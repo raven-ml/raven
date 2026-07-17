@@ -3,6 +3,8 @@
   test_program_spec
   test_cstyle
   test_diskcache
+  test_device
+  test_device_no_engine
   test_engine_schedule
   test_elf
   test_runtime_cpu
@@ -11,6 +13,8 @@
   test_program_spec
   test_cstyle
   test_diskcache
+  test_device
+  test_device_no_engine
   test_engine_schedule
   test_elf
   test_runtime_cpu

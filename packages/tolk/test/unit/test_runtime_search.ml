@@ -300,6 +300,60 @@ let beam_search_tests =
           is_true (P.shape_len r2 >= 1));
     ]
 
+(* Search timing *)
+
+(* Guards the CPU wait-timing contract BEAM ranking depends on.
+
+   search.ml times every candidate through
+   [Realize.Compiled_runner.call ~wait:true] and maps a [None] result to
+   [infinity] (see time_program). If CPU timing regresses to [None], every
+   candidate ties at [infinity] and BEAM can no longer order them. This drives
+   the same construction the search timing loop uses — optimize, lower,
+   linearize, compile, then time with [~wait:true] — and requires each
+   measurement be finite and positive so candidates stay rankable. The raw
+   runtime call is guarded in test_runtime_cpu; this pins the property for
+   kernels built through the beam-search codegen pipeline. *)
+let search_timing_tests =
+  group "search timing on CPU"
+    [
+      slow "wait:true yields a finite, rankable time" (fun () ->
+          let device = cpu "search-timing" in
+          let n = 16 in
+          let ast = elementwise_1d_ast ~n in
+          let s = P.create ast ren in
+          let opt_ast = P.get_optimized_ast (P.copy s) in
+          let program =
+            Device.compile_program device
+              (Linearizer.linearize (Codegen_lower.lower ren opt_ast))
+          in
+          let out_buf =
+            create_f32_buffer device n (List.init n (fun _ -> 0.0))
+          in
+          let in_buf =
+            create_f32_buffer device n (List.init n (fun i -> Float.of_int i))
+          in
+          let car = Realize.Compiled_runner.create ~device program in
+          (* Sample the cnt-style timing loop. A [None] would become [infinity]
+             in search.ml and collapse ranking, so fail loudly on it. *)
+          for _ = 1 to 3 do
+            match
+              Realize.Compiled_runner.call car [ out_buf; in_buf ] [] ~wait:true
+                ~timeout:None
+            with
+            | None ->
+                fail
+                  "CPU wait:true timing returned None; BEAM would tie every \
+                   candidate at infinity"
+            | Some t ->
+                is_true
+                  ~msg:(Printf.sprintf "CPU wait:true timing not finite: %g" t)
+                  (Float.is_finite t);
+                is_true
+                  ~msg:(Printf.sprintf "CPU wait:true timing not positive: %g" t)
+                  (t > 0.)
+          done);
+    ]
+
 (* Entry *)
 
-let () = run __FILE__ [ beam_search_tests ]
+let () = run __FILE__ [ beam_search_tests; search_timing_tests ]
