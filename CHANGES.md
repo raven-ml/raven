@@ -48,6 +48,9 @@ thread.
 
 - Constant-folding an integer `Floordiv`/`Floormod` by zero no longer raises;
   it folds to `0` / the dividend, matching the existing `Cdiv`/`Cmod` guards.
+- Fix jitted random-number generation: the call transformation sized staging
+  buffers for broadcast expands one rank short, so `Rand` under a captured
+  jit failed with `buffer_like: unknown shape`.
 - Full parity refresh against the reference compiler: dtypes are now a flat
   scalar enum (`Dtype.Val`/`Ptr`/`Image` and vector widths are gone — vector
   width comes from a value's shape, pointer provenance from its address

@@ -6,13 +6,6 @@ anchors point at the tinygrad clone.
 
 ## Open bugs
 
-- **threefry-under-jit regression** (fix in flight): four rng jit tests fail
-  with `Failure("buffer_like: unknown shape")` from
-  `Callify.transform_to_call` (callify.ml:330 via contig_to_store_after
-  :522) on `contiguous (broadcast_to [n;2] (reshape [1;2] key))`. Window:
-  the identity-permute elision exposed a shape-derivation gap in callify's
-  buffer sizing for jit-fed inputs. Eager rng and all non-rng jit paths
-  are unaffected.
 - **CPU renderer: vector store through scalar pointer** (predicted, from the
   gpt2 pmap work): a 3-wide vector stored through a scalar float pointer in
   a pmapped dropout backward may miscompile on the CPU renderer once the
