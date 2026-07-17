@@ -60,6 +60,12 @@ anchors point at the tinygrad clone.
 
 ## Performance follow-ups
 
+- **CPU matmul runtime trails the reference ~25-30%** at N=512/1024 (Track 2
+  indicative bench, `bench/runtime/`: 71.8 vs 90.7 and 68.3 vs 98.3 GFLOP/s).
+  Kernels are byte-identical at 128³ (compare suite), so the gap at larger
+  shapes most likely comes from optimizer heuristic selection (tile/upcast
+  choices), not codegen. Runtime divergence is out of scope by design —
+  pick this up only if the runtime track opens.
 - **Weak memo caches**: the uop layer's `Ref_tbl` memo caches (device,
   addrspace, min_max, shape, axis, ranges, child_ops) and side_metadata are
   non-weak, so entries outlive collected nodes — unbounded growth over long
