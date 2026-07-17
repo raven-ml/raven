@@ -25,12 +25,15 @@ let gpu_renderers = List.filter (fun (name, _) -> name <> "clang") all_renderers
 
 (* Helpers *)
 
-let dt = Dtype.Val.float32
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
-let local_ptr dt = Dtype.Ptr.create dt ~addrspace:Local ~size:(-1)
+let dt = Dtype.float32
+
+(* Pointer-ness is now an address space, not a dtype: a "pointer" is just the
+   scalar element dtype, and buffers/params carry their address space and shape
+   separately. [global_ptr] keeps its name but simply returns the scalar. *)
+let global_ptr dt = dt
 let render r prog = Renderer.render r prog
 let render_kernel r kernel = Renderer.render r (Linearizer.linearize kernel)
-let int32_c n = Const.int Dtype.Val.int32 n
+let int32_c n = Const.int Dtype.int32 n
 let float_c dt v = Const.float dt v
 
 let with_env name value f =
@@ -96,17 +99,22 @@ let apply_extra_matcher renderer node =
 
 (* IR Program Builders *)
 
-let param idx ptr = U.param ~slot:idx ~dtype:(Dtype.Ptr ptr) ()
+(* A Global buffer param carrying shape (-1,) renders its base name as
+   [data{slot}_-1]. *)
+let param idx scalar =
+  U.param ~slot:idx ~dtype:scalar ~shape:(U.const_int (-1))
+    ~addrspace:Dtype.Global ()
+
 let const value = U.const value
 let c0_i32 () = const (int32_c 0)
-let ptr_index ptr idx () = U.index ~ptr ~idxs:[idx] ~as_ptr:true ()
+let ptr_index ptr idx () = U.index ~ptr ~idxs:[ idx ] ()
 let load ?alt ?gate src = U.load ~src ?alt ?gate ()
 let store dst value = U.store ~dst ~value ()
 let unary op src _dtype = U.alu_unary ~op ~src
 let binary op lhs rhs _dtype = U.alu_binary ~op ~lhs ~rhs
 let ternary op a b c _dtype = U.alu_ternary ~op ~a ~b ~c
-let cast_to dtype src = U.cast ~src ~dtype:(Dtype.Val dtype)
-let bitcast_to dtype src = U.bitcast ~src ~dtype:(Dtype.Val dtype)
+let cast_to dtype src = U.cast ~src ~dtype
+let bitcast_to dtype src = U.bitcast ~src ~dtype
 
 let make_store_const dt const_value =
   let ptr = global_ptr dt in
@@ -173,7 +181,7 @@ let make_loop () =
   let p0 = param 0 ptr in
   let c10 = const (int32_c 10) in
   let r = U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Loop
-      ~dtype:Dtype.Val.int32 () in
+      ~dtype:Dtype.int32 () in
   let idx0 = ptr_index p0 r () in
   let ld = load idx0 in
   let idx1 = ptr_index p0 r () in
@@ -185,9 +193,9 @@ let make_nested_loops () =
   let p0 = param 0 ptr in
   let c10 = const (int32_c 10) and c5 = const (int32_c 5) in
   let r0 = U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Loop
-      ~dtype:Dtype.Val.int32 () in
+      ~dtype:Dtype.int32 () in
   let r1 = U.range ~size:c5 ~axis:1 ~sub:[] ~kind:Axis_type.Loop
-      ~dtype:Dtype.Val.int32 ~parents:[ r0 ] () in
+      ~dtype:Dtype.int32 ~parents:[ r0 ] () in
   let sum = U.alu_binary ~op:Ops.Add ~lhs:r0 ~rhs:r1 in
   let idx0 = ptr_index p0 sum () in
   let ld = load idx0 in
@@ -197,22 +205,20 @@ let make_nested_loops () =
     U.end_ ~value:ld ~ranges:[ r1 ]; U.end_ ~value:r0 ~ranges:[ r0 ] ]
 
 let make_special dim =
-  let ptr = global_ptr Dtype.Val.int32 in
+  let ptr = global_ptr Dtype.int32 in
   let p0 = param 0 ptr in
   let c64 = const (int32_c 64) in
   let sp =
     U.special ~name:(Gpu_dim.to_special_name dim) ~size:c64
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let idx = ptr_index p0 sp () in
   [ p0; c64; sp; idx; store idx sp ]
 
 let make_shared_memory () =
-  let gptr = global_ptr dt in
-  let lptr = local_ptr dt in
-  let p0 = param 0 gptr in
+  let p0 = param 0 dt in
   let dl =
-    U.buffer ~slot:0 ~dtype:(Dtype.Ptr (Dtype.Ptr.with_size 256 lptr)) ()
+    U.buffer ~slot:0 ~dtype:dt ~shape:(U.const_int 256) ~addrspace:Dtype.Local ()
   in
   let c0 = c0_i32 () in
   let lidx = ptr_index dl c0 () in
@@ -243,77 +249,78 @@ let make_gated_store () =
   let idx = ptr_index p0 c0 () in
   [ p0; c0; gate; value; idx; U.store ~dst:idx ~value ~gate () ]
 
+(* A vec4 access reads four contiguous lanes: a SHRINK of size 4 has
+   [max_numel = 4], so the load casts the access pointer to [float4*]. *)
+let vec4_param slot =
+  U.param ~slot ~dtype:dt ~shape:(U.const_int 4) ~addrspace:Dtype.Global ()
+
 let make_vector_access () =
-  let vdt = Dtype.Val.vec 4 dt in
-  let ptr = global_ptr vdt in
-  let p0 = param 0 ptr and p1 = param 1 ptr in
-  let c0 = c0_i32 () in
-  let idx0 = ptr_index p0 c0 () in
-  let idx1 = ptr_index p1 c0 () in
-  let ld = load idx0 in
-  [ p0; p1; c0; idx0; idx1; ld; store idx1 ld ]
+  let p0 = vec4_param 0 and p1 = vec4_param 1 in
+  let src = U.shrink ~src:p0 ~offset:(U.const_int 0) ~size:(U.const_int 4) in
+  let dst = U.shrink ~src:p1 ~offset:(U.const_int 0) ~size:(U.const_int 4) in
+  let ld = load src in
+  [ p0; p1; src; dst; ld; store dst ld ]
 
 let make_dtype_changing_load () =
-  let in_ptr = global_ptr Dtype.Val.int32 in
+  let in_ptr = global_ptr Dtype.int32 in
   let out_ptr = global_ptr dt in
   let p0 = param 0 in_ptr and p1 = param 1 out_ptr in
   let c0 = c0_i32 () in
   let idx0 = ptr_index p0 c0 () in
   let idx1 = ptr_index p1 c0 () in
-  let ld = U.replace (load idx0) ~dtype:(Dtype.Val dt) () in
+  let ld = U.replace (load idx0) ~dtype:dt () in
   [ p0; p1; c0; idx0; idx1; ld; store idx1 ld ]
 
 let make_pointer_bitcast_load () =
-  let src_ptr = global_ptr dt in
-  let cast_ptr = global_ptr Dtype.Val.int32 in
-  let out_ptr = global_ptr Dtype.Val.int32 in
-  let p0 = param 0 src_ptr and p1 = param 1 out_ptr in
+  let p0 = param 0 dt and p1 = param 1 Dtype.int32 in
   let c0 = c0_i32 () in
-  let cast = U.bitcast ~src:p0 ~dtype:(Dtype.Ptr cast_ptr) in
+  let cast = U.bitcast ~src:p0 ~dtype:Dtype.int32 in
   let src = ptr_index cast c0 () in
   let dst = ptr_index p1 c0 () in
   let ld = load src in
   [ p0; p1; c0; cast; src; dst; ld; store dst ld ]
 
 let make_shrink_load () =
-  let ptr = global_ptr dt in
-  let p0 = param 0 ptr and p1 = param 1 ptr in
+  let p0 =
+    U.param ~slot:0 ~dtype:dt ~shape:(U.const_int 16) ~addrspace:Dtype.Global ()
+  in
+  let p1 = param 1 dt in
   let c0 = c0_i32 () in
-  let shrunk = U.shrink ~src:p0 ~offset:c0 ~size:c0 in
+  let shrunk = U.shrink ~src:p0 ~offset:(U.const_int 0) ~size:(U.const_int 1) in
   let dst = ptr_index p1 c0 () in
   let ld = load shrunk in
   [ p0; p1; c0; shrunk; dst; ld; store dst ld ]
 
+(* An image is a float param whose shape is rank-3 with a trailing dim of 4. *)
+let image_param slot =
+  U.param ~slot ~dtype:Dtype.float32
+    ~shape:(U.stack [ U.const_int 4; U.const_int 4; U.const_int 4 ])
+    ~addrspace:Dtype.Global ()
+
 let make_image_load () =
-  let img_ptr = Dtype.Image.imagef [ 4; 4; 4 ] in
-  let buf_ptr = global_ptr dt in
-  let img = U.param ~slot:0 ~dtype:(Dtype.Ptr img_ptr) () in
-  let buf = param 1 buf_ptr in
+  let img = image_param 0 in
+  let buf = param 1 dt in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
-  let coord = U.stack ~dtype:Dtype.Val.int32 [ c0; c1 ] in
+  let coord = U.stack ~dtype:Dtype.int32 [ c0; c1 ] in
   let src = ptr_index img coord () in
   let dst = ptr_index buf c0 () in
   U.sink [ store dst (load src) ]
 
 let make_image_store () =
-  let img_ptr = Dtype.Image.imagef [ 4; 4; 4 ] in
-  let buf_ptr = global_ptr dt in
-  let img = U.param ~slot:0 ~dtype:(Dtype.Ptr img_ptr) () in
-  let buf = param 1 buf_ptr in
+  let img = image_param 0 in
+  let buf = param 1 dt in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
-  let coord = U.stack ~dtype:Dtype.Val.int32 [ c0; c1 ] in
+  let coord = U.stack ~dtype:Dtype.int32 [ c0; c1 ] in
   let src = ptr_index buf c0 () in
   let dst = ptr_index img coord () in
   U.sink [ store dst (load src) ]
 
 let make_gated_image_store () =
-  let img_ptr = Dtype.Image.imagef [ 4; 4; 4 ] in
-  let buf_ptr = global_ptr dt in
-  let img = U.param ~slot:0 ~dtype:(Dtype.Ptr img_ptr) () in
-  let buf = param 1 buf_ptr in
+  let img = image_param 0 in
+  let buf = param 1 dt in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
   let gate = const (Const.bool true) in
-  let coord = U.stack ~dtype:Dtype.Val.int32 [ c0; c1 ] in
+  let coord = U.stack ~dtype:Dtype.int32 [ c0; c1 ] in
   let src = ptr_index buf c0 () in
   let dst = ptr_index img coord () in
   U.sink [ U.store ~dst ~value:(load src) ~gate () ]
@@ -334,10 +341,8 @@ let make_bitcast ~from_dt ~to_dt =
   make_type_convert ~from_dt ~to_dt (bitcast_to to_dt)
 
 let float_vec scalar count value =
-  let dtype = Dtype.Val.of_scalar scalar in
-  U.stack
-    ~dtype:(Dtype.Val.vec count dtype)
-    (List.init count (fun _ -> const (Const.float dtype value)))
+  U.stack ~dtype:scalar
+    (List.init count (fun _ -> const (Const.float scalar value)))
 
 let make_wmma ?(device = "AMD") ?(threads = 64)
     ?(upcast_axes = ([], [], [])) ~name ~dims ~dtype_in ~dtype_out ~a_count
@@ -357,11 +362,9 @@ let make_wmma ?(device = "AMD") ?(threads = 64)
       reduce_axes = [];
     }
   in
-  let dtype = Dtype.Val.vec c_count (Dtype.Val.of_scalar dtype_out) in
-  U.toposort (U.wmma ~a ~b ~c ~info ~dtype)
+  U.toposort (U.wmma ~a ~b ~c ~info ~dtype:dtype_out)
 
 let make_vectorize_index () =
-  let vdt = Dtype.Val.vec 4 dt in
   let ptr = global_ptr dt in
   let p0 = param 0 ptr and p1 = param 1 ptr in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
@@ -370,7 +373,7 @@ let make_vectorize_index () =
   let idx2 = ptr_index p0 c2 () and idx3 = ptr_index p0 c3 () in
   let ld0 = load idx0 and ld1 = load idx1 in
   let ld2 = load idx2 and ld3 = load idx3 in
-  let vec = U.stack ~dtype:vdt [ ld0; ld1; ld2; ld3 ] in
+  let vec = U.stack ~dtype:dt [ ld0; ld1; ld2; ld3 ] in
   let lane = ptr_index vec c2 () in
   let oidx = ptr_index p1 c0 () in
   [
@@ -406,7 +409,7 @@ let make_custom () =
 let make_define_var () =
   let ptr = global_ptr dt in
   let p0 = param 0 ptr in
-  let dv = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:Dtype.Val.int32 () in
+  let dv = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:Dtype.int32 () in
   let idx = ptr_index p0 dv () in
   let ld = load idx in
   [ p0; dv; idx; ld; store idx ld ]
@@ -439,14 +442,14 @@ let make_conditional () =
   [ p0; c0; idx; cond; if_; fval; store idx fval; U.endif ~if_ ]
 
 let make_launch_bounds () =
-  let ptr = global_ptr Dtype.Val.int32 in
+  let ptr = global_ptr Dtype.int32 in
   let p0 = param 0 ptr in
   let c64 = const (int32_c 64) in
   let lid0 = U.special ~name:(Gpu_dim.to_special_name (Gpu_dim.Local_id 0)) ~size:c64
-      ~dtype:Dtype.Val.int32 () in
+      ~dtype:Dtype.int32 () in
   let c4 = const (int32_c 4) in
   let lid1 = U.special ~name:(Gpu_dim.to_special_name (Gpu_dim.Local_id 1)) ~size:c4
-      ~dtype:Dtype.Val.int32 () in
+      ~dtype:Dtype.int32 () in
   let sum = U.alu_binary ~op:Ops.Add ~lhs:lid0 ~rhs:lid1 in
   let idx = ptr_index p0 sum () in
   [ p0; c64; lid0; c4; lid1; sum; idx; store idx sum ]
@@ -458,13 +461,13 @@ let f32_1 = make_store_const dt (float_c dt 1.0)
 (* Comparison program builder: loads from two float32 inputs, applies cmp, stores bool *)
 let make_comparison mk_op =
   let in_ptr = global_ptr dt in
-  let out_ptr = global_ptr Dtype.Val.bool in
+  let out_ptr = global_ptr Dtype.bool in
   let p0 = param 0 in_ptr and p1 = param 1 in_ptr and p2 = param 2 out_ptr in
   let c0 = c0_i32 () in
   let idx0 = ptr_index p0 c0 () and idx1 = ptr_index p1 c0 () in
   let idx2 = ptr_index p2 c0 () in
   let ld0 = load idx0 and ld1 = load idx1 in
-  let cmp = mk_op ld0 ld1 Dtype.Val.bool in
+  let cmp = mk_op ld0 ld1 Dtype.bool in
   [ p0; p1; p2; c0; idx0; idx1; idx2; ld0; ld1; cmp; store idx2 cmp ]
 
 (* Property test support *)
@@ -474,11 +477,11 @@ let renderer_testable =
   let pp fmt (name, _) = Format.pp_print_string fmt name in
   testable ~pp ~equal:(fun (a, _) (b, _) -> String.equal a b) ~gen ()
 
-let safe_dtypes = [ Dtype.Val.int32; Dtype.Val.float32; Dtype.Val.float64; Dtype.Val.uint32 ]
+let safe_dtypes = [ Dtype.int32; Dtype.float32; Dtype.float64; Dtype.uint32 ]
 
 let safe_dtype =
   let gen = Gen.oneofl safe_dtypes in
-  testable ~pp:Dtype.Val.pp ~equal:Dtype.Val.equal ~gen ()
+  testable ~pp:Dtype.pp ~equal:Dtype.equal ~gen ()
 
 (* Runner *)
 
@@ -488,7 +491,7 @@ let () =
       group "Constants"
         [
           test "int constant" (fun () ->
-            let prog = make_store_const Dtype.Val.int32 (int32_c 42) in
+            let prog = make_store_const Dtype.int32 (int32_c 42) in
             for_each_renderer all_renderers (fun name r ->
                 assert_contains (name ^ " int 42") (render r prog) "42"));
           test "float32 constant" (fun () ->
@@ -498,15 +501,15 @@ let () =
                 assert_contains (name ^ " float32 3.14") out "3.14";
                 assert_contains (name ^ " float32 f suffix") out "f"));
           test "float64 constant" (fun () ->
-            let prog = make_store_const Dtype.Val.float64 (float_c Dtype.Val.float64 3.14) in
+            let prog = make_store_const Dtype.float64 (float_c Dtype.float64 3.14) in
             for_each_renderer all_renderers (fun name r ->
                 assert_contains (name ^ " float64 3.14") (render r prog) "3.14"));
           test "bool constants" (fun () ->
             for_each_renderer all_renderers (fun name r ->
                 assert_contains (name ^ " bool true")
-                  (render r (make_store_const Dtype.Val.bool (Const.bool true))) "1";
+                  (render r (make_store_const Dtype.bool (Const.bool true))) "1";
                 assert_contains (name ^ " bool false")
-                  (render r (make_store_const Dtype.Val.bool (Const.bool false))) "0"));
+                  (render r (make_store_const Dtype.bool (Const.bool false))) "0"));
           test "nan/inf constants" (fun () ->
             let nan_prog = make_store_const dt (float_c dt Float.nan) in
             let inf_prog = make_store_const dt (float_c dt Float.infinity) in
@@ -525,23 +528,23 @@ let () =
             assert_contains "clang NAN" nan_out "__builtin_nanf";
             assert_contains "clang INF" (render clang_renderer inf_prog) "__builtin_inff");
           test "int64 suffix" (fun () ->
-            let prog = make_store_const Dtype.Val.int64 (Const.int Dtype.Val.int64 12345) in
+            let prog = make_store_const Dtype.int64 (Const.int Dtype.int64 12345) in
             for_each_renderer all_renderers (fun name r ->
                 assert_contains (name ^ " int64 l suffix") (render r prog) "12345l"));
           test "uint32 suffix" (fun () ->
-            let prog = make_store_const Dtype.Val.uint32 (Const.int Dtype.Val.uint32 42) in
+            let prog = make_store_const Dtype.uint32 (Const.int Dtype.uint32 42) in
             for_each_renderer all_renderers (fun name r ->
                 let out = render r prog in
                 assert_contains (name ^ " uint32 u suffix") out "42u";
                 assert_not_contains (name ^ " uint32 has no uu suffix") out "42uu"));
           test "uint64 suffix" (fun () ->
-            let prog = make_store_const Dtype.Val.uint64 (Const.int Dtype.Val.uint64 42) in
+            let prog = make_store_const Dtype.uint64 (Const.int Dtype.uint64 42) in
             for_each_renderer all_renderers (fun name r ->
                 assert_contains (name ^ " uint64 ul suffix") (render r prog) "42ul"));
           test "uint64 constants are rendered unsigned" (fun () ->
             let prog =
-              make_store_const Dtype.Val.uint64
-                (Const.int64 Dtype.Val.uint64 Int64.minus_one)
+              make_store_const Dtype.uint64
+                (Const.int64 Dtype.uint64 Int64.minus_one)
             in
             for_each_renderer all_renderers (fun name r ->
                 assert_contains (name ^ " uint64 truncation") (render r prog)
@@ -569,7 +572,7 @@ let () =
                   (fun (label, mk_op, expected) ->
                     let op_dt =
                       if String.length expected = 1 && expected.[0] = '/' then dt
-                      else Dtype.Val.int32
+                      else Dtype.int32
                     in
                     let prog = make_binop op_dt mk_op in
                     for_each_renderer all_renderers (fun name r ->
@@ -588,7 +591,7 @@ let () =
                         failwith (name ^ " should reject raw Fdiv"))));
               test "integer division" (fun () ->
                 let prog =
-                  make_binop Dtype.Val.int32 (fun l r dt ->
+                  make_binop Dtype.int32 (fun l r dt ->
                       binary Ops.Cdiv l r dt)
                 in
                 for_each_renderer all_renderers (fun name r ->
@@ -677,7 +680,7 @@ let () =
                 let cuda = Cstyle.cuda Gpu_target.SM80 in
                 List.iter
                   (fun (expected, mk_op) ->
-                    let out = render cuda (make_unop Dtype.Val.float16 mk_op) in
+                    let out = render cuda (make_unop Dtype.float16 mk_op) in
                     assert_contains ("CUDA " ^ expected) out expected)
                   [
                     ("hexp2", fun s dt -> unary Ops.Exp2 s dt);
@@ -715,9 +718,9 @@ let () =
             let prog_add = make_chained_binop dt mk_add 5 in
             let prog_sub = make_chained_binop dt mk_sub 5 in
             let prog_mul = make_chained_binop dt mk_mul 5 in
-            let prog_xor = make_chained_binop Dtype.Val.int32 mk_xor 5 in
-            let prog_or = make_chained_binop Dtype.Val.int32 mk_or 5 in
-            let prog_and = make_chained_binop Dtype.Val.int32 mk_and 5 in
+            let prog_xor = make_chained_binop Dtype.int32 mk_xor 5 in
+            let prog_or = make_chained_binop Dtype.int32 mk_or 5 in
+            let prog_and = make_chained_binop Dtype.int32 mk_and 5 in
             for_each_renderer all_renderers (fun name r ->
                 assert_not_contains (name ^ " Add no deep parens") (render r prog_add) "(((((";
                 assert_not_contains (name ^ " Mul no deep parens") (render r prog_mul) "(((((";
@@ -805,7 +808,7 @@ let () =
       group "Cast and Bitcast"
         [
           test "cast per backend" (fun () ->
-            let prog = make_cast ~from_dt:Dtype.Val.int32 ~to_dt:dt in
+            let prog = make_cast ~from_dt:Dtype.int32 ~to_dt:dt in
             let metal_out = render metal_renderer prog in
             assert_contains "metal cast" metal_out "(float)";
             let cuda_out = render (Cstyle.cuda Gpu_target.SM80) prog in
@@ -814,7 +817,7 @@ let () =
             assert_contains "opencl cast" opencl_out "(float)";
             assert_contains "clang cast" (render clang_renderer prog) "(float)");
           test "bitcast per backend" (fun () ->
-            let prog = make_bitcast ~from_dt:dt ~to_dt:Dtype.Val.int32 in
+            let prog = make_bitcast ~from_dt:dt ~to_dt:Dtype.int32 in
             assert_contains "clang __builtin_bit_cast"
               (render clang_renderer prog) "__builtin_bit_cast";
             assert_contains "cuda tg_bitcast"
@@ -932,15 +935,13 @@ let () =
               (render metal_renderer prog) "device float* data0_-1, constant int& n";
             assert_contains "cuda scalar param in signature"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "float* data0_-1, const int n");
-          test "buffer parameter base uses canonical name, body uses type_map" (fun () ->
-            (* tinygrad quirk: PtrDType.scalar() returns the pointer, so a
-               pointer param's base misses type_map and falls back to the raw
-               scalar name, while value-typed uses in the body do apply
-               type_map. A bf16 metal buffer is thus [device __bf16*] in the
-               signature but [bfloat] in the body. *)
-            let prog = make_store_const Dtype.Val.bfloat16 (float_c Dtype.Val.bfloat16 1.0) in
+          test "buffer parameter and body both use type_map" (fun () ->
+            (* Both the buffer signature and value-typed uses in the body apply
+               the language type_map, so a bf16 metal buffer is [device bfloat*]
+               in the signature and [(bfloat)] in the body. *)
+            let prog = make_store_const Dtype.bfloat16 (float_c Dtype.bfloat16 1.0) in
             let metal_out = render (Cstyle.metal (Gpu_target.Apple 7)) prog in
-            assert_contains "metal bf16 buffer signature" metal_out "device __bf16*";
+            assert_contains "metal bf16 buffer signature" metal_out "device bfloat*";
             assert_contains "metal bf16 body cast" metal_out "(bfloat)");
           test "renderer op capabilities match cstyle render surface" (fun () ->
             let check_ops name r =
@@ -953,7 +954,7 @@ let () =
               (all_renderers @ [ ("qcom", Cstyle.qcom); ("amd", Cstyle.amd Gpu_target.CDNA3) ])
               check_ops);
           test "renderer dtype capabilities are backend-specific" (fun () ->
-            let fp8 = Dtype.of_scalar Dtype.Fp8e4m3 in
+            let fp8 = Dtype.fp8e4m3 in
             if Renderer.supports_dtype Cstyle.qcom Dtype.float64 then
               failwith "qcom should not advertise float64";
             if Renderer.supports_dtype Cstyle.qcom Dtype.float16 then
@@ -1057,11 +1058,11 @@ let () =
       group "Preamble"
         [
           test "CUDA bitcast template" (fun () ->
-            let prog = make_bitcast ~from_dt:dt ~to_dt:Dtype.Val.int32 in
+            let prog = make_bitcast ~from_dt:dt ~to_dt:Dtype.int32 in
             assert_contains "cuda tg_bitcast template"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "tg_bitcast");
           test "CUDA fp16 include" (fun () ->
-            let prog = make_store_const Dtype.Val.float16 (float_c Dtype.Val.float16 1.0) in
+            let prog = make_store_const Dtype.float16 (float_c Dtype.float16 1.0) in
             assert_contains "cuda fp16 include"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "cuda_fp16");
           test "CUDA WMMA helper follows tinygrad asm preamble" (fun () ->
@@ -1105,14 +1106,12 @@ let () =
             assert_contains "metal wmma helper simdgroup" out
               "simdgroup_multiply_accumulate");
           test "OpenCL fp16 pragma" (fun () ->
-            let prog = make_store_const Dtype.Val.float16 (float_c Dtype.Val.float16 1.0) in
+            let prog = make_store_const Dtype.float16 (float_c Dtype.float16 1.0) in
             assert_contains "opencl fp16 pragma"
               (render opencl_renderer prog) "cl_khr_fp16");
           test "OpenCL aux groups params by slot" (fun () ->
             let prog = make_simple_add_f32 () in
-            let expected_dtype =
-              Dtype.repr (Dtype.Ptr (global_ptr Dtype.Val.float32))
-            in
+            let expected_dtype = Dtype.repr Dtype.float32 in
             equal (list string)
               [
                 Printf.sprintf "((0,%s))" expected_dtype;
@@ -1122,12 +1121,10 @@ let () =
               (Renderer.aux opencl_renderer prog));
           test "OpenCL aux uses dense parameter ordinals" (fun () ->
             let c0 = c0_i32 () in
-            let p0 = param 0 (global_ptr Dtype.Val.float32) in
-            let p1 = param 1 (global_ptr Dtype.Val.float32) in
+            let p0 = param 0 (global_ptr Dtype.float32) in
+            let p1 = param 1 (global_ptr Dtype.float32) in
             let prog = [ c0; p0; p1 ] in
-            let expected_dtype =
-              Dtype.repr (Dtype.Ptr (global_ptr Dtype.Val.float32))
-            in
+            let expected_dtype = Dtype.repr Dtype.float32 in
             equal (list string)
               [
                 Printf.sprintf "((0,%s))" expected_dtype;
@@ -1135,14 +1132,14 @@ let () =
               ]
               (Renderer.aux opencl_renderer prog));
           test "GPU pointer bitcasts use backend bitcast syntax" (fun () ->
-            let f32_ptr = global_ptr Dtype.Val.float32 in
-            let i32_ptr = global_ptr Dtype.Val.int32 in
+            let f32_ptr = global_ptr Dtype.float32 in
+            let i32_ptr = global_ptr Dtype.int32 in
             let p0 = param 0 f32_ptr in
             let p1 = param 1 i32_ptr in
             let c0 = c0_i32 () in
             let src = ptr_index p0 c0 () in
             let dst = ptr_index p1 c0 () in
-            let bc = U.bitcast ~src ~dtype:(Dtype.Ptr i32_ptr) in
+            let bc = U.bitcast ~src ~dtype:i32_ptr in
             let ld = load bc in
             let prog = [ p0; p1; c0; src; dst; bc; ld; store dst ld ] in
             assert_contains "cuda pointer bitcast"
@@ -1161,8 +1158,8 @@ let () =
             | None -> failwith "clang should have extra_matcher for bf16 promotion"
             | Some _ -> ());
           test "amd promotes bf16 ALU through float32" (fun () ->
-            let a = U.const (Const.float Dtype.Val.bfloat16 1.0) in
-            let b = U.const (Const.float Dtype.Val.bfloat16 2.0) in
+            let a = U.const (Const.float Dtype.bfloat16 1.0) in
+            let b = U.const (Const.float Dtype.bfloat16 2.0) in
             let add = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
             match apply_extra_matcher (Cstyle.amd Gpu_target.RDNA3) add with
             | Some r ->
@@ -1171,14 +1168,14 @@ let () =
                    && Dtype.equal (U.dtype r) Dtype.bfloat16)
             | None -> failwith "amd bf16 ALU extra matcher did not fire");
           test "amd casts bf16 constants through software bf16 path" (fun () ->
-            let c = U.const (Const.float Dtype.Val.bfloat16 1.0) in
+            let c = U.const (Const.float Dtype.bfloat16 1.0) in
             match apply_extra_matcher (Cstyle.amd Gpu_target.CDNA4) c with
             | Some r ->
                 is_true ~msg:"amd bf16 const keeps bf16 dtype"
                   (Dtype.equal (U.dtype r) Dtype.bfloat16)
             | None -> failwith "amd bf16 const extra matcher did not fire");
           test "amd manual bf16 casts are skipped on CDNA4" (fun () ->
-            let src = U.const (Const.float Dtype.Val.bfloat16 1.0) in
+            let src = U.const (Const.float Dtype.bfloat16 1.0) in
             let cast = U.cast ~src ~dtype:Dtype.float32 in
             (match apply_extra_matcher (Cstyle.amd Gpu_target.RDNA3) cast with
              | Some _ -> ()
@@ -1204,7 +1201,7 @@ let () =
             in
             let wmma =
               U.wmma ~a ~b ~c ~info
-                ~dtype:(Dtype.Val.vec 4 Dtype.Val.float32)
+                ~dtype:Dtype.float32
             in
             match apply_extra_matcher (Cstyle.amd Gpu_target.CDNA4) wmma with
             | Some r -> (
@@ -1296,7 +1293,7 @@ let () =
               "amdgpu_flat_work_group_size");
           test "bf16 target paths" (fun () ->
             let prog =
-              make_binop Dtype.Val.bfloat16 (fun l r dt ->
+              make_binop Dtype.bfloat16 (fun l r dt ->
                   binary Ops.Add l r dt)
             in
             let rdna3_out = render (Cstyle.amd Gpu_target.RDNA3) prog in
@@ -1310,15 +1307,15 @@ let () =
               cdna4_out "typedef unsigned short hip_bfloat16;");
           test "cdna fp8 constants use f32_to_fp8 helper" (fun () ->
             let prog =
-              make_store_const Dtype.Val.fp8e4m3
-                (Const.float Dtype.Val.fp8e4m3 1.0)
+              make_store_const Dtype.fp8e4m3
+                (Const.float Dtype.fp8e4m3 1.0)
             in
             let out = render (Cstyle.amd Gpu_target.CDNA4) prog in
             assert_contains "amd cdna fp8 helper" out "f32_to_fp8";
             assert_contains "amd cdna fp8 const" out "f32_to_fp8(1.0f, 0)");
           test "cdna fp8 casts use f32_to_fp8 helper" (fun () ->
             let prog =
-              make_cast ~from_dt:Dtype.Val.float32 ~to_dt:Dtype.Val.fp8e5m2
+              make_cast ~from_dt:Dtype.float32 ~to_dt:Dtype.fp8e5m2
             in
             let out = render (Cstyle.amd Gpu_target.CDNA4) prog in
             assert_contains "amd cdna bf8 helper" out "f32_to_fp8";
@@ -1368,7 +1365,7 @@ let () =
             (pair safe_dtype renderer_testable)
             (fun (dt, (_name, renderer)) ->
               let const_value =
-                match Dtype.Val.scalar dt with
+                match dt with
                 | Dtype.Float32 | Dtype.Float64 -> Const.float dt 1.0
                 | _ -> Const.int dt 1
               in

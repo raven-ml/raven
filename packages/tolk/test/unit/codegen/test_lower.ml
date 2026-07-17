@@ -22,11 +22,6 @@ let with_spec value fn =
       | Some v -> Unix.putenv "SPEC" v
       | None -> Unix.putenv "SPEC" "")
 
-let weakint_dtype node =
-  match U.dtype node with
-  | Dtype.Val v -> Dtype.Val.scalar v = Dtype.Weakint
-  | Dtype.Ptr _ -> false
-
 let custom_fmt node =
   match U.op node, U.Arg.as_string (U.arg node) with
   | (Ops.Custom | Ops.Customi), Some fmt -> Some fmt
@@ -57,56 +52,43 @@ let is_invalid_const node =
 let has_invalid_const root =
   List.exists is_invalid_const (U.toposort root)
 
+let global_ptr ?(slot = 0) () =
+  U.param ~slot ~dtype:Dtype.float32 ~addrspace:Dtype.Global ()
+
 let () =
   run "Codegen_lower"
     [
       group "final cleanup"
         [
-          test "final rewrite removes remaining weakints" (fun () ->
-            let weak =
-              U.custom_inline ~fmt:"weak()" ~args:[]
-                ~dtype:Dtype.Val.weakint
+          test "final rewrite concretizes leftover index dtypes" (fun () ->
+            let p = global_ptr () in
+            let r =
+              U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Loop ()
             in
-            let root = U.sink [ weak ] in
+            let dst = U.index ~ptr:p ~idxs:[ r ] () in
+            let st =
+              U.store ~dst ~value:(U.const (Const.float Dtype.float32 1.0)) ()
+            in
+            let root = U.sink [ U.end_ ~value:st ~ranges:[ r ] ] in
             let lowered =
               with_spec "1" (fun () ->
                   Codegen_lower.lower (test_renderer ()) root)
             in
-            is_true ~msg:"no reachable weakint dtype remains"
-              (not (List.exists weakint_dtype (U.toposort lowered)));
-            Spec.type_verify Spec.program_spec lowered);
-          test "vector constants scalarize through stack" (fun () ->
-            let dtype = Dtype.Val.vec 3 Dtype.Val.float32 in
-            let vec = U.const (Const.of_view dtype (Const.Float 2.0)) in
-            let root = U.sink [ vec ] in
-            let lowered = Codegen_lower.lower (test_renderer ()) root in
-            let topo = U.toposort lowered in
-            is_true ~msg:"no vector const remains"
+            is_true ~msg:"no reachable index dtype remains"
               (not
                  (List.exists
-                    (fun node ->
-                      U.op node = Ops.Const
-                      && Dtype.count (U.dtype node) > 1)
-                    topo));
-            is_true ~msg:"has scalarized constants"
-              (List.exists
-                 (fun node ->
-                   U.op node = Ops.Const
-                   && Dtype.equal (U.dtype node) Dtype.float32)
-                 topo));
+                    (fun node -> Dtype.equal (U.dtype node) Dtype.index)
+                    (U.toposort lowered)));
+            Spec.type_verify Spec.program_spec lowered);
           test "memory operands feeding ALU become explicit loads" (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global
-                ~size:(-1)
-            in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = global_ptr ~slot:0 () in
+            let p1 = global_ptr ~slot:1 () in
             let idx = U.const_int 0 in
             let value =
               U.alu_unary ~op:Ops.Neg
                 ~src:(U.index ~ptr:p0 ~idxs:[ idx ] ())
             in
-            let dst = U.index ~ptr:p1 ~idxs:[ idx ] ~as_ptr:true () in
+            let dst = U.index ~ptr:p1 ~idxs:[ idx ] () in
             let lowered =
               Codegen_lower.lower (test_renderer ())
                 (U.sink [ U.store ~dst ~value () ])
@@ -130,23 +112,21 @@ let () =
                  topo));
           test "gater leaves already-gated invalid-index load unchanged"
             (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Global
-                ~size:(-1)
+            let p = global_ptr () in
+            let idx =
+              U.variable ~name:"i" ~min_val:0 ~max_val:100 ~dtype:Dtype.int32 ()
             in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let idx = U.param ~slot:1 ~dtype:Dtype.int32 () in
             let gate =
               U.alu_binary ~op:Ops.Cmplt ~lhs:idx
-                ~rhs:(U.const (Const.int Dtype.Val.int32 3))
+                ~rhs:(U.const (Const.int Dtype.int32 3))
             in
             let invalid_idx =
-              U.O.where gate idx (U.invalid ~dtype:Dtype.Val.int32 ())
+              U.O.where gate idx (U.invalid ~dtype:Dtype.int32 ())
             in
-            let mop = U.index ~ptr:p ~idxs:[ invalid_idx ] ~as_ptr:true () in
+            let mop = U.index ~ptr:p ~idxs:[ invalid_idx ] () in
             let load =
               U.load ~src:mop
-                ~alt:(U.const (Const.float Dtype.Val.float32 0.0))
+                ~alt:(U.const (Const.float Dtype.float32 0.0))
                 ~gate ()
             in
             let lowered = Gater.pm_move_gates_from_index load in
@@ -159,11 +139,7 @@ let () =
             is_true ~msg:"load unchanged" (U.equal load lowered));
           test "gater strips both image indexes with same invalid gate"
             (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Global
-                ~size:(-1)
-            in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p = global_ptr () in
             let gate =
               U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
                 ~addrspace:Dtype.Alu ()
@@ -172,7 +148,7 @@ let () =
             let x = U.const_int 5 in
             let yi = U.O.where gate y (U.invalid ()) in
             let xi = U.O.where gate x (U.invalid ()) in
-            let src = U.index ~ptr:p ~idxs:[ yi; xi ] ~as_ptr:true () in
+            let src = U.index ~ptr:p ~idxs:[ yi; xi ] () in
             let load = U.load ~src () in
             let lowered = Gater.pm_move_gates_from_index load in
             match U.as_load lowered with
@@ -189,8 +165,12 @@ let () =
             | _ -> failwith "expected gated load");
           test "gater strips stacked image load coordinates with same invalid gate"
             (fun () ->
-            let image = Dtype.Image.imagef [ 4; 4; 4 ] in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr image) () in
+            let p =
+              U.param ~slot:0 ~dtype:Dtype.float32
+                ~shape:
+                  (U.stack [ U.const_int 4; U.const_int 4; U.const_int 4 ])
+                ~addrspace:Dtype.Global ()
+            in
             let gate =
               U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
                 ~addrspace:Dtype.Alu ()
@@ -198,11 +178,11 @@ let () =
             let y = U.const_int 3 in
             let x = U.const_int 5 in
             let coord =
-              U.stack ~dtype:Dtype.Val.weakint
+              U.stack ~dtype:Dtype.index
                 [ U.O.where gate y (U.invalid ());
                   U.O.where gate x (U.invalid ()) ]
             in
-            let src = U.index ~ptr:p ~idxs:[ coord ] ~as_ptr:true () in
+            let src = U.index ~ptr:p ~idxs:[ coord ] () in
             let lowered = Gater.pm_move_gates_from_index (U.load ~src ()) in
             match U.as_load lowered with
             | Some { src; gate = Some load_gate; alt = Some _ } ->
@@ -221,8 +201,12 @@ let () =
             | _ -> failwith "expected gated load");
           test "gater strips stacked image store coordinates with same invalid gate"
             (fun () ->
-            let image = Dtype.Image.imagef [ 4; 4; 4 ] in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr image) () in
+            let p =
+              U.param ~slot:0 ~dtype:Dtype.float32
+                ~shape:
+                  (U.stack [ U.const_int 4; U.const_int 4; U.const_int 4 ])
+                ~addrspace:Dtype.Global ()
+            in
             let gate =
               U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
                 ~addrspace:Dtype.Alu ()
@@ -230,11 +214,11 @@ let () =
             let y = U.const_int 3 in
             let x = U.const_int 5 in
             let coord =
-              U.stack ~dtype:Dtype.Val.weakint
+              U.stack ~dtype:Dtype.index
                 [ U.O.where gate y (U.invalid ());
                   U.O.where gate x (U.invalid ()) ]
             in
-            let dst = U.index ~ptr:p ~idxs:[ coord ] ~as_ptr:true () in
+            let dst = U.index ~ptr:p ~idxs:[ coord ] () in
             let store = U.store ~dst ~value:(U.const_float 1.0) () in
             let lowered = Gater.pm_move_gates_from_index store in
             match U.as_store lowered with
@@ -254,11 +238,7 @@ let () =
                 | None -> failwith "expected index")
             | _ -> failwith "expected gated store");
           test "gater strips only the first variadic invalid index" (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Global
-                ~size:(-1)
-            in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p = global_ptr () in
             let gate =
               U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
                 ~addrspace:Dtype.Alu ()
@@ -268,7 +248,7 @@ let () =
             let g0 = U.O.where gate i0 (U.invalid ()) in
             let g1 = U.O.where gate i1 (U.invalid ()) in
             let tail = U.const_int 7 in
-            let src = U.index ~ptr:p ~idxs:[ g0; g1; tail ] ~as_ptr:true () in
+            let src = U.index ~ptr:p ~idxs:[ g0; g1; tail ] () in
             let load = U.load ~src () in
             let lowered = Gater.pm_move_gates_from_index load in
             match U.as_load lowered with
@@ -304,39 +284,11 @@ let () =
               (Some 2) (List.assoc_opt "n" named_slots);
             equal (option int) ~msg:"m follows n"
               (Some 3) (List.assoc_opt "m" named_slots));
-          test "pointer PARAMs become scalar params with size shape" (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global
-                ~size:(-1)
-            in
-            let root =
-              U.sink [ U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () ]
-            in
-            let lowered = Codegen_lower.lower (test_renderer ()) root in
-            match
-              List.find_opt
-                (fun n ->
-                  match U.as_param n with
-                  | Some { param; _ } -> param.slot = 0
-                  | None -> false)
-                (U.toposort lowered)
-            with
-            | Some p -> (
-                equal bool true (Dtype.equal (U.dtype p) Dtype.float32);
-                match U.as_param p with
-                | Some { shape; _ } ->
-                    equal bool true
-                      (Dtype.equal (U.dtype shape) Dtype.int32);
-                    equal (option int) (Some (-1)) (U.const_int_value shape)
-                | None -> failwith "expected param")
-            | None -> failwith "expected slot 0 param");
-          test "remove vec dtypes also cleans sink-like children" (fun () ->
-            let a = U.const_float 1.0 in
-            let b = U.const_float 2.0 in
-            let c = U.const_float 3.0 in
-            let stack =
-              U.stack ~dtype:Dtype.Val.float32 [ b; c ]
-            in
+          test "lowering flattens sink-like children" (fun () ->
+            let a = U.const (Const.float Dtype.float32 1.0) in
+            let b = U.const (Const.float Dtype.float32 2.0) in
+            let c = U.const (Const.float Dtype.float32 3.0) in
+            let stack = U.stack ~dtype:Dtype.float32 [ b; c ] in
             let noop = U.noop ~dtype:Dtype.void () in
             let root = U.sink [ U.sink [ a ]; stack; noop ] in
             let lowered = Codegen_lower.lower (test_renderer ()) root in
@@ -347,11 +299,7 @@ let () =
                 is_true ~msg:"noop is flattened away" (U.equal c c')
             | _ -> failwith "expected cleaned sink children");
           test "invalid index gate moves onto store" (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global
-                ~size:(-1)
-            in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p = global_ptr () in
             let gate =
               U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
                 ~addrspace:Dtype.Alu ()
@@ -359,7 +307,7 @@ let () =
             let idx =
               U.O.where gate (U.const_int 0) (U.invalid ())
             in
-            let dst = U.index ~ptr:p ~idxs:[idx] ~as_ptr:true () in
+            let dst = U.index ~ptr:p ~idxs:[idx] () in
             let root =
               U.sink
                 [ U.store ~dst ~value:(U.const_float 1.0) () ]
@@ -383,11 +331,7 @@ let () =
                  | None -> failwith "expected store index")
             | _ -> failwith "expected one gated store");
           test "range comparison invalid value becomes gated store" (fun () ->
-            let ptr =
-              Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global
-                ~size:(-1)
-            in
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p = global_ptr () in
             let r =
               U.range ~size:(U.const_int 256) ~axis:0
                 ~kind:Axis_type.Global ()
@@ -395,10 +339,10 @@ let () =
             let gate =
               U.alu_binary ~op:Ops.Cmplt ~lhs:r ~rhs:(U.const_int 200)
             in
-            let dst = U.index ~ptr:p ~idxs:[r] ~as_ptr:true () in
+            let dst = U.index ~ptr:p ~idxs:[r] () in
             let value =
               U.O.where gate (U.const_float 1.0)
-                (U.invalid ~dtype:Dtype.Val.float32 ())
+                (U.invalid ~dtype:Dtype.float32 ())
             in
             let st = U.store ~dst ~value () in
             let root =
@@ -428,13 +372,13 @@ let () =
             let extra_matcher node =
               match custom_fmt node with
               | Some "make_movement()" ->
-                  let one = U.const (Const.int Dtype.Val.int32 1) in
+                  let one = U.const (Const.int Dtype.int32 1) in
                   Some (U.reshape ~src:one ~shape:one)
               | _ -> None
             in
             let marker =
               U.custom_inline ~fmt:"make_movement()" ~args:[]
-                ~dtype:Dtype.Val.int32
+                ~dtype:Dtype.int32
             in
             raises_match
               (function Spec.Verification_failed _ -> true | _ -> false)
