@@ -31,11 +31,13 @@ let shard_axis0 src ~rows ~cols =
   let dnum =
     U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
   in
-  let off = U.alu_binary ~op:Ops.Mul ~lhs:dnum ~rhs:(Helpers.idx sz) in
+  (* Shrink bounds are shape descriptors: [index]-typed like tinygrad's
+     [shard], not the [weakint] range-size literals [Helpers.idx] mints. *)
+  let off = U.alu_binary ~op:Ops.Mul ~lhs:dnum ~rhs:(U.const_int sz) in
   let sharded =
     U.shrink ~src:copied
-      ~offset:(U.stack [ off; Helpers.idx 0 ])
-      ~size:(U.stack [ Helpers.idx sz; Helpers.idx cols ])
+      ~offset:(U.stack [ off; U.const_int 0 ])
+      ~size:(U.stack [ U.const_int sz; U.const_int cols ])
   in
   U.multi ~src:sharded ~axis:0
 

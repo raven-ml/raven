@@ -987,7 +987,11 @@ val pad : src:t -> offset:t -> size:t -> t
 
 val shrink : src:t -> offset:t -> size:t -> t
 (** [shrink ~src ~offset ~size] slices [src] at per-axis offsets [offset]
-    with per-axis sizes [size]. Dtype is inherited from [src]. Tensor. *)
+    with per-axis sizes [size]. Dtype is inherited from [src]. Tensor.
+
+    Offsets and sizes may be symbolic. Shape inference rejects a bound only
+    when it is provably out of range; a symbolically-undecidable offset (whose
+    out-of-range accesses are masked by a surrounding gate) is accepted. *)
 
 val permute : src:t -> order:int list -> t
 (** [permute ~src ~order] permutes the axes of [src] according to

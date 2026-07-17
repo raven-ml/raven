@@ -76,7 +76,7 @@ let dump_stage7 ?backends ?optimize ~out_dir sink =
 
 let mk_shape dims =
   let ids =
-    List.map (fun s -> U.const (Const.int Dtype.weakint s)) dims
+    List.map (fun s -> U.const (Const.int Dtype.index s)) dims
   in
   match ids with [ d ] -> d | ds -> U.stack ds
 

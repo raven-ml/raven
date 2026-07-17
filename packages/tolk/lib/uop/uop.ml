@@ -1832,11 +1832,20 @@ let require_pad op src_shape offsets sizes =
 let require_shrink op src_shape offsets sizes =
   require_movement_len op src_shape offsets;
   require_movement_len op src_shape sizes;
-  require_non_negative_shape op offsets;
-  require_non_negative_shape op sizes;
+  (* A shrink bound is rejected only when it is *provably* violated; a
+     symbolically-undecidable bound is accepted, since its out-of-range
+     accesses are masked by a surrounding gate (e.g. a per-shard shrink whose
+     offset carries a symbolic device index). So a shrink offset or size is
+     negative only when definitely negative ([vmax < 0]), and the slice
+     overruns only when it definitely exceeds the input ([vmin] of
+     [offset + size] past the input's [vmax]). *)
+  let provably_negative d = vmax d < 0 in
+  if List.exists provably_negative offsets
+     || List.exists provably_negative sizes then
+    invalid_shape op "shape contains a negative dimension";
   List.iter2
     (fun src_dim (offset, size) ->
-      if not (dim_leq (dim_add offset size) src_dim) then
+      if vmin (dim_add offset size) > vmax src_dim then
         invalid_shape op "slice extends past the input shape")
     src_shape (List.combine offsets sizes)
 

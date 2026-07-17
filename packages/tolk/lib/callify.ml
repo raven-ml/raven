@@ -23,13 +23,15 @@ module C = Const
 
 (* Helpers *)
 
-let int_ n = U.const (C.int D.weakint n)
 let index_ n = U.const (C.int D.index n)
 let shape_prod = List.fold_left ( * ) 1
 let dtype_or_void n = U.dtype n
 
+(* Shape descriptors are [index]-typed: a shape-tuple STACK is metadata, not
+   tensor data, so the rangeify pass skips it and index-dtype lowering leaves
+   it alone. *)
 let shape_node dims =
-  match List.map int_ dims with [ d ] -> d | ds -> U.stack ds
+  match List.map index_ dims with [ d ] -> d | ds -> U.stack ds
 
 let concrete_shape n =
   try
