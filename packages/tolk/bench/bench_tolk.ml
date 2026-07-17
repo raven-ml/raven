@@ -32,6 +32,17 @@ let ren = Cstyle.clang_no_abi Gpu_target.X86_64
 let optimize = true
 let keep x = ignore (Sys.opaque_identity x)
 
+(* Device renderer + host clang compiler for the stage-7 compile group. The
+   render-parity renderer above emits device source that is not a compilable
+   host translation unit; the CPU device's own renderer is the real compile
+   path. *)
+let device_ren = Device.renderer (Tolk_cpu.create "CPU:bench_tolk")
+
+let clang_compiler =
+  match Renderer.compiler device_ren with
+  | Some c -> c
+  | None -> failwith "CPU device renderer has no compiler"
+
 let rangeify_of w = Rangeify.get_kernel_graph (Graphs.sink w)
 let kernels_of w = Graphs.kernels (rangeify_of w)
 
@@ -50,13 +61,32 @@ let programs_of w =
       (name, Linearizer.linearize processed))
     (kernels_of w)
 
-(* One group per workload; the five stage cases give full paths of the form
+let device_srcs_of w =
+  List.map
+    (fun k ->
+      let processed = Codegen.full_rewrite_to_sink ~optimize device_ren k in
+      let name =
+        match U.as_kernel_info processed with
+        | Some ki -> ki.name
+        | None -> "kernel"
+      in
+      Renderer.render device_ren ~name (Linearizer.linearize processed))
+    (kernels_of w)
+
+(* One group per workload; the stage cases give full paths of the form
    [<workload>/<stage>]. The lab tag is set per case: it drives the [--tag lab]
-   gate filter, which group-level tags do not. *)
+   gate filter, which group-level tags do not. The graph-transform stages are
+   tagged [lab], except codegen on the multi-kernel [attention] workload, which
+   is the single priciest pass in the suite and would strain the tight gate;
+   there it is untagged (run on demand), mirroring how codegen stays untagged
+   on the scaling ladder. The stage-7 [compile] case shells out to clang, is
+   wall-time-only, and stays untagged so the tight gate skips it — it is run on
+   demand (with [CCACHE=0] to defeat the compiler's disk cache). *)
 let workload_benches w =
-  let bench ~setup name f =
-    Thumper.bench_with_setup ~tags:[ "lab" ] ~setup name f
+  let bench ?(tags = [ "lab" ]) ~setup name f =
+    Thumper.bench_with_setup ~tags ~setup name f
   in
+  let codegen_tags = if Graphs.name w = "attention" then [] else [ "lab" ] in
   Thumper.group (Graphs.name w)
     [
       bench ~setup:(fun () -> Graphs.sink w) "rangeify" (fun sink ->
@@ -64,7 +94,8 @@ let workload_benches w =
       bench ~setup:(fun () -> rangeify_of w) "schedule" (fun kg ->
           let linear = Schedule.create_schedule kg in
           keep (Schedule.memory_plan_rewrite linear []));
-      bench ~setup:(fun () -> kernels_of w) "codegen" (fun ks ->
+      bench ~tags:codegen_tags ~setup:(fun () -> kernels_of w) "codegen"
+        (fun ks ->
           List.iter
             (fun k -> keep (Codegen.full_rewrite_to_sink ~optimize ren k))
             ks);
@@ -74,6 +105,11 @@ let workload_benches w =
           List.iter
             (fun (name, prog) -> keep (Renderer.render ren ~name prog))
             programs);
+      Thumper.bench_with_setup ~metrics:[ Thumper.Metric.wall_time ]
+        ~setup:(fun () -> device_srcs_of w) "compile" (fun srcs ->
+          List.iter
+            (fun s -> keep (Compiler.compile_cached clang_compiler s))
+            srcs);
     ]
 
 (* Scaling gate over each headline workload's size ladder. [alloc_words] across

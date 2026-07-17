@@ -49,6 +49,64 @@ let matmul_small =
   let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
   { name = "matmul_small"; size = "128x128x128"; sink = Helpers.wrap_sink [ red ] }
 
+(* Scaled dot-product attention over one head. Two contractions (the score
+   matmul q@kᵀ and the value matmul softmax@v) bracket a softmax whose row max
+   and row sum each fan out from a shared subgraph, so the graph is a
+   multi-consumer DAG rather than a straight line. Every operand of every
+   binary op is pre-broadcast to a matching shape, mirroring the frontend
+   lowering the reference driver reproduces node for node. The scale 1/√d and
+   the base-change factor 1/ln 2 are computed the same way on both sides so
+   their float32 literals render identically. *)
+
+let attn_seq = 64
+let attn_dim = 64
+
+let attention =
+  let s = attn_seq and d = attn_dim in
+  let add a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
+  let mul a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b in
+  let reshape src shape = U.reshape ~src ~shape:(Helpers.mk_shape shape) in
+  let broadcast src shape = U.broadcast_to ~src ~shape:(Helpers.mk_shape shape) in
+  let bcast v shape =
+    U.expand
+      ~src:(U.const (Const.float Dtype.float32 v))
+      ~dims:(Helpers.mk_shape shape)
+  in
+  let q = Helpers.mk_param ~idx:0 [ s; d ] in
+  let k = Helpers.mk_param ~idx:1 [ s; d ] in
+  let v = Helpers.mk_param ~idx:2 [ s; d ] in
+  (* scores[i,j] = Σ_e q[i,e]·k[j,e]: the contraction axis is the trailing axis
+     of both operands, so q@kᵀ needs no transpose. *)
+  let qe = broadcast (reshape q [ s; 1; d ]) [ s; s; d ] in
+  let ke = broadcast (reshape k [ 1; s; d ]) [ s; s; d ] in
+  let scores = U.reduce_axis ~src:(mul qe ke) ~op:Ops.Add ~axes:[ 2 ] in
+  let scaled = mul scores (bcast 0.125 [ s; s ]) in
+  (* softmax over the last axis: subtract the row max, exponentiate, divide by
+     the row sum. The keep-dim reductions reshape to [s;1] and broadcast back. *)
+  let row_max =
+    broadcast
+      (reshape (U.reduce_axis ~src:scaled ~op:Ops.Max ~axes:[ 1 ]) [ s; 1 ])
+      [ s; s ]
+  in
+  let shifted = add scaled (mul row_max (bcast (-1.0) [ s; s ])) in
+  let e =
+    U.alu_unary ~op:Ops.Exp2
+      ~src:(mul shifted (bcast (1.0 /. log 2.0) [ s; s ]))
+  in
+  let row_sum = reshape (U.reduce_axis ~src:e ~op:Ops.Add ~axes:[ 1 ]) [ s; 1 ] in
+  let recip = U.alu_unary ~op:Ops.Reciprocal ~src:row_sum in
+  let sm = mul e (broadcast recip [ s; s ]) in
+  (* out[i,e] = Σ_j sm[i,j]·v[j,e]: the contraction axis j is the leading axis
+     of v, the standard matmul layout. *)
+  let sme = broadcast (reshape sm [ s; s; 1 ]) [ s; s; d ] in
+  let ve = broadcast (reshape v [ 1; s; d ]) [ s; s; d ] in
+  let out = U.reduce_axis ~src:(mul sme ve) ~op:Ops.Add ~axes:[ 1 ] in
+  {
+    name = "attention";
+    size = Printf.sprintf "s%dd%d" s d;
+    sink = Helpers.wrap_sink [ out ];
+  }
+
 (* Headline scaling workloads. Subtraction and negation are lowered to the
    same primitive form the tensor frontend uses — [a - b] is [a + b * (-1)],
    [-b] is [b * (-1)] — so a benchmarked graph is node-for-node identical to
@@ -130,5 +188,5 @@ let rnn horizon =
     sink = Helpers.wrap_sink [ out ];
   }
 
-let all = [ elementwise; reduce; matmul_small ]
+let all = [ elementwise; reduce; matmul_small; attention ]
 let scaling = List.map lorenz lorenz_ladder @ List.map rnn rnn_ladder

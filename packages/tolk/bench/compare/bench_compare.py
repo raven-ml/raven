@@ -21,6 +21,7 @@ and cross-check against the tolk side.
 Run from the repo root:  uv run packages/tolk/bench/compare/bench_compare.py
 """
 
+import math
 import os
 import platform
 import sys
@@ -110,6 +111,47 @@ def build_matmul_small():
     return wrap_sink(matmul(a, b, m, k, n))
 
 
+# Single-head scaled dot-product attention — mirror graphs.ml op for op.
+# scores = q@kᵀ contracts the shared trailing axis (no transpose); the softmax
+# is the frontend max/sub/exp/sum/div chain (exp = mul(1/ln2).exp2); softmax@v
+# is a standard matmul. Every binary op's operands are pre-broadcast, matching
+# the OCaml side node for node.
+
+ATTN_SEQ = 64
+ATTN_DIM = 64
+
+
+def build_attention():
+    s, d = ATTN_SEQ, ATTN_DIM
+
+    def reshape(x, shape):
+        return UOp(Ops.RESHAPE, dtypes.float32, (x, shape_to_shape_arg(shape)))
+
+    def broadcast(x, shape):
+        return x.expand(shape)
+
+    def bcast(val, shape):
+        return UOp.const(dtypes.float32, val, shape=shape)
+
+    q = mk_param(0, s, d)
+    k = mk_param(1, s, d)
+    v = mk_param(2, s, d)
+    qe = broadcast(reshape(q, (s, 1, d)), (s, s, d))
+    ke = broadcast(reshape(k, (1, s, d)), (s, s, d))
+    scores = (qe * ke)._rop(Ops.ADD, (2,))
+    scaled = scores * bcast(0.125, (s, s))
+    row_max = broadcast(reshape(scaled._rop(Ops.MAX, (1,)), (s, 1)), (s, s))
+    shifted = scaled + row_max * bcast(-1.0, (s, s))
+    e = (shifted * bcast(1.0 / math.log(2), (s, s))).alu(Ops.EXP2)
+    row_sum = reshape(e._rop(Ops.ADD, (1,)), (s, 1))
+    recip = row_sum.alu(Ops.RECIPROCAL)
+    sm = e * broadcast(recip, (s, s))
+    sme = broadcast(reshape(sm, (s, s, 1)), (s, s, d))
+    ve = broadcast(reshape(v, (1, s, d)), (s, s, d))
+    out = (sme * ve)._rop(Ops.ADD, (1,))
+    return wrap_sink(out)
+
+
 # Headline scaling workloads — mirror graphs.ml op for op. Subtraction is the
 # frontend form a-b = a + b*(-1); tinygrad lowers python `-` to exactly that, so
 # `a - b` here matches the OCaml `add a (mul b neg_one)`.
@@ -158,6 +200,7 @@ WORKLOADS = [
     ("elementwise", "256x256", build_elementwise),
     ("reduce", "512x512", build_reduce),
     ("matmul_small", "128x128x128", build_matmul_small),
+    ("attention", f"s{ATTN_SEQ}d{ATTN_DIM}", build_attention),
 ] + [
     ("lorenz", f"n{n}", (lambda n: lambda: build_lorenz(n))(n))
     for n in LORENZ_LADDER

@@ -39,6 +39,13 @@ val matmul_small : t
 (** [a @ b] for a 128x128 by 128x128 float32 matrix product, expressed as a
     broadcast-multiply reduced over the contraction axis. *)
 
+val attention : t
+(** Single-head scaled dot-product attention [softmax(q·kᵀ / √d)·v] for
+    sequence length 64 and head dimension 64, all float32. The two matmuls are
+    broadcast-multiply reductions; the softmax is a max/subtract/exp/sum/divide
+    chain whose reductions fan out from shared subgraphs, giving a
+    multi-consumer DAG. The size descriptor is [sSdD]. *)
+
 val lorenz : int -> t
 (** [lorenz n_steps] is an Euler-integrated Lorenz attractor unrolled for
     [n_steps]. The state [(x, y, z)] is three small float32 vectors; each step
@@ -60,8 +67,8 @@ val rnn_ladder : int list
 (** Horizons sweept by {!rnn}: [[ 2; 5; 10; 20 ]]. *)
 
 val all : t list
-(** [[ elementwise; reduce; matmul_small ]]: the fixed-size reference
-    workloads. *)
+(** [[ elementwise; reduce; matmul_small; attention ]]: the fixed-size
+    reference workloads. *)
 
 val scaling : t list
 (** {!lorenz} and {!rnn} at every ladder point, for the comparative sweep. *)
