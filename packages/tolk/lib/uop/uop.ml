@@ -1069,8 +1069,10 @@ let shrink ~src ~offset ~size =
     ~src:[| src; offset; size |] ~arg:Arg.Empty
 
 let permute ~src ~order =
-  mk ~op:Ops.Permute ~dtype:(dtype src) ~src:[| src |]
-    ~arg:(Arg.Ints order)
+  if List.mapi (fun i o -> i = o) order |> List.for_all Fun.id then src
+  else
+    mk ~op:Ops.Permute ~dtype:(dtype src) ~src:[| src |]
+      ~arg:(Arg.Ints order)
 
 let flip ~src ~dims =
   mk ~op:Ops.Flip ~dtype:(dtype src) ~src:[| src |]

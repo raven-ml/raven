@@ -180,7 +180,7 @@ let broadcast_tests =
       test "broadcast to more dims prepends leading axes" (fun () ->
           let t = Mv.broadcast_to (ones_f [ 3 ]) [ 2; 3 ] in
           equal (list int) [ 2; 3 ] (shape t);
-          is_true (Ops.equal (U.op (src t 0)) Ops.Expand));
+          is_true (has_op t Ops.Expand));
     ]
 
 (* Elementwise structure *)
