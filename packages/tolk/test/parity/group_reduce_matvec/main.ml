@@ -18,9 +18,9 @@ let backends =
 
 let kernel () =
   let n, k = (256, 64) in
-  let pw = U.param ~slot:0 ~dtype:Helpers.global_fptr () in
-  let px = U.param ~slot:1 ~dtype:Helpers.global_fptr () in
-  let py = U.param ~slot:2 ~dtype:Helpers.global_fptr () in
+  let pw = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
+  let px = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
+  let py = U.param ~slot:2 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let rj = U.range ~size:(Helpers.idx n) ~axis:0 ~kind:Axis_type.Global () in
   let rk = U.range ~size:(Helpers.idx k) ~axis:1 ~kind:Axis_type.Reduce () in
   let open U.O in

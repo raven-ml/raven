@@ -5,9 +5,9 @@ module U = Uop
 
 let kernel () =
   let rows, cols = (8, 16) in
-  let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr () in
-  let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr () in
-  let p2 = U.param ~slot:2 ~dtype:Helpers.global_fptr () in
+  let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
+  let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
+  let p2 = U.param ~slot:2 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let ri = U.range ~size:(Helpers.idx rows) ~axis:0 ~kind:Axis_type.Global () in
   let rj = U.range ~size:(Helpers.idx cols) ~axis:1 ~kind:Axis_type.Global () in
   let open U.O in

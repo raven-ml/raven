@@ -115,7 +115,8 @@ let scalar_index = function
 let emit b instr =
   let node =
     match instr with
-    | Param { slot; dtype } -> Uop.param ~slot ~dtype ()
+    | Param { slot; dtype } ->
+        Uop.param ~slot ~dtype ~shape:(Uop.const_int (-1)) ()
     | Const { value; dtype } ->
         if Dtype.equal (Const.dtype value) dtype then Uop.const value
         else
