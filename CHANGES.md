@@ -310,6 +310,11 @@ thread.
 
 ### Nx
 
+- Split the backend contract's `div` into `fdiv` (IEEE 754 float/complex
+  division) and `idiv` (truncated integer division), matching the effect
+  layer's existing dtype dispatch. Backend implementors now provide two
+  domain-specific primitives instead of one that branches on dtype; the
+  frontend selects between them. `Nx.div`'s behavior is unchanged.
 - Support boolean-mask indexing in `slice` and `set_slice`: an `M mask` spec
   selects (or writes at) the positions where the rank-1 boolean `mask` is true
   along the axis it addresses. The mask length must equal that axis.

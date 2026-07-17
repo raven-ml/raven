@@ -115,11 +115,18 @@ module type S = sig
   val mul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [mul a b] is the element-wise product of [a] and [b]. *)
 
-  val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [div a b] is the element-wise quotient of [a] and [b].
+  val fdiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [fdiv a b] is the element-wise IEEE 754 quotient of [a] and [b].
 
-      Integer dtypes use truncation toward zero (C division). Floating-point
-      dtypes use IEEE 754 division. *)
+      {b Frontend guarantees:} [a] and [b] are float or complex dtypes. The
+      frontend selects between {!fdiv} and {!idiv} by dtype; the backend never
+      inspects the dtype domain here. *)
+
+  val idiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [idiv a b] is the element-wise integer quotient of [a] and [b], truncated
+      toward zero (C division).
+
+      {b Frontend guarantees:} [a] and [b] are integer dtypes. *)
 
   val mod_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [mod_ a b] is the element-wise remainder of [a / b].

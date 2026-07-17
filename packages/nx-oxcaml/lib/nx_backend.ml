@@ -260,11 +260,6 @@ let fdiv (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
   | _ -> invalid_arg "fdiv: unsupported dtype");
   out
 
-let div x y =
-  let dt = dtype x in
-  if Dtype.is_int dt || Dtype.is_uint dt then idiv x y
-  else fdiv x y
-
 let mod_ (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
   let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in

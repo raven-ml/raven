@@ -1156,10 +1156,8 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
   (* Squeeze output back to 1D if input was 1D *)
   if b_is_1d then reshape out_expanded out_shape else out_expanded
 
-let div x y =
-  let dt = dtype x in
-  if Dtype.is_int dt || Dtype.is_uint dt then binary_op "idiv" caml_idiv x y
-  else binary_op "fdiv" caml_fdiv x y
+let fdiv x y = binary_op "fdiv" caml_fdiv x y
+let idiv x y = binary_op "idiv" caml_idiv x y
 
 let argmax ~axis ~keepdims x =
   let x' = ensure_materializable x in

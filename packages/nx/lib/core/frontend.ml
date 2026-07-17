@@ -429,7 +429,10 @@ module Make (B : Backend_intf.S) = struct
   let rsub_s s t = sub (scalar_like t s) t
   let mul a b = binop B.mul a b
   let mul_s t s = mul t (scalar_like t s)
-  let div a b = binop B.div a b
+  let div a b =
+    let a', b' = broadcasted a b in
+    let dt = B.dtype a' in
+    if Dtype.is_int dt || Dtype.is_uint dt then B.idiv a' b' else B.fdiv a' b'
   let div_s t s = div t (scalar_like t s)
   let rdiv_s s t = div (scalar_like t s) t
   let pow a b = binop B.pow a b
@@ -592,8 +595,7 @@ module Make (B : Backend_intf.S) = struct
 
   let lshift x shift_val = shift_op ~op:"lshift" ~apply:mul x shift_val
 
-  let rshift x shift_val =
-    shift_op ~op:"rshift" ~apply:(fun a b -> binop B.div a b) x shift_val
+  let rshift x shift_val = shift_op ~op:"rshift" ~apply:div x shift_val
 
   let clamp ?min ?max x =
     let x =

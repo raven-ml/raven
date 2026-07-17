@@ -433,11 +433,8 @@ let or_ a b = binary_op (fun () -> E_or { a; b }) Nx_backend.or_ a b
 let and_ a b = binary_op (fun () -> E_and { a; b }) Nx_backend.and_ a b
 let atan2 a b = binary_op (fun () -> E_atan2 { a; b }) Nx_backend.atan2 a b
 
-let div a b =
-  let dt = dtype a in
-  if Dtype.is_int dt || Dtype.is_uint dt then
-    binary_op (fun () -> E_idiv { a; b }) Nx_backend.div a b
-  else binary_op (fun () -> E_fdiv { a; b }) Nx_backend.div a b
+let fdiv a b = binary_op (fun () -> E_fdiv { a; b }) Nx_backend.fdiv a b
+let idiv a b = binary_op (fun () -> E_idiv { a; b }) Nx_backend.idiv a b
 
 (* Comparison operations *)
 
