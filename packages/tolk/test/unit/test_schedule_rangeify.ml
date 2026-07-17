@@ -111,7 +111,7 @@ let is_always_contiguous u = Indexing.always_contiguous (U.op u)
    For 1-D: emits a single Const index.
    For N-D: emits a Vectorize of Const index nodes. *)
 let mk_shape (dims : int list) : U.t =
-  let ids = List.map (fun s -> U.const (C.int D.weakint s)) dims in
+  let ids = List.map (fun s -> U.const (C.int D.index s)) dims in
   match ids with
   | [ d ] -> d
   | ds ->
@@ -255,7 +255,8 @@ let is_always_contiguous_tests =
       test "reduce_axis not contiguous" (fun () ->
           is_false
             (is_always_contiguous
-               (U.reduce_axis ~src:dummy ~op:Ops.Add ~axes:[ 0 ])));
+               (U.reduce_axis ~src:(mk_param ~idx:0 [ 4 ]) ~op:Ops.Add
+                  ~axes:[ 0 ])));
       test "unary not contiguous" (fun () ->
           is_false (is_always_contiguous (U.alu_unary ~op:Ops.Neg ~src:dummy)));
       test "binary not contiguous" (fun () ->
@@ -431,21 +432,12 @@ let apply_movement_op_tests =
               (* permute [1;0]: argsort = [1;0] → result = [rng1; rng0] *)
               equal int (U.tag rng1) (U.tag (List.nth result 0));
               equal int (U.tag rng0) (U.tag (List.nth result 1)));
-          test "identity [0;1;2]" (fun () ->
+          test "identity elides at construction" (fun () ->
+              (* An identity permute returns its source, so no Permute node
+                 ever reaches apply_movement_op — the range pass sees the ranges
+                 straight through. *)
               let param = mk_param ~idx:0 [ 2; 3; 4 ] in
-              let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 2 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 3 ~kind:Ak.Loop () in
-              let rng2 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let shapes = shape_of in
-              let v = U.permute ~src:param ~order:[ 0; 1; 2 ] in
-              let result =
-                Indexing.apply_movement_op ~shapes v
-                  [ rng0; rng1; rng2 ]
-              in
-              equal int (U.tag rng0) (U.tag (List.nth result 0));
-              equal int (U.tag rng1) (U.tag (List.nth result 1));
-              equal int (U.tag rng2) (U.tag (List.nth result 2)));
+              is_true (U.permute ~src:param ~order:[ 0; 1; 2 ] == param));
         ];
       (* FLIP *)
       group "flip"
@@ -1037,7 +1029,7 @@ let symbolic_variable_tests =
      ranged scalar PARAM sizing a SHRINK. *)
   let named_param () =
     U.param ~slot:1 ~dtype:D.weakint ~shape:(U.stack [])
-      ~vmin_vmax:(1, 7) ~name:"start_pos" ()
+      ~vmin_vmax:(1, 7) ~name:"start_pos" ~addrspace:D.Alu ()
   in
   let symbolic_shrink_sink () =
     let buf = mk_param ~idx:0 [ 8 ] in

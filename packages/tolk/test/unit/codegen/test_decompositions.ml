@@ -525,7 +525,7 @@ let early_decomp u =
 
 let early_floordiv_by_zero_raises () =
   let x =
-    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.weakint ()
+    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.index ()
   in
   let zero = Uop.const_int 0 in
   let q = Uop.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:zero in
@@ -534,7 +534,7 @@ let early_floordiv_by_zero_raises () =
 
 let early_floormod_by_zero_raises () =
   let x =
-    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.weakint ()
+    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.index ()
   in
   let zero = Uop.const_int 0 in
   let r = Uop.alu_binary ~op:Ops.Floormod ~lhs:x ~rhs:zero in
@@ -724,7 +724,7 @@ let bf16_vector_load_reindexes_shrink () =
      vector element dtype: the buffer holds scalar bf16 and the SHRINK
      selects a width-2 window. *)
   let buf =
-    Uop.param ~slot:0 ~dtype:Dtype.bfloat16 ~shape:(Uop.const_int 4)
+    Uop.param ~slot:0 ~dtype:Dtype.bfloat16 ~shape:(Uop.const_int 5)
       ~addrspace:Dtype.Global ()
   in
   let shrink =

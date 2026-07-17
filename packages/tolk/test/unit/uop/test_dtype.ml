@@ -211,8 +211,8 @@ let promotion_edges () =
   equal dtype Dtype.int16 (lub [ Dtype.int8; Dtype.uint8 ]);
   (* Cross-category: int promotes through weakfloat/fp8 into float. *)
   equal dtype Dtype.float16 (lub [ Dtype.float16; Dtype.int64 ]);
-  (* uint64 reaches the floats via weakfloat. *)
-  equal dtype Dtype.weakfloat (lub [ Dtype.int64; Dtype.uint64 ]);
+  (* int64 sits directly below uint64 in the lattice, so their join is uint64. *)
+  equal dtype Dtype.uint64 (lub [ Dtype.int64; Dtype.uint64 ]);
   (* FP8 siblings meet at float16. *)
   equal dtype Dtype.float16 (lub [ Dtype.fp8e4m3; Dtype.fp8e5m2 ]);
   (* Float16 and bfloat16 are incomparable; they meet at float32. *)

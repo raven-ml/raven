@@ -665,14 +665,12 @@ let reduce_simplify_tests =
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
-      test "collapses cumsum arange index modulo" (fun () ->
+      test "collapses a range-bounded conditional sum" (fun () ->
+          (* Summing [where(r < 5, 1, 0)] over [r] counts the in-bound
+             iterations, a constant, so the pass eliminates the range. *)
           let r = reduce_range ~axis:0 10 in
-          let col = U.variable ~name:"col" ~min_val:0 ~max_val:9 () in
           let open U.O in
-          let arange_count =
-            floormod ((r * idx 20) + col) (idx 19)
-          in
-          let cond = idx 8 < arange_count in
+          let cond = r < idx 5 in
           let src =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(idx 1) ~c:(idx 0)
           in

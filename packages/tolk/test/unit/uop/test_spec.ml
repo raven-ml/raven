@@ -422,9 +422,10 @@ let gettuple_rejects_bad_sources () =
     (rejected Spec.tensor_spec bad_source)
 
 let reduce_arg_required () =
-  let r =
-    Uop.reduce_axis ~src:(i32 1) ~op:Ops.Add ~axes:[ 0 ]
+  let src =
+    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ]) ()
   in
+  let r = Uop.reduce_axis ~src ~op:Ops.Add ~axes:[ 0 ] in
   is_true ~msg:"tensor reduce accepted" (accepts Spec.tensor_spec r);
   let lowered =
     Uop.reduce ~src:(i32 1)
@@ -454,9 +455,12 @@ let tensor_reduce_accepts_lowered_integer_tail () =
     (rejected Spec.tensor_spec bad_tail)
 
 let reduce_rejects_old_op_arg () =
+  let src =
+    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ]) ()
+  in
   let r =
     Uop.replace
-      (Uop.reduce_axis ~src:(i32 1) ~op:Ops.Add ~axes:[ 0 ])
+      (Uop.reduce_axis ~src ~op:Ops.Add ~axes:[ 0 ])
       ~arg:(Uop.Arg.Op Ops.Add) ()
   in
   is_true ~msg:"old Op arg reduce rejected" (rejected Spec.tensor_spec r)
@@ -654,11 +658,15 @@ let movement_validates_shape_contracts () =
     Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 4 ])
   in
   is_true ~msg:"valid Expand accepted" (accepts Spec.tensor_spec expand_ok);
-  let expand_bad =
-    Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 5 ])
-  in
-  is_true ~msg:"Expand changing non-one dimension rejected"
-    (rejected Spec.tensor_spec expand_bad);
+  (* EXPAND only prepends leading axes, so its shape is always well-formed and
+     the spec cannot reject it on shape grounds; an incompatible non-one
+     dimension is rejected eagerly when broadcast_to builds the movement. *)
+  is_true ~msg:"broadcast_to rejects incompatible non-one dimension"
+    (try
+       ignore
+         (Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 5 ]));
+       false
+     with Invalid_argument _ -> true);
   let pad_ok =
     Uop.pad ~src:tensor
       ~offset:(Uop.stack [ weak 1; weak 0 ])
@@ -812,7 +820,11 @@ let program_rejects_tensor_only_ops () =
   let allreduce =
     Uop.allreduce ~src:(i32 1) ~device:(Uop.Single "CPU") ~op:Ops.Add
   in
-  let reduce = Uop.reduce_axis ~src:(i32 1) ~op:Ops.Add ~axes:[ 0 ] in
+  let reduce =
+    Uop.reduce_axis
+      ~src:(Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ]) ())
+      ~op:Ops.Add ~axes:[ 0 ]
+  in
   let mstack = Uop.mstack [ i32 1; i32 1 ] in
   let mselect = Uop.mselect ~src:mstack ~index:0 in
   List.iter
@@ -1142,11 +1154,16 @@ let verify_list_validates_flat_program () =
 (* Full spec *)
 
 let full_spec_has_no_catch_all () =
-  let err =
-    Uop.rewrite_error ~src:[||] ~msg:"not a valid spec node"
+  (* full_spec accepts a REWRITE_ERROR only at void dtype; a non-void one
+     matches no rule, so its rejection proves full_spec carries no catch-all
+     rule that would rescue an unrecognised node. *)
+  let unknown =
+    Uop.replace
+      (Uop.rewrite_error ~src:[||] ~msg:"not a valid spec node")
+      ~dtype:Dtype.int32 ()
   in
-  is_true ~msg:"full_spec rejects unknown intermediate"
-    (rejected Spec.full_spec err)
+  is_true ~msg:"full_spec rejects unrecognised node"
+    (rejected Spec.full_spec unknown)
 
 let () =
   run "tolk.uop.spec"

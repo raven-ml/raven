@@ -50,7 +50,12 @@ module P = struct
              (Format.asprintf "%a" U.pp u))
 
   let value_dtype u =
-    match U.addrspace u with Some _ -> Dtype.void | None -> U.dtype u
+    (* ALU-space and unaddressed nodes carry a real value dtype; only genuine
+       pointer spaces (global/local/reg) view as void. LOAD (and an After that
+       carries a loaded value) lives in the ALU space. *)
+    match U.addrspace u with
+    | None | Some Dtype.Alu -> U.dtype u
+    | Some _ -> Dtype.void
 
   let int_const u =
     match U.op u, U.Arg.as_value (U.arg u) with
