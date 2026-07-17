@@ -17,7 +17,7 @@ open Tolk_frontend
 val safe_load : string -> (string * Tensor.t) list
 (** [safe_load fn] reads the safetensors file at [fn] and returns its tensors
     as a state dict, in header order. Each tensor's raw data is copied to the
-    default device. All safetensors dtypes are supported except fp8.
+    default device. Every safetensors dtype is supported.
 
     @raise Invalid_argument if the file is malformed.
     @raise Sys_error if the file cannot be read. *)
@@ -28,8 +28,9 @@ val load_state_dict :
 (** [load_state_dict model state_dict] rebinds every parameter tensor of
     [model] onto the value of the same name in [state_dict]: the parameter
     handle is repointed at the loaded value, so the model computes with the
-    loaded weights from then on. A one-element value is reshaped to the
-    parameter's shape if they disagree. Extra names in [state_dict] are
+    loaded weights from then on. A scalar value and a one-element vector are
+    reconciled by reshaping the value to the parameter's shape; any other
+    shape disagreement is an error. Extra names in [state_dict] are
     ignored. With [strict] (default [true]), a parameter with no matching
     value is an error; otherwise it is left unchanged. [realize] (default
     [true]) materialises the bound parameters, so that any deferred

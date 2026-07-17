@@ -15,6 +15,7 @@ module Embedding = Tolk_nn.Embedding
 module Linear = Tolk_nn.Linear
 module Layer_norm = Tolk_nn.Layer_norm
 module State = Tolk_nn.State
+module D = Tolk_uop.Dtype
 
 let close a b = Float.abs (a -. b) < 1e-4
 
@@ -99,9 +100,9 @@ let layer_norm_tests =
 let write_safetensors path tensors =
   let headers =
     List.map
-      (fun (name, shape, off0, off1) ->
+      (fun (name, dtype, shape, off0, off1) ->
         Printf.sprintf
-          {|"%s":{"dtype":"F32","shape":[%s],"data_offsets":[%d,%d]}|} name
+          {|"%s":{"dtype":"%s","shape":[%s],"data_offsets":[%d,%d]}|} name dtype
           (String.concat "," (List.map string_of_int shape))
           off0 off1)
       tensors
@@ -132,7 +133,7 @@ let state_tests =
           let path = Filename.temp_file "tolk_nn" ".safetensors" in
           let oc =
             write_safetensors path
-              [ ("a", [ 2; 2 ], 0, 16); ("b", [ 3 ], 16, 28) ]
+              [ ("a", "F32", [ 2; 2 ], 0, 16); ("b", "F32", [ 3 ], 16, 28) ]
           in
           output_floats oc [ 1.; 2.; 3.; 4.; 5.; 6.; 7. ];
           close_out oc;
@@ -142,6 +143,20 @@ let state_tests =
           equal (list int) [ 2; 2 ] (T.shape (List.assoc "a" sd));
           check_floats [| 1.; 2.; 3.; 4. |] (List.assoc "a" sd);
           check_floats [| 5.; 6.; 7. |] (List.assoc "b" sd));
+      test "safe_load supports fp8" (fun () ->
+          let path = Filename.temp_file "tolk_nn" ".safetensors" in
+          let oc =
+            write_safetensors path
+              [ ("e4m3", "F8_E4M3", [ 2 ], 0, 2); ("e5m2", "F8_E5M2", [ 3 ], 2, 5) ]
+          in
+          List.iter (output_byte oc) [ 0x00; 0x38; 0x01; 0x02; 0x03 ];
+          close_out oc;
+          let sd = State.safe_load path in
+          Sys.remove path;
+          is_true (D.equal (T.dtype (List.assoc "e4m3" sd)) D.fp8e4m3);
+          is_true (D.equal (T.dtype (List.assoc "e5m2" sd)) D.fp8e5m2);
+          equal (list int) [ 2 ] (T.shape (List.assoc "e4m3" sd));
+          equal (list int) [ 3 ] (T.shape (List.assoc "e5m2" sd)));
       test "load_state_dict rebinds parameters" (fun () ->
           let p = Tolk_frontend.Creation.zeros [ 2; 2 ] in
           let v = Run.of_float_array ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
@@ -152,6 +167,17 @@ let state_tests =
           let v = Run.of_float_array ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
           State.load_state_dict [ ("p", p) ] [ ("p", Mv.transpose v) ];
           check_floats [| 1.; 4.; 2.; 5.; 3.; 6. |] p);
+      test "load_state_dict reshapes a scalar to a one-vector" (fun () ->
+          let p = Tolk_frontend.Creation.zeros [ 1 ] in
+          let v = Run.of_float_array ~shape:[] [| 5. |] in
+          State.load_state_dict [ ("p", p) ] [ ("p", v) ];
+          check_floats [| 5. |] p);
+      test "load_state_dict rejects a non-scalar one-element mismatch" (fun () ->
+          let p = Tolk_frontend.Creation.zeros [ 1; 1 ] in
+          let v = Run.of_float_array ~shape:[ 1 ] [| 5. |] in
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> State.load_state_dict [ ("p", p) ] [ ("p", v) ]));
       test "strict load fails on a missing key" (fun () ->
           let p = Tolk_frontend.Creation.zeros [ 1 ] in
           raises_match

@@ -140,6 +140,8 @@ let dtype_of_string = function
   | "U32" -> D.uint32
   | "I64" -> D.int64
   | "U64" -> D.uint64
+  | "F8_E4M3" -> D.fp8e4m3
+  | "F8_E5M2" -> D.fp8e5m2
   | "F16" -> D.float16
   | "BF16" -> D.bfloat16
   | "F32" -> D.float32
@@ -216,10 +218,11 @@ let load_state_dict ?(strict = true) ?(realize = true) model state_dict =
                 (Printf.sprintf "State.load_state_dict: missing key %S" k)
             else None
         | Some s ->
+            let sv = Tensor.shape v and ss = Tensor.shape s in
             let s =
-              if Tensor.shape v = Tensor.shape s then s
-              else if Tensor.numel v = 1 && Tensor.numel s = 1 then
-                Movement.reshape s (Tensor.shape v)
+              if sv = ss then s
+              else if (sv = [] && ss = [ 1 ]) || (sv = [ 1 ] && ss = []) then
+                Movement.reshape s sv
               else
                 invalid_arg
                   (Printf.sprintf
