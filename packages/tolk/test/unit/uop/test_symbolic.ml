@@ -4,7 +4,7 @@ open Windtrap
 open Tolk_uop
 
 let rewrite = Symbolic.simplify
-let var ?(dtype = Dtype.Val.weakint) ~name ~lo ~hi () =
+let var ?(dtype = Dtype.index) ~name ~lo ~hi () =
   Uop.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
 (* x + 0 -> x *)
@@ -65,8 +65,8 @@ let two_stage_associative () =
 let int_neutral_chain_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:9 () in
   let x = Uop.cast ~src:x ~dtype:Dtype.int32 in
-  let one = Uop.const (Const.int Dtype.Val.int32 1) in
-  let neg_one = Uop.const (Const.int Dtype.Val.int32 (-1)) in
+  let one = Uop.const (Const.int Dtype.int32 1) in
+  let neg_one = Uop.const (Const.int Dtype.int32 (-1)) in
   let e = Uop.O.(((x + one) * one) + neg_one) in
   is_true ~msg:"((x + 1) * 1) + -1 folds to x" (Uop.equal (rewrite e) x)
 
@@ -100,7 +100,7 @@ let cdiv_cmod_constants_are_truncating () =
 
 let invalid_gate_survives_zero_multiply () =
   let cond =
-    var ~name:"b" ~lo:0 ~hi:1 ~dtype:Dtype.Val.bool ()
+    var ~name:"b" ~lo:0 ~hi:1 ~dtype:Dtype.bool ()
   in
   let x = var ~name:"x" ~lo:0 ~hi:10 () in
   let gated = Uop.O.where cond x (Uop.invalid ()) in
@@ -116,14 +116,14 @@ let invalid_gate_survives_zero_multiply () =
 
 let index_stack_const_folds () =
   let values =
-    List.map (Const.int Dtype.Val.int32) [ 1; 2; 3 ]
+    List.map (Const.int Dtype.int32) [ 1; 2; 3 ]
   in
   let v = Uop.stack (List.map Uop.const values) in
   let r = rewrite (Uop.index ~ptr:v ~idxs:[ Uop.const_int 1 ] ()) in
   equal int 2 (const_int r)
 
 let nan_cmpeq_folds_to_false () =
-  let nan = Uop.const (Const.float Dtype.Val.float32 Float.nan) in
+  let nan = Uop.const (Const.float Dtype.float32 Float.nan) in
   let r = rewrite (Uop.alu_binary ~op:Ops.Cmpeq ~lhs:nan ~rhs:nan) in
   is_true ~msg:"nan cmpeq nan folds to false under IEEE semantics"
     (not (const_bool r))
@@ -140,11 +140,11 @@ let invalid_gate_comparison_drops_weak_invalid () =
 
 let invalid_gate_comparison_gates_nonweak_invalid () =
   let cond =
-    var ~name:"valid" ~lo:0 ~hi:1 ~dtype:Dtype.Val.bool ()
+    var ~name:"valid" ~lo:0 ~hi:1 ~dtype:Dtype.bool ()
   in
-  let x = var ~name:"x32" ~lo:0 ~hi:10 ~dtype:Dtype.Val.int32 () in
-  let rhs = Uop.const (Const.int Dtype.Val.int32 3) in
-  let idx = Uop.O.where cond x (Uop.invalid ~dtype:Dtype.Val.int32 ()) in
+  let x = var ~name:"x32" ~lo:0 ~hi:10 ~dtype:Dtype.int32 () in
+  let rhs = Uop.const (Const.int Dtype.int32 3) in
+  let idx = Uop.O.where cond x (Uop.invalid ~dtype:Dtype.int32 ()) in
   let r = rewrite Uop.O.(idx < rhs) in
   is_true ~msg:"result dtype is bool" (Dtype.equal (Uop.dtype r) Dtype.bool);
   is_true ~msg:"non-weak invalid comparison remains gated"
@@ -162,11 +162,11 @@ let direct_invalid_comparison_keeps_bool_dtype () =
     (not (is_invalid_const r))
 
 let bool_cast_cmpne_const_folds () =
-  let x = var ~name:"flag" ~lo:0 ~hi:1 ~dtype:Dtype.Val.bool () in
+  let x = var ~name:"flag" ~lo:0 ~hi:1 ~dtype:Dtype.bool () in
   let cast = Uop.cast ~src:x ~dtype:Dtype.int32 in
-  let zero = Uop.const (Const.int Dtype.Val.int32 0) in
-  let one = Uop.const (Const.int Dtype.Val.int32 1) in
-  let other = Uop.const (Const.int Dtype.Val.int32 3) in
+  let zero = Uop.const (Const.int Dtype.int32 0) in
+  let one = Uop.const (Const.int Dtype.int32 1) in
+  let other = Uop.const (Const.int Dtype.int32 3) in
   is_true ~msg:"cast(bool) != 0 folds to bool"
     (Uop.equal (rewrite (Uop.O.ne cast zero)) x);
   let not_x = rewrite (Uop.O.ne cast one) in
@@ -180,7 +180,7 @@ let bool_cast_cmpne_const_folds () =
 
 let weak_invalid_gate_cast_drops_gate () =
   let cond =
-    var ~name:"valid_cast" ~lo:0 ~hi:1 ~dtype:Dtype.Val.bool ()
+    var ~name:"valid_cast" ~lo:0 ~hi:1 ~dtype:Dtype.bool ()
   in
   let x = var ~name:"idx" ~lo:0 ~hi:10 () in
   let gated = Uop.O.where cond x (Uop.invalid ()) in
@@ -191,38 +191,19 @@ let weak_invalid_gate_cast_drops_gate () =
     (Uop.equal r expected)
 
 let const_bitcast_folds () =
-  let f = Uop.const (Const.float Dtype.Val.float32 1.0) in
+  let f = Uop.const (Const.float Dtype.float32 1.0) in
   let r = rewrite (Uop.bitcast ~src:f ~dtype:Dtype.int32) in
   equal int (Int32.to_int (Int32.bits_of_float 1.0)) (const_int r)
-
-let vector_const_cast_folds () =
-  let vec_i32 = Dtype.Val.vec 3 Dtype.Val.int32 in
-  let src =
-    Uop.const_of_dtype vec_i32 (Uop.Const_scalar (`Int 4L))
-  in
-  let r = rewrite (Uop.cast ~src ~dtype:Dtype.float32) in
-  is_true ~msg:"cast(vector CONST) remains CONST" (Uop.op r = Ops.Const);
-  is_true ~msg:"cast(vector CONST) has vector target dtype"
-    (Dtype.equal (Uop.dtype r) (Dtype.Val (Dtype.Val.vec 3 Dtype.Val.float32)));
-  (match Uop.arg r with
-   | Uop.Arg.Value c ->
-       (match Const.view c with
-        | Const.Float f -> is_true ~msg:"cast(vector CONST) value" (Float.equal f 4.0)
-        | _ -> failwith "expected float const")
-   | _ -> failwith "expected const arg")
 
 let stack_const_bitcast_folds () =
   let src =
     Uop.stack
       [
-        Uop.const (Const.float Dtype.Val.float32 1.0);
-        Uop.const (Const.float Dtype.Val.float32 2.0);
+        Uop.const (Const.float Dtype.float32 1.0);
+        Uop.const (Const.float Dtype.float32 2.0);
       ]
   in
-  let r =
-    rewrite
-      (Uop.bitcast ~src ~dtype:(Dtype.Val (Dtype.Val.vec 2 Dtype.Val.int32)))
-  in
+  let r = rewrite (Uop.bitcast ~src ~dtype:Dtype.int32) in
   is_true ~msg:"bitcast(STACK consts) folds to STACK" (Uop.op r = Ops.Stack);
   let lanes = Uop.src r in
   equal int 2 (Array.length lanes);
@@ -241,80 +222,77 @@ let stack_const_bitcast_folds () =
   expect 1 2.0
 
 let constant_threefry_is_not_uop_folded () =
-  let ctr = Uop.const (Const.int Dtype.Val.uint32 0) in
-  let key = Uop.const (Const.int Dtype.Val.uint32 1) in
+  let ctr = Uop.const (Const.int Dtype.uint32 0) in
+  let key = Uop.const (Const.int Dtype.uint32 1) in
   let r = rewrite (Uop.alu_binary ~op:Ops.Threefry ~lhs:ctr ~rhs:key) in
   is_true ~msg:"THREEFRY stays explicit in UOp symbolic"
     (Uop.op r = Ops.Threefry)
 
-let () =
-  run "tolk.uop.symbolic"
-    [
-      group "simple folding"
-        [
-          test "x + 0 -> x" add_zero_folds;
-          test "x * 1 -> x" mul_one_folds;
-          test "int neutral chain -> x" int_neutral_chain_folds;
-          test "x // x -> 1" div_self_folds;
-          test "x % x -> 0" mod_self_folds;
-          test "cast const -> const" cast_const_folds;
-          test "x < x -> false" lt_self_folds;
-        ];
-      group "two-stage folding"
-        [
-          test "associative combine" two_stage_associative;
-        ];
-      group "tinygrad parity regressions"
-        [
-          test "constant cdiv/cmod use truncating semantics"
-            cdiv_cmod_constants_are_truncating;
-          test "invalid gate survives zero multiply"
-            invalid_gate_survives_zero_multiply;
-          test "weak invalid comparison drops invalid gate"
-            invalid_gate_comparison_drops_weak_invalid;
-          test "non-weak invalid comparison gates bool result"
-            invalid_gate_comparison_gates_nonweak_invalid;
-          test "direct invalid comparison keeps bool dtype"
-            direct_invalid_comparison_keeps_bool_dtype;
-          test "cast(bool) != const folds" bool_cast_cmpne_const_folds;
-          test "weak invalid gate cast drops gate"
-            weak_invalid_gate_cast_drops_gate;
-          test "constant BITCAST folds" const_bitcast_folds;
-          test "vector CONST cast folds" vector_const_cast_folds;
-          test "STACK const bitcast folds" stack_const_bitcast_folds;
-          test "constant THREEFRY is not UOp-folded"
-            constant_threefry_is_not_uop_folded;
-          test "INDEX(STACK const) folds" index_stack_const_folds;
-          test "NaN cmpeq folds to false" nan_cmpeq_folds_to_false;
-        ];
-    ]
+(* Groups exercising the [Symbolic.simplify] fixed-point driver. *)
 
-(* Legacy IR symbolic coverage, consolidated under the Symbolic UOp suite. *)
+let simplify_driver_groups =
+  [
+    group "simple folding"
+      [
+        test "x + 0 -> x" add_zero_folds;
+        test "x * 1 -> x" mul_one_folds;
+        test "int neutral chain -> x" int_neutral_chain_folds;
+        test "x // x -> 1" div_self_folds;
+        test "x % x -> 0" mod_self_folds;
+        test "cast const -> const" cast_const_folds;
+        test "x < x -> false" lt_self_folds;
+      ];
+    group "two-stage folding"
+      [
+        test "associative combine" two_stage_associative;
+      ];
+    group "constant folding and invalid propagation"
+      [
+        test "constant cdiv/cmod use truncating semantics"
+          cdiv_cmod_constants_are_truncating;
+        test "invalid gate survives zero multiply"
+          invalid_gate_survives_zero_multiply;
+        test "weak invalid comparison drops invalid gate"
+          invalid_gate_comparison_drops_weak_invalid;
+        test "non-weak invalid comparison gates bool result"
+          invalid_gate_comparison_gates_nonweak_invalid;
+        test "direct invalid comparison keeps bool dtype"
+          direct_invalid_comparison_keeps_bool_dtype;
+        test "cast(bool) != const folds" bool_cast_cmpne_const_folds;
+        test "weak invalid gate cast drops gate"
+          weak_invalid_gate_cast_drops_gate;
+        test "constant BITCAST folds" const_bitcast_folds;
+        test "STACK const bitcast folds" stack_const_bitcast_folds;
+        test "constant THREEFRY is not UOp-folded"
+          constant_threefry_is_not_uop_folded;
+        test "INDEX(STACK const) folds" index_stack_const_folds;
+        test "NaN cmpeq folds to false" nan_cmpeq_folds_to_false;
+      ];
+  ]
 
-(* Unit tests for Symbolic simplification rules.
+(* Groups exercising the phase-3 [Symbolic.sym] rules directly, applied both
+   node-locally and as a bottom-up graph rewrite. *)
 
-   Tests each phase of symbolic simplification in isolation. *)
-
-open Windtrap
-open Tolk_uop
 module U = Uop
 module D = Dtype
 module C = Const
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.Val.weakint n)
-let f32 x = U.const (C.float D.Val.float32 x)
+let idx n = U.const (C.int D.index n)
+let f32 x = U.const (C.float D.float32 x)
 
-let var name lo hi = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:D.Val.weakint ()
-let range size = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Loop ~dtype:D.Val.weakint ()
+let var name lo hi = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:D.index ()
+let range size = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Loop ~dtype:D.index ()
 
 let ptr_buffer slot =
-  let ptr_dtype = D.Ptr.create D.Val.int32 ~addrspace:D.Global ~size:16 in
-  U.buffer ~slot ~dtype:(D.Ptr ptr_dtype) ~shape:(idx 16) ()
+  U.buffer ~slot ~dtype:D.int32 ~addrspace:D.Global
+    ~shape:(U.stack [ idx 16 ]) ()
 
+(* [U.index] folds a constant index into a stack at construction, so build the
+   raw [Index] node directly to leave the fold for the pattern matcher. *)
 let raw_index_stack_const ~ptr ~idx ~dtype =
-  U.replace (U.index ~ptr ~idxs:[ idx ] ~as_ptr:true ()) ~dtype ()
+  U.replace ptr ~op:Ops.Index ~src:[| ptr; idx |] ~arg:U.Arg.Empty ~dtype ()
 
 (* Apply sym to a single node (not bottom-up). *)
 let sym n = Upat.Pattern_matcher.rewrite Symbolic.sym n
@@ -494,7 +472,7 @@ let identity_fold_tests =
           fires sym (U.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:(idx 1)) x);
       test "x | 0 → x" (fun () ->
           let x =
-            U.variable ~name:"x" ~min_val:0 ~max_val:1 ~dtype:D.Val.bool ()
+            U.variable ~name:"x" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
           fires sym (U.alu_binary ~op:Ops.Or ~lhs:x ~rhs:(U.const_bool false)) x);
       test "x & 0 → 0" (fun () ->
@@ -710,22 +688,22 @@ let bool_cast_fold_tests =
           is_true (U.equal (simplify expr) x));
       test "cast(bool -> int) != 0 → bool" (fun () ->
           let x =
-            U.variable ~name:"flag" ~min_val:0 ~max_val:1 ~dtype:D.Val.bool ()
+            U.variable ~name:"flag" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
           let expr =
             U.alu_binary ~op:Ops.Cmpne
               ~lhs:(U.cast ~src:x ~dtype:D.int32)
-              ~rhs:(U.const (C.int D.Val.int32 0))
+              ~rhs:(U.const (C.int D.int32 0))
           in
           is_true (U.equal (simplify expr) x));
       test "cast(bool -> int) != 1 → !bool" (fun () ->
           let x =
-            U.variable ~name:"flag2" ~min_val:0 ~max_val:1 ~dtype:D.Val.bool ()
+            U.variable ~name:"flag2" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
           let expr =
             U.alu_binary ~op:Ops.Cmpne
               ~lhs:(U.cast ~src:x ~dtype:D.int32)
-              ~rhs:(U.const (C.int D.Val.int32 1))
+              ~rhs:(U.const (C.int D.int32 1))
           in
           let result = simplify expr in
           check_op result Ops.Cmpne;
@@ -733,12 +711,12 @@ let bool_cast_fold_tests =
           check_const_bool (src result 1) true);
       test "cast(bool -> int) != other const → true" (fun () ->
           let x =
-            U.variable ~name:"flag3" ~min_val:0 ~max_val:1 ~dtype:D.Val.bool ()
+            U.variable ~name:"flag3" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
           let expr =
             U.alu_binary ~op:Ops.Cmpne
               ~lhs:(U.cast ~src:x ~dtype:D.int32)
-              ~rhs:(U.const (C.int D.Val.int32 7))
+              ~rhs:(U.const (C.int D.int32 7))
           in
           check_const_bool (simplify expr) true);
       test "bitcast const float32 to int32 folds" (fun () ->
@@ -746,46 +724,27 @@ let bool_cast_fold_tests =
             U.bitcast ~src:(f32 1.0) ~dtype:D.int32
           in
           simplifies_to_int expr (Int32.to_int (Int32.bits_of_float 1.0)));
-      test "cast vector const keeps scalar-broadcast vector const" (fun () ->
-          let vec_i32 = D.Val.vec 4 D.Val.int32 in
-          let src =
-            U.const_of_dtype vec_i32 (U.Const_scalar (`Int 3L))
-          in
-          let result = simplify (U.cast ~src ~dtype:D.float32) in
-          check_const_float result 3.0;
-          is_true
-            (D.equal (U.dtype result) (D.Val (D.Val.vec 4 D.Val.float32))));
       test "cast STACK const folds lane-wise" (fun () ->
           let src =
             U.stack
               [
-                U.const (C.int D.Val.int32 1);
-                U.const (C.int D.Val.int32 2);
+                U.const (C.int D.int32 1);
+                U.const (C.int D.int32 2);
               ]
           in
           let result = simplify (U.cast ~src ~dtype:D.float32) in
           check_stack_floats result [ 1.0; 2.0 ]);
-      test "bitcast vector const folds lane-wise" (fun () ->
-          let vec_f32 = D.Val.vec 2 D.Val.float32 in
-          let vec_i32 = D.Val.vec 2 D.Val.int32 in
-          let src =
-            U.const_of_dtype vec_f32 (U.Const_scalar (`Float 1.0))
-          in
-          let result = simplify (U.bitcast ~src ~dtype:(D.Val vec_i32)) in
-          check_const_int result (Int32.to_int (Int32.bits_of_float 1.0));
-          is_true (D.equal (U.dtype result) (D.Val vec_i32)));
       test "bitcast STACK const folds lane-wise" (fun () ->
           let src = U.stack [ f32 1.0; f32 2.0 ] in
-          let vec_i32 = D.Val.vec 2 D.Val.int32 in
-          let result = simplify (U.bitcast ~src ~dtype:(D.Val vec_i32)) in
+          let result = simplify (U.bitcast ~src ~dtype:D.int32) in
           check_stack_ints result
             [
               Int32.to_int (Int32.bits_of_float 1.0);
               Int32.to_int (Int32.bits_of_float 2.0);
             ]);
       test "constant Threefry is not folded in UOp-local symbolic" (fun () ->
-          let ctr = U.const (C.int D.Val.uint32 0) in
-          let key = U.const (C.int D.Val.uint32 1) in
+          let ctr = U.const (C.int D.uint32 0) in
+          let key = U.const (C.int D.uint32 1) in
           let result = simplify (U.alu_binary ~op:Ops.Threefry ~lhs:ctr ~rhs:key) in
           check_op result Ops.Threefry);
       test "pow constant exponent rewrites by squaring" (fun () ->
@@ -860,7 +819,7 @@ let where_fold_tests =
     [
       test "where cast push: where(s,a,b).cast(dt)" (fun () ->
           let s =
-            U.variable ~name:"s" ~min_val:0 ~max_val:1 ~dtype:D.Val.bool ()
+            U.variable ~name:"s" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
           let a = var "a" 0 10 and b = var "b" 0 10 in
           let w = U.alu_ternary ~op:Ops.Where ~a:s ~b:a ~c:b in
@@ -872,8 +831,8 @@ let where_fold_tests =
       test "where eq one zero flips to ne zero one" (fun () ->
           let x = var "x" 0 10 and y = var "y" 0 10 in
           let cond = U.alu_binary ~op:Ops.Cmpeq ~lhs:x ~rhs:y in
-          let one = U.const (Const.int D.Val.int32 1) in
-          let zero = U.const (Const.int D.Val.int32 0) in
+          let one = U.const (Const.int D.int32 1) in
+          let zero = U.const (Const.int D.int32 0) in
           let expr = U.alu_ternary ~op:Ops.Where ~a:cond ~b:one ~c:zero in
           let result = simplify expr in
           check_op result Ops.Where;
@@ -886,7 +845,10 @@ let reduce_tests =
   group "reduce"
     [
       test "add tensor reduce floats const and preserves axes" (fun () ->
-          let x = var "x" 0 10 in
+          let x =
+            U.param ~slot:0 ~dtype:D.index ~shape:(U.stack [ idx 4 ])
+              ~vmin_vmax:(0, 10) ()
+          in
           let body = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(idx 3) in
           let red = U.reduce_axis ~src:body ~op:Ops.Add ~axes:[ 0 ] in
           let result = simplify red in
@@ -898,20 +860,34 @@ let reduce_tests =
             | None -> rhs, lhs
           in
           (match U.as_reduce reduced with
-          | Some { src = reduced_src; op = Ops.Add; axes = [ 0 ]; ranges = [] } ->
+          | Some { src = reduced_src; op = Ops.Add; num_axes = 1; ranges = [] } ->
               is_true (U.equal reduced_src x)
           | _ -> fail "expected tensor Add reduce with preserved axes");
           check_const_int const 3);
-      test "mul-term hoist only applies to lowered reduce" (fun () ->
-          let x = var "x" 0 10 and y = var "y" 0 10 in
-          let body = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:y in
-          let red = U.reduce_axis ~src:body ~op:Ops.Max ~axes:[ 0 ] in
+      test "mul-term hoist floats non-range factors out of a lowered reduce"
+        (fun () ->
+          (* A lowered reduce carries its reduced range as a source. A MUL term
+             that does not reference that range floats out; the range-dependent
+             term stays inside. *)
+          let rng = range 4 in
+          let x =
+            U.variable ~name:"x" ~min_val:0 ~max_val:10 ~dtype:D.int32 ()
+          in
+          let ld = U.load ~src:(U.index ~ptr:(ptr_buffer 20) ~idxs:[ rng ] ()) () in
+          let body = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:x in
+          let red = U.reduce ~src:body ~ranges:[ rng ] ~op:Ops.Max
+              ~dtype:(U.dtype body) in
           let result = simplify red in
-          check_op result Ops.Reduce;
-          (match U.as_reduce result with
-          | Some { src = reduced_src; op = Ops.Max; axes = [ 0 ]; ranges = [] } ->
-              is_true (U.equal reduced_src body)
-          | _ -> fail "expected tensor Max reduce to remain intact"));
+          check_op result Ops.Mul;
+          let a = src result 0 and b = src result 1 in
+          let reduce_node, other =
+            if Ops.equal (U.op a) Ops.Reduce then a, b else b, a
+          in
+          is_true (U.equal other x);
+          (match U.as_reduce reduce_node with
+          | Some { src = rsrc; op = Ops.Max; num_axes = 0; ranges = [ r ] } ->
+              is_true (U.equal rsrc ld && U.equal r rng)
+          | _ -> fail "expected the range-dependent term to stay in a lowered reduce"));
     ]
 
 let load_store_tests =
@@ -920,25 +896,25 @@ let load_store_tests =
       test "invalid-index load with alt folds to alt" (fun () ->
           let ptr = ptr_buffer 0 in
           let invalid_idx = U.invalid () in
-          let dst = U.index ~ptr ~idxs:[invalid_idx] ~as_ptr:true () in
-          let alt = U.const (C.int D.Val.int32 42) in
+          let dst = U.index ~ptr ~idxs:[invalid_idx] () in
+          let alt = U.const (C.int D.int32 42) in
           let gate = U.const_bool false in
           let result = simplify (U.load ~src:dst ~alt ~gate ()) in
           is_true (U.equal result alt));
       test "invalid-index load without alt folds to zero" (fun () ->
           let ptr = ptr_buffer 1 in
           let invalid_idx = U.invalid () in
-          let dst = U.index ~ptr ~idxs:[invalid_idx] ~as_ptr:true () in
+          let dst = U.index ~ptr ~idxs:[invalid_idx] () in
           let result = simplify (U.load ~src:dst ()) in
           check_const_int result 0);
       test "store of gated load becomes gated store of alt" (fun () ->
           let ptr = ptr_buffer 2 in
           let offset = idx 3 in
-          let dst = U.index ~ptr ~idxs:[offset] ~as_ptr:true () in
+          let dst = U.index ~ptr ~idxs:[offset] () in
           let gate =
-            U.variable ~name:"gate" ~min_val:0 ~max_val:1 ~dtype:D.Val.bool ()
+            U.variable ~name:"gate" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
-          let alt = U.const (C.int D.Val.int32 7) in
+          let alt = U.const (C.int D.int32 7) in
           let old = U.load ~src:dst () in
           let value = U.O.where gate alt old in
           let result = simplify (U.store ~dst ~value ()) in
@@ -950,23 +926,144 @@ let load_store_tests =
           is_true (U.equal (src (src (src result 0) 1) 1) offset));
     ]
 
+(* Invalid-condition where folds *)
+
+let invalid_where_tests =
+  group "invalid_where"
+    [
+      test "where(Invalid, a, b) poisons to invalid" (fun () ->
+          let a = var "a" 0 10 and b = var "b" 0 10 in
+          let w = U.O.where (U.invalid ()) a b in
+          match sym w with
+          | Some r ->
+              (* The poisoned result is [Invalid] cast to [a]'s dtype; the cast
+                 to [a]'s own index dtype collapses to the bare Invalid. *)
+              is_true
+                (is_invalid_const r
+                || (Ops.equal (U.op r) Ops.Cast && is_invalid_const (src r 0)))
+          | None -> fail "expected invalid condition to poison where");
+      test "where(gated-invalid, a, b) lifts the gate" (fun () ->
+          let cond =
+            U.variable ~name:"c" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
+          in
+          let x =
+            U.variable ~name:"x" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
+          in
+          let a = var "a" 0 10 and b = var "b" 0 10 in
+          let gate = U.O.where cond x (U.invalid ~dtype:D.bool ()) in
+          let w = U.O.where gate a b in
+          match sym w with
+          | Some r ->
+              check_op r Ops.Where;
+              is_true (U.equal (src r 0) cond);
+              check_op (src r 1) Ops.Where;
+              check_op (src r 2) Ops.Cast;
+              is_true (is_invalid_const (src (src r 2) 0))
+          | None -> fail "expected gated-invalid condition to lift its gate");
+    ]
+
+(* Sigmoid reciprocal folds (phase-3 [sym]). *)
+
+let sigmoid_tests =
+  let fvar name = U.variable ~name ~min_val:0 ~max_val:10 ~dtype:D.float32 () in
+  let recip_1p x = U.alu_unary ~op:Ops.Reciprocal ~src:U.O.(x + f32 1.0) in
+  group "sigmoid"
+    [
+      test "x * (1/(1+x)) -> 1 - 1/(1+x)" (fun () ->
+          let x = fvar "x" in
+          let d = recip_1p x in
+          match sym U.O.(x * d) with
+          | Some r ->
+              check_op r Ops.Sub;
+              check_const_float (src r 0) 1.0;
+              is_true (src r 1 == d)
+          | None -> fail "expected sigmoid fold");
+      test "x * (1/(1+x) * y) -> y * (1 - 1/(1+x))" (fun () ->
+          let x = fvar "x" and y = fvar "y" in
+          let d = recip_1p x in
+          match sym U.O.(x * (d * y)) with
+          | Some r ->
+              check_op r Ops.Mul;
+              is_true (src r 0 == y);
+              check_op (src r 1) Ops.Sub
+          | None -> fail "expected sigmoid product fold");
+      test "x * (1/(1+x) + y) -> (1 - 1/(1+x)) + x*y" (fun () ->
+          let x = fvar "x" and y = fvar "y" in
+          let d = recip_1p x in
+          match sym U.O.(x * (d + y)) with
+          | Some r ->
+              check_op r Ops.Add;
+              check_op (src r 0) Ops.Sub;
+              check_op (src r 1) Ops.Mul
+          | None -> fail "expected sigmoid sum fold");
+    ]
+
+(* Masked-numerator division: (x & mask) // c collapses when the mask only
+   clears the low bits the power-of-two division discards. *)
+
+let masked_div_tests =
+  group "masked_div"
+    [
+      test "(x & -4) // 4 -> x // 4" (fun () ->
+          let x = var "x" 0 100 in
+          let masked = U.alu_binary ~op:Ops.And ~lhs:x ~rhs:(idx (-4)) in
+          let expr = U.alu_binary ~op:Ops.Floordiv ~lhs:masked ~rhs:(idx 4) in
+          match sym expr with
+          | Some r ->
+              check_op r Ops.Floordiv;
+              is_true (src r 0 == x);
+              check_const_int (src r 1) 4
+          | None -> fail "expected masked division to collapse");
+    ]
+
+(* Every remaining Invalid sentinel is rewritten to a typed zero. *)
+
+let remove_invalid_tests =
+  let remove n = Upat.Pattern_matcher.rewrite Symbolic.pm_remove_invalid n in
+  group "remove_invalid"
+    [
+      test "invalid(int32) -> const 0 : int32" (fun () ->
+          match remove (U.invalid ~dtype:D.int32 ()) with
+          | Some r ->
+              check_const_int r 0;
+              is_true (D.equal (U.dtype r) D.int32)
+          | None -> fail "expected invalid to be zeroed");
+      test "invalid(float32) -> const 0.0 : float32" (fun () ->
+          match remove (U.invalid ~dtype:D.float32 ()) with
+          | Some r ->
+              check_const_float r 0.0;
+              is_true (D.equal (U.dtype r) D.float32)
+          | None -> fail "expected invalid to be zeroed");
+      test "invalid(index) -> const 0 : index" (fun () ->
+          match remove (U.invalid ()) with
+          | Some r ->
+              check_const_int r 0;
+              is_true (D.equal (U.dtype r) D.index)
+          | None -> fail "expected invalid to be zeroed");
+    ]
+
 (* Entry point *)
 
 let () =
-  run "Ir.Symbolic"
-    [
-      const_fold_tests;
-      identity_fold_tests;
-      self_fold_tests;
-      divmod_reconstitute_tests;
-      divandmod_tests;
-      combine_terms_tests;
-      associative_tests;
-      index_pushing_tests;
-      spec_tests;
-      bool_cast_fold_tests;
-      lt_fold_tests;
-      where_fold_tests;
-      reduce_tests;
-      load_store_tests;
-    ]
+  run "tolk.uop.symbolic"
+    (simplify_driver_groups
+     @ [
+         const_fold_tests;
+         identity_fold_tests;
+         self_fold_tests;
+         divmod_reconstitute_tests;
+         divandmod_tests;
+         combine_terms_tests;
+         associative_tests;
+         index_pushing_tests;
+         spec_tests;
+         bool_cast_fold_tests;
+         lt_fold_tests;
+         where_fold_tests;
+         reduce_tests;
+         load_store_tests;
+         invalid_where_tests;
+         sigmoid_tests;
+         masked_div_tests;
+         remove_invalid_tests;
+       ])
