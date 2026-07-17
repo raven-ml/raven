@@ -712,12 +712,11 @@ let reduce_ranges_to_acc ctx node =
 
 let expand_horizontal_reduce node =
   match U.as_reduce node with
-  | Some { src; ranges = []; op; num_axes } when num_axes > 0 ->
-      let mshape = U.max_shape src in
+  | Some { src; ranges = []; op; num_axes } ->
       let rec product = function
         | 0 -> [ [] ]
         | n ->
-            let dim = List.nth mshape (num_axes - n) in
+            let dim = List.nth (U.max_shape src) (num_axes - n) in
             List.concat
               (List.init dim (fun i -> List.map (fun idx -> int_ i :: idx) (product (n - 1))))
       in
@@ -871,7 +870,6 @@ let pm_reduce_local ctx =
       wmma_add;
       PM.make
         [
-          fix_group_for_reduce;
           op ~name:"r" ~allow_any_len:true Ops.Reduce
           => (fun bs -> reduce_ranges_to_acc ctx (bs $ "r"));
           op ~name:"r" Ops.Reduce => (fun bs -> expand_horizontal_reduce (bs $ "r"));
@@ -880,7 +878,16 @@ let pm_reduce_local ctx =
       pm_clean_up_group_sink;
     ]
 
+let pm_fix_group_for_reduce = PM.make [ fix_group_for_reduce ]
+
 let pm_reduce root =
+  (* Split grouped reduces first so the accumulator-slot precompute sees the
+     partial and final reduces [fix_group_for_reduce] introduces; a tag-keyed
+     map can only number reduces that exist when it is built. *)
+  let root =
+    U.graph_rewrite ~name:"fix group for reduce"
+      (PM.rewrite pm_fix_group_for_reduce) root
+  in
   let ctx = { acc_num = 0; acc_slots = reduce_slots_in_tinygrad_order root } in
   U.graph_rewrite ~name:"remove reduces"
     (U.first_match [ PM.rewrite mop_cleanup; PM.rewrite (pm_reduce_local ctx) ])

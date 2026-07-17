@@ -135,7 +135,12 @@ let rec shape_of n =
   match U.op n with
   | Ops.Param | Ops.Buffer ->
       (match U.children n with shape :: _ -> shape_of_node shape | [] -> None)
-  | Ops.Reshape | Ops.Expand -> shape_of_node (U.src n).(1)
+  | Ops.Reshape -> shape_of_node (U.src n).(1)
+  | Ops.Expand ->
+      (* EXPAND prepends its argument dims to the source shape. *)
+      (match shape_of_node (U.src n).(1), shape_of (src0 n) with
+       | Some prepend, Some src -> Some (prepend @ src)
+       | _ -> None)
   | Ops.Pad | Ops.Shrink ->
       (match
          shape_of (src0 n), shape_of_node (U.src n).(1),
@@ -182,7 +187,12 @@ let rec shape_expr_of n =
       (match U.children n with
        | shape :: _ -> shape_expr_of_node shape
        | [] -> None)
-  | Ops.Reshape | Ops.Expand -> shape_expr_of_node (U.src n).(1)
+  | Ops.Reshape -> shape_expr_of_node (U.src n).(1)
+  | Ops.Expand ->
+      (* EXPAND prepends its argument dims to the source shape. *)
+      (match shape_expr_of_node (U.src n).(1), shape_expr_of (src0 n) with
+       | Some prepend, Some src -> Some (prepend @ src)
+       | _ -> None)
   | Ops.Pad | Ops.Shrink ->
       (match shape_expr_of (src0 n), shape_expr_of_node (U.src n).(2) with
        | Some _, (Some _ as size) -> size
