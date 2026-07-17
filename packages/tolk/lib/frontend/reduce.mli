@@ -13,14 +13,14 @@
     removed. *)
 
 val sum :
-  ?axis:int list -> ?keepdim:bool -> ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t ->
+  ?axis:int list -> ?keepdim:bool -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t ->
   Tensor.t
 (** [sum t] sums the elements of [t]. The accumulation is done at a widened
     dtype to limit overflow; pass [dtype] to fix it. Narrow-float inputs are
     cast back to their own dtype unless [dtype] is given. *)
 
 val prod :
-  ?axis:int list -> ?keepdim:bool -> ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t ->
+  ?axis:int list -> ?keepdim:bool -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t ->
   Tensor.t
 (** [prod t] multiplies the elements of [t]. Pass [dtype] to set the
     accumulation dtype. *)

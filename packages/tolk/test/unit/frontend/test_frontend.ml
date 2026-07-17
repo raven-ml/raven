@@ -28,7 +28,7 @@ let shape = T.shape
 (* Test tensors *)
 
 let ones_f sh = Cr.ones sh
-let ones_i sh = Cr.ones ~dtype:D.Val.int32 sh
+let ones_i sh = Cr.ones ~dtype:D.int32 sh
 
 (* Creation *)
 
@@ -167,6 +167,20 @@ let broadcast_tests =
           is_true (is_dtype t D.float32));
       test "scalar operand broadcasts" (fun () ->
           equal (list int) [ 2; 2 ] (shape (El.mul (ones_f [ 2; 2 ]) (T.f 2.0))));
+      test "stretch is a single leading expand permuted back" (fun () ->
+          (* A stretched axis is squeezed out, prepended by one EXPAND, and
+             permuted back into place -- not a raw whole-shape expand. The
+             EXPAND therefore carries only the stretched axis ([5]) ahead of the
+             kept axis ([3]), giving shape [5; 3] before the permute. *)
+          let t = Mv.broadcast_to (ones_f [ 3; 1 ]) [ 3; 5 ] in
+          equal (list int) [ 3; 5 ] (shape t);
+          is_true (has_op t Ops.Permute);
+          is_true (Ops.equal (U.op (src t 0)) Ops.Expand);
+          equal (list int) [ 5; 3 ] (T.shape (T.of_uop (src t 0))));
+      test "broadcast to more dims prepends leading axes" (fun () ->
+          let t = Mv.broadcast_to (ones_f [ 3 ]) [ 2; 3 ] in
+          equal (list int) [ 2; 3 ] (shape t);
+          is_true (Ops.equal (U.op (src t 0)) Ops.Expand));
     ]
 
 (* Elementwise structure *)
@@ -230,7 +244,7 @@ let reduce_tests =
           is_true (is_dtype (Rd.sum (ones_i [ 4 ])) D.int32));
       test "sum int8 widens to int32" (fun () ->
           is_true
-            (is_dtype (Rd.sum (Cr.ones ~dtype:D.Val.int8 [ 4 ])) D.int32));
+            (is_dtype (Rd.sum (Cr.ones ~dtype:D.int8 [ 4 ])) D.int32));
       test "max reduces" (fun () ->
           equal (list int) [ 2 ] (shape (Rd.max ~axis:[ 1 ] (ones_f [ 2; 3 ]))));
       test "min reduces" (fun () ->
@@ -384,7 +398,7 @@ let scan_tests =
           equal (list int) [ 3; 5 ]
             (shape
                (Op.gather (ones_f [ 4; 5 ]) ~dim:0
-                  (Cr.zeros ~dtype:D.Val.int32 [ 3; 5 ]))));
+                  (Cr.zeros ~dtype:D.int32 [ 3; 5 ]))));
       test "gather preserves dtype" (fun () ->
           is_true
             (is_dtype (Op.gather (ones_i [ 2; 2 ]) ~dim:1 (ones_i [ 2; 2 ])) D.int32));
@@ -701,7 +715,7 @@ let creation2_tests =
       test "eye rectangular" (fun () ->
           equal (list int) [ 2; 4 ] (shape (Op.eye ~m:4 2)));
       test "eye int dtype" (fun () ->
-          is_true (is_dtype (Op.eye ~dtype:D.Val.int32 3) D.int32));
+          is_true (is_dtype (Op.eye ~dtype:D.int32 3) D.int32));
       test "eye negative raises" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)
@@ -715,7 +729,7 @@ let creation2_tests =
       test "linspace empty" (fun () ->
           equal (list int) [ 0 ] (shape (Op.linspace 0.0 10.0 0)));
       test "linspace int dtype" (fun () ->
-          is_true (is_dtype (Op.linspace ~dtype:D.Val.int32 0.0 10.0 5) D.int32));
+          is_true (is_dtype (Op.linspace ~dtype:D.int32 0.0 10.0 5) D.int32));
       test "linspace negative steps raises" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)
@@ -790,7 +804,7 @@ let shape_memo_tests =
 (* Scatter *)
 
 let scatter_tests =
-  let zi sh = Cr.zeros ~dtype:D.Val.int32 sh in
+  let zi sh = Cr.zeros ~dtype:D.int32 sh in
   group "scatter"
     [
       test "scatter preserves self shape" (fun () ->
@@ -876,6 +890,36 @@ let sort_tests =
             (fun () -> Op.topk (ones_f [ 3 ]) 5));
     ]
 
+(* Scalar operands adopt the dtype of the tensor they pair with (ufix), so
+   mixed-precision arithmetic stays at the tensor's precision rather than
+   widening through a default-typed constant. *)
+let scalar_operand_tests =
+  group "scalar operand dtype"
+    [
+      test "half activation stays half" (fun () ->
+          let h = Cr.ones ~dtype:D.float16 [ 4 ] in
+          is_true (is_dtype (El.sigmoid h) D.float16);
+          is_true (is_dtype (El.gelu h) D.float16);
+          is_true (is_dtype (El.softplus h) D.float16));
+      test "bfloat16 activation stays bfloat16" (fun () ->
+          let b = Cr.ones ~dtype:D.bfloat16 [ 4 ] in
+          is_true (is_dtype (El.swish b) D.bfloat16);
+          is_true (is_dtype (El.tanh b) D.bfloat16));
+      test "narrow int keeps its width through an int-scalar op" (fun () ->
+          let i8 = Cr.ones ~dtype:D.int8 [ 4 ] in
+          is_true (is_dtype (El.relu i8) D.int8));
+      test "int tensor through a float-scalar activation is default float"
+        (fun () ->
+          let i = ones_i [ 4 ] in
+          is_true (is_dtype (El.sigmoid i) D.float32));
+      test "both-scalar where stays default int" (fun () ->
+          let idx = Cr.zeros ~dtype:D.int32 [ 3 ] in
+          is_true (is_dtype (Op.one_hot idx 5) D.int32));
+      test "scalar constructors stay concrete default" (fun () ->
+          is_true (is_dtype (T.f 1.0) D.float32);
+          is_true (is_dtype (T.i 1) D.int32));
+    ]
+
 let () =
   run "Tolk_frontend"
     [
@@ -898,4 +942,5 @@ let () =
       pool_tests;
       scan_tests;
       conv_tests;
+      scalar_operand_tests;
     ]

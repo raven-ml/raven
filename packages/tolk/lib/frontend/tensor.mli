@@ -53,10 +53,8 @@ val live_tensors : unit -> t list
 val dtype : t -> Tolk_uop.Dtype.t
 (** [dtype t] is the element type of [t]. *)
 
-val val_dtype : t -> Tolk_uop.Dtype.Val.t
-(** [val_dtype t] is [dtype t] as a value dtype.
-
-    @raise Invalid_argument if [t] has a pointer dtype. *)
+val val_dtype : t -> Tolk_uop.Dtype.t
+(** [val_dtype t] is the element dtype of [t]. Equivalent to {!dtype}. *)
 
 val device : t -> Tolk_uop.Uop.device option
 (** [device t] is the device [t] is placed on, or [None] for an unplaced
@@ -93,7 +91,7 @@ val resolve_dim : ?extra:bool -> t -> int -> int
     integer type, {!Sfloat} the default float, {!Sbool} boolean. *)
 type scalar = Sint of int | Sfloat of float | Sbool of bool
 
-val scalar_const : Tolk_uop.Dtype.Val.t -> scalar -> Tolk_uop.Const.t
+val scalar_const : Tolk_uop.Dtype.t -> scalar -> Tolk_uop.Const.t
 (** [scalar_const dt s] is the constant value [s] coerced to dtype [dt]. *)
 
 val i : int -> t

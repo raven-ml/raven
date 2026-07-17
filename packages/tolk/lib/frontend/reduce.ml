@@ -44,19 +44,19 @@ let reduce t op ?axis ?(keepdim = false) () =
   else ret
 
 let is_narrow_float dt =
-  D.Val.equal dt D.Val.float16 || D.Val.equal dt D.Val.bfloat16
-  || D.Val.is_fp8 dt
+  D.equal dt D.float16 || D.equal dt D.bfloat16
+  || D.is_fp8 dt
 
 let sum ?axis ?(keepdim = false) ?dtype t =
   let src_dt = T.val_dtype t in
-  let acc = match dtype with Some d -> d | None -> D.Val.sum_acc_dtype src_dt in
-  let ret = reduce (Dtype_ops.cast t (D.Val acc)) Ops.Add ?axis ~keepdim () in
+  let acc = match dtype with Some d -> d | None -> D.sum_acc_dtype src_dt in
+  let ret = reduce (Dtype_ops.cast t acc) Ops.Add ?axis ~keepdim () in
   if dtype = None && is_narrow_float src_dt then Dtype_ops.cast ret (T.dtype t)
   else ret
 
 let prod ?axis ?(keepdim = false) ?dtype t =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
-  reduce (Dtype_ops.cast t (D.Val dt)) Ops.Mul ?axis ~keepdim ()
+  reduce (Dtype_ops.cast t dt) Ops.Mul ?axis ~keepdim ()
 
 let max ?axis ?(keepdim = false) t = reduce t Ops.Max ?axis ~keepdim ()
 

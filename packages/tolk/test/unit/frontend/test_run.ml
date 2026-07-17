@@ -591,7 +591,7 @@ let symbolic_tests =
             let sink =
               U.sink [ U.contiguous ~src:(T.uop out) () ]
             in
-            let call, _ = Tolk.Allocations.transform_to_call sink in
+            let call, _ = Tolk.Callify.transform_to_call sink in
             ignore
               (U.graph_rewrite ~enter_calls:true
                  (fun node ->

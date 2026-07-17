@@ -64,13 +64,13 @@ val stack : ?dim:int -> Tensor.t -> Tensor.t list -> Tensor.t
 
 (** {1 Matrix multiplication} *)
 
-val dot : ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor.t -> Tensor.t
+val dot : ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t -> Tensor.t
 (** [dot a w] contracts the last axis of [a] with the matching axis of [w]:
     the last axis of [w] when [w] is 1-D, otherwise its second-to-last. Leading
     axes broadcast, giving batched matrix multiplication. [dtype] sets the
     accumulation dtype. *)
 
-val matmul : ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor.t -> Tensor.t
+val matmul : ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t -> Tensor.t
 (** [matmul a b] is [dot a b]. *)
 
 (** {1 Padding} *)
@@ -224,12 +224,12 @@ val tril : ?diagonal:int -> Tensor.t -> Tensor.t
 val logsumexp : ?axis:int -> ?keepdim:bool -> Tensor.t -> Tensor.t
 (** [logsumexp t] is [log (sum (exp t))] over [axis] (default: all axes). *)
 
-val softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor.t
+val softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
 (** [softmax t] rescales [t] along [axis] (default [-1]) into non-negative
     values summing to [1]. [dtype] casts the shifted input before
     exponentiating. *)
 
-val log_softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor.t
+val log_softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
 (** [log_softmax t] is the logarithm of {!softmax}, computed stably. *)
 
 val logcumsumexp : ?axis:int -> Tensor.t -> Tensor.t
@@ -262,7 +262,7 @@ val scaled_dot_product_attention :
 
 val conv2d :
   ?bias:Tensor.t -> ?groups:int -> ?stride:int list -> ?dilation:int list ->
-  ?padding:int list -> ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor.t ->
+  ?padding:int list -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t ->
   Tensor.t
 (** [conv2d x weight] convolves [x] with [weight] (shape
     [(out_channels, in_channels/groups, kernel...)]), optionally adding [bias]
@@ -285,21 +285,21 @@ val max_pool2d :
 (** {1 Ranges} *)
 
 val arange :
-  ?stop:int -> ?step:int -> ?dtype:Tolk_uop.Dtype.Val.t -> int -> Tensor.t
+  ?stop:int -> ?step:int -> ?dtype:Tolk_uop.Dtype.t -> int -> Tensor.t
 (** [arange start] is the 1-D tensor [\[0; 1; ...; start-1\]]. [arange start
     ~stop] ranges over [\[start, stop)], and [~step] sets the spacing (which
     may be negative). The length is [ceil((stop - start) / step)], clamped to
     zero. [dtype] defaults to the default integer type. *)
 
 val linspace :
-  ?dtype:Tolk_uop.Dtype.Val.t -> float -> float -> int -> Tensor.t
+  ?dtype:Tolk_uop.Dtype.t -> float -> float -> int -> Tensor.t
 (** [linspace start stop steps] is the 1-D tensor of [steps] values evenly
     spaced over [\[start, stop\]], inclusive of both ends. [dtype] defaults to
     the default float type.
 
     @raise Invalid_argument if [steps] is negative or [dtype] is boolean. *)
 
-val eye : ?m:int -> ?dtype:Tolk_uop.Dtype.Val.t -> int -> Tensor.t
+val eye : ?m:int -> ?dtype:Tolk_uop.Dtype.t -> int -> Tensor.t
 (** [eye n] is the [n]x[n] identity matrix. [~m] sets a different column count,
     giving an [n]x[m] matrix with ones on the main diagonal. [dtype] defaults
     to the default float type.

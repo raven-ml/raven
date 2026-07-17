@@ -15,6 +15,25 @@ let prod = List.fold_left ( * ) 1
    zero, so [-(-a / b)] would floor instead of ceil. *)
 let ceildiv a b = (a + b - 1) / b
 
+(* A scalar literal used as an operand adopts the dtype of the tensor it is
+   paired with, keeping a scalar operand at the operand's precision instead of a
+   wider default. [~like] is the paired tensor. *)
+let uf ~like s =
+  let dt = T.dtype like in
+  let sdt =
+    if D.is_float dt then dt
+    else
+      match s with
+      | T.Sint _ when D.is_int dt -> dt
+      | T.Sint _ -> D.default_int
+      | T.Sfloat _ -> D.default_float
+      | T.Sbool _ -> D.bool
+  in
+  T.of_uop (Uop.const (T.scalar_const sdt s))
+
+let sf ~like x = uf ~like (T.Sfloat x)
+let si ~like n = uf ~like (T.Sint n)
+
 (* Generator state: one seed for the process, plus per-device key and counter
    tensors created lazily on first use. The key holds a device-specific word
    (derived by hashing the device's first-use index) and the seed; the counter
@@ -105,7 +124,7 @@ let random_bits key counter num =
           (Dtype_ops.cast (Elementwise.lt c_low low) D.uint32)
       in
       let new_key = threefry_random_bits key c_low c_high in
-      let counts0 = Op.arange ~dtype:D.Val.uint32 (ceildiv chunk_num 2) in
+      let counts0 = Op.arange ~dtype:D.uint32 (ceildiv chunk_num 2) in
       let counts1 = Elementwise.add counts0 (c counts0 (ceildiv chunk_num 2)) in
       let bits =
         slice (threefry_random_bits new_key counts0 counts1) 0 chunk_num
@@ -120,9 +139,9 @@ let random_bits key counter num =
    overlay them on the bit pattern of 1.0 (giving a float in [1, 2)), and
    subtract 1. *)
 let bits_to_rand bits shape dt =
-  let _, nmant = D.finfo (D.Val dt) in
+  let _, nmant = D.finfo dt in
   let uint_dtype =
-    match D.Val.itemsize dt with
+    match D.itemsize dt with
     | 1 -> D.uint8
     | 2 -> D.uint16
     | 4 -> D.uint32
@@ -132,23 +151,23 @@ let bits_to_rand bits shape dt =
   let uint_bits = Dtype_ops.bitcast bits uint_dtype in
   let float_one_bits =
     Dtype_ops.bitcast
-      (Dtype_ops.cast (Creation.const_like uint_bits (T.Sint 1)) (D.Val dt))
+      (Dtype_ops.cast (Creation.const_like uint_bits (T.Sint 1)) dt)
       uint_dtype
   in
   let mantissa =
     Elementwise.bitwise_or
-      (Elementwise.rshift uint_bits (c uint_bits (D.Val.bitsize dt - nmant)))
+      (Elementwise.rshift uint_bits (c uint_bits (D.bitsize dt - nmant)))
       float_one_bits
   in
   Movement.reshape
     (Elementwise.sub
-       (slice (Dtype_ops.bitcast mantissa (D.Val dt)) 0 (prod shape))
+       (slice (Dtype_ops.bitcast mantissa dt) 0 (prod shape))
        (T.i 1))
     shape
 
 let rand_from key counter shape dt ~contiguous =
   let bits =
-    random_bits key counter (ceildiv (prod shape * D.Val.itemsize dt) 4)
+    random_bits key counter (ceildiv (prod shape * D.itemsize dt) 4)
   in
   let out = bits_to_rand bits shape dt in
   if contiguous then Elementwise.contiguous out else out
@@ -158,15 +177,15 @@ let check_shape name shape =
     invalid_arg (Printf.sprintf "Rand.%s: dimensions must be non-negative" name)
 
 let rand ?dtype ?(contiguous = true) shape =
-  let dt = match dtype with Some d -> d | None -> D.Val.default_float in
-  if not (D.Val.is_float dt) then
+  let dt = match dtype with Some d -> d | None -> D.default_float in
+  if not (D.is_float dt) then
     invalid_arg "Rand.rand: only float dtypes are supported";
   check_shape "rand" shape;
-  if D.Val.itemsize dt <> 4 then
+  if D.itemsize dt <> 4 then
     invalid_arg "Rand.rand: only 32-bit float dtypes are supported";
   let device = Run.device_name () in
   let key, counter =
-    next_counter device (ceildiv (prod shape * D.Val.itemsize dt) 4)
+    next_counter device (ceildiv (prod shape * D.itemsize dt) 4)
   in
   rand_from key counter shape dt ~contiguous
 
@@ -177,7 +196,7 @@ let rand_like ?dtype ?contiguous t =
 (* Box-Muller: two uniform draws give one standard normal sample. *)
 let randn_like ?dtype t =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
-  let src = rand ~dtype:D.Val.float32 (2 :: T.shape t) in
+  let src = rand ~dtype:D.float32 (2 :: T.shape t) in
   let sel i = Op.getitem src Movement.[ I i ] in
   Dtype_ops.cast
     (Elementwise.mul
@@ -186,7 +205,7 @@ let randn_like ?dtype t =
           (Elementwise.mul
              (Elementwise.log (Elementwise.sub (T.f 1.) (sel 1)))
              (T.f (-2.)))))
-    (D.Val dt)
+    dt
 
 let randn ?dtype shape =
   check_shape "randn" shape;
@@ -198,15 +217,15 @@ let uniform ?(low = 0.) ?(high = 1.) ?dtype shape =
     invalid_arg
       (Printf.sprintf "Rand.uniform: requires low < high, got low=%g high=%g"
          low high);
-  let dt = match dtype with Some d -> d | None -> D.Val.default_float in
+  let dt = match dtype with Some d -> d | None -> D.default_float in
   Elementwise.add
     (Dtype_ops.cast
        (Elementwise.mul (T.f (high -. low)) (rand shape))
-       (D.Val dt))
+       dt)
     (T.of_uop (Uop.const (T.scalar_const dt (T.Sfloat low))))
 
-let randint ?(low = 0) ?(high = 10) ?(dtype = D.Val.int32) shape =
-  if not (D.Val.is_int dtype) then
+let randint ?(low = 0) ?(high = 10) ?(dtype = D.int32) shape =
+  if not (D.is_int dtype) then
     invalid_arg "Rand.randint: dtype must be an integer type";
   if low >= high then
     invalid_arg
@@ -217,12 +236,12 @@ let randint ?(low = 0) ?(high = 10) ?(dtype = D.Val.int32) shape =
 let normal ?(mean = 0.) ?(std = 1.) ?dtype shape =
   if std < 0. then
     invalid_arg (Printf.sprintf "Rand.normal: requires std >= 0, got %g" std);
-  Elementwise.add (Elementwise.mul (randn ?dtype shape) (T.f std)) (T.f mean)
+  let r = randn ?dtype shape in
+  Elementwise.add (Elementwise.mul r (sf ~like:r std)) (sf ~like:r mean)
 
 let scaled_uniform ?dtype shape =
-  Elementwise.mul
-    (uniform ~low:(-1.) ~high:1. ?dtype shape)
-    (T.f (Float.pow (float_of_int (prod shape)) (-0.5)))
+  let u = uniform ~low:(-1.) ~high:1. ?dtype shape in
+  Elementwise.mul u (sf ~like:u (Float.pow (float_of_int (prod shape)) (-0.5)))
 
 let glorot_uniform ?dtype shape =
   let bound =
@@ -242,8 +261,8 @@ let kaiming_normal ?(a = 0.01) ?dtype shape =
   in
   normal ~std ?dtype shape
 
-let randperm ?(dtype = D.Val.int32) n =
-  Dtype_ops.cast (Op.argsort (rand [ n ])) (D.Val dtype)
+let randperm ?(dtype = D.int32) n =
+  Dtype_ops.cast (Op.argsort (rand [ n ])) dtype
 
 let multinomial ?(num_samples = 1) ?(replacement = false) t =
   let ndim = T.ndim t in
@@ -278,7 +297,7 @@ let multinomial ?(num_samples = 1) ?(replacement = false) t =
       snd
         (Op.topk ~dim:1
            (Elementwise.div
-              (Elementwise.log2 (rand_like ~dtype:D.Val.float32 weight))
+              (Elementwise.log2 (rand_like ~dtype:D.float32 weight))
               weight)
            num_samples)
   in
@@ -296,7 +315,7 @@ let dropout ?(p = 0.5) t =
       (Elementwise.where
          (Elementwise.contiguous
             (Elementwise.ge
-               (rand_like ~dtype:D.Val.default_float ~contiguous:false t)
+               (rand_like ~dtype:D.default_float ~contiguous:false t)
                (T.f p)))
-         t (T.i 0))
-      (T.f (1. -. p))
+         t (si ~like:t 0))
+      (sf ~like:t (1. -. p))

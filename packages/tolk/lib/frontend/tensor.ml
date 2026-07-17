@@ -82,10 +82,7 @@ let apply_map mappings =
 
 let dtype t = U.dtype t.uop
 
-let val_dtype t =
-  match U.dtype t.uop with
-  | D.Val v -> v
-  | D.Ptr _ -> invalid_arg "Tensor.val_dtype: pointer dtype"
+let val_dtype t = U.dtype t.uop
 
 let device t = U.device_of t.uop
 let symbolic_shape t = U.shape t.uop
@@ -113,20 +110,20 @@ let resolve_dim ?(extra = false) t dim =
 type scalar = Sint of int | Sfloat of float | Sbool of bool
 
 let scalar_const dt s =
-  if D.Val.is_bool dt then
+  if D.is_bool dt then
     Const.bool
       (match s with Sbool v -> v | Sint n -> n <> 0 | Sfloat x -> x <> 0.)
-  else if D.Val.is_float dt then
+  else if D.is_float dt then
     Const.float dt
       (match s with Sfloat x -> x | Sint n -> float_of_int n | Sbool v -> if v then 1. else 0.)
   else
     Const.int dt
       (match s with Sint n -> n | Sfloat x -> int_of_float x | Sbool v -> if v then 1 else 0)
 
-let i n = of_uop (U.const (Const.int D.Val.default_int n))
-let f x = of_uop (U.const (Const.float D.Val.default_float x))
+let i n = of_uop (U.const (Const.int D.default_int n))
+let f x = of_uop (U.const (Const.float D.default_float x))
 let b v = of_uop (U.const (Const.bool v))
-let int_ n = U.const (Const.int D.Val.weakint n)
+let int_ n = U.const_int n
 
 let symbolic_shape_uop dims = match dims with [ d ] -> d | ds -> U.stack ds
 let shape_uop dims = symbolic_shape_uop (List.map int_ dims)

@@ -123,7 +123,7 @@ let realize_buffers ts =
      expression has no store target for the scheduler to write. *)
   let outs = List.map (fun t -> U.contiguous ~src:(T.uop t) ()) ts in
   let sink = U.sink outs in
-  let call, buffer_map = Tolk.Allocations.transform_to_call sink in
+  let call, buffer_map = Tolk.Callify.transform_to_call sink in
   (* Rebind every scheduled node still referenced by a live tensor onto its
      final storage before executing, as the reference frontend does. *)
   let mappings =

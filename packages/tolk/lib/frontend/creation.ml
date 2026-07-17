@@ -11,9 +11,9 @@ module D = Dtype
 module T = Tensor
 
 let dtype_of_fill = function
-  | T.Sint _ -> D.Val.default_int
-  | T.Sfloat _ -> D.Val.default_float
-  | T.Sbool _ -> D.Val.bool
+  | T.Sint _ -> D.default_int
+  | T.Sfloat _ -> D.default_float
+  | T.Sbool _ -> D.bool
 
 let broadcast_scalar dt fill shape =
   let v = T.of_uop (U.const (T.scalar_const dt fill)) in

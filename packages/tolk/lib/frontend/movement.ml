@@ -59,24 +59,8 @@ let reshape t dims =
   symbolic_reshape t udims
 
 let symbolic_broadcast_to t new_shape =
-  let cur = T.symbolic_shape t in
-  if dims_equal cur new_shape then t
-  else begin
-    if T.ndim t > List.length new_shape then
-      invalid_arg "Movement.broadcast_to: cannot broadcast to fewer dimensions";
-    let aligned =
-      List.init (List.length new_shape - List.length cur) (fun _ -> sdim 1)
-      @ cur
-    in
-    List.iter2
-      (fun s ns ->
-        if not (U.equal s ns || dim_is_one s) then
-          invalid_arg "Movement.broadcast_to: incompatible shapes")
-      aligned new_shape;
-    let reshaped = symbolic_reshape t aligned in
-    if dims_equal aligned new_shape then reshaped
-    else T.of_uop (U.expand ~src:(T.uop reshaped) ~shape:(shape_arg new_shape))
-  end
+  if dims_equal (T.symbolic_shape t) new_shape then t
+  else T.of_uop (U.broadcast_to ~src:(T.uop t) ~shape:(shape_arg new_shape))
 
 let broadcast_to t new_shape = symbolic_broadcast_to t (List.map sdim new_shape)
 

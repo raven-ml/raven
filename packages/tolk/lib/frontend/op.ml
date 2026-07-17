@@ -14,6 +14,26 @@ let take n l = List.filteri (fun idx _ -> idx < n) l
 let drop n l = List.filteri (fun idx _ -> idx >= n) l
 let sub_range lo hi l = List.filteri (fun idx _ -> idx >= lo && idx < hi) l
 
+(* A scalar literal used as an operand adopts the dtype of the tensor it is
+   paired with (a float tensor for any scalar, an integer tensor for an integer
+   scalar), keeping mixed-precision arithmetic at the operand's precision.
+   [~like] is the paired tensor; a scalar paired with another scalar keeps its
+   own default dtype. *)
+let uf ~like s =
+  let dt = T.dtype like in
+  let sdt =
+    if D.is_float dt then dt
+    else
+      match s with
+      | T.Sint _ when D.is_int dt -> dt
+      | T.Sint _ -> D.default_int
+      | T.Sfloat _ -> D.default_float
+      | T.Sbool _ -> D.bool
+  in
+  T.of_uop (Uop.const (T.scalar_const sdt s))
+
+let si ~like n = uf ~like (T.Sint n)
+
 (* Broadcasting and promotion. This is the concrete implementation of the
    [Tensor.broadcasted] hook that the element-wise operations depend on;
    installing it here mirrors tinygrad, where [_broadcasted] is abstract in the
@@ -30,10 +50,7 @@ let broadcasted ?(reverse = false) a b =
        Movement.symbolic_broadcast_to y out)
     with Invalid_argument _ -> (x, y)
   in
-  if
-    D.equal (T.dtype x) (T.dtype y)
-    || D.is_ptr (T.dtype x) || D.is_ptr (T.dtype y)
-  then (x, y)
+  if D.equal (T.dtype x) (T.dtype y) then (x, y)
   else
     let out = D.least_upper_dtype [ T.dtype x; T.dtype y ] in
     (Dtype_ops.cast x out, Dtype_ops.cast y out)
@@ -88,17 +105,20 @@ let reduced_count t ?axis () =
 
 let mean ?axis ?(keepdim = false) t =
   let out_dt = if Dtype_ops.is_floating_point t then T.dtype t else D.float32 in
-  let acc = D.Val.sum_acc_dtype (T.val_dtype t) in
-  let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast t (D.Val acc)) in
+  let acc = D.sum_acc_dtype (T.val_dtype t) in
+  let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast t acc) in
   let denom = reduced_count t ?axis () in
-  Dtype_ops.cast (Elementwise.div numerator (T.i denom)) out_dt
+  Dtype_ops.cast (Elementwise.div numerator (si ~like:numerator denom)) out_dt
 
 let var ?axis ?(keepdim = false) ?(correction = 1) t =
   let m = mean ?axis ~keepdim:true t in
   let squares = Elementwise.square (Elementwise.sub t m) in
   let n = reduced_count squares ?axis () in
   let reduced = Reduce.sum ?axis ~keepdim squares in
-  let denom = Elementwise.sub (Creation.const_like reduced (T.Sint n)) (T.i correction) in
+  let denom =
+    Elementwise.sub (Creation.const_like reduced (T.Sint n))
+      (si ~like:reduced correction)
+  in
   Elementwise.div reduced (Elementwise.relu denom)
 
 let std ?axis ?keepdim ?correction t =
@@ -177,7 +197,7 @@ let dot ?dtype a w =
   let summed = Reduce.sum ~axis:[ -1 ] ?dtype (Elementwise.mul a2 w2) in
   let out_dt =
     match dtype with
-    | Some d -> D.Val d
+    | Some d -> d
     | None -> D.least_upper_dtype [ T.dtype a2; T.dtype w2 ]
   in
   Dtype_ops.cast summed out_dt
@@ -189,9 +209,9 @@ let matmul ?dtype a b = dot ?dtype a b
 let is_zero = function T.Sint 0 | T.Sfloat 0.0 -> true | _ -> false
 
 let fill_dtype = function
-  | T.Sint _ -> D.Val.default_int
-  | T.Sfloat _ -> D.Val.default_float
-  | T.Sbool _ -> D.Val.bool
+  | T.Sint _ -> D.default_int
+  | T.Sfloat _ -> D.default_float
+  | T.Sbool _ -> D.bool
 
 let pad_constant t px value =
   let px = List.map (function None -> (0, 0) | Some p -> p) px in
@@ -214,7 +234,7 @@ let pad_constant t px value =
   else
     let base =
       Dtype_ops.cast base
-        (D.least_upper_dtype [ T.dtype base; D.Val (fill_dtype value) ])
+        (D.least_upper_dtype [ T.dtype base; (fill_dtype value) ])
     in
     let mask = Movement.pad (Dtype_ops.bool (Creation.const_like x (T.Sint 1))) pads in
     Elementwise.where mask base (Creation.const_like base value)
@@ -222,17 +242,17 @@ let pad_constant t px value =
 (* Associative scans *)
 
 let max_identity dt =
-  if D.Val.is_float dt then T.Sfloat neg_infinity
-  else if D.Val.is_unsigned dt then T.Sint 0
+  if D.is_float dt then T.Sfloat neg_infinity
+  else if D.is_unsigned dt then T.Sint 0
   else
-    let bits = D.Val.bitsize dt in
+    let bits = D.bitsize dt in
     T.Sint (if bits >= 63 then min_int else -(1 lsl (bits - 1)))
 
 let dtype_max dt =
-  if D.Val.is_float dt then T.Sfloat infinity
+  if D.is_float dt then T.Sfloat infinity
   else
-    let bits = D.Val.bitsize dt in
-    if D.Val.is_unsigned dt then T.Sint (if bits >= 63 then max_int else (1 lsl bits) - 1)
+    let bits = D.bitsize dt in
+    if D.is_unsigned dt then T.Sint (if bits >= 63 then max_int else (1 lsl bits) - 1)
     else T.Sint (if bits >= 62 then max_int else (1 lsl (bits - 1)) - 1)
 
 let cumalu t axis op =
@@ -275,34 +295,34 @@ let iceildiv a b = -fdiv (-a) b
 let arange ?stop ?(step = 1) ?dtype start =
   if step = 0 then invalid_arg "Op.arange: step must be non-zero";
   let start, stop = match stop with None -> (0, start) | Some s -> (start, s) in
-  let dt = match dtype with Some d -> d | None -> D.Val.default_int in
+  let dt = match dtype with Some d -> d | None -> D.default_int in
   let output_len = iceildiv (stop - start) step in
   if output_len <= 0 then Creation.full ~dtype:dt ~buffer:false [ 0 ] (T.Sint 0)
   else
     let base = Creation.full ~dtype:dt ~buffer:false [ output_len ] (T.Sint step) in
     let scan = cumalu base 0 Ops.Add in
-    Dtype_ops.cast (Elementwise.add scan (T.i (start - step))) (D.Val dt)
+    Dtype_ops.cast (Elementwise.add scan (si ~like:scan (start - step))) dt
 
 let linspace ?dtype start stop steps =
   if steps < 0 then invalid_arg "Op.linspace: steps must be non-negative";
-  let dt = match dtype with Some d -> d | None -> D.Val.default_float in
-  if D.Val.is_bool dt then invalid_arg "Op.linspace: bool dtype is not supported";
+  let dt = match dtype with Some d -> d | None -> D.default_float in
+  if D.is_bool dt then invalid_arg "Op.linspace: bool dtype is not supported";
   if steps = 1 then Creation.full ~dtype:dt ~buffer:false [ 1 ] (T.Sfloat start)
   else
     Dtype_ops.cast
       (Elementwise.add (T.f start)
          (Elementwise.mul
-            (arange ~dtype:D.Val.default_float steps)
+            (arange ~dtype:D.default_float steps)
             (T.f ((stop -. start) /. float_of_int (steps - 1)))))
-      (D.Val dt)
+      dt
 
 let eye ?m ?dtype n =
   let m_ = match m with None -> n | Some m -> m in
   if n < 0 || m_ < 0 then invalid_arg "Op.eye: dimensions must be non-negative";
-  let dt = match dtype with Some d -> d | None -> D.Val.default_float in
+  let dt = match dtype with Some d -> d | None -> D.default_float in
   Dtype_ops.cast
     (Elementwise.eq (Movement.unsqueeze (arange n) (-1)) (arange m_))
-    (D.Val dt)
+    dt
 
 (* Triangular masks *)
 
@@ -330,7 +350,7 @@ let tril ?(diagonal = 0) t =
 (* Cumulative extrema *)
 
 let cummax ?(axis = 0) t =
-  if T.ndim t = 0 then (t, Creation.zeros ~dtype:D.Val.int32 ~buffer:false [])
+  if T.ndim t = 0 then (t, Creation.zeros ~dtype:D.int32 ~buffer:false [])
   else
     let axis = T.resolve_dim t axis in
     let values = cumalu t axis Ops.Max in
@@ -363,7 +383,7 @@ let one_hot_along_dim ?(dim = -1) index num_classes =
   let offset = T.ndim index - T.resolve_dim index dim - 1 in
   let classes =
     Movement.reshape
-      (arange ~dtype:D.Val.int32 num_classes)
+      (arange ~dtype:D.int32 num_classes)
       (num_classes :: List.init offset (fun _ -> 1))
   in
   Elementwise.eq index classes
@@ -448,12 +468,12 @@ let scatter_reduce t ~dim index src ~reduce ?(include_self = true) () =
   match reduce with
   | `Sum ->
       Elementwise.add
-        (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (T.i 0)))
-        (self_or (T.i 0))
+        (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (si ~like:src 0)))
+        (self_or (si ~like:t 0))
   | `Prod ->
       Elementwise.mul
-        (Reduce.prod ~axis:[ -1 ] (Elementwise.where mask src (T.i 1)))
-        (self_or (T.i 1))
+        (Reduce.prod ~axis:[ -1 ] (Elementwise.where mask src (si ~like:src 1)))
+        (self_or (si ~like:t 1))
   | `Amax ->
       let m = Creation.const_like src (max_identity (T.val_dtype src)) in
       Elementwise.maximum
@@ -472,8 +492,8 @@ let scatter_reduce t ~dim index src ~reduce ?(include_self = true) () =
       in
       let acc =
         Elementwise.add
-          (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (T.i 0)))
-          (self_or (T.i 0))
+          (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (si ~like:src 0)))
+          (self_or (si ~like:t 0))
       in
       Elementwise.div acc count
 
@@ -585,7 +605,8 @@ let rec getitem t indices =
           @ big_shape
           @ List.init (List.length post) (fun _ -> 1)
         in
-        Elementwise.where (Movement.reshape valid valid_shape) gathered (T.i 0))
+        Elementwise.where (Movement.reshape valid valid_shape) gathered
+          (si ~like:gathered 0))
       else
         let xndim = T.ndim x in
         let pre_reduce_shape = take d0 xshape @ big_shape @ drop d0 xshape in
@@ -610,8 +631,9 @@ let rec getitem t indices =
         in
         let sum_axis = List.map (fun d -> d + bshape_len) dims in
         let x =
+          let reshaped = Movement.reshape x reshape_arg in
           Reduce.sum ~axis:sum_axis ~dtype:(T.val_dtype x)
-            (Elementwise.where mask (Movement.reshape x reshape_arg) (T.i 0))
+            (Elementwise.where mask reshaped (si ~like:reshaped 0))
         in
         let permuted =
           d0 <> 0 && List.length dims <> 1
@@ -641,9 +663,9 @@ let masked_select ?(fill_value = T.Sint 0) t mask ~size =
   let mask_cumsum = cumsum mask in
   let counts =
     scatter_reduce
-      (Creation.zeros ~dtype:D.Val.int32 ~buffer:false [ size ])
+      (Creation.zeros ~dtype:D.int32 ~buffer:false [ size ])
       ~dim:0 mask_cumsum
-      (Creation.ones ~dtype:D.Val.int32 ~buffer:false [ T.numel t ])
+      (Creation.ones ~dtype:D.int32 ~buffer:false [ T.numel t ])
       ~reduce:`Sum ()
   in
   let gathered = getitem x [ Movement.T (cumsum counts) ] in
@@ -654,7 +676,7 @@ let masked_select ?(fill_value = T.Sint 0) t mask ~size =
 
 let nonzero ?(fill_value = T.Sint 0) t ~size =
   let ndim = T.ndim t in
-  if ndim = 0 then Creation.zeros ~dtype:D.Val.int32 ~buffer:false [ size; 0 ]
+  if ndim = 0 then Creation.zeros ~dtype:D.int32 ~buffer:false [ size; 0 ]
   else
     let sh = T.shape t in
     let mask = Movement.flatten (Elementwise.ne t (T.i 0)) in
@@ -712,7 +734,7 @@ let sort ?(dim = -1) ?(descending = false) t =
   let dim = T.resolve_dim t dim in
   let orig_len = List.nth (T.shape t) dim in
   if orig_len <= 1 then
-    (t, Creation.full ~dtype:D.Val.default_int ~buffer:false (T.shape t) (T.Sint 0))
+    (t, Creation.full ~dtype:D.default_int ~buffer:false (T.shape t) (T.Sint 0))
   else begin
     let ndim = T.ndim t in
     let n_stages = bit_length (orig_len - 1) in
@@ -758,7 +780,7 @@ let sort ?(dim = -1) ?(descending = false) t =
     in
     let mask =
       Movement.reshape
-        (tril (Creation.ones ~dtype:D.Val.bool ~buffer:false [ orig_len; orig_len ]))
+        (tril (Creation.ones ~dtype:D.bool ~buffer:false [ orig_len; orig_len ]))
         ([ orig_len; orig_len ] @ List.init (ndim - dim - 1) (fun _ -> 1))
     in
     let counts u =
@@ -915,7 +937,7 @@ let logsumexp ?axis ?(keepdim = false) t =
    graph is identical without the detach. *)
 let softmax_parts ?dtype axis t =
   let m = Elementwise.sub t (Reduce.max ~axis:[ axis ] ~keepdim:true t) in
-  let m = match dtype with Some d -> Dtype_ops.cast m (D.Val d) | None -> m in
+  let m = match dtype with Some d -> Dtype_ops.cast m d | None -> m in
   let e = Elementwise.exp m in
   (m, e, Reduce.sum ~axis:[ axis ] ~keepdim:true e)
 
@@ -932,7 +954,7 @@ let log_softmax ?(axis = -1) ?dtype t =
 let scaled_dot_product_attention ?attn_mask ?(is_causal = false) q k v =
   let d = List.nth (T.shape q) (T.ndim q - 1) in
   let acc_dt =
-    D.Val.least_upper_dtype [ T.val_dtype q; T.val_dtype k; D.Val.float32 ]
+    D.least_upper_dtype [ T.val_dtype q; T.val_dtype k; D.float32 ]
   in
   let qk =
     Elementwise.div
@@ -947,7 +969,7 @@ let scaled_dot_product_attention ?attn_mask ?(is_causal = false) q k v =
            with is_causal";
       Some
         (tril
-           (Dtype_ops.cast (Creation.const_like qk (T.Sint 1)) (D.Val D.Val.bool)))
+           (Dtype_ops.cast (Creation.const_like qk (T.Sint 1)) D.bool))
     end
     else attn_mask
   in

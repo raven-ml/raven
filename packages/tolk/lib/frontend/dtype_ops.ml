@@ -19,7 +19,7 @@ let bitcast t dt =
     invalid_arg "Dtype_ops.bitcast: element sizes differ"
   else T.of_uop (U.bitcast ~src:(T.uop t) ~dtype:dt)
 
-let is_floating_point t = D.is_float (D.scalarize (T.dtype t))
+let is_floating_point t = D.is_float (T.dtype t)
 let element_size t = D.itemsize (T.dtype t)
 let float t = cast t D.float32
 let half t = cast t D.float16

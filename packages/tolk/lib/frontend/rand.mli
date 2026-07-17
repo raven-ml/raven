@@ -30,7 +30,7 @@ val manual_seed : int -> unit
 (** {1 Uniform} *)
 
 val rand :
-  ?dtype:Tolk_uop.Dtype.Val.t -> ?contiguous:bool -> int list -> Tensor.t
+  ?dtype:Tolk_uop.Dtype.t -> ?contiguous:bool -> int list -> Tensor.t
 (** [rand shape] is a tensor of shape [shape] filled with uniform random
     values in [\[0, 1)]. [dtype] must be a 32-bit float type (default: the
     default float). [contiguous] (default [true]) materialises the result
@@ -39,12 +39,12 @@ val rand :
     @raise Invalid_argument if [dtype] is not a 32-bit float dtype. *)
 
 val rand_like :
-  ?dtype:Tolk_uop.Dtype.Val.t -> ?contiguous:bool -> Tensor.t -> Tensor.t
+  ?dtype:Tolk_uop.Dtype.t -> ?contiguous:bool -> Tensor.t -> Tensor.t
 (** [rand_like t] is {!val-rand} with the shape of [t] and, unless
     overridden, the dtype of [t]. *)
 
 val uniform :
-  ?low:float -> ?high:float -> ?dtype:Tolk_uop.Dtype.Val.t -> int list ->
+  ?low:float -> ?high:float -> ?dtype:Tolk_uop.Dtype.t -> int list ->
   Tensor.t
 (** [uniform shape] is filled with uniform random values in
     [\[low, high)] (default [\[0, 1)]), cast to [dtype] (default: the default
@@ -53,41 +53,41 @@ val uniform :
     @raise Invalid_argument unless [low < high]. *)
 
 val randint :
-  ?low:int -> ?high:int -> ?dtype:Tolk_uop.Dtype.Val.t -> int list -> Tensor.t
+  ?low:int -> ?high:int -> ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
 (** [randint shape] is filled with uniform random integers in
     [\[low, high)] (default [\[0, 10)]). [dtype] must be an integer type
     (default [int32]).
 
     @raise Invalid_argument unless [low < high] and [dtype] is integer. *)
 
-val scaled_uniform : ?dtype:Tolk_uop.Dtype.Val.t -> int list -> Tensor.t
+val scaled_uniform : ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
 (** [scaled_uniform shape] is {!uniform} over [\[-1, 1)] scaled by
     [1/sqrt(numel)]. *)
 
-val glorot_uniform : ?dtype:Tolk_uop.Dtype.Val.t -> int list -> Tensor.t
+val glorot_uniform : ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
 (** [glorot_uniform shape] is the Glorot (Xavier) uniform initialisation:
     {!uniform} over [\[-b, b)] with
     [b = sqrt (6 / (shape.(0) + prod rest))]. *)
 
 val kaiming_uniform :
-  ?a:float -> ?dtype:Tolk_uop.Dtype.Val.t -> int list -> Tensor.t
+  ?a:float -> ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
 (** [kaiming_uniform shape] is the Kaiming (He) uniform initialisation for a
     leaky ReLU with negative slope [a] (default [0.01]): {!uniform} over
     [\[-b, b)] with [b = sqrt (6 / (1 + a^2) / prod (tl shape))]. *)
 
 (** {1 Normal} *)
 
-val randn : ?dtype:Tolk_uop.Dtype.Val.t -> int list -> Tensor.t
+val randn : ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
 (** [randn shape] is filled with standard normal random values (mean [0],
     variance [1]), sampled at 32-bit float precision and cast to [dtype]
     (default: the default float). *)
 
-val randn_like : ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor.t
+val randn_like : ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
 (** [randn_like t] is {!randn} with the shape of [t] and, unless overridden,
     the dtype of [t]. *)
 
 val normal :
-  ?mean:float -> ?std:float -> ?dtype:Tolk_uop.Dtype.Val.t -> int list ->
+  ?mean:float -> ?std:float -> ?dtype:Tolk_uop.Dtype.t -> int list ->
   Tensor.t
 (** [normal shape] is filled with normal random values with the given [mean]
     (default [0]) and standard deviation [std] (default [1]).
@@ -95,14 +95,14 @@ val normal :
     @raise Invalid_argument if [std] is negative. *)
 
 val kaiming_normal :
-  ?a:float -> ?dtype:Tolk_uop.Dtype.Val.t -> int list -> Tensor.t
+  ?a:float -> ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
 (** [kaiming_normal shape] is the Kaiming (He) normal initialisation for a
     leaky ReLU with negative slope [a] (default [0.01]): {!normal} with
     [std = sqrt (2 / (1 + a^2) / prod (tl shape))]. *)
 
 (** {1 Sampling} *)
 
-val randperm : ?dtype:Tolk_uop.Dtype.Val.t -> int -> Tensor.t
+val randperm : ?dtype:Tolk_uop.Dtype.t -> int -> Tensor.t
 (** [randperm n] is a uniformly random permutation of the integers
     [0 .. n-1], as a tensor of dtype [dtype] (default [int32]). *)
 
