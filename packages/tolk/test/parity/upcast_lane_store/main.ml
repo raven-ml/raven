@@ -24,7 +24,7 @@ let build () =
   let w = Helpers.mk_param ~idx:1 [ 2304; 768 ] in
   let b = Helpers.mk_param ~idx:2 [ 2304 ] in
   let xe =
-    U.expand
+    U.broadcast_to
       ~src:(U.reshape ~src:x ~shape:(Helpers.mk_shape [ 1; 768 ]))
       ~shape:(Helpers.mk_shape [ 2304; 768 ])
   in

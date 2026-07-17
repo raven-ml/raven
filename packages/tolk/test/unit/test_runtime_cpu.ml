@@ -8,7 +8,9 @@ open Tolk
 open Tolk_uop
 module U = Uop
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:16
+let i32_param ~slot =
+  U.param ~slot ~dtype:Dtype.int32
+    ~shape:(U.stack [ U.const_int 16 ]) ~addrspace:Dtype.Global ()
 
 let int32_to_bytes values =
   let bytes = Bytes.create (List.length values * 4) in
@@ -57,13 +59,12 @@ let i32_view buf ~offset ~size =
   view
 
 let increment_program () =
-  let dt = Dtype.Val.int32 in
-  let ptr = Dtype.Ptr (global_ptr dt) in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
-  let p1 = U.param ~slot:1 ~dtype:ptr () in
-  let c0 = U.const (Const.int Dtype.Val.int32 0) in
-  let idx_src = U.index ~ptr:p1 ~idxs:[c0] ~as_ptr:true () in
-  let idx_dst = U.index ~ptr:p0 ~idxs:[c0] ~as_ptr:true () in
+  let dt = Dtype.int32 in
+  let p0 = i32_param ~slot:0 in
+  let p1 = i32_param ~slot:1 in
+  let c0 = U.const (Const.int Dtype.int32 0) in
+  let idx_src = U.index ~ptr:p1 ~idxs:[c0] () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[c0] () in
   let l0 = U.load ~src:idx_src () in
   let c1 = U.const (Const.int dt 1) in
   let sum = U.alu_binary ~op:Ops.Add ~lhs:l0 ~rhs:c1 in
@@ -71,13 +72,12 @@ let increment_program () =
   [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
 
 let core_id_program ~threads =
-  let dt = Dtype.Val.int32 in
-  let ptr = Dtype.Ptr (global_ptr dt) in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
+  let dt = Dtype.int32 in
+  let p0 = i32_param ~slot:0 in
   let core_id =
     U.variable ~name:"core_id" ~min_val:0 ~max_val:(threads - 1) ~dtype:dt ()
   in
-  let idx = U.index ~ptr:p0 ~idxs:[core_id] ~as_ptr:true () in
+  let idx = U.index ~ptr:p0 ~idxs:[core_id] () in
   let store = U.store ~dst:idx ~value:core_id () in
   [ p0; core_id; idx; store ]
 
@@ -90,13 +90,12 @@ let run_spec device spec bufs =
    graph: nodes exported by the forked child below are genuinely foreign to
    the parent process until imported. *)
 let decrement_program () =
-  let dt = Dtype.Val.int32 in
-  let ptr = Dtype.Ptr (global_ptr dt) in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
-  let p1 = U.param ~slot:1 ~dtype:ptr () in
-  let c0 = U.const (Const.int Dtype.Val.int32 0) in
-  let idx_src = U.index ~ptr:p1 ~idxs:[ c0 ] ~as_ptr:true () in
-  let idx_dst = U.index ~ptr:p0 ~idxs:[ c0 ] ~as_ptr:true () in
+  let dt = Dtype.int32 in
+  let p0 = i32_param ~slot:0 in
+  let p1 = i32_param ~slot:1 in
+  let c0 = U.const (Const.int Dtype.int32 0) in
+  let idx_src = U.index ~ptr:p1 ~idxs:[ c0 ] () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[ c0 ] () in
   let l0 = U.load ~src:idx_src () in
   let c1 = U.const (Const.int dt 1) in
   let diff = U.alu_binary ~op:Ops.Sub ~lhs:l0 ~rhs:c1 in

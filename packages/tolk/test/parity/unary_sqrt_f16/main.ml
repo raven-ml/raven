@@ -3,17 +3,16 @@
 open Tolk_uop
 module B = Program_spec_builder
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 
 let kernel () =
-  let dt = Dtype.Val.float16 in
-  let ptr = global_ptr dt in
+  let dt = Dtype.float16 in
+  let ptr = dt in
   let b = B.create () in
   let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
   let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
   let c0 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
   in
   let idx0 =
     B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr })

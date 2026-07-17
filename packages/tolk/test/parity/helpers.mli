@@ -5,11 +5,12 @@
     only). *)
 
 val global_fptr : Tolk_uop.Dtype.t
-(** [float32 *] with address space [Global] and unknown size (as a
-    {!Tolk_uop.Dtype.Ptr} wrapped in the unified [Dtype.t]). *)
+(** The [float32] element dtype used for global parameters. Pointer-ness and
+    address space are properties of the parameter node, not the dtype, so a
+    global buffer parameter is just [U.param ~dtype:global_fptr]. *)
 
 val idx : int -> Tolk_uop.Uop.t
-(** [idx n] is a constant of type [Dtype.Val.weakint] with value [n]. *)
+(** [idx n] is a [weakint] constant with value [n]. *)
 
 val all_backends : (string * Tolk.Renderer.t) list
 (** [(short_name, renderer)] for ["cpu"] / ["cuda"] / ["metal"] / ["opencl"]. *)

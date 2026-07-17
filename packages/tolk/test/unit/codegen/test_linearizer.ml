@@ -17,16 +17,16 @@ module P = struct
     | End_range of { range : int }
     | Load of { src : int }
     | Store of { dst : int; value : int }
-    | After of { src : int; deps : int list; dtype : Dtype.Val.t }
+    | After of { src : int; deps : int list; dtype : Dtype.t }
     | Binary of { op : binary_op }
-    | Const of { value : Const.t; dtype : Dtype.Val.t }
+    | Const of { value : Const.t; dtype : Dtype.t }
     | Index of { ptr : int }
     | Param of { idx : int; dtype : Dtype.t }
     | If of { cond : int }
     | Endif of { if_ : int }
-    | Define_reg of { size : int; dtype : Dtype.Ptr.t }
-    | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.Val.t }
-    | Define_local of { size : int; dtype : Dtype.Ptr.t }
+    | Define_reg of { size : int; dtype : Dtype.t }
+    | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
+    | Define_local of { size : int; dtype : Dtype.t }
     | Special of { name : string; size : int }
     | Cast of { src : int }
     | Bitcast of { src : int }
@@ -50,7 +50,7 @@ module P = struct
              (Format.asprintf "%a" U.pp u))
 
   let value_dtype u =
-    match U.dtype u with Dtype.Val dt -> dt | Dtype.Ptr _ -> Dtype.Val.void
+    match U.addrspace u with Some _ -> Dtype.void | None -> U.dtype u
 
   let int_const u =
     match U.op u, U.Arg.as_value (U.arg u) with
@@ -95,9 +95,9 @@ module P = struct
     | Ops.Cmplt -> Binary { op = `Cmplt }
     | op when Ops.Group.is_binary op -> Binary { op = `Other op }
     | Ops.Const -> (
-        match U.Arg.as_value (U.arg u), U.dtype u with
-        | Some value, Dtype.Val dtype -> Const { value; dtype }
-        | _ -> Other u)
+        match U.Arg.as_value (U.arg u) with
+        | Some value -> Const { value; dtype = U.dtype u }
+        | None -> Other u)
     | Ops.Index -> (
         match U.as_index u with
         | Some { ptr; _ } -> Index { ptr = index tbl ptr }
@@ -106,9 +106,9 @@ module P = struct
         match U.as_param u with
         | Some { param = { slot; name; vmin_vmax; addrspace; _ }; _ }
           when addrspace = Dtype.Alu ->
-            (match name, vmin_vmax, U.dtype u with
-             | Some name, Some (lo, hi), Dtype.Val dtype ->
-                 Define_var { name; lo; hi; dtype }
+            (match name, vmin_vmax with
+             | Some name, Some (lo, hi) ->
+                 Define_var { name; lo; hi; dtype = U.dtype u }
              | _ -> Param { idx = slot; dtype = U.dtype u })
         | Some { param = { slot; _ }; _ } -> Param { idx = slot; dtype = U.dtype u }
         | None -> Other u)
@@ -120,13 +120,15 @@ module P = struct
         let src = U.src u in
         if Array.length src = 1 then Endif { if_ = index tbl src.(0) } else Other u
     | Ops.Buffer -> (
-        match U.dtype u with
-        | Dtype.Ptr ptr when Dtype.Ptr.addrspace ptr = Dtype.Local ->
+        match U.addrspace u with
+        | Some Dtype.Local ->
             Define_local
-              { size = Option.value (int_const (U.src u).(0)) ~default:(-1); dtype = ptr }
-        | Dtype.Ptr ptr when Dtype.Ptr.addrspace ptr = Dtype.Reg ->
+              { size = Option.value (int_const (U.src u).(0)) ~default:(-1);
+                dtype = U.dtype u }
+        | Some Dtype.Reg ->
             Define_reg
-              { size = Option.value (int_const (U.src u).(0)) ~default:(-1); dtype = ptr }
+              { size = Option.value (int_const (U.src u).(0)) ~default:(-1);
+                dtype = U.dtype u }
         | _ -> Other u)
     | Ops.Special -> (
         match U.as_special u with
@@ -187,36 +189,33 @@ end
 
 (* Helpers *)
 
-let dt = Dtype.Val.float32
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
-let ptr = global_ptr dt
+let dt = Dtype.float32
+let ptr = dt
 
-let i32 n = U.const (Const.int Dtype.Val.int32 n)
-let f32 x = U.const (Const.float Dtype.Val.float32 x)
+let i32 n = U.const (Const.int Dtype.int32 n)
+let f32 x = U.const (Const.float Dtype.float32 x)
 
 let define_local ~size ~dtype =
-  U.buffer ~slot:0 ~dtype:(Dtype.Ptr dtype) ~shape:(i32 size)
-    ~addrspace:Dtype.Local ()
+  U.buffer ~slot:0 ~dtype ~shape:(i32 size) ~addrspace:Dtype.Local ()
 
 let define_reg ~size ~dtype ~slot =
-  U.buffer ~slot ~dtype:(Dtype.Ptr dtype) ~shape:(i32 size)
-    ~addrspace:Dtype.Reg ()
+  U.buffer ~slot ~dtype ~shape:(i32 size) ~addrspace:Dtype.Reg ()
 
 let define_var ~name ~lo ~hi ~dtype () =
   U.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
 let loop_range ~axis size =
-  U.range ~size ~axis ~kind:Axis_type.Loop ~dtype:Dtype.Val.int32 ()
+  U.range ~size ~axis ~kind:Axis_type.Loop ~dtype:Dtype.int32 ()
 
 let reduce_range ~axis size =
-  U.range ~size ~axis ~kind:Axis_type.Reduce ~dtype:Dtype.Val.int32 ()
+  U.range ~size ~axis ~kind:Axis_type.Reduce ~dtype:Dtype.int32 ()
 
 let global_range ~axis size =
-  U.range ~size ~axis ~kind:Axis_type.Global ~dtype:Dtype.Val.int32 ()
+  U.range ~size ~axis ~kind:Axis_type.Global ~dtype:Dtype.int32 ()
 
 let load_one_elem () =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-  U.load ~src:(U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+  let p0 = U.param ~slot:0 ~dtype:ptr () in
+  U.load ~src:(U.index ~ptr:p0 ~idxs:[(i32 0)] ()) ()
 
 let contains haystack needle =
   let hl = String.length haystack and nl = String.length needle in
@@ -304,7 +303,7 @@ let () =
       group "Late kernel to program"
         [
           test "multi-range End lowers to nested End_range pairs" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let r0 = loop_range ~axis:0 (i32 2) in
             let r1 = loop_range ~axis:1 (i32 3) in
             let sum = U.alu_binary ~op:Ops.Add ~lhs:r0 ~rhs:r1 in
@@ -338,10 +337,10 @@ let () =
             is_true (inner_end < outer_end));
           test "outer-range loads are scheduled before entering inner ranges"
             (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
+            let p1 = U.param ~slot:1 ~dtype:ptr () in
             let r0 = loop_range ~axis:0 (i32 2) in
-            let idx_in = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+            let idx_in = U.index ~ptr:p0 ~idxs:[r0] () in
             let ld = U.load ~src:idx_in () in
             let r1 = loop_range ~axis:1 (i32 3) in
             let sum = U.alu_binary ~op:Ops.Add ~lhs:r0 ~rhs:r1 in
@@ -355,8 +354,8 @@ let () =
             is_true (load_pos < find_range ~axis:1 program));
           test "After nodes stay in Program ownership after linearize"
             (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
+            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
             let ld = U.load ~src:idx () in
             let af = U.after ~src:ld ~deps:[ f32 1.0 ] in
             let program = linearize (U.sink [ af ]) in
@@ -367,7 +366,7 @@ let () =
             in
             (match P.view program after_pos with
              | P.After { src; deps = [ dep ]; dtype } ->
-                 is_true (Dtype.Val.equal dtype dt);
+                 is_true (Dtype.equal dtype dt);
                  (match (P.view program src, P.view program dep) with
                   | P.Load _, P.Const { value; _ } ->
                       (match Const.view value with
@@ -379,7 +378,7 @@ let () =
                            (pp_view src_view) (pp_view dep_view)))
              | view -> fail_view "expected After" view));
           test "effect-only After nodes preserve store ordering" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let idx0 = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
             let st0 = U.store ~dst:idx0 ~value:(f32 1.0) () in
             let idx1 = U.index ~ptr:p0 ~idxs:[(i32 1)] () in
@@ -393,7 +392,7 @@ let () =
             in
             (match P.view program after_pos with
              | P.After { src; deps = [ dep ]; dtype } ->
-                 is_true (Dtype.Val.equal dtype Dtype.Val.void);
+                 is_true (Dtype.equal dtype Dtype.void);
                  (match (P.view program src, P.view program dep) with
                   | P.Store _, P.Store _ -> ()
                   | src_view, dep_view ->
@@ -403,11 +402,11 @@ let () =
                            (pp_view src_view) (pp_view dep_view)))
              | view -> fail_view "expected effect-only After" view));
           test "nested alt-index loads stay between the two ranges" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
+            let p1 = U.param ~slot:1 ~dtype:ptr () in
             let r0 = loop_range ~axis:0 (i32 2) in
             let gate = U.alu_binary ~op:Ops.Cmplt ~lhs:r0 ~rhs:(i32 2) in
-            let idx_gated = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+            let idx_gated = U.index ~ptr:p0 ~idxs:[r0] () in
             let ld = U.load ~src:idx_gated ~alt:(f32 2.0) ~gate () in
             let r1 = loop_range ~axis:1 (i32 3) in
             let add = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:(f32 1.0) in
@@ -435,9 +434,9 @@ let () =
                  (List.init (inner - outer - 1) (fun i -> outer + i + 1))));
           test "gated stores become IF/STORE/ENDIF"
             (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let gate = U.const (Const.bool true) in
-            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true () in
+            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
             let st = U.store ~dst:idx ~value:(f32 1.0) ~gate () in
             let sink = U.sink [ st ] in
             let sink = Linearizer.pm_split_ends sink in
@@ -462,9 +461,9 @@ let () =
              | view -> fail_view "expected ungated Store" view));
           test "single casted gated stores become IF/STORE/ENDIF"
             (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let gate = U.const (Const.bool true) in
-            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true () in
+            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
             let dst = U.cast ~src:idx ~dtype:(U.dtype idx) in
             let st = U.store ~dst ~value:(f32 1.0) ~gate () in
             let program = U.sink [ st ] |> linearize in
@@ -479,11 +478,11 @@ let () =
                 | _ -> false)));
           test "bitcasted gated stores are not linearize-cleanup matches"
             (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let gate = U.const (Const.bool true) in
-            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true () in
-            let i32_ptr = Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size:(-1) in
-            let dst = U.bitcast ~src:idx ~dtype:(Dtype.Ptr i32_ptr) in
+            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
+            let i32_ptr = Dtype.int32 in
+            let dst = U.bitcast ~src:idx ~dtype:i32_ptr in
             let st = U.store ~dst ~value:(i32 1) ~gate () in
             let program = U.sink [ st ] |> linearize in
             equal int 0
@@ -498,12 +497,12 @@ let () =
                     program)));
           test "nested-cast gated stores are not linearize-cleanup matches"
             (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let gate = U.const (Const.bool true) in
-            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true () in
-            let i32_ptr = Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size:(-1) in
+            let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
+            let i32_ptr = Dtype.int32 in
             let dst =
-              U.cast ~src:(U.cast ~src:idx ~dtype:(Dtype.Ptr i32_ptr))
+              U.cast ~src:(U.cast ~src:idx ~dtype:i32_ptr)
                 ~dtype:(U.dtype idx)
             in
             let st = U.store ~dst ~value:(f32 1.0) ~gate () in
@@ -535,27 +534,27 @@ let () =
             in
             is_true (add_pos < sub_pos));
           test "late bias loads are scheduled after reduce end" (fun () ->
-            let out_ptr = global_ptr dt in
-            let in_ptr = global_ptr dt in
-            let bias_ptr = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr out_ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr in_ptr) () in
-            let p2 = U.param ~slot:2 ~dtype:(Dtype.Ptr bias_ptr) () in
+            let out_ptr = dt in
+            let in_ptr = dt in
+            let bias_ptr = dt in
+            let reg_ptr = dt in
+            let p0 = U.param ~slot:0 ~dtype:out_ptr () in
+            let p1 = U.param ~slot:1 ~dtype:in_ptr () in
+            let p2 = U.param ~slot:2 ~dtype:bias_ptr () in
             let dreg = define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = U.index ~ptr:dreg ~idxs:[(i32 0)] () in
             let st_init = U.store ~dst:reg_idx ~value:(f32 0.0) () in
             let r0 = reduce_range ~axis:0 (i32 4) in
-            let idx_in = U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true () in
+            let idx_in = U.index ~ptr:p1 ~idxs:[r0] () in
             let st_acc =
               U.store ~dst:reg_idx ~value:(U.load ~src:idx_in ()) ()
             in
             let e = U.end_ ~value:st_acc ~ranges:[ r0 ] in
             let acc_after = U.after ~src:dreg ~deps:[ e ] in
             let acc_val =
-              U.load ~src:(U.index ~ptr:acc_after ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+              U.load ~src:(U.index ~ptr:acc_after ~idxs:[(i32 0)] ()) ()
             in
-            let idx_bias = U.index ~ptr:p2 ~idxs:[(i32 0)] ~as_ptr:true () in
+            let idx_bias = U.index ~ptr:p2 ~idxs:[(i32 0)] () in
             let ld_bias = U.load ~src:idx_bias () in
             let add = U.alu_binary ~op:Ops.Add ~lhs:acc_val ~rhs:ld_bias in
             let idx_out = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
@@ -579,27 +578,27 @@ let () =
             in
             is_true (last_end < bias_load));
           test "outer ops are placed before loop phis" (fun () ->
-            let out_ptr = global_ptr dt in
-            let in_ptr = global_ptr dt in
-            let bias_ptr = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr out_ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr in_ptr) () in
-            let p2 = U.param ~slot:2 ~dtype:(Dtype.Ptr bias_ptr) () in
+            let out_ptr = dt in
+            let in_ptr = dt in
+            let bias_ptr = dt in
+            let reg_ptr = dt in
+            let p0 = U.param ~slot:0 ~dtype:out_ptr () in
+            let p1 = U.param ~slot:1 ~dtype:in_ptr () in
+            let p2 = U.param ~slot:2 ~dtype:bias_ptr () in
             let dreg = define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = U.index ~ptr:dreg ~idxs:[(i32 0)] () in
             let st_init = U.store ~dst:reg_idx ~value:(f32 0.0) () in
-            let idx_bias = U.index ~ptr:p2 ~idxs:[(i32 0)] ~as_ptr:true () in
+            let idx_bias = U.index ~ptr:p2 ~idxs:[(i32 0)] () in
             let ld_bias = U.load ~src:idx_bias () in
             let r0 = reduce_range ~axis:0 (i32 4) in
-            let idx_in = U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true () in
+            let idx_in = U.index ~ptr:p1 ~idxs:[r0] () in
             let ld_in = U.load ~src:idx_in () in
             let add_in = U.alu_binary ~op:Ops.Add ~lhs:ld_in ~rhs:ld_bias in
             let st_reg = U.store ~dst:reg_idx ~value:add_in () in
             let e = U.end_ ~value:st_reg ~ranges:[ r0 ] in
             let acc_after = U.after ~src:dreg ~deps:[ e ] in
             let acc_val =
-              U.load ~src:(U.index ~ptr:acc_after ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+              U.load ~src:(U.index ~ptr:acc_after ~idxs:[(i32 0)] ()) ()
             in
             let add_out = U.alu_binary ~op:Ops.Add ~lhs:acc_val ~rhs:ld_bias in
             let idx_out = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
@@ -630,14 +629,14 @@ let () =
             equal int 1 (List.length pre_range_loads);
             is_true (List.hd pre_range_loads < range_pos));
           test "loop-carried reg stores stay inside the range" (fun () ->
-            let input_ptr = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:4 in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr input_ptr) () in
+            let input_ptr = dt in
+            let reg_ptr = dt in
+            let p0 = U.param ~slot:0 ~dtype:input_ptr () in
             let dreg = define_reg ~size:4 ~dtype:reg_ptr ~slot:0 in
             let ri n = U.index ~ptr:dreg ~idxs:[(i32 n)] () in
             let st_init n = U.store ~dst:(ri n) ~value:(f32 0.0) () in
             let r0 = loop_range ~axis:0 (i32 4) in
-            let idx_in = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+            let idx_in = U.index ~ptr:p0 ~idxs:[r0] () in
             let ld = U.load ~src:idx_in () in
             let st_loop n =
               let add = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:(f32 0.0) in
@@ -688,18 +687,18 @@ let () =
             raises_linearize
               "gated loads require an alt value before linearize"
               (fun () ->
-                let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+                let p0 = U.param ~slot:0 ~dtype:ptr () in
                 let gate = U.const (Const.bool true) in
-                let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] ~as_ptr:true () in
+                let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
                 let ld = U.load ~src:idx () in
                 let ld = U.replace ld ~src:[| idx; gate |] () in
                 ignore (linearize (U.sink [ ld ]))));
           test "unlowered Reduce nodes are rejected" (fun () ->
             raises_linearize "Reduce must be lowered before linearize"
               (fun () ->
-                let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+                let p0 = U.param ~slot:0 ~dtype:ptr () in
                 let r0 = reduce_range ~axis:0 (i32 4) in
-                let idx = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+                let idx = U.index ~ptr:p0 ~idxs:[r0] () in
                 let ld = U.load ~src:idx () in
                 let red =
                   U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] ~dtype:dt
@@ -725,8 +724,8 @@ let () =
       group "CFG context"
         [
           test "sibling ends under sink are ordered" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
+            let p1 = U.param ~slot:1 ~dtype:ptr () in
             let r0 = loop_range ~axis:0 (i32 4) in
             let st0 =
               U.store
@@ -749,7 +748,7 @@ let () =
             let ends = find_end_ranges program in
             is_true (List.hd ends < List.nth ranges 1));
           test "three-range end exercises cfg nesting" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let r0 = loop_range ~axis:0 (i32 4) in
             let r1 = loop_range ~axis:1 (i32 4) in
             let r2 = loop_range ~axis:2 (i32 4) in
@@ -772,18 +771,18 @@ let () =
             is_true (List.nth ranges 1 < List.nth ranges 2);
             is_true (List.nth ends 0 < List.nth ends 1));
           test "two independent reduces are sequenced" (fun () ->
-            let out_ptr = global_ptr dt in
-            let in_ptr_a = global_ptr dt in
-            let in_ptr_b = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr out_ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr in_ptr_a) () in
-            let p2 = U.param ~slot:2 ~dtype:(Dtype.Ptr in_ptr_b) () in
+            let out_ptr = dt in
+            let in_ptr_a = dt in
+            let in_ptr_b = dt in
+            let reg_ptr = dt in
+            let p0 = U.param ~slot:0 ~dtype:out_ptr () in
+            let p1 = U.param ~slot:1 ~dtype:in_ptr_a () in
+            let p2 = U.param ~slot:2 ~dtype:in_ptr_b () in
             let make_reduce dreg param axis =
               let ri = U.index ~ptr:dreg ~idxs:[(i32 0)] () in
               let st_init = U.store ~dst:ri ~value:(f32 0.0) () in
               let r = reduce_range ~axis (i32 4) in
-              let idx = U.index ~ptr:param ~idxs:[r] ~as_ptr:true () in
+              let idx = U.index ~ptr:param ~idxs:[r] () in
               let st_acc =
                 U.store ~dst:ri ~value:(U.load ~src:idx ()) ()
               in
@@ -797,10 +796,10 @@ let () =
             let af_a = U.after ~src:dreg_a ~deps:[ e0 ] in
             let af_b = U.after ~src:dreg_b ~deps:[ e1 ] in
             let ld_res_a =
-              U.load ~src:(U.index ~ptr:af_a ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+              U.load ~src:(U.index ~ptr:af_a ~idxs:[(i32 0)] ()) ()
             in
             let ld_res_b =
-              U.load ~src:(U.index ~ptr:af_b ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+              U.load ~src:(U.index ~ptr:af_b ~idxs:[(i32 0)] ()) ()
             in
             let sum = U.alu_binary ~op:Ops.Add ~lhs:ld_res_a ~rhs:ld_res_b in
             let idx_out = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
@@ -816,7 +815,7 @@ let () =
             is_true (List.nth ends 0 < List.nth ranges 1));
           test "three sibling ends are chain-ordered" (fun () ->
             let make_branch idx axis =
-              let p = U.param ~slot:idx ~dtype:(Dtype.Ptr (global_ptr dt)) () in
+              let p = U.param ~slot:idx ~dtype:dt () in
               let r = loop_range ~axis (i32 4) in
               let st =
                 U.store
@@ -837,7 +836,7 @@ let () =
             is_true (List.nth ends 0 < List.nth ranges 1);
             is_true (List.nth ends 1 < List.nth ranges 2));
           test "cyclic control-flow edge is rejected" (fun () ->
-            let p = U.param ~slot:0 ~dtype:(Dtype.Ptr (global_ptr dt)) () in
+            let p = U.param ~slot:0 ~dtype:dt () in
             let child_r = loop_range ~axis:1 (i32 4) in
             let parent_r =
               loop_range ~axis:0 (i32 4)
@@ -871,11 +870,11 @@ let () =
       group "Priority ordering"
         [
           test "params ordered by index" (fun () ->
-            let p2 = U.param ~slot:2 ~dtype:(Dtype.Ptr ptr) () in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
-            let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr ptr) () in
+            let p2 = U.param ~slot:2 ~dtype:ptr () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
+            let p1 = U.param ~slot:1 ~dtype:ptr () in
             let ld n p =
-              U.load ~src:(U.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+              U.load ~src:(U.index ~ptr:p ~idxs:[(i32 0)] ()) ()
             in
             let sum =
               U.alu_binary ~op:Ops.Add ~lhs:(ld 0 p0)
@@ -894,10 +893,10 @@ let () =
             is_true (find_param 1 < find_param 2));
           test "define_var ordered by name" (fun () ->
             let vb =
-              define_var ~name:"b" ~lo:0 ~hi:10 ~dtype:Dtype.Val.int32 ()
+              define_var ~name:"b" ~lo:0 ~hi:10 ~dtype:Dtype.int32 ()
             in
             let va =
-              define_var ~name:"a" ~lo:0 ~hi:10 ~dtype:Dtype.Val.int32 ()
+              define_var ~name:"a" ~lo:0 ~hi:10 ~dtype:Dtype.int32 ()
             in
             let sum = U.alu_binary ~op:Ops.Add ~lhs:va ~rhs:vb in
             let program = linearize (U.sink [ sum ]) in
@@ -909,8 +908,8 @@ let () =
             in
             is_true (find_var "a" < find_var "b"));
           test "define_reg before define_local" (fun () ->
-            let local_ptr = Dtype.Ptr.create dt ~addrspace:Local ~size:256 in
-            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
+            let local_ptr = dt in
+            let reg_ptr = dt in
             let dl = define_local ~size:256 ~dtype:local_ptr in
             let dr = define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let st ptr_node =
@@ -932,7 +931,7 @@ let () =
             in
             is_true (pos_reg < pos_local));
           test "nested range increases run_count" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let r_outer = loop_range ~axis:0 (i32 4) in
             let r_inner = loop_range ~axis:1 (i32 8) in
             let sum = U.alu_binary ~op:Ops.Add ~lhs:r_outer ~rhs:r_inner in
@@ -950,7 +949,7 @@ let () =
       group "Split ends"
         [
           test "three ranges with mixed kinds are sorted" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let r_global = global_range ~axis:0 (i32 4) in
             let r_loop = loop_range ~axis:1 (i32 4) in
             let r_reduce = reduce_range ~axis:2 (i32 4) in
@@ -977,11 +976,11 @@ let () =
           test "same-axis ranges are split by full range argument" (fun () ->
             let r0 =
               U.range ~size:(i32 4) ~axis:0 ~sub:[ 0 ]
-                ~kind:Axis_type.Loop ~dtype:Dtype.Val.int32 ()
+                ~kind:Axis_type.Loop ~dtype:Dtype.int32 ()
             in
             let r1 =
               U.range ~size:(i32 4) ~axis:0 ~sub:[ 1 ]
-                ~kind:Axis_type.Loop ~dtype:Dtype.Val.int32 ()
+                ~kind:Axis_type.Loop ~dtype:Dtype.int32 ()
             in
             let e = U.end_ ~value:(i32 1) ~ranges:[ r0; r1 ] in
             match Linearizer.do_split_ends e with
@@ -996,7 +995,7 @@ let () =
                       | _ -> failwith "expected inner End")
                  | _ -> failwith "expected outer End"));
           test "end with zero ranges passes through" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
             let st = U.store ~dst:idx ~value:(f32 1.0) () in
             let e = U.end_ ~value:st ~ranges:[] in
@@ -1010,7 +1009,7 @@ let () =
       group "Emission"
         [
           test "barrier emission" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let idx = U.index ~ptr:p0 ~idxs:[(i32 0)] () in
             let st = U.store ~dst:idx ~value:(f32 1.0) () in
             let program = linearize (U.sink [ st; U.barrier () ]) in
@@ -1018,9 +1017,9 @@ let () =
             equal int 1
               (count program (function P.Barrier -> true | _ -> false)));
           test "special emission" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let sp =
-              U.special ~name:"idx0" ~size:(i32 32) ~dtype:Dtype.Val.int32 ()
+              U.special ~name:"idx0" ~size:(i32 32) ~dtype:Dtype.int32 ()
             in
             let idx = U.index ~ptr:p0 ~idxs:[sp] () in
             let st = U.store ~dst:idx ~value:(f32 1.0) () in
@@ -1063,7 +1062,7 @@ let () =
           test "custom and custom_inline emission" (fun () ->
             let ci =
               U.custom_inline ~fmt:"get_val(%d)" ~args:[ i32 0 ]
-                ~dtype:Dtype.Val.int32
+                ~dtype:Dtype.int32
             in
             let ce = U.custom ~fmt:"barrier()" ~args:[] in
             let af = U.after ~src:ci ~deps:[ ce ] in
@@ -1075,14 +1074,14 @@ let () =
                 | P.Custom_inline _ -> true
                 | _ -> false)));
           test "after on ptr stays in program" (fun () ->
-            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let reg_ptr = dt in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let dreg = define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = U.index ~ptr:dreg ~idxs:[(i32 0)] () in
             let st_init = U.store ~dst:reg_idx ~value:(f32 0.0) () in
             let af = U.after ~src:dreg ~deps:[ st_init ] in
             let ld =
-              U.load ~src:(U.index ~ptr:af ~idxs:[(i32 0)] ~as_ptr:true ()) ()
+              U.load ~src:(U.index ~ptr:af ~idxs:[(i32 0)] ()) ()
             in
             let st_out =
               U.store
@@ -1098,7 +1097,7 @@ let () =
             in
             (match P.view program after_pos with
              | P.After { src; deps = [ dep ]; dtype } ->
-                 is_true (Dtype.Val.equal dtype Dtype.Val.void);
+                 is_true (Dtype.equal dtype Dtype.void);
                  (match (P.view program src, P.view program dep) with
                   | P.Define_reg _, P.Store _ -> ()
                   | src_view, dep_view ->
@@ -1108,7 +1107,7 @@ let () =
                            (pp_view src_view) (pp_view dep_view)))
              | view -> fail_view "expected pointer After" view));
           test "group forwards first source" (fun () ->
-            let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr ptr) () in
+            let p0 = U.param ~slot:0 ~dtype:ptr () in
             let st n =
               U.store
                 ~dst:(U.index ~ptr:p0 ~idxs:[(i32 n)] ())

@@ -20,36 +20,36 @@ let backends =
     (fun (name, _) -> name = "cpu" || name = "cuda")
     Helpers.all_backends
 
-let fptr size =
-  Dtype.Ptr (Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Global ~size)
+let fparam ~slot size =
+  U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int size) ()
 
-let iptr size =
-  Dtype.Ptr (Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size)
+let iparam ~slot size =
+  U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int size) ()
 
 let kernel () =
   let open U.O in
-  let out = U.param ~slot:0 ~dtype:(fptr 289536) () in
+  let out = fparam ~slot:0 289536 in
   let col = U.range ~size:(Helpers.idx 768) ~axis:2 ~kind:Axis_type.Loop () in
   let chunk = U.range ~size:(Helpers.idx 29) ~axis:3 ~kind:Axis_type.Loop () in
   let tok_i = U.range ~size:(Helpers.idx 13) ~axis:1 ~kind:Axis_type.Loop () in
   let r = U.range ~size:(Helpers.idx 1733) ~axis:0 ~kind:Axis_type.Reduce () in
   let vocab = (chunk * Helpers.idx 1733) + r in
-  let toks = U.param ~slot:1 ~dtype:(iptr 13) () in
-  let wte = U.param ~slot:2 ~dtype:(fptr 38597376) () in
+  let toks = iparam ~slot:1 13 in
+  let wte = fparam ~slot:2 38597376 in
   let gate =
     U.alu_binary ~op:Ops.Cmpne
-      ~lhs:(U.cast ~src:vocab ~dtype:(Dtype.Val Dtype.Val.int32))
+      ~lhs:(U.cast ~src:vocab ~dtype:Dtype.int32)
       ~rhs:(U.index ~ptr:toks ~idxs:[ tok_i ] ())
   in
   let body =
     U.alu_ternary ~op:Ops.Where ~a:gate
-      ~b:(U.const (Const.float Dtype.Val.float32 0.0))
+      ~b:(U.const (Const.float Dtype.float32 0.0))
       ~c:(U.index ~ptr:wte ~idxs:[ (vocab * Helpers.idx 768) + col ] ())
   in
-  let red = U.reduce ~src:body ~ranges:[ r ] ~op:Ops.Add ~dtype:Dtype.Val.float32 in
+  let red = U.reduce ~src:body ~ranges:[ r ] ~op:Ops.Add ~dtype:Dtype.float32 in
   let out_idx = (col * Helpers.idx 29) + chunk + (tok_i * Helpers.idx 22272) in
   let st =
-    U.store ~dst:(U.index ~ptr:out ~idxs:[ out_idx ] ~as_ptr:true ()) ~value:red ()
+    U.store ~dst:(U.index ~ptr:out ~idxs:[ out_idx ] ()) ~value:red ()
   in
   let ended = U.end_ ~value:st ~ranges:[ tok_i; col; chunk ] in
   U.sink

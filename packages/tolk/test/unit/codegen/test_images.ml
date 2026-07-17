@@ -57,9 +57,9 @@ let with_env name value f =
       | Some old -> Unix.putenv name old
       | None -> Unix.putenv name "")
 
-let test_renderer ?pre_matcher ?extra_matcher () =
+let test_renderer ?extra_matcher () =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
-    ~has_shared:false ~shared_max:0 ?pre_matcher ?extra_matcher
+    ~has_shared:false ~shared_max:0 ?extra_matcher
     ~render:(fun ?name:_ _ -> "") ()
 
 let qcom_renderer () =
@@ -354,16 +354,7 @@ let () =
                     | Some _ | None -> failwith "expected unchanged index")
                 | _ -> failwith "expected index")
             | _ -> failwith "expected where around valid index");
-          test "lower pipeline applies renderer pre and extra matchers" (fun () ->
-            let pre_matcher node =
-              match custom_fmt node with
-              | Some "pre({0})" ->
-                  Some
-                    (U.custom_inline ~fmt:"pre_done({0})"
-                       ~args:(Array.to_list (U.src node))
-                       ~dtype:(U.dtype node))
-              | _ -> None
-            in
+          test "lower pipeline applies renderer extra matcher" (fun () ->
             let extra_matcher node =
               match custom_fmt node with
               | Some "extra({0})" ->
@@ -376,23 +367,12 @@ let () =
             let arg = U.const_float 1.0 in
             let root =
               U.sink
-                [ U.custom_inline ~fmt:"pre({0})" ~args:[ arg ]
-                    ~dtype:Dtype.float32;
-                  U.custom_inline ~fmt:"extra({0})" ~args:[ arg ]
+                [ U.custom_inline ~fmt:"extra({0})" ~args:[ arg ]
                     ~dtype:Dtype.float32 ]
             in
             let lowered =
-              Codegen_lower.lower
-                (test_renderer ~pre_matcher ~extra_matcher ())
-                root
+              Codegen_lower.lower (test_renderer ~extra_matcher ()) root
             in
-            equal int 1
-              (count
-                 (fun n ->
-                   match custom_fmt n with
-                   | Some "pre_done({0})" -> true
-                   | _ -> false)
-                 lowered);
             equal int 1
               (count
                  (fun n ->

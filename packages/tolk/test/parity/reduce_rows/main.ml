@@ -11,10 +11,10 @@ let kernel () =
   let rj = U.range ~size:(Helpers.idx cols) ~axis:1 ~kind:Axis_type.Reduce () in
   let open U.O in
   let flat = (ri * int_ cols) + rj in
-  let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ~as_ptr:true ()) () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rj ] ~dtype:Dtype.Val.float32 in
+  let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ()) () in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rj ] ~dtype:Dtype.float32 in
   let st =
-    U.store ~dst:(U.index ~ptr:p1 ~idxs:[ri] ~as_ptr:true ()) ~value:red ()
+    U.store ~dst:(U.index ~ptr:p1 ~idxs:[ri] ()) ~value:red ()
   in
   let e = U.end_ ~value:st ~ranges:[ ri ] in
   U.sink

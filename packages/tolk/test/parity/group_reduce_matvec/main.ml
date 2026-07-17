@@ -25,15 +25,15 @@ let kernel () =
   let rk = U.range ~size:(Helpers.idx k) ~axis:1 ~kind:Axis_type.Reduce () in
   let open U.O in
   let ld_w =
-    U.load ~src:(U.index ~ptr:pw ~idxs:[ (rj * int_ k) + rk ] ~as_ptr:true ()) ()
+    U.load ~src:(U.index ~ptr:pw ~idxs:[ (rj * int_ k) + rk ] ()) ()
   in
-  let ld_x = U.load ~src:(U.index ~ptr:px ~idxs:[ rk ] ~as_ptr:true ()) () in
+  let ld_x = U.load ~src:(U.index ~ptr:px ~idxs:[ rk ] ()) () in
   let red =
     U.reduce ~op:Ops.Add ~src:(ld_w * ld_x) ~ranges:[ rk ]
-      ~dtype:Dtype.Val.float32
+      ~dtype:Dtype.float32
   in
   let st =
-    U.store ~dst:(U.index ~ptr:py ~idxs:[ rj ] ~as_ptr:true ()) ~value:red ()
+    U.store ~dst:(U.index ~ptr:py ~idxs:[ rj ] ()) ~value:red ()
   in
   let e = U.end_ ~value:st ~ranges:[ rj ] in
   U.sink

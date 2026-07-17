@@ -8,13 +8,13 @@ let kernel () =
   let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr () in
   let p2 = U.param ~slot:2 ~dtype:Helpers.global_fptr () in
   let r0 = U.range ~size:(Helpers.idx 128) ~axis:0 ~kind:Axis_type.Reduce () in
-  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true ()) () in
-  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true ()) () in
+  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
+  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r0 ] ~dtype:Dtype.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r0 ] ~dtype:Dtype.float32 in
   let st =
     U.store
-      ~dst:(U.index ~ptr:p2 ~idxs:[(Helpers.idx 0)] ~as_ptr:true ())
+      ~dst:(U.index ~ptr:p2 ~idxs:[(Helpers.idx 0)] ())
       ~value:red ()
   in
   U.sink

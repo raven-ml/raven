@@ -7,12 +7,12 @@ let kernel () =
   let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr () in
   let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr () in
   let r0 = U.range ~size:(Helpers.idx 256) ~axis:0 ~kind:Axis_type.Global () in
-  let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true ()) () in
-  let zero = U.const (Const.float Dtype.Val.float32 0.0) in
+  let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
+  let zero = U.const (Const.float Dtype.float32 0.0) in
   let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:zero ~rhs:ld in
   let w = U.alu_ternary ~op:Ops.Where ~a:cond ~b:ld ~c:zero in
   let st =
-    U.store ~dst:(U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true ()) ~value:w ()
+    U.store ~dst:(U.index ~ptr:p1 ~idxs:[r0] ()) ~value:w ()
   in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   U.sink

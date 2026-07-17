@@ -19,7 +19,7 @@ module D = Dtype
 
 (* Emit a shape-encoding node from a concrete int list. *)
 let mk_shape b (dims : int list) : U.t =
-  let ids = List.map (fun s -> U.const (C.int D.Val.weakint s)) dims in
+  let ids = List.map (fun s -> U.const (C.int D.weakint s)) dims in
   match ids with
   | [ d ] -> d
   | ds ->
@@ -32,10 +32,8 @@ let mk_param ?(dtype = D.float32) b ~slot (shape : int list) : U.t =
   U.param ~slot ~dtype ?shape:shape_id ~device:dev ()
 
 let mk_ptr_param b ~slot size : U.t =
-  let dtype =
-    D.Ptr (D.Ptr.create D.Val.float32 ~addrspace:D.Global ~size)
-  in
-  U.param ~slot ~dtype ~shape:(mk_shape b [ size ]) ~device:(U.Single "CPU") ()
+  U.param ~slot ~dtype:D.float32 ~shape:(mk_shape b [ size ])
+    ~device:(U.Single "CPU") ()
 
 (* Wrap source(s) in CONTIGUOUS -> SINK. *)
 let wrap_sink b (srcs : U.t list) : U.t =
@@ -59,7 +57,6 @@ let scheduled_kernel ?(name = "") ?(optimize = true) args body =
   let info : U.call_info =
     {
       grad_fxn = None;
-      metadata = [];
       name = None;
       precompile = false;
       precompile_backward = false;
@@ -199,11 +196,11 @@ let build_expand_permute b =
   let bp = mk_param b ~slot:1 [ 10; 10; 1 ] in
   let ab = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
   let expanded =
-    U.expand ~src:ab ~shape:(mk_shape b [ 10; 10; 10 ])
+    U.broadcast_to ~src:ab ~shape:(mk_shape b [ 10; 10; 10 ])
   in
   let permed = U.permute ~src:ab ~order:[ 2; 1; 0 ] in
   let permed_expanded =
-    U.expand ~src:permed ~shape:(mk_shape b [ 10; 10; 10 ])
+    U.broadcast_to ~src:permed ~shape:(mk_shape b [ 10; 10; 10 ])
   in
   let result = U.alu_binary ~op:Ops.Add ~lhs:expanded ~rhs:permed_expanded in
   wrap_sink b [ result ]
@@ -223,7 +220,7 @@ let build_multistage_reduce b =
   let a = mk_param b ~slot:0 [ 32; 32; 32 ] in
   let red1 =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 2 ] in
-  let zero = U.const (C.float D.Val.float32 0.0) in
+  let zero = U.const (C.float D.float32 0.0) in
   let relu = U.alu_binary ~op:Ops.Max ~lhs:red1 ~rhs:zero in
   let reshaped =
     U.reshape ~src:relu ~shape:(mk_shape b [ 32; 32 ])
@@ -278,11 +275,11 @@ let build_llama_rmsnorm b =
   let sum = U.reduce_axis ~src:sq ~op:Ops.Add ~axes:[ 1 ] in
   let mean =
     U.alu_binary ~op:Ops.Mul ~lhs:sum
-      ~rhs:(U.const (C.float D.Val.float32 0.125))
+      ~rhs:(U.const (C.float D.float32 0.125))
   in
   let eps =
     U.alu_binary ~op:Ops.Add ~lhs:mean
-      ~rhs:(U.const (C.float D.Val.float32 0.00001))
+      ~rhs:(U.const (C.float D.float32 0.00001))
   in
   let sqrt = U.alu_unary ~op:Ops.Sqrt ~src:eps in
   let rsqrt = U.alu_unary ~op:Ops.Reciprocal ~src:sqrt in
@@ -298,10 +295,10 @@ let build_llama_ffn_gate b =
   let norm3 = U.reshape ~src:norm ~shape:(mk_shape b [ 2; 1; 1 ]) in
   let weight3 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 1; 8 ]) in
   let matrix3 = U.reshape ~src:matrix ~shape:(mk_shape b [ 1; 8; 8 ]) in
-  let x3 = U.expand ~src:x3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
-  let norm3 = U.expand ~src:norm3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
-  let weight3 = U.expand ~src:weight3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
-  let matrix3 = U.expand ~src:matrix3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+  let norm3 = U.broadcast_to ~src:norm3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+  let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+  let matrix3 = U.broadcast_to ~src:matrix3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:norm3 in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs ~rhs:weight3 in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs ~rhs:matrix3 in
@@ -315,8 +312,8 @@ let build_llama_vector_scale b =
   let weight = mk_param b ~slot:2 [ 8 ] in
   let scale2 = U.reshape ~src:scale ~shape:(mk_shape b [ 2; 1 ]) in
   let weight2 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 8 ]) in
-  let scale2 = U.expand ~src:scale2 ~shape:(mk_shape b [ 2; 8 ]) in
-  let weight2 = U.expand ~src:weight2 ~shape:(mk_shape b [ 2; 8 ]) in
+  let scale2 = U.broadcast_to ~src:scale2 ~shape:(mk_shape b [ 2; 8 ]) in
+  let weight2 = U.broadcast_to ~src:weight2 ~shape:(mk_shape b [ 2; 8 ]) in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:scale2 in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:value ~rhs:weight2 in
   wrap_sink b [ value ]
@@ -326,30 +323,30 @@ let build_llama_output_projection b =
   let weight = mk_param b ~slot:1 [ 32; 8 ] in
   let x3 = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; 8 ]) in
   let weight3 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 32; 8 ]) in
-  let x3 = U.expand ~src:x3 ~shape:(mk_shape b [ 2; 32; 8 ]) in
-  let weight3 = U.expand ~src:weight3 ~shape:(mk_shape b [ 2; 32; 8 ]) in
+  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; 32; 8 ]) in
+  let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape b [ 2; 32; 8 ]) in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:weight3 in
   let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
   let result = U.reshape ~src:red ~shape:(mk_shape b [ 2; 32 ]) in
   wrap_sink b [ result ]
 
-let f32 x = U.const (C.float D.Val.float32 x)
-let wi x = U.const (C.int D.Val.weakint x)
+let f32 x = U.const (C.float D.float32 x)
+let wi x = U.const (C.int D.weakint x)
 
 let linear b ~x ~weight ~out_dim ~in_dim =
   let x3 = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; in_dim ]) in
   let w3 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; out_dim; in_dim ]) in
-  let x3 = U.expand ~src:x3 ~shape:(mk_shape b [ 2; out_dim; in_dim ]) in
-  let w3 = U.expand ~src:w3 ~shape:(mk_shape b [ 2; out_dim; in_dim ]) in
+  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; out_dim; in_dim ]) in
+  let w3 = U.broadcast_to ~src:w3 ~shape:(mk_shape b [ 2; out_dim; in_dim ]) in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:w3 in
   let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
   U.reshape ~src:red ~shape:(mk_shape b [ 2; out_dim ])
 
 let rms_norm_from_inv b x inv weight =
   let inv = U.reshape ~src:inv ~shape:(mk_shape b [ 2; 1 ]) in
-  let inv = U.expand ~src:inv ~shape:(mk_shape b [ 2; 8 ]) in
+  let inv = U.broadcast_to ~src:inv ~shape:(mk_shape b [ 2; 8 ]) in
   let weight = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 8 ]) in
-  let weight = U.expand ~src:weight ~shape:(mk_shape b [ 2; 8 ]) in
+  let weight = U.broadcast_to ~src:weight ~shape:(mk_shape b [ 2; 8 ]) in
   U.alu_binary ~op:Ops.Mul
     ~lhs:(U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:inv)
     ~rhs:weight
@@ -423,7 +420,7 @@ let build_llama_attention_scores ?(kernel_name = "") b =
     score01_base + f32 neg_infinity
   in
   let base = r * wi 4 in
-  let dst = U.index ~ptr:out ~idxs:[ base ] ~as_ptr:true () in
+  let dst = U.index ~ptr:out ~idxs:[ base ] () in
   let value = U.stack [ score00; score01; score10; score11 ] in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r ]
   |> scheduled_kernel ~name:kernel_name [ out; q; freqs; k ]
@@ -435,7 +432,7 @@ let build_llama_attention_max b =
 
 let softmax_exp2 b ~score ~maxv =
   let maxv = U.reshape ~src:maxv ~shape:(mk_shape b [ 4; 1 ]) in
-  let maxv = U.expand ~src:maxv ~shape:(mk_shape b [ 4; 2 ]) in
+  let maxv = U.broadcast_to ~src:maxv ~shape:(mk_shape b [ 4; 2 ]) in
   let diff = U.alu_binary ~op:Ops.Sub ~lhs:score ~rhs:maxv in
   U.alu_binary ~op:Ops.Mul ~lhs:diff ~rhs:(f32 1.4426950408889634)
   |> fun u -> U.alu_unary ~op:Ops.Exp2 ~src:u
@@ -469,9 +466,9 @@ let build_llama_attention_context b =
       ~rhs:(U.index ~ptr:v ~idxs:[ (r2 * wi 4) + r3 ] ())
   in
   let value =
-    U.reduce ~src:value ~ranges:[ r2 ] ~op:Ops.Add ~dtype:D.Val.float32
+    U.reduce ~src:value ~ranges:[ r2 ] ~op:Ops.Add ~dtype:D.float32
   in
-  let dst = U.index ~ptr:out ~idxs:[ (r1 * wi 4) + r3 ] ~as_ptr:true () in
+  let dst = U.index ~ptr:out ~idxs:[ (r1 * wi 4) + r3 ] () in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r1; r2; r3 ]
   |> scheduled_kernel [ out; score; maxv; inv; v ]
 
@@ -495,11 +492,11 @@ let build_llama_attention_output b =
   let value = load ctx ctx_idx * load weight weight_idx in
   let value =
     U.reduce ~src:value ~ranges:[ rred; rdim ] ~op:Ops.Add
-      ~dtype:D.Val.float32
+      ~dtype:D.float32
   in
   let idx = (rseq * wi 8) + rout in
   let value = load residual idx + value in
-  let dst = U.index ~ptr:out ~idxs:[ idx ] ~as_ptr:true () in
+  let dst = U.index ~ptr:out ~idxs:[ idx ] () in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ rseq; rout ]
   |> scheduled_kernel [ out; residual; ctx; weight ]
 
@@ -514,10 +511,10 @@ let build_llama_ffn_hidden b =
     let inv = U.reshape ~src:inv ~shape:(mk_shape b [ 2; 1; 1 ]) in
     let norm = U.reshape ~src:norm ~shape:(mk_shape b [ 1; 1; 8 ]) in
     let weight = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 16; 8 ]) in
-    let x = U.expand ~src:x ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let inv = U.expand ~src:inv ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let norm = U.expand ~src:norm ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let weight = U.expand ~src:weight ~shape:(mk_shape b [ 2; 16; 8 ]) in
+    let x = U.broadcast_to ~src:x ~shape:(mk_shape b [ 2; 16; 8 ]) in
+    let inv = U.broadcast_to ~src:inv ~shape:(mk_shape b [ 2; 16; 8 ]) in
+    let norm = U.broadcast_to ~src:norm ~shape:(mk_shape b [ 2; 16; 8 ]) in
+    let weight = U.broadcast_to ~src:weight ~shape:(mk_shape b [ 2; 16; 8 ]) in
     let mul = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:inv in
     let mul = U.alu_binary ~op:Ops.Mul ~lhs:mul ~rhs:norm in
     let mul = U.alu_binary ~op:Ops.Mul ~lhs:mul ~rhs:weight in

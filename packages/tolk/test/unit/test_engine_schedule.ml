@@ -9,7 +9,6 @@ module U = Uop
 let call_info : U.call_info =
   {
     grad_fxn = None;
-    metadata = [];
     name = None;
     precompile = false;
     precompile_backward = false;
@@ -27,27 +26,25 @@ let kernel_info name : U.kernel_info =
     beam = 0;
   }
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
-
 let shape dims =
   dims
-  |> List.map (fun n -> U.const (Const.int Dtype.Val.weakint n))
-  |> U.stack ~dtype:Dtype.Val.weakint
+  |> List.map (fun n -> U.const (Const.int Dtype.weakint n))
+  |> U.stack ~dtype:Dtype.weakint
 
 let buffer slot =
-  U.buffer ~slot ~dtype:(Dtype.Ptr (global_ptr Dtype.Val.float32))
-    ~shape:(shape [ 1 ]) ~addrspace:Global ()
+  U.buffer ~slot ~dtype:Dtype.float32 ~shape:(shape [ 1 ])
+    ~addrspace:Dtype.Global ()
 
 let kernel name args =
   let body = U.sink ~kernel_info:(kernel_info name) [] in
   U.call ~body ~args ~info:call_info
 
 let store_dep dst =
-  let idx = U.index ~ptr:dst ~idxs:[(U.const_int 0)] ~as_ptr:true () in
+  let idx = U.index ~ptr:dst ~idxs:[(U.const_int 0)] () in
   U.store ~dst:idx ~value:(U.const_float 0.0) ()
 
 let variable name =
-  U.variable ~name ~min_val:0 ~max_val:16 ~dtype:Dtype.Val.int32 ()
+  U.variable ~name ~min_val:0 ~max_val:16 ~dtype:Dtype.int32 ()
 
 let linear_calls linear =
   match U.op linear with

@@ -101,9 +101,9 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
     ~renderer_set ~runtime ~synchronize ()
 
 let variable name lo hi =
-  U.variable ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.Val.int32 ()
+  U.variable ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 ()
 
-let shape_const n = U.const (Const.int Dtype.Val.weakint n)
+let shape_const n = U.const (Const.int Dtype.weakint n)
 
 let buffer_node ?(slot = 0) ?(size = 4) ?(dtype = Dtype.int32)
     ?(device = "TEST:0") () =
@@ -122,7 +122,6 @@ let program_of body =
 let call_info name : U.call_info =
   {
     grad_fxn = None;
-    metadata = [];
     name;
     precompile = false;
     precompile_backward = false;
@@ -379,7 +378,6 @@ let () =
             let info : U.call_info =
               {
                 grad_fxn = None;
-                metadata = [];
                 name = Some "rl_kernel";
                 precompile = false;
                 precompile_backward = false;
@@ -402,7 +400,6 @@ let () =
             let info : U.call_info =
               {
                 grad_fxn = None;
-                metadata = [];
                 name = Some "rl_param";
                 precompile = false;
                 precompile_backward = false;
@@ -433,7 +430,6 @@ let () =
             let info : U.call_info =
               {
                 grad_fxn = None;
-                metadata = [];
                 name = None;
                 precompile = false;
                 precompile_backward = false;

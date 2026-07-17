@@ -18,10 +18,10 @@ let build () =
   let b = Helpers.mk_param ~idx:1 ~dtype:Dtype.bfloat16 [ k; n ] in
   (* dot: a.reshape(M,1,K) * b.permute(1,0).reshape(1,N,K), summed over K. *)
   let ar = U.reshape ~src:a ~shape:(Helpers.mk_shape [ m; 1; k ]) in
-  let ae = U.expand ~src:ar ~shape:(Helpers.mk_shape [ m; n; k ]) in
+  let ae = U.broadcast_to ~src:ar ~shape:(Helpers.mk_shape [ m; n; k ]) in
   let bt = U.permute ~src:b ~order:[ 1; 0 ] in
   let br = U.reshape ~src:bt ~shape:(Helpers.mk_shape [ 1; n; k ]) in
-  let be = U.expand ~src:br ~shape:(Helpers.mk_shape [ m; n; k ]) in
+  let be = U.broadcast_to ~src:br ~shape:(Helpers.mk_shape [ m; n; k ]) in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ae ~rhs:be in
   let mulf = U.cast ~src:mul ~dtype:Dtype.float32 in
   let red = U.reduce_axis ~src:mulf ~op:Ops.Add ~axes:[ 2 ] in

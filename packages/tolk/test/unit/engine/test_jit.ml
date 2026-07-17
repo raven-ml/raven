@@ -75,7 +75,7 @@ let to_program body =
   U.program ~sink:body ~linear:(U.linear []) ~source:(U.source "")
     ~binary:(U.binary "") ~info ()
 
-let shape_const n = U.const (Const.int Dtype.Val.weakint n)
+let shape_const n = U.const (Const.int Dtype.weakint n)
 
 let buffer_node ?(size = 4) ?(dtype = Dtype.int32) () =
   U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(shape_const size)
@@ -95,7 +95,6 @@ let kernel_info name : U.kernel_info =
 let call_info name : U.call_info =
   {
     grad_fxn = None;
-    metadata = [];
     name;
     precompile = false;
     precompile_backward = false;

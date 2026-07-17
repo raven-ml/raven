@@ -9,13 +9,9 @@ open Tolk_uop
 
 module U = Uop
 
-let ptr_i32 size =
-  Dtype.Ptr (Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Global ~size)
-
 let call_info name : U.call_info =
   {
     grad_fxn = None;
-    metadata = [];
     name = Some name;
     precompile = false;
     precompile_backward = false;
@@ -86,7 +82,7 @@ let test_device =
     ~synchronize:(fun () -> ()) ()
 
 let after_partition_orders_nested_after_dependencies () =
-  let buf = U.buffer ~slot:0 ~dtype:(ptr_i32 4) () in
+  let buf = U.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
   let producer = call "producer" [ buf ] in
   let dep_after = U.after ~src:buf ~deps:[ producer ] in
   let consumer = call "consumer" [ dep_after ] in
@@ -102,9 +98,9 @@ let war_edge_orders_reader_before_writer () =
      The reader must be scheduled before the writer. Absent the WAR edge, the
      writer's AFTER is toposorted first (it is the first sink child) and would
      sort ahead of the reader. *)
-  let buf_b = U.buffer ~slot:0 ~dtype:(ptr_i32 4) () in
-  let buf_c = U.buffer ~slot:1 ~dtype:(ptr_i32 4) () in
-  let buf_d = U.buffer ~slot:2 ~dtype:(ptr_i32 4) () in
+  let buf_b = U.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
+  let buf_c = U.buffer ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
+  let buf_d = U.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
   let reader = call "reader" [ buf_c; buf_b ] in
   let writer = call "writer" [ buf_b; buf_d ] in
   let after_b = U.after ~src:buf_b ~deps:[ writer ] in
@@ -114,9 +110,9 @@ let war_edge_orders_reader_before_writer () =
 
 let create_linear_call_substitutes_params_and_new_buffers () =
   let shape = U.const_int 4 in
-  let formal = U.param ~slot:0 ~dtype:(ptr_i32 4) ~shape () in
-  let actual = U.buffer ~slot:10 ~dtype:(ptr_i32 4) ~shape () in
-  let cached_tmp = U.buffer ~slot:99 ~dtype:(ptr_i32 4) ~shape () in
+  let formal = U.param ~slot:0 ~dtype:Dtype.int32 ~shape () in
+  let actual = U.buffer ~slot:10 ~dtype:Dtype.int32 ~shape () in
+  let cached_tmp = U.buffer ~slot:99 ~dtype:Dtype.int32 ~shape () in
   let body_call = call "kernel" [ formal; cached_tmp ] in
   let cached_linear = U.linear [ body_call ] in
   let big_sink =
@@ -149,8 +145,8 @@ let create_linear_call_param_slots_count_binds () =
   let shape = U.const_int 4 in
   let n = U.variable ~name:"n" ~min_val:0 ~max_val:16 () in
   let bind_n = U.bind ~var:n ~value:(U.const_int 5) in
-  let formal = U.param ~slot:1 ~dtype:(ptr_i32 4) ~shape () in
-  let actual = U.buffer ~slot:10 ~dtype:(ptr_i32 4) ~shape () in
+  let formal = U.param ~slot:1 ~dtype:Dtype.int32 ~shape () in
+  let actual = U.buffer ~slot:10 ~dtype:Dtype.int32 ~shape () in
   let body_call =
     U.call ~body:(kernel_body "uses_n" [ n ]) ~args:[ formal ]
       ~info:(call_info "uses_n")
@@ -196,12 +192,12 @@ let create_linear_with_vars_returns_only_used_binds () =
    must leave it intact on the capture path. *)
 let internal_buffer_sink () =
   let shape = U.const_int 4 in
-  let formal = U.param ~slot:0 ~dtype:(ptr_i32 4) ~shape () in
+  let formal = U.param ~slot:0 ~dtype:Dtype.int32 ~shape () in
   let tmp =
     U.buffer ~slot:77 ~dtype:Dtype.int32 ~shape
       ~device:(U.Single "TEST:0") ()
   in
-  let actual = U.buffer ~slot:10 ~dtype:(ptr_i32 4) ~shape () in
+  let actual = U.buffer ~slot:10 ~dtype:Dtype.int32 ~shape () in
   let body_call = call "kernel" [ formal; tmp ] in
   U.call ~body:(U.linear [ body_call ]) ~args:[ actual ]
     ~info:(call_info "linear")

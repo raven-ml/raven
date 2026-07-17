@@ -15,12 +15,12 @@ let kernel () =
   let a_idx = (ri * int_ k) + rk in
   let b_idx = (rk * int_ n) + rj in
   let c_idx = (ri * int_ n) + rj in
-  let ld_a = U.load ~src:(U.index ~ptr:pA ~idxs:[a_idx] ~as_ptr:true ()) () in
-  let ld_b = U.load ~src:(U.index ~ptr:pB ~idxs:[b_idx] ~as_ptr:true ()) () in
+  let ld_a = U.load ~src:(U.index ~ptr:pA ~idxs:[a_idx] ()) () in
+  let ld_b = U.load ~src:(U.index ~ptr:pB ~idxs:[b_idx] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] ~dtype:Dtype.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] ~dtype:Dtype.float32 in
   let st =
-    U.store ~dst:(U.index ~ptr:pC ~idxs:[c_idx] ~as_ptr:true ()) ~value:red ()
+    U.store ~dst:(U.index ~ptr:pC ~idxs:[c_idx] ()) ~value:red ()
   in
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   U.sink

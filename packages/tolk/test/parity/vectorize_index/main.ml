@@ -3,30 +3,28 @@
 open Tolk_uop
 module B = Program_spec_builder
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 
 let kernel () =
-  let dt = Dtype.Val.float32 in
-  let vdt = Dtype.Val.vec 4 dt in
-  let ptr = global_ptr dt in
+  let dt = Dtype.float32 in
+  let ptr = dt in
   let b = B.create () in
   let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
   let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
   let c0 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
   in
   let c1 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 1; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 })
   in
   let c2 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 2; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 2; dtype = Dtype.int32 })
   in
   let c3 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 3; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 3; dtype = Dtype.int32 })
   in
   let idx0 =
     B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr })
@@ -45,7 +43,7 @@ let kernel () =
   let ld2 = B.emit b (Load { src = idx2; alt = None; gate = None; dtype = dt }) in
   let ld3 = B.emit b (Load { src = idx3; alt = None; gate = None; dtype = dt }) in
   let vec =
-    B.emit b (Stack { srcs = [ ld0; ld1; ld2; ld3 ]; dtype = vdt })
+    B.emit b (Stack { srcs = [ ld0; ld1; ld2; ld3 ]; dtype = dt })
   in
   let lane = B.emit b (Value_index { src = vec; idxs = [ c2 ]; dtype = dt }) in
   let oidx =
@@ -55,26 +53,26 @@ let kernel () =
   B.finish b
 
 let kernel_scalarized () =
-  let dt = Dtype.Val.float32 in
-  let ptr = global_ptr dt in
+  let dt = Dtype.float32 in
+  let ptr = dt in
   let b = B.create () in
   let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
   let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
   let c0 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
   in
   let c1 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 1; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 })
   in
   let c2 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 2; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 2; dtype = Dtype.int32 })
   in
   let c3 =
     B.emit b
-      (Const { value = Const.int Dtype.Val.int32 3; dtype = Dtype.Val.int32 })
+      (Const { value = Const.int Dtype.int32 3; dtype = Dtype.int32 })
   in
   let idx0 =
     B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr })

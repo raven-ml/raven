@@ -8,7 +8,9 @@ open Tolk
 open Tolk_uop
 module U = Uop
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:16
+let i32_param ~slot =
+  U.param ~slot ~dtype:Dtype.int32
+    ~shape:(U.stack [ U.const_int 16 ]) ~addrspace:Dtype.Global ()
 
 let int32_to_bytes values =
   let bytes = Bytes.create (List.length values * 4) in
@@ -67,13 +69,12 @@ let i32_view buf ~offset ~size =
 let read_i32 buf = Device.Buffer.as_bytes buf |> int32_list_of_bytes
 
 let increment_program () =
-  let dt = Dtype.Val.int32 in
-  let ptr = Dtype.Ptr (global_ptr dt) in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
-  let p1 = U.param ~slot:1 ~dtype:ptr () in
-  let c0 = U.const (Const.int Dtype.Val.int32 0) in
-  let idx_src = U.index ~ptr:p1 ~idxs:[c0] ~as_ptr:true () in
-  let idx_dst = U.index ~ptr:p0 ~idxs:[c0] ~as_ptr:true () in
+  let dt = Dtype.int32 in
+  let p0 = i32_param ~slot:0 in
+  let p1 = i32_param ~slot:1 in
+  let c0 = U.const (Const.int Dtype.int32 0) in
+  let idx_src = U.index ~ptr:p1 ~idxs:[c0] () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[c0] () in
   let l0 = U.load ~src:idx_src () in
   let c1 = U.const (Const.int dt 1) in
   let sum = U.alu_binary ~op:Ops.Add ~lhs:l0 ~rhs:c1 in
@@ -81,12 +82,11 @@ let increment_program () =
   [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
 
 let variable_program () =
-  let dt = Dtype.Val.int32 in
-  let ptr = Dtype.Ptr (global_ptr dt) in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
+  let dt = Dtype.int32 in
+  let p0 = i32_param ~slot:0 in
   let c0 = U.const (Const.int dt 0) in
   let n = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:dt () in
-  let idx_dst = U.index ~ptr:p0 ~idxs:[c0] ~as_ptr:true () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[c0] () in
   let store = U.store ~dst:idx_dst ~value:n () in
   [ p0; c0; n; idx_dst; store ]
 

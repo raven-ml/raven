@@ -8,11 +8,11 @@ let build () =
   let b = Helpers.mk_param ~idx:1 [ 10; 10; 1 ] in
   let ab = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
   let expanded =
-    U.expand ~src:ab ~shape:(Helpers.mk_shape [ 10; 10; 10 ])
+    U.broadcast_to ~src:ab ~shape:(Helpers.mk_shape [ 10; 10; 10 ])
   in
   let permed = U.permute ~src:ab ~order:[ 2; 1; 0 ] in
   let permed_expanded =
-    U.expand ~src:permed ~shape:(Helpers.mk_shape [ 10; 10; 10 ])
+    U.broadcast_to ~src:permed ~shape:(Helpers.mk_shape [ 10; 10; 10 ])
   in
   let result = U.alu_binary ~op:Ops.Add ~lhs:expanded ~rhs:permed_expanded in
   Helpers.wrap_sink [ result ]

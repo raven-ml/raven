@@ -66,9 +66,9 @@ let zero_buffer size = make_buffer (List.init size (fun _ -> 0))
 let read_buffer buf = Device.Buffer.as_bytes buf |> int32_list_of_bytes
 
 (* Kernel-building helpers, mirroring the scheduled sinks the rangeifier emits. *)
-let idx n = U.const (Const.int Dtype.Val.weakint n)
-let ci n = U.const (Const.int Dtype.Val.int32 n)
-let iptr size = Dtype.Ptr (Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size)
+let idx n = U.const (Const.int Dtype.weakint n)
+let ci n = U.const (Const.int Dtype.int32 n)
+let iparam ~slot size = U.param ~slot ~dtype:Dtype.int32 ~shape:(idx size) ()
 
 let kernel_info name axis_types : U.kernel_info =
   {
@@ -84,7 +84,6 @@ let kernel_info name axis_types : U.kernel_info =
 let call_info name : U.call_info =
   {
     grad_fxn = None;
-    metadata = [];
     name = Some name;
     precompile = false;
     precompile_backward = false;
@@ -97,50 +96,50 @@ let buffer_node ~size () =
 
 (* out[i] = in[i] + in[i] over a Global range of [size] elements. *)
 let double_kernel name ~size =
-  let p_out = U.param ~slot:0 ~dtype:(iptr size) () in
-  let p_in = U.param ~slot:1 ~dtype:(iptr size) () in
+  let p_out = iparam ~slot:0 size in
+  let p_in = iparam ~slot:1 size in
   let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Global () in
-  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ~as_ptr:true ()) () in
+  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
   let v = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:ld in
-  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ~as_ptr:true ()) ~value:v () in
+  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ()) ~value:v () in
   U.sink
     ~kernel_info:(kernel_info name [ Axis_type.Global ])
     [ U.end_ ~value:st ~ranges:[ r ] ]
 
 (* out[i] = in[i] + [addend] over a Global range of [size] elements. *)
 let add_const_kernel name ~size ~addend =
-  let p_out = U.param ~slot:0 ~dtype:(iptr size) () in
-  let p_in = U.param ~slot:1 ~dtype:(iptr size) () in
+  let p_out = iparam ~slot:0 size in
+  let p_in = iparam ~slot:1 size in
   let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Global () in
-  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ~as_ptr:true ()) () in
+  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
   let v = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:(ci addend) in
-  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ~as_ptr:true ()) ~value:v () in
+  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ()) ~value:v () in
   U.sink
     ~kernel_info:(kernel_info name [ Axis_type.Global ])
     [ U.end_ ~value:st ~ranges:[ r ] ]
 
 (* out[i] = sum_{j<=i} in[j] — a triangular reduce (cumsum). *)
 let running_sum_kernel name ~size =
-  let p_out = U.param ~slot:0 ~dtype:(iptr size) () in
-  let p_in = U.param ~slot:1 ~dtype:(iptr size) () in
+  let p_out = iparam ~slot:0 size in
+  let p_in = iparam ~slot:1 size in
   let ri = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Global () in
   let rj = U.range ~size:(idx size) ~axis:1 ~kind:Axis_type.Reduce () in
-  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ rj ] ~as_ptr:true ()) () in
+  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ rj ] ()) () in
   let masked = U.O.where U.O.(ri < rj) (ci 0) ld in
-  let red = U.reduce ~op:Ops.Add ~src:masked ~ranges:[ rj ] ~dtype:Dtype.Val.int32 in
-  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ ri ] ~as_ptr:true ()) ~value:red () in
+  let red = U.reduce ~op:Ops.Add ~src:masked ~ranges:[ rj ] ~dtype:Dtype.int32 in
+  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ ri ] ()) ~value:red () in
   U.sink
     ~kernel_info:(kernel_info name [ Axis_type.Global; Axis_type.Reduce ])
     [ U.end_ ~value:st ~ranges:[ ri ] ]
 
 (* out[0] = sum_i in[i] over a single Reduce range — the scalar-output path. *)
 let sum_to_scalar_kernel name ~size =
-  let p_out = U.param ~slot:0 ~dtype:(iptr 1) () in
-  let p_in = U.param ~slot:1 ~dtype:(iptr size) () in
+  let p_out = iparam ~slot:0 1 in
+  let p_in = iparam ~slot:1 size in
   let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Reduce () in
-  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ~as_ptr:true ()) () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r ] ~dtype:Dtype.Val.int32 in
-  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ idx 0 ] ~as_ptr:true ()) ~value:red () in
+  let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r ] ~dtype:Dtype.int32 in
+  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ idx 0 ] ()) ~value:red () in
   U.sink ~kernel_info:(kernel_info name [ Axis_type.Reduce ]) [ st ]
 
 (* JIT driver. The function builds the CALL(LINEAR) form allocations emits —

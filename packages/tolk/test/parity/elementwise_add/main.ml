@@ -9,11 +9,11 @@ let kernel () =
   let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr () in
   let p2 = U.param ~slot:2 ~dtype:Helpers.global_fptr () in
   let r0 = U.range ~size:(Helpers.idx 256) ~axis:0 ~kind:Axis_type.Global () in
-  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true ()) () in
-  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true ()) () in
+  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
+  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let st =
-    U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ~as_ptr:true ()) ~value:add ()
+    U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ()) ~value:add ()
   in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   U.sink

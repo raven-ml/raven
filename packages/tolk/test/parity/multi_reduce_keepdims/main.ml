@@ -29,7 +29,7 @@ let build () =
   let h = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
   let red = U.reduce_axis ~src:h ~op:Ops.Max ~axes:[ 1 ] in
   let keep = U.reshape ~src:red ~shape:(Helpers.mk_shape [ 8; 1 ]) in
-  let exp = U.expand ~src:keep ~shape:(Helpers.mk_shape [ 8; 8 ]) in
+  let exp = U.broadcast_to ~src:keep ~shape:(Helpers.mk_shape [ 8; 8 ]) in
   Helpers.wrap_sink [ U.alu_binary ~op:Ops.Sub ~lhs:h ~rhs:exp ]
 
 let () =

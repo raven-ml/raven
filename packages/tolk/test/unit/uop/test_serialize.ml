@@ -7,34 +7,31 @@ module U = Uop
 let call_info : U.call_info =
   {
     grad_fxn = None;
-    metadata = [];
     name = None;
     precompile = false;
     precompile_backward = false;
     aux = None;
   }
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:16
-
 let shape dims =
   dims
-  |> List.map (fun n -> U.const (Const.int Dtype.Val.weakint n))
-  |> U.stack ~dtype:Dtype.Val.weakint
+  |> List.map (fun n -> U.const (Const.int Dtype.weakint n))
+  |> U.stack ~dtype:Dtype.weakint
 
 let internal_buffer slot =
-  U.buffer ~slot
-    ~dtype:(Dtype.Ptr (global_ptr Dtype.Val.float32))
-    ~shape:(shape [ 4 ]) ~addrspace:Global ()
+  U.buffer ~slot ~dtype:Dtype.float32 ~shape:(shape [ 4 ])
+    ~addrspace:Dtype.Global ()
 
 (* A compiled-program-shaped graph exercising every argument embedding:
    kernel_info estimates ([Sym]), program_info [vars] and [Launch_sym]
    launch dimensions, a tagged node, and SLICE/COPY call bodies. *)
 let compiled_program ~name () =
-  let dt = Dtype.Val.int32 in
-  let ptr = Dtype.Ptr (global_ptr dt) in
+  let dt = Dtype.int32 in
   let var = U.variable ~name:"n" ~min_val:1 ~max_val:128 ~dtype:dt () in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
-  let idx = U.index ~ptr:p0 ~idxs:[ U.const_int 0 ] ~as_ptr:true () in
+  let p0 =
+    U.param ~slot:0 ~dtype:dt ~shape:(shape [ 16 ]) ~addrspace:Dtype.Global ()
+  in
+  let idx = U.index ~ptr:p0 ~idxs:[ U.const_int 0 ] () in
   let sum =
     U.with_tag "serialize-test"
       (U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:idx ()) ~rhs:var)
@@ -53,7 +50,7 @@ let compiled_program ~name () =
   in
   let sink = U.sink ~kernel_info [ st ] in
   let kern_call = U.call ~body:sink ~args:[ p0 ] ~info:call_info in
-  let sl = U.slice ~src:p0 ~offset:(U.const_int 0) ~size:8 ~dtype:ptr in
+  let sl = U.slice ~src:p0 ~offset:(U.const_int 0) ~size:8 ~dtype:dt in
   let copy_call =
     U.call
       ~body:(U.copy ~src:sl ~device:(U.Single "CPU") ())
@@ -113,9 +110,9 @@ let deep_chain_roundtrips () =
     else
       build (i - 1)
         (U.alu_binary ~op:Ops.Add ~lhs:acc
-           ~rhs:(U.const (Const.int Dtype.Val.int32 (i land 7))))
+           ~rhs:(U.const (Const.int Dtype.int32 (i land 7))))
   in
-  let root = build 50_000 (U.const (Const.int Dtype.Val.int32 0)) in
+  let root = build 50_000 (U.const (Const.int Dtype.int32 0)) in
   is_true ~msg:"deep chain round-trip" (U.import (U.export root) == root)
 
 let export_rejects_grad_fxn () =

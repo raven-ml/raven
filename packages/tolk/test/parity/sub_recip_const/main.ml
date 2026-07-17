@@ -18,7 +18,7 @@ let backends =
     (fun (name, _) -> name = "cpu" || name = "cuda")
     Helpers.all_backends
 
-let cf v = U.const (Const.float Dtype.Val.float32 v)
+let cf v = U.const (Const.float Dtype.float32 v)
 
 let build () =
   let a = Helpers.mk_param ~idx:0 [ 128 ] in

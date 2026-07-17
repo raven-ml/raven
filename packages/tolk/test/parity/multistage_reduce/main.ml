@@ -13,7 +13,7 @@ let build () =
     U.reshape ~src:zero ~shape:(Helpers.mk_shape [ 1; 1 ])
   in
   let zero_expanded =
-    U.expand ~src:zero_reshaped ~shape:(Helpers.mk_shape [ 32; 32 ])
+    U.broadcast_to ~src:zero_reshaped ~shape:(Helpers.mk_shape [ 32; 32 ])
   in
   let relu = U.alu_binary ~op:Ops.Max ~lhs:red1 ~rhs:zero_expanded in
   let red2 = U.reduce_axis ~src:relu ~op:Ops.Add ~axes:[ 1 ] in

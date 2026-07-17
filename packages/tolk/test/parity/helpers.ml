@@ -2,11 +2,9 @@ open Tolk
 open Tolk_uop
 module U = Uop
 
-let global_fptr =
-  Dtype.Ptr
-    (Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Global ~size:(-1))
+let global_fptr = Dtype.float32
 
-let idx n = U.const (Const.int Dtype.Val.weakint n)
+let idx n = U.const (Const.int Dtype.weakint n)
 
 let all_backends =
   [
@@ -78,7 +76,7 @@ let dump_stage7 ?backends ?optimize ~out_dir sink =
 
 let mk_shape dims =
   let ids =
-    List.map (fun s -> U.const (Const.int Dtype.Val.weakint s)) dims
+    List.map (fun s -> U.const (Const.int Dtype.weakint s)) dims
   in
   match ids with [ d ] -> d | ds -> U.stack ds
 

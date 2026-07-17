@@ -58,7 +58,6 @@ let copy_current ~src ~device =
 let call_info name : Uop.call_info =
   {
     Uop.grad_fxn = None;
-    metadata = [];
     name = Some name;
     precompile = false;
     precompile_backward = false;
@@ -111,7 +110,7 @@ let buffer_rejects_alu_addrspace () =
       (Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ())
       ~arg:
         (Uop.Arg.Param_arg
-           { slot = 0; vmin_vmax = None; name = None;
+           { slot = 0; dtype = Dtype.int32; vmin_vmax = None; name = None;
              addrspace = Dtype.Alu; axis = None; device = None })
       ()
   in
@@ -174,12 +173,12 @@ let alu_operand_scalars_match () =
 
 let index_accepts_integer_offsets () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   is_true ~msg:"int32 index accepted" (accepts Spec.shared_spec idx)
 
 let index_rejects_gate_source () =
   let p = global_i32_param () in
-  let idx0 = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx0 = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let idx =
     Uop.replace idx0 ~src:[| p; i32 0; Uop.const_bool true |] ()
   in
@@ -652,11 +651,11 @@ let movement_validates_shape_contracts () =
       ~shape:(Uop.stack [ weak 1; weak 4 ]) ()
   in
   let expand_ok =
-    Uop.expand ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 4 ])
+    Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 4 ])
   in
   is_true ~msg:"valid Expand accepted" (accepts Spec.tensor_spec expand_ok);
   let expand_bad =
-    Uop.expand ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 5 ])
+    Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 5 ])
   in
   is_true ~msg:"Expand changing non-one dimension rejected"
     (rejected Spec.tensor_spec expand_bad);
@@ -760,7 +759,7 @@ let full_spec_accepts_intermediate_forms () =
 
 let tensor_rejects_if_endif () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let if_ = Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:idx in
   let endif = Uop.endif ~if_ in
   is_true ~msg:"If rejected by tensor_spec" (rejected Spec.tensor_spec if_);
@@ -824,14 +823,14 @@ let program_rejects_tensor_only_ops () =
 
 let program_accepts_plain_load () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let ld = Uop.load ~src:idx () in
   Spec.verify_list Spec.program_spec [ idx; ld ];
   is_true ~msg:"plain load accepted" true
 
 let program_accepts_cast_index_load () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let cast = Uop.cast ~src:idx ~dtype:(Uop.dtype idx) in
   let ld = Uop.load ~src:cast () in
   Spec.verify_list Spec.program_spec [ idx; cast; ld ];
@@ -839,7 +838,7 @@ let program_accepts_cast_index_load () =
 
 let program_bitcast_index_same_dtype_is_plain_index () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let bitcast = Uop.bitcast ~src:idx ~dtype:(Uop.dtype idx) in
   is_true ~msg:"Bitcast(Index) to same dtype returns index" (bitcast == idx);
   let ld = Uop.load ~src:bitcast () in
@@ -848,7 +847,7 @@ let program_bitcast_index_same_dtype_is_plain_index () =
 
 let program_rejects_real_bitcast_index_load () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let bitcast = Uop.bitcast ~src:idx ~dtype:Dtype.float32 in
   let ld = Uop.load ~src:bitcast () in
   is_true ~msg:"real Bitcast(Index) load rejected"
@@ -856,14 +855,14 @@ let program_rejects_real_bitcast_index_load () =
 
 let program_accepts_load_gate_on_load () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let ld = load_with_gate ~idx ~alt:(i32 0) ~gate:(Uop.const_bool true) in
   Spec.verify_list Spec.program_spec [ idx; ld ];
   is_true ~msg:"load-gated alt load accepted" true
 
 let program_rejects_load_gate_on_index () =
   let p = global_i32_param () in
-  let idx0 = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx0 = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let idx =
     Uop.replace idx0 ~src:[| p; i32 0; Uop.const_bool true |] ()
   in
@@ -876,14 +875,14 @@ let program_rejects_load_gate_on_index () =
 
 let program_accepts_plain_store () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let st = Uop.store ~dst:idx ~value:(i32 1) () in
   Spec.verify_list Spec.program_spec [ idx; st ];
   is_true ~msg:"plain store accepted" true
 
 let program_oob_disabled_accepts_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] () in
   let ld = Uop.load ~src:idx () in
   with_env "CHECK_OOB" "0" (fun () ->
       Spec.verify_list Spec.program_spec [ p; idx; ld ]);
@@ -891,7 +890,7 @@ let program_oob_disabled_accepts_out_of_bounds_load () =
 
 let program_oob_enabled_rejects_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] () in
   let ld = Uop.load ~src:idx () in
   is_true ~msg:"CHECK_OOB=1 rejects proven out-of-bounds load"
     (with_env "CHECK_OOB" "1" (fun () ->
@@ -903,7 +902,7 @@ let program_oob_enabled_accepts_minmax_in_bounds_load () =
     Uop.variable ~name:"n" ~min_val:0 ~max_val:15
       ~dtype:Dtype.int32 ()
   in
-  let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[n] () in
   let ld = Uop.load ~src:idx () in
   with_env "CHECK_OOB" "1" (fun () ->
       Spec.verify_list Spec.program_spec [ p; n; idx; ld ]);
@@ -911,15 +910,18 @@ let program_oob_enabled_accepts_minmax_in_bounds_load () =
 
 let program_oob_uses_explicit_buffer_shape () =
   let p = global_i32_param_with_shape [ 8 ] in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 9)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 9)] () in
   let ld = Uop.load ~src:idx () in
   is_true ~msg:"CHECK_OOB=1 validates against buffer max_numel"
     (with_env "CHECK_OOB" "1" (fun () ->
          rejected_list Spec.program_spec [ p; idx; ld ]))
 
 let program_oob_image_pointer_bypasses_bounds () =
-  let p = Uop.param ~slot:0 ~dtype:(Dtype.imageh [ 4; 4 ]) () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 999)] ~as_ptr:true () in
+  let p =
+    Uop.param ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.stack [ weak 4; weak 4; weak 4 ]) ()
+  in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 999)] () in
   let ld = Uop.load ~src:idx () in
   with_env "CHECK_OOB" "1" (fun () ->
       Spec.verify_list Spec.program_spec [ p; idx; ld ]);
@@ -927,7 +929,7 @@ let program_oob_image_pointer_bypasses_bounds () =
 
 let program_oob_false_gate_accepts_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] () in
   let ld = load_with_gate ~idx ~alt:(i32 0) ~gate:(Uop.const_bool false) in
   with_env "CHECK_OOB" "1" (fun () ->
       Spec.verify_list Spec.program_spec [ p; idx; ld ]);
@@ -940,7 +942,7 @@ let program_oob_symbolic_false_gate_accepts_out_of_bounds_load () =
       ~dtype:Dtype.int32 ()
   in
   let gate = Uop.alu_binary ~op:Ops.Cmplt ~lhs:n ~rhs:(i32 0) in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] () in
   let ld = load_with_gate ~idx ~alt:(i32 0) ~gate in
   with_env "CHECK_OOB" "1" (fun () ->
       Spec.verify_list Spec.program_spec [ p; n; gate; idx; ld ]);
@@ -952,7 +954,7 @@ let program_oob_symbolic_store_remains_rejected () =
     Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
       ~dtype:Dtype.int32 ()
   in
-  let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[n] () in
   let st = Uop.store ~dst:idx ~value:(i32 1) () in
   is_true ~msg:"CHECK_OOB=1 rejects unmasked symbolic store"
     (with_env "CHECK_OOB" "1" (fun () ->
@@ -967,7 +969,7 @@ let program_oob_masked_symbolic_bounds_are_accepted () =
   let ge_zero = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 (-1)) ~rhs:n in
   let lt_size = Uop.alu_binary ~op:Ops.Cmplt ~lhs:n ~rhs:(i32 16) in
   let gate = Uop.alu_binary ~op:Ops.And ~lhs:ge_zero ~rhs:lt_size in
-  let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[n] () in
   let ld = load_with_gate ~idx ~alt:(i32 0) ~gate in
   with_env "CHECK_OOB" "1" (fun () ->
       Spec.verify_list Spec.program_spec
@@ -981,7 +983,7 @@ let program_oob_masked_symbolic_lower_bound_only_rejected () =
       ~dtype:Dtype.int32 ()
   in
   let gate = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 (-1)) ~rhs:n in
-  let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[n] () in
   let ld = load_with_gate ~idx ~alt:(i32 0) ~gate in
   is_true ~msg:"CHECK_OOB=1 rejects incomplete masked symbolic bounds"
     (with_env "CHECK_OOB" "1" (fun () ->
@@ -989,7 +991,7 @@ let program_oob_masked_symbolic_lower_bound_only_rejected () =
 
 let program_rejects_nested_casted_index_source () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let cast1 =
     Uop.replace idx ~op:Ops.Cast ~src:[| idx |] ~arg:Uop.Arg.Empty ()
   in
@@ -1002,14 +1004,14 @@ let program_rejects_nested_casted_index_source () =
 
 let program_accepts_store_gate_on_store () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let st = store_with_gate ~idx ~value:(i32 1) ~gate:(Uop.const_bool true) in
   Spec.verify_list Spec.program_spec [ idx; st ];
   is_true ~msg:"store-gated store accepted" true
 
 let program_rejects_store_gate_on_index () =
   let p = global_i32_param () in
-  let idx0 = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx0 = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let idx =
     Uop.replace idx0 ~src:[| p; i32 0; Uop.const_bool true |] ()
   in
@@ -1026,7 +1028,7 @@ let program_accepts_if_with_shrink_index () =
 
 let program_control_flow_boundaries () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let cast_idx = Uop.cast ~src:idx ~dtype:Dtype.int64 in
   let if_index = Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:idx in
   let if_cast =
@@ -1050,7 +1052,7 @@ let program_control_flow_boundaries () =
 
 let program_rejects_bad_if_layouts () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let valid = Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:idx in
   let non_bool_cond = Uop.if_ ~cond:(i32 1) ~idx_for_dedup:idx in
   let value_dedup =
@@ -1079,7 +1081,7 @@ let program_rejects_loose_after_layout () =
 
 let program_rejects_if_dedup_source_matrix () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let bad_bitcast = Uop.bitcast ~src:idx ~dtype:Dtype.float32 in
   let bad_after = Uop.after ~src:idx ~deps:[ Uop.noop ~dtype:Dtype.void () ] in
   let bad_buffer =
@@ -1095,7 +1097,7 @@ let program_rejects_if_dedup_source_matrix () =
 
 let program_rejects_bad_endif_layouts () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let if_ = Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:idx in
   let endif = Uop.endif ~if_ in
   let non_if_src =
@@ -1131,7 +1133,7 @@ let program_end_range_boundaries () =
 
 let verify_list_validates_flat_program () =
   let p = global_i32_param () in
-  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
+  let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let ld = Uop.load ~src:idx () in
   Spec.verify_list Spec.program_spec [ i32 0; idx; ld ];
   is_true ~msg:"verify_list rejects supplied invalid node"

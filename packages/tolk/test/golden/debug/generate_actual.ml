@@ -11,20 +11,18 @@ open Tolk
 open Tolk_uop
 module U = Uop
 
-let global_fptr size =
-  Dtype.Ptr.create (Dtype.val_of Dtype.float32) ~addrspace:Global ~size
-let idx n = U.const (Const.int Dtype.Val.weakint n)
+let idx n = U.const (Const.int Dtype.weakint n)
 
 let make_kernel ~name ~opts_to_apply ~ptr_size =
-  let ptr = Dtype.Ptr (global_fptr ptr_size) in
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
-  let p1 = U.param ~slot:1 ~dtype:ptr () in
-  let p2 = U.param ~slot:2 ~dtype:ptr () in
+  let shape = if ptr_size < 0 then None else Some (idx ptr_size) in
+  let p0 = U.param ~slot:0 ~dtype:Dtype.float32 ?shape () in
+  let p1 = U.param ~slot:1 ~dtype:Dtype.float32 ?shape () in
+  let p2 = U.param ~slot:2 ~dtype:Dtype.float32 ?shape () in
   let r0 = U.range ~size:(idx 256) ~axis:0 ~kind:Axis_type.Global () in
-  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true ()) () in
-  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true ()) () in
+  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
+  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
-  let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ~as_ptr:true ()) ~value:add () in
+  let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ()) ~value:add () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   U.sink
     ~kernel_info:{ U.name = name;

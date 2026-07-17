@@ -12,11 +12,11 @@ let kernel () =
   let rj = U.range ~size:(Helpers.idx cols) ~axis:1 ~kind:Axis_type.Global () in
   let open U.O in
   let flat = (ri * int_ cols) + rj in
-  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ~as_ptr:true ()) () in
-  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[flat] ~as_ptr:true ()) () in
+  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ()) () in
+  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[flat] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let st =
-    U.store ~dst:(U.index ~ptr:p2 ~idxs:[flat] ~as_ptr:true ()) ~value:add ()
+    U.store ~dst:(U.index ~ptr:p2 ~idxs:[flat] ()) ~value:add ()
   in
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   U.sink
