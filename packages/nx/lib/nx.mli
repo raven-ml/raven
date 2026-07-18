@@ -583,16 +583,16 @@ module Rng : sig
       different keys. This is what the keyless samplers call. *)
 end
 
-val rand : ('a, 'b) dtype -> int array -> ('a, 'b) t
+val rand : (float, 'b) dtype -> int array -> (float, 'b) t
 (** [rand dtype shape] samples uniformly from \[[0], [1]).
 
-    Raises [Invalid_argument] if [dtype] is not a float type. *)
+    Raises [Invalid_argument] if a shape dimension is negative. *)
 
-val randn : ('a, 'b) dtype -> int array -> ('a, 'b) t
+val randn : (float, 'b) dtype -> int array -> (float, 'b) t
 (** [randn dtype shape] samples from the standard normal distribution (mean 0,
     variance 1) via the Box–Muller transform.
 
-    Raises [Invalid_argument] if [dtype] is not a float type. *)
+    Raises [Invalid_argument] if a shape dimension is negative. *)
 
 val randint : ('a, 'b) dtype -> ?high:int -> int array -> int -> ('a, 'b) t
 (** [randint dtype ?high shape low] samples integers uniformly from \[[low],
@@ -624,12 +624,11 @@ val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
     of bounds. *)
 
 val truncated_normal :
-  ('a, 'b) dtype -> lower:float -> upper:float -> int array -> ('a, 'b) t
+  (float, 'a) dtype -> lower:float -> upper:float -> int array -> (float, 'a) t
 (** [truncated_normal dtype ~lower ~upper shape] samples from a standard normal
     distribution truncated to \[[lower], [upper]\].
 
-    Raises [Invalid_argument] if [dtype] is not a float type or
-    [lower >= upper]. *)
+    Raises [Invalid_argument] if [dtype] is a float8 type or [lower >= upper]. *)
 
 (** {1:shape Shape manipulation} *)
 

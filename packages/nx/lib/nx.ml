@@ -69,6 +69,7 @@ let of_bigarray ba = F.of_bigarray (Lazy.force context) ba
 let of_buffer ba ~shape = F.of_buffer (Lazy.force context) ~shape ba
 let to_bigarray = F.to_bigarray
 let to_buffer = F.to_buffer
+
 let rand dtype shape = F.rand (Lazy.force context) dtype shape
 let randn dtype shape = F.randn (Lazy.force context) dtype shape
 

@@ -2215,11 +2215,11 @@ module Make (B : Backend_intf.S) = struct
       err op "invalid shape %s, dimensions must be non-negative"
         (Shape.to_string shape)
 
-  let rand ctx dtype shape =
+  let rand ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "rand" dtype shape;
     cast dtype (Rng.uniform (Rng.split_off ctx) Dtype.float32 shape)
 
-  let randn ctx dtype shape =
+  let randn ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "randn" dtype shape;
     cast dtype (Rng.normal (Rng.split_off ctx) Dtype.float32 shape)
 
@@ -2279,13 +2279,14 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg "categorical: logits, float8 logits not supported"
     | _ -> invalid_arg "categorical: logits requires floating point dtype"
 
-  let truncated_normal (type a b) ctx (dtype : (a, b) Dtype.t) ~lower ~upper
+  let truncated_normal ctx (type b) (dtype : (float, b) Dtype.t) ~lower ~upper
       shape =
     if lower >= upper then
       invalid_arg "truncated_normal: bounds, lower must be less than upper";
     (match dtype with
     | Float16 | Float32 | Float64 | BFloat16 -> ()
-    | _ -> invalid_arg "truncated_normal: dtype must be floating point");
+    | Float8_e4m3 | Float8_e5m2 ->
+        invalid_arg "truncated_normal: float8 dtypes are not supported");
     let lo = scalar ctx Dtype.float64 lower |> astype dtype in
     let hi = scalar ctx Dtype.float64 upper |> astype dtype in
     let has_remaining mask =

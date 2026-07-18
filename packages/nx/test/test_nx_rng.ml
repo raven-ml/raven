@@ -84,6 +84,17 @@ let test_randn () =
   equal ~msg:"randn mean ~0" (float 0.2) 0. mean;
   equal ~msg:"randn std ~1" (float 0.3) 1. std
 
+let test_keyless_float_sampler_dtypes () =
+  let check (type b) name (dt : (float, b) Nx.dtype) =
+    let uniform_sample : (float, b) Nx.t = rand dt [| 2 |] in
+    let normal_sample : (float, b) Nx.t = randn dt [| 2 |] in
+    equal ~msg:(name ^ " rand dtype") bool true (Nx.dtype uniform_sample = dt);
+    equal ~msg:(name ^ " randn dtype") bool true (Nx.dtype normal_sample = dt)
+  in
+  Rng.run ~seed:42 (fun () ->
+      check "float32" float32;
+      check "float64" float64)
+
 let test_randint () =
   let shape = [| 10 |] in
   let t = Rng.run ~seed:42 (fun () -> randint Nx.int32 ~high:15 shape 5) in
@@ -415,6 +426,7 @@ let () =
         [
           test "rand" test_rand;
           test "randn" test_randn;
+          test "keyless float sampler dtypes" test_keyless_float_sampler_dtypes;
           test "randint" test_randint;
           test "bernoulli" test_bernoulli;
           test "shuffle_preserves_shape" test_shuffle_preserves_shape;

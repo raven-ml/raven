@@ -363,6 +363,10 @@ thread.
 
 ### Nx
 
+- `truncated_normal` now rejects integer dtype witnesses at compile time,
+  matching the other normal samplers.
+- `rand` and `randn` now reject integer dtype witnesses at compile time instead
+  of accepting them and raising `Invalid_argument` at runtime.
 - Fix elementwise arithmetic on non-contiguous views: `mul_s`, `div_s`, and
   tensor `div` now honor the view's offset and strides instead of reading
   out-of-view values from the underlying buffer.
