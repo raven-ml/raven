@@ -361,6 +361,16 @@ thread.
 
 ### Nx
 
+- Replace the vendored camlzip and stb image libraries with owned ISC codecs in
+  `nx.io`. NPZ no longer creates a temporary NPY file for each entry, image and
+  archive decoding writes directly into Nx buffers, and Nx no longer needs zlib
+  or pkg-config.
+- Speed up `load_npy`, stored `load_npz`, compressible `save_npz`, and `gunzip`
+  by removing redundant checksum passes, processing stored data in larger
+  batches, and bounding DEFLATE match searches.
+- Add `Nx_io.gunzip` with checksum validation and atomic destination replacement.
+  **Breaking:** `save_image` now supports only modern PNG and JPEG output; BMP
+  and TGA output and the public `nx.zip`/`nx.io.stb_image*` libraries are removed.
 - Replace the default `nx.c` backend with the self-contained C implementation.
   FFT and dense linear algebra no longer require PocketFFT, OpenBLAS, LAPACKE,
   libomp, or platform depext configuration; macOS automatically uses Accelerate

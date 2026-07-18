@@ -30,6 +30,84 @@ let read_file_bytes path =
       let len = in_channel_length ic in
       really_input_string ic len)
 
+let write_file_bytes path contents =
+  let channel = open_out_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_out channel)
+    (fun () -> output_string channel contents)
+
+let expect_failure message f =
+  match f () with
+  | _ -> fail ("expected failure: " ^ message)
+  | exception Failure _ -> ()
+
+let find_substring text pattern =
+  let rec search offset =
+    if offset > String.length text - String.length pattern then raise Not_found
+    else if String.sub text offset (String.length pattern) = pattern then offset
+    else search (offset + 1)
+  in
+  search 0
+
+let hex_nibble = function
+  | '0' .. '9' as c -> Char.code c - Char.code '0'
+  | 'a' .. 'f' as c -> Char.code c - Char.code 'a' + 10
+  | c -> invalid_arg (Printf.sprintf "invalid hexadecimal digit %C" c)
+
+let string_of_hex hex =
+  let length = String.length hex in
+  if length land 1 <> 0 then invalid_arg "odd hexadecimal fixture";
+  String.init (length / 2) (fun i ->
+      let off = i * 2 in
+      Char.chr ((hex_nibble hex.[off] lsl 4) lor hex_nibble hex.[off + 1]))
+
+let with_file_contents suffix contents f =
+  let path = temp_file "nx_io_fixture_" suffix in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      let channel = open_out_bin path in
+      Fun.protect
+        ~finally:(fun () -> close_out channel)
+        (fun () -> output_string channel contents);
+      f path)
+
+let with_hex_file suffix hex f = with_file_contents suffix (string_of_hex hex) f
+
+let base64_value = function
+  | 'A' .. 'Z' as c -> Char.code c - Char.code 'A'
+  | 'a' .. 'z' as c -> Char.code c - Char.code 'a' + 26
+  | '0' .. '9' as c -> Char.code c - Char.code '0' + 52
+  | '+' -> 62
+  | '/' -> 63
+  | c -> invalid_arg (Printf.sprintf "invalid base64 character %C" c)
+
+let string_of_base64 text =
+  let length = String.length text in
+  if length mod 4 <> 0 then invalid_arg "invalid base64 length";
+  let padding =
+    if length = 0 || text.[length - 1] <> '=' then 0
+    else if text.[length - 2] = '=' then 2
+    else 1
+  in
+  let output_length = (length / 4 * 3) - padding in
+  String.init output_length (fun index ->
+      let group = index / 3 * 4 in
+      let offset = index mod 3 in
+      let a = base64_value text.[group] in
+      let b = base64_value text.[group + 1] in
+      let c =
+        if text.[group + 2] = '=' then 0 else base64_value text.[group + 2]
+      in
+      let d =
+        if text.[group + 3] = '=' then 0 else base64_value text.[group + 3]
+      in
+      Char.chr
+        (match offset with
+        | 0 -> (a lsl 2) lor (b lsr 4)
+        | 1 -> ((b land 0xf) lsl 4) lor (c lsr 2)
+        | _ -> ((c land 0x3) lsl 6) lor d))
+
 let array_approx_equal ?(eps = 1e-6) a b =
   try
     let a_flat = Nx.flatten a in
@@ -110,6 +188,72 @@ let test_npy_overwrite_protection () =
   (* Clean up *)
   Sys.remove path
 
+let npy_fortran_fixture =
+  "934e554d5059010076007b276465736372273a20273c6634272c2027666f727472"
+  ^ "616e5f6f72646572273a20547275652c20277368617065273a2028322c2033292c"
+  ^ "207d20202020202020202020202020202020202020202020202020202020202020"
+  ^ "202020202020202020202020202020202020202020202020202020200a"
+  ^ "0000803f00008040000000400000a040000040400000c040"
+
+let npy_big_endian_fixture =
+  "934e554d5059010076007b276465736372273a20273e6932272c2027666f727472"
+  ^ "616e5f6f72646572273a2046616c73652c20277368617065273a2028332c292c20"
+  ^ "7d2020202020202020202020202020202020202020202020202020202020202020"
+  ^ "202020202020202020202020202020202020202020202020202020200a"
+  ^ "00010100fffe"
+
+let npy_v2_fixture =
+  "934e554d50590200740000007b276465736372273a20273c6934272c2027666f72"
+  ^ "7472616e5f6f72646572273a2046616c73652c20277368617065273a2028332c29"
+  ^ "2c207d202020202020202020202020202020202020202020202020202020202020"
+  ^ "202020202020202020202020202020202020202020202020202020200a07"
+  ^ "0000000800000009000000"
+
+let npy_v3_fixture =
+  "934e554d50590300740000007b276465736372273a20277c6231272c2027666f72"
+  ^ "7472616e5f6f72646572273a2046616c73652c20277368617065273a2028332c29"
+  ^ "2c207d202020202020202020202020202020202020202020202020202020202020"
+  ^ "202020202020202020202020202020202020202020202020202020200a01" ^ "0001"
+
+let test_npy_external_variants () =
+  equal ~msg:"Fortran fixture length" int 152
+    (String.length (string_of_hex npy_fortran_fixture));
+  equal ~msg:"big-endian fixture length" int 134
+    (String.length (string_of_hex npy_big_endian_fixture));
+  equal ~msg:"v2 fixture length" int 140
+    (String.length (string_of_hex npy_v2_fixture));
+  equal ~msg:"v3 fixture length" int 131
+    (String.length (string_of_hex npy_v3_fixture));
+  with_hex_file ".npy" npy_fortran_fixture (fun path ->
+      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.float32 in
+      equal ~msg:"Fortran shape" (array int) [| 2; 3 |] (Nx.shape actual);
+      equal ~msg:"Fortran values"
+        (array (float 0.0))
+        [| 1.; 2.; 3.; 4.; 5.; 6. |]
+        (Nx.to_array actual));
+  with_hex_file ".npy" npy_big_endian_fixture (fun path ->
+      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.int16 in
+      equal ~msg:"big-endian values" (array int) [| 1; 256; -2 |]
+        (Nx.to_array actual));
+  with_hex_file ".npy" npy_v2_fixture (fun path ->
+      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.int32 in
+      equal ~msg:"NPY v2 values" (array int32) [| 7l; 8l; 9l |]
+        (Nx.to_array actual));
+  with_hex_file ".npy" npy_v3_fixture (fun path ->
+      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.bool in
+      equal ~msg:"NPY v3 values" (array bool) [| true; false; true |]
+        (Nx.to_array actual))
+
+let test_npy_rejects_trailing_payload () =
+  let path = temp_file "test_npy_" ".npy" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_npy path (Nx.arange Nx.int32 0 4 1);
+      let contents = read_file_bytes path in
+      write_file_bytes path (contents ^ "\x00");
+      expect_failure "trailing NPY payload" (fun () -> Nx_io.load_npy path))
+
 (* Test NPZ format *)
 let test_npz_save_load_multiple () =
   let weights = Nx.Rng.run ~seed:0 (fun () -> Nx.randn Nx.float32 [| 5; 3 |]) in
@@ -187,6 +331,506 @@ let test_npz_load_entry () =
 
   (* Clean up *)
   Sys.remove path
+
+let npz_deflate_fixture =
+  "504b0304140000000800346cf25cfdcfa5084d0000008800000005000000612e6e"
+  ^ "70799bec17ea1b10c9c850c650ad9e925a9c5ca46ea5a06e9366a2aea3a09e965"
+  ^ "f54529498179f5f94920a12774bcc294e058a17672416a402f91a863a0a469a3a0"
+  ^ "ab50a64032e068603f60c400200504b0304140000000800346cf25cd03d90c24d00"
+  ^ "00009800000005000000622e6e70799bec17ea1b10c9c850c650ad9e925a9c5ca4"
+  ^ "6ea5a06e9369a1aea3a09e965f54529498179f5f94920a12774bcc294e058a17672"
+  ^ "416a402f91ac63a9a3a0ab50a14002e6606086081d2ac501a00504b010214031400"
+  ^ "00000800346cf25cfdcfa5084d000000880000000500000000000000000000008001"
+  ^ "00000000612e6e7079504b01021403140000000800346cf25cd03d90c24d00000098"
+  ^ "000000050000000000000000000000800170000000622e6e7079504b050600000000"
+  ^ "0200020066000000e00000000000"
+
+let test_npz_external_deflate () =
+  with_hex_file ".npz" npz_deflate_fixture (fun path ->
+      let archive = Nx_io.load_npz path in
+      equal ~msg:"external entry count" int 2 (Hashtbl.length archive);
+      let a = Hashtbl.find archive "a" |> Nx_io.to_typed Nx.float32 in
+      equal ~msg:"external float values"
+        (array (float 0.0))
+        [| 1.5; -2. |] (Nx.to_array a);
+      let b = Hashtbl.find archive "b" |> Nx_io.to_typed Nx.int64 in
+      equal ~msg:"external int values" (array int64) [| 3L; 4L; 5L |]
+        (Nx.to_array b))
+
+let test_npz_selects_store_for_incompressible_data () =
+  let random = Random.State.make [| 0x4e58; 0x494f |] in
+  let values = Array.init 70_000 (fun _ -> Random.State.int random 256) in
+  let tensor = Nx.create Nx.uint8 [| Array.length values |] values in
+  let path = temp_file "test_npz_" ".npz" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_npz path [ ("random", Nx_io.P tensor) ];
+      let archive_bytes = read_file_bytes path in
+      equal ~msg:"local ZIP method" int 0
+        (Char.code archive_bytes.[8] lor (Char.code archive_bytes.[9] lsl 8));
+      let loaded =
+        Nx_io.load_npz_entry ~name:"random" path |> Nx_io.to_typed Nx.uint8
+      in
+      equal ~msg:"stored NPZ values" (array int) values (Nx.to_array loaded);
+      let zeros = Nx.zeros Nx.uint8 [| 70_000 |] in
+      Nx_io.save_npz path [ ("zeros", Nx_io.P zeros) ];
+      let archive_bytes = read_file_bytes path in
+      let u16 offset =
+        Char.code archive_bytes.[offset]
+        lor (Char.code archive_bytes.[offset + 1] lsl 8)
+      in
+      equal ~msg:"compressed local ZIP method" int 8 (u16 8);
+      let payload = 30 + u16 26 + u16 28 in
+      equal ~msg:"dynamic DEFLATE block" int 2
+        ((Char.code archive_bytes.[payload] lsr 1) land 3);
+      let loaded =
+        Nx_io.load_npz_entry ~name:"zeros" path |> Nx_io.to_typed Nx.uint8
+      in
+      equal ~msg:"deflated NPZ values" (array int) (Nx.to_array zeros)
+        (Nx.to_array loaded))
+
+let test_npz_rejects_bad_crc_and_unsafe_names () =
+  let tensor = Nx.arange Nx.int32 0 16 1 in
+  let path = temp_file "test_npz_" ".npz" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_npz path [ ("values", Nx_io.P tensor) ];
+      let contents = read_file_bytes path |> Bytes.of_string in
+      let central =
+        find_substring (Bytes.unsafe_to_string contents) "PK\x01\x02"
+      in
+      let crc = central + 16 in
+      Bytes.set contents crc
+        (Char.chr (Char.code (Bytes.get contents crc) lxor 1));
+      write_file_bytes path (Bytes.unsafe_to_string contents);
+      expect_failure "NPZ CRC-32 mismatch" (fun () ->
+          Nx_io.load_npz_entry ~name:"values" path);
+      expect_failure "unsafe NPZ entry name" (fun () ->
+          Nx_io.save_npz path [ ("../values", Nx_io.P tensor) ]))
+
+let gzip_fixture =
+  "1f8b08000000000002ffcb48cdc9c9d751c8ab5048afca2c50e40200ca30838010000000"
+
+let gzip_bad_crc_fixture =
+  "1f8b08000000000002ffcb48cdc9c9d751c8ab5048afca2c50e40200cb30838010000000"
+
+let test_gunzip_external_stream () =
+  with_hex_file ".gz" gzip_fixture (fun src ->
+      let dst = temp_file "nx_io_gunzip_" ".txt" in
+      Fun.protect
+        ~finally:(fun () -> Sys.remove dst)
+        (fun () ->
+          Nx_io.gunzip ~src ~dst;
+          equal string "hello, nx gzip!\n" (read_file_bytes dst)))
+
+let test_gunzip_concatenated_members () =
+  with_hex_file ".gz" (gzip_fixture ^ gzip_fixture) (fun src ->
+      let dst = temp_file "nx_io_gunzip_" ".txt" in
+      Fun.protect
+        ~finally:(fun () -> Sys.remove dst)
+        (fun () ->
+          Nx_io.gunzip ~src ~dst;
+          equal string "hello, nx gzip!\nhello, nx gzip!\n"
+            (read_file_bytes dst)))
+
+let test_gunzip_preserves_destination_on_error () =
+  with_hex_file ".gz" gzip_bad_crc_fixture (fun src ->
+      let dst = temp_file "nx_io_gunzip_" ".txt" in
+      Fun.protect
+        ~finally:(fun () -> Sys.remove dst)
+        (fun () ->
+          let channel = open_out_bin dst in
+          output_string channel "sentinel";
+          close_out channel;
+          (try
+             Nx_io.gunzip ~src ~dst;
+             fail "expected checksum failure"
+           with Failure _ -> ());
+          equal ~msg:"destination preserved" string "sentinel"
+            (read_file_bytes dst)))
+
+let png_filters_fixture =
+  "89504e470d0a1a0a0000000d49484452000000030000000508020000000f13c1f5"
+  ^ "000000294944415478da6360f09c249fb1d1aefd02a37ec541793060d28701e6b8"
+  ^ "e6e5ea60c002e481e4f4e50146e20b458ede29a00000000049454e44ae426082"
+
+let png_gray1_fixture =
+  "89504e470d0a1a0a0000000d49484452000000080000000201000000004defa040"
+  ^ "0000000c4944415478da63886238090001db01245062c9010000000049454e44ae"
+  ^ "426082"
+
+let png_rgb16_fixture =
+  "89504e470d0a1a0a0000000d49484452000000020000000110020000002bd0349e"
+  ^ "000000154944415478da636060f8ffbf8141c864f5594626001d8104403aac0b95"
+  ^ "0000000049454e44ae426082"
+
+let png_palette_adam7_fixture =
+  "89504e470d0a1a0a0000000d49484452000000050000000502030000018706fee0"
+  ^ "0000000c504c5445ff000000ff000000ffffff00d6028f7b0000000474524e53ff"
+  ^ "80ff001f878699000000164944415478da63600083062054602800c38d0d400400"
+  ^ "24df04d3415e9a9c0000000049454e44ae426082"
+
+let test_png_external_filters () =
+  with_hex_file ".png" png_filters_fixture (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 5; 3; 3 |] (Nx.shape actual);
+      equal ~msg:"pixels" (array int)
+        [|
+          0;
+          73;
+          146;
+          31;
+          104;
+          177;
+          62;
+          135;
+          208;
+          47;
+          120;
+          193;
+          78;
+          151;
+          224;
+          109;
+          182;
+          255;
+          94;
+          167;
+          240;
+          125;
+          198;
+          15;
+          156;
+          229;
+          46;
+          141;
+          214;
+          31;
+          172;
+          245;
+          62;
+          203;
+          20;
+          93;
+          188;
+          5;
+          78;
+          219;
+          36;
+          109;
+          250;
+          67;
+          140;
+        |]
+        (Nx.to_array actual))
+
+let test_png_external_depths () =
+  with_hex_file ".png" png_gray1_fixture (fun path ->
+      let actual = Nx_io.load_image ~grayscale:true path in
+      equal ~msg:"1-bit shape" (array int) [| 2; 8 |] (Nx.shape actual);
+      equal ~msg:"1-bit pixels" (array int)
+        [| 0; 255; 0; 255; 255; 0; 255; 0; 255; 255; 0; 0; 255; 0; 0; 255 |]
+        (Nx.to_array actual));
+  with_hex_file ".png" png_rgb16_fixture (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"16-bit pixels" (array int)
+        [| 0; 255; 128; 18; 171; 1 |]
+        (Nx.to_array actual))
+
+let test_png_external_adam7_palette () =
+  with_hex_file ".png" png_palette_adam7_fixture (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 5; 5; 3 |] (Nx.shape actual);
+      equal ~msg:"pixels" (array int)
+        [|
+          255;
+          0;
+          0;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          255;
+          255;
+          0;
+          255;
+          0;
+          0;
+          0;
+          0;
+          255;
+          255;
+          255;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          255;
+          0;
+          0;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          255;
+          255;
+          0;
+          255;
+          0;
+          0;
+          0;
+          0;
+          255;
+          255;
+          255;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          255;
+          0;
+          0;
+          0;
+          255;
+          0;
+          0;
+          0;
+          255;
+          255;
+          255;
+          0;
+          255;
+          0;
+          0;
+        |]
+        (Nx.to_array actual))
+
+let test_png_save_load () =
+  let values =
+    Array.init (4 * 7 * 4) (fun i -> ((i * 37) + (i / 4 * 11)) land 0xff)
+  in
+  let image = Nx.create Nx.uint8 [| 4; 7; 4 |] values in
+  let path = temp_file "nx_io_png_" ".png" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_image path image;
+      let loaded = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 4; 7; 3 |] (Nx.shape loaded);
+      let expected =
+        Array.init
+          (4 * 7 * 3)
+          (fun i ->
+            let pixel = i / 3 in
+            values.((pixel * 4) + (i mod 3)))
+      in
+      equal ~msg:"RGB pixels" (array int) expected (Nx.to_array loaded);
+      (try
+         Nx_io.save_image ~overwrite:false path image;
+         fail "expected exclusive-create failure"
+       with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+      equal ~msg:"existing image preserved" (array int) expected
+        (Nx_io.load_image path |> Nx.to_array))
+
+let test_png_rejects_corruption () =
+  let contents = string_of_hex png_filters_fixture |> Bytes.of_string in
+  Bytes.set contents 48 (Char.chr (Char.code (Bytes.get contents 48) lxor 1));
+  with_file_contents ".png" (Bytes.unsafe_to_string contents) (fun path ->
+      expect_failure "PNG chunk CRC" (fun () -> Nx_io.load_image path))
+
+let jpeg_baseline_fixture =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwQDAwQEAwQFBAQFBgoHBgYGBg0JCggK"
+  ^ "Dw0QEA8NDw4RExgUERIXEg4PFRwVFxkZGxsbEBQdHx0aHxgaGxr/2wBDAQQFBQYFBg"
+  ^ "wHBwwaEQ8RGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoa"
+  ^ "GhoaGhoaGhr/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/"
+  ^ "xAAXEAEAAwAAAAAAAAAAAAAAAAAAGGSi/8QAFAEBAAAAAAAAAAAAAAAAAAAABv/EABcR"
+  ^ "AAMBAAAAAAAAAAAAAAAAAAAEFVL/2gAMAwEAAhEDEQA/AIsbKmQBCy5oSTlsn//Z"
+
+let jpeg_baseline_reference =
+  "1221361221361221361221361221361221361221361221362e37482e37462e3748"
+  ^ "2e37462e37482e37462e37482e37464f4e544f4e534f4e544f4e534f4e544f4e"
+  ^ "534f4e544f4e5370635b6e645b70635b6e645b70635b6e645b70635b6e645b94"
+  ^ "7b65927c65947b65927c65947b65927c65947b65927c65b2916eb2916eb2916e"
+  ^ "b2916eb2916eb2916eb2916eb2916ed2a97bd2a97bd2a97bd2a97bd2a97bd2a9"
+  ^ "7bd2a97bd2a97bebc08debc08debc08debc08debc08debc08debc08debc08d"
+
+let jpeg_progressive_fixture =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBAUEBAYFBQUGBgYHCQ4JCQgICRINDQoOFRIWFhUSFBQXGiEcFxgfGRQUHScdHyIjJSUlFhwpLCgkKyEkJST/2wBDAQYGBgkICREJCREkGBQYJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCT/wgARCAAHAAkDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAAAAMF/8QAFQEBAQAAAAAAAAAAAAAAAAAAAwT/2gAMAwEAAhADEAAAAa55e3//xAAYEAACAwAAAAAAAAAAAAAAAAAAAwQFE//aAAgBAQABBQJ1auUZvP/EABkRAAEFAAAAAAAAAAAAAAAAAAIAAQMEIf/aAAgBAwEBPwGKuBDrL//EABoRAAEFAQAAAAAAAAAAAAAAAAEAAgUREyH/2gAIAQIBAT8BimjOj1f/xAAYEAADAQEAAAAAAAAAAAAAAAAAAQIRMv/aAAgBAQAGPwJ3Deydn//EABgQAAMBAQAAAAAAAAAAAAAAAAARIQFh/9oACAEBAAE/IVE7bUzgP//aAAwDAQACAAMAAAAQ/wD/xAAZEQEAAgMAAAAAAAAAAAAAAAARAAExQVH/2gAIAQMBAT8QfNSmqcnEn//EABgRAQEBAQEAAAAAAAAAAAAAAAERMQBR/9oACAECAQE/ELhETQdL53//xAAcEAEAAgEFAAAAAAAAAAAAAAABAEERITFx0fD/2gAIAQEAAT8QcWZxajhza3uVPMdT/9k="
+
+let jpeg_progressive_reference =
+  "78c05d368a28288f330b651f284936412b40610e467935707285a37dab514f8b31"
+  ^ "2f87311c71301e4b371a172c5d205c571e656772a8b3b166a6b86c68a15a3c86"
+  ^ "513073620c30483f2b724826854942a9b99e4da39c4e9ebe758fc8915fa88d5c9"
+  ^ "29e7076b2634fae5540b5e2ca60dfd36fabb76196b97578b38381b6a672819e81"
+  ^ "74b96946aab7af44b5af4f9e9c51c2cf97a0c498aecfbeb0b4cd8c73b49260c3"
+  ^ "93a54f9aa65e908b63aea691c8c6bad9d1dcd5b8e6c894e6ae65d8"
+
+let jpeg_grayscale_fixture =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYI"
+  ^ "DAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/wAALCAAGAAUBAR"
+  ^ "EA/8QAFAABAAAAAAAAAAAAAAAAAAAAB//EABsQAAAHAQAAAAAAAAAAAAAAAAABBAYZUp"
+  ^ "PS/9oACAEBAAA/AFSJBk3RZnyP/9k="
+
+let jpeg_grayscale_reference =
+  "00000000000000000000000000000033333333333333333333333333333364646464"
+  ^ "64646464646464646464649b9b9b9b9b9b9b9b9b9b9b9b9b9b9bcbcbcbcbcbcbcbcb"
+  ^ "cbcbcbcbcbcbcbffffffffffffffffffffffffffffff"
+
+let jpeg_cmyk_fixture =
+  "/9j/7gAOQWRvYmUAZAAAAAAC/9sAQwAFAwQEBAMFBAQEBQUFBgcMCAcHBwcPCwsJDBEP"
+  ^ "EhIRDxERExYcFxMUGhURERghGBodHR8fHxMXIiQiHiQcHh8e/9sAQwEFBQUHBgcOCAgO"
+  ^ "HhQRFB4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4e"
+  ^ "Hh4e/8AAFAgABQAGBAEiAAIRAQMRAQQiAP/EABUAAQEAAAAAAAAAAAAAAAAAAAAH/8QA"
+  ^ "HxABAAEBCQAAAAAAAAAAAAAAAAUCBBMXVVaRlNHh/8QAFQEBAQAAAAAAAAAAAAAAAAAA"
+  ^ "Bgf/xAAdEQAABQUAAAAAAAAAAAAAAAAAAQIFFRZTVJGS/9oADgQBAAIRAxEEAAA/AI5f"
+  ^ "TepJfk1dgLPSTJiI5IBZlwvK2YqWEkZm9u39Af/Z"
+
+let jpeg_cmyk_reference =
+  "294067294067294067294067294067294067505969505969505969505969505969"
+  ^ "5059697a6e587a6e587a6e587a6e587a6e587a6e58ad8843ad8843ad8843ad8843"
+  ^ "ad8843ad8843dba02cdba02cdba02cdba02cdba02cdba02c"
+
+let jpeg_restart_fixture =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwQDAwQEBAQFBQQFBwsHBwYGBw4KCggL"
+  ^ "EA4RERAOEA8SFBoWEhMYEw8QFh8XGBsbHR0dERYgIh8cIhocHRz/2wBDAQUFBQcGBw0H"
+  ^ "Bw0cEhASHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+  ^ "HBwcHBz/wAARCAAJAAsDASEAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQF"
+  ^ "BgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEI"
+  ^ "I0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNk"
+  ^ "ZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLD"
+  ^ "xMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEB"
+  ^ "AQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJB"
+  ^ "UQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZH"
+  ^ "SElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaan"
+  ^ "qKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/90A"
+  ^ "BAAB/9oADAMBAAIRAxEAPwDzux1K9vdZltZtSRjnYFMIGG3AZJI5/AYxXplvZ6l5EeyR"
+  ^ "Cm0Y2rtH5CuLNsEvb8tnGL95Wdt/v/4FjtyfDZXUpSpTpc9PmbjZrrbv01P/0PIdY/5H"
+  ^ "W2/6+H/9mr6I0r/kHW/+7XRnP8LD/wCFfmzHgn/kWQP/2Q=="
+
+let jpeg_restart_reference =
+  "39a97934ab71199e4d2ea24d478d4561784e786869765f6969715a6990615eaa6261"
+  ^ "88a544808030955d33994d45894e6f836087625ca96e68aa8056a6944a909f386429"
+  ^ "95603f904b5c78254c4b26443c62625878483c873d32a4574dad654ca77135863c8b"
+  ^ "6b33743622452b2e3737433764624b865e44924c40a04556bd4769d444687b3c976b"
+  ^ "3a8953417152596c48685b5a745969674e7d6647977748ad764fbf655c8d5a79764e"
+  ^ "707261854b51673055445978586b6a4b9a8c658a854b938d599b86715d747c283955"
+  ^ "2c3377353b853e4f7d65667b724f4dab7a6c9b7367aa827ab78385158f82086e7311"
+  ^ "4e7a2043852340864750876756668b746c847f6b988d77b18e7b11b67c0088640275"
+  ^ "78085581173a8b2124755948727b5a6d976d79ad7c7fbc8d85"
+
+let check_u8_close ~tolerance expected_hex actual =
+  let expected = string_of_hex expected_hex in
+  equal ~msg:"pixel count" int (String.length expected) (Array.length actual);
+  let worst = ref 0 in
+  let worst_index = ref 0 in
+  for i = 0 to Array.length actual - 1 do
+    let error = abs (actual.(i) - Char.code expected.[i]) in
+    if error > !worst then (
+      worst := error;
+      worst_index := i)
+  done;
+  if !worst > tolerance then
+    fail
+      (Printf.sprintf
+         "pixel error %d exceeds tolerance %d at byte %d (expected %d, got %d)"
+         !worst tolerance !worst_index
+         (Char.code expected.[!worst_index])
+         actual.(!worst_index))
+
+let test_jpeg_external_baseline () =
+  equal ~msg:"fixture length" int 300
+    (String.length (string_of_base64 jpeg_baseline_fixture));
+  with_file_contents ".jpg" (string_of_base64 jpeg_baseline_fixture)
+    (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 8; 8; 3 |] (Nx.shape actual);
+      check_u8_close ~tolerance:3 jpeg_baseline_reference (Nx.to_array actual))
+
+let test_jpeg_external_progressive () =
+  equal ~msg:"fixture length" int 608
+    (String.length (string_of_base64 jpeg_progressive_fixture));
+  with_file_contents ".jpg" (string_of_base64 jpeg_progressive_fixture)
+    (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 7; 9; 3 |] (Nx.shape actual);
+      check_u8_close ~tolerance:8 jpeg_progressive_reference
+        (Nx.to_array actual))
+
+let test_jpeg_external_grayscale () =
+  with_file_contents ".jpg" (string_of_base64 jpeg_grayscale_fixture)
+    (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 6; 5; 3 |] (Nx.shape actual);
+      check_u8_close ~tolerance:3 jpeg_grayscale_reference (Nx.to_array actual))
+
+let test_jpeg_external_cmyk () =
+  with_file_contents ".jpg" (string_of_base64 jpeg_cmyk_fixture) (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 5; 6; 3 |] (Nx.shape actual);
+      check_u8_close ~tolerance:8 jpeg_cmyk_reference (Nx.to_array actual))
+
+let test_jpeg_external_restart () =
+  with_file_contents ".jpg" (string_of_base64 jpeg_restart_fixture) (fun path ->
+      let actual = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 9; 11; 3 |] (Nx.shape actual);
+      check_u8_close ~tolerance:8 jpeg_restart_reference (Nx.to_array actual))
+
+let test_jpeg_rejects_truncation () =
+  let contents = string_of_base64 jpeg_progressive_fixture in
+  with_file_contents ".jpg"
+    (String.sub contents 0 (String.length contents - 2))
+    (fun path ->
+      expect_failure "truncated JPEG" (fun () -> Nx_io.load_image path))
+
+let test_jpeg_save_load () =
+  let values =
+    Array.init
+      (13 * 17 * 3)
+      (fun i ->
+        let pixel = i / 3 in
+        let y = pixel / 17 in
+        let x = pixel mod 17 in
+        match i mod 3 with
+        | 0 -> x * 255 / 16
+        | 1 -> y * 255 / 12
+        | _ -> (x + y) * 255 / 28)
+  in
+  let image = Nx.create Nx.uint8 [| 13; 17; 3 |] values in
+  let path = temp_file "nx_io_jpeg_" ".jpg" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_image path image;
+      let loaded = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 13; 17; 3 |] (Nx.shape loaded);
+      let actual = Nx.to_array loaded in
+      let error = ref 0 in
+      for i = 0 to Array.length values - 1 do
+        error := !error + abs (values.(i) - actual.(i))
+      done;
+      let mean_error =
+        float_of_int !error /. float_of_int (Array.length values)
+      in
+      if mean_error > 8. then
+        fail (Printf.sprintf "JPEG mean absolute error %.2f" mean_error))
 
 (* Test SafeTensors format *)
 
@@ -594,12 +1238,14 @@ let test_safetensors_half_values_roundtrip () =
   let values = [| 0.0; -0.5; 1.5; -384.0; 0.00390625; 3.0 |] in
   let f16_data = Nx.create Nx.float16 [| 2; 3 |] values in
   let f16_loaded = safetensors_roundtrip Nx.float16 f16_data in
-  equal ~msg:"float16 values exact" (array (float 0.0)) values
-    (Nx.to_array f16_loaded);
+  equal ~msg:"float16 values exact"
+    (array (float 0.0))
+    values (Nx.to_array f16_loaded);
   let bf16_data = Nx.create Nx.bfloat16 [| 2; 3 |] values in
   let bf16_loaded = safetensors_roundtrip Nx.bfloat16 bf16_data in
-  equal ~msg:"bfloat16 values exact" (array (float 0.0)) values
-    (Nx.to_array bf16_loaded)
+  equal ~msg:"bfloat16 values exact"
+    (array (float 0.0))
+    values (Nx.to_array bf16_loaded)
 
 let test_safetensors_rank0_half () =
   let f16_scalar = Nx.scalar Nx.float16 (-2.5) in
@@ -714,12 +1360,45 @@ let () =
           test "Save/load float32" test_npy_save_load_float32;
           test "Save/load int64" test_npy_save_load_int64;
           test "Overwrite protection" test_npy_overwrite_protection;
+          test "External versions, endian, and layout"
+            test_npy_external_variants;
+          test "Reject trailing payload" test_npy_rejects_trailing_payload;
         ];
       group "txt" txt_tests;
       group "npz"
         [
           test "Save/load multiple arrays" test_npz_save_load_multiple;
           test "Load specific entry" test_npz_load_entry;
+          test "External deflated archive" test_npz_external_deflate;
+          test "Store incompressible data"
+            test_npz_selects_store_for_incompressible_data;
+          test "Reject CRC and unsafe names"
+            test_npz_rejects_bad_crc_and_unsafe_names;
+        ];
+      group "gzip"
+        [
+          test "External stream" test_gunzip_external_stream;
+          test "Concatenated members" test_gunzip_concatenated_members;
+          test "Checksum failure is atomic"
+            test_gunzip_preserves_destination_on_error;
+        ];
+      group "png"
+        [
+          test "External filters" test_png_external_filters;
+          test "External sample depths" test_png_external_depths;
+          test "External Adam7 palette" test_png_external_adam7_palette;
+          test "Save/load and exclusive overwrite" test_png_save_load;
+          test "Reject corruption" test_png_rejects_corruption;
+        ];
+      group "jpeg"
+        [
+          test "External baseline" test_jpeg_external_baseline;
+          test "External progressive" test_jpeg_external_progressive;
+          test "External grayscale" test_jpeg_external_grayscale;
+          test "External CMYK" test_jpeg_external_cmyk;
+          test "External restart interval" test_jpeg_external_restart;
+          test "Reject truncation" test_jpeg_rejects_truncation;
+          test "Save/load" test_jpeg_save_load;
         ];
       group "safetensors"
         [

@@ -88,21 +88,7 @@ let ensure_decompressed_gz ~gz_path ~target_path =
     true)
   else if Sys.file_exists gz_path then (
     Log.info (fun m -> m "Decompressing %s..." gz_path);
-    let ic = Gzip.open_in gz_path in
-    let oc = open_out_bin target_path in
-    Fun.protect
-      ~finally:(fun () ->
-        Gzip.close_in ic;
-        close_out oc)
-      (fun () ->
-        let buf = Bytes.create 4096 in
-        let rec loop () =
-          let n = Gzip.input ic buf 0 4096 in
-          if n > 0 then (
-            output oc buf 0 n;
-            loop ())
-        in
-        loop ());
+    Nx_io.gunzip ~src:gz_path ~dst:target_path;
     Log.info (fun m -> m "Decompressed to %s" target_path);
     true)
   else (

@@ -7,7 +7,6 @@ let strf = Printf.sprintf
 
 (* Errors *)
 
-let err_file_exists path = strf "file already exists: %s" path
 let err_unsupported_ext ext = strf "unsupported image format: %s" ext
 let err_bad_dims n s = strf "expected 2 or 3 dimensions, got %d (%s)" n s
 
@@ -27,23 +26,9 @@ let unwrap = function Ok v -> v | Error err -> failwith (Error.to_string err)
 
 (* Images *)
 
-let load_image ?(grayscale = false) path =
-  let channels = if grayscale then 1 else 3 in
-  match Stb_image.load ~channels path with
-  | Error (`Msg msg) -> failwith msg
-  | Ok img ->
-      let h = Stb_image.height img in
-      let w = Stb_image.width img in
-      let c = Stb_image.channels img in
-      let buf = Nx_buffer.of_bigarray1 (Stb_image.data img) in
-      let n = Nx_buffer.length buf in
-      let t = Nx.of_buffer buf ~shape:[| n |] in
-      let shape = if c = 1 then [| h; w |] else [| h; w; c |] in
-      Nx.reshape shape t
+let load_image ?(grayscale = false) path = Image_io.load_image ~grayscale path
 
 let save_image ?(overwrite = true) path img =
-  if (not overwrite) && Sys.file_exists path then
-    failwith (err_file_exists path);
   let h, w, c =
     match Nx.shape img with
     | [| h; w |] -> (h, w, 1)
@@ -62,10 +47,14 @@ let save_image ?(overwrite = true) path img =
   in
   let ext = String.lowercase_ascii (Filename.extension path) in
   match ext with
-  | ".png" -> Stb_image_write.png path ~w ~h ~c data
-  | ".bmp" -> Stb_image_write.bmp path ~w ~h ~c data
-  | ".tga" -> Stb_image_write.tga path ~w ~h ~c data
-  | ".jpg" | ".jpeg" -> Stb_image_write.jpg path ~w ~h ~c ~quality:90 data
+  | ".png" ->
+      if c <> 1 && c <> 3 && c <> 4 then
+        failwith "save_image: PNG requires one, three, or four channels";
+      Image_io.save_png ~overwrite path data ~width:w ~height:h ~channels:c
+  | ".jpg" | ".jpeg" ->
+      if c <> 1 && c <> 3 then
+        failwith "save_image: JPEG requires one or three channels";
+      Image_io.save_jpeg ~overwrite path data ~width:w ~height:h ~channels:c
   | _ -> failwith (err_unsupported_ext ext)
 
 (* NumPy *)
@@ -77,6 +66,8 @@ let load_npz_entry ~name path = Nx_npy.load_npz_entry ~name path |> unwrap
 
 let save_npz ?overwrite path items =
   Nx_npy.save_npz ?overwrite path items |> unwrap
+
+let gunzip ~src ~dst = Gzip_io.gunzip ~src ~dst
 
 (* SafeTensors *)
 

@@ -6,8 +6,7 @@ description:
   "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
-license:
-  "ISC AND LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception AND (MIT OR Unlicense)"
+license: "ISC"
 tags: ["numerical-computation" "tensor-library" "machine-learning"]
 homepage: "https://github.com/raven-ml/raven"
 doc: "https://raven-ml.dev/docs/"
@@ -15,9 +14,6 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
-  "dune-configurator" {build}
-  "conf-pkg-config" {build}
-  "conf-zlib" {build}
   "logs"
   "windtrap" {with-test}
   "mdx" {with-test}

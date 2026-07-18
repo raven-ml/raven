@@ -1,0 +1,125 @@
+(rule
+ (target deflate_core_test.exe)
+ (deps
+  deflate_core_test.c
+  ../nx_io_codec.h
+  ../nx_io_deflate.c
+  ../nx_io_deflate_encode.c)
+ (action
+  (run
+   cc
+   -std=c11
+   -O2
+   -Wall
+   -Wextra
+   -Wpedantic
+   -Werror
+   -DNX_IO_CODEC_NO_OCAML
+   -I..
+   %{dep:deflate_core_test.c}
+   %{dep:../nx_io_deflate.c}
+   %{dep:../nx_io_deflate_encode.c}
+   -o
+   %{target})))
+
+(rule
+ (alias runtest)
+ (action (run %{dep:deflate_core_test.exe})))
+
+(rule
+ (target image_core_test.exe)
+ (deps
+  image_core_test.c
+  ../nx_io_codec.h
+  ../nx_io_checksum.c
+  ../nx_io_deflate.c
+  ../nx_io_deflate_encode.c
+  ../nx_io_png.c
+  ../nx_io_jpeg.c)
+ (action
+  (run
+   cc
+   -std=c11
+   -O2
+   -Wall
+   -Wextra
+   -Wpedantic
+   -Werror
+   -DNX_IO_CODEC_NO_OCAML
+   -I..
+   %{dep:image_core_test.c}
+   %{dep:../nx_io_checksum.c}
+   %{dep:../nx_io_deflate.c}
+   %{dep:../nx_io_deflate_encode.c}
+   -o
+   %{target})))
+
+(rule
+ (alias runtest)
+ (action (run %{dep:image_core_test.exe})))
+
+(rule
+ (target deflate_core_sanitize.exe)
+ (deps
+  deflate_core_test.c
+  ../nx_io_codec.h
+  ../nx_io_deflate.c
+  ../nx_io_deflate_encode.c)
+ (action
+  (run
+   cc
+   -std=c11
+   -O1
+   -g
+   -fno-omit-frame-pointer
+   -fsanitize=address,undefined
+   -Wall
+   -Wextra
+   -Wpedantic
+   -Werror
+   -DNX_IO_CODEC_NO_OCAML
+   -I..
+   %{dep:deflate_core_test.c}
+   %{dep:../nx_io_deflate.c}
+   %{dep:../nx_io_deflate_encode.c}
+   -o
+   %{target})))
+
+(rule
+ (alias codec-sanitize)
+ (action (run %{dep:deflate_core_sanitize.exe})))
+
+(rule
+ (target image_core_sanitize.exe)
+ (deps
+  image_core_test.c
+  ../nx_io_codec.h
+  ../nx_io_checksum.c
+  ../nx_io_deflate.c
+  ../nx_io_deflate_encode.c
+  ../nx_io_png.c
+  ../nx_io_jpeg.c)
+ (action
+  (run
+   cc
+   -std=c11
+   -O1
+   -g
+   -fno-omit-frame-pointer
+   -fsanitize=address,undefined
+   -Wall
+   -Wextra
+   -Wpedantic
+   -Werror
+   -DNX_IO_CODEC_NO_OCAML
+   -I..
+   %{dep:image_core_test.c}
+   %{dep:../nx_io_checksum.c}
+   %{dep:../nx_io_deflate.c}
+   %{dep:../nx_io_deflate_encode.c}
+   -o
+   %{target})))
+
+(rule
+ (alias codec-sanitize)
+ (action (run %{dep:image_core_sanitize.exe})))

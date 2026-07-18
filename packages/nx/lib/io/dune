@@ -1,4 +1,11 @@
+(include_subdirs unqualified)
+
 (library
  (name nx_io)
  (public_name nx.io)
- (libraries nx_buffer nx nx_core unix zip stb_image stb_image_write))
+ (libraries nx_buffer nx nx_core unix)
+ (foreign_stubs
+  (language c)
+  (names nx_io_checksum nx_io_deflate nx_io_deflate_encode nx_io_png nx_io_jpeg)
+  (flags
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic))))

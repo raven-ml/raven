@@ -1,0 +1,44 @@
+# thumper baseline
+# version: 2
+# suite_name: nx_io
+
+# machine: 3b8ae6dbe74c4269
+# cpu: Apple M1 Max
+# ocaml: 5.5.0
+# git: 8e9fbb39
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/io/bench_io.exe --bless --ci --baseline packages/nx/bench/io/nx_io.thumper
+
+gzip/gunzip_stored_1_mib	alloc_words	1.940000e+02	1.940000e+02	1.940000e+02	0.000000e+00	65	5
+gzip/gunzip_stored_1_mib	cpu_time	1.211825e-03	1.177886e-03	1.240686e-03	2.591133e-02	65	3
+gzip/gunzip_stored_1_mib	wall_time	1.270157e-03	1.229301e-03	1.305148e-03	2.985719e-02	65	1
+jpeg/load_jpeg_512x512_rgb	alloc_words	2.390000e+02	2.390000e+02	2.390000e+02	0.000000e+00	55	5
+jpeg/load_jpeg_512x512_rgb	cpu_time	5.303602e-03	5.265984e-03	5.353600e-03	8.259994e-03	55	3
+jpeg/load_jpeg_512x512_rgb	wall_time	5.354439e-03	5.311864e-03	5.410316e-03	9.193440e-03	55	3
+jpeg/save_jpeg_512x512_rgb	alloc_words	3.350000e+02	3.350000e+02	3.350000e+02	0.000000e+00	56	3
+jpeg/save_jpeg_512x512_rgb	cpu_time	3.992215e-03	3.955789e-03	4.035444e-03	9.976356e-03	56	2
+jpeg/save_jpeg_512x512_rgb	wall_time	4.046672e-03	3.998288e-03	4.098155e-03	1.233941e-02	56	2
+npy/load_npy_1_mib_f32	alloc_words	4.640000e+02	4.640000e+02	4.640000e+02	0.000000e+00	57	5
+npy/load_npy_1_mib_f32	cpu_time	1.131596e-04	1.120187e-04	1.141270e-04	9.315515e-03	57	11
+npy/load_npy_1_mib_f32	wall_time	1.163443e-04	1.150725e-04	1.177099e-04	1.133432e-02	57	11
+npy/save_npy_1_mib_f32	alloc_words	5.870000e+02	5.870000e+02	5.870000e+02	0.000000e+00	58	5
+npy/save_npy_1_mib_f32	cpu_time	3.461799e-04	3.431691e-04	3.529861e-04	1.417918e-02	58	7
+npy/save_npy_1_mib_f32	wall_time	4.642290e-04	4.509257e-04	4.796373e-04	3.092389e-02	58	3
+npz/load_npz_deflate_1_mib_f32	alloc_words	7.340000e+02	7.340000e+02	7.340000e+02	0.000000e+00	48	5
+npz/load_npz_deflate_1_mib_f32	cpu_time	1.120022e-02	1.101132e-02	1.132688e-02	1.408744e-02	48	4
+npz/load_npz_deflate_1_mib_f32	wall_time	1.135557e-02	1.113588e-02	1.151668e-02	1.676713e-02	48	3
+npz/load_npz_store_1_mib_u8	alloc_words	7.200000e+02	7.200000e+02	7.200000e+02	0.000000e+00	65	6
+npz/load_npz_store_1_mib_u8	cpu_time	5.989017e-04	5.965110e-04	6.018630e-04	4.468184e-03	65	5
+npz/load_npz_store_1_mib_u8	wall_time	6.086520e-04	6.052266e-04	6.135345e-04	6.824857e-03	65	5
+npz/save_npz_adaptive_1_mib_u8	alloc_words	1.175000e+03	1.175000e+03	1.175000e+03	0.000000e+00	62	4
+npz/save_npz_adaptive_1_mib_u8	cpu_time	2.297012e-03	2.278453e-03	2.309264e-03	6.706861e-03	62	2
+npz/save_npz_adaptive_1_mib_u8	wall_time	2.375581e-03	2.339715e-03	2.406219e-03	1.399744e-02	62	4
+npz/save_npz_deflate_1_mib_f32	alloc_words	1.167000e+03	1.167000e+03	1.167000e+03	0.000000e+00	42	4
+npz/save_npz_deflate_1_mib_f32	cpu_time	1.946518e-02	1.932396e-02	1.957558e-02	6.463388e-03	42	2
+npz/save_npz_deflate_1_mib_f32	wall_time	2.041803e-02	2.001441e-02	2.109005e-02	2.634054e-02	42	1
+png/load_png_512x512_rgb	alloc_words	2.390000e+02	2.390000e+02	2.390000e+02	0.000000e+00	52	5
+png/load_png_512x512_rgb	cpu_time	7.014297e-03	6.919056e-03	7.073273e-03	1.099311e-02	52	0
+png/load_png_512x512_rgb	wall_time	7.102508e-03	7.007788e-03	7.169687e-03	1.139735e-02	52	0
+png/save_png_512x512_rgb	alloc_words	3.350000e+02	3.350000e+02	3.350000e+02	0.000000e+00	49	5
+png/save_png_512x512_rgb	cpu_time	1.023819e-02	1.018049e-02	1.028981e-02	5.339046e-03	49	5
+png/save_png_512x512_rgb	wall_time	1.037581e-02	1.028855e-02	1.045233e-02	7.892091e-03	49	3

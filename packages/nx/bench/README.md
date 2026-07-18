@@ -7,6 +7,7 @@ Additional focused suites live under subdirectories:
 - `conv2d/` for convolutional workloads
 - `einsum/` for tensor contractions
 - `matmul/` for dense matrix multiplication
+- `io/` for end-to-end tensor, image, archive, and gzip I/O
 
 ## Results Nx
 
