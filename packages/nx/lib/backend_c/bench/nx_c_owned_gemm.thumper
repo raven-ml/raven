@@ -1,0 +1,23 @@
+# thumper baseline
+# version: 2
+# suite_name: nx_c_owned_gemm
+
+# machine: 3b8ae6dbe74c4269
+# cpu: Apple M1 Max
+# ocaml: 5.5.0
+# git: 262582b2
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/lib/backend_c/bench/bench_owned_gemm.exe --bless --quick --baseline packages/nx/lib/backend_c/bench/nx_c_owned_gemm.thumper
+
+owned-gemm/f32_512x512	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	19	0
+owned-gemm/f32_512x512	cpu_time	4.182994e-03	4.112829e-03	4.232887e-03	1.435070e-02	19	3
+owned-gemm/f32_512x512	wall_time	2.516697e-03	2.232593e-03	2.758991e-03	1.045811e-01	19	0
+owned-gemm/f32_64x64	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	10	0
+owned-gemm/f32_64x64	cpu_time	1.337373e-05	1.292339e-05	1.405273e-05	4.222225e-02	10	0
+owned-gemm/f32_64x64	wall_time	1.364285e-05	1.295901e-05	1.441444e-05	5.334053e-02	10	1
+owned-gemm/f32_batched_64x32x32	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	13	0
+owned-gemm/f32_batched_64x32x32	cpu_time	1.241688e-03	1.145482e-03	1.274016e-03	5.175756e-02	13	2
+owned-gemm/f32_batched_64x32x32	wall_time	5.450202e-04	4.920504e-04	5.666102e-04	6.840093e-02	13	0
+owned-gemm/f32_transposed_512x512	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	19	0
+owned-gemm/f32_transposed_512x512	cpu_time	4.238325e-03	4.128511e-03	4.301558e-03	2.041462e-02	19	1
+owned-gemm/f32_transposed_512x512	wall_time	2.224338e-03	2.170057e-03	2.285307e-03	2.590663e-02	19	0

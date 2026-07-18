@@ -81,6 +81,12 @@ let structural_benchmarks () =
   let transpose_view = Nx.transpose (Nx.rand Nx.Float32 [| 512; 512 |]) in
   let cat_a = Nx.rand Nx.Float32 [| 512; 512 |] in
   let cat_b = Nx.rand Nx.Float32 [| 512; 512 |] in
+  let gather_source = Nx.rand Nx.Float32 [| 4096; 256 |] in
+  let gather_indices =
+    Nx.create Nx.Int32 [| 1024 |]
+      (Array.init 1024 (fun i -> Int32.of_int ((i * 37) mod 4096)))
+  in
+  let sort_input = Nx.rand Nx.Float32 [| 512; 512 |] in
   [
     Thumper.bench ~tags:lab "contiguous of transpose 512x512" (fun () ->
         Nx.contiguous transpose_view);
@@ -91,6 +97,9 @@ let structural_benchmarks () =
     Thumper.bench "cast f32→f16 1M" (fun () -> Nx.cast Nx.Float16 flat);
     Thumper.bench "cast f32→i32 1M" (fun () -> Nx.cast Nx.Int32 flat);
     Thumper.bench "copy 1M" (fun () -> Nx.copy flat);
+    Thumper.bench "gather 1024 rows from 4096x256" (fun () ->
+        Nx.take ~axis:0 ~indices:gather_indices gather_source);
+    Thumper.bench "sort rows 512x512" (fun () -> Nx.sort sort_input);
   ]
 
 let () =

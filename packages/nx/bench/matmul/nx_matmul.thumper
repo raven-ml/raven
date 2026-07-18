@@ -1,7 +1,8 @@
 # thumper baseline
-# version: 1
+# version: 2
 # suite_name: nx_matmul
-# host: 1480401c3b76ed18
+
+# machine: 1480401c3b76ed18
 # cpu: Apple M1 Max
 # ocaml: 5.4.1
 # git: 31747323
@@ -32,3 +33,41 @@ f64/matmul_tallskinny_256x64___64x256_f64__nx_	wall_time	8.725737e-05	8.644738e-
 f64/matmul_wide_128x256___256x64_f64__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
 f64/matmul_wide_128x256___256x64_f64__nx_	cpu_time	1.791992e-05	1.777490e-05	1.808887e-05	8.760198e-03	5	1
 f64/matmul_wide_128x256___256x64_f64__nx_	wall_time	1.793295e-05	1.778910e-05	1.806828e-05	7.784129e-03	5	1
+
+# machine: 3b8ae6dbe74c4269
+# cpu: Apple M1 Max
+# ocaml: 5.5.0
+# git: 262582b2
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/matmul/bench_matmul_nx.exe --bless --quick --baseline packages/nx/bench/matmul/nx_matmul.thumper
+
+f32/matmul_squarelarge_512x512___512x512_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	20	0
+f32/matmul_squarelarge_512x512___512x512_f32__nx_	cpu_time	3.902541e-04	3.854690e-04	3.961396e-04	1.367133e-02	20	2
+f32/matmul_squarelarge_512x512___512x512_f32__nx_	wall_time	4.768794e-04	4.679632e-04	4.907533e-04	2.389507e-02	20	2
+f32/matmul_squaresmall_64x64___64x64_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	16	0
+f32/matmul_squaresmall_64x64___64x64_f32__nx_	cpu_time	1.653538e-06	1.633492e-06	1.672695e-06	1.185416e-02	16	0
+f32/matmul_squaresmall_64x64___64x64_f32__nx_	wall_time	1.731091e-06	1.668811e-06	1.821466e-06	4.409225e-02	16	0
+f32/matmul_tallskinny_256x64___64x256_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	8	0
+f32/matmul_tallskinny_256x64___64x256_f32__nx_	cpu_time	3.201037e-05	3.135570e-05	3.282003e-05	2.287270e-02	8	0
+f32/matmul_tallskinny_256x64___64x256_f32__nx_	wall_time	3.203108e-05	2.960249e-05	3.458895e-05	7.783787e-02	8	1
+f32/matmul_wide_128x256___256x64_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	17	0
+f32/matmul_wide_128x256___256x64_f32__nx_	cpu_time	6.470946e-06	6.393231e-06	6.653771e-06	2.013150e-02	17	1
+f32/matmul_wide_128x256___256x64_f32__nx_	wall_time	7.046148e-06	6.798307e-06	7.836746e-06	7.368838e-02	17	0
+f64/matmul_squarelarge_512x512___512x512_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	19	0
+f64/matmul_squarelarge_512x512___512x512_f64__nx_	cpu_time	1.236588e-03	1.214818e-03	1.252157e-03	1.509759e-02	19	0
+f64/matmul_squarelarge_512x512___512x512_f64__nx_	wall_time	1.201097e-03	1.147020e-03	1.235210e-03	3.671233e-02	19	0
+f64/matmul_squaresmall_64x64___64x64_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	10	0
+f64/matmul_squaresmall_64x64___64x64_f64__nx_	cpu_time	3.355361e-06	3.267137e-06	3.381352e-06	1.701981e-02	10	3
+f64/matmul_squaresmall_64x64___64x64_f64__nx_	wall_time	3.849867e-06	3.423021e-06	3.983278e-06	7.276316e-02	10	1
+f64/matmul_tallskinny_256x64___64x256_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	16	0
+f64/matmul_tallskinny_256x64___64x256_f64__nx_	cpu_time	5.844778e-05	5.781376e-05	5.880351e-05	8.466935e-03	16	2
+f64/matmul_tallskinny_256x64___64x256_f64__nx_	wall_time	6.545343e-05	6.218622e-05	6.878678e-05	5.042180e-02	16	1
+f64/matmul_wide_128x256___256x64_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	5	0
+f64/matmul_wide_128x256___256x64_f64__nx_	cpu_time	1.990206e-05	1.927588e-05	2.098218e-05	4.286755e-02	5	1
+f64/matmul_wide_128x256___256x64_f64__nx_	wall_time	2.509291e-05	2.340773e-05	2.871363e-05	1.057249e-01	5	0
+layout-and-batch/matmul_batched_64x32x32_f32__nx_	alloc_words	1.380000e+02	1.380000e+02	1.380000e+02	0.000000e+00	22	1
+layout-and-batch/matmul_batched_64x32x32_f32__nx_	cpu_time	1.226516e-03	1.216104e-03	1.246640e-03	1.244807e-02	22	1
+layout-and-batch/matmul_batched_64x32x32_f32__nx_	wall_time	5.856314e-04	5.624544e-04	6.174715e-04	4.697241e-02	22	1
+layout-and-batch/matmul_transposed_512x512_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	16	0
+layout-and-batch/matmul_transposed_512x512_f32__nx_	cpu_time	3.874709e-04	3.771499e-04	3.978648e-04	2.673086e-02	16	0
+layout-and-batch/matmul_transposed_512x512_f32__nx_	wall_time	4.639278e-04	4.514931e-04	4.948795e-04	4.675986e-02	16	1

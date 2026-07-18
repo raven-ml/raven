@@ -583,8 +583,8 @@ module type S = sig
 
       {b Frontend guarantees:} [a]'s last dim equals [b]'s second-to-last dim.
 
-      {b Backend must:} allocate and return the result. May use BLAS for
-      performance. [a] and [b] may be non-contiguous. *)
+      {b Backend must:} allocate and return the result. [a] and [b] may be
+      non-contiguous. *)
 
   (** {1 Fourier Transforms}
 
@@ -618,7 +618,9 @@ module type S = sig
 
       Takes conjugate-symmetric complex input, returns real output. [s]
       specifies output sizes along the transformed axes; [None] infers sizes
-      from the input. *)
+      from the input. When an explicit last-axis size needs fewer or more
+      frequency bins than [t] supplies, the backend truncates or zero-pads the
+      half-spectrum. *)
 
   (** {1 Linear Algebra}
 
@@ -628,8 +630,7 @@ module type S = sig
       {b Frontend guarantees:} input matrices have compatible shapes (square
       where required, matching dimensions for solves).
 
-      {b Backend must:} allocate and return result tensors. Typically delegates
-      to LAPACK.
+      {b Backend must:} allocate and return result tensors.
 
       Numeric failures (a matrix that is not positive-definite, a decomposition
       that fails to converge) raise {!Linalg_error}. Precondition violations
@@ -666,8 +667,8 @@ module type S = sig
   (** [eigvals t] computes the eigenvalues of a general square matrix. Returns
       complex64 results.
 
-      This is the values-only variant: it drives the cheaper LAPACK path that
-      does not accumulate eigenvectors. Use {!eig} when the vectors are needed.
+      This is the values-only variant: it avoids accumulating eigenvectors. Use
+      {!eig} when the vectors are needed.
 
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
@@ -685,8 +686,8 @@ module type S = sig
   (** [eigvalsh t] computes the eigenvalues of a symmetric/Hermitian matrix.
       Eigenvalues are float64.
 
-      This is the values-only variant: it drives the cheaper LAPACK path that
-      does not accumulate eigenvectors. Use {!eigh} when the vectors are needed.
+      This is the values-only variant: it avoids accumulating eigenvectors. Use
+      {!eigh} when the vectors are needed.
 
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
@@ -711,7 +712,9 @@ module type S = sig
 
       [upper]: [A] is upper triangular. [transpose]: solve [Aᴴ·x = b] — the
       conjugate transpose for complex dtypes, the plain transpose for real
-      ones. [unit_diag]: assume diagonal is all ones.
+      ones. [unit_diag]: assume diagonal is all ones. [b] may be a vector with
+      shape [(..., n)] or a matrix of right-hand sides with shape
+      [(..., n, nrhs)].
 
       May raise {!Linalg_error} with kind [`Singular] if [A] is singular (a zero
       on the diagonal when [unit_diag] is false). *)

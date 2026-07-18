@@ -1,0 +1,20 @@
+# thumper baseline
+# version: 2
+# suite_name: nx_fft
+
+# machine: 3b8ae6dbe74c4269
+# cpu: Apple M1 Max
+# ocaml: 5.5.0
+# git: 262582b2
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/fft/bench_fft.exe --bless --quick --baseline packages/nx/bench/fft/nx_fft.thumper
+
+fft/c64_100000_mixed-radix	alloc_words	9.600000e+01	9.600000e+01	9.600000e+01	0.000000e+00	18	0
+fft/c64_100000_mixed-radix	cpu_time	7.472089e-04	7.373803e-04	7.555076e-04	1.213002e-02	18	3
+fft/c64_100000_mixed-radix	wall_time	7.530485e-04	7.390486e-04	7.647282e-04	1.705048e-02	18	3
+fft/c64_65521_prime	alloc_words	9.600000e+01	9.600000e+01	9.600000e+01	0.000000e+00	5	0
+fft/c64_65521_prime	cpu_time	2.466300e-03	2.414063e-03	2.534500e-03	2.441664e-02	5	0
+fft/c64_65521_prime	wall_time	2.475266e-03	2.413807e-03	2.553959e-03	2.831042e-02	5	0
+fft/c64_65536_power-of-two	alloc_words	9.600000e+01	9.600000e+01	9.600000e+01	0.000000e+00	9	0
+fft/c64_65536_power-of-two	cpu_time	5.680946e-04	5.336083e-04	5.857205e-04	4.586579e-02	9	1
+fft/c64_65536_power-of-two	wall_time	5.652618e-04	5.015181e-04	6.012864e-04	8.824959e-02	9	0

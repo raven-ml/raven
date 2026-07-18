@@ -36,10 +36,9 @@
  (name nx)
  (dir packages/nx)
  ; ISC, plus the vendored components: camlzip (LGPL with the OCaml linking
- ; exception), pocketfft (BSD-3-Clause), stb_image/stb_image_write
- ; (MIT or Unlicense).
+ ; exception) and stb_image/stb_image_write (MIT or Unlicense).
  (license
-  "ISC AND LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception AND BSD-3-Clause AND (MIT OR Unlicense)")
+  "ISC AND LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception AND (MIT OR Unlicense)")
  (synopsis "N-dimensional arrays for OCaml")
  (description
   "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")

@@ -721,13 +721,32 @@ module Make (B : Backend_intf.S) = struct
   let std ?axes ?(keepdims = false) ?(ddof = 0) x =
     sqrt (var ?axes ~keepdims ~ddof x)
 
-  let all ?axes ?(keepdims = false) x =
+  let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
     let bool_t = cmpne x (full_like x (Dtype.zero (dtype x))) in
-    prod ?axes ~keepdims bool_t
+    let input_shape = shape bool_t in
+    let rank = Array.length input_shape in
+    let axes_to_reduce =
+      normalize_and_dedup_axes ~op:op_name rank
+        (match axes with None -> List.init rank Fun.id | Some values -> values)
+      |> Array.of_list
+    in
+    if Array.exists (fun axis -> input_shape.(axis) = 0) axes_to_reduce then
+      full (B.context x) Dtype.bool
+        (Shape.reduce_output_shape input_shape axes_to_reduce keepdims)
+        identity
+    else
+      let reduced = B.reduce ~op ~axes:axes_to_reduce bool_t in
+      if keepdims then
+        reshape
+          (Shape.reduce_output_shape input_shape axes_to_reduce true)
+          reduced
+      else reduced
+
+  let all ?axes ?(keepdims = false) x =
+    logical_reduce ~op_name:"all" ~op:`Min ~identity:true ?axes ~keepdims x
 
   let any ?axes ?(keepdims = false) x =
-    let bool_t = cmpne x (full_like x (Dtype.zero (dtype x))) in
-    max ?axes ~keepdims bool_t
+    logical_reduce ~op_name:"any" ~op:`Max ~identity:false ?axes ~keepdims x
 
   let array_equal x y =
     let can_broadcast =
@@ -2295,35 +2314,63 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Linear Algebra ───── *)
 
-  let matmul_with_alloc a b = B.matmul a b
+  let matmul_with_alloc a_shape b_shape a b =
+    let a_axis = Array.length a_shape - 1 in
+    let b_axis = Array.length b_shape - 2 in
+    let a_contract = a_shape.(a_axis) and b_contract = b_shape.(b_axis) in
+    if a_contract <> b_contract then
+      err "dot"
+        "cannot contract %s (last axis: %d) to %s (axis %d: %d) (size %d≠%d)"
+        (Shape.to_string a_shape) a_contract (Shape.to_string b_shape) b_axis
+        b_contract a_contract b_contract;
+    B.matmul a b
 
   let dot x w =
-    if not (ndim x > 0 && ndim w > 0) then
+    let x_shape = shape x and w_shape = shape w in
+    let x_ndim = Array.length x_shape and w_ndim = Array.length w_shape in
+    if not (x_ndim > 0 && w_ndim > 0) then
       invalid_arg "dot: tensors, both must be at least 1D";
-    match (ndim x, ndim w) with
+    match (x_ndim, w_ndim) with
     | 1, 1 -> sum (mul x w)
     | 1, _ ->
-        let r = matmul_with_alloc (unsqueeze ~axes:[ 0 ] x) w in
+        let x = unsqueeze ~axes:[ 0 ] x in
+        let r = matmul_with_alloc (Array.append [| 1 |] x_shape) w_shape x w in
         squeeze ~axes:[ ndim r - 2 ] r
     | _, 1 ->
-        let r = matmul_with_alloc x (unsqueeze ~axes:[ 1 ] w) in
+        let w = unsqueeze ~axes:[ 1 ] w in
+        let r = matmul_with_alloc x_shape (Array.append w_shape [| 1 |]) x w in
         squeeze ~axes:[ ndim r - 1 ] r
-    | _ -> matmul_with_alloc x w
+    | _ -> matmul_with_alloc x_shape w_shape x w
 
   let matmul a_orig b_orig =
-    if ndim a_orig = 0 || ndim b_orig = 0 then
+    let a_shape = shape a_orig and b_shape = shape b_orig in
+    let a_ndim = Array.length a_shape and b_ndim = Array.length b_shape in
+    if a_ndim = 0 || b_ndim = 0 then
       invalid_arg "matmul: inputs cannot be 0-D (scalars)";
-    if ndim a_orig >= 2 && ndim b_orig >= 2 then matmul_with_alloc a_orig b_orig
+    if a_ndim >= 2 && b_ndim >= 2 then
+      matmul_with_alloc a_shape b_shape a_orig b_orig
     else
-      let a, b =
-        match (ndim a_orig, ndim b_orig) with
-        | 1, 1 -> (unsqueeze ~axes:[ 0 ] a_orig, unsqueeze ~axes:[ 1 ] b_orig)
-        | 1, _ -> (unsqueeze ~axes:[ 0 ] a_orig, b_orig)
-        | _ -> (a_orig, unsqueeze ~axes:[ 1 ] b_orig)
+      let a, a_shape, b, b_shape =
+        match (a_ndim, b_ndim) with
+        | 1, 1 ->
+            ( unsqueeze ~axes:[ 0 ] a_orig,
+              Array.append [| 1 |] a_shape,
+              unsqueeze ~axes:[ 1 ] b_orig,
+              Array.append b_shape [| 1 |] )
+        | 1, _ ->
+            ( unsqueeze ~axes:[ 0 ] a_orig,
+              Array.append [| 1 |] a_shape,
+              b_orig,
+              b_shape )
+        | _ ->
+            ( a_orig,
+              a_shape,
+              unsqueeze ~axes:[ 1 ] b_orig,
+              Array.append b_shape [| 1 |] )
       in
-      let r = matmul_with_alloc a b in
-      if ndim a_orig = 1 && ndim b_orig = 1 then squeeze r
-      else if ndim a_orig = 1 then squeeze ~axes:[ ndim r - 2 ] r
+      let r = matmul_with_alloc a_shape b_shape a b in
+      if a_ndim = 1 && b_ndim = 1 then squeeze r
+      else if a_ndim = 1 then squeeze ~axes:[ ndim r - 2 ] r
       else squeeze ~axes:[ ndim r - 1 ] r
 
   let diagonal ?(offset = 0) ?axis1 ?axis2 x =
@@ -3329,6 +3376,9 @@ module Make (B : Backend_intf.S) = struct
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
+    (match hermitian with
+    | Some true -> check_square ~op:"matrix_rank" a
+    | None | Some false -> ());
     let s =
       match hermitian with
       | Some true -> abs (B.eigvalsh a)
@@ -3392,6 +3442,9 @@ module Make (B : Backend_intf.S) = struct
 
   let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
     check_float_or_complex ~op:"pinv" a;
+    (match hermitian with
+    | Some true -> check_square ~op:"pinv" a
+    | None | Some false -> ());
     let sh = shape a in
     let m = sh.(Array.length sh - 2) in
     let n = sh.(Array.length sh - 1) in
@@ -3422,8 +3475,14 @@ module Make (B : Backend_intf.S) = struct
         mul (div ones_s (where mask s ones_s)) (cast (dtype s) mask)
         |> cast dtype_a
       in
-      let v = matrix_transpose vh in
-      let vs = mul v (unsqueeze ~axes:[ 0 ] s_inv) in
+      let v =
+        if Dtype.is_complex dtype_a then matrix_transpose (conjugate vh)
+        else matrix_transpose vh
+      in
+      (* Scale V's columns. The singleton belongs immediately before the
+         singular-value axis so batched factors [..., n, k] and [..., k]
+         broadcast as [..., n, k]. *)
+      let vs = mul v (expand_dims [ -2 ] s_inv) in
       if Dtype.is_complex dtype_a then
         matmul vs (matrix_transpose (conjugate u))
       else matmul vs (matrix_transpose u)
@@ -3440,10 +3499,15 @@ module Make (B : Backend_intf.S) = struct
         let o = ones (B.context vals) (dtype vals) (shape vals) in
         let z = zeros (B.context vals) (dtype vals) (shape vals) in
         let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
+        let vecs_h =
+          if Dtype.is_complex dtype_a then
+            matrix_transpose (conjugate vecs)
+          else matrix_transpose vecs
+        in
         let vh =
           mul
             (expand_dims [ -1 ] (cast dtype_a sign_fixed))
-            (matrix_transpose vecs)
+            vecs_h
         in
         pinv_from_factors vecs abs_vals vh
     | _ -> pinv_via_svd ()
@@ -3736,7 +3800,12 @@ module Make (B : Backend_intf.S) = struct
 
   let rfftn ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
-    let axes_list = match axes with None -> [ nd - 1 ] | Some ax -> ax in
+    let axes_list =
+      match axes with
+      | None -> [ nd - 1 ]
+      | Some values ->
+          List.map (fun axis -> if axis < 0 then nd + axis else axis) values
+    in
     let xp = pad_or_truncate_for_fft x axes_list s in
     let scale = fft_norm_scale norm axes_list xp in
     let r = B.rfft xp ~dtype:Dtype.Complex128 ~axes:(Array.of_list axes_list) in
@@ -3744,7 +3813,12 @@ module Make (B : Backend_intf.S) = struct
 
   let irfftn ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
-    let axes_list = match axes with None -> [ nd - 1 ] | Some ax -> ax in
+    let axes_list =
+      match axes with
+      | None -> [ nd - 1 ]
+      | Some values ->
+          List.map (fun axis -> if axis < 0 then nd + axis else axis) values
+    in
     let input_shape = shape x in
     let output_sizes =
       match s with
@@ -3752,7 +3826,6 @@ module Make (B : Backend_intf.S) = struct
       | None ->
           List.mapi
             (fun i axis ->
-              let axis = if axis < 0 then nd + axis else axis in
               if i = List.length axes_list - 1 then (input_shape.(axis) - 1) * 2
               else input_shape.(axis))
             axes_list

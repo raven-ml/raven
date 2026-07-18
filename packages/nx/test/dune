@@ -17,8 +17,16 @@
   test_nx_ops
   test_nx_rng)
  (package nx)
- (modules :standard \ test_nx_support test_nx_io)
+ (modules
+  :standard
+  \ backend_contract test_backend_contract test_nx_support test_nx_io)
  (libraries nx.buffer nx nx.core nx.effect windtrap test_nx_support))
+
+(test
+ (name test_backend_contract)
+ (package nx)
+ (modules backend_contract test_backend_contract)
+ (libraries nx.buffer nx.c nx.core windtrap windtrap.prop))
 
 (test
  (name test_nx_io)

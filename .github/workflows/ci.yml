@@ -34,6 +34,7 @@ jobs:
         run: |
           opam exec -- dune build --release packages/nx
           opam exec -- dune build --release @packages/nx/runtest
+          opam exec -- dune build --release @packages/nx/lib/backend_c/test/backend-stress
 
       - name: Build and test brot
         run: |

@@ -1,37 +1,80 @@
+; The default native CPU implementation of nx.backend.
+;
+; The include path for nx_buffer_stubs.h comes from the nx_buffer dependency
+; (install_c_headers). No OpenMP and no -ffast-math: the engine owns its own
+; thread pool and honors IEEE semantics. -fwrapv is passed EXPLICITLY,
+; not left to :standard: signed integer wrap is defined behavior the backend
+; relies on (modular int stores, i64 reduction accumulation), and that must not
+; depend on OCaml's default flag set surviving an upstream change. pthread needs
+; no explicit link flag — the OCaml 5 runtime already links it for its domain
+; support, which satisfies the engine pool's pthread_create/mutex/cond symbols.
+;
+; Nx_backend implements Nx_core.Backend_intf.S (t, View, Dtype, Shape), so
+; nx_core joins nx_buffer. The C needs just nx_c.h + nx_buffer_stubs.h.
+;
+; -Werror is a development/CI gate, not a release constraint: "warnings are
+; defects" is only policy until the build fails on them (the -Wstring-compare
+; defect once shipped through a green build), but a future compiler's NEW
+; warning must not break user installs. So the dev profile (and any custom
+; profile — CI included) keeps warnings fatal via werror_flags.sexp below,
+; while the release profile drops only the fatality; -Wall -Wextra themselves
+; apply everywhere.
+
 (library
  (name nx_c)
  (public_name nx.c)
  (implements nx.backend)
- (libraries nx_buffer nx_core nx.pocketfft)
+ (libraries nx_buffer nx_core)
  (foreign_stubs
   (language c)
-  (names
-   nx_c_binary
-   nx_c_unary
-   nx_c_reduce
-   nx_c_sort
-   nx_c_scan
-   nx_c_ternary
-   nx_c_cast
-   nx_c_memory
-   nx_c_index
-   nx_c_random
-   nx_c_shape
-   nx_c_window
-   nx_c_matmul
-   nx_c_cholesky
-   nx_c_qr
-   nx_c_eig
-   nx_c_solve
-   nx_c_svd)
+  (names nx_c_engine nx_c_map nx_c_fold nx_c_matmul nx_c_tri nx_c_qr nx_c_eigh nx_c_svd nx_c_eig nx_c_fft nx_c_sort nx_c_move nx_c_random)
   (flags
    :standard
-   (:include c_flags.sexp)))
+   -std=c11
+   -O3
+   -fwrapv
+   -Wall
+   -Wextra
+   (:include werror_flags.sexp)))
+ ; The only platform conditional: nx_c_matmul.c links the OS-shipped Accelerate
+ ; framework on macOS for eligible float and complex GEMMs. Off macOS the hook
+ ; compiles out and no flag is emitted, leaving the owned implementation as the
+ ; self-contained fallback.
  (c_library_flags
-  :standard
-  (:include c_library_flags.sexp)))
+  (:include accelerate_flags.sexp)))
 
 (rule
- (targets c_library_flags.sexp c_flags.sexp)
+ (target accelerate_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
  (action
-  (run config/discover.exe)))
+  (with-stdout-to
+   accelerate_flags.sexp
+   (echo "(-framework Accelerate)"))))
+
+(rule
+ (target accelerate_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   accelerate_flags.sexp
+   (echo "()"))))
+
+(rule
+ (target werror_flags.sexp)
+ (enabled_if
+  (<> %{profile} release))
+ (action
+  (with-stdout-to
+   werror_flags.sexp
+   (echo "(-Werror)"))))
+
+(rule
+ (target werror_flags.sexp)
+ (enabled_if
+  (= %{profile} release))
+ (action
+  (with-stdout-to
+   werror_flags.sexp
+   (echo "()"))))

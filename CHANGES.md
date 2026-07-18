@@ -361,6 +361,16 @@ thread.
 
 ### Nx
 
+- Replace the default `nx.c` backend with the self-contained C implementation.
+  FFT and dense linear algebra no longer require PocketFFT, OpenBLAS, LAPACKE,
+  libomp, or platform depext configuration; macOS automatically uses Accelerate
+  for eligible matmuls and every platform retains the owned GEMM fallback.
+  **Breaking:** the public `nx.pocketfft` vendored library is removed.
+- Preserve Nx semantics across the backend cutover for detailed `matmul` shape
+  errors, empty `all`/`any`, vector right-hand sides, explicit-size real FFTs,
+  and complex pseudoinverses.
+- Prevent parallel `nx.c` operations from hanging in a forked child by rebuilding
+  the backend worker pool after `fork`.
 - Correct the backend interface docs: `reshape` never copies — it raises
   `Invalid_argument` when the existing strides cannot express the new shape —
   and `triangular_solve`'s `transpose` solves with the conjugate transpose

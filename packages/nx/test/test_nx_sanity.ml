@@ -485,12 +485,20 @@ let reduction_tests =
         let a = Nx.create Nx.int32 [| 4 |] [| 1l; 1l; 0l; 1l |] in
         Nx.all a |> check_t "all with zero" [||] [| false |];
         let c = Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 1l |] in
-        Nx.all c |> check_t "all without zero" [||] [| true |]);
+        Nx.all c |> check_t "all without zero" [||] [| true |];
+        let empty = Nx.empty Nx.int32 [| 0; 3 |] in
+        Nx.all empty |> check_t "all empty" [||] [| true |];
+        Nx.all ~axes:[ 0 ] empty
+        |> check_t "all empty axis" [| 3 |] [| true; true; true |]);
     test "any" (fun () ->
         let a = Nx.create Nx.int32 [| 4 |] [| 0l; 0l; 1l; 0l |] in
         Nx.any a |> check_t "any with one" [||] [| true |];
         let c = Nx.create Nx.int32 [| 3 |] [| 0l; 0l; 0l |] in
-        Nx.any c |> check_t "any all zeros" [||] [| false |]);
+        Nx.any c |> check_t "any all zeros" [||] [| false |];
+        let empty = Nx.empty Nx.int32 [| 0; 3 |] in
+        Nx.any empty |> check_t "any empty" [||] [| false |];
+        Nx.any ~axes:[ 0 ] empty
+        |> check_t "any empty axis" [| 3 |] [| false; false; false |]);
     test "array_equal" (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in

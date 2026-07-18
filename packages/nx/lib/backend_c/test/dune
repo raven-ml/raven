@@ -1,0 +1,70 @@
+(test
+ (name test_backend_c)
+ (modules test_backend_c)
+ (libraries nx_c nx.core nx_buffer windtrap)
+ (foreign_stubs
+  (language c)
+  (names nx_c_test_stubs)
+  (flags
+   :standard
+   -I
+   ..)))
+
+(test
+ (name engine_test)
+ (modules engine_test)
+ (libraries nx_c nx_buffer unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names nx_c_selftest)
+  (flags
+   :standard
+   -I
+   ..)))
+
+(test
+ (name kernel_test)
+ (modules kernel_test)
+ (libraries nx_c nx_buffer windtrap)
+ (foreign_stubs
+  (language c)
+  (names kernel_test_stubs)
+  (flags
+   :standard
+   -I
+   ..)))
+
+(test
+ (name matmul_test)
+ (modules matmul_test)
+ (libraries nx_c nx_buffer windtrap)
+ (foreign_stubs
+  (language c)
+  (names matmul_test_stubs)
+  (flags
+   :standard
+   -I
+   ..)))
+
+(executable
+ (name linalg_test)
+ (modules linalg_test)
+ (libraries nx_c nx_buffer windtrap))
+
+(executable
+ (name eig_test)
+ (modules eig_test)
+ (libraries nx_c nx_buffer))
+
+(executable
+ (name fold_stress_test)
+ (modules fold_stress_test)
+ (libraries nx_c nx.core nx_buffer windtrap))
+
+(rule
+ (alias backend-stress)
+ (action
+  (progn
+   (run %{exe:linalg_test.exe})
+   (run %{exe:eig_test.exe})
+   (run %{exe:fold_stress_test.exe}))))

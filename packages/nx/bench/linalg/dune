@@ -1,0 +1,12 @@
+(executable
+ (name bench_linalg)
+ (modules bench_linalg)
+ (libraries nx thumper))
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_linalg.exe} -q)
+   (diff? nx_linalg.thumper nx_linalg.thumper.corrected))))

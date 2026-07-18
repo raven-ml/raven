@@ -21,7 +21,7 @@ let test_matmul_infix_precedence () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let b = Nx.eye Nx.float32 2 in
   let c = Nx.ones Nx.float32 [| 2; 2 |] in
-  let result = a *@ b + c in
+  let result = (a *@ b) + c in
   check_t "matmul infix precedence" [| 2; 2 |] [| 2.; 3.; 4.; 5. |] result
 
 let test_matmul_1d_2d () =
@@ -454,8 +454,8 @@ let test_matrix_rank_hermitian () =
     Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
   in
   raises ~msg:"matrix_rank hermitian non-square"
-    (Failure "eig: input must be square matrix") (fun () ->
-      ignore (Nx.matrix_rank ~hermitian:true non_square))
+    (Invalid_argument "matrix_rank: coefficient matrix must be square")
+    (fun () -> ignore (Nx.matrix_rank ~hermitian:true non_square))
 
 let test_matrix_rank_hermitian_negative () =
   (* Test negative-definite matrix *)
@@ -495,7 +495,7 @@ let test_pinv_hermitian () =
     Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
   in
   raises ~msg:"pinv hermitian non-square"
-    (Failure "eig: input must be square matrix") (fun () ->
+    (Invalid_argument "pinv: coefficient matrix must be square") (fun () ->
       ignore (Nx.pinv ~hermitian:true non_square))
 
 let test_pinv_hermitian_negative () =
@@ -528,6 +528,32 @@ let test_pinv_hermitian_complex () =
   check_nx ~epsilon:1e-5 "pinv hermitian complex recon" a recon;
   let pinv_svd = Nx.pinv a in
   check_nx ~epsilon:1e-5 "pinv hermitian complex vs svd" pinv_svd pinv_a
+
+let test_pinv_batched_complex () =
+  let z re im = Complex.{ re; im } in
+  let a =
+    Nx.create Nx.complex128 [| 2; 2; 2 |]
+      [|
+        z 1. 1.;
+        z 0. 0.;
+        z 0. 0.;
+        z 2. (-1.);
+        z 2. 0.;
+        z 0. 1.;
+        z 0. 0.;
+        z 3. 0.;
+      |]
+  in
+  let pinv_a = Nx.pinv a in
+  check_shape "pinv batched complex shape" [| 2; 2; 2 |] pinv_a;
+  let product = Nx.matmul a pinv_a in
+  let identity =
+    Nx.create Nx.complex128 [| 2; 2; 2 |]
+      [|
+        z 1. 0.; z 0. 0.; z 0. 0.; z 1. 0.; z 1. 0.; z 0. 0.; z 0. 0.; z 1. 0.;
+      |]
+  in
+  check_nx ~epsilon:1e-5 "pinv batched complex identity" identity product
 
 (* ───── Product Ops Tests ───── *)
 
@@ -1579,6 +1605,7 @@ let advanced_utility_tests =
     test "pinv hermitian" test_pinv_hermitian;
     test "pinv hermitian negative" test_pinv_hermitian_negative;
     test "pinv hermitian complex" test_pinv_hermitian_complex;
+    test "pinv batched complex" test_pinv_batched_complex;
   ]
 
 let product_tests =

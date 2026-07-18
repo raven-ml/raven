@@ -3,322 +3,133 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-// PRNG operations for nx C backend
+/* nx_c_random.c — counter-based PRNG: threefry2x32-20.
 
-#include <caml/alloc.h>
-#include <caml/bigarray.h>
-#include <caml/custom.h>
-#include <caml/fail.h>
+   Threefry maps a (key, counter) pair of two uint32 words to two output words.
+   The frontend lays key/counter/output out as int32 tensors whose last axis has
+   extent 2 (the 2-word vector); every position before that axis is an
+   independent vector. So this is a thin custom driver, not a map ride: it
+   iterates the prefix nest (all axes but the last) and processes each vector
+   through the pair kernel, reading the two words along the last-axis stride so
+   any layout works. The vectors are independent, so it parallelizes freely over
+   them (COMPUTE class — 20 rounds per vector is arithmetic-bound), race-free by
+   construction (disjoint output vectors).
+
+   The kernel is the verified threefry2x32-20 (Random123 constants: the
+   0x1BD11BDA key-schedule parity word, the eight rotation constants, one key
+   injection every four rounds). It computes in uint32 (modular, matching the
+   Int32-wrapping reference); the int32 storage is a pure reinterpretation.
+
+   Like every kernel-family file, this TU includes neither caml/fail.h nor
+   caml/threads.h: it raises and hands off the runtime lock only through the
+   engine (nx_c_raise, nx_c_parallel_run). */
+
 #include <caml/memory.h>
-#include <caml/threads.h>
-#include <stdint.h>
-#include <string.h>
+#include <caml/mlvalues.h>
 
-#include "nx_c_shared.h"
+#include "nx_c_engine.h"
 
-// Type definitions for binary operations (reused structure from binary ops)
-typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
+#define NX_C_ERR_THREEFRY_SHAPE "threefry: last axis must have extent 2"
 
-// Dispatch table for each type (only int32 supported for threefry)
-typedef struct {
-  binary_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
-  binary_op_t f16, f32, f64;
-  binary_op_t c32, c64;
-  binary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
-} binary_op_table;
+static inline uint32_t nx_c_rotl32(uint32_t x, int r) {
+  return (uint32_t)((x << r) | (x >> (32 - r)));
+}
 
-// Threefry2x32 definitions
-typedef uint32_t u32_t;
-
-typedef struct {
-  u32_t v[2];
-} tfry_ctr_t;
-
-typedef tfry_ctr_t tfry_key_t;
-
-#define ROTL_32(x, r) (((x) << (r)) | ((x) >> (32u - (r))))
-
-static tfry_ctr_t threefry2x32(tfry_key_t key, tfry_ctr_t ctr) {
-  tfry_ctr_t X;
-  u32_t ks[3];
-  ks[0] = key.v[0];
-  ks[1] = key.v[1];
-  ks[2] = 0x1BD11BDA ^ ks[0] ^ ks[1];
-
-  u32_t X0 = ctr.v[0] + ks[0];
-  u32_t X1 = ctr.v[1] + ks[1];
-
-  // Random123 Threefry2x32: 8 rotation constants, one rotation per round.
-  const int rots[8] = {13, 15, 26, 6, 17, 29, 16, 24};
-
+/* threefry2x32-20: 20 rounds, one rotation per round from the 8-constant
+   schedule, a key injection after every 4th round. ks[2] is the Threefry parity
+   word. Verified against the Random123 known-answer vectors (see the
+   conformance KAT cases). */
+static inline void nx_c_threefry2x32(uint32_t k0, uint32_t k1, uint32_t c0,
+                                    uint32_t c1, uint32_t *o0, uint32_t *o1) {
+  static const int rots[8] = {13, 15, 26, 6, 17, 29, 16, 24};
+  uint32_t ks[3] = {k0, k1, (uint32_t)0x1BD11BDA ^ k0 ^ k1};
+  uint32_t x0 = c0 + k0, x1 = c1 + k1;
   for (int r = 0; r < 20; r++) {
-    X0 += X1;
-    X1 = ROTL_32(X1, rots[r % 8]);
-    X1 ^= X0;
+    x0 += x1;
+    x1 = nx_c_rotl32(x1, rots[r % 8]);
+    x1 ^= x0;
     if ((r + 1) % 4 == 0) {
       int s = (r + 1) / 4;
-      X0 += ks[s % 3];
-      X1 += ks[(s + 1) % 3] + (u32_t)s;
+      x0 += ks[s % 3];
+      x1 += ks[(s + 1) % 3] + (uint32_t)s;
     }
   }
-
-  X.v[0] = X0;
-  X.v[1] = X1;
-  return X;
+  *o0 = x0;
+  *o1 = x1;
 }
 
-// Threefry implementation for int32 (only supported type)
-static void nx_c_threefry_i32(const ndarray_t *key_p, const ndarray_t *ctr_p,
-                              ndarray_t *out_p) {
-  if (!key_p || !ctr_p || !out_p) {
-    fprintf(stderr, "nx: nx_c_threefry_i32: null pointer\n");
-    abort();
-  }
+typedef struct {
+  const nx_c_ndarray *key;
+  const nx_c_ndarray *ctr;
+  const nx_c_ndarray *out;
+  int prefix_ndim; /* axes before the size-2 vector axis */
+  int64_t key_last, ctr_last, out_last; /* element stride of the vector axis */
+} nx_c_threefry_ctx;
 
-  ndarray_t key = *key_p;
-  ndarray_t ctr = *ctr_p;
-  ndarray_t out = *out_p;
-
-  // Dimension check already done before blocking section in dispatch_binary_op
-
-  long total_vectors = total_elements_safe(&key) / 2;
-  if (total_vectors == 0) return;
-
-  long last_stride_key = key.strides[key.ndim - 1];
-  long last_stride_ctr = ctr.strides[ctr.ndim - 1];
-  long last_stride_out = out.strides[out.ndim - 1];
-
-  int prefix_ndim = key.ndim - 1;
-  key.ndim = prefix_ndim;
-  ctr.ndim = prefix_ndim;
-  out.ndim = prefix_ndim;
-
-  if (is_fully_contiguous(key_p, ctr_p, out_p) &&
-      key_p->strides[key_p->ndim - 1] == 1 &&
-      ctr_p->strides[ctr_p->ndim - 1] == 1 &&
-      out_p->strides[out_p->ndim - 1] == 1) {
-    _Pragma(
-        "omp parallel for simd if(total_vectors > 1000)") for (long i = 0;
-                                                               i <
-                                                               total_vectors;
-                                                               i++) {
-      long off = i * 2;
-      tfry_key_t k;
-      tfry_ctr_t c;
-      int32_t *key_data = (int32_t *)key.data;
-      int32_t *ctr_data = (int32_t *)ctr.data;
-      int32_t *out_data = (int32_t *)out.data;
-      k.v[0] = (u32_t)key_data[key.offset + off];
-      k.v[1] = (u32_t)key_data[key.offset + off + 1];
-      c.v[0] = (u32_t)ctr_data[ctr.offset + off];
-      c.v[1] = (u32_t)ctr_data[ctr.offset + off + 1];
-      tfry_ctr_t res = threefry2x32(k, c);
-      out_data[out.offset + off] = (int32_t)res.v[0];
-      out_data[out.offset + off + 1] = (int32_t)res.v[1];
+static void nx_c_threefry_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  (void)worker;
+  const nx_c_threefry_ctx *t = vctx;
+  const nx_c_ndarray *key = t->key, *ctr = t->ctr, *out = t->out;
+  int pn = t->prefix_ndim;
+  const int32_t *kd = key->data, *cd = ctr->data;
+  int32_t *od = out->data;
+  int64_t coord[NX_C_MAX_NDIM];
+  for (int64_t it = lo; it < hi; it++) {
+    int64_t rem = it, kb = key->offset, cb = ctr->offset, ob = out->offset;
+    for (int d = pn - 1; d >= 0; d--) {
+      int64_t c = rem % key->shape[d];
+      rem /= key->shape[d];
+      coord[d] = c;
+      kb += c * key->strides[d];
+      cb += c * ctr->strides[d];
+      ob += c * out->strides[d];
     }
-  } else {
-    nd_iterator_t it;
-    nd_iterator_init_safe(&it, &key, &ctr, &out);
-    do {
-      long key_base, ctr_base, out_base;
-      nd_iterator_get_offsets(&it, &key_base, &ctr_base, &out_base);
-      long key_off0 = key.offset + key_base;
-      long key_off1 = key_off0 + last_stride_key;
-      long ctr_off0 = ctr.offset + ctr_base;
-      long ctr_off1 = ctr_off0 + last_stride_ctr;
-      long out_off0 = out.offset + out_base;
-      long out_off1 = out_off0 + last_stride_out;
-      tfry_key_t k;
-      tfry_ctr_t c;
-      int32_t *key_data = (int32_t *)key.data;
-      int32_t *ctr_data = (int32_t *)ctr.data;
-      int32_t *out_data = (int32_t *)out.data;
-      k.v[0] = (u32_t)key_data[key_off0];
-      k.v[1] = (u32_t)key_data[key_off1];
-      c.v[0] = (u32_t)ctr_data[ctr_off0];
-      c.v[1] = (u32_t)ctr_data[ctr_off1];
-      tfry_ctr_t res = threefry2x32(k, c);
-      out_data[out_off0] = (int32_t)res.v[0];
-      out_data[out_off1] = (int32_t)res.v[1];
-    } while (nd_iterator_next(&it));
-    nd_iterator_destroy(&it);
+    uint32_t o0, o1;
+    nx_c_threefry2x32((uint32_t)kd[kb], (uint32_t)kd[kb + t->key_last],
+                     (uint32_t)cd[cb], (uint32_t)cd[cb + t->ctr_last], &o0, &o1);
+    od[ob] = (int32_t)o0;
+    od[ob + t->out_last] = (int32_t)o1;
   }
 }
 
-// Build dispatch table (only i32 supported)
-static const binary_op_table threefry_table = {.i8 = NULL,
-                                               .u8 = NULL,
-                                               .i16 = NULL,
-                                               .u16 = NULL,
-                                               .i32 = nx_c_threefry_i32,
-                                               .i64 = NULL,
-                                               .u32 = nx_c_threefry_i32,
-                                               .u64 = NULL,
-                                               .inat = NULL,
-                                               .f16 = NULL,
-                                               .f32 = NULL,
-                                               .f64 = NULL,
-                                               .c32 = NULL,
-                                               .c64 = NULL,
-                                               .bf16 = NULL,
-                                               .bool_ = NULL,
-                                               .i4 = NULL,
-                                               .u4 = NULL,
-                                               .f8e4m3 = NULL,
-                                               .f8e5m2 = NULL};
+CAMLprim value caml_nx_c_threefry(value vout, value vkey, value vctr) {
+  CAMLparam3(vout, vkey, vctr);
+  nx_c_ndarray out, key, ctr;
+  nx_c_status s = nx_c_ndarray_of_value(vout, &out);
+  if (s == NX_C_OK) s = nx_c_ndarray_of_value(vkey, &key);
+  if (s == NX_C_OK) s = nx_c_ndarray_of_value(vctr, &ctr);
+  if (s != NX_C_OK) nx_c_raise("threefry", s);
+  if (nx_c_dtype_of_value(vout) != NX_C_DTYPE_i32 ||
+      nx_c_dtype_of_value(vkey) != NX_C_DTYPE_i32 ||
+      nx_c_dtype_of_value(vctr) != NX_C_DTYPE_i32)
+    nx_c_raise("threefry", NX_C_ERR_UNSUPPORTED_DTYPE);
+  /* The driver odometers over key's shape and applies those coords to ctr/out
+     strides, so it must VERIFY (never assume) that all three share a shape with
+     a size-2 last axis — backend_intf only promises "compatible shapes", and a
+     mismatched prefix would silently under-fill or mis-index. */
+  if (key.ndim < 1 || key.ndim != ctr.ndim || key.ndim != out.ndim)
+    nx_c_raise_invalid("threefry", NX_C_ERR_THREEFRY_SHAPE);
+  int last = key.ndim - 1;
+  for (int d = 0; d < key.ndim; d++)
+    if (key.shape[d] != ctr.shape[d] || key.shape[d] != out.shape[d])
+      nx_c_raise_invalid("threefry", NX_C_ERR_THREEFRY_SHAPE);
+  if (key.shape[last] != 2)
+    nx_c_raise_invalid("threefry", NX_C_ERR_THREEFRY_SHAPE);
 
-// Reuse dispatch from binary (compatible structure)
-static void dispatch_binary_op(value v_x, value v_y, value v_z,
-                               const binary_op_table *table,
-                               const char *op_name) {
-  // Extract ndarrays from FFI tensors
-  ndarray_t x = extract_ndarray(v_x);
-  ndarray_t y = extract_ndarray(v_y);
-  ndarray_t z = extract_ndarray(v_z);
-
-  // Check shapes match
-  if (x.ndim != y.ndim || x.ndim != z.ndim) {
-    cleanup_ndarray(&x);
-    cleanup_ndarray(&y);
-    cleanup_ndarray(&z);
-    caml_failwith("shape mismatch");
+  nx_c_threefry_ctx t = {&key,
+                        &ctr,
+                        &out,
+                        last,
+                        key.strides[last],
+                        ctr.strides[last],
+                        out.strides[last]};
+  int64_t vectors = 1;
+  for (int d = 0; d < last; d++) vectors *= key.shape[d];
+  if (vectors > 0) {
+    int nth = nx_c_threads_for(NX_C_COST_COMPUTE, vectors, 1, vectors * 16);
+    if (nth > vectors) nth = (int)vectors;
+    /* ctx is a stack struct; no per-thread scratch, so free_on_exit is NULL. */
+    nx_c_parallel_for(nth, vectors, vectors * 16, nx_c_threefry_body, &t, NULL);
   }
-  for (int i = 0; i < x.ndim; i++) {
-    if (x.shape[i] != y.shape[i] || x.shape[i] != z.shape[i]) {
-      cleanup_ndarray(&x);
-      cleanup_ndarray(&y);
-      cleanup_ndarray(&z);
-      caml_failwith("shape mismatch");
-    }
-  }
-
-  // Get bigarray kind from the data field
-  value v_x_data = Field(v_x, FFI_TENSOR_DATA);
-  value v_y_data = Field(v_y, FFI_TENSOR_DATA);
-  value v_z_data = Field(v_z, FFI_TENSOR_DATA);
-
-  struct caml_ba_array *ba = Caml_ba_array_val(v_x_data);
-  int kind = nx_buffer_get_kind(ba);
-
-  // Check kinds match for y and z
-  int kind_y = nx_buffer_get_kind(Caml_ba_array_val(v_y_data));
-  int kind_z = nx_buffer_get_kind(Caml_ba_array_val(v_z_data));
-  if (kind != kind_y || kind != kind_z) {
-    cleanup_ndarray(&x);
-    cleanup_ndarray(&y);
-    cleanup_ndarray(&z);
-    caml_failwith("dtype mismatch");
-  }
-
-  // Select operation based on dtype
-  binary_op_t op = NULL;
-  switch (kind) {
-    case CAML_BA_SINT8:
-      op = table->i8;
-      break;
-    case CAML_BA_UINT8:
-      op = table->u8;
-      break;
-    case CAML_BA_SINT16:
-      op = table->i16;
-      break;
-    case CAML_BA_UINT16:
-      op = table->u16;
-      break;
-    case CAML_BA_INT32:
-      op = table->i32;
-      break;
-    case CAML_BA_INT64:
-      op = table->i64;
-      break;
-    case NX_BA_UINT32:
-      op = table->u32;
-      break;
-    case NX_BA_UINT64:
-      op = table->u64;
-      break;
-    case CAML_BA_CAML_INT:
-    case CAML_BA_NATIVE_INT:
-      op = table->inat;
-      break;
-    case CAML_BA_FLOAT16:
-      op = table->f16;
-      break;
-    case CAML_BA_FLOAT32:
-      op = table->f32;
-      break;
-    case CAML_BA_FLOAT64:
-      op = table->f64;
-      break;
-    case CAML_BA_COMPLEX32:
-      op = table->c32;
-      break;
-    case CAML_BA_COMPLEX64:
-      op = table->c64;
-      break;
-    case NX_BA_BFLOAT16:
-      op = table->bf16;
-      break;
-    case NX_BA_BOOL:
-      op = table->bool_;
-      break;
-    case NX_BA_INT4:
-      op = table->i4;
-      break;
-    case NX_BA_UINT4:
-      op = table->u4;
-      break;
-    case NX_BA_FP8_E4M3:
-      op = table->f8e4m3;
-      break;
-    case NX_BA_FP8_E5M2:
-      op = table->f8e5m2;
-      break;
-    default:
-      cleanup_ndarray(&x);
-      cleanup_ndarray(&y);
-      cleanup_ndarray(&z);
-      caml_failwith("dispatch_binary_op: unsupported dtype");
-  }
-
-  if (!op) {
-    char msg[256];
-    snprintf(msg, sizeof(msg), "%s: operation not supported for dtype",
-             op_name);
-    cleanup_ndarray(&x);
-    cleanup_ndarray(&y);
-    cleanup_ndarray(&z);
-    caml_failwith(msg);
-  }
-
-  // For threefry, validate that last dimension is 2 before blocking section
-  if (strcmp(op_name, "threefry") == 0) {
-    if (x.ndim < 1 || x.shape[x.ndim - 1] != 2 ||
-        y.shape[y.ndim - 1] != 2 || z.shape[z.ndim - 1] != 2) {
-      cleanup_ndarray(&x);
-      cleanup_ndarray(&y);
-      cleanup_ndarray(&z);
-      caml_failwith("threefry: last dimension must be 2");
-    }
-  }
-
-  // Enter blocking section for potentially long computation
-  caml_enter_blocking_section();
-  op(&x, &y, &z);
-  caml_leave_blocking_section();
-
-  // Clean up if heap allocated
-  cleanup_ndarray(&x);
-  cleanup_ndarray(&y);
-  cleanup_ndarray(&z);
-}
-
-// ============================================================================
-// OCaml FFI Stubs
-// ============================================================================
-
-CAMLprim value caml_nx_threefry(value v_x, value v_y, value v_z) {
-  CAMLparam3(v_x, v_y, v_z);
-  dispatch_binary_op(v_x, v_y, v_z, &threefry_table, "threefry");
   CAMLreturn(Val_unit);
 }

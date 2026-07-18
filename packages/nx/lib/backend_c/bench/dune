@@ -1,0 +1,19 @@
+(executable
+ (name bench_owned_gemm)
+ (modules bench_owned_gemm)
+ (libraries nx_c nx_buffer thumper)
+ (foreign_stubs
+  (language c)
+  (names owned_gemm_stubs)
+  (flags
+   :standard
+   -I
+   ..)))
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_owned_gemm.exe} -q)
+   (diff? nx_c_owned_gemm.thumper nx_c_owned_gemm.thumper.corrected))))

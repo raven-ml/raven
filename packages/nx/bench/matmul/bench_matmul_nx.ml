@@ -40,9 +40,20 @@ let build_benchmarks () =
       add_case ~tags:f32_tags f32_benches case Nx.Float32 "f32";
       add_case f64_benches case Nx.Float64 "f64")
     cases;
+  let batch_lhs = Nx.rand Nx.Float32 [| 64; 32; 32 |] in
+  let batch_rhs = Nx.rand Nx.Float32 [| 64; 32; 32 |] in
+  let trans_lhs = Nx.transpose (Nx.rand Nx.Float32 [| 512; 512 |]) in
+  let trans_rhs = Nx.rand Nx.Float32 [| 512; 512 |] in
   [
     Thumper.group "f32" (List.rev !f32_benches);
     Thumper.group "f64" (List.rev !f64_benches);
+    Thumper.group "layout-and-batch"
+      [
+        Thumper.bench "MatMul Batched 64x32x32 f32 (Nx)" (fun () ->
+            Nx.matmul batch_lhs batch_rhs);
+        Thumper.bench "MatMul Transposed 512x512 f32 (Nx)" (fun () ->
+            Nx.matmul trans_lhs trans_rhs);
+      ];
   ]
 
 let () =

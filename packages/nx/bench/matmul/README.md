@@ -11,20 +11,21 @@ backend. Each shape is tested in two modes:
 - **reuse**: a pre-allocated output buffer is passed in (`Nx.matmul ~out a b` /
   `np.matmul(a, b, out=out)`)
 
-The reuse variant isolates pure BLAS compute time from allocation overhead.
+The reuse variant isolates matrix-multiplication compute time from allocation
+overhead.
 
 ## Running the Benchmarks
 
 ### Nx (OCaml)
 
 ```bash
-dune exec nx/bench/matmul/bench_matmul_nx.exe
+dune exec packages/nx/bench/matmul/bench_matmul_nx.exe
 ```
 
 ### NumPy (Python)
 
 ```bash
-python nx/bench/matmul/bench_matmul_numpy.py
+python packages/nx/bench/matmul/bench_matmul_numpy.py
 ```
 
 ## Results Nx (OCaml)
@@ -79,7 +80,7 @@ python nx/bench/matmul/bench_matmul_numpy.py
 
 ## Comparison (reuse, f32)
 
-Pure BLAS compute time (pre-allocated output, f32):
+Matrix-multiplication compute time (pre-allocated output, f32):
 
 | Shape                      | Nx       | NumPy    | Ratio     |
 | -------------------------- | -------- | -------- | --------- |
