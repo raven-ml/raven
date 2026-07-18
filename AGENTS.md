@@ -79,6 +79,7 @@ writing style:
 - NEVER run `dune clean`
 - NEVER use the `--force` argument
 - NEVER run dune build with DUNE_CACHE=disabled
+- NEVER pass `--build-dir` to dune
 - NEVER try to remove the dune lock file
 - NEVER use git stash, git checkout, git reset, git restore, or ANY git command that modifies the working tree
 - NEVER use git commands to "test" or "isolate" changes — reason about the code instead
