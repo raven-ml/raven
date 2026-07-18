@@ -3,22 +3,18 @@
  (libraries tolk tolk.uop unix))
 
 (rule
- (package tolk)
- (targets elementwise_add.actual elementwise_add_opt.actual)
- (action
-  (setenv
-   DEBUG
-   6
-   (run ./generate_actual.exe .))))
-
-(rule
  (alias runtest)
  (package tolk)
+ (deps
+  (:generator generate_actual.exe)
+  elementwise_add.expected
+  elementwise_add_opt.expected)
  (action
-  (diff elementwise_add.expected elementwise_add.actual)))
-
-(rule
- (alias runtest)
- (package tolk)
- (action
-  (diff elementwise_add_opt.expected elementwise_add_opt.actual)))
+  (no-infer
+   (progn
+    (setenv
+     DEBUG
+     6
+     (run %{generator} .))
+    (diff elementwise_add.expected elementwise_add.actual)
+    (diff elementwise_add_opt.expected elementwise_add_opt.actual)))))

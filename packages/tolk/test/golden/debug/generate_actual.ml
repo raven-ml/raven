@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Generates elementwise_add.actual for the debug golden test. Dune runs
-   this with DEBUG=6 so codegen emits the final lowered UOps. Stdout is
-   captured in the output file; diagnostic stderr is discarded. *)
+   this with DEBUG=6 so graph_rewrite emits print_uops after each named
+   stage. Stderr is redirected to the output file. *)
 
 open Tolk
 open Tolk_uop
@@ -31,25 +31,15 @@ let make_kernel ~name ~opts_to_apply ~ptr_size =
 let ren = Cstyle.clang_no_abi Gpu_target.X86_64
 
 let saved_stdout = Unix.dup Unix.stdout
-let saved_stderr = Unix.dup Unix.stderr
 
 let run_test ~name ~sink =
   let path = Filename.concat Sys.argv.(1) (name ^ ".actual") in
   let fd = Unix.openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644 in
-  let null = Unix.openfile Filename.null [ O_WRONLY ] 0o644 in
   Unix.dup2 fd Unix.stdout;
-  Unix.dup2 null Unix.stderr;
   Unix.close fd;
-  Unix.close null;
-  Fun.protect
-    (fun () -> ignore (Codegen.full_rewrite_to_sink ~optimize:true ren sink))
-    ~finally:(fun () ->
-      Format.pp_print_flush Format.std_formatter ();
-      Format.pp_print_flush Format.err_formatter ();
-      flush stdout;
-      flush stderr;
-      Unix.dup2 saved_stdout Unix.stdout;
-      Unix.dup2 saved_stderr Unix.stderr)
+  ignore (Codegen.full_rewrite_to_sink ~optimize:true ren sink);
+  flush stdout;
+  Unix.dup2 saved_stdout Unix.stdout
 
 let () =
   run_test ~name:"elementwise_add"
