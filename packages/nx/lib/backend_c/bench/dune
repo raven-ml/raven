@@ -1,7 +1,10 @@
+; The benchmark calls a private C maintenance hook without using Nx_backend
+; from OCaml. Keep the backend archive live for single-pass ELF linkers.
 (executable
  (name bench_owned_gemm)
  (modules bench_owned_gemm)
  (libraries nx_c nx_buffer thumper)
+ (link_flags -linkall)
  (foreign_stubs
   (language c)
   (names owned_gemm_stubs)

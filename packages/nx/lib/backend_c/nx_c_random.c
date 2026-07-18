@@ -73,13 +73,11 @@ static void nx_c_threefry_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   int pn = t->prefix_ndim;
   const int32_t *kd = key->data, *cd = ctr->data;
   int32_t *od = out->data;
-  int64_t coord[NX_C_MAX_NDIM];
   for (int64_t it = lo; it < hi; it++) {
     int64_t rem = it, kb = key->offset, cb = ctr->offset, ob = out->offset;
     for (int d = pn - 1; d >= 0; d--) {
       int64_t c = rem % key->shape[d];
       rem /= key->shape[d];
-      coord[d] = c;
       kb += c * key->strides[d];
       cb += c * ctr->strides[d];
       ob += c * out->strides[d];

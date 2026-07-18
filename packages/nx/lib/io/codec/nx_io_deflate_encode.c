@@ -736,21 +736,24 @@ nx_io_result nx_io_deflate_raw(const uint8_t *prefix, size_t prefix_len,
   out.fd = fd;
   bit_writer bw = {&out, 0, 0};
 
-  size_t *head = malloc(NX_IO_HASH_SIZE * sizeof(*head));
-  size_t *previous = malloc(NX_IO_WINDOW * sizeof(*previous));
-  token *tokens = malloc(NX_IO_BLOCK * sizeof(*tokens));
-  if (head == NULL || previous == NULL || tokens == NULL) {
-    result.status = NX_IO_NOMEM;
-    goto done;
-  }
-  for (size_t i = 0; i < NX_IO_HASH_SIZE; i++)
-    head[i] = SIZE_MAX;
-  for (size_t i = 0; i < NX_IO_WINDOW; i++)
-    previous[i] = SIZE_MAX;
+  size_t *head = NULL;
+  size_t *previous = NULL;
+  token *tokens = NULL;
 
   if (in.total == 0) {
-    result.status = emit_fixed_block(&bw, tokens, 0, 1);
+    result.status = emit_fixed_block(&bw, NULL, 0, 1);
   } else {
+    head = malloc(NX_IO_HASH_SIZE * sizeof(*head));
+    previous = malloc(NX_IO_WINDOW * sizeof(*previous));
+    tokens = malloc(NX_IO_BLOCK * sizeof(*tokens));
+    if (head == NULL || previous == NULL || tokens == NULL) {
+      result.status = NX_IO_NOMEM;
+      goto done;
+    }
+    for (size_t i = 0; i < NX_IO_HASH_SIZE; i++)
+      head[i] = SIZE_MAX;
+    for (size_t i = 0; i < NX_IO_WINDOW; i++)
+      previous[i] = SIZE_MAX;
     size_t block_start = 0;
     while (block_start < in.total && result.status == NX_IO_OK) {
       size_t block_end = block_start + NX_IO_BLOCK;

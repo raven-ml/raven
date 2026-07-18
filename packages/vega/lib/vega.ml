@@ -21,6 +21,16 @@ let float_of_scalar (type a b) (dt : (a, b) Dtype.t) (v : a) : float =
   | Dtype.Float8_e5m2 -> (v : float)
   | _ -> invalid_arg "Vega: expected floating-point dtype"
 
+let randn (type a b) (dt : (a, b) Dtype.t) shape : (a, b) Nx.t =
+  match dt with
+  | Dtype.Float16 -> Nx.randn Dtype.Float16 shape
+  | Dtype.Float32 -> Nx.randn Dtype.Float32 shape
+  | Dtype.Float64 -> Nx.randn Dtype.Float64 shape
+  | Dtype.BFloat16 -> Nx.randn Dtype.BFloat16 shape
+  | Dtype.Float8_e4m3 -> Nx.randn Dtype.Float8_e4m3 shape
+  | Dtype.Float8_e5m2 -> Nx.randn Dtype.Float8_e5m2 shape
+  | _ -> invalid_arg "Vega.add_noise: expected floating-point dtype"
+
 (* Validation *)
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -567,7 +577,7 @@ let add_noise ~eta ?(gamma = 0.55) () =
             eta count /. Float.pow (1. +. float_of_int count) gamma
           in
           let noise =
-            Nx.mul (Nx.randn dt (Nx.shape updates)) (scalar dt (sqrt variance))
+            Nx.mul (randn dt (Nx.shape updates)) (scalar dt (sqrt variance))
           in
           (Nx.add updates noise, [||]));
     };

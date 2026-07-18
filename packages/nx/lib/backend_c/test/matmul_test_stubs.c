@@ -47,9 +47,10 @@ CAMLprim value caml_nx_c_matmul_accel_set_override(value vmode) {
 CAMLprim value caml_nx_c_gemm2d_ct_ws_test(value vc, value va, value vb) {
   CAMLparam3(vc, va, vb);
   nx_c_ndarray A, B, C;
-  nx_c_ndarray_of_value(va, &A);
-  nx_c_ndarray_of_value(vb, &B);
-  nx_c_ndarray_of_value(vc, &C);
+  nx_c_status status = nx_c_ndarray_of_value(va, &A);
+  if (status == NX_C_OK) status = nx_c_ndarray_of_value(vb, &B);
+  if (status == NX_C_OK) status = nx_c_ndarray_of_value(vc, &C);
+  if (status != NX_C_OK) nx_c_raise("matmul", status);
   nx_c_dtype dt = nx_c_dtype_of_value(va);
   int64_t esz = nx_c_elem_size(dt);
   int64_t m = A.shape[0], k = A.shape[1], n = B.shape[1];

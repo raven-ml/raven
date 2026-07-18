@@ -10,10 +10,14 @@
    -I
    ..)))
 
+; These two suites call private C symbols from the backend archive. -linkall
+; keeps that archive live even though no OCaml value from Nx_backend is used;
+; otherwise single-pass ELF linkers see the test stub references too late.
 (test
  (name engine_test)
  (modules engine_test)
  (libraries nx_c nx_buffer unix windtrap)
+ (link_flags -linkall)
  (foreign_stubs
   (language c)
   (names nx_c_selftest)
@@ -26,6 +30,7 @@
  (name kernel_test)
  (modules kernel_test)
  (libraries nx_c nx_buffer windtrap)
+ (link_flags -linkall)
  (foreign_stubs
   (language c)
   (names kernel_test_stubs)

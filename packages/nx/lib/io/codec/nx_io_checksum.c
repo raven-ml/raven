@@ -39,7 +39,7 @@ static uint32_t read_le32(const uint8_t *src) {
          ((uint32_t)src[3] << 24);
 }
 
-static uint32_t crc32_update(const uint32_t table[8][256], uint32_t crc,
+static uint32_t crc32_update(uint32_t table[8][256], uint32_t crc,
                              const uint8_t *src, size_t len) {
   while (len >= 8) {
     uint32_t first = crc ^ read_le32(src);

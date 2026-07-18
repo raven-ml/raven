@@ -19,12 +19,12 @@ let benchmark_name case dtype_label suffix =
   Printf.sprintf "MatMul %s %dx%d @ %dx%d %s%s (%s)" case.name case.m case.k
     case.k case.n dtype_label suffix backend_name
 
-let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
+let setup_operands (type b) (dtype : (float, b) Nx.dtype) case =
   let lhs = Nx.rand dtype [| case.m; case.k |] in
   let rhs = Nx.rand dtype [| case.k; case.n |] in
   (lhs, rhs)
 
-let add_case (type a b) ?(tags = []) benches case (dtype : (a, b) Nx.dtype)
+let add_case (type b) ?(tags = []) benches case (dtype : (float, b) Nx.dtype)
     dtype_label =
   let lhs, rhs = setup_operands dtype case in
   let name = benchmark_name case dtype_label "" in

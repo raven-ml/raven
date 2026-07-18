@@ -940,6 +940,7 @@ let test_eigh_diag () =
   let vals = [| 5.0; 2.0; 8.0; 1.0; 2.0 |] in
   let n = Array.length vals in
   let ain = Buf.create Buf.float64 (n * n) in
+  Buf.fill ain 0.0;
   for i = 0 to n - 1 do
     Buf.set ain ((i * n) + i) vals.(i)
   done;

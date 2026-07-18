@@ -363,6 +363,9 @@ thread.
 
 ### Nx
 
+- The default C backend and `nx.io` codecs now build cleanly with strict GCC
+  warnings and single-pass ELF linkers. Empty DEFLATE streams also avoid
+  allocating the encoder's match tables.
 - Add float32- and float64-preserving `dct`, `idct`, `dst`, and `idst`
   transforms of types I–IV, including N-D variants and forward, backward, and
   orthonormal scaling modes.

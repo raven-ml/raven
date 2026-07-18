@@ -663,6 +663,10 @@ static cx2 chirp_at(int64_t j, int64_t n, int sign) {
 /* Bluestein chirp-z plan for a non-smooth length. The two length-m FFTs (m a
    power of two, hence smooth) ride native sub-plans, one per sign. */
 static fft_plan *build_bluestein(int64_t n, int sign) {
+  /* plan_build sends n <= 1 and every 13-smooth length to build_native. Keep
+     that private precondition explicit here as well: besides making this
+     helper total, it lets the compiler prove that chirp[0] exists. */
+  if (n <= 1) return NULL;
   fft_plan *p = calloc(1, sizeof(fft_plan));
   if (!p) return NULL;
   p->n = n;
@@ -680,7 +684,10 @@ static fft_plan *build_bluestein(int64_t n, int sign) {
     plan_free(p);
     return NULL;
   }
-  for (int64_t j = 0; j < n; j++) p->chirp[j] = chirp_at(j, n, sign);
+  /* chirp(0) is exactly one. Spell out the identity instead of relying on a
+     loop-bound inference before bseq reads the element below. */
+  p->chirp[0] = (cx2){1.0, 0.0};
+  for (int64_t j = 1; j < n; j++) p->chirp[j] = chirp_at(j, n, sign);
   /* b[j] = conj(chirp[j]) with circular symmetry b[m-j]=b[j]; bfilter = FFT(b). */
   cx2 *bseq = calloc((size_t)m, sizeof(cx2));
   cx2 *scr = malloc((size_t)m * sizeof(cx2));
@@ -689,8 +696,7 @@ static fft_plan *build_bluestein(int64_t n, int sign) {
     plan_free(p);
     return NULL;
   }
-  bseq[0].r = p->chirp[0].r;
-  bseq[0].i = -p->chirp[0].i;
+  bseq[0] = (cx2){1.0, 0.0};
   for (int64_t j = 1; j < n; j++) {
     cx2 bj = {p->chirp[j].r, -p->chirp[j].i};
     bseq[j] = bj;
