@@ -389,11 +389,11 @@ let test_grad_over_pmap_runs_eagerly () =
   check_arr ~msg:"grad over pmap" [| 2.0; 4.0; 6.0; 8.0 |] dx
 
 (* Dropout under pmap + grad: [fold_in_axis] folds each device's own index into
-   a replicated key, so the per-device dropout masks decorrelate. The gradient
-   of [sum (x * mask)] w.r.t. [x] recovers the mask (a tape constant), one shard
-   per device — so with identical input rows the two devices produce different
-   gradients, each equal to the mask [fold_in key i] draws for its slice. This
-   is the data-parallel dropout the DP-MLP step would use. *)
+   a replicated key, so the per-device dropout masks decorrelate. At [x = 1],
+   the gradient of [sum (0.5 * x**2 * mask)] recovers the mask while retaining
+   the sharded input dependency from which pmap derives the output placement.
+   The mask itself is a tape constant, so this exercises the same backward path
+   as data-parallel dropout. *)
 
 let test_pmap_dropout_grad_decorrelates () =
   let key = Nx.Rng.key 7 in
@@ -405,7 +405,7 @@ let test_pmap_dropout_grad_decorrelates () =
              Nx.cast f32
                (Nx.Rng.bernoulli (Nx.Rng.fold_in_axis key) ~p:0.5 [| 2; 16 |])
            in
-           Nx.sum (Nx.mul x m))
+           Nx.mul_s (Nx.sum (Nx.mul (Nx.mul x x) m)) 0.5)
          x)
   in
   let g =
