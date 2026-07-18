@@ -14,7 +14,6 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
-  "logs"
   "windtrap" {with-test}
   "mdx" {with-test}
   "thumper" {with-test}

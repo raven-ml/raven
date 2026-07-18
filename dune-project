@@ -43,7 +43,6 @@
   (ocaml
    (>= 5.5.0))
   dune
-  logs
   ; tests
   (windtrap :with-test)
   (mdx :with-test)
