@@ -363,6 +363,9 @@ thread.
 
 ### Nx
 
+- `Nx.concatenate` on the OxCaml backend now uses SIMD and unrolled contiguous
+  block copies, with stride-aware paths for offset, transposed, flipped, and
+  broadcast views.
 - `truncated_normal` now rejects integer dtype witnesses at compile time,
   matching the other normal samplers.
 - `rand` and `randn` now reject integer dtype witnesses at compile time instead

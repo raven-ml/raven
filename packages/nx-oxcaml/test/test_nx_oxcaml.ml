@@ -1062,6 +1062,151 @@ let test_cat_int32_axis1 () =
   check_int32 "cat_int32_axis1[6]" 7l d.(6);
   check_int32 "cat_int32_axis1[7]" 8l d.(7)
 
+let test_cat_all_storage_layouts () =
+  let ctx = Nx_backend.create_context () in
+  let f64_a =
+    Nx_ox.create ctx Dtype.Float64 [| 9 |]
+      (Array.init 9 (fun i -> Float.of_int i))
+  in
+  let f64_b = Nx_ox.create ctx Dtype.Float64 [| 1 |] [| 9.0 |] in
+  let f64 = Nx_backend.cat [ f64_a; f64_b ] ~axis:0 |> Nx_ox.to_array in
+  check_float "cat_float64[0]" ~eps:1e-12 0.0 f64.(0);
+  check_float "cat_float64[8]" ~eps:1e-12 8.0 f64.(8);
+  check_float "cat_float64[9]" ~eps:1e-12 9.0 f64.(9);
+  let f32_a =
+    Nx_ox.create ctx Dtype.Float32 [| 17 |]
+      (Array.init 17 (fun i -> Float.of_int i))
+  in
+  let f32_b = Nx_ox.create ctx Dtype.Float32 [| 1 |] [| 17.0 |] in
+  let f32 = Nx_backend.cat [ f32_a; f32_b ] ~axis:0 |> Nx_ox.to_array in
+  check_float "cat_float32[0]" ~eps:1e-6 0.0 f32.(0);
+  check_float "cat_float32[16]" ~eps:1e-6 16.0 f32.(16);
+  check_float "cat_float32[17]" ~eps:1e-6 17.0 f32.(17);
+  let i8_a = Nx_ox.create ctx Dtype.Int8 [| 9 |] (Array.init 9 Fun.id) in
+  let i8_b = Nx_ox.create ctx Dtype.Int8 [| 1 |] [| 9 |] in
+  let i8 = Nx_backend.cat [ i8_a; i8_b ] ~axis:0 |> Nx_ox.to_array in
+  check_int "cat_int8[0]" 0 i8.(0);
+  check_int "cat_int8[8]" 8 i8.(8);
+  check_int "cat_int8[9]" 9 i8.(9);
+  let i16_a = Nx_ox.create ctx Dtype.Int16 [| 9 |] (Array.init 9 Fun.id) in
+  let i16_b = Nx_ox.create ctx Dtype.Int16 [| 1 |] [| 9 |] in
+  let i16 = Nx_backend.cat [ i16_a; i16_b ] ~axis:0 |> Nx_ox.to_array in
+  check_int "cat_int16[0]" 0 i16.(0);
+  check_int "cat_int16[8]" 8 i16.(8);
+  check_int "cat_int16[9]" 9 i16.(9);
+  let i32_a =
+    Nx_ox.create ctx Dtype.Int32 [| 17 |]
+      (Array.init 17 (fun i -> Int32.of_int i))
+  in
+  let i32_b = Nx_ox.create ctx Dtype.Int32 [| 1 |] [| 17l |] in
+  let i32 = Nx_backend.cat [ i32_a; i32_b ] ~axis:0 |> Nx_ox.to_array in
+  check_int32 "cat_int32[0]" 0l i32.(0);
+  check_int32 "cat_int32[16]" 16l i32.(16);
+  check_int32 "cat_int32[17]" 17l i32.(17);
+  let i64_a =
+    Nx_ox.create ctx Dtype.Int64 [| 9 |]
+      (Array.init 9 (fun i -> Int64.of_int i))
+  in
+  let i64_b = Nx_ox.create ctx Dtype.Int64 [| 1 |] [| 9L |] in
+  let i64 = Nx_backend.cat [ i64_a; i64_b ] ~axis:(-1) |> Nx_ox.to_array in
+  check_int64 "cat_int64[0]" 0L i64.(0);
+  check_int64 "cat_int64[8]" 8L i64.(8);
+  check_int64 "cat_int64[9]" 9L i64.(9);
+  let bool_a =
+    Nx_ox.create ctx Dtype.Bool [| 9 |]
+      (Array.init 9 (fun i -> i mod 2 = 0))
+  in
+  let bool_b = Nx_ox.create ctx Dtype.Bool [| 1 |] [| false |] in
+  let bool = Nx_backend.cat [ bool_a; bool_b ] ~axis:0 |> Nx_ox.to_array in
+  check_bool "cat_bool[0]" true bool.(0);
+  check_bool "cat_bool[8]" true bool.(8);
+  check_bool "cat_bool[9]" false bool.(9)
+
+let test_cat_contiguous_offset_views () =
+  let ctx = Nx_backend.create_context () in
+  let a =
+    Nx_ox.create ctx Dtype.Int32 [| 4; 2 |]
+      [| 0l; 1l; 2l; 3l; 4l; 5l; 6l; 7l |]
+    |> fun x -> Nx_backend.shrink x [| (1, 3); (0, 2) |]
+  in
+  let b =
+    Nx_ox.create ctx Dtype.Int32 [| 3; 2 |]
+      [| 10l; 11l; 12l; 13l; 14l; 15l |]
+    |> fun x -> Nx_backend.shrink x [| (1, 3); (0, 2) |]
+  in
+  check "cat_offset: a contiguous" (View.is_c_contiguous (Nx_backend.view a));
+  check "cat_offset: b contiguous" (View.is_c_contiguous (Nx_backend.view b));
+  check "cat_offset: a nonzero offset" (View.offset (Nx_backend.view a) = 2);
+  check "cat_offset: b nonzero offset" (View.offset (Nx_backend.view b) = 2);
+  let d = Nx_backend.cat [ a; b ] ~axis:0 |> Nx_ox.to_array in
+  Array.iteri
+    (fun i expected -> check_int32 (Printf.sprintf "cat_offset[%d]" i) expected d.(i))
+    [| 2l; 3l; 4l; 5l; 12l; 13l; 14l; 15l |]
+
+let test_cat_permuted_views () =
+  let ctx = Nx_backend.create_context () in
+  let a =
+    Nx_ox.create ctx Dtype.Float64 [| 2; 3 |]
+      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
+    |> fun x -> Nx_backend.permute x [| 1; 0 |]
+  in
+  let b =
+    Nx_ox.create ctx Dtype.Float64 [| 2; 3 |]
+      [| 10.0; 20.0; 30.0; 40.0; 50.0; 60.0 |]
+    |> fun x -> Nx_backend.permute x [| 1; 0 |]
+  in
+  check "cat_permuted: strided"
+    (not (View.is_c_contiguous (Nx_backend.view a)));
+  let d = Nx_backend.cat [ a; b ] ~axis:1 |> Nx_ox.to_array in
+  Array.iteri
+    (fun i expected ->
+      check_float (Printf.sprintf "cat_permuted[%d]" i) ~eps:1e-12 expected
+        d.(i))
+    [| 1.0; 4.0; 10.0; 40.0; 2.0; 5.0; 20.0; 50.0; 3.0; 6.0; 30.0; 60.0 |]
+
+let test_cat_flipped_and_expanded_views () =
+  let ctx = Nx_backend.create_context () in
+  let flipped =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |]
+      [| 1l; 2l; 3l; 4l; 5l; 6l |]
+    |> fun x -> Nx_backend.flip x [| false; true |]
+  in
+  let column = Nx_ox.create ctx Dtype.Int32 [| 2; 1 |] [| 7l; 8l |] in
+  check "cat_flipped: negative stride"
+    ((View.strides (Nx_backend.view flipped)).(1) < 0);
+  let flipped_cat =
+    Nx_backend.cat [ flipped; column ] ~axis:1 |> Nx_ox.to_array
+  in
+  Array.iteri
+    (fun i expected ->
+      check_int32 (Printf.sprintf "cat_flipped[%d]" i) expected
+        flipped_cat.(i))
+    [| 3l; 2l; 1l; 7l; 6l; 5l; 4l; 8l |];
+  let left =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 1 |] [| 1l; 2l |]
+    |> fun x -> Nx_backend.expand x [| 2; 2 |]
+  in
+  let right =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 1 |] [| 9l; 8l |]
+    |> fun x -> Nx_backend.expand x [| 2; 2 |]
+  in
+  check "cat_expanded: zero stride"
+    ((View.strides (Nx_backend.view left)).(1) = 0);
+  let expanded_cat = Nx_backend.cat [ left; right ] ~axis:1 |> Nx_ox.to_array in
+  Array.iteri
+    (fun i expected ->
+      check_int32 (Printf.sprintf "cat_expanded[%d]" i) expected
+        expanded_cat.(i))
+    [| 1l; 1l; 9l; 9l; 2l; 2l; 8l; 8l |]
+
+let test_cat_zero_sized () =
+  let ctx = Nx_backend.create_context () in
+  let a = Nx_ox.create ctx Dtype.Float32 [| 2; 0 |] [||] in
+  let b = Nx_ox.create ctx Dtype.Float32 [| 2; 0 |] [||] in
+  let out = Nx_backend.cat [ a; b ] ~axis:1 in
+  check "cat_zero: size" (numel (Nx_backend.view out) = 0);
+  check "cat_zero: data" (Nx_ox.to_array out = [||])
+
 let test_gather_int32_axis1 () =
   let ctx = Nx_backend.create_context () in
   let data =
@@ -1926,6 +2071,11 @@ let () =
   test_shrink_int32_view ();
   test_flip_int32_view ();
   test_cat_int32_axis1 ();
+  test_cat_all_storage_layouts ();
+  test_cat_contiguous_offset_views ();
+  test_cat_permuted_views ();
+  test_cat_flipped_and_expanded_views ();
+  test_cat_zero_sized ();
   test_gather_int32_axis1 ();
   test_gather_float32_axis0_contiguous ();
   test_gather_float64_axis0_contiguous ();
