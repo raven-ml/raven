@@ -1,4 +1,0 @@
-(library
- (name mimir)
- (public_name mimir)
- (libraries nx unix))

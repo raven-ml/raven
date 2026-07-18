@@ -1,3 +1,0 @@
-(test
- (name test_umbra)
- (libraries umbra umbra.fits nx nx.io talon windtrap))
