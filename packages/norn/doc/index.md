@@ -33,9 +33,9 @@ let () =
   let result = Norn.nuts ~n:1000 log_prob init in
 
   let mean = Nx.mean ~axes:[ 0 ] result.samples in
-  Printf.printf "posterior mean: %s\n" (Nx.data_to_string mean);
+  Printf.printf "posterior mean: %s\n" (Nx.to_string mean);
   Printf.printf "accept rate:   %.2f\n" result.stats.accept_rate;
-  Printf.printf "ESS:           %s\n" (Nx.data_to_string (Norn.ess result.samples))
+  Printf.printf "ESS:           %s\n" (Nx.to_string (Norn.ess result.samples))
 ```
 
 ## Next Steps

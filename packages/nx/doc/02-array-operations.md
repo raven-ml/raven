@@ -32,8 +32,8 @@ let () =
   let x = create Int32 [|6|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
   let a = reshape [|2; 3|] x in
   let b = reshape [|3; -1|] x in   (* -1 inferred as 2 *)
-  Printf.printf "%s\n" (data_to_string a);
-  Printf.printf "%s\n" (data_to_string b)
+  Printf.printf "%s\n" (to_string a);
+  Printf.printf "%s\n" (to_string b)
 ```
 
 ### flatten and unflatten
@@ -83,12 +83,12 @@ let () =
   let matrix = ones Float32 [|3; 4|] in
   let row = create Float32 [|1; 4|] [|10.; 20.; 30.; 40.|] in
   let result = add matrix row in
-  Printf.printf "%s\n" (data_to_string result);
+  Printf.printf "%s\n" (to_string result);
 
   (* Add a column vector to every column *)
   let col = create Float32 [|3; 1|] [|100.; 200.; 300.|] in
   let result2 = add matrix col in
-  Printf.printf "%s\n" (data_to_string result2)
+  Printf.printf "%s\n" (to_string result2)
 ```
 
 You can also broadcast explicitly:
@@ -122,7 +122,7 @@ open Nx
 let () =
   let x = create Int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
   let t = transpose x in
-  Printf.printf "%s\n" (data_to_string t)
+  Printf.printf "%s\n" (to_string t)
   (* [[1, 4],
       [2, 5],
       [3, 6]] *)
@@ -168,7 +168,7 @@ open Nx
 let () =
   let x = create Int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
   let row = get [1] x in      (* second row: [4, 5, 6] *)
-  Printf.printf "%s\n" (data_to_string row)
+  Printf.printf "%s\n" (to_string row)
 ```
 
 ### item
@@ -192,15 +192,15 @@ let () =
 
   (* R (start, stop): half-open range *)
   let rows_0_1 = slice [R (0, 2); A] x in
-  Printf.printf "%s\n" (data_to_string rows_0_1);
+  Printf.printf "%s\n" (to_string rows_0_1);
 
   (* I i: single index (reduces dimension) *)
   let col_1 = slice [A; I 1] x in
-  Printf.printf "%s\n" (data_to_string col_1);
+  Printf.printf "%s\n" (to_string col_1);
 
   (* L [indices]: gather specific indices *)
   let corners = slice [L [0; 2]; L [0; 2]] x in
-  Printf.printf "%s\n" (data_to_string corners)
+  Printf.printf "%s\n" (to_string corners)
 ```
 
 Index types:
@@ -240,7 +240,7 @@ let () =
   let a = create Float32 [|3|] [|1.; 2.; 3.|] in
   let b = create Float32 [|3|] [|4.; 5.; 6.|] in
   let c = stack ~axis:0 [a; b] in   (* [|2; 3|] *)
-  Printf.printf "%s\n" (data_to_string c)
+  Printf.printf "%s\n" (to_string c)
 ```
 
 ### split

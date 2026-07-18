@@ -23,10 +23,10 @@ let () =
   (* Explained variance ratio: s_i^2 / sum(s^2) *)
   let s2 = square s in
   let ratios = s2 /$ item [] (sum s2) in
-  Printf.printf "Singular values:          %s\n" (data_to_string s);
-  Printf.printf "Explained variance ratio: %s\n" (data_to_string ratios);
+  Printf.printf "Singular values:          %s\n" (to_string s);
+  Printf.printf "Explained variance ratio: %s\n" (to_string ratios);
   Printf.printf "Cumulative:               %s\n\n"
-    (data_to_string (cumsum ratios));
+    (to_string (cumsum ratios));
 
   (* Project to 2 components *)
   let n_components = 2 in

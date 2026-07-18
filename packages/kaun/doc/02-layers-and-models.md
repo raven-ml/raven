@@ -19,7 +19,7 @@ let () =
   let layer = Linear.init ~inputs:4 ~outputs:2 in
   let x = Nx.randn Nx.float32 [| 8; 4 |] in
   let y = Linear.apply layer x in
-  Printf.printf "y has shape %s\n" (Nx.shape_to_string (Nx.shape y))
+  Format.printf "y has shape %a@." Nx.pp_shape (Nx.shape y)
   (* [8; 2] *)
 ```
 
@@ -118,7 +118,7 @@ let () =
   in
   let x = Nx.randn Nx.float32 [| 2; 1; 28; 28 |] in
   let logits = Cnn.apply params ~training:false x in
-  Printf.printf "logits: %s\n" (Nx.shape_to_string (Nx.shape logits))
+  Format.printf "logits: %a@." Nx.pp_shape (Nx.shape logits)
   (* [2; 10] *)
 ```
 
@@ -135,7 +135,7 @@ let () =
   let x = Nx.randn Nx.float32 [| 2; 5; 16 |] in
   (* batch 2, sequence 5 *)
   let y = Attention.apply ~num_heads:4 ~causal:true attn x in
-  Printf.printf "y: %s\n" (Nx.shape_to_string (Nx.shape y))
+  Format.printf "y: %a@." Nx.pp_shape (Nx.shape y)
   (* [2; 5; 16] — same shape; causal masks future positions *)
 ```
 
@@ -148,7 +148,7 @@ let () =
   let k = Nx.randn Nx.float32 [| 5; 8 |] in
   let v = Nx.randn Nx.float32 [| 5; 4 |] in
   let y = Attention.scaled_dot_product_attention q k v in
-  Printf.printf "y: %s\n" (Nx.shape_to_string (Nx.shape y))
+  Format.printf "y: %a@." Nx.pp_shape (Nx.shape y)
   (* [3; 4] — one weighted average of value rows per query row *)
 ```
 
@@ -223,8 +223,7 @@ let () =
      the returned statistics. *)
   let params, stats, _ = !state in
   let pred, _ = Net.forward params stats ~training:false x in
-  Printf.printf "eval predictions: %s\n"
-    (Nx.shape_to_string (Nx.shape pred))
+  Format.printf "eval predictions: %a@." Nx.pp_shape (Nx.shape pred)
 ```
 
 The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own traversals and `names` (`Batch_norm.Stats` is itself a `Ptree.S` structure), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained/).

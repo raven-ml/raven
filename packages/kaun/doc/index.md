@@ -64,7 +64,8 @@ let () =
     let s, _ = step !state in
     state := s
   done;
-  Nx.print_data (Fn.sigmoid (Mlp.apply (fst !state) x))
+  Printf.printf "%s\n"
+    (Nx.to_string (Fn.sigmoid (Mlp.apply (fst !state) x)))
   (* predictions approach [0; 1; 1; 0] *)
 ```
 

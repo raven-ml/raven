@@ -22,8 +22,8 @@ let () =
   (* Create and manipulate arrays *)
   let x = linspace Float32 0. 10. 5 in
   let y = mul x x in
-  Printf.printf "x = "; Printf.printf "%s\n" (data_to_string x);
-  Printf.printf "y = x² = "; Printf.printf "%s\n" (data_to_string y);
+  Printf.printf "x = "; Printf.printf "%s\n" (to_string x);
+  Printf.printf "y = x² = "; Printf.printf "%s\n" (to_string y);
 
   (* Matrix operations *)
   let a = rand Float32 [|3; 3|] in

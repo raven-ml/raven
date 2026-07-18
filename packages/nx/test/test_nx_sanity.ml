@@ -867,28 +867,26 @@ let sorting_searching_tests =
 
 let display_formatting_tests =
   [
-    test "pp_data" (fun () ->
-        let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        let str = Format.asprintf "%a" Nx.pp_data a in
-        equal ~msg:"pp_data not empty" bool true (String.length str > 0);
-        equal ~msg:"pp_data contains data" bool true (String.contains str '1'));
-    test "data_to_string" (fun () ->
-        let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        let str = Nx.data_to_string a in
-        equal ~msg:"data_to_string not empty" bool true (String.length str > 0);
-        equal ~msg:"data_to_string contains data" bool true
-          (String.contains str '1'));
-    test "print_data" (fun () ->
-        let a = Nx.ones Nx.float32 [| 2; 2 |] in
-        Format.printf "%a@." Nx.pp_data a);
     test "pp" (fun () ->
-        let a = Nx.ones Nx.float32 [| 2; 2 |] in
-        let str = Format.asprintf "%a" Nx.pp a in
-        equal ~msg:"pp not empty" bool true (String.length str > 0));
-    test "to_string" (fun () ->
-        let a = Nx.ones Nx.float32 [| 2; 2 |] in
-        let str = Nx.to_string a in
-        equal ~msg:"to_string not empty" bool true (String.length str > 0));
+        let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+        equal ~msg:"compact tensor" string "float32 [2,2] \n[[1, 2],\n [3, 4]]"
+          (Format.asprintf "%a" Nx.pp a);
+        let empty = Nx.empty Nx.float32 [| 0; 3 |] in
+        equal ~msg:"empty matrix retains metadata" string "float32 [0,3] \n[]"
+          (Format.asprintf "%a" Nx.pp empty));
+    test "to_string follows pp" (fun () ->
+        let a = Nx.arange Nx.int32 0 6 1 in
+        equal ~msg:"same representation" string
+          (Format.asprintf "%a" Nx.pp a)
+          (Nx.to_string a));
+    test "pp_shape" (fun () ->
+        equal ~msg:"tensor shape" string "[2,3,4]"
+          (Format.asprintf "%a" Nx.pp_shape [| 2; 3; 4 |]);
+        equal ~msg:"scalar shape" string "[]"
+          (Format.asprintf "%a" Nx.pp_shape [||]));
+    test "pp_dtype" (fun () ->
+        equal ~msg:"dtype" string "float32"
+          (Format.asprintf "%a" Nx.pp_dtype Nx.float32));
     test "print" (fun () ->
         let a = Nx.ones Nx.float32 [| 2; 2 |] in
         Nx.print a);

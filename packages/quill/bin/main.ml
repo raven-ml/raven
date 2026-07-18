@@ -20,7 +20,7 @@ let raven_packages =
     "fehu";
   ]
 
-let raven_printers = [ "Nx.pp_data"; "Hugin.pp"; "Talon.pp_display" ]
+let raven_printers = [ "Nx.pp"; "Hugin.pp"; "Talon.pp_display" ]
 
 let load_optional pkg =
   match Quill_top.load_package pkg with

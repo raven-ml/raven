@@ -228,8 +228,8 @@ val create : ('a, 'b) dtype -> int array -> 'a array -> ('a, 'b) t
     {@ocaml[
       # create float32 [| 2; 3 |]
           [| 1.; 2.; 3.; 4.; 5.; 6. |]
-      - : (float, float32_elt) t = float32 [2; 3] [[1, 2, 3],
-                                                   [4, 5, 6]]
+      - : (float, float32_elt) t = float32 [2,3] [[1, 2, 3],
+                                                  [4, 5, 6]]
     ]} *)
 
 val init : ('a, 'b) dtype -> int array -> (int array -> 'a) -> ('a, 'b) t
@@ -239,8 +239,8 @@ val init : ('a, 'b) dtype -> int array -> (int array -> 'a) -> ('a, 'b) t
     {@ocaml[
       # init int32 [| 2; 3 |]
           (fun i -> Int32.of_int (i.(0) + i.(1)))
-      - : (int32, int32_elt) t = int32 [2; 3] [[0, 1, 2],
-                                               [1, 2, 3]]
+      - : (int32, int32_elt) t = int32 [2,3] [[0, 1, 2],
+                                              [1, 2, 3]]
     ]} *)
 
 val empty : ('a, 'b) dtype -> int array -> ('a, 'b) t
@@ -253,7 +253,7 @@ val full : ('a, 'b) dtype -> int array -> 'a -> ('a, 'b) t
 
     {@ocaml[
       # full float32 [| 2; 3 |] 3.14
-      - : (float, float32_elt) t = float32 [2; 3]
+      - : (float, float32_elt) t = float32 [2,3]
       [[3.14, 3.14, 3.14],
        [3.14, 3.14, 3.14]]
     ]} *)
@@ -290,13 +290,13 @@ val eye : ?m:int -> ?k:int -> ('a, 'b) dtype -> int -> ('a, 'b) t
 
     {@ocaml[
       # eye int32 3
-      - : (int32, int32_elt) t = int32 [3; 3] [[1, 0, 0],
-                                               [0, 1, 0],
-                                               [0, 0, 1]]
+      - : (int32, int32_elt) t = int32 [3,3] [[1, 0, 0],
+                                              [0, 1, 0],
+                                              [0, 0, 1]]
       # eye ~k:1 int32 3
-      - : (int32, int32_elt) t = int32 [3; 3] [[0, 1, 0],
-                                               [0, 0, 1],
-                                               [0, 0, 0]]
+      - : (int32, int32_elt) t = int32 [3,3] [[0, 1, 0],
+                                              [0, 0, 1],
+                                              [0, 0, 0]]
     ]}
 
     See also {!diag}. *)
@@ -313,9 +313,9 @@ val diag : ?k:int -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # let v = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         diag v
-      - : (int32, int32_elt) t = int32 [3; 3] [[1, 0, 0],
-                                               [0, 2, 0],
-                                               [0, 0, 3]]
+      - : (int32, int32_elt) t = int32 [3,3] [[1, 0, 0],
+                                              [0, 2, 0],
+                                              [0, 0, 3]]
       # let x =
           arange int32 0 9 1 |> reshape [| 3; 3 |]
         in
@@ -420,9 +420,9 @@ val meshgrid :
         let y = linspace float32 0. 1. 2 in
         meshgrid x y
       - : (float, float32_elt) t * (float, float32_elt) t =
-      (float32 [2; 3] [[0, 1, 2],
-                       [0, 1, 2]], float32 [2; 3] [[0, 0, 0],
-                                                   [1, 1, 1]])
+      (float32 [2,3] [[0, 1, 2],
+                      [0, 1, 2]], float32 [2,3] [[0, 0, 0],
+                                                 [1, 1, 1]])
     ]} *)
 
 val tril : ?k:int -> ('a, 'b) t -> ('a, 'b) t
@@ -467,10 +467,9 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
           create int32 [| 3 |] [| 0l; 1l; 3l |]
         in
         one_hot ~num_classes:4 idx
-      - : (int, uint8_elt) t = uint8 [3; 4]
-      [[1, 0, 0, 0],
-       [0, 1, 0, 0],
-       [0, 0, 0, 1]]
+      - : (int, uint8_elt) t = uint8 [3,4] [[1, 0, 0, 0],
+                                            [0, 1, 0, 0],
+                                            [0, 0, 0, 1]]
     ]} *)
 
 (** {1:rng Random number generation}
@@ -644,13 +643,13 @@ val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
         |> reshape [| 2; 3 |]
-      - : (int32, int32_elt) t = int32 [2; 3] [[1, 2, 3],
-                                               [4, 5, 6]]
+      - : (int32, int32_elt) t = int32 [2,3] [[1, 2, 3],
+                                              [4, 5, 6]]
       # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
         |> reshape [| 3; -1 |]
-      - : (int32, int32_elt) t = int32 [3; 2] [[1, 2],
-                                               [3, 4],
-                                               [5, 6]]
+      - : (int32, int32_elt) t = int32 [3,2] [[1, 2],
+                                              [3, 4],
+                                              [5, 6]]
     ]}
 
     See also {!flatten}, {!unflatten}, {!ravel}. *)
@@ -667,9 +666,9 @@ val broadcast_to : int array -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # create int32 [| 1; 3 |] [| 1l; 2l; 3l |]
         |> broadcast_to [| 3; 3 |]
-      - : (int32, int32_elt) t = int32 [3; 3] [[1, 2, 3],
-                                               [1, 2, 3],
-                                               [1, 2, 3]]
+      - : (int32, int32_elt) t = int32 [3,3] [[1, 2, 3],
+                                              [1, 2, 3],
+                                              [1, 2, 3]]
     ]}
 
     See also {!broadcasted}, {!expand}. *)
@@ -783,9 +782,9 @@ val transpose : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
         |> transpose
-      - : (int32, int32_elt) t = int32 [3; 2] [[1, 4],
-                                               [2, 5],
-                                               [3, 6]]
+      - : (int32, int32_elt) t = int32 [3,2] [[1, 4],
+                                              [2, 5],
+                                              [3, 6]]
     ]}
 
     See also {!matrix_transpose}, {!moveaxis}, {!swapaxes}. *)
@@ -799,8 +798,8 @@ val flip : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
         |> flip ~axes:[ 1 ]
-      - : (int32, int32_elt) t = int32 [2; 3] [[3, 2, 1],
-                                               [6, 5, 4]]
+      - : (int32, int32_elt) t = int32 [2,3] [[3, 2, 1],
+                                              [6, 5, 4]]
     ]} *)
 
 val moveaxis : int -> int -> ('a, 'b) t -> ('a, 'b) t
@@ -853,8 +852,8 @@ val shrink : (int * int) array -> ('a, 'b) t -> ('a, 'b) t
       # create int32 [| 3; 3 |]
           [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
         |> shrink [| (1, 3); (0, 2) |]
-      - : (int32, int32_elt) t = int32 [2; 2] [[4, 5],
-                                               [7, 8]]
+      - : (int32, int32_elt) t = int32 [2,2] [[4, 5],
+                                              [7, 8]]
     ]}
 
     See also {!pad}. *)
@@ -869,8 +868,8 @@ val tile : int array -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # create int32 [| 1; 2 |] [| 1l; 2l |]
         |> tile [| 2; 3 |]
-      - : (int32, int32_elt) t = int32 [2; 6] [[1, 2, ..., 1, 2],
-                                               [1, 2, ..., 1, 2]]
+      - : (int32, int32_elt) t = int32 [2,6] [[1, 2, ..., 1, 2],
+                                              [1, 2, ..., 1, 2]]
     ]}
 
     See also {!repeat}. *)
@@ -902,9 +901,9 @@ val concatenate : axis:int -> ('a, 'b) t list -> ('a, 'b) t
       # let a = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
         let b = create int32 [| 1; 2 |] [| 5l; 6l |] in
         concatenate ~axis:0 [ a; b ]
-      - : (int32, int32_elt) t = int32 [3; 2] [[1, 2],
-                                               [3, 4],
-                                               [5, 6]]
+      - : (int32, int32_elt) t = int32 [3,2] [[1, 2],
+                                              [3, 4],
+                                              [5, 6]]
     ]}
 
     See also {!stack}. *)
@@ -921,13 +920,13 @@ val stack : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
       # let a = create int32 [| 2 |] [| 1l; 2l |] in
         let b = create int32 [| 2 |] [| 3l; 4l |] in
         stack [ a; b ]
-      - : (int32, int32_elt) t = int32 [2; 2] [[1, 2],
-                                               [3, 4]]
+      - : (int32, int32_elt) t = int32 [2,2] [[1, 2],
+                                              [3, 4]]
       # let a = create int32 [| 2 |] [| 1l; 2l |] in
         let b = create int32 [| 2 |] [| 3l; 4l |] in
         stack ~axis:1 [ a; b ]
-      - : (int32, int32_elt) t = int32 [2; 2] [[1, 3],
-                                               [2, 4]]
+      - : (int32, int32_elt) t = int32 [2,2] [[1, 3],
+                                              [2, 4]]
     ]}
 
     See also {!concatenate}. *)
@@ -1062,8 +1061,8 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
             [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
         in
         slice [ R (0, 2); L [ 0; 2 ] ] x
-      - : (int32, int32_elt) t = int32 [2; 2] [[1, 3],
-                                               [4, 6]]
+      - : (int32, int32_elt) t = int32 [2,2] [[1, 3],
+                                              [4, 6]]
     ]}
 
     See also {!get}, {!set_slice}. *)
@@ -1140,8 +1139,8 @@ val take_along_axis :
           create int32 [| 2; 1 |] [| 1l; 0l |]
         in
         take_along_axis ~axis:1 ~indices:idx x
-      - : (float, float32_elt) t = float32 [2; 1] [[1],
-                                                   [3]]
+      - : (float, float32_elt) t = float32 [2,1] [[1],
+                                                  [3]]
     ]}
 
     See also {!take}, {!put_along_axis}. *)
@@ -1192,10 +1191,9 @@ val index_put :
                      [| 10.; 20.; 30. |])
           t;
         t
-      - : (float, float32_elt) t = float32 [3; 3]
-      [[0, 10, 0],
-       [0, 0, 30],
-       [20, 0, 0]]
+      - : (float, float32_elt) t = float32 [3,3] [[0, 10, 0],
+                                                  [0, 0, 30],
+                                                  [20, 0, 0]]
     ]}
 
     See also {!put}. *)
@@ -1246,8 +1244,8 @@ val scatter :
           ~values:(create float32 [| 2; 1 |]
                      [| 10.; 20. |])
           x
-      - : (float, float32_elt) t = float32 [2; 3] [[0, 10, 0],
-                                                   [20, 0, 0]]
+      - : (float, float32_elt) t = float32 [2,3] [[0, 10, 0],
+                                                  [20, 0, 0]]
     ]}
 
     Raises [Invalid_argument] if shapes are incompatible.
@@ -1817,7 +1815,7 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [4, 6]
       # create float32 [| 1; 2 |] [| 1.; 2. |]
         |> sum ~axes:[ 1 ] ~keepdims:true
-      - : (float, float32_elt) t = float32 [1; 1] [[3]]
+      - : (float, float32_elt) t = float32 [1,1] [[3]]
     ]} *)
 
 val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
@@ -2805,20 +2803,20 @@ val fold_item : ('a -> 'b -> 'a) -> 'a -> ('b, 'c) t -> 'a
 
 (** {1:pp Formatting} *)
 
-val pp_data : Format.formatter -> ('a, 'b) t -> unit
-(** [pp_data fmt t] formats the data of [t]. *)
-
-val data_to_string : ('a, 'b) t -> string
-(** [data_to_string t] is the data of [t] as a string. *)
-
 val pp : Format.formatter -> ('a, 'b) t -> unit
-(** [pp fmt t] formats [t] for debugging (dtype, shape, and data). *)
-
-val print : ('a, 'b) t -> unit
-(** [print t] prints [t] to stdout. *)
+(** [pp ppf t] formats [t] compactly. Multidimensional or truncated tensors
+    include their dtype and shape. *)
 
 val to_string : ('a, 'b) t -> string
-(** [to_string t] is [t] formatted as a string (dtype, shape, and data). *)
+(** [to_string t] is [t] formatted with {!pp}. *)
+
+val print : ('a, 'b) t -> unit
+(** [print t] formats [t] with {!pp}, followed by a newline, on standard
+    output. *)
+
+val pp_shape : Format.formatter -> int array -> unit
+(** [pp_shape ppf shape] formats [shape] as a bracketed, comma-separated list
+    of dimensions, for example [[2,3,4]]. *)
 
 val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
-(** [pp_dtype fmt dtype] formats [dtype] by name (e.g. [float32]). *)
+(** [pp_dtype ppf dtype] formats [dtype] by name (e.g. [float32]). *)

@@ -236,7 +236,8 @@ let f x =
 
 let () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Nx.print_data (Rune.grad' (fun v -> Nx.sum (f v)) x)
+  Printf.printf "%s\n"
+    (Nx.to_string (Rune.grad' (fun v -> Nx.sum (f v)) x))
 ```
 
 `custom_jvp` mirrors `jax.custom_jvp` the same way. One difference to know: in rune a `custom_vjp` raises if differentiated in forward mode (and vice versa) — define both rules if you need both modes, where JAX can sometimes transpose a JVP rule automatically.

@@ -49,7 +49,7 @@ let () =
   in
   let cities = [| "Paris"; "Cairo"; "Helsinki"; "London" |] in
   Printf.printf "Daily temperatures (4 cities × 7 days):\n%s\n\n"
-    (data_to_string temps);
+    (to_string temps);
 
   (* --- Per-city statistics (reduce along axis 1 = across days) --- *)
   let city_means = mean ~axes:[ 1 ] temps in
@@ -76,16 +76,16 @@ let () =
   (* --- Cumulative sum: running total of Cairo's temperatures --- *)
   let cairo = temps.${[ I 1; A ]} in
   let cumulative = cumsum ~axis:0 cairo in
-  Printf.printf "Cairo daily:      %s\n" (data_to_string cairo);
-  Printf.printf "Cairo cumulative: %s\n\n" (data_to_string cumulative);
+  Printf.printf "Cairo daily:      %s\n" (to_string cairo);
+  Printf.printf "Cairo cumulative: %s\n\n" (to_string cumulative);
 
   (* --- Outlier detection with z-scores --- *)
   let mu = mean ~axes:[ 1 ] ~keepdims:true temps in
   let sigma = std ~axes:[ 1 ] ~keepdims:true temps in
   let z_scores = (temps - mu) / sigma in
   let outlier_mask = greater_s (abs z_scores) 1.5 in
-  Printf.printf "Z-scores:\n%s\n" (data_to_string z_scores);
-  Printf.printf "Outliers (|z| > 1.5): %s\n\n" (data_to_string outlier_mask);
+  Printf.printf "Z-scores:\n%s\n" (to_string z_scores);
+  Printf.printf "Outliers (|z| > 1.5): %s\n\n" (to_string outlier_mask);
 
   (* --- Check if all/any values meet a condition --- *)
   let all_above_zero = all (greater_s temps 0.0) in

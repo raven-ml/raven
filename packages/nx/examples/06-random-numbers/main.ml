@@ -12,15 +12,15 @@ open Nx.Infix
 let () =
   (* --- Dice simulation: roll 10 six-sided dice --- *)
   let dice = randint Int32 ~high:7 [| 10 |] 1 in
-  Printf.printf "10 dice rolls: %s\n\n" (data_to_string dice);
+  Printf.printf "10 dice rolls: %s\n\n" (to_string dice);
 
   (* --- Uniform random floats in [0, 1) --- *)
   let uniform = rand Float64 [| 5 |] in
-  Printf.printf "Uniform [0,1): %s\n\n" (data_to_string uniform);
+  Printf.printf "Uniform [0,1): %s\n\n" (to_string uniform);
 
   (* --- Normal distribution (mean=0, std=1) --- *)
   let normal = randn Float64 [| 5 |] in
-  Printf.printf "Normal(0,1):   %s\n\n" (data_to_string normal);
+  Printf.printf "Normal(0,1):   %s\n\n" (to_string normal);
 
   (* --- Monte Carlo pi estimation ---
 
@@ -39,18 +39,18 @@ let () =
   let x = rand Float64 [| 8 |] in
   let noise = randn Float64 [| 8 |] *$ 0.1 in
   let y = (x *$ 3.0) +$ 2.0 + noise in
-  Printf.printf "x:     %s\n" (data_to_string x);
-  Printf.printf "y ~ 3x+2: %s\n\n" (data_to_string y);
+  Printf.printf "x:     %s\n" (to_string x);
+  Printf.printf "y ~ 3x+2: %s\n\n" (to_string y);
 
   (* --- Reproducibility: Rng.run ~seed gives the same result --- *)
   let a = Rng.run ~seed:99 (fun () -> randn Float64 [| 3 |]) in
   let b = Rng.run ~seed:99 (fun () -> randn Float64 [| 3 |]) in
-  Printf.printf "Same seed, run 1: %s\n" (data_to_string a);
-  Printf.printf "Same seed, run 2: %s\n" (data_to_string b);
+  Printf.printf "Same seed, run 1: %s\n" (to_string a);
+  Printf.printf "Same seed, run 2: %s\n" (to_string b);
   Printf.printf "Identical? %b\n\n" (item [] (all (equal a b)));
 
   (* --- Shuffle: random permutation of a dataset --- *)
   let data = arange int32 0 8 1 in
   let shuffled = shuffle data in
-  Printf.printf "Original:  %s\n" (data_to_string data);
-  Printf.printf "Shuffled:  %s\n" (data_to_string shuffled)
+  Printf.printf "Original:  %s\n" (to_string data);
+  Printf.printf "Shuffled:  %s\n" (to_string shuffled)

@@ -29,7 +29,7 @@ let () =
 
   (* Show first 8 samples. *)
   Printf.printf "First 8 samples: %s\n\n"
-    (data_to_string (slice [ R (0, 8) ] signal));
+    (to_string (slice [ R (0, 8) ] signal));
 
   (* --- Real FFT: transform to frequency domain --- *)
   let spectrum = rfft signal in
@@ -74,11 +74,11 @@ let () =
 
   Printf.printf "After filtering (threshold=%.1f):\n" threshold;
   Printf.printf "  Original first 8:  %s\n"
-    (data_to_string (slice [ R (0, 8) ] signal));
+    (to_string (slice [ R (0, 8) ] signal));
   Printf.printf "  Filtered first 8:  %s\n\n"
-    (data_to_string (slice [ R (0, 8) ] clean_signal));
+    (to_string (slice [ R (0, 8) ] clean_signal));
 
   (* --- Frequency bins explained --- *)
   Printf.printf "Frequency bins (first 10): %s\n"
-    (data_to_string (slice [ R (0, 10) ] freqs));
+    (to_string (slice [ R (0, 10) ] freqs));
   Printf.printf "Total bins: %d (for %d-sample signal)\n" (shape freqs).(0) n

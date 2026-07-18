@@ -93,7 +93,7 @@ chain is worth:
 ```ocaml
 let result = Norn.nuts ~n:2000 log_prob init in
 let n_eff = Norn.ess result.samples in
-Printf.printf "ESS: %s\n" (Nx.data_to_string n_eff)
+Printf.printf "ESS: %s\n" (Nx.to_string n_eff)
 ```
 
 `ess` takes a matrix of shape `[n; dim]` and returns a vector of shape `[dim]`
@@ -129,7 +129,7 @@ let () =
   in
 
   let r = Norn.rhat chains in
-  Printf.printf "R-hat: %s\n" (Nx.data_to_string r)
+  Printf.printf "R-hat: %s\n" (Nx.to_string r)
 ```
 
 `rhat` takes an array of chains, each of shape `[n; dim]`, and returns

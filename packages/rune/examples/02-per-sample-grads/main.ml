@@ -97,4 +97,4 @@ let () =
 
   (* Per-sample gradient norms, e.g. for gradient clipping in DP-SGD. *)
   let norms = Nx.sqrt (Nx.sum ~axes:[ 1 ] (Nx.square per_sample.w)) in
-  Printf.printf "per-sample |dw|: %s\n" (Nx.data_to_string norms)
+  Printf.printf "per-sample |dw|: %s\n" (Nx.to_string norms)

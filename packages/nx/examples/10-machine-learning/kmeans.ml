@@ -72,7 +72,7 @@ let () =
   done;
 
   Printf.printf "Converged after %d iterations\n\n" !iter;
-  Printf.printf "Centroids:\n%s\n" (data_to_string centroids);
+  Printf.printf "Centroids:\n%s\n" (to_string centroids);
 
   for c = 0 to k - 1 do
     let count =

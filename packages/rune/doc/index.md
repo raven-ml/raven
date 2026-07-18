@@ -44,9 +44,8 @@ let () =
     { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
   in
   let g = Rune.grad (module Params) loss params in
-  Printf.printf "dw has shape %s, db has shape %s\n"
-    (Nx.shape_to_string (Nx.shape g.w))
-    (Nx.shape_to_string (Nx.shape g.b))
+  Format.printf "dw has shape %a, db has shape %a@."
+    Nx.pp_shape (Nx.shape g.w) Nx.pp_shape (Nx.shape g.b)
 ```
 
 Leaves may mix dtypes freely: a single forward and backward pass produces gradients for all of them, each with its leaf's dtype. Records nest into records, so models compose structurally — see [kaun](/docs/kaun/) for neural-network layers built this way, and [vega](/docs/vega/) for optimizers that consume the same structures.

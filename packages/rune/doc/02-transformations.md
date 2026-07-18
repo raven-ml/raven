@@ -30,7 +30,7 @@ Reverse mode (backpropagation) computes gradients for all inputs in one backward
 let () =
   let f v = Nx.sum (Nx.mul v v) in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Nx.print_data (Rune.grad (module Vec) f x)
+  Printf.printf "%s\n" (Nx.to_string (Rune.grad (module Vec) f x))
   (* gradient: [2. 4. 6.] *)
 ```
 
@@ -46,7 +46,7 @@ let () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let value, gradient = Rune.value_and_grad (module Vec) f x in
   Printf.printf "f(x) = %.4f\n" (Nx.item [] value);
-  Nx.print_data gradient
+  Printf.printf "%s\n" (Nx.to_string gradient)
 ```
 
 ### value_and_grad_aux
@@ -74,8 +74,8 @@ let () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let ct = Nx.ones Nx.float32 [| 3 |] in
   let y, g = Rune.vjp' f x ct in
-  Nx.print_data y; (* [1. 4. 9.] *)
-  Nx.print_data g (* [2. 4. 6.] *)
+  Printf.printf "%s\n" (Nx.to_string y); (* [1. 4. 9.] *)
+  Printf.printf "%s\n" (Nx.to_string g) (* [2. 4. 6.] *)
 ```
 
 The cotangent must have the output's shape and dtype. For a function returning a whole structure, `vjp2 (module P) (module Q) f params cotangents` takes one cotangent per output leaf.
@@ -110,8 +110,9 @@ let () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let v = Nx.ones Nx.float32 [| 3 |] in
   let y, tangent = Rune.jvp' f x v in
-  Nx.print_data y; (* [1. 4. 9.] — primal *)
-  Nx.print_data tangent (* [2. 4. 6.] — directional derivative *)
+  Printf.printf "%s\n" (Nx.to_string y); (* [1. 4. 9.] — primal *)
+  Printf.printf "%s\n" (Nx.to_string tangent)
+  (* [2. 4. 6.] — directional derivative *)
 ```
 
 `jvp_aux` carries auxiliary outputs; `jvp2` handles functions returning a structure (one tangent per output leaf).
@@ -133,8 +134,7 @@ let () =
   let f v = Nx.sum (Nx.mul v v) in
   let batch = Nx.ones Nx.float32 [| 10; 5 |] in
   let results = Rune.vmap' f batch in
-  Printf.printf "results has shape %s\n"
-    (Nx.shape_to_string (Nx.shape results))
+  Format.printf "results has shape %a@." Nx.pp_shape (Nx.shape results)
   (* [10] — one scalar per example *)
 ```
 
@@ -171,7 +171,7 @@ let () =
       (fun p -> Nx.dot p.x p.y)
       pairs
   in
-  Nx.print_data dots
+  Printf.printf "%s\n" (Nx.to_string dots)
 ```
 
 `vmap2` is the variant for mapped functions returning a structure: every output leaf gains the batch axis.
@@ -218,10 +218,8 @@ let () =
       (fun ex -> Rune.grad (module Params) (loss ex) params)
       batch
   in
-  Printf.printf "per-sample dw: %s\n"
-    (Nx.shape_to_string (Nx.shape per_sample.w));
-  Printf.printf "per-sample db: %s\n"
-    (Nx.shape_to_string (Nx.shape per_sample.b))
+  Format.printf "per-sample dw: %a@." Nx.pp_shape (Nx.shape per_sample.w);
+  Format.printf "per-sample db: %a@." Nx.pp_shape (Nx.shape per_sample.b)
   (* dw is [8; 3], db is [8]: one gradient per example. *)
 ```
 
@@ -247,7 +245,7 @@ let () =
     let h = Rune.hessian' rosenbrock !x in
     x := Nx.sub !x (Nx.solve h g)
   done;
-  Printf.printf "minimum at %s\n" (Nx.data_to_string !x)
+  Printf.printf "minimum at %s\n" (Nx.to_string !x)
   (* converges to (1, 1) *)
 ```
 
@@ -259,8 +257,8 @@ let () =
   let v = Nx.create Nx.float64 [| 2 |] [| 0.5; -1.0 |] in
   let hv = Rune.hvp' rosenbrock x v in
   let hv' = Nx.matmul (Rune.hessian' rosenbrock x) v in
-  Printf.printf "hvp:         %s\n" (Nx.data_to_string hv);
-  Printf.printf "hessian @ v: %s\n" (Nx.data_to_string hv')
+  Printf.printf "hvp:         %s\n" (Nx.to_string hv);
+  Printf.printf "hessian @ v: %s\n" (Nx.to_string hv')
 ```
 
 `hvp` (unprimed) does the same for any parameter structure. Under the hood it is `jvp` of `grad` — forward-over-reverse — one more instance of transformations composing.
@@ -277,8 +275,8 @@ let () =
   let g_remat =
     Rune.grad' (fun v -> Rune.remat (module Vec) expensive v) x
   in
-  Nx.print_data g_plain;
-  Nx.print_data g_remat (* identical *)
+  Printf.printf "%s\n" (Nx.to_string g_plain);
+  Printf.printf "%s\n" (Nx.to_string g_remat) (* identical *)
 ```
 
 Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. `remat` is a `custom_vjp` rule underneath, so differentiating it in forward mode raises.
@@ -302,7 +300,8 @@ let () =
       x
   in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Nx.print_data (Rune.grad' (fun v -> Nx.sum (f v)) x)
+  Printf.printf "%s\n"
+    (Nx.to_string (Rune.grad' (fun v -> Nx.sum (f v)) x))
   (* [2. 4. 6.] — from the custom rule *)
 ```
 
@@ -324,7 +323,8 @@ let () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let v = Nx.ones Nx.float32 [| 3 |] in
   let _, tangent = Rune.jvp' f x v in
-  Nx.print_data tangent (* [2. 4. 6.] — from the custom rule *)
+  Printf.printf "%s\n" (Nx.to_string tangent)
+  (* [2. 4. 6.] — from the custom rule *)
 ```
 
 With no transformation in scope, both constructs just run the plain forward function.
@@ -370,8 +370,9 @@ let () =
         (c, c))
       ~init:(Nx.scalar Nx.float32 0.0) xs
   in
-  Printf.printf "final: %s\n" (Nx.data_to_string final);
-  Nx.print_data partials (* the running sums [1. 3. 6. 10.] *)
+  Printf.printf "final: %s\n" (Nx.to_string final);
+  Printf.printf "%s\n" (Nx.to_string partials)
+  (* the running sums [1. 3. 6. 10.] *)
 ```
 
 Differentiating traces every step.
@@ -399,7 +400,7 @@ let () =
       ~body:(fun c -> Nx.mul_s c 2.0)
       (Nx.create Nx.float32 [| 2 |] [| 1.0; 0.5 |])
   in
-  Nx.print_data y (* [8. 4.] *)
+  Printf.printf "%s\n" (Nx.to_string y) (* [8. 4.] *)
 ```
 
 Differentiation traces the branch or iterations actually taken. Reading the predicate concretizes it: inside `vmap`, a predicate that depends on the mapped inputs raises, since the lanes could diverge.

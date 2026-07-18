@@ -36,15 +36,15 @@ let () =
     x := Nx.sub !x (Nx.solve h g);
     Printf.printf "  iter %d  f = %.3e\n" i (Nx.item [] (rosenbrock !x))
   done;
-  Printf.printf "  minimum at %s\n\n" (Nx.data_to_string !x);
+  Printf.printf "  minimum at %s\n\n" (Nx.to_string !x);
 
   (* Hessian-vector products never materialize the Hessian: hvp' f x v equals
      (hessian' f x) @ v. *)
   let v = Nx.create Nx.float64 [| 2 |] [| 0.5; -1.0 |] in
   let hv = Rune.hvp' rosenbrock x0 v in
   let hv' = Nx.matmul (Rune.hessian' rosenbrock x0) v in
-  Printf.printf "hvp:           %s\n" (Nx.data_to_string hv);
-  Printf.printf "hessian @ v:   %s\n\n" (Nx.data_to_string hv');
+  Printf.printf "hvp:           %s\n" (Nx.to_string hv);
+  Printf.printf "hessian @ v:   %s\n\n" (Nx.to_string hv');
 
   (* check_grads compares reverse-mode gradients against central differences
      along deterministic directions. *)

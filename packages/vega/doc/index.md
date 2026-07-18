@@ -30,7 +30,7 @@ let () =
     param := p;
     st := s;
     if i mod 25 = 0 then
-      Printf.printf "step %3d  x = %s\n" i (Nx.data_to_string !param)
+      Printf.printf "step %3d  x = %s\n" i (Nx.to_string !param)
   done
 ```
 

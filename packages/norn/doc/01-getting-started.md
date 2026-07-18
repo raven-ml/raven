@@ -47,9 +47,7 @@ let () =
   let init = Nx.zeros f64 [| 2 |] in
   let result = Norn.nuts ~n:1000 log_prob init in
 
-  Printf.printf "samples shape: %s\n"
-    (String.concat "x" (List.map string_of_int
-       (Array.to_list (Nx.shape result.samples))));
+  Format.printf "samples shape: %a@." Nx.pp_shape (Nx.shape result.samples);
   Printf.printf "accept rate:   %.3f\n" result.stats.accept_rate;
   Printf.printf "divergences:   %d\n" result.stats.num_divergent
 ```
@@ -85,8 +83,8 @@ Compute posterior summaries from `result.samples`:
 ```ocaml
 let mean = Nx.mean ~axes:[ 0 ] result.samples in
 let std = Nx.std ~axes:[ 0 ] result.samples in
-Printf.printf "mean: %s\n" (Nx.data_to_string mean);
-Printf.printf "std:  %s\n" (Nx.data_to_string std)
+Printf.printf "mean: %s\n" (Nx.to_string mean);
+Printf.printf "std:  %s\n" (Nx.to_string std)
 ```
 
 ## Using HMC

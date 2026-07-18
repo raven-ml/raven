@@ -34,7 +34,7 @@ open Nx
 let () =
   (* From explicit values: provide dtype, shape, and flat data *)
   let a = create Float32 [|2; 3|] [|1.; 2.; 3.; 4.; 5.; 6.|] in
-  Printf.printf "%s\n" (data_to_string a);
+  Printf.printf "%s\n" (to_string a);
 
   (* Filled arrays *)
   let z = zeros Float32 [|3; 3|] in
@@ -54,7 +54,7 @@ let () =
 
   (* Special matrices *)
   let i = eye Float32 3 in               (* 3×3 identity *)
-  Printf.printf "%s\n" (data_to_string i)
+  Printf.printf "%s\n" (to_string i)
 ```
 
 ## Data Types
@@ -78,7 +78,7 @@ open Nx
 let () =
   let x = create Int32 [|3|] [|1l; 2l; 3l|] in
   let y = cast Float32 x in
-  Printf.printf "%s\n" (data_to_string y)   (* [1. 2. 3.] as float32 *)
+  Printf.printf "%s\n" (to_string y)   (* [1. 2. 3.] as float32 *)
 ```
 
 ## Array Properties
@@ -88,8 +88,7 @@ open Nx
 
 let () =
   let x = rand Float32 [|2; 3; 4|] in
-  Printf.printf "shape: [|%s|]\n"
-    (Array.to_list (shape x) |> List.map string_of_int |> String.concat "; ");
+  Format.printf "shape: %a@." pp_shape (shape x);
   Printf.printf "ndim: %d\n" (ndim x);         (* 3 *)
   Printf.printf "size: %d\n" (numel x);          (* 24 *)
   Printf.printf "dtype: %s\n" (Format.asprintf "%a" pp_dtype (dtype x))
@@ -135,10 +134,10 @@ let () =
 
   (* Reduce along an axis *)
   let col_sums = sum ~axes:[0] x in    (* sum each column *)
-  Printf.printf "%s\n" (data_to_string col_sums);   (* [5. 7. 9.] *)
+  Printf.printf "%s\n" (to_string col_sums);   (* [5. 7. 9.] *)
 
   let row_sums = sum ~axes:[1] x in    (* sum each row *)
-  Printf.printf "%s\n" (data_to_string row_sums)    (* [6. 15.] *)
+  Printf.printf "%s\n" (to_string row_sums)    (* [6. 15.] *)
 ```
 
 ## Slicing and Indexing
@@ -153,7 +152,7 @@ let () =
 
   (* Get a row *)
   let row = get [1] x in           (* [4, 5, 6] *)
-  Printf.printf "%s\n" (data_to_string row);
+  Printf.printf "%s\n" (to_string row);
 
   (* Get a scalar *)
   let v = item [1; 2] x in        (* 6l *)
@@ -172,15 +171,15 @@ let () =
 
   (* Range: rows 0 to 2 (exclusive), all columns *)
   let sub = slice [R (0, 2); A] x in
-  Printf.printf "%s\n" (data_to_string sub);
+  Printf.printf "%s\n" (to_string sub);
 
   (* Single index on one axis, range on another *)
   let row1_cols = slice [I 1; R (0, 3)] x in
-  Printf.printf "%s\n" (data_to_string row1_cols);
+  Printf.printf "%s\n" (to_string row1_cols);
 
   (* Gather specific indices *)
   let picked = slice [L [0; 3]; L [1; 2]] x in
-  Printf.printf "%s\n" (data_to_string picked)
+  Printf.printf "%s\n" (to_string picked)
 ```
 
 Index types: `I i` (single index), `R (start, stop)` (half-open range), `Rs (start, stop, step)` (strided range), `L indices` (gather), `A` (all), `N` (new axis).
@@ -196,7 +195,7 @@ let () =
   let matrix = ones Float32 [|3; 4|] in
   let row = create Float32 [|1; 4|] [|10.; 20.; 30.; 40.|] in
   let result = add matrix row in    (* row added to every row *)
-  Printf.printf "%s\n" (data_to_string result)
+  Printf.printf "%s\n" (to_string result)
 ```
 
 ## Matrix Multiplication

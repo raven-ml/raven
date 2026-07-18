@@ -23,7 +23,7 @@ let run name tx steps =
     param := p;
     st := s
   done;
-  Printf.printf "  %-40s x = %s\n" name (Nx.data_to_string !param)
+  Printf.printf "  %-40s x = %s\n" name (Nx.to_string !param)
 
 let () =
   let lr = Vega.Schedule.constant 0.01 in
@@ -79,5 +79,5 @@ let () =
     param := Vega.apply_updates ~param:!param ~updates;
     st := s;
     if i mod 10 = 0 then
-      Printf.printf "  step %2d  x = %s\n" i (Nx.data_to_string !param)
+      Printf.printf "  step %2d  x = %s\n" i (Nx.to_string !param)
   done

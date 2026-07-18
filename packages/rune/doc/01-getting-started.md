@@ -86,8 +86,8 @@ let () =
   in
   (* The gradient is a value of type [params]. *)
   let g = Rune.grad (module Params) loss params in
-  Printf.printf "dw:\n%s\n" (Nx.data_to_string g.w);
-  Printf.printf "db: %s\n" (Nx.data_to_string g.b)
+  Printf.printf "dw:\n%s\n" (Nx.to_string g.w);
+  Printf.printf "db: %s\n" (Nx.to_string g.b)
 ```
 
 Leaves of the record that do not contribute to the result get all-zero gradients. Leaves may have different dtypes; each gradient leaf has its parameter leaf's dtype.
@@ -127,7 +127,7 @@ let () =
     if i mod 50 = 0 then Printf.printf "step %3d  loss %.6f\n" i l
   done;
   Printf.printf "w (expected ~[2.0; -1.0; 0.5]):\n%s\n"
-    (Nx.data_to_string !p.w)
+    (Nx.to_string !p.w)
 ```
 
 This is the whole pattern — the full program is [`examples/01-gradient-descent`](https://github.com/raven-ml/raven/tree/main/packages/rune/examples/01-gradient-descent). For neural networks, [kaun](/docs/kaun/) provides layers whose parameter records compose exactly this way.
@@ -152,8 +152,8 @@ let () =
   end in
   let loss, g, pred = Rune.value_and_grad_aux (module Vec) f x in
   Printf.printf "loss = %.2f\n" (Nx.item [] loss);
-  Printf.printf "grad = %s\n" (Nx.data_to_string g);
-  Printf.printf "pred = %s\n" (Nx.data_to_string pred)
+  Printf.printf "grad = %s\n" (Nx.to_string g);
+  Printf.printf "pred = %s\n" (Nx.to_string pred)
 ```
 
 The `Vec` module above is worth noting: a single tensor is itself a one-leaf `Ptree.S` structure, so the structured API subsumes the single-tensor one.
@@ -187,7 +187,7 @@ let () =
   (* detach: gradients do not flow through the copy. *)
   let f v = Nx.mean (Nx.mul v (Rune.detach v)) in
   Printf.printf "with detach:  %s\n"
-    (Nx.data_to_string (Rune.grad' f x));
+    (Nx.to_string (Rune.grad' f x));
 
   (* no_grad: nothing inside is recorded. *)
   let g v =

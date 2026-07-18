@@ -82,8 +82,8 @@ let () =
   in
   let ostate = Vega.adamw_init (module Mlp) params in
   (* The moments are Mlp.t values, inspectable like the parameters. *)
-  Printf.printf "mu.l1.w: %s  step: %d\n"
-    (Nx.shape_to_string (Nx.shape ostate.mu.l1.w))
+  Format.printf "mu.l1.w: %a  step: %d@." Nx.pp_shape
+    (Nx.shape ostate.mu.l1.w)
     ostate.step
 ```
 
@@ -120,9 +120,8 @@ let () =
   let y = Nx.create Nx.int32 [| 10 |] (Array.init 10 Int32.of_int) in
   Data.batches2 ~batch_size:4 (x, y)
   |> Seq.iter (fun (xb, yb) ->
-      Printf.printf "batch: x %s  y %s\n"
-        (Nx.shape_to_string (Nx.shape xb))
-        (Nx.shape_to_string (Nx.shape yb)))
+      Format.printf "batch: x %a  y %a@." Nx.pp_shape (Nx.shape xb)
+        Nx.pp_shape (Nx.shape yb))
   (* [4; 2]/[4], [4; 2]/[4], [2; 2]/[2] — the last batch is smaller;
      pass ~drop_last:true to drop it. *)
 ```

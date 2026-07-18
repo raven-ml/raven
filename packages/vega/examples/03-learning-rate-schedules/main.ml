@@ -72,5 +72,5 @@ let () =
     st := s;
     if i mod 20 = 0 then
       Printf.printf "  step %3d  lr=%.6f  x = %s\n" i (lr i)
-        (Nx.data_to_string !param)
+        (Nx.to_string !param)
   done

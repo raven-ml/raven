@@ -4447,7 +4447,10 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Display and Formatting ───── *)
 
-  let pp_data (type a b) fmt (x : (a, b) t) =
+  let pp_shape = Shape.pp
+  let pp_dtype ppf dtype = Format.pp_print_string ppf (Dtype.to_string dtype)
+
+  let pp (type a b) fmt (x : (a, b) t) =
     let open Format in
     let view = B.view x in
     let buffer = B.to_host x in
@@ -4478,11 +4481,8 @@ module Make (B : Backend_intf.S) = struct
       | Complex128 -> fprintf fmt "(%g+%gi)" elt.re elt.im
     in
     let edge = 2 in
-    if sz = 0 && ndim > 0 then fprintf fmt "[]"
-    else if ndim = 0 then
-      if sz > 0 then
-        pp_element fmt (Nx_buffer.unsafe_get buffer (View.offset view))
-      else fprintf fmt "<empty scalar>"
+    if ndim = 0 then
+      pp_element fmt (Nx_buffer.unsafe_get buffer (View.offset view))
     else
       let strides = View.strides view in
       let base_offset = View.offset view in
@@ -4531,44 +4531,12 @@ module Make (B : Backend_intf.S) = struct
       in
       (* Print shape and dtype header for non-trivial tensors *)
       if ndim > 1 || sz > edge * 2 then (
-        fprintf fmt "%s [%s] " (Dtype.to_string dtype)
-          (Array.to_list shape |> List.map string_of_int |> String.concat "; ");
+        fprintf fmt "%a %a " pp_dtype dtype pp_shape shape;
         pp_print_cut fmt ());
-      if sz > 0 then pp_slice fmt [] else fprintf fmt "[]"
+      if sz = 0 then fprintf fmt "[]" else pp_slice fmt []
 
-  let format_to_string pp x =
-    let buf = Stdlib.Buffer.create 1024 in
-    let fmt = Format.formatter_of_buffer buf in
-    pp fmt x;
-    Format.pp_print_flush fmt ();
-    Stdlib.Buffer.contents buf
-
-  let print_with_formatter pp x =
-    pp Format.std_formatter x;
-    Format.pp_print_newline Format.std_formatter ();
-    Format.pp_print_flush Format.std_formatter ()
-
-  let data_to_string x = format_to_string pp_data x
-  let pp_dtype fmt dtype = Format.fprintf fmt "%s" (Dtype.to_string dtype)
-
-  let pp fmt x =
-    let open Format in
-    let view = B.view x in
-    fprintf fmt "@[<v 0>";
-    fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %s@," (Shape.to_string (View.shape view));
-    fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
-    fprintf fmt "  Strides: %s@,"
-      ("["
-      ^ String.concat "; "
-          (Array.to_list (Array.map string_of_int (View.strides view)))
-      ^ "]");
-    fprintf fmt "  Offset: %d@," (View.offset view);
-    fprintf fmt "  Size: %d@," (View.numel view);
-    fprintf fmt "  Data: %a@," pp_data x
-
-  let print x = print_with_formatter pp x
-  let to_string x = format_to_string pp x
+  let to_string x = Format.asprintf "%a" pp x
+  let print x = Format.printf "%a@." pp x
 
   (* ───── Higher-order Functions ───── *)
 

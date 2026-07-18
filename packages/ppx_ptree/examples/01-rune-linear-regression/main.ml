@@ -52,5 +52,5 @@ let () =
   done;
 
   Printf.printf "\nw (expected about [2.0; -1.0; 0.5]):\n  %s\n"
-    (Nx.data_to_string !params.w);
-  Printf.printf "b (expected about 0.3):\n  %s\n" (Nx.data_to_string !params.b)
+    (Nx.to_string !params.w);
+  Printf.printf "b (expected about 0.3):\n  %s\n" (Nx.to_string !params.b)
