@@ -28,7 +28,9 @@ jobs:
           ocaml-compiler: 5
 
       - name: Install dependencies
-        run: opam install . --deps-only --with-test
+        run: |
+          opam pin add thumper git+https://github.com/invariant-hq/thumper.git --no-action
+          opam install . --deps-only --with-test
 
       - name: Build and test nx
         run: |
