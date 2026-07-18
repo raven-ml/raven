@@ -46,6 +46,8 @@ thread.
 
 ### Tolk (new)
 
+- The debug golden-test generator no longer leaks `DEBUG=6` AST diagnostics
+  into otherwise successful `dune build` output.
 - Codegen distributes the negation of a sum as a multiply by `-1` over its
   terms, so a later-negated constant-scaled subexpression folds its sign into
   the constant factor (`c*x` negated becomes `(-c)*x`) rather than re-negating
