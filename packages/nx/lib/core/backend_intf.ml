@@ -390,7 +390,7 @@ module type S = sig
       Two kinds live here. {e Pure-view} movement — {!expand}, {!reshape},
       {!permute}, {!shrink}, {!flip} — only rewrites view metadata (shape,
       strides, offset) and returns a handle sharing the input's buffer, with no
-      copy ({!reshape} is the one exception: it copies when the existing strides
+      copy ({!reshape} never copies either: it raises when the existing strides
       cannot express the new shape). {e Materializing assembly} — {!pad} and
       {!cat} — cannot be expressed as a view and must allocate a fresh buffer and
       copy: {!pad} widens each dimension around a fill value, and {!cat} is the
@@ -412,8 +412,10 @@ module type S = sig
   val reshape : ('a, 'b) t -> int array -> ('a, 'b) t
   (** [reshape t shape] changes the logical shape, preserving element count.
 
-      Zero-copy when [t] is C-contiguous or the reshape is compatible with the
-      current strides. May copy if [t] is non-contiguous. *)
+      Always zero-copy: the result is a view over [t]'s buffer. Raises
+      [Invalid_argument] when the current strides cannot express [shape] (some
+      non-contiguous layouts); the caller materializes with {!contiguous}
+      first. *)
 
   val permute : ('a, 'b) t -> int array -> ('a, 'b) t
   (** [permute t axes] reorders dimensions according to [axes], which must be a
@@ -705,10 +707,11 @@ module type S = sig
     ('a, 'b) t ->
     ('a, 'b) t
   (** [triangular_solve ~upper ~transpose ~unit_diag a b] solves [A·x = b] or
-      [Aᵀ·x = b] where [A] is triangular.
+      [Aᴴ·x = b] where [A] is triangular.
 
-      [upper]: [A] is upper triangular. [transpose]: solve [Aᵀ·x = b].
-      [unit_diag]: assume diagonal is all ones.
+      [upper]: [A] is upper triangular. [transpose]: solve [Aᴴ·x = b] — the
+      conjugate transpose for complex dtypes, the plain transpose for real
+      ones. [unit_diag]: assume diagonal is all ones.
 
       May raise {!Linalg_error} with kind [`Singular] if [A] is singular (a zero
       on the diagonal when [unit_diag] is false). *)

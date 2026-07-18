@@ -361,6 +361,10 @@ thread.
 
 ### Nx
 
+- Correct the backend interface docs: `reshape` never copies — it raises
+  `Invalid_argument` when the existing strides cannot express the new shape —
+  and `triangular_solve`'s `transpose` solves with the conjugate transpose
+  (`Aᴴ`) for complex dtypes.
 - Unify random number generation on one splittable Threefry generator, reached
   through `Nx.Rng`. The explicit samplers `Nx.Rng.uniform`/`normal`/`randint`/
   `bernoulli` are pure, order-independent functions of a key; the implicit scope
