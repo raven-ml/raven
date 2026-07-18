@@ -10,9 +10,10 @@ open Windtrap
 open Rune_test_support.Support
 
 let v3 () = vec64 [| 0.7; -1.3; 2.1 |]
+let v3_f32 () = vec32 [| 0.7; -1.3; 2.1 |]
 
 (* f : R^3 -> R^2, non-linear with cross terms. *)
-let f32_fn x =
+let jacobian_fn x =
   let x0 = Nx.slice [ Nx.R (0, 1) ] x
   and x1 = Nx.slice [ Nx.R (1, 2) ] x
   and x2 = Nx.slice [ Nx.R (2, 3) ] x in
@@ -40,19 +41,63 @@ let test_pullback_shape_mismatch () =
   in
   raises_invalid_arg (fun () -> ignore (pullback (vec64 [| 1.0 |])))
 
-let test_jacfwd_matches_jacrev () =
-  let jf = Rune.jacfwd' f32_fn (v3 ()) in
-  let jr = Rune.jacrev' f32_fn (v3 ()) in
+let dtype_name x = Nx_core.Dtype.to_string (Nx.dtype x)
+
+let test_jacobians_float64 () =
+  let jf = Rune.jacfwd' jacobian_fn (v3 ()) in
+  let jr = Rune.jacrev' jacobian_fn (v3 ()) in
+  equal ~msg:"jacfwd dtype" string "float64" (dtype_name jf);
+  equal ~msg:"jacrev dtype" string "float64" (dtype_name jr);
   equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape jf);
   check_arr ~msg:"agree" (to_arr jf) jr
 
 let test_jacobian_analytic () =
   (* d(x0*x1)/dx = [x1; x0; 0]; d(sin x2 * x0)/dx = [sin x2; 0; x0 cos x2]. *)
   let x = v3 () in
-  let j = Rune.jacrev' f32_fn x in
+  let j = Rune.jacrev' jacobian_fn x in
   check_arr ~msg:"jacobian"
     [| -1.3; 0.7; 0.0; Stdlib.sin 2.1; 0.0; 0.7 *. Stdlib.cos 2.1 |]
     j
+
+let test_jacobians_float32 () =
+  let x = v3_f32 () in
+  let jf = Rune.jacfwd' jacobian_fn x in
+  let jr = Rune.jacrev' jacobian_fn x in
+  equal ~msg:"jacfwd dtype" string "float32" (dtype_name jf);
+  equal ~msg:"jacrev dtype" string "float32" (dtype_name jr);
+  check_arr ~msg:"agree" ~eps:1e-5 (to_arr jf) jr
+
+let test_jacobians_mixed_dtypes () =
+  let x = v3_f32 () in
+  let f x = Nx.cast Nx.float64 (Nx.mul x x) in
+  let jf = Rune.jacfwd' f x in
+  let jr = Rune.jacrev' f x in
+  equal ~msg:"jacfwd follows output" string "float64" (dtype_name jf);
+  equal ~msg:"jacrev follows input" string "float32" (dtype_name jr);
+  let expected = [| 1.4; 0.0; 0.0; 0.0; -2.6; 0.0; 0.0; 0.0; 4.2 |] in
+  check_arr ~msg:"jacfwd" ~eps:1e-5 expected jf;
+  check_arr ~msg:"jacrev" ~eps:1e-5 expected jr
+
+let test_jacobians_restore_tensor_shapes () =
+  let x = Nx.reshape [| 1; 3 |] (v3 ()) in
+  let f x = Nx.reshape [| 2; 1 |] (jacobian_fn (Nx.reshape [| 3 |] x)) in
+  let jf = Rune.jacfwd' f x in
+  let jr = Rune.jacrev' f x in
+  equal ~msg:"jacfwd shape" (array int) [| 2; 1; 1; 3 |] (Nx.shape jf);
+  equal ~msg:"jacrev shape" (array int) [| 2; 1; 1; 3 |] (Nx.shape jr);
+  check_arr ~msg:"agree" (to_arr jf) jr
+
+let test_jacobians_evaluate_function_once () =
+  let calls = ref 0 in
+  let f x =
+    incr calls;
+    jacobian_fn x
+  in
+  ignore (Rune.jacfwd' f (v3 ()));
+  equal ~msg:"jacfwd calls" int 1 !calls;
+  calls := 0;
+  ignore (Rune.jacrev' f (v3 ()));
+  equal ~msg:"jacrev calls" int 1 !calls
 
 let test_hessian_analytic () =
   (* Hessian of sum(x³) is diag(6x). *)
@@ -133,8 +178,15 @@ let tests =
       ];
     group "jacobians"
       [
-        test "jacfwd agrees with jacrev" test_jacfwd_matches_jacrev;
+        test "jacobians preserve float64" test_jacobians_float64;
         test "jacobian matches the analytic matrix" test_jacobian_analytic;
+        test "jacobians preserve float32" test_jacobians_float32;
+        test "mixed-dtype jacobians follow tangent space dtypes"
+          test_jacobians_mixed_dtypes;
+        test "jacobians restore input and output shapes"
+          test_jacobians_restore_tensor_shapes;
+        test "jacobians evaluate the function once"
+          test_jacobians_evaluate_function_once;
         test "hessian matches the analytic matrix" test_hessian_analytic;
         test "hvp agrees with the materialized hessian" test_hvp_matches_hessian;
         test "structured hvp matches analytic" test_hvp_structured;

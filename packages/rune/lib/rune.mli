@@ -260,13 +260,14 @@ val remat :
 val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
 (** [jacfwd' f x] is the Jacobian of [f] at [x], with shape
     [shape (f x) @ shape x], computed column by column in forward mode (one
-    vectorized pass). Prefer it when the input is smaller than the output. *)
+    vectorized pass). Its dtype is the dtype of [f x]. Prefer it when the input
+    is smaller than the output. *)
 
 val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [jacrev' f x] is the Jacobian of [f] at [x], with shape
     [shape (f x) @ shape x], computed row by row in reverse mode (one forward
-    pass, one vectorized backward pass). Prefer it when the output is smaller
-    than the input. *)
+    pass, one vectorized backward pass). Its dtype is the dtype of [x]. Prefer
+    it when the output is smaller than the input. *)
 
 val hessian' :
   (('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t

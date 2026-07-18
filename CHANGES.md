@@ -615,6 +615,10 @@ thread.
 
 ### Rune
 
+- `jacfwd'` and `jacrev'` support float32 and float64 inputs without an
+  implicit float64 specialization. Forward-mode Jacobians keep the output
+  dtype, reverse-mode Jacobians keep the input dtype, and both evaluate the
+  differentiated function only once.
 - `pmap` now decorrelates per-device randomness: under `Rune.pmap`/`pmap2`,
   `Nx.Rng.fold_in_axis key` folds each device's own index into the key, so a
   replicated key yields an independent draw per device (device `i` draws

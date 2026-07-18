@@ -351,6 +351,9 @@ let basis_like (type a b) (y : (a, b) Nx.t) : (a, b) Nx.t =
 
 let jacrev' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
     (a, b) Nx.t =
+  (* [vjp_fun'] returns the primal output and records its reusable pullback in
+     the same forward pass. Derive the row basis from that output rather than
+     evaluating [f] separately for its shape. *)
   let y, pullback = vjp_fun' f x in
   let rows = vmap' pullback (basis_like y) in
   Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
@@ -358,10 +361,12 @@ let jacrev' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
 let jacfwd' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
     (c, d) Nx.t =
   let cols = vmap' (fun v -> snd (jvp' f x v)) (basis_like x) in
-  (* [cols] is [numel x; shape y...]; the input axis moves last. *)
-  let rank = Array.length (Nx.shape cols) in
+  (* [cols] is [numel x; shape y...], so it supplies the output shape without a
+     separate evaluation of [f]. Move its input axis last. *)
+  let cols_shape = Nx.shape cols in
+  let rank = Array.length cols_shape in
   let cols = Nx.moveaxis 0 (rank - 1) cols in
-  let y_shape = Array.sub (Nx.shape cols) 0 (rank - 1) in
+  let y_shape = Array.sub cols_shape 1 (rank - 1) in
   Nx.reshape (Array.append y_shape (Nx.shape x)) (Nx.contiguous cols)
 
 let hessian' (type a b) (f : (a, b) Nx.t -> (a, b) Nx.t) (x : (a, b) Nx.t) :
