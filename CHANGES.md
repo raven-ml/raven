@@ -363,6 +363,9 @@ thread.
 
 ### Nx
 
+- Add float32- and float64-preserving `dct`, `idct`, `dst`, and `idst`
+  transforms of types I–IV, including N-D variants and forward, backward, and
+  orthonormal scaling modes.
 - `Nx.concatenate` on the OxCaml backend now uses SIMD and unrolled contiguous
   block copies, with stride-aware paths for offset, transposed, flipped, and
   broadcast views.

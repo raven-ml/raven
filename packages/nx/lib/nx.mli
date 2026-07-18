@@ -2511,6 +2511,97 @@ val ihfft :
   (Complex.t, complex64_elt) t
 (** [ihfft ?axis ?n ?norm x] is the inverse of {!hfft}. *)
 
+val dct :
+  ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t
+(** [dct ?type_ ?axis ?norm x] is the discrete cosine transform along [axis].
+    [type_] selects DCT type I, II, III, or IV and defaults to II. [axis]
+    defaults to [-1]; [norm] defaults to [`Backward]. The result has the same
+    shape and dtype as [x].
+
+    [`Forward] scales by the reciprocal of the logical transform length,
+    [`Backward] leaves the forward transform unscaled, and [`Ortho] produces an
+    orthonormal transform. The logical length is [2 * (n - 1)] for type I and
+    [2 * n] otherwise.
+
+    Raises [Invalid_argument] unless [x] is float32 or float64, if [type_] is
+    outside [[1; 4]], if [axis] is invalid, if the transformed axis is empty, or
+    if type I is requested for an axis of length one.
+
+    See also {!idct}, {!dctn}, {!dst}. *)
+
+val idct :
+  ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t
+(** [idct ?type_ ?axis ?norm x] is the inverse discrete cosine transform. Types
+    I and IV are self-inverse up to normalisation; types II and III are inverse
+    pairs. Calling [idct] with the same [type_] and [norm] as {!dct} recovers
+    the input up to floating-point error.
+
+    See also {!dct}, {!idctn}. *)
+
+val dctn :
+  ?type_:int ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dctn ?type_ ?axes ?norm x] applies {!dct} successively along [axes]. [axes]
+    defaults to all axes. Negative axes are accepted; repeated axes are
+    rejected. An empty [axes] list returns [x] unchanged.
+
+    See also {!idctn}, {!dct}. *)
+
+val idctn :
+  ?type_:int ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [idctn ?type_ ?axes ?norm x] is the inverse of {!dctn}. *)
+
+val dst :
+  ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t
+(** [dst ?type_ ?axis ?norm x] is the discrete sine transform along [axis].
+    [type_] selects DST type I, II, III, or IV and defaults to II. [axis]
+    defaults to [-1]; [norm] defaults to [`Backward]. The result has the same
+    shape and dtype as [x].
+
+    The normalisation modes have the same meaning as for {!dct}. The logical
+    transform length is [2 * (n + 1)] for type I and [2 * n] otherwise.
+
+    Raises [Invalid_argument] unless [x] is float32 or float64, if [type_] is
+    outside [[1; 4]], if [axis] is invalid, or if the transformed axis is empty.
+
+    See also {!idst}, {!dstn}, {!dct}. *)
+
+val idst :
+  ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t
+(** [idst ?type_ ?axis ?norm x] is the inverse discrete sine transform. Types I
+    and IV are self-inverse up to normalisation; types II and III are inverse
+    pairs. Calling [idst] with the same [type_] and [norm] as {!dst} recovers
+    the input up to floating-point error.
+
+    See also {!dst}, {!idstn}. *)
+
+val dstn :
+  ?type_:int ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dstn ?type_ ?axes ?norm x] applies {!dst} successively along [axes]. [axes]
+    defaults to all axes. Negative axes are accepted; repeated axes are
+    rejected. An empty [axes] list returns [x] unchanged.
+
+    See also {!idstn}, {!dst}. *)
+
+val idstn :
+  ?type_:int ->
+  ?axes:int list ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [idstn ?type_ ?axes ?norm x] is the inverse of {!dstn}. *)
+
 val fftfreq : ?d:float -> int -> (float, float64_elt) t
 (** [fftfreq ?d n] is the DFT sample frequencies for window length [n] and
     sample spacing [d] (default [1.0]).

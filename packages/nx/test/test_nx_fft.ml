@@ -9,6 +9,178 @@ open Test_nx_support
 let pi = 4.0 *. atan 1.0
 let two_pi = 2.0 *. pi
 
+let reference_dct_raw type_ x =
+  let n = Array.length x in
+  Array.init n (fun k ->
+      match type_ with
+      | 1 ->
+          let value = ref (x.(0) +. ((-1.0 ** float_of_int k) *. x.(n - 1))) in
+          for j = 1 to n - 2 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. cos (pi *. float_of_int (k * j) /. float_of_int (n - 1))
+          done;
+          !value
+      | 2 ->
+          let value = ref 0.0 in
+          for j = 0 to n - 1 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. cos
+                      (pi
+                      *. float_of_int (k * ((2 * j) + 1))
+                      /. float_of_int (2 * n))
+          done;
+          !value
+      | 3 ->
+          let value = ref x.(0) in
+          for j = 1 to n - 1 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. cos
+                      (pi
+                      *. float_of_int (((2 * k) + 1) * j)
+                      /. float_of_int (2 * n))
+          done;
+          !value
+      | 4 ->
+          let value = ref 0.0 in
+          for j = 0 to n - 1 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. cos
+                      (pi
+                      *. float_of_int (((2 * k) + 1) * ((2 * j) + 1))
+                      /. float_of_int (4 * n))
+          done;
+          !value
+      | _ -> assert false)
+
+let reference_dst_raw type_ x =
+  let n = Array.length x in
+  Array.init n (fun k ->
+      match type_ with
+      | 1 ->
+          let value = ref 0.0 in
+          for j = 0 to n - 1 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. sin
+                      (pi
+                      *. float_of_int ((k + 1) * (j + 1))
+                      /. float_of_int (n + 1))
+          done;
+          !value
+      | 2 ->
+          let value = ref 0.0 in
+          for j = 0 to n - 1 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. sin
+                      (pi
+                      *. float_of_int ((k + 1) * ((2 * j) + 1))
+                      /. float_of_int (2 * n))
+          done;
+          !value
+      | 3 ->
+          let value = ref ((-1.0 ** float_of_int k) *. x.(n - 1)) in
+          for j = 0 to n - 2 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. sin
+                      (pi
+                      *. float_of_int (((2 * k) + 1) * (j + 1))
+                      /. float_of_int (2 * n))
+          done;
+          !value
+      | 4 ->
+          let value = ref 0.0 in
+          for j = 0 to n - 1 do
+            value :=
+              !value
+              +. 2.0 *. x.(j)
+                 *. sin
+                      (pi
+                      *. float_of_int (((2 * k) + 1) * ((2 * j) + 1))
+                      /. float_of_int (4 * n))
+          done;
+          !value
+      | _ -> assert false)
+
+let reference_real_transform ~family ~inverse ~type_ ~norm x =
+  let n = Array.length x in
+  let raw_type =
+    if inverse then match type_ with 2 -> 3 | 3 -> 2 | value -> value
+    else type_
+  in
+  let adjusted = Array.copy x in
+  (if norm = `Ortho then
+     match (family, raw_type) with
+     | `Dct, 1 ->
+         adjusted.(0) <- adjusted.(0) *. sqrt 2.0;
+         adjusted.(n - 1) <- adjusted.(n - 1) *. sqrt 2.0
+     | `Dct, 3 -> adjusted.(0) <- adjusted.(0) *. sqrt 2.0
+     | `Dst, 3 -> adjusted.(n - 1) <- adjusted.(n - 1) *. sqrt 2.0
+     | (`Dct | `Dst), (1 | 2 | 4) -> ()
+     | _ -> assert false);
+  let transformed =
+    match family with
+    | `Dct -> reference_dct_raw raw_type adjusted
+    | `Dst -> reference_dst_raw raw_type adjusted
+  in
+  (if norm = `Ortho then
+     match (family, raw_type) with
+     | `Dct, 1 ->
+         transformed.(0) <- transformed.(0) /. sqrt 2.0;
+         transformed.(n - 1) <- transformed.(n - 1) /. sqrt 2.0
+     | `Dct, 2 -> transformed.(0) <- transformed.(0) /. sqrt 2.0
+     | `Dst, 2 -> transformed.(n - 1) <- transformed.(n - 1) /. sqrt 2.0
+     | (`Dct | `Dst), (1 | 3 | 4) -> ()
+     | _ -> assert false);
+  let length =
+    match (family, type_) with
+    | `Dct, 1 -> 2 * (n - 1)
+    | `Dst, 1 -> 2 * (n + 1)
+    | (`Dct | `Dst), (2 | 3 | 4) -> 2 * n
+    | _ -> assert false
+  in
+  let scale =
+    match (inverse, norm) with
+    | false, `Backward | true, `Forward -> 1.0
+    | false, `Forward | true, `Backward -> 1.0 /. float_of_int length
+    | _, `Ortho -> 1.0 /. sqrt (float_of_int length)
+  in
+  Array.map (fun value -> value *. scale) transformed
+
+let reference_real_transform_2d ~family ~type_ ~norm rows columns data =
+  let result = Array.copy data in
+  for row = 0 to rows - 1 do
+    let values = Array.sub result (row * columns) columns in
+    let transformed =
+      reference_real_transform ~family ~inverse:false ~type_ ~norm values
+    in
+    Array.blit transformed 0 result (row * columns) columns
+  done;
+  for column = 0 to columns - 1 do
+    let values =
+      Array.init rows (fun row -> result.((row * columns) + column))
+    in
+    let transformed =
+      reference_real_transform ~family ~inverse:false ~type_ ~norm values
+    in
+    for row = 0 to rows - 1 do
+      result.((row * columns) + column) <- transformed.(row)
+    done
+  done;
+  result
+
 (* Test standard FFT/IFFT *)
 let test_fft_ifft () =
   (* 1D even length *)
@@ -388,6 +560,169 @@ let test_fftshift () =
   let unshifted = Nx.ifftshift shifted in
   check_t "ifftshift 1D" x_shape x_data unshifted
 
+let test_dct_reference () =
+  let data = [| 0.25; -1.0; 2.0; 0.5; 3.0 |] in
+  let input = Nx.create Nx.float64 [| Array.length data |] data in
+  List.iter
+    (fun type_ ->
+      List.iter
+        (fun norm ->
+          let suffix =
+            Printf.sprintf "type %d %s" type_
+              (match norm with
+              | `Backward -> "backward"
+              | `Forward -> "forward"
+              | `Ortho -> "ortho")
+          in
+          check_t ~eps:1e-10 ("dct " ^ suffix)
+            [| Array.length data |]
+            (reference_real_transform ~family:`Dct ~inverse:false ~type_ ~norm
+               data)
+            (Nx.dct input ~type_ ~norm);
+          check_t ~eps:1e-10 ("idct " ^ suffix)
+            [| Array.length data |]
+            (reference_real_transform ~family:`Dct ~inverse:true ~type_ ~norm
+               data)
+            (Nx.idct input ~type_ ~norm))
+        [ `Backward; `Forward; `Ortho ])
+    [ 1; 2; 3; 4 ]
+
+let test_dst_reference () =
+  let data = [| 0.25; -1.0; 2.0; 0.5; 3.0 |] in
+  let input = Nx.create Nx.float64 [| Array.length data |] data in
+  List.iter
+    (fun type_ ->
+      List.iter
+        (fun norm ->
+          let suffix =
+            Printf.sprintf "type %d %s" type_
+              (match norm with
+              | `Backward -> "backward"
+              | `Forward -> "forward"
+              | `Ortho -> "ortho")
+          in
+          check_t ~eps:1e-10 ("dst " ^ suffix)
+            [| Array.length data |]
+            (reference_real_transform ~family:`Dst ~inverse:false ~type_ ~norm
+               data)
+            (Nx.dst input ~type_ ~norm);
+          check_t ~eps:1e-10 ("idst " ^ suffix)
+            [| Array.length data |]
+            (reference_real_transform ~family:`Dst ~inverse:true ~type_ ~norm
+               data)
+            (Nx.idst input ~type_ ~norm))
+        [ `Backward; `Forward; `Ortho ])
+    [ 1; 2; 3; 4 ]
+
+let test_dst_type_one_singleton () =
+  let input = Nx.create Nx.float64 [| 1 |] [| 3.0 |] in
+  check_t "dst-I singleton" [| 1 |] [| 6.0 |] (Nx.dst ~type_:1 input);
+  check_t "idst-I singleton" [| 1 |] [| 3.0 |]
+    (Nx.idst ~type_:1 (Nx.dst ~type_:1 input))
+
+let test_real_transform_roundtrips () =
+  let shape = [| 5 |] in
+  let data = [| 1.0; -2.0; 0.5; 4.0; -1.5 |] in
+  let input = Nx.create Nx.float64 shape data in
+  List.iter
+    (fun type_ ->
+      List.iter
+        (fun norm ->
+          check_t ~eps:1e-10
+            (Printf.sprintf "dct/idct type %d" type_)
+            shape data
+            (Nx.idct ~type_ ~norm (Nx.dct ~type_ ~norm input));
+          check_t ~eps:1e-10
+            (Printf.sprintf "dst/idst type %d" type_)
+            shape data
+            (Nx.idst ~type_ ~norm (Nx.dst ~type_ ~norm input)))
+        [ `Backward; `Forward; `Ortho ])
+    [ 1; 2; 3; 4 ]
+
+let test_real_transform_axes_and_nd () =
+  let rows, columns = (2, 3) in
+  let shape = [| rows; columns |] in
+  let data = [| 1.0; -2.0; 0.5; 4.0; 3.0; -1.5 |] in
+  let input = Nx.create Nx.float64 shape data in
+  let expected_dctn =
+    reference_real_transform_2d ~family:`Dct ~type_:2 ~norm:`Ortho rows columns
+      data
+  in
+  check_t ~eps:1e-10 "dctn all axes" shape expected_dctn
+    (Nx.dctn ~type_:2 ~norm:`Ortho input);
+  check_t ~eps:1e-10 "dctn explicit axes" shape expected_dctn
+    (Nx.dctn ~type_:2 ~axes:[ 0; -1 ] ~norm:`Ortho input);
+  check_t ~eps:1e-10 "dctn/idctn" shape data
+    (Nx.idctn ~type_:2 ~norm:`Ortho (Nx.dctn ~type_:2 ~norm:`Ortho input));
+
+  let expected_dst_last = Array.copy data in
+  for row = 0 to rows - 1 do
+    let values = Array.sub data (row * columns) columns in
+    let transformed =
+      reference_real_transform ~family:`Dst ~inverse:false ~type_:4
+        ~norm:`Forward values
+    in
+    Array.blit transformed 0 expected_dst_last (row * columns) columns
+  done;
+  check_t ~eps:1e-10 "dstn negative axis" shape expected_dst_last
+    (Nx.dstn ~type_:4 ~axes:[ -1 ] ~norm:`Forward input);
+  check_t ~eps:1e-10 "dstn/idstn" shape data
+    (Nx.idstn ~type_:4 ~axes:[ -1 ] ~norm:`Forward
+       (Nx.dstn ~type_:4 ~axes:[ -1 ] ~norm:`Forward input));
+
+  let axis_zero = Nx.dct ~type_:3 ~axis:0 input in
+  let negative_axis = Nx.dct ~type_:3 ~axis:(-2) input in
+  check_data ~eps:1e-10 "dct negative axis" (Nx.to_array axis_zero)
+    negative_axis;
+  check_t "dctn empty axes" shape data (Nx.dctn ~axes:[] input);
+
+  let scalar = Nx.scalar Nx.float64 2.0 in
+  check_t "dctn scalar" [||] [| 2.0 |] (Nx.dctn scalar);
+  check_t "dstn scalar with empty axes" [||] [| 2.0 |]
+    (Nx.dstn ~axes:[] scalar)
+
+let test_real_transform_dtypes () =
+  let data = [| 1.0; 2.0; 3.0; 4.0 |] in
+  let f32 = Nx.create Nx.float32 [| 4 |] data in
+  let f64 = Nx.create Nx.float64 [| 4 |] data in
+  equal ~msg:"dct float32 dtype" string "float32"
+    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dct f32)));
+  equal ~msg:"dst float32 dtype" string "float32"
+    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dst f32)));
+  equal ~msg:"dct float64 dtype" string "float64"
+    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dct f64)));
+  equal ~msg:"dst float64 dtype" string "float64"
+    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dst f64)));
+  check_t ~eps:1e-5 "dct float32 values" [| 4 |]
+    (reference_real_transform ~family:`Dct ~inverse:false ~type_:2
+       ~norm:`Ortho data)
+    (Nx.dct ~norm:`Ortho f32);
+  check_t ~eps:1e-5 "dst float32 values" [| 4 |]
+    (reference_real_transform ~family:`Dst ~inverse:false ~type_:2
+       ~norm:`Ortho data)
+    (Nx.dst ~norm:`Ortho f32)
+
+let test_real_transform_errors () =
+  let input = Nx.ones Nx.float64 [| 4 |] in
+  check_invalid_arg "dct invalid type"
+    "dct: type_, expected one of 1, 2, 3, or 4, got 0" (fun () ->
+      Nx.dct ~type_:0 input);
+  check_invalid_arg "dst invalid axis" "dst: axis 1 out of bounds for 1D tensor"
+    (fun () -> Nx.dst ~axis:1 input);
+  check_invalid_arg "dct empty axis"
+    "dct: input size along axis 0 must be positive" (fun () ->
+      Nx.dct (Nx.empty Nx.float64 [| 0 |]));
+  check_invalid_arg "dct type I singleton"
+    "dct: type 1 requires an input size greater than 1" (fun () ->
+      Nx.dct ~type_:1 (Nx.ones Nx.float64 [| 1 |]));
+  check_invalid_arg "dctn repeated axis" "dctn: axis -1 is repeated" (fun () ->
+      Nx.dctn ~axes:[ 0; -1 ] input);
+  check_invalid_arg "dct unsupported dtype"
+    "dct: dtype, expected float32 or float64, got float16" (fun () ->
+      Nx.dct (Nx.ones Nx.float16 [| 4 |]));
+  check_invalid_arg "dst scalar" "dst: input must have at least one dimension"
+    (fun () -> Nx.dst (Nx.scalar Nx.float64 1.0))
+
 let suite =
   [
     group "fft/ifft"
@@ -407,6 +742,22 @@ let suite =
         test "edge_cases" test_rfft_edge_cases;
       ];
     group "hfft/ihfft" [ test "basic" test_hfft_ihfft ];
+    group "dct/idct"
+      [
+        test "reference" test_dct_reference;
+        test "roundtrips" test_real_transform_roundtrips;
+      ];
+    group "dst/idst"
+      [
+        test "reference" test_dst_reference;
+        test "type-I singleton" test_dst_type_one_singleton;
+      ];
+    group "real transforms"
+      [
+        test "axes and n-d" test_real_transform_axes_and_nd;
+        test "dtypes" test_real_transform_dtypes;
+        test "errors" test_real_transform_errors;
+      ];
     group "helpers"
       [
         test "fftfreq" test_fftfreq;

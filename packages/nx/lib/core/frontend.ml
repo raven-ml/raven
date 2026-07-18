@@ -3979,6 +3979,264 @@ module Make (B : Backend_intf.S) = struct
         roll (-(sh.(axis) / 2)) acc ~axis)
       x axes_list
 
+  (* Discrete cosine and sine transforms. These are expressed in terms of the
+     complex FFT so every backend, including effectful ones, gets the same
+     implementation without extending the backend interface. *)
+
+  let real_transform_slice_last spec x =
+    slice_internal (List.init (ndim x - 1) (fun _ -> A) @ [ spec ]) x
+
+  let real_transform_scale_first factor x =
+    concatenate ~axis:(-1)
+      [
+        mul_s (real_transform_slice_last (R (0, 1)) x) factor;
+        real_transform_slice_last (R (1, dim (-1) x)) x;
+      ]
+
+  let real_transform_scale_last factor x =
+    let n = dim (-1) x in
+    concatenate ~axis:(-1)
+      [
+        real_transform_slice_last (R (0, n - 1)) x;
+        mul_s (real_transform_slice_last (R (n - 1, n)) x) factor;
+      ]
+
+  let real_transform_alternating_signs (type a) (dtype : (float, a) Dtype.t) ctx
+      n =
+    let indices = arange ctx Dtype.int32 0 n 1 in
+    let even = equal_s (mod_s indices 2l) 0l in
+    where even (ones ctx dtype [| n |]) (full ctx dtype [| n |] (-1.0))
+
+  let real_transform_phase (type a b) (float_dtype : (float, a) Dtype.t)
+      (complex_dtype : (Complex.t, b) Dtype.t) ctx n =
+    let indices = cast float_dtype (arange ctx Dtype.int32 0 n 1) in
+    let angles = mul_s indices (-.Float.pi /. (2.0 *. float_of_int n)) in
+    add
+      (cast complex_dtype (cos angles))
+      (mul_s (cast complex_dtype (sin angles)) Complex.{ re = 0.0; im = 1.0 })
+
+  let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Dtype.t)
+      (complex_dtype : (Complex.t, b) Dtype.t) (x : (float, a) t) =
+    let ctx = B.context x in
+    let n = dim (-1) x in
+    let dct_2 x =
+      let n = dim (-1) x in
+      let even = real_transform_slice_last (Rs (0, n, 2)) x in
+      let odd =
+        flip ~axes:[ -1 ] (real_transform_slice_last (Rs (1, n, 2)) x)
+      in
+      let reordered = concatenate ~axis:(-1) [ even; odd ] in
+      let spectrum = fft (cast complex_dtype reordered) in
+      mul_s
+        (cast float_dtype
+           (mul spectrum (real_transform_phase float_dtype complex_dtype ctx n)))
+        2.0
+    in
+    let dct_3 x =
+      let zero_shape = Array.copy (shape x) in
+      zero_shape.(Array.length zero_shape - 1) <- (2 * n) + 1;
+      let tail = flip ~axes:[ -1 ] (real_transform_slice_last (R (1, n)) x) in
+      let extended =
+        concatenate ~axis:(-1) [ x; zeros ctx float_dtype zero_shape; tail ]
+      in
+      let spectrum = fft (cast complex_dtype extended) in
+      let odd_indices = arange ctx Dtype.int32 1 (2 * n) 2 in
+      cast float_dtype (take spectrum ~axis:(-1) ~indices:odd_indices)
+    in
+    match type_ with
+    | 1 ->
+        let interior =
+          flip ~axes:[ -1 ] (real_transform_slice_last (R (1, n - 1)) x)
+        in
+        let spectrum =
+          fft (cast complex_dtype (concatenate ~axis:(-1) [ x; interior ]))
+        in
+        cast float_dtype (real_transform_slice_last (R (0, n)) spectrum)
+    | 2 -> dct_2 x
+    | 3 -> dct_3 x
+    | 4 ->
+        let zero_shape = Array.copy (shape x) in
+        zero_shape.(Array.length zero_shape - 1) <- n;
+        let padded =
+          concatenate ~axis:(-1) [ x; zeros ctx float_dtype zero_shape ]
+        in
+        let transformed = dct_2 padded in
+        take transformed ~axis:(-1)
+          ~indices:(arange ctx Dtype.int32 1 (2 * n) 2)
+    | _ -> assert false
+
+  let dst_raw_last (type a b) ~type_ (float_dtype : (float, a) Dtype.t)
+      (complex_dtype : (Complex.t, b) Dtype.t) (x : (float, a) t) =
+    let ctx = B.context x in
+    let n = dim (-1) x in
+    let signs = real_transform_alternating_signs float_dtype ctx n in
+    match type_ with
+    | 1 ->
+        let zero_shape = Array.copy (shape x) in
+        zero_shape.(Array.length zero_shape - 1) <- 1;
+        let zero = zeros ctx float_dtype zero_shape in
+        let extended =
+          concatenate ~axis:(-1) [ zero; x; zero; neg (flip ~axes:[ -1 ] x) ]
+        in
+        let spectrum = fft (cast complex_dtype extended) in
+        let frequencies = real_transform_slice_last (R (1, n + 1)) spectrum in
+        cast float_dtype (mul_s frequencies Complex.{ re = 0.0; im = 1.0 })
+    | 2 ->
+        flip ~axes:[ -1 ]
+          (dct_raw_last ~type_:2 float_dtype complex_dtype (mul x signs))
+    | 3 ->
+        mul signs
+          (dct_raw_last ~type_:3 float_dtype complex_dtype (flip ~axes:[ -1 ] x))
+    | 4 ->
+        flip ~axes:[ -1 ]
+          (dct_raw_last ~type_:4 float_dtype complex_dtype (mul x signs))
+    | _ -> assert false
+
+  let validate_real_transform ~op ~type_ (type a) (x : (float, a) t) =
+    (match dtype x with
+    | Float32 | Float64 -> ()
+    | dtype ->
+        err op "dtype, expected float32 or float64, got %s"
+          (Dtype.to_string dtype));
+    if type_ < 1 || type_ > 4 then
+      err op "type_, expected one of 1, 2, 3, or 4, got %d" type_
+
+  let resolve_real_transform_axis ~op x axis =
+    let rank = ndim x in
+    let resolved = if axis < 0 then axis + rank else axis in
+    if resolved < 0 || resolved >= rank then
+      err op "axis %d out of bounds for %dD tensor" axis rank;
+    resolved
+
+  let normalize_real_transform_axes ~op x axes =
+    let rank = ndim x in
+    let seen = Array.make rank false in
+    List.map
+      (fun axis ->
+        let resolved = if axis < 0 then axis + rank else axis in
+        if resolved < 0 || resolved >= rank then
+          err op "axis %d out of bounds for %dD tensor" axis rank;
+        if seen.(resolved) then err op "axis %d is repeated" axis;
+        seen.(resolved) <- true;
+        resolved)
+      axes
+
+  let real_transform_length family type_ n =
+    match (family, type_) with
+    | `Dct, 1 -> 2 * (n - 1)
+    | `Dst, 1 -> 2 * (n + 1)
+    | (`Dct | `Dst), (2 | 3 | 4) -> 2 * n
+    | _ -> assert false
+
+  let real_transform_ortho_input family type_ x =
+    let sqrt_two = Stdlib.sqrt 2.0 in
+    match (family, type_) with
+    | `Dct, 1 ->
+        x
+        |> real_transform_scale_first sqrt_two
+        |> real_transform_scale_last sqrt_two
+    | `Dct, 3 -> real_transform_scale_first sqrt_two x
+    | `Dst, 3 -> real_transform_scale_last sqrt_two x
+    | (`Dct | `Dst), (1 | 2 | 4) -> x
+    | _ -> assert false
+
+  let real_transform_ortho_output family type_ x =
+    let inv_sqrt_two = 1.0 /. Stdlib.sqrt 2.0 in
+    match (family, type_) with
+    | `Dct, 1 ->
+        x
+        |> real_transform_scale_first inv_sqrt_two
+        |> real_transform_scale_last inv_sqrt_two
+    | `Dct, 2 -> real_transform_scale_first inv_sqrt_two x
+    | `Dst, 2 -> real_transform_scale_last inv_sqrt_two x
+    | (`Dct | `Dst), (1 | 3 | 4) -> x
+    | _ -> assert false
+
+  let real_transform (type a) ~op ~family ~inverse ~type_ ~axis ~norm
+      (x : (float, a) t) : (float, a) t =
+    validate_real_transform ~op ~type_ x;
+    if ndim x = 0 then err op "input must have at least one dimension";
+    let axis = resolve_real_transform_axis ~op x axis in
+    let x = moveaxis axis (-1) x in
+    let n = dim (-1) x in
+    if n = 0 then err op "input size along axis %d must be positive" axis;
+    if family = `Dct && type_ = 1 && n = 1 then
+      err op "type 1 requires an input size greater than 1";
+    let raw_type =
+      if inverse then match type_ with 2 -> 3 | 3 -> 2 | value -> value
+      else type_
+    in
+    let x =
+      match norm with
+      | `Ortho -> real_transform_ortho_input family raw_type x
+      | `Backward | `Forward -> x
+    in
+    let transformed : (float, a) t =
+      match dtype x with
+      | Float32 -> (
+          match family with
+          | `Dct -> dct_raw_last ~type_:raw_type Float32 Complex64 x
+          | `Dst -> dst_raw_last ~type_:raw_type Float32 Complex64 x)
+      | Float64 -> (
+          match family with
+          | `Dct -> dct_raw_last ~type_:raw_type Float64 Complex128 x
+          | `Dst -> dst_raw_last ~type_:raw_type Float64 Complex128 x)
+      | _ -> assert false
+    in
+    let transformed =
+      match norm with
+      | `Ortho -> real_transform_ortho_output family raw_type transformed
+      | `Backward | `Forward -> transformed
+    in
+    let length = real_transform_length family type_ n in
+    let scale =
+      match (inverse, norm) with
+      | false, `Backward | true, `Forward -> 1.0
+      | false, `Forward | true, `Backward -> 1.0 /. float_of_int length
+      | _, `Ortho -> 1.0 /. Stdlib.sqrt (float_of_int length)
+    in
+    let transformed =
+      if scale = 1.0 then transformed else mul_s transformed scale
+    in
+    moveaxis (-1) axis transformed
+
+  let real_transformn ~op ~family ~inverse ~type_ ~axes ~norm x =
+    validate_real_transform ~op ~type_ x;
+    let axes =
+      normalize_real_transform_axes ~op x
+        (match axes with
+        | None -> List.init (ndim x) Fun.id
+        | Some axes -> axes)
+    in
+    List.fold_left
+      (fun acc axis ->
+        real_transform ~op ~family ~inverse ~type_ ~axis ~norm acc)
+      x axes
+
+  let dct ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    real_transform ~op:"dct" ~family:`Dct ~inverse:false ~type_ ~axis ~norm x
+
+  let idct ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    real_transform ~op:"idct" ~family:`Dct ~inverse:true ~type_ ~axis ~norm x
+
+  let dctn ?(type_ = 2) ?axes ?(norm = `Backward) x =
+    real_transformn ~op:"dctn" ~family:`Dct ~inverse:false ~type_ ~axes ~norm x
+
+  let idctn ?(type_ = 2) ?axes ?(norm = `Backward) x =
+    real_transformn ~op:"idctn" ~family:`Dct ~inverse:true ~type_ ~axes ~norm x
+
+  let dst ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    real_transform ~op:"dst" ~family:`Dst ~inverse:false ~type_ ~axis ~norm x
+
+  let idst ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    real_transform ~op:"idst" ~family:`Dst ~inverse:true ~type_ ~axis ~norm x
+
+  let dstn ?(type_ = 2) ?axes ?(norm = `Backward) x =
+    real_transformn ~op:"dstn" ~family:`Dst ~inverse:false ~type_ ~axes ~norm x
+
+  let idstn ?(type_ = 2) ?axes ?(norm = `Backward) x =
+    real_transformn ~op:"idstn" ~family:`Dst ~inverse:true ~type_ ~axes ~norm x
+
   (* ───── Neural Network Operations ───── *)
 
   let softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
