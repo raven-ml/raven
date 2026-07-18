@@ -155,6 +155,13 @@ let data_manipulation_tests =
         check_t "fill leaves source" shape_2x3 [| 0.; 0.; 0.; 0.; 0.; 0. |] t);
   ]
 
+let non_contiguous_view () =
+  let base =
+    Nx.create Nx.float32 [| 2; 5 |]
+      [| 1000.; 1.; 2.; 4.; 8.; 2000.; 16.; 32.; 64.; 128. |]
+  in
+  Nx.slice [ Nx.A; Nx.R (2, 5) ] base
+
 let element_wise_binary_tests =
   [
     test "add" (fun () ->
@@ -194,6 +201,15 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 2.0 in
         Nx.rdiv_s 6.0 a
         |> check_t "rdiv_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
+    test "mul_s respects non-contiguous views" (fun () ->
+        Nx.mul_s (non_contiguous_view ()) 0.5
+        |> check_t "mul_s view" shape_2x3 [| 1.; 2.; 4.; 16.; 32.; 64. |]);
+    test "div_s respects non-contiguous views" (fun () ->
+        Nx.div_s (non_contiguous_view ()) 2.0
+        |> check_t "div_s view" shape_2x3 [| 1.; 2.; 4.; 16.; 32.; 64. |]);
+    test "div respects a non-contiguous left operand" (fun () ->
+        Nx.div (non_contiguous_view ()) (Nx.full Nx.float32 shape_2x3 2.0)
+        |> check_t "div view" shape_2x3 [| 1.; 2.; 4.; 16.; 32.; 64. |]);
     test "pow" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 2.0 in
         let b = Nx.full Nx.float32 shape_2x3 3.0 in

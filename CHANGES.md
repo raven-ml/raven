@@ -363,6 +363,9 @@ thread.
 
 ### Nx
 
+- Fix elementwise arithmetic on non-contiguous views: `mul_s`, `div_s`, and
+  tensor `div` now honor the view's offset and strides instead of reading
+  out-of-view values from the underlying buffer.
 - Replace the vendored camlzip and stb image libraries with owned ISC codecs in
   `nx.io`. NPZ no longer creates a temporary NPY file for each entry, image and
   archive decoding writes directly into Nx buffers, and Nx no longer needs zlib
