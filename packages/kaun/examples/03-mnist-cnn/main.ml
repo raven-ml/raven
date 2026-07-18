@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* A small CNN on MNIST: Conv + Pool + Dropout in the forward pass, and
-   Checkpoint to save the trained parameters and load them back.
+   Checkpoint to save and restore the model and AdamW optimizer state.
 
    Trains on a subset of MNIST to keep the run short: expect ~93% test accuracy
    after three epochs, in well under a minute on CPU. *)
@@ -66,6 +66,36 @@ end
 let accuracy params (x, y) =
   Metric.accuracy (Cnn.apply params ~training:false x) y
 
+let save_training_state path (params, (ostate : Cnn.t Vega.adam_state)) =
+  Checkpoint.save path
+    (Checkpoint.concat
+       [
+         Checkpoint.of_params (module Cnn) ~prefix:"model" params;
+         Checkpoint.of_params (module Cnn) ~prefix:"optim.mu" ostate.mu;
+         Checkpoint.of_params (module Cnn) ~prefix:"optim.nu" ostate.nu;
+         Checkpoint.of_int "optim.step" ostate.step;
+       ])
+
+let load_training_state path =
+  let ckpt = Checkpoint.load path in
+  let like = Cnn.init () in
+  let like_ostate = Vega.adamw_init (module Cnn) like in
+  let params = Checkpoint.to_params (module Cnn) ~prefix:"model" ~like ckpt in
+  let ostate =
+    {
+      Vega.mu =
+        Checkpoint.to_params
+          (module Cnn)
+          ~prefix:"optim.mu" ~like:like_ostate.mu ckpt;
+      nu =
+        Checkpoint.to_params
+          (module Cnn)
+          ~prefix:"optim.nu" ~like:like_ostate.nu ckpt;
+      step = Checkpoint.to_int "optim.step" ckpt;
+    }
+  in
+  (params, ostate)
+
 let () =
   Nx.Rng.run ~seed:42 @@ fun () ->
   Printf.printf "Loading MNIST...\n%!";
@@ -109,18 +139,16 @@ let () =
         Printf.printf "  epoch %d/%d  mean loss %.4f\n%!" epoch epochs
           (!losses /. float_of_int !n)
       done;
-      let params = fst !state in
+      let params, ostate = !state in
       Printf.printf "test accuracy: %.2f%%\n\n" (100. *. accuracy params test);
 
-      (* Save the parameters, load them into a fresh model, check it agrees. *)
+      (* The optimizer moments and step counter belong in the same checkpoint:
+         restoring parameters alone would restart AdamW's history. *)
       let path = Filename.temp_file "mnist-cnn" ".safetensors" in
-      Checkpoint.save path
-        (Checkpoint.of_params (module Cnn) ~prefix:"model" params);
+      save_training_state path (params, ostate);
       Printf.printf "saved checkpoint to %s\n" path;
-      let restored =
-        Checkpoint.load path
-        |> Checkpoint.to_params (module Cnn) ~prefix:"model" ~like:(Cnn.init ())
-      in
-      Printf.printf "restored accuracy: %.2f%%\n"
-        (100. *. accuracy restored test);
+      let restored_params, restored_ostate = load_training_state path in
+      Printf.printf "restored accuracy: %.2f%% (optimizer step %d)\n"
+        (100. *. accuracy restored_params test)
+        restored_ostate.step;
       Sys.remove path

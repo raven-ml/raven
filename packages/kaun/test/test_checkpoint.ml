@@ -117,19 +117,19 @@ let loss (p : lin) =
   let d = Nx.sub (Nx.add (Nx.matmul xs p.lw) p.lb) ys in
   Nx.mean (Nx.mul d d)
 
-let train_step (p, st) =
+let adam_train_step (p, st) =
   let grads = Rune.grad (module Lin) loss p in
   Vega.adam_step (module Lin) ~lr:0.05 st ~params:p ~grads
 
-let rec train_steps n s =
-  if n = 0 then s else train_steps (n - 1) (train_step s)
+let rec train_adam_steps n s =
+  if n = 0 then s else train_adam_steps (n - 1) (adam_train_step s)
 
 let test_resume_training () =
   with_ckpt_file @@ fun path ->
   let p0 =
     { lw = Nx.create f32 [| 2; 1 |] [| 0.2; -0.1 |]; lb = vec32 [| 0.0 |] }
   in
-  let p3, st3 = train_steps 3 (p0, Vega.adam_init (module Lin) p0) in
+  let p3, st3 = train_adam_steps 3 (p0, Vega.adam_init (module Lin) p0) in
   Checkpoint.save path
     (Checkpoint.concat
        [
@@ -138,7 +138,7 @@ let test_resume_training () =
          Checkpoint.of_params (module Lin) ~prefix:"optim.nu" st3.Vega.nu;
          Checkpoint.of_int "optim.step" st3.Vega.step;
        ]);
-  let expected, _ = train_steps 2 (p3, st3) in
+  let expected, _ = train_adam_steps 2 (p3, st3) in
   (* Restore into freshly initialized values and continue training. *)
   let ckpt = Checkpoint.load path in
   let like = Vega.adam_init (module Lin) p0 in
@@ -156,14 +156,53 @@ let test_resume_training () =
       step = Checkpoint.to_int "optim.step" ckpt;
     }
   in
-  let resumed, _ = train_steps 2 (p3', st3') in
+  let resumed, _ = train_adam_steps 2 (p3', st3') in
   check_arr ~msg:"w" (to_arr expected.lw) resumed.lw;
   check_arr ~msg:"b" (to_arr expected.lb) resumed.lb;
   (* Control: dropping the optimizer state changes the trajectory, so the
      assertions above genuinely depend on restoring it. *)
-  let fresh, _ = train_steps 2 (p3', Vega.adam_init (module Lin) p3') in
+  let fresh, _ = train_adam_steps 2 (p3', Vega.adam_init (module Lin) p3') in
   is_false ~msg:"fresh optimizer state diverges"
     (to_arr fresh.lw = to_arr expected.lw)
+
+let sgd_train_step (p, st) =
+  let grads = Rune.grad (module Lin) loss p in
+  Vega.sgd_step (module Lin) ~lr:0.05 ~momentum:0.9 st ~params:p ~grads
+
+let rec train_sgd_steps n s =
+  if n = 0 then s else train_sgd_steps (n - 1) (sgd_train_step s)
+
+let test_resume_sgd_momentum () =
+  with_ckpt_file @@ fun path ->
+  let p0 =
+    { lw = Nx.create f32 [| 2; 1 |] [| 0.2; -0.1 |]; lb = vec32 [| 0.0 |] }
+  in
+  let p3, st3 = train_sgd_steps 3 (p0, Vega.sgd_init (module Lin) p0) in
+  Checkpoint.save path
+    (Checkpoint.concat
+       [
+         Checkpoint.of_params (module Lin) ~prefix:"model" p3;
+         Checkpoint.of_params
+           (module Lin)
+           ~prefix:"optim.velocity" st3.Vega.velocity;
+       ]);
+  let expected, _ = train_sgd_steps 2 (p3, st3) in
+  let ckpt = Checkpoint.load path in
+  let p3' = Checkpoint.to_params (module Lin) ~prefix:"model" ~like:p0 ckpt in
+  let like = Vega.sgd_init (module Lin) p0 in
+  let st3' =
+    {
+      Vega.velocity =
+        Checkpoint.to_params
+          (module Lin)
+          ~prefix:"optim.velocity" ~like:like.Vega.velocity ckpt;
+    }
+  in
+  let resumed, _ = train_sgd_steps 2 (p3', st3') in
+  check_arr ~msg:"w" (to_arr expected.lw) resumed.lw;
+  check_arr ~msg:"b" (to_arr expected.lb) resumed.lb;
+  let fresh, _ = train_sgd_steps 2 (p3', Vega.sgd_init (module Lin) p3') in
+  is_false ~msg:"fresh momentum diverges" (to_arr fresh.lw = to_arr expected.lw)
 
 let test_load_pretrained () =
   with_ckpt_file @@ fun path ->
@@ -348,7 +387,10 @@ let () =
         ];
       group "training"
         [
-          test "resumed training continues identically" test_resume_training;
+          test "resumed Adam training continues identically"
+            test_resume_training;
+          test "resumed SGD momentum continues identically"
+            test_resume_sgd_momentum;
           test "pretrained weights load by name into a fresh model"
             test_load_pretrained;
         ];

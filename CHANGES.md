@@ -737,6 +737,9 @@ thread.
 
 ### Kaun
 
+- The MNIST CNN example now saves and restores model parameters with both
+  AdamW moment trees and the step counter, demonstrating how to resume
+  momentum-based optimization without resetting its history.
 - The `kaun` bench suite is broader: alongside the MLP Adam train step and
   forward pass it now covers an SGD train step, a small CNN train step
   (conv + max-pool blocks with `Conv`/`Pool`), and a single `Linear` layer
