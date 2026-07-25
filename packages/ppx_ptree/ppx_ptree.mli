@@ -3,4 +3,4 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Deriver registration for [@@deriving ptree]. *)
+(** Deriver registration for [@@deriving ptree] and [@@deriving gtree]. *)

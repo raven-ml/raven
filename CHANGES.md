@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
   operations required by `Nx.Ptree.S` for records, products, containers, and
   recursive parameter types, with generated code and diagnostics located at the
   originating source forms.
+- Add `[@@deriving gtree]` support for uniform homomorphic traversals on
+  parameterised records (`map`, `map2`, `iter`, `fold` with dotted paths,
+  `fold2`, `names`), plus mirror mode via `[@@deriving ptree, gtree]` on
+  concrete records (generates `module Gtree`, `to_gtree`, `of_gtree`).
 - Add a runnable linear-regression example using a derived parameter module
   directly with `Rune.grad` and `Rune.jit2`.
 
@@ -830,6 +834,11 @@ thread.
   user structure implementing its three traversals (`map`, `map2`, `iter`).
   A stock dynamic tree (`Ptree.t` with tensor, list, and dict nodes) covers
   structures only known at runtime.
+- Add `Nx.Ptree.Gtree` module type for uniform homomorphic structures
+  (`map`, `map2`, `iter`, `fold` with dotted paths, `fold2`), plus the
+  `Nx.Ptree.Tensor_tree` functor bridging any `Gtree` to `Nx.Ptree.S` for
+  rune/vega/kaun interop, and `Nx.Ptree.unpack` for dtype-checked existential
+  unpacking with optional path annotation.
 - Require OCaml >= 5.5.0 (module-dependent functions are used by the
   `Ptree.S`-based APIs downstream).
 - Fix `flatten` raising on rank-0 tensors; it now reshapes them to `[|1|]`.
