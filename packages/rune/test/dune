@@ -13,7 +13,8 @@
   test_jit
   test_pmap
   test_rng
-  test_half)
+  test_half
+  test_gtree)
  (modules
   test_grad
   test_ops
@@ -28,7 +29,8 @@
   test_jit
   test_pmap
   test_rng
-  test_half)
+  test_half
+  test_gtree)
  (package rune)
  (libraries rune nx nx.core unix windtrap rune_test_support))
 

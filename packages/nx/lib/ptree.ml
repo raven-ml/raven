@@ -18,6 +18,57 @@ module type S = sig
 end
 
 type tensor = P : ('a, 'b) Nx_effect.t -> tensor
+
+module type Gtree = sig
+  type 'a t
+
+  val map : ('a -> 'b) -> 'a t -> 'b t
+  val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
+  val iter : ('a -> unit) -> 'a t -> unit
+  val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+
+  val fold2 :
+    (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
+end
+
+module Tensor_tree (U : Gtree) = struct
+  type t = tensor U.t
+
+  let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) (t : t) : t
+      =
+    U.map (fun (P x) -> P (f x)) t
+
+  let map2
+      (f :
+        'a 'b.
+        ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t)
+      (a : t) (b : t) : t =
+    U.map2
+      (fun (P x) (P y) ->
+        match
+          Nx_core.Dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
+        with
+        | Some Type.Equal -> P (f x y)
+        | None -> invalid_arg "Ptree.Tensor_tree.map2: leaf dtype mismatch")
+      a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) (t : t) : unit =
+    U.iter (fun (P x) -> f x) t
+end
+
+let unpack ?(at = "") (type a b) (dt : (a, b) Nx_core.Dtype.t) (p : tensor) :
+    (a, b) Nx_effect.t =
+  match p with
+  | P x -> (
+      match Nx_core.Dtype.equal_witness (Nx_effect.dtype x) dt with
+      | Some Type.Equal -> x
+      | None ->
+          let msg =
+            if at = "" then "Ptree.unpack: dtype mismatch"
+            else "Ptree.unpack: dtype mismatch at " ^ at
+          in
+          invalid_arg msg)
+
 type t = Tensor of tensor | List of t list | Dict of (string * t) list
 
 let tensor x = Tensor (P x)
