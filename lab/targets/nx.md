@@ -16,10 +16,10 @@ materializations).
 - **BENCH:** the built executable, run **directly**, never through `dune exec`:
   `<WT>/_build/default/packages/nx/bench/bench_nx.exe`
   Suite name is `nx`; lab subset is `--tag lab`. Running the exe directly is
-  required, not stylistic: `dune exec` sets `INSIDE_DUNE`, which makes
-  `--bless --baseline PATH` write `PATH.corrected` instead of `PATH` and
-  suppresses the corrected-file write the ratchet needs, and it forces a `--`
-  separator that would swallow thumper's own flags. Build with the dune command
+  simplest and what this program assumes: the corrected-file contract is
+  identical everywhere (a check or bless only ever writes `PATH.corrected`;
+  acceptance is the `mv`), and `dune exec` would need a `--` separator
+  before thumper's flags while adding nothing. Build with the dune command
   above, then invoke the exe path with thumper's flags appended (no `--`).
 
 One executable per session. Other nx suites you may target instead (each its own

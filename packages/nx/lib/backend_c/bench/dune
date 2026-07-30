@@ -18,5 +18,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_owned_gemm.exe} -q)
+   (run %{exe:bench_owned_gemm.exe})
    (diff? nx_c_owned_gemm.thumper nx_c_owned_gemm.thumper.corrected))))

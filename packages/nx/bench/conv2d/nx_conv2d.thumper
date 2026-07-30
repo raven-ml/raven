@@ -1,40 +1,27 @@
-# thumper baseline
-# version: 1
-# suite_name: nx_conv2d
-# host: 1480401c3b76ed18
-# cpu: Apple M1 Max
-# ocaml: 5.4.1
-# git: 31747323
-# dirty: true
-# command: ./bench_conv2d_nx.exe -q
+# thumper baseline v1
+# suite: nx_conv2d
 
-correlate_1d_10k_batched_f32__nx_	alloc_words	9.310000e+02	9.310000e+02	9.310000e+02	0.000000e+00	10	1
-correlate_1d_10k_batched_f32__nx_	cpu_time	6.759299e-03	6.742944e-03	6.781850e-03	2.877945e-03	10	0
-correlate_1d_10k_batched_f32__nx_	wall_time	6.144004e-03	6.131814e-03	6.158235e-03	2.150099e-03	10	0
-correlate_1d_1k_f32__nx_	alloc_words	8.160000e+02	8.160000e+02	8.160000e+02	0.000000e+00	10	0
-correlate_1d_1k_f32__nx_	cpu_time	6.460449e-06	6.450824e-06	6.471332e-06	1.587145e-03	10	0
-correlate_1d_1k_f32__nx_	wall_time	6.461020e-06	6.451447e-06	6.471827e-06	1.577114e-03	10	1
-correlate_2d_256x256_f32__nx_	alloc_words	8.990000e+02	8.990000e+02	8.990000e+02	0.000000e+00	10	0
-correlate_2d_256x256_f32__nx_	cpu_time	4.401137e-03	4.389369e-03	4.411961e-03	2.566629e-03	10	0
-correlate_2d_256x256_f32__nx_	wall_time	3.977256e-03	3.968869e-03	3.986821e-03	2.256904e-03	10	0
-correlate_2d_64x64_f32__nx_	alloc_words	8.990000e+02	8.990000e+02	8.990000e+02	0.000000e+00	10	2
-correlate_2d_64x64_f32__nx_	cpu_time	4.350262e-04	4.309908e-04	4.382260e-04	8.315777e-03	10	3
-correlate_2d_64x64_f32__nx_	wall_time	3.878239e-04	3.848593e-04	3.897182e-04	6.264335e-03	10	2
-correlate_2d_batch_8x256x256_f32__nx_	alloc_words	1.016000e+03	1.016000e+03	1.016000e+03	0.000000e+00	10	1
-correlate_2d_batch_8x256x256_f32__nx_	cpu_time	3.718025e-02	3.711858e-02	3.722040e-02	1.369329e-03	10	2
-correlate_2d_batch_8x256x256_f32__nx_	wall_time	3.247770e-02	3.246563e-02	3.250109e-02	5.459608e-04	10	1
-correlate_2d_batch_8x64x64_f32__nx_	alloc_words	1.016000e+03	1.016000e+03	1.016000e+03	0.000000e+00	10	0
-correlate_2d_batch_8x64x64_f32__nx_	cpu_time	2.536084e-03	2.526750e-03	2.546429e-03	3.879779e-03	10	0
-correlate_2d_batch_8x64x64_f32__nx_	wall_time	2.322492e-03	2.315861e-03	2.330876e-03	3.232401e-03	10	0
-extract_patches_2d_256x256_k3_s1_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	0
-extract_patches_2d_256x256_k3_s1_f32__nx_	cpu_time	7.138257e-04	7.129127e-04	7.148739e-04	1.373699e-03	10	1
-extract_patches_2d_256x256_k3_s1_f32__nx_	wall_time	7.139240e-04	7.129017e-04	7.150828e-04	1.527537e-03	10	0
-extract_patches_2d_64x64_k3_s1_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	1
-extract_patches_2d_64x64_k3_s1_f32__nx_	cpu_time	6.823460e-05	6.808474e-05	6.831762e-05	1.706495e-03	10	3
-extract_patches_2d_64x64_k3_s1_f32__nx_	wall_time	6.821857e-05	6.813969e-05	6.832750e-05	1.376542e-03	10	2
-extract_patches_2d_64x64_k3_s2_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	0
-extract_patches_2d_64x64_k3_s2_f32__nx_	cpu_time	1.160441e-05	1.159022e-05	1.162028e-05	1.295226e-03	10	0
-extract_patches_2d_64x64_k3_s2_f32__nx_	wall_time	1.160520e-05	1.158941e-05	1.162151e-05	1.382895e-03	10	0
-extract_patches_2d_8x3x64x64_k3_s1_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	0
-extract_patches_2d_8x3x64x64_k3_s1_f32__nx_	cpu_time	1.006386e-03	1.005213e-03	1.007881e-03	1.325399e-03	10	0
-extract_patches_2d_8x3x64x64_k3_s1_f32__nx_	wall_time	1.006492e-03	1.005348e-03	1.008017e-03	1.325981e-03	10	0
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
+
+correlate-1D-10k-batched-f32-Nx	alloc_words	exact	1231
+correlate-1D-10k-batched-f32-Nx	wall_time	batch=1	n=20	5.721e-03	5.671e-03 5.671e-03 5.681e-03 5.681e-03 5.682e-03 5.692e-03 5.696e-03 5.707e-03 5.714e-03 5.715e-03 5.728e-03 5.736e-03 5.744e-03 5.749e-03 5.753e-03 5.760e-03 6.382e-03 6.386e-03 7.430e-03 8.030e-03
+correlate-1D-1k-f32-Nx	alloc_words	exact	1079
+correlate-1D-1k-f32-Nx	wall_time	batch=1024	n=20	5.622e-06	5.419e-06 5.442e-06 5.516e-06 5.536e-06 5.554e-06 5.558e-06 5.565e-06 5.591e-06 5.593e-06 5.621e-06 5.623e-06 5.647e-06 5.655e-06 5.672e-06 5.673e-06 5.682e-06 5.706e-06 5.744e-06 5.814e-06 6.011e-06
+correlate-2D-256x256-f32-Nx	alloc_words	exact	1199
+correlate-2D-256x256-f32-Nx	wall_time	batch=1	n=20	4.633e-03	4.472e-03 4.499e-03 4.505e-03 4.523e-03 4.543e-03 4.572e-03 4.589e-03 4.596e-03 4.597e-03 4.627e-03 4.639e-03 4.649e-03 4.652e-03 4.666e-03 4.677e-03 4.687e-03 4.695e-03 4.717e-03 4.741e-03 4.755e-03
+correlate-2D-64x64-f32-Nx	alloc_words	exact	1199
+correlate-2D-64x64-f32-Nx	wall_time	batch=32	n=20	2.924e-04	2.853e-04 2.856e-04 2.867e-04 2.878e-04 2.883e-04 2.886e-04 2.888e-04 2.889e-04 2.924e-04 2.924e-04 2.925e-04 2.927e-04 2.929e-04 2.930e-04 2.945e-04 2.949e-04 3.023e-04 3.024e-04 3.080e-04 3.166e-04
+correlate-2D-batch-8x256x256-f32-Nx	alloc_words	exact	1354
+correlate-2D-batch-8x256x256-f32-Nx	wall_time	batch=1	n=20	4.301e-02	4.220e-02 4.232e-02 4.256e-02 4.256e-02 4.260e-02 4.260e-02 4.289e-02 4.296e-02 4.297e-02 4.300e-02 4.301e-02 4.305e-02 4.310e-02 4.319e-02 4.331e-02 4.333e-02 4.341e-02 4.353e-02 4.363e-02 4.374e-02
+correlate-2D-batch-8x64x64-f32-Nx	alloc_words	exact	1354
+correlate-2D-batch-8x64x64-f32-Nx	wall_time	batch=2	n=20	2.610e-03	2.547e-03 2.570e-03 2.572e-03 2.574e-03 2.585e-03 2.586e-03 2.589e-03 2.591e-03 2.595e-03 2.606e-03 2.614e-03 2.616e-03 2.627e-03 2.628e-03 2.637e-03 2.649e-03 2.656e-03 2.662e-03 2.664e-03 2.714e-03
+extract_patches-2D-256x256-k3-s1-f32-Nx	alloc_words	exact	85
+extract_patches-2D-256x256-k3-s1-f32-Nx	wall_time	batch=1	n=20	6.067e-03	5.944e-03 5.963e-03 5.968e-03 6.007e-03 6.021e-03 6.024e-03 6.026e-03 6.044e-03 6.054e-03 6.059e-03 6.075e-03 6.085e-03 6.092e-03 6.099e-03 6.115e-03 6.130e-03 6.135e-03 6.137e-03 6.160e-03 6.161e-03
+extract_patches-2D-64x64-k3-s1-f32-Nx	alloc_words	exact	85
+extract_patches-2D-64x64-k3-s1-f32-Nx	wall_time	batch=16	n=20	3.714e-04	3.637e-04 3.646e-04 3.648e-04 3.656e-04 3.665e-04 3.676e-04 3.700e-04 3.701e-04 3.709e-04 3.711e-04 3.717e-04 3.729e-04 3.731e-04 3.743e-04 3.759e-04 3.763e-04 3.770e-04 3.775e-04 3.796e-04 3.824e-04
+extract_patches-2D-64x64-k3-s2-f32-Nx	alloc_words	exact	85
+extract_patches-2D-64x64-k3-s2-f32-Nx	wall_time	batch=64	n=20	9.059e-05	8.705e-05 8.914e-05 8.971e-05 8.979e-05 9.009e-05 9.021e-05 9.028e-05 9.046e-05 9.050e-05 9.054e-05 9.064e-05 9.068e-05 9.089e-05 9.114e-05 9.116e-05 9.118e-05 9.128e-05 9.197e-05 9.210e-05 9.232e-05
+extract_patches-2D-8x3x64x64-k3-s1-f32-Nx	alloc_words	exact	85
+extract_patches-2D-8x3x64x64-k3-s1-f32-Nx	wall_time	batch=1	n=20	8.665e-03	8.360e-03 8.504e-03 8.509e-03 8.595e-03 8.606e-03 8.629e-03 8.637e-03 8.648e-03 8.661e-03 8.664e-03 8.665e-03 8.679e-03 8.694e-03 8.704e-03 8.704e-03 8.723e-03 8.762e-03 8.769e-03 8.770e-03 8.779e-03

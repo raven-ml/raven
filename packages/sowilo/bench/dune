@@ -3,14 +3,16 @@
  (libraries sowilo nx.io nx thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or `dune exec packages/sowilo/bench/bench_sowilo.exe -- --explore`).
+; (or run the built exe directly; `list` prints case ids).
 
 (rule
  (alias bench)
  ; Serialize bench rules across the workspace: concurrent suites contend
  ; for cores and distort measurements.
  (locks %{project_root}/bench)
+ (deps
+  (source_tree data))
  (action
   (progn
-   (run %{exe:bench_sowilo.exe} -q)
+   (run %{exe:bench_sowilo.exe})
    (diff? sowilo.thumper sowilo.thumper.corrected))))

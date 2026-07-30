@@ -1,22 +1,15 @@
-# thumper baseline
-# version: 1
-# suite_name: talon
-# host: 1480401c3b76ed18
-# cpu: Apple M1 Max
-# ocaml: 5.4.1
-# git: 31747323
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/talon/bench/bench_talon.exe --bless --quick
+# thumper baseline v1
+# suite: talon
 
-talon/filter_high_value	alloc_words	5.829060e+05	5.829060e+05	5.829060e+05	0.000000e+00	5	0
-talon/filter_high_value	cpu_time	3.465705e-03	3.398246e-03	3.551483e-03	2.210760e-02	5	0
-talon/filter_high_value	wall_time	3.471535e-03	3.408034e-03	3.535678e-03	1.838436e-02	5	0
-talon/group_category_region	alloc_words	1.970381e+06	1.970381e+06	1.970381e+06	0.000000e+00	5	1
-talon/group_category_region	cpu_time	1.762447e-02	1.746038e-02	1.799537e-02	1.517769e-02	5	1
-talon/group_category_region	wall_time	1.763611e-02	1.745952e-02	1.811992e-02	1.872291e-02	5	1
-talon/join_customer_lookup	alloc_words	3.093605e+06	3.093605e+06	3.093605e+06	0.000000e+00	5	1
-talon/join_customer_lookup	cpu_time	2.282571e-02	2.273004e-02	2.290595e-02	3.853322e-03	5	0
-talon/join_customer_lookup	wall_time	2.283701e-02	2.275199e-02	2.291955e-02	3.668491e-03	5	0
-talon/sort_amount_desc	alloc_words	1.991202e+06	1.991202e+06	1.991202e+06	0.000000e+00	5	1
-talon/sort_amount_desc	cpu_time	2.935218e-02	2.877947e-02	2.979120e-02	1.723426e-02	5	2
-talon/sort_amount_desc	wall_time	2.937058e-02	2.873829e-02	2.981201e-02	1.827888e-02	5	2
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
+
+Talon/Filter-high_value	alloc_words	exact	583718
+Talon/Filter-high_value	wall_time	batch=1	n=20	4.492e-03	3.352e-03 3.466e-03 3.541e-03 3.545e-03 3.743e-03 3.870e-03 4.239e-03 4.329e-03 4.330e-03 4.487e-03 4.497e-03 4.562e-03 4.572e-03 4.578e-03 4.593e-03 4.593e-03 4.651e-03 4.694e-03 4.736e-03 4.907e-03
+Talon/Group-category_region	alloc_words	exact	1985914
+Talon/Group-category_region	wall_time	batch=1	n=20	2.273e-02	2.073e-02 2.096e-02 2.144e-02 2.161e-02 2.184e-02 2.207e-02 2.237e-02 2.260e-02 2.269e-02 2.273e-02 2.273e-02 2.286e-02 2.363e-02 2.370e-02 2.373e-02 2.387e-02 2.398e-02 2.402e-02 2.425e-02 2.539e-02
+Talon/Join-customer_lookup	alloc_words	exact	3095036
+Talon/Join-customer_lookup	wall_time	batch=1	n=20	3.075e-02	2.878e-02 2.958e-02 2.990e-02 3.007e-02 3.018e-02 3.056e-02 3.061e-02 3.063e-02 3.065e-02 3.069e-02 3.082e-02 3.113e-02 3.128e-02 3.193e-02 3.215e-02 3.249e-02 3.251e-02 3.269e-02 3.293e-02 3.332e-02
+Talon/Sort-amount_desc	alloc_words	exact	1991931
+Talon/Sort-amount_desc	wall_time	batch=1	n=20	3.505e-02	3.196e-02 3.305e-02 3.305e-02 3.323e-02 3.364e-02 3.376e-02 3.404e-02 3.419e-02 3.469e-02 3.501e-02 3.509e-02 3.627e-02 3.648e-02 3.897e-02 4.107e-02 4.164e-02 4.194e-02 4.226e-02 4.294e-02 5.878e-02

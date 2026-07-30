@@ -1,20 +1,13 @@
-# thumper baseline
-# version: 2
-# suite_name: nx_fft
+# thumper baseline v1
+# suite: nx_fft
 
-# machine: 3b8ae6dbe74c4269
-# cpu: Apple M1 Max
-# ocaml: 5.5.0
-# git: 262582b2
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/fft/bench_fft.exe --bless --quick --baseline packages/nx/bench/fft/nx_fft.thumper
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
 
-fft/c64_100000_mixed-radix	alloc_words	9.600000e+01	9.600000e+01	9.600000e+01	0.000000e+00	18	0
-fft/c64_100000_mixed-radix	cpu_time	7.472089e-04	7.373803e-04	7.555076e-04	1.213002e-02	18	3
-fft/c64_100000_mixed-radix	wall_time	7.530485e-04	7.390486e-04	7.647282e-04	1.705048e-02	18	3
-fft/c64_65521_prime	alloc_words	9.600000e+01	9.600000e+01	9.600000e+01	0.000000e+00	5	0
-fft/c64_65521_prime	cpu_time	2.466300e-03	2.414063e-03	2.534500e-03	2.441664e-02	5	0
-fft/c64_65521_prime	wall_time	2.475266e-03	2.413807e-03	2.553959e-03	2.831042e-02	5	0
-fft/c64_65536_power-of-two	alloc_words	9.600000e+01	9.600000e+01	9.600000e+01	0.000000e+00	9	0
-fft/c64_65536_power-of-two	cpu_time	5.680946e-04	5.336083e-04	5.857205e-04	4.586579e-02	9	1
-fft/c64_65536_power-of-two	wall_time	5.652618e-04	5.015181e-04	6.012864e-04	8.824959e-02	9	0
+fft/c64-100000-mixed-radix	alloc_words	exact	96
+fft/c64-100000-mixed-radix	wall_time	batch=8	n=20	9.086e-04	8.329e-04 8.371e-04 8.414e-04 8.426e-04 8.427e-04 8.739e-04 8.992e-04 9.014e-04 9.077e-04 9.083e-04 9.089e-04 9.109e-04 9.202e-04 9.361e-04 9.919e-04 1.142e-03 1.288e-03 1.373e-03 1.560e-03 1.679e-03
+fft/c64-65521-prime	alloc_words	exact	96
+fft/c64-65521-prime	wall_time	batch=1	n=20	3.652e-03	2.795e-03 2.824e-03 2.839e-03 2.851e-03 2.928e-03 3.084e-03 3.250e-03 3.565e-03 3.579e-03 3.641e-03 3.663e-03 3.734e-03 3.834e-03 4.090e-03 4.138e-03 4.271e-03 4.321e-03 5.597e-03 5.637e-03 8.650e-03
+fft/c64-65536-power-of-two	alloc_words	exact	96
+fft/c64-65536-power-of-two	wall_time	batch=16	n=20	6.255e-04	5.797e-04 5.916e-04 5.963e-04 5.994e-04 6.012e-04 6.026e-04 6.131e-04 6.239e-04 6.240e-04 6.244e-04 6.265e-04 6.285e-04 6.290e-04 6.528e-04 6.766e-04 6.793e-04 7.492e-04 8.779e-04 1.101e-03 1.583e-03

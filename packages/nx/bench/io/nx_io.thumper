@@ -1,44 +1,29 @@
-# thumper baseline
-# version: 2
-# suite_name: nx_io
+# thumper baseline v1
+# suite: nx_io
 
-# machine: 3b8ae6dbe74c4269
-# cpu: Apple M1 Max
-# ocaml: 5.5.0
-# git: 8e9fbb39
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/io/bench_io.exe --bless --ci --baseline packages/nx/bench/io/nx_io.thumper
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
 
-gzip/gunzip_stored_1_mib	alloc_words	1.940000e+02	1.940000e+02	1.940000e+02	0.000000e+00	65	5
-gzip/gunzip_stored_1_mib	cpu_time	1.211825e-03	1.177886e-03	1.240686e-03	2.591133e-02	65	3
-gzip/gunzip_stored_1_mib	wall_time	1.270157e-03	1.229301e-03	1.305148e-03	2.985719e-02	65	1
-jpeg/load_jpeg_512x512_rgb	alloc_words	2.390000e+02	2.390000e+02	2.390000e+02	0.000000e+00	55	5
-jpeg/load_jpeg_512x512_rgb	cpu_time	5.303602e-03	5.265984e-03	5.353600e-03	8.259994e-03	55	3
-jpeg/load_jpeg_512x512_rgb	wall_time	5.354439e-03	5.311864e-03	5.410316e-03	9.193440e-03	55	3
-jpeg/save_jpeg_512x512_rgb	alloc_words	3.350000e+02	3.350000e+02	3.350000e+02	0.000000e+00	56	3
-jpeg/save_jpeg_512x512_rgb	cpu_time	3.992215e-03	3.955789e-03	4.035444e-03	9.976356e-03	56	2
-jpeg/save_jpeg_512x512_rgb	wall_time	4.046672e-03	3.998288e-03	4.098155e-03	1.233941e-02	56	2
-npy/load_npy_1_mib_f32	alloc_words	4.640000e+02	4.640000e+02	4.640000e+02	0.000000e+00	57	5
-npy/load_npy_1_mib_f32	cpu_time	1.131596e-04	1.120187e-04	1.141270e-04	9.315515e-03	57	11
-npy/load_npy_1_mib_f32	wall_time	1.163443e-04	1.150725e-04	1.177099e-04	1.133432e-02	57	11
-npy/save_npy_1_mib_f32	alloc_words	5.870000e+02	5.870000e+02	5.870000e+02	0.000000e+00	58	5
-npy/save_npy_1_mib_f32	cpu_time	3.461799e-04	3.431691e-04	3.529861e-04	1.417918e-02	58	7
-npy/save_npy_1_mib_f32	wall_time	4.642290e-04	4.509257e-04	4.796373e-04	3.092389e-02	58	3
-npz/load_npz_deflate_1_mib_f32	alloc_words	7.340000e+02	7.340000e+02	7.340000e+02	0.000000e+00	48	5
-npz/load_npz_deflate_1_mib_f32	cpu_time	1.120022e-02	1.101132e-02	1.132688e-02	1.408744e-02	48	4
-npz/load_npz_deflate_1_mib_f32	wall_time	1.135557e-02	1.113588e-02	1.151668e-02	1.676713e-02	48	3
-npz/load_npz_store_1_mib_u8	alloc_words	7.200000e+02	7.200000e+02	7.200000e+02	0.000000e+00	65	6
-npz/load_npz_store_1_mib_u8	cpu_time	5.989017e-04	5.965110e-04	6.018630e-04	4.468184e-03	65	5
-npz/load_npz_store_1_mib_u8	wall_time	6.086520e-04	6.052266e-04	6.135345e-04	6.824857e-03	65	5
-npz/save_npz_adaptive_1_mib_u8	alloc_words	1.175000e+03	1.175000e+03	1.175000e+03	0.000000e+00	62	4
-npz/save_npz_adaptive_1_mib_u8	cpu_time	2.297012e-03	2.278453e-03	2.309264e-03	6.706861e-03	62	2
-npz/save_npz_adaptive_1_mib_u8	wall_time	2.375581e-03	2.339715e-03	2.406219e-03	1.399744e-02	62	4
-npz/save_npz_deflate_1_mib_f32	alloc_words	1.167000e+03	1.167000e+03	1.167000e+03	0.000000e+00	42	4
-npz/save_npz_deflate_1_mib_f32	cpu_time	1.946518e-02	1.932396e-02	1.957558e-02	6.463388e-03	42	2
-npz/save_npz_deflate_1_mib_f32	wall_time	2.041803e-02	2.001441e-02	2.109005e-02	2.634054e-02	42	1
-png/load_png_512x512_rgb	alloc_words	2.390000e+02	2.390000e+02	2.390000e+02	0.000000e+00	52	5
-png/load_png_512x512_rgb	cpu_time	7.014297e-03	6.919056e-03	7.073273e-03	1.099311e-02	52	0
-png/load_png_512x512_rgb	wall_time	7.102508e-03	7.007788e-03	7.169687e-03	1.139735e-02	52	0
-png/save_png_512x512_rgb	alloc_words	3.350000e+02	3.350000e+02	3.350000e+02	0.000000e+00	49	5
-png/save_png_512x512_rgb	cpu_time	1.023819e-02	1.018049e-02	1.028981e-02	5.339046e-03	49	5
-png/save_png_512x512_rgb	wall_time	1.037581e-02	1.028855e-02	1.045233e-02	7.892091e-03	49	3
+gzip/Gunzip-stored-1-MiB	alloc_words	exact	198
+gzip/Gunzip-stored-1-MiB	wall_time	batch=4	n=20	1.392e-03	1.154e-03 1.244e-03 1.246e-03 1.279e-03 1.297e-03 1.323e-03 1.323e-03 1.349e-03 1.369e-03 1.377e-03 1.407e-03 1.421e-03 1.421e-03 1.438e-03 1.445e-03 1.450e-03 1.463e-03 1.465e-03 2.631e-03 7.061e-03
+jpeg/Load-JPEG-512x512-RGB	alloc_words	exact	239
+jpeg/Load-JPEG-512x512-RGB	wall_time	batch=1	n=20	4.961e-03	4.862e-03 4.875e-03 4.888e-03 4.911e-03 4.924e-03 4.925e-03 4.925e-03 4.949e-03 4.953e-03 4.959e-03 4.963e-03 4.965e-03 4.971e-03 4.976e-03 4.997e-03 5.003e-03 5.006e-03 5.069e-03 5.118e-03 5.136e-03
+jpeg/Save-JPEG-512x512-RGB	alloc_words	exact	339
+jpeg/Save-JPEG-512x512-RGB	wall_time	batch=2	n=20	3.903e-03	3.770e-03 3.780e-03 3.788e-03 3.805e-03 3.823e-03 3.829e-03 3.837e-03 3.840e-03 3.863e-03 3.894e-03 3.911e-03 3.930e-03 3.943e-03 3.954e-03 3.976e-03 3.985e-03 3.998e-03 3.998e-03 4.011e-03 4.014e-03
+npy/Load-NPY-1-MiB-f32	alloc_words	exact	464
+npy/Load-NPY-1-MiB-f32	wall_time	batch=64	n=20	1.111e-04	1.038e-04 1.038e-04 1.041e-04 1.041e-04 1.041e-04 1.053e-04 1.074e-04 1.098e-04 1.100e-04 1.109e-04 1.114e-04 1.140e-04 1.161e-04 1.185e-04 1.260e-04 1.283e-04 1.285e-04 1.301e-04 1.306e-04 1.310e-04
+npy/Save-NPY-1-MiB-f32	alloc_words	batch=16	n=20	5.941e+02	5.939e+02 5.939e+02 5.939e+02 5.939e+02 5.939e+02 5.939e+02 5.939e+02 5.939e+02 5.941e+02 5.941e+02 5.941e+02 5.941e+02 5.941e+02 5.941e+02 5.941e+02 5.941e+02 5.941e+02 5.942e+02 5.942e+02 5.942e+02
+npy/Save-NPY-1-MiB-f32	wall_time	batch=16	n=20	8.230e-04	5.193e-04 5.462e-04 6.286e-04 6.302e-04 6.894e-04 7.083e-04 7.468e-04 7.777e-04 7.987e-04 8.143e-04 8.316e-04 8.412e-04 8.668e-04 9.178e-04 9.312e-04 9.853e-04 9.939e-04 1.008e-03 1.215e-03 2.373e-03
+npz/Load-NPZ-Deflate-1-MiB-f32	alloc_words	exact	734
+npz/Load-NPZ-Deflate-1-MiB-f32	wall_time	batch=1	n=20	1.085e-02	1.065e-02 1.071e-02 1.072e-02 1.075e-02 1.075e-02 1.080e-02 1.080e-02 1.081e-02 1.083e-02 1.084e-02 1.086e-02 1.086e-02 1.090e-02 1.091e-02 1.092e-02 1.092e-02 1.095e-02 1.102e-02 1.103e-02 1.121e-02
+npz/Load-NPZ-Store-1-MiB-u8	alloc_words	exact	720
+npz/Load-NPZ-Store-1-MiB-u8	wall_time	batch=16	n=20	5.873e-04	5.681e-04 5.721e-04 5.738e-04 5.747e-04 5.763e-04 5.767e-04 5.792e-04 5.794e-04 5.801e-04 5.844e-04 5.903e-04 5.920e-04 5.940e-04 5.963e-04 5.967e-04 5.995e-04 6.038e-04 6.563e-04 7.168e-04 1.363e-03
+npz/Save-NPZ-Deflate-1-MiB-f32	alloc_words	exact	1171
+npz/Save-NPZ-Deflate-1-MiB-f32	wall_time	batch=1	n=20	1.833e-02	1.797e-02 1.808e-02 1.813e-02 1.816e-02 1.821e-02 1.824e-02 1.825e-02 1.827e-02 1.827e-02 1.832e-02 1.833e-02 1.834e-02 1.840e-02 1.849e-02 1.852e-02 1.856e-02 1.857e-02 1.866e-02 1.869e-02 1.878e-02
+npz/Save-NPZ-adaptive-1-MiB-u8	alloc_words	batch=4	n=20	1.191e+03	1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03 1.191e+03
+npz/Save-NPZ-adaptive-1-MiB-u8	wall_time	batch=4	n=20	2.338e-03	2.257e-03 2.274e-03 2.301e-03 2.307e-03 2.308e-03 2.313e-03 2.317e-03 2.321e-03 2.323e-03 2.338e-03 2.339e-03 2.344e-03 2.346e-03 2.382e-03 2.387e-03 2.399e-03 2.504e-03 2.655e-03 3.313e-03 6.593e-03
+png/Load-PNG-512x512-RGB	alloc_words	exact	239
+png/Load-PNG-512x512-RGB	wall_time	batch=1	n=20	6.828e-03	6.616e-03 6.694e-03 6.732e-03 6.739e-03 6.741e-03 6.770e-03 6.779e-03 6.814e-03 6.823e-03 6.827e-03 6.828e-03 6.842e-03 6.876e-03 6.889e-03 6.916e-03 6.921e-03 6.933e-03 6.935e-03 6.938e-03 6.981e-03
+png/Save-PNG-512x512-RGB	alloc_words	exact	339
+png/Save-PNG-512x512-RGB	wall_time	batch=1	n=20	9.795e-03	9.508e-03 9.559e-03 9.564e-03 9.637e-03 9.660e-03 9.686e-03 9.692e-03 9.745e-03 9.774e-03 9.788e-03 9.801e-03 9.802e-03 9.820e-03 9.825e-03 9.845e-03 9.966e-03 1.008e-02 1.046e-02 2.094e-02 3.288e-02

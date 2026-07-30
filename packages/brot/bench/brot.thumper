@@ -1,46 +1,31 @@
-# thumper baseline
-# version: 1
-# suite_name: brot
-# host: 1480401c3b76ed18
-# cpu: Apple M1 Max
-# ocaml: 5.4.1
-# git: 31747323
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/brot/bench/bench_brot.exe --bless --quick
+# thumper baseline v1
+# suite: brot
 
-bert-base/decode_long	alloc_words	4.445400e+05	4.445400e+05	4.445400e+05	0.000000e+00	9	0
-bert-base/decode_long	cpu_time	1.424685e-03	1.370913e-03	1.470915e-03	3.509645e-02	9	1
-bert-base/decode_long	wall_time	1.425388e-03	1.371378e-03	1.475911e-03	3.666840e-02	9	1
-bert-base/encode_batch_32	alloc_words	1.089250e+05	1.089250e+05	1.089250e+05	0.000000e+00	31	1
-bert-base/encode_batch_32	cpu_time	9.091263e-03	8.686646e-03	9.591658e-03	4.977371e-02	31	2
-bert-base/encode_batch_32	wall_time	2.121498e-03	1.993592e-03	2.253395e-03	6.123112e-02	31	1
-bert-base/encode_single_long	alloc_words	1.350547e+06	1.350547e+06	1.350547e+06	0.000000e+00	9	1
-bert-base/encode_single_long	cpu_time	9.506189e-03	9.354674e-03	9.692541e-03	1.777085e-02	9	1
-bert-base/encode_single_long	wall_time	9.509793e-03	9.372449e-03	9.680291e-03	1.618554e-02	9	1
-bert-base/encode_single_short	alloc_words	2.699600e+04	2.699600e+04	2.699600e+04	0.000000e+00	9	0
-bert-base/encode_single_short	cpu_time	1.392726e-04	1.345864e-04	1.448241e-04	3.675399e-02	9	0
-bert-base/encode_single_short	wall_time	1.393180e-04	1.345034e-04	1.440607e-04	3.430033e-02	9	0
-gpt-2/decode_long	alloc_words	3.417770e+05	3.417770e+05	3.417770e+05	0.000000e+00	7	0
-gpt-2/decode_long	cpu_time	1.305595e-03	1.261472e-03	1.338931e-03	2.966443e-02	7	0
-gpt-2/decode_long	wall_time	1.305703e-03	1.262279e-03	1.346462e-03	3.223653e-02	7	0
-gpt-2/encode_batch_32	alloc_words	5.518900e+04	5.518900e+04	5.518900e+04	0.000000e+00	6	0
-gpt-2/encode_batch_32	cpu_time	3.952923e-03	3.848310e-03	4.113309e-03	3.351934e-02	6	1
-gpt-2/encode_batch_32	wall_time	1.386324e-03	1.328412e-03	1.431061e-03	3.702195e-02	6	0
-gpt-2/encode_single_long	alloc_words	6.731690e+05	6.731690e+05	6.731690e+05	0.000000e+00	19	2
-gpt-2/encode_single_long	cpu_time	3.852835e-03	3.758677e-03	3.927922e-03	2.196376e-02	19	1
-gpt-2/encode_single_long	wall_time	3.856248e-03	3.756035e-03	3.930090e-03	2.256793e-02	19	1
-gpt-2/encode_single_short	alloc_words	1.356200e+04	1.356200e+04	1.356200e+04	0.000000e+00	13	0
-gpt-2/encode_single_short	cpu_time	5.279107e-05	5.090596e-05	5.553182e-05	4.381283e-02	13	0
-gpt-2/encode_single_short	wall_time	5.282309e-05	5.106692e-05	5.499492e-05	3.718073e-02	13	0
-llama/decode_long	alloc_words	6.844460e+05	6.844460e+05	6.844460e+05	0.000000e+00	12	0
-llama/decode_long	cpu_time	1.149214e-03	1.094901e-03	1.194180e-03	4.319437e-02	12	0
-llama/decode_long	wall_time	1.149682e-03	1.095042e-03	1.189211e-03	4.095449e-02	12	0
-llama/encode_batch_32	alloc_words	9.471700e+04	9.471700e+04	9.471700e+04	0.000000e+00	5	0
-llama/encode_batch_32	cpu_time	4.421498e-03	4.320283e-03	4.534447e-03	2.421853e-02	5	0
-llama/encode_batch_32	wall_time	1.467702e-03	1.366193e-03	1.593832e-03	7.754944e-02	5	2
-llama/encode_single_long	alloc_words	1.261210e+06	1.261210e+06	1.261210e+06	0.000000e+00	9	1
-llama/encode_single_long	cpu_time	1.817278e-02	1.788729e-02	1.860684e-02	1.979736e-02	9	2
-llama/encode_single_long	wall_time	1.819150e-02	1.794107e-02	1.863329e-02	1.902594e-02	9	2
-llama/encode_single_short	alloc_words	2.344400e+04	2.344400e+04	2.344400e+04	0.000000e+00	42	0
-llama/encode_single_short	cpu_time	6.126139e-05	6.069695e-05	6.174501e-05	8.553960e-03	42	6
-llama/encode_single_short	wall_time	6.130598e-05	6.079485e-05	6.183071e-05	8.448240e-03	42	6
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
+
+BERT-base/Decode-long	alloc_words	exact	444540
+BERT-base/Decode-long	wall_time	batch=1	n=20	1.567e-03	1.199e-03 1.238e-03 1.247e-03 1.252e-03 1.302e-03 1.321e-03 1.451e-03 1.496e-03 1.527e-03 1.527e-03 1.607e-03 1.614e-03 1.626e-03 1.672e-03 1.717e-03 1.756e-03 1.777e-03 2.251e-03 2.282e-03 2.283e-03
+BERT-base/Encode-batch_32	alloc_words	exact	108925
+BERT-base/Encode-batch_32	wall_time	batch=4	n=20	2.068e-03	1.832e-03 1.873e-03 1.874e-03 1.877e-03 1.897e-03 1.918e-03 1.960e-03 1.996e-03 2.004e-03 2.026e-03 2.110e-03 2.179e-03 2.225e-03 2.385e-03 2.557e-03 2.639e-03 2.662e-03 2.763e-03 2.878e-03 3.883e-03
+BERT-base/Encode-single_long	alloc_words	exact	1350547
+BERT-base/Encode-single_long	wall_time	batch=1	n=20	1.136e-02	8.304e-03 8.449e-03 8.490e-03 9.105e-03 9.186e-03 9.605e-03 9.691e-03 1.016e-02 1.021e-02 1.088e-02 1.184e-02 1.192e-02 1.244e-02 1.264e-02 1.290e-02 1.317e-02 1.336e-02 1.498e-02 1.522e-02 3.012e-02
+BERT-base/Encode-single_short	alloc_words	exact	26996
+BERT-base/Encode-single_short	wall_time	batch=16	n=20	1.496e-04	1.257e-04 1.263e-04 1.281e-04 1.312e-04 1.316e-04 1.341e-04 1.401e-04 1.428e-04 1.467e-04 1.478e-04 1.514e-04 1.578e-04 1.627e-04 1.646e-04 1.654e-04 1.789e-04 1.801e-04 1.812e-04 1.851e-04 2.077e-04
+GPT-2/Decode-long	alloc_words	exact	341777
+GPT-2/Decode-long	wall_time	batch=2	n=20	1.341e-03	1.075e-03 1.147e-03 1.150e-03 1.171e-03 1.176e-03 1.184e-03 1.229e-03 1.252e-03 1.301e-03 1.335e-03 1.347e-03 1.363e-03 1.407e-03 1.426e-03 1.476e-03 1.533e-03 1.559e-03 1.972e-03 2.007e-03 2.061e-03
+GPT-2/Encode-batch_32	alloc_words	exact	55189
+GPT-2/Encode-batch_32	wall_time	batch=4	n=20	1.409e-03	1.229e-03 1.244e-03 1.280e-03 1.285e-03 1.306e-03 1.318e-03 1.338e-03 1.377e-03 1.396e-03 1.405e-03 1.412e-03 1.419e-03 1.462e-03 1.475e-03 1.578e-03 1.837e-03 1.972e-03 2.010e-03 2.010e-03 2.371e-03
+GPT-2/Encode-single_long	alloc_words	exact	673169
+GPT-2/Encode-single_long	wall_time	batch=1	n=20	4.477e-03	3.050e-03 3.051e-03 3.112e-03 3.250e-03 3.547e-03 3.728e-03 3.904e-03 4.315e-03 4.367e-03 4.421e-03 4.533e-03 4.787e-03 4.828e-03 4.901e-03 4.946e-03 5.257e-03 6.011e-03 6.291e-03 6.685e-03 6.732e-03
+GPT-2/Encode-single_short	alloc_words	exact	13562
+GPT-2/Encode-single_short	wall_time	batch=64	n=20	5.570e-05	4.573e-05 4.609e-05 4.637e-05 4.747e-05 4.866e-05 4.868e-05 5.059e-05 5.163e-05 5.526e-05 5.549e-05 5.591e-05 5.911e-05 6.079e-05 6.184e-05 6.297e-05 6.827e-05 6.864e-05 7.003e-05 7.606e-05 7.741e-05
+LLaMA/Decode-long	alloc_words	exact	684446
+LLaMA/Decode-long	wall_time	batch=1	n=20	1.185e-03	8.940e-04 9.018e-04 9.024e-04 9.133e-04 1.025e-03 1.075e-03 1.122e-03 1.158e-03 1.163e-03 1.176e-03 1.194e-03 1.210e-03 1.290e-03 1.307e-03 1.404e-03 1.437e-03 1.605e-03 1.770e-03 1.874e-03 1.909e-03
+LLaMA/Encode-batch_32	alloc_words	exact	94717
+LLaMA/Encode-batch_32	wall_time	batch=4	n=20	1.456e-03	1.316e-03 1.348e-03 1.349e-03 1.376e-03 1.382e-03 1.388e-03 1.391e-03 1.411e-03 1.442e-03 1.446e-03 1.467e-03 1.469e-03 1.502e-03 1.820e-03 1.879e-03 1.965e-03 2.257e-03 2.375e-03 2.551e-03 2.562e-03
+LLaMA/Encode-single_long	alloc_words	exact	1261210
+LLaMA/Encode-single_long	wall_time	batch=1	n=20	2.010e-02	1.718e-02 1.845e-02 1.866e-02 1.877e-02 1.884e-02 1.938e-02 1.950e-02 1.953e-02 1.968e-02 1.986e-02 2.033e-02 2.094e-02 2.152e-02 2.155e-02 2.160e-02 2.216e-02 2.243e-02 2.328e-02 2.400e-02 2.428e-02
+LLaMA/Encode-single_short	alloc_words	exact	23444
+LLaMA/Encode-single_short	wall_time	batch=32	n=20	7.402e-05	4.683e-05 4.695e-05 4.791e-05 4.991e-05 5.136e-05 5.373e-05 5.444e-05 5.463e-05 5.473e-05 7.286e-05 7.519e-05 7.646e-05 7.663e-05 7.933e-05 8.122e-05 8.623e-05 8.759e-05 9.163e-05 1.033e-04 1.047e-04

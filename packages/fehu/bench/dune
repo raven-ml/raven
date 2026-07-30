@@ -3,7 +3,7 @@
  (libraries nx fehu thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or `dune exec packages/fehu/bench/bench_fehu.exe -- --explore`).
+; (or run the built exe directly; `list` prints case ids).
 
 (rule
  (alias bench)
@@ -12,5 +12,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_fehu.exe} -q)
+   (run %{exe:bench_fehu.exe})
    (diff? fehu.thumper fehu.thumper.corrected))))

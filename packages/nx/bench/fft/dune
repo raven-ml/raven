@@ -8,5 +8,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_fft.exe} -q)
+   (run %{exe:bench_fft.exe})
    (diff? nx_fft.thumper nx_fft.thumper.corrected))))

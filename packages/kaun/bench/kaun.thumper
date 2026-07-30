@@ -1,16 +1,19 @@
-# thumper baseline
-# version: 1
-# suite_name: kaun
-# host: 7ddbc0675390e24
-# cpu: Intel(R) Xeon(R) Platinum 8468
-# ocaml: 5.5.0
-# git: 3e26560d
-# dirty: true
-# command: /root/raven/_build/default/packages/kaun/bench/bench_kaun.exe --bless --quick --baseline packages/kaun/bench/kaun.thumper
+# thumper baseline v1
+# suite: kaun
 
-forward/apply	alloc_words	2.054000e+03	2.054000e+03	2.054000e+03	0.000000e+00	12	1
-forward/apply	cpu_time	5.003429e-01	4.140395e-01	5.450265e-01	1.308972e-01	12	0
-forward/apply	wall_time	2.517614e-02	2.072375e-02	2.747227e-02	1.340261e-01	12	0
-trainstep/train_step	alloc_words	4.011400e+04	4.011400e+04	4.011400e+04	0.000000e+00	4	0
-trainstep/train_step	cpu_time	7.346329e+00	2.571368e+00	1.186286e+01	6.323898e-01	4	0
-trainstep/train_step	wall_time	3.848394e-01	1.283901e-01	6.255155e-01	6.458868e-01	4	0
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
+
+Conv/conv-train-step	alloc_words	exact	63561
+Conv/conv-train-step	wall_time	batch=1	n=20	1.786e-02	1.695e-02 1.722e-02 1.722e-02 1.742e-02 1.752e-02 1.772e-02 1.773e-02 1.775e-02 1.780e-02 1.782e-02 1.791e-02 1.797e-02 1.809e-02 1.813e-02 1.845e-02 2.070e-02 2.080e-02 2.162e-02 2.168e-02 2.435e-02
+Forward/apply	alloc_words	exact	2341
+Forward/apply	wall_time	batch=16	n=20	4.932e-04	4.691e-04 4.791e-04 4.801e-04 4.836e-04 4.836e-04 4.860e-04 4.861e-04 4.912e-04 4.926e-04 4.931e-04 4.933e-04 4.952e-04 4.961e-04 4.976e-04 5.066e-04 5.080e-04 5.102e-04 5.111e-04 5.147e-04 5.202e-04
+Linear/linear-fwd	alloc_words	exact	585
+Linear/linear-fwd	wall_time	batch=16	n=20	3.536e-04	3.276e-04 3.314e-04 3.360e-04 3.403e-04 3.409e-04 3.410e-04 3.417e-04 3.420e-04 3.497e-04 3.529e-04 3.543e-04 3.575e-04 3.606e-04 3.619e-04 3.628e-04 3.629e-04 3.639e-04 3.725e-04 3.798e-04 4.864e-04
+Linear/linear-fwd-bwd	alloc_words	exact	3598
+Linear/linear-fwd-bwd	wall_time	batch=8	n=20	8.490e-04	7.855e-04 7.997e-04 8.085e-04 8.221e-04 8.344e-04 8.409e-04 8.442e-04 8.448e-04 8.479e-04 8.480e-04 8.500e-04 8.545e-04 8.548e-04 8.569e-04 8.586e-04 8.632e-04 9.256e-04 9.410e-04 1.092e-03 1.522e-03
+TrainStep/sgd-train-step	alloc_words	exact	24942
+TrainStep/sgd-train-step	wall_time	batch=4	n=20	2.039e-03	1.923e-03 1.935e-03 1.982e-03 1.986e-03 2.003e-03 2.009e-03 2.016e-03 2.026e-03 2.029e-03 2.034e-03 2.045e-03 2.046e-03 2.046e-03 2.070e-03 2.078e-03 2.082e-03 2.091e-03 2.103e-03 2.103e-03 2.130e-03
+TrainStep/train-step	alloc_words	exact	50339
+TrainStep/train-step	wall_time	batch=1	n=20	6.313e-03	6.156e-03 6.157e-03 6.163e-03 6.164e-03 6.210e-03 6.244e-03 6.276e-03 6.283e-03 6.291e-03 6.295e-03 6.330e-03 6.334e-03 6.368e-03 6.409e-03 6.433e-03 6.469e-03 6.499e-03 6.533e-03 6.650e-03 7.262e-03

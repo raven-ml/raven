@@ -23,5 +23,5 @@
     CCACHE
     0
     (progn
-     (run %{exe:bench_tolk.exe} -q)
+     (run %{exe:bench_tolk.exe})
      (diff? tolk.thumper tolk.thumper.corrected))))))

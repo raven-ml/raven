@@ -8,7 +8,10 @@
 module Row = Talon.Row
 
 module Fixtures = struct
-  let data_dir = Filename.concat (Sys.getcwd ()) "packages/talon/bench/data"
+  (* Resolve fixtures next to the executable, not the working directory:
+     the bench rule runs with the bench dir as cwd, dune exec with the
+     project root — the exe path is the one stable anchor in both. *)
+  let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 
   let load_csv name dtype_spec =
     Talon_csv.read ~dtype_spec (Filename.concat data_dir name)

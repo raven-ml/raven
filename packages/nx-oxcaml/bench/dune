@@ -14,7 +14,7 @@
  (libraries bench_nx_common nx_oxcaml))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or `dune exec packages/nx-oxcaml/bench/bench_nx_c.exe -- --explore`).
+; (or run the built exe directly; `list` prints case ids).
 
 (rule
  (alias bench)
@@ -23,7 +23,7 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_nx_c.exe} -q)
+   (run %{exe:bench_nx_c.exe})
    (diff? nx_c.thumper nx_c.thumper.corrected))))
 
 (rule
@@ -33,5 +33,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_nx_oxcaml.exe} -q)
+   (run %{exe:bench_nx_oxcaml.exe})
    (diff? nx_oxcaml.thumper nx_oxcaml.thumper.corrected))))

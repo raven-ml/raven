@@ -42,22 +42,25 @@ exist — this is a fresh run. Then:
    running machine's section). The target's **Baseline** entry names the file,
    e.g. `packages/nx/bench/nx.thumper` — call it `BASELINE`.
 
-   - If the baseline already contains this machine's section (look for a
-     `# machine:` header matching this host, or just run the perf gate once
-     and see whether cases resolve), it IS your session reference — no bless.
-   - Otherwise, bless **once** to add this machine's section, and commit the
-     refresh on its own. Run the target's `BENCH` exe **directly** (never via
-     `dune exec` — see the target's Commands note):
+   Run the perf gate once (step 6's exact command). If the cases resolve
+   against an existing section, that section IS your session reference —
+   move on. If they report `proposed` (no section for this machine yet, or a
+   stale one after a compiler change), the run wrote the proposal to
+   `<BASELINE>.corrected`; accept and commit it on its own:
 
    ```
-   <BENCH> --tag lab --bless --baseline <WT>/<BASELINE>
+   mv <WT>/<BASELINE>.corrected <WT>/<BASELINE>
    git -C <WT> add <BASELINE>
-   git -C <WT> commit -m "bench(<target>): Bless <target> baseline for <machine> (lab session <tag>)"
+   git -C <WT> commit -m "bench(<target>): Record <target> baseline for <machine> (lab session <tag>)"
    ```
 
-   This is the only bless in the session. The baseline advances later by
-   promoting corrected files thumper writes — never by re-blessing — and every
-   advance is committed together with the change that earned it.
+   There is no separate bless step: a check with no section proposes exactly
+   the selected cases' evidence, and this is the only wholesale accept in
+   the session. The baseline advances later by promoting corrected files the
+   gate writes — and every advance is committed together with the change
+   that earned it. (`bless` still exists for mid-session emergencies — a
+   `baseline_unstable` or `batch_drifted` case — but it re-records the whole
+   section and refuses on a busy host; do not reach for it casually.)
 
 5. Initialize `<RESULTS>/results.tsv` with the header row:
 
@@ -127,11 +130,12 @@ Read per-case relations from the `cases` array; the per-metric `summary`
 counts are the quick screen (run 1 with `n_improved == 0` on both metrics and
 no simplification claim is already a discard — skip the second run).
 
-Never decide from the exit code. thumper deliberately lets a case *pass* when
-wall_time improved even if its allocation regressed (an accepted trade-off),
-so exit 0 does not imply the alloc gate holds; and a spurious single-run wall
-regression exits 1 without being real. The pair rule above is the sole
-authority; exit codes are sanity checks only.
+Never decide from the exit code. Exit 1 does mean some case failed its
+budget (there is no cross-metric forgiveness: an alloc regression fails the
+case even when its time improved) — but a single-run wall regression can
+still be noise the pair rule exists to filter, and exit 0 says nothing about
+which cases improved. The pair rule above is the sole authority; exit codes
+are sanity checks only.
 
 Inconclusive cases neither justify nor block a keep: they are counted
 separately (`summary.wall_time.n_inconclusive`) and ignored.
@@ -167,10 +171,13 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
 
    ```
    rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected
-   <BENCH> --tag lab -q \
+   <BENCH> --tag lab \
      --baseline <WT>/<BASELINE> \
-     --json <RESULTS>/verdict.json
+     --json <RESULTS>/verdict.json > <RESULTS>/report.txt
    ```
+
+   (The report always prints on stdout — there is no quiet flag; capture it,
+   it is the human-readable twin of the verdict.)
 
    If `verdict.json` does not exist after the run, the run itself failed —
    treat it like exit 2: investigate, do not log an iteration.
@@ -224,9 +231,11 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
 9. Log one row to `<RESULTS>/results.tsv` (see below).
 10. Go to 1. Never stop to ask whether to continue.
 
-To develop an idea before the confirm, iterate fast on the single case you are
-changing with `<BENCH> -f <case> --quick --explore`. `--quick` is for the inner
-loop only — never for a keep decision.
+To develop an idea before the confirm, iterate fast on the single case you
+are changing with `<BENCH> --quick -f <case> --baseline <WT>/<BASELINE>` —
+a narrowed check against the session baseline (there is no baseline-free
+mode in the CLI). `--quick` is for the inner loop only — never for a keep
+decision, and delete any `.corrected` it proposes.
 
 ## Commit messages
 
@@ -302,7 +311,8 @@ Measurement on a dev laptop is noisy; the design fights this at every step:
   systematically inflated in every run, so a false regression *reproduces*
   across the pair and looks real. A change whose gate cannot be run within
   the load precondition stays PENDING — neither kept nor discarded, and never
-  decided on `--explore` evidence alone, however convincing the mechanism.
+  decided on inner-loop `--quick` evidence alone, however convincing the
+  mechanism.
   Wait for the machine, or end the session and note the pending change in the
   log. Only one lab-style measurement session may run per machine at a time.
 

@@ -3,7 +3,7 @@
  (libraries nx thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or `dune exec packages/nx/bench/conv2d/bench_conv2d_nx.exe -- --explore`).
+; (or run the built exe directly; `list` prints case ids).
 
 (rule
  (alias bench)
@@ -12,5 +12,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_conv2d_nx.exe} -q)
+   (run %{exe:bench_conv2d_nx.exe})
    (diff? nx_conv2d.thumper nx_conv2d.thumper.corrected))))

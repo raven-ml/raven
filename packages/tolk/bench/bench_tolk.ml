@@ -36,12 +36,19 @@ let keep x = ignore (Sys.opaque_identity x)
    render-parity renderer above emits device source that is not a compilable
    host translation unit; the CPU device's own renderer is the real compile
    path. *)
-let device_ren = Device.renderer (Tolk_cpu.create "CPU:bench_tolk")
+(* Deferred: creating the CPU device spawns its dispatch domain, and the
+   OCaml runtime refuses Unix.fork once any domain has been spawned — which
+   is exactly what thumper's fork-per-case measurement needs from the parent.
+   Forcing inside the case closures spawns the domain in each forked worker
+   instead, where it is free to. *)
+let device_ren =
+  lazy (Device.renderer (Tolk_cpu.create "CPU:bench_tolk"))
 
 let clang_compiler =
-  match Renderer.compiler device_ren with
-  | Some c -> c
-  | None -> failwith "CPU device renderer has no compiler"
+  lazy
+    (match Renderer.compiler (Lazy.force device_ren) with
+    | Some c -> c
+    | None -> failwith "CPU device renderer has no compiler")
 
 let rangeify_of w = Rangeify.get_kernel_graph (Graphs.sink w)
 let kernels_of w = Graphs.kernels (rangeify_of w)
@@ -64,13 +71,16 @@ let programs_of w =
 let device_srcs_of w =
   List.map
     (fun k ->
-      let processed = Codegen.full_rewrite_to_sink ~optimize device_ren k in
+      let processed =
+        Codegen.full_rewrite_to_sink ~optimize (Lazy.force device_ren) k
+      in
       let name =
         match U.as_kernel_info processed with
         | Some ki -> ki.name
         | None -> "kernel"
       in
-      Renderer.render device_ren ~name (Linearizer.linearize processed))
+      Renderer.render (Lazy.force device_ren) ~name
+        (Linearizer.linearize processed))
     (kernels_of w)
 
 (* One group per workload; the stage cases give full paths of the form
@@ -108,7 +118,8 @@ let workload_benches w =
       Thumper.bench_with_setup ~metrics:[ Thumper.Metric.wall_time ]
         ~setup:(fun () -> device_srcs_of w) "compile" (fun srcs ->
           List.iter
-            (fun s -> keep (Compiler.compile_cached clang_compiler s))
+            (fun s ->
+              keep (Compiler.compile_cached (Lazy.force clang_compiler) s))
             srcs);
     ]
 
@@ -157,6 +168,10 @@ let scaling_benches =
 
 let () =
   Thumper.run "tolk"
+    (* Codegen cases JIT-compile through clang inside the measured worker;
+       the heaviest (lorenz-n200) needs more than the default 10 s per-case
+       budget. A raised deadline is a cap on damage, not a target. *)
+    ~config:Thumper.Config.(default |> deadline 120.)
     ~budgets:
       [
         Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;

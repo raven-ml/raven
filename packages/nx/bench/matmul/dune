@@ -4,7 +4,7 @@
  (libraries nx thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or `dune exec packages/nx/bench/matmul/bench_matmul_nx.exe -- --explore`).
+; (or run the built exe directly; `list` prints case ids).
 
 (rule
  (alias bench)
@@ -13,5 +13,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_matmul_nx.exe} -q)
+   (run %{exe:bench_matmul_nx.exe})
    (diff? nx_matmul.thumper nx_matmul.thumper.corrected))))

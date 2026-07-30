@@ -1,42 +1,51 @@
-# thumper baseline
-# version: 1
-# suite_name: rune
-# host: 7ddbc0675390e24
-# cpu: Intel(R) Xeon(R) Platinum 8468
-# ocaml: 5.5.0
-# git: 3e26560d
-# dirty: true
-# command: /root/raven/_build/default/packages/rune/bench/bench_rune.exe --bless --quick --baseline packages/rune/bench/rune.thumper
+# thumper baseline v1
+# suite: rune
 
-deepchain/chain_fwd__nx_eager_	alloc_words	9.434000e+03	9.434000e+03	9.434000e+03	0.000000e+00	8	0
-deepchain/chain_fwd__nx_eager_	cpu_time	8.962411e-05	8.088670e-05	9.455804e-05	7.627042e-02	8	1
-deepchain/chain_fwd__nx_eager_	wall_time	8.964943e-05	8.092790e-05	9.386285e-05	7.214184e-02	8	1
-deepchain/chain_grad	alloc_words	4.215700e+04	4.215700e+04	4.215700e+04	0.000000e+00	5	0
-deepchain/chain_grad	cpu_time	3.707475e-04	3.635236e-04	3.769000e-04	1.803979e-02	5	0
-deepchain/chain_grad	wall_time	3.706714e-04	3.635372e-04	3.778024e-04	1.924238e-02	5	0
-mlpgrad/mlp_forward__nx_eager_	alloc_words	2.757000e+03	2.757000e+03	2.757000e+03	0.000000e+00	12	1
-mlpgrad/mlp_forward__nx_eager_	cpu_time	5.165638e-01	4.862729e-01	5.947874e-01	1.050349e-01	12	0
-mlpgrad/mlp_forward__nx_eager_	wall_time	2.618511e-02	2.465868e-02	3.005268e-02	1.029974e-01	12	0
-mlpgrad/mlp_value_and_grad	alloc_words	8.988000e+03	8.988000e+03	8.988000e+03	0.000000e+00	7	0
-mlpgrad/mlp_value_and_grad	cpu_time	1.789951e+00	1.450453e+00	2.004198e+00	1.546818e-01	7	0
-mlpgrad/mlp_value_and_grad	wall_time	9.026456e-02	7.277717e-02	1.001236e-01	1.514791e-01	7	0
-mlpjvp/mlp_jvp	alloc_words	1.011300e+04	1.011300e+04	1.011300e+04	0.000000e+00	5	1
-mlpjvp/mlp_jvp	cpu_time	2.934169e+00	2.281405e+00	3.241411e+00	1.635908e-01	5	0
-mlpjvp/mlp_jvp	wall_time	1.491956e-01	1.157346e-01	1.664340e-01	1.699092e-01	5	0
-persamplegrads/per-sample_grads_ew	alloc_words	5.845000e+03	5.845000e+03	5.845000e+03	0.000000e+00	5	1
-persamplegrads/per-sample_grads_ew	cpu_time	3.954240e-02	2.610374e-02	5.284176e-02	3.380932e-01	5	1
-persamplegrads/per-sample_grads_ew	wall_time	1.727881e-03	1.697501e-03	1.756642e-03	1.711382e-02	5	0
-persamplegrads/per-sample_mlp_w3_grads	alloc_words	1.156400e+04	1.156400e+04	1.156400e+04	0.000000e+00	19	0
-persamplegrads/per-sample_mlp_w3_grads	cpu_time	4.653756e-02	4.492290e-02	5.147427e-02	7.038798e-02	19	2
-persamplegrads/per-sample_mlp_w3_grads	wall_time	2.332524e-03	2.248935e-03	2.560471e-03	6.678080e-02	19	3
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
 
-# machine: 3b8ae6dbe74c4269
-# cpu: Apple M1 Max
-# ocaml: 5.5.0
-
-jitfootprint/elementwise_first-call	alloc_words	5.530190e+05	5.441490e+05	5.686760e+05	2.217555e-02	15	2
-jitfootprint/elementwise_first-call	cpu_time	5.683843e-03	5.439091e-03	6.189724e-03	6.603217e-02	15	0
-jitfootprint/elementwise_first-call	wall_time	4.272036e-02	4.227358e-02	4.336269e-02	1.274695e-02	15	0
-jitfootprint/lorenz_n10_first-call	alloc_words	1.643258e+07	1.641363e+07	1.648703e+07	2.233490e-03	13	2
-jitfootprint/lorenz_n10_first-call	cpu_time	5.764041e-02	5.677300e-02	5.821460e-02	1.250512e-02	13	0
-jitfootprint/lorenz_n10_first-call	wall_time	9.479288e-02	9.415247e-02	9.569196e-02	8.120248e-03	13	3
+DeepChain/chain-fwd-nx-eager	alloc_words	exact	4328
+DeepChain/chain-fwd-nx-eager	wall_time	batch=256	n=20	3.459e-05	3.346e-05 3.358e-05 3.371e-05 3.376e-05 3.377e-05 3.398e-05 3.402e-05 3.417e-05 3.434e-05 3.456e-05 3.461e-05 3.508e-05 3.526e-05 3.557e-05 3.572e-05 3.636e-05 3.703e-05 3.722e-05 3.996e-05 5.035e-05
+DeepChain/chain-grad	alloc_words	exact	38364
+DeepChain/chain-grad	wall_time	batch=32	n=20	2.617e-04	2.479e-04 2.530e-04 2.550e-04 2.554e-04 2.567e-04 2.577e-04 2.582e-04 2.594e-04 2.600e-04 2.601e-04 2.633e-04 2.638e-04 2.652e-04 2.658e-04 2.666e-04 2.666e-04 2.696e-04 2.713e-04 2.719e-04 2.775e-04
+Jit/eager-run-mlp	alloc_words	exact	2341
+Jit/eager-run-mlp	wall_time	batch=16	n=20	4.976e-04	4.558e-04 4.666e-04 4.800e-04 4.831e-04 4.836e-04 4.884e-04 4.911e-04 4.940e-04 4.963e-04 4.971e-04 4.981e-04 5.008e-04 5.026e-04 5.062e-04 5.062e-04 5.104e-04 5.138e-04 5.179e-04 5.240e-04 5.272e-04
+Jit/jit-run-chain	alloc_words	exact	842
+Jit/jit-run-chain	wall_time	batch=64	n=20	6.728e-05	6.226e-05 6.352e-05 6.365e-05 6.403e-05 6.428e-05 6.434e-05 6.644e-05 6.705e-05 6.706e-05 6.719e-05 6.738e-05 6.775e-05 6.788e-05 6.804e-05 6.956e-05 7.580e-05 7.819e-05 9.692e-05 1.413e-04 4.311e-04
+Jit/jit-run-mlp	alloc_words	exact	2295
+Jit/jit-run-mlp	wall_time	batch=8	n=20	7.059e-04	6.390e-04 6.436e-04 6.458e-04 6.562e-04 6.671e-04 6.845e-04 6.851e-04 6.923e-04 6.941e-04 6.985e-04 7.133e-04 7.169e-04 7.176e-04 7.239e-04 7.342e-04 7.437e-04 7.781e-04 7.802e-04 8.102e-04 9.356e-04
+JitFootprint/elementwise-first-call	alloc_words	exact	550618
+JitFootprint/elementwise-first-call	wall_time	batch=1	n=20	4.806e-02	4.632e-02 4.638e-02 4.687e-02 4.704e-02 4.718e-02 4.719e-02 4.733e-02 4.755e-02 4.764e-02 4.796e-02 4.815e-02 4.829e-02 4.838e-02 4.886e-02 4.944e-02 5.118e-02 5.970e-02 6.736e-02 7.678e-02 7.900e-02
+JitFootprint/elementwise-replay	alloc_words	batch=64	n=20	1.212e+03	1.211e+03 1.211e+03 1.211e+03 1.211e+03 1.211e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03 1.212e+03
+JitFootprint/elementwise-replay	wall_time	batch=64	n=20	1.105e-04	1.025e-04 1.035e-04 1.042e-04 1.049e-04 1.055e-04 1.064e-04 1.089e-04 1.092e-04 1.095e-04 1.099e-04 1.110e-04 1.135e-04 1.138e-04 1.151e-04 1.168e-04 1.171e-04 1.190e-04 1.248e-04 1.296e-04 1.850e-04
+JitFootprint/lorenz-n10-first-call	alloc_words	batch=1	n=20	1.644e+07	1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.644e+07 1.645e+07 1.645e+07 1.645e+07 1.645e+07 1.645e+07 1.646e+07 1.663e+07
+JitFootprint/lorenz-n10-first-call	wall_time	batch=1	n=20	9.599e-02	9.075e-02 9.140e-02 9.178e-02 9.202e-02 9.251e-02 9.304e-02 9.340e-02 9.372e-02 9.482e-02 9.557e-02 9.641e-02 9.703e-02 9.704e-02 9.874e-02 1.021e-01 1.032e-01 1.042e-01 1.058e-01 1.181e-01 1.643e-01
+JitFootprint/lorenz-n10-replay	alloc_words	batch=1024	n=20	1.198e+03	1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.191e+03 1.197e+03 1.198e+03 1.198e+03 1.198e+03 1.198e+03 1.198e+03 1.198e+03 1.198e+03 1.202e+03 1.202e+03 1.202e+03 1.202e+03 1.202e+03 1.206e+03
+JitFootprint/lorenz-n10-replay	wall_time	batch=1024	n=20	1.023e-05	9.438e-06 9.511e-06 9.832e-06 9.835e-06 9.839e-06 9.901e-06 9.954e-06 1.005e-05 1.006e-05 1.019e-05 1.026e-05 1.030e-05 1.047e-05 1.050e-05 1.065e-05 1.069e-05 1.076e-05 1.101e-05 1.199e-05 1.614e-05
+JitFootprint/lorenz-n100-replay	alloc_words	exact	1174
+JitFootprint/lorenz-n100-replay	wall_time	batch=256	n=20	2.147e-05	1.924e-05 1.991e-05 2.024e-05 2.028e-05 2.067e-05 2.085e-05 2.088e-05 2.099e-05 2.109e-05 2.125e-05 2.169e-05 2.187e-05 2.202e-05 2.230e-05 2.231e-05 2.312e-05 2.476e-05 2.554e-05 3.406e-05 3.454e-05
+JitFootprint/lorenz-n50-replay	alloc_words	batch=512	n=20	1.174e+03	1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.174e+03 1.209e+03 1.230e+03 1.239e+03 1.247e+03 1.247e+03
+JitFootprint/lorenz-n50-replay	wall_time	batch=512	n=20	1.485e-05	1.331e-05 1.345e-05 1.386e-05 1.400e-05 1.431e-05 1.471e-05 1.472e-05 1.472e-05 1.476e-05 1.480e-05 1.489e-05 1.497e-05 1.504e-05 1.518e-05 1.525e-05 1.525e-05 1.528e-05 1.551e-05 1.698e-05 1.862e-05
+JitFootprint/rnn-fwd-h10-replay	alloc_words	exact	6043
+JitFootprint/rnn-fwd-h10-replay	wall_time	batch=8	n=20	5.678e-04	4.865e-04 4.885e-04 4.949e-04 4.995e-04 5.116e-04 5.328e-04 5.546e-04 5.560e-04 5.584e-04 5.625e-04 5.732e-04 5.747e-04 5.889e-04 5.901e-04 5.911e-04 5.981e-04 6.111e-04 6.268e-04 6.313e-04 6.966e-04
+JitFootprint/rnn-fwd-h2-replay	alloc_words	exact	1851
+JitFootprint/rnn-fwd-h2-replay	wall_time	batch=128	n=20	7.267e-05	5.604e-05 5.972e-05 6.242e-05 6.253e-05 6.822e-05 7.035e-05 7.077e-05 7.147e-05 7.167e-05 7.213e-05 7.322e-05 7.534e-05 7.698e-05 7.756e-05 7.975e-05 8.058e-05 8.135e-05 8.460e-05 8.566e-05 1.531e-04
+JitFootprint/rnn-fwd-h20-replay	alloc_words	exact	11283
+JitFootprint/rnn-fwd-h20-replay	wall_time	batch=8	n=20	1.174e-03	1.018e-03 1.120e-03 1.123e-03 1.125e-03 1.136e-03 1.144e-03 1.154e-03 1.159e-03 1.168e-03 1.174e-03 1.175e-03 1.196e-03 1.202e-03 1.208e-03 1.231e-03 1.241e-03 1.312e-03 1.444e-03 1.607e-03 1.759e-03
+JitFootprint/rnn-grad-h10-replay	alloc_words	batch=8	n=20	2.013e+04	2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04 2.013e+04
+JitFootprint/rnn-grad-h10-replay	wall_time	batch=8	n=20	9.988e-04	6.513e-04 6.600e-04 6.942e-04 6.991e-04 7.002e-04 8.048e-04 8.206e-04 9.257e-04 9.604e-04 9.907e-04 1.007e-03 1.018e-03 1.054e-03 1.088e-03 1.161e-03 1.281e-03 1.321e-03 1.324e-03 1.369e-03 1.559e-03
+JitFootprint/rnn-grad-h2-replay	alloc_words	exact	6205
+JitFootprint/rnn-grad-h2-replay	wall_time	batch=32	n=20	1.668e-04	1.481e-04 1.506e-04 1.512e-04 1.522e-04 1.573e-04 1.576e-04 1.605e-04 1.616e-04 1.647e-04 1.655e-04 1.681e-04 1.702e-04 1.719e-04 1.730e-04 1.735e-04 1.747e-04 1.752e-04 1.843e-04 1.995e-04 2.016e-04
+JitFootprint/rnn-grad-h20-replay	alloc_words	exact	37399
+JitFootprint/rnn-grad-h20-replay	wall_time	batch=4	n=20	1.742e-03	1.438e-03 1.614e-03 1.623e-03 1.633e-03 1.634e-03 1.645e-03 1.657e-03 1.659e-03 1.704e-03 1.720e-03 1.764e-03 1.788e-03 1.802e-03 2.065e-03 2.079e-03 2.087e-03 2.576e-03 3.247e-03 3.493e-03 3.810e-03
+MlpGrad/mlp-forward-nx-eager	alloc_words	exact	3250
+MlpGrad/mlp-forward-nx-eager	wall_time	batch=16	n=20	4.901e-04	4.674e-04 4.677e-04 4.729e-04 4.751e-04 4.757e-04 4.782e-04 4.809e-04 4.809e-04 4.866e-04 4.897e-04 4.904e-04 4.935e-04 4.942e-04 4.966e-04 5.084e-04 5.132e-04 5.142e-04 5.144e-04 5.151e-04 5.252e-04
+MlpGrad/mlp-value_and_grad	alloc_words	exact	12714
+MlpGrad/mlp-value_and_grad	wall_time	batch=4	n=20	1.393e-03	1.268e-03 1.277e-03 1.279e-03 1.281e-03 1.337e-03 1.339e-03 1.369e-03 1.372e-03 1.381e-03 1.387e-03 1.398e-03 1.400e-03 1.401e-03 1.421e-03 1.427e-03 1.444e-03 1.464e-03 1.465e-03 1.492e-03 1.571e-03
+MlpJvp/mlp-jvp	alloc_words	exact	11955
+MlpJvp/mlp-jvp	wall_time	batch=4	n=20	1.710e-03	1.547e-03 1.580e-03 1.633e-03 1.635e-03 1.652e-03 1.658e-03 1.681e-03 1.689e-03 1.691e-03 1.704e-03 1.717e-03 1.719e-03 1.723e-03 1.737e-03 1.743e-03 1.770e-03 1.771e-03 1.778e-03 1.779e-03 1.819e-03
+PerSampleGrads/per-sample-grads-ew	alloc_words	exact	7577
+PerSampleGrads/per-sample-grads-ew	wall_time	batch=2	n=20	3.115e-03	2.841e-03 2.844e-03 2.870e-03 2.904e-03 2.932e-03 3.009e-03 3.021e-03 3.028e-03 3.030e-03 3.102e-03 3.128e-03 3.142e-03 3.169e-03 3.170e-03 3.203e-03 3.218e-03 3.231e-03 3.285e-03 3.286e-03 4.422e-03
+PerSampleGrads/per-sample-mlp-w3-grads	alloc_words	exact	14033
+PerSampleGrads/per-sample-mlp-w3-grads	wall_time	batch=1	n=20	1.034e-02	7.114e-03 7.436e-03 7.746e-03 8.317e-03 8.345e-03 8.774e-03 8.922e-03 9.511e-03 9.643e-03 1.032e-02 1.035e-02 1.106e-02 1.153e-02 1.168e-02 1.185e-02 1.188e-02 1.331e-02 1.360e-02 1.464e-02 2.143e-02

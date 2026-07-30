@@ -8,5 +8,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_linalg.exe} -q)
+   (run %{exe:bench_linalg.exe})
    (diff? nx_linalg.thumper nx_linalg.thumper.corrected))))

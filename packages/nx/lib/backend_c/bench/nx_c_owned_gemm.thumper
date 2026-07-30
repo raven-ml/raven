@@ -1,23 +1,15 @@
-# thumper baseline
-# version: 2
-# suite_name: nx_c_owned_gemm
+# thumper baseline v1
+# suite: nx_c_owned_gemm
 
-# machine: 3b8ae6dbe74c4269
-# cpu: Apple M1 Max
-# ocaml: 5.5.0
-# git: 262582b2
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/lib/backend_c/bench/bench_owned_gemm.exe --bless --quick --baseline packages/nx/lib/backend_c/bench/nx_c_owned_gemm.thumper
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
 
-owned-gemm/f32_512x512	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	19	0
-owned-gemm/f32_512x512	cpu_time	4.182994e-03	4.112829e-03	4.232887e-03	1.435070e-02	19	3
-owned-gemm/f32_512x512	wall_time	2.516697e-03	2.232593e-03	2.758991e-03	1.045811e-01	19	0
-owned-gemm/f32_64x64	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	10	0
-owned-gemm/f32_64x64	cpu_time	1.337373e-05	1.292339e-05	1.405273e-05	4.222225e-02	10	0
-owned-gemm/f32_64x64	wall_time	1.364285e-05	1.295901e-05	1.441444e-05	5.334053e-02	10	1
-owned-gemm/f32_batched_64x32x32	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	13	0
-owned-gemm/f32_batched_64x32x32	cpu_time	1.241688e-03	1.145482e-03	1.274016e-03	5.175756e-02	13	2
-owned-gemm/f32_batched_64x32x32	wall_time	5.450202e-04	4.920504e-04	5.666102e-04	6.840093e-02	13	0
-owned-gemm/f32_transposed_512x512	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	19	0
-owned-gemm/f32_transposed_512x512	cpu_time	4.238325e-03	4.128511e-03	4.301558e-03	2.041462e-02	19	1
-owned-gemm/f32_transposed_512x512	wall_time	2.224338e-03	2.170057e-03	2.285307e-03	2.590663e-02	19	0
+owned-gemm/f32-512x512	alloc_words	exact	0
+owned-gemm/f32-512x512	wall_time	batch=8	n=20	9.863e-04	9.631e-04 9.642e-04 9.773e-04 9.812e-04 9.814e-04 9.825e-04 9.835e-04 9.847e-04 9.855e-04 9.859e-04 9.867e-04 9.894e-04 9.916e-04 9.931e-04 9.978e-04 9.979e-04 9.994e-04 1.001e-03 1.002e-03 1.014e-03
+owned-gemm/f32-64x64	alloc_words	exact	0
+owned-gemm/f32-64x64	wall_time	batch=512	n=20	1.259e-05	1.232e-05 1.236e-05 1.239e-05 1.240e-05 1.241e-05 1.246e-05 1.247e-05 1.247e-05 1.258e-05 1.259e-05 1.259e-05 1.259e-05 1.261e-05 1.262e-05 1.268e-05 1.271e-05 1.271e-05 1.271e-05 1.277e-05 1.277e-05
+owned-gemm/f32-batched-64x32x32	alloc_words	exact	0
+owned-gemm/f32-batched-64x32x32	wall_time	batch=32	n=20	1.723e-04	1.640e-04 1.649e-04 1.651e-04 1.658e-04 1.659e-04 1.660e-04 1.667e-04 1.691e-04 1.715e-04 1.720e-04 1.727e-04 1.757e-04 1.766e-04 1.783e-04 1.834e-04 1.843e-04 1.851e-04 1.852e-04 1.975e-04 1.978e-04
+owned-gemm/f32-transposed-512x512	alloc_words	exact	0
+owned-gemm/f32-transposed-512x512	wall_time	batch=8	n=20	9.929e-04	9.595e-04 9.716e-04 9.724e-04 9.762e-04 9.786e-04 9.889e-04 9.915e-04 9.922e-04 9.928e-04 9.929e-04 9.929e-04 9.931e-04 9.932e-04 9.946e-04 9.969e-04 9.972e-04 1.014e-03 1.017e-03 1.019e-03 1.020e-03

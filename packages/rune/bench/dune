@@ -3,7 +3,7 @@
  (libraries nx rune thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or `dune exec packages/rune/bench/bench_rune.exe -- --explore`).
+; (or run the built exe directly; `list` prints case ids).
 
 (rule
  (alias bench)
@@ -12,5 +12,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_rune.exe} -q)
+   (run %{exe:bench_rune.exe})
    (diff? rune.thumper rune.thumper.corrected))))

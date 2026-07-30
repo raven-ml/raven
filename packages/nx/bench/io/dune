@@ -9,5 +9,5 @@
  (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench_io.exe} -q --ci)
+   (run %{exe:bench_io.exe})
    (diff? nx_io.thumper nx_io.thumper.corrected))))

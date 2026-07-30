@@ -1,73 +1,27 @@
-# thumper baseline
-# version: 2
-# suite_name: nx_matmul
+# thumper baseline v1
+# suite: nx_matmul
 
-# machine: 1480401c3b76ed18
-# cpu: Apple M1 Max
-# ocaml: 5.4.1
-# git: 31747323
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/matmul/bench_matmul_nx.exe --bless --quick
+# machine: 73bfb753d0739958
+# host: MacBookPro.Home · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.0 · 64-bit · release
 
-f32/matmul_squarelarge_512x512___512x512_f32__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f32/matmul_squarelarge_512x512___512x512_f32__nx_	cpu_time	3.098033e-04	3.078516e-04	3.124807e-04	7.470928e-03	5	1
-f32/matmul_squarelarge_512x512___512x512_f32__nx_	wall_time	2.106800e-04	2.089472e-04	2.131048e-04	9.867098e-03	5	1
-f32/matmul_squaresmall_64x64___64x64_f32__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f32/matmul_squaresmall_64x64___64x64_f32__nx_	cpu_time	1.483007e-06	1.465233e-06	1.502532e-06	1.257557e-02	5	2
-f32/matmul_squaresmall_64x64___64x64_f32__nx_	wall_time	1.483088e-06	1.465796e-06	1.505107e-06	1.325325e-02	5	2
-f32/matmul_tallskinny_256x64___64x256_f32__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f32/matmul_tallskinny_256x64___64x256_f32__nx_	cpu_time	5.986367e-05	5.930609e-05	6.047566e-05	9.768660e-03	5	0
-f32/matmul_tallskinny_256x64___64x256_f32__nx_	wall_time	5.989386e-05	5.933197e-05	6.040919e-05	8.992800e-03	5	0
-f32/matmul_wide_128x256___256x64_f32__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f32/matmul_wide_128x256___256x64_f32__nx_	cpu_time	5.925620e-06	5.888825e-06	5.966923e-06	6.589886e-03	5	0
-f32/matmul_wide_128x256___256x64_f32__nx_	wall_time	5.929617e-06	5.893135e-06	5.978258e-06	7.177803e-03	5	0
-f64/matmul_squarelarge_512x512___512x512_f64__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	1
-f64/matmul_squarelarge_512x512___512x512_f64__nx_	cpu_time	9.528020e-04	9.434341e-04	9.591325e-04	8.238030e-03	5	0
-f64/matmul_squarelarge_512x512___512x512_f64__nx_	wall_time	5.317828e-04	5.251065e-04	5.359640e-04	1.020860e-02	5	0
-f64/matmul_squaresmall_64x64___64x64_f64__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f64/matmul_squaresmall_64x64___64x64_f64__nx_	cpu_time	3.022022e-06	3.001909e-06	3.045365e-06	7.190003e-03	5	1
-f64/matmul_squaresmall_64x64___64x64_f64__nx_	wall_time	3.024805e-06	3.004257e-06	3.049405e-06	7.462840e-03	5	0
-f64/matmul_tallskinny_256x64___64x256_f64__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f64/matmul_tallskinny_256x64___64x256_f64__nx_	cpu_time	8.711857e-05	8.639228e-05	8.780838e-05	8.127438e-03	5	0
-f64/matmul_tallskinny_256x64___64x256_f64__nx_	wall_time	8.725737e-05	8.644738e-05	8.805477e-05	9.210608e-03	5	0
-f64/matmul_wide_128x256___256x64_f64__nx_	alloc_words	1.360000e+02	1.360000e+02	1.360000e+02	0.000000e+00	5	0
-f64/matmul_wide_128x256___256x64_f64__nx_	cpu_time	1.791992e-05	1.777490e-05	1.808887e-05	8.760198e-03	5	1
-f64/matmul_wide_128x256___256x64_f64__nx_	wall_time	1.793295e-05	1.778910e-05	1.806828e-05	7.784129e-03	5	1
-
-# machine: 3b8ae6dbe74c4269
-# cpu: Apple M1 Max
-# ocaml: 5.5.0
-# git: 262582b2
-# dirty: true
-# command: /Users/tmattio/Workspace/raven/_build/default/packages/nx/bench/matmul/bench_matmul_nx.exe --bless --quick --baseline packages/nx/bench/matmul/nx_matmul.thumper
-
-f32/matmul_squarelarge_512x512___512x512_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	20	0
-f32/matmul_squarelarge_512x512___512x512_f32__nx_	cpu_time	3.902541e-04	3.854690e-04	3.961396e-04	1.367133e-02	20	2
-f32/matmul_squarelarge_512x512___512x512_f32__nx_	wall_time	4.768794e-04	4.679632e-04	4.907533e-04	2.389507e-02	20	2
-f32/matmul_squaresmall_64x64___64x64_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	16	0
-f32/matmul_squaresmall_64x64___64x64_f32__nx_	cpu_time	1.653538e-06	1.633492e-06	1.672695e-06	1.185416e-02	16	0
-f32/matmul_squaresmall_64x64___64x64_f32__nx_	wall_time	1.731091e-06	1.668811e-06	1.821466e-06	4.409225e-02	16	0
-f32/matmul_tallskinny_256x64___64x256_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	8	0
-f32/matmul_tallskinny_256x64___64x256_f32__nx_	cpu_time	3.201037e-05	3.135570e-05	3.282003e-05	2.287270e-02	8	0
-f32/matmul_tallskinny_256x64___64x256_f32__nx_	wall_time	3.203108e-05	2.960249e-05	3.458895e-05	7.783787e-02	8	1
-f32/matmul_wide_128x256___256x64_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	17	0
-f32/matmul_wide_128x256___256x64_f32__nx_	cpu_time	6.470946e-06	6.393231e-06	6.653771e-06	2.013150e-02	17	1
-f32/matmul_wide_128x256___256x64_f32__nx_	wall_time	7.046148e-06	6.798307e-06	7.836746e-06	7.368838e-02	17	0
-f64/matmul_squarelarge_512x512___512x512_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	19	0
-f64/matmul_squarelarge_512x512___512x512_f64__nx_	cpu_time	1.236588e-03	1.214818e-03	1.252157e-03	1.509759e-02	19	0
-f64/matmul_squarelarge_512x512___512x512_f64__nx_	wall_time	1.201097e-03	1.147020e-03	1.235210e-03	3.671233e-02	19	0
-f64/matmul_squaresmall_64x64___64x64_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	10	0
-f64/matmul_squaresmall_64x64___64x64_f64__nx_	cpu_time	3.355361e-06	3.267137e-06	3.381352e-06	1.701981e-02	10	3
-f64/matmul_squaresmall_64x64___64x64_f64__nx_	wall_time	3.849867e-06	3.423021e-06	3.983278e-06	7.276316e-02	10	1
-f64/matmul_tallskinny_256x64___64x256_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	16	0
-f64/matmul_tallskinny_256x64___64x256_f64__nx_	cpu_time	5.844778e-05	5.781376e-05	5.880351e-05	8.466935e-03	16	2
-f64/matmul_tallskinny_256x64___64x256_f64__nx_	wall_time	6.545343e-05	6.218622e-05	6.878678e-05	5.042180e-02	16	1
-f64/matmul_wide_128x256___256x64_f64__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	5	0
-f64/matmul_wide_128x256___256x64_f64__nx_	cpu_time	1.990206e-05	1.927588e-05	2.098218e-05	4.286755e-02	5	1
-f64/matmul_wide_128x256___256x64_f64__nx_	wall_time	2.509291e-05	2.340773e-05	2.871363e-05	1.057249e-01	5	0
-layout-and-batch/matmul_batched_64x32x32_f32__nx_	alloc_words	1.380000e+02	1.380000e+02	1.380000e+02	0.000000e+00	22	1
-layout-and-batch/matmul_batched_64x32x32_f32__nx_	cpu_time	1.226516e-03	1.216104e-03	1.246640e-03	1.244807e-02	22	1
-layout-and-batch/matmul_batched_64x32x32_f32__nx_	wall_time	5.856314e-04	5.624544e-04	6.174715e-04	4.697241e-02	22	1
-layout-and-batch/matmul_transposed_512x512_f32__nx_	alloc_words	1.320000e+02	1.320000e+02	1.320000e+02	0.000000e+00	16	0
-layout-and-batch/matmul_transposed_512x512_f32__nx_	cpu_time	3.874709e-04	3.771499e-04	3.978648e-04	2.673086e-02	16	0
-layout-and-batch/matmul_transposed_512x512_f32__nx_	wall_time	4.639278e-04	4.514931e-04	4.948795e-04	4.675986e-02	16	1
+f32/MatMul-SquareLarge-512x512-512x512-f32-Nx	alloc_words	exact	132
+f32/MatMul-SquareLarge-512x512-512x512-f32-Nx	wall_time	batch=32	n=20	1.925e-04	1.759e-04 1.784e-04 1.798e-04 1.800e-04 1.853e-04 1.881e-04 1.902e-04 1.903e-04 1.920e-04 1.925e-04 1.926e-04 1.945e-04 1.978e-04 1.995e-04 2.002e-04 2.035e-04 2.193e-04 2.203e-04 2.302e-04 2.325e-04
+f32/MatMul-SquareSmall-64x64-64x64-f32-Nx	alloc_words	exact	132
+f32/MatMul-SquareSmall-64x64-64x64-f32-Nx	wall_time	batch=4096	n=20	1.286e-06	1.245e-06 1.246e-06 1.248e-06 1.250e-06 1.251e-06 1.256e-06 1.259e-06 1.275e-06 1.281e-06 1.283e-06 1.289e-06 1.307e-06 1.313e-06 1.320e-06 1.326e-06 1.361e-06 1.369e-06 1.375e-06 1.378e-06 1.423e-06
+f32/MatMul-TallSkinny-256x64-64x256-f32-Nx	alloc_words	exact	132
+f32/MatMul-TallSkinny-256x64-64x256-f32-Nx	wall_time	batch=256	n=20	2.681e-05	2.563e-05 2.601e-05 2.607e-05 2.608e-05 2.645e-05 2.647e-05 2.663e-05 2.668e-05 2.670e-05 2.678e-05 2.684e-05 2.694e-05 2.702e-05 2.704e-05 2.705e-05 2.709e-05 2.757e-05 2.767e-05 2.825e-05 2.860e-05
+f32/MatMul-Wide-128x256-256x64-f32-Nx	alloc_words	exact	132
+f32/MatMul-Wide-128x256-256x64-f32-Nx	wall_time	batch=1024	n=20	5.910e-06	5.620e-06 5.632e-06 5.668e-06 5.702e-06 5.705e-06 5.757e-06 5.836e-06 5.861e-06 5.885e-06 5.901e-06 5.919e-06 5.983e-06 5.993e-06 6.012e-06 6.022e-06 6.088e-06 6.144e-06 6.255e-06 6.335e-06 6.782e-06
+f64/MatMul-SquareLarge-512x512-512x512-f64-Nx	alloc_words	exact	132
+f64/MatMul-SquareLarge-512x512-512x512-f64-Nx	wall_time	batch=4	n=20	1.311e-03	9.310e-04 1.018e-03 1.069e-03 1.080e-03 1.166e-03 1.175e-03 1.188e-03 1.190e-03 1.267e-03 1.304e-03 1.317e-03 1.332e-03 1.386e-03 1.434e-03 1.463e-03 1.490e-03 1.517e-03 1.566e-03 2.116e-03 2.284e-03
+f64/MatMul-SquareSmall-64x64-64x64-f64-Nx	alloc_words	exact	132
+f64/MatMul-SquareSmall-64x64-64x64-f64-Nx	wall_time	batch=2048	n=20	3.189e-06	2.908e-06 2.971e-06 2.972e-06 3.006e-06 3.018e-06 3.026e-06 3.085e-06 3.101e-06 3.151e-06 3.183e-06 3.194e-06 3.244e-06 3.293e-06 3.297e-06 3.304e-06 3.316e-06 3.323e-06 3.346e-06 3.440e-06 3.910e-06
+f64/MatMul-TallSkinny-256x64-64x256-f64-Nx	alloc_words	exact	132
+f64/MatMul-TallSkinny-256x64-64x256-f64-Nx	wall_time	batch=128	n=20	5.437e-05	5.052e-05 5.104e-05 5.118e-05 5.164e-05 5.167e-05 5.201e-05 5.329e-05 5.345e-05 5.385e-05 5.429e-05 5.445e-05 5.913e-05 5.992e-05 6.108e-05 6.152e-05 6.357e-05 6.398e-05 6.639e-05 6.720e-05 7.865e-05
+f64/MatMul-Wide-128x256-256x64-f64-Nx	alloc_words	exact	132
+f64/MatMul-Wide-128x256-256x64-f64-Nx	wall_time	batch=512	n=20	2.645e-05	1.793e-05 1.863e-05 2.050e-05 2.228e-05 2.246e-05 2.251e-05 2.338e-05 2.350e-05 2.408e-05 2.616e-05 2.675e-05 2.676e-05 2.777e-05 3.148e-05 3.150e-05 3.379e-05 3.435e-05 3.571e-05 3.849e-05 4.202e-05
+layout-and-batch/MatMul-Batched-64x32x32-f32-Nx	alloc_words	exact	138
+layout-and-batch/MatMul-Batched-64x32x32-f32-Nx	wall_time	batch=4	n=20	7.060e-04	5.630e-04 5.669e-04 5.896e-04 5.917e-04 6.051e-04 6.213e-04 6.441e-04 6.671e-04 6.927e-04 6.942e-04 7.178e-04 7.196e-04 8.109e-04 8.698e-04 8.765e-04 8.856e-04 8.982e-04 9.133e-04 1.057e-03 1.139e-03
+layout-and-batch/MatMul-Transposed-512x512-f32-Nx	alloc_words	exact	132
+layout-and-batch/MatMul-Transposed-512x512-f32-Nx	wall_time	batch=8	n=20	1.831e-04	1.675e-04 1.683e-04 1.744e-04 1.774e-04 1.780e-04 1.783e-04 1.786e-04 1.794e-04 1.805e-04 1.807e-04 1.854e-04 1.885e-04 1.889e-04 1.942e-04 1.983e-04 1.990e-04 2.087e-04 2.090e-04 2.864e-04 1.178e-03

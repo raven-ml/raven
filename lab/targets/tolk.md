@@ -25,15 +25,15 @@ so a regression localizes to one stage.
 - **BENCH:** the built executable, run **directly**, never through `dune exec`:
   `<WT>/_build/default/packages/tolk/bench/bench_tolk.exe`
   Suite name is `tolk`; lab subset is `--tag lab`. Run it with `SCACHE=0` in
-  the environment (see Perf context). Running the exe directly is required, not
-  stylistic: `dune exec` sets `INSIDE_DUNE`, which makes `--bless --baseline
-  PATH` write `PATH.corrected` instead of `PATH` and suppresses the
-  corrected-file write the ratchet needs, and it forces a `--` separator that
-  would swallow thumper's own flags. Example gate run:
+  the environment (see Perf context). Running the exe directly is
+  simplest and what this program assumes: the corrected-file contract is
+  identical everywhere (a check or bless only ever writes `PATH.corrected`;
+  acceptance is the `mv`), and `dune exec` would need a `--` separator
+  before thumper's flags while adding nothing. Example gate run:
 
   ```
   rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected
-  SCACHE=0 <BENCH> --tag lab -q \
+  SCACHE=0 <BENCH> --tag lab \
     --baseline <WT>/<BASELINE> \
     --json <RESULTS>/verdict.json
   ```
