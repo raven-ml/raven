@@ -83,6 +83,9 @@ let permute t axes = of_view t (View.permute (view t) axes)
 let shrink t bounds = of_view t (View.shrink (view t) bounds)
 let flip t axes = of_view t (View.flip (view t) axes)
 
+let sliding_window t ~axis ~window ~step =
+  of_view t (View.sliding_window (view t) ~axis ~window ~step)
+
 let is_c_contiguous (t : ('a, 'b) t) =
   View.is_c_contiguous (view t) && t.offset = 0
 

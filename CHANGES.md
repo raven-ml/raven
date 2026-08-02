@@ -626,6 +626,10 @@ thread.
   and shape C stubs. The `iterate_inner_dims` helpers did not account for the
   ndarray offset, producing wrong results when the data starts at a non-zero
   offset in the underlying buffer.
+- Add `Nx.sliding_window_view`, a zero-copy view of sliding windows along one
+  axis with a built-in step. Unlike `extract_patches`, it materializes nothing:
+  framed pipelines such as `rfft` over overlapping windows no longer allocate
+  the framed tensor.
 
 ### Rune
 
