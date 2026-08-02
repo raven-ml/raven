@@ -320,3 +320,20 @@ let flip view flip_axes_bools =
           new_strides.(i) <- -new_strides.(i)))
     flip_axes_bools;
   create ~offset:!new_offset ~strides:new_strides view.shape
+
+let sliding_window view ~axis ~window ~step =
+  let ndim = Array.length view.shape in
+  if axis < 0 || axis >= ndim then
+    err "sliding_window" "axis %d out of bounds for %dD tensor" axis ndim;
+  if window < 1 then err "sliding_window" "window %d < 1" window;
+  if step < 1 then err "sliding_window" "step %d < 1" step;
+  let size = view.shape.(axis) in
+  if window > size then
+    err "sliding_window" "window %d > size %d of axis %d" window size axis;
+  let new_shape = Array.make (ndim + 1) window in
+  let new_strides = Array.make (ndim + 1) view.strides.(axis) in
+  Array.blit view.shape 0 new_shape 0 ndim;
+  Array.blit view.strides 0 new_strides 0 ndim;
+  new_shape.(axis) <- ((size - window) / step) + 1;
+  new_strides.(axis) <- view.strides.(axis) * step;
+  create ~offset:view.offset ~strides:new_strides new_shape

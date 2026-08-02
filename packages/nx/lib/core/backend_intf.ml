@@ -430,6 +430,18 @@ module type S = sig
   (** [flip t axes] reverses dimensions where [axes.(i) = true] by negating
       strides. Zero-copy. *)
 
+  val sliding_window :
+    ('a, 'b) t -> axis:int -> window:int -> step:int -> ('a, 'b) t
+  (** [sliding_window t ~axis ~window ~step] extracts sliding windows of length
+      [window] along [axis], advancing by [step]. The size of [axis] becomes
+      [(size - window) / step + 1] and a trailing axis of length [window] is
+      appended. Zero-copy: the stride of [axis] is multiplied by [step] and
+      reused for the trailing axis, so overlapping windows alias the same
+      elements.
+
+      {b Frontend guarantees:} [axis] is valid. [1 <= window <= size of axis].
+      [step >= 1]. *)
+
   val pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
   (** [pad t padding fill_value] extends [t] with [fill_value]. [padding.(i)] is
       [(before, after)] for dimension [i].

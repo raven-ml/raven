@@ -2705,6 +2705,38 @@ val erf : ('a, 'b) t -> ('a, 'b) t
 
 (** {1:windows Sliding windows} *)
 
+(** {2:views Views} *)
+
+val sliding_window_view :
+  ?axis:int -> window:int -> ?step:int -> ('a, 'b) t -> ('a, 'b) t
+(** [sliding_window_view ?axis ~window ?step t] is a {e view} of [t] with
+    sliding windows of length [window] along [axis], taken every [step]
+    elements. [axis] defaults to the last axis; negative indices count from the
+    end. [step] defaults to [1].
+
+    The size of [axis] becomes [(size - window) / step + 1] and a trailing axis
+    of length [window] is appended. No data is copied: overlapping windows share
+    storage with [t], so writing through one window is visible in every window
+    that overlaps it.
+
+    Raises [Invalid_argument] if [window < 1], [step < 1], [window] exceeds the
+    size of [axis], or [axis] is out of bounds.
+
+    {@ocaml[
+      # create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |]
+        |> sliding_window_view ~window:3
+      - : (int32, int32_elt) t = int32 [3,3] [[1, 2, 3],
+                                              [2, 3, 4],
+                                              [3, 4, 5]]
+      # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        |> sliding_window_view ~window:2 ~step:2
+      - : (int32, int32_elt) t = int32 [3,2] [[1, 2],
+                                              [3, 4],
+                                              [5, 6]]
+    ]}
+
+    See also {!extract_patches}. *)
+
 (** {2:patches Patches} *)
 
 val extract_patches :

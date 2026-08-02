@@ -102,3 +102,15 @@ val flip : t -> bool array -> t
     shifting offset.
 
     Raises [Invalid_argument] if [axes_to_flip] rank mismatches [ndim v]. *)
+
+val sliding_window : t -> axis:int -> window:int -> step:int -> t
+(** [sliding_window v ~axis ~window ~step] extracts sliding windows of length
+    [window] along [axis], advancing by [step] elements.
+
+    The size of [axis] becomes [(size - window) / step + 1] and a trailing axis
+    of length [window] is appended. The result multiplies the stride of [axis]
+    by [step] and reuses it for the trailing axis, so overlapping windows alias
+    the same storage.
+
+    Raises [Invalid_argument] if [axis] is out of bounds, [window < 1],
+    [step < 1], or [window] exceeds the size of [axis]. *)

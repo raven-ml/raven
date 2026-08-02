@@ -204,6 +204,13 @@ type _ Effect.t +=
       dims_to_flip : bool array;
     }
       -> ('a, 'b) t Effect.t
+  | E_sliding_window : {
+      t_in : ('a, 'b) t;
+      axis : int;
+      window : int;
+      step : int;
+    }
+      -> ('a, 'b) t Effect.t
   | E_cat : { t_list : ('a, 'b) t list; axis : int } -> ('a, 'b) t Effect.t
   | E_cast : {
       t_in : ('a, 'b) t;
@@ -540,6 +547,11 @@ let flip t_in dims_to_flip =
   movement_op
     (fun () -> E_flip { t_in; dims_to_flip })
     Nx_backend.flip t_in dims_to_flip
+
+let sliding_window t_in ~axis ~window ~step =
+  try Effect.perform (E_sliding_window { t_in; axis; window; step })
+  with Effect.Unhandled _ ->
+    T (Nx_backend.sliding_window (unwrap t_in) ~axis ~window ~step)
 
 let pad t_in padding_config fill_value =
   try Effect.perform (E_pad { t_in; padding_config; fill_value })
