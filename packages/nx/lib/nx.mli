@@ -2508,86 +2508,101 @@ val ifftn :
 (** [ifftn ?axes ?s ?norm x] is the inverse of {!fftn}. *)
 
 val rfft :
+  (Complex.t, 'b) dtype ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [rfft ?axis ?n ?norm x] is the 1-D FFT of real input. Returns only the
-    non-redundant positive frequencies; the output size along the transformed
-    axis is [n/2 + 1].
+  (Complex.t, 'b) t
+(** [rfft dtype ?axis ?n ?norm x] is the 1-D FFT of real input, stored as
+    [dtype]. Returns only the non-redundant positive frequencies; the output
+    size along the transformed axis is [n/2 + 1].
+
+    [dtype] selects the storage precision of the result independently of the
+    input precision: [rfft complex64 x] on float32 input keeps the spectrum in
+    single precision. The transform itself computes in double precision
+    regardless of [dtype].
 
     {@ocaml[
       # create float64 [| 4 |] [| 0.; 1.; 2.; 3. |]
-        |> rfft |> shape
+        |> rfft complex128 |> shape
       - : int array = [|3|]
     ]}
 
     See also {!irfft}, {!fft}. *)
 
 val irfft :
+  (float, 'b) dtype ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [irfft ?axis ?n ?norm x] is the inverse of {!rfft}, producing real output.
-    Assumes Hermitian symmetry.
+  (float, 'b) t
+(** [irfft dtype ?axis ?n ?norm x] is the inverse of {!rfft}, producing real
+    output stored as [dtype]. Assumes Hermitian symmetry. As with {!rfft},
+    [dtype] is independent of the input precision and the transform computes in
+    double precision.
 
     See also {!rfft}. *)
 
 val rfft2 :
+  (Complex.t, 'b) dtype ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [rfft2 ?axes ?s ?norm x] is the 2-D FFT of real input.
+  (Complex.t, 'b) t
+(** [rfft2 dtype ?axes ?s ?norm x] is the 2-D FFT of real input.
 
     See also {!irfft2}, {!rfft}. *)
 
 val irfft2 :
+  (float, 'b) dtype ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [irfft2 ?axes ?s ?norm x] is the inverse of {!rfft2}. *)
+  (float, 'b) t
+(** [irfft2 dtype ?axes ?s ?norm x] is the inverse of {!rfft2}. *)
 
 val rfftn :
+  (Complex.t, 'b) dtype ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [rfftn ?axes ?s ?norm x] is the N-D FFT of real input.
+  (Complex.t, 'b) t
+(** [rfftn dtype ?axes ?s ?norm x] is the N-D FFT of real input.
 
     See also {!irfftn}, {!rfft}. *)
 
 val irfftn :
+  (float, 'b) dtype ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [irfftn ?axes ?s ?norm x] is the inverse of {!rfftn}. *)
+  (float, 'b) t
+(** [irfftn dtype ?axes ?s ?norm x] is the inverse of {!rfftn}. *)
 
 val hfft :
+  (float, 'b) dtype ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [hfft ?axis ?n ?norm x] is the FFT of a signal with Hermitian symmetry,
-    producing real output. *)
+  (float, 'b) t
+(** [hfft dtype ?axis ?n ?norm x] is the FFT of a signal with Hermitian
+    symmetry, producing real output stored as [dtype]. *)
 
 val ihfft :
+  (Complex.t, 'b) dtype ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [ihfft ?axis ?n ?norm x] is the inverse of {!hfft}. *)
+  (Complex.t, 'b) t
+(** [ihfft dtype ?axis ?n ?norm x] is the inverse of {!hfft}. *)
 
 val dct :
   ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t

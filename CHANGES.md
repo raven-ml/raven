@@ -363,6 +363,10 @@ thread.
 
 ### Nx
 
+- **Breaking:** `rfft`, `irfft`, `hfft`, `ihfft` and their 2-D/N-D variants now
+  take the output dtype first, like the constructors. Real FFTs preserve
+  precision: float32 input can produce a `complex64` spectrum instead of always
+  promoting to `complex128`.
 - Add complex accessors `Nx.real`, `Nx.imag`, `Nx.magnitude`, `Nx.angle` and
   the `Nx.complex ~re ~im` constructor, taking the result dtype first so a
   `complex64` spectrum can yield a `float32` magnitude. `Nx.conjugate` now runs

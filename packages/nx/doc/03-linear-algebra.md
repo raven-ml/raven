@@ -192,11 +192,13 @@ For real-valued inputs, `rfft` is more efficient — it exploits conjugate symme
 
 <!-- $MDX skip -->
 ```ocaml
-let spectrum = Nx.rfft signal           (* n/2+1 complex outputs *)
-let signal_back = Nx.irfft spectrum     (* back to real *)
+(* The first argument picks the output dtype: float32 input can keep a
+   complex64 spectrum instead of promoting to complex128 *)
+let spectrum = Nx.rfft Nx.complex128 signal    (* n/2+1 complex outputs *)
+let signal_back = Nx.irfft Nx.float64 spectrum (* back to real *)
 
-let spectrum_2d = Nx.rfft2 image
-let spectrum_nd = Nx.rfftn ~axes:[0; 1] data
+let spectrum_2d = Nx.rfft2 Nx.complex128 image
+let spectrum_nd = Nx.rfftn Nx.complex128 ~axes:[0; 1] data
 ```
 
 ### Frequency axes

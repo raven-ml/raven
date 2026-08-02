@@ -231,7 +231,7 @@ let test_rfft_magnitude () =
     Array.init n (fun i ->
         cos (two_pi *. float_of_int k *. float_of_int i /. float_of_int n))
   in
-  let spectrum = Nx.rfft (Nx.create Nx.float64 [| n |] signal) in
+  let spectrum = Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] signal) in
   let expected =
     Array.init
       ((n / 2) + 1)

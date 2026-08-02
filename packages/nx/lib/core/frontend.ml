@@ -3765,7 +3765,7 @@ module Make (B : Backend_intf.S) = struct
     let r = B.ifft xp ~axes:(Array.of_list axes_list) in
     apply_fft_scale scale r
 
-  let rfftn ?axes ?s ?(norm = `Backward) x =
+  let rfftn dtype ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
     let axes_list =
       match axes with
@@ -3775,10 +3775,10 @@ module Make (B : Backend_intf.S) = struct
     in
     let xp = pad_or_truncate_for_fft x axes_list s in
     let scale = fft_norm_scale norm axes_list xp in
-    let r = B.rfft xp ~dtype:Dtype.Complex128 ~axes:(Array.of_list axes_list) in
+    let r = B.rfft xp ~dtype ~axes:(Array.of_list axes_list) in
     apply_fft_scale scale r
 
-  let irfftn ?axes ?s ?(norm = `Backward) x =
+  let irfftn dtype ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
     let axes_list =
       match axes with
@@ -3807,9 +3807,7 @@ module Make (B : Backend_intf.S) = struct
     let s_param =
       match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
     in
-    let r =
-      B.irfft ?s:s_param x ~dtype:Dtype.Float64 ~axes:(Array.of_list axes_list)
-    in
+    let r = B.irfft ?s:s_param x ~dtype ~axes:(Array.of_list axes_list) in
     if norm_scale <> 1.0 then
       mul r (scalar (B.context r) (B.dtype r) norm_scale)
     else r
@@ -3823,13 +3821,13 @@ module Make (B : Backend_intf.S) = struct
     let s = match n with None -> None | Some sz -> Some [ sz ] in
     ifftn x ~axes:[ axis ] ?s ~norm
 
-  let rfft ?(axis = -1) ?n ?(norm = `Backward) x =
+  let rfft dtype ?(axis = -1) ?n ?(norm = `Backward) x =
     let s = match n with None -> None | Some sz -> Some [ sz ] in
-    rfftn x ~axes:[ axis ] ?s ~norm
+    rfftn dtype x ~axes:[ axis ] ?s ~norm
 
-  let irfft ?(axis = -1) ?n ?(norm = `Backward) x =
+  let irfft dtype ?(axis = -1) ?n ?(norm = `Backward) x =
     let s = match n with None -> None | Some sz -> Some [ sz ] in
-    irfftn x ~axes:[ axis ] ?s ~norm
+    irfftn dtype x ~axes:[ axis ] ?s ~norm
 
   (* 2D FFT *)
 
@@ -3863,36 +3861,36 @@ module Make (B : Backend_intf.S) = struct
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
-  let rfft2 ?axes ?s ?(norm = `Backward) x =
+  let rfft2 dtype ?axes ?s ?(norm = `Backward) x =
     let axes_list = check_fft2 ~op:"rfft2" x axes in
-    rfftn x ~axes:axes_list ?s ~norm
+    rfftn dtype x ~axes:axes_list ?s ~norm
 
-  let irfft2 ?axes ?s ?(norm = `Backward) x =
+  let irfft2 dtype ?axes ?s ?(norm = `Backward) x =
     let axes_list = check_fft2 ~op:"irfft2" x axes in
-    irfftn x ~axes:axes_list ?s ~norm
+    irfftn dtype x ~axes:axes_list ?s ~norm
 
-  let rfftn ?axes ?s ?(norm = `Backward) x =
-    rfftn x
+  let rfftn dtype ?axes ?s ?(norm = `Backward) x =
+    rfftn dtype x
       ~axes:
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
-  let irfftn ?axes ?s ?(norm = `Backward) x =
-    irfftn x
+  let irfftn dtype ?axes ?s ?(norm = `Backward) x =
+    irfftn dtype x
       ~axes:
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
   (* Hermitian FFT *)
-  let hfft ?(axis = -1) ?n ?norm x =
+  let hfft dtype ?(axis = -1) ?n ?norm x =
     let n = match n with None -> 2 * (dim axis x - 1) | Some n -> n in
     let axis = resolve_single_axis x axis in
-    irfftn x ~axes:[ axis ] ~s:[ n ] ?norm
+    irfftn dtype x ~axes:[ axis ] ~s:[ n ] ?norm
 
-  let ihfft ?(axis = -1) ?n ?norm x =
+  let ihfft dtype ?(axis = -1) ?n ?norm x =
     let n = match n with None -> dim axis x | Some n -> n in
     let axis = resolve_single_axis x axis in
-    rfftn x ~axes:[ axis ] ~s:[ n ] ?norm
+    rfftn dtype x ~axes:[ axis ] ~s:[ n ] ?norm
 
   (* FFT helpers *)
   let fftfreq ctx ?(d = 1.0) n =
@@ -3998,7 +3996,7 @@ module Make (B : Backend_intf.S) = struct
       err "stft" "window %d exceeds the %d samples on the last axis" window n;
     let w = taper "stft" (B.context x) (B.dtype x) ~window win in
     let frames = B.sliding_window x ~axis:(r - 1) ~window ~step in
-    let spectrum = rfft (mul frames w) ~axis:(-1) in
+    let spectrum = rfft Dtype.Complex128 (mul frames w) ~axis:(-1) in
     (* [rfft] fixes its own output dtype, so honor [cdt] with a trailing
        conversion — a no-op when they already agree. *)
     match Dtype.equal_witness (dtype spectrum) cdt with
@@ -4041,7 +4039,9 @@ module Make (B : Backend_intf.S) = struct
         ~dilation:[| 1 |]
         ~padding:[| (0, 0) |]
     in
-    let windowed = mul (cast dt (irfft z ~axis:(-1) ~n:window)) w in
+    let windowed =
+      mul (cast dt (irfft Dtype.Float64 z ~axis:(-1) ~n:window)) w
+    in
     let signal = overlap_add windowed in
     let envelope =
       overlap_add
