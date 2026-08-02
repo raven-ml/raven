@@ -32,7 +32,7 @@ let () =
     (to_string (slice [ R (0, 8) ] signal));
 
   (* --- Real FFT: transform to frequency domain --- *)
-  let spectrum = rfft signal in
+  let spectrum = rfft complex128 signal in
   let freqs = rfftfreq ~d:dt n in
 
   (* Magnitudes |z| (scaled by 2/N for single-sided spectrum). *)
@@ -60,7 +60,7 @@ let () =
   let clean_spectrum = create Complex128 (shape spectrum) filtered in
 
   (* Inverse FFT back to time domain. *)
-  let clean_signal = irfft ~n clean_spectrum in
+  let clean_signal = irfft float64 ~n clean_spectrum in
 
   Printf.printf "After filtering (threshold=%.1f):\n" threshold;
   Printf.printf "  Original first 8:  %s\n"

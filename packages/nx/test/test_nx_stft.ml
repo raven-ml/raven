@@ -57,7 +57,9 @@ let test_stft_matches_framed_rfft () =
   List.iter
     (fun (window, step) ->
       let shape, frames = framed ~window ~step data in
-      let expected = Nx.rfft (Nx.create Nx.float64 shape frames) ~axis:(-1) in
+      let expected =
+        Nx.rfft Nx.complex128 (Nx.create Nx.float64 shape frames) ~axis:(-1)
+      in
       let actual = Nx.stft Nx.complex128 ~window ~step ~win:(rect window) x in
       check_nx ~epsilon:1e-11
         (Printf.sprintf "window %d step %d" window step)
@@ -72,7 +74,9 @@ let test_stft_windowed () =
   let w = Nx.hann Nx.float64 window in
   let shape, frames = framed ~window ~step data in
   let expected =
-    Nx.rfft (Nx.mul (Nx.create Nx.float64 shape frames) w) ~axis:(-1)
+    Nx.rfft Nx.complex128
+      (Nx.mul (Nx.create Nx.float64 shape frames) w)
+      ~axis:(-1)
   in
   check_nx ~epsilon:1e-11 "tapered frames" expected
     (Nx.stft Nx.complex128 ~window ~step ~win:w

@@ -21,8 +21,8 @@ dune exec nx/examples/08-signal-processing/main.exe
 
 | Function                      | Purpose                                           |
 | ----------------------------- | ------------------------------------------------- |
-| `rfft t`                      | Real-valued FFT (time domain to frequency domain) |
-| `irfft ~n t`                  | Inverse real FFT (frequency domain back to time)  |
+| `rfft dtype t`                | Real-valued FFT (time domain to frequency domain) |
+| `irfft dtype ~n t`            | Inverse real FFT (frequency domain back to time)  |
 | `rfftfreq ~d n`               | Frequency bin labels for `rfft` output            |
 | `linspace dtype start stop n` | Evenly spaced time samples                        |
 | `sin t`                       | Element-wise sine                                 |
