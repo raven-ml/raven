@@ -136,6 +136,129 @@ let exact_c msg (expected : Complex.t array) (actual : Complex.t array) =
 let exact_f msg (expected : float array) (actual : float array) =
   exact_c msg (complex_of_real expected) (complex_of_real actual)
 
+(* ── Exhaustive forward sweep ──
+   Every n in 1..256: covers both parities of n and of n/2 (the packed real
+   path's self-pair and no-self-pair untangle shapes), every small radix mix,
+   and packed halves that ride Bluestein (e.g. n = 34 -> half 17). *)
+
+let test_rfft_exhaustive () =
+  for n = 1 to 256 do
+    let x = rsig (1000 + n) n in
+    let got = Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] x)) in
+    let want = rfft_oracle x in
+    rel_l2_c (Printf.sprintf "rfft n=%d = DFT" n) 1e-14 want got;
+    bin_bound (Printf.sprintf "rfft n=%d" n) 1e-13 want got
+  done
+
+(* ── Targeted large lengths (forward) ──
+   Naive DFT where n^2 is affordable; otherwise cross-path agreement with the
+   independently DFT-verified complex transform, whose plan machinery is
+   disjoint from the packed path's. *)
+
+let cross_path_fwd n =
+  let x = Nx.create Nx.float64 [| n |] (rsig (2000 + (n mod 977)) n) in
+  let full = Nx.fft (Nx.cast Nx.complex128 x) in
+  let want = Array.sub (Nx.to_array full) 0 ((n / 2) + 1) in
+  rel_l2_c
+    (Printf.sprintf "rfft n=%d = fft half" n)
+    1e-14 want
+    (Nx.to_array (Nx.rfft x))
+
+let test_rfft_large () =
+  (* pow2 against the naive oracle where affordable, cross-path beyond *)
+  let x = rsig 41 4096 in
+  rel_l2_c "rfft n=4096 = DFT" 1e-14 (rfft_oracle x)
+    (Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| 4096 |] x)));
+  cross_path_fwd 65536;
+  cross_path_fwd 44100;
+  cross_path_fwd 131042
+
+let test_rfft_even_bluestein_half () =
+  (* even n whose half is prime: the packed sub-plan is a Bluestein plan *)
+  List.iter
+    (fun n ->
+      let x = rsig (3000 + n) n in
+      rel_l2_c
+        (Printf.sprintf "rfft n=%d (Bluestein half) = DFT" n)
+        1e-14 (rfft_oracle x)
+        (Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] x))))
+    [ 34; 4098 ]
+
+let test_rfft_odd_controls () =
+  (* odd lengths keep the full-transform path; pin them to the oracle too *)
+  List.iter
+    (fun n ->
+      let x = rsig (4000 + n) n in
+      rel_l2_c
+        (Printf.sprintf "rfft n=%d (odd) = DFT" n)
+        1e-14 (rfft_oracle x)
+        (Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] x))))
+    [ 7; 101 ]
+
+(* ── DC/Nyquist structural exactness (even n) ──
+   The half-spectrum edges of a real signal are exactly real; the packed
+   untangle stores literal 0.0 there, matching numpy/pocketfft. *)
+
+let test_rfft_dc_nyquist_exact () =
+  List.iter
+    (fun n ->
+      let spec =
+        Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] (rsig (5000 + n) n)))
+      in
+      is_true
+        ~msg:(Printf.sprintf "Im X[0] = 0 exactly, n=%d" n)
+        (spec.(0).Complex.im = 0.0);
+      is_true
+        ~msg:(Printf.sprintf "Im X[n/2] = 0 exactly, n=%d" n)
+        (spec.(n / 2).Complex.im = 0.0))
+    [ 2; 4; 8; 34; 4096 ]
+
+(* ── dtypes: f32 input upcasts on gather ── *)
+
+let test_rfft_f32 () =
+  List.iter
+    (fun n ->
+      let x = rsig (6000 + n) n in
+      let x32 = Nx.create Nx.float32 [| n |] x in
+      (* oracle on the f32-rounded values the gather actually reads *)
+      rel_l2_c
+        (Printf.sprintf "rfft f32 n=%d = DFT" n)
+        1e-4
+        (rfft_oracle (Nx.to_array x32))
+        (Nx.to_array (Nx.rfft x32)))
+    [ 8; 34; 4096 ]
+
+(* ── Multi-axis: last axis packed + other axes complex ── *)
+
+let dft2_real rows cols (data : float array) =
+  (* full 2-D forward DFT of a real matrix, first cols/2+1 columns kept *)
+  let tmp = Array.make (rows * cols) Complex.zero in
+  for r = 0 to rows - 1 do
+    let row = dft ~sign:(-1) (complex_of_real (Array.sub data (r * cols) cols)) in
+    Array.blit row 0 tmp (r * cols) cols
+  done;
+  let hcols = (cols / 2) + 1 in
+  let out = Array.make (rows * hcols) Complex.zero in
+  for c = 0 to hcols - 1 do
+    let col = dft ~sign:(-1) (Array.init rows (fun r -> tmp.((r * cols) + c))) in
+    for r = 0 to rows - 1 do
+      out.((r * hcols) + c) <- col.(r)
+    done
+  done;
+  out
+
+let test_rfft2_vs_dft () =
+  List.iter
+    (fun (rows, cols) ->
+      let data = Array.init (rows * cols) (fun i -> sample (7000 + rows) i) in
+      let t = Nx.create Nx.float64 [| rows; cols |] data in
+      rel_l2_c
+        (Printf.sprintf "rfft2 %dx%d = 2-D DFT" rows cols)
+        1e-13
+        (dft2_real rows cols data)
+        (Nx.to_array (Nx.rfftn ~axes:[ 0; 1 ] t)))
+    [ (5, 8); (7, 12) ]
+
 (* ── Strided and offset views ──
    The last-axis real drivers read the input tensor directly (no compaction
    pass), so a strided or offset view must transform identically to its
@@ -215,6 +338,16 @@ let test_irfft_batched_lines () =
 
 let suite =
   [
+    group "forward sweep"
+      [
+        test "every n in 1..256" test_rfft_exhaustive;
+        test "targeted large" test_rfft_large;
+        test "bluestein halves" test_rfft_even_bluestein_half;
+        test "odd controls" test_rfft_odd_controls;
+        test "dc/nyquist exact" test_rfft_dc_nyquist_exact;
+        test "f32" test_rfft_f32;
+        test "rfft2 vs 2-D DFT" test_rfft2_vs_dft;
+      ];
     group "strided views"
       [
         test "rfft strided" test_rfft_strided_view;
