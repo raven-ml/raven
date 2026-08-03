@@ -74,6 +74,14 @@ let oracle_tests =
         check_vmap ~msg:"cat" (fun r -> Nx.concatenate ~axis:0 [ r; r ]) (xs ()));
     test "pad" (fun () ->
         check_vmap ~msg:"pad" (fun r -> Nx.pad [| (1, 1) |] 9.0 r) (xs ()));
+    test "sliding windows" (fun () ->
+        check_vmap ~msg:"sliding_window_view"
+          (fun r -> Nx.sliding_window_view ~window:2 r)
+          (xs ()));
+    test "sliding windows on a leading axis" (fun () ->
+        check_vmap ~msg:"sliding_window_view axis 0"
+          (fun m -> Nx.sliding_window_view ~axis:0 ~window:2 m)
+          (ms ()));
     test "slice" (fun () ->
         check_vmap ~msg:"slice" (fun r -> Nx.slice [ Nx.R (1, 3) ] r) (xs ()));
     test "take_along_axis with constant indices" (fun () ->

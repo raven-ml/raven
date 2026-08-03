@@ -257,6 +257,11 @@ let handler (tangents : Tensor_map.t) =
             (fun k ->
               lift1 k (flip t_in dims_to_flip) t_in (fun dx ->
                   flip dx dims_to_flip))
+      | E_sliding_window { t_in; axis; window; step } ->
+          Some
+            (fun k ->
+              lift1 k (sliding_window t_in ~axis ~window ~step) t_in (fun dx ->
+                  sliding_window dx ~axis ~window ~step))
       | E_cat { t_list; axis } ->
           Some
             (fun k ->

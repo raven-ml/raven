@@ -319,6 +319,47 @@ let handler (tape : Tape.t) =
             (fun k ->
               pull1 k (flip t_in dims_to_flip) t_in (fun g ->
                   flip g dims_to_flip))
+      | E_sliding_window { t_in; axis; window; step } ->
+          Some
+            (fun k ->
+              (* The transpose is overlap-add: input position [w*step + j]
+                 accumulates the cotangent of window [w] at offset [j]. Bring
+                 the trailing window axis next to the window-count axis, merge
+                 them, and scatter-add each pair's cotangent at the position it
+                 read. Positions no window reads (step > window) keep the
+                 template's zero. *)
+              pull1 k (sliding_window t_in ~axis ~window ~step) t_in (fun g ->
+                  let in_shape = T.shape t_in in
+                  let r = Array.length in_shape in
+                  let n_win = ((in_shape.(axis) - window) / step) + 1 in
+                  let order =
+                    List.init (r + 1) (fun i ->
+                        if i <= axis then i
+                        else if i = axis + 1 then r
+                        else i - 1)
+                  in
+                  let merged =
+                    Array.init r (fun i ->
+                        if i = axis then n_win * window else in_shape.(i))
+                  in
+                  let g =
+                    T.reshape merged (T.contiguous (T.transpose g ~axes:order))
+                  in
+                  let idx =
+                    T.add
+                      (T.reshape [| n_win; 1 |]
+                         (T.arange T.int32 0 (n_win * step) step))
+                      (T.reshape [| 1; window |] (T.arange T.int32 0 window 1))
+                  in
+                  let idx_shape =
+                    Array.init r (fun i ->
+                        if i = axis then n_win * window else 1)
+                  in
+                  let indices =
+                    T.broadcast_to merged (T.reshape idx_shape idx)
+                  in
+                  scatter ~mode:`Add ~unique_indices:false (T.zeros_like t_in)
+                    ~indices ~updates:g ~axis))
       | E_cat { t_list; axis } ->
           Some
             (fun k ->
