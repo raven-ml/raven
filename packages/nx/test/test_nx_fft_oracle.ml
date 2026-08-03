@@ -368,6 +368,25 @@ let test_irfft_c64_dtype () =
         (Nx.to_array (Nx.irfft ~n spec32)))
     [ 8; 34; 4096 ]
 
+(* ── c2c Bluestein lengths (the 7-smooth pad m = good_size(2n−1)) ──
+   n=17 pads to m=35, n=4099 to m=8232 — both non-power-of-two sub-plans;
+   the naive DFT stays the arbiter for both directions. *)
+
+let test_fft_bluestein_smooth_m () =
+  List.iter
+    (fun n ->
+      let a = csig (15000 + n) n in
+      let t = Nx.create Nx.complex128 [| n |] a in
+      rel_l2_c
+        (Printf.sprintf "fft n=%d (Bluestein) = DFT" n)
+        1e-14 (dft ~sign:(-1) a)
+        (Nx.to_array (Nx.fft t));
+      rel_l2_c
+        (Printf.sprintf "ifft n=%d (Bluestein) = DFT+" n)
+        1e-14 (dft ~sign:1 a)
+        (Nx.to_array (Nx.ifft ~norm:`Forward t)))
+    [ 17; 4099 ]
+
 (* ── Strided and offset views ──
    The last-axis real drivers read the input tensor directly (no compaction
    pass), so a strided or offset view must transform identically to its
@@ -470,6 +489,8 @@ let suite =
         test "targeted large" test_roundtrip_large;
         test "irfft2" test_irfft2_roundtrip;
       ];
+    group "bluestein"
+      [ test "smooth-m fft/ifft" test_fft_bluestein_smooth_m ];
     group "strided views"
       [
         test "rfft strided" test_rfft_strided_view;
