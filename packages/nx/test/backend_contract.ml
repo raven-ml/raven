@@ -3201,6 +3201,28 @@ struct
               equal ~msg:"strided rfft = DFT half" (array ct)
                 (Array.sub full 0 ((n / 2) + 1))
                 (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
+          case classify path "irfft-vs-dft-even" (fun () ->
+              (* unnormalized: B.irfft = real part of the +sign DFT of the
+                 Hermitian-extended spectrum (Im of DC/Nyquist discarded) *)
+              let n = 12 in
+              let half = (n / 2) + 1 in
+              let g = cdata half in
+              let f = Array.make n Complex.zero in
+              Array.blit g 0 f 0 half;
+              f.(0) <- z g.(0).Complex.re 0.;
+              f.(n / 2) <- z g.(n / 2).Complex.re 0.;
+              for k = 1 to half - 2 do
+                f.(n - k) <- Complex.conj f.(k)
+              done;
+              let want =
+                Array.map (fun v -> v.Complex.re) (dft ~inverse:true f)
+              in
+              let spec = F.create ctx F.complex128 [| half |] g in
+              equal ~msg:"irfft = symmetrized inverse DFT"
+                (array (ftest ~rel:1e-9 ~abs:1e-9))
+                want
+                (F.to_array
+                   (B.irfft ~s:[| n |] spec ~dtype:F.float64 ~axes:[| 0 |])));
         ];
     ]
 
