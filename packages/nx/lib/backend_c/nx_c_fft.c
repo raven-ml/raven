@@ -715,9 +715,13 @@ static fft_plan *build_bluestein(int64_t n, int sign) {
   p->kind = FFT_BLUESTEIN;
   /* The pad only needs m >= 2n-1; the smallest 7-smooth m beats the old
      next-power-of-two whenever a 3/5/7 factor lands closer (e.g. n=4099:
-     8232 = 2³·3·7³ instead of 16384 — fewer, cheaper stages, and the shorter
-     transform is also slightly more accurate). Lengths whose 2n-1 is already
-     just under a power of two keep it (n=65521 stays m=131072). */
+     8232 = 2³·3·7³ instead of 16384 — fewer, cheaper stages). Accuracy is a
+     wash to a slight cost, not a win: rel-L2 error vs pocketfft doubles
+     measured ~1.00× the old plan's at n=4099 and 1.08–1.11× at n=10007
+     across 24 seeds (the m change and the 1/m fold below reorder the
+     roundings), the error itself staying ≤ 1e-15 rel-L2. Lengths whose 2n-1
+     is already just under a power of two keep it (n=65521 stays m=131072,
+     bit-identical output). */
   int64_t m = fft_good_size(2 * n - 1);
   p->m = m;
   p->work_cx = 2 * (m + FFT_PAD); /* a-line + de-aliased ping-pong scratch */
