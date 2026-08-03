@@ -2923,6 +2923,9 @@ struct
       Array.init n (fun i ->
           z (float_of_int ((i mod 5) - 2)) (float_of_int ((i mod 3) - 1)))
     in
+    let rdata n =
+      Array.init n (fun i -> (float_of_int ((i mod 7) - 3) /. 2.) +. 0.25)
+    in
     let cscale s =
       Array.map (fun w -> z (w.Complex.re *. s) (w.Complex.im *. s))
     in
@@ -3156,6 +3159,48 @@ struct
                      (float_of_int n *. ex))
                 (Float.abs (ex_hat -. (float_of_int n *. ex))
                 <= 1e-6 *. float_of_int n *. ex));
+          (* rfft is the first n/2+1 bins of the forward DFT; even lengths are
+             stated separately from the roundtrips above because a real-input
+             fast path may treat them specially (n=34's half is prime). *)
+          case classify path "rfft-vs-dft-even" (fun () ->
+              let n = 12 in
+              let data = rdata n in
+              let t = F.create ctx F.float64 [| n |] data in
+              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              equal ~msg:"rfft = DFT half" (array ct)
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
+          case classify path "rfft-vs-dft-even-bluestein-half" (fun () ->
+              let n = 34 in
+              let data = rdata n in
+              let t = F.create ctx F.float64 [| n |] data in
+              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              equal ~msg:"rfft = DFT half" (array ct)
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
+          case classify path "rfft-complex64-even" (fun () ->
+              (* f32 in, c32 out: gather upcasts, store rounds *)
+              let n = 12 in
+              let data = rdata n in
+              let t = F.create ctx F.float32 [| n |] data in
+              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              equal ~msg:"f32 rfft = DFT half"
+                (array (ctest ~rel:1e-4 ~abs:1e-4))
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex64 ~axes:[| 0 |])));
+          case classify path "rfft-strided-axis-vs-dft" (fun () ->
+              let n = 34 in
+              let data = rdata n in
+              let interleaved =
+                Array.init (n * 2) (fun i ->
+                    if i mod 2 = 0 then 99. else data.(i / 2))
+              in
+              let base = F.create ctx F.float64 [| n; 2 |] interleaved in
+              let t = B.shrink base [| (0, n); (1, 2) |] in
+              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              equal ~msg:"strided rfft = DFT half" (array ct)
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
         ];
     ]
 

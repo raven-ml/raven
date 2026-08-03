@@ -49,12 +49,15 @@
    Multi-axis is repeated 1-D passes, one transform axis at a time; each pass
    parallelizes over the independent "lines" (the odometer over all other dims),
    gathering each strided length-n line to contiguous scratch, transforming, and
-   scattering back. rfft/irfft ride the complex transform (correctness-first). */
+   scattering back. rfft's last axis packs an even-length real line into a
+   half-size complex transform plus an O(n) Hermitian untangle (see the packed
+   real path below); odd lengths keep the full-size complex transform. */
 
 /* DEFERRED PERF (correctness-first; none affects correctness, all verified
    against the DFT oracle):
-   1. rfft/irfft use a full-size complex FFT + half extraction rather than a
-      half-size packed real-FFT — correct but ~2× the ideal on the real axis.
+   1. irfft still reconstructs the full length-s spectrum and runs a full-size
+      complex inverse; the packed half-size inverse (the dual of rfft's packed
+      forward) is the remaining ~2× on that axis.
    2. The generic odd-prime pass (11/13) is an O(ip²) direct DFT, not a tuned
       unrolled butterfly, and the native/Bluestein gate is a flat prime bound
       (≤ 13) rather than a cost model. Fine for the admitted small primes; a
@@ -502,8 +505,8 @@ static void passg(int64_t ido, int64_t ip, int64_t l1, const cx2 *restrict cc,
   }
 }
 
-/* ── Plan: native mixed-radix, or Bluestein for a non-smooth length ────────*/
-typedef enum { FFT_NATIVE, FFT_BLUESTEIN } fft_kind;
+/* ── Plan: native mixed-radix, Bluestein, or the packed real wrapper ───────*/
+typedef enum { FFT_NATIVE, FFT_BLUESTEIN, FFT_REAL } fft_kind;
 
 typedef struct {
   int radix;   /* 8, 4, 2, 3, 5, 7, or a generic odd prime (11, 13) */
@@ -517,16 +520,24 @@ typedef struct fft_plan {
   int64_t n;
   int sign;
   fft_kind kind;
-  int64_t work_cx; /* scratch cx2 exec needs beyond the size-n line buffer */
+  int64_t work_cx; /* scratch cx2 exec needs beyond the size-n line buffer
+                      (for FFT_REAL: beyond the packed N+1 line, N = n/2) */
   /* NATIVE */
   int nstages;
   fft_stage *stages;
   /* BLUESTEIN */
-  int64_t m;                  /* padded power-of-two length (>= 2n-1) */
+  int64_t m;                  /* padded 7-smooth length (>= 2n-1) */
   cx2 *chirp;                 /* chirp[j] = exp(sign·iπ j²/n), j in [0,n) */
-  cx2 *bfilter;               /* native FFT of the b-sequence, length m */
-  struct fft_plan *mplan_fwd; /* native size-m forward plan (sign -1) */
-  struct fft_plan *mplan_inv; /* native size-m inverse plan (sign +1) */
+  cx2 *bfilter;               /* native FFT of the b-sequence times 1/m */
+  /* BLUESTEIN: native size-m forward/inverse sub-plans (sign -1 / +1).
+     REAL: mplan_fwd is the length-n/2 complex sub-plan with the SAME sign as
+     this node (a real inverse packs onto a +sign half-size transform);
+     mplan_inv stays NULL. Sub-plans are private to their parent — built by
+     direct plan_build, never through the cache. */
+  struct fft_plan *mplan_fwd;
+  struct fft_plan *mplan_inv;
+  /* REAL */
+  cx2 *rtw; /* untangle/pre-twiddle table, n/4+1 entries (see build_real) */
   struct fft_plan *next;
 } fft_plan;
 
@@ -546,6 +557,7 @@ static void plan_free(fft_plan *p) {
   }
   free(p->chirp);
   free(p->bfilter);
+  free(p->rtw);
   plan_free(p->mplan_fwd);
   plan_free(p->mplan_inv);
   free(p);
@@ -750,16 +762,54 @@ static fft_plan *plan_build(int64_t n, int sign) {
   return build_bluestein(n, sign);
 }
 
+/* Packed real plan (even n): the length-N=n/2 complex sub-plan plus the
+   untangle/pre-twiddle table rtw[k] = (−sin θ_k, sign·cos θ_k), θ_k = 2πk/n,
+   k = 0..N/2. sign −1 stores T[k] = −i·ω_n^k (the forward untangle twiddle),
+   sign +1 stores U[k] = conj(T[k]) (the inverse pre-twiddle), so both packed
+   drivers share one table layout and one loop shape. Entries come from one
+   cos+sin call on the exact integer index — θ ≤ π/2 needs no reduction — and
+   never a recurrence (which would reintroduce O(√n)·u twiddle drift; same
+   doctrine as the stage tables above). rtw[0] is allocated but unused (the
+   DC/Nyquist edges are handled separately); keeping it makes indexing
+   uniform. The sub-plan comes from a direct plan_build call, NEVER plan_get:
+   the caller already holds g_plan_mtx (non-recursive), and Bluestein set the
+   precedent of private, unshared sub-plans. */
+static fft_plan *build_real(int64_t n, int sign) {
+  /* precondition: n even, n >= 2 (plan_get_kind's callers gate) */
+  fft_plan *p = calloc(1, sizeof(fft_plan));
+  if (!p) return NULL;
+  p->n = n;
+  p->sign = sign;
+  p->kind = FFT_REAL;
+  int64_t N = n / 2;
+  p->mplan_fwd = plan_build(N, sign); /* native or Bluestein — either works */
+  p->rtw = malloc((size_t)(N / 2 + 1) * sizeof(cx2));
+  if (!p->mplan_fwd || !p->rtw) {
+    plan_free(p);
+    return NULL;
+  }
+  for (int64_t k = 0; k <= N / 2; k++) {
+    double ang = 2.0 * NX_C_PI * (double)k / (double)n;
+    p->rtw[k].r = -sin(ang);
+    p->rtw[k].i = (double)sign * cos(ang);
+  }
+  p->work_cx = p->mplan_fwd->work_cx;
+  return p;
+}
+
 /* Lock held by the caller's CAMLprim; the cache mutex serializes cache ops
-   across domains. Grow-only: a returned pointer is never freed. NULL on OOM. */
-static const fft_plan *plan_get(int64_t n, int sign) {
+   across domains. Grow-only: a returned pointer is never freed — the
+   no-eviction/no-UAF argument in the header covers FFT_REAL nodes like every
+   other kind. NULL on OOM. `real` selects the packed real wrapper; a real and
+   a complex plan of the same (n, sign) are distinct cache entries. */
+static const fft_plan *plan_get_kind(int64_t n, int sign, int real) {
   pthread_mutex_lock(&g_plan_mtx);
   for (fft_plan *p = g_plans; p; p = p->next)
-    if (p->n == n && p->sign == sign) {
+    if (p->n == n && p->sign == sign && ((p->kind == FFT_REAL) == (real != 0))) {
       pthread_mutex_unlock(&g_plan_mtx);
       return p;
     }
-  fft_plan *p = plan_build(n, sign);
+  fft_plan *p = real ? build_real(n, sign) : plan_build(n, sign);
   if (p) {
     p->next = g_plans;
     g_plans = p;
@@ -768,13 +818,60 @@ static const fft_plan *plan_get(int64_t n, int sign) {
   return p;
 }
 
-/* Transform the length-n line `x` in place; `work` is >= plan->work_cx cx2. */
+static const fft_plan *plan_get(int64_t n, int sign) {
+  return plan_get_kind(n, sign, 0);
+}
+
+/* Transform the length-n line `x` in place; `work` is >= plan->work_cx cx2.
+   Never called on an FFT_REAL node: the packed drivers run its complex
+   sub-plan (plan_exec(p->mplan_fwd, ...)) around their own twiddle pass. */
 static void plan_exec(const fft_plan *p, cx2 *x, cx2 *work) {
   if (p->n <= 1) return; /* identity: length-1 line already holds its transform */
   if (p->kind == FFT_NATIVE)
     native_exec(p, x, work);
   else
     bluestein_exec(p, x, work);
+}
+
+/* ── Packed real path (even n) ────────────────────────────────────────────
+   An even real line packs into a half-length complex line
+   z[j] = (x[2j], x[2j+1]), j in [0, N), N = n/2 — one length-N transform of
+   the SAME sign, then an O(n) Hermitian untangle, instead of a length-n
+   complex transform of a half-zero line. The forward untangle
+   (Sorensen et al. 1987; Numerical Recipes 3rd ed. §12.3):
+
+     X[k]   = (Z[k] + conj(Z[N−k]))/2 + T[k]·(Z[k] − conj(Z[N−k]))/2
+     T[k]   = −i·ω_n^k = (−sin θ_k, −cos θ_k),  θ_k = 2πk/n
+     X[0]   = Re Z[0] + Im Z[0]      X[N] = Re Z[0] − Im Z[0]
+
+   so DC and Nyquist come out EXACTLY real (matching numpy/pocketfft; the
+   full-length path left ~1e-17·‖x‖ residue there). In-place safety: the
+   edges touch slots 0 and N only, iteration k reads slots {k, N−k} before
+   writing exactly those slots, and distinct iterations touch disjoint pairs.
+   When N is even the last iteration k = N/2 is the self-pair and the same
+   code is correct without a branch: θ = π/2 makes rtw[N/2] = (−1, 0), and
+   both writes then produce conj(Z[N/2]). Verified against the naive-DFT
+   oracle for every n in 1..256 (both parities of N) plus the targeted large
+   lengths in the oracle suite. */
+static void rfft_untangle(cx2 *restrict z, const cx2 *restrict rtw,
+                          int64_t N) {
+  /* edges first, from the ORIGINAL Z[0] (slot 0 is overwritten by X[0]) */
+  double z0r = z[0].r, z0i = z[0].i;
+  z[0].r = z0r + z0i;
+  z[0].i = 0.0;
+  z[N].r = z0r - z0i;
+  z[N].i = 0.0;
+  for (int64_t k = 1; k <= N / 2; k++) {
+    cx2 zk = z[k], znk = z[N - k], t = rtw[k];
+    double f1r = zk.r + znk.r, f1i = zk.i - znk.i; /* Z[k] + conj(Z[N−k]) */
+    double f2r = zk.r - znk.r, f2i = zk.i + znk.i; /* Z[k] − conj(Z[N−k]) */
+    double tr = f2r * t.r - f2i * t.i;
+    double ti = f2r * t.i + f2i * t.r;
+    z[k].r = 0.5 * (f1r + tr);
+    z[k].i = 0.5 * (f1i + ti);
+    z[N - k].r = 0.5 * (f1r - tr);
+    z[N - k].i = 0.5 * (ti - f1i);
+  }
 }
 
 /* ── Gather / scatter one strided line, converting storage <-> cx2 ─────────
@@ -827,6 +924,24 @@ static void scatter_real(nx_c_dtype dt, char *base, int64_t stride_elems,
       *(double *)p = src[k].r;
     else
       *(float *)p = (float)src[k].r;
+  }
+}
+/* pack for the even-n real path: z[j] = (x[2j], x[2j+1]) — two strided reals
+   per cx2; f32 upcasts. Arbitrary strides (negative, zero) work like in the
+   four gatherers above. */
+static void gather_real_pairs(nx_c_dtype dt, const char *base,
+                              int64_t stride_elems, int64_t esz, int64_t N,
+                              cx2 *dst) {
+  for (int64_t j = 0; j < N; j++) {
+    const char *p0 = base + 2 * j * stride_elems * esz;
+    const char *p1 = base + (2 * j + 1) * stride_elems * esz;
+    if (dt == NX_C_DTYPE_f64) {
+      dst[j].r = *(const double *)p0;
+      dst[j].i = *(const double *)p1;
+    } else {
+      dst[j].r = (double)*(const float *)p0;
+      dst[j].i = (double)*(const float *)p1;
+    }
   }
 }
 
@@ -949,9 +1064,88 @@ static nx_c_status nx_c_fft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
   return NX_C_OK;
 }
 
+/* ── rfft last axis, packed (even n) ──────────────────────────────────────
+   Per line: pack N=n/2 pairs → length-N complex FFT (the FFT_REAL sub-plan)
+   → in-place untangle → scatter the N+1 half-spectrum bins. Per-worker
+   scratch is [ z: N+1 cx2 ][ work: work_cx cx2 ] — the z|work junction
+   carries exactly the one extra Nyquist slot the algorithm forces, NOT an
+   FFT_PAD on top: the header's measured doctrine keeps the main ping-pong
+   junction unpadded (a 64 B pad regressed pow2 65536 1.20×→1.29×). Thread
+   policy is unchanged from run_axis (same lines/n/bytes inputs) even though
+   the packed work is half — deliberately conservative. */
+typedef struct {
+  nx_c_dtype src_dt, dst_dt;
+  const nx_c_ndarray *src;
+  const nx_c_ndarray *dst;
+  int axis;
+  int64_t N; /* n/2 */
+  int64_t src_esz, dst_esz;
+  const fft_plan *plan; /* FFT_REAL, sign -1 */
+  char *scratch;
+  int64_t slot;
+} rfft_packed_ctx;
+
+static void rfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  const rfft_packed_ctx *c = (const rfft_packed_ctx *)vctx;
+  cx2 *base = (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
+  cx2 *z = base;
+  cx2 *work = base + (c->N + 1);
+  int64_t sstride = c->src->strides[c->axis];
+  int64_t dstride = c->dst->strides[c->axis];
+  for (int64_t L = lo; L < hi; L++) {
+    const char *sb = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
+    char *db = (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
+    gather_real_pairs(c->src_dt, sb, sstride, c->src_esz, c->N, z);
+    plan_exec(c->plan->mplan_fwd, z, work);
+    rfft_untangle(z, c->plan->rtw, c->N);
+    scatter_cx(c->dst_dt, db, dstride, c->dst_esz, c->N + 1, z);
+  }
+}
+
+static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
+                                  const nx_c_ndarray *src,
+                                  const nx_c_ndarray *dst, int axis,
+                                  int64_t n) {
+  const fft_plan *plan = plan_get_kind(n, -1, 1);
+  if (!plan) return NX_C_ERR_ALLOC;
+  int64_t N = n / 2;
+
+  int64_t lines = 1;
+  for (int d = 0; d < dst->ndim; d++)
+    if (d != axis) lines *= dst->shape[d];
+  if (lines == 0) return NX_C_OK;
+
+  int64_t slot = (N + 1) + plan->work_cx; /* cx2 per worker */
+  int64_t bytes = lines * n * (int64_t)sizeof(cx2);
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n, bytes);
+  if (nth > lines) nth = (int)lines;
+  if (nth < 1) nth = 1;
+
+  int64_t slot_bytes = ((slot * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
+  char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
+  if (!scratch) return NX_C_ERR_ALLOC;
+
+  rfft_packed_ctx c;
+  c.src_dt = src_dt;
+  c.dst_dt = dst_dt;
+  c.src = src;
+  c.dst = dst;
+  c.axis = axis;
+  c.N = N;
+  c.src_esz = nx_c_elem_size(src_dt);
+  c.dst_esz = nx_c_elem_size(dst_dt);
+  c.plan = plan;
+  c.scratch = scratch;
+  c.slot = slot_bytes / (int64_t)sizeof(cx2);
+  nx_c_parallel_for(nth, lines, bytes, rfft_packed_body, &c, scratch);
+  return NX_C_OK;
+}
+
 /* ── rfft ─────────────────────────────────────────────────────────────────
-   Real→complex. Last transformed axis: real line → full FFT → keep n/2+1 bins.
-   Other transformed axes: full complex FFT of `out` in place. */
+   Real→complex. Last transformed axis: even n takes the packed half-size
+   path; odd n keeps the full-length transform (packing needs pairs — the
+   status-quo path, byte-identical). Other transformed axes: full complex FFT
+   of `out` in place. */
 static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
                                nx_c_dtype in_dt, nx_c_dtype out_dt,
                                const int *axes, int naxes) {
@@ -962,7 +1156,9 @@ static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out
   int64_t half = n / 2 + 1;
   if (out->shape[last] != half) return NX_C_ERR_SHAPE;
   /* last axis: real in (n) → complex out (half) */
-  nx_c_status s = run_axis(in_dt, out_dt, in, out, last, n, half, -1, 1, 0);
+  nx_c_status s = (n >= 2 && (n & 1) == 0)
+                     ? run_rfft_packed(in_dt, out_dt, in, out, last, n)
+                     : run_axis(in_dt, out_dt, in, out, last, n, half, -1, 1, 0);
   if (s != NX_C_OK) return s;
   /* remaining axes: complex fft on out in place */
   for (int ai = 0; ai < naxes - 1; ai++) {
