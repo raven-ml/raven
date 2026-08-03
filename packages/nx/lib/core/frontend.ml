@@ -4697,6 +4697,39 @@ module Make (B : Backend_intf.S) = struct
     done;
     !acc
 
+  (* ───── Complex Accessors ───── *)
+
+  (* Compositions of existing backend operations, so every backend (including
+     effectful ones) gets them without extending the backend interface. Each
+     runs a constant number of element-wise kernels and never boxes a
+     [Stdlib.Complex.t]. Component extraction leans on the normative cast
+     rules: complex-to-float takes the real part, float-to-complex sets a zero
+     imaginary part. *)
+  module Complex = struct
+    let real dt z = cast dt z
+
+    (* z * -i swaps the imaginary part into the real lane: for finite
+       components (re + i.im)(-i) has real part im exactly. *)
+    let imag dt z = cast dt (mul_s z Stdlib.Complex.{ re = 0.0; im = -1.0 })
+
+    (* The inner [abs] is the dtype-preserving frontend one; on complex it is
+       the fused magnitude kernel (im = 0), so the cast keeps |z|. *)
+    let abs dt z = cast dt (abs z)
+    let angle dt z = atan2 (imag dt z) (real dt z)
+
+    (* re_c - (z - re_c) = re - i.im without scaling, so finite components
+       (including values above half the dtype maximum) stay exact. The float64
+       hop through creal is exact for both complex dtypes. *)
+    let conj z =
+      let re_c = cast (dtype z) (cast Dtype.float64 z) in
+      sub re_c (sub z re_c)
+
+    let polar dt r theta =
+      let re = cast dt (mul r (cos theta)) in
+      let im = cast dt (mul r (sin theta)) in
+      add re (mul_s im Stdlib.Complex.i)
+  end
+
   (* ───── Infix Operators ───── *)
 
   module Infix = struct

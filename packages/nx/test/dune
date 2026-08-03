@@ -14,6 +14,7 @@
   test_nx_manipulation
   test_nx_extended_dtypes
   test_nx_fft
+  test_nx_complex
   test_nx_ops
   test_nx_rng
   test_nx_stft)
