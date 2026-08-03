@@ -3166,7 +3166,9 @@ struct
               let n = 12 in
               let data = rdata n in
               let t = F.create ctx F.float64 [| n |] data in
-              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
               equal ~msg:"rfft = DFT half" (array ct)
                 (Array.sub full 0 ((n / 2) + 1))
                 (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
@@ -3174,7 +3176,9 @@ struct
               let n = 34 in
               let data = rdata n in
               let t = F.create ctx F.float64 [| n |] data in
-              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
               equal ~msg:"rfft = DFT half" (array ct)
                 (Array.sub full 0 ((n / 2) + 1))
                 (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
@@ -3183,7 +3187,9 @@ struct
               let n = 12 in
               let data = rdata n in
               let t = F.create ctx F.float32 [| n |] data in
-              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
               equal ~msg:"f32 rfft = DFT half"
                 (array (ctest ~rel:1e-4 ~abs:1e-4))
                 (Array.sub full 0 ((n / 2) + 1))
@@ -3197,7 +3203,9 @@ struct
               in
               let base = F.create ctx F.float64 [| n; 2 |] interleaved in
               let t = B.shrink base [| (0, n); (1, 2) |] in
-              let full = dft ~inverse:false (Array.map (fun v -> z v 0.) data) in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
               equal ~msg:"strided rfft = DFT half" (array ct)
                 (Array.sub full 0 ((n / 2) + 1))
                 (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
@@ -3223,6 +3231,29 @@ struct
                 want
                 (F.to_array
                    (B.irfft ~s:[| n |] spec ~dtype:F.float64 ~axes:[| 0 |])));
+          case classify path "irfft-complex64-odd" (fun () ->
+              (* c32 half-spectrum with an explicit odd s: the odd (full-size)
+                 inverse path gathers the input at its own precision, so it
+                 needs its own case — the even cases all take the packed path.
+                 Oracle on the c32-rounded bins the gather reads. *)
+              let n = 9 in
+              let half = (n + 1) / 2 in
+              let spec = F.create ctx F.complex64 [| half |] (cdata half) in
+              let g = F.to_array spec in
+              let f = Array.make n Complex.zero in
+              Array.blit g 0 f 0 half;
+              f.(0) <- z g.(0).Complex.re 0.;
+              for k = 1 to half - 1 do
+                f.(n - k) <- Complex.conj f.(k)
+              done;
+              let want =
+                Array.map (fun v -> v.Complex.re) (dft ~inverse:true f)
+              in
+              equal ~msg:"c32 odd irfft = symmetrized inverse DFT"
+                (array (ftest ~rel:1e-4 ~abs:1e-4))
+                want
+                (F.to_array
+                   (B.irfft ~s:[| n |] spec ~dtype:F.float32 ~axes:[| 0 |])));
         ];
     ]
 
