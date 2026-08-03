@@ -424,9 +424,12 @@ static void pass8(int64_t ido, int64_t l1, const cx2 *restrict cc,
   double rot = -(double)sign; /* ROT90:  (r,im) -> (rot·im, -rot·r) */
   double h = NX_C_SQRTH;
   if (ido == 1) {
-    /* Final stage: no twiddle and no inner loop. A dedicated loop over k lets
-       clang vectorize across k (unit-stride output ch[k+b·l1]); folded into the
-       ido>1 path the empty a-loop keeps it scalar. */
+    /* Final stage: no twiddle and no inner loop. The dedicated loop over k
+       keeps the body straight-line — Apple clang 17's loop-vectorize cost
+       model declines vectorizing across k here (-Rpass-missed: "vectorization
+       is not beneficial"), but each cx2 result still stores as one 128-bit
+       re/im pair, and folding into the ido>1 path would add the empty
+       a-loop's per-k control flow for nothing. */
     for (int64_t k = 0; k < l1; k++) {
       const cx2 *c0 = cc + 8 * k;
       NX_C_BFLY8(c0[0], c0[1], c0[2], c0[3], c0[4], c0[5], c0[6], c0[7]);
