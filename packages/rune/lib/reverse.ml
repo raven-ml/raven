@@ -20,10 +20,10 @@
    gradient fall into three deliberate categories: - zero derivative
    (comparisons, bitwise and integer ops, rounding, argmax/argmin/argsort, RNG,
    tensor creation): fall through untracked, which yields the correct zero
-   gradient; - no rule implemented (svd, eig, eigh, rfft, irfft, psum, mod):
-   raise when an input is tracked instead of silently producing a zero gradient
-   — detach the input if differentiation should not flow through it; - in-place
-   mutation (assign): always raises during differentiation. *)
+   gradient; - no rule implemented (svd, eig, eigh, psum, mod): raise when an
+   input is tracked instead of silently producing a zero gradient — detach the
+   input if differentiation should not flow through it; - in-place mutation
+   (assign): always raises during differentiation. *)
 
 open Nx_effect
 module T = Nx
@@ -714,20 +714,90 @@ let handler (tape : Tape.t) =
               continue k out)
       (* FFT: the transform matrix is symmetric, so each transform is its own
          transpose and pulls back through itself. Going through the inverse
-         instead would reverse the frequency index. The real-valued variants
-         have no rule yet. *)
+         instead would reverse the frequency index. *)
       | E_fft { t; axes } ->
           Some (fun k -> pull1 k (fft t ~axes) t (fun g -> fft g ~axes))
       | E_ifft { t; axes } ->
           Some (fun k -> pull1 k (ifft t ~axes) t (fun g -> ifft g ~axes))
+      (* rfft factors as real-embed, fft over every transformed axis, then a
+         slice to the first n/2 + 1 bins of the last one. Each factor pulls back
+         through its own transpose: the slice through a zero-pad, the fft
+         through itself, and the embed through the real part — the same pair the
+         cast rules use between float and complex. No Hermitian mirror appears
+         anywhere: the forward never built one, so the transpose never reads
+         one. *)
       | E_rfft { t; dtype; axes } ->
+          ignore dtype;
           Some
             (fun k ->
-              no_rule k "rfft" (tracked t) (fun () -> rfft t ~dtype ~axes))
+              pull1 k (rfft t ~dtype ~axes) t (fun g ->
+                  let last = axes.(Array.length axes - 1) in
+                  let n = (T.shape t).(last) in
+                  let m = (T.shape g).(last) in
+                  let g =
+                    if n > m then begin
+                      let cfg = Array.make (T.ndim g) (0, 0) in
+                      cfg.(last) <- (0, n - m);
+                      T.pad cfg Complex.zero g
+                    end
+                    else g
+                  in
+                  T.real (T.dtype t) (fft g ~axes)))
+      (* irfft factors as Hermitian-extend along the last transformed axis, ifft
+         over every transformed axis, then the real part. The pull runs the
+         transposes in reverse: complex-embed the real cotangent, ifft it
+         through itself, then transpose the extension — bin k of the input fed
+         slot k directly and slot n - k through a conjugate, so the pull folds
+         conj of the mirror slots onto bins 1 .. n - m (bin 0, and the Nyquist
+         bin when n is even, fed one slot only). The fold is spelled out rather
+         than collapsed into a doubling: with leading axes transformed too, the
+         spectrum's symmetry pairs (j, k) with (-j, -k) across axes, so the
+         mirror along the last axis alone is not the conjugate of what it folds
+         onto. The leading c2c pass — its own transpose — runs after the fold,
+         never inside it: conjugation anti-commutes with a complex transform, so
+         folding a leading-transformed mirror would pull those axes through the
+         wrong direction. The forward ignores bins past what n supports and
+         zero-fills a short spectrum, so the pull shrinks or pads back to the
+         input's bins before that final pass. *)
       | E_irfft { t; dtype; axes; s } ->
           Some
             (fun k ->
-              no_rule k "irfft" (tracked t) (fun () -> irfft t ~axes ?s ~dtype))
+              pull1 k (irfft t ~axes ?s ~dtype) t (fun g ->
+                  let last = axes.(Array.length axes - 1) in
+                  let n = (T.shape g).(last) in
+                  let m = (n / 2) + 1 in
+                  let m_in = (T.shape t).(last) in
+                  let cdtype = T.dtype t in
+                  let gz = ifft (T.cast cdtype g) ~axes:[| last |] in
+                  let sub lo hi x =
+                    let lim = Array.map (fun d -> (0, d)) (T.shape x) in
+                    lim.(last) <- (lo, hi);
+                    T.shrink lim x
+                  in
+                  let head = sub 0 m gz in
+                  let gi =
+                    if n - m >= 1 then begin
+                      let mirror =
+                        T.conjugate (T.flip ~axes:[ last ] (sub m n gz))
+                      in
+                      let cfg = Array.make (T.ndim mirror) (0, 0) in
+                      cfg.(last) <- (1, m - 1 - (n - m));
+                      T.add head (T.pad cfg Complex.zero mirror)
+                    end
+                    else head
+                  in
+                  let gi =
+                    if m_in > m then begin
+                      let cfg = Array.make (T.ndim gi) (0, 0) in
+                      cfg.(last) <- (0, m_in - m);
+                      T.pad cfg Complex.zero gi
+                    end
+                    else if m_in < m then sub 0 m_in gi
+                    else gi
+                  in
+                  if Array.length axes > 1 then
+                    ifft gi ~axes:(Array.sub axes 0 (Array.length axes - 1))
+                  else gi))
       | E_psum { t_in } ->
           Some
             (fun k -> no_rule k "psum" (tracked t_in) (fun () -> op_psum t_in))
