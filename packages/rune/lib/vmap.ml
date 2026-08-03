@@ -392,11 +392,32 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             in
             mark st out;
             continue k out)
-    (* No batching rule yet. *)
-    | E_fft { t; _ } when batched st t -> err_no_rule "fft"
-    | E_ifft { t; _ } when batched st t -> err_no_rule "ifft"
-    | E_rfft { t; _ } when batched st t -> err_no_rule "rfft"
-    | E_irfft { t; _ } when batched st t -> err_no_rule "irfft"
+    (* FFT: the transformed axes shift past the batch dimension; sizes ([s]) are
+       per-axis and unchanged. *)
+    | E_fft { t; axes } when batched st t ->
+        Some
+          (fun k ->
+            let out = fft t ~axes:(Array.map taxis axes) in
+            mark st out;
+            continue k out)
+    | E_ifft { t; axes } when batched st t ->
+        Some
+          (fun k ->
+            let out = ifft t ~axes:(Array.map taxis axes) in
+            mark st out;
+            continue k out)
+    | E_rfft { t; dtype; axes } when batched st t ->
+        Some
+          (fun k ->
+            let out = rfft t ~dtype ~axes:(Array.map taxis axes) in
+            mark st out;
+            continue k out)
+    | E_irfft { t; dtype; axes; s } when batched st t ->
+        Some
+          (fun k ->
+            let out = irfft t ~axes:(Array.map taxis axes) ?s ~dtype in
+            mark st out;
+            continue k out)
     | E_psum { t_in } when batched st t_in -> err_no_rule "psum"
     | E_cholesky { t_in; _ } when batched st t_in -> err_no_rule "cholesky"
     | E_qr { t_in; _ } when batched st t_in -> err_no_rule "qr"

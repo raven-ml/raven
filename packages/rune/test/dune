@@ -8,6 +8,7 @@
   test_jvp
   test_vmap
   test_custom
+  test_fft
   test_jacobian
   test_control
   test_jit
@@ -23,6 +24,7 @@
   test_jvp
   test_vmap
   test_custom
+  test_fft
   test_jacobian
   test_control
   test_jit

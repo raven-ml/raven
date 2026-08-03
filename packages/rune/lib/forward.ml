@@ -465,11 +465,12 @@ let handler (tangents : Tensor_map.t) =
       | E_rfft { t; dtype; axes } ->
           Some
             (fun k ->
-              no_rule k "rfft" (active t) (fun () -> rfft t ~dtype ~axes))
+              lift1 k (rfft t ~dtype ~axes) t (fun dx -> rfft dx ~dtype ~axes))
       | E_irfft { t; dtype; axes; s } ->
           Some
             (fun k ->
-              no_rule k "irfft" (active t) (fun () -> irfft t ~axes ?s ~dtype))
+              lift1 k (irfft t ~axes ?s ~dtype) t (fun dx ->
+                  irfft dx ~axes ?s ~dtype))
       | E_psum { t_in } ->
           Some
             (fun k -> no_rule k "psum" (active t_in) (fun () -> op_psum t_in))

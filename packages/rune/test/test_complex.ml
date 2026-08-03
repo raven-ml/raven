@@ -81,12 +81,36 @@ let modulus_tests =
    transpose. A pullback through the inverse transform instead would come back
    reindexed. *)
 
+let z5 () =
+  cvec [| (1.1, 0.5); (-0.7, 1.3); (0.4, -0.9); (0.2, 0.6); (-1.0, 0.3) |]
+
 let transform_tests =
   List.concat
     [
       both "fft" (fun z -> Nx.fft z ~axis:0) z3;
       both "ifft" (fun z -> Nx.ifft z ~axis:0) z3;
       both "ifft of fft" (fun z -> Nx.ifft (Nx.fft z ~axis:0) ~axis:0) z3;
+      (* The real transforms, driven by the complex oracle so their cotangents
+         and tangents are non-zero in both components: irfft's leaf is complex
+         already, and rfft is reached through the real part of one, so a
+         conjugation slipped into either pull cannot agree by coincidence. *)
+      both "irfft" (fun z -> Nx.cast Nx.complex128 (Nx.irfft f64 ~n:8 z)) z5;
+      both "irfft, odd length"
+        (fun z -> Nx.cast Nx.complex128 (Nx.irfft f64 ~n:7 z))
+        z5;
+      both "irfft, truncated"
+        (fun z -> Nx.cast Nx.complex128 (Nx.irfft f64 ~n:4 z))
+        z5;
+      both "rfft of a real part"
+        (fun z -> Nx.rfft Nx.complex128 (Nx.real f64 z))
+        z5;
+      both "complex-filtered round trip"
+        (fun z ->
+          let x = Nx.real f64 z in
+          let h = Nx.shrink [| (0, 3) |] z in
+          Nx.cast Nx.complex128
+            (Nx.irfft f64 ~n:5 (Nx.mul (Nx.rfft Nx.complex128 x) h)))
+        z5;
     ]
 
 (* Reading a component out and putting one back: the paths a real-valued

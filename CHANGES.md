@@ -861,6 +861,10 @@ thread.
 
 ### Rune
 
+- `grad`, `vjp`, and `jvp` now differentiate `Nx.rfft` and `Nx.irfft` — both
+  are linear, so each rule is an exact transpose — and `vmap` batches all four
+  FFT transforms (`fft`, `ifft`, `rfft`, `irfft`), so spectral losses built on
+  real FFTs train end to end.
 - A parameter structure may now hold leaves that are not parameters — an
   `Nx.Rng.key` threaded through a compiled step, a step counter, a batch of
   indices. `grad`, `value_and_grad` and `vjp` carry them instead of raising:
