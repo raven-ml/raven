@@ -267,6 +267,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let out = flip t_in (Array.append [| false |] dims_to_flip) in
             mark st out;
             continue k out)
+    | E_sliding_window { t_in; axis; window; step } when batched st t_in ->
+        Some
+          (fun k ->
+            (* The trailing window axis lands at the physical end, which is the
+               virtual end shifted past the batch dimension. *)
+            let out = sliding_window t_in ~axis:(taxis axis) ~window ~step in
+            mark st out;
+            continue k out)
     | E_cat { t_list; axis } when List.exists (batched st) t_list ->
         Some
           (fun k ->

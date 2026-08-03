@@ -20,6 +20,7 @@ let b3 () = vec64 [| 1.9; 0.8; -0.6 |]
 let b3_pos () = vec64 [| 1.9; 0.8; 0.6 |]
 let m23 () = mat64 2 3 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |]
 let m23_pos () = mat64 2 3 [| 0.5; 1.2; 2.1; 1.7; 0.4; 0.9 |]
+let v7 () = vec64 [| 0.7; -1.3; 2.1; 0.4; -0.9; 1.6; -0.2 |]
 
 (* Structural semantics *)
 
@@ -203,6 +204,17 @@ let movement_tests =
     test "shrink" (fun () ->
         check_jvp ~msg:"shrink" (Nx.shrink [| (0, 2); (1, 3) |]) (m23 ()));
     test "flip" (fun () -> check_jvp ~msg:"flip" (Nx.flip ~axes:[ 1 ]) (m23 ()));
+    test "sliding_window_view" (fun () ->
+        check_jvp ~msg:"sliding_window_view"
+          (Nx.sliding_window_view ~window:3 ~step:2)
+          (v7 ()));
+    test "sliding_window_view tangent is the windowed tangent" (fun () ->
+        (* Linearity: the tangent maps through the operation itself. *)
+        let f = Nx.sliding_window_view ~window:2 ~step:3 in
+        let x = v7 () in
+        let v = tangent_like x in
+        let _, dy = Rune.jvp' f x v in
+        check_arr ~msg:"linearity" (to_arr (f v)) dy);
     test "concatenate" (fun () ->
         check_jvp2 ~msg:"concatenate"
           (fun a b -> Nx.concatenate ~axis:0 [ a; b ])

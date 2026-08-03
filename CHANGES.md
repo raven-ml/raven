@@ -759,6 +759,10 @@ thread.
   `check_gradient` API — use `check_grads`; and `jit`/`trace_graph` —
   JIT compilation via Tolk will return as a transformation in a later
   release.
+- `Nx.sliding_window_view` is now first-class under every transformation:
+  reverse mode accumulates each window's cotangent back onto the positions it
+  read (overlap-add), forward mode and `vmap` map through the view, and `jit`
+  compiles it as a movement operation.
 
 ### Kaun
 

@@ -812,6 +812,11 @@ let handler st =
             let axes = ref [] in
             Array.iteri (fun i f -> if f then axes := i :: !axes) dims_to_flip;
             ret k (dt t_in) (F.Movement.flip (go t_in) (List.rev !axes)))
+    | E_sliding_window { t_in; axis; window; step } ->
+        Some
+          (fun k ->
+            ret k (dt t_in)
+              (F.Movement.unfold (go t_in) axis ~size:window ~step))
     | E_cat { t_list; axis } ->
         Some
           (fun k ->

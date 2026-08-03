@@ -21,6 +21,10 @@ let v3_pos () = vec64 [| 0.7; 1.3; 2.1 |]
 let v3_unit () = vec64 [| 0.3; -0.6; 0.8 |]
 let m23 () = mat64 2 3 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |]
 let m23_pos () = mat64 2 3 [| 0.5; 1.2; 2.1; 1.7; 0.4; 0.9 |]
+let v7 () = vec64 [| 0.7; -1.3; 2.1; 0.4; -0.9; 1.6; -0.2 |]
+
+let m43 () =
+  mat64 4 3 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |]
 
 (* Unary operations *)
 
@@ -127,6 +131,23 @@ let movement_tests =
         check_grad ~msg:"shrink" (Nx.shrink [| (0, 2); (1, 3) |]) (m23 ()));
     test "flip" (fun () ->
         check_grad ~msg:"flip" (Nx.flip ~axes:[ 1 ]) (m23 ()));
+    test "sliding_window_view" (fun () ->
+        check_grad ~msg:"sliding_window_view"
+          (Nx.sliding_window_view ~window:3)
+          (v7 ()));
+    test "sliding_window_view strided" (fun () ->
+        check_grad ~msg:"sliding_window_view step 2"
+          (Nx.sliding_window_view ~window:3 ~step:2)
+          (v7 ()));
+    test "sliding_window_view with gaps" (fun () ->
+        (* step > window: positions no window reads get a zero cotangent. *)
+        check_grad ~msg:"sliding_window_view step 3"
+          (Nx.sliding_window_view ~window:2 ~step:3)
+          (v7 ()));
+    test "sliding_window_view on a leading axis" (fun () ->
+        check_grad ~msg:"sliding_window_view axis -2"
+          (Nx.sliding_window_view ~axis:(-2) ~window:2)
+          (m43 ()));
     test "concatenate" (fun () ->
         check_grad2 ~msg:"concatenate"
           (fun a b -> Nx.concatenate ~axis:0 [ a; b ])
@@ -246,6 +267,15 @@ let composite_tests =
             let var = Nx.mean (Nx.mul centered centered) ~keepdims:true in
             Nx.div centered (Nx.sqrt (Nx.add var (Nx.scalar f64 1e-5))))
           (v3 ()));
+    test "windowed-energy loss" (fun () ->
+        (* The cotangent flows through the zero-copy view into an overlapping
+           reduction: each input position accumulates every window that read
+           it. *)
+        check_grad ~msg:"windowed energy"
+          (fun x ->
+            let w = Nx.sliding_window_view ~window:3 ~step:2 x in
+            Nx.sum ~axes:[ 1 ] (Nx.mul w w))
+          (v7 ()));
   ]
 
 let tests =
