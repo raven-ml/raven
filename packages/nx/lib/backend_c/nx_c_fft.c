@@ -49,20 +49,22 @@
    Multi-axis is repeated 1-D passes, one transform axis at a time; each pass
    parallelizes over the independent "lines" (the odometer over all other dims),
    gathering each strided length-n line to contiguous scratch, transforming, and
-   scattering back. rfft's last axis packs an even-length real line into a
-   half-size complex transform plus an O(n) Hermitian untangle (see the packed
-   real path below); odd lengths keep the full-size complex transform. */
+   scattering back. The real transforms' last axis packs an even length into a
+   half-size complex transform: rfft as pack → FFT_N → Hermitian untangle,
+   irfft as pre-twiddle → IFFT_N → unpack (see the packed real path below).
+   Odd lengths keep the full-size complex transform, byte-identical to the
+   pre-packing code. */
 
 /* DEFERRED PERF (correctness-first; none affects correctness, all verified
    against the DFT oracle):
-   1. irfft still reconstructs the full length-s spectrum and runs a full-size
-      complex inverse; the packed half-size inverse (the dual of rfft's packed
-      forward) is the remaining ~2× on that axis.
-   2. The generic odd-prime pass (11/13) is an O(ip²) direct DFT, not a tuned
+   1. The generic odd-prime pass (11/13) is an O(ip²) direct DFT, not a tuned
       unrolled butterfly, and the native/Bluestein gate is a flat prime bound
       (≤ 13) rather than a cost model. Fine for the admitted small primes; a
       length whose largest prime factor is a mid-size prime (17..~√n) always
-      takes Bluestein even where a tuned generic pass could beat it. */
+      takes Bluestein even where a tuned generic pass could beat it.
+   2. Odd-length real transforms still ride the full-size complex path; the
+      two-real-lines-per-complex-transform pairing that would halve them too
+      is deferred until a workload shows batched odd-length real transforms. */
 
 #include <math.h>
 #include <pthread.h>
@@ -874,6 +876,43 @@ static void rfft_untangle(cx2 *restrict z, const cx2 *restrict rtw,
   }
 }
 
+/* The inverse dual: pre-twiddle the N+1 half-spectrum bins into the length-N
+   line G, run the unnormalized +sign length-N transform, and read the even/
+   odd output samples out of w[j] = (out[2j], out[2j+1]):
+
+     G[k] = (X[k] + conj(X[N−k])) + U[k]·(X[k] − conj(X[N−k]))
+     U[k] = conj(T[k]) = (−sin θ_k, +cos θ_k)
+     G[0] = (Re X[0] + Re X[N],  Re X[0] − Re X[N])
+
+   No 0.5 anywhere: the analytic factor 2 is folded into G, so ifft_N(G) is
+   EXACTLY s·x — the backend contract's unnormalized inverse with no
+   post-scale loop. The pairwise loop shape is identical to the forward's
+   because U[N−k] = conj(U[k]) gives G[N−k] = conj(s1) − conj(U[k]·d1). The
+   G[0] edge reads REAL PARTS ONLY: Im X[0] and Im X[N] are structurally
+   discarded, exactly as the full-spectrum reconstruction and numpy/pocketfft
+   discard them (their contribution to the real output is identically zero
+   there); using them would change results for non-Hermitian garbage inputs.
+   Slot N is dead after the edge, so the same N+1-slot buffer serves in
+   place. Self-pair k = N/2 (even N): both writes produce 2·conj(X[N/2]),
+   same argument as the forward. */
+static void irfft_pretwiddle(cx2 *restrict x, const cx2 *restrict rtw,
+                             int64_t N) {
+  double x0r = x[0].r, xnr = x[N].r;
+  x[0].r = x0r + xnr;
+  x[0].i = x0r - xnr;
+  for (int64_t k = 1; k <= N / 2; k++) {
+    cx2 xk = x[k], xnk = x[N - k], u = rtw[k]; /* rtw built with sign +1 */
+    double f1r = xk.r + xnk.r, f1i = xk.i - xnk.i; /* X[k] + conj(X[N−k]) */
+    double f2r = xk.r - xnk.r, f2i = xk.i + xnk.i; /* X[k] − conj(X[N−k]) */
+    double tr = f2r * u.r - f2i * u.i;
+    double ti = f2r * u.i + f2i * u.r;
+    x[k].r = f1r + tr;
+    x[k].i = f1i + ti;
+    x[N - k].r = f1r - tr;
+    x[N - k].i = ti - f1i;
+  }
+}
+
 /* ── Gather / scatter one strided line, converting storage <-> cx2 ─────────
    Complex operands: c32 (float _Complex) upcast, c64 (double _Complex) direct.
    Real operands: f32/f64 as the real part on gather (imag 0); real part on
@@ -941,6 +980,22 @@ static void gather_real_pairs(nx_c_dtype dt, const char *base,
     } else {
       dst[j].r = (double)*(const float *)p0;
       dst[j].i = (double)*(const float *)p1;
+    }
+  }
+}
+/* unpack for the even-s inverse: out[2j] = w[j].r, out[2j+1] = w[j].i — f32
+   rounds on store. */
+static void scatter_real_pairs(nx_c_dtype dt, char *base, int64_t stride_elems,
+                               int64_t esz, int64_t N, const cx2 *src) {
+  for (int64_t j = 0; j < N; j++) {
+    char *p0 = base + 2 * j * stride_elems * esz;
+    char *p1 = base + (2 * j + 1) * stride_elems * esz;
+    if (dt == NX_C_DTYPE_f64) {
+      *(double *)p0 = src[j].r;
+      *(double *)p1 = src[j].i;
+    } else {
+      *(float *)p0 = (float)src[j].r;
+      *(float *)p1 = (float)src[j].i;
     }
   }
 }
@@ -1221,6 +1276,35 @@ static void irfft_last_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
+/* Packed even-s inverse: gather the half bins into the N+1-slot line, zero
+   the bins the pad rule leaves empty, pre-twiddle, run the length-N +sign
+   sub-plan, unpack pairs. Per-worker scratch is [ x: N+1 cx2 ][ work ] — the
+   same one-extra-slot junction as the packed forward, replacing the odd
+   path's (half+PAD) + (s+PAD) reconstruct/mirror layout entirely. */
+static void irfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  const irfft_ctx *c = (const irfft_ctx *)vctx;
+  cx2 *base = (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
+  int64_t N = c->s / 2;
+  cx2 *x = base;
+  cx2 *work = x + (N + 1);
+  int64_t istride = c->src->strides[c->axis];
+  int64_t ostride = c->out->strides[c->axis];
+  for (int64_t L = lo; L < hi; L++) {
+    const char *ib = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
+    char *ob = (char *)c->out->data + line_base(c->out, c->axis, L) * c->out_esz;
+    gather_cx(c->src_dt, ib, istride, c->src_esz, c->half, x);
+    /* pad rule: frequencies above the supplied half-spectrum are zero
+       (excess ones were already excluded when c->half was computed) */
+    for (int64_t k = c->half; k <= N; k++) {
+      x[k].r = 0.0;
+      x[k].i = 0.0;
+    }
+    irfft_pretwiddle(x, c->plan->rtw, N);
+    plan_exec(c->plan->mplan_fwd, x, work);
+    scatter_real_pairs(c->out_dt, ob, ostride, c->out_esz, N, x);
+  }
+}
+
 static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
                                 nx_c_dtype in_dt, nx_c_dtype out_dt,
                                 const int *axes, int naxes, int64_t s_last) {
@@ -1316,8 +1400,12 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
     src = &tmp;
     src_dt = NX_C_DTYPE_c64;
   }
-  /* last axis: half-spectrum → real length s */
-  const fft_plan *plan = plan_get(s, 1);
+  /* last axis: half-spectrum → real length s. Even s (which the default
+     s = 2·(in_half − 1) always is) takes the packed half-size inverse; an
+     explicit odd s keeps the full-length reconstruct+mirror path,
+     byte-identical to before. */
+  int packed = (s >= 2 && (s & 1) == 0);
+  const fft_plan *plan = packed ? plan_get_kind(s, 1, 1) : plan_get(s, 1);
   if (!plan) {
     free(tdata);
     return NX_C_ERR_ALLOC;
@@ -1326,7 +1414,9 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
   for (int d = 0; d < out->ndim; d++)
     if (d != last) lines *= out->shape[d];
   if (lines > 0 && s > 0) {
-    int64_t slot = (half + FFT_PAD) + (s + FFT_PAD) + plan->work_cx; /* cx2 */
+    int64_t slot = packed
+                      ? (s / 2 + 1) + plan->work_cx
+                      : (half + FFT_PAD) + (s + FFT_PAD) + plan->work_cx; /* cx2 */
     int64_t slot_bytes = ((slot * cesz) + 63) & ~(int64_t)63;
     int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, s, lines * s * cesz);
     if (nth > lines) nth = (int)lines;
@@ -1350,7 +1440,8 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
     c.scratch = scratch;
     c.slot = slot_bytes / cesz;
     /* scratch handed to the primitive as free_on_exit — do NOT free it here. */
-    nx_c_parallel_for(nth, lines, lines * s * cesz, irfft_last_body, &c, scratch);
+    nx_c_parallel_for(nth, lines, lines * s * cesz,
+                     packed ? irfft_packed_body : irfft_last_body, &c, scratch);
   }
   free(tdata);
   return NX_C_OK;

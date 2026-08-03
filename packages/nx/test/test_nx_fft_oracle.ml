@@ -259,6 +259,115 @@ let test_rfft2_vs_dft () =
         (Nx.to_array (Nx.rfftn ~axes:[ 0; 1 ] t)))
     [ (5, 8); (7, 12) ]
 
+(* ── Exhaustive inverse sweep ──
+   Every n in 1..128: irfft (norm Forward => the raw +sign transform) of a
+   random half-spectrum vs the naive symmetrized inverse DFT. *)
+
+let test_irfft_exhaustive () =
+  for n = 1 to 128 do
+    let half = (n / 2) + 1 in
+    let g = csig (8000 + n) half in
+    let spec = Nx.create Nx.complex128 [| half |] g in
+    rel_l2_f
+      (Printf.sprintf "irfft n=%d = DFT" n)
+      1e-14 (irfft_oracle g n)
+      (Nx.to_array (Nx.irfft ~n ~norm:`Forward spec))
+  done
+
+(* ── Exhaustive roundtrip sweep (default norms) ── *)
+
+let test_roundtrip_exhaustive () =
+  for n = 1 to 256 do
+    let x = rsig (9000 + n) n in
+    rel_l2_f
+      (Printf.sprintf "irfft(rfft x) n=%d" n)
+      1e-14 x
+      (Nx.to_array (Nx.irfft ~n (Nx.rfft (Nx.create Nx.float64 [| n |] x))))
+  done
+
+let test_roundtrip_large () =
+  List.iter
+    (fun n ->
+      let x = rsig (10000 + (n mod 977)) n in
+      rel_l2_f
+        (Printf.sprintf "irfft(rfft x) n=%d" n)
+        1e-14 x
+        (Nx.to_array (Nx.irfft ~n (Nx.rfft (Nx.create Nx.float64 [| n |] x)))))
+    [ 4096; 65536; 44100; 131042; 65535 ]
+
+(* ── Pad / truncate sweep ──
+   Every even s in 4..64, from spectra shorter than, equal to, and longer
+   than the s/2+1 bins the reconstruction reads. *)
+
+let test_irfft_pad_truncate () =
+  let s = ref 4 in
+  while !s <= 64 do
+    let n = !s in
+    let needed = (n / 2) + 1 in
+    List.iter
+      (fun d ->
+        let len = needed + d in
+        if len >= 1 then
+          let g = csig (11000 + n + d) len in
+          let spec = Nx.create Nx.complex128 [| len |] g in
+          rel_l2_f
+            (Printf.sprintf "irfft s=%d from %d bins" n len)
+            1e-13 (irfft_oracle g n)
+            (Nx.to_array (Nx.irfft ~n ~norm:`Forward spec)))
+      [ -2; 0; 2 ];
+    s := !s + 2
+  done
+
+(* ── Non-Hermitian invariance ──
+   Im X[0] and Im X[s/2] are structurally discarded (real-part-only edges),
+   exactly like the full-spectrum reconstruction and numpy/pocketfft. *)
+
+let test_irfft_nonhermitian_edges () =
+  let n = 8 in
+  let half = 5 in
+  let g = csig 12000 half in
+  let dirty = Array.copy g in
+  dirty.(0) <- { dirty.(0) with Complex.im = 5.0 };
+  dirty.(4) <- { dirty.(4) with Complex.im = -3.0 };
+  let clean = Array.copy g in
+  clean.(0) <- { clean.(0) with Complex.im = 0.0 };
+  clean.(4) <- { clean.(4) with Complex.im = 0.0 };
+  exact_f "irfft discards Im DC and Im Nyquist"
+    (Nx.to_array (Nx.irfft ~n (Nx.create Nx.complex128 [| half |] clean)))
+    (Nx.to_array (Nx.irfft ~n (Nx.create Nx.complex128 [| half |] dirty)))
+
+(* ── Multi-axis irfft (keeps the complex temp for the non-last axes) ── *)
+
+let test_irfft2_roundtrip () =
+  List.iter
+    (fun (rows, cols) ->
+      let data = Array.init (rows * cols) (fun i -> sample (13000 + rows) i) in
+      let t = Nx.create Nx.float64 [| rows; cols |] data in
+      rel_l2_f
+        (Printf.sprintf "irfft2(rfft2 x) %dx%d" rows cols)
+        1e-13 data
+        (Nx.to_array
+           (Nx.irfftn ~axes:[ 0; 1 ] ~s:[ rows; cols ]
+              (Nx.rfftn ~axes:[ 0; 1 ] t))))
+    [ (5, 8); (7, 12) ]
+
+(* ── dtypes: c64 (single-precision) half-spectrum in ── *)
+
+let test_irfft_c64_dtype () =
+  List.iter
+    (fun n ->
+      let x = rsig (14000 + n) n in
+      let spec = Nx.rfft (Nx.create Nx.float64 [| n |] x) in
+      let spec32 = Nx.cast Nx.complex64 spec in
+      (* oracle on the c32-rounded bins the gather actually reads *)
+      let g = Nx.to_array spec32 in
+      rel_l2_f
+        (Printf.sprintf "irfft c64 n=%d = DFT" n)
+        1e-4
+        (Array.map (fun v -> v /. float_of_int n) (irfft_oracle g n))
+        (Nx.to_array (Nx.irfft ~n spec32)))
+    [ 8; 34; 4096 ]
+
 (* ── Strided and offset views ──
    The last-axis real drivers read the input tensor directly (no compaction
    pass), so a strided or offset view must transform identically to its
@@ -347,6 +456,19 @@ let suite =
         test "dc/nyquist exact" test_rfft_dc_nyquist_exact;
         test "f32" test_rfft_f32;
         test "rfft2 vs 2-D DFT" test_rfft2_vs_dft;
+      ];
+    group "inverse sweep"
+      [
+        test "every n in 1..128" test_irfft_exhaustive;
+        test "pad/truncate" test_irfft_pad_truncate;
+        test "non-Hermitian edges" test_irfft_nonhermitian_edges;
+        test "c64" test_irfft_c64_dtype;
+      ];
+    group "roundtrip"
+      [
+        test "every n in 1..256" test_roundtrip_exhaustive;
+        test "targeted large" test_roundtrip_large;
+        test "irfft2" test_irfft2_roundtrip;
       ];
     group "strided views"
       [
