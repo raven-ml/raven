@@ -55,10 +55,7 @@
    against the DFT oracle):
    1. rfft/irfft use a full-size complex FFT + half extraction rather than a
       half-size packed real-FFT — correct but ~2× the ideal on the real axis.
-   2. irfft's strided→contiguous tmp-fill (nx_c_irfft_run) runs serially under the
-      runtime lock before nx_c_parallel_for; it only reads raw bigarray memory, so
-      it could move after the lock release if it ever shows on a profile.
-   3. The generic odd-prime pass (11/13) is an O(ip²) direct DFT, not a tuned
+   2. The generic odd-prime pass (11/13) is an O(ip²) direct DFT, not a tuned
       unrolled butterfly, and the native/Bluestein gate is a flat prime bound
       (≤ 13) rather than a cost model. Fine for the admitted small primes; a
       length whose largest prime factor is a mid-size prime (17..~√n) always
@@ -985,10 +982,12 @@ static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out
 typedef struct {
   nx_c_dtype out_dt;
   const nx_c_ndarray *out;
-  const nx_c_ndarray *tmp; /* complex temp, in's shape */
+  const nx_c_ndarray *src; /* half-spectrum source: `in` itself when only the
+                              last axis transforms, else the complex temp */
+  nx_c_dtype src_dt;
   int axis;
   int64_t half, s;
-  int64_t out_esz, tmp_esz;
+  int64_t out_esz, src_esz;
   const fft_plan *plan;
   char *scratch;
   int64_t slot;
@@ -1000,12 +999,12 @@ static void irfft_last_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   cx2 *g = base;                    /* gathered half-spectrum, length half */
   cx2 *f = g + (c->half + FFT_PAD); /* reconstructed spectrum, length s */
   cx2 *work = f + (c->s + FFT_PAD); /* transform scratch */
-  int64_t istride = c->tmp->strides[c->axis];
+  int64_t istride = c->src->strides[c->axis];
   int64_t ostride = c->out->strides[c->axis];
   for (int64_t L = lo; L < hi; L++) {
-    const char *ib = (const char *)c->tmp->data + line_base(c->tmp, c->axis, L) * c->tmp_esz;
+    const char *ib = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
     char *ob = (char *)c->out->data + line_base(c->out, c->axis, L) * c->out_esz;
-    gather_cx(NX_C_DTYPE_c64, ib, istride, c->tmp_esz, c->half, g);
+    gather_cx(c->src_dt, ib, istride, c->src_esz, c->half, g);
     /* An explicit output length may require padding or truncating the supplied
        half-spectrum. Missing frequencies are zero; excess ones were excluded
        when c->half was computed. */
@@ -1040,68 +1039,86 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
   int64_t needed_half = (s / 2) + 1;
   int64_t half = in_half < needed_half ? in_half : needed_half;
 
-  /* complex temp holding in's shape; ifft the non-last transformed axes there.
-     ACCEPTED DEVIATION (leak-only, never corruption): tdata spans the whole
-     irfft — the non-last-axis run_axis passes AND the last-axis pool region —
-     so it outlives multiple nx_c_parallel_for calls and CANNOT be the primitive's
-     free_on_exit (that owns a single region's scratch, freed at that region's
-     join). It is freed explicitly on every return path here. The only leak is if
-     an async pending action (signal/memprof) raises inside a nx_c_parallel_for
-     lock re-acquire and longjmps past these frees; that never corrupts memory,
-     and every single-region alternative either double-copies the strided input
-     or holds the runtime lock across the transform. */
-  nx_c_ndarray tmp = *in;
-  int64_t nelem = 1;
-  for (int d = 0; d < in->ndim; d++) nelem *= in->shape[d];
+  /* Half-spectrum source for the last-axis pass. With a single transform axis
+     the pool body reads `in` directly: gather_cx already does the same
+     strided->contiguous+upcast conversion per line, in parallel, that the
+     serial temp fill below did up front for every irfft. Only the multi-axis
+     transform still needs the temp, to hold the intermediate inverse
+     transforms between axis passes. */
+  const nx_c_ndarray *src = in;
+  nx_c_dtype src_dt = in_dt;
   int64_t cesz = (int64_t)sizeof(cx2);
-  cx2 *tdata = malloc((size_t)(nelem ? nelem : 1) * (size_t)cesz);
-  if (!tdata) return NX_C_ERR_ALLOC;
-  tmp.data = tdata;
-  tmp.offset = 0;
-  { /* contiguous strides for tmp */
-    int64_t st = 1;
-    for (int d = in->ndim - 1; d >= 0; d--) {
-      tmp.strides[d] = st;
-      st *= in->shape[d];
-    }
-  }
-  /* Fill tmp (contiguous) from in (strided), converting to double complex. */
-  {
-    int64_t idx[NX_C_MAX_NDIM];
-    for (int d = 0; d < in->ndim; d++) idx[d] = 0;
-    for (int64_t f = 0; f < nelem; f++) {
-      int64_t ioff = in->offset;
-      for (int d = 0; d < in->ndim; d++) ioff += idx[d] * in->strides[d];
-      const char *ip = (const char *)in->data + ioff * nx_c_elem_size(in_dt);
-      if (in_dt == NX_C_DTYPE_c64) {
-        const double *w = (const double *)ip;
-        tdata[f].r = w[0];
-        tdata[f].i = w[1];
-      } else {
-        const float *w = (const float *)ip;
-        tdata[f].r = (double)w[0];
-        tdata[f].i = (double)w[1];
-      }
+  nx_c_ndarray tmp;
+  cx2 *tdata = NULL;
+  if (naxes > 1) {
+    /* complex temp holding in's shape; ifft the non-last transformed axes
+       there. ACCEPTED DEVIATION (leak-only, never corruption; naxes > 1 only —
+       the single-axis path allocates nothing here): tdata spans the whole
+       irfft — the non-last-axis run_axis passes AND the last-axis pool region —
+       so it outlives multiple nx_c_parallel_for calls and CANNOT be the
+       primitive's free_on_exit (that owns a single region's scratch, freed at
+       that region's join). It is freed explicitly on every return path here.
+       The only leak is if an async pending action (signal/memprof) raises
+       inside a nx_c_parallel_for lock re-acquire and longjmps past these
+       frees; that never corrupts memory, and every single-region alternative
+       either double-copies the strided input or holds the runtime lock across
+       the transform. */
+    tmp = *in;
+    int64_t nelem = 1;
+    for (int d = 0; d < in->ndim; d++) nelem *= in->shape[d];
+    tdata = malloc((size_t)(nelem ? nelem : 1) * (size_t)cesz);
+    if (!tdata) return NX_C_ERR_ALLOC;
+    tmp.data = tdata;
+    tmp.offset = 0;
+    { /* contiguous strides for tmp */
+      int64_t st = 1;
       for (int d = in->ndim - 1; d >= 0; d--) {
-        if (++idx[d] < in->shape[d]) break;
-        idx[d] = 0;
+        tmp.strides[d] = st;
+        st *= in->shape[d];
       }
     }
-  }
-  /* ifft the non-last transformed axes in tmp (complex, unnormalized) */
-  for (int ai = 0; ai < naxes - 1; ai++) {
-    int axis = axes[ai];
-    if (axis < 0 || axis >= in->ndim) {
-      free(tdata);
-      return NX_C_ERR_AXIS;
+    /* Fill tmp (contiguous) from in (strided), converting to double complex.
+       Serial under the runtime lock; acceptable because the multi-axis
+       transforms below dominate it. */
+    {
+      int64_t idx[NX_C_MAX_NDIM];
+      for (int d = 0; d < in->ndim; d++) idx[d] = 0;
+      for (int64_t f = 0; f < nelem; f++) {
+        int64_t ioff = in->offset;
+        for (int d = 0; d < in->ndim; d++) ioff += idx[d] * in->strides[d];
+        const char *ip = (const char *)in->data + ioff * nx_c_elem_size(in_dt);
+        if (in_dt == NX_C_DTYPE_c64) {
+          const double *w = (const double *)ip;
+          tdata[f].r = w[0];
+          tdata[f].i = w[1];
+        } else {
+          const float *w = (const float *)ip;
+          tdata[f].r = (double)w[0];
+          tdata[f].i = (double)w[1];
+        }
+        for (int d = in->ndim - 1; d >= 0; d--) {
+          if (++idx[d] < in->shape[d]) break;
+          idx[d] = 0;
+        }
+      }
     }
-    int64_t m = tmp.shape[axis];
-    nx_c_status s2 = run_axis(NX_C_DTYPE_c64, NX_C_DTYPE_c64, &tmp, &tmp, axis, m, m,
-                             1, 0, 0);
-    if (s2 != NX_C_OK) {
-      free(tdata);
-      return s2;
+    /* ifft the non-last transformed axes in tmp (complex, unnormalized) */
+    for (int ai = 0; ai < naxes - 1; ai++) {
+      int axis = axes[ai];
+      if (axis < 0 || axis >= in->ndim) {
+        free(tdata);
+        return NX_C_ERR_AXIS;
+      }
+      int64_t m = tmp.shape[axis];
+      nx_c_status s2 = run_axis(NX_C_DTYPE_c64, NX_C_DTYPE_c64, &tmp, &tmp, axis,
+                               m, m, 1, 0, 0);
+      if (s2 != NX_C_OK) {
+        free(tdata);
+        return s2;
+      }
     }
+    src = &tmp;
+    src_dt = NX_C_DTYPE_c64;
   }
   /* last axis: half-spectrum → real length s */
   const fft_plan *plan = plan_get(s, 1);
@@ -1126,12 +1143,13 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
     irfft_ctx c;
     c.out_dt = out_dt;
     c.out = out;
-    c.tmp = &tmp;
+    c.src = src;
+    c.src_dt = src_dt;
     c.axis = last;
     c.half = half;
     c.s = s;
     c.out_esz = nx_c_elem_size(out_dt);
-    c.tmp_esz = cesz;
+    c.src_esz = nx_c_elem_size(src_dt);
     c.plan = plan;
     c.scratch = scratch;
     c.slot = slot_bytes / cesz;
