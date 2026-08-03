@@ -11,8 +11,9 @@
    (≤ 13). This covers all powers of two and smooth composites like 100000 =
    2⁵·5⁵, 1000000 = 2⁶·5⁶, and 44100 = 2²·3²·5²·7². A length with a larger prime
    factor (a large prime, or a composite like 17·k) is transformed by Bluestein's
-   chirp-z algorithm, whose two internal length-m FFTs (m a power of two, hence
-   smooth) ride the same native core — so the transform is correct for ALL n.
+   chirp-z algorithm, whose two internal length-m FFTs (m the smallest 7-smooth
+   length >= 2n-1) ride the same native core — so the transform is correct for
+   ALL n.
    Everything computes in double precision; c32 inputs upcast on gather and round
    on store, which beats a native single-precision transform on accuracy.
 
@@ -671,8 +672,34 @@ static cx2 chirp_at(int64_t j, int64_t n, int sign) {
   return c;
 }
 
-/* Bluestein chirp-z plan for a non-smooth length. The two length-m FFTs (m a
-   power of two, hence smooth) ride native sub-plans, one per sign. */
+/* Smallest 7-smooth (2^a·3^b·5^c·7^d) length >= v — the Bluestein pad
+   target. The smoothness set deliberately EXCLUDES 11/13: those radices run
+   through the O(ip²) generic pass, which would hand the convolution's hot
+   loop to the slowest butterfly. Enumerate every odd-smooth part 3^b·5^c·7^d
+   below the power-of-two candidate and pad each with 2s — O(log³ v) products
+   at plan build. The division guards keep every product in range; past 2^61
+   keep the legacy next-power-of-two doubling (an allocation that size fails
+   long before the arithmetic matters). */
+static int64_t fft_good_size(int64_t v) {
+  if (v > ((int64_t)1 << 61)) {
+    int64_t m = 1;
+    while (m < v) m <<= 1;
+    return m;
+  }
+  int64_t best = 1;
+  while (best < v) best <<= 1;
+  for (int64_t p7 = 1; p7 < best; p7 = p7 > best / 7 ? best : p7 * 7)
+    for (int64_t p5 = p7; p5 < best; p5 = p5 > best / 5 ? best : p5 * 5)
+      for (int64_t p3 = p5; p3 < best; p3 = p3 > best / 3 ? best : p3 * 3) {
+        int64_t m = p3;
+        while (m < v) m <<= 1;
+        if (m < best) best = m;
+      }
+  return best;
+}
+
+/* Bluestein chirp-z plan for a non-smooth length. The two length-m FFTs (m
+   7-smooth by construction) ride native sub-plans, one per sign. */
 static fft_plan *build_bluestein(int64_t n, int sign) {
   /* plan_build sends n <= 1 and every 13-smooth length to build_native. Keep
      that private precondition explicit here as well: besides making this
@@ -683,8 +710,12 @@ static fft_plan *build_bluestein(int64_t n, int sign) {
   p->n = n;
   p->sign = sign;
   p->kind = FFT_BLUESTEIN;
-  int64_t m = 1;
-  while (m < 2 * n - 1) m <<= 1;
+  /* The pad only needs m >= 2n-1; the smallest 7-smooth m beats the old
+     next-power-of-two whenever a 3/5/7 factor lands closer (e.g. n=4099:
+     8232 = 2³·3·7³ instead of 16384 — fewer, cheaper stages, and the shorter
+     transform is also slightly more accurate). Lengths whose 2n-1 is already
+     just under a power of two keep it (n=65521 stays m=131072). */
+  int64_t m = fft_good_size(2 * n - 1);
   p->m = m;
   p->work_cx = 2 * (m + FFT_PAD); /* a-line + de-aliased ping-pong scratch */
   p->chirp = malloc((size_t)n * sizeof(cx2));
@@ -714,6 +745,14 @@ static fft_plan *build_bluestein(int64_t n, int sign) {
     bseq[m - j] = bj;
   }
   native_exec(p->mplan_fwd, bseq, scr);
+  /* Fold the inverse transform's 1/m into the filter once at build: by
+     linearity of the inverse DFT the result is the same, and bluestein_exec
+     drops a length-n multiply per line. */
+  double minv = 1.0 / (double)m;
+  for (int64_t k = 0; k < m; k++) {
+    bseq[k].r *= minv;
+    bseq[k].i *= minv;
+  }
   memcpy(p->bfilter, bseq, (size_t)m * sizeof(cx2));
   free(bseq); free(scr);
   return p;
@@ -736,9 +775,9 @@ static void bluestein_exec(const fft_plan *p, cx2 *x, cx2 *work) {
     a[k].i = vr * bi + vi * br;
   }
   native_exec(p->mplan_inv, a, scr);
-  double inv = 1.0 / (double)m;
+  /* no 1/m here: it was folded into bfilter at plan build */
   for (int64_t k = 0; k < n; k++) {
-    double vr = a[k].r * inv, vi = a[k].i * inv;
+    double vr = a[k].r, vi = a[k].i;
     double cr = p->chirp[k].r, ci = p->chirp[k].i;
     x[k].r = vr * cr - vi * ci;
     x[k].i = vr * ci + vi * cr;
