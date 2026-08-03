@@ -2731,6 +2731,79 @@ val istft :
 
     See also {!stft}. *)
 
+(** {1:complex Complex accessors} *)
+
+module Complex : sig
+  (** Element-wise accessors for complex tensors: component extraction,
+      magnitude, phase, conjugation, and polar construction.
+
+      All functions run unboxed tensor kernels — no per-element
+      [Stdlib.Complex.t] round-trips — and return a fresh tensor (a copy, not
+      a {e view}). Functions producing float tensors take the output dtype
+      first; it selects the storage precision, independent of the input's. The
+      natural pairings are [complex64] with [float32] and [complex128] with
+      [float64].
+
+      This module is namespaced so that {!val-abs} — magnitude, complex in,
+      float out — does not clash with the dtype-preserving [Nx.abs]. *)
+
+  val real : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
+  (** [real dt z] is the real part of each element of [z], as a float tensor
+      of dtype [dt].
+
+      {@ocaml[
+        # create complex64 [| 2 |]
+            [| Stdlib.Complex.{ re = 3.; im = 4. }; Stdlib.Complex.i |]
+          |> Complex.real float32
+        - : (float, float32_elt) t = [3, 0]
+      ]}
+
+      See also {!imag}, {!val-abs}. *)
+
+  val imag : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
+  (** [imag dt z] is the imaginary part of each element of [z], as a float
+      tensor of dtype [dt].
+
+      See also {!real}. *)
+
+  val abs : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
+  (** [abs dt z] is the element-wise magnitude (modulus) of [z], as a float
+      tensor of dtype [dt]. Computed without undue overflow (C [cabs]).
+
+      {@ocaml[
+        # create complex64 [| 2 |]
+            [| Stdlib.Complex.{ re = 3.; im = 4. }; Stdlib.Complex.i |]
+          |> Complex.abs float32
+        - : (float, float32_elt) t = [5, 1]
+      ]}
+
+      See also {!angle}, {!polar}. *)
+
+  val angle : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
+  (** [angle dt z] is the element-wise argument (phase) of [z] in radians, in
+      \[[-π], [π]\], as a float tensor of dtype [dt]. Measured as
+      [atan2 im re], so negative real values map to π and zero maps to zero.
+
+      See also {!val-abs}, {!polar}. *)
+
+  val conj : (Stdlib.Complex.t, 'a) t -> (Stdlib.Complex.t, 'a) t
+  (** [conj z] is the element-wise complex conjugate of [z].
+
+      See also {!imag}. *)
+
+  val polar :
+    (Stdlib.Complex.t, 'c) dtype ->
+    (float, 'a) t ->
+    (float, 'a) t ->
+    (Stdlib.Complex.t, 'c) t
+  (** [polar dt r theta] is the complex tensor with magnitude [r] and phase
+      [theta]: [r·cos theta + i·r·sin theta], as a complex tensor of dtype
+      [dt]. [r] and [theta] are broadcast together. Inverse of the
+      ({!val-abs}, {!angle}) decomposition.
+
+      See also {!val-abs}, {!angle}. *)
+end
+
 (** {1:activation Activation functions} *)
 
 val relu : ('a, 'b) t -> ('a, 'b) t
