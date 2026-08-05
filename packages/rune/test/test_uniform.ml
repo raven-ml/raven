@@ -86,7 +86,8 @@ let tests =
   [
     group "differentiation"
       [
-        test "grad works over a uniform-backed Ptree.Make" test_grad_over_uniform;
+        test "grad works over a uniform-backed Ptree.Make"
+          test_grad_over_uniform;
         test "value_and_grad returns correct value and gradient"
           test_value_and_grad;
       ];

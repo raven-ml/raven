@@ -27,26 +27,14 @@
   backend_contract
   test_backend_contract
   test_nx_support
-  test_nx_io
-  test_oxcaml_backend)
+  test_nx_io)
  (libraries nx.buffer nx nx.core nx.effect windtrap test_nx_support))
 
 (test
  (name test_backend_contract)
  (package nx)
  (modules backend_contract test_backend_contract)
- (libraries nx.buffer nx.c nx.core windtrap))
-
-(test
- (name test_oxcaml_backend)
- (package nx)
- (modules test_oxcaml_backend)
- (action
-  (run
-   %{test}
-   %{dep:../lib/core/backend_intf.ml}
-   %{dep:../lib/backend/nx_backend.mli}
-   %{dep:../../nx-oxcaml/lib/nx_backend.ml})))
+ (libraries nx.buffer nx.c nx.core windtrap windtrap.prop))
 
 (test
  (name test_nx_io)

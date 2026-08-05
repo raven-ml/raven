@@ -1473,8 +1473,8 @@ let uvalidate_declaration ~signature validation type_decl =
   (match body with
   | Some body when not (ubody_has_payload body) ->
       add_error validation ~loc:type_decl.ptype_name.loc
-        "ppx_ptree: the type parameter ['%s] of [%s] never occurs in a \
-         payload position"
+        "ppx_ptree: the type parameter ['%s] of [%s] never occurs in a payload \
+         position"
         parameter type_decl.ptype_name.txt
   | _ -> ());
   let dependencies =
@@ -1521,22 +1521,23 @@ let ucomponent_rec_flag component =
   match component with
   | [] -> assert false
   | [ udecl ] ->
-      if String_set.mem udecl.utype_decl.ptype_name.txt udecl.udependencies
-      then Recursive
+      if String_set.mem udecl.utype_decl.ptype_name.txt udecl.udependencies then
+        Recursive
       else Nonrecursive
   | _ -> Recursive
 
 (* Leaf paths: [None] at the root, otherwise a string expression holding the
-   dot-joined segments so far. Top-level segments are bare; deeper segments
-   are appended with ["."], matching the checkpoint naming convention. *)
+   dot-joined segments so far. Top-level segments are bare; deeper segments are
+   appended with ["."], matching the checkpoint naming convention. *)
 
 let ujoin ~loc path segment =
   match path with
   | None -> segment
   | Some path ->
       call ~loc (Longident.Lident "^")
-        [ call ~loc (Longident.Lident "^") [ path; B.estring ~loc "." ];
-          segment ]
+        [
+          call ~loc (Longident.Lident "^") [ path; B.estring ~loc "." ]; segment;
+        ]
 
 let upath_expr ~loc path =
   match path with None -> B.estring ~loc "" | Some path -> path
@@ -1552,8 +1553,7 @@ let rec umap_expr fvar shape expr =
   | UPayload -> call ~loc (Lident fvar) [ expr ]
   | UStatic -> expr
   | ULocal name ->
-      call ~loc
-        (Lident (uniform_names_for_type name).umap)
+      call ~loc (Lident (uniform_names_for_type name).umap)
         [ evar ~loc fvar; expr ]
   | UUsing module_path ->
       call ~loc (append_lid module_path "map") [ evar ~loc fvar; expr ]
@@ -1612,8 +1612,7 @@ let rec umap2_expr ~function_path fvar shape left right =
   | UPayload -> call ~loc (Lident fvar) [ left; right ]
   | UStatic -> left
   | ULocal name ->
-      call ~loc
-        (Lident (uniform_names_for_type name).umap2)
+      call ~loc (Lident (uniform_names_for_type name).umap2)
         [ evar ~loc fvar; left; right ]
   | UUsing module_path ->
       call ~loc (append_lid module_path "map2") [ evar ~loc fvar; left; right ]
@@ -1700,7 +1699,8 @@ let rec umap2_expr ~function_path fvar shape left right =
                   (Longident.parse "Stdlib.List.length")
                   [ evar ~loc right_name ];
               ])
-           (invalid_argument ~loc (umismatch_message function_path "list length"))
+           (invalid_argument ~loc
+              (umismatch_message function_path "list length"))
            (Some
               (call ~loc
                  (Longident.parse "Stdlib.List.map2")
@@ -1752,8 +1752,7 @@ let rec uiter_expr fvar shape expr =
   | UPayload -> call ~loc (Lident fvar) [ expr ]
   | UStatic -> B.eunit ~loc
   | ULocal name ->
-      call ~loc
-        (Lident (uniform_names_for_type name).uiter)
+      call ~loc (Lident (uniform_names_for_type name).uiter)
         [ evar ~loc fvar; expr ]
   | UUsing module_path ->
       call ~loc (append_lid module_path "iter") [ evar ~loc fvar; expr ]
@@ -1765,7 +1764,8 @@ let rec uiter_expr fvar shape expr =
         [ B.value_binding ~loc ~pat:pattern ~expr:tuple ]
         (B.esequence ~loc
            (List.map2
-              (fun shape name -> uiter_expr fvar shape (evar ~loc:shape.uloc name))
+              (fun shape name ->
+                uiter_expr fvar shape (evar ~loc:shape.uloc name))
               shapes names))
   | UOption shape ->
       let value = gen_symbol ~prefix:"ptree_value" () in
@@ -1810,8 +1810,7 @@ let udelegate_callback ~loc ~path fvar arity =
 let rec ufold_expr ~path fvar shape expr acc_expr =
   let loc = shape.uloc in
   match shape.udesc with
-  | UPayload ->
-      call ~loc (Lident fvar) [ upath_expr ~loc path; acc_expr; expr ]
+  | UPayload -> call ~loc (Lident fvar) [ upath_expr ~loc path; acc_expr; expr ]
   | UStatic -> acc_expr
   | ULocal _ | UUsing _ ->
       let target =
@@ -1820,8 +1819,7 @@ let rec ufold_expr ~path fvar shape expr acc_expr =
         | UUsing module_path -> append_lid module_path "fold"
         | _ -> assert false
       in
-      call ~loc target
-        [ udelegate_callback ~loc ~path fvar 2; acc_expr; expr ]
+      call ~loc target [ udelegate_callback ~loc ~path fvar 2; acc_expr; expr ]
   | UTuple shapes ->
       let names, pattern, tuple =
         tuple_bindings ~loc expr (List.length shapes)
@@ -1991,7 +1989,8 @@ let rec ufold2_expr ~function_path ~path fvar shape left right acc_expr =
                ~lhs:
                  (B.ppat_tuple ~loc
                     [
-                      construct_pattern ~loc "Some" (Some (pvar ~loc left_value));
+                      construct_pattern ~loc "Some"
+                        (Some (pvar ~loc left_value));
                       construct_pattern ~loc "Some"
                         (Some (pvar ~loc right_value));
                     ])
@@ -2043,7 +2042,8 @@ let rec ufold2_expr ~function_path ~path fvar shape left right acc_expr =
                   (Longident.parse "Stdlib.List.length")
                   [ evar ~loc right_name ];
               ])
-           (invalid_argument ~loc (umismatch_message function_path "list length"))
+           (invalid_argument ~loc
+              (umismatch_message function_path "list length"))
            (Some
               (call ~loc
                  (Longident.parse "Stdlib.List.fold_left2")
@@ -2164,7 +2164,8 @@ let rec unames_expr ~path shape expr =
               (fun index shape ->
                 unames_expr
                   ~path:
-                    (Some (ujoin ~loc path (B.estring ~loc (string_of_int index))))
+                    (Some
+                       (ujoin ~loc path (B.estring ~loc (string_of_int index))))
                   shape
                   (evar ~loc (List.nth names index)))
               shapes))
@@ -2240,8 +2241,8 @@ let rec unames_expr ~path shape expr =
 
 let urecord ~loc bindings =
   lets_located
-    (List.map (fun (field_loc, name, expression, _) ->
-         (field_loc, name, expression))
+    (List.map
+       (fun (field_loc, name, expression, _) -> (field_loc, name, expression))
        bindings)
     (B.pexp_record ~loc
        (List.map
@@ -2260,7 +2261,9 @@ let uoperation_body ~loc ~function_path operation ubody =
   let input = evar ~loc "x" in
   let second = evar ~loc "y" in
   let accumulator = evar ~loc "acc" in
-  let field_path label = Some (B.estring ~loc:label.pld_loc label.pld_name.txt) in
+  let field_path label =
+    Some (B.estring ~loc:label.pld_loc label.pld_name.txt)
+  in
   match (operation, ubody) with
   | `Umap, UAlias shape -> umap_expr "f" shape input
   | `Umap, URecord fields ->
@@ -2374,7 +2377,8 @@ let umake_binding ~module_path operation udecl =
   let functions parameters body =
     List.fold_right
       (fun (name, type_) body ->
-        B.pexp_fun ~loc Nolabel None (constrained_parameter ~loc name type_)
+        B.pexp_fun ~loc Nolabel None
+          (constrained_parameter ~loc name type_)
           body)
       parameters body
   in
@@ -2542,6 +2546,7 @@ let uniform_signature ~ctxt type_declarations =
 let strip_ptree_attributes =
   object
     inherit Ast_traverse.map
+
     method! attributes attributes =
       List.filter
         (fun attribute -> not (is_ptree_attribute attribute.attr_name.txt))
@@ -2557,7 +2562,8 @@ let rec shape_has_local shape =
 
 let body_has_local = function
   | Alias shape -> shape_has_local shape
-  | Record fields -> List.exists (fun (_, shape) -> shape_has_local shape) fields
+  | Record fields ->
+      List.exists (fun (_, shape) -> shape_has_local shape) fields
 
 let body_has_leaf =
   let rec shape_has_leaf shape =
@@ -2586,8 +2592,8 @@ let tuple_arguments core_type =
   | Ptyp_tuple elements -> elements
   | _ -> assert false
 
-(* The mirror type of a position: payloads become ['m], delegations become
-   ['m M.Uniform.t], static positions keep their original type. *)
+(* The mirror type of a position: payloads become ['m], delegations become ['m
+   M.Uniform.t], static positions keep their original type. *)
 let rec mirror_type shape core_type =
   let loc = shape.loc in
   match shape.desc with
@@ -2599,7 +2605,8 @@ let rec mirror_type shape core_type =
         [ B.ptyp_var ~loc "m" ]
   | Local _ -> assert false
   | Tuple shapes ->
-      B.ptyp_tuple ~loc (List.map2 mirror_type shapes (tuple_arguments core_type))
+      B.ptyp_tuple ~loc
+        (List.map2 mirror_type shapes (tuple_arguments core_type))
   | Option shape ->
       B.ptyp_constr ~loc (lident ~loc "option")
         [ mirror_type shape (container_argument core_type) ]
@@ -2777,8 +2784,7 @@ let rec of_uniform_shape ~path shape core_type expr =
               (fun index shape ->
                 of_uniform_shape
                   ~path:(string_of_int index :: path)
-                  shape
-                  (List.nth arguments index)
+                  shape (List.nth arguments index)
                   (evar ~loc (List.nth names index)))
               shapes))
   | Option shape ->
@@ -2897,11 +2903,7 @@ let mirror_udeclaration ~loc declaration =
              fields synth_labels)
     | `Record _, _ -> assert false
   in
-  {
-    utype_decl = synth;
-    ubody = Some ubody;
-    udependencies = String_set.empty;
-  }
+  { utype_decl = synth; ubody = Some ubody; udependencies = String_set.empty }
 
 let mirror_check declarations =
   match declarations with
@@ -2999,8 +3001,7 @@ let mirror_to_uniform ~loc declaration =
   in
   B.pstr_value ~loc Nonrecursive
     [
-      B.value_binding ~loc
-        ~pat:(pvar ~loc "to_uniform")
+      B.value_binding ~loc ~pat:(pvar ~loc "to_uniform")
         ~expr:
           (B.pexp_fun ~loc Nolabel None
              (constrained_parameter ~loc "x"
@@ -3020,25 +3021,23 @@ let mirror_of_uniform ~loc declaration =
           (List.map
              (fun (label, shape) ->
                ( lident ~loc:label.pld_name.loc label.pld_name.txt,
-                 of_uniform_shape
-                   ~path:[ label.pld_name.txt ]
-                   shape label.pld_type
+                 of_uniform_shape ~path:[ label.pld_name.txt ] shape
+                   label.pld_type
                    (B.pexp_field ~loc:label.pld_loc (evar ~loc "u")
                       (located_lid ~loc:label.pld_name.loc
-                         (Longident.Ldot (Lident "Uniform", label.pld_name.txt)))) ))
+                         (Longident.Ldot (Lident "Uniform", label.pld_name.txt))))
+               ))
              fields)
           None
     | None -> assert false
   in
   B.pstr_value ~loc Nonrecursive
     [
-      B.value_binding ~loc
-        ~pat:(pvar ~loc "of_uniform")
+      B.value_binding ~loc ~pat:(pvar ~loc "of_uniform")
         ~expr:
           (B.pexp_fun ~loc Nolabel None
              (constrained_parameter ~loc "u" (tensor_uniform_type ~loc))
-             (B.pexp_constraint ~loc body
-                (declared_type declaration.type_decl)));
+             (B.pexp_constraint ~loc body (declared_type declaration.type_decl)));
     ]
 
 let mirror_structure ~ctxt type_declarations =
@@ -3122,7 +3121,7 @@ let mirror_signature ~ctxt type_declarations =
             ]
           else []
         in
-        (module_item :: to_uniform_item :: of_uniform_items)
+        module_item :: to_uniform_item :: of_uniform_items
 
 (* Deriver registration: one deriver, dispatching on the shape of the
    declaration group. *)
@@ -3140,7 +3139,8 @@ let mirror_on_uniform_error type_declarations =
 
 let ptree_structure ~ctxt (recursive, type_declarations) mirror =
   if uniform_group type_declarations then
-    if mirror then structure_errors [ mirror_on_uniform_error type_declarations ]
+    if mirror then
+      structure_errors [ mirror_on_uniform_error type_declarations ]
     else uniform_structure ~ctxt type_declarations
   else
     let base = structure_generator ~ctxt (recursive, type_declarations) in
@@ -3148,7 +3148,8 @@ let ptree_structure ~ctxt (recursive, type_declarations) mirror =
 
 let ptree_signature ~ctxt (recursive, type_declarations) mirror =
   if uniform_group type_declarations then
-    if mirror then signature_errors [ mirror_on_uniform_error type_declarations ]
+    if mirror then
+      signature_errors [ mirror_on_uniform_error type_declarations ]
     else uniform_signature ~ctxt type_declarations
   else
     let base = signature_generator ~ctxt (recursive, type_declarations) in
