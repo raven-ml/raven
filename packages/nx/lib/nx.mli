@@ -2518,10 +2518,15 @@ val rfft :
     [dtype]. Returns only the non-redundant positive frequencies; the output
     size along the transformed axis is [n/2 + 1].
 
-    [dtype] selects the storage precision of the result independently of the
-    input precision: [rfft complex64 x] on float32 input keeps the spectrum in
-    single precision. The transform itself computes in double precision
-    regardless of [dtype].
+    [dtype] selects the storage precision of the result, independent of the
+    input's: the natural pairings are [float32] with [complex64] and [float64]
+    with [complex128], but any pairing is accepted and a narrowing one rounds
+    the spectrum. The result is accurate to at least [dtype]'s precision.
+
+    The normalisation implied by [norm] is applied after the result has been
+    stored as [dtype], so a spectrum whose unnormalised magnitudes overflow
+    [dtype] stays infinite. Transform at the wider dtype and {!cast} afterwards
+    if the input's dynamic range approaches that limit.
 
     {@ocaml[
       # create float64 [| 4 |] [| 0.; 1.; 2.; 3. |]
@@ -2540,8 +2545,7 @@ val irfft :
   (float, 'b) t
 (** [irfft dtype ?axis ?n ?norm x] is the inverse of {!rfft}, producing real
     output stored as [dtype]. Assumes Hermitian symmetry. As with {!rfft},
-    [dtype] is independent of the input precision and the transform computes in
-    double precision.
+    [dtype] selects the storage precision independent of the input's.
 
     See also {!rfft}. *)
 
@@ -2552,7 +2556,9 @@ val rfft2 :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, 'b) t
-(** [rfft2 dtype ?axes ?s ?norm x] is the 2-D FFT of real input.
+(** [rfft2 dtype ?axes ?s ?norm x] is the 2-D FFT of real input, stored as
+    [dtype]. As with {!rfftn}, the intermediate spectrum is carried at [dtype]
+    between the two axis passes.
 
     See also {!irfft2}, {!rfft}. *)
 
@@ -2572,7 +2578,14 @@ val rfftn :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, 'b) t
-(** [rfftn dtype ?axes ?s ?norm x] is the N-D FFT of real input.
+(** [rfftn dtype ?axes ?s ?norm x] is the N-D FFT of real input, stored as
+    [dtype].
+
+    The real-to-complex pass runs along the last of [axes] and the remaining
+    axes are then transformed in place, so with more than one axis the
+    intermediate spectrum is carried at [dtype] rather than at a wider working
+    precision. A narrow [dtype] therefore rounds once per axis. Pass
+    [complex128] and {!cast} afterwards to keep the intermediates wide.
 
     See also {!irfftn}, {!rfft}. *)
 
@@ -2602,7 +2615,8 @@ val ihfft :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, 'b) t
-(** [ihfft dtype ?axis ?n ?norm x] is the inverse of {!hfft}. *)
+(** [ihfft dtype ?axis ?n ?norm x] is the inverse of {!hfft}, producing complex
+    output stored as [dtype]. *)
 
 val dct :
   ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t
