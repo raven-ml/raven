@@ -131,22 +131,22 @@ let movement_tests =
         check_grad ~msg:"shrink" (Nx.shrink [| (0, 2); (1, 3) |]) (m23 ()));
     test "flip" (fun () ->
         check_grad ~msg:"flip" (Nx.flip ~axes:[ 1 ]) (m23 ()));
-    test "sliding_window_view" (fun () ->
-        check_grad ~msg:"sliding_window_view"
-          (Nx.sliding_window_view ~window:3)
+    test "sliding window" (fun () ->
+        check_grad ~msg:"sliding window"
+          (sliding_window ~axis:0 ~window:3 ~step:1)
           (v7 ()));
-    test "sliding_window_view strided" (fun () ->
-        check_grad ~msg:"sliding_window_view step 2"
-          (Nx.sliding_window_view ~window:3 ~step:2)
+    test "sliding window strided" (fun () ->
+        check_grad ~msg:"sliding window step 2"
+          (sliding_window ~axis:0 ~window:3 ~step:2)
           (v7 ()));
-    test "sliding_window_view with gaps" (fun () ->
+    test "sliding window with gaps" (fun () ->
         (* step > window: positions no window reads get a zero cotangent. *)
-        check_grad ~msg:"sliding_window_view step 3"
-          (Nx.sliding_window_view ~window:2 ~step:3)
+        check_grad ~msg:"sliding window step 3"
+          (sliding_window ~axis:0 ~window:2 ~step:3)
           (v7 ()));
-    test "sliding_window_view on a leading axis" (fun () ->
-        check_grad ~msg:"sliding_window_view axis -2"
-          (Nx.sliding_window_view ~axis:(-2) ~window:2)
+    test "sliding window on a leading axis" (fun () ->
+        check_grad ~msg:"sliding window axis 0"
+          (sliding_window ~axis:0 ~window:2 ~step:1)
           (m43 ()));
     test "concatenate" (fun () ->
         check_grad2 ~msg:"concatenate"
@@ -273,7 +273,7 @@ let composite_tests =
            it. *)
         check_grad ~msg:"windowed energy"
           (fun x ->
-            let w = Nx.sliding_window_view ~window:3 ~step:2 x in
+            let w = sliding_window ~axis:0 ~window:3 ~step:2 x in
             Nx.sum ~axes:[ 1 ] (Nx.mul w w))
           (v7 ()));
   ]

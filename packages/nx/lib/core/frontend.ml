@@ -3979,6 +3979,135 @@ module Make (B : Backend_intf.S) = struct
         roll (-(sh.(axis) / 2)) acc ~axis)
       x axes_list
 
+  (* Short-time Fourier analysis.
+
+     Framing is a pure view: the frames alias the signal through overlapping
+     strides and are never materialized, so a spectrogram costs one transform
+     pass and no framed copy. The inverse is weighted overlap-add — each frame
+     is windowed again and summed back at the position it came from, then
+     divided by the overlap envelope the windows themselves produce. Dividing by
+     the measured envelope rather than assuming one makes reconstruction exact
+     for every [step] that covers the signal, instead of only for the hops where
+     the window happens to sum to a constant. *)
+
+  let hann ctx dt n =
+    if n < 1 then err "hann" "length must be >= 1, got %d" n;
+    (* Periodic form: the sample that would open the next period is dropped
+       rather than duplicated, which is what lets shifted copies sum flat. The
+       symmetric variant divides by [n - 1] and does not. *)
+    let phase =
+      mul_s
+        (arange_f ctx dt 0. (float_of_int n) 1.)
+        (2.0 *. Float.pi /. float_of_int n)
+    in
+    add_s (mul_s (cos phase) (-0.5)) 0.5
+
+  let stft_step ~window = function
+    | Some s -> s
+    | None -> Stdlib.max 1 (window / 4)
+
+  let check_taper op ~window = function
+    | Some w when shape w <> [| window |] ->
+        err op "win has shape %s, expected [%d]"
+          (Shape.to_string (shape w))
+          window
+    | _ -> ()
+
+  let stft (type c) (cdt : (Complex.t, c) Dtype.t) ~window ?step ?win x :
+      (Complex.t, c) t =
+    let step = stft_step ~window step in
+    let r = ndim x in
+    if r < 1 then err "stft" "input must have at least 1 dimension";
+    if window < 1 then err "stft" "window must be >= 1, got %d" window;
+    if step < 1 then err "stft" "step must be >= 1, got %d" step;
+    let n = (shape x).(r - 1) in
+    if window > n then
+      err "stft" "window %d exceeds the %d samples on the last axis" window n;
+    check_taper "stft" ~window win;
+    let frames = B.sliding_window x ~axis:(r - 1) ~window ~step in
+    let frames = match win with None -> frames | Some w -> mul frames w in
+    let spectrum = rfft frames ~axis:(-1) in
+    (* [rfft] fixes its own output dtype, so honor [cdt] with a trailing
+       conversion — a no-op when they already agree. *)
+    match Dtype.equal_witness (dtype spectrum) cdt with
+    | Some Type.Equal -> spectrum
+    | None -> cast cdt spectrum
+
+  let istft (type a) (dt : (float, a) Dtype.t) ~window ?step ?win ?length z :
+      (float, a) t =
+    let step = stft_step ~window step in
+    let r = ndim z in
+    if r < 2 then err "istft" "input must have at least 2 dimensions";
+    if window < 1 then err "istft" "window must be >= 1, got %d" window;
+    if step < 1 || step > window then
+      err "istft" "step must be in [1, %d] to cover the signal, got %d" window
+        step;
+    check_taper "istft" ~window win;
+    let z_shape = shape z in
+    let bins = (window / 2) + 1 in
+    if z_shape.(r - 1) <> bins then
+      err "istft" "last axis has %d bins, expected %d for window %d"
+        z_shape.(r - 1)
+        bins window;
+    let frames = z_shape.(r - 2) in
+    let out_len = ((frames - 1) * step) + window in
+    let ctx = B.context z in
+    let taper_sq =
+      match win with None -> ones ctx dt [| window |] | Some w -> mul w w
+    in
+    (* [fold] sums the taps landing on each output position, which is exactly
+       overlap-add, and reads its operand as [(leading…, window, frames)]. *)
+    let swap_last_two rank =
+      List.init rank (fun i ->
+          if i < rank - 2 then i
+          else if i = rank - 2 then rank - 1
+          else rank - 2)
+    in
+    let overlap_add t =
+      let rank = ndim t in
+      B.fold
+        (transpose t ~axes:(swap_last_two rank))
+        ~output_size:[| out_len |] ~kernel_size:[| window |] ~stride:[| step |]
+        ~dilation:[| 1 |]
+        ~padding:[| (0, 0) |]
+    in
+    let windowed = cast dt (irfft z ~axis:(-1) ~n:window) in
+    let windowed =
+      match win with None -> windowed | Some w -> mul windowed w
+    in
+    let signal = overlap_add windowed in
+    let envelope =
+      overlap_add
+        (broadcast_to [| frames; window |] (reshape [| 1; window |] taper_sq))
+    in
+    (* A sample the analysis window zeroed carries no information: both its
+       envelope and its numerator are zero, so dividing by one returns the
+       honest 0 rather than a NaN. *)
+    let denom =
+      where
+        (equal envelope (scalar_like envelope (Dtype.zero dt)))
+        (scalar_like envelope (Dtype.one dt))
+        envelope
+    in
+    let y = div signal denom in
+    match length with
+    | None -> y
+    | Some l ->
+        if l < 1 then err "istft" "length must be >= 1, got %d" l;
+        let rank = ndim y in
+        let axis_of i = (0, (shape y).(i)) in
+        if l < out_len then
+          B.shrink y
+            (Array.init rank (fun i ->
+                 if i = rank - 1 then (0, l) else axis_of i))
+        else if l > out_len then
+          pad
+            (Array.init rank (fun i ->
+                 if i = rank - 1 then (0, l - out_len) else (0, 0)))
+            (Dtype.zero dt) y
+        else y
+
+
   (* Discrete cosine and sine transforms. These are expressed in terms of the
      complex FFT so every backend, including effectful ones, gets the same
      implementation without extending the backend interface. *)
@@ -4346,23 +4475,6 @@ module Make (B : Backend_intf.S) = struct
             (scalar_like x (Dtype.of_float (dtype x) epsilon))))
 
   let erf x = unaryop B.erf x
-
-  let sliding_window_view ?axis ~window ?(step = 1) x =
-    let r = ndim x in
-    let ax = match axis with Some a -> a | None -> -1 in
-    let axis = resolve_single_axis x ax in
-    if axis < 0 || axis >= r then
-      err "sliding_window_view" "axis %d out of bounds for %dD tensor" ax r;
-    if window < 1 then
-      err "sliding_window_view" "window must be >= 1, got %d" window;
-    if step < 1 then err "sliding_window_view" "step must be >= 1, got %d" step;
-    let size = (shape x).(axis) in
-    if window > size then
-      err "sliding_window_view"
-        "cannot slide window %d along axis %d in shape %s (%d>%d)" window axis
-        (Shape.to_string (shape x))
-        window size;
-    B.sliding_window x ~axis ~window ~step
 
   let extract_patches ~kernel_size ~stride ~dilation ~padding x =
     B.unfold x ~kernel_size ~stride ~dilation ~padding

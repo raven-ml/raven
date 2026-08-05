@@ -363,6 +363,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.stft`, `Nx.istft`, and `Nx.hann` for short-time Fourier analysis.
+  `stft` frames the last axis through a view instead of materializing the
+  frames; `istft` reconstructs by weighted overlap-add, dividing by the
+  envelope the windows themselves produce so any `step <= window` inverts.
 - **Breaking:** `Nx_core.Backend_intf.S` gains `sliding_window`, a pure-view
   movement producing overlapping windows. Out-of-tree engines implementing the
   `nx.backend` virtual library must add it.

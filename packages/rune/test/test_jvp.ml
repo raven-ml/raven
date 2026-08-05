@@ -204,13 +204,13 @@ let movement_tests =
     test "shrink" (fun () ->
         check_jvp ~msg:"shrink" (Nx.shrink [| (0, 2); (1, 3) |]) (m23 ()));
     test "flip" (fun () -> check_jvp ~msg:"flip" (Nx.flip ~axes:[ 1 ]) (m23 ()));
-    test "sliding_window_view" (fun () ->
-        check_jvp ~msg:"sliding_window_view"
-          (Nx.sliding_window_view ~window:3 ~step:2)
+    test "sliding window" (fun () ->
+        check_jvp ~msg:"sliding window"
+          (sliding_window ~axis:0 ~window:3 ~step:2)
           (v7 ()));
-    test "sliding_window_view tangent is the windowed tangent" (fun () ->
+    test "sliding window tangent is the windowed tangent" (fun () ->
         (* Linearity: the tangent maps through the operation itself. *)
-        let f = Nx.sliding_window_view ~window:2 ~step:3 in
+        let f = sliding_window ~axis:0 ~window:2 ~step:3 in
         let x = v7 () in
         let v = tangent_like x in
         let _, dy = Rune.jvp' f x v in

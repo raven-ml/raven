@@ -2631,6 +2631,97 @@ val fftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 val ifftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [ifftshift ?axes t] is the inverse of {!fftshift}. *)
 
+(** {2:shorttime Short-time analysis} *)
+
+val hann : (float, 'a) dtype -> int -> (float, 'a) t
+(** [hann dtype n] is the length-[n] Hann taper
+    [0.5 - 0.5 * cos (2 * pi * i / n)].
+
+    This is the periodic form: the sample that would open the next period is
+    dropped rather than repeated, which is what lets shifted copies sum to a
+    constant and keeps {!istft} well conditioned. Pass it as {!stft}'s [win].
+
+    Raises [Invalid_argument] if [n < 1].
+
+    {@ocaml[
+      # hann float64 4
+      - : (float, float64_elt) t = [0, 0.5, 1, 0.5]
+    ]} *)
+
+val stft :
+  (Complex.t, 'c) dtype ->
+  window:int ->
+  ?step:int ->
+  ?win:(float, 'a) t ->
+  (float, 'a) t ->
+  (Complex.t, 'c) t
+(** [stft dtype ~window ?step ?win t] is the short-time Fourier transform of [t]
+    along its last axis: [t] is cut into frames of [window] samples every [step]
+    samples, each frame is multiplied by [win] if given, and each is transformed
+    with {!rfft}.
+
+    [[…; n]] becomes [[…; frames; window / 2 + 1]] with
+    [frames = (n - window) / step + 1] — time first, frequency last, so a
+    spectrogram indexes as [t.{frame, bin}] and feeds a sequence model directly.
+    Samples past the last whole frame are dropped.
+
+    [step] defaults to [window / 4]. Framing is a view, so no framed copy of [t]
+    is allocated; only the transform's own output is.
+
+    [win] must have shape [[|window|]] and [t]'s dtype. Without it the frames
+    are rectangular, which leaks energy across bins — pass {!hann} unless you
+    have a reason not to.
+
+    Raises [Invalid_argument] if [window < 1], [step < 1], [window] exceeds the
+    last axis, [t] is 0-d, or [win] has the wrong shape.
+
+    {@ocaml[
+      # stft complex128 ~window:16 ~step:8 (zeros float64 [| 64 |]) |> shape
+      - : int array = [|7; 9|]
+    ]}
+
+    See also {!istft}, {!hann}. *)
+
+val istft :
+  (float, 'a) dtype ->
+  window:int ->
+  ?step:int ->
+  ?win:(float, 'a) t ->
+  ?length:int ->
+  (Complex.t, 'c) t ->
+  (float, 'a) t
+(** [istft dtype ~window ?step ?win ?length z] reconstructs a signal from the
+    frames [z] produced by {!stft} with the same [window], [step], and [win].
+
+    Each frame is inverted with {!irfft}, multiplied by [win] again, and summed
+    back at the position it was taken from; the sum is then divided by the
+    overlap envelope the windows themselves produce. Dividing by the measured
+    envelope rather than assuming a constant one makes reconstruction exact for
+    every [step] that covers the signal, not only for the hops at which a given
+    window happens to sum flat.
+
+    [[…; frames; window / 2 + 1]] becomes [[…; (frames - 1) * step + window]],
+    or exactly [length] samples when given — truncated, or zero-extended when
+    the frames end early. Samples that [win] multiplied by zero carry no
+    information and come back as [0].
+
+    Raises [Invalid_argument] if [step] is outside [[1, window]] (a wider step
+    leaves gaps no frame covers), if [z] has fewer than 2 dimensions, if its
+    last axis is not [window / 2 + 1], or if [win] has the wrong shape.
+
+    {@ocaml[
+      # let x = init float64 [| 64 |] (fun i -> float_of_int i.(0)) in
+        let w = hann float64 16 in
+        let y =
+          stft complex128 ~window:16 ~step:4 ~win:w x
+          |> istft float64 ~window:16 ~step:4 ~win:w
+        in
+        (shape y, item [] (max (abs (sub y x))) < 1e-12)
+      - : int array * bool = ([|64|], true)
+    ]}
+
+    See also {!stft}. *)
+
 (** {1:activation Activation functions} *)
 
 val relu : ('a, 'b) t -> ('a, 'b) t
@@ -2704,38 +2795,6 @@ val erf : ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 (** {1:windows Sliding windows} *)
-
-(** {2:views Views} *)
-
-val sliding_window_view :
-  ?axis:int -> window:int -> ?step:int -> ('a, 'b) t -> ('a, 'b) t
-(** [sliding_window_view ?axis ~window ?step t] is a {e view} of [t] with
-    sliding windows of length [window] along [axis], taken every [step]
-    elements. [axis] defaults to the last axis; negative indices count from the
-    end. [step] defaults to [1].
-
-    The size of [axis] becomes [(size - window) / step + 1] and a trailing axis
-    of length [window] is appended. No data is copied: overlapping windows share
-    storage with [t], so writing through one window is visible in every window
-    that overlaps it.
-
-    Raises [Invalid_argument] if [window < 1], [step < 1], [window] exceeds the
-    size of [axis], or [axis] is out of bounds.
-
-    {@ocaml[
-      # create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |]
-        |> sliding_window_view ~window:3
-      - : (int32, int32_elt) t = int32 [3,3] [[1, 2, 3],
-                                              [2, 3, 4],
-                                              [3, 4, 5]]
-      # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
-        |> sliding_window_view ~window:2 ~step:2
-      - : (int32, int32_elt) t = int32 [3,2] [[1, 2],
-                                              [3, 4],
-                                              [5, 6]]
-    ]}
-
-    See also {!extract_patches}. *)
 
 (** {2:patches Patches} *)
 

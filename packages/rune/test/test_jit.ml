@@ -212,8 +212,8 @@ let test_fold_matches_eager () =
   let x = window_input () in
   check_arr ~msg:"fold of unfold" (to_arr (f x)) (g x)
 
-let test_sliding_window_view_matches_eager () =
-  let f x = Nx.sliding_window_view ~axis:1 ~window:3 ~step:2 x in
+let test_sliding_window_matches_eager () =
+  let f x = sliding_window ~axis:1 ~window:3 ~step:2 x in
   let g = Rune.jit' f in
   let x =
     Nx.create f32 [| 2; 8 |] (Array.init 16 (fun i -> float_of_int i -. 7.5))
@@ -665,8 +665,7 @@ let tests =
       [
         test "unfold matches eager" test_unfold_matches_eager;
         test "fold of unfold matches eager" test_fold_matches_eager;
-        test "sliding_window_view matches eager"
-          test_sliding_window_view_matches_eager;
+        test "sliding window matches eager" test_sliding_window_matches_eager;
         test "correlate matches eager" test_correlate_matches_eager;
       ];
     group "indexed access"
