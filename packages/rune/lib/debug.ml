@@ -74,6 +74,10 @@ let handler ppf =
         Some (fun k -> obs k "shrink" (shrink t_in limits))
     | E_flip { t_in; dims_to_flip } ->
         Some (fun k -> obs k "flip" (flip t_in dims_to_flip))
+    | E_sliding_window { t_in; axis; window; step } ->
+        Some
+          (fun k ->
+            obs k "sliding_window" (sliding_window t_in ~axis ~window ~step))
     | E_cat { t_list; axis } -> Some (fun k -> obs k "cat" (cat t_list ~axis))
     | E_cast { t_in; target_dtype } ->
         Some (fun k -> obs k "cast" (cast ~dtype:target_dtype t_in))
