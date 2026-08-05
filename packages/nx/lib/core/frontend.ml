@@ -3982,8 +3982,8 @@ module Make (B : Backend_intf.S) = struct
             window;
         w
 
-  let stft (type c) (cdt : (Complex.t, c) Dtype.t) ~window ?step ?win x :
-      (Complex.t, c) t =
+  let stft (cdt : (Complex.t, 'c) Dtype.t) ~window ?step ?win x :
+      (Complex.t, 'c) t =
     let step = stft_step ~window step in
     let r = ndim x in
     if r < 1 then err "stft" "input must have at least 1 dimension";
@@ -3994,15 +3994,10 @@ module Make (B : Backend_intf.S) = struct
       err "stft" "window %d exceeds the %d samples on the last axis" window n;
     let w = taper "stft" (B.context x) (B.dtype x) ~window win in
     let frames = B.sliding_window x ~axis:(r - 1) ~window ~step in
-    let spectrum = rfft Dtype.Complex128 (mul frames w) ~axis:(-1) in
-    (* [rfft] fixes its own output dtype, so honor [cdt] with a trailing
-       conversion — a no-op when they already agree. *)
-    match Dtype.equal_witness (dtype spectrum) cdt with
-    | Some Type.Equal -> spectrum
-    | None -> cast cdt spectrum
+    rfft cdt (mul frames w) ~axis:(-1)
 
-  let istft (type a) (dt : (float, a) Dtype.t) ~window ?step ?win ?length z :
-      (float, a) t =
+  let istft (dt : (float, 'a) Dtype.t) ~window ?step ?win ?length z :
+      (float, 'a) t =
     let step = stft_step ~window step in
     let r = ndim z in
     if r < 2 then err "istft" "input must have at least 2 dimensions";
@@ -4037,9 +4032,7 @@ module Make (B : Backend_intf.S) = struct
         ~dilation:[| 1 |]
         ~padding:[| (0, 0) |]
     in
-    let windowed =
-      mul (cast dt (irfft Dtype.Float64 z ~axis:(-1) ~n:window)) w
-    in
+    let windowed = mul (irfft dt z ~axis:(-1) ~n:window) w in
     let signal = overlap_add windowed in
     let envelope =
       overlap_add
