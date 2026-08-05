@@ -278,6 +278,58 @@ let composite_tests =
           (v7 ()));
   ]
 
+(* Complex accessors. Assembling a complex tensor and reading a component back
+   keeps the leaf and the loss real, so the finite-difference oracle covers the
+   whole path. *)
+
+let complex_tests =
+  let z_of x = Nx.complex Nx.complex128 ~re:x ~im:(Nx.mul_s x 2.0) in
+  [
+    test "magnitude" (fun () ->
+        check_grad ~msg:"magnitude"
+          (fun x -> Nx.magnitude f64 (z_of x))
+          (v3_pos ()));
+    test "real and imag" (fun () ->
+        check_grad ~msg:"real/imag"
+          (fun x ->
+            let z = z_of x in
+            Nx.add (Nx.real f64 z) (Nx.imag f64 z))
+          (v3 ()));
+    test "angle" (fun () ->
+        check_grad ~msg:"angle"
+          (fun x ->
+            (* a constant imaginary component keeps the argument varying *)
+            Nx.angle f64
+              (Nx.complex Nx.complex128 ~re:x ~im:(Nx.full f64 (Nx.shape x) 1.0)))
+          (v3 ()));
+    test "conjugate" (fun () ->
+        check_grad ~msg:"conjugate"
+          (fun x -> Nx.imag f64 (Nx.conjugate (z_of x)))
+          (v3 ()));
+    (* With a complex leaf, |z| pulls back as conj(z)/|z|. The conjugate is
+       what makes the composite cases above agree with finite differences:
+       without it the imaginary contribution comes back negated. *)
+    test "complex leaf differentiates |z| as conj(z)/|z|" (fun () ->
+        let z =
+          Nx.create Nx.complex128 [| 2 |]
+            [| Complex.{ re = 3.; im = 4. }; Complex.{ re = -1.; im = 2. } |]
+        in
+        let g =
+          Rune.grad'
+            (fun z -> Nx.sum (Nx.cast Nx.complex128 (Nx.magnitude f64 z)))
+            z
+        in
+        let got = Nx.to_array g in
+        Array.iteri
+          (fun i c ->
+            let n = Complex.norm c in
+            equal ~msg:(Printf.sprintf "re[%d]" i) (float 1e-9)
+              (c.Complex.re /. n) got.(i).Complex.re;
+            equal ~msg:(Printf.sprintf "im[%d]" i) (float 1e-9)
+              (-.c.Complex.im /. n) got.(i).Complex.im)
+          (Nx.to_array z));
+  ]
+
 let tests =
   [
     group "unary rules" unary_tests;
@@ -289,6 +341,7 @@ let tests =
     group "scan rules" scan_tests;
     group "matmul rules" matmul_tests;
     group "linalg rules" linalg_tests;
+    group "complex accessors" complex_tests;
     group "composites" composite_tests;
   ]
 

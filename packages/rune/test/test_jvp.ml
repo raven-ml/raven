@@ -293,6 +293,14 @@ let composite_tests =
             let e = Nx.exp x in
             Nx.log (Nx.div e (Nx.sum e ~keepdims:true)))
           (v3 ()));
+    (* Assembling a complex tensor and reading a component back keeps the input
+       and the output real, so the oracle covers the whole complex path. *)
+    test "magnitude of an assembled complex tensor" (fun () ->
+        check_jvp ~msg:"magnitude"
+          (fun x ->
+            Nx.magnitude f64
+              (Nx.complex Nx.complex128 ~re:x ~im:(Nx.mul_s x 2.0)))
+          (v3_pos ()));
   ]
 
 (* Composition with reverse mode *)

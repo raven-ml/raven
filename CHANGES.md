@@ -643,6 +643,10 @@ thread.
 
 ### Rune
 
+- Fix the derivative of `abs` on complex tensors, in both forward and reverse
+  mode: it pulled back through `sign z` instead of its conjugate, which negated
+  the imaginary part's contribution. Gradients of a real-valued function that
+  passes through a complex magnitude were wrong; real dtypes are unaffected.
 - Reverse mode differentiates the sliding-window movement through `fold`
   rather than a materialized scatter, so the backward pass is a single
   overlap-add instead of allocating a `window`-fold copy of the cotangent.

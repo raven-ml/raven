@@ -242,9 +242,14 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               pull1 k (recip t_in) t_in (fun g -> T.mul g (Derivs.recip' t_in)))
+      (* [conjugate] is the identity on real dtypes. On complex ones the
+         modulus is not holomorphic, and pulling back through [sign z] rather
+         than its conjugate flips the sign of the imaginary contribution. *)
       | E_abs { t_in } ->
           Some
-            (fun k -> pull1 k (abs t_in) t_in (fun g -> T.mul g (T.sign t_in)))
+            (fun k ->
+              pull1 k (abs t_in) t_in (fun g ->
+                  T.mul g (T.conjugate (T.sign t_in))))
       | E_erf { t_in } ->
           Some
             (fun k ->
