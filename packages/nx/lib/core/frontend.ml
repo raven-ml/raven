@@ -3988,7 +3988,8 @@ module Make (B : Backend_intf.S) = struct
      divided by the overlap envelope the windows themselves produce. Dividing by
      the measured envelope rather than assuming one makes reconstruction exact
      for every [step] that covers the signal, instead of only for the hops where
-     the window happens to sum to a constant. *)
+     the window happens to sum to a constant — which is also what lets both
+     directions default their taper without pinning the hop. *)
 
   let hann ctx dt n =
     if n < 1 then err "hann" "length must be >= 1, got %d" n;
@@ -4006,12 +4007,18 @@ module Make (B : Backend_intf.S) = struct
     | Some s -> s
     | None -> Stdlib.max 1 (window / 4)
 
-  let check_taper op ~window = function
-    | Some w when shape w <> [| window |] ->
-        err op "win has shape %s, expected [%d]"
-          (Shape.to_string (shape w))
-          window
-    | _ -> ()
+  (* Framing with no taper multiplies the signal by a rectangle, and a
+     rectangle's own spectrum smears every component across every bin, so the
+     default tapers rather than leaving the leakage to whoever did not know to
+     ask. An explicit [ones] opts back out. *)
+  let taper op ctx dt ~window = function
+    | None -> hann ctx dt window
+    | Some w ->
+        if shape w <> [| window |] then
+          err op "win has shape %s, expected [%d]"
+            (Shape.to_string (shape w))
+            window;
+        w
 
   let stft (type c) (cdt : (Complex.t, c) Dtype.t) ~window ?step ?win x :
       (Complex.t, c) t =
@@ -4023,10 +4030,9 @@ module Make (B : Backend_intf.S) = struct
     let n = (shape x).(r - 1) in
     if window > n then
       err "stft" "window %d exceeds the %d samples on the last axis" window n;
-    check_taper "stft" ~window win;
+    let w = taper "stft" (B.context x) (B.dtype x) ~window win in
     let frames = B.sliding_window x ~axis:(r - 1) ~window ~step in
-    let frames = match win with None -> frames | Some w -> mul frames w in
-    let spectrum = rfft frames ~axis:(-1) in
+    let spectrum = rfft (mul frames w) ~axis:(-1) in
     (* [rfft] fixes its own output dtype, so honor [cdt] with a trailing
        conversion — a no-op when they already agree. *)
     match Dtype.equal_witness (dtype spectrum) cdt with
@@ -4042,7 +4048,6 @@ module Make (B : Backend_intf.S) = struct
     if step < 1 || step > window then
       err "istft" "step must be in [1, %d] to cover the signal, got %d" window
         step;
-    check_taper "istft" ~window win;
     let z_shape = shape z in
     let bins = (window / 2) + 1 in
     if z_shape.(r - 1) <> bins then
@@ -4052,9 +4057,8 @@ module Make (B : Backend_intf.S) = struct
     let frames = z_shape.(r - 2) in
     let out_len = ((frames - 1) * step) + window in
     let ctx = B.context z in
-    let taper_sq =
-      match win with None -> ones ctx dt [| window |] | Some w -> mul w w
-    in
+    let w = taper "istft" ctx dt ~window win in
+    let taper_sq = mul w w in
     (* [fold] sums the taps landing on each output position, which is exactly
        overlap-add, and reads its operand as [(leading…, window, frames)]. *)
     let swap_last_two rank =
@@ -4071,10 +4075,7 @@ module Make (B : Backend_intf.S) = struct
         ~dilation:[| 1 |]
         ~padding:[| (0, 0) |]
     in
-    let windowed = cast dt (irfft z ~axis:(-1) ~n:window) in
-    let windowed =
-      match win with None -> windowed | Some w -> mul windowed w
-    in
+    let windowed = mul (cast dt (irfft z ~axis:(-1) ~n:window)) w in
     let signal = overlap_add windowed in
     let envelope =
       overlap_add
@@ -4106,7 +4107,6 @@ module Make (B : Backend_intf.S) = struct
                  if i = rank - 1 then (0, l - out_len) else (0, 0)))
             (Dtype.zero dt) y
         else y
-
 
   (* Discrete cosine and sine transforms. These are expressed in terms of the
      complex FFT so every backend, including effectful ones, gets the same

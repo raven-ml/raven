@@ -2657,20 +2657,25 @@ val stft :
   (Complex.t, 'c) t
 (** [stft dtype ~window ?step ?win t] is the short-time Fourier transform of [t]
     along its last axis: [t] is cut into frames of [window] samples every [step]
-    samples, each frame is multiplied by [win] if given, and each is transformed
-    with {!rfft}.
+    samples, each frame is multiplied by [win], and each is transformed with
+    {!rfft}.
 
-    [[…; n]] becomes [[…; frames; window / 2 + 1]] with
-    [frames = (n - window) / step + 1] — time first, frequency last, so a
-    spectrogram indexes as [t.{frame, bin}] and feeds a sequence model directly.
-    Samples past the last whole frame are dropped.
+    {b The result is time-major.} [[…; n]] becomes [[…; frames; window / 2 + 1]]
+    with [frames = (n - window) / step + 1], so a spectrogram indexes as
+    [t.{frame, bin}] and feeds a sequence model directly. Most signal-processing
+    libraries return the transpose of this; swap the last two axes with
+    {!transpose} if you want frequency-major. Samples past the last whole frame
+    are dropped.
+
+    [win] defaults to a periodic {!hann} taper of length [window] in [t]'s
+    dtype, and must otherwise have shape [[|window|]] and [t]'s dtype. That
+    default is deliberate rather than neutral: framing with no taper multiplies
+    the signal by a rectangle, and a rectangle's own spectrum smears every
+    component across every bin. Pass [~win:(ones (dtype t) [| window |])] for an
+    untapered framing.
 
     [step] defaults to [window / 4]. Framing is a view, so no framed copy of [t]
     is allocated; only the transform's own output is.
-
-    [win] must have shape [[|window|]] and [t]'s dtype. Without it the frames
-    are rectangular, which leaks energy across bins — pass {!hann} unless you
-    have a reason not to.
 
     Raises [Invalid_argument] if [window < 1], [step < 1], [window] exceeds the
     last axis, [t] is 0-d, or [win] has the wrong shape.
@@ -2703,7 +2708,11 @@ val istft :
     [[…; frames; window / 2 + 1]] becomes [[…; (frames - 1) * step + window]],
     or exactly [length] samples when given — truncated, or zero-extended when
     the frames end early. Samples that [win] multiplied by zero carry no
-    information and come back as [0].
+    information and come back as [0]; under the default taper that is sample
+    [0], which a periodic Hann sends to zero and no later frame reaches.
+
+    [win] defaults to the same periodic {!hann} taper {!stft} uses, so a pair
+    called with matching [window] and [step] and no [win] round-trips.
 
     Raises [Invalid_argument] if [step] is outside [[1, window]] (a wider step
     leaves gaps no frame covers), if [z] has fewer than 2 dimensions, if its
