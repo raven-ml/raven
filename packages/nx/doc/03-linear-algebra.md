@@ -192,22 +192,24 @@ For real-valued inputs, `rfft` is more efficient — it exploits conjugate symme
 
 <!-- $MDX skip -->
 ```ocaml
-(* The first argument picks the output dtype: float32 input can keep a
-   complex64 spectrum instead of promoting to complex128 *)
-let spectrum = Nx.rfft Nx.complex128 signal    (* n/2+1 complex outputs *)
-let signal_back = Nx.irfft Nx.float64 spectrum (* back to real *)
+(* The first argument picks the output dtype, independent of the input's.
+   Pair float32 with complex64 to keep a single-precision spectrum. *)
+let spectrum = Nx.rfft Nx.complex64 signal    (* n/2+1 complex outputs *)
+let signal_back = Nx.irfft Nx.float32 spectrum (* back to real *)
 
-let spectrum_2d = Nx.rfft2 Nx.complex128 image
-let spectrum_nd = Nx.rfftn Nx.complex128 ~axes:[0; 1] data
+let spectrum_2d = Nx.rfft2 Nx.complex64 image
+let spectrum_nd = Nx.rfftn Nx.complex64 ~axes:[0; 1] data
 ```
 
 ### Frequency axes
 
+Frequency axes are constructed, so they take their dtype first. Ask for the same precision you transformed at and the frequency bins line up with the spectrum without a cast:
+
 <!-- $MDX skip -->
 ```ocaml
-let freqs = Nx.fftfreq n          (* frequency bins for fft *)
-let rfreqs = Nx.rfftfreq n        (* frequency bins for rfft *)
-let shifted = Nx.fftshift spectrum (* shift zero-frequency to center *)
+let freqs = Nx.fftfreq Nx.float32 n    (* frequency bins for fft *)
+let rfreqs = Nx.rfftfreq Nx.float32 n  (* frequency bins for rfft *)
+let shifted = Nx.fftshift spectrum     (* shift zero-frequency to center *)
 ```
 
 ### Magnitude and phase

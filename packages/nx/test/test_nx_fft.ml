@@ -592,30 +592,62 @@ let test_hfft_ihfft () =
 let test_fftfreq () =
   let n = 5 in
   let shape = [| n |] in
-  let freq = Nx.fftfreq n in
+  let freq = Nx.fftfreq Nx.float64 n in
   let expected_data = [| 0.0; 0.2; 0.4; -0.4; -0.2 |] in
   check_t "fftfreq odd" shape expected_data freq;
 
   let n_even = 4 in
   let shape_even = [| n_even |] in
-  let freq_even = Nx.fftfreq n_even ~d:0.5 in
+  let freq_even = Nx.fftfreq Nx.float64 n_even ~d:0.5 in
   let expected_even_data = [| 0.0; 0.5; -1.0; -0.5 |] in
   check_t "fftfreq even" shape_even expected_even_data freq_even
 
 let test_rfftfreq () =
   let n = 8 in
   let shape = [| (n / 2) + 1 |] in
-  let freq = Nx.rfftfreq n in
+  let freq = Nx.rfftfreq Nx.float64 n in
   let expected_data = [| 0.0; 0.125; 0.25; 0.375; 0.5 |] in
   check_t "rfftfreq even" shape expected_data freq;
 
   let n_odd = 9 in
   let shape_odd = [| (n_odd / 2) + 1 |] in
-  let freq_odd = Nx.rfftfreq n_odd ~d:2.0 in
+  let freq_odd = Nx.rfftfreq Nx.float64 n_odd ~d:2.0 in
   let expected_odd_data =
     [| 0.0; 0.055555555555; 0.111111111111; 0.166666666666; 0.222222222222 |]
   in
   check_t ~eps:1e-8 "rfftfreq odd" shape_odd expected_odd_data freq_odd
+
+let test_fftfreq_dtypes () =
+  (* The frequency axis is a constructor: its dtype is chosen, not derived, so
+     it can be matched to the dtype the spectrum was transformed at. *)
+  let n = 4 in
+  let shape = [| n |] in
+  let spectrum_shape = [| (n / 2) + 1 |] in
+  let expected = [| 0.0; 0.25; -0.5; -0.25 |] in
+  let freq32 = Nx.fftfreq Nx.float32 n in
+  equal ~msg:"fftfreq float32 dtype" string "float32"
+    (Nx_core.Dtype.to_string (Nx.dtype freq32));
+  check_t ~eps:1e-7 "fftfreq float32 values" shape expected freq32;
+
+  let rexpected = [| 0.0; 0.25; 0.5 |] in
+  let rfreq32 = Nx.rfftfreq Nx.float32 n in
+  equal ~msg:"rfftfreq float32 dtype" string "float32"
+    (Nx_core.Dtype.to_string (Nx.dtype rfreq32));
+  check_t ~eps:1e-7 "rfftfreq float32 values" spectrum_shape rexpected rfreq32;
+
+  (* The point of the dtype argument: a single-precision spectrum and its
+     frequency axis combine with no cast in between. *)
+  let signal = Nx.create Nx.float32 shape [| 1.0; 0.0; -1.0; 0.0 |] in
+  let spectrum = Nx.rfft Nx.complex64 signal in
+  equal ~msg:"rfftfreq matches rfft bin count" (array int) (Nx.shape spectrum)
+    (Nx.shape rfreq32);
+  let re =
+    Nx.create Nx.float32 (Nx.shape spectrum)
+      (Array.map (fun c -> c.Complex.re) (Nx.to_array spectrum))
+  in
+  let weighted = [| 0.0; 0.5; 0.0 |] in
+  check_t ~eps:1e-6 "rfftfreq weights an rfft spectrum without a cast"
+    spectrum_shape weighted (Nx.mul rfreq32 re)
 
 let test_fftshift () =
   let x_shape = [| 4 |] in
@@ -838,6 +870,7 @@ let suite =
       [
         test "fftfreq" test_fftfreq;
         test "rfftfreq" test_rfftfreq;
+        test "freq dtypes" test_fftfreq_dtypes;
         test "shifts" test_fftshift;
       ];
   ]

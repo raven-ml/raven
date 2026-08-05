@@ -2,7 +2,10 @@
 
     Build a signal from two sine waves plus noise. Use the real FFT to identify
     component frequencies, then filter the noise and reconstruct a clean signal.
-*)
+
+    The pipeline stays in single precision throughout: [rfft complex64] keeps
+    the spectrum half the size of a [complex128] one, and [rfftfreq float32]
+    gives a frequency axis that combines with the magnitudes without a cast. *)
 
 open Nx
 open Nx.Infix
@@ -14,10 +17,10 @@ let () =
   let dt = 1.0 /. sample_rate in
 
   (* Time axis: n samples at the given rate. *)
-  let t = linspace float64 0.0 (Float.of_int n *. dt) n ~endpoint:false in
+  let t = linspace float32 0.0 (Float.of_int n *. dt) n ~endpoint:false in
 
   (* Build signal: 5 Hz sine + 20 Hz sine + noise. *)
-  let noise = randn Float64 [| n |] *$ 0.3 in
+  let noise = randn float32 [| n |] *$ 0.3 in
   let pi2 = 2.0 *. Float.pi in
   let signal_5hz = sin (t *$ (pi2 *. 5.0)) in
   let signal_20hz = sin (t *$ (pi2 *. 20.0)) *$ 0.5 in
@@ -32,11 +35,11 @@ let () =
     (to_string (slice [ R (0, 8) ] signal));
 
   (* --- Real FFT: transform to frequency domain --- *)
-  let spectrum = rfft complex128 signal in
-  let freqs = rfftfreq ~d:dt n in
+  let spectrum = rfft complex64 signal in
+  let freqs = rfftfreq float32 ~d:dt n in
 
   (* Magnitudes |z| (scaled by 2/N for single-sided spectrum). *)
-  let magnitudes = magnitude float64 spectrum *$ (2.0 /. Float.of_int n) in
+  let magnitudes = magnitude float32 spectrum *$ (2.0 /. Float.of_int n) in
 
   (* Find the dominant frequencies (magnitude > 0.3). *)
   Printf.printf "Dominant frequencies:\n";
@@ -57,10 +60,10 @@ let () =
         if Stdlib.( < ) mag_arr.(i) threshold then Complex.zero else c)
       (to_array spectrum)
   in
-  let clean_spectrum = create Complex128 (shape spectrum) filtered in
+  let clean_spectrum = create complex64 (shape spectrum) filtered in
 
   (* Inverse FFT back to time domain. *)
-  let clean_signal = irfft float64 ~n clean_spectrum in
+  let clean_signal = irfft float32 ~n clean_spectrum in
 
   Printf.printf "After filtering (threshold=%.1f):\n" threshold;
   Printf.printf "  Original first 8:  %s\n"

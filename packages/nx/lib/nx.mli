@@ -2695,20 +2695,23 @@ val idstn :
   (float, 'a) t
 (** [idstn ?type_ ?axes ?norm x] is the inverse of {!dstn}. *)
 
-val fftfreq : ?d:float -> int -> (float, float64_elt) t
-(** [fftfreq ?d n] is the DFT sample frequencies for window length [n] and
-    sample spacing [d] (default [1.0]).
+val fftfreq : (float, 'a) dtype -> ?d:float -> int -> (float, 'a) t
+(** [fftfreq dtype ?d n] is the DFT sample frequencies for window length [n] and
+    sample spacing [d] (default [1.0]), as a tensor of dtype [dtype]. Pair it
+    with the dtype the spectrum was transformed at so the frequency axis and the
+    magnitudes combine without a {!cast}.
 
     {@ocaml[
-      # fftfreq 4
+      # fftfreq float64 4
       - : (float, float64_elt) t = [0, 0.25, -0.5, -0.25]
     ]}
 
     See also {!rfftfreq}. *)
 
-val rfftfreq : ?d:float -> int -> (float, float64_elt) t
-(** [rfftfreq ?d n] is the positive DFT sample frequencies:
-    [[0, 1, …, n/2] / (d * n)].
+val rfftfreq : (float, 'a) dtype -> ?d:float -> int -> (float, 'a) t
+(** [rfftfreq dtype ?d n] is the positive DFT sample frequencies:
+    [[0, 1, …, n/2] / (d * n)], as a tensor of dtype [dtype]. This is the
+    frequency axis matching {!rfft}'s output.
 
     See also {!fftfreq}. *)
 
@@ -2717,7 +2720,7 @@ val fftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
     defaults to all.
 
     {@ocaml[
-      # fftfreq 5 |> fftshift
+      # fftfreq float64 5 |> fftshift
       - : (float, float64_elt) t = float64 [5] [-0.4, -0.2, ..., 0.2, 0.4]
     ]}
 

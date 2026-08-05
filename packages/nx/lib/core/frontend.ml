@@ -3893,8 +3893,7 @@ module Make (B : Backend_intf.S) = struct
     rfftn dtype x ~axes:[ axis ] ~s:[ n ] ?norm
 
   (* FFT helpers *)
-  let fftfreq ctx ?(d = 1.0) n =
-    let dt = Dtype.float64 in
+  let fftfreq ctx dt ?(d = 1.0) n =
     let v = 1.0 /. (float_of_int n *. d) in
     let freqs =
       if n mod 2 = 0 then
@@ -3912,8 +3911,7 @@ module Make (B : Backend_intf.S) = struct
     in
     mul_s freqs v
 
-  let rfftfreq ctx ?(d = 1.0) n =
-    let dt = Dtype.float64 in
+  let rfftfreq ctx dt ?(d = 1.0) n =
     let v = 1.0 /. (float_of_int n *. d) in
     mul (cast dt (arange ctx Dtype.int32 0 ((n / 2) + 1) 1)) (scalar ctx dt v)
 
