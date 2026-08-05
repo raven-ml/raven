@@ -373,9 +373,26 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let out = matmul a b in
             mark st out;
             continue k out)
+    (* Windowing: both address the last spatial dimensions and pass every
+       leading dimension through untouched, so the batch dimension rides along
+       as one more leading dimension and no parameter shifts. *)
+    | E_unfold { t_in; kernel_size; stride; dilation; padding }
+      when batched st t_in ->
+        Some
+          (fun k ->
+            let out = unfold t_in ~kernel_size ~stride ~dilation ~padding in
+            mark st out;
+            continue k out)
+    | E_fold { t_in; output_size; kernel_size; stride; dilation; padding }
+      when batched st t_in ->
+        Some
+          (fun k ->
+            let out =
+              fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
+            in
+            mark st out;
+            continue k out)
     (* No batching rule yet. *)
-    | E_unfold { t_in; _ } when batched st t_in -> err_no_rule "unfold"
-    | E_fold { t_in; _ } when batched st t_in -> err_no_rule "fold"
     | E_fft { t; _ } when batched st t -> err_no_rule "fft"
     | E_ifft { t; _ } when batched st t -> err_no_rule "ifft"
     | E_rfft { t; _ } when batched st t -> err_no_rule "rfft"
