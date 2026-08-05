@@ -36,7 +36,7 @@ let () =
   let freqs = rfftfreq ~d:dt n in
 
   (* Magnitudes |z| (scaled by 2/N for single-sided spectrum). *)
-  let magnitudes = Complex.abs float64 spectrum *$ (2.0 /. Float.of_int n) in
+  let magnitudes = magnitude float64 spectrum *$ (2.0 /. Float.of_int n) in
 
   (* Find the dominant frequencies (magnitude > 0.3). *)
   Printf.printf "Dominant frequencies:\n";
@@ -54,7 +54,7 @@ let () =
   let filtered =
     Array.mapi
       (fun i c ->
-        if Stdlib.( < ) mag_arr.(i) threshold then Stdlib.Complex.zero else c)
+        if Stdlib.( < ) mag_arr.(i) threshold then Complex.zero else c)
       (to_array spectrum)
   in
   let clean_spectrum = create Complex128 (shape spectrum) filtered in

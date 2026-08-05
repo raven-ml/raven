@@ -32,123 +32,115 @@ let shape = [| Array.length samples |]
 let input64 () = Nx.create Nx.complex64 shape samples
 let input128 () = Nx.create Nx.complex128 shape samples
 
+let complex_testable =
+  Testable.make
+    ~pp:(fun ppf v -> Format.fprintf ppf "(%g, %g)" v.Complex.re v.Complex.im)
+    ~equal:(fun a b ->
+      a.Complex.re = b.Complex.re && a.Complex.im = b.Complex.im)
+    ()
+
 (* Oracle checks against per-element stdlib Complex loops *)
 
 let test_real_imag () =
   let expected_re = Array.map (fun z -> z.Complex.re) samples in
   let expected_im = Array.map (fun z -> z.Complex.im) samples in
-  check_t "real complex64" shape expected_re
-    (Nx.Complex.real Nx.float32 (input64 ()));
+  check_t "real complex64" shape expected_re (Nx.real Nx.float32 (input64 ()));
   check_t ~eps:1e-12 "real complex128" shape expected_re
-    (Nx.Complex.real Nx.float64 (input128 ()));
-  check_t "imag complex64" shape expected_im
-    (Nx.Complex.imag Nx.float32 (input64 ()));
+    (Nx.real Nx.float64 (input128 ()));
+  check_t "imag complex64" shape expected_im (Nx.imag Nx.float32 (input64 ()));
   check_t ~eps:1e-12 "imag complex128" shape expected_im
-    (Nx.Complex.imag Nx.float64 (input128 ()));
+    (Nx.imag Nx.float64 (input128 ()));
   (* the output dtype is independent of the input precision *)
   check_t ~eps:1e-12 "real complex64 to float64" shape expected_re
-    (Nx.Complex.real Nx.float64 (input64 ()))
+    (Nx.real Nx.float64 (input64 ()))
 
-let test_abs () =
+let test_magnitude () =
   let expected = Array.map Complex.norm samples in
-  check_t ~eps:1e-5 "abs complex64" shape expected
-    (Nx.Complex.abs Nx.float32 (input64 ()));
-  check_t ~eps:1e-12 "abs complex128" shape expected
-    (Nx.Complex.abs Nx.float64 (input128 ()));
-  check_t ~eps:1e-5 "abs complex64 to float64" shape expected
-    (Nx.Complex.abs Nx.float64 (input64 ()))
+  check_t ~eps:1e-5 "magnitude complex64" shape expected
+    (Nx.magnitude Nx.float32 (input64 ()));
+  check_t ~eps:1e-12 "magnitude complex128" shape expected
+    (Nx.magnitude Nx.float64 (input128 ()));
+  check_t ~eps:1e-5 "magnitude complex64 to float64" shape expected
+    (Nx.magnitude Nx.float64 (input64 ()))
 
 let test_angle () =
   let expected = Array.map Complex.arg samples in
   check_t ~eps:1e-5 "angle complex64" shape expected
-    (Nx.Complex.angle Nx.float32 (input64 ()));
+    (Nx.angle Nx.float32 (input64 ()));
   check_t ~eps:1e-12 "angle complex128" shape expected
-    (Nx.Complex.angle Nx.float64 (input128 ()))
+    (Nx.angle Nx.float64 (input128 ()))
 
-let test_conj () =
+let test_conjugate () =
   let expected = Array.map Complex.conj samples in
-  check_t "conj complex64" shape expected (Nx.Complex.conj (input64 ()));
-  check_t ~eps:1e-12 "conj complex128" shape expected
-    (Nx.Complex.conj (input128 ()))
+  check_t "conjugate complex64" shape expected (Nx.conjugate (input64 ()));
+  check_t ~eps:1e-12 "conjugate complex128" shape expected
+    (Nx.conjugate (input128 ()));
+  (* real dtypes pass through untouched *)
+  let r = Nx.create Nx.float64 [| 3 |] [| 1.5; -2.0; 0.0 |] in
+  check_t ~eps:1e-12 "conjugate float64" [| 3 |] [| 1.5; -2.0; 0.0 |]
+    (Nx.conjugate r)
 
-let test_polar () =
-  let r_data = [| 0.0; 0.5; 1.0; 2.0; 3.5; 5.0 |] in
-  let theta_data = [| 0.0; pi; -.pi; 1.5; -0.75; 2.5 |] in
-  let polar_shape = [| Array.length r_data |] in
-  let expected = Array.map2 Complex.polar r_data theta_data in
-  let r64 = Nx.create Nx.float64 polar_shape r_data in
-  let theta64 = Nx.create Nx.float64 polar_shape theta_data in
-  check_t ~eps:1e-12 "polar complex128" polar_shape expected
-    (Nx.Complex.polar Nx.complex128 r64 theta64);
-  let r32 = Nx.create Nx.float32 polar_shape r_data in
-  let theta32 = Nx.create Nx.float32 polar_shape theta_data in
-  check_t ~eps:1e-5 "polar complex64" polar_shape expected
-    (Nx.Complex.polar Nx.complex64 r32 theta32);
-  (* magnitude and phase broadcast together *)
-  let theta_scalar = Nx.scalar Nx.float64 (pi /. 2.0) in
-  let expected_bcast =
-    Array.map (fun r -> Complex.polar r (pi /. 2.0)) r_data
-  in
-  check_t ~eps:1e-12 "polar broadcast" polar_shape expected_bcast
-    (Nx.Complex.polar Nx.complex128 r64 theta_scalar)
+let test_complex_ctor () =
+  let re_data = Array.map (fun z -> z.Complex.re) samples in
+  let im_data = Array.map (fun z -> z.Complex.im) samples in
+  let re64 = Nx.create Nx.float64 shape re_data in
+  let im64 = Nx.create Nx.float64 shape im_data in
+  check_t ~eps:1e-12 "complex128" shape samples
+    (Nx.complex Nx.complex128 ~re:re64 ~im:im64);
+  let re32 = Nx.create Nx.float32 shape re_data in
+  let im32 = Nx.create Nx.float32 shape im_data in
+  check_t ~eps:1e-5 "complex64" shape samples
+    (Nx.complex Nx.complex64 ~re:re32 ~im:im32);
+  (* components broadcast together *)
+  let expected = Array.map (fun re -> Complex.{ re; im = 2.0 }) re_data in
+  check_t ~eps:1e-12 "complex broadcast" shape expected
+    (Nx.complex Nx.complex128 ~re:re64 ~im:(Nx.scalar Nx.float64 2.0))
 
 (* Round-trips *)
 
 let test_roundtrips () =
-  (* polar (abs z) (angle z) recovers z *)
   let z128 = input128 () in
-  let mag = Nx.Complex.abs Nx.float64 z128 in
-  let phase = Nx.Complex.angle Nx.float64 z128 in
-  check_t ~eps:1e-12 "polar/abs/angle complex128" shape samples
-    (Nx.Complex.polar Nx.complex128 mag phase);
-  let z64 = input64 () in
-  let mag32 = Nx.Complex.abs Nx.float32 z64 in
-  let phase32 = Nx.Complex.angle Nx.float32 z64 in
-  check_t ~eps:1e-5 "polar/abs/angle complex64" shape samples
-    (Nx.Complex.polar Nx.complex64 mag32 phase32);
-  (* conj is an involution *)
-  check_t ~eps:1e-12 "conj involution" shape samples
-    (Nx.Complex.conj (Nx.Complex.conj z128));
-  (* real/imag decompose z exactly *)
-  let re_arr = Nx.to_array (Nx.Complex.real Nx.float64 z128) in
-  let im_arr = Nx.to_array (Nx.Complex.imag Nx.float64 z128) in
-  let reassembled =
-    Array.init (Array.length samples) (fun i ->
-        { Complex.re = re_arr.(i); im = im_arr.(i) })
-  in
-  equal ~msg:"real/imag reassembly"
-    (array
-       (Testable.make
-          ~pp:(fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.im)
-          ~equal:(fun a b -> a.Complex.re = b.Complex.re && a.im = b.im)
-          ()))
-    samples reassembled
+  (* real/imag decompose z and complex reassembles it, exactly *)
+  let re = Nx.real Nx.float64 z128 and im = Nx.imag Nx.float64 z128 in
+  equal ~msg:"decompose/reassemble" (array complex_testable) samples
+    (Nx.to_array (Nx.complex Nx.complex128 ~re ~im));
+  (* magnitude and angle recover z through the polar form *)
+  let mag = Nx.magnitude Nx.float64 z128 in
+  let phase = Nx.angle Nx.float64 z128 in
+  check_t ~eps:1e-12 "polar roundtrip" shape samples
+    (Nx.complex Nx.complex128
+       ~re:Nx.(mul mag (cos phase))
+       ~im:Nx.(mul mag (sin phase)));
+  (* conjugate is an involution *)
+  check_t ~eps:1e-12 "conjugate involution" shape samples
+    (Nx.conjugate (Nx.conjugate z128))
 
 (* Result dtypes *)
 
 let test_result_dtypes () =
   let dtype_name t = Nx_core.Dtype.to_string (Nx.dtype t) in
   let z64 = input64 () and z128 = input128 () in
-  equal ~msg:"abs complex64 dtype" string "float32"
-    (dtype_name (Nx.Complex.abs Nx.float32 z64));
-  equal ~msg:"abs complex128 dtype" string "float64"
-    (dtype_name (Nx.Complex.abs Nx.float64 z128));
+  equal ~msg:"magnitude complex64 dtype" string "float32"
+    (dtype_name (Nx.magnitude Nx.float32 z64));
+  equal ~msg:"magnitude complex128 dtype" string "float64"
+    (dtype_name (Nx.magnitude Nx.float64 z128));
   equal ~msg:"angle complex64 dtype" string "float32"
-    (dtype_name (Nx.Complex.angle Nx.float32 z64));
+    (dtype_name (Nx.angle Nx.float32 z64));
   equal ~msg:"real complex128 dtype" string "float64"
-    (dtype_name (Nx.Complex.real Nx.float64 z128));
+    (dtype_name (Nx.real Nx.float64 z128));
   equal ~msg:"imag cross dtype" string "float64"
-    (dtype_name (Nx.Complex.imag Nx.float64 z64));
-  equal ~msg:"conj complex64 dtype" string "complex64"
-    (dtype_name (Nx.Complex.conj z64));
-  equal ~msg:"conj complex128 dtype" string "complex128"
-    (dtype_name (Nx.Complex.conj z128));
-  equal ~msg:"polar complex64 dtype" string "complex64"
+    (dtype_name (Nx.imag Nx.float64 z64));
+  equal ~msg:"conjugate complex64 dtype" string "complex64"
+    (dtype_name (Nx.conjugate z64));
+  equal ~msg:"conjugate complex128 dtype" string "complex128"
+    (dtype_name (Nx.conjugate z128));
+  equal ~msg:"complex ctor dtype" string "complex64"
     (dtype_name
-       (Nx.Complex.polar Nx.complex64 (Nx.scalar Nx.float32 1.0)
-          (Nx.scalar Nx.float32 0.0)))
+       (Nx.complex Nx.complex64
+          ~re:(Nx.scalar Nx.float32 1.0)
+          ~im:(Nx.scalar Nx.float32 0.0)))
 
-(* Branch cuts and non-finite values, pinned to the kernel's behavior *)
+(* Branch cuts *)
 
 let test_branch_cuts () =
   let z =
@@ -160,46 +152,75 @@ let test_branch_cuts () =
         Complex.{ re = 0.0; im = 0.0 };
       |]
   in
-  (* atan2 semantics on the negative real axis: the sign of the zero imaginary
-     part selects the branch, matching C99 carg *)
+  (* the sign of the zero imaginary component selects the side of the cut *)
   check_t ~eps:1e-12 "angle negative reals" [| 4 |] [| pi; -.pi; pi; 0.0 |]
-    (Nx.Complex.angle Nx.float64 z)
+    (Nx.angle Nx.float64 z)
 
-let test_non_finite () =
+(* Non-finite components.
+
+   [real] and [magnitude] read a component directly and stay exact. The others
+   rotate the imaginary component into the real one through a multiply, so a
+   non-finite component poisons the other. The degraded cases below pin that
+   limitation so a future component-level extraction shows up here as a change.
+   They are not a claim that NaN is the wanted answer. *)
+
+let of_list l = Nx.create Nx.complex128 [| List.length l |] (Array.of_list l)
+
+let test_non_finite_exact () =
   let inf = Float.infinity in
   let z =
-    Nx.create Nx.complex128 [| 5 |]
-      [|
+    of_list
+      [
         Complex.{ re = inf; im = 1.0 };
         Complex.{ re = -.inf; im = 0.0 };
         Complex.{ re = inf; im = Float.nan };
         Complex.{ re = Float.nan; im = 1.0 };
         Complex.{ re = 1e300; im = 1e300 };
-      |]
+      ]
   in
-  (* real is exact componentwise, like C creal *)
-  let re = Nx.to_array (Nx.Complex.real Nx.float64 z) in
+  let re = Nx.to_array (Nx.real Nx.float64 z) in
   equal ~msg:"real inf" (float 0.0) inf re.(0);
   equal ~msg:"real -inf" (float 0.0) (-.inf) re.(1);
   is_true ~msg:"real nan" (Float.is_nan re.(3));
-  (* abs follows C99 cabs: infinite even when the other component is NaN, and no
-     overflow for large finite components *)
-  let mag = Nx.to_array (Nx.Complex.abs Nx.float64 z) in
-  equal ~msg:"abs inf" (float 0.0) inf mag.(0);
-  equal ~msg:"abs -inf" (float 0.0) inf mag.(1);
-  equal ~msg:"abs (inf, nan)" (float 0.0) inf mag.(2);
-  is_true ~msg:"abs (nan, finite)" (Float.is_nan mag.(3));
-  equal ~msg:"abs no overflow" (float 1e285) (1e300 *. sqrt 2.0) mag.(4);
-  (* imag routes through complex arithmetic, so a non-finite real part degrades
-     to NaN; a finite real part stays exact *)
-  let im = Nx.to_array (Nx.Complex.imag Nx.float64 z) in
-  is_true ~msg:"imag (inf, finite)" (Float.is_nan im.(0));
-  equal ~msg:"imag large" (float 0.0) 1e300 im.(4);
-  let finite_im =
-    Nx.Complex.imag Nx.float64
-      (Nx.create Nx.complex128 [| 1 |] [| Complex.{ re = 2.0; im = inf } |])
+  equal ~msg:"real large" (float 0.0) 1e300 re.(4);
+  (* the modulus is infinite even when the other component is NaN, and large
+     finite components do not saturate *)
+  let mag = Nx.to_array (Nx.magnitude Nx.float64 z) in
+  equal ~msg:"magnitude inf" (float 0.0) inf mag.(0);
+  equal ~msg:"magnitude -inf" (float 0.0) inf mag.(1);
+  equal ~msg:"magnitude (inf, nan)" (float 0.0) inf mag.(2);
+  is_true ~msg:"magnitude (nan, finite)" (Float.is_nan mag.(3));
+  equal ~msg:"magnitude no overflow" (float 1e285) (1e300 *. sqrt 2.0) mag.(4)
+
+let test_non_finite_degraded () =
+  let inf = Float.infinity in
+  (* a finite real component leaves the imaginary one intact, however large *)
+  let finite_re =
+    of_list
+      [ Complex.{ re = 2.0; im = inf }; Complex.{ re = 0.0; im = 1e300 } ]
   in
-  equal ~msg:"imag (finite, inf)" (float 0.0) inf (Nx.item [ 0 ] finite_im)
+  let im = Nx.to_array (Nx.imag Nx.float64 finite_re) in
+  equal ~msg:"imag (finite, inf)" (float 0.0) inf im.(0);
+  equal ~msg:"imag (finite, large)" (float 0.0) 1e300 im.(1);
+  (* a non-finite real component is the limitation: it contaminates the
+     imaginary one through the rotation *)
+  let bad_re =
+    of_list
+      [ Complex.{ re = inf; im = 1.0 }; Complex.{ re = Float.nan; im = 1.0 } ]
+  in
+  let im = Nx.to_array (Nx.imag Nx.float64 bad_re) in
+  is_true ~msg:"imag (inf, finite) degrades" (Float.is_nan im.(0));
+  is_true ~msg:"imag (nan, finite) degrades" (Float.is_nan im.(1));
+  let ang = Nx.to_array (Nx.angle Nx.float64 bad_re) in
+  is_true ~msg:"angle (inf, finite) degrades" (Float.is_nan ang.(0));
+  (* conjugate degrades the same way, and is exact everywhere else *)
+  let conj = Nx.to_array (Nx.conjugate bad_re) in
+  is_true ~msg:"conjugate (inf, finite) degrades"
+    (Float.is_nan conj.(0).Complex.re);
+  let big = of_list [ Complex.{ re = 1e308; im = 2.0 } ] in
+  let conj_big = (Nx.to_array (Nx.conjugate big)).(0) in
+  equal ~msg:"conjugate large re" (float 0.0) 1e308 conj_big.Complex.re;
+  equal ~msg:"conjugate large im" (float 0.0) (-2.0) conj_big.Complex.im
 
 (* Interaction with rfft: magnitude spectrum of a known signal *)
 
@@ -219,9 +240,9 @@ let test_rfft_magnitude () =
   check_t ~eps:1e-10 "cosine magnitude spectrum"
     [| (n / 2) + 1 |]
     expected
-    (Nx.Complex.abs Nx.float64 spectrum);
+    (Nx.magnitude Nx.float64 spectrum);
   (* the phase of the occupied bin is zero for a pure cosine *)
-  let phase = Nx.Complex.angle Nx.float64 spectrum in
+  let phase = Nx.angle Nx.float64 spectrum in
   equal ~msg:"cosine phase at bin" (float 1e-10) 0.0 (Nx.item [ k ] phase)
 
 let suite =
@@ -229,15 +250,19 @@ let suite =
     group "oracle"
       [
         test "real/imag" test_real_imag;
-        test "abs" test_abs;
+        test "magnitude" test_magnitude;
         test "angle" test_angle;
-        test "conj" test_conj;
-        test "polar" test_polar;
+        test "conjugate" test_conjugate;
+        test "complex" test_complex_ctor;
       ];
     group "roundtrips" [ test "roundtrips" test_roundtrips ];
     group "dtypes" [ test "results" test_result_dtypes ];
     group "edge values"
-      [ test "branch cuts" test_branch_cuts; test "non-finite" test_non_finite ];
+      [
+        test "branch cuts" test_branch_cuts;
+        test "non-finite, exact" test_non_finite_exact;
+        test "non-finite, degraded" test_non_finite_degraded;
+      ];
     group "fft" [ test "rfft magnitude" test_rfft_magnitude ];
   ]
 

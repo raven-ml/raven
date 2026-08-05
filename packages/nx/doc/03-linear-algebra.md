@@ -208,6 +208,27 @@ let rfreqs = Nx.rfftfreq n        (* frequency bins for rfft *)
 let shifted = Nx.fftshift spectrum (* shift zero-frequency to center *)
 ```
 
+### Magnitude and phase
+
+A spectrum is complex. `magnitude` and `angle` extract its polar components as
+float tensors, and `complex` reassembles one. The first argument picks the
+result dtype, since leaving the complex domain has to name what to land in —
+this is why `magnitude` is not called `abs`, which preserves the dtype:
+
+<!-- $MDX skip -->
+```ocaml
+let mags = Nx.magnitude Nx.float64 spectrum  (* |z| per bin *)
+let phase = Nx.angle Nx.float64 spectrum     (* arg z, in [-π, π] *)
+
+(* rebuild a spectrum after reshaping its magnitude *)
+let rebuilt =
+  Nx.complex Nx.complex128
+    ~re:Nx.(mul mags (cos phase))
+    ~im:Nx.(mul mags (sin phase))
+```
+
+`real`, `imag`, and `conjugate` give the cartesian view of the same tensor.
+
 ## Next Steps
 
 - [Array Operations](/docs/nx/array-operations/) — reshaping, broadcasting, slicing

@@ -2425,69 +2425,35 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Complex ───── *)
 
-  let extract_complex_part (type a b) ~op ~field (x : (a, b) t) =
-    let extract (type c d e f) (x : (Complex.t, c) t) (out_dt : (d, e) Dtype.t)
-        (get : Complex.t -> d) : (f, _) t =
-      let s = shape x in
-      let size = array_prod s in
-      let data =
-        Array.init size (fun i ->
-            let idx = Shape.unravel_index i s |> Array.to_list in
-            get (unsafe_get idx x))
-      in
-      Obj.magic (create (B.context x) out_dt s data)
+  (* These compose element-wise operations rather than reading elements back to
+     the host, so effectful backends can trace them and no intermediate boxes a
+     [Complex.t]. Two cast rules carry the component work: complex-to-float
+     keeps the real part, float-to-complex sets a zero imaginary part.
+
+     Only [real] and [magnitude] read a lane directly. Reaching the imaginary
+     lane means rotating it into the real one, which is a complex multiply: it
+     is exact for finite components, but a non-finite component contaminates
+     the product through [inf * 0], so [imag], [angle], [complex], and
+     [conjugate] yield NaN there. Lifting a lane out without arithmetic would
+     need a component view of the storage, which the backend does not expose. *)
+
+  let real dt (z : (Complex.t, _) t) = cast dt z
+  let imag dt (z : (Complex.t, _) t) = cast dt (mul_s z Complex.{ re = 0.; im = -1. })
+  let magnitude dt (z : (Complex.t, _) t) = cast dt (abs z)
+  let angle dt (z : (Complex.t, _) t) = atan2 (imag dt z) (real dt z)
+  let complex dt ~re ~im = add (cast dt re) (mul_s (cast dt im) Complex.i)
+
+  let conjugate (type a b) (x : (a, b) t) : (a, b) t =
+    let negate_imag (type c) (z : (Complex.t, c) t) : (Complex.t, c) t =
+      (* [re - (z - re)] rather than [2·re - z]: the doubling would overflow for
+         components above half the dtype maximum. The float64 hop is exact for
+         both complex dtypes. *)
+      let re = cast (dtype z) (cast Dtype.float64 z) in
+      sub re (sub z re)
     in
     match dtype x with
-    | Complex64 ->
-        extract
-          (x : (Complex.t, complex32_elt) t)
-          Dtype.float32
-          (fun c -> field c)
-    | Complex128 ->
-        extract
-          (x : (Complex.t, complex64_elt) t)
-          Dtype.float64
-          (fun c -> field c)
-    | _ -> err op "dtype, input must be complex64 or complex128"
-
-  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
-    let s = shape real in
-    if s <> shape imag then
-      err "complex" "cannot reshape %s to %s"
-        (Shape.to_string (shape imag))
-        (Shape.to_string s);
-    let size = array_prod s in
-    match dtype real with
-    | Float32 ->
-        let real = (real : (float, float32_elt) t) in
-        let imag = (imag : (float, float32_elt) t) in
-        let data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i s |> Array.to_list in
-              Complex.{ re = unsafe_get idx real; im = unsafe_get idx imag })
-        in
-        Obj.magic (create (B.context real) Dtype.complex64 s data)
-    | Float64 ->
-        let real = (real : (float, float64_elt) t) in
-        let imag = (imag : (float, float64_elt) t) in
-        let data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i s |> Array.to_list in
-              Complex.{ re = unsafe_get idx real; im = unsafe_get idx imag })
-        in
-        Obj.magic (create (B.context real) Dtype.complex128 s data)
-    | _ ->
-        invalid_arg "complex: dtype, real and imag must be float32 or float64"
-
-  let real (type a b) (x : (a, b) t) =
-    extract_complex_part ~op:"real" ~field:(fun c -> c.Complex.re) x
-
-  let imag (type a b) (x : (a, b) t) =
-    extract_complex_part ~op:"imag" ~field:(fun c -> c.Complex.im) x
-
-  let conjugate (type a b) (x : (a, b) t) =
-    match dtype x with
-    | Complex64 | Complex128 -> complex ~real:(real x) ~imag:(neg (imag x))
+    | Complex64 -> negate_imag x
+    | Complex128 -> negate_imag x
     | _ -> x
 
   (* ───── Dot Products and Tensor Contractions ───── *)
@@ -4696,39 +4662,6 @@ module Make (B : Backend_intf.S) = struct
       acc := f !acc (Nx_buffer.unsafe_get src i)
     done;
     !acc
-
-  (* ───── Complex Accessors ───── *)
-
-  (* Compositions of existing backend operations, so every backend (including
-     effectful ones) gets them without extending the backend interface. Each
-     runs a constant number of element-wise kernels and never boxes a
-     [Stdlib.Complex.t]. Component extraction leans on the normative cast
-     rules: complex-to-float takes the real part, float-to-complex sets a zero
-     imaginary part. *)
-  module Complex = struct
-    let real dt z = cast dt z
-
-    (* z * -i swaps the imaginary part into the real lane: for finite
-       components (re + i.im)(-i) has real part im exactly. *)
-    let imag dt z = cast dt (mul_s z Stdlib.Complex.{ re = 0.0; im = -1.0 })
-
-    (* The inner [abs] is the dtype-preserving frontend one; on complex it is
-       the fused magnitude kernel (im = 0), so the cast keeps |z|. *)
-    let abs dt z = cast dt (abs z)
-    let angle dt z = atan2 (imag dt z) (real dt z)
-
-    (* re_c - (z - re_c) = re - i.im without scaling, so finite components
-       (including values above half the dtype maximum) stay exact. The float64
-       hop through creal is exact for both complex dtypes. *)
-    let conj z =
-      let re_c = cast (dtype z) (cast Dtype.float64 z) in
-      sub re_c (sub z re_c)
-
-    let polar dt r theta =
-      let re = cast dt (mul r (cos theta)) in
-      let im = cast dt (mul r (sin theta)) in
-      add re (mul_s im Stdlib.Complex.i)
-  end
 
   (* ───── Infix Operators ───── *)
 
