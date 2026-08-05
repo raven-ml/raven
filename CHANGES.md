@@ -22,10 +22,13 @@ All notable changes to this project will be documented in this file.
   operations required by `Nx.Ptree.S` for records, products, containers, and
   recursive parameter types, with generated code and diagnostics located at the
   originating source forms.
-- Add `[@@deriving gtree]` support for uniform homomorphic traversals on
-  parameterised records (`map`, `map2`, `iter`, `fold` with dotted paths,
-  `fold2`, `names`), plus mirror mode via `[@@deriving ptree, gtree]` on
-  concrete records (generates `module Gtree`, `to_gtree`, `of_gtree`).
+- Extend `[@@deriving ptree]` to payload-generic types: on a type with one
+  parameter occurring outside tensor leaves it derives the uniform traversals
+  (`map`, `map2`, `iter`, `fold` and `fold2` with dot-joined leaf paths, and
+  `names : 'a t -> string t`, the tree of leaf paths). Concrete types keep the
+  rank-2 traversals, and `[@@deriving ptree ~mirror]` additionally generates
+  their uniform mirror (`module Uniform`, `to_uniform`, and — when leaf dtypes
+  are statically known — `of_uniform` with per-leaf error paths).
 - Add a runnable linear-regression example using a derived parameter module
   directly with `Rune.grad` and `Rune.jit2`.
 

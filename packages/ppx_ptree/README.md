@@ -16,6 +16,10 @@ name generates suffixed functions, such as `map_state`, `map2_state`, and
 `iter_state`. This lets one declaration group contain helper structures while
 reserving the unsuffixed names for one primary `t` or `params` type.
 
+The same attribute on a payload-generic type — one type parameter, occurring
+outside tensor leaves — derives the rank-1 uniform traversals instead; see
+[Uniform types](#uniform-payload-generic-types) below.
+
 ## Supported shapes
 
 Tensor leaves may use `('a, 'b) Nx.t`, `Nx_effect.t`, or any of Nx's concrete
@@ -52,99 +56,99 @@ the public `Nx.t` type:
 
 The PPX adds no runtime dependency.
 
-## Deriving uniform gtree traversals
+## Uniform (payload-generic) types
 
-`[@@deriving gtree]` generates rank-1, type-changing traversals for
-*higher-kinded data* — structures whose payload positions all share a single
-type parameter:
-
-```ocaml
-type 'a t = { w : 'a; b : 'a; name : string }
-[@@deriving gtree]
-```
-
-This produces `map`, `map2`, `iter`, `fold`, `fold2`, and `names` directly on
-`'a t`. The `fold` and `fold2` operations receive a dotted path string at
-each leaf, built from field names and container indices:
+When a type has exactly one type parameter and that parameter occurs outside
+tensor leaves, `[@@deriving ptree]` derives rank-1, type-changing traversals
+instead — the `Nx.Ptree.Uniform` shape:
 
 ```ocaml
-val fold  : (string -> 'a -> 'acc -> 'acc) -> 'a t -> 'acc -> 'acc
-val fold2 : (string -> 'a -> 'b -> 'acc -> 'acc) -> 'a t -> 'b t -> 'acc -> 'acc
+type 'a t = { w : 'a; b : 'a option; name : string }
+[@@deriving ptree]
 ```
 
-Path convention (stable for JIT caching):
+This produces `map`, `map2`, `iter`, `fold`, `fold2`, and `names`:
 
-- Root starts at `""`.
-- Record field `w` appends `".w"`.
-- List/array item at index `i` appends `".i"`.
-- Tuple positions use `".0"`, `".1"`, etc.
+```ocaml
+val map   : ('a -> 'b) -> 'a t -> 'b t
+val map2  : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
+val iter  : ('a -> unit) -> 'a t -> unit
+val fold  : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
+val names : 'a t -> string t
+```
 
-Payload positions are fields (or nested positions) where the type parameter
-`'a` occurs directly — not inside an `Nx.t` leaf. Fields without `'a` are
-static metadata, following the same semantics as `[@ptree.ignore]`: preserved
-by `map`, left-biased by `map2`, skipped by `iter`/`fold`/`fold2`.
+`fold` and `fold2` pass each payload leaf's path to the callback, and `names`
+is the tree of those paths, computed from a value so optional and variable-size
+containers resolve. A path is the dot-joined sequence of record field names and
+container indices from the root — `"w"`, `"layers.0"`, `"pair.1"` — matching
+the checkpoint naming convention; `Some` contributes no segment, and a payload
+at the root has the empty path.
+
+Payload positions are the positions where `'a` occurs directly — not inside an
+`Nx.t` leaf. Fields without `'a` are static metadata: preserved by `map`,
+left-biased by `map2`, skipped by `iter`/`fold`/`fold2`, copied by `names`.
+The `[@ptree.*]` attributes do not apply to payload positions of uniform
+types; a field whose bare `'a` carries an attribute keeps its rank-2 meaning
+for mode selection, so records like `{ tag : 'tag [@ptree.ignore]; ... }`
+continue to derive the classic traversals.
 
 ### Nesting
 
-A field `'a Sub.t` delegates to `Sub.map`, `Sub.fold`, etc. — `Sub` must also
-derive `[@@deriving gtree]`.
-
-### Names
-
-`val names : string t` is a constant tree of dotted paths, derived when the
-structure is statically known (no payload `option`/`list`/`array`). Omitted
-otherwise.
+A field `'a sub` (a sibling type in the same declaration group) or `'a Sub.t`
+delegates to the sibling's or `Sub`'s uniform traversals. Delegated types must
+be applied to the payload parameter alone.
 
 ### Bridge to Ptree.S
 
-A gtree instantiated with `Nx.Ptree.tensor` as its payload satisfies
-`Nx.Ptree.S` via the `Nx.Ptree.Tensor_tree` functor:
+A uniform type instantiated at `Nx.Ptree.tensor` satisfies `Nx.Ptree.S` via
+the `Nx.Ptree.Make` functor:
 
 ```ocaml
 type 'a params = { w : 'a; b : 'a }
-[@@deriving gtree]
+[@@deriving ptree]
 
-type t = Nx.Ptree.tensor params
-
-module T = Nx.Ptree.Tensor_tree (struct
+module P = Nx.Ptree.Make (struct
   type 'a t = 'a params
   let map = map
   let map2 = map2
   let iter = iter
 end)
 
-let loss (p : T.t) = ...
-let g = Rune.grad (module T) loss params
+let g = Rune.grad (module P) loss params
 ```
 
-(The `[@@deriving ptree, gtree]` combination on a static record automates the
-packing — see mirror mode below.)
+### Mirror mode (concrete records)
 
-### Mirror mode (static records)
+`[@@deriving ptree ~mirror]` on a concrete type additionally generates a
+uniform mirror alongside the rank-2 traversals:
 
-When applied to a concrete record without a type parameter,
-`[@@deriving ptree, gtree]` generates:
-
-- `module Gtree` — the uniform mirror type `'a t` + all six traversals
-- `val to_gtree : t -> Nx.Ptree.tensor Gtree.t` — packs tensor leaves
-- `val of_gtree : Nx.Ptree.tensor Gtree.t -> t` — unpacks with dtype checks
-  (only when all leaf dtypes are concrete, e.g. `Nx.float32_t`)
+- `module Uniform` — the payload-generic mirror `'m t` with all six uniform
+  traversals; static fields keep their original types.
+- `val to_uniform : t -> Nx.Ptree.tensor Uniform.t` — packs tensor leaves.
+- `val of_uniform : Nx.Ptree.tensor Uniform.t -> t` — unpacks with dtype
+  checks (generated only when every leaf dtype is statically known, e.g.
+  `Nx.float32_t`; errors carry the leaf's path).
 
 ```ocaml
 type t = { w : Nx.float32_t; b : Nx.float16_t }
-[@@deriving ptree, gtree]
+[@@deriving ptree ~mirror]
 
-(* Gtree traversals on the uniform view: *)
-let symmetrize (params : t) (syms : Symmetry.t Params.Gtree.t) : t =
-  let u = to_gtree params in
-  let zipped = Params.Gtree.map2 (fun (Nx.Ptree.P x) sym ->
-    Nx.Ptree.P (Symmetry.project sym x)) u syms
+(* uniform traversals on the mirror view: *)
+let symmetrize (params : t) (syms : Symmetry.t Uniform.t) : t =
+  let u = to_uniform params in
+  let zipped =
+    Uniform.map2
+      (fun (Nx.Ptree.P x) sym -> Nx.Ptree.P (Symmetry.project sym x))
+      u syms
   in
-  of_gtree zipped
+  of_uniform zipped
 ```
 
-Also works for nested models where each sub-module derives `[@@deriving ptree, gtree]`:
-a field `linear : Linear.t` maps to `'a Linear.Gtree.t` in the mirror.
+A field `linear : Linear.t` maps to `'m Linear.Uniform.t` in the mirror;
+`Linear` must itself derive `[@@deriving ptree ~mirror]`. Mirror mode applies
+to a single declaration whose definition is visible, without locally declared
+or recursive sub-structures.
 
 ## Example
 
