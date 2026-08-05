@@ -19,7 +19,7 @@ end
 
 type tensor = P : ('a, 'b) Nx_effect.t -> tensor
 
-module type Gtree = sig
+module type Uniform = sig
   type 'a t
 
   val map : ('a -> 'b) -> 'a t -> 'b t
@@ -31,7 +31,7 @@ module type Gtree = sig
     (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
 end
 
-module Tensor_tree (U : Gtree) = struct
+module Make (U : Uniform) = struct
   type t = tensor U.t
 
   let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) (t : t) : t
@@ -49,7 +49,7 @@ module Tensor_tree (U : Gtree) = struct
           Nx_core.Dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
         with
         | Some Type.Equal -> P (f x y)
-        | None -> invalid_arg "Ptree.Tensor_tree.map2: leaf dtype mismatch")
+        | None -> invalid_arg "Ptree.Make.map2: leaf dtype mismatch")
       a b
 
   let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) (t : t) : unit =

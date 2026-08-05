@@ -3,13 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Gtree → Ptree.S bridge: differentiation and JIT through Tensor_tree. *)
+(* Uniform → Ptree.S bridge: differentiation and JIT through Ptree.Make. *)
 
 open Windtrap
 open Rune_test_support.Support
 
-(* Hand-written gtree, copied from nx test so this test is self-contained (the
-   ppx Phase 1 will eliminate the duplication). *)
+(* Hand-written uniform structure, copied from the nx test so this test is
+   self-contained. *)
 module U = struct
   type 'a t = { w : 'a; b : 'a }
 
@@ -27,7 +27,7 @@ module U = struct
     f "b" (f "w" acc a.w b.w) a.b b.b
 end
 
-module T = Nx.Ptree.Tensor_tree (U)
+module T = Nx.Ptree.Make (U)
 
 let pack x = Nx.Ptree.P x
 
@@ -40,7 +40,7 @@ let loss (t : T.t) : Nx.float32_t =
   let w = as_f32 w and b = as_f32 b in
   Nx.add (Nx.sum (Nx.mul w w)) (Nx.mul_s (Nx.sum b) 3.0)
 
-let test_grad_over_gtree () =
+let test_grad_over_uniform () =
   let p : T.t = params () in
   let g = Rune.grad (module T) loss p in
   match g with
@@ -65,9 +65,9 @@ let test_jit_cache () =
   equal ~msg:"cached jit" (float 1e-5) 15.5 (scalar v1);
   equal ~msg:"cached jit again" (float 1e-5) 15.5 (scalar v2)
 
-let test_gtree_fold_paths_in_grad () =
+let test_uniform_fold_paths_in_grad () =
   (* Fold over the gradient tree with paths, verifying the paths are the same as
-     the gtree's fold would give. *)
+     the structure's own fold would give. *)
   let g = Rune.grad (module T) loss (params ()) in
   let paths = ref [] in
   let _ =
@@ -86,7 +86,7 @@ let tests =
   [
     group "differentiation"
       [
-        test "grad works over a gtree-backed Tensor_tree" test_grad_over_gtree;
+        test "grad works over a uniform-backed Ptree.Make" test_grad_over_uniform;
         test "value_and_grad returns correct value and gradient"
           test_value_and_grad;
       ];
@@ -95,8 +95,8 @@ let tests =
     group "fold"
       [
         test "fold over gradient tree produces correct paths"
-          test_gtree_fold_paths_in_grad;
+          test_uniform_fold_paths_in_grad;
       ];
   ]
 
-let () = run "rune gtree" tests
+let () = run "rune uniform" tests

@@ -19,7 +19,7 @@
   test_nx_rng
   test_nx_splat
   test_nx_stft
-  test_ptree_gtree)
+  test_ptree_uniform)
  (package nx)
  (modules
   :standard

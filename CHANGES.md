@@ -834,11 +834,12 @@ thread.
   user structure implementing its three traversals (`map`, `map2`, `iter`).
   A stock dynamic tree (`Ptree.t` with tensor, list, and dict nodes) covers
   structures only known at runtime.
-- Add `Nx.Ptree.Gtree` module type for uniform homomorphic structures
-  (`map`, `map2`, `iter`, `fold` with dotted paths, `fold2`), plus the
-  `Nx.Ptree.Tensor_tree` functor bridging any `Gtree` to `Nx.Ptree.S` for
-  rune/vega/kaun interop, and `Nx.Ptree.unpack` for dtype-checked existential
-  unpacking with optional path annotation.
+- Add `Nx.Ptree.Uniform`, the module type of payload-generic structures
+  (`map`, `map2`, `iter`, `fold` and `fold2` with dot-joined leaf paths), and
+  the `Nx.Ptree.Make` functor deriving an `Nx.Ptree.S` from any `Uniform` with
+  packed tensor leaves, so one `'a params` declaration serves both the model
+  and parameter-shaped data. Add `Nx.Ptree.unpack` for dtype-checked
+  unpacking of packed tensors with an optional path in the error message.
 - Require OCaml >= 5.5.0 (module-dependent functions are used by the
   `Ptree.S`-based APIs downstream).
 - Fix `flatten` raising on rank-0 tensors; it now reshapes them to `[|1|]`.
