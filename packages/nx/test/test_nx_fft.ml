@@ -195,6 +195,31 @@ let reference_rfft x =
       done;
       Complex.{ re = !re; im = !im })
 
+(* Full 2-D DFT keeping the non-redundant half of the last axis, row-major. *)
+let reference_rfft2 rows columns x =
+  let half = (columns / 2) + 1 in
+  Array.init (rows * half) (fun idx ->
+      let r = idx / half and c = idx mod half in
+      let re = ref 0.0 in
+      let im = ref 0.0 in
+      for y = 0 to rows - 1 do
+        for z = 0 to columns - 1 do
+          let angle =
+            two_pi
+            *. ((float_of_int (r * y) /. float_of_int rows)
+               +. (float_of_int (c * z) /. float_of_int columns))
+          in
+          let v = x.((y * columns) + z) in
+          re := !re +. (v *. cos angle);
+          im := !im -. (v *. sin angle)
+        done
+      done;
+      Complex.{ re = !re; im = !im })
+
+(* Round through float32 so a reference can be compared against a float32 input
+   without the input's own quantisation swamping the tolerance. *)
+let to_float32 v = Int32.float_of_bits (Int32.bits_of_float v)
+
 (* Test standard FFT/IFFT *)
 let test_fft_ifft () =
   (* 1D even length *)
@@ -524,6 +549,8 @@ let test_rfft_dtypes () =
         sin (two_pi *. Float.of_int i /. Float.of_int n) +. 0.25)
   in
   let expected = reference_rfft signal in
+  let signal32 = Array.map to_float32 signal in
+  let expected32 = reference_rfft signal32 in
   let f32 = Nx.create Nx.float32 shape signal in
   let f64 = Nx.create Nx.float64 shape signal in
 
@@ -531,11 +558,11 @@ let test_rfft_dtypes () =
   let spectrum32 = Nx.rfft Nx.complex64 f32 in
   equal ~msg:"rfft complex64 dtype" string "complex64"
     (Nx_core.Dtype.to_string (Nx.dtype spectrum32));
-  check_t ~eps:1e-5 "rfft complex64 values" spectrum_shape expected spectrum32;
+  check_t ~eps:1e-5 "rfft complex64 values" spectrum_shape expected32 spectrum32;
   let roundtrip32 = Nx.irfft Nx.float32 spectrum32 ~n in
   equal ~msg:"irfft float32 dtype" string "float32"
     (Nx_core.Dtype.to_string (Nx.dtype roundtrip32));
-  check_t ~eps:1e-5 "rfft/irfft float32 roundtrip" shape signal roundtrip32;
+  check_t ~eps:1e-5 "rfft/irfft float32 roundtrip" shape signal32 roundtrip32;
 
   (* float64 input keeps the double-precision behaviour *)
   let spectrum64 = Nx.rfft Nx.complex128 f64 in
@@ -548,13 +575,15 @@ let test_rfft_dtypes () =
     (Nx_core.Dtype.to_string (Nx.dtype roundtrip64));
   check_t ~eps:1e-10 "rfft/irfft float64 roundtrip" shape signal roundtrip64;
 
-  (* The output dtype is independent of the input precision: mixed pairings
-     store the double-precision transform at the requested precision *)
+  (* The output dtype is independent of the input precision. Against a reference
+     built from the float32-rounded signal the only remaining error is the
+     storage precision, so this tolerance fails if the result is silently
+     narrowed to complex64. *)
   let widened = Nx.rfft Nx.complex128 f32 in
   equal ~msg:"rfft float32 to complex128 dtype" string "complex128"
     (Nx_core.Dtype.to_string (Nx.dtype widened));
-  check_t ~eps:1e-5 "rfft float32 to complex128 values" spectrum_shape expected
-    widened;
+  check_t ~eps:1e-12 "rfft float32 to complex128 values" spectrum_shape
+    expected32 widened;
   let narrowed = Nx.rfft Nx.complex64 f64 in
   equal ~msg:"rfft float64 to complex64 dtype" string "complex64"
     (Nx_core.Dtype.to_string (Nx.dtype narrowed));
@@ -574,6 +603,61 @@ let test_rfft_dtypes () =
   equal ~msg:"hfft float32 dtype" string "float32"
     (Nx_core.Dtype.to_string (Nx.dtype hfft32));
   check_t ~eps:1e-5 "hfft/ihfft float32 roundtrip" shape signal hfft32
+
+let test_rfft_dtypes_nd () =
+  (* Multi-axis rfft transforms the last axis real→complex and then the
+     remaining axes in place at the output dtype, so a narrow dtype rounds the
+     intermediate spectrum once per extra axis. Both precisions are checked
+     against the same reference to pin that difference down. *)
+  let rows = 4 and columns = 8 in
+  let shape = [| rows; columns |] in
+  let spectrum_shape = [| rows; (columns / 2) + 1 |] in
+  let signal =
+    Array.init (rows * columns) (fun i ->
+        sin (two_pi *. Float.of_int i /. 6.0) +. 0.5)
+  in
+  let signal32 = Array.map to_float32 signal in
+  let expected = reference_rfft2 rows columns signal32 in
+  let f32 = Nx.create Nx.float32 shape signal in
+
+  let wide = Nx.rfft2 Nx.complex128 f32 in
+  equal ~msg:"rfft2 complex128 dtype" string "complex128"
+    (Nx_core.Dtype.to_string (Nx.dtype wide));
+  check_t ~eps:1e-10 "rfft2 complex128 values" spectrum_shape expected wide;
+
+  let narrow = Nx.rfft2 Nx.complex64 f32 in
+  equal ~msg:"rfft2 complex64 dtype" string "complex64"
+    (Nx_core.Dtype.to_string (Nx.dtype narrow));
+  check_t ~eps:1e-4 "rfft2 complex64 values" spectrum_shape expected narrow;
+
+  let back = Nx.irfft2 Nx.float32 narrow ~s:[ rows; columns ] in
+  equal ~msg:"irfft2 float32 dtype" string "float32"
+    (Nx_core.Dtype.to_string (Nx.dtype back));
+  check_t ~eps:1e-5 "rfft2/irfft2 float32 roundtrip" shape signal32 back;
+
+  (* N-D over a subset of axes, batched over the leading one. *)
+  let batch = 2 in
+  let nd_shape = [| batch; rows; columns |] in
+  let nd_signal =
+    Array.init
+      (batch * rows * columns)
+      (fun i -> sin (two_pi *. Float.of_int i /. 7.0))
+  in
+  let nd_signal32 = Array.map to_float32 nd_signal in
+  let nd = Nx.create Nx.float32 nd_shape nd_signal in
+  let spectrum_nd = Nx.rfftn Nx.complex64 nd ~axes:[ 1; 2 ] in
+  equal ~msg:"rfftn complex64 dtype" string "complex64"
+    (Nx_core.Dtype.to_string (Nx.dtype spectrum_nd));
+  equal ~msg:"rfftn complex64 shape" (array int)
+    [| batch; rows; (columns / 2) + 1 |]
+    (Nx.shape spectrum_nd);
+  let back_nd =
+    Nx.irfftn Nx.float32 spectrum_nd ~axes:[ 1; 2 ] ~s:[ rows; columns ]
+  in
+  equal ~msg:"irfftn float32 dtype" string "float32"
+    (Nx_core.Dtype.to_string (Nx.dtype back_nd));
+  check_t ~eps:1e-5 "rfftn/irfftn float32 roundtrip" nd_shape nd_signal32
+    back_nd
 
 (* Test Hermitian FFT *)
 let test_hfft_ihfft () =
@@ -848,6 +932,7 @@ let suite =
         test "norm" test_rfft_norm;
         test "edge_cases" test_rfft_edge_cases;
         test "dtypes" test_rfft_dtypes;
+        test "dtypes 2-d and n-d" test_rfft_dtypes_nd;
       ];
     group "hfft/ihfft" [ test "basic" test_hfft_ihfft ];
     group "dct/idct"

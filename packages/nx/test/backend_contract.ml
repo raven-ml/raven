@@ -3025,6 +3025,83 @@ struct
                   1. +. root2;
                 |]
                 (F.to_array back));
+          case classify path "rfft-complex64-vs-dft" (fun () ->
+              (* ~dtype fixes the output's storage precision. Every value here
+                 is exactly representable in float32, so the only error left is
+                 the complex64 store. *)
+              let n = 8 in
+              let data =
+                Array.init n (fun i -> float_of_int ((i mod 4) - 1) +. 0.5)
+              in
+              let t = F.create ctx F.float32 [| n |] data in
+              let spec = B.rfft t ~dtype:F.complex64 ~axes:[| 0 |] in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
+              equal ~msg:"rfft complex64 = half of DFT"
+                (array (ctest ~rel:1e-5 ~abs:1e-5))
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array spec));
+          case classify path "rfft-irfft-complex64-roundtrip" (fun () ->
+              let n = 8 in
+              let data =
+                Array.init n (fun i -> float_of_int ((i mod 4) - 1) +. 0.5)
+              in
+              let t = F.create ctx F.float32 [| n |] data in
+              let spec = B.rfft t ~dtype:F.complex64 ~axes:[| 0 |] in
+              let back =
+                B.irfft ~s:[| n |] spec ~dtype:F.float32 ~axes:[| 0 |]
+              in
+              equal ~msg:"irfft(rfft x) = n x"
+                (array (ftest ~rel:1e-5 ~abs:1e-5))
+                (Array.map (fun v -> v *. float_of_int n) data)
+                (F.to_array back));
+          case classify path "rfft-dtype-independent-of-input" (fun () ->
+              (* the requested dtype is not derived from the input's: a float64
+                 signal may be stored as complex64 and a complex128 spectrum
+                 inverted to float32 *)
+              let n = 8 in
+              let data =
+                Array.init n (fun i -> float_of_int ((i mod 4) - 1) +. 0.5)
+              in
+              let t = F.create ctx F.float64 [| n |] data in
+              let narrow = B.rfft t ~dtype:F.complex64 ~axes:[| 0 |] in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
+              equal ~msg:"float64 in, complex64 out"
+                (array (ctest ~rel:1e-5 ~abs:1e-5))
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array narrow);
+              let wide = B.rfft t ~dtype:F.complex128 ~axes:[| 0 |] in
+              let back =
+                B.irfft ~s:[| n |] wide ~dtype:F.float32 ~axes:[| 0 |]
+              in
+              equal ~msg:"complex128 in, float32 out"
+                (array (ftest ~rel:1e-5 ~abs:1e-5))
+                (Array.map (fun v -> v *. float_of_int n) data)
+                (F.to_array back));
+          case classify path "rfft-2d-complex64-roundtrip" (fun () ->
+              (* two axes: the real→complex pass writes at ~dtype and the
+                 remaining axis is transformed in place at that same dtype *)
+              let rows = 3 and columns = 4 in
+              let data =
+                Array.init (rows * columns) (fun i ->
+                    float_of_int ((i mod 4) - 1) +. 0.5)
+              in
+              let t = F.create ctx F.float32 [| rows; columns |] data in
+              let spec = B.rfft t ~dtype:F.complex64 ~axes:[| 0; 1 |] in
+              equal ~msg:"half-spectrum shape" (array int)
+                [| rows; (columns / 2) + 1 |]
+                (F.shape spec);
+              let back =
+                B.irfft ~s:[| rows; columns |] spec ~dtype:F.float32
+                  ~axes:[| 0; 1 |]
+              in
+              equal ~msg:"irfft(rfft x) = rows*columns x"
+                (array (ftest ~rel:1e-5 ~abs:1e-5))
+                (Array.map (fun v -> v *. float_of_int (rows * columns)) data)
+                (F.to_array back));
           case classify path "fft-known-value" (fun () ->
               (* hand-computed: fft([1,1,1,1]) = [4,0,0,0]; fft of a unit delta
                  [1,0,0,0] = [1,1,1,1] (all ones). *)
