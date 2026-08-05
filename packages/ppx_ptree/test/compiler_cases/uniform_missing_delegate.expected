@@ -1,0 +1,4 @@
+File "compiler_cases/uniform_missing_delegate.ml", line 5, characters 20-32:
+5 | type 'a t = { sub : 'a Missing.t } [@@deriving ptree]
+                        ^^^^^^^^^^^^
+Error: Unbound value Missing.map
