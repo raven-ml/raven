@@ -16,7 +16,7 @@
   test_nx_fft
   test_nx_ops
   test_nx_rng
-  test_nx_sliding_window)
+  test_nx_stft)
  (package nx)
  (modules
   :standard

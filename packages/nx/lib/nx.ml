@@ -90,3 +90,4 @@ let truncated_normal dtype ~lower ~upper shape =
 
 let fftfreq ?d n = F.fftfreq (Lazy.force context) ?d n
 let rfftfreq ?d n = F.rfftfreq (Lazy.force context) ?d n
+let hann dt n = F.hann (Lazy.force context) dt n
