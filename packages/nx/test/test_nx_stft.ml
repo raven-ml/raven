@@ -17,6 +17,10 @@ let framed ~window ~step data =
     Array.init (frames * window) (fun i ->
         data.((i / window * step) + (i mod window))) )
 
+(* The default taper is Hann; an explicit rectangle opts back out and is what
+   the plain-framing oracles below compare against. *)
+let rect ?(dt = Nx.float64) window = Nx.ones dt [| window |]
+
 let signal n =
   Array.init n (fun i ->
       let t = float_of_int i in
@@ -54,7 +58,7 @@ let test_stft_matches_framed_rfft () =
     (fun (window, step) ->
       let shape, frames = framed ~window ~step data in
       let expected = Nx.rfft (Nx.create Nx.float64 shape frames) ~axis:(-1) in
-      let actual = Nx.stft Nx.complex128 ~window ~step x in
+      let actual = Nx.stft Nx.complex128 ~window ~step ~win:(rect window) x in
       check_nx ~epsilon:1e-11
         (Printf.sprintf "window %d step %d" window step)
         expected actual)
@@ -73,6 +77,35 @@ let test_stft_windowed () =
   check_nx ~epsilon:1e-11 "tapered frames" expected
     (Nx.stft Nx.complex128 ~window ~step ~win:w
        (Nx.create Nx.float64 [| n |] data))
+
+let test_stft_default_taper () =
+  let n = 48 in
+  let window = 16 in
+  let x = Nx.create Nx.float64 [| n |] (signal n) in
+  check_nx ~epsilon:1e-12 "default is a periodic hann"
+    (Nx.stft Nx.complex128 ~window ~step:4 ~win:(Nx.hann Nx.float64 window) x)
+    (Nx.stft Nx.complex128 ~window ~step:4 x);
+  (* An explicit rectangle is still reachable, and differs from the default. *)
+  let rectangular =
+    Nx.stft Nx.complex128 ~window ~step:4 ~win:(rect window) x
+  in
+  equal ~msg:"rectangular differs from the default" bool false
+    (approx_equal_complex ~epsilon:1e-6 rectangular
+       (Nx.stft Nx.complex128 ~window ~step:4 x))
+
+let test_roundtrip_default () =
+  (* A matched pair with no optional arguments at all must reconstruct. *)
+  let n = 96 in
+  let window = 16 in
+  let x = Nx.create Nx.float64 [| n |] (signal n) in
+  let y = Nx.istft Nx.float64 ~window (Nx.stft Nx.complex128 ~window x) in
+  check_shape "default hop covers the signal" [| n |] y;
+  (* Sample 0 is the one a periodic Hann zeroes, and no later frame reaches it,
+     so the default taper cannot recover it. *)
+  equal ~msg:"unrecoverable first sample" (float 1e-12) 0.0 (Nx.item [ 0 ] y);
+  check_nx ~epsilon:1e-11 "default round-trip"
+    (Nx.slice [ Nx.R (1, n) ] x)
+    (Nx.slice [ Nx.R (1, n) ] y)
 
 let test_stft_shape_and_default_step () =
   let x = Nx.zeros Nx.float64 [| 64 |] in
@@ -121,8 +154,9 @@ let test_roundtrip_rectangular () =
   let x = Nx.create Nx.float64 [| n |] data in
   List.iter
     (fun (window, step) ->
-      let z = Nx.stft Nx.complex128 ~window ~step x in
-      let y = Nx.istft Nx.float64 ~window ~step z in
+      let w = rect window in
+      let z = Nx.stft Nx.complex128 ~window ~step ~win:w x in
+      let y = Nx.istft Nx.float64 ~window ~step ~win:w z in
       check_nx ~epsilon:1e-11
         (Printf.sprintf "window %d step %d" window step)
         x y)
@@ -170,10 +204,11 @@ let test_istft_length () =
   let step = 4 in
   let data = signal n in
   let x = Nx.create Nx.float64 [| n |] data in
-  let z = Nx.stft Nx.complex128 ~window ~step x in
+  let w = rect window in
+  let z = Nx.stft Nx.complex128 ~window ~step ~win:w x in
   (* 22 frames cover 100 samples; the last one falls outside every frame. *)
-  check_shape "untrimmed" [| 100 |] (Nx.istft Nx.float64 ~window ~step z);
-  let padded = Nx.istft Nx.float64 ~window ~step ~length:n z in
+  check_shape "untrimmed" [| 100 |] (Nx.istft Nx.float64 ~window ~step ~win:w z);
+  let padded = Nx.istft Nx.float64 ~window ~step ~win:w ~length:n z in
   check_shape "zero-extended" [| n |] padded;
   equal ~msg:"uncovered tail is zero" (float 1e-12) 0.0
     (Nx.item [ n - 1 ] padded);
@@ -181,7 +216,7 @@ let test_istft_length () =
     (Nx.slice [ Nx.R (0, 100) ] x)
     (Nx.slice [ Nx.R (0, 100) ] padded);
   check_shape "truncated" [| 40 |]
-    (Nx.istft Nx.float64 ~window ~step ~length:40 z)
+    (Nx.istft Nx.float64 ~window ~step ~win:w ~length:40 z)
 
 let test_istft_float32 () =
   let n = 64 in
@@ -241,6 +276,7 @@ let suite =
       [
         test "matches framed rfft" test_stft_matches_framed_rfft;
         test "applies the taper" test_stft_windowed;
+        test "defaults to a hann taper" test_stft_default_taper;
         test "shape and default step" test_stft_shape_and_default_step;
         test "batched" test_stft_batched;
         test "single precision" test_stft_float32;
@@ -248,6 +284,7 @@ let suite =
       ];
     group "istft"
       [
+        test "round-trips with no arguments" test_roundtrip_default;
         test "round-trips untapered" test_roundtrip_rectangular;
         test "round-trips through hann" test_roundtrip_hann;
         test "round-trips batched" test_roundtrip_batched;
