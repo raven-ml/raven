@@ -75,12 +75,31 @@ let oracle_tests =
     test "pad" (fun () ->
         check_vmap ~msg:"pad" (fun r -> Nx.pad [| (1, 1) |] 9.0 r) (xs ()));
     test "sliding windows" (fun () ->
-        check_vmap ~msg:"sliding_window_view"
-          (fun r -> Nx.sliding_window_view ~window:2 r)
+        check_vmap ~msg:"sliding window"
+          (fun r -> sliding_window ~axis:0 ~window:2 ~step:1 r)
           (xs ()));
     test "sliding windows on a leading axis" (fun () ->
-        check_vmap ~msg:"sliding_window_view axis 0"
-          (fun m -> Nx.sliding_window_view ~axis:0 ~window:2 m)
+        check_vmap ~msg:"sliding window axis 0"
+          (fun m -> sliding_window ~axis:0 ~window:2 ~step:1 m)
+          (ms ()));
+    test "extract_patches" (fun () ->
+        check_vmap ~msg:"extract_patches"
+          (fun m ->
+            Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
+              ~dilation:[| 1 |]
+              ~padding:[| (0, 0) |]
+              m)
+          (ms ()));
+    test "combine_patches" (fun () ->
+        check_vmap ~msg:"combine_patches"
+          (fun m ->
+            Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
+              ~dilation:[| 1 |]
+              ~padding:[| (0, 0) |]
+              m
+            |> Nx.combine_patches ~output_size:[| 3 |] ~kernel_size:[| 2 |]
+                 ~stride:[| 1 |] ~dilation:[| 1 |]
+                 ~padding:[| (0, 0) |])
           (ms ()));
     test "slice" (fun () ->
         check_vmap ~msg:"slice" (fun r -> Nx.slice [ Nx.R (1, 3) ] r) (xs ()));
@@ -331,6 +350,22 @@ let test_per_sample_gradients_of_gather () =
   (* Row element 1 is gathered twice: its gradient is 2. *)
   check_arr ~msg:"per-sample gather grads" (to_arr expected) g
 
+let test_per_sample_gradients_of_sliding_window () =
+  (* The sliding-window adjoint overlap-adds through [fold], so [fold] has to
+     batch or per-sample gradients of any windowed loss stop working. *)
+  let f x =
+    Nx.sum
+      (Nx.mul
+         (sliding_window ~axis:0 ~window:2 ~step:1 x)
+         (sliding_window ~axis:0 ~window:2 ~step:1 x))
+  in
+  let g = Rune.vmap' (fun x -> Rune.grad' f x) (xs ()) in
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 4 (fun i -> Rune.grad' f (Nx.slice [ Nx.I i ] (xs ()))))
+  in
+  check_arr ~msg:"per-sample windowed grads" (to_arr expected) g
+
 let test_jvp_through_vmap () =
   (* jvp of vmap of sum(x²) along v: per row, 2 <x_i, v_i>. *)
   let f x = Rune.vmap' (fun r -> Nx.sum (Nx.mul r r)) x in
@@ -375,6 +410,8 @@ let tests =
         test "vmap of grad: per-sample gradients" test_per_sample_gradients;
         test "per-sample gradients of a gather"
           test_per_sample_gradients_of_gather;
+        test "per-sample gradients of a sliding window"
+          test_per_sample_gradients_of_sliding_window;
         test "grad of vmap" test_grad_through_vmap;
         test "jvp of vmap" test_jvp_through_vmap;
       ];
