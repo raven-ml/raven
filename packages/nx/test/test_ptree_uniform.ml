@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Gtree → Ptree.S bridge via Tensor_tree: hand-written gtree, no ppx. *)
+(* Uniform → Ptree.S bridge via Ptree.Make: hand-written uniform structure, no ppx. *)
 
 open Windtrap
 
@@ -30,7 +30,7 @@ let f32 = Nx.float32
 let vec32 xs = Nx.create f32 [| Array.length xs |] xs
 let pack x = Nx.Ptree.P x
 
-(* ——— hand-written gtree ——— *)
+(* ——— hand-written uniform structure ——— *)
 
 module U = struct
   type 'a t = { w : 'a; b : 'a }
@@ -49,9 +49,9 @@ module U = struct
     f "b" (f "w" acc a.w b.w) a.b b.b
 end
 
-(* ——— Tensor_tree bridge ——— *)
+(* ——— Ptree.S bridge ——— *)
 
-module T = Nx.Ptree.Tensor_tree (U)
+module T = Nx.Ptree.Make (U)
 module Check : Nx.Ptree.S = T
 
 let params () =
@@ -79,7 +79,7 @@ let test_iter_visits_every_leaf () =
   T.iter (fun _ -> incr count) (params ());
   equal ~msg:"leaves" int 2 !count
 
-let test_gtree_fold_paths () =
+let test_uniform_fold_paths () =
   let visited = ref [] in
   let _ =
     U.fold
@@ -93,7 +93,7 @@ let test_gtree_fold_paths () =
   equal ~msg:"first path" string "w" (List.nth paths 0);
   equal ~msg:"second path" string "b" (List.nth paths 1)
 
-let test_gtree_fold2 () =
+let test_uniform_fold2 () =
   let merged =
     U.fold2 (fun path acc _ _ -> path :: acc) [] (params ()) (params ())
   in
@@ -132,14 +132,14 @@ let test_unpack_at_path () =
 
 let tests =
   [
-    group "Tensor_tree bridge"
+    group "Ptree.S bridge"
       [
         test "map preserves structure" test_map_preserves_structure;
         test "map2 combines leafwise" test_map2_combines_leafwise;
         test "iter visits every leaf" test_iter_visits_every_leaf;
       ];
-    group "Gtree fold"
-      [ test "fold paths" test_gtree_fold_paths; test "fold2" test_gtree_fold2 ];
+    group "Uniform fold"
+      [ test "fold paths" test_uniform_fold_paths; test "fold2" test_uniform_fold2 ];
     group "structure errors"
       [ test "map2 rejects dtype mismatch" test_map2_dtype_mismatch ];
     group "unpack"
@@ -150,4 +150,4 @@ let tests =
       ];
   ]
 
-let () = run "nx ptree gtree" tests
+let () = run "nx ptree uniform" tests

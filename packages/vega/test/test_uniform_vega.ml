@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Gtree → Ptree.S bridge: structural optimiser step over Tensor_tree. Uses
+(* Uniform → Ptree.S bridge: structural optimiser step over Ptree.Make. Uses
    hand-crafted gradients to avoid a rune dependency in the vega test suite. *)
 
 open Windtrap
@@ -33,7 +33,7 @@ let check_t name shape values (t : Nx.float32_t) =
       equal ~msg:(Printf.sprintf "%s[%d]" name i) (float 1e-5) x actual.(i))
     values
 
-(* ——— hand-written gtree ——— *)
+(* ——— hand-written uniform structure ——— *)
 
 module U = struct
   type 'a t = { w : 'a; b : 'a }
@@ -52,7 +52,7 @@ module U = struct
     f "b" (f "w" acc a.w b.w) a.b b.b
 end
 
-module T = Nx.Ptree.Tensor_tree (U)
+module T = Nx.Ptree.Make (U)
 
 (* Initial parameters and synthetic gradients. *)
 let params =
@@ -61,7 +61,7 @@ let params =
 let grads =
   { U.w = pack (vec32 [| 0.1; 0.2; 0.3 |]); b = pack (vec32 [| 0.05 |]) }
 
-let test_adam_step_on_gtree () =
+let test_adam_step_on_uniform () =
   let st = Vega.adam_init (module T) params in
   let p', _ = Vega.adam_step (module T) ~lr:0.1 st ~params ~grads in
   let { U.w = Nx.Ptree.P w'; b = Nx.Ptree.P b' } = p' in
@@ -69,7 +69,7 @@ let test_adam_step_on_gtree () =
   check_t "w after adam step" [| 3 |] [| 0.9; -2.1; 2.9 |] w';
   check_t "b after adam step" [| 1 |] [| 0.4 |] b'
 
-let test_clip_by_global_norm_on_gtree () =
+let test_clip_by_global_norm_on_uniform () =
   let g_clipped = Vega.clip_by_global_norm (module T) ~max_norm:10.0 grads in
   let { U.w = Nx.Ptree.P wc; _ } = g_clipped in
   (* Our gradients are small enough that clipping is a no-op. *)
@@ -77,13 +77,13 @@ let test_clip_by_global_norm_on_gtree () =
 
 let tests =
   [
-    group "Vega over Tensor_tree"
+    group "Vega over Ptree.Make"
       [
         test "adam_step preserves structure and applies update"
-          test_adam_step_on_gtree;
-        test "clip_by_global_norm works on gtree-backed gradients"
-          test_clip_by_global_norm_on_gtree;
+          test_adam_step_on_uniform;
+        test "clip_by_global_norm works on uniform-backed gradients"
+          test_clip_by_global_norm_on_uniform;
       ];
   ]
 
-let () = run "vega gtree" tests
+let () = run "vega uniform" tests
