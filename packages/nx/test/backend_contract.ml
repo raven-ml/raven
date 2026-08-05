@@ -1620,6 +1620,17 @@ struct
                 (array (ctest ~rel:0.0 ~abs:0.0))
                 [| z 1.5 0.0; z (-2.0) 0.0; z 3.0 0.0 |]
                 (F.to_array (B.cast ~dtype:F.complex128 t)));
+          case classify path "complex128->f64" (fun () ->
+              (* complex -> real keeps the real component and drops the
+                 imaginary one. The frontend's real/imag/angle/conjugate all
+                 rest on this direction. *)
+              let z re im = { Complex.re; im } in
+              let t =
+                F.create ctx F.complex128 [| 3 |]
+                  [| z 1.5 9.0; z (-2.0) (-9.0); z 0.0 3.0 |]
+              in
+              equal ~msg:"keeps re" exact [| 1.5; -2.0; 0.0 |]
+                (F.to_array (B.cast ~dtype:F.float64 t)));
           case classify path "int8<->int4-roundtrip" (fun () ->
               (* Int4 is storage-only, supported in cast (pack/unpack). In-range
                  values round-trip exactly. *)
@@ -2345,7 +2356,9 @@ struct
 
   (* ───── Complex ───── *)
 
-  type cdt = CDT : (Complex.t, 'b) Dtype.t * string * float -> cdt
+  (* The last field is a component big enough that [re² + im²] saturates the
+     dtype's float range, so a naive modulus would return infinity. *)
+  type cdt = CDT : (Complex.t, 'b) Dtype.t * string * float * float -> cdt
 
   let cpool =
     Array.init 18 (fun i ->
@@ -2355,13 +2368,16 @@ struct
         })
 
   let complex_dtypes =
-    [ CDT (F.complex64, "c32", 1e-5); CDT (F.complex128, "c64", 1e-11) ]
+    [
+      CDT (F.complex64, "c32", 1e-5, 1e20);
+      CDT (F.complex128, "c64", 1e-11, 1e200);
+    ]
 
   let complex_tests classify path =
     [
       group "complex"
         (List.map
-           (fun (CDT (dt, name, tol)) ->
+           (fun (CDT (dt, name, tol, big)) ->
              let ct = ctest ~rel:tol ~abs:tol in
              case classify path name (fun () ->
                  let a = F.create ctx dt [| 3; 4 |] (Array.sub cpool 0 12) in
@@ -2377,6 +2393,20 @@ struct
                  chk "div" B.fdiv Complex.div;
                  equal ~msg:"neg" (array ct) (Array.map Complex.neg sa)
                    (F.to_array (B.neg a));
+                 (* abs on complex is the modulus, delivered in the real
+                    component with a zero imaginary one; the frontend's
+                    magnitude casts that down to a float tensor. *)
+                 equal ~msg:"abs" (array ct)
+                   (Array.map
+                      (fun z -> { Complex.re = Complex.norm z; im = 0.0 })
+                      sa)
+                   (F.to_array (B.abs a));
+                 (* and it must not go through re² + im², which saturates *)
+                 let huge = F.create ctx dt [| 1 |] [| { Complex.re = big; im = big } |] in
+                 let hz = (F.to_array huge).(0) in
+                 equal ~msg:"abs no overflow" (array ct)
+                   [| { Complex.re = Complex.norm hz; im = 0.0 } |]
+                   (F.to_array (B.abs huge));
                  let bt_base =
                    F.create ctx dt [| 4; 3 |] (Array.sub cpool 4 12)
                  in
