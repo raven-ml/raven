@@ -1509,6 +1509,37 @@ struct
               equal ~msg:"merge values"
                 (array (ftest ~rel:0.0 ~abs:0.0))
                 d12 (F.to_array merged));
+          case classify path "sliding-window-view" (fun () ->
+              (* View-only: the windowed axis keeps its stride scaled by
+                 [step], and the appended axis reuses the unscaled stride, so
+                 windows that overlap read the same elements. *)
+              let t = mk [| 3; 4 |] d12 in
+              let w = B.sliding_window t ~axis:1 ~window:3 ~step:1 in
+              equal ~msg:"shape" (array int) [| 3; 2; 3 |] (F.shape w);
+              equal ~msg:"strides" (array int) [| 4; 1; 1 |]
+                (View.strides (B.view w));
+              equal ~msg:"offset" int
+                (View.offset (B.view t))
+                (View.offset (B.view w));
+              equal ~msg:"values"
+                (array (ftest ~rel:0.0 ~abs:0.0))
+                [|
+                  1.; 2.; 3.; 2.; 3.; 4.; 5.; 6.; 7.; 6.; 7.; 8.; 9.; 10.; 11.;
+                  10.; 11.; 12.;
+                |]
+                (F.to_array w));
+          case classify path "sliding-window-strided-source" (fun () ->
+              (* A step that divides the axis exactly leaves no overlap, and
+                 the source's own strides carry through untouched. *)
+              let t = B.permute (mk [| 3; 4 |] d12) [| 1; 0 |] in
+              let w = B.sliding_window t ~axis:0 ~window:2 ~step:2 in
+              equal ~msg:"shape" (array int) [| 2; 3; 2 |] (F.shape w);
+              equal ~msg:"strides" (array int) [| 2; 4; 1 |]
+                (View.strides (B.view w));
+              equal ~msg:"values"
+                (array (ftest ~rel:0.0 ~abs:0.0))
+                [| 1.; 2.; 5.; 6.; 9.; 10.; 3.; 4.; 7.; 8.; 11.; 12. |]
+                (F.to_array w));
         ];
     ]
 

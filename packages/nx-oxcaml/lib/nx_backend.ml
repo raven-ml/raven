@@ -1098,6 +1098,9 @@ let permute x axes = { x with view = View.permute x.view axes }
 let shrink x bounds = { x with view = View.shrink x.view bounds }
 let flip x axes = { x with view = View.flip x.view axes }
 
+let sliding_window x ~axis ~window ~step =
+  { x with view = View.sliding_window x.view ~axis ~window ~step }
+
 let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     (fill_value : a) : (a, b) t =
   let in_view = x.view in

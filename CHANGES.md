@@ -363,6 +363,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_core.Backend_intf.S` gains `sliding_window`, a pure-view
+  movement producing overlapping windows. Out-of-tree engines implementing the
+  `nx.backend` virtual library must add it.
 - **Breaking:** consolidate tensor formatting around the compact `Nx.pp`,
   `Nx.to_string`, and `Nx.print`. Remove `pp_data`, `data_to_string`,
   `print_data`, `format_to_string`, `print_with_formatter`, `dtype_to_string`,
@@ -626,10 +629,6 @@ thread.
   and shape C stubs. The `iterate_inner_dims` helpers did not account for the
   ndarray offset, producing wrong results when the data starts at a non-zero
   offset in the underlying buffer.
-- Add `Nx.sliding_window_view`, a zero-copy view of sliding windows along one
-  axis with a built-in step. Unlike `extract_patches`, it materializes nothing:
-  framed pipelines such as `rfft` over overlapping windows no longer allocate
-  the framed tensor.
 
 ### Rune
 
@@ -759,10 +758,6 @@ thread.
   `check_gradient` API — use `check_grads`; and `jit`/`trace_graph` —
   JIT compilation via Tolk will return as a transformation in a later
   release.
-- `Nx.sliding_window_view` is now first-class under every transformation:
-  reverse mode accumulates each window's cotangent back onto the positions it
-  read (overlap-add), forward mode and `vmap` map through the view, and `jit`
-  compiles it as a movement operation.
 
 ### Kaun
 
