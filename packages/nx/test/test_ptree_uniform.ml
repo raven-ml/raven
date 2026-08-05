@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Uniform → Ptree.S bridge via Ptree.Make: hand-written uniform structure, no ppx. *)
+(* Uniform → Ptree.S bridge via Ptree.Make: hand-written uniform structure, no
+   ppx. *)
 
 open Windtrap
 
@@ -139,7 +140,10 @@ let tests =
         test "iter visits every leaf" test_iter_visits_every_leaf;
       ];
     group "Uniform fold"
-      [ test "fold paths" test_uniform_fold_paths; test "fold2" test_uniform_fold2 ];
+      [
+        test "fold paths" test_uniform_fold_paths;
+        test "fold2" test_uniform_fold2;
+      ];
     group "structure errors"
       [ test "map2 rejects dtype mismatch" test_map2_dtype_mismatch ];
     group "unpack"
