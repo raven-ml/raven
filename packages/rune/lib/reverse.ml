@@ -323,43 +323,39 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               (* The transpose is overlap-add: input position [w*step + j]
-                 accumulates the cotangent of window [w] at offset [j]. Bring
-                 the trailing window axis next to the window-count axis, merge
-                 them, and scatter-add each pair's cotangent at the position it
-                 read. Positions no window reads (step > window) keep the
-                 template's zero. *)
+                 accumulates the cotangent of window [w] at offset [j]. That is
+                 what [fold] computes — it sums the taps landing on each output
+                 position in one pass, and stores a zero where no window reached
+                 (the dropped tail, or the gaps left by [step > window]). Its
+                 operand layout is [(leading…, window, count)], so permute the
+                 windowed axis into the trailing spatial slot, fold, and permute
+                 the result back. *)
               pull1 k (sliding_window t_in ~axis ~window ~step) t_in (fun g ->
                   let in_shape = T.shape t_in in
                   let r = Array.length in_shape in
-                  let n_win = ((in_shape.(axis) - window) / step) + 1 in
-                  let order =
+                  (* [g] is [(d0…d_axis-1, count, d_axis+1…d_r-1, window)]. *)
+                  let to_fold =
                     List.init (r + 1) (fun i ->
-                        if i <= axis then i
-                        else if i = axis + 1 then r
-                        else i - 1)
+                        if i < axis then i
+                        else if i <= r - 2 then i + 1
+                        else if i = r - 1 then r
+                        else axis)
                   in
-                  let merged =
-                    Array.init r (fun i ->
-                        if i = axis then n_win * window else in_shape.(i))
+                  let folded =
+                    fold
+                      (T.transpose g ~axes:to_fold)
+                      ~output_size:[| in_shape.(axis) |]
+                      ~kernel_size:[| window |] ~stride:[| step |]
+                      ~dilation:[| 1 |] ~padding:[| (0, 0) |]
                   in
-                  let g =
-                    T.reshape merged (T.contiguous (T.transpose g ~axes:order))
+                  (* [folded] carries [axis] last; move it back into place. *)
+                  let from_fold =
+                    List.init r (fun j ->
+                        if j < axis then j
+                        else if j = axis then r - 1
+                        else j - 1)
                   in
-                  let idx =
-                    T.add
-                      (T.reshape [| n_win; 1 |]
-                         (T.arange T.int32 0 (n_win * step) step))
-                      (T.reshape [| 1; window |] (T.arange T.int32 0 window 1))
-                  in
-                  let idx_shape =
-                    Array.init r (fun i ->
-                        if i = axis then n_win * window else 1)
-                  in
-                  let indices =
-                    T.broadcast_to merged (T.reshape idx_shape idx)
-                  in
-                  scatter ~mode:`Add ~unique_indices:false (T.zeros_like t_in)
-                    ~indices ~updates:g ~axis))
+                  T.transpose folded ~axes:from_fold))
       | E_cat { t_list; axis } ->
           Some
             (fun k ->

@@ -632,6 +632,11 @@ thread.
 
 ### Rune
 
+- Reverse mode differentiates the sliding-window movement through `fold`
+  rather than a materialized scatter, so the backward pass is a single
+  overlap-add instead of allocating a `window`-fold copy of the cotangent.
+- `vmap` now batches `Nx.extract_patches` and `Nx.combine_patches` instead of
+  raising; both preserve leading dimensions, so the batch axis passes through.
 - `jacfwd'` and `jacrev'` support float32 and float64 inputs without an
   implicit float64 specialization. Forward-mode Jacobians keep the output
   dtype, reverse-mode Jacobians keep the input dtype, and both evaluate the
