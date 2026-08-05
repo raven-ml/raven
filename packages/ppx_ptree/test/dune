@@ -1,5 +1,5 @@
 (tests
- (names test_ptree test_signature test_integration)
+ (names test_ptree test_signature test_integration test_uniform)
  (package ppx_ptree)
  (flags
   (:standard -warn-error +a))
@@ -44,7 +44,8 @@
   compiler_leaf.actual
   compiler_missing_delegate.actual
   compiler_illtyped_delegate.actual
-  compiler_ppx_metadata.actual)
+  compiler_ppx_metadata.actual
+  compiler_uniform_missing_delegate.actual)
  (deps
   (:pp pp.exe))
  (action
@@ -121,6 +122,24 @@
       %{dep:compiler_cases/ppx_metadata.ml}
       -o
       ppx_metadata.cmo)))
+   (with-stderr-to
+    compiler_uniform_missing_delegate.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/uniform_missing_delegate.ml}
+      -o
+      uniform_missing_delegate.cmo)))
    (diff compiler_cases/leaf_misuse.expected compiler_leaf.actual)
    (diff
     compiler_cases/missing_delegate.expected
@@ -128,14 +147,19 @@
    (diff
     compiler_cases/illtyped_delegate.expected
     compiler_illtyped_delegate.actual)
-   (diff compiler_cases/ppx_metadata.expected compiler_ppx_metadata.actual))))
+   (diff compiler_cases/ppx_metadata.expected compiler_ppx_metadata.actual)
+   (diff
+    compiler_cases/uniform_missing_delegate.expected
+    compiler_uniform_missing_delegate.actual))))
 
 (rule
  (alias runtest)
  (targets
   expansion_simple.actual
   expansion_generic.actual
-  expansion_recursive.actual)
+  expansion_recursive.actual
+  expansion_uniform.actual
+  expansion_mirror.actual)
  (deps
   (:pp pp.exe))
  (action
@@ -149,6 +173,14 @@
    (with-stdout-to
     expansion_recursive.actual
     (run ./%{pp} -impl %{dep:expansion_cases/recursive.ml}))
+   (with-stdout-to
+    expansion_uniform.actual
+    (run ./%{pp} -impl %{dep:expansion_cases/uniform.ml}))
+   (with-stdout-to
+    expansion_mirror.actual
+    (run ./%{pp} -impl %{dep:expansion_cases/mirror.ml}))
    (diff expansion_cases/simple.expected expansion_simple.actual)
    (diff expansion_cases/generic.expected expansion_generic.actual)
-   (diff expansion_cases/recursive.expected expansion_recursive.actual))))
+   (diff expansion_cases/recursive.expected expansion_recursive.actual)
+   (diff expansion_cases/uniform.expected expansion_uniform.actual)
+   (diff expansion_cases/mirror.expected expansion_mirror.actual))))

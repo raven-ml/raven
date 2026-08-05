@@ -110,3 +110,21 @@ Expansion exposes only functions, with one primary name and suffixed helpers.
   let map2
   let iter_helper
   let iter
+
+Uniform (payload-generic) declarations reject rank-2 vocabulary and
+payload-free parameters; mirror mode validates its shape.
+
+  $ ./pp.exe -impl cases/uniform_attribute_payload.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: ptree attributes do not apply to payload positions of uniform (parameterised) types; the payload parameter determines the traversal"]
+  $ ./pp.exe -impl cases/uniform_static_helper.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: the type parameter ['a] of [meta] never occurs in a payload position"]
+  $ ./pp.exe -impl cases/uniform_mirror_on_uniform.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: [~mirror] applies to concrete types; uniform (parameterised) types are their own mirror"]
+  $ ./pp.exe -impl cases/uniform_bad_delegate_apply.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: cannot derive a uniform traversal through [sub]; the payload parameter may appear directly, under tuples, [option], [list], [array], or as [M.t] applied to the parameter alone"]
+  $ ./pp.exe -impl cases/mirror_local.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: mirror mode does not support locally declared or recursive types; move the sub-structure to its own module deriving [ptree ~mirror]"]
+  $ ./pp.exe -impl cases/mirror_multi.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: mirror mode supports a single type declaration"]
+  $ ./pp.exe -impl cases/mirror_no_leaf.ml 2>&1 | grep 'ppx_ptree:'
+        "ppx_ptree: mirror mode requires at least one tensor leaf"]

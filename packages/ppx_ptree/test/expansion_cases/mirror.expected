@@ -1,0 +1,132 @@
+type t = {
+  w: Nx.float32_t ;
+  b: Nx.float32_t option ;
+  dim: int [@ptree.ignore ]}[@@deriving ptree ~mirror]
+include struct let _ = fun (_ : t) -> () end[@@ocaml.doc "@inline"][@@merlin.hide
+                                                                    ]
+include
+  struct
+    [@@@ocaml.warning "-60"]
+    let map
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) =
+      let ptree_w__001_ = f x.w in
+      let ptree_b__002_ =
+        match x.b with
+        | None -> None
+        | Some ptree_value__003_ -> Some (f ptree_value__003_) in
+      let ptree_dim__004_ = x.dim in
+      { w = ptree_w__001_; b = ptree_b__002_; dim = ptree_dim__004_ }
+    let _ = map
+    let map2
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) (y : t) =
+      let ptree_w__005_ = f x.w y.w in
+      let ptree_b__006_ =
+        match ((x.b), (y.b)) with
+        | (None, None) -> None
+        | (Some ptree_left__007_, Some ptree_right__008_) ->
+            Some (f ptree_left__007_ ptree_right__008_)
+        | _ ->
+            Stdlib.invalid_arg
+              "Mirror.map2: option constructor mismatch at b" in
+      let ptree_dim__009_ = x.dim in
+      { w = ptree_w__005_; b = ptree_b__006_; dim = ptree_dim__009_ }
+    let _ = map2
+    let iter (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit)
+      (x : t) =
+      f x.w;
+      (match x.b with
+       | None -> ()
+       | Some ptree_value__010_ -> f ptree_value__010_);
+      ()
+    let _ = iter
+    module Uniform =
+      struct
+        type nonrec 'm t = {
+          w: 'm ;
+          b: 'm option ;
+          dim: int }
+        let map (f : 'a -> 'b) (x : 'a t) =
+          (let ptree_w__011_ = f x.w in
+           let ptree_b__013_ =
+             match x.b with
+             | None -> None
+             | Some ptree_value__012_ -> Some (f ptree_value__012_) in
+           let ptree_dim__014_ = x.dim in
+           { w = ptree_w__011_; b = ptree_b__013_; dim = ptree_dim__014_ } : 
+          'b t)
+        let _ = map
+        let map2 (f : 'a -> 'b -> 'c) (x : 'a t) (y : 'b t) =
+          (let ptree_w__015_ = f x.w y.w in
+           let ptree_b__018_ =
+             match ((x.b), (y.b)) with
+             | (None, None) -> None
+             | (Some ptree_left__016_, Some ptree_right__017_) ->
+                 Some (f ptree_left__016_ ptree_right__017_)
+             | _ ->
+                 Stdlib.invalid_arg
+                   "Mirror.Uniform.map2: option constructor mismatch" in
+           let ptree_dim__019_ = x.dim in
+           { w = ptree_w__015_; b = ptree_b__018_; dim = ptree_dim__019_ } : 
+          'c t)
+        let _ = map2
+        let iter (f : 'a -> unit) (x : 'a t) =
+          f x.w;
+          (match x.b with
+           | None -> ()
+           | Some ptree_value__020_ -> f ptree_value__020_);
+          ()
+        let _ = iter
+        let fold (f : string -> 'acc -> 'a -> 'acc) (acc : 'acc) (x : 'a t) =
+          let ptree_acc__021_ = f "w" acc x.w in
+          match x.b with
+          | None -> ptree_acc__021_
+          | Some ptree_value__022_ -> f "b" ptree_acc__021_ ptree_value__022_
+        let _ = fold
+        let fold2 (f : string -> 'acc -> 'a -> 'b -> 'acc) (acc : 'acc)
+          (x : 'a t) (y : 'b t) =
+          let ptree_acc__023_ = f "w" acc x.w y.w in
+          match ((x.b), (y.b)) with
+          | (None, None) -> ptree_acc__023_
+          | (Some ptree_left__024_, Some ptree_right__025_) ->
+              f "b" ptree_acc__023_ ptree_left__024_ ptree_right__025_
+          | _ ->
+              Stdlib.invalid_arg
+                "Mirror.Uniform.fold2: option constructor mismatch"
+        let _ = fold2
+        let names (x : 'a t) =
+          ({
+             w = "w";
+             b = (match x.b with | None -> None | Some _ -> Some "b");
+             dim = (x.dim)
+           } : string t)
+        let _ = names
+      end
+    let to_uniform (x : t) =
+      ({
+         Uniform.w = (Nx.Ptree.P (x.w));
+         Uniform.b =
+           (match x.b with
+            | None -> None
+            | Some ptree_value__028_ -> Some (Nx.Ptree.P ptree_value__028_));
+         Uniform.dim = (x.dim)
+       } : Nx.Ptree.tensor Uniform.t)
+    let _ = to_uniform
+    let of_uniform (u : Nx.Ptree.tensor Uniform.t) =
+      ({
+         w = (Nx.Ptree.unpack ~at:"w" Nx.float32 u.Uniform.w);
+         b =
+           (match u.Uniform.b with
+            | None -> None
+            | Some ptree_value__027_ ->
+                Some (Nx.Ptree.unpack ~at:"b" Nx.float32 ptree_value__027_));
+         dim = (u.Uniform.dim)
+       } : t)
+    let _ = of_uniform
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
