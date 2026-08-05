@@ -16,6 +16,7 @@ dune exec nx/examples/08-signal-processing/main.exe
 - Identifying dominant frequency components by magnitude
 - Filtering noise by zeroing small-magnitude frequency bins
 - Reconstructing a clean signal with `irfft`
+- Keeping a whole spectral pipeline in single precision
 
 ## Key Functions
 
@@ -23,7 +24,8 @@ dune exec nx/examples/08-signal-processing/main.exe
 | ----------------------------- | ------------------------------------------------- |
 | `rfft dtype t`                | Real-valued FFT (time domain to frequency domain) |
 | `irfft dtype ~n t`            | Inverse real FFT (frequency domain back to time)  |
-| `rfftfreq ~d n`               | Frequency bin labels for `rfft` output            |
+| `rfftfreq dtype ~d n`         | Frequency bin labels for `rfft` output            |
+| `magnitude dtype z`           | Element-wise modulus of a complex spectrum        |
 | `linspace dtype start stop n` | Evenly spaced time samples                        |
 | `sin t`                       | Element-wise sine                                 |
 | `Rng.normal ~key dtype shape` | Gaussian noise                                    |
@@ -42,7 +44,10 @@ Components: 5 Hz (amplitude 1.0) + 20 Hz (amplitude 0.5) + noise
 
 ### Frequency analysis
 
-After `rfft`, compute magnitudes scaled by 2/N to get amplitudes:
+The signal is `float32`, so `rfft complex64` keeps the spectrum in single
+precision — half the bytes a `complex128` spectrum would take — and
+`rfftfreq float32` labels it without a cast. After `rfft`, compute magnitudes
+scaled by 2/N to get amplitudes:
 
 ```
 Dominant frequencies:
