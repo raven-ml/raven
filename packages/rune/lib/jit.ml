@@ -812,6 +812,9 @@ let handler st =
             let axes = ref [] in
             Array.iteri (fun i f -> if f then axes := i :: !axes) dims_to_flip;
             ret k (dt t_in) (F.Movement.flip (go t_in) (List.rev !axes)))
+    (* Unlike the eager movement, which is view metadata, the lowering pools
+       through pad/reshape/shrink and materializes: a step narrower than the
+       window writes each overlapped element once per window that reads it. *)
     | E_sliding_window { t_in; axis; window; step } ->
         Some
           (fun k ->
