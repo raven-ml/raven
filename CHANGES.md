@@ -363,6 +363,12 @@ thread.
 
 ### Nx
 
+- Add complex accessors `Nx.real`, `Nx.imag`, `Nx.magnitude`, `Nx.angle` and
+  the `Nx.complex ~re ~im` constructor, taking the result dtype first so a
+  `complex64` spectrum can yield a `float32` magnitude. `Nx.conjugate` now runs
+  the same element-wise kernels instead of reading every element back to the
+  host one at a time; it returns NaN components where the input has a
+  non-finite one, which the boxed version handled exactly.
 - Add `Nx.stft`, `Nx.istft`, and `Nx.hann` for short-time Fourier analysis.
   `stft` frames through a view rather than materializing, returns time-major
   `[frames; bins]`, and tapers with a periodic Hann by default; `istft`
@@ -375,10 +381,6 @@ thread.
   `Nx.to_string`, and `Nx.print`. Remove `pp_data`, `data_to_string`,
   `print_data`, `format_to_string`, `print_with_formatter`, `dtype_to_string`,
   and `shape_to_string`; add `Nx.pp_shape` alongside `Nx.pp_dtype`.
-- Add `Nx.Complex` accessors for complex tensors: `real`, `imag`, `abs`
-  (magnitude), `angle`, `conj`, and `polar`, all running unboxed element-wise
-  kernels. The float-producing functions take the output dtype first, so a
-  `complex64` spectrum yields a `float32` magnitude without a boxed loop.
 - The default C backend and `nx.io` codecs now build cleanly with strict GCC
   warnings and single-pass ELF linkers. Empty DEFLATE streams also avoid
   allocating the encoder's match tables.

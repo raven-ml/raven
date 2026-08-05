@@ -1373,9 +1373,89 @@ val rmod_s : 'a -> ('a, 'b) t -> ('a, 'b) t
 val neg : ('a, 'b) t -> ('a, 'b) t
 (** [neg t] is the element-wise negation of [t]. *)
 
+(** {1:complex Complex numbers}
+
+    A complex tensor stores an interleaved real and imaginary component. These
+    functions move between such a tensor and the float tensors holding its
+    components. All are element-wise and return a fresh tensor, never a view.
+
+    The ones producing a float tensor take that dtype first. It selects the
+    result's storage precision independently of the input's, so the arithmetic
+    still happens at the input's precision: [magnitude float64] of a
+    [complex64] tensor widens a float32 result rather than recomputing it. The
+    matching pairs are [complex64] with [float32], and [complex128] with
+    [float64].
+
+    {2:complex_nonfinite Non-finite components}
+
+    Only {!real} and {!magnitude} read a component directly. The others reach
+    the imaginary component by rotating it into the real one, which multiplies
+    the two components together, so a non-finite component poisons the other:
+    {!imag}, {!angle}, {!val-complex}, and {!conjugate} produce NaN components
+    wherever an input component is infinite or NaN. Finite inputs are
+    unaffected, including components near the dtype maximum. *)
+
+val real : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
+(** [real dt z] is the real component of each element of [z].
+
+    {@ocaml[
+      # create complex64 [| 2 |] [| Complex.{ re = 3.; im = 4. }; Complex.i |]
+        |> real float32
+      - : (float, float32_elt) t = [3, 0]
+    ]}
+
+    See also {!imag}, {!magnitude}. *)
+
+val imag : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
+(** [imag dt z] is the imaginary component of each element of [z].
+
+    See also {!real}, {!val-complex}. *)
+
+val magnitude : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
+(** [magnitude dt z] is the element-wise modulus of [z]. It is named apart from
+    {!abs}, which preserves the dtype and so cannot leave the complex domain.
+
+    Computed without intermediate overflow, so components large enough that
+    [re² + im²] would saturate still yield a finite magnitude.
+
+    {@ocaml[
+      # create complex64 [| 2 |] [| Complex.{ re = 3.; im = 4. }; Complex.i |]
+        |> magnitude float32
+      - : (float, float32_elt) t = [5, 1]
+    ]}
+
+    See also {!angle}, {!val-complex}. *)
+
+val angle : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
+(** [angle dt z] is the element-wise argument of [z] in radians, in
+    \[[-π], [π]\].
+
+    The negative real axis is a branch cut and the sign of a zero imaginary
+    component picks the side: [-1. + 0.i] has argument [π], [-1. - 0.i] has
+    argument [-π]. Zero has argument zero.
+
+    See also {!magnitude}, {!val-complex}. *)
+
+val complex :
+  (Complex.t, 'c) dtype ->
+  re:(float, 'a) t ->
+  im:(float, 'a) t ->
+  (Complex.t, 'c) t
+(** [complex dt ~re ~im] assembles a complex tensor from its components, which
+    are broadcast together.
+
+    {@ocaml[
+      # complex complex64
+          ~re:(create float32 [| 2 |] [| 3.; 0. |])
+          ~im:(create float32 [| 2 |] [| 4.; 1. |])
+      - : (Complex.t, complex32_elt) t = [(3+4i), (0+1i)]
+    ]}
+
+    See also {!real}, {!imag}. *)
+
 val conjugate : ('a, 'b) t -> ('a, 'b) t
-(** [conjugate t] is the complex conjugate of [t]. For complex dtypes, negates
-    the imaginary part. For real dtypes, returns [t] unchanged. *)
+(** [conjugate t] negates the imaginary component of each element. Real dtypes
+    are returned unchanged. *)
 
 (** {1:math Mathematical functions} *)
 
@@ -2731,78 +2811,6 @@ val istft :
 
     See also {!stft}. *)
 
-(** {1:complex Complex accessors} *)
-
-module Complex : sig
-  (** Element-wise accessors for complex tensors: component extraction,
-      magnitude, phase, conjugation, and polar construction.
-
-      All functions run unboxed tensor kernels — no per-element
-      [Stdlib.Complex.t] round-trips — and return a fresh tensor (a copy, not
-      a {e view}). Functions producing float tensors take the output dtype
-      first; it selects the storage precision, independent of the input's. The
-      natural pairings are [complex64] with [float32] and [complex128] with
-      [float64].
-
-      This module is namespaced so that {!val-abs} — magnitude, complex in,
-      float out — does not clash with the dtype-preserving [Nx.abs]. *)
-
-  val real : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
-  (** [real dt z] is the real part of each element of [z], as a float tensor
-      of dtype [dt].
-
-      {@ocaml[
-        # create complex64 [| 2 |]
-            [| Stdlib.Complex.{ re = 3.; im = 4. }; Stdlib.Complex.i |]
-          |> Complex.real float32
-        - : (float, float32_elt) t = [3, 0]
-      ]}
-
-      See also {!imag}, {!val-abs}. *)
-
-  val imag : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
-  (** [imag dt z] is the imaginary part of each element of [z], as a float
-      tensor of dtype [dt].
-
-      See also {!real}. *)
-
-  val abs : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
-  (** [abs dt z] is the element-wise magnitude (modulus) of [z], as a float
-      tensor of dtype [dt]. Computed without undue overflow (C [cabs]).
-
-      {@ocaml[
-        # create complex64 [| 2 |]
-            [| Stdlib.Complex.{ re = 3.; im = 4. }; Stdlib.Complex.i |]
-          |> Complex.abs float32
-        - : (float, float32_elt) t = [5, 1]
-      ]}
-
-      See also {!angle}, {!polar}. *)
-
-  val angle : (float, 'b) dtype -> (Stdlib.Complex.t, 'a) t -> (float, 'b) t
-  (** [angle dt z] is the element-wise argument (phase) of [z] in radians, in
-      \[[-π], [π]\], as a float tensor of dtype [dt]. Measured as
-      [atan2 im re], so negative real values map to π and zero maps to zero.
-
-      See also {!val-abs}, {!polar}. *)
-
-  val conj : (Stdlib.Complex.t, 'a) t -> (Stdlib.Complex.t, 'a) t
-  (** [conj z] is the element-wise complex conjugate of [z].
-
-      See also {!imag}. *)
-
-  val polar :
-    (Stdlib.Complex.t, 'c) dtype ->
-    (float, 'a) t ->
-    (float, 'a) t ->
-    (Stdlib.Complex.t, 'c) t
-  (** [polar dt r theta] is the complex tensor with magnitude [r] and phase
-      [theta]: [r·cos theta + i·r·sin theta], as a complex tensor of dtype
-      [dt]. [r] and [theta] are broadcast together. Inverse of the
-      ({!val-abs}, {!angle}) decomposition.
-
-      See also {!val-abs}, {!angle}. *)
-end
 
 (** {1:activation Activation functions} *)
 
