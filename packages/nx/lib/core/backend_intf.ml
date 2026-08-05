@@ -244,7 +244,13 @@ module type S = sig
   (** [recip x] is the element-wise reciprocal of [x]. *)
 
   val abs : ('a, 'b) t -> ('a, 'b) t
-  (** [abs x] is the element-wise absolute value of [x]. *)
+  (** [abs x] is the element-wise absolute value of [x].
+
+      {b Backend must:} for complex dtypes, return the modulus in the real
+      component and zero in the imaginary one, computed without intermediate
+      overflow — components large enough that [re² + im²] would saturate must
+      still give a finite modulus. The frontend's [magnitude] casts this
+      result down to a float tensor. *)
 
   val sqrt : ('a, 'b) t -> ('a, 'b) t
   (** [sqrt x] is the element-wise square root of [x]. *)
@@ -460,7 +466,13 @@ module type S = sig
   (** [cast ~dtype x] converts elements of [x] to [dtype].
 
       Float-to-int truncates toward zero. Int-to-float may lose precision for
-      large values. *)
+      large values.
+
+      {b Backend must:} drop the imaginary component when casting complex to a
+      real dtype, keeping the real one, and set a zero imaginary component when
+      casting a real dtype to complex. The frontend's complex accessors are
+      built on both directions, so a backend that instead cast complex through
+      its modulus would silently change their results. *)
 
   val contiguous : ('a, 'b) t -> ('a, 'b) t
   (** [contiguous t] returns a C-contiguous version of [t].
