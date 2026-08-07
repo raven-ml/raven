@@ -663,3 +663,27 @@ Recorded so nobody re-derives them from the upstream diff.
   list fails identically and looks like the same known failure. On any enum
   change, diff the whole list against the reference rather than patching the
   entry you know about.
+
+## Multi-device: three pmap cases fail after the pin migration
+
+`packages/rune/test/test_pmap.ml` — `elementwise+matmul+reduce matches jit on
+2 devices`, the same on 4, and `two collectively reduced outputs` — fail with
+`Invalid_argument("buffer copy: size or dtype mismatch")` from
+`engine/realize.ml:209`. That check is unmodified: a cross-device copy is
+being scheduled between buffers of genuinely different sizes.
+
+The sharding and allreduce half of the multi rework (`schedule/multi.ml`,
+`schedule/allreduce.ml`) was never started, while the op it keys on was
+renamed and operand broadcasting moved out of the frontend. So the token and
+the surrounding shapes moved without the semantics that were meant to
+accompany them.
+
+One half is already fixed: sharding split a size-one axis, which is a
+broadcast axis and must stay whole — the reference guards the same case in
+`shard_srcs` ("broadcast srcs stay whole"). That took the failure count from
+six to three and moved the rest past the divisibility check into this copy.
+
+To resume: instrument `realize.ml:209` to print both buffer sizes, then work
+back to which side is sharded and which is whole. The likely shape is a
+consumer still treating a now-whole broadcast operand as if it were a shard.
+The three tests are the acceptance criterion.
