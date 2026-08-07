@@ -46,6 +46,13 @@ thread.
 
 ### Tolk (new)
 
+- Multi-device programs with two outputs that both need a cross-device
+  reduction — a data-parallel step returning both the loss and the gradient of
+  a replicated parameter — no longer miscompile. Flattening a bufferize folded
+  the source's own shape into the flattened extent, which overflowed to a
+  negative size whenever that shape was unresolved, leaving the gradient with a
+  one-element buffer that every lane wrote to at index zero. `Rune.pmap` steps
+  that hit this failed to compile rather than returning wrong numbers.
 - Tensor-core kernels now declare each `WMMA` result at the accumulator width
   the instruction actually returns, so tensor cores are usable again on Metal
   and CUDA. The renderer declared them scalar, emitting programs the target

@@ -1052,10 +1052,14 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
 
 (* Add buffers *)
 
+(* How many elements an index spans: a range's size, one element for an axis
+   pinned to a constant, and otherwise the bound of the expression — a stage
+   flattened to a single index no longer holds a RANGE, but it still spans its
+   whole extent. *)
 let range_int_size r =
   match U.as_range r with
   | Some v -> Option.value (U.const_int_value v.size) ~default:(U.vmax r + 1)
-  | None -> 1
+  | None -> if U.op r = Ops.Const then 1 else U.vmax r + 1
 
 let flat_index_of_ranges ?dims ranges =
   let range_dims ranges =
@@ -1094,15 +1098,17 @@ let flatten_stage n =
          && List.for_all
               (fun r -> match U.op r with Ops.Range | Ops.Const -> true | _ -> false)
               ranges ->
-      let shape =
-        try U.max_shape n with Invalid_argument _ ->
-          List.map (fun r -> U.vmax r + 1) ranges
-      in
+      (* A stage's shape is its range dims followed by the source's own shape.
+         Only the range dims flatten into the index; folding the source's
+         shape in as well overflows the size to a negative when the source
+         carries an unresolved dimension. *)
+      let range_dims = List.map (fun r -> U.vmax r + 1) ranges in
+      let shape = try U.max_shape n with Invalid_argument _ -> range_dims in
       let flat_src =
         U.buffer ~slot:(-1) ~dtype:(U.dtype src)
-          ~shape:(shape_node [ prod shape ]) ()
+          ~shape:(shape_node [ prod range_dims ]) ()
       in
-      let flat_view = U.reshape ~src:flat_src ~shape:(shape_node shape) in
+      let flat_view = U.reshape ~src:flat_src ~shape:(shape_node range_dims) in
       let flat_idx =
         match Indexing.apply_movement_op ~shapes:shape_of flat_view ranges with
         | [ idx ] -> idx

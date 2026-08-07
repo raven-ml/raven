@@ -388,6 +388,81 @@ let test_grad_over_pmap_runs_eagerly () =
   let dx = Rune.grad (module Single_f32) (fun x -> g x) x in
   check_arr ~msg:"grad over pmap" [| 2.0; 4.0; 6.0; 8.0 |] dx
 
+(* Two outputs that both need a cross-device reduction: the gradient of a
+   replicated parameter (summed over the sharded batch) and the loss itself.
+   The gradient comes from a gather, so its buffer spans the whole vocabulary
+   while the loss spans one element; a schedule that sizes the first from the
+   second silently truncates it to one element and writes every lane to index
+   zero. Every element of the gradient is checked, not just its sum, because a
+   truncated buffer can still total correctly by accident.
+
+   With one occurrence of each id in the batch, [d(sum (w[ids] * m))/dw] is
+   [m]'s value at every entry. *)
+
+module Grad_and_loss = struct
+  type t = { g : Nx.float32_t; loss : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    { g = f t.g; loss = f t.loss }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { g = f a.g b.g; loss = f a.loss b.loss }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    f t.g;
+    f t.loss
+end
+
+module Weights_mask_ids = struct
+  type t = { w : Nx.float32_t; m : Nx.float32_t; ids : Nx.int32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    { w = f t.w; m = f t.m; ids = f t.ids }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { w = f a.w b.w; m = f a.m b.m; ids = f a.ids b.ids }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    f t.w;
+    f t.m;
+    f t.ids
+end
+
+let test_two_collective_outputs () =
+  let vocab, dim, rows, cols = (8, 4, 4, 2) in
+  let w = Nx.full f32 [| vocab; dim |] 0.02 in
+  let m = Nx.full f32 [| rows; cols; dim |] 0.5 in
+  let ids =
+    Nx.reshape [| rows; cols |] (Nx.arange Nx.int32 0 (rows * cols) 1)
+  in
+  let step { Weights_mask_ids.w; m; ids } =
+    let loss, g =
+      Rune.value_and_grad
+        (module Single_f32)
+        (fun w ->
+          let e =
+            Nx.reshape [| rows; cols; dim |]
+              (Nx.take w ~axis:0
+                 ~indices:(Nx.reshape [| rows * cols |] ids))
+          in
+          Nx.sum (Nx.mul e m))
+        w
+    in
+    { Grad_and_loss.g; loss }
+  in
+  let f =
+    Rune.pmap2 ~devices:devs2
+      ~in_axes:[ None; None; Some 0 ]
+      (module Weights_mask_ids)
+      (module Grad_and_loss)
+      step
+  in
+  let out = f { Weights_mask_ids.w; m; ids } in
+  check_arr ~msg:"gradient of the replicated parameter"
+    (Array.make (vocab * dim) 0.5)
+    out.Grad_and_loss.g;
+  check_arr ~msg:"loss" [| 0.32 |] out.Grad_and_loss.loss
+
 (* Dropout under pmap + grad: [fold_in_axis] folds each device's own index into
    a replicated key, so the per-device dropout masks decorrelate. At [x = 1],
    the gradient of [sum (0.5 * x**2 * mask)] recovers the mask while retaining
@@ -607,6 +682,7 @@ let tests =
         test "grad over pmap runs eagerly" test_grad_over_pmap_runs_eagerly;
         test "dropout under pmap+grad decorrelates masks"
           test_pmap_dropout_grad_decorrelates;
+        test "two collectively reduced outputs" test_two_collective_outputs;
       ];
     group "training"
       [
