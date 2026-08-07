@@ -36,14 +36,6 @@ any more, so a red file now means a real gap.
 Each of these depends on something that does not exist yet. The blocker is
 named; do not pick one up before it lands.
 
-- **Custom-kernel inputs are not force-realized** (`470c032a5`, `f253c4469`).
-  Upstream's `realize_custom_kernel_srcs` realizes the arguments of a CALL
-  whose body is a SINK or PROGRAM and marks them non-removable. tolk has no
-  entry point that builds such a CALL in a tensor graph (no `custom_kernel`),
-  so the rule and the `non_removable` set it feeds have no consumer.
-
-  **Blocker**: the `custom_kernel` feature. Port both with it, not before.
-
 - **The reference's UNSHARD, COPY and CALL spec rules are not in
   `lib/uop/spec.ml` yet.** `Ops.Unshard` is named but `Uop.unshard` still
   builds a single-axis `Arg.Int`, so the reference's
@@ -85,16 +77,13 @@ named; do not pick one up before it lands.
   and the rendered source (stage 7) — a DEVICE range that reaches the opt axes
   or fails to become `_device_num` shows up in both.
 
-- **`multi_pm` does not run at the head of `full_rewrite_to_sink`.** The
-  reference resolves in-kernel shards (register fragments) during codegen, not
-  only in the scheduler. Tolk's `multi_pm` needs scheduler-supplied shape and
-  device callbacks and there is no in-kernel `Ops.Multi` to resolve, so the
-  pass would be a no-op traversal.
-
-  **Blocker**: UNSHARD and `alloc_fragment`. *What catches a bad port*:
-  **nothing today** — with no in-kernel shard to resolve, adding the pass is
-  unobservable either way. It becomes testable only once `alloc_fragment` can
-  put a shard inside a kernel; that commit needs the test.
+  **Blocker corrected**: it is not `Axis_type.Device`, which exists. The
+  producer is `lib/schedule/multi.ml:84,101`, which still mints `_device_num`
+  via `U.variable` instead of a DEVICE range — scheduler work, not a codegen
+  gap. Porting it deletes tolk's `_device_num` special cases at
+  `rangeify.ml:632,2011` and `indexing.ml:604`, but touches four files across
+  three ownerships and moves twelve `multi_*` goldens, so it wants one commit
+  by one owner.
 
 - **Negative slice bounds against a symbolic size** (`mixin/movement.py`). The
   reference resolves `start`/`stop` against a possibly symbolic `size` before
@@ -419,6 +408,16 @@ Recorded so nobody re-derives them from the upstream diff.
   that logic lives in `uop.ml`.
 
 ## Design debt
+
+- **`c9e11544d`'s remaining cast deletions, decomp half.** Two arms landed in
+  `codegen/simplify.ml`; five still carry their casts and belong to the decomp
+  owner: `decomp_dtype.ml:180` (`L2i_add` carry), `:189` (`L2i_sub` borrow),
+  `:560` (float→long `adj`), `:839` (`rne` sticky), `decomp_op.ml:371`
+  (`floordiv_to_idiv` fixup), `decomp_transcendental.ml:456` (`xexp2`). Check
+  each against a live spec rather than porting as cleanup: one arm was found
+  load-bearing in the wrong direction, and another blocked a fold outright.
+  The commit's other two arms need nothing — `frontend/rand.ml:105` is already
+  cast-free and tolk has no ONNX frontend.
 
 ### Silent-default audit (2026-08-07)
 
