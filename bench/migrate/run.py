@@ -2,9 +2,9 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""End-to-end PyTorch-vs-Raven comparison harness.
+"""End-to-end comparison harness: one model, one fixture, every stack.
 
-Discovers every model directory under models/, runs both sides of each on the
+Discovers every model directory under models/, runs every side of each on the
 same weights and the same batches, checks that they compute the same thing,
 and only then reports timings.
 
@@ -13,16 +13,19 @@ and only then reports timings.
 The harness knows nothing about any particular model. A model is a directory
 under models/ holding
 
-    spec.json   hyperparameters, opaque to the harness, passed to both sides
-    model.py    the PyTorch side, and the owner of the shared fixture
-    model.ml    the Raven side, built by dune into model.exe
+    spec.json          hyperparameters, opaque to the harness, passed to
+                       every side
+    model.py           the PyTorch side, and the owner of the shared fixture
+    model.ml           the Raven side, built by dune into model.exe
+    model_<stack>.py   any further stack to compare against
     dune
 
-and both sides answer the same three-command protocol:
+and every side answers the same three-command protocol:
 
     <runner> variants
-        prints {"variants": [{"variant": V, "device": D}, ...]} — what this
-        build of this side can actually run, probed rather than assumed.
+        prints {"side": S, "variants": [{"variant": V, "device": D}, ...]} —
+        what this side calls itself, and what this build of it can actually
+        run, probed rather than assumed.
 
     <runner> run --spec S --fixture F --variant V --device D --steps N
                  --cache {cold,warm}
@@ -33,10 +36,11 @@ and both sides answer the same three-command protocol:
         compiled artifact may be served from an earlier process; each side
         owns the knob that arranges that.
 
-    model.py fixture --spec S --out F        (PyTorch side only)
+    model.py fixture --spec S --out F        (the fixture's owner only)
         writes the shared weights and training data, deterministically.
 
-Adding a comparison is adding such a directory. Nothing here is edited.
+Adding a comparison is adding such a directory, and adding a stack to compare
+is adding a model_<stack>.py to one. Nothing here is edited for either.
 
 Three numbers per (side, variant, device), never averaged together:
 
@@ -111,8 +115,16 @@ def capture(argv, env=None):
 
 
 class Side:
-    def __init__(self, name, argv, model_dir):
-        self.name = name
+    """One runner: how to invoke it, and the name it calls itself.
+
+    The name comes out of the runner's own `variants` answer rather than out of
+    its filename, so what a row is labelled is the runner's own business.
+    Until that answer arrives a runner is known by its file, which is what the
+    errors of a runner too broken to answer have to say.
+    """
+
+    def __init__(self, argv, model_dir):
+        self.name = os.path.basename(argv[-1])
         self.argv = argv
         self.dir = model_dir
 
@@ -132,7 +144,9 @@ class Side:
         return json.loads(lines[-1]), rss
 
     def variants(self):
-        return self.json_call(["variants"])[0]["variants"]
+        answer = self.json_call(["variants"])[0]
+        self.name = answer["side"]
+        return answer["variants"]
 
     def run(self, spec_path, fixture, variant, device, steps, cache):
         return self.json_call(
@@ -149,6 +163,12 @@ class Side:
 
 
 def sides(model_dir):
+    """Every runner the model directory holds, the fixture's owner first.
+
+    model.py is the PyTorch side and writes the fixture the rest read; model.ml
+    is built by dune into model.exe; every further model_<stack>.py beside them
+    is another stack to compare against. Adding a stack is adding such a file.
+    """
     name = os.path.basename(model_dir)
     exe = os.path.join(
         ROOT, "_build", "default", "bench", "migrate", "models", name, "model.exe"
@@ -158,10 +178,17 @@ def sides(model_dir):
             f"{exe} is missing. Build it with\n"
             f"    dune build bench/migrate/models/{name}/model.exe"
         )
-    return [
-        Side("pytorch", ["uv", "run", os.path.join(model_dir, "model.py")], model_dir),
-        Side("raven", [exe], model_dir),
-    ]
+
+    def script(f):
+        return ["uv", "run", os.path.join(model_dir, f)]
+
+    others = sorted(
+        f
+        for f in os.listdir(model_dir)
+        if f.startswith("model_") and f.endswith(".py")
+    )
+    argvs = [script("model.py"), [exe]] + [script(f) for f in others]
+    return [Side(argv, model_dir) for argv in argvs]
 
 
 # Measurement
@@ -204,14 +231,14 @@ def run_model(model_dir, steps=None, only_device=None):
     results, errors = [], []
     with tempfile.TemporaryDirectory() as tmp:
         fixture = os.path.join(tmp, "fixture.safetensors")
-        torch_side, raven_side = sides(model_dir)
+        runners = sides(model_dir)
         stdout, stderr, code, _ = capture(
-            torch_side.argv + ["fixture", "--spec", spec_path, "--out", fixture]
+            runners[0].argv + ["fixture", "--spec", spec_path, "--out", fixture]
         )
         if code != 0:
             raise SystemExit(f"fixture generation failed:\n{stderr}")
 
-        for side in (torch_side, raven_side):
+        for side in runners:
             for v in side.variants():
                 # The reference always runs: it is what agreement is measured
                 # against, so restricting to another device would otherwise
@@ -273,6 +300,10 @@ def table(rows, headers):
     return "\n".join([line(headers), line(rule)] + [line(r) for r in rows])
 
 
+def label(r):
+    return f"{r['side']}/{r['variant']}/{r['device']}"
+
+
 def report(report_data):
     spec = report_data["spec"]
     print(f"\n{report_data['model']}: {spec.get('description', '')}\n")
@@ -287,9 +318,7 @@ def report(report_data):
         f"(tolerance {spec['agree_atol']} + {spec['agree_rtol']}*|ref|):"
     )
     print(table(
-        [[f"{r['side']}/{r['variant']}/{r['device']}",
-          "ok" if r["agrees"] else "DISAGREES",
-          f"{r['max_loss_dev']:.2e}"]
+        [[label(r), "ok" if r["agrees"] else "DISAGREES", f"{r['max_loss_dev']:.2e}"]
          for r in report_data["results"]],
         ["run", "", "max |dloss|"],
     ))
@@ -297,37 +326,41 @@ def report(report_data):
 
     if disagree:
         print(
-            "\nTIMINGS WITHHELD: "
-            + ", ".join(f"{r['side']}/{r['variant']}/{r['device']}" for r in disagree)
-            + " does not compute the same thing as the reference."
+            "\nTIMINGS WITHHELD for "
+            + ", ".join(label(r) for r in disagree)
+            + ": not computing the same thing as the reference."
         )
-        return 1
+
+    # A disagreeing run's timings are withheld, and only that run's: with
+    # several stacks in the table, blacking all of them out over one would
+    # throw away every comparison that is still sound.
+    def timings(r):
+        if not r["agrees"]:
+            return ["withheld"] * 5
+        return [
+            f"{r['cold_ms']:.0f}", f"{r['warm_start_ms']:.0f}",
+            f"{r['steady_median_ms']:.1f}", f"{r['steady_min_ms']:.1f}",
+            f"{r['peak_rss_mb']:.0f}",
+        ]
 
     print("\ntimings (ms):")
     print(table(
-        [[f"{r['side']}/{r['variant']}/{r['device']}",
-          f"{r['cold_ms']:.0f}", f"{r['warm_start_ms']:.0f}",
-          f"{r['steady_median_ms']:.1f}", f"{r['steady_min_ms']:.1f}",
-          f"{r['peak_rss_mb']:.0f}"]
-         for r in report_data["results"]],
+        [[label(r)] + timings(r) for r in report_data["results"]],
         ["run", "cold", "warm start", "steady med", "steady min", "peak rss MB"],
     ))
 
-    base = next(
-        r for r in report_data["results"]
-        if (r["side"], r["variant"], r["device"]) == REFERENCE
-    )["steady_median_ms"]
+    base = ref["steady_median_ms"]
     print("\nsteady state relative to pytorch/eager/cpu (>1 is slower):")
     print(table(
-        [[f"{r['side']}/{r['variant']}/{r['device']}",
-          f"{r['steady_median_ms'] / base:.2f}x"]
+        [[label(r),
+          f"{r['steady_median_ms'] / base:.2f}x" if r["agrees"] else "withheld"]
          for r in report_data["results"]],
         ["run", "vs ref"],
     ))
 
-    for label, err in report_data["errors"]:
-        print(f"\n{label} FAILED:\n{err}")
-    return 0
+    for lbl, err in report_data["errors"]:
+        print(f"\n{lbl} FAILED:\n{err}")
+    return 1 if disagree else 0
 
 
 def main():
