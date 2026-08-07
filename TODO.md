@@ -24,6 +24,20 @@ rune/jit follow-ups:
 - ptree product combinators (`Pair`/`List_of`/`Leaf` functors) to absorb
   hand-written jit2 step modules; dedupe jit.ml's two inline leaf modules
 
+nx follow-ups:
+- complex construction still assembles by rotation, so `complex ~re ~im` with
+  a non-finite `im` leaves the real component NaN (`im * i` expands the real
+  part as `im * 0`). reads are exact through the component view; closing this
+  needs its dual, `float[s; 2] -> complex[s]` — the inverse isomorphism, and
+  its own adjoint. it belongs in the movement family (same buffer, different
+  view, dtype changes) rather than as a general bitcast: `complex[s]` *is*
+  `float[s; 2]` structurally, so there is no punning to justify the wider op
+- restore the `magnitude` gradient case in rune's test_ops once the component
+  view lands — it needs the complex `abs` conjugate fix, now on main
+- complex gradient convention is written down nowhere and is unaudited: 16
+  conjugate-sensitive reverse rules are reachable on complex, only `abs` has
+  ever met a finite-difference oracle, and it was wrong
+
 next model targets:
 - llama3 in kaun-models + tolk parity (rope, rmsnorm, gqa, sharded
   safetensors; llama.py-style per-weight model-parallel axis choices become
