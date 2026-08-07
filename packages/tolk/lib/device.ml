@@ -562,17 +562,15 @@ module Program_cache = struct
     add_list add_int b info.outs;
     add_list add_int b info.ins
 
+  (* The upcast axes are not keyed. Every program that reaches this cache is
+     already lowered, and the expander clears them once it has applied them,
+     so the field is [None] here whatever it held. The widths it chose are
+     keyed regardless, through the operand subtrees the expansion built. *)
   let add_wmma_info b (info : Uop.wmma_info) =
     add_triple add_int add_int add_int b info.dims;
     add_atom b (Dtype.to_string info.dtype_in);
     add_atom b info.device;
-    add_int b info.threads;
-    add_option
-      (add_triple
-         (add_list (add_pair add_int add_int))
-         (add_list (add_pair add_int add_int))
-         (add_list (add_pair add_int add_int)))
-      b info.tc_upcast_axes
+    add_int b info.threads
 
   let rec add_arg add_uop b = function
     | Uop.Arg.Empty -> add_atom b "empty"

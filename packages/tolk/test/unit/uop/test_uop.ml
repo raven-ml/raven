@@ -1505,7 +1505,7 @@ let debug_prints_rich_args_dataclass_style () =
   in
   is_true ~msg:"ParamArg repr"
     (contains out
-       "ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 9), name='n', addrspace=AddrSpace.ALU)");
+       "ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 9), multiple_of=1, name='n', addrspace=AddrSpace.ALU)");
   is_true ~msg:"Buffer ParamArg repr"
     (contains out
        "ParamArg(2, dtypes.int, name='buf', addrspace=AddrSpace.LOCAL)");

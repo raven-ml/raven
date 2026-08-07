@@ -126,6 +126,7 @@ let param_arg_debug_string (p : param_arg) =
     | Some value -> fields := !fields @ [ name ^ "=" ^ render value ]
   in
   add "vmin_vmax" int_pair_string p.vmin_vmax;
+  add "multiple_of" string_of_int p.multiple_of;
   add "name" python_quote p.name;
   (match p.addrspace with
    | Dtype.Global -> ()
