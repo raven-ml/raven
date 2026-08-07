@@ -420,6 +420,82 @@ Recorded so nobody re-derives them from the upstream diff.
 
 ## Design debt
 
+### Silent-default audit (2026-08-07)
+
+A sweep of `lib/` for one bug shape: **tolk reconstructs a value that tinygrad
+reads off the node, and the reconstruction carries a fallback for a case it
+does not model.** The fallback yields a plausible number, so the failure is a
+wrong answer rather than a diff or a crash.
+
+**83 sites judged: 1 BUG (fixed), 11 LATENT (2 hardened), 71 CORRECT.** The
+correct ones are almost all defaultdict equivalents (adjacency lists, degree
+tables, name counters, tag side-tables, dispatch buckets), env-var defaults,
+and probe failures where the reference defaults the same way. Each was checked
+against its upstream counterpart.
+
+**BUG — `codegen/late/gater.ml` `vzero_like`, fixed.** The value a gated LOAD
+falls back to was built by re-deriving the access width from the *index
+expression*, defaulting to one lane. An image coordinate addresses four floats,
+so a gated image load zeroed one lane and left three unwritten; a
+multi-dimensional shrink was undersized too, since `vmax` of a stacked size is
+the largest dimension, not their product. The reference builds it from the load
+itself (`l.vconst_like(0)`), whose width goes through `.shape` and raises.
+Fix: `vzero_like` drops its `mop` parameter and reads the width off the node.
+`Uop.max_numel` is now a first-class operation (`prod (max_shape u)`, raising
+for a shapeless node), which is where tinygrad keeps it; `decomp_dtype.ml`'s
+and `program_spec.ml`'s private copies are folded into it. Two remain:
+`cstyle.ml:309`, and `validate.ml:26` which returns an option on purpose so the
+OOB validator can skip a shapeless buffer. Pinned by "gater zeroes every lane
+of a gated image load" (`test/unit/codegen/test_lower.ml`), which fails
+`Expected: 4 / Actual: 1` against the old code.
+
+**LATENT — unreachable today, nothing enforcing it.** Ordered by consequence.
+
+1. `uop.ml` `compute_shape_opt`, broadcastable arm — `List.filter_map
+   shape_opt` *drops* shapeless operands, then broadcasts the rest with
+   `lenient_broadcast_shape`, which keeps "the first candidate" when two
+   dimensions disagree. The reference asserts both away. An ALU node built
+   without pre-broadcasting takes its first operand's shape, and every lane
+   count derived downstream is silently wrong. A raising `broadcast_shape`
+   already sits next to it. **This is the same defect as the rangeify
+   `filter_map` bug, in the core shape rule.**
+2. `uop.ml` `compute_shape_opt` final `| _ -> None` — the reference raises
+   `NotImplementedError` for an op with no shape rule. A new op becomes
+   silently shapeless instead of failing.
+3. `program_spec.ml` `max_numel` — *hardened*; was `| None -> 1` feeding
+   `Estimates`, which gates BEAM candidate pruning, so an undercount both
+   survived pruning and lowered the bar for everything after it.
+4. `linearizer.ml:22` `range_size` — `| None -> 1` multiplied into `run_count`.
+   **Proven unreachable**: `U.ranges` admits only `Ops.Range`, and every such
+   node comes from `Uop.range`, which always supplies `Arg.Range_info`.
+5. `linearizer.ml:32` PARAM slot — *hardened*; `as_param` additionally demands
+   exactly one src, so a PARAM that grew one would sort as slot 0 and reorder
+   the emitted parameter declarations.
+6. `linearizer.ml:248` `chain` — silently skips an END whose range is not a
+   single RANGE, dropping a control-flow ordering edge. Safe only because
+   `pm_split_ends` runs earlier in the same rewrite.
+7. `linearizer.ml:283` `range_key` — sorts a non-RANGE as axis 0. Same
+   unreachability argument as (4).
+8. `codegen_lower.ml:624` `clone_ranges` — `| None -> r` returns the original
+   as its own clone, so the substitution is `(r, r)` and two merged END groups
+   share one range. Same shape as the accumulator-slot collision fixed today.
+9. `callify.ml:178` Permute — a missing `Arg.Ints` yields `Some []`, so a
+   permuted tensor reports a *scalar* shape.
+10. `callify.ml:560` `pm_finalize` — `original_shape = []` for a
+    symbolic-shaped tagged node shrinks the buffer to rank 0. `require_shrink`
+    catches it later, so this is a delayed loud failure rather than a wrong
+    value.
+11. `coalesce.ml:206` `host_is_osx` — `with _ -> false` swallows a failed
+    `uname -s` into "not Darwin", so `image_valid_dims` checks the wrong pitch
+    alignment on the platform this project primarily targets. Also forks a
+    process per call.
+
+**General finding.** A correct guard *downstream* of a silent default is
+worthless: the allreduce rule's `U.vmax` backstop would have caught the
+rangeify `filter_map` bug had the filter ever let a `None` through. Never
+classify a site as correct because something later checks it.
+
+
 - **Reconstructed values with silent defaults**: in several places tolk
   recomputes something the reference reads straight off the node or produces
   as it goes, and each reconstruction carries a fallback for the case it does
