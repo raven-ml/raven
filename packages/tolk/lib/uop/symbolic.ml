@@ -2221,17 +2221,17 @@ let uop_given_valid ?(try_simplex = true) valid u =
       let reverse = List.map (fun (a, b) -> (b, a)) final_subs in
       Uop.simplify (Uop.substitute reverse (Uop.simplify s_uop))
 
-(* [_valid_priority v valids] is the sort key used by {!simplify_valid}.
-   A clause is ordered earlier when its subject appears in the backward
-   slice of other clauses, so that simplifying later clauses can use the
-   tighter bound established by earlier ones. *)
-let _valid_priority v valids =
+(* [_valid_priority v slices] is the sort key used by {!simplify_valid},
+   where [slices] holds the backward slice of each clause as a membership
+   table. A clause is ordered earlier when its subject appears in the
+   backward slice of other clauses, so that simplifying later clauses can
+   use the tighter bound established by earlier ones. *)
+let _valid_priority v slices =
   match parse_valid v with
   | None -> 0
   | Some (subject, _, _) ->
-      List.fold_left (fun acc other ->
-        if List.memq subject (Uop.toposort other) then acc - 1
-        else acc) 0 valids
+      List.fold_left (fun acc slice ->
+        if Uop.Tbl.mem slice subject then acc - 1 else acc) 0 slices
 
 (* [simplify_valid] deduplicates AND clauses in [valid], orders them by
    {!_valid_priority}, then applies constraint propagation pairwise:
@@ -2247,10 +2247,17 @@ let simplify_valid valid =
   if contains_index then None
   else
     let valids = Uop.split_uop valid Ops.And in
-    let sorted =
-      List.stable_sort
-        (fun a b -> compare (_valid_priority a valids) (_valid_priority b valids))
+    let slices =
+      List.map (fun other ->
+        let slice = Uop.Tbl.create 64 in
+        List.iter (fun u -> Uop.Tbl.replace slice u ()) (Uop.toposort other);
+        slice)
         valids
+    in
+    let sorted =
+      List.map snd
+        (List.stable_sort (fun (a, _) (b, _) -> Int.compare a b)
+           (List.map (fun c -> (_valid_priority c slices, c)) valids))
     in
     let seen = Uop.Tbl.create 8 in
     let deduped = List.filter (fun c ->
