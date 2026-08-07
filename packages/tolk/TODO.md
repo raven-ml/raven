@@ -6,10 +6,15 @@ anchors point at the tinygrad clone.
 
 ## Open bugs
 
-- **CPU renderer: vector store through scalar pointer** (predicted, from the
-  gpt2 pmap work): a 3-wide vector stored through a scalar float pointer in
-  a pmapped dropout backward may miscompile on the CPU renderer once the
-  rng jit path is restored. Verify and fix when reachable.
+- **Renderer vector stores through scalar pointers**: full-model codegen can
+  retain a vectorized value at a scalar store site. The float16 GPT-2
+  loss-multiply backward renders `make_float50257(...)` on CUDA, which NVRTC
+  rejects; a pmapped dropout backward renders a 3-wide float store through a
+  scalar pointer on CPU. The repros are recorded in Kaun's GPT-2 `train.ml`;
+  both likely share an owner in the devectorize/store path.
+- **Pure-constant materialization**: `Run.buffer_of` raises when a tensor's graph
+  folds to a constant expression with no storage instead of materializing it.
+  The dropout `p=1` test currently works around this.
 
 ## Deferred parity divergences (each with a known blocker)
 
@@ -24,7 +29,7 @@ anchors point at the tinygrad clone.
   additionally needs the disk-copy push rules tolk does not port.
 - **expand_bitcast** (rangeify): differing-itemsize bitcast reshaping
   unported; needs movement-composition helpers (usum/squeeze/flatten-style).
-  Only fires for quant/disk-style bitcasts; no golden exercises it.
+  It blocks half-precision `Rand.rand`; no golden exercises it.
 - **Host I/O via allocator bridge** (`frontend/run.ml`): upload/download use
   `Buffer.copyin`/`as_bytes` directly because tolk has no host pseudo-device
   to route a `copy_from` through (reference: device.py:113-115 seeds via a
@@ -34,8 +39,6 @@ anchors point at the tinygrad clone.
   `INDEX(buf, STACK[y,x])`. Converge on two-axis and drop the stacked branch,
   gated on an image golden generated from the clone (none exists — the image
   path is uncovered by committed goldens).
-- **keccak/hash** (frontend): the reference moved SHA3/keccak into the op
-  mixin; tolk does not port it.
 
 ## Design debt
 
@@ -50,13 +53,22 @@ anchors point at the tinygrad clone.
 - **`uf` scalar-promotion helper triplicated** across
   `elementwise.ml`/`op.ml`/`rand.ml` to avoid public surface; fold into a
   shared non-public home if dune allows one.
-- **`Symbolic.index_pushing` export**: likely consumer-less since the
-  simplifier composes plain `symbolic` (which carries movement cleanup);
-  delete the export if a consumer sweep confirms.
 - **Upat `Prefix` source pattern**: redundant with `Fixed` + `allow_any_len`,
   unused in lib; DSL simplification candidate.
-- **Upat `alu` operand dtype**: patterns don't constrain operand dtypes
-  (benign — no rule uses typed operands; becomes a bug if one appears).
+
+## Multi-device follow-ups
+
+- **Frontend sharding API**: add `Tensor.shard`/`shard_`/`to_` for device tuples.
+  Scheduling and execution underneath are complete and golden-pinned; move
+  `shard`/`unshard` to uop ownership.
+- **CUDA peer access** (needs at least two GPUs): call
+  `cuDeviceCanAccessPeer`/`cuCtxEnablePeerAccess` when opening devices.
+- **Eventful cross-context transfer** (needs at least two GPUs): give allocator
+  `transfer` source and destination device parameters. This touches every
+  backend record and depends on resolving the nativeint dispatch waist above.
+- **Multi-device graph batching**: build per-shard graph nodes under the
+  `MultiGraphRunner` same-backend rule. Multi calls currently run correctly but
+  ungraphed and unbatched.
 
 ## Performance follow-ups
 
@@ -71,46 +83,19 @@ anchors point at the tinygrad clone.
   non-weak, so entries outlive collected nodes — unbounded growth over long
   processes. Fix with Ephemeron-style weak tables; benchmark the hot path
   before/after.
-- **div/mod fold memoization**: `fold_divmod_general` recomputes on shared
-  sub-expressions; the reference caches (`@functools.cache`). A `Ref_tbl`
-  memo bounds pathological blowup; only worth it if profiling shows cost.
-- **pm_replace_buf global gate** (callify): the reference gates buffer→param
-  replacement on GLOBAL address space; tolk replaces all. Benign today (only
-  global output buffers reach the assigns).
 
 ## Missing tests
 
-- End-to-end realize aliasing test (gates the bare-view fix).
 - `multi_stack` parity case (the STACK sharding rule has no coverage).
 - Image golden from the clone (gates the image-coordinate convergence).
 - Golden asserting the group-reduce gate-mask boolean shape
   (`Cmpeq` vs the reference's compare-nest — currently proven only
   indirectly by gated load/store goldens).
-- BEAM-on-CPU test (would have caught the wait-timing bug where every
-  candidate tied at infinity).
-- `Buffer.copy_from` contract test (fail-loud before the runner is
-  installed; delegation after) — needs a new `test_device.ml`.
 - WMMA estimate unit test (flops factor covered only by goldens).
 - Re-verify `bf16_vector_load_reindexes_shrink` (decomp) end-to-end: it
   relies on the LOAD inheriting the shrink's width-2 shape.
-- Two migrated image-test assertions to value-check once suites run:
-  invalid-index sentinels under `pm_remove_invalid`, and
-  `pm_move_where_on_load` behavior after the pointer-flag removal.
 
 ## Misc
 
-- **`Buffer.copy_between`/`transfer` bridge is load-bearing for rune**: rune's
-  single-device jit keeps its devices out of the global registry (only pmap
-  registers), so `copy_from` — whose engine runner resolves the destination
-  device by name through the registry — cannot serve it. Do not remove the
-  allocator bridge without giving rune a registry-free copy path.
-
 - `Uop.program_vals` raises bare `Not_found` for an unbound variable; the
   reference raises a descriptive error naming the variable and its user.
-- `pm_clean_up_group_sink` exists as a codegen-local matcher; if the
-  symbolic layer ever exports it, dedupe the local copy.
-- OpenCL `aux` metadata may need the buffer shape for `clCreateImage` if an
-  OpenCL runtime lands; verify against reference output first.
-- Dormant: a `weakfloat` store value into a float32 buffer is not
-  concretized in a degenerate loop-invariant store (realistic programs store
-  already-concrete values).
