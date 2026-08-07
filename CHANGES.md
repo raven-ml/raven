@@ -363,6 +363,11 @@ thread.
 
 ### Nx
 
+- Sliding-window extraction is 10-77x faster on the C backend. The kernel used
+  to divide ten times per output element; it now walks contiguous runs, so
+  convolution (`correlate`, `convolve`) and the pooling filters
+  (`maximum_filter`, `uniform_filter`) move at memory bandwidth instead of
+  around 0.4 GB/s.
 - `relu`, `sigmoid`, `clamp`, `hypot`, `tril`/`triu`, `logical_not`, and the
   boolean reductions build their constant operand as a scalar instead of a
   full-size tensor, making them 1.4-3.1x faster. Values are unchanged.

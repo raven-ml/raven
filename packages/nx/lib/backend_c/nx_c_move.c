@@ -647,9 +647,90 @@ static void nx_c_window_counts(nx_c_window *w, const int64_t *spatial_extent) {
 
    (leading..., spatial...) -> (leading..., kernel_prod, L). Each output element
    (lead, kernel-tap kf, window w) reads one input element, or zero when the tap
-   falls in the pad. Every output is written exactly once, so the whole thing
-   parallelizes over output elements with no coordination; zeroing a padded tap
-   is memset of one element (esize > 0 because packed storage is rejected). */
+   falls in the pad.
+
+   The driver walks RUNS, not elements. Fixing (lead, kf) fixes one output row
+   of L windows, and the window index within that row is an odometer over
+   w->win whose last digit steps one output element at a time and one input
+   element every stride[K-1]. So each odometer position covers a whole run, and
+   a run splits into at most three pieces: the windows whose tap sits before
+   the input (zeros), the windows whose tap sits inside it (a copy), and the
+   windows whose tap sits past it (zeros). Which windows those are is a per-dim
+   half-open interval that depends only on (kf, d), computed once per row — so
+   nothing inside a run divides, and the run itself collapses to a memcpy once
+   it is dense (which the output always is; unfold allocates it) and long
+   enough to pay for the call.
+
+   Trailing spatial dims coalesce into the run when the geometry lets them, so
+   a same-padded row is one long run rather than one per window row. Everything
+   that survives per row — the leading coordinate, the kernel tap decomposition
+   — is hoisted out of the window walk.
+
+   Every output is still written exactly once, so this parallelizes over output
+   elements with no coordination; a worker range that starts or ends mid-row
+   just clips the odometer at both ends. */
+
+/* Ceiling of a/b for b > 0 and a of either sign (C division truncates toward
+   zero, which is floor only for a >= 0). */
+static inline int64_t nx_c_ceil_div(int64_t a, int64_t b) {
+  return a >= 0 ? (a + b - 1) / b : -((-a) / b);
+}
+
+/* Run length above which calling memcpy/memset beats moving the run inline. A
+   3x3 tap on a 7x7 feature map is a 28-byte run and there are a quarter of a
+   million of them per unfold, so the call is the dominant cost down here;
+   measured on Apple Silicon, the crossover sits just under a cache line. */
+#define NX_C_UNFOLD_CALL_BYTES 64
+
+/* One run of n elements of `esize` bytes at byte steps dstep/sstep. A long
+   dense run is a single memcpy; a strided run, or a dense run too short to pay
+   for the call, moves one element at a time at a width recovered from the
+   runtime esize, which the compiler lowers to a load/store pair (unfold is
+   dtype-blind, so there is no storage type to name, and punning through a word
+   type would break aliasing). The default arm keeps any size the switch does
+   not enumerate correct. */
+static inline void nx_c_unfold_copy(char *dst, int64_t dstep, const char *src,
+                                    int64_t sstep, int64_t n, int64_t esize) {
+  int64_t nbytes = n * esize;
+  if (dstep == esize && sstep == esize && nbytes > NX_C_UNFOLD_CALL_BYTES) {
+    memcpy(dst, src, (size_t)nbytes);
+    return;
+  }
+#define NX_C_UNFOLD_COPY_RUN(bytes)                                            \
+  for (int64_t i = 0; i < n; i++)                                              \
+    memcpy(dst + i * dstep, src + i * sstep, bytes);
+  switch (esize) {
+    case 1: NX_C_UNFOLD_COPY_RUN(1) break;
+    case 2: NX_C_UNFOLD_COPY_RUN(2) break;
+    case 4: NX_C_UNFOLD_COPY_RUN(4) break;
+    case 8: NX_C_UNFOLD_COPY_RUN(8) break;
+    case 16: NX_C_UNFOLD_COPY_RUN(16) break;
+    default: NX_C_UNFOLD_COPY_RUN((size_t)esize) break;
+  }
+#undef NX_C_UNFOLD_COPY_RUN
+}
+
+/* Zero the same run, on the same terms. A padded tap is byte-zero in every
+   dtype unfold accepts (esize > 0 because packed storage is rejected). */
+static inline void nx_c_unfold_zero(char *dst, int64_t dstep, int64_t n,
+                                    int64_t esize) {
+  int64_t nbytes = n * esize;
+  if (dstep == esize && nbytes > NX_C_UNFOLD_CALL_BYTES) {
+    memset(dst, 0, (size_t)nbytes);
+    return;
+  }
+#define NX_C_UNFOLD_ZERO_RUN(bytes)                                            \
+  for (int64_t i = 0; i < n; i++) memset(dst + i * dstep, 0, bytes);
+  switch (esize) {
+    case 1: NX_C_UNFOLD_ZERO_RUN(1) break;
+    case 2: NX_C_UNFOLD_ZERO_RUN(2) break;
+    case 4: NX_C_UNFOLD_ZERO_RUN(4) break;
+    case 8: NX_C_UNFOLD_ZERO_RUN(8) break;
+    case 16: NX_C_UNFOLD_ZERO_RUN(16) break;
+    default: NX_C_UNFOLD_ZERO_RUN((size_t)esize) break;
+  }
+#undef NX_C_UNFOLD_ZERO_RUN
+}
 
 typedef struct {
   const nx_c_window *w;
@@ -657,40 +738,150 @@ typedef struct {
   const nx_c_ndarray *out; /* (leading..., kernel_prod, L) */
 } nx_c_unfold_ctx;
 
+/* Windows [win_lo, win_hi) of the output row selected by kernel tap kf, within
+   the leading slice whose element offsets are out_lead/in_lead. */
+static void nx_c_unfold_row(const nx_c_unfold_ctx *u, int64_t out_lead,
+                            int64_t in_lead, int64_t kf, int64_t win_lo,
+                            int64_t win_hi) {
+  const nx_c_window *w = u->w;
+  const nx_c_ndarray *in = u->in, *out = u->out;
+  const int ld = w->leading_ndim, last = w->K - 1;
+  const int64_t esize = w->esize;
+
+  char *out_row =
+      (char *)out->data + (out_lead + kf * out->strides[ld]) * esize;
+
+  /* Per spatial dim: the input offset step per window, and the half-open
+     window interval whose tap lands inside the input — outside it the tap is
+     in the pad. in_base collects the offset at window 0 along every dim.
+     Decomposing kf from the last dim down reproduces
+     (kf / kernel_cumprod[d]) % kernel[d]. */
+  int64_t win_step[NX_C_MAX_SPATIAL], valid_lo[NX_C_MAX_SPATIAL],
+      valid_hi[NX_C_MAX_SPATIAL];
+  int64_t in_base = in_lead;
+  int64_t kk = kf;
+  for (int d = last; d >= 0; d--) {
+    int64_t kc = kk % w->kernel[d];
+    kk /= w->kernel[d];
+    /* tap is the input coordinate this kernel offset reads at window 0. */
+    int64_t tap = kc * w->dilation[d] - w->pad_before[d];
+    int64_t stride = w->stride[d], extent = in->shape[ld + d];
+    win_step[d] = stride * in->strides[ld + d];
+    in_base += tap * in->strides[ld + d];
+    int64_t vlo = nx_c_ceil_div(-tap, stride);
+    int64_t vhi = nx_c_ceil_div(extent - tap, stride);
+    valid_lo[d] = vlo < 0 ? 0 : vlo;
+    valid_hi[d] = vhi > w->win[d] ? w->win[d] : vhi;
+    if (valid_hi[d] < valid_lo[d]) valid_hi[d] = valid_lo[d];
+  }
+
+  /* Coalesce trailing spatial dims into the run — the window-space twin of the
+     engine's dimension coalescing. The dim above the current block joins it
+     when the block's taps all land inside the input (so nothing splits the run)
+     and the block's windows tile that dim's own step exactly (so the input
+     stays contiguous across the boundary). This turns a same-padded 3x3 row
+     from 56 runs of 56 into one run of 3136, and a 1x1 row into one memcpy. */
+  int outer_ndim = last; /* dims [0, outer_ndim) stay an odometer */
+  int64_t run_win = w->win[last];    /* windows in one run */
+  int64_t run_step = win_step[last]; /* input step per window in a run */
+  int64_t run_lo = valid_lo[last], run_hi = valid_hi[last];
+  while (outer_ndim > 0 && run_lo == 0 && run_hi == run_win &&
+         win_step[outer_ndim - 1] == run_win * run_step) {
+    outer_ndim--;
+    run_lo = valid_lo[outer_ndim] * run_win;
+    run_hi = valid_hi[outer_ndim] * run_win;
+    run_win *= w->win[outer_ndim];
+  }
+
+  /* Odometer over the dims above the run, carrying the input offset and the
+     "every outer tap is inside the input" flag incrementally. `first` is the
+     starting window within the run, rebuilt from the coalesced digits. */
+  int64_t wc[NX_C_MAX_SPATIAL];
+  nx_c_unravel(win_lo, w->K, w->win, wc);
+  int64_t in_outer = in_base;
+  bool outer_valid = true;
+  for (int d = 0; d < outer_ndim; d++) {
+    in_outer += wc[d] * win_step[d];
+    if (wc[d] < valid_lo[d] || wc[d] >= valid_hi[d]) outer_valid = false;
+  }
+  int64_t first = 0, mult = 1;
+  for (int d = last; d >= outer_ndim; d--) {
+    first += wc[d] * mult;
+    mult *= w->win[d];
+  }
+
+  const int64_t out_step = out->strides[ld + 1] * esize;
+  const int64_t src_step = run_step * esize;
+  int64_t win = win_lo;
+  for (;;) {
+    int64_t run_end = win + (run_win - first);
+    if (run_end > win_hi) run_end = win_hi;
+    char *dst = out_row + win * out_step;
+    int64_t n = run_end - win;
+    if (!outer_valid) {
+      nx_c_unfold_zero(dst, out_step, n, esize);
+    } else {
+      int64_t a = run_lo < first ? first : run_lo;
+      int64_t b = run_hi > first + n ? first + n : run_hi;
+      if (b < a) b = a;
+      if (a > first) nx_c_unfold_zero(dst, out_step, a - first, esize);
+      if (b > a)
+        nx_c_unfold_copy(dst + (a - first) * out_step, out_step,
+                         (const char *)in->data +
+                             (in_outer + a * run_step) * esize,
+                         src_step, b - a, esize);
+      if (first + n > b)
+        nx_c_unfold_zero(dst + (b - first) * out_step, out_step, first + n - b,
+                         esize);
+    }
+    win = run_end;
+    if (win >= win_hi) return;
+
+    first = 0;
+    for (int d = outer_ndim - 1; d >= 0; d--) {
+      wc[d]++;
+      in_outer += win_step[d];
+      if (wc[d] < w->win[d]) break;
+      wc[d] = 0;
+      in_outer -= w->win[d] * win_step[d];
+    }
+    outer_valid = true;
+    for (int d = 0; d < outer_ndim; d++)
+      if (wc[d] < valid_lo[d] || wc[d] >= valid_hi[d]) {
+        outer_valid = false;
+        break;
+      }
+  }
+}
+
 static void nx_c_unfold_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const nx_c_unfold_ctx *u = vctx;
-  const nx_c_window *w = u->w;
   const nx_c_ndarray *in = u->in, *out = u->out;
-  int ld = w->leading_ndim, K = w->K;
-  int64_t esize = w->esize;
-  int64_t lead_coord[NX_C_MAX_NDIM];
-  for (int64_t it = lo; it < hi; it++) {
-    int64_t win_flat = it % w->L;
-    int64_t rem = it / w->L;
-    int64_t kf = rem % w->kernel_prod;
-    int64_t lead = rem / w->kernel_prod;
-
-    nx_c_unravel(lead, ld, in->shape, lead_coord);
-    int64_t out_off = out->offset + nx_c_dot(ld, lead_coord, out->strides) +
-                      kf * out->strides[ld] + win_flat * out->strides[ld + 1];
-    int64_t in_off = in->offset + nx_c_dot(ld, lead_coord, in->strides);
-    bool valid = true;
-    for (int d = 0; d < K; d++) {
-      int64_t wc = (win_flat / w->win_cumprod[d]) % w->win[d];
-      int64_t kc = (kf / w->kernel_cumprod[d]) % w->kernel[d];
-      int64_t sp = wc * w->stride[d] + kc * w->dilation[d] - w->pad_before[d];
-      if (sp < 0 || sp >= in->shape[ld + d]) {
-        valid = false;
-        break;
-      }
-      in_off += sp * in->strides[ld + d];
+  const int ld = u->w->leading_ndim;
+  const int64_t L = u->w->L, kernel_prod = u->w->kernel_prod;
+  int64_t win = lo % L, rem = lo / L;
+  int64_t kf = rem % kernel_prod, lead = rem / kernel_prod;
+  /* The leading coordinate only moves once every kernel_prod rows, and
+     unravelling it costs a division per leading dim — more than the rest of a
+     row's setup costs on a small feature map. */
+  int64_t lead_coord[NX_C_MAX_NDIM], out_lead = 0, in_lead = 0, decomposed = -1;
+  for (int64_t it = lo; it < hi;) {
+    if (lead != decomposed) {
+      nx_c_unravel(lead, ld, in->shape, lead_coord);
+      out_lead = out->offset + nx_c_dot(ld, lead_coord, out->strides);
+      in_lead = in->offset + nx_c_dot(ld, lead_coord, in->strides);
+      decomposed = lead;
     }
-    char *dst = (char *)out->data + out_off * esize;
-    if (valid)
-      memcpy(dst, (const char *)in->data + in_off * esize, (size_t)esize);
-    else
-      memset(dst, 0, (size_t)esize);
+    int64_t take = L - win;
+    if (take > hi - it) take = hi - it;
+    nx_c_unfold_row(u, out_lead, in_lead, kf, win, win + take);
+    it += take;
+    win = 0;
+    if (++kf == kernel_prod) {
+      kf = 0;
+      lead++;
+    }
   }
 }
 
