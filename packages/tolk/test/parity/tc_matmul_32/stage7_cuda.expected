@@ -1,0 +1,50 @@
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_fp16.h>
+struct __align__(16) half8 { half x, y, z, w, a, b, c, d; }; __device__ half8 make_half8(half x, half y, half z, half w, half a, half b, half c, half d) { half8 r={x, y, z, w, a, b, c, d}; return r; }
+struct __align__(8) half4 { half x, y, z, w; }; __device__ half4 make_half4(half x, half y, half z, half w) { half4 r={x, y, z, w}; return r; }
+__device__ float4 __WMMA_8_16_16_half_float(half8 a, half4 b, float4 c){
+  int *a_pk = (int *)(&a), *b_pk = (int *)(&b), *c_pk = (int *)(&c);
+  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32"
+      "{%0, %1, %2, %3}, {%4, %5, %6, %7},"
+      "{%8, %9}, {%0, %1, %2, %3};"
+    : "+r"(c_pk[0]), "+r"(c_pk[1]), "+r"(c_pk[2]), "+r"(c_pk[3])
+    : "r"(a_pk[0]), "r"(a_pk[1]), "r"(a_pk[2]), "r"(a_pk[3]), "r"(b_pk[0]), "r"(b_pk[1]));
+  return c;
+}
+extern "C" __global__ void __launch_bounds__(32) tc_matmul_32(half* data0_1024, half* data1_1024, float* data2_1024) {
+  int gidx0 = blockIdx.x; /* 4 */
+  int lidx0 = threadIdx.x; /* 32 */
+  int alu0 = (gidx0<<3);
+  int alu1 = (lidx0>>2);
+  int alu2 = (lidx0&3);
+  int alu3 = (alu0+alu1+(alu2<<6));
+  half val0 = (*(data1_1024+(alu3+32)));
+  half val1 = (*(data1_1024+(alu3+256)));
+  half val2 = (*(data1_1024+(alu3+288)));
+  half val3 = (*(data1_1024+(alu3+512)));
+  half val4 = (*(data1_1024+(alu3+544)));
+  half val5 = (*(data1_1024+(alu3+768)));
+  half val6 = (*(data1_1024+(alu3+800)));
+  half val7 = (*(data1_1024+alu3));
+  int gidx1 = blockIdx.y; /* 2 */
+  int alu4 = ((gidx1<<9)+(alu1<<5));
+  int alu5 = (alu2<<1);
+  int alu6 = (alu4+alu5);
+  half2 val8 = (*((half2*)((data0_1024+(alu6+8)))));
+  half2 val9 = (*((half2*)((data0_1024+(alu6+16)))));
+  half2 val10 = (*((half2*)((data0_1024+(alu6+24)))));
+  half2 val11 = (*((half2*)((data0_1024+(alu6+256)))));
+  half2 val12 = (*((half2*)((data0_1024+(alu6+264)))));
+  half2 val13 = (*((half2*)((data0_1024+(alu6+272)))));
+  half2 val14 = (*((half2*)((data0_1024+(alu6+280)))));
+  half2 val15 = (*((half2*)((data0_1024+alu6))));
+  float4 cast0 = make_float4(0.0f,0.0f,0.0f,0.0f);
+  float4 wmma0 = __WMMA_8_16_16_half_float(make_half8(val9.x,val9.y,val13.x,val13.y,val10.x,val10.y,val14.x,val14.y), make_half4(val3,val4,val5,val6), cast0);
+  float4 wmma1 = __WMMA_8_16_16_half_float(make_half8(val15.x,val15.y,val11.x,val11.y,val8.x,val8.y,val12.x,val12.y), make_half4(val7,val0,val1,val2), cast0);
+  int alu7 = (alu0+alu5+alu4);
+  *((float2*)((data2_1024+(alu7+256)))) = make_float2((wmma1.z+wmma0.z),(wmma1.w+wmma0.w));
+  *((float2*)((data2_1024+alu7))) = make_float2((wmma1.x+wmma0.x),(wmma1.y+wmma0.y));
+}

@@ -1945,11 +1945,26 @@ let metal_extra_matcher (node : U.t) : U.t option =
       Some (U.cast ~src:promoted ~dtype:(U.dtype node))
   | _ -> extra_pm node
 
-let wmma_nodes uops : (U.wmma_info * Dtype.t) list =
+(* The lanes one thread holds of a WMMA operand: the tail of that operand's
+   own shape. The upcast axes that produced the width are cleared once the
+   expander has applied them, so the operand is the only remaining record of
+   it, and the three widths differ from each other. *)
+let wmma_operand_width u =
+  match U.shape_opt u with
+  | None -> 1
+  | Some _ -> ( match List.rev (U.max_shape u) with [] -> 1 | tail :: _ -> tail)
+
+let wmma_nodes uops : (U.wmma_info * Dtype.t * (int * int * int)) list =
   List.filter_map
     (fun u ->
       match U.as_wmma u with
-      | Some ({ info; _ } : U.wmma_view) -> Some (info, U.dtype u)
+      | Some ({ a; b; c; info } : U.wmma_view) ->
+          Some
+            ( info,
+              U.dtype u,
+              ( wmma_operand_width a,
+                wmma_operand_width b,
+                wmma_operand_width c ) )
       | None -> None)
     uops
 
@@ -1963,14 +1978,12 @@ let dedup_by_key key values =
   in
   loop [] [] values
 
-let axis_product axes = prod (List.map snd axes)
-
 let metal_wmma_helpers lang uops =
   let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
   wmma_nodes uops
-  |> dedup_by_key (fun ((info : U.wmma_info), dtype_out) ->
+  |> dedup_by_key (fun ((info : U.wmma_info), dtype_out, _widths) ->
          (info.dims, info.dtype_in, dtype_out))
-  |> List.map (fun ((info : U.wmma_info), dtype_out) ->
+  |> List.map (fun ((info : U.wmma_info), dtype_out, _widths) ->
          let dstr_in = render_dtype_c lang ~sz:2 info.dtype_in in
          let dstr_out = render_dtype_c lang ~sz:2 dtype_out in
          let scalar_in = render_dtype ctx info.dtype_in in
@@ -2120,23 +2133,16 @@ let cuda_wmma_out_type_name = function
 
 let cuda_wmma_helpers lang uops =
   wmma_nodes uops
-  |> dedup_by_key (fun ((info : U.wmma_info), dtype_out) ->
+  |> dedup_by_key (fun ((info : U.wmma_info), dtype_out, widths) ->
          ( info.dims,
            info.dtype_in,
            dtype_out,
            info.device,
            info.threads,
-           info.tc_upcast_axes ))
-  |> List.map (fun ((info : U.wmma_info), dtype_out) ->
+           widths ))
+  |> List.map (fun ((info : U.wmma_info), dtype_out, (wa, wb, wc)) ->
          let n, m, k = info.dims in
-         let ua, ub, uc =
-           match info.tc_upcast_axes with
-           | Some axes -> axes
-           | None -> ([], [], [])
-         in
-         let upcast_sizes =
-           [ axis_product ua; axis_product ub; axis_product uc ]
-         in
+         let upcast_sizes = [ wa; wb; wc ] in
          let wmma_dtypes =
            List.map2
              (fun dtype size -> render_dtype_c lang ~sz:size dtype)

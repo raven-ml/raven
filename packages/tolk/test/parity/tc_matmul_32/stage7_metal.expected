@@ -1,0 +1,34 @@
+#include <metal_stdlib>
+using namespace metal;
+float2 __WMMA_8_8_8_half_float(half2 a, half2 b, float2 c){
+  simdgroup_half8x8 mat_a, mat_b; simdgroup_float8x8 mat_c;
+  mat_a.thread_elements()[0] = a[0]; mat_b.thread_elements()[0] = b[0]; mat_c.thread_elements()[0] = c[0];
+  mat_a.thread_elements()[1] = a[1]; mat_b.thread_elements()[1] = b[1]; mat_c.thread_elements()[1] = c[1];
+  simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);
+  return float2(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);
+}
+kernel void tc_matmul_32(device half* data0_1024, device half* data1_1024, device float* data2_1024, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int gidx1 = gid.y; /* 4 */
+  int lidx0 = lid.x; /* 32 */
+  int alu0 = (((lidx0>>4)<<7)+(((lidx0>>1)&3)<<5));
+  int alu1 = (alu0+(gidx1<<8));
+  int alu2 = ((lidx0&1)<<1);
+  int alu3 = (((lidx0>>3)&1)<<2);
+  int alu4 = (alu1+alu2+alu3);
+  half2 val0 = (*((device half2*)((data0_1024+(alu4+8)))));
+  half2 val1 = (*((device half2*)((data0_1024+(alu4+16)))));
+  half2 val2 = (*((device half2*)((data0_1024+(alu4+24)))));
+  half2 val3 = (*((device half2*)((data0_1024+alu4))));
+  int gidx0 = gid.x; /* 4 */
+  int alu5 = ((gidx0<<3)+alu3+alu2);
+  int alu6 = (alu5+alu0);
+  half2 val4 = (*((device half2*)((data1_1024+(alu6+256)))));
+  half2 val5 = (*((device half2*)((data1_1024+(alu6+512)))));
+  half2 val6 = (*((device half2*)((data1_1024+(alu6+768)))));
+  half2 val7 = (*((device half2*)((data1_1024+alu6))));
+  float2 wmma0 = __WMMA_8_8_8_half_float(val2, val6, float2(0.0f,0.0f));
+  float2 wmma1 = __WMMA_8_8_8_half_float(val1, val5, wmma0);
+  float2 wmma2 = __WMMA_8_8_8_half_float(val0, val4, wmma1);
+  float2 wmma3 = __WMMA_8_8_8_half_float(val3, val7, wmma2);
+  *((device float2*)((data2_1024+(alu5+alu1)))) = wmma3;
+}
