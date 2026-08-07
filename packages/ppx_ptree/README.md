@@ -99,24 +99,28 @@ A field `'a sub` (a sibling type in the same declaration group) or `'a Sub.t`
 delegates to the sibling's or `Sub`'s uniform traversals. Delegated types must
 be applied to the payload parameter alone.
 
+Paths compose: a leaf the delegate reports as `"w"` under a field `head` becomes
+`"head.w"`. A delegate whose payload sits at its own root — `type 'a leaf = 'a`
+— reports the empty path, so a field `bias : 'a leaf` yields `"bias"`.
+
 ### Bridge to Ptree.S
 
 A uniform type instantiated at `Nx.Ptree.tensor` satisfies `Nx.Ptree.S` via
 the `Nx.Ptree.Make` functor:
 
 ```ocaml
-type 'a params = { w : 'a; b : 'a }
-[@@deriving ptree]
+module Params = struct
+  type 'a t = { w : 'a; b : 'a }
+  [@@deriving ptree]
+end
 
-module P = Nx.Ptree.Make (struct
-  type 'a t = 'a params
-  let map = map
-  let map2 = map2
-  let iter = iter
-end)
+module P = Nx.Ptree.Make (Params)
 
 let g = Rune.grad (module P) loss params
 ```
+
+`P.t` is `Nx.Ptree.tensor Params.t`, so the leaves are packed; recover a typed
+tensor from one with `Nx.Ptree.unpack`.
 
 ### Mirror mode (concrete records)
 
