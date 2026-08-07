@@ -849,8 +849,20 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
   for (int i = 0; i < p.ndim; i++)
     if (p.shape[i] > 1 && p.bstride[0][i] == 0) return NX_C_ERR_OUT_ALIASED;
 
+  /* Traffic for the bandwidth heuristic: an operand only touches the elements
+     it actually holds, so a 0-stride (broadcast) dim contributes one element,
+     not shape[i] of them. Counting p.total for every operand would bill a
+     splat operand — one cell the kernel hoists into a register — as a full
+     stream and hand the run more threads than its bandwidth warrants. The
+     output has no 0-stride dim (rejected just above), so it still counts
+     p.total. */
   int64_t bytes = 0;
-  for (int k = 0; k < nop; k++) bytes += p.total * elem_size[k];
+  for (int k = 0; k < nop; k++) {
+    int64_t touched = 1;
+    for (int i = 0; i < p.ndim; i++)
+      if (p.bstride[k][i] != 0) touched *= p.shape[i];
+    bytes += touched * elem_size[k];
+  }
 
   nx_c_map_exec e = {&p, kernel, ctx};
   if (p.ndim == 1) {

@@ -33,7 +33,19 @@
    walks typed pointers (compile-time unit stride) so clang autovectorizes the
    f32/f64/int arithmetic ops; the strided branch keeps the generic byte walk.
    Both branches share one scalar expression. `es` folds to a constant, so only
-   the compare uses it — the hot loop is plain array indexing. */
+   the compare uses it — the hot loop is plain array indexing.
+
+   A step of 0 is the third shape worth naming: it is how a 0-d operand
+   broadcast against a full tensor arrives (the `_s` scalar family, and every
+   `binop x (zeros_like x)`), and the generic walk would re-read that one cell
+   per element and stay scalar. A multi-input kernel therefore also branches on
+   a 0 step, hoisting that operand's single load out of the loop and leaving the
+   remaining pointers unit-stride — so the loop still vectorizes and reads half
+   the memory. Splat branches restate the SAME scalar expression with the same
+   operand order, so results are bit-identical to the contiguous branch. Only
+   the innermost coalesced step is 0 for a 0-d broadcast; a partially broadcast
+   operand (say [1,k] against [n,k]) keeps an innermost step of `es` and stays
+   on the contiguous branch. */
 
 /* Correctly libm-suffixed function for a compute type: NX_C_MFN(sin, float) ->
    sinf, NX_C_MFN(sin, double) -> sin, NX_C_MFN(cexp, nx_c_complex32) -> cexpf. The
@@ -98,6 +110,22 @@
         compute vb = (compute)ld(pB[i]);                                       \
         pO[i] = (storage)st(EXPR);                                             \
       }                                                                        \
+    } else if (so == es && sa == es && sb == 0) {                             \
+      storage *pO = (storage *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const compute vb = nx_c_ld_##sfx(in1);                                  \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = (compute)ld(pA[i]);                                       \
+        pO[i] = (storage)st(EXPR);                                             \
+      }                                                                        \
+    } else if (so == es && sa == 0 && sb == es) {                             \
+      storage *pO = (storage *)out;                                           \
+      const compute va = nx_c_ld_##sfx(in0);                                  \
+      const storage *pB = (const storage *)in1;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute vb = (compute)ld(pB[i]);                                       \
+        pO[i] = (storage)st(EXPR);                                             \
+      }                                                                        \
     } else {                                                                   \
       for (int64_t i = 0; i < nn; i++) {                                       \
         compute va = nx_c_ld_##sfx(in0 + i * sa);                              \
@@ -127,6 +155,22 @@
       const storage *pB = (const storage *)in1;                               \
       for (int64_t i = 0; i < nn; i++) {                                       \
         compute va = (compute)ld(pA[i]);                                       \
+        compute vb = (compute)ld(pB[i]);                                       \
+        pO[i] = (uint8_t)(EXPR);                                               \
+      }                                                                        \
+    } else if (so == 1 && sa == es && sb == 0) {                              \
+      uint8_t *pO = (uint8_t *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const compute vb = nx_c_ld_##sfx(in1);                                  \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = (compute)ld(pA[i]);                                       \
+        pO[i] = (uint8_t)(EXPR);                                               \
+      }                                                                        \
+    } else if (so == 1 && sa == 0 && sb == es) {                              \
+      uint8_t *pO = (uint8_t *)out;                                           \
+      const compute va = nx_c_ld_##sfx(in0);                                  \
+      const storage *pB = (const storage *)in1;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
         compute vb = (compute)ld(pB[i]);                                       \
         pO[i] = (uint8_t)(EXPR);                                               \
       }                                                                        \
@@ -806,6 +850,14 @@ NX_C_CMPORD(cmple)
    where (map3) — bool condition, two value operands, pure bit-select
    ═════════════════════════════════════════════════════════════════════════ */
 
+/* The splat branches read the varying arm into a local BEFORE the select rather
+   than indexing inside it. Written as `pC[i] ? pA[i] : vb` the surviving arm is
+   a conditional load, which clang keeps as a real branch — and on a data-driven
+   mask that mispredicts every other element, making the splat form ~6x slower
+   than the byte walk it replaces. Loading unconditionally leaves a plain select
+   the vectorizer turns into a blend. Not cosmetic; do not fold the load back
+   into the ternary. */
+
 #define NX_C_WK(sfx, storage)                                                   \
   static void nx_c_where_##sfx(char *const *pp, const int64_t *ssx, int64_t nn, \
                               void *ctx) {                                     \
@@ -822,6 +874,30 @@ NX_C_CMPORD(cmple)
       const storage *pA = (const storage *)in0;                               \
       const storage *pB = (const storage *)in1;                               \
       for (int64_t i = 0; i < nn; i++) pO[i] = pC[i] ? pA[i] : pB[i];          \
+    } else if (so == es && sa == es && sb == 0 && sc == 1) {                  \
+      storage *pO = (storage *)out;                                           \
+      const uint8_t *pC = (const uint8_t *)cnd;                               \
+      const storage *pA = (const storage *)in0;                               \
+      const storage vb = *(const storage *)in1;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        storage va = pA[i];                                                   \
+        pO[i] = pC[i] ? va : vb;                                              \
+      }                                                                        \
+    } else if (so == es && sa == 0 && sb == es && sc == 1) {                  \
+      storage *pO = (storage *)out;                                           \
+      const uint8_t *pC = (const uint8_t *)cnd;                               \
+      const storage va = *(const storage *)in0;                               \
+      const storage *pB = (const storage *)in1;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        storage vb = pB[i];                                                   \
+        pO[i] = pC[i] ? va : vb;                                              \
+      }                                                                        \
+    } else if (so == es && sa == 0 && sb == 0 && sc == 1) {                   \
+      storage *pO = (storage *)out;                                           \
+      const uint8_t *pC = (const uint8_t *)cnd;                               \
+      const storage va = *(const storage *)in0;                               \
+      const storage vb = *(const storage *)in1;                               \
+      for (int64_t i = 0; i < nn; i++) pO[i] = pC[i] ? va : vb;                \
     } else {                                                                   \
       for (int64_t i = 0; i < nn; i++) {                                       \
         uint8_t c = *(const uint8_t *)(cnd + i * sc);                          \

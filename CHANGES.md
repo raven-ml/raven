@@ -363,6 +363,11 @@ thread.
 
 ### Nx
 
+- Element-wise ops against a scalar operand are 1.4-9.5x faster. A broadcast
+  0-d operand (every `_s` variant, and any operand broadcast along the innermost
+  axis) used to fall onto a scalar code path; the C map, comparison, and `where`
+  kernels now hoist it out of the loop and stay vectorized. Results are
+  unchanged bit for bit.
 - Speed up `Nx.Rng.uniform` about 2x and `Nx.Rng.normal` about 4x (4M float32
   draws: 550ms to 283ms and 1153ms to 301ms). A Threefry row yields two words
   and `uniform` discarded one of them; `normal` then drew two uniforms per
