@@ -86,3 +86,34 @@ would actually write — stock `nn` modules, stock optimizer — with nothing
 shaped to suit Raven, and the Raven model is written against the real
 user-facing API. Where idiomatic Raven is awkward, that is a finding to report,
 not something to work around in the model.
+
+## Results so far
+
+Apple M1 Max, 12 steps, `char_lstm`. All six runs agreed with the reference to
+within 3.4e-06, so these compare programs computing the same thing.
+
+| run | cold | warm start | steady med | vs ref |
+| --- | --- | --- | --- | --- |
+| pytorch/eager/cpu | 113 ms | 60 ms | 38.5 ms | 1.00x |
+| pytorch/eager-unrolled/cpu | 137 ms | 305 ms | 229.4 ms | 5.95x |
+| pytorch/compile/cpu | 7013 ms | 1161 ms | 38.7 ms | 1.00x |
+| pytorch/compile-unrolled/cpu | 8238 ms | 1793 ms | 87.8 ms | 2.28x |
+| raven/eager/cpu | 1975 ms | 568 ms | 502.9 ms | 13.06x |
+| raven/jit/cpu | 49426 ms | 2702 ms | 1093.7 ms | 28.39x |
+
+Read three things from that table.
+
+**Compiling costs speed rather than buying it.** `raven/jit` is 2.2x slower in
+steady state than `raven/eager`, which inverts the premise. Compilation is also
+where the recurrence is unrolled -- `Rune.jit` unrolls `Rune.scan`, so a 64-step
+sequence traces 64 copies of the body -- and the 49 s cold compile is the same
+fact seen from the other side.
+
+**A hand-written recurrence is expensive on both sides.** PyTorch writing the
+loop out by hand instead of calling `nn.LSTM` is itself 5.95x slower than
+calling it. Raven has no recurrent layer at all, so it has no choice. That
+share of the gap closes by having the layer, not by making elementwise
+operations faster.
+
+**Eager is 13x off before compilation enters into it.** That is the floor to
+move first, because everything else is measured against it.

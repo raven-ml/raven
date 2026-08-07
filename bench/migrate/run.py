@@ -213,7 +213,11 @@ def run_model(model_dir, steps=None, only_device=None):
 
         for side in (torch_side, raven_side):
             for v in side.variants():
-                if only_device and v["device"] != only_device:
+                # The reference always runs: it is what agreement is measured
+                # against, so restricting to another device would otherwise
+                # discard every run it selected.
+                is_reference = (side.name, v["variant"], v["device"]) == REFERENCE
+                if only_device and v["device"] != only_device and not is_reference:
                     continue
                 label = f"{side.name}/{v['variant']}/{v['device']}"
                 print(f"  {label} ...", end="", flush=True)
