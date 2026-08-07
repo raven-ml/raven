@@ -2,6 +2,7 @@
  (names
   test_grad
   test_ops
+  test_complex
   test_engine
   test_ptree
   test_jvp
@@ -16,6 +17,7 @@
  (modules
   test_grad
   test_ops
+  test_complex
   test_engine
   test_ptree
   test_jvp

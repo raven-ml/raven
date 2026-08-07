@@ -211,3 +211,180 @@ let check_jvp2 ?(h = 1e-5) ?(tol = 1e-3) ~msg
     Array.init (Array.length fp) (fun i -> (fp.(i) -. fm.(i)) /. (2.0 *. h))
   in
   check_close ~tol ~msg numeric (to_arr dy)
+
+(* Complex finite-difference oracle.
+
+   A complex tensor is a pair of real components, and every rule is a real
+   linear map on them. These checks differentiate both components separately,
+   assemble the real Jacobian, and compare against it under rune's packing: a
+   tangent carries [dre + i*dim], a cotangent carries [dL/dre - i*dL/dim]. That
+   makes them independent of the convention being right — they measure the
+   operation, not another rule. *)
+
+let c128 = Nx.complex128
+let cx re im = Complex.{ re; im }
+
+let cvec xs =
+  Nx.create c128 [| Array.length xs |] (Array.map (fun (re, im) -> cx re im) xs)
+
+let cmat r c xs =
+  Nx.create c128 [| r; c |] (Array.map (fun (re, im) -> cx re im) xs)
+
+let to_carr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+
+(* Deterministic complex weights. Both components vary and neither is ever zero:
+   a cotangent that is real everywhere is exactly what lets a missing
+   conjugation agree with the oracle by coincidence. The two generators differ
+   so that a binary rule reading the wrong argument cannot cancel out. *)
+
+let cotangent_like t =
+  Nx.create c128 (Nx.shape t)
+    (Array.init (Nx.numel t) (fun i ->
+         cx
+           (float_of_int ((i mod 5) + 1) /. 2.0)
+           (float_of_int (((i + 1) mod 4) - 5) /. 4.0)))
+
+let ctangent_like t =
+  Nx.create c128 (Nx.shape t)
+    (Array.init (Nx.numel t) (fun i ->
+         cx
+           (float_of_int ((i * 3 mod 5) - 6) /. 4.0)
+           (float_of_int ((i mod 4) + 2) /. 3.0)))
+
+let check_cclose ~tol ~msg expected actual =
+  Array.iteri
+    (fun i (e : Complex.t) ->
+      let a : Complex.t = actual.(i) in
+      equal
+        ~msg:(Printf.sprintf "%s[%d].re" msg i)
+        (float tol) e.Complex.re a.Complex.re;
+      equal
+        ~msg:(Printf.sprintf "%s[%d].im" msg i)
+        (float tol) e.Complex.im a.Complex.im)
+    expected
+
+(* [cvjp_numeric ~h f z w] is the cotangent [w] pulled back through the real
+   Jacobian of [f] at [z], measured by central differences: perturb each
+   component of each input, read how each component of each output responds, and
+   contract with [w] unpacked into [(dL/dre, dL/dim)]. *)
+let cvjp_numeric ~h f (z : Nx.complex128_t) (w : Complex.t array) =
+  let shape = Nx.shape z in
+  let zs = to_carr z in
+  let eval a = to_carr (f (Nx.create c128 shape a)) in
+  Array.init (Array.length zs) (fun j ->
+      let at dre dim =
+        let ys = Array.copy zs in
+        ys.(j) <- cx (ys.(j).Complex.re +. dre) (ys.(j).Complex.im +. dim);
+        eval ys
+      in
+      let fpre = at h 0.0 and fmre = at (-.h) 0.0 in
+      let fpim = at 0.0 h and fmim = at 0.0 (-.h) in
+      let dre = ref 0.0 and dim = ref 0.0 in
+      Array.iteri
+        (fun i (wi : Complex.t) ->
+          let slope p m component =
+            (component p.(i) -. component m.(i)) /. (2.0 *. h)
+          in
+          let re (c : Complex.t) = c.Complex.re
+          and im (c : Complex.t) = c.Complex.im in
+          let contract p m =
+            (slope p m re *. wi.Complex.re) -. (slope p m im *. wi.Complex.im)
+          in
+          dre := !dre +. contract fpre fmre;
+          dim := !dim +. contract fpim fmim)
+        w;
+      cx !dre (-. !dim))
+
+(* [cjvp_numeric ~h f z v] is the central difference of [f] at [z] along [v],
+   taken on both components at once — the directional derivative that a
+   pushforward must reproduce. *)
+let cjvp_numeric ~h f (z : Nx.complex128_t) (v : Nx.complex128_t) =
+  let shape = Nx.shape z in
+  let zs = to_carr z and vs = to_carr v in
+  let eval d =
+    to_carr
+      (f
+         (Nx.create c128 shape
+            (Array.mapi
+               (fun i (zi : Complex.t) ->
+                 cx
+                   (zi.Complex.re +. (d *. vs.(i).Complex.re))
+                   (zi.Complex.im +. (d *. vs.(i).Complex.im)))
+               zs)))
+  in
+  let fp = eval h and fm = eval (-.h) in
+  Array.init (Array.length fp) (fun i ->
+      cx
+        ((fp.(i).Complex.re -. fm.(i).Complex.re) /. (2.0 *. h))
+        ((fp.(i).Complex.im -. fm.(i).Complex.im) /. (2.0 *. h)))
+
+(* [check_cgrad ~msg f z] compares the reverse-mode pullback of a deterministic
+   complex cotangent against the transposed finite-difference Jacobian. *)
+let check_cgrad ?(h = 1e-5) ?(tol = 1e-5) ~msg
+    (f : Nx.complex128_t -> Nx.complex128_t) (z : Nx.complex128_t) =
+  let w = cotangent_like (f z) in
+  let _, g = Rune.vjp' f z w in
+  check_cclose ~tol ~msg (cvjp_numeric ~h f z (to_carr w)) (to_carr g)
+
+(* [check_cjvp ~msg f z] compares the forward-mode pushforward of a
+   deterministic complex tangent against the same central difference. *)
+let check_cjvp ?(h = 1e-5) ?(tol = 1e-5) ~msg
+    (f : Nx.complex128_t -> Nx.complex128_t) (z : Nx.complex128_t) =
+  let v = ctangent_like z in
+  let _, dy = Rune.jvp' f z v in
+  check_cclose ~tol ~msg (cjvp_numeric ~h f z v) (to_carr dy)
+
+(* A pair of complex128 tensors, for differentiating binary operations. *)
+
+type cpair = { cfst : Nx.complex128_t; csnd : Nx.complex128_t }
+
+module Cpair = struct
+  type t = cpair
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { cfst; csnd } =
+    { cfst = f cfst; csnd = f csnd }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { cfst = f p.cfst q.cfst; csnd = f p.csnd q.csnd }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { cfst; csnd } =
+    f cfst;
+    f csnd
+end
+
+(* [check_cgrad2 ~msg f a b] is {!check_cgrad} for a binary operation. Each
+   argument is checked against the Jacobian taken with the other one held fixed,
+   so a contribution routed to the wrong argument shows up. *)
+let check_cgrad2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
+    (f : Nx.complex128_t -> Nx.complex128_t -> Nx.complex128_t)
+    (a : Nx.complex128_t) (b : Nx.complex128_t) =
+  let w = cotangent_like (f a b) in
+  let _, g =
+    Rune.vjp (module Cpair) (fun p -> f p.cfst p.csnd) { cfst = a; csnd = b } w
+  in
+  let warr = to_carr w in
+  check_cclose ~tol ~msg:(msg ^ ".fst")
+    (cvjp_numeric ~h (fun x -> f x b) a warr)
+    (to_carr g.cfst);
+  check_cclose ~tol ~msg:(msg ^ ".snd")
+    (cvjp_numeric ~h (fun y -> f a y) b warr)
+    (to_carr g.csnd)
+
+(* [check_cjvp2 ~msg f a b] is {!check_cjvp} for a binary operation. The
+   pushforward is linear in the tangents, so the oracle is the sum of the two
+   partial directional derivatives. *)
+let check_cjvp2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
+    (f : Nx.complex128_t -> Nx.complex128_t -> Nx.complex128_t)
+    (a : Nx.complex128_t) (b : Nx.complex128_t) =
+  let va = ctangent_like a and vb = cotangent_like b in
+  let _, dy =
+    Rune.jvp
+      (module Cpair)
+      (fun p -> f p.cfst p.csnd)
+      { cfst = a; csnd = b } { cfst = va; csnd = vb }
+  in
+  let from_a = cjvp_numeric ~h (fun x -> f x b) a va in
+  let from_b = cjvp_numeric ~h (fun y -> f a y) b vb in
+  check_cclose ~tol ~msg
+    (Array.mapi (fun i d -> Complex.add d from_b.(i)) from_a)
+    (to_carr dy)
