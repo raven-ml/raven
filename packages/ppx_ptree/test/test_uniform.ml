@@ -286,6 +286,14 @@ let test_mirror_container_paths () =
     [ "layers.0"; "layers.1"; "grid.0" ]
     paths
 
+let test_mirror_container_round_trip () =
+  let restored = Stack.of_uniform (Stack.to_uniform stack) in
+  equal ~msg:"list length survives" int 2 (List.length restored.Stack.layers);
+  equal ~msg:"array length survives" int 1 (Array.length restored.Stack.grid);
+  check_arr ~msg:"element 0" [| 1.0 |] (List.nth restored.Stack.layers 0);
+  check_arr ~msg:"element 1" [| 2.0 |] (List.nth restored.Stack.layers 1);
+  check_arr ~msg:"grid element" [| 3.0 |] restored.Stack.grid.(0)
+
 let test_mirror_container_dtype_mismatch () =
   let forged =
     let u = Stack.to_uniform stack in
@@ -332,6 +340,8 @@ let tests =
           test_mirror_dtype_mismatch;
         test "container elements fold with their index"
           test_mirror_container_paths;
+        test "containers survive to_uniform/of_uniform"
+          test_mirror_container_round_trip;
         test "of_uniform locates a mismatch inside a container"
           test_mirror_container_dtype_mismatch;
       ];
