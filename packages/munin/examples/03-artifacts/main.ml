@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Artifact versioning and lineage across runs.
 
     Run 1 produces a dataset artifact. Run 2 consumes it and produces a result.

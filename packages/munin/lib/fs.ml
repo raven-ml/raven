@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let is_directory path =
   try (Unix.stat path).Unix.st_kind = Unix.S_DIR
   with Unix.Unix_error _ -> false

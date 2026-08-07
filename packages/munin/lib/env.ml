@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let root () =
   match Sys.getenv_opt "RAVEN_TRACKING_DIR" with
   | Some dir -> dir

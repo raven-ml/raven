@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type summary = Metric.summary
 type goal = Metric.goal
 type media_kind = [ `Image | `Audio | `Table | `File ]

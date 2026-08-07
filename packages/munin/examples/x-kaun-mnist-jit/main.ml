@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Jitted MNIST training on the GPU with experiment tracking.
 
     Trains the same CNN as [x-kaun-mnist], but the whole training step —

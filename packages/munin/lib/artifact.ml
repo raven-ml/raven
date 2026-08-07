@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type kind = [ `Dataset | `Model | `Checkpoint | `File | `Dir | `Other ]
 type payload = [ `File | `Dir ]
 

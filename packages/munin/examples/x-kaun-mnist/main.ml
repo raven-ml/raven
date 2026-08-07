@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** End-to-end MNIST training with experiment tracking.
 
     Trains a CNN on MNIST using kaun, logging metrics, hyperparameters, and a

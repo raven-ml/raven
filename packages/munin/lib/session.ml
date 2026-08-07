@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let err_not_resumable = "Munin.Session.resume: run is not resumable"
 let err_missing_manifest = "Munin.Session.run: missing run manifest"
 let err_closed_session = "Munin.Session.log_artifact: closed session"
