@@ -23,26 +23,17 @@ let threefry_key_magic = 0x1BD11BDA
 let threefry2x32 x key =
   let u32 = Dtype.uint32 in
   let u64 = Dtype.uint64 in
-  let two32 = Int64.shift_left 1L 32 in
-  let mask32 = Uop.const (Const.int64 Dtype.uint64 0xFFFFFFFFL) in
-  let c_two32 = Uop.const (Const.int64 Dtype.uint64 two32) in
   let u32c n = Uop.const (Const.int Dtype.uint32 n) in
-  let low32 u =
-    Uop.cast ~dtype:u32
-      ~src:(Uop.alu_binary ~op:Ops.And ~lhs:u ~rhs:mask32)
-  in
+  let u64c n = Uop.const (Const.int Dtype.uint64 n) in
+  (* Narrowing to uint32 truncates, so the low word needs no mask. *)
+  let low32 u = Uop.cast ~dtype:u32 ~src:u in
   let high32 u =
     Uop.cast ~dtype:u32
-      ~src:(Uop.alu_binary ~op:Ops.And
-              ~lhs:(Uop.alu_binary ~op:Ops.Cdiv ~lhs:u ~rhs:c_two32)
-              ~rhs:mask32)
+      ~src:(Uop.alu_binary ~op:Ops.Shr ~lhs:u ~rhs:(u64c 32))
   in
-  (* (v << r) + (v >> (32 - r)) via MUL/CDIV; no logical shift op. *)
   let rot32 v r =
-    let hi = Uop.alu_binary ~op:Ops.Mul ~lhs:v ~rhs:(u32c (1 lsl r)) in
-    let lo = Uop.alu_binary ~op:Ops.Cdiv ~lhs:v
-               ~rhs:(u32c (1 lsl (32 - r)))
-    in
+    let hi = Uop.alu_binary ~op:Ops.Shl ~lhs:v ~rhs:(u32c r) in
+    let lo = Uop.alu_binary ~op:Ops.Shr ~lhs:v ~rhs:(u32c (32 - r)) in
     Uop.alu_binary ~op:Ops.Add ~lhs:hi ~rhs:lo
   in
   let key0 = low32 key and key1 = high32 key in
@@ -72,9 +63,9 @@ let threefry2x32 x key =
     if i >= 5 then a, b else loop (i + 1) (round a b i)
   in
   let xr0, xr1 = loop 0 (init0, init1) in
-  (* Combine as uint64: (xr1 * 2^32) | xr0 *)
+  (* Combine as uint64: (xr1 << 32) | xr0 *)
   let to_u64 v = Uop.cast ~dtype:u64 ~src:v in
-  let hi = Uop.alu_binary ~op:Ops.Mul ~lhs:(to_u64 xr1) ~rhs:c_two32 in
+  let hi = Uop.alu_binary ~op:Ops.Shl ~lhs:(to_u64 xr1) ~rhs:(u64c 32) in
   Uop.alu_binary ~op:Ops.Or ~lhs:hi ~rhs:(to_u64 xr0)
 
 (* Integer division magic *)
@@ -116,10 +107,11 @@ let safe_mul_int64 a b =
 let abs_int64_checked n =
   if Int64.equal n Int64.min_int then None else Some (Int64.abs n)
 
+(* The next integer width that holds [x * m]. A weak integer has no
+   committed width to widen from, so it has no next. *)
 let next_integer_dtype (dt : Dtype.t) =
   let next_scalar =
     match dt with
-    | Dtype.Weakint -> Some Dtype.Uint8
     | Dtype.Int8 -> Some Dtype.Int16
     | Dtype.Int16 -> Some Dtype.Int32
     | Dtype.Int32 -> Some Dtype.Int64
@@ -127,7 +119,7 @@ let next_integer_dtype (dt : Dtype.t) =
     | Dtype.Uint8 -> Some Dtype.Uint16
     | Dtype.Uint16 -> Some Dtype.Uint32
     | Dtype.Uint32 -> Some Dtype.Uint64
-    | Dtype.Uint64 | Dtype.Uint128 | Dtype.Uint256
+    | Dtype.Weakint | Dtype.Uint64 | Dtype.Uint128 | Dtype.Uint256
     | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
     | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz | Dtype.Float16
     | Dtype.Bfloat16 | Dtype.Float32 | Dtype.Float64 | Dtype.Bool | Dtype.Void

@@ -72,6 +72,27 @@ let add_const_div_fires_for_negative_constant () =
   | Some r -> is_true ~msg:"rewrites to Add" (Uop.op r = Ops.Add)
   | None -> is_true ~msg:"rule fired" false
 
+(* The same constant split applies to the modulo: (x+c)%d -> (x+c%d)%d. *)
+let add_const_mod_splits_the_constant () =
+  let x = var ~name:"x" ~lo:0 ~hi:100 () in
+  let e = floormod (Uop.alu_binary ~op:Ops.Add ~lhs:x ~rhs:(ic 7)) (ic 4) in
+  match rewrite e with
+  | Some r ->
+      is_true ~msg:"stays a Floormod" (Uop.op r = Ops.Floormod);
+      let sum = (Uop.src r).(0) in
+      is_true ~msg:"constant reduced to 7 mod 4"
+        (Uop.op sum = Ops.Add
+         && Uop.const_int_value (Uop.src sum).(1) = Some 3)
+  | None -> is_true ~msg:"rule fired" false
+
+(* The split holds for any non-zero divisor, not just positive ones. *)
+let add_const_div_fires_for_negative_divisor () =
+  let x = var ~name:"x" ~lo:0 ~hi:100 () in
+  let e = floordiv (Uop.alu_binary ~op:Ops.Add ~lhs:x ~rhs:(ic 7)) (ic (-4)) in
+  match rewrite e with
+  | Some r -> is_true ~msg:"rewrites to Add" (Uop.op r = Ops.Add)
+  | None -> is_true ~msg:"rule fired" false
+
 let remove_nested_floormod_fires () =
   let x = var ~name:"x" ~lo:(-10) ~hi:10 () in
   let y = var ~name:"y" ~lo:(-10) ~hi:10 () in
@@ -407,6 +428,114 @@ let one_random_fold_is_correct () =
   in
   check floordiv floor_div && check floormod floor_mod
 
+(* Recombination of a scaled mod with its quotient partner. This is the shape
+   tensor-core thread indices arrive in: two adjacent single-bit extracts of
+   one thread id, which together are one multi-bit extract.
+
+   Each test here asserts the folded form *and* checks it pointwise. Both are
+   needed, and neither substitutes for the other: a fold is an identity, so a
+   wrong-but-equivalent form passes the pointwise check, and a structural
+   assertion only confirms whatever form the author expected. Together they
+   catch a fold that is unsound and a fold that is merely not the one intended.
+   Copy the pair. *)
+
+let mul lhs rhs = Uop.alu_binary ~op:Ops.Mul ~lhs ~rhs
+let add lhs rhs = Uop.alu_binary ~op:Ops.Add ~lhs ~rhs
+
+let agrees_pointwise ~hi ~what l e got =
+  let disagreed = ref [] in
+  for x = 0 to hi do
+    let env = [ (l, x) ] in
+    if eval env got <> eval env e then disagreed := x :: !disagreed
+  done;
+  is_true
+    ~msg:
+      (Printf.sprintf "%s disagrees at %s" what
+         (String.concat "," (List.rev_map string_of_int !disagreed)))
+    (!disagreed = [])
+
+let adjacent_bit_extracts_recombine () =
+  let l = var ~name:"lidx0" ~lo:0 ~hi:31 () in
+  let e =
+    add
+      (mul (floormod (floordiv l (ic 4)) (ic 2)) (ic 256))
+      (mul (floormod (floordiv l (ic 2)) (ic 2)) (ic 128))
+  in
+  let expected = mul (floormod (floordiv l (ic 2)) (ic 4)) (ic 128) in
+  let got = Symbolic.simplify e in
+  is_true
+    ~msg:
+      (Format.asprintf "two bit extracts merge into one, got %a" Uop.pp got)
+    (Uop.equal got (Symbolic.simplify expected));
+  agrees_pointwise ~hi:31 ~what:"recombined bit extracts" l e got
+
+(* The partner may be a plain quotient whose divisor has absorbed an inner
+   division, so recombining needs the quotient re-based onto that inner
+   numerator: (l//8)*4 + (l//2)%4 is l//2. *)
+let quotient_partner_recombines_through_a_merged_divisor () =
+  let l = var ~name:"l" ~lo:0 ~hi:63 () in
+  let e =
+    add (mul (floordiv l (ic 8)) (ic 4)) (floormod (floordiv l (ic 2)) (ic 4))
+  in
+  let got = Symbolic.simplify e in
+  agrees_pointwise ~hi:63 ~what:"merged-divisor recombine" l e got;
+  is_true
+    ~msg:(Format.asprintf "recombines to a single quotient, got %a" Uop.pp got)
+    (Uop.equal got (Symbolic.simplify (floordiv l (ic 2))))
+
+(* A quotient shifted by a whole multiple of its divisor still recombines,
+   with the shift carried out to the recombined base:
+   l%4 + ((l+4)//4)*4 is l + 4. *)
+let shifted_quotient_partner_recombines () =
+  let l = var ~name:"l" ~lo:0 ~hi:31 () in
+  let e =
+    add (floormod l (ic 4)) (mul (floordiv (add l (ic 4)) (ic 4)) (ic 4))
+  in
+  let got = Symbolic.simplify e in
+  agrees_pointwise ~hi:31 ~what:"shifted-quotient recombine" l e got;
+  is_true
+    ~msg:(Format.asprintf "recombines to a shifted base, got %a" Uop.pp got)
+    (Uop.equal got (Symbolic.simplify (add l (ic 4))))
+
+(* The existing property test drives [Divandmod.div_and_mod_symbolic] alone,
+   which does not carry the recombination rule. This one drives the whole
+   symbolic layer over index expressions built from the div/mod/mul/add
+   vocabulary and checks that simplification preserves the value everywhere. *)
+let random_index_expr hi =
+  let l = var ~name:"l" ~lo:0 ~hi () in
+  let rec build depth =
+    if depth = 0 then l
+    else
+      let child = build (depth - 1) in
+      match Random.int 5 with
+      | 0 -> floordiv child (ic (1 + Random.int 8))
+      | 1 -> floormod child (ic (1 + Random.int 8))
+      | 2 -> mul child (ic (Random.int 9 - 4))
+      | 3 -> add child (ic (Random.int 9 - 4))
+      | _ -> add (mul (build (depth - 1)) (ic (1 + Random.int 4))) child
+  in
+  (l, add (build (1 + Random.int 3)) (build (1 + Random.int 3)))
+
+let simplify_preserves_index_values () =
+  Random.init 0xc0ffee;
+  let hi = 63 in
+  let failures = ref [] in
+  for _ = 1 to 400 do
+    let l, e = random_index_expr hi in
+    let got = Symbolic.simplify e in
+    for x = 0 to hi do
+      let env = [ (l, x) ] in
+      if eval env got <> eval env e then
+        failures :=
+          Format.asprintf "at l=%d: %a" x Uop.pp e :: !failures
+    done
+  done;
+  is_true
+    ~msg:
+      (Printf.sprintf "%d disagreements, first: %s" (List.length !failures)
+         (match List.rev !failures with [] -> "-" | f :: _ -> f))
+    (!failures = [])
+
 let property_folds_are_numerically_correct () =
   Random.init 0x5eed;
   let cases = 500 in
@@ -431,6 +560,10 @@ let () =
             nested_div_accepts_negative_inner_divisor;
           test "add const div fires for negative constant"
             add_const_div_fires_for_negative_constant;
+          test "add const mod splits the constant"
+            add_const_mod_splits_the_constant;
+          test "add const div fires for negative divisor"
+            add_const_div_fires_for_negative_divisor;
           test "remove nested floormod fires" remove_nested_floormod_fires;
           test "crossing denominator does not fold zero singleton"
             crossing_denominator_does_not_fold_zero_singleton;
@@ -472,9 +605,20 @@ let () =
           test "nest_by_factor accepts stack numerator"
             nest_by_factor_accepts_stack_numerator;
         ];
+      group "recombination"
+        [
+          test "adjacent bit extracts recombine"
+            adjacent_bit_extracts_recombine;
+          test "quotient partner recombines through a merged divisor"
+            quotient_partner_recombines_through_a_merged_divisor;
+          test "shifted quotient partner recombines"
+            shifted_quotient_partner_recombines;
+        ];
       group "property"
         [
           test "random folds are numerically correct"
             property_folds_are_numerically_correct;
+          test "simplify preserves index expression values"
+            simplify_preserves_index_values;
         ];
     ]

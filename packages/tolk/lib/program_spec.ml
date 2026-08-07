@@ -209,11 +209,13 @@ module Estimates = struct
       end;
       match U.op u with
       | Ops.Range ->
-          (match U.as_range u with
-           | Some rv ->
-               Stack.push !mults mult_stack;
-               mults := mul_estimate !mults (estimate_of_size rv.size)
-           | None -> ())
+          Stack.push !mults mult_stack;
+          (* A void range is an unbounded loop closed by a conditional END: its
+             trip count is unknown, so the body contributes at multiplicity 1. *)
+          if not (Dtype.equal (U.dtype u) Dtype.void) then
+            (match U.as_range u with
+             | Some rv -> mults := mul_estimate !mults (estimate_of_size rv.size)
+             | None -> ())
       | Ops.End ->
           (match U.as_end u with
            | Some ev ->
@@ -280,7 +282,6 @@ type t = {
   launch : launch;
   estimates : Estimates.t;
   core_id : core_id option;
-  aux : string list;
 }
 
 let default_dims () = [| U.const_int 1; U.const_int 1; U.const_int 1 |]
@@ -407,7 +408,7 @@ let collect_launch (program : program) (vars : var list) : launch * core_id opti
   (launch, core_id)
 
 let of_program ~name ~src ~device ?lib ?(applied_opts = [])
-    ?estimates ?(aux = []) (program : program) : t =
+    ?estimates (program : program) : t =
   let var_defs = collect_vars program in
   let vars = List.map (fun def -> def.var) var_defs in
   let outs, ins = collect_buffers program in
@@ -420,7 +421,7 @@ let of_program ~name ~src ~device ?lib ?(applied_opts = [])
     | None -> Estimates.of_program program
   in
   { name; src; device; program; lib; applied_opts; vars; var_defs; globals;
-    outs; ins; launch; estimates; core_id; aux }
+    outs; ins; launch; estimates; core_id }
 
 let with_lib lib t = { t with lib = Some lib }
 let with_estimates estimates t = { t with estimates }
@@ -456,7 +457,8 @@ let program_info t : U.program_info =
     globals = t.globals;
     outs = t.outs;
     ins = t.ins;
-    aux = t.aux;
+    (* TODO: delete with [Uop.program_info.aux]; nothing produces a payload. *)
+    aux = [];
   }
 
 let name t = t.name

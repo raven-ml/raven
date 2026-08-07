@@ -110,7 +110,9 @@ type t =
   | Expand  (** Broadcasts to a target shape. *)
   | Pad  (** Pads per axis. *)
   | Flip  (** Reverses selected axes. *)
-  | Multi  (** Distributes a value across devices. *)
+  | Unshard
+      (** Reassembles a value sharded across devices. A movement op: its
+          source is one shard and its result is the whole. *)
   | Reduce  (** Reduction by [Add], [Mul], or [Max]. *)
   | Allreduce  (** Cross-device reduction. *)
 

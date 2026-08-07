@@ -90,7 +90,8 @@ val threefry : Tensor.t -> Tensor.t -> Tensor.t
 
 val where : Tensor.t -> Tensor.t -> Tensor.t -> Tensor.t
 (** [where cond x y] selects from [x] where [cond] is true and from [y]
-    elsewhere. [cond] is cast to boolean and all three are broadcast together. *)
+    elsewhere. [cond] must be a boolean tensor; all three are broadcast
+    together. *)
 
 val maximum : Tensor.t -> Tensor.t -> Tensor.t
 (** [maximum a b] is the element-wise larger value. *)

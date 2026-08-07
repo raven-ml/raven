@@ -35,7 +35,7 @@ let wrap_sink srcs = U.sink ~kernel_info:(kernel_info ()) srcs
 
 (* Build a loop range on [axis] with int [size]. *)
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
 
 (* Build a reduce range on [axis] with int [size]. *)
 let reduce_range ~axis size =
@@ -105,7 +105,7 @@ let flatten_range_tests =
           let r0 = loop_range ~axis:0 4 in
           let open U.O in
           let r1 =
-            U.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.weakint ()
+            U.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Weak ~dtype:D.weakint ()
           in
           let value = r0 + r1 in
           (* Build End with intentionally wrong order: [r1, r0] *)
@@ -225,7 +225,7 @@ let simplify_merge_tests =
   group "pm_simplify_ranges - merge adjacent"
     [
       test "merges adjacent ranges in End with same kind" (fun () ->
-          (* Two adjacent Loop ranges with sizes 3 and 4. Expression uses
+          (* Two adjacent Weak ranges with sizes 3 and 4. Expression uses
              r0*4 + r1, which is the canonical divmod pattern that merges
              into Range(12). *)
           let r0 = loop_range ~axis:0 3 in

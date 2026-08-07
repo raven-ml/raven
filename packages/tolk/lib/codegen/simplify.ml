@@ -163,6 +163,7 @@ let simplify_merge_adjacent u =
             (U.first_match
                [
                  Upat.Pattern_matcher.rewrite symbolic;
+                 Upat.Pattern_matcher.rewrite Symbolic.pm_fold_cast_const;
                  Upat.Pattern_matcher.rewrite pm_flatten_range;
                ])
             nidx
@@ -359,9 +360,10 @@ let reduce_unparented node =
           then U.reduce ~op ~src ~ranges:parented ~dtype
           else src
         in
+        (* The range size is weak-typed, so it commits to the reduce's
+           dtype where it lands; no cast is needed to widen it. *)
         let compensate binop acc r =
-          U.alu_binary ~op:binop ~lhs:acc
-            ~rhs:(U.cast ~src:(range_size r) ~dtype)
+          U.alu_binary ~op:binop ~lhs:acc ~rhs:(range_size r)
         in
         let ret = match op with
           | Ops.Add -> List.fold_left (compensate Ops.Mul) ret unparented
@@ -501,6 +503,24 @@ let rule_reduce_fold_upper =
     else
       Some (fold_result (clamp_count ~upper:cut r) v)
 
+(* [WHERE(cond, x, Invalid)].reduce(r, Add) lifts the gate out of the
+   reduce when [cond] does not depend on the reduced ranges: every lane
+   agrees on it, so it can be tested once around the whole sum. *)
+let rule_reduce_invalid_gate =
+  let open Upat in
+  let cond = var "cond" and x = var "x" and i = var "i" in
+  op ~src:[ where cond x i ] ~name:"red" ~allow_any_len:true Ops.Reduce
+  => fun bs ->
+    let red = bs $ "red" and cond = bs $ "cond" and x = bs $ "x"
+    and i = bs $ "i" in
+    match as_lowered_add_reduce red with
+    | Some { ranges; _ } when is_invalid i && no_range cond ->
+        Some
+          (U.alu_ternary ~op:Ops.Where ~a:cond
+             ~b:(U.reduce ~op:Ops.Add ~src:x ~ranges ~dtype:(U.dtype red))
+             ~c:i)
+    | _ -> None
+
 (* [(x + y).reduce(r, Add) -> x.reduce(r) + y.reduce(r)]. *)
 let rule_reduce_split_add =
   let open Upat in
@@ -561,6 +581,7 @@ let pm_reduce_collapse =
              rule_reduce_fold_lower;
              rule_reduce_fold_between;
              rule_reduce_fold_upper;
+             rule_reduce_invalid_gate;
              rule_reduce_split_add;
              rule_reduce_and_where;
            ]

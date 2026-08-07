@@ -282,7 +282,7 @@ let build_cfg_context (sink : U.t) : cfg_context =
 let range_key r =
   match U.as_range r with
   | Some v -> (v.axis, v.sub, v.kind)
-  | None -> (0, [], Axis_type.Loop)
+  | None -> (0, [], Axis_type.Weak)
 
 let do_split_ends (e : U.t) : U.t option =
   match U.as_end e with

@@ -93,7 +93,7 @@ type t =
   | Expand
   | Pad
   | Flip
-  | Multi
+  | Unshard
   | Reduce
   | Allreduce
   (* 7 -- pattern compiler IR *)
@@ -181,7 +181,7 @@ let name = function
   | Expand -> "EXPAND"
   | Pad -> "PAD"
   | Flip -> "FLIP"
-  | Multi -> "MULTI"
+  | Unshard -> "UNSHARD"
   | Reduce -> "REDUCE"
   | Allreduce -> "ALLREDUCE"
   | Pyliteral -> "PYLITERAL"
@@ -318,7 +318,7 @@ module Group = struct
       Expand;
       Pad;
       Flip;
-      Multi;
+      Unshard;
       Reduce;
       Allreduce;
       Pyliteral;

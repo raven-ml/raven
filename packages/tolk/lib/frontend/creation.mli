@@ -29,10 +29,11 @@ val ones : ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> int list -> Tensor.t
 (** [ones shape] is a tensor of shape [shape] filled with ones, defaulting to
     the default float dtype. *)
 
-val const_like : Tensor.t -> Tensor.scalar -> Tensor.t
-(** [const_like t v] is a broadcast constant with the shape and dtype of [t],
-    with every element equal to [v] coerced to [t]'s dtype. No storage is
-    allocated. *)
+val const_like :
+  ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.scalar -> Tensor.t
+(** [const_like t v] is a broadcast constant with the shape of [t] and, unless
+    [dtype] overrides it, the dtype of [t]; every element equals [v] coerced to
+    that dtype. No storage is allocated. *)
 
 val full_like :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> Tensor.t -> Tensor.scalar ->

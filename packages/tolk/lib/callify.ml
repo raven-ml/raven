@@ -27,10 +27,10 @@ let index_ n = U.const (C.int D.weakint n)
 let shape_prod = List.fold_left ( * ) 1
 let dtype_or_void n = U.dtype n
 
-(* Shape descriptors are [weakint]-typed: a shape-tuple STACK is metadata, not
-   tensor data, so the rangeify pass skips it. This is a dtype-tag mechanism
-   that upstream has replaced with a structural one; see the [data_srcs] note
-   in the wave 6-1 plan item. *)
+(* A shape descriptor is metadata, not tensor data. It stays out of range
+   propagation by position, not by dtype: it only ever occupies a source slot
+   that [Indexing.data_srcs] excludes, so no consumer indexes it and no pass
+   assigns it ranges. Its entries are ordinary weak integers. *)
 let shape_node dims =
   match List.map index_ dims with [ d ] -> d | ds -> U.stack ds
 
@@ -180,7 +180,7 @@ let compute_shapes root =
                 map_order s order)
           | Ops.Flip ->
               Option.bind (src0 n) shape
-          | Ops.Multi ->
+          | Ops.Unshard ->
               (* A MULTI presents the global shape: [U.shape] multiplies the
                  shard axis of its per-shard source back up by the device
                  count, whatever form the source takes (a symbolic
@@ -352,7 +352,7 @@ let buffer_like ctx src dtype =
     | Some d -> d | None -> failwith "buffer_like: unknown device" in
   let axis =
     match U.op src with
-    | Ops.Multi -> U.Arg.as_int (U.arg src)
+    | Ops.Unshard -> U.Arg.as_int (U.arg src)
     | _ -> None
   in
   let ndev = match dev with
@@ -502,7 +502,7 @@ let revert_store_to_contiguous ctx node =
              (* A multi-device store target wraps its per-shard buffer in
                 MULTI; look through it, or the AFTER just built for it
                 reverts and the rewrite cycles. *)
-             | Ops.Multi, Some src, _ -> find_target (base src)
+             | Ops.Unshard, Some src, _ -> find_target (base src)
              | _, _, Some (src, _) -> find_target (base src)
              | _ -> n
            in

@@ -36,7 +36,7 @@ let kernel_info () =
 let wrap_sink srcs = U.sink ~kernel_info:(kernel_info ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
 
 let reduce_range ~axis size =
   U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
@@ -130,7 +130,7 @@ let elementwise_global_ast ~s0 ~s1 =
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
   wrap_sink [ e ]
 
-(* Elementwise with Loop ranges — for thread renderer tests *)
+(* Elementwise with Weak ranges — for thread renderer tests *)
 let elementwise_loop_ast ~s0 ~s1 =
   let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
   let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in

@@ -210,7 +210,7 @@ let define_var ~name ~lo ~hi ~dtype () =
   U.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
 let loop_range ~axis size =
-  U.range ~size ~axis ~kind:Axis_type.Loop ~dtype:Dtype.int32 ()
+  U.range ~size ~axis ~kind:Axis_type.Weak ~dtype:Dtype.int32 ()
 
 let reduce_range ~axis size =
   U.range ~size ~axis ~kind:Axis_type.Reduce ~dtype:Dtype.int32 ()
@@ -972,7 +972,7 @@ let () =
             let pos_reduce =
               find_range_by_kind ~kind:Axis_type.Reduce program
             in
-            let pos_loop = find_range_by_kind ~kind:Axis_type.Loop program in
+            let pos_loop = find_range_by_kind ~kind:Axis_type.Weak program in
             let pos_global =
               find_range_by_kind ~kind:Axis_type.Global program
             in
@@ -981,11 +981,11 @@ let () =
           test "same-axis ranges are split by full range argument" (fun () ->
             let r0 =
               U.range ~size:(i32 4) ~axis:0 ~sub:[ 0 ]
-                ~kind:Axis_type.Loop ~dtype:Dtype.int32 ()
+                ~kind:Axis_type.Weak ~dtype:Dtype.int32 ()
             in
             let r1 =
               U.range ~size:(i32 4) ~axis:0 ~sub:[ 1 ]
-                ~kind:Axis_type.Loop ~dtype:Dtype.int32 ()
+                ~kind:Axis_type.Weak ~dtype:Dtype.int32 ()
             in
             let e = U.end_ ~value:(i32 1) ~ranges:[ r0; r1 ] in
             match Linearizer.do_split_ends e with

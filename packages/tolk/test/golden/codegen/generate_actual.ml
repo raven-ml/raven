@@ -312,7 +312,7 @@ let make_lorenz_fold () =
 let make_llama_rmsnorm backend =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 2) () in
   let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 16) () in
-  let ri = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Loop () in
+  let ri = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Weak () in
   let rr = U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Reduce () in
   let open U.O in
   let in_idx = (ri * int_ 8) + rr in
@@ -384,8 +384,8 @@ let make_llama_embedding backend =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 16) () in
   let p1 = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 2) () in
   let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
-  let ri = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Loop () in
-  let rj = U.range ~size:(U.const_int 8) ~axis:2 ~kind:Axis_type.Loop () in
+  let ri = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Weak () in
+  let rj = U.range ~size:(U.const_int 8) ~axis:2 ~kind:Axis_type.Weak () in
   let rv = U.range ~size:(U.const_int 32) ~axis:0 ~kind:Axis_type.Reduce () in
   let open U.O in
   let out_idx = (ri * int_ 8) + rj in
@@ -434,10 +434,10 @@ let make_llama_ffn_gate backend =
   let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 2) () in
   let p3 = U.param ~slot:3 ~dtype:global_fptr ~shape:(U.const_int 8) () in
   let p4 = U.param ~slot:4 ~dtype:global_fptr ~shape:(U.const_int 64) () in
-  let r3 = U.range ~size:(U.const_int 2) ~axis:3 ~kind:Axis_type.Loop () in
-  let r4 = U.range ~size:(U.const_int 2) ~axis:4 ~kind:Axis_type.Loop () in
-  let r2 = U.range ~size:(U.const_int 2) ~axis:2 ~kind:Axis_type.Loop () in
-  let r1 = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Loop () in
+  let r3 = U.range ~size:(U.const_int 2) ~axis:3 ~kind:Axis_type.Weak () in
+  let r4 = U.range ~size:(U.const_int 2) ~axis:4 ~kind:Axis_type.Weak () in
+  let r2 = U.range ~size:(U.const_int 2) ~axis:2 ~kind:Axis_type.Weak () in
+  let r1 = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Weak () in
   let rr = U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Reduce () in
   let open U.O in
   let lane = (r3 * int_ 2) + r4 + (r2 * int_ 4) in
@@ -494,8 +494,8 @@ let make_llama_vector_scale backend =
   let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 16) () in
   let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 2) () in
   let p3 = U.param ~slot:3 ~dtype:global_fptr ~shape:(U.const_int 8) () in
-  let ri = U.range ~size:(U.const_int 2) ~axis:0 ~kind:Axis_type.Loop () in
-  let rj = U.range ~size:(U.const_int 8) ~axis:1 ~kind:Axis_type.Loop () in
+  let ri = U.range ~size:(U.const_int 2) ~axis:0 ~kind:Axis_type.Weak () in
+  let rj = U.range ~size:(U.const_int 8) ~axis:1 ~kind:Axis_type.Weak () in
   let open U.O in
   let flat = (ri * int_ 8) + rj in
   let lhs = U.load ~src:(U.index ~ptr:p1 ~idxs:[ flat ] ()) () in
@@ -542,8 +542,8 @@ let make_llama_output_projection backend =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 64) () in
   let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 16) () in
   let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
-  let ri = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Loop () in
-  let rj = U.range ~size:(U.const_int 32) ~axis:2 ~kind:Axis_type.Loop () in
+  let ri = U.range ~size:(U.const_int 2) ~axis:1 ~kind:Axis_type.Weak () in
+  let rj = U.range ~size:(U.const_int 32) ~axis:2 ~kind:Axis_type.Weak () in
   let rr = U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Reduce () in
   let open U.O in
   let input = U.load ~src:(U.index ~ptr:p1 ~idxs:[ (ri * int_ 8) + rr ] ()) () in

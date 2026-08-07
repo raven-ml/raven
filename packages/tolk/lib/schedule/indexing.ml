@@ -142,13 +142,18 @@ type indexing_context = {
   realize_map : (int, realize_state) Hashtbl.t;
   range_map : (int, U.t list * U.t list) Hashtbl.t;
   buf_cache : (int, U.t list) Hashtbl.t;
+  shape_exprs : U.t -> U.t list option;
   mutable range_idx : int;
 }
 
-let create_context () = {
+let default_shape_exprs u =
+  try Some (U.shape u) with Invalid_argument _ -> None
+
+let create_context ?(shape_exprs = default_shape_exprs) () = {
   realize_map = Hashtbl.create 256;
   range_map = Hashtbl.create 256;
   buf_cache = Hashtbl.create 256;
+  shape_exprs;
   range_idx = 0;
 }
 
@@ -161,7 +166,7 @@ let range_get ctx n = Hashtbl.find_opt ctx.range_map (U.tag n)
 let range_set ctx n v = Hashtbl.replace ctx.range_map (U.tag n) v
 
 (* Size-1 dimensions collapse to the constant 0 rather than a range. *)
-let new_range_expr ctx size ?(kind = Axis_type.Loop) () =
+let new_range_expr ctx size ?(kind = Axis_type.Weak) () =
   if U.op size = Ops.Range then size
   else if U.const_int_value (simplify_expr size) = Some 1
           || (U.vmin size = 1 && U.vmax size = 1)
@@ -171,8 +176,54 @@ let new_range_expr ctx size ?(kind = Axis_type.Loop) () =
     ctx.range_idx <- ctx.range_idx + 1;
     U.range ~size ~axis ~kind ()
 
-let new_range ctx size ?(kind = Axis_type.Loop) () =
+let new_range ctx size ?(kind = Axis_type.Weak) () =
   new_range_expr ctx (idx size) ~kind ()
+
+(* Which output axes of [out_shape] are added or stretched relative to
+   [src_shape]: the leading axes that do not exist in the source, plus the
+   axes the source holds at size one and the output does not. *)
+let broadcast_axes src_shape out_shape =
+  let nleft = List.length out_shape - List.length src_shape in
+  if nleft < 0 then
+    invalid_arg "Indexing.broadcast_axes: source outranks its consumer";
+  let stretched =
+    List.filteri
+      (fun i _ ->
+        is_one (List.nth src_shape i)
+        && not (is_one (List.nth out_shape (nleft + i))))
+      (List.init (List.length src_shape) (fun i -> nleft + i))
+  in
+  List.init nleft Fun.id @ stretched
+
+(* Re-express [rngs], the ranges [x] iterates, in the axis frame of its
+   source [src]. A broadcasting op reads a lower-rank source once per value
+   of the axes it adds, so those axes drop out and the stretched ones index
+   the single element the source holds. Ranges pass through unchanged when
+   either shape is unknown: there is no frame to map them into. *)
+let broadcast_rngs ctx x src rngs =
+  match
+    (if Ops.Group.is_broadcastable (U.op x) then ctx.shape_exprs x else None),
+    ctx.shape_exprs src
+  with
+  | Some out_shape, Some src_shape ->
+      let baxes = broadcast_axes src_shape out_shape in
+      let nleft = List.length out_shape - List.length src_shape in
+      List.filteri (fun j _ -> j >= nleft) rngs
+      |> List.mapi (fun j r ->
+           if List.mem (j + nleft) baxes then U.const_like r 0 else r)
+  | _ -> rngs
+
+(* The sources that carry data, as opposed to the shape, bound, and index
+   arguments that share the source array. Only data sources take part in
+   range propagation and get indexed. *)
+let data_srcs op (srcs : U.t array) =
+  let value_src = if Array.length srcs = 0 then [] else [ srcs.(0) ] in
+  match op with
+  | Ops.Param | Ops.Buffer | Ops.Range | Ops.Special | Ops.Bind -> []
+  | Ops.Index | Ops.Slice | Ops.Stage | Ops.Reduce | Ops.After | Ops.End ->
+      value_src
+  | op when Ops.Group.is_movement op -> value_src
+  | _ -> Array.to_list srcs
 
 (* Phase 1: realize map *)
 
@@ -310,24 +361,27 @@ let apply_movement_op ?shape_exprs ~shapes n rngs =
        | _ -> rngs)
   | _ -> assert false
 
-(* Build the direct-consumer map for [root] from its toposort. *)
+(* Build the direct-consumer map for [root] from its toposort, over data
+   sources only: a node reached through a shape or index argument is not a
+   consumer of it. *)
 let consumer_map root =
   let tbl : (int, U.t list) Hashtbl.t = Hashtbl.create 256 in
   let topo = U.toposort root in
   List.iter (fun u -> Hashtbl.replace tbl (U.tag u) []) topo;
   List.iter (fun u ->
-    Array.iter (fun s ->
+    List.iter (fun s ->
       match Hashtbl.find_opt tbl (U.tag s) with
       | Some prev -> Hashtbl.replace tbl (U.tag s) (u :: prev)
-      | None -> ()) (U.src u)) topo;
+      | None -> ()) (data_srcs (U.op u) (U.src u))) topo;
   (fun u -> Option.value ~default:[] (Hashtbl.find_opt tbl (U.tag u))),
   topo
 
-(* Transpose [[a0;a1;...]; [b0;b1;...]; ...] to per-index lists. *)
-let transpose = function
-  | [] -> []
-  | first :: _ as lists ->
-      List.mapi (fun i _ -> List.map (fun l -> List.nth l i) lists) first
+(* Transpose [[a0;a1;...]; [b0;b1;...]; ...] to per-index lists, truncating
+   to the shortest input. *)
+let rec transpose lists =
+  if lists = [] || List.exists (fun l -> l = []) lists then []
+  else
+    List.map List.hd lists :: transpose (List.map List.tl lists)
 
 (* Used only on nodes that come out of [U.ranges], always Range. *)
 let range_axis r = match U.as_range r with
@@ -380,28 +434,33 @@ let check_ending_ranges ctx ~pcontig ~ending_get ~ending_set ~out_shape x out_rn
   end
   end
 
-(* Skip nodes that don't take part in range propagation: index-domain
-   expressions, which carry no committed width, and the [Invalid] sentinel,
-   which is a masked-out marker rather than a value. Propagating ranges through
-   a gate's [Invalid] branch conjoins the gate with its own negation and makes
-   the gate unsatisfiable. *)
+(* Kernel bodies and buffer identities carry no ranges of their own: a CALL,
+   FUNCTION or LINEAR owns its ranges internally, an AFTER is a buffer alias,
+   and MSTACK/MSELECT are treated like a SINK. *)
 let skip_for_rangeify x =
   match U.op x with
-  | Ops.Store | Ops.End -> false
-  | Ops.Call | Ops.Function | Ops.Linear | Ops.Mselect | Ops.Mstack -> true
-  | Ops.After -> true
-  | _ -> Dtype.equal (U.dtype x) Dtype.weakint || U.is_invalid_const x
+  | Ops.Call | Ops.Function | Ops.Linear | Ops.After | Ops.Mselect | Ops.Mstack
+    ->
+      true
+  | _ -> false
 
-(* Merge consumer ranges for nodes with multiple consumers agreeing on
-   rank. Non-trivially new axes get fresh ranges and are recorded in the
-   realize map. *)
+(* Merge consumer ranges for nodes with multiple consumers. Non-trivially new
+   axes get fresh ranges and are recorded in the realize map. *)
 let merge_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs =
   let per_axis = transpose consumer_rngs in
-  let per_axis =
-    List.filteri (fun i _ -> i < List.length out_shape) per_axis in
   let pairs = List.map (fun axis_rngs ->
     List.map get_idx axis_rngs, List.map get_valid axis_rngs) per_axis in
   let all_all_same = List.for_all (fun (lr, _) -> all_same lr) pairs in
+  let axis_size i =
+    match List.nth_opt out_shape i with
+    | Some size -> size
+    | None ->
+        invalid_arg
+          (Printf.sprintf
+             "Indexing.merge_consumer_rngs: %s has rank %d but its consumers \
+              agree on %d axes" (Ops.name (U.op x)) (List.length out_shape)
+             (List.length pairs))
+  in
   let out = ref [] and realize_axes = ref [] in
   List.iteri (fun i (local_rngs, valids) ->
     if all_all_same || (pcontig > 0 && all_same local_rngs) then
@@ -410,7 +469,7 @@ let merge_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs =
            ~b:(List.hd local_rngs) ~c:(U.invalid ())) in
       out := merged :: !out
     else begin
-      out := new_range_expr ctx (List.nth out_shape i) () :: !out;
+      out := new_range_expr ctx (axis_size i) () :: !out;
       realize_axes := i :: !realize_axes
     end) pairs;
   let realize_axes = List.rev !realize_axes in
@@ -421,22 +480,15 @@ let choose_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs =
   match consumer_rngs with
   | [] -> None
   | [rs] -> Some rs
-  | _ ->
-      let n = List.length (List.hd consumer_rngs) in
-      if not (List.for_all (fun l -> List.length l = n) consumer_rngs) then
-        let n_out = List.length out_shape in
-        let out = List.map (fun s -> new_range_expr ctx s ()) out_shape in
-        realize_set ctx x (Realized (List.init n_out Fun.id));
-        Some out
-      else Some (merge_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs)
+  | _ -> Some (merge_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs)
 
 let run_rangeify ?shape_exprs root ~shapes =
-  let ctx = create_context () in
   let shape_exprs =
     match shape_exprs with
     | Some shape_exprs -> shape_exprs
     | None -> fun x -> Option.map (List.map idx) (shapes x)
   in
+  let ctx = create_context ~shape_exprs () in
   generate_realize_map ctx root;
   let consumers, topo = consumer_map root in
   let ending : (int, U.t list) Hashtbl.t = Hashtbl.create 256 in
@@ -449,10 +501,28 @@ let run_rangeify ?shape_exprs root ~shapes =
     if skip_for_rangeify x then () else begin
       ending_set x (List.concat_map ending_get (consumers x));
       let out_shape = Option.value ~default:[] (shape_exprs x) in
+      (* The ranges the consumers iterate but this node is broadcast over:
+         they end here, because the value is computed once and reused across
+         them. A REDUCE ends them ahead of the merge below, which is what
+         puts the reduce before the broadcast. *)
+      let broadcast_ending_ranges =
+        List.concat_map
+          (fun c ->
+            match range_get ctx c, ctx.shape_exprs x, ctx.shape_exprs c with
+            | Some (c_in, _), Some x_shape, Some c_shape
+              when Ops.Group.is_broadcastable (U.op c) ->
+                List.filter_map (List.nth_opt c_in)
+                  (broadcast_axes x_shape c_shape)
+            | _ -> [])
+          (consumers x)
+        |> U.sink |> U.ranges
+      in
+      if U.op x = Ops.Reduce then
+        ending_set x (ending_get x @ broadcast_ending_ranges);
       let consumer_rngs =
         List.filter_map
           (fun c -> match range_get ctx c with
-             | Some (in_rngs, _) -> Some in_rngs
+             | Some (in_rngs, _) -> Some (broadcast_rngs ctx c x in_rngs)
              | None -> None)
           (consumers x)
       in
@@ -475,6 +545,7 @@ let run_rangeify ?shape_exprs root ~shapes =
                 ~out_shape x out_rngs
             else out_rngs
           in
+          ending_set x (ending_get x @ broadcast_ending_ranges);
           let rngs =
             if is_movement_op x then
               apply_movement_op ~shape_exprs ~shapes x out_rngs
@@ -547,23 +618,18 @@ let remove_movement_op ctx x =
     else None
   else None
 
-(* Direct buffer source: insert an INDEX into [s] using [x]'s input ranges. *)
-let index_direct_buffer in_rngs s = U.index ~ptr:s ~idxs:in_rngs ()
-
-(* Realized source: wrap in STAGE (or END for STORE) and INDEX. *)
-let wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~realized_axes s =
-  let out_rngs =
+(* Realized source: wrap in STAGE (or END for STORE) and INDEX. [src_rngs]
+   are the parent's input ranges re-expressed in [s]'s axis frame, so the
+   stage's closed ranges and the index sources select the same axes. *)
+let wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~src_rngs ~realized_axes
+    s =
+  let _, out_rngs =
     match range_get ctx s with
-    | Some (_, o) -> o
+    | Some entry -> entry
     | None ->
-        let shape =
-          try U.max_shape s with Invalid_argument _ -> []
-        in
-        let out =
-          List.map (fun size -> new_range_expr ctx (idx size) ()) shape
-        in
-        if out <> [] then range_set ctx s (out, out);
-        out
+        invalid_arg
+          (Printf.sprintf "Indexing.wrap_realized_src: %s is realized but has \
+                           no ranges" (Ops.name (U.op s)))
   in
   let closed = select_axes realized_axes out_rngs in
   match U.op s with
@@ -583,34 +649,38 @@ let wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~realized_axes s =
       let opts : U.stage_opts =
         { device = U.device_of s; addrspace; removable } in
       let buf = U.stage ~src:s ~ranges:closed ~opts in
-      match parent_rngs with
-      | Some (in_rngs, _) ->
-          let idxs = select_axes realized_axes in_rngs in
-          U.index ~ptr:buf ~idxs ()
-      | None -> buf
+      if Option.is_none parent_rngs then buf
+      else U.index ~ptr:buf ~idxs:(select_axes realized_axes src_rngs) ()
 
 (* Rewrite each child of [x], inserting INDEX for direct buffer sources and
-   STAGE/INDEX (or END for stores) for realized sources. Movement ops keep
-   their shape children ([i > 0]) untouched. *)
+   STAGE/INDEX (or END for stores) for realized sources. Shape, bound and
+   index arguments are left untouched. *)
 let create_stage_and_index_srcs ctx x =
   let parent_is_copy = U.op x = Ops.Copy in
   let parent_rngs = range_get ctx x in
-  let movement = is_movement_op x in
+  let data_src_count = List.length (data_srcs (U.op x) (U.src x)) in
   let rewrite_child i s =
-    if movement && i > 0 then s
-    else if direct_buffer_src s then
+    let src_rngs =
       match parent_rngs with
-      | Some (in_rngs, _) -> index_direct_buffer in_rngs s
-      | _ -> s
+      | Some (in_rngs, _) -> broadcast_rngs ctx x s in_rngs
+      | None -> []
+    in
+    if direct_buffer_src s then
+      if Option.is_some parent_rngs && i < data_src_count then
+        U.index ~ptr:s ~idxs:src_rngs ()
+      else s
     else match realize_get ctx s with
     | Some (Realized realized_axes) ->
-        wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~realized_axes s
+        wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~src_rngs
+          ~realized_axes s
     | _ -> s
   in
   List.mapi rewrite_child (Array.to_list (U.src x))
 
 (* Rebuild [x] with its children indexed, or [None] if nothing changed.
-   STAGE and INDEX nodes are left alone. *)
+   STAGE and INDEX nodes are left alone. The rangeify maps are keyed on the
+   nodes the walk started from; a rebuilt node is deliberately absent, so the
+   rewrite reaches a fixed point instead of indexing its sources twice. *)
 let create_stage_and_index ctx x =
   match U.op x with
   | Ops.Stage | Ops.Index -> None
@@ -618,14 +688,7 @@ let create_stage_and_index ctx x =
       let old_children = Array.to_list (U.src x) in
       let new_children = create_stage_and_index_srcs ctx x in
       if List.for_all2 ( == ) old_children new_children then None
-      else begin
-        let x' = U.replace x ~src:(Array.of_list new_children) () in
-        (match realize_get ctx x with
-         | Some v -> realize_set ctx x' v | None -> ());
-        (match range_get ctx x with
-         | Some v -> range_set ctx x' v | None -> ());
-        Some x'
-      end
+      else Some (U.replace x ~src:(Array.of_list new_children) ())
 
 let with_indexed_children ctx x =
   Option.value (create_stage_and_index ctx x) ~default:x
@@ -644,15 +707,11 @@ let convert_reduce ctx x =
 (* PAD -> WHERE(valid, src, 0). *)
 let convert_pad_to_where ctx x =
   match U.op x, range_get ctx x with
-  | Ops.Pad, Some ((in_rngs, _) as entry) ->
+  | Ops.Pad, Some (in_rngs, _) ->
       let valid = prod_valid (List.map get_valid in_rngs) in
       let bx = with_indexed_children ctx x in
       let src = (U.src bx).(0) in
-      let ret =
-        U.alu_ternary ~op:Ops.Where ~a:valid ~b:src ~c:(U.zero_like x)
-      in
-      range_set ctx ret entry;
-      Some ret
+      Some (U.alu_ternary ~op:Ops.Where ~a:valid ~b:src ~c:(U.zero_like x))
   | _ -> None
 
 (* STACK -> nested WHERE selecting a source on the leading range.
@@ -695,16 +754,6 @@ let fix_deviceless_stages device root =
         (fix_deviceless_stage ~device) root
 
 let apply_rangeify_pass ctx root =
-  let on_rebuild ~old_n ~new_n =
-    if U.tag old_n <> U.tag new_n then begin
-      (match realize_get ctx old_n with
-       | Some v when not (realize_mem ctx new_n) -> realize_set ctx new_n v
-       | _ -> ());
-      (match range_get ctx old_n with
-       | Some v when Option.is_none (range_get ctx new_n) -> range_set ctx new_n v
-       | _ -> ())
-    end
-  in
   let device = U.device_of root in
   (* The op-specific converters (Reduce, Pad, Stack) fall through to the
      generic stage-and-index rewrite, which itself falls through to
@@ -715,7 +764,7 @@ let apply_rangeify_pass ctx root =
     | None -> remove_movement_op ctx n
   in
   let root =
-    U.graph_rewrite ~name:"apply rangeify" ~bottom_up:true ~on_rebuild
+    U.graph_rewrite ~name:"apply rangeify" ~bottom_up:true
       (fun n ->
         let specific =
           match U.op n with

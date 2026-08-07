@@ -103,22 +103,24 @@ let rule_nested_div =
     then Some (floordiv Uop.O.(x + (a * c)) Uop.O.(c * d))
     else None
 
-(* Rule 1b: (x+c)//d  ->  ((x+c%d)//d + c//d) when c%d != c and d > 0. *)
-let rule_add_const_div =
+(* Rule 1b: split the multiple of [d] out of the constant, for any [d <> 0]:
+   (x+c)//d -> (x+c%d)//d + c//d, and (x+c)%d -> (x+c%d)%d. *)
+let rule_add_const_divmod =
   let open Upat in
   let x = var_dtype "x" (exact_dtype Dtype.weakint)
   and c = cvar ~name:"c" ()
   and d = cvar ~name:"d" () in
-  let n = alu ~name:"n" [ x; c ] Ops.Add in
-  floordiv_pat n d => fun bs ->
-    let x = bs $ "x" and c = bs $ "c" and d = bs $ "d" in
+  let sum = alu [ x; c ] Ops.Add in
+  ops ~name:"n" ~src:[ sum; d ] [ Ops.Floordiv; Ops.Floormod ] => fun bs ->
+    let n = bs $ "n" and x = bs $ "x" and c = bs $ "c" and d = bs $ "d" in
     match Uop.const_int_value c, Uop.const_int_value d with
-    | Some cv, Some dv when dv > 0 ->
+    | Some cv, Some dv when dv <> 0 ->
         (match floor_mod_checked cv dv, floor_div_checked cv dv with
          | Some c_mod_v, Some c_div_v when c_mod_v <> cv ->
-             let c_mod = Uop.const_like c c_mod_v in
-             let c_div = Uop.const_like c c_div_v in
-             Some Uop.O.(floordiv (x + c_mod) d + c_div)
+             let split = Uop.O.(x + Uop.const_like c c_mod_v) in
+             if Uop.op n = Ops.Floordiv
+             then Some Uop.O.(floordiv split d + Uop.const_like c c_div_v)
+             else Some (floormod split d)
          | _ -> None)
     | _ -> None
 
@@ -509,6 +511,6 @@ let rule_fold_divmod_general =
 let div_and_mod_symbolic : Upat.Pattern_matcher.t =
   Upat.Pattern_matcher.make [
     rule_nested_div;
-    rule_add_const_div;
+    rule_add_const_divmod;
     rule_fold_divmod_general;
   ]

@@ -29,13 +29,12 @@ let floordiv lhs rhs = U.alu_binary ~op:Ops.Floordiv ~lhs ~rhs
 let floormod lhs rhs = U.alu_binary ~op:Ops.Floormod ~lhs ~rhs
 let neg src = U.alu_unary ~op:Ops.Neg ~src
 let mulacc a b c = U.alu_ternary ~op:Ops.Mulacc ~a ~b ~c
-let range size = U.range ~size ~axis:0 ~kind:Axis_type.Loop ()
+let range size = U.range ~size ~axis:0 ~kind:Axis_type.Weak ()
 let special dim size =
   U.special ~name:(Gpu_dim.to_special_name dim) ~size ~dtype:(U.dtype size) ()
 
-let spec_of ?estimates ?aux program =
-  Program_spec.of_program ~name:"kern" ~src:"" ~device:"CPU" ?estimates ?aux
-    program
+let spec_of ?estimates program =
+  Program_spec.of_program ~name:"kern" ~src:"" ~device:"CPU" ?estimates program
 
 let empty_spec ?estimates () = spec_of ?estimates []
 
@@ -173,7 +172,6 @@ let () =
             in
             let info = Program_spec.program_info spec in
             equal string "kern" info.name;
-            equal (list string) [] info.aux;
             equal (list int) [ 0; 1 ] info.globals;
             equal (list int) [ 0 ] info.outs;
             equal (list int) [ 1 ] info.ins;
@@ -184,10 +182,6 @@ let () =
             | _ -> failwith "expected symbolic launch metadata"
             end;
             equal (option (list int)) (Some [ 1; 1; 1 ]) info.local_size);
-          test "program_info preserves renderer aux metadata" (fun () ->
-            let spec = spec_of ~aux:[ "((0,dtypes.float.ptr(-1)))" ] [] in
-            let info = Program_spec.program_info spec in
-            equal (list string) [ "((0,dtypes.float.ptr(-1)))" ] info.aux);
           test "duplicate launch axis is rejected" (fun () ->
             let c4 = i32 4 in
             let gid0 = special (Gpu_dim.Group_id 0) c4 in
@@ -246,6 +240,19 @@ let () =
             let end_ = U.end_ ~value:body ~ranges:[ r ] in
             let est = E.of_program [ c10; r; a; body; end_ ] in
             expect_int_estimate "ops" 10 est.ops);
+          test "an unbounded loop contributes no multiplier" (fun () ->
+            (* A void range has no trip count, so its body is counted once
+               rather than at the size sitting in its source. *)
+            let c10 = i32 10 in
+            let r =
+              U.range ~size:c10 ~axis:0 ~kind:Axis_type.Weak
+                ~dtype:Dtype.void ()
+            in
+            let a = f32 1.0 in
+            let body = add a a in
+            let end_ = U.end_ ~value:body ~ranges:[ r ] in
+            let est = E.of_program [ c10; r; a; body; end_ ] in
+            expect_int_estimate "ops" 1 est.ops);
           test "special multiplier stacks" (fun () ->
             let c8 = i32 8 in
             let idx = special (Gpu_dim.Global_idx 0) c8 in

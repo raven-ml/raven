@@ -26,8 +26,6 @@ let shape_arg_of_ints dims = shape_arg (List.map U.const_int dims)
 
 let shape_opt = U.shape_opt
 
-let dim_is_one dim = match U.const_int_value dim with Some 1 -> true | _ -> false
-
 let argsort order =
   order |> List.mapi (fun i v -> (v, i)) |> List.sort compare |> List.map snd
 
@@ -35,61 +33,7 @@ let all_same = function
   | [] -> true
   | first :: rest -> List.for_all (List.equal U.equal first) rest
 
-let align_left rank shape =
-  List.init (rank - List.length shape) (fun _ -> U.const_int 1) @ shape
-
-(* Reshape [src] to [shape], skipping the reshape when the shape is unchanged. *)
-let reshape_to src shape =
-  match shape_opt src with
-  | Some s when List.equal U.equal s shape -> src
-  | _ -> U.reshape ~src ~shape:(shape_arg shape)
-
-(* Broadcast [src] to [new_shape], stretching size-one axes. [Uop.expand] only
-   prepends leading axes, so the axes that must stretch — the newly-prepended
-   leading axes and each own size-one axis whose target differs — are squeezed
-   out, re-introduced by a single leading EXPAND, and permuted back into place. *)
-let broadcast_to src new_shape =
-  match shape_opt src with
-  | None -> src
-  | Some s ->
-      if List.equal U.equal s new_shape then src
-      else
-        let m = List.length s and rank = List.length new_shape in
-        let n_left = rank - m in
-        let s_arr = Array.of_list s and t_arr = Array.of_list new_shape in
-        let axes = List.init m Fun.id in
-        let expand_at =
-          List.filter
-            (fun i -> dim_is_one s_arr.(i) && not (dim_is_one t_arr.(n_left + i)))
-            axes
-        in
-        let kept = List.filter (fun i -> not (List.mem i expand_at)) axes in
-        let squeezed = reshape_to src (List.map (fun i -> s_arr.(i)) kept) in
-        let prepend =
-          List.init n_left (fun i -> t_arr.(i))
-          @ List.map (fun i -> t_arr.(n_left + i)) expand_at
-        in
-        let expanded = U.expand ~src:squeezed ~dims:(shape_arg prepend) in
-        let idx_in lst x =
-          let rec go k = function
-            | [] -> raise Not_found
-            | y :: _ when y = x -> k
-            | _ :: tl -> go (k + 1) tl
-          in
-          go 0 lst
-        in
-        let n_expand = List.length expand_at in
-        let order =
-          List.init n_left Fun.id
-          @ List.map
-              (fun i ->
-                n_left
-                + (if List.mem i expand_at then idx_in expand_at i
-                   else n_expand + idx_in kept i))
-              axes
-        in
-        if order = List.init rank Fun.id then expanded
-        else U.permute ~src:expanded ~order
+let broadcast_to src shape = U.broadcast_to ~src ~shape:(shape_arg shape)
 
 (* Value-lane INDEX selecting lane [i] of a stacked value. *)
 let lane src i = U.index ~ptr:src ~idxs:[ int_ i ] ()
@@ -287,22 +231,15 @@ let wmma_add =
 (* Broadcast every operand of a binary / ternary / store node to a common
    shape. STORE's destination is an INDEX and carries a shape like any other
    source, so it broadcasts through the same uniform path. *)
-let broadcast_binary node =
+let expand_broadcast node =
   let srcs = Array.to_list (U.src node) in
   let shapes = List.map shape_opt srcs in
   if List.exists Option.is_none shapes || all_same (List.filter_map Fun.id shapes)
   then None
   else
-    let shapes = List.map Option.get shapes in
-    let target = U.broadcast_shape shapes in
-    let rank = List.length target in
-    let src' =
-      List.map2
-        (fun u s -> broadcast_to (reshape_to u (align_left rank s)) target)
-        srcs shapes
-    in
-    if List.for_all2 U.equal srcs src' then None
-    else Some (U.replace node ~src:(Array.of_list src') ())
+    let target = U.broadcast_shape (List.filter_map Fun.id shapes) in
+    let src' = List.map (fun u -> broadcast_to u target) srcs in
+    Some (U.replace node ~src:(Array.of_list src') ())
 
 (* Broadcast then devectorise WMMA operands (all but the lane axis). *)
 let broadcast_and_devec_wmma node =
@@ -317,17 +254,12 @@ let broadcast_and_devec_wmma node =
       if all_same prefixes then None
       else
         let target = U.broadcast_shape prefixes in
-        let rank = List.length target in
         let normalized =
           List.map
             (fun u ->
               match List.rev (U.shape u) with
               | [] -> u
-              | lane :: _ ->
-                  let pre = prefix_of u in
-                  broadcast_to
-                    (reshape_to u (align_left rank pre @ [ lane ]))
-                    (target @ [ lane ]))
+              | lane :: _ -> broadcast_to u (target @ [ lane ]))
             srcs
         in
         let rec product = function
@@ -348,7 +280,7 @@ let broadcast_and_devec_wmma node =
         in
         Some (U.reshape ~src:(U.stack lanes) ~shape:(shape_arg (U.shape node))))
 
-let unbroadcast =
+let pm_expand_broadcast =
   let open Upat in
   PM.compose
     [
@@ -356,24 +288,43 @@ let unbroadcast =
       PM.make
         [
           ops ~name:"x" (Ops.Store :: Ops.Group.broadcastable)
-          => (fun bs -> broadcast_binary (bs $ "x"));
+          => (fun bs -> expand_broadcast (bs $ "x"));
           op ~name:"b" Ops.Wmma => (fun bs -> broadcast_and_devec_wmma (bs $ "b"));
         ];
     ]
 
 (* devectorizer2 *)
 
-(* Scalarise a shaped node lane by lane, then re-stack. *)
+(* Rebuild one lane of [node] over already-scalarised sources. An Invalid
+   source is bool-typed and carries no shape, so the lane it feeds can be
+   narrower than the vector node: route ALU lanes through the smart
+   constructors so each derives its own dtype instead of inheriting the
+   node's. CAST/BITCAST take their dtype from the op, not the sources. *)
+let rebuild_lane node srcs =
+  let op = U.op node in
+  if Ops.Group.is_unary op then U.alu_unary ~op ~src:srcs.(0)
+  else if Ops.Group.is_binary op then
+    U.alu_binary ~op ~lhs:srcs.(0) ~rhs:srcs.(1)
+  else if Ops.Group.is_ternary op then
+    U.alu_ternary ~op ~a:srcs.(0) ~b:srcs.(1) ~c:srcs.(2)
+  else U.replace node ~src:srcs ()
+
+(* Scalarise a shaped node lane by lane, then re-stack. A source that is a
+   bare Invalid matches any shape and passes through unindexed. *)
 let do_devectorize node =
   match U.shape_opt node with
   | None | Some [] -> None
-  | Some _ ->
-      let src_shapes = Array.to_list (U.src node) |> List.map U.shape_opt in
-      if List.exists Option.is_none src_shapes
-         || not (all_same (List.filter_map Fun.id src_shapes))
-      then None
+  | Some shape ->
+      let srcs = U.src node in
+      let is_invalid_src s = U.is_invalid_const (U.base s) in
+      let conforms s =
+        is_invalid_src s
+        || match U.shape_opt s with
+           | Some s_shape -> List.equal U.equal s_shape shape
+           | None -> false
+      in
+      if not (Array.for_all conforms srcs) then None
       else
-        let shape = U.max_shape node in
         let rec product = function
           | [] -> [ [] ]
           | n :: ns ->
@@ -382,14 +333,17 @@ let do_devectorize node =
                 (List.init n Fun.id)
         in
         let lanes =
-          product shape
+          product (U.max_shape node)
           |> List.map (fun idxs ->
-                 U.replace node
-                   ~src:(Array.map (fun s -> U.index ~ptr:s ~idxs ()) (U.src node))
-                   ())
+                 rebuild_lane node
+                   (Array.map
+                      (fun s ->
+                        if is_invalid_src s then U.base s
+                        else U.index ~ptr:s ~idxs ())
+                      srcs))
         in
         if U.op node = Ops.Store then Some (U.group lanes)
-        else Some (U.reshape ~src:(U.stack lanes) ~shape:(shape_arg (U.shape node)))
+        else Some (U.reshape ~src:(U.stack lanes) ~shape:(shape_arg shape))
 
 (* Unpack WMMA: replace each non-STACK source with an explicit STACK of its
    scalar elements. *)
@@ -457,13 +411,6 @@ let devectorizer2 =
             if U.shape x = [] && U.max_shape out = [ n ] then
               Some (U.stack (List.init n (fun _ -> x)))
             else None );
-          (* INDEX on INDEX is INDEX *)
-          ( op ~name:"idx2" ~src:[ op ~name:"idx1" ~allow_any_len:true Ops.Index ]
-              ~allow_any_len:true Ops.Index
-          => fun bs ->
-            let idx1 = bs $ "idx1" and idx2 = bs $ "idx2" in
-            let tail u = Array.sub (U.src u) 1 (Array.length (U.src u) - 1) |> Array.to_list in
-            Some (U.index ~ptr:(U.src idx1).(0) ~idxs:(tail idx1 @ tail idx2) ()) );
         ]
 
 (* remove reduces *)
@@ -777,6 +724,7 @@ let pm_reduce_local ctx =
       wmma_add;
       PM.make
         [
+          fix_group_for_reduce;
           op ~name:"r" ~allow_any_len:true Ops.Reduce
           => (fun bs -> reduce_ranges_to_acc ctx (bs $ "r"));
           op ~name:"r" Ops.Reduce => (fun bs -> expand_horizontal_reduce (bs $ "r"));
@@ -785,16 +733,7 @@ let pm_reduce_local ctx =
       pm_clean_up_group_sink;
     ]
 
-let pm_fix_group_for_reduce = PM.make [ fix_group_for_reduce ]
-
 let pm_reduce root =
-  (* Split grouped reduces first so the accumulator-slot precompute sees the
-     partial and final reduces [fix_group_for_reduce] introduces; a tag-keyed
-     map can only number reduces that exist when it is built. *)
-  let root =
-    U.graph_rewrite ~name:"fix group for reduce"
-      (PM.rewrite pm_fix_group_for_reduce) root
-  in
   let ctx = { acc_num = 0 } in
   U.graph_rewrite ~name:"remove reduces"
     (U.first_match [ PM.rewrite mop_cleanup; PM.rewrite (pm_reduce_local ctx) ])
@@ -838,9 +777,7 @@ let add_local_buffer_rule counter node =
           ~addrspace:opts.addrspace ()
       in
       let store = U.store ~dst:(U.index ~ptr:buf ~idxs:ranges ()) ~value:src () in
-      Some
-        (U.after ~src:buf
-           ~deps:[ U.barrier ~srcs:[ U.end_ ~value:store ~ranges ] () ])
+      Some (U.after ~src:buf ~deps:[ U.end_ ~value:store ~ranges ])
 
 let pm_add_local_buffers counter root =
   U.graph_rewrite ~name:"add local buffers"
@@ -860,6 +797,89 @@ let pm_cast_float_alu =
         let u = bs $ "u" and x = bs $ "x" in
         if Dtype.equal (U.dtype x) (U.dtype u) then None
         else Some (U.replace u ~src:[| U.cast ~src:x ~dtype:(U.dtype u) |] ()) );
+    ]
+
+(* implicit barriers *)
+
+(* Workgroup barriers are not written by the pass that introduces shared
+   memory; they are derived here from the two orderings that need them.
+
+   A read-after-write pair is an AFTER into LOCAL memory whose dependencies
+   contain a LOCAL store: every thread must finish storing before any thread
+   reads. A write-after-read pair is a LOCAL buffer both stored and loaded
+   inside one loop body: the next iteration's stores must not overtake this
+   iteration's loads, so the barrier goes at the end of the body. *)
+
+let is_local_store x =
+  U.op x = Ops.Store && U.addrspace x = Some Dtype.Local
+
+let add_raw_barrier node =
+  let deps = Array.to_list (U.src node) |> List.tl in
+  if U.addrspace node <> Some Dtype.Local then None
+  else
+    let reachable =
+      U.toposort ~gate:(fun x -> U.op x <> Ops.Barrier) (U.sink deps)
+    in
+    if not (List.exists is_local_store reachable) then None
+    else Some (U.after ~src:(U.src node).(0) ~deps:[ U.barrier ~srcs:deps () ])
+
+(* Only ranges that are actually looped over can carry a value from one
+   iteration into the next. *)
+let range_repeats kind =
+  match (kind : Axis_type.t) with
+  | Axis_type.Reduce | Axis_type.Weak | Axis_type.Loop -> true
+  | Axis_type.Device | Axis_type.Global | Axis_type.Warp | Axis_type.Local
+  | Axis_type.Group_reduce | Axis_type.Upcast | Axis_type.Unroll
+  | Axis_type.Thread | Axis_type.Placeholder ->
+      false
+
+let add_war_barrier node =
+  match U.as_end node with
+  | None -> None
+  | Some { value; ranges } ->
+      let loops =
+        List.filter
+          (fun r ->
+            match U.as_range r with
+            | Some { kind; _ } -> range_repeats kind && U.vmax r > 0
+            | None -> false)
+          ranges
+      in
+      if loops = [] || U.op value = Ops.Barrier then None
+      else
+        let body = U.toposort value in
+        let stored_bufs =
+          List.filter_map
+            (fun x ->
+              if
+                is_local_store x
+                && List.exists
+                     (fun r -> List.exists (U.equal r) (U.ranges x))
+                     loops
+              then Some (U.buf_uop x)
+              else None)
+            body
+        in
+        let loads =
+          List.filter
+            (fun x ->
+              U.op x = Ops.Load
+              && List.exists
+                   (U.equal (U.buf_uop (U.src x).(0)))
+                   stored_bufs)
+            body
+        in
+        if loads = [] then None
+        else
+          Some
+            (U.end_ ~value:(U.barrier ~srcs:(value :: loads) ()) ~ranges)
+
+let pm_implicit_barriers =
+  let open Upat in
+  PM.make
+    [
+      op ~name:"after" Ops.After => (fun bs -> add_raw_barrier (bs $ "after"));
+      op ~name:"end" Ops.End => (fun bs -> add_war_barrier (bs $ "end"));
     ]
 
 (* number params *)
@@ -902,11 +922,18 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   let rewrite ?name ?bottom_up rule = U.graph_rewrite ?name ?bottom_up rule in
   let pm pm' = PM.rewrite pm' in
 
-  (* postopt symbolic: [sym + pm_move_where_on_load + pm_flatten_range]. *)
+  (* postopt symbolic:
+     [sym + pm_move_where_on_load + pm_flatten_range + pm_reduce_unparented].
+     A reduce whose body folded to a constant (e.g. [x * 0]) has no parented
+     ranges left; collapsing it here keeps it out of the expander. *)
   let sink =
     rewrite ~name:"postopt symbolic"
       (U.first_match
-         [ pm PM.(sym ++ Symbolic.pm_move_where_on_load); Simplify.flatten_range ])
+         [
+           pm PM.(sym ++ Symbolic.pm_move_where_on_load);
+           Simplify.flatten_range;
+           pm Simplify.pm_reduce_unparented;
+         ])
       sink
   in
 
@@ -928,37 +955,45 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   (* add gpu dims: [pm_add_gpudims]. *)
   let sink = Gpudims.pm_add_gpudims ren sink in
 
-  (* unbroadcast / add loads: [symbolic_simple + unbroadcast + pm_add_loads]. *)
+  (* expand broadcast / add loads:
+     [symbolic_simple + pm_expand_broadcast + pm_add_loads]. *)
   let sink =
-    rewrite ~name:"unbroadcast / add loads"
-      (pm PM.(symbolic_simple ++ unbroadcast ++ pm_add_loads))
+    rewrite ~name:"expand broadcast / add loads"
+      (pm PM.(symbolic_simple ++ pm_expand_broadcast ++ pm_add_loads))
       sink
   in
 
-  (* devectorize:
-     [symbolic_simple + (mop_cleanup + pm_mops + devectorizer2 rules)]. *)
+  (* devectorize: [symbolic_simple + (mop_cleanup + pm_mops + devectorizer2
+     rules) + indexing_simplify]. Index simplification runs in the same
+     rewrite so a devectorised index is simplified as soon as it appears. *)
   let sink =
     rewrite ~name:"devectorize2"
       (U.first_match
-         [ pm symbolic_simple; pm mop_cleanup; pm_mops; pm devectorizer2 ])
+         [
+           pm symbolic_simple;
+           pm Symbolic.pm_fold_cast_const;
+           pm mop_cleanup;
+           pm_mops;
+           pm devectorizer2;
+           pm Coalesce.indexing_simplify;
+         ])
       sink
   in
 
-  (* simplify load/store indexing: [indexing_simplify]. *)
+  (* some coalescing misses without this: [sym + pm_fold_cast_const]. *)
   let sink =
-    rewrite ~name:"simplify load/store indexing" (pm Coalese.indexing_simplify) sink
+    rewrite ~name:"early symbolic"
+      (pm PM.(sym ++ Symbolic.pm_fold_cast_const))
+      sink
   in
 
-  (* some coalesing misses without this: [sym]. *)
-  let sink = rewrite ~name:"early symbolic" (pm sym) sink in
-
-  (* do memory coalesing (late). *)
-  let sink = Coalese.memory_coalesing ren sink in
+  (* do memory coalescing (late). *)
+  let sink = Coalesce.memory_coalescing ren sink in
 
   (* add images: [symbolic_simple + ew_devectorizer + pm_simplify_add_image]. *)
   let sink =
     rewrite ~name:"add images" ~bottom_up:true
-      (pm PM.(symbolic_simple ++ ew_devectorizer ++ Coalese.pm_simplify_add_image ren))
+      (pm PM.(symbolic_simple ++ ew_devectorizer ++ Coalesce.pm_simplify_add_image ren))
       sink
   in
 
@@ -969,7 +1004,7 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   let sink =
     rewrite ~name:"lower all index dtypes"
       (U.first_match
-         [ pm (Weak.pm_lower_index_dtype ()); pm Coalese.indexing_simplify ])
+         [ pm (Weak.pm_lower_index_dtype ()); pm Coalesce.indexing_simplify ])
       sink
   in
 
@@ -979,11 +1014,16 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   (* cast float alu operands: [pm_cast_float_alu]. *)
   let sink = rewrite ~name:"cast float alu operands" (pm pm_cast_float_alu) sink in
 
-  (* early decompositions: [symbolic_simple + get_simplifying_rewrite_patterns]. *)
+  (* early decompositions:
+     [symbolic_simple + pm_fold_cast_const + get_simplifying_rewrite_patterns]. *)
   let ops = supported_ops_of ren in
   let pm_decomp =
     U.first_match
-      [ pm symbolic_simple; Decomp_op.get_simplifying_rewrite_patterns ops ]
+      [
+        pm symbolic_simple;
+        pm Symbolic.pm_fold_cast_const;
+        Decomp_op.get_simplifying_rewrite_patterns ops;
+      ]
   in
   let sink = rewrite ~name:"early decompositions" pm_decomp sink in
 
@@ -1023,6 +1063,13 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
            pm Symbolic.pm_remove_invalid;
          ])
       sink
+  in
+
+  (* add implicit barriers: stores and loads through LOCAL memory that are
+     ordered by AFTER, or that race across loop iterations, need a workgroup
+     barrier between them. *)
+  let sink =
+    rewrite ~name:"add implicit barriers" (pm pm_implicit_barriers) sink
   in
 
   (* add control flow: [pm_add_control_flow], bottom-up. *)

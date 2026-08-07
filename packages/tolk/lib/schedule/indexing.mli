@@ -48,25 +48,32 @@ type realize_state =
 type indexing_context = {
   realize_map : (int, realize_state) Hashtbl.t;
   range_map : (int, Tolk_uop.Uop.t list * Tolk_uop.Uop.t list) Hashtbl.t;
-      (** Maps {!Tolk_uop.Uop.tag} to [(input_ranges, output_ranges)]. *)
+      (** Maps {!Tolk_uop.Uop.tag} to [(input_ranges, output_ranges)].
+          Only nodes of the graph {!run_rangeify} walked are present; a node
+          rebuilt by {!apply_rangeify_pass} is deliberately absent. *)
   buf_cache : (int, Tolk_uop.Uop.t list) Hashtbl.t;
       (** Memoised reachable buffer-boundary nodes per node tag.  Shared
           across buffer-limiting rewrites so a subtree's reachable set is
           computed once. *)
+  shape_exprs : Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option;
+      (** Symbolic shape of a node, as seen by every phase. *)
   mutable range_idx : int;
       (** Monotonic counter for fresh range axis indices. *)
 }
 (** Per-node state populated by {!run_rangeify}.  All maps are keyed
     by {!Tolk_uop.Uop.tag}. *)
 
-val create_context : unit -> indexing_context
-(** [create_context ()] is a fresh, empty context. *)
+val create_context :
+  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) -> unit ->
+  indexing_context
+(** [create_context ()] is a fresh, empty context.  [shape_exprs] defaults to
+    the node's own shape. *)
 
 val new_range :
   indexing_context -> int -> ?kind:Tolk_uop.Axis_type.t -> unit ->
   Tolk_uop.Uop.t
 (** [new_range ctx size ?kind ()] is a fresh RANGE node over
-    \[[0];[size-1]\] with axis kind [kind] (default {!Tolk_uop.Axis_type.Loop}).
+    \[[0];[size-1]\] with axis kind [kind] (default {!Tolk_uop.Axis_type.Weak}).
     Returns a constant [0] when [size] is [1]. *)
 
 val new_range_expr :

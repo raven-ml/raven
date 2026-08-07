@@ -74,6 +74,13 @@ let get_idx buf = match U.as_index buf with
   | Some _ -> None
   | None -> None
 
+(* The validity predicate guarding [buf]'s index, if it carries one. *)
+let get_valid buf = match U.as_index buf with
+  | Some { idxs = [ idx ]; _ } when U.op idx = Ops.Where
+                                    && strip_where_invalid idx != idx ->
+      Some (U.src idx).(0)
+  | Some _ | None -> None
+
 (* [u] is [rng * c] or [c * rng] for an integer constant [c]; return [c]. *)
 let mul_by_rng_const rng u = match U.op u, U.src u with
   | Ops.Mul, [| a; b |] when a == rng && is_const b -> U.const_int_value b
@@ -92,38 +99,46 @@ let try_opt_on_rng tk rng sizes mk_opt =
       let axis = index_of_rng (P.rngs tk) rng in
       if axis < 0 then None else P.apply_opt tk (mk_opt axis sz)
 
-(* Try tensor core optimization. Returns [Some k] on success. *)
+(* Try tensor core optimization. Returns [Some k] on success.
+
+   The X/Y/reduce axis triple is drawn from an ordered list of candidates
+   and the leading ones can be rejected (a padded axis that will not fit, an
+   X or Y axis that is itself reduced), so each candidate is tried in turn
+   on a fresh copy. *)
 let try_tensor_cores k =
   let reduce_axes = P.axes_of k [ Axis_type.Group_reduce; Axis_type.Reduce ] in
   let use_tc = use_tc () in
   let tc_opt = tc_opt () in
   if use_tc <= 0 || (List.length reduce_axes <> 1 && tc_opt < 1) then None
   else
-    let tk = P.copy k in
-    let tc_result =
-      try
-        P.apply_opt tk
-          (U.Opt.Tc
-             { axis = 0; tc_select = tc_select (); tc_opt; use_tc })
-      with P.Opt_error _ -> None
+    let rec try_axis axis =
+      if axis > 2 then None
+      else
+        let tk = P.copy k in
+        let tc_result =
+          try
+            P.apply_opt tk
+              (U.Opt.Tc { axis; tc_select = tc_select (); tc_opt; use_tc })
+          with P.Opt_error _ -> None
+        in
+        match tc_result with
+        | None -> try_axis (axis + 1)
+        | Some (n_rng, m_rng) ->
+            let rngs = [| n_rng; m_rng |] in
+            List.iter (fun d ->
+              let upcast axis amount = U.Opt.Upcast { axis; amount } in
+              match try_opt_on_rng tk rngs.(d) [ 5; 4; 3; 2 ] upcast with
+              | Some (replaced, _) -> rngs.(d) <- replaced
+              | None -> ()) [ 1; 0 ];
+            let local axis amount = U.Opt.Local { axis; amount } in
+            ignore (try_opt_on_rng tk rngs.(0) [ 4; 2 ] local);
+            Some tk
     in
-    match tc_result with
-    | Some (n_rng, m_rng) ->
-        let rngs = [| n_rng; m_rng |] in
-        List.iter (fun d ->
-          let upcast axis amount = U.Opt.Upcast { axis; amount } in
-          match try_opt_on_rng tk rngs.(d) [ 5; 4; 3; 2 ] upcast with
-          | Some (replaced, _) -> rngs.(d) <- replaced
-          | None -> ()) [ 1; 0 ];
-        let local axis amount = U.Opt.Local { axis; amount } in
-        ignore (try_opt_on_rng tk rngs.(0) [ 4; 2 ] local);
-        Some tk
-    | None when P.tensor_core tk <> None -> Some tk
-    | None -> None
+    try_axis 0
 
 let is_valid_image_buf k buf = match U.as_index buf with
   | Some { ptr; _ } ->
-      Coalese.image_valid_dims
+      Coalesce.image_valid_dims
         ~image_pitch_alignment:(Renderer.image_pitch_alignment (P.ren k))
         ~base:(U.dtype ptr)
         ~size:(List.fold_left ( * ) 1 (U.max_shape ptr))
@@ -135,8 +150,18 @@ let upcast_image_buf k buf =
   match get_idx buf with
   | None -> ()
   | Some idx ->
+      (* An image upcast is only worth taking when all four unit-stride
+         lanes share one validity, so that coalescing can merge them into a
+         single vector read; an axis the guard depends on splits them. *)
+      let gating =
+        match get_valid buf with
+        | None -> []
+        | Some valid -> U.backward_slice valid
+      in
       let axes = List.filter_map (fun c ->
-        if is_range c && (U.vmax c + 1) mod 4 = 0 then
+        if is_range c && (U.vmax c + 1) mod 4 = 0
+           && not (List.exists (fun g -> g == c) gating)
+        then
           let i = index_of_rng (P.rngs k) c in
           if i >= 0 then Some i else None
         else None) (U.split_uop idx Ops.Add) in
@@ -394,7 +419,7 @@ let apply_locals k =
           | Some idx -> not (List.memq rng (U.backward_slice idx))
           | None -> false) (P.bufs k) in
         Some (is_expand, axis))
-      (P.axes_of k [ Axis_type.Global; Axis_type.Loop ])
+      (P.axes_of k [ Axis_type.Global; Axis_type.Weak ])
     in
     let sorted_ranking = List.sort (fun (e1, a1) (e2, a2) ->
       let c = compare e2 e1 in if c <> 0 then c else compare a2 a1) ranking
@@ -423,7 +448,7 @@ let try_thread_split k threads =
     if const_int_or 0 (nth_size k axis) mod threads = 0 then begin
       try_apply k (U.Opt.Thread { axis; amount = threads });
       raise_notrace Exit
-    end) (P.axes_of k [ Axis_type.Loop ])
+    end) (P.axes_of k [ Axis_type.Weak ])
   with Exit -> ()
 
 let last_is_thread opts = opts <> [] && (match last opts with

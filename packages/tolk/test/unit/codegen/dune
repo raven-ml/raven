@@ -23,18 +23,3 @@
   test_tc)
  (package tolk)
  (libraries unix tolk tolk.uop windtrap))
-
-; Regression tests for open bugs. Red until the owning pass is fixed, so they
-; run under their own alias and never gate @runtest. Run with
-; `dune build @known-bugs`.
-
-(executable
- (name test_stage_broadcast)
- (modules test_stage_broadcast)
- (libraries tolk tolk.uop windtrap))
-
-(rule
- (alias known-bugs)
- (package tolk)
- (action
-  (run %{exe:test_stage_broadcast.exe})))

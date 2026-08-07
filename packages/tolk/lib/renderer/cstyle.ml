@@ -92,16 +92,38 @@ let getenv name default =
   | Some s -> ( try int_of_string s with Failure _ -> default)
   | None -> default
 
+(* A cgroup v2 CPU quota ("<quota> <period>", or "max" when unset) is the real
+   limit inside a container, where the online-processor count reports the whole
+   host. *)
+let cgroup_cpu_quota () =
+  try
+    let ic = open_in "/sys/fs/cgroup/cpu.max" in
+    let line =
+      Fun.protect
+        ~finally:(fun () -> close_in_noerr ic)
+        (fun () -> input_line ic)
+    in
+    match String.split_on_char ' ' (String.trim line) with
+    | [ quota; period ] when quota <> "max" ->
+        Some (max 1 (int_of_string quota / int_of_string period))
+    | _ -> None
+  with _ -> None
+
+let online_cpu_count () =
+  try
+    let ic = Unix.open_process_in "getconf _NPROCESSORS_ONLN" in
+    let line = input_line ic in
+    ignore (Unix.close_process_in ic);
+    max 1 (int_of_string (String.trim line))
+  with _ -> 1
+
 let host_cpu_count () =
-  match Sys.getenv_opt "CPU_COUNT" with
+  match Sys.getenv_opt "NUM_CPU_THREADS" with
   | Some s -> (try max 1 (int_of_string s) with Failure _ -> 1)
   | None -> (
-      try
-        let ic = Unix.open_process_in "getconf _NPROCESSORS_ONLN" in
-        let line = input_line ic in
-        ignore (Unix.close_process_in ic);
-        max 1 (int_of_string (String.trim line))
-      with _ -> 1)
+      match cgroup_cpu_quota () with
+      | Some n -> n
+      | None -> online_cpu_count ())
 
 (* Subset of python str.format(): positional {0}/{1}, auto-numbered {}, {{ }} escapes. *)
 let render_custom_fmt fmt args =
@@ -211,7 +233,10 @@ and language = {
   smem_align : string;
   smem_prefix : string;
   smem_prefix_for_cast : bool;
-  arg_int_prefix : string;
+  (* Decoration around a scalar kernel parameter's type: "const " / "" in C,
+     "constant " / "&" in Metal. *)
+  var_prefix : string;
+  var_suffix : string;
   barrier : string;
   code_for_workitem : string -> string;
   extra_args : string list;
@@ -717,6 +742,14 @@ let base_rewrite : ctx rule list =
         match U.as_if (bs $ "x") with
         | Some v -> Some (strf "if (%s) {" (lookup ctx v.cond))
         | None -> None );
+    (* END closing an unbounded loop: exit test at the bottom of the body. *)
+    ( op
+        ~src:
+          [ any; op ~dtype:Dtype.void Ops.Range;
+            var_dtype "c" (exact_dtype Dtype.bool) ]
+        Ops.End,
+      fun ctx bs _ ->
+        Some (strf "  if (!(%s)) { break; }\n}" (lookup ctx (bs $ "c"))) );
     (* ENDIF / END: "}" *)
     (ops [ Ops.Endif; Ops.End ], fun _ _ _ -> Some "}");
     (* WMMA: "__name(a, b, c)" *)
@@ -729,6 +762,9 @@ let base_rewrite : ctx rule list =
               (strf "__%s(%s, %s, %s)" v.info.name (lookup ctx v.a)
                  (lookup ctx v.b) (lookup ctx v.c))
         | None -> None );
+    (* RANGE with no induction variable: an unbounded loop whose exit test the
+       closing END renders. *)
+    (op ~dtype:Dtype.void Ops.Range, fun _ _ _ -> Some "for (;;) {");
     (* RANGE: "for (dtype n = 0; n < size; n++) {" *)
     ( op ~name:"x" Ops.Range,
       fun ctx bs _ ->
@@ -1228,7 +1264,9 @@ let should_inline ~expand_ssa ~child_count (u : U.t) : bool =
     match U.op u with
     | Ops.Const | Ops.Index | Ops.Shrink | Ops.Customi -> true
     | Ops.Load ->
-        U.addrspace (U.src u).(0) = Some Dtype.Reg
+        (* A register load is only free to repeat at one use site; past that,
+           name it so the read happens once. *)
+        U.addrspace (U.src u).(0) = Some Dtype.Reg && cc = 1
     | Ops.Cast
       when U.addrspace u = Some Dtype.Global || U.addrspace u = Some Dtype.Local
       ->
@@ -1447,7 +1485,12 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
                    invalid_arg
                      (strf "negative render depth at %s rendered=%s node=%s"
                         (Ops.name (U.op u)) line (Format.asprintf "%a" U.pp u));
-                 kernel := (String.make (!depth * 2) ' ' ^ line) :: !kernel;
+                 let indent = String.make (!depth * 2) ' ' in
+                 kernel :=
+                   (String.split_on_char '\n' line
+                   |> List.map (fun l -> indent ^ l)
+                   |> String.concat "\n")
+                   :: !kernel;
                  (match prefix_opt with
                   | Some p -> StrTbl.replace counters p (counter_get p + 1)
                   | None -> ())
@@ -1458,17 +1501,19 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
 
 let buf_param ctx (u, nm, (dt, mut)) =
   if U.op u <> Ops.Param then invalid_arg "buf_param: expected Param";
-  match addrspace_of u with
-  | Dtype.Global ->
-      (* Global buffers render as pointers (or image handles when the shape is
-         an image), applying the language's [type_map] like any other value. *)
-      strf "%s%s %s"
-        (render_dtype_c ctx.lang ~sz:1 ~addrspace:Dtype.Global ~mutable_:mut
-           ~shape:(U.shape_opt u) dt)
-        ctx.lang.buffer_suffix nm
-  | Dtype.Local | Dtype.Reg | Dtype.Alu ->
-      if Dtype.equal dt Dtype.int32 then strf "%s %s" ctx.lang.arg_int_prefix nm
-      else strf "%s %s" (render_dtype ctx dt) nm
+  let addrspace = addrspace_of u in
+  (* Scalars take the language's variable decoration at any width; buffers
+     render as pointers (or image handles when the shape is an image),
+     applying the language's [type_map] like any other value. *)
+  let prefix, suffix =
+    match addrspace with
+    | Dtype.Alu -> (ctx.lang.var_prefix, ctx.lang.var_suffix)
+    | Dtype.Global | Dtype.Local | Dtype.Reg -> ("", ctx.lang.buffer_suffix)
+  in
+  strf "%s%s%s %s" prefix
+    (render_dtype_c ctx.lang ~sz:1 ~addrspace ~mutable_:mut
+       ~shape:(U.shape_opt u) dt)
+    suffix nm
 
 let collect_lane_demand uops =
   let tbl = U.Tbl.create 32 in
@@ -1547,7 +1592,8 @@ let make_language
     ?(buffer_prefix = "") ?(buffer_suffix = "")
     ?(smem_align = "") ?(smem_prefix = "")
     ?(smem_prefix_for_cast = true)
-    ?(arg_int_prefix = "const int")
+    ?(var_prefix = "const ")
+    ?(var_suffix = "")
     ?(barrier = "")
     ?(code_for_workitem = fun _ -> invalid_arg "no workitem support")
     ?(extra_args = [])
@@ -1566,7 +1612,7 @@ let make_language
     () : language =
   {
     kernel_typedef; buffer_prefix; buffer_suffix; smem_align; smem_prefix;
-    smem_prefix_for_cast; arg_int_prefix; barrier; code_for_workitem;
+    smem_prefix_for_cast; var_prefix; var_suffix; barrier; code_for_workitem;
     extra_args; supports_images; float4; float4_style; gep_arr_threshold; type_map;
     infinity; nan; code_for_op; string_rewrite; extra_matcher;
     render_kernel; preamble;
@@ -1721,8 +1767,10 @@ let fixed_abi_arg ctx buf_idx val_idx (u, _nm, (dt, _mut)) =
       let arg = strf "(%s)bufs[%d]" ptr buf_idx in
       (arg, buf_idx + 1, val_idx)
   | Dtype.Local | Dtype.Reg | Dtype.Alu ->
-      if Dtype.equal dt Dtype.int32 then
-        let arg = strf "(int)vals[%d]" val_idx in
+      (* Every scalar occupies one [long long] slot, so any integer width
+         narrows out of the same slot. *)
+      if Dtype.is_int dt || Dtype.is_bool dt then
+        let arg = strf "(%s)vals[%d]" (render_dtype ctx dt) val_idx in
         (arg, buf_idx, val_idx + 1)
       else
         invalid_arg
@@ -1819,30 +1867,6 @@ let opencl_preamble _ctx uops =
   in
   prefix
 
-let opencl_aux uops =
-  let params =
-    List.filter_map
-      (fun u ->
-        match U.as_param u with
-        | None -> None
-        | Some { param = { slot; _ }; _ } -> Some (u, slot))
-      uops
-  in
-  let add_param i (u, slot) =
-    Some (slot, strf "(%d,%s)" i (Dtype.repr (U.dtype u)))
-  in
-  let by_slot = Hashtbl.create 8 in
-  List.mapi add_param params
-  |> List.filter_map Fun.id
-  |> List.iter (fun (slot, item) ->
-         let items = Option.value (Hashtbl.find_opt by_slot slot) ~default:[] in
-         Hashtbl.replace by_slot slot (item :: items));
-  let max_slot = Hashtbl.fold (fun slot _ acc -> max slot acc) by_slot (-1) in
-  List.init (max_slot + 1) (fun slot ->
-      match Hashtbl.find_opt by_slot slot with
-      | None -> "()"
-      | Some items -> "(" ^ String.concat "," (List.rev items) ^ ")")
-
 let opencl_language : language =
   make_language
     ~kernel_typedef:"__kernel void"
@@ -1863,6 +1887,7 @@ let opencl_language : language =
 (* MetalRenderer *)
 
 let metal_type_map : Dtype.t -> string option = function
+  | Dtype.Uint32 -> Some "uint"
   | Dtype.Bfloat16 -> Some "bfloat"
   | _ -> None
 
@@ -1961,7 +1986,7 @@ let metal_language : language =
     ~kernel_typedef:"kernel void"
     ~buffer_prefix:"device "
     ~smem_prefix:"threadgroup __attribute__((aligned(16))) "
-    ~arg_int_prefix:"constant int&"
+    ~var_prefix:"constant " ~var_suffix:"&"
     ~barrier:"threadgroup_barrier(mem_flags::mem_threadgroup);"
     ~float4:(Some "float4")
     ~code_for_workitem:metal_code_for_workitem
@@ -1980,6 +2005,7 @@ let metal_language : language =
 (* CUDARenderer *)
 
 let cuda_type_map : Dtype.t -> string option = function
+  | Dtype.Uint32 -> Some "uint"
   | Dtype.Bfloat16 -> Some "nv_bfloat16"
   | Dtype.Fp8e4m3 -> Some "__nv_fp8_e4m3"
   | Dtype.Fp8e5m2 -> Some "__nv_fp8_e5m2"
@@ -2160,6 +2186,7 @@ let cuda_preamble _ctx uops =
   in
   let prefix =
     [
+      "typedef unsigned int uint;";
       "#define INFINITY (__int_as_float(0x7f800000))";
       "#define NAN (__int_as_float(0x7fffffff))";
       "template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }";
@@ -2455,6 +2482,14 @@ let amd_wmma_prefix arch (info : U.wmma_info) dtype_out =
   | Gpu_target.RDNA4 ->
       strf "#define __%s __builtin_amdgcn_wmma_%s_16x16x16_%s_w32_gfx12"
         name (amd_type_map_name dtype_out) (amd_type_map_name info.dtype_in)
+  | Gpu_target.RDNA3 when dtype_out = Dtype.Int32 ->
+      strf
+        "typedef int wmma_int4 __attribute__((ext_vector_type(4)));\n\
+         static inline __attribute__((device)) int8 __%s(signed_char16 a, signed_char16 b, int8 c) {\n\
+        \  return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, __builtin_bit_cast(wmma_int4, a),\n\
+        \    true, __builtin_bit_cast(wmma_int4, b), c, false);\n\
+         }"
+        name
   | Gpu_target.RDNA3 when dtype_out = Dtype.Float32 ->
       strf "#define __%s __builtin_amdgcn_wmma_f32_16x16x16_%s_w32"
         name
@@ -2715,7 +2750,6 @@ let opencl arch =
     ~supports_dtype:(supports_opencl_dtype arch)
     ?image_pitch_alignment:
       (arch_int_value ~prefix:"IMAGE_PITCH_ALIGNMENT=" arch)
-    ~aux:opencl_aux
     ~render:(render opencl_language) ()
 
 let intel arch =

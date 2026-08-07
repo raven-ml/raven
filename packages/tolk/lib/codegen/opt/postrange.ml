@@ -176,11 +176,11 @@ let output_rngs t =
       | None -> [])
     (U.children t.ast)
 
-(* Loop ranges eligible for promotion to Global: must appear in all
+(* Weak ranges eligible for promotion to Global: must appear in all
    Stage nodes' ranges. *)
 let globalizable_rngs t =
   let out =
-    List.filter (fun r -> range_kind r = Axis_type.Loop) (output_rngs t)
+    List.filter (fun r -> range_kind r = Axis_type.Weak) (output_rngs t)
   in
   List.fold_left
     (fun acc node ->
@@ -191,7 +191,7 @@ let globalizable_rngs t =
       | None -> acc)
     out (U.toposort t.ast)
 
-(* Promote eligible Loop ranges to Global. *)
+(* Promote eligible Weak ranges to Global. *)
 let convert_loop_to_global t =
   if Renderer.has_local t.ren then begin
     let glob = globalizable_rngs t in
@@ -221,11 +221,12 @@ let reduceop t = List.find_opt is_reduce (U.backward_slice t.ast)
 
 (* Debug colour for the axis-type visualiser. *)
 let axis_color : Axis_type.t -> string = function
+  | Device -> "green"
   | Global -> "blue"
   | Thread -> "BLUE"
   | Local -> "cyan"
   | Warp -> "CYAN"
-  | Loop -> "WHITE"
+  | Weak | Loop -> "WHITE"
   | Upcast -> "yellow"
   | Group_reduce -> "RED"
   | Reduce -> "red"
@@ -238,8 +239,8 @@ let colors t =
   List.map2
     (fun at r ->
       if t.dont_use_locals && at = Axis_type.Global then "BLUE"
-      else if at = Axis_type.Loop && not (List.memq r out) then "BLACK"
-      else if at = Axis_type.Loop && not (List.memq r glob) then "white"
+      else if at = Axis_type.Weak && not (List.memq r out) then "BLACK"
+      else if at = Axis_type.Weak && not (List.memq r glob) then "white"
       else axis_color at)
     (axis_types t) (rngs t)
 
@@ -409,7 +410,7 @@ let upcast_size t =
        (axes_of t [ Axis_type.Upcast; Axis_type.Unroll ]))
 
 let upcastable_dims t =
-  const_dims t [ Axis_type.Global; Axis_type.Local; Axis_type.Loop ]
+  const_dims t [ Axis_type.Global; Axis_type.Local; Axis_type.Weak ]
 
 let unrollable_dims t =
   const_dims t [ Axis_type.Group_reduce; Axis_type.Reduce ]
@@ -682,12 +683,12 @@ let validate_shift_opt t opt r amt rng_kind =
       check
         (rng_kind = Axis_type.Global
         || rng_kind = Axis_type.Local
-        || rng_kind = Axis_type.Loop)
+        || rng_kind = Axis_type.Weak)
         "upcast is for GLOBAL/LOCAL/LOOP"
   | U.Opt.Local _ ->
       check (not t.dont_use_locals) err_no_locals;
       check
-        (rng_kind = Axis_type.Global || rng_kind = Axis_type.Loop)
+        (rng_kind = Axis_type.Global || rng_kind = Axis_type.Weak)
         "local is for globals"
   | U.Opt.Thread _ ->
       check (Renderer.has_threads t.ren) "target does not support threads";

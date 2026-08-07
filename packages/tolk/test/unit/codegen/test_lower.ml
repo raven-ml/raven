@@ -63,7 +63,7 @@ let () =
           test "final rewrite concretizes leftover index dtypes" (fun () ->
             let p = global_ptr () in
             let r =
-              U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Loop ()
+              U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Weak ()
             in
             let dst = U.index ~ptr:p ~idxs:[ r ] () in
             let st =

@@ -338,7 +338,6 @@ and program_info_debug_string (p : program_info) =
       "globals", tuple_string (List.map string_of_int p.globals);
       "outs", tuple_string (List.map string_of_int p.outs);
       "ins", tuple_string (List.map string_of_int p.ins);
-      "aux", tuple_string (List.map python_quote p.aux);
     ]
 
 and wmma_info_debug_string (w : wmma_info) =
@@ -506,6 +505,11 @@ let expr_to_string ?(simplify = true) u =
     | Ops.Special -> (
         match as_special u with
         | Some { name; _ } -> name
+        | None -> uop_repr_debug_string u)
+    (* A void range is a bound-less loop header, named by its axis alone. *)
+    | Ops.Range when Dtype.equal (dtype u) Dtype.void -> (
+        match as_range u with
+        | Some { axis; _ } -> "loop" ^ string_of_int axis
         | None -> uop_repr_debug_string u)
     | Ops.Range -> "r" ^ range_debug_string u
     | Ops.Const -> (

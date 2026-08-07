@@ -18,7 +18,6 @@ let loc_of_pos (file, line, _, _) = (file, line)
    vocabulary directly. *)
 type src_pat =
   | Fixed of t list
-  | Prefix of t list
   | Perms of t list
   | Rep of t
 
@@ -59,7 +58,6 @@ let exact_dtype dtype = Dtype dtype
 let any_dtype dtypes = Any_dtype dtypes
 
 let fixed pats = Fixed pats
-let prefix pats = Prefix pats
 let perms pats = Perms pats
 let repeat pat = Rep pat
 
@@ -89,11 +87,11 @@ let ops ?loc ?dtype ?src ?(arg = Any_arg) ?name ?(allow_any_len = false) os =
   let dtype = Option.map (fun d -> Dtype d) dtype in
   with_loc ?loc (mk ~ops:os ?dtype ?src ~arg ?name ~allow_any_len ())
 
-let op_src ?loc ?dtype ?src ?(arg = Any_arg) ?name o =
-  with_loc ?loc (mk ~ops:[ o ] ?dtype ?src ~arg ?name ())
+let op_src ?loc ?dtype ?src ?(arg = Any_arg) ?name ?(allow_any_len = false) o =
+  with_loc ?loc (mk ~ops:[ o ] ?dtype ?src ~arg ?name ~allow_any_len ())
 
-let ops_src ?loc ?dtype ?src ?(arg = Any_arg) ?name os =
-  with_loc ?loc (mk ~ops:os ?dtype ?src ~arg ?name ())
+let ops_src ?loc ?dtype ?src ?(arg = Any_arg) ?name ?(allow_any_len = false) os =
+  with_loc ?loc (mk ~ops:os ?dtype ?src ~arg ?name ~allow_any_len ())
 
 let const ?loc ?dtype ?name c =
   let dtype = Option.map (fun d -> Dtype d) dtype in
@@ -348,9 +346,6 @@ and match_src src_pat uop_srcs bs allow_any_len =
       if n_pats > n_srcs then []
       else if (not allow_any_len) && n_pats < n_srcs then []
       else match_sequence pats uop_srcs 0 [ bs ]
-  | Prefix pats ->
-      if List.length pats > n_srcs then []
-      else match_sequence pats uop_srcs 0 [ bs ]
   | Perms pats ->
       if List.length pats <> n_srcs && not allow_any_len then []
       else
@@ -429,7 +424,7 @@ let single_root_op pat =
   | _ -> None
 
 let src_patterns = function
-  | Fixed pats | Prefix pats | Perms pats -> pats
+  | Fixed pats | Perms pats -> pats
   | Rep pat -> [ pat ]
 
 let inferred_early_reject pat =

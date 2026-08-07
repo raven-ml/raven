@@ -36,7 +36,7 @@ let wrap_sink ?opts_to_apply ?dont_use_locals srcs =
   U.sink ~kernel_info:(kernel_info ?opts_to_apply ?dont_use_locals ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
 
 let reduce_range ~axis size =
   U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
@@ -656,16 +656,16 @@ let swap_nolocals_tests =
 let state_query_tests =
   group "state queries"
     [
-      (* rngs sorts by axis_to_pos: Loop(-1) < Global(0) < Reduce(4) *)
+      (* rngs sorts by axis_to_pos: Weak(-1) < Global(0) < Reduce(4) *)
       test "rngs sorted by axis_to_pos then axis" (fun () ->
         let ast = reduce_ast ~s0:4 ~s1:4 ~sr:8 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         let ats = P.axis_types t in
-        (* Two Loop ranges first (pos=-1), then Reduce (pos=4) *)
+        (* Two Weak ranges first (pos=-1), then Reduce (pos=4) *)
         equal int 3 (List.length ats);
-        is_true (List.nth ats 0 = Ak.Loop);
-        is_true (List.nth ats 1 = Ak.Loop);
+        is_true (List.nth ats 0 = Ak.Weak);
+        is_true (List.nth ats 1 = Ak.Weak);
         is_true (List.nth ats 2 = Ak.Reduce));
       (* rngs filters out size-1 ranges *)
       test "rngs filters out size-1 ranges" (fun () ->
@@ -744,7 +744,7 @@ let state_query_tests =
                if v.axis = axis then Some v.kind else None)
         in
         is_true (kind_for_axis 0 = Some Ak.Global);
-        is_true (kind_for_axis 1 = Some Ak.Loop));
+        is_true (kind_for_axis 1 = Some Ak.Weak));
       test "postrange flatten does not merge through extra floor div" (fun () ->
         let r0 = global_range ~axis:0 3 in
         let r1 = global_range ~axis:1 4 in
@@ -859,7 +859,7 @@ let convert_loop_to_global_tests =
         let t = P.create ast ren in
         (* Before: all LOOP *)
         is_true
-          (List.for_all (fun at -> at = Ak.Loop) (P.axis_types t));
+          (List.for_all (fun at -> at = Ak.Weak) (P.axis_types t));
         P.convert_loop_to_global t;
         (* After: all GLOBAL *)
         is_true
@@ -870,7 +870,7 @@ let convert_loop_to_global_tests =
         let t = P.create ast ren in
         P.convert_loop_to_global t;
         is_true
-          (List.for_all (fun at -> at = Ak.Loop) (P.axis_types t)));
+          (List.for_all (fun at -> at = Ak.Weak) (P.axis_types t)));
       test "reduce ranges stay REDUCE after conversion" (fun () ->
         let ast = reduce_ast ~s0:4 ~s1:4 ~sr:8 in
         let ren = gpu_renderer () in
@@ -879,7 +879,7 @@ let convert_loop_to_global_tests =
         let ats = P.axis_types t in
         (* LOOP ranges → GLOBAL, but REDUCE stays *)
         is_true (List.exists (fun at -> at = Ak.Reduce) ats);
-        is_true (not (List.exists (fun at -> at = Ak.Loop) ats)));
+        is_true (not (List.exists (fun at -> at = Ak.Weak) ats)));
     ]
 
 (* Group 9: Apply_opts dispatch *)

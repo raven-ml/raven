@@ -559,8 +559,7 @@ module Program_cache = struct
     add_list add_uop b info.vars;
     add_list add_int b info.globals;
     add_list add_int b info.outs;
-    add_list add_int b info.ins;
-    add_list add_atom b info.aux
+    add_list add_int b info.ins
 
   let add_wmma_info b (info : Uop.wmma_info) =
     add_atom b info.name;
@@ -710,9 +709,8 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
           let build_spec () =
             let src = Renderer.render ren ~name:kernel_name program in
             let lib = Compiler.compile_cached comp src in
-            let aux = Renderer.aux ren program in
             Program_spec.of_program ~name:kernel_name ~src ~device:d.name
-              ~lib ~applied_opts ~estimates ~aux program
+              ~lib ~applied_opts ~estimates program
           in
           let spec =
             match Program_cache.Cache.find_opt Program_cache.cache bkey with

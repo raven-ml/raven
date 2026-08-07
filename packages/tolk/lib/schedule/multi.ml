@@ -143,7 +143,7 @@ let subst_device_num node i =
 
 (* Predicates and light view helpers *)
 
-let is_multi x = U.op x = Ops.Multi
+let is_multi x = U.op x = Ops.Unshard
 
 let multi_axis x =
   match U.arg x with
@@ -573,7 +573,7 @@ let rec multi_pm ~shapes ~devices node =
       let src = (U.src node).(0) in
       let offset = (U.src node).(1) and size = (U.src node).(2) in
       match U.op src with
-      | Ops.Multi ->
+      | Ops.Unshard ->
           let inner, axis = inner_axis src in
           shrink_multi ~shapes ~devices offset size inner axis src
       | Ops.Mstack -> Some (mstack_early_shrink src offset size)

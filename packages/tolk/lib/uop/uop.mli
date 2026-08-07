@@ -514,9 +514,6 @@ type slice_view = { src : t; offset : t; size : int }
 (** View of an {!Ops.Slice} node: underlying buffer, symbolic offset,
     and element count. *)
 
-type wait_view = { src : t }
-(** View of an {!Ops.Wait} node: the boolean condition being waited on. *)
-
 type param_view = { param : param_arg; shape : t }
 (** View of an {!Ops.Param} node: tinygrad-style payload plus shape child.
     Unknown shape is represented by an empty void {!Ops.Noop}
@@ -582,9 +579,6 @@ val as_stage : t -> stage_view option
 
 val as_slice : t -> slice_view option
 (** [as_slice u] matches {!Ops.Slice}. *)
-
-val as_wait : t -> wait_view option
-(** [as_wait u] matches {!Ops.Wait}. *)
 
 val as_param : t -> param_view option
 (** [as_param u] matches {!Ops.Param} nodes carrying {!Param_arg}. *)
@@ -861,9 +855,7 @@ val get_valid : t -> t
 
     {!Ops.If}: [src = \[| cond; idx_for_dedup |\]].
 
-    {!Ops.Endif}: [src = \[| if_ |\]].
-
-    {!Ops.Wait}: [src = \[| cond |\]]. *)
+    {!Ops.Endif}: [src = \[| if_ |\]]. *)
 
 val range :
   size:t -> axis:int -> kind:Axis_type.t -> ?sub:int list ->
@@ -891,10 +883,6 @@ val endif : if_:t -> t
 val barrier : ?srcs:t list -> unit -> t
 (** [barrier ?srcs ()] is a workgroup barrier. [srcs] defaults to [[]]
     and carries ordering dependencies. Void dtype. Kernel. *)
-
-val wait : src:t -> t
-(** [wait ~src] waits on the boolean condition [src], with
-    [src = \[| src |\]]. Void dtype. Kernel. *)
 
 val special : name:string -> size:t -> ?dtype:Dtype.t -> unit -> t
 (** [special ~name ~size ?dtype ()] is a backend-provided hardware index
@@ -1201,7 +1189,7 @@ val addrspace : t -> Dtype.addr_space option
 
 val base : t -> t
 (** [base u] walks through movement ops and {!Ops.Detach} to the
-    underlying node. Other ops, including {!Ops.Multi}, {!Ops.Stage},
+    underlying node. Other ops, including {!Ops.Unshard}, {!Ops.Stage},
     {!Ops.Slice}, {!Ops.Bind}, {!Ops.Param}, and {!Ops.Buffer}, are their
     own base. *)
 
@@ -1214,7 +1202,7 @@ val buf_uop : t -> t
 val has_buffer_identity : t -> bool
 (** [has_buffer_identity u] is [true] iff [u] is a concrete graph buffer
     identity under tinygrad's shortcut rules: {!Ops.Param}, {!Ops.Buffer},
-    {!Ops.Slice}, or those identities through {!Ops.Reshape}, {!Ops.Multi},
+    {!Ops.Slice}, or those identities through {!Ops.Reshape}, {!Ops.Unshard},
     or direct {!Ops.Gettuple} from a {!Ops.Tuple}. *)
 
 val as_shape : t -> t list
@@ -1257,7 +1245,7 @@ val max_shard_shape : t -> int list
 
 val axis : t -> int option
 (** [axis u] is [u]'s sharding axis. {!Ops.Param} reads [param_arg.axis],
-    {!Ops.Multi} reads its integer arg, {!Ops.Copy} clears the axis, direct
+    {!Ops.Unshard} reads its integer arg, {!Ops.Copy} clears the axis, direct
     tuple projections read the projected element, ALU ops use the last
     non-[None] source axis, and movement/reduction ops remap or clear the
     axis using tinygrad's shape rules. *)

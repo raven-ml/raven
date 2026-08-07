@@ -42,7 +42,9 @@ let full ?dtype ?(buffer = true) shape fill =
 
 let zeros ?dtype ?buffer shape = full ?dtype ?buffer shape (T.Sfloat 0.0)
 let ones ?dtype ?buffer shape = full ?dtype ?buffer shape (T.Sfloat 1.0)
-let const_like t fill = broadcast_scalar (T.val_dtype t) fill (T.shape t)
+let const_like ?dtype t fill =
+  let dt = match dtype with Some d -> d | None -> T.val_dtype t in
+  broadcast_scalar dt fill (T.shape t)
 
 let full_like ?dtype ?buffer t fill =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in

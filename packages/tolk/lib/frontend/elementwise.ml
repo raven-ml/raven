@@ -15,7 +15,11 @@ module T = Tensor
 let alu_unary = T.alu_unary
 let alu_binary = T.alu_binary
 let alu_ternary = T.alu_ternary
-let contiguous t = T.of_uop (Uop.contiguous ~src:(T.uop t) ())
+(* A weak-dtyped value has no committed width yet, so there is nothing to
+   materialize; realizing it would have to invent one. *)
+let contiguous t =
+  if D.is_weak (T.dtype t) then t
+  else T.of_uop (Uop.contiguous ~src:(T.uop t) ())
 
 (* Broadcasting and promotion are provided by [Tensor.broadcasted], whose
    concrete implementation lives in [Op] (mirroring tinygrad, where
@@ -90,11 +94,13 @@ let bitwise_not t =
 
 (* Selection *)
 
+(* The condition must already be boolean: coercing it here would accept a
+   numeric selector that the IR rejects. *)
 let where cond x y =
   let x, y = T.broadcasted x y in
   let out = T.broadcast_shape [ T.shape cond; T.shape x ] in
-  let cond = Movement.broadcast_to (Dtype_ops.bool cond) out in
-  alu_ternary Ops.Where cond (Movement.broadcast_to x out)
+  alu_ternary Ops.Where (Movement.broadcast_to cond out)
+    (Movement.broadcast_to x out)
     (Movement.broadcast_to y out)
 
 let maximum a b = binop Ops.Max a b
@@ -111,9 +117,16 @@ let usum t ts =
 let uprod t ts =
   List.fold_left (if D.is_bool (T.dtype t) then bitwise_and else mul) t ts
 
+(* One order-reversing map chosen for the pair, not per operand: promotion can
+   leave the two at different dtypes, and a per-operand choice would negate one
+   while complementing the other. *)
 let minimum a b =
   let x, y = T.broadcasted a b in
-  inverse (maximum (inverse x) (inverse y))
+  let flip =
+    if D.is_float (D.least_upper_dtype [ T.dtype x; T.dtype y ]) then neg
+    else bitwise_not
+  in
+  flip (maximum (flip x) (flip y))
 
 (* Unary math. The transcendental ALU ops derive a float output dtype at the
    IR level (an integer or weak-integer operand promotes to its least-upper
@@ -127,17 +140,17 @@ let exp2 t = alu_unary Ops.Exp2 t
 let log2 t = alu_unary Ops.Log2 t
 let trunc t = alu_unary Ops.Trunc t
 
+(* An integer argument enters the float domain first, so the identity and the
+   round-trip cast below are stated once against a float dtype. *)
 let cos t =
-  if Dtype_ops.is_floating_point t then
-    let up = Dtype_ops.cast t (D.least_upper_dtype [ T.dtype t; D.float32 ]) in
-    Dtype_ops.cast (sin (sub (sf ~like:up (Float.pi /. 2.)) up)) (T.dtype t)
-  else sin (sub (sf ~like:t (Float.pi /. 2.)) t)
+  let t = Dtype_ops.cast t (D.least_upper_float (T.dtype t)) in
+  let up = Dtype_ops.cast t (D.least_upper_dtype [ T.dtype t; D.float32 ]) in
+  Dtype_ops.cast (sin (sub (sf ~like:up (Float.pi /. 2.)) up)) (T.dtype t)
 
 let exp t =
-  if Dtype_ops.is_floating_point t then
-    let up = Dtype_ops.cast t (D.least_upper_dtype [ T.dtype t; D.float32 ]) in
-    Dtype_ops.cast (exp2 (mul up (sf ~like:up (1. /. Float.log 2.)))) (T.dtype t)
-  else exp2 (mul t (sf ~like:t (1. /. Float.log 2.)))
+  let t = Dtype_ops.cast t (D.least_upper_float (T.dtype t)) in
+  let up = Dtype_ops.cast t (D.least_upper_dtype [ T.dtype t; D.float32 ]) in
+  Dtype_ops.cast (exp2 (mul up (sf ~like:up (1. /. Float.log 2.)))) (T.dtype t)
 
 let log t =
   let l = log2 t in
@@ -153,18 +166,27 @@ let ceil t =
   let bt = trunc t in
   where (gt t bt) (add bt (si ~like:bt 1)) bt
 
+(* Integer division that is not asked to round stays exact by entering the
+   float domain, rather than truncating through the integer divide. *)
 let div a b =
   let x, y = T.broadcasted a b in
+  let x =
+    if D.is_int (T.dtype x) && D.is_int (T.dtype y) then
+      Dtype_ops.cast x D.default_float
+    else x
+  in
   mul x (reciprocal y)
+
+let is_int_pair x y = D.is_int (T.dtype x) && D.is_int (T.dtype y)
 
 let floordiv a b =
   let x, y = T.broadcasted a b in
-  if D.is_int (T.dtype x) then alu_binary Ops.Floordiv x y else floor (div x y)
+  if is_int_pair x y then alu_binary Ops.Floordiv x y else floor (div x y)
 
 let mod_ a b =
   let x, y = T.broadcasted a b in
-  if D.is_int (T.dtype x) then alu_binary Ops.Floormod x y
-  else sub x (mul (floor (div x y)) y)
+  if is_int_pair x y then alu_binary Ops.Floormod x y
+  else sub x (mul (floordiv x y) y)
 
 (* Shape-preserving nonlinearities *)
 
@@ -201,11 +223,12 @@ let rshift a b = binop Ops.Shr a b
 
 let cdiv a b =
   let x, y = T.broadcasted a b in
-  if D.is_int (T.dtype x) then alu_binary Ops.Cdiv x y else trunc (mul x (reciprocal y))
+  if is_int_pair x y then alu_binary Ops.Cdiv x y
+  else trunc (mul x (reciprocal y))
 
 let fmod a b =
   let x, y = T.broadcasted a b in
-  if D.is_int (T.dtype x) then alu_binary Ops.Cmod x y else sub x (mul (cdiv x y) y)
+  if is_int_pair x y then alu_binary Ops.Cmod x y else sub x (mul (cdiv x y) y)
 
 (* Rounding to nearest, half to even *)
 
@@ -218,13 +241,11 @@ let round t =
 
 (* Power *)
 
+(* The result takes the promoted dtype of base and exponent: an integer base
+   raised to a float exponent is a float, not a rounded integer. *)
 let pow a b =
-  let self_dt = T.dtype a in
   let base, exponent = T.broadcasted a b in
-  let ret = alu_binary Ops.Pow base exponent in
-  if (not (D.is_float self_dt)) && D.is_float (T.dtype exponent) then
-    Dtype_ops.cast (round ret) self_dt
-  else ret
+  alu_binary Ops.Pow base exponent
 
 (* Clamping *)
 
@@ -238,12 +259,13 @@ let clip = clamp
 
 (* Sign transfer and log-space helpers *)
 
+(* The reciprocal test catches negative zero, whose sign [b < 0] misses. *)
 let copysign a b =
   let a, b = T.broadcasted a b in
-  mul (abs a)
-    (where
-       (bitwise_or (lt b (si ~like:b 0)) (lt (reciprocal b) (si ~like:b 0)))
-       (T.i (-1)) (T.i 1))
+  let mag = abs a in
+  where
+    (bitwise_or (lt b (si ~like:b 0)) (lt (reciprocal b) (si ~like:b 0)))
+    (neg mag) mag
 
 let logaddexp a b =
   let a, b = T.broadcasted a b in

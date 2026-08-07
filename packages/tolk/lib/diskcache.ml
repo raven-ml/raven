@@ -9,8 +9,10 @@
 
 (* Bump whenever a change invalidates previously cached entries — notably
    when an optimisation a beam search could once select stops being legal, so
-   that replaying its cached opt list would fail. *)
-let cache_version = 2
+   that replaying its cached opt list would fail, or when a name that feeds a
+   cache key is reused for a different concept, so that an old entry would
+   still be found under the new meaning. *)
+let cache_version = 3
 
 let cache_dir =
   let base =

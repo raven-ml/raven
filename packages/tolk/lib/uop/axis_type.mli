@@ -27,6 +27,11 @@
     Exactly one kind is attached to each range; most transforms fix a
     kind at creation and never mutate it afterwards. *)
 type t =
+  | Device
+      (** Device dimension of a sharded computation. One iteration per
+          device holding a piece of the sharded tensor; resolved before
+          the kernel is emitted, so no range of this kind survives to
+          the renderer. *)
   | Global
       (** Global work-grid dimension. Materialises as a workgroup index
           on the target (CUDA block, Metal threadgroup, OpenCL group). *)
@@ -37,9 +42,12 @@ type t =
       (** Workgroup-local thread dimension. Materialises as the in-group
           thread index and is the natural companion of shared-memory
           staging. *)
-  | Loop
-      (** Plain software loop. Emitted as a [for] in the rendered
-          source; no implicit parallelism. *)
+  | Weak
+      (** Counted loop with no committed hardware role. Emitted as a
+          [for] over its size with no implicit parallelism, but the
+          schedule optimiser is free to promote it first — to {!Global},
+          {!Local} or {!Upcast} — so a range keeps this kind only for as
+          long as nothing better has claimed it. *)
   | Group_reduce
       (** Reduction across a {!Local} workgroup, typically staged
           through shared memory and a tree reduction. *)
@@ -58,6 +66,11 @@ type t =
   | Placeholder
       (** Unassigned axis. Temporary kind used between schedule passes;
           no range with this kind may reach the renderer. *)
+  | Loop
+      (** Unbounded loop. Has no trip count: it spins until an explicit
+          exit condition holds, so it emits as [for (;;)] closed by a
+          conditional break rather than a counted [for]. Never eligible
+          for promotion, unrolling or upcasting. *)
 
 (** {1:predicates Predicates and ordering} *)
 
@@ -83,14 +96,15 @@ val pp : Format.formatter -> t -> unit
 val to_pos : t -> int
 (** [to_pos t] is the schedule priority of [t]. The postrange pass
     orders ranges by [(to_pos kind, axis_id)], which groups them as:
-    loops wrap hardware dimensions, hardware dimensions wrap
-    reductions, reductions wrap unrolls, and placeholders sink to the
-    bottom.
+    devices wrap loops, loops wrap hardware dimensions, hardware
+    dimensions wrap reductions, reductions wrap unrolls, and
+    placeholders sink to the bottom.
 
     Priorities:
 
     {ul
-    {- {!Loop} [-> -1]}
+    {- {!Device} [-> -2]}
+    {- {!Weak}, {!Loop} [-> -1]}
     {- {!Thread}, {!Global} [-> 0]}
     {- {!Warp} [-> 1]}
     {- {!Local}, {!Group_reduce} [-> 2]}
@@ -107,11 +121,12 @@ val letter : t -> string
     Mapping:
 
     {ul
+    {- {!Device} [-> "d"]}
     {- {!Global} [-> "g"]}
     {- {!Thread} [-> "t"]}
     {- {!Local} [-> "l"]}
     {- {!Warp} [-> "w"]}
-    {- {!Loop} [-> "L"]}
+    {- {!Weak}, {!Loop} [-> "L"]}
     {- {!Upcast} [-> "u"]}
     {- {!Group_reduce} [-> "G"]}
     {- {!Reduce} [-> "R"]}

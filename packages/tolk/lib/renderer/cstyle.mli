@@ -44,7 +44,9 @@ val clang : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
 
     {b Note.} Reads environment variables at module initialization:
     - [THREADS]: set to [0] to disable host-side threading (default: enabled).
-    - [CPU_COUNT]: override logical CPU count for thread pool size.
+    - [NUM_CPU_THREADS]: override the thread-pool size. Unset, the pool is
+      sized by the cgroup CPU quota when one is in force, otherwise by the
+      online processor count.
 
     See also {!clang_no_abi} for tests and runtimes that intentionally bypass
     the fixed ABI wrapper. *)

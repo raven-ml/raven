@@ -29,9 +29,9 @@ let iparam ~slot size =
 let kernel () =
   let open U.O in
   let out = fparam ~slot:0 289536 in
-  let col = U.range ~size:(U.const_int 768) ~axis:2 ~kind:Axis_type.Loop () in
-  let chunk = U.range ~size:(U.const_int 29) ~axis:3 ~kind:Axis_type.Loop () in
-  let tok_i = U.range ~size:(U.const_int 13) ~axis:1 ~kind:Axis_type.Loop () in
+  let col = U.range ~size:(U.const_int 768) ~axis:2 ~kind:Axis_type.Weak () in
+  let chunk = U.range ~size:(U.const_int 29) ~axis:3 ~kind:Axis_type.Weak () in
+  let tok_i = U.range ~size:(U.const_int 13) ~axis:1 ~kind:Axis_type.Weak () in
   let r = U.range ~size:(U.const_int 1733) ~axis:0 ~kind:Axis_type.Reduce () in
   let vocab = (chunk * U.const_int 1733) + r in
   let toks = iparam ~slot:1 13 in

@@ -74,13 +74,18 @@ let gated_mop mop idx =
   src.(1) <- idx;
   U.replace mop ~src ()
 
+(* The alternative the load falls back to when the gate is false. An Invalid
+   alternative carries no value and is bool-typed, so it cannot be cast into
+   the load's dtype; it becomes a zero of the load's own width. *)
 let strip_alt_cast load alt =
-  match U.op alt, U.src alt with
-  | Ops.Cast, [| inner |] when Dtype.equal (U.dtype inner) (U.dtype load) ->
-      inner
-  | _ ->
-      if Dtype.equal (U.dtype alt) (U.dtype load) then alt
-      else U.cast ~src:alt ~dtype:(U.dtype load)
+  if is_invalid_const alt then vzero_like load (U.src load).(0)
+  else
+    match U.op alt, U.src alt with
+    | Ops.Cast, [| inner |] when Dtype.equal (U.dtype inner) (U.dtype load) ->
+        inner
+    | _ ->
+        if Dtype.equal (U.dtype alt) (U.dtype load) then alt
+        else U.cast ~src:alt ~dtype:(U.dtype load)
 
 let load_node u =
   match U.op u, U.src u with
@@ -137,10 +142,12 @@ let move_gates_from_index_rule node =
   | None, Some _ -> None
   | None, None -> (
       match U.op node, U.src node with
+      (* The folded load takes the dtype of the WHERE it replaces, not of
+         the branch it absorbs: an Invalid branch is bool. *)
       | Ops.Where, [| gate; value; alt |] -> (
-          match fold_gated_load value gate alt (U.dtype alt) with
+          match fold_gated_load value gate alt (U.dtype node) with
           | Some folded -> Some folded
-          | None -> fold_gated_load alt (U.O.not_ gate) value (U.dtype value))
+          | None -> fold_gated_load alt (U.O.not_ gate) value (U.dtype node))
       | _ -> None)
 
 let pm_move_gates_from_index sink =

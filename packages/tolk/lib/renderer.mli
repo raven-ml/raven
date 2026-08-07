@@ -168,10 +168,6 @@ val render : t -> ?name:string -> Tolk_uop.Uop.t list -> string
 
     [name] defaults to ["kernel"]. *)
 
-val aux : t -> Tolk_uop.Uop.t list -> string list
-(** [aux r program] is backend-specific program metadata derived from
-    [program]. Empty when the backend has no auxiliary runtime payload. *)
-
 (** {1:construction Construction} *)
 
 val make :
@@ -187,7 +183,6 @@ val make :
   ?compiler:Compiler.t ->
   ?extra_matcher:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) ->
   ?supports_dtype:(Tolk_uop.Dtype.t -> bool) ->
-  ?aux:(Tolk_uop.Uop.t list -> string list) ->
   ?emulated_floats:(Tolk_uop.Dtype.t * Tolk_uop.Dtype.t) list ->
   name:string ->
   device:string ->

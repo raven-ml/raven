@@ -34,7 +34,14 @@ let same_dtype a b =
   Dtype.equal (Uop.dtype a) (Uop.dtype b) || is_invalid a || is_invalid b
 
 let matches_or_weak u s = same_dtype u s || is_weak s
-let int32_or_weakint u = Dtype.equal (Uop.dtype u) Dtype.int32 || is_weakint u
+
+(* Dtypes a bound variable may carry: a concrete 32- or 64-bit signed integer,
+   or an index-domain integer whose width is not yet committed. *)
+let bind_dtype u =
+  Dtype.equal (Uop.dtype u) Dtype.int32
+  || Dtype.equal (Uop.dtype u) Dtype.int64
+  || is_weakint u
+
 let arg_empty u = match Uop.arg u with Uop.Arg.Empty -> true | _ -> false
 
 let option_for_all p = function
@@ -106,7 +113,7 @@ let stack_ok u =
   let srcs = Uop.src u in
   Array.length srcs = 0
   || (Array.for_all (shape_equal srcs.(0)) srcs
-      && Array.for_all (same_dtype u) srcs)
+      && Array.for_all (matches_or_weak u) srcs)
 
 let movement_shape_ok u =
   try ignore (Uop.shape u); true with Invalid_argument _ -> false
@@ -202,7 +209,7 @@ let alu_param u =
       is_int u
   | _ -> false
 
-let bind_value u = Uop.op u = Ops.Const && int32_or_weakint u
+let bind_value u = Uop.op u = Ops.Const && bind_dtype u
 
 let bind_ok u var value =
   arg_empty u
@@ -266,8 +273,10 @@ let shared_spec : t =
 
     op Ops.Noop =?> (fun _ _ -> true);
 
+    (* Invalid is the lattice bottom and lives at bool. *)
     op ~src:[] Ops.Const
     =?> (fun u _ -> match Uop.arg u with
+      | Uop.Arg.Value c when Const.view c = Const.Invalid -> is_bool u
       | Uop.Arg.Value c -> Dtype.equal (Const.dtype c) (Uop.dtype u)
       | _ -> false);
 
@@ -292,6 +301,13 @@ let shared_spec : t =
       let x = bs $ "x" and y = bs $ "y" in
       same_dtype x y || is_weak x || is_weak y);
 
+    (* Bitwise and shift operands are integral. *)
+    ops [ Ops.And; Ops.Or; Ops.Xor; Ops.Shl; Ops.Shr ]
+    =??> (fun u _ ->
+      if Array.exists (fun s -> Dtype.is_float (Uop.dtype s)) (Uop.src u)
+      then Some false
+      else None);
+
     (* A renderer-lowered shift may carry a uint32 count; every other
        shape of shift is left to the generic ALU rule. *)
     ops ~src:[ var "x"; var_dtype "count" (exact_dtype Dtype.uint32) ]
@@ -313,7 +329,7 @@ let shared_spec : t =
       && Option.is_some (Uop.as_range u));
 
     op ~allow_any_len:true ~src:[ any ] Ops.Index
-    =?> (fun u _ -> tail_srcs is_int u);
+    =?> (fun u _ -> tail_srcs (fun s -> is_int s || is_invalid s) u);
 
     op ~allow_any_len:true ~src:[ any ] Ops.End
     =?> (fun u _ -> end_ok u);
@@ -323,14 +339,14 @@ let shared_spec : t =
       Ops.Group
     =?> (fun _ _ -> true);
 
-    op_src
-      ~src:(prefix [
+    op ~allow_any_len:true
+      ~src:[
         ops (Ops.Group.movement @
              [ Ops.Param; Ops.Buffer; Ops.Contiguous; Ops.Index; Ops.After;
-               Ops.Multi; Ops.Bitcast; Ops.Ins ])
-      ])
+               Ops.Unshard; Ops.Bitcast; Ops.Ins ])
+      ]
       Ops.After
-    =?> (fun _ _ -> true);
+    =?> (fun u _ -> same_dtype u (Uop.src u).(0));
 
     op Ops.Custom =?> (fun _ _ -> true);
     op Ops.Customi =?> (fun _ _ -> true);
@@ -339,9 +355,6 @@ let shared_spec : t =
 
     op ~allow_any_len:true ~dtype:Dtype.void Ops.Barrier
     =?> (fun _ _ -> true);
-
-    op ~dtype:Dtype.void ~src:[ var "x" ] Ops.Wait
-    =?> (fun _ bs -> is_bool (bs $ "x"));
 
     op Ops.Ins =?> (fun _ _ -> true);
 
@@ -439,7 +452,7 @@ let tensor_spec : t =
     op ~src:[ var "x" ] Ops.Allreduce
     =?> (fun u bs -> allreduce_ok u (bs $ "x"));
 
-    op Ops.Multi =?> (fun u _ -> multi_ok u);
+    op Ops.Unshard =?> (fun u _ -> multi_ok u);
 
     op Ops.Mselect =?> (fun u _ -> mselect_ok u);
 
@@ -534,7 +547,7 @@ let full_only_spec : t =
     ops [ Ops.Load; Ops.Store ] =?> (fun _ _ -> true);
 
     op ~src:[ any; any ] Ops.Bind
-    =?> (fun u _ -> arg_empty u && int32_or_weakint u);
+    =?> (fun u _ -> arg_empty u && bind_dtype u);
   ]
 
 let full_spec : t =

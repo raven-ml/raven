@@ -78,7 +78,6 @@ type t = {
   supports_float4 : bool;
   image_pitch_alignment : int option;
   render : ?name:string -> Tolk_uop.Uop.t list -> string;
-  aux : Tolk_uop.Uop.t list -> string list;
   code_for_op : code_op list;
   supported_ops : Decomp_op.supported_ops;
   extra_matcher : (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option;
@@ -102,7 +101,6 @@ let tensor_cores t = t.tensor_cores
 let supports_float4 t = t.supports_float4
 let image_pitch_alignment t = t.image_pitch_alignment
 let render t = t.render
-let aux t = t.aux
 let code_for_op t = t.code_for_op
 let supported_ops t = t.supported_ops
 let extra_matcher t = t.extra_matcher
@@ -127,7 +125,7 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
     ?global_prod_max
     ?(local_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
     ?(code_for_op = []) ?supported_ops ?compiler ?extra_matcher
-    ?(supports_dtype = fun _ -> true) ?(aux = fun _ -> [])
+    ?(supports_dtype = fun _ -> true)
     ?(emulated_floats = [])
     ~name ~device ~has_local ~has_shared ~shared_max ~render () =
   let supported_ops =
@@ -153,7 +151,6 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
     supports_float4;
     image_pitch_alignment;
     render;
-    aux;
     code_for_op;
     supported_ops;
     extra_matcher;

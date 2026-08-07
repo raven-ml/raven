@@ -87,10 +87,6 @@ val any_dtype : dtype_pat list -> dtype_pat
 val fixed : t list -> src_pat
 (** [fixed ps] matches exactly the source list [ps]. *)
 
-val prefix : t list -> src_pat
-(** [prefix ps] matches [ps] at the beginning of the source list and accepts
-    any trailing sources. *)
-
 val perms : t list -> src_pat
 (** [perms ps] matches the source list as any permutation of [ps].
     Duplicate binding sets are collapsed. *)
@@ -150,10 +146,13 @@ val op_src :
   ?src:src_pat ->
   ?arg:arg_pat ->
   ?name:string ->
+  ?allow_any_len:bool ->
   Ops.t -> t
 (** [op_src] is the explicit-source-pattern variant of {!op}. Use
-    {!fixed}, {!prefix}, {!perms}, or {!repeat} to describe child matching,
-    and {!exact_dtype} or {!any_dtype} for dtype matching. *)
+    {!fixed}, {!perms}, or {!repeat} to describe child matching,
+    and {!exact_dtype} or {!any_dtype} for dtype matching. With
+    [allow_any_len], a {!fixed} pattern matches a prefix of the sources and
+    ignores the rest. *)
 
 val ops_src :
   ?loc:pos ->
@@ -161,6 +160,7 @@ val ops_src :
   ?src:src_pat ->
   ?arg:arg_pat ->
   ?name:string ->
+  ?allow_any_len:bool ->
   Ops.t list -> t
 (** [ops_src] is like {!op_src} but matches any node whose op is in the
     supplied list. *)

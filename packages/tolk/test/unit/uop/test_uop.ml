@@ -148,7 +148,7 @@ let ops_tinygrad_order () =
       "EXPAND";
       "PAD";
       "FLIP";
-      "MULTI";
+      "UNSHARD";
       "REDUCE";
       "ALLREDUCE";
       "PYLITERAL";
@@ -322,7 +322,7 @@ let bind_requires_concrete_value () =
 
 let integer_bounds_parity () =
   let empty_range =
-    Uop.range ~size:(Uop.const_int 0) ~axis:0 ~kind:Axis_type.Loop ()
+    Uop.range ~size:(Uop.const_int 0) ~axis:0 ~kind:Axis_type.Weak ()
   in
   equal_bounds ~msg:"RANGE(0) is an empty interval" empty_range (0, -1);
   let empty_special =
@@ -460,13 +460,6 @@ let uop_constructor_parity_shortcuts () =
     (Uop.index ~ptr:stacked ~idxs:[ Uop.const_int 1 ] () == b);
   is_true ~msg:"empty end returns value"
     (Uop.end_ ~value:a ~ranges:[] == a);
-  let wait = Uop.wait ~src:a in
-  is_true ~msg:"wait uses Wait op" (Uop.op wait = Ops.Wait);
-  is_true ~msg:"wait is void typed"
-    (Dtype.equal (Uop.dtype wait) Dtype.void);
-  (match Uop.as_wait wait with
-   | Some { src } -> is_true ~msg:"wait view keeps source" (src == a)
-   | None -> is_true ~msg:"wait view is present" false);
   let contiguous = Uop.contiguous ~src:stacked () in
   is_true ~msg:"deviceless contiguous returns source"
     (contiguous == stacked);
@@ -549,7 +542,7 @@ let call_constructor_parity () =
   is_true ~msg:"slice body call stays Call"
     (Ops.equal (Uop.op slice_call) Ops.Call);
   let range =
-    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Loop ()
+    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
   in
   let leaked_range_rejected =
     try
@@ -1409,19 +1402,19 @@ let debug_prints_toposort_like_tinygrad () =
 
 let debug_prints_ranges_and_supplied_list_sources () =
   let r =
-    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Loop ()
+    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
   in
   let expr = Uop.O.(r + Uop.const_int 1) in
   let expected_toposort =
     "   0 Ops.CONST           :            dtypes.weakint                           []                               4\n\
-     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['4']                            (0, AxisType.LOOP)\n\
+     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['4']                            (0, AxisType.WEAK)\n\
      \   2 Ops.CONST           :            dtypes.weakint                           []                               1\n\
      \   3 Ops.ADD             : 0          dtypes.weakint                           [1, '1']                         None\n"
   in
   equal string expected_toposort (Render.uops_to_string expr);
   let expected_list =
     "   0 Ops.ADD             : 0          dtypes.weakint                           [1, '--']                        None\n\
-     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['--']                           (0, AxisType.LOOP)\n"
+     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['--']                           (0, AxisType.WEAK)\n"
   in
   equal string expected_list (Render.uops_list_to_string [ expr; r ])
 
@@ -1486,7 +1479,7 @@ let debug_prints_rich_args_dataclass_style () =
   let kernel_info : Uop.kernel_info =
     {
       name = "kern";
-      axis_types = [ Axis_type.Loop ];
+      axis_types = [ Axis_type.Weak ];
       dont_use_locals = false;
       applied_opts = [ Uop.Opt.Upcast { axis = 0; amount = 4 } ];
       opts_to_apply = Some [ Uop.Opt.Nolocals ];
@@ -1532,7 +1525,7 @@ let debug_prints_rich_args_dataclass_style () =
        "BufferizeOpts(device=0, addrspace=AddrSpace.LOCAL, removable=False)");
   is_true ~msg:"KernelInfo repr"
     (contains out
-       "KernelInfo(name='kern', axis_types=(AxisType.LOOP,), dont_use_locals=False");
+       "KernelInfo(name='kern', axis_types=(AxisType.WEAK,), dont_use_locals=False");
   is_true ~msg:"Opt repr"
     (contains out "Opt(op=OptOps.UPCAST, axis=0, arg=4)");
   is_true ~msg:"Estimates repr"
@@ -1741,9 +1734,10 @@ let upat_explicit_source_patterns () =
           Ops.Add)
        sum
      <> []);
-  is_true ~msg:"prefix source pattern accepts trailing sources"
+  is_true ~msg:"fixed source pattern accepts trailing sources"
     (Upat.match_
-       (Upat.op_src ~src:(Upat.prefix [ Upat.const_int 1; Upat.const_int 2 ])
+       (Upat.op_src ~allow_any_len:true
+          ~src:(Upat.fixed [ Upat.const_int 1; Upat.const_int 2 ])
           Ops.Sink)
        sink
      <> []);
@@ -1971,25 +1965,73 @@ let graph_rewrite_skips_call_body_by_default () =
       ignore srcs;
       is_true ~msg:"call keeps body and one arg" false
 
-let graph_rewrite_detects_bottom_up_cycles () =
+(* Skipping the body is a property of the body, not of the edge that reaches
+   it: once a call pins its body, a second path to that same body is left
+   alone too. Otherwise a body shared with the surrounding graph would be
+   rewritten through the other path and the call would no longer name it. *)
+let graph_rewrite_pins_call_body_on_every_path () =
+  let info =
+    {
+      Uop.grad_fxn = None;
+      name = None;
+      precompile = false;
+      precompile_backward = false;
+      aux = None;
+    }
+  in
+  let body = Uop.sink [ Uop.const_int 1 ] in
+  let call = Uop.call ~body ~args:[ Uop.const_int 2 ] ~info in
   let rewrite u =
     match Uop.const_int_value u with
-    | Some 1 -> Some (Uop.const_int 2)
-    | Some 2 -> Some (Uop.const_int 1)
+    | Some 1 -> Some (Uop.const_int 10)
+    | Some 2 -> Some (Uop.const_int 20)
     | _ -> None
   in
+  let r = Uop.graph_rewrite rewrite (Uop.sink [ call; body ]) in
+  match Array.to_list (Uop.src r) with
+  | [ call'; body' ] ->
+      is_true ~msg:"call body is not entered" ((Uop.src call').(0) == body);
+      is_true ~msg:"call arg is still rewritten"
+        (Uop.equal (Uop.src call').(1) (Uop.const_int 20));
+      is_true ~msg:"the other path to the body is not entered either"
+        (body' == body)
+  | srcs ->
+      ignore srcs;
+      is_true ~msg:"sink keeps the call and the body" false
+
+let swap_one_and_two u =
+  match Uop.const_int_value u with
+  | Some 1 -> Some (Uop.const_int 2)
+  | Some 2 -> Some (Uop.const_int 1)
+  | _ -> None
+
+let graph_rewrite_detects_bottom_up_cycles () =
   let rejected =
     try
-      ignore (Uop.graph_rewrite ~bottom_up:true rewrite (Uop.const_int 1));
+      ignore
+        (Uop.graph_rewrite ~bottom_up:true swap_one_and_two (Uop.const_int 1));
       false
     with Invalid_argument msg ->
       contains msg "cycle"
   in
   is_true ~msg:"bottom-up rewrite cycle is rejected" rejected
 
+(* A node's replacement is itself rewritten, so a rule that maps a pair of
+   nodes onto each other never settles. It is reported where it closes, not
+   left to run away. *)
+let graph_rewrite_detects_top_down_cycles () =
+  let rejected =
+    try
+      ignore (Uop.graph_rewrite swap_one_and_two (Uop.const_int 1));
+      false
+    with Invalid_argument msg ->
+      contains msg "cycle"
+  in
+  is_true ~msg:"top-down rewrite cycle is rejected" rejected
+
 let after_closes_ranges_from_dependencies () =
   let r =
-    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Loop ()
+    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
   in
   let ended = Uop.end_ ~value:(Uop.const_int 0) ~ranges:[ r ] in
   let sequenced = Uop.after ~src:r ~deps:[ ended ] in
@@ -1998,7 +2040,7 @@ let after_closes_ranges_from_dependencies () =
 
 let linear_closes_ranges () =
   let r =
-    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Loop ()
+    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
   in
   let lin = Uop.linear [ r ] in
   is_true ~msg:"Linear closes all of its source ranges"
@@ -2225,8 +2267,12 @@ let () =
             graph_rewrite_walk_bottom_up_gate_skips_post_and_children;
           test "graph rewrite skips call bodies by default"
             graph_rewrite_skips_call_body_by_default;
+          test "graph rewrite pins call bodies on every path"
+            graph_rewrite_pins_call_body_on_every_path;
           test "graph rewrite detects bottom-up cycles"
             graph_rewrite_detects_bottom_up_cycles;
+          test "graph rewrite detects top-down cycles"
+            graph_rewrite_detects_top_down_cycles;
         ];
       group "Ranges"
         [

@@ -209,6 +209,18 @@ let elementwise_tests =
           is_true (has_op (El.mod_ (ones_i [ 4 ]) (ones_i [ 4 ])) Ops.Floormod));
       test "float div is float" (fun () ->
           is_true (is_dtype (El.div (ones_i [ 4 ]) (ones_i [ 4 ])) D.float32));
+      test "int floordiv against a float divisor divides in float" (fun () ->
+          let t = El.floordiv (ones_i [ 4 ]) (ones_f [ 4 ]) in
+          is_true ~msg:"no integer floordiv" (not (has_op t Ops.Floordiv));
+          is_true (is_dtype t D.float32));
+      test "int mod against a float divisor stays float" (fun () ->
+          let t = El.mod_ (ones_i [ 4 ]) (ones_f [ 4 ]) in
+          is_true ~msg:"no integer floormod" (not (has_op t Ops.Floormod));
+          is_true (is_dtype t D.float32));
+      test "minimum of floats negates rather than complements" (fun () ->
+          is_true (has_op (El.minimum (ones_f [ 4 ]) (ones_f [ 4 ])) Ops.Mul));
+      test "minimum of ints complements" (fun () ->
+          is_true (has_op (El.minimum (ones_i [ 4 ]) (ones_i [ 4 ])) Ops.Xor));
       test "sqrt promotes int to float" (fun () ->
           is_true (is_dtype (El.sqrt (ones_i [ 4 ])) D.float32));
       test "where shape and dtype from branches" (fun () ->
@@ -216,6 +228,14 @@ let elementwise_tests =
           let t = El.where cond (ones_f [ 3 ]) (ones_f [ 3 ]) in
           equal (list int) [ 3 ] (shape t);
           is_true (is_dtype t D.float32));
+      test "where takes its condition uncoerced" (fun () ->
+          let cond = El.lt (ones_f [ 3 ]) (ones_f [ 3 ]) in
+          let t = El.where cond (ones_f [ 3 ]) (ones_f [ 3 ]) in
+          is_true (U.equal (src t 0) (T.uop cond)));
+      test "const_like can override the dtype" (fun () ->
+          let m = Cr.const_like ~dtype:D.bool (ones_f [ 2; 2 ]) (T.Sbool true) in
+          equal (list int) [ 2; 2 ] (shape m);
+          is_true (is_dtype m D.bool));
       test "where broadcasts branches" (fun () ->
           let cond = El.lt (ones_f [ 3; 1 ]) (ones_f [ 3; 1 ]) in
           equal (list int) [ 3; 4 ]
@@ -270,6 +290,23 @@ let dtype_tests =
       test "is_floating_point" (fun () ->
           is_true (Dt.is_floating_point (ones_f [ 3 ]));
           is_true (not (Dt.is_floating_point (ones_i [ 3 ]))));
+      test "bitcast needs a concrete source dtype" (fun () ->
+          let weak = Dt.cast (ones_i [ 3 ]) D.weakint in
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Dt.bitcast weak D.int32));
+      test "bitcast needs a concrete target dtype" (fun () ->
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Dt.bitcast (ones_i [ 3 ]) D.weakint));
+      test "element_size needs a concrete dtype" (fun () ->
+          let weak = Dt.cast (ones_i [ 3 ]) D.weakint in
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Dt.element_size weak));
+      test "a weak value has nothing to make contiguous" (fun () ->
+          let weak = Dt.cast (ones_i [ 3 ]) D.weakint in
+          is_true (U.equal (T.uop (El.contiguous weak)) (T.uop weak)));
     ]
 
 (* Composed ops *)
@@ -285,6 +322,17 @@ let op_tests =
           equal (list int) [] (shape (Op.mean (ones_f [ 2; 3 ]))));
       test "var reduces axis" (fun () ->
           equal (list int) [ 2 ] (shape (Op.var ~axis:[ 1 ] (ones_f [ 2; 3 ]))));
+      test "var of half accumulates at float32 and returns half" (fun () ->
+          let t = Cr.ones ~dtype:D.float16 [ 2; 3 ] in
+          let v = Op.var ~axis:[ 1 ] t in
+          is_true ~msg:"result keeps the input dtype" (is_dtype v D.float16);
+          is_true ~msg:"the sum is taken at float32"
+            (List.exists
+               (fun u -> D.equal (U.dtype u) D.float32)
+               (U.toposort (T.uop v) |> List.filter (fun u ->
+                    Ops.equal (U.op u) Ops.Reduce))));
+      test "var of int is float32" (fun () ->
+          is_true (is_dtype (Op.var (ones_i [ 4 ])) D.float32));
       test "std reduces axis" (fun () ->
           equal (list int) [ 2 ] (shape (Op.std ~axis:[ 1 ] (ones_f [ 2; 3 ]))));
       test "cat dim 0" (fun () ->
@@ -481,9 +529,9 @@ let elementwise2_tests =
       test "pow float stays float" (fun () ->
           is_true (has_op (El.pow (ones_f [ 4 ]) (T.f 2.0)) Ops.Pow);
           is_true (is_dtype (El.pow (ones_f [ 4 ]) (T.f 2.0)) D.float32));
-      test "pow int base float exp rounds to int" (fun () ->
+      test "pow int base float exp promotes to float" (fun () ->
           let t = El.pow (ones_i [ 4 ]) (T.f 2.0) in
-          is_true (is_dtype t D.int32));
+          is_true (is_dtype t D.float32));
       test "pow int base int exp is int" (fun () ->
           is_true (is_dtype (El.pow (ones_i [ 4 ]) (T.i 2)) D.int32));
       test "cdiv int uses cdiv op" (fun () ->
@@ -701,6 +749,13 @@ let logspace_tests =
             (shape (Op.logcumsumexp ~axis:1 (ones_f [ 2; 3; 4 ]))));
       test "logcumsumexp default axis" (fun () ->
           equal (list int) [ 2; 3 ] (shape (Op.logcumsumexp (ones_f [ 2; 3 ]))));
+      test "softmin is softmax of the negated input" (fun () ->
+          let t = ones_f [ 2; 3; 4 ] in
+          equal (list int) [ 2; 3; 4 ] (shape (Op.softmin t));
+          is_true
+            (U.equal
+               (T.uop (Op.softmin ~axis:0 t))
+               (T.uop (Op.softmax ~axis:0 (El.neg t)))));
     ]
 
 (* Creation remainder *)
@@ -734,6 +789,16 @@ let creation2_tests =
           raises_match
             (function Invalid_argument _ -> true | _ -> false)
             (fun () -> Op.linspace 0.0 10.0 (-1)));
+      test "arange defaults to the default integer" (fun () ->
+          is_true (is_dtype (Op.arange 8) D.int32));
+      test "arange widens to int64 rather than wrapping" (fun () ->
+          let big = 1 lsl 40 in
+          is_true (is_dtype (Op.arange ~stop:(big + 4) big) D.int64);
+          is_true (is_dtype (Op.arange ~stop:(-big) ~step:(-1) 0) D.int64));
+      test "arange rejects a range its explicit dtype cannot hold" (fun () ->
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Op.arange ~dtype:D.int8 200));
     ]
 
 (* Padding modes and masked fill *)

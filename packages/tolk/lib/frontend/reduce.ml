@@ -35,6 +35,8 @@ let rop t op axis =
   else ret
 
 let reduce t op ?axis ?(keepdim = false) () =
+  (* A reduction accumulates, so its input needs a committed width. *)
+  let t = Dtype_ops.cast t (D.strong_dtype (T.dtype t)) in
   let axes = match axis with None -> List.init (T.ndim t) Fun.id | Some l -> l in
   let axes = List.map (T.resolve_dim t) axes in
   let axes = if T.ndim t = 0 then [] else axes in

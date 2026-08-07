@@ -32,10 +32,14 @@ val simplify_ranges : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     shrinks gated ranges based on [r < C] guards extracted from Index
     nodes. Reduce ranges are never shrunk. *)
 
+val pm_reduce_unparented : Tolk_uop.Upat.Pattern_matcher.t
+(** [pm_reduce_unparented] removes reduce ranges not referenced in the
+    reduce source. For ADD reduces the removed range size is multiplied into
+    the result; for MUL it is exponentiated. *)
+
 val reduce_unparented_all : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [reduce_unparented_all root] removes reduce ranges not referenced in
-    the reduce source. For ADD reduces the removed range size is multiplied
-    into the result; for MUL it is exponentiated. *)
+(** [reduce_unparented_all root] applies {!pm_reduce_unparented} over the
+    whole graph. *)
 
 val reduce_simplify_all : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [reduce_simplify_all root] removes unparented reduce ranges and

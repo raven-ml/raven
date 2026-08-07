@@ -401,16 +401,16 @@ let coalesce_entry node =
            | Some (base, offset) ->
                Some { op; node; index; buf; base; valid; offset; value }
            | None -> None)
-	    | Some _ | None ->
-	        failwith
-	          (Printf.sprintf "memory coalesing should be on INDEX, not %s"
-	             (Ops.name (U.op index)))
+    | Some _ | None ->
+        failwith
+          (Printf.sprintf "memory coalescing should be on INDEX, not %s"
+             (Ops.name (U.op index)))
   in
   match U.as_load node, U.as_store node with
   | Some { src; alt = None; gate = None }, _ -> of_index Mem_load src
   | _, Some { dst; value; gate = None } -> of_index Mem_store ~value dst
   | Some _, _ | _, Some _ ->
-      failwith "memory coalesing does not support gated loads/stores"
+      failwith "memory coalescing does not support gated loads/stores"
   | _ -> None
 
 let base_equal a b =
@@ -455,8 +455,8 @@ let entries_at entries offset =
   loop [] [] entries
 
 let is_foldable_scalar = function
-  | Dtype.Float32 | Dtype.Float16 | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
-  | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> true
+  | Dtype.Float32 | Dtype.Float16 | Dtype.Int32 | Dtype.Uint32 | Dtype.Fp8e4m3
+  | Dtype.Fp8e5m2 | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> true
   | _ -> false
 
 let fold_widths_for_value ren buf =
@@ -554,7 +554,7 @@ let coalesce_store_group ren entries offsets =
       let grouped_entries = List.map (entries_at entries) group in
       let replacements =
         match List.find_opt (fun entries -> List.length entries <> 1) grouped_entries with
-        | Some _ -> failwith "Coalese: multiple stores to the same offset"
+        | Some _ -> failwith "Coalesce: multiple stores to the same offset"
         | None ->
             let offset = gated_offset first.valid base in
             let idx =
@@ -600,7 +600,7 @@ let coalesce_group ren entries =
           | Mem_store -> coalesce_store_group ren entries offsets)
         groups
 
-let memory_coalesing ren root =
+let memory_coalescing ren root =
   if Helpers.getenv "DMC" 0 <> 0 then root
   else
     let rec group_entries groups = function

@@ -86,7 +86,7 @@ val shared_spec : t
 (** Rules that hold at every stage: {!Ops.Sink}, {!Ops.Noop},
     {!Ops.Const}, local/register {!Ops.Buffer}, {!Ops.Stack}, ALU and casts,
     {!Ops.Range}, {!Ops.Index}, {!Ops.End}, grouped side effects, ordering
-    {!Ops.After}, backend escapes, pattern literals, conditional {!Ops.Wait},
+    {!Ops.After}, backend escapes, pattern literals,
     machine instructions, memory access, and {!Ops.Wmma}.
 
     An ALU result and each of its operands share a dtype, except that a

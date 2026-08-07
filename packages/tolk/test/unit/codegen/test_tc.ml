@@ -46,7 +46,7 @@ let wrap_sink ?opts_to_apply srcs =
   U.sink ~kernel_info:(kernel_info ?opts_to_apply ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
 
 let reduce_range ~axis size =
   U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
@@ -404,6 +404,7 @@ let () =
                 "WMMA_16_16_16_half_float";
                 "WMMA_16_16_16_half_half";
                 "WMMA_16_16_16___bf16_float";
+                "WMMA_16_16_16_char_int";
               ]
               (List.map Tc.to_string Tc.amd_rdna3);
             equal (list string)

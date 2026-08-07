@@ -55,7 +55,7 @@ let make_loop () =
   let b = B.create () in
   let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
   let c10 = B.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 }) in
-  let r = B.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_type.Loop }) in
+  let r = B.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_type.Weak }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ r ]; dtype = ptr }) in
   let ld = B.emit b (Load { src = idx0; alt = None; gate = None; dtype = dt }) in
   let idx1 = B.emit b (Index { ptr = p0; idxs = [ r ]; dtype = ptr }) in
@@ -140,8 +140,8 @@ let make_nested_loops () =
   let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
   let c10 = B.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 }) in
   let c5 = B.emit b (Const { value = Const.int Dtype.int32 5; dtype = Dtype.int32 }) in
-  let r0 = B.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_type.Loop }) in
-  let r1 = B.emit b (Range { size = c5; dtype = Dtype.int32; axis = 1; sub = []; kind = Axis_type.Loop }) in
+  let r0 = B.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_type.Weak }) in
+  let r1 = B.emit b (Range { size = c5; dtype = Dtype.int32; axis = 1; sub = []; kind = Axis_type.Weak }) in
   let sum = B.emit b (Binary { op = `Add; lhs = r0; rhs = r1; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ sum ]; dtype = ptr }) in
   let ld = B.emit b (Load { src = idx0; alt = None; gate = None; dtype = dt }) in

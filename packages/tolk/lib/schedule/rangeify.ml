@@ -177,7 +177,7 @@ and compute_shape_of n =
   | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
   | Ops.Mselect | Ops.Mstack | Ops.Allreduce ->
       if Array.length (U.src n) = 0 then None else shape_of (src0 n)
-  | Ops.Multi ->
+  | Ops.Unshard ->
       (* The sharding axis covers all devices: inner size times device
          count. *)
       let ndev =
@@ -248,7 +248,8 @@ and compute_shape_expr_of n =
 let argsort order =
   List.map snd (List.sort compare (List.mapi (fun i o -> (o, i)) order))
 
-let device_max_bufs = function "METAL" -> 31 | "WEBGPU" -> 8 | _ -> 0
+let device_max_bufs =
+  function "METAL" -> 31 | "WEBGPU" -> 8 | "CPU" -> 31 | _ -> 0
 
 let base n = U.base n
 
@@ -364,7 +365,7 @@ let pm_add_ranges_to_store ctr n =
              List.map (fun size ->
                  let axis = !ctr in
                  incr ctr;
-                 U.range ~size ~axis ~kind:Axis_type.Loop ())
+                 U.range ~size ~axis ~kind:Axis_type.Weak ())
                d_sh
            in
            let mk s = U.index ~ptr:s ~idxs () in
@@ -513,7 +514,7 @@ let detect_expanded src =
   else
     let rngs =
       List.mapi (fun i s ->
-          if s > 1 then U.range ~size:(int_ s) ~axis:i ~kind:Axis_type.Loop ()
+          if s > 1 then U.range ~size:(int_ s) ~axis:i ~kind:Axis_type.Weak ()
           else int_ 0) sh
     in
     let rec push node rngs =
@@ -770,7 +771,8 @@ let remove_noop_stage n =
 
 let cleanup_dead_axes n =
   match U.as_stage n with
-  | Some { src; ranges; opts; _ } when not (is_always_run (U.op src))
+  | Some { src; ranges; opts; _ } when opts.removable
+                                       && (not (is_always_run (U.op src)))
                                        && U.op src <> Ops.After ->
       let sh = Option.value (shape_of n) ~default:[] in
       if List.length sh <> List.length ranges then None
@@ -826,21 +828,26 @@ let unflatten_stage_index flat ranges =
   in
   loop [] flat sizes
 
+(* The index sources that correspond one-for-one with a stage's ranges. A
+   stage flattened to a single index expression is unflattened back; any other
+   arity mismatch means the index was built against a different stage, which
+   the rangeify pass must never produce. *)
 let stage_index_sources buf idx =
   let srcs = src_tail idx in
   let ranges = buf.U.ranges in
   let removable_range r =
     match U.op r with Ops.Range | Ops.Const -> true | _ -> false
   in
-  let compatible ranges srcs =
-    List.length ranges = List.length srcs
-    && List.for_all removable_range ranges
-  in
-  if compatible ranges srcs then Some srcs
-  else if not (List.for_all removable_range ranges) then None
-  else match srcs, ranges with
+  if not (List.for_all removable_range ranges) then None
+  else if List.length ranges = List.length srcs then Some srcs
+  else
+    match srcs, ranges with
     | [ flat ], _ :: _ :: _ -> Some (unflatten_stage_index flat ranges)
-    | _ -> None
+    | _ ->
+        invalid_arg
+          (Printf.sprintf "Rangeify: index on wrong stage, %d ranges vs %d \
+                           index sources" (List.length ranges)
+             (List.length srcs))
 
 let substitute_stage_ranges mappings src =
   let mappings = List.filter (fun (k, v) -> not (U.equal k v)) mappings in
@@ -1029,7 +1036,7 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
                                 let axis = ctx.range_idx in
                                 ctx.range_idx <- ctx.range_idx + 1;
                                 U.range ~size:v.size ~axis ~sub:v.sub
-                                  ~kind:Axis_type.Loop
+                                  ~kind:Axis_type.Weak
                                   ~dtype:(U.dtype x)
                                   ~parents:v.parents ()
                             | None -> x) orig
@@ -1142,6 +1149,10 @@ let range_axis_cmp a b =
 let stage_to_store ?(allow_locals = true) counter n =
   match U.as_stage n with
   | Some { src; ranges; opts } ->
+      (* A buffer is never weak: store at a committed width and cast the
+         result back, so readers see the dtype the stage had. *)
+      let buf_dtype = Dtype.strong_dtype (U.dtype n) in
+      let read_back u = U.cast ~src:u ~dtype:(U.dtype n) in
       let shape =
         match shape_of n with
         | Some _ as shape -> shape
@@ -1216,25 +1227,31 @@ let stage_to_store ?(allow_locals = true) counter n =
             incr counter;
             let buf =
               U.buffer ~slot:id ?device:opts.device ~shape:(shape_node [ size ])
-                ~addrspace:Dtype.Global ~dtype:(U.dtype n) ()
+                ~addrspace:Dtype.Global ~dtype:buf_dtype ()
             in
             let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
             let ended =
-              U.end_ ~value:(U.store ~dst:idx ~value:src ()) ~ranges:idx_ranges
+              U.end_
+                ~value:(U.store ~dst:idx ~value:(U.cast ~src ~dtype:buf_dtype) ())
+                ~ranges:idx_ranges
             in
-            Some (U.after ~src:buf ~deps:[ ended ])
+            Some (read_back (U.after ~src:buf ~deps:[ ended ]))
         | _ when opts.addrspace = Dtype.Local && allow_locals ->
             let id = !counter in
             incr counter;
             let buf =
-              U.buffer ~slot:id ~shape:(shape_node [ size ]) ~dtype:(U.dtype n)
+              U.buffer ~slot:id ~shape:(shape_node [ size ]) ~dtype:buf_dtype
                 ~addrspace:Dtype.Local ()
             in
             let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
             let st =
-              U.end_ ~value:(U.store ~dst:idx ~value:src ()) ~ranges:idx_ranges
+              U.end_
+                ~value:(U.store ~dst:idx ~value:(U.cast ~src ~dtype:buf_dtype) ())
+                ~ranges:idx_ranges
             in
-            Some (U.after ~src:buf ~deps:[ U.barrier ~srcs:[ st ] () ])
+            Some
+              (read_back
+                 (U.after ~src:buf ~deps:[ U.barrier ~srcs:[ st ] () ]))
         | _ -> None)
   | None -> None
 
@@ -1832,6 +1849,17 @@ let add_buffers_rules ?(allow_locals = true) counter =
     pm_mop_through_index; pm_mop_past_after; pm_mop_past_end;
     flatten_stage;
     stage_to_store ~allow_locals counter;
+    (* Index the buffer under the read-back cast the rule above adds, and cast
+       the loaded value instead. Without this the expander widens the whole
+       cast buffer into one vector. *)
+    (fun n -> match U.as_index n with
+       | Some { ptr; _ } when U.op ptr = Ops.Cast && Dtype.is_weak (U.dtype ptr)
+         ->
+           let idxs = src_tail n in
+           Some
+             (U.cast ~dtype:(U.dtype n)
+                ~src:(U.index ~ptr:(src0 ptr) ~idxs ()))
+       | _ -> None);
     (* Tag PARAMs and RANGEs so later passes can tell an original node from
        one freshly created during the kernel split. *)
     (fun n -> match U.op n, U.node_tag n with

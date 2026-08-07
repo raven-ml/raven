@@ -173,6 +173,10 @@ let const_nan_like u =
 let rec gcd_int a b =
   if b = 0 then abs a else gcd_int b (a mod b)
 
+(* [ceil_div a b] rounds towards positive infinity; [b] must be positive.
+   OCaml's [/] truncates, so a negative dividend needs the correction. *)
+let ceil_div a b = if a > 0 then ((a + b - 1) / b) else -(-a / b)
+
 let int_bounds (v : Dtype.t) =
   match Dtype.min v, Dtype.max v with
   | `SInt lo, `SInt hi -> Some (Int64.to_int lo, Int64.to_int hi)
@@ -381,25 +385,33 @@ let const_bound_like u n =
   if Dtype.is_bool (Uop.dtype u) then Uop.const_bool (n <> 0)
   else Uop.const_like u n
 
+(* The rewritten exponent is left weak: it is a mathematical value, and the
+   width it eventually takes is the surrounding expression's to decide.
+   An integer exponent stays an integer. *)
+let weak_exponent c v =
+  match const_int_v c with
+  | Some _ when Float.is_integer v -> Uop.const_int (int_of_float v)
+  | _ -> Uop.const_float v
+
 let simplify_pow x c =
   match const_numeric_v c with
   | None -> None
   | Some e ->
       if e < 0.0 then
-        let neg_c = const_numeric_like c (-. e) in
+        let neg_c = weak_exponent c (-. e) in
         let r = Uop.alu_unary ~op:Ops.Reciprocal ~src:x in
         Some (Uop.alu_binary ~op:Ops.Pow ~lhs:r ~rhs:neg_c)
       else if e = 0.0 then Some (const_numeric_like x 1.0)
       else if Float.of_int (Float.to_int (e -. 0.5)) +. 0.5 = e then
         (* half-integer: x^e = x^(e-0.5) * sqrt(x) *)
-        let c' = const_numeric_like c (e -. 0.5) in
+        let c' = Uop.const_float (e -. 0.5) in
         let half = Uop.alu_binary ~op:Ops.Pow ~lhs:x ~rhs:c' in
         let s = Uop.alu_unary ~op:Ops.Sqrt ~src:x in
         Some (Uop.alu_binary ~op:Ops.Mul ~lhs:half ~rhs:s)
       else if Float.of_int (Float.to_int e) = e then
         (* integer >= 0: repeated squaring *)
         let n = Float.to_int e in
-        let c' = const_numeric_like c (Float.of_int (n / 2)) in
+        let c' = weak_exponent c (Float.of_int (n / 2)) in
         let y = Uop.alu_binary ~op:Ops.Pow ~lhs:x ~rhs:c' in
         let y2 = Uop.alu_binary ~op:Ops.Mul ~lhs:y ~rhs:y in
         if n mod 2 = 1
@@ -436,107 +448,113 @@ let decompose_mod_mul u =
        | _ -> None)
   | _ -> None
 
-(* [(base % div) * mul + q * (div * mul)] collapses to [base * mul] when
-   [q = base // div] (or the equivalent via nested CDIV). A third variant
-   collapses [((base // div) % d) * div + base % div] to [base % (div*d)]. *)
+(* Split [u = rest * c] into [(rest, c)], or [(u, 1)] when [u] is not that
+   shape. The multiplicative counterpart of {!Uop.pop_const}. *)
+let pop_const_mul u =
+  match Uop.op u, Uop.src u with
+  | Ops.Mul, [| rest; c |] -> (
+      match const_int_v c with Some n -> (rest, n) | None -> (u, 1))
+  | _ -> (u, 1)
+
+(* [quotient_base ~div_op q base div] is the [b] with [q = b // div] and
+   [b mod div = base mod div], when one exists. That congruence is all a
+   recombination needs, and canonicalisation moves constants freely, so the
+   quotient may have been merged ([(x//c + a)//div] becomes [(x + a*c)//(c*div)]
+   for [div > 0]) or shifted ([(y + k*D)//D = y//D + k]). Both identities are
+   floor-specific, so a truncating quotient only recombines when it is
+   literally [base // div]. *)
+let quotient_base ~div_op q base div =
+  if not (Ops.equal div_op Ops.Floordiv) then
+    match Uop.op q, Uop.src q with
+    | op, [| qb; qd |]
+      when Ops.equal op div_op
+           && const_int_v qd = Some div
+           && Uop.equal qb base ->
+        Some base
+    | _ -> None
+  else
+    let q, shift = Uop.pop_const q in
+    let num, a = Uop.pop_const base in
+    match Uop.op q, Uop.src q with
+    | Ops.Floordiv, [| q_num; q_den |] -> (
+        match const_int_v q_den with
+        | None -> None
+        | Some qd -> (
+            let merged =
+              if div <= 0 then None
+              else
+                match Uop.op num, Uop.src num with
+                | Ops.Floordiv, [| inner; inner_den |] -> (
+                    match const_int_v inner_den with
+                    | Some c when qd = c * div -> Some (inner, a * c, c * div)
+                    | _ -> None)
+                | _ -> None
+            in
+            let plan =
+              match merged with
+              | Some _ as m -> m
+              | None -> if qd = div then Some (num, a, div) else None
+            in
+            match plan with
+            | None -> None
+            | Some (num, a, merged_div) ->
+                let x, xa = Uop.pop_const num in
+                let p, pa = Uop.pop_const q_num in
+                if not (Uop.equal p x) then None
+                else
+                  let t = xa + a - pa in
+                  if t mod merged_div <> 0 then None
+                  else
+                    let k = (t / merged_div) - shift in
+                    if k = 0 then Some base
+                    else
+                      let step = Uop.const_like base (k * div) in
+                      Some Uop.O.(base - step)))
+    | _ -> None
+
+(* A scaled mod [(base % div) * mul] recombines with a partner carrying the
+   quotient of some [b] congruent to [base] modulo [div]:
+
+   - partner [(b // div) * (div * mul)]      -> [b * mul]
+   - partner [((b // div) % d) * (div * mul)] -> [(b % (div * d)) * mul]
+
+   The second is a partial recombination into a wider mod and needs [d > 0]. *)
 let fold_add_divmod_recombine root =
-  let terms = Uop.split_uop root Ops.Add in
-  let terms_arr = Array.of_list terms in
-  let n = Array.length terms_arr in
+  let terms = Array.of_list (Uop.split_uop root Ops.Add) in
+  let n = Array.length terms in
+  let others i j =
+    Array.to_list terms |> List.filteri (fun k _ -> k <> i && k <> j)
+  in
   let result = ref None in
   let i = ref 0 in
   while Option.is_none !result && !i < n do
-    (match decompose_mod_mul terms_arr.(!i) with
+    (match decompose_mod_mul terms.(!i) with
      | None -> ()
      | Some (mod_op, div_op, base, div, mul) ->
-         let target = div * mul in
          let j = ref 0 in
          while Option.is_none !result && !j < n do
-           if !j <> !i then begin
-             let v = terms_arr.(!j) in
-             (match Uop.op v, Uop.src v with
-              | Ops.Mul, [| q; c |] when
-                  (match const_int_v c with
-                   | Some cv -> cv = target
-                   | None -> false) ->
-                  let exact =
+           (if !j <> !i then
+              let q, scale = pop_const_mul terms.(!j) in
+              if scale = div * mul then
+                let emit head =
+                  let head = Uop.O.(head * Uop.const_like head mul) in
+                  result := Some (Uop.usum (head :: others !i !j))
+                in
+                match quotient_base ~div_op q base div with
+                | Some b -> emit b
+                | None -> (
                     match Uop.op q, Uop.src q with
-                    | op, [| qbase; qd |] when Ops.equal op div_op ->
-                        (match const_int_v qd with
-                         | Some qdv when qdv = div ->
-                             Uop.equal qbase base
-                         | _ -> false)
-                    | _ -> false
-                  in
-                  let exact_nested =
-                    if exact then false
-                    else match Uop.op base, Uop.src base with
-                    | op, [| bb; bd |] when Ops.equal op div_op ->
-                        (match const_int_v bd, Uop.op q, Uop.src q with
-                         | Some bdv, qop, [| qbase; qd |]
-                           when Ops.equal qop div_op ->
-                             (match const_int_v qd with
-                              | Some qdv when qdv = bdv * div ->
-                                  Uop.equal qbase bb
-                              | _ -> false)
-                         | _ -> false)
-                    | _ -> false
-                  in
-                  if exact || exact_nested then begin
-                    let head =
-                      Uop.O.(base * Uop.const_like base mul)
-                    in
-                    let rest =
-                      Array.to_list terms_arr
-                      |> List.mapi (fun k t -> k, t)
-                      |> List.filter_map (fun (k, t) ->
-                           if k = !i || k = !j then None
-                           else Some t)
-                    in
-                    result := Some (Uop.usum (head :: rest))
-                  end
-                  else if div > 0 then begin
-                    match Uop.op q, Uop.src q with
-                    | qop, [| qinner; qd |] when Ops.equal qop mod_op ->
-                        (match const_int_v qd with
-                         | Some d_inner when d_inner > 0 ->
-                             (match Uop.op qinner, Uop.src qinner with
-                              | qinner_op, [| qb; qb_d |]
-                                when Ops.equal qinner_op div_op ->
-                                  let ok =
-                                    Uop.equal qb base
-                                    && (match const_int_v qb_d with
-                                        | Some qdv -> qdv = div
-                                        | _ -> false)
-                                  in
-                                  if ok then begin
-                                    let new_mod_rhs =
-                                      Uop.const_like base (div * d_inner)
-                                    in
-                                    let new_mod =
-                                      Uop.alu_binary ~op:mod_op
-                                        ~lhs:base ~rhs:new_mod_rhs
-                                    in
-                                    let head =
-                                      Uop.O.(new_mod * Uop.const_like base mul)
-                                    in
-                                    let rest =
-                                      Array.to_list terms_arr
-                                      |> List.mapi (fun k t -> k, t)
-                                      |> List.filter_map (fun (k, t) ->
-                                           if k = !i || k = !j
-                                           then None
-                                           else Some t)
-                                    in
-                                    result := Some
-                                      (Uop.usum (head :: rest))
-                                  end
-                              | _ -> ())
-                         | _ -> ())
-                    | _ -> ()
-                  end
-              | _ -> ())
-           end;
+                    | op, [| q_num; q_den |] when Ops.equal op mod_op -> (
+                        match const_int_v q_den with
+                        | Some d when d > 0 -> (
+                            match quotient_base ~div_op q_num base div with
+                            | Some b ->
+                                emit
+                                  (Uop.alu_binary ~op:mod_op ~lhs:b
+                                     ~rhs:(Uop.const_like b (div * d)))
+                            | None -> ())
+                        | _ -> ())
+                    | _ -> ()));
            incr j
          done);
     incr i
@@ -594,53 +612,12 @@ let pm_invalid_load_store : Upat.Pattern_matcher.t =
          [ make_rule_invalid_load inner; make_rule_invalid_store_idx inner ])
        invalid_index_or_casted)
 
-(* An index-domain invalid gate is never read past a cast or a comparison: the
-   consumer recovers the gate itself with [Uop.get_valid], so the gate drops
-   and the valid value is used directly. Without this, a comparison on a gated
-   index lifts the gate into the surrounding boolean algebra, where two halves
-   of a concatenation contribute a predicate and its negation and annihilate.
-   Runs before pm_data_invalid so the drop wins over the general gate-lifting
-   rules. *)
-let is_index_domain u = Dtype.equal (Uop.dtype u) Dtype.weakint
-
-let pm_index_invalid : Upat.Pattern_matcher.t =
-  let open Upat in
-  Pattern_matcher.make [
-    (let cond = var "cond" and x = var "x" in
-     cast ~name:"cast" (where ~name:"w" cond x invalid_pat) => fun bs ->
-       if is_invalid_const (bs $ "i") && is_index_domain (bs $ "w")
-       then Some (Uop.cast ~src:(bs $ "x") ~dtype:(Uop.dtype (bs $ "cast")))
-       else None);
-
-    (let cond = var "cond" and x = var "x" and y = var "y" in
-     ops ~src:[ where ~name:"w" cond x invalid_pat; y ] ~name:"alu"
-       Ops.Group.comparison
-     => fun bs ->
-       if is_invalid_const (bs $ "i") && is_index_domain (bs $ "w")
-       then
-         Some
-           (Uop.alu_binary ~op:(Uop.op (bs $ "alu")) ~lhs:(bs $ "x")
-              ~rhs:(bs $ "y"))
-       else None);
-
-    (let cond = var "cond" and x = var "x" and y = var "y" in
-     ops ~src:[ y; where ~name:"w" cond x invalid_pat ] ~name:"alu"
-       Ops.Group.comparison
-     => fun bs ->
-       if is_invalid_const (bs $ "i") && is_index_domain (bs $ "w")
-       then
-         Some
-           (Uop.alu_binary ~op:(Uop.op (bs $ "alu")) ~lhs:(bs $ "y")
-              ~rhs:(bs $ "x"))
-       else None);
-  ]
-
-(* Everywhere else Invalid poisons the value: ops move inside the gate so the
-   Invalid reaches the LOAD/STORE and folds there. Prepended to symbolic_simple
-   so that [0 * something_that_might_be_invalid] does not become [0]. *)
+(* Invalid poisons the value: ops move inside the gate so the Invalid reaches
+   the LOAD/STORE and folds there. Prepended to symbolic_simple so that
+   [0 * something_that_might_be_invalid] does not become [0]. *)
 let pm_data_invalid : Upat.Pattern_matcher.t =
   let open Upat in
-  Pattern_matcher.make [
+  Pattern_matcher.(make [
     (* Bare Invalid poisons a unary, cast, or bitcast result. *)
     (ops ~src:[ invalid_pat ] (Ops.Cast :: Ops.Bitcast :: Ops.Group.unary)
      => fun bs ->
@@ -726,9 +703,8 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
          if is_invalid_const v then Some i
          else Some (Uop.O.where (Uop.O.not_ cond) v i));
 
-    (* where(a, where(cond, x, Invalid), c) ->
-       lifted.where(a.where(x, c), Invalid) with
-       [lifted = cond] if [a = cond], else [!a | cond]. *)
+    (* where(a, where(cond, x, Invalid), c)
+       -> (!a | cond).where(a.where(x, c), Invalid). *)
     (let a = var "a" and c = var "c" in
      let cond = var "cond" and x = var "x" in
      where a (where cond x invalid_pat) c => fun bs ->
@@ -740,8 +716,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
          else
            let cond = bs $ "cond" and x = bs $ "x" in
            let lifted =
-             if Uop.equal a cond then cond
-             else Uop.alu_binary ~op:Ops.Or ~lhs:(Uop.O.not_ a) ~rhs:cond
+             Uop.alu_binary ~op:Ops.Or ~lhs:(Uop.O.not_ a) ~rhs:cond
            in
            Some (Uop.O.where lifted (Uop.O.where a x c) i));
 
@@ -760,18 +735,29 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
            let lifted = Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:cond in
            Some (Uop.O.where lifted (Uop.O.where a b x) i));
   ]
-
-let propagate_invalid : Upat.Pattern_matcher.t =
-  Upat.Pattern_matcher.(pm_index_invalid ++ pm_data_invalid ++ pm_invalid_load_store)
+  ++ pm_invalid_load_store)
 
 let fold_mul_zero x =
   match const_float_v x with
   | Some f when not (Float.is_finite f) -> const_nan_like x
   | _ -> Some (Uop.const_like x 0)
 
+(* The one rule that collapses [CAST(dt, CONST v)] into a typed CONST. It is
+   kept out of the layers below because it writes a strongly typed constant,
+   which the weak-dtype lowering must be free to decide for itself; passes that
+   want the fold compose it explicitly. *)
+let pm_fold_cast_const : Upat.Pattern_matcher.t =
+  let open Upat in
+  Pattern_matcher.make [
+    (cast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
+       match const_of_uop (bs $ "c") with
+       | Some c -> Option.map Uop.const (cast_const (Uop.dtype (bs $ "root")) c)
+       | None -> None);
+  ]
+
 let symbolic_simple : Upat.Pattern_matcher.t =
   let open Upat in
-  Pattern_matcher.(propagate_invalid ++ make [
+  Pattern_matcher.(pm_data_invalid ++ make [
     (* x + 0 -> x *)
     rewrite1 (fun x -> O.(x + zero)) (fun x -> Some x);
     (let x = var "x" and c = cvar ~name:"c" () in
@@ -1006,6 +992,10 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        | Some false -> Some x
        | None -> None);
 
+    (* x != False -> x *)
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
+     alu [ x; false_ ] Ops.Cmpne => fun bs -> Some (bs $ "x"));
+
     (* Idempotent ALUs with two equal operands. *)
     (rewrite1 (fun x -> ops ~src:[ x; x ] Ops.Group.idempotent) (fun x -> Some x));
 
@@ -1077,12 +1067,6 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        (fun x -> alu [ alu [ x ] Ops.Neg ] Ops.Neg)
        (fun x -> Some x));
 
-    (* Cast of a constant -> same const with root dtype. *)
-    (cast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
-       match const_of_uop (bs $ "c") with
-       | Some c -> Option.map Uop.const (cast_const (Uop.dtype (bs $ "root")) c)
-       | None -> None);
-
     (* Cast of STACK constants -> lane-wise cast. Tolk represents tinygrad tuple
        vector constants structurally as STACK. *)
     (cast ~name:"root" (op ~name:"stk" Ops.Stack) => fun bs ->
@@ -1117,6 +1101,12 @@ let symbolic_simple : Upat.Pattern_matcher.t =
           && Dtype.can_lossless_cast (Uop.dtype b) (Uop.dtype a)
        then Some x
        else None);
+
+    (* x.bitcast(a).bitcast(b) -> x.bitcast(b): the intermediate width equals
+       both ends', so the bit pattern is unchanged. *)
+    (let x = var "x" in
+     bitcast ~name:"b" (bitcast x) => fun bs ->
+       Some (Uop.bitcast ~src:(bs $ "x") ~dtype:(Uop.dtype (bs $ "b"))));
 
     (* Bitcast of scalar CONST -> reinterpret the const. *)
     (bitcast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
@@ -1216,6 +1206,12 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        (fun a b c d -> where a (where b c d) d)
        (fun a b c d ->
          Some (Uop.O.where (Uop.alu_binary ~op:Ops.And ~lhs:a ~rhs:b) c d)));
+
+    (* a.where(c, b.where(c, d)) -> (a | b).where(c, d). *)
+    (rewrite4
+       (fun a b c d -> where a c (where b c d))
+       (fun a b c d ->
+         Some (Uop.O.where (Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:b) c d)));
 
     (* bool max(x, y) -> x | y. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
@@ -1370,6 +1366,50 @@ let pm_fold_lane_stack : Upat.Pattern_matcher.t =
              with Exit -> None));
   ]
 
+(* Bool-typed nodes reachable from a node, itself included. Memoized: the
+   where-closure rule below consults it on every [where], and an unmemoized
+   walk revisits shared subgraphs. *)
+let bool_slice_cache : unit Uop.Ref_tbl.t Uop.Ref_tbl.t = Uop.Ref_tbl.create 256
+
+let rec bool_slice u =
+  match Uop.Ref_tbl.find_opt bool_slice_cache u with
+  | Some s -> s
+  | None ->
+      let s = Uop.Ref_tbl.create 8 in
+      Array.iter
+        (fun c ->
+          Uop.Ref_tbl.iter (fun k () -> Uop.Ref_tbl.replace s k ()) (bool_slice c))
+        (Uop.src u);
+      if Dtype.is_bool (Uop.dtype u) then Uop.Ref_tbl.replace s u ();
+      Uop.Ref_tbl.add bool_slice_cache u s;
+      s
+
+let has_index_cache : bool Uop.Ref_tbl.t = Uop.Ref_tbl.create 256
+
+let rec has_index u =
+  match Uop.Ref_tbl.find_opt has_index_cache u with
+  | Some b -> b
+  | None ->
+      let b = Uop.op u = Ops.Index || Array.exists has_index (Uop.src u) in
+      Uop.Ref_tbl.add has_index_cache u b;
+      b
+
+(* In [cond.where(t, f)], [cond] is true throughout [t] and false throughout
+   [f], so nested uses of it in either branch fold to a literal. Indexing gates
+   are excluded: the validity and store-coalescing passes read the gate back
+   off the where and own its shape. *)
+let fold_where_closure cond t f =
+  if
+    not
+      (Uop.Ref_tbl.mem (bool_slice t) cond || Uop.Ref_tbl.mem (bool_slice f) cond)
+  then None
+  else if has_index cond || has_index t || has_index f then None
+  else
+    let t' = Uop.substitute [ (cond, Uop.const_bool true) ] t in
+    let f' = Uop.substitute [ (cond, Uop.const_bool false) ] f in
+    if Uop.equal t' t && Uop.equal f' f then None
+    else Some (Uop.O.where cond t' f')
+
 let symbolic : Upat.Pattern_matcher.t =
   let open Upat in
   let rec compare_tuplize a b =
@@ -1505,44 +1545,28 @@ let symbolic : Upat.Pattern_matcher.t =
      matching tinygrad's rule order. *)
   @ two_stage_associative_rules
   @ [
-    (* c0*x < c1 for positive int c0, c1: rewrites to x < ceil(c1/c0). *)
+    (* c0*x < c1  ->  sign(c0)*x < ceil(c1/|c0|), for |c0| > 1. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and c0 = cvar ~name:"c0" ()
      and c1 = cvar ~name:"c1" () in
      O.((c0 * x) < c1) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
        match const_int_v c0, const_int_v c1 with
-       | Some c0v, Some c1v when c0v > 0 && c1v > 0 ->
-           let bound = (c1v + c0v - 1) / c0v in
-           Some Uop.O.(x < Uop.const_like x bound)
+       | Some c0v, Some c1v when abs c0v > 1 ->
+           let lhs = if c0v > 0 then x else Uop.O.neg x in
+           Some Uop.O.(lhs < Uop.const_like x (ceil_div c1v (abs c0v)))
        | _ -> None);
 
-    (* c0*x < c1 for negative c0 (not -1), c1 <= 0: rewrites to
-       -x < -floor(-c1/-c0). *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
-     and c0 = cvar ~name:"c0" ()
-     and c1 = cvar ~name:"c1" () in
-     O.((c0 * x) < c1) => fun bs ->
-       let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       match const_int_v c0, const_int_v c1 with
-       | Some c0v, Some c1v when c0v < 0 && c0v <> -1 && c1v <= 0 ->
-           (* floor((-c1)/(-c0)) with both positive. *)
-           let bound = (-c1v) / (-c0v) in
-           Some Uop.O.(Uop.O.neg x < Uop.const_like x (-bound))
-       | _ -> None);
-
-    (* (x//d) < c  for d > 0:
-       - if c > 0: x < c*d
-       - else:     x < c*d - (d-1) *)
+    (* (x//d) < c  ->  x < c*d for d > 0, and  c*d < x for d < 0. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and d = cvar ~name:"d" ()
      and c = cvar ~name:"c" () in
      O.((x // d) < c) => fun bs ->
        let x = bs $ "x" and d = bs $ "d" and c = bs $ "c" in
        match const_int_v d, const_int_v c with
-       | Some dv, Some cv when dv > 0 ->
-           let bound = if cv > 0 then cv * dv else cv * dv - (dv - 1) in
-           Some Uop.O.(x < Uop.const_like x bound)
+       | Some dv, Some cv when dv <> 0 ->
+           let bound = Uop.const_like x (cv * dv) in
+           if dv > 0 then Some Uop.O.(x < bound) else Some Uop.O.(bound < x)
        | _ -> None);
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and d = cvar ~name:"d" ()
@@ -1597,6 +1621,11 @@ let symbolic : Upat.Pattern_matcher.t =
                    Uop.O.(newx < Uop.const_like newx 1)
                    (Uop.const_bool true)));
 
+    (* Uses of a condition fold to a literal inside its own where branches. *)
+    (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
+     where cond (var "t") (var "f") => fun bs ->
+       fold_where_closure (bs $ "cond") (bs $ "t") (bs $ "f"));
+
     (* Binary(where(c, t, f), where(c, tt, ff)) -> where(c, op(t,tt), op(f,ff))
        when at least one branch is const on both sides. *)
     (let c = var "c" in
@@ -1631,17 +1660,33 @@ let symbolic : Upat.Pattern_matcher.t =
          let merged = Uop.O.where c Uop.O.(t + tt) Uop.O.(f + ff) in
          Some Uop.O.(y + merged));
 
+    (* c.where(t, 0) + c.where(0, f) -> c.where(t, f): the branches are
+       complementary, so exactly one contributes. *)
+    (let c = var "c" and t = var "t" and f = var "f" in
+     let z0 = cvar ~name:"z0" () and z1 = cvar ~name:"z1" () in
+     O.(where c t z0 + where c z1 f) => fun bs ->
+       if is_zero_const (bs $ "z0") && is_zero_const (bs $ "z1")
+       then Some (Uop.O.where (bs $ "c") (bs $ "t") (bs $ "f"))
+       else None);
+
     (* Binary op on two int64 sources narrows to int32 math when no operand
-       or result overflows int32, then casts the result back to int64. *)
+       or result overflows int32, then casts the result back to int64. A
+       constant operand is rebuilt weak rather than cast, so it stays free to
+       take whichever width the rebuilt node settles on. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Int64) and y = var_dtype "y" (exact_dtype Dtype.Int64) in
      ops ~src:[ x; y ] ~name:"u" Ops.Group.binary => fun bs ->
        let u = bs $ "u" and x = bs $ "x" and y = bs $ "y" in
        let i32 = Dtype.int32 in
        if overflows u i32 || overflows x i32 || overflows y i32 then None
        else
-         let xc = Uop.cast ~src:x ~dtype:Dtype.int32 in
-         let yc = Uop.cast ~src:y ~dtype:Dtype.int32 in
-         let narrowed = Uop.alu_binary ~op:(Uop.op u) ~lhs:xc ~rhs:yc in
+         let narrow v =
+           match const_int_v v with
+           | Some n -> Uop.const_int n
+           | None -> Uop.cast ~src:v ~dtype:Dtype.int32
+         in
+         let narrowed =
+           Uop.alu_binary ~op:(Uop.op u) ~lhs:(narrow x) ~rhs:(narrow y)
+         in
          Some (Uop.cast ~src:narrowed ~dtype:(Uop.dtype u)));
 
     (* Narrowing cast chain: [x.cast(a).cast(b)] where [x], [a], [b] are
@@ -1764,17 +1809,21 @@ let symbolic : Upat.Pattern_matcher.t =
            None
          with Not_all_const -> None);
 
-    (* (x + c).cast(int) -> x.cast + c.cast. *)
+    (* (x + c).cast(int) -> x.cast + c, with the constant rebuilt at the
+       target dtype rather than wrapped in a cast node. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint) and c = cvar ~name:"c" () in
      cast ~name:"cast" (alu [ x; c ] Ops.Add) => fun bs ->
        let cast = bs $ "cast"
        and x = bs $ "x" and c = bs $ "c" in
        if not (Dtype.is_int (Uop.dtype cast)) then None
        else
-         let dt = Uop.dtype cast in
-         Some (Uop.alu_binary ~op:Ops.Add
-                 ~lhs:(Uop.cast ~src:x ~dtype:dt)
-                 ~rhs:(Uop.cast ~src:c ~dtype:dt)));
+         match const_int_v c with
+         | None -> None
+         | Some cv ->
+             let dt = Uop.dtype cast in
+             Some (Uop.alu_binary ~op:Ops.Add
+                     ~lhs:(Uop.cast ~src:x ~dtype:dt)
+                     ~rhs:(Uop.const_like cast cv)));
 
     (* cast/long folding: intermediate cast that doesn't narrow can be
        dropped. *)
@@ -1827,7 +1876,10 @@ let parse_valid v =
            Some (lhs, false, Uop.vmin rhs2)
        | _ -> None)
   | Ops.Cmplt, [| lhs; rhs |] when Dtype.is_int (Uop.dtype lhs) ->
-      Some (lhs, true, Uop.vmax rhs - 1)
+      (match const_int_v lhs with
+       (* c < X is a lower bound on X. *)
+       | Some c -> Some (rhs, false, c + 1)
+       | None -> Some (lhs, true, Uop.vmax rhs - 1))
   | _ -> None
 
 let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
@@ -2294,15 +2346,16 @@ let sym : Upat.Pattern_matcher.t =
 
 (* top-level simplifier *)
 
-(* Run [symbolic] to fixed point, then install as [Uop.simplify_ref].
-   This mirrors tinygrad, where [UOp.simplify] runs the phase-2 [symbolic]
-   matcher (which itself carries [div_and_mod_symbolic]), not the heavier
-   phase-3 [sym]: [sym]'s [pm_simplify_valid] re-enters [Uop.simplify], so
-   using it here would make simplification mutually recursive. *)
+(* Run [symbolic + pm_fold_cast_const] to fixed point, then install as
+   [Uop.simplify_ref]. This mirrors tinygrad, where [UOp.simplify] runs the
+   phase-2 [symbolic] matcher (which itself carries [div_and_mod_symbolic]),
+   not the heavier phase-3 [sym]: [sym]'s [pm_simplify_valid] re-enters
+   [Uop.simplify], so using it here would make simplification mutually
+   recursive. *)
 let simplify u =
+  let pm = Upat.Pattern_matcher.(symbolic ++ pm_fold_cast_const) in
   let rec loop u =
-    let u' = Uop.graph_rewrite (fun n ->
-      Upat.Pattern_matcher.rewrite symbolic n) u in
+    let u' = Uop.graph_rewrite (fun n -> Upat.Pattern_matcher.rewrite pm n) u in
     if Uop.equal u u' then u else loop u'
   in
   loop u

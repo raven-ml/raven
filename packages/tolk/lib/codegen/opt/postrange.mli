@@ -101,7 +101,7 @@ val ranges_of : t -> Tolk_uop.Axis_type.t list -> Tolk_uop.Uop.t list
 (** Ranges whose kind is in the given list. *)
 
 val upcastable_dims : t -> int list
-(** Global/Local/Loop axes with constant size > 1. *)
+(** Global/Local/Weak axes with constant size > 1. *)
 
 val unrollable_dims : t -> int list
 (** Group_reduce/Reduce axes with constant size > 1. *)
@@ -142,7 +142,7 @@ val real_axis :
 (** {1:transforms Transforms} *)
 
 val convert_loop_to_global : t -> unit
-(** Promote eligible Loop ranges to Global. *)
+(** Promote eligible Weak ranges to Global. *)
 
 val shift_to :
   ?top:bool -> ?input_new_rng:Tolk_uop.Uop.t ->

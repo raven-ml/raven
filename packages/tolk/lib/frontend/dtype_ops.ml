@@ -13,14 +13,21 @@ module T = Tensor
 let cast t dt =
   if D.equal (T.dtype t) dt then t else T.of_uop (U.cast ~src:(T.uop t) ~dtype:dt)
 
+(* Reinterpreting bits needs both widths to be committed. *)
 let bitcast t dt =
-  if D.equal (T.dtype t) dt then t
+  if D.is_weak (T.dtype t) || D.is_weak dt then
+    invalid_arg "Dtype_ops.bitcast: both dtypes must be concrete"
+  else if D.equal (T.dtype t) dt then t
   else if D.itemsize (T.dtype t) <> D.itemsize dt then
     invalid_arg "Dtype_ops.bitcast: element sizes differ"
   else T.of_uop (U.bitcast ~src:(T.uop t) ~dtype:dt)
 
 let is_floating_point t = D.is_float (T.dtype t)
-let element_size t = D.itemsize (T.dtype t)
+
+let element_size t =
+  if D.is_weak (T.dtype t) then
+    invalid_arg "Dtype_ops.element_size: dtype must be concrete"
+  else D.itemsize (T.dtype t)
 let float t = cast t D.float32
 let half t = cast t D.float16
 let int t = cast t D.int32

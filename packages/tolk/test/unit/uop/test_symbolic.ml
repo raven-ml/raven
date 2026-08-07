@@ -128,17 +128,32 @@ let nan_cmpeq_folds_to_false () =
   is_true ~msg:"nan cmpeq nan folds to false under IEEE semantics"
     (not (const_bool r))
 
-(* An index-domain gate is recovered by the consumer with [Uop.get_valid], so
-   a comparison over it drops the gate instead of lifting it. *)
-let invalid_gate_comparison_drops_index_gate () =
-  let ridx = var ~name:"ridx" ~lo:0 ~hi:10 () in
-  let cond = Uop.O.(ridx < Uop.const_int 5) in
-  let idx = Uop.O.where cond ridx (Uop.invalid ()) in
-  let r = rewrite Uop.O.(idx < Uop.const_int 3) in
-  let expected = rewrite Uop.O.(ridx < Uop.const_int 3) in
+(* Inside [cond.where(t, f)], nested reads of [cond] fold to a literal. *)
+let where_closure_folds_nested_condition () =
+  let x = var ~name:"x" ~lo:0 ~hi:10 () in
+  let cond = Uop.O.(x < Uop.const_int 5) in
+  let inner = Uop.O.where cond (Uop.O.neg x) x in
+  let r = rewrite (Uop.O.where cond Uop.O.(inner * Uop.const_int 2)
+                     Uop.O.(inner + Uop.const_int 1)) in
+  let expected =
+    rewrite
+      (Uop.O.where cond
+         Uop.O.(Uop.O.neg x * Uop.const_int 2)
+         Uop.O.(x + Uop.const_int 1))
+  in
   is_true
-    ~msg:(Format.asprintf "index comparison drops the gate, got %a" Uop.pp r)
+    ~msg:(Format.asprintf "nested where collapses per branch, got %a" Uop.pp r)
     (Uop.equal r expected)
+
+(* A nested where on a different condition is left alone. *)
+let where_closure_keeps_other_conditions () =
+  let x = var ~name:"x" ~lo:0 ~hi:10 () in
+  let a = var ~name:"a" ~lo:0 ~hi:3 () in
+  let b = var ~name:"b" ~lo:0 ~hi:3 () in
+  let c0 = Uop.O.(x < Uop.const_int 5) in
+  let c1 = Uop.O.(x < Uop.const_int 7) in
+  let e = Uop.O.where c0 (Uop.O.where c1 a b) (Uop.O.where c1 b a) in
+  is_true ~msg:"unrelated condition survives" (Uop.equal (rewrite e) e)
 
 let invalid_gate_comparison_gates_nonweak_invalid () =
   let cond =
@@ -180,22 +195,39 @@ let bool_cast_cmpne_const_folds () =
   is_true ~msg:"cast(bool) != other folds true"
     (const_bool (rewrite (Uop.O.ne cast other)))
 
-let invalid_gate_cast_drops_index_gate () =
+(* A cast moves inside the gate rather than dropping it: the Invalid must reach
+   the load or store that consumes the index. *)
+let invalid_gate_cast_stays_gated () =
   let cond =
     var ~name:"valid_cast" ~lo:0 ~hi:1 ~dtype:Dtype.bool ()
   in
   let x = var ~name:"idx" ~lo:0 ~hi:10 () in
   let gated = Uop.O.where cond x (Uop.invalid ()) in
   let r = rewrite (Uop.cast ~src:gated ~dtype:Dtype.int32) in
-  let expected = Uop.cast ~src:x ~dtype:Dtype.int32 in
+  let expected =
+    Uop.O.where cond (Uop.cast ~src:x ~dtype:Dtype.int32) (Uop.invalid ())
+  in
   is_true
-    ~msg:(Format.asprintf "index cast drops the gate, got %a" Uop.pp r)
+    ~msg:(Format.asprintf "cast moves inside the gate, got %a" Uop.pp r)
     (Uop.equal r expected)
 
 let const_bitcast_folds () =
   let f = Uop.const (Const.float Dtype.float32 1.0) in
   let r = rewrite (Uop.bitcast ~src:f ~dtype:Dtype.int32) in
   equal int (Int32.to_int (Int32.bits_of_float 1.0)) (const_int r)
+
+(* Chained bitcasts of equal width collapse: the bit pattern never changes. *)
+let double_bitcast_collapses () =
+  let x = var ~name:"x32" ~lo:0 ~hi:10 ~dtype:Dtype.int32 () in
+  let e =
+    Uop.bitcast
+      ~src:(Uop.bitcast ~src:x ~dtype:Dtype.float32)
+      ~dtype:Dtype.uint32
+  in
+  let r = rewrite e in
+  is_true
+    ~msg:(Format.asprintf "one bitcast remains, got %a" Uop.pp r)
+    (Uop.equal r (Uop.bitcast ~src:x ~dtype:Dtype.uint32))
 
 let stack_const_bitcast_folds () =
   let src =
@@ -254,16 +286,19 @@ let simplify_driver_groups =
           cdiv_cmod_constants_are_truncating;
         test "invalid gate survives zero multiply"
           invalid_gate_survives_zero_multiply;
-        test "index invalid comparison drops the gate"
-          invalid_gate_comparison_drops_index_gate;
+        test "where closure folds a nested condition"
+          where_closure_folds_nested_condition;
+        test "where closure keeps unrelated conditions"
+          where_closure_keeps_other_conditions;
         test "non-weak invalid comparison gates bool result"
           invalid_gate_comparison_gates_nonweak_invalid;
         test "direct invalid comparison keeps bool dtype"
           direct_invalid_comparison_keeps_bool_dtype;
         test "cast(bool) != const folds" bool_cast_cmpne_const_folds;
-        test "index invalid gate cast drops the gate"
-          invalid_gate_cast_drops_index_gate;
+        test "invalid gate cast stays gated"
+          invalid_gate_cast_stays_gated;
         test "constant BITCAST folds" const_bitcast_folds;
+        test "double BITCAST collapses" double_bitcast_collapses;
         test "STACK const bitcast folds" stack_const_bitcast_folds;
         test "constant THREEFRY is not UOp-folded"
           constant_threefry_is_not_uop_folded;
@@ -285,7 +320,7 @@ let idx n = U.const (C.int D.weakint n)
 let f32 x = U.const (C.float D.float32 x)
 
 let var name lo hi = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:D.weakint ()
-let range size = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Loop ~dtype:D.weakint ()
+let range size = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Weak ~dtype:D.weakint ()
 
 let ptr_buffer slot =
   U.buffer ~slot ~dtype:D.int32 ~addrspace:D.Global
@@ -296,11 +331,15 @@ let ptr_buffer slot =
 let raw_index_stack_const ~ptr ~idx ~dtype =
   U.replace ptr ~op:Ops.Index ~src:[| ptr; idx |] ~arg:U.Arg.Empty ~dtype ()
 
+(* [pm_fold_cast_const] is composed in explicitly, as the passes that want
+   constant casts collapsed do. *)
+let sym_pm = Upat.Pattern_matcher.(Symbolic.sym ++ Symbolic.pm_fold_cast_const)
+
 (* Apply sym to a single node (not bottom-up). *)
-let sym n = Upat.Pattern_matcher.rewrite Symbolic.sym n
+let sym n = Upat.Pattern_matcher.rewrite sym_pm n
 
 (* Apply sym as a single-pass graph rewrite. *)
-let simplify n = U.graph_rewrite (Upat.Pattern_matcher.rewrite Symbolic.sym) n
+let simplify n = U.graph_rewrite (Upat.Pattern_matcher.rewrite sym_pm) n
 
 (* Check that rule fires and produces the expected node (by physical identity). *)
 let fires rule node expected =
@@ -782,6 +821,38 @@ let lt_fold_tests =
           check_op result Ops.Cmplt;
           is_true (src result 0 == x);
           check_const_int (src result 1) 5);
+      test "lt mul fold: -2*x < 9 → -x < 5" (fun () ->
+          let x = var "x" (-100) 100 in
+          let expr =
+            U.alu_binary ~op:Ops.Cmplt
+              ~lhs:(U.alu_binary ~op:Ops.Mul ~lhs:(idx (-2)) ~rhs:x)
+              ~rhs:(idx 9)
+          in
+          let result = simplify expr in
+          check_op result Ops.Cmplt;
+          check_const_int (src result 1) 5);
+      test "lt floordiv fold: x//2 < 0 → x < 0" (fun () ->
+          let x = var "x" (-100) 100 in
+          let expr =
+            U.alu_binary ~op:Ops.Cmplt
+              ~lhs:(U.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:(idx 2))
+              ~rhs:(idx 0)
+          in
+          let result = simplify expr in
+          check_op result Ops.Cmplt;
+          is_true (src result 0 == x);
+          check_const_int (src result 1) 0);
+      test "lt floordiv fold: x//-2 < 3 → -6 < x" (fun () ->
+          let x = var "x" (-100) 100 in
+          let expr =
+            U.alu_binary ~op:Ops.Cmplt
+              ~lhs:(U.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:(idx (-2)))
+              ~rhs:(idx 3)
+          in
+          let result = simplify expr in
+          check_op result Ops.Cmplt;
+          check_const_int (src result 0) (-6);
+          is_true (src result 1 == x));
       test "lt cdiv fold: cdiv(x, 4) < 3 → x < 12" (fun () ->
           let x = var "x" 0 100 in
           let expr =
@@ -819,6 +890,33 @@ let lt_fold_tests =
 let where_fold_tests =
   group "where_fold"
     [
+      test "a.where(c, b.where(c, d)) → (a|b).where(c, d)" (fun () ->
+          let bvar n = U.variable ~name:n ~min_val:0 ~max_val:1 ~dtype:D.bool () in
+          let a = bvar "a" and b = bvar "b" in
+          let c = var "c" 0 10 and d = var "d" 0 10 in
+          let expr = U.O.where a c (U.O.where b c d) in
+          let result = simplify expr in
+          check_op result Ops.Where;
+          check_op (src result 0) Ops.Or;
+          is_true (src result 1 == c);
+          is_true (src result 2 == d));
+      test "c.where(t,0) + c.where(0,f) → c.where(t,f)" (fun () ->
+          let c = U.variable ~name:"c" ~min_val:0 ~max_val:1 ~dtype:D.bool () in
+          let t = var "t" 0 10 and f = var "f" 0 10 in
+          let expr =
+            U.O.(U.O.where c t (idx 0) + U.O.where c (idx 0) f)
+          in
+          let result = simplify expr in
+          check_op result Ops.Where;
+          is_true (src result 0 == c);
+          is_true (src result 1 == t);
+          is_true (src result 2 == f));
+      test "x != False → x" (fun () ->
+          let x = U.variable ~name:"x" ~min_val:0 ~max_val:1 ~dtype:D.bool () in
+          let expr =
+            U.alu_binary ~op:Ops.Cmpne ~lhs:x ~rhs:(U.const_bool false)
+          in
+          is_true (simplify expr == x));
       test "where cast push: where(s,a,b).cast(dt)" (fun () ->
           let s =
             U.variable ~name:"s" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
@@ -998,6 +1096,107 @@ let sigmoid_tests =
 (* Masked-numerator division: (x & mask) // c collapses when the mask only
    clears the low bits the power-of-two division discards. *)
 
+(* [simplify_valid] orders the clauses of a validity predicate by
+   [_valid_priority] — a clause whose subject other clauses depend on sorts
+   first — then folds each clause under the ones already accepted. Reaching
+   that path takes a multi-clause, non-indexing predicate: every predicate that
+   carries an [Ops.Index] returns early, and a single clause never exercises
+   the comparator.
+
+   Each test asserts the simplified form *and* evaluates both predicates over
+   the whole leaf domain. Neither alone suffices: a fold is an identity, so a
+   wrong-but-equivalent form passes the pointwise check, and a structural
+   assertion only confirms the form the author expected. *)
+
+let rec eval_bool env u =
+  let s i = (U.src u).(i) in
+  match U.op u with
+  | Ops.Const -> (
+      match U.arg u with
+      | U.Arg.Value c -> (
+          match Const.view c with
+          | Const.Bool b -> b
+          | _ -> failwith "eval_bool: non-bool const")
+      | _ -> failwith "eval_bool: const arg")
+  | Ops.And -> eval_bool env (s 0) && eval_bool env (s 1)
+  | Ops.Or -> eval_bool env (s 0) || eval_bool env (s 1)
+  | Ops.Cmplt -> eval_int env (s 0) < eval_int env (s 1)
+  | Ops.Cmpne -> eval_bool env (s 0) <> eval_bool env (s 1)
+  | op -> failwith ("eval_bool: " ^ Ops.name op)
+
+and eval_int env u =
+  let s i = (U.src u).(i) in
+  match U.op u, U.const_int_value u with
+  | Ops.Const, Some n -> n
+  | Ops.Add, _ -> eval_int env (s 0) + eval_int env (s 1)
+  | Ops.Mul, _ -> eval_int env (s 0) * eval_int env (s 1)
+  | _ -> (
+      match List.find_opt (fun (v, _) -> U.equal v u) env with
+      | Some (_, n) -> n
+      | None -> failwith "eval_int: unbound leaf")
+
+let simplify_valid_tests =
+  let fixpoint u =
+    let rec loop u =
+      let u' = simplify u in
+      if U.equal u u' then u else loop u'
+    in
+    loop u
+  in
+  (* [x] is declared wider than its bound so the clause does not fold away on
+     its own bounds, and [y] is narrow so the second clause becomes provable
+     once [x] is constrained. *)
+  let predicate () =
+    let x = var "x" 0 100 and y = var "y" 0 1 in
+    let narrow = U.O.(x < idx 2) in
+    let wide = U.O.(x + y < idx 3) in
+    (* Built wide-first, so the comparator has to move [narrow] ahead of it. *)
+    (x, y, narrow, U.alu_binary ~op:Ops.And ~lhs:wide ~rhs:narrow)
+  in
+  let agrees_over_domain ~what x y a b =
+    let disagreed = ref [] in
+    for xv = 0 to 6 do
+      for yv = 0 to 1 do
+        let env = [ (x, xv); (y, yv) ] in
+        if eval_bool env a <> eval_bool env b then
+          disagreed := Printf.sprintf "(%d,%d)" xv yv :: !disagreed
+      done
+    done;
+    is_true
+      ~msg:
+        (Printf.sprintf "%s disagrees at %s" what
+           (String.concat "," (List.rev !disagreed)))
+      (!disagreed = [])
+  in
+  group "simplify_valid"
+    [
+      test "a clause its peers depend on is folded in first" (fun () ->
+          let x, y, narrow, valid = predicate () in
+          let got = fixpoint valid in
+          is_true
+            ~msg:
+              (Format.asprintf "wider clause is discharged, got %a" U.pp got)
+            (U.equal got (fixpoint narrow));
+          agrees_over_domain ~what:"simplified predicate" x y valid got);
+      (* Applied on its own, so the reduction is this rewrite's work and not
+         something the rest of the layer reached another way. *)
+      test "the rewrite fires on the raw predicate" (fun () ->
+          let _, _, narrow, valid = predicate () in
+          match Upat.Pattern_matcher.rewrite Symbolic.pm_simplify_valid valid with
+          | Some r ->
+              is_true
+                ~msg:
+                  (Format.asprintf
+                     "the dependent clause collapsed to a constant, got %a" U.pp
+                     r)
+                (Array.exists (fun s -> U.op s = Ops.Const) (U.src r));
+              is_true
+                ~msg:(Format.asprintf "reduces to the narrow clause, got %a"
+                        U.pp (fixpoint r))
+                (U.equal (fixpoint r) (fixpoint narrow))
+          | None -> fail "expected simplify_valid to fire");
+    ]
+
 let masked_div_tests =
   group "masked_div"
     [
@@ -1011,6 +1210,31 @@ let masked_div_tests =
               is_true (src r 0 == x);
               check_const_int (src r 1) 4
           | None -> fail "expected masked division to collapse");
+    ]
+
+(* Movement cleanups composed into [symbolic_simple]. *)
+
+let mop_tests =
+  let mop n = Upat.Pattern_matcher.rewrite Movement.mop_cleanup n in
+  let raw_index ~ptr ~idxs ~dtype =
+    U.replace ptr ~op:Ops.Index
+      ~src:(Array.of_list (ptr :: idxs))
+      ~arg:U.Arg.Empty ~dtype ()
+  in
+  group "mop_cleanup"
+    [
+      test "INDEX on INDEX chains scalar coordinates" (fun () ->
+          let buf = ptr_buffer 0 in
+          let inner = raw_index ~ptr:buf ~idxs:[ idx 3 ] ~dtype:D.int32 in
+          let outer = raw_index ~ptr:inner ~idxs:[ idx 2 ] ~dtype:D.int32 in
+          match mop outer with
+          | Some r ->
+              check_op r Ops.Index;
+              is_true (src r 0 == buf);
+              is_true (Array.length (U.src r) = 3);
+              check_const_int (src r 1) 3;
+              check_const_int (src r 2) 2
+          | None -> fail "expected the INDEX chain to collapse");
     ]
 
 (* Every remaining Invalid sentinel is rewritten to a typed zero. *)
@@ -1070,6 +1294,8 @@ let () =
          load_store_tests;
          invalid_where_tests;
          sigmoid_tests;
+         simplify_valid_tests;
          masked_div_tests;
+         mop_tests;
          remove_invalid_tests;
        ])

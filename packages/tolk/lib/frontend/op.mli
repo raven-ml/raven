@@ -232,6 +232,10 @@ val softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
 val log_softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
 (** [log_softmax t] is the logarithm of {!softmax}, computed stably. *)
 
+val softmin : ?axis:int -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
+(** [softmin t] is {!softmax} of the negated input: the same rescaling, with
+    the smallest element receiving the largest weight. *)
+
 val logcumsumexp : ?axis:int -> Tensor.t -> Tensor.t
 (** [logcumsumexp t] is the cumulative {!logsumexp} along [axis] (default [0]):
     output position [k] is [log (sum (exp t.(0..k)))]. *)

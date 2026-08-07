@@ -31,6 +31,12 @@ val symbolic_simple : Upat.Pattern_matcher.t
     condition poisons the [where]; a gated-invalid condition lifts its
     gate out). *)
 
+val pm_fold_cast_const : Upat.Pattern_matcher.t
+(** [pm_fold_cast_const] collapses a cast of a scalar constant into a constant
+    of the target dtype. It is kept out of {!symbolic_simple} because it writes
+    a strongly typed constant, which weak-dtype lowering must be free to decide
+    for itself; passes that want the fold compose it explicitly. *)
+
 val pm_fold_lane_stack : Upat.Pattern_matcher.t
 (** [pm_fold_lane_stack] folds a [Stack] of per-lane [Index] extracts of a
     single vector value back into that value when the shapes agree.

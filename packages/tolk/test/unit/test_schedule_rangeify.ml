@@ -273,40 +273,40 @@ let new_range_tests =
       test "size 1 gives const 0" (fun () ->
           
           let ctx = Indexing.create_context () in
-          let id = Indexing.new_range ctx 1 ~kind:Ak.Loop () in
+          let id = Indexing.new_range ctx 1 ~kind:Ak.Weak () in
           equal int 0 (const_int_uop id));
       test "symbolic size resolving to 1 gives const 0" (fun () ->
           let ctx = Indexing.create_context () in
           let two = U.const (C.int D.weakint 2) in
           let one = U.const (C.int D.weakint 1) in
           let size = U.alu_binary ~op:Ops.Sub ~lhs:two ~rhs:one in
-          let id = Indexing.new_range_expr ctx size ~kind:Ak.Loop () in
+          let id = Indexing.new_range_expr ctx size ~kind:Ak.Weak () in
           equal int 0 (const_int_uop id));
       test "size 0 gives Range (resolve(s!=1) is true)" (fun () ->
           
           let ctx = Indexing.create_context () in
-          let id = Indexing.new_range ctx 0 ~kind:Ak.Loop () in
+          let id = Indexing.new_range ctx 0 ~kind:Ak.Weak () in
           (match U.as_range id with
           | Some { size; axis; kind; _ } ->
               equal int 0 axis;
-              is_true (kind = Ak.Loop);
+              is_true (kind = Ak.Weak);
               equal int 0 (const_int_uop size)
           | _ -> fail "expected Range for size 0"));
       test "size > 1 gives Range" (fun () ->
           
           let ctx = Indexing.create_context () in
-          let id = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+          let id = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
           (match U.as_range id with
           | Some { size; axis; kind; _ } ->
               equal int 0 axis;
-              is_true (kind = Ak.Loop);
+              is_true (kind = Ak.Weak);
               equal int 4 (const_int_uop size)
           | _ -> fail "expected Range for size > 1"));
       test "axis increments" (fun () ->
           
           let ctx = Indexing.create_context () in
-          let id1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-          let id2 = Indexing.new_range ctx 8 ~kind:Ak.Loop () in
+          let id1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
+          let id2 = Indexing.new_range ctx 8 ~kind:Ak.Weak () in
           let axis1 =
             match U.as_range id1 with
             | Some { axis; _ } -> axis
@@ -330,11 +330,11 @@ let new_range_tests =
           let ctx = Indexing.create_context () in
           let existing =
             U.range ~size:(U.const (C.int D.weakint 4)) ~axis:7
-              ~kind:Ak.Loop ()
+              ~kind:Ak.Weak ()
           in
           let result = Indexing.new_range_expr ctx existing ~kind:Ak.Reduce () in
           is_true (result == existing);
-          let next = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+          let next = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
           match U.as_range next with
           | Some { axis; _ } -> equal int 0 axis
           | None -> fail "expected Range");
@@ -345,8 +345,8 @@ let range_helper_tests =
     [
       test "get_idx recurses through stack" (fun () ->
           let ctx = Indexing.create_context () in
-          let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-          let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+          let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
+          let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
           let gate = U.const_bool true in
           let gated =
             U.alu_ternary ~op:Ops.Where ~a:gate ~b:rng0 ~c:(U.invalid ())
@@ -359,7 +359,7 @@ let range_helper_tests =
           is_true (List.nth (U.children result) 1 == rng1));
       test "get_valid recurses through stack" (fun () ->
           let ctx = Indexing.create_context () in
-          let rng = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+          let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
           let gate = U.const_bool true in
           let gated =
             U.alu_ternary ~op:Ops.Where ~a:gate ~b:rng ~c:(U.invalid ())
@@ -385,8 +385,8 @@ let apply_movement_op_tests =
           test "zero offset passthrough" (fun () ->
               let param = mk_param ~idx:0 [ 4; 4 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
+              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 0; 0 ] in
               let size = mk_shape [ 4; 4 ] in
               let shapes = shape_of in
@@ -401,8 +401,8 @@ let apply_movement_op_tests =
           test "nonzero offset adds" (fun () ->
               let param = mk_param ~idx:0 [ 4; 4 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
+              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 1; 2 ] in
               let size = mk_shape [ 2; 2 ] in
               let shapes = shape_of in
@@ -421,8 +421,8 @@ let apply_movement_op_tests =
           test "swap [1;0]" (fun () ->
               let param = mk_param ~idx:0 [ 4; 8 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 8 ~kind:Ak.Loop () in
+              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
+              let rng1 = Indexing.new_range ctx 8 ~kind:Ak.Weak () in
               let shapes = shape_of in
               let v = U.permute ~src:param ~order:[ 1; 0 ] in
               let result =
@@ -445,7 +445,7 @@ let apply_movement_op_tests =
           test "flip true reverses" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let rng = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let shapes = shape_of in
               let v = U.flip ~src:param ~dims:[ true ] in
               let result =
@@ -456,7 +456,7 @@ let apply_movement_op_tests =
           test "flip false passthrough" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let rng = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let shapes = shape_of in
               let v = U.flip ~src:param ~dims:[ false ] in
               let result =
@@ -470,8 +470,8 @@ let apply_movement_op_tests =
           test "one prepended dim drops leading range" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let r0 = Indexing.new_range ctx 3 ~kind:Ak.Loop () in
-              let r1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let r0 = Indexing.new_range ctx 3 ~kind:Ak.Weak () in
+              let r1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let shapes = shape_of in
               let v = U.expand ~src:param ~dims:(mk_shape [ 3 ]) in
               let result =
@@ -482,9 +482,9 @@ let apply_movement_op_tests =
           test "two prepended dims drop two leading ranges" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let r0 = Indexing.new_range ctx 2 ~kind:Ak.Loop () in
-              let r1 = Indexing.new_range ctx 3 ~kind:Ak.Loop () in
-              let r2 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let r0 = Indexing.new_range ctx 2 ~kind:Ak.Weak () in
+              let r1 = Indexing.new_range ctx 3 ~kind:Ak.Weak () in
+              let r2 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let shapes = shape_of in
               let v = U.expand ~src:param ~dims:(mk_shape [ 2; 3 ]) in
               let result =
@@ -500,8 +500,8 @@ let apply_movement_op_tests =
                   ~device:(U.Single "CPU") ()
               in
               let expanded = U.expand ~src:param ~dims:m in
-              let rng0 = U.range ~size:m ~axis:0 ~kind:Ak.Loop () in
-              let rng1 = U.range ~size:n ~axis:1 ~kind:Ak.Loop () in
+              let rng0 = U.range ~size:m ~axis:0 ~kind:Ak.Weak () in
+              let rng1 = U.range ~size:n ~axis:1 ~kind:Ak.Weak () in
               let result =
                 Indexing.apply_movement_op ~shapes:(fun _ -> None)
                   expanded [ rng0; rng1 ]
@@ -515,8 +515,8 @@ let apply_movement_op_tests =
           test "zero pad passthrough" (fun () ->
               let param = mk_param ~idx:0 [ 4; 4 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
+              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 0; 0 ] in
               let size = mk_shape [ 4; 4 ] in
               let shapes = shape_of in
@@ -530,8 +530,8 @@ let apply_movement_op_tests =
           test "nonzero pad creates WHERE" (fun () ->
               let param = mk_param ~idx:0 [ 4; 4 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 6 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng0 = Indexing.new_range ctx 6 ~kind:Ak.Weak () in
+              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 2; 0 ] in
               let size = mk_shape [ 6; 4 ] in
               let shapes = shape_of in
@@ -550,7 +550,7 @@ let apply_movement_op_tests =
                  Must emit WHERE(r < 4, r, invalid). *)
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let rng = Indexing.new_range ctx 6 ~kind:Ak.Loop () in
+              let rng = Indexing.new_range ctx 6 ~kind:Ak.Weak () in
               let before = mk_shape [ 0 ] in
               let size = mk_shape [ 6 ] in
               let shapes = shape_of in
@@ -570,7 +570,7 @@ let apply_movement_op_tests =
               let padded =
                 U.pad ~src:param ~offset:(weak_int 1) ~size
               in
-              let rng = U.range ~size ~axis:0 ~kind:Ak.Loop () in
+              let rng = U.range ~size ~axis:0 ~kind:Ak.Weak () in
               let result =
                 Indexing.apply_movement_op ~shapes:(fun _ -> None)
                   padded [ rng ]
@@ -590,7 +590,7 @@ let apply_movement_op_tests =
                  Pass 1 output range, get back 2 input ranges. *)
               let param = mk_param ~idx:0 [ 2; 3 ] in
               let ctx = Indexing.create_context () in
-              let rng_out = Indexing.new_range ctx 6 ~kind:Ak.Loop () in
+              let rng_out = Indexing.new_range ctx 6 ~kind:Ak.Weak () in
               let new_shape = mk_shape [ 6 ] in
               let shapes = shape_of in
               let v = U.reshape ~src:param ~shape:new_shape in
@@ -603,8 +603,8 @@ let apply_movement_op_tests =
                  Pass 2 output ranges, get back 1 input range. *)
               let param = mk_param ~idx:0 [ 6 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 2 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 3 ~kind:Ak.Loop () in
+              let rng0 = Indexing.new_range ctx 2 ~kind:Ak.Weak () in
+              let rng1 = Indexing.new_range ctx 3 ~kind:Ak.Weak () in
               let new_shape = mk_shape [ 2; 3 ] in
               let shapes = shape_of in
               let v = U.reshape ~src:param ~shape:new_shape in
@@ -616,7 +616,7 @@ let apply_movement_op_tests =
           test "identity [4] to [4]" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let rng = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
+              let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let new_shape = mk_shape [ 4 ] in
               let shapes = shape_of in
               let v = U.reshape ~src:param ~shape:new_shape in
@@ -634,7 +634,7 @@ let apply_movement_op_tests =
                   ~device:(U.Single "CPU") ()
               in
               let reshaped = U.reshape ~src:param ~shape:flat in
-              let rng = U.range ~size:flat ~axis:0 ~kind:Ak.Loop () in
+              let rng = U.range ~size:flat ~axis:0 ~kind:Ak.Weak () in
               let result =
                 Indexing.apply_movement_op ~shapes:(fun _ -> None)
                   reshaped [ rng ]
@@ -668,6 +668,34 @@ let run_rangeify_tests =
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify sink ~shapes in
           is_true (Hashtbl.mem ctx.range_map (U.tag contig)));
+      (* The maps are keyed on the graph rangeify walked. A node the apply
+         pass builds must not acquire an entry: hash-consing collapses nodes
+         that differed only in movement ops, so an inherited entry can carry
+         another node's rank and produce an INDEX with too few indices for
+         the STAGE it reads. *)
+      test "the apply pass adds no map entries" (fun () ->
+          let x = mk_param ~idx:0 [ 4; 8 ] in
+          let sc = U.reshape ~src:(mk_param ~idx:1 [ 1 ]) ~shape:(mk_shape []) in
+          let recip = U.alu_unary ~op:Ops.Reciprocal ~src:sc in
+          let loss = U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 0; 1 ] in
+          let scalar_use = U.alu_binary ~op:Ops.Mul ~lhs:loss ~rhs:recip in
+          let wide_use =
+            U.alu_binary ~op:Ops.Mul ~lhs:x
+              ~rhs:(broadcast_to recip ~from_shape:[] ~to_shape:[ 4; 8 ])
+          in
+          let sink =
+            U.sink
+              [ U.contiguous ~src:scalar_use (); U.contiguous ~src:wide_use () ]
+          in
+          let ctx = Indexing.run_rangeify sink ~shapes:shape_of in
+          let keys tbl = Hashtbl.fold (fun k _ acc -> k :: acc) tbl [] in
+          let ranged = keys ctx.range_map and realized = keys ctx.realize_map in
+          ignore (Indexing.apply_rangeify_pass ctx sink);
+          let added prev tbl =
+            List.filter (fun k -> not (List.mem k prev)) (keys tbl)
+          in
+          equal (list int) [] (added ranged ctx.range_map);
+          equal (list int) [] (added realized ctx.realize_map));
       test "elementwise inherits consumer ranges" (fun () ->
           let param = mk_param ~idx:0 [ 4 ] in
           let neg = U.alu_unary ~op:Ops.Neg ~src:param in
@@ -812,7 +840,7 @@ let early_movement_tests =
           let reshaped = U.reshape ~src:param ~shape:(mk_shape [ 6; 4 ]) in
           let rng =
             U.range ~size:(U.const (C.int D.weakint 6)) ~axis:0
-              ~kind:Ak.Loop ()
+              ~kind:Ak.Weak ()
           in
           let indexed = U.index ~ptr:reshaped ~idxs:[rng] () in
           let result = Rangeify.early_movement_pass indexed in
@@ -916,8 +944,12 @@ let get_kernel_graph_tests =
         (fun () ->
           let a = mk_param ~idx:0 [ 10; 10; 10 ] in
           let bp = mk_param ~idx:1 [ 10; 10; 1 ] in
+          (* [sum ~axis:0 ~keepdim:true]: the reduce drops the axis, the
+             reshape puts it back at size one so the permute has rank 3. *)
           let red =
-            U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 0 ]
+            U.reshape
+              ~src:(U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 0 ])
+              ~shape:(mk_shape [ 1; 10; 10 ])
           in
           let permed = U.permute ~src:red ~order:[ 2; 1; 0 ] in
           let result = U.alu_binary ~op:Ops.Add ~lhs:permed ~rhs:bp in

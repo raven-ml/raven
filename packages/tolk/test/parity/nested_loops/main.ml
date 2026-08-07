@@ -25,7 +25,7 @@ let kernel () =
            dtype = Dtype.int32;
            axis = 0;
            sub = [];
-           kind = Axis_type.Loop;
+           kind = Axis_type.Weak;
          })
   in
   let r1 =
@@ -36,7 +36,7 @@ let kernel () =
            dtype = Dtype.int32;
            axis = 1;
            sub = [];
-           kind = Axis_type.Loop;
+           kind = Axis_type.Weak;
          })
   in
   let sum =

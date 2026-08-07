@@ -374,7 +374,7 @@ let build_llama_attention_scores ?(kernel_name = "") b =
   let q = mk_ptr_param b ~slot:1 16 in
   let freqs = mk_ptr_param b ~slot:2 64 in
   let k = mk_ptr_param b ~slot:3 8 in
-  let r = U.range ~size:(wi 2) ~axis:1 ~kind:Axis_type.Loop () in
+  let r = U.range ~size:(wi 2) ~axis:1 ~kind:Axis_type.Weak () in
   let open U.O in
   let load ptr idx = U.index ~ptr ~idxs:[ idx ] () in
   let rope4 ptr base freq_base =
@@ -452,9 +452,9 @@ let build_llama_attention_context b =
   let maxv = mk_ptr_param b ~slot:2 4 in
   let inv = mk_ptr_param b ~slot:3 4 in
   let v = mk_ptr_param b ~slot:4 8 in
-  let r1 = U.range ~size:(wi 4) ~axis:1 ~kind:Axis_type.Loop () in
+  let r1 = U.range ~size:(wi 4) ~axis:1 ~kind:Axis_type.Weak () in
   let r2 = U.range ~size:(wi 2) ~axis:2 ~kind:Axis_type.Reduce () in
-  let r3 = U.range ~size:(wi 4) ~axis:3 ~kind:Axis_type.Loop () in
+  let r3 = U.range ~size:(wi 4) ~axis:3 ~kind:Axis_type.Weak () in
   let open U.O in
   let score_v = U.index ~ptr:score ~idxs:[ (r1 * wi 2) + r2 ] () in
   let max_v = U.index ~ptr:maxv ~idxs:[ r1 ] () in
@@ -481,8 +481,8 @@ let build_llama_attention_output b =
   let rred =
     U.range ~size:(wi 2) ~axis:0 ~sub:[ 0 ] ~kind:Axis_type.Reduce ()
   in
-  let rseq = U.range ~size:(wi 2) ~axis:1 ~kind:Axis_type.Loop () in
-  let rout = U.range ~size:(wi 8) ~axis:2 ~kind:Axis_type.Loop () in
+  let rseq = U.range ~size:(wi 2) ~axis:1 ~kind:Axis_type.Weak () in
+  let rout = U.range ~size:(wi 8) ~axis:2 ~kind:Axis_type.Weak () in
   let rdim =
     U.range ~size:(wi 4) ~axis:0 ~sub:[ 0 ] ~kind:Axis_type.Reduce ()
   in

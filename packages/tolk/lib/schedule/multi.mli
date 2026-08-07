@@ -7,7 +7,7 @@
 
 (** Multi-device sharding transformations.
 
-    Rewrites operations on {!Tolk_uop.Ops.Multi}-wrapped (sharded)
+    Rewrites operations on {!Tolk_uop.Ops.Unshard}-wrapped (sharded)
     nodes into per-shard operations. Each rule strips the MULTI
     wrapper, applies the operation to the inner per-shard value, and
     re-wraps the result.

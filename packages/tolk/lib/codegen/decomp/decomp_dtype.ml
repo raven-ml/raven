@@ -122,32 +122,58 @@ let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : Uop.t list) : Uop.t * Uop.t =
   in
   match op with
   | L2i_neg -> l2i L2i_sub dt [zero; zero; a0; a1]
+  (* Word-crossing shifts run on the unsigned reinterpretation of both
+     words, so the bits that cross the boundary are filled with zeros
+     rather than sign bits. The by-one detour ([>> 1] then [>> 31-n])
+     keeps the shift count below the word width when [n] is zero. *)
   | L2i_shl ->
       let mask31 = Uop.const (Const.int dt 31) in
-      let b0_mod = Uop.alu_binary ~op:Ops.And ~lhs:b0 ~rhs:mask31 in
-      let lo = expr_shl a0 b0_mod in
-      let one_c = Uop.const (Const.int dt 1) in
-      let comp = Uop.alu_binary ~op:Ops.Sub ~lhs:mask31 ~rhs:b0_mod in
-      let hi = Uop.alu_binary ~op:Ops.Or
-        ~lhs:(expr_shl a1 b0_mod)
-        ~rhs:(expr_shr (expr_shr a0 one_c) comp)
+      let u32 = Dtype.uint32 in
+      let u32c k = Uop.const (Const.int u32 k) in
+      let shl x y = Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:y in
+      let shr x y = Uop.alu_binary ~op:Ops.Shr ~lhs:x ~rhs:y in
+      let a0u = Uop.bitcast ~src:a0 ~dtype:u32 in
+      let a1u = Uop.bitcast ~src:a1 ~dtype:u32 in
+      let n =
+        Uop.cast ~dtype:u32
+          ~src:(Uop.alu_binary ~op:Ops.And ~lhs:b0 ~rhs:mask31)
+      in
+      let comp = Uop.alu_binary ~op:Ops.Sub ~lhs:(u32c 31) ~rhs:n in
+      let lo = Uop.bitcast ~src:(shl a0u n) ~dtype:dt in
+      let hi =
+        Uop.bitcast ~dtype:dt
+          ~src:
+            (Uop.alu_binary ~op:Ops.Or ~lhs:(shl a1u n)
+               ~rhs:(shr (shr a0u (u32c 1)) comp))
       in
       let ge32 = Uop.alu_binary ~op:Ops.Cmplt ~lhs:mask31 ~rhs:b0 in
       (Uop.alu_ternary ~op:Ops.Where ~a:ge32 ~b:zero ~c:lo,
        Uop.alu_ternary ~op:Ops.Where ~a:ge32 ~b:lo ~c:hi)
   | L2i_shr ->
       let mask31 = Uop.const (Const.int dt 31) in
+      let u32 = Dtype.uint32 in
+      let u32c k = Uop.const (Const.int u32 k) in
+      let shl x y = Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:y in
+      let shr x y = Uop.alu_binary ~op:Ops.Shr ~lhs:x ~rhs:y in
+      let a0u = Uop.bitcast ~src:a0 ~dtype:u32 in
+      let a1u = Uop.bitcast ~src:a1 ~dtype:u32 in
       let b0_mod = Uop.alu_binary ~op:Ops.And ~lhs:b0 ~rhs:mask31 in
-      let one_c = Uop.const (Const.int dt 1) in
-      let comp = Uop.alu_binary ~op:Ops.Sub ~lhs:mask31 ~rhs:b0_mod in
-      let lo = Uop.alu_binary ~op:Ops.Or
-        ~lhs:(expr_shr a0 b0_mod)
-        ~rhs:(expr_shl (expr_shl a1 one_c) comp)
+      let n = Uop.cast ~dtype:u32 ~src:b0_mod in
+      let comp = Uop.alu_binary ~op:Ops.Sub ~lhs:(u32c 31) ~rhs:n in
+      let lo =
+        Uop.bitcast ~dtype:dt
+          ~src:
+            (Uop.alu_binary ~op:Ops.Or ~lhs:(shr a0u n)
+               ~rhs:(shl (shl a1u (u32c 1)) comp))
       in
-      let hi = expr_shr a1 b0_mod in
+      (* The high word keeps its own signedness, so a signed long shifts
+         arithmetically and the word vacated by a 32-or-more shift is
+         filled with its sign bits. *)
+      let hi = shr a1 b0_mod in
+      let fill = if Dtype.is_unsigned dt then zero else shr a1 mask31 in
       let ge32 = Uop.alu_binary ~op:Ops.Cmplt ~lhs:mask31 ~rhs:b0 in
       (Uop.alu_ternary ~op:Ops.Where ~a:ge32 ~b:hi ~c:lo,
-       Uop.alu_ternary ~op:Ops.Where ~a:ge32 ~b:zero ~c:hi)
+       Uop.alu_ternary ~op:Ops.Where ~a:ge32 ~b:fill ~c:hi)
   | L2i_add ->
       let low = Uop.alu_binary ~op:Ops.Add ~lhs:a0 ~rhs:b0 in
       let carry =
@@ -856,8 +882,14 @@ let rec f2f v fr to_ =
                (Int64.shift_left (Int64.of_int ((1 lsl te) - 1)) tm)
                (Int64.shift_left 1L (tm - 1)))
         in
+        (* The fnuz bias can exceed the target's, so exponents in
+           [1, fb - tb] are normal in the source but land below the
+           target's normal range; they flush to zero like denormals. *)
+        let flush_below =
+          int_const_val to_uint (Int64.of_int (max (fb - tb) 0 + 1))
+        in
         iwhere fnuz_nan qnan
-          (ior sign (iwhere (icmpeq exp (int_const_val to_uint 0L))
+          (ior sign (iwhere (icmplt exp flush_below)
                        (int_const_val to_uint 0L) norm))
       else
         let is_nan =
@@ -1068,9 +1100,30 @@ let rule_float_cast ctx =
              ctx.from_dtype)
     | _ -> None
 
+(* A constant has no sources to cast: it restates its value directly at
+   the emulating dtype. *)
+let rule_float_const ctx =
+  let open Upat in
+  op ~name:"x" Ops.Const => fun bs ->
+    let x = bs $ "x" in
+    if not (same_scalar ctx.from_dtype (Uop.dtype x)) then None
+    else
+      match Uop.arg x with
+      | Uop.Arg.Value c -> (
+          match Const.view c with
+          | Const.Float f -> Some (Uop.const (Const.float ctx.to_dtype f))
+          | Const.Int _ | Const.Bool _ | Const.Invalid -> None)
+      | _ -> None
+
+(* Buffers, casts and constants declare their own dtype rather than
+   inheriting one from their sources; each has its own rule above. *)
 let rule_float_all ctx =
   let open Upat in
-  ops ~name:"x" (List.filter (fun op -> op <> Ops.Bitcast) Ops.Group.all) => fun bs ->
+  let declares_own_dtype op =
+    List.mem op [ Ops.Bitcast; Ops.Cast; Ops.Const ] || Ops.Group.is_define op
+  in
+  ops ~name:"x" (List.filter (fun op -> not (declares_own_dtype op)) Ops.Group.all)
+  => fun bs ->
     let x = bs $ "x" in
     if same_scalar ctx.from_dtype (Uop.dtype x) then
       let to_dt = ctx.to_dtype in
@@ -1126,6 +1179,7 @@ let pm_float_decomp (ctx : float_decomp_ctx) : Upat.Pattern_matcher.t =
     rule_float_bitcast_from ctx;
     rule_float_bitcast_to ctx;
     rule_float_cast ctx;
+    rule_float_const ctx;
     rule_float_all ctx;
     rule_float_store_bitcast ctx;
     rule_float_store ctx;

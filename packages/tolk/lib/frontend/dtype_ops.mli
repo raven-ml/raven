@@ -19,6 +19,7 @@ val bitcast : Tensor.t -> Tolk_uop.Dtype.t -> Tensor.t
 (** [bitcast t dt] reinterprets the bits of [t] as [dt] without conversion.
 
     @raise Invalid_argument
+      if either dtype is weak, since a weak dtype has no committed width; or
       if [dt] and [t]'s dtype have different element sizes. This module does
       not implement the multi-element repacking used for size-changing
       bitcasts. *)
@@ -28,7 +29,9 @@ val is_floating_point : Tensor.t -> bool
     type. *)
 
 val element_size : Tensor.t -> int
-(** [element_size t] is the size in bytes of one element of [t]. *)
+(** [element_size t] is the size in bytes of one element of [t].
+
+    @raise Invalid_argument if [t]'s dtype is weak, and so has no width yet. *)
 
 val float : Tensor.t -> Tensor.t
 (** [float t] casts [t] to 32-bit float. *)

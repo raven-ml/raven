@@ -21,7 +21,7 @@ let kernel () =
            dtype = Dtype.int32;
            axis = 0;
            sub = [];
-           kind = Axis_type.Loop;
+           kind = Axis_type.Weak;
          })
   in
   let idx0 =

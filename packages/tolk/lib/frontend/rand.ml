@@ -99,7 +99,6 @@ let next_counter device num =
 let threefry_random_bits key counts0 counts1 =
   let u64 t = Dtype_ops.cast t D.uint64 in
   let shl32 t = Elementwise.lshift t (c t 32) in
-  let mask32 t = Elementwise.bitwise_and t (c t 0xFFFFFFFF) in
   let x = Elementwise.bitwise_or (shl32 (u64 counts1)) (u64 counts0) in
   let key_lane i =
     u64 (Movement.broadcast_to (Op.getitem key Movement.[ I i ]) (T.shape x))
@@ -108,9 +107,10 @@ let threefry_random_bits key counts0 counts1 =
     Elementwise.threefry x
       (Elementwise.bitwise_or (shl32 (key_lane 1)) (key_lane 0))
   in
+  (* Narrowing to uint32 already discards the high half; no mask needed. *)
   Op.cat
-    (Dtype_ops.cast (mask32 x) D.uint32)
-    [ Dtype_ops.cast (mask32 (Elementwise.rshift x (c x 32))) D.uint32 ]
+    (Dtype_ops.cast x D.uint32)
+    [ Dtype_ops.cast (Elementwise.rshift x (c x 32)) D.uint32 ]
 
 let uint32_max = 0xFFFFFFFF
 
@@ -124,7 +124,7 @@ let random_bits key counter num =
       let c_high =
         Elementwise.add
           (Elementwise.add high (c high (i lsr 32)))
-          (Dtype_ops.cast (Elementwise.lt c_low low) D.uint32)
+          (Elementwise.lt c_low low)
       in
       let new_key = threefry_random_bits key c_low c_high in
       let counts0 = Op.arange ~dtype:D.uint32 (ceildiv chunk_num 2) in
@@ -181,8 +181,8 @@ let check_shape name shape =
 
 let rand ?dtype ?(contiguous = true) shape =
   let dt = match dtype with Some d -> d | None -> D.default_float in
-  if not (D.is_float dt) then
-    invalid_arg "Rand.rand: only float dtypes are supported";
+  if (not (D.is_float dt)) || D.is_weak dt then
+    invalid_arg "Rand.rand: only concrete float dtypes are supported";
   check_shape "rand" shape;
   if D.itemsize dt <> 4 then
     invalid_arg "Rand.rand: only 32-bit float dtypes are supported";
@@ -199,6 +199,8 @@ let rand_like ?dtype ?contiguous t =
 (* Box-Muller: two uniform draws give one standard normal sample. *)
 let randn_like ?dtype t =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
+  if dtype = None && D.is_weak dt then
+    invalid_arg "Rand.randn_like: a weak-dtyped input needs an explicit dtype";
   let src = rand ~dtype:D.float32 (2 :: T.shape t) in
   let sel i = Op.getitem src Movement.[ I i ] in
   Dtype_ops.cast
@@ -291,8 +293,7 @@ let multinomial ?(num_samples = 1) ?(replacement = false) t =
       let rows = List.hd (T.shape cdf) in
       let unif_samples = rand [ num_samples; rows; 1 ] in
       Movement.permute
-        (Reduce.sum ~axis:[ 2 ]
-           (Elementwise.ge (Movement.expand unif_samples [ -1; -1; cols ]) cdf))
+        (Reduce.sum ~axis:[ 2 ] (Elementwise.ge unif_samples cdf))
         [ 1; 0 ]
     else
       (* Weighted sampling without replacement (Efraimidis-Spirakis): draw a

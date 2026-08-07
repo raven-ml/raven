@@ -48,6 +48,38 @@ thread.
 
 ### Tolk (new)
 
+- Fix a scheduler miscompile that made mixed-precision training steps fail to
+  compile. Rangeify records per-node loop ranges while walking the tensor
+  graph, and was carrying those records over to the nodes it rebuilt. Because
+  rebuilding removes movement ops, two values that differed only in a
+  broadcast collapse into one node — which then inherited the wrong rank, and
+  its reader was indexed with fewer indices than the staged buffer had axes.
+  The result was one store per element to a single address, rejected as
+  `Coalesce: multiple stores to the same offset`, or silently wrong values
+  where it slipped through. A shape shared between consumers of different rank
+  is now mapped into each source's own axes, and a mismatched index raises
+  instead of being tolerated.
+
+- Rewrite the graph rewriter's traversal so nodes are visited in dependency
+  order rather than plain depth-first order. Passes that number things as they
+  go — accumulator registers, local buffer slots — now number them the same way
+  the reference does, so generated kernel source matches it exactly instead of
+  differing in register and buffer names. A call or function body is now left
+  alone on every path that reaches it, not only on the edge through its call.
+  This costs compile time: roughly 20% more wall time and 15% more allocation,
+  concentrated in the codegen, schedule, and rangeify stages. The new traversal
+  keeps a scheduled set and revisits each rebuilt node, which is inherently
+  more bookkeeping than the depth-first walk it replaces.
+
+- Tighten index arithmetic in tensor-core kernels. A scaled remainder and its
+  quotient partner now recombine even when the quotient's divisor has absorbed
+  an inner division, so two adjacent single-bit extracts of a thread id
+  collapse into one multi-bit extract instead of being emitted separately.
+- Fix a symbolic rewrite that dropped valid indices from a bounds test. A
+  comparison of the form `x // d < c` with a non-positive `c` was rewritten to
+  a bound one step too tight, so `x // 2 < 0` became `x < -1` and excluded
+  `x = -1`, which satisfies the original. Any gate, mask, or loop bound reduced
+  through that shape could exclude a valid element.
 - Fix silently wrong results from any kernel holding both a group reduce and
   an ordinary loop reduce — the shape of most backward passes on a GPU. The two
   reduces were given the same accumulator register and the second's zero-init

@@ -582,12 +582,18 @@ let xpow base exponent =
   let is_odd =
     cast Dtype.bool (cast Dtype.int32 abs_exp mod two_i)
   in
-  let neg_base = where non_int nan_c (where is_odd (neg ret) ret) in
-  let zero_zero = Uop.alu_binary ~op:Ops.And
-    ~lhs:(Uop.alu_binary ~op:Ops.Cmpeq ~lhs:base ~rhs:zero)
-    ~rhs:(Uop.alu_binary ~op:Ops.Cmpeq ~lhs:exponent ~rhs:exp_zero)
+  (* A negative base raised to a non-integer power is nan, except for
+     -inf, which is never nan and keeps [|base| ** exponent]. *)
+  let neg_inf = const_float_v v Float.neg_infinity in
+  let not_neg_inf = Uop.alu_binary ~op:Ops.Cmpne ~lhs:base ~rhs:neg_inf in
+  let neg_base =
+    where non_int (where not_neg_inf nan_c ret) (where is_odd (neg ret) ret)
   in
-  where zero_zero one (where is_neg neg_base ret)
+  (* x ** 0 is 1 for every x, including 0 and inf. *)
+  let exp_is_zero =
+    Uop.alu_binary ~op:Ops.Cmpeq ~lhs:exponent ~rhs:exp_zero
+  in
+  where exp_is_zero one (where is_neg neg_base ret)
 (* [via_f32 f d dtype] applies [f] directly when [dtype] is one of the
    three full-precision float kinds, and otherwise lifts [d] through
    float32 around [f] for narrower float types. *)

@@ -74,4 +74,29 @@ let mop_cleanup : Upat.Pattern_matcher.t =
               in
               Some (Uop.index ~ptr:lane ~idxs:extra ())
         | _ -> None);
+      (* Scalar indices chain: indexing an index just appends coordinates. *)
+      (op ~name:"idx2" ~allow_any_len:true
+         ~src:[ op ~name:"idx1" ~allow_any_len:true Ops.Index ]
+         Ops.Index
+      => fun bs ->
+        let idx1 = bs $ "idx1" and idx2 = bs $ "idx2" in
+        let tail u = Array.to_list (Uop.src u) |> List.tl in
+        let inner = tail idx1 and outer = tail idx2 in
+        if List.for_all (fun u -> Uop.shape_opt u = Some []) (inner @ outer)
+        then Some (Uop.index ~ptr:(Uop.src idx1).(0) ~idxs:(inner @ outer) ())
+        else None);
+      (* A shaped index used as the pointer of another index composes: the
+         outer coordinates select within the inner index's own shape. *)
+      (op ~name:"idx2" ~allow_any_len:true
+         ~src:[ op ~src:[ var "buf"; var "inner" ] Ops.Index ]
+         Ops.Index
+      => fun bs ->
+        let buf = bs $ "buf" and inner = bs $ "inner" and idx2 = bs $ "idx2" in
+        let outer = Array.to_list (Uop.src idx2) |> List.tl in
+        match Uop.shape_opt inner with
+        | Some shape when List.length shape = List.length outer ->
+            Some
+              (Uop.index ~ptr:buf ~idxs:[ Uop.index ~ptr:inner ~idxs:outer () ]
+                 ())
+        | _ -> None);
     ]

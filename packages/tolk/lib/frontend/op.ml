@@ -113,16 +113,17 @@ let mean ?axis ?(keepdim = false) t =
   let denom = reduced_count t ?axis () in
   Dtype_ops.cast (Elementwise.div numerator (si ~like:numerator denom)) out_dt
 
+(* The squares are accumulated at the wider sum dtype: summing them at a narrow
+   float loses the variance of a large input entirely. *)
 let var ?axis ?(keepdim = false) ?(correction = 1) t =
+  let out_dt = if Dtype_ops.is_floating_point t then T.dtype t else D.float32 in
   let m = mean ?axis ~keepdim:true t in
   let squares = Elementwise.square (Elementwise.sub t m) in
   let n = reduced_count squares ?axis () in
-  let reduced = Reduce.sum ?axis ~keepdim squares in
-  let denom =
-    Elementwise.sub (Creation.const_like reduced (T.Sint n))
-      (si ~like:reduced correction)
-  in
-  Elementwise.div reduced (Elementwise.relu denom)
+  let acc = D.sum_acc_dtype (T.val_dtype t) in
+  let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast squares acc) in
+  let denom = Stdlib.max (n - correction) 0 in
+  Dtype_ops.cast (Elementwise.div numerator (si ~like:numerator denom)) out_dt
 
 let std ?axis ?keepdim ?correction t =
   Elementwise.sqrt (var ?axis ?keepdim ?correction t)
@@ -239,7 +240,9 @@ let pad_constant t px value =
       Dtype_ops.cast base
         (D.least_upper_dtype [ T.dtype base; (fill_dtype value) ])
     in
-    let mask = Movement.pad (Dtype_ops.bool (Creation.const_like x (T.Sint 1))) pads in
+    let mask =
+      Movement.pad (Creation.const_like ~dtype:D.bool x (T.Sbool true)) pads
+    in
     Elementwise.where mask base (Creation.const_like base value)
 
 (* Associative scans *)
@@ -295,10 +298,31 @@ let fdiv a b =
 
 let iceildiv a b = -fdiv (-a) b
 
+(* Whether every value in [[lo, hi]] is representable in [dt]. Dtypes with no
+   integer bounds impose no constraint. *)
+let range_fits dt lo hi =
+  match (D.min dt, D.max dt) with
+  | `SInt dlo, `SInt dhi ->
+      Int64.compare (Int64.of_int lo) dlo >= 0
+      && Int64.compare (Int64.of_int hi) dhi <= 0
+  | `UInt _, `UInt dhi ->
+      lo >= 0 && Int64.unsigned_compare (Int64.of_int hi) dhi <= 0
+  | _, _ -> true
+
 let arange ?stop ?(step = 1) ?dtype start =
   if step = 0 then invalid_arg "Op.arange: step must be non-zero";
   let start, stop = match stop with None -> (0, start) | Some s -> (start, s) in
-  let dt = match dtype with Some d -> d | None -> D.default_int in
+  let lo, hi = if step > 0 then (start, stop - step) else (stop - step, start) in
+  let dt =
+    match dtype with
+    | Some d -> d
+    (* A range wider than the default integer widens rather than wrapping. *)
+    | None -> if range_fits D.default_int lo hi then D.default_int else D.int64
+  in
+  if not (range_fits dt lo hi) then
+    invalid_arg
+      (Printf.sprintf "Op.arange: [%d, %d) is not representable in %s" start stop
+         (D.to_string dt));
   let output_len = iceildiv (stop - start) step in
   if output_len <= 0 then Creation.full ~dtype:dt ~buffer:false [ 0 ] (T.Sint 0)
   else
@@ -364,7 +388,7 @@ let cummax ?(axis = 0) t =
       Elementwise.mul
         (Elementwise.eq (Movement.unsqueeze x (-1))
            (Movement.unsqueeze values_t (-2)))
-        (triu (Creation.ones ~buffer:false [ n; n ]))
+        (triu (Creation.ones ~dtype:D.bool ~buffer:false [ n; n ]))
     in
     let counts =
       Reduce.max ~axis:[ -2 ]
@@ -385,8 +409,7 @@ let one_hot_along_dim ?(dim = -1) index num_classes =
     invalid_arg "Op.one_hot_along_dim: integer index required";
   let offset = T.ndim index - T.resolve_dim index dim - 1 in
   let classes =
-    Movement.reshape
-      (arange ~dtype:D.int32 num_classes)
+    Movement.reshape (arange num_classes)
       (num_classes :: List.init offset (fun _ -> 1))
   in
   Elementwise.eq index classes
@@ -952,6 +975,8 @@ let log_softmax ?(axis = -1) ?dtype t =
   let m, _, ss = softmax_parts ?dtype axis t in
   Elementwise.sub m (Elementwise.log ss)
 
+let softmin ?(axis = -1) ?dtype t = softmax ~axis ?dtype (Elementwise.neg t)
+
 (* Attention *)
 
 let scaled_dot_product_attention ?attn_mask ?(is_causal = false) q k v =
@@ -970,9 +995,7 @@ let scaled_dot_product_attention ?attn_mask ?(is_causal = false) q k v =
         invalid_arg
           "Op.scaled_dot_product_attention: attn_mask cannot be combined \
            with is_causal";
-      Some
-        (tril
-           (Dtype_ops.cast (Creation.const_like qk (T.Sint 1)) D.bool))
+      Some (tril (Creation.const_like ~dtype:D.bool qk (T.Sbool true)))
     end
     else attn_mask
   in
@@ -995,12 +1018,9 @@ let logcumsumexp ?(axis = 0) t =
     let axis = T.resolve_dim t axis in
     let x = Movement.transpose ~dim0:axis ~dim1:(-1) t in
     let last = List.nth (T.shape x) (T.ndim x - 1) in
-    let x_unsqueezed =
-      Movement.expand (Movement.unsqueeze x (-2))
-        (List.init (T.ndim t - 1) (fun _ -> -1) @ [ last; -1 ])
-    in
+    let x_unsqueezed = Movement.unsqueeze x (-2) in
     let x_cummax, _ = cummax ~axis:(-1) x in
-    let mask = tril (Creation.ones ~buffer:false [ last; last ]) in
+    let mask = tril (Creation.ones ~dtype:D.bool ~buffer:false [ last; last ]) in
     let diff = Elementwise.sub x_unsqueezed (Movement.unsqueeze x_cummax (-1)) in
     let filled =
       Elementwise.where mask diff (Creation.const_like diff (dtype_min_scalar t))

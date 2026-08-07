@@ -99,16 +99,24 @@ let permutes_for_shape_str (tc : t) shape_str =
   in
   (perm r0, perm r1)
 
+(* Operand type names go verbatim into the emitted tensor-core function
+   name, so they are the target's spelling of the type rather than tolk's
+   short dtype tag. A dtype with no spelling here has no place in a
+   tensor-core table. *)
 let dtype_name = function
   | Dtype.Float16 -> "half"
   | Dtype.Bfloat16 -> "__bf16"
   | Dtype.Float32 -> "float"
   | Dtype.Float64 -> "double"
+  | Dtype.Int8 -> "char"
+  | Dtype.Int32 -> "int"
   | Dtype.Fp8e4m3 -> "float8_e4m3"
   | Dtype.Fp8e5m2 -> "float8_e5m2"
   | Dtype.Fp8e4m3fnuz -> "float8_e4m3fnuz"
   | Dtype.Fp8e5m2fnuz -> "float8_e5m2fnuz"
-  | dt -> Dtype.to_string dt
+  | dt ->
+      invalid_arg
+        (strf "Tc.dtype_name: no tensor-core name for %s" (Dtype.to_string dt))
 
 let to_string (tc : t) =
   let n, m, k = tc.dims in
@@ -235,7 +243,8 @@ let amd_rdna3 = mk ~dims:(16,16,16) ~threads:32 ~ept:(16,16,8)
   ~opts:["l0";"l0";"l0";"l0";"l1";"u1";"u1";"u1"]
   ~swizzle:((["l4";"u0";"u1";"u2";"l0"], ["r1";"r2";"r3"], ["l1";"l2";"l3";"r0"]),
             (["l0";"l1";"l2";"l3";"l4"], ["r1";"r2";"r3"], ["u0";"u1";"u2";"r0"]))
-  Dtype.[(Float16, Float32); (Float16, Float16); (Bfloat16, Float32)]
+  Dtype.[(Float16, Float32); (Float16, Float16); (Bfloat16, Float32);
+         (Int8, Int32)]
 
 let amd_rdna4 = mk ~dims:(16,16,16) ~threads:32 ~ept:(8,8,8)
   ~opts:["l0";"l0";"l0";"l0";"u1";"u1";"u1";"l1"]

@@ -450,7 +450,6 @@ type reduce_view = { src : t; ranges : t list; op : Ops.t; num_axes : int }
 type allreduce_view = { src : t; device : device; op : Ops.t }
 type stage_view = { src : t; ranges : t list; opts : stage_opts }
 type slice_view = { src : t; offset : t; size : int }
-type wait_view = { src : t }
 type param_view = { param : param_arg; shape : t }
 type buffer_view = { buffer : param_arg; shape : t }
 type wmma_view = { a : t; b : t; c : t; info : wmma_info }
@@ -524,11 +523,6 @@ let as_slice u =
   match op u, arg u, Array.to_list (src u) with
   | Ops.Slice, Arg.Int size, [ src; offset ] ->
       Option.Some { src; offset; size }
-  | _ -> Option.None
-
-let as_wait u =
-  match op u, Array.to_list (src u) with
-  | Ops.Wait, [ src ] -> Option.Some { src }
   | _ -> Option.None
 
 let as_param u =
@@ -800,6 +794,17 @@ let store ~dst ~value ?gate () =
   mk ~op:Ops.Store ~dtype:void_dtype
     ~src ~arg:Arg.Empty
 
+let promo_dtype srcs =
+  match srcs with
+  | [] -> invalid_arg "Uop.promo_dtype: no operands"
+  | first :: rest ->
+      let dt = dtype first in
+      (* Identical operands settle without consulting the lattice, so ops on
+         dtypes that have no upper bound with anything -- pointers, void --
+         still pass their own dtype through. *)
+      if List.for_all (fun u -> Dtype.equal (dtype u) dt) rest then dt
+      else Dtype.least_upper_dtype (List.map dtype srcs)
+
 let alu_unary ~op ~src =
   if not (Ops.Group.is_unary op) then
     invalid_arg
@@ -808,8 +813,7 @@ let alu_unary ~op ~src =
   let dt =
     match op with
     | Ops.Sin | Ops.Log2 | Ops.Exp2 | Ops.Sqrt | Ops.Reciprocal ->
-        if Dtype.equal (dtype src) Dtype.weakint then Dtype.weakfloat
-        else Dtype.least_upper_float (dtype src)
+        Dtype.least_upper_float (dtype src)
     | _ -> dtype src
   in
   mk ~op ~dtype:dt ~src:[| src |] ~arg:Arg.Empty
@@ -818,17 +822,37 @@ let alu_binary ~op ~lhs ~rhs =
   if not (Ops.Group.is_binary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_binary: %s is not binary" (Ops.name op));
-  let dt = if Ops.Group.is_comparison op then Dtype.bool else dtype lhs in
+  let dt =
+    if Ops.Group.is_comparison op then Dtype.bool
+    else
+      match op with
+      (* A shift is not a promotion: the result is as wide as the value being
+         shifted, whatever width the shift amount happens to carry. *)
+      | Ops.Shl | Ops.Shr ->
+          if not (Dtype.is_int (dtype lhs) && Dtype.is_int (dtype rhs)) then
+            invalid_arg
+              (Printf.sprintf "Uop.alu_binary: %s operands must be int, got %s and %s"
+                 (Ops.name op)
+                 (Dtype.to_string (dtype lhs))
+                 (Dtype.to_string (dtype rhs)));
+          dtype lhs
+      | _ -> promo_dtype [ lhs; rhs ]
+  in
   mk ~op ~dtype:dt ~src:[| lhs; rhs |] ~arg:Arg.Empty
 
 let alu_ternary ~op ~a ~b ~c =
   if not (Ops.Group.is_ternary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_ternary: %s is not ternary" (Ops.name op));
-  let dt = match op with
-    | Ops.Where -> dtype b
-    | Ops.Mulacc -> dtype a
-    | _ -> dtype a
+  let dt =
+    match op with
+    | Ops.Where ->
+        if not (Dtype.equal (dtype a) Dtype.bool) then
+          invalid_arg
+            (Printf.sprintf "Uop.alu_ternary: WHERE condition must be bool, got %s"
+               (Dtype.to_string (dtype a)));
+        promo_dtype [ b; c ]
+    | _ -> promo_dtype [ a; b; c ]
   in
   mk ~op ~dtype:dt ~src:[| a; b; c |] ~arg:Arg.Empty
 
@@ -917,9 +941,6 @@ let barrier ?(srcs = []) () =
   mk ~op:Ops.Barrier ~dtype:void_dtype
     ~src:(Array.of_list srcs) ~arg:Arg.Empty
 
-let wait ~src =
-  mk ~op:Ops.Wait ~dtype:void_dtype ~src:[| src |] ~arg:Arg.Empty
-
 let special ~name ~size ?(dtype = Dtype.weakint) () =
   mk ~op:Ops.Special ~dtype
     ~src:[| cast ~src:size ~dtype |] ~arg:(Arg.String name)
@@ -934,7 +955,7 @@ let allreduce ~src ~device ~op =
     ~src:[| src |] ~arg:(Arg.Op_device (op, device))
 
 let multi ~src ~axis =
-  mk ~op:Ops.Multi ~dtype:(dtype src) ~src:[| src |] ~arg:(Arg.Int axis)
+  mk ~op:Ops.Unshard ~dtype:(dtype src) ~src:[| src |] ~arg:(Arg.Int axis)
 
 let mstack srcs =
   let dt = match srcs with
@@ -1038,7 +1059,7 @@ let rec buf_uop u =
 let rec has_buffer_identity u =
   let srcs = src u in
   match op u with
-  | Ops.Reshape | Ops.Multi ->
+  | Ops.Reshape | Ops.Unshard ->
       Array.length srcs > 0 && has_buffer_identity srcs.(0)
   | Ops.Gettuple -> (
       match Arg.as_int (arg u), Array.to_list srcs with
@@ -1378,10 +1399,21 @@ let call ~body ~args ~info =
 
 let first_match rules n = List.find_map (fun r -> r n) rules
 
+(* A node's rewrite runs in three steps held on an explicit stack: descend
+   into its sources, rebuild it once they all have results, then link it to
+   the result of rewriting the rebuilt node. A node whose sources are not all
+   resolved parks on the one it is missing and resumes when that source
+   resolves, rather than recursing into it: a source reached this way is
+   already scheduled further down the stack, and recursing would settle it,
+   and everything stacked above it, in a different order. *)
+type rewrite_step =
+  | Descend of t
+  | Rebuild of t * t
+  | Link of t * t
+
 let graph_rewrite ?loc ?(name = "") ?(enter_calls = false) ?(bottom_up = false)
     ?bpm ?(walk = false) ?(on_rebuild = fun ~old_n:_ ~new_n:_ -> ()) f root =
-  let cache = Ref_tbl.create 64 in
-  let active = Ref_tbl.create 64 in
+  let results = Ref_tbl.create 64 in
   let pre_cache = Ref_tbl.create 64 in
   let post, pre = if bottom_up then None, Some f else Some f, bpm in
   let loc_suffix =
@@ -1433,71 +1465,193 @@ let graph_rewrite ?loc ?(name = "") ?(enter_calls = false) ?(bottom_up = false)
         in
         loop u
   in
-  let rec rw u =
-    match Ref_tbl.find_opt cache u with
-    | Some r -> r
-    | None ->
-        if Ref_tbl.mem active u then invalid_arg cycle_message;
-        Ref_tbl.replace active u ();
-        try
-          let result = rewrite_node u in
-          Ref_tbl.replace cache u result;
-          Ref_tbl.remove active u;
-          if not (u == result) then on_rebuild ~old_n:u ~new_n:result;
-          result
-        with exn ->
-          Ref_tbl.remove active u;
-          raise exn
-  and rewrite_node u =
-    if walk then
-      match apply_pre_once u with
-      | `Rewritten u' | `Gated u' -> u'
-      | `Unchanged u -> descend_and_post u
-    else
-      match apply_pre_fixed u with
-      | `Gated u -> u
-      | `Continue u -> descend_and_post u
-  and descend_and_post u =
-    let u' = rewrite_children u in
-    match post with
-    | None ->
-        (* Bottom-up (fixed-point): once the children are rewritten and the
-           node rebuilt, re-examine it so [pre] can match on the new sources.
-           tinygrad re-pushes the rebuilt node through stage 0 for this. *)
-        if (not walk) && not (u == u') then rw u' else u'
-    | Some fn -> (
-        match maybe_rewrite fn u' with
-        | Some u'' -> if walk then u'' else rw u''
-        | None -> u')
-  and rewrite_children u =
-    let srcs = src u in
-    let n = Array.length srcs in
-    if n = 0 then u
-    else
-      let changed = ref false in
-      let new_srcs = Array.make n u in
-      let enter =
-        enter_calls
-        || (match op u with Ops.Call | Ops.Function -> false | _ -> true)
-      in
-      for i = 0 to n - 1 do
-        let child = srcs.(i) in
-        let c' =
-          if i = 0 && not enter
-             && (match op u with Ops.Call | Ops.Function -> true | _ -> false)
-          then child
-          else rw child
-        in
-        if not (child == c') then changed := true;
-        new_srcs.(i) <- c'
-      done;
-      if !changed then
-        let u' = replace u ~src:new_srcs () in
-        on_rebuild ~old_n:u ~new_n:u';
-        u'
-      else u
+  (* Rewriting iterates: a node's replacement is itself rewritten, and so on
+     until one settles. [chains] carries the nodes already passed through on
+     the way to a result, so a rewrite that loops back is reported where it
+     closes. This is the top-down twin of [apply_pre_fixed]'s [seen]. An
+     entry dies as soon as its node resolves, so only live chains are held. *)
+  let chains = Ref_tbl.create 16 in
+  let extend_chain origin target =
+    let seen =
+      match Ref_tbl.find_opt chains origin with
+      | Some seen -> seen
+      | None -> [ origin ]
+    in
+    if List.memq target seen then invalid_arg cycle_message;
+    Ref_tbl.replace chains target (target :: seen)
   in
-  rw root
+  let resolve u r =
+    Ref_tbl.replace results u r;
+    Ref_tbl.remove chains u;
+    if not (u == r) then on_rebuild ~old_n:u ~new_n:r
+  in
+  (* A call or function body is pinned to itself, so that no path reaching it
+     is rewritten -- not merely the one through this node. *)
+  let pin_body u =
+    if
+      (not enter_calls)
+      && match op u with Ops.Call | Ops.Function -> true | _ -> false
+    then
+      let body = (src u).(0) in
+      Ref_tbl.replace results body body
+  in
+  let sources_changed srcs new_srcs =
+    let changed = ref false in
+    Array.iteri
+      (fun i child -> if not (child == new_srcs.(i)) then changed := true)
+      srcs;
+    !changed
+  in
+  (* Single pass: a replacement is final and is not traversed again. *)
+  let walk_rewrite root =
+    let stack = ref [ (root, false) ] in
+    let push step = stack := step :: !stack in
+    let rec run () =
+      match !stack with
+      | [] -> ()
+      | (u, descended) :: rest ->
+          stack := rest;
+          if not (Ref_tbl.mem results u) then
+            if not descended then (
+              match apply_pre_once u with
+              | `Rewritten r | `Gated r -> resolve u r
+              | `Unchanged _ ->
+                  push (u, true);
+                  pin_body u;
+                  let srcs = src u in
+                  for i = Array.length srcs - 1 downto 0 do
+                    if not (Ref_tbl.mem results srcs.(i)) then
+                      push (srcs.(i), false)
+                  done)
+            else begin
+              let srcs = src u in
+              let new_srcs =
+                Array.map
+                  (fun child ->
+                    match Ref_tbl.find_opt results child with
+                    | Some r -> r
+                    | None -> child)
+                  srcs
+              in
+              let u' =
+                if sources_changed srcs new_srcs then begin
+                  let rebuilt = replace u ~src:new_srcs () in
+                  on_rebuild ~old_n:u ~new_n:rebuilt;
+                  rebuilt
+                end
+                else u
+              in
+              let u' =
+                match post with
+                | None -> u'
+                | Some fn -> (
+                    match maybe_rewrite fn u' with Some r -> r | None -> u')
+              in
+              resolve u u'
+            end;
+          run ()
+    in
+    run ();
+    match Ref_tbl.find_opt results root with Some r -> r | None -> root
+  in
+  (* Parking is the visit order, not a scheduling detail. When [rebuild] meets
+     a source that has not resolved yet it suspends the whole step on that
+     source and returns, rather than descending into it; the step resumes when
+     the source settles. Rewriting this as a recursive descent -- which is what
+     it reads like it wants to be -- produces the same results in a different
+     order, and order is observable: every pass that threads a mutable context
+     (accumulator numbering, slot counters) numbers off this traversal. No unit
+     test covers it. The only thing that does is the parity goldens, so a
+     change here that keeps the suites green has proved nothing. *)
+  let unified_rewrite root =
+    let stack = ref [ Descend root ] in
+    let scheduled = Ref_tbl.create 64 in
+    let parked = Ref_tbl.create 64 in
+    Ref_tbl.replace scheduled root ();
+    let push step = stack := step :: !stack in
+    let park u step =
+      let waiting =
+        match Ref_tbl.find_opt parked u with Some l -> l | None -> []
+      in
+      Ref_tbl.replace parked u (step :: waiting)
+    in
+    let settle u r =
+      resolve u r;
+      match Ref_tbl.find_opt parked u with
+      | None -> ()
+      | Some waiting ->
+          Ref_tbl.remove parked u;
+          List.iter push (List.rev waiting)
+    in
+    let descend u =
+      match apply_pre_fixed u with
+      | `Gated r -> settle u r
+      | `Continue u' ->
+          push (Rebuild (u, u'));
+          pin_body u';
+          let srcs = src u' in
+          for i = Array.length srcs - 1 downto 0 do
+            let child = srcs.(i) in
+            if not (Ref_tbl.mem scheduled child) then begin
+              push (Descend child);
+              Ref_tbl.replace scheduled child ()
+            end
+          done
+    in
+    let advance u target =
+      extend_chain u target;
+      push (Link (u, target));
+      push (Descend target)
+    in
+    let rebuild u u' =
+      let srcs = src u' in
+      let len = Array.length srcs in
+      let new_srcs = Array.make len u' in
+      let missing = ref None in
+      let i = ref 0 in
+      while Option.is_none !missing && !i < len do
+        (match Ref_tbl.find_opt results srcs.(!i) with
+        | Some r -> new_srcs.(!i) <- r
+        | None -> missing := Some srcs.(!i));
+        incr i
+      done;
+      match !missing with
+      | Some child -> park child (Rebuild (u, u'))
+      | None ->
+          if sources_changed srcs new_srcs then begin
+            let rebuilt = replace u' ~src:new_srcs () in
+            on_rebuild ~old_n:u' ~new_n:rebuilt;
+            advance u rebuilt
+          end
+          else (
+            match post with
+            | None -> settle u u'
+            | Some fn -> (
+                match maybe_rewrite fn u' with
+                | None -> settle u u'
+                | Some r -> advance u r))
+    in
+    let link u target =
+      match Ref_tbl.find_opt results target with
+      | None -> park target (Link (u, target))
+      | Some r -> settle u r
+    in
+    let rec run () =
+      match !stack with
+      | [] -> ()
+      | step :: rest ->
+          stack := rest;
+          (match step with
+          | Descend u -> if not (Ref_tbl.mem results u) then descend u
+          | Rebuild (u, u') -> if not (Ref_tbl.mem results u) then rebuild u u'
+          | Link (u, target) ->
+              if not (Ref_tbl.mem results u) then link u target);
+          run ()
+    in
+    run ();
+    match Ref_tbl.find_opt results root with Some r -> r | None -> root
+  in
+  if walk then walk_rewrite root else unified_rewrite root
 
 let remove_all_tags root =
   graph_rewrite ~enter_calls:true
@@ -2141,7 +2295,7 @@ and compute_shape_opt u =
              invalid_shape Ops.Flip "rank does not match argument rank";
            Some ps
        | ps, _ -> ps)
-  | Ops.Multi ->
+  | Ops.Unshard ->
       (match first_shape (), Arg.as_int (arg u), device_of u with
        | Some ps, Some axis, Some (Multi devs) ->
            Some
@@ -2176,7 +2330,7 @@ and compute_axis u =
   let srcs = src u in
   match op u with
   | Ops.Copy -> None
-  | Ops.Multi -> Arg.as_int (arg u)
+  | Ops.Unshard -> Arg.as_int (arg u)
   | Ops.Gettuple ->
       (match Arg.as_int (arg u), Array.to_list srcs with
        | Some i, [ tuple ] when op tuple = Ops.Tuple ->

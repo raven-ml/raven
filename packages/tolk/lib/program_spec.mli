@@ -80,13 +80,11 @@ val of_program :
   ?lib:bytes ->
   ?applied_opts:Tolk_uop.Uop.Opt.t list ->
   ?estimates:Estimates.t ->
-  ?aux:string list ->
   program ->
   t
-(** [of_program ~name ~src ~device ?lib ?applied_opts ?estimates ?aux program]
+(** [of_program ~name ~src ~device ?lib ?applied_opts ?estimates program]
     extracts a kernel description from [program]. If [estimates] is omitted,
-    estimates are computed from [program]. [aux] is copied to
-    {!Tolk_uop.Uop.program_info}. *)
+    estimates are computed from [program]. *)
 
 val with_lib : bytes -> t -> t
 (** [with_lib lib spec] is [spec] with [lib] set to [Some lib]. *)
@@ -114,10 +112,10 @@ val estimates : t -> Estimates.t
 val global_size : t -> Tolk_uop.Uop.t array
 val local_size : t -> Tolk_uop.Uop.t array option
 val program_info : t -> Tolk_uop.Uop.program_info
-(** [program_info spec] is the tinygrad-shaped program metadata carried by
+(** [program_info spec] is the runtime-facing program metadata carried by
     [spec]. Symbolic global dimensions are preserved as launch expressions;
-    local dimensions are present only when all local dimensions are fixed
-    integers, and backend auxiliary metadata is preserved. *)
+    local dimensions are present only when every local dimension is a fixed
+    integer. *)
 
 val launch_dims : t -> (string * int) list -> int array * int array option
 (** [launch_dims spec var_vals] evaluates launch dimensions by replacing

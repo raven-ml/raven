@@ -132,10 +132,15 @@ let stack_rejects_mismatched_child_dtype () =
   is_true ~msg:"stack children must match the stack dtype"
     (rejected Spec.shared_spec s)
 
+(* A weak child is fine — lowering commits it later — but two committed dtypes
+   must agree. *)
 let stack_rejects_mixed_dtype () =
-  let s = stack [ i32 1; Uop.const_float 2.0 ] ~dtype:Dtype.int32 in
+  let f32 = Uop.const (Const.float Dtype.float32 2.0) in
+  let s = stack [ i32 1; f32 ] ~dtype:Dtype.int32 in
   is_true ~msg:"stack children must share the stack dtype"
-    (rejected Spec.shared_spec s)
+    (rejected Spec.shared_spec s);
+  let weak = stack [ i32 1; Uop.const_float 2.0 ] ~dtype:Dtype.int32 in
+  is_true ~msg:"a weak child is accepted" (accepts Spec.shared_spec weak)
 
 let stack_rejects_mixed_child_counts () =
   let pair = stack [ i32 1; i32 2 ] ~dtype:Dtype.int32 in
@@ -190,6 +195,17 @@ let shift_count_dtypes () =
   in
   is_true ~msg:"shift result must match the shifted operand"
     (rejected Spec.shared_spec widened)
+
+(* Bitwise and shift operands must be integral. *)
+let bitwise_rejects_float_operands () =
+  let f32 x = Uop.const (Const.float Dtype.float32 x) in
+  let check op =
+    is_true
+      ~msg:(Ops.name op ^ " with a float operand rejected")
+      (rejected Spec.shared_spec
+         (Uop.alu_binary ~op ~lhs:(f32 1.0) ~rhs:(f32 2.0)))
+  in
+  List.iter check [ Ops.And; Ops.Or; Ops.Xor; Ops.Shl; Ops.Shr ]
 
 let index_accepts_integer_offsets () =
   let p = global_i32_param () in
@@ -271,14 +287,6 @@ let barrier_boundaries () =
   let bad_barrier = Uop.replace barrier ~dtype:Dtype.int32 () in
   is_true ~msg:"Barrier must be void"
     (rejected Spec.shared_spec bad_barrier)
-
-let wait_requires_bool_source () =
-  let ok = Uop.wait ~src:(Uop.const_bool true) in
-  is_true ~msg:"Wait with bool condition accepted"
-    (accepts Spec.shared_spec ok);
-  let bad = Uop.wait ~src:(i32 1) in
-  is_true ~msg:"Wait with non-bool condition rejected"
-    (rejected Spec.shared_spec bad)
 
 let group_after_bad_layouts () =
   let grouped =
@@ -652,6 +660,15 @@ let bind_rejects_non_alu_param () =
   let b = Uop.bind ~var ~value:(i32 3) in
   is_true ~msg:"non-ALU Param Bind rejected"
     (rejected Spec.tensor_spec b)
+
+(* A 64-bit variable is a valid binding target. *)
+let bind_accepts_64_bit_variable () =
+  let var =
+    Uop.param ~slot:(-1) ~dtype:Dtype.int64 ~name:"n" ~vmin_vmax:(0, 8)
+      ~addrspace:Dtype.Alu ()
+  in
+  let b = Uop.bind ~var ~value:(Uop.const (Const.int Dtype.int64 3)) in
+  is_true ~msg:"64-bit Bind accepted" (accepts Spec.tensor_spec b)
 
 let bind_rejects_dtype_mismatch () =
   let var =
@@ -1212,6 +1229,8 @@ let () =
           test "Cdiv with float rejected" cdiv_rejects_float;
           test "ALU operand scalars match" alu_operand_scalars_match;
           test "shift count dtypes" shift_count_dtypes;
+          test "bitwise rejects float operands"
+            bitwise_rejects_float_operands;
           test "Index accepts integer offsets" index_accepts_integer_offsets;
           test "Index rejects gate source" index_rejects_gate_source;
           test "Special raw name accepted" special_accepts_raw_name;
@@ -1222,7 +1241,6 @@ let () =
           test "End non-range tail rejected" end_rejects_non_range_tail;
           test "Range bad layouts rejected" range_rejects_bad_layouts;
           test "Barrier boundaries" barrier_boundaries;
-          test "Wait requires bool source" wait_requires_bool_source;
           test "Group/After bad layouts rejected" group_after_bad_layouts;
         ];
       group "tensor_spec"
@@ -1255,6 +1273,7 @@ let () =
           test "Bind accepts ALU Param const" bind_accepts_alu_param_const;
           test "Bind rejects ALU Param stack" bind_rejects_alu_param_stack;
           test "Bind rejects non-ALU Param" bind_rejects_non_alu_param;
+          test "Bind accepts a 64-bit variable" bind_accepts_64_bit_variable;
           test "Bind rejects dtype mismatch" bind_rejects_dtype_mismatch;
           test "Movement validates shape contracts"
             movement_validates_shape_contracts;

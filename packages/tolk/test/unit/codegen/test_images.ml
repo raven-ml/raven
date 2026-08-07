@@ -68,41 +68,41 @@ let qcom_renderer () =
     ~render:(fun ?name:_ _ -> "") ()
 
 let () =
-  run "Coalese image selection"
+  run "Coalesce image selection"
     [
       group "image valid dimensions"
         [
           test "missing pitch alignment yields no candidates" (fun () ->
             equal (list (pair int int)) []
-              (Coalese.image_valid_dims ~image_pitch_alignment:None
+              (Coalesce.image_valid_dims ~image_pitch_alignment:None
                  ~base:Dtype.float32 ~size:1024 ()));
           test "rejects non-float image bases" (fun () ->
             equal (list (pair int int)) []
-              (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
+              (Coalesce.image_valid_dims ~image_pitch_alignment:(Some 64)
                  ~base:Dtype.int32 ~size:1024 ()));
           test "aligned sizes enumerate height-width candidates" (fun () ->
             equal (list (pair int int)) [ (4, 64); (2, 128); (1, 256) ]
-              (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
+              (Coalesce.image_valid_dims ~image_pitch_alignment:(Some 64)
                  ~base:Dtype.float32 ~size:1024 ()));
           test "one-row fallback uses byte alignment" (fun () ->
             equal (list (pair int int)) [ (1, 4) ]
-              (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
+              (Coalesce.image_valid_dims ~image_pitch_alignment:(Some 64)
                  ~base:Dtype.float32 ~size:16 ());
             equal (list (pair int int)) [ (1, 10) ]
-              (Coalese.image_valid_dims ~image_pitch_alignment:(Some 20)
+              (Coalesce.image_valid_dims ~image_pitch_alignment:(Some 20)
                  ~base:Dtype.float32 ~size:40 ());
             equal (list (pair int int)) []
-              (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
+              (Coalesce.image_valid_dims ~image_pitch_alignment:(Some 64)
                  ~base:Dtype.float32 ~size:40 ());
             equal (list (pair int int)) []
-              (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
+              (Coalesce.image_valid_dims ~image_pitch_alignment:(Some 64)
                  ~base:Dtype.float16 ~size:40 ());
             equal (list (pair int int)) [ (1, 8) ]
-              (Coalese.image_valid_dims ~osx:true
+              (Coalesce.image_valid_dims ~osx:true
                  ~image_pitch_alignment:(Some 256)
                  ~base:Dtype.float16 ~size:32 ()));
         ];
-      group "coalese image selection"
+      group "coalesce image selection"
         [
           test "shrink of float param becomes image index" (fun () ->
             let param =
@@ -118,7 +118,7 @@ let () =
                   U.graph_rewrite ~name:"add images" ~bottom_up:true
                     (fun n ->
                       Upat.Pattern_matcher.rewrite
-                        (Coalese.pm_simplify_add_image (qcom_renderer ()))
+                        (Coalesce.pm_simplify_add_image (qcom_renderer ()))
                         n)
                     shrink)
             in
@@ -140,7 +140,7 @@ let () =
                   U.graph_rewrite ~name:"add images" ~bottom_up:true
                     (fun n ->
                       Upat.Pattern_matcher.rewrite
-                        (Coalese.pm_simplify_add_image
+                        (Coalesce.pm_simplify_add_image
                            (Cstyle.opencl "IMAGE_PITCH_ALIGNMENT=64"))
                         n)
                     shrink)
@@ -150,13 +150,13 @@ let () =
                 equal (list int) [ 1; 4; 4 ] (U.max_shape ptr)
             | None -> failwith "expected image index");
         ];
-      group "memory coalesing"
+      group "memory coalescing"
         [
           test "adjacent float loads become coalesced load with lane indexes"
             (fun () ->
               let buf = lowered_float_buffer 16 in
               let loads = List.init 4 (lowered_load buf) in
-              let root = Coalese.memory_coalesing (test_renderer ()) (U.sink loads) in
+              let root = Coalesce.memory_coalescing (test_renderer ()) (U.sink loads) in
               let nodes = U.toposort root in
               let coalesced_loads =
                 List.filter
@@ -185,7 +185,7 @@ let () =
                 List.init 4 (fun i -> lowered_store buf i (Float.of_int i))
               in
               let root =
-                Coalese.memory_coalesing (test_renderer ()) (U.sink stores)
+                Coalesce.memory_coalescing (test_renderer ()) (U.sink stores)
               in
               let nodes = U.toposort root in
               let vector_stores =
@@ -212,11 +212,11 @@ let () =
               (function
                 | Failure msg ->
                     String.equal msg
-                      "Coalese: multiple stores to the same offset"
+                      "Coalesce: multiple stores to the same offset"
                 | _ -> false)
               (fun () ->
                 ignore
-                  (Coalese.memory_coalesing (test_renderer ())
+                  (Coalesce.memory_coalescing (test_renderer ())
                      (U.sink stores))));
           test "gated memory ops are rejected" (fun () ->
             let buf = lowered_float_buffer 16 in
@@ -232,11 +232,11 @@ let () =
               (function
                 | Failure msg ->
                     String.equal msg
-                      "memory coalesing does not support gated loads/stores"
+                      "memory coalescing does not support gated loads/stores"
                 | _ -> false)
               (fun () ->
                 ignore
-                  (Coalese.memory_coalesing (test_renderer ())
+                  (Coalesce.memory_coalescing (test_renderer ())
                      (U.sink [ store ]))));
           test "non-index memory ops are rejected" (fun () ->
             let buf = lowered_float_buffer 16 in
@@ -245,11 +245,11 @@ let () =
               (function
                 | Failure msg ->
                     String.equal msg
-                      "memory coalesing should be on INDEX, not PARAM"
+                      "memory coalescing should be on INDEX, not PARAM"
                 | _ -> false)
               (fun () ->
                 ignore
-                  (Coalese.memory_coalesing (test_renderer ())
+                  (Coalesce.memory_coalescing (test_renderer ())
                      (U.sink [ load ]))));
         ];
       group "late cleanup"
@@ -307,7 +307,7 @@ let () =
             let root =
               run_matcher
                 Upat.Pattern_matcher.(
-                  Weak.pm_lower_index_dtype () ++ Coalese.indexing_simplify)
+                  Weak.pm_lower_index_dtype () ++ Coalesce.indexing_simplify)
                 node
             in
             let idx =
@@ -340,7 +340,7 @@ let () =
           test "move where on value index keeps loads late" (fun () ->
             let buf = buffer_param Dtype.float32 in
             let axis =
-              U.range ~axis:0 ~kind:Axis_type.Loop ~size:(U.const_int 2) ()
+              U.range ~axis:0 ~kind:Axis_type.Weak ~size:(U.const_int 2) ()
             in
             let gate = U.O.(axis < U.const_int 1) in
             let zero = scalar_zero () in

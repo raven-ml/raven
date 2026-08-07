@@ -8,36 +8,41 @@
 (* Declaration order is load-bearing: compare and sort stability depend
    on it. Do not reorder. *)
 type t =
+  | Device
   | Global
   | Warp
   | Local
-  | Loop
+  | Weak
   | Group_reduce
   | Reduce
   | Upcast
   | Unroll
   | Thread
   | Placeholder
+  | Loop
 
 let equal = ( = )
 let compare = Stdlib.compare
 
 let to_string = function
+  | Device -> "device"
   | Global -> "global"
   | Warp -> "warp"
   | Local -> "local"
-  | Loop -> "loop"
+  | Weak -> "weak"
   | Group_reduce -> "group_reduce"
   | Reduce -> "reduce"
   | Upcast -> "upcast"
   | Unroll -> "unroll"
   | Thread -> "thread"
   | Placeholder -> "placeholder"
+  | Loop -> "loop"
 
 let pp fmt t = Format.pp_print_string fmt (to_string t)
 
 let to_pos = function
-  | Loop -> -1
+  | Device -> -2
+  | Weak | Loop -> -1
   | Thread | Global -> 0
   | Warp -> 1
   | Local | Group_reduce -> 2
@@ -47,11 +52,12 @@ let to_pos = function
   | Placeholder -> 6
 
 let letter = function
+  | Device -> "d"
   | Global -> "g"
   | Thread -> "t"
   | Local -> "l"
   | Warp -> "w"
-  | Loop -> "L"
+  | Weak | Loop -> "L"
   | Upcast -> "u"
   | Group_reduce -> "G"
   | Reduce -> "R"

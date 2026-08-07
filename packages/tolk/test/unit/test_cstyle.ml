@@ -72,6 +72,13 @@ let count_substring s sub =
   in
   loop 0 0
 
+let indent_of line =
+  let n = ref 0 in
+  (try
+     String.iter (fun c -> if c = ' ' then incr n else raise Exit) line
+   with Exit -> ());
+  !n
+
 let assert_contains msg haystack needle =
   if not (contains haystack needle) then
     failwith
@@ -180,7 +187,7 @@ let make_loop () =
   let ptr = global_ptr dt in
   let p0 = param 0 ptr in
   let c10 = const (int32_c 10) in
-  let r = U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Loop
+  let r = U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Weak
       ~dtype:Dtype.int32 () in
   let idx0 = ptr_index p0 r () in
   let ld = load idx0 in
@@ -188,13 +195,31 @@ let make_loop () =
   let st = store idx1 ld in
   [ p0; c10; r; idx0; ld; idx1; st; U.end_ ~value:ld ~ranges:[ r ] ]
 
+(* An unbounded loop: a void-dtyped RANGE has no induction variable, and the
+   END that closes it carries the exit condition as its third source. *)
+let make_unbounded_loop () =
+  let ptr = global_ptr dt in
+  let p0 = param 0 ptr in
+  let c10 = const (int32_c 10) in
+  let r =
+    U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Weak ~dtype:Dtype.void ()
+  in
+  let c0 = c0_i32 () in
+  let idx = ptr_index p0 c0 () in
+  let ld = load idx in
+  let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:ld ~rhs:(const (float_c dt 1.0)) in
+  let end_ =
+    U.replace (U.end_ ~value:ld ~ranges:[ r ]) ~src:[| ld; r; cond |] ()
+  in
+  [ p0; c10; r; c0; idx; ld; cond; end_ ]
+
 let make_nested_loops () =
   let ptr = global_ptr dt in
   let p0 = param 0 ptr in
   let c10 = const (int32_c 10) and c5 = const (int32_c 5) in
-  let r0 = U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Loop
+  let r0 = U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Weak
       ~dtype:Dtype.int32 () in
-  let r1 = U.range ~size:c5 ~axis:1 ~sub:[] ~kind:Axis_type.Loop
+  let r1 = U.range ~size:c5 ~axis:1 ~sub:[] ~kind:Axis_type.Weak
       ~dtype:Dtype.int32 ~parents:[ r0 ] () in
   let sum = U.alu_binary ~op:Ops.Add ~lhs:r0 ~rhs:r1 in
   let idx0 = ptr_index p0 sum () in
@@ -214,6 +239,28 @@ let make_special dim =
   in
   let idx = ptr_index p0 sp () in
   [ p0; c64; sp; idx; store idx sp ]
+
+(* A register-file buffer read [n] times: with one consumer the load inlines at
+   its use site, with more it must be named so the read happens once. *)
+let make_reg_load consumers =
+  let p0 = param 0 dt in
+  let reg =
+    U.buffer ~slot:0 ~dtype:dt ~shape:(U.const_int 4) ~addrspace:Dtype.Reg ()
+  in
+  let c0 = c0_i32 () in
+  let ridx = ptr_index reg c0 () in
+  let ld = load ridx in
+  (* Each product consumes [ld] once more, so [ld] ends with exactly
+     [consumers] uses across the program. *)
+  let chain = ref [] and acc = ref ld in
+  for _ = 2 to consumers do
+    acc := U.alu_binary ~op:Ops.Mul ~lhs:!acc ~rhs:ld;
+    chain := !acc :: !chain
+  done;
+  let gidx = ptr_index p0 c0 () in
+  [ p0; reg; c0; ridx; ld ]
+  @ List.rev !chain
+  @ [ gidx; store gidx !acc ]
 
 let make_shared_memory () =
   let p0 = param 0 dt in
@@ -406,10 +453,10 @@ let make_custom () =
   let ci = U.custom_inline ~fmt:"custom_func({0}, {0})" ~args:[ ld ] ~dtype:dt in
   [ p0; c0; idx; ld; ci; store idx ci ]
 
-let make_define_var () =
+let make_define_var ?(dtype = Dtype.int32) () =
   let ptr = global_ptr dt in
   let p0 = param 0 ptr in
-  let dv = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:Dtype.int32 () in
+  let dv = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype () in
   let idx = ptr_index p0 dv () in
   let ld = load idx in
   [ p0; dv; idx; ld; store idx ld ]
@@ -935,6 +982,16 @@ let () =
               (render metal_renderer prog) "device float* data0_-1, constant int& n";
             assert_contains "cuda scalar param in signature"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "float* data0_-1, const int n");
+          test "64-bit scalar parameter" (fun () ->
+            let prog = make_define_var ~dtype:Dtype.int64 () in
+            assert_contains "clang 64-bit scalar param"
+              (render clang_renderer prog) "const long n";
+            assert_contains "clang 64-bit scalar forwarded through vals"
+              (render clang_renderer prog) "(long)vals[0]";
+            assert_contains "metal 64-bit scalar param"
+              (render metal_renderer prog) "constant long& n";
+            assert_contains "opencl 64-bit scalar param"
+              (render opencl_renderer prog) "const long n");
           test "buffer parameter and body both use type_map" (fun () ->
             (* Both the buffer signature and value-typed uses in the body apply
                the language type_map, so a bf16 metal buffer is [device bfloat*]
@@ -1128,28 +1185,6 @@ let () =
             let prog = make_store_const Dtype.float16 (float_c Dtype.float16 1.0) in
             assert_contains "opencl fp16 pragma"
               (render opencl_renderer prog) "cl_khr_fp16");
-          test "OpenCL aux groups params by slot" (fun () ->
-            let prog = make_simple_add_f32 () in
-            let expected_dtype = Dtype.repr Dtype.float32 in
-            equal (list string)
-              [
-                Printf.sprintf "((0,%s))" expected_dtype;
-                Printf.sprintf "((1,%s))" expected_dtype;
-                Printf.sprintf "((2,%s))" expected_dtype;
-              ]
-              (Renderer.aux opencl_renderer prog));
-          test "OpenCL aux uses dense parameter ordinals" (fun () ->
-            let c0 = c0_i32 () in
-            let p0 = param 0 (global_ptr Dtype.float32) in
-            let p1 = param 1 (global_ptr Dtype.float32) in
-            let prog = [ c0; p0; p1 ] in
-            let expected_dtype = Dtype.repr Dtype.float32 in
-            equal (list string)
-              [
-                Printf.sprintf "((0,%s))" expected_dtype;
-                Printf.sprintf "((1,%s))" expected_dtype;
-              ]
-              (Renderer.aux opencl_renderer prog));
           test "GPU pointer bitcasts use backend bitcast syntax" (fun () ->
             let f32_ptr = global_ptr Dtype.float32 in
             let i32_ptr = global_ptr Dtype.int32 in
@@ -1253,12 +1288,25 @@ let () =
               (render (Cstyle.cuda Gpu_target.SM80) (make_launch_bounds ()))
               "__launch_bounds__");
         ];
+      group "uint spelling"
+        [
+          test "cuda declares uint in the prefix" (fun () ->
+            assert_contains "cuda uint typedef"
+              (render (Cstyle.cuda Gpu_target.SM80) f32_1)
+              "typedef unsigned int uint;");
+          test "cuda and metal spell uint32 as uint" (fun () ->
+            let prog = make_store_const Dtype.uint32 (Const.int Dtype.uint32 1) in
+            assert_contains "cuda uint buffer"
+              (render (Cstyle.cuda Gpu_target.SM80) prog) "uint*";
+            assert_contains "metal uint buffer" (render metal_renderer prog)
+              "device uint*");
+        ];
       group "Variable Naming"
         [
           test "range variable prefix" (fun () ->
             let prog = make_loop () in
             for_each_renderer all_renderers (fun name r ->
-                assert_contains (name ^ " Loop prefix Lidx") (render r prog) "Lidx0"));
+                assert_contains (name ^ " Weak prefix Lidx") (render r prog) "Lidx0"));
           test "special variable names" (fun () ->
             let prog = make_special (Gpu_dim.Group_id 0) in
             for_each_renderer gpu_renderers (fun name r ->
@@ -1266,6 +1314,39 @@ let () =
             let prog_lid = make_special (Gpu_dim.Local_id 1) in
             for_each_renderer gpu_renderers (fun name r ->
                 assert_contains (name ^ " lidx1") (render r prog_lid) "lidx1"));
+        ];
+      group "Unbounded loops"
+        [
+          test "void range renders an unbounded for" (fun () ->
+            let out = render clang_renderer (make_unbounded_loop ()) in
+            assert_contains "unbounded for" out "for (;;) {");
+          test "conditional end renders a bottom exit test" (fun () ->
+            let out = render clang_renderer (make_unbounded_loop ()) in
+            assert_contains "exit test" out "{ break; }");
+          test "the exit test is indented inside the loop body" (fun () ->
+            let out = render clang_renderer (make_unbounded_loop ()) in
+            let lines = String.split_on_char '\n' out in
+            let break_line =
+              List.find (fun l -> contains l "break") lines
+            in
+            let close_line =
+              List.find (fun l -> String.trim l = "}" && l <> "}") lines
+            in
+            is_true
+              ~msg:"the break sits deeper than the brace that closes the loop"
+              (indent_of break_line > indent_of close_line));
+        ];
+      group "Register loads"
+        [
+          test "a single-use register load inlines" (fun () ->
+            let out = render clang_renderer (make_reg_load 1) in
+            is_true ~msg:"no named temporary for the load"
+              (not (contains out "val0 = ")));
+          test "a reused register load is named once" (fun () ->
+            let out = render clang_renderer (make_reg_load 3) in
+            assert_contains "the load is bound to a temporary" out "val0 = ";
+            equal int ~msg:"the register is read once" 1
+              (count_substring out "buf0+0"));
         ];
       group "Custom"
         [

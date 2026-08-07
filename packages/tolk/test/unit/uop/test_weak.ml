@@ -97,7 +97,7 @@ let consumer_cast_never_narrows () =
 
 let range_arithmetic_lowers_to_concrete_int () =
   let r =
-    U.range ~size:(U.const_int 16) ~axis:0 ~kind:Axis_type.Loop ()
+    U.range ~size:(U.const_int 16) ~axis:0 ~kind:Axis_type.Weak ()
   in
   let e = U.O.(r * U.const_int 4) in
   let lowered = lower e in
@@ -109,7 +109,7 @@ let range_arithmetic_lowers_to_concrete_int () =
 
 let comparison_unifies_operand_widths () =
   let r =
-    U.range ~size:(U.const_int 16) ~axis:0 ~kind:Axis_type.Loop ()
+    U.range ~size:(U.const_int 16) ~axis:0 ~kind:Axis_type.Weak ()
   in
   let lowered = lower U.O.(r < U.const_int 8) in
   equal dtype ~msg:"a comparison is bool" D.bool (U.dtype lowered);
