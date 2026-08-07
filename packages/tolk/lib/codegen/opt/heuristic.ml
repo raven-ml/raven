@@ -435,10 +435,25 @@ let apply_threading k =
   else match Renderer.global_max (P.ren k) with
   | None | Some [] -> ()
   | Some (gmax :: _) ->
+      (* Heuristic: use about 128K ops per thread. The reference forms this
+         product in arbitrary precision, where an OCaml int wraps — a kernel
+         fusing enough reduce axes overflows to a value that fails every
+         comparison below and silently loses threading. 32 is the largest
+         thread count tried, so any product at or above 128K*32 decides those
+         comparisons exactly as the true product would; multiplying only when
+         the result provably stays under that bound keeps the fold itself
+         overflow-free. *)
+      let saturate = (128 lsl 10) * 32 in
       let total =
-        List.fold_left (fun acc s -> const_int_or 1 s * acc) 1 (P.full_shape k)
+        List.fold_left
+          (fun acc s ->
+            let s = const_int_or 1 s in
+            if acc = 0 || s = 0 then 0
+            else if acc >= saturate then acc
+            else if s > saturate / acc then saturate
+            else acc * s)
+          1 (P.full_shape k)
       in
-      (* Heuristic: use about 128K ops per thread. *)
       try List.iter (fun threads ->
         if threads <= gmax && total / (128 lsl 10) >= threads then begin
           try_thread_split k threads;

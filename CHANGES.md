@@ -46,6 +46,17 @@ thread.
 
 ### Tolk (new)
 
+- Fix silently wrong results from any kernel holding both a group reduce and
+  an ordinary loop reduce — the shape of most backward passes on a GPU. The two
+  reduces were given the same accumulator register and the second's zero-init
+  was dropped, so the closing add read one accumulator twice and the kernel
+  computed `2(a+b)` where the answer is `a+b`. Affects every target with local
+  memory (CUDA, Metal, OpenCL); CPU was never affected.
+- Restore multi-threaded CPU kernels for large fused reductions. The
+  ops-per-thread heuristic formed the iteration-space product in a machine
+  integer, which wrapped on kernels fusing enough reduce axes (an unrolled
+  recurrence's weight gradients reach 2^110), so the thread split was silently
+  skipped and those kernels ran single-threaded.
 - Multi-device programs with two outputs that both need a cross-device
   reduction — a data-parallel step returning both the loss and the gradient of
   a replicated parameter — no longer miscompile. Flattening a bufferize folded

@@ -110,28 +110,6 @@ let mop_cleanup = Movement.mop_cleanup
 (* Movement-op / index pushing rule shared with the scheduler. *)
 let pm_mops = Rangeify.movement_ops
 
-(* pm_no_index: index dtype only exists before the renderer; concretise the
-   remaining index-typed ALU/CONST to int32, and drop index casts. *)
-let pm_no_index =
-  let open Upat in
-  PM.make
-    [
-      ops ~name:"x" ~dtype:Dtype.index (Ops.Const :: Ops.Group.alu)
-      => (fun bs ->
-      let x = bs $ "x" in
-      let arg =
-        match U.arg x with
-        | U.Arg.Value c -> (
-            match Const.view c with
-            | Const.Int v -> U.Arg.Value (Const.int64 Dtype.int32 v)
-            | _ -> U.arg x)
-        | a -> a
-      in
-      Some (U.replace x ~dtype:Dtype.int32 ~arg ()));
-      op ~name:"c" ~dtype:Dtype.index ~src:[ var "x" ] Ops.Cast
-      => (fun bs -> Some (U.cast ~src:(bs $ "x") ~dtype:Dtype.int32));
-    ]
-
 (* expander (expand_rewrite) *)
 
 let build_range_map sink =
@@ -560,73 +538,10 @@ let fix_group_for_reduce =
   let open Upat in
   op ~name:"reduce" Ops.Reduce => fun bs -> fix_group_for_reduce_rule (bs $ "reduce")
 
-type reduce_ctx = { mutable acc_num : int; acc_slots : int U.Ref_tbl.t }
-
-(* Precompute a deterministic accumulator slot per reduce, numbered in the
-   reference graph-rewrite visitation order so rendered accumulator buffer
-   names (acc0, acc1, ...) stay byte-identical regardless of local rewrite
-   order. *)
-let reduce_slots_in_tinygrad_order root =
-  let replaced = U.Ref_tbl.create 128 in
-  let on_stack = U.Ref_tbl.create 128 in
-  let waitlist = U.Ref_tbl.create 32 in
-  let order = ref [] in
-  let stack = ref [ (root, 0) ] in
-  U.Ref_tbl.replace on_stack root ();
-  let push_wait dep item =
-    let items =
-      match U.Ref_tbl.find_opt waitlist dep with
-      | Some items -> item :: items
-      | None -> [ item ]
-    in
-    U.Ref_tbl.replace waitlist dep items
-  in
-  let release_waiters n =
-    match U.Ref_tbl.find_opt waitlist n with
-    | None -> ()
-    | Some items ->
-        U.Ref_tbl.remove waitlist n;
-        stack := items @ !stack
-  in
-  let rec first_missing srcs i =
-    if i = Array.length srcs then None
-    else if U.Ref_tbl.mem replaced srcs.(i) then first_missing srcs (i + 1)
-    else Some srcs.(i)
-  in
-  while !stack <> [] do
-    match !stack with
-    | [] -> ()
-    | (node, stage) :: rest ->
-        stack := rest;
-        if not (U.Ref_tbl.mem replaced node) then
-          if stage = 0 then begin
-            stack := (node, 1) :: !stack;
-            let srcs = U.src node in
-            let enter =
-              match U.op node with Ops.Call | Ops.Function -> false | _ -> true
-            in
-            for i = Array.length srcs - 1 downto 0 do
-              let child = srcs.(i) in
-              if (i <> 0 || enter) && not (U.Ref_tbl.mem on_stack child) then begin
-                stack := (child, 0) :: !stack;
-                U.Ref_tbl.replace on_stack child ()
-              end
-            done
-          end
-          else
-            let srcs = U.src node in
-            match first_missing srcs 0 with
-            | Some dep -> push_wait dep (node, 1)
-            | None ->
-                (match U.as_reduce node with
-                | Some { ranges = _ :: _; _ } -> order := node :: !order
-                | Some { ranges = []; _ } | None -> ());
-                U.Ref_tbl.replace replaced node ();
-                release_waiters node
-  done;
-  let slots = U.Ref_tbl.create 16 in
-  List.rev !order |> List.iteri (fun slot node -> U.Ref_tbl.replace slots node slot);
-  slots
+(* Accumulator numbering. The reference bumps a single counter once per
+   reduce it lowers, so a reduce created part-way through the rewrite --
+   fix_group_for_reduce makes one -- is numbered as naturally as the rest. *)
+type reduce_ctx = { mutable acc_num : int }
 
 (* Ranges live in the reduce body but not in the reduce loops or already ended:
    these must be sequenced before the accumulator init. *)
@@ -677,16 +592,8 @@ let reduce_ranges_to_acc ctx node =
   match U.as_reduce node with
   | Some { src; ranges = _ :: _ as reduce_range; op; num_axes } ->
       let dtype = U.dtype node in
-      let slot =
-        match U.Ref_tbl.find_opt ctx.acc_slots node with
-        | Some slot ->
-            ctx.acc_num <- max ctx.acc_num (slot + 1);
-            slot
-        | None ->
-            let slot = ctx.acc_num in
-            ctx.acc_num <- ctx.acc_num + 1;
-            slot
-      in
+      let slot = ctx.acc_num in
+      ctx.acc_num <- ctx.acc_num + 1;
       let acc = placeholder_like node ~slot ~addrspace:Dtype.Reg in
       let input_ranges = reduce_input_ranges src reduce_range in
       let acc_init =
@@ -888,7 +795,7 @@ let pm_reduce root =
     U.graph_rewrite ~name:"fix group for reduce"
       (PM.rewrite pm_fix_group_for_reduce) root
   in
-  let ctx = { acc_num = 0; acc_slots = reduce_slots_in_tinygrad_order root } in
+  let ctx = { acc_num = 0 } in
   U.graph_rewrite ~name:"remove reduces"
     (U.first_match [ PM.rewrite mop_cleanup; PM.rewrite (pm_reduce_local ctx) ])
     root
@@ -1062,7 +969,7 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   let sink =
     rewrite ~name:"lower all index dtypes"
       (U.first_match
-         [ pm Symbolic.pm_lower_index_dtype; pm Coalese.indexing_simplify ])
+         [ pm (Weak.pm_lower_index_dtype ()); pm Coalese.indexing_simplify ])
       sink
   in
 
@@ -1099,7 +1006,8 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   let sink = Gater.pm_move_gates_from_index sink in
 
   (* final rewrite:
-     [pm_decomp + extra_matcher + pm_split_ends + pm_no_index + pm_remove_invalid]. *)
+     [pm_commit_weak + pm_cast_weak + pm_decomp + extra_matcher + pm_split_ends
+      + pm_remove_invalid]. *)
   let extra_matcher =
     match Renderer.extra_matcher ren with None -> fun _ -> None | Some m -> m
   in
@@ -1107,10 +1015,11 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
     rewrite ~name:"final rewrite"
       (U.first_match
          [
+           pm Weak.pm_commit_weak;
+           pm Weak.pm_cast_weak;
            pm_decomp;
            extra_matcher;
            Linearizer.do_split_ends;
-           pm pm_no_index;
            pm Symbolic.pm_remove_invalid;
          ])
       sink
