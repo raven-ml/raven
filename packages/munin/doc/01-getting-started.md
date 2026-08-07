@@ -26,6 +26,11 @@ mutations go through append-only events -- no direct state editing.
 `Session.start` opens a session, `Session.finish` closes it.
 `Session.with_run` wraps both and handles exceptions.
 
+**Metric.** A metric is a named scalar channel of a run.
+`Session.metric` declares one and returns the handle that logs it, so
+the key is spelled once. `Metric.log` appends a sample;
+`Session.log_metrics` appends several under one timestamp.
+
 **Run.** A run is the persisted, read-only view of a tracked
 experiment. It materializes its state by replaying the event log.
 `Run.params`, `Run.summary`, `Run.metric_history`, and other
@@ -68,13 +73,13 @@ let () =
       ~params:[ ("lr", `Float 0.001); ("hidden", `Int 64) ]
       ()
   in
-  (* Log metrics at each step. *)
-  Session.define_metric session "loss" ~summary:`Min ~goal:`Minimize ();
+  (* Declare the metrics, then log through their handles. *)
+  let loss = Session.metric session ~goal:`Minimize "loss" in
+  let accuracy = Session.metric session ~goal:`Maximize "accuracy" in
 
   for step = 1 to 50 do
-    let loss = 1.0 /. Float.of_int step in
-    let acc = 1.0 -. loss in
-    Session.log_metrics session ~step [ ("loss", loss); ("accuracy", acc) ]
+    let l = 1.0 /. Float.of_int step in
+    Session.log_metrics session ~step [ (loss, l); (accuracy, 1.0 -. l) ]
   done;
 
   (* Write a summary value explicitly. *)
@@ -113,10 +118,9 @@ let train ~name ~lr =
   Session.with_run ~experiment:"demo" ~name
     ~params:[ ("lr", `Float lr) ]
   @@ fun session ->
-  Session.define_metric session "loss" ~summary:`Min ~goal:`Minimize ();
+  let loss = Session.metric session ~goal:`Minimize "loss" in
   for step = 1 to 50 do
-    let loss = (1.0 /. Float.of_int step) *. (1.0 /. lr) in
-    Session.log_metric session ~step "loss" loss
+    Metric.log loss ~step ((1.0 /. Float.of_int step) *. (1.0 /. lr))
   done
 
 let () =

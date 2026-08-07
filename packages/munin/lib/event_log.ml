@@ -1,12 +1,12 @@
-type summary_mode = [ `Min | `Max | `Mean | `Last | `None ]
-type goal = [ `Minimize | `Maximize ]
+type summary = Metric.summary
+type goal = Metric.goal
 type media_kind = [ `Image | `Audio | `Table | `File ]
 
 type event =
   | Metric of { step : int; timestamp : float; key : string; value : float }
   | Define_metric of {
       key : string;
-      summary : summary_mode;
+      summary : summary;
       step_metric : string option;
       goal : goal option;
     }
@@ -35,14 +35,14 @@ let optional_string_of_json json =
   | Jsont.String (value, _) -> Some (Some value)
   | _ -> None
 
-let summary_mode_to_string = function
+let summary_to_string = function
   | `Min -> "min"
   | `Max -> "max"
   | `Mean -> "mean"
   | `Last -> "last"
   | `None -> "none"
 
-let summary_mode_of_string = function
+let summary_of_string = function
   | "min" -> Some `Min
   | "max" -> Some `Max
   | "mean" -> Some `Mean
@@ -89,7 +89,7 @@ let of_json json =
         ( Json_utils.json_mem "key" json |> Json_utils.json_string,
           Json_utils.json_mem "summary" json
           |> Json_utils.json_string
-          |> Fun.flip Option.bind summary_mode_of_string )
+          |> Fun.flip Option.bind summary_of_string )
       with
       | Some key, Some summary ->
           let step_metric =
@@ -174,7 +174,7 @@ let to_json = function
         ([
            ("type", Jsont.Json.string "define_metric");
            ("key", Jsont.Json.string key);
-           ("summary", Jsont.Json.string (summary_mode_to_string summary));
+           ("summary", Jsont.Json.string (summary_to_string summary));
          ]
         @ (match step_metric with
           | Some sm -> [ ("step_metric", Jsont.Json.string sm) ]

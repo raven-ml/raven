@@ -73,10 +73,12 @@ let () =
         ]
       ()
   in
-  Munin.Session.define_metric session "train/loss" ~summary:`Min ~goal:`Minimize
-    ();
-  Munin.Session.define_metric session "val/accuracy" ~summary:`Max
-    ~goal:`Maximize ();
+  let train_loss = Munin.Session.metric session ~goal:`Minimize "train/loss" in
+  let train_loss_avg = Munin.Session.metric session "train/loss_avg" in
+  let val_accuracy =
+    Munin.Session.metric session ~goal:`Maximize "val/accuracy"
+  in
+  let epoch_metric = Munin.Session.metric session "epoch" in
   let sysmon = Munin_sys.start session () in
 
   Printf.printf "run: %s\n%!" (Munin.Session.id session);
@@ -127,7 +129,7 @@ let () =
            loss_sum := !loss_sum +. loss;
            incr loss_count;
            Munin.Session.log_metrics session ~step:s
-             [ ("train/loss", loss); ("epoch", Float.of_int epoch) ];
+             [ (train_loss, loss); (epoch_metric, Float.of_int epoch) ];
            Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss;
            step + 1)
          1
@@ -150,7 +152,7 @@ let () =
 
     let loss_avg = !loss_sum /. float_of_int !loss_count in
     Munin.Session.log_metrics session ~step:!global_step
-      [ ("train/loss_avg", loss_avg); ("val/accuracy", test_acc) ];
+      [ (train_loss_avg, loss_avg); (val_accuracy, test_acc) ];
 
     Printf.printf "epoch %d  loss: %.4f  val_acc: %.2f%%\n%!" epoch loss_avg
       (test_acc *. 100.)

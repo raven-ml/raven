@@ -7,8 +7,8 @@ runs from the terminal.
 
 ## Features
 
-- **Scalar tracking**: `log_metric`, `log_metrics`, auto-computed summaries
-- **Metric definitions**: summary modes (min/max/mean/last), goals (minimize/maximize), custom x-axes
+- **Scalar tracking**: metrics declared once and logged through their handle, auto-computed summaries
+- **Metric declarations**: summary modes (min/max/mean/last), goals (minimize/maximize), custom x-axes
 - **Media logging**: images, files, audio, and structured tables
 - **Versioned artifacts**: content-addressed deduplication, aliases, cross-run lineage
 - **Provenance**: git commit, command line, environment variables, captured automatically
@@ -24,9 +24,9 @@ let () =
   Munin.Session.with_run ~experiment:"demo"
     ~params:[ ("lr", `Float 0.001); ("epochs", `Int 10) ]
   @@ fun session ->
+  let loss = Munin.Session.metric session ~goal:`Minimize "loss" in
   for step = 1 to 100 do
-    let loss = 1.0 /. Float.of_int step in
-    Munin.Session.log_metric session ~step "loss" loss
+    Munin.Metric.log loss ~step (1.0 /. Float.of_int step)
   done;
   Munin.Session.set_summary session [ ("final_loss", `Float 0.01) ]
 ```

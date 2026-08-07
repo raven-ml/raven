@@ -79,7 +79,7 @@ let test_with_run_success () =
   let store = Store.open_ ~root () in
   let result =
     Session.with_run ~store ~experiment:"exp" (fun session ->
-        Session.log_metric session ~step:1 "x" 1.0;
+        Metric.log (Session.metric session "x") ~step:1 1.0;
         42)
   in
   equal ~msg:"return value" int 42 result;
@@ -105,11 +105,11 @@ let test_resume () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  Metric.log (Session.metric session "x") ~step:1 1.0;
   let run = Session.run session in
   is_true ~msg:"resumable before finish" (Run.resumable run);
   let resumed = Session.resume run in
-  Session.log_metric resumed ~step:2 "x" 0.5;
+  Metric.log (Session.metric resumed "x") ~step:2 0.5;
   Session.finish resumed;
   let final = Session.run resumed in
   equal ~msg:"history length" int 2 (List.length (Run.metric_history final "x"));
@@ -128,9 +128,10 @@ let test_ops_after_finish_ignored () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 1.0;
   Session.finish session;
-  Session.log_metric session ~step:2 "x" 2.0;
+  Metric.log x ~step:2 2.0;
   Session.set_notes session (Some "late");
   Session.add_tags session [ "late" ];
   Session.set_summary session [ ("late", `Float 1.0) ];
@@ -165,11 +166,13 @@ let lifecycle =
 
 (* Scalars *)
 
-let test_log_metric () =
+let test_metric_log () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "train/loss" 1.5;
+  let loss = Session.metric session "train/loss" in
+  equal ~msg:"key" string "train/loss" (Metric.key loss);
+  Metric.log loss ~step:1 1.5;
   Session.finish session;
   let run = Session.run session in
   let m =
@@ -184,31 +187,52 @@ let test_log_metrics_batch () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metrics session ~step:1 [ ("train/loss", 1.0); ("val/acc", 0.6) ];
+  let loss = Session.metric session "train/loss" in
+  let acc = Session.metric session "val/acc" in
+  Session.log_metrics session ~step:1 [ (loss, 1.0); (acc, 0.6) ];
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"two keys" int 2 (List.length (Run.metric_keys run))
+
+let test_log_metrics_shared_timestamp () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let a = Session.metric session "a" in
+  let b = Session.metric session "b" in
+  Session.log_metrics session ~step:1 [ (a, 1.0); (b, 2.0) ];
+  Session.finish session;
+  let run = Session.run session in
+  let timestamp key =
+    match List.assoc_opt key (Run.latest_metrics run) with
+    | Some (m : Metric.sample) -> m.timestamp
+    | None -> failwith "missing"
+  in
+  equal ~msg:"one timestamp for the batch" (float 0.0) (timestamp "a")
+    (timestamp "b")
 
 let test_metric_history_chronological () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 3.0;
-  Session.log_metric session ~step:2 "x" 2.0;
-  Session.log_metric session ~step:3 "x" 1.0;
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 3.0;
+  Metric.log x ~step:2 2.0;
+  Metric.log x ~step:3 1.0;
   Session.finish session;
   let run = Session.run session in
   let history = Run.metric_history run "x" in
   equal ~msg:"length" int 3 (List.length history);
-  let values = List.map (fun (m : Run.metric) -> m.value) history in
+  let values = List.map (fun (m : Metric.sample) -> m.value) history in
   equal ~msg:"order" (list (float 0.0)) [ 3.0; 2.0; 1.0 ] values
 
 let test_latest_metrics () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
-  Session.log_metric session ~step:2 "x" 2.0;
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 1.0;
+  Metric.log x ~step:2 2.0;
   Session.finish session;
   let run = Session.run session in
   let latest =
@@ -223,9 +247,9 @@ let test_metric_keys_sorted () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "z/loss" 1.0;
-  Session.log_metric session ~step:1 "a/acc" 0.5;
-  Session.log_metric session ~step:1 "m/lr" 0.01;
+  Metric.log (Session.metric session "z/loss") ~step:1 1.0;
+  Metric.log (Session.metric session "a/acc") ~step:1 0.5;
+  Metric.log (Session.metric session "m/lr") ~step:1 0.01;
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"sorted keys" (list string)
@@ -236,7 +260,7 @@ let test_explicit_timestamp () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 ~timestamp:42.0 "x" 1.0;
+  Metric.log (Session.metric session "x") ~step:1 ~timestamp:42.0 1.0;
   Session.finish session;
   let run = Session.run session in
   let m =
@@ -254,13 +278,14 @@ let test_missing_metric_history_empty () =
   let run = Session.run session in
   equal ~msg:"empty history" (list int) []
     (List.map
-       (fun (m : Run.metric) -> m.step)
+       (fun (m : Metric.sample) -> m.step)
        (Run.metric_history run "nonexistent"))
 
 let scalars =
   [
-    test "log_metric" test_log_metric;
+    test "Metric.log" test_metric_log;
     test "log_metrics batch" test_log_metrics_batch;
+    test "log_metrics shares a timestamp" test_log_metrics_shared_timestamp;
     test "history chronological" test_metric_history_chronological;
     test "latest_metrics" test_latest_metrics;
     test "metric_keys sorted" test_metric_keys_sorted;
@@ -268,14 +293,14 @@ let scalars =
     test "missing key history empty" test_missing_metric_history_empty;
   ]
 
-(* Metric definitions *)
+(* Metric declarations *)
 
-let test_define_metric_summary_and_goal () =
+let test_metric_summary_and_goal () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "train/loss" ~summary:`Min ~goal:`Minimize ();
-  Session.define_metric session "val/acc" ~summary:`Max ~goal:`Maximize ();
+  ignore (Session.metric session ~summary:`Min ~goal:`Minimize "train/loss");
+  ignore (Session.metric session ~summary:`Max ~goal:`Maximize "val/acc");
   Session.finish session;
   let run = Session.run session in
   let defs = Run.metric_defs run in
@@ -287,15 +312,16 @@ let test_define_metric_summary_and_goal () =
   is_true ~msg:"acc summary max" (acc_def.summary = `Max);
   is_true ~msg:"acc goal maximize" (acc_def.goal = Some `Maximize)
 
-let test_define_metric_all_summaries () =
+let test_metric_all_summaries () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "a" ~summary:`Min ();
-  Session.define_metric session "b" ~summary:`Max ();
-  Session.define_metric session "c" ~summary:`Mean ();
-  Session.define_metric session "d" ~summary:`Last ();
-  Session.define_metric session "e" ~summary:`None ();
+  let declare summary key = ignore (Session.metric session ~summary key) in
+  declare `Min "a";
+  declare `Max "b";
+  declare `Mean "c";
+  declare `Last "d";
+  declare `None "e";
   Session.finish session;
   let run = Session.run session in
   let defs = Run.metric_defs run in
@@ -306,44 +332,88 @@ let test_define_metric_all_summaries () =
   is_true ~msg:"d=Last" ((List.assoc "d" defs).summary = `Last);
   is_true ~msg:"e=None" ((List.assoc "e" defs).summary = `None)
 
-let test_define_metric_step_metric () =
+let test_metric_step_metric () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "train/loss" ~step_metric:"epoch" ();
+  let epoch = Session.metric session "epoch" in
+  ignore (Session.metric session ~step_metric:epoch "train/loss");
   Session.finish session;
   let run = Session.run session in
   let def = List.assoc "train/loss" (Run.metric_defs run) in
-  equal ~msg:"step_metric" (option string) (Some "epoch") def.step_metric
+  equal ~msg:"step_metric is the referenced key" (option string) (Some "epoch")
+    def.step_metric
 
-let test_define_metric_default_summary () =
+let test_metric_default_summary () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "x" ();
+  ignore (Session.metric session "x");
   Session.finish session;
   let run = Session.run session in
   let def = List.assoc "x" (Run.metric_defs run) in
-  is_true ~msg:"default summary is Last" (def.summary = `Last)
+  is_true ~msg:"default summary is Last" (def.summary = `Last);
+  is_none ~msg:"no goal by default" def.goal
+
+let test_metric_summary_from_goal () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  ignore (Session.metric session ~goal:`Minimize "loss");
+  ignore (Session.metric session ~goal:`Maximize "acc");
+  Session.finish session;
+  let defs = Run.metric_defs (Session.run session) in
+  is_true ~msg:"minimize implies Min" ((List.assoc "loss" defs).summary = `Min);
+  is_true ~msg:"maximize implies Max" ((List.assoc "acc" defs).summary = `Max)
+
+let test_metric_summary_overrides_goal () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  ignore (Session.metric session ~summary:`Mean ~goal:`Minimize "loss");
+  Session.finish session;
+  let def = List.assoc "loss" (Run.metric_defs (Session.run session)) in
+  is_true ~msg:"explicit summary wins" (def.summary = `Mean);
+  is_true ~msg:"goal is kept" (def.goal = Some `Minimize)
+
+let test_metric_redeclare_replaces () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let first = Session.metric session ~summary:`Min "loss" in
+  let second = Session.metric session ~summary:`Max "loss" in
+  Metric.log first ~step:1 1.0;
+  Metric.log second ~step:2 2.0;
+  Session.finish session;
+  let run = Session.run session in
+  let defs = Run.metric_defs run in
+  equal ~msg:"one def" int 1 (List.length defs);
+  is_true ~msg:"last declaration wins" ((List.assoc "loss" defs).summary = `Max);
+  equal ~msg:"both handles write the same key" int 2
+    (List.length (Run.metric_history run "loss"))
 
 let test_metric_defs_sorted () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "z" ();
-  Session.define_metric session "a" ();
-  Session.define_metric session "m" ();
+  let declare key = ignore (Session.metric session key) in
+  declare "z";
+  declare "a";
+  declare "m";
   Session.finish session;
   let run = Session.run session in
   let keys = List.map fst (Run.metric_defs run) in
   equal ~msg:"sorted" (list string) [ "a"; "m"; "z" ] keys
 
-let metric_definitions =
+let metric_declarations =
   [
-    test "summary and goal" test_define_metric_summary_and_goal;
-    test "all summary modes" test_define_metric_all_summaries;
-    test "step_metric" test_define_metric_step_metric;
-    test "default summary is Last" test_define_metric_default_summary;
+    test "summary and goal" test_metric_summary_and_goal;
+    test "all summary modes" test_metric_all_summaries;
+    test "step_metric" test_metric_step_metric;
+    test "default summary is Last" test_metric_default_summary;
+    test "summary defaults from goal" test_metric_summary_from_goal;
+    test "explicit summary overrides goal" test_metric_summary_overrides_goal;
+    test "redeclaring replaces the def" test_metric_redeclare_replaces;
     test "defs sorted" test_metric_defs_sorted;
   ]
 
@@ -1019,8 +1089,9 @@ let test_monitor_poll () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "train/loss" 1.0;
-  Session.log_metric session ~step:2 "train/loss" 0.5;
+  let loss = Session.metric session "train/loss" in
+  Metric.log loss ~step:1 1.0;
+  Metric.log loss ~step:2 0.5;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1035,13 +1106,14 @@ let test_monitor_incremental () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 1.0;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
   equal ~msg:"one point after first poll" int 1
     (List.length (Run_monitor.history monitor "x"));
-  Session.log_metric session ~step:2 "x" 2.0;
+  Metric.log x ~step:2 2.0;
   Run_monitor.poll monitor;
   equal ~msg:"two points after second poll" int 2
     (List.length (Run_monitor.history monitor "x"));
@@ -1052,9 +1124,10 @@ let test_monitor_history_chronological () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 3.0;
-  Session.log_metric session ~step:2 "x" 1.0;
-  Session.log_metric session ~step:3 "x" 2.0;
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 3.0;
+  Metric.log x ~step:2 1.0;
+  Metric.log x ~step:3 2.0;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1068,7 +1141,7 @@ let test_monitor_metric_defs () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "loss" ~summary:`Min ~goal:`Minimize ();
+  ignore (Session.metric session ~summary:`Min ~goal:`Minimize "loss");
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1083,10 +1156,10 @@ let test_monitor_best_minimize () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "loss" ~goal:`Minimize ();
-  Session.log_metric session ~step:1 "loss" 1.0;
-  Session.log_metric session ~step:2 "loss" 0.3;
-  Session.log_metric session ~step:3 "loss" 0.7;
+  let loss = Session.metric session ~goal:`Minimize "loss" in
+  Metric.log loss ~step:1 1.0;
+  Metric.log loss ~step:2 0.3;
+  Metric.log loss ~step:3 0.7;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1100,10 +1173,10 @@ let test_monitor_best_maximize () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "acc" ~goal:`Maximize ();
-  Session.log_metric session ~step:1 "acc" 0.5;
-  Session.log_metric session ~step:2 "acc" 0.9;
-  Session.log_metric session ~step:3 "acc" 0.7;
+  let acc = Session.metric session ~goal:`Maximize "acc" in
+  Metric.log acc ~step:1 0.5;
+  Metric.log acc ~step:2 0.9;
+  Metric.log acc ~step:3 0.7;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1117,9 +1190,10 @@ let test_monitor_best_loss_heuristic () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "train/loss" 1.0;
-  Session.log_metric session ~step:2 "train/loss" 0.2;
-  Session.log_metric session ~step:3 "train/loss" 0.5;
+  let loss = Session.metric session "train/loss" in
+  Metric.log loss ~step:1 1.0;
+  Metric.log loss ~step:2 0.2;
+  Metric.log loss ~step:3 0.5;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1133,7 +1207,7 @@ let test_monitor_live_status () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  Metric.log (Session.metric session "x") ~step:1 1.0;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1174,7 +1248,7 @@ let test_partial_log () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  Metric.log (Session.metric session "x") ~step:1 1.0;
   let run = Session.run session in
   (* Append truncated JSON *)
   let oc =
@@ -1195,7 +1269,7 @@ let test_malformed_line () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  Metric.log (Session.metric session "x") ~step:1 1.0;
   let run = Session.run session in
   let oc =
     open_out_gen
@@ -1226,7 +1300,8 @@ let test_mixed_valid_invalid () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_metric session ~step:1 "x" 1.0;
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 1.0;
   let run = Session.run session in
   let oc =
     open_out_gen
@@ -1239,7 +1314,7 @@ let test_mixed_valid_invalid () =
     (fun () ->
       output_string oc "garbage\n";
       output_string oc "{\"bad\":true}\n");
-  Session.log_metric session ~step:2 "x" 2.0;
+  Metric.log x ~step:2 2.0;
   let run = Session.run session in
   equal ~msg:"only valid metrics" int 2
     (List.length (Run.metric_history run "x"));
@@ -1264,10 +1339,10 @@ let test_auto_summary_min () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "loss" ~summary:`Min ();
-  Session.log_metric session ~step:1 "loss" 1.0;
-  Session.log_metric session ~step:2 "loss" 0.3;
-  Session.log_metric session ~step:3 "loss" 0.7;
+  let loss = Session.metric session ~summary:`Min "loss" in
+  Metric.log loss ~step:1 1.0;
+  Metric.log loss ~step:2 0.3;
+  Metric.log loss ~step:3 0.7;
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"min summary"
@@ -1278,10 +1353,10 @@ let test_auto_summary_max () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "acc" ~summary:`Max ();
-  Session.log_metric session ~step:1 "acc" 0.5;
-  Session.log_metric session ~step:2 "acc" 0.9;
-  Session.log_metric session ~step:3 "acc" 0.7;
+  let acc = Session.metric session ~summary:`Max "acc" in
+  Metric.log acc ~step:1 0.5;
+  Metric.log acc ~step:2 0.9;
+  Metric.log acc ~step:3 0.7;
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"max summary"
@@ -1292,10 +1367,10 @@ let test_auto_summary_mean () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "x" ~summary:`Mean ();
-  Session.log_metric session ~step:1 "x" 1.0;
-  Session.log_metric session ~step:2 "x" 2.0;
-  Session.log_metric session ~step:3 "x" 3.0;
+  let x = Session.metric session ~summary:`Mean "x" in
+  Metric.log x ~step:1 1.0;
+  Metric.log x ~step:2 2.0;
+  Metric.log x ~step:3 3.0;
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"mean summary"
@@ -1306,10 +1381,10 @@ let test_auto_summary_last () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "x" ~summary:`Last ();
-  Session.log_metric session ~step:1 "x" 1.0;
-  Session.log_metric session ~step:2 "x" 2.0;
-  Session.log_metric session ~step:3 "x" 3.0;
+  let x = Session.metric session ~summary:`Last "x" in
+  Metric.log x ~step:1 1.0;
+  Metric.log x ~step:2 2.0;
+  Metric.log x ~step:3 3.0;
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"last summary"
@@ -1320,8 +1395,7 @@ let test_auto_summary_none () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "x" ~summary:`None ();
-  Session.log_metric session ~step:1 "x" 1.0;
+  Metric.log (Session.metric session ~summary:`None "x") ~step:1 1.0;
   Session.finish session;
   let run = Session.run session in
   is_none ~msg:"no auto-summary" (Run.find_summary run "x")
@@ -1330,9 +1404,9 @@ let test_explicit_summary_wins () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  Session.define_metric session "loss" ~summary:`Min ();
-  Session.log_metric session ~step:1 "loss" 1.0;
-  Session.log_metric session ~step:2 "loss" 0.3;
+  let loss = Session.metric session ~summary:`Min "loss" in
+  Metric.log loss ~step:1 1.0;
+  Metric.log loss ~step:2 0.3;
   Session.set_summary session [ ("loss", `Float 999.0) ];
   Session.finish session;
   let run = Session.run session in
@@ -1587,7 +1661,7 @@ let suite =
   [
     group "Session lifecycle" lifecycle;
     group "Scalars" scalars;
-    group "Metric definitions" metric_definitions;
+    group "Metric declarations" metric_declarations;
     group "Metadata" metadata;
     group "Provenance" provenance_tests;
     group "Run loading" run_loading;

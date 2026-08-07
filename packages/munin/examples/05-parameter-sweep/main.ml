@@ -22,13 +22,13 @@ let () =
       Session.with_run ~store ~experiment:"optimisation" ~name ~group
         ~params:[ ("step_size", `Float step_size); ("max_iter", `Int max_iter) ]
       @@ fun session ->
-      Session.define_metric session "error" ~summary:`Min ~goal:`Minimize ();
+      let error_metric = Session.metric session ~goal:`Minimize "error" in
 
       (* Simulate convergence: smaller steps converge slower but lower. *)
       let error = ref 10.0 in
       for i = 1 to max_iter do
         error := (!error *. (1.0 -. step_size)) +. Random.float 0.01;
-        if i mod 10 = 0 then Session.log_metric session ~step:i "error" !error
+        if i mod 10 = 0 then Metric.log error_metric ~step:i !error
       done)
     configs;
 

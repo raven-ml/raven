@@ -18,24 +18,6 @@ type status =
   | `Killed  (** Run was manually terminated. *) ]
 (** The type for run status values. *)
 
-type metric = {
-  step : int;  (** Step counter at which the sample was logged. *)
-  timestamp : float;  (** Wall-clock time of the sample. *)
-  value : float;  (** Scalar metric value. *)
-}
-(** The type for scalar metric observations. *)
-
-type metric_def = {
-  summary : [ `Min | `Max | `Mean | `Last | `None ];
-      (** How the run summary value is computed from history. *)
-  step_metric : string option;
-      (** Another metric to use as x-axis (e.g. ["epoch"]). *)
-  goal : [ `Minimize | `Maximize ] option;
-      (** Whether lower or higher values are better. *)
-}
-(** The type for metric definitions. Declares how a metric should be summarised
-    and plotted. *)
-
 type media_entry = {
   step : int;  (** Step counter at which the media was logged. *)
   timestamp : float;  (** Wall-clock time. *)
@@ -110,20 +92,23 @@ val find_summary : t -> string -> Value.t option
 
 (** {1:metrics Metrics} *)
 
+(** Metrics are read back by key: keys come off disk, so there is nothing for a
+    {!Metric.t} handle to check here. *)
+
 val metric_keys : t -> string list
 (** [metric_keys t] is the sorted list of metric keys observed in [t]. *)
 
-val latest_metrics : t -> (string * metric) list
-(** [latest_metrics t] is the latest scalar metric value per key, sorted
+val latest_metrics : t -> (string * Metric.sample) list
+(** [latest_metrics t] is the latest sample per metric key, sorted
     alphabetically by key. *)
 
-val metric_history : t -> string -> metric list
+val metric_history : t -> string -> Metric.sample list
 (** [metric_history t key] is the full history for [key] in chronological order.
     Returns the empty list if [key] has no samples. *)
 
-val metric_defs : t -> (string * metric_def) list
-(** [metric_defs t] is the metric definitions declared via
-    {!Session.define_metric}, sorted alphabetically by key. *)
+val metric_defs : t -> (string * Metric.def) list
+(** [metric_defs t] is the metric definitions declared via {!Session.metric},
+    sorted alphabetically by key. *)
 
 (** {1:media Media} *)
 

@@ -15,8 +15,9 @@ let () =
       ()
   in
   write artifact_path "hello from munin\n";
-  Session.log_metric session ~step:1 "loss" 1.25;
-  Session.log_metric session ~step:2 "loss" 0.94;
+  let loss = Session.metric session "loss" in
+  Metric.log loss ~step:1 1.25;
+  Metric.log loss ~step:2 0.94;
   Session.set_summary session [ ("best_loss", `Float 0.94) ];
   ignore
     (Session.log_artifact session ~name:"notes" ~kind:`File ~path:artifact_path

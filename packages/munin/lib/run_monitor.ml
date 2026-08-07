@@ -5,9 +5,9 @@ type t = {
   mutable ic : in_channel option;
   mutable pos : int;
   mutable last_event_time : float;
-  latest : (string, Run.metric) Hashtbl.t;
+  latest : (string, Metric.sample) Hashtbl.t;
   histories : (string, (int * float) list) Hashtbl.t;
-  defs : (string, Run.metric_def) Hashtbl.t;
+  defs : (string, Metric.def) Hashtbl.t;
   mutable finished : Run.status option;
 }
 
@@ -69,15 +69,15 @@ let read_new_events t =
 
 let process_event t = function
   | Event_log.Metric { step; timestamp; key; value } ->
-      let metric = Run.{ step; timestamp; value } in
-      Hashtbl.replace t.latest key metric;
+      let sample = { Metric.step; timestamp; value } in
+      Hashtbl.replace t.latest key sample;
       let history =
         match Hashtbl.find_opt t.histories key with Some h -> h | None -> []
       in
       Hashtbl.replace t.histories key ((step, value) :: history);
       t.last_event_time <- timestamp
   | Define_metric { key; summary = s; step_metric; goal } ->
-      Hashtbl.replace t.defs key { Run.summary = s; step_metric; goal }
+      Hashtbl.replace t.defs key { Metric.summary = s; step_metric; goal }
   | Finished { status; ended_at = _ } ->
       t.finished <- Some (Run.status_of_string status)
   | Resumed _ ->
@@ -146,4 +146,4 @@ let best t key =
         | Some m -> m.timestamp
         | None -> 0.0
       in
-      Some Run.{ step = best_step; timestamp; value = best_value }
+      Some { Metric.step = best_step; timestamp; value = best_value }

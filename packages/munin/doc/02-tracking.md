@@ -6,9 +6,11 @@ training loop.
 
 ## Logging Scalars
 
-`Session.log_metric` records a single scalar at a given step.
-`Session.log_metrics` records several atomically with the same
-timestamp.
+`Session.metric` declares a metric and returns the handle that logs
+it. The key is spelled once, where the metric is declared, so a typo
+cannot silently create a second channel. `Metric.log` records a single
+scalar at a given step; `Session.log_metrics` records several under
+one timestamp.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -16,10 +18,11 @@ open Munin
 
 let () =
   Session.with_run ~experiment:"tracking-demo" @@ fun session ->
+  let loss = Session.metric session ~goal:`Minimize "loss" in
+  let accuracy = Session.metric session ~goal:`Maximize "accuracy" in
   for step = 1 to 100 do
-    let loss = 1.0 /. Float.of_int step in
-    let acc = 1.0 -. loss in
-    Session.log_metrics session ~step [ ("loss", loss); ("accuracy", acc) ]
+    let l = 1.0 /. Float.of_int step in
+    Session.log_metrics session ~step [ (loss, l); (accuracy, 1.0 -. l) ]
   done
 ```
 
@@ -27,7 +30,9 @@ Each call appends to an event log. The `step` is your x-axis counter
 (typically the global training step). A wall-clock timestamp is added
 automatically; pass `~timestamp` to override it.
 
-Read metrics back through the `Run` module:
+Read metrics back through the `Run` module. Reading is keyed by
+string: keys come off disk, so there is nothing for a handle to
+check.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -37,23 +42,16 @@ Run.latest_metrics run     (* latest value per key *)
 Run.metric_history run "loss"  (* full chronological history *)
 ```
 
-## Defining Metrics
+## Declaring Metrics
 
-`Session.define_metric` declares how a metric should be summarized,
-compared, and plotted. Call it once per key, before or after logging
-values.
+The optional arguments of `Session.metric` say how a metric should be
+summarized, compared, and plotted. Declaring the same key again
+replaces its definition; readers see the last one.
 
 <!-- $MDX skip -->
 ```ocaml
-Session.define_metric session "loss"
-  ~summary:`Min
-  ~goal:`Minimize
-  ();
-
-Session.define_metric session "accuracy"
-  ~summary:`Max
-  ~goal:`Maximize
-  ();
+let loss = Session.metric session ~goal:`Minimize "loss" in
+let accuracy = Session.metric session ~goal:`Maximize "accuracy" in
 ```
 
 ### Summary Modes
@@ -65,8 +63,12 @@ The `~summary` parameter controls the auto-computed run summary value:
 | `` `Min ``  | Minimum over all samples |
 | `` `Max ``  | Maximum over all samples |
 | `` `Mean `` | Arithmetic mean of all samples |
-| `` `Last `` | Most recent sample (default) |
+| `` `Last `` | Most recent sample |
 | `` `None `` | No auto-summary |
+
+`~summary` defaults to the mode `~goal` implies -- `` `Min `` for
+`` `Minimize ``, `` `Max `` for `` `Maximize `` -- and to `` `Last ``
+when no goal is given. Pass it explicitly only to override that.
 
 When the run is loaded, the summary is computed from the full metric
 history. You do not need to compute it yourself.
@@ -96,39 +98,47 @@ higher (`` `Maximize ``) values are better. It is used by:
 
 ### Step Metric
 
-The `~step_metric` parameter specifies another metric as the x-axis:
+The `~step_metric` parameter takes another metric to use as the
+x-axis, so the reference is checked by the compiler:
 
 <!-- $MDX skip -->
 ```ocaml
-Session.define_metric session "val/accuracy"
-  ~summary:`Max ~goal:`Maximize ~step_metric:"epoch" ();
+let epoch = Session.metric session "epoch" in
+let accuracy =
+  Session.metric session ~goal:`Maximize ~step_metric:epoch "val/accuracy"
+in
 ```
 
 This tells renderers to plot `val/accuracy` against the `epoch`
-metric instead of the raw step counter.
+metric instead of the raw step counter. The x-axis metric must be
+declared before the metrics that reference it.
 
 ## Epoch Tracking
 
-Epochs are not a special concept -- log them as a regular metric and
-reference them with `~step_metric`:
+Epochs are not a special concept -- declare one as a regular metric
+and reference it with `~step_metric`:
 
 <!-- $MDX skip -->
 ```ocaml
-Session.define_metric session "train/loss"
-  ~summary:`Min ~goal:`Minimize ~step_metric:"epoch" ();
-Session.define_metric session "val/accuracy"
-  ~summary:`Max ~goal:`Maximize ~step_metric:"epoch" ();
+let epoch_metric = Session.metric session "epoch" in
+let loss =
+  Session.metric session ~goal:`Minimize ~step_metric:epoch_metric "train/loss"
+in
+let accuracy =
+  Session.metric session ~goal:`Maximize ~step_metric:epoch_metric
+    "val/accuracy"
+in
 
 for epoch = 1 to 10 do
   let steps_per_epoch = 100 in
   for batch = 1 to steps_per_epoch do
     let step = ((epoch - 1) * steps_per_epoch) + batch in
-    let loss = 1.0 /. Float.of_int step in
     Session.log_metrics session ~step
-      [ ("train/loss", loss); ("epoch", Float.of_int epoch) ]
+      [ (loss, 1.0 /. Float.of_int step);
+        (epoch_metric, Float.of_int epoch) ]
   done;
   let step = epoch * steps_per_epoch in
-  Session.log_metric session ~step "val/accuracy" (Float.of_int epoch *. 0.1)
+  Metric.log accuracy ~step (Float.of_int epoch *. 0.1)
 done
 ```
 
@@ -197,10 +207,13 @@ let () =
       ]
       ()
   in
-  Munin.Session.define_metric session "train/loss"
-    ~summary:`Min ~goal:`Minimize ();
-  Munin.Session.define_metric session "val/accuracy"
-    ~summary:`Max ~goal:`Maximize ();
+  let train_loss =
+    Munin.Session.metric session ~goal:`Minimize "train/loss"
+  in
+  let val_accuracy =
+    Munin.Session.metric session ~goal:`Maximize "val/accuracy"
+  in
+  let epoch_metric = Munin.Session.metric session "epoch" in
 
   let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
   let params = Model.init () in
@@ -222,12 +235,12 @@ let () =
         state := (params, ostate);
         incr step;
         Munin.Session.log_metrics session ~step:!step
-          [ ("train/loss", Nx.item [] loss);
-            ("epoch", Float.of_int epoch) ]);
+          [ (train_loss, Nx.item [] loss);
+            (epoch_metric, Float.of_int epoch) ]);
 
     (* Evaluate and log validation accuracy. *)
     let acc = Kaun.Metric.accuracy (Model.apply (fst !state) test_x) test_y in
-    Munin.Session.log_metric session ~step:!step "val/accuracy" acc
+    Munin.Metric.log val_accuracy ~step:!step acc
   done;
 
   Munin.Session.finish session

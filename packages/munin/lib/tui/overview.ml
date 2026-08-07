@@ -50,8 +50,8 @@ let kv_row k v =
 let badge_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:10) ~dim:true ()
 
-let format_summary_value ~(metric_defs : (string * Munin.Run.metric_def) list)
-    ~(best_for_tag : string -> float option) k (m : Munin.Run.metric) =
+let format_summary_value ~(metric_defs : (string * Munin.Metric.def) list)
+    ~(best_for_tag : string -> float option) k (m : Munin.Metric.sample) =
   let def = List.assoc_opt k metric_defs in
   let value =
     match (def, best_for_tag k) with
@@ -82,9 +82,9 @@ let format_summary_value ~(metric_defs : (string * Munin.Run.metric_def) list)
     ]
 
 let view ~(run : Munin.Run.t)
-    ~(latest_metrics : (string * Munin.Run.metric) list)
+    ~(latest_metrics : (string * Munin.Metric.sample) list)
     ~(step_metrics : string list)
-    ~(metric_defs : (string * Munin.Run.metric_def) list)
+    ~(metric_defs : (string * Munin.Metric.def) list)
     ~(best_for_tag : string -> float option) =
   let params = Munin.Run.params run in
   let metrics =

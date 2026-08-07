@@ -1,7 +1,7 @@
-(** Metric definitions and rich scalar logging.
+(** Metric declarations and rich scalar logging.
 
-    Demonstrates define_metric with summaries, goals, and step_metric for custom
-    x-axes. Simulates an iterative solver converging over epochs. *)
+    Demonstrates Session.metric with summaries, goals, and step_metric for
+    custom x-axes. Simulates an iterative solver converging over epochs. *)
 
 open Munin
 
@@ -12,10 +12,14 @@ let () =
       ~params:[ ("tolerance", `Float 1e-6); ("max_iter", `Int 500) ]
       ()
   in
-  (* Declare how metrics should be summarised and compared. *)
-  Session.define_metric session "residual" ~summary:`Min ~goal:`Minimize ();
-  Session.define_metric session "convergence_rate" ~summary:`Mean
-    ~step_metric:"epoch" ();
+  (* Declare how metrics should be summarised and compared. The epoch axis comes
+     first: metrics plotted against it refer to its handle. *)
+  let epoch_metric = Session.metric session "epoch" in
+  let residual_metric = Session.metric session ~goal:`Minimize "residual" in
+  let rate_metric =
+    Session.metric session ~summary:`Mean ~step_metric:epoch_metric
+      "convergence_rate"
+  in
 
   (* Simulate an iterative solver: residual shrinks, rate stabilises. *)
   let residual = ref 1.0 in
@@ -25,9 +29,9 @@ let () =
     let step = epoch * 25 in
     Session.log_metrics session ~step
       [
-        ("residual", !residual);
-        ("convergence_rate", rate);
-        ("epoch", Float.of_int epoch);
+        (residual_metric, !residual);
+        (rate_metric, rate);
+        (epoch_metric, Float.of_int epoch);
       ]
   done;
 
@@ -41,7 +45,7 @@ let () =
 
   let defs = Run.metric_defs run in
   List.iter
-    (fun (key, (def : Run.metric_def)) ->
+    (fun (key, (def : Metric.def)) ->
       let goal =
         match def.goal with
         | Some `Minimize -> "minimize"

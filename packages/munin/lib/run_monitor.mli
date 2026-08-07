@@ -34,19 +34,19 @@ val close : t -> unit
 val live_status : t -> live_status
 (** [live_status t] is the current run status based on event activity. *)
 
-val metrics : t -> (string * Run.metric) list
+val metrics : t -> (string * Metric.sample) list
 (** [metrics t] is the latest metric value per key, sorted alphabetically. *)
 
 val history : t -> string -> (int * float) list
 (** [history t key] is the [(step, value)] history for [key] in chronological
     order. Returns the empty list if [key] has no samples. *)
 
-val metric_defs : t -> (string * Run.metric_def) list
+val metric_defs : t -> (string * Metric.def) list
 (** [metric_defs t] is the metric definitions declared so far, sorted
     alphabetically by key. *)
 
-val best : t -> string -> Run.metric option
+val best : t -> string -> Metric.sample option
 (** [best t key] is the best observation for [key] according to
-    {!Session.define_metric} goal, or a heuristic if undefined (keys containing
-    "loss" or "error" prefer lower values). Returns [None] if no samples exist
-    for [key]. *)
+    {!Session.metric} goal, or a heuristic if undefined (keys containing "loss"
+    or "error" prefer lower values). Returns [None] if no samples exist for
+    [key]. *)

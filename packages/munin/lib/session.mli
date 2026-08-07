@@ -75,42 +75,42 @@ val finish : ?status:[ `Finished | `Failed | `Killed ] -> t -> unit
     [status] defaults to [`Finished]. Calling [finish] on an already-closed
     session is a no-op. *)
 
-(** {1:scalars Scalars} *)
+(** {1:metrics Metrics} *)
 
-val log_metric : t -> step:int -> ?timestamp:float -> string -> float -> unit
-(** [log_metric t ~step key value] appends a scalar metric sample.
+val metric :
+  t ->
+  ?summary:Metric.summary ->
+  ?goal:Metric.goal ->
+  ?step_metric:Metric.t ->
+  string ->
+  Metric.t
+(** [metric t key] declares the scalar metric [key] on [t] and is the handle
+    that logs it, with {!Metric.log}. Declaring is the only way to name a
+    metric, so a key is spelled exactly once.
+
+    - [summary] controls how the run summary value is computed from the metric's
+      history: [`Min] (best for loss), [`Max] (best for accuracy), [`Mean],
+      [`Last], or [`None] for no auto-summary. Defaults to the mode [goal]
+      implies — [`Min] for [`Minimize], [`Max] for [`Maximize] — or to [`Last]
+      when [goal] is omitted.
+    - [goal] declares whether lower ([`Minimize]) or higher ([`Maximize]) values
+      are better, used by the TUI for "best" badges and by comparisons. Defaults
+      to [None].
+    - [step_metric] is another metric to plot [key] against instead of the step
+      counter; pass its handle, which means declaring it first. An epoch axis is
+      just a metric of its own. Defaults to [None].
+
+    Declaring the same key twice replaces its definition; readers see the last
+    one. Both handles stay valid and write to the same key. *)
+
+val log_metrics :
+  t -> step:int -> ?timestamp:float -> (Metric.t * float) list -> unit
+(** [log_metrics t ~step pairs] appends one sample per metric of [pairs] at
+    [step]. The samples are distinct entries in the event log sharing a single
+    timestamp, so readers see them at the same instant.
 
     [timestamp] defaults to [Unix.gettimeofday ()]. Silently ignored if the
     session is closed. *)
-
-val log_metrics :
-  t -> step:int -> ?timestamp:float -> (string * float) list -> unit
-(** [log_metrics t ~step pairs] appends multiple scalar metric samples
-    atomically.
-
-    [timestamp] defaults to [Unix.gettimeofday ()]. *)
-
-(** {1:metric_defs Metric definitions} *)
-
-val define_metric :
-  t ->
-  string ->
-  ?summary:[ `Min | `Max | `Mean | `Last | `None ] ->
-  ?step_metric:string ->
-  ?goal:[ `Minimize | `Maximize ] ->
-  unit ->
-  unit
-(** [define_metric t key ()] declares how a metric should be summarised and
-    plotted.
-
-    - [summary] controls how the run summary value is computed from history:
-      [`Min] (best for loss), [`Max] (best for accuracy), [`Mean], [`Last]
-      (default), [`None] (no auto-summary).
-    - [step_metric] specifies another metric as x-axis (e.g. ["epoch"]).
-      Defaults to [None].
-    - [goal] declares whether lower ([`Minimize]) or higher ([`Maximize]) is
-      better, used by the TUI for "best" badges and by comparisons. Defaults to
-      [None]. *)
 
 (** {1:media Media} *)
 

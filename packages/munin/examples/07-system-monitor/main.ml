@@ -31,13 +31,15 @@ let () =
   let monitor = Munin_sys.start session ~interval:0.5 () in
 
   (* Run the computation, logging progress. *)
+  let primes_found = Session.metric session "primes_found" in
+  let limit_metric = Session.metric session "limit" in
   let steps = 10 in
   let per_step = 500_000 in
   for i = 1 to steps do
     let limit = i * per_step in
     let n = count_primes limit in
     Session.log_metrics session ~step:i
-      [ ("primes_found", Float.of_int n); ("limit", Float.of_int limit) ]
+      [ (primes_found, Float.of_int n); (limit_metric, Float.of_int limit) ]
   done;
 
   Munin_sys.stop monitor;

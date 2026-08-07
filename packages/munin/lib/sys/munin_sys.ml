@@ -3,18 +3,16 @@ include Sysstat
 
 type t = { stop : bool Atomic.t; thread : Thread.t }
 
-let define session key = Session.define_metric session key ~summary:`Last ()
-
 let start session ?(interval = 2.0) () =
-  define session "sys/cpu_user";
-  define session "sys/cpu_system";
-  define session "sys/mem_used_pct";
-  define session "sys/mem_used_gb";
-  define session "sys/proc_cpu_pct";
-  define session "sys/proc_mem_mb";
-  define session "sys/disk_read_mbs";
-  define session "sys/disk_write_mbs";
-  define session "sys/disk_util_pct";
+  let cpu_user = Session.metric session "sys/cpu_user" in
+  let cpu_system = Session.metric session "sys/cpu_system" in
+  let mem_used_pct = Session.metric session "sys/mem_used_pct" in
+  let mem_used_gb = Session.metric session "sys/mem_used_gb" in
+  let proc_cpu_pct = Session.metric session "sys/proc_cpu_pct" in
+  let proc_mem_mb = Session.metric session "sys/proc_mem_mb" in
+  let disk_read_mbs = Session.metric session "sys/disk_read_mbs" in
+  let disk_write_mbs = Session.metric session "sys/disk_write_mbs" in
+  let disk_util_pct = Session.metric session "sys/disk_util_pct" in
   let stop_flag = Atomic.make false in
   let prev_cpu = ref (Sysstat.Cpu.sample ()) in
   let prev_proc = ref (Sysstat.Proc.Self.sample ()) in
@@ -56,18 +54,15 @@ let start session ?(interval = 2.0) () =
             prev_time := now;
             Session.log_metrics session ~step:!step
               [
-                ("sys/cpu_user", cpu_stats.user);
-                ("sys/cpu_system", cpu_stats.system);
-                ("sys/mem_used_pct", mem_pct);
-                ("sys/mem_used_gb", mem_gb);
-                ("sys/proc_cpu_pct", proc_stats.cpu_percent);
-                ( "sys/proc_mem_mb",
-                  Int64.to_float proc_stats.rss_bytes /. 1_048_576. );
-                ( "sys/disk_read_mbs",
-                  disk_stats.read_bytes_per_sec /. 1_048_576. );
-                ( "sys/disk_write_mbs",
-                  disk_stats.write_bytes_per_sec /. 1_048_576. );
-                ("sys/disk_util_pct", disk_stats.utilization_percent);
+                (cpu_user, cpu_stats.user);
+                (cpu_system, cpu_stats.system);
+                (mem_used_pct, mem_pct);
+                (mem_used_gb, mem_gb);
+                (proc_cpu_pct, proc_stats.cpu_percent);
+                (proc_mem_mb, Int64.to_float proc_stats.rss_bytes /. 1_048_576.);
+                (disk_read_mbs, disk_stats.read_bytes_per_sec /. 1_048_576.);
+                (disk_write_mbs, disk_stats.write_bytes_per_sec /. 1_048_576.);
+                (disk_util_pct, disk_stats.utilization_percent);
               ]
           end
         done)

@@ -14,9 +14,9 @@ let session =
     ~params:[ ("lr", `Float 0.001); ("epochs", `Int 10) ]
     ()
 in
+let train_loss = Munin.Session.metric session ~goal:`Minimize "train/loss" in
 for step = 1 to 1000 do
-  let loss = train_step () in
-  Munin.Session.log_metric session ~step "train/loss" loss
+  Munin.Metric.log train_loss ~step (train_step ())
 done;
 Munin.Session.finish session
 ```
@@ -28,7 +28,7 @@ munin compare a b c  # side-by-side params + summary
 
 ## Features
 
-- **Scalar metrics** with `define_metric` for auto-computed summaries (min, max, mean, last) and custom x-axes
+- **Scalar metrics** declared once with `Session.metric`, with auto-computed summaries (min, max, mean, last) and custom x-axes
 - **Media logging** -- images, tables, and files at specific steps
 - **Versioned artifacts** with content-addressed storage, aliases, and lineage tracking
 - **Terminal dashboard** with live metric charts, system resource panels, and EMA smoothing

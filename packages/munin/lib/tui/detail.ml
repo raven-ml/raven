@@ -88,7 +88,7 @@ let view_stats_row stats =
 
 let meta_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ()
 
-let view_metric_def_row (metric_def : Munin.Run.metric_def) =
+let view_metric_def_row (metric_def : Munin.Metric.def) =
   let parts =
     (match metric_def.goal with
       | Some `Minimize -> [ "Goal: minimize" ]

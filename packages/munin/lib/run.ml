@@ -1,11 +1,4 @@
 type status = [ `Running | `Finished | `Failed | `Killed ]
-type metric = { step : int; timestamp : float; value : float }
-
-type metric_def = {
-  summary : [ `Min | `Max | `Mean | `Last | `None ];
-  step_metric : string option;
-  goal : [ `Minimize | `Maximize ] option;
-}
 
 type media_entry = {
   step : int;
@@ -21,9 +14,9 @@ type full = {
   notes : string option;
   ended_at : float option;
   summary : (string * Value.t) list;
-  latest_metrics : (string * metric) list;
-  histories : (string * metric list) list;
-  metric_defs : (string * metric_def) list;
+  latest_metrics : (string * Metric.sample) list;
+  histories : (string * Metric.sample list) list;
+  metric_defs : (string * Metric.def) list;
   media : (string * media_entry list) list;
   input_artifacts : Artifact.t list;
   output_artifacts : Artifact.t list;
@@ -176,16 +169,17 @@ let materialize_full root dir manifest_json =
   List.iter
     (function
       | Event_log.Metric { step; timestamp; key; value } ->
-          let metric = { step; timestamp; value } in
+          let sample = { Metric.step; timestamp; value } in
           let history =
             match Hashtbl.find_opt history_table key with
             | Some history -> history
             | None -> []
           in
-          Hashtbl.replace history_table key (metric :: history);
-          Hashtbl.replace latest_table key metric
+          Hashtbl.replace history_table key (sample :: history);
+          Hashtbl.replace latest_table key sample
       | Define_metric { key; summary; step_metric; goal } ->
-          Hashtbl.replace metric_def_table key { summary; step_metric; goal }
+          Hashtbl.replace metric_def_table key
+            { Metric.summary; step_metric; goal }
       | Media { step; timestamp; key; kind; path } ->
           let abs_path = Filename.concat dir path in
           let entry = { step; timestamp; kind; path = abs_path } in
@@ -228,10 +222,10 @@ let materialize_full root dir manifest_json =
     |> List.map (fun (key, history) -> (key, List.rev history))
   in
   let metric_defs = sorted_of_hashtbl metric_def_table in
-  (* Auto-compute summaries from define_metric declarations. Explicit
+  (* Auto-compute summaries from Define_metric events. Explicit
      set_summary always wins; auto-summary only fills gaps. *)
   Hashtbl.iter
-    (fun key (def : metric_def) ->
+    (fun key (def : Metric.def) ->
       if not (Hashtbl.mem summary_table key) then
         match Hashtbl.find_opt history_table key with
         | None | Some [] -> ()
@@ -241,18 +235,18 @@ let materialize_full root dir manifest_json =
               | `Min ->
                   Some
                     (List.fold_left
-                       (fun acc (m : metric) -> Float.min acc m.value)
+                       (fun acc (m : Metric.sample) -> Float.min acc m.value)
                        Float.infinity history)
               | `Max ->
                   Some
                     (List.fold_left
-                       (fun acc (m : metric) -> Float.max acc m.value)
+                       (fun acc (m : Metric.sample) -> Float.max acc m.value)
                        Float.neg_infinity history)
               | `Mean ->
                   let n = List.length history in
                   let sum =
                     List.fold_left
-                      (fun acc (m : metric) -> acc +. m.value)
+                      (fun acc (m : Metric.sample) -> acc +. m.value)
                       0. history
                   in
                   Some (sum /. Float.of_int n)

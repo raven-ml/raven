@@ -170,13 +170,23 @@ let set_notes t notes =
   with_lock t (fun () ->
       if not t.closed then append_event t (Event_log.Notes notes))
 
-let log_metric t ~step ?timestamp key value =
+let metric t ?summary ?goal ?step_metric key =
+  let summary =
+    match (summary, goal) with
+    | Some summary, _ -> summary
+    | None, Some `Minimize -> `Min
+    | None, Some `Maximize -> `Max
+    | None, None -> `Last
+  in
+  let step_metric = Option.map Metric.key step_metric in
   with_lock t (fun () ->
       if not t.closed then
-        let timestamp =
-          Option.value timestamp ~default:(Unix.gettimeofday ())
-        in
-        append_event t (Event_log.Metric { step; timestamp; key; value }))
+        append_event t
+          (Event_log.Define_metric { key; summary; step_metric; goal }));
+  Metric.make ~key ~append:(fun ~step ~timestamp value ->
+      with_lock t (fun () ->
+          if not t.closed then
+            append_event t (Event_log.Metric { step; timestamp; key; value })))
 
 let log_metrics t ~step ?timestamp pairs =
   with_lock t (fun () ->
@@ -185,15 +195,10 @@ let log_metrics t ~step ?timestamp pairs =
           Option.value timestamp ~default:(Unix.gettimeofday ())
         in
         List.iter
-          (fun (key, value) ->
-            append_event t (Event_log.Metric { step; timestamp; key; value }))
+          (fun (m, value) ->
+            append_event t
+              (Event_log.Metric { step; timestamp; key = Metric.key m; value }))
           pairs)
-
-let define_metric t key ?(summary = `Last) ?step_metric ?goal () =
-  with_lock t (fun () ->
-      if not t.closed then
-        append_event t
-          (Event_log.Define_metric { key; summary; step_metric; goal }))
 
 let rel_path_of ~run_dir abs_path =
   String.sub abs_path

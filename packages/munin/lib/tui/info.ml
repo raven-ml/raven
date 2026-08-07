@@ -24,8 +24,8 @@ let short_hash s = if String.length s > 7 then String.sub s 0 7 else s
 (* View *)
 
 let view ~(run : Munin.Run.t) ~(status : Theme.run_status) ~elapsed_secs
-    ~(metric_defs : (string * Munin.Run.metric_def) list)
-    ~(latest_metrics : (string * Munin.Run.metric) list)
+    ~(metric_defs : (string * Munin.Metric.def) list)
+    ~(latest_metrics : (string * Munin.Metric.sample) list)
     ~(step_metrics : string list) ~(best_for_tag : string -> float option) =
   let prov = Munin.Run.provenance run in
   let status_color = Theme.status_color status in

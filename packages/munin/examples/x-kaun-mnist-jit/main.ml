@@ -173,11 +173,16 @@ let () =
         ]
       ()
   in
-  Munin.Session.define_metric session "train/loss" ~summary:`Min ~goal:`Minimize
-    ();
-  Munin.Session.define_metric session "val/accuracy" ~summary:`Max
-    ~goal:`Maximize ();
-  Munin.Session.define_metric session "perf/images_per_sec" ~summary:`Mean ();
+  let train_loss = Munin.Session.metric session ~goal:`Minimize "train/loss" in
+  let train_loss_avg = Munin.Session.metric session "train/loss_avg" in
+  let val_accuracy =
+    Munin.Session.metric session ~goal:`Maximize "val/accuracy"
+  in
+  let images_per_sec =
+    Munin.Session.metric session ~summary:`Mean "perf/images_per_sec"
+  in
+  let step_ms = Munin.Session.metric session "perf/step_ms" in
+  let epoch_metric = Munin.Session.metric session "epoch" in
   let sysmon = Munin_sys.start session () in
 
   Printf.printf "run: %s  device: %s  params: %d\n%!" (Munin.Session.id session)
@@ -245,37 +250,34 @@ let () =
            if s = 1 then begin
              Printf.printf "  traced and compiled in %.1fs\n%!" dt;
              Munin.Session.log_metrics session ~step:s
-               [ ("train/loss", loss); ("epoch", Float.of_int epoch) ]
+               [ (train_loss, loss); (epoch_metric, Float.of_int epoch) ]
            end
            else
              Munin.Session.log_metrics session ~step:s
                [
-                 ("train/loss", loss);
-                 ("epoch", Float.of_int epoch);
-                 ("perf/step_ms", dt *. 1000.);
-                 ("perf/images_per_sec", float_of_int !batch_size /. dt);
+                 (train_loss, loss);
+                 (epoch_metric, Float.of_int epoch);
+                 (step_ms, dt *. 1000.);
+                 (images_per_sec, float_of_int !batch_size /. dt);
                ];
            if s mod !eval_every = 0 then begin
              let acc = evaluate !params in
              last_acc := acc;
-             Munin.Session.log_metrics session ~step:s
-               [ ("val/accuracy", acc) ]
+             Munin.Metric.log val_accuracy ~step:s acc
            end;
            Printf.printf "\r  step %d/%d  loss: %.4f  val_acc: %.2f%%%!"
              (((s - 1) mod num_batches) + 1)
              num_batches loss (!last_acc *. 100.));
 
     let loss_avg = !loss_sum /. float_of_int !loss_count in
-    Munin.Session.log_metrics session ~step:!global_step
-      [ ("train/loss_avg", loss_avg) ];
+    Munin.Metric.log train_loss_avg ~step:!global_step loss_avg;
     Printf.printf "\nepoch %d  loss: %.4f  val_acc: %.2f%%\n%!" epoch loss_avg
       (!last_acc *. 100.)
   done;
 
   let acc = evaluate !params in
   last_acc := acc;
-  Munin.Session.log_metrics session ~step:!global_step
-    [ ("val/accuracy", acc) ];
+  Munin.Metric.log val_accuracy ~step:!global_step acc;
 
   (* Save the trained model as a versioned artifact. *)
   let checkpoint_path =

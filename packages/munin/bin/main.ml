@@ -122,7 +122,7 @@ let show_cmd =
                   pp_string_list (Run.metric_keys run);
                   Printf.printf "latest_metrics:\n";
                   List.iter
-                    (fun (key, (metric : Run.metric)) ->
+                    (fun (key, (metric : Metric.sample)) ->
                       Printf.printf "  %s: step=%d value=%g\n" key metric.step
                         metric.value)
                     (Run.latest_metrics run);
@@ -249,7 +249,7 @@ let compare_cmd =
               List.iter
                 (fun run ->
                   List.iter
-                    (fun (key, (def : Run.metric_def)) ->
+                    (fun (key, (def : Metric.def)) ->
                       match def.goal with
                       | Some g -> Hashtbl.replace goals key g
                       | None -> ())
@@ -336,7 +336,7 @@ let metrics_cmd =
                       (* Listing mode *)
                       Printf.printf "key\tlatest_value\tlatest_step\tcount\n";
                       List.iter
-                        (fun (key, (m : Run.metric)) ->
+                        (fun (key, (m : Metric.sample)) ->
                           let count =
                             List.length (Run.metric_history run key)
                           in
@@ -349,21 +349,21 @@ let metrics_cmd =
                       | `Tsv ->
                           Printf.printf "step\ttimestamp\tvalue\n";
                           List.iter
-                            (fun (m : Run.metric) ->
+                            (fun (m : Metric.sample) ->
                               Printf.printf "%d\t%.6f\t%g\n" m.step m.timestamp
                                 m.value)
                             history
                       | `Csv ->
                           Printf.printf "step,timestamp,value\n";
                           List.iter
-                            (fun (m : Run.metric) ->
+                            (fun (m : Metric.sample) ->
                               Printf.printf "%d,%.6f,%g\n" m.step m.timestamp
                                 m.value)
                             history
                       | `Json ->
                           Printf.printf "[";
                           List.iteri
-                            (fun i (m : Run.metric) ->
+                            (fun i (m : Metric.sample) ->
                               if i > 0 then Printf.printf ",";
                               Printf.printf
                                 "{\"step\":%d,\"timestamp\":%.6f,\"value\":%g}"

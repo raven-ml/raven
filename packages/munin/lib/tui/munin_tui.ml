@@ -53,13 +53,13 @@ let latest_step monitor =
   | _ ->
       Some
         (List.fold_left
-           (fun acc (_, (m : Munin.Run.metric)) -> max acc m.step)
+           (fun acc (_, (m : Munin.Metric.sample)) -> max acc m.step)
            0 ms)
 
 let latest_epoch monitor =
   let ms = Munin.Run_monitor.metrics monitor in
   match List.assoc_opt "epoch" ms with
-  | Some (m : Munin.Run.metric) -> Some (int_of_float m.value)
+  | Some (m : Munin.Metric.sample) -> Some (int_of_float m.value)
   | None -> None
 
 let total_epochs run =
@@ -84,7 +84,7 @@ let metrics_width m =
 
 let best_value monitor tag =
   Option.map
-    (fun (b : Munin.Run.metric) -> b.value)
+    (fun (b : Munin.Metric.sample) -> b.value)
     (Munin.Run_monitor.best monitor tag)
 
 (* View *)
@@ -100,7 +100,7 @@ let is_sys_metric tag = String.length tag > 4 && String.sub tag 0 4 = "sys/"
 let step_metrics monitor =
   let defs = Munin.Run_monitor.metric_defs monitor in
   let from_defs =
-    List.filter_map (fun (_, (d : Munin.Run.metric_def)) -> d.step_metric) defs
+    List.filter_map (fun (_, (d : Munin.Metric.def)) -> d.step_metric) defs
   in
   if List.mem "epoch" from_defs then from_defs else "epoch" :: from_defs
 
@@ -222,13 +222,13 @@ let view_dashboard m =
   let best_for_tag tag = best_value m.monitor tag in
   let goal_for_tag tag =
     match List.assoc_opt tag (Munin.Run_monitor.metric_defs m.monitor) with
-    | Some (d : Munin.Run.metric_def) -> d.goal
+    | Some (d : Munin.Metric.def) -> d.goal
     | None -> None
   in
   let metrics_pct = if m.show_system then 66 else 100 in
   let sys_latest tag =
     match List.assoc_opt tag all_metrics with
-    | Some (m : Munin.Run.metric) -> m.value
+    | Some (m : Munin.Metric.sample) -> m.value
     | None -> 0.0
   in
   let sys_values =

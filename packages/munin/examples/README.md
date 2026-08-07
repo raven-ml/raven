@@ -3,7 +3,7 @@
 | Example | What you'll learn |
 |---------|-------------------|
 | [01-basic](01-basic/) | Start a session, log metrics, store an artifact, finish |
-| [02-metrics](02-metrics/) | Define metrics with summaries, goals, and custom x-axes |
+| [02-metrics](02-metrics/) | Declare metrics with summaries, goals, and custom x-axes |
 | [03-artifacts](03-artifacts/) | Version artifacts, attach aliases, track cross-run lineage |
 | [04-media](04-media/) | Log images, files, and structured tables |
 | [05-parameter-sweep](05-parameter-sweep/) | Group runs under a sweep, compare results |
