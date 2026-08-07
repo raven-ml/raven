@@ -1,0 +1,68 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_4_4_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, float* restrict data3_16, float* restrict data4_16) {
+  float buf0[1];
+  for (int Lidx2 = 0; Lidx2 < 4; Lidx2++) {
+    int alu0 = (Lidx2<<2);
+    float4 val0 = (*((float4*)((data3_16+alu0))));
+    for (int Lidx3 = 0; Lidx3 < 4; Lidx3++) {
+      *(buf0+0) = 0.0f;
+      for (int Ridx0 = 0; Ridx0 < 4; Ridx0++) {
+        float val1 = (*(data1_16+(alu0+Ridx0)));
+        float val2 = (*(data2_16+((Ridx0<<2)+Lidx3)));
+        *(buf0+0) = ((*(buf0+0))+(val1*val2));
+      }
+      float val3 = (*(data4_16+(Lidx3+4)));
+      float val4 = (*(data4_16+(Lidx3+8)));
+      float val5 = (*(data4_16+(Lidx3+12)));
+      float val6 = (*(data4_16+Lidx3));
+      *(data0_16+(alu0+Lidx3)) = ((*(buf0+0))+(val0[0]*val6)+(val0[1]*val3)+(val0[2]*val4)+(val0[3]*val5));
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_16_4_4_4_4(float* restrict data0_1, float* restrict data1_16, float* restrict data2_16, float* restrict data3_16, float* restrict data4_16) {
+  float buf0[1];
+  float buf1[4];
+  float buf2[4];
+  float buf3[1];
+  *(buf0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 16; Ridx0++) {
+    float val0 = (*(data1_16+Ridx0));
+    *(buf0+0) = ((*(buf0+0))+(val0*val0));
+  }
+  *(buf3+0) = 0.0f;
+  for (int Ridx4 = 0; Ridx4 < 4; Ridx4++) {
+    int alu4 = (Ridx4<<2);
+    *(buf2+0) = 0.0f;
+    *(buf2+1) = 0.0f;
+    *(buf2+2) = 0.0f;
+    *(buf2+3) = 0.0f;
+    for (int Ridx2 = 0; Ridx2 < 4; Ridx2++) {
+      float val1 = (*(data2_16+(alu4+Ridx2)));
+      float4 val2 = (*((float4*)((data3_16+(Ridx2<<2)))));
+      *(buf2+0) = ((*(buf2+0))+(val1*val2[0]));
+      *(buf2+1) = ((*(buf2+1))+(val1*val2[1]));
+      *(buf2+2) = ((*(buf2+2))+(val1*val2[2]));
+      *(buf2+3) = ((*(buf2+3))+(val1*val2[3]));
+    }
+    *(buf1+0) = 0.0f;
+    *(buf1+1) = 0.0f;
+    *(buf1+2) = 0.0f;
+    *(buf1+3) = 0.0f;
+    for (int Ridx3 = 0; Ridx3 < 4; Ridx3++) {
+      float val3 = (*(data1_16+(alu4+Ridx3)));
+      float4 val4 = (*((float4*)((data4_16+(Ridx3<<2)))));
+      *(buf1+0) = ((*(buf1+0))+(val3*val4[0]));
+      *(buf1+1) = ((*(buf1+1))+(val3*val4[1]));
+      *(buf1+2) = ((*(buf1+2))+(val3*val4[2]));
+      *(buf1+3) = ((*(buf1+3))+(val3*val4[3]));
+    }
+    float alu23 = ((*(buf2+0))+(*(buf1+0)));
+    float alu24 = ((*(buf2+1))+(*(buf1+1)));
+    float alu25 = ((*(buf2+2))+(*(buf1+2)));
+    float alu26 = ((*(buf2+3))+(*(buf1+3)));
+    *(buf3+0) = ((*(buf3+0))+(alu23*alu23)+(alu24*alu24)+(alu25*alu25)+(alu26*alu26));
+  }
+  *(data0_1+0) = ((*(buf0+0))+(*(buf3+0)));
+}

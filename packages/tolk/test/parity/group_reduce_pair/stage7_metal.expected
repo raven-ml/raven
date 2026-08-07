@@ -1,0 +1,30 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_16_16_16_16n1(device float* data0_256, device float* data1_256, device float* data2_256, device float* data3_256, device float* data4_256, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float buf0[1];
+  float buf1[1];
+  threadgroup __attribute__((aligned(16))) float buf2[16];
+  int gidx1 = gid.y; /* 16 */
+  int lidx0 = lid.x; /* 16 */
+  int alu0 = (lidx0<<4);
+  float val0 = (*(data1_256+(gidx1+alu0)));
+  int gidx0 = gid.x; /* 16 */
+  float val1 = (*(data2_256+(gidx0+alu0)));
+  *(buf2+lidx0) = (val0*val1);
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  *(buf1+0) = 0.0f;
+  for (int Ridx104 = 0; Ridx104 < 16; Ridx104++) {
+    float val2 = (*(buf2+Ridx104));
+    *(buf1+0) = ((*(buf1+0))+val2);
+  }
+  int alu6 = (gidx1<<4);
+  *(buf0+0) = 0.0f;
+  for (int Ridx1 = 0; Ridx1 < 16; Ridx1++) {
+    float val3 = (*(data3_256+(alu6+Ridx1)));
+    float val4 = (*(data4_256+(gidx0+(Ridx1<<4))));
+    *(buf0+0) = ((*(buf0+0))+(val3*val4));
+  }
+  if ((lidx0==0)) {
+    *(data0_256+(gidx0+alu6)) = ((*(buf1+0))+(*(buf0+0)));
+  }
+}

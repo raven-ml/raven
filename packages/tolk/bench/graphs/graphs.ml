@@ -154,18 +154,43 @@ let rnn_batch = 32
 let rnn_dim = 32
 let rnn_ladder = [ 2; 5; 10; 20 ]
 
+(* The three operand orientations a recurrence needs. Each contracts [k] out of
+   a [m; n; k] broadcast product, so they differ only in how the two operands
+   are viewed: [nn] is the forward [lhs @ rhs], [nt] is [lhs @ rhsᵀ] (the
+   gradient flowing back through a weight), [tn] is [lhsᵀ @ rhs] (the gradient
+   of a weight). The [nn] form permutes the right operand so its contraction
+   axis lands last, which is exactly what [nt] already has. *)
+
+let contract ~m ~n ~k ae be =
+  let ae = U.broadcast_to ~src:ae ~shape:(Helpers.mk_shape [ m; n; k ]) in
+  let be = U.broadcast_to ~src:be ~shape:(Helpers.mk_shape [ m; n; k ]) in
+  U.reduce_axis
+    ~src:(U.alu_binary ~op:Ops.Mul ~lhs:ae ~rhs:be)
+    ~op:Ops.Add ~axes:[ 2 ]
+
+let reshape src shape = U.reshape ~src ~shape:(Helpers.mk_shape shape)
+let transpose src = U.permute ~src ~order:[ 1; 0 ]
+
+(* out[m; n] = Σ_k lhs[m; k] · rhs[k; n] *)
+let matmul_nn ~m ~k ~n lhs rhs =
+  contract ~m ~n ~k
+    (reshape lhs [ m; 1; k ])
+    (reshape (transpose rhs) [ 1; n; k ])
+
+(* out[m; n] = Σ_k lhs[m; k] · rhs[n; k] *)
+let matmul_nt ~m ~k ~n lhs rhs =
+  contract ~m ~n ~k (reshape lhs [ m; 1; k ]) (reshape rhs [ 1; n; k ])
+
+(* out[m; n] = Σ_k lhs[k; m] · rhs[k; n] *)
+let matmul_tn ~m ~k ~n lhs rhs =
+  contract ~m ~n ~k
+    (reshape (transpose lhs) [ m; 1; k ])
+    (reshape (transpose rhs) [ 1; n; k ])
+
 let rnn horizon =
   let b = rnn_batch and d = rnn_dim in
   let add a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
   let mul a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b in
-  let matmul ~m ~k ~n lhs rhs =
-    let ar = U.reshape ~src:lhs ~shape:(Helpers.mk_shape [ m; 1; k ]) in
-    let ae = U.broadcast_to ~src:ar ~shape:(Helpers.mk_shape [ m; n; k ]) in
-    let bt = U.permute ~src:rhs ~order:[ 1; 0 ] in
-    let br = U.reshape ~src:bt ~shape:(Helpers.mk_shape [ 1; n; k ]) in
-    let be = U.broadcast_to ~src:br ~shape:(Helpers.mk_shape [ m; n; k ]) in
-    U.reduce_axis ~src:(mul ae be) ~op:Ops.Add ~axes:[ 2 ]
-  in
   let w_in = Helpers.mk_param ~idx:0 [ d; d ] in
   let w_rec = Helpers.mk_param ~idx:1 [ d; d ] in
   let h0 = Helpers.mk_param ~idx:2 [ b; d ] in
@@ -175,7 +200,7 @@ let rnn horizon =
     else
       let x = Helpers.mk_param ~idx:(3 + t) [ b; d ] in
       let h' =
-        add (matmul ~m:b ~k:d ~n:d x w_in) (matmul ~m:b ~k:d ~n:d h w_rec)
+        add (matmul_nn ~m:b ~k:d ~n:d x w_in) (matmul_nn ~m:b ~k:d ~n:d h w_rec)
       in
       let loss = step_loss h' in
       let acc = match acc with None -> loss | Some a -> add a loss in
@@ -188,5 +213,65 @@ let rnn horizon =
     sink = Helpers.wrap_sink [ out ];
   }
 
+(* Reverse pass of {!rnn}: the shape a training step compiles. The forward
+   activations are kept live across the whole reverse sweep, so every hidden
+   state is consumed twice — once by the recurrence that produced the next one,
+   once by the gradient that flows back into it. The weight gradients are a
+   horizon-long sum of contractions over the batch axis, so the graph is
+   simultaneously deep (the chain) and wide (the accumulation tree). *)
+
+let rnn_grad horizon =
+  let b = rnn_batch and d = rnn_dim in
+  let add a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
+  let mul a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b in
+  let bcast v shape =
+    U.expand
+      ~src:(U.const (Const.float Dtype.float32 v))
+      ~dims:(Helpers.mk_shape shape)
+  in
+  let w_in = Helpers.mk_param ~idx:0 [ d; d ] in
+  let w_rec = Helpers.mk_param ~idx:1 [ d; d ] in
+  let h0 = Helpers.mk_param ~idx:2 [ b; d ] in
+  let xs = List.init horizon (fun t -> Helpers.mk_param ~idx:(3 + t) [ b; d ]) in
+  (* Forward: h.(t) is the state entering step [t], h.(horizon) the last. *)
+  let h = Array.make (horizon + 1) h0 in
+  List.iteri
+    (fun t x ->
+      h.(t + 1) <-
+        add
+          (matmul_nn ~m:b ~k:d ~n:d x w_in)
+          (matmul_nn ~m:b ~k:d ~n:d h.(t) w_rec))
+    xs;
+  (* Reverse: the loss Σ_t ‖h.(t+1)‖² contributes 2·h.(t) at every state but
+     the initial one, and the recurrence carries the next state's gradient
+     back through W_recᵀ. *)
+  let two = bcast 2.0 [ b; d ] in
+  let g = Array.make (horizon + 1) h0 in
+  g.(horizon) <- mul two h.(horizon);
+  for t = horizon - 1 downto 0 do
+    let carried = matmul_nt ~m:b ~k:d ~n:d g.(t + 1) w_rec in
+    g.(t) <- (if t = 0 then carried else add (mul two h.(t)) carried)
+  done;
+  (* Weight gradients accumulate one contraction per step. *)
+  let sum_steps operand =
+    let terms =
+      List.mapi (fun t o -> matmul_tn ~m:d ~k:b ~n:d o g.(t + 1)) operand
+    in
+    match terms with
+    | [] -> invalid_arg "rnn_grad: horizon must be positive"
+    | first :: rest -> List.fold_left add first rest
+  in
+  let d_w_in = sum_steps xs in
+  let d_w_rec = sum_steps (List.init horizon (fun t -> h.(t))) in
+  {
+    name = "rnn_grad";
+    size = Printf.sprintf "h%d" horizon;
+    sink = Helpers.wrap_sink [ d_w_in; d_w_rec; g.(0) ];
+  }
+
 let all = [ elementwise; reduce; matmul_small; attention ]
-let scaling = List.map lorenz lorenz_ladder @ List.map rnn rnn_ladder
+
+let scaling =
+  List.map lorenz lorenz_ladder
+  @ List.map rnn rnn_ladder
+  @ List.map rnn_grad rnn_ladder

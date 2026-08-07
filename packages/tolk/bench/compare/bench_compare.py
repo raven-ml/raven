@@ -95,13 +95,33 @@ def build_reduce():
     return wrap_sink(x._rop(Ops.ADD, (1,)))
 
 
+def _reshape(x, shape):
+    return UOp(Ops.RESHAPE, dtypes.float32, (x, shape_to_shape_arg(shape)))
+
+
+def _transpose(x):
+    return UOp(Ops.PERMUTE, dtypes.float32, (x,), (1, 0))
+
+
+def _contract(ae, be, m, n, k):
+    return (ae.expand((m, n, k)) * be.expand((m, n, k)))._rop(Ops.ADD, (2,))
+
+
+# out[m, n] = Σ_k a[m, k] · b[k, n]
 def matmul(a, b, m, k, n):
-    ar = UOp(Ops.RESHAPE, dtypes.float32, (a, shape_to_shape_arg((m, 1, k))))
-    ae = ar.expand((m, n, k))
-    bt = UOp(Ops.PERMUTE, dtypes.float32, (b,), (1, 0))
-    br = UOp(Ops.RESHAPE, dtypes.float32, (bt, shape_to_shape_arg((1, n, k))))
-    be = br.expand((m, n, k))
-    return (ae * be)._rop(Ops.ADD, (2,))
+    return _contract(_reshape(a, (m, 1, k)),
+                     _reshape(_transpose(b), (1, n, k)), m, n, k)
+
+
+# out[m, n] = Σ_k a[m, k] · b[n, k]
+def matmul_nt(a, b, m, k, n):
+    return _contract(_reshape(a, (m, 1, k)), _reshape(b, (1, n, k)), m, n, k)
+
+
+# out[m, n] = Σ_k a[k, m] · b[k, n]
+def matmul_tn(a, b, m, k, n):
+    return _contract(_reshape(_transpose(a), (m, 1, k)),
+                     _reshape(_transpose(b), (1, n, k)), m, n, k)
 
 
 def build_matmul_small():
@@ -196,6 +216,34 @@ def build_rnn(horizon):
     return wrap_sink(out)
 
 
+# Reverse pass of build_rnn — mirror graphs.ml rnn_grad op for op.
+def build_rnn_grad(horizon):
+    b, d = RNN_BATCH, RNN_DIM
+    w_in = mk_param(0, d, d)
+    w_rec = mk_param(1, d, d)
+    h0 = mk_param(2, b, d)
+    xs = [mk_param(3 + t, b, d) for t in range(horizon)]
+    h = [h0]
+    for x in xs:
+        h.append(matmul(x, w_in, b, d, d) + matmul(h[-1], w_rec, b, d, d))
+    two = UOp.const(dtypes.float32, 2.0, shape=(b, d))
+    g = [None] * (horizon + 1)
+    g[horizon] = two * h[horizon]
+    for t in range(horizon - 1, -1, -1):
+        carried = matmul_nt(g[t + 1], w_rec, b, d, d)
+        g[t] = carried if t == 0 else two * h[t] + carried
+
+    def sum_steps(operands):
+        terms = [matmul_tn(o, g[t + 1], d, b, d)
+                 for t, o in enumerate(operands)]
+        acc = terms[0]
+        for term in terms[1:]:
+            acc = acc + term
+        return acc
+
+    return wrap_sink(sum_steps(xs), sum_steps(h[:horizon]), g[0])
+
+
 WORKLOADS = [
     ("elementwise", "256x256", build_elementwise),
     ("reduce", "512x512", build_reduce),
@@ -206,6 +254,9 @@ WORKLOADS = [
     for n in LORENZ_LADDER
 ] + [
     ("rnn", f"h{h}", (lambda h: lambda: build_rnn(h))(h))
+    for h in RNN_LADDER
+] + [
+    ("rnn_grad", f"h{h}", (lambda h: lambda: build_rnn_grad(h))(h))
     for h in RNN_LADDER
 ]
 

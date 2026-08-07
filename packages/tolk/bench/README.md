@@ -10,8 +10,12 @@ kernels it produces — with one small runtime-throughput suite for context.
 
 Every workload is built once, in one place: `graphs/graphs.ml` holds the graph
 builders (`elementwise`, `reduce`, `matmul_small`, `attention`, and the
-`lorenz` / `rnn` scaling ladders). Both the gate and the comparison link that
-library, so they always time the identical graph.
+`lorenz` / `rnn` / `rnn_grad` scaling ladders). Both the gate and the comparison
+link that library, so they always time the identical graph.
+
+`rnn_grad` is the reverse pass of `rnn` — the graph a training step compiles.
+It shares the `rnn` horizon ladder and is carried by the comparison sweep only;
+the gate ladder stays on `lorenz` and `rnn` so its budget does not move.
 
 ## The three executables
 

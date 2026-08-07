@@ -1,0 +1,17 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+; CPU_COUNT is pinned: the host-threading heuristic caps its thread count at
+; the core count, so an unpinned run would render differently per machine.
+(rule
+ (package tolk)
+ (targets stage7_cpu.actual)
+ (action
+  (setenv CPU_COUNT 8 (run ./main.exe .))))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (diff stage7_cpu.expected stage7_cpu.actual)))

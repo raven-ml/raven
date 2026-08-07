@@ -1,0 +1,62 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_4_4_4_4n2(device float* data0_16, device float* data1_16, device float* data2_16, device float* data3_16, device float* data4_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float buf0[1];
+  int lidx0 = lid.x; /* 4 */
+  int lidx1 = lid.y; /* 4 */
+  int alu0 = (lidx0<<2);
+  *(buf0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 4; Ridx0++) {
+    float val0 = (*(data1_16+(alu0+Ridx0)));
+    float val1 = (*(data2_16+(lidx1+(Ridx0<<2))));
+    *(buf0+0) = ((*(buf0+0))+(val0*val1));
+  }
+  float val2 = (*(data4_16+lidx1));
+  float val3 = (*(data4_16+(lidx1+4)));
+  float val4 = (*(data4_16+(lidx1+8)));
+  float val5 = (*(data4_16+(lidx1+12)));
+  float4 val6 = (*((device float4*)((data3_16+alu0))));
+  *(data0_16+(lidx1+alu0)) = ((*(buf0+0))+(val6.x*val2)+(val6.y*val3)+(val6.z*val4)+(val6.w*val5));
+}
+---
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_16_4_4_4_4n2(device float* data0_1, device float* data1_16, device float* data2_16, device float* data3_16, device float* data4_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float buf0[1];
+  float buf1[1];
+  float buf2[1];
+  float buf3[1];
+  threadgroup __attribute__((aligned(16))) float buf4[16];
+  int lidx0 = lid.x; /* 16 */
+  float val0 = (*(data1_16+lidx0));
+  *(buf4+lidx0) = (val0*val0);
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  *(buf0+0) = 0.0f;
+  for (int Ridx106 = 0; Ridx106 < 16; Ridx106++) {
+    float val1 = (*(buf4+Ridx106));
+    *(buf0+0) = ((*(buf0+0))+val1);
+  }
+  *(buf3+0) = 0.0f;
+  for (int Ridx4 = 0; Ridx4 < 4; Ridx4++) {
+    int alu6 = (Ridx4<<2);
+    for (int Ridx5 = 0; Ridx5 < 4; Ridx5++) {
+      *(buf2+0) = 0.0f;
+      for (int Ridx2 = 0; Ridx2 < 4; Ridx2++) {
+        float val2 = (*(data2_16+(alu6+Ridx2)));
+        float val3 = (*(data3_16+((Ridx2<<2)+Ridx5)));
+        *(buf2+0) = ((*(buf2+0))+(val2*val3));
+      }
+      *(buf1+0) = 0.0f;
+      for (int Ridx3 = 0; Ridx3 < 4; Ridx3++) {
+        float val4 = (*(data1_16+(alu6+Ridx3)));
+        float val5 = (*(data4_16+((Ridx3<<2)+Ridx5)));
+        *(buf1+0) = ((*(buf1+0))+(val4*val5));
+      }
+      float alu13 = ((*(buf2+0))+(*(buf1+0)));
+      *(buf3+0) = ((*(buf3+0))+(alu13*alu13));
+    }
+  }
+  if ((lidx0==0)) {
+    *(data0_1+0) = ((*(buf0+0))+(*(buf3+0)));
+  }
+}

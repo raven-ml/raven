@@ -60,6 +60,15 @@ val rnn : int -> t
     and accumulates a squared-magnitude scalar loss. Matmuls and reduces
     dominate the graph. The size descriptor is [hH]. *)
 
+val rnn_grad : int -> t
+(** [rnn_grad horizon] is the reverse pass of {!rnn} — the graph a training
+    step compiles. It carries the forward recurrence, the gradient sweep back
+    through it, and the two weight gradients [∂L/∂W] and [∂L/∂U], each a sum of
+    [horizon] contractions over the batch axis. Every hidden state is live
+    across both sweeps, so the graph has the deep chain of {!rnn} plus a wide
+    accumulation tree and both transposed matmul orientations. [horizon] must
+    be positive. The size descriptor is [hH]. *)
+
 val lorenz_ladder : int list
 (** Step counts sweept by {!lorenz}: [[ 10; 25; 50; 100; 200 ]]. *)
 
@@ -71,4 +80,5 @@ val all : t list
     reference workloads. *)
 
 val scaling : t list
-(** {!lorenz} and {!rnn} at every ladder point, for the comparative sweep. *)
+(** {!lorenz}, {!rnn} and {!rnn_grad} at every ladder point, for the
+    comparative sweep. *)

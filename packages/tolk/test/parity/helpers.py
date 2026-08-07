@@ -53,7 +53,7 @@ ALL_BACKENDS = {}
 for _name, _ctor in [
     ("cpu", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
     ("cuda", lambda: _CudaNoNvrtc(Target("CUDA", arch="sm_80"))),
-    ("metal", lambda: MetalRenderer(Target("METAL"))),
+    ("metal", lambda: MetalRenderer(Target("METAL", arch="Apple7"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
 ]:
     try:

@@ -1,0 +1,18 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+(rule
+ (package tolk)
+ (targets stage7_cuda.actual stage7_metal.actual stage7_opencl.actual)
+ (action
+  (run ./main.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff stage7_cuda.expected stage7_cuda.actual)
+   (diff stage7_metal.expected stage7_metal.actual)
+   (diff stage7_opencl.expected stage7_opencl.actual))))
