@@ -728,12 +728,18 @@ end
 
 (** {2:keyless Keyless samplers}
 
-    One per {!module-Rng} sampler, with the same arguments minus the key, each
-    drawing a fresh subkey from the ambient scope (see {!Rng.with_key}). The names match except for the two zero-configuration draws,
-    which keep the names the ecosystem gives them: [rand] is {!Rng.uniform} on
-    \[[0], [1]) and [randn] is {!Rng.normal}.
+    A closed set: the draws reached for reflexively, taking their subkey from
+    the ambient scope (see {!Rng.with_key}) instead of a key argument. [rand] is
+    {!Rng.uniform} on \[[0], [1]) and [randn] is {!Rng.normal}, keeping the names
+    the ecosystem gives them; the rest match their keyed twin's name and take
+    its arguments minus the key, and raise whatever it raises.
 
-    Each raises whatever its keyed twin raises. *)
+    Every other distribution — {!Rng.gamma}, {!Rng.beta}, {!Rng.dirichlet},
+    {!Rng.poisson}, {!Rng.gumbel}, {!Rng.exponential} — lives in {!module-Rng}
+    only. Reaching for one of those is a deliberate act, by which point a key is
+    at hand; [Rng.gamma (Rng.next_key ()) ...] covers the case where it is not.
+    Keeping them out of this namespace also leaves [gamma] and [beta] free for
+    the special functions of those names, which belong beside {!erf}. *)
 
 val rand : (float, 'b) dtype -> int array -> (float, 'b) t
 (** [rand dtype shape] samples uniformly from \[[0], [1]). For other bounds, see
@@ -766,36 +772,6 @@ val truncated_normal :
     conditioned on landing in \[[lower], [upper]\].
 
     Raises [Invalid_argument] if [lower >= upper]. *)
-
-val gumbel : (float, 'b) dtype -> int array -> (float, 'b) t
-(** [gumbel dtype shape] samples the standard Gumbel distribution. See
-    {!Rng.gumbel}. *)
-
-val exponential : (float, 'b) dtype -> int array -> (float, 'b) t
-(** [exponential dtype shape] samples the exponential distribution with rate 1.
-*)
-
-val gamma :
-  concentration:float -> (float, 'b) dtype -> int array -> (float, 'b) t
-(** [gamma ~concentration dtype shape] samples the gamma distribution. See
-    {!Rng.gamma}, including the note that it is not exact. *)
-
-val beta :
-  alpha:float -> beta:float -> (float, 'b) dtype -> int array -> (float, 'b) t
-(** [beta ~alpha ~beta dtype shape] samples the beta distribution. See
-    {!Rng.beta}. *)
-
-val dirichlet :
-  concentration:float array ->
-  (float, 'b) dtype ->
-  int array ->
-  (float, 'b) t
-(** [dirichlet ~concentration dtype shape] samples the Dirichlet distribution;
-    the result has shape [shape @ [| n |]]. See {!Rng.dirichlet}. *)
-
-val poisson : rate:float -> int array -> int32_t
-(** [poisson ~rate shape] samples the Poisson distribution. See {!Rng.poisson}.
-*)
 
 val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
 (** [categorical logits] samples category indices from unnormalised

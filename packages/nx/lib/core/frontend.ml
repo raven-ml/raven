@@ -2675,27 +2675,6 @@ module Make (B : Backend_intf.S) = struct
         (Shape.to_string shape);
     Rng.bernoulli (Rng.next_key ctx) ~p shape
 
-  let gumbel ctx (type b) (dtype : (float, b) Dtype.t) shape =
-    validate_random_float_params "gumbel" dtype shape;
-    Rng.gumbel (Rng.next_key ctx) dtype shape
-
-  let exponential ctx (type b) (dtype : (float, b) Dtype.t) shape =
-    validate_random_float_params "exponential" dtype shape;
-    Rng.exponential (Rng.next_key ctx) dtype shape
-
-  let gamma ctx (type b) ~concentration (dtype : (float, b) Dtype.t) shape =
-    validate_random_float_params "gamma" dtype shape;
-    Rng.gamma (Rng.next_key ctx) ~concentration dtype shape
-
-  let poisson ctx ~rate shape = Rng.poisson (Rng.next_key ctx) ~rate shape
-
-  let beta ctx (type b) ~alpha ~beta:b (dtype : (float, b) Dtype.t) shape =
-    validate_random_float_params "beta" dtype shape;
-    Rng.beta (Rng.next_key ctx) ~alpha ~beta:b dtype shape
-
-  let dirichlet ctx (type b) ~concentration (dtype : (float, b) Dtype.t) shape =
-    validate_random_float_params "dirichlet" dtype shape;
-    Rng.dirichlet (Rng.next_key ctx) ~concentration dtype shape
   let permutation ctx n = Rng.permutation (Rng.next_key ctx) n
   let shuffle ctx x = Rng.shuffle (Rng.next_key ctx) x
 

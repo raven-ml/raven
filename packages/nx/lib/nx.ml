@@ -72,18 +72,6 @@ let rand dtype shape = F.rand (Lazy.force context) dtype shape
 let randn dtype shape = F.randn (Lazy.force context) dtype shape
 let randint ?low ~high shape = F.randint (Lazy.force context) ?low ~high shape
 let bernoulli ~p shape = F.bernoulli (Lazy.force context) ~p shape
-let gumbel dtype shape = F.gumbel (Lazy.force context) dtype shape
-let exponential dtype shape = F.exponential (Lazy.force context) dtype shape
-let gamma ~concentration dtype shape =
-  F.gamma (Lazy.force context) ~concentration dtype shape
-
-let poisson ~rate shape = F.poisson (Lazy.force context) ~rate shape
-
-let beta ~alpha ~beta dtype shape =
-  F.beta (Lazy.force context) ~alpha ~beta dtype shape
-
-let dirichlet ~concentration dtype shape =
-  F.dirichlet (Lazy.force context) ~concentration dtype shape
 let permutation n = F.permutation (Lazy.force context) n
 let shuffle x = F.shuffle (Lazy.force context) x
 

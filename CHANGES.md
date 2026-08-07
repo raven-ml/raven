@@ -489,11 +489,10 @@ thread.
   silently rooted at a constant — the case `Rune.jit` must refuse. A scope now
   visibly inherits its root key's properties: root it at a jitted function's
   input leaf and the keyless samplers inside compile.
-- Add `beta` and `dirichlet`, both keyed and keyless, built from `gamma` and
-  inheriting its approximation. `dirichlet` puts its components on a new
-  trailing axis, so a draw of `shape` gives `shape @ [| n |]` with every row on
-  the simplex.
-- Add `gamma` and `poisson`, both keyed and keyless. `gamma` is the keystone
+- Add `Rng.beta` and `Rng.dirichlet`, built from `Rng.gamma` and inheriting its
+  approximation. `dirichlet` puts its components on a new trailing axis, so a
+  draw of `shape` gives `shape @ [| n |]` with every row on the simplex.
+- Add `Rng.gamma` and `Rng.poisson`. `gamma` is the keystone
   for statistical work — beta is `g1 /. (g1 +. g2)`, a Dirichlet is a vector of
   gammas over its own sum, chi-square and Student's t follow in turn — and its
   docstring records those derivations. It is the one sampler in `Rng` that is
@@ -503,7 +502,7 @@ thread.
   expressing Knuth's count as a cumulative product rather than a loop that stops
   when the draw says so; its cost is `O(rate)` per element, so `rate` is capped
   at 100.
-- Add `gumbel` and `exponential`, both keyed and keyless. `gumbel` is the noise
+- Add `Rng.gumbel` and `Rng.exponential`. `gumbel` is the noise
   behind `categorical`, which now builds on it; adding it to log-probabilities
   and taking a softmax instead of an argmax gives the relaxed, differentiable
   form. `exponential` is `-log (1 - u)` — built from `1 - u` because a draw can
@@ -532,7 +531,11 @@ thread.
 - `Rng.truncated_normal`, `Rng.categorical`, `Rng.permutation` and
   `Rng.shuffle` complete the keyed sampler set: every distribution now has a
   pure form that composes with `Rune.jit`, `vmap` and `pmap`, and each keyless
-  sampler is that form applied to a subkey of the ambient scope.
+  sampler is that form applied to a subkey of the ambient scope. The keyless set
+  at the top level of `Nx` is closed at the reflexive draws (`rand`, `randn`,
+  `randint`, `bernoulli`, `truncated_normal`, `categorical`, `permutation`,
+  `shuffle`); the distributions added since take a key, which also leaves
+  `gamma` and `beta` free for the special functions of those names.
 - `truncated_normal` draws by inverting the conditioned distribution instead of
   rejecting out-of-range samples. The rejection loop read its stopping
   condition back to the host, so it could not be traced or compiled at all, and
