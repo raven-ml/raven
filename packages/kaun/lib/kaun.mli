@@ -22,10 +22,11 @@
       ((params, ostate), Nx.item [] l)
     ]}
 
-    Random initialization and shuffling draw from the implicit RNG scope; wrap
-    the program in {!Nx.Rng.with_key} for reproducibility. Randomness inside a jitted
-    training step ({!Dropout}) instead takes an explicit {!Nx.Rng} key threaded
-    through the step's inputs. *)
+    Random initialization and shuffling draw from the ambient {!Nx.Rng} scope;
+    open one with {!Nx.Rng.with_key} for reproducibility. Under {!Rune.val-jit}
+    what matters is the key the scope is rooted at, not whether a draw named
+    one: root it at a key threaded through the step's inputs and the keyless
+    draws inside compile, exactly as an explicit key ({!Dropout}) would. *)
 
 (** {1:layers Layers}
 

@@ -330,11 +330,39 @@ let test_dropout_keyed_eval_identity () =
 
 (* Under jit: the keyed form compiles, the keyless form is refused loudly. *)
 
+(* What decides is where the mask's key comes from, not whether [?key] was
+   passed. With no scope at all the draw is a compile-time constant, so jit
+   refuses it. *)
 let test_dropout_keyless_jit_raises () =
   let f = Rune.jit' (fun x -> Dropout.apply ~rate:0.5 ~training:true x) in
-  raises_match ~msg:"implicit-scope dropout raises inside jit"
+  raises_match ~msg:"unscoped dropout raises inside jit"
     (function Rune.Jit_error _ -> true | _ -> false)
     (fun () -> ignore (f (vec [| 1.0; 2.0; 3.0 |])))
+
+(* ...but the same keyless call compiles when the caller roots a scope at the
+   step's own key, which is what lets a model keep its draw sites key-free. *)
+module Scope_key = struct
+  type t = Nx.Rng.key
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
+end
+
+let test_dropout_keyless_scope_jit_compiles () =
+  let f =
+    Rune.jit
+      (module Scope_key)
+      (fun key ->
+        Nx.Rng.with_key key @@ fun () ->
+        Dropout.apply ~rate:0.5 ~training:true (Nx.ones Nx.float32 [| 64 |]))
+  in
+  let at k = Nx.to_array (f (Nx.Rng.key k)) in
+  is_true ~msg:"the compiled mask follows the key it is given" (at 1 <> at 2);
+  equal ~msg:"and replays for the same key" (array (float 0.)) (at 1) (at 1)
 
 module Keyed_x = struct
   type t = { x : Nx.float32_t; key : Nx.Rng.key }
@@ -534,7 +562,10 @@ let tests =
         test "keyed training keeps about 1 - rate with inverted scaling"
           test_dropout_keyed_statistics;
         test "keyed eval mode is the identity" test_dropout_keyed_eval_identity;
-        test "keyless dropout raises inside jit" test_dropout_keyless_jit_raises;
+        test "unscoped dropout raises inside jit"
+          test_dropout_keyless_jit_raises;
+        test "keyless dropout compiles inside a scope on a traced key"
+          test_dropout_keyless_scope_jit_compiles;
         test "keyed dropout compiles and matches eager"
           test_dropout_keyed_jit_matches_eager;
         test "jitted train steps with fold_in keys reproduce from the seed"
