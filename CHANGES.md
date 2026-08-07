@@ -64,6 +64,10 @@ thread.
   buffer instead of raising: such a graph is placed on no device and owns no
   storage, so `Run.buffer_of` had nothing to return. Affected every
   constant-folded result, for instance `Rand.dropout ~p:1.`.
+- A cast to an unsigned dtype now keeps the source's exact symbolic bounds when
+  that source already fits the destination window; only a source that can wrap
+  (negative, or wider than the destination) falls back to the full dtype range.
+  `Uop.vmin`/`Uop.vmax` previously gave up on every unsigned cast.
 - Reject the tensor-core optimisation when one of its X or Y axes is a reduce
   axis. Those axes index the WMMA accumulator tile, so a kernel that reduces
   over a matmul's output dimensions (`(a @ b)` summed over `M`, as a recurrent

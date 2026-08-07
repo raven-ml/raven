@@ -399,6 +399,29 @@ let integer_bounds_parity () =
   is_true ~msg:"bind rejects int64 values outside native bounds"
     overflow_rejected
 
+let cast_bounds_parity () =
+  let fits = Uop.variable ~name:"fits" ~min_val:5 ~max_val:10 () in
+  equal_bounds ~msg:"CAST to unsigned keeps exact bounds when the source fits"
+    (Uop.cast ~src:fits ~dtype:Dtype.uint8) (5, 10);
+  let maybe_negative =
+    Uop.variable ~name:"maybe_negative" ~min_val:(-1) ~max_val:10 ()
+  in
+  equal_bounds ~msg:"CAST to unsigned of a negative source can wrap"
+    (Uop.cast ~src:maybe_negative ~dtype:Dtype.uint8) (0, 255);
+  let too_large = Uop.variable ~name:"too_large" ~min_val:250 ~max_val:260 () in
+  equal_bounds ~msg:"CAST to unsigned of a too-large source can wrap"
+    (Uop.cast ~src:too_large ~dtype:Dtype.uint8) (0, 255);
+  let wide = Uop.variable ~name:"wide" ~min_val:(-300) ~max_val:300 () in
+  equal_bounds ~msg:"CAST to a signed int clamps to the destination window"
+    (Uop.cast ~src:wide ~dtype:Dtype.int8) (-128, 127);
+  equal_bounds ~msg:"CAST to bool says nothing"
+    (Uop.cast ~src:fits ~dtype:Dtype.bool) (0, 1);
+  let round_trip =
+    Uop.cast ~src:(Uop.cast ~src:fits ~dtype:Dtype.float32) ~dtype:Dtype.int32
+  in
+  equal_bounds ~msg:"CAST to int carries a float source's bounds through"
+    round_trip (5, 10)
+
 let stack_stage_slice_constructors () =
   let a = Uop.const_int 1 and b = Uop.const_int 2 in
   let stacked = Uop.stack [ a; b ] in
@@ -991,6 +1014,22 @@ let exec_alu_folds_and_absorbs () =
        is_true ~msg:"untruncated add keeps the full value"
          (Const.view r = Const.Int 256L)
    | None -> is_true ~msg:"untruncated add folds" false)
+
+let exec_alu_trunc_keeps_nonfinite () =
+  let folded x =
+    match Uop.exec_alu Ops.Trunc Dtype.float32 [ Const.float Dtype.float32 x ]
+    with
+    | Some r ->
+        (match Const.view r with
+         | Const.Float v -> v
+         | _ -> fail "expected TRUNC to fold to a float constant")
+    | None -> fail "expected TRUNC to fold"
+  in
+  is_true ~msg:"TRUNC rounds toward zero" (folded (-4.5) = -4.0);
+  is_true ~msg:"TRUNC of +inf is +inf" (folded Float.infinity = Float.infinity);
+  is_true ~msg:"TRUNC of -inf is -inf"
+    (folded Float.neg_infinity = Float.neg_infinity);
+  is_true ~msg:"TRUNC of nan is nan" (Float.is_nan (folded Float.nan))
 
 let alu_unary_promotes_transcendentals () =
   let weak = Uop.const (Const.int Dtype.weakint 4) in
@@ -2090,6 +2129,7 @@ let () =
             arithmetic_helpers_tinygrad_parity;
           test "BIND requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
+          test "tinygrad CAST bounds parity" cast_bounds_parity;
           test "Stack/Stage/Slice constructors"
             stack_stage_slice_constructors;
           test "UOp constructor parity shortcuts"
@@ -2111,6 +2151,8 @@ let () =
             child_ops_reports_child_op_set;
           test "exec_alu folds and absorbs invalids"
             exec_alu_folds_and_absorbs;
+          test "exec_alu TRUNC keeps non-finite inputs"
+            exec_alu_trunc_keeps_nonfinite;
           test "alu_unary promotes transcendentals"
             alu_unary_promotes_transcendentals;
           test "semantic tag and side metadata"

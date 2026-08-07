@@ -1726,17 +1726,18 @@ and compute_min_max u =
         (max_int, min_int) srcs
   | Ops.Index when Array.length (src u) > 0 -> min_max (src u).(0)
   | Ops.Cast when Array.length (src u) > 0 ->
-      (* CAST to bool/unsigned is not monotone; only tighten for floats
-         and signed ints (including weakint). *)
+      (* An unsigned destination wraps, so it carries the source bounds
+         over exactly while the source fits its window and says nothing
+         otherwise. Signed-int and float destinations are monotone; bool
+         is neither. *)
       let dt = dtype u in
-      let monotone =
-        Dtype.is_float dt || (Dtype.is_int dt && not (Dtype.is_unsigned dt))
-      in
-      if monotone then
-        let s_lo, s_hi = min_max (src u).(0) in
-        let d_lo, d_hi = dtype_bounds () in
+      let d_lo, d_hi = dtype_bounds () in
+      let s_lo, s_hi = min_max (src u).(0) in
+      if Dtype.is_unsigned dt then
+        if s_lo >= 0 && s_hi <= d_hi then s_lo, s_hi else d_lo, d_hi
+      else if Dtype.is_float dt || Dtype.is_int dt then
         max d_lo s_lo, min s_hi d_hi
-      else dtype_bounds ()
+      else d_lo, d_hi
   | _ -> dtype_bounds ())
 
 let vmin u = fst (min_max u)
