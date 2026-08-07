@@ -30,6 +30,22 @@ let floormod lhs rhs = U.alu_binary ~op:Ops.Floormod ~lhs ~rhs
 let neg src = U.alu_unary ~op:Ops.Neg ~src
 let mulacc a b c = U.alu_ternary ~op:Ops.Mulacc ~a ~b ~c
 let range size = U.range ~size ~axis:0 ~kind:Axis_type.Weak ()
+
+(* A tensor-core node with scalar operands: [Estimates] reads the FLOP count
+   off [dims] and [threads], never off the operand widths. *)
+let wmma ~dims ~threads =
+  let info : U.wmma_info =
+    {
+      dims;
+      dtype_in = Dtype.float16;
+      device = "CUDA";
+      threads;
+      tc_upcast_axes = None;
+    }
+  in
+  let a = U.const (Const.float Dtype.float16 1.0) in
+  let c = f32 0.0 in
+  U.wmma ~a ~b:a ~c ~info ~dtype:Dtype.float32
 let special dim size =
   U.special ~name:(Gpu_dim.to_special_name dim) ~size ~dtype:(U.dtype size) ()
 
@@ -232,6 +248,28 @@ let () =
             let d = mulacc a b c in
             let est = E.of_program [ a; b; c; d ] in
             expect_int_estimate "ops" 2 est.ops);
+          test "wmma counts 2*M*N*K per warp, divided across threads"
+            (fun () ->
+              (* One tensor-core call does 2*M*N*K FLOPs for the whole warp,
+                 and the estimate is per thread: 2*8*16*16/32 = 128. *)
+              let w = wmma ~dims:(8, 16, 16) ~threads:32 in
+              let est = E.of_program (U.toposort w) in
+              expect_int_estimate "ops" 128 est.ops);
+          test "wmma thread count divides the FLOP factor" (fun () ->
+            (* Same shape on a 64-wide warp halves the per-thread count,
+               so the divisor is read from the node rather than assumed. *)
+            let w = wmma ~dims:(8, 16, 16) ~threads:64 in
+            let est = E.of_program (U.toposort w) in
+            expect_int_estimate "ops" 64 est.ops);
+          test "wmma FLOPs scale with the loop multiplier" (fun () ->
+            let c10 = i32 10 in
+            let r = range c10 in
+            let w = wmma ~dims:(8, 16, 16) ~threads:32 in
+            let end_ = U.end_ ~value:w ~ranges:[ r ] in
+            let est =
+              E.of_program ((c10 :: r :: U.toposort w) @ [ end_ ])
+            in
+            expect_int_estimate "ops" 1280 est.ops);
           test "loop multiplier stacks" (fun () ->
             let c10 = i32 10 in
             let r = range c10 in

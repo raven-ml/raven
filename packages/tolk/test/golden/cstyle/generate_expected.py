@@ -7,7 +7,7 @@ tinygrad's renderer that matches the flat IR programs constructed in tolk's
 generate_actual.ml.
 
 Usage:
-    uv run tolk/test/golden/cstyle/generate_expected.py
+    uv run packages/tolk/test/golden/cstyle/generate_expected.py
 
 After running, commit the generated .expected files. Dune's expect tests diff
 tolk's .actual output against these tinygrad-generated .expected files.

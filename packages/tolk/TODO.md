@@ -342,8 +342,25 @@ Everything below is a deliberate change from this pin update whose only visible
 effect is that a golden's `.actual` no longer matches its `.expected`. They are
 listed so the regeneration is read as intended movement rather than regression.
 
+Counts below are measured, not estimated: the generators were run against
+`baa614806` into a scratch tree and diffed against the committed corpus. Only
+45 of 71 parity cases and 1 of 4 golden generators can run today (see the
+driver-migration entry under Misc), so the figures cover 268 parity files plus
+`golden/debug`; `golden/{codegen,cstyle,rangeify}` (232 files) is unmeasured.
+Of the 96 parity files that move, all but 14 are fully explained by the five
+mechanical causes below. **The 14 exceptions are all `multi_*`** and are the
+only place regeneration changes semantics rather than spelling — kernel
+signatures lose a parameter (`E_4_4n1(data0, data1, data2)` ->
+`E_4_4n5(data0, data1)`), axis ids shift by one, and kernel-name suffixes
+renumber. Review those 14 by hand; attribute the rest.
+
 - Every `cuda_*` kernel gains `typedef unsigned int uint;` as its first prefix
-  line, and CUDA and Metal both spell `uint32` as `uint`.
+  line, and CUDA and Metal both spell `uint32` as `uint`. (46 files)
+- Loop and thread index variables renumber (`Lidx0` -> `Lidx1`), so a kernel
+  body can differ only in its counter names. (48 files)
+- `ParamArg` reprs gain `multiple_of=1` on ALU-space parameters, which moves
+  every stage-5 dump carrying a `core_id` or a bound variable, and both
+  `golden/debug` files. (19 parity files + 2 debug)
 - A register-file buffer read more than once is bound to a named temporary
   instead of having the read re-emitted at each use.
 - Scalar kernel parameters wider than int32 render `const long` /
@@ -500,14 +517,24 @@ Recorded so nobody re-derives them from the upstream diff.
 
 ## Missing tests
 
-- `multi_stack` parity case (the STACK sharding rule has no coverage).
-- Image golden from the clone (gates the image-coordinate convergence).
-- Golden asserting the group-reduce gate-mask boolean shape
-  (`Cmpeq` vs the reference's compare-nest — currently proven only
-  indirectly by gated load/store goldens).
-- WMMA estimate unit test (flops factor covered only by goldens).
-- Re-verify `bf16_vector_load_reindexes_shrink` (decomp) end-to-end: it
-  relies on the LOAD inheriting the shrink's width-2 shape.
+Both remaining entries need a clone-generated `.expected`, and neither can
+produce a correct one today — see the two blockers named below.
+
+- **`multi_stack` parity case** (the STACK sharding rule has no coverage).
+  **Blocked on the pin move.** The reference's `multi_*` output is not stable
+  across the pin: regenerating the existing multi cases at `baa614806` changes
+  kernel signatures (`E_4_4n1(data0, data1, data2)` becomes
+  `E_4_4n5(data0, data1)`), axis ids and kernel-name suffixes — those 14 files
+  are the only ones in the whole corpus whose regeneration is semantic rather
+  than cosmetic. An expectation captured now would be stale within a commit.
+
+- **Image golden from the clone** (gates the image-coordinate convergence).
+  **Blocked on the `lib/` convergence it is meant to gate.** tolk's
+  `transform_to_image` emits the stacked `INDEX(buf, STACK[y,x])` form while
+  the reference emits two-axis `INDEX(buf, y, x)`, so a golden generated from
+  the clone today lands red on that known divergence rather than on anything
+  it pins. Generate it in the same commit that converges the producer.
+
 - **Trap to remember for `simplify_valid`-style rules** (the coverage gap
   itself is closed by the `simplify_valid` group in
   `test/unit/uop/test_symbolic.ml`): `pm_simplify_valid` is composed into
@@ -522,6 +549,25 @@ Recorded so nobody re-derives them from the upstream diff.
   branch trivial. Verify by perturbing the thing under test — invert the
   comparator and watch the test fail — not by reading the test and judging
   that it looks like it exercises the path.
+
+Closed since this list was written, recorded for what they pin:
+
+- **WMMA FLOP factor** — `test/unit/test_program_spec.ml`, three cases in
+  `Estimates.of_program`: the per-thread count `2*M*N*K/threads`, that the
+  divisor is read off the node (same dims at 32 and 64 threads give 128 and
+  64), and that a loop multiplier scales it. The factor was previously visible
+  only through goldens, where a wrong estimate does not change rendered source.
+- **Group-reduce gate-mask shape** — `test/unit/codegen/test_gpudims.ml`,
+  "two missing local ranges gate on a bool AND of equalities". Two missing
+  locals are required: one cannot distinguish a fold from a nest. It also
+  settles the concern that prompted the entry — there is no divergence.
+  `gate_missing_locals` folds `Cmpeq(range, 0)` left under `Ops.And`, and the
+  reference's `UOp.uprod` reduces with `operator.and_` when the operands are
+  bool (`mixin/elementwise.py:37`), so the two are the same construction.
+- **`bf16_vector_load_reindexes_shrink`** — verified end-to-end and tightened.
+  The old assertion used `List.exists` over `vmin = 3 || vmin = 4`, which a
+  width-1 result would still satisfy; it now requires a 2-source STACK whose
+  INDEX offsets are exactly `[3; 4]`, so losing the shrink's width fails.
 
 ## Misc
 
@@ -556,6 +602,28 @@ Recorded so nobody re-derives them from the upstream diff.
   drivers are all outside the compiler's reach; only the ordering exposed
   them.
 
+- **BLOCKING PRECONDITION FOR REGENERATION — the Python drivers do not run at
+  `baa614806`.** Measured by running them all against the new pin: 26 of 71
+  parity cases and 3 of 4 golden generators abort. Four distinct API breaks,
+  none of them in tolk:
+
+  | break | sites | fix |
+  |---|---|---|
+  | `UOp.const` swapped its arguments | 96 calls in 29 files | `UOp.const(dtypes.X, v)` -> `UOp.const(v, dtypes.X)` |
+  | `UOp.const`'s `shape=` parameter deleted | 1 | drop it |
+  | `dtypes.index` deleted | 6 | pick the replacement per site |
+  | `AxisType.WEAK` absent at the old pin | 9 (already migrated) | — |
+
+  Old signature `UOp.const(dtype, b, shape=None)`; new one
+  `UOp.const(b, dtype=None)` (`uop/ops.py:624`). The order swap is silent for
+  the two-arg form only because the first argument is now type-checked at use;
+  it fails loudly, which is why this is a migration and not a correctness risk.
+
+  **`golden/cstyle/generate_expected.py` swallows these.** It catches per case
+  and prints `SKIP <name>: <error>`, then `Done. Generated 0 .expected files`
+  and **exits 0**. Every one of its 62 cases currently skips. Read its output;
+  do not trust its exit status.
+
 - **The nine `AxisType.LOOP` driver sites are migrated to `AxisType.WEAK`
   (done).** Three in `test/golden/cstyle/generate_expected.py`, two in
   `test/parity/nested_loops/main.py`, three in
@@ -575,10 +643,18 @@ Recorded so nobody re-derives them from the upstream diff.
   `generate_expected.py` until `_tinygrad` is at the new pin**; they will
   fail, not silently emit the wrong axis class.
 
-  Regeneration must also repoint `test/parity/helpers.py` and
-  `test/golden/codegen/generate_expected.py`, which both still `sys.path`
-  in `_tinygrad`; once that clone is the new pin, no edit is needed beyond
-  deleting the `_tinygrad_next` path if anything references it.
+  Every clone reference is a relative path to `_tinygrad`, so all of them
+  follow the pin automatically and none needs editing: the four
+  `golden/*/generate_expected.py`, `parity/helpers.py`,
+  `test/unit/uop/test_ops.ml` (a runtime probe, which also prefers
+  `_tinygrad/.venv/bin/python3` — untracked, so it survives a checkout but not
+  a re-clone; the system `python3` is 3.14 and the venv is 3.11), and
+  `bench/{runtime,compare}/bench_*.py`. **Nothing anywhere references
+  `_tinygrad_next`** except this file, so removing that worktree breaks
+  nothing. It is a detached-HEAD worktree of `_tinygrad` itself and
+  `baa614806` is already in the main clone's object store, so the move needs
+  no fetch and there is no branch collision in either order.
+
   `test/parity/tc_matmul_32` is the one case whose `.expected` was generated
   from `_tinygrad_next` already, so it should not move — verify it stays
   byte-identical rather than assuming it regenerated.
@@ -587,37 +663,15 @@ Recorded so nobody re-derives them from the upstream diff.
   `stage5_*.expected` files are *output*, not source. They are the pending
   movement recorded above and must not be hand-edited.
 
-- **There are two Ops-order tests and only one self-heals.**
-  `test/unit/uop/test_ops.ml` probes the live `_tinygrad` checkout, so it goes
-  green by itself when the pin moves. `test/unit/uop/test_uop.ml:70` holds a
-  *hardcoded* 82-entry name list and must be edited by hand on any enum
-  change. Until the pin moves, `test_ops.ml` is red on exactly one entry
-  (index 78, `UNSHARD` vs the old pin's `MULTI`) — expected, not a
+- **There are two Ops-order tests and only one self-heals — but both are
+  ready for this move.** `test/unit/uop/test_ops.ml` probes the live
+  `_tinygrad` checkout, so it goes green by itself when the pin moves.
+  `test/unit/uop/test_uop.ml:70` holds a *hardcoded* 82-entry name list and
+  must be edited by hand on any enum change — that edit has already been made
+  for this move: the list is byte-identical to `baa614806`'s enum, and differs
+  from `7eb197b1b`'s on exactly one entry. So `test_ops.ml` is red today on
+  that same single entry (`UNSHARD` vs the old pin's `MULTI`) — expected, not a
   regression, and not something to debug. The trap is that a stale hardcoded
   list fails identically and looks like the same known failure. On any enum
   change, diff the whole list against the reference rather than patching the
   entry you know about.
-
-## Multi-device: three pmap cases fail after the pin migration
-
-`packages/rune/test/test_pmap.ml` — `elementwise+matmul+reduce matches jit on
-2 devices`, the same on 4, and `two collectively reduced outputs` — fail with
-`Invalid_argument("buffer copy: size or dtype mismatch")` from
-`engine/realize.ml:209`. That check is unmodified: a cross-device copy is
-being scheduled between buffers of genuinely different sizes.
-
-The sharding and allreduce half of the multi rework (`schedule/multi.ml`,
-`schedule/allreduce.ml`) was never started, while the op it keys on was
-renamed and operand broadcasting moved out of the frontend. So the token and
-the surrounding shapes moved without the semantics that were meant to
-accompany them.
-
-One half is already fixed: sharding split a size-one axis, which is a
-broadcast axis and must stay whole — the reference guards the same case in
-`shard_srcs` ("broadcast srcs stay whole"). That took the failure count from
-six to three and moved the rest past the divisibility check into this copy.
-
-To resume: instrument `realize.ml:209` to print both buffer sizes, then work
-back to which side is sharded and which is whole. The likely shape is a
-consumer still treating a now-whole broadcast operand as if it were a shard.
-The three tests are the acceptance criterion.

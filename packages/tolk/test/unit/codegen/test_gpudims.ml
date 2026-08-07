@@ -630,6 +630,49 @@ let missing_locals_tests =
               (U.toposort result)
           in
           is_true has_where ~msg:"has Where node for gating");
+      test "two missing local ranges gate on a bool AND of equalities"
+        (fun () ->
+          (* The gate over several missing locals is a left fold of
+             [range = 0] under AND, at bool dtype — not a wider compare
+             nest and not an arithmetic product. One missing range cannot
+             tell those apart, so this case uses two. *)
+          let g0 =
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()
+          in
+          let l0 =
+            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.weakint ()
+          in
+          let l1 =
+            U.range ~size:(idx 4) ~axis:2 ~kind:Ak.Local ~dtype:D.weakint ()
+          in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
+          let load_idx = U.index ~ptr:p ~idxs:[ U.O.(g0 + l0 + l1) ] () in
+          let loaded = U.load ~src:load_idx () in
+          let reduced = U.end_ ~value:loaded ~ranges:[ l0; l1 ] in
+          let store_idx = U.index ~ptr:p ~idxs:[ g0 ] () in
+          let st = U.store ~dst:store_idx ~value:reduced () in
+          let sink = U.sink ~kernel_info:(kernel_info ()) [ st ] in
+          let result = Gpudims.pm_add_gpudims (gpu_renderer ()) sink in
+          let is_eq_zero n =
+            U.op n = Ops.Cmpeq
+            && Array.exists
+                 (fun s -> U.const_int_value s = Some 0)
+                 (U.src n)
+          in
+          let gate =
+            List.find_opt
+              (fun n -> U.op n = Ops.Where)
+              (U.toposort result)
+            |> Option.map (fun w -> (U.src w).(0))
+          in
+          match gate with
+          | None -> failwith "no Where node produced by missing-locals gating"
+          | Some cond ->
+              is_true ~msg:"gate is a bool AND"
+                (U.op cond = Ops.And && D.equal (U.dtype cond) D.bool);
+              is_true ~msg:"both AND operands compare a local against zero"
+                (Array.length (U.src cond) = 2
+                 && Array.for_all is_eq_zero (U.src cond)));
       test "missing local range rejects multi-index global store" (fun () ->
           let g0 =
             U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()

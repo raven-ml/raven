@@ -740,16 +740,22 @@ let bf16_vector_load_reindexes_shrink () =
       load
   in
   let nodes = Uop.toposort rewritten in
-  let has_offset_index =
-    List.exists
+  let offsets =
+    List.filter_map
       (fun n ->
          match Uop.as_index n with
-         | Some { idxs = [ i ]; _ } -> Uop.vmin i = 3 || Uop.vmin i = 4
-         | _ -> false)
+         | Some { idxs = [ i ]; _ } -> Some (Uop.vmin i)
+         | _ -> None)
       nodes
+    |> List.sort_uniq compare
   in
+  (* Both lanes must survive: the width comes from the SHRINK's shape, so a
+     rewrite that dropped it would still produce a STACK, just a narrow one
+     indexing only offset 3. *)
   is_true ~msg:"bf16 vector load converts SHRINK lanes to INDEX offsets"
-    (Uop.op rewritten = Ops.Stack && has_offset_index
+    (Uop.op rewritten = Ops.Stack
+     && Array.length (Uop.src rewritten) = 2
+     && offsets = [ 3; 4 ]
      && not (contains_op Ops.Shrink rewritten))
 
 let f32_store_demotes_to_bf16_bits () =
