@@ -490,6 +490,34 @@ of a gated image load" (`test/unit/codegen/test_lower.ml`), which fails
     alignment on the platform this project primarily targets. Also forks a
     process per call.
 
+**Excluded files, judged read-only (24 sites in `lib/schedule/**` and
+`lib/renderer/cstyle.ml`, owned elsewhere at audit time).** Most are
+`Not_found -> 0/[]/""` on renderer side-tables and are correct. Five to hand to
+their owners, in order of consequence:
+
+- `schedule/indexing.ml:503` — `Option.value ~default:[] (shape_exprs x)` feeds
+  range-ending and index generation, so a node whose shape cannot be
+  reconstructed is processed as rank 0. `shape_expr_of` already has a
+  `fallback ()` for that case, so the `[]` may be standing in for something
+  that has a real answer. **The one to look at hardest.**
+- `cstyle.ml:309` `max_numel` — `| None -> stack_count u`, already a partial
+  repair, but a shapeless *non-Stack* node still gets one lane where `.shape`
+  raises. `Uop.max_numel` (raising) now exists; ask whether the `None` arm can
+  be asserted away, making it the same shape as the WMMA width fix.
+- `cstyle.ml:1954` `wmma_operand_width` — the `[] -> 1` arm is right for a
+  rank-0 operand; the `None -> 1` arm is the shapeless guess again. Reference
+  is `src[2].shape[-1]`, which raises.
+- `rangeify.ml:1146` — `match U.as_range u with Some v -> v.axis | None -> 0`
+  as a sort key. Same shape as LATENT (7).
+- `cstyle.ml:118` `online_cpu_count` — `with _ -> 1`, so a failed `getconf`
+  silently means one CPU and kernels go single-threaded with no signal.
+  Performance, not correctness.
+
+Cleared on inspection: `allreduce.ml:102` (the default is taken only when the
+element count is odd, where 1 is the exactly correct chunk alignment, not a
+guess) and the side-table defaults at `indexing.ml:376,496` and
+`rangeify.ml:1661,1731,1782`.
+
 **General finding.** A correct guard *downstream* of a silent default is
 worthless: the allreduce rule's `U.vmax` backstop would have caught the
 rangeify `filter_map` bug had the filter ever let a `None` through. Never
