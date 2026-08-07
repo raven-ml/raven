@@ -136,6 +136,24 @@ let shrink t bounds =
   symbolic_shrink t
     (List.map (fun (start, stop) -> Some (sdim start, sdim stop)) bounds)
 
+(* A stack node carries the operands as its sources and prepends an axis
+   indexing them, so it is built at axis 0 and permuted into place. All
+   operands are brought to the promoted dtype, which the node then reports. *)
+let stack ?(dim = 0) t others =
+  let tensors = t :: others in
+  let dim = T.resolve_dim ~extra:true t dim in
+  let sh = T.symbolic_shape t in
+  if not (List.for_all (fun x -> dims_equal (T.symbolic_shape x) sh) others)
+  then invalid_arg "Movement.stack: all shapes must match";
+  let dtype = U.promo_dtype (List.map T.uop tensors) in
+  let srcs = List.map (fun x -> U.cast ~src:(T.uop x) ~dtype) tensors in
+  let ret = T.of_uop (U.stack ~dtype srcs) in
+  if dim = 0 then ret
+  else
+    permute ret
+      (List.init dim (fun i -> i + 1)
+      @ (0 :: List.init (T.ndim ret - dim - 1) (fun i -> dim + 1 + i)))
+
 let squeeze ?dim t =
   match dim with
   | None ->

@@ -358,7 +358,7 @@ let op_tests =
             (shape (Op.cat ~dim:1 (ones_f [ 2; 3 ]) [ ones_f [ 2; 5 ] ])));
       test "stack adds axis" (fun () ->
           equal (list int) [ 2; 2; 3 ]
-            (shape (Op.stack ~dim:1 (ones_f [ 2; 3 ]) [ ones_f [ 2; 3 ] ])));
+            (shape (Mv.stack ~dim:1 (ones_f [ 2; 3 ]) [ ones_f [ 2; 3 ] ])));
       test "dot 2d x 2d" (fun () ->
           equal (list int) [ 2; 4 ] (shape (Op.dot (ones_f [ 2; 3 ]) (ones_f [ 3; 4 ]))));
       test "dot 1d x 1d is scalar" (fun () ->

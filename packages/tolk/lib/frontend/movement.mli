@@ -85,6 +85,13 @@ val symbolic_shrink :
       if [bounds] length differs from [ndim t] or a slice can exceed its
       axis. *)
 
+val stack : ?dim:int -> Tensor.t -> Tensor.t list -> Tensor.t
+(** [stack t others] joins [t] and [others] along a new axis inserted at [dim]
+    (default [0]), whose size is the number of tensors. All of them must have
+    the same shape; their dtypes are promoted to a common one.
+
+    @raise Invalid_argument if the shapes differ. *)
+
 val squeeze : ?dim:int -> Tensor.t -> Tensor.t
 (** [squeeze t] removes all size-[1] axes. [squeeze ~dim t] removes only axis
     [dim], and returns [t] unchanged if that axis is not size [1]. *)

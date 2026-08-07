@@ -98,39 +98,49 @@ let cat ?(dim = 0) t args =
   let tensors = t :: args in
   let dim = T.resolve_dim t dim in
   let n = T.ndim t in
-  (* Only the concatenated axis must be concrete; the other axes may stay
-     symbolic since they receive no padding. *)
-  let sizes =
-    List.map
-      (fun x ->
-        match Uop.const_int_value (List.nth (T.symbolic_shape x) dim) with
-        | Some s -> s
-        | None -> invalid_arg "Op.cat: symbolic dimension on the cat axis")
-      tensors
-  in
-  let total = List.fold_left ( + ) 0 sizes in
-  let combine =
-    if D.is_bool (T.dtype t) then Elementwise.bitwise_or else Elementwise.add
-  in
-  let _, rev_padded =
-    List.fold_left2
-      (fun (before, acc) x sz ->
-        let padding =
-          List.init n (fun ax ->
-              if ax = dim then (before, total - before - sz) else (0, 0))
-        in
-        (before + sz, Movement.pad x padding :: acc))
-      (0, []) tensors sizes
-  in
-  match List.rev rev_padded with
-  | [] -> t
-  | h :: tl -> List.fold_left combine h tl
-
-let stack ?(dim = 0) t args =
-  let unsqueezed = List.map (fun x -> Movement.unsqueeze x dim) (t :: args) in
-  match unsqueezed with
-  | [] -> t
-  | h :: tl -> cat ~dim h tl
+  let off_dim s = List.filteri (fun ax _ -> ax <> dim) s in
+  let rest = off_dim (T.symbolic_shape t) in
+  List.iter
+    (fun x ->
+      let xs = T.symbolic_shape x in
+      if List.length xs <> n || not (List.for_all2 Uop.equal rest (off_dim xs))
+      then invalid_arg "Op.cat: shapes must match off the concatenated axis")
+    args;
+  let extent x = List.nth (T.symbolic_shape x) dim in
+  if List.for_all (fun x -> Uop.equal (extent x) (extent t)) args then
+    (* Equal extents concatenate by stacking and merging the new axis into
+       the old one, which selects on one range instead of summing pads. *)
+    Movement.flatten ~start_dim:dim ~end_dim:(dim + 1)
+      (Movement.stack ~dim t args)
+  else begin
+    (* Padding needs a concrete extent on the concatenated axis; the other
+       axes may stay symbolic since they receive no padding. *)
+    let sizes =
+      List.map
+        (fun x ->
+          match Uop.const_int_value (extent x) with
+          | Some s -> s
+          | None -> invalid_arg "Op.cat: symbolic dimension on the cat axis")
+        tensors
+    in
+    let total = List.fold_left ( + ) 0 sizes in
+    let combine =
+      if D.is_bool (T.dtype t) then Elementwise.bitwise_or else Elementwise.add
+    in
+    let _, rev_padded =
+      List.fold_left2
+        (fun (before, acc) x sz ->
+          let padding =
+            List.init n (fun ax ->
+                if ax = dim then (before, total - before - sz) else (0, 0))
+          in
+          (before + sz, Movement.pad x padding :: acc))
+        (0, []) tensors sizes
+    in
+    match List.rev rev_padded with
+    | [] -> t
+    | h :: tl -> List.fold_left combine h tl
+  end
 
 (* Matrix multiplication *)
 
@@ -672,7 +682,9 @@ let nonzero ?(fill_value = T.Sint 0) t ~size =
         sh
     in
     let indices =
-      match coords with h :: tl -> stack ~dim:(-1) h tl | [] -> assert false
+      match coords with
+      | h :: tl -> Movement.stack ~dim:(-1) h tl
+      | [] -> assert false
     in
     let mask = Movement.expand (Movement.unsqueeze mask (-1)) (T.shape mask @ [ ndim ]) in
     Movement.reshape

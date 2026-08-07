@@ -95,7 +95,7 @@ let attention_apply a x start_pos mask =
        (Op.assign
           (Movement.symbolic_shrink cache_kv
              [ None; None; Some (start_pos, plus start_pos seqlen); None; None ])
-          (Op.stack xk [ xv ])));
+          (Movement.stack xk [ xv ])));
   let keys, values =
     if pos_value start_pos > 0 then
       let layer i =

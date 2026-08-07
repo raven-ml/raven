@@ -48,11 +48,11 @@ val layernorm : ?axis:int list -> ?eps:float -> Tensor.t -> Tensor.t
 
 val cat : ?dim:int -> Tensor.t -> Tensor.t list -> Tensor.t
 (** [cat t others] concatenates [t] and [others] along axis [dim]. All tensors
-    must share every axis except [dim]. *)
+    must share every axis except [dim].
 
-val stack : ?dim:int -> Tensor.t -> Tensor.t list -> Tensor.t
-(** [stack t others] joins equally shaped tensors along a new axis inserted at
-    [dim]. *)
+    @raise Invalid_argument
+      if the shapes differ off [dim], or if [dim] is symbolic and the extents
+      along it are not all equal. *)
 
 (** {1 Matrix multiplication} *)
 

@@ -285,10 +285,58 @@ let stack_tests =
       test "stack along new leading axis" (fun () ->
           let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
           let b = fa ~shape:[ 2; 2 ] [| 5.; 6.; 7.; 8. |] in
-          check_floats [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] (Op.stack a [ b ]));
+          check_floats [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] (Mv.stack a [ b ]));
       test "stack along inner axis" (fun () ->
           let a = vec [| 1.; 2. |] and b = vec [| 3.; 4. |] in
-          check_floats [| 1.; 3.; 2.; 4. |] (Op.stack ~dim:1 a [ b ]));
+          check_floats [| 1.; 3.; 2.; 4. |] (Mv.stack ~dim:1 a [ b ]));
+    ]
+
+(* [cat] takes one of two lowerings: equal extents on the joined axis stack
+   and merge the new axis, anything else pads and sums. Both are covered on
+   every axis, since only the equal-extent case reaches the stack. *)
+let cat_tests =
+  group "cat"
+    [
+      test "equal extents along axis 0" (fun () ->
+          let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
+          let b = fa ~shape:[ 2; 2 ] [| 5.; 6.; 7.; 8. |] in
+          check_floats [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] (Op.cat a [ b ]));
+      test "equal extents along axis 1" (fun () ->
+          let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
+          let b = fa ~shape:[ 2; 2 ] [| 5.; 6.; 7.; 8. |] in
+          check_floats
+            [| 1.; 2.; 5.; 6.; 3.; 4.; 7.; 8. |]
+            (Op.cat ~dim:1 a [ b ]));
+      test "equal extents, three operands" (fun () ->
+          let a = vec [| 1.; 2. |] and b = vec [| 3.; 4. |] in
+          let c = vec [| 5.; 6. |] in
+          check_floats [| 1.; 2.; 3.; 4.; 5.; 6. |] (Op.cat a [ b; c ]));
+      test "unequal extents along axis 0" (fun () ->
+          let a = fa ~shape:[ 1; 2 ] [| 1.; 2. |] in
+          let b = fa ~shape:[ 2; 2 ] [| 3.; 4.; 5.; 6. |] in
+          check_floats [| 1.; 2.; 3.; 4.; 5.; 6. |] (Op.cat a [ b ]));
+      test "unequal extents along axis 1" (fun () ->
+          let a = fa ~shape:[ 2; 1 ] [| 1.; 4. |] in
+          let b = fa ~shape:[ 2; 2 ] [| 2.; 3.; 5.; 6. |] in
+          check_floats [| 1.; 2.; 3.; 4.; 5.; 6. |] (Op.cat ~dim:1 a [ b ]));
+      test "a single operand is the identity" (fun () ->
+          check_floats [| 1.; 2.; 3. |] (Op.cat (vec [| 1.; 2.; 3. |]) []));
+      test "negative axis counts from the end" (fun () ->
+          let a = fa ~shape:[ 2; 1 ] [| 1.; 3. |] in
+          let b = fa ~shape:[ 2; 1 ] [| 2.; 4. |] in
+          check_floats [| 1.; 2.; 3.; 4. |] (Op.cat ~dim:(-1) a [ b ]));
+      test "booleans keep their values" (fun () ->
+          let b v = Dt.bool (vec v) in
+          check_ints [| 1; 0; 0; 1 |]
+            (Dt.int (Op.cat (b [| 1.; 0. |]) [ b [| 0.; 1. |] ])));
+      test "operands are promoted to a common dtype" (fun () ->
+          let a = Dt.int (vec [| 1.; 2. |]) and b = vec [| 3.5; 4.5 |] in
+          check_floats [| 1.; 2.; 3.5; 4.5 |] (Op.cat a [ b ]));
+      test "shapes must match off the joined axis" (fun () ->
+          let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
+          let b = fa ~shape:[ 2; 3 ] (Array.make 6 0.) in
+          raises_invalid_arg "Op.cat: shapes must match off the concatenated axis"
+            (fun () -> ignore (Op.cat a [ b ])));
     ]
 
 let triu_tests =
@@ -352,7 +400,7 @@ let assign_tests =
             Op.getitem cache
               [ Mv.All; Mv.All; Mv.R (Some 1, Some 3, None); Mv.All; Mv.All ]
           in
-          ignore (Run.realize (Op.assign view (Op.stack xk [ xv ])));
+          ignore (Run.realize (Op.assign view (Mv.stack xk [ xv ])));
           let expected = Array.make 48 0. in
           for pos = 0 to 1 do
             for h = 0 to 1 do
@@ -389,7 +437,7 @@ let assign_tests =
                   Mv.All; Mv.All;
                 ]
             in
-            ignore (Run.realize (Op.assign view (Op.stack xk [ xv ])))
+            ignore (Run.realize (Op.assign view (Mv.stack xk [ xv ])))
           in
           step 0 1.;
           step 1 2.;
@@ -686,6 +734,7 @@ let () =
       gpt2_getitem_tests;
       conv_tests;
       stack_tests;
+      cat_tests;
       triu_tests;
       assign_tests;
       attention_tests;
