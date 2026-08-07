@@ -522,6 +522,95 @@ worthless: the allreduce rule's `U.vmax` backstop would have caught the
 rangeify `filter_map` bug had the filter ever let a `None` through. Never
 classify a site as correct because something later checks it.
 
+**Two corrections to the LATENT list above**, found while cross-reading this
+file:
+
+- (6) `linearizer.ml:248` `chain` skipping an END whose ended child is not a
+  single RANGE is not an unguarded hazard — it is the tolk-side counterpart of
+  the guard the reference puts on `simplify_merge_adjacent`, and belongs to the
+  void-RANGE loop header under "Deliberate divergences". Leave it until that
+  feature acquires a producer.
+- `uop.ml` `ended_ranges` (and its copy in `codegen_lower.ml:505`) returning
+  `[]` where `_tinygrad_next` returns `src[1:]` for UNSHARD is not a new
+  finding either: it is downstream of the sorted-axis-tuple rework named as a
+  blocker under "Deferred parity divergences — blocked". `Ops.Copy` staying in
+  `range_start` is likewise consistent with COPY still taking part in rangeify.
+  Worth knowing that the `[]` fallback is what makes both invisible: when the
+  axis-tuple rework lands, this is the arm that has to move with it, and
+  nothing will fail if it is forgotten.
+
+### Silent-default audit, second pass: the structural variant (2026-08-07)
+
+The fallback need not be a literal. `List.filter_map` over an all-or-nothing
+derivation *drops* the failures and computes from the survivors — the same
+defect, with no `| None ->` to grep for. Swept every `List.filter_map` (50),
+`List.concat_map` (41) and accumulating `fold_left` (25) in `lib/`: **no new
+BUG**. The variant exists in exactly two places, and both reconstruct a shape
+from operands — `rangeify.compute_shape_of` (below) and LATENT (1) above.
+Everything else is selection over legitimate non-participants.
+
+Two sites do the idiom correctly, and are the shape to look for when reviewing
+a `filter_map` over a derivation: `uop.ml:2925` pairs the filter with
+`if List.length decomposed <> List.length xs then <bail>`, and
+`codegen_lower.ml:244` `expand_broadcast` leads with `if List.exists
+Option.is_none shapes then None`.
+
+Recorded as a deliberate non-finding: `gpudims.ml:225` filters `local_idxs` to
+SPECIALs and then zips the result *positionally* against `global_max`, so a
+dropped entry would shift the alignment. The reference does character-for-
+character the same thing (`[_dim_max(u.src[0]) for u in local_idxs if u.op is
+Ops.SPECIAL]`, then `zip`). If the shift is a hazard it is upstream's.
+
+**`schedule/rangeify.ml` `compute_shape_of` / `compute_shape_expr_of` — fixed,
+and the answer was not the obvious one.**
+
+*Is the reference strict here?* Yes, by not having the function. tinygrad's
+`schedule/rangeify.py` reads `x.shape` off the node throughout — the raising
+property. There is no `shape_of` in it. tolk's `shape_of`/`shape_expr_of` are a
+*third* parallel shape derivation alongside `Uop.shape_opt` and
+`callify.compute_shapes`, each with its own broadcast function and its own
+leniency policy. That duplication is the standing design debt; see the
+"Reconstructed values" bullet below.
+
+*What making the filter strict broke.* Nothing visible, which was the problem.
+Instrumented, the strict branch fires **308 times** per golden-corpus run (188
+MUL, 82 ADD, 34 MAX, 4 SUB) in `shape_of` and never in `shape_expr_of` — and in
+every single case the dropped operand is an `Ops.Load`. Goldens stayed
+byte-identical and every suite passed anyway, so 308 answers flip from
+confidently-right to `None` and the corpus cannot tell. That is exactly the
+coverage situation that let the original miscompile through, so strictness on
+its own would have been a change made blind.
+
+*What had to be fixed alongside.* `compute_shape_of` ended with a bare
+`| _ -> None`, while its own sibling `compute_shape_expr_of` ends with a
+`U.shape` backstop. So a LOAD — whose shape `Uop.shape` knows perfectly well —
+came back unknown, and the `filter_map` had been papering over that omission
+308 times a run. It got the right answer by luck: dropping a LOAD and taking
+the other operand's shape is correct exactly while the two agree, which is what
+the elementwise contract says right up until it does not. With the same
+backstop added to `compute_shape_of`, the strict branch **provably never fires**
+— re-measured to zero hits over both golden corpora. That is what makes the
+pair a local fix rather than a scoped change.
+
+*Evidence.* `test/unit/{codegen,engine,frontend,nn,runtime}/runtest` green;
+`test_schedule_rangeify` 67/67; `engine/test_multi` 10/10. `golden/cstyle` 0/62;
+`golden/codegen` 12/82 and `golden/rangeify` 16/88 — the *identical file set* as
+the baseline measured with the change reverted, all of them the recorded
+rsqrt-reciprocal residual under "Residual divergences after the pin move", not
+drift from this change.
+
+*What is not pinned.* No test and no changelog entry: `shape_of` is not in
+`rangeify.mli` and the change is output-neutral on everything covered, so there
+is nothing observable to assert. The proof is the instrumented zero-hit
+measurement, which does not survive as a regression test. The backstop also
+widens `shape_of`'s answers on paths the corpus does not reach; `test_multi` is
+the only multi-device coverage it has.
+
+*The transferable lesson.* When a lenient site turns out to be load-bearing,
+the fix is rarely to add strictness — it is to find the missing case the
+leniency was standing in for. Strictness is then free, and you know it is free
+because you can measure that the strict path no longer fires.
+
 
 - **Reconstructed values with silent defaults**: in several places tolk
   recomputes something the reference reads straight off the node or produces
