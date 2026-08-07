@@ -133,6 +133,40 @@ val jvp2 :
     objective returning a structured output: the result tangent has the output's
     structure, one tangent per output leaf. *)
 
+(** {1:complex Complex tensors}
+
+    A complex tensor is two real components per element, so a function of one
+    is a function of twice as many real numbers, and its derivative is a real
+    linear map on them. Rune packs the two directions of that map into complex
+    tensors differently.
+
+    A {e tangent} carries the perturbation itself. {!jvp} takes and returns
+    [dre + i*dim], and its result is the directional derivative: move the
+    input by [h] times the tangent and both components of the output move by
+    [h] times the result.
+
+    A {e cotangent} carries the conjugate of the sensitivity. For a
+    real-valued objective [l], {!grad} and {!vjp} return [dl/dre - i*dl/dim].
+    That sign is what makes the plain chain rule correct: with it, a rule that
+    multiplies the cotangent by a derivative and conjugates nothing is right
+    for every operation that has a complex derivative — [mul] pulls back as
+    [cotangent * b], [exp] as [cotangent * exp z], [matmul] through an
+    ordinary transpose. The real-valued formulas carry over unchanged. Using
+    the result as a direction has to undo the conjugation:
+    [z - lr * conj g] descends, while [z - lr * g] moves the imaginary
+    component the wrong way. An objective that is complex-valued rather than
+    real is seeded with a cotangent of [1], so for a complex-differentiable
+    objective {!grad} is its complex derivative.
+
+    Operations with no complex derivative carry the conjugation explicitly.
+    [abs] is the modulus: real-valued, and its differential mixes the two
+    components rather than scaling by one complex number. It pulls back
+    through [conj (sign z)] — through [sign z] the imaginary contribution
+    would come back negated — and keeps only the real part of the cotangent,
+    since a real-valued output cannot move in the imaginary direction; in
+    forward mode it produces a real tangent. Both are the identity on real
+    dtypes, so real gradients are unaffected. *)
+
 (** {1:vmap Vectorizing maps} *)
 
 val vmap :

@@ -50,6 +50,33 @@ Pull thunks execute ordinary Nx operations, so an enclosing transformation inter
 
 Tangent arithmetic is re-performed in the enclosing context too, so forward-over-reverse (`hvp`), reverse-over-forward, and nested `jvp` all compose.
 
+## Complex Tensors
+
+A complex tensor is two real numbers per element. A function on complex tensors is therefore a function on twice as many real numbers, and its derivative at a point is a real linear map on those components. Both engines pack that map's two directions back into complex tensors — and they use different packings.
+
+A **tangent** carries the perturbation itself: displacing `z` by `dre` in the real component and `dim` in the imaginary one is the complex number `dre + i·dim`. `jvp` takes and returns tangents in this packing, and what it returns is the honest directional derivative — displace the input by `h` times the tangent, and both components of the output move by `h` times the result.
+
+A **cotangent** carries the *conjugate* of the sensitivity. For a real-valued objective `L`, the cotangent of `z` is
+
+```
+dL/dre - i · dL/dim
+```
+
+The minus sign is not cosmetic; it is what makes the rules simple. Pair a cotangent `g` with a tangent `v` by taking the real part of `g * v`, and you get exactly the change in `L`:
+
+```
+Re((dL/dre - i·dL/dim) * (dre + i·dim)) = dL/dre · dre + dL/dim · dim
+```
+
+Because that pairing multiplies rather than conjugates, the transpose of "multiply by the complex number `c`" is again "multiply by `c`". So under this packing **a rule that multiplies the cotangent by a derivative, conjugating nothing, is correct for every operation that has a complex derivative**. `mul` pulls back as `cotangent * b`, `exp` as `cotangent * exp z`, `matmul` through an ordinary — not conjugate — transpose, `fft` through `fft` itself. Every real-valued derivative formula carries over to complex unchanged.
+
+Two consequences are worth stating outright:
+
+- **A gradient is not a descent direction until you conjugate it.** `z - lr * conj g` decreases the objective; `z - lr * g` moves the imaginary component the wrong way.
+- **Operations with no complex derivative need the conjugate contribution too.** `abs z` is the modulus: real-valued, and its differential mixes the two components instead of scaling by a single complex number. Its rule pulls back through `conj (sign z)` rather than `sign z` — the latter negates the imaginary contribution — and keeps only the real part of the cotangent, because a real-valued output cannot move in the imaginary direction. In forward mode it correspondingly produces a real tangent. Both are the identity on real dtypes, so nothing about real gradients changes.
+
+Rules are checked against a finite-difference oracle in `packages/rune/test/test_complex.ml`. It perturbs each component of each input separately, assembles the real Jacobian, and compares the engines against it — so it measures the operation rather than trusting another rule. A new rule reachable on a complex dtype belongs there.
+
 ## vmap: a Virtual View
 
 The mapped function is written for unbatched values. Under the `vmap` handler, every tensor is either *batched* — it physically carries the batch dimension, canonically at axis 0 — or a constant of the map. Two mechanisms keep this transparent:
