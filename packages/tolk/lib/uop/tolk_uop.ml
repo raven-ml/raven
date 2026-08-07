@@ -16,4 +16,5 @@ module Movement = Movement
 module Validate = Validate
 module Spec = Spec
 module Symbolic = Symbolic
+module Weak = Weak
 module Divandmod = Divandmod

@@ -507,7 +507,7 @@ let memory_plan_rewrite linear held_bufs =
                  let arena = Hashtbl.find arenas lane in
                  let offset =
                    U.const
-                     (Const.int Dtype.index
+                     (Const.int Dtype.weakint
                         (Hashtbl.find offsets tag))
                  in
                  let slice =

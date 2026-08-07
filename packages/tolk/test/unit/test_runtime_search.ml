@@ -62,7 +62,7 @@ let create_bufs_for_kernel device ast =
 let elementwise_1d_ast ~n =
   let p0 = U.param ~slot:0 ~dtype:D.float32 ~shape:(idx n) () in
   let p1 = U.param ~slot:1 ~dtype:D.float32 ~shape:(idx n) () in
-  let r0 = U.range ~size:(idx n) ~axis:0 ~kind:Ak.Loop ~dtype:D.index () in
+  let r0 = U.range ~size:(idx n) ~axis:0 ~kind:Ak.Loop ~dtype:D.weakint () in
   let in_idx = index_ptr p1 r0 in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:(f32 2.0) in
@@ -86,7 +86,7 @@ let elementwise_1d_ast_with_params ~n ~ptr_n ~out_slot ~in_slot ?shape () =
   let shape = match shape with Some s -> s | None -> idx ptr_n in
   let p0 = U.param ~slot:out_slot ~dtype:D.float32 ~shape () in
   let p1 = U.param ~slot:in_slot ~dtype:D.float32 ~shape () in
-  let r0 = U.range ~size:(idx n) ~axis:0 ~kind:Ak.Loop ~dtype:D.index () in
+  let r0 = U.range ~size:(idx n) ~axis:0 ~kind:Ak.Loop ~dtype:D.weakint () in
   let in_idx = index_ptr p1 r0 in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:(f32 2.0) in
@@ -111,8 +111,8 @@ let elementwise_2d_ast ~s0 ~s1 =
   let n = s0 * s1 in
   let p0 = U.param ~slot:0 ~dtype:D.float32 ~shape:(idx n) () in
   let p1 = U.param ~slot:1 ~dtype:D.float32 ~shape:(idx n) () in
-  let r0 = U.range ~size:(idx s0) ~axis:0 ~kind:Ak.Loop ~dtype:D.index () in
-  let r1 = U.range ~size:(idx s1) ~axis:1 ~kind:Ak.Loop ~dtype:D.index () in
+  let r0 = U.range ~size:(idx s0) ~axis:0 ~kind:Ak.Loop ~dtype:D.weakint () in
+  let r1 = U.range ~size:(idx s1) ~axis:1 ~kind:Ak.Loop ~dtype:D.weakint () in
   let open U.O in
   let linear_idx = (r0 * idx s1) + r1 in
   let in_idx = index_ptr p1 linear_idx in
@@ -258,7 +258,7 @@ let beam_search_tests =
           let p1 = U.param ~slot:1 ~dtype:D.float32 ~shape:(idx n) () in
           let var = U.variable ~name:"v" ~min_val:1 ~max_val:n () in
           let r0 =
-            U.range ~size:var ~axis:0 ~kind:Ak.Loop ~dtype:D.index ()
+            U.range ~size:var ~axis:0 ~kind:Ak.Loop ~dtype:D.weakint ()
           in
           let in_idx = index_ptr p1 r0 in
           let ld = U.load ~src:in_idx () in

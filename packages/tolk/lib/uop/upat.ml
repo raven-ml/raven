@@ -99,7 +99,7 @@ let const ?loc ?dtype ?name c =
   let dtype = Option.map (fun d -> Dtype d) dtype in
   with_loc ?loc (mk ~ops:[ Ops.Const ] ?dtype ~arg:(Has_const c) ?name ())
 
-let const_int n = const (Const.int Dtype.index n)
+let const_int n = const (Const.int Dtype.weakint n)
 let const_float x = const (Const.float Dtype.weakfloat x)
 
 (* Bool literals keep a bool dtype constraint (the reference writes them as

@@ -209,7 +209,7 @@ let compute_idxs (ctx : Renderer.t) ki ~global_shape ~local_shape ~local_dims =
     let core =
       U.variable ~name:"core_id" ~min_val:0 ~max_val:hi ~dtype:Dtype.int32 ()
     in
-    [ U.cast ~src:core ~dtype:Dtype.index ]
+    [ U.cast ~src:core ~dtype:Dtype.weakint ]
   end
   else if ki.U.dont_use_locals then begin
     assert (local_dims = []);

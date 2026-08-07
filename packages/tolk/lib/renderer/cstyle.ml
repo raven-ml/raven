@@ -237,7 +237,7 @@ and language = {
 
 let c_scalar_to_string = function
   | Dtype.Void -> "void"
-  | Dtype.Weakint | Dtype.Int32 | Dtype.Index -> "int"
+  | Dtype.Weakint | Dtype.Int32 -> "int"
   | Dtype.Bool -> "bool"
   | Dtype.Int8 -> "signed char"
   | Dtype.Int16 -> "short"

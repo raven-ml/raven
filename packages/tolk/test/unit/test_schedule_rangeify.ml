@@ -111,7 +111,7 @@ let is_always_contiguous u = Indexing.always_contiguous (U.op u)
    For 1-D: emits a single Const index.
    For N-D: emits a Vectorize of Const index nodes. *)
 let mk_shape (dims : int list) : U.t =
-  let ids = List.map (fun s -> U.const (C.int D.index s)) dims in
+  let ids = List.map (fun s -> U.const (C.int D.weakint s)) dims in
   match ids with
   | [ d ] -> d
   | ds ->

@@ -22,12 +22,19 @@ let ( ++ ) = List.append
 
 let is_void u = Dtype.equal (Uop.dtype u) Dtype.void
 let is_bool u = Dtype.equal (Uop.dtype u) Dtype.bool
-let is_index u = Dtype.equal (Uop.dtype u) Dtype.index
+let is_weakint u = Dtype.equal (Uop.dtype u) Dtype.weakint
 let is_weak u = Dtype.is_weak (Uop.dtype u)
 let is_int u = Dtype.is_int (Uop.dtype u)
-let same_dtype a b = Dtype.equal (Uop.dtype a) (Uop.dtype b)
+
+(* Invalid is the bottom of the promotion lattice, so it satisfies whichever
+   dtype the position demands. *)
+let is_invalid u = Uop.is_invalid_const (Uop.base u)
+
+let same_dtype a b =
+  Dtype.equal (Uop.dtype a) (Uop.dtype b) || is_invalid a || is_invalid b
+
 let matches_or_weak u s = same_dtype u s || is_weak s
-let int32_or_index u = Dtype.equal (Uop.dtype u) Dtype.int32 || is_index u
+let int32_or_weakint u = Dtype.equal (Uop.dtype u) Dtype.int32 || is_weakint u
 let arg_empty u = match Uop.arg u with Uop.Arg.Empty -> true | _ -> false
 
 let option_for_all p = function
@@ -76,7 +83,7 @@ let valid_global_buffer u =
       && option_for_all valid_device_payload buffer.device
       && valid_shape_child shape
       && valid_sharding_axis shape buffer.axis buffer.device
-      && is_index shape
+      && is_weakint shape
 
 let is_const_invalid u =
   match Uop.op u, Uop.arg u with
@@ -115,7 +122,7 @@ let valid_full_slice u =
           | Ops.Buffer | Ops.Param | Ops.Stage | Ops.After -> true
           | _ -> false)
       && Uop.op offset = Ops.Const
-      && is_index offset
+      && is_weakint offset
   | _ -> false
 
 let call_info_arg u =
@@ -158,7 +165,7 @@ let stage_ok u = Option.is_some (Uop.as_stage u) && tail_srcs is_int u
 
 let valid_reduce_op op = Ops.Group.mem op Ops.Group.reduce
 
-let reduce_tail_ok s = is_index s || Dtype.equal (Uop.dtype s) Dtype.int32
+let reduce_tail_ok s = is_weakint s || Dtype.equal (Uop.dtype s) Dtype.int32
 
 let reduce_arg_ok u =
   match Uop.Arg.as_reduce_arg (Uop.arg u) with
@@ -195,7 +202,7 @@ let alu_param u =
       is_int u
   | _ -> false
 
-let bind_value u = Uop.op u = Ops.Const && int32_or_index u
+let bind_value u = Uop.op u = Ops.Const && int32_or_weakint u
 
 let bind_ok u var value =
   arg_empty u
@@ -403,10 +410,7 @@ let tensor_spec : t =
     op ~src:[ var "x" ] Ops.Special
     =?> (fun u bs ->
       let x = bs $ "x" in
-      Option.is_some (Uop.as_special u) && same_dtype u x && is_index x);
-
-    ops ~dtype:Dtype.index [ Ops.Add; Ops.Mul; Ops.Cdiv; Ops.Floordiv ]
-    =?> (fun _ _ -> true);
+      Option.is_some (Uop.as_special u) && same_dtype u x && is_weakint x);
 
     ops ~src:[ any; any ] [ Ops.Reshape; Ops.Expand ]
     =?> (fun u _ -> movement_shape_ok u);
@@ -475,7 +479,7 @@ let program_spec : t =
   let open Upat in
   let program_only = make [
     ops Ops.Group.all =??> (fun u _ ->
-      if is_index u || is_weak u then Some false else None);
+      if is_weak u then Some false else None);
 
     op ~src:[ ops [ Ops.Param; Ops.Buffer; Ops.After ]; any; op Ops.Const ]
       Ops.Shrink
@@ -530,7 +534,7 @@ let full_only_spec : t =
     ops [ Ops.Load; Ops.Store ] =?> (fun _ _ -> true);
 
     op ~src:[ any; any ] Ops.Bind
-    =?> (fun u _ -> arg_empty u && int32_or_index u);
+    =?> (fun u _ -> arg_empty u && int32_or_weakint u);
   ]
 
 let full_spec : t =

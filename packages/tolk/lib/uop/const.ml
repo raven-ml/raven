@@ -20,7 +20,9 @@ let view t = t.view
 let dtype t = t.dtype
 let bool value = { dtype = Dtype.bool; view = Bool value }
 
-let invalid ?(dtype = Dtype.weakint) () = { dtype; view = Invalid }
+(* Invalid is the bottom of the promotion lattice: it satisfies any dtype a
+   consumer demands, so it carries [bool] rather than a dtype of its own. *)
+let invalid = { dtype = Dtype.bool; view = Invalid }
 
 let int64 (dtype : Dtype.t) value =
   if not (Dtype.is_int dtype) then invalid_arg (err_not_int dtype);
@@ -31,7 +33,7 @@ let int dtype value = int64 dtype (Int64.of_int value)
 let float (dtype : Dtype.t) value =
   if not (Dtype.is_float dtype) then invalid_arg (err_not_float dtype);
   let value = if Float.is_nan value then Float.nan else value in
-  { dtype; view = Float value }
+  { dtype; view = Float (Dtype.truncate_float dtype value) }
 
 let storage_bool = function
   | `Bool b -> b
@@ -52,13 +54,13 @@ let of_scalar dtype value =
   if Dtype.is_float dtype then
     let value = storage_float value in
     let value = if Float.is_nan value then Float.nan else value in
-    { dtype; view = Float value }
+    { dtype; view = Float (Dtype.truncate_float dtype value) }
   else if Dtype.is_bool dtype then
     { dtype; view = Bool (storage_bool value) }
   else { dtype; view = Int (storage_int64 value) }
 
 let of_view dtype = function
-  | Invalid -> invalid ~dtype ()
+  | Invalid -> invalid
   | Bool b -> of_scalar dtype (`Bool b)
   | Int n -> of_scalar dtype (`Int n)
   | Float f -> of_scalar dtype (`Float f)

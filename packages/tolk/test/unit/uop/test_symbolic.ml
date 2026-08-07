@@ -4,7 +4,7 @@ open Windtrap
 open Tolk_uop
 
 let rewrite = Symbolic.simplify
-let var ?(dtype = Dtype.index) ~name ~lo ~hi () =
+let var ?(dtype = Dtype.weakint) ~name ~lo ~hi () =
   Uop.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
 (* x + 0 -> x *)
@@ -128,14 +128,16 @@ let nan_cmpeq_folds_to_false () =
   is_true ~msg:"nan cmpeq nan folds to false under IEEE semantics"
     (not (const_bool r))
 
-let invalid_gate_comparison_drops_weak_invalid () =
+(* An index-domain gate is recovered by the consumer with [Uop.get_valid], so
+   a comparison over it drops the gate instead of lifting it. *)
+let invalid_gate_comparison_drops_index_gate () =
   let ridx = var ~name:"ridx" ~lo:0 ~hi:10 () in
   let cond = Uop.O.(ridx < Uop.const_int 5) in
   let idx = Uop.O.where cond ridx (Uop.invalid ()) in
   let r = rewrite Uop.O.(idx < Uop.const_int 3) in
   let expected = rewrite Uop.O.(ridx < Uop.const_int 3) in
   is_true
-    ~msg:(Format.asprintf "weak invalid comparison drops gate, got %a" Uop.pp r)
+    ~msg:(Format.asprintf "index comparison drops the gate, got %a" Uop.pp r)
     (Uop.equal r expected)
 
 let invalid_gate_comparison_gates_nonweak_invalid () =
@@ -144,7 +146,7 @@ let invalid_gate_comparison_gates_nonweak_invalid () =
   in
   let x = var ~name:"x32" ~lo:0 ~hi:10 ~dtype:Dtype.int32 () in
   let rhs = Uop.const (Const.int Dtype.int32 3) in
-  let idx = Uop.O.where cond x (Uop.invalid ~dtype:Dtype.int32 ()) in
+  let idx = Uop.O.where cond x (Uop.invalid ()) in
   let r = rewrite Uop.O.(idx < rhs) in
   is_true ~msg:"result dtype is bool" (Dtype.equal (Uop.dtype r) Dtype.bool);
   is_true ~msg:"non-weak invalid comparison remains gated"
@@ -178,7 +180,7 @@ let bool_cast_cmpne_const_folds () =
   is_true ~msg:"cast(bool) != other folds true"
     (const_bool (rewrite (Uop.O.ne cast other)))
 
-let weak_invalid_gate_cast_drops_gate () =
+let invalid_gate_cast_drops_index_gate () =
   let cond =
     var ~name:"valid_cast" ~lo:0 ~hi:1 ~dtype:Dtype.bool ()
   in
@@ -187,7 +189,7 @@ let weak_invalid_gate_cast_drops_gate () =
   let r = rewrite (Uop.cast ~src:gated ~dtype:Dtype.int32) in
   let expected = Uop.cast ~src:x ~dtype:Dtype.int32 in
   is_true
-    ~msg:(Format.asprintf "weak invalid cast drops gate, got %a" Uop.pp r)
+    ~msg:(Format.asprintf "index cast drops the gate, got %a" Uop.pp r)
     (Uop.equal r expected)
 
 let const_bitcast_folds () =
@@ -252,15 +254,15 @@ let simplify_driver_groups =
           cdiv_cmod_constants_are_truncating;
         test "invalid gate survives zero multiply"
           invalid_gate_survives_zero_multiply;
-        test "weak invalid comparison drops invalid gate"
-          invalid_gate_comparison_drops_weak_invalid;
+        test "index invalid comparison drops the gate"
+          invalid_gate_comparison_drops_index_gate;
         test "non-weak invalid comparison gates bool result"
           invalid_gate_comparison_gates_nonweak_invalid;
         test "direct invalid comparison keeps bool dtype"
           direct_invalid_comparison_keeps_bool_dtype;
         test "cast(bool) != const folds" bool_cast_cmpne_const_folds;
-        test "weak invalid gate cast drops gate"
-          weak_invalid_gate_cast_drops_gate;
+        test "index invalid gate cast drops the gate"
+          invalid_gate_cast_drops_index_gate;
         test "constant BITCAST folds" const_bitcast_folds;
         test "STACK const bitcast folds" stack_const_bitcast_folds;
         test "constant THREEFRY is not UOp-folded"
@@ -279,11 +281,11 @@ module C = Const
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.index n)
+let idx n = U.const (C.int D.weakint n)
 let f32 x = U.const (C.float D.float32 x)
 
-let var name lo hi = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:D.index ()
-let range size = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Loop ~dtype:D.index ()
+let var name lo hi = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:D.weakint ()
+let range size = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Loop ~dtype:D.weakint ()
 
 let ptr_buffer slot =
   U.buffer ~slot ~dtype:D.int32 ~addrspace:D.Global
@@ -846,7 +848,7 @@ let reduce_tests =
     [
       test "add tensor reduce floats const and preserves axes" (fun () ->
           let x =
-            U.param ~slot:0 ~dtype:D.index ~shape:(U.stack [ idx 4 ])
+            U.param ~slot:0 ~dtype:D.weakint ~shape:(U.stack [ idx 4 ])
               ~vmin_vmax:(0, 10) ()
           in
           let body = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(idx 3) in
@@ -936,11 +938,7 @@ let invalid_where_tests =
           let w = U.O.where (U.invalid ()) a b in
           match sym w with
           | Some r ->
-              (* The poisoned result is [Invalid] cast to [a]'s dtype; the cast
-                 to [a]'s own index dtype collapses to the bare Invalid. *)
-              is_true
-                (is_invalid_const r
-                || (Ops.equal (U.op r) Ops.Cast && is_invalid_const (src r 0)))
+              is_true (is_invalid_const r)
           | None -> fail "expected invalid condition to poison where");
       test "where(gated-invalid, a, b) lifts the gate" (fun () ->
           let cond =
@@ -950,15 +948,14 @@ let invalid_where_tests =
             U.variable ~name:"x" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
           let a = var "a" 0 10 and b = var "b" 0 10 in
-          let gate = U.O.where cond x (U.invalid ~dtype:D.bool ()) in
+          let gate = U.O.where cond x (U.invalid ()) in
           let w = U.O.where gate a b in
           match sym w with
           | Some r ->
               check_op r Ops.Where;
               is_true (U.equal (src r 0) cond);
               check_op (src r 1) Ops.Where;
-              check_op (src r 2) Ops.Cast;
-              is_true (is_invalid_const (src (src r 2) 0))
+              is_true (is_invalid_const (src r 2))
           | None -> fail "expected gated-invalid condition to lift its gate");
     ]
 
@@ -1020,26 +1017,35 @@ let masked_div_tests =
 
 let remove_invalid_tests =
   let remove n = Upat.Pattern_matcher.rewrite Symbolic.pm_remove_invalid n in
+  let cond = U.variable ~name:"c" ~min_val:0 ~max_val:1 ~dtype:D.bool () in
+  let gated dt x = U.O.where cond x (U.invalid ()) in
   group "remove_invalid"
     [
-      test "invalid(int32) -> const 0 : int32" (fun () ->
-          match remove (U.invalid ~dtype:D.int32 ()) with
+      test "gated int32 -> zero of the gate's dtype" (fun () ->
+          let x = U.const (C.int D.int32 7) in
+          match remove (gated D.int32 x) with
           | Some r ->
-              check_const_int r 0;
-              is_true (D.equal (U.dtype r) D.int32)
+              check_op r Ops.Where;
+              check_const_int (src r 2) 0;
+              is_true (D.equal (U.dtype (src r 2)) D.int32)
           | None -> fail "expected invalid to be zeroed");
-      test "invalid(float32) -> const 0.0 : float32" (fun () ->
-          match remove (U.invalid ~dtype:D.float32 ()) with
+      test "gated float32 -> zero of the gate's dtype" (fun () ->
+          let x = f32 7.0 in
+          match remove (gated D.float32 x) with
           | Some r ->
-              check_const_float r 0.0;
-              is_true (D.equal (U.dtype r) D.float32)
+              check_op r Ops.Where;
+              check_const_float (src r 2) 0.0;
+              is_true (D.equal (U.dtype (src r 2)) D.float32)
           | None -> fail "expected invalid to be zeroed");
-      test "invalid(index) -> const 0 : index" (fun () ->
-          match remove (U.invalid ()) with
+      test "invalid stack lane -> zero of the stack's dtype" (fun () ->
+          let s = U.stack ~dtype:D.int32 [ U.const (C.int D.int32 3);
+                                           U.invalid () ] in
+          match remove s with
           | Some r ->
-              check_const_int r 0;
-              is_true (D.equal (U.dtype r) D.index)
-          | None -> fail "expected invalid to be zeroed");
+              check_op r Ops.Stack;
+              check_const_int (src r 1) 0;
+              is_true (D.equal (U.dtype (src r 1)) D.int32)
+          | None -> fail "expected invalid lane to be zeroed");
     ]
 
 (* Entry point *)

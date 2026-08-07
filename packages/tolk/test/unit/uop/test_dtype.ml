@@ -78,14 +78,14 @@ let lud_expected =
   Dtype.[|
     [| weakint; weakint; int8; int16; int32; int64; uint8; uint16; uint32; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
     [| weakint; bool; int8; int16; int32; int64; uint8; uint16; uint32; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
-    [| int8; int8; int8; int16; int32; int64; int16; int32; int64; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
-    [| int16; int16; int16; int16; int32; int64; int16; int32; int64; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
-    [| int32; int32; int32; int32; int32; int64; int32; int32; int64; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
-    [| int64; int64; int64; int64; int64; int64; int64; int64; int64; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
+    [| int8; int8; int8; int16; int32; int64; int16; int32; int64; weakfloat; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
+    [| int16; int16; int16; int16; int32; int64; int16; int32; int64; weakfloat; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
+    [| int32; int32; int32; int32; int32; int64; int32; int32; int64; weakfloat; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
+    [| int64; int64; int64; int64; int64; int64; int64; int64; int64; weakfloat; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
     [| uint8; uint8; int16; int16; int32; int64; uint8; uint16; uint32; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
     [| uint16; uint16; int32; int32; int32; int64; uint16; uint16; uint32; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
     [| uint32; uint32; int64; int64; int64; int64; uint32; uint32; uint32; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
-    [| uint64; uint64; uint64; uint64; uint64; uint64; uint64; uint64; uint64; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
+    [| uint64; uint64; weakfloat; weakfloat; weakfloat; weakfloat; uint64; uint64; uint64; uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
     [| weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16; bfloat16; float32; float64 |];
     [| fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; fp8e4m3; float16; float16; float16; float16; bfloat16; float32; float64 |];
     [| fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; fp8e5m2; float16; fp8e5m2; float16; float16; float16; bfloat16; float32; float64 |];
@@ -97,50 +97,41 @@ let lud_expected =
     [| float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64; float64 |];
   |]
 
-let clc_order =
-  Dtype.
-    [|
-      index; weakint; bool; int8; int16; int32; int64; uint8; uint16; uint32;
-      uint64; weakfloat; fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz; float16;
-      bfloat16; float32; float64;
-    |]
+let clc_order = lud_order
 
 (* clc_expected.(i).(j) = can_lossless_cast clc_order.(i) clc_order.(j). *)
 let clc_expected =
   [|
-    [| 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
-    [| 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
-    [| 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1 |];
-    [| 1; 1; 0; 1; 1; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 1; 1 |];
-    [| 1; 1; 0; 0; 1; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1 |];
-    [| 1; 1; 0; 0; 0; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1 |];
-    [| 1; 1; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
-    [| 1; 1; 0; 0; 1; 1; 1; 1; 1; 1; 1; 0; 0; 0; 0; 0; 1; 0; 1; 1 |];
-    [| 1; 1; 0; 0; 0; 1; 1; 0; 1; 1; 1; 0; 0; 0; 0; 0; 0; 0; 1; 1 |];
-    [| 1; 1; 0; 0; 0; 0; 1; 0; 0; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 1 |];
-    [| 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 1; 0; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 1; 0; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 1; 0; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1; 0; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1 |];
-    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1 |];
+    [| 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
+    [| 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1; 1 |];
+    [| 1; 0; 1; 1; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 1; 1 |];
+    [| 1; 0; 0; 1; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1 |];
+    [| 1; 0; 0; 0; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1 |];
+    [| 1; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
+    [| 1; 0; 0; 1; 1; 1; 1; 1; 1; 1; 0; 0; 0; 0; 0; 1; 0; 1; 1 |];
+    [| 1; 0; 0; 0; 1; 1; 0; 1; 1; 1; 0; 0; 0; 0; 0; 0; 0; 1; 1 |];
+    [| 1; 0; 0; 0; 0; 1; 0; 0; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 1 |];
+    [| 1; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 0 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 0; 1; 0; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 0; 1; 0; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 1; 0; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1; 0; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 0; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1 |];
+    [| 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 1 |];
   |]
 
 (* Predicates and identity *)
 
 let predicates () =
-  equal int 0 (Dtype.priority Dtype.index);
+  equal int 0 (Dtype.priority Dtype.weakint);
   equal int 9 (Dtype.priority Dtype.weakfloat);
-  equal int 800 (Dtype.bitsize Dtype.index);
+  equal int 800 (Dtype.bitsize Dtype.weakint);
   equal int 800 (Dtype.bitsize Dtype.weakfloat);
-  is_true ~msg:"index is an integer" (Dtype.is_int Dtype.index);
-  is_false ~msg:"index is not unsigned" (Dtype.is_unsigned Dtype.index);
-  is_false ~msg:"index is not weak" (Dtype.is_weak Dtype.index);
-  is_false ~msg:"index is not float" (Dtype.is_float Dtype.index);
+  is_false ~msg:"weakint is not unsigned" (Dtype.is_unsigned Dtype.weakint);
+  is_false ~msg:"weakint is not float" (Dtype.is_float Dtype.weakint);
   is_true ~msg:"weakfloat is a float" (Dtype.is_float Dtype.weakfloat);
   is_true ~msg:"weakfloat is weak" (Dtype.is_weak Dtype.weakfloat);
   is_true ~msg:"weakint is weak" (Dtype.is_weak Dtype.weakint);
@@ -174,7 +165,6 @@ let repr_surface () =
   equal string "dtypes.fp8e4m3" (Dtype.repr Dtype.fp8e4m3);
   equal string "dtypes.bool" (Dtype.repr Dtype.bool);
   equal string "dtypes.weakint" (Dtype.repr Dtype.weakint);
-  equal string "dtypes.index" (Dtype.repr Dtype.index);
   equal string "dtypes.weakfloat" (Dtype.repr Dtype.weakfloat)
 
 let address_space () =
@@ -211,8 +201,9 @@ let promotion_edges () =
   equal dtype Dtype.int16 (lub [ Dtype.int8; Dtype.uint8 ]);
   (* Cross-category: int promotes through weakfloat/fp8 into float. *)
   equal dtype Dtype.float16 (lub [ Dtype.float16; Dtype.int64 ]);
-  (* int64 sits directly below uint64 in the lattice, so their join is uint64. *)
-  equal dtype Dtype.uint64 (lub [ Dtype.int64; Dtype.uint64 ]);
+  (* Signed and unsigned 64-bit have no common integer supertype: both climb
+     into the floats, meeting at weakfloat. *)
+  equal dtype Dtype.weakfloat (lub [ Dtype.int64; Dtype.uint64 ]);
   (* FP8 siblings meet at float16. *)
   equal dtype Dtype.float16 (lub [ Dtype.fp8e4m3; Dtype.fp8e5m2 ]);
   (* Float16 and bfloat16 are incomparable; they meet at float32. *)
@@ -221,15 +212,25 @@ let promotion_edges () =
 let promotion_errors () =
   raises_invalid_arg "Dtype.least_upper_dtype: empty list" (fun () -> lub []);
   equal dtype Dtype.weakint (lub [ Dtype.weakint ]);
-  is_true ~msg:"index is outside the lattice"
-    (raises_invalid (fun () -> lub [ Dtype.index; Dtype.int32 ]));
   is_true ~msg:"void is outside the lattice"
     (raises_invalid (fun () -> lub [ Dtype.void; Dtype.int32 ]))
 
 let least_upper_float_cases () =
   equal dtype Dtype.float32 (Dtype.least_upper_float Dtype.int8);
   equal dtype Dtype.float16 (Dtype.least_upper_float Dtype.float16);
-  equal dtype Dtype.weakfloat (Dtype.least_upper_float Dtype.weakfloat)
+  equal dtype Dtype.weakfloat (Dtype.least_upper_float Dtype.weakfloat);
+  (* an uncommitted integer becomes an uncommitted float, not default_float *)
+  equal dtype Dtype.weakfloat (Dtype.least_upper_float Dtype.weakint)
+
+let strong_and_weak () =
+  equal dtype Dtype.int32 (Dtype.strong_dtype Dtype.weakint);
+  equal dtype Dtype.float32 (Dtype.strong_dtype Dtype.weakfloat);
+  equal dtype Dtype.int8 (Dtype.strong_dtype Dtype.int8);
+  equal dtype Dtype.bool (Dtype.strong_dtype Dtype.bool);
+  equal dtype Dtype.weakint (Dtype.weak_dtype Dtype.int32);
+  equal dtype Dtype.weakfloat (Dtype.weak_dtype Dtype.float16);
+  equal dtype Dtype.bool (Dtype.weak_dtype Dtype.bool);
+  equal dtype Dtype.void (Dtype.weak_dtype Dtype.void)
 
 (* Lossless cast *)
 
@@ -242,11 +243,9 @@ let lossless_matrix () =
         clc_order)
     clc_order
 
-let lossless_to_index () =
-  is_true (Dtype.can_lossless_cast Dtype.int32 Dtype.index);
-  is_true (Dtype.can_lossless_cast Dtype.uint64 Dtype.index);
+let lossless_to_weak () =
   is_true (Dtype.can_lossless_cast Dtype.int32 Dtype.weakint);
-  is_false (Dtype.can_lossless_cast Dtype.float32 Dtype.index);
+  is_true (Dtype.can_lossless_cast Dtype.uint64 Dtype.weakint);
   is_false (Dtype.can_lossless_cast Dtype.float32 Dtype.weakint)
 
 (* Sum accumulator *)
@@ -361,7 +360,6 @@ let storage_formats () =
   equal char_option (Some 'H') (Dtype.storage_fmt_for_dtype Dtype.bfloat16);
   equal char_option (Some 'B') (Dtype.storage_fmt_for_dtype Dtype.fp8e4m3);
   equal char_option None (Dtype.storage_fmt_for_dtype Dtype.weakint);
-  equal char_option None (Dtype.storage_fmt_for_dtype Dtype.index);
   equal char_option None (Dtype.storage_fmt_for_dtype Dtype.weakfloat);
   equal char_option None (Dtype.storage_fmt_for_dtype Dtype.Uint128)
 
@@ -408,8 +406,8 @@ let bounds () =
   equal bound (`UInt Int64.minus_one) (Dtype.max Dtype.uint64);
   equal bound (`Float neg_infinity) (Dtype.min Dtype.float32);
   equal bound (`Float infinity) (Dtype.max Dtype.float64);
-  (* Weak and index integers report the Int64 range as an approximation. *)
-  equal bound (`SInt Int64.min_int) (Dtype.min Dtype.index);
+  (* Weak integers report the Int64 range as an approximation. *)
+  equal bound (`SInt Int64.min_int) (Dtype.min Dtype.weakint);
   equal bound (`SInt Int64.max_int) (Dtype.max Dtype.weakint);
   equal bound (`Float neg_infinity) (Dtype.min Dtype.weakfloat);
   raises_invalid_arg "void has no numeric bounds" (fun () -> Dtype.min Dtype.void)
@@ -577,10 +575,11 @@ let tests =
         test "representative edges" promotion_edges;
         test "errors and singletons" promotion_errors;
         test "least_upper_float" least_upper_float_cases;
+        test "strong and weak projections" strong_and_weak;
       ];
     group "Lossless Cast"
       [
-        test "full matrix" lossless_matrix; test "to weak and index" lossless_to_index;
+        test "full matrix" lossless_matrix; test "to weak" lossless_to_weak;
       ];
     group "Sum Accumulator" [ test "all categories" sum_acc ];
     group "FP Conversion"

@@ -19,32 +19,26 @@
 
     {b Weak dtypes.} {!Weakint} and {!Weakfloat} are abstract literal types
     with priority [0] and [9] respectively and a sentinel bit width of [800].
-    They stand for untyped integer and floating-point literals and promote to
-    any concrete type of their kind ([Weakint + Int8 = Int8],
-    [Weakfloat + Float16 = Float16]). {!is_weak} tests for either.
-
-    {b Index.} {!Index} is a dedicated integer dtype for shapes and loop
-    indices. It has priority [0] and the same sentinel width [800], is
-    classified as an integer, but is deliberately absent from the promotion
-    lattice: index arithmetic never mixes dtypes, so {!least_upper_dtype} of
-    {!Index} with anything else raises. *)
+    They stand for values whose width is not yet committed — integer literals,
+    loop indices, shape expressions, and floating-point literals. They occupy
+    the bottom of each branch of the lattice and promote to any concrete type
+    of their kind ([Weakint + Int8 = Int8], [Weakfloat + Float16 = Float16]).
+    {!is_weak} tests for either; {!strong_dtype} commits one to its default
+    width and {!weak_dtype} is the reverse projection. *)
 
 (** {1:types Dtype} *)
 
 (** Scalar data type.
 
     Promotion priority ranges from [-1] ({!Void}) to [15] ({!Float64}).
-    {!Weakint}, {!Index}, and {!Bool} share priority [0]. See {!priority} and
+    {!Weakint} and {!Bool} share priority [0]. See {!priority} and
     {!least_upper_dtype} for the full ordering. *)
 type t =
   | Void  (** Absence of a value. Zero bit width; has no numeric bounds. *)
-  | Index
-      (** Integer dtype for shapes and loop indices. Priority [0], sentinel
-          width [800]. Classified as an integer but never participates in
-          promotion. *)
   | Weakint
-      (** Abstract integer literal. Priority [0], sentinel width [800].
-          Promotes to any concrete integer type. *)
+      (** Integer with no committed width: literals, loop indices, and shape
+          expressions. Priority [0], sentinel width [800]. Promotes to any
+          concrete integer type. *)
   | Bool  (** Boolean. 1 bit. *)
   | Int8  (** Signed 8-bit integer. *)
   | Int16  (** Signed 16-bit integer. *)
@@ -108,7 +102,6 @@ val fp8e5m2 : t
 val fp8e4m3fnuz : t
 val fp8e5m2fnuz : t
 val weakint : t
-val index : t
 val weakfloat : t
 
 val default_float : t
@@ -120,8 +113,12 @@ val default_float : t
     {!least_upper_float}. *)
 
 val default_int : t
-(** [default_int] is {!int32}. Used by {!sum_acc_dtype} to widen narrow integer
-    accumulators. *)
+(** [default_int] is the dtype named by the [DEFAULT_INT] environment variable
+    at module initialization, or {!int32} when unset. The value must name an
+    integer dtype using a canonical name or public alias such as ["int32"],
+    ["int"], ["long"], or ["default_int"]. Short display mnemonics such as
+    ["i32"] and ["i64"] are not accepted. Used by {!strong_dtype} and by
+    {!sum_acc_dtype} to widen narrow integer accumulators. *)
 
 (** {1:predicates Predicates} *)
 
@@ -130,14 +127,13 @@ val is_float : t -> bool
     fp8 dtypes and {!Weakfloat}. *)
 
 val is_int : t -> bool
-(** [is_int dt] is [true] iff [dt] is an integer dtype, including {!Weakint} and
-    {!Index}. {!Uint128} and {!Uint256} are private storage helpers and are not
+(** [is_int dt] is [true] iff [dt] is an integer dtype, including {!Weakint}.
+    {!Uint128} and {!Uint256} are private storage helpers and are not
     classified as integers. *)
 
 val is_unsigned : t -> bool
 (** [is_unsigned dt] is [true] iff [dt] is a public unsigned integer dtype.
-    {!Weakint}, {!Index}, {!Uint128}, and {!Uint256} are not classified as
-    unsigned. *)
+    {!Weakint}, {!Uint128}, and {!Uint256} are not classified as unsigned. *)
 
 val is_bool : t -> bool
 (** [is_bool dt] is [true] iff [dt] is {!Bool}. *)
@@ -146,13 +142,26 @@ val is_fp8 : t -> bool
 (** [is_fp8 dt] is [true] iff [dt] is one of the four fp8 dtypes. *)
 
 val is_weak : t -> bool
-(** [is_weak dt] is [true] iff [dt] is {!Weakint} or {!Weakfloat}. {!Index} is
-    not a weak dtype. *)
+(** [is_weak dt] is [true] iff [dt] is {!Weakint} or {!Weakfloat}. *)
+
+val strong_dtype : t -> t
+(** [strong_dtype dt] commits a weak dtype to its default width: {!Weakint}
+    becomes {!default_int} and {!Weakfloat} becomes {!default_float}. Every
+    other dtype is returned unchanged.
+
+    See also {!weak_dtype}. *)
+
+val weak_dtype : t -> t
+(** [weak_dtype dt] projects [dt] onto the weak dtype of its kind: any float
+    becomes {!Weakfloat}, any integer becomes {!Weakint}. Every other dtype
+    ({!Bool}, {!Void}, and the private wide helpers) is returned unchanged.
+
+    See also {!strong_dtype}. *)
 
 (** {1:properties Properties} *)
 
 val bitsize : t -> int
-(** [bitsize dt] is the size in bits. {!Void} is [0]; {!Weakint}, {!Index}, and
+(** [bitsize dt] is the size in bits. {!Void} is [0]; {!Weakint} and
     {!Weakfloat} carry the sentinel width [800]. *)
 
 val itemsize : t -> int
@@ -161,7 +170,7 @@ val itemsize : t -> int
 val priority : t -> int
 (** [priority dt] is the promotion priority. Higher priorities absorb lower
     ones in {!least_upper_dtype}. Ranges from [-1] ({!Void}) through [0]
-    ({!Bool}, {!Weakint}, {!Index}) to [15] ({!Float64}). *)
+    ({!Bool}, {!Weakint}) to [15] ({!Float64}). *)
 
 (** {1:promotion Promotion} *)
 
@@ -175,12 +184,14 @@ val least_upper_dtype : t list -> t
 
     Raises [Invalid_argument] if [ts] is empty, or if the inputs have no common
     supertype — which happens for any dtype outside the lattice, such as
-    {!Index}, {!Void}, {!Uint128}, or {!Uint256}.
+    {!Void}, {!Uint128}, or {!Uint256}.
 
     See also {!least_upper_float} and {!can_lossless_cast}. *)
 
 val least_upper_float : t -> t
-(** [least_upper_float dt] is [dt] if [dt] is floating-point, or
+(** [least_upper_float dt] is {!Weakfloat} if [dt] is {!Weakint} — an
+    uncommitted integer becomes an uncommitted float rather than committing to
+    {!default_float} — [dt] itself if [dt] is already floating-point, and
     [least_upper_dtype [dt; default_float]] otherwise.
 
     See also {!least_upper_dtype}. *)
@@ -188,8 +199,8 @@ val least_upper_float : t -> t
 val can_lossless_cast : t -> t -> bool
 (** [can_lossless_cast src dst] is [true] iff every value representable by
     [src] is exactly representable by [dst]. {!Bool} casts losslessly to any
-    dtype; any signed or unsigned integer type casts losslessly to {!Weakint}
-    and {!Index}.
+    dtype; any signed or unsigned integer type casts losslessly to
+    {!Weakint}.
 
     This checks exact representability, not promotion. For instance,
     [can_lossless_cast int32 float32] is [false] (float32 cannot represent
@@ -211,7 +222,7 @@ val sum_acc_dtype : t -> t
       mnemonics such as ["f32"], ["u8"], and ["bf16"] are not accepted.
 
     Raises [Invalid_argument] for dtypes outside the lattice (see
-    {!least_upper_dtype}), such as {!Index}. *)
+    {!least_upper_dtype}), such as {!Void}. *)
 
 (** {1:bounds Bounds} *)
 
@@ -220,9 +231,9 @@ type bound =
 (** Numeric bounds for dtypes. Returned by {!min} and {!max}.
 
     - [`Bool b] for boolean bounds.
-    - [`SInt n] for signed integer bounds, including {!Weakint} and {!Index},
-      which report the [Int64] range as an approximation of their [800]-bit
-      sentinel width.
+    - [`SInt n] for signed integer bounds, including {!Weakint}, which reports
+      the [Int64] range as an approximation of its [800]-bit sentinel
+      width.
     - [`UInt n] for unsigned integer bounds. Values are raw 64-bit unsigned bit
       patterns stored in an [int64] (for example {!Uint64}'s max is
       [`UInt Int64.minus_one]).
@@ -267,7 +278,7 @@ val compare : t -> t -> int
 
 val to_string : t -> string
 (** [to_string dt] is the short display mnemonic of [dt] (for example ["f32"],
-    ["i64"], ["bool"], ["void"], ["weakint"], ["index"]). *)
+    ["i64"], ["bool"], ["void"], ["weakint"]). *)
 
 val repr : t -> string
 (** [repr dt] is the qualified dtype representation, such as ["dtypes.int"] or
@@ -329,11 +340,10 @@ val truncate_float : t -> float -> float
 
 val truncate_int : t -> int -> int
 (** [truncate_int dt x] reduces integer [x] into the range of integer dtype
-    [dt]. Unsigned types mask to the low [bitsize dt] bits; signed types,
-    {!Weakint}, and {!Index} apply the same mask and sign-extend. When the
-    target width equals or exceeds [Sys.int_size] (notably for {!Int64},
-    {!Uint64}, {!Weakint}, and {!Index} at their sentinel width) [x] is
-    returned unchanged. {!Bool} maps [0] to [0] and any other value to [1].
+    [dt]. Unsigned types mask to the low [bitsize dt] bits; signed types and
+    {!Weakint} apply the same mask and sign-extend. When the target width
+    equals or exceeds [Sys.int_size] (notably for {!Int64}, {!Uint64}, and
+    {!Weakint} at its sentinel width) [x] is returned unchanged. {!Bool} maps [0] to [0] and any other value to [1].
 
     Raises [Invalid_argument] if [dt] is not an integer or bool type.
 
@@ -356,7 +366,7 @@ val storage_fmt_for_dtype : t -> char option
     scalar lane of [dt].
 
     Returns [None] for dtypes without a portable storage format: {!Void},
-    {!Weakint}, {!Index}, {!Weakfloat}, {!Uint128}, and {!Uint256}.
+    {!Weakint}, {!Weakfloat}, {!Uint128}, and {!Uint256}.
     {!Bfloat16} stores as ['H'] and fp8 dtypes store as ['B']. *)
 
 val to_storage_scalar : t -> storage_scalar -> storage_scalar

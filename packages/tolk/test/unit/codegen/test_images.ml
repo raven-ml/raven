@@ -17,7 +17,7 @@ let custom_fmt n =
   | _ -> None
 
 let coord ?(cast = false) x y =
-  let maybe_cast u = if cast then U.cast ~src:u ~dtype:Dtype.index else u in
+  let maybe_cast u = if cast then U.cast ~src:u ~dtype:Dtype.weakint else u in
   let x = maybe_cast x and y = maybe_cast y in
   U.stack ~dtype:(U.dtype x) [ x; y ]
 
@@ -254,10 +254,18 @@ let () =
         ];
       group "late cleanup"
         [
-          test "remove invalid rewrites every sentinel to a typed zero"
+          test "remove invalid zeroes a sentinel at its consumer's dtype"
             (fun () ->
+            (* [Invalid] carries no dtype of its own, so the zero replacing it
+               takes the dtype of the node that reads it. *)
+            let cond =
+              U.variable ~name:"c" ~min_val:0 ~max_val:1 ~dtype:Dtype.bool ()
+            in
+            let gated dt x = U.O.where cond x (U.invalid ()) in
             let root =
-              U.sink [ U.invalid (); U.invalid ~dtype:Dtype.float32 () ]
+              U.sink
+                [ gated Dtype.weakint (U.const_int 7);
+                  gated Dtype.float32 (U.const (Const.float Dtype.float32 7.0)) ]
             in
             let root =
               U.graph_rewrite ~name:"remove invalids"
@@ -278,7 +286,7 @@ let () =
                    match U.op n, U.arg n with
                    | Ops.Const, U.Arg.Value c ->
                        Const.view c = Const.Int 0L
-                       && Dtype.equal (U.dtype n) Dtype.index
+                       && Dtype.equal (U.dtype n) Dtype.weakint
                    | _ -> false)
                  root);
             equal int 1
@@ -299,7 +307,7 @@ let () =
             let root =
               run_matcher
                 Upat.Pattern_matcher.(
-                  Symbolic.pm_lower_index_dtype ++ Coalese.indexing_simplify)
+                  Weak.pm_lower_index_dtype () ++ Coalese.indexing_simplify)
                 node
             in
             let idx =
@@ -310,22 +318,25 @@ let () =
             in
             equal int 0 (count (fun n -> U.op n = Ops.Cast) idx));
           test "lower index dtype concretizes index binary math" (fun () ->
+            (* An all-weak expression commits only once something that is not
+               itself weak demands a width from it, so drive it from a sink. *)
             let x =
               U.cast
                 ~src:(U.const (Const.int Dtype.int32 1))
-                ~dtype:Dtype.index
+                ~dtype:Dtype.weakint
             in
             let y =
               U.cast
                 ~src:(U.const (Const.int Dtype.int32 2))
-                ~dtype:Dtype.index
+                ~dtype:Dtype.weakint
             in
-            let root = run_matcher Symbolic.pm_lower_index_dtype U.O.(x + y) in
-            match U.op root, U.src root with
-            | Ops.Cast, [| add |] ->
-                equal bool true (Dtype.equal (U.dtype root) Dtype.index);
-                equal bool true (Dtype.equal (U.dtype add) Dtype.int32)
-            | _ -> failwith "expected index cast around concrete add");
+            let root =
+              run_matcher (Weak.pm_lower_index_dtype ())
+                (U.sink [ U.O.(x + y) ])
+            in
+            let add = (U.src root).(0) in
+            equal bool true (Ops.equal (U.op add) Ops.Add);
+            equal bool true (Dtype.equal (U.dtype add) Dtype.int32));
           test "move where on value index keeps loads late" (fun () ->
             let buf = buffer_param Dtype.float32 in
             let axis =

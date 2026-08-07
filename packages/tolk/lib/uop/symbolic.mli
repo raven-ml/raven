@@ -76,18 +76,13 @@ val pm_drop_and_clauses : Upat.Pattern_matcher.t
 
 val pm_remove_invalid : Upat.Pattern_matcher.t
 (** [pm_remove_invalid] replaces every {!Const.Invalid} constant with a zero of
-    its dtype. It runs in the final rewrite, after index dtypes are lowered and
+    its dtype. It runs in the final rewrite, after weak dtypes are committed and
     masked loads and stores have been folded into gated forms, so any remaining
     {!Const.Invalid} is a value that is never read. *)
 
 val pm_move_where_on_load : Upat.Pattern_matcher.t
 (** [pm_move_where_on_load] moves eligible [where] guards around value-typed
     indexes into the index validity predicate. *)
-
-val pm_lower_index_dtype : Upat.Pattern_matcher.t
-(** [pm_lower_index_dtype] lowers {!Dtype.index} indexing expressions to
-    concrete integer math ([int32] or [int64] by range), wrapping the result
-    back in an outer cast so the index-typed interface is preserved. *)
 
 val parse_valid : Uop.t -> (Uop.t * bool * int) option
 (** [parse_valid v] parses a validity clause. It returns

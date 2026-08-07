@@ -131,7 +131,7 @@ let next_integer_dtype (dt : Dtype.t) =
     | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
     | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz | Dtype.Float16
     | Dtype.Bfloat16 | Dtype.Float32 | Dtype.Float64 | Dtype.Bool | Dtype.Void
-    | Dtype.Index | Dtype.Weakfloat ->
+    | Dtype.Weakfloat ->
         None
   in
   match next_scalar with

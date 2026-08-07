@@ -21,19 +21,19 @@ type t = { mutable uop : U.t }
    realization rebinding computed nodes onto their buffers) can repoint every
    live handle whose graph contains a rewritten node. Weak slots let the GC
    collect tensors as usual; dead slots are compacted when the array fills. *)
-let live = ref (Weak.create 1024)
+let live = ref (Stdlib.Weak.create 1024)
 let live_n = ref 0
 
 let rec register t =
-  let cap = Weak.length !live in
+  let cap = Stdlib.Weak.length !live in
   if !live_n < cap then begin
-    Weak.set !live !live_n (Some t);
+    Stdlib.Weak.set !live !live_n (Some t);
     incr live_n
   end
   else begin
     let kept = ref [] and n = ref 0 in
     for i = cap - 1 downto 0 do
-      match Weak.get !live i with
+      match Stdlib.Weak.get !live i with
       | Some x ->
           kept := x :: !kept;
           incr n
@@ -41,8 +41,8 @@ let rec register t =
     done;
     (* Grow only when compaction leaves the array mostly full. *)
     let cap' = if 2 * !n >= cap then 2 * cap else cap in
-    let fresh = Weak.create cap' in
-    List.iteri (fun i x -> Weak.set fresh i (Some x)) !kept;
+    let fresh = Stdlib.Weak.create cap' in
+    List.iteri (fun i x -> Stdlib.Weak.set fresh i (Some x)) !kept;
     live := fresh;
     live_n := !n;
     register t
@@ -51,7 +51,7 @@ let rec register t =
 let live_tensors () =
   let acc = ref [] in
   for i = !live_n - 1 downto 0 do
-    match Weak.get !live i with
+    match Stdlib.Weak.get !live i with
     | Some t -> acc := t :: !acc
     | None -> ()
   done;

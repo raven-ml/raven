@@ -40,7 +40,6 @@ let global_i32_param_with_shape ?(slot = 0) shape =
 
 let i32 n = Uop.const (Const.int Dtype.int32 n)
 
-let weak n = Uop.const_int n
 
 let stack srcs ~dtype =
   Uop.replace (Uop.const_int 0) ~op:Ops.Stack ~dtype
@@ -207,16 +206,16 @@ let index_rejects_gate_source () =
 
 let special_accepts_raw_name () =
   let special =
-    Uop.special ~name:"thread0" ~size:(weak 8) ~dtype:Dtype.index ()
+    Uop.special ~name:"thread0" ~size:(Uop.const_int 8) ~dtype:Dtype.weakint ()
   in
-  is_true ~msg:"index Special raw name is accepted"
+  is_true ~msg:"weakint Special raw name is accepted"
     (accepts Spec.tensor_spec special)
 
 let special_dtype_by_stage () =
   let idx_special =
-    Uop.special ~name:"lidx0" ~size:(weak 8) ~dtype:Dtype.index ()
+    Uop.special ~name:"lidx0" ~size:(Uop.const_int 8) ~dtype:Dtype.weakint ()
   in
-  is_true ~msg:"index Special accepted by tensor spec"
+  is_true ~msg:"weakint Special accepted by tensor spec"
     (accepts Spec.tensor_spec idx_special);
   let i32_special =
     Uop.special ~name:"lidx0" ~size:(i32 8) ~dtype:Dtype.int32 ()
@@ -226,7 +225,7 @@ let special_dtype_by_stage () =
   let mismatch = Uop.replace idx_special ~src:[| i32 8 |] () in
   is_true ~msg:"Special result and size dtype must match"
     (rejected Spec.tensor_spec mismatch);
-  is_true ~msg:"index Special rejected by program spec"
+  is_true ~msg:"weakint Special rejected by program spec"
     (rejected Spec.program_spec idx_special)
 
 let group_rejects_value_source () =
@@ -302,7 +301,7 @@ let group_after_bad_layouts () =
 (* Tensor spec *)
 
 let tensor_accepts_global_buffer () =
-  let shape = weak 16 in
+  let shape = Uop.const_int 16 in
   let b =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape
       ~device:(Uop.Single "CPU") ()
@@ -351,7 +350,7 @@ let copy_rejects_bad_device_or_dtype () =
 
 let slice_is_full_spec_only () =
   let b = Uop.buffer ~slot:0 ~dtype:Dtype.int32 () in
-  let valid = Uop.slice ~src:b ~offset:(weak 0) ~size:4 ~dtype:Dtype.int32 in
+  let valid = Uop.slice ~src:b ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32 in
   is_true ~msg:"Slice rejected by tensor_spec"
     (rejected Spec.tensor_spec valid);
   is_true ~msg:"Slice accepted by full_spec"
@@ -365,14 +364,14 @@ let slice_is_full_spec_only () =
   is_true ~msg:"Slice only requires integer size in full_spec"
     (accepts Spec.full_spec bad_size);
   let bad_source =
-    Uop.slice ~src:(i32 1) ~offset:(weak 0) ~size:4 ~dtype:Dtype.int32
+    Uop.slice ~src:(i32 1) ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32
   in
   is_true ~msg:"Slice source must be a buffer/view intermediate"
     (rejected Spec.full_spec bad_source)
 
 let call_function_reject_bad_layouts () =
   let info = call_info "f" in
-  let arg = weak 2 in
+  let arg = Uop.const_int 2 in
   let call = Uop.call ~body:(Uop.sink []) ~args:[ arg ] ~info in
   let missing_info = Uop.replace call ~arg:Uop.Arg.Empty () in
   is_true ~msg:"Call requires Call_info"
@@ -394,18 +393,18 @@ let call_function_source_contracts () =
   let info = call_info "f" in
   let call =
     Uop.call ~body:(Uop.custom_function ~name:"extern" ~srcs:[])
-      ~args:[ weak 2 ] ~info
+      ~args:[ Uop.const_int 2 ] ~info
   in
   let fn =
     Uop.call ~body:(Uop.tuple [ i32 1; Uop.const_float 2.0 ])
-      ~args:[ weak 2 ] ~info
+      ~args:[ Uop.const_int 2 ] ~info
   in
   let projected = Uop.gettuple ~src:fn ~index:1 in
   let bad_call_body =
-    Uop.replace call ~src:[| Uop.tuple [ i32 1 ]; weak 2 |] ()
+    Uop.replace call ~src:[| Uop.tuple [ i32 1 ]; Uop.const_int 2 |] ()
   in
   let bad_function_source =
-    Uop.replace fn ~src:[| Uop.sink []; weak 2 |] ()
+    Uop.replace fn ~src:[| Uop.sink []; Uop.const_int 2 |] ()
   in
   is_true ~msg:"Call accepts opaque Custom_function bodies"
     (accepts Spec.tensor_spec call);
@@ -444,13 +443,13 @@ let gettuple_rejects_bad_sources () =
 
 let reduce_arg_required () =
   let src =
-    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ]) ()
+    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ Uop.const_int 4 ]) ()
   in
   let r = Uop.reduce_axis ~src ~op:Ops.Add ~axes:[ 0 ] in
   is_true ~msg:"tensor reduce accepted" (accepts Spec.tensor_spec r);
   let lowered =
     Uop.reduce ~src:(i32 1)
-      ~ranges:[ Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Reduce () ]
+      ~ranges:[ Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Reduce () ]
       ~op:Ops.Add ~dtype:Dtype.int32
   in
   is_true ~msg:"lowered reduce accepted by tensor spec"
@@ -464,7 +463,7 @@ let tensor_reduce_accepts_lowered_integer_tail () =
     (accepts Spec.tensor_spec r);
   let lowered =
     Uop.reduce ~src:(i32 1)
-      ~ranges:[ Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Reduce () ]
+      ~ranges:[ Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Reduce () ]
       ~op:Ops.Add ~dtype:Dtype.int32
   in
   is_true ~msg:"tensor spec accepts lowered integer tail"
@@ -477,7 +476,7 @@ let tensor_reduce_accepts_lowered_integer_tail () =
 
 let reduce_rejects_old_op_arg () =
   let src =
-    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ]) ()
+    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ Uop.const_int 4 ]) ()
   in
   let r =
     Uop.replace
@@ -520,7 +519,7 @@ let allreduce_rejects_bad_device_or_dtype () =
     (rejected Spec.tensor_spec bad_empty)
 
 let multi_device_selection_layouts () =
-  let shape = Uop.stack [ weak 4 ] in
+  let shape = Uop.stack [ Uop.const_int 4 ] in
   let sharded =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape ~axis:0
       ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
@@ -574,7 +573,7 @@ let multi_device_stack_layouts () =
   is_true ~msg:"Mstack rejects positional device selectors"
     (rejected Spec.tensor_spec bad_indexed);
   let multi_src =
-    Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ])
+    Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(Uop.stack [ Uop.const_int 4 ])
       ~axis:0 ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
   in
   let bad_multi = Uop.mstack [ Uop.multi ~src:multi_src ~axis:0 ] in
@@ -585,7 +584,7 @@ let multi_device_stack_layouts () =
     (rejected Spec.tensor_spec dtype_mismatch)
 
 let multi_device_multi_layouts () =
-  let shape = Uop.stack [ weak 4; weak 4 ] in
+  let shape = Uop.stack [ Uop.const_int 4; Uop.const_int 4 ] in
   let sharded =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape ~axis:1
       ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
@@ -618,7 +617,7 @@ let stage_rejects_bad_layouts () =
   let opts : Uop.stage_opts =
     { device = None; addrspace = Dtype.Global; removable = false }
   in
-  let stage = Uop.stage ~src:(i32 1) ~ranges:[ weak 4 ] ~opts in
+  let stage = Uop.stage ~src:(i32 1) ~ranges:[ Uop.const_int 4 ] ~opts in
   is_true ~msg:"Stage with integer ranges accepted"
     (accepts Spec.tensor_spec stage);
   let bad_range =
@@ -632,18 +631,18 @@ let stage_rejects_bad_layouts () =
 
 let bind_accepts_alu_param_const () =
   let var =
-    Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ~dtype:Dtype.index ()
+    Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ~dtype:Dtype.weakint ()
   in
-  let b = Uop.bind ~var ~value:(weak 3) in
-  is_true ~msg:"ALU Param bound to index const accepted"
+  let b = Uop.bind ~var ~value:(Uop.const_int 3) in
+  is_true ~msg:"ALU Param bound to weakint const accepted"
     (accepts Spec.tensor_spec b)
 
 let bind_rejects_alu_param_stack () =
   let var =
-    Uop.param ~slot:(-1) ~dtype:Dtype.index ~name:"shape"
+    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"shape"
       ~vmin_vmax:(0, 8) ~addrspace:Dtype.Alu ()
   in
-  let value = stack [ weak 1; weak 2 ] ~dtype:Dtype.index in
+  let value = stack [ Uop.const_int 1; Uop.const_int 2 ] ~dtype:Dtype.weakint in
   let b = Uop.bind ~var ~value in
   is_true ~msg:"Bind requires a scalar Const value"
     (rejected Spec.tensor_spec b)
@@ -659,24 +658,24 @@ let bind_rejects_dtype_mismatch () =
     Uop.variable ~name:"n" ~min_val:0 ~max_val:4
       ~dtype:Dtype.int32 ()
   in
-  let b = Uop.bind ~var ~value:(weak 3) in
+  let b = Uop.bind ~var ~value:(Uop.const_int 3) in
   is_true ~msg:"Bind dtype mismatch rejected"
     (rejected Spec.tensor_spec b)
 
 let movement_validates_shape_contracts () =
-  let shape2 = Uop.stack [ weak 2; weak 4 ] in
+  let shape2 = Uop.stack [ Uop.const_int 2; Uop.const_int 4 ] in
   let tensor = Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:shape2 () in
-  let reshape_ok = Uop.reshape ~src:tensor ~shape:(weak 8) in
+  let reshape_ok = Uop.reshape ~src:tensor ~shape:(Uop.const_int 8) in
   is_true ~msg:"valid Reshape accepted" (accepts Spec.tensor_spec reshape_ok);
-  let reshape_bad = Uop.reshape ~src:tensor ~shape:(weak 7) in
+  let reshape_bad = Uop.reshape ~src:tensor ~shape:(Uop.const_int 7) in
   is_true ~msg:"Reshape changing element count rejected"
     (rejected Spec.tensor_spec reshape_bad);
   let expand_src =
     Uop.buffer ~slot:1 ~dtype:Dtype.int32
-      ~shape:(Uop.stack [ weak 1; weak 4 ]) ()
+      ~shape:(Uop.stack [ Uop.const_int 1; Uop.const_int 4 ]) ()
   in
   let expand_ok =
-    Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 4 ])
+    Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ Uop.const_int 2; Uop.const_int 4 ])
   in
   is_true ~msg:"valid Expand accepted" (accepts Spec.tensor_spec expand_ok);
   (* EXPAND only prepends leading axes, so its shape is always well-formed and
@@ -685,38 +684,38 @@ let movement_validates_shape_contracts () =
   is_true ~msg:"broadcast_to rejects incompatible non-one dimension"
     (try
        ignore
-         (Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ weak 2; weak 5 ]));
+         (Uop.broadcast_to ~src:expand_src ~shape:(Uop.stack [ Uop.const_int 2; Uop.const_int 5 ]));
        false
      with Invalid_argument _ -> true);
   let pad_ok =
     Uop.pad ~src:tensor
-      ~offset:(Uop.stack [ weak 1; weak 0 ])
-      ~size:(Uop.stack [ weak 4; weak 4 ])
+      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
+      ~size:(Uop.stack [ Uop.const_int 4; Uop.const_int 4 ])
   in
   is_true ~msg:"valid Pad accepted" (accepts Spec.tensor_spec pad_ok);
   let pad_bad_shape =
-    Uop.pad ~src:tensor ~offset:(weak 0)
-      ~size:(Uop.stack [ weak 2; weak 4 ])
+    Uop.pad ~src:tensor ~offset:(Uop.const_int 0)
+      ~size:(Uop.stack [ Uop.const_int 2; Uop.const_int 4 ])
   in
   is_true ~msg:"Pad offset/size shape mismatch rejected"
     (rejected Spec.tensor_spec pad_bad_shape);
   let pad_bad_bounds =
     Uop.pad ~src:tensor
-      ~offset:(Uop.stack [ weak 1; weak 0 ])
-      ~size:(Uop.stack [ weak 2; weak 4 ])
+      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
+      ~size:(Uop.stack [ Uop.const_int 2; Uop.const_int 4 ])
   in
   is_true ~msg:"Pad output size smaller than offset plus input rejected"
     (rejected Spec.tensor_spec pad_bad_bounds);
   let shrink_ok =
     Uop.shrink ~src:tensor
-      ~offset:(Uop.stack [ weak 1; weak 0 ])
-      ~size:(Uop.stack [ weak 1; weak 4 ])
+      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
+      ~size:(Uop.stack [ Uop.const_int 1; Uop.const_int 4 ])
   in
   is_true ~msg:"valid Shrink accepted" (accepts Spec.tensor_spec shrink_ok);
   let shrink_bad =
     Uop.shrink ~src:tensor
-      ~offset:(Uop.stack [ weak 1; weak 0 ])
-      ~size:(Uop.stack [ weak 3; weak 4 ])
+      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
+      ~size:(Uop.stack [ Uop.const_int 3; Uop.const_int 4 ])
   in
   is_true ~msg:"Shrink extending past input rejected"
     (rejected Spec.tensor_spec shrink_bad);
@@ -729,8 +728,8 @@ let movement_validates_shape_contracts () =
 
 let full_spec_accepts_intermediate_forms () =
   let src = Uop.buffer ~slot:0 ~dtype:Dtype.int32 () in
-  let slice = Uop.slice ~src ~offset:(weak 0) ~size:4 ~dtype:Dtype.int32 in
-  let call = Uop.call ~body:slice ~args:[ weak 4 ] ~info:(call_info "slice") in
+  let slice = Uop.slice ~src ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32 in
+  let call = Uop.call ~body:slice ~args:[ Uop.const_int 4 ] ~info:(call_info "slice") in
   let call_without_info = Uop.replace call ~arg:Uop.Arg.Empty () in
   let call_non_void = Uop.replace call ~dtype:Dtype.int32 () in
   let loose_after =
@@ -743,7 +742,7 @@ let full_spec_accepts_intermediate_forms () =
   let bound =
     Uop.bind
       ~var:(Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ())
-      ~value:(weak 2)
+      ~value:(Uop.const_int 2)
   in
   let loose_bind =
     Uop.replace bound ~src:[| i32 1; Uop.const_float 2.0 |] ()
@@ -813,7 +812,7 @@ let program_buffer_rules () =
     Uop.buffer ~slot:1 ~dtype:Dtype.int32 ~addrspace:Dtype.Reg ()
   in
   let global =
-    Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(weak 16)
+    Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(Uop.const_int 16)
       ~device:(Uop.Single "CPU") ()
   in
   is_true ~msg:"Local Buffer accepted in program_spec"
@@ -829,7 +828,7 @@ let program_range_forms () =
       ~dtype:Dtype.int32 ()
   in
   let weak_range =
-    Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Global ()
+    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Global ()
   in
   is_true ~msg:"int32 Range accepted in program_spec"
     (accepts Spec.program_spec int_range);
@@ -843,7 +842,7 @@ let program_rejects_tensor_only_ops () =
   in
   let reduce =
     Uop.reduce_axis
-      ~src:(Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ weak 4 ]) ())
+      ~src:(Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.stack [ Uop.const_int 4 ]) ())
       ~op:Ops.Add ~axes:[ 0 ]
   in
   let mstack = Uop.mstack [ i32 1; i32 1 ] in
@@ -952,7 +951,7 @@ let program_oob_uses_explicit_buffer_shape () =
 let program_oob_image_pointer_bypasses_bounds () =
   let p =
     Uop.param ~slot:0 ~dtype:Dtype.float32
-      ~shape:(Uop.stack [ weak 4; weak 4; weak 4 ]) ()
+      ~shape:(Uop.stack [ Uop.const_int 4; Uop.const_int 4; Uop.const_int 4 ]) ()
   in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 999)] () in
   let ld = Uop.load ~src:idx () in
@@ -1150,10 +1149,10 @@ let program_end_range_boundaries () =
       ~dtype:Dtype.int32 ()
   in
   let weak_range =
-    Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Global ()
+    Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Global ()
   in
   let closed = Uop.end_ ~value:(i32 1) ~ranges:[ int_range ] in
-  let weak_closed = Uop.end_ ~value:(weak 1) ~ranges:[ weak_range ] in
+  let weak_closed = Uop.end_ ~value:(Uop.const_int 1) ~ranges:[ weak_range ] in
   let bad_tail =
     Uop.replace closed ~src:[| i32 1; i32 2 |] ()
   in

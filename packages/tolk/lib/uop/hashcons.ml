@@ -45,12 +45,12 @@ module Make (H : HashedType) : S with type key = H.t = struct
   type data = H.t hash_consed
 
   type t = {
-    mutable table : data Weak.t array;
+    mutable table : data Stdlib.Weak.t array;
     mutable totsize : int;
     mutable limit : int;
   }
 
-  let emptybucket = Weak.create 0
+  let emptybucket = Stdlib.Weak.create 0
 
   let create sz =
     let sz = if sz < 7 then 7 else sz in
@@ -66,9 +66,9 @@ module Make (H : HashedType) : S with type key = H.t = struct
 
   let iter f t =
     let rec iter_bucket i b =
-      if i >= Weak.length b then ()
+      if i >= Stdlib.Weak.length b then ()
       else
-        match Weak.get b i with
+        match Stdlib.Weak.get b i with
         | Some v -> f v; iter_bucket (i + 1) b
         | None -> iter_bucket (i + 1) b
     in
@@ -76,8 +76,8 @@ module Make (H : HashedType) : S with type key = H.t = struct
 
   let count t =
     let rec count_bucket i b accu =
-      if i >= Weak.length b then accu
-      else count_bucket (i + 1) b (accu + if Weak.check b i then 1 else 0)
+      if i >= Stdlib.Weak.length b then accu
+      else count_bucket (i + 1) b (accu + if Stdlib.Weak.check b i then 1 else 0)
     in
     Array.fold_right (count_bucket 0) t.table 0
 
@@ -96,21 +96,21 @@ module Make (H : HashedType) : S with type key = H.t = struct
   and add t d =
     let index = d.hkey mod Array.length t.table in
     let bucket = t.table.(index) in
-    let sz = Weak.length bucket in
+    let sz = Stdlib.Weak.length bucket in
     let rec loop i =
       if i >= sz then begin
         let newsz = min (3 * sz / 2 + 3) (Sys.max_array_length - 1) in
         if newsz <= sz then
           failwith "Hashcons.Make: hash bucket cannot grow more";
-        let newbucket = Weak.create newsz in
-        Weak.blit bucket 0 newbucket 0 sz;
-        Weak.set newbucket i (Some d);
+        let newbucket = Stdlib.Weak.create newsz in
+        Stdlib.Weak.blit bucket 0 newbucket 0 sz;
+        Stdlib.Weak.set newbucket i (Some d);
         t.table.(index) <- newbucket;
         t.totsize <- t.totsize + (newsz - sz);
         if t.totsize > t.limit * Array.length t.table then resize t
       end else begin
-        if Weak.check bucket i then loop (i + 1)
-        else Weak.set bucket i (Some d)
+        if Stdlib.Weak.check bucket i then loop (i + 1)
+        else Stdlib.Weak.set bucket i (Some d)
       end
     in
     loop 0
@@ -119,16 +119,16 @@ module Make (H : HashedType) : S with type key = H.t = struct
     let hkey = H.hash d land max_int in
     let index = hkey mod Array.length t.table in
     let bucket = t.table.(index) in
-    let sz = Weak.length bucket in
+    let sz = Stdlib.Weak.length bucket in
     let rec loop i =
       if i >= sz then begin
         let hnode = { hkey; tag = gentag (); node = d } in
         add t hnode;
         hnode
       end else
-        match Weak.get bucket i with
+        match Stdlib.Weak.get bucket i with
         | Some v when H.equal v.node d -> begin
-            match Weak.get bucket i with
+            match Stdlib.Weak.get bucket i with
             | Some v -> v
             | None -> loop (i + 1)
           end
@@ -138,7 +138,7 @@ module Make (H : HashedType) : S with type key = H.t = struct
 
   let stats t =
     let len = Array.length t.table in
-    let lens = Array.map Weak.length t.table in
+    let lens = Array.map Stdlib.Weak.length t.table in
     Array.sort compare lens;
     let totlen = Array.fold_left ( + ) 0 lens in
     (len, count t, totlen, lens.(0), lens.(len / 2), lens.(len - 1))

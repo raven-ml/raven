@@ -10,8 +10,9 @@
     A constant pairs a scalar payload with its {!Dtype.t}. Direct integer and
     floating-point constructors validate that the dtype matches the payload
     kind. Integer payloads are always stored as [int64] regardless of the
-    integer width; floating-point payloads are stored as native [float] and are
-    only truncated to [dtype]'s precision on emission, not on construction.
+    integer width; floating-point payloads are rounded to [dtype]'s precision
+    on construction, so a constant never carries more precision than its dtype
+    can represent.
 
     Constants participate in pattern matching and constant folding through
     {!view}. The {!Invalid} payload is the absorbing element of ALU folding
@@ -59,30 +60,28 @@ val int64 : Dtype.t -> int64 -> t
 
     Raises [Invalid_argument]
       if [dtype] is not an integer dtype (as per {!Dtype.is_int}, which accepts
-      {!Dtype.weakint}, {!Dtype.index}, and all signed and unsigned integer
-      types). *)
+      {!Dtype.weakint} and all signed and unsigned integer types). *)
 
 val float : Dtype.t -> float -> t
-(** [float dtype x] is the floating-point constant [x] tagged with [dtype].
-    The value is stored verbatim; narrowing to [dtype]'s precision is
-    deferred to emission via {!Dtype.truncate_float}.
+(** [float dtype x] is the floating-point constant [x] tagged with [dtype],
+    rounded to [dtype]'s precision with {!Dtype.truncate_float}.
 
     Raises [Invalid_argument] if [dtype] is not a floating-point dtype. *)
 
-val invalid : ?dtype:Dtype.t -> unit -> t
-(** [invalid ?dtype ()] is the [Invalid] sentinel. [dtype] defaults to
-    {!Dtype.weakint}. The dtype is unchecked: any dtype is accepted so that
-    [Invalid] can propagate through typed IR positions. *)
+val invalid : t
+(** [invalid] is the [Invalid] sentinel. Its dtype is {!Dtype.bool}: [Invalid]
+    is the bottom of the promotion lattice and satisfies whatever dtype its
+    consumer demands, so it needs no dtype of its own. *)
 
 val of_scalar : Dtype.t -> Dtype.storage_scalar -> t
 (** [of_scalar dtype x] coerces storage scalar [x] according to [dtype]:
-    floating-point dtypes produce canonicalized {!Float} payloads, bool dtypes
-    produce {!Bool}, and all other dtypes produce integer payloads.
-    Float-to-integer conversion follows {!Int64.of_float}. *)
+    floating-point dtypes produce {!Float} payloads rounded to [dtype]'s
+    precision, bool dtypes produce {!Bool}, and all other dtypes produce
+    integer payloads. Float-to-integer conversion follows {!Int64.of_float}. *)
 
 val of_view : Dtype.t -> view -> t
-(** [of_view dtype v] is [invalid ~dtype ()] for {!Invalid}; otherwise it
-    coerces [v] with {!of_scalar}. *)
+(** [of_view dtype v] is {!invalid} for {!Invalid}, ignoring [dtype];
+    otherwise it coerces [v] with {!of_scalar}. *)
 
 (** {1:predicates Predicates and comparisons} *)
 
@@ -102,7 +101,7 @@ val compare : t -> t -> int
 val to_string : t -> string
 (** [to_string c] is a compact [value:dtype] representation using
     {!Dtype.to_string} for the tag (e.g. ["42:i32"], ["3.14:f32"],
-    ["true:bool"], ["Invalid:weakint"]). *)
+    ["true:bool"], ["Invalid:bool"]). *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a constant with {!to_string}. *)

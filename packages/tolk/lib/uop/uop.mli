@@ -671,7 +671,7 @@ val variable :
   name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.t -> unit -> t
 (** [variable ~name ~min_val ~max_val ?dtype ()] is a symbolic
     {!Ops.Param} in {!Dtype.Alu} address space. [dtype] defaults to
-    {!Dtype.index}. Shared. *)
+    {!Dtype.weakint}. Shared. *)
 
 val buffer :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?name:string ->
@@ -721,12 +721,13 @@ val const_of_dtype : ?shape:t -> Dtype.t -> const_value -> t
     If [shape] is supplied and is not scalar, the result is reshaped from
     singleton dimensions and expanded to [shape]. *)
 
-val invalid : ?dtype:Dtype.t -> unit -> t
-(** [invalid ?dtype ()] is the [Invalid] sentinel expressed as a
-    [Const]. [dtype] defaults to {!Dtype.index}. Shared. *)
+val invalid : unit -> t
+(** [invalid ()] is the [Invalid] sentinel expressed as a {!Dtype.bool}
+    [Const]. It is the bottom of the promotion lattice and satisfies whatever
+    dtype its consumer demands. Shared. *)
 
 val const_int : int -> t
-(** [const_int n] is a {!Dtype.index} integer constant, used for shape
+(** [const_int n] is a {!Dtype.weakint} integer constant, used for shape
     dimensions and loop indices. Shared. *)
 
 val const_float : float -> t
@@ -802,8 +803,8 @@ val alu_ternary : op:Ops.t -> a:t -> b:t -> c:t -> t
 
 val valid : src:t -> cond:t -> t
 (** [valid ~src ~cond] is [where cond src invalid]: it masks [src] to the
-    {!Const.invalid} sentinel of [src]'s dtype wherever [cond] is false.
-    Used to gate index expressions. Dtype is inherited from [src]. *)
+    {!Const.invalid} sentinel wherever [cond] is false. Used to gate index
+    expressions. Dtype is inherited from [src]. *)
 
 val cast : src:t -> dtype:Dtype.t -> t
 (** [cast ~src ~dtype] converts [src] to [dtype] with the usual
@@ -870,7 +871,7 @@ val range :
 (** [range ~size ~axis ~kind ?sub ?dtype ?parents ()] is a loop variable
     over \[[0];[size-1]\] bound to schedule [axis] with semantic [kind]
     (see {!Axis_type}). [sub] defaults to [[]]. [dtype] defaults to
-    {!Dtype.index}. [parents] defaults to [[]] and lists the outer
+    {!Dtype.weakint}. [parents] defaults to [[]] and lists the outer
     {!range} nodes this loop must be emitted under, used as
     control-flow ordering dependencies. Shared. *)
 
@@ -898,7 +899,7 @@ val wait : src:t -> t
 val special : name:string -> size:t -> ?dtype:Dtype.t -> unit -> t
 (** [special ~name ~size ?dtype ()] is a backend-provided hardware index
     named [name] and bounded by [size], ranging over \[[0];[size-1]\].
-    [size] is cast to [dtype]. [dtype] defaults to {!Dtype.index}.
+    [size] is cast to [dtype]. [dtype] defaults to {!Dtype.weakint}.
     Kernel. *)
 
 (** {2:ctors_reduce Reduction}
@@ -1463,7 +1464,7 @@ val exec_alu : ?truncate_output:bool -> Ops.t -> Dtype.t -> Const.t list -> Cons
     operand folds to {!Const.invalid} regardless of dtype.
 
     [truncate_output] defaults to [true]: the folded value is narrowed to
-    [target]'s value domain (a no-op for {!Dtype.weakint}, {!Dtype.index}, and
+    [target]'s value domain (a no-op for {!Dtype.weakint} and
     {!Dtype.weakfloat}, which have no finite width). Symbolic fold sites pass
     [false] to keep full host precision, deferring narrowing to emission.
 

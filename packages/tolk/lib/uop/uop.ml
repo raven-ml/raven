@@ -719,7 +719,7 @@ let stage ~src ~ranges ~opts =
     ~src:(Array.of_list (src :: ranges))
     ~arg:(Arg.Stage_info opts)
 
-let variable ~name ~min_val ~max_val ?(dtype = Dtype.index) () =
+let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint) () =
   let shape = mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty in
   param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(min_val, max_val)
     ~addrspace:Dtype.Alu ()
@@ -746,8 +746,8 @@ let const ?(srcs = []) v =
   mk ~op:Ops.Const ~dtype:(Const.dtype v) ~src:(Array.of_list srcs)
     ~arg:(Arg.Value v)
 
-let invalid ?(dtype = Dtype.index) () = const (Const.invalid ~dtype ())
-let const_int n = const (Const.int Dtype.index n)
+let invalid () = const Const.invalid
+let const_int n = const (Const.int Dtype.weakint n)
 let const_float x = const (Const.float Dtype.weakfloat x)
 let const_bool b = const (Const.bool b)
 let zero_like u = const (Const.of_scalar (dtype u) (`Int 0L))
@@ -833,7 +833,7 @@ let alu_ternary ~op ~a ~b ~c =
   mk ~op ~dtype:dt ~src:[| a; b; c |] ~arg:Arg.Empty
 
 let valid ~src ~cond =
-  let inv = const (Const.invalid ~dtype:(dtype src) ()) in
+  let inv = const Const.invalid in
   alu_ternary ~op:Ops.Where ~a:cond ~b:src ~c:inv
 
 let cast ~src ~dtype:target_dtype =
@@ -894,7 +894,7 @@ let rec get_valid u =
   | Ops.Const when is_invalid_const u -> const_bool false
   | _ -> const_bool true
 
-let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.index)
+let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.weakint)
     ?(parents = []) () =
   mk ~op:Ops.Range ~dtype
     ~src:(Array.of_list (size :: parents))
@@ -920,7 +920,7 @@ let barrier ?(srcs = []) () =
 let wait ~src =
   mk ~op:Ops.Wait ~dtype:void_dtype ~src:[| src |] ~arg:Arg.Empty
 
-let special ~name ~size ?(dtype = Dtype.index) () =
+let special ~name ~size ?(dtype = Dtype.weakint) () =
   mk ~op:Ops.Special ~dtype
     ~src:[| cast ~src:size ~dtype |] ~arg:(Arg.String name)
 
@@ -2551,7 +2551,7 @@ let rec const_of_dtype ?shape:target_shape dtype value =
   let ret =
     match value with
     | Const_scalar value -> const (Const.of_scalar dtype value)
-    | Const_invalid -> const (Const.invalid ~dtype ())
+    | Const_invalid -> const Const.invalid
     | Const_tuple values ->
         let src = Array.of_list (List.map (const_of_dtype dtype) values) in
         mk ~op:Ops.Stack ~dtype ~src ~arg:Arg.Empty
@@ -3174,7 +3174,7 @@ let exec_ternary ?(truncate_output = false) op (target : Dtype.t) a b c =
 
 let exec_alu ?(truncate_output = true) op (target : Dtype.t) args =
   let is_binary = Ops.Group.is_binary op in
-  if is_binary && any_invalid args then Some (Const.invalid ~dtype:target ())
+  if is_binary && any_invalid args then Some Const.invalid
   else
     match args with
     | [ a ] when Ops.Group.is_unary op -> exec_unary ~truncate_output op target a

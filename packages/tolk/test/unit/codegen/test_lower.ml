@@ -77,7 +77,7 @@ let () =
             is_true ~msg:"no reachable index dtype remains"
               (not
                  (List.exists
-                    (fun node -> Dtype.equal (U.dtype node) Dtype.index)
+                    (fun node -> Dtype.equal (U.dtype node) Dtype.weakint)
                     (U.toposort lowered)));
             Spec.type_verify Spec.program_spec lowered);
           test "memory operands feeding ALU become explicit loads" (fun () ->
@@ -121,7 +121,7 @@ let () =
                 ~rhs:(U.const (Const.int Dtype.int32 3))
             in
             let invalid_idx =
-              U.O.where gate idx (U.invalid ~dtype:Dtype.int32 ())
+              U.O.where gate idx (U.invalid ())
             in
             let mop = U.index ~ptr:p ~idxs:[ invalid_idx ] () in
             let load =
@@ -178,7 +178,7 @@ let () =
             let y = U.const_int 3 in
             let x = U.const_int 5 in
             let coord =
-              U.stack ~dtype:Dtype.index
+              U.stack ~dtype:Dtype.weakint
                 [ U.O.where gate y (U.invalid ());
                   U.O.where gate x (U.invalid ()) ]
             in
@@ -214,7 +214,7 @@ let () =
             let y = U.const_int 3 in
             let x = U.const_int 5 in
             let coord =
-              U.stack ~dtype:Dtype.index
+              U.stack ~dtype:Dtype.weakint
                 [ U.O.where gate y (U.invalid ());
                   U.O.where gate x (U.invalid ()) ]
             in
@@ -342,7 +342,7 @@ let () =
             let dst = U.index ~ptr:p ~idxs:[r] () in
             let value =
               U.O.where gate (U.const_float 1.0)
-                (U.invalid ~dtype:Dtype.float32 ())
+                (U.invalid ())
             in
             let st = U.store ~dst ~value () in
             let root =

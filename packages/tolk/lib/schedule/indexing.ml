@@ -380,13 +380,17 @@ let check_ending_ranges ctx ~pcontig ~ending_get ~ending_set ~out_shape x out_rn
   end
   end
 
-(* Skip nodes that don't take part in range propagation. *)
+(* Skip nodes that don't take part in range propagation: index-domain
+   expressions, which carry no committed width, and the [Invalid] sentinel,
+   which is a masked-out marker rather than a value. Propagating ranges through
+   a gate's [Invalid] branch conjoins the gate with its own negation and makes
+   the gate unsatisfiable. *)
 let skip_for_rangeify x =
   match U.op x with
   | Ops.Store | Ops.End -> false
   | Ops.Call | Ops.Function | Ops.Linear | Ops.Mselect | Ops.Mstack -> true
   | Ops.After -> true
-  | _ -> Dtype.equal (U.dtype x) Dtype.index
+  | _ -> Dtype.equal (U.dtype x) Dtype.weakint || U.is_invalid_const x
 
 (* Merge consumer ranges for nodes with multiple consumers agreeing on
    rank. Non-trivially new axes get fresh ranges and are recorded in the

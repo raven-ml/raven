@@ -75,9 +75,7 @@ let dump_stage7 ?backends ?optimize ~out_dir sink =
 (* Tensor-graph builders, shared by rangeify parity cases. *)
 
 let mk_shape dims =
-  let ids =
-    List.map (fun s -> U.const (Const.int Dtype.index s)) dims
-  in
+  let ids = List.map U.const_int dims in
   match ids with [ d ] -> d | ds -> U.stack ds
 
 let mk_param ~idx ?(dtype = Dtype.float32) ?(device = "CPU") shape =

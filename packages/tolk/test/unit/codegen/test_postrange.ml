@@ -36,13 +36,13 @@ let wrap_sink ?opts_to_apply ?dont_use_locals srcs =
   U.sink ~kernel_info:(kernel_info ?opts_to_apply ?dont_use_locals ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
 
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
 
 let global_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.weakint ()
 
 (* Renderers *)
 
@@ -181,7 +181,7 @@ let symbolic_extent_global_ast () =
   let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let n = U.variable ~name:"n" ~min_val:1 ~max_val:1 () in
   let size = U.O.(n * idx 8) in
-  let r0 = U.range ~size ~axis:0 ~kind:Ak.Global ~dtype:D.index () in
+  let r0 = U.range ~size ~axis:0 ~kind:Ak.Global ~dtype:D.weakint () in
   let in_idx = U.index ~ptr:p1 ~idxs:[r0] () in
   let ld = U.load ~src:in_idx () in
   let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
@@ -308,7 +308,7 @@ let shift_to_tests =
         let rngs = P.rngs t in
         let rng = List.hd rngs in
         let custom_rng =
-          U.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.index ()
+          U.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.weakint ()
         in
         let _replaced, new_rng =
           P.shift_to ~input_new_rng:custom_rng t rng 4 Ak.Warp
@@ -318,7 +318,7 @@ let shift_to_tests =
         let parent = global_range ~axis:0 2 in
         let child =
           U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global
-            ~dtype:D.index ~parents:[ parent ] ()
+            ~dtype:D.weakint ~parents:[ parent ] ()
         in
         let ast = wrap_sink [ U.end_ ~value:child ~ranges:[ parent; child ] ] in
         let t = P.create ast (gpu_renderer ()) in
@@ -606,11 +606,11 @@ let swap_nolocals_tests =
         let ptr = U.param ~slot:0 ~dtype:(global_fptr) () in
         let r0 =
           U.range ~size:(idx 8) ~axis:0 ~sub:[ 1 ] ~kind:Ak.Global
-            ~dtype:D.index ()
+            ~dtype:D.weakint ()
         in
         let r1 =
           U.range ~size:(idx 16) ~axis:1 ~sub:[ 2 ] ~kind:Ak.Global
-            ~dtype:D.index ()
+            ~dtype:D.weakint ()
         in
         let out = U.index ~ptr ~idxs:[ U.O.(r0 + r1) ] () in
         let ast = wrap_sink [ U.end_ ~value:(U.store ~dst:out ~value:r0 ()) ~ranges:[ r0; r1 ] ] in

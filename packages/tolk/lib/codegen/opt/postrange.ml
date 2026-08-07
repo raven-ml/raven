@@ -730,7 +730,6 @@ let rec get_idx_valid u =
       U.stack idxs, U.stack valids
   | _ -> u, U.const_bool true
 
-let invalid_for_dtype dtype = U.invalid ~dtype ()
 
 (* Pad a range to a multiple of [amount]. *)
 let apply_padto t r amount _red_opt =
@@ -774,7 +773,7 @@ let apply_padto t r amount _red_opt =
                 guarded
               else
                 U.alu_ternary ~op:Ops.Where ~a:valid ~b:guarded
-                  ~c:(invalid_for_dtype (U.dtype b))
+                  ~c:(U.invalid ())
             in
             (b, replacement) :: acc
         | Some _ -> acc

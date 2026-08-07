@@ -114,8 +114,8 @@ val tensor_spec : t
 (** Tensor-graph spec. Accepts, on top of {!shared_spec}, float-only unary
     math ({!Ops.Sin}, {!Ops.Log2}, {!Ops.Exp2}, {!Ops.Sqrt},
     {!Ops.Reciprocal}), tensor-level devices, global buffers whose shape source
-    is [index]-typed, scalar constant binds, calls/functions/tuples,
-    index-typed {!Ops.Special} and index arithmetic feeding movement ops,
+    is [weakint]-typed, scalar constant binds, calls/functions/tuples,
+    [weakint]-typed {!Ops.Special},
     movement ops, reductions over an integer tail, copy/allreduce/multi-device
     ops, staging, and program packaging. {!Ops.Slice} is an explicit
     {!full_spec} intermediate, not a tensor-stage node. Concrete device
@@ -124,7 +124,7 @@ val tensor_spec : t
 
 val program_spec : t
 (** Linearized-program spec. Accepts {!shared_spec} plus program-only
-    rejection rules: no [index], [weakint], or [weakfloat] values, movement ops
+    rejection rules: no [weakint] or [weakfloat] values, movement ops
     only for the special index-like {!Ops.Shrink} form, only local/register
     {!Ops.Buffer} nodes, no invalid constants, and {!Ops.If}/{!Ops.Endif} with
     bool conditions and {!Ops.Cast}, {!Ops.Index}, or {!Ops.Shrink} dedup

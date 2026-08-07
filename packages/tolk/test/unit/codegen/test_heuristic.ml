@@ -36,13 +36,13 @@ let kernel_info () =
 let wrap_sink srcs = U.sink ~kernel_info:(kernel_info ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
 
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
 
 let global_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.weakint ()
 
 (* Renderers *)
 

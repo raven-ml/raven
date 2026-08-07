@@ -34,274 +34,31 @@ let is_invalid_const u =
   | Ops.Const, Uop.Arg.Value c -> Const.view c = Const.Invalid
   | _ -> false
 
+(* [Invalid] is a bool const, so a zero replacing it takes its dtype from the
+   consuming node rather than from the sentinel itself. *)
 let pm_remove_invalid : Upat.Pattern_matcher.t =
   let open Upat in
   Pattern_matcher.make [
-    op ~name:"i" Ops.Const
-    => fun bs ->
-         let i = bs $ "i" in
-         match U.dtype i, U.arg i with
-         | dtype, U.Arg.Value c when Const.view c = Const.Invalid ->
-             Some (U.const (Const.zero dtype))
-         | _ -> None;
-  ]
+    (let cond = var "cond" and x = var "x" in
+     where ~name:"w" cond x (op ~name:"i" Ops.Const) => fun bs ->
+       if not (is_invalid_const (bs $ "i")) then None
+       else
+         let w = bs $ "w" in
+         Some
+           (U.replace w
+              ~src:[| bs $ "cond"; bs $ "x"; U.const (Const.zero (U.dtype w)) |]
+              ()));
 
-let is_index_dtype dtype = dtype = Dtype.Index
-
-let cast_to_index node =
-  match U.op node, U.src node with
-  | Ops.Cast, [| src |] when is_index_dtype (U.dtype node) -> Some src
-  | _ -> None
-
-let cast_from_int node =
-  match U.op node, U.src node with
-  | Ops.Cast, [| src |] when Dtype.is_int (U.dtype src) -> Some src
-  | _ -> None
-
-let select_index_dtype node =
-  if U.vmin node < -0x8000_0000 || U.vmax node > 0x7fff_ffff
-  then Dtype.int64
-  else Dtype.int32
-
-let retype_const node dtype =
-  match U.op node, U.arg node with
-  | Ops.Const, U.Arg.Value c ->
-      Some (U.const (Const.of_view dtype (Const.view c)))
-  | _ -> None
-
-let index_range_value node (r : U.range_view) =
-  let size =
-    match cast_to_index r.size with
-    | Some size -> Some size
-    | None when Dtype.is_int (U.dtype r.size) -> Some r.size
-    | None -> None
-  in
-  match size with
-  | None -> None
-  | Some size ->
-      Some
-        (U.replace node
-           ~src:(Array.of_list (size :: r.parents))
-           ~dtype:(U.dtype size) ())
-
-(* Concrete integer value of a index binary operand: the source of a
-   [cast_to_index], or the operand itself when it is already a concrete int.
-   Accepting a bare int lets the index cast bubble past an already-lowered
-   operand (e.g. an integer stride) instead of stalling below it. *)
-let index_binary_operand node =
-  match cast_to_index node with
-  | Some src -> Some src
-  | None -> if Dtype.is_int (U.dtype node) then Some node else None
-
-let lower_index_binary node =
-  let src = U.src node in
-  (* Comparisons of index operands lower alongside index-valued
-     binaries: the reference matches any binary whose operands are
-     index casts and casts the result back to the node dtype (a no-op
-     for the bool result of a comparison). *)
-  let index_operands =
-    Array.length src = 2
-    && is_index_dtype (U.dtype src.(0))
-    && is_index_dtype (U.dtype src.(1))
-  in
-  if
-    not (Ops.Group.is_binary (U.op node))
-    || Array.length src <> 2
-    || not (is_index_dtype (U.dtype node) || index_operands)
-  then None
-  else
-    match index_binary_operand src.(0), index_binary_operand src.(1) with
-    | Some lhs, Some rhs
-      when cast_to_index src.(0) <> None || cast_to_index src.(1) <> None ->
-        let dtype =
-          Dtype.least_upper_dtype
-            [ select_index_dtype node; U.dtype lhs; U.dtype rhs ]
-        in
-        let value =
-          U.alu_binary ~op:(U.op node)
-            ~lhs:(U.cast ~src:lhs ~dtype)
-            ~rhs:(U.cast ~src:rhs ~dtype)
-        in
-        if Dtype.equal (U.dtype value) (U.dtype node) then Some value
-        else Some (U.cast ~src:value ~dtype:(U.dtype node))
-    | _ -> None
-
-let lower_index_const node =
-  match U.op node, U.arg node with
-  | Ops.Const, U.Arg.Value c
-    when is_index_dtype (U.dtype node) && Const.view c <> Const.Invalid ->
-      Option.map
-        (fun src -> U.cast ~src ~dtype:(U.dtype node))
-        (retype_const node (select_index_dtype node))
-  | _ -> None
-
-let lower_index_where node =
-  match U.op node, U.src node with
-  | Ops.Where, [| cond; t; f |] when is_index_dtype (U.dtype node) -> (
-      match cast_to_index t, cast_to_index f with
-      | Some t, Some f ->
-          let dtype = Dtype.least_upper_dtype [ U.dtype t; U.dtype f ] in
-          let value =
-            U.O.where cond (U.cast ~src:t ~dtype) (U.cast ~src:f ~dtype)
-          in
-          Some (U.cast ~src:value ~dtype:(U.dtype node))
-      | _ -> None)
-  | _ -> None
-
-let lower_index_range node =
-  match U.as_range node with
-  | Some r when is_index_dtype (U.dtype node) ->
-      Option.map
-        (fun range -> U.cast ~src:range ~dtype:(U.dtype node))
-        (index_range_value node r)
-  | _ -> None
-
-let lower_index_stack node =
-  match U.op node, U.src node with
-  | Ops.Stack, src when is_index_dtype (U.dtype node) ->
-      let inners = Array.map cast_to_index src in
-      if Array.exists Option.is_none inners then None
-      else
-        let dtype = select_index_dtype node in
-        let scalar_dtype = dtype in
-        let srcs =
-          Array.to_list inners
-          |> List.map (function
-               | Some src -> U.cast ~src ~dtype:scalar_dtype
-               | None -> assert false)
-        in
-        Some
-          (U.cast
-             ~src:(U.stack ~dtype:((dtype)) srcs)
-             ~dtype:(U.dtype node))
-  | _ -> None
-
-let lower_index_special node =
-  match U.op node, U.src node with
-  | Ops.Special, [| size |] when is_index_dtype (U.dtype node) -> (
-      let concrete_size =
-        match cast_to_index size with
-        | Some size -> Some size
-        | None when is_index_dtype (U.dtype size) ->
-            retype_const size (select_index_dtype size)
-        | None when Dtype.is_int (U.dtype size) -> Some size
-        | None -> None
-      in
-      match concrete_size with
-      | None -> None
-      | Some size ->
-          Some
-            (U.cast
-               ~src:(U.replace node ~src:[| size |] ~dtype:Dtype.int32 ())
-               ~dtype:(U.dtype node)))
-  | _ -> None
-
-let lower_index_param node =
-  match U.as_param node with
-  | Some { param; _ }
-    when U.addrspace node = Some Dtype.Alu && is_index_dtype (U.dtype node) ->
-      (* Round-trip the dtype through the arg so the node and its param arg do
-         not desync when the index dtype is lowered to concrete int. *)
-      let arg = U.Arg.Param_arg { param with dtype = Dtype.int32 } in
-      Some
-        (U.cast
-           ~src:(U.replace node ~dtype:Dtype.int32 ~arg ())
-           ~dtype:(U.dtype node))
-  | _ -> None
-
-let lower_index_bind node =
-  match U.as_bind node with
-  | Some { var; value } when is_index_dtype (U.dtype node) -> (
-      match cast_to_index var, cast_to_index value with
-      | Some var, Some value ->
-          Some (U.cast ~src:(U.bind ~var ~value) ~dtype:(U.dtype node))
-      | _ -> None)
-  | _ -> None
-
-(* Strip a hanging int->index cast off an index operand: a bare cast, or a cast
-   nested inside a validity gate [where(gate, idx.cast, Invalid)], which becomes
-   [idx.valid(gate)] carrying the gate without the cast. *)
-let strip_index_cast idx =
-  match cast_from_int idx with
-  | Some inner -> Some inner
-  | None -> (
-      match U.op idx, U.src idx with
-      | Ops.Where, [| gate; inner; invalid |] when is_invalid_const invalid -> (
-          match cast_from_int inner with
-          | Some inner -> Some (U.valid ~src:inner ~cond:gate)
-          | None -> None)
-      | _ -> None)
-
-let lower_index_casts node =
-  match U.as_index node with
-  | Some { ptr; idxs } ->
-      let changed = ref false in
-      let idxs =
-        List.map
-          (fun idx ->
-            match strip_index_cast idx with
-            | None -> idx
-            | Some idx ->
-                changed := true;
-                idx)
-          idxs
-      in
-      if !changed then Some (U.replace node ~src:(Array.of_list (ptr :: idxs)) ())
-      else None
-  | None -> (
-      match U.op node, U.src node with
-      | Ops.Shrink, [| buf; idx; len |] -> (
-          match cast_from_int idx, cast_from_int len with
-          | None, None -> None
-          | idx', len' ->
-              Some
-                (U.replace node
-                   ~src:
-                     [| buf;
-                        Option.value idx' ~default:idx;
-                        Option.value len' ~default:len |]
-                   ()))
-      | _ -> None)
-
-let strip_sink_like_index_casts node =
-  match U.op node with
-  | Ops.Sink | Ops.Noop | Ops.End ->
-      let changed = ref false in
-      let src =
-        Array.map
-          (fun s ->
-            match cast_to_index s with
-            | None -> s
-            | Some s ->
-                changed := true;
-                s)
-          (U.src node)
-      in
-      if !changed then Some (U.replace node ~src ()) else None
-  | _ -> None
-
-let lower_index_dtype_rule node =
-  match lower_index_binary node with
-  | Some _ as r -> r
-  | None ->
-      List.find_map (fun f -> f node)
-        [
-          lower_index_const;
-          lower_index_where;
-          lower_index_range;
-          lower_index_stack;
-          lower_index_special;
-          lower_index_param;
-          lower_index_bind;
-          lower_index_casts;
-          strip_sink_like_index_casts;
-        ]
-
-let pm_lower_index_dtype : Upat.Pattern_matcher.t =
-  let open Upat in
-  Pattern_matcher.make [
-    ops ~name:"node" Ops.Group.all
-    => fun bs -> lower_index_dtype_rule (bs $ "node");
+    (op ~name:"s" Ops.Stack => fun bs ->
+       let s = bs $ "s" in
+       let srcs = U.src s in
+       if not (Array.exists is_invalid_const srcs) then None
+       else
+         let zero = U.const (Const.zero (U.dtype s)) in
+         let srcs =
+           Array.map (fun x -> if is_invalid_const x then zero else x) srcs
+         in
+         Some (U.replace s ~src:srcs ()));
   ]
 
 let is_zero_const node =
@@ -792,17 +549,6 @@ let is_const_int_eq u v =
 let non_cmp_binary =
   List.filter (fun o -> not (Ops.Group.is_comparison o)) Ops.Group.binary
 
-let invalid_is_index i = Uop.dtype i = Dtype.Index
-
-let invalid_for_result u = Uop.invalid ~dtype:(Uop.dtype u) ()
-
-let propagate_invalid_comparison ~op ~cond ~valid_lhs ~valid_rhs ~invalid =
-  let cmp = Uop.alu_binary ~op ~lhs:valid_lhs ~rhs:valid_rhs in
-  if invalid_is_index invalid then Some cmp
-  else
-    let invalid_bool = Uop.cast ~src:invalid ~dtype:(Uop.dtype cmp) in
-    Some (Uop.O.where cond cmp invalid_bool)
-
 (* A LOAD through an INDEX whose scalar offset is [Invalid] folds to [0];
    a STORE through it becomes a NOOP. Two pattern variants cover the
    bare INDEX and [CAST(INDEX)] (when the address is widened). *)
@@ -848,38 +594,45 @@ let pm_invalid_load_store : Upat.Pattern_matcher.t =
          [ make_rule_invalid_load inner; make_rule_invalid_store_idx inner ])
        invalid_index_or_casted)
 
-(* Index-typed invalid gates are never read past a cast or comparison, so the
-   gate drops and the valid value is used directly. Runs before pm_data_invalid
-   so the drop wins over the general gate-lifting rules. *)
+(* An index-domain invalid gate is never read past a cast or a comparison: the
+   consumer recovers the gate itself with [Uop.get_valid], so the gate drops
+   and the valid value is used directly. Without this, a comparison on a gated
+   index lifts the gate into the surrounding boolean algebra, where two halves
+   of a concatenation contribute a predicate and its negation and annihilate.
+   Runs before pm_data_invalid so the drop wins over the general gate-lifting
+   rules. *)
+let is_index_domain u = Dtype.equal (Uop.dtype u) Dtype.weakint
+
 let pm_index_invalid : Upat.Pattern_matcher.t =
   let open Upat in
   Pattern_matcher.make [
     (let cond = var "cond" and x = var "x" in
-     cast ~name:"cast" (where cond x invalid_pat) => fun bs ->
-       let i = bs $ "i" in
-       if is_invalid_const i && invalid_is_index i
+     cast ~name:"cast" (where ~name:"w" cond x invalid_pat) => fun bs ->
+       if is_invalid_const (bs $ "i") && is_index_domain (bs $ "w")
        then Some (Uop.cast ~src:(bs $ "x") ~dtype:(Uop.dtype (bs $ "cast")))
        else None);
 
     (let cond = var "cond" and x = var "x" and y = var "y" in
-     ops ~src:[ where cond x invalid_pat; y ] ~name:"alu" Ops.Group.comparison
+     ops ~src:[ where ~name:"w" cond x invalid_pat; y ] ~name:"alu"
+       Ops.Group.comparison
      => fun bs ->
-       let i = bs $ "i" in
-       if not (is_invalid_const i) then None
-       else
-         propagate_invalid_comparison ~op:(Uop.op (bs $ "alu"))
-           ~cond:(bs $ "cond") ~valid_lhs:(bs $ "x") ~valid_rhs:(bs $ "y")
-           ~invalid:i);
+       if is_invalid_const (bs $ "i") && is_index_domain (bs $ "w")
+       then
+         Some
+           (Uop.alu_binary ~op:(Uop.op (bs $ "alu")) ~lhs:(bs $ "x")
+              ~rhs:(bs $ "y"))
+       else None);
 
     (let cond = var "cond" and x = var "x" and y = var "y" in
-     ops ~src:[ y; where cond x invalid_pat ] ~name:"alu" Ops.Group.comparison
+     ops ~src:[ y; where ~name:"w" cond x invalid_pat ] ~name:"alu"
+       Ops.Group.comparison
      => fun bs ->
-       let i = bs $ "i" in
-       if not (is_invalid_const i) then None
-       else
-         propagate_invalid_comparison ~op:(Uop.op (bs $ "alu"))
-           ~cond:(bs $ "cond") ~valid_lhs:(bs $ "y") ~valid_rhs:(bs $ "x")
-           ~invalid:i);
+       if is_invalid_const (bs $ "i") && is_index_domain (bs $ "w")
+       then
+         Some
+           (Uop.alu_binary ~op:(Uop.op (bs $ "alu")) ~lhs:(bs $ "y")
+              ~rhs:(bs $ "x"))
+       else None);
   ]
 
 (* Everywhere else Invalid poisons the value: ops move inside the gate so the
@@ -888,44 +641,32 @@ let pm_index_invalid : Upat.Pattern_matcher.t =
 let pm_data_invalid : Upat.Pattern_matcher.t =
   let open Upat in
   Pattern_matcher.make [
-    (* Bare Invalid poisons a unary or bitcast result. *)
-    (ops ~src:[ invalid_pat ] Ops.Group.unary => fun bs ->
+    (* Bare Invalid poisons a unary, cast, or bitcast result. *)
+    (ops ~src:[ invalid_pat ] (Ops.Cast :: Ops.Bitcast :: Ops.Group.unary)
+     => fun bs ->
        let i = bs $ "i" in if is_invalid_const i then Some i else None);
 
-    (bitcast ~name:"bc" (op ~name:"i" Ops.Const) => fun bs ->
-       let i = bs $ "i" in
-       if is_invalid_const i
-       then Some (Uop.cast ~src:i ~dtype:(Uop.dtype (bs $ "bc")))
-       else None);
-
-    (* Unary(invalid_gate) -> cond.where(op(x), invalid). *)
+    (* Unary/Cast/Bitcast(invalid_gate) -> cond.where(op(x), invalid). *)
     (let cond = var "cond" and x = var "x" in
-     ops ~src:[ where cond x invalid_pat ] ~name:"alu" Ops.Group.unary
+     ops ~src:[ where cond x invalid_pat ] ~name:"alu"
+       (Ops.Cast :: Ops.Bitcast :: Ops.Group.unary)
      => fun bs ->
        let i = bs $ "i" in
        if not (is_invalid_const i) then None
        else
          let alu = bs $ "alu" and cond = bs $ "cond" and x = bs $ "x" in
-         Some (Uop.O.where cond (Uop.alu_unary ~op:(Uop.op alu) ~src:x)
-                 (invalid_for_result alu)));
+         let dt = Uop.dtype alu in
+         let lifted =
+           match Uop.op alu with
+           | Ops.Cast -> Uop.cast ~src:x ~dtype:dt
+           | Ops.Bitcast -> Uop.bitcast ~src:x ~dtype:dt
+           | op -> Uop.alu_unary ~op ~src:x
+         in
+         Some (Uop.O.where cond lifted (Uop.invalid ())));
 
-    (* BITCAST(invalid_gate) -> cond.where(x.bitcast(d), i.bitcast(d)). *)
-    (let cond = var "cond" and x = var "x" in
-     bitcast ~name:"bc" (where cond x invalid_pat) => fun bs ->
-       let i = bs $ "i" in
-       if not (is_invalid_const i) then None
-       else
-         let bc = bs $ "bc"
-         and cond = bs $ "cond" and x = bs $ "x" in
-         let dt = Uop.dtype bc in
-         Some (Uop.O.where cond
-                 (Uop.bitcast ~src:x ~dtype:dt)
-                 (Uop.bitcast ~src:i ~dtype:dt)));
-
-    (* Binary(invalid_gate, y) -> cond.where(op(x, y), invalid) for non-cmps
-       (comparisons are handled in pm_index_invalid). *)
+    (* Binary(invalid_gate, y) -> cond.where(op(x, y), invalid). *)
     (let cond = var "cond" and x = var "x" and y = var "y" in
-     ops ~src:[ where cond x invalid_pat; y ] ~name:"alu" non_cmp_binary
+     ops ~src:[ where cond x invalid_pat; y ] ~name:"alu" Ops.Group.binary
      => fun bs ->
        let i = bs $ "i" in
        if not (is_invalid_const i) then None
@@ -934,11 +675,11 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
          and x = bs $ "x" and y = bs $ "y" in
          Some (Uop.O.where cond
                  (Uop.alu_binary ~op:(Uop.op alu) ~lhs:x ~rhs:y)
-                 (invalid_for_result alu)));
+                 (Uop.invalid ())));
 
-    (* Binary(y, invalid_gate) -> cond.where(op(y, x), invalid) for non-cmps. *)
+    (* Binary(y, invalid_gate) -> cond.where(op(y, x), invalid). *)
     (let cond = var "cond" and x = var "x" and y = var "y" in
-     ops ~src:[ y; where cond x invalid_pat ] ~name:"alu" non_cmp_binary
+     ops ~src:[ y; where cond x invalid_pat ] ~name:"alu" Ops.Group.binary
      => fun bs ->
        let i = bs $ "i" in
        if not (is_invalid_const i) then None
@@ -947,7 +688,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
          and x = bs $ "x" and y = bs $ "y" in
          Some (Uop.O.where cond
                  (Uop.alu_binary ~op:(Uop.op alu) ~lhs:y ~rhs:x)
-                 (invalid_for_result alu)));
+                 (Uop.invalid ())));
 
     (* Bare Invalid poisons a non-comparison binary. Both operand positions
        need their own rule: pattern src only permutes for commutative ops, so
@@ -963,8 +704,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
     (let a = var "a" in
      where invalid_pat a any => fun bs ->
        let i = bs $ "i" in
-       if not (is_invalid_const i) then None
-       else Some (Uop.cast ~src:i ~dtype:(Uop.dtype (bs $ "a"))));
+       if is_invalid_const i then Some i else None);
 
     (* A gated-Invalid condition lifts its gate out of the where. *)
     (let cond = var "cond" and x = var "x" and a = var "a" and b = var "b" in
@@ -974,9 +714,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
        else
          let cond = bs $ "cond" and x = bs $ "x"
          and a = bs $ "a" and b = bs $ "b" in
-         Some
-           (Uop.O.where cond (Uop.O.where x a b)
-              (Uop.cast ~src:i ~dtype:(Uop.dtype a))));
+         Some (Uop.O.where cond (Uop.O.where x a b) i));
 
     (* Normalize where(cond, Invalid, val) -> !cond.where(val, Invalid).
        If val is also Invalid, fold to Invalid. *)
@@ -1181,7 +919,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        fold_const_alu (bs $ "root"));
 
     (* variations of div/mod recombination, for both truncating and floor ops. *)
-    (op ~dtype:Dtype.index ~name:"x" Ops.Add
+    (op ~dtype:Dtype.weakint ~name:"x" Ops.Add
      => fun bs -> fold_add_divmod_recombine (bs $ "x"));
 
     (* (x:u64 & 0xFFFFFFFF).cast(u32) -> x.cast(u32). *)
@@ -1663,7 +1401,7 @@ let symbolic : Upat.Pattern_matcher.t =
      alu [ x; neg_x ] Ops.Or => fun _ -> Some (Uop.const_bool true));
 
     (* Canonical operand order for index-mode commutative ops. *)
-    (ops ~dtype:Dtype.index ~name:"x" Ops.Group.commutative => fun bs ->
+    (ops ~dtype:Dtype.weakint ~name:"x" Ops.Group.commutative => fun bs ->
        let x = bs $ "x" in
        let s = Uop.src x in
        if Array.length s <> 2 then None
@@ -1713,7 +1451,7 @@ let symbolic : Upat.Pattern_matcher.t =
        Some Uop.O.(y + (x * (c + Uop.const_like c 1))));
 
     (* y * (x + c) -> (y*x) + (y*c)  (distribution, int only). *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and y = cvar ~name:"y" () and c = cvar ~name:"c" () in
      O.(y * (x + c)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
@@ -1768,7 +1506,7 @@ let symbolic : Upat.Pattern_matcher.t =
   @ two_stage_associative_rules
   @ [
     (* c0*x < c1 for positive int c0, c1: rewrites to x < ceil(c1/c0). *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and c0 = cvar ~name:"c0" ()
      and c1 = cvar ~name:"c1" () in
      O.((c0 * x) < c1) => fun bs ->
@@ -1781,7 +1519,7 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* c0*x < c1 for negative c0 (not -1), c1 <= 0: rewrites to
        -x < -floor(-c1/-c0). *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and c0 = cvar ~name:"c0" ()
      and c1 = cvar ~name:"c1" () in
      O.((c0 * x) < c1) => fun bs ->
@@ -1796,7 +1534,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (* (x//d) < c  for d > 0:
        - if c > 0: x < c*d
        - else:     x < c*d - (d-1) *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and d = cvar ~name:"d" ()
      and c = cvar ~name:"c" () in
      O.((x // d) < c) => fun bs ->
@@ -1806,7 +1544,7 @@ let symbolic : Upat.Pattern_matcher.t =
            let bound = if cv > 0 then cv * dv else cv * dv - (dv - 1) in
            Some Uop.O.(x < Uop.const_like x bound)
        | _ -> None);
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and d = cvar ~name:"d" ()
      and c = cvar ~name:"c" () in
      O.(cdiv x d < c) => fun bs ->
@@ -1837,12 +1575,12 @@ let symbolic : Upat.Pattern_matcher.t =
          Some Uop.O.((x * y) * c1));
 
     (* x*(-1) < y*(-1)  ->  y < x. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index) and y = var "y" in
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint) and y = var "y" in
      O.(alu [ x; neg_one ] Ops.Mul < alu [ y; neg_one ] Ops.Mul) => fun bs ->
        Some Uop.O.((bs $ "y") < (bs $ "x")));
 
     (* Generic lt folding: lifts a common factor out of an ADD-split LHS. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and c = cvar ~name:"c" () in
      O.(x < c) => fun bs ->
        match const_int_v (bs $ "c") with
@@ -1850,7 +1588,7 @@ let symbolic : Upat.Pattern_matcher.t =
        | _ -> None);
 
     (* Canonicalise a simplex with positive coefficients > 0. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index) in
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint) in
      op ~src:[ O.(x < one); true_ ] Ops.Cmpne => fun bs ->
        match canonicalize_simplex (bs $ "x") with
        | None -> None
@@ -1909,7 +1647,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (* Narrowing cast chain: [x.cast(a).cast(b)] where [x], [a], [b] are
        ints, [a]'s range covers [x.vmin..x.vmax]. Collapse to
        [x.cast(b)]. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index) in
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint) in
      cast ~name:"b" (cast ~name:"a" x) => fun bs ->
        let x = bs $ "x" and a = bs $ "a" and b = bs $ "b" in
        if not (Dtype.is_int (Uop.dtype x) && Dtype.is_int (Uop.dtype a))
@@ -2027,7 +1765,7 @@ let symbolic : Upat.Pattern_matcher.t =
          with Not_all_const -> None);
 
     (* (x + c).cast(int) -> x.cast + c.cast. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index) and c = cvar ~name:"c" () in
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint) and c = cvar ~name:"c" () in
      cast ~name:"cast" (alu [ x; c ] Ops.Add) => fun bs ->
        let cast = bs $ "cast"
        and x = bs $ "x" and c = bs $ "c" in
@@ -2293,7 +2031,7 @@ let pm_simplify_valid =
        if not (is_invalid_const i) then None
        else
          let cond = bs $ "cond" and x = bs $ "x" in
-         if Uop.dtype x = Dtype.Index then
+         if Uop.dtype x = Dtype.Weakint then
            let x' = uop_given_valid cond x in
            if Uop.equal x x' then None else Some (Uop.O.where cond x' i)
          else None);
@@ -2547,7 +2285,7 @@ let sym : Upat.Pattern_matcher.t =
          Some Uop.O.(nx + ny)));
 
     (* (x + y) * c  ->  x*c + y*c  (int only; floats hit NaN issues). *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Index)
+    (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and y = var "y" and c = cvar ~name:"c" () in
      O.((x + y) * c) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in

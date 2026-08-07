@@ -62,7 +62,9 @@
     - {!Spec} — stage specifications used to validate that a DAG is
       well-formed at a given pipeline stage.
     - {!Symbolic} — algebraic simplification rules wired into
-      {!Uop.simplify}. *)
+      {!Uop.simplify}.
+    - {!Weak} — commits weak dtypes to concrete widths, resolving index
+      arithmetic to [int32] or [int64]. *)
 
 module Ops = Ops
 module Axis_type = Axis_type
@@ -75,4 +77,5 @@ module Movement = Movement
 module Validate = Validate
 module Spec = Spec
 module Symbolic = Symbolic
+module Weak = Weak
 module Divandmod = Divandmod

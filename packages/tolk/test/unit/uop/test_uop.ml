@@ -450,7 +450,7 @@ let uop_constructor_parity_shortcuts () =
   equal (list int) ~msg:"stack cast keeps vector shape" [ 2 ]
     (List.map Uop.vmax (Uop.shape casted));
   is_true ~msg:"cast to same dtype returns source"
-    (Uop.cast ~src:stacked ~dtype:Dtype.index == stacked);
+    (Uop.cast ~src:stacked ~dtype:Dtype.weakint == stacked);
   is_true ~msg:"bitcast to same dtype returns source"
     (Uop.bitcast ~src:stacked ~dtype:(Uop.dtype stacked) == stacked);
   let buf = Uop.buffer ~slot:0 ~dtype:Dtype.int32 () in
@@ -994,7 +994,7 @@ let exec_alu_folds_and_absorbs () =
    | Some r -> is_true ~msg:"Add folds constants" (Const.view r = Const.Int 5L)
    | None -> is_true ~msg:"Add folds constants" false);
   (match
-     Uop.exec_alu Ops.Add Dtype.int32 [ c 2; Const.invalid ~dtype:Dtype.int32 () ]
+     Uop.exec_alu Ops.Add Dtype.int32 [ c 2; Const.invalid ]
    with
    | Some r ->
        is_true ~msg:"an Invalid operand absorbs the fold"
@@ -1401,9 +1401,9 @@ let debug_prints_toposort_like_tinygrad () =
   let b = Uop.const_int 2 in
   let add = Uop.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
   let expected =
-    "   0 Ops.CONST           :            dtypes.index                             []                               1\n\
-     \   1 Ops.CONST           :            dtypes.index                             []                               2\n\
-     \   2 Ops.ADD             :            dtypes.index                             ['1', '2']                       None\n"
+    "   0 Ops.CONST           :            dtypes.weakint                           []                               1\n\
+     \   1 Ops.CONST           :            dtypes.weakint                           []                               2\n\
+     \   2 Ops.ADD             :            dtypes.weakint                           ['1', '2']                       None\n"
   in
   equal string expected (Render.uops_to_string add)
 
@@ -1413,15 +1413,15 @@ let debug_prints_ranges_and_supplied_list_sources () =
   in
   let expr = Uop.O.(r + Uop.const_int 1) in
   let expected_toposort =
-    "   0 Ops.CONST           :            dtypes.index                             []                               4\n\
-     \   1 Ops.RANGE           : 0          dtypes.index                             ['4']                            (0, AxisType.LOOP)\n\
-     \   2 Ops.CONST           :            dtypes.index                             []                               1\n\
-     \   3 Ops.ADD             : 0          dtypes.index                             [1, '1']                         None\n"
+    "   0 Ops.CONST           :            dtypes.weakint                           []                               4\n\
+     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['4']                            (0, AxisType.LOOP)\n\
+     \   2 Ops.CONST           :            dtypes.weakint                           []                               1\n\
+     \   3 Ops.ADD             : 0          dtypes.weakint                           [1, '1']                         None\n"
   in
   equal string expected_toposort (Render.uops_to_string expr);
   let expected_list =
-    "   0 Ops.ADD             : 0          dtypes.index                             [1, '--']                        None\n\
-     \   1 Ops.RANGE           : 0          dtypes.index                             ['--']                           (0, AxisType.LOOP)\n"
+    "   0 Ops.ADD             : 0          dtypes.weakint                           [1, '--']                        None\n\
+     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['--']                           (0, AxisType.LOOP)\n"
   in
   equal string expected_list (Render.uops_list_to_string [ expr; r ])
 
@@ -1429,8 +1429,8 @@ let debug_prints_tinygrad_dtype_reprs () =
   let vec = Uop.stack [ Uop.const_int 1; Uop.const_int 2 ] in
   let buffer = Uop.buffer ~slot:0 ~dtype:Dtype.float32 () in
   let long = Uop.buffer ~slot:1 ~dtype:Dtype.int64 () in
-  is_true ~msg:"index dtype repr"
-    (contains (Render.uops_to_string vec) "dtypes.index");
+  is_true ~msg:"weakint dtype repr"
+    (contains (Render.uops_to_string vec) "dtypes.weakint");
   is_true ~msg:"scalar float dtype repr"
     (contains (Render.uops_to_string buffer) "dtypes.float");
   is_true ~msg:"scalar long dtype repr"
@@ -1523,7 +1523,7 @@ let debug_prints_rich_args_dataclass_style () =
   in
   is_true ~msg:"ParamArg repr"
     (contains out
-       "ParamArg(-1, dtypes.index, vmin_vmax=(1, 9), name='n', addrspace=AddrSpace.ALU)");
+       "ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 9), name='n', addrspace=AddrSpace.ALU)");
   is_true ~msg:"Buffer ParamArg repr"
     (contains out
        "ParamArg(2, dtypes.int, name='buf', addrspace=AddrSpace.LOCAL)");
@@ -1541,7 +1541,7 @@ let debug_prints_rich_args_dataclass_style () =
     (contains out
        "ProgramInfo(name='prog', global_size=(1, 2.0), local_size=None");
   is_true ~msg:"ProgramInfo vars use UOp repr"
-    (contains out "vars=(UOp(Ops.PARAM, dtypes.index, arg=ParamArg");
+    (contains out "vars=(UOp(Ops.PARAM, dtypes.weakint, arg=ParamArg");
   is_true ~msg:"CallInfo repr"
     (contains out "CallInfo(None, 'fn', True, False)")
 

@@ -172,7 +172,7 @@ val const :
 
 val const_int : int -> t
 (** [const_int n] matches a {!Ops.Const} of value [n] with dtype
-    {!Dtype.index} (the dtype {!Uop.const_int} builds). *)
+    {!Dtype.weakint} (the dtype {!Uop.const_int} builds). *)
 
 val const_float : float -> t
 (** [const_float x] matches a {!Ops.Const} of value [x] with dtype

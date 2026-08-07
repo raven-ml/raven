@@ -6,11 +6,11 @@ open Tolk_uop
 
 let rewrite u = Upat.Pattern_matcher.rewrite Divandmod.div_and_mod_symbolic u
 
-(* Index expressions are dtype [Dtype.index]; the matcher keys on it. *)
-let var ?(dtype = Dtype.index) ~name ~lo ~hi () =
+(* Index expressions are dtype [Dtype.weakint]; the matcher keys on it. *)
+let var ?(dtype = Dtype.weakint) ~name ~lo ~hi () =
   Uop.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
-let ic n = Uop.const (Const.int Dtype.index n)
+let ic n = Uop.const (Const.int Dtype.weakint n)
 
 let floordiv lhs rhs = Uop.alu_binary ~op:Ops.Floordiv ~lhs ~rhs
 let floormod lhs rhs = Uop.alu_binary ~op:Ops.Floormod ~lhs ~rhs

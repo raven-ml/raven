@@ -12,7 +12,6 @@ let err_private_wide_repr name = strf "Dtype.repr: private dtype %s has no publi
 
 type t =
   | Void
-  | Index
   | Weakint
   | Bool
   | Int8
@@ -48,13 +47,13 @@ let bitsize = function
   | Int64 | Uint64 | Float64 -> 64
   | Uint128 -> 128
   | Uint256 -> 256
-  | Weakint | Index | Weakfloat -> 800
+  | Weakint | Weakfloat -> 800
 
 let itemsize dt = (bitsize dt + 7) / 8
 
 let priority = function
   | Void -> -1
-  | Weakint | Index | Bool -> 0
+  | Weakint | Bool -> 0
   | Int8 -> 1
   | Uint8 -> 2
   | Int16 -> 3
@@ -97,7 +96,7 @@ let is_fp8_fnuz = function Fp8e4m3fnuz | Fp8e5m2fnuz -> true | _ -> false
 
 let is_int = function
   | Int8 | Int16 | Int32 | Int64
-  | Uint8 | Uint16 | Uint32 | Uint64 | Weakint | Index -> true
+  | Uint8 | Uint16 | Uint32 | Uint64 | Weakint -> true
   | _ -> false
 
 let is_unsigned = function
@@ -110,12 +109,12 @@ let is_weak = function Weakint | Weakfloat -> true | _ -> false
 (* Environment-configured dtypes *)
 
 let default_float_ref = ref Float32
+let default_int_ref = ref Int32
 
 let of_string s =
   match String.lowercase_ascii s with
   | "void" -> Some Void
   | "weakint" -> Some Weakint
-  | "index" -> Some Index
   | "weakfloat" -> Some Weakfloat
   | "bool" -> Some Bool
   | "int8" | "char" -> Some Int8
@@ -133,7 +132,7 @@ let of_string s =
   | "float32" | "float" -> Some Float32
   | "float64" | "double" -> Some Float64
   | "default_float" -> Some !default_float_ref
-  | "default_int" -> Some Int32
+  | "default_int" -> Some !default_int_ref
   | "fp8e4m3" -> Some Fp8e4m3
   | "fp8e5m2" -> Some Fp8e5m2
   | "fp8e4m3fnuz" -> Some Fp8e4m3fnuz
@@ -151,6 +150,11 @@ let env_dtype ~key ~default ~accept =
 let default_float () =
   let dt = env_dtype ~key:"DEFAULT_FLOAT" ~default:Float32 ~accept:is_float in
   default_float_ref := dt;
+  dt
+
+let default_int () =
+  let dt = env_dtype ~key:"DEFAULT_INT" ~default:Int32 ~accept:is_int in
+  default_int_ref := dt;
   dt
 
 let sum_dtype () =
@@ -177,10 +181,17 @@ let fp8e5m2 = Fp8e5m2
 let fp8e4m3fnuz = Fp8e4m3fnuz
 let fp8e5m2fnuz = Fp8e5m2fnuz
 let weakint = Weakint
-let index = Index
 let weakfloat = Weakfloat
 let default_float = default_float ()
-let default_int = Int32
+let default_int = default_int ()
+
+let strong_dtype = function
+  | Weakint -> default_int
+  | Weakfloat -> default_float
+  | dt -> dt
+
+let weak_dtype dt =
+  if is_float dt then Weakfloat else if is_int dt then Weakint else dt
 
 (* Promotion lattice *)
 
@@ -188,7 +199,7 @@ let promo_lattice =
   [ Bool, [ Weakint ];
     Weakint, [ Int8; Uint8 ];
     Int8, [ Int16 ];       Int16, [ Int32 ];
-    Int32, [ Int64 ];      Int64, [ Uint64 ];
+    Int32, [ Int64 ];      Int64, [ Weakfloat ];
     Uint8, [ Int16; Uint16 ];
     Uint16, [ Int32; Uint32 ];
     Uint32, [ Int64; Uint64 ];
@@ -245,13 +256,15 @@ let least_upper_dtype dts =
       | None -> invalid_arg "Dtype.least_upper_dtype: no common ancestor")
 
 let least_upper_float dt =
-  if is_float dt then dt else least_upper_dtype [ dt; default_float ]
+  if dt = Weakint then Weakfloat
+  else if is_float dt then dt
+  else least_upper_dtype [ dt; default_float ]
 
 let can_lossless_cast (dt0 : t) (dt1 : t) =
   dt0 = dt1 || dt0 = Bool
   ||
   match dt1 with
-  | Weakint | Index ->
+  | Weakint ->
       List.mem dt0 [ Uint8; Uint16; Uint32; Uint64; Int8; Int16; Int32; Int64 ]
   | Float64 ->
       List.mem dt0
@@ -289,7 +302,7 @@ let min (dt : t) =
   | Bool -> `Bool false
   | Uint8 | Uint16 | Uint32 | Uint64 -> `UInt 0L
   | Uint128 | Uint256 -> `Bool false
-  | Weakint | Index -> `SInt Int64.min_int
+  | Weakint -> `SInt Int64.min_int
   | Int8 | Int16 | Int32 | Int64 ->
       if b >= 64 then `SInt Int64.min_int
       else `SInt Int64.(neg (shift_left 1L (b - 1)))
@@ -305,7 +318,7 @@ let max (dt : t) =
   | Uint8 | Uint16 | Uint32 -> `UInt Int64.(sub (shift_left 1L b) 1L)
   | Uint64 -> `UInt Int64.minus_one
   | Uint128 | Uint256 -> `Bool true
-  | Weakint | Index -> `SInt Int64.max_int
+  | Weakint -> `SInt Int64.max_int
   | Int8 | Int16 | Int32 | Int64 ->
       if b >= 64 then `SInt Int64.max_int
       else `SInt Int64.(sub (shift_left 1L (b - 1)) 1L)
@@ -327,7 +340,7 @@ let finfo = function
 
 let to_string = function
   | Void -> "void"   | Bool -> "bool"   | Weakint -> "weakint"
-  | Index -> "index" | Weakfloat -> "weakfloat"
+  | Weakfloat -> "weakfloat"
   | Int8 -> "i8"     | Int16 -> "i16"   | Int32 -> "i32"   | Int64 -> "i64"
   | Uint8 -> "u8"    | Uint16 -> "u16"  | Uint32 -> "u32"  | Uint64 -> "u64"
   | Uint128 -> "u128" | Uint256 -> "u256"
@@ -337,7 +350,7 @@ let to_string = function
   | Fp8e4m3fnuz -> "fp8e4m3fnuz" | Fp8e5m2fnuz -> "fp8e5m2fnuz"
 
 let repr_name = function
-  | Void -> "void" | Weakint -> "weakint" | Index -> "index"
+  | Void -> "void" | Weakint -> "weakint"
   | Weakfloat -> "weakfloat" | Bool -> "bool"
   | Int8 -> "char" | Int16 -> "short" | Int32 -> "int" | Int64 -> "long"
   | Uint8 -> "uchar" | Uint16 -> "ushort" | Uint32 -> "uint"
@@ -633,7 +646,7 @@ let truncate_int (dt : t) x =
   | Uint128 | Uint256 ->
       (* Virtual wider-than-native types: no OCaml int truncation. *)
       x
-  | Int8 | Int16 | Int32 | Int64 | Weakint | Index ->
+  | Int8 | Int16 | Int32 | Int64 | Weakint ->
       if b >= Sys.int_size then x
       else
         let mask = (1 lsl b) - 1 in
@@ -660,7 +673,7 @@ let storage_fmt_for_dtype (dt : t) =
   | Float16 -> Some 'e'
   | Float32 -> Some 'f'
   | Float64 -> Some 'd'
-  | Void | Weakint | Index | Weakfloat | Uint128 | Uint256 -> None
+  | Void | Weakint | Weakfloat | Uint128 | Uint256 -> None
 
 let storage_bool = function
   | `Bool b -> b
@@ -684,7 +697,7 @@ let truncate_int64 (dt : t) x =
   | Uint8 | Uint16 | Uint32 | Uint64 ->
       if b >= 64 then x else Int64.logand x Int64.(sub (shift_left 1L b) 1L)
   | Uint128 | Uint256 -> x
-  | Int8 | Int16 | Int32 | Int64 | Weakint | Index ->
+  | Int8 | Int16 | Int32 | Int64 | Weakint ->
       if b >= 64 then x
       else
         let mask = Int64.(sub (shift_left 1L b) 1L) in
@@ -708,7 +721,7 @@ let to_storage_scalar (dt : t) x =
       `Int (Int64.of_int (float_to_fp8 dt (storage_float x)))
   | Float32 | Float64 | Weakfloat -> `Float (storage_float x)
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Uint128
-  | Uint256 | Weakint | Index -> `Int (storage_int64 x)
+  | Uint256 | Weakint -> `Int (storage_int64 x)
   | Void -> invalid_arg "to_storage_scalar: void has no storage scalar"
 
 let from_storage_scalar x (dt : t) =
@@ -721,7 +734,7 @@ let from_storage_scalar x (dt : t) =
       `Float (fp8_to_float dt (Int64.to_int (storage_int64 x)))
   | Float16 | Float32 | Float64 | Weakfloat -> `Float (storage_float x)
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Uint128
-  | Uint256 | Weakint | Index -> `Int (storage_int64 x)
+  | Uint256 | Weakint -> `Int (storage_int64 x)
   | Void -> invalid_arg "from_storage_scalar: void has no storage scalar"
 
 let truncate (dt : t) x =
@@ -730,5 +743,5 @@ let truncate (dt : t) x =
   | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz
   | Fp8e5m2fnuz | Weakfloat -> `Float (truncate_float dt (storage_float x))
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Uint128
-  | Uint256 | Weakint | Index -> `Int (truncate_int64 dt (storage_int64 x))
+  | Uint256 | Weakint -> `Int (truncate_int64 dt (storage_int64 x))
   | Void -> invalid_arg "truncate: void has no storage scalar"

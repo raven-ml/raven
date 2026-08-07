@@ -753,7 +753,7 @@ let pm_reduce_simplify =
    math on a loaded index can overflow. *)
 let rule_undo_add_lt_on_load =
   let open Upat in
-  let x = var_dtype "x" (exact_dtype Dtype.index)
+  let x = var_dtype "x" (exact_dtype Dtype.weakint)
   and y = var "y"
   and c = var "c" in
   O.(x + y < c) => fun bs ->

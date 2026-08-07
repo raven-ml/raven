@@ -106,7 +106,7 @@ let rule_nested_div =
 (* Rule 1b: (x+c)//d  ->  ((x+c%d)//d + c//d) when c%d != c and d > 0. *)
 let rule_add_const_div =
   let open Upat in
-  let x = var_dtype "x" (exact_dtype Dtype.index)
+  let x = var_dtype "x" (exact_dtype Dtype.weakint)
   and c = cvar ~name:"c" ()
   and d = cvar ~name:"d" () in
   let n = alu ~name:"n" [ x; c ] Ops.Add in
@@ -503,7 +503,7 @@ and fold_divmod_general_rec (d : Uop.t) : Uop.t option =
 
 let rule_fold_divmod_general =
   let open Upat in
-  ops ~dtype:Dtype.index ~name:"d" [ Ops.Floordiv; Ops.Floormod ]
+  ops ~dtype:Dtype.weakint ~name:"d" [ Ops.Floordiv; Ops.Floormod ]
   => fun bs -> fold_divmod_general_rec (bs $ "d")
 
 let div_and_mod_symbolic : Upat.Pattern_matcher.t =

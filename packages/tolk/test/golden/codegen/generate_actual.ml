@@ -204,7 +204,7 @@ let make_gated_store () =
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let gate = U.alu_binary ~op:Ops.Cmplt ~lhs:r0 ~rhs:(idx 200) in
-  let value = U.O.where gate add (U.invalid ~dtype:Dtype.float32 ()) in
+  let value = U.O.where gate add (U.invalid ()) in
   let st =
     U.store
       ~dst:(U.index ~ptr:p2 ~idxs:[r0] ())

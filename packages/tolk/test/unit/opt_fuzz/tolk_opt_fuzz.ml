@@ -29,7 +29,7 @@ module P = Postrange
 (* Graph construction *)
 
 let mk_shape dims =
-  match List.map (fun s -> U.const (C.int D.index s)) dims with
+  match List.map (fun s -> U.const (C.int D.weakint s)) dims with
   | [ d ] -> d
   | ds -> U.stack ds
 

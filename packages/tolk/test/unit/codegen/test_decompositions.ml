@@ -525,7 +525,7 @@ let early_decomp u =
 
 let early_floordiv_by_zero_raises () =
   let x =
-    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.index ()
+    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.weakint ()
   in
   let zero = Uop.const_int 0 in
   let q = Uop.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:zero in
@@ -534,7 +534,7 @@ let early_floordiv_by_zero_raises () =
 
 let early_floormod_by_zero_raises () =
   let x =
-    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.index ()
+    Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.weakint ()
   in
   let zero = Uop.const_int 0 in
   let r = Uop.alu_binary ~op:Ops.Floormod ~lhs:x ~rhs:zero in

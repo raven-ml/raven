@@ -17,7 +17,7 @@ module Ak = Axis_type
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.index n)
+let idx n = U.const (C.int D.weakint n)
 let f32 x = U.const (C.float D.float32 x)
 
 let kernel_info () =
@@ -35,11 +35,11 @@ let wrap_sink srcs = U.sink ~kernel_info:(kernel_info ()) srcs
 
 (* Build a loop range on [axis] with int [size]. *)
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.weakint ()
 
 (* Build a reduce range on [axis] with int [size]. *)
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
 
 (* Build a gated load: LOAD(INDEX(param, WHERE(valid, idx, invalid)), alt=0). *)
 let gated_load ?(param_idx = 0) valid index_val =
@@ -105,7 +105,7 @@ let flatten_range_tests =
           let r0 = loop_range ~axis:0 4 in
           let open U.O in
           let r1 =
-            U.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.index ()
+            U.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.weakint ()
           in
           let value = r0 + r1 in
           (* Build End with intentionally wrong order: [r1, r0] *)
@@ -245,7 +245,7 @@ let simplify_merge_tests =
           let r1 = reduce_range ~axis:1 4 in
           let open U.O in
           let value = (r0 * idx 4) + r1 in
-          let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.index in
+          let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.weakint in
           let sink = wrap_sink [ U.end_ ~value:red ~ranges:[] ] in
           let result = Simplify.simplify_ranges sink in
           (* Different kinds: should not merge *)
@@ -675,7 +675,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(idx 1) ~c:(idx 0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.index
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.weakint
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
@@ -742,7 +742,7 @@ let load_collapse_tests =
           in
           let index_node = U.index ~ptr:p ~idxs:[(idx 0)] () in
           let loaded_idx =
-            U.cast ~src:(U.load ~src:index_node ()) ~dtype:D.index
+            U.cast ~src:(U.load ~src:index_node ()) ~dtype:D.weakint
           in
           let open U.O in
           let y = idx 5 in
