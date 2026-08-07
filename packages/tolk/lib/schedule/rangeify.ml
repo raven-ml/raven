@@ -191,9 +191,17 @@ and compute_shape_of n =
         (shape_of (src0 n))
   | Ops.Const -> Some []
   | op when Ops.Group.is_elementwise op ->
-      let child_shapes = List.filter_map shape_of (U.children n) in
-      broadcast_shape child_shapes
-  | _ -> None
+      (* An operand whose shape is unknown makes the result unknown. Dropping
+         it and broadcasting the rest would report the surviving operand's
+         shape, which is a confident answer to a question this pass could not
+         answer. *)
+      let child_shapes = List.map shape_of (U.children n) in
+      if List.exists Option.is_none child_shapes then None
+      else broadcast_shape (List.filter_map Fun.id child_shapes)
+  | _ ->
+      (* Ops with no rule above — a LOAD, an INDEX, the ranges under them —
+         still carry a shape on the node itself. *)
+      (try Some (List.map U.vmax (U.shape n)) with Invalid_argument _ -> None)
 
 let shape_expr_of_cache : U.t list option U.Ref_tbl.t = U.Ref_tbl.create 256
 
@@ -235,7 +243,10 @@ and compute_shape_expr_of n =
   | Ops.Mstack | Ops.Mselect | Ops.Allreduce ->
       if Array.length (U.src n) = 0 then None else shape_expr_of (src0 n)
   | op when Ops.Group.is_elementwise op ->
-      U.children n |> List.filter_map shape_expr_of |> broadcast_shape_expr
+      (* As in [compute_shape_of]: unknown in, unknown out. *)
+      let child_shapes = List.map shape_expr_of (U.children n) in
+      if List.exists Option.is_none child_shapes then None
+      else broadcast_shape_expr (List.filter_map Fun.id child_shapes)
   | _ -> (
       match shape_of n with
       | Some sh -> Some (List.map int_ sh)
