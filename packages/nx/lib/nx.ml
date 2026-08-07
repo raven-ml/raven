@@ -78,6 +78,12 @@ let gamma ~concentration dtype shape =
   F.gamma (Lazy.force context) ~concentration dtype shape
 
 let poisson ~rate shape = F.poisson (Lazy.force context) ~rate shape
+
+let beta ~alpha ~beta dtype shape =
+  F.beta (Lazy.force context) ~alpha ~beta dtype shape
+
+let dirichlet ~concentration dtype shape =
+  F.dirichlet (Lazy.force context) ~concentration dtype shape
 let permutation n = F.permutation (Lazy.force context) n
 let shuffle x = F.shuffle (Lazy.force context) x
 

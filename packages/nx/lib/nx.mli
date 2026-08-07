@@ -630,6 +630,35 @@ module Rng : sig
 
       Raises [Invalid_argument] if [concentration] is not positive. *)
 
+  val beta :
+    key ->
+    alpha:float ->
+    beta:float ->
+    (float, 'b) dtype ->
+    int array ->
+    (float, 'b) t
+  (** [beta k ~alpha ~beta dtype shape] samples the beta distribution on
+      [\[0, 1\]]. Built from two {!gamma} draws, whose approximation it
+      inherits.
+
+      Raises [Invalid_argument] unless both concentrations are positive. *)
+
+  val dirichlet :
+    key ->
+    concentration:float array ->
+    (float, 'b) dtype ->
+    int array ->
+    (float, 'b) t
+  (** [dirichlet k ~concentration dtype shape] samples the Dirichlet
+      distribution over as many components as [concentration] has. The
+      components occupy a new trailing axis, so the result has shape
+      [shape @ [| n |]] and every row sums to one.
+
+      Built from one {!gamma} per component, whose approximation it inherits.
+
+      Raises [Invalid_argument] if [concentration] has fewer than two entries or
+      any of them is not positive. *)
+
   val poisson : key -> rate:float -> int array -> int32_t
   (** [poisson k ~rate shape] samples the Poisson distribution with the given
       rate. Exact, unlike {!gamma}: the count is expressed as a cumulative
@@ -750,6 +779,19 @@ val gamma :
   concentration:float -> (float, 'b) dtype -> int array -> (float, 'b) t
 (** [gamma ~concentration dtype shape] samples the gamma distribution. See
     {!Rng.gamma}, including the note that it is not exact. *)
+
+val beta :
+  alpha:float -> beta:float -> (float, 'b) dtype -> int array -> (float, 'b) t
+(** [beta ~alpha ~beta dtype shape] samples the beta distribution. See
+    {!Rng.beta}. *)
+
+val dirichlet :
+  concentration:float array ->
+  (float, 'b) dtype ->
+  int array ->
+  (float, 'b) t
+(** [dirichlet ~concentration dtype shape] samples the Dirichlet distribution;
+    the result has shape [shape @ [| n |]]. See {!Rng.dirichlet}. *)
 
 val poisson : rate:float -> int array -> int32_t
 (** [poisson ~rate shape] samples the Poisson distribution. See {!Rng.poisson}.

@@ -2373,6 +2373,63 @@ module Make (B : Backend_intf.S) = struct
       | Dtype.Float64 -> cast dtype (draw Dtype.float64)
       | _ -> cast dtype (draw Dtype.float32)
 
+    (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas of unit rate.
+       Both draws inherit {!gamma}'s bounded-rejection approximation. The sum is
+       floored before dividing: two gammas can both round to zero when their
+       concentrations are tiny. *)
+    let beta (type b) k ~alpha ~beta (dtype : (float, b) Dtype.t) shape :
+        (float, b) t =
+      if not (alpha > 0.0 && beta > 0.0) then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.beta: both concentrations must be positive, got alpha=%g \
+              beta=%g"
+             alpha beta);
+      check_shape "beta" shape;
+      let ctx = B.context k in
+      let ks = split k in
+      let g1 = gamma ks.(0) ~concentration:alpha dtype shape in
+      let g2 = gamma ks.(1) ~concentration:beta dtype shape in
+      let tiny =
+        scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype))
+      in
+      div g1 (maximum (add g1 g2) tiny)
+
+    (* Dirichlet: one gamma per component, normalised across them. The
+       components go on a new trailing axis, so a draw of [shape] gives
+       [shape @ [| n |]] and every row sums to one. *)
+    let dirichlet (type b) k ~concentration (dtype : (float, b) Dtype.t) shape :
+        (float, b) t =
+      let n = Array.length concentration in
+      if n < 2 then
+        invalid_arg
+          "Nx.Rng.dirichlet: concentration needs at least two components";
+      Array.iter
+        (fun a ->
+          if not (a > 0.0) then
+            invalid_arg
+              (Printf.sprintf
+                 "Nx.Rng.dirichlet: every concentration must be positive, got \
+                  %g"
+                 a))
+        concentration;
+      check_shape "dirichlet" shape;
+      let ctx = B.context k in
+      let ks = split ~n k in
+      let axis = Array.length shape in
+      let components =
+        Array.to_list
+          (Array.mapi
+             (fun i a -> gamma ks.(i) ~concentration:a dtype shape)
+             concentration)
+      in
+      let stacked = stack ~axis components in
+      let tiny =
+        scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype))
+      in
+      let total = sum ~axes:[ axis ] ~keepdims:true stacked in
+      div stacked (maximum total tiny)
+
     (* Knuth's method, made branchless. With L = e^-rate, Knuth multiplies
        uniforms until the running product drops to L and returns one less than
        the number of factors — that is, the count of prefixes whose product
@@ -2631,6 +2688,14 @@ module Make (B : Backend_intf.S) = struct
     Rng.gamma (Rng.next_key ctx) ~concentration dtype shape
 
   let poisson ctx ~rate shape = Rng.poisson (Rng.next_key ctx) ~rate shape
+
+  let beta ctx (type b) ~alpha ~beta:b (dtype : (float, b) Dtype.t) shape =
+    validate_random_float_params "beta" dtype shape;
+    Rng.beta (Rng.next_key ctx) ~alpha ~beta:b dtype shape
+
+  let dirichlet ctx (type b) ~concentration (dtype : (float, b) Dtype.t) shape =
+    validate_random_float_params "dirichlet" dtype shape;
+    Rng.dirichlet (Rng.next_key ctx) ~concentration dtype shape
   let permutation ctx n = Rng.permutation (Rng.next_key ctx) n
   let shuffle ctx x = Rng.shuffle (Rng.next_key ctx) x
 

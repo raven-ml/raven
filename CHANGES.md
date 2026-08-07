@@ -489,6 +489,10 @@ thread.
   silently rooted at a constant — the case `Rune.jit` must refuse. A scope now
   visibly inherits its root key's properties: root it at a jitted function's
   input leaf and the keyless samplers inside compile.
+- Add `beta` and `dirichlet`, both keyed and keyless, built from `gamma` and
+  inheriting its approximation. `dirichlet` puts its components on a new
+  trailing axis, so a draw of `shape` gives `shape @ [| n |]` with every row on
+  the simplex.
 - Add `gamma` and `poisson`, both keyed and keyless. `gamma` is the keystone
   for statistical work — beta is `g1 /. (g1 +. g2)`, a Dirichlet is a vector of
   gammas over its own sum, chi-square and Student's t follow in turn — and its

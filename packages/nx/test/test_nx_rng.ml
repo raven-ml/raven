@@ -597,6 +597,75 @@ let test_poisson_validates_rate () =
   invalid_arg_raised ~msg:"rate beyond the ceiling" (fun () ->
       ignore (Rng.poisson (Rng.key 0) ~rate:250.0 [| 4 |]))
 
+(* Beta(a, b) has mean a/(a+b) and variance ab/((a+b)^2 (a+b+1)); the variance
+   is what catches a wrong composition, since a ratio of the wrong two gammas
+   can still centre correctly. *)
+let test_beta_moments () =
+  let n = 100_000 in
+  let check alpha beta =
+    let v = Nx.to_array (Rng.beta (Rng.key 5) ~alpha ~beta float64 [| n |]) in
+    let len = float_of_int n in
+    let mean = Array.fold_left ( +. ) 0.0 v /. len in
+    let var =
+      Array.fold_left (fun a x -> a +. ((x -. mean) ** 2.0)) 0.0 v /. len
+    in
+    let total = alpha +. beta in
+    let label = Printf.sprintf "beta(%g, %g)" alpha beta in
+    equal ~msg:(label ^ " mean") (float 0.01) (alpha /. total) mean;
+    equal
+      ~msg:(label ^ " variance")
+      (float 0.005)
+      (alpha *. beta /. (total *. total *. (total +. 1.0)))
+      var;
+    equal ~msg:(label ^ " draws lie in [0, 1]") bool true
+      (Array.for_all (fun x -> x >= 0.0 && x <= 1.0) v)
+  in
+  check 2.0 5.0;
+  check 0.5 0.5;
+  check 8.0 3.0
+
+(* A Dirichlet row is a point on the simplex: non-negative and summing to one,
+   with component means proportional to the concentrations. The simplex
+   constraint is the part a per-component draw would fail without the
+   normalisation. *)
+let test_dirichlet_is_on_the_simplex () =
+  let n = 50_000 in
+  let concentration = [| 1.0; 2.0; 7.0 |] in
+  let k = Array.length concentration in
+  let t = Rng.dirichlet (Rng.key 13) ~concentration float64 [| n |] in
+  equal ~msg:"components go on a trailing axis" (array int) [| n; k |]
+    (Nx.shape t);
+  let v = Nx.to_array t in
+  let sums = Array.make n 0.0 in
+  let totals = Array.make k 0.0 in
+  Array.iteri
+    (fun i x ->
+      sums.(i / k) <- sums.(i / k) +. x;
+      totals.(i mod k) <- totals.(i mod k) +. x)
+    v;
+  equal ~msg:"every component is non-negative" bool true
+    (Array.for_all (fun x -> x >= 0.0) v);
+  equal ~msg:"every row sums to one" bool true
+    (Array.for_all (fun s -> Float.abs (s -. 1.0) < 1e-9) sums);
+  let total = Array.fold_left ( +. ) 0.0 concentration in
+  Array.iteri
+    (fun i sum ->
+      equal
+        ~msg:(Printf.sprintf "component %d has its share of the mass" i)
+        (float 0.01)
+        (concentration.(i) /. total)
+        (sum /. float_of_int n))
+    totals
+
+let test_beta_and_dirichlet_validate () =
+  invalid_arg_raised ~msg:"non-positive alpha" (fun () ->
+      ignore (Rng.beta (Rng.key 0) ~alpha:0.0 ~beta:1.0 float32 [| 4 |]));
+  invalid_arg_raised ~msg:"one component" (fun () ->
+      ignore (Rng.dirichlet (Rng.key 0) ~concentration:[| 1.0 |] float32 [| 4 |]));
+  invalid_arg_raised ~msg:"a non-positive component" (fun () ->
+      ignore
+        (Rng.dirichlet (Rng.key 0) ~concentration:[| 1.0; 0.0 |] float32 [| 4 |]))
+
 let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
   (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
@@ -837,6 +906,11 @@ let () =
             test_gamma_validates_concentration;
           test "poisson matches the pmf" test_poisson_matches_the_pmf;
           test "poisson validates rate" test_poisson_validates_rate;
+          test "beta moments" test_beta_moments;
+          test "dirichlet is on the simplex"
+            test_dirichlet_is_on_the_simplex;
+          test "beta and dirichlet validate their concentrations"
+            test_beta_and_dirichlet_validate;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;
