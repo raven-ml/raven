@@ -6,18 +6,36 @@ anchors point at the tinygrad clone.
 
 ## Open bugs
 
-- **Renderer vector stores through scalar pointers**: full-model codegen can
-  retain a vectorized value at a scalar store site. The float16 GPT-2
-  loss-multiply backward renders `make_float50257(...)` on CUDA, which NVRTC
-  rejects; a pmapped dropout backward renders a 3-wide float store through a
-  scalar pointer on CPU. The repros are recorded in Kaun's GPT-2 `train.ml`;
-  both likely share an owner in the devectorize/store path.
-- **Pure-constant materialization**: `Run.buffer_of` raises when a tensor's graph
-  folds to a constant expression with no storage instead of materializing it.
-  The dropout `p=1` test currently works around this.
+- **Whole-vocab-axis vectorized store on CUDA**: the float16 GPT-2
+  loss-multiply backward renders `make_float50257(...)`, which NVRTC rejects
+  (recorded in Kaun's GPT-2 `train.ml`). Not reproduced: the same model shape
+  and backward form compile clean on CPU at `vocab = 50257`, and the case needs
+  a CUDA device.
+
+  The optimiser is ruled out as the source. A 50257-wide lane count would have
+  to come from an UPCAST or UNROLL of the vocab axis, and neither can reach it:
+  `apply_opt` resolves an amount of `0` to the axis's full extent, but then
+  `validate_shift_opt` caps the *resolved* amount at 16 for UPCAST and 32 for
+  UNROLL, so both are rejected. No sequence of beam actions produces it.
+
+  That leaves the shape itself: a node of shape `[50257]` reaching devectorize
+  without a range behind it, which `do_devectorize` turns into one STACK lane
+  per element (an EXPAND on a scalar becomes `U.stack (List.init n ...)`). The
+  broadcast of the scalar loss back over the vocab axis is the candidate — the
+  search should start at whatever leaves that axis rangeless in the backward
+  kernel, not at the renderer, which sizes a STACK correctly by construction
+  (`stack_count` is `Array.length srcs`).
 
 ## Deferred parity divergences (each with a known blocker)
 
+- **Index factoring in tensor-core kernels**: the 32³ matmul under
+  `TC:0:-1:0:1 + UNROLL:0:0` is byte-identical to the reference except that the
+  reference folds one thread-index expression the symbolic pass leaves split —
+  it emits `((lidx0>>4)<<7)+(((lidx0>>1)&3)<<5)` where tolk emits the two bit
+  extracts `(((lidx0>>2)&1)<<6)` and `(((lidx0>>1)&1)<<5)` separately. Owner is
+  the symbolic pass, not the renderer. This blocks a tinygrad-backed
+  exact-source golden for tensor cores, so the WMMA width invariant is pinned
+  by renderer unit tests instead (`test/unit/test_cstyle.ml`).
 - **Leading-dim view folds**: last-axis contiguous views fold to schedule-free
   aliases (matching the reference), but callify's local
   `contiguous_view_offset`/`make_slice` bails when a leading dim is not kept
@@ -42,6 +60,30 @@ anchors point at the tinygrad clone.
 
 ## Design debt
 
+- **Reconstructed sizes with silent defaults**: in several places tolk
+  recomputes a width or extent that the reference reads straight off the node,
+  and each reconstruction carries a fallback for the case it does not model.
+  Every gap found so far has produced a silent miscompile rather than a visible
+  diff, because the fallback yields a plausible number instead of failing.
+  Three instances:
+  - `expr_numel` (`renderer/cstyle.ml`) consults the node's shape only for
+    `Index`/`Shrink`/`Wmma` and otherwise propagates from sources, defaulting
+    to one lane. The reference just uses `u.max_numel()`. `Wmma` was missing,
+    so every WMMA declared scalar and tensor cores were uncompilable on all
+    backends.
+  - `range_int_size` (`schedule/rangeify.ml`) returned `1` for anything that
+    is not a `RANGE`, so a stage flattened to a single index expression sized
+    to one element. Fixed.
+  - `stage_to_store` (`schedule/rangeify.ml`) sizes a bufferize from two
+    sources and silently takes the second when they disagree; only a
+    non-positive product is rejected. Still present, and it swallowed the
+    late-allreduce overflow rather than reporting it.
+
+  The question this raises is whether these collapse into reading the node's
+  own shape, and if some op genuinely needs source propagation, which and why.
+  Each is extra machinery relative to the reference, so it has to earn its
+  place. Renderer- and scheduler-wide, so it wants its own pass rather than a
+  fourth point fix.
 - **nativeint dispatch waist**: `Allocator.addr`/`prog.call`/`Graph.node`
   flatten buffers to `nativeint`, forcing the Metal token registry
   (`tolk_metal.ml`) and an `Obj.magic` in `Buffer.transfer`, and making
@@ -94,6 +136,13 @@ anchors point at the tinygrad clone.
 - WMMA estimate unit test (flops factor covered only by goldens).
 - Re-verify `bf16_vector_load_reindexes_shrink` (decomp) end-to-end: it
   relies on the LOAD inheriting the shrink's width-2 shape.
+- Validity-clause ordering in `simplify_valid` is uncovered. Inverting the
+  `_valid_priority` sort comparator (`lib/uop/symbolic.ml:2259`) leaves the uop
+  unit suite, every golden, and parity green, so nothing in the corpus
+  discriminates on clause order. Left open deliberately: the priority is a
+  simplification-order heuristic, so a wrong order costs simplification rather
+  than correctness, and a synthetic case would pin today's ordering instead of
+  the property.
 
 ## Misc
 
