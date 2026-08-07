@@ -1416,7 +1416,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
     match U.device_of u with
     | Some (U.Multi _) -> (
         match (U.op u, U.axis u) with
-        | Tolk_uop.Ops.Multi, Some a -> P_sharded a
+        | Tolk_uop.Ops.Unshard, Some a -> P_sharded a
         | _ -> P_replicated)
     | Some (U.Single _) | Some (U.Index _) | None -> P_single
   in
@@ -1581,7 +1581,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
   let rec strip_identity u =
     match U.op u with
     | Tolk_uop.Ops.Buffer -> Some u
-    | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Multi ->
+    | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Unshard ->
         if Array.length (U.src u) > 0 then strip_identity (U.src u).(0)
         else None
     | _ -> None
