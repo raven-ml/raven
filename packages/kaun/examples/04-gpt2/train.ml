@@ -168,7 +168,14 @@ let train_step objective params =
 
 (* The step's dropout key rides the input structures as one more optional int32
    leaf: [Some key] when [--dropout] is positive, [None] otherwise — [None]
-   contributes no leaf, so dropout-free runs trace the exact reference graph. *)
+   contributes no leaf, so dropout-free runs trace the exact reference graph.
+
+   The option is about whether dropout is on, not about where the key may live.
+   Rune carries a non-differentiable leaf through [grad] and [vjp], and Vega's
+   optimizers leave it alone, so the key could equally sit in the structure the
+   objective is differentiated against; the objective closes over it here only
+   because the loss-scaling path wants the parameters alone as its cotangent
+   domain. *)
 let map2_key f a b =
   match (a, b) with
   | Some a, Some b -> Some (f a b)
