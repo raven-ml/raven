@@ -23,7 +23,7 @@
     ]}
 
     Random initialization and shuffling draw from the implicit RNG scope; wrap
-    the program in {!Nx.Rng.run} for reproducibility. Randomness inside a jitted
+    the program in {!Nx.Rng.with_key} for reproducibility. Randomness inside a jitted
     training step ({!Dropout}) instead takes an explicit {!Nx.Rng} key threaded
     through the step's inputs. *)
 

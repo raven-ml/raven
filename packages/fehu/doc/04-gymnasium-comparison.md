@@ -25,14 +25,14 @@ If you already use Gymnasium, this should be enough to become productive in Fehu
 | Replay buffers        | External (Stable Baselines3, TorchRL)              | Built-in: `Buffer.create`, `Buffer.add`, `Buffer.sample`             |
 | GAE                   | External (Stable Baselines3)                       | Built-in: `Gae.compute`, `Gae.returns`, `Gae.normalize`              |
 | Policy evaluation     | Manual loop or SB3 `evaluate_policy`               | Built-in: `Eval.run`                                                 |
-| RNG                   | `np.random` / seed passed to `env.reset(seed=...)` | Implicit scope via `Nx.Rng.run ~seed`                                |
+| RNG                   | `np.random` / seed passed to `env.reset(seed=...)` | Implicit scope via `Nx.Rng.with_key`                                |
 | Rendering             | String mode `"human"`, `"rgb_array"`               | Polymorphic variants `` `Human ``, `` `Rgb_array ``, etc.            |
 | Mutability            | Environments are mutable objects                   | Environments are immutable handles; state is internal                |
 
 **Fehu semantics to know (read once):**
 - `Env.reset` must be called before `Env.step`. After a terminal step, another `reset` is required.
 - Spaces validate observations and actions automatically -- `Env.step` raises if an action is outside the action space.
-- RNG is scoped: wrap your code in `Nx.Rng.run ~seed:42 (fun () -> ...)` instead of passing seeds to individual calls.
+- RNG is scoped: wrap your code in `Nx.Rng.with_key (Nx.Rng.key 42) (fun () -> ...)` instead of passing seeds to individual calls.
 - Trajectory collection, replay buffers, GAE, and evaluation are built into Fehu, not external libraries.
 
 ---
@@ -297,7 +297,7 @@ env.close()
 <!-- $MDX skip -->
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
     let env = (* create environment *) in
     let (obs, _info) = Env.reset env () in
     let obs = ref obs in
@@ -314,7 +314,7 @@ let () =
 ```
 
 Key differences:
-- RNG is scoped with `Nx.Rng.run ~seed:42` rather than passed to `reset`.
+- RNG is scoped with `Nx.Rng.with_key (Nx.Rng.key 42)` rather than passed to `reset`.
 - Step results are accessed by field name (`step.observation`, `step.reward`).
 - `Env.step` raises `Invalid_argument` if called without a prior `reset` or after a terminal step without resetting.
 
@@ -338,7 +338,7 @@ for episode in range(10):
 ```ocaml
 (* Manual *)
 let () =
-  Nx.Rng.run ~seed:0 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) (fun () ->
     let env = (* create environment *) in
     for _ep = 0 to 9 do
       let (obs, _info) = Env.reset env () in
@@ -355,7 +355,7 @@ let () =
 
 (* Or use Collect.episodes directly *)
 let trajs =
-  Nx.Rng.run ~seed:0 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) (fun () ->
     let env = (* create environment *) in
     Collect.episodes env
       ~policy:(fun obs -> (policy obs, None, None))
@@ -932,4 +932,4 @@ let is_empty = Info.is_empty info
 | Evaluate policy      | `evaluate_policy(model, env, n_eval_episodes=10)` | `Eval.run env ~policy ~n_episodes:10 ()`                                          |
 | Render               | `env.render()`                                    | `Env.render env`                                                                  |
 | Record frames        | `RecordVideo(env, ...)`                           | `Render.on_render ~sink env`                                                      |
-| Seed RNG             | `env.reset(seed=42)`                              | `Nx.Rng.run ~seed:42 (fun () -> ...)`                                             |
+| Seed RNG             | `env.reset(seed=42)`                              | `Nx.Rng.with_key (Nx.Rng.key 42) (fun () -> ...)`                                             |

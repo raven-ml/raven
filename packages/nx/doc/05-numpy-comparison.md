@@ -304,9 +304,9 @@ let random = Nx.rand Nx.float64 [|3; 3|]
 (* Generate normal distributed random numbers *)
 let normal = Nx.randn Nx.float64 [|3; 3|]
 
-(* For reproducibility, wrap in Rng.run *)
+(* For reproducibility, wrap in Rng.with_key *)
 let reproducible =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
     Nx.rand Nx.float64 [|3; 3|])
 ```
 

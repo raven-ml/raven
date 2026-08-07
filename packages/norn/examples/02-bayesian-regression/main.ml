@@ -55,7 +55,7 @@ let percentile samples frac =
   Nx.item [ idx ] sorted
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let x_data, y_data = gen_data () in
   let init = Nx.zeros f64 [| 2 |] in
   let log_prob = log_posterior x_data y_data in

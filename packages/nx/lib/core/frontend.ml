@@ -2422,7 +2422,7 @@ module Make (B : Backend_intf.S) = struct
            ~axis:(axis + Array.length batch_shape)
            ~keepdims:false)
 
-    (* The scope: [split_off] performs [E_next_key]; [run]/[with_key] answer it
+    (* The scope: [next_key] performs [E_next_key]; [with_key] answers it
        by [fold_in root counter] with an incrementing counter — the same
        [fold_in] the explicit path uses, so the two front-ends share one stream.
        Every derived key is therefore a tensor computation on the root, which is
@@ -2452,9 +2452,6 @@ module Make (B : Backend_intf.S) = struct
             | _ -> None);
       }
 
-    let run ctx ~seed f =
-      Effect.Deep.match_with f () (make_handler (key ctx seed))
-
     let with_key k f = Effect.Deep.match_with f () (make_handler k)
     let fallback = Domain.DLS.new_key (fun () -> ref None)
 
@@ -2464,7 +2461,7 @@ module Make (B : Backend_intf.S) = struct
        varying the moment some linked library called [Random.self_init].
        Reproducibility is what a scope is for; without one the draws should be
        fresh. *)
-    let split_off ctx =
+    let next_key ctx =
       try Effect.perform E_next_key
       with Effect.Unhandled _ ->
         let cell = Domain.DLS.get fallback in
@@ -2494,41 +2491,41 @@ module Make (B : Backend_intf.S) = struct
      draw down to a narrower dtype can land on 1. *)
   let rand ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "rand" dtype shape;
-    Rng.uniform (Rng.split_off ctx) dtype shape
+    Rng.uniform (Rng.next_key ctx) dtype shape
 
   let randn ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "randn" dtype shape;
-    Rng.normal (Rng.split_off ctx) dtype shape
+    Rng.normal (Rng.next_key ctx) dtype shape
 
   let randint ctx ?(low = 0) ~high shape =
     Rng.check_range "randint" ~low ~high;
-    Rng.randint (Rng.split_off ctx) ~low ~high shape
+    Rng.randint (Rng.next_key ctx) ~low ~high shape
 
   let bernoulli ctx ~p shape =
     if p < 0.0 || p > 1.0 then invalid_arg "bernoulli: p must be in [0, 1]";
     if Array.exists (fun x -> x < 0) shape then
       err "bernoulli" "invalid shape %s, dimensions must be non-negative"
         (Shape.to_string shape);
-    Rng.bernoulli (Rng.split_off ctx) ~p shape
+    Rng.bernoulli (Rng.next_key ctx) ~p shape
 
   let gumbel ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "gumbel" dtype shape;
-    Rng.gumbel (Rng.split_off ctx) dtype shape
+    Rng.gumbel (Rng.next_key ctx) dtype shape
 
   let exponential ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "exponential" dtype shape;
-    Rng.exponential (Rng.split_off ctx) dtype shape
+    Rng.exponential (Rng.next_key ctx) dtype shape
 
-  let permutation ctx n = Rng.permutation (Rng.split_off ctx) n
-  let shuffle ctx x = Rng.shuffle (Rng.split_off ctx) x
+  let permutation ctx n = Rng.permutation (Rng.next_key ctx) n
+  let shuffle ctx x = Rng.shuffle (Rng.next_key ctx) x
 
   let categorical ctx ?axis ?shape logits =
-    Rng.categorical (Rng.split_off ctx) ?axis ?shape logits
+    Rng.categorical (Rng.next_key ctx) ?axis ?shape logits
 
   let truncated_normal ctx (type b) ~lower ~upper (dtype : (float, b) Dtype.t)
       shape =
     validate_random_float_params "truncated_normal" dtype shape;
-    Rng.truncated_normal (Rng.split_off ctx) ~lower ~upper dtype shape
+    Rng.truncated_normal (Rng.next_key ctx) ~lower ~upper dtype shape
 
   (* ───── Linear Algebra ───── *)
 

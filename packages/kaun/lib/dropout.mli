@@ -19,10 +19,10 @@
 
     Training-mode masks come from an explicit {!Nx.Rng} key when [?key] is given
     — the mask is a pure function of the key and [x]'s shape — and from the
-    implicit RNG scope of {!Nx.Rng} otherwise; wrap a keyless training loop in
-    {!Nx.Rng.run} for reproducibility. Under {!Rune.val-jit} only the keyed form
-    compiles: make the key an input leaf of the jitted step and derive a fresh
-    one per step with {!Nx.Rng.fold_in}. *)
+    ambient {!Nx.Rng} scope otherwise; open one with {!Nx.Rng.with_key} for
+    reproducibility. Either form compiles under {!Rune.val-jit}, provided the
+    key it ultimately draws from is an input of the jitted step rather than one
+    the trace closes over. *)
 
 val apply :
   rate:float ->
@@ -44,15 +44,17 @@ val apply :
 
     With [training = false] (or [rate = 0.]), the result is [x], unchanged.
 
-    {b Under jit.} Pass a [?key] that depends on the jitted function's inputs —
-    a key leaf of the step's input structure, or one {!Nx.Rng.fold_in}-derived
-    from such a leaf. Keyless dropout raises {!Rune.Jit_error}: the implicit
-    draw would compile to a constant mask replayed on every call.
+    {b Under jit.} The mask must come from a key that depends on the jitted
+    function's inputs: pass [?key] as a key leaf of the step's input structure,
+    or one {!Nx.Rng.fold_in}-derived from such a leaf. Keyless dropout works
+    too, if the step body runs inside {!Nx.Rng.with_key} on such a key — what
+    raises {!Rune.Jit_error} is a key the trace closes over, whichever form
+    drew from it, since the mask would be a constant replayed on every call.
 
     {b Under vmap.} A key the mapped function closes over is a constant of the
-    map, so every lane draws the identical mask (and so does the implicit RNG).
-    For independent lanes, {!Nx.Rng.split} one key into per-lane keys, stack
-    them into an [[n; 2]] tensor, and map over it alongside [x] (see the note at
-    {!Rune.val-vmap}).
+    map, so every lane draws the identical mask. For independent lanes, fold the
+    lane index into the key with {!Nx.Rng.fold_in_axis}; a manual
+    {!Nx.Rng.split} into per-lane keys stacked along a mapped axis does the same
+    thing by hand.
 
     Raises [Invalid_argument] if [rate] is outside \[[0];[1]). *)

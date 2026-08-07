@@ -111,7 +111,7 @@ let () =
     "Epsilon: %.2f -> %.2f over %d steps, target update every %d steps\n\n"
     epsilon_start epsilon_end epsilon_decay_steps target_update_interval;
 
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network. Parameter records are immutable values, so the target

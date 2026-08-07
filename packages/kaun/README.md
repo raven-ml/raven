@@ -88,7 +88,7 @@ checkpoint, or swap.
   log space for stability
 - **Data** — `Data.batches`/`batches2` cut in-memory tensors into a
   standard `Seq.t` of minibatches; shuffling reshuffles per epoch and is
-  reproducible under `Nx.Rng.run`
+  reproducible under `Nx.Rng.with_key`
 - **Metrics** — `Metric`: accuracy, top-k accuracy, confusion matrix,
   precision/recall/F1 (macro/micro), AUC-ROC
 - **Checkpoints** — `Checkpoint` saves named parameter structures as
@@ -111,7 +111,7 @@ Train a two-layer network on XOR (the full program is
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let x = Nx.create Nx.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
   let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
   let params =

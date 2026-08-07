@@ -293,7 +293,7 @@ let test_time_limit_needs_reset () =
       Env.step wrapped action_right)
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Env (wrappers)"
     [
       group "state sharing"

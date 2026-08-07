@@ -19,7 +19,7 @@ Norn provides MCMC sampling with automatic gradients for OCaml. You supply an un
 open Nx
 
 let () =
-  Rng.run ~seed:42 @@ fun () ->
+  Rng.with_key (Rng.key 42) @@ fun () ->
   let f64 = Nx.float64 in
 
   (* Target: N([3; -1], I) *)

@@ -15,7 +15,7 @@ Every parameterized layer module follows the same shape, with `Linear` as the re
 open Kaun
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let layer = Linear.init ~inputs:4 ~outputs:2 in
   let x = Nx.randn Nx.float32 [| 8; 4 |] in
   let y = Linear.apply layer x in
@@ -108,7 +108,7 @@ module Cnn = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let params =
     {
       Cnn.c1 = Conv.init ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
@@ -130,7 +130,7 @@ Note the `~training` flag threaded to `Dropout.apply`: mode is an argument, not 
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let attn = Attention.init ~embed_dim:16 in
   let x = Nx.randn Nx.float32 [| 2; 5; 16 |] in
   (* batch 2, sequence 5 *)
@@ -143,7 +143,7 @@ let () =
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let q = Nx.randn Nx.float32 [| 3; 8 |] in
   let k = Nx.randn Nx.float32 [| 5; 8 |] in
   let v = Nx.randn Nx.float32 [| 5; 4 |] in
@@ -186,7 +186,7 @@ module Net = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let x = Nx.randn Nx.float32 [| 16; 4 |] in
   let y = Nx.randn Nx.float32 [| 16; 1 |] in
   let bn, stats = Batch_norm.init ~features:8 in
@@ -236,7 +236,7 @@ An initializer is a plain function from fan geometry, dtype, and shape to a fres
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   (* He-normal weights for a ReLU network, no bias. *)
   let layer =
     Linear.make ~w_init:Init.he_normal ~bias:false ~inputs:64 ~outputs:64
@@ -245,7 +245,7 @@ let () =
   ignore layer
 ```
 
-The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.variance_scaling`; any function of the right type is an initializer, so custom schemes need no registration. Random initializers draw from the implicit RNG scope — wrap model construction in `Nx.Rng.run` for reproducibility.
+The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.variance_scaling`; any function of the right type is an initializer, so custom schemes need no registration. Random initializers draw from the implicit RNG scope — wrap model construction in `Nx.Rng.with_key` for reproducibility.
 
 ## Next Steps
 

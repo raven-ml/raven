@@ -42,7 +42,7 @@ let test_n_episodes_matches () =
   equal ~msg:"n_episodes matches" int 7 stats.n_episodes
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Eval"
     [
       group "run"

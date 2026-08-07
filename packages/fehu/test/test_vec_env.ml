@@ -130,7 +130,7 @@ let test_close_all_envs () =
   List.iter (fun env -> is_true ~msg:"env is closed" (Env.closed env)) envs
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Vec_env"
     [
       group "creation"

@@ -31,7 +31,7 @@ let xor_x =
 let xor_y = lazy (Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |])
 
 let test_xor_trains () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let x = Lazy.force xor_x and y = Lazy.force xor_y in
   let params =
     {
@@ -65,7 +65,7 @@ let test_xor_trains () =
     expect
 
 let test_sgd_decreases_loss () =
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let x = Lazy.force xor_x and y = Lazy.force xor_y in
   let params =
     {

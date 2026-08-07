@@ -18,7 +18,7 @@
     ]}
 
     Random initializers draw from the implicit RNG scope of {!Nx.Rng}; wrap
-    model construction in {!Nx.Rng.run} for reproducibility. The named families
+    model construction in {!Nx.Rng.with_key} for reproducibility. The named families
     (Glorot/Xavier, He/Kaiming, LeCun) are instances of {!variance_scaling}. *)
 
 (** {1:types Types} *)

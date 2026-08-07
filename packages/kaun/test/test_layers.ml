@@ -42,7 +42,7 @@ let values_are ?msg ~tol expected t =
 (* Linear *)
 
 let test_linear_init_shapes () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p = Linear.init ~inputs:3 ~outputs:5 in
   shape_is ~msg:"w shape" [| 3; 5 |] p.Linear.w;
   match p.Linear.b with
@@ -61,7 +61,7 @@ let test_linear_apply_affine () =
     (Linear.apply p x)
 
 let test_linear_no_bias () =
-  Nx.Rng.run ~seed:2 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
   let p = Linear.make ~bias:false ~inputs:4 ~outputs:3 Nx.float32 in
   is_true ~msg:"no bias parameter" (p.Linear.b = None);
   let x = Nx.create Nx.float32 [| 2; 4 |] (Array.init 8 float_of_int) in
@@ -70,7 +70,7 @@ let test_linear_no_bias () =
     (Linear.apply p x)
 
 let test_linear_batched_apply () =
-  Nx.Rng.run ~seed:3 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let p = Linear.init ~inputs:4 ~outputs:2 in
   let x = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
   shape_is ~msg:"leading axes are batch axes" [| 2; 3; 2 |] (Linear.apply p x)
@@ -86,14 +86,14 @@ let test_linear_custom_inits () =
   | Some b -> values_are ~msg:"bias_init" ~tol:0.0 (Array.make 3 1.0) b
 
 let test_linear_names () =
-  Nx.Rng.run ~seed:4 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let with_bias = Linear.init ~inputs:2 ~outputs:2 in
   equal ~msg:"with bias" (list string) [ "w"; "b" ] (Linear.names with_bias);
   let no_bias = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
   equal ~msg:"without bias" (list string) [ "w" ] (Linear.names no_bias)
 
 let test_linear_gradients () =
-  Nx.Rng.run ~seed:5 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 4; 3 |] in
   let loss p =
     let y = Linear.apply p x in
@@ -105,7 +105,7 @@ let test_linear_gradients () =
   grads_ok (Rune.check_grads (module Linear64) loss no_bias)
 
 let test_linear_map2_bias_mismatch () =
-  Nx.Rng.run ~seed:6 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p = Linear.init ~inputs:2 ~outputs:2 in
   let q = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
   raises_invalid_arg "Linear.map2: bias mismatch" (fun () ->
@@ -129,7 +129,7 @@ let embedding_4x3 () =
   }
 
 let test_embedding_init_shape () =
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Embedding.init ~vocab:7 ~dim:4 in
   shape_is ~msg:"table shape" [| 7; 4 |] p.Embedding.table;
   equal ~msg:"names" (list string) [ "table" ] (Embedding.names p)
@@ -154,7 +154,7 @@ let test_embedding_scalar_id () =
   values_are ~msg:"row 2" ~tol:0.0 [| 6.; 7.; 8. |] row
 
 let test_embedding_duplicate_id_gradient () =
-  Nx.Rng.run ~seed:8 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let p = Embedding.make ~vocab:3 ~dim:2 Nx.float64 in
   let ids = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 0l |] in
   let loss p = Nx.sum (Embedding.apply p ids) in
@@ -165,7 +165,7 @@ let test_embedding_duplicate_id_gradient () =
     g.Embedding.table
 
 let test_embedding_gradients () =
-  Nx.Rng.run ~seed:9 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
   let p = Embedding.make ~vocab:5 ~dim:3 Nx.float64 in
   let ids = Nx.create Nx.int32 [| 2; 2 |] [| 0l; 3l; 3l; 1l |] in
   let loss p =
@@ -209,7 +209,7 @@ let test_layer_norm_analytic () =
     (Layer_norm.apply p x)
 
 let test_layer_norm_standardizes () =
-  Nx.Rng.run ~seed:10 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 10) @@ fun () ->
   let x = Nx.add_s (Nx.mul_s (Nx.randn Nx.float32 [| 3; 16 |]) 3.0) 7.0 in
   let y = Layer_norm.apply (Layer_norm.init ~dim:16) x in
   shape_is ~msg:"shape preserved" [| 3; 16 |] y;
@@ -238,7 +238,7 @@ let test_layer_norm_eps () =
     (Layer_norm.apply ~eps:3.0 p x)
 
 let test_layer_norm_gradients () =
-  Nx.Rng.run ~seed:11 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 11) @@ fun () ->
   let p =
     {
       Layer_norm.gamma = Nx.randn Nx.float64 [| 4 |];

@@ -97,7 +97,7 @@ let load_training_state path =
   (params, ostate)
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   Printf.printf "Loading MNIST...\n%!";
   match Kaun_datasets.mnist () with
   | exception Failure msg ->

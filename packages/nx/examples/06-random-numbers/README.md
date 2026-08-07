@@ -1,7 +1,8 @@
 # `06-random-numbers`
 
-Implicit RNG with reproducible scopes — generate distributions, sample,
-and shuffle. Wrap code in `Rng.run ~seed` for deterministic results.
+Drawing from the ambient RNG scope — distributions, sampling, and
+shuffling. Open a scope with `Rng.with_key (Rng.key 42)` for deterministic
+results; outside one, draws are seeded from system entropy.
 
 ```bash
 dune exec nx/examples/06-random-numbers/main.exe
@@ -12,19 +13,23 @@ dune exec nx/examples/06-random-numbers/main.exe
 - Generating uniform, normal, and integer distributions
 - Running a Monte Carlo simulation to estimate pi
 - Creating synthetic training data with controlled noise
-- Verifying reproducibility with `Rng.run ~seed`
-- Shuffling arrays with `Rng.shuffle`
+- Verifying reproducibility with `Rng.with_key`
+- Shuffling arrays with `shuffle`
 
 ## Key Functions
 
-| Function                                 | Purpose                                           |
-| ---------------------------------------- | ------------------------------------------------- |
-| `Rng.run ~seed f`                        | Execute `f` in a deterministic RNG scope          |
-| `Rng.uniform dtype shape`                | Uniform random values in [0, 1)                   |
-| `Rng.normal dtype shape`                 | Standard normal distribution (mean=0, std=1)      |
-| `randint ?low ~high shape`               | Random int32 values in [low, high)                |
-| `Rng.shuffle t`                          | Randomly permute array elements                   |
-| `rand dtype shape`                       | Shorthand for uniform random values               |
+Each sampler comes in two forms: `Rng.f key ...` is a pure function of the
+key, and `f ...` is the same draw taken from the ambient scope.
+
+| Function                          | Purpose                                        |
+| --------------------------------- | ---------------------------------------------- |
+| `Rng.with_key k f`                | Run `f` in a scope rooted at `k`               |
+| `Rng.key seed`                    | The key for a seed                             |
+| `rand dtype shape`                | Uniform values in [0, 1)                       |
+| `randn dtype shape`               | Standard normal (mean 0, variance 1)           |
+| `randint ?low ~high shape`        | Uniform int32 values in [low, high)            |
+| `shuffle t`                       | Permute the first axis                         |
+| `Rng.uniform k ?low ?high dt sh`  | Uniform over an arbitrary interval             |
 
 ## Output Walkthrough
 
@@ -49,8 +54,8 @@ Monte Carlo pi (100000 points): 3.1420  (actual: 3.1416)
 Same seed always produces the same numbers:
 
 ```ocaml
-let a = Rng.run ~seed:99 (fun () -> Rng.normal Float64 [| 3 |]) in
-let b = Rng.run ~seed:99 (fun () -> Rng.normal Float64 [| 3 |]) in
+let a = Rng.with_key (Rng.key 99) (fun () -> Rng.normal Float64 [| 3 |]) in
+let b = Rng.with_key (Rng.key 99) (fun () -> Rng.normal Float64 [| 3 |]) in
 (* Identical? true *)
 ```
 

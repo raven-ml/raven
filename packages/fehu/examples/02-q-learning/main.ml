@@ -93,7 +93,7 @@ let () =
   Printf.printf "alpha = %.2f, gamma = %.2f, episodes = %d\n\n" alpha gamma
     n_episodes;
 
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let sample_uniform () =
     let t = Nx.rand Nx.float32 [| 1 |] in
     (Nx.to_array t : float array).(0)

@@ -121,7 +121,7 @@ let test_vega_optimizer_step () =
   equal (array (float 1e-6)) [| 2.; -4. |] (Nx.to_array state.velocity.weight)
 
 let test_nested_kaun_model_and_checkpoint_order () =
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let model =
     Model.
       {

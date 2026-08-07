@@ -13,12 +13,12 @@
 
     Traversing a sequence built with [~shuffle:true] draws a fresh permutation
     from the ambient RNG scope (see {!Nx.Rng}): iterating the same sequence once
-    per epoch reshuffles every epoch, and running the loop under {!Nx.Rng.run}
+    per epoch reshuffles every epoch, and running the loop under {!Nx.Rng.with_key}
     makes the whole schedule of permutations — hence the whole run —
     reproducible.
 
     {[
-    Nx.Rng.run ~seed:42 @@ fun () ->
+    Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
     let data = Data.batches2 ~shuffle:true ~batch_size:32 (x, y) in
     let state = ref (params, Vega.adam_init (module Model) params) in
     for _epoch = 1 to 10 do

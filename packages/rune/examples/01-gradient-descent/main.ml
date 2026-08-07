@@ -23,7 +23,7 @@ module Params = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   (* Synthetic data: y = x @ w_true + b_true + noise. *)
   let w_true = Nx.create Nx.float32 [| 3; 1 |] [| 2.0; -1.0; 0.5 |] in
   let b_true = 0.3 in

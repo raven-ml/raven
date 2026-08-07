@@ -57,7 +57,7 @@ let test_empty_dataset () =
 (* Shuffling *)
 
 let shuffled_elements ~seed =
-  Nx.Rng.run ~seed @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key seed) @@ fun () ->
   elements (Data.batches ~shuffle:true ~batch_size:4 (arange 10 1))
 
 let test_shuffle_deterministic () =
@@ -73,12 +73,12 @@ let test_shuffle_is_permutation () =
     (sorted seen) ~msg:"same multiset of examples"
 
 let test_shuffle_keeps_batch_shapes () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let data = Data.batches ~shuffle:true ~batch_size:4 (arange 10 3) in
   equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ]; [ 2; 3 ] ] (shapes data)
 
 let test_epochs_reshuffle () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let data = Data.batches ~shuffle:true ~batch_size:4 (arange 32 1) in
   let epoch1 = elements data in
   let epoch2 = elements data in
@@ -109,7 +109,7 @@ let test_batches2_shapes () =
           data))
 
 let test_batches2_shuffle_keeps_pairing () =
-  Nx.Rng.run ~seed:3 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let data = Data.batches2 ~shuffle:true ~batch_size:4 (paired 10) in
   let xs, ys =
     Seq.fold_left

@@ -87,7 +87,7 @@ let test_core_mask_zeroes_weights () =
     (Attention.scaled_dot_product_attention ~mask q k v)
 
 let test_core_gradients () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p =
     {
       Qkv64.q = Nx.randn Nx.float64 [| 3; 2 |];
@@ -102,7 +102,7 @@ let test_core_gradients () =
   grads_ok (Rune.check_grads (module Qkv64) loss p)
 
 let test_core_masked_gradients () =
-  Nx.Rng.run ~seed:2 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
   let p =
     {
       Qkv64.q = Nx.randn Nx.float64 [| 2; 2 |];
@@ -143,7 +143,7 @@ let test_core_rejects_bad_shapes () =
 (* Multi-head self-attention layer *)
 
 let test_init_shapes () =
-  Nx.Rng.run ~seed:3 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   List.iter
     (fun (name, (l : Linear.t)) ->
@@ -159,7 +159,7 @@ let test_init_shapes () =
     ]
 
 let test_names () =
-  Nx.Rng.run ~seed:4 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   equal ~msg:"with biases" (list string)
     [ "q.w"; "q.b"; "k.w"; "k.b"; "v.w"; "v.b"; "out.w"; "out.b" ]
@@ -170,7 +170,7 @@ let test_names () =
     (Attention.names no_bias)
 
 let test_apply_shapes () =
-  Nx.Rng.run ~seed:5 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let batched = Nx.zeros Nx.float32 [| 2; 5; 8 |] in
   shape_is ~msg:"batched input keeps its shape" [| 2; 5; 8 |]
@@ -216,7 +216,7 @@ let test_causal_first_position_is_itself () =
     [| 1.; 2. |] (Array.sub y 0 2)
 
 let test_causal_ignores_the_future () =
-  Nx.Rng.run ~seed:6 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let base = Array.init 32 (fun i -> sin (float_of_int i)) in
   let changed = Array.mapi (fun i a -> if i >= 24 then a +. 10.0 else a) base in
@@ -239,7 +239,7 @@ let test_causal_ignores_the_future () =
 let test_permutation_equivariance () =
   (* Self-attention has no notion of position: permuting the sequence permutes
      the output the same way. *)
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let base = Array.init 12 (fun i -> cos (float_of_int i)) in
   let perm = [| 2; 0; 1 |] in
@@ -255,7 +255,7 @@ let test_permutation_equivariance () =
     (permute perm y) yp
 
 let test_gradients () =
-  Nx.Rng.run ~seed:8 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 3; 4 |] in
   let p = Attention.make ~embed_dim:4 Nx.float64 in
   let loss ?causal p =
@@ -271,7 +271,7 @@ let pos_at i = Nx.create Nx.int32 [| 1 |] [| Int32.of_int i |]
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
 let test_cached_prefill_matches_causal () =
-  Nx.Rng.run ~seed:20 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 20) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let full = Attention.apply ~num_heads:2 ~causal:true p x in
@@ -282,7 +282,7 @@ let test_cached_prefill_matches_causal () =
     (flat full) (flat y)
 
 let test_cached_decode_matches_causal () =
-  Nx.Rng.run ~seed:21 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let full = Attention.apply ~num_heads:2 ~causal:true p x in
@@ -308,7 +308,7 @@ let test_cached_decode_matches_causal () =
     (flat full) (flat y)
 
 let test_cached_update_is_functional () =
-  Nx.Rng.run ~seed:22 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
@@ -325,7 +325,7 @@ let test_cached_update_is_functional () =
        (flat cache'.Attention.Cache.keys))
 
 let test_cached_write_past_len_is_dropped () =
-  Nx.Rng.run ~seed:23 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:2 Nx.float32 in
@@ -370,7 +370,7 @@ module Step = struct
 end
 
 let test_cached_step_jits_once () =
-  Nx.Rng.run ~seed:24 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
   let decode step_fn =
@@ -405,7 +405,7 @@ let test_cached_step_jits_once () =
   equal ~msg:"all four steps share one trace" int 1 !traces
 
 let test_cached_gradients () =
-  Nx.Rng.run ~seed:25 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 25) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 1; 3; 4 |] in
   let p = Attention.make ~embed_dim:4 Nx.float64 in
   let loss p =
@@ -426,7 +426,7 @@ let test_cached_gradients () =
   grads_ok (Rune.check_grads (module Attention64) loss p)
 
 let test_cached_rejects_bad_geometry () =
-  Nx.Rng.run ~seed:26 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 26) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
   let apply ?(pos = pos_at 0) x =
@@ -451,7 +451,7 @@ let test_cached_rejects_bad_geometry () =
         (Nx.zeros Nx.float32 [| 1; 1; 4 |]))
 
 let test_rejects_bad_geometry () =
-  Nx.Rng.run ~seed:9 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
   raises_invalid_arg "Attention.make: embed_dim must be positive, got 0"
     (fun () -> Attention.make ~embed_dim:0 Nx.float32);
   let p = Attention.init ~embed_dim:4 in

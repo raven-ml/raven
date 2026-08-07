@@ -256,7 +256,7 @@ let test_npy_rejects_trailing_payload () =
 
 (* Test NPZ format *)
 let test_npz_save_load_multiple () =
-  let weights = Nx.Rng.run ~seed:0 (fun () -> Nx.randn Nx.float32 [| 5; 3 |]) in
+  let weights = Nx.Rng.with_key (Nx.Rng.key 0) (fun () -> Nx.randn Nx.float32 [| 5; 3 |]) in
   let bias = Nx.zeros Nx.float32 [| 3 |] in
   let scale = Nx.ones Nx.float64 [| 3 |] in
   let path = temp_file "test_npz_" ".npz" in
@@ -972,7 +972,7 @@ let txt_tests =
 
 let test_safetensors_save_load () =
   let weights, embeddings =
-    Nx.Rng.run ~seed:10 (fun () ->
+    Nx.Rng.with_key (Nx.Rng.key 10) (fun () ->
         let w = Nx.randn Nx.float32 [| 10; 5 |] in
         let e = Nx.randn Nx.float32 [| 100; 64 |] in
         (w, e))

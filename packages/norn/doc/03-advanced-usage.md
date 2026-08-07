@@ -173,7 +173,7 @@ calculation, skip the adaptation overhead by providing the metric directly:
 open Nx
 
 let () =
-  Rng.run ~seed:42 @@ fun () ->
+  Rng.with_key (Rng.key 42) @@ fun () ->
   let f64 = Nx.float64 in
   let log_prob x = Nx.mul_s (Nx.sum (Nx.square x)) (-0.5) in
   let init = Nx.zeros f64 [| 2 |] in

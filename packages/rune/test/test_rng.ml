@@ -5,7 +5,7 @@
 
 (* One generator, two front-ends: the explicit [Nx.Rng] samplers (purity and
    statistics, key derivation via split/fold_in) and the implicit scope
-   ([Nx.rand] under [Nx.Rng.run]), which must draw from the same generator.
+   ([Nx.rand] under [Nx.Rng.with_key]), which must draw from the same generator.
    Also: bit-exact parity between eager and compiled execution (the C threefry
    kernel and Tolk's decomposition are the same function), the constant-key
    refusal inside jit, per-lane decorrelation with [fold_in_axis], and
@@ -160,7 +160,7 @@ let test_fold_in_distinct_and_reproducible () =
 let test_scope_matches_explicit_draw () =
   let shape = [| 16 |] in
   let root = Nx.Rng.key 123 in
-  Nx.Rng.run ~seed:123 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 123) (fun () ->
       let a = Nx.rand f32 shape in
       let b = Nx.rand f32 shape in
       check_bits ~msg:"first scope draw == uniform (fold_in root 0)"

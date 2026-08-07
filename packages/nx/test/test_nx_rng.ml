@@ -48,7 +48,7 @@ let test_fold_in () =
 
 let test_rand () =
   let shape = [| 3; 4 |] in
-  let t = Rng.run ~seed:42 (fun () -> rand float32 shape) in
+  let t = Rng.with_key (Rng.key 42) (fun () -> rand float32 shape) in
 
   equal ~msg:"rand produces correct shape" (array int) shape (Nx.shape t);
 
@@ -59,14 +59,14 @@ let test_rand () =
     values;
 
   (* Check deterministic *)
-  let t2 = Rng.run ~seed:42 (fun () -> rand float32 shape) in
+  let t2 = Rng.with_key (Rng.key 42) (fun () -> rand float32 shape) in
   let is_equal = Nx.all (Nx.equal t t2) in
   let is_equal_val = Nx.to_array is_equal in
   equal ~msg:"rand is deterministic" bool true is_equal_val.(0)
 
 let test_randn () =
   let shape = [| 10_000 |] in
-  let t = Rng.run ~seed:42 (fun () -> randn float32 shape) in
+  let t = Rng.with_key (Rng.key 42) (fun () -> randn float32 shape) in
 
   equal ~msg:"randn produces correct shape" (array int) shape (Nx.shape t);
 
@@ -181,13 +181,13 @@ let test_keyless_float_sampler_dtypes () =
     equal ~msg:(name ^ " rand dtype") bool true (Nx.dtype uniform_sample = dt);
     equal ~msg:(name ^ " randn dtype") bool true (Nx.dtype normal_sample = dt)
   in
-  Rng.run ~seed:42 (fun () ->
+  Rng.with_key (Rng.key 42) (fun () ->
       check "float32" float32;
       check "float64" float64)
 
 let test_randint () =
   let shape = [| 10 |] in
-  let t = Rng.run ~seed:42 (fun () -> randint ~low:5 ~high:15 shape) in
+  let t = Rng.with_key (Rng.key 42) (fun () -> randint ~low:5 ~high:15 shape) in
 
   equal ~msg:"randint produces correct shape" (array int) shape (Nx.shape t);
 
@@ -243,7 +243,7 @@ let test_bernoulli_extremes () =
 let test_bernoulli () =
   let shape = [| 1000 |] in
   let p = 0.3 in
-  let t = Rng.run ~seed:42 (fun () -> bernoulli ~p shape) in
+  let t = Rng.with_key (Rng.key 42) (fun () -> bernoulli ~p shape) in
 
   equal ~msg:"bernoulli produces correct shape" (array int) shape (Nx.shape t);
   let t_int = cast uint8 t in
@@ -261,7 +261,7 @@ let test_shuffle_preserves_shape () =
     Array.init (shape.(0) * shape.(1)) (fun i -> float_of_int (i + 1))
   in
   let x = Nx.create float32 shape data in
-  let shuffled = Rng.run ~seed:7 (fun () -> shuffle x) in
+  let shuffled = Rng.with_key (Rng.key 7) (fun () -> shuffle x) in
 
   equal ~msg:"shuffle preserves leading axis" (array int) shape
     (Nx.shape shuffled);
@@ -283,7 +283,7 @@ let test_shuffle_preserves_shape () =
     (array (float 0.0))
     sorted_orig sorted_shuffled;
 
-  let shuffled_again = Rng.run ~seed:7 (fun () -> shuffle x) in
+  let shuffled_again = Rng.with_key (Rng.key 7) (fun () -> shuffle x) in
   let equality = Nx.equal shuffled shuffled_again |> Nx.all |> Nx.to_array in
   equal ~msg:"shuffle deterministic with same seed" bool true equality.(0)
 
@@ -292,7 +292,7 @@ let test_truncated_normal () =
   let lower = -1.5 in
   let upper = 2.0 in
   let t =
-    Rng.run ~seed:42 (fun () -> truncated_normal float32 ~lower ~upper shape)
+    Rng.with_key (Rng.key 42) (fun () -> truncated_normal float32 ~lower ~upper shape)
   in
 
   equal ~msg:"truncated_normal produces correct shape" (array int) shape
@@ -315,7 +315,7 @@ let test_truncated_normal_distribution () =
   let lower = -0.75 in
   let upper = 1.25 in
   let samples =
-    Rng.run ~seed:123 (fun () -> truncated_normal float32 ~lower ~upper shape)
+    Rng.with_key (Rng.key 123) (fun () -> truncated_normal float32 ~lower ~upper shape)
   in
 
   equal ~msg:"truncated_normal produces correct shape" (array int) shape
@@ -506,7 +506,7 @@ let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
   (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
   let logits = Nx.create float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
-  let samples = Rng.run ~seed:42 (fun () -> categorical logits) in
+  let samples = Rng.with_key (Rng.key 42) (fun () -> categorical logits) in
 
   (* Check output shape *)
   let output_shape = Nx.shape samples in
@@ -522,14 +522,14 @@ let test_categorical () =
     (sample_idx >= 0 && sample_idx <= 2);
 
   (* Test determinism *)
-  let samples2 = Rng.run ~seed:42 (fun () -> categorical logits) in
+  let samples2 = Rng.with_key (Rng.key 42) (fun () -> categorical logits) in
   let is_equal = Nx.all (Nx.equal samples samples2) in
   let is_equal_val = Nx.to_array is_equal in
   equal ~msg:"categorical is deterministic" bool true is_equal_val.(0);
 
   (* Test with Float64 *)
   let logits64 = Nx.create float64 [| 3 |] [| 0.0; 1.0; 2.0 |] in
-  let samples64 = Rng.run ~seed:42 (fun () -> categorical logits64) in
+  let samples64 = Rng.with_key (Rng.key 42) (fun () -> categorical logits64) in
   let is_equal64 = Nx.all (Nx.equal samples samples64) in
   let is_equal_val64 = Nx.to_array is_equal64 in
   equal ~msg:"categorical is type agnostic" bool true is_equal_val64.(0)
@@ -538,7 +538,7 @@ let test_categorical_2d () =
   (* Test with 2D logits: [[0.0, 1.0], [2.0, 0.0]] *)
   (* Expected probabilities after softmax: [[0.269, 0.731], [0.881, 0.119]] approximately *)
   let logits = Nx.create float32 [| 2; 2 |] [| 0.0; 1.0; 2.0; 0.0 |] in
-  let samples = Rng.run ~seed:42 (fun () -> categorical logits) in
+  let samples = Rng.with_key (Rng.key 42) (fun () -> categorical logits) in
 
   (* Check output shape (should be [2] - one sample per row) *)
   let output_shape = Nx.shape samples in
@@ -565,17 +565,17 @@ let test_categorical_axis_handling () =
 
   (* axis=1 -> sample across columns for each row -> shape [2] *)
   let samples_axis_1 =
-    Rng.run ~seed:42 (fun () -> categorical ~axis:1 logits)
+    Rng.with_key (Rng.key 42) (fun () -> categorical ~axis:1 logits)
   in
 
   (* axis=-1 -> equivalent to axis=1 -> shape [2] *)
   let samples_axis_neg_1 =
-    Rng.run ~seed:42 (fun () -> categorical ~axis:(-1) logits)
+    Rng.with_key (Rng.key 42) (fun () -> categorical ~axis:(-1) logits)
   in
 
   (* axis=0 -> sample across rows for each column -> shape [3] *)
   let samples_axis_0 =
-    Rng.run ~seed:42 (fun () -> categorical ~axis:0 logits)
+    Rng.with_key (Rng.key 42) (fun () -> categorical ~axis:0 logits)
   in
 
   (* Check shape for axis=1 *)
@@ -647,7 +647,7 @@ let test_categorical_shape_prefix_axis () =
 
   let prefix_shape = [| 5; 6 |] in
   let samples =
-    Rng.run ~seed:314 (fun () ->
+    Rng.with_key (Rng.key 314) (fun () ->
         categorical ~shape:prefix_shape ~axis:(-2) logits)
   in
 
@@ -667,7 +667,7 @@ let test_categorical_distribution () =
 
   let n_samples = 20000 in
   let inds =
-    Rng.run ~seed:123 (fun () -> categorical ~shape:[| n_samples |] logits)
+    Rng.with_key (Rng.key 123) (fun () -> categorical ~shape:[| n_samples |] logits)
   in
 
   equal ~msg:"categorical produces correct shape" (array int) [| n_samples |]

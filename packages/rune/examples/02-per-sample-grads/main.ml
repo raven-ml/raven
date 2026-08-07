@@ -48,7 +48,7 @@ module Example = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let n, d = (8, 3) in
   let params =
     { w = Nx.randn Nx.float32 [| d |]; b = Nx.randn Nx.float32 [||] }

@@ -391,7 +391,7 @@ let cold_compile spec =
   Printf.printf "%.3f\n" ms
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   match Array.to_list Sys.argv with
   | _ :: "--cold" :: rest -> cold_compile rest
   | _ ->

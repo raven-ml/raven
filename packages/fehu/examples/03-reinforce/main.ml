@@ -84,7 +84,7 @@ let () =
   Printf.printf "Rollout: %d steps/update, gamma = %.2f, lr = %.4f\n\n" n_steps
     gamma lr;
 
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network *)

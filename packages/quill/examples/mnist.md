@@ -90,7 +90,7 @@ moments) is a record shaped like the parameters themselves.
 let batch_size = 64
 
 let params =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   Model.{ l1 = Linear.init ~inputs:784 ~outputs:128;
           l2 = Linear.init ~inputs:128 ~outputs:10 }
 
@@ -109,7 +109,7 @@ fold over shuffled minibatches.
 let epochs = 1
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let n_train = (Nx.shape x_train).(0) in
   let num_batches = n_train / batch_size in
   for epoch = 1 to epochs do

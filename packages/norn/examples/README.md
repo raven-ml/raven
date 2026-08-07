@@ -31,7 +31,7 @@ dune exec packages/norn/examples/01-sampling-basics/main.exe
 
 ```ocaml
 let result =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   Norn.nuts ~n:1000 log_prob (Nx.zeros Nx.float64 [| dim |])
 ```
 

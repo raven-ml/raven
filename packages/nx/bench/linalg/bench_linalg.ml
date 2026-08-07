@@ -13,7 +13,7 @@ let spd shape =
   Nx.matmul g (Nx.transpose ~axes:(Array.to_list axes) g)
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let matrix = Nx.rand Nx.Float64 [| 256; 256 |] in
   let positive = spd [| 256; 256 |] in
   let rhs = Nx.rand Nx.Float64 [| 256; 16 |] in

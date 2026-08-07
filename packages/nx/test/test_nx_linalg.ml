@@ -738,7 +738,7 @@ let einsum_int_dot_scalar () =
 let test_einsum_regression_axis_order () =
   (* Case 1: i,jk->jki should order as j, k, i *)
   let a1, b1, a2, b2 =
-    Nx.Rng.run ~seed:0 (fun () ->
+    Nx.Rng.with_key (Nx.Rng.key 0) (fun () ->
         let a1 = Nx.randn Nx.float32 [| 5 |] in
         let b1 = Nx.randn Nx.float32 [| 7; 7 |] in
         let a2 = Nx.randn Nx.float32 [| 5; 5 |] in

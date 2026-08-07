@@ -41,7 +41,7 @@ let () =
   Printf.printf "Target: 2D Gaussian, mean=[3,-1], cov=[[1,0.5],[0.5,2]]\n\n";
 
   (* --- HMC: match BlackJAX: 1000 warmup + 3000 samples, fixed --- *)
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let metric = Norn.unit_metric 2 in
       let kernel = Norn.hmc_kernel ~step_size:0.1 ~num_leapfrog:20 ~metric () in
       let init = Nx.zeros f64 [| 2 |] in
@@ -61,7 +61,7 @@ let () =
         "  BlackJAX: mean=[3.0048, -0.9621] var=[0.9896, 2.0819]\n\n");
 
   (* --- NUTS: match BlackJAX: 1000 warmup + 3000 samples, fixed --- *)
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let metric = Norn.unit_metric 2 in
       let kernel = Norn.nuts_kernel ~step_size:0.1 ~metric () in
       let init = Nx.zeros f64 [| 2 |] in
@@ -85,7 +85,7 @@ let () =
         "  BlackJAX: mean=[3.0297, -0.9192] var=[1.0453, 2.1354]\n\n");
 
   (* --- NUTS adapted: warmup trace + 100 samples --- *)
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let report ~step (_state : Norn.state) (info : Norn.info) =
         if step < 0 then begin
           let ws = 1000 + step + 1 in

@@ -17,7 +17,7 @@ Sample from a 2D Gaussian with NUTS:
 open Nx
 
 let () =
-  Rng.run ~seed:42 @@ fun () ->
+  Rng.with_key (Rng.key 42) @@ fun () ->
   let f64 = Nx.float64 in
 
   (* Target: N([3; -1], [[1, 0.8]; [0.8, 1]]) *)

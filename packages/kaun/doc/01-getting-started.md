@@ -56,11 +56,11 @@ end
 
 ## Initialize Parameters
 
-Constructors draw from the implicit RNG scope; wrap the program in `Nx.Rng.run` for reproducibility. `Linear.init` gives Glorot-uniform weights and zero bias:
+Constructors draw from the implicit RNG scope; wrap the program in `Nx.Rng.with_key` for reproducibility. `Linear.init` gives Glorot-uniform weights and zero bias:
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* XOR dataset. *)
   let x =
     Nx.create Nx.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]

@@ -41,7 +41,7 @@ let arange_image shape n = image shape (Array.init n float_of_int)
 (* Conv *)
 
 let test_conv_init_shapes () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p = Conv.init ~in_channels:3 ~out_channels:5 ~kernel_size:(2, 4) in
   shape_is ~msg:"w shape" [| 5; 3; 2; 4 |] p.Conv.w;
   match p.Conv.b with
@@ -101,7 +101,7 @@ let test_conv_stride () =
   values_are ~msg:"disjoint window sums" ~tol:1e-6 [| 10.; 18.; 42.; 50. |] y
 
 let test_conv_shape_contracts () =
-  Nx.Rng.run ~seed:2 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
   let p = Conv.init ~in_channels:3 ~out_channels:4 ~kernel_size:(3, 3) in
   let x = Nx.zeros Nx.float32 [| 2; 3; 8; 7 |] in
   shape_is ~msg:"valid, stride 1" [| 2; 4; 6; 5 |] (Conv.apply p x);
@@ -133,7 +133,7 @@ let test_conv_custom_inits_and_fans () =
       equal ~msg:"fan_out is out_channels * kh * kw" int 12 fan_out
 
 let test_conv_no_bias () =
-  Nx.Rng.run ~seed:3 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let p =
     Conv.make ~bias:false ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2)
       Nx.float32
@@ -142,12 +142,12 @@ let test_conv_no_bias () =
   equal ~msg:"names without bias" (list string) [ "w" ] (Conv.names p)
 
 let test_conv_names () =
-  Nx.Rng.run ~seed:4 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2) in
   equal ~msg:"with bias" (list string) [ "w"; "b" ] (Conv.names p)
 
 let test_conv_gradients () =
-  Nx.Rng.run ~seed:5 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 2; 2; 4; 4 |] in
   let loss p =
     let y = Conv.apply p x in
@@ -168,7 +168,7 @@ let test_conv_gradients () =
   grads_ok (Rune.check_grads (module Conv64) strided_loss no_bias)
 
 let test_conv_input_gradients () =
-  Nx.Rng.run ~seed:6 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p =
     Conv.make ~in_channels:2 ~out_channels:3 ~kernel_size:(2, 2) Nx.float64
   in
@@ -190,7 +190,7 @@ let test_conv_rejects_bad_geometry () =
       Conv.make ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 0) Nx.float32)
 
 let test_conv_rejects_bad_input () =
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 3) in
   raises_invalid_arg
     "Conv.apply: input must be [batch; channels; height; width], got rank 3"
@@ -247,7 +247,7 @@ let test_max_pool_gradient_routes_to_max () =
   values_are ~msg:"gradient is 1 at each window maximum" ~tol:1e-12 expected g
 
 let test_pool_gradients () =
-  Nx.Rng.run ~seed:8 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 1; 2; 4; 4 |] in
   let max_loss x =
     let y = Pool.max_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x in

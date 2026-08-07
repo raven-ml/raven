@@ -28,7 +28,7 @@ Create an environment, run a random agent, and evaluate:
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Run one episode *)

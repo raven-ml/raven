@@ -35,7 +35,7 @@ let () =
   (* Run chains with different seeds *)
   let chains =
     Array.init n_chains (fun i ->
-        Nx.Rng.run ~seed:(i + 1) @@ fun () ->
+        Nx.Rng.with_key (Nx.Rng.key (i + 1)) @@ fun () ->
         let init = Nx.zeros f64 [| dim |] in
         Norn.nuts ~n:n_samples ~num_warmup:500 log_prob init)
   in

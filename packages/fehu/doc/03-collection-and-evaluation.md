@@ -17,7 +17,7 @@ environment at the start and automatically on episode boundaries:
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* The policy receives an observation and returns
@@ -149,7 +149,7 @@ Draw a batch of transitions uniformly at random (with replacement):
 
 <!-- $MDX skip -->
 ```ocaml
-let batch = Nx.Rng.run ~seed:0 @@ fun () ->
+let batch = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   Buffer.sample buf ~batch_size:64
 
 (* batch is a transition array *)
@@ -163,7 +163,7 @@ For structure-of-arrays form (more convenient for training):
 ```ocaml
 let (observations, actions, rewards,
      next_observations, terminated, truncated) =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
     Buffer.sample_arrays buf ~batch_size:64
 ```
 
@@ -249,7 +249,7 @@ and reports summary statistics:
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Evaluate a random policy *)

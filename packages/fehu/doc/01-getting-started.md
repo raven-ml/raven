@@ -21,12 +21,12 @@ cd raven && dune build fehu
 ## Creating an Environment
 
 Environments are created via factory functions in `Fehu_envs`. Randomness is
-provided by the implicit RNG scope from `Nx.Rng.run`:
+provided by the implicit RNG scope from `Nx.Rng.with_key`:
 
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
   ignore env
 ```
@@ -42,7 +42,7 @@ first `step`, and again after any terminal step (terminated or truncated).
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Reset returns the initial observation and info *)
@@ -71,7 +71,7 @@ let run_episode env =
   done;
   !total_reward
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
   let _reward = run_episode env in ()
 ```
@@ -93,7 +93,7 @@ let space = Space.Discrete.create 4  (* actions 0, 1, 2, 3 *)
 let _n = Space.Discrete.n space      (* 4 *)
 
 (* Sample a random action (requires an Nx.Rng scope) *)
-let _act = Nx.Rng.run ~seed:0 @@ fun () ->
+let _act = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   Space.sample space
 
 (* Convert between int and discrete element *)
@@ -117,7 +117,7 @@ let space = Space.Box.create
   ~high:[| 1.0; 2.0 |]
 
 let _low, _high = Space.Box.bounds space
-let _obs = Nx.Rng.run ~seed:0 @@ fun () -> Space.sample space
+let _obs = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Space.sample space
 ```
 
 ### Other Space Types
@@ -144,7 +144,7 @@ cart leaves +/-2.4. Truncates at 500 steps.
 - **Actions**: Discrete 2 -- 0 = push left, 1 = push right
 
 ```ocaml
-let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Cartpole.make ()
+let _env = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () -> Fehu_envs.Cartpole.make ()
 ```
 
 ### MountainCar
@@ -157,7 +157,7 @@ step. Terminates when position >= 0.5 with non-negative velocity. Truncates at
 - **Actions**: Discrete 3 -- 0 = push left, 1 = coast, 2 = push right
 
 ```ocaml
-let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Mountain_car.make ()
+let _env = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () -> Fehu_envs.Mountain_car.make ()
 ```
 
 ### GridWorld
@@ -170,7 +170,7 @@ steps.
 - **Actions**: Discrete 4 -- 0 = up, 1 = down, 2 = left, 3 = right
 
 ```ocaml
-let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Grid_world.make ()
+let _env = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () -> Fehu_envs.Grid_world.make ()
 ```
 
 ### RandomWalk
@@ -182,7 +182,7 @@ boundaries or after 200 steps.
 - **Actions**: Discrete 2 -- 0 = left, 1 = right
 
 ```ocaml
-let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Random_walk.make ()
+let _env = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () -> Fehu_envs.Random_walk.make ()
 ```
 
 ## Render Modes
@@ -193,7 +193,7 @@ creating the environment:
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make
     ~render_mode:`Ansi () in
 

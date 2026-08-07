@@ -2,7 +2,7 @@
     shuffle.
 
     Roll dice, estimate pi with Monte Carlo, and generate noisy training data.
-    Every result is reproducible inside an [Rng.run] scope: same seed, same
+    Every result is reproducible inside an [Rng.with_key] scope: same seed, same
     numbers. Outside any scope the global fallback provides convenient but
     non-reproducible randomness. *)
 
@@ -42,9 +42,9 @@ let () =
   Printf.printf "x:     %s\n" (to_string x);
   Printf.printf "y ~ 3x+2: %s\n\n" (to_string y);
 
-  (* --- Reproducibility: Rng.run ~seed gives the same result --- *)
-  let a = Rng.run ~seed:99 (fun () -> randn Float64 [| 3 |]) in
-  let b = Rng.run ~seed:99 (fun () -> randn Float64 [| 3 |]) in
+  (* --- Reproducibility: Rng.with_key gives the same result --- *)
+  let a = Rng.with_key (Rng.key 99) (fun () -> randn Float64 [| 3 |]) in
+  let b = Rng.with_key (Rng.key 99) (fun () -> randn Float64 [| 3 |]) in
   Printf.printf "Same seed, run 1: %s\n" (to_string a);
   Printf.printf "Same seed, run 2: %s\n" (to_string b);
   Printf.printf "Identical? %b\n\n" (item [] (all (equal a b)));

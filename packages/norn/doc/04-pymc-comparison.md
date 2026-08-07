@@ -62,7 +62,7 @@ done
 ```
 
 Both use a `{init; step}` pattern. The key difference: BlackJAX threads a
-PRNG key explicitly, while Norn uses Nx's RNG context (`Rng.run`).
+PRNG key explicitly, while Norn uses Nx's RNG context (`Rng.with_key`).
 
 ## Adaptation
 
@@ -185,7 +185,7 @@ info.num_integration_steps  (* int *)
 | Language | Python / JAX | OCaml / Rune |
 | Model definition | Declarative (PyMC) or functional (BlackJAX) | Functional -- write `log_prob` directly |
 | Gradients | JAX autodiff | Rune autodiff |
-| PRNG | Explicit key splitting (JAX) | Scoped via `Nx.Rng.run` |
+| PRNG | Explicit key splitting (JAX) | Scoped via `Nx.Rng.with_key` |
 | Adaptation | Separate step (BlackJAX) or automatic (PyMC) | Integrated into `sample` |
 | Mass matrix output | Diagonal or dense | `metric` record with `sample_momentum`, `kinetic_energy`, `scale` |
 | Multi-chain | Built-in (`chains` parameter) | Run multiple calls, combine with `rhat` |

@@ -11,7 +11,7 @@ module Params = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let expected_w = Nx.create Nx.float32 [| 3; 1 |] [| 2.0; -1.0; 0.5 |] in
   let expected_b = 0.3 in
   let x = Nx.randn Nx.float32 [| 64; 3 |] in

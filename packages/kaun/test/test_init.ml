@@ -30,7 +30,7 @@ let test_constants () =
 (* Random *)
 
 let test_uniform_range_and_mean () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let scale = 0.25 in
   let t = Init.uniform ~scale ~fan_in:0 ~fan_out:0 Nx.float32 [| 120_000 |] in
   is_true ~msg:"uniform range" (tensor_all (fun x -> x >= 0.0 && x < scale) t);
@@ -38,7 +38,7 @@ let test_uniform_range_and_mean () =
   equal ~msg:"uniform mean" (float 8e-3) (scale /. 2.0) mean
 
 let test_normal_mean_and_variance () =
-  Nx.Rng.run ~seed:2 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
   let stddev = 0.2 in
   let t = Init.normal ~stddev ~fan_in:0 ~fan_out:0 Nx.float32 [| 140_000 |] in
   let mean, variance = tensor_stats t in
@@ -48,7 +48,7 @@ let test_normal_mean_and_variance () =
 let test_deterministic_same_seed () =
   let shape = [| 64; 64 |] in
   let draw seed =
-    Nx.Rng.run ~seed @@ fun () ->
+    Nx.Rng.with_key (Nx.Rng.key seed) @@ fun () ->
     flatten_f32 (Init.he_uniform ~fan_in:64 ~fan_out:64 Nx.float32 shape)
   in
   is_true ~msg:"same seed, same tensor" (draw 12 = draw 12);
@@ -57,7 +57,7 @@ let test_deterministic_same_seed () =
 (* Variance scaling families *)
 
 let test_glorot_uniform_bounds () =
-  Nx.Rng.run ~seed:3 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let fan_in = 64 and fan_out = 32 in
   let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
   let t = Init.glorot_uniform ~fan_in ~fan_out Nx.float32 [| 64; 32 |] in
@@ -65,7 +65,7 @@ let test_glorot_uniform_bounds () =
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_glorot_normal_variance () =
-  Nx.Rng.run ~seed:4 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let fan_in = 960 and fan_out = 480 in
   let expected = 2.0 /. float_of_int (fan_in + fan_out) in
   let t = Init.glorot_normal ~fan_in ~fan_out Nx.float32 [| 960; 480 |] in
@@ -73,7 +73,7 @@ let test_glorot_normal_variance () =
   equal ~msg:"glorot_normal variance" (float 3e-4) expected variance
 
 let test_he_uniform_bounds () =
-  Nx.Rng.run ~seed:5 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
   let fan_in = 128 in
   let limit = sqrt (6.0 /. float_of_int fan_in) in
   let t = Init.he_uniform ~fan_in ~fan_out:64 Nx.float32 [| 128; 64 |] in
@@ -81,7 +81,7 @@ let test_he_uniform_bounds () =
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_he_normal_variance () =
-  Nx.Rng.run ~seed:6 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let fan_in = 256 in
   let expected = 2.0 /. float_of_int fan_in in
   let t = Init.he_normal ~fan_in ~fan_out:64 Nx.float32 [| 256; 64 |] in
@@ -89,7 +89,7 @@ let test_he_normal_variance () =
   equal ~msg:"he_normal variance" (float 2e-3) expected variance
 
 let test_lecun_uniform_bounds () =
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let fan_in = 128 in
   let limit = sqrt (3.0 /. float_of_int fan_in) in
   let t = Init.lecun_uniform ~fan_in ~fan_out:32 Nx.float32 [| 128; 32 |] in
@@ -97,7 +97,7 @@ let test_lecun_uniform_bounds () =
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_lecun_normal_variance () =
-  Nx.Rng.run ~seed:8 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let fan_in = 128 in
   let expected = 1.0 /. float_of_int fan_in in
   let t = Init.lecun_normal ~fan_in ~fan_out:16 Nx.float32 [| 128; 16 |] in
@@ -105,7 +105,7 @@ let test_lecun_normal_variance () =
   equal ~msg:"lecun_normal variance" (float 1.5e-3) expected variance
 
 let test_variance_scaling_fan_out_mode () =
-  Nx.Rng.run ~seed:9 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
   let fan_out = 40 in
   let scale = 1.7 in
   let limit = sqrt (3.0 *. scale /. float_of_int fan_out) in
@@ -117,7 +117,7 @@ let test_variance_scaling_fan_out_mode () =
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_variance_follows_fans_not_shape () =
-  Nx.Rng.run ~seed:10 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 10) @@ fun () ->
   (* The shape is unrelated to the fans; only the fans set the variance. *)
   let t = Init.he_normal ~fan_in:8 ~fan_out:1 Nx.float32 [| 400; 400 |] in
   let _, variance = tensor_stats t in
@@ -126,13 +126,13 @@ let test_variance_follows_fans_not_shape () =
 (* Shape and dtype *)
 
 let test_requested_shape () =
-  Nx.Rng.run ~seed:11 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 11) @@ fun () ->
   let shape = [| 3; 4; 5 |] in
   let t = Init.glorot_uniform ~fan_in:4 ~fan_out:5 Nx.float32 shape in
   equal ~msg:"shape" (array int) shape (Nx.shape t)
 
 let test_float64_dtype () =
-  Nx.Rng.run ~seed:12 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 12) @@ fun () ->
   (* One polymorphic initializer value serves several float dtypes. *)
   let init = Init.lecun_normal in
   let t32 = init ~fan_in:64 ~fan_out:64 Nx.float32 [| 64; 64 |] in

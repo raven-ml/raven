@@ -340,7 +340,7 @@ val check_grads :
 
     Random number generation lives entirely in {!Nx.Rng}: keys, the keyed
     samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the scope
-    ({!Nx.Rng.with_key}, {!Nx.Rng.run}). A key is an ordinary [[|2|]] int32
+    ({!Nx.Rng.with_key}). A key is an ordinary [[|2|]] int32
     tensor, so it traces, batches and shards like any tensor — thread it as an
     input of a jitted function and derive per-call keys with {!Nx.Rng.split} or
     {!Nx.Rng.fold_in}. The transforms answer the generator's effects but add no
@@ -360,7 +360,7 @@ exception Jit_error of string
     data-dependent branch), it assigned to a tensor it closes over (captures are
     compile-time constants), it drew random values from a key that does not
     depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
-    [Nx.Rng.run ~seed] — the draw would be a compile-time constant replayed on
+    [Nx.Rng.with_key] on a constant key — the draw would be a compile-time constant replayed on
     every call; pass the key as an input instead), or it used an operation the
     compiler does not support (FFT, linear algebra, complex, int4 and uint4
     tensors, assigning into a view). *)
@@ -466,7 +466,7 @@ val jit :
     writing the keyless [Nx.rand]: the scope derives every draw from its root,
     so a traced root makes the whole scope traced. What raises {!Jit_error} is a
     root that does not depend on the inputs — a captured key, or
-    [Nx.Rng.run ~seed] — since the draw would be a compile-time constant
+    [Nx.Rng.with_key] on a constant key — since the draw would be a compile-time constant
     replayed on every call.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and

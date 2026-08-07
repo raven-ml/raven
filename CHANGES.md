@@ -456,6 +456,12 @@ thread.
 
 ### Nx
 
+- **Breaking**: `Rng.run ~seed f` is replaced by `Rng.with_key (Rng.key seed) f`,
+  and `Rng.split_off` is renamed `Rng.next_key`. The two entry points were one
+  handler differing only in what it rooted at, and `~seed` was the one that
+  silently rooted at a constant — the case `Rune.jit` must refuse. A scope now
+  visibly inherits its root key's properties: root it at a jitted function's
+  input leaf and the keyless samplers inside compile.
 - Add `gumbel` and `exponential`, both keyed and keyless. `gumbel` is the noise
   behind `categorical`, which now builds on it; adding it to log-probabilities
   and taking a softmax instead of an argmax gives the relaxed, differentiable

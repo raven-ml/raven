@@ -200,7 +200,7 @@ let test_mc_reward () =
   equal ~msg:"reward -1.0" (float 1e-6) (-1.0) s.reward
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu_envs"
     [
       group "RandomWalk"

@@ -38,7 +38,7 @@ Each layer module ships its own `names` (`Linear.names` is `["w"; "b"]`, or `["w
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let init () =
     {
       Mlp.l1 = Linear.init ~inputs:4 ~outputs:8;
@@ -74,7 +74,7 @@ Because extraction ignores unnamed entries, one file holds model parameters, par
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let init () =
     {
       Mlp.l1 = Linear.init ~inputs:4 ~outputs:8;

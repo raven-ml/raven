@@ -23,7 +23,7 @@ let check_arr ?(eps = 1e-5) ?msg expected actual =
 let bn_x = lazy (t32 [| 4; 2 |] [| 1.0; -2.0; 3.0; 4.0; -1.0; 10.0; 5.0; 0.0 |])
 
 let test_bn_normalizes_batch () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let params, stats = Batch_norm.init ~features:5 in
   let x = Nx.randn Nx.float32 [| 64; 5 |] in
   let x = Nx.add_s (Nx.mul_s x 3.0) 7.0 in
@@ -188,7 +188,7 @@ module Model = struct
 end
 
 let test_bn_train_step_roundtrip () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let x = Nx.randn Nx.float32 [| 16; 2 |] in
   let y = Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.mul x x) in
   let bn, stats = Batch_norm.init ~features:8 in
@@ -245,7 +245,7 @@ let test_dropout_rate_zero_identity () =
   check_arr ~eps:0.0 ~msg:"rate 0 is the identity" (Nx.to_array x) y
 
 let test_dropout_train_statistics () =
-  Nx.Rng.run ~seed:11 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 11) @@ fun () ->
   let n = 10_000 in
   let rate = 0.3 in
   let x = Nx.ones Nx.float32 [| n |] in
@@ -283,7 +283,7 @@ let test_dropout_validates_rate () =
 let test_dropout_deterministic_under_seed () =
   let x = vec (Array.init 100 float_of_int) in
   let run () =
-    Nx.Rng.run ~seed:5 @@ fun () -> Dropout.apply ~rate:0.5 ~training:true x
+    Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () -> Dropout.apply ~rate:0.5 ~training:true x
   in
   check_arr ~eps:0.0 ~msg:"same seed, same mask" (Nx.to_array (run ())) (run ())
 

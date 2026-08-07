@@ -25,7 +25,7 @@ let log_prob x =
   Nx.mul_s (Nx.reshape [||] mahal) (-0.5)
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let init = Nx.zeros f64 [| 2 |] in
   let result = Norn.nuts ~n:1000 log_prob init in
 

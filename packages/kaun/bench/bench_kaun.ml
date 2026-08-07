@@ -104,7 +104,7 @@ let one_hot n =
   t
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* MLP: inputs, parameters, and both optimizer states. *)
   let x = Nx.randn Nx.float32 [| batch; d_in |] in
   let y = one_hot batch in

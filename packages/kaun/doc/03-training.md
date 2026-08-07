@@ -73,7 +73,7 @@ Steps are pure: they consume a state and return `(params', state')`. AdamW's `we
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let params =
     {
       Mlp.l1 = Linear.init ~inputs:4 ~outputs:16;
@@ -126,11 +126,11 @@ let () =
      pass ~drop_last:true to drop it. *)
 ```
 
-Without shuffling, batches are views of the data, not copies, in order. With `~shuffle:true`, each *traversal* of the sequence draws a fresh permutation from the ambient RNG scope — so iterating the same sequence once per epoch reshuffles every epoch, `batches2` permutes inputs and targets together, and running the loop under `Nx.Rng.run` makes the whole schedule of permutations reproducible:
+Without shuffling, batches are views of the data, not copies, in order. With `~shuffle:true`, each *traversal* of the sequence draws a fresh permutation from the ambient RNG scope — so iterating the same sequence once per epoch reshuffles every epoch, `batches2` permutes inputs and targets together, and running the loop under `Nx.Rng.with_key` makes the whole schedule of permutations reproducible:
 
 <!-- $MDX skip -->
 ```ocaml
-Nx.Rng.run ~seed:42 @@ fun () ->
+Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
 let data = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
 let state = ref (params, Vega.adamw_init (module Mlp) params) in
 for _epoch = 1 to 10 do
@@ -161,7 +161,7 @@ Metrics are pure and hold no state; aggregation across batches is your fold. Bat
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let params =
     {
       Mlp.l1 = Linear.init ~inputs:4 ~outputs:16;

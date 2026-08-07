@@ -38,7 +38,7 @@ using NUTS:
 open Nx
 
 let () =
-  Rng.run ~seed:42 @@ fun () ->
+  Rng.with_key (Rng.key 42) @@ fun () ->
   let f64 = Nx.float64 in
 
   (* log p(x) = -0.5 * ||x||^2  (standard Gaussian) *)

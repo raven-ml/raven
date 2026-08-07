@@ -29,7 +29,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Control flow | `lax.scan`, `lax.cond`, `lax.while_loop` (required under `jit`) | `scan`, `cond`, `while_loop` (optional, staging-ready) plus ordinary OCaml control flow |
 | Gradient stopping | `jax.lax.stop_gradient` | `detach`, `no_grad` |
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
-| Randomness | Explicit splittable keys (`jax.random`) | Implicit scoped RNG (`Nx.Rng.run`) |
+| Randomness | Explicit splittable keys (`jax.random`) | Implicit scoped RNG (`Nx.Rng.with_key`) |
 | JIT compilation | `jax.jit` | Not yet implemented |
 | Devices | `jax.device_put`, GPU/TPU | CPU only |
 
@@ -335,11 +335,11 @@ Both compare autodiff against finite differences along directions rather than el
 
 ## 11. Randomness
 
-JAX threads explicit splittable keys. Rune uses Nx's implicit scoped RNG: wrap the program in `Nx.Rng.run ~seed` for reproducibility, and `Nx.rand`/`Nx.randn` draw from the ambient scope:
+JAX threads explicit splittable keys. Rune uses Nx's implicit scoped RNG: wrap the program in `Nx.Rng.with_key` for reproducibility, and `Nx.rand`/`Nx.randn` draw from the ambient scope:
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   ignore (Nx.randn Nx.float32 [| 3 |])
 ```
 

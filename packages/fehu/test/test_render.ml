@@ -103,7 +103,7 @@ let test_on_render_id () =
     (Env.id wrapped)
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Render"
     [
       group "image"

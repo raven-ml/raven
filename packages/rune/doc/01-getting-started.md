@@ -98,7 +98,7 @@ In practice you want the loss and its gradient together; `value_and_grad` comput
 
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   (* Synthetic data: y = x @ w_true + 0.3. *)
   let w_true = Nx.create Nx.float32 [| 3; 1 |] [| 2.0; -1.0; 0.5 |] in
   let x = Nx.randn Nx.float32 [| 64; 3 |] in

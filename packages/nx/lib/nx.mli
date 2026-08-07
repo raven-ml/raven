@@ -483,7 +483,7 @@ module Ptree = Ptree
     per distribution, and the scope. The {{!section:keyless}keyless samplers}
     below are the same samplers drawing from the ambient scope.
 
-    {v   Rng.run ~seed:42 (fun () -> rand float32 [| 3 |]) v} *)
+    {v   Rng.with_key (Rng.key 42) (fun () -> rand float32 [| 3 |]) v} *)
 
 module Rng : sig
   (** One splittable random generator, reached two ways.
@@ -638,9 +638,9 @@ module Rng : sig
       {!fold_in} of the root, a tensor computation, so a root that is a jitted
       function's input leaf or a {!Rune.val-vmap} mapped axis makes the whole
       scope traced or batched — the keyless samplers then compile and
-      decorrelate just as the keyed ones do. A root that a transform closes
-      over, including the constant one {!run} builds from a seed, is a constant
-      of that transform, and under {!Rune.val-jit} raises rather than freeze one
+      decorrelate just as the keyed ones do. A root a transform closes over,
+      such as [with_key (key 42)] inside a jitted function, is a constant of
+      that transform, and under {!Rune.val-jit} raises rather than freeze one
       draw into the compiled program.
 
       What a scope gives up against passing keys explicitly is
@@ -652,16 +652,13 @@ module Rng : sig
       draw sequence give the same values. Scopes nest: an inner one replaces the
       outer for its duration.
 
+      For a seeded scope, root it at one: [with_key (key 42) f].
+
       The scope is an effect handler, so it is per-fiber and per-domain: a draw
       on a domain spawned inside [f] does not see it. *)
 
-  val run : seed:int -> (unit -> 'a) -> 'a
-  (** [run ~seed f] is {!with_key} on [key seed]. Since the root is a constant,
-      draws inside are reproducible but not traceable; use {!with_key} on an
-      input key under a transform. *)
-
-  val split_off : unit -> key
-  (** [split_off ()] draws a fresh subkey from the current scope. Two calls
+  val next_key : unit -> key
+  (** [next_key ()] draws a fresh subkey from the current scope. Two calls
       always return different keys. This is what the keyless samplers call.
 
       Outside any scope the subkey comes from a per-domain generator seeded from
@@ -672,8 +669,7 @@ end
 (** {2:keyless Keyless samplers}
 
     One per {!module-Rng} sampler, with the same arguments minus the key, each
-    drawing a fresh subkey from the ambient scope (see {!Rng.with_key} and
-    {!Rng.run}). The names match except for the two zero-configuration draws,
+    drawing a fresh subkey from the ambient scope (see {!Rng.with_key}). The names match except for the two zero-configuration draws,
     which keep the names the ecosystem gives them: [rand] is {!Rng.uniform} on
     \[[0], [1]) and [randn] is {!Rng.normal}.
 

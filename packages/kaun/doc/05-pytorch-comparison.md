@@ -27,7 +27,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Data loading | `DataLoader` | `Data.batches2` returning a `Seq.t` |
 | Checkpointing | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Checkpoint` |
 | Pretrained models | `from_pretrained` per architecture | `kaun.hf` + generic `rename`/`transpose`/`split` |
-| RNG | global `torch.manual_seed` | scoped `Nx.Rng.run ~seed` |
+| RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
 | Device | `model.to("cuda")` | CPU only |
 
 ---
@@ -73,7 +73,7 @@ module Mlp = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let model =
     {
       Mlp.l1 = Linear.init ~inputs:4 ~outputs:8;
@@ -264,5 +264,5 @@ let params =
 | Save | `torch.save(model.state_dict())` | `Checkpoint.save` + `of_params` |
 | Load | `load_state_dict` | `Checkpoint.to_params ~like` |
 | Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_checkpoint` + `rename`/`transpose`/`split` |
-| Seed | `torch.manual_seed(42)` | `Nx.Rng.run ~seed:42` |
+| Seed | `torch.manual_seed(42)` | `Nx.Rng.with_key (Nx.Rng.key 42)` |
 | Per-sample grads | `torch.func.vmap(grad(...))` | `Rune.vmap2` of `Rune.grad` |

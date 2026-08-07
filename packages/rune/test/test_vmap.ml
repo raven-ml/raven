@@ -297,7 +297,7 @@ let test_rng_is_identical_per_lane () =
      values. Pinned as documented behavior until nx grows tensor-typed keys;
      thread distinct randomness in as mapped inputs instead. *)
   let y =
-    Nx.Rng.run ~seed:42 (fun () ->
+    Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
         Rune.vmap' (fun r -> Nx.add r (Nx.rand f64 [| 3 |])) (xs ()))
   in
   let base = Nx.sub y (xs ()) in

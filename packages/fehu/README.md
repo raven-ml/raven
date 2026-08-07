@@ -16,7 +16,7 @@ Create an environment, run a random policy, and evaluate:
 open Fehu
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Run one episode *)

@@ -16,8 +16,7 @@ module Rng = struct
   include F.Rng
 
   let key seed = F.Rng.key (Lazy.force context) seed
-  let run ~seed f = F.Rng.run (Lazy.force context) ~seed f
-  let split_off () = F.Rng.split_off (Lazy.force context)
+  let next_key () = F.Rng.next_key (Lazy.force context)
 
   let fold_in_axis k =
     F.Rng.fold_in_tensor k (Nx_effect.axis_index (Nx_effect.context k))

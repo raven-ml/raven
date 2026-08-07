@@ -54,7 +54,7 @@ let make_counter () =
 ### RNG Management
 
 Environments draw random keys from the implicit RNG scope established by
-`Nx.Rng.run`. Any call to `Space.sample` or other random operations inside
+`Nx.Rng.with_key`. Any call to `Space.sample` or other random operations inside
 `reset` and `step` callbacks will use this scope automatically:
 
 <!-- $MDX skip -->
@@ -250,7 +250,7 @@ Terminated or truncated episodes are automatically reset.
 ```ocaml
 open Fehu
 
-let () = Nx.Rng.run ~seed:42 @@ fun () ->
+let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* Create 4 parallel environments *)
   let envs = List.init 4 (fun _ -> Fehu_envs.Cartpole.make ()) in
   let vec = Vec_env.create envs in

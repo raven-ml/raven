@@ -46,7 +46,7 @@ let check_result msg result =
   done
 
 let test_hmc () =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let init = Nx.zeros f64 [| 2 |] in
       let result =
         Norn.hmc ~step_size:0.1 ~num_leapfrog:20 ~num_warmup:200 ~n:500 log_prob
@@ -55,7 +55,7 @@ let test_hmc () =
       check_result "HMC" result)
 
 let test_nuts () =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let init = Nx.zeros f64 [| 2 |] in
       let result =
         Norn.nuts ~step_size:0.5 ~max_depth:6 ~num_warmup:500 ~n:800 log_prob
@@ -64,7 +64,7 @@ let test_nuts () =
       check_result "NUTS" result)
 
 let test_kernel_api () =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let init = Nx.zeros f64 [| 2 |] in
       let metric = Norn.unit_metric 2 in
       let kernel = Norn.hmc_kernel ~step_size:0.1 ~metric () in
@@ -78,7 +78,7 @@ let test_kernel_api () =
         (info.acceptance_rate >= 0.0 && info.acceptance_rate <= 1.0))
 
 let test_sample_with_kernel () =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let init = Nx.zeros f64 [| 2 |] in
       let result =
         Norn.sample ~step_size:0.1 ~num_warmup:200 ~n:500 log_prob init
@@ -87,11 +87,11 @@ let test_sample_with_kernel () =
       check_result "sample+kernel" result)
 
 let test_diagnostics () =
-  Nx.Rng.run ~seed:42 (fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
       let init = Nx.zeros f64 [| 2 |] in
       let chains =
         Array.init 4 (fun i ->
-            Nx.Rng.run ~seed:i (fun () ->
+            Nx.Rng.with_key (Nx.Rng.key i) (fun () ->
                 Norn.nuts ~step_size:0.1 ~num_warmup:500 ~n:1000 log_prob init))
       in
       let chain_samples = Array.map (fun r -> r.Norn.samples) chains in

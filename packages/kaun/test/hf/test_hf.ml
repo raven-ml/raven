@@ -290,7 +290,7 @@ let test_remap_into_attention () =
       | "attn.c_proj.bias" -> "out.b"
       | n -> n)
   in
-  let like = Nx.Rng.run ~seed:0 @@ fun () -> Attention.init ~embed_dim:2 in
+  let like = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Attention.init ~embed_dim:2 in
   let p = Checkpoint.to_params (module Attention) ~like ours in
   equal ~msg:"q.w" (array (float 0.0)) [| 1.0; 2.0; 7.0; 8.0 |] (to_arr p.q.w);
   equal ~msg:"v.b"
