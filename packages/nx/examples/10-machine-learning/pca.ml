@@ -25,8 +25,7 @@ let () =
   let ratios = s2 /$ item [] (sum s2) in
   Printf.printf "Singular values:          %s\n" (to_string s);
   Printf.printf "Explained variance ratio: %s\n" (to_string ratios);
-  Printf.printf "Cumulative:               %s\n\n"
-    (to_string (cumsum ratios));
+  Printf.printf "Cumulative:               %s\n\n" (to_string (cumsum ratios));
 
   (* Project to 2 components *)
   let n_components = 2 in

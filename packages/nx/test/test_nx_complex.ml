@@ -136,8 +136,7 @@ let test_result_dtypes () =
     (dtype_name (Nx.conjugate z128));
   equal ~msg:"complex ctor dtype" string "complex64"
     (dtype_name
-       (Nx.complex Nx.complex64
-          ~re:(Nx.scalar Nx.float32 1.0)
+       (Nx.complex Nx.complex64 ~re:(Nx.scalar Nx.float32 1.0)
           ~im:(Nx.scalar Nx.float32 0.0)))
 
 (* Branch cuts *)
@@ -196,8 +195,7 @@ let test_non_finite_degraded () =
   let inf = Float.infinity in
   (* a finite real component leaves the imaginary one intact, however large *)
   let finite_re =
-    of_list
-      [ Complex.{ re = 2.0; im = inf }; Complex.{ re = 0.0; im = 1e300 } ]
+    of_list [ Complex.{ re = 2.0; im = inf }; Complex.{ re = 0.0; im = 1e300 } ]
   in
   let im = Nx.to_array (Nx.imag Nx.float64 finite_re) in
   equal ~msg:"imag (finite, inf)" (float 0.0) inf im.(0);

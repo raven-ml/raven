@@ -8,9 +8,9 @@
 open Brot
 
 module Fixtures = struct
-  (* Resolve fixtures next to the executable, not the working directory:
-     the bench rule runs with the bench dir as cwd, dune exec with the
-     project root — the exe path is the one stable anchor in both. *)
+  (* Resolve fixtures next to the executable, not the working directory: the
+     bench rule runs with the bench dir as cwd, dune exec with the project root
+     — the exe path is the one stable anchor in both. *)
   let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 
   let read_file name =

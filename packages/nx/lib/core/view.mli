@@ -71,8 +71,8 @@ val reshape : t -> int array -> t
     - All-zero-stride broadcast layouts.
 
     Raises [Invalid_argument] if reshape cannot be represented, including size
-    mismatches (except zero-size special cases) or incompatible stride
-    patterns. *)
+    mismatches (except zero-size special cases) or incompatible stride patterns.
+*)
 
 val expand : t -> int array -> t
 (** [expand v new_shape] broadcasts singleton dimensions to [new_shape] by

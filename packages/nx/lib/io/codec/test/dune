@@ -24,7 +24,8 @@
 
 (rule
  (alias runtest)
- (action (run %{dep:deflate_core_test.exe})))
+ (action
+  (run %{dep:deflate_core_test.exe})))
 
 (rule
  (target image_core_test.exe)
@@ -56,7 +57,8 @@
 
 (rule
  (alias runtest)
- (action (run %{dep:image_core_test.exe})))
+ (action
+  (run %{dep:image_core_test.exe})))
 
 (rule
  (target deflate_core_sanitize.exe)
@@ -87,7 +89,8 @@
 
 (rule
  (alias codec-sanitize)
- (action (run %{dep:deflate_core_sanitize.exe})))
+ (action
+  (run %{dep:deflate_core_sanitize.exe})))
 
 (rule
  (target image_core_sanitize.exe)
@@ -122,4 +125,5 @@
 
 (rule
  (alias codec-sanitize)
- (action (run %{dep:image_core_sanitize.exe})))
+ (action
+  (run %{dep:image_core_sanitize.exe})))

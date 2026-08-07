@@ -1,5 +1,5 @@
-(* Public FFT performance regimes: native power-of-two, native mixed-radix,
-   and prime-size Bluestein. Setup and dtype conversion are outside timing. *)
+(* Public FFT performance regimes: native power-of-two, native mixed-radix, and
+   prime-size Bluestein. Setup and dtype conversion are outside timing. *)
 
 let case name n =
   let input = Nx.cast Nx.Complex64 (Nx.rand Nx.Float32 [| n |]) in

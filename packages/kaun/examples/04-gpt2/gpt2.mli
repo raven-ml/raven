@@ -66,17 +66,16 @@ val logits :
   (int32, Nx.int32_elt) Nx.t ->
   (float, 'b) Nx.t
 (** [logits cfg ?dropout p ids] is the next-token logits for the
-    [[| batch; seq |]] id tensor [ids], of shape
-    [[| batch; seq; vocab_size |]], at the parameters' dtype. The LM head is
-    tied to [p.wte].
+    [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; vocab_size |]],
+    at the parameters' dtype. The LM head is tied to [p.wte].
 
     [?dropout:(rate, key)] enables training-time dropout at the canonical GPT-2
     sites — the embedding sum and each block's post-attention and post-MLP
     projections — with masks applied at the activations' dtype and derived from
-    [key] by {!Nx.Rng.fold_in}, one subkey per site. The same key gives the
-    same masks; derive a fresh key per training step ({!Nx.Rng.fold_in} a
-    step counter into a root key), and under {!Rune.jit} pass it as an input
-    leaf of the step. Inference (the default) applies no dropout.
+    [key] by {!Nx.Rng.fold_in}, one subkey per site. The same key gives the same
+    masks; derive a fresh key per training step ({!Nx.Rng.fold_in} a step
+    counter into a root key), and under {!Rune.jit} pass it as an input leaf of
+    the step. Inference (the default) applies no dropout.
 
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)

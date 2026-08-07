@@ -27,5 +27,8 @@
  ; pipeline, so a node whose dtype does not match its operands fails here
  ; rather than reaching a renderer that would emit plausible code for it.
  (action
-  (setenv SPEC 1 (run %{test})))
+  (setenv
+   SPEC
+   1
+   (run %{test})))
  (libraries unix tolk tolk.uop windtrap))

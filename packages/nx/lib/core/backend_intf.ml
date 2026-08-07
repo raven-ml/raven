@@ -8,8 +8,8 @@ exception
     op : string;
     kind : [ `Not_positive_definite | `Singular | `No_convergence ];
   }
-(** Raised by a linear-algebra operation when the numeric computation fails
-    (as opposed to a precondition violation such as a non-square or wrong-dtype
+(** Raised by a linear-algebra operation when the numeric computation fails (as
+    opposed to a precondition violation such as a non-square or wrong-dtype
     input, which raises [Invalid_argument] or [Failure]).
 
     [op] names the operation that failed (e.g. ["cholesky"]). [kind] classifies
@@ -249,8 +249,8 @@ module type S = sig
       {b Backend must:} for complex dtypes, return the modulus in the real
       component and zero in the imaginary one, computed without intermediate
       overflow — components large enough that [re² + im²] would saturate must
-      still give a finite modulus. The frontend's [magnitude] casts this
-      result down to a float tensor. *)
+      still give a finite modulus. The frontend's [magnitude] casts this result
+      down to a float tensor. *)
 
   val sqrt : ('a, 'b) t -> ('a, 'b) t
   (** [sqrt x] is the element-wise square root of [x]. *)
@@ -398,10 +398,10 @@ module type S = sig
       strides, offset) and returns a handle sharing the input's buffer, with no
       copy ({!reshape} never copies either: it raises when the existing strides
       cannot express the new shape). {e Materializing assembly} — {!pad} and
-      {!cat} — cannot be expressed as a view and must allocate a fresh buffer and
-      copy: {!pad} widens each dimension around a fill value, and {!cat} is the
-      contract's only variable-arity operation, joining a list of tensors along
-      an axis.
+      {!cat} — cannot be expressed as a view and must allocate a fresh buffer
+      and copy: {!pad} widens each dimension around a fill value, and {!cat} is
+      the contract's only variable-arity operation, joining a list of tensors
+      along an axis.
 
       {b Frontend guarantees:} all parameters are validated (axes in range,
       shapes compatible, bounds within limits).
@@ -420,8 +420,8 @@ module type S = sig
 
       Always zero-copy: the result is a view over [t]'s buffer. Raises
       [Invalid_argument] when the current strides cannot express [shape] (some
-      non-contiguous layouts); the caller materializes with {!contiguous}
-      first. *)
+      non-contiguous layouts); the caller materializes with {!contiguous} first.
+  *)
 
   val permute : ('a, 'b) t -> int array -> ('a, 'b) t
   (** [permute t axes] reorders dimensions according to [axes], which must be a
@@ -505,8 +505,8 @@ module type S = sig
   (** [threefry key counter] applies the Threefry-2x32 counter-based hash.
 
       This is normative, not merely illustrative: the algorithm is Threefry-2x32
-      run for 20 rounds, with the standard rotation constants and key schedule of
-      that construction. A given [(key, counter)] pair must therefore produce
+      run for 20 rounds, with the standard rotation constants and key schedule
+      of that construction. A given [(key, counter)] pair must therefore produce
       bit-identical output in every backend and under every lowering — eager and
       jit results are held equal by rune's [test_rng.ml].
 
@@ -516,9 +516,9 @@ module type S = sig
   (** {1 Indexed Access Operations}
 
       Index tensors are uniformly [int32] across the whole contract: {!argmax},
-      {!argmin}, and {!argsort} produce [int32], and {!gather}/{!scatter} consume
-      it. Axes longer than 2{^31} - 1 (the [int32] maximum) are therefore
-      unsupported, and the limit is not checked. *)
+      {!argmin}, and {!argsort} produce [int32], and {!gather}/{!scatter}
+      consume it. Axes longer than 2{^ 31} - 1 (the [int32] maximum) are
+      therefore unsupported, and the limit is not checked. *)
 
   val gather :
     ('a, 'b) t -> (int32, Dtype.int32_elt) t -> axis:int -> ('a, 'b) t
@@ -717,9 +717,9 @@ module type S = sig
       iteration does not converge. *)
 
   val eigh : ('a, 'b) t -> (float, Dtype.float64_elt) t * ('a, 'b) t
-  (** [eigh t] computes the eigenvalues and eigenvectors of a symmetric/Hermitian
-      matrix, returned as [(values, vectors)]. Eigenvalues are float64;
-      eigenvectors carry the input dtype.
+  (** [eigh t] computes the eigenvalues and eigenvectors of a
+      symmetric/Hermitian matrix, returned as [(values, vectors)]. Eigenvalues
+      are float64; eigenvectors carry the input dtype.
 
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
@@ -735,10 +735,9 @@ module type S = sig
       [Aᴴ·x = b] where [A] is triangular.
 
       [upper]: [A] is upper triangular. [transpose]: solve [Aᴴ·x = b] — the
-      conjugate transpose for complex dtypes, the plain transpose for real
-      ones. [unit_diag]: assume diagonal is all ones. [b] may be a vector with
-      shape [(..., n)] or a matrix of right-hand sides with shape
-      [(..., n, nrhs)].
+      conjugate transpose for complex dtypes, the plain transpose for real ones.
+      [unit_diag]: assume diagonal is all ones. [b] may be a vector with shape
+      [(..., n)] or a matrix of right-hand sides with shape [(..., n, nrhs)].
 
       May raise {!Linalg_error} with kind [`Singular] if [A] is singular (a zero
       on the diagonal when [unit_diag] is false). *)

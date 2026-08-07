@@ -342,9 +342,7 @@ let linalg_props =
     prop "svd reconstruction (f64)" square_f64 (fun a ->
         let u, s, vh = Nx.svd a in
         let n = (Nx.shape a).(0) in
-        let s_diag =
-          Nx.mul (Nx.eye Nx.float64 n) (Nx.reshape [| 1; n |] s)
-        in
+        let s_diag = Nx.mul (Nx.eye Nx.float64 n) (Nx.reshape [| 1; n |] s) in
         let reconstructed = Nx.matmul (Nx.matmul u s_diag) vh in
         allclose ~atol:1e-6 ~rtol:1e-6 reconstructed a);
     prop "cholesky reconstruction (f64 posdef)" posdef_f64 (fun a ->

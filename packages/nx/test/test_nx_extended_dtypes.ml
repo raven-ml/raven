@@ -189,8 +189,8 @@ let check_quantize name dt cases =
         (float 0.0) expected (via_store dt v))
     cases
 
-(* bfloat16: 7 stored mantissa bits, step 2^-7 near 1.0. Round to nearest,
-   ties to even mantissa. *)
+(* bfloat16: 7 stored mantissa bits, step 2^-7 near 1.0. Round to nearest, ties
+   to even mantissa. *)
 let test_bfloat16_rne () =
   check_quantize "bfloat16" Nx_core.Dtype.bfloat16
     [
@@ -254,8 +254,8 @@ let test_float16_overflow_to_inf () =
     (via_cast Nx_core.Dtype.float16 (-65536.0))
 
 let test_half_cast_roundtrip (type b) name (dt : (float, b) Nx.dtype) () =
-  (* Values exactly representable at the half dtype survive
-     f32 -> half -> f32 unchanged. *)
+  (* Values exactly representable at the half dtype survive f32 -> half -> f32
+     unchanged. *)
   let exact = [| 0.0; -0.5; 1.0; 1.5; -2.0; 0.25; 384.0; -0.09375 |] in
   let t32 = Nx.create Nx.float32 [| 8 |] exact in
   let back = Nx.cast Nx.float32 (Nx.cast dt t32) in
@@ -266,8 +266,8 @@ let test_half_cast_roundtrip (type b) name (dt : (float, b) Nx.dtype) () =
   equal
     ~msg:(name ^ " quantization is idempotent")
     (float 0.0) (Nx.item [] once) (Nx.item [] twice);
-  (* 0.1 is not representable: the roundtrip must move it, but only within
-     one unit in the last place. *)
+  (* 0.1 is not representable: the roundtrip must move it, but only within one
+     unit in the last place. *)
   let err = Float.abs (Nx.item [] once -. 0.1) in
   is_true ~msg:(name ^ " 0.1 is inexact") (err > 0.0);
   is_true ~msg:(name ^ " 0.1 error within 1 ulp") (err <= 0.1 /. 128.0)
@@ -284,15 +284,11 @@ let test_half_special_values (type b) name (dt : (float, b) Nx.dtype) () =
 let test_half_binary_rounding () =
   (* bfloat16: 256 + 1 ties between 256 and 258 -> 256. *)
   let bf16 = Nx_core.Dtype.bfloat16 in
-  let r =
-    Nx.add (Nx.scalar bf16 256.0) (Nx.scalar bf16 1.0)
-  in
+  let r = Nx.add (Nx.scalar bf16 256.0) (Nx.scalar bf16 1.0) in
   equal ~msg:"bfloat16 256+1" (float 0.0) 256.0 (Nx.item [] r);
   (* float16: 2048 + 1 ties between 2048 and 2050 -> 2048. *)
   let f16 = Nx_core.Dtype.float16 in
-  let r =
-    Nx.add (Nx.scalar f16 2048.0) (Nx.scalar f16 1.0)
-  in
+  let r = Nx.add (Nx.scalar f16 2048.0) (Nx.scalar f16 1.0) in
   equal ~msg:"float16 2048+1" (float 0.0) 2048.0 (Nx.item [] r);
   (* mul: (1 + 2^-7)^2 = 1 + 2^-6 + 2^-14 rounds to 1 + 2^-6 at bfloat16. *)
   let x = Nx.scalar bf16 1.0078125 in
@@ -308,14 +304,12 @@ let test_half_binary_exact (type b) name (dt : (float, b) Nx.dtype) () =
   let b = Nx.create dt [| 4 |] [| 0.5; 0.5; -0.5; 2.0 |] in
   check_data ~eps:0.0 (name ^ " add") [| 2.0; -1.5; -0.25; 5.0 |] (Nx.add a b);
   check_data ~eps:0.0 (name ^ " sub") [| 1.0; -2.5; 0.75; 1.0 |] (Nx.sub a b);
-  check_data ~eps:0.0 (name ^ " mul")
-    [| 0.75; -1.0; -0.125; 6.0 |]
-    (Nx.mul a b);
+  check_data ~eps:0.0 (name ^ " mul") [| 0.75; -1.0; -0.125; 6.0 |] (Nx.mul a b);
   check_data ~eps:0.0 (name ^ " div") [| 3.0; -4.0; -0.5; 1.5 |] (Nx.div a b)
 
-(* Reductions accumulate wider than the half dtype: summing 4096 ones at
-   float16 gives exactly 4096 (a naive float16 accumulator stalls at 2048
-   because 2048 + 1 rounds back to 2048); same construction for bfloat16. *)
+(* Reductions accumulate wider than the half dtype: summing 4096 ones at float16
+   gives exactly 4096 (a naive float16 accumulator stalls at 2048 because 2048 +
+   1 rounds back to 2048); same construction for bfloat16. *)
 let test_half_sum_accumulates_wide () =
   let f16 = Nx_core.Dtype.float16 in
   let s = Nx.sum (Nx.ones f16 [| 4096 |]) in
@@ -325,17 +319,13 @@ let test_half_sum_accumulates_wide () =
   equal ~msg:"bfloat16 sum of 1024 ones" (float 0.0) 1024.0 (Nx.item [] s)
 
 let test_half_reductions (type b) name (dt : (float, b) Nx.dtype) ~mean () =
-  let t =
-    Nx.create dt [| 2; 3 |] [| 1.0; -2.0; 3.5; 0.5; 4.0; -1.5 |]
-  in
+  let t = Nx.create dt [| 2; 3 |] [| 1.0; -2.0; 3.5; 0.5; 4.0; -1.5 |] in
   check_t ~eps:0.0 (name ^ " sum axis 0") [| 3 |] [| 1.5; 2.0; 2.0 |]
     (Nx.sum ~axes:[ 0 ] t);
   check_t ~eps:0.0 (name ^ " sum axis 1") [| 2 |] [| 2.5; 3.0 |]
     (Nx.sum ~axes:[ 1 ] t);
   check_t ~eps:0.0 (name ^ " max") [||] [| 4.0 |] (Nx.max t);
-  check_t ~eps:0.0
-    (name ^ " max axis 1")
-    [| 2 |] [| 3.5; 4.0 |]
+  check_t ~eps:0.0 (name ^ " max axis 1") [| 2 |] [| 3.5; 4.0 |]
     (Nx.max ~axes:[ 1 ] t);
   (* 5.5 / 6 = 0.91666..., rounded to the dtype's precision. *)
   check_t ~eps:0.0 (name ^ " mean") [||] [| mean |] (Nx.mean t)
@@ -351,33 +341,28 @@ let test_half_matmul (type b) name (dt : (float, b) Nx.dtype) ~eps () =
       (Array.init (k * 3) (fun i -> cos (float_of_int i)))
   in
   let ah = Nx.cast dt a32 and bh = Nx.cast dt b32 in
-  (* Reference: the exact product of the quantized inputs at float32. The
-     half matmul may differ only by the final rounding of each output. *)
-  let reference =
-    Nx.matmul (Nx.cast Nx.float32 ah) (Nx.cast Nx.float32 bh)
-  in
+  (* Reference: the exact product of the quantized inputs at float32. The half
+     matmul may differ only by the final rounding of each output. *)
+  let reference = Nx.matmul (Nx.cast Nx.float32 ah) (Nx.cast Nx.float32 bh) in
   let out = Nx.cast Nx.float32 (Nx.matmul ah bh) in
-  check_data ~eps (name ^ " matmul vs f32 reference")
+  check_data ~eps
+    (name ^ " matmul vs f32 reference")
     (Nx.to_array reference) out
 
 let test_half_compare_where (type b) name (dt : (float, b) Nx.dtype) () =
   let a = Nx.create dt [| 4 |] [| 1.0; -2.0; 3.0; 0.5 |] in
   let b = Nx.create dt [| 4 |] [| 0.5; -1.0; 3.0; 2.0 |] in
-  check_data
-    (name ^ " cmpgt")
-    [| true; false; false; false |]
-    (Nx.greater a b);
+  check_data (name ^ " cmpgt") [| true; false; false; false |] (Nx.greater a b);
   check_data (name ^ " equal") [| false; false; true; false |] (Nx.equal a b);
-  check_data ~eps:0.0 (name ^ " where")
-    [| 1.0; -1.0; 3.0; 2.0 |]
+  check_data ~eps:0.0 (name ^ " where") [| 1.0; -1.0; 3.0; 2.0 |]
     (Nx.where (Nx.greater a b) a b);
-  check_data ~eps:0.0
-    (name ^ " maximum")
-    [| 1.0; -1.0; 3.0; 2.0 |]
+  check_data ~eps:0.0 (name ^ " maximum") [| 1.0; -1.0; 3.0; 2.0 |]
     (Nx.maximum a b);
   (* Values that quantize to the same half bits compare equal. *)
   let x = Nx.scalar dt 1.0 and y = Nx.scalar dt 1.0001 in
-  equal ~msg:(name ^ " quantized equality") bool true
+  equal
+    ~msg:(name ^ " quantized equality")
+    bool true
     (Nx.item [] (Nx.equal x y))
 
 (* ───── Dtype Property Tests ───── *)

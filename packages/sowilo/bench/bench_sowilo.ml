@@ -6,9 +6,9 @@
 (* Sowilo image processing benchmarks using synthetic PNG fixtures. *)
 
 module Fixtures = struct
-  (* Resolve fixtures next to the executable, not the working directory:
-     the bench rule runs with the bench dir as cwd, dune exec with the
-     project root — the exe path is the one stable anchor in both. *)
+  (* Resolve fixtures next to the executable, not the working directory: the
+     bench rule runs with the bench dir as cwd, dune exec with the project root
+     — the exe path is the one stable anchor in both. *)
   let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 
   let load_image name =
@@ -43,10 +43,10 @@ let bench_canny img =
   let edges = Sowilo.canny ~low:0.2 ~high:0.6 img in
   force_tensor edges
 
-(* Fixtures are forced in each case's setup, inside thumper's forked worker
-   — never in the parent: building a tensor spawns the backend's thread
-   pool, and a pool created before the fork leaves the child dispatching
-   onto threads that no longer exist. *)
+(* Fixtures are forced in each case's setup, inside thumper's forked worker —
+   never in the parent: building a tensor spawns the backend's thread pool, and
+   a pool created before the fork leaves the child dispatching onto threads that
+   no longer exist. *)
 let all_benchmarks =
   [
     Thumper.bench_with_setup ~setup:Fixtures.img_1080 "ToGrayscale/1080p"
@@ -54,8 +54,7 @@ let all_benchmarks =
     Thumper.bench_with_setup ~setup:Fixtures.img_1080 "GaussianBlur/1080p"
       bench_gaussian;
     Thumper.bench_with_setup ~setup:Fixtures.gray_720 "Sobel/720p" bench_sobel;
-    Thumper.bench_with_setup ~setup:Fixtures.gray_1080 "Canny/1080p"
-      bench_canny;
+    Thumper.bench_with_setup ~setup:Fixtures.gray_1080 "Canny/1080p" bench_canny;
   ]
   |> fun benches -> [ Thumper.group "Sowilo" benches ]
 

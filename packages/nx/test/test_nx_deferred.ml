@@ -84,8 +84,7 @@ let tests =
         test "item fills exactly once" test_item_fills_once;
         test "to_array fills exactly once" test_to_array_fills_once;
         test "an eager op forces" test_eager_op_forces;
-        test "blit into a deferred forces then mutates"
-          test_blit_into_deferred;
+        test "blit into a deferred forces then mutates" test_blit_into_deferred;
         test "set_item into a deferred forces then mutates"
           test_set_item_into_deferred;
       ];

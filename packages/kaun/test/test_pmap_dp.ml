@@ -7,10 +7,10 @@
    attention + linear stack trained for a few SGD steps with parameters
    replicated and the batch sharded over two CPU devices. The loss trajectory
    and final weights must match the single-device [Rune.jit2] step up to fp32
-   reduction order (the cross-device gradient allreduce reorders the batch
-   sum). A momentum run checks that replicated optimizer state threaded
-   through the pmapped step stays coherent across devices. Runs on CPU device
-   instances; no pretrained weights involved. *)
+   reduction order (the cross-device gradient allreduce reorders the batch sum).
+   A momentum run checks that replicated optimizer state threaded through the
+   pmapped step stays coherent across devices. Runs on CPU device instances; no
+   pretrained weights involved. *)
 
 open Windtrap
 open Kaun
@@ -22,8 +22,8 @@ let dim = 8
 let vocab = 11
 let lr = 0.05
 
-(* The model: pre-norm causal self-attention with a residual, then a linear
-   head over the vocabulary. *)
+(* The model: pre-norm causal self-attention with a residual, then a linear head
+   over the vocabulary. *)
 
 type model = { ln : Layer_norm.t; attn : Attention.t; head : Linear.t }
 
@@ -50,10 +50,12 @@ module Model = struct
     Linear.iter f m.head
 end
 
-(* Deterministic init, no RNG: every run and both step implementations see
-   the same weights and batch. *)
+(* Deterministic init, no RNG: every run and both step implementations see the
+   same weights and batch. *)
 
-let fill i n = Array.init n (fun j -> sin (float_of_int ((i * 7919) + j)) *. 0.3)
+let fill i n =
+  Array.init n (fun j -> sin (float_of_int ((i * 7919) + j)) *. 0.3)
+
 let mat i r c = Nx.create Nx.float32 [| r; c |] (fill i (r * c))
 let vec i n = Nx.create Nx.float32 [| n |] (fill i n)
 
@@ -71,7 +73,7 @@ let x_init () =
 
 let tgt_init () =
   Nx.create Nx.int32 [| batch; seq |]
-    (Array.init (batch * seq) (fun i -> Int32.of_int ((i * 5) mod vocab)))
+    (Array.init (batch * seq) (fun i -> Int32.of_int (i * 5 mod vocab)))
 
 let loss_fn x tgt m =
   let h =

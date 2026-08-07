@@ -36,8 +36,8 @@ let test_capture_is_uploaded_once () =
     [| 11.0; 21.0; 31.0 |]
     (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures are compile-time constants: a function that assigns to one fails
-   at trace time. Mutable state belongs in the input structure. *)
+(* Captures are compile-time constants: a function that assigns to one fails at
+   trace time. Mutable state belongs in the input structure. *)
 let test_assign_to_capture_raises () =
   let s = vec32 [| 1.0; 2.0 |] in
   let g =

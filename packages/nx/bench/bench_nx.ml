@@ -6,8 +6,8 @@
 (* Nx core operations across the regimes a perf change must not silently
    regress: elementwise binary and unary, reductions along each axis, and
    structural materialization. Inputs are allocated in the group builders and
-   captured in each closure, so only the operation and its output allocation
-   are timed.
+   captured in each closure, so only the operation and its output allocation are
+   timed.
 
    The [lab] subset is the fast, representative slice the perf loop optimizes.
    It keeps the documented anomalies -- the f64 elementwise cliff at 100x100,
@@ -84,7 +84,7 @@ let structural_benchmarks () =
   let gather_source = Nx.rand Nx.Float32 [| 4096; 256 |] in
   let gather_indices =
     Nx.create Nx.Int32 [| 1024 |]
-      (Array.init 1024 (fun i -> Int32.of_int ((i * 37) mod 4096)))
+      (Array.init 1024 (fun i -> Int32.of_int (i * 37 mod 4096)))
   in
   let sort_input = Nx.rand Nx.Float32 [| 512; 512 |] in
   [

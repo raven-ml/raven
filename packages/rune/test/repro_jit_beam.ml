@@ -7,10 +7,10 @@
    recurrence gives a different answer jitted under BEAM>=1 than it does
    eagerly, and a different wrong answer on each run.
 
-   Not part of runtest: a single BEAM=2 pass over this graph takes minutes.
-   Run it directly, e.g.
+   Not part of runtest: a single BEAM=2 pass over this graph takes minutes. Run
+   it directly, e.g.
 
-     BEAM=2 IGNORE_BEAM_CACHE=1 dune exec packages/rune/test/repro_jit_beam.exe *)
+   BEAM=2 IGNORE_BEAM_CACHE=1 dune exec packages/rune/test/repro_jit_beam.exe *)
 
 let f32 = Nx.float32
 let horizon = try int_of_string (Sys.getenv "HORIZON") with _ -> 10
@@ -70,7 +70,8 @@ let time label f =
   let t0 = Unix.gettimeofday () in
   let r = f () in
   Printf.printf "%-22s %8.4fs  result = %.9f\n%!" label
-    (Unix.gettimeofday () -. t0) r;
+    (Unix.gettimeofday () -. t0)
+    r;
   r
 
 let () =
@@ -83,7 +84,9 @@ let () =
   let jitted = Rune.jit ~device (module Rnn) grad_norm in
   let first = time "jit (compile+run)" (fun () -> item (jitted p)) in
   let replay = time "jit (replay)" (fun () -> item (jitted p)) in
-  let ok v = Float.abs (v -. eager) <= 1e-4 *. Float.max 1.0 (Float.abs eager) in
+  let ok v =
+    Float.abs (v -. eager) <= 1e-4 *. Float.max 1.0 (Float.abs eager)
+  in
   if ok first && ok replay then print_endline "OK: jit matches eager"
   else (
     Printf.printf "MISMATCH: eager %.9f, jit %.9f / %.9f\n" eager first replay;

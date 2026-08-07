@@ -127,8 +127,8 @@ let chain_benchmarks x0 =
 
 (* Jit: compiled execution of the same computations. Compilation — tracing plus
    kernel build — is hoisted into [setup], which builds the jitted closure and
-   calls it once, so the timed region replays the compiled program only.
-   [eager run mlp] is the same forward pass without jit, the no-jit baseline. *)
+   calls it once, so the timed region replays the compiled program only. [eager
+   run mlp] is the same forward pass without jit, the no-jit baseline. *)
 let jit_benchmarks params x x0 =
   [
     Thumper.bench_with_setup ~tags:[ "lab" ]
@@ -163,10 +163,10 @@ let jit_benchmarks params x x0 =
    and compiles. Repeating an identical compile in a live process is served by
    tolk's process-global program cache (not reachable from here to clear), so
    the first-call gate cases scale the output by a distinct constant each
-   iteration: a fresh kernel body, a genuine recompile. That perturbation reaches
-   a single fused kernel but not a matmul kernel's body, so the absolute cold
-   cost of the matmul-heavy sizes is taken process-isolated through [--cold]
-   instead, one fresh process per measurement. *)
+   iteration: a fresh kernel body, a genuine recompile. That perturbation
+   reaches a single fused kernel but not a matmul kernel's body, so the absolute
+   cold cost of the matmul-heavy sizes is taken process-isolated through
+   [--cold] instead, one fresh process per measurement. *)
 
 type ew = { a : Nx.float32_t; b : Nx.float32_t; c : Nx.float32_t }
 
@@ -238,7 +238,6 @@ let lorenz_dt = 0.0625
 let rnn_batch = 32
 let rnn_in = 32
 let rnn_hidden = 32
-
 let ew_forward p = Nx.add p.a (Nx.mul p.b p.c)
 
 let lorenz_step { x; y; z } =
@@ -285,7 +284,8 @@ let init_rnn horizon =
     w = Nx.randn Nx.float32 [| rnn_in; rnn_hidden |];
     u = Nx.randn Nx.float32 [| rnn_hidden; rnn_hidden |];
     h0 = Nx.randn Nx.float32 [| rnn_batch; rnn_hidden |];
-    xs = List.init horizon (fun _ -> Nx.randn Nx.float32 [| rnn_batch; rnn_in |]);
+    xs =
+      List.init horizon (fun _ -> Nx.randn Nx.float32 [| rnn_batch; rnn_in |]);
   }
 
 (* A distinct scalar per recompile — and, through a per-process seed, per

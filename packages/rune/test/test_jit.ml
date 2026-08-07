@@ -155,10 +155,10 @@ let test_outputs_have_their_own_storage () =
     y1
 
 (* Mutating a capture between calls has unspecified visibility. This pins the
-   CPU device's zero-copy binding, which happens to observe the mutation
-   because contiguous captures alias the tensor's memory; other devices keep
-   the compile-time value. Not a supported pattern — thread changing values
-   as input leaves. *)
+   CPU device's zero-copy binding, which happens to observe the mutation because
+   contiguous captures alias the tensor's memory; other devices keep the
+   compile-time value. Not a supported pattern — thread changing values as input
+   leaves. *)
 let test_cpu_aliasing_observes_closure_mutation () =
   let c = vec32 [| 10.0; 20.0; 30.0 |] in
   let g = Rune.jit' (fun x -> Nx.add x c) in
@@ -168,8 +168,8 @@ let test_cpu_aliasing_observes_closure_mutation () =
   check_arr ~msg:"mutated capture is read through the alias" [| 1.0; 1.0; 1.0 |]
     (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures are compile-time constants: a function that assigns to one fails
-   at trace time, on every device. *)
+(* Captures are compile-time constants: a function that assigns to one fails at
+   trace time, on every device. *)
 let test_assign_to_capture_raises () =
   let s = vec32 [| 1.0; 2.0 |] in
   let g =
@@ -308,11 +308,11 @@ let test_jitted_training_matches_eager () =
   is_true ~msg:"loss decreased" (l5 < l0)
 
 (* Device residency. Under RUNE_JIT_FORCE_COPY=1 the CPU device takes the
-   staged-copy path used by CUDA and Metal: outputs become deferred handles
-   that stay on the device until read, and a handle fed back into a compiled
-   call seeds its input buffer directly. The transfer counters make the
-   no-copy claims observable. The knob is read when the jit closure is
-   created, so it is scoped to each test body. *)
+   staged-copy path used by CUDA and Metal: outputs become deferred handles that
+   stay on the device until read, and a handle fed back into a compiled call
+   seeds its input buffer directly. The transfer counters make the no-copy
+   claims observable. The knob is read when the jit closure is created, so it is
+   scoped to each test body. *)
 
 let with_force_copy f =
   Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
@@ -356,7 +356,8 @@ let test_feedback_chain_moves_no_bytes () =
       equal ~msg:"producing h2 downloads nothing" int 0 down2;
       equal ~msg:"feeding h2 back uploads nothing" int 0 up3;
       equal ~msg:"producing h3 downloads nothing" int 0 down3;
-      check_arr ~msg:"h3 matches the eager composition" (to_arr (f (f (f x))))
+      check_arr ~msg:"h3 matches the eager composition"
+        (to_arr (f (f (f x))))
         h3;
       (* Handles from earlier calls keep their own storage (R3). *)
       check_arr ~msg:"h1 still readable" (to_arr (f x)) h1;
@@ -415,9 +416,11 @@ let test_cross_jit_feedback () =
 let test_cross_signature_feedback () =
   with_force_copy (fun () ->
       let g = Rune.jit' (fun x -> Nx.sum ~axes:[ 0 ] x) in
-      let h1 = g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]) in
-      (* h1 has a new shape: feeding it back compiles a second signature,
-         still without forcing the handle. *)
+      let h1 =
+        g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |])
+      in
+      (* h1 has a new shape: feeding it back compiles a second signature, still
+         without forcing the handle. *)
       let h2, up, down = delta (fun () -> g h1) in
       equal ~msg:"the retrace uploads nothing" int 0 up;
       equal ~msg:"the retrace downloads nothing" int 0 down;
@@ -467,8 +470,7 @@ let test_vmap_over_jit_with_deferred_arg () =
       let h = g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
       let y = Rune.vmap' g h in
       check_arr ~msg:"vmap over jit at a deferred point"
-        [| 4.0; 8.0; 12.0; 16.0 |]
-        y)
+        [| 4.0; 8.0; 12.0; 16.0 |] y)
 
 let test_dispatch_on_handle_reads_no_bytes () =
   with_force_copy (fun () ->
@@ -515,11 +517,11 @@ let test_dropped_handles_are_reclaimed () =
       is_true ~msg:"resident bytes are bounded after gc"
         (s.resident_bytes - base <= 3 * n * 4))
 
-(* Donation. [donate:true] consumes resident input handles: their device
-   buffers return to the allocator once the call completes, so a
-   state-to-state loop holds ~2 generations of device memory instead of one
-   per call, without any GC. A donated handle raises on read; host tensors,
-   already-read handles, and written-back leaves are unaffected. *)
+(* Donation. [donate:true] consumes resident input handles: their device buffers
+   return to the allocator once the call completes, so a state-to-state loop
+   holds ~2 generations of device memory instead of one per call, without any
+   GC. A donated handle raises on read; host tensors, already-read handles, and
+   written-back leaves are unaffected. *)
 
 let raises_donated f =
   raises_match
@@ -586,8 +588,8 @@ let test_donate_duplicate_leaves_once () =
       let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |]) in
       let base = (Rune.jit_stats ()).resident_bytes in
       let r = g { u = h; v = h } in
-      (* One handle behind two leaves donates once; only the two fresh
-         outputs remain resident. *)
+      (* One handle behind two leaves donates once; only the two fresh outputs
+         remain resident. *)
       is_true ~msg:"the duplicate handle was released once"
         ((Rune.jit_stats ()).resident_bytes - base <= 2 * 2 * 4);
       check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
@@ -627,9 +629,9 @@ let test_donated_writeback_leaf_survives () =
             Nx.sum x)
       in
       let s = step h in
-      (* The writeback forces the leaf before donation applies: the handle
-         holds the updated host value, and its device storage is released by
-         the force rather than the donation. *)
+      (* The writeback forces the leaf before donation applies: the handle holds
+         the updated host value, and its device storage is released by the force
+         rather than the donation. *)
       check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
       check_arr ~msg:"the written-back leaf is not consumed" [| 4.0; 8.0 |] h)
 

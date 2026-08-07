@@ -34,8 +34,7 @@ let () =
         82.0;
       |]
   in
-  Printf.printf "Grade book (students × subjects):\n%s\n\n"
-    (to_string grades);
+  Printf.printf "Grade book (students × subjects):\n%s\n\n" (to_string grades);
 
   (* Single element: student 0's Science score (row 0, col 1). *)
   let score = item [ 0; 1 ] grades in
@@ -55,8 +54,7 @@ let () =
 
   (* Strided: every other student, every other subject. *)
   let strided = grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]} in
-  Printf.printf "Every other student & subject:\n%s\n\n"
-    (to_string strided);
+  Printf.printf "Every other student & subject:\n%s\n\n" (to_string strided);
 
   (* Boolean mask: which students scored above 85 in Math? *)
   let math_scores = grades.${[ A; I 0 ]} in

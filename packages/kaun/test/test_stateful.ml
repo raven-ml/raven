@@ -296,16 +296,14 @@ let test_dropout_keyed_deterministic () =
     (Nx.to_array (apply (Nx.Rng.key 7)))
     (apply (Nx.Rng.key 7));
   is_true ~msg:"different keys, different masks"
-    (Nx.to_array (apply (Nx.Rng.key 7))
-    <> Nx.to_array (apply (Nx.Rng.key 8)))
+    (Nx.to_array (apply (Nx.Rng.key 7)) <> Nx.to_array (apply (Nx.Rng.key 8)))
 
 let test_dropout_keyed_statistics () =
   let n = 10_000 in
   let rate = 0.3 in
   let x = Nx.ones Nx.float32 [| n |] in
   let y =
-    Nx.to_array
-      (Dropout.apply ~rate ~training:true ~key:(Nx.Rng.key 11) x)
+    Nx.to_array (Dropout.apply ~rate ~training:true ~key:(Nx.Rng.key 11) x)
   in
   let scaled = 1.0 /. (1.0 -. rate) in
   let kept = ref 0 in
@@ -491,9 +489,7 @@ let test_dropout_bf16_sandwich () =
   let w = t32 [| 4; 4 |] (grid 16) in
   let objective w =
     let h = Nx.matmul (Nx.cast Nx.bfloat16 x) (Nx.cast Nx.bfloat16 w) in
-    let h =
-      Dropout.apply ~rate:0.5 ~training:true ~key:(Nx.Rng.key 3) h
-    in
+    let h = Dropout.apply ~rate:0.5 ~training:true ~key:(Nx.Rng.key 3) h in
     Nx.mean (Nx.cast Nx.float32 h)
   in
   let loss, grads = Rune.value_and_grad (module W) objective w in
@@ -538,8 +534,7 @@ let tests =
         test "keyed training keeps about 1 - rate with inverted scaling"
           test_dropout_keyed_statistics;
         test "keyed eval mode is the identity" test_dropout_keyed_eval_identity;
-        test "keyless dropout raises inside jit"
-          test_dropout_keyless_jit_raises;
+        test "keyless dropout raises inside jit" test_dropout_keyless_jit_raises;
         test "keyed dropout compiles and matches eager"
           test_dropout_keyed_jit_matches_eager;
         test "jitted train steps with fold_in keys reproduce from the seed"

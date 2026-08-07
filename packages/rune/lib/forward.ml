@@ -207,11 +207,11 @@ let handler (tangents : Tensor_map.t) =
               lift1 k (recip t_in) t_in (fun dx ->
                   T.mul dx (Derivs.recip' t_in)))
       (* On complex dtypes [abs] is the modulus: real-valued, and not
-         holomorphic. Its pushforward conjugates the direction — going
-         through [sign z] itself would flip the sign of the imaginary
-         contribution — and keeps the real part of the product, since a
-         real-valued output cannot move in the imaginary direction. Both are
-         the identity on real dtypes. *)
+         holomorphic. Its pushforward conjugates the direction — going through
+         [sign z] itself would flip the sign of the imaginary contribution — and
+         keeps the real part of the product, since a real-valued output cannot
+         move in the imaginary direction. Both are the identity on real
+         dtypes. *)
       | E_abs { t_in } ->
           Some
             (fun k ->

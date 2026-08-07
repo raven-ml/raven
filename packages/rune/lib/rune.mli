@@ -135,37 +135,36 @@ val jvp2 :
 
 (** {1:complex Complex tensors}
 
-    A complex tensor is two real components per element, so a function of one
-    is a function of twice as many real numbers, and its derivative is a real
+    A complex tensor is two real components per element, so a function of one is
+    a function of twice as many real numbers, and its derivative is a real
     linear map on them. Rune packs the two directions of that map into complex
     tensors differently.
 
     A {e tangent} carries the perturbation itself. {!jvp} takes and returns
-    [dre + i*dim], and its result is the directional derivative: move the
-    input by [h] times the tangent and both components of the output move by
-    [h] times the result.
+    [dre + i*dim], and its result is the directional derivative: move the input
+    by [h] times the tangent and both components of the output move by [h] times
+    the result.
 
-    A {e cotangent} carries the conjugate of the sensitivity. For a
-    real-valued objective [l], {!grad} and {!vjp} return [dl/dre - i*dl/dim].
-    That sign is what makes the plain chain rule correct: with it, a rule that
-    multiplies the cotangent by a derivative and conjugates nothing is right
-    for every operation that has a complex derivative — [mul] pulls back as
-    [cotangent * b], [exp] as [cotangent * exp z], [matmul] through an
-    ordinary transpose. The real-valued formulas carry over unchanged. Using
-    the result as a direction has to undo the conjugation:
-    [z - lr * conj g] descends, while [z - lr * g] moves the imaginary
-    component the wrong way. An objective that is complex-valued rather than
-    real is seeded with a cotangent of [1], so for a complex-differentiable
-    objective {!grad} is its complex derivative.
+    A {e cotangent} carries the conjugate of the sensitivity. For a real-valued
+    objective [l], {!grad} and {!vjp} return [dl/dre - i*dl/dim]. That sign is
+    what makes the plain chain rule correct: with it, a rule that multiplies the
+    cotangent by a derivative and conjugates nothing is right for every
+    operation that has a complex derivative — [mul] pulls back as
+    [cotangent * b], [exp] as [cotangent * exp z], [matmul] through an ordinary
+    transpose. The real-valued formulas carry over unchanged. Using the result
+    as a direction has to undo the conjugation: [z - lr * conj g] descends,
+    while [z - lr * g] moves the imaginary component the wrong way. An objective
+    that is complex-valued rather than real is seeded with a cotangent of [1],
+    so for a complex-differentiable objective {!grad} is its complex derivative.
 
     Operations with no complex derivative carry the conjugation explicitly.
     [abs] is the modulus: real-valued, and its differential mixes the two
-    components rather than scaling by one complex number. It pulls back
-    through [conj (sign z)] — through [sign z] the imaginary contribution
-    would come back negated — and keeps only the real part of the cotangent,
-    since a real-valued output cannot move in the imaginary direction; in
-    forward mode it produces a real tangent. Both are the identity on real
-    dtypes, so real gradients are unaffected. *)
+    components rather than scaling by one complex number. It pulls back through
+    [conj (sign z)] — through [sign z] the imaginary contribution would come
+    back negated — and keeps only the real part of the cotangent, since a
+    real-valued output cannot move in the imaginary direction; in forward mode
+    it produces a real tangent. Both are the identity on real dtypes, so real
+    gradients are unaffected. *)
 
 (** {1:vmap Vectorizing maps} *)
 
@@ -358,8 +357,8 @@ val check_grads :
 exception Jit_error of string
 (** Raised when a function cannot be compiled: it read the value of a traced
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
-    data-dependent branch), it assigned to a tensor it closes over (captures
-    are compile-time constants), it drew random values from a key that does not
+    data-dependent branch), it assigned to a tensor it closes over (captures are
+    compile-time constants), it drew random values from a key that does not
     depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
     [Nx.Rng.run ~seed] — the draw would be a compile-time constant replayed on
     every call; pass the key as an input instead), or it used an operation the
@@ -379,60 +378,58 @@ val jit :
     [device] selects where the kernels compile and run: ["CPU"] (the default),
     ["CUDA"] (NVIDIA GPUs), or ["METAL"] (macOS only). On the CPU device,
     contiguous inputs and captured tensors are read in place and outputs are
-    computed directly into the returned tensors' storage; non-contiguous
-    tensors are copied.
+    computed directly into the returned tensors' storage; non-contiguous tensors
+    are copied.
 
     On other devices, results are bit-identical but data moves lazily. Inputs
-    are copied to the device on every call; outputs stay resident on the
-    device and materialize on the host the first time their data is read
-    (metadata such as shape and dtype never transfers). An unread output fed
-    back as an input leaf of any jit call on the same device seeds the
-    compiled program's input directly — no transfer — which makes iterated
-    calls (training steps, decode loops with a cache) run without per-call
-    traffic. Reading an output moves it to the host for good: it becomes an
-    ordinary tensor, later mutations are honored, and feeding it back uploads
-    its current bytes. Device memory backing an output is held until the
-    output is read or garbage-collected; past a budget (the
-    [RUNE_JIT_RESIDENT_BUDGET] environment variable, in bytes, a few GiB by
-    default) a collection is triggered before allocating more. A transfer
-    failure surfaces as an exception at the first read of the affected
-    output.
+    are copied to the device on every call; outputs stay resident on the device
+    and materialize on the host the first time their data is read (metadata such
+    as shape and dtype never transfers). An unread output fed back as an input
+    leaf of any jit call on the same device seeds the compiled program's input
+    directly — no transfer — which makes iterated calls (training steps, decode
+    loops with a cache) run without per-call traffic. Reading an output moves it
+    to the host for good: it becomes an ordinary tensor, later mutations are
+    honored, and feeding it back uploads its current bytes. Device memory
+    backing an output is held until the output is read or garbage-collected;
+    past a budget (the [RUNE_JIT_RESIDENT_BUDGET] environment variable, in
+    bytes, a few GiB by default) a collection is triggered before allocating
+    more. A transfer failure surfaces as an exception at the first read of the
+    affected output.
 
     [donate] (default [false]) consumes the resident inputs: once a call
     completes — never during it — the device buffers of every input leaf that
     was an unread resident output of an earlier call are released to the
-    allocator, and the donated handle becomes unusable — reading it, or
-    feeding it to a later call (which reads it), raises [Invalid_argument];
-    read or copy the value before the call if it is still needed. The next
-    call's fresh outputs reuse the released storage, so a state-to-state loop
+    allocator, and the donated handle becomes unusable — reading it, or feeding
+    it to a later call (which reads it), raises [Invalid_argument]; read or copy
+    the value before the call if it is still needed. The next call's fresh
+    outputs reuse the released storage, so a state-to-state loop
     ([state <- step state] with [step] jitted [~donate:true]) holds about two
     generations of state on the device instead of one per call awaiting
     collection. Only resident handles are consumed: host tensors and handles
-    already read are unaffected. A handle appearing as several input leaves
-    is donated once, and a leaf the function updates in place is materialized
-    on the host by the writeback rather than donated.
+    already read are unaffected. A handle appearing as several input leaves is
+    donated once, and a leaf the function updates in place is materialized on
+    the host by the writeback rather than donated.
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
-    are compile-time constants, bound once when the trace first compiles: on
-    the CPU device contiguous captures are read in place, and every other
-    capture is copied to the device once per closure — signatures share the
-    copy. Mutating a captured tensor between calls is not supported and has
-    unspecified visibility (the CPU device may observe the mutation through
-    its in-place binding; other devices never do): pass values that change
-    between calls as leaves of [P] rather than capturing them.
+    are compile-time constants, bound once when the trace first compiles: on the
+    CPU device contiguous captures are read in place, and every other capture is
+    copied to the device once per closure — signatures share the copy. Mutating
+    a captured tensor between calls is not supported and has unspecified
+    visibility (the CPU device may observe the mutation through its in-place
+    binding; other devices never do): pass values that change between calls as
+    leaves of [P] rather than capturing them.
 
-    Compiled programs also persist across processes: the first compilation of
-    a trace writes the scheduled and compiled kernels to a disk cache under
-    the platform cache directory ([$XDG_CACHE_HOME/tolk/rune_jit], with
-    [XDG_CACHE_HOME] defaulting to [~/.cache] on Linux and [~/Library/Caches]
-    on macOS), and a later process compiling the same trace loads them
-    instead of scheduling and compiling again, leaving tracing as the bulk of
-    warm start-up time. Entries are invalidated automatically when the
-    executable, the device or its compiler, or the codegen options change.
-    Set the [JITCACHE] environment variable to [0] to disable the persistent
-    cache; {!pmap} compilations are never persisted. Results are identical
-    either way.
+    Compiled programs also persist across processes: the first compilation of a
+    trace writes the scheduled and compiled kernels to a disk cache under the
+    platform cache directory ([$XDG_CACHE_HOME/tolk/rune_jit], with
+    [XDG_CACHE_HOME] defaulting to [~/.cache] on Linux and [~/Library/Caches] on
+    macOS), and a later process compiling the same trace loads them instead of
+    scheduling and compiling again, leaving tracing as the bulk of warm start-up
+    time. Entries are invalidated automatically when the executable, the device
+    or its compiler, or the codegen options change. Set the [JITCACHE]
+    environment variable to [0] to disable the persistent cache; {!pmap}
+    compilations are never persisted. Results are identical either way.
 
     Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
     outer [jit]), the wrapped function runs directly so the transformation
@@ -454,9 +451,9 @@ val jit :
     are replayed by writing the computed value back into the destination, so
     in-place state threaded through [P] carries across calls on every device.
     Assigning to a captured tensor raises {!Jit_error} at trace time — captures
-    are compile-time constants; thread mutable state through the input
-    structure instead. Structured values read during tracing must not depend on
-    traced tensors: a data-dependent {!cond} or {!while_loop} predicate raises
+    are compile-time constants; thread mutable state through the input structure
+    instead. Structured values read during tracing must not depend on traced
+    tensors: a data-dependent {!cond} or {!while_loop} predicate raises
     {!Jit_error}. Compiled functions are not thread-safe.
 
     Randomness inside a jitted function comes from a {!Nx.Rng} key threaded
@@ -464,13 +461,13 @@ val jit :
     compiled program recomputes each draw from the current key on every call —
     feed a fresh key ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for fresh values.
 
-    Either front-end works. Pass the key to each sampler
-    ({!Nx.Rng.uniform} and friends), or wrap the body in
-    {!Nx.Rng.with_key} on that input key and keep writing the keyless
-    [Nx.rand]: the scope derives every draw from its root, so a traced root
-    makes the whole scope traced. What raises {!Jit_error} is a root that does
-    not depend on the inputs — a captured key, or [Nx.Rng.run ~seed] — since
-    the draw would be a compile-time constant replayed on every call.
+    Either front-end works. Pass the key to each sampler ({!Nx.Rng.uniform} and
+    friends), or wrap the body in {!Nx.Rng.with_key} on that input key and keep
+    writing the keyless [Nx.rand]: the scope derives every draw from its root,
+    so a traced root makes the whole scope traced. What raises {!Jit_error} is a
+    root that does not depend on the inputs — a captured key, or
+    [Nx.Rng.run ~seed] — since the draw would be a compile-time constant
+    replayed on every call.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
     [Invalid_argument] for an unknown or unavailable [device]. *)
@@ -496,18 +493,18 @@ val pmap :
   ?donate:bool ->
   (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
 (** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
-    [devices] — {!val-jit} whose inputs are placed on a device tuple instead
-    of one device. Device names are as in {!val-jit}, with an instance suffix
-    to address several devices of one backend (["CUDA:0"], ["CUDA:1"], or
+    [devices] — {!val-jit} whose inputs are placed on a device tuple instead of
+    one device. Device names are as in {!val-jit}, with an instance suffix to
+    address several devices of one backend (["CUDA:0"], ["CUDA:1"], or
     ["CPU:1"], ["CPU:2"], ...); all devices must share one backend.
 
     [in_axes] gives one entry per leaf of [P], in traversal order: [Some a]
-    splits the leaf along axis [a] into [List.length devices] equal shards,
-    one per device; [None] replicates the leaf, a full copy on every device.
-    It defaults to [Some 0] for every leaf. [f] observes full (global) shapes
-    and needs no collective operations: an operation combining sharded and
-    replicated values runs on every device over its shard, and a reduction
-    over a sharded axis (say the mean loss over a sharded batch) becomes a
+    splits the leaf along axis [a] into [List.length devices] equal shards, one
+    per device; [None] replicates the leaf, a full copy on every device. It
+    defaults to [Some 0] for every leaf. [f] observes full (global) shapes and
+    needs no collective operations: an operation combining sharded and
+    replicated values runs on every device over its shard, and a reduction over
+    a sharded axis (say the mean loss over a sharded batch) becomes a
     cross-device allreduce automatically — differentiating such a loss inside
     [pmap] yields allreduced gradients, which makes data-parallel training a
     matter of sharding the batch and replicating the parameters.
@@ -515,32 +512,31 @@ val pmap :
     Compilation, caching, capture, and writeback semantics are {!val-jit}'s.
     Outputs stay resident, one buffer per device, and gather to the host the
     first time they are read (shards are reassembled along their axis;
-    replicated outputs read one replica). An unread output fed back as an
-    input leaf whose placement matches — same devices, same axis or
-    replication — seeds the compiled program's buffers directly with no
-    transfer, so iterated calls (a data-parallel training step) move only the
-    freshly sharded batch. [donate] consumes resident inputs as in {!val-jit},
-    releasing every per-device buffer of the donated handle; a handle whose
-    placement mismatches is forced to the host first and is not donated.
-    Assigning a sharded value to an input leaf raises
-    {!Jit_error} at trace time (it would gather on every call); replicated
-    writebacks are honored.
+    replicated outputs read one replica). An unread output fed back as an input
+    leaf whose placement matches — same devices, same axis or replication —
+    seeds the compiled program's buffers directly with no transfer, so iterated
+    calls (a data-parallel training step) move only the freshly sharded batch.
+    [donate] consumes resident inputs as in {!val-jit}, releasing every
+    per-device buffer of the donated handle; a handle whose placement mismatches
+    is forced to the host first and is not donated. Assigning a sharded value to
+    an input leaf raises {!Jit_error} at trace time (it would gather on every
+    call); replicated writebacks are honored.
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
 
-    Raises [Invalid_argument] if [devices] is empty, mixes backends, or a
-    device is unavailable; if [in_axes] has one entry per leaf missing or in
-    excess; or if a sharded leaf's dimension does not divide evenly across the
-    devices. Raises {!Jit_error} when tracing fails, as {!val-jit}. *)
+    Raises [Invalid_argument] if [devices] is empty, mixes backends, or a device
+    is unavailable; if [in_axes] has one entry per leaf missing or in excess; or
+    if a sharded leaf's dimension does not divide evenly across the devices.
+    Raises {!Jit_error} when tracing fails, as {!val-jit}. *)
 
 val pmap2 :
   devices:string list ->
   ?in_axes:int option list ->
   ?donate:bool ->
   (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
-(** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function
-    returning a structured output. *)
+(** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
+    a structured output. *)
 
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)

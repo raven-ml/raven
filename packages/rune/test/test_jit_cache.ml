@@ -5,14 +5,13 @@
 
 (* Persistent jit compile cache, across processes.
 
-   [Tolk.Diskcache] resolves its cache directory from the environment once,
-   at module initialization, so every cache-touching scenario runs in a
-   child process spawned from this executable with [XDG_CACHE_HOME] pointing
-   at a per-scenario temporary directory (the pattern of tolk's
-   test_diskcache). Children select a role via [RUNE_JITCACHE_ROLE], print
-   results as hex floats on stdout (bit-exact comparison), and run with
-   [RUNE_JIT_DEBUG=1] so the parent observes cache hits and misses on
-   stderr. *)
+   [Tolk.Diskcache] resolves its cache directory from the environment once, at
+   module initialization, so every cache-touching scenario runs in a child
+   process spawned from this executable with [XDG_CACHE_HOME] pointing at a
+   per-scenario temporary directory (the pattern of tolk's test_diskcache).
+   Children select a role via [RUNE_JITCACHE_ROLE], print results as hex floats
+   on stdout (bit-exact comparison), and run with [RUNE_JIT_DEBUG=1] so the
+   parent observes cache hits and misses on stderr. *)
 
 open Windtrap
 open Rune_test_support.Support
@@ -58,8 +57,8 @@ let child_twice () =
   print_result (Rune.jit' f (input ()));
   print_result (Rune.jit' f (input ()))
 
-(* An assign-carrying trace: the writeback into the input leaf and the
-   returned sum must survive the save/load round trip. *)
+(* An assign-carrying trace: the writeback into the input leaf and the returned
+   sum must survive the save/load round trip. *)
 let child_writeback () =
   let step =
     Rune.jit
@@ -127,17 +126,13 @@ let drain fd =
   Unix.close fd;
   Buffer.contents buf
 
-(* Run [exe] with the given role and cache dir; return (stdout, cache
-   events). Cache events are the "rune.jit: compile cache <event> <key>"
-   lines, reduced to their <event> word, in order. *)
+(* Run [exe] with the given role and cache dir; return (stdout, cache events).
+   Cache events are the "rune.jit: compile cache <event> <key>" lines, reduced
+   to their <event> word, in order. *)
 let run_child ?(exe = Sys.executable_name) ?(extra = []) ~cache role =
   let env =
     child_env
-      ([
-         ("XDG_CACHE_HOME", cache);
-         (role_var, role);
-         ("RUNE_JIT_DEBUG", "1");
-       ]
+      ([ ("XDG_CACHE_HOME", cache); (role_var, role); ("RUNE_JIT_DEBUG", "1") ]
       @ extra)
   in
   let out_read, out_write = Unix.pipe ~cloexec:false () in
@@ -157,15 +152,15 @@ let run_child ?(exe = Sys.executable_name) ?(extra = []) ~cache role =
   let events =
     String.split_on_char '\n' errs
     |> List.filter_map (fun line ->
-           if String.starts_with ~prefix line then
-             let rest =
-               String.sub line (String.length prefix)
-                 (String.length line - String.length prefix)
-             in
-             match String.index_opt rest ' ' with
-             | Some i -> Some (String.sub rest 0 i)
-             | None -> Some rest
-           else None)
+        if String.starts_with ~prefix line then
+          let rest =
+            String.sub line (String.length prefix)
+              (String.length line - String.length prefix)
+          in
+          match String.index_opt rest ' ' with
+          | Some i -> Some (String.sub rest 0 i)
+          | None -> Some rest
+        else None)
   in
   (out, events)
 
@@ -183,8 +178,8 @@ let entry_files cache =
 
 let cold_miss_then_warm_hit () =
   let cache = fresh_dir () in
-  (* Cold process: the first closure misses and stores, the second closure
-     (same trace, same process) hits; both produce identical bytes. *)
+  (* Cold process: the first closure misses and stores, the second closure (same
+     trace, same process) hits; both produce identical bytes. *)
   let out, events = run_child ~cache "twice" in
   equal (list string) ~msg:"cold events" [ "miss"; "store"; "hit" ] events;
   (match String.split_on_char '\n' (String.trim out) with
@@ -210,16 +205,15 @@ let corrupt_entry_is_a_miss_and_rewritten () =
   let out, events = run_child ~cache "once" in
   equal (list string) ~msg:"corrupt entry misses and is rewritten"
     [ "miss"; "store" ] events;
-  equal string ~msg:"output unchanged" (String.trim cold_out)
-    (String.trim out);
+  equal string ~msg:"output unchanged" (String.trim cold_out) (String.trim out);
   let ic = open_in_bin path in
   let size = in_channel_length ic in
   close_in ic;
   is_true ~msg:"entry rewritten" (size > String.length "not a marshalled entry")
 
 (* The key digests the executable, so the same trace compiled by a different
-   binary must miss. Append a byte to a copy of this executable: same code
-   runs, different fingerprint. *)
+   binary must miss. Append a byte to a copy of this executable: same code runs,
+   different fingerprint. *)
 let different_exe_fingerprint_is_a_miss () =
   let cache = fresh_dir () in
   ignore (run_child ~cache "once");
@@ -240,17 +234,13 @@ let different_exe_fingerprint_is_a_miss () =
 
 let jitcache_zero_disables () =
   let cache = fresh_dir () in
-  let _, events =
-    run_child ~extra:[ ("JITCACHE", "0") ] ~cache "once"
-  in
+  let _, events = run_child ~extra:[ ("JITCACHE", "0") ] ~cache "once" in
   equal (list string) ~msg:"no cache events" [] events;
   is_true ~msg:"no rune_jit table created"
     (not (Sys.file_exists (table_dir cache)));
   (* And a warmed cache is ignored when disabled. *)
   ignore (run_child ~cache "once");
-  let _, events =
-    run_child ~extra:[ ("JITCACHE", "0") ] ~cache "once"
-  in
+  let _, events = run_child ~extra:[ ("JITCACHE", "0") ] ~cache "once" in
   equal (list string) ~msg:"warm cache ignored" [] events
 
 let writeback_survives_the_hit_path () =
@@ -265,12 +255,11 @@ let writeback_survives_the_hit_path () =
 let pmap_bails () =
   let cache = fresh_dir () in
   let _, events = run_child ~cache "pmap" in
-  (* The single-device jit inside the role caches; the pmap compilations
-     must not. One trace -> one miss/store pair and no more. *)
+  (* The single-device jit inside the role caches; the pmap compilations must
+     not. One trace -> one miss/store pair and no more. *)
   equal (list string) ~msg:"only the jit trace touches the cache"
     [ "miss"; "store" ] events;
-  equal int ~msg:"one entry (the jit trace)" 1
-    (List.length (entry_files cache))
+  equal int ~msg:"one entry (the jit trace)" 1 (List.length (entry_files cache))
 
 let () =
   match Sys.getenv_opt role_var with

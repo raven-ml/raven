@@ -6,6 +6,11 @@
  (libraries nx_buffer nx nx_core unix)
  (foreign_stubs
   (language c)
-  (names nx_io_checksum nx_io_deflate nx_io_deflate_encode nx_io_png nx_io_jpeg)
+  (names
+   nx_io_checksum
+   nx_io_deflate
+   nx_io_deflate_encode
+   nx_io_png
+   nx_io_jpeg)
   (flags
    (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic))))

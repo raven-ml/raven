@@ -7,11 +7,10 @@
    representative workloads:
 
    - an MLP (784 -> 256 -> 128 -> 10, relu, batch 128, float32, softmax
-     cross-entropy) trained one full step with Adam, and separately with SGD;
-   - the same MLP's forward pass in isolation;
-   - a small CNN (two conv + max-pool blocks then a dense head) trained one full
-     step with Adam;
-   - a single Linear layer (512 -> 512, batch 128) forward, and forward+backward.
+   cross-entropy) trained one full step with Adam, and separately with SGD; -
+   the same MLP's forward pass in isolation; - a small CNN (two conv + max-pool
+   blocks then a dense head) trained one full step with Adam; - a single Linear
+   layer (512 -> 512, batch 128) forward, and forward+backward.
 
    Every case measures only the operation: inputs, parameters and optimizer
    state are built once in setup, outside the timed region. The train-step cases
@@ -58,10 +57,9 @@ module Mlp = struct
       (Fn.relu (Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))))
 end
 
-(* CNN: two conv + max-pool blocks then a dense head, NCHW, single-channel
-   28x28 inputs, batch 32, float32. Spatial size shrinks
-   28 -conv3-> 26 -pool2-> 13 -conv3-> 11 -pool2-> 5, so the head sees
-   16 * 5 * 5 features. *)
+(* CNN: two conv + max-pool blocks then a dense head, NCHW, single-channel 28x28
+   inputs, batch 32, float32. Spatial size shrinks 28 -conv3-> 26 -pool2-> 13
+   -conv3-> 11 -pool2-> 5, so the head sees 16 * 5 * 5 features. *)
 
 let cnn_batch = 32
 let cnn_img = 28
@@ -122,12 +120,16 @@ let () =
   let sgd_state = Vega.sgd_init (module Mlp) params in
   let adam_step () =
     let l, grads = Rune.value_and_grad (module Mlp) loss params in
-    let params', state' = Vega.adam_step (module Mlp) ~lr adam_state ~params ~grads in
+    let params', state' =
+      Vega.adam_step (module Mlp) ~lr adam_state ~params ~grads
+    in
     (l, params', state')
   in
   let sgd_step () =
     let l, grads = Rune.value_and_grad (module Mlp) loss params in
-    let params', state' = Vega.sgd_step (module Mlp) ~lr sgd_state ~params ~grads in
+    let params', state' =
+      Vega.sgd_step (module Mlp) ~lr sgd_state ~params ~grads
+    in
     (l, params', state')
   in
 
@@ -151,7 +153,8 @@ let () =
     (l, params', state')
   in
 
-  (* A single Linear layer in isolation: forward, and value_and_grad through it. *)
+  (* A single Linear layer in isolation: forward, and value_and_grad through
+     it. *)
   let lin_in = 512 and lin_out = 512 and lin_batch = 128 in
   let lin = Kaun.Linear.init ~inputs:lin_in ~outputs:lin_out in
   let lx = Nx.randn Nx.float32 [| lin_batch; lin_in |] in
@@ -174,7 +177,8 @@ let () =
         [ Thumper.bench "apply" (fun () -> Mlp.apply params x) ];
       Thumper.group "Conv"
         [
-          Thumper.bench "conv train step" ~tags:[ "lab" ] (fun () -> cnn_step ());
+          Thumper.bench "conv train step" ~tags:[ "lab" ] (fun () ->
+              cnn_step ());
         ];
       Thumper.group "Linear"
         [

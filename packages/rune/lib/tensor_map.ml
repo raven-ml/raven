@@ -28,10 +28,10 @@ let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
       | Some Type.Equal -> Some v
       | None -> assert false)
 
-(* A deferred tensor (an unread jit output) mutates when its bytes arrive,
-   which would change its structural hash. Forcing it before keying makes the
-   key stable — and a keyed tensor is being differentiated or mapped, so its
-   bytes are needed anyway. *)
+(* A deferred tensor (an unread jit output) mutates when its bytes arrive, which
+   would change its structural hash. Forcing it before keying makes the key
+   stable — and a keyed tensor is being differentiated or mapped, so its bytes
+   are needed anyway. *)
 let stable x = ignore (Nx_effect.unwrap x)
 
 let set m x v =

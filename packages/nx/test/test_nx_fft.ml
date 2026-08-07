@@ -568,8 +568,7 @@ let test_rfft_dtypes () =
   let spectrum64 = Nx.rfft Nx.complex128 f64 in
   equal ~msg:"rfft complex128 dtype" string "complex128"
     (Nx_core.Dtype.to_string (Nx.dtype spectrum64));
-  check_t ~eps:1e-10 "rfft complex128 values" spectrum_shape expected
-    spectrum64;
+  check_t ~eps:1e-10 "rfft complex128 values" spectrum_shape expected spectrum64;
   let roundtrip64 = Nx.irfft Nx.float64 spectrum64 ~n in
   equal ~msg:"irfft float64 dtype" string "float64"
     (Nx_core.Dtype.to_string (Nx.dtype roundtrip64));
@@ -869,8 +868,7 @@ let test_real_transform_axes_and_nd () =
 
   let scalar = Nx.scalar Nx.float64 2.0 in
   check_t "dctn scalar" [||] [| 2.0 |] (Nx.dctn scalar);
-  check_t "dstn scalar with empty axes" [||] [| 2.0 |]
-    (Nx.dstn ~axes:[] scalar)
+  check_t "dstn scalar with empty axes" [||] [| 2.0 |] (Nx.dstn ~axes:[] scalar)
 
 let test_real_transform_dtypes () =
   let data = [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -885,12 +883,12 @@ let test_real_transform_dtypes () =
   equal ~msg:"dst float64 dtype" string "float64"
     (Nx_core.Dtype.to_string (Nx.dtype (Nx.dst f64)));
   check_t ~eps:1e-5 "dct float32 values" [| 4 |]
-    (reference_real_transform ~family:`Dct ~inverse:false ~type_:2
-       ~norm:`Ortho data)
+    (reference_real_transform ~family:`Dct ~inverse:false ~type_:2 ~norm:`Ortho
+       data)
     (Nx.dct ~norm:`Ortho f32);
   check_t ~eps:1e-5 "dst float32 values" [| 4 |]
-    (reference_real_transform ~family:`Dst ~inverse:false ~type_:2
-       ~norm:`Ortho data)
+    (reference_real_transform ~family:`Dst ~inverse:false ~type_:2 ~norm:`Ortho
+       data)
     (Nx.dst ~norm:`Ortho f32)
 
 let test_real_transform_errors () =

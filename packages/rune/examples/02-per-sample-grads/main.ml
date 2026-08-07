@@ -73,8 +73,7 @@ let () =
       (fun ex -> Rune.grad (module Params) (loss ex) params)
       batch
   in
-  Printf.printf "per-sample dw: %s\n"
-    (shape_to_string (Nx.shape per_sample.w));
+  Printf.printf "per-sample dw: %s\n" (shape_to_string (Nx.shape per_sample.w));
   Printf.printf "per-sample db: %s\n\n"
     (shape_to_string (Nx.shape per_sample.b));
 

@@ -300,15 +300,16 @@ let complex_tests =
           (fun x ->
             (* a constant imaginary component keeps the argument varying *)
             Nx.angle f64
-              (Nx.complex Nx.complex128 ~re:x ~im:(Nx.full f64 (Nx.shape x) 1.0)))
+              (Nx.complex Nx.complex128 ~re:x
+                 ~im:(Nx.full f64 (Nx.shape x) 1.0)))
           (v3 ()));
     test "conjugate" (fun () ->
         check_grad ~msg:"conjugate"
           (fun x -> Nx.imag f64 (Nx.conjugate (z_of x)))
           (v3 ()));
-    (* With a complex leaf, |z| pulls back as conj(z)/|z|. The conjugate is
-       what makes the composite cases above agree with finite differences:
-       without it the imaginary contribution comes back negated. *)
+    (* With a complex leaf, |z| pulls back as conj(z)/|z|. The conjugate is what
+       makes the composite cases above agree with finite differences: without it
+       the imaginary contribution comes back negated. *)
     test "complex leaf differentiates |z| as conj(z)/|z|" (fun () ->
         let z =
           Nx.create Nx.complex128 [| 2 |]
@@ -323,10 +324,12 @@ let complex_tests =
         Array.iteri
           (fun i c ->
             let n = Complex.norm c in
-            equal ~msg:(Printf.sprintf "re[%d]" i) (float 1e-9)
-              (c.Complex.re /. n) got.(i).Complex.re;
-            equal ~msg:(Printf.sprintf "im[%d]" i) (float 1e-9)
-              (-.c.Complex.im /. n) got.(i).Complex.im)
+            equal
+              ~msg:(Printf.sprintf "re[%d]" i)
+              (float 1e-9) (c.Complex.re /. n) got.(i).Complex.re;
+            equal
+              ~msg:(Printf.sprintf "im[%d]" i)
+              (float 1e-9) (-.c.Complex.im /. n) got.(i).Complex.im)
           (Nx.to_array z));
   ]
 

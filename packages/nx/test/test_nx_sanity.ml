@@ -109,8 +109,8 @@ let property_access_tests =
         equal ~msg:"stride 1" int 4 strides.(1));
     test "stride" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
-        equal ~msg:"stride 0" int 12 ((Nx.strides t).(0));
-        equal ~msg:"stride 1" int 4 ((Nx.strides t).(1)));
+        equal ~msg:"stride 0" int 12 (Nx.strides t).(0);
+        equal ~msg:"stride 1" int 4 (Nx.strides t).(1));
     test "dims" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
         let d = Nx.shape t in
@@ -833,10 +833,7 @@ let random_tests =
         let mean = Array.fold_left ( +. ) 0.0 vals /. 100.0 in
         equal ~msg:"randn mean" bool true (abs_float mean < 0.5));
     test "randint" (fun () ->
-        let t =
-          Nx.Rng.run ~seed:2 (fun () ->
-              Nx.randint ~high:10 shape_2x3)
-        in
+        let t = Nx.Rng.run ~seed:2 (fun () -> Nx.randint ~high:10 shape_2x3) in
         check_shape "randint shape" shape_2x3 t;
         (* Check all values are in range *)
         for i = 0 to 1 do
@@ -906,7 +903,9 @@ let higher_order_tests =
     test "fold_item product" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let prod =
-          Nx.fold_item (fun acc v -> Nx.mul_s acc v) (Nx.scalar Nx.float32 1.0) a
+          Nx.fold_item
+            (fun acc v -> Nx.mul_s acc v)
+            (Nx.scalar Nx.float32 1.0) a
         in
         equal ~msg:"fold_item product" (float 0.01) 24.0 (Nx.item [] prod));
     test "fold_item max" (fun () ->

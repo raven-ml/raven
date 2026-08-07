@@ -56,6 +56,5 @@ let () =
     if i mod 40 = 0 then Printf.printf "step %3d  loss %.6f\n%!" i l
   done;
 
-  Printf.printf "\nw (expected ~[2.0; -1.0; 0.5]):\n  %s\n"
-    (Nx.to_string !p.w);
+  Printf.printf "\nw (expected ~[2.0; -1.0; 0.5]):\n  %s\n" (Nx.to_string !p.w);
   Printf.printf "b (expected ~0.3):\n  %s\n" (Nx.to_string !p.b)

@@ -50,8 +50,8 @@ let test_capture_is_uploaded_once () =
     [| 11.0; 21.0; 31.0 |]
     (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures are compile-time constants: a function that assigns to one fails
-   at trace time. Mutable state belongs in the input structure. *)
+(* Captures are compile-time constants: a function that assigns to one fails at
+   trace time. Mutable state belongs in the input structure. *)
 let test_assign_to_capture_raises () =
   require_cuda ();
   let s = vec32 [| 1.0; 2.0 |] in
@@ -64,8 +64,8 @@ let test_assign_to_capture_raises () =
     (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
     (fun () -> ignore (g (vec32 [| 1.0; 1.0 |])))
 
-(* Device residency: outputs stay on the GPU until read, and unread outputs
-   fed back as inputs move no bytes. *)
+(* Device residency: outputs stay on the GPU until read, and unread outputs fed
+   back as inputs move no bytes. *)
 
 let delta f =
   let s0 = Rune.jit_stats () in
@@ -125,8 +125,8 @@ let test_assign_to_resident_leaf () =
 
 (* Multi-kernel compiled traces replay as batched device execution graphs: the
    kernels are recorded into a CUDA graph on the first call and later calls
-   patch the rebound buffers (fresh outputs, resident inputs) into the
-   recorded graph instead of launching each kernel individually. *)
+   patch the rebound buffers (fresh outputs, resident inputs) into the recorded
+   graph instead of launching each kernel individually. *)
 let test_graph_batched_replay () =
   require_cuda ();
   let w1 =
@@ -147,7 +147,8 @@ let test_graph_batched_replay () =
       let x = Nx.create f32 [| 2; 4 |] data in
       check_arr
         ~msg:(Printf.sprintf "call %d matches eager" (i + 1))
-        (to_arr (f x)) (g x))
+        (to_arr (f x))
+        (g x))
     [
       Array.init 8 (fun i -> float_of_int i /. 8.0);
       Array.init 8 (fun i -> float_of_int (7 - i));
@@ -198,8 +199,8 @@ let test_pass_through_output_survives () =
   check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
   check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v
 
-(* Half precision on the GPU: eager (nx C kernels) vs CUDA-jitted half
-   graphs, and the astype-sandwich gradient under a CUDA jit. *)
+(* Half precision on the GPU: eager (nx C kernels) vs CUDA-jitted half graphs,
+   and the astype-sandwich gradient under a CUDA jit. *)
 
 let sin_data n = Array.init n (fun i -> sin (float_of_int (i + 1)))
 let cos_data n = Array.init n (fun i -> 0.5 *. cos (float_of_int (i + 1)))
@@ -217,8 +218,7 @@ let test_half_matmul_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps () =
     (fun a -> Nx.matmul a b)
     (half_mat dt 4 8 sin_data)
 
-let test_half_softmax_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps ()
-    =
+let test_half_softmax_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps () =
   require_cuda ();
   check_half_on_cuda name ~eps
     (fun x ->
@@ -226,9 +226,9 @@ let test_half_softmax_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps ()
       Nx.div e (Nx.sum e ~axes:[ 1 ] ~keepdims:true))
     (half_mat dt 3 5 sin_data)
 
-(* fp32 params, half compute, fp32 loss: the gradient of the sandwich must
-   come out fp32 and match the all-fp32 gradient within the half dtype's
-   tolerance, under a CUDA jit. *)
+(* fp32 params, half compute, fp32 loss: the gradient of the sandwich must come
+   out fp32 and match the all-fp32 gradient within the half dtype's tolerance,
+   under a CUDA jit. *)
 let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
     ~tol () =
   require_cuda ();
@@ -251,8 +251,8 @@ let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
 
 (* pmap on a duplicated CUDA device tuple: both shards run on the one GPU, so
    the whole multi-device path (per-shard uploads, per-device launches with
-   [_device_num] bound, allreduce, gather on read) is exercised without a
-   second device. *)
+   [_device_num] bound, allreduce, gather on read) is exercised without a second
+   device. *)
 
 module Single_f32 = struct
   type t = Nx.float32_t
@@ -303,9 +303,9 @@ module Single_bf16 = struct
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
 end
 
-(* Reducing over the sharded axis allreduces at bfloat16: each shard's
-   partial sum is rounded to bfloat16 before the combine, so allow a couple
-   of ulps against the single-device result. *)
+(* Reducing over the sharded axis allreduces at bfloat16: each shard's partial
+   sum is rounded to bfloat16 before the combine, so allow a couple of ulps
+   against the single-device result. *)
 let test_pmap_bf16_allreduce_on_cuda () =
   require_cuda ();
   let f x = Nx.sum x ~axes:[ 0 ] in
@@ -399,9 +399,9 @@ let test_pmap_donate_on_cuda () =
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
 
-(* Rng on CUDA. The threefry samplers must be bit-identical to eager
-   execution: the Tolk decomposition the GPU kernels compile from is the same
-   Random123 function as the eager C kernel. *)
+(* Rng on CUDA. The threefry samplers must be bit-identical to eager execution:
+   the Tolk decomposition the GPU kernels compile from is the same Random123
+   function as the eager C kernel. *)
 
 module Key = struct
   type t = Nx.Rng.key
@@ -441,8 +441,7 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k) (Rune.jit ~device:"CUDA" (module Key) fr k);
   let fb key = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.3 [| 64 |]) in
-  check_bits ~msg:"bernoulli" (fb k)
-    (Rune.jit ~device:"CUDA" (module Key) fb k)
+  check_bits ~msg:"bernoulli" (fb k) (Rune.jit ~device:"CUDA" (module Key) fb k)
 
 (* The threefry bits agree exactly; Box-Muller's cos/log/sqrt land within
    float32 ulps of eager (GPU transcendental codegen). *)
@@ -450,7 +449,9 @@ let test_rng_normal_matches_eager_on_cuda () =
   require_cuda ();
   let f key = Nx.Rng.normal key Nx.float32 [| 1000 |] in
   let k = Nx.Rng.key 42 in
-  check_arr ~msg:"normal" (to_arr (f k)) (Rune.jit ~device:"CUDA" (module Key) f k)
+  check_arr ~msg:"normal"
+    (to_arr (f k))
+    (Rune.jit ~device:"CUDA" (module Key) f k)
 
 let test_rng_fold_in_driven_steps_on_cuda () =
   require_cuda ();
@@ -463,7 +464,8 @@ let test_rng_fold_in_driven_steps_on_cuda () =
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
     for j = i + 1 to 4 do
-      is_true ~msg:(Printf.sprintf "steps %d and %d differ" i j)
+      is_true
+        ~msg:(Printf.sprintf "steps %d and %d differ" i j)
         (outs.(i) <> outs.(j))
     done
   done;
@@ -493,8 +495,7 @@ let tests =
         test "feedback moves no bytes" test_feedback_moves_no_bytes;
         test "forced handles feed current bytes"
           test_forced_handle_feeds_current_bytes;
-        test "cuda handles read on the cpu device"
-          test_cuda_handle_into_cpu_jit;
+        test "cuda handles read on the cpu device" test_cuda_handle_into_cpu_jit;
         test "assigning to a resident leaf forces then writes back"
           test_assign_to_resident_leaf;
         test "pass-through outputs survive later calls"
@@ -545,8 +546,7 @@ let tests =
           test_donated_handle_raises_on_cuda;
         test "a handle read before the call is unaffected"
           test_forced_handle_unaffected_by_donate_on_cuda;
-        test "pmap donation consumes the sharded state"
-          test_pmap_donate_on_cuda;
+        test "pmap donation consumes the sharded state" test_pmap_donate_on_cuda;
       ];
   ]
 

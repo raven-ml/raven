@@ -1,6 +1,6 @@
 (* Performance guard for the self-contained GEMM used off macOS and whenever an
-   operation is not eligible for Accelerate. This benchmark intentionally uses
-   a backend-local maintenance hook; public matmul stays in packages/nx/bench. *)
+   operation is not eligible for Accelerate. This benchmark intentionally uses a
+   backend-local maintenance hook; public matmul stays in packages/nx/bench. *)
 
 module Buffer = Nx_buffer
 
@@ -11,8 +11,7 @@ type ('a, 'b) ffi = {
   offset : int;
 }
 
-external owned_matmul :
-  ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
+external owned_matmul : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
   = "caml_nx_c_owned_matmul"
 
 let row_major shape =
@@ -28,7 +27,7 @@ let make shape =
   let buffer = Buffer.create Buffer.float32 elements in
   for index = 0 to elements - 1 do
     Buffer.set buffer index
-      (Float.sin (float_of_int ((index * 17) mod 1021)) *. 0.25)
+      (Float.sin (float_of_int (index * 17 mod 1021)) *. 0.25)
   done;
   { buffer; shape; strides = row_major shape; offset = 0 }
 
@@ -55,8 +54,8 @@ let () =
         [
           case "f32 64x64" [| 64; 64 |] [| 64; 64 |] [| 64; 64 |];
           case "f32 512x512" [| 512; 512 |] [| 512; 512 |] [| 512; 512 |];
-          case ~a_strides:[| 1; 512 |] "f32 transposed 512x512"
-            [| 512; 512 |] [| 512; 512 |] [| 512; 512 |];
+          case ~a_strides:[| 1; 512 |] "f32 transposed 512x512" [| 512; 512 |]
+            [| 512; 512 |] [| 512; 512 |];
           case "f32 batched 64x32x32" [| 64; 32; 32 |] [| 64; 32; 32 |]
             [| 64; 32; 32 |];
         ];

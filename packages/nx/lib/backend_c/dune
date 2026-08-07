@@ -27,7 +27,20 @@
  (libraries nx_buffer nx_core)
  (foreign_stubs
   (language c)
-  (names nx_c_engine nx_c_map nx_c_fold nx_c_matmul nx_c_tri nx_c_qr nx_c_eigh nx_c_svd nx_c_eig nx_c_fft nx_c_sort nx_c_move nx_c_random)
+  (names
+   nx_c_engine
+   nx_c_map
+   nx_c_fold
+   nx_c_matmul
+   nx_c_tri
+   nx_c_qr
+   nx_c_eigh
+   nx_c_svd
+   nx_c_eig
+   nx_c_fft
+   nx_c_sort
+   nx_c_move
+   nx_c_random)
   (flags
    :standard
    -std=c11

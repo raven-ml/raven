@@ -730,14 +730,12 @@ let handler st =
         Some
           (fun k ->
             ret k (dt t_in)
-              (F.Reduce.max ~axis:(Array.to_list axes) ~keepdim:false
-                 (go t_in)))
+              (F.Reduce.max ~axis:(Array.to_list axes) ~keepdim:false (go t_in)))
     | E_reduce_min { t_in; axes } ->
         Some
           (fun k ->
             ret k (dt t_in)
-              (F.Reduce.min ~axis:(Array.to_list axes) ~keepdim:false
-                 (go t_in)))
+              (F.Reduce.min ~axis:(Array.to_list axes) ~keepdim:false (go t_in)))
     | E_argmax { t_in; axis; keepdims } ->
         Some
           (fun k ->
@@ -904,9 +902,9 @@ let handler st =
                     inside jit: the key does not depend on the jitted \
                     function's inputs, so every call would replay the same \
                     values. Use Nx.Rng and pass the key as an input of the \
-                    jitted function (derive per-call keys with Nx.Rng.split \
-                    or Nx.Rng.fold_in); implicit RNG (Nx.rand and friends) \
-                    is not supported inside jit")
+                    jitted function (derive per-call keys with Nx.Rng.split or \
+                    Nx.Rng.fold_in); implicit RNG (Nx.rand and friends) is not \
+                    supported inside jit")
             else ret k ND.int32 (threefry_graph kt (go ctr)))
     | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
         Some

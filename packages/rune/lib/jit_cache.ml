@@ -5,31 +5,28 @@
 
 (* Persistent compilation cache for jitted traces.
 
-   A compiled trace is a deterministic function of the traced computation —
-   the PARAM-normalized CALL body produced by [Callify.transform_to_call]
-   — and of the compilation environment: this executable (scheduling and
-   codegen live in the binary), the device and its kernel compiler, and the
-   codegen knobs that change lowering output. [key] digests exactly those;
-   [store] saves the compiled LINEAR (kernels scheduled, lowered, and
-   compiled to binaries) normalized back onto dense PARAM slots; [load]
-   imports it and rebinds it to the fresh trace's buffer nodes. A warm
-   process thus skips scheduling, lowering, and kernel compilation — tracing
-   and buffer allocation always rerun and produce the buffers the stored
-   schedule is rebound to.
+   A compiled trace is a deterministic function of the traced computation — the
+   PARAM-normalized CALL body produced by [Callify.transform_to_call] — and of
+   the compilation environment: this executable (scheduling and codegen live in
+   the binary), the device and its kernel compiler, and the codegen knobs that
+   change lowering output. [key] digests exactly those; [store] saves the
+   compiled LINEAR (kernels scheduled, lowered, and compiled to binaries)
+   normalized back onto dense PARAM slots; [load] imports it and rebinds it to
+   the fresh trace's buffer nodes. A warm process thus skips scheduling,
+   lowering, and kernel compilation — tracing and buffer allocation always rerun
+   and produce the buffers the stored schedule is rebound to.
 
-   Entries live in [Tolk.Diskcache] table "rune_jit" under the platform
-   cache directory (e.g. ~/.cache/tolk/rune_jit). JITCACHE=0 disables the
-   cache entirely; it then never touches the disk. Every failure mode — a
-   corrupt entry, an import from an incompatible format, a slot descriptor
-   mismatch — degrades to a plain miss, and the recompile overwrites the
-   entry.
+   Entries live in [Tolk.Diskcache] table "rune_jit" under the platform cache
+   directory (e.g. ~/.cache/tolk/rune_jit). JITCACHE=0 disables the cache
+   entirely; it then never touches the disk. Every failure mode — a corrupt
+   entry, an import from an incompatible format, a slot descriptor mismatch —
+   degrades to a plain miss, and the recompile overwrites the entry.
 
-   Symbolic variables: a stored entry records the names of the bound
-   variables whose values the schedule needs, and [load] re-extracts the
-   values from the fresh CALL's BIND arguments. Rune traces cannot produce
-   BINDs today (no symbolic shapes), so the list is always empty; the code
-   handles them anyway so the entry format does not change when they
-   appear. *)
+   Symbolic variables: a stored entry records the names of the bound variables
+   whose values the schedule needs, and [load] re-extracts the values from the
+   fresh CALL's BIND arguments. Rune traces cannot produce BINDs today (no
+   symbolic shapes), so the list is always empty; the code handles them anyway
+   so the entry format does not change when they appear. *)
 
 module U = Tolk_uop.Uop
 module TD = Tolk_uop.Dtype
@@ -43,8 +40,8 @@ let env_int name default =
   | Some s -> ( match int_of_string_opt s with Some v -> v | None -> default)
   | None -> default
 
-(* Read per call, not at module initialization, so tests can toggle them
-   with [Unix.putenv]. *)
+(* Read per call, not at module initialization, so tests can toggle them with
+   [Unix.putenv]. *)
 let enabled () = env_int "JITCACHE" 1 <> 0
 let debug () = env_int "RUNE_JIT_DEBUG" 0
 
@@ -53,18 +50,18 @@ let log event key =
     Printf.eprintf "rune.jit: compile cache %s %s\n%!" event key
 
 (* Scheduling and code generation live in this binary: any change to it can
-   change what a key would compile to, so the executable's digest versions
-   every entry. Computed once per process. *)
+   change what a key would compile to, so the executable's digest versions every
+   entry. Computed once per process. *)
 let exe_digest = lazy (Digest.to_hex (Digest.file Sys.executable_name))
 
-(* One entry per (key). [e_slots] validates the fresh CALL's arguments
-   against the saving trace's before the graph is imported; [e_linear] is
-   [Uop.export] of the compiled LINEAR with each CALL argument replaced by a
-   PARAM carrying its position; [e_vars] are the symbolic variable names
-   whose values must be re-extracted from the fresh CALL's BIND args. *)
+(* One entry per (key). [e_slots] validates the fresh CALL's arguments against
+   the saving trace's before the graph is imported; [e_linear] is [Uop.export]
+   of the compiled LINEAR with each CALL argument replaced by a PARAM carrying
+   its position; [e_vars] are the symbolic variable names whose values must be
+   re-extracted from the fresh CALL's BIND args. *)
 
 type slot_desc = {
-  sd_numel : int;  (* -1 when the argument has no tensor shape (a BIND) *)
+  sd_numel : int; (* -1 when the argument has no tensor shape (a BIND) *)
   sd_dtype : TD.t;
   sd_device : U.device option;
   sd_is_bind : bool;
@@ -103,9 +100,9 @@ let key ~device call =
     match U.as_call call with
     | None -> None
     | Some { body; _ } ->
-        (* The compiler's disk-cache key identifies the exact compilation
-           target (e.g. "compile_cuda_sm_90"), so it fingerprints the
-           architecture on top of the compiler name. *)
+        (* The compiler's disk-cache key identifies the exact compilation target
+           (e.g. "compile_cuda_sm_90"), so it fingerprints the architecture on
+           top of the compiler name. *)
         let compiler_id =
           match Tolk.Renderer.compiler (Tolk.Device.renderer device) with
           | Some c ->
@@ -113,11 +110,11 @@ let key ~device call =
               ^ Option.value ~default:"" (Tolk.Compiler.cachekey c)
           | None -> ""
         in
-        (* Exactly the environment knobs that change lowering output for a
-           fixed binary: the optimization toggles read by [Tolk.Codegen]. *)
+        (* Exactly the environment knobs that change lowering output for a fixed
+           binary: the optimization toggles read by [Tolk.Codegen]. *)
         let knobs =
-          Printf.sprintf "NOOPT=%d,BEAM=%d,BEAM_ESTIMATE=%d"
-            (env_int "NOOPT" 0) (env_int "BEAM" 0)
+          Printf.sprintf "NOOPT=%d,BEAM=%d,BEAM_ESTIMATE=%d" (env_int "NOOPT" 0)
+            (env_int "BEAM" 0)
             (env_int "BEAM_ESTIMATE" 1)
         in
         Some
@@ -135,18 +132,18 @@ let key ~device call =
 
 (* Save *)
 
-(* The PARAM standing for CALL argument [i], as [Tolk.Jit.jit_lower] builds
-   it for its own input substitution. *)
+(* The PARAM standing for CALL argument [i], as [Tolk.Jit.jit_lower] builds it
+   for its own input substitution. *)
 let param_of_arg i u =
   let shape =
     match U.as_buffer u with Some { shape; _ } -> Some shape | None -> None
   in
   U.param ~slot:i ~dtype:(U.dtype u) ?shape ?device:(U.device_of u) ()
 
-(* A global buffer slot minted by this process would alias an unrelated
-   buffer in an importing process (buffers hash-cons on their slot); after
-   normalization the only such slots left must be the internal (negative)
-   ones, which [load] renumbers. *)
+(* A global buffer slot minted by this process would alias an unrelated buffer
+   in an importing process (buffers hash-cons on their slot); after
+   normalization the only such slots left must be the internal (negative) ones,
+   which [load] renumbers. *)
 let leaks_local_slot normalized =
   List.exists
     (fun n ->
@@ -178,8 +175,8 @@ let store ~key call linear var_vals =
 
 (* Mirrors the BIND extraction in [Schedule.create_linear_with_vars]: bind
    values live in the CALL's arguments and rebind on every compile. Raises
-   [Not_found] when a stored name has no fresh bind, which [load] turns into
-   a miss. *)
+   [Not_found] when a stored name has no fresh bind, which [load] turns into a
+   miss. *)
 let vars_of_args names args =
   if names = [] then []
   else
@@ -211,8 +208,8 @@ let rebind entry args =
     let linear = U.import entry.e_linear in
     (* Imported internal buffers carry slots minted by the saving process;
        hash-consing on slots would silently alias them with this process's
-       internal buffers, so rebuild each with a fresh local slot (same
-       traversal as [Schedule.memory_plan_rewrite]'s substitution). *)
+       internal buffers, so rebuild each with a fresh local slot (same traversal
+       as [Schedule.memory_plan_rewrite]'s substitution). *)
     let renumber =
       List.filter_map
         (fun n ->
@@ -238,10 +235,10 @@ let rebind entry args =
     in
     (* Rebind the schedule onto this trace's buffers: the inverse of the
        save-time normalization, matching PARAMs by slot as
-       [Schedule.post_sched_cache_rule] does. Kernel-internal PARAMs live
-       inside CALL bodies, which the default traversal does not enter, and
-       replacements are final ([walk]) so a fresh BIND's own variable PARAM
-       is not rewritten. *)
+       [Schedule.post_sched_cache_rule] does. Kernel-internal PARAMs live inside
+       CALL bodies, which the default traversal does not enter, and replacements
+       are final ([walk]) so a fresh BIND's own variable PARAM is not
+       rewritten. *)
     let n = Array.length args_a in
     let linear =
       U.graph_rewrite ~name:"jitcache_args" ~walk:true
@@ -264,9 +261,8 @@ let load ~key call =
           log "miss" key;
           None
       | Some entry -> (
-          (* Any failure past this point — a malformed export blob, an
-             argument mismatch — is a miss; the recompile overwrites the
-             entry. *)
+          (* Any failure past this point — a malformed export blob, an argument
+             mismatch — is a miss; the recompile overwrites the entry. *)
           match rebind entry args with
           | Some _ as hit ->
               log "hit" key;

@@ -1,5 +1,5 @@
-(* Representative public dense-factorization benchmarks. The 256x256 cases
-   guard sustained work; batched 32x32 cases guard scheduling overhead. *)
+(* Representative public dense-factorization benchmarks. The 256x256 cases guard
+   sustained work; batched 32x32 cases guard scheduling overhead. *)
 
 let spd shape =
   let rank = Array.length shape in
@@ -28,21 +28,18 @@ let () =
     [
       Thumper.group "single"
         [
-          Thumper.bench "cholesky 256x256 f64" (fun () ->
-              Nx.cholesky positive);
+          Thumper.bench "cholesky 256x256 f64" (fun () -> Nx.cholesky positive);
           Thumper.bench "qr 256x256 f64" (fun () -> Nx.qr matrix);
           Thumper.bench "eigh 256x256 f64" (fun () -> Nx.eigh positive);
           Thumper.bench "svd 256x256 f64" (fun () -> Nx.svd matrix);
-          Thumper.bench "solve 256x256x16 f64" (fun () ->
-              Nx.solve positive rhs);
+          Thumper.bench "solve 256x256x16 f64" (fun () -> Nx.solve positive rhs);
         ];
       Thumper.group "batched"
         [
           Thumper.bench "cholesky 64x32x32 f64" (fun () ->
               Nx.cholesky positive_batch);
           Thumper.bench "qr 64x32x32 f64" (fun () -> Nx.qr batch);
-          Thumper.bench "eigh 64x32x32 f64" (fun () ->
-              Nx.eigh positive_batch);
+          Thumper.bench "eigh 64x32x32 f64" (fun () -> Nx.eigh positive_batch);
           Thumper.bench "svd 64x32x32 f64" (fun () -> Nx.svd batch);
         ];
     ]

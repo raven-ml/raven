@@ -17,8 +17,8 @@ let tests =
   group "binding-abi"
     [
       test "t-field-order" (fun () ->
-          (* C reads buffer/shape/strides/offset at record slots 0-3. An
-             offset, non-contiguous view makes a slot mismatch observable. *)
+          (* C reads buffer/shape/strides/offset at record slots 0-3. An offset,
+             non-contiguous view makes a slot mismatch observable. *)
           let base =
             F.create ctx F.float64 [| 3; 4 |]
               (Array.init 12 (fun i -> float_of_int i))
@@ -32,8 +32,7 @@ let tests =
             (fun (Dtype.Pack dt as packed) ->
               let buffer = Nx_buffer.create dt 1 in
               equal
-                ~msg:(Printf.sprintf "%s tag"
-                        (Dtype.Packed.to_string packed))
+                ~msg:(Printf.sprintf "%s tag" (Dtype.Packed.to_string packed))
                 int (Dtype.Packed.tag packed) (dtype_tag buffer))
             Dtype.Packed.all);
       test "linalg-error-translation" (fun () ->
@@ -43,8 +42,7 @@ let tests =
             | exception Nx_core.Backend_intf.Linalg_error error ->
                 equal ~msg:"kind" bool true (error.kind = kind)
             | exception exn ->
-                fail
-                  ("expected Linalg_error, got " ^ Printexc.to_string exn)
+                fail ("expected Linalg_error, got " ^ Printexc.to_string exn)
           in
           let not_positive_definite =
             F.create ctx F.float64 [| 2; 2 |] [| 1.; 2.; 2.; 1. |]

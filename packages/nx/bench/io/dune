@@ -4,6 +4,7 @@
 
 ; Kept out of runtest: filesystem and codec throughput are measured explicitly
 ; with `dune build @packages/nx/bench/io/bench`.
+
 (rule
  (alias bench)
  (locks %{project_root}/bench)

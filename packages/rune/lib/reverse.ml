@@ -248,10 +248,10 @@ let handler (tape : Tape.t) =
               pull1 k (recip t_in) t_in (fun g -> T.mul g (Derivs.recip' t_in)))
       (* On complex dtypes [abs] is the modulus: real-valued, and not
          holomorphic. Its pullback conjugates the direction — going through
-         [sign z] itself would flip the sign of the imaginary contribution —
-         and keeps only the real part of the cotangent, since the imaginary
-         component of a real-valued output moves nothing. Both are the
-         identity on real dtypes. *)
+         [sign z] itself would flip the sign of the imaginary contribution — and
+         keeps only the real part of the cotangent, since the imaginary
+         component of a real-valued output moves nothing. Both are the identity
+         on real dtypes. *)
       | E_abs { t_in } ->
           Some
             (fun k ->
@@ -358,7 +358,8 @@ let handler (tape : Tape.t) =
                       (T.transpose g ~axes:to_fold)
                       ~output_size:[| in_shape.(axis) |]
                       ~kernel_size:[| window |] ~stride:[| step |]
-                      ~dilation:[| 1 |] ~padding:[| (0, 0) |]
+                      ~dilation:[| 1 |]
+                      ~padding:[| (0, 0) |]
                   in
                   (* [folded] carries [axis] last; move it back into place. *)
                   let from_fold =
@@ -452,7 +453,8 @@ let handler (tape : Tape.t) =
               let shape_in = T.shape t_in in
               let broadcast_kept x =
                 let kept =
-                  T.shape (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                  T.shape
+                    (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
                 in
                 T.broadcast_to shape_in (T.reshape kept x)
               in
@@ -464,8 +466,8 @@ let handler (tape : Tape.t) =
             (fun k ->
               pull1 k (sort ~axis ~descending t_in) t_in (fun g ->
                   let indices = argsort ~axis ~descending t_in in
-                  scatter ~mode:`Add ~unique_indices:false
-                    (T.zeros_like t_in) ~indices ~updates:g ~axis))
+                  scatter ~mode:`Add ~unique_indices:false (T.zeros_like t_in)
+                    ~indices ~updates:g ~axis))
       (* Scans *)
       | E_associative_scan { t_in; axis; op } ->
           Some
@@ -578,8 +580,8 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               pull1 k (gather data indices ~axis) data (fun g ->
-                  scatter ~mode:`Add ~unique_indices:false
-                    (T.zeros_like data) ~indices ~updates:g ~axis))
+                  scatter ~mode:`Add ~unique_indices:false (T.zeros_like data)
+                    ~indices ~updates:g ~axis))
       | E_scatter
           { data_template; indices; updates; axis; mode; unique_indices } ->
           Some

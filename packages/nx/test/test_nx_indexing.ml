@@ -350,8 +350,8 @@ let test_scatter_shape_mismatch () =
   let values = Nx.zeros Nx.float32 [| 3; 1 |] in
   raises ~msg:"scatter shape mismatch"
     (Invalid_argument
-       "scatter: shape, dimension 0: indices has 3 but tensor has 2")
-    (fun () -> ignore (Nx.scatter ~axis:1 ~indices ~values t))
+       "scatter: shape, dimension 0: indices has 3 but tensor has 2") (fun () ->
+      ignore (Nx.scatter ~axis:1 ~indices ~values t))
 
 (* ───── Compress Tests ───── *)
 
@@ -403,8 +403,7 @@ let test_nonzero_1d () =
   let indices = Nx.nonzero t in
   equal ~msg:"nonzero 1d length" int 1 (Array.length indices);
   let expected = [| 1.; 3. |] in
-  check_t "nonzero 1d indices" [| 2 |] expected
-    (Nx.cast Nx.float32 indices.(0))
+  check_t "nonzero 1d indices" [| 2 |] expected (Nx.cast Nx.float32 indices.(0))
 
 let test_nonzero_2d () =
   let t =

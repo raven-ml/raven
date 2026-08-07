@@ -230,11 +230,11 @@ let test_strides_2x3_float32 () =
 
 let test_stride_dim0_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  equal ~msg:"stride dim 0" int 12 ((Nx.strides t).(0))
+  equal ~msg:"stride dim 0" int 12 (Nx.strides t).(0)
 
 let test_stride_dim1_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  equal ~msg:"stride dim 1" int 4 ((Nx.strides t).(1))
+  equal ~msg:"stride dim 1" int 4 (Nx.strides t).(1)
 
 let test_strides_2x3_int64 () =
   let t = Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int) in

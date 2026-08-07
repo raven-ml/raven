@@ -250,13 +250,12 @@ let rec ensure_dir path =
       ensure_dir (Filename.dirname path);
       Unix.mkdir path 0o755)
 
-(* Build artifacts that dune's mdx rules deposit next to doc sources in
-   _build; they must not be published. *)
+(* Build artifacts that dune's mdx rules deposit next to doc sources in _build;
+   they must not be published. *)
 let is_build_artifact entry =
   String.length entry > 0
   && (entry.[0] = '.'
-     || String.length entry >= 8
-        && String.sub entry 0 8 = "mdx_gen.")
+     || (String.length entry >= 8 && String.sub entry 0 8 = "mdx_gen."))
 
 let rec walk dir =
   Sys.readdir dir |> Array.to_list

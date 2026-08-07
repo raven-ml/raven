@@ -5,14 +5,12 @@
  (foreign_stubs
   (language c)
   (names nx_c_test_stubs)
-  (flags
-   :standard
-   -I
-   ..)))
+  (flags :standard -I ..)))
 
 ; These two suites call private C symbols from the backend archive. -linkall
 ; keeps that archive live even though no OCaml value from Nx_backend is used;
 ; otherwise single-pass ELF linkers see the test stub references too late.
+
 (test
  (name engine_test)
  (modules engine_test)
@@ -21,10 +19,7 @@
  (foreign_stubs
   (language c)
   (names nx_c_selftest)
-  (flags
-   :standard
-   -I
-   ..)))
+  (flags :standard -I ..)))
 
 (test
  (name kernel_test)
@@ -34,10 +29,7 @@
  (foreign_stubs
   (language c)
   (names kernel_test_stubs)
-  (flags
-   :standard
-   -I
-   ..)))
+  (flags :standard -I ..)))
 
 (test
  (name matmul_test)
@@ -46,10 +38,7 @@
  (foreign_stubs
   (language c)
   (names matmul_test_stubs)
-  (flags
-   :standard
-   -I
-   ..)))
+  (flags :standard -I ..)))
 
 (executable
  (name linalg_test)

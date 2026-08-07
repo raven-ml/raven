@@ -141,8 +141,7 @@ let reshape view new_shape =
       err "reshape" "cannot reshape %s to %s" (Shape.to_string old_arr)
         (Shape.to_string new_arr)
     else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
-    then create ~offset:0 new_shape
-      (* Fast path for C-contiguous views *)
+    then create ~offset:0 new_shape (* Fast path for C-contiguous views *)
     else if view.layout = C_contiguous then create ~offset:view.offset new_shape
     else if
       (* Special case: reshaping to/from scalar *)

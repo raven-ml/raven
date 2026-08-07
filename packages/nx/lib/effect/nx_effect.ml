@@ -16,17 +16,15 @@ type context = Nx_backend.context
    injective — so every effect definition fails with "type variable cannot be
    deduced". Wrapping in a single-constructor GADT restores injectivity: [T] is
    a fresh constructor whose parameters are, by definition, determined by the
-   return type. At runtime this is a zero-cost box (single-field
-   constructor).
+   return type. At runtime this is a zero-cost box (single-field constructor).
 
    [Deferred] is a host tensor whose bytes have not arrived yet: it carries its
    metadata (context, dtype, shape) plus a fill thunk that produces the host
    buffer on first data access. Rune's jit uses it to keep compiled outputs
    resident on non-host-sharing devices (CUDA, Metal): metadata reads answer
    from the record, and only a data access runs the thunk — which copies the
-   device buffer out — memoizing the resulting backend tensor. A deferred
-   tensor is never a trace placeholder, so its metadata never needs an
-   effect. *)
+   device buffer out — memoizing the resulting backend tensor. A deferred tensor
+   is never a trace placeholder, so its metadata never needs an effect. *)
 type ('a, 'b) t =
   | T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
   | Deferred : ('a, 'b) deferred -> ('a, 'b) t
@@ -325,9 +323,9 @@ type _ Effect.t +=
   | E_to_host : ('a, 'b) t -> ('a, 'b) host_buffer Effect.t
 
 (* Unwrap. Forcing a deferred tensor runs its fill thunk once, wraps the
-   resulting host buffer as a backend tensor of the recorded shape, and
-   memoizes it: after that the handle behaves as a plain host tensor, and later
-   mutations of the memoized tensor are observed through the handle. *)
+   resulting host buffer as a backend tensor of the recorded shape, and memoizes
+   it: after that the handle behaves as a plain host tensor, and later mutations
+   of the memoized tensor are observed through the handle. *)
 
 let force (type a b) (d : (a, b) deferred) : (a, b) Nx_backend.t =
   match d.d_forced with
@@ -367,7 +365,8 @@ let deferred (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
    side state (for example a resident device buffer) is gone. *)
 let deferred_id : type a b. (a, b) t -> int option = function
   | T _ -> None
-  | Deferred d -> ( match d.d_forced with Some _ -> None | None -> Some d.d_id)
+  | Deferred d -> (
+      match d.d_forced with Some _ -> None | None -> Some d.d_id)
 
 (* Lenses. Metadata reads on a deferred tensor answer from its record without
    running the fill thunk. The [E_view] effect is still performed first: a
@@ -435,7 +434,6 @@ let xor a b = binary_op (fun () -> E_xor { a; b }) Nx_backend.xor a b
 let or_ a b = binary_op (fun () -> E_or { a; b }) Nx_backend.or_ a b
 let and_ a b = binary_op (fun () -> E_and { a; b }) Nx_backend.and_ a b
 let atan2 a b = binary_op (fun () -> E_atan2 { a; b }) Nx_backend.atan2 a b
-
 let fdiv a b = binary_op (fun () -> E_fdiv { a; b }) Nx_backend.fdiv a b
 let idiv a b = binary_op (fun () -> E_idiv { a; b }) Nx_backend.idiv a b
 
@@ -680,8 +678,8 @@ let ifft t ~axes =
   try Effect.perform (E_ifft { t; axes })
   with Effect.Unhandled _ -> T (Nx_backend.ifft (unwrap t) ~axes)
 
-let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes
-    : (Complex.t, c) t =
+let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes :
+    (Complex.t, c) t =
   try Effect.perform (E_rfft { t; dtype; axes })
   with Effect.Unhandled _ -> T (Nx_backend.rfft (unwrap t) ~dtype ~axes)
 

@@ -5,8 +5,8 @@
 
 (* Multi-device parallel jit: pmap numerics against jit, replicate-vs-shard
    placements, gradients (cross-device allreduce), device residency and
-   gather-on-read, placement errors, and the under-transformation fallback.
-   Runs on CPU device instances, so no GPU is needed. *)
+   gather-on-read, placement errors, and the under-transformation fallback. Runs
+   on CPU device instances, so no GPU is needed. *)
 
 open Windtrap
 open Rune_test_support.Support
@@ -50,9 +50,9 @@ let arange n = Array.init n (fun i -> float_of_int (i + 1) /. 7.0)
 let m46 () = Nx.create f32 [| 4; 6 |] (arange 24)
 let m86 () = Nx.create f32 [| 8; 6 |] (arange 48)
 
-(* An elementwise + matmul + reduce chain over one tensor. The matmul
-   combines the batch-sharded value with its own transpose (mismatched shard
-   axes), exercising the cross-device realignment path on top of the plain
+(* An elementwise + matmul + reduce chain over one tensor. The matmul combines
+   the batch-sharded value with its own transpose (mismatched shard axes),
+   exercising the cross-device realignment path on top of the plain
    allreduce. *)
 let chain x =
   let y = Nx.tanh (Nx.add (Nx.mul x x) x) in
@@ -74,8 +74,8 @@ let test_matches_jit_4dev () =
   let g = Rune.pmap ~devices:devs4 (module Single_f32) chain in
   check_arr ~msg:"4 devices" (to_arr expect) (g x)
 
-(* No cross-device reduce: each device computes its shard independently, so
-   the result is byte-equal to the single-device one. *)
+(* No cross-device reduce: each device computes its shard independently, so the
+   result is byte-equal to the single-device one. *)
 let test_elementwise_byte_equal () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let x = m46 () in
@@ -97,9 +97,9 @@ let test_retrace_on_new_shape () =
   check_arr ~msg:"retraced shape" [| 10.0 |]
     (g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]))
 
-(* Replicate-vs-shard: the data-parallel shape. Params are replicated, the
-   batch is sharded, and the mean loss reduces over the sharded axis — a
-   cross-device allreduce. *)
+(* Replicate-vs-shard: the data-parallel shape. Params are replicated, the batch
+   is sharded, and the mean loss reduces over the sharded axis — a cross-device
+   allreduce. *)
 
 type dp = { w : Nx.float32_t; x : Nx.float32_t; t : Nx.float32_t }
 
@@ -137,15 +137,17 @@ let test_dp_loss_matches_jit () =
   let g = Rune.pmap ~devices:devs2 ~in_axes:dp_axes (module Dp) dp_loss in
   check_arr ~msg:"mean loss over sharded batch" (to_arr expect) (g p)
 
-(* Gradients: value_and_grad inside the pmapped function. Differentiating a
-   mean over the sharded batch makes every parameter gradient a cross-device
+(* Gradients: value_and_grad inside the pmapped function. Differentiating a mean
+   over the sharded batch makes every parameter gradient a cross-device
    allreduce, which multi_pm inserts automatically — the DDP path. *)
 
 let test_grad_inside_pmap () =
   let grads p = snd (Rune.value_and_grad (module Dp) dp_loss p) in
   let p = dp_input () in
   let expect = Rune.jit2 (module Dp) (module Dp) grads p in
-  let g = Rune.pmap2 ~devices:devs2 ~in_axes:dp_axes (module Dp) (module Dp) grads in
+  let g =
+    Rune.pmap2 ~devices:devs2 ~in_axes:dp_axes (module Dp) (module Dp) grads
+  in
   let got = g p in
   check_arr ~msg:"dw (allreduced)" (to_arr expect.w) got.w;
   check_arr ~msg:"dx (sharded)" (to_arr expect.x) got.x;
@@ -168,7 +170,9 @@ let check_keepdims_grad loss =
   let p = keepdims_input () in
   let expect = Rune.jit2 (module Dp) (module Dp) grads p in
   let axes = [ None; Some 0; Some 0 ] in
-  let g = Rune.pmap2 ~devices:devs2 ~in_axes:axes (module Dp) (module Dp) grads in
+  let g =
+    Rune.pmap2 ~devices:devs2 ~in_axes:axes (module Dp) (module Dp) grads
+  in
   let got = g p in
   check_arr ~msg:"dw" (to_arr expect.w) got.w;
   check_arr ~msg:"dx" (to_arr expect.x) got.x
@@ -222,8 +226,8 @@ let test_replicated_feedback () =
   check_arr ~eps:0.0 ~msg:"replicated read" [| 4.0; 8.0; 12.0 |] w2
 
 let test_mismatched_placement_forces () =
-  (* An output sharded on axis 0 fed into an axis-1 placement is forced to
-     the host and re-split, not seeded. *)
+  (* An output sharded on axis 0 fed into an axis-1 placement is forced to the
+     host and re-split, not seeded. *)
   let f x = Nx.add x x in
   let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] (module Single_f32) f in
   let g1 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] (module Single_f32) f in
@@ -246,9 +250,9 @@ let test_pass_through_output () =
   check_arr ~eps:0.0 ~msg:"pass-through gathers the input" (to_arr x) (g x)
 
 (* Donation: [donate:true] consumes a resident multi-device handle — every
-   per-device shard buffer is released once the call completes — and the
-   donated handle raises on read. A handle whose placement mismatches is
-   forced to the host first, so donation does not apply to it. *)
+   per-device shard buffer is released once the call completes — and the donated
+   handle raises on read. A handle whose placement mismatches is forced to the
+   host first, so donation does not apply to it. *)
 
 let raises_donated f =
   raises_match
@@ -319,8 +323,8 @@ let test_donate_mismatched_placement_not_consumed () =
     (to_arr (Nx.add x x))
     y
 
-(* Writebacks: replicated destinations are honored, sharded values are
-   rejected at trace time. *)
+(* Writebacks: replicated destinations are honored, sharded values are rejected
+   at trace time. *)
 
 let test_replicated_writeback () =
   let g =
@@ -332,8 +336,8 @@ let test_replicated_writeback () =
   in
   let w = vec32 [| 1.0; 2.0; 3.0 |] in
   check_arr ~msg:"sum of updated value" [| 12.0 |] (g w);
-  check_arr ~eps:0.0 ~msg:"writeback reached the host leaf"
-    [| 2.0; 4.0; 6.0 |] w
+  check_arr ~eps:0.0 ~msg:"writeback reached the host leaf" [| 2.0; 4.0; 6.0 |]
+    w
 
 let test_sharded_writeback_raises () =
   let g =
@@ -365,7 +369,8 @@ let test_non_divisible_axis () =
 
 let test_in_axes_arity () =
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ] (module Single_f32)
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ]
+      (module Single_f32)
       Fun.id
   in
   raises_invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
@@ -376,24 +381,23 @@ let test_axis_out_of_range () =
   in
   raises_invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
 
-(* Under an enclosing transformation the pmapped function runs eagerly, so
-   grad over pmap differentiates the plain function. *)
+(* Under an enclosing transformation the pmapped function runs eagerly, so grad
+   over pmap differentiates the plain function. *)
 
 let test_grad_over_pmap_runs_eagerly () =
   let g =
-    Rune.pmap ~devices:devs2 (module Single_f32) (fun x ->
-        Nx.sum (Nx.mul x x))
+    Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.sum (Nx.mul x x))
   in
   let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
   let dx = Rune.grad (module Single_f32) (fun x -> g x) x in
   check_arr ~msg:"grad over pmap" [| 2.0; 4.0; 6.0; 8.0 |] dx
 
 (* Two outputs that both need a cross-device reduction: the gradient of a
-   replicated parameter (summed over the sharded batch) and the loss itself.
-   The gradient comes from a gather, so its buffer spans the whole vocabulary
-   while the loss spans one element; a schedule that sizes the first from the
-   second silently truncates it to one element and writes every lane to index
-   zero. Every element of the gradient is checked, not just its sum, because a
+   replicated parameter (summed over the sharded batch) and the loss itself. The
+   gradient comes from a gather, so its buffer spans the whole vocabulary while
+   the loss spans one element; a schedule that sizes the first from the second
+   silently truncates it to one element and writes every lane to index zero.
+   Every element of the gradient is checked, not just its sum, because a
    truncated buffer can still total correctly by accident.
 
    With one occurrence of each id in the batch, [d(sum (w[ids] * m))/dw] is
@@ -442,8 +446,7 @@ let test_two_collective_outputs () =
         (fun w ->
           let e =
             Nx.reshape [| rows; cols; dim |]
-              (Nx.take w ~axis:0
-                 ~indices:(Nx.reshape [| rows * cols |] ids))
+              (Nx.take w ~axis:0 ~indices:(Nx.reshape [| rows * cols |] ids))
           in
           Nx.sum (Nx.mul e m))
         w
@@ -451,8 +454,7 @@ let test_two_collective_outputs () =
     { Grad_and_loss.g; loss }
   in
   let f =
-    Rune.pmap2 ~devices:devs2
-      ~in_axes:[ None; None; Some 0 ]
+    Rune.pmap2 ~devices:devs2 ~in_axes:[ None; None; Some 0 ]
       (module Weights_mask_ids)
       (module Grad_and_loss)
       step
@@ -474,7 +476,8 @@ let test_pmap_dropout_grad_decorrelates () =
   let key = Nx.Rng.key 7 in
   let mask_grad (x, key) =
     snd
-      (Rune.value_and_grad (module Single_f32)
+      (Rune.value_and_grad
+         (module Single_f32)
          (fun x ->
            let m =
              Nx.cast f32
@@ -484,7 +487,8 @@ let test_pmap_dropout_grad_decorrelates () =
          x)
   in
   let g =
-    Rune.pmap2 ~devices:devs2 ~in_axes:[ Some 0; None ] (module Batch_key)
+    Rune.pmap2 ~devices:devs2 ~in_axes:[ Some 0; None ]
+      (module Batch_key)
       (module Single_f32)
       mask_grad
   in
@@ -549,8 +553,7 @@ end
 module Mlp_out = struct
   type t = mlp * Nx.float32_t
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (s, l) =
-    (Mlp.map f s, f l)
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (s, l) = (Mlp.map f s, f l)
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (s, l)
       (t, m) =
@@ -601,7 +604,9 @@ let test_dp_training_matches_jit () =
   let in_axes = [ None; None; None; None; Some 0; Some 0 ] in
   let pmap_losses =
     trajectory
-      (Rune.pmap2 ~devices:devs2 ~in_axes (module Mlp) (module Mlp_out)
+      (Rune.pmap2 ~devices:devs2 ~in_axes
+         (module Mlp)
+         (module Mlp_out)
          mlp_step)
   in
   Array.iteri
@@ -610,10 +615,11 @@ let test_dp_training_matches_jit () =
         ~msg:(Printf.sprintf "loss at step %d" i)
         (float 1e-6) l pmap_losses.(i))
     jit_losses;
-  (* Late steps run entirely on resident state: nothing moves to the
-     devices. *)
+  (* Late steps run entirely on resident state: nothing moves to the devices. *)
   Rune.reset_jit_stats ();
-  let pstep = Rune.pmap2 ~devices:devs2 ~in_axes (module Mlp) (module Mlp_out) mlp_step in
+  let pstep =
+    Rune.pmap2 ~devices:devs2 ~in_axes (module Mlp) (module Mlp_out) mlp_step
+  in
   let s0 = mlp_init () in
   let s1, _ = pstep s0 in
   Rune.reset_jit_stats ();

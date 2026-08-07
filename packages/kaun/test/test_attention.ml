@@ -387,9 +387,9 @@ let test_cached_step_jits_once () =
     in
     Nx.concatenate ~axis:1 (List.rev ys)
   in
-  (* [Rune.jit2] runs the traced function itself only when it (re)traces, so
-     the counter observes compilations: every step has the same signature and
-     must replay the single trace. *)
+  (* [Rune.jit2] runs the traced function itself only when it (re)traces, so the
+     counter observes compilations: every step has the same signature and must
+     replay the single trace. *)
   let traces = ref 0 in
   let step { pos; x; cache } =
     incr traces;
@@ -410,7 +410,9 @@ let test_cached_gradients () =
   let p = Attention.make ~embed_dim:4 Nx.float64 in
   let loss p =
     (* Gradients must flow through the cache from prefill into the step. *)
-    let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:3 Nx.float64 in
+    let cache =
+      Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:3 Nx.float64
+    in
     let y1, cache =
       Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p
         (Nx.slice [ A; R (0, 2) ] x)

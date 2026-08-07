@@ -21,10 +21,10 @@ let half_mat dt r c f = Nx.cast dt (Nx.create f32 [| r; c |] (f (r * c)))
 
 (* ───── The astype sandwich ─────
 
-   fp32 params, cast to the half dtype, compute (matmul + nonlinearity +
-   mean), cast the scalar loss back to fp32. The cast VJP casts the cotangent
-   back to the input dtype, so the gradient must come out fp32 and close to
-   the all-fp32 gradient. *)
+   fp32 params, cast to the half dtype, compute (matmul + nonlinearity + mean),
+   cast the scalar loss back to fp32. The cast VJP casts the cotangent back to
+   the input dtype, so the gradient must come out fp32 and close to the all-fp32
+   gradient. *)
 
 let sandwich_loss (type b) (dt : (float, b) Nx.dtype) x w =
   let xh = Nx.cast dt x and wh = Nx.cast dt w in
@@ -79,9 +79,8 @@ let softmax_graph x =
   Nx.div e (Nx.sum e ~axes:[ 1 ] ~keepdims:true)
 
 let test_jit_softmax (type b) name (dt : (float, b) Nx.dtype) ~eps () =
-  check_eager_vs_jit ~eps
-    ~msg:(name ^ " softmax")
-    softmax_graph (half_mat dt 3 5 sin_data)
+  check_eager_vs_jit ~eps ~msg:(name ^ " softmax") softmax_graph
+    (half_mat dt 3 5 sin_data)
 
 let layernorm_graph (type b) (dt : (float, b) Nx.dtype) x =
   let mu = Nx.mean x ~axes:[ 1 ] ~keepdims:true in
@@ -90,9 +89,8 @@ let layernorm_graph (type b) (dt : (float, b) Nx.dtype) x =
   Nx.mul d (Nx.rsqrt (Nx.add v (Nx.scalar dt 1e-3)))
 
 let test_jit_layernorm (type b) name (dt : (float, b) Nx.dtype) ~eps () =
-  check_eager_vs_jit ~eps
-    ~msg:(name ^ " layernorm")
-    (layernorm_graph dt) (half_mat dt 3 6 sin_data)
+  check_eager_vs_jit ~eps ~msg:(name ^ " layernorm") (layernorm_graph dt)
+    (half_mat dt 3 6 sin_data)
 
 (* ───── pmap with bfloat16 leaves ───── *)
 
@@ -109,9 +107,9 @@ end
 
 let devs2 = [ "CPU:1"; "CPU:2" ]
 
-(* Reducing over the sharded axis forces a cross-device allreduce at
-   bfloat16. Each device rounds its partial sum to bfloat16 before the
-   combine, so allow a couple of ulps against the single-device result. *)
+(* Reducing over the sharded axis forces a cross-device allreduce at bfloat16.
+   Each device rounds its partial sum to bfloat16 before the combine, so allow a
+   couple of ulps against the single-device result. *)
 let test_pmap_bf16_allreduce () =
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat bf16 4 6 sin_data in
@@ -143,8 +141,7 @@ let test_pmap_bf16_mean_grad () =
 let test_vmap_half (type b) name (dt : (float, b) Nx.dtype) () =
   let x = Nx.create dt [| 2; 3 |] [| 1.0; -2.0; 0.5; 3.0; -0.25; 1.5 |] in
   let y = Rune.vmap' (fun row -> Nx.mul row row) x in
-  check_arr ~eps:0.0
-    ~msg:(name ^ " vmap square")
+  check_arr ~eps:0.0 ~msg:(name ^ " vmap square")
     [| 1.0; 4.0; 0.25; 9.0; 0.0625; 2.25 |]
     y;
   let z = Rune.vmap' (fun row -> Nx.sum row) x in
@@ -169,10 +166,8 @@ let tests =
         test "bfloat16 matmul" (test_jit_matmul "bfloat16" bf16 ~eps:0.07);
         test "float16 softmax" (test_jit_softmax "float16" f16 ~eps:0.002);
         test "bfloat16 softmax" (test_jit_softmax "bfloat16" bf16 ~eps:0.016);
-        test "float16 layernorm"
-          (test_jit_layernorm "float16" f16 ~eps:0.008);
-        test "bfloat16 layernorm"
-          (test_jit_layernorm "bfloat16" bf16 ~eps:0.06);
+        test "float16 layernorm" (test_jit_layernorm "float16" f16 ~eps:0.008);
+        test "bfloat16 layernorm" (test_jit_layernorm "bfloat16" bf16 ~eps:0.06);
       ];
     group "pmap"
       [

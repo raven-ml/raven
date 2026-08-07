@@ -27,8 +27,7 @@ let () =
   (* --- Stacking arrays --- *)
   let a = create float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = create float64 [| 3 |] [| 4.0; 5.0; 6.0 |] in
-  Printf.printf "stack [a; b] (new axis):\n%s\n"
-    (to_string (stack [ a; b ]));
+  Printf.printf "stack [a; b] (new axis):\n%s\n" (to_string (stack [ a; b ]));
   Printf.printf "concatenate [a; b]: %s\n\n"
     (to_string (concatenate ~axis:0 [ a; b ]));
 
@@ -58,8 +57,7 @@ let () =
   Printf.printf "Column means: %s\n" (to_string col_means);
 
   let centered = data - col_means in
-  Printf.printf "Centered (zero-mean columns):\n%s\n\n"
-    (to_string centered);
+  Printf.printf "Centered (zero-mean columns):\n%s\n\n" (to_string centered);
 
   (* --- Outer product via broadcasting --- *)
   let x = create float64 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in

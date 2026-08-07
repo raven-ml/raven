@@ -65,9 +65,7 @@ let bit_testable (type a b) (dtype : (a, b) Nx.dtype) : a testable =
   | Nx.Bool -> bool
 
 let same msg u v =
-  equal ~msg
-    (array (bit_testable (Nx.dtype u)))
-    (Nx.to_array u) (Nx.to_array v)
+  equal ~msg (array (bit_testable (Nx.dtype u))) (Nx.to_array u) (Nx.to_array v)
 
 (* The same values behind a step of 2 elements, so the innermost byte step is
    never the element size and the kernel falls to the generic walk. *)
@@ -102,11 +100,9 @@ let check_where dtype values s t =
   same "where false-arm splat" (Nx.where cond x fs) (Nx.where cond x bs);
   same "where true-arm splat" (Nx.where cond fs x) (Nx.where cond bs x);
   same "where both splat" (Nx.where cond fs ft) (Nx.where cond bs bt);
-  same "where false-arm splat vs strided"
-    (Nx.where cond x bs)
+  same "where false-arm splat vs strided" (Nx.where cond x bs)
     (Nx.where cond xs bs);
-  same "where true-arm splat vs strided"
-    (Nx.where cond bs x)
+  same "where true-arm splat vs strided" (Nx.where cond bs x)
     (Nx.where cond bs xs)
 
 (* ── Operand values ─────────────────────────────────────────────────────── *)
@@ -148,8 +144,7 @@ let complex_values =
 let int_values width =
   let hi = (1 lsl (width - 1)) - 1 in
   let edges = [| 0; 1; -1; hi; -hi - 1; 2; -2; 7; -7 |] in
-  Array.init n (fun i ->
-      if i < Array.length edges then edges.(i) else i - 33)
+  Array.init n (fun i -> if i < Array.length edges then edges.(i) else i - 33)
 
 let uint_values width =
   let hi = (1 lsl width) - 1 in
@@ -173,15 +168,23 @@ let bool_values = Array.init n (fun i -> i mod 7 < 3)
 
 let arith =
   [
-    ("add", Nx.add); ("sub", Nx.sub); ("mul", Nx.mul); ("div", Nx.div);
-    ("pow", Nx.pow); ("maximum", Nx.maximum); ("minimum", Nx.minimum);
+    ("add", Nx.add);
+    ("sub", Nx.sub);
+    ("mul", Nx.mul);
+    ("div", Nx.div);
+    ("pow", Nx.pow);
+    ("maximum", Nx.maximum);
+    ("minimum", Nx.minimum);
     ("mod", Nx.mod_);
   ]
 
 let compares =
   [
-    ("equal", Nx.equal); ("not_equal", Nx.not_equal); ("less", Nx.less);
-    ("less_equal", Nx.less_equal); ("greater", Nx.greater);
+    ("equal", Nx.equal);
+    ("not_equal", Nx.not_equal);
+    ("less", Nx.less);
+    ("less_equal", Nx.less_equal);
+    ("greater", Nx.greater);
     ("greater_equal", Nx.greater_equal);
   ]
 
@@ -192,7 +195,8 @@ let complex_compares = [ ("equal", Nx.equal); ("not_equal", Nx.not_equal) ]
 
 let bitwise =
   [
-    ("bitwise_and", Nx.bitwise_and); ("bitwise_or", Nx.bitwise_or);
+    ("bitwise_and", Nx.bitwise_and);
+    ("bitwise_or", Nx.bitwise_or);
     ("bitwise_xor", Nx.bitwise_xor);
   ]
 

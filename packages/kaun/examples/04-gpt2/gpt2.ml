@@ -152,8 +152,8 @@ let make cfg =
 (* Forward pass. Training passes [?dropout] — a rate and a [Nx.Rng] key — to
    enable the canonical GPT-2 dropout sites: the embedding sum and each block's
    post-attention and post-MLP projections. Every site's mask derives from the
-   one key by [Nx.Rng.fold_in], so a single per-step key drives them all;
-   under [Rune.jit] that key must be an input leaf of the step. Inference (the
+   one key by [Nx.Rng.fold_in], so a single per-step key drives them all; under
+   [Rune.jit] that key must be an input leaf of the step. Inference (the
    default) applies none. *)
 
 let drop dropout i x =

@@ -18,9 +18,9 @@
    construction — same numbers as the single-device step up to fp32 reduction
    order - [--dropout RATE] (default 0, the reference protocol's dropout-free
    graph) enables the GPT-2 dropout sites in [Gpt2.logits]; the per-step mask
-   key is one more int32 leaf of the jitted step's inputs — keys must be
-   inputs, never captures — derived as [Nx.Rng.fold_in root step] from
-   [--seed], so a run is reproducible from its seed alone
+   key is one more int32 leaf of the jitted step's inputs — keys must be inputs,
+   never captures — derived as [Nx.Rng.fold_in root step] from [--seed], so a
+   run is reproducible from its seed alone
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
@@ -110,9 +110,8 @@ let batch_of_ids ids =
     Nx.create Nx.int32 [| batch_size * seq_len |] (take 1) )
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
-   axis, NLL of the target id, mean. [?dropout] threads the rate and the
-   step's mask key to [Gpt2.logits]; absent, the graph is exactly the
-   reference's. *)
+   axis, NLL of the target id, mean. [?dropout] threads the rate and the step's
+   mask key to [Gpt2.logits]; absent, the graph is exactly the reference's. *)
 let loss_fn inputs targets ?dropout params =
   let logits = Gpt2.logits gpt2_124m ?dropout params inputs in
   let logits =
@@ -167,10 +166,9 @@ let train_step objective params =
   in
   { Step_out.params; loss }
 
-(* The step's dropout key rides the input structures as one more optional
-   int32 leaf: [Some key] when [--dropout] is positive, [None] otherwise —
-   [None] contributes no leaf, so dropout-free runs trace the exact reference
-   graph. *)
+(* The step's dropout key rides the input structures as one more optional int32
+   leaf: [Some key] when [--dropout] is positive, [None] otherwise — [None]
+   contributes no leaf, so dropout-free runs trace the exact reference graph. *)
 let map2_key f a b =
   match (a, b) with
   | Some a, Some b -> Some (f a b)
@@ -203,11 +201,7 @@ end
    flag, so the step still traces once). *)
 
 module Scaled_in = struct
-  type t = {
-    params : Gpt2.t;
-    ls : Vega.Loss_scale.t;
-    key : Nx.Rng.key option;
-  }
+  type t = { params : Gpt2.t; ls : Vega.Loss_scale.t; key : Nx.Rng.key option }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
     {
@@ -261,8 +255,9 @@ let train_step_scaled objective { Scaled_in.params; ls; key } =
      of this model renders a whole-vocab-axis vectorized store,
      [make_float50257], which NVRTC rejects.) *)
   let loss, grads =
-    Rune.vjp (module Gpt2.Params) (objective key) params
-      ls.Vega.Loss_scale.scale
+    Rune.vjp
+      (module Gpt2.Params)
+      (objective key) params ls.Vega.Loss_scale.scale
   in
   let grads = Vega.Loss_scale.unscale (module Gpt2.Params) ls grads in
   let finite = Vega.Loss_scale.grads_finite (module Gpt2.Params) grads in
@@ -526,8 +521,8 @@ let () =
         failwith
           ("--compute-dtype must be float32, bfloat16 or float16, got " ^ d)
   in
-  (* [obj key inputs targets] is the shard objective for one step's dropout
-     key; [None] (the default rate 0) is the dropout-free reference graph. *)
+  (* [obj key inputs targets] is the shard objective for one step's dropout key;
+     [None] (the default rate 0) is the dropout-free reference graph. *)
   let rate = !dropout in
   if rate < 0.0 || rate >= 1.0 then failwith "--dropout must be in [0, 1)";
   let obj key inputs targets params =
@@ -540,9 +535,9 @@ let () =
      capture. *)
   let root = Nx.Rng.key !seed in
   let key_at i = if rate = 0.0 then None else Some (Nx.Rng.fold_in root i) in
-  (* [step i] maps parameters to updated parameters and the pre-update loss;
-     the float16 variant additionally threads its loss-scale state, hidden in
-     the closure. *)
+  (* [step i] maps parameters to updated parameters and the pre-update loss; the
+     float16 variant additionally threads its loss-scale state, hidden in the
+     closure. *)
   let step : int -> Gpt2.t -> Gpt2.t * float =
     if !devices = "" then
       if !compute_dtype = "float16" then begin
@@ -581,7 +576,7 @@ let () =
       let in_axes =
         List.init n_params (fun _ -> None)
         @ [ Some 0; Some 0 ]
-        @ (if rate = 0.0 then [] else [ None ])
+        @ if rate = 0.0 then [] else [ None ]
       in
       let f =
         Rune.pmap2 ~devices:devs ~in_axes
