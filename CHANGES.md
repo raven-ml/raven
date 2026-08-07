@@ -438,6 +438,25 @@ thread.
 
 ### Nx
 
+- `Rng.truncated_normal`, `Rng.categorical`, `Rng.permutation` and
+  `Rng.shuffle` complete the keyed sampler set: every distribution now has a
+  pure form that composes with `Rune.jit`, `vmap` and `pmap`, and each keyless
+  sampler is that form applied to a subkey of the ambient scope.
+- `truncated_normal` draws by inverting the conditioned distribution instead of
+  rejecting out-of-range samples. The rejection loop read its stopping
+  condition back to the host, so it could not be traced or compiled at all, and
+  it gave up after 1000 rounds on a narrow interval; inverting costs one draw
+  per element whatever the bounds. `Kaun.Init.glorot_normal`, `he_normal` and
+  `lecun_normal` go through it, so they are now compilable.
+- **Breaking**: `truncated_normal` takes `~lower` and `~upper` before its dtype,
+  matching the keyed form.
+- **Breaking**: `randint` and `Rng.randint` take their bounds as `?low` and
+  `~high` and always return `int32`, replacing the trailing positional `low`,
+  the arbitrary `?high` default of `10`, and the dtype argument. The dtype
+  argument accepted float dtypes and raised at run time, and the draw was
+  computed in `int32` before being widened, so ranges beyond `int32` were
+  silently wrong; both are now impossible. Cast the result for another integer
+  width. Bounds outside `int32` raise `Invalid_argument` (#196).
 - Sliding-window extraction is 10-77x faster on the C backend. The kernel used
   to divide ten times per output element; it now walks contiguous runs, so
   convolution (`correlate`, `convolve`) and the pooling filters

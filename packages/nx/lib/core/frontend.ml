@@ -196,7 +196,6 @@ module Make (B : Backend_intf.S) = struct
     if Array.length axes_arr = 0 then 1
     else array_prod (Array.map (fun ax -> input_shape.(ax)) axes_arr)
 
-
   (* ───── Shape Manipulation Helpers ───── *)
 
   let reshape shape_spec x =
@@ -429,10 +428,12 @@ module Make (B : Backend_intf.S) = struct
   let rsub_s s t = sub (scalar_like t s) t
   let mul a b = binop B.mul a b
   let mul_s t s = mul t (scalar_like t s)
+
   let div a b =
     let a', b' = broadcasted a b in
     let dt = B.dtype a' in
     if Dtype.is_int dt || Dtype.is_uint dt then B.idiv a' b' else B.fdiv a' b'
+
   let div_s t s = div t (scalar_like t s)
   let rdiv_s s t = div (scalar_like t s) t
   let pow a b = binop B.pow a b
@@ -594,7 +595,6 @@ module Make (B : Backend_intf.S) = struct
            (B.full (B.context x) dt [||] (power_of_two dt shift_val)))
 
   let lshift x shift_val = shift_op ~op:"lshift" ~apply:mul x shift_val
-
   let rshift x shift_val = shift_op ~op:"rshift" ~apply:div x shift_val
 
   let clamp ?min ?max x =
@@ -653,9 +653,12 @@ module Make (B : Backend_intf.S) = struct
           err "reduce" "axis %d out of bounds for %dD tensor" ax rank)
       axes_to_reduce;
     let reduced = B.reduce ~op ~axes:axes_to_reduce x in
-    (* The backend drops the reduced axes; reinsert them as size 1 on request. *)
+    (* The backend drops the reduced axes; reinsert them as size 1 on
+       request. *)
     if keepdims then
-      reshape (Shape.reduce_output_shape input_shape axes_to_reduce true) reduced
+      reshape
+        (Shape.reduce_output_shape input_shape axes_to_reduce true)
+        reduced
     else reduced
 
   let sum ?axes ?(keepdims = false) x = reduce_op `Sum ?axes ~keepdims x
@@ -725,7 +728,9 @@ module Make (B : Backend_intf.S) = struct
     let rank = Array.length input_shape in
     let axes_to_reduce =
       normalize_and_dedup_axes ~op:op_name rank
-        (match axes with None -> List.init rank Fun.id | Some values -> values)
+        (match axes with
+        | None -> List.init rank Fun.id
+        | Some values -> values)
       |> Array.of_list
     in
     if Array.exists (fun axis -> input_shape.(axis) = 0) axes_to_reduce then
@@ -2036,12 +2041,67 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Random Number Generation ───── *)
 
+  (* Inverse of the error function, by Giles (2010): one logarithm, then a
+     degree-8 polynomial in a change of variable, chosen by how close |x| is to
+     1. Both branches are evaluated and selected with [where] — a data-dependent
+     branch would not trace — which is why the polynomials are kept short. The
+     approximation carries about seven significant digits, the accuracy
+     [truncated_normal] needs to place a bound.
+
+     Defined here rather than beside [erf] because [Rng.truncated_normal] below
+     is its consumer; it stays internal until it is accurate to double
+     precision. *)
+  let erfinv (type b) (x : (float, b) t) : (float, b) t =
+    let poly coeffs w =
+      (* Horner from the leading coefficient down. *)
+      match coeffs with
+      | [] -> invalid_arg "erfinv: empty polynomial"
+      | c0 :: rest ->
+          List.fold_left
+            (fun acc c -> add (mul acc w) (scalar_like x c))
+            (scalar_like x c0) rest
+    in
+    let w =
+      neg (log (mul (sub (scalar_like x 1.0) x) (add (scalar_like x 1.0) x)))
+    in
+    let central =
+      poly
+        [
+          2.81022636e-08;
+          3.43273939e-07;
+          -3.5233877e-06;
+          -4.39150654e-06;
+          0.00021858087;
+          -0.00125372503;
+          -0.00417768164;
+          0.246640727;
+          1.50140941;
+        ]
+        (sub w (scalar_like x 2.5))
+    in
+    let tail =
+      poly
+        [
+          -0.000200214257;
+          0.000100950558;
+          0.00134934322;
+          -0.00367342844;
+          0.00573950773;
+          -0.0076224613;
+          0.00943887047;
+          1.00167406;
+          2.83297682;
+        ]
+        (sub (sqrt w) (scalar_like x 3.0))
+    in
+    mul x (where (cmplt w (scalar_like x 5.0)) central tail)
+
   (* One splittable Threefry-2x32 generator with two front-ends over it: the
      explicit samplers below take a key and are pure functions of it
-     (order-independent, transform-safe), and the keyless [rand]/[randn]/…
-     draw a fresh subkey from the ambient scope and call the same samplers.
-     A key is a transparent [|2|] int32 tensor, so it flows wherever tensors
-     go — a parameter-tree leaf, a jit input, a mapped axis. *)
+     (order-independent, transform-safe), and the keyless [rand]/[randn]/… draw
+     a fresh subkey from the ambient scope and call the same samplers. A key is
+     a transparent [|2|] int32 tensor, so it flows wherever tensors go — a
+     parameter-tree leaf, a jit input, a mapped axis. *)
   module Rng = struct
     type key = (int32, int32_elt) t
 
@@ -2188,8 +2248,8 @@ module Make (B : Backend_intf.S) = struct
       let u = uniform k Dtype.float32 shape in
       (* [u * (high - low)] is non-negative, so the cast's truncation is a
          floor; shifting by [low] afterwards keeps it one, where folding [low]
-         in first would truncate towards zero and both drop [low] and double
-         the count of 0 for a negative [low]. *)
+         in first would truncate towards zero and both drop [low] and double the
+         count of 0 for a negative [low]. *)
       let span = scalar ctx Dtype.float32 (float_of_int (high - low)) in
       add
         (cast Dtype.int32 (mul u span))
@@ -2200,6 +2260,81 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg "Nx.Rng.bernoulli: p must be in [0, 1]";
       let ctx = B.context k in
       cmplt (uniform k Dtype.float32 shape) (scalar ctx Dtype.float32 p)
+
+    (* Inverse-CDF truncation: a standard normal restricted to [lo, hi] is [sqrt
+       2 * erfinv u] for [u] uniform over the images of the bounds under [erf].
+       The bounds are host floats, so their [erf] is exact and only the inverse
+       needs a kernel. One draw per sample, no acceptance test, so it compiles
+       and its cost does not depend on how much mass the interval holds. *)
+    let truncated_normal (type b) k ~lower ~upper (dtype : (float, b) Dtype.t)
+        shape : (float, b) t =
+      if not (lower < upper) then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.truncated_normal: invalid bounds, lower=%g >= upper=%g"
+             lower upper);
+      let ctx = B.context k in
+      (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
+         the interval off by a hair so unbounded truncation is the untruncated
+         normal rather than an infinity. *)
+      let limit = 1.0 -. 1e-7 in
+      let edge x =
+        Float.max (-.limit) (Float.min limit (Float.erf (x /. Float.sqrt 2.0)))
+      in
+      let u =
+        uniform k ~low:(edge lower) ~high:(edge upper) Dtype.float32 shape
+      in
+      cast dtype (mul (scalar ctx Dtype.float32 (Float.sqrt 2.0)) (erfinv u))
+
+    let permutation k n =
+      if n <= 0 then invalid_arg "Nx.Rng.permutation: n must be positive";
+      argsort (uniform k Dtype.float32 [| n |]) ~axis:0 ~descending:false
+
+    let shuffle k x =
+      let s = shape x in
+      if Array.length s = 0 then x
+      else take ~axis:0 ~indices:(permutation k s.(0)) x
+
+    (* Gumbel-max: adding Gumbel noise to log-probabilities and taking the
+       argmax samples from the distribution they describe. [eps] keeps the
+       double logarithm away from its poles at the resolution of the dtype the
+       noise is built in. *)
+    let categorical (type a b) k ?(axis = -1) ?shape:(batch_shape = [||])
+        (logits : (a, b) t) =
+      let logits_dtype = dtype logits in
+      let logits_shape = shape logits in
+      if not (Dtype.is_float logits_dtype) then
+        invalid_arg "Nx.Rng.categorical: logits requires floating point dtype";
+      let nd = Array.length logits_shape in
+      let axis = if axis < 0 then nd + axis else axis in
+      if axis < 0 || axis >= nd then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.categorical: axis %d out of bounds for %dD tensor" axis nd);
+      let ctx = B.context logits in
+      let full_shape = Array.append batch_shape logits_shape in
+      let draw float_dtype eps =
+        let u =
+          clip (uniform k float_dtype full_shape) ~min:eps ~max:(1. -. eps)
+        in
+        let neg_one = scalar ctx float_dtype (-1.0) in
+        let gumbel =
+          mul (log (mul (log u) neg_one)) neg_one |> astype logits_dtype
+        in
+        astype Dtype.int32
+          (argmax (add logits gumbel)
+             ~axis:(axis + Array.length batch_shape)
+             ~keepdims:false)
+      in
+      match logits_dtype with
+      | Float64 -> draw Dtype.float64 1e-12
+      | Float32 -> draw Dtype.float32 1e-6
+      | Float16 -> draw Dtype.float32 1e-3
+      | BFloat16 -> draw Dtype.float32 1e-2
+      | Float8_e4m3 | Float8_e5m2 ->
+          invalid_arg "Nx.Rng.categorical: float8 logits are not supported"
+      | _ ->
+          invalid_arg "Nx.Rng.categorical: logits requires floating point dtype"
 
     (* Implicit scope: [split_off] performs [E_next_key]; [run]/[with_key]
        answer it by [fold_in root counter] with an incrementing counter — the
@@ -2225,7 +2360,9 @@ module Make (B : Backend_intf.S) = struct
             | _ -> None);
       }
 
-    let run ctx ~seed f = Effect.Deep.match_with f () (make_handler (key ctx seed))
+    let run ctx ~seed f =
+      Effect.Deep.match_with f () (make_handler (key ctx seed))
+
     let with_key k f = Effect.Deep.match_with f () (make_handler k)
     let fallback = Domain.DLS.new_key (fun () -> ref None)
 
@@ -2272,82 +2409,16 @@ module Make (B : Backend_intf.S) = struct
         (Shape.to_string shape);
     Rng.bernoulli (Rng.split_off ctx) ~p shape
 
-  let permutation ctx n =
-    if n <= 0 then invalid_arg "permutation: n must be positive";
-    argsort (rand ctx Dtype.float32 [| n |]) ~axis:0 ~descending:false
+  let permutation ctx n = Rng.permutation (Rng.split_off ctx) n
+  let shuffle ctx x = Rng.shuffle (Rng.split_off ctx) x
 
-  let shuffle ctx x =
-    let s = shape x in
-    if Array.length s = 0 then x
-    else take ~axis:0 ~indices:(permutation ctx s.(0)) x
+  let categorical ctx ?axis ?shape logits =
+    Rng.categorical (Rng.split_off ctx) ?axis ?shape logits
 
-  let categorical (type a b) ctx ?(axis = -1) ?shape:(batch_shape = [||])
-      (logits : (a, b) t) =
-    let logits_dtype = dtype logits in
-    let logits_shape = shape logits in
-    if not (Dtype.is_float logits_dtype) then
-      invalid_arg "categorical: logits requires floating point dtype";
-    let nd = Array.length logits_shape in
-    let axis = if axis < 0 then nd + axis else axis in
-    if axis < 0 || axis >= nd then
-      err "categorical" "axis %d out of bounds for %dD tensor" axis nd;
-    let full_shape = Array.append batch_shape logits_shape in
-    (* Gumbel-max trick: argmax(logits + Gumbel noise) *)
-    let run_float float_dtype eps =
-      let u =
-        clip (rand ctx float_dtype full_shape) ~min:eps ~max:(1. -. eps)
-      in
-      let neg_one = scalar ctx float_dtype (-1.0) in
-      let gumbel =
-        mul (log (mul (log u) neg_one)) neg_one |> astype logits_dtype
-      in
-      astype Dtype.int32
-        (argmax (add logits gumbel)
-           ~axis:(axis + Array.length batch_shape)
-           ~keepdims:false)
-    in
-    match logits_dtype with
-    | Float64 -> run_float Dtype.float64 1e-12
-    | Float32 -> run_float Dtype.float32 1e-6
-    | Float16 -> run_float Dtype.float32 1e-3
-    | BFloat16 -> run_float Dtype.float32 1e-2
-    | Float8_e4m3 | Float8_e5m2 ->
-        invalid_arg "categorical: logits, float8 logits not supported"
-    | _ -> invalid_arg "categorical: logits requires floating point dtype"
-
-  let truncated_normal ctx (type b) (dtype : (float, b) Dtype.t) ~lower ~upper
+  let truncated_normal ctx (type b) ~lower ~upper (dtype : (float, b) Dtype.t)
       shape =
-    if lower >= upper then
-      invalid_arg "truncated_normal: bounds, lower must be less than upper";
-    (match dtype with
-    | Float16 | Float32 | Float64 | BFloat16 -> ()
-    | Float8_e4m3 | Float8_e5m2 ->
-        invalid_arg "truncated_normal: float8 dtypes are not supported");
-    let lo = scalar ctx Dtype.float64 lower |> astype dtype in
-    let hi = scalar ctx Dtype.float64 upper |> astype dtype in
-    let has_remaining mask =
-      match to_array (any mask) with [| v |] -> v | _ -> false
-    in
-    let initial = randn ctx dtype shape in
-    let accepted =
-      logical_and (greater_equal initial lo) (less_equal initial hi)
-    in
-    let remaining = logical_not accepted in
-    let rec fill acc remaining attempt =
-      if not (has_remaining remaining) then acc
-      else if attempt > 1000 then
-        invalid_arg
-          "truncated_normal: generation, failed to find samples within bounds \
-           after 1000 tries"
-      else
-        let c = randn ctx dtype shape in
-        let within = logical_and (greater_equal c lo) (less_equal c hi) in
-        let take_new = logical_and remaining within in
-        fill (where take_new c acc)
-          (logical_and remaining (logical_not within))
-          (attempt + 1)
-    in
-    fill initial remaining 1
+    validate_random_float_params "truncated_normal" dtype shape;
+    Rng.truncated_normal (Rng.split_off ctx) ~lower ~upper dtype shape
 
   (* ───── Linear Algebra ───── *)
 
@@ -2468,13 +2539,16 @@ module Make (B : Backend_intf.S) = struct
 
      Only [real] and [magnitude] read a lane directly. Reaching the imaginary
      lane means rotating it into the real one, which is a complex multiply: it
-     is exact for finite components, but a non-finite component contaminates
-     the product through [inf * 0], so [imag], [angle], [complex], and
-     [conjugate] yield NaN there. Lifting a lane out without arithmetic would
-     need a component view of the storage, which the backend does not expose. *)
+     is exact for finite components, but a non-finite component contaminates the
+     product through [inf * 0], so [imag], [angle], [complex], and [conjugate]
+     yield NaN there. Lifting a lane out without arithmetic would need a
+     component view of the storage, which the backend does not expose. *)
 
   let real dt (z : (Complex.t, _) t) = cast dt z
-  let imag dt (z : (Complex.t, _) t) = cast dt (mul_s z Complex.{ re = 0.; im = -1. })
+
+  let imag dt (z : (Complex.t, _) t) =
+    cast dt (mul_s z Complex.{ re = 0.; im = -1. })
+
   let magnitude dt (z : (Complex.t, _) t) = cast dt (abs z)
   let angle dt (z : (Complex.t, _) t) = atan2 (imag dt z) (real dt z)
   let complex dt ~re ~im = add (cast dt re) (mul_s (cast dt im) Complex.i)
@@ -3383,9 +3457,7 @@ module Make (B : Backend_intf.S) = struct
     | Some true -> check_square ~op:"matrix_rank" a
     | None | Some false -> ());
     let s =
-      match hermitian with
-      | Some true -> abs (B.eigvalsh a)
-      | _ -> svdvals a
+      match hermitian with Some true -> abs (B.eigvalsh a) | _ -> svdvals a
     in
     let max_s = max s |> unsafe_get [] in
     let sh = shape a in
@@ -3503,15 +3575,10 @@ module Make (B : Backend_intf.S) = struct
         let z = zeros (B.context vals) (dtype vals) (shape vals) in
         let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
         let vecs_h =
-          if Dtype.is_complex dtype_a then
-            matrix_transpose (conjugate vecs)
+          if Dtype.is_complex dtype_a then matrix_transpose (conjugate vecs)
           else matrix_transpose vecs
         in
-        let vh =
-          mul
-            (expand_dims [ -1 ] (cast dtype_a sign_fixed))
-            vecs_h
-        in
+        let vh = mul (expand_dims [ -1 ] (cast dtype_a sign_fixed)) vecs_h in
         pinv_from_factors vecs abs_vals vh
     | _ -> pinv_via_svd ()
 
@@ -4399,8 +4466,7 @@ module Make (B : Backend_intf.S) = struct
       let log_sum =
         add (log (sum (exp (sub x max_x)) ~axes:axes_norm ~keepdims:true)) max_x
       in
-      if keepdims then log_sum
-      else squeeze ~axes:(List.rev axes_norm) log_sum
+      if keepdims then log_sum else squeeze ~axes:(List.rev axes_norm) log_sum
 
   let logmeanexp ?axes ?(keepdims = false) x =
     let axes_norm =
@@ -4418,8 +4484,7 @@ module Make (B : Backend_intf.S) = struct
              (scalar_like log_sum
                 (Dtype.of_float (dtype x) (float_of_int count))))
       in
-      if keepdims then log_mean
-      else squeeze ~axes:(List.rev axes_norm) log_mean
+      if keepdims then log_mean else squeeze ~axes:(List.rev axes_norm) log_mean
 
   let standardize ?axes ?mean:mean_param ?variance:variance_param
       ?(epsilon = 1e-5) x =

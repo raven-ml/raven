@@ -491,20 +491,20 @@ module Rng : sig
       Two ways to use it:
 
       - {b Explicit keys} ({!uniform}, {!normal}, …) are pure functions of a
-        key: the same key, dtype and shape give the same values — eagerly,
-        under {!Rune.val-jit}, and on every device. They are order-independent,
-        so results survive refactoring, and they compose with the transforms.
-        Fresh randomness comes from fresh keys: {!split} a key into independent
+        key: the same key, dtype and shape give the same values — eagerly, under
+        {!Rune.val-jit}, and on every device. They are order-independent, so
+        results survive refactoring, and they compose with the transforms. Fresh
+        randomness comes from fresh keys: {!split} a key into independent
         subkeys, or {!fold_in} a counter to derive per-step keys.
       - {b The implicit scope} ({!run}, {!with_key}) threads keys for you, so
         the keyless samplers ([Nx.rand], [Nx.randn], …) need no key argument.
         Each draw pulls a fresh subkey, so successive draws never correlate.
         Results depend on draw order but are reproducible for a fixed program.
 
-      The two front-ends share one generator: [Nx.rand] is exactly
-      {!uniform} applied to a subkey drawn from the scope. Under a transform
-      that traces, batches or replicates (jit/vmap/pmap) thread an explicit
-      key; elsewhere the scope is enough. *)
+      The two front-ends share one generator: [Nx.rand] is exactly {!uniform}
+      applied to a subkey drawn from the scope. Under a transform that traces,
+      batches or replicates (jit/vmap/pmap) thread an explicit key; elsewhere
+      the scope is enough. *)
 
   type key = (int32, int32_elt) t
   (** The type for keys: a transparent [[|2|]] int32 tensor holding the
@@ -554,8 +554,7 @@ module Rng : sig
   (** [normal k dtype shape] samples the standard normal distribution (mean 0,
       variance 1) via the Box-Muller transform over two {!uniform} draws. *)
 
-  val randint :
-    key -> ?low:int -> high:int -> int array -> (int32, int32_elt) t
+  val randint : key -> ?low:int -> high:int -> int array -> (int32, int32_elt) t
   (** [randint k ~high shape] samples integers uniformly from [\[low, high)].
       [low] defaults to [0]. The result is [int32], the type Nx indexes with;
       cast it for a wider or narrower integer.
@@ -570,7 +569,41 @@ module Rng : sig
   (** [bernoulli k ~p shape] samples booleans that are [true] with probability
       [p].
 
-      Raises [Invalid_argument] if [p] is outside [\[0, 1\]]. *)
+      Raises [Invalid_argument] if [p] is outside [[0, 1]]. *)
+
+  val truncated_normal :
+    key ->
+    lower:float ->
+    upper:float ->
+    (float, 'b) dtype ->
+    int array ->
+    (float, 'b) t
+  (** [truncated_normal k ~lower ~upper dtype shape] samples the standard normal
+      distribution conditioned on landing in [[lower, upper]].
+
+      Drawn by inverting the conditioned distribution rather than by rejecting
+      out-of-range samples: one draw per element whatever the bounds, so the
+      cost does not grow as the interval narrows.
+
+      Raises [Invalid_argument] if [lower >= upper]. *)
+
+  val categorical :
+    key -> ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
+  (** [categorical k logits] samples category indices from unnormalised
+      log-probabilities. [axis] defaults to [-1] (the last axis); [shape]
+      prepends extra batch dimensions, giving that many independent draws.
+
+      Raises [Invalid_argument] if [logits] is not a float type, is a float8
+      type, or [axis] is out of bounds. *)
+
+  val permutation : key -> int -> int32_t
+  (** [permutation k n] is a random permutation of \[[0], [n-1]\].
+
+      Raises [Invalid_argument] if [n <= 0]. *)
+
+  val shuffle : key -> ('a, 'b) t -> ('a, 'b) t
+  (** [shuffle k t] is [t] with its first axis randomly permuted. Scalars are
+      returned unchanged. *)
 
   (** {1:implicit Implicit scope} *)
 
@@ -591,14 +624,25 @@ module Rng : sig
       different keys. This is what the keyless samplers call. *)
 end
 
+(** {2:keyless Keyless samplers}
+
+    One per {!module-Rng} sampler, with the same arguments minus the key, each
+    drawing a fresh subkey from the ambient scope (see {!Rng.with_key} and
+    {!Rng.run}). The names match except for the two zero-configuration draws,
+    which keep the names the ecosystem gives them: [rand] is {!Rng.uniform} on
+    \[[0], [1]) and [randn] is {!Rng.normal}.
+
+    Each raises whatever its keyed twin raises. *)
+
 val rand : (float, 'b) dtype -> int array -> (float, 'b) t
-(** [rand dtype shape] samples uniformly from \[[0], [1]).
+(** [rand dtype shape] samples uniformly from \[[0], [1]). For other bounds, see
+    {!Rng.uniform}.
 
     Raises [Invalid_argument] if a shape dimension is negative. *)
 
 val randn : (float, 'b) dtype -> int array -> (float, 'b) t
 (** [randn dtype shape] samples from the standard normal distribution (mean 0,
-    variance 1) via the Box–Muller transform.
+    variance 1).
 
     Raises [Invalid_argument] if a shape dimension is negative. *)
 
@@ -615,29 +659,28 @@ val bernoulli : p:float -> int array -> bool_t
 
     Raises [Invalid_argument] if [p] is not in \[[0], [1]\]. *)
 
+val truncated_normal :
+  lower:float -> upper:float -> (float, 'a) dtype -> int array -> (float, 'a) t
+(** [truncated_normal ~lower ~upper dtype shape] samples the standard normal
+    conditioned on landing in \[[lower], [upper]\].
+
+    Raises [Invalid_argument] if [lower >= upper]. *)
+
+val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
+(** [categorical logits] samples category indices from unnormalised
+    log-probabilities. See {!Rng.categorical}.
+
+    Raises [Invalid_argument] if [logits] is not a float type or [axis] is out
+    of bounds. *)
+
 val permutation : int -> int32_t
 (** [permutation n] is a random permutation of \[[0], [n-1]\].
 
     Raises [Invalid_argument] if [n <= 0]. *)
 
 val shuffle : ('a, 'b) t -> ('a, 'b) t
-(** [shuffle t] is a copy of [t] with the first axis randomly permuted. No-op on
-    scalars. *)
-
-val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
-(** [categorical ?axis ?shape logits] samples category indices from unnormalised
-    log-probabilities using the Gumbel-max trick. [axis] defaults to [-1] (last
-    axis). [shape] prepends extra batch dimensions.
-
-    Raises [Invalid_argument] if [logits] is not a float type or [axis] is out
-    of bounds. *)
-
-val truncated_normal :
-  (float, 'a) dtype -> lower:float -> upper:float -> int array -> (float, 'a) t
-(** [truncated_normal dtype ~lower ~upper shape] samples from a standard normal
-    distribution truncated to \[[lower], [upper]\].
-
-    Raises [Invalid_argument] if [dtype] is a float8 type or [lower >= upper]. *)
+(** [shuffle t] is [t] with its first axis randomly permuted. Scalars are
+    returned unchanged. *)
 
 (** {1:shape Shape manipulation} *)
 
@@ -1082,8 +1125,8 @@ val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
     [specs] uses the same index forms as {!val-slice}; [v] is broadcast to the
     selected shape. An [M mask] spec writes at the masked positions.
 
-    Raises [Invalid_argument] if an [N] (new-axis) spec is combined with a gather
-    ([L] or [M]) or a strided range of step other than ±1.
+    Raises [Invalid_argument] if an [N] (new-axis) spec is combined with a
+    gather ([L] or [M]) or a strided range of step other than ±1.
 
     See also {!val-slice}. *)
 
@@ -1134,9 +1177,9 @@ val take :
 
 val take_along_axis :
   axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [take_along_axis ~axis ~indices t] gathers values from [t] along [axis] using
-    [indices]. [indices] must match [t]'s shape except along [axis]. Useful for
-    gathering from {!argmax}/{!argmin} results.
+(** [take_along_axis ~axis ~indices t] gathers values from [t] along [axis]
+    using [indices]. [indices] must match [t]'s shape except along [axis].
+    Useful for gathering from {!argmax}/{!argmin} results.
 
     Raises [Invalid_argument] if shapes are incompatible.
 
@@ -1391,10 +1434,9 @@ val neg : ('a, 'b) t -> ('a, 'b) t
 
     The ones producing a float tensor take that dtype first. It selects the
     result's storage precision independently of the input's, so the arithmetic
-    still happens at the input's precision: [magnitude float64] of a
-    [complex64] tensor widens a float32 result rather than recomputing it. The
-    matching pairs are [complex64] with [float32], and [complex128] with
-    [float64].
+    still happens at the input's precision: [magnitude float64] of a [complex64]
+    tensor widens a float32 result rather than recomputing it. The matching
+    pairs are [complex64] with [float32], and [complex128] with [float64].
 
     {2:complex_nonfinite Non-finite components}
 
@@ -1437,8 +1479,8 @@ val magnitude : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
     See also {!angle}, {!val-complex}. *)
 
 val angle : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
-(** [angle dt z] is the element-wise argument of [z] in radians, in
-    \[[-π], [π]\].
+(** [angle dt z] is the element-wise argument of [z] in radians, in \[[-π],
+    [π]\].
 
     The negative real axis is a branch cut and the sign of a zero imaginary
     component picks the side: [-1. + 0.i] has argument [π], [-1. - 0.i] has
@@ -2853,7 +2895,6 @@ val istft :
 
     See also {!stft}. *)
 
-
 (** {1:activation Activation functions} *)
 
 val relu : ('a, 'b) t -> ('a, 'b) t
@@ -3034,12 +3075,12 @@ val to_string : ('a, 'b) t -> string
 (** [to_string t] is [t] formatted with {!pp}. *)
 
 val print : ('a, 'b) t -> unit
-(** [print t] formats [t] with {!pp}, followed by a newline, on standard
-    output. *)
+(** [print t] formats [t] with {!pp}, followed by a newline, on standard output.
+*)
 
 val pp_shape : Format.formatter -> int array -> unit
-(** [pp_shape ppf shape] formats [shape] as a bracketed, comma-separated list
-    of dimensions, for example [[2,3,4]]. *)
+(** [pp_shape ppf shape] formats [shape] as a bracketed, comma-separated list of
+    dimensions, for example [[2,3,4]]. *)
 
 val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
 (** [pp_dtype ppf dtype] formats [dtype] by name (e.g. [float32]). *)

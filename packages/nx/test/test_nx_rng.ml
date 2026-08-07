@@ -135,7 +135,9 @@ let test_uniform_half_open () =
   (* Narrow dtypes: every grid point is drawn, so the bounds are exact. *)
   let grid (type b) name (dt : (float, b) Nx.dtype) p n =
     let hi, lo = scan name dt p n in
-    equal ~msg:(name ^ " reaches 1 - 2^-p") (float 0.0)
+    equal
+      ~msg:(name ^ " reaches 1 - 2^-p")
+      (float 0.0)
       (1.0 -. Float.ldexp 1.0 (-p))
       hi;
     equal ~msg:(name ^ " reaches 0") (float 0.0) 0.0 lo
@@ -322,6 +324,95 @@ let test_truncated_normal_distribution () =
   let mean = Array.fold_left ( +. ) 0. values /. float_of_int total in
   equal ~msg:"truncated normal mean lies within interval" bool true
     (mean > lower && mean < upper)
+
+(* The inverse-CDF draw must reproduce the conditional distribution exactly, not
+   merely land inside the bounds. Both moments of a standard normal restricted
+   to [a, b] are closed-form, so check against them:
+
+   mean = (phi a - phi b) / Z var = 1 + (a * phi a - b * phi b) / Z - mean^2
+   with Z = Phi b - Phi a
+
+   A rejection sampler and an inverse-CDF sampler agree here; a botched inverse
+   — wrong scale, wrong interval, a sign slip in erfinv — does not. *)
+let test_truncated_normal_matches_the_conditional_moments () =
+  let lower = -0.75 and upper = 1.25 in
+  let n = 200_000 in
+  let phi x = Float.exp (-0.5 *. x *. x) /. Stdlib.sqrt (2.0 *. Float.pi) in
+  let cdf x = 0.5 *. (1.0 +. Float.erf (x /. Stdlib.sqrt 2.0)) in
+  let z = cdf upper -. cdf lower in
+  let expected_mean = (phi lower -. phi upper) /. z in
+  let expected_var =
+    1.0
+    +. (((lower *. phi lower) -. (upper *. phi upper)) /. z)
+    -. (expected_mean *. expected_mean)
+  in
+  let values =
+    Nx.to_array
+      (Rng.truncated_normal (Rng.key 4242) ~lower ~upper float64 [| n |])
+  in
+  let mean = Array.fold_left ( +. ) 0.0 values /. float_of_int n in
+  let var =
+    Array.fold_left (fun acc v -> acc +. ((v -. mean) ** 2.0)) 0.0 values
+    /. float_of_int n
+  in
+  (* 5 standard errors of the sample mean, and a matching band for the
+     variance. *)
+  let se = Stdlib.sqrt (expected_var /. float_of_int n) in
+  equal ~msg:"truncated normal mean matches the closed form"
+    (float (5.0 *. se))
+    expected_mean mean;
+  equal ~msg:"truncated normal variance matches the closed form" (float 0.01)
+    expected_var var;
+  equal ~msg:"every draw lies inside the bounds" bool true
+    (Array.for_all (fun v -> v >= lower && v <= upper) values)
+
+(* Narrow bounds are where rejection sampling used to spend its budget and
+   eventually give up; inverting costs one draw whatever the acceptance rate. *)
+let test_truncated_normal_handles_narrow_bounds () =
+  let lower = 3.0 and upper = 3.01 in
+  let values =
+    Nx.to_array
+      (Rng.truncated_normal (Rng.key 7) ~lower ~upper float64 [| 512 |])
+  in
+  equal ~msg:"a 0.06%-mass interval still fills" bool true
+    (Array.for_all (fun v -> v >= lower && v <= upper) values);
+  equal ~msg:"the draws are not all identical" bool true
+    (Array.exists (fun v -> v <> values.(0)) values)
+
+(* Every keyed sampler is a pure function of its key: same key, same values;
+   different keys, different values. *)
+let test_keyed_samplers_are_pure () =
+  let check name draw =
+    equal
+      ~msg:(name ^ " is deterministic")
+      bool true
+      (draw (Rng.key 3) = draw (Rng.key 3));
+    equal
+      ~msg:(name ^ " follows its key")
+      bool true
+      (draw (Rng.key 3) <> draw (Rng.key 4))
+  in
+  let logits = Nx.create float32 [| 6 |] [| 0.; 1.; 2.; 0.5; 1.5; 0.2 |] in
+  check "truncated_normal" (fun k ->
+      Nx.to_array
+        (Rng.truncated_normal k ~lower:(-2.) ~upper:2. float32 [| 32 |]));
+  check "permutation" (fun k -> Nx.to_array (Rng.permutation k 64));
+  check "shuffle" (fun k ->
+      Nx.to_array (Rng.shuffle k (Nx.arange float32 0 64 1)));
+  check "categorical" (fun k ->
+      Nx.to_array (Rng.categorical k ~shape:[| 64 |] logits))
+
+(* [permutation] must be a permutation, not merely a tensor of indices. *)
+let test_permutation_is_a_permutation () =
+  let n = 4096 in
+  let p =
+    Array.map Int32.to_int (Nx.to_array (Rng.permutation (Rng.key 11) n))
+  in
+  let seen = Array.make n false in
+  Array.iter (fun i -> if i >= 0 && i < n then seen.(i) <- true) p;
+  equal ~msg:"permutation has the right length" int n (Array.length p);
+  equal ~msg:"permutation hits every index exactly once" bool true
+    (Array.for_all Fun.id seen)
 
 let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
@@ -548,6 +639,12 @@ let () =
           test "truncated_normal" test_truncated_normal;
           test "truncated_normal_distribution"
             test_truncated_normal_distribution;
+          test "truncated_normal matches the conditional moments"
+            test_truncated_normal_matches_the_conditional_moments;
+          test "truncated_normal handles narrow bounds"
+            test_truncated_normal_handles_narrow_bounds;
+          test "keyed samplers are pure" test_keyed_samplers_are_pure;
+          test "permutation is a permutation" test_permutation_is_a_permutation;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;

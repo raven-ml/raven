@@ -69,12 +69,9 @@ let of_bigarray ba = F.of_bigarray (Lazy.force context) ba
 let of_buffer ba ~shape = F.of_buffer (Lazy.force context) ~shape ba
 let to_bigarray = F.to_bigarray
 let to_buffer = F.to_buffer
-
 let rand dtype shape = F.rand (Lazy.force context) dtype shape
 let randn dtype shape = F.randn (Lazy.force context) dtype shape
-
 let randint ?low ~high shape = F.randint (Lazy.force context) ?low ~high shape
-
 let bernoulli ~p shape = F.bernoulli (Lazy.force context) ~p shape
 let permutation n = F.permutation (Lazy.force context) n
 let shuffle x = F.shuffle (Lazy.force context) x
@@ -82,8 +79,8 @@ let shuffle x = F.shuffle (Lazy.force context) x
 let categorical ?axis ?shape logits =
   F.categorical (Lazy.force context) ?axis ?shape logits
 
-let truncated_normal dtype ~lower ~upper shape =
-  F.truncated_normal (Lazy.force context) dtype ~lower ~upper shape
+let truncated_normal ~lower ~upper dtype shape =
+  F.truncated_normal (Lazy.force context) ~lower ~upper dtype shape
 
 (* ───── FFT ───── *)
 

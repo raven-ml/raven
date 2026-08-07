@@ -103,13 +103,14 @@ let test_normal_moments () =
   equal ~msg:"variance near 1" (float 0.05) 1.0 var
 
 let test_randint_range () =
-  let a = Nx.to_array (Nx.Rng.randint (Nx.Rng.key 5) ~low:3 ~high:9 [| 1000 |]) in
+  let a =
+    Nx.to_array (Nx.Rng.randint (Nx.Rng.key 5) ~low:3 ~high:9 [| 1000 |])
+  in
   is_true ~msg:"in [3, 9)" (Array.for_all (fun v -> v >= 3l && v < 9l) a)
 
 let test_bernoulli_probability () =
   let a =
-    to_arr
-      (Nx.cast f32 (Nx.Rng.bernoulli (Nx.Rng.key 6) ~p:0.3 [| 10_000 |]))
+    to_arr (Nx.cast f32 (Nx.Rng.bernoulli (Nx.Rng.key 6) ~p:0.3 [| 10_000 |]))
   in
   equal ~msg:"fraction of ones near p" (float 0.02) 0.3 (mean a)
 
@@ -129,9 +130,9 @@ let test_split_is_deterministic () =
   is_true ~msg:"splitting twice gives the same subkeys" (sub 0 = sub 0);
   is_true ~msg:"subkeys differ" (sub 0 <> sub 1)
 
-(* 100k draws put the sample correlation's standard error at 0.0032, so the
-   0.03 bound is ~9 of them: it fires on real coupling between subkeys, not on
-   the excursions any particular stream makes. *)
+(* 100k draws put the sample correlation's standard error at 0.0032, so the 0.03
+   bound is ~9 of them: it fires on real coupling between subkeys, not on the
+   excursions any particular stream makes. *)
 let test_split_independence () =
   let ks = Nx.Rng.split (Nx.Rng.key 42) in
   let draw k = to_arr (Nx.Rng.uniform k f32 [| 100_000 |]) in
@@ -146,7 +147,8 @@ let test_fold_in_distinct_and_reproducible () =
   let outs = Array.init 5 draw in
   for i = 0 to 4 do
     for j = i + 1 to 4 do
-      is_true ~msg:(Printf.sprintf "steps %d and %d differ" i j)
+      is_true
+        ~msg:(Printf.sprintf "steps %d and %d differ" i j)
         (outs.(i) <> outs.(j))
     done
   done;
@@ -199,7 +201,8 @@ let test_jit_split_derived_key_traces () =
       (Nx.Rng.uniform ks.(1) Nx.float32 [| 8 |])
   in
   let k = Nx.Rng.key 11 in
-  check_bits ~msg:"keys split inside the trace" (f k) (Rune.jit (module Key) f k)
+  check_bits ~msg:"keys split inside the trace" (f k)
+    (Rune.jit (module Key) f k)
 
 let test_jit_fold_in_driven_steps () =
   let root = Nx.Rng.key 3 in
@@ -207,7 +210,8 @@ let test_jit_fold_in_driven_steps () =
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
     for j = i + 1 to 4 do
-      is_true ~msg:(Printf.sprintf "steps %d and %d differ" i j)
+      is_true
+        ~msg:(Printf.sprintf "steps %d and %d differ" i j)
         (outs.(i) <> outs.(j))
     done
   done;
@@ -217,6 +221,20 @@ let test_jit_fold_in_driven_steps () =
 let test_jit_implicit_rng_raises () =
   let g = Rune.jit' (fun x -> Nx.add x (Nx.rand f32 [| 3 |])) in
   raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0 |]))
+
+(* [truncated_normal] used to reject out-of-range draws in a loop whose
+   continuation test read the mask back to the host, which no trace can do. The
+   inverse-CDF form is straight-line, so it compiles like any other sampler. *)
+let test_jit_truncated_normal_compiles () =
+  let f key =
+    Nx.Rng.truncated_normal key ~lower:(-2.0) ~upper:2.0 f32 [| 256 |]
+  in
+  let k = Nx.Rng.key 31 in
+  check_arr ~msg:"eager == jit" (to_arr (f k)) (Rune.jit (module Key) f k);
+  is_true ~msg:"compiled draws respect the bounds"
+    (Array.for_all
+       (fun v -> v >= -2.0 && v <= 2.0)
+       (to_arr (Rune.jit (module Key) f k)))
 
 (* A scope is as strong as the key it is rooted at. [with_key] on a traced key
    makes every scope draw [fold_in key i] on that key, so the keyless samplers
@@ -244,7 +262,8 @@ let test_jit_scope_recomputes_per_key () =
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
     for j = i + 1 to 4 do
-      is_true ~msg:(Printf.sprintf "steps %d and %d differ" i j)
+      is_true
+        ~msg:(Printf.sprintf "steps %d and %d differ" i j)
         (outs.(i) <> outs.(j))
     done
   done;
@@ -295,9 +314,7 @@ let test_grad_dropout_mask_is_constant () =
     Nx.sum (Nx.mul x m)
   in
   let g = Rune.grad' f x in
-  let m =
-    match !forward_mask with Some m -> m | None -> assert false
-  in
+  let m = match !forward_mask with Some m -> m | None -> assert false in
   (* The gradient is exactly the mask: the same values flowed through the
      forward and the backward pass, and no gradient flowed into the draw. *)
   check_bits ~msg:"gradient equals the forward mask" m g
@@ -330,8 +347,8 @@ let test_fold_in_axis_eager_is_lane_zero () =
     (Nx.Rng.uniform (Nx.Rng.fold_in_axis root) f32 [| 8 |])
 
 (* fold_in_axis under vmap folds the lane index into a single key, so one key
-   decorrelates the lanes without a manual split-and-stack — lane [i] draws
-   what [fold_in root i] draws. *)
+   decorrelates the lanes without a manual split-and-stack — lane [i] draws what
+   [fold_in root i] draws. *)
 
 let test_vmap_fold_in_axis_decorrelates () =
   let root = Nx.Rng.key 42 in
@@ -372,15 +389,17 @@ let test_vmap_scope_rooted_at_mapped_key () =
 
 (* Pmap: [fold_in_axis] folds each device's own index into the replicated key,
    so the devices draw decorrelated streams with no manual split. Multiplying
-   the draw by a batch-sharded operand exposes every device's shard — device
-   [i] draws exactly what [fold_in key i] draws for its slice. *)
+   the draw by a batch-sharded operand exposes every device's shard — device [i]
+   draws exactly what [fold_in key i] draws for its slice. *)
 
 let test_pmap_fold_in_axis_decorrelates () =
   let key = Nx.Rng.key 42 in
   let check devices =
     let n = List.length devices in
     let g =
-      Rune.pmap2 ~devices ~in_axes:[ Some 0; None ] (module Pair) (module Draw)
+      Rune.pmap2 ~devices ~in_axes:[ Some 0; None ]
+        (module Pair)
+        (module Draw)
         (fun (rows, key) ->
           Nx.mul rows (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| n; 8 |]))
     in
@@ -435,6 +454,7 @@ let tests =
           test_jit_fold_in_driven_steps;
         test "implicit RNG raises" test_jit_implicit_rng_raises;
         test "a captured key raises" test_jit_captured_key_raises;
+        test "truncated_normal compiles" test_jit_truncated_normal_compiles;
         test "a scope rooted at an input key compiles"
           test_jit_scope_rooted_at_input_key_traces;
         test "a scope recomputes from the key it is given"

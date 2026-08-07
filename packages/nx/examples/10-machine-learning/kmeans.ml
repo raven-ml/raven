@@ -7,7 +7,8 @@ open Nx
 
 (* Pairwise squared L2 distances: [n, d] x [k, d] -> [n, k] *)
 let sq_distances a b =
-  sum ~axes:[ 2 ] (square (sub (unsqueeze ~axes:[ 1 ] a) (unsqueeze ~axes:[ 0 ] b)))
+  sum ~axes:[ 2 ]
+    (square (sub (unsqueeze ~axes:[ 1 ] a) (unsqueeze ~axes:[ 0 ] b)))
 
 (* Isotropic Gaussian blobs around given centres. *)
 let make_blobs ~samples_per_cluster centers =
