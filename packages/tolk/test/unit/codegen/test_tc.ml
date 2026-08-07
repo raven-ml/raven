@@ -112,6 +112,31 @@ let matmul_f32_global_ast ~m ~n ~k =
   let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
   wrap_sink [ e ]
 
+(* out[j] = sum_i sum_k (a[i,k] * b[k,j]): a matmul whose M axis is reduced
+   away rather than stored. The M range is a REDUCE, so it can be picked as a
+   tensor-core X or Y axis — which a WMMA cannot express, since those axes
+   index the accumulator tile. *)
+let matmul_reduced_output_ast ~m ~n ~k =
+  let p_out = U.param ~slot:0 ~dtype:global_fptr () in
+  let p_a = U.param ~slot:1 ~dtype:global_fptr () in
+  let p_b = U.param ~slot:2 ~dtype:global_fptr () in
+  let r_m = reduce_range ~axis:0 m in
+  let r_n = global_range ~axis:1 n in
+  let r_k = reduce_range ~axis:2 k in
+  let open U.O in
+  let idx_a = U.index ~ptr:p_a ~idxs:[ (r_m * idx k) + r_k ] () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[ (r_k * idx n) + r_n ] () in
+  let mul =
+    U.alu_binary ~op:Ops.Mul
+      ~lhs:(U.load ~src:idx_a ())
+      ~rhs:(U.load ~src:idx_b ())
+  in
+  let red =
+    U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_m; r_k ] ~dtype:D.float32
+  in
+  let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r_n ] ()) ~value:red () in
+  wrap_sink [ U.end_ ~value:st ~ranges:[ r_n ] ]
+
 (* Matmul with f16 inputs and f32 accumulation *)
 let matmul_f16_global_ast ~m ~n ~k =
   let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
@@ -590,6 +615,16 @@ let () =
           test "TC dtype mismatch rejected" (fun () ->
             let ast = matmul_f32_global_ast ~m:16 ~n:8 ~k:8 in
             let ren = tc_renderer Tc.cuda_sm75 in
+            let t = P.create ast ren in
+            raises_opt_error (fun () ->
+              ignore (P.apply_opt t
+                (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }))));
+
+          test "TC over a reduced output axis rejected" (fun () ->
+            let tc = List.hd Tc.metal in
+            let m, n, k = tc.Tc.dims in
+            let ast = matmul_reduced_output_ast ~m:(m * 2) ~n ~k in
+            let ren = tc_renderer Tc.metal in
             let t = P.create ast ren in
             raises_opt_error (fun () ->
               ignore (P.apply_opt t

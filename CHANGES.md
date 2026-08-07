@@ -46,6 +46,11 @@ thread.
 
 ### Tolk (new)
 
+- Reject the tensor-core optimisation when one of its X or Y axes is a reduce
+  axis. Those axes index the WMMA accumulator tile, so a kernel that reduces
+  over a matmul's output dimensions (`(a @ b)` summed over `M`, as a recurrent
+  loss does) compiled to a kernel that computed the wrong values. `BEAM` search
+  ranks candidates by runtime alone, so it could select it silently.
 - Normal `dune build` no longer runs the debug golden-test generator; its
   `DEBUG=6` AST diagnostics and `.actual` fixtures are confined to `runtest`.
 - Codegen distributes the negation of a sum as a multiply by `-1` over its

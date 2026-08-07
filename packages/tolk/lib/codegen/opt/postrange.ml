@@ -923,6 +923,13 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
                   if axis >= List.length choices then None
                   else begin
                     let axes = Array.of_list (List.nth choices axis) in
+                    (* The X and Y axes index the accumulator, so a reduce
+                       over them would have to accumulate across the tile the
+                       WMMA writes as a whole. *)
+                    check
+                      (range_kind axes.(0) <> Axis_type.Reduce
+                      && range_kind axes.(1) <> Axis_type.Reduce)
+                      "tensor core X/Y axes can't be REDUCE";
                     t.ast <-
                       U.substitute [ (red, U.with_tag "TC" red) ] t.ast;
                     refresh t;
