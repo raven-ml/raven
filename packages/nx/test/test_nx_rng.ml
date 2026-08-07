@@ -166,7 +166,7 @@ let test_keyless_float_sampler_dtypes () =
 
 let test_randint () =
   let shape = [| 10 |] in
-  let t = Rng.run ~seed:42 (fun () -> randint Nx.int32 ~high:15 shape 5) in
+  let t = Rng.run ~seed:42 (fun () -> randint ~low:5 ~high:15 shape) in
 
   equal ~msg:"randint produces correct shape" (array int) shape (Nx.shape t);
 
@@ -184,7 +184,7 @@ let test_randint () =
 let test_randint_covers_range_uniformly () =
   let low = -5 and high = 5 in
   let n = 200_000 in
-  let values = Nx.to_array (Rng.randint (Rng.key 91) ~high [| n |] low) in
+  let values = Nx.to_array (Rng.randint (Rng.key 91) ~low ~high [| n |]) in
   let span = high - low in
   let counts = Array.make span 0 in
   let out_of_range = ref 0 in

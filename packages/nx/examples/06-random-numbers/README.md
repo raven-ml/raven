@@ -22,7 +22,7 @@ dune exec nx/examples/06-random-numbers/main.exe
 | `Rng.run ~seed f`                        | Execute `f` in a deterministic RNG scope          |
 | `Rng.uniform dtype shape`                | Uniform random values in [0, 1)                   |
 | `Rng.normal dtype shape`                 | Standard normal distribution (mean=0, std=1)      |
-| `Rng.randint ~high dtype shape low`      | Random integers in [low, high)                    |
+| `randint ?low ~high shape`               | Random int32 values in [low, high)                |
 | `Rng.shuffle t`                          | Randomly permute array elements                   |
 | `rand dtype shape`                       | Shorthand for uniform random values               |
 

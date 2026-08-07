@@ -835,7 +835,7 @@ let random_tests =
     test "randint" (fun () ->
         let t =
           Nx.Rng.run ~seed:2 (fun () ->
-              Nx.randint Nx.int32 shape_2x3 0 ~high:10)
+              Nx.randint ~high:10 shape_2x3)
         in
         check_shape "randint shape" shape_2x3 t;
         (* Check all values are in range *)

@@ -555,13 +555,16 @@ module Rng : sig
       variance 1) via the Box-Muller transform over two {!uniform} draws. *)
 
   val randint :
-    key -> ?high:int -> int array -> int -> (int32, int32_elt) t
-  (** [randint k ?high shape low] samples integers uniformly from
-      [\[low, high)]. [high] defaults to [10]. The draw comes from a 24-bit
-      {!uniform}, so a range wider than [2 ** 24] leaves some values
-      unreachable.
+    key -> ?low:int -> high:int -> int array -> (int32, int32_elt) t
+  (** [randint k ~high shape] samples integers uniformly from [\[low, high)].
+      [low] defaults to [0]. The result is [int32], the type Nx indexes with;
+      cast it for a wider or narrower integer.
 
-      Raises [Invalid_argument] if [low >= high]. *)
+      The draw comes from a 24-bit {!uniform}, so a range wider than [2 ** 24]
+      leaves some values unreachable.
+
+      Raises [Invalid_argument] if [low >= high], or if either bound falls
+      outside [int32]. *)
 
   val bernoulli : key -> p:float -> int array -> (bool, bool_elt) t
   (** [bernoulli k ~p shape] samples booleans that are [true] with probability
@@ -599,12 +602,13 @@ val randn : (float, 'b) dtype -> int array -> (float, 'b) t
 
     Raises [Invalid_argument] if a shape dimension is negative. *)
 
-val randint : ('a, 'b) dtype -> ?high:int -> int array -> int -> ('a, 'b) t
-(** [randint dtype ?high shape low] samples integers uniformly from \[[low],
-    [high]). [high] defaults to [10].
+val randint : ?low:int -> high:int -> int array -> (int32, int32_elt) t
+(** [randint ~high shape] samples integers uniformly from \[[low], [high]).
+    [low] defaults to [0]. The result is [int32]; cast it for a wider or
+    narrower integer.
 
-    Raises [Invalid_argument] if [dtype] is not an integer type or
-    [low >= high]. *)
+    Raises [Invalid_argument] if [low >= high], or if either bound falls outside
+    [int32]. *)
 
 val bernoulli : p:float -> int array -> bool_t
 (** [bernoulli ~p shape] samples booleans that are [true] with probability [p].

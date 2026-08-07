@@ -73,8 +73,7 @@ let to_buffer = F.to_buffer
 let rand dtype shape = F.rand (Lazy.force context) dtype shape
 let randn dtype shape = F.randn (Lazy.force context) dtype shape
 
-let randint dtype ?high shape low =
-  F.randint (Lazy.force context) dtype ?high shape low
+let randint ?low ~high shape = F.randint (Lazy.force context) ?low ~high shape
 
 let bernoulli ~p shape = F.bernoulli (Lazy.force context) ~p shape
 let permutation n = F.permutation (Lazy.force context) n

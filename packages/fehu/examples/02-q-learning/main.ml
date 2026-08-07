@@ -100,7 +100,7 @@ let () =
   in
 
   let sample_random_action () =
-    let t = Nx.randint Nx.int32 ~high:n_actions [| 1 |] 0 in
+    let t = Nx.randint ~high:n_actions [| 1 |] in
     Int32.to_int (Nx.to_array t : Int32.t array).(0)
   in
 

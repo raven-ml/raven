@@ -74,7 +74,7 @@ let sample_indices buf ~batch_size =
   if buf.size = 0 then invalid_arg err_empty;
   if batch_size <= 0 then invalid_arg err_batch_size;
   let n = min batch_size buf.size in
-  let raw = Nx.randint Nx.int32 ~high:buf.size [| n |] 0 in
+  let raw = Nx.randint ~high:buf.size [| n |] in
   let idx : Int32.t array = Nx.to_array raw in
   (idx, n)
 

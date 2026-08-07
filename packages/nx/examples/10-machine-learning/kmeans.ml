@@ -25,7 +25,7 @@ let kmeanspp data k =
   let n = (shape data).(0) in
   let d = (shape data).(1) in
   let centroids = zeros Float64 [| k; d |] in
-  let idx = Int32.to_int (item [] (randint Int32 ~high:n [||] 0)) in
+  let idx = Int32.to_int (item [] (randint ~high:n [||])) in
   set [ 0 ] centroids (get [ idx ] data);
   for c = 1 to k - 1 do
     let current = slice [ R (0, c); A ] centroids in

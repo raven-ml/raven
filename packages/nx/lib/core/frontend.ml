@@ -2167,11 +2167,23 @@ module Make (B : Backend_intf.S) = struct
         let z = concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ] in
         cast dtype (reshape shape (shrink [| (0, n) |] z))
 
-    let randint k ?(high = 10) shape low =
+    (* The draw is built and returned in int32, so the range must fit there:
+       [Int32.of_int] would otherwise wrap a wide bound into a valid-looking
+       narrow one. *)
+    let check_range name ~low ~high =
       if low >= high then
         invalid_arg
-          (Printf.sprintf "Nx.Rng.randint: invalid range, low=%d >= high=%d" low
+          (Printf.sprintf "Nx.%s: invalid range, low=%d >= high=%d" name low
              high);
+      let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF in
+      if not (fits low && fits high) then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.%s: range [%d, %d) does not fit in int32, the result dtype"
+             name low high)
+
+    let randint k ?(low = 0) ~high shape =
+      check_range "Rng.randint" ~low ~high;
       let ctx = B.context k in
       let u = uniform k Dtype.float32 shape in
       (* [u * (high - low)] is non-negative, so the cast's truncation is a
@@ -2249,11 +2261,9 @@ module Make (B : Backend_intf.S) = struct
     validate_random_float_params "randn" dtype shape;
     Rng.normal (Rng.split_off ctx) dtype shape
 
-  let randint ctx dtype ?(high = 10) shape low =
-    if low >= high then err "randint" "range, low=%d >= high=%d" low high;
-    if not (Dtype.is_int dtype) then
-      invalid_arg "randint: dtype, only integer dtypes supported";
-    astype dtype (Rng.randint (Rng.split_off ctx) ~high shape low)
+  let randint ctx ?(low = 0) ~high shape =
+    Rng.check_range "randint" ~low ~high;
+    Rng.randint (Rng.split_off ctx) ~low ~high shape
 
   let bernoulli ctx ~p shape =
     if p < 0.0 || p > 1.0 then invalid_arg "bernoulli: p must be in [0, 1]";

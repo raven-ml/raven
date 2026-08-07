@@ -11,7 +11,7 @@ open Nx.Infix
 
 let () =
   (* --- Dice simulation: roll 10 six-sided dice --- *)
-  let dice = randint Int32 ~high:7 [| 10 |] 1 in
+  let dice = randint ~low:1 ~high:7 [| 10 |] in
   Printf.printf "10 dice rolls: %s\n\n" (to_string dice);
 
   (* --- Uniform random floats in [0, 1) --- *)

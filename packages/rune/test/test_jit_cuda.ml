@@ -438,7 +438,7 @@ let test_rng_uniform_bit_parity_on_cuda () =
 let test_rng_int_samplers_bit_parity_on_cuda () =
   require_cuda ();
   let k = Nx.Rng.key 9 in
-  let fr key = Nx.cast f32 (Nx.Rng.randint key ~high:9 [| 64 |] 3) in
+  let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k) (Rune.jit ~device:"CUDA" (module Key) fr k);
   let fb key = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.3 [| 64 |]) in
   check_bits ~msg:"bernoulli" (fb k)

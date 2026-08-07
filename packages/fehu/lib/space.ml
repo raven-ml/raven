@@ -103,7 +103,7 @@ module Discrete = struct
       v >= start && v < hi
     in
     let sample () =
-      let tensor = Nx.randint Nx.int32 ~high:hi [| 1 |] start in
+      let tensor = Nx.randint ~low:start ~high:hi [| 1 |] in
       let arr : Int32.t array = Nx.to_array tensor in
       Nx.scalar Nx.int32 arr.(0)
     in
@@ -254,7 +254,7 @@ module Multi_binary = struct
       let arr : Int32.t array = Nx.to_array tensor in
       Array.for_all (fun v -> v = Int32.zero || v = Int32.one) arr
     in
-    let sample () = Nx.randint Nx.int32 ~high:2 [| n |] 0 in
+    let sample () = Nx.randint ~high:2 [| n |] in
     let pack tensor =
       let arr : Int32.t array = Nx.to_array tensor in
       Value.Bool_array
@@ -324,7 +324,7 @@ module Multi_discrete = struct
     let sample () =
       let data =
         Array.init arity (fun i ->
-            let tensor = Nx.randint Nx.int32 ~high:nvec.(i) [| 1 |] 0 in
+            let tensor = Nx.randint ~high:nvec.(i) [| 1 |] in
             let arr = Nx.to_array tensor in
             arr.(0))
       in
@@ -523,7 +523,7 @@ module Sequence = struct
             if max_len = min_length then min_length
             else
               let tensor =
-                Nx.randint Nx.int32 ~high:(max_len + 1) [| 1 |] min_length
+                Nx.randint ~low:min_length ~high:(max_len + 1) [| 1 |]
               in
               let arr = Nx.to_array tensor in
               Int32.to_int arr.(0)
@@ -602,13 +602,13 @@ module Text = struct
       let length =
         if max_length = 1 then 1
         else
-          let tensor = Nx.randint Nx.int32 ~high:(max_length + 1) [| 1 |] 1 in
+          let tensor = Nx.randint ~low:1 ~high:(max_length + 1) [| 1 |] in
           let arr = Nx.to_array tensor in
           Int32.to_int arr.(0)
       in
       if length = 0 then ""
       else
-        let idxs = Nx.randint Nx.int32 ~high:charset_len [| length |] 0 in
+        let idxs = Nx.randint ~high:charset_len [| length |] in
         let arr = Nx.to_array idxs in
         Bytes.init length (fun i -> charset.[Int32.to_int arr.(i)])
         |> Bytes.to_string

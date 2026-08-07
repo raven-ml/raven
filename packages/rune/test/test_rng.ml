@@ -103,7 +103,7 @@ let test_normal_moments () =
   equal ~msg:"variance near 1" (float 0.05) 1.0 var
 
 let test_randint_range () =
-  let a = Nx.to_array (Nx.Rng.randint (Nx.Rng.key 5) ~high:9 [| 1000 |] 3) in
+  let a = Nx.to_array (Nx.Rng.randint (Nx.Rng.key 5) ~low:3 ~high:9 [| 1000 |]) in
   is_true ~msg:"in [3, 9)" (Array.for_all (fun v -> v >= 3l && v < 9l) a)
 
 let test_bernoulli_probability () =
@@ -115,7 +115,7 @@ let test_bernoulli_probability () =
 
 let test_sampler_argument_errors () =
   raises_invalid_arg (fun () ->
-      ignore (Nx.Rng.randint (Nx.Rng.key 0) ~high:3 [| 4 |] 3));
+      ignore (Nx.Rng.randint (Nx.Rng.key 0) ~low:3 ~high:3 [| 4 |]));
   raises_invalid_arg (fun () ->
       ignore (Nx.Rng.bernoulli (Nx.Rng.key 0) ~p:1.5 [| 4 |]));
   raises_invalid_arg (fun () -> ignore (Nx.Rng.split ~n:0 (Nx.Rng.key 0)));
@@ -179,7 +179,7 @@ let test_jit_uniform_bit_parity () =
 
 let test_jit_int_samplers_bit_parity () =
   let k = Nx.Rng.key 9 in
-  let fr key = Nx.cast f32 (Nx.Rng.randint key ~high:9 [| 64 |] 3) in
+  let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k) (Rune.jit (module Key) fr k);
   let fb key = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.3 [| 64 |]) in
   check_bits ~msg:"bernoulli" (fb k) (Rune.jit (module Key) fb k)
