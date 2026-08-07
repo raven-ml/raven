@@ -218,6 +218,66 @@ let test_jit_implicit_rng_raises () =
   let g = Rune.jit' (fun x -> Nx.add x (Nx.rand f32 [| 3 |])) in
   raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0 |]))
 
+(* A scope is as strong as the key it is rooted at. [with_key] on a traced key
+   makes every scope draw [fold_in key i] on that key, so the keyless samplers
+   compile: the compiled program recomputes each draw from the input key. This
+   is what lets a jitted step keep writing [Nx.rand] instead of threading a
+   subkey to every draw site. *)
+
+let test_jit_scope_rooted_at_input_key_traces () =
+  let f key =
+    Nx.Rng.with_key key (fun () ->
+        Nx.add (Nx.rand f32 [| 8 |]) (Nx.randn f32 [| 8 |]))
+  in
+  let k = Nx.Rng.key 17 in
+  check_arr ~msg:"eager == jit" (to_arr (f k)) (Rune.jit (module Key) f k)
+
+(* Each call recomputes from the key it is given, so feeding fresh keys gives
+   fresh values and the same key replays. A frozen draw would fail both. *)
+let test_jit_scope_recomputes_per_key () =
+  let root = Nx.Rng.key 5 in
+  let g =
+    Rune.jit
+      (module Key)
+      (fun key -> Nx.Rng.with_key key (fun () -> Nx.rand f32 [| 8 |]))
+  in
+  let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
+  for i = 0 to 4 do
+    for j = i + 1 to 4 do
+      is_true ~msg:(Printf.sprintf "steps %d and %d differ" i j)
+        (outs.(i) <> outs.(j))
+    done
+  done;
+  is_true ~msg:"reproducible from the root"
+    (to_arr (g (Nx.Rng.fold_in root 3)) = outs.(3))
+
+(* Successive draws in one scope are decorrelated, exactly as the counter
+   promises — the scope is not one draw replayed. *)
+let test_jit_scope_draws_are_decorrelated () =
+  let g =
+    Rune.jit
+      (module Key)
+      (fun key ->
+        Nx.Rng.with_key key (fun () ->
+            Nx.stack ~axis:0 [ Nx.rand f32 [| 64 |]; Nx.rand f32 [| 64 |] ]))
+  in
+  let out = g (Nx.Rng.key 21) in
+  let a = to_arr (Nx.slice [ Nx.I 0 ] out)
+  and b = to_arr (Nx.slice [ Nx.I 1 ] out) in
+  is_true ~msg:"the two draws differ" (a <> b);
+  is_true ~msg:"the two draws are uncorrelated"
+    (abs_float (correlation a b) < 0.15)
+
+(* A scope rooted at a constant is still a constant: the root, not the
+   front-end, is what the refusal is about. *)
+let test_jit_scope_rooted_at_constant_raises () =
+  let g =
+    Rune.jit' (fun x ->
+        Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
+            Nx.add x (Nx.rand f32 [| 3 |])))
+  in
+  raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0 |]))
+
 let test_jit_captured_key_raises () =
   let k = Nx.Rng.key 42 in
   let g = Rune.jit' (fun x -> Nx.add x (Nx.Rng.uniform k f32 [| 3 |])) in
@@ -291,6 +351,25 @@ let test_vmap_fold_in_axis_decorrelates () =
   is_true ~msg:"lanes are decorrelated"
     (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
 
+(* A scope rooted at a mapped key decorrelates lanes the same way an explicit
+   per-lane key does: lane [i] draws what the unbatched scope on [ks.(i)]
+   draws. *)
+
+let test_vmap_scope_rooted_at_mapped_key () =
+  let ks = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
+  let stacked = Nx.stack ~axis:0 (Array.to_list ks) in
+  let draw () = Nx.rand Nx.float32 [| 8 |] in
+  let out = Rune.vmap' (fun key -> Nx.Rng.with_key key draw) stacked in
+  equal ~msg:"one row per lane" int 4 (Nx.shape out).(0);
+  for i = 0 to 3 do
+    check_bits
+      ~msg:(Printf.sprintf "lane %d matches its key" i)
+      (Nx.Rng.with_key ks.(i) draw)
+      (Nx.slice [ Nx.I i ] out)
+  done;
+  is_true ~msg:"lanes are decorrelated"
+    (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
+
 (* Pmap: [fold_in_axis] folds each device's own index into the replicated key,
    so the devices draw decorrelated streams with no manual split. Multiplying
    the draw by a batch-sharded operand exposes every device's shard — device
@@ -356,6 +435,14 @@ let tests =
           test_jit_fold_in_driven_steps;
         test "implicit RNG raises" test_jit_implicit_rng_raises;
         test "a captured key raises" test_jit_captured_key_raises;
+        test "a scope rooted at an input key compiles"
+          test_jit_scope_rooted_at_input_key_traces;
+        test "a scope recomputes from the key it is given"
+          test_jit_scope_recomputes_per_key;
+        test "successive scope draws are decorrelated"
+          test_jit_scope_draws_are_decorrelated;
+        test "a scope rooted at a constant raises"
+          test_jit_scope_rooted_at_constant_raises;
       ];
     group "transformations"
       [
@@ -365,6 +452,8 @@ let tests =
           test_vmap_per_lane_keys;
         test "fold_in_axis is lane 0 outside a transform"
           test_fold_in_axis_eager_is_lane_zero;
+        test "vmap over per-lane key scopes decorrelates lanes"
+          test_vmap_scope_rooted_at_mapped_key;
         test "vmap fold_in_axis decorrelates lanes"
           test_vmap_fold_in_axis_decorrelates;
         test "pmap fold_in_axis decorrelates devices"

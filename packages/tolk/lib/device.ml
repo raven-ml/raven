@@ -503,6 +503,7 @@ module Program_cache = struct
   let add_param_arg b (p : Uop.param_arg) =
     add_int b p.slot;
     add_option (add_pair add_int add_int) b p.vmin_vmax;
+    add_option add_int b p.multiple_of;
     add_option add_atom b p.name;
     add_addrspace b p.addrspace;
     add_option add_int b p.axis
@@ -562,18 +563,16 @@ module Program_cache = struct
     add_list add_int b info.ins
 
   let add_wmma_info b (info : Uop.wmma_info) =
-    add_atom b info.name;
     add_triple add_int add_int add_int b info.dims;
     add_atom b (Dtype.to_string info.dtype_in);
-    add_atom b (Dtype.to_string info.dtype_out);
     add_atom b info.device;
     add_int b info.threads;
-    add_triple
-      (add_list (add_pair add_int add_int))
-      (add_list (add_pair add_int add_int))
-      (add_list (add_pair add_int add_int))
-      b info.upcast_axes;
-    add_list add_int b info.reduce_axes
+    add_option
+      (add_triple
+         (add_list (add_pair add_int add_int))
+         (add_list (add_pair add_int add_int))
+         (add_list (add_pair add_int add_int)))
+      b info.tc_upcast_axes
 
   let rec add_arg add_uop b = function
     | Uop.Arg.Empty -> add_atom b "empty"

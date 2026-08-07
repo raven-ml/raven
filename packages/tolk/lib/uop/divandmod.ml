@@ -131,6 +131,14 @@ let rule_add_const_divmod =
    is installed to reach a fixed point; without it the results are
    under-simplified but still correct. *)
 
+(* Whether [x] is a PARAM whose declared multiple is divisible by the constant
+   divisor [y], making [x % y] statically zero. *)
+let param_multiple_of_divides x y =
+  match Uop.Arg.as_param_arg (Uop.arg x), Uop.const_int_value y with
+  | Some { multiple_of = Some m; _ }, Some c when c <> 0 ->
+      Uop.op x = Ops.Param && m mod c = 0
+  | _ -> false
+
 (* cancel_divmod: [x // y] takes a single value over the whole range.
    The quotient bound is read from the constructed [x // y] node so the
    check uses the same reasoning as everywhere else, including divisors
@@ -490,6 +498,13 @@ and fold_divmod_general_rec (d : Uop.t) : Uop.t option =
     else
       match try_cancel_divmod d_op x y with
       | Some r -> Some r
+      | None when param_multiple_of_divides x y ->
+          (* The numerator is declared a multiple of the divisor, so the
+             remainder is zero and the quotient is irreducible. Stop here
+             rather than falling through: the later strategies cannot improve
+             on a bare quotient and several would rewrite it into something
+             larger. *)
+          if d_op = Ops.Floormod then Some (Uop.const_like x 0) else None
       | None ->
           (match Uop.const_int_value y with
            | Some c when c > 0 ->

@@ -66,7 +66,6 @@ let compiled_program ~name () =
       globals = [ 0 ];
       outs = [ 0 ];
       ins = [ 0 ];
-      aux = [ "aux-payload" ];
     }
   in
   U.program ~sink ~linear

@@ -188,12 +188,13 @@ val vmap :
     Composes with the other transformations: [vmap] of {!grad} computes
     per-example gradients, and {!grad} of [vmap] differentiates through the map.
 
-    {b Note.} Randomness a lane closes over ([Nx.rand] and friends, or a
-    {!Rng} key used as a constant) draws {e identical} values for every lane:
-    it is a constant of the map. For decorrelated lanes, {!Rng.split} one key
-    into per-lane keys, stack them into an [[n; 2]] tensor, and map over it —
-    the sampler inside the map then sees one key per lane. Reading a batched
-    tensor's value inside the mapped function raises.
+    {b Note.} Randomness a lane closes over (a captured {!Nx.Rng.key}, or
+    [Nx.rand] under a scope the map closes over) draws {e identical} values for
+    every lane: it is a constant of the map. Decorrelate them either by folding
+    the lane index into one key with {!Nx.Rng.fold_in_axis}, or by mapping over
+    a key axis — {!Nx.Rng.split} one key into per-lane keys, stack them into an
+    [[n; 2]] tensor, and map over it. Reading a batched tensor's value inside
+    the mapped function raises.
 
     Raises [Invalid_argument] if [in_axes] does not have one entry per leaf,
     maps no leaf, names an axis out of bounds, or if the mapped axis sizes
@@ -338,13 +339,19 @@ val check_grads :
 
 (** {1:rng Random number generation}
 
-    Random number generation lives entirely in {!Nx.Rng}: keys, the explicit
-    samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the implicit scope
-    ({!Nx.Rng.run}). A key is an ordinary [[|2|]] int32 tensor, so it traces,
-    batches and compiles like any tensor — thread it as an input of a jitted
-    function and derive per-call keys with {!Nx.Rng.split} or
+    Random number generation lives entirely in {!Nx.Rng}: keys, the keyed
+    samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the scope
+    ({!Nx.Rng.with_key}, {!Nx.Rng.run}). A key is an ordinary [[|2|]] int32
+    tensor, so it traces, batches and shards like any tensor — thread it as an
+    input of a jitted function and derive per-call keys with {!Nx.Rng.split} or
     {!Nx.Rng.fold_in}. The transforms answer the generator's effects but add no
-    RNG vocabulary of their own. *)
+    RNG vocabulary of their own.
+
+    Under a transform, what matters is where the key comes from, not which
+    front-end draws from it. A traced or mapped key works either way: passed to
+    a keyed sampler, or as the root of a {!Nx.Rng.with_key} scope that the
+    keyless [Nx.rand] draws from. A key the transform closes over is a constant
+    of that transform, whichever front-end reads it. *)
 
 (** {1:jit Just-in-time compilation} *)
 
@@ -352,13 +359,12 @@ exception Jit_error of string
 (** Raised when a function cannot be compiled: it read the value of a traced
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
     data-dependent branch), it assigned to a tensor it closes over (captures
-    are compile-time constants), it drew random values from a key that does
-    not depend on the inputs ([Nx.rand] and friends, or a captured
-    {!Nx.Rng.key} — the draw would be a compile-time constant replayed on every
-    call; pass the key as an input instead), or it used an operation the
-    compiler does
-    not support (FFT, linear algebra, complex, int4 and uint4 tensors,
-    assigning into a view). *)
+    are compile-time constants), it drew random values from a key that does not
+    depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
+    [Nx.Rng.run ~seed] — the draw would be a compile-time constant replayed on
+    every call; pass the key as an input instead), or it used an operation the
+    compiler does not support (FFT, linear algebra, complex, int4 and uint4
+    tensors, assigning into a view). *)
 
 val jit :
   ?device:string ->
@@ -453,13 +459,18 @@ val jit :
     traced tensors: a data-dependent {!cond} or {!while_loop} predicate raises
     {!Jit_error}. Compiled functions are not thread-safe.
 
-    Randomness inside a jitted function comes from {!Rng} keys threaded
+    Randomness inside a jitted function comes from a {!Nx.Rng} key threaded
     through the inputs: samplers are pure functions of their key, so the
-    compiled program recomputes each draw from the current key on every call
-    — feed a fresh key ({!Rng.split}, {!Rng.fold_in}) for fresh values. A key
-    that does not depend on the inputs (implicit RNG such as [Nx.rand], or a
-    captured key) raises {!Jit_error} at trace time rather than replay one
-    frozen draw.
+    compiled program recomputes each draw from the current key on every call —
+    feed a fresh key ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for fresh values.
+
+    Either front-end works. Pass the key to each sampler
+    ({!Nx.Rng.uniform} and friends), or wrap the body in
+    {!Nx.Rng.with_key} on that input key and keep writing the keyless
+    [Nx.rand]: the scope derives every draw from its root, so a traced root
+    makes the whole scope traced. What raises {!Jit_error} is a root that does
+    not depend on the inputs — a captured key, or [Nx.Rng.run ~seed] — since
+    the draw would be a compile-time constant replayed on every call.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
     [Invalid_argument] for an unknown or unavailable [device]. *)

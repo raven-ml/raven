@@ -87,8 +87,19 @@ val permutes_for_shape_str : t -> string list -> int list * int list
     (for operands A and B) that reorder [shape_str] according to the
     swizzle. *)
 
+val dtype_name : Tolk_uop.Dtype.t -> string
+(** [dtype_name dt] is the C spelling of [dt] used inside tensor-core
+    primitive names — ["half"], ["char"], ["float8_e4m3"]. This is the sole
+    owner of that mapping: the renderer derives the emitted primitive's name
+    from it, so a second spelling anywhere would desynchronise a [#define]
+    from its call site.
+
+    @raise Invalid_argument if [dt] has no tensor-core spelling, rather than
+    falling back to a generic one that would name a primitive that does not
+    exist. *)
+
 val to_string : t -> string
-(** [to_string tc] is ["WMMA_N_M_K_in_out"]. *)
+(** [to_string tc] is ["WMMA_N_M_K_in_out"], built from {!dtype_name}. *)
 
 (** {1:definitions Definitions}
 

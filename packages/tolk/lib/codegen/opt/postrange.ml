@@ -564,26 +564,22 @@ let build_wmma_node t (tc : Tc.t) ne =
   in
   let wmma_info : U.wmma_info =
     {
-      name = Tc.to_string tc;
       dims = tc.dims;
       dtype_in = tc.dtype_in;
-      dtype_out = tc.dtype_out;
       device = Renderer.device t.ren;
       threads = tc.threads;
-      upcast_axes = (ua, ub, uc);
-      reduce_axes = [];
+      tc_upcast_axes = Some (ua, ub, uc);
     }
   in
   let wmma =
-    U.with_tag "1"
-      (U.wmma
-         ~a:src0 ~b:src1
-         ~c:
-           (U.const_of_dtype tc.dtype_out
-              (U.Const_tuple
-                 (List.init c_ept (fun _ -> U.Const_scalar (`Float 0.0)))))
-         ~info:wmma_info
-         ~dtype:tc.dtype_out)
+    U.wmma
+      ~a:src0 ~b:src1
+      ~c:
+        (U.const_of_dtype tc.dtype_out
+           (U.Const_tuple
+              (List.init c_ept (fun _ -> U.Const_scalar (`Float 0.0)))))
+      ~info:wmma_info
+      ~dtype:tc.dtype_out
   in
   (* Preserve extra reduces *)
   let red_ranges =

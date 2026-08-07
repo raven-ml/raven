@@ -343,18 +343,16 @@ and program_info_debug_string (p : program_info) =
 and wmma_info_debug_string (w : wmma_info) =
   let pair (a, b) = tuple_string [ string_of_int a; string_of_int b ] in
   let pairs xs = tuple_string (List.map pair xs) in
-  let a, b, c = w.upcast_axes in
   tuple_string
     [
-      python_quote w.name;
       tuple_string
         (List.map string_of_int (let x, y, z = w.dims in [ x; y; z ]));
       dtype_debug_string w.dtype_in;
-      dtype_debug_string w.dtype_out;
       python_quote w.device;
       string_of_int w.threads;
-      tuple_string [ pairs a; pairs b; pairs c ];
-      tuple_string (List.map string_of_int w.reduce_axes);
+      option_string
+        (fun (a, b, c) -> tuple_string [ pairs a; pairs b; pairs c ])
+        w.tc_upcast_axes;
     ]
 
 let arg_debug_string = function

@@ -457,8 +457,6 @@ let program_info t : U.program_info =
     globals = t.globals;
     outs = t.outs;
     ins = t.ins;
-    (* TODO: delete with [Uop.program_info.aux]; nothing produces a payload. *)
-    aux = [];
   }
 
 let name t = t.name

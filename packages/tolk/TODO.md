@@ -89,15 +89,6 @@ anchors point at the tinygrad clone.
   narrowing casts. All that remains is pruning the three now-dead symbolic
   rules.
 
-- **`Uop.wait` and its spec rule are not deleted yet** (`f41e4a758`). Two
-  recorded claims about this commit are wrong. The recon said "zero hits in
-  tolk": in fact `Uop.wait` constructs one, `Uop.as_wait` views one, a
-  `spec.ml` rule admits one, and `test/unit/uop/test_uop.ml` names one. And it
-  is *not* a whole-op deletion — the reference leaves `WAIT` in the `Ops` enum
-  and removes only `UOp.wait`, the WAIT arm of `dtype_from_uop`, and the
-  `spec.py` rule. So `Ops.Wait` stays (see the note under Misc); what remains
-  to delete spans `uop.ml{,i}`, `spec.ml`, and the two test suites.
-
 - **`has_index` duplicates `op_in_backward_slice_with_self` because
   `backward_slice` is uncached.** Both feed `fold_where_closure` in
   `lib/uop/symbolic.ml`. The reference expresses that guard as
@@ -111,15 +102,8 @@ anchors point at the tinygrad clone.
   own piece of work, not a rider on whichever wave notices it.
 
   (`bool_slice` itself has moved to `lib/uop/uop.ml`, where the reference keeps
-  it, exposed as a membership query rather than a table.)
-
-- **`PARAM // c` is not treated as irreducible** (`980748ccf`).
-  `lib/uop/divandmod.ml`. The reference short-circuits `fold_divmod_general`
-  when the numerator is a `PARAM` whose `multiple_of` is divisible by the
-  denominator. Tolk's `param_arg` has no `multiple_of` field. It is not
-  renderer work — the field is never rendered — so it lands with the field
-  itself; see item 3 of the post-wave sweep, which also records that no
-  existing test would catch a botched threading.
+  it, exposed as `bool_slice_mem` — a membership query rather than a table, so
+  the memo stays private and no caller can mutate a cached set.)
 
 - **The host-scalar `bitcast` stays in `symbolic.ml`** rather than moving to
   `dtype.ml` as the reference does (`67dc02d7e`). Forced, not skipped: tolk's
@@ -222,51 +206,38 @@ anchors point at the tinygrad clone.
   gated on generating one first: without it the suite would keep passing on
   whichever form the change happened to produce.
 
-- **`Uop.O` arithmetic does not promote, so the reference's explicit casts
-  stay** (`c9e11544d`). The reference deleted `.cast(...)` from a dozen
-  codegen expressions because `UOp.__add__` and friends route through
-  `_broadcasted`, which casts both operands to their least upper dtype.
-  Tolk's `Uop.O` operators are thin `alu_binary` wrappers: the node dtype is
-  the *left* operand's, with no promotion. Dropping a cast whose weak or bool
-  operand sits on the left therefore mistypes the node. The casts stay in
-  `codegen/simplify.ml` (`fold_result`, `rule_lift_add_lt`,
-  `rule_reduce_and_where`), `decomp/decomp_dtype.ml` (`l2i` ADD/SUB carry,
-  `rne`), `decomp/decomp_op.ml` (`floordiv_to_idiv`), and
-  `decomp/decomp_transcendental.ml` (`xexp2`). The one arm already ported is
-  `reduce_unparented`'s range-size multiplier, where the strong operand is on
-  the left so both rules agree. Unblocks with `dtype_from_uop`/`promo_dtype`
-  on the node type.
+- **`c9e11544d`'s remaining cast deletions are unblocked, and each one needs
+  checking against a live spec rather than porting as cleanup.** The left-bias
+  blocker is gone: `alu_binary` now takes `promo_dtype` of its operands, so a
+  cast that only existed to force the result dtype is genuinely redundant.
 
-  *What catches a bad port*: **nothing that currently runs.** `lib/uop/spec.ml`
-  has the rule that would reject it — `ops Ops.Group.alu =?> Array.for_all
-  (matches_or_weak u)`, which admits a source only if it matches the node's
-  dtype, is `Invalid`, or is weak — but `Spec.type_verify` is gated on
-  `SPEC=1` and **no suite sets `SPEC`**. A mistyped ALU node would reach the
-  renderer and emit plausible C. Whoever lands `promo_dtype` should turn
-  `SPEC=1` on for at least one suite in the same commit, or this deletion has
-  no guard at all.
+  **But "redundant" is not the only thing a cast can be.** The first arm
+  ported under the new rule — `rule_reduce_and_where` in `codegen/simplify.ml`
+  — turned out to be **load-bearing in the wrong direction**. It emitted
+  `reduce * x.cast(c.dtype)`, and once `x` is correctly bool that cast is
+  immediately re-consumed by `rule_mul_casted_bool` (`v * gate.cast` ->
+  `gate.where(v, 0)`), so the two rules undid each other and the Mul never
+  survived. Deleting the cast fixed a rule pair that had been silently
+  cancelling. A deletion that reads as tidy-up can therefore change which
+  *other* rules fire.
 
-- **The WMMA arg is still an 8-tuple** (T6: `61e104bdf`, `2b1146b3f`,
-  `d8b83daac`). The reference shrank it to
-  `(dims, dtype_in, device, threads, tc_upcast_axes)` and derives the name and
-  output dtype; `expand_wmma` then gates on `arg[4] is not None` and clears
-  that slot instead of clearing the node tag. Tolk's `expand_wmma`
-  (`codegen/codegen_lower.ml`) still gates on `node_tag = Some "1"`. The
-  change starts at `Arg.Wmma_info` in `lib/uop/uop.ml{,i}` and sweeps
-  `renderer/cstyle.ml`, `device.ml`, `program_spec.ml`, `uop/spec.ml`, and
-  `opt/postrange.ml`; it cannot land from `codegen/` alone.
+  So for each remaining arm — `codegen/simplify.ml` (`fold_result`,
+  `rule_lift_add_lt`), `decomp/decomp_dtype.ml` (`l2i` ADD/SUB carry, `rne`),
+  `decomp/decomp_op.ml` (`floordiv_to_idiv`),
+  `decomp/decomp_transcendental.ml` (`xexp2`) — check what else matches the
+  cast before removing it, and land it with `SPEC=1` live.
 
-  *What catches a bad port*: `test/unit/codegen/test_tc.ml` pins every table's
-  WMMA names (which the reference now derives from the arg rather than storing);
-  `test/unit/test_cstyle.ml` pins the WMMA accumulator width; and
-  `test/parity/tc_matmul_{f16,bf16,fp8}` render tensor-core kernels end to end
-  on four backends. Between them the derived name, the declared width and the
-  emitted call are all covered.
+  *What catches a bad port*: `Spec.type_verify`, which is now live —
+  `test/unit/codegen/dune` sets `SPEC=1`, so a mistyped ALU node fails there
+  instead of reaching the renderer and emitting plausible C. That suite is the
+  one that runs lowering, so it is where the gate has to be; setting `SPEC=1`
+  on `test/unit/uop` would be a no-op.
 
 - **`pm_device_to_var` is not in `codegen/gpudims.ml`** (`7d4892629`). The
   reference lowers an `AxisType.DEVICE` range to the `_device_num` variable at
   the end of `pm_add_gpudims`, and drops that range from the `END`s that
-  closed it. Tolk has neither `AxisType.Device` nor `Ops.Unshard`, so there is
+  closed it. `Axis_type.Device` and `Ops.Unshard` now both exist, but nothing
+  constructs a DEVICE range yet, so there is
   no DEVICE range to lower. Lands with the MULTI → UNSHARD rework, together
   with the matching DEVICE guards in `codegen/simplify.ml`'s `mark_range_mod`
   and `opt/postrange.ml`'s `rngs`.
@@ -325,24 +296,6 @@ anchors point at the tinygrad clone.
   exhaustive match over `Axis_type.t`, so adding a constructor in step 2
   fails to compile there and forces an explicit decision.
 
-- **Frontend promotion still broadcasts shapes and has no weak scalar
-  literal.** The reference's `_broadcasted` (`40f0d4af1`, `9433790ad`,
-  `b1a72299a`) is dtype-only: it promotes to `least_upper_dtype`, keeps a weak
-  CONST weak at `weak_dtype(out)`, and leaves shapes alone for
-  `pm_expand_broadcast` to widen in codegen. tolk still expands shapes in
-  `Op.broadcasted` behind the `Tensor.broadcasted_hook` indirection, and
-  `Tensor.i`/`f`/`b` build strongly typed default-dtype constants. Two
-  blockers: `alu_binary` derives its dtype from the left source rather than
-  `promo_dtype(src)`, so two differently typed operands would silently take the
-  left one; and no `pm_expand_broadcast` exists yet in `codegen_lower.ml`.
-  Landing it deletes `Tensor.broadcasted_hook`, moves `broadcasted` into
-  `elementwise.ml` where the reference keeps it, and dissolves the triplicated
-  `uf` helper below. Carries three riders that must land in the same sweep:
-  `b1060ca70` (`_pad_constant` stops promoting `base`, because the weak fill
-  value promotes it instead — removing the promotion first would silently
-  truncate a float fill into an int tensor), `46b82d475`/`f19a2ad77` (the
-  single `where` mixin), and `f5d9c31d1`'s remaining half.
-
 - **`cat` does not take the same-shape `stack` fast path** (`250de4b14`,
   final state `e684fcc68`). The reference's `stack` is a movement op
   (`_mop(Ops.STACK)`) and `cat` delegates to it when every input has the same
@@ -393,77 +346,51 @@ anchors point at the tinygrad clone.
   `Tensor.shape`, which raises on a symbolic dimension, so tolk cannot reach
   the case at all. Unblocks with symbolic-shape `getitem`.
 
-## Post-wave sweep
+## Post-wave sweep — landed
 
-Four items that no single wave can land, because each one changes a
-declaration in `lib/uop/` and every reader of it across `lib/codegen/`,
-`lib/renderer/`, `lib/schedule/` and the suites. Each needs one owner touching
-all of those files in one commit, after the waves settle. For each: what test
-goes red if it is done wrong. Where the honest answer is "none", the test comes
-*before* the sweep, not after.
+All four items are in. Each changed a declaration in `lib/uop/` plus every
+reader across `lib/codegen/`, `lib/renderer/`, `lib/schedule/` and the suites,
+so each went in as one change rather than per-wave.
 
-- **1. `Axis_type`: add the new `Loop`.** Owner: to be assigned. Step 1 (the
-  `Loop` → `Weak` rename) has landed; step 2 adds the void-RANGE header kind
-  and must stay a separate commit, for the reason spelled out under
-  `52c9e5a99` above.
+- **1. `Axis_type`: the new `Loop`.** Landed as its own step, after the
+  `Loop` -> `Weak` rename. Order is `Device, Global, Warp, Local, Weak,
+  Group_reduce, Reduce, Upcast, Unroll, Thread, Placeholder, Loop`, matching
+  the reference. Nothing constructs a `Loop` range yet — it arrives with the
+  void-RANGE loop header.
 
-  *What catches it*: `test/unit/codegen/test_postrange.ml` drives UPCAST,
-  LOCAL and THREAD through `Weak` ranges and asserts the resulting kinds, so a
-  site that reads the new `Loop` where it means `Weak` starts rejecting opts
-  and goes red. `codegen_lower.ml`'s `range_repeats` is an exhaustive match, so
-  it additionally fails to compile and forces an explicit decision per site.
+- **2. `wmma_info`: the reference's 5-tuple.** `(dims, dtype_in, device,
+  threads, tc_upcast_axes)`. `name`, `dtype_out` and the always-empty
+  `reduce_axes` are gone: the name is derived by `Cstyle.wmma_name` from
+  `dims`/`dtype_in`/the node's own dtype, which is where the reference keeps
+  it, and the output dtype *is* the node's dtype. `expand_wmma` now gates on
+  `tc_upcast_axes` being present and clears that slot, replacing the
+  `node_tag = Some "1"` marker.
 
-- **2. `wmma_info`: 8 fields → the reference's 5-tuple** (T6). Owner: to be
-  assigned. `Arg.Wmma_info` becomes `(dims, dtype_in, device, threads,
-  tc_upcast_axes)`; the name and output dtype are derived
-  (`WMMA_{dims}_{dtype_in.name}_{dtype.scalar().name}`, spaces to underscores)
-  and `expand_wmma` gates on the `tc_upcast_axes` slot instead of the node tag.
-  Starts in `lib/uop/uop.ml{,i}` and sweeps `renderer/cstyle.ml`, `device.ml`,
-  `program_spec.ml`, `uop/spec.ml`, `codegen/opt/postrange.ml` and
-  `codegen/codegen_lower.ml`.
+  `Tc.dtype_name` is exported for this and is the sole owner of the C spelling
+  used in primitive names — a second spelling anywhere desynchronises a
+  `#define` from its call site, which is a link error rather than a diff.
+  `test/unit/test_cstyle.ml`'s `make_wmma` no longer takes `~name`, so its
+  three exact-string assertions now check the derivation.
 
-  *What catches it*: `test/unit/test_cstyle.ml` pins the emitted primitive name
-  at both the preamble and the call site for three backends —
-  `__WMMA_8_16_16_half_float` (CUDA), `__WMMA_8_8_8_float_float` (Metal) and
-  `WMMA_16_16_128_float8_e4m3_float` (AMD fp8) — so a derivation that disagrees
-  with today's stored name desynchronises the `#define` from its caller and
-  goes red. `test/unit/codegen/test_postrange.ml:800` asserts
-  `node_tag result <> None`, which pins the *old* gate: it must be rewritten as
-  part of the change, and its going red is the signal that the gate moved.
+- **3. `ParamArg.multiple_of`.** Landed with its test written first, since
+  nothing existing would have caught a dropped field. `multiple_of` is an
+  `int option` (`None` means no promise, not `1`), read by `const_factor`,
+  `divides`, and `fold_divmod_general`'s irreducible-PARAM short circuit.
 
-  What `renderer/cstyle.ml` needs specifically: `wmma_args` returns
-  `(name, dims, dtype_in, dtype_out, device, threads, upcast_sizes)` where
-  `upcast_sizes` is read off `src[i].shape[-1]` rather than folded from
-  `upcast_axes`; `amd_wmma_prefix`, `cuda_wmma_helpers` and the Metal preamble
-  take the derived name; and the `Ops.Wmma` string rule uses it in place of
-  `v.info.name`.
+  It is in `device.ml`'s `add_param_arg` cache key. That is not optional: the
+  field changes folding, so two programs differing only in it would otherwise
+  collide and one would be handed the other's compiled code.
 
-- **3. `ParamArg.multiple_of`** (`980748ccf`). Owner: to be assigned. A
-  variable declared as a multiple of *k* lets `fold_divmod_general` fold
-  `x % k` to zero and refuse to split `x / k`. The field lands in
-  `lib/uop/uop.ml{,i}`; readers are `uop/divandmod.ml`,
-  `schedule/rangeify.ml`'s `to_define_global`, `schedule/multi.ml`'s
-  `param_to_multi`, `callify.ml`'s input-buffer replacement, the `bind`
-  divisibility assertion, and `device.ml`'s `add_param_arg` cache key.
+  *What catches it*: `test/unit/codegen/test_divandmod.ml`, "param multiple_of"
+  — verified by perturbation, not by observing green. Making the rule's
+  predicate return `false` turns exactly that test red and nothing else;
+  restoring turns it green.
 
-  *What catches it*: **nothing.** `multiple_of` has zero occurrences in `lib/`
-  and `test/` today, and nothing constructs a variable with a non-unit
-  multiple, so every threading site could drop the field on the floor and every
-  suite would stay green. Write the `test/unit/codegen/test_divandmod.ml` case
-  first — a `PARAM` with `multiple_of = 4` whose `% 4` folds to zero and whose
-  `/ 4` is left alone — then thread the field.
-
-- **4. `Uop.program_info.aux` and `program_info_from_sink ?aux`.** Owner:
-  team-lead (`lib/uop/uop.ml` was locked during the pin update). Every other
-  site is already deleted; these two are all that remain, plus the
-  `aux = []` placeholder they let `program_spec.ml`'s `program_info` drop.
-
-  *What catches it*: the field is constructed in
-  `test/unit/uop/test_uop.ml` (including a test asserting it participates in
-  `semantic_key`) and in `test/unit/uop/test_serialize.ml`'s round-trip, so
-  both fail to compile until they are updated with it — a half-done deletion
-  cannot land silently. `test/golden/debug` also loses the `aux` key from the
-  `ProgramInfo` repr; that is expected churn for the pin regeneration.
+- **4. `Uop.program_info.aux`.** Deleted, along with `program_info_from_sink`'s
+  `?aux` parameter, `program_spec.ml`'s `aux = []` placeholder, and the test
+  asserting the field participates in `semantic_key` — whose entire subject was
+  the field. `call_info.aux` is unrelated and stays; the reference keeps it.
+  `test/golden/debug` loses the `aux` key from the `ProgramInfo` repr.
 
 ## Rendered-output movement pending regeneration
 
@@ -479,6 +406,13 @@ listed so the regeneration is read as intended movement rather than regression.
   `constant long&` instead of a bare `long`; the Clang fixed-ABI wrapper
   narrows them out of their `long long` slot instead of raising.
 - `ProgramInfo` reprs lose the `aux` key (`test/golden/debug`).
+- WMMA arg reprs become the 5-tuple `(dims, dtype_in, device, threads,
+  tc_upcast_axes)` — the stored name, the output dtype and the always-empty
+  reduce-axis list are gone, and the upcast axes now print as `None` once the
+  operands have been contracted.
+- `AxisType.LOOP` prints as `AxisType.WEAK` for every counted range: 61 lines
+  across 27 `test/parity` `stage5_*.expected` files. The Python drivers must be
+  migrated first — see the wave-9 precondition under Misc.
 - Every threefry call loses two `& 0xFFFFFFFF` masks; the narrowing cast
   already discards the high half.
 - `pow(int, float)` loses its round-and-cast and keeps the promoted float.
@@ -488,6 +422,11 @@ listed so the regeneration is read as intended movement rather than regression.
 - `cummax`, `logcumsumexp` and `scaled_dot_product_attention` build their masks
   at bool instead of promoting a float `ones` through the comparison.
 - `logcumsumexp` and `multinomial` each lose one explicit `expand`.
+- Binary and ternary nodes no longer carry an `EXPAND` per operand from the
+  frontend: promotion is dtype-only and `pm_expand_broadcast` widens during
+  lowering. Any movement the scheduler used to fold away is simply never built.
+- Scalar literals enter weak, so a literal paired with a narrow tensor no
+  longer emits a cast to the default dtype and back.
 - Integer division without a rounding mode enters the float domain by an
   explicit cast rather than by the reciprocal's implicit promotion, which also
   fixes the intermediate node dtype in `mean` and `var` on integer inputs.
@@ -497,6 +436,19 @@ listed so the regeneration is read as intended movement rather than regression.
 ## Confirmed no-ops in the pin update
 
 Recorded so nobody re-derives them from the upstream diff.
+
+- **Frontend promotion is dtype-only and its riders have landed**
+  (`40f0d4af1`, `9433790ad`, `b1a72299a`, `b1060ca70`, `46b82d475`,
+  `f19a2ad77`). `broadcasted` lives in `lib/frontend/elementwise.ml`, promotes
+  to `Uop.promo_dtype`, rebuilds a weak constant weak instead of casting it,
+  and leaves shapes to `pm_expand_broadcast` in codegen — a binary node's
+  operands keep their own shapes and the node reports their broadcast. The
+  `Tensor.broadcasted_hook` indirection and the `Op.broadcasted` re-export are
+  gone with it, as are the two `Sys.opaque_identity Op.broadcasted` link
+  anchors that existed only to run the hook installer. `Tensor.i`/`f`/`b` now
+  build weak constants, which dissolved the `uf` helper that was triplicated
+  across `elementwise.ml`/`op.ml`/`rand.ml`: a literal takes its peer's
+  precision by construction rather than by inspecting it.
 
 - **`lib/nn/**` has nothing to port.** The three upstream `nn/` hunks are
   `BatchNorm.calc_stats` dropping an `expand` (tolk has no `BatchNorm`),
@@ -565,9 +517,6 @@ Recorded so nobody re-derives them from the upstream diff.
   through dispatch; runtimes bind (object, offset) themselves. Interim hard
   contract (enforced): the engine roots offset-view buffers across launch —
   the Metal registry is weak and a GC'd view raises at token resolve.
-- **`uf` scalar-promotion helper triplicated** across
-  `elementwise.ml`/`op.ml`/`rand.ml` to avoid public surface; fold into a
-  shared non-public home if dune allows one.
 
 ## Multi-device follow-ups
 

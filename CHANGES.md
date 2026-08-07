@@ -438,13 +438,6 @@ thread.
 
 ### Nx
 
-- **Breaking**: `randint` and `Rng.randint` take their bounds as `?low` and
-  `~high` and always return `int32`, replacing the trailing positional `low`,
-  the arbitrary `?high` default of `10`, and the dtype argument. The dtype
-  argument accepted float dtypes and raised at run time, and the draw was
-  computed in `int32` before being widened, so ranges beyond `int32` were
-  silently wrong; both are now impossible. Cast the result for another integer
-  width. Bounds outside `int32` raise `Invalid_argument` (#196).
 - Sliding-window extraction is 10-77x faster on the C backend. The kernel used
   to divide ten times per output element; it now walks contiguous runs, so
   convolution (`correlate`, `convolve`) and the pooling filters

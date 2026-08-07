@@ -12,10 +12,18 @@
     rule: shapes are aligned from the last axis, and an axis of size [1] is
     stretched to match. Promotion picks the least dtype that both operands cast
     into without loss where possible. Use {!Tensor.i}, {!Tensor.f}, and
-    {!Tensor.b} to lift scalar operands.
+    {!Tensor.b} to lift scalar operands: those carry a weak dtype, so a literal
+    takes the precision of the operand it meets rather than widening it. *)
 
-    Broadcasting and promotion themselves are {!Tensor.broadcasted}, whose
-    implementation lives in {!Op}. *)
+val broadcasted : ?reverse:bool -> Tensor.t -> Tensor.t -> Tensor.t * Tensor.t
+(** [broadcasted a b] brings [a] and [b] to a common shape and dtype, the form
+    every binary operation applies to its operands. With [~reverse:true] the
+    returned pair is swapped.
+
+    A weak-dtyped constant is rebuilt weak rather than cast, so it adopts the
+    other operand's precision; the rebuild may still lift a weak integer to a
+    weak float. Operands that cannot be broadcast to a common shape are
+    returned with their shapes unchanged. *)
 
 val contiguous : Tensor.t -> Tensor.t
 (** [contiguous t] forces [t] to be materialised into a contiguous buffer,

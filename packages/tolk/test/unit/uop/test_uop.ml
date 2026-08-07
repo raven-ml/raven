@@ -1103,7 +1103,7 @@ let semantic_tag_and_side_metadata () =
   let base = Uop.const_int 1 in
   let tagged = Uop.with_tag "lane0" base in
   let metadata : Uop.metadata =
-    { name = "trace"; caller = "test"; backward = false }
+    { name = "trace"; backward = false }
   in
   let with_md = Uop.with_metadata [ metadata ] base in
   is_true ~msg:"side metadata returns same node" (with_md == base);
@@ -1135,7 +1135,6 @@ let info_function_names_follow_tinygrad () =
       globals = [];
       outs = [];
       ins = [];
-      aux = [];
     }
   in
   let cases =
@@ -1169,7 +1168,7 @@ let cache_info_semantic_key_parity () =
       beam;
     }
   in
-  let program_info ?(aux = []) name : Uop.program_info =
+  let program_info name : Uop.program_info =
     {
       name;
       global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
@@ -1178,7 +1177,6 @@ let cache_info_semantic_key_parity () =
       globals = [];
       outs = [];
       ins = [];
-      aux;
     }
   in
   let call_info ?aux () : Uop.call_info =
@@ -1194,12 +1192,6 @@ let cache_info_semantic_key_parity () =
   let beamed = Uop.sink ~kernel_info:(kernel_info ~beam:3 "kernel") [] in
   is_true ~msg:"KernelInfo.beam participates in semantic_key"
     (Uop.semantic_key sink <> Uop.semantic_key beamed);
-  let program = Uop.program ~sink ~info:(program_info "program") () in
-  let program_with_aux =
-    Uop.program ~sink ~info:(program_info ~aux:[ "aux" ] "program") ()
-  in
-  is_true ~msg:"ProgramInfo.aux participates in semantic_key"
-    (Uop.semantic_key program <> Uop.semantic_key program_with_aux);
   let raw_space = Uop.program ~sink ~info:(program_info "a b") () in
   let raw_hex = Uop.program ~sink ~info:(program_info "a20b") () in
   equal string ~msg:"different raw names can share function_name"
@@ -1216,7 +1208,7 @@ let cache_info_semantic_key_parity () =
   is_true ~msg:"CallInfo.aux is excluded from semantic_key"
     (Uop.semantic_key call_without_aux = Uop.semantic_key call_with_aux);
   let metadata : Uop.metadata =
-    { name = "trace"; caller = "cache"; backward = false }
+    { name = "trace"; backward = false }
   in
   let side_metadata = Uop.with_metadata [ metadata ] call_without_aux in
   is_true ~msg:"side metadata remains outside semantic_key"
@@ -1224,7 +1216,7 @@ let cache_info_semantic_key_parity () =
 
 let remove_all_tags_parity () =
   let metadata : Uop.metadata =
-    { name = "trace"; caller = "remove_tags"; backward = false }
+    { name = "trace"; backward = false }
   in
   let leaf =
     Uop.with_metadata [ metadata ] (Uop.with_tag "leaf" (Uop.const_int 1))
@@ -1283,7 +1275,6 @@ let program_constructor_prefix_layouts () =
       globals = [];
       outs = [];
       ins = [];
-      aux = [];
     }
   in
   let src_ops u = Array.to_list (Uop.src u) |> List.map Uop.op in
@@ -1341,7 +1332,7 @@ let program_info_from_sink_parity () =
     }
   in
   let sink = Uop.sink ~kernel_info [ stored; group_dim; local_dim; core_id ] in
-  let info = Uop.program_info_from_sink ~aux:[ "aux" ] sink in
+  let info = Uop.program_info_from_sink sink in
   equal string ~msg:"ProgramInfo name comes from KernelInfo"
     "kernel name" info.name;
   equal (list int) ~msg:"ProgramInfo globals"
@@ -1364,8 +1355,7 @@ let program_info_from_sink_parity () =
     [ Launch_value_int 4; Launch_value_int 1; Launch_value_int 7 ]
     global_size;
   equal (option (list int)) ~msg:"ProgramInfo local dims"
-    (Some [ 1; 8; 1 ]) local_size;
-  equal (list string) ~msg:"ProgramInfo aux" [ "aux" ] info.aux
+    (Some [ 1; 8; 1 ]) local_size
 
 let program_launch_dims_floor_divmod () =
   let n =
@@ -1497,7 +1487,6 @@ let debug_prints_rich_args_dataclass_style () =
       globals = [ 2 ];
       outs = [];
       ins = [ 2 ];
-      aux = [ "aux" ];
     }
   in
   let program = Uop.program ~sink ~info:program_info () in
@@ -1561,7 +1550,7 @@ let debug_print_ignores_side_metadata () =
   let base = Uop.const_int 9 in
   let before = Render.uops_to_string base in
   let metadata : Uop.metadata =
-    { name = "trace"; caller = "debug"; backward = true }
+    { name = "trace"; backward = true }
   in
   ignore (Uop.with_metadata [ metadata ] base);
   equal string before (Render.uops_to_string base)

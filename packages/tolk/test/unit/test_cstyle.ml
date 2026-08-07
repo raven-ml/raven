@@ -392,22 +392,13 @@ let float_vec scalar count value =
     (List.init count (fun _ -> const (Const.float scalar value)))
 
 let make_wmma ?(device = "AMD") ?(threads = 64)
-    ?(upcast_axes = ([], [], [])) ~name ~dims ~dtype_in ~dtype_out ~a_count
+    ?(upcast_axes = ([], [], [])) ~dims ~dtype_in ~dtype_out ~a_count
     ~b_count ~c_count () =
   let a = float_vec dtype_in a_count 1.0 in
   let b = float_vec dtype_in b_count 1.0 in
   let c = float_vec dtype_out c_count 0.0 in
   let info : U.wmma_info =
-    {
-      name;
-      dims;
-      dtype_in;
-      dtype_out;
-      device;
-      threads;
-      upcast_axes;
-      reduce_axes = [];
-    }
+    { dims; dtype_in; device; threads; tc_upcast_axes = Some upcast_axes }
   in
   U.toposort (U.wmma ~a ~b ~c ~info ~dtype:dtype_out)
 
@@ -1123,9 +1114,8 @@ let () =
             assert_contains "cuda fp16 include"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "cuda_fp16");
           test "CUDA WMMA helper follows tinygrad asm preamble" (fun () ->
-            let name = "WMMA_8_16_16_half_float" in
             let prog =
-              make_wmma ~device:"CUDA" ~threads:32 ~name ~dims:(8, 16, 16)
+              make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1136,9 +1126,8 @@ let () =
             assert_contains "cuda wmma helper asm" out
               "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32");
           test "CUDA WMMA helper is emitted once per signature" (fun () ->
-            let name = "WMMA_8_16_16_half_float" in
             let one =
-              make_wmma ~device:"CUDA" ~threads:32 ~name ~dims:(8, 16, 16)
+              make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1155,8 +1144,7 @@ let () =
           test "CUDA WMMA declares the accumulator width, not the operand width"
             (fun () ->
               let prog =
-                make_wmma ~device:"CUDA" ~threads:32
-                  ~name:"WMMA_8_16_16_half_float" ~dims:(8, 16, 16)
+                make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                   ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                   ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
                   ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1167,9 +1155,8 @@ let () =
           test "Metal stdlib" (fun () ->
             assert_contains "metal stdlib" (render metal_renderer f32_1) "metal_stdlib");
           test "Metal WMMA helper follows tinygrad simdgroup preamble" (fun () ->
-            let name = "WMMA_8_8_8_float_float" in
             let prog =
-              make_wmma ~device:"METAL" ~threads:32 ~name ~dims:(8, 8, 8)
+              make_wmma ~device:"METAL" ~threads:32 ~dims:(8, 8, 8)
                 ~dtype_in:Dtype.Float32 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ (0, 2) ], [ (0, 2) ], [ (0, 2) ])
                 ~a_count:2 ~b_count:2 ~c_count:2 ()
@@ -1243,14 +1230,11 @@ let () =
             let c = float_vec Dtype.Float32 4 0.0 in
             let info : U.wmma_info =
               {
-                name = "WMMA_16_16_128_float8_e4m3_float";
                 dims = (16, 16, 128);
                 dtype_in = Dtype.Fp8e4m3;
-                dtype_out = Dtype.Float32;
                 device = "AMD";
                 threads = 64;
-                upcast_axes = ([], [], []);
-                reduce_axes = [];
+                tc_upcast_axes = Some ([], [], []);
               }
             in
             let wmma =
@@ -1421,9 +1405,8 @@ let () =
             assert_contains "amd cdna bf8 helper" out "f32_to_fp8";
             assert_contains "amd cdna bf8 cast" out "f32_to_fp8(val0, 1)");
           test "cdna WMMA emits MFMA macro and extra call arguments" (fun () ->
-            let name = "WMMA_16_16_128_float8_e4m3_float" in
             let prog =
-              make_wmma ~name ~dims:(16, 16, 128)
+              make_wmma ~dims:(16, 16, 128)
                 ~dtype_in:Dtype.Fp8e4m3 ~dtype_out:Dtype.Float32
                 ~a_count:8 ~b_count:8 ~c_count:4 ()
             in
@@ -1433,9 +1416,8 @@ let () =
             assert_contains "amd cdna wmma call extras" out
               ", 0, 0, 0, 0, 0, 0)");
           test "rdna4 WMMA emits gfx12 builtin macro" (fun () ->
-            let name = "WMMA_16_16_16___bf16___bf16" in
             let prog =
-              make_wmma ~name ~dims:(16, 16, 16)
+              make_wmma ~dims:(16, 16, 16)
                 ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Bfloat16
                 ~a_count:8 ~b_count:8 ~c_count:8 ()
             in
@@ -1443,9 +1425,8 @@ let () =
             assert_contains "amd rdna4 wmma macro" out
               "#define __WMMA_16_16_16___bf16___bf16 __builtin_amdgcn_wmma_bf16_16x16x16_bf16_w32_gfx12");
           test "rdna3 half output WMMA emits wrapper" (fun () ->
-            let name = "WMMA_16_16_16_half_half" in
             let prog =
-              make_wmma ~name ~dims:(16, 16, 16)
+              make_wmma ~dims:(16, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float16
                 ~a_count:16 ~b_count:16 ~c_count:8 ()
             in

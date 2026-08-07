@@ -44,10 +44,6 @@ module TD = Tolk_uop.Dtype
 module ND = Nx_core.Dtype
 module NV = Nx_core.View
 
-(* Element-wise operations need the broadcasting hook installed by [F.Op]'s
-   initialiser; referencing the module forces the link. *)
-let _op_linked = Sys.opaque_identity F.Op.broadcasted
-
 exception Jit_error of string
 
 let err fmt = Printf.ksprintf (fun s -> raise (Jit_error s)) fmt

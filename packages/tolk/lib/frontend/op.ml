@@ -17,49 +17,6 @@ let take n l = List.filteri (fun idx _ -> idx < n) l
 let drop n l = List.filteri (fun idx _ -> idx >= n) l
 let sub_range lo hi l = List.filteri (fun idx _ -> idx >= lo && idx < hi) l
 
-(* A scalar literal used as an operand adopts the dtype of the tensor it is
-   paired with (a float tensor for any scalar, an integer tensor for an integer
-   scalar), keeping mixed-precision arithmetic at the operand's precision.
-   [~like] is the paired tensor; a scalar paired with another scalar keeps its
-   own default dtype. *)
-let uf ~like s =
-  let dt = T.dtype like in
-  let sdt =
-    if D.is_float dt then dt
-    else
-      match s with
-      | T.Sint _ when D.is_int dt -> dt
-      | T.Sint _ -> D.default_int
-      | T.Sfloat _ -> D.default_float
-      | T.Sbool _ -> D.bool
-  in
-  T.of_uop (Uop.const (T.scalar_const sdt s))
-
-let si ~like n = uf ~like (T.Sint n)
-
-(* Broadcasting and promotion. This is the concrete implementation of the
-   [Tensor.broadcasted] hook that the element-wise operations depend on;
-   installing it here mirrors tinygrad, where [_broadcasted] is abstract in the
-   element-wise mixin and defined in the composed-op mixin. *)
-
-let broadcasted ?(reverse = false) a b =
-  let x, y = if reverse then (b, a) else (a, b) in
-  let x, y =
-    try
-      let out =
-        Uop.broadcast_shape [ T.symbolic_shape x; T.symbolic_shape y ]
-      in
-      (Movement.symbolic_broadcast_to x out,
-       Movement.symbolic_broadcast_to y out)
-    with Invalid_argument _ -> (x, y)
-  in
-  if D.equal (T.dtype x) (T.dtype y) then (x, y)
-  else
-    let out = D.least_upper_dtype [ T.dtype x; T.dtype y ] in
-    (Dtype_ops.cast x out, Dtype_ops.cast y out)
-
-let () = T.broadcasted_hook := fun ~reverse a b -> broadcasted ~reverse a b
-
 (* In-place assignment. The write is a STORE effect on the destination graph,
    sequenced with AFTER so that reads of the destination depend on it. When
    the destination is a view of a buffer, the AFTER is embedded at the
@@ -111,7 +68,7 @@ let mean ?axis ?(keepdim = false) t =
   let acc = D.sum_acc_dtype (T.val_dtype t) in
   let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast t acc) in
   let denom = reduced_count t ?axis () in
-  Dtype_ops.cast (Elementwise.div numerator (si ~like:numerator denom)) out_dt
+  Dtype_ops.cast (Elementwise.div numerator (T.i denom)) out_dt
 
 (* The squares are accumulated at the wider sum dtype: summing them at a narrow
    float loses the variance of a large input entirely. *)
@@ -123,7 +80,7 @@ let var ?axis ?(keepdim = false) ?(correction = 1) t =
   let acc = D.sum_acc_dtype (T.val_dtype t) in
   let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast squares acc) in
   let denom = Stdlib.max (n - correction) 0 in
-  Dtype_ops.cast (Elementwise.div numerator (si ~like:numerator denom)) out_dt
+  Dtype_ops.cast (Elementwise.div numerator (T.i denom)) out_dt
 
 let std ?axis ?keepdim ?correction t =
   Elementwise.sqrt (var ?axis ?keepdim ?correction t)
@@ -212,10 +169,12 @@ let matmul ?dtype a b = dot ?dtype a b
 
 let is_zero = function T.Sint 0 | T.Sfloat 0.0 -> true | _ -> false
 
-let fill_dtype = function
-  | T.Sint _ -> D.default_int
-  | T.Sfloat _ -> D.default_float
-  | T.Sbool _ -> D.bool
+(* A fill value enters as a weak literal, so the padded tensor is promoted by
+   the select below rather than by an explicit cast here. *)
+let scalar_tensor = function
+  | T.Sint n -> T.i n
+  | T.Sfloat x -> T.f x
+  | T.Sbool v -> T.b v
 
 let pad_constant t px value =
   let px = List.map (function None -> (0, 0) | Some p -> p) px in
@@ -236,14 +195,10 @@ let pad_constant t px value =
   let base = Movement.pad x pads in
   if is_zero value then base
   else
-    let base =
-      Dtype_ops.cast base
-        (D.least_upper_dtype [ T.dtype base; (fill_dtype value) ])
-    in
     let mask =
       Movement.pad (Creation.const_like ~dtype:D.bool x (T.Sbool true)) pads
     in
-    Elementwise.where mask base (Creation.const_like base value)
+    Elementwise.where mask base (scalar_tensor value)
 
 (* Associative scans *)
 
@@ -328,7 +283,7 @@ let arange ?stop ?(step = 1) ?dtype start =
   else
     let base = Creation.full ~dtype:dt ~buffer:false [ output_len ] (T.Sint step) in
     let scan = cumalu base 0 Ops.Add in
-    Dtype_ops.cast (Elementwise.add scan (si ~like:scan (start - step))) dt
+    Dtype_ops.cast (Elementwise.add scan (T.i (start - step))) dt
 
 let linspace ?dtype start stop steps =
   if steps < 0 then invalid_arg "Op.linspace: steps must be non-negative";
@@ -494,12 +449,12 @@ let scatter_reduce t ~dim index src ~reduce ?(include_self = true) () =
   match reduce with
   | `Sum ->
       Elementwise.add
-        (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (si ~like:src 0)))
-        (self_or (si ~like:t 0))
+        (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (T.i 0)))
+        (self_or (T.i 0))
   | `Prod ->
       Elementwise.mul
-        (Reduce.prod ~axis:[ -1 ] (Elementwise.where mask src (si ~like:src 1)))
-        (self_or (si ~like:t 1))
+        (Reduce.prod ~axis:[ -1 ] (Elementwise.where mask src (T.i 1)))
+        (self_or (T.i 1))
   | `Amax ->
       let m = Creation.const_like src (max_identity (T.val_dtype src)) in
       Elementwise.maximum
@@ -518,8 +473,8 @@ let scatter_reduce t ~dim index src ~reduce ?(include_self = true) () =
       in
       let acc =
         Elementwise.add
-          (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (si ~like:src 0)))
-          (self_or (si ~like:t 0))
+          (Reduce.sum ~axis:[ -1 ] (Elementwise.where mask src (T.i 0)))
+          (self_or (T.i 0))
       in
       Elementwise.div acc count
 
@@ -632,7 +587,7 @@ let rec getitem t indices =
           @ List.init (List.length post) (fun _ -> 1)
         in
         Elementwise.where (Movement.reshape valid valid_shape) gathered
-          (si ~like:gathered 0))
+          (T.i 0))
       else
         let xndim = T.ndim x in
         let pre_reduce_shape = take d0 xshape @ big_shape @ drop d0 xshape in
@@ -659,7 +614,7 @@ let rec getitem t indices =
         let x =
           let reshaped = Movement.reshape x reshape_arg in
           Reduce.sum ~axis:sum_axis ~dtype:(T.val_dtype x)
-            (Elementwise.where mask reshaped (si ~like:reshaped 0))
+            (Elementwise.where mask reshaped (T.i 0))
         in
         let permuted =
           d0 <> 0 && List.length dims <> 1

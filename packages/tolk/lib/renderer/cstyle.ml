@@ -731,6 +731,14 @@ let render_const_any (ctx : ctx) (u : U.t) : string option =
       | Const.Invalid -> None
 
 (* base_rewrite rules. Each rule mirrors tinygrad's cstyle.py base_rewrite. *)
+(* The emitted primitive's name. Derived rather than carried on the node so
+   the [#define] and every call site cannot disagree: a mismatch here is a
+   link-time undefined symbol, not a diff. *)
+let wmma_name (info : U.wmma_info) dtype_out =
+  let n, m, k = info.dims in
+  strf "WMMA_%d_%d_%d_%s_%s" n m k (Tc.dtype_name info.dtype_in)
+    (Tc.dtype_name dtype_out)
+
 let base_rewrite : ctx rule list =
   let open Upat in
   [
@@ -759,8 +767,9 @@ let base_rewrite : ctx rule list =
         match U.as_wmma x with
         | Some v ->
             Some
-              (strf "__%s(%s, %s, %s)" v.info.name (lookup ctx v.a)
-                 (lookup ctx v.b) (lookup ctx v.c))
+              (strf "__%s(%s, %s, %s)"
+                 (wmma_name v.info (U.dtype x))
+                 (lookup ctx v.a) (lookup ctx v.b) (lookup ctx v.c))
         | None -> None );
     (* RANGE with no induction variable: an unbounded loop whose exit test the
        closing END renders. *)
@@ -1960,7 +1969,7 @@ let metal_wmma_helpers lang uops =
   let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
   wmma_nodes uops
   |> dedup_by_key (fun ((info : U.wmma_info), dtype_out) ->
-         (info.name, info.dtype_in, dtype_out))
+         (info.dims, info.dtype_in, dtype_out))
   |> List.map (fun ((info : U.wmma_info), dtype_out) ->
          let dstr_in = render_dtype_c lang ~sz:2 info.dtype_in in
          let dstr_out = render_dtype_c lang ~sz:2 dtype_out in
@@ -1974,8 +1983,8 @@ let metal_wmma_helpers lang uops =
            \  simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);\n\
            \  return %s(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);\n\
             }"
-           dstr_out info.name dstr_in dstr_in dstr_out scalar_in scalar_out
-           dstr_out)
+           dstr_out (wmma_name info dtype_out) dstr_in dstr_in dstr_out
+           scalar_in scalar_out dstr_out)
 
 let metal_preamble lang uops =
   [ "#include <metal_stdlib>"; "using namespace metal;" ]
@@ -2112,17 +2121,19 @@ let cuda_wmma_out_type_name = function
 let cuda_wmma_helpers lang uops =
   wmma_nodes uops
   |> dedup_by_key (fun ((info : U.wmma_info), dtype_out) ->
-         ( info.name,
-           info.dims,
+         ( info.dims,
            info.dtype_in,
            dtype_out,
            info.device,
            info.threads,
-           info.upcast_axes,
-           info.reduce_axes ))
+           info.tc_upcast_axes ))
   |> List.map (fun ((info : U.wmma_info), dtype_out) ->
          let n, m, k = info.dims in
-         let ua, ub, uc = info.upcast_axes in
+         let ua, ub, uc =
+           match info.tc_upcast_axes with
+           | Some axes -> axes
+           | None -> ([], [], [])
+         in
          let upcast_sizes =
            [ axis_product ua; axis_product ub; axis_product uc ]
          in
@@ -2173,7 +2184,7 @@ let cuda_wmma_helpers lang uops =
            \    : %s);\n\
            \  return c;\n\
             }"
-           (List.nth wmma_dtypes 2) info.name
+           (List.nth wmma_dtypes 2) (wmma_name info dtype_out)
            (List.nth wmma_dtypes 0) (List.nth wmma_dtypes 1)
            (List.nth wmma_dtypes 2)
            m n k dt_out dt_in dt_in dt_out c_ops a_ops b_ops c_ops
@@ -2392,10 +2403,13 @@ let amd_wmma_rule arch : ctx rule =
             match amd_fp8_index (U.dtype v.a) with
             | Some fp8 ->
                 Some
-                  (strf "__%s(%s, %s, %s, %d, %d, 0, 0, 0, 0)" v.info.name
-                     a b c fp8 fp8)
+                  (strf "__%s(%s, %s, %s, %d, %d, 0, 0, 0, 0)"
+                     (wmma_name v.info (U.dtype x)) a b c fp8 fp8)
             | None -> None)
-          else Some (strf "__%s(%s, %s, %s, 0, 0, 0)" v.info.name a b c)
+          else
+            Some
+              (strf "__%s(%s, %s, %s, 0, 0, 0)"
+                 (wmma_name v.info (U.dtype x)) a b c)
       | Some _ | None -> None )
 
 let amd_string_rewrite arch =
@@ -2472,7 +2486,7 @@ let amd_cdna_type_map_name dims scalar =
 
 let amd_wmma_prefix arch (info : U.wmma_info) dtype_out =
   let n, m, k = info.dims in
-  let name = info.name in
+  let name = wmma_name info dtype_out in
   match arch with
   | Gpu_target.CDNA3 | Gpu_target.CDNA4 ->
       strf "#define __%s __builtin_amdgcn_mfma_%sf32_%dx%dx%d%s"

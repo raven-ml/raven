@@ -120,8 +120,10 @@ let scalar_const dt s =
     Const.int dt
       (match s with Sint n -> n | Sfloat x -> int_of_float x | Sbool v -> if v then 1 else 0)
 
-let i n = of_uop (U.const (Const.int D.default_int n))
-let f x = of_uop (U.const (Const.float D.default_float x))
+(* A scalar literal has no committed width: it enters the graph weak and takes
+   one from the operand it meets, so a literal never widens its peer. *)
+let i n = of_uop (U.const (Const.int D.weakint n))
+let f x = of_uop (U.const (Const.float D.weakfloat x))
 let b v = of_uop (U.const (Const.bool v))
 let int_ n = U.const_int n
 
@@ -143,8 +145,3 @@ let broadcast_shape shapes =
       | None -> invalid_arg "Tensor.broadcast_shape: symbolic dimension")
     (U.broadcast_shape (List.map (List.map int_) shapes))
 
-let broadcasted_hook : (reverse:bool -> t -> t -> t * t) ref =
-  ref (fun ~reverse:_ _ _ ->
-      failwith "Tensor.broadcasted: the Op module must be linked to install it")
-
-let broadcasted ?(reverse = false) a b = !broadcasted_hook ~reverse a b

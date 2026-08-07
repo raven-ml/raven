@@ -95,11 +95,12 @@ val scalar_const : Tolk_uop.Dtype.t -> scalar -> Tolk_uop.Const.t
 (** [scalar_const dt s] is the constant value [s] coerced to dtype [dt]. *)
 
 val i : int -> t
-(** [i n] is a scalar tensor holding integer [n] at the default integer
-    dtype. *)
+(** [i n] is a scalar tensor holding integer [n] at the weak integer dtype: it
+    has no committed width until an operand or a cast supplies one. *)
 
 val f : float -> t
-(** [f x] is a scalar tensor holding float [x] at the default float dtype. *)
+(** [f x] is a scalar tensor holding float [x] at the weak float dtype. See
+    {!i}. *)
 
 val b : bool -> t
 (** [b v] is a scalar tensor holding boolean [v]. *)
@@ -135,16 +136,4 @@ val broadcast_shape : int list list -> int list
 
     @raise Invalid_argument if the shapes are incompatible. *)
 
-val broadcasted : ?reverse:bool -> t -> t -> t * t
-(** [broadcasted a b] broadcasts [a] and [b] to a common shape and promotes
-    them to a common dtype. With [~reverse:true] the returned pair is swapped.
-
-    The concrete implementation lives in {!Op} and is installed into
-    {!broadcasted_hook} when that module is linked; calling this before then
-    raises [Failure]. *)
-
-val broadcasted_hook : (reverse:bool -> t -> t -> t * t) ref
-(** Mutable hook backing {!broadcasted}. {!Op} assigns it on initialisation to
-    break the dependency cycle between the element-wise operations, which need
-    broadcasting, and the promotion logic, which is defined alongside the
-    composed operations. *)
+(** Promotion of an operand pair lives in {!Elementwise.broadcasted}. *)

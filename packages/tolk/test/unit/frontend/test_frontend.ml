@@ -232,6 +232,21 @@ let elementwise_tests =
           let cond = El.lt (ones_f [ 3 ]) (ones_f [ 3 ]) in
           let t = El.where cond (ones_f [ 3 ]) (ones_f [ 3 ]) in
           is_true (U.equal (src t 0) (T.uop cond)));
+      test "promotion does not expand shapes" (fun () ->
+          (* The node's shape is the broadcast of its operands', but neither
+             operand is wrapped in an EXPAND: that is codegen's job. *)
+          let a = ones_f [ 3; 1 ] and b = ones_f [ 1; 4 ] in
+          let t = El.add a b in
+          equal (list int) [ 3; 4 ] (shape t);
+          is_true (U.equal (src t 0) (T.uop a));
+          is_true (U.equal (src t 1) (T.uop b)));
+      test "promotion casts without expanding" (fun () ->
+          let a = ones_f [ 3; 1 ] and b = ones_i [ 1; 4 ] in
+          let x, y = El.broadcasted a b in
+          equal (list int) [ 3; 1 ] (shape x);
+          equal (list int) [ 1; 4 ] (shape y);
+          is_true (is_dtype x D.float32);
+          is_true (is_dtype y D.float32));
       test "const_like can override the dtype" (fun () ->
           let m = Cr.const_like ~dtype:D.bool (ones_f [ 2; 2 ]) (T.Sbool true) in
           equal (list int) [ 2; 2 ] (shape m);
@@ -529,9 +544,13 @@ let elementwise2_tests =
       test "pow float stays float" (fun () ->
           is_true (has_op (El.pow (ones_f [ 4 ]) (T.f 2.0)) Ops.Pow);
           is_true (is_dtype (El.pow (ones_f [ 4 ]) (T.f 2.0)) D.float32));
-      test "pow int base float exp promotes to float" (fun () ->
+      test "pow int base float exp promotes out of int" (fun () ->
           let t = El.pow (ones_i [ 4 ]) (T.f 2.0) in
-          is_true (is_dtype t D.float32));
+          is_true (is_dtype t D.weakfloat);
+          is_true (D.equal (D.strong_dtype (T.dtype t)) D.float32));
+      test "pow int base concrete float exp is that float" (fun () ->
+          let e = Cr.ones ~dtype:D.float32 [ 4 ] in
+          is_true (is_dtype (El.pow (ones_i [ 4 ]) e) D.float32));
       test "pow int base int exp is int" (fun () ->
           is_true (is_dtype (El.pow (ones_i [ 4 ]) (T.i 2)) D.int32));
       test "cdiv int uses cdiv op" (fun () ->
@@ -973,16 +992,28 @@ let scalar_operand_tests =
       test "narrow int keeps its width through an int-scalar op" (fun () ->
           let i8 = Cr.ones ~dtype:D.int8 [ 4 ] in
           is_true (is_dtype (El.relu i8) D.int8));
-      test "int tensor through a float-scalar activation is default float"
+      test "int tensor through a float-scalar activation is weakly float"
         (fun () ->
-          let i = ones_i [ 4 ] in
-          is_true (is_dtype (El.sigmoid i) D.float32));
-      test "both-scalar where stays default int" (fun () ->
+          (* No operand fixes a width, so the result stays weak and commits to
+             the default float when one is demanded. *)
+          let t = El.sigmoid (ones_i [ 4 ]) in
+          is_true (is_dtype t D.weakfloat);
+          is_true (D.equal (D.strong_dtype (T.dtype t)) D.float32));
+      test "a where over two literals stays weakly int" (fun () ->
           let idx = Cr.zeros ~dtype:D.int32 [ 3 ] in
-          is_true (is_dtype (Op.one_hot idx 5) D.int32));
-      test "scalar constructors stay concrete default" (fun () ->
-          is_true (is_dtype (T.f 1.0) D.float32);
-          is_true (is_dtype (T.i 1) D.int32));
+          let t = Op.one_hot idx 5 in
+          is_true (is_dtype t D.weakint);
+          is_true (D.equal (D.strong_dtype (T.dtype t)) D.int32));
+      test "scalar constructors are weak" (fun () ->
+          is_true (is_dtype (T.f 1.0) D.weakfloat);
+          is_true (is_dtype (T.i 1) D.weakint);
+          is_true (is_dtype (T.b true) D.bool));
+      test "a literal does not widen the tensor it meets" (fun () ->
+          let h = Cr.ones ~dtype:D.float16 [ 4 ] in
+          is_true (is_dtype (El.add h (T.f 1.0)) D.float16);
+          is_true (is_dtype (El.mul h (T.i 2)) D.float16);
+          let i8 = Cr.ones ~dtype:D.int8 [ 4 ] in
+          is_true (is_dtype (El.add i8 (T.i 1)) D.int8));
     ]
 
 let () =

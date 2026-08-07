@@ -143,7 +143,6 @@ type stage_opts = {
 
 type metadata = {
   name : string;  (** Operation name. *)
-  caller : string;  (** Call-site identifier. *)
   backward : bool;  (** [true] if emitted during backward pass. *)
 }
 (** Side metadata attached to tensor-stage call sites or individual uops.
@@ -157,6 +156,11 @@ type param_arg = {
           node dtype without desynchronising from the parameter. *)
   vmin_vmax : (int * int) option;
       (** Symbolic lower and upper bounds, when known. *)
+  multiple_of : int option;
+      (** A known divisor of every value this parameter can take, when the
+          producer declares one. Lets index folding discharge a remainder
+          statically and treat the quotient as irreducible. [None] means no
+          such promise, not [1]. *)
   name : string option;  (** Symbolic or debug name, when known. *)
   addrspace : Dtype.addr_space;
       (** Memory address space. Defaults to {!Dtype.Global}.
@@ -263,7 +267,6 @@ type program_info = {
   globals : int list;  (** Global buffer slots. *)
   outs : int list;  (** Output buffer slots. *)
   ins : int list;  (** Input buffer slots. *)
-  aux : string list;  (** Auxiliary program payload. *)
 }
 (** Tinygrad-shaped program metadata attached to {!Ops.Program}. *)
 
@@ -280,14 +283,13 @@ val program_function_name : program_info -> string
 (** [program_function_name info] is [info.name] sanitized for backend
     function emission. *)
 
-val program_info_from_sink : ?aux:string list -> t -> program_info
-(** [program_info_from_sink ?aux sink] derives tinygrad-style program metadata
+val program_info_from_sink : t -> program_info
+(** [program_info_from_sink sink] derives tinygrad-style program metadata
     from [sink]. It scans [sink]'s topological order for ALU {!Ops.Param}
     runtime variables, non-ALU {!Ops.Param} global buffer slots, load/store
     buffer slots, and {!Ops.Special} launch dimensions.
 
-    [aux] defaults to [[]]. The resulting [vars], [globals], [outs], and [ins]
-    are deduplicated and sorted like tinygrad's [ProgramInfo.from_sink].
+    The resulting [vars], [globals], [outs], and [ins] are deduplicated and sorted like tinygrad's [ProgramInfo.from_sink].
 
     Raises [Invalid_argument] if a launch axis is outside the three tinygrad
     launch dimensions, or if a local launch dimension is not a concrete
@@ -316,16 +318,19 @@ val program_vals : program_info -> var_vals:(string * int) list -> int option li
     Raises [Not_found] if a non-runtime variable has no supplied value. *)
 
 type wmma_info = {
-  name : string;  (** Tensor-core primitive name. *)
   dims : int * int * int;  (** Matrix dimensions [(M, N, K)]. *)
-  dtype_in : Dtype.t;  (** Input operand scalar type. *)
-  dtype_out : Dtype.t;  (** Output operand scalar type. *)
+  dtype_in : Dtype.t;
+      (** Input operand scalar type. Carried rather than read off [src.(0)],
+          which bitcast rewrites are free to retype. *)
   device : string;  (** Target device name. *)
   threads : int;  (** Warp thread count. *)
-  upcast_axes :
-    (int * int) list * (int * int) list * (int * int) list;
-      (** [(axis, amount)] pairs for the [A]/[B]/[C] operands. *)
-  reduce_axes : int list;  (** Reduction axis ids. *)
+  tc_upcast_axes :
+    ((int * int) list * (int * int) list * (int * int) list) option;
+      (** [(axis, amount)] pairs for the [A]/[B]/[C] operands, pending
+          expansion. [None] once the operands have been contracted, which is
+          what marks the node as already expanded.
+
+          The output type is not carried here: it is the node's own dtype. *)
 }
 (** Configuration of a kernel-stage tensor-core matrix-multiply
     accumulate ({!Ops.Wmma}). *)
@@ -655,17 +660,20 @@ val linear : t list -> t
 
 val param :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
-  ?vmin_vmax:int * int -> ?name:string ->
+  ?vmin_vmax:int * int -> ?multiple_of:int -> ?name:string ->
   ?addrspace:Dtype.addr_space -> ?axis:int -> unit -> t
-(** [param ~slot ~dtype ?shape ?device ?vmin_vmax ?name ?addrspace ?axis ()]
+(** [param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name
+    ?addrspace ?axis ()]
     is a {!Ops.Param} carrying {!param_arg} and exactly one shape child.
     [shape] defaults to {!shape_to_shape_arg} [None]. Shared. *)
 
 val variable :
-  name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.t -> unit -> t
-(** [variable ~name ~min_val ~max_val ?dtype ()] is a symbolic
+  name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.t ->
+  ?multiple_of:int -> unit -> t
+(** [variable ~name ~min_val ~max_val ?dtype ?multiple_of ()] is a symbolic
     {!Ops.Param} in {!Dtype.Alu} address space. [dtype] defaults to
-    {!Dtype.weakint}. Shared. *)
+    {!Dtype.weakint}. [multiple_of] declares a known divisor of every value
+    the variable can take; see {!param_arg}. Shared. *)
 
 val buffer :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?name:string ->
@@ -1163,6 +1171,14 @@ val in_backward_slice : t -> t -> bool
 (** [in_backward_slice needle haystack] is [true] iff [needle] occurs
     strictly before [haystack] in [toposort haystack]. *)
 
+val bool_slice_mem : t -> t -> bool
+(** [bool_slice_mem root u] is [true] iff [u] is bool-typed and reachable
+    from [root], counting [root] itself.
+
+    This is a reachability test restricted to the one dtype a condition can
+    have, which is what makes it cheap enough to run per node: the bool
+    subgraph is a small fraction of a kernel. Memoized on [root]. *)
+
 val runtime_realization_state : t -> realization_state
 (** [runtime_realization_state u] is the static graph portion of tinygrad's
     runtime-backed [realized] and [is_realized] properties.
@@ -1196,6 +1212,13 @@ val device_of : t -> device option
     {!Ops.Copy} and {!Ops.Allreduce} read their payload device.
     Other ops report the device of their first child that has one, or
     [None]. *)
+
+val is_virtual : t -> bool
+(** [is_virtual u] is [true] iff [u] cannot back a buffer as it stands:
+    either it has no {!device_of} — nowhere to store it — or its dtype is
+    weak ({!Dtype.is_weak}) — no committed width to store it at. Realizing
+    such a node requires placing it on a device and committing its width
+    first. *)
 
 val addrspace : t -> Dtype.addr_space option
 (** [addrspace u] is [u]'s tinygrad-style address-space property.

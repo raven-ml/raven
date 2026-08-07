@@ -140,17 +140,24 @@ let unroll_axis range_map u axes =
   in
   U.permute ~src:out ~order:(argsort (permute_head @ permute_tail))
 
+(* The pending upcast axes are both the instruction for this expansion and the
+   record that it has not happened; clearing them is what stops it recurring. *)
 let expand_wmma range_map node =
   match U.as_wmma node with
-  | Some { a; b; c; info } when U.node_tag node = Some "1" ->
-      let in0, in1, out0 = info.upcast_axes in
-      let wmma =
-        U.replace node
-          ~src:[| contract_axis range_map a in0; contract_axis range_map b in1; c |]
-          ~node_tag:None ()
-      in
-      Some (unroll_axis range_map wmma out0)
-  | Some _ | None -> None
+  | Some { a; b; c; info } -> (
+      match info.tc_upcast_axes with
+      | None -> None
+      | Some (in0, in1, out0) ->
+          let wmma =
+            U.replace node
+              ~src:
+                [| contract_axis range_map a in0;
+                   contract_axis range_map b in1; c |]
+              ~arg:(U.Arg.Wmma_info { info with tc_upcast_axes = None })
+              ()
+          in
+          Some (unroll_axis range_map wmma out0))
+  | None -> None
 
 let expander2 range_map =
   let open Upat in

@@ -13,11 +13,6 @@ module U = Uop
 module D = Dtype
 module T = Tensor
 
-(* Force [Op] to be linked so its initialiser installs the broadcasting hook
-   that the element-wise operations rely on. Realizing a graph is meaningless
-   without the composed-op surface, so the execution entry pulls it in. *)
-let _op_linked = Sys.opaque_identity Op.broadcasted
-
 (* One process-wide default device backs every realization. This mirrors
    tinygrad, whose [Tensor.realize] resolves the device internally rather than
    taking it as an argument. Backend openers are installed in the shared

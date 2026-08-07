@@ -109,8 +109,9 @@ let buffer_rejects_alu_addrspace () =
       (Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ())
       ~arg:
         (Uop.Arg.Param_arg
-           { slot = 0; dtype = Dtype.int32; vmin_vmax = None; name = None;
-             addrspace = Dtype.Alu; axis = None; device = None })
+           { slot = 0; dtype = Dtype.int32; vmin_vmax = None;
+             multiple_of = None; name = None; addrspace = Dtype.Alu;
+             axis = None; device = None })
       ()
   in
   is_true ~msg:"Buffer with ALU addrspace rejected"

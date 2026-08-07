@@ -26,10 +26,6 @@ module Op = Tolk_frontend.Op
 module U = Tolk_uop.Uop
 module D = Tolk_uop.Dtype
 
-(* Force [Op] to be linked so its initialiser installs the broadcasting hook
-   the element-wise operations rely on. *)
-let _op_linked = Sys.opaque_identity Op.broadcasted
-
 let param slot dims =
   let shape = if dims = [] then None else Some (T.shape_uop dims) in
   T.of_uop (U.param ~slot ~dtype:D.float32 ?shape ~device:(U.Single "CPU") ())

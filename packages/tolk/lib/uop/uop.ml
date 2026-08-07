@@ -68,12 +68,13 @@ type stage_opts = {
   removable : bool;
 }
 
-type metadata = { name : string; caller : string; backward : bool }
+type metadata = { name : string; backward : bool }
 
 type param_arg = {
   slot : int;
   dtype : Dtype.t;
   vmin_vmax : (int * int) option;
+  multiple_of : int option;
   name : string option;
   addrspace : Dtype.addr_space;
   axis : int option;
@@ -118,18 +119,15 @@ and program_info = {
   globals : int list;
   outs : int list;
   ins : int list;
-  aux : string list;
 }
 
 and wmma_info = {
-  name : string;
   dims : int * int * int;
   dtype_in : Dtype.t;
-  dtype_out : Dtype.t;
   device : string;
   threads : int;
-  upcast_axes : (int * int) list * (int * int) list * (int * int) list;
-  reduce_axes : int list;
+  tc_upcast_axes :
+    ((int * int) list * (int * int) list * (int * int) list) option;
 }
 
 and arg =
@@ -299,9 +297,9 @@ end)
 let side_metadata : metadata list Side_metadata_tbl.t =
   Side_metadata_tbl.create 64
 
-let default_param_arg ~dtype ?vmin_vmax ?name ?(addrspace = Dtype.Global) ?axis
-    ?device slot =
-  { slot; dtype; vmin_vmax; name; addrspace; axis; device }
+let default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name
+    ?(addrspace = Dtype.Global) ?axis ?device slot =
+  { slot; dtype; vmin_vmax; multiple_of; name; addrspace; axis; device }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -622,6 +620,11 @@ and compute_device u =
         children;
       !found
 
+(* No device is nowhere to store; a weak dtype is no width to store. Either
+   way the value cannot back a buffer as it stands. *)
+let is_virtual u =
+  Option.is_none (device_of u) || Dtype.is_weak (dtype u)
+
 let as_contiguous_opts u =
   match op u, arg u with
   | Ops.Contiguous, Arg.Opts o -> Option.Some o
@@ -682,12 +685,13 @@ let linear srcs =
   mk ~op:Ops.Linear ~dtype:void_dtype
     ~src:(Array.of_list srcs) ~arg:Arg.Empty
 
-let param ~slot ~dtype ?shape ?device ?vmin_vmax ?name ?addrspace ?axis () =
+let param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name ?addrspace
+    ?axis () =
   let shape = shape_to_shape_arg shape in
   mk ~op:Ops.Param ~dtype ~src:[| shape |]
     ~arg:(Arg.Param_arg
-            (default_param_arg ~dtype ?vmin_vmax ?name ?addrspace ?axis ?device
-               slot))
+            (default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name ?addrspace
+               ?axis ?device slot))
 
 let buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device () =
   let shape = shape_to_shape_arg shape in
@@ -713,10 +717,10 @@ let stage ~src ~ranges ~opts =
     ~src:(Array.of_list (src :: ranges))
     ~arg:(Arg.Stage_info opts)
 
-let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint) () =
+let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint) ?multiple_of () =
   let shape = mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty in
   param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(min_val, max_val)
-    ~addrspace:Dtype.Alu ()
+    ?multiple_of ~addrspace:Dtype.Alu ()
 
 let bind ~var ~value =
   let in_bounds = match arg var, op value, arg value with
@@ -1341,6 +1345,24 @@ and ended_ranges u =
 
 (* Ordered variant of [ranges_set]; memoized like it, since an unmemoized
    walk revisits shared subgraphs and goes exponential on unrolled kernels. *)
+(* Bool-typed nodes reachable from a node, itself included: a backward slice
+   pruned to the only dtype a condition can have. Memoized, since the
+   where-closure fold queries it on every WHERE and an unmemoized walk
+   revisits shared subgraphs. *)
+let bool_slice_cache : Ref_set.t Ref_tbl.t = Ref_tbl.create 256
+
+let rec bool_slice u =
+  match Ref_tbl.find_opt bool_slice_cache u with
+  | Some s -> s
+  | None ->
+      let acc = ref Ref_set.empty in
+      Array.iter (fun c -> acc := Ref_set.union !acc (bool_slice c)) (src u);
+      if Dtype.is_bool (dtype u) then acc := Ref_set.add u !acc;
+      Ref_tbl.add bool_slice_cache u !acc;
+      !acc
+
+let bool_slice_mem root u = Ref_set.mem u (bool_slice root)
+
 let ranges_list_cache : t list Ref_tbl.t = Ref_tbl.create 64
 
 let ranges u =
@@ -2189,27 +2211,21 @@ and compute_shape_opt u =
       in
       if Array.length srcs = 0 then None else Some (range_shape @ shape srcs.(0))
   | Ops.Wmma ->
-      (* output shape = broadcast of the srcs' shapes minus the packed tail,
-         plus the upcast output tail *)
+      (* Broadcast of the operands' shapes without their packed tails, plus
+         the accumulator's own tail: the lanes one thread holds are already
+         the accumulator's last dimension, so the width is read off the node
+         rather than recomputed from the tensor-core axes — which are dropped
+         once the expander has consumed them. *)
       if Array.length srcs >= 3 then
-        match arg u with
-        | Arg.Wmma_info info -> (
-            let drop_last l =
-              match List.rev l with [] -> [] | _ :: rest -> List.rev rest
-            in
-            match
-              (shape_opt srcs.(0), shape_opt srcs.(1), shape_opt srcs.(2))
-            with
-            | Some s0, Some s1, Some s2 ->
-                let _, _, out0 = info.upcast_axes in
-                let out_sz =
-                  List.fold_left (fun acc (_, sz) -> acc * sz) 1 out0
-                in
-                Some
-                  (lenient_broadcast_shape
-                     [ drop_last s0; drop_last s1; drop_last s2 ]
-                  @ [ const_int out_sz ])
-            | _ -> None)
+        let drop_last l =
+          match List.rev l with [] -> [] | _ :: rest -> List.rev rest
+        in
+        match (shape_opt srcs.(0), shape_opt srcs.(1), shape_opt srcs.(2)) with
+        | Some s0, Some s1, Some s2 when s2 <> [] ->
+            Some
+              (lenient_broadcast_shape
+                 [ drop_last s0; drop_last s1; drop_last s2 ]
+              @ [ List.nth s2 (List.length s2 - 1) ])
         | _ -> None
       else None
   | Ops.Mstack | Ops.Mselect | Ops.Detach | Ops.Contiguous
@@ -2738,6 +2754,10 @@ let rec const_factor u =
       (match const_int_value a, const_int_value b with
        | Option.Some n, _ | _, Option.Some n -> n
        | _ -> 1)
+  | Ops.Param ->
+      (match Arg.as_param_arg (arg u) with
+       | Option.Some { multiple_of = Option.Some m; _ } -> m
+       | _ -> 1)
   | _ -> 1
 
 let rec divides u n =
@@ -2769,6 +2789,11 @@ let rec divides u n =
            (match divides b n with
             | Option.Some qb -> Option.Some (alu_binary ~op:Ops.Mul ~lhs:a ~rhs:qb)
             | Option.None -> Option.None))
+  | Ops.Param ->
+      (match Arg.as_param_arg (arg u) with
+       | Option.Some { multiple_of = Option.Some m; _ } when m mod n = 0 ->
+           Option.Some (alu_binary ~op:Ops.Floordiv ~lhs:u ~rhs:(const_like u n))
+       | _ -> Option.None)
   | _ -> Option.None
 
 let pop_const u =
@@ -3058,7 +3083,7 @@ let program_index_buffer u =
   | Some idx when Array.length (src idx) > 0 -> Some (buf_uop (src idx).(0))
   | _ -> None
 
-let program_info_from_sink ?(aux = []) sink =
+let program_info_from_sink sink =
   let vars = ref [] in
   let globals = ref [] in
   let outs = ref [] in
@@ -3137,7 +3162,6 @@ let program_info_from_sink ?(aux = []) sink =
     globals = sort_uniq_ints !globals;
     outs = sort_uniq_ints !outs;
     ins = sort_uniq_ints !ins;
-    aux;
   }
 
 let int_floor_div a b =

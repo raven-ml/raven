@@ -18,25 +18,6 @@ let prod = List.fold_left ( * ) 1
    zero, so [-(-a / b)] would floor instead of ceil. *)
 let ceildiv a b = (a + b - 1) / b
 
-(* A scalar literal used as an operand adopts the dtype of the tensor it is
-   paired with, keeping a scalar operand at the operand's precision instead of a
-   wider default. [~like] is the paired tensor. *)
-let uf ~like s =
-  let dt = T.dtype like in
-  let sdt =
-    if D.is_float dt then dt
-    else
-      match s with
-      | T.Sint _ when D.is_int dt -> dt
-      | T.Sint _ -> D.default_int
-      | T.Sfloat _ -> D.default_float
-      | T.Sbool _ -> D.bool
-  in
-  T.of_uop (Uop.const (T.scalar_const sdt s))
-
-let sf ~like x = uf ~like (T.Sfloat x)
-let si ~like n = uf ~like (T.Sint n)
-
 (* Generator state: one seed for the process, plus per-device key and counter
    tensors created lazily on first use. The key holds a device-specific word
    (derived by hashing the device's first-use index) and the seed; the counter
@@ -53,9 +34,6 @@ let manual_seed s =
 
 let device_rng_counter device = Hashtbl.find_opt device_rng_counters device
 
-(* Scalar constant at [t]'s dtype, so unsigned arithmetic stays at the
-   operand's width (a Python literal operand adopts the tensor's dtype). *)
-let c t v = T.of_uop (Uop.const (T.scalar_const (T.val_dtype t) (T.Sint v)))
 let slice t a b = Op.getitem t Movement.[ R (Some a, Some b, None) ]
 
 let uint32_input values =
@@ -76,20 +54,20 @@ let next_counter device num =
   end;
   let counter = Hashtbl.find device_rng_counters device in
   let num_low = num land 0xFFFFFFFF and num_high = num lsr 32 in
-  let new_low = Elementwise.add (slice counter 0 1) (c counter num_low) in
+  let new_low = Elementwise.add (slice counter 0 1) (T.i num_low) in
   let new_high =
     Elementwise.add
-      (Elementwise.add (slice counter 1 2) (c counter num_high))
+      (Elementwise.add (slice counter 1 2) (T.i num_high))
       (Elementwise.lt new_low (Op.getitem counter Movement.[ I 0 ]))
   in
   ignore (Op.assign counter (Op.cat new_low [ new_high ]));
   (* Recover the pre-advance position by reading back through the write, so
      the advance replays even when this graph is captured. *)
-  let low = Elementwise.sub (slice counter 0 1) (c counter num_low) in
+  let low = Elementwise.sub (slice counter 0 1) (T.i num_low) in
   let high =
     Elementwise.sub
-      (Elementwise.sub (slice counter 1 2) (c counter num_high))
-      (Elementwise.lt (Op.getitem counter Movement.[ I 0 ]) (c counter num_low))
+      (Elementwise.sub (slice counter 1 2) (T.i num_high))
+      (Elementwise.lt (Op.getitem counter Movement.[ I 0 ]) (T.i num_low))
   in
   (Hashtbl.find device_seeds device, Op.cat low [ high ])
 
@@ -98,7 +76,7 @@ let next_counter device num =
    concatenated along axis 0. *)
 let threefry_random_bits key counts0 counts1 =
   let u64 t = Dtype_ops.cast t D.uint64 in
-  let shl32 t = Elementwise.lshift t (c t 32) in
+  let shl32 t = Elementwise.lshift t (T.i 32) in
   let x = Elementwise.bitwise_or (shl32 (u64 counts1)) (u64 counts0) in
   let key_lane i =
     u64 (Movement.broadcast_to (Op.getitem key Movement.[ I i ]) (T.shape x))
@@ -110,7 +88,7 @@ let threefry_random_bits key counts0 counts1 =
   (* Narrowing to uint32 already discards the high half; no mask needed. *)
   Op.cat
     (Dtype_ops.cast x D.uint32)
-    [ Dtype_ops.cast (Elementwise.rshift x (c x 32)) D.uint32 ]
+    [ Dtype_ops.cast (Elementwise.rshift x (T.i 32)) D.uint32 ]
 
 let uint32_max = 0xFFFFFFFF
 
@@ -120,15 +98,15 @@ let random_bits key counter num =
     if i >= num then List.rev acc
     else
       let chunk_num = min (num - i) uint32_max in
-      let c_low = Elementwise.add low (c low (i land 0xFFFFFFFF)) in
+      let c_low = Elementwise.add low (T.i (i land 0xFFFFFFFF)) in
       let c_high =
         Elementwise.add
-          (Elementwise.add high (c high (i lsr 32)))
+          (Elementwise.add high (T.i (i lsr 32)))
           (Elementwise.lt c_low low)
       in
       let new_key = threefry_random_bits key c_low c_high in
       let counts0 = Op.arange ~dtype:D.uint32 (ceildiv chunk_num 2) in
-      let counts1 = Elementwise.add counts0 (c counts0 (ceildiv chunk_num 2)) in
+      let counts1 = Elementwise.add counts0 (T.i (ceildiv chunk_num 2)) in
       let bits =
         slice (threefry_random_bits new_key counts0 counts1) 0 chunk_num
       in
@@ -159,7 +137,7 @@ let bits_to_rand bits shape dt =
   in
   let mantissa =
     Elementwise.bitwise_or
-      (Elementwise.rshift uint_bits (c uint_bits (D.bitsize dt - nmant)))
+      (Elementwise.rshift uint_bits (T.i (D.bitsize dt - nmant)))
       float_one_bits
   in
   Movement.reshape
@@ -242,11 +220,11 @@ let normal ?(mean = 0.) ?(std = 1.) ?dtype shape =
   if std < 0. then
     invalid_arg (Printf.sprintf "Rand.normal: requires std >= 0, got %g" std);
   let r = randn ?dtype shape in
-  Elementwise.add (Elementwise.mul r (sf ~like:r std)) (sf ~like:r mean)
+  Elementwise.add (Elementwise.mul r (T.f std)) (T.f mean)
 
 let scaled_uniform ?dtype shape =
   let u = uniform ~low:(-1.) ~high:1. ?dtype shape in
-  Elementwise.mul u (sf ~like:u (Float.pow (float_of_int (prod shape)) (-0.5)))
+  Elementwise.mul u (T.f (Float.pow (float_of_int (prod shape)) (-0.5)))
 
 let glorot_uniform ?dtype shape =
   let bound =
@@ -321,5 +299,5 @@ let dropout ?(p = 0.5) t =
             (Elementwise.ge
                (rand_like ~dtype:D.default_float ~contiguous:false t)
                (T.f p)))
-         t (si ~like:t 0))
-      (sf ~like:t (1. -. p))
+         t (T.i 0))
+      (T.f (1. -. p))

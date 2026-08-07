@@ -548,6 +548,33 @@ let property_folds_are_numerically_correct () =
             !failures cases)
     (!failures = 0)
 
+(* A PARAM declared a multiple of [k] divides [k] exactly, so the remainder is
+   statically zero and the quotient is irreducible — no other strategy can
+   improve on it, and some would rewrite it into a larger expression. *)
+let param_multiple_of_folds_mod_and_leaves_div () =
+  let x =
+    Uop.variable ~name:"x" ~min_val:0 ~max_val:100 ~dtype:Dtype.weakint
+      ~multiple_of:4 ()
+  in
+  (match rewrite (floormod x (ic 4)) with
+   | Some r ->
+       equal (option int) ~msg:"x % 4 folds to zero" (Some 0)
+         (Uop.const_int_value r)
+   | None -> is_true ~msg:"x % 4 rewrites" false);
+  is_true ~msg:"x / 4 is left alone" (rewrite (floordiv x (ic 4)) = None);
+  (* A divisor the declared multiple does not cover carries no such promise. *)
+  is_true ~msg:"x % 3 does not fold to zero"
+    (match rewrite (floormod x (ic 3)) with
+     | Some r -> Uop.const_int_value r <> Some 0
+     | None -> true)
+
+let param_without_multiple_of_does_not_fold () =
+  let x = var ~name:"x" ~lo:0 ~hi:100 () in
+  is_true ~msg:"undeclared param does not fold its mod"
+    (match rewrite (floormod x (ic 4)) with
+     | Some r -> Uop.const_int_value r <> Some 0
+     | None -> true)
+
 let () =
   run "tolk.uop.divandmod"
     [
@@ -604,6 +631,13 @@ let () =
             large_constant_residue_double_does_not_overflow_rewrite;
           test "nest_by_factor accepts stack numerator"
             nest_by_factor_accepts_stack_numerator;
+        ];
+      group "param multiple_of"
+        [
+          test "declared multiple folds mod and leaves div"
+            param_multiple_of_folds_mod_and_leaves_div;
+          test "undeclared param does not fold"
+            param_without_multiple_of_does_not_fold;
         ];
       group "recombination"
         [

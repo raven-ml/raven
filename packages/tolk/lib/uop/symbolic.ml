@@ -1366,24 +1366,10 @@ let pm_fold_lane_stack : Upat.Pattern_matcher.t =
              with Exit -> None));
   ]
 
-(* Bool-typed nodes reachable from a node, itself included. Memoized: the
-   where-closure rule below consults it on every [where], and an unmemoized
-   walk revisits shared subgraphs. *)
-let bool_slice_cache : unit Uop.Ref_tbl.t Uop.Ref_tbl.t = Uop.Ref_tbl.create 256
-
-let rec bool_slice u =
-  match Uop.Ref_tbl.find_opt bool_slice_cache u with
-  | Some s -> s
-  | None ->
-      let s = Uop.Ref_tbl.create 8 in
-      Array.iter
-        (fun c ->
-          Uop.Ref_tbl.iter (fun k () -> Uop.Ref_tbl.replace s k ()) (bool_slice c))
-        (Uop.src u);
-      if Dtype.is_bool (Uop.dtype u) then Uop.Ref_tbl.replace s u ();
-      Uop.Ref_tbl.add bool_slice_cache u s;
-      s
-
+(* Whether a node's backward slice reaches an [Ops.Index], itself included.
+   Memoized here rather than expressed as the equivalent {!Uop.in_backward_slice}
+   query, because that one re-walks the graph per call and the rule below runs
+   on every [where] in every pass. *)
 let has_index_cache : bool Uop.Ref_tbl.t = Uop.Ref_tbl.create 256
 
 let rec has_index u =
@@ -1399,10 +1385,7 @@ let rec has_index u =
    are excluded: the validity and store-coalescing passes read the gate back
    off the where and own its shape. *)
 let fold_where_closure cond t f =
-  if
-    not
-      (Uop.Ref_tbl.mem (bool_slice t) cond || Uop.Ref_tbl.mem (bool_slice f) cond)
-  then None
+  if not (Uop.bool_slice_mem t cond || Uop.bool_slice_mem f cond) then None
   else if has_index cond || has_index t || has_index f then None
   else
     let t' = Uop.substitute [ (cond, Uop.const_bool true) ] t in

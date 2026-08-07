@@ -10,14 +10,6 @@
     Higher-level operations built from movement, element-wise, and reduction
     primitives. *)
 
-(** {1 Broadcasting} *)
-
-val broadcasted : ?reverse:bool -> Tensor.t -> Tensor.t -> Tensor.t * Tensor.t
-(** [broadcasted a b] is [(a, b)] broadcast to a common shape and promoted to a
-    common dtype; with [~reverse:true] the pair is returned swapped. Linking
-    this module installs it as {!Tensor.broadcasted}, which the element-wise
-    operations use. *)
-
 (** {1 Assignment} *)
 
 val assign : Tensor.t -> Tensor.t -> Tensor.t
