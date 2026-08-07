@@ -75,6 +75,13 @@ let range_size_int r =
 (* Count Range nodes in a DAG. *)
 let count_ranges root = List.length (find_ranges root)
 
+(* The float payload of [root] when it is a single folded constant. *)
+let float_const root =
+  match U.Arg.as_value (U.arg root) with
+  | Some value -> (
+      match C.view value with C.Float f -> Some f | _ -> None)
+  | None -> None
+
 (* Check whether a node kind appears in a DAG. *)
 let has_node pred root =
   List.exists pred (U.toposort root)
@@ -563,8 +570,10 @@ let reduce_simplify_tests =
             U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
-          (* Range should be eliminated *)
-          equal int (count_ranges result) 0);
+          equal int (count_ranges result) 0;
+          (* The count is weak, so the product takes the value's dtype and
+             folds through; a cast on the count would block the fold. *)
+          equal (option (float 1e-9)) (Some 6.0) (float_const result));
       test "bound from below: (r < cut).where(0, val).reduce(ADD)" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open U.O in
@@ -577,8 +586,8 @@ let reduce_simplify_tests =
             U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
-          (* Range should be eliminated: result is (10-3)*2 = 14 *)
-          equal int (count_ranges result) 0);
+          equal int (count_ranges result) 0;
+          equal (option (float 1e-9)) (Some 14.0) (float_const result));
       test "unparented range removed from ADD reduce" (fun () ->
           (* Integration with reduce_unparented: Reduce(ADD, const, [r])
              where const doesn't reference r -> const * size(r) *)
@@ -621,7 +630,10 @@ let reduce_simplify_tests =
           (* r2 is unparented -> removed with *4 multiplier.
              r1 fold: min(max(3,0),5) * 1.0 = 3.0.
              Result: 3.0 * 4.0 = 12.0, no ranges. *)
-          equal int (count_ranges result) 0);
+          equal int (count_ranges result) 0;
+          (* Both factors stay weak, so nothing casts: the pass leaves
+             MUL(3, 4) for the symbolic fold that follows it. *)
+          is_false (has_node (fun n -> U.op n = Ops.Cast) result));
       (* Bound from two sides:
          ((r >= lower) & (r < upper)).where(val, 0).reduce(r, ADD) *)
       test "bound from two sides" (fun () ->
@@ -646,7 +658,8 @@ let reduce_simplify_tests =
           in
           let result = Simplify.reduce_simplify_all red in
           (* Range should be eliminated: count = min(max(min(7,10)-max(2,0),0),10) = 5 *)
-          equal int (count_ranges result) 0);
+          equal int (count_ranges result) 0;
+          equal (option (float 1e-9)) (Some 15.0) (float_const result));
       (* lift x*y out of reduce: (x * y) < c -> x < ceil_div(c, y)
          when no_range(y), no_range(c), is_int(y), y.vmin > 0 *)
       test "lift x*y out of reduce" (fun () ->
@@ -665,6 +678,23 @@ let reduce_simplify_tests =
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
+      (* lift x+y out of reduce on lt, through the cast arm: the bound is
+         wider than the addend, and the subtraction promotes, so casting
+         the bound down to the addend's width would strand it unfolded. *)
+      test "lift x+y out of reduce on lt" (fun () ->
+          let r = loop_range ~axis:0 10 in
+          let open U.O in
+          (* (r + 2) < i32 7 lifts to r < 7 - 2 = 5. *)
+          let cond = r + idx 2 < U.const (C.int D.int32 7) in
+          let src =
+            U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 2.0) ~c:(f32 0.0)
+          in
+          let red =
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+          in
+          let result = Simplify.reduce_simplify_all red in
+          equal int (count_ranges result) 0;
+          equal (option (float 1e-9)) (Some 10.0) (float_const result));
       test "collapses a range-bounded conditional sum" (fun () ->
           (* Summing [where(r < 5, 1, 0)] over [r] counts the in-bound
              iterations, a constant, so the pass eliminates the range. *)

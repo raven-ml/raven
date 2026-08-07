@@ -15,7 +15,7 @@ def kernel():
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     b = UOp.param(1, dtypes.float32, shape=(-1,))
-    idx = UOp.const(dtypes.int, 0)
+    idx = UOp.const(0, dtypes.int)
     idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
     sq = UOp(Ops.SQRT, dtypes.float32, (ld,))

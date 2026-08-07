@@ -17,9 +17,9 @@ def kernel():
     p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
-    st1 = p1.index(r0).store(ld_a + UOp.const(dtypes.float32, 1.0))
+    st1 = p1.index(r0).store(ld_a + UOp.const(1.0, dtypes.float32))
     e1 = st1.end(r0)
-    st2 = p2.index(r0).store(ld_a * UOp.const(dtypes.float32, 2.0))
+    st2 = p2.index(r0).store(ld_a * UOp.const(2.0, dtypes.float32))
     e2 = st2.end(r0)
     return UOp.sink(
         e1, e2,

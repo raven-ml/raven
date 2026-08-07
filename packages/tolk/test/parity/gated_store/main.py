@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import dump  # noqa: E402
 
 from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType  # noqa: E402
-from tinygrad.dtype import dtypes, Invalid  # noqa: E402
+from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
@@ -19,9 +19,9 @@ def kernel():
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    gate = r0 < UOp.const(dtypes.index, 200)
+    gate = r0 < UOp.const(200, dtypes.weakint)
     st = p2.index(r0).store(
-        gate.where(add, UOp(Ops.CONST, dtypes.float32, (), Invalid))
+        gate.where(add, UOp.invalid())
     )
     end = st.end(r0)
     return UOp.sink(

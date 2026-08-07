@@ -20,7 +20,7 @@ def kernel():
     ld_b = p1.index(r0).load()
     mul = ld_a * ld_b
     red = UOp(Ops.REDUCE, dtypes.float32, (mul, r0), (Ops.ADD, 0))
-    c0 = UOp.const(dtypes.weakint, 0)
+    c0 = UOp.const(0, dtypes.weakint)
     st = p2.index(c0).store(red)
     return UOp.sink(
         st,

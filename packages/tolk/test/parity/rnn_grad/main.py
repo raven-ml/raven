@@ -62,7 +62,7 @@ def build():
     h = [h0]
     for x in xs:
         h.append(matmul_nn(x, w_in, b, d, d) + matmul_nn(h[-1], w_rec, b, d, d))
-    two = UOp.const(dtypes.float32, 2.0, shape=(b, d))
+    two = UOp.const(2.0, dtypes.float32).expand((b, d))
     g = [None] * (HORIZON + 1)
     g[HORIZON] = two * h[HORIZON]
     for t in range(HORIZON - 1, -1, -1):

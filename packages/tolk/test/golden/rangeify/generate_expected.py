@@ -106,8 +106,8 @@ def get_source(sink, renderer, optimize=True):
 def mk_shape(*dims):
     """Encode a shape as a VECTORIZE of index consts (or single const for 1-D)."""
     if len(dims) == 1:
-        return UOp.const(dtypes.int, dims[0])
-    return UOp.stack(*(UOp.const(dtypes.int, d) for d in dims))
+        return UOp.const(dims[0], dtypes.int)
+    return UOp.stack(*(UOp.const(d, dtypes.int) for d in dims))
 
 
 def mk_param(slot, *shape, dtype=dtypes.float32):

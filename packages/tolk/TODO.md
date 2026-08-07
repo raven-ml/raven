@@ -342,25 +342,44 @@ Everything below is a deliberate change from this pin update whose only visible
 effect is that a golden's `.actual` no longer matches its `.expected`. They are
 listed so the regeneration is read as intended movement rather than regression.
 
-Counts below are measured, not estimated: the generators were run against
-`baa614806` into a scratch tree and diffed against the committed corpus. Only
-45 of 71 parity cases and 1 of 4 golden generators can run today (see the
-driver-migration entry under Misc), so the figures cover 268 parity files plus
-`golden/debug`; `golden/{codegen,cstyle,rangeify}` (232 files) is unmeasured.
-Of the 96 parity files that move, all but 14 are fully explained by the five
-mechanical causes below. **The 14 exceptions are all `multi_*`** and are the
-only place regeneration changes semantics rather than spelling — kernel
-signatures lose a parameter (`E_4_4n1(data0, data1, data2)` ->
-`E_4_4n5(data0, data1)`), axis ids shift by one, and kernel-name suffixes
-renumber. Review those 14 by hand; attribute the rest.
+Counts below are measured over the **whole corpus**, not estimated: every
+generator was run against `baa614806` into a scratch tree and diffed against
+the committed corpus. **631 files: 408 unchanged, 223 changed.** Seven
+mechanical causes account for 160 of them; **63 need to be read by hand**, and
+they cluster — `golden/codegen` 20, `golden/rangeify` 20, `multi_*` 13,
+`multistage_reduce` 4, `tc_matmul_*` 5. Attribute the rest; review those 63.
+
+The two clusters known to be semantic rather than cosmetic:
+
+- **`multi_*`** — kernel signatures lose a parameter
+  (`E_4_4n1(data0, data1, data2)` -> `E_4_4n5(data0, data1)`) and axis ids
+  shift by one. This is the MULTI -> UNSHARD rework on the reference side, and
+  it is why a `multi_stack` case cannot be authored before the pin moves.
+- **`rsqrt` moved across a kernel boundary.** `llama_rmsnorm` stops emitting
+  `1.0f/__builtin_sqrtf(x)` and emits `__builtin_sqrtf(x)`, while its consumer
+  `llama_vector_scale` changes `val1[i]*val0*val2[i]` into
+  `(val1[i]/val0)*val2[i]` — mathematically identical, one kernel later.
+  Checked rather than assumed: the golden selection is stable, 14 sinks at both
+  pins with each target name matching exactly one kernel.
+
+  *Trap in that generator*: the five `llama_*` cases are selected by matching
+  a hardcoded kernel-name table (`"r_2_8": "llama_rmsnorm"`) against
+  `rewritten.arg.name`. Kernel names encode shape and axis structure, so a
+  schedule change can silently rebind a name to a different kernel, and the
+  loop's last write would win. Re-run the sink-name census on any future pin
+  move rather than trusting that the five names still resolve.
 
 - Every `cuda_*` kernel gains `typedef unsigned int uint;` as its first prefix
-  line, and CUDA and Metal both spell `uint32` as `uint`. (46 files)
+  line, and CUDA and Metal both spell `uint32` as `uint`. (130 files)
 - Loop and thread index variables renumber (`Lidx0` -> `Lidx1`), so a kernel
-  body can differ only in its counter names. (48 files)
+  body can differ only in its counter names. (115 files)
+- Kernel-name suffixes renumber (`E_8_4n16` -> `E_8_4n32`). (96 files)
+- Float literals render at float32 precision rather than Python double:
+  `0.0013020833333333333` -> `0.0013020833721384406`, `1e-05f` ->
+  `9.999999747378752e-06`. (93 files)
 - `ParamArg` reprs gain `multiple_of=1` on ALU-space parameters, which moves
   every stage-5 dump carrying a `core_id` or a bound variable, and both
-  `golden/debug` files. (19 parity files + 2 debug)
+  `golden/debug` files. (24 files)
 - A register-file buffer read more than once is bound to a named temporary
   instead of having the read re-emitted at each use.
 - Scalar kernel parameters wider than int32 render `const long` /
@@ -372,8 +391,8 @@ renumber. Review those 14 by hand; attribute the rest.
   reduce-axis list are gone, and the upcast axes now print as `None` once the
   operands have been contracted.
 - `AxisType.LOOP` prints as `AxisType.WEAK` for every counted range: 61 lines
-  across 27 `test/parity` `stage5_*.expected` files. The Python drivers must be
-  migrated first — see the wave-9 precondition under Misc.
+  across 27 `test/parity` `stage5_*.expected` files. (27 files; the drivers
+  are already migrated.)
 - Every threefry call loses two `& 0xFFFFFFFF` masks; the narrowing cast
   already discards the high half.
 - `pow(int, float)` loses its round-and-cast and keeps the promoted float.
@@ -602,26 +621,41 @@ Closed since this list was written, recorded for what they pin:
   drivers are all outside the compiler's reach; only the ordering exposed
   them.
 
-- **BLOCKING PRECONDITION FOR REGENERATION — the Python drivers do not run at
-  `baa614806`.** Measured by running them all against the new pin: 26 of 71
-  parity cases and 3 of 4 golden generators abort. Four distinct API breaks,
-  none of them in tolk:
+- **The Python drivers are migrated to `baa614806` (done).** Before the
+  migration 26 of 71 parity cases and 3 of 4 golden generators aborted against
+  the new pin; after it, **all 71 parity cases and all 4 generators run, with
+  zero aborts and zero skips** (2 + 62 + 88 + 82 golden files written). Five
+  API breaks, none of them in tolk:
 
-  | break | sites | fix |
+  | break | sites | fix applied |
   |---|---|---|
   | `UOp.const` swapped its arguments | 96 calls in 29 files | `UOp.const(dtypes.X, v)` -> `UOp.const(v, dtypes.X)` |
-  | `UOp.const`'s `shape=` parameter deleted | 1 | drop it |
-  | `dtypes.index` deleted | 6 | pick the replacement per site |
-  | `AxisType.WEAK` absent at the old pin | 9 (already migrated) | — |
+  | `UOp.const`'s `shape=` parameter deleted | 1 | `.expand(S)`, which is what the old body did |
+  | `dtypes.index` deleted | 6 | `dtypes.weakint` |
+  | `Invalid` is always bool | 2 | `UOp(Ops.CONST, dtypes.float32, (), Invalid)` -> `UOp.invalid()` |
+  | `AxisType.WEAK` absent at the old pin | 9 | migrated earlier |
 
-  Old signature `UOp.const(dtype, b, shape=None)`; new one
-  `UOp.const(b, dtype=None)` (`uop/ops.py:624`). The order swap is silent for
-  the two-arg form only because the first argument is now type-checked at use;
-  it fails loudly, which is why this is a migration and not a correctness risk.
+  Old signature `UOp.const(dtype, b, shape=None)`, new one
+  `UOp.const(b, dtype=None)` (`uop/ops.py:624`). `dtypes.weakint` is not a
+  guess: every one of the six sites has an OCaml sibling built with
+  `U.const_int`, which is `const (Const.int Dtype.weakint n)`, and `UOp.range`
+  now defaults to `dtype=dtypes.weakint`, so the constant must be weakint or a
+  spurious cast appears against the range it is compared with. Likewise
+  `Const.invalid` is already `{ dtype = Dtype.bool; ... }` on the tolk side,
+  matching "Invalid is always bool, the promo lattice bottom"
+  (`uop/ops.py:182`); the new `const` ignores any dtype passed alongside
+  `Invalid`, so a float-typed one is now a spec violation.
 
-  **`golden/cstyle/generate_expected.py` swallows these.** It catches per case
-  and prints `SKIP <name>: <error>`, then `Done. Generated 0 .expected files`
-  and **exits 0**. Every one of its 62 cases currently skips. Read its output;
+  *What proved the swap did not silently transpose anything*: the 45 cases
+  that already ran before the migration produce **268 of 268 `.expected` files
+  byte-identical** afterwards. And the three cases carrying the judgement calls
+  — `gated_store`, `token_gather_collapse` (4 of the 6 index sites),
+  `rnn_grad` (the `shape=` site) — now match tolk's own `.actual` on 18 of 19
+  files, the exception being the `multiple_of` movement below.
+
+  **`golden/cstyle/generate_expected.py` hid all of this.** It catches per
+  case and prints `SKIP <name>: <error>`, then `Done. Generated 0 .expected
+  files`, and **exits 0**. All 62 of its cases were skipping. Read its output;
   do not trust its exit status.
 
 - **The nine `AxisType.LOOP` driver sites are migrated to `AxisType.WEAK`

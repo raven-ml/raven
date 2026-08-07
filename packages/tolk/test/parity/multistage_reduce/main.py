@@ -13,7 +13,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def build():
     a = mk_param(0, 32, 32, 32)
     red1 = a._rop(Ops.ADD, (2,))
-    zero = UOp.const(dtypes.float32, 0.0)
+    zero = UOp.const(0.0, dtypes.float32)
     zero_bc = zero.reshape((1, 1)).expand((32, 32))
     relu = red1.alu(Ops.MAX, zero_bc)
     red2 = relu._rop(Ops.ADD, (1,))

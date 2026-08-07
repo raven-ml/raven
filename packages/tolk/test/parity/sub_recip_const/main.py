@@ -26,8 +26,8 @@ BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cpu", "cuda")}
 def build():
     a = mk_param(0, 128)
     b = mk_param(1, 128)
-    diff = a + b * UOp.const(dtypes.float32, -1.0)
-    return wrap_sink(diff * UOp.const(dtypes.float32, 768.0).reciprocal())
+    diff = a + b * UOp.const(-1.0, dtypes.float32)
+    return wrap_sink(diff * UOp.const(768.0, dtypes.float32).reciprocal())
 
 
 if __name__ == "__main__":

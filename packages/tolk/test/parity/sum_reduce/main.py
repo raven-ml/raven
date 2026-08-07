@@ -17,7 +17,7 @@ def kernel():
     r0 = UOp.range(256, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
-    c0 = UOp.const(dtypes.weakint, 0)
+    c0 = UOp.const(0, dtypes.weakint)
     st = p1.index(c0).store(red)
     return UOp.sink(
         st,

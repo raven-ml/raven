@@ -31,15 +31,15 @@ def kernel():
     chunk = UOp.range(29, 3, AxisType.WEAK)
     tok_i = UOp.range(13, 1, AxisType.WEAK)
     r = UOp.range(1733, 0, AxisType.REDUCE)
-    vocab = chunk * UOp.const(dtypes.index, 1733) + r
+    vocab = chunk * UOp.const(1733, dtypes.weakint) + r
     toks = UOp.param(1, dtypes.int, shape=(13,))
     wte = UOp.param(2, dtypes.float, shape=(38597376,))
     gate = vocab.cast(dtypes.int) != toks.index(tok_i)
-    body = gate.where(UOp.const(dtypes.float, 0.0),
-                      wte.index(vocab * UOp.const(dtypes.index, 768) + col))
+    body = gate.where(UOp.const(0.0, dtypes.float),
+                      wte.index(vocab * UOp.const(768, dtypes.weakint) + col))
     red = UOp(Ops.REDUCE, dtypes.float, (body, r), (Ops.ADD, 0))
-    out_idx = (col * UOp.const(dtypes.index, 29) + chunk
-               + tok_i * UOp.const(dtypes.index, 22272))
+    out_idx = (col * UOp.const(29, dtypes.weakint) + chunk
+               + tok_i * UOp.const(22272, dtypes.weakint))
     st = out.index(out_idx).store(red).end(tok_i, col, chunk)
     return UOp.sink(
         st,

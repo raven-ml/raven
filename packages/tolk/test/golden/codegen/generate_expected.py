@@ -27,7 +27,7 @@ sys.path.insert(
 os.environ["NO_COLOR"] = "1"
 
 from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
-from tinygrad.dtype import dtypes, Invalid
+from tinygrad.dtype import dtypes
 from tinygrad.helpers import Target
 from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups
 from tinygrad.codegen.late.linearizer import linearize
@@ -126,7 +126,7 @@ def build_sum_reduce():
     r0 = UOp.range(256, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
-    c0 = UOp.const(dtypes.int, 0)
+    c0 = UOp.const(0, dtypes.int)
     st = p1.index(c0).store(red)
     return UOp.sink(st, arg=ki("sum_reduce", axis_types=(AxisType.REDUCE,)))
 
@@ -138,7 +138,7 @@ def build_max_reduce():
     r0 = UOp.range(64, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.MAX, 0))
-    c0 = UOp.const(dtypes.int, 0)
+    c0 = UOp.const(0, dtypes.int)
     st = p1.index(c0).store(red)
     return UOp.sink(st, arg=ki("max_reduce", axis_types=(AxisType.REDUCE,)))
 
@@ -153,7 +153,7 @@ def build_dot_product():
     ld_b = p1.index(r0).load()
     mul = ld_a * ld_b
     red = UOp(Ops.REDUCE, dtypes.float32, (mul, r0), (Ops.ADD, 0))
-    c0 = UOp.const(dtypes.int, 0)
+    c0 = UOp.const(0, dtypes.int)
     st = p2.index(c0).store(red)
     return UOp.sink(st, arg=ki("dot_product", axis_types=(AxisType.REDUCE,)))
 
@@ -228,9 +228,9 @@ def build_multi_output():
     p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
-    st1 = p1.index(r0).store(ld_a + UOp.const(dtypes.float32, 1.0))
+    st1 = p1.index(r0).store(ld_a + UOp.const(1.0, dtypes.float32))
     e1 = st1.end(r0)
-    st2 = p2.index(r0).store(ld_a * UOp.const(dtypes.float32, 2.0))
+    st2 = p2.index(r0).store(ld_a * UOp.const(2.0, dtypes.float32))
     e2 = st2.end(r0)
     return UOp.sink(e1, e2, arg=ki("multi_output", axis_types=(AxisType.GLOBAL,)))
 
@@ -244,9 +244,9 @@ def build_gated_store():
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    gate = r0 < UOp.const(dtypes.index, 200)
+    gate = r0 < UOp.const(200, dtypes.weakint)
     st = p2.index(r0).store(
-        gate.where(add, UOp(Ops.CONST, dtypes.float32, (), Invalid))
+        gate.where(add, UOp.invalid())
     )
     end = st.end(r0)
     return UOp.sink(end, arg=ki("gated_store", axis_types=(AxisType.GLOBAL,)))
@@ -278,7 +278,7 @@ def build_elementwise_where():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld = p0.index(r0).load()
-    zero = UOp.const(dtypes.float32, 0.0)
+    zero = UOp.const(0.0, dtypes.float32)
     cond = zero.alu(Ops.CMPLT, ld)  # 0.0 < a[i] => a[i] > 0
     val = cond.where(ld, zero)
     st = p1.index(r0).store(val)
@@ -322,7 +322,7 @@ def build_parallel_reduce():
     ld = p0.index(r0).load()
     red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
     red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, 0))
-    c0 = UOp.const(dtypes.int, 0)
+    c0 = UOp.const(0, dtypes.int)
     st1 = p1.index(c0).store(red1)
     st2 = p2.index(c0).store(red2)
     return UOp.sink(st1, st2, arg=ki("parallel_reduce", axis_types=(AxisType.REDUCE,)))
@@ -353,10 +353,10 @@ def build_lorenz_fold():
     x = px.index(r0).load()
     y = py.index(r0).load()
     z = pz.index(r0).load()
-    sigma = UOp.const(dtypes.float32, 10.0)
-    rho = UOp.const(dtypes.float32, 28.0)
-    beta = UOp.const(dtypes.float32, 2.5)
-    dt = UOp.const(dtypes.float32, 0.0625)
+    sigma = UOp.const(10.0, dtypes.float32)
+    rho = UOp.const(28.0, dtypes.float32)
+    beta = UOp.const(2.5, dtypes.float32)
+    dt = UOp.const(0.0625, dtypes.float32)
     for _ in range(3):
         dx = sigma * (y - x)
         dy = x * (rho - z) - y

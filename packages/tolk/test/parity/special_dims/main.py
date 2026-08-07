@@ -14,7 +14,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def kernel():
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
-    bound = UOp.const(dtypes.int, 32)
+    bound = UOp.const(32, dtypes.int)
     gid = UOp(Ops.SPECIAL, dtypes.int, (bound,), "gidx0")
     lid = UOp(Ops.SPECIAL, dtypes.int, (bound,), "lidx0")
     combined = gid + lid

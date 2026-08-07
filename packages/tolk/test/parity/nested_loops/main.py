@@ -14,8 +14,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def kernel():
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
-    ten = UOp.const(dtypes.int, 10)
-    five = UOp.const(dtypes.int, 5)
+    ten = UOp.const(10, dtypes.int)
+    five = UOp.const(5, dtypes.int)
     ridx0 = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.WEAK))
     ridx1 = UOp(Ops.RANGE, dtypes.int, (five,), (1, AxisType.WEAK))
     combined = ridx0 + ridx1

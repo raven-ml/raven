@@ -16,7 +16,7 @@ def kernel():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld = p0.index(r0).load()
-    zero = UOp.const(dtypes.float32, 0.0)
+    zero = UOp.const(0.0, dtypes.float32)
     cond = zero.alu(Ops.CMPLT, ld)  # 0.0 < a[i] => a[i] > 0
     val = cond.where(ld, zero)
     st = p1.index(r0).store(val)

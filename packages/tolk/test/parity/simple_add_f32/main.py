@@ -20,7 +20,7 @@ def kernel():
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     b = UOp.param(1, dtypes.float32, shape=(-1,))
     c = UOp.param(2, dtypes.float32, shape=(-1,))
-    idx = UOp.const(dtypes.int, 0)
+    idx = UOp.const(0, dtypes.int)
     idx_a = a.index(idx)
     ld_a = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
     idx_b = b.index(idx)
