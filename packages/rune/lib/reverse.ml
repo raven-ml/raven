@@ -699,12 +699,14 @@ let handler (tape : Tape.t) =
                         end)
               end;
               continue k out)
-      (* FFT: fft and ifft are duals; the real-valued variants have no rule
-         yet. *)
+      (* FFT: the transform matrix is symmetric, so each transform is its own
+         transpose and pulls back through itself. Going through the inverse
+         instead would reverse the frequency index. The real-valued variants
+         have no rule yet. *)
       | E_fft { t; axes } ->
-          Some (fun k -> pull1 k (fft t ~axes) t (fun g -> ifft g ~axes))
+          Some (fun k -> pull1 k (fft t ~axes) t (fun g -> fft g ~axes))
       | E_ifft { t; axes } ->
-          Some (fun k -> pull1 k (ifft t ~axes) t (fun g -> fft g ~axes))
+          Some (fun k -> pull1 k (ifft t ~axes) t (fun g -> ifft g ~axes))
       | E_rfft { t; dtype; axes } ->
           Some
             (fun k ->

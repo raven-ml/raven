@@ -647,6 +647,9 @@ thread.
 
 ### Rune
 
+- Fix the gradient of `Nx.fft` and `Nx.ifft`: reverse mode pulled cotangents
+  back through the opposite transform, which reversed the frequency index. Each
+  transform is its own transpose and now pulls back through itself.
 - Fix the derivative of `abs` on complex tensors for cotangents that are not
   real: the modulus is real-valued, so the rule now keeps only the real part of
   the cotangent and pushes forward to a real tangent.

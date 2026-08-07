@@ -77,6 +77,18 @@ let modulus_tests =
       both "abs of a product" (fun z -> Nx.abs (Nx.mul z z)) z3;
     ]
 
+(* The discrete transform matrix is symmetric, so each transform is its own
+   transpose. A pullback through the inverse transform instead would come back
+   reindexed. *)
+
+let transform_tests =
+  List.concat
+    [
+      both "fft" (fun z -> Nx.fft z ~axis:0) z3;
+      both "ifft" (fun z -> Nx.ifft z ~axis:0) z3;
+      both "ifft of fft" (fun z -> Nx.ifft (Nx.fft z ~axis:0) ~axis:0) z3;
+    ]
+
 (* Reading a component out and putting one back: the paths a real-valued
    objective takes to reach a complex intermediate. *)
 
@@ -128,6 +140,7 @@ let tests =
   [
     group "holomorphic rules" holomorphic_tests;
     group "modulus" modulus_tests;
+    group "transforms" transform_tests;
     group "component access" accessor_tests;
     group "linear and movement rules" linear_tests;
   ]
