@@ -129,9 +129,12 @@ let test_split_is_deterministic () =
   is_true ~msg:"splitting twice gives the same subkeys" (sub 0 = sub 0);
   is_true ~msg:"subkeys differ" (sub 0 <> sub 1)
 
+(* 100k draws put the sample correlation's standard error at 0.0032, so the
+   0.03 bound is ~9 of them: it fires on real coupling between subkeys, not on
+   the excursions any particular stream makes. *)
 let test_split_independence () =
   let ks = Nx.Rng.split (Nx.Rng.key 42) in
-  let draw k = to_arr (Nx.Rng.uniform k f32 [| 10_000 |]) in
+  let draw k = to_arr (Nx.Rng.uniform k f32 [| 100_000 |]) in
   let x = draw ks.(0) and y = draw ks.(1) in
   is_true ~msg:"correlation near zero" (abs_float (correlation x y) < 0.03);
   equal ~msg:"subkey 0 mean sane" (float 0.02) 0.5 (mean x);

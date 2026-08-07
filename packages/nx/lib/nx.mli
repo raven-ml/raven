@@ -544,7 +544,11 @@ module Rng : sig
     (float, 'b) t
   (** [uniform k dtype shape] samples uniformly from [\[low, high)] ([low]
       defaults to [0], [high] to [1]). Pure: the same arguments always produce
-      the same values. *)
+      the same values.
+
+      A draw is a multiple of [2 ** -p] scaled into the interval, where [p] is
+      the significand width of [dtype] and never more than [24]; [high] itself
+      is unreachable. *)
 
   val normal : key -> (float, 'b) dtype -> int array -> (float, 'b) t
   (** [normal k dtype shape] samples the standard normal distribution (mean 0,
@@ -553,7 +557,9 @@ module Rng : sig
   val randint :
     key -> ?high:int -> int array -> int -> (int32, int32_elt) t
   (** [randint k ?high shape low] samples integers uniformly from
-      [\[low, high)]. [high] defaults to [10].
+      [\[low, high)]. [high] defaults to [10]. The draw comes from a 24-bit
+      {!uniform}, so a range wider than [2 ** 24] leaves some values
+      unreachable.
 
       Raises [Invalid_argument] if [low >= high]. *)
 

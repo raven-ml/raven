@@ -363,6 +363,14 @@ thread.
 
 ### Nx
 
+- Fix `Nx.Rng.uniform` and `Nx.Rng.randint` returning `high`, which both
+  document as excluded: the draw is now built from the random bits so it is
+  half-open at every float dtype, rather than by float32 rounding that reached
+  `1.0` about once in 2^24 draws (once in 4000 at float16). `Nx.rand` also
+  samples at its result dtype instead of narrowing a float32 draw.
+- Fix `Nx.Rng.randint` skewing towards zero for a negative `low`: it truncated
+  the shifted float, so `low` was never drawn and `0` was drawn twice as often.
+  Values for a fixed key change.
 - **Breaking:** the real FFT family (`rfft`, `irfft`, `hfft`, `ihfft` and their
   2-D/N-D variants) and `fftfreq`/`rfftfreq` now take the output dtype first,
   like the constructors. It selects storage precision independent of the

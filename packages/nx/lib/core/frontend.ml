@@ -2103,7 +2103,21 @@ module Make (B : Backend_intf.S) = struct
       let ctr = mul template (cast Dtype.int32 idx) in
       B.threefry (contiguous k) ctr
 
-    (* Signed int32 bits -> [0, 1): add 2^31 then divide by 2^32. *)
+    (* Significand width of [dtype] — the leading bit included — capped at the
+       24 bits a float32 carries exactly, since the draw is built there. *)
+    let significand_bits : type b. (float, b) Dtype.t -> int = function
+      | Float8_e5m2 -> 3
+      | Float8_e4m3 -> 4
+      | BFloat16 -> 8
+      | Float16 -> 11
+      | Float32 | Float64 -> 24
+
+    (* Random bits -> [0, 1): keep the low [p] bits of a word and scale them by
+       2^-p, where [p] is the destination's significand width. Both steps are
+       exact, so a draw is one of the 2^p multiples of 2^-p in [0, 1 - 2^-p]:
+       the interval is half-open by construction, at every dtype, rather than by
+       a rounding accident. Scaling to [low, high) rounds, but stays below
+       [high] for any range float32 resolves. *)
     let uniform (type b) k ?(low = 0.0) ?(high = 1.0)
         (dtype : (float, b) Dtype.t) shape : (float, b) t =
       check_shape "uniform" shape;
@@ -2112,11 +2126,12 @@ module Make (B : Backend_intf.S) = struct
       if n = 0 then zeros ctx dtype shape
       else
         let bits = shrink [| (0, n) |] (flatten (blocks "uniform" k n)) in
-        let f32 = cast Dtype.float32 bits in
+        let p = significand_bits dtype in
+        let mask = scalar ctx Dtype.int32 (Int32.of_int ((1 lsl p) - 1)) in
         let u =
-          div
-            (add f32 (scalar ctx Dtype.float32 2147483648.0))
-            (scalar ctx Dtype.float32 4294967296.0)
+          mul
+            (cast Dtype.float32 (bitwise_and bits mask))
+            (scalar ctx Dtype.float32 (Float.ldexp 1.0 (-p)))
         in
         let scaled =
           if low = 0.0 && high = 1.0 then u
@@ -2154,10 +2169,14 @@ module Make (B : Backend_intf.S) = struct
              high);
       let ctx = B.context k in
       let u = uniform k Dtype.float32 shape in
-      cast Dtype.int32
-        (add
-           (mul u (scalar ctx Dtype.float32 (float_of_int (high - low))))
-           (scalar ctx Dtype.float32 (float_of_int low)))
+      (* [u * (high - low)] is non-negative, so the cast's truncation is a
+         floor; shifting by [low] afterwards keeps it one, where folding [low]
+         in first would truncate towards zero and both drop [low] and double
+         the count of 0 for a negative [low]. *)
+      let span = scalar ctx Dtype.float32 (float_of_int (high - low)) in
+      add
+        (cast Dtype.int32 (mul u span))
+        (scalar ctx Dtype.int32 (Int32.of_int low))
 
     let bernoulli k ~p shape =
       if p < 0.0 || p > 1.0 then
@@ -2215,13 +2234,15 @@ module Make (B : Backend_intf.S) = struct
       err op "invalid shape %s, dimensions must be non-negative"
         (Shape.to_string shape)
 
+  (* Sample at [dtype] rather than at float32 and narrow: rounding a float32
+     draw down to a narrower dtype can land on 1. *)
   let rand ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "rand" dtype shape;
-    cast dtype (Rng.uniform (Rng.split_off ctx) Dtype.float32 shape)
+    Rng.uniform (Rng.split_off ctx) dtype shape
 
   let randn ctx (type b) (dtype : (float, b) Dtype.t) shape =
     validate_random_float_params "randn" dtype shape;
-    cast dtype (Rng.normal (Rng.split_off ctx) Dtype.float32 shape)
+    Rng.normal (Rng.split_off ctx) dtype shape
 
   let randint ctx dtype ?(high = 10) shape low =
     if low >= high then err "randint" "range, low=%d >= high=%d" low high;

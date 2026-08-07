@@ -65,7 +65,7 @@ let test_rand () =
   equal ~msg:"rand is deterministic" bool true is_equal_val.(0)
 
 let test_randn () =
-  let shape = [| 100 |] in
+  let shape = [| 10_000 |] in
   let t = Rng.run ~seed:42 (fun () -> randn float32 shape) in
 
   equal ~msg:"randn produces correct shape" (array int) shape (Nx.shape t);
@@ -81,8 +81,52 @@ let test_randn () =
   in
   let std = Stdlib.sqrt variance in
 
-  equal ~msg:"randn mean ~0" (float 0.2) 0. mean;
-  equal ~msg:"randn std ~1" (float 0.3) 1. std
+  equal ~msg:"randn mean ~0" (float 0.05) 0. mean;
+  equal ~msg:"randn std ~1" (float 0.05) 1. std
+
+(* A draw is an exact multiple of 2^-p in [0, 1 - 2^-p], where p is the
+   destination's significand width. Statistics cannot see the endpoints — the
+   old closed-interval bug hit 1.0 about once in 2^24 float32 draws — so check
+   the reachable value set instead: at a narrow dtype the whole grid shows up in
+   a few thousand draws, which pins both ends exactly. *)
+let test_uniform_half_open () =
+  let key = Rng.key 4242 in
+  let scan (type b) name (dt : (float, b) Nx.dtype) p n =
+    let values = Nx.to_array (Nx.cast float64 (Rng.uniform key dt [| n |])) in
+    let step = Float.ldexp 1.0 (-p) in
+    let seen = Hashtbl.create (1 lsl Stdlib.min p 12) in
+    let out_of_range = ref 0 and off_grid = ref 0 in
+    Array.iter
+      (fun v ->
+        if v < 0.0 || v >= 1.0 then incr out_of_range;
+        if not (Float.is_integer (v /. step)) then incr off_grid;
+        Hashtbl.replace seen v ())
+      values;
+    equal ~msg:(name ^ " draws lie in [0, 1)") int 0 !out_of_range;
+    equal ~msg:(name ^ " draws are multiples of 2^-p") int 0 !off_grid;
+    let extreme pick = Hashtbl.fold (fun v () acc -> pick v acc) seen in
+    (extreme Float.max neg_infinity, extreme Float.min infinity)
+  in
+  (* Narrow dtypes: every grid point is drawn, so the bounds are exact. *)
+  let grid (type b) name (dt : (float, b) Nx.dtype) p n =
+    let hi, lo = scan name dt p n in
+    equal ~msg:(name ^ " reaches 1 - 2^-p") (float 0.0)
+      (1.0 -. Float.ldexp 1.0 (-p))
+      hi;
+    equal ~msg:(name ^ " reaches 0") (float 0.0) 0.0 lo
+  in
+  grid "float8_e5m2" float8_e5m2 3 2_000;
+  grid "float8_e4m3" float8_e4m3 4 2_000;
+  grid "bfloat16" bfloat16 8 20_000;
+  grid "float16" float16 11 200_000;
+  (* float32: 2^24 grid points are too many to enumerate, so bound both ends
+     instead — the upper bound is exact, the lower one only rules out a
+     collapsed range (missing it has probability e^-100). *)
+  let hi, lo = scan "float32" float32 24 1_000_000 in
+  equal ~msg:"float32 stays at or below 1 - 2^-24" bool true
+    (hi <= 1.0 -. Float.ldexp 1.0 (-24));
+  equal ~msg:"float32 approaches 1" bool true (hi >= 1.0 -. 1e-4);
+  equal ~msg:"float32 approaches 0" bool true (lo <= 1e-4)
 
 let test_keyless_float_sampler_dtypes () =
   let check (type b) name (dt : (float, b) Nx.dtype) =
@@ -108,6 +152,47 @@ let test_randint () =
       let v = Int32.to_int v in
       equal ~msg:"randint values in [5, 15)" bool true (v >= 5 && v < 15))
     values
+
+(* [low, high) must be half-open and flat all the way to its ends, including a
+   negative [low]: rounding the affine map towards zero used to drop [low]
+   entirely and give 0 twice its share. *)
+let test_randint_covers_range_uniformly () =
+  let low = -5 and high = 5 in
+  let n = 200_000 in
+  let values = Nx.to_array (Rng.randint (Rng.key 91) ~high [| n |] low) in
+  let span = high - low in
+  let counts = Array.make span 0 in
+  let out_of_range = ref 0 in
+  Array.iter
+    (fun v ->
+      let v = Int32.to_int v in
+      if v < low || v >= high then incr out_of_range
+      else counts.(v - low) <- counts.(v - low) + 1)
+    values;
+  equal ~msg:"randint draws lie in [low, high)" int 0 !out_of_range;
+  let expected = float_of_int n /. float_of_int span in
+  let tol =
+    5.0 *. Stdlib.sqrt (expected *. (1.0 -. (1.0 /. float_of_int span)))
+  in
+  Array.iteri
+    (fun i c ->
+      equal
+        ~msg:(Printf.sprintf "randint value %d is drawn its share" (low + i))
+        (float tol) expected (float_of_int c))
+    counts
+
+(* [p = 1] must accept every draw and [p = 0] reject every one: the comparison
+   is [u < p], so these hold exactly when [u] lives in [0, 1). *)
+let test_bernoulli_extremes () =
+  let n = 100_000 in
+  let count p =
+    let t = Nx.cast uint8 (Rng.bernoulli (Rng.key 17) ~p [| n |]) in
+    Array.fold_left
+      (fun acc v -> acc + if v > 0 then 1 else 0)
+      0 (Nx.to_array t)
+  in
+  equal ~msg:"bernoulli p=1 always accepts" int n (count 1.0);
+  equal ~msg:"bernoulli p=0 never accepts" int 0 (count 0.0)
 
 let test_bernoulli () =
   let shape = [| 1000 |] in
@@ -428,7 +513,11 @@ let () =
           test "randn" test_randn;
           test "keyless float sampler dtypes" test_keyless_float_sampler_dtypes;
           test "randint" test_randint;
+          test "uniform_half_open" test_uniform_half_open;
+          test "randint_covers_range_uniformly"
+            test_randint_covers_range_uniformly;
           test "bernoulli" test_bernoulli;
+          test "bernoulli_extremes" test_bernoulli_extremes;
           test "shuffle_preserves_shape" test_shuffle_preserves_shape;
           test "truncated_normal" test_truncated_normal;
           test "truncated_normal_distribution"
