@@ -64,7 +64,7 @@ module Cnn = struct
 end
 
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* Start a tracked run. *)
   let session =
     Munin.Session.start ~experiment:"mnist" ~name:"cnn-adam"

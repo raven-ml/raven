@@ -197,7 +197,7 @@ ordinary code you own, logging is a line inside it:
 <!-- $MDX skip -->
 ```ocaml
 let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let session =
     Munin.Session.start ~experiment:"mnist" ~name:"mlp-adamw"
       ~params:[

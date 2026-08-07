@@ -140,7 +140,7 @@ let () =
   Arg.parse speclist
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "mnist-jit [--device METAL|CPU|CUDA] [--epochs N] [--batch-size N]";
-  Nx.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* Model parameters and a one-time optimizer state (momentum is 0, so the zero
      velocity is never read and the state needs no threading through the jitted
      step). *)
