@@ -1590,6 +1590,38 @@ let umismatch ~loc ~function_path ~path kind =
         (Longident.Ldot (Lident "Stdlib", "invalid_arg"))
         [ concat ~loc (B.estring ~loc message) path ]
 
+(* Indexed traversal: [fold] and [fold2] number the elements they visit, which a
+   local loop carries in a parameter rather than in a paired-up copy of the
+   container. *)
+
+let successor ~loc name =
+  call ~loc (stdlib_operator "+") [ evar ~loc name; B.eint ~loc 1 ]
+
+let nil_pattern ~loc = B.ppat_construct ~loc (lident ~loc "[]") None
+
+let cons_pattern ~loc head tail =
+  B.ppat_construct ~loc (lident ~loc "::")
+    (Some (B.ppat_tuple ~loc [ pvar ~loc head; pvar ~loc tail ]))
+
+let array_length ~loc name =
+  call ~loc (Longident.parse "Stdlib.Array.length") [ evar ~loc name ]
+
+let element_at ~loc array index =
+  call ~loc
+    (Longident.parse "Stdlib.Array.unsafe_get")
+    [ evar ~loc array; evar ~loc index ]
+
+let let_rec_loop ~loc name parameters body arguments =
+  let abstraction =
+    List.fold_right
+      (fun parameter body ->
+        B.pexp_fun ~loc Nolabel None (pvar ~loc parameter) body)
+      parameters body
+  in
+  B.pexp_let ~loc Recursive
+    [ B.value_binding ~loc ~pat:(pvar ~loc name) ~expr:abstraction ]
+    (call ~loc (Lident name) arguments)
+
 (* map *)
 
 let rec umap_expr fvar shape expr =
@@ -1898,67 +1930,55 @@ let rec ufold_expr ~path fvar shape expr acc_expr =
                     (evar ~loc acc_name));
            ])
   | UList shape ->
+      let loop = gen_symbol ~prefix:"ptree_loop" () in
       let acc_name = gen_symbol ~prefix:"ptree_acc" () in
       let index = gen_symbol ~prefix:"ptree_index" () in
+      let list_name = gen_symbol ~prefix:"ptree_list" () in
       let value = gen_symbol ~prefix:"ptree_value" () in
-      let pair = gen_symbol ~prefix:"ptree_pair" () in
+      let rest = gen_symbol ~prefix:"ptree_rest" () in
       let child_path = uindex_path ~loc path index in
-      let inner_body =
-        B.pexp_let ~loc Nonrecursive
+      let step =
+        call ~loc (Lident loop)
           [
-            B.value_binding ~loc
-              ~pat:(B.ppat_tuple ~loc [ pvar ~loc index; pvar ~loc value ])
-              ~expr:(evar ~loc pair);
+            successor ~loc index;
+            ufold_expr ~path:child_path fvar shape (evar ~loc value)
+              (evar ~loc acc_name);
+            evar ~loc rest;
           ]
-          (ufold_expr ~path:child_path fvar shape (evar ~loc value)
-             (evar ~loc acc_name))
       in
-      call ~loc
-        (Longident.parse "Stdlib.List.fold_left")
-        [
-          B.pexp_fun ~loc Nolabel None (pvar ~loc acc_name)
-            (B.pexp_fun ~loc Nolabel None (pvar ~loc pair) inner_body);
-          acc_expr;
-          call ~loc
-            (Longident.parse "Stdlib.List.mapi")
-            [
-              B.pexp_fun ~loc Nolabel None (pvar ~loc index)
-                (B.pexp_fun ~loc Nolabel None (pvar ~loc value)
-                   (B.pexp_tuple ~loc [ evar ~loc index; evar ~loc value ]));
-              expr;
-            ];
-        ]
+      let_rec_loop ~loc loop
+        [ index; acc_name; list_name ]
+        (B.pexp_match ~loc (evar ~loc list_name)
+           [
+             B.case ~lhs:(nil_pattern ~loc) ~guard:None
+               ~rhs:(evar ~loc acc_name);
+             B.case ~lhs:(cons_pattern ~loc value rest) ~guard:None ~rhs:step;
+           ])
+        [ B.eint ~loc 0; acc_expr; expr ]
   | UArray shape ->
+      let loop = gen_symbol ~prefix:"ptree_loop" () in
+      let array_name = gen_symbol ~prefix:"ptree_array" () in
+      let length_name = gen_symbol ~prefix:"ptree_length" () in
       let acc_name = gen_symbol ~prefix:"ptree_acc" () in
       let index = gen_symbol ~prefix:"ptree_index" () in
-      let value = gen_symbol ~prefix:"ptree_value" () in
-      let pair = gen_symbol ~prefix:"ptree_pair" () in
       let child_path = uindex_path ~loc path index in
-      let inner_body =
-        B.pexp_let ~loc Nonrecursive
+      let step =
+        call ~loc (Lident loop)
           [
-            B.value_binding ~loc
-              ~pat:(B.ppat_tuple ~loc [ pvar ~loc index; pvar ~loc value ])
-              ~expr:(evar ~loc pair);
+            successor ~loc index;
+            ufold_expr ~path:child_path fvar shape
+              (element_at ~loc array_name index)
+              (evar ~loc acc_name);
           ]
-          (ufold_expr ~path:child_path fvar shape (evar ~loc value)
-             (evar ~loc acc_name))
       in
-      call ~loc
-        (Longident.parse "Stdlib.Array.fold_left")
-        [
-          B.pexp_fun ~loc Nolabel None (pvar ~loc acc_name)
-            (B.pexp_fun ~loc Nolabel None (pvar ~loc pair) inner_body);
-          acc_expr;
-          call ~loc
-            (Longident.parse "Stdlib.Array.mapi")
-            [
-              B.pexp_fun ~loc Nolabel None (pvar ~loc index)
-                (B.pexp_fun ~loc Nolabel None (pvar ~loc value)
-                   (B.pexp_tuple ~loc [ evar ~loc index; evar ~loc value ]));
-              expr;
-            ];
-        ]
+      lets ~loc
+        [ (array_name, expr); (length_name, array_length ~loc array_name) ]
+        (let_rec_loop ~loc loop [ index; acc_name ]
+           (B.pexp_ifthenelse ~loc
+              (call ~loc (stdlib_operator "=")
+                 [ evar ~loc index; evar ~loc length_name ])
+              (evar ~loc acc_name) (Some step))
+           [ B.eint ~loc 0; acc_expr ])
 
 (* fold2 *)
 
@@ -2034,104 +2054,82 @@ let rec ufold2_expr ~function_path ~path fvar shape left right acc_expr =
                ~rhs:(umismatch ~loc ~function_path ~path "option constructor");
            ])
   | UList shape ->
+      let loop = gen_symbol ~prefix:"ptree_loop" () in
       let left_name = gen_symbol ~prefix:"ptree_left" () in
       let right_name = gen_symbol ~prefix:"ptree_right" () in
       let acc_name = gen_symbol ~prefix:"ptree_acc" () in
       let index = gen_symbol ~prefix:"ptree_index" () in
+      let left_rest = gen_symbol ~prefix:"ptree_left_rest" () in
+      let right_rest = gen_symbol ~prefix:"ptree_right_rest" () in
       let left_value = gen_symbol ~prefix:"ptree_left_value" () in
       let right_value = gen_symbol ~prefix:"ptree_right_value" () in
-      let pair = gen_symbol ~prefix:"ptree_pair" () in
       let child_path = uindex_path ~loc path index in
-      let inner_body =
-        B.pexp_let ~loc Nonrecursive
+      let step =
+        call ~loc (Lident loop)
           [
-            B.value_binding ~loc
-              ~pat:(B.ppat_tuple ~loc [ pvar ~loc index; pvar ~loc left_value ])
-              ~expr:(evar ~loc pair);
+            successor ~loc index;
+            ufold2_expr ~function_path ~path:child_path fvar shape
+              (evar ~loc left_value) (evar ~loc right_value)
+              (evar ~loc acc_name);
+            evar ~loc left_rest;
+            evar ~loc right_rest;
           ]
-          (ufold2_expr ~function_path ~path:child_path fvar shape
-             (evar ~loc left_value) (evar ~loc right_value) (evar ~loc acc_name))
       in
-      lets ~loc
-        [ (left_name, left); (right_name, right) ]
-        (B.pexp_ifthenelse ~loc
-           (call ~loc (stdlib_operator "<>")
-              [
-                call ~loc
-                  (Longident.parse "Stdlib.List.length")
-                  [ evar ~loc left_name ];
-                call ~loc
-                  (Longident.parse "Stdlib.List.length")
-                  [ evar ~loc right_name ];
-              ])
-           (umismatch ~loc ~function_path ~path "list length")
-           (Some
-              (call ~loc
-                 (Longident.parse "Stdlib.List.fold_left2")
-                 [
-                   B.pexp_fun ~loc Nolabel None (pvar ~loc acc_name)
-                     (B.pexp_fun ~loc Nolabel None (pvar ~loc pair)
-                        (B.pexp_fun ~loc Nolabel None (pvar ~loc right_value)
-                           inner_body));
-                   acc_expr;
-                   call ~loc
-                     (Longident.parse "Stdlib.List.mapi")
-                     [
-                       B.pexp_fun ~loc Nolabel None (pvar ~loc index)
-                         (B.pexp_fun ~loc Nolabel None (pvar ~loc left_value)
-                            (B.pexp_tuple ~loc
-                               [ evar ~loc index; evar ~loc left_value ]));
-                       evar ~loc left_name;
-                     ];
-                   evar ~loc right_name;
-                 ])))
+      let_rec_loop ~loc loop
+        [ index; acc_name; left_name; right_name ]
+        (B.pexp_match ~loc
+           (B.pexp_tuple ~loc [ evar ~loc left_name; evar ~loc right_name ])
+           [
+             B.case
+               ~lhs:
+                 (B.ppat_tuple ~loc
+                    [
+                      cons_pattern ~loc left_value left_rest;
+                      cons_pattern ~loc right_value right_rest;
+                    ])
+               ~guard:None ~rhs:step;
+             B.case
+               ~lhs:(B.ppat_tuple ~loc [ nil_pattern ~loc; nil_pattern ~loc ])
+               ~guard:None ~rhs:(evar ~loc acc_name);
+             B.case ~lhs:(B.ppat_any ~loc) ~guard:None
+               ~rhs:(umismatch ~loc ~function_path ~path "list length");
+           ])
+        [ B.eint ~loc 0; acc_expr; left; right ]
   | UArray shape ->
+      let loop = gen_symbol ~prefix:"ptree_loop" () in
       let left_name = gen_symbol ~prefix:"ptree_left" () in
       let right_name = gen_symbol ~prefix:"ptree_right" () in
       let length_name = gen_symbol ~prefix:"ptree_length" () in
       let acc_name = gen_symbol ~prefix:"ptree_acc" () in
       let index = gen_symbol ~prefix:"ptree_index" () in
       let child_path = uindex_path ~loc path index in
-      let value_at array =
-        call ~loc
-          (Longident.parse "Stdlib.Array.unsafe_get")
-          [ evar ~loc array; evar ~loc index ]
+      let step =
+        call ~loc (Lident loop)
+          [
+            successor ~loc index;
+            ufold2_expr ~function_path ~path:child_path fvar shape
+              (element_at ~loc left_name index)
+              (element_at ~loc right_name index)
+              (evar ~loc acc_name);
+          ]
       in
       lets ~loc
         [
           (left_name, left);
           (right_name, right);
-          ( length_name,
-            call ~loc
-              (Longident.parse "Stdlib.Array.length")
-              [ evar ~loc left_name ] );
+          (length_name, array_length ~loc left_name);
         ]
         (B.pexp_ifthenelse ~loc
            (call ~loc (stdlib_operator "<>")
-              [
-                evar ~loc length_name;
-                call ~loc
-                  (Longident.parse "Stdlib.Array.length")
-                  [ evar ~loc right_name ];
-              ])
+              [ evar ~loc length_name; array_length ~loc right_name ])
            (umismatch ~loc ~function_path ~path "array length")
            (Some
-              (call ~loc
-                 (Longident.parse "Stdlib.Array.fold_left")
-                 [
-                   B.pexp_fun ~loc Nolabel None (pvar ~loc acc_name)
-                     (B.pexp_fun ~loc Nolabel None (pvar ~loc index)
-                        (ufold2_expr ~function_path ~path:child_path fvar shape
-                           (value_at left_name) (value_at right_name)
-                           (evar ~loc acc_name)));
-                   acc_expr;
-                   call ~loc
-                     (Longident.parse "Stdlib.Array.init")
-                     [
-                       evar ~loc length_name;
-                       ident ~loc (Longident.parse "Stdlib.Fun.id");
-                     ];
-                 ])))
+              (let_rec_loop ~loc loop [ index; acc_name ]
+                 (B.pexp_ifthenelse ~loc
+                    (call ~loc (stdlib_operator "=")
+                       [ evar ~loc index; evar ~loc length_name ])
+                    (evar ~loc acc_name) (Some step))
+                 [ B.eint ~loc 0; acc_expr ])))
 
 (* names: a path-labelled map. Payload positions become their path; static
    positions are copied from the input. *)
