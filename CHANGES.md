@@ -51,6 +51,9 @@ thread.
   over a matmul's output dimensions (`(a @ b)` summed over `M`, as a recurrent
   loss does) compiled to a kernel that computed the wrong values. `BEAM` search
   ranks candidates by runtime alone, so it could select it silently.
+- Invalidate the on-disk cache, so a beam result cached before the tensor-core
+  fix above is re-searched rather than replayed into an optimisation that is
+  no longer legal.
 - Normal `dune build` no longer runs the debug golden-test generator; its
   `DEBUG=6` AST diagnostics and `.actual` fixtures are confined to `runtest`.
 - Codegen distributes the negation of a sum as a multiply by `-1` over its

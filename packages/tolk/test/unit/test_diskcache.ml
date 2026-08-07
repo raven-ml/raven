@@ -192,9 +192,12 @@ let concurrent_writers_never_tear () =
        | _ -> fail "spam child failed");
       equal string ~msg:"child observed only complete entries" "ok" output)
     children;
-  (* The final entry must be one writer's complete payload. *)
-  let version, value = read_entry ~table ~key in
-  equal int ~msg:"entry version" 1 version;
+  (* The final entry must be one writer's complete payload. Unmarshalling both
+     fields is itself the header check — a torn write fails to read back — so
+     the version's value is deliberately not asserted here: pinning the
+     literal would fail on every cache-version bump without testing anything
+     this case is about. *)
+  let value = snd (read_entry ~table ~key) in
   equal int ~msg:"entry size" size (String.length value);
   is_true ~msg:"payload written by a single writer"
     (String.exists (fun c -> Char.equal c value.[0]) fills

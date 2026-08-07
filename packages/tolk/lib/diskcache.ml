@@ -7,7 +7,10 @@
 (* Simple file-based disk cache.
    Uses Marshal for serialization and individual files per key. *)
 
-let cache_version = 1
+(* Bump whenever a change invalidates previously cached entries — notably
+   when an optimisation a beam search could once select stops being legal, so
+   that replaying its cached opt list would fail. *)
+let cache_version = 2
 
 let cache_dir =
   let base =
