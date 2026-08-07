@@ -67,17 +67,9 @@ let ndev_of devices node =
   | _ -> 1
 
 (* Partition [src] along [axis] using a symbolic device index. Each device
-   takes its slice: [dnum * sz .. dnum * sz + sz). Scalars broadcast, no
-   sharding needed. *)
+   takes its slice: [dnum * sz .. dnum * sz + sz). *)
 let shard shape ndev src axis =
-  if shape = [] then src (* scalars broadcast, no sharding needed *)
-  else
   let dim = List.nth shape axis in
-  (* A size-one axis is a broadcast axis: the operand is the same on every
-     device, so it stays whole rather than being split. Splitting it would
-     ask each device for a fraction of one element. *)
-  if dim = 1 then src
-  else
   let () = if dim mod ndev <> 0 then failwith "multi axis uneven" in
   let sz = dim / ndev in
   let dnum =
@@ -160,16 +152,35 @@ let unwrap_multi x = if is_multi x then (U.src x).(0) else x
 (* For a MULTI node, return (inner, axis). *)
 let inner_axis m = (U.src m).(0), multi_axis m
 
+(* Sources are right-aligned under the result, so a source of rank [rank]
+   names the result's axis [a] as [a - (out_rank - rank)], and its own axis
+   [a] as [a + (out_rank - rank)]. *)
+let align_up ~out_rank ~rank axis = axis + (out_rank - rank)
+let align_down ~out_rank ~rank axis = axis - (out_rank - rank)
+
+(* The axes along which [shape] broadcasts into [out_shape]: the leading axes
+   it does not have, plus its size-one axes that stretch. Along such an axis a
+   source holds the same value on every device, so it stays whole. *)
+let broadcast_axes shape out_shape =
+  let nleft = List.length out_shape - List.length shape in
+  List.init nleft Fun.id
+  @ List.filter_map
+      (fun (a, s) -> if s = 1 && List.nth out_shape a <> 1 then Some a else None)
+      (List.mapi (fun i s -> (nleft + i, s)) shape)
+
 (* The result shard axis of an elementwise or stack node: the last distinct
-   axis among its MULTI sources. [None] when no source is sharded. *)
-let last_multi_axis children =
-  match
-    List.rev
-      (dedup
-         (List.filter_map
-            (fun s -> if is_multi s then Some (multi_axis s) else None)
-            children))
-  with
+   axis among its MULTI sources, in the coordinates of a result of rank
+   [out_rank]. [None] when no source is sharded. *)
+let last_multi_axis ~shapes ~out_rank children =
+  let result_axis s =
+    if not (is_multi s) then None
+    else
+      match shapes s with
+      | Some sh ->
+          Some (align_up ~out_rank ~rank:(List.length sh) (multi_axis s))
+      | None -> failwith "last_multi_axis: unknown shape"
+  in
+  match List.rev (dedup (List.filter_map result_axis children)) with
   | axis :: _ -> Some axis
   | [] -> None
 
@@ -289,9 +300,10 @@ let copy_multi ~shapes ~devices multi device =
       let unsharded = unshard inner_shape ndev inner axis in
       U.allreduce ~src:unsharded ~device ~op:Ops.Add
 
-(* Normalise every source to a local shard on [axis]: unwrap MULTIs already on
-   [axis], shard non-sharded sources, and gather-then-reshard MULTIs sharded on
-   a different axis. *)
+(* Normalise every source to a local shard on the result's [axis]: unwrap
+   MULTIs already sharded there, gather-then-reshard MULTIs sharded elsewhere,
+   and shard the rest. A source that broadcasts along [axis] is already whole
+   on every device and is passed through. *)
 let shard_srcs ~shapes ~devices children axis =
   let multi_len s =
     match (devices s : U.device option) with
@@ -308,23 +320,40 @@ let shard_srcs ~shapes ~devices children axis =
     | Some sh -> sh
     | None -> failwith "shard_srcs: unknown shape"
   in
+  let out_shape =
+    List.map U.vmax (U.broadcast_shape (List.map U.shape children))
+  in
+  let out_rank = List.length out_shape in
   List.map
     (fun s ->
-      if is_multi s then
-        if multi_axis s = axis then (U.src s).(0)
-        else
-          let dev =
-            match devices s with
-            | Some d -> d
-            | None -> failwith "shard_srcs: no device"
-          in
-          shard (shape_exn s) ndev (copy_multi ~shapes ~devices s dev) axis
-      else shard (shape_exn s) ndev s axis)
+      let shape = shape_exn s in
+      let src_axis = align_down ~out_rank ~rank:(List.length shape) axis in
+      if is_multi s && multi_axis s = src_axis then (U.src s).(0)
+      else
+        let full =
+          if not (is_multi s) then s
+          else
+            let dev =
+              match devices s with
+              | Some d -> d
+              | None -> failwith "shard_srcs: no device"
+            in
+            copy_multi ~shapes ~devices s dev
+        in
+        if List.mem axis (broadcast_axes shape out_shape) then full
+        else shard shape ndev full src_axis)
     children
+
+(* The rank of [root]'s result: the coordinates shard axes are named in. *)
+let out_rank_exn ~shapes root =
+  match shapes root with
+  | Some sh -> List.length sh
+  | None -> failwith "multi: unknown result shape"
 
 let alu_multi ~shapes ~devices root =
   let children = Array.to_list (U.src root) in
-  match last_multi_axis children with
+  let out_rank = out_rank_exn ~shapes root in
+  match last_multi_axis ~shapes ~out_rank children with
   | None -> None
   | Some axis ->
       let aligned = shard_srcs ~shapes ~devices children axis in
@@ -343,11 +372,12 @@ let alu_multi ~shapes ~devices root =
    stacked result. *)
 let stack_multi ~shapes ~devices root =
   let children = Array.to_list (U.src root) in
-  match last_multi_axis children with
+  let out_rank = out_rank_exn ~shapes root in
+  match last_multi_axis ~shapes ~out_rank children with
   | None -> None
-  | Some below ->
-      let sharded = shard_srcs ~shapes ~devices children below in
-      Some (U.multi ~src:(U.stack sharded) ~axis:(below + 1))
+  | Some axis ->
+      let sharded = shard_srcs ~shapes ~devices children (axis - 1) in
+      Some (U.multi ~src:(U.stack sharded) ~axis)
 
 let reduce_multi ~devices op num_axes src axis multi =
   let reduced = U.reduce_axis ~src ~op ~axes:(List.init num_axes Fun.id) in

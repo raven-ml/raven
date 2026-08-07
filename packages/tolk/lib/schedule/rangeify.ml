@@ -156,11 +156,11 @@ and compute_shape_of n =
        | Some prepend, Some src -> Some (prepend @ src)
        | _ -> None)
   | Ops.Pad | Ops.Shrink ->
-      (match
-         shape_of (src0 n), shape_of_node (U.src n).(1),
-         shape_of_node (U.src n).(2)
-       with
-       | Some _, Some _, Some size -> Some size
+      (* The result shape is the size argument alone: the offset only says
+         where the window sits, so a symbolic one (a shard offset, say) leaves
+         the shape fully determined. *)
+      (match shape_of (src0 n), shape_of_node (U.src n).(2) with
+       | Some _, (Some _ as size) -> size
        | _ -> None)
   | Ops.Permute ->
       let order = match U.arg n with U.Arg.Ints i -> i | _ -> [] in
@@ -628,9 +628,9 @@ let earliest_rewrites =
          | _ -> None);
       (fun n -> match U.as_allreduce n with
          | Some { src; device; op } ->
-             (* An unshard PAD below the allreduce carries symbolic
-                [_device_num] offsets that the concrete [shape_of] refuses;
-                the sizes are what matter, so max the symbolic shape. *)
+             (* [shape_of] is concrete and stays undefined on a symbolic
+                dimension; the node's own shape at its bounds is the
+                backstop. *)
              let shape = match shape_of n with
                | Some _ as s -> s
                | None ->
@@ -1948,9 +1948,9 @@ let add_buffers_rules ?(allow_locals = true) counter =
   ]
 
 let get_kernel_graph root =
-  (* Sharding rewrites see the graph's own (symbolic) shapes, maxed to ints:
-     a shard SHRINK has a symbolic [_device_num] offset but a concrete size,
-     which the stricter [shape_of] would refuse. *)
+  (* Sharding rewrites see the graph's own shapes with every symbolic
+     dimension maxed to its bound, so a shard sized by a variable still
+     reports the size it is allocated at. *)
   let multi_shapes n =
     match U.max_shape n with
     | s -> Some s

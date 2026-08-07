@@ -53,6 +53,15 @@ thread.
 
 ### Tolk (new)
 
+- Fix multi-device programs failing to compile with
+  `Invalid_argument "buffer copy: size or dtype mismatch"`. An operand that
+  broadcasts along the shard axis — one of lower rank than the result, or with
+  size one there — was split across devices as if it held a distinct slice per
+  device, so a collective was sized from a fraction of its real shape. Such an
+  operand now stays whole on every device. Separately, the scheduler refused to
+  read a shape off a `Pad` or `Shrink` whose offset was symbolic, even though
+  the shape is the size argument alone; the resulting unknown propagated into
+  an elementwise node as a too-small shape and mis-sized the allreduce buffers.
 - `Op.cat` joins operands with equal extents on the concatenated axis through a
   single stack node instead of padding each operand to the full width and
   summing them, so a concatenation of `n` inputs now selects on one loop range
