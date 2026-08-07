@@ -30,7 +30,7 @@ let huber ?(delta = 1.0) ?(reduction = `Mean) predictions targets =
   let abs_d = Nx.abs d in
   let quadratic = Nx.mul_s (Nx.mul d d) 0.5 in
   let linear = Nx.mul_s (Nx.sub_s abs_d (0.5 *. delta)) delta in
-  let in_quadratic = Nx.less_equal abs_d (Nx.full_like abs_d delta) in
+  let in_quadratic = Nx.less_equal_s abs_d delta in
   reduce reduction (Nx.where in_quadratic quadratic linear)
 
 (* Classification *)
@@ -38,7 +38,7 @@ let huber ?(delta = 1.0) ?(reduction = `Mean) predictions targets =
 let sigmoid_bce ?(reduction = `Mean) logits targets =
   (* Numerically stable: max(z,0) - z*y + log(1 + exp(-|z|)). *)
   let z = logits and y = targets in
-  let relu_z = Nx.maximum z (Nx.zeros_like z) in
+  let relu_z = Nx.maximum_s z 0.0 in
   let softplus = Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs z))) 1.0) in
   reduce reduction (Nx.add (Nx.sub relu_z (Nx.mul z y)) softplus)
 

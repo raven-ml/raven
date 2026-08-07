@@ -363,6 +363,9 @@ thread.
 
 ### Nx
 
+- `relu`, `sigmoid`, `clamp`, `hypot`, `tril`/`triu`, `logical_not`, and the
+  boolean reductions build their constant operand as a scalar instead of a
+  full-size tensor, making them 1.4-3.1x faster. Values are unchanged.
 - Element-wise ops against a scalar operand are 1.4-9.5x faster. A broadcast
   0-d operand (every `_s` variant, and any operand broadcast along the innermost
   axis) used to fall onto a scalar code path; the C map, comparison, and `where`
@@ -665,6 +668,9 @@ thread.
 
 ### Rune
 
+- Gradient rules that combine with a constant (`asin`, `atan`, `tanh`, `sqrt`,
+  `pow`, `max`/`min`, `where`, `cholesky`, `cumprod`) no longer materialize a
+  full-size tensor of ones or zeros to do it.
 - Fix the gradient of `Nx.fft` and `Nx.ifft`: reverse mode pulled cotangents
   back through the opposite transform, which reversed the frequency index. Each
   transform is its own transpose and now pulls back through itself.
@@ -809,6 +815,8 @@ thread.
 
 ### Kaun
 
+- `Loss.huber`, `Loss.sigmoid_bce`, and `Fn.leaky_relu` compare against a
+  scalar rather than a materialized constant tensor.
 - The MNIST CNN example now saves and restores model parameters with both
   AdamW moment trees and the step counter, demonstrating how to resume
   momentum-based optimization without resetting its history.
@@ -873,6 +881,11 @@ thread.
   (`Fn`), data batching, metrics, checkpoints, and HuggingFace Hub
   integration (`kaun.hf`, `kaun.datasets`) are provided as plain functions
   over these records.
+
+### Sowilo
+
+- `resize`, `canny`, `threshold`, `invert`, and the HSV conversions combine
+  with scalars instead of materializing full-size constant tensors.
 
 ### Talon
 

@@ -129,7 +129,7 @@ let handler (tangents : Tensor_map.t) =
               lift2 k out a b (fun da db ->
                   let mask = T.cast (dtype out) (T.greater a b) in
                   T.add (T.mul da mask)
-                    (T.mul db (T.sub (T.ones_like mask) mask))))
+                    (T.mul db (T.rsub_s (Derivs.one_like mask) mask))))
       | E_min { a; b } ->
           Some
             (fun k ->
@@ -137,7 +137,7 @@ let handler (tangents : Tensor_map.t) =
               lift2 k out a b (fun da db ->
                   let mask = T.cast (dtype out) (T.less a b) in
                   T.add (T.mul da mask)
-                    (T.mul db (T.sub (T.ones_like mask) mask))))
+                    (T.mul db (T.rsub_s (Derivs.one_like mask) mask))))
       | E_atan2 { a; b } ->
           Some
             (fun k ->
@@ -231,7 +231,7 @@ let handler (tangents : Tensor_map.t) =
                 let dt_ = tan_or_zeros if_true and df = tan_or_zeros if_false in
                 set_tangent out
                   (T.add (T.mul dt_ mask)
-                     (T.mul df (T.sub (T.ones_like mask) mask)))
+                     (T.mul df (T.rsub_s (Derivs.one_like mask) mask)))
               end;
               continue k out)
       (* Movement: linear ops apply to the tangent unchanged. *)
@@ -495,8 +495,8 @@ let handler (tangents : Tensor_map.t) =
                   in
                   let phi =
                     let diag_m = T.diagonal m in
-                    let two = T.add (T.ones_like diag_m) (T.ones_like diag_m) in
-                    T.sub (T.tril m) (T.diag (T.div diag_m two))
+                    let two = Nx_core.Dtype.of_float (T.dtype diag_m) 2.0 in
+                    T.sub (T.tril m) (T.diag (T.div_s diag_m two))
                   in
                   let dl_lower = T.matmul l_lower phi in
                   if upper then T.transpose dl_lower else dl_lower))

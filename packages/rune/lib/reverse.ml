@@ -168,7 +168,9 @@ let handler (tape : Tape.t) =
               let mask g = T.cast (T.dtype g) (T.greater a b) in
               pull2 k out a b
                 (fun g -> T.mul g (mask g))
-                (fun g -> T.mul g (T.sub (T.ones_like (mask g)) (mask g))))
+                (fun g ->
+                  let m = mask g in
+                  T.mul g (T.rsub_s (Derivs.one_like m) m)))
       | E_min { a; b } ->
           Some
             (fun k ->
@@ -176,7 +178,9 @@ let handler (tape : Tape.t) =
               let mask g = T.cast (T.dtype g) (T.less a b) in
               pull2 k out a b
                 (fun g -> T.mul g (mask g))
-                (fun g -> T.mul g (T.sub (T.ones_like (mask g)) (mask g))))
+                (fun g ->
+                  let m = mask g in
+                  T.mul g (T.rsub_s (Derivs.one_like m) m)))
       | E_atan2 { a; b } ->
           Some
             (fun k ->
@@ -276,7 +280,7 @@ let handler (tape : Tape.t) =
                         if tf then
                           Tape.accumulate tape if_false
                             (unbroadcast
-                               (T.mul g (T.sub (T.ones_like mask) mask))
+                               (T.mul g (T.rsub_s (Derivs.one_like mask) mask))
                                (T.shape if_false)))
               end;
               continue k out)
@@ -517,12 +521,19 @@ let handler (tape : Tape.t) =
                         T.slice (Array.to_list slice_specs) padded
                       in
                       let divide_no_nan num denom =
-                        let zero_mask = T.equal denom (T.zeros_like denom) in
+                        let dt = T.dtype denom in
+                        let zero_mask =
+                          T.equal_s denom (Nx_core.Dtype.zero dt)
+                        in
                         let safe_denom =
-                          T.where zero_mask (T.ones_like denom) denom
+                          T.where zero_mask
+                            (T.scalar_like denom (Nx_core.Dtype.one dt))
+                            denom
                         in
                         let base = T.div num safe_denom in
-                        T.where zero_mask (T.zeros_like base) base
+                        T.where zero_mask
+                          (T.scalar_like base (Nx_core.Dtype.zero dt))
+                          base
                       in
                       let reverse_cumsum x axis =
                         let flipped = T.flip x ~axes:[ axis ] in
@@ -730,8 +741,8 @@ let handler (tape : Tape.t) =
                   let c = T.matmul (T.transpose l_lower) dl_lower in
                   let p =
                     let diag_c = T.diagonal c in
-                    let two = T.add (T.ones_like diag_c) (T.ones_like diag_c) in
-                    T.sub (T.tril c) (T.diag (T.div diag_c two))
+                    let two = Nx_core.Dtype.of_float (T.dtype diag_c) 2.0 in
+                    T.sub (T.tril c) (T.diag (T.div_s diag_c two))
                   in
                   let z =
                     triangular_solve ~upper:false ~transpose:true

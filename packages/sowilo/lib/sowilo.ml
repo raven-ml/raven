@@ -31,10 +31,8 @@ let normalize ~mean ~std img =
   Nx.div (Nx.sub img mean_t) std_t
 
 let threshold t img =
-  let t_s = Nx.scalar_like img t in
-  let one = Nx.ones_like img in
-  let zero = Nx.zeros_like img in
-  Nx.where (Nx.greater img t_s) one zero
+  Nx.where (Nx.greater_s img t) (Nx.scalar_like img 1.0)
+    (Nx.scalar_like img 0.0)
 
 (* Re-export private modules *)
 

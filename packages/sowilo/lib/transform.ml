@@ -77,8 +77,8 @@ let resize : type a b.
       in
       let dx_b = Nx.reshape (make_broadcastable w_ax out_w) dx in
       let dy_b = Nx.reshape (make_broadcastable h_ax out_h) dy in
-      let one_dx = Nx.sub (Nx.ones_like dx_b) dx_b in
-      let one_dy = Nx.sub (Nx.ones_like dy_b) dy_b in
+      let one_dx = Nx.rsub_s 1.0 dx_b in
+      let one_dy = Nx.rsub_s 1.0 dy_b in
       let top_interp =
         Nx.add (Nx.mul one_dx top_left) (Nx.mul dx_b top_right)
       in

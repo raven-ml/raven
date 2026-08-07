@@ -457,10 +457,10 @@ module Make (B : Backend_intf.S) = struct
 
   let logical_not (type a b) (x : (a, b) t) : (a, b) t =
     let dt = dtype x in
-    let one = full (B.context x) dt (shape x) (Dtype.one dt) in
     match dt with
-    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 -> binop B.xor x one
-    | _ -> sub one x
+    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 ->
+        binop B.xor x (scalar_like x (Dtype.one dt))
+    | _ -> rsub_s (Dtype.one dt) x
 
   let cmpeq a b = cmpop B.cmpeq a b
   let cmpne a b = cmpop B.cmpne a b
@@ -516,14 +516,14 @@ module Make (B : Backend_intf.S) = struct
   let tan x = unaryop B.tan x
   let square x = mul x x
   let sign x = unaryop B.sign x
-  let relu x = maximum x (zeros_like x)
+  let relu x = maximum_s x (Dtype.zero (dtype x))
 
   let sigmoid x =
     let dt = dtype x in
     let neg_one_over_log2 =
       B.full (B.context x) dt [||] (Dtype.of_float dt (-1.0 /. Stdlib.log 2.0))
     in
-    recip (add (ones_like x) (exp2 (mul x neg_one_over_log2)))
+    recip (add_s (exp2 (mul x neg_one_over_log2)) (Dtype.one dt))
 
   let rsqrt x = recip (sqrt x)
   let asin x = unaryop B.asin x
@@ -598,12 +598,8 @@ module Make (B : Backend_intf.S) = struct
   let rshift x shift_val = shift_op ~op:"rshift" ~apply:div x shift_val
 
   let clamp ?min ?max x =
-    let x =
-      match min with None -> x | Some min_v -> maximum x (full_like x min_v)
-    in
-    match max with
-    | None -> x
-    | Some max_v -> minimum x (full_like x max_v)
+    let x = match min with None -> x | Some min_v -> maximum_s x min_v in
+    match max with None -> x | Some max_v -> minimum_s x max_v
 
   let clip = clamp
 
@@ -624,18 +620,20 @@ module Make (B : Backend_intf.S) = struct
   (* sqrt(x² + y²) with overflow protection via max * sqrt(1 + (min/max)²) *)
   let hypot x y =
     let x', y' = broadcasted x y in
+    let dt = dtype x' in
     let x_abs = abs x' in
     let y_abs = abs y' in
     let max_val = maximum x_abs y_abs in
     let min_val = minimum x_abs y_abs in
     let both_zero =
       logical_and
-        (cmpeq x_abs (zeros_like x_abs))
-        (cmpeq y_abs (zeros_like y_abs))
+        (equal_s x_abs (Dtype.zero dt))
+        (equal_s y_abs (Dtype.zero dt))
     in
-    let ratio = where both_zero (zeros_like min_val) (div min_val max_val) in
-    let result = mul max_val (sqrt (add (ones_like ratio) (square ratio))) in
-    where both_zero (zeros_like result) result
+    let zero = scalar_like x' (Dtype.zero dt) in
+    let ratio = where both_zero zero (div min_val max_val) in
+    let result = mul max_val (sqrt (add_s (square ratio) (Dtype.one dt))) in
+    where both_zero zero result
 
   (* ───── Reduction Operations ───── *)
 
@@ -722,7 +720,7 @@ module Make (B : Backend_intf.S) = struct
     sqrt (var ?axes ~keepdims ~ddof x)
 
   let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
-    let bool_t = cmpne x (full_like x (Dtype.zero (dtype x))) in
+    let bool_t = not_equal_s x (Dtype.zero (dtype x)) in
     let input_shape = shape bool_t in
     let rank = Array.length input_shape in
     let axes_to_reduce =
@@ -1390,7 +1388,7 @@ module Make (B : Backend_intf.S) = struct
           mask
       else mask
     in
-    where mask x (zeros_like x)
+    where mask x (scalar_like x (Dtype.zero (dtype x)))
 
   let tril ?k x = triangular_mask ~op:"tril" ~cmp:greater_equal ?k x
   let triu ?k x = triangular_mask ~op:"triu" ~cmp:less_equal ?k x

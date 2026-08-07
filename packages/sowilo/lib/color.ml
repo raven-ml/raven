@@ -46,12 +46,12 @@ let rgb_to_hsv img =
   let h = Nx.where is_r_max h_r (Nx.where is_g_max h_g h_b) in
   (* Normalize to [0, 1]: divide by 6, wrap negatives *)
   let h = Nx.div_s h 6.0 in
-  let h = Nx.where (Nx.less h (Nx.zeros_like h)) (Nx.add_s h 1.0) h in
+  let h = Nx.where (Nx.less_s h 0.0) (Nx.add_s h 1.0) h in
   (* Saturation *)
   let s =
     Nx.where (Nx.greater cmax eps)
       (Nx.div delta (Nx.add cmax eps))
-      (Nx.zeros_like cmax)
+      (Nx.scalar_like cmax 0.0)
   in
   (* Value *)
   let v = cmax in
@@ -76,10 +76,9 @@ let hsv_to_rgb img =
   let h6 = Nx.mul_s h 6.0 in
   let hi = Nx.floor h6 in
   let f = Nx.sub h6 hi in
-  let one = Nx.ones_like v in
-  let p = Nx.mul v (Nx.sub one s) in
-  let q = Nx.mul v (Nx.sub one (Nx.mul s f)) in
-  let t_ = Nx.mul v (Nx.sub one (Nx.mul s (Nx.sub one f))) in
+  let p = Nx.mul v (Nx.rsub_s 1.0 s) in
+  let q = Nx.mul v (Nx.rsub_s 1.0 (Nx.mul s f)) in
+  let t_ = Nx.mul v (Nx.rsub_s 1.0 (Nx.mul s (Nx.rsub_s 1.0 f))) in
   (* Select r, g, b based on hi mod 6 *)
   let hi_mod = Nx.mod_ h6 (Nx.scalar_like h6 6.0) in
   let hi_floor = Nx.floor hi_mod in
@@ -170,4 +169,4 @@ let adjust_hue delta img =
   hsv_to_rgb (Nx.concatenate ~axis:c_axis [ h'; s; v ])
 
 let adjust_gamma gamma img = Nx.pow_s img gamma
-let invert img = Nx.sub (Nx.ones_like img) img
+let invert img = Nx.rsub_s 1.0 img

@@ -23,9 +23,12 @@ let real_part (type a b) (x : (a, b) T.t) : (a, b) T.t =
     T.cast (T.dtype x) (T.cast T.float64 x)
   else x
 
+(* The scalar one in x's element type, for the [_s] operations. *)
+let one_like (type a b) (x : (a, b) T.t) : a = Nx_core.Dtype.one (T.dtype x)
+
 (* d/dx sqrt(x) = 1 / (2 * sqrt(x)), expressed with the primal output. *)
 let sqrt' sqrt_x =
-  T.div (T.ones_like sqrt_x) (T.mul (float_scalar_like sqrt_x 2.0) sqrt_x)
+  T.rdiv_s (one_like sqrt_x) (T.mul (float_scalar_like sqrt_x 2.0) sqrt_x)
 
 (* d/dx (1/x) = -1/x^2 *)
 let recip' x = T.neg (T.recip (T.mul x x))
@@ -36,14 +39,10 @@ let tan' x =
   T.recip (T.mul cos_x cos_x)
 
 (* d/dx asin(x) = 1/sqrt(1 - x^2) *)
-let asin' x =
-  let one = T.ones_like x in
-  T.recip (T.sqrt (T.sub one (T.mul x x)))
+let asin' x = T.recip (T.sqrt (T.rsub_s (one_like x) (T.mul x x)))
 
 (* d/dx atan(x) = 1/(1 + x^2) *)
-let atan' x =
-  let one = T.ones_like x in
-  T.recip (T.add one (T.mul x x))
+let atan' x = T.recip (T.add_s (T.mul x x) (one_like x))
 
 (* d/dx erf(x) = (2/sqrt(pi)) * exp(-x^2) *)
 let erf' x =
@@ -51,10 +50,10 @@ let erf' x =
   T.mul coeff (T.exp (T.neg (T.mul x x)))
 
 (* d/dx tanh(x) = 1 - tanh(x)^2, expressed with the primal output. *)
-let tanh' tanh_x = T.sub (T.ones_like tanh_x) (T.mul tanh_x tanh_x)
+let tanh' tanh_x = T.rsub_s (one_like tanh_x) (T.mul tanh_x tanh_x)
 
 (* d/da (a^b) = b * a^(b-1) *)
-let pow_wrt_base base exp = T.mul exp (T.pow base (T.sub exp (T.ones_like exp)))
+let pow_wrt_base base exp = T.mul exp (T.pow base (T.sub_s exp (one_like exp)))
 
 (* d/db (a^b) = a^b * ln(a) = a^b * log2(a) * ln(2) *)
 let pow_wrt_exp base result =

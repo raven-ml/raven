@@ -15,7 +15,7 @@ let tanh = Nx.tanh
 
 let leaky_relu ?(negative_slope = 0.01) x =
   Nx.where
-    (Nx.greater x (Nx.zeros_like x))
+    (Nx.greater_s x (const x 0.0))
     x
     (Nx.mul_s x (const x negative_slope))
 

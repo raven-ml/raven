@@ -58,9 +58,7 @@ let canny ~low ~high ?(sigma = 1.4) img =
       (* 3. Non-maximum suppression *)
       let angle_deg = Nx.mul_s angle3 (180.0 /. Float.pi) in
       let angle_pos =
-        Nx.where
-          (Nx.less angle_deg (Nx.zeros_like angle_deg))
-          (Nx.add_s angle_deg 180.0) angle_deg
+        Nx.where (Nx.less_s angle_deg 0.0) (Nx.add_s angle_deg 180.0) angle_deg
       in
       let scalar v = Nx.scalar_like angle_pos v in
       let is_horizontal =
@@ -117,7 +115,7 @@ let canny ~low ~high ?(sigma = 1.4) img =
              (Nx.logical_and is_diag2
                 (Nx.logical_and (ge center tl) (ge center br))))
       in
-      let nms = Nx.where is_max mag3 (Nx.zeros_like mag3) in
+      let nms = Nx.where is_max mag3 (Nx.scalar_like mag3 0.0) in
       (* 4. Double thresholding *)
       let strong = Nx.greater nms (Nx.scalar_like nms high) in
       let weak =
@@ -126,8 +124,8 @@ let canny ~low ~high ?(sigma = 1.4) img =
           (Nx.logical_not strong)
       in
       (* 5. Hysteresis via dilation *)
-      let one = Nx.ones_like nms in
-      let zero = Nx.zeros_like nms in
+      let one = Nx.scalar_like nms 1.0 in
+      let zero = Nx.scalar_like nms 0.0 in
       let strong_map = Nx.where strong one zero in
       let strong_4d = Nx.reshape [| n; h; w; 1 |] strong_map in
       let k3 = Morphology.structuring_element Rect (3, 3) in
@@ -135,7 +133,7 @@ let canny ~low ~high ?(sigma = 1.4) img =
         Morphology.dilate ~kernel:k3 (Morphology.dilate ~kernel:k3 strong_4d)
       in
       let dilated3 = Nx.reshape [| n; h; w |] dilated in
-      let connected = Nx.greater dilated3 zero in
+      let connected = Nx.greater_s dilated3 0.0 in
       let final =
         Nx.where (Nx.logical_and connected (Nx.logical_or strong weak)) one zero
       in
