@@ -14,6 +14,15 @@ let two_over_sqrt_pi = 1.12837916709551257390
 let float_scalar_like (type a b) (x : (a, b) T.t) (v : float) : (a, b) T.t =
   T.full (T.dtype x) [||] (Nx_core.Dtype.of_float (T.dtype x) v)
 
+(* The real part of [x], staying in [x]'s dtype: the cast down to float keeps
+   the real component, and the cast back sets a zero imaginary one. Rules
+   need it where an operation's value is real but its dtype is not. On real
+   dtypes it is the identity, and the guard spares them the round trip. *)
+let real_part (type a b) (x : (a, b) T.t) : (a, b) T.t =
+  if Nx_core.Dtype.is_complex (T.dtype x) then
+    T.cast (T.dtype x) (T.cast T.float64 x)
+  else x
+
 (* d/dx sqrt(x) = 1 / (2 * sqrt(x)), expressed with the primal output. *)
 let sqrt' sqrt_x =
   T.div (T.ones_like sqrt_x) (T.mul (float_scalar_like sqrt_x 2.0) sqrt_x)

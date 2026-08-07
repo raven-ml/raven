@@ -64,6 +64,19 @@ let holomorphic_tests =
       both "reduce_prod" (fun z -> Nx.prod z ~axes:[ 0 ] ~keepdims:true) z3;
     ]
 
+(* [abs] is the one non-holomorphic arithmetic rule: on a complex dtype it is
+   the modulus, so its differential mixes the two components. The cotangent the
+   oracle feeds it is complex, which is what distinguishes the rule from one
+   that only conjugates the direction. *)
+
+let modulus_tests =
+  List.concat
+    [
+      both "abs" Nx.abs z3;
+      both "magnitude" (fun z -> Nx.cast Nx.complex128 (Nx.magnitude f64 z)) z3;
+      both "abs of a product" (fun z -> Nx.abs (Nx.mul z z)) z3;
+    ]
+
 (* Reading a component out and putting one back: the paths a real-valued
    objective takes to reach a complex intermediate. *)
 
@@ -114,6 +127,7 @@ let linear_tests =
 let tests =
   [
     group "holomorphic rules" holomorphic_tests;
+    group "modulus" modulus_tests;
     group "component access" accessor_tests;
     group "linear and movement rules" linear_tests;
   ]

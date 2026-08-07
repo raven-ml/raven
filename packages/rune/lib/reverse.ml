@@ -242,14 +242,17 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               pull1 k (recip t_in) t_in (fun g -> T.mul g (Derivs.recip' t_in)))
-      (* [conjugate] is the identity on real dtypes. On complex ones the
-         modulus is not holomorphic, and pulling back through [sign z] rather
-         than its conjugate flips the sign of the imaginary contribution. *)
+      (* On complex dtypes [abs] is the modulus: real-valued, and not
+         holomorphic. Its pullback conjugates the direction — going through
+         [sign z] itself would flip the sign of the imaginary contribution —
+         and keeps only the real part of the cotangent, since the imaginary
+         component of a real-valued output moves nothing. Both are the
+         identity on real dtypes. *)
       | E_abs { t_in } ->
           Some
             (fun k ->
               pull1 k (abs t_in) t_in (fun g ->
-                  T.mul g (T.conjugate (T.sign t_in))))
+                  T.mul (Derivs.real_part g) (T.conjugate (T.sign t_in))))
       | E_erf { t_in } ->
           Some
             (fun k ->

@@ -647,6 +647,9 @@ thread.
 
 ### Rune
 
+- Fix the derivative of `abs` on complex tensors for cotangents that are not
+  real: the modulus is real-valued, so the rule now keeps only the real part of
+  the cotangent and pushes forward to a real tangent.
 - Fix the derivative of `abs` on complex tensors, in both forward and reverse
   mode: it pulled back through `sign z` instead of its conjugate, which negated
   the imaginary part's contribution. Gradients of a real-valued function that

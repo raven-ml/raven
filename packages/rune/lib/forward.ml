@@ -206,15 +206,17 @@ let handler (tangents : Tensor_map.t) =
             (fun k ->
               lift1 k (recip t_in) t_in (fun dx ->
                   T.mul dx (Derivs.recip' t_in)))
-      (* [conjugate] is the identity on real dtypes. On complex ones the
-         modulus is not holomorphic, and pushing forward through [sign z]
-         rather than its conjugate flips the sign of the imaginary
-         contribution. *)
+      (* On complex dtypes [abs] is the modulus: real-valued, and not
+         holomorphic. Its pushforward conjugates the direction — going
+         through [sign z] itself would flip the sign of the imaginary
+         contribution — and keeps the real part of the product, since a
+         real-valued output cannot move in the imaginary direction. Both are
+         the identity on real dtypes. *)
       | E_abs { t_in } ->
           Some
             (fun k ->
               lift1 k (abs t_in) t_in (fun dx ->
-                  T.mul dx (T.conjugate (T.sign t_in))))
+                  Derivs.real_part (T.mul dx (T.conjugate (T.sign t_in)))))
       | E_erf { t_in } ->
           Some
             (fun k ->
