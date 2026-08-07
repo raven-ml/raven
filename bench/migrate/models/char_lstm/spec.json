@@ -1,0 +1,16 @@
+{
+  "name": "char_lstm",
+  "description": "Character-level LSTM language model: byte embedding, one LSTM layer unrolled over the sequence, linear projection to the vocabulary, mean cross-entropy, SGD with momentum.",
+  "vocab": 96,
+  "embed": 128,
+  "hidden": 256,
+  "seq_len": 64,
+  "batch": 32,
+  "steps": 30,
+  "warmup": 5,
+  "lr": 1.0,
+  "momentum": 0.9,
+  "seed": 20260807,
+  "agree_atol": 0.002,
+  "agree_rtol": 0.002
+}

@@ -1,0 +1,7 @@
+(executable
+ (name model)
+ (libraries kaun vega nx rune jsont jsont.bytesrw unix))
+
+; Not attached to any alias: the harness (bench/migrate/run.py) runs the built
+; executable directly, one process per measurement, so that a cold number is
+; not served by a live process's caches.
