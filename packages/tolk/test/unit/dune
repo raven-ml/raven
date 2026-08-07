@@ -22,6 +22,36 @@
  (package tolk)
  (libraries unix tolk tolk.uop tolk.cpu windtrap))
 
+; Exhaustive differential sweep over the beam action set: minutes, not
+; seconds, so it runs under its own alias rather than @runtest.
+; Exhaustive differential sweep over the beam action set: minutes, not
+; seconds, so these run under their own alias rather than @runtest.
+(executable
+ (name test_opt_correctness)
+ (modules test_opt_correctness)
+ (libraries tolk tolk_opt_fuzz tolk.cpu windtrap))
+
+(rule
+ (alias opt-correctness)
+ (package tolk)
+ (action
+  (run %{exe:test_opt_correctness.exe})))
+
+(executable
+ (name test_opt_correctness_metal)
+ (modules test_opt_correctness_metal)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries tolk tolk_opt_fuzz tolk.metal windtrap))
+
+(rule
+ (alias opt-correctness)
+ (package tolk)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (run %{exe:test_opt_correctness_metal.exe})))
+
 (test
  (name test_schedule_rangeify)
  (modules test_schedule_rangeify)

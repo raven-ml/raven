@@ -32,6 +32,11 @@
  (package rune)
  (libraries rune nx nx.core unix windtrap rune_test_support))
 
+(executable
+ (name repro_jit_beam)
+ (modules repro_jit_beam)
+ (libraries rune nx nx.core unix))
+
 (tests
  (names test_jit_cache)
  (modules test_jit_cache)

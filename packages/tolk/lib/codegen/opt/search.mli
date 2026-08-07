@@ -10,6 +10,11 @@
     Explores the space of kernel optimisations by compiling, timing, and
     selecting the best candidates over multiple rounds. *)
 
+val actions : Tolk_uop.Uop.Opt.t list
+(** The fixed candidate optimisation set explored by {!beam_search}. Each
+    round applies one of these to every scheduler kept from the previous
+    round. *)
+
 val beam_search :
   ?allow_test_size:bool ->
   ?disable_cache:bool ->

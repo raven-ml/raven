@@ -1,0 +1,3 @@
+(library
+ (name tolk_opt_fuzz)
+ (libraries tolk tolk.uop))
