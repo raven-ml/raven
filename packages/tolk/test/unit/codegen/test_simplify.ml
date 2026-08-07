@@ -684,7 +684,10 @@ let reduce_simplify_tests =
       test "AND on WHERE with define_var" (fun () ->
           let r = loop_range ~axis:0 4 in
           let open U.O in
-          let dv = U.variable ~name:"x" ~min_val:0 ~max_val:1 () in
+          (* The AND feeds a WHERE condition, so both operands are bool. *)
+          let dv =
+            U.variable ~name:"x" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
+          in
           let gate = r < idx 2 in
           let cond = U.alu_binary ~op:Ops.And ~lhs:dv ~rhs:gate in
           let val_ = f32 1.0 in

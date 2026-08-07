@@ -22,4 +22,10 @@
   test_simplify
   test_tc)
  (package tolk)
+ ; SPEC=1 turns on Spec.type_verify at the end of lowering. This suite is the
+ ; one that runs it: it drives the most ALU construction through the real
+ ; pipeline, so a node whose dtype does not match its operands fails here
+ ; rather than reaching a renderer that would emit plausible code for it.
+ (action
+  (setenv SPEC 1 (run %{test})))
  (libraries unix tolk tolk.uop windtrap))

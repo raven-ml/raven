@@ -770,30 +770,48 @@ val store : dst:t -> value:t -> ?gate:t -> unit -> t
 
 (** {2:ctors_alu Arithmetic} *)
 
+val promo_dtype : t list -> Dtype.t
+(** [promo_dtype srcs] is the dtype an elementwise operation over [srcs]
+    produces: the dtype they share if they all carry the same one, and
+    {!Dtype.least_upper_dtype} of them otherwise.
+
+    The shared-dtype case does not consult the lattice, so operands whose
+    dtype has no upper bound with anything — pointers, {!Dtype.Void} — are
+    carried through rather than rejected.
+
+    @raise Invalid_argument if [srcs] is empty, or if the operands have no
+    common upper bound. *)
+
 val alu_unary : op:Ops.t -> src:t -> t
 (** [alu_unary ~op ~src] is a unary ALU node. Dtype is inherited from
     [src], except that the transcendental ops ({!Ops.Sin}, {!Ops.Log2},
     {!Ops.Exp2}, {!Ops.Sqrt}, {!Ops.Reciprocal}) promote an integer argument
-    to floating point: their result dtype is {!Dtype.weakfloat} for a
-    {!Dtype.weakint} argument, and {!Dtype.least_upper_float} of the argument
-    dtype otherwise. Shared.
+    to floating point via {!Dtype.least_upper_float}. Shared.
 
     @raise Invalid_argument if [op] is not in {!Ops.Group.unary}. *)
 
 val alu_binary : op:Ops.t -> lhs:t -> rhs:t -> t
-(** [alu_binary ~op ~lhs ~rhs] is a binary ALU node. Dtype is inherited
-    from [lhs], except for comparisons which produce a bool of matching
-    vector width. Shared.
+(** [alu_binary ~op ~lhs ~rhs] is a binary ALU node. Dtype is
+    {!promo_dtype} of the two operands, so a mixed-dtype operation widens
+    to their least upper bound rather than favouring either side. Two
+    exceptions: comparisons produce a bool of matching vector width, and a
+    shift ({!Ops.Shl}, {!Ops.Shr}) keeps [lhs]'s dtype, since the shift
+    amount's width does not affect the result's. Shared.
 
-    @raise Invalid_argument if [op] is not in {!Ops.Group.binary}, or
-    if [op] is a comparison on a pointer dtype. *)
+    @raise Invalid_argument if [op] is not in {!Ops.Group.binary}, if [op]
+    is a comparison on a pointer dtype, if [op] is a shift and either
+    operand is not an integer, or if the operands have no common upper
+    bound. *)
 
 val alu_ternary : op:Ops.t -> a:t -> b:t -> c:t -> t
 (** [alu_ternary ~op ~a ~b ~c] is a ternary ALU node. Dtype is
-    inherited from [b] for {!Ops.Where} and from [a] otherwise.
-    Shared.
+    {!promo_dtype} of the value operands — [b] and [c] for {!Ops.Where},
+    whose condition [a] does not take part in the promotion, and all three
+    otherwise. Shared.
 
-    @raise Invalid_argument if [op] is not in {!Ops.Group.ternary}. *)
+    @raise Invalid_argument if [op] is not in {!Ops.Group.ternary}, if [op]
+    is {!Ops.Where} and [a] is not bool, or if the promoted operands have
+    no common upper bound. *)
 
 val valid : src:t -> cond:t -> t
 (** [valid ~src ~cond] is [where cond src invalid]: it masks [src] to the

@@ -537,7 +537,12 @@ let rule_reduce_split_add =
              ~lhs:(U.reduce ~op:Ops.Add ~src:x ~ranges ~dtype)
              ~rhs:(U.reduce ~op:Ops.Add ~src:y ~ranges ~dtype))
 
-(* [(x & y).where(c, 0)].reduce(Add) -> y.where(c, 0).reduce * x.cast *)
+(* [(x & y).where(c, 0)].reduce(Add) -> y.where(c, 0).reduce * x.
+
+   [x] stays bool rather than being cast to the reduce's dtype: the product
+   takes its dtype from the promotion, and a cast here would be re-consumed by
+   [rule_mul_casted_bool], which turns [v * gate.cast] straight back into a
+   WHERE. *)
 let rule_reduce_and_where =
   let open Upat in
   let x = op ~name:"x" Ops.Param
@@ -559,7 +564,7 @@ let rule_reduce_and_where =
           Some
             (U.alu_binary ~op:Ops.Mul
                ~lhs:(U.reduce ~op:Ops.Add ~src:body ~ranges ~dtype)
-               ~rhs:(U.cast ~src:x ~dtype:(U.dtype c)))
+               ~rhs:x)
 
 (* [x * gate.cast] with [gate:bool] -> [gate.where(x, 0)]. *)
 let rule_mul_casted_bool =

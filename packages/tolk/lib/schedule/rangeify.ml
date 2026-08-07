@@ -1806,7 +1806,11 @@ let post_rangeify_rules =
     pm_mop_through_index;
     pm_mop_past_after;
     pm_mop_past_end;
-    Upat.Pattern_matcher.rewrite symbolic;
+    (* The constant fold runs here and not in every symbolic rewrite: it
+       commits a cast of a constant to a concrete width, which is only safe
+       once the ranges are built and nothing downstream still gets to choose
+       that width. *)
+    Upat.Pattern_matcher.(rewrite (symbolic ++ Symbolic.pm_fold_cast_const));
     Upat.Pattern_matcher.rewrite Simplify.pm_reduce_simplify;
     cleanup_dead_axes;
     remove_noop_stage;

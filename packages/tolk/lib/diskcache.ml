@@ -7,11 +7,15 @@
 (* Simple file-based disk cache.
    Uses Marshal for serialization and individual files per key. *)
 
-(* Bump whenever a change invalidates previously cached entries — notably
-   when an optimisation a beam search could once select stops being legal, so
-   that replaying its cached opt list would fail, or when a name that feeds a
-   cache key is reused for a different concept, so that an old entry would
-   still be found under the new meaning. *)
+(* Bump whenever a change makes previously cached entries wrong.
+
+   The obvious case is when an entry can no longer be replayed — an
+   optimisation a beam search could once select stops being legal, so its
+   cached opt list now fails. The case that is easy to miss: a change that
+   alters what a serialised key component *means* without altering how it is
+   spelled. The key still matches, so the entry is still found, and it is now
+   an answer to a different question. Renaming a variant and reusing the old
+   name for a new concept does exactly this. Bump for those too. *)
 let cache_version = 3
 
 let cache_dir =

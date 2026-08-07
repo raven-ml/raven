@@ -154,11 +154,16 @@ let where_bool_cond () =
   let w = Uop.alu_ternary ~op:Ops.Where ~a:c ~b:t ~c:e in
   is_true ~msg:"valid where accepted" (accepts Spec.shared_spec w)
 
+(* A WHERE over a non-bool condition has no dtype to derive, so it is
+   refused where it is built rather than where it is checked. *)
 let where_rejects_non_bool_cond () =
-  let bad_c = i32 0 in
-  let t = i32 1 and e = i32 2 in
-  let w = Uop.alu_ternary ~op:Ops.Where ~a:bad_c ~b:t ~c:e in
-  is_true ~msg:"non-bool cond rejected" (rejected Spec.shared_spec w)
+  let raised =
+    try
+      ignore (Uop.alu_ternary ~op:Ops.Where ~a:(i32 0) ~b:(i32 1) ~c:(i32 2));
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"non-bool cond rejected at construction" raised
 
 let cmplt_is_bool () =
   let c = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 3) ~rhs:(i32 4) in
@@ -205,7 +210,22 @@ let bitwise_rejects_float_operands () =
       (rejected Spec.shared_spec
          (Uop.alu_binary ~op ~lhs:(f32 1.0) ~rhs:(f32 2.0)))
   in
-  List.iter check [ Ops.And; Ops.Or; Ops.Xor; Ops.Shl; Ops.Shr ]
+  List.iter check [ Ops.And; Ops.Or; Ops.Xor ];
+  (* A shift takes its result dtype from the value being shifted, so a float
+     operand leaves nothing to derive and is refused at construction. The spec
+     keeps a rule for it too, which no constructible node can reach. *)
+  let check_shift op =
+    let raised =
+      try
+        ignore (Uop.alu_binary ~op ~lhs:(f32 1.0) ~rhs:(f32 2.0));
+        false
+      with Invalid_argument _ -> true
+    in
+    is_true
+      ~msg:(Ops.name op ^ " with a float operand rejected at construction")
+      raised
+  in
+  List.iter check_shift [ Ops.Shl; Ops.Shr ]
 
 let index_accepts_integer_offsets () =
   let p = global_i32_param () in

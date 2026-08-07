@@ -53,19 +53,20 @@ anchors point at the tinygrad clone.
   so the rule and the `non_removable` set it feeds have no consumer. Port both
   with the feature, not before.
 
-- **`Symbolic.pm_fold_cast_const` has no consumer outside `Uop.simplify`.**
+- **`Symbolic.pm_fold_cast_const` is composed at one of its six sites.**
   The rule that collapses `CAST(dt, CONST v)` into a typed constant was split
   out of `symbolic_simple` (`d726e5f7f`, pruned by `d51e55aa1`) because it
   writes a strongly typed constant that weak-dtype lowering must be free to
   decide for itself. The reference re-composes it at exactly six places, and
-  deliberately not at the others; until those land, any pass that used to get
-  the fold for free from `sym`/`symbolic_simple` no longer does, and its
-  rendered output carries casts the reference folds away. The six:
+  deliberately not at the others; until the rest land, any pass that used to
+  get the fold for free from `sym`/`symbolic_simple` no longer does, and its
+  rendered output carries casts the reference folds away.
+
+  `schedule/rangeify.ml`'s `post_rangeify_rules` has it. The five remaining:
   `codegen.ml` "initial symbolic", "devectorize2", "early symbolic", and
-  `pm_decomp`; `codegen/simplify.ml`'s substituted range rewrite; and
-  `schedule/rangeify.ml`'s `symbolic` rewrite. It must *not* be added to
-  "postopt symbolic", "expand broadcast / add loads", "add images", "extra
-  symbolic", "final symbolic", or `pm_reduce_collapse`.
+  `pm_decomp`; and `codegen/simplify.ml`'s substituted range rewrite. It must
+  *not* be added to "postopt symbolic", "expand broadcast / add loads", "add
+  images", "extra symbolic", "final symbolic", or `pm_reduce_collapse`.
 
 - **The reference's UNSHARD, COPY, CALL, void-RANGE, and WMMA spec rules are
   not in `lib/uop/spec.ml` yet.** Each waits on the feature it describes:
@@ -516,6 +517,11 @@ Recorded so nobody re-derives them from the upstream diff.
 - **`Elementwise.where` needed no coercion removal beyond the cast.** Every
   internal caller already passes a boolean: masks come from comparisons,
   `one_hot_along_dim`, `logical_not`, or `bitwise_or` of those.
+- **`lib/uop/hashcons.ml` has nothing to port** — it is vendored from
+  Filliâtre's hashcons library and has no upstream counterpart, so it is a
+  no-op rather than a decline. The wave plan lists it beside `uop.ml`, which
+  is only true in the sense that `_rebuild_dtype` interacts with hash-consing;
+  that logic lives in `uop.ml`.
 
 ## Design debt
 
@@ -664,18 +670,47 @@ Recorded so nobody re-derives them from the upstream diff.
 - **`Axis_type.Loop` names a different concept than it did before the
   2026-08 pin.** The old `Loop` — a counted software loop — is now `Weak`;
   the current `Loop` is the unbounded wait-loop (void-dtype `Range`, closed
-  by a conditional `End`). Nothing constructs one yet. Two things follow.
+  by a conditional `End`). Nothing constructs one yet. Two consequences.
   `Axis_type.to_string Loop` is again `"loop"`, the same atom the old kind
   fed into the `Diskcache` program key, so `cache_version` was bumped to 3
   to stop a pre-rename entry being found under the new meaning. And the
   parity/golden Python drivers still say `AxisType.LOOP` where they mean
-  `AxisType.WEAK` — see the wave-9 note below.
+  `AxisType.WEAK` — see the wave-9 precondition below.
 
-- **Nine Python driver sites still name `AxisType.LOOP` meaning the counted
-  loop** and must become `AxisType.WEAK` before any golden is regenerated:
-  `test/golden/cstyle/generate_expected.py:120,200,201`,
-  `test/parity/nested_loops/main.py:19,20`,
-  `test/parity/token_gather_collapse/main.py:30,31,32`,
-  `test/parity/loop/main.py:18`. Both constructors exist at the new pin, so
-  this fails silently — the drivers run and emit a golden for the wrong axis
-  class rather than raising.
+  **Do a rename-and-reuse in two steps, and this is the evidence why.** The
+  rename (`Loop` -> `Weak`) landed first, alone, so the compiler pointed at
+  every reference. Adding the new `Loop` came second. Had both landed
+  together every existing `Axis_type.Loop` would have kept compiling while
+  silently meaning the new concept. That is not hypothetical: three
+  assertions in `test/unit/uop/test_uop.ml` (1417, 1424, 1535) pin the axis
+  kind as the *string* `AxisType.LOOP`, and one-step would have left them
+  green while asserting the wrong class. Strings, cache keys and Python
+  drivers are all outside the compiler's reach; only the ordering exposed
+  them.
+
+- **BLOCKING PRECONDITION FOR WAVE 9 — migrate nine `AxisType.LOOP` sites
+  before regenerating anything.** These nine Python constructions mean the
+  *counted* loop and must become `AxisType.WEAK`:
+
+  | file | lines |
+  |---|---|
+  | `test/golden/cstyle/generate_expected.py` | 120, 200, 201 |
+  | `test/parity/nested_loops/main.py` | 19, 20 |
+  | `test/parity/token_gather_collapse/main.py` | 30, 31, 32 |
+  | `test/parity/loop/main.py` | 18 |
+
+  Both constructors exist at the new pin, so nothing raises: the drivers run
+  and emit expectations for the wrong axis class. Regenerating first bakes
+  that into every `.expected` and destroys the signal that would reveal it.
+  Migrate, then regenerate — not the other way round.
+
+- **There are two Ops-order tests and only one self-heals.**
+  `test/unit/uop/test_ops.ml` probes the live `_tinygrad` checkout, so it goes
+  green by itself when the pin moves. `test/unit/uop/test_uop.ml:70` holds a
+  *hardcoded* 82-entry name list and must be edited by hand on any enum
+  change. Until the pin moves, `test_ops.ml` is red on exactly one entry
+  (index 78, `UNSHARD` vs the old pin's `MULTI`) — expected, not a
+  regression, and not something to debug. The trap is that a stale hardcoded
+  list fails identically and looks like the same known failure. On any enum
+  change, diff the whole list against the reference rather than patching the
+  entry you know about.
