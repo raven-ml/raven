@@ -102,99 +102,95 @@ include
       | Some ptree_value__036_ -> f "lb" ptree_acc__035_ ptree_value__036_
     let _ = fold_layer
     let fold (f : string -> 'acc -> 'a0 -> 'acc) (acc : 'acc) (x : 'a0 t) =
-      let (ptree_tuple__048_, ptree_tuple__049_) = x.pair in
+      let (ptree_tuple__050_, ptree_tuple__051_) = x.pair in
       f "pair.1"
         (f "pair.0"
            (fold_layer
-              (fun ptree_path__045_ ptree_arg__046_ ptree_arg__047_ ->
+              (fun ptree_path__047_ ptree_arg__048_ ptree_arg__049_ ->
                  f
-                   (if Stdlib.String.equal ptree_path__045_ ""
+                   (if Stdlib.String.equal ptree_path__047_ ""
                     then "head"
-                    else Stdlib.(^) "head." ptree_path__045_) ptree_arg__046_
-                   ptree_arg__047_)
-              (Stdlib.List.fold_left
-                 (fun ptree_acc__037_ ptree_pair__040_ ->
-                    let (ptree_index__038_, ptree_value__039_) =
-                      ptree_pair__040_ in
-                    fold_layer
-                      (fun ptree_path__041_ ptree_arg__042_ ptree_arg__043_
-                         ->
-                         f
-                           (let ptree_prefix__044_ =
-                              Stdlib.(^) "layers."
-                                (Stdlib.string_of_int ptree_index__038_) in
-                            if Stdlib.String.equal ptree_path__041_ ""
-                            then ptree_prefix__044_
-                            else
-                              Stdlib.(^) (Stdlib.(^) ptree_prefix__044_ ".")
-                                ptree_path__041_) ptree_arg__042_
-                           ptree_arg__043_) ptree_acc__037_ ptree_value__039_)
-                 acc
-                 (Stdlib.List.mapi
-                    (fun ptree_index__038_ ptree_value__039_ ->
-                       (ptree_index__038_, ptree_value__039_)) x.layers))
-              x.head) ptree_tuple__048_) ptree_tuple__049_
+                    else Stdlib.(^) "head." ptree_path__047_) ptree_arg__048_
+                   ptree_arg__049_)
+              (let rec ptree_loop__037_ ptree_index__039_ ptree_acc__038_
+                 ptree_list__040_ =
+                 match ptree_list__040_ with
+                 | [] -> ptree_acc__038_
+                 | ptree_value__041_::ptree_rest__042_ ->
+                     ptree_loop__037_ (Stdlib.(+) ptree_index__039_ 1)
+                       (fold_layer
+                          (fun ptree_path__043_ ptree_arg__044_
+                             ptree_arg__045_ ->
+                             f
+                               (let ptree_prefix__046_ =
+                                  Stdlib.(^) "layers."
+                                    (Stdlib.string_of_int ptree_index__039_) in
+                                if Stdlib.String.equal ptree_path__043_ ""
+                                then ptree_prefix__046_
+                                else
+                                  Stdlib.(^)
+                                    (Stdlib.(^) ptree_prefix__046_ ".")
+                                    ptree_path__043_) ptree_arg__044_
+                               ptree_arg__045_) ptree_acc__038_
+                          ptree_value__041_) ptree_rest__042_ in
+               ptree_loop__037_ 0 acc x.layers) x.head) ptree_tuple__050_)
+        ptree_tuple__051_
     let _ = fold
     let fold2_layer (f : string -> 'acc -> 'a0 -> 'b -> 'acc) (acc : 'acc)
       (x : 'a0 layer) (y : 'b layer) =
-      let ptree_acc__050_ = f "lw" acc x.lw y.lw in
+      let ptree_acc__052_ = f "lw" acc x.lw y.lw in
       match ((x.lb), (y.lb)) with
-      | (None, None) -> ptree_acc__050_
-      | (Some ptree_left__051_, Some ptree_right__052_) ->
-          f "lb" ptree_acc__050_ ptree_left__051_ ptree_right__052_
+      | (None, None) -> ptree_acc__052_
+      | (Some ptree_left__053_, Some ptree_right__054_) ->
+          f "lb" ptree_acc__052_ ptree_left__053_ ptree_right__054_
       | _ ->
           Stdlib.invalid_arg
             "Uniform.fold2_layer: option constructor mismatch at lb"
     let _ = fold2_layer
     let fold2 (f : string -> 'acc -> 'a0 -> 'b -> 'acc) (acc : 'acc)
       (x : 'a0 t) (y : 'b t) =
-      let (ptree_tuple__069_, ptree_tuple__070_) = x.pair in
-      let (ptree_tuple__071_, ptree_tuple__072_) = y.pair in
+      let (ptree_tuple__073_, ptree_tuple__074_) = x.pair in
+      let (ptree_tuple__075_, ptree_tuple__076_) = y.pair in
       f "pair.1"
         (f "pair.0"
            (fold2_layer
-              (fun ptree_path__065_ ptree_arg__066_ ptree_arg__067_
-                 ptree_arg__068_ ->
+              (fun ptree_path__069_ ptree_arg__070_ ptree_arg__071_
+                 ptree_arg__072_ ->
                  f
-                   (if Stdlib.String.equal ptree_path__065_ ""
+                   (if Stdlib.String.equal ptree_path__069_ ""
                     then "head"
-                    else Stdlib.(^) "head." ptree_path__065_) ptree_arg__066_
-                   ptree_arg__067_ ptree_arg__068_)
-              (let ptree_left__053_ = x.layers in
-               let ptree_right__054_ = y.layers in
-               if
-                 Stdlib.(<>) (Stdlib.List.length ptree_left__053_)
-                   (Stdlib.List.length ptree_right__054_)
-               then
-                 Stdlib.invalid_arg
-                   "Uniform.fold2: list length mismatch at layers"
-               else
-                 Stdlib.List.fold_left2
-                   (fun ptree_acc__055_ ptree_pair__059_
-                      ptree_right_value__058_ ->
-                      let (ptree_index__056_, ptree_left_value__057_) =
-                        ptree_pair__059_ in
-                      fold2_layer
-                        (fun ptree_path__060_ ptree_arg__061_ ptree_arg__062_
-                           ptree_arg__063_ ->
-                           f
-                             (let ptree_prefix__064_ =
-                                Stdlib.(^) "layers."
-                                  (Stdlib.string_of_int ptree_index__056_) in
-                              if Stdlib.String.equal ptree_path__060_ ""
-                              then ptree_prefix__064_
-                              else
-                                Stdlib.(^)
-                                  (Stdlib.(^) ptree_prefix__064_ ".")
-                                  ptree_path__060_) ptree_arg__061_
-                             ptree_arg__062_ ptree_arg__063_) ptree_acc__055_
-                        ptree_left_value__057_ ptree_right_value__058_) acc
-                   (Stdlib.List.mapi
-                      (fun ptree_index__056_ ptree_left_value__057_ ->
-                         (ptree_index__056_, ptree_left_value__057_))
-                      ptree_left__053_) ptree_right__054_) x.head y.head)
-           ptree_tuple__069_ ptree_tuple__071_) ptree_tuple__070_
-        ptree_tuple__072_
+                    else Stdlib.(^) "head." ptree_path__069_) ptree_arg__070_
+                   ptree_arg__071_ ptree_arg__072_)
+              (let rec ptree_loop__055_ ptree_index__059_ ptree_acc__058_
+                 ptree_left__056_ ptree_right__057_ =
+                 match (ptree_left__056_, ptree_right__057_) with
+                 | (ptree_left_value__062_::ptree_left_rest__060_,
+                    ptree_right_value__063_::ptree_right_rest__061_) ->
+                     ptree_loop__055_ (Stdlib.(+) ptree_index__059_ 1)
+                       (fold2_layer
+                          (fun ptree_path__064_ ptree_arg__065_
+                             ptree_arg__066_ ptree_arg__067_ ->
+                             f
+                               (let ptree_prefix__068_ =
+                                  Stdlib.(^) "layers."
+                                    (Stdlib.string_of_int ptree_index__059_) in
+                                if Stdlib.String.equal ptree_path__064_ ""
+                                then ptree_prefix__068_
+                                else
+                                  Stdlib.(^)
+                                    (Stdlib.(^) ptree_prefix__068_ ".")
+                                    ptree_path__064_) ptree_arg__065_
+                               ptree_arg__066_ ptree_arg__067_)
+                          ptree_acc__058_ ptree_left_value__062_
+                          ptree_right_value__063_) ptree_left_rest__060_
+                       ptree_right_rest__061_
+                 | ([], []) -> ptree_acc__058_
+                 | _ ->
+                     Stdlib.invalid_arg
+                       "Uniform.fold2: list length mismatch at layers" in
+               ptree_loop__055_ 0 acc x.layers y.layers) x.head y.head)
+           ptree_tuple__073_ ptree_tuple__075_) ptree_tuple__074_
+        ptree_tuple__076_
     let _ = fold2
     let names_layer (x : 'a0 layer) =
       ({
@@ -206,24 +202,24 @@ include
       ({
          layers =
            (Stdlib.List.mapi
-              (fun ptree_index__074_ ptree_value__075_ ->
+              (fun ptree_index__078_ ptree_value__079_ ->
                  map_layer
-                   (fun ptree_path__076_ ->
-                      let ptree_prefix__077_ =
+                   (fun ptree_path__080_ ->
+                      let ptree_prefix__081_ =
                         Stdlib.(^) "layers."
-                          (Stdlib.string_of_int ptree_index__074_) in
-                      if Stdlib.String.equal ptree_path__076_ ""
-                      then ptree_prefix__077_
+                          (Stdlib.string_of_int ptree_index__078_) in
+                      if Stdlib.String.equal ptree_path__080_ ""
+                      then ptree_prefix__081_
                       else
-                        Stdlib.(^) (Stdlib.(^) ptree_prefix__077_ ".")
-                          ptree_path__076_) (names_layer ptree_value__075_))
+                        Stdlib.(^) (Stdlib.(^) ptree_prefix__081_ ".")
+                          ptree_path__080_) (names_layer ptree_value__079_))
               x.layers);
          head =
            (map_layer
-              (fun ptree_path__078_ ->
-                 if Stdlib.String.equal ptree_path__078_ ""
+              (fun ptree_path__082_ ->
+                 if Stdlib.String.equal ptree_path__082_ ""
                  then "head"
-                 else Stdlib.(^) "head." ptree_path__078_)
+                 else Stdlib.(^) "head." ptree_path__082_)
               (names_layer x.head));
          pair = (let (_, _) = x.pair in ("pair.0", "pair.1"));
          tag = (x.tag)

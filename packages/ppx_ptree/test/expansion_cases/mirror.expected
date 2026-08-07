@@ -141,55 +141,51 @@ include
           ()
         let _ = iter
         let fold (f : string -> 'acc -> 'a -> 'acc) (acc : 'acc) (x : 'a t) =
-          Stdlib.List.fold_left
-            (fun ptree_acc__041_ ptree_pair__044_ ->
-               let (ptree_index__042_, ptree_value__043_) = ptree_pair__044_ in
-               f
-                 (Stdlib.(^) "layers."
-                    (Stdlib.string_of_int ptree_index__042_)) ptree_acc__041_
-                 ptree_value__043_)
+          let rec ptree_loop__041_ ptree_index__043_ ptree_acc__042_
+            ptree_list__044_ =
+            match ptree_list__044_ with
+            | [] -> ptree_acc__042_
+            | ptree_value__045_::ptree_rest__046_ ->
+                ptree_loop__041_ (Stdlib.(+) ptree_index__043_ 1)
+                  (f
+                     (Stdlib.(^) "layers."
+                        (Stdlib.string_of_int ptree_index__043_))
+                     ptree_acc__042_ ptree_value__045_) ptree_rest__046_ in
+          ptree_loop__041_ 0
             (let ptree_acc__039_ = f "w" acc x.w in
              match x.b with
              | None -> ptree_acc__039_
              | Some ptree_value__040_ ->
-                 f "b" ptree_acc__039_ ptree_value__040_)
-            (Stdlib.List.mapi
-               (fun ptree_index__042_ ptree_value__043_ ->
-                  (ptree_index__042_, ptree_value__043_)) x.layers)
+                 f "b" ptree_acc__039_ ptree_value__040_) x.layers
         let _ = fold
         let fold2 (f : string -> 'acc -> 'a -> 'b -> 'acc) (acc : 'acc)
           (x : 'a t) (y : 'b t) =
-          let ptree_left__048_ = x.layers in
-          let ptree_right__049_ = y.layers in
-          if
-            Stdlib.(<>) (Stdlib.List.length ptree_left__048_)
-              (Stdlib.List.length ptree_right__049_)
-          then
-            Stdlib.invalid_arg
-              "Mirror.Uniform.fold2: list length mismatch at layers"
-          else
-            Stdlib.List.fold_left2
-              (fun ptree_acc__050_ ptree_pair__054_ ptree_right_value__053_
-                 ->
-                 let (ptree_index__051_, ptree_left_value__052_) =
-                   ptree_pair__054_ in
-                 f
-                   (Stdlib.(^) "layers."
-                      (Stdlib.string_of_int ptree_index__051_))
-                   ptree_acc__050_ ptree_left_value__052_
-                   ptree_right_value__053_)
-              (let ptree_acc__045_ = f "w" acc x.w y.w in
-               match ((x.b), (y.b)) with
-               | (None, None) -> ptree_acc__045_
-               | (Some ptree_left__046_, Some ptree_right__047_) ->
-                   f "b" ptree_acc__045_ ptree_left__046_ ptree_right__047_
-               | _ ->
-                   Stdlib.invalid_arg
-                     "Mirror.Uniform.fold2: option constructor mismatch at b")
-              (Stdlib.List.mapi
-                 (fun ptree_index__051_ ptree_left_value__052_ ->
-                    (ptree_index__051_, ptree_left_value__052_))
-                 ptree_left__048_) ptree_right__049_
+          let rec ptree_loop__050_ ptree_index__054_ ptree_acc__053_
+            ptree_left__051_ ptree_right__052_ =
+            match (ptree_left__051_, ptree_right__052_) with
+            | (ptree_left_value__057_::ptree_left_rest__055_,
+               ptree_right_value__058_::ptree_right_rest__056_) ->
+                ptree_loop__050_ (Stdlib.(+) ptree_index__054_ 1)
+                  (f
+                     (Stdlib.(^) "layers."
+                        (Stdlib.string_of_int ptree_index__054_))
+                     ptree_acc__053_ ptree_left_value__057_
+                     ptree_right_value__058_) ptree_left_rest__055_
+                  ptree_right_rest__056_
+            | ([], []) -> ptree_acc__053_
+            | _ ->
+                Stdlib.invalid_arg
+                  "Mirror.Uniform.fold2: list length mismatch at layers" in
+          ptree_loop__050_ 0
+            (let ptree_acc__047_ = f "w" acc x.w y.w in
+             match ((x.b), (y.b)) with
+             | (None, None) -> ptree_acc__047_
+             | (Some ptree_left__048_, Some ptree_right__049_) ->
+                 f "b" ptree_acc__047_ ptree_left__048_ ptree_right__049_
+             | _ ->
+                 Stdlib.invalid_arg
+                   "Mirror.Uniform.fold2: option constructor mismatch at b")
+            x.layers y.layers
         let _ = fold2
         let names (x : 'a t) =
           ({
@@ -197,9 +193,9 @@ include
              b = (match x.b with | None -> None | Some _ -> Some "b");
              layers =
                (Stdlib.List.mapi
-                  (fun ptree_index__056_ _ ->
+                  (fun ptree_index__060_ _ ->
                      Stdlib.(^) "layers."
-                       (Stdlib.string_of_int ptree_index__056_)) x.layers);
+                       (Stdlib.string_of_int ptree_index__060_)) x.layers);
              dim = (x.dim)
            } : string t)
         let _ = names
@@ -210,10 +206,10 @@ include
          Uniform.b =
            (match x.b with
             | None -> None
-            | Some ptree_value__061_ -> Some (Nx.Ptree.P ptree_value__061_));
+            | Some ptree_value__065_ -> Some (Nx.Ptree.P ptree_value__065_));
          Uniform.layers =
            (Stdlib.List.map
-              (fun ptree_value__062_ -> Nx.Ptree.P ptree_value__062_)
+              (fun ptree_value__066_ -> Nx.Ptree.P ptree_value__066_)
               x.layers);
          Uniform.dim = (x.dim)
        } : Nx.Ptree.tensor Uniform.t)
@@ -224,15 +220,15 @@ include
          b =
            (match u.Uniform.b with
             | None -> None
-            | Some ptree_value__058_ ->
-                Some (Nx.Ptree.unpack ~at:"b" Nx.float32 ptree_value__058_));
+            | Some ptree_value__062_ ->
+                Some (Nx.Ptree.unpack ~at:"b" Nx.float32 ptree_value__062_));
          layers =
            (Stdlib.List.mapi
-              (fun ptree_index__059_ ptree_value__060_ ->
+              (fun ptree_index__063_ ptree_value__064_ ->
                  Nx.Ptree.unpack
                    ~at:(Stdlib.(^) "layers."
-                          (Stdlib.string_of_int ptree_index__059_))
-                   Nx.float32 ptree_value__060_) u.Uniform.layers);
+                          (Stdlib.string_of_int ptree_index__063_))
+                   Nx.float32 ptree_value__064_) u.Uniform.layers);
          dim = (u.Uniform.dim)
        } : t)
     let _ = of_uniform
