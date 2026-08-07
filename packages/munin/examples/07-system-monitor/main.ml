@@ -20,9 +20,9 @@ let count_primes n =
   !count
 
 let () =
-  let root = "_munin" in
+  let store = Store.open_ ~root:"_munin" () in
   let session =
-    Session.start ~root ~experiment:"compute" ~name:"prime-sieve"
+    Session.start ~store ~experiment:"compute" ~name:"prime-sieve"
       ~params:[ ("limit", `Int 5_000_000) ]
       ()
   in

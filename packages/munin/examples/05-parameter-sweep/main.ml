@@ -6,8 +6,7 @@
 open Munin
 
 let () =
-  let root = "_munin" in
-  let store = Store.open_ ~root () in
+  let store = Store.open_ ~root:"_munin" () in
   let group = "sweep-1" in
 
   (* Sweep over three configurations. *)
@@ -20,12 +19,9 @@ let () =
   in
   List.iter
     (fun (name, step_size, max_iter) ->
-      let session =
-        Session.start ~root ~experiment:"optimisation" ~name ~group
-          ~params:
-            [ ("step_size", `Float step_size); ("max_iter", `Int max_iter) ]
-          ()
-      in
+      Session.with_run ~store ~experiment:"optimisation" ~name ~group
+        ~params:[ ("step_size", `Float step_size); ("max_iter", `Int max_iter) ]
+      @@ fun session ->
       Session.define_metric session "error" ~summary:`Min ~goal:`Minimize ();
 
       (* Simulate convergence: smaller steps converge slower but lower. *)
@@ -33,8 +29,7 @@ let () =
       for i = 1 to max_iter do
         error := (!error *. (1.0 -. step_size)) +. Random.float 0.01;
         if i mod 10 = 0 then Session.log_metric session ~step:i "error" !error
-      done;
-      Session.finish session)
+      done)
     configs;
 
   (* Compare: list all runs in the group and print a results table. *)

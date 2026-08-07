@@ -6,9 +6,9 @@
 open Munin
 
 let () =
-  let root = "_munin" in
+  let store = Store.open_ ~root:"_munin" () in
   let session =
-    Session.start ~root ~experiment:"solver" ~name:"conjugate-gradient"
+    Session.start ~store ~experiment:"solver" ~name:"conjugate-gradient"
       ~params:[ ("tolerance", `Float 1e-6); ("max_iter", `Int 500) ]
       ()
   in

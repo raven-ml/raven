@@ -24,29 +24,8 @@ type payload =
 (** The type for materialized payload kinds. *)
 
 type t
-(** The type for artifact handles. *)
-
-(** {1:loading Loading} *)
-
-val load : root:string -> name:string -> version:string -> t option
-(** [load ~root ~name ~version] is the artifact named [name] at [version], if
-    present.
-
-    If [version] does not match an explicit version, it is resolved as an alias.
-    Returns [None] if neither matches. *)
-
-val list :
-  root:string ->
-  ?name:string ->
-  ?kind:kind ->
-  ?alias:string ->
-  ?producer_run:string ->
-  ?consumer_run:string ->
-  unit ->
-  t list
-(** [list ~root ()] is the artifacts stored under [root], filtered when the
-    optional selectors are provided. Results are sorted by name, then by version
-    number. *)
+(** The type for artifact handles. Obtain one from {!Store.find_artifact},
+    {!Store.list_artifacts}, or {!Session.log_artifact}. *)
 
 (** {1:identity Identity} *)
 
@@ -96,6 +75,18 @@ val created_at : t -> float
     creation time). *)
 
 (**/**)
+
+val load : root:string -> name:string -> version:string -> t option
+
+val list :
+  root:string ->
+  ?name:string ->
+  ?kind:kind ->
+  ?alias:string ->
+  ?producer_run:string ->
+  ?consumer_run:string ->
+  unit ->
+  t list
 
 val create :
   root:string ->

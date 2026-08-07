@@ -10,9 +10,10 @@
     for discovery, and {!Artifact} for versioned payloads.
 
     {1:library Library [munin]}
-    {!modules:Value Session Run Run_monitor Store Artifact} *)
+    {!modules:Value Provenance Session Run Run_monitor Store Artifact} *)
 
 module Value = Value
+module Provenance = Provenance
 module Artifact = Artifact
 module Run = Run
 module Run_monitor = Run_monitor

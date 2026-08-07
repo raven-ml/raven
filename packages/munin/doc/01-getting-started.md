@@ -32,9 +32,17 @@ experiment. It materializes its state by replaying the event log.
 accessors expose the data.
 
 **Store.** A store is the root directory containing all experiments
-and artifacts. `Store.open_` creates or opens it.
-`Store.list_runs`, `Store.find_run`, and `Store.latest_run`
-discover runs across experiments.
+and artifacts, and the only place a filesystem path is interpreted.
+`Store.open_` creates or opens it; pass the result as `~store` to
+`Session.start`. `Store.list_runs`, `Store.find_run`, and
+`Store.latest_run` discover runs across experiments;
+`Store.find_artifact` and `Store.list_artifacts` do the same for
+artifacts.
+
+**Provenance.** Provenance records how and where a run executed:
+command line, working directory, hostname, PID, and git revision.
+`Provenance.detect` captures it from the current process, which is
+what `Session.start` does by default. `Run.provenance` reads it back.
 
 **Artifact.** An artifact is a versioned, content-addressed file or
 directory. Versions are auto-incremented (v1, v2, ...). Aliases like
@@ -135,14 +143,36 @@ Every run automatically captures:
 - Hostname and PID
 - Git commit hash and dirty status
 
-Pass `~capture_env:["CUDA_VISIBLE_DEVICES"; "OMP_NUM_THREADS"]` to
-`Session.start` to also record specific environment variables.
+That is `Provenance.detect ()`, which `Session.start` calls when no
+`~provenance` is given. To also record specific environment
+variables, detect them yourself:
+
+<!-- $MDX skip -->
+```ocaml
+Session.start ~experiment:"demo"
+  ~provenance:
+    (Provenance.detect
+       ~capture_env:[ "CUDA_VISIBLE_DEVICES"; "OMP_NUM_THREADS" ]
+       ())
+  ()
+```
+
+`~provenance` takes a full record, so a run replayed elsewhere can
+record the provenance it is standing in for rather than the replaying
+process.
 
 ## Store Location
 
 By default, runs are stored in `$XDG_DATA_HOME/raven/munin`. Override
-with the `RAVEN_TRACKING_DIR` environment variable, or pass `~root`
-to `Session.start` and `Store.open_`.
+with the `RAVEN_TRACKING_DIR` environment variable, or open a store at
+an explicit path and pass it to every session:
+
+<!-- $MDX skip -->
+```ocaml
+let store = Store.open_ ~root:"_munin" () in
+let session = Session.start ~store ~experiment:"demo" () in
+...
+```
 
 ## Next Steps
 

@@ -14,52 +14,37 @@ type t
 (** {1:lifecycle Lifecycle} *)
 
 val start :
-  ?root:string ->
-  experiment:string ->
+  ?store:Store.t ->
   ?name:string ->
   ?group:string ->
   ?parent:Run.t ->
   ?tags:string list ->
   ?params:(string * Value.t) list ->
   ?notes:string ->
-  ?capture_env:string list ->
-  ?command:string list ->
-  ?cwd:string ->
-  ?hostname:string ->
-  ?pid:int ->
-  ?git_commit:string ->
-  ?git_dirty:bool ->
-  ?env:(string * string) list ->
+  ?provenance:Provenance.t ->
+  experiment:string ->
   unit ->
   t
-(** [start ~experiment ()] starts a new run session.
+(** [start ~experiment ()] starts a new run session in [store].
 
-    Creates the store directory structure if it does not exist.
-
-    - [root] defaults to [$RAVEN_TRACKING_DIR] or [$XDG_DATA_HOME/raven/munin].
-    - [name] defaults to [None].
-    - [tags] defaults to [[]].
-    - [params] defaults to [[]].
-    - [notes] defaults to [None].
-    - [capture_env] is a list of environment variable names to capture into
-      provenance. Defaults to [[]].
-    - [command] defaults to [Sys.argv].
-    - [cwd] defaults to [Sys.getcwd ()].
-    - [hostname] defaults to [Unix.gethostname ()].
-    - [pid] defaults to [Unix.getpid ()].
-    - [git_commit] defaults to the HEAD commit detected from [cwd].
-    - [git_dirty] defaults to the working tree status detected from [cwd].
-    - [env] defaults to the variables captured via [capture_env]. *)
+    - [store] defaults to [Store.open_ ()].
+    - [name], [group], [parent], and [notes] default to [None].
+    - [tags] and [params] default to [[]].
+    - [provenance] defaults to [Provenance.detect ()]. To record environment
+      variables, pass
+      [~provenance:(Provenance.detect ~capture_env:["CUDA_VISIBLE_DEVICES"] ())].
+*)
 
 val with_run :
-  ?root:string ->
-  experiment:string ->
+  ?store:Store.t ->
   ?name:string ->
+  ?group:string ->
   ?parent:Run.t ->
   ?tags:string list ->
   ?params:(string * Value.t) list ->
   ?notes:string ->
-  ?capture_env:string list ->
+  ?provenance:Provenance.t ->
+  experiment:string ->
   (t -> 'a) ->
   'a
 (** [with_run ~experiment f] starts a run, calls [f], and finishes the run as

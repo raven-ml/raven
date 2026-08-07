@@ -34,7 +34,8 @@ let make_dir root name files =
 
 let test_start_creates_run_dir () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let run = Session.run session in
   is_true ~msg:"run dir exists" (Sys.file_exists (Run.dir run));
   is_true ~msg:"manifest exists"
@@ -44,7 +45,8 @@ let test_start_creates_run_dir () =
 
 let test_finish_sets_status () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let run = Session.run session in
   is_true ~msg:"status finished" (Run.status run = `Finished);
@@ -52,53 +54,57 @@ let test_finish_sets_status () =
 
 let test_finish_failed () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish ~status:`Failed session;
   is_true ~msg:"status failed" (Run.status (Session.run session) = `Failed)
 
 let test_finish_killed () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish ~status:`Killed session;
   is_true ~msg:"status killed" (Run.status (Session.run session) = `Killed)
 
 let test_finish_idempotent () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   Session.finish ~status:`Failed session;
   is_true ~msg:"still finished" (Run.status (Session.run session) = `Finished)
 
 let test_with_run_success () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let result =
-    Session.with_run ~root ~experiment:"exp" (fun session ->
+    Session.with_run ~store ~experiment:"exp" (fun session ->
         Session.log_metric session ~step:1 "x" 1.0;
         42)
   in
   equal ~msg:"return value" int 42 result;
-  let store = Store.open_ ~root () in
   let run = Option.get (Store.latest_run store ()) in
   is_true ~msg:"status finished" (Run.status run = `Finished)
 
 let test_with_run_exception () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let raised =
     try
       ignore
-        (Session.with_run ~root ~experiment:"exp" (fun _session ->
+        (Session.with_run ~store ~experiment:"exp" (fun _session ->
              failwith "boom"));
       false
     with Failure _ -> true
   in
   is_true ~msg:"exception re-raised" raised;
-  let store = Store.open_ ~root () in
   let run = Option.get (Store.latest_run store ()) in
   is_true ~msg:"status failed" (Run.status run = `Failed)
 
 let test_resume () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   let run = Session.run session in
   is_true ~msg:"resumable before finish" (Run.resumable run);
@@ -111,7 +117,8 @@ let test_resume () =
 
 let test_resume_finished_raises () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let run = Session.run session in
   raises_invalid_arg "Munin.Session.resume: run is not resumable" (fun () ->
@@ -119,7 +126,8 @@ let test_resume_finished_raises () =
 
 let test_ops_after_finish_ignored () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   Session.finish session;
   Session.log_metric session ~step:2 "x" 2.0;
@@ -133,7 +141,8 @@ let test_ops_after_finish_ignored () =
 
 let test_session_identity () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let run = Session.run session in
   equal ~msg:"id matches run" string (Run.id run) (Session.id session);
   equal ~msg:"dir matches run" string (Run.dir run) (Session.dir session);
@@ -158,7 +167,8 @@ let lifecycle =
 
 let test_log_metric () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "train/loss" 1.5;
   Session.finish session;
   let run = Session.run session in
@@ -172,7 +182,8 @@ let test_log_metric () =
 
 let test_log_metrics_batch () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metrics session ~step:1 [ ("train/loss", 1.0); ("val/acc", 0.6) ];
   Session.finish session;
   let run = Session.run session in
@@ -180,7 +191,8 @@ let test_log_metrics_batch () =
 
 let test_metric_history_chronological () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 3.0;
   Session.log_metric session ~step:2 "x" 2.0;
   Session.log_metric session ~step:3 "x" 1.0;
@@ -193,7 +205,8 @@ let test_metric_history_chronological () =
 
 let test_latest_metrics () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   Session.log_metric session ~step:2 "x" 2.0;
   Session.finish session;
@@ -208,7 +221,8 @@ let test_latest_metrics () =
 
 let test_metric_keys_sorted () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "z/loss" 1.0;
   Session.log_metric session ~step:1 "a/acc" 0.5;
   Session.log_metric session ~step:1 "m/lr" 0.01;
@@ -220,7 +234,8 @@ let test_metric_keys_sorted () =
 
 let test_explicit_timestamp () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 ~timestamp:42.0 "x" 1.0;
   Session.finish session;
   let run = Session.run session in
@@ -233,7 +248,8 @@ let test_explicit_timestamp () =
 
 let test_missing_metric_history_empty () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"empty history" (list int) []
@@ -256,7 +272,8 @@ let scalars =
 
 let test_define_metric_summary_and_goal () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "train/loss" ~summary:`Min ~goal:`Minimize ();
   Session.define_metric session "val/acc" ~summary:`Max ~goal:`Maximize ();
   Session.finish session;
@@ -272,7 +289,8 @@ let test_define_metric_summary_and_goal () =
 
 let test_define_metric_all_summaries () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "a" ~summary:`Min ();
   Session.define_metric session "b" ~summary:`Max ();
   Session.define_metric session "c" ~summary:`Mean ();
@@ -290,7 +308,8 @@ let test_define_metric_all_summaries () =
 
 let test_define_metric_step_metric () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "train/loss" ~step_metric:"epoch" ();
   Session.finish session;
   let run = Session.run session in
@@ -299,7 +318,8 @@ let test_define_metric_step_metric () =
 
 let test_define_metric_default_summary () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "x" ();
   Session.finish session;
   let run = Session.run session in
@@ -308,7 +328,8 @@ let test_define_metric_default_summary () =
 
 let test_metric_defs_sorted () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "z" ();
   Session.define_metric session "a" ();
   Session.define_metric session "m" ();
@@ -330,7 +351,8 @@ let metric_definitions =
 
 let test_set_notes () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.set_notes session (Some "hello");
   Session.finish session;
   equal ~msg:"notes set" (option string) (Some "hello")
@@ -338,7 +360,8 @@ let test_set_notes () =
 
 let test_set_notes_replace () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.set_notes session (Some "first");
   Session.set_notes session (Some "second");
   Session.finish session;
@@ -347,7 +370,8 @@ let test_set_notes_replace () =
 
 let test_clear_notes () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" ~notes:"initial" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" ~notes:"initial" () in
   Session.set_notes session None;
   Session.finish session;
   equal ~msg:"notes cleared" (option string) None
@@ -355,7 +379,8 @@ let test_clear_notes () =
 
 let test_set_summary_merge () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.set_summary session [ ("a", `Float 1.0) ];
   Session.set_summary session [ ("b", `Float 2.0); ("a", `Float 3.0) ];
   Session.finish session;
@@ -369,14 +394,16 @@ let test_set_summary_merge () =
 
 let test_find_summary_missing () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   equal ~msg:"missing key" (option unit) None
     (Option.map ignore (Run.find_summary (Session.run session) "nope"))
 
 let test_add_tags () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" ~tags:[ "initial" ] () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" ~tags:[ "initial" ] () in
   Session.add_tags session [ "added" ];
   Session.finish session;
   let run = Session.run session in
@@ -384,7 +411,8 @@ let test_add_tags () =
 
 let test_add_tags_dedup () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" ~tags:[ "a" ] () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" ~tags:[ "a" ] () in
   Session.add_tags session [ "a"; "b" ];
   Session.finish session;
   let run = Session.run session in
@@ -392,15 +420,17 @@ let test_add_tags_dedup () =
 
 let test_add_tags_empty_noop () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.add_tags session [];
   Session.finish session;
   equal ~msg:"no tags" (list string) [] (Run.tags (Session.run session))
 
 let test_params_immutable () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let session =
-    Session.start ~root ~experiment:"exp"
+    Session.start ~store ~experiment:"exp"
       ~params:[ ("lr", `Float 0.001); ("bs", `Int 32) ]
       ()
   in
@@ -425,9 +455,19 @@ let metadata =
 
 let test_provenance_fields () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let session =
-    Session.start ~root ~experiment:"exp" ~command:[ "ocaml"; "train.ml" ]
-      ~cwd:root ~hostname:"node0" ~pid:42 ~git_commit:"abc123" ~git_dirty:true
+    Session.start ~store ~experiment:"exp"
+      ~provenance:
+        {
+          Provenance.command = [ "ocaml"; "train.ml" ];
+          cwd = root;
+          hostname = Some "node0";
+          pid = 42;
+          git_commit = Some "abc123";
+          git_dirty = Some true;
+          env = [];
+        }
       ()
   in
   Session.finish session;
@@ -441,9 +481,12 @@ let test_provenance_fields () =
 
 let test_capture_env () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   Unix.putenv "MUNIN_TEST_A" "alpha";
   let session =
-    Session.start ~root ~experiment:"exp" ~capture_env:[ "MUNIN_TEST_A" ] ()
+    Session.start ~store ~experiment:"exp"
+      ~provenance:(Provenance.detect ~capture_env:[ "MUNIN_TEST_A" ] ())
+      ()
   in
   Session.finish session;
   let prov = Run.provenance (Session.run session) in
@@ -454,10 +497,12 @@ let test_capture_env () =
 
 let test_capture_env_missing () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   (* Use a variable name that won't exist *)
   let session =
-    Session.start ~root ~experiment:"exp"
-      ~capture_env:[ "MUNIN_NONEXISTENT_9999" ]
+    Session.start ~store ~experiment:"exp"
+      ~provenance:
+        (Provenance.detect ~capture_env:[ "MUNIN_NONEXISTENT_9999" ] ())
       ()
   in
   Session.finish session;
@@ -466,8 +511,11 @@ let test_capture_env_missing () =
 
 let test_explicit_env () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let session =
-    Session.start ~root ~experiment:"exp" ~env:[ ("KEY", "value") ] ()
+    Session.start ~store ~experiment:"exp"
+      ~provenance:{ (Provenance.detect ()) with env = [ ("KEY", "value") ] }
+      ()
   in
   Session.finish session;
   let prov = Run.provenance (Session.run session) in
@@ -488,24 +536,25 @@ let provenance_tests =
 
 let test_run_load () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let id = Session.id session in
-  is_some ~msg:"load existing" (Run.load ~root ~experiment:"exp" ~id)
+  is_some ~msg:"load existing" (Store.find_run store id)
 
 let test_run_load_missing () =
   with_temp_dir @@ fun root ->
-  let _store = Store.open_ ~root () in
-  is_none ~msg:"load missing"
-    (Run.load ~root ~experiment:"exp" ~id:"nonexistent")
+  let store = Store.open_ ~root () in
+  is_none ~msg:"load missing" (Store.find_run store "nonexistent")
 
 let test_run_list_sorted_descending () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" () in
   Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" () in
+  let s2 = Session.start ~store ~experiment:"exp" () in
   Session.finish s2;
-  let runs = Run.list ~root ~experiment:"exp" () in
+  let runs = Store.list_runs store ~experiment:"exp" () in
   equal ~msg:"count" int 2 (List.length runs);
   let ids = List.map Run.id runs in
   (* Sorted descending by id *)
@@ -514,48 +563,51 @@ let test_run_list_sorted_descending () =
 
 let test_run_list_filter_status () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" () in
   Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" () in
+  let s2 = Session.start ~store ~experiment:"exp" () in
   Session.finish ~status:`Failed s2;
   equal ~msg:"finished only" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~status:`Finished ()));
+    (List.length (Store.list_runs store ~experiment:"exp" ~status:`Finished ()));
   equal ~msg:"failed only" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~status:`Failed ()))
+    (List.length (Store.list_runs store ~experiment:"exp" ~status:`Failed ()))
 
 let test_run_list_filter_tag () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" ~tags:[ "train" ] () in
+  let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" ~tags:[ "train" ] () in
   Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" ~tags:[ "eval" ] () in
+  let s2 = Session.start ~store ~experiment:"exp" ~tags:[ "eval" ] () in
   Session.finish s2;
   equal ~msg:"train tagged" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~tag:"train" ()));
+    (List.length (Store.list_runs store ~experiment:"exp" ~tag:"train" ()));
   equal ~msg:"eval tagged" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~tag:"eval" ()))
+    (List.length (Store.list_runs store ~experiment:"exp" ~tag:"eval" ()))
 
 let test_run_list_filter_parent () =
   with_temp_dir @@ fun root ->
-  let parent = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let parent = Session.start ~store ~experiment:"exp" () in
   Session.finish parent;
   let parent_run = Session.run parent in
-  let child = Session.start ~root ~experiment:"exp" ~parent:parent_run () in
+  let child = Session.start ~store ~experiment:"exp" ~parent:parent_run () in
   Session.finish child;
-  let _other = Session.start ~root ~experiment:"exp" () in
+  let _other = Session.start ~store ~experiment:"exp" () in
   Session.finish _other;
   equal ~msg:"one child" int 1
     (List.length
-       (Run.list ~root ~experiment:"exp" ~parent:(Run.id parent_run) ()))
+       (Store.list_runs store ~experiment:"exp" ~parent:(Run.id parent_run) ()))
 
 let test_run_children () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
-  let parent = Session.start ~root ~experiment:"exp" () in
+  let parent = Session.start ~store ~experiment:"exp" () in
   Session.finish parent;
   let parent_run = Session.run parent in
-  let c1 = Session.start ~root ~experiment:"exp" ~parent:parent_run () in
+  let c1 = Session.start ~store ~experiment:"exp" ~parent:parent_run () in
   Session.finish c1;
-  let c2 = Session.start ~root ~experiment:"exp" ~parent:parent_run () in
+  let c2 = Session.start ~store ~experiment:"exp" ~parent:parent_run () in
   Session.finish c2;
   let children = Store.list_runs store ~parent:(Run.id parent_run) () in
   equal ~msg:"two children" int 2 (List.length children);
@@ -568,9 +620,10 @@ let test_run_children () =
 
 let test_run_name () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" ~name:"baseline" () in
+  let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" ~name:"baseline" () in
   Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" () in
+  let s2 = Session.start ~store ~experiment:"exp" () in
   Session.finish s2;
   equal ~msg:"named" (option string) (Some "baseline")
     (Run.name (Session.run s1));
@@ -578,7 +631,8 @@ let test_run_name () =
 
 let test_experiment () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"my-exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"my-exp" () in
   Session.finish session;
   equal ~msg:"experiment name" string "my-exp"
     (Run.experiment (Session.run session))
@@ -600,8 +654,9 @@ let run_loading =
 
 let test_file_artifact () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "weights.bin" "model weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let artifact =
     Session.log_artifact session ~name:"model" ~kind:`Checkpoint ~path:src ()
   in
@@ -617,10 +672,11 @@ let test_file_artifact () =
 
 let test_dir_artifact () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let dir =
     make_dir root "dataset" [ ("a.txt", "data a"); ("b.txt", "data b") ]
   in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let artifact =
     Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:dir ()
   in
@@ -631,8 +687,9 @@ let test_dir_artifact () =
 
 let test_artifact_versioning () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "v1 weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let a1 =
     Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
   in
@@ -646,8 +703,9 @@ let test_artifact_versioning () =
 
 let test_artifact_aliases () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let artifact =
     Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
       ~aliases:[ "best"; "latest" ] ()
@@ -659,8 +717,9 @@ let test_artifact_aliases () =
 
 let test_artifact_alias_resolution () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   ignore
     (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
        ~aliases:[ "latest" ] ());
@@ -669,16 +728,17 @@ let test_artifact_alias_resolution () =
     (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
        ~aliases:[ "latest" ] ());
   Session.finish session;
-  let resolved = Artifact.load ~root ~name:"model" ~version:"latest" in
+  let resolved = Store.find_artifact store ~name:"model" ~version:"latest" in
   is_true ~msg:"alias resolves to v2"
     (match resolved with Some a -> Artifact.version a = "v2" | None -> false);
-  let v1 = Artifact.load ~root ~name:"model" ~version:"v1" in
+  let v1 = Store.find_artifact store ~name:"model" ~version:"v1" in
   is_some ~msg:"explicit v1 loads" v1
 
 let test_artifact_metadata () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let artifact =
     Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
       ~metadata:[ ("framework", `String "rune") ]
@@ -689,12 +749,13 @@ let test_artifact_metadata () =
 
 let test_artifact_lineage () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let producer = Session.start ~root ~experiment:"exp" ~name:"producer" () in
+  let producer = Session.start ~store ~experiment:"exp" ~name:"producer" () in
   let artifact =
     Session.log_artifact producer ~name:"model" ~kind:`Model ~path:src ()
   in
-  let consumer = Session.start ~root ~experiment:"exp" ~name:"consumer" () in
+  let consumer = Session.start ~store ~experiment:"exp" ~name:"consumer" () in
   Session.use_artifact consumer artifact;
   Session.finish producer;
   Session.finish consumer;
@@ -705,7 +766,7 @@ let test_artifact_lineage () =
     (Artifact.producer_run_id artifact);
   (* Reload to see consumer linkage *)
   let reloaded =
-    match Artifact.load ~root ~name:"model" ~version:"v1" with
+    match Store.find_artifact store ~name:"model" ~version:"v1" with
     | Some a -> a
     | None -> failwith "missing artifact"
   in
@@ -719,8 +780,9 @@ let test_artifact_lineage () =
 
 let test_log_artifact_closed_raises () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   raises_failure "Munin.Session.log_artifact: closed session" (fun () ->
       ignore
@@ -728,7 +790,8 @@ let test_log_artifact_closed_raises () =
 
 let test_log_artifact_missing_path_raises () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   raises_invalid_arg
     "Munin.Session.log_artifact: path does not exist: /nonexistent/path"
     (fun () ->
@@ -738,8 +801,9 @@ let test_log_artifact_missing_path_raises () =
 
 let test_artifact_content_dedup () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "same content" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let a1 =
     Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
   in
@@ -776,11 +840,11 @@ let test_store_open () =
 
 let test_store_list_experiments () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"mnist" () in
-  Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"cifar" () in
-  Session.finish s2;
   let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"mnist" () in
+  Session.finish s1;
+  let s2 = Session.start ~store ~experiment:"cifar" () in
+  Session.finish s2;
   let exps = Store.list_experiments store in
   equal ~msg:"two experiments" int 2 (List.length exps);
   is_true ~msg:"has mnist" (List.mem "mnist" exps);
@@ -788,20 +852,20 @@ let test_store_list_experiments () =
 
 let test_store_list_runs_all () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp1" () in
-  Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp2" () in
-  Session.finish s2;
   let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp1" () in
+  Session.finish s1;
+  let s2 = Session.start ~store ~experiment:"exp2" () in
+  Session.finish s2;
   equal ~msg:"all runs" int 2 (List.length (Store.list_runs store ()))
 
 let test_store_list_runs_experiment () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp1" () in
-  Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp2" () in
-  Session.finish s2;
   let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp1" () in
+  Session.finish s1;
+  let s2 = Session.start ~store ~experiment:"exp2" () in
+  Session.finish s2;
   equal ~msg:"exp1 runs" int 1
     (List.length (Store.list_runs store ~experiment:"exp1" ()));
   equal ~msg:"exp2 runs" int 1
@@ -809,10 +873,10 @@ let test_store_list_runs_experiment () =
 
 let test_store_find_run () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let id = Session.id session in
-  let store = Store.open_ ~root () in
   is_some ~msg:"found" (Store.find_run store id)
 
 let test_store_find_run_missing () =
@@ -822,40 +886,40 @@ let test_store_find_run_missing () =
 
 let test_store_latest_run () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" ~name:"only" () in
-  Session.finish session;
   let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" ~name:"only" () in
+  Session.finish session;
   let latest = Store.latest_run store () in
   is_true ~msg:"latest returns the run"
     (match latest with Some run -> Run.name run = Some "only" | None -> false)
 
 let test_store_latest_run_with_filter () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let s1 =
-    Session.start ~root ~experiment:"exp" ~tags:[ "train" ] ~name:"a" ()
+    Session.start ~store ~experiment:"exp" ~tags:[ "train" ] ~name:"a" ()
   in
   Session.finish s1;
   Unix.sleepf 0.01;
   let s2 =
-    Session.start ~root ~experiment:"exp" ~tags:[ "eval" ] ~name:"b" ()
+    Session.start ~store ~experiment:"exp" ~tags:[ "eval" ] ~name:"b" ()
   in
   Session.finish s2;
-  let store = Store.open_ ~root () in
   let latest = Store.latest_run store ~tag:"train" () in
   is_true ~msg:"latest with tag filter"
     (match latest with Some run -> Run.name run = Some "a" | None -> false)
 
 let test_store_latest_run_parent () =
   with_temp_dir @@ fun root ->
-  let parent = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let parent = Session.start ~store ~experiment:"exp" () in
   Session.finish parent;
   let parent_run = Session.run parent in
   Unix.sleepf 0.01;
   let child =
-    Session.start ~root ~experiment:"exp" ~parent:parent_run ~name:"child" ()
+    Session.start ~store ~experiment:"exp" ~parent:parent_run ~name:"child" ()
   in
   Session.finish child;
-  let store = Store.open_ ~root () in
   let latest = Store.latest_run store ~parent:(Run.id parent_run) () in
   is_true ~msg:"latest with parent filter"
     (match latest with
@@ -864,34 +928,34 @@ let test_store_latest_run_parent () =
 
 let test_store_delete_run () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let run = Session.run session in
-  let store = Store.open_ ~root () in
   is_true ~msg:"run dir exists before" (Sys.file_exists (Run.dir run));
   Store.delete_run store run;
   is_false ~msg:"run dir removed" (Sys.file_exists (Run.dir run))
 
 let test_store_delete_run_cleans_experiment () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"temp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"temp" () in
   Session.finish session;
   let run = Session.run session in
-  let store = Store.open_ ~root () in
   Store.delete_run store run;
   let exp_dir = Filename.concat (Filename.concat root "experiments") "temp" in
   is_false ~msg:"experiment dir removed" (Sys.file_exists exp_dir)
 
 let test_store_gc () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   (* Use directory artifact so blob is a directory (gc uses list_dirs) *)
   let dir = make_dir root "dataset" [ ("a.txt", "data") ] in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let artifact =
     Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:dir ()
   in
   Session.finish session;
-  let store = Store.open_ ~root () in
   (* Blob is referenced, gc should remove 0 *)
   let removed_before = Store.gc store in
   equal ~msg:"no unreferenced before" int 0 removed_before;
@@ -910,21 +974,21 @@ let test_store_gc () =
 
 let test_store_find_artifact () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   ignore (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ());
   Session.finish session;
-  let store = Store.open_ ~root () in
   is_some ~msg:"found" (Store.find_artifact store ~name:"model" ~version:"v1")
 
 let test_store_list_artifacts () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   ignore (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ());
   ignore (Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:src ());
   Session.finish session;
-  let store = Store.open_ ~root () in
   equal ~msg:"all artifacts" int 2 (List.length (Store.list_artifacts store ()));
   equal ~msg:"filter by kind" int 1
     (List.length (Store.list_artifacts store ~kind:`Model ()));
@@ -953,7 +1017,8 @@ let store_tests =
 
 let test_monitor_poll () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "train/loss" 1.0;
   Session.log_metric session ~step:2 "train/loss" 0.5;
   let run = Session.run session in
@@ -968,7 +1033,8 @@ let test_monitor_poll () =
 
 let test_monitor_incremental () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
@@ -984,7 +1050,8 @@ let test_monitor_incremental () =
 
 let test_monitor_history_chronological () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 3.0;
   Session.log_metric session ~step:2 "x" 1.0;
   Session.log_metric session ~step:3 "x" 2.0;
@@ -999,7 +1066,8 @@ let test_monitor_history_chronological () =
 
 let test_monitor_metric_defs () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "loss" ~summary:`Min ~goal:`Minimize ();
   let run = Session.run session in
   let monitor = Run_monitor.start run in
@@ -1013,7 +1081,8 @@ let test_monitor_metric_defs () =
 
 let test_monitor_best_minimize () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "loss" ~goal:`Minimize ();
   Session.log_metric session ~step:1 "loss" 1.0;
   Session.log_metric session ~step:2 "loss" 0.3;
@@ -1029,7 +1098,8 @@ let test_monitor_best_minimize () =
 
 let test_monitor_best_maximize () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "acc" ~goal:`Maximize ();
   Session.log_metric session ~step:1 "acc" 0.5;
   Session.log_metric session ~step:2 "acc" 0.9;
@@ -1045,7 +1115,8 @@ let test_monitor_best_maximize () =
 
 let test_monitor_best_loss_heuristic () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "train/loss" 1.0;
   Session.log_metric session ~step:2 "train/loss" 0.2;
   Session.log_metric session ~step:3 "train/loss" 0.5;
@@ -1060,7 +1131,8 @@ let test_monitor_best_loss_heuristic () =
 
 let test_monitor_live_status () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   let run = Session.run session in
   let monitor = Run_monitor.start run in
@@ -1074,7 +1146,8 @@ let test_monitor_live_status () =
 
 let test_monitor_best_nonexistent () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let run = Session.run session in
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
@@ -1099,7 +1172,8 @@ let run_monitor =
 
 let test_partial_log () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   let run = Session.run session in
   (* Append truncated JSON *)
@@ -1119,7 +1193,8 @@ let test_partial_log () =
 
 let test_malformed_line () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   let run = Session.run session in
   let oc =
@@ -1138,7 +1213,8 @@ let test_malformed_line () =
 
 let test_empty_event_log () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let run = Session.run session in
   (* No events logged *)
   equal ~msg:"no metrics" int 0 (List.length (Run.metric_keys run));
@@ -1148,7 +1224,8 @@ let test_empty_event_log () =
 
 let test_mixed_valid_invalid () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   let run = Session.run session in
   let oc =
@@ -1185,7 +1262,8 @@ let summary_float run key =
 
 let test_auto_summary_min () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "loss" ~summary:`Min ();
   Session.log_metric session ~step:1 "loss" 1.0;
   Session.log_metric session ~step:2 "loss" 0.3;
@@ -1198,7 +1276,8 @@ let test_auto_summary_min () =
 
 let test_auto_summary_max () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "acc" ~summary:`Max ();
   Session.log_metric session ~step:1 "acc" 0.5;
   Session.log_metric session ~step:2 "acc" 0.9;
@@ -1211,7 +1290,8 @@ let test_auto_summary_max () =
 
 let test_auto_summary_mean () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "x" ~summary:`Mean ();
   Session.log_metric session ~step:1 "x" 1.0;
   Session.log_metric session ~step:2 "x" 2.0;
@@ -1224,7 +1304,8 @@ let test_auto_summary_mean () =
 
 let test_auto_summary_last () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "x" ~summary:`Last ();
   Session.log_metric session ~step:1 "x" 1.0;
   Session.log_metric session ~step:2 "x" 2.0;
@@ -1237,7 +1318,8 @@ let test_auto_summary_last () =
 
 let test_auto_summary_none () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "x" ~summary:`None ();
   Session.log_metric session ~step:1 "x" 1.0;
   Session.finish session;
@@ -1246,7 +1328,8 @@ let test_auto_summary_none () =
 
 let test_explicit_summary_wins () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.define_metric session "loss" ~summary:`Min ();
   Session.log_metric session ~step:1 "loss" 1.0;
   Session.log_metric session ~step:2 "loss" 0.3;
@@ -1271,48 +1354,52 @@ let auto_summaries =
 
 let test_group_round_trip () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" ~group:"sweep-lr" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" ~group:"sweep-lr" () in
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"group" (option string) (Some "sweep-lr") (Run.group run)
 
 let test_group_none_by_default () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   equal ~msg:"no group" (option string) None (Run.group (Session.run session))
 
 let test_run_list_filter_group () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" ~group:"a" () in
+  let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" ~group:"a" () in
   Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" ~group:"b" () in
+  let s2 = Session.start ~store ~experiment:"exp" ~group:"b" () in
   Session.finish s2;
-  let s3 = Session.start ~root ~experiment:"exp" () in
+  let s3 = Session.start ~store ~experiment:"exp" () in
   Session.finish s3;
   equal ~msg:"group a" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~group:"a" ()));
+    (List.length (Store.list_runs store ~experiment:"exp" ~group:"a" ()));
   equal ~msg:"group b" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~group:"b" ()));
-  equal ~msg:"all" int 3 (List.length (Run.list ~root ~experiment:"exp" ()))
+    (List.length (Store.list_runs store ~experiment:"exp" ~group:"b" ()));
+  equal ~msg:"all" int 3
+    (List.length (Store.list_runs store ~experiment:"exp" ()))
 
 let test_store_list_runs_group () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" ~group:"sweep" () in
-  Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s2;
   let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" ~group:"sweep" () in
+  Session.finish s1;
+  let s2 = Session.start ~store ~experiment:"exp" () in
+  Session.finish s2;
   equal ~msg:"sweep only" int 1
     (List.length (Store.list_runs store ~group:"sweep" ()))
 
 let test_store_latest_run_group () =
   with_temp_dir @@ fun root ->
-  let s1 = Session.start ~root ~experiment:"exp" ~group:"a" () in
-  Session.finish s1;
-  let s2 = Session.start ~root ~experiment:"exp" ~group:"b" () in
-  Session.finish s2;
   let store = Store.open_ ~root () in
+  let s1 = Session.start ~store ~experiment:"exp" ~group:"a" () in
+  Session.finish s1;
+  let s2 = Session.start ~store ~experiment:"exp" ~group:"b" () in
+  Session.finish s2;
   let latest = Store.latest_run store ~group:"a" () in
   is_true ~msg:"latest in group a"
     (match latest with Some r -> Run.group r = Some "a" | None -> false)
@@ -1330,8 +1417,9 @@ let grouping =
 
 let test_log_media_copies_file () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "pred.png" "image data" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_media session ~step:1 ~key:"predictions" ~kind:`Image ~path:src;
   Session.finish session;
   let run = Session.run session in
@@ -1344,8 +1432,9 @@ let test_log_media_copies_file () =
 
 let test_log_media_nested_key () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "img.png" "pixels" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_media session ~step:5 ~key:"train/predictions" ~kind:`Image
     ~path:src;
   Session.finish session;
@@ -1359,8 +1448,9 @@ let test_log_media_nested_key () =
 
 let test_log_media_multiple_steps () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "img.png" "pixels" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_media session ~step:1 ~key:"pred" ~kind:`Image ~path:src;
   Session.log_media session ~step:5 ~key:"pred" ~kind:`Image ~path:src;
   Session.log_media session ~step:10 ~key:"pred" ~kind:`Image ~path:src;
@@ -1373,7 +1463,8 @@ let test_log_media_multiple_steps () =
 
 let test_log_media_missing_path_raises () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   raises_invalid_arg
     "Munin.Session.log_media: path does not exist: /no/such/file" (fun () ->
       Session.log_media session ~step:1 ~key:"x" ~kind:`File
@@ -1382,8 +1473,9 @@ let test_log_media_missing_path_raises () =
 
 let test_log_media_closed_ignored () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "img.png" "pixels" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   Session.log_media session ~step:1 ~key:"pred" ~kind:`Image ~path:src;
   let run = Session.run session in
@@ -1391,7 +1483,8 @@ let test_log_media_closed_ignored () =
 
 let test_log_table () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_table session ~step:1 ~key:"confusion" ~columns:[ "cat"; "dog" ]
     ~rows:[ [ `Int 90; `Int 10 ]; [ `Int 5; `Int 95 ] ];
   Session.finish session;
@@ -1404,8 +1497,9 @@ let test_log_table () =
 
 let test_media_keys_sorted () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let src = make_file root "f.bin" "data" in
-  let session = Session.start ~root ~experiment:"exp" () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.log_media session ~step:1 ~key:"z/output" ~kind:`File ~path:src;
   Session.log_media session ~step:1 ~key:"a/input" ~kind:`File ~path:src;
   Session.log_media session ~step:1 ~key:"m/middle" ~kind:`File ~path:src;
@@ -1417,7 +1511,8 @@ let test_media_keys_sorted () =
 
 let test_media_empty_history () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"no media keys" (list string) [] (Run.media_keys run);
@@ -1440,7 +1535,8 @@ let media =
 
 let test_system_monitor_logs_metrics () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let monitor = Munin_sys.start session ~interval:0.1 () in
   Thread.delay 0.35;
   Munin_sys.stop monitor;
@@ -1453,7 +1549,8 @@ let test_system_monitor_logs_metrics () =
 
 let test_system_monitor_defines_metrics () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let monitor = Munin_sys.start session ~interval:100.0 () in
   Munin_sys.stop monitor;
   Session.finish session;
@@ -1470,7 +1567,8 @@ let test_system_monitor_defines_metrics () =
 
 let test_system_monitor_stop_idempotent () =
   with_temp_dir @@ fun root ->
-  let session = Session.start ~root ~experiment:"exp" () in
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
   let monitor = Munin_sys.start session ~interval:100.0 () in
   Munin_sys.stop monitor;
   Munin_sys.stop monitor;

@@ -35,26 +35,6 @@ let status_to_string = function
   | `Failed -> "failed"
   | `Killed -> "killed"
 
-let git_output cwd args =
-  let command =
-    String.concat " " (List.map Filename.quote ("git" :: "-C" :: cwd :: args))
-  in
-  Fs.command_output command
-
-let detect_git_commit cwd = git_output cwd [ "rev-parse"; "HEAD" ]
-
-let detect_git_dirty cwd =
-  match git_output cwd [ "status"; "--porcelain"; "--untracked-files=no" ] with
-  | None -> None
-  | Some output -> Some (output <> "")
-
-let capture_env_vars names =
-  List.filter_map
-    (fun name -> Option.map (fun value -> (name, value)) (Sys.getenv_opt name))
-    names
-
-let first_some a b = match a with Some _ -> a | None -> b
-
 let root_of_run_dir dir =
   Filename.dirname (Filename.dirname (Filename.dirname (Filename.dirname dir)))
 
@@ -70,21 +50,22 @@ let write_manifest path json =
 
 let optional_field key f = function None -> [] | Some v -> [ (key, f v) ]
 
-let provenance_json ?notes ~command ~cwd ~hostname ~pid ~git_commit ~git_dirty
-    ~env () =
+(* [notes] is run metadata but shares the manifest's "provenance" object; see
+   Run.notes_of_json. *)
+let provenance_json ?notes (p : Provenance.t) =
   Json_utils.json_obj
     ([
-       ("command", Jsont.Json.list (List.map Jsont.Json.string command));
-       ("cwd", Jsont.Json.string cwd);
-       ("pid", Jsont.Json.int pid);
+       ("command", Jsont.Json.list (List.map Jsont.Json.string p.command));
+       ("cwd", Jsont.Json.string p.cwd);
+       ("pid", Jsont.Json.int p.pid);
        ( "env",
          Json_utils.json_obj
-           (List.map (fun (k, v) -> (k, Jsont.Json.string v)) env) );
+           (List.map (fun (k, v) -> (k, Jsont.Json.string v)) p.env) );
      ]
     @ optional_field "notes" Jsont.Json.string notes
-    @ optional_field "hostname" Jsont.Json.string hostname
-    @ optional_field "git_commit" Jsont.Json.string git_commit
-    @ optional_field "git_dirty" Jsont.Json.bool git_dirty)
+    @ optional_field "hostname" Jsont.Json.string p.hostname
+    @ optional_field "git_commit" Jsont.Json.string p.git_commit
+    @ optional_field "git_dirty" Jsont.Json.bool p.git_dirty)
 
 let make_manifest ~id ~experiment ~started_at ?name ?group ?parent ~tags ~params
     ~provenance () =
@@ -106,13 +87,10 @@ let make_manifest ~id ~experiment ~started_at ?name ?group ?parent ~tags ~params
         (fun run -> Jsont.Json.string (Run.id run))
         parent)
 
-let start ?root ~experiment ?name ?group ?parent ?(tags = []) ?(params = [])
-    ?notes ?(capture_env = []) ?command ?cwd ?hostname ?pid ?git_commit
-    ?git_dirty ?env () =
-  let root = Option.value root ~default:(Env.root ()) in
-  Fs.ensure_dir (Filename.concat root "experiments");
-  Fs.ensure_dir (Filename.concat root "artifacts");
-  Fs.ensure_dir (Filename.concat (Filename.concat root "blobs") "sha256");
+let start ?store ?name ?group ?parent ?(tags = []) ?(params = []) ?notes
+    ?provenance ~experiment () =
+  let store = match store with Some store -> store | None -> Store.open_ () in
+  let root = Store.root store in
   let id = generate_id () in
   let dir =
     Filename.concat
@@ -122,26 +100,15 @@ let start ?root ~experiment ?name ?group ?parent ?(tags = []) ?(params = [])
       id
   in
   Fs.ensure_dir dir;
-  let cwd = Option.value cwd ~default:(Sys.getcwd ()) in
-  let command = Option.value command ~default:(Array.to_list Sys.argv) in
-  let hostname =
-    match hostname with
-    | Some hostname -> Some hostname
-    | None -> Some (Unix.gethostname ())
-  in
-  let pid = Option.value pid ~default:(Unix.getpid ()) in
-  let git_commit = first_some git_commit (detect_git_commit cwd) in
-  let git_dirty = first_some git_dirty (detect_git_dirty cwd) in
-  let env = Option.value env ~default:(capture_env_vars capture_env) in
   let provenance =
-    provenance_json ?notes ~command ~cwd ~hostname ~pid ~git_commit ~git_dirty
-      ~env ()
+    match provenance with Some p -> p | None -> Provenance.detect ()
   in
   let started_at = Unix.gettimeofday () in
   let parent_id = Option.map Run.id parent in
   let manifest =
     make_manifest ~id ~experiment ~started_at ?name ?group ?parent ~tags ~params
-      ~provenance ()
+      ~provenance:(provenance_json ?notes provenance)
+      ()
   in
   write_manifest (manifest_path dir) manifest;
   Index.add root ~id
@@ -160,10 +127,11 @@ let finish ?(status = `Finished) t =
         Index.update_status t.root ~id:t.id (status :> Index.status);
         t.closed <- true))
 
-let with_run ?root ~experiment ?name ?parent ?tags ?params ?notes ?capture_env f
-    =
+let with_run ?store ?name ?group ?parent ?tags ?params ?notes ?provenance
+    ~experiment f =
   let session =
-    start ?root ~experiment ?name ?parent ?tags ?params ?notes ?capture_env ()
+    start ?store ?name ?group ?parent ?tags ?params ?notes ?provenance
+      ~experiment ()
   in
   match f session with
   | value ->

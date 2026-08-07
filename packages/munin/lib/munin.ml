@@ -1,4 +1,5 @@
 module Value = Value
+module Provenance = Provenance
 module Artifact = Artifact
 module Run = Run
 module Run_monitor = Run_monitor

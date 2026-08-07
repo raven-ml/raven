@@ -1,17 +1,6 @@
 type status = [ `Running | `Finished | `Failed | `Killed ]
 type metric = { step : int; timestamp : float; value : float }
 
-type provenance = {
-  notes : string option;
-  command : string list;
-  cwd : string;
-  hostname : string option;
-  pid : int;
-  git_commit : string option;
-  git_dirty : bool option;
-  env : (string * string) list;
-}
-
 type metric_def = {
   summary : [ `Min | `Max | `Mean | `Last | `None ];
   step_metric : string option;
@@ -28,7 +17,8 @@ type media_entry = {
 (* Heavy data loaded on demand from manifest + events *)
 type full = {
   params : (string * Value.t) list;
-  provenance : provenance;
+  provenance : Provenance.t;
+  notes : string option;
   ended_at : float option;
   summary : (string * Value.t) list;
   latest_metrics : (string * metric) list;
@@ -73,7 +63,7 @@ let resumable t = t.status = `Running
 let full t = Lazy.force t.full
 let params t = (full t).params
 let provenance t = (full t).provenance
-let notes t = (full t).provenance.notes
+let notes t = (full t).notes
 let ended_at t = (full t).ended_at
 let summary t = (full t).summary
 let find_param t key = List.assoc_opt key (full t).params
@@ -123,10 +113,14 @@ let push_tag seen acc tag =
     Hashtbl.replace seen tag ();
     tag :: acc)
 
-let provenance_of_json json =
+(* [notes] is stored inside the manifest's "provenance" object but is run
+   metadata, not provenance; it is read out separately. *)
+let notes_of_json json =
+  Json_utils.json_mem "notes" json |> Json_utils.json_string
+
+let provenance_of_json json : Provenance.t =
   let env_json = Json_utils.json_mem "env" json in
   {
-    notes = Json_utils.json_mem "notes" json |> Json_utils.json_string;
     command = Json_utils.json_mem "command" json |> Json_utils.json_string_list;
     cwd =
       Option.value
@@ -177,9 +171,7 @@ let materialize_full root dir manifest_json =
   let status = ref `Running in
   let ended_at = ref None in
   let notes =
-    ref
-      (Json_utils.json_mem "provenance" manifest_json |> provenance_of_json)
-        .notes
+    ref (Json_utils.json_mem "provenance" manifest_json |> notes_of_json)
   in
   List.iter
     (function
@@ -276,14 +268,13 @@ let materialize_full root dir manifest_json =
     sorted_of_hashtbl media_table
     |> List.map (fun (key, entries) -> (key, List.rev entries))
   in
-  let base_provenance =
-    Json_utils.json_mem "provenance" manifest_json |> provenance_of_json
-  in
   ( !status,
     List.rev !tags,
     {
       params;
-      provenance = { base_provenance with notes = !notes };
+      provenance =
+        Json_utils.json_mem "provenance" manifest_json |> provenance_of_json;
+      notes = !notes;
       ended_at = !ended_at;
       summary;
       latest_metrics;
@@ -339,13 +330,14 @@ let load ~root ~experiment ~id =
           }
     with _ -> None
 
-(* Lazy load from index — reads manifest + events only when full data
-   accessed *)
-let load_from_index ~root id (entry : Index.entry) =
-  let dir = run_dir ~root ~experiment:entry.experiment id in
+(* Build from already-known header fields — reads manifest + events only when
+   full data is accessed *)
+let of_header ~root ~id ~experiment ~name ~group ~parent_id ~status ~tags
+    ~started_at =
+  let dir = run_dir ~root ~experiment id in
   let full =
     lazy
-      (let path = manifest_path root entry.experiment id in
+      (let path = manifest_path root experiment id in
        let json = Fs.read_file path |> Json_utils.json_of_string in
        let _status, _tags, full_data = materialize_full root dir json in
        full_data)
@@ -353,13 +345,13 @@ let load_from_index ~root id (entry : Index.entry) =
   {
     id;
     dir;
-    experiment = entry.experiment;
-    name = entry.name;
-    group = entry.group;
-    parent_id = entry.parent_id;
-    started_at = entry.started_at;
-    status = entry.status;
-    tags = entry.tags;
+    experiment;
+    name;
+    group;
+    parent_id;
+    started_at;
+    status;
+    tags;
     full;
   }
 

@@ -12,15 +12,14 @@ let write_file path text =
     (fun () -> output_string oc text)
 
 let () =
-  let root = "_munin" in
-  let store = Store.open_ ~root () in
+  let store = Store.open_ ~root:"_munin" () in
 
   (* Run 1: produce a dataset. *)
   let session1 =
-    Session.start ~root ~experiment:"pipeline" ~name:"prepare-data"
+    Session.start ~store ~experiment:"pipeline" ~name:"prepare-data"
       ~tags:[ "data" ] ()
   in
-  let data_path = Filename.concat root "measurements.csv" in
+  let data_path = Filename.concat (Store.root store) "measurements.csv" in
   write_file data_path "wavelength,flux\n450.0,1.23\n550.0,2.45\n650.0,1.87\n";
   let dataset =
     Session.log_artifact session1 ~name:"measurements" ~kind:`Dataset
@@ -35,11 +34,11 @@ let () =
 
   (* Run 2: consume the dataset, produce a result. *)
   let session2 =
-    Session.start ~root ~experiment:"pipeline" ~name:"analyse"
+    Session.start ~store ~experiment:"pipeline" ~name:"analyse"
       ~tags:[ "analysis" ] ()
   in
   Session.use_artifact session2 dataset;
-  let result_path = Filename.concat root "result.txt" in
+  let result_path = Filename.concat (Store.root store) "result.txt" in
   write_file result_path "peak_wavelength=550.0\npeak_flux=2.45\n";
   let result =
     Session.log_artifact session2 ~name:"analysis-result" ~kind:`File

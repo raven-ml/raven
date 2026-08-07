@@ -1,8 +1,8 @@
 open Munin
 
 let () =
-  let root = "_munin" in
-  let artifact_path = Filename.concat root "artifact.txt" in
+  let store = Store.open_ ~root:"_munin" () in
+  let artifact_path = Filename.concat (Store.root store) "artifact.txt" in
   let write path text =
     let oc = open_out path in
     Fun.protect
@@ -10,7 +10,7 @@ let () =
       (fun () -> output_string oc text)
   in
   let session =
-    Session.start ~root ~experiment:"demo" ~name:"baseline"
+    Session.start ~store ~experiment:"demo" ~name:"baseline"
       ~params:[ ("lr", `Float 0.001) ]
       ()
   in

@@ -25,18 +25,6 @@ type metric = {
 }
 (** The type for scalar metric observations. *)
 
-type provenance = {
-  notes : string option;  (** Free-form run note. *)
-  command : string list;  (** Command line that started the run. *)
-  cwd : string;  (** Working directory at run start. *)
-  hostname : string option;  (** Machine hostname. *)
-  pid : int;  (** Process identifier. *)
-  git_commit : string option;  (** Git HEAD commit hash. *)
-  git_dirty : bool option;  (** Whether the working tree was dirty. *)
-  env : (string * string) list;  (** Captured environment variables. *)
-}
-(** The type for run provenance. *)
-
 type metric_def = {
   summary : [ `Min | `Max | `Mean | `Last | `None ];
       (** How the run summary value is computed from history. *)
@@ -57,27 +45,8 @@ type media_entry = {
 (** The type for media log entries. *)
 
 type t
-(** The type for run handles. *)
-
-(** {1:loading Loading} *)
-
-val load : root:string -> experiment:string -> id:string -> t option
-(** [load ~root ~experiment ~id] is the run [id] in [experiment], if present.
-    Returns [None] if the manifest is missing, has an incompatible schema
-    version, or cannot be read. *)
-
-val list :
-  root:string ->
-  experiment:string ->
-  ?status:status ->
-  ?tag:string ->
-  ?parent:string ->
-  ?group:string ->
-  unit ->
-  t list
-(** [list ~root ~experiment ()] is the runs persisted for [experiment], filtered
-    when the optional selectors are provided. [parent] filters by parent run
-    identifier. Results are sorted by identifier descending (newest first). *)
+(** The type for run handles. Obtain one from {!Store.find_run},
+    {!Store.list_runs}, {!Store.latest_run}, or {!Session.run}. *)
 
 (** {1:identity Identity} *)
 
@@ -115,8 +84,8 @@ val resumable : t -> bool
 
 (** {1:provenance Provenance} *)
 
-val provenance : t -> provenance
-(** [provenance t] is the run provenance. *)
+val provenance : t -> Provenance.t
+(** [provenance t] is the run provenance, as recorded when the run started. *)
 
 val notes : t -> string option
 (** [notes t] is the latest run note, if any. *)
@@ -176,6 +145,28 @@ val output_artifacts : t -> Artifact.t list
 (**/**)
 
 val status_of_string : string -> status
-val load_from_index : root:string -> string -> Index.entry -> t
+val load : root:string -> experiment:string -> id:string -> t option
+
+val list :
+  root:string ->
+  experiment:string ->
+  ?status:status ->
+  ?tag:string ->
+  ?parent:string ->
+  ?group:string ->
+  unit ->
+  t list
+
+val of_header :
+  root:string ->
+  id:string ->
+  experiment:string ->
+  name:string option ->
+  group:string option ->
+  parent_id:string option ->
+  status:status ->
+  tags:string list ->
+  started_at:float ->
+  t
 
 (**/**)

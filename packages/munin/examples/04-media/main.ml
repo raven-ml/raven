@@ -28,9 +28,11 @@ let write_ppm path =
       done)
 
 let () =
-  let root = "_munin" in
-  let session = Session.start ~root ~experiment:"media-demo" ~name:"run-1" () in
-  let tmp = Filename.concat root "_tmp" in
+  let store = Store.open_ ~root:"_munin" () in
+  let session =
+    Session.start ~store ~experiment:"media-demo" ~name:"run-1" ()
+  in
+  let tmp = Filename.concat (Store.root store) "_tmp" in
   (try Unix.mkdir tmp 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
 
   (* Log an image at two different steps. *)

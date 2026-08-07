@@ -7,8 +7,7 @@
 open Munin
 
 let () =
-  let root = "_munin" in
-  let store = Store.open_ ~root () in
+  let store = Store.open_ ~root:"_munin" () in
 
   (* List all experiments. *)
   let experiments = Store.list_experiments store in

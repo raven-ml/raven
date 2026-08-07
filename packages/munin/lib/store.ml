@@ -2,6 +2,11 @@ type t = { root : string }
 
 let root t = t.root
 
+let run_of_entry ~root id (entry : Index.entry) =
+  Run.of_header ~root ~id ~experiment:entry.experiment ~name:entry.name
+    ~group:entry.group ~parent_id:entry.parent_id ~status:entry.status
+    ~tags:entry.tags ~started_at:entry.started_at
+
 let open_ ?root () =
   let root = Option.value root ~default:(Env.root ()) in
   Fs.ensure_dir (Filename.concat root "experiments");
@@ -25,7 +30,7 @@ let list_runs_indexed index ~root ?experiment ?status ?tag ?parent ?group () =
              ~some:(fun p -> entry.parent_id = Some p)
              parent
         && Option.fold ~none:true ~some:(fun g -> entry.group = Some g) group
-      then Some (Run.load_from_index ~root id entry)
+      then Some (run_of_entry ~root id entry)
       else None)
   |> List.sort (fun a b -> String.compare (Run.id b) (Run.id a))
 
@@ -54,7 +59,7 @@ let find_run t id =
   match Index.read t.root with
   | Some index -> (
       match Hashtbl.find_opt index id with
-      | Some entry -> Some (Run.load_from_index ~root:t.root id entry)
+      | Some entry -> Some (run_of_entry ~root:t.root id entry)
       | None -> None)
   | None ->
       List.find_map
