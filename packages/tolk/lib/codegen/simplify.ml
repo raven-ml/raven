@@ -395,10 +395,6 @@ let toposort_gated gate root =
   visit root;
   List.rev !order
 
-let fold_result count v =
-  U.alu_binary ~op:Ops.Mul
-    ~lhs:(U.cast ~src:count ~dtype:(U.dtype v)) ~rhs:v
-
 let maximum a b = U.alu_binary ~op:Ops.Max ~lhs:a ~rhs:b
 
 let as_lowered_add_reduce u =
@@ -426,8 +422,9 @@ let clamp_count ?lower ?upper r =
   let lo = match lower with Some l -> maximum l zero | None -> zero in
   minimum (maximum (sub_add_neg hi lo) zero) n
 
-(* [(x + y).or_casted < c -> x < (c.cast(y.dtype) - y)] when [y] and
-   [c] carry no ranges. *)
+(* [(x + y).or_casted < c -> x < (c - y)] when [y] and [c] carry no
+   ranges. The subtraction promotes, so [c] needs no cast to reach [y]'s
+   width. *)
 let rule_lift_add_lt =
   let open Upat in
   let x = var "x" and y = var "y" and c = var "c" in
@@ -436,7 +433,7 @@ let rule_lift_add_lt =
     let y = bs $ "y" and c = bs $ "c" in
     if no_range y && no_range c then
       let x = bs $ "x" in
-      Some U.O.(x < sub_add_neg (U.cast ~src:c ~dtype:(U.dtype y)) y)
+      Some U.O.(x < sub_add_neg c y)
     else None
   in
   [ O.(add < c) => body; O.(cast add < c) => body ]
@@ -468,7 +465,7 @@ let rule_reduce_fold_lower =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some (fold_result (clamp_count ~lower:cut r) v)
+      Some U.O.(clamp_count ~lower:cut r * v)
 
 (* [((r < lower).not & (r < upper)).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_between =
@@ -486,7 +483,7 @@ let rule_reduce_fold_between =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some (fold_result (clamp_count ~lower ~upper r) v)
+      Some U.O.(clamp_count ~lower ~upper r * v)
 
 (* [(r < cut).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_upper =
@@ -501,7 +498,7 @@ let rule_reduce_fold_upper =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some (fold_result (clamp_count ~upper:cut r) v)
+      Some U.O.(clamp_count ~upper:cut r * v)
 
 (* [WHERE(cond, x, Invalid)].reduce(r, Add) lifts the gate out of the
    reduce when [cond] does not depend on the reduced ranges: every lane
