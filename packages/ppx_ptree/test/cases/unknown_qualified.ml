@@ -1,1 +1,1 @@
-type t = { key : Nx.Rng.key } [@@deriving ptree]
+type t = { stats : Hashtbl.statistics } [@@deriving ptree]

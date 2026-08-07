@@ -211,6 +211,10 @@ let is_nx_alias path =
   match longident_parts path with
   | Some [ name ] -> String_set.mem name nx_aliases
   | Some [ "Nx"; name ] -> String_set.mem name nx_aliases
+  (* An RNG key is a tensor, and it belongs in a parameter structure whenever a
+     jitted step draws from it. Its name does not end in [t], so the qualified
+     fallback below cannot recognise it. *)
+  | Some [ "Rng"; "key" ] | Some [ "Nx"; "Rng"; "key" ] -> true
   | _ -> false
 
 let container_kind path =

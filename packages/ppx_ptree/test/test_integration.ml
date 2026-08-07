@@ -24,6 +24,14 @@ module Optimizer_params = struct
   [@@deriving ptree]
 end
 
+(* A key is a tensor, and it belongs in the structure whenever a compiled step
+   draws from it — that is how the draw reaches the trace as an input rather
+   than a frozen constant. Spelled [Nx.Rng.key], not [(int32, int32_elt) Nx.t].
+*)
+module Stepper = struct
+  type t = { weight : Nx.float32_t; key : Nx.Rng.key } [@@deriving ptree]
+end
+
 module Block = struct
   type t = { projection : Kaun.Linear.t } [@@deriving ptree]
 end
@@ -155,8 +163,29 @@ let test_nested_kaun_model_and_checkpoint_order () =
         (Kaun.Checkpoint.find name checkpoint))
     names
 
+(* The key must traverse as a leaf, and — the point of putting it there — reach
+   a jitted step as an input, so the draw follows the key it is handed instead
+   of replaying one baked in at trace time. *)
+let test_rng_key_field_is_a_leaf () =
+  let params =
+    Stepper.{ weight = f32 [| 2 |] [| 1.0; 2.0 |]; key = Nx.Rng.key 5 }
+  in
+  let leaves = ref 0 in
+  Stepper.iter (fun _ -> incr leaves) params;
+  equal ~msg:"the key traverses alongside the weight" int 2 !leaves;
+  let step =
+    Rune.jit
+      (module Stepper)
+      (fun p -> Nx.mul p.Stepper.weight (Nx.Rng.uniform p.Stepper.key Nx.float32 [| 2 |]))
+  in
+  let at k = Nx.to_array (step { params with Stepper.key = Nx.Rng.key k }) in
+  is_true ~msg:"a compiled draw follows the key it is given" (at 5 <> at 6);
+  equal ~msg:"and replays for the same key" (array (float 0.)) (at 5) (at 5)
+
 let tests =
   [
+    test "derives a traversal over an Nx.Rng.key field"
+      test_rng_key_field_is_a_leaf;
     test "preserves derived leaf order through pmap axes and tuple output"
       test_pmap_axes_and_tuple_output;
     test "runs a Vega optimizer step over a derived module"

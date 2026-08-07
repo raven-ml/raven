@@ -13,6 +13,11 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
+- `[@@deriving ptree]` recognises a field typed `Nx.Rng.key` as a tensor leaf.
+  A key belongs in a parameter structure whenever a compiled step draws from it,
+  but the deriver only knew qualified types whose name ends in `t`, so the field
+  had to be spelled `(int32, int32_elt) Nx.t`.
+
 - Add the `ppx_ptree` deriver, which generates the `map`, `map2`, and `iter`
   operations required by `Nx.Ptree.S` for records, products, containers, and
   recursive parameter types, with generated code and diagnostics located at the
