@@ -610,6 +610,37 @@ module Rng : sig
   (** [exponential k dtype shape] samples the exponential distribution with rate
       1. Scale by [1 /. rate] for another rate. *)
 
+  val gamma :
+    key -> concentration:float -> (float, 'b) dtype -> int array -> (float, 'b) t
+  (** [gamma k ~concentration dtype shape] samples the gamma distribution with
+      the given concentration (the shape parameter, named to avoid colliding
+      with the tensor shape) and unit rate. Divide by a rate, or multiply by a
+      scale, for the two-parameter family.
+
+      Other distributions follow from it: [beta] is [g1 /. (g1 +. g2)] for
+      concentrations [a] and [b], a Dirichlet is a vector of gammas divided by
+      its own sum, a chi-square with [k] degrees of freedom is [2] times a gamma
+      of concentration [k /. 2], and Student's t is a normal over the square
+      root of a chi-square over its degrees of freedom.
+
+      {b This sampler is not exact.} Every algorithm for the gamma rejects, and
+      a rejection loop cannot be traced, so a fixed eight attempts are drawn and
+      the first acceptance taken. Roughly one element in [1e14] is accepted by
+      none and falls back to the distribution's mean.
+
+      Raises [Invalid_argument] if [concentration] is not positive. *)
+
+  val poisson : key -> rate:float -> int array -> int32_t
+  (** [poisson k ~rate shape] samples the Poisson distribution with the given
+      rate. Exact, unlike {!gamma}: the count is expressed as a cumulative
+      product rather than a loop that stops when the draw says so.
+
+      The cost is [O(rate)] uniforms per element, so [rate] is capped at 100.
+      Beyond that the transformed-rejection algorithms are the right answer and
+      are not implemented.
+
+      Raises [Invalid_argument] if [rate] is not positive or exceeds 100. *)
+
   val categorical :
     key -> ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
   (** [categorical k logits] samples category indices from unnormalised
@@ -713,6 +744,15 @@ val gumbel : (float, 'b) dtype -> int array -> (float, 'b) t
 
 val exponential : (float, 'b) dtype -> int array -> (float, 'b) t
 (** [exponential dtype shape] samples the exponential distribution with rate 1.
+*)
+
+val gamma :
+  concentration:float -> (float, 'b) dtype -> int array -> (float, 'b) t
+(** [gamma ~concentration dtype shape] samples the gamma distribution. See
+    {!Rng.gamma}, including the note that it is not exact. *)
+
+val poisson : rate:float -> int array -> int32_t
+(** [poisson ~rate shape] samples the Poisson distribution. See {!Rng.poisson}.
 *)
 
 val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t

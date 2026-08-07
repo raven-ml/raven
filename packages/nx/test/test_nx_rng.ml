@@ -502,6 +502,101 @@ let test_gumbel_and_exponential_moments () =
   equal ~msg:"exponential draws are finite" bool true
     (Array.for_all Float.is_finite e)
 
+(* Gamma(a, 1) has mean a and variance a, and — the part that catches a broken
+   acceptance test rather than a broken constant — skewness 2/sqrt a. A sampler
+   that accepted everything would still land the mean roughly right while
+   getting the tail badly wrong, so check the third moment too. Both sides of
+   the concentration = 1 boundary are exercised, since below it the draw goes
+   through the Gamma(a) = Gamma(a+1) * U^(1/a) shift. *)
+let test_gamma_moments () =
+  let n = 200_000 in
+  let check concentration =
+    let v =
+      Nx.to_array (Rng.gamma (Rng.key 31) ~concentration float64 [| n |])
+    in
+    let len = float_of_int n in
+    let mean = Array.fold_left ( +. ) 0.0 v /. len in
+    let central p =
+      Array.fold_left (fun acc x -> acc +. ((x -. mean) ** p)) 0.0 v /. len
+    in
+    let var = central 2.0 in
+    let skew = central 3.0 /. (var ** 1.5) in
+    let label = Printf.sprintf "gamma(%g)" concentration in
+    equal ~msg:(label ^ " mean") (float (0.03 *. concentration)) concentration
+      mean;
+    equal ~msg:(label ^ " variance") (float (0.06 *. concentration))
+      concentration var;
+    equal ~msg:(label ^ " skewness")
+      (float 0.12)
+      (2.0 /. Stdlib.sqrt concentration)
+      skew;
+    equal ~msg:(label ^ " draws are positive") bool true
+      (Array.for_all (fun x -> x > 0.0) v)
+  in
+  check 0.4;
+  check 1.0;
+  check 3.7;
+  check 20.0
+
+let invalid_arg_raised ~msg f =
+  raises_match ~msg (function Invalid_argument _ -> true | _ -> false) f
+
+let test_gamma_validates_concentration () =
+  invalid_arg_raised ~msg:"zero concentration" (fun () ->
+      ignore (Rng.gamma (Rng.key 0) ~concentration:0.0 float32 [| 4 |]));
+  invalid_arg_raised ~msg:"negative concentration" (fun () ->
+      ignore (Rng.gamma (Rng.key 0) ~concentration:(-1.0) float32 [| 4 |]))
+
+(* Poisson is exact here, so it can be held to its whole distribution rather
+   than a couple of moments: compare the empirical frequency of each count
+   against the analytic pmf. Mean and variance both equal the rate, which a
+   truncated round count would break at the tail. *)
+let test_poisson_matches_the_pmf () =
+  let n = 200_000 in
+  let check rate =
+    let v =
+      Array.map Int32.to_int
+        (Nx.to_array (Rng.poisson (Rng.key 77) ~rate [| n |]))
+    in
+    let len = float_of_int n in
+    let mean = Array.fold_left (fun a x -> a +. float_of_int x) 0.0 v /. len in
+    let var =
+      Array.fold_left
+        (fun a x -> a +. ((float_of_int x -. mean) ** 2.0))
+        0.0 v
+      /. len
+    in
+    let label = Printf.sprintf "poisson(%g)" rate in
+    equal ~msg:(label ^ " mean") (float (0.03 *. Stdlib.sqrt rate)) rate mean;
+    equal ~msg:(label ^ " variance") (float (0.1 *. rate)) rate var;
+    equal ~msg:(label ^ " counts are non-negative") bool true
+      (Array.for_all (fun x -> x >= 0) v);
+    (* Frequencies against the pmf, over the counts carrying real mass. *)
+    let top = int_of_float (Float.ceil (rate +. (4.0 *. Stdlib.sqrt rate))) in
+    let counts = Array.make (top + 1) 0 in
+    Array.iter (fun x -> if x <= top then counts.(x) <- counts.(x) + 1) v;
+    let pmf = ref (Float.exp (-.rate)) in
+    for c = 0 to top do
+      let expected = !pmf *. len in
+      if expected > 50.0 then
+        equal
+          ~msg:(Printf.sprintf "%s frequency of %d" label c)
+          (float (5.0 *. Stdlib.sqrt expected))
+          expected
+          (float_of_int counts.(c));
+      pmf := !pmf *. rate /. float_of_int (c + 1)
+    done
+  in
+  check 0.7;
+  check 4.0;
+  check 30.0
+
+let test_poisson_validates_rate () =
+  invalid_arg_raised ~msg:"zero rate" (fun () ->
+      ignore (Rng.poisson (Rng.key 0) ~rate:0.0 [| 4 |]));
+  invalid_arg_raised ~msg:"rate beyond the ceiling" (fun () ->
+      ignore (Rng.poisson (Rng.key 0) ~rate:250.0 [| 4 |]))
+
 let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
   (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
@@ -737,6 +832,11 @@ let () =
             test_permutation_positions_are_uniform;
           test "gumbel and exponential moments"
             test_gumbel_and_exponential_moments;
+          test "gamma moments" test_gamma_moments;
+          test "gamma validates concentration"
+            test_gamma_validates_concentration;
+          test "poisson matches the pmf" test_poisson_matches_the_pmf;
+          test "poisson validates rate" test_poisson_validates_rate;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;

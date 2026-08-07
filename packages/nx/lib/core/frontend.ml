@@ -2303,6 +2303,116 @@ module Make (B : Backend_intf.S) = struct
       | Dtype.Float64 -> draw Dtype.float64
       | _ -> draw Dtype.float32
 
+    (* Marsaglia-Tsang (2000). At a concentration of 1 or more, a normal draw is
+       squeezed through v = (1 + cx)^3 and accepted against a uniform;
+       acceptance exceeds 98% at every concentration and rises with it. Below 1,
+       the identity Gamma(a) = Gamma(a + 1) * U^(1/a) shifts into that range.
+
+       The acceptance test is data-dependent and a trace cannot branch on data,
+       so a fixed number of attempts is drawn at once and the first acceptance
+       selected branchlessly. Eight rounds at 98% leave a failure probability
+       near 1e-14 per element, and an element failing all eight falls back to
+       the distribution's mean. This is the only sampler here that is not exact:
+       the price of a shape that does not depend on the draw. *)
+    let gamma_rounds = 8
+
+    let gamma (type b) k ~concentration (dtype : (float, b) Dtype.t) shape :
+        (float, b) t =
+      if not (concentration > 0.0) then
+        invalid_arg
+          (Printf.sprintf "Nx.Rng.gamma: concentration must be positive, got %g"
+             concentration);
+      check_shape "gamma" shape;
+      let ctx = B.context k in
+      let draw (type c) (compute : (float, c) Dtype.t) =
+        let lit v = scalar ctx compute v in
+        let tiny = lit (Float.ldexp 1.0 (-significand_bits compute)) in
+        let boosted =
+          if concentration >= 1.0 then concentration else concentration +. 1.0
+        in
+        let d = boosted -. (1.0 /. 3.0) in
+        let squeeze = 1.0 /. Stdlib.sqrt (9.0 *. d) in
+        let ks = split ~n:3 k in
+        let attempts = Array.append [| gamma_rounds |] shape in
+        let x = normal ks.(0) compute attempts in
+        let u = uniform ks.(1) compute attempts in
+        (* The mean of Gamma(boosted, 1) is [boosted]: the least wrong constant
+           for an element no round accepted. *)
+        let acc = ref (full ctx compute shape boosted) in
+        let settled = ref (cmpne (zeros ctx compute shape) (zeros ctx compute shape)) in
+        for j = 0 to gamma_rounds - 1 do
+          let xj = contiguous (slice [ I j ] x) in
+          let uj = contiguous (slice [ I j ] u) in
+          let t = add (lit 1.0) (mul (lit squeeze) xj) in
+          let v = mul t (mul t t) in
+          (* [v] can be non-positive, where the logarithm is undefined. Floor it
+             so the arithmetic stays finite and let [positive] do the
+             rejecting. *)
+          let positive = cmpgt v (lit 0.0) in
+          let log_v = log (maximum v tiny) in
+          let bound =
+            add
+              (mul (lit 0.5) (mul xj xj))
+              (add (lit d) (add (neg (mul (lit d) v)) (mul (lit d) log_v)))
+          in
+          let accept =
+            logical_and positive (cmplt (log (maximum uj tiny)) bound)
+          in
+          let take = logical_and accept (logical_not !settled) in
+          acc := where take (mul (lit d) v) !acc;
+          settled := logical_or !settled accept
+        done;
+        if concentration >= 1.0 then !acc
+        else
+          (* Gamma(a) = Gamma(a + 1) * U^(1/a); the floor keeps the power finite
+             when the uniform draws exactly zero. *)
+          let boost = uniform ks.(2) compute shape in
+          mul !acc (pow (maximum boost tiny) (lit (1.0 /. concentration)))
+      in
+      match dtype with
+      | Dtype.Float64 -> cast dtype (draw Dtype.float64)
+      | _ -> cast dtype (draw Dtype.float32)
+
+    (* Knuth's method, made branchless. With L = e^-rate, Knuth multiplies
+       uniforms until the running product drops to L and returns one less than
+       the number of factors — that is, the count of prefixes whose product
+       still exceeds L. A cumulative product and a sum of comparisons say the
+       same thing without a trip count that depends on the draw, so this is
+       exact rather than a bounded approximation like {!gamma}.
+
+       [rounds] must exceed any count the caller could plausibly see. It comes
+       from [rate], a host float, so it is fixed when the program is built: ten
+       standard deviations above the mean puts the truncation probability below
+       1e-20. The work is O(rounds) per element, which is what the ceiling on
+       [rate] is about — beyond it the transformed-rejection algorithms are the
+       right answer, and they are not implemented.
+
+       The running product falls to about e^-rate, so it is formed in float64:
+       float32 would flush it to zero around rate 88 and undercount. *)
+    let poisson_max_rate = 100.0
+
+    let poisson k ~rate shape =
+      if not (rate > 0.0) then
+        invalid_arg
+          (Printf.sprintf "Nx.Rng.poisson: rate must be positive, got %g" rate);
+      if rate > poisson_max_rate then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.poisson: rate %g exceeds %g, above which this sampler's \
+              cost grows without bound; it draws O(rate) uniforms per element"
+             rate poisson_max_rate);
+      check_shape "poisson" shape;
+      let ctx = B.context k in
+      let rounds =
+        int_of_float (Float.ceil (rate +. (10.0 *. Stdlib.sqrt rate))) + 10
+      in
+      let attempts = Array.append [| rounds |] shape in
+      let running = cumprod ~axis:0 (uniform k Dtype.float64 attempts) in
+      let threshold = scalar ctx Dtype.float64 (Float.exp (-.rate)) in
+      cast Dtype.int32
+        (sum ~axes:[ 0 ]
+           (cast Dtype.float64 (cmpgt running threshold)))
+
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking
        narrow one. *)
@@ -2516,6 +2626,11 @@ module Make (B : Backend_intf.S) = struct
     validate_random_float_params "exponential" dtype shape;
     Rng.exponential (Rng.next_key ctx) dtype shape
 
+  let gamma ctx (type b) ~concentration (dtype : (float, b) Dtype.t) shape =
+    validate_random_float_params "gamma" dtype shape;
+    Rng.gamma (Rng.next_key ctx) ~concentration dtype shape
+
+  let poisson ctx ~rate shape = Rng.poisson (Rng.next_key ctx) ~rate shape
   let permutation ctx n = Rng.permutation (Rng.next_key ctx) n
   let shuffle ctx x = Rng.shuffle (Rng.next_key ctx) x
 

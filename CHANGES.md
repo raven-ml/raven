@@ -53,6 +53,12 @@ thread.
 
 ### Tolk (new)
 
+- Fix a gated image load falling back to a single zero instead of a full
+  vector. The value a gated load reads when its gate is false was sized by
+  re-deriving the access width from the index expression, which had no case for
+  an image coordinate and defaulted to one lane; an image access reads four
+  floats, so three lanes were left unwritten. The width now comes from the
+  load's own lane count, exposed as `Uop.max_numel`.
 - Fix multi-device programs failing to compile with
   `Invalid_argument "buffer copy: size or dtype mismatch"`. An operand that
   broadcasts along the shard axis — one of lower rank than the result, or with
@@ -471,6 +477,16 @@ thread.
   silently rooted at a constant — the case `Rune.jit` must refuse. A scope now
   visibly inherits its root key's properties: root it at a jitted function's
   input leaf and the keyless samplers inside compile.
+- Add `gamma` and `poisson`, both keyed and keyless. `gamma` is the keystone
+  for statistical work — beta is `g1 /. (g1 +. g2)`, a Dirichlet is a vector of
+  gammas over its own sum, chi-square and Student's t follow in turn — and its
+  docstring records those derivations. It is the one sampler in `Rng` that is
+  not exact: every gamma algorithm rejects and a rejection loop cannot be
+  traced, so eight attempts are drawn and the first acceptance taken, leaving
+  about one element in `1e14` to fall back to the mean. `poisson` is exact,
+  expressing Knuth's count as a cumulative product rather than a loop that stops
+  when the draw says so; its cost is `O(rate)` per element, so `rate` is capped
+  at 100.
 - Add `gumbel` and `exponential`, both keyed and keyless. `gumbel` is the noise
   behind `categorical`, which now builds on it; adding it to log-probabilities
   and taking a softmax instead of an argmax gives the relaxed, differentiable

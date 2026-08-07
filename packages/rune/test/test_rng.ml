@@ -281,6 +281,32 @@ let test_jit_truncated_normal_compiles () =
        (fun v -> v >= -2.0 && v <= 2.0)
        (to_arr (Rune.jit (module Key) f k)))
 
+(* Both of these replace a rejection loop with something of fixed shape —
+   gamma with a fixed round count, poisson with a cumulative product — for the
+   sole reason that a trace cannot branch on the draw. If they did not compile
+   the design would have bought nothing. *)
+let test_jit_gamma_and_poisson_compile () =
+  let g_gamma =
+    Rune.jit
+      (module Key)
+      (fun key -> Nx.Rng.gamma key ~concentration:2.5 f32 [| 256 |])
+  in
+  let a = to_arr (g_gamma (Nx.Rng.key 1)) in
+  is_true ~msg:"compiled gamma draws are positive and finite"
+    (Array.for_all (fun v -> v > 0.0 && Float.is_finite v) a);
+  is_true ~msg:"compiled gamma follows its key"
+    (a <> to_arr (g_gamma (Nx.Rng.key 2)));
+  let g_poisson =
+    Rune.jit
+      (module Key)
+      (fun key -> Nx.cast f32 (Nx.Rng.poisson key ~rate:4.0 [| 256 |]))
+  in
+  let b = to_arr (g_poisson (Nx.Rng.key 1)) in
+  is_true ~msg:"compiled poisson counts are non-negative integers"
+    (Array.for_all (fun v -> v >= 0.0 && Float.is_integer v) b);
+  is_true ~msg:"compiled poisson follows its key"
+    (b <> to_arr (g_poisson (Nx.Rng.key 2)))
+
 (* A scope is as strong as the key it is rooted at. [with_key] on a traced key
    makes every scope draw [fold_in key i] on that key, so the keyless samplers
    compile: the compiled program recomputes each draw from the input key. This
@@ -503,6 +529,8 @@ let tests =
           test_fold_in_tensor_matches_the_host_form;
         test "fold_in_tensor tracks a traced step counter"
           test_jit_fold_in_tensor_tracks_a_traced_step;
+        test "gamma and poisson compile"
+          test_jit_gamma_and_poisson_compile;
         test "truncated_normal compiles" test_jit_truncated_normal_compiles;
         test "a scope rooted at an input key compiles"
           test_jit_scope_rooted_at_input_key_traces;
