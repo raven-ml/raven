@@ -2336,10 +2336,16 @@ module Make (B : Backend_intf.S) = struct
       | _ ->
           invalid_arg "Nx.Rng.categorical: logits requires floating point dtype"
 
-    (* Implicit scope: [split_off] performs [E_next_key]; [run]/[with_key]
-       answer it by [fold_in root counter] with an incrementing counter — the
-       same [fold_in] the explicit path uses, so the two front-ends share one
-       stream. Outside any scope a domain-local auto-seeded key is split. *)
+    (* The scope: [split_off] performs [E_next_key]; [run]/[with_key] answer it
+       by [fold_in root counter] with an incrementing counter — the same
+       [fold_in] the explicit path uses, so the two front-ends share one stream.
+       Every derived key is therefore a tensor computation on the root, which is
+       what lets a scope rooted at a traced or batched key compile and batch
+       like an explicit one.
+
+       The handler is an effect handler, so it is per-fiber and per-domain: a
+       draw on a domain spawned inside a scope does not see it and falls back
+       below. *)
     type _ Effect.t += E_next_key : key Effect.t
 
     let make_handler root =
@@ -2366,12 +2372,22 @@ module Make (B : Backend_intf.S) = struct
     let with_key k f = Effect.Deep.match_with f () (make_handler k)
     let fallback = Domain.DLS.new_key (fun () -> ref None)
 
+    (* Outside any scope, seed from system entropy. [Random.bits] on the default
+       state is not an option: OCaml seeds that state deterministically, so
+       unscoped draws repeated exactly from run to run — and would have started
+       varying the moment some linked library called [Random.self_init].
+       Reproducibility is what a scope is for; without one the draws should be
+       fresh. *)
     let split_off ctx =
       try Effect.perform E_next_key
       with Effect.Unhandled _ ->
         let cell = Domain.DLS.get fallback in
         let state =
-          match !cell with Some s -> s | None -> key ctx (Random.bits ())
+          match !cell with
+          | Some s -> s
+          | None ->
+              let entropy = Random.State.make_self_init () in
+              key ctx (Int64.to_int (Random.State.bits64 entropy))
         in
         let keys = split state in
         cell := Some keys.(0);

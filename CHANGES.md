@@ -438,6 +438,12 @@ thread.
 
 ### Nx
 
+- Unscoped draws (`Nx.rand` and friends outside `Rng.run`/`Rng.with_key`) are
+  seeded from system entropy and so differ from run to run, as the docs always
+  claimed. They came from OCaml's default `Random` state, which is seeded
+  deterministically, so they repeated exactly on every run — and would have
+  started varying if any linked library called `Random.self_init`. Open a scope
+  for reproducibility.
 - `Rng.truncated_normal`, `Rng.categorical`, `Rng.permutation` and
   `Rng.shuffle` complete the keyed sampler set: every distribution now has a
   pure form that composes with `Rune.jit`, `vmap` and `pmap`, and each keyless

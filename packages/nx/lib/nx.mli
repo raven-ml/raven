@@ -605,23 +605,45 @@ module Rng : sig
   (** [shuffle k t] is [t] with its first axis randomly permuted. Scalars are
       returned unchanged. *)
 
-  (** {1:implicit Implicit scope} *)
+  (** {1:scope Scope}
 
-  val run : seed:int -> (unit -> 'a) -> 'a
-  (** [run ~seed f] runs [f] in a scope seeded by [seed]. The keyless samplers
-      inside [f] draw from it; the same [seed] and the same draw sequence give
-      the same values. Scopes nest: an inner [run] replaces the outer one for
-      its duration. *)
+      The scope is where a key enters once instead of at every call: the
+      keyless samplers draw successive subkeys of its root, so draws inside it
+      are decorrelated without deriving a subkey by hand per site.
+
+      A scope is exactly as strong as its root key. Every draw is
+      {!fold_in} of the root, a tensor computation, so a root that is a jitted
+      function's input leaf or a {!Rune.val-vmap} mapped axis makes the whole
+      scope traced or batched — the keyless samplers then compile and
+      decorrelate just as the keyed ones do. A root that a transform closes
+      over, including the constant one {!run} builds from a seed, is a constant
+      of that transform, and under {!Rune.val-jit} raises rather than freeze one
+      draw into the compiled program.
+
+      What a scope gives up against passing keys explicitly is
+      order-independence: inserting a draw shifts every draw after it. *)
 
   val with_key : key -> (unit -> 'a) -> 'a
-  (** [with_key k f] is {!run} initialized from an existing key [k] rather than
-      a seed: useful when you hold a key from a {!split} and want to open a
-      scope for a sub-computation. *)
+  (** [with_key k f] runs [f] in a scope rooted at [k]. The keyless samplers
+      inside [f] draw successive subkeys of [k], so the same [k] and the same
+      draw sequence give the same values. Scopes nest: an inner one replaces the
+      outer for its duration.
+
+      The scope is an effect handler, so it is per-fiber and per-domain: a draw
+      on a domain spawned inside [f] does not see it. *)
+
+  val run : seed:int -> (unit -> 'a) -> 'a
+  (** [run ~seed f] is {!with_key} on [key seed]. Since the root is a constant,
+      draws inside are reproducible but not traceable; use {!with_key} on an
+      input key under a transform. *)
 
   val split_off : unit -> key
-  (** [split_off ()] draws a fresh subkey from the current scope (a domain-local
-      auto-seeded generator outside any scope). Two calls always return
-      different keys. This is what the keyless samplers call. *)
+  (** [split_off ()] draws a fresh subkey from the current scope. Two calls
+      always return different keys. This is what the keyless samplers call.
+
+      Outside any scope the subkey comes from a per-domain generator seeded from
+      system entropy, so unscoped draws differ from run to run. Open a scope to
+      make them reproducible. *)
 end
 
 (** {2:keyless Keyless samplers}
