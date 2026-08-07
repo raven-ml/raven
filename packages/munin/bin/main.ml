@@ -1,3 +1,5 @@
+open Munin
+
 let pp_kv pairs =
   List.iter
     (fun (key, value) ->

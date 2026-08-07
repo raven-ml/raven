@@ -1,3 +1,5 @@
+open Munin
+
 let () =
   let root = "_munin" in
   let artifact_path = Filename.concat root "artifact.txt" in

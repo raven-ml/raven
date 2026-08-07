@@ -48,7 +48,7 @@ include module type of Sysstat
 type t
 (** The type for background monitors. *)
 
-val start : Session.t -> ?interval:float -> unit -> t
+val start : Munin.Session.t -> ?interval:float -> unit -> t
 (** [start session ~interval ()] begins periodic system monitoring.
 
     All [sys/] metrics are defined with [~summary:`Last] so the final sampled

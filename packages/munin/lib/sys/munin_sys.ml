@@ -1,3 +1,4 @@
+open Munin
 include Sysstat
 
 type t = { stop : bool Atomic.t; thread : Thread.t }

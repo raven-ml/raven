@@ -1,4 +1,5 @@
 open Windtrap
+open Munin
 
 (* Helpers *)
 
