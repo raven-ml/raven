@@ -2152,10 +2152,11 @@ module Make (B : Backend_intf.S) = struct
       B.threefry (contiguous k) ctr
 
     (* [fold_in] of a scalar index tensor rather than a host int: the counter
-       [(0, idx)] is [(0, 1)] scaled by [idx], so a batched [idx] (under vmap)
-       yields a batched, per-lane key. Backs [Nx.Rng.fold_in_axis]. *)
-    let fold_in_index k idx =
-      check_key "fold_in_axis" k;
+       [(0, idx)] is [(0, 1)] scaled by [idx], which agrees with the host form
+       for any [idx] below 2^32. A batched [idx] (under vmap) therefore yields a
+       batched, per-lane key, and a traced one a traced key. *)
+    let fold_in_tensor k idx =
+      check_key "fold_in_tensor" k;
       let ctx = B.context k in
       let template = create ctx Dtype.int32 [| 2 |] [| 0l; 1l |] in
       let ctr = mul template (cast Dtype.int32 idx) in

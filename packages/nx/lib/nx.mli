@@ -527,6 +527,16 @@ module Rng : sig
       values give independent keys. Use it to derive per-step keys from a root
       key and a loop counter. *)
 
+  val fold_in_tensor : key -> (int32, int32_elt) t -> key
+  (** [fold_in_tensor k data] is {!fold_in} for a [data] known only at run
+      time — a step counter carried through a compiled loop, a device index.
+      [data] is a scalar [int32] tensor, and the result agrees with
+      [fold_in k i] whenever [data] holds [i] and [i] fits in 32 bits.
+
+      Unlike {!fold_in}, this keeps the derivation inside the computation, so
+      the subkey tracks a traced counter instead of freezing whatever value it
+      held at trace time. *)
+
   val fold_in_axis : key -> key
   (** [fold_in_axis k] folds the current mapped-axis index into [k], giving one
       independent key per lane under {!Rune.val-vmap} or per device under

@@ -222,6 +222,51 @@ let test_jit_implicit_rng_raises () =
   let g = Rune.jit' (fun x -> Nx.add x (Nx.rand f32 [| 3 |])) in
   raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0 |]))
 
+(* [fold_in] takes a host int, so under a trace it freezes whatever the counter
+   held when the function was traced. [fold_in_tensor] keeps the derivation in
+   the computation, so a step counter carried as an input drives the stream. *)
+
+let test_fold_in_tensor_matches_the_host_form () =
+  let root = Nx.Rng.key 77 in
+  for i = 0 to 4 do
+    check_bits
+      ~msg:(Printf.sprintf "fold_in_tensor %d == fold_in %d" i i)
+      (Nx.Rng.uniform (Nx.Rng.fold_in root i) f32 [| 8 |])
+      (Nx.Rng.uniform
+         (Nx.Rng.fold_in_tensor root (Nx.scalar Nx.int32 (Int32.of_int i)))
+         f32 [| 8 |])
+  done
+
+module Key_and_step = struct
+  type t = Nx.Rng.key * (int32, Nx.int32_elt) Nx.t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (k, s) = (f k, f s)
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (k1, s1)
+      (k2, s2) =
+    (f k1 k2, f s1 s2)
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (k, s) =
+    f k;
+    f s
+end
+
+let test_jit_fold_in_tensor_tracks_a_traced_step () =
+  let g =
+    Rune.jit
+      (module Key_and_step)
+      (fun (key, step) ->
+        Nx.Rng.uniform (Nx.Rng.fold_in_tensor key step) f32 [| 8 |])
+  in
+  let root = Nx.Rng.key 77 in
+  let at i = g (root, Nx.scalar Nx.int32 (Int32.of_int i)) in
+  for i = 0 to 4 do
+    check_bits
+      ~msg:(Printf.sprintf "compiled step %d == eager fold_in %d" i i)
+      (Nx.Rng.uniform (Nx.Rng.fold_in root i) f32 [| 8 |])
+      (at i)
+  done
+
 (* [truncated_normal] used to reject out-of-range draws in a loop whose
    continuation test read the mask back to the host, which no trace can do. The
    inverse-CDF form is straight-line, so it compiles like any other sampler. *)
@@ -454,6 +499,10 @@ let tests =
           test_jit_fold_in_driven_steps;
         test "implicit RNG raises" test_jit_implicit_rng_raises;
         test "a captured key raises" test_jit_captured_key_raises;
+        test "fold_in_tensor matches the host form"
+          test_fold_in_tensor_matches_the_host_form;
+        test "fold_in_tensor tracks a traced step counter"
+          test_jit_fold_in_tensor_tracks_a_traced_step;
         test "truncated_normal compiles" test_jit_truncated_normal_compiles;
         test "a scope rooted at an input key compiles"
           test_jit_scope_rooted_at_input_key_traces;

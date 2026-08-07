@@ -20,7 +20,7 @@ module Rng = struct
   let split_off () = F.Rng.split_off (Lazy.force context)
 
   let fold_in_axis k =
-    F.Rng.fold_in_index k (Nx_effect.axis_index (Nx_effect.context k))
+    F.Rng.fold_in_tensor k (Nx_effect.axis_index (Nx_effect.context k))
 end
 
 (* Re-export extended type aliases *)

@@ -438,6 +438,11 @@ thread.
 
 ### Nx
 
+- Add `Rng.fold_in_tensor`, deriving a subkey from a value known only at run
+  time — a step counter carried through a compiled loop, a device index.
+  `Rng.fold_in` takes a host `int`, so under `Rune.jit` it freezes whatever the
+  counter held at trace time; only the mapped-axis specialisation
+  (`Rng.fold_in_axis`) was reachable before.
 - `permutation` and `shuffle` order 64-bit random sort keys instead of a
   24-bit uniform draw. A uniform carries at most 24 significant bits, so at
   60,000 elements — one MNIST epoch through `Kaun.Data` — about 107 pairs
