@@ -908,26 +908,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (op ~dtype:Dtype.weakint ~name:"x" Ops.Add
      => fun bs -> fold_add_divmod_recombine (bs $ "x"));
 
-    (* (x:u64 & 0xFFFFFFFF).cast(u32) -> x.cast(u32). *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Uint64) in
-     let mask = cvar ~name:"m" ~dtype:Dtype.uint64 () in
-     cast ~dtype:Dtype.uint32 (alu [ x; mask ] Ops.And) => fun bs ->
-       match const_int_v (bs $ "m") with
-       | Some 0xFFFFFFFF ->
-           Some (Uop.cast ~src:(bs $ "x") ~dtype:Dtype.uint32)
-       | _ -> None);
-
-    (* ((a:u64 * 2^32) | y:u32.cast(u64)).cast(u32) -> y *)
-    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
-     and y = var_dtype "y" (exact_dtype Dtype.Uint32)
-     and k = cvar ~name:"k" ~dtype:Dtype.uint64 () in
-     let spliced =
-       alu [ alu [ a; k ] Ops.Mul; cast ~dtype:Dtype.uint64 y ] Ops.Or
-     in
-     cast ~dtype:Dtype.uint32 spliced => fun bs ->
-       if is_const_int_eq (bs $ "k") (1 lsl 32) then Some (bs $ "y") else None);
-
-    (* ((a:u64 << 32) | y:u32.cast(u64)).cast(u32) -> y *)
+    (* Unpack a uint64 packed from two uint32:
+       ((a:u64 << 32) | y:u32.cast(u64)).cast(u32) -> y *)
     (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
      and y = var_dtype "y" (exact_dtype Dtype.Uint32)
      and k = cvar ~name:"k" () in
@@ -937,31 +919,22 @@ let symbolic_simple : Upat.Pattern_matcher.t =
      cast ~dtype:Dtype.uint32 spliced => fun bs ->
        if is_const_int_eq (bs $ "k") 32 then Some (bs $ "y") else None);
 
-    (* cdiv(((a:u64 * 2^32) | _:u32.cast(u64)), 2^32) -> a *)
-    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
-     and y = var_dtype "y" (exact_dtype Dtype.Uint32)
-     and k1 = cvar ~name:"k1" ~dtype:Dtype.uint64 ()
-     and k2 = cvar ~name:"k2" ~dtype:Dtype.uint64 () in
-     let spliced =
-       alu [ alu [ a; k1 ] Ops.Mul; cast ~dtype:Dtype.uint64 y ] Ops.Or
-     in
-     alu [ spliced; k2 ] Ops.Cdiv => fun bs ->
-       if is_const_int_eq (bs $ "k1") (1 lsl 32)
-          && is_const_int_eq (bs $ "k2") (1 lsl 32)
-       then Some (bs $ "a")
-       else None);
-
-    (* ((a:u64 << 32) | _:u32.cast(u64)) >> 32 -> a *)
-    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
+    (* ((x:u32.cast(u64) << 32) | _:u32.cast(u64)) >> 32 -> x.cast(u64).
+       The high half must come from a uint32: a wider one loses its top bits
+       to the shift, and they are not the shift back's to restore. *)
+    (let x = var_dtype "x" (exact_dtype Dtype.Uint32)
      and y = var_dtype "y" (exact_dtype Dtype.Uint32)
      and k1 = cvar ~name:"k1" ()
      and k2 = cvar ~name:"k2" () in
      let spliced =
-       alu [ alu [ a; k1 ] Ops.Shl; cast ~dtype:Dtype.uint64 y ] Ops.Or
+       alu
+         [ alu [ cast ~dtype:Dtype.uint64 x; k1 ] Ops.Shl;
+           cast ~dtype:Dtype.uint64 y ]
+         Ops.Or
      in
      alu [ spliced; k2 ] Ops.Shr => fun bs ->
        if is_const_int_eq (bs $ "k1") 32 && is_const_int_eq (bs $ "k2") 32
-       then Some (bs $ "a")
+       then Some (Uop.cast ~src:(bs $ "x") ~dtype:Dtype.uint64)
        else None);
 
     (* (base % y) % y -> base % y *)

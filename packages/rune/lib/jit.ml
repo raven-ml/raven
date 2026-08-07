@@ -399,11 +399,8 @@ let threefry_graph key ctr =
     bitwise_or (lshift hi (sint hi 32)) lo
   in
   let bits = threefry (pack ctr) (pack key) in
-  let i32 t =
-    F.Dtype_ops.cast
-      (F.Dtype_ops.cast (bitwise_and t (sint t 0xFFFFFFFF)) TD.uint32)
-      TD.int32
-  in
+  (* Narrowing to uint32 truncates, so the low word needs no mask. *)
+  let i32 t = F.Dtype_ops.cast (F.Dtype_ops.cast t TD.uint32) TD.int32 in
   let lo = i32 bits and hi = i32 (rshift bits (sint bits 32)) in
   let lane t = F.Movement.reshape t [ n; 1 ] in
   F.Movement.reshape (F.Op.cat ~dim:1 (lane lo) [ lane hi ]) shape

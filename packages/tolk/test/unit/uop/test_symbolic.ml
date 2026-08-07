@@ -1212,6 +1212,54 @@ let masked_div_tests =
           | None -> fail "expected masked division to collapse");
     ]
 
+(* Unpacking a uint64 built from two uint32 halves. Both rules are sound only
+   because the packed value provably has nothing above bit 63 to lose: the
+   [>> 32] rule must therefore read the high half from a uint32 source, or it
+   would claim back bits the [<< 32] shifted out. *)
+
+let unpack_u64_tests =
+  let simple n = Upat.Pattern_matcher.rewrite Symbolic.symbolic_simple n in
+  let u32 name = U.variable ~name ~min_val:0 ~max_val:0xFFFF ~dtype:D.uint32 () in
+  let u64 x = U.cast ~src:x ~dtype:D.uint64 in
+  let shift32 = U.const (C.int D.uint64 32) in
+  let pack hi lo =
+    U.alu_binary ~op:Ops.Or
+      ~lhs:(U.alu_binary ~op:Ops.Shl ~lhs:hi ~rhs:shift32)
+      ~rhs:(u64 lo)
+  in
+  group "unpack_u64"
+    [
+      test "((hi << 32) | lo).cast(u32) -> lo" (fun () ->
+          let hi = u32 "hi" and lo = u32 "lo" in
+          let expr =
+            U.cast ~src:(pack (u64 hi) lo) ~dtype:D.uint32
+          in
+          match simple expr with
+          | Some r -> is_true (r == lo)
+          | None -> fail "expected the low half to be unpacked");
+      test "((hi << 32) | lo) >> 32 -> hi" (fun () ->
+          let hi = u32 "hi" and lo = u32 "lo" in
+          let expr =
+            U.alu_binary ~op:Ops.Shr ~lhs:(pack (u64 hi) lo) ~rhs:shift32
+          in
+          match simple expr with
+          | Some r ->
+              check_op r Ops.Cast;
+              is_true (src r 0 == hi);
+              is_true (D.equal (U.dtype r) D.uint64)
+          | None -> fail "expected the high half to be unpacked");
+      test "a wide high half keeps its shift" (fun () ->
+          (* [hi] can exceed 32 bits, so [<< 32] drops what [>> 32] would
+             otherwise be told to restore. *)
+          let hi = U.variable ~name:"hi" ~min_val:0 ~max_val:0xFFFF
+                     ~dtype:D.uint64 ()
+          and lo = u32 "lo" in
+          let expr =
+            U.alu_binary ~op:Ops.Shr ~lhs:(pack hi lo) ~rhs:shift32
+          in
+          is_true (simple expr = None));
+    ]
+
 (* Movement cleanups composed into [symbolic_simple]. *)
 
 let mop_tests =
@@ -1296,6 +1344,7 @@ let () =
          sigmoid_tests;
          simplify_valid_tests;
          masked_div_tests;
+         unpack_u64_tests;
          mop_tests;
          remove_invalid_tests;
        ])
