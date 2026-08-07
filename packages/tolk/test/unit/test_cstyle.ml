@@ -1090,6 +1090,23 @@ let () =
             equal int 1
               (count_substring out
                  "__device__ float4 __WMMA_8_16_16_half_float"));
+          (* The accumulator tail a thread holds is independent of the operand
+             widths — here the A operand is 8 lanes wide and the result 4 — so
+             the declared type must come from the WMMA's own shape. Declaring
+             it from the operands, or as a scalar, yields a program the target
+             compiler rejects. *)
+          test "CUDA WMMA declares the accumulator width, not the operand width"
+            (fun () ->
+              let prog =
+                make_wmma ~device:"CUDA" ~threads:32
+                  ~name:"WMMA_8_16_16_half_float" ~dims:(8, 16, 16)
+                  ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
+                  ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
+                  ~a_count:8 ~b_count:4 ~c_count:4 ()
+              in
+              assert_contains "cuda wmma declaration width"
+                (render (Cstyle.cuda Gpu_target.SM80) prog)
+                "float4 wmma0 = __WMMA_8_16_16_half_float");
           test "Metal stdlib" (fun () ->
             assert_contains "metal stdlib" (render metal_renderer f32_1) "metal_stdlib");
           test "Metal WMMA helper follows tinygrad simdgroup preamble" (fun () ->
@@ -1104,7 +1121,9 @@ let () =
             assert_contains "metal wmma helper signature" out
               "float2 __WMMA_8_8_8_float_float";
             assert_contains "metal wmma helper simdgroup" out
-              "simdgroup_multiply_accumulate");
+              "simdgroup_multiply_accumulate";
+            assert_contains "metal wmma declaration width" out
+              "float2 wmma0 = __WMMA_8_8_8_float_float");
           test "OpenCL fp16 pragma" (fun () ->
             let prog = make_store_const Dtype.float16 (float_c Dtype.float16 1.0) in
             assert_contains "opencl fp16 pragma"

@@ -335,7 +335,11 @@ and compute_expr_numel u =
   | Ops.Stack ->
       let srcs = U.src u in
       if Array.length srcs = 0 then base_count else Array.length srcs
-  | Ops.Index | Ops.Shrink -> max base_count (max_numel u)
+  (* These carry their width in their own shape. A WMMA's is the accumulator
+     tail — the lanes one thread holds of the output tile — which is
+     independent of the operand widths, so it must not come from the sources:
+     an f16 tile can take an 8-lane operand and return 4. *)
+  | Ops.Index | Ops.Shrink | Ops.Wmma -> max base_count (max_numel u)
   | Ops.Load ->
       let srcs = U.src u in
       if Array.length srcs = 0 then base_count

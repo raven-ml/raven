@@ -64,7 +64,7 @@ RENDERERS = {}
 for _name, _ctor in [
     ("clang", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
     ("cuda", lambda: _RenderOnlyCUDARenderer(Target("CUDA", arch="sm_80"))),
-    ("metal", lambda: MetalRenderer(Target("METAL"))),
+    ("metal", lambda: MetalRenderer(Target("METAL", arch="Apple7"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
 ]:
     try:

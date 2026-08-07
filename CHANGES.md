@@ -46,6 +46,12 @@ thread.
 
 ### Tolk (new)
 
+- Tensor-core kernels now declare each `WMMA` result at the accumulator width
+  the instruction actually returns, so tensor cores are usable again on Metal
+  and CUDA. The renderer declared them scalar, emitting programs the target
+  compilers reject (`cannot initialize a variable of type 'float' with an
+  rvalue of type 'float2'` on Metal). Any tensor-core candidate therefore
+  failed to compile, and `BEAM` search silently discarded all of them.
 - Reject the tensor-core optimisation when one of its X or Y axes is a reduce
   axis. Those axes index the WMMA accumulator tile, so a kernel that reduces
   over a matmul's output dimensions (`(a @ b)` summed over `M`, as a recurrent
