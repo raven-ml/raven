@@ -472,39 +472,40 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
                                             [0, 0, 0, 1]]
     ]} *)
 
-(** {1:rng Random number generation}
-
-    Sampling functions use the implicit RNG state managed by {!module-Rng}. Wrap
-    calls in {!Rng.run} for reproducibility:
-
-    {v   Rng.run ~seed:42 (fun () -> rand float32 [| 3 |]) v} *)
-
 module Ptree = Ptree
 (** Parameter trees: structures with tensor leaves. {!Ptree.S} is the traversal
     interface shared across the Raven ecosystem; {!Ptree.t} is the stock dynamic
     instance. *)
 
+(** {1:rng Random number generation}
+
+    One generator, reached two ways. {!module-Rng} holds it: keys, one sampler
+    per distribution, and the scope. The {{!section:keyless}keyless samplers}
+    below are the same samplers drawing from the ambient scope.
+
+    {v   Rng.run ~seed:42 (fun () -> rand float32 [| 3 |]) v} *)
+
 module Rng : sig
-  (** One splittable random generator with two front-ends.
+  (** One splittable random generator, reached two ways.
 
-      Randomness is drawn from a Threefry generator whose state is a {e key}.
-      Two ways to use it:
+      Draws come from a Threefry generator whose state is a {e key}. Every
+      sampler here is a pure function of the key it is given: the same key,
+      dtype and shape give the same values — eagerly, under {!Rune.val-jit},
+      and on every device. Fresh values come from fresh keys, by {!split}ting a
+      key into independent subkeys or {!fold_in}ning a counter.
 
-      - {b Explicit keys} ({!uniform}, {!normal}, …) are pure functions of a
-        key: the same key, dtype and shape give the same values — eagerly, under
-        {!Rune.val-jit}, and on every device. They are order-independent, so
-        results survive refactoring, and they compose with the transforms. Fresh
-        randomness comes from fresh keys: {!split} a key into independent
-        subkeys, or {!fold_in} a counter to derive per-step keys.
-      - {b The implicit scope} ({!run}, {!with_key}) threads keys for you, so
-        the keyless samplers ([Nx.rand], [Nx.randn], …) need no key argument.
-        Each draw pulls a fresh subkey, so successive draws never correlate.
-        Results depend on draw order but are reproducible for a fixed program.
+      Naming a key per draw site is precise but verbose, so a {{!section:scope}
+      scope} lets one key stand for a region: the keyless samplers
+      ([Nx.rand], [Nx.randn], …) draw successive subkeys of its root. The two
+      are the same generator — [Nx.rand] is {!uniform} on a subkey of the
+      scope — and both are as strong as the key involved.
 
-      The two front-ends share one generator: [Nx.rand] is exactly {!uniform}
-      applied to a subkey drawn from the scope. Under a transform that traces,
-      batches or replicates (jit/vmap/pmap) thread an explicit key; elsewhere
-      the scope is enough. *)
+      Which to reach for is not "explicit under a transform, scope elsewhere".
+      A scope rooted at a traced or batched key traces and batches too (see
+      {{!section:scope}Scope}). Pass keys when you want a particular draw pinned
+      to a particular name, and results that survive inserting a draw
+      elsewhere; open a scope when you want the draws in a region decorrelated
+      and would rather not thread a subkey to each one. *)
 
   type key = (int32, int32_elt) t
   (** The type for keys: a transparent [[|2|]] int32 tensor holding the
@@ -596,6 +597,18 @@ module Rng : sig
       cost does not grow as the interval narrows.
 
       Raises [Invalid_argument] if [lower >= upper]. *)
+
+  val gumbel : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  (** [gumbel k dtype shape] samples the standard Gumbel distribution, the
+      limiting distribution of a maximum.
+
+      Adding it to unnormalised log-probabilities and taking the argmax samples
+      the distribution they describe, which is what {!categorical} does; a
+      softmax in place of the argmax gives the relaxed, differentiable form. *)
+
+  val exponential : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  (** [exponential k dtype shape] samples the exponential distribution with rate
+      1. Scale by [1 /. rate] for another rate. *)
 
   val categorical :
     key -> ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
@@ -697,6 +710,14 @@ val truncated_normal :
     conditioned on landing in \[[lower], [upper]\].
 
     Raises [Invalid_argument] if [lower >= upper]. *)
+
+val gumbel : (float, 'b) dtype -> int array -> (float, 'b) t
+(** [gumbel dtype shape] samples the standard Gumbel distribution. See
+    {!Rng.gumbel}. *)
+
+val exponential : (float, 'b) dtype -> int array -> (float, 'b) t
+(** [exponential dtype shape] samples the exponential distribution with rate 1.
+*)
 
 val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
 (** [categorical logits] samples category indices from unnormalised

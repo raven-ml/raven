@@ -2271,6 +2271,38 @@ module Make (B : Backend_intf.S) = struct
         | Dtype.Float64 -> box_muller Dtype.float64
         | _ -> box_muller Dtype.float32
 
+    (* Gumbel(0, 1) by inverse CDF: -log (-log u). The double logarithm has a
+       pole at each end of the unit interval. The draw never reaches 1, and the
+       floor at 2^-p — the smallest value a uniform can take — moves the single
+       draw that would land on the other pole and leaves every other alone. *)
+    let gumbel (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
+      check_shape "gumbel" shape;
+      let ctx = B.context k in
+      let draw (type c) (compute : (float, c) Dtype.t) =
+        let u = uniform k compute shape in
+        let smallest =
+          scalar ctx compute (Float.ldexp 1.0 (-significand_bits compute))
+        in
+        cast dtype (neg (log (neg (log (maximum u smallest)))))
+      in
+      match dtype with
+      | Dtype.Float64 -> draw Dtype.float64
+      | _ -> draw Dtype.float32
+
+    (* Exponential(1) by inverse CDF. Built from [1 - u] rather than [u]: the
+       draw can be exactly 0, where a logarithm diverges, but never 1. *)
+    let exponential (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t
+        =
+      check_shape "exponential" shape;
+      let ctx = B.context k in
+      let draw (type c) (compute : (float, c) Dtype.t) =
+        let u = uniform k compute shape in
+        cast dtype (neg (log (sub (scalar ctx compute 1.0) u)))
+      in
+      match dtype with
+      | Dtype.Float64 -> draw Dtype.float64
+      | _ -> draw Dtype.float32
+
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking
        narrow one. *)
@@ -2360,45 +2392,35 @@ module Make (B : Backend_intf.S) = struct
       else take ~axis:0 ~indices:(permutation k s.(0)) x
 
     (* Gumbel-max: adding Gumbel noise to log-probabilities and taking the
-       argmax samples from the distribution they describe. [eps] keeps the
-       double logarithm away from its poles at the resolution of the dtype the
-       noise is built in. *)
+       argmax samples from the distribution they describe. The noise is built at
+       least in float32, then cast to the logits' dtype — a float16 Gumbel would
+       quantise the comparison the argmax turns on. *)
     let categorical (type a b) k ?(axis = -1) ?shape:(batch_shape = [||])
         (logits : (a, b) t) =
       let logits_dtype = dtype logits in
       let logits_shape = shape logits in
-      if not (Dtype.is_float logits_dtype) then
-        invalid_arg "Nx.Rng.categorical: logits requires floating point dtype";
       let nd = Array.length logits_shape in
       let axis = if axis < 0 then nd + axis else axis in
       if axis < 0 || axis >= nd then
         invalid_arg
           (Printf.sprintf
              "Nx.Rng.categorical: axis %d out of bounds for %dD tensor" axis nd);
-      let ctx = B.context logits in
       let full_shape = Array.append batch_shape logits_shape in
-      let draw float_dtype eps =
-        let u =
-          clip (uniform k float_dtype full_shape) ~min:eps ~max:(1. -. eps)
-        in
-        let neg_one = scalar ctx float_dtype (-1.0) in
-        let gumbel =
-          mul (log (mul (log u) neg_one)) neg_one |> astype logits_dtype
-        in
-        astype Dtype.int32
-          (argmax (add logits gumbel)
-             ~axis:(axis + Array.length batch_shape)
-             ~keepdims:false)
+      let noise compute = astype logits_dtype (gumbel k compute full_shape) in
+      let g =
+        match logits_dtype with
+        | Float64 -> noise Dtype.float64
+        | Float32 | Float16 | BFloat16 -> noise Dtype.float32
+        | Float8_e4m3 | Float8_e5m2 ->
+            invalid_arg "Nx.Rng.categorical: float8 logits are not supported"
+        | _ ->
+            invalid_arg
+              "Nx.Rng.categorical: logits requires floating point dtype"
       in
-      match logits_dtype with
-      | Float64 -> draw Dtype.float64 1e-12
-      | Float32 -> draw Dtype.float32 1e-6
-      | Float16 -> draw Dtype.float32 1e-3
-      | BFloat16 -> draw Dtype.float32 1e-2
-      | Float8_e4m3 | Float8_e5m2 ->
-          invalid_arg "Nx.Rng.categorical: float8 logits are not supported"
-      | _ ->
-          invalid_arg "Nx.Rng.categorical: logits requires floating point dtype"
+      astype Dtype.int32
+        (argmax (add logits g)
+           ~axis:(axis + Array.length batch_shape)
+           ~keepdims:false)
 
     (* The scope: [split_off] performs [E_next_key]; [run]/[with_key] answer it
        by [fold_in root counter] with an incrementing counter — the same
@@ -2488,6 +2510,14 @@ module Make (B : Backend_intf.S) = struct
       err "bernoulli" "invalid shape %s, dimensions must be non-negative"
         (Shape.to_string shape);
     Rng.bernoulli (Rng.split_off ctx) ~p shape
+
+  let gumbel ctx (type b) (dtype : (float, b) Dtype.t) shape =
+    validate_random_float_params "gumbel" dtype shape;
+    Rng.gumbel (Rng.split_off ctx) dtype shape
+
+  let exponential ctx (type b) (dtype : (float, b) Dtype.t) shape =
+    validate_random_float_params "exponential" dtype shape;
+    Rng.exponential (Rng.split_off ctx) dtype shape
 
   let permutation ctx n = Rng.permutation (Rng.split_off ctx) n
   let shuffle ctx x = Rng.shuffle (Rng.split_off ctx) x

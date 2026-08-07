@@ -53,6 +53,19 @@ thread.
 
 ### Tolk (new)
 
+- `Op.cat` joins operands with equal extents on the concatenated axis through a
+  single stack node instead of padding each operand to the full width and
+  summing them, so a concatenation of `n` inputs now selects on one loop range
+  rather than emitting `n` pads and `n - 1` adds. It also rejects operands whose
+  shapes differ off the concatenated axis, which used to broadcast silently.
+- Move `stack` from `Op` to `Movement`, where it now builds a stack node
+  directly rather than unsqueezing every operand and concatenating. Call sites
+  change from `Op.stack` to `Movement.stack`.
+- Fix an unsound simplification of `((hi << 32) | lo) >> 32`, which returned
+  `hi` even when `hi` had bits above 32 that the shift had discarded. It now
+  requires `hi` to come from a 32-bit source, matching what packing two `uint32`
+  halves into a `uint64` actually produces.
+
 - Fix a scheduler miscompile that made mixed-precision training steps fail to
   compile. Rangeify records per-node loop ranges while walking the tensor
   graph, and was carrying those records over to the nodes it rebuilt. Because
@@ -443,6 +456,11 @@ thread.
 
 ### Nx
 
+- Add `gumbel` and `exponential`, both keyed and keyless. `gumbel` is the noise
+  behind `categorical`, which now builds on it; adding it to log-probabilities
+  and taking a softmax instead of an argmax gives the relaxed, differentiable
+  form. `exponential` is `-log (1 - u)` — built from `1 - u` because a draw can
+  be exactly `0`, where `-log u` would diverge.
 - float64 draws carry 53 random bits instead of 24. `uniform` built every draw
   in float32 and widened it, and `normal` ran the whole Box-Muller transform in
   float32, so a float64 sample was a double holding float32 noise — 2^24

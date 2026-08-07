@@ -470,6 +470,38 @@ let test_permutation_positions_are_uniform () =
         row)
     counts
 
+(* Both are inverse-CDF draws whose closed-form moments pin them exactly.
+   Gumbel(0,1): mean = Euler-Mascheroni, variance = pi^2/6. Exponential(1):
+   mean = variance = 1. A sign slip or a missing negation moves both. *)
+let test_gumbel_and_exponential_moments () =
+  let n = 200_000 in
+  let moments a =
+    let len = float_of_int (Array.length a) in
+    let mean = Array.fold_left ( +. ) 0.0 a /. len in
+    let var =
+      Array.fold_left (fun acc v -> acc +. ((v -. mean) ** 2.0)) 0.0 a /. len
+    in
+    (mean, var)
+  in
+  let g = Nx.to_array (Rng.gumbel (Rng.key 1) float64 [| n |]) in
+  let gm, gv = moments g in
+  equal ~msg:"gumbel mean is Euler-Mascheroni" (float 0.02) 0.5772156649 gm;
+  equal ~msg:"gumbel variance is pi^2/6" (float 0.05)
+    (Float.pi *. Float.pi /. 6.0)
+    gv;
+  let e = Nx.to_array (Rng.exponential (Rng.key 2) float64 [| n |]) in
+  let em, ev = moments e in
+  equal ~msg:"exponential mean is 1" (float 0.02) 1.0 em;
+  equal ~msg:"exponential variance is 1" (float 0.05) 1.0 ev;
+  equal ~msg:"exponential draws are non-negative" bool true
+    (Array.for_all (fun v -> v >= 0.0) e);
+  (* Both poles are the real risk: a draw of exactly 0 or of the largest
+     representable uniform must stay finite. *)
+  equal ~msg:"gumbel draws are finite" bool true
+    (Array.for_all Float.is_finite g);
+  equal ~msg:"exponential draws are finite" bool true
+    (Array.for_all Float.is_finite e)
+
 let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
   (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
@@ -703,6 +735,8 @@ let () =
           test "permutation is a permutation" test_permutation_is_a_permutation;
           test "permutation positions are uniform"
             test_permutation_positions_are_uniform;
+          test "gumbel and exponential moments"
+            test_gumbel_and_exponential_moments;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;
