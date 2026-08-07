@@ -8,17 +8,17 @@
     Trains the same CNN as [x-kaun-mnist], but the whole training step —
     forward, backward, and SGD update — compiles into one program with
     [Rune.jit2] and runs on Metal (the default; pass [--device CPU] or
-    [--device CUDA]). Parameters stay resident on the device between steps:
-    only the scalar loss is read back each step. Metrics stream to munin;
-    watch the run live with:
+    [--device CUDA]). Parameters stay resident on the device between steps: only
+    the scalar loss is read back each step. Metrics stream to munin; watch the
+    run live with:
 
     {v
     dune exec packages/munin/examples/x-kaun-mnist-jit/main.exe
     munin watch   # in another terminal
     v}
 
-    The first step traces and compiles the program (a few seconds, cached
-    across runs); every later step replays the compiled kernels. *)
+    The first step traces and compiles the program (a few seconds, cached across
+    runs); every later step replays the compiled kernels. *)
 
 open Kaun
 
@@ -39,8 +39,8 @@ let speclist =
       "steps between test evaluations (default 200)" );
   ]
 
-(* Conv(1 -> 16, 3x3, same) -> ReLU -> MaxPool(2x2) -> Conv(16 -> 32, 3x3,
-   same) -> ReLU -> MaxPool(2x2) -> Flatten -> Linear(32*7*7 -> 128) -> ReLU ->
+(* Conv(1 -> 16, 3x3, same) -> ReLU -> MaxPool(2x2) -> Conv(16 -> 32, 3x3, same)
+   -> ReLU -> MaxPool(2x2) -> Flatten -> Linear(32*7*7 -> 128) -> ReLU ->
    Linear(128 -> 10), as a plain record of layers with hand-written traversals
    (the Nx.Ptree.S contract plus checkpoint names). *)
 
@@ -141,9 +141,9 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "mnist-jit [--device METAL|CPU|CUDA] [--epochs N] [--batch-size N]";
   Nx.Rng.run ~seed:42 @@ fun () ->
-  (* Model parameters and a one-time optimizer state (momentum is 0, so the
-     zero velocity is never read and the state needs no threading through the
-     jitted step). *)
+  (* Model parameters and a one-time optimizer state (momentum is 0, so the zero
+     velocity is never read and the state needs no threading through the jitted
+     step). *)
   let params =
     ref
       {
@@ -199,9 +199,9 @@ let () =
   let n_train = (Nx.shape x_train).(0) in
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
-  (* The whole training step — forward, backward, SGD update — compiles into
-     one program. Parameters flow out and back in as unread device-resident
-     tensors, so training never round-trips them through the host. *)
+  (* The whole training step — forward, backward, SGD update — compiles into one
+     program. Parameters flow out and back in as unread device-resident tensors,
+     so training never round-trips them through the host. *)
   let train_step { Step_in.params; x; y } =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad (module Cnn) loss_fn params in
@@ -241,38 +241,38 @@ let () =
     Data.batches2 ~shuffle:true ~drop_last:true ~batch_size:!batch_size
       (x_train, y_train)
     |> Seq.iter (fun (x, y) ->
-           incr global_step;
-           let s = !global_step in
-           let t0 = Unix.gettimeofday () in
-           let out = step { Step_in.params = !params; x; y } in
-           params := out.Step_out.params;
-           (* Reading the loss is the step's only device-to-host transfer and
-              its synchronization point, so [dt] covers the full step. *)
-           let loss = Nx.item [] out.Step_out.loss in
-           let dt = Unix.gettimeofday () -. t0 in
-           loss_sum := !loss_sum +. loss;
-           incr loss_count;
-           if s = 1 then begin
-             Printf.printf "  traced and compiled in %.1fs\n%!" dt;
-             Munin.Session.log_metrics session ~step:s
-               [ (train_loss, loss); (epoch_metric, Float.of_int epoch) ]
-           end
-           else
-             Munin.Session.log_metrics session ~step:s
-               [
-                 (train_loss, loss);
-                 (epoch_metric, Float.of_int epoch);
-                 (step_ms, dt *. 1000.);
-                 (images_per_sec, float_of_int !batch_size /. dt);
-               ];
-           if s mod !eval_every = 0 then begin
-             let acc = evaluate !params in
-             last_acc := acc;
-             Munin.Metric.log val_accuracy ~step:s acc
-           end;
-           Printf.printf "\r  step %d/%d  loss: %.4f  val_acc: %.2f%%%!"
-             (((s - 1) mod num_batches) + 1)
-             num_batches loss (!last_acc *. 100.));
+        incr global_step;
+        let s = !global_step in
+        let t0 = Unix.gettimeofday () in
+        let out = step { Step_in.params = !params; x; y } in
+        params := out.Step_out.params;
+        (* Reading the loss is the step's only device-to-host transfer and its
+           synchronization point, so [dt] covers the full step. *)
+        let loss = Nx.item [] out.Step_out.loss in
+        let dt = Unix.gettimeofday () -. t0 in
+        loss_sum := !loss_sum +. loss;
+        incr loss_count;
+        if s = 1 then begin
+          Printf.printf "  traced and compiled in %.1fs\n%!" dt;
+          Munin.Session.log_metrics session ~step:s
+            [ (train_loss, loss); (epoch_metric, Float.of_int epoch) ]
+        end
+        else
+          Munin.Session.log_metrics session ~step:s
+            [
+              (train_loss, loss);
+              (epoch_metric, Float.of_int epoch);
+              (step_ms, dt *. 1000.);
+              (images_per_sec, float_of_int !batch_size /. dt);
+            ];
+        if s mod !eval_every = 0 then begin
+          let acc = evaluate !params in
+          last_acc := acc;
+          Munin.Metric.log val_accuracy ~step:s acc
+        end;
+        Printf.printf "\r  step %d/%d  loss: %.4f  val_acc: %.2f%%%!"
+          (((s - 1) mod num_batches) + 1)
+          num_batches loss (!last_acc *. 100.));
 
     let loss_avg = !loss_sum /. float_of_int !loss_count in
     Munin.Metric.log train_loss_avg ~step:!global_step loss_avg;
