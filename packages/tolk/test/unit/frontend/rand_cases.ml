@@ -20,7 +20,6 @@ open Windtrap
 module T = Tolk_frontend.Tensor
 module El = Tolk_frontend.Elementwise
 module Cr = Tolk_frontend.Creation
-module Op = Tolk_frontend.Op
 module Rand = Tolk_frontend.Rand
 module Run = Tolk_frontend.Run
 module Jit = Tolk_frontend.Jit
@@ -250,13 +249,8 @@ let dropout_tests =
               is_true (Rand.dropout ~p:0. t == t)));
       test "all zero at rate 1" (fun () ->
           with_training (fun () ->
-              (* The result is a pure zero constant, which has no storage of
-                 its own to read back; write it into a buffer instead. *)
-              let dst = Run.realize (Cr.ones [ 4 ]) in
-              ignore
-                (Run.realize
-                   (Op.assign dst (Rand.dropout ~p:1. (Cr.ones [ 4 ]))));
-              check_floats_exact [| 0.; 0.; 0.; 0. |] dst));
+              check_floats_exact [| 0.; 0.; 0.; 0. |]
+                (Rand.dropout ~p:1. (Cr.ones [ 4 ]))));
       test "mask is reproducible under a fixed seed" (fun () ->
           with_training (fun () ->
               Rand.manual_seed 123;

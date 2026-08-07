@@ -52,6 +52,11 @@ thread.
   compilers reject (`cannot initialize a variable of type 'float' with an
   rvalue of type 'float2'` on Metal). Any tensor-core candidate therefore
   failed to compile, and `BEAM` search silently discarded all of them.
+- Reading a tensor whose graph folds to a pure constant (`Run.data`,
+  `Run.to_float_array`, `Run.item_float`, ...) now materializes it into a fresh
+  buffer instead of raising: such a graph is placed on no device and owns no
+  storage, so `Run.buffer_of` had nothing to return. Affected every
+  constant-folded result, for instance `Rand.dropout ~p:1.`.
 - Reject the tensor-core optimisation when one of its X or Y axes is a reduce
   axis. Those axes index the WMMA accumulator tile, so a kernel that reduces
   over a matmul's output dimensions (`(a @ b)` summed over `M`, as a recurrent

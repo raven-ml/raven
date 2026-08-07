@@ -648,10 +648,31 @@ let aliasing_tests =
           check_floats [| 3.; 4.; 5.; 6. |] y);
     ]
 
+(* An expression whose graph folds to a pure constant owns no storage and is
+   placed on no device. Reading it must materialize it rather than fail. *)
+
+let constant_tests =
+  group "constant"
+    [
+      test "broadcast constant reads back" (fun () ->
+          check_floats [| 3.; 3.; 3.; 3. |]
+            (Creation.full ~buffer:false [ 4 ] (T.Sfloat 3.0)));
+      test "expression folding to a constant reads back" (fun () ->
+          check_floats [| 0.; 0.; 0. |]
+            (El.mul (vec [| 1.; 2.; 3. |]) (T.f 0.0)));
+      test "constant scalar reads back" (fun () ->
+          equal (float 0.0) 5.0 (Run.item_float (T.f 5.0)));
+      test "constant realizes into a buffer only once" (fun () ->
+          let t = Creation.full ~buffer:false [ 2; 3 ] (T.Sfloat 1.5) in
+          check_floats [| 1.5; 1.5; 1.5; 1.5; 1.5; 1.5 |] t;
+          check_floats [| 1.5; 1.5; 1.5; 1.5; 1.5; 1.5 |] t);
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
       aliasing_tests;
+      constant_tests;
       elementwise_tests;
       select_tests;
       dynamic_select_tests;

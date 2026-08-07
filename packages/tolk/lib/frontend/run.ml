@@ -216,6 +216,21 @@ let realize t =
   ignore (realize_buffers [ t ]);
   t
 
+(* Materialize [t] into a fresh buffer on the default device, written by a
+   store effect. A graph that folds to a pure constant expression is placed on
+   no device and owns no storage; reading its bytes needs one. *)
+let materialize t =
+  let shape = T.shape t in
+  let n = List.fold_left ( * ) 1 shape in
+  let buf =
+    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:(T.dtype t)
+      ~shape:(T.shape_uop [ n ])
+      ~device:(U.Single (device_name ()))
+      ()
+  in
+  let dst = U.reshape ~src:buf ~shape:(T.shape_uop shape) in
+  T.of_uop (U.after ~src:dst ~deps:[ U.store ~dst ~value:(T.uop t) () ])
+
 let buffer_of t =
   match buffer_of_node (T.uop t) with
   | Some buf -> buf
@@ -225,6 +240,7 @@ let buffer_of t =
       match view_buffer (T.uop t) with
       | Some buf -> buf
       | None -> (
+          let t = if T.device t = None then materialize t else t in
           match List.hd (realize_buffers [ t ]) with
           | Some buf -> buf
           | None ->
