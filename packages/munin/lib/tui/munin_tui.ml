@@ -41,10 +41,10 @@ let run_status_of_live_status :
     Munin.Run_monitor.live_status -> Theme.run_status = function
   | `Live -> Theme.Live
   | `Stopped -> Theme.Stopped
-  | `Done `finished -> Theme.Done
-  | `Done `failed -> Theme.Failed
-  | `Done `killed -> Theme.Killed
-  | `Done `running -> Theme.Live
+  | `Done `Finished -> Theme.Done
+  | `Done `Failed -> Theme.Failed
+  | `Done `Killed -> Theme.Killed
+  | `Done `Running -> Theme.Live
 
 let latest_step monitor =
   let ms = Munin.Run_monitor.metrics monitor in

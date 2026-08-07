@@ -41,7 +41,7 @@ let () =
   done;
 
   Munin_sys.stop monitor;
-  Session.finish session ();
+  Session.finish session;
 
   (* Check what system metrics were recorded. *)
   let run = Session.run session in
@@ -49,7 +49,7 @@ let () =
   let sys_keys =
     List.filter (fun k -> String.length k > 4 && String.sub k 0 4 = "sys/") keys
   in
-  Printf.printf "run: %s\n" (Run.id run);
+  Printf.printf "run: %s\n" (Session.id session);
   Printf.printf "system metrics: %s\n" (String.concat ", " sys_keys);
   List.iter
     (fun key ->

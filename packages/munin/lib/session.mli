@@ -63,7 +63,7 @@ val with_run :
   (t -> 'a) ->
   'a
 (** [with_run ~experiment f] starts a run, calls [f], and finishes the run as
-    [`finished] on success or [`failed] on exception. The exception is re-raised
+    [`Finished] on success or [`Failed] on exception. The exception is re-raised
     after the run is closed.
 
     Optional arguments default as in {!start}. *)
@@ -73,18 +73,22 @@ val resume : Run.t -> t
 
     Raises [Invalid_argument] if [Run.resumable run] is [false]. *)
 
+val id : t -> string
+(** [id t] is the unique run identifier. *)
+
+val dir : t -> string
+(** [dir t] is the absolute path to the run directory. *)
+
 val run : t -> Run.t
 (** [run t] is the current materialized view of the run.
 
     Raises [Failure] if the run manifest is missing. *)
 
-val finish : ?status:[ `finished | `failed | `killed ] -> t -> unit -> unit
-(** [finish t ()] closes the run with the given final status.
+val finish : ?status:[ `Finished | `Failed | `Killed ] -> t -> unit
+(** [finish t] closes the run with the given final status.
 
-    [status] defaults to [`finished]. The trailing [unit] argument allows
-    partial application as a finalizer (e.g.
-    [Fun.protect ~finally:(finish session)]). Calling [finish] on an
-    already-closed session is a no-op. *)
+    [status] defaults to [`Finished]. Calling [finish] on an already-closed
+    session is a no-op. *)
 
 (** {1:scalars Scalars} *)
 

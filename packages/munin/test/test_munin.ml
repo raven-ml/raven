@@ -39,35 +39,35 @@ let test_start_creates_run_dir () =
   is_true ~msg:"run dir exists" (Sys.file_exists (Run.dir run));
   is_true ~msg:"manifest exists"
     (Sys.file_exists (Filename.concat (Run.dir run) "run.json"));
-  is_true ~msg:"status is running" (Run.status run = `running);
-  Session.finish session ()
+  is_true ~msg:"status is running" (Run.status run = `Running);
+  Session.finish session
 
 let test_finish_sets_status () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
-  is_true ~msg:"status finished" (Run.status run = `finished);
+  is_true ~msg:"status finished" (Run.status run = `Finished);
   is_true ~msg:"ended_at set" (Option.is_some (Run.ended_at run))
 
 let test_finish_failed () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish ~status:`failed session ();
-  is_true ~msg:"status failed" (Run.status (Session.run session) = `failed)
+  Session.finish ~status:`Failed session;
+  is_true ~msg:"status failed" (Run.status (Session.run session) = `Failed)
 
 let test_finish_killed () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish ~status:`killed session ();
-  is_true ~msg:"status killed" (Run.status (Session.run session) = `killed)
+  Session.finish ~status:`Killed session;
+  is_true ~msg:"status killed" (Run.status (Session.run session) = `Killed)
 
 let test_finish_idempotent () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
-  Session.finish ~status:`failed session ();
-  is_true ~msg:"still finished" (Run.status (Session.run session) = `finished)
+  Session.finish session;
+  Session.finish ~status:`Failed session;
+  is_true ~msg:"still finished" (Run.status (Session.run session) = `Finished)
 
 let test_with_run_success () =
   with_temp_dir @@ fun root ->
@@ -79,7 +79,7 @@ let test_with_run_success () =
   equal ~msg:"return value" int 42 result;
   let store = Store.open_ ~root () in
   let run = Option.get (Store.latest_run store ()) in
-  is_true ~msg:"status finished" (Run.status run = `finished)
+  is_true ~msg:"status finished" (Run.status run = `Finished)
 
 let test_with_run_exception () =
   with_temp_dir @@ fun root ->
@@ -94,7 +94,7 @@ let test_with_run_exception () =
   is_true ~msg:"exception re-raised" raised;
   let store = Store.open_ ~root () in
   let run = Option.get (Store.latest_run store ()) in
-  is_true ~msg:"status failed" (Run.status run = `failed)
+  is_true ~msg:"status failed" (Run.status run = `Failed)
 
 let test_resume () =
   with_temp_dir @@ fun root ->
@@ -104,7 +104,7 @@ let test_resume () =
   is_true ~msg:"resumable before finish" (Run.resumable run);
   let resumed = Session.resume run in
   Session.log_metric resumed ~step:2 "x" 0.5;
-  Session.finish resumed ();
+  Session.finish resumed;
   let final = Session.run resumed in
   equal ~msg:"history length" int 2 (List.length (Run.metric_history final "x"));
   is_false ~msg:"not resumable after finish" (Run.resumable final)
@@ -112,7 +112,7 @@ let test_resume () =
 let test_resume_finished_raises () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   raises_invalid_arg "Munin.Session.resume: run is not resumable" (fun () ->
       ignore (Session.resume run))
@@ -121,7 +121,7 @@ let test_ops_after_finish_ignored () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
-  Session.finish session ();
+  Session.finish session;
   Session.log_metric session ~step:2 "x" 2.0;
   Session.set_notes session (Some "late");
   Session.add_tags session [ "late" ];
@@ -131,9 +131,18 @@ let test_ops_after_finish_ignored () =
   is_true ~msg:"no late note" (Run.notes run = None);
   equal ~msg:"no tags" (list string) [] (Run.tags run)
 
+let test_session_identity () =
+  with_temp_dir @@ fun root ->
+  let session = Session.start ~root ~experiment:"exp" () in
+  let run = Session.run session in
+  equal ~msg:"id matches run" string (Run.id run) (Session.id session);
+  equal ~msg:"dir matches run" string (Run.dir run) (Session.dir session);
+  Session.finish session
+
 let lifecycle =
   [
     test "start creates run dir" test_start_creates_run_dir;
+    test "session identity" test_session_identity;
     test "finish sets status" test_finish_sets_status;
     test "finish failed" test_finish_failed;
     test "finish killed" test_finish_killed;
@@ -151,7 +160,7 @@ let test_log_metric () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_metric session ~step:1 "train/loss" 1.5;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let m =
     match List.assoc_opt "train/loss" (Run.latest_metrics run) with
@@ -165,7 +174,7 @@ let test_log_metrics_batch () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_metrics session ~step:1 [ ("train/loss", 1.0); ("val/acc", 0.6) ];
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"two keys" int 2 (List.length (Run.metric_keys run))
 
@@ -175,7 +184,7 @@ let test_metric_history_chronological () =
   Session.log_metric session ~step:1 "x" 3.0;
   Session.log_metric session ~step:2 "x" 2.0;
   Session.log_metric session ~step:3 "x" 1.0;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let history = Run.metric_history run "x" in
   equal ~msg:"length" int 3 (List.length history);
@@ -187,7 +196,7 @@ let test_latest_metrics () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_metric session ~step:1 "x" 1.0;
   Session.log_metric session ~step:2 "x" 2.0;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let latest =
     match List.assoc_opt "x" (Run.latest_metrics run) with
@@ -203,7 +212,7 @@ let test_metric_keys_sorted () =
   Session.log_metric session ~step:1 "z/loss" 1.0;
   Session.log_metric session ~step:1 "a/acc" 0.5;
   Session.log_metric session ~step:1 "m/lr" 0.01;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"sorted keys" (list string)
     [ "a/acc"; "m/lr"; "z/loss" ]
@@ -213,7 +222,7 @@ let test_explicit_timestamp () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_metric session ~step:1 ~timestamp:42.0 "x" 1.0;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let m =
     match List.assoc_opt "x" (Run.latest_metrics run) with
@@ -225,7 +234,7 @@ let test_explicit_timestamp () =
 let test_missing_metric_history_empty () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"empty history" (list int) []
     (List.map
@@ -250,7 +259,7 @@ let test_define_metric_summary_and_goal () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.define_metric session "train/loss" ~summary:`Min ~goal:`Minimize ();
   Session.define_metric session "val/acc" ~summary:`Max ~goal:`Maximize ();
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let defs = Run.metric_defs run in
   equal ~msg:"two defs" int 2 (List.length defs);
@@ -269,7 +278,7 @@ let test_define_metric_all_summaries () =
   Session.define_metric session "c" ~summary:`Mean ();
   Session.define_metric session "d" ~summary:`Last ();
   Session.define_metric session "e" ~summary:`None ();
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let defs = Run.metric_defs run in
   equal ~msg:"five defs" int 5 (List.length defs);
@@ -283,7 +292,7 @@ let test_define_metric_step_metric () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.define_metric session "train/loss" ~step_metric:"epoch" ();
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let def = List.assoc "train/loss" (Run.metric_defs run) in
   equal ~msg:"step_metric" (option string) (Some "epoch") def.step_metric
@@ -292,7 +301,7 @@ let test_define_metric_default_summary () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.define_metric session "x" ();
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let def = List.assoc "x" (Run.metric_defs run) in
   is_true ~msg:"default summary is Last" (def.summary = `Last)
@@ -303,7 +312,7 @@ let test_metric_defs_sorted () =
   Session.define_metric session "z" ();
   Session.define_metric session "a" ();
   Session.define_metric session "m" ();
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let keys = List.map fst (Run.metric_defs run) in
   equal ~msg:"sorted" (list string) [ "a"; "m"; "z" ] keys
@@ -323,7 +332,7 @@ let test_set_notes () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.set_notes session (Some "hello");
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"notes set" (option string) (Some "hello")
     (Run.notes (Session.run session))
 
@@ -332,7 +341,7 @@ let test_set_notes_replace () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.set_notes session (Some "first");
   Session.set_notes session (Some "second");
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"notes replaced" (option string) (Some "second")
     (Run.notes (Session.run session))
 
@@ -340,7 +349,7 @@ let test_clear_notes () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" ~notes:"initial" () in
   Session.set_notes session None;
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"notes cleared" (option string) None
     (Run.notes (Session.run session))
 
@@ -349,7 +358,7 @@ let test_set_summary_merge () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.set_summary session [ ("a", `Float 1.0) ];
   Session.set_summary session [ ("b", `Float 2.0); ("a", `Float 3.0) ];
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let summary = Run.summary run in
   equal ~msg:"two keys" int 2 (List.length summary);
@@ -361,7 +370,7 @@ let test_set_summary_merge () =
 let test_find_summary_missing () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"missing key" (option unit) None
     (Option.map ignore (Run.find_summary (Session.run session) "nope"))
 
@@ -369,7 +378,7 @@ let test_add_tags () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" ~tags:[ "initial" ] () in
   Session.add_tags session [ "added" ];
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"tags" (list string) [ "initial"; "added" ] (Run.tags run)
 
@@ -377,7 +386,7 @@ let test_add_tags_dedup () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" ~tags:[ "a" ] () in
   Session.add_tags session [ "a"; "b" ];
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"deduped" (list string) [ "a"; "b" ] (Run.tags run)
 
@@ -385,7 +394,7 @@ let test_add_tags_empty_noop () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
   Session.add_tags session [];
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"no tags" (list string) [] (Run.tags (Session.run session))
 
 let test_params_immutable () =
@@ -395,7 +404,7 @@ let test_params_immutable () =
       ~params:[ ("lr", `Float 0.001); ("bs", `Int 32) ]
       ()
   in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"param count" int 2 (List.length (Run.params run))
 
@@ -421,7 +430,7 @@ let test_provenance_fields () =
       ~cwd:root ~hostname:"node0" ~pid:42 ~git_commit:"abc123" ~git_dirty:true
       ()
   in
-  Session.finish session ();
+  Session.finish session;
   let prov = Run.provenance (Session.run session) in
   equal ~msg:"command" (list string) [ "ocaml"; "train.ml" ] prov.command;
   equal ~msg:"cwd" string root prov.cwd;
@@ -436,7 +445,7 @@ let test_capture_env () =
   let session =
     Session.start ~root ~experiment:"exp" ~capture_env:[ "MUNIN_TEST_A" ] ()
   in
-  Session.finish session ();
+  Session.finish session;
   let prov = Run.provenance (Session.run session) in
   equal ~msg:"env captured"
     (list (pair string string))
@@ -451,7 +460,7 @@ let test_capture_env_missing () =
       ~capture_env:[ "MUNIN_NONEXISTENT_9999" ]
       ()
   in
-  Session.finish session ();
+  Session.finish session;
   let prov = Run.provenance (Session.run session) in
   equal ~msg:"missing env omitted" (list (pair string string)) [] prov.env
 
@@ -460,7 +469,7 @@ let test_explicit_env () =
   let session =
     Session.start ~root ~experiment:"exp" ~env:[ ("KEY", "value") ] ()
   in
-  Session.finish session ();
+  Session.finish session;
   let prov = Run.provenance (Session.run session) in
   equal ~msg:"explicit env"
     (list (pair string string))
@@ -480,8 +489,8 @@ let provenance_tests =
 let test_run_load () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
-  let id = Run.id (Session.run session) in
+  Session.finish session;
+  let id = Session.id session in
   is_some ~msg:"load existing" (Run.load ~root ~experiment:"exp" ~id)
 
 let test_run_load_missing () =
@@ -493,9 +502,9 @@ let test_run_load_missing () =
 let test_run_list_sorted_descending () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let runs = Run.list ~root ~experiment:"exp" () in
   equal ~msg:"count" int 2 (List.length runs);
   let ids = List.map Run.id runs in
@@ -506,20 +515,20 @@ let test_run_list_sorted_descending () =
 let test_run_list_filter_status () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" () in
-  Session.finish ~status:`failed s2 ();
+  Session.finish ~status:`Failed s2;
   equal ~msg:"finished only" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~status:`finished ()));
+    (List.length (Run.list ~root ~experiment:"exp" ~status:`Finished ()));
   equal ~msg:"failed only" int 1
-    (List.length (Run.list ~root ~experiment:"exp" ~status:`failed ()))
+    (List.length (Run.list ~root ~experiment:"exp" ~status:`Failed ()))
 
 let test_run_list_filter_tag () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" ~tags:[ "train" ] () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" ~tags:[ "eval" ] () in
-  Session.finish s2 ();
+  Session.finish s2;
   equal ~msg:"train tagged" int 1
     (List.length (Run.list ~root ~experiment:"exp" ~tag:"train" ()));
   equal ~msg:"eval tagged" int 1
@@ -528,26 +537,27 @@ let test_run_list_filter_tag () =
 let test_run_list_filter_parent () =
   with_temp_dir @@ fun root ->
   let parent = Session.start ~root ~experiment:"exp" () in
-  Session.finish parent ();
+  Session.finish parent;
   let parent_run = Session.run parent in
   let child = Session.start ~root ~experiment:"exp" ~parent:parent_run () in
-  Session.finish child ();
+  Session.finish child;
   let _other = Session.start ~root ~experiment:"exp" () in
-  Session.finish _other ();
+  Session.finish _other;
   equal ~msg:"one child" int 1
     (List.length
        (Run.list ~root ~experiment:"exp" ~parent:(Run.id parent_run) ()))
 
 let test_run_children () =
   with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
   let parent = Session.start ~root ~experiment:"exp" () in
-  Session.finish parent ();
+  Session.finish parent;
   let parent_run = Session.run parent in
   let c1 = Session.start ~root ~experiment:"exp" ~parent:parent_run () in
-  Session.finish c1 ();
+  Session.finish c1;
   let c2 = Session.start ~root ~experiment:"exp" ~parent:parent_run () in
-  Session.finish c2 ();
-  let children = Run.children parent_run in
+  Session.finish c2;
+  let children = Store.list_runs store ~parent:(Run.id parent_run) () in
   equal ~msg:"two children" int 2 (List.length children);
   List.iter
     (fun child ->
@@ -559,19 +569,19 @@ let test_run_children () =
 let test_run_name () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" ~name:"baseline" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s2 ();
+  Session.finish s2;
   equal ~msg:"named" (option string) (Some "baseline")
     (Run.name (Session.run s1));
   equal ~msg:"unnamed" (option string) None (Run.name (Session.run s2))
 
-let test_experiment_name () =
+let test_experiment () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"my-exp" () in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"experiment name" string "my-exp"
-    (Run.experiment_name (Session.run session))
+    (Run.experiment (Session.run session))
 
 let run_loading =
   [
@@ -583,7 +593,7 @@ let run_loading =
     test "list filter parent" test_run_list_filter_parent;
     test "children" test_run_children;
     test "name" test_run_name;
-    test "experiment_name" test_experiment_name;
+    test "experiment" test_experiment;
   ]
 
 (* Artifacts *)
@@ -593,13 +603,13 @@ let test_file_artifact () =
   let src = make_file root "weights.bin" "model weights" in
   let session = Session.start ~root ~experiment:"exp" () in
   let artifact =
-    Session.log_artifact session ~name:"model" ~kind:`checkpoint ~path:src ()
+    Session.log_artifact session ~name:"model" ~kind:`Checkpoint ~path:src ()
   in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"name" string "model" (Artifact.name artifact);
   equal ~msg:"version" string "v1" (Artifact.version artifact);
-  is_true ~msg:"kind" (Artifact.kind artifact = `checkpoint);
-  is_true ~msg:"payload file" (Artifact.payload artifact = `file);
+  is_true ~msg:"kind" (Artifact.kind artifact = `Checkpoint);
+  is_true ~msg:"payload file" (Artifact.payload artifact = `File);
   is_true ~msg:"size positive" (Artifact.size_bytes artifact > 0);
   is_true ~msg:"path exists" (Sys.file_exists (Artifact.path artifact));
   is_true ~msg:"digest is sha256 hex"
@@ -612,11 +622,11 @@ let test_dir_artifact () =
   in
   let session = Session.start ~root ~experiment:"exp" () in
   let artifact =
-    Session.log_artifact session ~name:"data" ~kind:`dataset ~path:dir ()
+    Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:dir ()
   in
-  Session.finish session ();
-  is_true ~msg:"payload dir" (Artifact.payload artifact = `dir);
-  is_true ~msg:"kind dataset" (Artifact.kind artifact = `dataset);
+  Session.finish session;
+  is_true ~msg:"payload dir" (Artifact.payload artifact = `Dir);
+  is_true ~msg:"kind dataset" (Artifact.kind artifact = `Dataset);
   is_true ~msg:"blob dir exists" (Sys.file_exists (Artifact.path artifact))
 
 let test_artifact_versioning () =
@@ -624,13 +634,13 @@ let test_artifact_versioning () =
   let src = make_file root "model.bin" "v1 weights" in
   let session = Session.start ~root ~experiment:"exp" () in
   let a1 =
-    Session.log_artifact session ~name:"model" ~kind:`model ~path:src ()
+    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
   in
   write_text src "v2 weights";
   let a2 =
-    Session.log_artifact session ~name:"model" ~kind:`model ~path:src ()
+    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
   in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"first version" string "v1" (Artifact.version a1);
   equal ~msg:"second version" string "v2" (Artifact.version a2)
 
@@ -639,10 +649,10 @@ let test_artifact_aliases () =
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~root ~experiment:"exp" () in
   let artifact =
-    Session.log_artifact session ~name:"model" ~kind:`model ~path:src
+    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
       ~aliases:[ "best"; "latest" ] ()
   in
-  Session.finish session ();
+  Session.finish session;
   is_true ~msg:"has best alias" (Artifact.has_alias artifact "best");
   is_true ~msg:"has latest alias" (Artifact.has_alias artifact "latest");
   is_false ~msg:"no nope alias" (Artifact.has_alias artifact "nope")
@@ -652,13 +662,13 @@ let test_artifact_alias_resolution () =
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~root ~experiment:"exp" () in
   ignore
-    (Session.log_artifact session ~name:"model" ~kind:`model ~path:src
+    (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
        ~aliases:[ "latest" ] ());
   write_text src "v2 weights";
   ignore
-    (Session.log_artifact session ~name:"model" ~kind:`model ~path:src
+    (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
        ~aliases:[ "latest" ] ());
-  Session.finish session ();
+  Session.finish session;
   let resolved = Artifact.load ~root ~name:"model" ~version:"latest" in
   is_true ~msg:"alias resolves to v2"
     (match resolved with Some a -> Artifact.version a = "v2" | None -> false);
@@ -670,11 +680,11 @@ let test_artifact_metadata () =
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~root ~experiment:"exp" () in
   let artifact =
-    Session.log_artifact session ~name:"model" ~kind:`model ~path:src
+    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
       ~metadata:[ ("framework", `String "rune") ]
       ()
   in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"metadata count" int 1 (List.length (Artifact.metadata artifact))
 
 let test_artifact_lineage () =
@@ -682,12 +692,12 @@ let test_artifact_lineage () =
   let src = make_file root "model.bin" "weights" in
   let producer = Session.start ~root ~experiment:"exp" ~name:"producer" () in
   let artifact =
-    Session.log_artifact producer ~name:"model" ~kind:`model ~path:src ()
+    Session.log_artifact producer ~name:"model" ~kind:`Model ~path:src ()
   in
   let consumer = Session.start ~root ~experiment:"exp" ~name:"consumer" () in
   Session.use_artifact consumer artifact;
-  Session.finish producer ();
-  Session.finish consumer ();
+  Session.finish producer;
+  Session.finish consumer;
   let producer_run = Session.run producer in
   let consumer_run = Session.run consumer in
   equal ~msg:"producer_run_id" (option string)
@@ -711,10 +721,10 @@ let test_log_artifact_closed_raises () =
   with_temp_dir @@ fun root ->
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   raises_failure "Munin.Session.log_artifact: closed session" (fun () ->
       ignore
-        (Session.log_artifact session ~name:"model" ~kind:`model ~path:src ()))
+        (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()))
 
 let test_log_artifact_missing_path_raises () =
   with_temp_dir @@ fun root ->
@@ -723,7 +733,7 @@ let test_log_artifact_missing_path_raises () =
     "Munin.Session.log_artifact: path does not exist: /nonexistent/path"
     (fun () ->
       ignore
-        (Session.log_artifact session ~name:"model" ~kind:`model
+        (Session.log_artifact session ~name:"model" ~kind:`Model
            ~path:"/nonexistent/path" ()))
 
 let test_artifact_content_dedup () =
@@ -731,12 +741,12 @@ let test_artifact_content_dedup () =
   let src = make_file root "model.bin" "same content" in
   let session = Session.start ~root ~experiment:"exp" () in
   let a1 =
-    Session.log_artifact session ~name:"model" ~kind:`model ~path:src ()
+    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
   in
   let a2 =
-    Session.log_artifact session ~name:"backup" ~kind:`model ~path:src ()
+    Session.log_artifact session ~name:"backup" ~kind:`Model ~path:src ()
   in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"same digest" string (Artifact.digest a1) (Artifact.digest a2)
 
 let artifacts =
@@ -767,9 +777,9 @@ let test_store_open () =
 let test_store_list_experiments () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"mnist" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"cifar" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let store = Store.open_ ~root () in
   let exps = Store.list_experiments store in
   equal ~msg:"two experiments" int 2 (List.length exps);
@@ -779,18 +789,18 @@ let test_store_list_experiments () =
 let test_store_list_runs_all () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp1" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp2" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let store = Store.open_ ~root () in
   equal ~msg:"all runs" int 2 (List.length (Store.list_runs store ()))
 
 let test_store_list_runs_experiment () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp1" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp2" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let store = Store.open_ ~root () in
   equal ~msg:"exp1 runs" int 1
     (List.length (Store.list_runs store ~experiment:"exp1" ()));
@@ -800,8 +810,8 @@ let test_store_list_runs_experiment () =
 let test_store_find_run () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
-  let id = Run.id (Session.run session) in
+  Session.finish session;
+  let id = Session.id session in
   let store = Store.open_ ~root () in
   is_some ~msg:"found" (Store.find_run store id)
 
@@ -813,7 +823,7 @@ let test_store_find_run_missing () =
 let test_store_latest_run () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" ~name:"only" () in
-  Session.finish session ();
+  Session.finish session;
   let store = Store.open_ ~root () in
   let latest = Store.latest_run store () in
   is_true ~msg:"latest returns the run"
@@ -824,21 +834,38 @@ let test_store_latest_run_with_filter () =
   let s1 =
     Session.start ~root ~experiment:"exp" ~tags:[ "train" ] ~name:"a" ()
   in
-  Session.finish s1 ();
+  Session.finish s1;
   Unix.sleepf 0.01;
   let s2 =
     Session.start ~root ~experiment:"exp" ~tags:[ "eval" ] ~name:"b" ()
   in
-  Session.finish s2 ();
+  Session.finish s2;
   let store = Store.open_ ~root () in
   let latest = Store.latest_run store ~tag:"train" () in
   is_true ~msg:"latest with tag filter"
     (match latest with Some run -> Run.name run = Some "a" | None -> false)
 
+let test_store_latest_run_parent () =
+  with_temp_dir @@ fun root ->
+  let parent = Session.start ~root ~experiment:"exp" () in
+  Session.finish parent;
+  let parent_run = Session.run parent in
+  Unix.sleepf 0.01;
+  let child =
+    Session.start ~root ~experiment:"exp" ~parent:parent_run ~name:"child" ()
+  in
+  Session.finish child;
+  let store = Store.open_ ~root () in
+  let latest = Store.latest_run store ~parent:(Run.id parent_run) () in
+  is_true ~msg:"latest with parent filter"
+    (match latest with
+    | Some run -> Run.name run = Some "child"
+    | None -> false)
+
 let test_store_delete_run () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let store = Store.open_ ~root () in
   is_true ~msg:"run dir exists before" (Sys.file_exists (Run.dir run));
@@ -848,7 +875,7 @@ let test_store_delete_run () =
 let test_store_delete_run_cleans_experiment () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"temp" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let store = Store.open_ ~root () in
   Store.delete_run store run;
@@ -861,9 +888,9 @@ let test_store_gc () =
   let dir = make_dir root "dataset" [ ("a.txt", "data") ] in
   let session = Session.start ~root ~experiment:"exp" () in
   let artifact =
-    Session.log_artifact session ~name:"data" ~kind:`dataset ~path:dir ()
+    Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:dir ()
   in
-  Session.finish session ();
+  Session.finish session;
   let store = Store.open_ ~root () in
   (* Blob is referenced, gc should remove 0 *)
   let removed_before = Store.gc store in
@@ -885,8 +912,8 @@ let test_store_find_artifact () =
   with_temp_dir @@ fun root ->
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~root ~experiment:"exp" () in
-  ignore (Session.log_artifact session ~name:"model" ~kind:`model ~path:src ());
-  Session.finish session ();
+  ignore (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ());
+  Session.finish session;
   let store = Store.open_ ~root () in
   is_some ~msg:"found" (Store.find_artifact store ~name:"model" ~version:"v1")
 
@@ -894,13 +921,13 @@ let test_store_list_artifacts () =
   with_temp_dir @@ fun root ->
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~root ~experiment:"exp" () in
-  ignore (Session.log_artifact session ~name:"model" ~kind:`model ~path:src ());
-  ignore (Session.log_artifact session ~name:"data" ~kind:`dataset ~path:src ());
-  Session.finish session ();
+  ignore (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ());
+  ignore (Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:src ());
+  Session.finish session;
   let store = Store.open_ ~root () in
   equal ~msg:"all artifacts" int 2 (List.length (Store.list_artifacts store ()));
   equal ~msg:"filter by kind" int 1
-    (List.length (Store.list_artifacts store ~kind:`model ()));
+    (List.length (Store.list_artifacts store ~kind:`Model ()));
   equal ~msg:"filter by name" int 1
     (List.length (Store.list_artifacts store ~name:"data" ()))
 
@@ -914,6 +941,7 @@ let store_tests =
     test "find_run missing" test_store_find_run_missing;
     test "latest_run" test_store_latest_run;
     test "latest_run with filter" test_store_latest_run_with_filter;
+    test "latest_run with parent" test_store_latest_run_parent;
     test "delete_run" test_store_delete_run;
     test "delete_run cleans experiment" test_store_delete_run_cleans_experiment;
     test "gc" test_store_gc;
@@ -936,7 +964,7 @@ let test_monitor_poll () =
   let latest = List.assoc "train/loss" metrics in
   equal ~msg:"latest step" int 2 latest.step;
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_incremental () =
   with_temp_dir @@ fun root ->
@@ -952,7 +980,7 @@ let test_monitor_incremental () =
   equal ~msg:"two points after second poll" int 2
     (List.length (Run_monitor.history monitor "x"));
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_history_chronological () =
   with_temp_dir @@ fun root ->
@@ -967,7 +995,7 @@ let test_monitor_history_chronological () =
   let steps = List.map fst history in
   equal ~msg:"chronological steps" (list int) [ 1; 2; 3 ] steps;
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_metric_defs () =
   with_temp_dir @@ fun root ->
@@ -981,7 +1009,7 @@ let test_monitor_metric_defs () =
   let def = List.assoc "loss" defs in
   is_true ~msg:"summary min" (def.summary = `Min);
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_best_minimize () =
   with_temp_dir @@ fun root ->
@@ -997,7 +1025,7 @@ let test_monitor_best_minimize () =
   is_true ~msg:"best is 0.3"
     (match best with Some m -> m.value = 0.3 | None -> false);
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_best_maximize () =
   with_temp_dir @@ fun root ->
@@ -1013,7 +1041,7 @@ let test_monitor_best_maximize () =
   is_true ~msg:"best is 0.9"
     (match best with Some m -> m.value = 0.9 | None -> false);
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_best_loss_heuristic () =
   with_temp_dir @@ fun root ->
@@ -1028,7 +1056,7 @@ let test_monitor_best_loss_heuristic () =
   is_true ~msg:"loss heuristic picks minimum"
     (match best with Some m -> m.value = 0.2 | None -> false);
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let test_monitor_live_status () =
   with_temp_dir @@ fun root ->
@@ -1038,7 +1066,7 @@ let test_monitor_live_status () =
   let monitor = Run_monitor.start run in
   Run_monitor.poll monitor;
   is_true ~msg:"live during session" (Run_monitor.live_status monitor = `Live);
-  Session.finish session ();
+  Session.finish session;
   Run_monitor.poll monitor;
   is_true ~msg:"done after finish"
     (match Run_monitor.live_status monitor with `Done _ -> true | _ -> false);
@@ -1052,7 +1080,7 @@ let test_monitor_best_nonexistent () =
   Run_monitor.poll monitor;
   is_none ~msg:"no best for missing key" (Run_monitor.best monitor "nope");
   Run_monitor.close monitor;
-  Session.finish session ()
+  Session.finish session
 
 let run_monitor =
   [
@@ -1087,7 +1115,7 @@ let test_partial_log () =
   let run = Session.run session in
   equal ~msg:"partial line ignored" int 1
     (List.length (Run.metric_history run "x"));
-  Session.finish session ()
+  Session.finish session
 
 let test_malformed_line () =
   with_temp_dir @@ fun root ->
@@ -1106,7 +1134,7 @@ let test_malformed_line () =
   let run = Session.run session in
   equal ~msg:"malformed line skipped" int 1
     (List.length (Run.metric_history run "x"));
-  Session.finish session ()
+  Session.finish session
 
 let test_empty_event_log () =
   with_temp_dir @@ fun root ->
@@ -1115,8 +1143,8 @@ let test_empty_event_log () =
   (* No events logged *)
   equal ~msg:"no metrics" int 0 (List.length (Run.metric_keys run));
   equal ~msg:"no tags" (list string) [] (Run.tags run);
-  is_true ~msg:"running" (Run.status run = `running);
-  Session.finish session ()
+  is_true ~msg:"running" (Run.status run = `Running);
+  Session.finish session
 
 let test_mixed_valid_invalid () =
   with_temp_dir @@ fun root ->
@@ -1138,7 +1166,7 @@ let test_mixed_valid_invalid () =
   let run = Session.run session in
   equal ~msg:"only valid metrics" int 2
     (List.length (Run.metric_history run "x"));
-  Session.finish session ()
+  Session.finish session
 
 let robustness =
   [
@@ -1162,7 +1190,7 @@ let test_auto_summary_min () =
   Session.log_metric session ~step:1 "loss" 1.0;
   Session.log_metric session ~step:2 "loss" 0.3;
   Session.log_metric session ~step:3 "loss" 0.7;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"min summary"
     (option (float 0.0))
@@ -1175,7 +1203,7 @@ let test_auto_summary_max () =
   Session.log_metric session ~step:1 "acc" 0.5;
   Session.log_metric session ~step:2 "acc" 0.9;
   Session.log_metric session ~step:3 "acc" 0.7;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"max summary"
     (option (float 0.0))
@@ -1188,7 +1216,7 @@ let test_auto_summary_mean () =
   Session.log_metric session ~step:1 "x" 1.0;
   Session.log_metric session ~step:2 "x" 2.0;
   Session.log_metric session ~step:3 "x" 3.0;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"mean summary"
     (option (float 0.0))
@@ -1201,7 +1229,7 @@ let test_auto_summary_last () =
   Session.log_metric session ~step:1 "x" 1.0;
   Session.log_metric session ~step:2 "x" 2.0;
   Session.log_metric session ~step:3 "x" 3.0;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"last summary"
     (option (float 0.0))
@@ -1212,7 +1240,7 @@ let test_auto_summary_none () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.define_metric session "x" ~summary:`None ();
   Session.log_metric session ~step:1 "x" 1.0;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   is_none ~msg:"no auto-summary" (Run.find_summary run "x")
 
@@ -1223,7 +1251,7 @@ let test_explicit_summary_wins () =
   Session.log_metric session ~step:1 "loss" 1.0;
   Session.log_metric session ~step:2 "loss" 0.3;
   Session.set_summary session [ ("loss", `Float 999.0) ];
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"explicit wins"
     (option (float 0.0))
@@ -1244,24 +1272,24 @@ let auto_summaries =
 let test_group_round_trip () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" ~group:"sweep-lr" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"group" (option string) (Some "sweep-lr") (Run.group run)
 
 let test_group_none_by_default () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   equal ~msg:"no group" (option string) None (Run.group (Session.run session))
 
 let test_run_list_filter_group () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" ~group:"a" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" ~group:"b" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let s3 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s3 ();
+  Session.finish s3;
   equal ~msg:"group a" int 1
     (List.length (Run.list ~root ~experiment:"exp" ~group:"a" ()));
   equal ~msg:"group b" int 1
@@ -1271,9 +1299,9 @@ let test_run_list_filter_group () =
 let test_store_list_runs_group () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" ~group:"sweep" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let store = Store.open_ ~root () in
   equal ~msg:"sweep only" int 1
     (List.length (Store.list_runs store ~group:"sweep" ()))
@@ -1281,9 +1309,9 @@ let test_store_list_runs_group () =
 let test_store_latest_run_group () =
   with_temp_dir @@ fun root ->
   let s1 = Session.start ~root ~experiment:"exp" ~group:"a" () in
-  Session.finish s1 ();
+  Session.finish s1;
   let s2 = Session.start ~root ~experiment:"exp" ~group:"b" () in
-  Session.finish s2 ();
+  Session.finish s2;
   let store = Store.open_ ~root () in
   let latest = Store.latest_run store ~group:"a" () in
   is_true ~msg:"latest in group a"
@@ -1305,7 +1333,7 @@ let test_log_media_copies_file () =
   let src = make_file root "pred.png" "image data" in
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_media session ~step:1 ~key:"predictions" ~kind:`Image ~path:src;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let entries = Run.media_history run "predictions" in
   equal ~msg:"one entry" int 1 (List.length entries);
@@ -1320,7 +1348,7 @@ let test_log_media_nested_key () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_media session ~step:5 ~key:"train/predictions" ~kind:`Image
     ~path:src;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let entries = Run.media_history run "train/predictions" in
   equal ~msg:"one entry" int 1 (List.length entries);
@@ -1336,7 +1364,7 @@ let test_log_media_multiple_steps () =
   Session.log_media session ~step:1 ~key:"pred" ~kind:`Image ~path:src;
   Session.log_media session ~step:5 ~key:"pred" ~kind:`Image ~path:src;
   Session.log_media session ~step:10 ~key:"pred" ~kind:`Image ~path:src;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let entries = Run.media_history run "pred" in
   equal ~msg:"three entries" int 3 (List.length entries);
@@ -1350,13 +1378,13 @@ let test_log_media_missing_path_raises () =
     "Munin.Session.log_media: path does not exist: /no/such/file" (fun () ->
       Session.log_media session ~step:1 ~key:"x" ~kind:`File
         ~path:"/no/such/file");
-  Session.finish session ()
+  Session.finish session
 
 let test_log_media_closed_ignored () =
   with_temp_dir @@ fun root ->
   let src = make_file root "img.png" "pixels" in
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   Session.log_media session ~step:1 ~key:"pred" ~kind:`Image ~path:src;
   let run = Session.run session in
   equal ~msg:"no media" int 0 (List.length (Run.media_keys run))
@@ -1366,7 +1394,7 @@ let test_log_table () =
   let session = Session.start ~root ~experiment:"exp" () in
   Session.log_table session ~step:1 ~key:"confusion" ~columns:[ "cat"; "dog" ]
     ~rows:[ [ `Int 90; `Int 10 ]; [ `Int 5; `Int 95 ] ];
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let entries = Run.media_history run "confusion" in
   equal ~msg:"one entry" int 1 (List.length entries);
@@ -1381,7 +1409,7 @@ let test_media_keys_sorted () =
   Session.log_media session ~step:1 ~key:"z/output" ~kind:`File ~path:src;
   Session.log_media session ~step:1 ~key:"a/input" ~kind:`File ~path:src;
   Session.log_media session ~step:1 ~key:"m/middle" ~kind:`File ~path:src;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"sorted" (list string)
     [ "a/input"; "m/middle"; "z/output" ]
@@ -1390,7 +1418,7 @@ let test_media_keys_sorted () =
 let test_media_empty_history () =
   with_temp_dir @@ fun root ->
   let session = Session.start ~root ~experiment:"exp" () in
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   equal ~msg:"no media keys" (list string) [] (Run.media_keys run);
   equal ~msg:"empty history" int 0
@@ -1416,7 +1444,7 @@ let test_system_monitor_logs_metrics () =
   let monitor = Munin_sys.start session ~interval:0.1 () in
   Thread.delay 0.35;
   Munin_sys.stop monitor;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let keys = Run.metric_keys run in
   is_true ~msg:"has sys/cpu_user" (List.mem "sys/cpu_user" keys);
@@ -1428,7 +1456,7 @@ let test_system_monitor_defines_metrics () =
   let session = Session.start ~root ~experiment:"exp" () in
   let monitor = Munin_sys.start session ~interval:100.0 () in
   Munin_sys.stop monitor;
-  Session.finish session ();
+  Session.finish session;
   let run = Session.run session in
   let defs = Run.metric_defs run in
   let has_def key =
@@ -1446,7 +1474,7 @@ let test_system_monitor_stop_idempotent () =
   let monitor = Munin_sys.start session ~interval:100.0 () in
   Munin_sys.stop monitor;
   Munin_sys.stop monitor;
-  Session.finish session ()
+  Session.finish session
 
 let system_monitor_tests =
   [

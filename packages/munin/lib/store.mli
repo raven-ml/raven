@@ -47,11 +47,12 @@ val latest_run :
   ?experiment:string ->
   ?status:Run.status ->
   ?tag:string ->
+  ?parent:string ->
   ?group:string ->
   unit ->
   Run.t option
-(** [latest_run t ()] is the most recently started run matching the optional
-    filters, by identifier ordering. *)
+(** [latest_run t ()] is the head of {!list_runs} with the same filters, that is
+    the most recently started matching run by identifier ordering. *)
 
 (** {1:artifacts Artifacts} *)
 

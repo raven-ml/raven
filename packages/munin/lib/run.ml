@@ -1,4 +1,4 @@
-type status = [ `running | `finished | `failed | `killed ]
+type status = [ `Running | `Finished | `Failed | `Killed ]
 type metric = { step : int; timestamp : float; value : float }
 
 type provenance = {
@@ -41,10 +41,9 @@ type full = {
 
 (* Header fields are always available without I/O *)
 type t = {
-  root : string;
   id : string;
   dir : string;
-  experiment_name : string;
+  experiment : string;
   name : string option;
   group : string option;
   parent_id : string option;
@@ -60,14 +59,14 @@ let schema_version = 2
 
 let id t = t.id
 let dir t = t.dir
-let experiment_name t = t.experiment_name
+let experiment t = t.experiment
 let name t = t.name
 let group t = t.group
 let parent_id t = t.parent_id
 let started_at t = t.started_at
 let status t = t.status
 let tags t = t.tags
-let resumable t = t.status = `running
+let resumable t = t.status = `Running
 
 (* Full accessors — forces lazy on first access *)
 
@@ -113,10 +112,10 @@ let events_path dir = Filename.concat dir "events.jsonl"
 (* Parsing helpers *)
 
 let status_of_string = function
-  | "finished" -> `finished
-  | "failed" -> `failed
-  | "killed" -> `killed
-  | _ -> `running
+  | "finished" -> `Finished
+  | "failed" -> `Failed
+  | "killed" -> `Killed
+  | _ -> `Running
 
 let push_tag seen acc tag =
   if Hashtbl.mem seen tag then acc
@@ -175,7 +174,7 @@ let materialize_full root dir manifest_json =
   let input_artifacts = ref [] in
   let output_artifacts = ref [] in
   let tags = ref initial_tags in
-  let status = ref `running in
+  let status = ref `Running in
   let ended_at = ref None in
   let notes =
     ref
@@ -226,7 +225,7 @@ let materialize_full root dir manifest_json =
             | None -> ())
       | Resumed _ ->
           ended_at := None;
-          status := `running
+          status := `Running
       | Finished { status = status_string; ended_at = finished_at } ->
           status := status_of_string status_string;
           ended_at := Some finished_at)
@@ -327,10 +326,9 @@ let load ~root ~experiment ~id =
         let status, tags, full_data = materialize_full root dir json in
         Some
           {
-            root;
             id;
             dir;
-            experiment_name = experiment;
+            experiment;
             name;
             group;
             parent_id;
@@ -353,10 +351,9 @@ let load_from_index ~root id (entry : Index.entry) =
        full_data)
   in
   {
-    root;
     id;
     dir;
-    experiment_name = entry.experiment;
+    experiment = entry.experiment;
     name = entry.name;
     group = entry.group;
     parent_id = entry.parent_id;
@@ -385,5 +382,3 @@ let list ~root ~experiment ?status:status_filter ?tag ?parent
            parent
       && Option.fold ~none:true ~some:(fun g -> group run = Some g) group_filter)
   |> List.sort (fun a b -> String.compare (id b) (id a))
-
-let children t = list ~root:t.root ~experiment:t.experiment_name ~parent:t.id ()

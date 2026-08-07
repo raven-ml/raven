@@ -79,7 +79,7 @@ let () =
     ~goal:`Maximize ();
   let sysmon = Munin_sys.start session () in
 
-  Printf.printf "run: %s\n%!" (Munin.Run.id (Munin.Session.run session));
+  Printf.printf "run: %s\n%!" (Munin.Session.id session);
 
   (* Load data. *)
   Printf.printf "Loading MNIST...\n%!";
@@ -158,13 +158,11 @@ let () =
 
   (* Save model checkpoint as a versioned artifact. *)
   let checkpoint_path =
-    Filename.concat
-      (Munin.Run.dir (Munin.Session.run session))
-      "model.safetensors"
+    Filename.concat (Munin.Session.dir session) "model.safetensors"
   in
   Checkpoint.save checkpoint_path (Checkpoint.of_params (module Cnn) !params);
   ignore
-    (Munin.Session.log_artifact session ~name:"mnist-cnn" ~kind:`checkpoint
+    (Munin.Session.log_artifact session ~name:"mnist-cnn" ~kind:`Checkpoint
        ~path:checkpoint_path
        ~metadata:[ ("format", `String "safetensors") ]
        ~aliases:[ "latest" ] ());
@@ -172,5 +170,5 @@ let () =
   Munin_sys.stop sysmon;
   Munin.Session.set_notes session
     (Some (Printf.sprintf "Final val accuracy: %.2f%%" (!last_acc *. 100.)));
-  Munin.Session.finish session ();
-  Printf.printf "\nDone. Run: %s\n" (Munin.Run.id (Munin.Session.run session))
+  Munin.Session.finish session;
+  Printf.printf "\nDone. Run: %s\n" (Munin.Session.id session)

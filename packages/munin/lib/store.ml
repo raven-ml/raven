@@ -61,8 +61,8 @@ let find_run t id =
         (fun experiment -> Run.load ~root:t.root ~experiment ~id)
         (list_experiments t)
 
-let latest_run t ?experiment ?status ?tag ?group () =
-  match list_runs t ?experiment ?status ?tag ?group () with
+let latest_run t ?experiment ?status ?tag ?parent ?group () =
+  match list_runs t ?experiment ?status ?tag ?parent ?group () with
   | run :: _ -> Some run
   | [] -> None
 
@@ -74,9 +74,7 @@ let list_artifacts t ?name ?kind ?alias ?producer_run ?consumer_run () =
 let delete_run t run =
   Fs.remove_tree (Run.dir run);
   let exp_dir =
-    Filename.concat
-      (Filename.concat t.root "experiments")
-      (Run.experiment_name run)
+    Filename.concat (Filename.concat t.root "experiments") (Run.experiment run)
   in
   if Fs.list_dirs (Filename.concat exp_dir "runs") = [] then
     Fs.remove_tree exp_dir;

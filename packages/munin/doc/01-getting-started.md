@@ -72,8 +72,8 @@ let () =
   (* Write a summary value explicitly. *)
   Session.set_summary session [ ("note", `String "first run") ];
 
-  Session.finish session ();
-  Printf.printf "run: %s\n" (Run.id (Session.run session))
+  Session.finish session;
+  Printf.printf "run: %s\n" (Session.id session)
 ```
 
 After running, inspect from the terminal:

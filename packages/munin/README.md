@@ -18,7 +18,7 @@ for step = 1 to 1000 do
   let loss = train_step () in
   Munin.Session.log_metric session ~step "train/loss" loss
 done;
-Munin.Session.finish session ()
+Munin.Session.finish session
 ```
 
 ```sh

@@ -9,20 +9,20 @@ let pp_kv pairs =
 let pp_string_list items = Printf.printf "  %s\n" (String.concat ", " items)
 
 let string_of_status = function
-  | `running -> "running"
-  | `finished -> "finished"
-  | `failed -> "failed"
-  | `killed -> "killed"
+  | `Running -> "running"
+  | `Finished -> "finished"
+  | `Failed -> "failed"
+  | `Killed -> "killed"
 
 let string_of_kind = function
-  | `dataset -> "dataset"
-  | `model -> "model"
-  | `checkpoint -> "checkpoint"
-  | `file -> "file"
-  | `dir -> "dir"
-  | `other -> "other"
+  | `Dataset -> "dataset"
+  | `Model -> "model"
+  | `Checkpoint -> "checkpoint"
+  | `File -> "file"
+  | `Dir -> "dir"
+  | `Other -> "other"
 
-let string_of_payload = function `file -> "file" | `dir -> "dir"
+let string_of_payload = function `File -> "file" | `Dir -> "dir"
 
 let value_to_float = function
   | `Float f -> Some f
@@ -56,7 +56,7 @@ let runs_cmd =
               Store.list_runs store ?experiment ()
               |> List.iter (fun run ->
                   Printf.printf "%s\t%s\t%s\t%s\t%s\t%s\n" (Run.id run)
-                    (Run.experiment_name run)
+                    (Run.experiment run)
                     (string_of_status (Run.status run))
                     (Option.value (Run.parent_id run) ~default:"-")
                     (Option.value (Run.name run) ~default:"-")
@@ -81,7 +81,7 @@ let show_cmd =
                   exit 1
               | Some run ->
                   Printf.printf "id: %s\n" (Run.id run);
-                  Printf.printf "experiment: %s\n" (Run.experiment_name run);
+                  Printf.printf "experiment: %s\n" (Run.experiment run);
                   Printf.printf "name: %s\n"
                     (Option.value (Run.name run) ~default:"-");
                   Printf.printf "parent: %s\n"
@@ -129,7 +129,7 @@ let show_cmd =
                   Printf.printf "children:\n";
                   List.iter
                     (fun child -> Printf.printf "  %s\n" (Run.id child))
-                    (Run.children run);
+                    (Store.list_runs store ~parent:(Run.id run) ());
                   Printf.printf "output_artifacts:\n";
                   List.iter
                     (fun artifact ->

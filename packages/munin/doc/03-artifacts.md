@@ -21,7 +21,7 @@ let () =
   let _artifact =
     Session.log_artifact session
       ~name:"measurements"
-      ~kind:`dataset
+      ~kind:`Dataset
       ~path:"data/measurements.csv"
       ~metadata:[ ("rows", `Int 10000); ("format", `String "csv") ]
       ~aliases:[ "latest" ]
@@ -33,7 +33,7 @@ let () =
 Parameters:
 
 - **`~name`** -- logical name for the artifact (e.g. `"measurements"`, `"mnist-cnn"`).
-- **`~kind`** -- one of `` `checkpoint ``, `` `model ``, `` `dataset ``, `` `file ``, `` `dir ``, `` `other ``.
+- **`~kind`** -- one of `` `Checkpoint ``, `` `Model ``, `` `Dataset ``, `` `File ``, `` `Dir ``, `` `Other ``.
 - **`~path`** -- path to the file or directory to store.
 - **`~metadata`** -- optional key-value pairs attached to the version.
 - **`~aliases`** -- optional alias list (e.g. `["latest"; "best"]`).
@@ -45,12 +45,12 @@ artifacts are stored the same way.
 
 | Kind | Use for |
 |------|---------|
-| `` `checkpoint `` | Training checkpoints (model + optimizer state) |
-| `` `model `` | Final model weights |
-| `` `dataset `` | Datasets and data splits |
-| `` `file `` | Single files (configs, logs, reports) |
-| `` `dir `` | Directory trees |
-| `` `other `` | Anything else |
+| `` `Checkpoint `` | Training checkpoints (model + optimizer state) |
+| `` `Model `` | Final model weights |
+| `` `Dataset `` | Datasets and data splits |
+| `` `File `` | Single files (configs, logs, reports) |
+| `` `Dir `` | Directory trees |
+| `` `Other `` | Anything else |
 
 ## Versioning
 
@@ -62,12 +62,12 @@ created.
 ```ocaml
 (* First call creates v1. *)
 let v1 =
-  Session.log_artifact session ~name:"model" ~kind:`model
+  Session.log_artifact session ~name:"model" ~kind:`Model
     ~path:"model_epoch1.safetensors" ()
 in
 (* Second call creates v2. *)
 let v2 =
-  Session.log_artifact session ~name:"model" ~kind:`model
+  Session.log_artifact session ~name:"model" ~kind:`Model
     ~path:"model_epoch2.safetensors" ()
 in
 Printf.printf "%s %s\n" (Artifact.version v1) (Artifact.version v2)
@@ -108,9 +108,9 @@ is stored on disk.
 <!-- $MDX skip -->
 ```ocaml
 (* These share the same blob if the file content is identical. *)
-let a = Session.log_artifact session ~name:"config" ~kind:`file
+let a = Session.log_artifact session ~name:"config" ~kind:`File
   ~path:"config.yaml" () in
-let b = Session.log_artifact session ~name:"config" ~kind:`file
+let b = Session.log_artifact session ~name:"config" ~kind:`File
   ~path:"config.yaml" () in
 assert (Artifact.digest a = Artifact.digest b)
 ```
@@ -128,7 +128,7 @@ recorded as the producer:
 <!-- $MDX skip -->
 ```ocaml
 let artifact =
-  Session.log_artifact session ~name:"features" ~kind:`dataset
+  Session.log_artifact session ~name:"features" ~kind:`Dataset
     ~path:"features.csv" ()
 in
 Artifact.producer_run_id artifact  (* Some "<run_id>" *)
@@ -193,7 +193,7 @@ let store = Store.open_ () in
 let all = Store.list_artifacts store () in
 
 (* Only checkpoints. *)
-let checkpoints = Store.list_artifacts store ~kind:`checkpoint () in
+let checkpoints = Store.list_artifacts store ~kind:`Checkpoint () in
 
 (* Only artifacts produced by a specific run. *)
 let from_run = Store.list_artifacts store ~producer_run:"<RUN_ID>" () in
@@ -234,7 +234,7 @@ let () =
   @@ fun session ->
   write_file "/tmp/data.csv" "x,y\n1.0,2.0\n3.0,4.0\n";
   ignore
-    (Session.log_artifact session ~name:"training-data" ~kind:`dataset
+    (Session.log_artifact session ~name:"training-data" ~kind:`Dataset
        ~path:"/tmp/data.csv"
        ~metadata:[ ("rows", `Int 2) ]
        ~aliases:[ "latest" ] ())
@@ -257,7 +257,7 @@ let () =
 
   write_file "/tmp/model.bin" "model weights";
   ignore
-    (Session.log_artifact session ~name:"my-model" ~kind:`model
+    (Session.log_artifact session ~name:"my-model" ~kind:`Model
        ~path:"/tmp/model.bin"
        ~aliases:[ "latest" ] ())
 ```

@@ -11,16 +11,16 @@
 (** {1:types Types} *)
 
 type kind =
-  [ `dataset  (** Dataset. *)
-  | `model  (** Model weights. *)
-  | `checkpoint  (** Checkpoint. *)
-  | `file  (** Single file. *)
-  | `dir  (** Directory tree. *)
-  | `other  (** Unclassified artifact. *) ]
+  [ `Dataset  (** Dataset. *)
+  | `Model  (** Model weights. *)
+  | `Checkpoint  (** Checkpoint. *)
+  | `File  (** Single file. *)
+  | `Dir  (** Directory tree. *)
+  | `Other  (** Unclassified artifact. *) ]
 (** The type for logical artifact kinds. *)
 
 type payload =
-  [ `file  (** Single file payload. *) | `dir  (** Directory tree payload. *) ]
+  [ `File  (** Single file payload. *) | `Dir  (** Directory tree payload. *) ]
 (** The type for materialized payload kinds. *)
 
 type t

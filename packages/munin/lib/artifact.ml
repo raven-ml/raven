@@ -1,5 +1,5 @@
-type kind = [ `dataset | `model | `checkpoint | `file | `dir | `other ]
-type payload = [ `file | `dir ]
+type kind = [ `Dataset | `Model | `Checkpoint | `File | `Dir | `Other ]
+type payload = [ `File | `Dir ]
 
 type t = {
   root : string;
@@ -33,26 +33,26 @@ let path t = Filename.concat t.root t.materialized_rel_path
 let has_alias t alias = List.exists (String.equal alias) t.aliases
 
 let kind_of_string = function
-  | "dataset" -> `dataset
-  | "model" -> `model
-  | "checkpoint" -> `checkpoint
-  | "file" -> `file
-  | "dir" -> `dir
-  | _ -> `other
+  | "dataset" -> `Dataset
+  | "model" -> `Model
+  | "checkpoint" -> `Checkpoint
+  | "file" -> `File
+  | "dir" -> `Dir
+  | _ -> `Other
 
 let kind_to_string : kind -> string = function
-  | `dataset -> "dataset"
-  | `model -> "model"
-  | `checkpoint -> "checkpoint"
-  | `file -> "file"
-  | `dir -> "dir"
-  | `other -> "other"
+  | `Dataset -> "dataset"
+  | `Model -> "model"
+  | `Checkpoint -> "checkpoint"
+  | `File -> "file"
+  | `Dir -> "dir"
+  | `Other -> "other"
 
-let payload_of_string = function "dir" -> `dir | _ -> `file
+let payload_of_string = function "dir" -> `Dir | _ -> `File
 
 let payload_to_string : payload -> string = function
-  | `file -> "file"
-  | `dir -> "dir"
+  | `File -> "file"
+  | `Dir -> "dir"
 
 let versions_dir root name =
   Filename.concat

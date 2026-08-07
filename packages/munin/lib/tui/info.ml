@@ -35,7 +35,7 @@ let view ~(run : Munin.Run.t) ~(status : Theme.run_status) ~elapsed_secs
       | Some name -> [ Overview.kv_row "Name" name ]
       | None -> [])
     @ [ Overview.kv_row "ID" (Munin.Run.id run) ]
-    @ [ Overview.kv_row "Experiment" (Munin.Run.experiment_name run) ]
+    @ [ Overview.kv_row "Experiment" (Munin.Run.experiment run) ]
     @ (match Munin.Run.group run with
       | Some g -> [ Overview.kv_row "Group" g ]
       | None -> [])

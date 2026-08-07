@@ -1,4 +1,4 @@
-type status = [ `running | `finished | `failed | `killed ]
+type status = [ `Running | `Finished | `Failed | `Killed ]
 
 type entry = {
   experiment : string;
@@ -13,10 +13,10 @@ type entry = {
 let index_path root = Filename.concat root "index.json"
 
 let status_to_string = function
-  | `running -> "running"
-  | `finished -> "finished"
-  | `failed -> "failed"
-  | `killed -> "killed"
+  | `Running -> "running"
+  | `Finished -> "finished"
+  | `Failed -> "failed"
+  | `Killed -> "killed"
 
 let entry_to_json entry =
   Json_utils.json_obj
@@ -43,10 +43,10 @@ let entry_of_json json =
   | Some experiment ->
       let status : status =
         match Json_utils.json_mem "status" json |> Json_utils.json_string with
-        | Some "finished" -> `finished
-        | Some "failed" -> `failed
-        | Some "killed" -> `killed
-        | _ -> `running
+        | Some "finished" -> `Finished
+        | Some "failed" -> `Failed
+        | Some "killed" -> `Killed
+        | _ -> `Running
       in
       let tags =
         Json_utils.json_mem "tags" json |> Json_utils.json_string_list

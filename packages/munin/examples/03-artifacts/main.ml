@@ -23,12 +23,12 @@ let () =
   let data_path = Filename.concat root "measurements.csv" in
   write_file data_path "wavelength,flux\n450.0,1.23\n550.0,2.45\n650.0,1.87\n";
   let dataset =
-    Session.log_artifact session1 ~name:"measurements" ~kind:`dataset
+    Session.log_artifact session1 ~name:"measurements" ~kind:`Dataset
       ~path:data_path
       ~metadata:[ ("rows", `Int 3) ]
       ~aliases:[ "latest" ] ()
   in
-  Session.finish session1 ();
+  Session.finish session1;
   Printf.printf "produced: %s v%s (aliases: %s)\n" (Artifact.name dataset)
     (Artifact.version dataset)
     (String.concat ", " (Artifact.aliases dataset));
@@ -42,10 +42,10 @@ let () =
   let result_path = Filename.concat root "result.txt" in
   write_file result_path "peak_wavelength=550.0\npeak_flux=2.45\n";
   let result =
-    Session.log_artifact session2 ~name:"analysis-result" ~kind:`file
+    Session.log_artifact session2 ~name:"analysis-result" ~kind:`File
       ~path:result_path ~aliases:[ "latest"; "best" ] ()
   in
-  Session.finish session2 ();
+  Session.finish session2;
   Printf.printf "produced: %s v%s\n" (Artifact.name result)
     (Artifact.version result);
 

@@ -29,7 +29,7 @@ let () =
   (* ... training loop ... *)
 
   Munin_sys.stop monitor;
-  Munin.Session.finish session ()
+  Munin.Session.finish session
 ```
 
 The monitor spawns a background thread that samples system and process

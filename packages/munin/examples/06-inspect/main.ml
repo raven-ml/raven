@@ -17,7 +17,7 @@ let () =
   (* List runs, optionally filtering. *)
   let all_runs = Store.list_runs store () in
   Printf.printf "total runs: %d\n" (List.length all_runs);
-  let finished = Store.list_runs store ~status:`finished () in
+  let finished = Store.list_runs store ~status:`Finished () in
   Printf.printf "finished runs: %d\n\n" (List.length finished);
 
   (* Find the latest run and inspect it. *)
@@ -25,15 +25,15 @@ let () =
   | None -> Printf.printf "no runs found\n"
   | Some run ->
       Printf.printf "latest run: %s\n" (Run.id run);
-      Printf.printf "  experiment: %s\n" (Run.experiment_name run);
+      Printf.printf "  experiment: %s\n" (Run.experiment run);
       Printf.printf "  name: %s\n"
         (Option.value ~default:"(none)" (Run.name run));
       Printf.printf "  status: %s\n"
         (match Run.status run with
-        | `running -> "running"
-        | `finished -> "finished"
-        | `failed -> "failed"
-        | `killed -> "killed");
+        | `Running -> "running"
+        | `Finished -> "finished"
+        | `Failed -> "failed"
+        | `Killed -> "killed");
       Printf.printf "  tags: [%s]\n" (String.concat ", " (Run.tags run));
 
       (* Provenance. *)

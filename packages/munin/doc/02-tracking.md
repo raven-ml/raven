@@ -230,7 +230,7 @@ let () =
     Munin.Session.log_metric session ~step:!step "val/accuracy" acc
   done;
 
-  Munin.Session.finish session ()
+  Munin.Session.finish session
 ```
 
 ## System Monitoring

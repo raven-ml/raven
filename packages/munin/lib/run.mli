@@ -12,10 +12,10 @@
 (** {1:types Types} *)
 
 type status =
-  [ `running  (** Run is actively logging. *)
-  | `finished  (** Run completed successfully. *)
-  | `failed  (** Run terminated with an error. *)
-  | `killed  (** Run was manually terminated. *) ]
+  [ `Running  (** Run is actively logging. *)
+  | `Finished  (** Run completed successfully. *)
+  | `Failed  (** Run terminated with an error. *)
+  | `Killed  (** Run was manually terminated. *) ]
 (** The type for run status values. *)
 
 type metric = {
@@ -87,8 +87,8 @@ val id : t -> string
 val dir : t -> string
 (** [dir t] is the absolute path to the run directory. *)
 
-val experiment_name : t -> string
-(** [experiment_name t] is the containing experiment name. *)
+val experiment : t -> string
+(** [experiment t] is the containing experiment name. *)
 
 val name : t -> string option
 (** [name t] is the optional human-readable run name. *)
@@ -111,7 +111,7 @@ val status : t -> status
 (** [status t] is the current run status. *)
 
 val resumable : t -> bool
-(** [resumable t] is [true] iff [status t] is [`running]. *)
+(** [resumable t] is [true] iff [status t] is [`Running]. *)
 
 (** {1:provenance Provenance} *)
 
@@ -166,10 +166,6 @@ val media_history : t -> string -> media_entry list
     Returns the empty list if [key] has no entries. *)
 
 (** {1:relations Relations} *)
-
-val children : t -> t list
-(** [children t] is the list of child runs of [t]. Performs a filesystem scan of
-    the experiment directory. *)
 
 val input_artifacts : t -> Artifact.t list
 (** [input_artifacts t] is the list of artifacts consumed by [t]. *)

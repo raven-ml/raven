@@ -57,11 +57,11 @@ let () =
         [ `String "red"; `Float 15.1; `Float 0.92 ];
       ];
 
-  Session.finish session ();
+  Session.finish session;
 
   (* Read back media entries. *)
   let run = Session.run session in
-  Printf.printf "run: %s\n" (Run.id run);
+  Printf.printf "run: %s\n" (Session.id session);
   Printf.printf "media keys: %s\n" (String.concat ", " (Run.media_keys run));
   let entries = Run.media_history run "viz/sample" in
   Printf.printf "viz/sample: %d entries\n" (List.length entries);

@@ -31,9 +31,9 @@ let generate_id () =
   stamp ^ "_" ^ suffix
 
 let status_to_string = function
-  | `finished -> "finished"
-  | `failed -> "failed"
-  | `killed -> "killed"
+  | `Finished -> "finished"
+  | `Failed -> "failed"
+  | `Killed -> "killed"
 
 let git_output cwd args =
   let command =
@@ -145,10 +145,10 @@ let start ?root ~experiment ?name ?group ?parent ?(tags = []) ?(params = [])
   in
   write_manifest (manifest_path dir) manifest;
   Index.add root ~id
-    { experiment; name; group; parent_id; status = `running; tags; started_at };
+    { experiment; name; group; parent_id; status = `Running; tags; started_at };
   { root; experiment; id; dir; mutex = Mutex.create (); closed = false }
 
-let finish ?(status = `finished) t () =
+let finish ?(status = `Finished) t =
   with_lock t (fun () ->
       if not t.closed then (
         append_event t
@@ -167,10 +167,10 @@ let with_run ?root ~experiment ?name ?parent ?tags ?params ?notes ?capture_env f
   in
   match f session with
   | value ->
-      finish session ();
+      finish session;
       value
   | exception exn ->
-      finish ~status:`failed session ();
+      finish ~status:`Failed session;
       raise exn
 
 let resume run =
@@ -179,7 +179,7 @@ let resume run =
   let t =
     {
       root;
-      experiment = Run.experiment_name run;
+      experiment = Run.experiment run;
       id = Run.id run;
       dir = Run.dir run;
       mutex = Mutex.create ();
@@ -187,8 +187,11 @@ let resume run =
     }
   in
   append_event t (Event_log.Resumed { at = Unix.gettimeofday () });
-  Index.update_status root ~id:(Run.id run) `running;
+  Index.update_status root ~id:(Run.id run) `Running;
   t
+
+let id t = t.id
+let dir t = t.dir
 
 let run t =
   match Run.load ~root:t.root ~experiment:t.experiment ~id:t.id with
@@ -312,7 +315,7 @@ let log_artifact t ~name ~kind ~path ?(metadata = []) ?(aliases = []) () =
       if not (Sys.file_exists blob_abs_path) then
         Fs.copy_tree path blob_abs_path;
       let payload : Artifact.payload =
-        if Fs.is_directory path then `dir else `file
+        if Fs.is_directory path then `Dir else `File
       in
       let json_metadata =
         List.map (fun (k, v) -> (k, Value.to_json v)) metadata

@@ -32,11 +32,11 @@ let () =
   done;
 
   Session.set_summary session [ ("final_residual", `Float !residual) ];
-  Session.finish session ();
+  Session.finish session;
 
   (* Read back and print. *)
   let run = Session.run session in
-  Printf.printf "run: %s\n" (Run.id run);
+  Printf.printf "run: %s\n" (Session.id session);
   Printf.printf "metric keys: %s\n" (String.concat ", " (Run.metric_keys run));
 
   let defs = Run.metric_defs run in

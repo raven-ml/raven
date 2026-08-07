@@ -34,7 +34,7 @@ let () =
         error := (!error *. (1.0 -. step_size)) +. Random.float 0.01;
         if i mod 10 = 0 then Session.log_metric session ~step:i "error" !error
       done;
-      Session.finish session ())
+      Session.finish session)
     configs;
 
   (* Compare: list all runs in the group and print a results table. *)
