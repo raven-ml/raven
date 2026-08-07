@@ -94,7 +94,7 @@ higher (`` `Maximize ``) values are better. It is used by:
 
 - `munin compare` to mark the best value with `*`
 - `munin watch` TUI for "best" badges
-- `Run_monitor.best` to find the best observation
+- `Run.best` to find the best observation
 
 ### Step Metric
 

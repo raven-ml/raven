@@ -9,7 +9,6 @@ open Mosaic
 
 type model = {
   run : Munin.Run.t;
-  monitor : Munin.Run_monitor.t;
   run_status : Theme.run_status;
   metrics_state : Metrics.state;
   mode : mode;
@@ -37,28 +36,42 @@ type msg =
 
 (* Helpers *)
 
-let run_status_of_live_status :
-    Munin.Run_monitor.live_status -> Theme.run_status = function
-  | `Live -> Theme.Live
-  | `Stopped -> Theme.Stopped
-  | `Done `Finished -> Theme.Done
-  | `Done `Failed -> Theme.Failed
-  | `Done `Killed -> Theme.Killed
-  | `Done `Running -> Theme.Live
+(* How long a running run may go without logging before it reads as stalled
+   rather than live. *)
+let stale_after = 5.0
 
-let latest_step monitor =
-  let ms = Munin.Run_monitor.metrics monitor in
-  match ms with
+let live_status run =
+  match Munin.Run.status run with
+  | `Finished -> Theme.Done
+  | `Failed -> Theme.Failed
+  | `Killed -> Theme.Killed
+  | `Running ->
+      (* A run that just started has yet to log anything, so its start time is
+         the last sign of life we have. *)
+      let last =
+        Option.value
+          (Munin.Run.last_event_at run)
+          ~default:(Munin.Run.started_at run)
+      in
+      if Unix.gettimeofday () -. last > stale_after then Theme.Stopped
+      else Theme.Live
+
+let history_for_tag run tag =
+  List.map
+    (fun (m : Munin.Metric.sample) -> (m.step, m.value))
+    (Munin.Run.metric_history run tag)
+
+let latest_step run =
+  match Munin.Run.latest_metrics run with
   | [] -> None
-  | _ ->
+  | ms ->
       Some
         (List.fold_left
            (fun acc (_, (m : Munin.Metric.sample)) -> max acc m.step)
            0 ms)
 
-let latest_epoch monitor =
-  let ms = Munin.Run_monitor.metrics monitor in
-  match List.assoc_opt "epoch" ms with
+let latest_epoch run =
+  match List.assoc_opt "epoch" (Munin.Run.latest_metrics run) with
   | Some (m : Munin.Metric.sample) -> Some (int_of_float m.value)
   | None -> None
 
@@ -82,10 +95,8 @@ let metrics_width m =
   if m.show_system then int_of_float (float_of_int m.screen_width *. 0.66)
   else m.screen_width
 
-let best_value monitor tag =
-  Option.map
-    (fun (b : Munin.Metric.sample) -> b.value)
-    (Munin.Run_monitor.best monitor tag)
+let best_value run tag =
+  Option.map (fun (b : Munin.Metric.sample) -> b.value) (Munin.Run.best run tag)
 
 (* View *)
 
@@ -97,19 +108,19 @@ let divider () =
 
 let is_sys_metric tag = String.length tag > 4 && String.sub tag 0 4 = "sys/"
 
-let step_metrics monitor =
-  let defs = Munin.Run_monitor.metric_defs monitor in
+let step_metrics run =
+  let defs = Munin.Run.metric_defs run in
   let from_defs =
     List.filter_map (fun (_, (d : Munin.Metric.def)) -> d.step_metric) defs
   in
   if List.mem "epoch" from_defs then from_defs else "epoch" :: from_defs
 
-let user_metric_tags monitor =
-  let sms = step_metrics monitor in
+let user_metric_tags run =
+  let sms = step_metrics run in
   List.filter_map
     (fun (tag, _) ->
       if is_sys_metric tag || List.mem tag sms then None else Some tag)
-    (Munin.Run_monitor.metrics monitor)
+    (Munin.Run.latest_metrics run)
 
 let blocks =
   [|
@@ -160,7 +171,7 @@ let view_summary_banner m =
   let duration = Printf.sprintf "%02d:%02d:%02d" h mi s in
   let status_color = Theme.status_color m.run_status in
   let status_label = Theme.status_label m.run_status in
-  let metric_tags = user_metric_tags m.monitor in
+  let metric_tags = user_metric_tags m.run in
   let capped =
     if List.length metric_tags > 8 then
       List.filteri (fun i _ -> i < 8) metric_tags
@@ -169,10 +180,10 @@ let view_summary_banner m =
   let metric_entries =
     List.map
       (fun tag ->
-        let history = Munin.Run_monitor.history m.monitor tag in
+        let history = history_for_tag m.run tag in
         let spark = mini_sparkline history ~width:8 in
         let value =
-          match best_value m.monitor tag with
+          match best_value m.run tag with
           | Some v -> Printf.sprintf "%.4g" v
           | None -> (
               match Theme.last_value history with
@@ -216,12 +227,12 @@ let view_summary_banner m =
     @ metric_rows)
 
 let view_dashboard m =
-  let all_metrics = Munin.Run_monitor.metrics m.monitor in
-  let metric_tags = user_metric_tags m.monitor in
-  let history_for_tag tag = Munin.Run_monitor.history m.monitor tag in
-  let best_for_tag tag = best_value m.monitor tag in
+  let all_metrics = Munin.Run.latest_metrics m.run in
+  let metric_tags = user_metric_tags m.run in
+  let history_for_tag tag = history_for_tag m.run tag in
+  let best_for_tag tag = best_value m.run tag in
   let goal_for_tag tag =
-    match List.assoc_opt tag (Munin.Run_monitor.metric_defs m.monitor) with
+    match List.assoc_opt tag (Munin.Run.metric_defs m.run) with
     | Some (d : Munin.Metric.def) -> d.goal
     | None -> None
   in
@@ -254,9 +265,9 @@ let view_dashboard m =
           [
             System.view sys_values ~history_for_tag;
             Overview.view ~run:m.run ~latest_metrics:all_metrics
-              ~step_metrics:(step_metrics m.monitor)
-              ~metric_defs:(Munin.Run_monitor.metric_defs m.monitor)
-              ~best_for_tag:(best_value m.monitor);
+              ~step_metrics:(step_metrics m.run)
+              ~metric_defs:(Munin.Run.metric_defs m.run)
+              ~best_for_tag:(best_value m.run);
           ];
       ]
     else []
@@ -266,8 +277,8 @@ let view_dashboard m =
     ~size:{ width = pct 100; height = pct 100 }
     ([
        Header.view ~run_id:(Munin.Run.id m.run) ~run_name:(Munin.Run.name m.run)
-         ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.monitor)
-         ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.monitor)
+         ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.run)
+         ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.run)
          ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
      ]
     @ banner
@@ -289,17 +300,15 @@ let view_dashboard m =
 
 let view_detail m tag =
   let smooth_param = Theme.smooth_alpha m.smooth in
-  let history_for_tag t = Munin.Run_monitor.history m.monitor t in
-  let metric_def =
-    List.assoc_opt tag (Munin.Run_monitor.metric_defs m.monitor)
-  in
+  let history_for_tag tag = history_for_tag m.run tag in
+  let metric_def = List.assoc_opt tag (Munin.Run.metric_defs m.run) in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     [
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }
         [
-          Detail.view ~tag ~history_for_tag ~best:(best_value m.monitor tag)
+          Detail.view ~tag ~history_for_tag ~best:(best_value m.run tag)
             ~smooth:smooth_param ~metric_def
             ~size:{ width = pct 80; height = pct 80 };
         ];
@@ -307,22 +316,22 @@ let view_detail m tag =
     ]
 
 let view_info m =
-  let all_metrics = Munin.Run_monitor.metrics m.monitor in
+  let all_metrics = Munin.Run.latest_metrics m.run in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     [
       Header.view ~run_id:(Munin.Run.id m.run) ~run_name:(Munin.Run.name m.run)
-        ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.monitor)
-        ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.monitor)
+        ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.run)
+        ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.run)
         ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
       box ~flex_grow:1.0 ~flex_shrink:1.0 ~overflow:{ x = Hidden; y = Hidden }
         ~size:{ width = pct 100; height = auto }
         [
           Info.view ~run:m.run ~status:m.run_status
             ~elapsed_secs:(elapsed_secs m)
-            ~metric_defs:(Munin.Run_monitor.metric_defs m.monitor)
-            ~latest_metrics:all_metrics ~step_metrics:(step_metrics m.monitor)
-            ~best_for_tag:(best_value m.monitor);
+            ~metric_defs:(Munin.Run.metric_defs m.run)
+            ~latest_metrics:all_metrics ~step_metrics:(step_metrics m.run)
+            ~best_for_tag:(best_value m.run);
         ];
       Footer.view ~mode:`Info;
     ]
@@ -336,15 +345,11 @@ let view m =
 (* TEA core *)
 
 let init ~run =
-  let monitor = Munin.Run_monitor.start run in
-  Munin.Run_monitor.poll monitor;
-  let run_status =
-    run_status_of_live_status (Munin.Run_monitor.live_status monitor)
-  in
+  let run = Munin.Run.reload run in
+  let run_status = live_status run in
   let metrics_state = Metrics.initial_state () in
   ( {
       run;
-      monitor;
       run_status;
       metrics_state;
       mode = Dashboard;
@@ -359,16 +364,14 @@ let init ~run =
 let update msg m =
   match msg with
   | Tick _dt ->
-      Munin.Run_monitor.poll m.monitor;
-      let run_status =
-        run_status_of_live_status (Munin.Run_monitor.live_status m.monitor)
-      in
+      let run = Munin.Run.reload m.run in
+      let run_status = live_status run in
       let run_completed =
         m.run_completed
         || m.was_live && run_status <> Theme.Live
            && run_status <> Theme.Stopped
       in
-      ({ m with run_status; run_completed }, Cmd.none)
+      ({ m with run; run_status; run_completed }, Cmd.none)
   | Terminal_resize (width, height) ->
       let m = { m with screen_width = width } in
       let mw = metrics_width m in
@@ -376,18 +379,18 @@ let update msg m =
         Metrics.update
           (Metrics.Resize (mw, height))
           m.metrics_state
-          ~total_metrics:(List.length (user_metric_tags m.monitor))
+          ~total_metrics:(List.length (user_metric_tags m.run))
       in
       ({ m with metrics_state = metrics_state' }, Cmd.none)
   | Metrics_msg metrics_msg ->
-      let total_metrics = List.length (user_metric_tags m.monitor) in
+      let total_metrics = List.length (user_metric_tags m.run) in
       let metrics_state' =
         Metrics.update metrics_msg m.metrics_state ~total_metrics
       in
       ({ m with metrics_state = metrics_state' }, Cmd.none)
   | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
   | Open_selected -> (
-      let all_tags = user_metric_tags m.monitor in
+      let all_tags = user_metric_tags m.run in
       let total_metrics = List.length all_tags in
       match Metrics.selected_tag m.metrics_state ~total_metrics ~all_tags with
       | Some tag -> ({ m with mode = Detail tag }, Cmd.none)
@@ -402,16 +405,14 @@ let update msg m =
   | Toggle_system ->
       let m = { m with show_system = not m.show_system } in
       let mw = metrics_width m in
-      let total_metrics = List.length (user_metric_tags m.monitor) in
+      let total_metrics = List.length (user_metric_tags m.run) in
       let metrics_state' =
         Metrics.update
           (Metrics.Resize (mw, m.metrics_state.screen_height))
           m.metrics_state ~total_metrics
       in
       ({ m with metrics_state = metrics_state' }, Cmd.none)
-  | Quit ->
-      Munin.Run_monitor.close m.monitor;
-      (m, Cmd.quit)
+  | Quit -> (m, Cmd.quit)
 
 let subscriptions m =
   Sub.batch

@@ -17,6 +17,12 @@ let write_text path text =
     ~finally:(fun () -> close_out oc)
     (fun () -> output_string oc text)
 
+let read_text path =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
 let make_file root name text =
   let path = Filename.concat root name in
   write_text path text;
@@ -1083,76 +1089,115 @@ let store_tests =
     test "list_artifacts" test_store_list_artifacts;
   ]
 
-(* Run monitor *)
+(* Reloading *)
 
-let test_monitor_poll () =
+let test_reload_reads_metrics () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
+  let run = Session.run session in
   let loss = Session.metric session "train/loss" in
   Metric.log loss ~step:1 1.0;
   Metric.log loss ~step:2 0.5;
-  let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  let metrics = Run_monitor.metrics monitor in
+  let run = Run.reload run in
+  let metrics = Run.latest_metrics run in
   equal ~msg:"one key" int 1 (List.length metrics);
   let latest = List.assoc "train/loss" metrics in
   equal ~msg:"latest step" int 2 latest.step;
-  Run_monitor.close monitor;
   Session.finish session
 
-let test_monitor_incremental () =
+let test_reload_incremental () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
   let x = Session.metric session "x" in
   Metric.log x ~step:1 1.0;
   let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  equal ~msg:"one point after first poll" int 1
-    (List.length (Run_monitor.history monitor "x"));
+  equal ~msg:"one point when loaded" int 1
+    (List.length (Run.metric_history run "x"));
   Metric.log x ~step:2 2.0;
-  Run_monitor.poll monitor;
-  equal ~msg:"two points after second poll" int 2
-    (List.length (Run_monitor.history monitor "x"));
-  Run_monitor.close monitor;
+  let run = Run.reload run in
+  equal ~msg:"two points after reload" int 2
+    (List.length (Run.metric_history run "x"));
   Session.finish session
 
-let test_monitor_history_chronological () =
+let test_reload_history_chronological () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
+  let run = Session.run session in
   let x = Session.metric session "x" in
   Metric.log x ~step:1 3.0;
   Metric.log x ~step:2 1.0;
   Metric.log x ~step:3 2.0;
-  let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  let history = Run_monitor.history monitor "x" in
-  let steps = List.map fst history in
+  let run = Run.reload run in
+  let steps =
+    List.map (fun (m : Metric.sample) -> m.step) (Run.metric_history run "x")
+  in
   equal ~msg:"chronological steps" (list int) [ 1; 2; 3 ] steps;
-  Run_monitor.close monitor;
   Session.finish session
 
-let test_monitor_metric_defs () =
+let test_reload_metric_defs () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.metric session ~summary:`Min ~goal:`Minimize "loss");
   let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  let defs = Run_monitor.metric_defs monitor in
+  ignore (Session.metric session ~summary:`Min ~goal:`Minimize "loss");
+  let run = Run.reload run in
+  let defs = Run.metric_defs run in
   equal ~msg:"one def" int 1 (List.length defs);
   let def = List.assoc "loss" defs in
   is_true ~msg:"summary min" (def.summary = `Min);
-  Run_monitor.close monitor;
   Session.finish session
 
-let test_monitor_best_minimize () =
+let test_reload_after_truncation () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let x = Session.metric session "x" in
+  Metric.log x ~step:1 1.0;
+  Metric.log x ~step:2 2.0;
+  Metric.log x ~step:3 3.0;
+  Session.finish session;
+  let run = Session.run session in
+  equal ~msg:"three points" int 3 (List.length (Run.metric_history run "x"));
+  (* Keep the metric declaration and the first sample only. *)
+  let path = Filename.concat (Run.dir run) "events.jsonl" in
+  let lines = String.split_on_char '\n' (read_text path) in
+  write_text path
+    (String.concat "\n" (List.filteri (fun i _ -> i < 2) lines) ^ "\n");
+  let run = Run.reload run in
+  equal ~msg:"re-read from the start" int 1
+    (List.length (Run.metric_history run "x"))
+
+let test_last_event_at () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let x = Session.metric session "x" in
+  let run = Session.run session in
+  is_none ~msg:"no timestamped events yet" (Run.last_event_at run);
+  Metric.log x ~step:1 1.0;
+  Metric.log x ~step:2 2.0;
+  let run = Run.reload run in
+  let last = List.nth (Run.metric_history run "x") 1 in
+  is_true ~msg:"timestamp of the last sample"
+    (Run.last_event_at run = Some last.timestamp);
+  Session.finish session
+
+let test_reload_finished () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  Metric.log (Session.metric session "x") ~step:1 1.0;
+  let run = Session.run session in
+  is_true ~msg:"running during session" (Run.status run = `Running);
+  Session.finish session;
+  let run = Run.reload run in
+  is_true ~msg:"finished after reload" (Run.status run = `Finished);
+  is_some ~msg:"ended_at set" (Run.ended_at run)
+
+let test_best_minimize () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
@@ -1160,16 +1205,12 @@ let test_monitor_best_minimize () =
   Metric.log loss ~step:1 1.0;
   Metric.log loss ~step:2 0.3;
   Metric.log loss ~step:3 0.7;
-  let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  let best = Run_monitor.best monitor "loss" in
-  is_true ~msg:"best is 0.3"
-    (match best with Some m -> m.value = 0.3 | None -> false);
-  Run_monitor.close monitor;
-  Session.finish session
+  Session.finish session;
+  let best = Run.best (Session.run session) "loss" in
+  is_true ~msg:"best is 0.3 at step 2"
+    (match best with Some m -> m.value = 0.3 && m.step = 2 | None -> false)
 
-let test_monitor_best_maximize () =
+let test_best_maximize () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
@@ -1177,69 +1218,45 @@ let test_monitor_best_maximize () =
   Metric.log acc ~step:1 0.5;
   Metric.log acc ~step:2 0.9;
   Metric.log acc ~step:3 0.7;
-  let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  let best = Run_monitor.best monitor "acc" in
-  is_true ~msg:"best is 0.9"
-    (match best with Some m -> m.value = 0.9 | None -> false);
-  Run_monitor.close monitor;
-  Session.finish session
+  Session.finish session;
+  let best = Run.best (Session.run session) "acc" in
+  is_true ~msg:"best is 0.9 at step 2"
+    (match best with Some m -> m.value = 0.9 && m.step = 2 | None -> false)
 
-let test_monitor_best_loss_heuristic () =
+let test_best_without_goal () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
   let loss = Session.metric session "train/loss" in
   Metric.log loss ~step:1 1.0;
   Metric.log loss ~step:2 0.2;
-  Metric.log loss ~step:3 0.5;
-  let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  let best = Run_monitor.best monitor "train/loss" in
-  is_true ~msg:"loss heuristic picks minimum"
-    (match best with Some m -> m.value = 0.2 | None -> false);
-  Run_monitor.close monitor;
-  Session.finish session
-
-let test_monitor_live_status () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "x") ~step:1 1.0;
-  let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  is_true ~msg:"live during session" (Run_monitor.live_status monitor = `Live);
   Session.finish session;
-  Run_monitor.poll monitor;
-  is_true ~msg:"done after finish"
-    (match Run_monitor.live_status monitor with `Done _ -> true | _ -> false);
-  Run_monitor.close monitor
+  is_none ~msg:"no goal declared, no best"
+    (Run.best (Session.run session) "train/loss")
 
-let test_monitor_best_nonexistent () =
+let test_best_nonexistent () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
+  ignore (Session.metric session ~goal:`Minimize "loss");
+  Session.finish session;
   let run = Session.run session in
-  let monitor = Run_monitor.start run in
-  Run_monitor.poll monitor;
-  is_none ~msg:"no best for missing key" (Run_monitor.best monitor "nope");
-  Run_monitor.close monitor;
-  Session.finish session
+  is_none ~msg:"no best for a key without samples" (Run.best run "loss");
+  is_none ~msg:"no best for a missing key" (Run.best run "nope")
 
-let run_monitor =
+let reloading =
   [
-    test "poll reads metrics" test_monitor_poll;
-    test "incremental polling" test_monitor_incremental;
-    test "history chronological" test_monitor_history_chronological;
-    test "metric_defs" test_monitor_metric_defs;
-    test "best minimize" test_monitor_best_minimize;
-    test "best maximize" test_monitor_best_maximize;
-    test "best loss heuristic" test_monitor_best_loss_heuristic;
-    test "live_status" test_monitor_live_status;
-    test "best nonexistent key" test_monitor_best_nonexistent;
+    test "reload reads metrics" test_reload_reads_metrics;
+    test "reload is incremental" test_reload_incremental;
+    test "history chronological" test_reload_history_chronological;
+    test "metric_defs" test_reload_metric_defs;
+    test "reload after truncation" test_reload_after_truncation;
+    test "last_event_at" test_last_event_at;
+    test "reload picks up finish" test_reload_finished;
+    test "best minimize" test_best_minimize;
+    test "best maximize" test_best_maximize;
+    test "best without goal" test_best_without_goal;
+    test "best nonexistent key" test_best_nonexistent;
   ]
 
 (* Robustness *)
@@ -1667,7 +1684,7 @@ let suite =
     group "Run loading" run_loading;
     group "Artifacts" artifacts;
     group "Store" store_tests;
-    group "Run monitor" run_monitor;
+    group "Reloading" reloading;
     group "Robustness" robustness;
     group "Auto-computed summaries" auto_summaries;
     group "Grouping" grouping;

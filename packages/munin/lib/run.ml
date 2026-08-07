@@ -7,14 +7,30 @@ type media_entry = {
   path : string;
 }
 
-(* Heavy data loaded on demand from manifest + events *)
-type full = {
+(* What the run declared when it started. It never changes afterwards, and it is
+   what every fold of the event log starts from. *)
+type manifest = {
   params : (string * Value.t) list;
   provenance : Provenance.t;
   notes : string option;
+  tags : string list;
+}
+
+(* State folded from the event log. [consumed] is how many bytes of the log it
+   accounts for, which is where [reload] resumes. Histories and media are kept
+   newest first so that folding more events is a prepend; accessors reverse
+   them. [summary_writes] is what the run wrote explicitly, [summary] adds the
+   values computed from metric definitions on top. *)
+type full = {
+  manifest : manifest;
+  consumed : int;
+  status : status;
+  tags : string list;
+  notes : string option;
   ended_at : float option;
+  last_event_at : float option;
+  summary_writes : (string * Value.t) list;
   summary : (string * Value.t) list;
-  latest_metrics : (string * Metric.sample) list;
   histories : (string * Metric.sample list) list;
   metric_defs : (string * Metric.def) list;
   media : (string * media_entry list) list;
@@ -24,6 +40,7 @@ type full = {
 
 (* Header fields are always available without I/O *)
 type t = {
+  root : string;
   id : string;
   dir : string;
   experiment : string;
@@ -54,29 +71,54 @@ let resumable t = t.status = `Running
 (* Full accessors — forces lazy on first access *)
 
 let full t = Lazy.force t.full
-let params t = (full t).params
-let provenance t = (full t).provenance
+let params t = (full t).manifest.params
+let provenance t = (full t).manifest.provenance
 let notes t = (full t).notes
 let ended_at t = (full t).ended_at
+let last_event_at t = (full t).last_event_at
 let summary t = (full t).summary
-let find_param t key = List.assoc_opt key (full t).params
-let find_summary t key = List.assoc_opt key (full t).summary
-let latest_metrics t = (full t).latest_metrics
-let metric_keys t = List.map fst (full t).latest_metrics
+let find_param t key = List.assoc_opt key (params t)
+let find_summary t key = List.assoc_opt key (summary t)
+let metric_keys t = List.map fst (full t).histories
 let input_artifacts t = (full t).input_artifacts
 let output_artifacts t = (full t).output_artifacts
 let metric_defs t = (full t).metric_defs
 let media_keys t = List.map fst (full t).media
 
+let latest_metrics t =
+  List.filter_map
+    (fun (key, history) ->
+      match history with [] -> None | sample :: _ -> Some (key, sample))
+    (full t).histories
+
 let media_history t key =
   match List.assoc_opt key (full t).media with
-  | Some entries -> entries
+  | Some entries -> List.rev entries
   | None -> []
 
 let metric_history t key =
   match List.assoc_opt key (full t).histories with
-  | Some history -> history
+  | Some history -> List.rev history
   | None -> []
+
+(* A goal is what makes one observation better than another: without one there
+   is nothing to optimize, and so no best sample to report. *)
+let best t key =
+  match List.assoc_opt key (full t).metric_defs with
+  | None | Some { Metric.goal = None; _ } -> None
+  | Some { goal = Some goal; _ } -> (
+      match List.assoc_opt key (full t).histories with
+      | None | Some [] -> None
+      | Some (first :: rest) ->
+          let better (a : Metric.sample) (b : Metric.sample) =
+            match goal with
+            | `Minimize -> a.value < b.value
+            | `Maximize -> a.value > b.value
+          in
+          Some
+            (List.fold_left
+               (fun best sample -> if better sample best then sample else best)
+               first rest))
 
 (* Paths *)
 
@@ -99,12 +141,6 @@ let status_of_string = function
   | "failed" -> `Failed
   | "killed" -> `Killed
   | _ -> `Running
-
-let push_tag seen acc tag =
-  if Hashtbl.mem seen tag then acc
-  else (
-    Hashtbl.replace seen tag ();
-    tag :: acc)
 
 (* [notes] is stored inside the manifest's "provenance" object but is run
    metadata, not provenance; it is read out separately. *)
@@ -133,151 +169,257 @@ let provenance_of_json json : Provenance.t =
           Json_utils.json_string value |> Option.map (fun text -> (key, text)));
   }
 
+let manifest_of_json json =
+  {
+    params =
+      Json_utils.json_mem "params" json
+      |> Json_utils.json_assoc
+      |> List.map (fun (key, value) -> (key, Value.of_json value));
+    provenance = Json_utils.json_mem "provenance" json |> provenance_of_json;
+    notes = Json_utils.json_mem "provenance" json |> notes_of_json;
+    tags = Json_utils.json_mem "tags" json |> Json_utils.json_string_list;
+  }
+
+(* Fold state *)
+
+(* Tables while folding, sorted association lists once frozen. Lists grow at the
+   head, so they are reversed on the way out. *)
+type acc = {
+  root : string;
+  dir : string;
+  manifest : manifest;
+  tag_seen : (string, unit) Hashtbl.t;
+  histories : (string, Metric.sample list) Hashtbl.t;
+  metric_defs : (string, Metric.def) Hashtbl.t;
+  media : (string, media_entry list) Hashtbl.t;
+  summary_writes : (string, Value.t) Hashtbl.t;
+  input_seen : (string, unit) Hashtbl.t;
+  output_seen : (string, unit) Hashtbl.t;
+  mutable tags : string list;
+  mutable input_artifacts : Artifact.t list;
+  mutable output_artifacts : Artifact.t list;
+  mutable notes : string option;
+  mutable status : status;
+  mutable ended_at : float option;
+  mutable last_event_at : float option;
+}
+
 let sorted_of_hashtbl tbl =
   Hashtbl.to_seq tbl |> List.of_seq
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
-(* Materialize full data from manifest JSON + event log *)
-let materialize_full root dir manifest_json =
-  let tag_seen = Hashtbl.create 8 in
-  let initial_tags =
-    Json_utils.json_mem "tags" manifest_json
-    |> Json_utils.json_string_list
-    |> List.fold_left (push_tag tag_seen) []
-    |> List.rev
-  in
-  let params =
-    Json_utils.json_mem "params" manifest_json
-    |> Json_utils.json_assoc
-    |> List.map (fun (k, v) -> (k, Value.of_json v))
-  in
-  let summary_table = Hashtbl.create 8 in
-  let history_table = Hashtbl.create 16 in
-  let latest_table = Hashtbl.create 16 in
-  let metric_def_table = Hashtbl.create 8 in
-  let media_table = Hashtbl.create 8 in
-  let input_seen = Hashtbl.create 8 in
-  let output_seen = Hashtbl.create 8 in
-  let input_artifacts = ref [] in
-  let output_artifacts = ref [] in
-  let tags = ref initial_tags in
-  let status = ref `Running in
-  let ended_at = ref None in
-  let notes =
-    ref (Json_utils.json_mem "provenance" manifest_json |> notes_of_json)
-  in
-  List.iter
-    (function
-      | Event_log.Metric { step; timestamp; key; value } ->
-          let sample = { Metric.step; timestamp; value } in
-          let history =
-            match Hashtbl.find_opt history_table key with
-            | Some history -> history
-            | None -> []
-          in
-          Hashtbl.replace history_table key (sample :: history);
-          Hashtbl.replace latest_table key sample
-      | Define_metric { key; summary; step_metric; goal } ->
-          Hashtbl.replace metric_def_table key
-            { Metric.summary; step_metric; goal }
-      | Media { step; timestamp; key; kind; path } ->
-          let abs_path = Filename.concat dir path in
-          let entry = { step; timestamp; kind; path = abs_path } in
-          let prev =
-            match Hashtbl.find_opt media_table key with
-            | Some l -> l
-            | None -> []
-          in
-          Hashtbl.replace media_table key (entry :: prev)
-      | Summary values ->
-          List.iter
-            (fun (key, value) -> Hashtbl.replace summary_table key value)
-            values
-      | Notes value -> notes := value
-      | Tags values -> tags := List.fold_left (push_tag tag_seen) !tags values
-      | Artifact_output { name; version } ->
-          let key = name ^ ":" ^ version in
-          if not (Hashtbl.mem output_seen key) then (
-            Hashtbl.replace output_seen key ();
-            match Artifact.load ~root ~name ~version with
-            | Some artifact -> output_artifacts := artifact :: !output_artifacts
-            | None -> ())
-      | Artifact_input { name; version } ->
-          let key = name ^ ":" ^ version in
-          if not (Hashtbl.mem input_seen key) then (
-            Hashtbl.replace input_seen key ();
-            match Artifact.load ~root ~name ~version with
-            | Some artifact -> input_artifacts := artifact :: !input_artifacts
-            | None -> ())
-      | Resumed _ ->
-          ended_at := None;
-          status := `Running
-      | Finished { status = status_string; ended_at = finished_at } ->
-          status := status_of_string status_string;
-          ended_at := Some finished_at)
-    (Event_log.read (events_path dir));
-  let latest_metrics = sorted_of_hashtbl latest_table in
-  let histories =
-    sorted_of_hashtbl history_table
-    |> List.map (fun (key, history) -> (key, List.rev history))
-  in
-  let metric_defs = sorted_of_hashtbl metric_def_table in
-  (* Auto-compute summaries from Define_metric events. Explicit
-     set_summary always wins; auto-summary only fills gaps. *)
-  Hashtbl.iter
-    (fun key (def : Metric.def) ->
-      if not (Hashtbl.mem summary_table key) then
-        match Hashtbl.find_opt history_table key with
-        | None | Some [] -> ()
-        | Some history ->
-            let auto =
-              match def.summary with
-              | `Min ->
-                  Some
-                    (List.fold_left
-                       (fun acc (m : Metric.sample) -> Float.min acc m.value)
-                       Float.infinity history)
-              | `Max ->
-                  Some
-                    (List.fold_left
-                       (fun acc (m : Metric.sample) -> Float.max acc m.value)
-                       Float.neg_infinity history)
-              | `Mean ->
-                  let n = List.length history in
-                  let sum =
-                    List.fold_left
-                      (fun acc (m : Metric.sample) -> acc +. m.value)
-                      0. history
-                  in
-                  Some (sum /. Float.of_int n)
-              | `Last -> Some (List.hd history).value
-              | `None -> None
-            in
-            Option.iter
-              (fun v -> Hashtbl.replace summary_table key (`Float v))
-              auto)
-    metric_def_table;
-  let summary = sorted_of_hashtbl summary_table in
-  let media =
-    sorted_of_hashtbl media_table
-    |> List.map (fun (key, entries) -> (key, List.rev entries))
-  in
-  ( !status,
-    List.rev !tags,
+let table_of_assoc entries =
+  let tbl = Hashtbl.create (List.length entries) in
+  List.iter (fun (key, value) -> Hashtbl.replace tbl key value) entries;
+  tbl
+
+let artifact_key artifact =
+  Artifact.name artifact ^ ":" ^ Artifact.version artifact
+
+let add_tag acc tag =
+  if not (Hashtbl.mem acc.tag_seen tag) then begin
+    Hashtbl.replace acc.tag_seen tag ();
+    acc.tags <- tag :: acc.tags
+  end
+
+let empty_acc ~root ~dir manifest =
+  {
+    root;
+    dir;
+    manifest;
+    tag_seen = Hashtbl.create 8;
+    histories = Hashtbl.create 16;
+    metric_defs = Hashtbl.create 8;
+    media = Hashtbl.create 8;
+    summary_writes = Hashtbl.create 8;
+    input_seen = Hashtbl.create 8;
+    output_seen = Hashtbl.create 8;
+    tags = [];
+    input_artifacts = [];
+    output_artifacts = [];
+    notes = manifest.notes;
+    status = `Running;
+    ended_at = None;
+    last_event_at = None;
+  }
+
+(* Fold state for a log that has not been read yet. *)
+let acc_of_manifest ~root ~dir manifest =
+  let acc = empty_acc ~root ~dir manifest in
+  List.iter (add_tag acc) manifest.tags;
+  acc
+
+(* Fold state that resumes where [f] stopped. *)
+let acc_of_full ~root ~dir (f : full) =
+  let acc =
     {
-      params;
-      provenance =
-        Json_utils.json_mem "provenance" manifest_json |> provenance_of_json;
-      notes = !notes;
-      ended_at = !ended_at;
-      summary;
-      latest_metrics;
-      histories;
-      metric_defs;
-      media;
-      input_artifacts = List.rev !input_artifacts;
-      output_artifacts = List.rev !output_artifacts;
-    } )
+      (empty_acc ~root ~dir f.manifest) with
+      histories = table_of_assoc f.histories;
+      metric_defs = table_of_assoc f.metric_defs;
+      media = table_of_assoc f.media;
+      summary_writes = table_of_assoc f.summary_writes;
+      tags = List.rev f.tags;
+      input_artifacts = List.rev f.input_artifacts;
+      output_artifacts = List.rev f.output_artifacts;
+      notes = f.notes;
+      status = f.status;
+      ended_at = f.ended_at;
+      last_event_at = f.last_event_at;
+    }
+  in
+  List.iter (fun tag -> Hashtbl.replace acc.tag_seen tag ()) f.tags;
+  List.iter
+    (fun a -> Hashtbl.replace acc.input_seen (artifact_key a) ())
+    f.input_artifacts;
+  List.iter
+    (fun a -> Hashtbl.replace acc.output_seen (artifact_key a) ())
+    f.output_artifacts;
+  acc
+
+let fold_event acc = function
+  | Event_log.Metric { step; timestamp; key; value } ->
+      let history =
+        match Hashtbl.find_opt acc.histories key with
+        | Some history -> history
+        | None -> []
+      in
+      Hashtbl.replace acc.histories key
+        ({ Metric.step; timestamp; value } :: history);
+      acc.last_event_at <- Some timestamp
+  | Define_metric { key; summary; step_metric; goal } ->
+      Hashtbl.replace acc.metric_defs key { Metric.summary; step_metric; goal }
+  | Media { step; timestamp; key; kind; path } ->
+      let entry =
+        { step; timestamp; kind; path = Filename.concat acc.dir path }
+      in
+      let entries =
+        match Hashtbl.find_opt acc.media key with
+        | Some entries -> entries
+        | None -> []
+      in
+      Hashtbl.replace acc.media key (entry :: entries);
+      acc.last_event_at <- Some timestamp
+  | Summary values ->
+      List.iter
+        (fun (key, value) -> Hashtbl.replace acc.summary_writes key value)
+        values
+  | Notes value -> acc.notes <- value
+  | Tags values -> List.iter (add_tag acc) values
+  | Artifact_output { name; version } ->
+      let key = name ^ ":" ^ version in
+      if not (Hashtbl.mem acc.output_seen key) then begin
+        Hashtbl.replace acc.output_seen key ();
+        match Artifact.load ~root:acc.root ~name ~version with
+        | Some artifact ->
+            acc.output_artifacts <- artifact :: acc.output_artifacts
+        | None -> ()
+      end
+  | Artifact_input { name; version } ->
+      let key = name ^ ":" ^ version in
+      if not (Hashtbl.mem acc.input_seen key) then begin
+        Hashtbl.replace acc.input_seen key ();
+        match Artifact.load ~root:acc.root ~name ~version with
+        | Some artifact ->
+            acc.input_artifacts <- artifact :: acc.input_artifacts
+        | None -> ()
+      end
+  | Resumed _ ->
+      acc.ended_at <- None;
+      acc.status <- `Running
+  | Finished { status; ended_at } ->
+      acc.status <- status_of_string status;
+      acc.ended_at <- Some ended_at
+
+(* [history] is newest first and non-empty. *)
+let auto_summary (def : Metric.def) (history : Metric.sample list) =
+  match def.summary with
+  | `Min ->
+      Some
+        (List.fold_left
+           (fun acc (m : Metric.sample) -> Float.min acc m.value)
+           Float.infinity history)
+  | `Max ->
+      Some
+        (List.fold_left
+           (fun acc (m : Metric.sample) -> Float.max acc m.value)
+           Float.neg_infinity history)
+  | `Mean ->
+      let sum =
+        List.fold_left
+          (fun acc (m : Metric.sample) -> acc +. m.value)
+          0. history
+      in
+      Some (sum /. Float.of_int (List.length history))
+  | `Last -> Some (List.hd history).value
+  | `None -> None
+
+let freeze acc ~consumed =
+  let histories = sorted_of_hashtbl acc.histories in
+  let metric_defs = sorted_of_hashtbl acc.metric_defs in
+  let summary_writes = sorted_of_hashtbl acc.summary_writes in
+  (* Metric definitions fill in the summary entries the run did not write
+     itself. Both lists are key-sorted, so merging keeps them so. *)
+  let auto =
+    List.filter_map
+      (fun (key, def) ->
+        if List.mem_assoc key summary_writes then None
+        else
+          match Hashtbl.find_opt acc.histories key with
+          | None | Some [] -> None
+          | Some history ->
+              auto_summary def history
+              |> Option.map (fun value -> (key, `Float value)))
+      metric_defs
+  in
+  {
+    manifest = acc.manifest;
+    consumed;
+    status = acc.status;
+    tags = List.rev acc.tags;
+    notes = acc.notes;
+    ended_at = acc.ended_at;
+    last_event_at = acc.last_event_at;
+    summary_writes;
+    summary =
+      List.merge (fun (a, _) (b, _) -> String.compare a b) summary_writes auto;
+    histories;
+    metric_defs;
+    media = sorted_of_hashtbl acc.media;
+    input_artifacts = List.rev acc.input_artifacts;
+    output_artifacts = List.rev acc.output_artifacts;
+  }
+
+(* Materialize full data from manifest JSON + event log *)
+let materialize ~root ~dir manifest_json =
+  let acc = acc_of_manifest ~root ~dir (manifest_of_json manifest_json) in
+  let events, consumed = Event_log.read_from (events_path dir) ~pos:0 in
+  List.iter (fold_event acc) events;
+  freeze acc ~consumed
+
+let reload t =
+  let previous = full t in
+  let events, consumed =
+    Event_log.read_from (events_path t.dir) ~pos:previous.consumed
+  in
+  let folded =
+    if consumed = previous.consumed then previous
+    else
+      (* A log shorter than what we consumed was truncated or replaced, so the
+         read restarted at its beginning and the fold restarts too. *)
+      let acc =
+        if consumed < previous.consumed then
+          acc_of_manifest ~root:t.root ~dir:t.dir previous.manifest
+        else acc_of_full ~root:t.root ~dir:t.dir previous
+      in
+      List.iter (fold_event acc) events;
+      freeze acc ~consumed
+  in
+  {
+    t with
+    status = folded.status;
+    tags = folded.tags;
+    full = Lazy.from_val folded;
+  }
 
 (* Full eager load — reads manifest + events immediately *)
 let load ~root ~experiment ~id =
@@ -308,9 +450,10 @@ let load ~root ~experiment ~id =
             (Json_utils.json_mem "started_at" json |> Json_utils.json_number)
             ~default:0.0
         in
-        let status, tags, full_data = materialize_full root dir json in
+        let folded = materialize ~root ~dir json in
         Some
           {
+            root;
             id;
             dir;
             experiment;
@@ -318,9 +461,9 @@ let load ~root ~experiment ~id =
             group;
             parent_id;
             started_at;
-            status;
-            tags;
-            full = Lazy.from_val full_data;
+            status = folded.status;
+            tags = folded.tags;
+            full = Lazy.from_val folded;
           }
     with _ -> None
 
@@ -332,11 +475,10 @@ let of_header ~root ~id ~experiment ~name ~group ~parent_id ~status ~tags
   let full =
     lazy
       (let path = manifest_path root experiment id in
-       let json = Fs.read_file path |> Json_utils.json_of_string in
-       let _status, _tags, full_data = materialize_full root dir json in
-       full_data)
+       materialize ~root ~dir (Fs.read_file path |> Json_utils.json_of_string))
   in
   {
+    root;
     id;
     dir;
     experiment;

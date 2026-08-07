@@ -240,19 +240,32 @@ let to_json = function
 
 let encode event = Json_utils.json_to_string (to_json event)
 
-let read path =
-  if not (Sys.file_exists path) then []
+(* [read_from path ~pos] is the events written after byte [pos] of [path],
+   paired with the offset they were read up to. A log shorter than [pos] was
+   truncated or replaced, so reading restarts at its beginning. A trailing
+   fragment with no newline is an event still being written: it is neither
+   decoded nor consumed, so the next read sees it whole. *)
+let read_from path ~pos =
+  if not (Sys.file_exists path) then ([], 0)
   else
-    let ic = open_in path in
-    let rec loop acc =
-      match input_line ic with
-      | line ->
-          let acc =
-            match decode_line line with
-            | Some event -> event :: acc
-            | None -> acc
-          in
-          loop acc
-      | exception End_of_file -> List.rev acc
-    in
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () -> loop [])
+    let ic = open_in_bin path in
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () ->
+        let pos = if in_channel_length ic < pos then 0 else pos in
+        seek_in ic pos;
+        let rec loop acc consumed =
+          let start = pos_in ic in
+          match input_line ic with
+          | exception End_of_file -> (List.rev acc, consumed)
+          | line when pos_in ic = start + String.length line ->
+              (List.rev acc, consumed)
+          | line ->
+              let acc =
+                match decode_line line with
+                | Some event -> event :: acc
+                | None -> acc
+              in
+              loop acc (pos_in ic)
+        in
+        loop [] pos)

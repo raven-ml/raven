@@ -7,7 +7,8 @@
 
     Runs are the durable tracked objects of Munin. They expose immutable
     manifest data together with materialized state rebuilt from the append-only
-    event log. *)
+    event log. A run value is a snapshot of that log: {!reload} folds in
+    whatever the log has gained since. *)
 
 (** {1:types Types} *)
 
@@ -29,6 +30,15 @@ type media_entry = {
 type t
 (** The type for run handles. Obtain one from {!Store.find_run},
     {!Store.list_runs}, {!Store.latest_run}, or {!Session.run}. *)
+
+(** {1:reloading Reloading} *)
+
+val reload : t -> t
+(** [reload t] is [t] with the events appended since it was loaded folded in.
+
+    Only the new bytes of the event log are read, so following a live run costs
+    its new events rather than its whole history. A log that shrank was
+    truncated or replaced and is re-read from the start. *)
 
 (** {1:identity Identity} *)
 
@@ -60,6 +70,11 @@ val ended_at : t -> float option
 
 val status : t -> status
 (** [status t] is the current run status. *)
+
+val last_event_at : t -> float option
+(** [last_event_at t] is the timestamp of the most recent metric or media entry,
+    or [None] if [t] has logged neither. A run whose status is [`Running] but
+    whose last event is old is no longer writing. *)
 
 val resumable : t -> bool
 (** [resumable t] is [true] iff [status t] is [`Running]. *)
@@ -106,6 +121,12 @@ val metric_history : t -> string -> Metric.sample list
 (** [metric_history t key] is the full history for [key] in chronological order.
     Returns the empty list if [key] has no samples. *)
 
+val best : t -> string -> Metric.sample option
+(** [best t key] is the sample of [key] that best meets the goal declared with
+    {!Session.metric}, i.e. the smallest value under [`Minimize] and the largest
+    under [`Maximize]. Returns [None] if [key] has no samples, or if it was
+    declared without a goal: what counts as best is the run's to say. *)
+
 val metric_defs : t -> (string * Metric.def) list
 (** [metric_defs t] is the metric definitions declared via {!Session.metric},
     sorted alphabetically by key. *)
@@ -129,7 +150,6 @@ val output_artifacts : t -> Artifact.t list
 
 (**/**)
 
-val status_of_string : string -> status
 val load : root:string -> experiment:string -> id:string -> t option
 
 val list :
