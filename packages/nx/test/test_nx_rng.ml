@@ -84,6 +84,31 @@ let test_randn () =
   equal ~msg:"randn mean ~0" (float 0.05) 0. mean;
   equal ~msg:"randn std ~1" (float 0.05) 1. std
 
+(* Box-Muller fills the draw two samples at a time, so a mistake can leave the
+   second half or the odd trailing sample wrong while the first half looks
+   right. Check the halves of an odd-length draw separately. *)
+let test_randn_fills_the_whole_draw () =
+  let n = 20_001 in
+  let values = Nx.to_array (Rng.normal (Rng.key 5) float32 [| n |]) in
+  equal ~msg:"randn honours an odd length" int n (Array.length values);
+  equal ~msg:"randn draws are finite" bool true
+    (Array.for_all Float.is_finite values);
+  let moments a =
+    let n = float_of_int (Array.length a) in
+    let mean = Array.fold_left ( +. ) 0. a /. n in
+    let variance =
+      Array.fold_left (fun acc v -> acc +. ((v -. mean) ** 2.)) 0. a /. n
+    in
+    (mean, Stdlib.sqrt variance)
+  in
+  let half = n / 2 in
+  let m0, s0 = moments (Array.sub values 0 half) in
+  let m1, s1 = moments (Array.sub values half (n - half)) in
+  equal ~msg:"first half mean ~0" (float 0.05) 0. m0;
+  equal ~msg:"first half std ~1" (float 0.05) 1. s0;
+  equal ~msg:"second half mean ~0" (float 0.05) 0. m1;
+  equal ~msg:"second half std ~1" (float 0.05) 1. s1
+
 (* A draw is an exact multiple of 2^-p in [0, 1 - 2^-p], where p is the
    destination's significand width. Statistics cannot see the endpoints — the
    old closed-interval bug hit 1.0 about once in 2^24 float32 draws — so check
@@ -511,6 +536,7 @@ let () =
         [
           test "rand" test_rand;
           test "randn" test_randn;
+          test "randn_fills_the_whole_draw" test_randn_fills_the_whole_draw;
           test "keyless float sampler dtypes" test_keyless_float_sampler_dtypes;
           test "randint" test_randint;
           test "uniform_half_open" test_uniform_half_open;

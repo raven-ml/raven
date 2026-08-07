@@ -363,6 +363,11 @@ thread.
 
 ### Nx
 
+- Speed up `Nx.Rng.uniform` about 2x and `Nx.Rng.normal` about 4x (4M float32
+  draws: 550ms to 283ms and 1153ms to 301ms). A Threefry row yields two words
+  and `uniform` discarded one of them; `normal` then drew two uniforms per
+  sample and threw away the sine half of Box-Muller. Both halves are now kept.
+  Values for a fixed key change.
 - Fix `Nx.Rng.uniform` and `Nx.Rng.randint` returning `high`, which both
   document as excluded: the draw is now built from the random bits so it is
   half-open at every float dtype, rather than by float32 rounding that reached

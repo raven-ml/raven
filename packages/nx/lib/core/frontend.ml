@@ -2125,7 +2125,10 @@ module Make (B : Backend_intf.S) = struct
       let n = array_prod shape in
       if n = 0 then zeros ctx dtype shape
       else
-        let bits = shrink [| (0, n) |] (flatten (blocks "uniform" k n)) in
+        (* A Threefry row is two words, so [n] draws cost ceil (n/2) rows. *)
+        let bits =
+          shrink [| (0, n) |] (flatten (blocks "uniform" k ((n + 1) / 2)))
+        in
         let p = significand_bits dtype in
         let mask = scalar ctx Dtype.int32 (Int32.of_int ((1 lsl p) - 1)) in
         let u =
@@ -2142,25 +2145,29 @@ module Make (B : Backend_intf.S) = struct
         in
         reshape shape (cast dtype scaled)
 
-    (* Box-Muller over two uniform draws from independent subkeys:
-       z = cos(2 pi u1) * sqrt(-2 ln (max (1 - u2) 1e-7)). *)
+    (* Box-Muller: a radius from one uniform and an angle from another give two
+       independent samples, r cos(2 pi u2) and r sin(2 pi u2). Both are kept, so
+       [n] samples come from [n] uniforms — themselves ceil (n/2) Threefry rows.
+       [u1] can be exactly 0, so it is floored before the log. *)
     let normal (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
       check_shape "normal" shape;
       let ctx = B.context k in
-      if array_prod shape = 0 then zeros ctx dtype shape
+      let n = array_prod shape in
+      if n = 0 then zeros ctx dtype shape
       else
-        let ks = split k in
-        let u1 = uniform ks.(0) Dtype.float32 shape in
-        let u2 = uniform ks.(1) Dtype.float32 shape in
-        let angle = mul u1 (scalar ctx Dtype.float32 (2.0 *. Float.pi)) in
-        let u2_safe =
-          maximum (sub (ones_like u2) u2) (scalar ctx Dtype.float32 1e-7)
-        in
+        let pairs = (n + 1) / 2 in
+        let u = uniform k Dtype.float32 [| 2; pairs |] in
+        let u1 = contiguous (slice [ I 0 ] u) in
+        let u2 = contiguous (slice [ I 1 ] u) in
         let r =
-          mul (cos angle)
-            (sqrt (mul (scalar ctx Dtype.float32 (-2.0)) (log u2_safe)))
+          sqrt
+            (mul
+               (scalar ctx Dtype.float32 (-2.0))
+               (log (maximum u1 (scalar ctx Dtype.float32 1e-7))))
         in
-        cast dtype r
+        let angle = mul u2 (scalar ctx Dtype.float32 (2.0 *. Float.pi)) in
+        let z = concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ] in
+        cast dtype (reshape shape (shrink [| (0, n) |] z))
 
     let randint k ?(high = 10) shape low =
       if low >= high then
