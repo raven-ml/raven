@@ -2162,21 +2162,27 @@ module Make (B : Backend_intf.S) = struct
       let ctr = mul template (cast Dtype.int32 idx) in
       B.threefry (contiguous k) ctr
 
-    (* Significand width of [dtype] — the leading bit included — capped at the
-       24 bits a float32 carries exactly, since the draw is built there. *)
+    (* Significand width of [dtype], the leading bit included. *)
     let significand_bits : type b. (float, b) Dtype.t -> int = function
       | Float8_e5m2 -> 3
       | Float8_e4m3 -> 4
       | BFloat16 -> 8
       | Float16 -> 11
-      | Float32 | Float64 -> 24
+      | Float32 -> 24
+      | Float64 -> 53
 
-    (* Random bits -> [0, 1): keep the low [p] bits of a word and scale them by
-       2^-p, where [p] is the destination's significand width. Both steps are
-       exact, so a draw is one of the 2^p multiples of 2^-p in [0, 1 - 2^-p]:
-       the interval is half-open by construction, at every dtype, rather than by
-       a rounding accident. Scaling to [low, high) rounds, but stays below
-       [high] for any range float32 resolves. *)
+    (* Random bits -> [0, 1): keep the low [p] bits and scale them by 2^-p,
+       where [p] is the destination's significand width. Both steps are exact,
+       so a draw is one of the 2^p multiples of 2^-p in [0, 1 - 2^-p]: the
+       interval is half-open by construction, at every dtype, rather than by a
+       rounding accident.
+
+       A Threefry word carries 32 bits, so anything up to float32 takes its [p]
+       bits from one word and builds the draw in float32. float64 wants 53 and
+       so consumes a whole row, 21 bits of one word and all 32 of the next; both
+       parts and their combination are exact in float64. Widening a float32 draw
+       instead would have left a double with 24 random bits, which is what this
+       used to do. *)
     let uniform (type b) k ?(low = 0.0) ?(high = 1.0)
         (dtype : (float, b) Dtype.t) shape : (float, b) t =
       check_shape "uniform" shape;
@@ -2184,30 +2190,61 @@ module Make (B : Backend_intf.S) = struct
       let n = array_prod shape in
       if n = 0 then zeros ctx dtype shape
       else
-        (* A Threefry row is two words, so [n] draws cost ceil (n/2) rows. *)
-        let bits =
-          shrink [| (0, n) |] (flatten (blocks "uniform" k ((n + 1) / 2)))
-        in
-        let p = significand_bits dtype in
-        let mask = scalar ctx Dtype.int32 (Int32.of_int ((1 lsl p) - 1)) in
-        let u =
-          mul
-            (cast Dtype.float32 (bitwise_and bits mask))
-            (scalar ctx Dtype.float32 (Float.ldexp 1.0 (-p)))
-        in
-        let scaled =
+        let scale (type c) (compute : (float, c) Dtype.t) u =
           if low = 0.0 && high = 1.0 then u
           else
             add
-              (mul u (scalar ctx Dtype.float32 (high -. low)))
-              (scalar ctx Dtype.float32 low)
+              (mul u (scalar ctx compute (high -. low)))
+              (scalar ctx compute low)
         in
-        reshape shape (cast dtype scaled)
+        match dtype with
+        | Dtype.Float64 ->
+            (* One row per draw: [(hi, lo)] contributes 21 + 32 bits. *)
+            let words = blocks "uniform" k n in
+            let word col =
+              reshape [| n |]
+                (contiguous (shrink [| (0, n); (col, col + 1) |] words))
+            in
+            let top =
+              cast Dtype.float64
+                (bitwise_and (word 0) (scalar ctx Dtype.int32 0x1F_FFFFl))
+            in
+            let bottom =
+              cast Dtype.float64
+                (bitwise_and
+                   (cast Dtype.int64 (word 1))
+                   (scalar ctx Dtype.int64 0xFFFF_FFFFL))
+            in
+            let u =
+              mul
+                (add (mul top (scalar ctx Dtype.float64 4294967296.0)) bottom)
+                (scalar ctx Dtype.float64 (Float.ldexp 1.0 (-53)))
+            in
+            reshape shape (scale Dtype.float64 u)
+        | _ ->
+            (* A Threefry row is two words, so [n] draws cost ceil (n/2) rows. *)
+            let bits =
+              shrink [| (0, n) |] (flatten (blocks "uniform" k ((n + 1) / 2)))
+            in
+            let p = significand_bits dtype in
+            let mask = scalar ctx Dtype.int32 (Int32.of_int ((1 lsl p) - 1)) in
+            let u =
+              mul
+                (cast Dtype.float32 (bitwise_and bits mask))
+                (scalar ctx Dtype.float32 (Float.ldexp 1.0 (-p)))
+            in
+            reshape shape (cast dtype (scale Dtype.float32 u))
 
     (* Box-Muller: a radius from one uniform and an angle from another give two
        independent samples, r cos(2 pi u2) and r sin(2 pi u2). Both are kept, so
        [n] samples come from [n] uniforms — themselves ceil (n/2) Threefry rows.
-       [u1] can be exactly 0, so it is floored before the log. *)
+
+       The transform runs at the destination's precision, not always at float32:
+       building a double's normal out of float32 uniforms and widening the
+       result leaves a double carrying float32 noise, which is what this used to
+       do. [u1] can be exactly 0, so it is floored before the log — at 2^-p, the
+       smallest positive value the uniform can take, so the floor rewrites zero
+       and nothing else. *)
     let normal (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
       check_shape "normal" shape;
       let ctx = B.context k in
@@ -2215,18 +2252,24 @@ module Make (B : Backend_intf.S) = struct
       if n = 0 then zeros ctx dtype shape
       else
         let pairs = (n + 1) / 2 in
-        let u = uniform k Dtype.float32 [| 2; pairs |] in
-        let u1 = contiguous (slice [ I 0 ] u) in
-        let u2 = contiguous (slice [ I 1 ] u) in
-        let r =
-          sqrt
-            (mul
-               (scalar ctx Dtype.float32 (-2.0))
-               (log (maximum u1 (scalar ctx Dtype.float32 1e-7))))
+        let box_muller (type c) (compute : (float, c) Dtype.t) =
+          let u = uniform k compute [| 2; pairs |] in
+          let u1 = contiguous (slice [ I 0 ] u) in
+          let u2 = contiguous (slice [ I 1 ] u) in
+          let smallest =
+            scalar ctx compute (Float.ldexp 1.0 (-significand_bits compute))
+          in
+          let r =
+            sqrt
+              (mul (scalar ctx compute (-2.0)) (log (maximum u1 smallest)))
+          in
+          let angle = mul u2 (scalar ctx compute (2.0 *. Float.pi)) in
+          let z = concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ] in
+          cast dtype (reshape shape (shrink [| (0, n) |] z))
         in
-        let angle = mul u2 (scalar ctx Dtype.float32 (2.0 *. Float.pi)) in
-        let z = concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ] in
-        cast dtype (reshape shape (shrink [| (0, n) |] z))
+        match dtype with
+        | Dtype.Float64 -> box_muller Dtype.float64
+        | _ -> box_muller Dtype.float32
 
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking

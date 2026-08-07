@@ -153,7 +153,26 @@ let test_uniform_half_open () =
   equal ~msg:"float32 stays at or below 1 - 2^-24" bool true
     (hi <= 1.0 -. Float.ldexp 1.0 (-24));
   equal ~msg:"float32 approaches 1" bool true (hi >= 1.0 -. 1e-4);
-  equal ~msg:"float32 approaches 0" bool true (lo <= 1e-4)
+  equal ~msg:"float32 approaches 0" bool true (lo <= 1e-4);
+  (* float64 lands on the 2^-53 grid, not the 2^-24 one a widened float32 draw
+     would sit on. The grid check inside [scan] is the whole claim: a draw off
+     the 2^-53 grid is impossible, and one that is a multiple of 2^-24 as well
+     would betray a float32 draw in disguise — so also count how many draws are
+     multiples of 2^-24, which should be about n * 2^-29, i.e. none. *)
+  let hi, lo = scan "float64" float64 53 200_000 in
+  equal ~msg:"float64 stays at or below 1 - 2^-53" bool true
+    (hi <= 1.0 -. Float.ldexp 1.0 (-53));
+  equal ~msg:"float64 approaches 1" bool true (hi >= 1.0 -. 1e-4);
+  equal ~msg:"float64 approaches 0" bool true (lo <= 1e-4);
+  let coarse = Float.ldexp 1.0 (-24) in
+  let on_float32_grid =
+    Nx.to_array (Rng.uniform (Rng.key 4242) float64 [| 200_000 |])
+    |> Array.to_list
+    |> List.filter (fun v -> Float.is_integer (v /. coarse))
+    |> List.length
+  in
+  equal ~msg:"float64 draws do not sit on the float32 grid" int 0
+    on_float32_grid
 
 let test_keyless_float_sampler_dtypes () =
   let check (type b) name (dt : (float, b) Nx.dtype) =

@@ -443,6 +443,12 @@ thread.
 
 ### Nx
 
+- float64 draws carry 53 random bits instead of 24. `uniform` built every draw
+  in float32 and widened it, and `normal` ran the whole Box-Muller transform in
+  float32, so a float64 sample was a double holding float32 noise — 2^24
+  distinct values instead of 2^53. This matters most to `Norn`, whose HMC and
+  NUTS samplers draw momenta with `randn f64` and accept with `rand f64`.
+  float64 streams therefore change; narrower dtypes are unaffected.
 - Add `Rng.fold_in_tensor`, deriving a subkey from a value known only at run
   time — a step counter carried through a compiled loop, a device index.
   `Rng.fold_in` takes a host `int`, so under `Rune.jit` it freezes whatever the
