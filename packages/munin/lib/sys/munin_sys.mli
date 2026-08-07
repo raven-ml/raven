@@ -5,20 +5,30 @@
 
 (** System monitoring.
 
-    Provides stateless, poll-based system metrics sampling and background
-    session monitoring. Each module samples instantaneous or cumulative values
-    from the operating system. CPU, network, and disk I/O statistics are
-    cumulative since boot and require two samples to compute usage percentages;
-    memory statistics are instantaneous.
+    {!Stat} samples operating-system statistics on demand. {!start} runs those
+    samplers on a background thread and logs the results to a {!Munin.Session}.
+
+    This library owns the [sys/] metric-key prefix: every metric it logs is
+    named [sys/...]. Keep your own metric keys out of that prefix.
 
     {1:platform Platform support}
 
     Supported platforms: Linux and macOS. Platform-specific behavior is
     documented per module. Some metrics have limited availability on certain
     platforms (e.g., macOS CPU counters populate only user/nice/system/idle
-    fields).
+    fields). *)
 
-    {1:background Background monitoring}
+(** {1:sampling Sampling} *)
+
+module Stat : module type of Sysstat
+(** Stateless, poll-based sampling of operating-system statistics.
+
+    Each module samples instantaneous or cumulative values. CPU, network, and
+    disk I/O statistics are cumulative since boot and require two samples to
+    compute usage percentages; memory statistics are instantaneous. The caller
+    manages state and sampling intervals. *)
+
+(** {1:monitor Background monitoring}
 
     {!start} spawns a background thread that periodically samples CPU, memory,
     and process statistics and logs them as scalar metrics via {!Munin.Session}.
@@ -40,16 +50,11 @@
     - [sys/disk_write_mbs] — disk write rate in MB/s
     - [sys/disk_util_pct] — disk utilization percentage *)
 
-include module type of Sysstat
-(** @inline *)
-
-(** {1 Background monitoring} *)
-
 type t
 (** The type for background monitors. *)
 
-val start : Munin.Session.t -> ?interval:float -> unit -> t
-(** [start session ~interval ()] begins periodic system monitoring.
+val start : ?interval:float -> Munin.Session.t -> t
+(** [start session] begins periodic system monitoring of [session].
 
     All [sys/] metrics are defined with [~summary:`Last] so the final sampled
     value appears in run summaries.

@@ -24,7 +24,7 @@ let () =
   let session =
     Munin.Session.start ~experiment:"train" ~name:"resnet-50" ()
   in
-  let monitor = Munin_sys.start session () in
+  let monitor = Munin_sys.start session in
 
   (* ... training loop ... *)
 
@@ -37,11 +37,11 @@ statistics at a fixed interval and logs them as scalar metrics.
 
 ### Configuring the interval
 
-The default sampling interval is 15 seconds. Override it with `~interval`:
+The default sampling interval is 2 seconds. Override it with `~interval`:
 
 <!-- $MDX skip -->
 ```ocaml
-let monitor = Munin_sys.start session ~interval:5.0 ()
+let monitor = Munin_sys.start ~interval:5.0 session
 ```
 
 The first sample is taken after one interval elapses.
@@ -85,20 +85,20 @@ does not use `munin.sys`, the system panel shows zeroes.
 
 Toggle the panel with `[` or `]` in the dashboard.
 
-## Sysstat module
+## Stat module
 
-The `Munin_sys` module re-exports the `Sysstat` interface, giving direct access
-to stateless, poll-based sampling functions. These are useful for custom
-monitoring outside the background thread.
+`Munin_sys.Stat` exposes the stateless, poll-based sampling functions the
+monitor is built on. These are useful for custom monitoring outside the
+background thread.
 
 ### Cpu
 
 <!-- $MDX skip -->
 ```ocaml
-let prev = Munin_sys.Cpu.sample () in
+let prev = Munin_sys.Stat.Cpu.sample () in
 (* ... wait ... *)
-let next = Munin_sys.Cpu.sample () in
-let stats = Munin_sys.Cpu.compute ~prev ~next in
+let next = Munin_sys.Stat.Cpu.sample () in
+let stats = Munin_sys.Stat.Cpu.compute ~prev ~next in
 Printf.printf "User: %.1f%%  System: %.1f%%\n" stats.user stats.system
 ```
 
@@ -108,7 +108,7 @@ Printf.printf "User: %.1f%%  System: %.1f%%\n" stats.user stats.system
 
 <!-- $MDX skip -->
 ```ocaml
-let mem = Munin_sys.Mem.sample () in
+let mem = Munin_sys.Stat.Mem.sample () in
 let used_gb = Int64.to_float mem.used /. 1_073_741_824. in
 Printf.printf "Memory: %.1f GB used / %.1f GB total\n"
   used_gb (Int64.to_float mem.total /. 1_073_741_824.)
@@ -118,10 +118,10 @@ Printf.printf "Memory: %.1f GB used / %.1f GB total\n"
 
 <!-- $MDX skip -->
 ```ocaml
-let prev = Munin_sys.Net.sample () in
+let prev = Munin_sys.Stat.Net.sample () in
 (* ... wait ... *)
-let next = Munin_sys.Net.sample () in
-let stats = Munin_sys.Net.compute ~prev ~next ~dt:1.0 in
+let next = Munin_sys.Stat.Net.sample () in
+let stats = Munin_sys.Stat.Net.compute ~prev ~next ~dt:1.0 in
 Printf.printf "Rx: %.0f B/s  Tx: %.0f B/s\n"
   stats.rx_bytes_per_sec stats.tx_bytes_per_sec
 ```
@@ -130,10 +130,10 @@ Printf.printf "Rx: %.0f B/s  Tx: %.0f B/s\n"
 
 <!-- $MDX skip -->
 ```ocaml
-let prev = Munin_sys.Disk_io.sample () in
+let prev = Munin_sys.Stat.Disk_io.sample () in
 (* ... wait ... *)
-let next = Munin_sys.Disk_io.sample () in
-let stats = Munin_sys.Disk_io.compute ~prev ~next ~dt:1.0 in
+let next = Munin_sys.Stat.Disk_io.sample () in
+let stats = Munin_sys.Stat.Disk_io.compute ~prev ~next ~dt:1.0 in
 Printf.printf "Read: %.0f B/s  Write: %.0f B/s  Util: %.1f%%\n"
   stats.read_bytes_per_sec stats.write_bytes_per_sec
   stats.utilization_percent
@@ -143,12 +143,12 @@ Printf.printf "Read: %.0f B/s  Write: %.0f B/s  Util: %.1f%%\n"
 
 <!-- $MDX skip -->
 ```ocaml
-let fs = Munin_sys.Fs.sample () in
+let fs = Munin_sys.Stat.Fs.sample () in
 let used_pct =
   Int64.to_float fs.used_bytes /. Int64.to_float fs.total_bytes *. 100.
 in
 Printf.printf "Disk: %.1f%% used\n" used_pct;
-List.iter (fun (p : Munin_sys.Fs.partition) ->
+List.iter (fun (p : Munin_sys.Stat.Fs.partition) ->
   Printf.printf "  %s: %Ld / %Ld bytes\n"
     p.mount_point p.used_bytes p.total_bytes
 ) fs.partitions
@@ -160,10 +160,12 @@ Current process stats:
 
 <!-- $MDX skip -->
 ```ocaml
-let prev = Munin_sys.Proc.Self.sample () in
+let prev = Munin_sys.Stat.Proc.Self.sample () in
 (* ... wait ... *)
-let next = Munin_sys.Proc.Self.sample () in
-let stats = Munin_sys.Proc.Self.compute ~prev ~next ~dt:1.0 ~num_cores:None in
+let next = Munin_sys.Stat.Proc.Self.sample () in
+let stats =
+  Munin_sys.Stat.Proc.Self.compute ~prev ~next ~dt:1.0 ~num_cores:None
+in
 Printf.printf "CPU: %.1f%%  RSS: %Ld bytes\n" stats.cpu_percent stats.rss_bytes
 ```
 
@@ -171,11 +173,11 @@ Process table (all visible processes):
 
 <!-- $MDX skip -->
 ```ocaml
-let prev = Munin_sys.Proc.Table.sample () in
+let prev = Munin_sys.Stat.Proc.Table.sample () in
 (* ... wait ... *)
-let next = Munin_sys.Proc.Table.sample () in
-let stats = Munin_sys.Proc.Table.compute ~prev ~next ~dt:1.0 in
-List.iter (fun (p : Munin_sys.Proc.Table.stats) ->
+let next = Munin_sys.Stat.Proc.Table.sample () in
+let stats = Munin_sys.Stat.Proc.Table.compute ~prev ~next ~dt:1.0 in
+List.iter (fun (p : Munin_sys.Stat.Proc.Table.stats) ->
   Printf.printf "%d  %-15s  CPU: %.1f%%  Mem: %.1f%%\n"
     p.pid p.name p.cpu_percent p.mem_percent
 ) (List.sort (fun a b -> compare b.cpu_percent a.cpu_percent) stats)
@@ -185,7 +187,7 @@ List.iter (fun (p : Munin_sys.Proc.Table.stats) ->
 
 <!-- $MDX skip -->
 ```ocaml
-let (l1, l5, l15) = Munin_sys.loadavg () in
+let (l1, l5, l15) = Munin_sys.Stat.loadavg () in
 Printf.printf "Load: %.2f %.2f %.2f\n" l1 l5 l15;
-Printf.printf "Uptime: %Ld seconds\n" (Munin_sys.uptime ())
+Printf.printf "Uptime: %Ld seconds\n" (Munin_sys.Stat.uptime ())
 ```

@@ -1633,7 +1633,7 @@ let test_system_monitor_logs_metrics () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start session ~interval:0.1 () in
+  let monitor = Munin_sys.start ~interval:0.1 session in
   Thread.delay 0.35;
   Munin_sys.stop monitor;
   Session.finish session;
@@ -1647,7 +1647,7 @@ let test_system_monitor_defines_metrics () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start session ~interval:100.0 () in
+  let monitor = Munin_sys.start ~interval:100.0 session in
   Munin_sys.stop monitor;
   Session.finish session;
   let run = Session.run session in
@@ -1665,7 +1665,7 @@ let test_system_monitor_stop_idempotent () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start session ~interval:100.0 () in
+  let monitor = Munin_sys.start ~interval:100.0 session in
   Munin_sys.stop monitor;
   Munin_sys.stop monitor;
   Session.finish session

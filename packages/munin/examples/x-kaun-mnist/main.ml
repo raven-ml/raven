@@ -84,7 +84,7 @@ let () =
     Munin.Session.metric session ~goal:`Maximize "val/accuracy"
   in
   let epoch_metric = Munin.Session.metric session "epoch" in
-  let sysmon = Munin_sys.start session () in
+  let sysmon = Munin_sys.start session in
 
   Printf.printf "run: %s\n%!" (Munin.Session.id session);
 

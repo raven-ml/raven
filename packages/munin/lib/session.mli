@@ -88,6 +88,9 @@ val metric :
     that logs it, with {!Metric.log}. Declaring is the only way to name a
     metric, so a key is spelled exactly once.
 
+    Keys are hierarchical, [/]-delimited like media keys, and renderers group on
+    that hierarchy: ["train/loss"] and ["train/acc"] appear together.
+
     - [summary] controls how the run summary value is computed from the metric's
       history: [`Min] (best for loss), [`Max] (best for accuracy), [`Mean],
       [`Last], or [`None] for no auto-summary. Defaults to the mode [goal]

@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 open Munin
-include Sysstat
+module Stat = Sysstat
 
 type t = { stop : bool Atomic.t; thread : Thread.t }
 
-let start session ?(interval = 2.0) () =
+let start ?(interval = 2.0) session =
   let cpu_user = Session.metric session "sys/cpu_user" in
   let cpu_system = Session.metric session "sys/cpu_system" in
   let mem_used_pct = Session.metric session "sys/mem_used_pct" in

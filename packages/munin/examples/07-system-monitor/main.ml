@@ -33,7 +33,7 @@ let () =
   in
 
   (* Start system monitoring with a short interval for this demo. *)
-  let monitor = Munin_sys.start session ~interval:0.5 () in
+  let monitor = Munin_sys.start ~interval:0.5 session in
 
   (* Run the computation, logging progress. *)
   let primes_found = Session.metric session "primes_found" in

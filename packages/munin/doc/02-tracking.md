@@ -249,11 +249,11 @@ let () =
 ## System Monitoring
 
 `Munin_sys.start` spawns a background thread that samples CPU and
-memory usage every 15 seconds (configurable via `~interval`):
+memory usage every 2 seconds (configurable via `~interval`):
 
 <!-- $MDX skip -->
 ```ocaml
-let sysmon = Munin_sys.start session () in
+let sysmon = Munin_sys.start session in
 (* ... training ... *)
 Munin_sys.stop sysmon
 ```

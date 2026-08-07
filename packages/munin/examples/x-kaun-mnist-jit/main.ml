@@ -188,7 +188,7 @@ let () =
   in
   let step_ms = Munin.Session.metric session "perf/step_ms" in
   let epoch_metric = Munin.Session.metric session "epoch" in
-  let sysmon = Munin_sys.start session () in
+  let sysmon = Munin_sys.start session in
 
   Printf.printf "run: %s  device: %s  params: %d\n%!" (Munin.Session.id session)
     !device n_params;
