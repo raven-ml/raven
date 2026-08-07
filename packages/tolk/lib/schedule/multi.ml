@@ -73,7 +73,12 @@ let shard shape ndev src axis =
   if shape = [] then src (* scalars broadcast, no sharding needed *)
   else
   let dim = List.nth shape axis in
-  if dim mod ndev <> 0 then failwith "multi axis uneven";
+  (* A size-one axis is a broadcast axis: the operand is the same on every
+     device, so it stays whole rather than being split. Splitting it would
+     ask each device for a fraction of one element. *)
+  if dim = 1 then src
+  else
+  let () = if dim mod ndev <> 0 then failwith "multi axis uneven" in
   let sz = dim / ndev in
   let dnum =
     U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
