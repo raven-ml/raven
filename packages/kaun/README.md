@@ -181,8 +181,11 @@ weights, and generates text.
 
 ## Scope and Limitations
 
-- Everything runs eagerly on CPU through [Nx](../nx/); there is no GPU
-  backend or JIT yet.
+- Eager execution runs on CPU through [Nx](../nx/). For GPU, compile a
+  step with [`Rune.jit`](../rune/) and pass `~device:"METAL"` or
+  `~device:"CUDA"`; the `04-gpt2` example does this behind a `--device`
+  flag. Note that `jit` unrolls `Rune.scan`, so a recurrence's compile
+  time grows with its sequence length.
 - Layer coverage is deliberately small: no recurrent layers, and
   `Attention` has no rotary embeddings or KV cache (write them from the
   `scaled_dot_product_attention` core when needed). `Conv` is
