@@ -414,6 +414,43 @@ let test_permutation_is_a_permutation () =
   equal ~msg:"permutation hits every index exactly once" bool true
     (Array.for_all Fun.id seen)
 
+(* The sort keys are assembled from two Threefry words by masking and shifting,
+   which is easy to get subtly wrong — a bad mask biases the high word, and
+   every draw then sorts nearly by its low word alone. Check the ordering is
+   uniform: over many keys each element must reach each position about equally
+   often. A skewed key construction shows up here as a heavy diagonal.
+
+   (This does not test the tie bias the 64-bit keys were introduced for. That
+   one is not observable at any feasible sample size: it shifts P(i before j)
+   by 2^-24, which needs ~1e16 trials to see. The argument for it is the
+   collision count, in the comment on [permutation].) *)
+let test_permutation_positions_are_uniform () =
+  let n = 8 and trials = 20_000 in
+  let counts = Array.make_matrix n n 0 in
+  for t = 0 to trials - 1 do
+    let p = Nx.to_array (Rng.permutation (Rng.key t) n) in
+    Array.iteri (fun pos v ->
+        let v = Int32.to_int v in
+        counts.(pos).(v) <- counts.(pos).(v) + 1)
+      p
+  done;
+  let expected = float_of_int trials /. float_of_int n in
+  (* Binomial standard deviation, times five. *)
+  let tol =
+    5.0
+    *. Stdlib.sqrt
+         (expected *. (1.0 -. (1.0 /. float_of_int n)))
+  in
+  Array.iteri
+    (fun pos row ->
+      Array.iteri
+        (fun v c ->
+          equal
+            ~msg:(Printf.sprintf "element %d reaches position %d evenly" v pos)
+            (float tol) expected (float_of_int c))
+        row)
+    counts
+
 let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
   (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
@@ -645,6 +682,8 @@ let () =
             test_truncated_normal_handles_narrow_bounds;
           test "keyed samplers are pure" test_keyed_samplers_are_pure;
           test "permutation is a permutation" test_permutation_is_a_permutation;
+          test "permutation positions are uniform"
+            test_permutation_positions_are_uniform;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;

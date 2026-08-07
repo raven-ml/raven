@@ -438,6 +438,10 @@ thread.
 
 ### Nx
 
+- `permutation` and `shuffle` order 64-bit random sort keys instead of a
+  24-bit uniform draw. A uniform carries at most 24 significant bits, so at
+  60,000 elements — one MNIST epoch through `Kaun.Data` — about 107 pairs
+  collided and `argsort` resolved every one of them towards the input order.
 - Unscoped draws (`Nx.rand` and friends outside `Rng.run`/`Rng.with_key`) are
   seeded from system entropy and so differ from run to run, as the docs always
   claimed. They came from OCaml's default `Random` state, which is seeded

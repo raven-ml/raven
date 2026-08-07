@@ -2286,9 +2286,29 @@ module Make (B : Backend_intf.S) = struct
       in
       cast dtype (mul (scalar ctx Dtype.float32 (Float.sqrt 2.0)) (erfinv u))
 
+    (* Order [n] random sort keys. The keys are 64 bits wide, built from a
+       Threefry row per element, rather than a [uniform] draw: a uniform carries
+       at most 24 significant bits, and at [n = 60_000] — one MNIST epoch — that
+       is about 107 expected collisions, each of which [argsort] resolves
+       towards the input order. Sixty-four bits put the expected collision count
+       at [3e-8] for a million elements. Any bijection of the random bits keeps
+       the ordering uniform, so the arithmetic below is free to wrap. *)
     let permutation k n =
       if n <= 0 then invalid_arg "Nx.Rng.permutation: n must be positive";
-      argsort (uniform k Dtype.float32 [| n |]) ~axis:0 ~descending:false
+      let ctx = B.context k in
+      let words = blocks "permutation" k n in
+      let word col =
+        cast Dtype.int64
+          (reshape [| n |] (contiguous (shrink [| (0, n); (col, col + 1) |] words)))
+      in
+      let low_32 = scalar ctx Dtype.int64 0xFFFF_FFFFL in
+      let sort_key =
+        add
+          (mul (bitwise_and (word 0) low_32)
+             (scalar ctx Dtype.int64 0x1_0000_0000L))
+          (bitwise_and (word 1) low_32)
+      in
+      argsort sort_key ~axis:0 ~descending:false
 
     let shuffle k x =
       let s = shape x in
