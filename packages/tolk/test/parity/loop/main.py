@@ -15,7 +15,7 @@ def kernel():
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     ten = UOp.const(dtypes.int, 10)
-    ridx = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.LOOP))
+    ridx = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.WEAK))
     idx_ld = a.index(ridx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
     idx_st = a.index(ridx)

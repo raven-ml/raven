@@ -16,8 +16,8 @@ def kernel():
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     ten = UOp.const(dtypes.int, 10)
     five = UOp.const(dtypes.int, 5)
-    ridx0 = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.LOOP))
-    ridx1 = UOp(Ops.RANGE, dtypes.int, (five,), (1, AxisType.LOOP))
+    ridx0 = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.WEAK))
+    ridx1 = UOp(Ops.RANGE, dtypes.int, (five,), (1, AxisType.WEAK))
     combined = ridx0 + ridx1
     idx_ld = a.index(combined)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))

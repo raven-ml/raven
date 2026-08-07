@@ -1,8 +1,13 @@
 # TODO
 
-Known gaps, deferred parity items, and follow-ups from the 2026-07 parity
-campaign (reference: `_tinygrad` @ 7eb197b1b). Maintainer notes — reference
+Known gaps, deferred parity items, and follow-ups. Maintainer notes — reference
 anchors point at the tinygrad clone.
+
+Two clones are live during the pin migration: `_tinygrad_next` @ `baa614806` is
+the pin `lib/` is being ported to, and `_tinygrad` @ `7eb197b1b` is the pin the
+committed `.expected` corpus was generated from. A byte-diff against the wrong
+one reads convergence as divergence — see "Rendered-output movement pending
+regeneration" below for what is expected to be red until wave 9 regenerates.
 
 ## Open bugs
 
@@ -11,16 +16,109 @@ anchors point at the tinygrad clone.
   fail in the coalescer when the same kernel ASTs are lowered through the CUDA
   renderer. Not yet minimised.
 
-  The scalar-bufferize entry that used to sit above this one is **fixed**: the
-  apply-rangeify pass was copying the realize and range maps onto the nodes it
-  rebuilt, and hash-consing collapses nodes that differed only in the movement
-  ops rangeify removes — so a rank-2 value's ranges reached a rank-0 rebuild
-  and its consumer indexed a STAGE with too few indices. The maps are now
-  keyed on the walked graph only, as in the reference. Reproducer for the
-  future: the gpt2 float16 scaled step at `VOCAB=1009 EMBD=64 LAYER=1 HEAD=4
-  INNER=256 BS=2 SEQ=8`, which used to die in the coalescer and now trains.
+- **The CUDA WMMA primitive renders with scalar operands.** Every
+  `__device__ __WMMA_*` prototype comes out as
+  `float __WMMA_8_16_16_half_float(half a, half b, float c)` with empty asm
+  operand lists (`"{%0}, {},"` / `: );`) instead of the reference's
+  `float4 __WMMA_8_16_16_half_float(half8 a, half4 b, float4 c)`. The kernel
+  body is byte-identical either way — it calls `make_half8(...)`/`make_half4(...)`
+  correctly — so only the emitted primitive is wrong, and it is uncompilable.
 
-## Deferred parity divergences (each with a known blocker)
+  `cstyle.ml`'s `cuda_wmma_helpers` reconstructs the three operand widths from
+  `info.tc_upcast_axes` (`| None -> ([], [], [])`, so `axis_product` is 1). But
+  `expand_wmma` (`codegen/codegen_lower.ml:156`) clears that slot to `None` as
+  its "already expanded" marker, so by render time it is *always* `None`. The
+  reference reads the widths off the node instead —
+  `wmma_args` is `tuple(uop.src[i].shape[-1] for i in range(3))`
+  (`renderer/cstyle.py:113`). Fix at that owner: take the widths from the WMMA
+  node's own three sources, and drop `tc_upcast_axes` from the `dedup_by_key`
+  (it is a constant `None` there, so it deduplicates nothing). `device.ml:575`
+  also mixes the always-`None` field into a key.
+
+  Introduced by the `wmma_info` 5-tuple rework. Metal is unaffected because
+  `metal_wmma_helpers` hardcodes `~sz:2` rather than reconstructing. This is a
+  fifth instance of the reconstructed-value pattern under "Design debt".
+
+  *What catches it*: `test/parity/tc_matmul_32` (new, see below) and the three
+  `tc_matmul_{f16,bf16,fp8}` cases. `tc_matmul_32`'s `stage7_cuda` disagrees on
+  exactly this and nothing else.
+
+## Deferred parity divergences — blocked
+
+Each of these depends on something that does not exist yet. The blocker is
+named; do not pick one up before it lands.
+
+- **Custom-kernel inputs are not force-realized** (`470c032a5`, `f253c4469`).
+  Upstream's `realize_custom_kernel_srcs` realizes the arguments of a CALL
+  whose body is a SINK or PROGRAM and marks them non-removable. tolk has no
+  entry point that builds such a CALL in a tensor graph (no `custom_kernel`),
+  so the rule and the `non_removable` set it feeds have no consumer.
+
+  **Blocker**: the `custom_kernel` feature. Port both with it, not before.
+
+- **The reference's UNSHARD, COPY and CALL spec rules are not in
+  `lib/uop/spec.ml` yet.** `Ops.Unshard` is named but `Uop.unshard` still
+  builds a single-axis `Arg.Int`, so the reference's
+  `len(src) == 1+len(arg)` rule has nothing to check; COPY keeps
+  `allow_any_len` until copies leave rangeify (`dcad11941`); and the
+  address-valued `CALL` rule needs call-inside-C (`6e979b879`).
+
+  **Blocker**: the sorted-axis-tuple rework for UNSHARD, the COPY move out of
+  rangeify, and call-inside-C respectively. A spec that admits a shape nothing
+  builds proves nothing — port each rule with its owning change.
+
+  (The 5-tuple WMMA arg check is **done**: `spec.ml`'s
+  `op ~src:[any; any; any] Ops.Wmma =?> Option.is_some (Uop.as_wmma u)` is the
+  typed equivalent of the reference's `len(x.arg) == 5`.)
+
+- **BITCAST/COPY fold extension** (callify): blocked on the same tag machinery
+  as the bare-view aliasing deferral; the COPY arm additionally needs the
+  disk-copy push rules tolk does not port.
+
+- **Host I/O via allocator bridge** (`frontend/run.ml`): upload/download use
+  `Buffer.copyin`/`as_bytes` directly because tolk has no host pseudo-device
+  to route a `copy_from` through (reference: `device.py:113-115` seeds via a
+  PYTHON-device buffer).
+
+  **Blocker**: a host pseudo-device. Converges to `copy_from` if one lands.
+
+- **`pm_device_to_var` is not in `codegen/gpudims.ml`** (`7d4892629`). The
+  reference lowers an `AxisType.DEVICE` range to the `_device_num` variable at
+  the end of `pm_add_gpudims`, and drops that range from the `END`s that closed
+  it. `Axis_type.Device` and `Ops.Unshard` both exist now, but nothing
+  constructs a DEVICE range, so there is nothing to lower.
+
+  **Blocker**: the MULTI → UNSHARD rework, which is what starts building DEVICE
+  ranges. Lands with it, together with the matching DEVICE guards in
+  `codegen/simplify.ml`'s `mark_range_mod` and `opt/postrange.ml`'s `rngs`.
+
+  *What catches a bad port*: `test/unit/engine/test_multi.ml` and the twelve
+  `test/parity/multi_*` cases, which dump both the scheduled graph (stage 5)
+  and the rendered source (stage 7) — a DEVICE range that reaches the opt axes
+  or fails to become `_device_num` shows up in both.
+
+- **`multi_pm` does not run at the head of `full_rewrite_to_sink`.** The
+  reference resolves in-kernel shards (register fragments) during codegen, not
+  only in the scheduler. Tolk's `multi_pm` needs scheduler-supplied shape and
+  device callbacks and there is no in-kernel `Ops.Multi` to resolve, so the
+  pass would be a no-op traversal.
+
+  **Blocker**: UNSHARD and `alloc_fragment`. *What catches a bad port*:
+  **nothing today** — with no in-kernel shard to resolve, adding the pass is
+  unobservable either way. It becomes testable only once `alloc_fragment` can
+  put a shard inside a kernel; that commit needs the test.
+
+- **Negative slice bounds against a symbolic size** (`mixin/movement.py`). The
+  reference resolves `start`/`stop` against a possibly symbolic `size` before
+  deciding whether the slice is fully concrete. `Movement.parsed` is built from
+  `Tensor.shape`, which raises on a symbolic dimension, so tolk cannot reach
+  the case at all.
+
+  **Blocker**: symbolic-shape `getitem`.
+
+## Deferred parity divergences — not started
+
+Nothing external blocks these; each could be picked up today.
 
 - **COPY still takes part in rangeify** (`f65001e29`, `dcad11941`). Upstream
   converts every COPY to a BUFFER+STORE before rangeify (`pm_copy_to_store`),
@@ -30,64 +128,29 @@ anchors point at the tinygrad clone.
   `copy_kernel_to_copy_uop`, `simplify_copy_kernel`) with
   `assert_all_same_devices` replacing the device check inside `split_store`.
 
-  **Blocker**: the second half lands in `lib/engine/realize.ml` (copy
-  detection) and needs `pm_simplify_ranges`/`pm_flatten_range` exported from
-  `lib/codegen/simplify.ml` — neither is in this wave's ownership, and both
-  were being rewritten concurrently. It also moves every rangeify golden, so
-  it wants to land in one commit with a golden regeneration.
+  The old blocker is gone: `Simplify.simplify_ranges` and
+  `Simplify.flatten_range` are both exported from `lib/codegen/simplify.mli`
+  now. What remains is sequencing — the second half lands in
+  `lib/engine/realize.ml` (copy detection) and it moves every rangeify golden,
+  so it wants one commit that includes the golden regeneration.
+
+- **The threefry symbolic rules are not pruned yet** (`33755a346`).
+  `lib/uop/symbolic.ml` still carries five unpack rules (the `&0xFFFFFFFF`
+  cast, both `*2^32` splice forms, and both `<<32` forms); the reference keeps
+  only the two `<<32` ones. This was one third of a three-file change; two
+  thirds have landed — `threefry2x32` in `lib/codegen/decomp/decomp_op.ml` now
+  splits, rotates and repacks with `<<`/`>>` and narrows the low word by cast
+  rather than mask, and `_threefry_random_bits` in `lib/frontend/rand.ml` no
+  longer masks before its narrowing casts. All that remains is pruning the
+  three now-dead symbolic rules.
 
 - **Kernel formals keep their caller-side variable names** (`be25207a7`).
   Upstream renames a BIND'd scalar formal to `p{slot}` in `UOp.param_like` and
   maps it back in `resolve_linear_call` with a `substitute(..., enter_calls)`.
   tolk identifies kernel-body variables by name and address space
   (`engine/schedule.ml`, `variables_of_kernel_body`), so two callers that bind
-  different values to the same variable name are not distinguished.
-
-  **Blocker**: `param_like` lives in `lib/uop/uop.ml`. No tolk failure is known
-  to depend on it — the divergence is scoping hygiene, not a live bug.
-
-- **Custom-kernel inputs are not force-realized** (`470c032a5`, `f253c4469`).
-  Upstream's `realize_custom_kernel_srcs` realizes the arguments of a CALL
-  whose body is a SINK or PROGRAM and marks them non-removable. tolk has no
-  entry point that builds such a CALL in a tensor graph (no `custom_kernel`),
-  so the rule and the `non_removable` set it feeds have no consumer. Port both
-  with the feature, not before.
-
-- **`Symbolic.pm_fold_cast_const` is composed at one of its six sites.**
-  The rule that collapses `CAST(dt, CONST v)` into a typed constant was split
-  out of `symbolic_simple` (`d726e5f7f`, pruned by `d51e55aa1`) because it
-  writes a strongly typed constant that weak-dtype lowering must be free to
-  decide for itself. The reference re-composes it at exactly six places, and
-  deliberately not at the others; until the rest land, any pass that used to
-  get the fold for free from `sym`/`symbolic_simple` no longer does, and its
-  rendered output carries casts the reference folds away.
-
-  `schedule/rangeify.ml`'s `post_rangeify_rules` has it. The five remaining:
-  `codegen.ml` "initial symbolic", "devectorize2", "early symbolic", and
-  `pm_decomp`; and `codegen/simplify.ml`'s substituted range rewrite. It must
-  *not* be added to "postopt symbolic", "expand broadcast / add loads", "add
-  images", "extra symbolic", "final symbolic", or `pm_reduce_collapse`.
-
-- **The reference's UNSHARD, COPY, CALL, void-RANGE, and WMMA spec rules are
-  not in `lib/uop/spec.ml` yet.** Each waits on the feature it describes:
-  `Ops.Unshard` is named but still carries the old single-axis `Multi` arg
-  shape, so its spec rule waits on the sorted-axis-tuple rework; COPY
-  keeps `allow_any_len` until copies leave rangeify (`dcad11941`); the
-  address-valued `CALL` rule needs call-inside-C (`6e979b879`); the void-RANGE
-  loop header and the `END(body, range, cond)` backedge need the loop rework
-  (`b764599d8`, `39924387b`); and the 5-tuple WMMA arg check needs the WMMA arg
-  shrink. Port each spec rule with its owning change, not before — a spec that
-  admits a shape nothing builds proves nothing.
-
-- **The threefry symbolic rules are not pruned yet** (`33755a346`).
-  `lib/uop/symbolic.ml` still carries five unpack rules (the `&0xFFFFFFFF`
-  cast, both `*2^32` splice forms, and both `<<32` forms); the reference keeps
-  only two. This was one third of a three-file change; two thirds have landed —
-  `threefry2x32` in `lib/codegen/decomp/decomp_op.ml` now splits, rotates and
-  repacks with `<<`/`>>` and narrows the low word by cast rather than mask, and
-  `_threefry_random_bits` in `lib/frontend/rand.ml` no longer masks before its
-  narrowing casts. All that remains is pruning the three now-dead symbolic
-  rules.
+  different values to the same variable name are not distinguished. Scoping
+  hygiene, not a live bug — no tolk failure is known to depend on it.
 
 - **`has_index` duplicates `op_in_backward_slice_with_self` because
   `backward_slice` is uncached.** Both feed `fold_where_closure` in
@@ -97,52 +160,14 @@ anchors point at the tinygrad clone.
   (`lib/uop/uop.ml`) is a plain `toposort` filter and `in_backward_slice`
   re-toposorts per call, so routing a rule that runs on every `where` in every
   pass through it would be quadratic. Hence the local memo. Both collapse into
-  the node API once `backward_slice` is cached — which is a change to a hot
-  path and has to be measured against the current rewrite engine, so it is its
-  own piece of work, not a rider on whichever wave notices it.
+  the node API once `backward_slice` is cached — a change to a hot path that
+  has to be measured against the current rewrite engine, so it is its own piece
+  of work, not a rider on whichever wave notices it.
 
   (`bool_slice` itself has moved to `lib/uop/uop.ml`, where the reference keeps
   it, exposed as `bool_slice_mem` — a membership query rather than a table, so
   the memo stays private and no caller can mutate a cached set.)
 
-- **The host-scalar `bitcast` stays in `symbolic.ml`** rather than moving to
-  `dtype.ml` as the reference does (`67dc02d7e`). Forced, not skipped: tolk's
-  equivalent (`bitcast_const_storage`) takes a `Const.t`, and `Const` depends on
-  `Dtype`, so the move is impossible without re-cutting it to `storage_scalar`
-  — for a consumer tolk does not have, since `lib/frontend/rand.ml` builds
-  `_bits_to_rand` out of UOp `Bitcast` nodes rather than host-side arithmetic.
-
-- **A tensor-core source golden is now possible and does not exist.** The index
-  factoring that used to block it is fixed (`fold_add_divmod_recombine` now
-  re-bases a quotient partner through a merged divisor, so two adjacent
-  single-bit extracts of a thread id collapse into the one multi-bit extract
-  the reference emits). Nothing under `test/golden/codegen` or `test/parity`
-  covers a tensor-core kernel's source, so the WMMA width invariant is still
-  pinned only by renderer unit tests (`test/unit/test_cstyle.ml`). Generate one
-  from the clone: the 32³ matmul under `TC:0:-1:0:1 + UNROLL:0:0` is the case
-  the divergence was first found on, and the Metal `rnn_grad` reverse pass,
-  `matmul_small` 128³, and `attention` all exercise the same shape.
-
-- **Accumulator numbering**: tolk numbers reduce accumulators in a different
-  order than the reference, so kernels with more than one reduce render the
-  same code with `buf`/`acc` indices permuted. Semantically inert — the
-  declaration set is identical and the bodies match under a consistent
-  bijection — but it is a real source divergence and the last residue of the
-  aliasing miscompile fixed above: the pre-pass that used to hide it was
-  deleted, since it was preventing a cosmetic diff at the cost of a silent
-  miscompile.
-
-  Four cases are red on it: `test/parity/group_reduce_pair` (swap of the two
-  scalar accumulators, shared staging buffer unchanged),
-  `test/parity/wide_reduce_thread` (exact reversal of eleven accumulators,
-  reference `10, 9, … 0` against tolk `0, 1, … 10`), `test/parity/rnn_unroll`
-  (all four backends) and `test/parity/two_sum` (visible at both stage 5, as
-  the `ParamArg(N, …, addrspace=REG)` slot, and stage 7). **Do not regenerate
-  these** — the numbering is the finding.
-
-  The exact reversal in the eleven-accumulator case is the strongest hint: the
-  fix is to match the reference's `pm_reduce_local` visitation order, not to
-  re-derive the numbering.
 - **WMMA accumulator element order**: the register array holding a tensor-core
   accumulator is laid out in a different axis order than the reference. On the
   128³ Metal matmul the reference orders it, outermost to innermost, as
@@ -162,10 +187,11 @@ anchors point at the tinygrad clone.
   all mirror the reference, so the divergence is in the order those ranges
   reach `build_range_map`. Owner is `opt/` or the expander, not the renderer.
 
-  Invisible on the 32³ tensor-core case above, which has a single WMMA and so
-  cannot observe the ordering — that case being otherwise byte-identical is
-  not evidence of layout parity. Verified identical under both `7eb197b1b` and
-  `baa614806`.
+  Not observable on the committed tensor-core cases: `test/parity/tc_matmul_32`
+  is byte-identical to the reference on Metal at 32³ (four WMMAs), and the
+  `tc_matmul_{f16,bf16,fp8}` cases have a single WMMA each. Verified identical
+  under both `7eb197b1b` and `baa614806`.
+
 - **Leading-dim view folds**: last-axis contiguous views fold to schedule-free
   aliases (matching the reference), but callify's local
   `contiguous_view_offset`/`make_slice` bails when a leading dim is not kept
@@ -173,22 +199,18 @@ anchors point at the tinygrad clone.
   `Uop.contiguous_view_offset` already handles leading dims — align the fold
   to it and delete the partial local reimplementation. Schedule-shape change
   (kernel counts drop), so verify against the golden suites.
-- **BITCAST/COPY fold extension** (callify): same tag blocker; the COPY arm
-  additionally needs the disk-copy push rules tolk does not port.
+
 - **expand_bitcast** (rangeify): a BITCAST between dtypes of different
   itemsize has to be re-expressed as a reshape, a per-part shift and a
   recombination. It blocks half-precision `Rand.rand`; no golden exercises it.
 
-  Still missing, both in `lib/uop/`, not in `lib/schedule/`: an axis-adding
-  `stack ~dim` (tolk's `Uop.stack` builds a vector/shape tuple, not a new
-  axis) and `flatten` over a negative axis range. `squeeze` is expressible as
-  a `Uop.reshape`, and `Uop.shrink`/`cast`/`usum`/shift cover the rest — so
-  the rule is roughly ten lines once those two land. Reference:
-  `rangeify.py:116` plus `mixin/movement.py`.
-- **Host I/O via allocator bridge** (`frontend/run.ml`): upload/download use
-  `Buffer.copyin`/`as_bytes` directly because tolk has no host pseudo-device
-  to route a `copy_from` through (reference: device.py:113-115 seeds via a
-  PYTHON-device buffer). Converges to `copy_from` if a host device lands.
+  Two `lib/uop/` movement primitives are missing and are part of this work, not
+  a blocker on it: an axis-adding `stack ~dim` (tolk's `Uop.stack` builds a
+  vector/shape tuple, not a new axis) and `flatten` over a negative axis range.
+  `squeeze` is expressible as a `Uop.reshape`, and `Uop.shrink`/`cast`/`usum`/
+  shift cover the rest — so the rule is roughly ten lines once those two land.
+  Reference: `rangeify.py:116` plus `mixin/movement.py`.
+
 - **Image coordinate form**: the gater/coalesce/renderer accept both
   two-axis `INDEX(buf, y, x)` (reference form) and stacked
   `INDEX(buf, STACK[y,x])`. Converge on two-axis and drop the stacked branch,
@@ -206,10 +228,10 @@ anchors point at the tinygrad clone.
   gated on generating one first: without it the suite would keep passing on
   whichever form the change happened to produce.
 
-- **`c9e11544d`'s remaining cast deletions are unblocked, and each one needs
-  checking against a live spec rather than porting as cleanup.** The left-bias
-  blocker is gone: `alu_binary` now takes `promo_dtype` of its operands, so a
-  cast that only existed to force the result dtype is genuinely redundant.
+- **`c9e11544d`'s remaining cast deletions each need checking against a live
+  spec rather than porting as cleanup.** The left-bias blocker is gone:
+  `alu_binary` now takes `promo_dtype` of its operands, so a cast that only
+  existed to force the result dtype is genuinely redundant.
 
   **But "redundant" is not the only thing a cast can be.** The first arm
   ported under the new rule — `rule_reduce_and_where` in `codegen/simplify.ml`
@@ -223,7 +245,7 @@ anchors point at the tinygrad clone.
 
   So for each remaining arm — `codegen/simplify.ml` (`fold_result`,
   `rule_lift_add_lt`), `decomp/decomp_dtype.ml` (`l2i` ADD/SUB carry, `rne`),
-  `decomp/decomp_op.ml` (`floordiv_to_idiv`),
+  `decomp/decomp_op.ml` (`rule_floordiv_to_idiv`),
   `decomp/decomp_transcendental.ml` (`xexp2`) — check what else matches the
   cast before removing it, and land it with `SPEC=1` live.
 
@@ -233,69 +255,6 @@ anchors point at the tinygrad clone.
   one that runs lowering, so it is where the gate has to be; setting `SPEC=1`
   on `test/unit/uop` would be a no-op.
 
-- **`pm_device_to_var` is not in `codegen/gpudims.ml`** (`7d4892629`). The
-  reference lowers an `AxisType.DEVICE` range to the `_device_num` variable at
-  the end of `pm_add_gpudims`, and drops that range from the `END`s that
-  closed it. `Axis_type.Device` and `Ops.Unshard` now both exist, but nothing
-  constructs a DEVICE range yet, so there is
-  no DEVICE range to lower. Lands with the MULTI → UNSHARD rework, together
-  with the matching DEVICE guards in `codegen/simplify.ml`'s `mark_range_mod`
-  and `opt/postrange.ml`'s `rngs`.
-
-  *What catches a bad port*: `test/unit/engine/test_multi.ml` and the twelve
-  `test/parity/multi_*` cases, which dump both the scheduled graph (stage 5)
-  and the rendered source (stage 7) — a DEVICE range that reaches the opt
-  axes or fails to become `_device_num` shows up in both.
-
-- **The void-RANGE loop header is not ported** (`b764599d8`, `39924387b`).
-  Beyond the spec rules noted above, the reference threads a "backedge" (the
-  void range plus its bool condition) through `flatten_range` and
-  `do_split_ends`, guards `simplify_merge_adjacent` against a non-RANGE ended
-  child, and filters void ranges out of `Scheduler.rngs`. The feature exists
-  for HCQ wait loops; nothing in tolk constructs a void range, so all four
-  branches would be unreachable. Port them with a producer, not before.
-
-  *What catches a bad port*: **nothing, and nothing can** — there is no way to
-  build a void range, so no test can reach the branches. The producer and the
-  branches have to land together, with the producer's own test.
-
-- **`multi_pm` does not run at the head of `full_rewrite_to_sink`.** The
-  reference resolves in-kernel shards (register fragments) during codegen, not
-  only in the scheduler. Tolk's `multi_pm` needs scheduler-supplied shape and
-  device callbacks and there is no in-kernel `Ops.Multi` to resolve, so the
-  pass would be a no-op traversal. Lands with UNSHARD and `alloc_fragment`.
-
-  *What catches a bad port*: **nothing today** — with no in-kernel shard to
-  resolve, adding the pass is unobservable either way. It becomes testable
-  only once `alloc_fragment` can put a shard inside a kernel; that commit
-  needs the test.
-
-- **`52c9e5a99` must land in two commits, in this order. This is required
-  procedure, not advice.** The reference renames the old `LOOP` to `WEAK`
-  *and* adds a new `LOOP` for the void-RANGE header. Doing both at once
-  type-checks perfectly while silently changing the meaning of every existing
-  `Loop` site — the one refactor no compiler error can catch.
-
-  1. **Rename only.** `Axis_type.Loop` → `Axis_type.Weak` tree-wide, adding
-     no constructor. Every reference either updates or fails to build, so
-     there is no window in which a stale reference means something new.
-  2. **Then add the new `Loop`,** as a separate commit. By then nothing
-     refers to `Loop`, so it starts with no inherited meaning.
-
-  **Step 1 has landed** (`lib/uop/axis_type.ml` reads
-  `Global, Warp, Local, Weak, Group_reduce, …`; `lib/codegen/**`,
-  `lib/schedule/**` and the unit suites were swept with it). Step 2 is still
-  open and must stay a separate commit.
-
-  *What catches a bad sweep*: `test/unit/codegen/test_postrange.ml` builds
-  `Weak` ranges (`weak_rng`) and drives UPCAST, LOCAL and THREAD through
-  them, asserting the resulting axis kinds. If `upcastable_dims`, the
-  UPCAST/LOCAL preconditions, or `_globalizable_rngs` read the new `Loop`
-  where they mean `Weak`, those opts start being rejected and that suite goes
-  red. `codegen_lower.ml`'s `range_repeats` is additionally written as an
-  exhaustive match over `Axis_type.t`, so adding a constructor in step 2
-  fails to compile there and forces an explicit decision.
-
 - **`cat` does not take the same-shape `stack` fast path** (`250de4b14`,
   final state `e684fcc68`). The reference's `stack` is a movement op
   (`_mop(Ops.STACK)`) and `cat` delegates to it when every input has the same
@@ -303,8 +262,28 @@ anchors point at the tinygrad clone.
   `unsqueeze` + `Op.cat`, so the reference's fast path would recurse. Needs
   `Ops.Stack` as a tensor-level movement op first; `Uop.shape` already gives it
   the right shape (`(len src) :: shape src.(0)`), but nothing constructs one
-  from the frontend. The `pm_reduce_collapse` half of `e684fcc68` is wave 5-2's
-  and independent.
+  from the frontend. The `pm_reduce_collapse` half of `e684fcc68` is a
+  separate, independent change.
+
+## Deliberate divergences (do not port)
+
+Reviewed and declined. Each would add machinery whose only producers are
+runtimes or dependency orders tolk does not have. Do not re-open without a
+consumer.
+
+- **The void-RANGE loop header** (`b764599d8`, `39924387b`, plus its
+  `spec.py` rules). The reference threads a "backedge" (the void range plus its
+  bool condition) through `flatten_range` and `do_split_ends`, guards
+  `simplify_merge_adjacent` against a non-RANGE ended child, filters void
+  ranges out of `Scheduler.rngs`, and adds an `END(body, range, cond)` spec
+  rule. The feature exists for HCQ wait loops — a runtime tolk does not port —
+  and nothing in tolk constructs a void range, so all of it would be
+  unreachable. `Axis_type.Loop` exists and names this concept, with no
+  constructor; that is intentional. Port with a producer, never before.
+
+  *What would catch a bad port*: **nothing, and nothing can** — there is no way
+  to build a void range, so no test can reach the branches. The producer and
+  the branches have to land together, with the producer's own test.
 
 - **`Renderer` has no `abi` field and no CALL-in-C rule** (`d1f215d37`,
   `6e979b879`). Both exist upstream for the CPU uop worker, a runtime tolk does
@@ -326,71 +305,36 @@ anchors point at the tinygrad clone.
   `UOp.to_elf()` can build a `TinyELF`. That is the runtime restructure tolk
   does not port — tolk dispatches through `lib/compiler.ml`, and
   `Program_spec.t` already carries `device` — so `target` would be a field
-  with no reader, which is porting bloat rather than parity. tolk's `aux` had
-  no reader either: its only producer was `OpenCLRenderer.aux`, and nothing in
-  `lib/runtime/` consumed it; it reached only the diskcache key and the debug
-  repr. So the whole channel is gone: `Renderer.has_aux`/`aux`, the
-  `?aux` parameters on `Renderer.make` and `Program_spec.of_program`,
-  `Cstyle.opencl_aux`, the `device.ml` cache-key line, the `codegen.ml`
-  producer, and the `render.ml` repr entry. **`Uop.program_info.aux` and the
-  `?aux` on `Uop.program_info_from_sink` are the last two sites** — see the
-  post-wave sweep below.
+  with no reader. tolk's `aux` had no reader either: its only producer was
+  `OpenCLRenderer.aux`, and nothing in `lib/runtime/` consumed it; it reached
+  only the diskcache key and the debug repr. The whole channel is gone.
+  `call_info.aux` is unrelated and stays; the reference keeps it.
 
-- **`_broadcast_to` computes its expand axes by hand.** The reference uses
-  `broadcast_axes(shape, new_shape)` (`f64f96ec5`), which tolk's uop layer does
-  not export. Equivalent for concrete shapes, which is all `Movement` accepts.
-
-- **Negative slice bounds against a symbolic size** (`mixin/movement.py`). The
-  reference resolves `start`/`stop` against a possibly symbolic `size` before
-  deciding whether the slice is fully concrete. `Movement.parsed` is built from
-  `Tensor.shape`, which raises on a symbolic dimension, so tolk cannot reach
-  the case at all. Unblocks with symbolic-shape `getitem`.
+- **The host-scalar `bitcast` stays in `symbolic.ml`** rather than moving to
+  `dtype.ml` as the reference does (`67dc02d7e`). Forced, not skipped: tolk's
+  equivalent (`bitcast_const_storage`) takes a `Const.t`, and `Const` depends on
+  `Dtype`, so the move is impossible without re-cutting it to `storage_scalar`
+  — for a consumer tolk does not have, since `lib/frontend/rand.ml` builds
+  `_bits_to_rand` out of UOp `Bitcast` nodes rather than host-side arithmetic.
 
 ## Post-wave sweep — landed
 
-All four items are in. Each changed a declaration in `lib/uop/` plus every
-reader across `lib/codegen/`, `lib/renderer/`, `lib/schedule/` and the suites,
-so each went in as one change rather than per-wave.
+All four changed a declaration in `lib/uop/` plus every reader across
+`lib/codegen/`, `lib/renderer/`, `lib/schedule/` and the suites, so each went in
+as one change rather than per-wave: the new `Axis_type.Loop` (added as its own
+step, after the `Loop` -> `Weak` rename); the `wmma_info` 5-tuple
+`(dims, dtype_in, device, threads, tc_upcast_axes)`; `ParamArg.multiple_of`; and
+the deletion of `Uop.program_info.aux`.
 
-- **1. `Axis_type`: the new `Loop`.** Landed as its own step, after the
-  `Loop` -> `Weak` rename. Order is `Device, Global, Warp, Local, Weak,
-  Group_reduce, Reduce, Upcast, Unroll, Thread, Placeholder, Loop`, matching
-  the reference. Nothing constructs a `Loop` range yet — it arrives with the
-  void-RANGE loop header.
+Two invariants they created, which a later change could silently break:
 
-- **2. `wmma_info`: the reference's 5-tuple.** `(dims, dtype_in, device,
-  threads, tc_upcast_axes)`. `name`, `dtype_out` and the always-empty
-  `reduce_axes` are gone: the name is derived by `Cstyle.wmma_name` from
-  `dims`/`dtype_in`/the node's own dtype, which is where the reference keeps
-  it, and the output dtype *is* the node's dtype. `expand_wmma` now gates on
-  `tc_upcast_axes` being present and clears that slot, replacing the
-  `node_tag = Some "1"` marker.
-
-  `Tc.dtype_name` is exported for this and is the sole owner of the C spelling
-  used in primitive names — a second spelling anywhere desynchronises a
-  `#define` from its call site, which is a link error rather than a diff.
-  `test/unit/test_cstyle.ml`'s `make_wmma` no longer takes `~name`, so its
-  three exact-string assertions now check the derivation.
-
-- **3. `ParamArg.multiple_of`.** Landed with its test written first, since
-  nothing existing would have caught a dropped field. `multiple_of` is an
-  `int option` (`None` means no promise, not `1`), read by `const_factor`,
-  `divides`, and `fold_divmod_general`'s irreducible-PARAM short circuit.
-
-  It is in `device.ml`'s `add_param_arg` cache key. That is not optional: the
-  field changes folding, so two programs differing only in it would otherwise
-  collide and one would be handed the other's compiled code.
-
-  *What catches it*: `test/unit/codegen/test_divandmod.ml`, "param multiple_of"
-  — verified by perturbation, not by observing green. Making the rule's
-  predicate return `false` turns exactly that test red and nothing else;
-  restoring turns it green.
-
-- **4. `Uop.program_info.aux`.** Deleted, along with `program_info_from_sink`'s
-  `?aux` parameter, `program_spec.ml`'s `aux = []` placeholder, and the test
-  asserting the field participates in `semantic_key` — whose entire subject was
-  the field. `call_info.aux` is unrelated and stays; the reference keeps it.
-  `test/golden/debug` loses the `aux` key from the `ProgramInfo` repr.
+- **`Tc.dtype_name` is the sole owner of the C spelling used in WMMA primitive
+  names.** A second spelling anywhere desynchronises a `#define` from its call
+  site, which is a link error rather than a diff.
+- **`ParamArg.multiple_of` is in `device.ml`'s `add_param_arg` cache key.** Not
+  optional: the field changes folding, so two programs differing only in it
+  would otherwise collide and one would be handed the other's compiled code.
+  `multiple_of` is an `int option` — `None` means no promise, not `1`.
 
 ## Rendered-output movement pending regeneration
 
@@ -450,6 +394,11 @@ Recorded so nobody re-derives them from the upstream diff.
   across `elementwise.ml`/`op.ml`/`rand.ml`: a literal takes its peer's
   precision by construction rather than by inspecting it.
 
+- **`_broadcast_to` computing its expand axes by hand is equivalent.** The
+  reference uses `broadcast_axes(shape, new_shape)` (`f64f96ec5`), which tolk's
+  uop layer does not export — equivalent for concrete shapes, which is all
+  `Movement` accepts.
+
 - **`lib/nn/**` has nothing to port.** The three upstream `nn/` hunks are
   `BatchNorm.calc_stats` dropping an `expand` (tolk has no `BatchNorm`),
   `_embedding_bwd`'s `multi` → `unshard` and `dtypes.index` → `dtypes.weakint`
@@ -482,12 +431,16 @@ Recorded so nobody re-derives them from the upstream diff.
   as it goes, and each reconstruction carries a fallback for the case it does
   not model. Every gap found so far has produced a silent miscompile rather
   than a visible diff, because the fallback yields a plausible value instead
-  of failing. Four instances:
+  of failing. Five instances:
   - `expr_numel` (`renderer/cstyle.ml`) consults the node's shape only for
     `Index`/`Shrink`/`Wmma` and otherwise propagates from sources, defaulting
     to one lane. The reference just uses `u.max_numel()`. `Wmma` was missing,
     so every WMMA declared scalar and tensor cores were uncompilable on all
     backends.
+  - `cuda_wmma_helpers` (`renderer/cstyle.ml`) reconstructs the WMMA operand
+    widths from `info.tc_upcast_axes`, defaulting to `([], [], [])` — i.e.
+    width 1 — for the case the expander has already cleared. The reference
+    reads `uop.src[i].shape[-1]`. Currently live; see "Open bugs".
   - `range_int_size` (`schedule/rangeify.ml`) returned `1` for anything that
     is not a `RANGE`, so a stage flattened to a single index expression sized
     to one element. Fixed.
@@ -501,13 +454,12 @@ Recorded so nobody re-derives them from the upstream diff.
     to a shared counter and collided, so two accumulators aliased and a kernel
     silently doubled its result. An ordering reconstruction rather than a size
     one, but the same shape of bug. Deleted in favour of the reference's
-    counter; see the accumulator-numbering entry above for what that left
-    behind.
+    counter.
 
   The question this raises is whether these collapse into reading the node's
   own shape, or into doing what the reference does as it goes. Each is extra
   machinery relative to the reference, so it has to earn its place. Renderer-,
-  scheduler- and codegen-wide, so it wants its own pass rather than a fifth
+  scheduler- and codegen-wide, so it wants its own pass rather than a sixth
   point fix.
 - **nativeint dispatch waist**: `Allocator.addr`/`prog.call`/`Graph.node`
   flatten buffers to `nativeint`, forcing the Metal token registry
@@ -556,53 +508,20 @@ Recorded so nobody re-derives them from the upstream diff.
 - WMMA estimate unit test (flops factor covered only by goldens).
 - Re-verify `bf16_vector_load_reindexes_shrink` (decomp) end-to-end: it
   relies on the LOAD inheriting the shrink's width-2 shape.
-- `simplify_valid` had **zero** coverage, not merely no ordering coverage. The
-  earlier note here said inverting the `_valid_priority` comparator left
-  everything green and concluded the corpus does not discriminate on clause
-  order. Instrumenting the function at entry showed why: 16 calls across the 70
-  parity cases, 24 across the 82 codegen goldens, and **0** from
-  `test_symbolic.ml` — and every one of them returned early on the guard that
-  skips predicates containing an `Ops.Index`. The comparator, the sort, and the
-  clause fold never executed at all, so inverting the comparator could not have
-  failed anything.
-
-  There are **three** distinct ways to call this function and prove nothing,
-  and the corpus used all of them:
-
-  1. **The guard.** A predicate whose slice contains an `Ops.Index` returns
-     before anything runs. This is every parity and golden call.
-  2. **The wrong harness.** `pm_simplify_valid` is composed into `sym`, not
-     into `symbolic`, and `Symbolic.simplify` runs `symbolic` — so *no test
-     driven through `Symbolic.simplify` can ever reach this code*, however
-     carefully its predicate is built. This is a property of the matcher
-     composition, not of the tests, and it is the trap to warn about: the
-     obvious way to write a symbolic test is against `Symbolic.simplify`.
-     **A test for this path must drive `Symbolic.sym` (or apply
-     `Symbolic.pm_simplify_valid` directly).**
-  3. **Trivial data.** `pm_simplify_valid` matches `Ops.And` with no dtype
-     constraint, so an *integer* bitwise AND reaches it too — as
-     `test_symbolic.ml`'s `masked_div` group does with `(x & -4) // 4`. There
-     `parse_valid` fails on both operands, every priority is 0, the sort is a
-     no-op, and the fold returns `None`. The call happens; the branches are all
-     trivial.
-
-  The general lesson, which is why the entry is written out rather than just
-  fixed: reaching the code is not coverage if the data makes every branch
-  trivial. Verify by perturbing the thing under test — invert the comparator
-  and watch the test fail — not by reading the test and judging that it looks
-  like it exercises the path.
-
-  Closed by the `simplify_valid` group in `test/unit/uop/test_symbolic.ml`: a
-  two-clause non-indexing predicate whose clauses have distinct priorities and
-  whose result differs under the two orders, asserted both structurally and
-  pointwise over the leaf domain, plus a companion applying
-  `pm_simplify_valid` on its own so the reduction is attributable to this
-  rewrite rather than to something else in `sym`.
-
-  Verified by perturbation, not inspection: inverting the `_valid_priority`
-  comparator to `Int.compare b a` turns both tests red (and nothing else in the
-  uop suite), and restoring it turns them green. So the group does reach the
-  comparator, and the comparator's direction is what it pins.
+- **Trap to remember for `simplify_valid`-style rules** (the coverage gap
+  itself is closed by the `simplify_valid` group in
+  `test/unit/uop/test_symbolic.ml`): `pm_simplify_valid` is composed into
+  `sym`, not into `symbolic`, and `Symbolic.simplify` runs `symbolic` — so no
+  test driven through `Symbolic.simplify` can reach it, however carefully its
+  predicate is built. A test for such a rule must drive `Symbolic.sym` or apply
+  the matcher directly. Two more ways to call it and prove nothing: the guard
+  that returns early on any predicate whose slice contains an `Ops.Index`
+  (which is every parity and golden call), and trivial data — an *integer*
+  bitwise AND reaches the rule too, and there every branch is a no-op.
+  General lesson: reaching the code is not coverage if the data makes every
+  branch trivial. Verify by perturbing the thing under test — invert the
+  comparator and watch the test fail — not by reading the test and judging
+  that it looks like it exercises the path.
 
 ## Misc
 
@@ -637,21 +556,36 @@ Recorded so nobody re-derives them from the upstream diff.
   drivers are all outside the compiler's reach; only the ordering exposed
   them.
 
-- **BLOCKING PRECONDITION FOR WAVE 9 — migrate nine `AxisType.LOOP` sites
-  before regenerating anything.** These nine Python constructions mean the
-  *counted* loop and must become `AxisType.WEAK`:
+- **The nine `AxisType.LOOP` driver sites are migrated to `AxisType.WEAK`
+  (done).** Three in `test/golden/cstyle/generate_expected.py`, two in
+  `test/parity/nested_loops/main.py`, three in
+  `test/parity/token_gather_collapse/main.py`, one in
+  `test/parity/loop/main.py` — all nine mean the *counted* loop, and all nine
+  OCaml siblings already said `Axis_type.Weak`. No `.expected` was
+  regenerated; that happens once, after the pin moves.
 
-  | file | lines |
-  |---|---|
-  | `test/golden/cstyle/generate_expected.py` | 120, 200, 201 |
-  | `test/parity/nested_loops/main.py` | 19, 20 |
-  | `test/parity/token_gather_collapse/main.py` | 30, 31, 32 |
-  | `test/parity/loop/main.py` | 18 |
+  **These drivers now require the new pin.** `AxisType.WEAK` does **not**
+  exist at `7eb197b1b` — that pin's enum is
+  `GLOBAL, WARP, LOCAL, LOOP, GROUP_REDUCE, REDUCE, UPCAST, UNROLL, THREAD,
+  PLACEHOLDER`, with no `WEAK` member at all. So the four drivers raise
+  `AttributeError` against the old clone and are correct only against
+  `baa614806`. That is deliberate and harmless — nothing runs them until
+  regeneration, and `dune runtest` diffs committed `.expected` against the
+  OCaml `.actual`, never against Python. But **do not run `regen.py` or
+  `generate_expected.py` until `_tinygrad` is at the new pin**; they will
+  fail, not silently emit the wrong axis class.
 
-  Both constructors exist at the new pin, so nothing raises: the drivers run
-  and emit expectations for the wrong axis class. Regenerating first bakes
-  that into every `.expected` and destroys the signal that would reveal it.
-  Migrate, then regenerate — not the other way round.
+  Regeneration must also repoint `test/parity/helpers.py` and
+  `test/golden/codegen/generate_expected.py`, which both still `sys.path`
+  in `_tinygrad`; once that clone is the new pin, no edit is needed beyond
+  deleting the `_tinygrad_next` path if anything references it.
+  `test/parity/tc_matmul_32` is the one case whose `.expected` was generated
+  from `_tinygrad_next` already, so it should not move — verify it stays
+  byte-identical rather than assuming it regenerated.
+
+  The 61 `AxisType.LOOP` lines still in 27 committed
+  `stage5_*.expected` files are *output*, not source. They are the pending
+  movement recorded above and must not be hand-edited.
 
 - **There are two Ops-order tests and only one self-heals.**
   `test/unit/uop/test_ops.ml` probes the live `_tinygrad` checkout, so it goes

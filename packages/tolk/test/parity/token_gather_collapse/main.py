@@ -27,9 +27,9 @@ BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cpu", "cuda")}
 
 def kernel():
     out = UOp.param(0, dtypes.float, shape=(289536,))
-    col = UOp.range(768, 2, AxisType.LOOP)
-    chunk = UOp.range(29, 3, AxisType.LOOP)
-    tok_i = UOp.range(13, 1, AxisType.LOOP)
+    col = UOp.range(768, 2, AxisType.WEAK)
+    chunk = UOp.range(29, 3, AxisType.WEAK)
+    tok_i = UOp.range(13, 1, AxisType.WEAK)
     r = UOp.range(1733, 0, AxisType.REDUCE)
     vocab = chunk * UOp.const(dtypes.index, 1733) + r
     toks = UOp.param(1, dtypes.int, shape=(13,))
