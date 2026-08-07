@@ -285,13 +285,11 @@ let shared_spec : t =
       let x = bs $ "x" and y = bs $ "y" in
       same_dtype x y || is_weak x || is_weak y);
 
-    ops ~src:[ var "x"; var "y" ] [ Ops.Shl; Ops.Shr ]
-    =?> (fun u bs ->
-      let x = bs $ "x" and y = bs $ "y" in
-      let rhs_ok =
-        same_dtype x y || Dtype.equal (Uop.dtype y) Dtype.uint32 || is_weak y
-      in
-      same_dtype u x && rhs_ok);
+    (* A renderer-lowered shift may carry a uint32 count; every other
+       shape of shift is left to the generic ALU rule. *)
+    ops ~src:[ var "x"; var_dtype "count" (exact_dtype Dtype.uint32) ]
+      [ Ops.Shl; Ops.Shr ]
+    =??> (fun u bs -> if same_dtype u (bs $ "x") then Some true else None);
 
     ops [ Ops.Cdiv; Ops.Cmod; Ops.Floordiv; Ops.Floormod ]
     =??> (fun u _ -> if is_int u then None else Some false);

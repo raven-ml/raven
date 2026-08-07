@@ -171,6 +171,27 @@ let alu_operand_scalars_match () =
   let sum = Uop.alu_binary ~op:Ops.Add ~lhs:(i32 3) ~rhs:(i32 4) in
   is_true ~msg:"add accepted" (accepts Spec.shared_spec sum)
 
+let shift_count_dtypes () =
+  let shl ~rhs = Uop.alu_binary ~op:Ops.Shl ~lhs:(i32 8) ~rhs in
+  is_true ~msg:"uint32 shift count accepted"
+    (accepts Spec.shared_spec (shl ~rhs:(Uop.const (Const.int Dtype.uint32 2))));
+  is_true ~msg:"same-dtype shift count accepted"
+    (accepts Spec.shared_spec (Uop.alu_binary ~op:Ops.Shr ~lhs:(i32 8)
+       ~rhs:(i32 2)));
+  is_true ~msg:"weak shift count accepted"
+    (accepts Spec.shared_spec
+       (shl ~rhs:(Uop.const (Const.int Dtype.weakint 2))));
+  is_true ~msg:"narrower shift count rejected"
+    (rejected Spec.shared_spec
+       (shl ~rhs:(Uop.const (Const.int Dtype.uint8 2))));
+  let widened =
+    Uop.replace
+      (shl ~rhs:(Uop.const (Const.int Dtype.uint32 2)))
+      ~dtype:Dtype.int64 ()
+  in
+  is_true ~msg:"shift result must match the shifted operand"
+    (rejected Spec.shared_spec widened)
+
 let index_accepts_integer_offsets () =
   let p = global_i32_param () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
@@ -1191,6 +1212,7 @@ let () =
           test "Cmplt returns bool" cmplt_is_bool;
           test "Cdiv with float rejected" cdiv_rejects_float;
           test "ALU operand scalars match" alu_operand_scalars_match;
+          test "shift count dtypes" shift_count_dtypes;
           test "Index accepts integer offsets" index_accepts_integer_offsets;
           test "Index rejects gate source" index_rejects_gate_source;
           test "Special raw name accepted" special_accepts_raw_name;
