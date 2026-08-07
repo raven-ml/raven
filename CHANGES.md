@@ -53,6 +53,13 @@ thread.
 
 ### Tolk (new)
 
+- Fix CUDA tensor-core kernels failing to compile. Every `__WMMA_*` primitive
+  was emitted with scalar parameters and empty asm operand lists —
+  `float f(half a, half b, float c)` — while the kernel body correctly built
+  vector operands for it. The renderer rebuilt the three operand widths from
+  the tensor-core upcast axes, which the expander clears once it has applied
+  them, so the one-lane fallback always fired; the widths now come from the
+  operands themselves. Metal was unaffected.
 - Fix a gated image load falling back to a single zero instead of a full
   vector. The value a gated load reads when its gate is false was sized by
   re-deriving the access width from the index expression, which had no case for
@@ -443,6 +450,11 @@ thread.
 
 ### Vega (new)
 
+- The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
+  non-float leaves through unchanged instead of updating them, so a structure
+  carrying an `Nx.Rng.key` alongside its parameters survives a step. Adam is
+  where it showed: its direction runs each leaf through a square root and a
+  division.
 - Add `Loss_scale` for float16 training: static and dynamic loss scales
   with `scale`/`unscale`/`grads_finite`/`adjust`; all state is scalar
   tensors updated by `Nx.where` arithmetic, so it threads through
@@ -841,6 +853,16 @@ thread.
   offset in the underlying buffer.
 
 ### Rune
+
+- A parameter structure may now hold leaves that are not parameters — an
+  `Nx.Rng.key` threaded through a compiled step, a step counter, a batch of
+  indices. `grad`, `value_and_grad` and `vjp` carry them instead of raising:
+  they are not tracked, and their slot in the gradient structure holds zeros.
+  One structure can therefore serve both `grad` and `jit`, where before a key
+  had to be captured in a closure and the parameters kept in a second structure
+  — the workaround the GPT-2 example spells out across four hand-written ptree
+  modules. The single-tensor `grad'`/`vjp'` still reject an integer argument,
+  having nowhere to carry one.
 
 - Gradient rules that combine with a constant (`asin`, `atan`, `tanh`, `sqrt`,
   `pow`, `max`/`min`, `where`, `cholesky`, `cumprod`) no longer materialize a

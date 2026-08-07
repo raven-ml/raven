@@ -144,19 +144,52 @@ let test_remat_value () =
   in
   check_arr ~msg:"value" (to_arr (f params)) (Rune.remat (module Pair) f params)
 
+(* A single tensor has nowhere to carry a non-differentiable value, so an
+   integer argument there is simply the wrong dtype. *)
 let test_grad_rejects_integer_leaves () =
   raises_invalid_arg (fun () ->
       ignore
         (Rune.grad'
            (fun x -> Nx.sum x)
-           (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |])));
-  raises_invalid_arg (fun () ->
-      let module T = Rune.Ptree in
-      ignore
-        (Rune.grad
-           (module T)
-           (fun _ -> Nx.scalar f64 1.0)
-           (T.tensor (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]))))
+           (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |])))
+
+(* A structure does have somewhere. The canonical case is an RNG key, which
+   must sit in the structure to reach a compiled step as an input, but is not
+   something to differentiate. Such a leaf is carried: zero in the gradient,
+   untouched by the optimizer, while the real parameters update. Before this,
+   grad refused the whole structure and the key had to be captured in a closure
+   and the parameters kept in a second structure. *)
+module Stepper = struct
+  type t = { w : Nx.float32_t; key : Nx.Rng.key }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    { w = f t.w; key = f t.key }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { w = f a.w b.w; key = f a.key b.key }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    f t.w;
+    f t.key
+end
+
+let stepper () =
+  Stepper.{ w = Nx.create f32 [| 3 |] [| 1.0; -2.0; 3.0 |]; key = Nx.Rng.key 7 }
+
+(* The draw is a constant of the tape, so the loss below has the same gradient
+   it would without the mask, scaled by it. *)
+let test_grad_carries_a_key_leaf () =
+  let p = stepper () in
+  let g =
+    Rune.grad
+      (module Stepper)
+      (fun p -> Nx.sum (Nx.mul p.Stepper.w p.Stepper.w))
+      p
+  in
+  check_arr ~msg:"the float leaf differentiates" [| 2.0; -4.0; 6.0 |] g.Stepper.w;
+  equal ~msg:"the key's gradient is zero" (array int32)
+    [| 0l; 0l |]
+    (Nx.to_array g.Stepper.key)
 
 let tests =
   [
@@ -170,7 +203,9 @@ let tests =
         test "mixed dtypes differentiate in one pass"
           test_mixed_dtype_single_pass;
         test "gradient descent converges" test_gradient_descent_converges;
-        test "rejects integer parameter leaves" test_grad_rejects_integer_leaves;
+        test "rejects an integer single-tensor argument"
+          test_grad_rejects_integer_leaves;
+        test "carries a non-differentiable leaf" test_grad_carries_a_key_leaf;
       ];
     group "vjp"
       [

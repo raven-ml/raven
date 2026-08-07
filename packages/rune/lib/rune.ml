@@ -22,32 +22,40 @@ let require_scalar name y =
 let run_transform f x handler =
   Gate.with_transform (fun () -> Effect.Deep.match_with f x handler)
 
+(* Gradients are defined with respect to real and complex leaves. A parameter
+   structure may hold others — an RNG key threaded through a compiled step, a
+   step counter, a batch of indices — and they ride along rather than being
+   differentiated: untracked, so nothing accumulates into them, and zero in the
+   gradient structure they return. An optimizer is then responsible for leaving
+   them alone; see Vega. *)
+let differentiable_leaf leaf =
+  let dt = Nx.dtype leaf in
+  Nx_core.Dtype.is_float dt || Nx_core.Dtype.is_complex dt
+
+(* The single-tensor forms have no structure to carry a non-differentiable
+   value in, so there the dtype is simply wrong. *)
+let require_float_leaf name leaf =
+  if not (differentiable_leaf leaf) then
+    invalid_arg
+      (Printf.sprintf
+         "%s: cannot differentiate a %s tensor; gradients are defined for real \
+          and complex dtypes"
+         name
+         (Nx_core.Dtype.to_string (Nx.dtype leaf)))
+
 (* Run [f params] under the reverse handler with the leaves of [params] tracked,
    seed the output cotangent, and pull gradients back to the leaves. *)
 let run_reverse (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t) : (c, d) Nx.t * P.t =
   let tape = Tape.create () in
-  P.iter (fun leaf -> Tape.track tape leaf) params;
+  P.iter (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf) params;
   let y = run_transform f params (Reverse.handler tape) in
   Tape.accumulate tape y (seed y);
   Tape.backward tape;
   (y, P.map (fun leaf -> Tape.cotangent tape leaf) params)
 
-(* Gradients are only defined with respect to real (or complex) leaves; integer
-   data belongs in the closure or the auxiliary output. *)
-let require_float_leaf name leaf =
-  let dt = Nx.dtype leaf in
-  if not (Nx_core.Dtype.is_float dt || Nx_core.Dtype.is_complex dt) then
-    invalid_arg
-      (Printf.sprintf
-         "%s: cannot differentiate with respect to a %s leaf; hold \
-          non-differentiable data in the closure or the auxiliary output"
-         name
-         (Nx_core.Dtype.to_string dt))
-
 let value_and_grad (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) : (c, d) Nx.t * P.t =
-  P.iter (fun leaf -> require_float_leaf "Rune.value_and_grad" leaf) params;
   let y, grads =
     run_reverse
       (module P)
@@ -89,7 +97,7 @@ let err_cotangent_shape leaf cotangent =
 let vjp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
     (params : P.t) (cotangents : Q.t) : Q.t * P.t =
   let tape = Tape.create () in
-  P.iter (fun leaf -> Tape.track tape leaf) params;
+  P.iter (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf) params;
   let y = run_transform f params (Reverse.handler tape) in
   let (_ : Q.t) =
     Q.map2
@@ -105,7 +113,7 @@ let vjp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
 let vjp_fun (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t) =
   let tape = Tape.create () in
-  P.iter (fun leaf -> Tape.track tape leaf) params;
+  P.iter (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf) params;
   let y = run_transform f params (Reverse.handler tape) in
   let pullback ct =
     if Nx.shape ct <> Nx.shape y then

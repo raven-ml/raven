@@ -11,6 +11,14 @@ module Dtype = Nx_core.Dtype
 let scalar (type a b) (dt : (a, b) Dtype.t) x =
   Nx.scalar dt (Dtype.of_float dt x)
 
+(* A parameter structure may carry leaves that are not parameters: an RNG key
+   threaded through a compiled step, a step counter, a batch of indices. Rune
+   does not differentiate them — their slot in the gradient structure holds
+   zeros — and an optimizer must not update them either. Adam's square root
+   over an integer leaf is meaningless, and even plain descent would round its
+   step into the value. Carry them instead. *)
+let updates (type a b) (p : (a, b) Nx.t) = Dtype.is_float (Nx.dtype p)
+
 let float_of_scalar (type a b) (dt : (a, b) Dtype.t) (v : a) : float =
   match dt with
   | Dtype.Float16 -> (v : float)
@@ -825,12 +833,15 @@ let sgd_step (module P : Nx.Ptree.S) ~lr ?(momentum = 0.0) (st : P.t sgd_state)
     if momentum = 0.0 then grads
     else
       P.map2
-        (fun v g -> Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g)
+        (fun v g ->
+          if updates v then Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g
+          else v)
         st.velocity grads
   in
   let params =
     P.map2
-      (fun p v -> Nx.sub p (Nx.mul v (scalar (Nx.dtype v) lr)))
+      (fun p v ->
+        if updates p then Nx.sub p (Nx.mul v (scalar (Nx.dtype v) lr)) else p)
       params velocity
   in
   (params, { velocity })
@@ -852,16 +863,20 @@ let adam_direction (module P : Nx.Ptree.S) ~b1 ~b2 ~eps (st : P.t adam_state)
     P.map2
       (fun m g ->
         let dt = Nx.dtype m in
-        Nx.add (Nx.mul m (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1))))
+        if updates m then
+          Nx.add (Nx.mul m (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1)))
+        else m)
       st.mu grads
   in
   let nu =
     P.map2
       (fun n g ->
         let dt = Nx.dtype n in
-        Nx.add
-          (Nx.mul n (scalar dt b2))
-          (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2))))
+        if updates n then
+          Nx.add
+            (Nx.mul n (scalar dt b2))
+            (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2)))
+        else n)
       st.nu grads
   in
   let c1 = 1.0 -. (b1 ** float_of_int step) in
@@ -870,9 +885,11 @@ let adam_direction (module P : Nx.Ptree.S) ~b1 ~b2 ~eps (st : P.t adam_state)
     P.map2
       (fun m n ->
         let dt = Nx.dtype m in
-        let mu_hat = Nx.div m (scalar dt c1) in
-        let nu_hat = Nx.div n (scalar dt c2) in
-        Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps)))
+        if updates m then
+          let mu_hat = Nx.div m (scalar dt c1) in
+          let nu_hat = Nx.div n (scalar dt c2) in
+          Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps))
+        else m)
       mu nu
   in
   (direction, { mu; nu; step })
@@ -883,7 +900,8 @@ let adam_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
   let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in
   let params =
     P.map2
-      (fun p d -> Nx.sub p (Nx.mul d (scalar (Nx.dtype p) lr)))
+      (fun p d ->
+        if updates p then Nx.sub p (Nx.mul d (scalar (Nx.dtype p) lr)) else p)
       params direction
   in
   (params, st)
@@ -899,8 +917,10 @@ let adamw_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
     P.map2
       (fun p d ->
         let dt = Nx.dtype p in
-        let decayed = Nx.add d (Nx.mul p (scalar dt weight_decay)) in
-        Nx.sub p (Nx.mul decayed (scalar dt lr)))
+        if updates p then
+          let decayed = Nx.add d (Nx.mul p (scalar dt weight_decay)) in
+          Nx.sub p (Nx.mul decayed (scalar dt lr))
+        else p)
       params direction
   in
   (params, st)

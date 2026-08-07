@@ -37,7 +37,15 @@
     Below the structural tier, the {{!section:chains}per-tensor tier} composes
     Optax-style gradient transformations on single tensors via {!chain}. Use it
     to build custom update rules from primitives, or from frameworks that manage
-    each parameter tensor separately. *)
+    each parameter tensor separately.
+
+    {b Non-parameter leaves.} A structure may carry leaves that are not
+    parameters — an {!Nx.Rng.key} threaded through a compiled step, a counter, a
+    batch of indices. {!Rune.val-grad} does not differentiate them, and the
+    structural optimizers here do not update them: every step passes a
+    non-float leaf through unchanged. So one structure can serve the objective,
+    the gradient and the update without splitting the values that must reach a
+    compiled step from the values being trained. *)
 
 (** {1:schedules Learning-Rate Schedules}
 

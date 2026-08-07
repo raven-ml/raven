@@ -359,6 +359,84 @@ let test_adamw_converges () =
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
 
+(* A parameter structure may carry leaves that are not parameters. The
+   canonical one is an RNG key, which has to sit in the structure to reach a
+   compiled step as an input but is not something to optimize. Rune leaves its
+   gradient slot at zero; the optimizers must leave the value alone. Adam is
+   where it would show: its direction runs each leaf through a square root and
+   a division. *)
+module Stepper = struct
+  type t = { w : Nx.float64_t; key : Nx.Rng.key }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    { w = f t.w; key = f t.key }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { w = f a.w b.w; key = f a.key b.key }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    f t.w;
+    f t.key
+end
+
+let test_optimizers_carry_a_non_parameter_leaf () =
+  let params =
+    Stepper.
+      {
+        w = Nx.create Nx.float64 [| 3 |] [| 1.0; -2.0; 3.0 |];
+        key = Nx.Rng.key 7;
+      }
+  in
+  let grads =
+    Stepper.
+      {
+        w = Nx.create Nx.float64 [| 3 |] [| 2.0; -4.0; 6.0 |];
+        key = Nx.zeros Nx.int32 [| 2 |];
+      }
+  in
+  let key_before = Nx.to_array params.Stepper.key in
+  let check name (updated : Stepper.t) =
+    is_true
+      ~msg:(name ^ " moves the weight")
+      (Nx.to_array updated.Stepper.w <> Nx.to_array params.Stepper.w);
+    equal
+      ~msg:(name ^ " leaves the key alone")
+      (array int32) key_before
+      (Nx.to_array updated.Stepper.key)
+  in
+  let sgd, _ =
+    Vega.sgd_step
+      (module Stepper)
+      ~lr:0.1
+      (Vega.sgd_init (module Stepper) params)
+      ~params ~grads
+  in
+  check "sgd" sgd;
+  let momentum, _ =
+    Vega.sgd_step
+      (module Stepper)
+      ~lr:0.1 ~momentum:0.9
+      (Vega.sgd_init (module Stepper) params)
+      ~params ~grads
+  in
+  check "sgd with momentum" momentum;
+  let adam, _ =
+    Vega.adam_step
+      (module Stepper)
+      ~lr:0.1
+      (Vega.adam_init (module Stepper) params)
+      ~params ~grads
+  in
+  check "adam" adam;
+  let adamw, _ =
+    Vega.adamw_step
+      (module Stepper)
+      ~lr:0.1
+      (Vega.adamw_init (module Stepper) params)
+      ~params ~grads
+  in
+  check "adamw" adamw
+
 let tests =
   [
     group "schedules"
@@ -406,6 +484,11 @@ let tests =
         test "zero gradients decay weights geometrically"
           test_adamw_decays_weights;
         test "converges on a quadratic bowl" test_adamw_converges;
+      ];
+    group "non-parameter leaves"
+      [
+        test "every optimizer carries them unchanged"
+          test_optimizers_carry_a_non_parameter_leaf;
       ];
   ]
 

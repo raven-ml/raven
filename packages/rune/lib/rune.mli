@@ -47,10 +47,17 @@ val grad : (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t
     structure and leaf types as [params]. Leaves of [params] that do not
     contribute to the result have all-zero gradients.
 
-    Raises [Invalid_argument] if a parameter leaf has an integer or boolean
-    dtype (hold non-differentiable data in the closure or the auxiliary output),
-    or if [f params] is not a scalar (a tensor with exactly one element); use
-    {!vjp} to differentiate non-scalar outputs against an explicit cotangent. *)
+    Gradients are defined for real and complex leaves. A structure may hold
+    others — an {!Nx.Rng.key} threaded through a compiled step, a counter, a
+    batch of indices — and they are {e carried}, not differentiated: nothing
+    accumulates into them and their slot in the result is zero. This is what
+    lets one structure serve both [grad] and {!val-jit}, which needs such values
+    as inputs. Vega's optimizers leave them alone in turn, so a step over the
+    combined structure updates the parameters and passes the rest through.
+
+    Raises [Invalid_argument] if [f params] is not a scalar (a tensor with
+    exactly one element); use {!vjp} to differentiate non-scalar outputs against
+    an explicit cotangent. *)
 
 val value_and_grad :
   (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t * P.t
