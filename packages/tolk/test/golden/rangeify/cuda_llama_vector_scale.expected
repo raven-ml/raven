@@ -1,3 +1,4 @@
+typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
@@ -9,5 +10,6 @@ extern "C" __global__ void __launch_bounds__(4) E_2_2_4n1(float* data0_16, float
   int alu1 = ((lidx0<<3)+alu0);
   float4 val1 = (*((float4*)((data1_16+alu1))));
   float4 val2 = (*((float4*)((data3_8+alu0))));
-  *((float4*)((data0_16+alu1))) = make_float4((val1.x*val0*val2.x),(val1.y*val0*val2.y),(val1.z*val0*val2.z),(val1.w*val0*val2.w));
+  float alu2 = (1/val0);
+  *((float4*)((data0_16+alu1))) = make_float4((val1.x*alu2*val2.x),(val1.y*alu2*val2.y),(val1.z*alu2*val2.z),(val1.w*alu2*val2.w));
 }

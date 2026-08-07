@@ -57,7 +57,7 @@
   56 Ops.STACK           :            dtypes.half                              [44, 47, 51, 55]                 None
   57 Ops.CONST           :            dtypes.float                             []                               0.0
   58 Ops.STACK           :            dtypes.float                             ['0.0', '0.0', '0.0', '0.0']     None
-  59 Ops.WMMA            :            dtypes.float                             [39, 56, 58]                     ('WMMA_8_16_16_half_float', (8, 16, 16), dtypes.half, dtypes.float, 'CUDA', 32, (((4, 2), (3, 2), (8, 2)), ((4, 2), (3, 2), (8, 1)), ((4, 2), (3, 2), (8, 1))), ())
+  59 Ops.WMMA            :            dtypes.float                             [39, 56, 58]                     ((8, 16, 16), dtypes.half, 'CUDA', 32, None)
   60 Ops.INDEX           :            dtypes.float                             [59, '0']                        None
   61 Ops.INDEX           :            dtypes.float                             [59, '1']                        None
   62 Ops.STACK           :            dtypes.float                             [60, 61]                         None

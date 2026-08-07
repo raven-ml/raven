@@ -82,7 +82,7 @@
   81 Ops.STACK           :            dtypes.fp8e4m3                           [54, 58, 61, 65, 68, 72, 76, 80] None
   82 Ops.CONST           :            dtypes.float                             []                               0.0
   83 Ops.STACK           :            dtypes.float                             ['0.0', '0.0', '0.0', '0.0']     None
-  84 Ops.WMMA            :            dtypes.float                             [49, 81, 83]                     ('WMMA_8_16_32_float8_e4m3_float', (8, 16, 32), dtypes.fp8e4m3, dtypes.float, 'CUDA', 32, (((4, 2), (3, 2), (9, 2), (8, 2)), ((4, 2), (3, 2), (9, 2), (8, 1)), ((4, 2), (3, 2), (9, 1), (8, 1))), ())
+  84 Ops.WMMA            :            dtypes.float                             [49, 81, 83]                     ((8, 16, 32), dtypes.fp8e4m3, 'CUDA', 32, None)
   85 Ops.INDEX           :            dtypes.float                             [84, '0']                        None
   86 Ops.INDEX           :            dtypes.float                             [84, '1']                        None
   87 Ops.STACK           :            dtypes.float                             [85, 86]                         None

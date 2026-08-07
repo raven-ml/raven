@@ -1,11 +1,11 @@
    0 Ops.CONST           :            dtypes.int                               []                               64
    1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, dtypes.int, vmin_vmax=(0, 1), name='core_id', addrspace=AddrSpace.ALU)
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, dtypes.int, vmin_vmax=(0, 1), multiple_of=1, name='core_id', addrspace=AddrSpace.ALU)
    4 Ops.CONST           :            dtypes.int                               []                               5
    5 Ops.SHL             :            dtypes.int                               [3, '5']                         None
    6 Ops.CONST           :            dtypes.int                               []                               32
-   7 Ops.RANGE           : 2          dtypes.int                               ['32']                           (2, AxisType.LOOP)
+   7 Ops.RANGE           : 2          dtypes.int                               ['32']                           (2, AxisType.WEAK)
    8 Ops.ADD             : 2          dtypes.int                               [5, 7]                           None
    9 Ops.INDEX           : 2          dtypes.float                             [1, 8]                           None
   10 Ops.CONST           :            dtypes.int                               []                               1

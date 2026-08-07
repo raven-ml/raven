@@ -8,5 +8,6 @@ kernel void E_2_2_4n3(device float* data0_16, device float* data1_16, device flo
   int alu1 = ((lidx0<<3)+alu0);
   float4 val1 = (*((device float4*)((data1_16+alu1))));
   float4 val2 = (*((device float4*)((data3_8+alu0))));
-  *((device float4*)((data0_16+alu1))) = float4((val1.x*val0*val2.x),(val1.y*val0*val2.y),(val1.z*val0*val2.z),(val1.w*val0*val2.w));
+  float alu2 = (1/val0);
+  *((device float4*)((data0_16+alu1))) = float4((val1.x*alu2*val2.x),(val1.y*alu2*val2.y),(val1.z*alu2*val2.z),(val1.w*alu2*val2.w));
 }

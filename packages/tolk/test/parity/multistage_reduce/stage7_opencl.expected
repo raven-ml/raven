@@ -12,15 +12,16 @@ __kernel void r_32_16_32_2n5(__global float* data0_32, __global float* data1_327
       float val0 = (*(data1_32768+((lidx0<<6)+(Ridx1<<5)+Ridx0+(gidx0<<10))));
       *(buf0+0) = ((*(buf0+0))+val0);
     }
-    float alu4 = (((*(buf0+0))<0.0f)?0.0f:(*(buf0+0)));
+    float val1 = (*(buf0+0));
+    float alu4 = ((val1<0.0f)?0.0f:val1);
     *(buf1+0) = ((*(buf1+0))+alu4);
   }
   *(buf3+lidx0) = (*(buf1+0));
   barrier(CLK_LOCAL_MEM_FENCE);
   *(buf2+0) = 0.0f;
   for (int Ridx103 = 0; Ridx103 < 16; Ridx103++) {
-    float val1 = (*(buf3+Ridx103));
-    *(buf2+0) = ((*(buf2+0))+val1);
+    float val2 = (*(buf3+Ridx103));
+    *(buf2+0) = ((*(buf2+0))+val2);
   }
   if ((lidx0==0)) {
     *(data0_32+gidx0) = (*(buf2+0));

@@ -2,7 +2,7 @@
    0 Ops.CONST           :            dtypes.int                               []                               256
    1 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2, dtypes.float)
    2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(3, dtypes.int, vmin_vmax=(0, 63), name='core_id', addrspace=AddrSpace.ALU)
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(3, dtypes.int, vmin_vmax=(0, 63), multiple_of=1, name='core_id', addrspace=AddrSpace.ALU)
    4 Ops.CONST           :            dtypes.int                               []                               2
    5 Ops.SHL             :            dtypes.int                               [3, '2']                         None
    6 Ops.CONST           :            dtypes.int                               []                               4

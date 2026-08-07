@@ -7,7 +7,7 @@
    6 Ops.CONST           :            dtypes.float                             []                               0.0
    7 Ops.STORE           :            dtypes.void                              [5, '0.0']                       None
    8 Ops.STACK           :            dtypes.void                              []                               None
-   9 Ops.PARAM           :            dtypes.int                               [8]                              ParamArg(2, dtypes.int, vmin_vmax=(1, 127), name='start_pos', addrspace=AddrSpace.ALU)
+   9 Ops.PARAM           :            dtypes.int                               [8]                              ParamArg(2, dtypes.int, vmin_vmax=(1, 127), multiple_of=1, name='start_pos', addrspace=AddrSpace.ALU)
   10 Ops.ADD             :            dtypes.int                               [9, '1']                         None
   11 Ops.RANGE           : 0          dtypes.int                               [10]                             (0, AxisType.REDUCE)
   12 Ops.AFTER           : 0          dtypes.float                             [4, 7, 11]                       None

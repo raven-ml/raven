@@ -3,7 +3,7 @@ __kernel void r_2_8n7(__global float* data0_2, __global float* data1_16) {
   int alu0 = (lidx0<<3);
   float4 val0 = (*((__global float4*)((data1_16+(alu0+4)))));
   float4 val1 = (*((__global float4*)((data1_16+alu0))));
-  *(data0_2+lidx0) = (1/sqrt(((((val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+1e-05f)));
+  *(data0_2+lidx0) = sqrt(((((val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+9.999999747378752e-06f));
 }
 ---
 __kernel void r_2_8_8n7(__global float* data0_16, __global float* data1_16, __global float* data2_2, __global float* data3_8, __global float* data4_64) {
@@ -18,7 +18,7 @@ __kernel void r_2_8_8n7(__global float* data0_16, __global float* data1_16, __gl
   int alu1 = (lidx1<<3);
   float4 val5 = (*((__global float4*)((data4_64+(alu1+4)))));
   float4 val6 = (*((__global float4*)((data4_64+alu1))));
-  *(data0_16+(lidx1+alu0)) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*val0);
+  *(data0_16+(lidx1+alu0)) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*(1/val0));
 }
 ---
 __kernel void r_2_4_8n6(__global float* data0_8, __global float* data1_16, __global float* data2_2, __global float* data3_8, __global float* data4_32) {
@@ -33,7 +33,7 @@ __kernel void r_2_4_8n6(__global float* data0_8, __global float* data1_16, __glo
   int alu1 = (lidx1<<3);
   float4 val5 = (*((__global float4*)((data4_32+(alu1+4)))));
   float4 val6 = (*((__global float4*)((data4_32+alu1))));
-  *(data0_8+(lidx1+(lidx0<<2))) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*val0);
+  *(data0_8+(lidx1+(lidx0<<2))) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*(1/val0));
 }
 ---
 __kernel void r_2_4_8n7(__global float* data0_8, __global float* data1_16, __global float* data2_2, __global float* data3_8, __global float* data4_32) {
@@ -48,7 +48,7 @@ __kernel void r_2_4_8n7(__global float* data0_8, __global float* data1_16, __glo
   int alu1 = (lidx1<<3);
   float4 val5 = (*((__global float4*)((data4_32+(alu1+4)))));
   float4 val6 = (*((__global float4*)((data4_32+alu1))));
-  *(data0_8+(lidx1+(lidx0<<2))) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*val0);
+  *(data0_8+(lidx1+(lidx0<<2))) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*(1/val0));
 }
 ---
 __kernel void r_2_2_2_2_2n3(__global float* data0_8, __global float* data1_16, __global float* data2_64, __global float* data3_8) {
@@ -90,7 +90,7 @@ __kernel void r_4_2n7(__global float* data0_4, __global float* data1_8, __global
   int lidx0 = get_local_id(0); /* 4 */
   float val0 = (*(data2_4+lidx0));
   float2 val1 = (*((__global float2*)((data1_8+(lidx0<<1)))));
-  *(data0_4+lidx0) = (1/(exp2(((val1.x-val0)*1.4426950408889634f))+exp2(((val1.y-val0)*1.4426950408889634f))));
+  *(data0_4+lidx0) = (exp2(((val1.x-val0)*1.4426950216293335f))+exp2(((val1.y-val0)*1.4426950216293335f)));
 }
 ---
 __kernel void r_4_4_2n3(__global float* data0_16, __global float* data1_8, __global float* data2_4, __global float* data3_4, __global float* data4_8) {
@@ -101,7 +101,7 @@ __kernel void r_4_4_2n3(__global float* data0_16, __global float* data1_8, __glo
   float val2 = (*(data4_8+lidx1));
   float val3 = (*(data4_8+(lidx1+4)));
   float2 val4 = (*((__global float2*)((data1_8+(lidx0<<1)))));
-  *(data0_16+(lidx1+(lidx0<<2))) = (((exp2(((val4.x-val0)*1.4426950408889634f))*val2)+(exp2(((val4.y-val0)*1.4426950408889634f))*val3))*val1);
+  *(data0_16+(lidx1+(lidx0<<2))) = (((exp2(((val4.x-val0)*1.4426950216293335f))*val2)+(exp2(((val4.y-val0)*1.4426950216293335f))*val3))*(1/val1));
 }
 ---
 __kernel void r_2_8_2_4n3(__global float* data0_16, __global float* data1_16, __global float* data2_16, __global float* data3_64) {
@@ -133,14 +133,15 @@ __kernel void r_2_16_8_8n3(__global float* data0_32, __global float* data1_16, _
     *(buf0+0) = ((*(buf0+0))+(val0*val1*val2));
   }
   float val3 = (*(data2_2+lidx0));
-  float4 val4 = (*((__global float4*)((data1_16+(alu0+4)))));
-  float4 val5 = (*((__global float4*)((data1_16+alu0))));
-  float4 val6 = (*((__global float4*)((data3_8+0))));
-  float4 val7 = (*((__global float4*)((data3_8+4))));
-  float4 val8 = (*((__global float4*)((data5_128+(alu1+4)))));
-  float4 val9 = (*((__global float4*)((data5_128+alu1))));
-  float alu5 = ((*(buf0+0))*val3);
-  *(data0_32+(lidx1+(lidx0<<4))) = (alu5*(1/(1.0f+exp2((alu5*-1.4426950408889634f))))*((val5.x*val6.x*val9.x)+(val5.y*val6.y*val9.y)+(val5.z*val6.z*val9.z)+(val5.w*val6.w*val9.w)+(val4.x*val7.x*val8.x)+(val4.y*val7.y*val8.y)+(val4.z*val7.z*val8.z)+(val4.w*val7.w*val8.w))*val3);
+  float val4 = (*(buf0+0));
+  float4 val5 = (*((__global float4*)((data1_16+(alu0+4)))));
+  float4 val6 = (*((__global float4*)((data1_16+alu0))));
+  float4 val7 = (*((__global float4*)((data3_8+0))));
+  float4 val8 = (*((__global float4*)((data3_8+4))));
+  float4 val9 = (*((__global float4*)((data5_128+(alu1+4)))));
+  float4 val10 = (*((__global float4*)((data5_128+alu1))));
+  float alu5 = (1/val3);
+  *(data0_32+(lidx1+(lidx0<<4))) = (val4*(1/(val3*(1.0f+exp2((val4*alu5*-1.4426950216293335f)))))*((val6.x*val7.x*val10.x)+(val6.y*val7.y*val10.y)+(val6.z*val7.z*val10.z)+(val6.w*val7.w*val10.w)+(val5.x*val8.x*val9.x)+(val5.y*val8.y*val9.y)+(val5.z*val8.z*val9.z)+(val5.w*val8.w*val9.w))*alu5);
 }
 ---
 __kernel void r_2_8_16n3(__global float* data0_16, __global float* data1_16, __global float* data2_32, __global float* data3_128) {
@@ -173,7 +174,8 @@ __kernel void E_2_2_4n7(__global float* data0_16, __global float* data1_16, __gl
   int alu1 = ((lidx0<<3)+alu0);
   float4 val1 = (*((__global float4*)((data1_16+alu1))));
   float4 val2 = (*((__global float4*)((data3_8+alu0))));
-  *((__global float4*)((data0_16+alu1))) = (float4)((val1.x*val0*val2.x),(val1.y*val0*val2.y),(val1.z*val0*val2.z),(val1.w*val0*val2.w));
+  float alu2 = (1/val0);
+  *((__global float4*)((data0_16+alu1))) = (float4)((val1.x*alu2*val2.x),(val1.y*alu2*val2.y),(val1.z*alu2*val2.z),(val1.w*alu2*val2.w));
 }
 ---
 __kernel void r_2_2_16_8n5(__global float* data0_64, __global float* data1_16, __global float* data2_256) {

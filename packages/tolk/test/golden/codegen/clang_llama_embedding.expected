@@ -1,10 +1,10 @@
+typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
 void E_8_2n1(float* restrict data0_16, int* restrict data1_2, float* restrict data2_256) {
-  int val0 = (*(data1_2+0));
-  int val1 = (*(data1_2+1));
+  int2 val0 = (*((int2*)((data1_2+0))));
   for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
-    float val2 = (((-1<val0)&(val0<32))?*(data2_256+((val0<<3)+Lidx2)):0.0f);
-    float val3 = (((-1<val1)&(val1<32))?*(data2_256+((val1<<3)+Lidx2)):0.0f);
-    *(data0_16+(Lidx2+8)) = val3;
-    *(data0_16+Lidx2) = val2;
+    float val1 = (((-1<val0[0])&(val0[0]<32))?*(data2_256+((val0[0]<<3)+Lidx2)):0.0f);
+    float val2 = (((-1<val0[1])&(val0[1]<32))?*(data2_256+((val0[1]<<3)+Lidx2)):0.0f);
+    *(data0_16+(Lidx2+8)) = val2;
+    *(data0_16+Lidx2) = val1;
   }
 }

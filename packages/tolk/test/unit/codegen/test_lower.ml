@@ -163,6 +163,28 @@ let () =
                 | Some _ -> failwith "expected two image indexes"
                 | None -> failwith "expected index")
             | _ -> failwith "expected gated load");
+          test "gater zeroes every lane of a gated image load" (fun () ->
+            (* An image coordinate addresses four floats, so the load is four
+               lanes wide. The alternative it falls back to when the gate is
+               false has to be as wide as the load: a scalar zero would leave
+               three lanes unwritten. *)
+            let p =
+              U.param ~slot:0 ~dtype:Dtype.float32
+                ~shape:
+                  (U.stack [ U.const_int 4; U.const_int 4; U.const_int 4 ])
+                ~addrspace:Dtype.Global ()
+            in
+            let gate =
+              U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
+                ~addrspace:Dtype.Alu ()
+            in
+            let yi = U.O.where gate (U.const_int 3) (U.invalid ()) in
+            let xi = U.O.where gate (U.const_int 1) (U.invalid ()) in
+            let load = U.load ~src:(U.index ~ptr:p ~idxs:[ yi; xi ] ()) () in
+            equal int 4 (U.max_numel load);
+            match U.as_load (Gater.pm_move_gates_from_index load) with
+            | Some { alt = Some alt; _ } -> equal int 4 (U.max_numel alt)
+            | _ -> failwith "expected gated load");
           test "gater strips stacked image load coordinates with same invalid gate"
             (fun () ->
             let p =

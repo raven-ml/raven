@@ -63,7 +63,7 @@
   62 Ops.STACK           :            dtypes.bfloat16                          [50, 53, 57, 61]                 None
   63 Ops.CONST           :            dtypes.float                             []                               0.0
   64 Ops.STACK           :            dtypes.float                             ['0.0', '0.0', '0.0', '0.0']     None
-  65 Ops.WMMA            :            dtypes.float                             [45, 62, 64]                     ('WMMA_8_16_16___bf16_float', (8, 16, 16), dtypes.bfloat16, dtypes.float, 'CUDA', 32, (((4, 2), (3, 2), (8, 2)), ((4, 2), (3, 2), (8, 1)), ((4, 2), (3, 2), (8, 1))), ())
+  65 Ops.WMMA            :            dtypes.float                             [45, 62, 64]                     ((8, 16, 16), dtypes.bfloat16, 'CUDA', 32, None)
   66 Ops.CONST           :            dtypes.int                               []                               0
   67 Ops.INDEX           :            dtypes.float                             [65, '0']                        None
   68 Ops.INDEX           :            dtypes.float                             [65, '1']                        None

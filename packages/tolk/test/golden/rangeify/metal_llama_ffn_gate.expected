@@ -12,5 +12,5 @@ kernel void r_2_8_8n2(device float* data0_16, device float* data1_16, device flo
   int alu1 = (lidx1<<3);
   float4 val5 = (*((device float4*)((data4_64+(alu1+4)))));
   float4 val6 = (*((device float4*)((data4_64+alu1))));
-  *(data0_16+(lidx1+alu0)) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*val0);
+  *(data0_16+(lidx1+alu0)) = (((val2.x*val3.x*val6.x)+(val2.y*val3.y*val6.y)+(val2.z*val3.z*val6.z)+(val2.w*val3.w*val6.w)+(val1.x*val4.x*val5.x)+(val1.y*val4.y*val5.y)+(val1.z*val4.z*val5.z)+(val1.w*val4.w*val5.w))*(1/val0));
 }

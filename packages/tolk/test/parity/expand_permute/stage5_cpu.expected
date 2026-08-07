@@ -1,10 +1,10 @@
    0 Ops.CONST           :            dtypes.int                               []                               1000
    1 Ops.PARAM           :            dtypes.float                             ['1000']                         ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               10
-   3 Ops.RANGE           : 0          dtypes.int                               ['10']                           (0, AxisType.LOOP)
-   4 Ops.RANGE           : 0,1        dtypes.int                               ['10', 3]                        (1, AxisType.LOOP)
+   3 Ops.RANGE           : 0          dtypes.int                               ['10']                           (0, AxisType.WEAK)
+   4 Ops.RANGE           : 0,1        dtypes.int                               ['10', 3]                        (1, AxisType.WEAK)
    5 Ops.MUL             : 0,1        dtypes.int                               [4, '10']                        None
-   6 Ops.RANGE           : 0,1,2      dtypes.int                               ['10', 4]                        (2, AxisType.LOOP)
+   6 Ops.RANGE           : 0,1,2      dtypes.int                               ['10', 4]                        (2, AxisType.WEAK)
    7 Ops.ADD             : 0,1,2      dtypes.int                               [5, 6]                           None
    8 Ops.CONST           :            dtypes.int                               []                               100
    9 Ops.MUL             : 0          dtypes.int                               [3, '100']                       None

@@ -3,11 +3,15 @@
 Known gaps, deferred parity items, and follow-ups. Maintainer notes — reference
 anchors point at the tinygrad clone.
 
-Two clones are live during the pin migration: `_tinygrad_next` @ `baa614806` is
-the pin `lib/` is being ported to, and `_tinygrad` @ `7eb197b1b` is the pin the
-committed `.expected` corpus was generated from. A byte-diff against the wrong
-one reads convergence as divergence — see "Rendered-output movement pending
-regeneration" below for what is expected to be red until wave 9 regenerates.
+`_tinygrad` is at `baa614806`, and the whole `.expected` corpus was regenerated
+against it. `_tinygrad_next` is a leftover worktree at the same commit, kept
+only so the pre-move corpus can still be reconstructed; it has no references
+anywhere and can be removed once this round is reviewed.
+
+Corpus status after the regeneration: **631 files, 565 agree with tolk, 66
+diverge**, and every one of the 66 is attributed to one of four causes — see
+"Residual divergences after the pin move" below. Nothing is red for pin drift
+any more, so a red file now means a real gap.
 
 ## Open bugs
 
@@ -16,32 +20,16 @@ regeneration" below for what is expected to be red until wave 9 regenerates.
   fail in the coalescer when the same kernel ASTs are lowered through the CUDA
   renderer. Not yet minimised.
 
-- **The CUDA WMMA primitive renders with scalar operands.** Every
-  `__device__ __WMMA_*` prototype comes out as
-  `float __WMMA_8_16_16_half_float(half a, half b, float c)` with empty asm
-  operand lists (`"{%0}, {},"` / `: );`) instead of the reference's
-  `float4 __WMMA_8_16_16_half_float(half8 a, half4 b, float4 c)`. The kernel
-  body is byte-identical either way — it calls `make_half8(...)`/`make_half4(...)`
-  correctly — so only the emitted primitive is wrong, and it is uncompilable.
-
-  `cstyle.ml`'s `cuda_wmma_helpers` reconstructs the three operand widths from
-  `info.tc_upcast_axes` (`| None -> ([], [], [])`, so `axis_product` is 1). But
-  `expand_wmma` (`codegen/codegen_lower.ml:156`) clears that slot to `None` as
-  its "already expanded" marker, so by render time it is *always* `None`. The
-  reference reads the widths off the node instead —
-  `wmma_args` is `tuple(uop.src[i].shape[-1] for i in range(3))`
-  (`renderer/cstyle.py:113`). Fix at that owner: take the widths from the WMMA
-  node's own three sources, and drop `tc_upcast_axes` from the `dedup_by_key`
-  (it is a constant `None` there, so it deduplicates nothing). `device.ml:575`
-  also mixes the always-`None` field into a key.
-
-  Introduced by the `wmma_info` 5-tuple rework. Metal is unaffected because
-  `metal_wmma_helpers` hardcodes `~sz:2` rather than reconstructing. This is a
-  fifth instance of the reconstructed-value pattern under "Design debt".
-
-  *What catches it*: `test/parity/tc_matmul_32` (new, see below) and the three
-  `tc_matmul_{f16,bf16,fp8}` cases. `tc_matmul_32`'s `stage7_cuda` disagrees on
-  exactly this and nothing else.
+- **FIXED — the CUDA WMMA primitive no longer renders with scalar operands.**
+  It used to emit `float __WMMA_8_16_16_half_float(half a, half b, float c)`
+  with empty asm operand lists; it now emits
+  `float4 __WMMA_8_16_16_half_float(half8 a, half4 b, float4 c)`. Root cause
+  was `cuda_wmma_helpers` reconstructing the operand widths from
+  `info.tc_upcast_axes`, which `expand_wmma` clears to `None` as its
+  already-expanded marker, so the `| None -> ([], [], [])` fallback made every
+  width 1. Verified across all four tensor-core cases — `tc_matmul_32`,
+  `tc_matmul_f16`, `tc_matmul_bf16`, `tc_matmul_fp8`, 16 files, all agreeing
+  with the reference at `baa614806`.
 
 ## Deferred parity divergences — blocked
 
@@ -133,16 +121,6 @@ Nothing external blocks these; each could be picked up today.
   now. What remains is sequencing — the second half lands in
   `lib/engine/realize.ml` (copy detection) and it moves every rangeify golden,
   so it wants one commit that includes the golden regeneration.
-
-- **The threefry symbolic rules are not pruned yet** (`33755a346`).
-  `lib/uop/symbolic.ml` still carries five unpack rules (the `&0xFFFFFFFF`
-  cast, both `*2^32` splice forms, and both `<<32` forms); the reference keeps
-  only the two `<<32` ones. This was one third of a three-file change; two
-  thirds have landed — `threefry2x32` in `lib/codegen/decomp/decomp_op.ml` now
-  splits, rotates and repacks with `<<`/`>>` and narrows the low word by cast
-  rather than mask, and `_threefry_random_bits` in `lib/frontend/rand.ml` no
-  longer masks before its narrowing casts. All that remains is pruning the
-  three now-dead symbolic rules.
 
 - **Kernel formals keep their caller-side variable names** (`be25207a7`).
   Upstream renames a BIND'd scalar formal to `p{slot}` in `UOp.param_like` and
@@ -334,84 +312,64 @@ Two invariants they created, which a later change could silently break:
 - **`ParamArg.multiple_of` is in `device.ml`'s `add_param_arg` cache key.** Not
   optional: the field changes folding, so two programs differing only in it
   would otherwise collide and one would be handed the other's compiled code.
-  `multiple_of` is an `int option` — `None` means no promise, not `1`.
+  `multiple_of` is an `int option` — `None` means no promise, not `1`. That
+  reading is right for `Uop.param` and wrong for `Uop.variable`, which the
+  reference defaults to `1`; see the residual-divergence section.
 
-## Rendered-output movement pending regeneration
+## Residual divergences after the pin move
 
-Everything below is a deliberate change from this pin update whose only visible
-effect is that a golden's `.actual` no longer matches its `.expected`. They are
-listed so the regeneration is read as intended movement rather than regression.
+The corpus was regenerated against `baa614806`. 565 of 631 files now agree with
+tolk; the 66 that do not fall into exactly four causes, none of them pin drift.
+Ordered by how much they matter.
 
-Counts below are measured over the **whole corpus**, not estimated: every
-generator was run against `baa614806` into a scratch tree and diffed against
-the committed corpus. **631 files: 408 unchanged, 223 changed.** Seven
-mechanical causes account for 160 of them; **63 need to be read by hand**, and
-they cluster — `golden/codegen` 20, `golden/rangeify` 20, `multi_*` 13,
-`multistage_reduce` 4, `tc_matmul_*` 5. Attribute the rest; review those 63.
+- **The reciprocal of an `rsqrt` sits on the wrong side of a kernel boundary**
+  (28 files: every `llama_*` case in `golden/codegen` and `golden/rangeify`,
+  all four backends). The reference stores `sqrt(s)` and divides at the
+  consumer; tolk stores `1.0f/sqrt(s)` and multiplies:
 
-The two clusters known to be semantic rather than cosmetic:
+  | | reference | tolk |
+  |---|---|---|
+  | `llama_rmsnorm` | `__builtin_sqrtf(s)` | `(1.0f/__builtin_sqrtf(s))` |
+  | `llama_vector_scale` | `(val1[i]/val0)*val2[i]` | `val1[i]*val0*val2[i]` |
+  | `llama_ffn_gate` | `(...)/val2` | `(...)*val2` |
 
-- **`multi_*`** — kernel signatures lose a parameter
-  (`E_4_4n1(data0, data1, data2)` -> `E_4_4n5(data0, data1)`) and axis ids
-  shift by one. This is the MULTI -> UNSHARD rework on the reference side, and
-  it is why a `multi_stack` case cannot be authored before the pin moves.
-- **`rsqrt` moved across a kernel boundary.** `llama_rmsnorm` stops emitting
-  `1.0f/__builtin_sqrtf(x)` and emits `__builtin_sqrtf(x)`, while its consumer
-  `llama_vector_scale` changes `val1[i]*val0*val2[i]` into
-  `(val1[i]/val0)*val2[i]` — mathematically identical, one kernel later.
-  Checked rather than assumed: the golden selection is stable, 14 sinks at both
-  pins with each target name matching exactly one kernel.
+  **Not a miscompile**: the two are consistent pairs and agree to float
+  rounding. But the intermediate buffer genuinely holds a different value —
+  the root on one side, its reciprocal on the other — so anything that reads
+  that buffer outside these kernels would disagree. `RMSNorm` itself is
+  identical at both pins and `rsqrt`'s definition did not change, so the owner
+  is downstream folding (`mixin/op.py` and `codegen/simplify.py` are the two
+  files that moved between the pins). Unported upstream change; find the rule
+  and port it.
 
-  *Trap in that generator*: the five `llama_*` cases are selected by matching
-  a hardcoded kernel-name table (`"r_2_8": "llama_rmsnorm"`) against
-  `rewritten.arg.name`. Kernel names encode shape and axis structure, so a
-  schedule change can silently rebind a name to a different kernel, and the
-  loop's last write would win. Re-run the sink-name census on any future pin
-  move rather than trusting that the five names still resolve.
+- **`multi_*` emits about half the kernels the reference does** (9 files:
+  `multi_allreduce_naive`, `multi_allreduce_ring`, `multi_replicate_elementwise`
+  at stage 5 CUDA and stage 7 CPU/CUDA). Counts are reference-vs-tolk 6/2,
+  34/18 and 9/5 — the reference splits per-shard copies into their own kernels
+  where tolk fuses them. This is the MULTI -> UNSHARD sharding rework, still
+  listed as not started, now showing as a clean structural divergence instead
+  of pin noise. Same area as the three failing `test_pmap.ml` cases.
 
-- Every `cuda_*` kernel gains `typedef unsigned int uint;` as its first prefix
-  line, and CUDA and Metal both spell `uint32` as `uint`. (130 files)
-- Loop and thread index variables renumber (`Lidx0` -> `Lidx1`), so a kernel
-  body can differ only in its counter names. (115 files)
-- Kernel-name suffixes renumber (`E_8_4n16` -> `E_8_4n32`). (96 files)
-- Float literals render at float32 precision rather than Python double:
-  `0.0013020833333333333` -> `0.0013020833721384406`, `1e-05f` ->
-  `9.999999747378752e-06`. (93 files)
-- `ParamArg` reprs gain `multiple_of=1` on ALU-space parameters, which moves
-  every stage-5 dump carrying a `core_id` or a bound variable, and both
-  `golden/debug` files. (24 files)
-- A register-file buffer read more than once is bound to a named temporary
-  instead of having the read re-emitted at each use.
-- Scalar kernel parameters wider than int32 render `const long` /
-  `constant long&` instead of a bare `long`; the Clang fixed-ABI wrapper
-  narrows them out of their `long long` slot instead of raising.
-- `ProgramInfo` reprs lose the `aux` key (`test/golden/debug`).
-- WMMA arg reprs become the 5-tuple `(dims, dtype_in, device, threads,
-  tc_upcast_axes)` — the stored name, the output dtype and the always-empty
-  reduce-axis list are gone, and the upcast axes now print as `None` once the
-  operands have been contracted.
-- `AxisType.LOOP` prints as `AxisType.WEAK` for every counted range: 61 lines
-  across 27 `test/parity` `stage5_*.expected` files. (27 files; the drivers
-  are already migrated.)
-- Every threefry call loses two `& 0xFFFFFFFF` masks; the narrowing cast
-  already discards the high half.
-- `pow(int, float)` loses its round-and-cast and keeps the promoted float.
-- `arange` over a range wider than int32 renders at 64 bits.
-- `var` accumulates at `sum_acc_dtype` and computes its denominator on the
-  host rather than as a tensor `relu`.
-- `cummax`, `logcumsumexp` and `scaled_dot_product_attention` build their masks
-  at bool instead of promoting a float `ones` through the comparison.
-- `logcumsumexp` and `multinomial` each lose one explicit `expand`.
-- Binary and ternary nodes no longer carry an `EXPAND` per operand from the
-  frontend: promotion is dtype-only and `pm_expand_broadcast` widens during
-  lowering. Any movement the scheduler used to fold away is simply never built.
-- Scalar literals enter weak, so a literal paired with a narrow tensor no
-  longer emits a cast to the default dtype and back.
-- Integer division without a rounding mode enters the float domain by an
-  explicit cast rather than by the reciprocal's implicit promotion, which also
-  fixes the intermediate node dtype in `mean` and `var` on integer inputs.
-- `test/golden/cstyle` still needs the directory move recorded under T11; it
-  has not been touched.
+- **`ParamArg` reprs omit `multiple_of`** (22 files, every stage-5 dump with an
+  ALU-space parameter, plus both `golden/debug` files). The reference's
+  `UOp.variable` defaults `multiple_of=1` (`uop/ops.py:983`); tolk's
+  `Uop.variable` (`lib/uop/uop.ml:720`) takes `?multiple_of` and leaves it
+  `None`.
+
+  **Proven inert, and it is a one-line fix.** Both consumers behave identically
+  under `Some 1` and `None`: `const_factor` returns `1` either way (the
+  reference's PARAM branch yields `multiple_of`, tolk falls through to its
+  `| _ -> 1`), and `divides v` for `v > 1` returns `None` either way (`1 % v`
+  is non-zero, so the reference's branch fails; tolk never enters it). Give
+  `Uop.variable` a `?(multiple_of = 1)` default and all 22 files go green.
+  `Uop.param` must keep defaulting to `None`, which is what the reference does
+  for non-variable params.
+
+- **Sharded axis ids are off by one** (7 files, `multi_*` stage 5/7 CPU). The
+  reference numbers the sharded range axis 1 and renders `Lidx1`; tolk numbers
+  it axis 0 and renders `Lidx0`. Consistent with the reference reserving axis 0
+  for the `AxisType.DEVICE` range that tolk does not build yet — the blocked
+  `pm_device_to_var` item. Cosmetic today; it resolves with that work.
 
 ## Confirmed no-ops in the pin update
 
@@ -606,9 +564,7 @@ Closed since this list was written, recorded for what they pin:
   by a conditional `End`). Nothing constructs one yet. Two consequences.
   `Axis_type.to_string Loop` is again `"loop"`, the same atom the old kind
   fed into the `Diskcache` program key, so `cache_version` was bumped to 3
-  to stop a pre-rename entry being found under the new meaning. And the
-  parity/golden Python drivers still say `AxisType.LOOP` where they mean
-  `AxisType.WEAK` — see the wave-9 precondition below.
+  to stop a pre-rename entry being found under the new meaning.
 
   **Do a rename-and-reuse in two steps, and this is the evidence why.** The
   rename (`Loop` -> `Weak`) landed first, alone, so the compiler pointed at
@@ -666,36 +622,13 @@ Closed since this list was written, recorded for what they pin:
   OCaml siblings already said `Axis_type.Weak`. No `.expected` was
   regenerated; that happens once, after the pin moves.
 
-  **These drivers now require the new pin.** `AxisType.WEAK` does **not**
-  exist at `7eb197b1b` — that pin's enum is
-  `GLOBAL, WARP, LOCAL, LOOP, GROUP_REDUCE, REDUCE, UPCAST, UNROLL, THREAD,
-  PLACEHOLDER`, with no `WEAK` member at all. So the four drivers raise
-  `AttributeError` against the old clone and are correct only against
-  `baa614806`. That is deliberate and harmless — nothing runs them until
-  regeneration, and `dune runtest` diffs committed `.expected` against the
-  OCaml `.actual`, never against Python. But **do not run `regen.py` or
-  `generate_expected.py` until `_tinygrad` is at the new pin**; they will
-  fail, not silently emit the wrong axis class.
-
-  Every clone reference is a relative path to `_tinygrad`, so all of them
-  follow the pin automatically and none needs editing: the four
-  `golden/*/generate_expected.py`, `parity/helpers.py`,
-  `test/unit/uop/test_ops.ml` (a runtime probe, which also prefers
-  `_tinygrad/.venv/bin/python3` — untracked, so it survives a checkout but not
-  a re-clone; the system `python3` is 3.14 and the venv is 3.11), and
-  `bench/{runtime,compare}/bench_*.py`. **Nothing anywhere references
-  `_tinygrad_next`** except this file, so removing that worktree breaks
-  nothing. It is a detached-HEAD worktree of `_tinygrad` itself and
-  `baa614806` is already in the main clone's object store, so the move needs
-  no fetch and there is no branch collision in either order.
-
-  `test/parity/tc_matmul_32` is the one case whose `.expected` was generated
-  from `_tinygrad_next` already, so it should not move — verify it stays
-  byte-identical rather than assuming it regenerated.
-
-  The 61 `AxisType.LOOP` lines still in 27 committed
-  `stage5_*.expected` files are *output*, not source. They are the pending
-  movement recorded above and must not be hand-edited.
+  **The pin has since moved and the corpus is regenerated**, so these drivers
+  now match their clone. `_tinygrad` was fast-forwarded on `master`
+  (7eb197b1b -> baa614806, a clean fast-forward, working tree still clean) and
+  the untracked `.venv` survived — which matters, because `test_ops.ml` prefers
+  it and it is Python 3.11 against a system 3.14. Every clone reference is a
+  relative path to `_tinygrad`, so nothing needed a path edit, and nothing
+  anywhere references `_tinygrad_next`.
 
 - **There are two Ops-order tests and only one self-heals — but both are
   ready for this move.** `test/unit/uop/test_ops.ml` probes the live
