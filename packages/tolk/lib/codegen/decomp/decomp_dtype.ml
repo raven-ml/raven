@@ -980,12 +980,8 @@ and f2f_clamp ?(sat = true) val_ dt =
     (iwhere (icmplt val_ neg_mx) neg_sat
        (iwhere (icmplt mx val_) sat_value val_))
 
-(* Number of scalar lanes in [u], read from its shape now that dtypes are
-   scalar. *)
-let max_numel u = List.fold_left ( * ) 1 (Uop.max_shape u)
-
 let f2f_load x fr to_ =
-  let n = max_numel x in
+  let n = Uop.max_numel x in
   let uint_fr = f2f_dt fr in
   if n = 1 then f2f (Uop.replace x ~dtype:uint_fr ()) fr to_
   else
@@ -1000,7 +996,7 @@ let f2f_load x fr to_ =
              f2f ld fr to_))
 
 let f2f_store st idx val_ fr to_ =
-  let n = max_numel val_ in
+  let n = Uop.max_numel val_ in
   if n = 1 then
     Uop.replace st
       ~src:[| idx; f2f (Uop.bitcast ~src:val_ ~dtype:(f2f_dt to_)) to_ fr |]

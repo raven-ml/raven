@@ -53,13 +53,6 @@ let rec trace_to_buffer_uop (u : U.t) : U.t option =
 let trace_to_buffer_slot (u : U.t) : int option =
   Option.bind (trace_to_buffer_uop u) slot_of_define
 
-(* Lane count: the product of each shape dimension's upper bound, mirroring
-   tinygrad's [max_numel]. Shapeless nodes carry a single lane. *)
-let max_numel u =
-  match U.shape_opt u with
-  | Some dims -> List.fold_left (fun acc d -> acc * U.vmax d) 1 dims
-  | None -> 1
-
 module Estimates = struct
   type estimate = Int of int | Symbolic of U.t
   type t = { ops : estimate; lds : estimate; mem : estimate }
@@ -157,7 +150,7 @@ module Estimates = struct
 
   (* Bytes touched by a single access to [u]: one lane per shape element,
      each the width of the scalar element type. *)
-  let access_bytes u = max_numel u * Dtype.itemsize (U.dtype u)
+  let access_bytes u = U.max_numel u * Dtype.itemsize (U.dtype u)
 
   let of_program (program : program) =
     let ignored = U.Tbl.create 64 in
@@ -184,7 +177,7 @@ module Estimates = struct
              traffic is capped at the buffer's own footprint. *)
           if not (Hashtbl.mem caps slot) then
             Hashtbl.replace caps slot
-              (Int (max_numel buf * Dtype.itemsize (U.dtype buf)))
+              (Int (U.max_numel buf * Dtype.itemsize (U.dtype buf)))
     in
     List.iter (fun u ->
       begin match U.op u with
@@ -200,7 +193,7 @@ module Estimates = struct
           (match U.as_store u with
            | Some sv ->
                if not (is_reg_access sv.dst) then
-                 add_lds (max_numel u * Dtype.itemsize (U.dtype sv.value));
+                 add_lds (U.max_numel u * Dtype.itemsize (U.dtype sv.value));
                Option.iter
                  (fun buf -> add_mem buf Ops.Store (access_bytes sv.dst))
                  (trace_to_buffer_uop sv.dst)
@@ -236,9 +229,9 @@ module Estimates = struct
                mults := mul_estimate !mults (Int (Stdlib.( + ) hi 1))
            | _ -> ())
       | Ops.Mulacc when not (U.Tbl.mem ignored u) ->
-          add_ops (2 * max_numel u)
+          add_ops (2 * U.max_numel u)
       | op when Ops.Group.is_alu op && not (U.Tbl.mem ignored u) ->
-          add_ops (max_numel u)
+          add_ops (U.max_numel u)
       | Ops.Wmma when not (U.Tbl.mem ignored u) ->
           (match U.as_wmma u with
            | Some { info; _ } ->

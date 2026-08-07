@@ -673,7 +673,8 @@ val variable :
 (** [variable ~name ~min_val ~max_val ?dtype ?multiple_of ()] is a symbolic
     {!Ops.Param} in {!Dtype.Alu} address space. [dtype] defaults to
     {!Dtype.weakint}. [multiple_of] declares a known divisor of every value
-    the variable can take; see {!param_arg}. Shared. *)
+    the variable can take and defaults to [1], which every integer divides;
+    see {!param_arg}. Shared. *)
 
 val buffer :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?name:string ->
@@ -1275,6 +1276,12 @@ val shape_opt : t -> t list option
 val max_shape : t -> int list
 (** [max_shape u] is {!shape} with every symbolic dimension replaced by
     its conservative upper bound. *)
+
+val max_numel : t -> int
+(** [max_numel u] is the number of scalar lanes [u] holds: the product of
+    {!max_shape}.
+
+    Raises [Invalid_argument] if [u] has no tensor shape. *)
 
 val shard_shape : t -> t list
 (** [shard_shape u] is [shape u], except that a multi-device tensor with a

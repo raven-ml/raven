@@ -10,19 +10,11 @@
 open Tolk_uop
 module U = Uop
 
-(* Zero alternative for a gated load: a scalar zero constant, stacked to the
-   access width when the load reads through a coalesced [Shrink]. Vector
-   values must be [Stack]s of scalars so C-style renderers emit a vector
-   constructor. The width is the [Shrink] length, which is what the load's
-   rank-1 shape evaluates to. *)
-let vzero_like node mop =
-  let zero = U.const (Const.zero (U.dtype node)) in
-  let lanes =
-    match U.op mop, U.src mop with
-    | Ops.Shrink, [| _; _; len |] -> U.vmax len
-    | _ -> 1
-  in
-  U.broadcast zero lanes
+(* Zero alternative for a gated load: a zero constant stacked to the load's
+   own lane count. Vector values must be [Stack]s of scalars so C-style
+   renderers emit a vector constructor. *)
+let vzero_like node =
+  U.broadcast (U.const (Const.zero (U.dtype node))) (U.max_numel node)
 
 let is_invalid_const u =
   match U.op u, U.arg u with
@@ -78,7 +70,7 @@ let gated_mop mop idx =
    alternative carries no value and is bool-typed, so it cannot be cast into
    the load's dtype; it becomes a zero of the load's own width. *)
 let strip_alt_cast load alt =
-  if is_invalid_const alt then vzero_like load (U.src load).(0)
+  if is_invalid_const alt then vzero_like load
   else
     match U.op alt, U.src alt with
     | Ops.Cast, [| inner |] when Dtype.equal (U.dtype inner) (U.dtype load) ->
@@ -118,16 +110,13 @@ let move_gates_from_index_rule node =
   | Some { src; alt = None; gate = None }, _ -> (
       match indexed_two_invalid_gate src with
       | Some (gate, gated_src) ->
-          Some
-            (U.replace node
-               ~src:[| gated_src; vzero_like node gated_src; gate |] ())
+          Some (U.replace node ~src:[| gated_src; vzero_like node; gate |] ())
       | None -> (
       match indexed_invalid_gate src with
       | None -> None
       | Some (gate, idx) ->
           let mop = gated_mop src idx in
-          Some
-            (U.replace node ~src:[| mop; vzero_like node mop; gate |] ())))
+          Some (U.replace node ~src:[| mop; vzero_like node; gate |] ())))
   | Some _, _ -> None
   | None, Some { dst; value; gate = None } -> (
       match indexed_two_invalid_gate dst with

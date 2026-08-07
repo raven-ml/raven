@@ -717,10 +717,11 @@ let stage ~src ~ranges ~opts =
     ~src:(Array.of_list (src :: ranges))
     ~arg:(Arg.Stage_info opts)
 
-let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint) ?multiple_of () =
+let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint)
+    ?(multiple_of = 1) () =
   let shape = mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty in
   param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(min_val, max_val)
-    ?multiple_of ~addrspace:Dtype.Alu ()
+    ~multiple_of ~addrspace:Dtype.Alu ()
 
 let bind ~var ~value =
   let in_bounds = match arg var, op value, arg value with
@@ -2329,6 +2330,7 @@ and compute_shape_opt u =
   | _ -> None
 
 let max_shape u = List.map vmax (shape u)
+let max_numel u = List.fold_left ( * ) 1 (max_shape u)
 
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
    exponential in residual depth. *)

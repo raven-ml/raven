@@ -27,9 +27,9 @@ let priority_of u =
   let op_pri, extra = match U.op u with
   | Ops.Param ->
       let idx =
-        match U.as_param u with
-        | Some { param; _ } -> param.slot
-        | None -> 0
+        match U.Arg.as_param_arg (U.arg u) with
+        | Some param -> param.slot
+        | None -> invalid_arg "Linearizer: PARAM without a parameter argument"
       in
       -20, Idx idx
   | Ops.Buffer ->
