@@ -646,6 +646,12 @@ thread.
 
 ### Nx
 
+- Speed up the default C backend's FFTs: even-length `rfft` and `irfft` now
+  pack into a half-size complex transform instead of running a full-length
+  one, a single-axis `irfft` reads its input directly instead of staging a
+  serial complex copy, and Bluestein (large-prime) lengths pad to the nearest
+  7-smooth size instead of the next power of two. Even-length `rfft` also
+  returns exactly real DC and Nyquist bins now.
 - `irfftn` and `irfft2` now honour `s` along every transformed axis: the
   leading, complex axes are cropped or zero-padded to the requested lengths,
   as in `ifftn`. Previously only the last axis was resized while the
