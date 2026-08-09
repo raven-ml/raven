@@ -758,6 +758,11 @@ thread.
 
 ### Nx
 
+- Add `sliding_window`, a zero-copy view framing a tensor into windows of a
+  given length along an axis. Framing without a copy was reachable only through
+  `stft`, which bundles a taper and a transform with it; a reduction, a filter
+  or an overlap-save convolution wanting the frames themselves had to gather
+  them with `extract_patches`.
 - **Breaking**: tensors are values (RFC 0001, `doc/rfc/0001-tensors-as-values.md`).
   The in-place writers `blit`, `set` (int-list form), `set_slice`, `set_item`,
   `put`, `index_put`, `put_along_axis` and the `.%{}<-` / `.${}<-` operators
