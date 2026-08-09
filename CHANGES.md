@@ -651,6 +651,12 @@ thread.
 
 ### Nx
 
+- Add `sliding_window_view`, a zero-copy view framing a tensor into windows of a
+  given length along an axis. Framing without a copy was reachable only through
+  `stft`, which bundles a taper and a transform with it; a reduction, a filter
+  or an overlap-save convolution wanting the frames themselves had to gather
+  them with `extract_patches`. Windows closer together than they are wide share
+  storage, so writing into such a view raises `Invalid_argument`.
 - Writing into a broadcast view through `blit`, `set_slice` or `put` now raises
   `Invalid_argument` from the frontend, on every backend. A view records
   whether each of its positions addresses its own element, so the check is
