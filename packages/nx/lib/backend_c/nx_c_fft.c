@@ -718,9 +718,11 @@ static fft_plan *build_bluestein(int64_t n, int sign) {
      8232 = 2³·3·7³ instead of 16384 — fewer, cheaper stages). Accuracy is a
      wash to a slight cost, not a win: rel-L2 error vs pocketfft doubles
      measured ~1.00× the old plan's at n=4099 and 1.08–1.11× at n=10007
-     across 24 seeds (the m change and the 1/m fold below reorder the
-     roundings), the error itself staying ≤ 1e-15 rel-L2. Lengths whose 2n-1
-     is already just under a power of two keep it (n=65521 stays m=131072,
+     across 24 seeds, the error itself staying ≤ 1e-15 rel-L2. The cost is
+     the shorter m's 3/5/7 stages rounding more per point than the pow2
+     stages they replace; the 1/m fold below is exactly neutral at pow2 m
+     and measured marginally better at m=20160. Lengths whose 2n-1 is
+     already just under a power of two keep it (n=65521 stays m=131072,
      bit-identical output). */
   int64_t m = fft_good_size(2 * n - 1);
   p->m = m;
@@ -841,6 +843,10 @@ static fft_plan *build_real(int64_t n, int sign) {
     p->rtw[k].r = -sin(ang);
     p->rtw[k].i = (double)sign * cos(ang);
   }
+  /* The self-pair entry (even N) sits at θ = π/2 exactly, where cos leaves a
+     6.1e-17 residue; pin it so the self-pair iterations multiply by a real
+     −1 bit-exactly, as the untangle/pre-twiddle comments promise. */
+  if (N % 2 == 0) p->rtw[N / 2].i = 0.0;
   p->work_cx = p->mplan_fwd->work_cx;
   return p;
 }
@@ -897,8 +903,8 @@ static void plan_exec(const fft_plan *p, cx2 *x, cx2 *work) {
    edges touch slots 0 and N only, iteration k reads slots {k, N−k} before
    writing exactly those slots, and distinct iterations touch disjoint pairs.
    When N is even the last iteration k = N/2 is the self-pair and the same
-   code is correct without a branch: θ = π/2 makes rtw[N/2] = (−1, 0), and
-   both writes then produce conj(Z[N/2]). Verified against the naive-DFT
+   code is correct without a branch: build_real pins rtw[N/2] = (−1, 0)
+   exactly, so both writes produce conj(Z[N/2]). Verified against the naive-DFT
    oracle for every n in 1..256 (both parities of N) plus the targeted large
    lengths in the oracle suite. */
 static void rfft_untangle(cx2 *restrict z, const cx2 *restrict rtw,
@@ -939,8 +945,8 @@ static void rfft_untangle(cx2 *restrict z, const cx2 *restrict rtw,
    discard them (their contribution to the real output is identically zero
    there); using them would change results for non-Hermitian garbage inputs.
    Slot N is dead after the edge, so the same N+1-slot buffer serves in
-   place. Self-pair k = N/2 (even N): both writes produce 2·conj(X[N/2]),
-   same argument as the forward. */
+   place. Self-pair k = N/2 (even N): rtw[N/2] is pinned to (−1, 0), so both
+   writes produce 2·conj(X[N/2]), same argument as the forward. */
 static void irfft_pretwiddle(cx2 *restrict x, const cx2 *restrict rtw,
                              int64_t N) {
   double x0r = x[0].r, xnr = x[N].r;
@@ -1310,6 +1316,15 @@ static void irfft_last_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       f[k].i = 0.0;
     }
     for (int64_t k = 0; k < c->half; k++) f[k] = g[k];
+    /* Im X[0] and, for even s, Im X[s/2] never reach a real output: every
+       other slot is Hermitian-paired below, and numpy/pocketfft discard the
+       edge imaginaries structurally. Discard them here too — the native odd
+       path already drops them exactly (slot 0 never meets a stage twiddle),
+       but a Bluestein-executed length would otherwise leak ~1e-16 of garbage
+       from a non-Hermitian input into the output. The Nyquist store is
+       idempotent when the supplied spectrum stops short of that bin. */
+    f[0].i = 0.0;
+    if (c->s % 2 == 0) f[c->s / 2].i = 0.0;
     for (int64_t k = 1; k < c->half; k++) {
       int64_t mirror = c->s - k;
       if (mirror != k) {
