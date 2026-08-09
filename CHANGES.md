@@ -646,6 +646,11 @@ thread.
 
 ### Nx
 
+- Speed up batched `fft`, `rfft` and `irfft` in the default C backend: the
+  worker count was picked as though a transform line cost one pass over its
+  samples, so a stack of a few dozen medium-length lines ran on a single core.
+  Lines are now weighted by the `n log n` work a transform actually does; short
+  stacks still run serially.
 - Speed up the C backend's real FFTs: even-length `rfft` and `irfft` pack into
   a half-size complex transform, and `irfft` no longer stages a serial copy of
   its input. Even-length `rfft` now returns exactly real DC and Nyquist bins.
