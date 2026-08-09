@@ -144,7 +144,7 @@ let exact_f msg (expected : float array) (actual : float array) =
 let test_rfft_exhaustive () =
   for n = 1 to 256 do
     let x = rsig (1000 + n) n in
-    let got = Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] x)) in
+    let got = Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x)) in
     let want = rfft_oracle x in
     rel_l2_c (Printf.sprintf "rfft n=%d = DFT" n) 1e-14 want got;
     bin_bound (Printf.sprintf "rfft n=%d" n) 1e-13 want got
@@ -162,13 +162,13 @@ let cross_path_fwd n =
   rel_l2_c
     (Printf.sprintf "rfft n=%d = fft half" n)
     1e-14 want
-    (Nx.to_array (Nx.rfft x))
+    (Nx.to_array (Nx.rfft Nx.complex128 x))
 
 let test_rfft_large () =
   (* pow2 against the naive oracle where affordable, cross-path beyond *)
   let x = rsig 41 4096 in
   rel_l2_c "rfft n=4096 = DFT" 1e-14 (rfft_oracle x)
-    (Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| 4096 |] x)));
+    (Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| 4096 |] x)));
   cross_path_fwd 65536;
   cross_path_fwd 44100;
   cross_path_fwd 131042
@@ -181,7 +181,7 @@ let test_rfft_even_bluestein_half () =
       rel_l2_c
         (Printf.sprintf "rfft n=%d (Bluestein half) = DFT" n)
         1e-14 (rfft_oracle x)
-        (Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] x))))
+        (Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))))
     [ 34; 4098 ]
 
 let test_rfft_odd_controls () =
@@ -192,7 +192,7 @@ let test_rfft_odd_controls () =
       rel_l2_c
         (Printf.sprintf "rfft n=%d (odd) = DFT" n)
         1e-14 (rfft_oracle x)
-        (Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] x))))
+        (Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))))
     [ 7; 101 ]
 
 (* ── DC/Nyquist structural exactness (even n) ──
@@ -203,7 +203,7 @@ let test_rfft_dc_nyquist_exact () =
   List.iter
     (fun n ->
       let spec =
-        Nx.to_array (Nx.rfft (Nx.create Nx.float64 [| n |] (rsig (5000 + n) n)))
+        Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] (rsig (5000 + n) n)))
       in
       is_true
         ~msg:(Printf.sprintf "Im X[0] = 0 exactly, n=%d" n)
@@ -225,7 +225,7 @@ let test_rfft_f32 () =
         (Printf.sprintf "rfft f32 n=%d = DFT" n)
         1e-4
         (rfft_oracle (Nx.to_array x32))
-        (Nx.to_array (Nx.rfft x32)))
+        (Nx.to_array (Nx.rfft Nx.complex64 x32)))
     [ 8; 34; 4096 ]
 
 (* ── Multi-axis: last axis packed + other axes complex ── *)
@@ -256,7 +256,7 @@ let test_rfft2_vs_dft () =
         (Printf.sprintf "rfft2 %dx%d = 2-D DFT" rows cols)
         1e-13
         (dft2_real rows cols data)
-        (Nx.to_array (Nx.rfftn ~axes:[ 0; 1 ] t)))
+        (Nx.to_array (Nx.rfftn Nx.complex128 ~axes:[ 0; 1 ] t)))
     [ (5, 8); (7, 12) ]
 
 (* ── Exhaustive inverse sweep ──
@@ -271,7 +271,7 @@ let test_irfft_exhaustive () =
     rel_l2_f
       (Printf.sprintf "irfft n=%d = DFT" n)
       1e-14 (irfft_oracle g n)
-      (Nx.to_array (Nx.irfft ~n ~norm:`Forward spec))
+      (Nx.to_array (Nx.irfft Nx.float64 ~n ~norm:`Forward spec))
   done
 
 (* ── Exhaustive roundtrip sweep (default norms) ── *)
@@ -282,7 +282,7 @@ let test_roundtrip_exhaustive () =
     rel_l2_f
       (Printf.sprintf "irfft(rfft x) n=%d" n)
       1e-14 x
-      (Nx.to_array (Nx.irfft ~n (Nx.rfft (Nx.create Nx.float64 [| n |] x))))
+      (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))))
   done
 
 let test_roundtrip_large () =
@@ -292,7 +292,7 @@ let test_roundtrip_large () =
       rel_l2_f
         (Printf.sprintf "irfft(rfft x) n=%d" n)
         1e-14 x
-        (Nx.to_array (Nx.irfft ~n (Nx.rfft (Nx.create Nx.float64 [| n |] x)))))
+        (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x)))))
     [ 4096; 65536; 44100; 131042; 65535 ]
 
 (* ── Pad / truncate sweep ──
@@ -313,7 +313,7 @@ let test_irfft_pad_truncate () =
           rel_l2_f
             (Printf.sprintf "irfft s=%d from %d bins" n len)
             1e-13 (irfft_oracle g n)
-            (Nx.to_array (Nx.irfft ~n ~norm:`Forward spec)))
+            (Nx.to_array (Nx.irfft Nx.float64 ~n ~norm:`Forward spec)))
       [ -2; 0; 2 ];
     s := !s + 2
   done
@@ -333,8 +333,8 @@ let test_irfft_nonhermitian_edges () =
   clean.(0) <- { clean.(0) with Complex.im = 0.0 };
   clean.(4) <- { clean.(4) with Complex.im = 0.0 };
   exact_f "irfft discards Im DC and Im Nyquist"
-    (Nx.to_array (Nx.irfft ~n (Nx.create Nx.complex128 [| half |] clean)))
-    (Nx.to_array (Nx.irfft ~n (Nx.create Nx.complex128 [| half |] dirty)))
+    (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.create Nx.complex128 [| half |] clean)))
+    (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.create Nx.complex128 [| half |] dirty)))
 
 (* ── Multi-axis irfft (keeps the complex temp for the non-last axes) ── *)
 
@@ -347,8 +347,8 @@ let test_irfft2_roundtrip () =
         (Printf.sprintf "irfft2(rfft2 x) %dx%d" rows cols)
         1e-13 data
         (Nx.to_array
-           (Nx.irfftn ~axes:[ 0; 1 ] ~s:[ rows; cols ]
-              (Nx.rfftn ~axes:[ 0; 1 ] t))))
+           (Nx.irfftn Nx.float64 ~axes:[ 0; 1 ] ~s:[ rows; cols ]
+              (Nx.rfftn Nx.complex128 ~axes:[ 0; 1 ] t))))
     [ (5, 8); (7, 12) ]
 
 (* ── dtypes: c64 (single-precision) half-spectrum in ── *)
@@ -357,7 +357,7 @@ let test_irfft_c64_dtype () =
   List.iter
     (fun n ->
       let x = rsig (14000 + n) n in
-      let spec = Nx.rfft (Nx.create Nx.float64 [| n |] x) in
+      let spec = Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x) in
       let spec32 = Nx.cast Nx.complex64 spec in
       (* oracle on the c32-rounded bins the gather actually reads *)
       let g = Nx.to_array spec32 in
@@ -365,7 +365,7 @@ let test_irfft_c64_dtype () =
         (Printf.sprintf "irfft c64 n=%d = DFT" n)
         1e-4
         (Array.map (fun v -> v /. float_of_int n) (irfft_oracle g n))
-        (Nx.to_array (Nx.irfft ~n spec32)))
+        (Nx.to_array (Nx.irfft Nx.float32 ~n spec32)))
     [ 8; 34; 4096 ]
 
 (* ── c2c Bluestein lengths (the 7-smooth pad m = good_size(2n−1)) ──
@@ -401,14 +401,14 @@ let test_rfft_strided_view () =
   let base = Nx.create Nx.float64 [| n; 2 |] interleaved in
   let view = Nx.slice [ Nx.A; Nx.I 0 ] base in
   exact_c "rfft of a strided view = rfft of its compacted copy"
-    (Nx.to_array (Nx.rfft (Nx.contiguous view)))
-    (Nx.to_array (Nx.rfft view));
+    (Nx.to_array (Nx.rfft Nx.complex128 (Nx.contiguous view)))
+    (Nx.to_array (Nx.rfft Nx.complex128 view));
   rel_l2_c "rfft of a strided view = DFT" 1e-14 (rfft_oracle x)
-    (Nx.to_array (Nx.rfft ~norm:`Backward view))
+    (Nx.to_array (Nx.rfft Nx.complex128 ~norm:`Backward view))
 
 let test_irfft_strided_view_c128 () =
   let n = 34 in
-  let spec = Nx.rfft (Nx.create Nx.float64 [| n |] (rsig 5 n)) in
+  let spec = Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] (rsig 5 n)) in
   let half = (n / 2) + 1 in
   let doubled =
     Nx.concatenate ~axis:1
@@ -416,13 +416,13 @@ let test_irfft_strided_view_c128 () =
   in
   let view = Nx.slice [ Nx.A; Nx.I 1 ] doubled in
   exact_f "irfft of a strided c128 view = irfft of its compacted copy"
-    (Nx.to_array (Nx.irfft ~n (Nx.contiguous view)))
-    (Nx.to_array (Nx.irfft ~n view))
+    (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.contiguous view)))
+    (Nx.to_array (Nx.irfft Nx.float64 ~n view))
 
 let test_irfft_strided_view_c64 () =
   let n = 34 in
   let spec =
-    Nx.cast Nx.complex64 (Nx.rfft (Nx.create Nx.float64 [| n |] (rsig 7 n)))
+    Nx.cast Nx.complex64 (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] (rsig 7 n)))
   in
   let half = (n / 2) + 1 in
   let doubled =
@@ -431,8 +431,8 @@ let test_irfft_strided_view_c64 () =
   in
   let view = Nx.slice [ Nx.A; Nx.I 1 ] doubled in
   exact_f "irfft of a strided c64 view = irfft of its compacted copy"
-    (Nx.to_array (Nx.irfft ~n (Nx.contiguous view)))
-    (Nx.to_array (Nx.irfft ~n view))
+    (Nx.to_array (Nx.irfft Nx.float32 ~n (Nx.contiguous view)))
+    (Nx.to_array (Nx.irfft Nx.float32 ~n view))
 
 (* ── Batched lines (multi-worker pool path) ──
    Large batches split across pool workers; every line must equal the same
@@ -442,25 +442,25 @@ let test_rfft_batched_lines () =
   let lines = 64 and n = 4096 in
   let data = Array.init (lines * n) (fun i -> sample 11 i) in
   let t = Nx.create Nx.float64 [| lines; n |] data in
-  let batched = Nx.rfft t in
+  let batched = Nx.rfft Nx.complex128 t in
   for l = 0 to lines - 1 do
     if l mod 17 = 0 then
       exact_c
         (Printf.sprintf "rfft batched line %d = 1-D rfft" l)
-        (Nx.to_array (Nx.rfft (Nx.slice [ Nx.I l ] t)))
+        (Nx.to_array (Nx.rfft Nx.complex128 (Nx.slice [ Nx.I l ] t)))
         (Nx.to_array (Nx.slice [ Nx.I l ] batched))
   done
 
 let test_irfft_batched_lines () =
   let lines = 16 and n = 8192 in
   let data = Array.init (lines * n) (fun i -> sample 13 i) in
-  let spec = Nx.rfft (Nx.create Nx.float64 [| lines; n |] data) in
-  let batched = Nx.irfft ~n spec in
+  let spec = Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| lines; n |] data) in
+  let batched = Nx.irfft Nx.float64 ~n spec in
   for l = 0 to lines - 1 do
     if l mod 5 = 0 then
       exact_f
         (Printf.sprintf "irfft batched line %d = 1-D irfft" l)
-        (Nx.to_array (Nx.irfft ~n (Nx.slice [ Nx.I l ] spec)))
+        (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.slice [ Nx.I l ] spec)))
         (Nx.to_array (Nx.slice [ Nx.I l ] batched))
   done
 
