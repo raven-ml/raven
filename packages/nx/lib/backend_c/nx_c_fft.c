@@ -1117,6 +1117,21 @@ static char *dst_line(const line_ctx *c, int64_t L) {
   return (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
 }
 
+/* Threads for a stack of `lines` independent length-n transforms. A transform
+   line is not a linear pass over n elements: it costs O(n log n), so the work
+   per line handed to the generic compute policy is n weighted by ceil(log2 n).
+   The policy's own serial floor still decides — a stack of a few short lines
+   stays on one worker — and the count is clamped to the number of lines, which
+   are the only splittable units. */
+static int fft_threads(int64_t lines, int64_t n, int64_t bytes) {
+  int64_t lg = 1;
+  while (lg < 62 && ((int64_t)1 << lg) < n) lg++;
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n * lg, bytes);
+  if (nth > lines) nth = (int)lines;
+  if (nth < 1) nth = 1;
+  return nth;
+}
+
 /* Sizes the per-worker scratch (slot_cx cx2, rounded up to a cache line),
    picks the thread count for `lines` transforms of length n, fills the
    context's derived fields and pools `body` over the lines with the scratch
@@ -1130,9 +1145,7 @@ static nx_c_status run_lines(line_ctx *c, int64_t n, int64_t slot_cx,
   if (lines == 0 || n == 0) return NX_C_OK;
 
   int64_t bytes = lines * n * (int64_t)sizeof(cx2);
-  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n, bytes);
-  if (nth > lines) nth = (int)lines;
-  if (nth < 1) nth = 1;
+  int nth = fft_threads(lines, n, bytes);
 
   int64_t slot_bytes = ((slot_cx * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
   char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
