@@ -15,12 +15,11 @@ let mat64 r c xs = Nx.create f64 [| r; c |] xs
 let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 let scalar t = (to_arr t).(0)
 
-(* The sliding-window movement is internal — it backs [Nx.stft] and is not part
-   of Nx's public surface — but the transformation rules are written against its
-   effect, so exercise it there rather than through a caller that would also
-   drag in [rfft], which has no rule of its own. *)
+(* The transformation rules for the sliding-window movement are written against
+   its effect; driving them through the public [Nx.sliding_window_view] pins
+   that the exposed function reaches those rules end to end. *)
 let sliding_window ~axis ~window ~step x =
-  Nx_effect.sliding_window x ~axis ~window ~step
+  Nx.sliding_window_view ~axis ~window ~step x
 
 let check_arr ?(eps = 1e-5) ~msg expected actual =
   let actual = to_arr actual in

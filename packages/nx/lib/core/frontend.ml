@@ -4800,6 +4800,23 @@ module Make (B : Backend_intf.S) = struct
 
   let erf x = unaryop B.erf x
 
+  let sliding_window_view ?axis ~window ?(step = 1) x =
+    let r = ndim x in
+    let ax = match axis with Some a -> a | None -> -1 in
+    let axis = resolve_single_axis x ax in
+    if axis < 0 || axis >= r then
+      err "sliding_window_view" "axis %d out of bounds for %dD tensor" ax r;
+    if window < 1 then
+      err "sliding_window_view" "window must be >= 1, got %d" window;
+    if step < 1 then err "sliding_window_view" "step must be >= 1, got %d" step;
+    let size = (shape x).(axis) in
+    if window > size then
+      err "sliding_window_view"
+        "cannot slide window %d along axis %d in shape %s (%d>%d)" window axis
+        (Shape.to_string (shape x))
+        window size;
+    B.sliding_window x ~axis ~window ~step
+
   let extract_patches ~kernel_size ~stride ~dilation ~padding x =
     B.unfold x ~kernel_size ~stride ~dilation ~padding
 

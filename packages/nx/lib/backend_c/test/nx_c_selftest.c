@@ -986,6 +986,43 @@ static void t_precondition_checks(void) {
   s = nx_c_map_run(&st_neg_table, NX_C_DTYPE_f64, 1, al, E8, NX_C_COST_BANDWIDTH,
                   NULL);
   check(status_is(s, NX_C_ERR_OUT_ALIASED), "map rejects aliased output");
+
+  /* map: an overlapping window aliases with every stride non-zero — the case a
+     zero-stride test alone lets through */
+  int64_t wsh[2] = {3, 3}, wst[2] = {1, 1};
+  nx_c_ndarray ov[2] = {nd(out, 2, wsh, wst, 0), nd(buf, 2, wsh, wst, 0)};
+  s = nx_c_map_run(&st_neg_table, NX_C_DTYPE_f64, 1, ov, E8, NX_C_COST_BANDWIDTH,
+                  NULL);
+  check(status_is(s, NX_C_ERR_OUT_ALIASED),
+        "map rejects an overlapping window output");
+
+  /* map: windows whose step clears their width are disjoint, and a gap between
+     them must not be read as overlap */
+  int64_t dsh[2] = {2, 2}, dst[2] = {3, 1};
+  nx_c_ndarray dj[2] = {nd(out, 2, dsh, dst, 0), nd(buf, 2, dsh, dst, 0)};
+  s = nx_c_map_run(&st_neg_table, NX_C_DTYPE_f64, 1, dj, E8, NX_C_COST_BANDWIDTH,
+                  NULL);
+  check(s == NX_C_OK, "map accepts stepped windows that do not overlap");
+
+  /* map: a flipped output walks distinct cells backwards, so |stride| is what
+     the footprint test must read */
+  int64_t fsh[1] = {4}, fst[1] = {-1};
+  nx_c_ndarray fl[2] = {nd(out, 1, fsh, fst, 3), nd(buf, 1, fsh, ast1, 0)};
+  s = nx_c_map_run(&st_neg_table, NX_C_DTYPE_f64, 1, fl, E8, NX_C_COST_BANDWIDTH,
+                  NULL);
+  check(s == NX_C_OK, "map accepts a flipped output");
+
+  /* map: interleaved strides — shape [3,2], element strides [2,3] — address
+     six distinct cells {0,2,3,4,5,7}, and the footprint test rejects them
+     anyway: it is sufficient, not exact. Pinned so an exact guard is a
+     deliberate flip of this expectation, not an accident. */
+  double io8[8] = {0};
+  int64_t ish[2] = {3, 2}, ist[2] = {2, 3}, ict[2] = {2, 1};
+  nx_c_ndarray iv[2] = {nd(io8, 2, ish, ist, 0), nd(buf, 2, ish, ict, 0)};
+  s = nx_c_map_run(&st_neg_table, NX_C_DTYPE_f64, 1, iv, E8, NX_C_COST_BANDWIDTH,
+                  NULL);
+  check(status_is(s, NX_C_ERR_OUT_ALIASED),
+        "map conservatively rejects interleaved disjoint strides");
 }
 
 CAMLprim value caml_nx_c_selftest(value unit) {

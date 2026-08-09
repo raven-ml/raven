@@ -3076,6 +3076,52 @@ val erf : ('a, 'b) t -> ('a, 'b) t
 
 (** {1:windows Sliding windows} *)
 
+(** {2:views Views} *)
+
+val sliding_window_view :
+  ?axis:int -> window:int -> ?step:int -> ('a, 'b) t -> ('a, 'b) t
+(** [sliding_window_view ?axis ~window ?step t] is a {e view} of [t] with
+    sliding windows of length [window] along [axis], taken every [step]
+    elements. [axis] defaults to the last axis; negative indices count from the
+    end. [step] defaults to [1].
+
+    The size of [axis] becomes [(size - window) / step + 1] and a trailing axis
+    of length [window] is appended. No data is copied, so framing a signal costs
+    nothing: {!stft} is this view, a taper and one batched {!rfft}.
+
+    Windows closer together than they are wide share storage, which makes the
+    result read-only in practice: writing into an overlapping view through
+    {!blit}, {!set_slice} or any other in-place path raises [Invalid_argument],
+    because the same element would be written from several positions at once.
+    Copy it with {!contiguous} first if you need somewhere to write. A view
+    whose [step] is at least its [window] holds each element once and takes
+    writes normally.
+
+    @raise Invalid_argument
+      if [window < 1], [step < 1], [window] exceeds the size of [axis], or
+      [axis] is out of bounds
+
+    Framing a signal into overlapping windows:
+    {[
+      # create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |]
+        |> sliding_window_view ~window:3
+      - : (int32, int32_elt) t = int32 [3,3] [[1, 2, 3],
+                                              [2, 3, 4],
+                                              [3, 4, 5]]
+    ]}
+
+    Stepping by the window width gives disjoint blocks:
+    {[
+      # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        |> sliding_window_view ~window:2 ~step:2
+      - : (int32, int32_elt) t = int32 [3,2] [[1, 2],
+                                              [3, 4],
+                                              [5, 6]]
+    ]}
+
+    See also {!extract_patches}, which gathers a copy and so is always writable.
+*)
+
 (** {2:patches Patches} *)
 
 val extract_patches :

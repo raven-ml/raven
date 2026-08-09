@@ -55,7 +55,8 @@ let test_sort_rejects_aliased_output () =
   let input = buffer Buf.float64 [| 3.; 1.; 2.; 4. |] in
   let output = Buf.create Buf.float64 4 in
   raises ~msg:"zero-stride output"
-    (Invalid_argument "sort: output has a broadcast (zero) stride") (fun () ->
+    (Invalid_argument "sort: output aliases one element onto several positions")
+    (fun () ->
       sort
         (ffi ~shape:[| 2; 2 |] ~strides:[| 0; 1 |] output)
         (ffi ~shape:[| 2; 2 |] ~strides:[| 2; 1 |] input)
