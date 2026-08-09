@@ -44,7 +44,7 @@
 #define NX_C_ERR_AXES "reduce axes must be strictly increasing and in range"
 #define NX_C_ERR_OUT_RANK "output rank inconsistent with the operation"
 #define NX_C_ERR_AXIS "axis out of range"
-#define NX_C_ERR_OUT_ALIASED "output has a broadcast (zero) stride"
+#define NX_C_ERR_OUT_ALIASED "output aliases one element onto several positions"
 /* A programming error in a family stub, not user data: more operands than the
    engine's fixed metadata arrays hold. Maps to Failure. */
 #define NX_C_ERR_ARITY "operand count exceeds NX_C_MAX_OPERANDS"

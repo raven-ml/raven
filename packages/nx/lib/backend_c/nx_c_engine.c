@@ -828,6 +828,70 @@ static void nx_c_map_outer_body(int64_t lo, int64_t hi, int worker, void *vctx) 
   }
 }
 
+/* Whether the output addresses one element from two distinct index tuples,
+   which makes the write order-dependent — wrong even serially, and a race once
+   the run is threaded.
+
+   Sort the dims by |stride| and require each to clear the footprint its
+   predecessors already cover. Sound for arbitrary strides: had two index
+   tuples collided, the largest differing dim would contribute at least its
+   own stride to the address difference while every smaller dim together
+   contributes strictly less, so no collision exists. Seeding [covered] with
+   the element size extends that from start addresses to whole byte extents,
+   |stride| admits a flipped output — negative strides still enumerate
+   distinct cells — and a broadcast dim (stride 0) fails against the very
+   first footprint. The verdict is also independent of how much the coalescer
+   merged: a merged pair contributes exactly its factors' combined footprint.
+
+   Sufficient, not exact: a dim can interleave with the span below it and
+   still address distinct cells — shape [3,2] with element strides [2,3]
+   addresses {0,2,3,4,5,7} yet is rejected. Reaching such a layout takes an
+   overlapping window later decimated back to disjointness; every chain of
+   shrink, flip, permute, stride-compatible reshape, stepped slice and
+   step-covers-window framing keeps accepted layouts accepted. The exact
+   decision is a bounded-Diophantine solve (what numpy's shares_memory runs),
+   deliberately not spent on a per-dispatch guard whose conservative miss is
+   a loud Invalid_argument on a write, never a silent admit.
+
+   Runs on the coalesced output, where size-1 dims are already gone; the skip
+   below only re-checks. */
+static int nx_c_out_aliases(const nx_c_plan *p, int64_t elem_size) {
+  int64_t stride[NX_C_MAX_NDIM], extent[NX_C_MAX_NDIM];
+  int n = 0;
+  for (int i = 0; i < p->ndim; i++) {
+    if (p->shape[i] <= 1) continue; /* indexes one cell, never collides */
+    int64_t s = p->bstride[0][i];
+    if (s == 0) return 1;
+    stride[n] = s < 0 ? -s : s;
+    extent[n] = p->shape[i];
+    n++;
+  }
+  /* Insertion sort: n is a coalesced rank, so it is tiny and already close to
+     sorted for the layouts that reach here. */
+  for (int i = 1; i < n; i++) {
+    int64_t s = stride[i], e = extent[i];
+    int j = i - 1;
+    while (j >= 0 && stride[j] > s) {
+      stride[j + 1] = stride[j];
+      extent[j + 1] = extent[j];
+      j--;
+    }
+    stride[j + 1] = s;
+    extent[j + 1] = e;
+  }
+  int64_t covered = elem_size; /* the footprint one element already occupies */
+  for (int i = 0; i < n; i++) {
+    if (stride[i] < covered) return 1;
+    /* A wrapped accumulator would go negative and admit everything after it.
+       No view over a real allocation gets near the bound — only hand-built
+       strides do — but rejecting them keeps the soundness argument
+       unconditional. */
+    if (extent[i] - 1 > (INT64_MAX - covered) / stride[i]) return 1;
+    covered += (extent[i] - 1) * stride[i];
+  }
+  return 0;
+}
+
 nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
                        const nx_c_ndarray *ops, const int64_t *elem_size,
                        nx_c_cost_class cls, void *ctx) {
@@ -842,12 +906,11 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
   nx_c_coalesce_map(ops, nop, elem_size, &p);
   if (p.total == 0) return NX_C_OK; /* empty tensor: kernels are no-ops */
 
-  /* On a non-empty output, a 0-stride dim of extent > 1 would alias elements
-     (parallel threads racing one cell, wrong even serially). Checked on the
-     coalesced output (index 0), after the empty short-circuit — an empty tensor
-     writes nothing, so a stride-0 dim there is harmless. Verified, not assumed. */
-  for (int i = 0; i < p.ndim; i++)
-    if (p.shape[i] > 1 && p.bstride[0][i] == 0) return NX_C_ERR_OUT_ALIASED;
+  /* On a non-empty output, aliased positions would race (wrong even serially).
+     Checked on the coalesced output (index 0), after the empty short-circuit —
+     an empty tensor writes nothing, so aliasing there is harmless. Verified,
+     not assumed. */
+  if (nx_c_out_aliases(&p, elem_size[0])) return NX_C_ERR_OUT_ALIASED;
 
   /* Traffic for the bandwidth heuristic: an operand only touches the elements
      it actually holds, so a 0-stride (broadcast) dim contributes one element,

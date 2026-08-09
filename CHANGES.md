@@ -483,6 +483,13 @@ thread.
 
 ### Nx
 
+- Writing into an overlapping view raises `Invalid_argument` instead of racing.
+  The engine's output-alias check only rejected a broadcast (zero) stride, so a
+  window closer to its neighbour than it is wide — distinct positions sharing an
+  element — reached the kernels and was written from several places at once. It
+  now rejects any output that addresses one element twice, which a flipped or
+  merely gapped output still does not.
+
 - **Breaking**: `Rng.run ~seed f` is replaced by `Rng.with_key (Rng.key seed) f`,
   and `Rng.split_off` is renamed `Rng.next_key`. The two entry points were one
   handler differing only in what it rooted at, and `~seed` was the one that
