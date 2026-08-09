@@ -483,6 +483,11 @@ thread.
 
 ### Nx
 
+- Add `sliding_window_view`, a zero-copy view framing a tensor into windows of a
+  given length along an axis. Framing without a copy was reachable only through
+  `stft`, which bundles a taper and a transform with it; a reduction, a filter
+  or an overlap-save convolution wanting the frames themselves had to gather
+  them with `extract_patches`.
 - Writing into an overlapping view raises `Invalid_argument` instead of racing.
   The engine's output-alias check only rejected a broadcast (zero) stride, so a
   window closer to its neighbour than it is wide — distinct positions sharing an
