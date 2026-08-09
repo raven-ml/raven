@@ -1109,6 +1109,21 @@ static void axis_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
+/* Threads for a stack of `lines` independent length-n transforms. A transform
+   line is not a linear pass over n elements: it costs O(n log n), so the work
+   per line handed to the generic compute policy is n weighted by ceil(log2 n).
+   The policy's own serial floor still decides — a stack of a few short lines
+   stays on one worker — and the count is clamped to the number of lines, which
+   are the only splittable units. */
+static int fft_threads(int64_t lines, int64_t n, int64_t bytes) {
+  int64_t lg = 1;
+  while (lg < 62 && ((int64_t)1 << lg) < n) lg++;
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n * lg, bytes);
+  if (nth > lines) nth = (int)lines;
+  if (nth < 1) nth = 1;
+  return nth;
+}
+
 /* Runs one axis pass: builds/gets the plan (lock held), sizes per-worker scratch
    (a line + plan scratch), releases + pools over the lines via nx_c_parallel_for.
    n_out<=n_in trims the written line. */
@@ -1126,9 +1141,7 @@ static nx_c_status run_axis(nx_c_dtype src_dt, nx_c_dtype dst_dt,
 
   int64_t slot = n_in + plan->work_cx; /* cx2 per worker */
   int64_t bytes = lines * n_in * (int64_t)sizeof(cx2);
-  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n_in, bytes);
-  if (nth > lines) nth = (int)lines;
-  if (nth < 1) nth = 1;
+  int nth = fft_threads(lines, n_in, bytes);
 
   int64_t slot_bytes = ((slot * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
   char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
@@ -1224,9 +1237,7 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
 
   int64_t slot = (N + 1) + plan->work_cx; /* cx2 per worker */
   int64_t bytes = lines * n * (int64_t)sizeof(cx2);
-  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n, bytes);
-  if (nth > lines) nth = (int)lines;
-  if (nth < 1) nth = 1;
+  int nth = fft_threads(lines, n, bytes);
 
   int64_t slot_bytes = ((slot * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
   char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
@@ -1479,9 +1490,7 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
                       ? (s / 2 + 1) + plan->work_cx
                       : (half + FFT_PAD) + (s + FFT_PAD) + plan->work_cx; /* cx2 */
     int64_t slot_bytes = ((slot * cesz) + 63) & ~(int64_t)63;
-    int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, s, lines * s * cesz);
-    if (nth > lines) nth = (int)lines;
-    if (nth < 1) nth = 1;
+    int nth = fft_threads(lines, s, lines * s * cesz);
     char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
     if (!scratch) {
       free(tdata);
