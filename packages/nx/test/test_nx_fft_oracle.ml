@@ -4,23 +4,21 @@
   ---------------------------------------------------------------------------*)
 
 (* Oracle sweep for the FFT family. Every case is decided either by a naive
-   O(n^2) DFT computed in double precision — the arbiter of every dispute —
-   or, where n^2 is too slow, by agreement with an independently DFT-verified
-   path (the complex transform for rfft, the identity for round-trips).
-   Inputs are deterministic (fixed literal seeds, no library RNG) so failures
-   reproduce bit-for-bit. *)
+   O(n^2) DFT computed in double precision — the arbiter of every dispute — or,
+   where n^2 is too slow, by agreement with an independently DFT-verified path
+   (the complex transform for rfft, the identity for round-trips). Inputs are
+   deterministic (fixed literal seeds, no library RNG) so failures reproduce
+   bit-for-bit. *)
 
 open Windtrap
 
 let pi = 4.0 *. atan 1.0
 
-(* Deterministic doubles in (-1, 1): splitmix64 finalizer on (seed, index),
-   so fixtures are stable across platforms and RNG changes. *)
+(* Deterministic doubles in (-1, 1): splitmix64 finalizer on (seed, index), so
+   fixtures are stable across platforms and RNG changes. *)
 let sample seed i =
   let z =
-    Int64.mul
-      (Int64.of_int (((seed + 1) * 0x9E37) + i + 1))
-      0x9E3779B97F4A7C15L
+    Int64.mul (Int64.of_int (((seed + 1) * 0x9E37) + i + 1)) 0x9E3779B97F4A7C15L
   in
   let z = Int64.logxor z (Int64.shift_right_logical z 30) in
   let z = Int64.mul z 0xBF58476D1CE4E5B9L in
@@ -36,7 +34,8 @@ let csig seed n =
       { Complex.re = sample seed i; im = sample (seed + 17) i })
 
 (* Naive DFT, sign -1 forward / +1 inverse, unnormalized. The twiddle index is
-   reduced mod n before the angle so the oracle itself carries no n*eps drift. *)
+   reduced mod n before the angle so the oracle itself carries no n*eps
+   drift. *)
 let dft ~sign (a : Complex.t array) =
   let n = Array.length a in
   Array.init n (fun k ->
@@ -61,8 +60,8 @@ let rfft_oracle x =
   Array.sub (dft ~sign:(-1) (complex_of_real x)) 0 ((n / 2) + 1)
 
 (* irfft oracle for a half-spectrum g and output length s: zero-pad/truncate g
-   to s/2+1 bins, drop the imaginary parts the reconstruction never reads
-   (DC, and Nyquist when s is even), Hermitian-extend, +sign DFT, real part. *)
+   to s/2+1 bins, drop the imaginary parts the reconstruction never reads (DC,
+   and Nyquist when s is even), Hermitian-extend, +sign DFT, real part. *)
 let irfft_oracle g s =
   let half = min (Array.length g) ((s / 2) + 1) in
   let f = Array.make s Complex.zero in
@@ -78,9 +77,9 @@ let irfft_oracle g s =
   done;
   Array.map (fun v -> v.Complex.re) (dft ~sign:1 f)
 
-(* rel-L2 gates: any structural bug (sign, bin permutation, scale) lands at
-   >= 1e-3; the measured packed-path error is ~2-4e-16, so 1e-14 is > 25x
-   headroom while still absolute. *)
+(* rel-L2 gates: any structural bug (sign, bin permutation, scale) lands at >=
+   1e-3; the measured packed-path error is ~2-4e-16, so 1e-14 is > 25x headroom
+   while still absolute. *)
 let rel_l2_c msg tol (expected : Complex.t array) (actual : Complex.t array) =
   equal ~msg:(msg ^ ": length") int (Array.length expected)
     (Array.length actual);
@@ -94,18 +93,19 @@ let rel_l2_c msg tol (expected : Complex.t array) (actual : Complex.t array) =
       den := !den +. (e.re *. e.re) +. (e.im *. e.im))
     expected;
   let err = if !den = 0.0 then sqrt !num else sqrt (!num /. !den) in
-  is_true ~msg:(Printf.sprintf "%s: rel-L2 %.3e <= %.1e" msg err tol)
+  is_true
+    ~msg:(Printf.sprintf "%s: rel-L2 %.3e <= %.1e" msg err tol)
     (err <= tol)
 
 let rel_l2_f msg tol (expected : float array) (actual : float array) =
-  rel_l2_c msg tol
-    (complex_of_real expected)
-    (complex_of_real actual)
+  rel_l2_c msg tol (complex_of_real expected) (complex_of_real actual)
 
 let bin_bound msg tol (expected : Complex.t array) (actual : Complex.t array) =
   let linf =
     Array.fold_left
-      (fun m v -> Float.max m (Float.max (Float.abs v.Complex.re) (Float.abs v.Complex.im)))
+      (fun m v ->
+        Float.max m
+          (Float.max (Float.abs v.Complex.re) (Float.abs v.Complex.im)))
       0.0 expected
   in
   let worst = ref 0.0 in
@@ -119,7 +119,8 @@ let bin_bound msg tol (expected : Complex.t array) (actual : Complex.t array) =
       in
       if d > !worst then worst := d)
     expected;
-  is_true ~msg:(Printf.sprintf "%s: per-bin %.3e <= %.1e * %.3e" msg !worst tol linf)
+  is_true
+    ~msg:(Printf.sprintf "%s: per-bin %.3e <= %.1e * %.3e" msg !worst tol linf)
     (!worst <= tol *. linf)
 
 let exact_c msg (expected : Complex.t array) (actual : Complex.t array) =
@@ -136,24 +137,25 @@ let exact_c msg (expected : Complex.t array) (actual : Complex.t array) =
 let exact_f msg (expected : float array) (actual : float array) =
   exact_c msg (complex_of_real expected) (complex_of_real actual)
 
-(* ── Exhaustive forward sweep ──
-   Every n in 1..256: covers both parities of n and of n/2 (the packed real
-   path's self-pair and no-self-pair untangle shapes), every small radix mix,
-   and packed halves that ride Bluestein (e.g. n = 34 -> half 17). *)
+(* ── Exhaustive forward sweep ── Every n in 1..256: covers both parities of n
+   and of n/2 (the packed real path's self-pair and no-self-pair untangle
+   shapes), every small radix mix, and packed halves that ride Bluestein (e.g. n
+   = 34 -> half 17). *)
 
 let test_rfft_exhaustive () =
   for n = 1 to 256 do
     let x = rsig (1000 + n) n in
-    let got = Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x)) in
+    let got =
+      Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))
+    in
     let want = rfft_oracle x in
     rel_l2_c (Printf.sprintf "rfft n=%d = DFT" n) 1e-14 want got;
     bin_bound (Printf.sprintf "rfft n=%d" n) 1e-13 want got
   done
 
-(* ── Targeted large lengths (forward) ──
-   Naive DFT where n^2 is affordable; otherwise cross-path agreement with the
-   independently DFT-verified complex transform, whose plan machinery is
-   disjoint from the packed path's. *)
+(* ── Targeted large lengths (forward) ── Naive DFT where n^2 is affordable;
+   otherwise cross-path agreement with the independently DFT-verified complex
+   transform, whose plan machinery is disjoint from the packed path's. *)
 
 let cross_path_fwd n =
   let x = Nx.create Nx.float64 [| n |] (rsig (2000 + (n mod 977)) n) in
@@ -195,15 +197,17 @@ let test_rfft_odd_controls () =
         (Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))))
     [ 7; 101 ]
 
-(* ── DC/Nyquist structural exactness (even n) ──
-   The half-spectrum edges of a real signal are exactly real; the packed
-   untangle stores literal 0.0 there, matching numpy/pocketfft. *)
+(* ── DC/Nyquist structural exactness (even n) ── The half-spectrum edges of a
+   real signal are exactly real; the packed untangle stores literal 0.0 there,
+   matching numpy/pocketfft. *)
 
 let test_rfft_dc_nyquist_exact () =
   List.iter
     (fun n ->
       let spec =
-        Nx.to_array (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] (rsig (5000 + n) n)))
+        Nx.to_array
+          (Nx.rfft Nx.complex128
+             (Nx.create Nx.float64 [| n |] (rsig (5000 + n) n)))
       in
       is_true
         ~msg:(Printf.sprintf "Im X[0] = 0 exactly, n=%d" n)
@@ -234,13 +238,17 @@ let dft2_real rows cols (data : float array) =
   (* full 2-D forward DFT of a real matrix, first cols/2+1 columns kept *)
   let tmp = Array.make (rows * cols) Complex.zero in
   for r = 0 to rows - 1 do
-    let row = dft ~sign:(-1) (complex_of_real (Array.sub data (r * cols) cols)) in
+    let row =
+      dft ~sign:(-1) (complex_of_real (Array.sub data (r * cols) cols))
+    in
     Array.blit row 0 tmp (r * cols) cols
   done;
   let hcols = (cols / 2) + 1 in
   let out = Array.make (rows * hcols) Complex.zero in
   for c = 0 to hcols - 1 do
-    let col = dft ~sign:(-1) (Array.init rows (fun r -> tmp.((r * cols) + c))) in
+    let col =
+      dft ~sign:(-1) (Array.init rows (fun r -> tmp.((r * cols) + c)))
+    in
     for r = 0 to rows - 1 do
       out.((r * hcols) + c) <- col.(r)
     done
@@ -254,14 +262,13 @@ let test_rfft2_vs_dft () =
       let t = Nx.create Nx.float64 [| rows; cols |] data in
       rel_l2_c
         (Printf.sprintf "rfft2 %dx%d = 2-D DFT" rows cols)
-        1e-13
-        (dft2_real rows cols data)
+        1e-13 (dft2_real rows cols data)
         (Nx.to_array (Nx.rfftn Nx.complex128 ~axes:[ 0; 1 ] t)))
     [ (5, 8); (7, 12) ]
 
-(* ── Exhaustive inverse sweep ──
-   Every n in 1..128: irfft (norm Forward => the raw +sign transform) of a
-   random half-spectrum vs the naive symmetrized inverse DFT. *)
+(* ── Exhaustive inverse sweep ── Every n in 1..128: irfft (norm Forward => the
+   raw +sign transform) of a random half-spectrum vs the naive symmetrized
+   inverse DFT. *)
 
 let test_irfft_exhaustive () =
   for n = 1 to 128 do
@@ -282,7 +289,9 @@ let test_roundtrip_exhaustive () =
     rel_l2_f
       (Printf.sprintf "irfft(rfft x) n=%d" n)
       1e-14 x
-      (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))))
+      (Nx.to_array
+         (Nx.irfft Nx.float64 ~n
+            (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x))))
   done
 
 let test_roundtrip_large () =
@@ -292,12 +301,15 @@ let test_roundtrip_large () =
       rel_l2_f
         (Printf.sprintf "irfft(rfft x) n=%d" n)
         1e-14 x
-        (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x)))))
+        (Nx.to_array
+           (Nx.irfft Nx.float64 ~n
+              (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] x)))))
     [ 4096; 65536; 44100; 131042; 65535 ]
 
-(* ── Pad / truncate sweep ──
-   Every even s in 4..64, from spectra shorter than, equal to, and longer
-   than the s/2+1 bins the reconstruction reads. *)
+(* ── Pad / truncate sweep ── Every even s in 4..64, from spectra shorter than,
+   equal to, and longer than the s/2+1 bins the reconstruction reads. d = -1 is
+   the spectrum missing exactly its Nyquist bin, so the zero-fill loop runs
+   exactly once. *)
 
 let test_irfft_pad_truncate () =
   let s = ref 4 in
@@ -314,27 +326,37 @@ let test_irfft_pad_truncate () =
             (Printf.sprintf "irfft s=%d from %d bins" n len)
             1e-13 (irfft_oracle g n)
             (Nx.to_array (Nx.irfft Nx.float64 ~n ~norm:`Forward spec)))
-      [ -2; 0; 2 ];
+      [ -2; -1; 0; 2 ];
     s := !s + 2
   done
 
-(* ── Non-Hermitian invariance ──
-   Im X[0] and Im X[s/2] are structurally discarded (real-part-only edges),
-   exactly like the full-spectrum reconstruction and numpy/pocketfft. *)
+(* ── Non-Hermitian invariance ── Im X[0] and Im X[s/2] are structurally
+   discarded (real-part-only edges), exactly like the full-spectrum
+   reconstruction and numpy/pocketfft. *)
 
 let test_irfft_nonhermitian_edges () =
-  let n = 8 in
-  let half = 5 in
-  let g = csig 12000 half in
-  let dirty = Array.copy g in
-  dirty.(0) <- { dirty.(0) with Complex.im = 5.0 };
-  dirty.(4) <- { dirty.(4) with Complex.im = -3.0 };
-  let clean = Array.copy g in
-  clean.(0) <- { clean.(0) with Complex.im = 0.0 };
-  clean.(4) <- { clean.(4) with Complex.im = 0.0 };
-  exact_f "irfft discards Im DC and Im Nyquist"
-    (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.create Nx.complex128 [| half |] clean)))
-    (Nx.to_array (Nx.irfft Nx.float64 ~n (Nx.create Nx.complex128 [| half |] dirty)))
+  (* n=8 rides the packed even path; n=17 the full path through a Bluestein
+     plan, which reads every input slot and so only stays invariant because the
+     reconstruction discards the edge imaginaries before transforming. *)
+  List.iter
+    (fun n ->
+      let half = (n / 2) + 1 in
+      let g = csig (12000 + n) half in
+      let dirty = Array.copy g in
+      dirty.(0) <- { (dirty.(0)) with Complex.im = 5.0 };
+      let clean = Array.copy g in
+      clean.(0) <- { (clean.(0)) with Complex.im = 0.0 };
+      if n mod 2 = 0 then begin
+        dirty.(n / 2) <- { (dirty.(n / 2)) with Complex.im = -3.0 };
+        clean.(n / 2) <- { (clean.(n / 2)) with Complex.im = 0.0 }
+      end;
+      exact_f
+        (Printf.sprintf "irfft n=%d discards Im DC and Im Nyquist" n)
+        (Nx.to_array
+           (Nx.irfft Nx.float64 ~n (Nx.create Nx.complex128 [| half |] clean)))
+        (Nx.to_array
+           (Nx.irfft Nx.float64 ~n (Nx.create Nx.complex128 [| half |] dirty))))
+    [ 8; 17 ]
 
 (* ── Multi-axis irfft (keeps the complex temp for the non-last axes) ── *)
 
@@ -368,9 +390,9 @@ let test_irfft_c64_dtype () =
         (Nx.to_array (Nx.irfft Nx.float32 ~n spec32)))
     [ 8; 34; 4096 ]
 
-(* ── c2c Bluestein lengths (the 7-smooth pad m = good_size(2n−1)) ──
-   n=17 pads to m=35, n=4099 to m=8232 — both non-power-of-two sub-plans;
-   the naive DFT stays the arbiter for both directions. *)
+(* ── c2c Bluestein lengths (the 7-smooth pad m = good_size(2n−1)) ── n=17 pads
+   to m=35, n=4099 to m=8232 — both non-power-of-two sub-plans; the naive DFT
+   stays the arbiter for both directions. *)
 
 let test_fft_bluestein_smooth_m () =
   List.iter
@@ -387,10 +409,9 @@ let test_fft_bluestein_smooth_m () =
         (Nx.to_array (Nx.ifft ~norm:`Forward t)))
     [ 17; 4099 ]
 
-(* ── Strided and offset views ──
-   The last-axis real drivers read the input tensor directly (no compaction
-   pass), so a strided or offset view must transform identically to its
-   compacted copy. *)
+(* ── Strided and offset views ── The last-axis real drivers read the input
+   tensor directly (no compaction pass), so a strided or offset view must
+   transform identically to its compacted copy. *)
 
 let test_rfft_strided_view () =
   let n = 34 in
@@ -422,7 +443,8 @@ let test_irfft_strided_view_c128 () =
 let test_irfft_strided_view_c64 () =
   let n = 34 in
   let spec =
-    Nx.cast Nx.complex64 (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] (rsig 7 n)))
+    Nx.cast Nx.complex64
+      (Nx.rfft Nx.complex128 (Nx.create Nx.float64 [| n |] (rsig 7 n)))
   in
   let half = (n / 2) + 1 in
   let doubled =
@@ -434,9 +456,9 @@ let test_irfft_strided_view_c64 () =
     (Nx.to_array (Nx.irfft Nx.float32 ~n (Nx.contiguous view)))
     (Nx.to_array (Nx.irfft Nx.float32 ~n view))
 
-(* ── Batched lines (multi-worker pool path) ──
-   Large batches split across pool workers; every line must equal the same
-   line transformed alone (identical code per line, so exact equality). *)
+(* ── Batched lines (multi-worker pool path) ── Large batches split across pool
+   workers; every line must equal the same line transformed alone (identical
+   code per line, so exact equality). *)
 
 let test_rfft_batched_lines () =
   let lines = 64 and n = 4096 in
@@ -489,8 +511,7 @@ let suite =
         test "targeted large" test_roundtrip_large;
         test "irfft2" test_irfft2_roundtrip;
       ];
-    group "bluestein"
-      [ test "smooth-m fft/ifft" test_fft_bluestein_smooth_m ];
+    group "bluestein" [ test "smooth-m fft/ifft" test_fft_bluestein_smooth_m ];
     group "strided views"
       [
         test "rfft strided" test_rfft_strided_view;
