@@ -1087,6 +1087,10 @@ thread.
 
 ### Brot
 
+- Fix `encode` returning stale tokens from a previously encoded word, or
+  crashing, when a word is made only of characters with no id and the model
+  has no `unk_token` or `byte_fallback`. Such a word now yields no tokens,
+  matching HuggingFace.
 - Fix `encode_batch` returning wrong tokens in rare cases: domains racing on
   the BPE word cache could pair one word's key with another word's tokens, so a
   cache hit returned the wrong ids. Merge scratch buffers are now held per

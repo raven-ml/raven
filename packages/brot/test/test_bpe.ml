@@ -141,6 +141,22 @@ let test_tokenizer_integration () =
 
   equal ~msg:"tokenizer produces output" bool true (List.length tokens > 0)
 
+(* Without an unknown token or byte fallback a character absent from the
+   vocabulary contributes no symbol, so a word can reach the merges empty. *)
+let test_unknown_character () =
+  let vocab = [ ("a", 0); ("b", 1); ("ab", 2) ] in
+  let merges = [ ("a", "b") ] in
+  let tokenizer = bpe ~vocab ~merges () in
+  let tokens text = encode tokenizer text |> Encoding.tokens |> Array.to_list in
+  equal ~msg:"unknown character alone" (list string) [] (tokens "z");
+  equal ~msg:"merged word" (list string) [ "ab" ] (tokens "ab");
+  (* The merge buffers are reused, so an empty word must not pick up the symbols
+     of the word merged before it. *)
+  equal ~msg:"unknown character after a merged word" (list string) []
+    (tokens "z");
+  equal ~msg:"known character before an unknown one" (list string) [ "a" ]
+    (tokens "az")
+
 (* The word cache is shared by every domain encoding with the model. These 169
    words share the 16 slots of the smallest cache, so the domains rewrite the
    same slots continuously: a slot whose key and word are published by two
@@ -186,6 +202,7 @@ let () =
           test "empty prefix and suffix" test_empty_affixes;
           test "save and load" test_bpe_save_load;
           test "tokenizer integration" test_tokenizer_integration;
+          test "unknown character" test_unknown_character;
         ];
       group "parallel"
         [ test "shared cache across domains" test_parallel_cache ];

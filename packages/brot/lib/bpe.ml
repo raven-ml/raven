@@ -380,18 +380,22 @@ let apply_merges model dropout word queue =
       end
     end
   done;
-  (* Compact using linked-list traversal: O(N_final) instead of O(N_original) *)
-  let j = ref 0 in
-  let cur = ref 0 in
-  while !cur >= 0 do
-    if !j <> !cur then begin
-      Array.unsafe_set sym_c !j (Array.unsafe_get sym_c !cur);
-      Array.unsafe_set sym_len !j (Array.unsafe_get sym_len !cur)
-    end;
-    incr j;
-    cur := Array.unsafe_get sym_next !cur
-  done;
-  word.size <- !j
+  (* Compact using linked-list traversal: O(N_final) instead of O(N_original). A
+     word with no symbol has no list to walk: the links left in the reused
+     buffers belong to the word merged before it. *)
+  if word.size > 0 then begin
+    let j = ref 0 in
+    let cur = ref 0 in
+    while !cur >= 0 do
+      if !j <> !cur then begin
+        Array.unsafe_set sym_c !j (Array.unsafe_get sym_c !cur);
+        Array.unsafe_set sym_len !j (Array.unsafe_get sym_len !cur)
+      end;
+      incr j;
+      cur := Array.unsafe_get sym_next !cur
+    done;
+    word.size <- !j
+  end
 
 let utf8_byte_len_table =
   Array.init 256 (fun b ->
