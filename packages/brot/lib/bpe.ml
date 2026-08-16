@@ -191,15 +191,16 @@ end
 type token = { id : int; value : string; offsets : int * int }
 
 (* Direct-mapped bounded cache: hash key to slot, newest entry wins. Fixed
-   memory, no eviction logic, no unbounded growth. *)
-type cache = {
-  cache_keys : string array;
-  cache_vals : word array;
-  cache_mask : int;
-}
+   memory, no eviction logic, no unbounded growth. A slot holds one immutable
+   entry, so the single pointer store that publishes it never lets another
+   domain observe a key paired with a different key's word. *)
+type cache_entry = { key : string; word : word }
+type cache = { cache_slots : cache_entry array; cache_mask : int }
 
 let empty_word =
   { sym_c = [||]; sym_prev = [||]; sym_next = [||]; sym_len = [||]; size = 0 }
+
+let empty_entry = { key = ""; word = empty_word }
 
 let create_cache capacity =
   (* Round up to power of 2 *)
@@ -207,22 +208,22 @@ let create_cache capacity =
   while !cap < capacity do
     cap := !cap * 2
   done;
-  {
-    cache_keys = Array.make !cap "";
-    cache_vals = Array.make !cap empty_word;
-    cache_mask = !cap - 1;
-  }
+  { cache_slots = Array.make !cap empty_entry; cache_mask = !cap - 1 }
 
 let[@inline] cache_find c key =
-  let h = Hashtbl.hash key land c.cache_mask in
-  if String.equal (Array.unsafe_get c.cache_keys h) key then
-    Array.unsafe_get c.cache_vals h
-  else empty_word
+  let e = Array.unsafe_get c.cache_slots (Hashtbl.hash key land c.cache_mask) in
+  if String.equal e.key key then e.word else empty_word
 
-let[@inline] cache_add c key value =
-  let h = Hashtbl.hash key land c.cache_mask in
-  Array.unsafe_set c.cache_keys h key;
-  Array.unsafe_set c.cache_vals h value
+let[@inline] cache_add c key word =
+  Array.unsafe_set c.cache_slots
+    (Hashtbl.hash key land c.cache_mask)
+    { key; word }
+
+type scratch = {
+  mutable scratch_word : word;
+  mutable scratch_queue : Merge_queue.t;
+  scratch_in_use : bool Atomic.t;
+}
 
 type t = {
   vocab : vocab;
@@ -242,9 +243,6 @@ type t = {
   prefixed_ascii_to_id : int array;
   prefixed_char_to_id : Merge_map.t;
   unk_id : int;
-  mutable work_word : word;
-  mutable work_queue : Merge_queue.t;
-  work_in_use : bool Atomic.t;
 }
 
 let create_word capacity =
@@ -271,6 +269,17 @@ let ensure_queue_capacity queue capacity =
     queue
   end
   else Merge_queue.create cap
+
+(* Merging needs a word and a queue to work in. They are held per domain and
+   grow to the longest word merged there; within a domain the first thread to
+   claim them wins and the others work in buffers of their own. *)
+let scratch_key =
+  Domain.DLS.new_key (fun () ->
+      {
+        scratch_word = create_word 16;
+        scratch_queue = Merge_queue.create 16;
+        scratch_in_use = Atomic.make false;
+      })
 
 let[@inline] add_symbol word c byte_len =
   let s = word.size in
@@ -601,13 +610,14 @@ let init_word_slow model word text text_len =
 
 let merge_word model text =
   let text_len = String.length text in
-  let owned = Atomic.compare_and_set model.work_in_use false true in
+  let scratch = Domain.DLS.get scratch_key in
+  let owned = Atomic.compare_and_set scratch.scratch_in_use false true in
   let word, queue =
     if owned then begin
-      let w = ensure_word_capacity model.work_word text_len in
-      model.work_word <- w;
-      let q = ensure_queue_capacity model.work_queue text_len in
-      model.work_queue <- q;
+      let w = ensure_word_capacity scratch.scratch_word text_len in
+      scratch.scratch_word <- w;
+      let q = ensure_queue_capacity scratch.scratch_queue text_len in
+      scratch.scratch_queue <- q;
       (w, q)
     end
     else (create_word text_len, Merge_queue.create text_len)
@@ -616,16 +626,13 @@ let merge_word model text =
   then init_word_fast model word text text_len
   else init_word_slow model word text text_len;
   apply_merges model model.dropout word queue;
-  if owned then begin
-    let n = word.size in
-    let sym_c = Array.make n 0 in
-    let sym_len = Array.make n 0 in
-    Array.blit word.sym_c 0 sym_c 0 n;
-    Array.blit word.sym_len 0 sym_len 0 n;
-    Atomic.set model.work_in_use false;
-    { sym_c; sym_prev = [||]; sym_next = [||]; sym_len; size = n }
-  end
-  else word
+  let n = word.size in
+  let sym_c = Array.make n 0 in
+  let sym_len = Array.make n 0 in
+  Array.blit word.sym_c 0 sym_c 0 n;
+  Array.blit word.sym_len 0 sym_len 0 n;
+  if owned then Atomic.set scratch.scratch_in_use false;
+  { sym_c; sym_prev = [||]; sym_next = [||]; sym_len; size = n }
 
 let word_to_tokens model word =
   let offset = ref 0 in
@@ -894,9 +901,6 @@ let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
     prefixed_ascii_to_id;
     prefixed_char_to_id;
     unk_id;
-    work_word = create_word 16;
-    work_queue = Merge_queue.create 16;
-    work_in_use = Atomic.make false;
   }
 
 let json_of_string s =

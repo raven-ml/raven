@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- Fix `encode_batch` returning wrong tokens in rare cases: domains racing on
+  the BPE word cache could pair one word's key with another word's tokens, so a
+  cache hit returned the wrong ids. Merge scratch buffers are now held per
+  domain, so parallel encoding no longer allocates a fresh word and merge queue
+  per token.
 - Fix GPT-2 (`ByteLevel`) pre-tokenization of whitespace: a run followed by
   text keeps all but its last character, so `"\n\nNot"` splits as `"\n"`,
   `"\n"`, `"Not"` and `"x  y"` as `"x"`, `" "`, `" y"`, as HuggingFace has it.

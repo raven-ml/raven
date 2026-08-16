@@ -141,6 +141,38 @@ let test_tokenizer_integration () =
 
   equal ~msg:"tokenizer produces output" bool true (List.length tokens > 0)
 
+(* The word cache is shared by every domain encoding with the model. These 169
+   words share the 16 slots of the smallest cache, so the domains rewrite the
+   same slots continuously: a slot whose key and word are published by two
+   separate stores then hands out the word of another key. *)
+let test_parallel_cache () =
+  let letter i = Char.chr (Char.code 'a' + i) in
+  let vocab =
+    List.init 26 (fun i -> (String.make 1 (letter i), i))
+    @ List.init 26 (fun i -> (Printf.sprintf "a%c" (letter i), 26 + i))
+  in
+  let merges = List.init 26 (fun i -> ("a", String.make 1 (letter i))) in
+  let tokenizer = bpe ~vocab ~merges ~cache_capacity:1 () in
+  let words =
+    Array.init 169 (fun k ->
+        Printf.sprintf "a%ca%c" (letter (k / 13)) (letter (k mod 13)))
+  in
+  let ids text = encode tokenizer text |> Encoding.ids in
+  let expected = Array.map ids words in
+  let mismatches = Atomic.make 0 in
+  let hammer () =
+    for _ = 1 to 100 do
+      Array.iteri
+        (fun i word -> if ids word <> expected.(i) then Atomic.incr mismatches)
+        words
+    done
+  in
+  let domains = Array.init 3 (fun _ -> Domain.spawn hammer) in
+  hammer ();
+  Array.iter Domain.join domains;
+  equal ~msg:"parallel tokenization agrees with single-domain" int 0
+    (Atomic.get mismatches)
+
 let () =
   run "BPE tests"
     [
@@ -155,4 +187,6 @@ let () =
           test "save and load" test_bpe_save_load;
           test "tokenizer integration" test_tokenizer_integration;
         ];
+      group "parallel"
+        [ test "shared cache across domains" test_parallel_cache ];
     ]

@@ -16,7 +16,11 @@
     performance. *)
 
 type t
-(** The type for BPE models. Internally mutable due to the merge cache. *)
+(** The type for BPE models. Internally mutable due to the merge cache.
+
+    Several domains may tokenize with the same model: cache entries are
+    immutable and published by a single store, and the merge scratch buffers are
+    held per domain and claimed by one thread at a time. *)
 
 type vocab = (string, int) Hashtbl.t
 (** The type for vocabularies mapping token strings to IDs. *)
