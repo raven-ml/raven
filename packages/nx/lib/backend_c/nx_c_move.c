@@ -756,8 +756,12 @@ static void nx_c_unfold_row(const nx_c_unfold_ctx *u, int64_t out_lead,
      in the pad. in_base collects the offset at window 0 along every dim.
      Decomposing kf from the last dim down reproduces
      (kf / kernel_cumprod[d]) % kernel[d]. */
-  int64_t win_step[NX_C_MAX_SPATIAL], valid_lo[NX_C_MAX_SPATIAL],
-      valid_hi[NX_C_MAX_SPATIAL];
+  /* Zero-init: the fill loop below provably runs at least once (both
+     unfold/fold entry points reject K < 1), but GCC 14's
+     -Wmaybe-uninitialized cannot see that through the opaque worker ctx. */
+  int64_t win_step[NX_C_MAX_SPATIAL] = {0};
+  int64_t valid_lo[NX_C_MAX_SPATIAL] = {0};
+  int64_t valid_hi[NX_C_MAX_SPATIAL] = {0};
   int64_t in_base = in_lead;
   int64_t kk = kf;
   for (int d = last; d >= 0; d--) {
