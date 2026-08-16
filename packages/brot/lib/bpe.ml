@@ -666,37 +666,48 @@ let word_to_encoding model word ~type_id =
     ~words:(Array.make n None) ~offsets ~special_tokens_mask:(Array.make n 0)
     ~attention_mask:(Array.make n 1) ()
 
+let[@inline] uses_dropout model =
+  match model.dropout with Some p -> p > 0.0 | None -> false
+
+(* Dropout is drawn per occurrence, so a dropped-out model can neither reuse a
+   word nor take any shortcut over the merges. *)
 let get_word model text =
-  if model.ignore_merges then merge_word model text
-  else
-    match model.cache with
-    | Some cache when String.length text < 4096 ->
-        let cached = cache_find cache text in
-        if cached.size > 0 then cached
-        else
-          let word = merge_word model text in
-          cache_add cache text word;
-          word
-    | _ -> merge_word model text
+  match model.cache with
+  | Some cache when String.length text < 4096 && not (uses_dropout model) ->
+      let cached = cache_find cache text in
+      if cached.size > 0 then cached
+      else
+        let word = merge_word model text in
+        cache_add cache text word;
+        word
+  | _ -> merge_word model text
+
+(* Under [ignore_merges] a word that is itself in the vocabulary is emitted as
+   that single token. Otherwise the merges decide, and a vocabulary entry that
+   no merge builds comes out as its decomposition. *)
+let[@inline] whole_word_id model text =
+  if model.ignore_merges && not (uses_dropout model) then
+    Hashtbl.find_opt model.vocab text
+  else None
 
 let tokenize model text =
   if String.length text = 0 then []
   else
-    match Hashtbl.find_opt model.vocab text with
+    match whole_word_id model text with
     | Some id -> [ { id; value = text; offsets = (0, String.length text) } ]
     | None -> word_to_tokens model (get_word model text)
 
 let tokenize_ids model text =
   if String.length text = 0 then [||]
   else
-    match Hashtbl.find_opt model.vocab text with
+    match whole_word_id model text with
     | Some id -> [| id |]
     | None -> word_to_ids (get_word model text)
 
 let tokenize_encoding model text ~type_id =
   if String.length text = 0 then Encoding.empty
   else
-    match Hashtbl.find_opt model.vocab text with
+    match whole_word_id model text with
     | Some id ->
         Encoding.token ~id ~token:text
           ~offset:(0, String.length text)
@@ -777,6 +788,10 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
 let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
     ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
     ?(byte_fallback = false) ?(ignore_merges = false) () : t =
+  (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
+  let non_empty = function Some "" -> None | affix -> affix in
+  let continuing_subword_prefix = non_empty continuing_subword_prefix in
+  let end_of_word_suffix = non_empty end_of_word_suffix in
   let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
   let vocab_r = Array.make (max_id + 1) "" in
   Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;

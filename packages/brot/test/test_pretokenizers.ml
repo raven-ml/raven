@@ -63,6 +63,64 @@ let test_byte_level_basic () =
   test_case "I'll" [ "I"; "'ll" ] [ (0, 1); (1, 4) ];
   test_case "OpenAI's" [ "OpenAI"; "'s" ] [ (0, 6); (6, 8) ]
 
+(* The splits as substrings of the input, which is what the GPT-2 pattern
+   ['s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+]
+   decides; their byte-level re-encoding is checked separately. Every case here
+   is the output of HuggingFace [tokenizers]. *)
+let test_byte_level_pattern () =
+  let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
+  let test_case text expected =
+    let spans =
+      Pre.pre_tokenize tokenizer text
+      |> List.map (fun (_, (start, stop)) ->
+          String.sub text start (stop - start))
+    in
+    equal
+      ~msg:(Printf.sprintf "GPT-2 pattern on %S" text)
+      (list string) expected spans
+  in
+
+  (* A whitespace run gives up its last character to the next split, unless it
+     ends the text. *)
+  test_case "\n\nNot" [ "\n"; "\n"; "Not" ];
+  test_case "  ." [ " "; " ." ];
+  test_case "x  y" [ "x"; " "; " y" ];
+  test_case "a \n b" [ "a"; " \n"; " b" ];
+  test_case "a  " [ "a"; "  " ];
+  test_case "  \n  x" [ "  \n "; " x" ];
+  test_case " \n " [ " \n " ];
+  test_case "a\r\nb" [ "a"; "\r"; "\n"; "b" ];
+
+  (* The optional leading character of the letter, number and other runs is a
+     space, not any whitespace. *)
+  test_case "\tabc" [ "\t"; "abc" ];
+  test_case "\t\tabc" [ "\t"; "\t"; "abc" ];
+  test_case "\011\012x" [ "\011"; "\012"; "x" ];
+
+  (* Whitespace is the Unicode White_Space property: no-break space, em space,
+     ideographic space, next line, line separator. *)
+  test_case "a\xc2\xa0b" [ "a"; "\xc2\xa0"; "b" ];
+  test_case "a \xc2\xa0b" [ "a"; " "; "\xc2\xa0"; "b" ];
+  test_case "a\xc2\xa0 b" [ "a"; "\xc2\xa0"; " b" ];
+  test_case "a\xe2\x80\x83b" [ "a"; "\xe2\x80\x83"; "b" ];
+  test_case "a\xe3\x80\x80b" [ "a"; "\xe3\x80\x80"; "b" ];
+  test_case "a\xc2\x85b" [ "a"; "\xc2\x85"; "b" ];
+  test_case "a\xe2\x80\xa8b" [ "a"; "\xe2\x80\xa8"; "b" ];
+
+  (* Letters are the Letter category, so a combining mark starts a run of its
+     own; zero width space is not whitespace. *)
+  test_case "e\xcc\x81x" [ "e"; "\xcc\x81"; "x" ];
+  test_case "a\xe0\xbd\xb1b" [ "a"; "\xe0\xbd\xb1"; "b" ];
+  test_case "a\xe2\x80\x8bb" [ "a"; "\xe2\x80\x8b"; "b" ];
+
+  (* Numbers are the Number category, letter and other numbers included. *)
+  test_case "1\xc2\xbd2" [ "1\xc2\xbd2" ];
+  test_case "\xe2\x85\xa0\xe2\x85\xa1" [ "\xe2\x85\xa0\xe2\x85\xa1" ];
+
+  (* Contractions are lower case only. *)
+  test_case "'ll'LL" [ "'ll"; "'"; "LL" ];
+  test_case " 's" [ " '"; "s" ]
+
 let test_byte_level_prefix_space () =
   (* Test with add_prefix_space=true *)
   let tokenizer = Pre.byte_level ~add_prefix_space:true ~use_regex:true () in
@@ -80,7 +138,11 @@ let test_byte_level_prefix_space () =
 
   (* Should NOT add extra space when text already starts with space *)
   test_case " hello" [ "\196\160hello" ];
-  test_case "  hello" [ "\196\160"; "\196\160hello" ]
+  test_case "  hello" [ "\196\160"; "\196\160hello" ];
+
+  (* Only a space is a prefix already there: other whitespace still gets one *)
+  test_case "\nx" [ "\196\160"; "\196\138"; "x" ];
+  test_case "\tx" [ "\196\160"; "\196\137"; "x" ]
 
 let test_byte_level_special_chars () =
   let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
@@ -246,7 +308,23 @@ let test_whitespace_pretokenizer () =
   test_case "a+b=c"
     [
       ("a", (0, 1)); ("+", (1, 2)); ("b", (2, 3)); ("=", (3, 4)); ("c", (4, 5));
-    ]
+    ];
+
+  (* \w is alphabetic, marks, decimal digits and connector punctuation: a
+     combining mark, a letter number and an undertie join the word, an other
+     number and a circled digit do not, and a no-break space splits it. *)
+  let check_words text expected =
+    check_strings
+      (Printf.sprintf "Whitespace words of %S" text)
+      (Pre.pre_tokenize (Pre.whitespace ()) text)
+      expected
+  in
+  check_words "a\xe0\xbd\xb1b" [ "a\xe0\xbd\xb1b" ];
+  check_words "a\xe2\x85\xa0b" [ "a\xe2\x85\xa0b" ];
+  check_words "a\xe2\x80\xbfb" [ "a\xe2\x80\xbfb" ];
+  check_words "a\xc2\xbdb" [ "a"; "\xc2\xbd"; "b" ];
+  check_words "a\xe2\x91\xa0b" [ "a"; "\xe2\x91\xa0"; "b" ];
+  check_words "a\xc2\xa0b" [ "a"; "b" ]
 
 let test_whitespace_split () =
   let test_case text expected =
@@ -463,6 +541,7 @@ let () =
       group "byte_level"
         [
           test "ByteLevel basic" test_byte_level_basic;
+          test "ByteLevel GPT-2 pattern" test_byte_level_pattern;
           test "ByteLevel prefix space" test_byte_level_prefix_space;
           test "ByteLevel special chars" test_byte_level_special_chars;
           test "ByteLevel unicode" test_byte_level_unicode;

@@ -1085,6 +1085,31 @@ thread.
   integration (`kaun.hf`, `kaun.datasets`) are provided as plain functions
   over these records.
 
+### Brot
+
+- Fix GPT-2 (`ByteLevel`) pre-tokenization of whitespace: a run followed by
+  text keeps all but its last character, so `"\n\nNot"` splits as `"\n"`,
+  `"\n"`, `"Not"` and `"x  y"` as `"x"`, `" "`, `" y"`, as HuggingFace has it.
+- Fix the optional leading character of a letter, number or symbol run in that
+  same pattern: it is a space, not any whitespace, so `"\tab"` splits as `"\t"`
+  then `"ab"`. `add_prefix_space` likewise only skips a leading space.
+- Fix letters in that pattern being the Alphabetic property instead of the
+  Unicode Letter category, which wrongly joined a combining mark to the letter
+  it follows.
+- Fix the `Whitespace` pre-tokenizer's word class, which now holds for
+  combining marks and connector punctuation and no longer for numbers such as
+  `"½"`, matching `\w`.
+- Fix `Bpe` emitting any pre-token found in the vocabulary as a single token.
+  That shortcut is what `ignore_merges` selects, and it never applies under
+  `dropout`; without it the merges decide, and a vocabulary entry no merge can
+  build comes out as its decomposition.
+- Fix `Bpe` reusing cached merges under `dropout`, which replayed the first
+  result for every later occurrence of a word instead of drawing again.
+- `Bpe.create` now reads `""` for `continuing_subword_prefix` and
+  `end_of_word_suffix` as no affix, which is how tokenizer files spell it: the
+  accessors return `None` for those models, and GPT-2 no longer takes the
+  allocating affix path when encoding.
+
 ### Sowilo
 
 - `resize`, `canny`, `threshold`, `invert`, and the HSV conversions combine

@@ -193,13 +193,14 @@ val bpe :
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
-      ["##"]). Default: none.
+      ["##"]). Default: none; [""] is the same as none.
     - [end_of_word_suffix]: suffix marking word boundaries (e.g., ["</w>"]).
-      Default: none.
+      Default: none; [""] is the same as none.
     - [fuse_unk]: merge consecutive unknown tokens. Default: [false].
     - [byte_fallback]: use byte-level fallback (["<0x00>"]) instead of unknown
       token. Default: [false].
-    - [ignore_merges]: skip merge application (character-level output). Default:
+    - [ignore_merges]: emit a word that is itself in [vocab] as that single
+      token, skipping the merges for it. Has no effect under [dropout]. Default:
       [false]. *)
 
 val wordpiece :

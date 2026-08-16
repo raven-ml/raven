@@ -55,7 +55,7 @@ let err_fixed_length = "requires positive length"
 (* Character classification *)
 
 (* ASCII property table: packed flags for O(1) classification. bit 0:
-   whitespace, bit 1: alphabetic, bit 2: numeric, bit 3: punctuation *)
+   whitespace, bit 1: letter, bit 2: numeric, bit 3: punctuation *)
 
 let ascii_props =
   let t = Array.make 128 0 in
@@ -105,16 +105,35 @@ let[@inline] is_whitespace code =
   if code < 128 then Array.unsafe_get ascii_props code land 1 <> 0
   else Uucp.White.is_white_space (Uchar.of_int code)
 
-let[@inline] is_alphabetic code =
+(* [\p{L}]: the general category Letter. Narrower than the Alphabetic property,
+   which also holds for the combining marks of abugidas. *)
+let[@inline] is_letter code =
   if code < 128 then Array.unsafe_get ascii_props code land 2 <> 0
-  else Uucp.Alpha.is_alphabetic (Uchar.of_int code)
+  else
+    match Uucp.Gc.general_category (Uchar.of_int code) with
+    | `Ll | `Lm | `Lo | `Lt | `Lu -> true
+    | _ -> false
 
+(* [\p{N}] *)
 let[@inline] is_numeric code =
   if code < 128 then Array.unsafe_get ascii_props code land 4 <> 0
   else
     match Uucp.Gc.general_category (Uchar.of_int code) with
     | `Nd | `Nl | `No -> true
     | _ -> false
+
+(* [\w]: alphabetic, combining marks, decimal digits, connector punctuation and
+   the joiners. Note that it holds for ["Ⅰ"] (a letter number) but not for ["½"]
+   (an other number). *)
+let[@inline] is_word code =
+  if code < 128 then Array.unsafe_get ascii_props code land 6 <> 0 || code = 95
+  else
+    let u = Uchar.of_int code in
+    Uucp.Alpha.is_alphabetic u
+    || (match Uucp.Gc.general_category u with
+      | `Mc | `Me | `Mn | `Nd | `Pc -> true
+      | _ -> false)
+    || Uucp.Func.is_join_control u
 
 let[@inline] is_punctuation code =
   if code < 128 then Array.unsafe_get ascii_props code land 8 <> 0
@@ -251,11 +270,13 @@ let byte_level_decode text =
   done;
   Buffer.contents result
 
+(* [[^\s\p{L}\p{N}]] *)
 let[@inline] is_other code =
-  (not (is_whitespace code))
-  && (not (is_alphabetic code))
-  && not (is_numeric code)
+  (not (is_whitespace code)) && (not (is_letter code)) && not (is_numeric code)
 
+(* The GPT-2 pattern ['s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+|
+   ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+], matched by taking the first alternative
+   that applies at each position. *)
 let split_gpt2_pattern text =
   let len = String.length text in
   if len = 0 then []
@@ -269,11 +290,8 @@ let split_gpt2_pattern text =
        for non-ASCII codepoints (slow path only). *)
     let try_space_run ~ascii_mask ~invert ~classify () =
       let start = !pos in
-      let b0 = Char.code (String.unsafe_get text !pos) in
-      let has_space =
-        if b0 < 128 then Array.unsafe_get ascii_props b0 land 1 <> 0
-        else is_whitespace b0
-      in
+      (* [ ?] is a space, not any whitespace: ["\tab"] is ["\t"] then ["ab"]. *)
+      let has_space = String.unsafe_get text !pos = ' ' in
       let run_start = if has_space then start + 1 else start in
       if run_start < len then
         let b = Char.code (String.unsafe_get text run_start) in
@@ -307,20 +325,10 @@ let split_gpt2_pattern text =
       else false
     in
 
-    let[@inline] next_is_alnum next_pos =
-      if next_pos >= len then false
-      else
-        let nb = Char.code (String.unsafe_get text next_pos) in
-        if nb < 128 then Array.unsafe_get ascii_props nb land 6 <> 0
-        else
-          let nc = utf8_next text next_pos lsr 3 in
-          is_alphabetic nc || is_numeric nc
-    in
-
     let rec loop () =
       if !pos >= len then ()
       else begin
-        (* 1. Contractions: 's 't 'm 'd 're 've 'll *)
+        (* Contractions: 's 't 'm 'd 're 've 'll *)
         let matched_contraction =
           text.[!pos] = '\''
           &&
@@ -347,51 +355,39 @@ let split_gpt2_pattern text =
             else false
         in
         if matched_contraction then ()
-        else if
-          try_space_run ~ascii_mask:2 ~invert:false ~classify:is_alphabetic ()
+        else if try_space_run ~ascii_mask:2 ~invert:false ~classify:is_letter ()
         then ()
         else if
           try_space_run ~ascii_mask:4 ~invert:false ~classify:is_numeric ()
         then ()
         else if try_space_run ~ascii_mask:7 ~invert:true ~classify:is_other ()
         then ()
-        (* 5 & 6. Whitespace run *)
-          else begin
-          let b0 = Char.code (String.unsafe_get text !pos) in
-          let is_ws, clen =
-            if b0 < 128 then (Array.unsafe_get ascii_props b0 land 1 <> 0, 1)
-            else
-              let p = utf8_next text !pos in
-              let code = p lsr 3 and cl = p land 7 in
-              (is_whitespace code, cl)
-          in
-          if is_ws then begin
-            let j = ref (!pos + clen) in
-            let continue = ref true in
-            while !j < len && !continue do
-              let b = Char.code (String.unsafe_get text !j) in
-              if b < 128 then
-                if Array.unsafe_get ascii_props b land 1 <> 0 then
-                  if next_is_alnum (!j + 1) && b = 0x20 then continue := false
-                  else j := !j + 1
-                else continue := false
+        else begin
+          (* Whatever is left starts a whitespace run, every other character
+             having matched one of the alternatives above. [\s+(?!\S)] takes the
+             whole run, or all but its last character when a non-whitespace
+             character follows; [\s+] then takes that last character on its own,
+             unless it is a space, which the next span starts with. *)
+          let j = ref !pos in
+          let last = ref !pos in
+          let scanning = ref true in
+          while !scanning && !j < len do
+            let b = Char.code (String.unsafe_get text !j) in
+            let ws, clen =
+              if b < 128 then (Array.unsafe_get ascii_props b land 1 <> 0, 1)
               else
                 let p = utf8_next text !j in
-                let code = p lsr 3 and cl = p land 7 in
-                if is_whitespace code then
-                  if next_is_alnum (!j + cl) && code = 0x20 then
-                    continue := false
-                  else j := !j + cl
-                else continue := false
-            done;
-            spans := (!pos, !j - !pos) :: !spans;
-            pos := !j
-          end
-          else begin
-            (* Fallback: single character *)
-            spans := (!pos, clen) :: !spans;
-            pos := !pos + clen
-          end
+                (is_whitespace (p lsr 3), p land 7)
+            in
+            if ws then begin
+              last := !j;
+              j := !j + clen
+            end
+            else scanning := false
+          done;
+          let stop = if !j < len && !last > !pos then !last else !j in
+          spans := (!pos, stop - !pos) :: !spans;
+          pos := stop
         end;
         loop ()
       end
@@ -471,7 +467,7 @@ let pre_tokenize_whitespace text =
     else
       let p = utf8_next text !i in
       let code = p lsr 3 and l = p land 7 in
-      if is_alphabetic code || is_numeric code then (
+      if is_word code then (
         if !in_punct then flush ();
         if !start < 0 then start := !i;
         in_word := true;
@@ -495,10 +491,8 @@ let pre_tokenize_whitespace text =
 let pre_tokenize_byte_level ~add_prefix_space ~use_regex ~trim_offsets:_ text =
   let orig_len = String.length text in
   let text, prefix_added =
-    if
-      add_prefix_space && orig_len > 0
-      && not (is_whitespace (Char.code text.[0]))
-    then (" " ^ text, true)
+    if add_prefix_space && orig_len > 0 && text.[0] <> ' ' then
+      (" " ^ text, true)
     else (text, false)
   in
   if use_regex then

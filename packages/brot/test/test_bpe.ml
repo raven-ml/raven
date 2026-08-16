@@ -53,6 +53,45 @@ let test_bpe_builder () =
   let tokens = Encoding.tokens encoding in
   equal ~msg:"single token for 'ab'" int 1 (Array.length tokens)
 
+let test_ignore_merges () =
+  (* ["ab"] is in the vocabulary but no merge builds it, so the merges alone
+     cannot produce it; [ignore_merges] is what makes the whole word win. *)
+  let vocab = [ ("a", 0); ("b", 1); ("c", 2); ("bc", 3); ("ab", 4) ] in
+  let merges = [ ("b", "c") ] in
+  let tokens tokenizer text =
+    encode tokenizer text |> Encoding.tokens |> Array.to_list
+  in
+  let merging = bpe ~vocab ~merges () in
+  let ignoring = bpe ~vocab ~merges ~ignore_merges:true () in
+  equal ~msg:"merges decide 'ab'" (list string) [ "a"; "b" ]
+    (tokens merging "ab");
+  equal ~msg:"ignore_merges keeps 'ab'" (list string) [ "ab" ]
+    (tokens ignoring "ab");
+  (* A word absent from the vocabulary is merged either way. *)
+  equal ~msg:"merges build 'abc'" (list string) [ "a"; "bc" ]
+    (tokens merging "abc");
+  equal ~msg:"ignore_merges still merges 'abc'" (list string) [ "a"; "bc" ]
+    (tokens ignoring "abc")
+
+let test_dropout_overrides_ignore_merges () =
+  (* Dropout is drawn per occurrence, so the whole-word shortcut cannot stand in
+     for the merges; at probability 1 none of them apply. *)
+  let vocab = [ ("a", 0); ("b", 1); ("ab", 2) ] in
+  let merges = [ ("a", "b") ] in
+  let tokenizer = bpe ~vocab ~merges ~ignore_merges:true ~dropout:1.0 () in
+  equal ~msg:"dropout leaves 'ab' unmerged" (list string) [ "a"; "b" ]
+    (encode tokenizer "ab" |> Encoding.tokens |> Array.to_list)
+
+let test_empty_affixes () =
+  (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
+  let vocab = [ ("a", 0); ("b", 1); ("ab", 2) ] in
+  let merges = [ ("a", "b") ] in
+  let tokenizer =
+    bpe ~vocab ~merges ~continuing_subword_prefix:"" ~end_of_word_suffix:"" ()
+  in
+  equal ~msg:"'ab' merges with empty affixes" (list string) [ "ab" ]
+    (encode tokenizer "ab" |> Encoding.tokens |> Array.to_list)
+
 let test_bpe_save_load () =
   let vocab = [ ("t", 0); ("e", 1); ("s", 2); ("test", 3) ] in
   let merges = [] in
@@ -109,6 +148,10 @@ let () =
         [
           test "basic tokenization" test_bpe_basic;
           test "builder pattern" test_bpe_builder;
+          test "ignore_merges" test_ignore_merges;
+          test "dropout overrides ignore_merges"
+            test_dropout_overrides_ignore_merges;
+          test "empty prefix and suffix" test_empty_affixes;
           test "save and load" test_bpe_save_load;
           test "tokenizer integration" test_tokenizer_integration;
         ];
