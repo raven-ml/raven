@@ -238,6 +238,72 @@ let test_tokenize_mixed_whitespace () =
     [ "hello"; "world"; "there"; "friend" ]
     tokens
 
+(* Expectations from HuggingFace [decoders.WordPiece(prefix="##",
+   cleanup=...)]. *)
+let test_wordpiece_decoder () =
+  let case ~cleanup tokens expected =
+    equal
+      ~msg:
+        (Printf.sprintf "decode cleanup=%b %s" cleanup
+           (String.concat "|" tokens))
+      string expected
+      (Decoder.decode (Decoder.wordpiece ~cleanup ()) tokens)
+  in
+  case ~cleanup:true [ "una"; "##ffa"; "##ble" ] "unaffable";
+  case ~cleanup:true [ "hello"; ","; "world"; "!" ] "hello, world!";
+  case ~cleanup:true [ "a"; "?"; "b"; "!"; "c"; ","; "d"; "." ] "a? b! c, d.";
+  case ~cleanup:true [ "is"; "n't" ] "isn't";
+  case ~cleanup:true [ "i"; "'m" ] "i'm";
+  case ~cleanup:true [ "it"; "'s" ] "it's";
+  (* Only the space the decoder added is taken back, so a full stop that was a
+     token of its own does not swallow the space before the next word. *)
+  case ~cleanup:true [ "3"; "."; "14" ] "3. 14";
+  case ~cleanup:true [ "don"; "'"; "t" ] "don ' t";
+  case ~cleanup:true [ "a"; "do"; "not" ] "a do not";
+  (* The cleanup runs on the first piece too, and one of its rules rewrites
+     content rather than removing a space. *)
+  case ~cleanup:true [ "a do not" ] "a don't";
+  (* Cleanup neither trims nor collapses the whitespace inside a token. *)
+  case ~cleanup:true [ "  x  " ] "  x  ";
+  case ~cleanup:true [] "";
+  case ~cleanup:false [ "hello"; ","; "world"; "!" ] "hello , world !";
+  case ~cleanup:false [ "3"; "."; "14" ] "3 . 14";
+  (* The continuing prefix is only stripped after the first token. *)
+  case ~cleanup:true [ "##ab"; "cd" ] "##ab cd"
+
+(* Expectations from HuggingFace [decoders.CTC(pad_token="<pad>",
+   word_delimiter_token="|", cleanup=...)]. *)
+let test_ctc_decoder () =
+  let case ~cleanup tokens expected =
+    equal
+      ~msg:
+        (Printf.sprintf "ctc cleanup=%b %s" cleanup (String.concat " " tokens))
+      string expected
+      (Decoder.decode (Decoder.ctc ~cleanup ()) tokens)
+  in
+  (* Consecutive repeats collapse, the pad token goes, and the delimiter becomes
+     a space. *)
+  case ~cleanup:true
+    [ "h"; "e"; "l"; "l"; "o"; "|"; "w"; "o"; "r"; "l"; "d" ]
+    "helo world";
+  case ~cleanup:true [ "a"; "a"; "b"; "<pad>"; "b"; "|"; "c" ] "abb c";
+  case ~cleanup:true [ "a"; "|"; "|"; "b" ] "a b";
+  case ~cleanup:true [ "<pad>"; "<pad>" ] "";
+  case ~cleanup:true [] "";
+  (* The detokenization cleanup applies to every token, the [" do not"] rewrite
+     included. *)
+  case ~cleanup:true [ " ." ] ".";
+  case ~cleanup:true [ "a"; " ,"; "b" ] "a,b";
+  case ~cleanup:true [ "x"; " n't" ] "xn't";
+  case ~cleanup:true [ "a"; " ' "; "b" ] "a'b";
+  case ~cleanup:true [ "a do not" ] "a don't";
+  (* Cleanup runs before the delimiter is replaced, so a delimiter that becomes
+     a space is not itself eligible for the punctuation rules. *)
+  case ~cleanup:true [ "|." ] " .";
+  case ~cleanup:true [ "  x  " ] "  x  ";
+  case ~cleanup:false [ "a"; " ,"; "b" ] "a ,b";
+  case ~cleanup:false [ "h"; "e"; "l"; "l"; "o"; "|"; "w" ] "helo|w"
+
 (* Test Suite *)
 
 let tokenization_tests =
@@ -269,6 +335,9 @@ let tokenization_tests =
     test "unigram special tokens" test_unigram_special_tokens;
     test "unigram encode sequence" test_unigram_encode_sequence;
     test "pad token reassignment updates id" test_pad_token_set_at_construction;
+    (* Decoding *)
+    test "wordpiece decoder" test_wordpiece_decoder;
+    test "ctc decoder" test_ctc_decoder;
   ]
 
 let () = run "brot tokenization" [ group "tokenization" tokenization_tests ]

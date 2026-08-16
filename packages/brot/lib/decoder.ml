@@ -28,8 +28,6 @@ let err_expected_object = "invalid decoder JSON: expected object"
 
 (* Decoding *)
 
-let whitespace_re = Re.compile (Re.rep1 (Re.char ' '))
-
 (* Literal string replacement without regex overhead. Returns [s] unchanged when
    [pattern] does not occur—no allocation on the fast path. *)
 let replace_all ~pattern ~by s =
@@ -114,20 +112,44 @@ let decode_byte_fallback tokens =
   in
   loop [] [] tokens
 
+let detokenization_cleanups =
+  [
+    (" .", ".");
+    (" ?", "?");
+    (" !", "!");
+    (" ,", ",");
+    (" ' ", "'");
+    (" n't", "n't");
+    (" 'm", "'m");
+    (" do not", " don't");
+    (" 's", "'s");
+    (" 've", "'ve");
+    (" 're", "'re");
+  ]
+
+(* Undo the spacing around punctuation and English contractions; the last rule
+   rewrites rather than unspaces. It sees one piece at a time, so only a space
+   already inside that piece is taken back: a full stop that was a token of its
+   own keeps the space that follows it. *)
+let cleanup_piece piece =
+  List.fold_left
+    (fun s (pattern, by) -> replace_all ~pattern ~by s)
+    piece detokenization_cleanups
+
 let decode_wordpiece ~prefix ~cleanup tokens =
   let plen = String.length prefix in
   let buf = Buffer.create 128 in
   List.iteri
     (fun i token ->
-      if i > 0 && String.starts_with ~prefix token then
-        Buffer.add_substring buf token plen (String.length token - plen)
-      else begin
-        if i > 0 then Buffer.add_char buf ' ';
-        Buffer.add_string buf token
-      end)
+      let piece =
+        if i = 0 then token
+        else if String.starts_with ~prefix token then
+          String.sub token plen (String.length token - plen)
+        else " " ^ token
+      in
+      Buffer.add_string buf (if cleanup then cleanup_piece piece else piece))
     tokens;
-  let s = Buffer.contents buf in
-  if cleanup then String.trim (Re.replace_string whitespace_re ~by:" " s) else s
+  Buffer.contents buf
 
 let decode_metaspace ~replacement ~add_prefix_space tokens =
   List.mapi
@@ -145,17 +167,15 @@ let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
     | x :: (y :: _ as rest) ->
         if String.equal x y then dedup acc rest else dedup (x :: acc) rest
   in
-  let re =
-    if cleanup then Some (Re.compile (Re.str word_delimiter_token)) else None
-  in
   dedup [] tokens
   |> List.filter_map (fun token ->
       if String.equal token pad_token then None
       else
         let s =
-          match re with
-          | Some re -> Re.replace_string re ~by:" " token
-          | None -> token
+          if cleanup then
+            replace_all ~pattern:word_delimiter_token ~by:" "
+              (cleanup_piece token)
+          else token
         in
         if String.equal s "" then None else Some s)
 

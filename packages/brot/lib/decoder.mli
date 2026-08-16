@@ -42,7 +42,12 @@ val wordpiece : ?prefix:string -> ?cleanup:bool -> unit -> t
 (** [wordpiece ~prefix ~cleanup ()] is a collapsing decoder for WordPiece
     tokens. Strips continuation [prefix] (default ["##"]) from non-initial
     subwords and joins tokens into words. When [cleanup] is [true] (default),
-    normalizes whitespace in the result. *)
+    applies the detokenization cleanup to every piece, once its joining space is
+    prepended: the space before [.], [?], [!], [,] and the English contractions
+    is taken back, and [" do not"] is rewritten to [" don't"]. So
+    ["hello"; ","; "world"] decodes to ["hello, world"], while ["3"; "."; "14"]
+    decodes to ["3. 14"] because the space after the full stop was never the
+    decoder's to remove. *)
 
 val metaspace : ?replacement:char -> ?add_prefix_space:bool -> unit -> t
 (** [metaspace ~replacement ~add_prefix_space ()] is a per-token decoder that
@@ -61,7 +66,8 @@ val ctc :
     {{:https://distill.pub/2017/ctc/}CTC (Connectionist Temporal
      Classification)} output. Deduplicates consecutive tokens, removes
     [pad_token] (default ["<pad>"]), and when [cleanup] is [true] (default),
-    replaces [word_delimiter_token] (default ["|"]) with spaces. *)
+    applies the same detokenization cleanup as {!wordpiece} to every token and
+    then replaces [word_delimiter_token] (default ["|"]) with spaces. *)
 
 val sequence : t list -> t
 (** [sequence decoders] chains [decoders] left-to-right. Each decoder's output

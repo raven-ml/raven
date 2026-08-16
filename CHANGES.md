@@ -1087,6 +1087,13 @@ thread.
 
 ### Brot
 
+- `Decoder.wordpiece ~cleanup:true` now applies HuggingFace's detokenization
+  cleanup: the space before `.`, `?`, `!`, `,` and the English contractions is
+  taken back and `" do not"` becomes `" don't"`, so `["hello"; ","; "world"]`
+  decodes to `"hello, world"`. It no longer trims or collapses whitespace.
+- `Decoder.ctc ~cleanup:true` now applies the same cleanup to each token before
+  replacing the word delimiter, as HuggingFace does. Previously only the
+  delimiter was replaced.
 - Fix BERT tokenization to match HuggingFace: the `Bert` and `Punctuation`
   pre-tokenizers now treat all 32 printable ASCII non-alphanumerics as
   punctuation. `$ + < = > ^ ` | ~` were missing, so `==` tokenized as one word
