@@ -11,6 +11,7 @@
   test_hf_tokenizers
   test_processors
   test_pretokenizers
+  test_added_tokens
   test_parity)
  (package brot)
  (deps

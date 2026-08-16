@@ -1,11 +1,12 @@
 # The Tokenization Pipeline
 
-Brot processes text through up to 5 stages, each optional and independently
+Brot processes text through up to 6 stages, each optional and independently
 configurable:
 
 ```
 text
  │
+ ├─ 0. Added tokens     — split the special tokens out of the input
  ├─ 1. Normalizer       — clean and transform text
  ├─ 2. Pre-tokenizer    — split into pieces with byte offsets
  ├─ 3. Algorithm        — map pieces to token IDs (BPE, WordPiece, …)
@@ -18,6 +19,39 @@ Encoding.t (ids, tokens, offsets, masks, …)
 
 Each stage is set when constructing the tokenizer. Omit any stage and it
 is skipped.
+
+## Added tokens
+
+The tokens passed as `~specials` are matched in the input ahead of the
+pre-tokenizer and the model, and emitted with their own ID. Only the text
+around them reaches the rest of the pipeline:
+
+```ocaml
+open Brot
+
+let tokenizer =
+  bpe
+    ~vocab:[ ("a", 0); ("b", 1) ]
+    ~specials:[ special "<|endoftext|>" ]
+    ()
+
+let ids = encode_ids tokenizer "a<|endoftext|>b" (* [| 0; 2; 1 |] *)
+```
+
+A token that the model does not already hold is numbered from the end of the
+model vocabulary, as above. At a given position the longest token wins, and
+earlier positions win over later ones.
+
+`special` takes optional parameters that refine matching: `~single_word`
+restricts a token to whole words, `~lstrip` and `~rstrip` extend the match
+over the neighbouring whitespace, and `~normalized` matches against the
+normalized text rather than against the raw input, which is matched first.
+`~special:false` marks a token that is matched atomically but never dropped by
+`decode ~skip_special_tokens:true`.
+
+A `~bos_token`, `~eos_token` or `~pad_token` the model holds is a special
+token in its own right, matched the same way. `~unk_token` is not: it
+configures the model's unknown handling and is never matched in the input.
 
 ## Normalization
 

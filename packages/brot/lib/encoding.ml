@@ -59,16 +59,16 @@ let token ~id ~token ~offset ~type_id ~special =
     sequence_ranges = empty_ranges;
   }
 
-let from_tokens tokens ~type_id =
+let from_tokens tokens ~type_id ~base =
   let n = List.length tokens in
   let ids = Array.make n 0 in
   let token_strs = Array.make n "" in
   let offsets = Array.make n (0, 0) in
   List.iteri
-    (fun i (id, tok, off) ->
+    (fun i (id, tok, (start, stop)) ->
       ids.(i) <- id;
       token_strs.(i) <- tok;
-      offsets.(i) <- off)
+      offsets.(i) <- (base + start, base + stop))
     tokens;
   {
     ids;

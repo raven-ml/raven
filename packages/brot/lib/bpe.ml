@@ -655,12 +655,12 @@ let word_to_tokens model word =
 let word_to_ids word =
   Array.init word.size (fun i -> Array.unsafe_get word.sym_c i)
 
-let word_to_encoding model word ~type_id =
+let word_to_encoding model word ~type_id ~base =
   let n = word.size in
   let ids = Array.make n 0 in
   let tokens = Array.make n "" in
   let offsets = Array.make n (0, 0) in
-  let offset = ref 0 in
+  let offset = ref base in
   for i = 0 to n - 1 do
     let id = Array.unsafe_get word.sym_c i in
     Array.unsafe_set ids i id;
@@ -715,15 +715,15 @@ let tokenize_ids model text =
     | Some id -> [| id |]
     | None -> word_to_ids (get_word model text)
 
-let tokenize_encoding model text ~type_id =
+let tokenize_encoding model text ~type_id ~base =
   if String.length text = 0 then Encoding.empty
   else
     match whole_word_id model text with
     | Some id ->
         Encoding.token ~id ~token:text
-          ~offset:(0, String.length text)
+          ~offset:(base, base + String.length text)
           ~type_id ~special:false
-    | None -> word_to_encoding model (get_word model text) ~type_id
+    | None -> word_to_encoding model (get_word model text) ~type_id ~base
 
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 

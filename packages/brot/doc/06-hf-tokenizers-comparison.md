@@ -29,7 +29,7 @@ If you already use HuggingFace Tokenizers, this should be enough to become produ
 - Tokenizers are immutable. Pipeline components are set at construction time, not mutated after.
 - `from_file` returns `(t, string) result`. Handle errors explicitly.
 - Padding and truncation are per-call parameters, not global tokenizer state.
-- Special tokens use a record type (`Brot.special`) with explicit control over stripping and normalization.
+- Special tokens use a record type (`Brot.special`) with explicit control over stripping and normalization. Like HuggingFace's added tokens, they are matched atomically in the input on `encode`.
 - `encode` returns `Encoding.t`; use `encode_ids` when you only need the ID array.
 
 ---
@@ -376,7 +376,7 @@ let tokenizer =
     ()
 ```
 
-In HuggingFace, special tokens are added after construction. In Brot, they are part of construction since tokenizers are immutable. The `special` function accepts optional `~single_word`, `~lstrip`, `~rstrip`, and `~normalized` parameters matching `AddedToken`.
+In HuggingFace, special tokens are added after construction. In Brot, they are part of construction since tokenizers are immutable. The `special` function accepts optional `~single_word`, `~lstrip`, `~rstrip`, `~normalized` and `~special` parameters matching `AddedToken`; `~special:false` is the equivalent of `add_tokens` rather than `add_special_tokens`. Both libraries match these tokens atomically in the input, ahead of the normalizer and the pre-tokenizer.
 
 ### 8.2 Role tokens
 

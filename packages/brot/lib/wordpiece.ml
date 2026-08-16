@@ -290,7 +290,7 @@ let tokenize_ids model sequence =
       List.iteri (fun i id -> result.(!n - 1 - i) <- id) !ids;
       result
 
-let tokenize_spans_encoding model pre_tokens ~type_id =
+let tokenize_spans_encoding model pre_tokens ~type_id ~base =
   if Hashtbl.length model.vocab = 0 then Encoding.empty
   else
     let trie = model.trie in
@@ -344,7 +344,7 @@ let tokenize_spans_encoding model pre_tokens ~type_id =
         if !n >= !cap then grow ();
         Array.unsafe_set !ids !n unk_id;
         Array.unsafe_set !token_strs !n unk_token_str;
-        Array.unsafe_set !offsets_arr !n (0, seq_len);
+        Array.unsafe_set !offsets_arr !n (base, base + seq_len);
         incr n
       end
       else begin
@@ -394,7 +394,8 @@ let tokenize_spans_encoding model pre_tokens ~type_id =
             if !n >= !cap then grow ();
             Array.unsafe_set !ids !n !last_id;
             Array.unsafe_set !token_strs !n (Array.unsafe_get vocab_r !last_id);
-            Array.unsafe_set !offsets_arr !n (match_start, !last_end);
+            Array.unsafe_set !offsets_arr !n
+              (base + match_start, base + !last_end);
             incr n;
             pos := !last_end
           end
@@ -405,7 +406,7 @@ let tokenize_spans_encoding model pre_tokens ~type_id =
           if !n >= !cap then grow ();
           Array.unsafe_set !ids !n unk_id;
           Array.unsafe_set !token_strs !n unk_token_str;
-          Array.unsafe_set !offsets_arr !n (0, seq_len);
+          Array.unsafe_set !offsets_arr !n (base, base + seq_len);
           n := start_n + 1
         end
       end

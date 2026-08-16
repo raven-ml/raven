@@ -65,11 +65,12 @@ val tokenize_ids : t -> string -> int array
 (** [tokenize_ids t s] is like {!tokenize} but returns only token IDs. *)
 
 val tokenize_spans_encoding :
-  t -> (string * (int * int)) list -> type_id:int -> Encoding.t
-(** [tokenize_spans_encoding t spans ~type_id] tokenizes all [spans] and builds
-    an {!Encoding.t} directly. Each element of [spans] is
+  t -> (string * (int * int)) list -> type_id:int -> base:int -> Encoding.t
+(** [tokenize_spans_encoding t spans ~type_id ~base] tokenizes all [spans] and
+    builds an {!Encoding.t} directly. Each element of [spans] is
     [(fragment, (start, stop))] where offsets are byte positions in the original
-    text.
+    text. Offsets count from [base], which is where the pre-tokenized text
+    starts in the text being encoded.
 
     This is a single-pass variant that avoids intermediate list and record
     allocation: mutable refs are hoisted, growable arrays are filled in place,

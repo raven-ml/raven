@@ -90,9 +90,10 @@ val tokenize : t -> string -> token list
 val tokenize_ids : t -> string -> int array
 (** [tokenize_ids t s] is like {!tokenize} but returns only token IDs. *)
 
-val tokenize_encoding : t -> string -> type_id:int -> Encoding.t
-(** [tokenize_encoding t s ~type_id] tokenizes [s] and builds an {!Encoding.t}
-    directly, avoiding intermediate list allocation. *)
+val tokenize_encoding : t -> string -> type_id:int -> base:int -> Encoding.t
+(** [tokenize_encoding t s ~type_id ~base] tokenizes [s] and builds an
+    {!Encoding.t} directly, avoiding intermediate list allocation. Offsets count
+    from [base], which is where [s] starts in the text being encoded. *)
 
 (** {1:vocabulary Vocabulary} *)
 

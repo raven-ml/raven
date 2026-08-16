@@ -26,6 +26,7 @@ type direction = [ `Left | `Right ]
 
 type special = {
   token : string;
+  special : bool;
   single_word : bool;
   lstrip : bool;
   rstrip : bool;
@@ -59,8 +60,7 @@ type t = {
   pre_tokenizer : Pre_tokenizer.t option;
   post_processor : Post_processor.t option;
   decoder : Decoder.t option;
-  specials : special list;
-  special_lookup : (string, unit) Hashtbl.t;
+  added : Added_tokens.t;
   bos_token : string option;
   eos_token : string option;
   pad_token : string option;
@@ -69,9 +69,10 @@ type t = {
   unk_token : string option;
 }
 
-let special ?(single_word = false) ?(lstrip = false) ?(rstrip = false)
-    ?(normalized = false) token =
-  { token; single_word; lstrip; rstrip; normalized }
+let special ?(special = true) ?(single_word = false) ?(lstrip = false)
+    ?(rstrip = false) ?normalized token =
+  let normalized = Option.value normalized ~default:(not special) in
+  { token; special; single_word; lstrip; rstrip; normalized }
 
 let padding ?(direction = `Right) ?pad_id ?pad_type_id ?pad_token length =
   { length; direction; pad_id; pad_type_id; pad_token }
@@ -186,41 +187,91 @@ let dedup_by key items =
     items;
   List.rev !acc
 
-let collect_unique_tokens specials ~bos_token ~eos_token ~pad_token ~unk_token =
-  let items =
-    List.map (fun (s : special) -> s.token) specials
-    @ List.filter_map Fun.id [ bos_token; eos_token; pad_token; unk_token ]
-  in
-  dedup_by Fun.id items
+(* A token named for a role is a special token when the model already holds it:
+   naming the padding token does not extend the vocabulary. The unknown token is
+   a model parameter rather than a token to match, so it never joins them. *)
+let promoted_roles algorithm ~bos_token ~eos_token ~pad_token =
+  List.filter_map Fun.id [ bos_token; eos_token; pad_token ]
+  |> List.filter (fun token -> Option.is_some (alg_token_to_id algorithm token))
+  |> List.map special
 
-let build_special_lookup specials ~bos_token ~eos_token ~pad_token ~unk_token =
-  let tokens =
-    collect_unique_tokens specials ~bos_token ~eos_token ~pad_token ~unk_token
+(* Identifiers follow HuggingFace: a token the model holds keeps the model's
+   identifier, the others are numbered from the end of the model vocabulary.
+   Repeated content is one token and takes one identifier; content that is empty
+   is no token at all and takes none. *)
+let added_tokens_of algorithm specials =
+  let vocab_size = alg_vocab_size algorithm in
+  let assigned = Hashtbl.create 16 in
+  let number (s : special) highest =
+    match Hashtbl.find_opt assigned s.token with
+    | Some id -> id
+    | None -> (
+        match alg_token_to_id algorithm s.token with
+        | Some id -> id
+        | None -> (
+            match highest with
+            | Some id when id >= vocab_size || vocab_size = 0 -> id + 1
+            | _ -> vocab_size))
   in
-  let table = Hashtbl.create (List.length tokens) in
-  List.iter (fun t -> Hashtbl.replace table t ()) tokens;
-  table
+  let tokens, _ =
+    List.fold_left
+      (fun (acc, highest) (s : special) ->
+        if s.token = "" then (acc, highest)
+        else
+          let id = number s highest in
+          Hashtbl.replace assigned s.token id;
+          let token =
+            {
+              Added_tokens.content = s.token;
+              id;
+              special = s.special;
+              single_word = s.single_word;
+              lstrip = s.lstrip;
+              rstrip = s.rstrip;
+              normalized = s.normalized;
+            }
+          in
+          let highest =
+            match highest with
+            | Some other -> Some (max other id)
+            | None -> Some id
+          in
+          (token :: acc, highest))
+      ([], None) specials
+  in
+  List.rev tokens
 
 (* Construction *)
 
 let create ?normalizer ?pre ?post ?decoder ?(specials = []) ?bos_token
     ?eos_token ?pad_token ?unk_token algorithm =
-  let all_tokens =
-    collect_unique_tokens specials ~bos_token ~eos_token ~pad_token ~unk_token
+  let roles =
+    List.filter_map Fun.id [ bos_token; eos_token; pad_token; unk_token ]
   in
-  let algorithm = alg_add_tokens algorithm all_tokens in
-  let special_lookup =
-    build_special_lookup specials ~bos_token ~eos_token ~pad_token ~unk_token
+  let algorithm =
+    List.map (fun (s : special) -> s.token) specials @ roles
+    |> dedup_by Fun.id |> alg_add_tokens algorithm
   in
-  let pad_id = Option.bind pad_token (alg_token_to_id algorithm) in
+  let added =
+    Added_tokens.make
+      ~normalize:
+        (match normalizer with Some n -> Normalizer.apply n | None -> Fun.id)
+      (added_tokens_of algorithm
+         (specials @ promoted_roles algorithm ~bos_token ~eos_token ~pad_token))
+  in
+  let token_id token =
+    match Added_tokens.token_to_id added token with
+    | Some _ as id -> id
+    | None -> alg_token_to_id algorithm token
+  in
+  let pad_id = Option.bind pad_token token_id in
   {
     algorithm;
     normalizer;
     pre_tokenizer = pre;
     post_processor = post;
     decoder;
-    specials;
-    special_lookup;
+    added;
     bos_token;
     eos_token;
     pad_token;
@@ -235,15 +286,44 @@ let normalizer t = t.normalizer
 let pre_tokenizer t = t.pre_tokenizer
 let post_processor t = t.post_processor
 let decoder t = t.decoder
-let specials t = t.specials
+
+let specials t =
+  Added_tokens.tokens t.added
+  |> List.map (fun (tok : Added_tokens.token) ->
+      {
+        token = tok.content;
+        special = tok.special;
+        single_word = tok.single_word;
+        lstrip = tok.lstrip;
+        rstrip = tok.rstrip;
+        normalized = tok.normalized;
+      })
+
 let bos_token t = t.bos_token
 let eos_token t = t.eos_token
 let pad_token t = t.pad_token
 let unk_token t = t.unk_token
-let vocab t = alg_vocab t.algorithm
-let vocab_size t = alg_vocab_size t.algorithm
-let token_to_id t token = alg_token_to_id t.algorithm token
-let id_to_token t id = alg_id_to_token t.algorithm id
+
+(* The added tokens that the model does not already hold. *)
+let added_vocab t =
+  Added_tokens.tokens t.added
+  |> List.filter_map (fun (tok : Added_tokens.token) ->
+      match alg_token_to_id t.algorithm tok.content with
+      | Some _ -> None
+      | None -> Some (tok.content, tok.id))
+
+let vocab t = alg_vocab t.algorithm @ added_vocab t
+let vocab_size t = alg_vocab_size t.algorithm + List.length (added_vocab t)
+
+let token_to_id t token =
+  match Added_tokens.token_to_id t.added token with
+  | Some _ as id -> id
+  | None -> alg_token_to_id t.algorithm token
+
+let id_to_token t id =
+  match Added_tokens.id_to_token t.added id with
+  | Some _ as token -> token
+  | None -> alg_id_to_token t.algorithm id
 
 (* Algorithm constructors *)
 
@@ -324,24 +404,85 @@ let add_tokens t tokens =
 
 (* Encoding *)
 
-let encode_text t text =
-  let normalized =
-    match t.normalizer with Some n -> Normalizer.apply n text | None -> text
-  in
-  let pre_tokens =
-    match t.pre_tokenizer with
-    | Some pre -> Pre_tokenizer.pre_tokenize pre normalized
-    | None -> [ (normalized, (0, String.length normalized)) ]
-  in
+let normalize t text =
+  match t.normalizer with Some n -> Normalizer.apply n text | None -> text
+
+let slice text start stop =
+  if start = 0 && stop = String.length text then text
+  else String.sub text start (stop - start)
+
+let pre_tokenize t normalized =
+  match t.pre_tokenizer with
+  | Some pre -> Pre_tokenizer.pre_tokenize pre normalized
+  | None -> [ (normalized, (0, String.length normalized)) ]
+
+let encode_normalized t normalized ~base =
+  let pre_tokens = pre_tokenize t normalized in
   match (t.algorithm, pre_tokens) with
-  | Alg_bpe m, [ (fragment, _) ] -> Bpe.tokenize_encoding m fragment ~type_id:0
+  | Alg_bpe m, [ (fragment, _) ] ->
+      Bpe.tokenize_encoding m fragment ~type_id:0 ~base
   | Alg_wordpiece m, _ ->
-      Wordpiece.tokenize_spans_encoding m pre_tokens ~type_id:0
+      Wordpiece.tokenize_spans_encoding m pre_tokens ~type_id:0 ~base
   | _ ->
       pre_tokens
       |> List.concat_map (fun (fragment, _) ->
           alg_tokenize t.algorithm fragment)
-      |> Encoding.from_tokens ~type_id:0
+      |> Encoding.from_tokens ~type_id:0 ~base
+
+(* Added tokens are matched before normalization and pre-tokenization: first the
+   ones matched against raw text, then, in each remaining piece once normalized,
+   the ones matched against normalized text. [segment] receives the normalized
+   text of a piece, the range of it left to the model, and where the piece
+   starts in [text]; [added] receives a matched token, the string it was found
+   in and where that string starts in [text]. *)
+let split_added t text ~segment ~added =
+  let len = String.length text in
+  let normalized_pass ~base raw =
+    let normalized = normalize t raw in
+    let normalized_len = String.length normalized in
+    let pos = ref 0 and scanning = ref true in
+    while !scanning do
+      match Added_tokens.find_normalized t.added normalized ~pos:!pos with
+      | None ->
+          segment ~base normalized ~start:!pos ~stop:normalized_len;
+          scanning := false
+      | Some (start, stop, id) ->
+          segment ~base normalized ~start:!pos ~stop:start;
+          added ~base normalized ~start ~stop ~id;
+          pos := stop
+    done
+  in
+  let pos = ref 0 and scanning = ref true in
+  while !scanning do
+    match Added_tokens.find_raw t.added text ~pos:!pos with
+    | None ->
+        if !pos < len then normalized_pass ~base:!pos (slice text !pos len);
+        scanning := false
+    | Some (start, stop, id) ->
+        if !pos < start then normalized_pass ~base:!pos (slice text !pos start);
+        added ~base:0 text ~start ~stop ~id;
+        pos := stop
+  done
+
+let encode_text t text =
+  if Added_tokens.is_empty t.added then
+    encode_normalized t (normalize t text) ~base:0
+  else begin
+    let parts = ref [] in
+    split_added t text
+      ~segment:(fun ~base normalized ~start ~stop ->
+        if start < stop then
+          let piece = slice normalized start stop in
+          parts := encode_normalized t piece ~base:(base + start) :: !parts)
+      ~added:(fun ~base source ~start ~stop ~id ->
+        let token = String.sub source start (stop - start) in
+        let offset = (base + start, base + stop) in
+        (* Only the tokens a post-processor inserts are masked: HuggingFace
+           reports 0 for an added token found in the input, special or not. *)
+        parts :=
+          Encoding.token ~id ~token ~offset ~type_id:0 ~special:false :: !parts);
+    Encoding.concat_list (List.rev !parts)
+  end
 
 let post_process t ~add_special primary pair =
   match t.post_processor with
@@ -376,7 +517,7 @@ let resolve_pad t (cfg : padding) =
     match id with
     | Some id -> id
     | None -> (
-        match alg_token_to_id t.algorithm token with
+        match token_to_id t token with
         | Some id -> id
         | None -> invalid_arg (err_pad_not_in_vocab token))
   in
@@ -479,6 +620,10 @@ let encode_pairs_batch t ?(add_special_tokens = true) ?padding ?truncation =
       in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
 
+let ids_of_normalized t normalized =
+  pre_tokenize t normalized
+  |> List.map (fun (fragment, _) -> alg_tokenize_ids t.algorithm fragment)
+
 let encode_ids t ?pair ?add_special_tokens ?padding ?truncation text =
   let use_fast_path =
     Option.is_none pair
@@ -489,18 +634,22 @@ let encode_ids t ?pair ?add_special_tokens ?padding ?truncation text =
   if not use_fast_path then
     Encoding.ids (encode t ?pair ?add_special_tokens ?padding ?truncation text)
   else
-    let normalized =
-      match t.normalizer with Some n -> Normalizer.apply n text | None -> text
-    in
-    let pre_tokens =
-      match t.pre_tokenizer with
-      | Some pre -> Pre_tokenizer.pre_tokenize pre normalized
-      | None -> [ (normalized, (0, String.length normalized)) ]
-    in
     let id_arrays =
-      List.map
-        (fun (fragment, _) -> alg_tokenize_ids t.algorithm fragment)
-        pre_tokens
+      if Added_tokens.is_empty t.added then
+        ids_of_normalized t (normalize t text)
+      else begin
+        let parts = ref [] in
+        split_added t text
+          ~segment:(fun ~base:_ normalized ~start ~stop ->
+            if start < stop then
+              parts :=
+                List.rev_append
+                  (ids_of_normalized t (slice normalized start stop))
+                  !parts)
+          ~added:(fun ~base:_ _ ~start:_ ~stop:_ ~id ->
+            parts := [| id |] :: !parts);
+        List.rev !parts
+      end
     in
     let total_len =
       List.fold_left (fun acc a -> acc + Array.length a) 0 id_arrays
@@ -521,12 +670,8 @@ let decode t ?(skip_special_tokens = false) ids =
   let tokens =
     Array.to_list ids
     |> List.filter_map (fun id ->
-        match alg_id_to_token t.algorithm id with
-        | None -> None
-        | Some token
-          when skip_special_tokens && Hashtbl.mem t.special_lookup token ->
-            None
-        | Some token -> Some token)
+        if skip_special_tokens && Added_tokens.is_special t.added id then None
+        else id_to_token t id)
   in
   match t.decoder with
   | Some decoder -> Decoder.decode decoder tokens
@@ -540,14 +685,14 @@ let decode_batch t ?(skip_special_tokens = false) id_lists =
 
 (* Training *)
 
-let special_tokens_for_training init specials =
+let special_tokens_for_training init requested =
   let items =
-    (match specials with
+    (match requested with
       | Some sl -> List.map (fun (s : special) -> s.token) sl
       | None -> [])
     @
     match init with
-    | Some tok -> List.map (fun (s : special) -> s.token) tok.specials
+    | Some tok -> List.map (fun (s : special) -> s.token) (specials tok)
     | None -> []
   in
   dedup_by Fun.id items
@@ -688,29 +833,31 @@ let json_option_of f = function None -> Jsont.Json.null () | Some v -> f v
 
 let special_of_json json =
   let mem name = json_mem name json in
-  let to_bool = function Jsont.Bool (b, _) -> b | _ -> false in
+  let bool_or default = function Jsont.Bool (b, _) -> b | _ -> default in
   let to_str = function
     | Jsont.String (s, _) -> s
     | _ -> failwith "expected string"
   in
+  let special = bool_or true (mem "special") in
   {
     token = to_str (mem "content");
-    single_word = to_bool (mem "single_word");
-    lstrip = to_bool (mem "lstrip");
-    rstrip = to_bool (mem "rstrip");
-    normalized = to_bool (mem "normalized");
+    special;
+    single_word = bool_or false (mem "single_word");
+    lstrip = bool_or false (mem "lstrip");
+    rstrip = bool_or false (mem "rstrip");
+    normalized = bool_or (not special) (mem "normalized");
   }
 
-let added_token_to_json ~id (s : special) =
+let added_token_to_json (tok : Added_tokens.token) =
   json_obj
     [
-      ("id", Jsont.Json.int id);
-      ("content", Jsont.Json.string s.token);
-      ("single_word", Jsont.Json.bool s.single_word);
-      ("lstrip", Jsont.Json.bool s.lstrip);
-      ("rstrip", Jsont.Json.bool s.rstrip);
-      ("normalized", Jsont.Json.bool s.normalized);
-      ("special", Jsont.Json.bool true);
+      ("id", Jsont.Json.int tok.id);
+      ("content", Jsont.Json.string tok.content);
+      ("single_word", Jsont.Json.bool tok.single_word);
+      ("lstrip", Jsont.Json.bool tok.lstrip);
+      ("rstrip", Jsont.Json.bool tok.rstrip);
+      ("normalized", Jsont.Json.bool tok.normalized);
+      ("special", Jsont.Json.bool tok.special);
     ]
 
 let vocab_to_json vocab =
@@ -775,12 +922,10 @@ let alg_to_json = function
       json_obj [ ("type", Jsont.Json.string "Chars"); ("vocab", json_obj []) ]
 
 let to_json (t : t) =
-  let vocab_list = alg_vocab t.algorithm in
   let added_tokens =
-    t.specials
-    |> List.filter_map (fun spec ->
-        List.find_opt (fun (token, _) -> token = spec.token) vocab_list
-        |> Option.map (fun (_, id) -> added_token_to_json ~id spec))
+    Added_tokens.tokens t.added
+    |> List.sort (fun (a : Added_tokens.token) b -> Int.compare a.id b.id)
+    |> List.map added_token_to_json
   in
   json_obj
     [

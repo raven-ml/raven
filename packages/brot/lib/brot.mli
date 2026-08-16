@@ -79,17 +79,32 @@ type direction = [ `Left | `Right ]
 
 type special = {
   token : string;  (** The token text (e.g., ["<pad>"], ["<unk>"]). *)
+  special : bool;  (** Whether decoding may skip this token. *)
   single_word : bool;  (** Whether this token must match whole words only. *)
-  lstrip : bool;  (** Whether to strip whitespace on the left. *)
-  rstrip : bool;  (** Whether to strip whitespace on the right. *)
-  normalized : bool;  (** Whether to apply normalization to this token. *)
+  lstrip : bool;
+      (** Whether a match extends over the whitespace preceding it. *)
+  rstrip : bool;
+      (** Whether a match extends over the whitespace following it. *)
+  normalized : bool;
+      (** Whether this token is matched against normalized text rather than
+          against the raw input. *)
 }
-(** The type for special token configurations.
+(** The type for added token configurations.
 
-    Special tokens are never split during tokenization and can be skipped during
-    decoding. Token IDs are assigned automatically when added to the vocabulary.
-    The semantic role (pad, unk, bos, etc.) is contextual, not encoded in the
-    type. *)
+    Added tokens are matched atomically in the input, ahead of the pre-tokenizer
+    and the model, so ["a<pad>b"] encodes as ["a"], ["<pad>"], ["b"] whatever
+    the model would make of ["<pad>"]. A token with [normalized] unset is
+    matched against the raw input, before normalization; one with it set is
+    matched against the normalized text, and emits what it matched there. At a
+    given position the longest token wins, and earlier positions win over later
+    ones.
+
+    Token IDs are assigned automatically: a token already in the model
+    vocabulary keeps its ID, the others are numbered from the end of it. A token
+    with [special] set is skipped by {!decode} when [skip_special_tokens] is
+    [true]; one without it is an ordinary vocabulary entry that happens to be
+    matched atomically. The semantic role (pad, unk, bos, etc.) is contextual,
+    not encoded in the type. *)
 
 type pad_length = [ `Batch_longest | `Fixed of int | `To_multiple of int ]
 (** The type for padding length strategies.
@@ -123,16 +138,18 @@ type data = [ `Files of string list | `Seq of string Seq.t ]
     - [`Seq seq]: use a sequence of strings. *)
 
 val special :
+  ?special:bool ->
   ?single_word:bool ->
   ?lstrip:bool ->
   ?rstrip:bool ->
   ?normalized:bool ->
   string ->
   special
-(** [special token] is a special token configuration for [token].
+(** [special token] is an added token configuration for [token].
 
-    [single_word] defaults to [false]. [lstrip] and [rstrip] default to [false].
-    [normalized] defaults to [false]. *)
+    [special] defaults to [true]; pass [~special:false] for a token that is
+    matched atomically but never skipped when decoding. [single_word], [lstrip]
+    and [rstrip] default to [false]. [normalized] defaults to [not special]. *)
 
 val padding :
   ?direction:direction ->
@@ -180,11 +197,17 @@ val bpe :
     - [pre]: pre-tokenization strategy. Default: none.
     - [post]: post-processor for special tokens. Default: none.
     - [decoder]: decoding strategy. Default: none.
-    - [specials]: special tokens to add to vocabulary. Default: [[]].
+    - [specials]: added tokens. They join the vocabulary, and are matched
+      atomically in the input on {!encode}: against the raw text before
+      normalization when [normalized] is unset, against the normalized text when
+      it is set. Default: [[]].
     - [bos_token], [eos_token], [pad_token]: role markers; added to vocabulary
-      if not already present. Default: none.
+      if not already present. A role marker the model holds is a special token
+      in its own right, matched in the input like the entries of [specials].
+      Default: none.
     - [unk_token]: token for unknown characters. Configures both the role and
-      the BPE model's unknown handling. Default: none.
+      the BPE model's unknown handling. It is a model parameter, never matched
+      atomically in the input. Default: none.
     - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
@@ -336,11 +359,12 @@ val from_model_file :
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
 val add_tokens : t -> string list -> t
-(** [add_tokens t tokens] is [t] with [tokens] added to the vocabulary. Only
-    supported for word-level tokenizers.
+(** [add_tokens t tokens] is [t] with [tokens] added to the word-level
+    vocabulary, one ID each. It does not make them added tokens: they are
+    matched by the model like any other word, not atomically in the input. Pass
+    [~specials] at construction for that.
 
-    Raises [Invalid_argument] if the tokenizer does not support dynamic
-    vocabulary extension. *)
+    Raises [Invalid_argument] unless [t] is a word-level tokenizer. *)
 
 (** {1:accessors Accessors} *)
 
@@ -357,7 +381,9 @@ val decoder : t -> Decoder.t option
 (** [decoder t] is [t]'s decoder, if any. *)
 
 val specials : t -> special list
-(** [specials t] is [t]'s special tokens. *)
+(** [specials t] is [t]'s added tokens: those given as [specials] at
+    construction, plus the role markers the model holds. This is what {!to_json}
+    writes. *)
 
 val bos_token : t -> string option
 (** [bos_token t] is [t]'s beginning-of-sequence token, if any. *)
@@ -374,16 +400,20 @@ val unk_token : t -> string option
 (** {1:vocab Vocabulary} *)
 
 val vocab : t -> (string * int) list
-(** [vocab t] is [t]'s vocabulary as [(token, id)] pairs. *)
+(** [vocab t] is [t]'s vocabulary as [(token, id)] pairs, the model's followed
+    by the added tokens it does not already hold. *)
 
 val vocab_size : t -> int
-(** [vocab_size t] is the number of tokens in [t]'s vocabulary. *)
+(** [vocab_size t] is the number of tokens in [t]'s vocabulary, added tokens
+    included. *)
 
 val token_to_id : t -> string -> int option
-(** [token_to_id t token] is the ID of [token] in [t], if any. *)
+(** [token_to_id t token] is the ID of [token] in [t], if any. Added tokens take
+    precedence over the model. *)
 
 val id_to_token : t -> int -> string option
-(** [id_to_token t id] is the token string for [id] in [t], if any. *)
+(** [id_to_token t id] is the token string for [id] in [t], if any. Added tokens
+    take precedence over the model. *)
 
 (** {1:encoding Encoding and decoding} *)
 
@@ -396,6 +426,9 @@ val encode :
   string ->
   Encoding.t
 (** [encode t text] is the encoding of [text] by [t].
+
+    Added tokens occurring in [text] are matched atomically and emitted with
+    their own ID, whatever [add_special_tokens] is.
 
     - [pair]: a second sentence for sentence-pair tasks. The post-processor
       merges both sequences with appropriate type IDs. Default: none.
@@ -444,7 +477,8 @@ val decode : t -> ?skip_special_tokens:bool -> int array -> string
 (** [decode t ids] is the text obtained by decoding [ids] through [t]'s
     vocabulary and decoder.
 
-    [skip_special_tokens] defaults to [false]. *)
+    [skip_special_tokens] defaults to [false]. It drops the added tokens whose
+    [special] is set, and only those. *)
 
 val decode_batch :
   t -> ?skip_special_tokens:bool -> int array list -> string list
@@ -630,7 +664,11 @@ val from_file : string -> (t, string) result
 val from_json : Jsont.json -> (t, string) result
 (** [from_json json] is a tokenizer deserialized from HuggingFace JSON format.
     Errors if [json] has a missing or unknown model type, or invalid parameters.
-*)
+
+    The [added_tokens] member gives the tokens matched atomically in the input.
+    A missing [special] member reads as [true], and a missing [normalized] as
+    [not special], as in {!val-special}. Their IDs are reassigned as documented
+    in {!type-special}, not read from the file. *)
 
 val to_json : t -> Jsont.json
 (** [to_json t] is [t] serialized to HuggingFace JSON format. *)

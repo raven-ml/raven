@@ -1087,6 +1087,22 @@ thread.
 
 ### Brot
 
+- `encode` now splits added and special tokens out of the input ahead of the
+  pre-tokenizer and the model, matching HuggingFace: `"a<|endoftext|>b"` with
+  GPT-2 gives `[64; 50256; 65]` instead of tokenizing the marker as text. At a
+  given position the longest token wins; `~single_word`, `~lstrip`, `~rstrip`
+  and `~normalized` on `Brot.special` all take effect.
+- `Brot.special` takes `?special` (default `true`); `?normalized` now defaults
+  to `not special`. `decode ~skip_special_tokens:true` drops only the tokens
+  with `special` set, so a plain added token survives decoding.
+- A `bos_token`, `eos_token` or `pad_token` the model already holds is now a
+  special token in its own right: matched atomically in the input and skipped
+  when decoding. `unk_token` is not — it configures the model's unknown
+  handling and is never matched in the input.
+- `token_to_id`, `id_to_token`, `vocab` and `vocab_size` now cover added tokens
+  the model does not hold; those are numbered from the end of the model
+  vocabulary, as HuggingFace does. `specials` reports the same set that
+  `to_json` writes, with real ids and `special` flags.
 - BPE `end_of_word_suffix` is now appended to the last character of a word
   instead of the first, and a one-character word takes it too;
   `continuing_subword_prefix` goes on every character but the first. Models

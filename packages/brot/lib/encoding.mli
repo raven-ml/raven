@@ -47,11 +47,13 @@ val token :
     {!val-word_ids} is [None]; otherwise {!val-special_tokens_mask} is [0].
     {!val-attention_mask} is always [1]. *)
 
-val from_tokens : (int * string * (int * int)) list -> type_id:int -> t
-(** [from_tokens tokens ~type_id] is an encoding from a list of
-    [(id, token_string, (start, end_offset))] triples. Every token gets the
-    given [type_id], {!val-attention_mask} [1], {!val-special_tokens_mask} [0]
-    and {!val-word_ids} [None]. *)
+val from_tokens :
+  (int * string * (int * int)) list -> type_id:int -> base:int -> t
+(** [from_tokens tokens ~type_id ~base] is an encoding from a list of
+    [(id, token_string, (start, end_offset))] triples. Offsets count from
+    [base], which is where the tokenized text starts in the text being encoded.
+    Every token gets the given [type_id], {!val-attention_mask} [1],
+    {!val-special_tokens_mask} [0] and {!val-word_ids} [None]. *)
 
 val concat : t -> t -> t
 (** [concat a b] is the encoding with [a]'s tokens followed by [b]'s.
