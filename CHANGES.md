@@ -1087,6 +1087,12 @@ thread.
 
 ### Brot
 
+- BPE `end_of_word_suffix` is now appended to the last character of a word
+  instead of the first, and a one-character word takes it too;
+  `continuing_subword_prefix` goes on every character but the first. Models
+  such as CLIP that set a suffix previously produced wrong tokens for every
+  word. Byte fallback now covers the affixed character, prefix and suffix bytes
+  included.
 - `Decoder.wordpiece ~cleanup:true` now applies HuggingFace's detokenization
   cleanup: the space before `.`, `?`, `!`, `,` and the English contractions is
   taken back and `" do not"` becomes `" don't"`, so `["hello"; ","; "world"]`

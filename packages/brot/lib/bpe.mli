@@ -53,17 +53,19 @@ val create :
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which
       would reuse a choice that is drawn per occurrence.
-    - [unk_token] is emitted for characters not in [vocab] (when
-      {!byte_fallback} is off). No default.
-    - [continuing_subword_prefix] is prepended to non-initial subwords. No
-      default; [""] is the same as none.
-    - [end_of_word_suffix] is appended to the final subword of each word. No
-      default; [""] is the same as none.
+    - [unk_token] is emitted for characters whose affixed form is not in [vocab]
+      (when {!byte_fallback} is off). No default.
+    - [continuing_subword_prefix] is prepended to every character of a word but
+      the first before merging, so continuation subwords carry it. No default;
+      [""] is the same as none.
+    - [end_of_word_suffix] is appended to the last character of a word before
+      merging, so the final subword carries it. A one-character word takes the
+      suffix but not the prefix. No default; [""] is the same as none.
     - [fuse_unk], when [true], merges consecutive unknown bytes into a single
       [unk_token] instead of emitting one per byte. Defaults to [false].
     - [byte_fallback], when [true], falls back to byte-level tokens (e.g.
-      ["<0xFF>"]) for characters not in [vocab] instead of emitting [unk_token].
-      Defaults to [false].
+      ["<0xFF>"]) for the bytes of the affixed character, prefix and suffix
+      bytes included, instead of emitting [unk_token]. Defaults to [false].
     - [ignore_merges], when [true], emits a word that is itself in [vocab] as
       that single token, without applying any merge; other words are merged as
       usual. Defaults to [false]. *)

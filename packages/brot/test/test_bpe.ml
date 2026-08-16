@@ -6,6 +6,9 @@
 open Windtrap
 open Brot
 
+let tokens tokenizer text =
+  encode tokenizer text |> Encoding.tokens |> Array.to_list
+
 let test_bpe_basic () =
   (* Create a simple vocabulary and merges *)
   let vocab =
@@ -58,9 +61,6 @@ let test_ignore_merges () =
      cannot produce it; [ignore_merges] is what makes the whole word win. *)
   let vocab = [ ("a", 0); ("b", 1); ("c", 2); ("bc", 3); ("ab", 4) ] in
   let merges = [ ("b", "c") ] in
-  let tokens tokenizer text =
-    encode tokenizer text |> Encoding.tokens |> Array.to_list
-  in
   let merging = bpe ~vocab ~merges () in
   let ignoring = bpe ~vocab ~merges ~ignore_merges:true () in
   equal ~msg:"merges decide 'ab'" (list string) [ "a"; "b" ]
@@ -91,6 +91,149 @@ let test_empty_affixes () =
   in
   equal ~msg:"'ab' merges with empty affixes" (list string) [ "ab" ]
     (encode tokenizer "ab" |> Encoding.tokens |> Array.to_list)
+
+(* The suffix goes on the last character of a word, the prefix on every
+   character but the first, so a one-character word takes the suffix alone.
+   Expectations probed with the [tokenizers] wheel, e.g.
+   [BPE({a,b,a</w>,b</w>,ab</w>}, [(a, b</w>)], end_of_word_suffix="</w>")]
+   gives ["a" -> a</w>] and ["ba" -> b, a</w>]. *)
+let test_suffix_only () =
+  let vocab =
+    [ ("a", 0); ("b", 1); ("a</w>", 2); ("b</w>", 3); ("ab</w>", 4) ]
+  in
+  let merges = [ ("a", "b</w>") ] in
+  let tokenizer = bpe ~vocab ~merges ~end_of_word_suffix:"</w>" () in
+  equal ~msg:"one character takes the suffix" (list string) [ "a</w>" ]
+    (tokens tokenizer "a");
+  equal ~msg:"last character takes the suffix" (list string) [ "b"; "a</w>" ]
+    (tokens tokenizer "ba");
+  equal ~msg:"merge across the suffixed character" (list string) [ "ab</w>" ]
+    (tokens tokenizer "ab");
+  equal ~msg:"merge inside a longer word" (list string) [ "a"; "ab</w>" ]
+    (tokens tokenizer "aab")
+
+let test_suffix_and_merges () =
+  (* The suffix is part of the character before any merge runs, so a merge rule
+     reaches the last character only if it names the suffixed token. Probed:
+     merges [(a, b)] give ["ab" -> a, b</w>] and ["aba" -> ab, a</w>], merges
+     [(a, b</w>)] give ["ab" -> ab</w>] and ["aba" -> a, b, a</w>]. *)
+  let vocab =
+    [ ("a", 0); ("b", 1); ("ab", 2); ("a</w>", 3); ("b</w>", 4); ("ab</w>", 5) ]
+  in
+  let plain = bpe ~vocab ~merges:[ ("a", "b") ] ~end_of_word_suffix:"</w>" () in
+  let suffixed =
+    bpe ~vocab ~merges:[ ("a", "b</w>") ] ~end_of_word_suffix:"</w>" ()
+  in
+  equal ~msg:"unsuffixed merge misses the last character" (list string)
+    [ "a"; "b</w>" ] (tokens plain "ab");
+  equal ~msg:"unsuffixed merge applies before it" (list string)
+    [ "ab"; "a</w>" ] (tokens plain "aba");
+  equal ~msg:"suffixed merge reaches the last character" (list string)
+    [ "ab</w>" ] (tokens suffixed "ab");
+  equal ~msg:"suffixed merge applies nowhere else" (list string)
+    [ "a"; "b"; "a</w>" ] (tokens suffixed "aba")
+
+let test_suffix_multibyte () =
+  let vocab = [ ("a", 0); ("é", 1); ("a</w>", 2); ("é</w>", 3) ] in
+  let tokenizer = bpe ~vocab ~merges:[] ~end_of_word_suffix:"</w>" () in
+  equal ~msg:"one multi-byte character" (list string) [ "é</w>" ]
+    (tokens tokenizer "é");
+  equal ~msg:"multi-byte character last" (list string) [ "a"; "é</w>" ]
+    (tokens tokenizer "aé");
+  equal ~msg:"multi-byte character first" (list string) [ "é"; "a</w>" ]
+    (tokens tokenizer "éa")
+
+let test_suffix_unknown () =
+  (* ["a</w>"] is absent, so a word ending in ['a'] falls back to the unknown
+     token; the plain ["a"] entry does not stand in for it. *)
+  let vocab = [ ("<unk>", 0); ("a", 1); ("b", 2); ("b</w>", 3) ] in
+  let tokenizer =
+    bpe ~vocab ~merges:[] ~end_of_word_suffix:"</w>" ~unk_token:"<unk>" ()
+  in
+  equal ~msg:"suffixed form missing" (list string) [ "<unk>" ]
+    (tokens tokenizer "a");
+  equal ~msg:"unsuffixed form still found" (list string) [ "a"; "b</w>" ]
+    (tokens tokenizer "ab");
+  equal ~msg:"missing suffixed form at the end" (list string) [ "b"; "<unk>" ]
+    (tokens tokenizer "ba");
+  (* The reverse: ["a</w>"] is there but the bare ["a"] is not, so ['a'] is
+     unknown anywhere but at the end. Probed: ["ab" -> <unk>, b</w>]. *)
+  let ending =
+    bpe
+      ~vocab:[ ("<unk>", 0); ("b", 1); ("a</w>", 2); ("b</w>", 3) ]
+      ~merges:[] ~end_of_word_suffix:"</w>" ~unk_token:"<unk>" ()
+  in
+  equal ~msg:"bare form missing" (list string) [ "<unk>"; "b</w>" ]
+    (tokens ending "ab");
+  equal ~msg:"suffixed form found at the end" (list string) [ "a</w>" ]
+    (tokens ending "a")
+
+let test_suffix_byte_fallback () =
+  (* Byte fallback spells out the affixed character, suffix bytes included. *)
+  let vocab =
+    [ ("a", 0); ("b", 1) ]
+    @ List.init 96 (fun i -> (Printf.sprintf "<0x%02X>" (0x20 + i), 2 + i))
+  in
+  let tokenizer =
+    bpe ~vocab ~merges:[] ~end_of_word_suffix:"</w>" ~byte_fallback:true ()
+  in
+  equal ~msg:"one character falls back with its suffix" (list string)
+    [ "<0x61>"; "<0x3C>"; "<0x2F>"; "<0x77>"; "<0x3E>" ]
+    (tokens tokenizer "a");
+  equal ~msg:"only the last character carries the suffix" (list string)
+    [ "a"; "<0x62>"; "<0x3C>"; "<0x2F>"; "<0x77>"; "<0x3E>" ]
+    (tokens tokenizer "ab")
+
+let test_prefix_byte_fallback () =
+  (* Probed: with only ["a"] in the vocabulary, ["ba" -> <0x62>, <0x23>, <0x23>,
+     <0x61>] and ["ab" -> a, <0x23>, <0x23>, <0x62>] — the prefix bytes are part
+     of what falls back. *)
+  let vocab =
+    [ ("a", 0) ]
+    @ List.init 96 (fun i -> (Printf.sprintf "<0x%02X>" (0x20 + i), 1 + i))
+  in
+  let tokenizer =
+    bpe ~vocab ~merges:[] ~continuing_subword_prefix:"##" ~byte_fallback:true ()
+  in
+  equal ~msg:"first character falls back bare" (list string)
+    [ "<0x62>"; "<0x23>"; "<0x23>"; "<0x61>" ]
+    (tokens tokenizer "ba");
+  equal ~msg:"later characters fall back with the prefix" (list string)
+    [ "a"; "<0x23>"; "<0x23>"; "<0x62>" ]
+    (tokens tokenizer "ab")
+
+let test_prefix_and_suffix () =
+  let vocab =
+    [
+      ("a", 0);
+      ("b", 1);
+      ("c", 2);
+      ("##a", 3);
+      ("##b", 4);
+      ("##c", 5);
+      ("a</w>", 6);
+      ("b</w>", 7);
+      ("c</w>", 8);
+      ("##a</w>", 9);
+      ("##b</w>", 10);
+      ("##c</w>", 11);
+    ]
+  in
+  let both =
+    bpe ~vocab ~merges:[] ~continuing_subword_prefix:"##"
+      ~end_of_word_suffix:"</w>" ()
+  in
+  equal ~msg:"one character: suffix, no prefix" (list string) [ "a</w>" ]
+    (tokens both "a");
+  equal ~msg:"last character: prefix and suffix" (list string)
+    [ "a"; "##b</w>" ] (tokens both "ab");
+  equal ~msg:"middle character: prefix only" (list string)
+    [ "a"; "##b"; "##c</w>" ] (tokens both "abc");
+  let prefix_only = bpe ~vocab ~merges:[] ~continuing_subword_prefix:"##" () in
+  equal ~msg:"prefix alone leaves one character bare" (list string) [ "a" ]
+    (tokens prefix_only "a");
+  equal ~msg:"prefix alone on every following character" (list string)
+    [ "a"; "##b"; "##c" ] (tokens prefix_only "abc")
 
 let test_bpe_save_load () =
   let vocab = [ ("t", 0); ("e", 1); ("s", 2); ("test", 3) ] in
@@ -201,6 +344,15 @@ let () =
             test_dropout_overrides_ignore_merges;
           test "empty prefix and suffix" test_empty_affixes;
           test "save and load" test_bpe_save_load;
+          test "end-of-word suffix" test_suffix_only;
+          test "end-of-word suffix and merges" test_suffix_and_merges;
+          test "end-of-word suffix on a multi-byte character"
+            test_suffix_multibyte;
+          test "missing suffixed character" test_suffix_unknown;
+          test "byte fallback with a suffix" test_suffix_byte_fallback;
+          test "byte fallback with a prefix" test_prefix_byte_fallback;
+          test "continuing prefix with and without a suffix"
+            test_prefix_and_suffix;
           test "tokenizer integration" test_tokenizer_integration;
           test "unknown character" test_unknown_character;
         ];

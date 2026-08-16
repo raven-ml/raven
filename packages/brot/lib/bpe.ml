@@ -10,6 +10,8 @@ let list_drop n l =
   in
   if n <= 0 then l else aux 0 l
 
+let affix = function Some s -> s | None -> ""
+
 type vocab = (string, int) Hashtbl.t
 type merges = (string * string) list
 
@@ -225,6 +227,11 @@ type scratch = {
   scratch_in_use : bool Atomic.t;
 }
 
+(* Vocabulary ids of single characters in one affixed form, keyed by the
+   character alone: [ascii] indexes a single byte, [multi] the 1 to 4 bytes of a
+   character packed into an int. *)
+type char_table = { ascii : int array; multi : Merge_map.t }
+
 type t = {
   vocab : vocab;
   vocab_r : string array;
@@ -237,11 +244,13 @@ type t = {
   fuse_unk : bool;
   byte_fallback : bool;
   ignore_merges : bool;
-  ascii_to_id : int array;
+  (* A character is looked up in the form its position gives it: the prefix on
+     every character but the first, the suffix on the last. *)
+  chars : char_table;
+  prefixed_chars : char_table;
+  suffixed_chars : char_table;
+  prefixed_suffixed_chars : char_table;
   byte_fallback_ids : int array;
-  char_to_id : Merge_map.t;
-  prefixed_ascii_to_id : int array;
-  prefixed_char_to_id : Merge_map.t;
   unk_id : int;
 }
 
@@ -422,6 +431,30 @@ let[@inline] pack_char_key text pos byte_len =
       lor (Char.code (String.unsafe_get text (pos + 2)) lsl 8)
       lor Char.code (String.unsafe_get text (pos + 3))
 
+let build_char_table vocab ~prefix ~suffix =
+  let ascii = Array.make 128 (-1) in
+  for i = 0 to 127 do
+    match
+      Hashtbl.find_opt vocab (prefix ^ String.make 1 (Char.chr i) ^ suffix)
+    with
+    | Some id -> Array.unsafe_set ascii i id
+    | None -> ()
+  done;
+  let plen = String.length prefix in
+  let slen = String.length suffix in
+  let entries = ref [] in
+  Hashtbl.iter
+    (fun key id ->
+      let char_len = String.length key - plen - slen in
+      if
+        char_len >= 1 && char_len <= 4
+        && String.starts_with ~prefix key
+        && String.ends_with ~suffix key
+        && utf8_byte_len (Char.code (String.unsafe_get key plen)) = char_len
+      then entries := (pack_char_key key plen char_len, id) :: !entries)
+    vocab;
+  { ascii; multi = Merge_map.create !entries }
+
 (* Try emitting byte fallback tokens for [byte_len] bytes starting at [src]
    offset [offset]. Returns true if all bytes had fallback IDs. *)
 let try_byte_fallback model word flush_unk src offset byte_len =
@@ -445,9 +478,11 @@ let try_byte_fallback model word flush_unk src offset byte_len =
   end
   else false
 
-(* No prefix/suffix — avoids all per-character string allocation for ASCII via
-   pre-computed lookup tables. *)
+(* No prefix and no suffix: every character is looked up in the same table, so
+   the position it holds in the word never has to be worked out. *)
 let init_word_fast model word text text_len =
+  let ascii = model.chars.ascii in
+  let multi = model.chars.multi in
   let pos = ref 0 in
   let pending_unk_id = ref (-1) in
   let pending_unk_len = ref 0 in
@@ -477,7 +512,7 @@ let init_word_fast model word text text_len =
   while !pos < text_len do
     let b = Char.code (String.unsafe_get text !pos) in
     if b < 128 then begin
-      let id = Array.unsafe_get model.ascii_to_id b in
+      let id = Array.unsafe_get ascii b in
       if id >= 0 then begin
         flush_unk ();
         add_symbol word id 1
@@ -496,7 +531,7 @@ let init_word_fast model word text text_len =
     else begin
       let byte_len = utf8_byte_len b in
       let key = pack_char_key text !pos byte_len in
-      let id = Merge_map.find model.char_to_id key in
+      let id = Merge_map.find multi key in
       if id >= 0 then begin
         flush_unk ();
         add_symbol word id byte_len
@@ -510,6 +545,12 @@ let init_word_fast model word text text_len =
     end
   done;
   flush_unk ()
+
+(* The character at [start] spelled the way the vocabulary holds it. *)
+let affixed_char model text start byte_len ~is_first ~is_last =
+  let prefix = if is_first then "" else affix model.continuing_subword_prefix in
+  let suffix = if is_last then affix model.end_of_word_suffix else "" in
+  prefix ^ String.sub text start byte_len ^ suffix
 
 (* Models with continuing_subword_prefix or end_of_word_suffix *)
 let init_word_slow model word text text_len =
@@ -539,8 +580,6 @@ let init_word_slow model word text text_len =
       end
       end
   in
-  let has_prefix = model.continuing_subword_prefix <> None in
-  let has_suffix = model.end_of_word_suffix <> None in
   while !pos < text_len do
     let b = Char.code (String.unsafe_get text !pos) in
     let byte_len = utf8_byte_len b in
@@ -548,66 +587,27 @@ let init_word_slow model word text text_len =
     else begin
       let start = !pos in
       let is_first = start = 0 in
-      let is_last = !pos + byte_len >= text_len in
+      let is_last = start + byte_len >= text_len in
       pos := !pos + byte_len;
-      (* Suffix only applies at word boundaries (first-not-last or
-         last-not-first), never to middle chars and never to single-char
-         words *)
-      let needs_string = has_suffix && is_first <> is_last in
-      if needs_string then begin
-        (* Slow path: suffix involved, at most 2x per word *)
-        let char_str = String.sub text start byte_len in
-        let token_str =
-          match
-            ( is_first,
-              is_last,
-              model.continuing_subword_prefix,
-              model.end_of_word_suffix )
-          with
-          | true, false, _, Some suffix -> char_str ^ suffix
-          | true, false, _, None -> char_str
-          | false, true, Some prefix, Some suffix -> prefix ^ char_str ^ suffix
-          | false, true, Some prefix, None -> prefix ^ char_str
-          | false, true, None, Some suffix -> char_str ^ suffix
-          | false, true, None, None -> char_str
-          | _, _, _, _ -> char_str
-        in
-        match Hashtbl.find_opt model.vocab token_str with
-        | Some id ->
-            flush_unk ();
-            add_symbol word id byte_len
-        | None ->
-            if model.byte_fallback then
-              begin if
-                not (try_byte_fallback model word flush_unk text start byte_len)
-              then handle_unk byte_len
-              end
-            else handle_unk byte_len
+      let table =
+        if is_first then if is_last then model.suffixed_chars else model.chars
+        else if is_last then model.prefixed_suffixed_chars
+        else model.prefixed_chars
+      in
+      let id =
+        if b < 128 then Array.unsafe_get table.ascii b
+        else Merge_map.find table.multi (pack_char_key text start byte_len)
+      in
+      if id >= 0 then begin
+        flush_unk ();
+        add_symbol word id byte_len
       end
-      else begin
-        (* Fast path: no suffix, use packed-int lookup (zero allocation) *)
-        let needs_prefix = has_prefix && not is_first in
-        let id =
-          if needs_prefix then
-            if b < 128 then Array.unsafe_get model.prefixed_ascii_to_id b
-            else
-              Merge_map.find model.prefixed_char_to_id
-                (pack_char_key text start byte_len)
-          else if b < 128 then Array.unsafe_get model.ascii_to_id b
-          else
-            Merge_map.find model.char_to_id (pack_char_key text start byte_len)
-        in
-        if id >= 0 then begin
-          flush_unk ();
-          add_symbol word id byte_len
-        end
-        else if model.byte_fallback then
-          begin if
-            not (try_byte_fallback model word flush_unk text start byte_len)
-          then handle_unk byte_len
-          end
-        else handle_unk byte_len
+      else if model.byte_fallback then begin
+        let s = affixed_char model text start byte_len ~is_first ~is_last in
+        if not (try_byte_fallback model word flush_unk s 0 (String.length s))
+        then handle_unk byte_len
       end
+      else handle_unk byte_len
     end
   done;
   flush_unk ()
@@ -754,9 +754,7 @@ let get_merges model =
   |> List.map snd
 
 let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
-  let csp_str =
-    match continuing_subword_prefix with Some p -> p | None -> ""
-  in
+  let csp_str = affix continuing_subword_prefix in
   let csp_len = String.length csp_str in
   List.mapi
     (fun rank (a, b) ->
@@ -800,7 +798,7 @@ let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
     ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
     ?(byte_fallback = false) ?(ignore_merges = false) () : t =
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
-  let non_empty = function Some "" -> None | affix -> affix in
+  let non_empty = function Some "" -> None | given -> given in
   let continuing_subword_prefix = non_empty continuing_subword_prefix in
   let end_of_word_suffix = non_empty end_of_word_suffix in
   let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
@@ -812,13 +810,6 @@ let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
   let merges =
     convert_merges_to_merge_map vocab merges continuing_subword_prefix
   in
-  let ascii_to_id = Array.make 128 (-1) in
-  for i = 0 to 127 do
-    let s = String.make 1 (Char.chr i) in
-    match Hashtbl.find_opt vocab s with
-    | Some id -> ascii_to_id.(i) <- id
-    | None -> ()
-  done;
   let byte_fallback_ids = Array.make 256 (-1) in
   for i = 0 to 255 do
     let hex = Printf.sprintf "<0x%02X>" i in
@@ -826,61 +817,20 @@ let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
     | Some id -> byte_fallback_ids.(i) <- id
     | None -> ()
   done;
-  (* Build packed-int char lookup table for zero-allocation multi-byte lookup *)
-  let char_entries = ref [] in
-  Hashtbl.iter
-    (fun key id ->
-      let len = String.length key in
-      if len >= 1 && len <= 4 then begin
-        let b0 = Char.code (String.unsafe_get key 0) in
-        let expected_len = utf8_byte_len b0 in
-        if expected_len = len then
-          let packed =
-            match len with
-            | 1 -> b0
-            | 2 -> (b0 lsl 8) lor Char.code (String.unsafe_get key 1)
-            | 3 ->
-                (b0 lsl 16)
-                lor (Char.code (String.unsafe_get key 1) lsl 8)
-                lor Char.code (String.unsafe_get key 2)
-            | _ ->
-                (b0 lsl 24)
-                lor (Char.code (String.unsafe_get key 1) lsl 16)
-                lor (Char.code (String.unsafe_get key 2) lsl 8)
-                lor Char.code (String.unsafe_get key 3)
-          in
-          char_entries := (packed, id) :: !char_entries
-      end)
-    vocab;
-  let char_to_id = Merge_map.create !char_entries in
-  (* Build prefixed char lookup tables for zero-allocation init_word_slow *)
-  let prefixed_ascii_to_id = Array.make 128 (-1) in
-  let prefixed_char_entries = ref [] in
-  (match continuing_subword_prefix with
-  | Some prefix ->
-      for i = 0 to 127 do
-        let s = prefix ^ String.make 1 (Char.chr i) in
-        match Hashtbl.find_opt vocab s with
-        | Some id -> prefixed_ascii_to_id.(i) <- id
-        | None -> ()
-      done;
-      Hashtbl.iter
-        (fun key id ->
-          let plen = String.length prefix in
-          let klen = String.length key in
-          if klen > plen && String.sub key 0 plen = prefix then begin
-            let rest_len = klen - plen in
-            if rest_len >= 2 && rest_len <= 4 then begin
-              let b0 = Char.code (String.unsafe_get key plen) in
-              let expected = utf8_byte_len b0 in
-              if expected = rest_len then
-                let packed = pack_char_key key plen rest_len in
-                prefixed_char_entries := (packed, id) :: !prefixed_char_entries
-            end
-          end)
-        vocab
-  | None -> ());
-  let prefixed_char_to_id = Merge_map.create !prefixed_char_entries in
+  let prefix = affix continuing_subword_prefix in
+  let suffix = affix end_of_word_suffix in
+  let chars = build_char_table vocab ~prefix:"" ~suffix:"" in
+  let prefixed_chars =
+    if prefix = "" then chars else build_char_table vocab ~prefix ~suffix:""
+  in
+  let suffixed_chars =
+    if suffix = "" then chars else build_char_table vocab ~prefix:"" ~suffix
+  in
+  let prefixed_suffixed_chars =
+    if prefix = "" then suffixed_chars
+    else if suffix = "" then prefixed_chars
+    else build_char_table vocab ~prefix ~suffix
+  in
   let unk_id =
     match unk_token with
     | Some unk -> (
@@ -899,11 +849,11 @@ let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
     fuse_unk;
     byte_fallback;
     ignore_merges;
-    ascii_to_id;
+    chars;
+    prefixed_chars;
+    suffixed_chars;
+    prefixed_suffixed_chars;
     byte_fallback_ids;
-    char_to_id;
-    prefixed_ascii_to_id;
-    prefixed_char_to_id;
     unk_id;
   }
 
@@ -1092,9 +1042,7 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
   in
   let kept = list_drop to_remove kept in
   let kept = List.sort (fun (k1, _) (k2, _) -> compare k1 k2) kept in
-  let csp_str =
-    match continuing_subword_prefix with Some p -> p | None -> ""
-  in
+  let csp_str = affix continuing_subword_prefix in
   let csp_len = String.length csp_str in
   List.iter
     (fun (c, _) ->
