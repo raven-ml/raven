@@ -10,6 +10,12 @@
   test_wordpiece
   test_hf_tokenizers
   test_processors
-  test_pretokenizers)
+  test_pretokenizers
+  test_parity)
  (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  ; Downloaded by bench/download_data.sh; a missing tokenizer is skipped
+  ; unless BROT_REQUIRE_FIXTURES is set.
+  (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (libraries brot windtrap unix jsont))

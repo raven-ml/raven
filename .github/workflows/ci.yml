@@ -40,8 +40,10 @@ jobs:
 
       - name: Build and test brot
         run: |
+          packages/brot/bench/download_data.sh
+          python3 packages/brot/test/scripts/download_hf_tokenizers.py
           opam exec -- dune build --release packages/brot
-          opam exec -- dune build --release @packages/brot/runtest
+          BROT_REQUIRE_FIXTURES=1 opam exec -- dune build --release @packages/brot/runtest
 
       - name: Build and test talon
         run: |

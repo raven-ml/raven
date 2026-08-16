@@ -6,28 +6,12 @@
 open Brot
 open Windtrap
 
-let candidate_roots () =
-  match Sys.getenv_opt "DUNE_SOURCEROOT" with
-  | Some root -> [ root; Sys.getcwd () ]
-  | None -> [ Sys.getcwd () ]
-
-let locate_fixture model =
-  let relative =
-    Filename.concat "brot/test/fixtures/hf"
-      (Filename.concat model "tokenizer.json")
-  in
-  let rec search = function
-    | [] -> None
-    | root :: rest ->
-        let path = Filename.concat root relative in
-        if Sys.file_exists path then Some path else search rest
-  in
-  search (candidate_roots ())
-
 let with_hf_tokenizer model f =
-  match locate_fixture model with
-  | None -> skip ()
-  | Some path -> (
+  let relative =
+    Filename.concat "fixtures/hf" (Filename.concat model "tokenizer.json")
+  in
+  Fixture.with_download relative
+    ~from:"packages/brot/test/scripts/download_hf_tokenizers.py" (fun path ->
       match from_file path with
       | Ok tok -> f tok
       | Error msg -> failf "Failed to load tokenizer %s: %s" model msg)
