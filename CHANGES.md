@@ -1087,6 +1087,22 @@ thread.
 
 ### Brot
 
+- Fix BERT tokenization to match HuggingFace: the `Bert` and `Punctuation`
+  pre-tokenizers now treat all 32 printable ASCII non-alphanumerics as
+  punctuation. `$ + < = > ^ ` | ~` were missing, so `==` tokenized as one word
+  instead of two.
+- `Normalizer.bert` now strips only nonspacing marks after NFD, keeping spacing
+  and enclosing marks. Stripping every mark dropped the vowel signs of abugidas,
+  so `नमस्ते हिन्दी` lost two characters.
+- `Normalizer.lowercase` and `Normalizer.bert ~lowercase:true` now apply the
+  Unicode lowercase mapping instead of case folding: `ß` and `ﬁ` lowercase to
+  themselves rather than expanding to `ss` and `fi`.
+- `Normalizer.strip_accents` no longer decomposes to NFD on its own, matching
+  HuggingFace's `StripAccents`. Compose it after `Normalizer.nfd` to strip the
+  accents of precomposed characters.
+- `Normalizer.bert ~clean_text:true` keeps unassigned codepoints instead of
+  discarding them as control characters, so they reach the model and become its
+  unknown token.
 - Fix `encode` returning stale tokens from a previously encoded word, or
   crashing, when a word is made only of characters with no id and the model
   has no `unk_token` or `byte_fallback`. Such a word now yields no tokens,

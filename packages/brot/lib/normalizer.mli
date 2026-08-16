@@ -44,11 +44,13 @@ val nfkd : t
 (** {2:text Text transforms} *)
 
 val lowercase : t
-(** [lowercase] is Unicode case folding to lowercase. *)
+(** [lowercase] is the full Unicode lowercase mapping. It is not case folding:
+    ["ß"] and ["ﬁ"] lowercase to themselves. *)
 
 val strip_accents : t
-(** [strip_accents] removes combining marks after NFD decomposition. Applies
-    {!val-nfd} before stripping. *)
+(** [strip_accents] removes every mark ([Mn], [Mc], [Me]). It does not
+    decompose: compose it after {!val-nfd} to also remove the accents of
+    precomposed characters. *)
 
 val strip : ?left:bool -> ?right:bool -> unit -> t
 (** [strip ?left ?right ()] is a normalizer that strips Unicode whitespace from
@@ -88,9 +90,11 @@ val bert :
     - [clean_text]: remove control characters and normalize whitespace. Default:
       [true].
     - [handle_chinese_chars]: pad CJK ideographs with spaces. Default: [true].
-    - [strip_accents]: strip accents after NFD decomposition. When [None],
-      accents are stripped iff [lowercase] is [true]. Default: [None].
-    - [lowercase]: lowercase text via Unicode case folding. Default: [true]. *)
+    - [strip_accents]: decompose to NFD and remove the nonspacing marks. Unlike
+      {!val-strip_accents}, spacing and enclosing marks are kept, so that the
+      vowel signs of abugidas survive. When [None], accents are stripped iff
+      [lowercase] is [true]. Default: [None].
+    - [lowercase]: apply the Unicode lowercase mapping. Default: [true]. *)
 
 (** {2:composition Composition} *)
 

@@ -289,6 +289,59 @@ let test_bert_pretokenizer () =
   test_case "" [];
   test_case "   " []
 
+(* The punctuation class of the BERT and Punctuation pre-tokenizers: every
+   printable ASCII character that is neither a letter nor a digit, plus the
+   Unicode punctuation categories. Symbols are not punctuation. Every case is
+   the output of HuggingFace [BertPreTokenizer] and [Punctuation]. *)
+let ascii_punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+let test_punctuation_class () =
+  let bert_pieces text = List.map fst (Pre.pre_tokenize (Pre.bert ()) text) in
+  let punct_pieces text =
+    List.map fst
+      (Pre.pre_tokenize (Pre.punctuation ~behavior:`Isolated ()) text)
+  in
+  String.iter
+    (fun c ->
+      let c = String.make 1 c in
+      let text = "a" ^ c ^ "b" in
+      equal
+        ~msg:(Printf.sprintf "bert splits %S" text)
+        (list string) [ "a"; c; "b" ] (bert_pieces text);
+      equal
+        ~msg:(Printf.sprintf "punctuation splits %S" text)
+        (list string) [ "a"; c; "b" ] (punct_pieces text))
+    ascii_punctuation;
+
+  (* A run of punctuation becomes one piece per character. *)
+  equal ~msg:"bert on \"==\"" (list string) [ "="; "=" ] (bert_pieces "==");
+  equal ~msg:"bert on \"a+b=c\"" (list string)
+    [ "a"; "+"; "b"; "="; "c" ]
+    (bert_pieces "a+b=c");
+  equal ~msg:"bert on \"<|endoftext|>\"" (list string)
+    [ "<"; "|"; "endoftext"; "|"; ">" ]
+    (bert_pieces "<|endoftext|>");
+  equal ~msg:"bert on \"#!/bin/sh\"" (list string)
+    [ "#"; "!"; "/"; "bin"; "/"; "sh" ]
+    (bert_pieces "#!/bin/sh");
+
+  (* Unicode punctuation splits; Unicode symbols do not. *)
+  let splits text expected =
+    equal
+      ~msg:(Printf.sprintf "bert on %S" text)
+      (list string) expected (bert_pieces text)
+  in
+  splits "a\xC2\xABb" [ "a"; "\xC2\xAB"; "b" ];
+  splits "a\xE2\x80\x90b" [ "a"; "\xE2\x80\x90"; "b" ];
+  splits "a\xE2\x80\xBEb" [ "a"; "\xE2\x80\xBE"; "b" ];
+  splits "a\xE2\x80\xBFb" [ "a"; "\xE2\x80\xBF"; "b" ];
+  splits "a\xC2\xA1b" [ "a"; "\xC2\xA1"; "b" ];
+  splits "a\xC2\xB1b" [ "a\xC2\xB1b" ];
+  splits "a\xC2\xA2b" [ "a\xC2\xA2b" ];
+  splits "a\xC2\xA9b" [ "a\xC2\xA9b" ];
+  splits "a\xC3\xB7b" [ "a\xC3\xB7b" ];
+  splits "a\xE2\x86\x92b" [ "a\xE2\x86\x92b" ]
+
 let test_whitespace_pretokenizer () =
   let test_case text expected =
     let result = Pre.pre_tokenize (Pre.whitespace ()) text in
@@ -547,7 +600,11 @@ let () =
           test "ByteLevel unicode" test_byte_level_unicode;
           test "ByteLevel edge cases" test_byte_level_edge_cases;
         ];
-      group "bert" [ test "BERT tokenization" test_bert_pretokenizer ];
+      group "bert"
+        [
+          test "BERT tokenization" test_bert_pretokenizer;
+          test "punctuation class" test_punctuation_class;
+        ];
       group "whitespace"
         [
           test "Whitespace tokenization" test_whitespace_pretokenizer;

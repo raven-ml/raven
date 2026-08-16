@@ -72,33 +72,9 @@ let ascii_props =
   for i = 48 to 57 do
     t.(i) <- t.(i) lor 4
   done;
-  List.iter
-    (fun i -> t.(i) <- t.(i) lor 8)
-    [
-      33;
-      34;
-      35;
-      37;
-      38;
-      39;
-      40;
-      41;
-      42;
-      44;
-      45;
-      46;
-      47;
-      58;
-      59;
-      63;
-      64;
-      91;
-      92;
-      93;
-      95;
-      123;
-      125;
-    ];
+  for i = 33 to 126 do
+    if t.(i) land 6 = 0 then t.(i) <- t.(i) lor 8
+  done;
   t
 
 let[@inline] is_whitespace code =

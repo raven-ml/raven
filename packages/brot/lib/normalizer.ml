@@ -47,17 +47,19 @@ let normalize_utf8 nf text =
     in
     if all_ascii 0 then text else Uunf_string.normalize_utf_8 nf text
 
-let case_fold text =
+(* The full Unicode lowercase mapping, which is not case folding: ["ß"] and
+   ["ﬁ"] lowercase to themselves but fold to ["ss"] and ["fi"]. *)
+let lowercase_text text =
   let len = String.length text in
-  let rec needs_fold i =
+  let rec needs_lowering i =
     if i >= len then false
     else
       let byte = Char.code (String.unsafe_get text i) in
       if byte >= 0x41 && byte <= 0x5A then true
       else if byte >= 128 then true
-      else needs_fold (i + 1)
+      else needs_lowering (i + 1)
   in
-  if not (needs_fold 0) then text
+  if not (needs_lowering 0) then text
   else
     let b = Buffer.create len in
     let i = ref 0 in
@@ -72,14 +74,17 @@ let case_fold text =
         let n = Uchar.utf_decode_length d in
         (if Uchar.utf_decode_is_valid d then
            let u = Uchar.utf_decode_uchar d in
-           match Uucp.Case.Fold.fold u with
+           match Uucp.Case.Map.to_lower u with
            | `Self -> Buffer.add_utf_8_uchar b u
            | `Uchars us -> List.iter (fun u -> Buffer.add_utf_8_uchar b u) us);
         i := !i + n
     done;
     Buffer.contents b
 
-let strip_accents_text text =
+(* [~nonspacing_only] drops the marks of general category [Mn], which are the
+   accents proper; otherwise every mark goes, spacing ([Mc]) and enclosing
+   ([Me]) included. *)
+let drop_marks ~nonspacing_only text =
   let len = String.length text in
   let rec has_non_ascii i =
     if i >= len then false
@@ -101,7 +106,8 @@ let strip_accents_text text =
         (if Uchar.utf_decode_is_valid d then
            let u = Uchar.utf_decode_uchar d in
            match Uucp.Gc.general_category u with
-           | `Mn | `Mc | `Me -> ()
+           | `Mn -> ()
+           | (`Mc | `Me) when not nonspacing_only -> ()
            | _ -> Buffer.add_utf_8_uchar b u);
         i := !i + n
     done;
@@ -120,11 +126,13 @@ let[@inline] is_whitespace code =
   code = 0x09 || code = 0x0A || code = 0x0D || code = 0x20
   || Uucp.White.is_white_space (Uchar.of_int code)
 
+(* Unassigned codepoints are not controls: they survive cleaning and reach the
+   model, which maps them to its unknown token. *)
 let[@inline] is_control code =
   if code = 0x09 || code = 0x0A || code = 0x0D then false
   else
     match Uucp.Gc.general_category (Uchar.of_int code) with
-    | `Cc | `Cf | `Cn | `Co -> true
+    | `Cc | `Cf | `Co -> true
     | _ -> false
 
 let[@inline] is_chinese_char code =
@@ -190,8 +198,8 @@ let handle_chinese_chars s =
     done;
     Buffer.contents buf
 
-let do_strip_accents s = strip_accents_text (normalize_utf8 `NFD s)
-let do_lowercase s = case_fold s
+let bert_strip_accents s =
+  drop_marks ~nonspacing_only:true (normalize_utf8 `NFD s)
 
 let strip_whitespace s ~left ~right =
   let len = String.length s in
@@ -285,8 +293,8 @@ let rec apply t s =
   | NFD -> normalize_utf8 `NFD s
   | NFKC -> normalize_utf8 `NFKC s
   | NFKD -> normalize_utf8 `NFKD s
-  | Lowercase -> do_lowercase s
-  | Strip_accents -> do_strip_accents s
+  | Lowercase -> lowercase_text s
+  | Strip_accents -> drop_marks ~nonspacing_only:false s
   | Strip { left; right } -> strip_whitespace s ~left ~right
   | Replace { compiled; replacement; _ } ->
       Re.replace_string compiled ~by:replacement s
@@ -302,9 +310,9 @@ let rec apply t s =
       } ->
       let s = if ct then clean_text s else s in
       let s = if hcc then handle_chinese_chars s else s in
-      let do_strip = match sa with Some v -> v | None -> lc in
-      let s = if do_strip then do_strip_accents s else s in
-      if lc then do_lowercase s else s
+      let strip = match sa with Some v -> v | None -> lc in
+      let s = if strip then bert_strip_accents s else s in
+      if lc then lowercase_text s else s
   | Sequence ns -> List.fold_left (fun s n -> apply n s) s ns
 
 (* Formatting *)

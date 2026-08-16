@@ -170,6 +170,61 @@ let test_wordpiece_greedy_matching () =
   equal ~msg:"greedy match finds longest token" int 1 (Array.length tokens);
   equal ~msg:"matched full word" string "unable" tokens.(0)
 
+(* Expectations from HuggingFace [models.WordPiece] with the same vocabulary.
+   The whole word falls back to the unknown token as soon as one of its pieces
+   has no entry, and the character budget counts characters, not bytes. *)
+let test_wordpiece_hf_semantics () =
+  let vocab =
+    [
+      ("[UNK]", 0);
+      ("un", 1);
+      ("##able", 2);
+      ("##a", 3);
+      ("##b", 4);
+      ("a", 5);
+      ("\xC3\xA9", 6);
+      ("##\xC3\xA9", 7);
+      ("play", 8);
+      ("##ing", 9);
+    ]
+  in
+  let tokens ~max text =
+    wordpiece ~vocab ~unk_token:"[UNK]" ~max_input_chars_per_word:max ()
+    |> fun t -> encode t text |> Encoding.tokens |> Array.to_list
+  in
+  let case ~max text expected =
+    equal
+      ~msg:(Printf.sprintf "wordpiece max=%d %S" max text)
+      (list string) expected (tokens ~max text)
+  in
+  (* Longest match first, so ["unable"] is two pieces and not four. *)
+  case ~max:100 "unable" [ "un"; "##able" ];
+  case ~max:100 "unab" [ "un"; "##a"; "##b" ];
+  case ~max:100 "playing" [ "play"; "##ing" ];
+  (* A word with one unmatchable piece is unknown as a whole, even though its
+     prefix matched. *)
+  case ~max:100 "unxyz" [ "[UNK]" ];
+  (* The budget is in characters: six two-byte characters exceed a budget of
+     five, six one-byte characters do too, and five of either do not. *)
+  case ~max:5 "aaaaa" [ "a"; "##a"; "##a"; "##a"; "##a" ];
+  case ~max:5 "aaaaaa" [ "[UNK]" ];
+  case ~max:5 "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
+    [ "\xC3\xA9"; "##\xC3\xA9"; "##\xC3\xA9"; "##\xC3\xA9"; "##\xC3\xA9" ];
+  case ~max:5 "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9" [ "[UNK]" ];
+  case ~max:100 "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
+    [
+      "\xC3\xA9";
+      "##\xC3\xA9";
+      "##\xC3\xA9";
+      "##\xC3\xA9";
+      "##\xC3\xA9";
+      "##\xC3\xA9";
+    ];
+  (* A word over budget is unknown even when every piece is in the
+     vocabulary. *)
+  case ~max:5 "unable" [ "[UNK]" ];
+  case ~max:100 "" []
+
 let () =
   run "WordPiece tests"
     [
@@ -182,5 +237,6 @@ let () =
           test "save and load" test_wordpiece_save_load;
           test "tokenizer integration" test_tokenizer_integration;
           test "greedy matching" test_wordpiece_greedy_matching;
+          test "HuggingFace semantics" test_wordpiece_hf_semantics;
         ];
     ]
