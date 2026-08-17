@@ -1087,6 +1087,12 @@ thread.
 
 ### Brot
 
+- `Normalizer.apply_aligned` returns the normalized text together with an
+  `alignment` mapping its bytes back to the input, and
+  `Normalizer.original_span` reads a span off it. Inserted characters take the
+  span of the character they were placed next to and removed ones take none,
+  matching what HuggingFace reports, so token offsets can be given in the
+  coordinates of the original text.
 - BPE tokenization now answers a repeated pretoken from a direct-mapped cache
   seeded with the whole vocabulary. `bpe`'s `cache_capacity` is the slot count
   of that cache (32 bytes a slot, one table per domain), default `262144`

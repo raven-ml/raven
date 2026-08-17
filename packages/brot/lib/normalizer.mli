@@ -107,6 +107,38 @@ val sequence : t list -> t
 val apply : t -> string -> string
 (** [apply n s] is [s] normalized by [n]. *)
 
+(** {1:alignment Alignment}
+
+    Normalizing moves text around: {!val-nfd} splits a character in two,
+    {!val-strip_accents} drops one, {!val-prepend} adds one. An alignment
+    records where the result came from, so that token offsets can be reported on
+    the text the user passed in rather than on the normalized text. *)
+
+type alignment
+(** The type for maps from the bytes of a normalized text back to the bytes of
+    the text it was normalized from. *)
+
+val identity : string -> alignment
+(** [identity s] is the alignment of [s] on itself, for text that was not
+    normalized. *)
+
+val apply_aligned : t -> string -> string * alignment
+(** [apply_aligned n s] is [apply n s] with its alignment on [s]. *)
+
+val original_span : alignment -> start:int -> stop:int -> int * int
+(** [original_span a ~start ~stop] is the span of the original text that the
+    normalized bytes \[[start];[stop]) come from: from the first byte the byte
+    at [start] comes from to the last byte the byte at [stop - 1] comes from.
+
+    Every byte of a character has the span of the whole character, so a span
+    cutting a character short still reports it whole. A character the normalizer
+    inserted has the span of the character it was inserted next to, and one it
+    removed has no span at all, so the result can cover original bytes that no
+    span reports. An empty [start = stop] gives an empty span.
+
+    Raises [Invalid_argument] unless [0 <= start <= stop <= n], where [n] is the
+    length of the normalized text. *)
+
 (** {1:formatting Formatting} *)
 
 val pp : Format.formatter -> t -> unit
