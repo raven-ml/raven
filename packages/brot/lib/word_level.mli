@@ -46,11 +46,6 @@ val get_vocab : t -> (string * int) list
 val get_vocab_size : t -> int
 (** [get_vocab_size t] is the number of tokens in the vocabulary. *)
 
-val add_tokens : t -> string list -> int
-(** [add_tokens t toks] adds [toks] to the vocabulary, assigning consecutive IDs
-    starting after the current maximum. Returns the number of new tokens
-    actually added (duplicates are skipped). Mutates [t]. *)
-
 (** {1:serialization Serialization} *)
 
 val save : t -> folder:string -> unit -> string list

@@ -77,8 +77,10 @@ type direction = [ `Left | `Right ]
 (** The type for padding and truncation directions. [`Left] operates at the
     beginning of the sequence, [`Right] at the end. *)
 
-type special = {
-  token : string;  (** The token text (e.g., ["<pad>"], ["<unk>"]). *)
+type added_token = {
+  content : string;
+      (** The token text: ["[CLS]"] for a special one, ["<name>"] for an
+          ordinary vocabulary entry matched atomically. *)
   special : bool;  (** Whether decoding may skip this token. *)
   single_word : bool;  (** Whether this token must match whole words only. *)
   lstrip : bool;
@@ -137,19 +139,24 @@ type data = [ `Files of string list | `Seq of string Seq.t ]
     - [`Files paths]: read training text from files, one line per example.
     - [`Seq seq]: use a sequence of strings. *)
 
-val special :
+val added_token :
   ?special:bool ->
   ?single_word:bool ->
   ?lstrip:bool ->
   ?rstrip:bool ->
   ?normalized:bool ->
   string ->
-  special
-(** [special token] is an added token configuration for [token].
+  added_token
+(** [added_token content] is an added token configuration for [content].
 
     [special] defaults to [true]; pass [~special:false] for a token that is
     matched atomically but never skipped when decoding. [single_word], [lstrip]
-    and [rstrip] default to [false]. [normalized] defaults to [not special]. *)
+    and [rstrip] default to [false]. [normalized] defaults to [not special].
+
+    The defaults line the two HuggingFace registrations up one for one:
+    [added_token c] is [add_special_tokens([c])] ([special] set, [normalized]
+    unset) and [added_token ~special:false c] is [add_tokens([c])] ([special]
+    unset, [normalized] set). *)
 
 val padding :
   ?direction:direction ->
@@ -174,7 +181,7 @@ val bpe :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -197,13 +204,13 @@ val bpe :
     - [pre]: pre-tokenization strategy. Default: none.
     - [post]: post-processor for special tokens. Default: none.
     - [decoder]: decoding strategy. Default: none.
-    - [specials]: added tokens. They join the vocabulary, and are matched
-      atomically in the input on {!encode}: against the raw text before
-      normalization when [normalized] is unset, against the normalized text when
-      it is set. Default: [[]].
-    - [bos_token], [eos_token], [pad_token]: role markers; added to vocabulary
-      if not already present. A role marker the model holds is a special token
-      in its own right, matched in the input like the entries of [specials].
+    - [added_tokens]: added tokens. They are matched atomically in the input on
+      {!encode} — against the raw text before normalization when [normalized] is
+      unset, against the normalized text when it is set — and are numbered from
+      the end of [vocab] without entering it. Default: [[]].
+    - [bos_token], [eos_token], [pad_token]: role markers. Each is a special
+      token in its own right, matched in the input like the entries of
+      [added_tokens] and numbered like them when [vocab] does not hold it.
       Default: none.
     - [unk_token]: token for unknown characters. Configures both the role and
       the BPE model's unknown handling. It is a model parameter, never matched
@@ -231,7 +238,7 @@ val wordpiece :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -254,7 +261,7 @@ val wordpiece :
     - [max_input_chars_per_word]: words longer than this are replaced with
       [unk_token]. Default: [100].
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val word_level :
@@ -262,7 +269,7 @@ val word_level :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -281,7 +288,7 @@ val word_level :
     - [vocab]: initial vocabulary as [(word, id)] pairs. Default: [[]].
     - [unk_token]: token for out-of-vocabulary words. Default: ["<unk>"].
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val unigram :
@@ -289,7 +296,7 @@ val unigram :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -306,7 +313,7 @@ val unigram :
       negative log probabilities. Default: [[]].
     - [unk_token]: token for unknown characters. Default: none.
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val chars :
@@ -314,7 +321,7 @@ val chars :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -326,7 +333,7 @@ val chars :
     Each byte in the input becomes a separate token with ID equal to its ordinal
     value. No vocabulary is required.
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val from_model_file :
@@ -336,7 +343,7 @@ val from_model_file :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -355,16 +362,18 @@ val from_model_file :
 
     Raises [Sys_error] if a file cannot be read.
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
-val add_tokens : t -> string list -> t
-(** [add_tokens t tokens] is [t] with [tokens] added to the word-level
-    vocabulary, one ID each. It does not make them added tokens: they are
-    matched by the model like any other word, not atomically in the input. Pass
-    [~specials] at construction for that.
+val add_tokens : t -> added_token list -> t
+(** [add_tokens t tokens] is [t] with [tokens] registered as added tokens,
+    exactly as if they had been passed as [added_tokens] at construction:
+    matched atomically in the input, numbered from the end of the vocabulary,
+    and skipped by {!decode} when their [special] is set. Works for every model.
 
-    Raises [Invalid_argument] unless [t] is a word-level tokenizer. *)
+    A token [t] already holds keeps the ID it has; its flags are replaced by the
+    new ones. Added tokens never enter the model's own vocabulary: to build one,
+    pass [vocab] to the constructor. *)
 
 (** {1:accessors Accessors} *)
 
@@ -380,10 +389,10 @@ val post_processor : t -> Post_processor.t option
 val decoder : t -> Decoder.t option
 (** [decoder t] is [t]'s decoder, if any. *)
 
-val specials : t -> special list
-(** [specials t] is [t]'s added tokens: those given as [specials] at
-    construction, plus the role markers the model holds. This is what {!to_json}
-    writes. *)
+val added_tokens : t -> added_token list
+(** [added_tokens t] is [t]'s added tokens: those given as [added_tokens] at
+    construction, plus the [bos_token], [eos_token] and [pad_token] role
+    markers. This is what {!to_json} writes. *)
 
 val bos_token : t -> string option
 (** [bos_token t] is [t]'s beginning-of-sequence token, if any. *)
@@ -494,7 +503,7 @@ val train_bpe :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -528,7 +537,7 @@ val train_bpe :
     - [show_progress]: display progress bar. Default: [true].
     - [max_token_length]: maximum token length. Default: none.
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
 val train_wordpiece :
@@ -537,7 +546,7 @@ val train_wordpiece :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -569,7 +578,7 @@ val train_wordpiece :
     - [end_of_word_suffix]: suffix marking word boundaries. Default: none.
     - [show_progress]: display progress bar. Default: [true].
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
 val train_wordlevel :
@@ -578,7 +587,7 @@ val train_wordlevel :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -600,7 +609,7 @@ val train_wordlevel :
       [0].
     - [show_progress]: display progress bar. Default: [true].
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
 val train_unigram :
@@ -609,7 +618,7 @@ val train_unigram :
   ?pre:Pre_tokenizer.t ->
   ?post:Post_processor.t ->
   ?decoder:Decoder.t ->
-  ?specials:special list ->
+  ?added_tokens:added_token list ->
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
@@ -635,7 +644,7 @@ val train_unigram :
     - [n_sub_iterations]: number of EM sub-iterations per pruning round.
       Default: [2].
 
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [specials],
+    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
 (** {1:model_files Model files} *)
@@ -667,8 +676,8 @@ val from_json : Jsont.json -> (t, string) result
 
     The [added_tokens] member gives the tokens matched atomically in the input.
     A missing [special] member reads as [true], and a missing [normalized] as
-    [not special], as in {!val-special}. Their IDs are reassigned as documented
-    in {!type-special}, not read from the file. *)
+    [not special], as in {!val-added_token}. Their IDs are reassigned as
+    documented in {!type-added_token}, not read from the file. *)
 
 val to_json : t -> Jsont.json
 (** [to_json t] is [t] serialized to HuggingFace JSON format. *)

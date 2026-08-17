@@ -67,7 +67,8 @@ let () =
   let wp_with_specials =
     train_wordpiece data ~vocab_size:100 ~show_progress:false
       ~pre:(Pre_tokenizer.whitespace ())
-      ~specials:[ special "[CLS]"; special "[SEP]"; special "[PAD]" ]
+      ~added_tokens:
+        [ added_token "[CLS]"; added_token "[SEP]"; added_token "[PAD]" ]
       ~pad_token:"[PAD]"
   in
   Printf.printf "WordPiece with specials (vocab=%d):\n"
@@ -92,7 +93,8 @@ let () =
            ~cls:("[CLS]", Option.get (token_to_id wp_with_specials "[CLS]"))
            ~sep:("[SEP]", Option.get (token_to_id wp_with_specials "[SEP]"))
            ())
-      ~specials:[ special "[CLS]"; special "[SEP]"; special "[PAD]" ]
+      ~added_tokens:
+        [ added_token "[CLS]"; added_token "[SEP]"; added_token "[PAD]" ]
       ~pad_token:"[PAD]"
   in
   let enc = encode wp_full "the cat plays" in

@@ -27,7 +27,7 @@ let tokenizer =
     ~vocab:
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("play", 5); ("##ing", 6) ]
-    ~specials:(List.map special [ "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
     ~decoder:(Decoder.wordpiece ())
@@ -60,7 +60,7 @@ let tokenizer =
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("sat", 5); ("how", 6);
         ("are", 7); ("you", 8) ]
-    ~specials:(List.map special [ "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
     ~decoder:(Decoder.wordpiece ())
@@ -90,7 +90,7 @@ let tokenizer =
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("sat", 5);
         ("how", 6); ("are", 7); ("you", 8); ("good", 9) ]
-    ~specials:(List.map special [ "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
     ~decoder:(Decoder.wordpiece ())
@@ -127,7 +127,7 @@ let tokenizer =
     ~vocab:
       [ ("[PAD]", 0); ("[UNK]", 1); ("the", 2); ("cat", 3);
         ("sat", 4); ("on", 5); ("a", 6); ("mat", 7) ]
-    ~specials:(List.map special [ "[PAD]"; "[UNK]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
 
@@ -156,7 +156,7 @@ let tokenizer =
   word_level
     ~vocab:
       [ ("[PAD]", 0); ("[UNK]", 1); ("the", 2); ("cat", 3); ("sat", 4) ]
-    ~specials:(List.map special [ "[PAD]"; "[UNK]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
 
@@ -181,7 +181,7 @@ let tokenizer =
     ~vocab:
       [ ("[UNK]", 0); ("the", 1); ("quick", 2); ("brown", 3);
         ("fox", 4); ("jumps", 5); ("over", 6) ]
-    ~specials:(List.map special [ "[UNK]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~unk_token:"[UNK]" ()
 
@@ -225,7 +225,7 @@ let tokenizer =
       [ ("[PAD]", 0); ("[UNK]", 1); ("the", 2); ("cat", 3);
         ("sat", 4); ("on", 5); ("a", 6); ("mat", 7);
         ("dog", 8); ("ran", 9); ("fast", 10) ]
-    ~specials:(List.map special [ "[PAD]"; "[UNK]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
 

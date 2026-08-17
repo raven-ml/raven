@@ -59,7 +59,7 @@ let tokenizer =
     ~pre:(Pre_tokenizer.bert ())
     ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
     ~decoder:(Decoder.wordpiece ())
-    ~specials:(List.map special [ "[CLS]"; "[SEP]"; "[PAD]" ])
+    ~added_tokens:(List.map added_token [ "[CLS]"; "[SEP]"; "[PAD]" ])
     ~pad_token:"[PAD]" ()
 ```
 

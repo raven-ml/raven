@@ -6,25 +6,27 @@
 open Windtrap
 open Brot
 
-let make_word_tokenizer ?(specials = []) () =
-  word_level ~pre:(Pre_tokenizer.whitespace ()) ~specials ()
+let make_word_tokenizer ?(added_tokens = []) ?(vocab = []) () =
+  word_level ~pre:(Pre_tokenizer.whitespace ()) ~added_tokens ~vocab ()
+
+let words = List.mapi (fun id word -> (word, id))
 
 let test_encode_simple () =
-  let tokenizer = add_tokens (make_word_tokenizer ()) [ "hello"; "world" ] in
+  let tokenizer = make_word_tokenizer ~vocab:(words [ "hello"; "world" ]) () in
   let ids = encode tokenizer "hello world hello" |> Encoding.ids in
   equal ~msg:"encoded length" int 3 (Array.length ids);
   equal ~msg:"repeated token same id" bool true (ids.(0) = ids.(2))
 
 let test_encode_with_vocab () =
-  let tokenizer = add_tokens (make_word_tokenizer ()) [ "hello"; "world" ] in
+  let tokenizer = make_word_tokenizer ~vocab:(words [ "hello"; "world" ]) () in
   let ids = encode tokenizer "hello world" |> Encoding.ids |> Array.to_list in
   equal ~msg:"encoded with vocab" (list int) [ 0; 1 ] ids
 
 let test_encode_unknown_tokens () =
   let tokenizer =
-    add_tokens
-      (make_word_tokenizer ~specials:[ special "<unk>" ] ())
-      [ "hello" ]
+    make_word_tokenizer
+      ~added_tokens:[ added_token "<unk>" ]
+      ~vocab:(words [ "hello" ]) ()
   in
   let ids =
     encode tokenizer "hello unknown world" |> Encoding.ids |> Array.to_list
@@ -38,7 +40,7 @@ let test_encode_empty () =
 
 let test_encode_batch_simple () =
   let tokenizer =
-    add_tokens (make_word_tokenizer ()) [ "hello"; "world"; "hi"; "there" ]
+    make_word_tokenizer ~vocab:(words [ "hello"; "world"; "hi"; "there" ]) ()
   in
   let encodings = encode_batch tokenizer [ "hello world"; "hi there" ] in
   equal ~msg:"batch size" int 2 (List.length encodings);
@@ -48,9 +50,10 @@ let test_encode_batch_simple () =
 
 let test_encode_batch_with_padding () =
   let tokenizer =
-    add_tokens
-      (make_word_tokenizer ~specials:[ special "<pad>" ] ())
-      [ "hello"; "world"; "hi"; "there" ]
+    make_word_tokenizer
+      ~added_tokens:[ added_token "<pad>" ]
+      ~vocab:(words [ "hello"; "world"; "hi"; "there" ])
+      ()
   in
   let padding =
     {
@@ -73,15 +76,16 @@ let test_encode_batch_empty () =
   equal ~msg:"empty batch" int 0 (List.length encodings)
 
 let test_decode_simple () =
-  let tokenizer = add_tokens (make_word_tokenizer ()) [ "hello"; "world" ] in
+  let tokenizer = make_word_tokenizer ~vocab:(words [ "hello"; "world" ]) () in
   let decoded = decode tokenizer [| 0; 1 |] in
   equal ~msg:"decoded text" string "hello world" decoded
 
 let test_decode_with_special () =
   let tokenizer =
-    add_tokens
-      (make_word_tokenizer ~specials:[ special "<bos>"; special "<eos>" ] ())
-      [ "hello" ]
+    make_word_tokenizer
+      ~added_tokens:[ added_token "<bos>"; added_token "<eos>" ]
+      ~vocab:[ ("<bos>", 0); ("<eos>", 1); ("hello", 2) ]
+      ()
   in
   (* <bos>=0, <eos>=1, hello=2 *)
   let decoded = decode tokenizer [| 0; 2; 1 |] in
@@ -89,16 +93,17 @@ let test_decode_with_special () =
 
 let test_decode_skip_special () =
   let tokenizer =
-    add_tokens
-      (make_word_tokenizer ~specials:[ special "<bos>"; special "<eos>" ] ())
-      [ "hello" ]
+    make_word_tokenizer
+      ~added_tokens:[ added_token "<bos>"; added_token "<eos>" ]
+      ~vocab:[ ("<bos>", 0); ("<eos>", 1); ("hello", 2) ]
+      ()
   in
   let decoded = decode ~skip_special_tokens:true tokenizer [| 0; 2; 1 |] in
   equal ~msg:"decoded without special" string "hello" decoded
 
 let test_decode_batch () =
   let tokenizer =
-    add_tokens (make_word_tokenizer ()) [ "hello"; "world"; "hi"; "there" ]
+    make_word_tokenizer ~vocab:(words [ "hello"; "world"; "hi"; "there" ]) ()
   in
   let decoded = decode_batch tokenizer [ [| 0; 1 |]; [| 2; 3 |] ] in
   equal ~msg:"decoded count" int 2 (List.length decoded);

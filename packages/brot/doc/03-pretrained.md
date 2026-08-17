@@ -86,7 +86,7 @@ let tokenizer =
     ~pre:(Pre_tokenizer.bert ())
     ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
     ~decoder:(Decoder.wordpiece ())
-    ~specials:(List.map special [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
 
 let enc = encode tokenizer "The Cat Is Playing"
@@ -178,7 +178,7 @@ let tokenizer =
     ~min_frequency:1
     ~show_progress:false
     ~pre:(Pre_tokenizer.whitespace ())
-    ~specials:(List.map special [ "[PAD]"; "[UNK]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]"
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog.";

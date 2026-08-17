@@ -1087,6 +1087,18 @@ thread.
 
 ### Brot
 
+- `Brot.special` is now `Brot.added_token` and the record it builds is
+  `added_token`, its `token` field renamed to `content`; `?specials` is
+  `?added_tokens` on every constructor and `specials` is `added_tokens`. The
+  type covers HuggingFace's added tokens, of which special ones are a subset,
+  so the old names described only half of what it holds.
+- `add_tokens` takes an `added_token list` and works for every model, not just
+  the word-level one: it registers added tokens exactly as passing them at
+  construction would, and no longer raises `Invalid_argument`. Added tokens no
+  longer enter the model's own vocabulary — they are numbered from the end of
+  it, as HuggingFace does — so registering the same token twice no longer
+  drifts the identifiers it hands out. To build a model vocabulary, pass
+  `vocab` to the constructor.
 - `Pre_tokenizer.unicode_scripts` now matches HuggingFace on whitespace and
   unknown scripts. A leading run of spaces used to be emitted as a piece of its
   own; it is now dropped, since the first piece opens at the first script
@@ -1097,17 +1109,21 @@ thread.
   pre-tokenizer and the model, matching HuggingFace: `"a<|endoftext|>b"` with
   GPT-2 gives `[64; 50256; 65]` instead of tokenizing the marker as text. At a
   given position the longest token wins; `~single_word`, `~lstrip`, `~rstrip`
-  and `~normalized` on `Brot.special` all take effect.
-- `Brot.special` takes `?special` (default `true`); `?normalized` now defaults
-  to `not special`. `decode ~skip_special_tokens:true` drops only the tokens
+  and `~normalized` on `Brot.added_token` all take effect.
+- `Brot.added_token` takes `?special` (default `true`); `?normalized` now
+  defaults to `not special`, so `added_token c` matches HuggingFace's
+  `add_special_tokens([c])` and `added_token ~special:false c` matches
+  `add_tokens([c])`. `decode ~skip_special_tokens:true` drops only the tokens
   with `special` set, so a plain added token survives decoding.
-- A `bos_token`, `eos_token` or `pad_token` the model already holds is now a
-  special token in its own right: matched atomically in the input and skipped
-  when decoding. `unk_token` is not — it configures the model's unknown
-  handling and is never matched in the input.
+- A `bos_token`, `eos_token` or `pad_token` is now a special token in its own
+  right: matched atomically in the input, numbered from the end of the
+  vocabulary when the model does not hold it, and skipped when decoding. This
+  makes `padding` work with a pad token that is not in the model vocabulary.
+  `unk_token` is unaffected — it configures the model's unknown handling and is
+  never matched in the input.
 - `token_to_id`, `id_to_token`, `vocab` and `vocab_size` now cover added tokens
   the model does not hold; those are numbered from the end of the model
-  vocabulary, as HuggingFace does. `specials` reports the same set that
+  vocabulary, as HuggingFace does. `added_tokens` reports the same set that
   `to_json` writes, with real ids and `special` flags.
 - BPE `end_of_word_suffix` is now appended to the last character of a word
   instead of the first, and a one-character word takes it too;

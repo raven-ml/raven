@@ -53,7 +53,9 @@ let () =
       ("you", 23);
     ]
   in
-  let specials = List.map special [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ] in
+  let added_tokens =
+    List.map added_token [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ]
+  in
 
   (* Assemble the full pipeline *)
   let tokenizer =
@@ -61,7 +63,7 @@ let () =
       ~normalizer:(Normalizer.bert ~lowercase:true ())
       ~pre:(Pre_tokenizer.bert ())
       ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
-      ~decoder:(Decoder.wordpiece ()) ~specials ~pad_token:"[PAD]" ()
+      ~decoder:(Decoder.wordpiece ()) ~added_tokens ~pad_token:"[PAD]" ()
   in
 
   (* Inspect the tokenizer *)

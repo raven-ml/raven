@@ -16,7 +16,6 @@ let strf = Printf.sprintf
 let err_pair_no_post = "pair sequences require a configured post-processor"
 let err_no_pad_token = "padding requested but no pad token configured"
 let err_pad_not_in_vocab tok = strf "pad token '%s' not in vocabulary" tok
-let err_add_tokens = "only supported for word-level tokenizers"
 let err_export_tiktoken = "only supported for BPE models"
 let err_infer_type = "unable to infer model type from JSON"
 
@@ -24,8 +23,8 @@ let err_infer_type = "unable to infer model type from JSON"
 
 type direction = [ `Left | `Right ]
 
-type special = {
-  token : string;
+type added_token = {
+  content : string;
   special : bool;
   single_word : bool;
   lstrip : bool;
@@ -69,10 +68,10 @@ type t = {
   unk_token : string option;
 }
 
-let special ?(special = true) ?(single_word = false) ?(lstrip = false)
-    ?(rstrip = false) ?normalized token =
+let added_token ?(special = true) ?(single_word = false) ?(lstrip = false)
+    ?(rstrip = false) ?normalized content =
   let normalized = Option.value normalized ~default:(not special) in
-  { token; special; single_word; lstrip; rstrip; normalized }
+  { content; special; single_word; lstrip; rstrip; normalized }
 
 let padding ?(direction = `Right) ?pad_id ?pad_type_id ?pad_token length =
   { length; direction; pad_id; pad_type_id; pad_token }
@@ -80,13 +79,6 @@ let padding ?(direction = `Right) ?pad_id ?pad_type_id ?pad_token length =
 let truncation ?(direction = `Right) max_length = { max_length; direction }
 
 (* Algorithm dispatch *)
-
-let alg_add_tokens algorithm tokens =
-  match algorithm with
-  | Alg_wordlevel model ->
-      ignore (Word_level.add_tokens model tokens);
-      algorithm
-  | Alg_bpe _ | Alg_wordpiece _ | Alg_unigram _ | Alg_chars _ -> algorithm
 
 let alg_token_to_id algorithm token =
   match algorithm with
@@ -187,26 +179,29 @@ let dedup_by key items =
     items;
   List.rev !acc
 
-(* A token named for a role is a special token when the model already holds it:
-   naming the padding token does not extend the vocabulary. The unknown token is
-   a model parameter rather than a token to match, so it never joins them. *)
-let promoted_roles algorithm ~bos_token ~eos_token ~pad_token =
+(* A token named for the beginning, end or padding role is a special token in
+   its own right. The unknown token is not: the model emits it, and nothing
+   matches it in the input. A role whose content is already among the given
+   tokens keeps the flags given there. *)
+let role_tokens ~bos_token ~eos_token ~pad_token given =
+  let named content =
+    List.exists (fun (a : added_token) -> a.content = content) given
+  in
   List.filter_map Fun.id [ bos_token; eos_token; pad_token ]
-  |> List.filter (fun token -> Option.is_some (alg_token_to_id algorithm token))
-  |> List.map special
+  |> List.filter (fun content -> not (named content))
+  |> List.map added_token
 
 (* Identifiers follow HuggingFace: a token the model holds keeps the model's
    identifier, the others are numbered from the end of the model vocabulary.
-   Repeated content is one token and takes one identifier; content that is empty
-   is no token at all and takes none. *)
-let added_tokens_of algorithm specials =
+   Repeated content is one token and takes one identifier. *)
+let added_tokens_of algorithm tokens =
   let vocab_size = alg_vocab_size algorithm in
   let assigned = Hashtbl.create 16 in
-  let number (s : special) highest =
-    match Hashtbl.find_opt assigned s.token with
+  let number (a : added_token) highest =
+    match Hashtbl.find_opt assigned a.content with
     | Some id -> id
     | None -> (
-        match alg_token_to_id algorithm s.token with
+        match alg_token_to_id algorithm a.content with
         | Some id -> id
         | None -> (
             match highest with
@@ -215,49 +210,43 @@ let added_tokens_of algorithm specials =
   in
   let tokens, _ =
     List.fold_left
-      (fun (acc, highest) (s : special) ->
-        if s.token = "" then (acc, highest)
-        else
-          let id = number s highest in
-          Hashtbl.replace assigned s.token id;
-          let token =
-            {
-              Added_tokens.content = s.token;
-              id;
-              special = s.special;
-              single_word = s.single_word;
-              lstrip = s.lstrip;
-              rstrip = s.rstrip;
-              normalized = s.normalized;
-            }
-          in
-          let highest =
-            match highest with
-            | Some other -> Some (max other id)
-            | None -> Some id
-          in
-          (token :: acc, highest))
-      ([], None) specials
+      (fun (acc, highest) (a : added_token) ->
+        let id = number a highest in
+        Hashtbl.replace assigned a.content id;
+        let token =
+          {
+            Added_tokens.content = a.content;
+            id;
+            special = a.special;
+            single_word = a.single_word;
+            lstrip = a.lstrip;
+            rstrip = a.rstrip;
+            normalized = a.normalized;
+          }
+        in
+        let highest =
+          match highest with
+          | Some other -> Some (max other id)
+          | None -> Some id
+        in
+        (token :: acc, highest))
+      ([], None) tokens
   in
   List.rev tokens
 
 (* Construction *)
 
-let create ?normalizer ?pre ?post ?decoder ?(specials = []) ?bos_token
+let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     ?eos_token ?pad_token ?unk_token algorithm =
-  let roles =
-    List.filter_map Fun.id [ bos_token; eos_token; pad_token; unk_token ]
+  let given =
+    List.filter (fun (a : added_token) -> a.content <> "") added_tokens
   in
-  let algorithm =
-    List.map (fun (s : special) -> s.token) specials @ roles
-    |> dedup_by Fun.id |> alg_add_tokens algorithm
-  in
+  let requested = given @ role_tokens ~bos_token ~eos_token ~pad_token given in
   let added =
     Added_tokens.make
       ~normalize:
         (match normalizer with Some n -> Normalizer.apply n | None -> Fun.id)
-      (added_tokens_of algorithm
-         (specials @ promoted_roles algorithm ~bos_token ~eos_token ~pad_token))
+      (added_tokens_of algorithm requested)
   in
   let token_id token =
     match Added_tokens.token_to_id added token with
@@ -287,11 +276,11 @@ let pre_tokenizer t = t.pre_tokenizer
 let post_processor t = t.post_processor
 let decoder t = t.decoder
 
-let specials t =
+let added_tokens t =
   Added_tokens.tokens t.added
   |> List.map (fun (tok : Added_tokens.token) ->
       {
-        token = tok.content;
+        content = tok.content;
         special = tok.special;
         single_word = tok.single_word;
         lstrip = tok.lstrip;
@@ -327,7 +316,7 @@ let id_to_token t id =
 
 (* Algorithm constructors *)
 
-let bpe ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token ?vocab ?merges ?cache_capacity ?dropout
     ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk ?byte_fallback
     ?ignore_merges () =
@@ -341,11 +330,11 @@ let bpe ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
          ?cache_capacity ?dropout ?unk_token ?continuing_subword_prefix
          ?end_of_word_suffix ?fuse_unk ?byte_fallback ?ignore_merges ())
   in
-  create ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+  create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
-let wordpiece ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
-    ?pad_token ?unk_token ?vocab ?continuing_subword_prefix
+let wordpiece ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token ?vocab ?continuing_subword_prefix
     ?max_input_chars_per_word () =
   let vocab_tbl =
     match vocab with None -> Hashtbl.create 100 | Some v -> vocab_to_hashtbl v
@@ -355,33 +344,33 @@ let wordpiece ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
       (Wordpiece.create ~vocab:vocab_tbl ?unk_token ?continuing_subword_prefix
          ?max_input_chars_per_word ())
   in
-  create ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+  create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
-let word_level ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
-    ?pad_token ?unk_token ?vocab () =
+let word_level ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token ?vocab () =
   let pre =
     match pre with Some _ -> pre | None -> Some (Pre_tokenizer.whitespace ())
   in
   let algorithm = Alg_wordlevel (Word_level.create ?vocab ?unk_token ()) in
-  create ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+  create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
-let unigram ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+let unigram ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token ?vocab () =
   let algorithm =
     Alg_unigram (Unigram.create (Option.value vocab ~default:[]))
   in
-  create ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+  create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
-let chars ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+let chars ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token () =
   let algorithm = Alg_chars (Chars.create ()) in
-  create ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+  create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
-let from_model_file ~vocab ?merges ?normalizer ?pre ?post ?decoder ?specials
+let from_model_file ~vocab ?merges ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token () =
   let algorithm =
     match merges with
@@ -389,18 +378,15 @@ let from_model_file ~vocab ?merges ?normalizer ?pre ?post ?decoder ?specials
         Alg_bpe (Bpe.from_files ~vocab_file:vocab ~merges_file)
     | None -> Alg_wordpiece (Wordpiece.from_file ~vocab_file:vocab)
   in
-  create ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
+  create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
 let add_tokens t tokens =
-  match t.algorithm with
-  | Alg_wordlevel model ->
-      let vocab = Word_level.get_vocab model in
-      let new_model = Word_level.create ~vocab ?unk_token:t.unk_token () in
-      ignore (Word_level.add_tokens new_model tokens);
-      { t with algorithm = Alg_wordlevel new_model }
-  | Alg_bpe _ | Alg_wordpiece _ | Alg_unigram _ | Alg_chars _ ->
-      invalid_arg err_add_tokens
+  create ?normalizer:t.normalizer ?pre:t.pre_tokenizer ?post:t.post_processor
+    ?decoder:t.decoder
+    ~added_tokens:(added_tokens t @ tokens)
+    ?bos_token:t.bos_token ?eos_token:t.eos_token ?pad_token:t.pad_token
+    ?unk_token:t.unk_token t.algorithm
 
 (* Encoding *)
 
@@ -688,21 +674,22 @@ let decode_batch t ?(skip_special_tokens = false) id_lists =
 let special_tokens_for_training init requested =
   let items =
     (match requested with
-      | Some sl -> List.map (fun (s : special) -> s.token) sl
+      | Some sl -> List.map (fun (a : added_token) -> a.content) sl
       | None -> [])
     @
     match init with
-    | Some tok -> List.map (fun (s : special) -> s.token) (specials tok)
+    | Some tok ->
+        List.map (fun (a : added_token) -> a.content) (added_tokens tok)
     | None -> []
   in
   dedup_by Fun.id items
 
-let merge_specials_from_training ~user_specials ~trained_tokens =
+let merge_added_tokens_from_training ~requested ~trained_tokens =
   let items =
-    (match user_specials with Some sl -> sl | None -> [])
-    @ List.map special trained_tokens
+    (match requested with Some tokens -> tokens | None -> [])
+    @ List.map added_token trained_tokens
   in
-  dedup_by (fun (s : special) -> s.token) items
+  dedup_by (fun (a : added_token) -> a.content) items
 
 let data_to_strings = function
   | `Files files ->
@@ -723,11 +710,11 @@ let data_to_strings = function
 let initial_alphabet_of strs =
   List.map (fun s -> if String.length s > 0 then s.[0] else ' ') strs
 
-let train_bpe ?init ?normalizer ?pre ?post ?decoder ?specials ?bos_token
+let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000) ?(min_frequency = 0)
     ?limit_alphabet ?initial_alphabet ?continuing_subword_prefix
     ?end_of_word_suffix ?(show_progress = true) ?max_token_length data =
-  let special_tokens = special_tokens_for_training init specials in
+  let special_tokens = special_tokens_for_training init added_tokens in
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
@@ -737,23 +724,23 @@ let train_bpe ?init ?normalizer ?pre ?post ?decoder ?specials ?bos_token
     Option.bind init (fun t ->
         match t.algorithm with Alg_bpe m -> Some m | _ -> None)
   in
-  let trained_model, result_specials =
+  let trained_model, trained_tokens =
     Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
       ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
       ~end_of_word_suffix ~max_token_length texts existing_bpe
   in
-  let all_specials =
-    merge_specials_from_training ~user_specials:specials
-      ~trained_tokens:result_specials
+  let all_added =
+    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
-  create ?normalizer ?pre ?post ?decoder ~specials:all_specials ?bos_token
+  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
     ?eos_token ?pad_token ?unk_token (Alg_bpe trained_model)
 
-let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?specials ?bos_token
-    ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000) ?(min_frequency = 0)
-    ?limit_alphabet ?initial_alphabet ?(continuing_subword_prefix = "##")
-    ?end_of_word_suffix ?(show_progress = true) data =
-  let special_tokens = special_tokens_for_training init specials in
+let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
+    ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
+    ?(min_frequency = 0) ?limit_alphabet ?initial_alphabet
+    ?(continuing_subword_prefix = "##") ?end_of_word_suffix
+    ?(show_progress = true) data =
+  let special_tokens = special_tokens_for_training init added_tokens in
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
@@ -763,57 +750,54 @@ let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?specials ?bos_token
     Option.bind init (fun t ->
         match t.algorithm with Alg_wordpiece m -> Some m | _ -> None)
   in
-  let trained_model, result_specials =
+  let trained_model, trained_tokens =
     Wordpiece.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
       ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
       ~end_of_word_suffix texts existing_wp
   in
-  let all_specials =
-    merge_specials_from_training ~user_specials:specials
-      ~trained_tokens:result_specials
+  let all_added =
+    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
-  create ?normalizer ?pre ?post ?decoder ~specials:all_specials ?bos_token
+  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
     ?eos_token ?pad_token ?unk_token (Alg_wordpiece trained_model)
 
-let train_wordlevel ?init ?normalizer ?pre ?post ?decoder ?specials ?bos_token
-    ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000) ?(min_frequency = 0)
-    ?(show_progress = true) data =
-  let special_tokens = special_tokens_for_training init specials in
+let train_wordlevel ?init ?normalizer ?pre ?post ?decoder ?added_tokens
+    ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
+    ?(min_frequency = 0) ?(show_progress = true) data =
+  let special_tokens = special_tokens_for_training init added_tokens in
   let texts = data_to_strings data in
   let existing_wl =
     Option.bind init (fun t ->
         match t.algorithm with Alg_wordlevel m -> Some m | _ -> None)
   in
-  let trained_model, result_specials =
+  let trained_model, trained_tokens =
     Word_level.train ~vocab_size ~min_frequency ~show_progress ~special_tokens
       texts existing_wl
   in
-  let all_specials =
-    merge_specials_from_training ~user_specials:specials
-      ~trained_tokens:result_specials
+  let all_added =
+    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
-  create ?normalizer ?pre ?post ?decoder ~specials:all_specials ?bos_token
+  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
     ?eos_token ?pad_token ?unk_token (Alg_wordlevel trained_model)
 
-let train_unigram ?init ?normalizer ?pre ?post ?decoder ?specials ?bos_token
+let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 8000)
     ?(show_progress = true) ?(shrinking_factor = 0.75) ?(max_piece_length = 16)
     ?(n_sub_iterations = 2) data =
-  let special_tokens = special_tokens_for_training init specials in
+  let special_tokens = special_tokens_for_training init added_tokens in
   let texts = data_to_strings data in
   let existing_ug =
     Option.bind init (fun t ->
         match t.algorithm with Alg_unigram m -> Some m | _ -> None)
   in
-  let trained_model, result_specials =
+  let trained_model, trained_tokens =
     Unigram.train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
       ~unk_token ~max_piece_length ~n_sub_iterations texts existing_ug
   in
-  let all_specials =
-    merge_specials_from_training ~user_specials:specials
-      ~trained_tokens:result_specials
+  let all_added =
+    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
-  create ?normalizer ?pre ?post ?decoder ~specials:all_specials ?bos_token
+  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
     ?eos_token ?pad_token ?unk_token (Alg_unigram trained_model)
 
 (* JSON serialization *)
@@ -831,7 +815,7 @@ let json_mem name = function
 let json_string_or_null = function Jsont.String (s, _) -> Some s | _ -> None
 let json_option_of f = function None -> Jsont.Json.null () | Some v -> f v
 
-let special_of_json json =
+let added_token_of_json json =
   let mem name = json_mem name json in
   let bool_or default = function Jsont.Bool (b, _) -> b | _ -> default in
   let to_str = function
@@ -840,7 +824,7 @@ let special_of_json json =
   in
   let special = bool_or true (mem "special") in
   {
-    token = to_str (mem "content");
+    content = to_str (mem "content");
     special;
     single_word = bool_or false (mem "single_word");
     lstrip = bool_or false (mem "lstrip");
@@ -1052,10 +1036,10 @@ let from_json json =
     let algorithm = alg_of_json (mem "model") in
     let added_tokens =
       match mem "added_tokens" with
-      | Jsont.Array (l, _) -> List.map special_of_json l
+      | Jsont.Array (l, _) -> List.map added_token_of_json l
       | _ -> []
     in
-    Ok (create ?normalizer ?pre ?post ?decoder ~specials:added_tokens algorithm)
+    Ok (create ?normalizer ?pre ?post ?decoder ~added_tokens algorithm)
   with
   | Failure msg -> Error msg
   | exn -> Error (Printexc.to_string exn)

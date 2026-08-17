@@ -191,7 +191,7 @@ let test_pad_token_set_at_construction () =
   let tokenizer =
     word_level ~vocab ~unk_token:"<unk>"
       ~pre:(Pre_tokenizer.whitespace ())
-      ~specials:[ special "[PAD]" ]
+      ~added_tokens:[ added_token "[PAD]" ]
       ~pad_token:"[PAD]" ()
   in
   equal ~msg:"pad token set" (option string) (Some "[PAD]")

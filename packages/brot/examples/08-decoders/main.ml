@@ -57,7 +57,7 @@ let () =
   in
   let tokenizer =
     wordpiece ~vocab ~unk_token:"[UNK]"
-      ~specials:[ special "[CLS]"; special "[SEP]" ]
+      ~added_tokens:[ added_token "[CLS]"; added_token "[SEP]" ]
       ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
       ~decoder:(Decoder.wordpiece ()) ()
   in

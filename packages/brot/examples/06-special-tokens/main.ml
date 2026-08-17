@@ -31,10 +31,10 @@ let () =
       ("you", 7);
     ]
   in
-  let specials = List.map special [ "[CLS]"; "[SEP]"; "[UNK]" ] in
+  let added_tokens = List.map added_token [ "[CLS]"; "[SEP]"; "[UNK]" ] in
   let post = Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) () in
   let tokenizer =
-    word_level ~vocab ~unk_token:"[UNK]" ~specials ~post
+    word_level ~vocab ~unk_token:"[UNK]" ~added_tokens ~post
       ~pre:(Pre_tokenizer.whitespace ())
       ()
   in
@@ -63,7 +63,7 @@ let () =
       ()
   in
   let tok2 =
-    word_level ~vocab ~unk_token:"[UNK]" ~specials ~post:template_post
+    word_level ~vocab ~unk_token:"[UNK]" ~added_tokens ~post:template_post
       ~pre:(Pre_tokenizer.whitespace ())
       ()
   in

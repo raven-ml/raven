@@ -29,7 +29,7 @@ If you already use HuggingFace Tokenizers, this should be enough to become produ
 - Tokenizers are immutable. Pipeline components are set at construction time, not mutated after.
 - `from_file` returns `(t, string) result`. Handle errors explicitly.
 - Padding and truncation are per-call parameters, not global tokenizer state.
-- Special tokens use a record type (`Brot.special`) with explicit control over stripping and normalization. Like HuggingFace's added tokens, they are matched atomically in the input on `encode`.
+- Added tokens use a record type (`Brot.added_token`) with explicit control over stripping and normalization. Like HuggingFace's added tokens, they are matched atomically in the input on `encode`.
 - `encode` returns `Encoding.t`; use `encode_ids` when you only need the ID array.
 
 ---
@@ -365,10 +365,10 @@ tokenizer.add_special_tokens([
 ```ocaml
 let tokenizer =
   Brot.bpe
-    ~specials:[
-      Brot.special "[CLS]";
-      Brot.special "[SEP]";
-      Brot.special "[PAD]";
+    ~added_tokens:[
+      Brot.added_token "[CLS]";
+      Brot.added_token "[SEP]";
+      Brot.added_token "[PAD]";
     ]
     ~pad_token:"[PAD]"
     ~bos_token:"[CLS]"
@@ -376,7 +376,7 @@ let tokenizer =
     ()
 ```
 
-In HuggingFace, special tokens are added after construction. In Brot, they are part of construction since tokenizers are immutable. The `special` function accepts optional `~single_word`, `~lstrip`, `~rstrip`, `~normalized` and `~special` parameters matching `AddedToken`; `~special:false` is the equivalent of `add_tokens` rather than `add_special_tokens`. Both libraries match these tokens atomically in the input, ahead of the normalizer and the pre-tokenizer.
+In HuggingFace, special tokens are added after construction. In Brot they are usually part of construction, since tokenizers are immutable; `Brot.add_tokens` returns a new tokenizer with more of them, for any model. The `added_token` function accepts optional `~single_word`, `~lstrip`, `~rstrip`, `~normalized` and `~special` parameters matching `AddedToken`. Its defaults line the two HuggingFace registrations up one for one: `added_token c` is `add_special_tokens([c])` and `added_token ~special:false c` is `add_tokens([c])`. Both libraries match these tokens atomically in the input, ahead of the normalizer and the pre-tokenizer, and neither puts them in the model's own vocabulary.
 
 ### 8.2 Role tokens
 
@@ -630,11 +630,11 @@ let tokenizer =
     (`Files [ "corpus.txt" ])
     ~vocab_size:30000
     ~min_frequency:2
-    ~specials:[
-      Brot.special "[UNK]";
-      Brot.special "[CLS]";
-      Brot.special "[SEP]";
-      Brot.special "[PAD]";
+    ~added_tokens:[
+      Brot.added_token "[UNK]";
+      Brot.added_token "[CLS]";
+      Brot.added_token "[SEP]";
+      Brot.added_token "[PAD]";
     ]
     ~unk_token:"[UNK]"
     ~pad_token:"[PAD]"
@@ -664,7 +664,7 @@ let tokenizer =
     (`Files [ "corpus.txt" ])
     ~vocab_size:30000
     ~unk_token:"[UNK]"
-    ~specials:[ Brot.special "[UNK]"; Brot.special "[PAD]" ]
+    ~added_tokens:[ Brot.added_token "[UNK]"; Brot.added_token "[PAD]" ]
     ~pad_token:"[PAD]"
 ```
 
@@ -690,7 +690,7 @@ let tokenizer =
     (`Files [ "corpus.txt" ])
     ~vocab_size:8000
     ~unk_token:"<unk>"
-    ~specials:[ Brot.special "<unk>"; Brot.special "<pad>" ]
+    ~added_tokens:[ Brot.added_token "<unk>"; Brot.added_token "<pad>" ]
     ~pad_token:"<pad>"
 ```
 
@@ -800,4 +800,4 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 | Set pre-tokenizer   | `tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()`      | `Brot.bpe ~pre:(Pre_tokenizer.byte_level ()) ()`                 |
 | Set post-processor  | `tokenizer.post_processor = processors.BertProcessing(...)` | `Brot.bpe ~post:(Post_processor.bert ~sep ~cls ()) ()`           |
 | Set decoder         | `tokenizer.decoder = decoders.WordPiece()`                  | `Brot.bpe ~decoder:(Decoder.wordpiece ()) ()`                    |
-| Add special tokens  | `tokenizer.add_special_tokens([AddedToken(...)])`           | Pass `~specials:[Brot.special "..."; ...]` at construction       |
+| Add special tokens  | `tokenizer.add_special_tokens([AddedToken(...)])`           | Pass `~added_tokens:[Brot.added_token "..."; ...]` at construction, or `Brot.add_tokens` after it (any model) |

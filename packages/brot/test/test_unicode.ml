@@ -133,17 +133,23 @@ let test_tokenize_with_normalization () =
       ]
   in
   let tokenizer =
-    word_level ~normalizer ~pre:(Pre_tokenizer.whitespace ()) ()
+    word_level ~normalizer
+      ~pre:(Pre_tokenizer.whitespace ())
+      ~vocab:[ ("hello", 0); ("world", 1); ("!", 2) ]
+      ()
   in
-  let tokenizer = add_tokens tokenizer [ "hello"; "world"; "!" ] in
   let tokens = encode tokenizer text |> Encoding.tokens |> Array.to_list in
   equal ~msg:"normalized tokenization" (list string) [ "hello"; "world"; "!" ]
     tokens
 
 let test_tokenize_unicode_words () =
   let text = "café résumé naïve" in
-  let tokenizer = word_level ~pre:(Pre_tokenizer.whitespace ()) () in
-  let tokenizer = add_tokens tokenizer [ "café"; "résumé"; "naïve" ] in
+  let tokenizer =
+    word_level
+      ~pre:(Pre_tokenizer.whitespace ())
+      ~vocab:[ ("café", 0); ("résumé", 1); ("naïve", 2) ]
+      ()
+  in
   let tokens = encode tokenizer text |> Encoding.tokens |> Array.to_list in
   equal ~msg:"tokenized unicode" bool true (List.length tokens > 0)
 

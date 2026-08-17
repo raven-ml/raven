@@ -55,17 +55,6 @@ let get_vocab model =
 
 let get_vocab_size model = Hashtbl.length model.vocab
 
-let add_tokens model tokens =
-  let start_id = Hashtbl.length model.vocab in
-  let count = ref 0 in
-  List.iteri
-    (fun i token ->
-      if not (Hashtbl.mem model.vocab token) then (
-        add_token model.vocab model.vocab_r token (start_id + i);
-        incr count))
-    tokens;
-  !count
-
 let json_obj pairs =
   Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
 

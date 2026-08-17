@@ -9,7 +9,7 @@ dune exec brot/examples/06-special-tokens/main.exe
 
 ## What You'll Learn
 
-- Defining special tokens with `Brot.special`
+- Defining added tokens with `Brot.added_token`
 - BERT-style post-processing: `[CLS] A [SEP]` and `[CLS] A [SEP] B [SEP]`
 - Sentence-pair encoding with `encode ~pair`
 - Type IDs: 0 for first sequence, 1 for second
@@ -20,7 +20,7 @@ dune exec brot/examples/06-special-tokens/main.exe
 
 | Function                       | Purpose                                     |
 | ------------------------------ | ------------------------------------------- |
-| `Brot.special`                 | Define a special token configuration        |
+| `Brot.added_token`             | Define an added token configuration         |
 | `Post_processor.bert`          | BERT-style `[CLS] A [SEP] B [SEP]`          |
 | `Post_processor.template`      | Template-based with `$A`, `$B` placeholders |
 | `Brot.encode ~pair`            | Encode a sentence pair                      |

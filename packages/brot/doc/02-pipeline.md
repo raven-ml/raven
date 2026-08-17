@@ -22,7 +22,7 @@ is skipped.
 
 ## Added tokens
 
-The tokens passed as `~specials` are matched in the input ahead of the
+The tokens passed as `~added_tokens` are matched in the input ahead of the
 pre-tokenizer and the model, and emitted with their own ID. Only the text
 around them reaches the rest of the pipeline:
 
@@ -32,7 +32,7 @@ open Brot
 let tokenizer =
   bpe
     ~vocab:[ ("a", 0); ("b", 1) ]
-    ~specials:[ special "<|endoftext|>" ]
+    ~added_tokens:[ added_token "<|endoftext|>" ]
     ()
 
 let ids = encode_ids tokenizer "a<|endoftext|>b" (* [| 0; 2; 1 |] *)
@@ -42,7 +42,7 @@ A token that the model does not already hold is numbered from the end of the
 model vocabulary, as above. At a given position the longest token wins, and
 earlier positions win over later ones.
 
-`special` takes optional parameters that refine matching: `~single_word`
+`added_token` takes optional parameters that refine matching: `~single_word`
 restricts a token to whole words, `~lstrip` and `~rstrip` extend the match
 over the neighbouring whitespace, and `~normalized` matches against the
 normalized text rather than against the raw input, which is matched first.
@@ -183,7 +183,7 @@ let tokenizer =
     ~vocab:
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("sat", 5); ("how", 6); ("are", 7); ("you", 8) ]
-    ~specials:(List.map special [ "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
     ~decoder:(Decoder.wordpiece ())
@@ -209,7 +209,7 @@ let tokenizer =
   word_level
     ~vocab:
       [ ("[BOS]", 0); ("[EOS]", 1); ("hello", 2); ("world", 3) ]
-    ~specials:(List.map special [ "[BOS]"; "[EOS]" ])
+    ~added_tokens:(List.map added_token [ "[BOS]"; "[EOS]" ])
     ~pre:(Pre_tokenizer.whitespace ())
     ~post:
       (Post_processor.template
@@ -288,7 +288,7 @@ let tokenizer =
       [ ("[PAD]", 0); ("[UNK]", 1); ("[CLS]", 2); ("[SEP]", 3);
         ("the", 4); ("cat", 5); ("sat", 6); ("on", 7); ("mat", 8);
         ("play", 9); ("##ing", 10); ("##ed", 11); ("a", 12) ]
-    ~specials:(List.map special [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]"
     (* 4. Post-processor: add [CLS] and [SEP] *)
     ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())

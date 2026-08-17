@@ -86,7 +86,7 @@ let tokenizer =
     ~vocab:
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("play", 5); ("##ing", 6) ]
-    ~specials:(List.map special [ "[UNK]"; "[CLS]"; "[SEP]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
     ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
     ~decoder:(Decoder.wordpiece ())
     ~pre:(Pre_tokenizer.whitespace ())
@@ -130,7 +130,7 @@ let tokenizer =
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2); ("[PAD]", 3);
         ("the", 4); ("cat", 5); ("sat", 6); ("on", 7);
         ("play", 8); ("##ing", 9); ("##ed", 10) ]
-    ~specials:(List.map special [ "[UNK]"; "[CLS]"; "[SEP]"; "[PAD]" ])
+    ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]"; "[PAD]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
 
 (* The normalizer lowercases "The Cat" before tokenization *)
@@ -206,7 +206,7 @@ open Brot
 
 let tokenizer =
   train_bpe ~vocab_size:80 ~show_progress:false
-    ~specials:(List.map special [ "[PAD]" ])
+    ~added_tokens:(List.map added_token [ "[PAD]" ])
     ~pad_token:"[PAD]"
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";

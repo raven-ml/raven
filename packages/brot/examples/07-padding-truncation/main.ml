@@ -34,7 +34,7 @@ let () =
   in
   let tokenizer =
     word_level ~vocab ~unk_token:"<unk>"
-      ~specials:[ special "[PAD]" ]
+      ~added_tokens:[ added_token "[PAD]" ]
       ~pad_token:"[PAD]"
       ~pre:(Pre_tokenizer.whitespace ())
       ()
