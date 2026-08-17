@@ -70,9 +70,14 @@ val process :
 (** [process t enc ~add_special_tokens] adds special tokens and sets type IDs on
     [enc].
 
-    When [~pair] is provided, both sequences are merged into a single encoding
-    with appropriate type IDs. When [~add_special_tokens] is [false], special
-    token insertion is skipped but byte-level offset trimming still applies. *)
+    When [~pair] is provided, both sequences are merged into a single encoding.
+    [pair] enters as the second segment, with type ID [1], which [t] may
+    override. Offsets are not shifted: each sequence keeps the offsets into its
+    own text.
+
+    When [~add_special_tokens] is [false], no special token is inserted, but
+    everything else still happens: the two sequences are still merged, type IDs
+    are still assigned, and byte-level offsets are still trimmed. *)
 
 val added_tokens : t -> is_pair:bool -> int
 (** [added_tokens t ~is_pair] is the number of special tokens [t] adds. Useful

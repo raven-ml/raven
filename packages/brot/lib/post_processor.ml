@@ -65,7 +65,7 @@ let with_type_id enc type_id =
     ~offsets:(Encoding.offsets enc)
     ~special_tokens_mask:(Encoding.special_tokens_mask enc)
     ~attention_mask:(Encoding.attention_mask enc)
-    ()
+    ~overflowing:(Encoding.overflowing enc) ()
 
 let build_special_lookup special_tokens =
   let tbl = Hashtbl.create (List.length special_tokens + 1) in
@@ -184,20 +184,9 @@ let process_bert ~sep ~cls encodings ~add_special_tokens =
     match encodings with
     | [] -> []
     | [ encoding ] ->
-        [
-          Encoding.concat_list [ cls_tok 0; with_type_id encoding 0; sep_tok 0 ];
-        ]
+        [ Encoding.concat_list [ cls_tok 0; encoding; sep_tok 0 ] ]
     | [ enc1; enc2 ] ->
-        [
-          Encoding.concat_list
-            [
-              cls_tok 0;
-              with_type_id enc1 0;
-              sep_tok 0;
-              with_type_id enc2 1;
-              sep_tok 1;
-            ];
-        ]
+        [ Encoding.concat_list [ cls_tok 0; enc1; sep_tok 0; enc2; sep_tok 1 ] ]
     | _ -> encodings
 
 let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
@@ -206,6 +195,9 @@ let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
     if trim_offsets then trim_encodings ~add_prefix_space encodings
     else encodings
   in
+  (* RoBERTa has a single segment: the second sequence of a pair keeps type id
+     0, with or without special tokens. *)
+  let encodings = List.map (fun enc -> with_type_id enc 0) encodings in
   if not add_special_tokens then encodings
   else
     let cls_str, cls_id = cls in
@@ -214,19 +206,11 @@ let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
     let sep_tok = special_token ~id:sep_id ~token:sep_str ~type_id:0 in
     match encodings with
     | [] -> []
-    | [ encoding ] ->
-        [ Encoding.concat_list [ cls_tok; with_type_id encoding 0; sep_tok ] ]
+    | [ encoding ] -> [ Encoding.concat_list [ cls_tok; encoding; sep_tok ] ]
     | [ enc1; enc2 ] ->
         [
           Encoding.concat_list
-            [
-              cls_tok;
-              with_type_id enc1 0;
-              sep_tok;
-              sep_tok;
-              with_type_id enc2 0;
-              sep_tok;
-            ];
+            [ cls_tok; enc1; sep_tok; sep_tok; enc2; sep_tok ];
         ]
     | _ -> encodings
 
@@ -342,89 +326,93 @@ let parse_template_definition ~special_lookup = function
 
 (* Template encoding *)
 
-let build_encoding_from_pieces pieces source_encodings special_lookup =
-  let ids_rev = ref [] in
-  let type_ids_rev = ref [] in
-  let tokens_rev = ref [] in
-  let words_rev = ref [] in
-  let offsets_rev = ref [] in
-  let special_mask_rev = ref [] in
-  let attention_rev = ref [] in
-  let append ~id ~token ~word ~type_id ~offset ~special ~attention =
-    ids_rev := id :: !ids_rev;
-    type_ids_rev := type_id :: !type_ids_rev;
-    tokens_rev := token :: !tokens_rev;
-    words_rev := word :: !words_rev;
-    offsets_rev := offset :: !offsets_rev;
-    special_mask_rev := special :: !special_mask_rev;
-    attention_rev := attention :: !attention_rev
+let source_encoding source index =
+  if index >= Array.length source then invalid_arg err_missing_sequence;
+  source.(index)
+
+let find_special special_tokens key =
+  match List.find_opt (fun tok -> String.equal tok.key key) special_tokens with
+  | Some special -> special
+  | None -> invalid_arg (err_unknown_special key)
+
+let piece_length source special_tokens = function
+  | Piece_sequence { id; _ } ->
+      Encoding.length (source_encoding source (sequence_id_to_index id))
+  | Piece_special { key; _ } ->
+      List.length (find_special special_tokens key).value_ids
+
+let build_encoding_from_pieces pieces source special_tokens =
+  let total =
+    List.fold_left
+      (fun acc piece -> acc + piece_length source special_tokens piece)
+      0 pieces
   in
-  let append_sequence seq_id type_id =
-    let index = sequence_id_to_index seq_id in
-    if index >= Array.length source_encodings then
-      invalid_arg err_missing_sequence;
-    let src = source_encodings.(index) in
-    let src_ids = Encoding.ids src in
-    let src_tokens = Encoding.tokens src in
-    let src_words = Encoding.word_ids src in
-    let src_offsets = Encoding.offsets src in
-    let src_special = Encoding.special_tokens_mask src in
-    let src_attention = Encoding.attention_mask src in
-    let len = Array.length src_ids in
-    for i = 0 to len - 1 do
-      let token = if i < Array.length src_tokens then src_tokens.(i) else "" in
-      let word = if i < Array.length src_words then src_words.(i) else None in
-      let offset =
-        if i < Array.length src_offsets then src_offsets.(i) else (0, 0)
-      in
-      let special =
-        if i < Array.length src_special && src_special.(i) <> 0 then 1 else 0
-      in
-      let attention =
-        if i < Array.length src_attention && src_attention.(i) <> 0 then 1
-        else 0
-      in
-      append ~id:src_ids.(i) ~token ~word ~type_id ~offset ~special ~attention
-    done
-  in
-  let append_special key type_id =
-    match Hashtbl.find_opt special_lookup key with
-    | None -> invalid_arg (err_unknown_special key)
-    | Some special ->
-        let rec loop ids tokens =
-          match (ids, tokens) with
-          | id :: rest_ids, token :: rest_tokens ->
-              append ~id ~token ~word:None ~type_id ~offset:(0, 0) ~special:1
-                ~attention:1;
-              loop rest_ids rest_tokens
-          | [], [] -> ()
-          | _ -> invalid_arg (err_mismatch key)
-        in
-        loop special.value_ids special.value_tokens
-  in
+  let ids = Array.make total 0 in
+  let type_ids = Array.make total 0 in
+  let tokens = Array.make total "" in
+  let words = Array.make total None in
+  let offsets = Array.make total (0, 0) in
+  let special_mask = Array.make total 0 in
+  let attention = Array.make total 0 in
+  let pos = ref 0 in
   List.iter
     (function
-      | Piece_sequence { id; type_id } -> append_sequence id type_id
-      | Piece_special { key; type_id } -> append_special key type_id)
+      | Piece_sequence { id; type_id } ->
+          let src = source_encoding source (sequence_id_to_index id) in
+          let len = Encoding.length src in
+          let at = !pos in
+          Array.blit (Encoding.ids src) 0 ids at len;
+          Array.fill type_ids at len type_id;
+          Array.blit (Encoding.tokens src) 0 tokens at len;
+          Array.blit (Encoding.word_ids src) 0 words at len;
+          Array.blit (Encoding.offsets src) 0 offsets at len;
+          Array.blit (Encoding.special_tokens_mask src) 0 special_mask at len;
+          Array.blit (Encoding.attention_mask src) 0 attention at len;
+          pos := at + len
+      | Piece_special { key; type_id } ->
+          let special = find_special special_tokens key in
+          let rec write value_ids value_tokens =
+            match (value_ids, value_tokens) with
+            | id :: rest_ids, token :: rest_tokens ->
+                let at = !pos in
+                ids.(at) <- id;
+                type_ids.(at) <- type_id;
+                tokens.(at) <- token;
+                special_mask.(at) <- 1;
+                attention.(at) <- 1;
+                pos := at + 1;
+                write rest_ids rest_tokens
+            | [], [] -> ()
+            | _ -> invalid_arg (err_mismatch key)
+          in
+          write special.value_ids special.value_tokens)
     pieces;
-  let to_array r = Array.of_list (List.rev !r) in
-  Encoding.create ~ids:(to_array ids_rev) ~type_ids:(to_array type_ids_rev)
-    ~tokens:(to_array tokens_rev) ~words:(to_array words_rev)
-    ~offsets:(to_array offsets_rev)
-    ~special_tokens_mask:(to_array special_mask_rev)
-    ~attention_mask:(to_array attention_rev) ()
+  Encoding.create ~ids ~type_ids ~tokens ~words ~offsets
+    ~special_tokens_mask:special_mask ~attention_mask:attention ()
 
+(* Without special tokens the template still decides the order and type ids of
+   the sequences; only its special pieces are dropped. A template left with a
+   single sequence is that sequence, so it shares its arrays instead of copying
+   them. *)
 let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
     =
-  if not add_special_tokens then encodings
-  else
-    let special_lookup = build_special_lookup special_tokens in
-    let source = Array.of_list encodings in
-    match Array.length source with
-    | 0 -> []
-    | 1 -> [ build_encoding_from_pieces single source special_lookup ]
-    | 2 -> [ build_encoding_from_pieces pair source special_lookup ]
-    | _ -> encodings
+  let source = Array.of_list encodings in
+  let apply pieces =
+    let pieces =
+      if add_special_tokens then pieces
+      else List.filter (function Piece_special _ -> false | _ -> true) pieces
+    in
+    match pieces with
+    | [ Piece_sequence { id; type_id } ] ->
+        let src = source_encoding source (sequence_id_to_index id) in
+        [ with_type_id src type_id ]
+    | _ -> [ build_encoding_from_pieces pieces source special_tokens ]
+  in
+  match Array.length source with
+  | 0 -> []
+  | 1 -> apply single
+  | 2 -> apply pair
+  | _ -> encodings
 
 (* Processing *)
 
@@ -446,11 +434,10 @@ let rec process_list processor encodings ~add_special_tokens =
         encodings processors
 
 let process processor ?pair enc ~add_special_tokens =
-  let encodings = match pair with None -> [ enc ] | Some p -> [ enc; p ] in
-  match process_list processor encodings ~add_special_tokens with
-  | [ r ] -> r
-  | r :: _ -> r
-  | [] -> enc
+  let encodings =
+    match pair with None -> [ enc ] | Some p -> [ enc; with_type_id p 1 ]
+  in
+  Encoding.concat_list (process_list processor encodings ~add_special_tokens)
 
 let rec added_tokens processor ~is_pair =
   match processor with

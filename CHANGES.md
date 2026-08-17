@@ -1087,6 +1087,15 @@ thread.
 
 ### Brot
 
+- `Post_processor.process` keeps both sequences of a pair when
+  `~add_special_tokens:false`. It used to return only the first, silently
+  dropping the second sentence. The second sequence gets type ID `1`, except
+  under `roberta`, which has a single segment and puts every type ID at `0`
+  with or without special tokens.
+- A `template` post-processor applies its template when
+  `~add_special_tokens:false`, dropping only the special pieces, so the order
+  and type IDs a pair template assigns to `$A` and `$B` are honoured. Building
+  the processed encoding is 8× faster.
 - `train_bpe`, `train_wordpiece`, `train_wordlevel` and `train_unigram` count
   the pre-tokens their own pipeline produces: every text goes through
   `?normalizer` then `?pre`, and each piece is one word, as in HuggingFace.
