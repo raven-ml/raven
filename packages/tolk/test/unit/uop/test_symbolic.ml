@@ -7,60 +7,66 @@ let rewrite = Symbolic.simplify
 let var ?(dtype = Dtype.weakint) ~name ~lo ~hi () =
   Uop.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
+(* Comparing whole IR nodes through a testable prints both trees on failure,
+   where [is_true (Uop.equal a b)] prints only "false". *)
+let uop = Testable.make ~pp:Uop.pp ~equal:Uop.equal
+
+let const_int u =
+  match Uop.const_int_value u with
+  | Some n -> n
+  | None -> Format.kasprintf failwith "expected integer const, got %a" Uop.pp u
+
+let const_bool u =
+  match Uop.arg u with
+  | Uop.Arg.Value c -> (
+      match Const.view c with
+      | Const.Bool b -> b
+      | _ -> Format.kasprintf failwith "expected bool const, got %a" Uop.pp u)
+  | _ -> Format.kasprintf failwith "expected const arg, got %a" Uop.pp u
+
+(* Each of these folds is named with its result in symbolic.mli's
+   [symbolic_simple] list, so the assertion states the value. Checking only
+   that the root is [Ops.Const] passes on a fold that produces the wrong
+   number — the whole content of these rules. *)
+
 (* x + 0 -> x *)
 let add_zero_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
-  let e = Uop.O.(x + Uop.const_int 0) in
-  is_true ~msg:"result equals x" (Uop.equal (rewrite e) x)
+  equal ~msg:"x + 0 is x" uop x (rewrite Uop.O.(x + Uop.const_int 0))
 
 (* x * 1 -> x *)
 let mul_one_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
-  let e = Uop.O.(x * Uop.const_int 1) in
-  is_true ~msg:"result equals x" (Uop.equal (rewrite e) x)
+  equal ~msg:"x * 1 is x" uop x (rewrite Uop.O.(x * Uop.const_int 1))
 
 (* x // x -> 1 *)
 let div_self_folds () =
   let x = var ~name:"x" ~lo:1 ~hi:100 () in
-  let e = Uop.O.(x // x) in
-  let r = rewrite e in
-  is_true ~msg:"result is const"
-    (Uop.op r = Ops.Const)
+  equal ~msg:"x // x is 1" int 1 (const_int (rewrite Uop.O.(x // x)))
 
 (* x % x -> 0 *)
 let mod_self_folds () =
   let x = var ~name:"x" ~lo:1 ~hi:100 () in
-  let e = Uop.O.(x mod x) in
-  is_true ~msg:"result is const 0"
-    (Uop.op (rewrite e) = Ops.Const)
+  equal ~msg:"x mod x is 0" int 0 (const_int (rewrite Uop.O.(x mod x)))
 
-(* Cast of a const -> const. *)
+(* Cast of a const -> const, preserving the value. *)
 let cast_const_folds () =
-  let c = Uop.const_int 5 in
-  let e = Uop.cast ~src:c ~dtype:Dtype.int32 in
-  let r = rewrite e in
-  is_true ~msg:"folds to const"
-    (Uop.op r = Ops.Const)
+  let e = Uop.cast ~src:(Uop.const_int 5) ~dtype:Dtype.int32 in
+  equal ~msg:"cast of const 5 is const 5" int 5 (const_int (rewrite e))
 
 (* x < x -> false *)
 let lt_self_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
-  let e = Uop.O.(x < x) in
-  let r = rewrite e in
-  is_true ~msg:"result is const (bool false)"
-    (Uop.op r = Ops.Const)
+  equal ~msg:"x < x is false" bool false (const_bool (rewrite Uop.O.(x < x)))
 
 (* Two-stage associative: x + 3 + 4 -> x + 7. *)
 let two_stage_associative () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
   let e = Uop.O.(x + Uop.const_int 3 + Uop.const_int 4) in
-  let r = rewrite e in
-  (* Expect [Add(x, const)] with const 7. *)
-  let ok =
-    Uop.op r = Ops.Add
-    && Uop.op (Uop.src r).(1) = Ops.Const
-  in
-  is_true ~msg:"folds nested adds" ok
+  (* The folded constant is the point of the rule: assert the whole tree. *)
+  equal ~msg:"x + 3 + 4 is x + 7" uop
+    (rewrite Uop.O.(x + Uop.const_int 7))
+    (rewrite e)
 
 let int_neutral_chain_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:9 () in
@@ -68,20 +74,7 @@ let int_neutral_chain_folds () =
   let one = Uop.const (Const.int Dtype.int32 1) in
   let neg_one = Uop.const (Const.int Dtype.int32 (-1)) in
   let e = Uop.O.(((x + one) * one) + neg_one) in
-  is_true ~msg:"((x + 1) * 1) + -1 folds to x" (Uop.equal (rewrite e) x)
-
-let const_int u =
-  match Uop.const_int_value u with
-  | Some n -> n
-  | None -> failwith "expected integer const"
-
-let const_bool u =
-  match Uop.arg u with
-  | Uop.Arg.Value c ->
-      (match Const.view c with
-       | Const.Bool b -> b
-       | _ -> failwith "expected bool const")
-  | _ -> failwith "expected const arg"
+  equal ~msg:"((x + 1) * 1) + -1 folds to x" uop x (rewrite e)
 
 let is_invalid_const u =
   match Uop.arg u with
@@ -125,8 +118,8 @@ let index_stack_const_folds () =
 let nan_cmpeq_folds_to_false () =
   let nan = Uop.const (Const.float Dtype.float32 Float.nan) in
   let r = rewrite (Uop.alu_binary ~op:Ops.Cmpeq ~lhs:nan ~rhs:nan) in
-  is_true ~msg:"nan cmpeq nan folds to false under IEEE semantics"
-    (not (const_bool r))
+  equal ~msg:"nan cmpeq nan folds to false under IEEE semantics" bool false
+    (const_bool r)
 
 (* Inside [cond.where(t, f)], nested reads of [cond] fold to a literal. *)
 let where_closure_folds_nested_condition () =
@@ -141,9 +134,7 @@ let where_closure_folds_nested_condition () =
          Uop.O.(Uop.O.neg x * Uop.const_int 2)
          Uop.O.(x + Uop.const_int 1))
   in
-  is_true
-    ~msg:(Format.asprintf "nested where collapses per branch, got %a" Uop.pp r)
-    (Uop.equal r expected)
+  equal ~msg:"nested where collapses per branch" uop expected r
 
 (* A nested where on a different condition is left alone. *)
 let where_closure_keeps_other_conditions () =
@@ -153,7 +144,7 @@ let where_closure_keeps_other_conditions () =
   let c0 = Uop.O.(x < Uop.const_int 5) in
   let c1 = Uop.O.(x < Uop.const_int 7) in
   let e = Uop.O.where c0 (Uop.O.where c1 a b) (Uop.O.where c1 b a) in
-  is_true ~msg:"unrelated condition survives" (Uop.equal (rewrite e) e)
+  equal ~msg:"unrelated condition survives" uop e (rewrite e)
 
 let invalid_gate_comparison_gates_nonweak_invalid () =
   let cond =
@@ -184,15 +175,13 @@ let bool_cast_cmpne_const_folds () =
   let zero = Uop.const (Const.int Dtype.int32 0) in
   let one = Uop.const (Const.int Dtype.int32 1) in
   let other = Uop.const (Const.int Dtype.int32 3) in
-  is_true ~msg:"cast(bool) != 0 folds to bool"
-    (Uop.equal (rewrite (Uop.O.ne cast zero)) x);
+  equal ~msg:"cast(bool) != 0 folds to bool" uop x (rewrite (Uop.O.ne cast zero));
   let not_x = rewrite (Uop.O.ne cast one) in
-  is_true ~msg:"cast(bool) != 1 folds to not bool"
-    (Uop.op not_x = Ops.Cmpne);
-  is_true ~msg:"not bool compares against true"
-    (Array.length (Uop.src not_x) = 2 && Uop.equal (Uop.src not_x).(0) x
-     && const_bool (Uop.src not_x).(1));
-  is_true ~msg:"cast(bool) != other folds true"
+  (* "not x" is spelled [x <> true], so both operands are part of the claim. *)
+  equal ~msg:"cast(bool) != 1 folds to not bool" uop
+    (Uop.O.ne x (Uop.const (Const.bool true)))
+    not_x;
+  equal ~msg:"cast(bool) != other folds true" bool true
     (const_bool (rewrite (Uop.O.ne cast other)))
 
 (* A cast moves inside the gate rather than dropping it: the Invalid must reach
