@@ -7,46 +7,46 @@
 open Hugin
 open Windtrap
 
-let contains s sub =
-  let len_s = String.length s and len_sub = String.length sub in
-  if len_sub > len_s then false
-  else
-    let found = ref false in
-    for i = 0 to len_s - len_sub do
-      if (not !found) && String.sub s i len_sub = sub then found := true
-    done;
-    !found
-
+(* Non-overlapping occurrence count, matching windtrap's [contains ~count]. *)
 let count_substring s sub =
   let len_s = String.length s and len_sub = String.length sub in
-  if len_sub > len_s || len_sub = 0 then 0
+  if len_sub = 0 || len_sub > len_s then 0
   else begin
-    let count = ref 0 in
-    for i = 0 to len_s - len_sub do
-      if String.sub s i len_sub = sub then incr count
+    let count = ref 0 and i = ref 0 in
+    while !i <= len_s - len_sub do
+      if String.sub s !i len_sub = sub then begin
+        incr count;
+        i := !i + len_sub
+      end
+      else incr i
     done;
     !count
   end
 
 let render spec =
-  let tmp = Filename.temp_file "hugin_test" ".svg" in
+  let tmp = temp_file ~suffix:".svg" () in
   Hugin.render_svg ~width:400. ~height:300. tmp spec;
   let ic = open_in tmp in
-  let n = in_channel_length ic in
-  let s = really_input_string ic n in
-  close_in ic;
-  Sys.remove tmp;
-  s
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
 
 let x5 = Nx.init Float32 [| 5 |] (fun i -> float_of_int i.(0))
 let y5 = Nx.init Float32 [| 5 |] (fun i -> float_of_int i.(0))
+let vec l = Nx.create Float32 [| List.length l |] (Array.of_list l)
+
+(* A degenerate input must still yield a well-formed document rather than a
+   crash or a truncated file — the claim these cases actually make. *)
+let well_formed svg =
+  starts_with ~affix:"<?xml" svg;
+  ends_with ~affix:"</svg>\n" svg
 
 (* linear scale *)
 
 let test_linear_ticks_present () =
   let svg = render (Hugin.line ~x:x5 ~y:y5 ()) in
   (* Data range 0-4, auto-ticks should include 0 *)
-  is_true ~msg:"has tick 0" (contains svg ">0<")
+  contains ~sub:">0<" svg
 
 let test_linear_xlim () =
   (* Use different x and y ranges so we can distinguish x ticks from y ticks. x
@@ -57,53 +57,69 @@ let test_linear_xlim () =
     Nx.init Float32 [| 11 |] (fun i -> 100. +. (float_of_int i.(0) *. 10.))
   in
   let svg = render (Hugin.line ~x ~y () |> Hugin.xlim 0. 5.) in
-  is_true ~msg:"has tick 0" (contains svg ">0<");
+  contains ~sub:">0<" svg;
   (* With xlim 0-5, we should not see x-axis tick "8" or "10". Y-axis ticks are
      in 100-200 range so no confusion. *)
-  is_false ~msg:"no tick 8" (contains svg ">8<");
-  is_false ~msg:"no tick 10" (contains svg ">10<")
+  not_contains ~sub:">8<" svg;
+  not_contains ~sub:">10<" svg
 
 let test_linear_ylim () =
-  let x = Nx.init Float32 [| 11 |] (fun i -> float_of_int i.(0)) in
+  (* Mirror of the xlim case: x lives in 100..200 so that a ">10<" match can
+     only have come from the y axis. *)
+  let x =
+    Nx.init Float32 [| 11 |] (fun i -> 100. +. (float_of_int i.(0) *. 10.))
+  in
   let y = Nx.init Float32 [| 11 |] (fun i -> float_of_int i.(0)) in
   let svg = render (Hugin.line ~x ~y () |> Hugin.ylim 0. 5.) in
-  is_true ~msg:"valid svg" (contains svg "<svg")
+  well_formed svg;
+  contains ~sub:">0<" svg;
+  not_contains ~msg:"ylim 0-5 excludes a tick at 10" ~sub:">10<" svg
 
 let test_linear_negative_range () =
-  let x = Nx.create Float32 [| 5 |] [| -10.; -5.; 0.; 5.; 10. |] in
-  let y = Nx.create Float32 [| 5 |] [| -10.; -5.; 0.; 5.; 10. |] in
-  let svg = render (Hugin.line ~x ~y ()) in
-  is_true ~msg:"has tick 0" (contains svg ">0<")
+  let x = vec [ -10.; -5.; 0.; 5.; 10. ] in
+  let svg = render (Hugin.line ~x ~y:x ()) in
+  (* A symmetric range must show the negative ticks, not just the origin. *)
+  in_order ~subs:[ ">-10<"; ">-5<"; ">0<"; ">5<"; ">10<" ] svg
 
 let test_linear_small_range () =
-  let x = Nx.create Float32 [| 3 |] [| 0.; 0.0005; 0.001 |] in
-  let y = Nx.create Float32 [| 3 |] [| 0.; 0.5; 1. |] in
+  let x = vec [ 0.; 0.0005; 0.001 ] in
+  let y = vec [ 0.; 0.5; 1. ] in
   let svg = render (Hugin.line ~x ~y ()) in
-  is_true ~msg:"valid svg" (contains svg "<svg")
+  well_formed svg;
+  contains ~msg:"a sub-millesimal range still draws its line" ~sub:"<path" svg
 
 let test_linear_single_point () =
-  let x = Nx.create Float32 [| 1 |] [| 5. |] in
-  let y = Nx.create Float32 [| 1 |] [| 5. |] in
-  let svg = render (Hugin.line ~x ~y ()) in
-  is_true ~msg:"valid svg" (contains svg "<svg")
+  let p = vec [ 5. ] in
+  let svg = render (Hugin.line ~x:p ~y:p ()) in
+  (* A degenerate zero-width range must not divide by zero or emit NaN
+     coordinates, which is what a bare "<svg is present" check would miss. *)
+  well_formed svg;
+  not_contains ~sub:"NaN" svg;
+  not_contains ~sub:"inf" svg
 
 (* log scale *)
 
 let test_log_ticks () =
-  let x = Nx.create Float32 [| 4 |] [| 1.; 10.; 100.; 1000. |] in
-  let y = Nx.create Float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let x = vec [ 1.; 10.; 100.; 1000. ] in
+  let y = vec [ 1.; 2.; 3.; 4. ] in
   let svg = render (Hugin.line ~x ~y () |> Hugin.xscale `Log) in
-  is_true ~msg:"has tick 1" (contains svg ">1<");
-  is_true ~msg:"has tick 10" (contains svg ">10<");
-  is_true ~msg:"has tick 10^2" (contains svg ">10^2<");
-  is_true ~msg:"has tick 10^3" (contains svg ">10^3<")
+  (* Decade ticks, ascending along the axis — order is part of the claim. *)
+  in_order ~subs:[ ">1<"; ">10<"; ">10^2<"; ">10^3<" ] svg
 
 let test_log_y () =
-  let x = Nx.create Float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  let y = Nx.create Float32 [| 4 |] [| 1.; 10.; 100.; 1000. |] in
+  let x = vec [ 1.; 2.; 3.; 4. ] in
+  let y = vec [ 1.; 10.; 100.; 1000. ] in
   let svg = render (Hugin.line ~x ~y () |> Hugin.yscale `Log) in
-  is_true ~msg:"has tick 1" (contains svg ">1<");
-  is_true ~msg:"has tick 10^3" (contains svg ">10^3<")
+  contains ~sub:">1<" svg;
+  contains ~sub:">10^3<" svg
+
+let test_log_rejects_nothing_below_one () =
+  (* A log axis over a decade span must label every decade in between, not just
+     the endpoints. *)
+  let x = vec [ 1.; 1000. ] in
+  let y = vec [ 1.; 2. ] in
+  let svg = render (Hugin.line ~x ~y () |> Hugin.xscale `Log) in
+  in_order ~subs:[ ">1<"; ">10<"; ">10^2<"; ">10^3<" ] svg
 
 (* custom ticks *)
 
@@ -112,101 +128,116 @@ let test_explicit_xticks () =
     render
       (Hugin.line ~x:x5 ~y:y5 () |> Hugin.xticks [ (0., "zero"); (4., "four") ])
   in
-  is_true ~msg:"has custom tick zero" (contains svg ">zero<");
-  is_true ~msg:"has custom tick four" (contains svg ">four<")
+  in_order ~subs:[ ">zero<"; ">four<" ] svg
 
 let test_explicit_yticks () =
   let svg =
     render
       (Hugin.line ~x:x5 ~y:y5 () |> Hugin.yticks [ (0., "low"); (4., "high") ])
   in
-  is_true ~msg:"has custom tick low" (contains svg ">low<");
-  is_true ~msg:"has custom tick high" (contains svg ">high<")
+  contains ~sub:">low<" svg;
+  contains ~sub:">high<" svg
+
+let test_explicit_xticks_replace_auto () =
+  (* xticks "Overrides auto-generated ticks" (hugin.mli), so the automatic
+     labels must be gone — not merely joined by the custom ones. The y data is
+     pushed into the hundreds so that a bare ">1<" cannot be a y-axis tick. *)
+  let y =
+    Nx.init Float32 [| 5 |] (fun i -> 100. +. (float_of_int i.(0) *. 100.))
+  in
+  let svg =
+    render
+      (Hugin.line ~x:x5 ~y () |> Hugin.xticks [ (0., "zero"); (4., "four") ])
+  in
+  in_order ~subs:[ ">zero<"; ">four<" ] svg;
+  not_contains ~sub:">1<" svg;
+  not_contains ~sub:">2<" svg;
+  not_contains ~sub:">3<" svg
 
 (* sqrt scale *)
 
+let sqrt_x = vec [ 0.; 1.; 4.; 9.; 16. ]
+let sqrt_y = vec [ 0.; 1.; 2.; 3.; 4. ]
+
 let test_sqrt_handles_zero () =
   (* Sqrt scale handles zero gracefully — critical for astronomical fluxes *)
-  let x = Nx.create Float32 [| 5 |] [| 0.; 1.; 4.; 9.; 16. |] in
-  let y = Nx.create Float32 [| 5 |] [| 0.; 1.; 2.; 3.; 4. |] in
-  let svg = render (Hugin.line ~x ~y () |> Hugin.xscale `Sqrt) in
-  is_true ~msg:"has tick 0" (contains svg ">0<");
-  is_true ~msg:"has path" (contains svg "<path")
+  let svg = render (Hugin.line ~x:sqrt_x ~y:sqrt_y () |> Hugin.xscale `Sqrt) in
+  contains ~sub:">0<" svg;
+  contains ~sub:"<path" svg;
+  not_contains ~msg:"sqrt of 0 must not produce NaN" ~sub:"NaN" svg
 
 let test_sqrt_differs_from_linear () =
-  let x = Nx.create Float32 [| 5 |] [| 0.; 1.; 4.; 9.; 16. |] in
-  let y = Nx.create Float32 [| 5 |] [| 0.; 1.; 2.; 3.; 4. |] in
-  let svg_lin = render (Hugin.line ~x ~y ()) in
-  let svg_sqrt = render (Hugin.line ~x ~y () |> Hugin.yscale `Sqrt) in
-  is_true ~msg:"sqrt changes output" (svg_sqrt <> svg_lin)
+  not_equal ~msg:"sqrt changes output" text
+    (render (Hugin.line ~x:sqrt_x ~y:sqrt_y () |> Hugin.yscale `Sqrt))
+    (render (Hugin.line ~x:sqrt_x ~y:sqrt_y ()))
 
 (* asinh scale *)
+
+let asinh_x = vec [ -100.; -1.; 0.; 1.; 100. ]
+let asinh_y = vec [ 0.; 1.; 2.; 3.; 4. ]
 
 let test_asinh_negative_values () =
   (* Asinh handles negative values, unlike log — needed for
      background-subtracted fluxes *)
-  let x = Nx.create Float32 [| 5 |] [| -100.; -1.; 0.; 1.; 100. |] in
-  let y = Nx.create Float32 [| 5 |] [| 0.; 1.; 2.; 3.; 4. |] in
-  let svg = render (Hugin.line ~x ~y () |> Hugin.xscale `Asinh) in
-  is_true ~msg:"has tick 0" (contains svg ">0<");
-  is_true ~msg:"has path" (contains svg "<path")
+  let svg =
+    render (Hugin.line ~x:asinh_x ~y:asinh_y () |> Hugin.xscale `Asinh)
+  in
+  contains ~sub:">0<" svg;
+  contains ~sub:"<path" svg;
+  not_contains ~msg:"asinh of a negative must not produce NaN" ~sub:"NaN" svg
 
 let test_asinh_differs_from_linear () =
-  let x = Nx.create Float32 [| 5 |] [| 0.; 1.; 2.; 3.; 4. |] in
-  let y = Nx.create Float32 [| 5 |] [| -100.; -1.; 0.; 1.; 100. |] in
-  let svg_lin = render (Hugin.line ~x ~y ()) in
-  let svg_asinh = render (Hugin.line ~x ~y () |> Hugin.yscale `Asinh) in
-  is_true ~msg:"asinh changes output" (svg_asinh <> svg_lin)
+  not_equal ~msg:"asinh changes output" text
+    (render (Hugin.line ~x:asinh_y ~y:asinh_x () |> Hugin.yscale `Asinh))
+    (render (Hugin.line ~x:asinh_y ~y:asinh_x ()))
 
 (* symlog scale *)
+
+let symlog_x = vec [ -1000.; -10.; -1.; 0.; 1.; 10.; 1000. ]
+let symlog_y = Nx.init Float32 [| 7 |] (fun i -> float_of_int i.(0))
 
 let test_symlog_has_linear_and_log_ticks () =
   (* Symlog should produce ticks in both the linear region (near 0) and the log
      region (far from 0) *)
-  let x =
-    Nx.create Float32 [| 7 |] [| -1000.; -10.; -1.; 0.; 1.; 10.; 1000. |]
+  let svg =
+    render (Hugin.line ~x:symlog_x ~y:symlog_y () |> Hugin.xscale (`Symlog 10.))
   in
-  let y = Nx.init Float32 [| 7 |] (fun i -> float_of_int i.(0)) in
-  let svg = render (Hugin.line ~x ~y () |> Hugin.xscale (`Symlog 10.)) in
-  is_true ~msg:"has tick 0 (linear region)" (contains svg ">0<");
-  is_true ~msg:"has path" (contains svg "<path")
+  contains ~msg:"linear region" ~sub:">0<" svg;
+  contains ~sub:"<path" svg;
+  not_contains ~msg:"symlog spans zero without a NaN" ~sub:"NaN" svg
 
 let test_symlog_differs_from_linear () =
-  let x =
-    Nx.create Float32 [| 7 |] [| -1000.; -10.; -1.; 0.; 1.; 10.; 1000. |]
-  in
-  let y = Nx.init Float32 [| 7 |] (fun i -> float_of_int i.(0)) in
-  let svg_lin = render (Hugin.line ~x ~y ()) in
-  let svg_sym = render (Hugin.line ~x ~y () |> Hugin.xscale (`Symlog 10.)) in
-  is_true ~msg:"symlog changes output" (svg_sym <> svg_lin)
+  not_equal ~msg:"symlog changes output" text
+    (render
+       (Hugin.line ~x:symlog_x ~y:symlog_y () |> Hugin.xscale (`Symlog 10.)))
+    (render (Hugin.line ~x:symlog_x ~y:symlog_y ()))
 
 (* inverted scales *)
 
 let test_invert_reverses_tick_order () =
   (* The same tick labels should appear, but xinvert swaps pixel positions. We
      verify the SVG output actually changes. *)
-  let svg_normal = render (Hugin.line ~x:x5 ~y:y5 ()) in
   let svg_inv = render (Hugin.line ~x:x5 ~y:y5 () |> Hugin.xinvert) in
-  is_true ~msg:"has tick 0" (contains svg_inv ">0<");
-  is_true ~msg:"invert changes output" (svg_inv <> svg_normal)
+  contains ~sub:">0<" svg_inv;
+  not_equal ~msg:"invert changes output" text svg_inv
+    (render (Hugin.line ~x:x5 ~y:y5 ()))
 
 let test_invert_preserves_ticks () =
   (* Inversion should not remove or add ticks, just reposition them *)
-  let svg_normal = render (Hugin.line ~x:x5 ~y:y5 ()) in
-  let svg_inv = render (Hugin.line ~x:x5 ~y:y5 () |> Hugin.yinvert) in
-  let normal_texts = count_substring svg_normal "<text" in
-  let inv_texts = count_substring svg_inv "<text" in
-  is_true ~msg:"same number of text elements" (normal_texts = inv_texts)
+  let texts spec = count_substring (render spec) "<text" in
+  equal ~msg:"same number of text elements" int
+    (texts (Hugin.line ~x:x5 ~y:y5 ()))
+    (texts (Hugin.line ~x:x5 ~y:y5 () |> Hugin.yinvert))
 
 let test_log_inverted () =
   (* Log + invert is the typical RA axis for sky charts *)
-  let x = Nx.create Float32 [| 4 |] [| 1.; 10.; 100.; 1000. |] in
-  let y = Nx.create Float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let x = vec [ 1.; 10.; 100.; 1000. ] in
+  let y = vec [ 1.; 2.; 3.; 4. ] in
   let svg =
     render (Hugin.line ~x ~y () |> Hugin.xscale `Log |> Hugin.xinvert)
   in
-  is_true ~msg:"has tick 1" (contains svg ">1<");
-  is_true ~msg:"has tick 10" (contains svg ">10<")
+  contains ~sub:">1<" svg;
+  contains ~sub:">10<" svg
 
 let () =
   run "Scale"
@@ -222,7 +253,9 @@ let () =
         ];
       group "log"
         [
-          test "power-of-10 ticks" test_log_ticks; test "log y axis" test_log_y;
+          test "power-of-10 ticks" test_log_ticks;
+          test "log y axis" test_log_y;
+          test "labels every decade" test_log_rejects_nothing_below_one;
         ];
       group "sqrt"
         [
@@ -249,5 +282,6 @@ let () =
         [
           test "explicit xticks" test_explicit_xticks;
           test "explicit yticks" test_explicit_yticks;
+          test "explicit ticks replace auto" test_explicit_xticks_replace_auto;
         ];
     ]
