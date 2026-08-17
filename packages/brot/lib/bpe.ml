@@ -195,39 +195,167 @@ end
 
 type token = { id : int; value : string; offsets : int * int }
 
-(* Direct-mapped bounded cache: hash key to slot, newest entry wins. Fixed
-   memory, no eviction logic, no unbounded growth. A slot holds one immutable
-   entry, so the single pointer store that publishes it never lets another
-   domain observe a key paired with a different key's word. *)
-type cache_entry = { key : string; word : word }
-type cache = { cache_slots : cache_entry array; cache_mask : int }
+(* A run of token ids, grown by doubling and reused between pretokens. *)
+module Ids = struct
+  type t = { mutable ids : int array; mutable count : int }
 
-let empty_word =
-  { sym_c = [||]; sym_prev = [||]; sym_next = [||]; sym_len = [||]; size = 0 }
+  let create ?(capacity = 64) () =
+    { ids = Array.make (max 4 capacity) 0; count = 0 }
 
-let empty_entry = { key = ""; word = empty_word }
+  let clear t = t.count <- 0
+  let length t = t.count
+  let[@inline] get t i = Array.unsafe_get t.ids i
+  let to_array t = Array.sub t.ids 0 t.count
 
-let create_cache capacity =
-  (* Round up to power of 2 *)
-  let cap = ref 16 in
-  while !cap < capacity do
+  let grow t needed =
+    let cap = ref (Array.length t.ids * 2) in
+    while !cap < needed do
+      cap := !cap * 2
+    done;
+    let a = Array.make !cap 0 in
+    Array.blit t.ids 0 a 0 t.count;
+    t.ids <- a
+
+  let[@inline] ensure t extra =
+    if t.count + extra > Array.length t.ids then grow t (t.count + extra)
+
+  let[@inline] add t id =
+    ensure t 1;
+    Array.unsafe_set t.ids t.count id;
+    t.count <- t.count + 1
+
+  (* Four ids are stored whatever the count is and the cursor advances by
+     [count]; the stores past it are dead. *)
+  let[@inline] add4 t a b c d ~count =
+    ensure t 4;
+    let n = t.count in
+    let ids = t.ids in
+    Array.unsafe_set ids n a;
+    Array.unsafe_set ids (n + 1) b;
+    Array.unsafe_set ids (n + 2) c;
+    Array.unsafe_set ids (n + 3) d;
+    t.count <- n + count
+end
+
+(* Pretoken cache.
+
+   One 32-byte entry per slot, direct-mapped: a pretoken has exactly one slot, a
+   miss overwrites whatever the slot held, and nothing is ever probed, evicted
+   or grown.
+
+   [0..7] k0: bytes 0..7 of the pretoken, zero-padded [8..15] k1: bytes 8..14
+   zero-padded, the length 1..15 in the top byte [16..23] ids 0 and 1 as 24-bit
+   fields, the token count in bits 24..31 [24..31] ids 2 and 3
+
+   Carrying the length in the key means keys of different lengths never collide
+   and a live key is never zero, so a zeroed table reads as empty. A hit is two
+   64-bit compares and two 64-bit loads.
+
+   A table is written by whichever thread holds the claim on the state that owns
+   it, so there is never a second writer. The value words are still published
+   before the key words, and [k0] last of all, so that a read torn by anything
+   at all comes out a miss rather than a wrong hit. *)
+
+external string_get64u : string -> int -> int64 = "%caml_string_get64u"
+external bytes_get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
+external bytes_set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
+
+let max_key_len = 15
+let max_lanes = 4
+let entry_bytes = 32
+let cached_id_limit = 1 lsl 24
+
+(* For each length, the mask keeping the bytes each key word holds. *)
+let key_masks =
+  let ones n =
+    if n >= 8 then -1L else Int64.sub (Int64.shift_left 1L (8 * n)) 1L
+  in
+  let b = Bytes.make ((max_key_len + 1) * 16) '\000' in
+  for len = 0 to max_key_len do
+    bytes_set64u b (len * 16) (ones (min len 8));
+    bytes_set64u b ((len * 16) + 8) (ones (max 0 (len - 8)))
+  done;
+  b
+
+let[@inline] byte_word text pos count =
+  let w = ref 0L in
+  for i = 0 to count - 1 do
+    w :=
+      Int64.logor !w
+        (Int64.shift_left
+           (Int64.of_int (Char.code (String.unsafe_get text (pos + i))))
+           (8 * i))
+  done;
+  !w
+
+(* A key word is one eight-byte read masked to the bytes it keeps. The read has
+   to stay inside the string — being unchecked is a property of native code
+   alone, and bytecode raises on it — so a pretoken that ends within eight bytes
+   of the end of the text is read from the last eight bytes of the text and
+   shifted down instead. Only a text shorter than eight bytes has no such read,
+   and gathers its bytes one at a time. [n] is the length of [text]. *)
+
+let[@inline] key0 text n pos len =
+  let w =
+    if pos + 8 <= n then string_get64u text pos
+    else if n >= 8 then
+      Int64.shift_right_logical (string_get64u text (n - 8)) ((pos - n + 8) * 8)
+    else byte_word text pos (n - pos)
+  in
+  Int64.logand w (bytes_get64u key_masks (len lsl 4))
+
+let[@inline] key1 text n pos len =
+  let tag = Int64.of_int (len lsl 56) in
+  if len <= 8 then tag
+  else
+    let w =
+      if pos + 16 <= n then string_get64u text (pos + 8)
+      else
+        Int64.shift_right_logical
+          (string_get64u text (n - 8))
+          ((pos + 16 - n) * 8)
+    in
+    Int64.logor tag (Int64.logand w (bytes_get64u key_masks ((len lsl 4) + 8)))
+
+type cache = { table : Bytes.t; mask : int }
+
+let no_cache = { table = Bytes.empty; mask = -1 }
+
+let[@inline] slot_of cache k0 k1 =
+  let h =
+    Int64.mul
+      (Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L))
+      0xD6E8FEB86659FD93L
+  in
+  (Int64.to_int (Int64.shift_right_logical h 24) land cache.mask) lsl 5
+
+let create_cache slots =
+  let cap = ref 1 in
+  while !cap < slots do
     cap := !cap * 2
   done;
-  { cache_slots = Array.make !cap empty_entry; cache_mask = !cap - 1 }
+  { table = Bytes.make (!cap * entry_bytes) '\000'; mask = !cap - 1 }
 
-let[@inline] cache_find c key =
-  let e = Array.unsafe_get c.cache_slots (Hashtbl.hash key land c.cache_mask) in
-  if String.equal e.key key then e.word else empty_word
+(* Pretokens above [max_key_len] bytes are keyed by their bytes; they are a
+   percent or two of a corpus, so one substring per lookup is affordable. The
+   table is dropped whole once it grows past [long_capacity] rather than
+   evicting, and pretokens beyond [long_max_len] are not kept at all. *)
+let long_capacity = 65536
+let long_max_len = 4096
 
-let[@inline] cache_add c key word =
-  Array.unsafe_set c.cache_slots
-    (Hashtbl.hash key land c.cache_mask)
-    { key; word }
-
-type scratch = {
-  mutable scratch_word : word;
-  mutable scratch_queue : Merge_queue.t;
-  scratch_in_use : bool Atomic.t;
+(* Merging needs a word, a queue, a rank scan and the caches to work in. They
+   are held per (model, domain) and grow to the longest pretoken merged there;
+   within a domain the first thread to claim them wins and the others work in
+   buffers of their own. *)
+type state = {
+  mutable st_word : word;
+  mutable st_queue : Merge_queue.t;
+  st_rank : int array;
+  st_cache : cache;
+  st_long : (string, int array) Hashtbl.t;
+  st_ids : Ids.t;
+  st_lens : Ids.t;
+  st_busy : bool Atomic.t;
 }
 
 (* Vocabulary ids of single characters in one affixed form, keyed by the
@@ -236,10 +364,15 @@ type scratch = {
 type char_table = { ascii : int array; multi : Merge_map.t }
 
 type t = {
+  stamp : int;
   vocab : vocab;
   vocab_r : string array;
   merges : Merge_map.t;
-  cache : cache option;
+  cache_slots : int;
+  (* Every vocabulary entry short enough to be keyed, tokenized once at creation
+     and laid out as cache entries, so that each domain seeds its own table by
+     replaying them instead of merging them again. *)
+  seeds : Bytes.t;
   dropout : float option;
   unk_token : string option;
   continuing_subword_prefix : string option;
@@ -247,6 +380,16 @@ type t = {
   fuse_unk : bool;
   byte_fallback : bool;
   ignore_merges : bool;
+  (* Byte-level models match raw bytes: [source] holds every entry decoded
+     through the byte-to-unicode table, [source_vocab] inverts it and [byte_ids]
+     gives the id of each single byte. The vocabulary itself keeps the encoded
+     form, which is what serialization and decoding speak. *)
+  byte_level : bool;
+  source : string array;
+  source_vocab : vocab;
+  byte_ids : int array;
+  (* How many bytes of a pretoken each id accounts for. *)
+  len_table : int array;
   (* A character is looked up in the form its position gives it: the prefix on
      every character but the first, the suffix on the last. *)
   chars : char_table;
@@ -255,6 +398,10 @@ type t = {
   prefixed_suffixed_chars : char_table;
   byte_fallback_ids : int array;
   unk_id : int;
+  (* Byte fallback spells a character out in the form its position gives it, so
+     one source byte can become as many as [1 + prefix + suffix] symbols and the
+     merge buffers have to be sized for that rather than for the bytes. *)
+  sym_per_byte : int;
 }
 
 let create_word capacity =
@@ -282,16 +429,16 @@ let ensure_queue_capacity queue capacity =
   end
   else Merge_queue.create cap
 
-(* Merging needs a word and a queue to work in. They are held per domain and
-   grow to the longest word merged there; within a domain the first thread to
-   claim them wins and the others work in buffers of their own. *)
-let scratch_key =
-  Domain.DLS.new_key (fun () ->
-      {
-        scratch_word = create_word 16;
-        scratch_queue = Merge_queue.create 16;
-        scratch_in_use = Atomic.make false;
-      })
+(* Above this many symbols the linear rank scan is dropped for the heap. *)
+let max_linear = 32
+
+(* A domain holds the states of the models it has encoded with, most recent
+   first, and forgets the oldest past this many: a state carries a cache of
+   several megabytes. *)
+let max_states = 8
+
+let states_key : (int * state) list ref Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> ref [])
 
 let[@inline] add_symbol word c byte_len =
   let s = word.size in
@@ -302,6 +449,27 @@ let[@inline] add_symbol word c byte_len =
   Array.unsafe_set word.sym_len s byte_len;
   if prev >= 0 then Array.unsafe_set word.sym_next prev s;
   word.size <- s + 1
+
+(* Compact using linked-list traversal: O(N_final) instead of O(N_original). A
+   word with no symbol has no list to walk: the links left in the reused buffers
+   belong to the word merged before it. *)
+let compact word =
+  if word.size > 0 then begin
+    let sym_c = word.sym_c in
+    let sym_len = word.sym_len in
+    let sym_next = word.sym_next in
+    let j = ref 0 in
+    let cur = ref 0 in
+    while !cur >= 0 do
+      if !j <> !cur then begin
+        Array.unsafe_set sym_c !j (Array.unsafe_get sym_c !cur);
+        Array.unsafe_set sym_len !j (Array.unsafe_get sym_len !cur)
+      end;
+      incr j;
+      cur := Array.unsafe_get sym_next !cur
+    done;
+    word.size <- !j
+  end
 
 let apply_merges model dropout word queue =
   let p = match dropout with Some p -> p | None -> 0.0 in
@@ -392,22 +560,68 @@ let apply_merges model dropout word queue =
       end
     end
   done;
-  (* Compact using linked-list traversal: O(N_final) instead of O(N_original). A
-     word with no symbol has no list to walk: the links left in the reused
-     buffers belong to the word merged before it. *)
-  if word.size > 0 then begin
-    let j = ref 0 in
-    let cur = ref 0 in
-    while !cur >= 0 do
-      if !j <> !cur then begin
-        Array.unsafe_set sym_c !j (Array.unsafe_get sym_c !cur);
-        Array.unsafe_set sym_len !j (Array.unsafe_get sym_len !cur)
-      end;
-      incr j;
-      cur := Array.unsafe_get sym_next !cur
+  compact word
+
+(* A word with few symbols keeps, for every position, the merge its pair opens —
+   the packed (rank, id) the map gives it, [max_int] for none — and takes the
+   minimum by scanning them. Rank leads the packed value so the scan orders by
+   rank and, at equal rank, by position, which is the order HuggingFace merges
+   in. A merge is O(1) surgery on the linked list and touches the ranks of the
+   two neighbours alone, and a position the surgery drops is ranked [max_int] so
+   it never wins again. The scan walks dead positions too: below [max_linear]
+   symbols that is cheaper than the heap it replaces. *)
+let[@inline] rank_of merges sym_c a b =
+  let v =
+    Merge_map.find merges
+      (merge_key (Array.unsafe_get sym_c a) (Array.unsafe_get sym_c b))
+  in
+  if v >= 0 then v else max_int
+
+let merge_linear model word rank =
+  let merges = model.merges in
+  let sym_c = word.sym_c in
+  let sym_prev = word.sym_prev in
+  let sym_next = word.sym_next in
+  let sym_len = word.sym_len in
+  let n = word.size in
+  if n > 0 then begin
+    for i = 0 to n - 2 do
+      Array.unsafe_set rank i (rank_of merges sym_c i (i + 1))
     done;
-    word.size <- !j
-  end
+    Array.unsafe_set rank (n - 1) max_int;
+    let merging = ref true in
+    while !merging do
+      let best = ref max_int in
+      let best_pos = ref (-1) in
+      for i = 0 to n - 1 do
+        if Array.unsafe_get rank i < !best then begin
+          best := Array.unsafe_get rank i;
+          best_pos := i
+        end
+      done;
+      if !best_pos < 0 then merging := false
+      else begin
+        let pos = !best_pos in
+        let gone = Array.unsafe_get sym_next pos in
+        Array.unsafe_set sym_c pos (merge_new_id !best);
+        Array.unsafe_set sym_len pos
+          (Array.unsafe_get sym_len pos + Array.unsafe_get sym_len gone);
+        Array.unsafe_set sym_next pos (Array.unsafe_get sym_next gone);
+        Array.unsafe_set sym_len gone 0;
+        Array.unsafe_set rank gone max_int;
+        let next = Array.unsafe_get sym_next pos in
+        if next >= 0 then begin
+          Array.unsafe_set sym_prev next pos;
+          Array.unsafe_set rank pos (rank_of merges sym_c pos next)
+        end
+        else Array.unsafe_set rank pos max_int;
+        let prev = Array.unsafe_get sym_prev pos in
+        if prev >= 0 then
+          Array.unsafe_set rank prev (rank_of merges sym_c prev pos)
+      end
+    done
+  end;
+  compact word
 
 let utf8_byte_len_table =
   Array.init 256 (fun b ->
@@ -458,9 +672,12 @@ let build_char_table vocab ~prefix ~suffix =
     vocab;
   { ascii; multi = Merge_map.create !entries }
 
-(* Try emitting byte fallback tokens for [byte_len] bytes starting at [src]
-   offset [offset]. Returns true if all bytes had fallback IDs. *)
-let try_byte_fallback model word flush_unk src offset byte_len =
+(* Emits one byte fallback token for each of the [byte_len] bytes at [src]
+   offset [offset], and is [false], having emitted nothing, if any of them has
+   no fallback token. A pending unknown token stays pending across a fallback:
+   HuggingFace lets it out at the next vocabulary hit, or at the end of the
+   word. *)
+let try_byte_fallback model word src offset byte_len =
   let all_found = ref true in
   for i = 0 to byte_len - 1 do
     if
@@ -470,7 +687,6 @@ let try_byte_fallback model word flush_unk src offset byte_len =
     then all_found := false
   done;
   if !all_found then begin
-    flush_unk ();
     for i = 0 to byte_len - 1 do
       add_symbol word
         (Array.unsafe_get model.byte_fallback_ids
@@ -481,73 +697,88 @@ let try_byte_fallback model word flush_unk src offset byte_len =
   end
   else false
 
-(* No prefix and no suffix: every character is looked up in the same table, so
-   the position it holds in the word never has to be worked out. *)
-let init_word_fast model word text text_len =
-  let ascii = model.chars.ascii in
-  let multi = model.chars.multi in
-  let pos = ref 0 in
-  let pending_unk_id = ref (-1) in
-  let pending_unk_len = ref 0 in
-  let flush_unk () =
-    if !pending_unk_id >= 0 then begin
-      add_symbol word !pending_unk_id !pending_unk_len;
-      pending_unk_id := -1;
-      pending_unk_len := 0
-    end
-  in
-  let handle_unk byte_len =
-    if model.unk_id >= 0 then
-      begin if model.fuse_unk then
-        begin if !pending_unk_id >= 0 then
-          pending_unk_len := !pending_unk_len + byte_len
-        else begin
-          pending_unk_id := model.unk_id;
-          pending_unk_len := byte_len
-        end
-        end
-      else begin
-        flush_unk ();
-        add_symbol word model.unk_id byte_len
-      end
-      end
-  in
-  while !pos < text_len do
-    let b = Char.code (String.unsafe_get text !pos) in
-    if b < 128 then begin
-      let id = Array.unsafe_get ascii b in
-      if id >= 0 then begin
-        flush_unk ();
-        add_symbol word id 1
-      end
-      else if model.byte_fallback then begin
-        let fbid = Array.unsafe_get model.byte_fallback_ids b in
-        if fbid >= 0 then begin
-          flush_unk ();
-          add_symbol word fbid 1
-        end
-        else handle_unk 1
-      end
-      else handle_unk 1;
-      incr pos
+(* Byte-level models match raw bytes, so every symbol is one byte and the
+   character tables never come into it. *)
+let init_word_bytes model word text pos stop =
+  let byte_ids = model.byte_ids in
+  let fallback_ids = model.byte_fallback_ids in
+  let unk_id = model.unk_id in
+  let byte_fallback = model.byte_fallback in
+  let fuse_unk = model.fuse_unk in
+  let pending = ref 0 in
+  for i = pos to stop - 1 do
+    let b = Char.code (String.unsafe_get text i) in
+    let id = Array.unsafe_get byte_ids b in
+    if id >= 0 then begin
+      if !pending > 0 then begin
+        add_symbol word unk_id !pending;
+        pending := 0
+      end;
+      add_symbol word id 1
     end
     else begin
-      let byte_len = utf8_byte_len b in
-      let key = pack_char_key text !pos byte_len in
-      let id = Merge_map.find multi key in
-      if id >= 0 then begin
-        flush_unk ();
-        add_symbol word id byte_len
-      end
-      else if model.byte_fallback then
-        begin if not (try_byte_fallback model word flush_unk text !pos byte_len)
-        then handle_unk byte_len
+      let fb = if byte_fallback then Array.unsafe_get fallback_ids b else -1 in
+      if fb >= 0 then add_symbol word fb 1
+      else if unk_id >= 0 then
+        if fuse_unk then incr pending
+        else begin
+          if !pending > 0 then add_symbol word unk_id !pending;
+          pending := 1
         end
-      else handle_unk byte_len;
-      pos := !pos + byte_len
     end
   done;
-  flush_unk ()
+  if !pending > 0 then add_symbol word unk_id !pending
+
+(* No prefix and no suffix: every character is looked up in the same table, so
+   the position it holds in the word never has to be worked out.
+
+   An unknown character is held back rather than emitted, because a byte
+   fallback coming after it goes out first; the unknown token follows at the
+   next vocabulary hit or at the end of the word. [pending] is the bytes it
+   stands for so far, zero for none. Neither it nor the cursor is closed over,
+   which is what lets the compiler keep them in registers. *)
+let init_word_fast model word text pos stop =
+  let ascii = model.chars.ascii in
+  let multi = model.chars.multi in
+  let unk_id = model.unk_id in
+  let byte_fallback = model.byte_fallback in
+  let fuse_unk = model.fuse_unk in
+  let i = ref pos in
+  let pending = ref 0 in
+  while !i < stop do
+    let b = Char.code (String.unsafe_get text !i) in
+    (* A truncated character is taken as the bytes that are left of it: the key
+       it packs is not the key of any whole character, so it falls through to
+       the fallback or to the unknown token. *)
+    let byte_len =
+      if b < 128 then 1
+      else
+        let width = utf8_byte_len b in
+        if width > stop - !i then stop - !i else width
+    in
+    let id =
+      if b < 128 then Array.unsafe_get ascii b
+      else Merge_map.find multi (pack_char_key text !i byte_len)
+    in
+    if id >= 0 then begin
+      if !pending > 0 then begin
+        add_symbol word unk_id !pending;
+        pending := 0
+      end;
+      add_symbol word id byte_len
+    end
+    else if
+      (not (byte_fallback && try_byte_fallback model word text !i byte_len))
+      && unk_id >= 0
+    then
+      if fuse_unk then pending := !pending + byte_len
+      else begin
+        if !pending > 0 then add_symbol word unk_id !pending;
+        pending := byte_len
+      end;
+    i := !i + byte_len
+  done;
+  if !pending > 0 then add_symbol word unk_id !pending
 
 (* The character at [start] spelled the way the vocabulary holds it. *)
 let affixed_char model text start byte_len ~is_first ~is_last =
@@ -556,42 +787,33 @@ let affixed_char model text start byte_len ~is_first ~is_last =
   prefix ^ String.sub text start byte_len ^ suffix
 
 (* Models with continuing_subword_prefix or end_of_word_suffix *)
-let init_word_slow model word text text_len =
-  let pos = ref 0 in
-  let pending_unk_id = ref (-1) in
-  let pending_unk_len = ref 0 in
+let init_word_slow model word text pos stop =
+  let i = ref pos in
+  let pending = ref 0 in
   let flush_unk () =
-    if !pending_unk_id >= 0 then begin
-      add_symbol word !pending_unk_id !pending_unk_len;
-      pending_unk_id := -1;
-      pending_unk_len := 0
+    if !pending > 0 then begin
+      add_symbol word model.unk_id !pending;
+      pending := 0
     end
   in
   let handle_unk byte_len =
     if model.unk_id >= 0 then
-      begin if model.fuse_unk then
-        begin if !pending_unk_id >= 0 then
-          pending_unk_len := !pending_unk_len + byte_len
-        else begin
-          pending_unk_id := model.unk_id;
-          pending_unk_len := byte_len
-        end
-        end
+      if model.fuse_unk then pending := !pending + byte_len
       else begin
-        flush_unk ();
-        add_symbol word model.unk_id byte_len
-      end
+        if !pending > 0 then add_symbol word model.unk_id !pending;
+        pending := byte_len
       end
   in
-  while !pos < text_len do
-    let b = Char.code (String.unsafe_get text !pos) in
-    let byte_len = utf8_byte_len b in
-    if b land 0xC0 = 0x80 then pos := !pos + 1
+  while !i < stop do
+    let b = Char.code (String.unsafe_get text !i) in
+    if b land 0xC0 = 0x80 then incr i
     else begin
-      let start = !pos in
-      let is_first = start = 0 in
-      let is_last = start + byte_len >= text_len in
-      pos := !pos + byte_len;
+      let start = !i in
+      let width = utf8_byte_len b in
+      let byte_len = if width > stop - start then stop - start else width in
+      let is_first = start = pos in
+      let is_last = start + byte_len >= stop in
+      i := start + byte_len;
       let table =
         if is_first then if is_last then model.suffixed_chars else model.chars
         else if is_last then model.prefixed_suffixed_chars
@@ -607,127 +829,404 @@ let init_word_slow model word text text_len =
       end
       else if model.byte_fallback then begin
         let s = affixed_char model text start byte_len ~is_first ~is_last in
-        if not (try_byte_fallback model word flush_unk s 0 (String.length s))
-        then handle_unk byte_len
+        if not (try_byte_fallback model word s 0 (String.length s)) then
+          handle_unk byte_len
       end
       else handle_unk byte_len
     end
   done;
   flush_unk ()
 
-let merge_word model text =
-  let text_len = String.length text in
-  let scratch = Domain.DLS.get scratch_key in
-  let owned = Atomic.compare_and_set scratch.scratch_in_use false true in
-  let word, queue =
-    if owned then begin
-      let w = ensure_word_capacity scratch.scratch_word text_len in
-      scratch.scratch_word <- w;
-      let q = ensure_queue_capacity scratch.scratch_queue text_len in
-      scratch.scratch_queue <- q;
-      (w, q)
-    end
-    else (create_word text_len, Merge_queue.create text_len)
-  in
-  if model.continuing_subword_prefix = None && model.end_of_word_suffix = None
-  then init_word_fast model word text text_len
-  else init_word_slow model word text text_len;
-  apply_merges model model.dropout word queue;
-  let n = word.size in
-  let sym_c = Array.make n 0 in
-  let sym_len = Array.make n 0 in
-  Array.blit word.sym_c 0 sym_c 0 n;
-  Array.blit word.sym_len 0 sym_len 0 n;
-  if owned then Atomic.set scratch.scratch_in_use false;
-  { sym_c; sym_prev = [||]; sym_next = [||]; sym_len; size = n }
-
-let word_to_tokens model word =
-  let offset = ref 0 in
-  List.init word.size (fun i ->
-      let id = Array.unsafe_get word.sym_c i in
-      let vr = model.vocab_r in
-      let value =
-        if id >= 0 && id < Array.length vr then Array.unsafe_get vr id
-        else "<unk>"
-      in
-      let start = !offset in
-      let end_ = start + Array.unsafe_get word.sym_len i in
-      offset := end_;
-      { id; value; offsets = (start, end_) })
-
-let word_to_ids word =
-  Array.init word.size (fun i -> Array.unsafe_get word.sym_c i)
-
-let word_to_encoding model word ~type_id ~base =
-  let n = word.size in
-  let ids = Array.make n 0 in
-  let tokens = Array.make n "" in
-  let offsets = Array.make n (0, 0) in
-  let offset = ref base in
-  for i = 0 to n - 1 do
-    let id = Array.unsafe_get word.sym_c i in
-    Array.unsafe_set ids i id;
-    let vr = model.vocab_r in
-    Array.unsafe_set tokens i
-      (if id >= 0 && id < Array.length vr then Array.unsafe_get vr id
-       else "<unk>");
-    let start = !offset in
-    let end_ = start + Array.unsafe_get word.sym_len i in
-    Array.unsafe_set offsets i (start, end_);
-    offset := end_
-  done;
-  Encoding.create ~ids ~type_ids:(Array.make n type_id) ~tokens
-    ~words:(Array.make n None) ~offsets ~special_tokens_mask:(Array.make n 0)
-    ~attention_mask:(Array.make n 1) ()
-
 let[@inline] uses_dropout model =
   match model.dropout with Some p -> p > 0.0 | None -> false
 
-(* Dropout is drawn per occurrence, so a dropped-out model can neither reuse a
-   word nor take any shortcut over the merges. *)
-let get_word model text =
-  match model.cache with
-  | Some cache when String.length text < 4096 && not (uses_dropout model) ->
-      let cached = cache_find cache text in
-      if cached.size > 0 then cached
-      else
-        let word = merge_word model text in
-        cache_add cache text word;
-        word
-  | _ -> merge_word model text
-
-(* Under [ignore_merges] a word that is itself in the vocabulary is emitted as
-   that single token. Otherwise the merges decide, and a vocabulary entry that
-   no merge builds comes out as its decomposition. *)
-let[@inline] whole_word_id model text =
+(* Under [ignore_merges] a pretoken that is itself in the vocabulary is emitted
+   as that single token. Otherwise the merges decide, and a vocabulary entry
+   that no merge builds comes out as its decomposition. Dropout is drawn per
+   occurrence, so it can take neither this shortcut nor the cache. *)
+let whole_word_id model text pos len =
   if model.ignore_merges && not (uses_dropout model) then
-    Hashtbl.find_opt model.vocab text
+    Hashtbl.find_opt model.source_vocab
+      (if pos = 0 && len = String.length text then text
+       else String.sub text pos len)
   else None
 
+let run_merge model st text pos len =
+  let word = ensure_word_capacity st.st_word (len * model.sym_per_byte) in
+  st.st_word <- word;
+  if model.byte_level then init_word_bytes model word text pos (pos + len)
+  else if
+    model.continuing_subword_prefix = None && model.end_of_word_suffix = None
+  then init_word_fast model word text pos (pos + len)
+  else init_word_slow model word text pos (pos + len);
+  if word.size <= max_linear && not (uses_dropout model) then
+    merge_linear model word st.st_rank
+  else begin
+    let queue = ensure_queue_capacity st.st_queue len in
+    st.st_queue <- queue;
+    apply_merges model model.dropout word queue
+  end
+
+(* Leaves the tokenization of [text.\[pos..pos+len)] in [st.st_word]. *)
+let build_word model st text pos len =
+  match whole_word_id model text pos len with
+  | Some id ->
+      let word = ensure_word_capacity st.st_word 1 in
+      st.st_word <- word;
+      add_symbol word id len
+  | None -> run_merge model st text pos len
+
+(* A cached word is handed back as ids alone and its token lengths are read off
+   [len_table], so only a word whose every id accounts for exactly the bytes the
+   merge gave it may be kept: an unknown token, a character no symbol stands
+   for, or a byte fallback spelling out an affix all fail here and are merged
+   again every time. *)
+let exact model word len =
+  let len_table = model.len_table in
+  let limit = Array.length len_table in
+  let ok = ref true in
+  let total = ref 0 in
+  for i = 0 to word.size - 1 do
+    let id = Array.unsafe_get word.sym_c i in
+    let l = Array.unsafe_get word.sym_len i in
+    if id < 0 || id >= limit || Array.unsafe_get len_table id <> l then
+      ok := false;
+    total := !total + l
+  done;
+  !ok && !total = len
+
+let in_lanes word =
+  let n = word.size in
+  if n < 1 || n > max_lanes then false
+  else begin
+    let ok = ref true in
+    for i = 0 to n - 1 do
+      if Array.unsafe_get word.sym_c i >= cached_id_limit then ok := false
+    done;
+    !ok
+  end
+
+let[@inline] cacheable model word len = in_lanes word && exact model word len
+
+let store cache slot k0 k1 word =
+  let table = cache.table in
+  let n = word.size in
+  let c = word.sym_c in
+  let id0 = Array.unsafe_get c 0 in
+  let id1 = if n > 1 then Array.unsafe_get c 1 else 0 in
+  let id2 = if n > 2 then Array.unsafe_get c 2 else 0 in
+  let id3 = if n > 3 then Array.unsafe_get c 3 else 0 in
+  bytes_set64u table (slot + 16)
+    (Int64.of_int (id0 lor (n lsl 24) lor (id1 lsl 32)));
+  bytes_set64u table (slot + 24) (Int64.of_int (id2 lor (id3 lsl 32)));
+  bytes_set64u table (slot + 8) k1;
+  bytes_set64u table slot k0
+
+(* Buffers of its own and no cache, for the thread that does not claim the
+   domain's state and for building the seed. *)
+let private_state () =
+  {
+    st_word = create_word 16;
+    st_queue = Merge_queue.create 16;
+    st_rank = Array.make max_linear 0;
+    st_cache = no_cache;
+    st_long = Hashtbl.create 16;
+    st_ids = Ids.create ();
+    st_lens = Ids.create ();
+    st_busy = Atomic.make true;
+  }
+
+(* Every vocabulary entry short enough to be keyed, tokenized by the very
+   function a miss runs so that a seeded answer can never disagree with a merged
+   one. The entry is seeded with its tokenization and not with its own id: a
+   vocabulary holds entries no merge builds, and HuggingFace spells those
+   out. *)
+let build_seeds model =
+  let st = private_state () in
+  let buf = Buffer.create (entry_bytes * 1024) in
+  Hashtbl.iter
+    (fun text _ ->
+      let len = String.length text in
+      if len >= 1 && len <= max_key_len then begin
+        build_word model st text 0 len;
+        let word = st.st_word in
+        if cacheable model word len then begin
+          let n = word.size in
+          let c = word.sym_c in
+          let id j = if j < n then Array.unsafe_get c j else 0 in
+          Buffer.add_int64_ne buf (key0 text len 0 len);
+          Buffer.add_int64_ne buf (key1 text len 0 len);
+          Buffer.add_int64_ne buf
+            (Int64.of_int (id 0 lor (n lsl 24) lor (id 1 lsl 32)));
+          Buffer.add_int64_ne buf (Int64.of_int (id 2 lor (id 3 lsl 32)))
+        end
+      end)
+    model.source_vocab;
+  Buffer.to_bytes buf
+
+let seed_cache model cache =
+  let seeds = model.seeds in
+  let table = cache.table in
+  for i = 0 to (Bytes.length seeds / entry_bytes) - 1 do
+    let o = i * entry_bytes in
+    let k0 = bytes_get64u seeds o in
+    let k1 = bytes_get64u seeds (o + 8) in
+    let slot = slot_of cache k0 k1 in
+    bytes_set64u table slot k0;
+    bytes_set64u table (slot + 8) k1;
+    bytes_set64u table (slot + 16) (bytes_get64u seeds (o + 16));
+    bytes_set64u table (slot + 24) (bytes_get64u seeds (o + 24))
+  done
+
+let make_state model =
+  let cache =
+    if model.cache_slots = 0 then no_cache else create_cache model.cache_slots
+  in
+  if cache.mask >= 0 then seed_cache model cache;
+  {
+    st_word = create_word 16;
+    st_queue = Merge_queue.create 16;
+    st_rank = Array.make max_linear 0;
+    st_cache = cache;
+    st_long = Hashtbl.create 512;
+    st_ids = Ids.create ();
+    st_lens = Ids.create ();
+    st_busy = Atomic.make false;
+  }
+
+(* Two threads of one domain that both find no state for the model build one
+   each and one of the two entries is lost; the loser is collected and its owner
+   works on unshared buffers, so the race costs a table and nothing else. *)
+let state model =
+  let states = Domain.DLS.get states_key in
+  let rec find = function
+    | (stamp, st) :: _ when stamp = model.stamp -> st
+    | _ :: rest -> find rest
+    | [] ->
+        let st = make_state model in
+        states :=
+          (model.stamp, st)
+          :: List.filteri (fun i _ -> i < max_states - 1) !states;
+        st
+  in
+  find !states
+
+(* The domain's state, held for the duration of [f]. Threads of one domain share
+   the state it holds — its word, queue and cache are all single-writer — so the
+   second to ask gets buffers of its own instead. The claim is given back even
+   when [f] raises: otherwise one exception would cost that domain its cache for
+   the rest of the program. *)
+let with_state model f =
+  let st = state model in
+  let st =
+    if Atomic.compare_and_set st.st_busy false true then st
+    else private_state ()
+  in
+  match f st with
+  | v ->
+      Atomic.set st.st_busy false;
+      v
+  | exception e ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      Atomic.set st.st_busy false;
+      Printexc.raise_with_backtrace e backtrace
+
+let encode_into model st ids text ~pos ~len =
+  if len > 0 then begin
+    let cache = st.st_cache in
+    if cache.mask >= 0 && len <= max_key_len then begin
+      let n = String.length text in
+      let k0 = key0 text n pos len in
+      let k1 = key1 text n pos len in
+      let slot = slot_of cache k0 k1 in
+      let table = cache.table in
+      if
+        (bytes_get64u table slot : int64) = k0
+        && (bytes_get64u table (slot + 8) : int64) = k1
+      then begin
+        let v0 = Int64.to_int (bytes_get64u table (slot + 16)) in
+        let v1 = Int64.to_int (bytes_get64u table (slot + 24)) in
+        Ids.add4 ids (v0 land 0xFFFFFF)
+          ((v0 lsr 32) land 0xFFFFFF)
+          (v1 land 0xFFFFFF)
+          ((v1 lsr 32) land 0xFFFFFF)
+          ~count:((v0 lsr 24) land 0xFF)
+      end
+      else begin
+        build_word model st text pos len;
+        let word = st.st_word in
+        for i = 0 to word.size - 1 do
+          Ids.add ids (Array.unsafe_get word.sym_c i)
+        done;
+        if cacheable model word len then store cache slot k0 k1 word
+      end
+    end
+    else if cache.mask >= 0 && len <= long_max_len then begin
+      let long = st.st_long in
+      let key =
+        if pos = 0 && len = String.length text then text
+        else String.sub text pos len
+      in
+      match Hashtbl.find_opt long key with
+      | Some a ->
+          for i = 0 to Array.length a - 1 do
+            Ids.add ids (Array.unsafe_get a i)
+          done
+      | None ->
+          build_word model st text pos len;
+          let word = st.st_word in
+          for i = 0 to word.size - 1 do
+            Ids.add ids (Array.unsafe_get word.sym_c i)
+          done;
+          if exact model word len then begin
+            if Hashtbl.length long >= long_capacity then Hashtbl.reset long;
+            Hashtbl.replace long key (Array.sub word.sym_c 0 word.size)
+          end
+    end
+    else begin
+      build_word model st text pos len;
+      let word = st.st_word in
+      for i = 0 to word.size - 1 do
+        Ids.add ids (Array.unsafe_get word.sym_c i)
+      done
+    end
+  end
+
+(* Ids and the source bytes each of them accounts for, which is what offsets are
+   built from. Every cached word is exact, so a hit reads its lengths off
+   [len_table]; a miss has them from the merge itself. *)
+let encode_run model st ids lens text ~pos ~len =
+  let[@inline] emit_word word =
+    for i = 0 to word.size - 1 do
+      Ids.add ids (Array.unsafe_get word.sym_c i);
+      Ids.add lens (Array.unsafe_get word.sym_len i)
+    done
+  in
+  let[@inline] emit_id id =
+    Ids.add ids id;
+    Ids.add lens (Array.unsafe_get model.len_table id)
+  in
+  if len > 0 then begin
+    let cache = st.st_cache in
+    if cache.mask >= 0 && len <= max_key_len then begin
+      let n = String.length text in
+      let k0 = key0 text n pos len in
+      let k1 = key1 text n pos len in
+      let slot = slot_of cache k0 k1 in
+      let table = cache.table in
+      if
+        (bytes_get64u table slot : int64) = k0
+        && (bytes_get64u table (slot + 8) : int64) = k1
+      then begin
+        let v0 = Int64.to_int (bytes_get64u table (slot + 16)) in
+        let v1 = Int64.to_int (bytes_get64u table (slot + 24)) in
+        let count = (v0 lsr 24) land 0xFF in
+        emit_id (v0 land 0xFFFFFF);
+        if count > 1 then emit_id ((v0 lsr 32) land 0xFFFFFF);
+        if count > 2 then emit_id (v1 land 0xFFFFFF);
+        if count > 3 then emit_id ((v1 lsr 32) land 0xFFFFFF)
+      end
+      else begin
+        build_word model st text pos len;
+        let word = st.st_word in
+        emit_word word;
+        if cacheable model word len then store cache slot k0 k1 word
+      end
+    end
+    else if cache.mask >= 0 && len <= long_max_len then begin
+      let long = st.st_long in
+      let key =
+        if pos = 0 && len = String.length text then text
+        else String.sub text pos len
+      in
+      match Hashtbl.find_opt long key with
+      | Some a ->
+          for i = 0 to Array.length a - 1 do
+            emit_id (Array.unsafe_get a i)
+          done
+      | None ->
+          build_word model st text pos len;
+          let word = st.st_word in
+          emit_word word;
+          if exact model word len then begin
+            if Hashtbl.length long >= long_capacity then Hashtbl.reset long;
+            Hashtbl.replace long key (Array.sub word.sym_c 0 word.size)
+          end
+    end
+    else begin
+      build_word model st text pos len;
+      emit_word st.st_word
+    end
+  end
+
+let[@inline] token_value model id =
+  let vr = model.vocab_r in
+  if id >= 0 && id < Array.length vr then Array.unsafe_get vr id else "<unk>"
+
 let tokenize model text =
-  if String.length text = 0 then []
+  let len = String.length text in
+  if len = 0 then []
   else
-    match whole_word_id model text with
-    | Some id -> [ { id; value = text; offsets = (0, String.length text) } ]
-    | None -> word_to_tokens model (get_word model text)
+    with_state model (fun st ->
+        let ids = st.st_ids and lens = st.st_lens in
+        Ids.clear ids;
+        Ids.clear lens;
+        encode_run model st ids lens text ~pos:0 ~len;
+        let n = Ids.length ids in
+        let stop = ref 0 in
+        for i = 0 to n - 1 do
+          stop := !stop + Ids.get lens i
+        done;
+        let tokens = ref [] in
+        for i = n - 1 downto 0 do
+          let id = Ids.get ids i in
+          let e = !stop in
+          let s = e - Ids.get lens i in
+          stop := s;
+          tokens :=
+            { id; value = token_value model id; offsets = (s, e) } :: !tokens
+        done;
+        !tokens)
 
 let tokenize_ids model text =
-  if String.length text = 0 then [||]
+  let len = String.length text in
+  if len = 0 then [||]
   else
-    match whole_word_id model text with
-    | Some id -> [| id |]
-    | None -> word_to_ids (get_word model text)
+    with_state model (fun st ->
+        let ids = st.st_ids in
+        Ids.clear ids;
+        encode_into model st ids text ~pos:0 ~len;
+        Ids.to_array ids)
 
 let tokenize_encoding model text ~type_id ~base =
-  if String.length text = 0 then Encoding.empty
+  let len = String.length text in
+  if len = 0 then Encoding.empty
   else
-    match whole_word_id model text with
-    | Some id ->
-        Encoding.token ~id ~token:text
-          ~offset:(base, base + String.length text)
-          ~type_id ~special:false
-    | None -> word_to_encoding model (get_word model text) ~type_id ~base
+    with_state model (fun st ->
+        let run = st.st_ids and lens = st.st_lens in
+        Ids.clear run;
+        Ids.clear lens;
+        encode_run model st run lens text ~pos:0 ~len;
+        let n = Ids.length run in
+        let ids = Array.make n 0 in
+        let tokens = Array.make n "" in
+        let offsets = Array.make n (0, 0) in
+        let offset = ref base in
+        for i = 0 to n - 1 do
+          let id = Ids.get run i in
+          Array.unsafe_set ids i id;
+          Array.unsafe_set tokens i (token_value model id);
+          let s = !offset in
+          let e = s + Ids.get lens i in
+          Array.unsafe_set offsets i (s, e);
+          offset := e
+        done;
+        Encoding.create ~ids ~type_ids:(Array.make n type_id) ~tokens
+          ~words:(Array.make n None) ~offsets
+          ~special_tokens_mask:(Array.make n 0) ~attention_mask:(Array.make n 1)
+          ())
 
+let len_table model = model.len_table
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =
@@ -801,19 +1300,56 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
        (fun ((a_id, b_id), packed) -> (merge_key a_id b_id, packed))
        entries)
 
-let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
-    ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
-    ?(byte_fallback = false) ?(ignore_merges = false) () : t =
+let next_stamp = Atomic.make 0
+
+(* How many bytes of a pretoken an id accounts for: the entry it stands for,
+   stripped of the affixes its position gives it, or the byte a fallback token
+   spells out. The unknown token stands for a run of bytes no entry covers, so
+   its length is not a property of the id at all and reads as zero. *)
+let build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
+    ~byte_fallback_ids ~unk_id =
+  let plen = String.length prefix in
+  let slen = String.length suffix in
+  let table =
+    Array.map
+      (fun s ->
+        if byte_level then String.length s
+        else
+          let n = String.length s in
+          let n =
+            if plen > 0 && String.starts_with ~prefix s then n - plen else n
+          in
+          let n =
+            if slen > 0 && String.ends_with ~suffix s then n - slen else n
+          in
+          max 0 n)
+      source
+  in
+  if byte_fallback then
+    Array.iter
+      (fun id -> if id >= 0 && id < Array.length table then table.(id) <- 1)
+      byte_fallback_ids;
+  if unk_id >= 0 && unk_id < Array.length table then table.(unk_id) <- 0;
+  table
+
+let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
+    ?dropout ?unk_token ?continuing_subword_prefix ?end_of_word_suffix
+    ?(fuse_unk = false) ?(byte_fallback = false) ?(ignore_merges = false) () : t
+    =
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
   let non_empty = function Some "" -> None | given -> given in
   let continuing_subword_prefix = non_empty continuing_subword_prefix in
   let end_of_word_suffix = non_empty end_of_word_suffix in
+  if
+    byte_level
+    && (continuing_subword_prefix <> None || end_of_word_suffix <> None)
+  then
+    invalid_arg
+      "Bpe.create: byte_level is incompatible with continuing_subword_prefix \
+       and end_of_word_suffix";
   let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
   let vocab_r = Array.make (max_id + 1) "" in
   Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;
-  let cache =
-    if cache_capacity = 0 then None else Some (create_cache cache_capacity)
-  in
   let merges =
     convert_merges_to_merge_map vocab merges continuing_subword_prefix
   in
@@ -844,25 +1380,78 @@ let create ~vocab ~merges ?(cache_capacity = 10000) ?dropout ?unk_token
         match Hashtbl.find_opt vocab unk with Some id -> id | None -> -1)
     | None -> -1
   in
-  {
-    vocab;
-    vocab_r;
-    merges;
-    cache;
-    dropout;
-    unk_token;
-    continuing_subword_prefix;
-    end_of_word_suffix;
-    fuse_unk;
-    byte_fallback;
-    ignore_merges;
-    chars;
-    prefixed_chars;
-    suffixed_chars;
-    prefixed_suffixed_chars;
-    byte_fallback_ids;
-    unk_id;
-  }
+  (* The source form of an entry is what a pretoken is matched against: the
+     entry itself, or, for a byte-level model, the bytes it stands for. Ids
+     ascend so the lowest one wins whenever two entries share a source. *)
+  let source =
+    if byte_level then Array.map Pre_tokenizer.byte_level_decode vocab_r
+    else vocab_r
+  in
+  let source_vocab =
+    if not byte_level then vocab
+    else begin
+      let tbl = Hashtbl.create (Array.length source) in
+      Array.iteri
+        (fun id s ->
+          if s <> "" && not (Hashtbl.mem tbl s) then Hashtbl.add tbl s id)
+        source;
+      tbl
+    end
+  in
+  let byte_ids = Array.make 256 (-1) in
+  if byte_level then
+    Array.iteri
+      (fun id s ->
+        if String.length s = 1 then begin
+          let b = Char.code (String.unsafe_get s 0) in
+          if Array.unsafe_get byte_ids b < 0 then Array.unsafe_set byte_ids b id
+        end)
+      source;
+  let model =
+    {
+      stamp = Atomic.fetch_and_add next_stamp 1;
+      vocab;
+      vocab_r;
+      merges;
+      (* Dropout is drawn per occurrence, so a dropped-out model can reuse
+         nothing and keeps no cache at all. *)
+      cache_slots =
+        (match dropout with
+        | Some p when p > 0.0 -> 0
+        | _ -> max 0 cache_capacity);
+      seeds = Bytes.empty;
+      dropout;
+      unk_token;
+      continuing_subword_prefix;
+      end_of_word_suffix;
+      fuse_unk;
+      byte_fallback;
+      ignore_merges;
+      byte_level;
+      source;
+      source_vocab;
+      byte_ids;
+      len_table =
+        build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
+          ~byte_fallback_ids ~unk_id;
+      chars;
+      prefixed_chars;
+      suffixed_chars;
+      prefixed_suffixed_chars;
+      byte_fallback_ids;
+      unk_id;
+      sym_per_byte =
+        (if byte_fallback && not byte_level then
+           1 + String.length prefix + String.length suffix
+         else 1);
+    }
+  in
+  (* A vocabulary entry carries the affixes its position gave it — [low</w>],
+     [##ing] — and no pretoken ever looks like that, so seeding an affixed model
+     would fill the table with entries nothing can hit. *)
+  if model.cache_slots > 0 && prefix = "" && suffix = "" then
+    { model with seeds = build_seeds model }
+  else model
 
 let json_of_string s =
   match Jsont_bytesrw.decode_string Jsont.json s with

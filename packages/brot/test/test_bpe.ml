@@ -202,6 +202,37 @@ let test_prefix_byte_fallback () =
     [ "a"; "<0x23>"; "<0x23>"; "<0x62>" ]
     (tokens tokenizer "ab")
 
+(* Byte fallback spells out the affixed character, so a two-byte prefix turns
+   one source byte into three symbols and the merge buffers have to be sized for
+   the symbols rather than for the bytes. Probed with the [tokenizers] wheel:
+   seven characters give 19 tokens and forty give 118. *)
+let test_prefix_byte_fallback_long () =
+  let vocab =
+    ("a", 0)
+    :: List.init 96 (fun i -> (Printf.sprintf "<0x%02X>" (0x20 + i), 1 + i))
+  in
+  let tokenizer =
+    bpe ~vocab ~merges:[] ~continuing_subword_prefix:"##" ~byte_fallback:true ()
+  in
+  (* Only the first character is bare; every one after it carries the prefix,
+     and all four of its bytes fall back. *)
+  let spelled first rest n =
+    first
+    :: List.concat_map
+         (fun i -> [ "<0x23>"; "<0x23>"; rest i ])
+         (List.init (n - 1) Fun.id)
+  in
+  let b _ = "<0x62>" in
+  equal ~msg:"seven characters" (list string) (spelled "<0x62>" b 7)
+    (tokens tokenizer (String.make 7 'b'));
+  equal ~msg:"forty characters" (list string) (spelled "<0x62>" b 40)
+    (tokens tokenizer (String.make 40 'b'));
+  (* ["a"] is in the vocabulary, so the first character is a token of its own
+     and only the prefixed ones fall back. *)
+  equal ~msg:"alternating characters" (list string)
+    (spelled "a" (fun i -> if i mod 2 = 0 then "<0x62>" else "<0x61>") 7)
+    (tokens tokenizer "abababa")
+
 let test_prefix_and_suffix () =
   let vocab =
     [
@@ -300,10 +331,9 @@ let test_unknown_character () =
   equal ~msg:"known character before an unknown one" (list string) [ "a" ]
     (tokens "az")
 
-(* The word cache is shared by every domain encoding with the model. These 169
-   words share the 16 slots of the smallest cache, so the domains rewrite the
-   same slots continuously: a slot whose key and word are published by two
-   separate stores then hands out the word of another key. *)
+(* Every domain builds a pretoken cache of its own, seeded from the same
+   vocabulary. These 169 words share the single slot of the smallest cache, so
+   each domain rewrites that slot continuously while the others read theirs. *)
 let test_parallel_cache () =
   let letter i = Char.chr (Char.code 'a' + i) in
   let vocab =
@@ -331,6 +361,256 @@ let test_parallel_cache () =
   Array.iter Domain.join domains;
   equal ~msg:"parallel tokenization agrees with single-domain" int 0
     (Atomic.get mismatches)
+
+(* The pretoken cache. Every expectation here is that the cache changes nothing:
+   a direct-mapped table with no probing and no eviction answers a pretoken from
+   whatever its one slot holds, so a collision, a seeded entry and a merge run
+   from scratch must all agree. *)
+
+(* Eight letters, every two-letter merge, one four-letter merge per letter, and
+   a three-letter entry per letter that no merge builds — the case where a
+   vocabulary entry is not its own tokenization. *)
+let collide_vocab, collide_merges =
+  let letters =
+    List.init 8 (fun i -> String.make 1 (Char.chr (Char.code 'a' + i)))
+  in
+  let vocab = ref [] and merges = ref [] and next = ref 0 in
+  let add token =
+    vocab := (token, !next) :: !vocab;
+    incr next
+  in
+  List.iter add letters;
+  List.iter
+    (fun a ->
+      List.iter
+        (fun b ->
+          add (a ^ b);
+          merges := (a, b) :: !merges)
+        letters)
+    letters;
+  List.iter
+    (fun a ->
+      let pair = a ^ a in
+      add (pair ^ pair);
+      merges := (pair, pair) :: !merges)
+    letters;
+  List.iter (fun a -> add (a ^ a ^ a)) letters;
+  (List.rev !vocab, List.rev !merges)
+
+let collide_words =
+  let state = Random.State.make [| 20260817 |] in
+  Array.init 400 (fun i ->
+      let len = 1 + (i mod 40) in
+      String.init len (fun _ ->
+          Char.chr (Char.code 'a' + Random.State.int state 8)))
+
+let collide ?(ignore_merges = false) cache_capacity =
+  bpe ~vocab:collide_vocab ~merges:collide_merges ~cache_capacity ~ignore_merges
+    ()
+
+let test_cache_agrees_with_merges () =
+  let uncached = collide 0 in
+  let expected = Array.map (fun w -> encode_ids uncached w) collide_words in
+  (* One slot: every pretoken collides with every other, so no answer can come
+     from a stale entry and survive. *)
+  List.iter
+    (fun capacity ->
+      let tokenizer = collide capacity in
+      (* Twice over: the first pass inserts, the second reads back. *)
+      for pass = 1 to 2 do
+        Array.iteri
+          (fun i word ->
+            equal
+              ~msg:(Printf.sprintf "%d slots, pass %d, %S" capacity pass word)
+              (array int) expected.(i)
+              (encode_ids tokenizer word))
+          collide_words
+      done)
+    [ 1; 16; 4096 ]
+
+(* The cache is seeded with the tokenization of every vocabulary entry, run
+   through the very function a miss runs. An entry no merge builds — ["aaa"]
+   here — must come out as its decomposition, not as itself. *)
+let test_seed_agrees_with_merges () =
+  let uncached = collide 0 in
+  let cached = collide 4096 in
+  List.iter
+    (fun (token, _) ->
+      equal
+        ~msg:(Printf.sprintf "seeded %S" token)
+        (array int)
+        (encode_ids uncached token)
+        (encode_ids cached token))
+    collide_vocab;
+  equal ~msg:"an unreachable entry decomposes" (list string) [ "aa"; "a" ]
+    (tokens cached "aaa")
+
+(* Under [ignore_merges] the seed is the entry itself, and a pretoken that
+   collides with it in the table must not take its place. *)
+let test_seed_ignore_merges () =
+  let uncached = collide ~ignore_merges:true 0 in
+  let cached = collide ~ignore_merges:true 1 in
+  equal ~msg:"an unreachable entry stands" (list string) [ "aaa" ]
+    (tokens cached "aaa");
+  Array.iter
+    (fun word ->
+      equal
+        ~msg:(Printf.sprintf "ignore_merges %S" word)
+        (array int) (encode_ids uncached word) (encode_ids cached word))
+    collide_words;
+  equal ~msg:"and still stands after the collisions" (list string) [ "aaa" ]
+    (tokens cached "aaa")
+
+(* Pretokens above 15 bytes are keyed by their bytes in a table of their own,
+   and pretokens of more than four tokens fit in no entry at all. *)
+let test_cache_long_and_wide () =
+  let uncached = collide 0 in
+  let cached = collide 4096 in
+  let words =
+    [
+      "abcdefgh";
+      "abcdefghabcdefg";
+      "abcdefghabcdefgh";
+      "abcdefghabcdefghabcdefghabcdefgh";
+      "aaaabbbbccccddddeeeeffffgggghhhh";
+      String.make 200 'a';
+      String.concat ""
+        (List.init 60 (fun i ->
+             String.make 1 (Char.chr (Char.code 'a' + (i mod 8)))));
+    ]
+  in
+  List.iter
+    (fun word ->
+      let want = encode_ids uncached word in
+      for _ = 1 to 3 do
+        equal
+          ~msg:(Printf.sprintf "%d bytes" (String.length word))
+          (array int) want (encode_ids cached word)
+      done)
+    words;
+  equal ~msg:"more than four tokens" bool true
+    (Array.length (encode_ids cached "aaaabbbbccccddddeeeeffffgggghhhh") > 4)
+
+(* Byte fallback and the unknown token. Expectations probed with the
+   [tokenizers] wheel: a fallback never lets a pending unknown token out, so the
+   unknown token follows the bytes that came after it and comes out at the next
+   vocabulary hit or at the end of the word. *)
+
+let fallback_vocab =
+  ("<unk>", 100)
+  :: List.mapi
+       (fun i b -> (Printf.sprintf "<0x%02X>" b, i))
+       [ 0x61; 0x3C; 0x2F; 0x77; 0x3E; 0x62 ]
+
+let test_unk_after_byte_fallback () =
+  let plain =
+    bpe ~vocab:fallback_vocab ~merges:[] ~unk_token:"<unk>" ~byte_fallback:true
+      ~end_of_word_suffix:"</w>" ()
+  in
+  let fused =
+    bpe ~vocab:fallback_vocab ~merges:[] ~unk_token:"<unk>" ~byte_fallback:true
+      ~fuse_unk:true ~end_of_word_suffix:"</w>" ()
+  in
+  let suffixed = [ "<0x61>"; "<0x3C>"; "<0x2F>"; "<0x77>"; "<0x3E>" ] in
+  equal ~msg:"a word that falls back whole" (list string) suffixed
+    (tokens plain "a");
+  equal ~msg:"the unknown token follows the fallback" (list string)
+    (suffixed @ [ "<unk>" ]) (tokens plain "za");
+  equal ~msg:"and precedes it when it comes last" (list string)
+    [ "<0x61>"; "<unk>" ] (tokens plain "az");
+  equal ~msg:"one unknown token per character" (list string)
+    [ "<0x61>"; "<unk>"; "<unk>" ]
+    (tokens plain "zaz");
+  equal ~msg:"two of them in a row" (list string) [ "<unk>"; "<unk>" ]
+    (tokens plain "zz");
+  equal ~msg:"fused across the fallback" (list string) [ "<0x61>"; "<unk>" ]
+    (tokens fused "zaz");
+  equal ~msg:"fused in a row" (list string) [ "<unk>" ] (tokens fused "zz");
+  equal ~msg:"fused before a fallback" (list string) (suffixed @ [ "<unk>" ])
+    (tokens fused "zza")
+
+let test_unk_flushed_by_vocab_hit () =
+  let vocab = [ ("<unk>", 100); ("<0x61>", 0); ("b", 1) ] in
+  let tokenizer =
+    bpe ~vocab ~merges:[] ~unk_token:"<unk>" ~byte_fallback:true ()
+  in
+  equal ~msg:"a vocabulary hit lets the unknown token out" (list string)
+    [ "<0x61>"; "<unk>"; "b" ] (tokens tokenizer "zab");
+  equal ~msg:"nothing is held back before it" (list string)
+    [ "<unk>"; "b"; "<0x61>" ] (tokens tokenizer "zba");
+  equal ~msg:"several fallbacks first" (list string)
+    [ "<0x61>"; "<0x61>"; "<unk>"; "b" ]
+    (tokens tokenizer "zaab");
+  (* Offsets run in emission order, as HuggingFace reports them. *)
+  equal ~msg:"offsets follow the tokens"
+    (list (pair int int))
+    [ (0, 1); (1, 2); (2, 3) ]
+    (encode tokenizer "zab" |> Encoding.offsets |> Array.to_list)
+
+(* A byte sequence cut short at the end of the input is taken as the bytes that
+   are left of it, never as the bytes its lead byte promises. *)
+let test_truncated_utf8 () =
+  let vocab = [ ("a", 0); ("é", 1); ("€", 2) ] in
+  let tokenizer = bpe ~vocab ~merges:[] () in
+  equal ~msg:"whole characters" (list string) [ "a"; "é"; "€" ]
+    (tokens tokenizer "aé€");
+  equal ~msg:"a two-byte character cut to one" (list string) [ "a" ]
+    (tokens tokenizer "a\xC3");
+  equal ~msg:"a three-byte character cut to two" (list string) [ "a" ]
+    (tokens tokenizer "a\xE2\x82");
+  equal ~msg:"a four-byte lead byte alone" (list string) [ "a" ]
+    (tokens tokenizer "a\xF0");
+  (* The affixed path spells the character out to fall back on it, which is
+     where a length taken from the lead byte used to read past the end. *)
+  let affixed =
+    bpe
+      ~vocab:
+        (("a", 0)
+        :: List.init 96 (fun i -> (Printf.sprintf "<0x%02X>" (0x20 + i), 1 + i))
+        )
+      ~merges:[] ~continuing_subword_prefix:"##" ~byte_fallback:true ()
+  in
+  equal ~msg:"a truncated character under a prefix" (list string) [ "a" ]
+    (tokens affixed "a\xE2\x82");
+  let unk =
+    bpe
+      ~vocab:[ ("<unk>", 0); ("a", 1) ]
+      ~merges:[] ~unk_token:"<unk>" ~end_of_word_suffix:"</w>" ()
+  in
+  equal ~msg:"a truncated character under a suffix" (list string)
+    [ "a"; "<unk>" ] (tokens unk "a\xE2\x82")
+
+(* Words of more than [max_linear] symbols leave the rank scan for the heap;
+   both must merge in the order HuggingFace merges in — by rank, then by
+   position. *)
+let test_long_word_merges () =
+  let vocab =
+    [ ("a", 0); ("b", 1); ("aa", 2); ("aaaa", 3); ("aaaaaaaa", 4); ("ab", 5) ]
+  in
+  let merges = [ ("a", "a"); ("aa", "aa"); ("aaaa", "aaaa"); ("a", "b") ] in
+  let tokenizer = bpe ~vocab ~merges ~cache_capacity:0 () in
+  equal ~msg:"eight" (list string) [ "aaaaaaaa" ]
+    (tokens tokenizer (String.make 8 'a'));
+  equal ~msg:"thirty-two" (list string)
+    [ "aaaaaaaa"; "aaaaaaaa"; "aaaaaaaa"; "aaaaaaaa" ]
+    (tokens tokenizer (String.make 32 'a'));
+  (* Sixty-four characters is past the rank scan's ceiling. *)
+  equal ~msg:"sixty-four" (list string)
+    (List.init 8 (fun _ -> "aaaaaaaa"))
+    (tokens tokenizer (String.make 64 'a'));
+  equal ~msg:"a tail that cannot merge" (list string)
+    [ "aaaaaaaa"; "aaaaaaaa"; "aaaa"; "aa"; "b" ]
+    (tokens tokenizer (String.make 22 'a' ^ "b"));
+  let cached = bpe ~vocab ~merges () in
+  List.iter
+    (fun n ->
+      let word = String.make n 'a' in
+      equal
+        ~msg:(Printf.sprintf "cached and uncached agree at %d" n)
+        (array int)
+        (encode_ids tokenizer word)
+        (encode_ids cached word))
+    [ 1; 2; 3; 7; 15; 16; 31; 32; 33; 64; 65; 200 ]
 
 (* Training. Every expectation below was probed with the [tokenizers] wheel,
    running its [BpeTrainer] over the same corpus behind a [WhitespaceSplit]
@@ -632,10 +912,25 @@ let () =
           test "missing suffixed character" test_suffix_unknown;
           test "byte fallback with a suffix" test_suffix_byte_fallback;
           test "byte fallback with a prefix" test_prefix_byte_fallback;
+          test "byte fallback with a prefix over a long word"
+            test_prefix_byte_fallback_long;
           test "continuing prefix with and without a suffix"
             test_prefix_and_suffix;
           test "tokenizer integration" test_tokenizer_integration;
           test "unknown character" test_unknown_character;
+          test "byte fallback before the unknown token"
+            test_unk_after_byte_fallback;
+          test "a vocabulary hit flushes the unknown token"
+            test_unk_flushed_by_vocab_hit;
+          test "truncated UTF-8" test_truncated_utf8;
+          test "words past the rank scan" test_long_word_merges;
+        ];
+      group "cache"
+        [
+          test "collisions agree with the merges" test_cache_agrees_with_merges;
+          test "the seed agrees with the merges" test_seed_agrees_with_merges;
+          test "the seed under ignore_merges" test_seed_ignore_merges;
+          test "long and many-token pretokens" test_cache_long_and_wide;
         ];
       group "training"
         [

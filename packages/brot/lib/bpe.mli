@@ -12,15 +12,16 @@
     priority order (earlier rules have higher priority). Merging continues until
     no more rules apply.
 
-    Tokenized words are cached in a direct-mapped bounded cache for amortized
-    performance. *)
+    Tokenizations are cached per pretoken in a direct-mapped table seeded with
+    the whole vocabulary, so a word the vocabulary holds is answered without
+    merging. *)
 
 type t
-(** The type for BPE models. Internally mutable due to the merge cache.
+(** The type for BPE models. Immutable after creation.
 
-    Several domains may tokenize with the same model: cache entries are
-    immutable and published by a single store, and the merge scratch buffers are
-    held per domain and claimed by one thread at a time. *)
+    Several domains may tokenize with the same model: the merge buffers and the
+    pretoken cache are held per (model, domain) and claimed by one thread at a
+    time. *)
 
 type vocab = (string, int) Hashtbl.t
 (** The type for vocabularies mapping token strings to IDs. *)
@@ -34,6 +35,7 @@ type merges = (string * string) list
 val create :
   vocab:vocab ->
   merges:merges ->
+  ?byte_level:bool ->
   ?cache_capacity:int ->
   ?dropout:float ->
   ?unk_token:string ->
@@ -46,9 +48,19 @@ val create :
   t
 (** [create ~vocab ~merges ()] is a BPE model.
 
-    - [cache_capacity] is the number of slots in the direct-mapped word cache.
-      Defaults to [10000]. Set to [0] to disable caching. Words longer than 4096
-      bytes bypass the cache.
+    - [byte_level], when [true], matches pretokens against the {e bytes} each
+      vocabulary entry stands for rather than against the entry itself, so a
+      byte-level pipeline can hand the model raw text instead of encoding every
+      pretoken first. Every entry is decoded through the byte-to-unicode table
+      once, at creation; the vocabulary, {!token_to_id}, {!id_to_token},
+      {!get_vocab} and {!save} keep speaking the encoded form. Raises
+      [Invalid_argument] together with [continuing_subword_prefix] or
+      [end_of_word_suffix]. Defaults to [false].
+    - [cache_capacity] is the number of slots in the direct-mapped pretoken
+      cache, rounded up to a power of two. Each slot costs 32 bytes and each
+      domain encoding with the model keeps a table of its own. Defaults to
+      [262144] (8 MB). Set to [0] to disable caching. Pretokens over 4096 bytes
+      are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which
@@ -94,6 +106,56 @@ val tokenize_encoding : t -> string -> type_id:int -> base:int -> Encoding.t
 (** [tokenize_encoding t s ~type_id ~base] tokenizes [s] and builds an
     {!Encoding.t} directly, avoiding intermediate list allocation. Offsets count
     from [base], which is where [s] starts in the text being encoded. *)
+
+(** {1:buffered Buffered encoding} *)
+
+(** A run of token ids. *)
+module Ids : sig
+  type t
+
+  val create : ?capacity:int -> unit -> t
+  (** [create ()] is an empty run. [capacity] defaults to [64] ids. *)
+
+  val clear : t -> unit
+  (** [clear t] drops every id, keeping the buffer. *)
+
+  val length : t -> int
+  (** [length t] is the number of ids in [t]. *)
+
+  val get : t -> int -> int
+  (** [get t i] is the [i]th id. Unchecked. *)
+
+  val to_array : t -> int array
+  (** [to_array t] is a fresh array of the ids of [t]. *)
+end
+
+type state
+(** The type for a model's encoding scratch: merge buffers and the pretoken
+    cache. Every one of them has a single writer, so a state is never shared. *)
+
+val with_state : t -> (state -> 'a) -> 'a
+(** [with_state t f] is [f st] for a state [st] held for the duration of the
+    call, and released even if [f] raises.
+
+    The calling domain has one state per model, built and seeded when it first
+    asks. A thread that finds it already held — another thread of the same
+    domain is encoding — gets unshared buffers and no cache instead, so [f] is
+    always correct and only sometimes fast. [st] must not escape [f]. *)
+
+val encode_into : t -> state -> Ids.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t st ids text ~pos ~len] appends the ids of
+    [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
+    checked.
+
+    This is the throughput path: nothing is allocated per pretoken that hits the
+    cache. *)
+
+val len_table : t -> int array
+(** [len_table t] maps an id to the number of source bytes an occurrence of it
+    accounts for: the bytes an entry stands for in a byte-level model, and the
+    entry stripped of its affixes otherwise. A byte fallback token reads [1] and
+    the unknown token [0], its length being a property of the text rather than
+    of the id. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

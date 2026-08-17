@@ -1087,6 +1087,24 @@ thread.
 
 ### Brot
 
+- BPE tokenization now answers a repeated pretoken from a direct-mapped cache
+  seeded with the whole vocabulary. `bpe`'s `cache_capacity` is the slot count
+  of that cache (32 bytes a slot, one table per domain), default `262144`
+  instead of `10000`; short words merge by a linear rank scan rather than a
+  binary heap, which is 2x faster on a miss.
+- Fixed a heap overflow in `bpe` with `byte_fallback` and
+  `continuing_subword_prefix` or `end_of_word_suffix`: byte fallback spells a
+  character out with its affixes, so one source byte becomes several tokens
+  and the merge buffers were sized for the bytes. Words of more than a few
+  characters corrupted the heap.
+- Fixed the placement of `unk_token` around byte fallbacks in `bpe`. A
+  fallback no longer lets a pending unknown token out first, so `"za"` with
+  `<0x7A>` absent gives the fallback tokens of `a` followed by `<unk>`, as
+  HuggingFace does, rather than the reverse.
+- Fixed `bpe` reading past the end of a pretoken whose last UTF-8 sequence is
+  cut short; with `continuing_subword_prefix` or `end_of_word_suffix` this
+  raised `Invalid_argument`. The bytes that remain are now taken as one unit
+  and fall through to the byte fallback or the unknown token.
 - Loading and saving a tokenizer now carry the BPE model's `byte_fallback`,
   `fuse_unk`, `ignore_merges` and `dropout`. LLaMA and other SentencePiece
   models were dropping `byte_fallback` on load, so every character outside the
