@@ -1,5 +1,13 @@
 (library
  (name brot)
  (public_name brot)
- (private_modules added_tokens bpe wordpiece word_level unigram chars)
+ (private_modules
+  added_tokens
+  bpe
+  char_class
+  chars
+  spans
+  unigram
+  word_level
+  wordpiece)
  (libraries re jsont jsont.bytesrw uucp uunf))

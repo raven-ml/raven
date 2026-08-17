@@ -62,6 +62,23 @@ let make_suite ~label ~tokenizer =
   in
   Thumper.group label benches
 
+(* Pre-tokenization on its own: the span walkers, plus the pieces and offsets
+   [pre_tokenize] builds from them. *)
+let pre_tokenizer_suite =
+  let open Fixtures in
+  let case label pre =
+    Thumper.bench label (fun () -> Pre_tokenizer.pre_tokenize pre long_text)
+  in
+  Thumper.group "Pre-tokenize"
+    [
+      case "byte_level" (Pre_tokenizer.byte_level ());
+      case "bert" (Pre_tokenizer.bert ());
+      case "whitespace" (Pre_tokenizer.whitespace ());
+      case "metaspace" (Pre_tokenizer.metaspace ());
+      Thumper.bench "byte_level/short" (fun () ->
+          Pre_tokenizer.pre_tokenize (Pre_tokenizer.byte_level ()) short_text);
+    ]
+
 let all_benchmarks =
   let open Fixtures in
   let gpt2 =
@@ -73,6 +90,6 @@ let all_benchmarks =
   let llama =
     make_suite ~label:"LLaMA" ~tokenizer:(load_tokenizer "llama.json")
   in
-  [ gpt2; bert; llama ]
+  [ pre_tokenizer_suite; gpt2; bert; llama ]
 
 let () = Thumper.run "brot" all_benchmarks

@@ -500,16 +500,17 @@ let test_char_delimiter_split () =
   let test_case delim text expected =
     let result = Pre.pre_tokenize (Pre.char_delimiter delim) text in
     check_tokenization
-      (Printf.sprintf "CharDelimiterSplit delim='%c' text=%S" delim text)
+      (Printf.sprintf "CharDelimiterSplit delim=%S text=%S" delim text)
       result expected
   in
 
-  test_case ',' "a,b,c" [ ("a", (0, 1)); ("b", (2, 3)); ("c", (4, 5)) ];
-  test_case ' ' "hello world" [ ("hello", (0, 5)); ("world", (6, 11)) ];
-  test_case '|' "one|two|three"
+  test_case "," "a,b,c" [ ("a", (0, 1)); ("b", (2, 3)); ("c", (4, 5)) ];
+  test_case " " "hello world" [ ("hello", (0, 5)); ("world", (6, 11)) ];
+  test_case "|" "one|two|three"
     [ ("one", (0, 3)); ("two", (4, 7)); ("three", (8, 13)) ];
-  test_case ',' "" [];
-  test_case ',' "," []
+  test_case "\u{2581}" "\u{2581}a\u{2581}b" [ ("a", (3, 4)); ("b", (7, 8)) ];
+  test_case "," "" [];
+  test_case "," "," []
 
 let test_sequence_pretokenizer () =
   (* Combine whitespace split then punctuation isolation *)
@@ -658,11 +659,49 @@ let test_unicode_scripts () =
   test_case "a\u{2764}\u{fe0f}b"
     [ ("a", (0, 1)); ("\u{2764}", (1, 4)); ("\u{fe0f}", (4, 7)); ("b", (7, 8)) ]
 
+(* Every case is the output of HuggingFace [Metaspace]. *)
+let test_metaspace_huggingface () =
+  let pieces ?(replacement = "\u{2581}") ?(prepend_scheme = `Always)
+      ?(split = true) text =
+    List.map fst
+      (Pre.pre_tokenize
+         (Pre.metaspace ~replacement ~prepend_scheme ~split ())
+         text)
+  in
+  let check text expected =
+    equal
+      ~msg:(Printf.sprintf "Metaspace %S" text)
+      (list string) expected (pieces text)
+  in
+  (* The marker is prepended only when the marked text lacks one. *)
+  check "a" [ "\u{2581}a" ];
+  check " a" [ "\u{2581}a" ];
+  check "\u{2581}a" [ "\u{2581}a" ];
+  check "\u{2581}hello\u{2581}world" [ "\u{2581}hello"; "\u{2581}world" ];
+  check "hello world" [ "\u{2581}hello"; "\u{2581}world" ];
+  check "  a" [ "\u{2581}"; "\u{2581}a" ];
+  check "\u{2581} a" [ "\u{2581}"; "\u{2581}a" ];
+  check " " [ "\u{2581}" ];
+  check "" [];
+  equal ~msg:"Metaspace `Never" (list string) [ "a"; "\u{2581}b" ]
+    (pieces ~prepend_scheme:`Never "a b");
+  (* Without splitting, the piece is the marked text and the offsets are those
+     of the text as given. *)
+  check_tokenization "Metaspace ~split:false"
+    (Pre.pre_tokenize
+       (Pre.metaspace ~prepend_scheme:`Never ~split:false ())
+       " a")
+    [ ("\u{2581}a", (0, 2)) ];
+  equal ~msg:"Metaspace ~split:false on empty"
+    (list (pair string (pair int int)))
+    []
+    (Pre.pre_tokenize (Pre.metaspace ~split:false ()) "")
+
 let test_metaspace_basic () =
-  let test_case text expected =
+  let test_case ?(replacement = "_") text expected =
     let result =
       Pre.pre_tokenize
-        (Pre.metaspace ~replacement:'_' ~prepend_scheme:`Always ~split:true ())
+        (Pre.metaspace ~replacement ~prepend_scheme:`Always ~split:true ())
         text
     in
     check_strings (Printf.sprintf "Metaspace %S" text) result expected
@@ -670,7 +709,393 @@ let test_metaspace_basic () =
 
   test_case "Hello world" [ "_Hello"; "_world" ];
   test_case " starts with space" [ "_starts"; "_with"; "_space" ];
-  test_case "" []
+  test_case "" [];
+
+  (* The default replacement is U+2581, which no single character could hold. *)
+  let default = Pre.pre_tokenize (Pre.metaspace ()) "Hello world" in
+  check_strings "Metaspace default marker" default
+    [ "\u{2581}Hello"; "\u{2581}world" ];
+  equal ~msg:"Metaspace default offsets"
+    (list (pair int int))
+    [ (0, 8); (8, 16) ]
+    (List.map snd default);
+  test_case ~replacement:"\u{2581}" "a b" [ "\u{2581}a"; "\u{2581}b" ]
+
+(* A corpus of classified code points, and the GPT-2 pattern expressed over
+   their classes: at each position, the first alternative of
+   ['s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+]
+   that matches. The walker must agree with it. Every class below is the one
+   HuggingFace gives that code point. *)
+
+type gpt2_class = Space | White | Letter | Number | Other
+
+(* Repeated entries are drawn more often: spaces, and the letters that make a
+   contraction. *)
+let alphabet =
+  [|
+    (0x0020, Space);
+    (0x0020, Space);
+    (0x0020, Space);
+    (0x0009, White);
+    (0x000A, White);
+    (0x000D, White);
+    (0x000B, White);
+    (0x000C, White);
+    (0x00A0, White) (* no-break space *);
+    (0x2003, White) (* em space *);
+    (0x3000, White) (* ideographic space *);
+    (0x0085, White) (* next line *);
+    (0x2028, White) (* line separator *);
+    (0x1680, White) (* ogham space *);
+    (0x0027, Other) (* ' *);
+    (0x0027, Other);
+    (0x0073, Letter) (* s *);
+    (0x0074, Letter) (* t *);
+    (0x006D, Letter) (* m *);
+    (0x0064, Letter) (* d *);
+    (0x0072, Letter) (* r *);
+    (0x0065, Letter) (* e *);
+    (0x0076, Letter) (* v *);
+    (0x006C, Letter) (* l *);
+    (0x0053, Letter) (* S *);
+    (0x0054, Letter) (* T *);
+    (0x0052, Letter) (* R *);
+    (0x004C, Letter) (* L *);
+    (0x0061, Letter) (* a *);
+    (0x005A, Letter) (* Z *);
+    (0x00E9, Letter) (* é *);
+    (0x00DF, Letter) (* ß *);
+    (0x041F, Letter) (* П *);
+    (0x05E9, Letter) (* ש *);
+    (0x0627, Letter) (* ا *);
+    (0x4E2D, Letter) (* 中 *);
+    (0x3042, Letter) (* あ *);
+    (0xD55C, Letter) (* 한 *);
+    (0x0030, Number) (* 0 *);
+    (0x0039, Number) (* 9 *);
+    (0x0661, Number) (* Arabic-Indic one *);
+    (0x00BD, Number) (* ½ *);
+    (0x2160, Number) (* Roman numeral one *);
+    (0x00B2, Number) (* superscript two *);
+    (0x0301, Other) (* combining acute: a mark, not a letter *);
+    (0x0F71, Other) (* combining Tibetan vowel *);
+    (0x2460, Number) (* circled one: an other number *);
+    (0x200B, Other) (* zero width space: not White_Space *);
+    (0x00AD, Other) (* soft hyphen *);
+    (0x200D, Other) (* zero width joiner *);
+    (0xFE0F, Other) (* variation selector *);
+    (0x1F600, Other) (* 😀 *);
+    (0x1F44D, Other) (* 👍 *);
+    (0x1F3FB, Other) (* skin tone *);
+    (0xE000, Other) (* private use *);
+    (0x10FFFF, Other) (* last code point *);
+    (0x002E, Other) (* . *);
+    (0x002C, Other);
+    (0x0021, Other);
+    (0x003F, Other);
+    (0x002D, Other);
+    (0x005F, Other);
+    (0x002B, Other);
+    (0x003D, Other);
+    (0x007C, Other);
+    (0x0040, Other);
+    (0x0023, Other);
+    (0x002F, Other);
+    (0x005C, Other);
+    (0x0022, Other);
+    (0x0028, Other);
+    (0x0029, Other);
+  |]
+
+let add_utf8 buf code =
+  if code < 0x80 then Buffer.add_char buf (Char.chr code)
+  else if code < 0x800 then begin
+    Buffer.add_char buf (Char.chr (0xC0 lor (code lsr 6)));
+    Buffer.add_char buf (Char.chr (0x80 lor (code land 0x3F)))
+  end
+  else if code < 0x10000 then begin
+    Buffer.add_char buf (Char.chr (0xE0 lor (code lsr 12)));
+    Buffer.add_char buf (Char.chr (0x80 lor ((code lsr 6) land 0x3F)));
+    Buffer.add_char buf (Char.chr (0x80 lor (code land 0x3F)))
+  end
+  else begin
+    Buffer.add_char buf (Char.chr (0xF0 lor (code lsr 18)));
+    Buffer.add_char buf (Char.chr (0x80 lor ((code lsr 12) land 0x3F)));
+    Buffer.add_char buf (Char.chr (0x80 lor ((code lsr 6) land 0x3F)));
+    Buffer.add_char buf (Char.chr (0x80 lor (code land 0x3F)))
+  end
+
+(* Spans of the characters [points], whose byte offsets are [offsets]. *)
+let reference_gpt2_spans points offsets stop =
+  let n = Array.length points in
+  let code k = fst points.(k) in
+  let class_of k = snd points.(k) in
+  let offset k = if k < n then offsets.(k) else stop in
+  let run holds k =
+    let j = ref k in
+    while !j < n && holds (class_of !j) do
+      incr j
+    done;
+    !j
+  in
+  let letter c = c = Letter in
+  let number c = c = Number in
+  let other c = c = Other in
+  let space c = c = Space || c = White in
+  let contraction k =
+    let ascii k = if k < n && code k < 128 then Char.chr (code k) else '\000' in
+    if code k <> Char.code '\'' then 0
+    else
+      let c1 = ascii (k + 1) in
+      if c1 = 's' || c1 = 't' || c1 = 'm' || c1 = 'd' then 2
+      else
+        let c2 = ascii (k + 2) in
+        if
+          (c1 = 'r' && c2 = 'e')
+          || (c1 = 'v' && c2 = 'e')
+          || (c1 = 'l' && c2 = 'l')
+        then 3
+        else 0
+  in
+  let spans = ref [] in
+  let i = ref 0 in
+  while !i < n do
+    let start = !i in
+    let c = contraction !i in
+    if c > 0 then i := !i + c
+    else begin
+      let j = if class_of !i = Space then !i + 1 else !i in
+      if j < n && letter (class_of j) then i := run letter j
+      else if j < n && number (class_of j) then i := run number j
+      else if j < n && other (class_of j) then i := run other j
+      else
+        (* [\s+(?!\S)] takes the whole run, or all but its last character when a
+           non-whitespace character follows. *)
+        let e = run space !i in
+        i := if e < n && e - 1 > !i then e - 1 else e
+    end;
+    spans := (offset start, offset !i) :: !spans
+  done;
+  List.rev !spans
+
+let malformed =
+  [|
+    "\xc3";
+    "\xe2\x80";
+    "\xf0\x9f\x98";
+    "\x80";
+    "\xbf";
+    "\xff";
+    "\xfe";
+    "\xc0";
+    "\xc1";
+    "\xc0\x80";
+    "\xed\xa0\x80";
+    "\xf5\x80\x80\x80";
+    "\xf8\x88\x80\x80";
+    "\xe0\x41\x42";
+  |]
+
+(* Deterministic xorshift, so a failure is reproducible. *)
+let next_random =
+  let state = ref 0x2545F4914F6CDD1D in
+  fun bound ->
+    let x = !state in
+    let x = x lxor (x lsl 13) in
+    let x = x lxor (x lsr 7) in
+    let x = x lxor (x lsl 17) in
+    state := x land max_int;
+    !state mod bound
+
+let random_classified length =
+  let count = 1 + next_random length in
+  let points =
+    Array.init count (fun _ -> alphabet.(next_random (Array.length alphabet)))
+  in
+  let offsets = Array.make count 0 in
+  let buf = Buffer.create (4 * count) in
+  Array.iteri
+    (fun k (code, _) ->
+      offsets.(k) <- Buffer.length buf;
+      add_utf8 buf code)
+    points;
+  (Buffer.contents buf, points, offsets)
+
+let random_malformed length =
+  let buf = Buffer.create 32 in
+  for _ = 1 to 1 + next_random length do
+    Buffer.add_string buf malformed.(next_random (Array.length malformed))
+  done;
+  Buffer.contents buf
+
+let test_byte_level_matches_pattern () =
+  let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
+  for _ = 1 to 5000 do
+    let text, points, offsets = random_classified 12 in
+    equal
+      ~msg:(Printf.sprintf "GPT-2 spans of %S" text)
+      (list (pair int int))
+      (reference_gpt2_spans points offsets (String.length text))
+      (List.map snd (Pre.pre_tokenize tokenizer text))
+  done
+
+(* Malformed UTF-8 reaches the walker whenever a user hands brot bytes that are
+   not text. It must not raise, not read past the string, and still cover it. *)
+let test_byte_level_malformed_utf8 () =
+  let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
+  let check text =
+    let offsets = List.map snd (Pre.pre_tokenize tokenizer text) in
+    let position = ref 0 in
+    List.iter
+      (fun (start, stop) ->
+        equal
+          ~msg:(Printf.sprintf "span of %S starts where the last stopped" text)
+          int !position start;
+        equal
+          ~msg:(Printf.sprintf "span of %S is not empty" text)
+          bool true (stop > start);
+        position := stop)
+      offsets;
+    equal
+      ~msg:(Printf.sprintf "spans of %S cover it" text)
+      int (String.length text) !position
+  in
+  Array.iter check malformed;
+  for _ = 1 to 5000 do
+    check (random_malformed 8)
+  done
+
+(* HuggingFace splits before every delimiter and keeps it with what precedes;
+   consecutive delimiters used to be reported at the offsets of the first. *)
+let test_split_merged_with_previous () =
+  let tokenizer = Pre.split ~pattern:"," ~behavior:`Merged_with_previous () in
+  check_tokenization "Split MergedWithPrevious on \"a,,b\""
+    (Pre.pre_tokenize tokenizer "a,,b")
+    [ ("a,", (0, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  check_tokenization "Split MergedWithPrevious on \",,\""
+    (Pre.pre_tokenize tokenizer ",,")
+    [ (",", (0, 1)); (",", (1, 2)) ]
+
+(* [fill] hands out spans a bounded chunk at a time, and a sequence whose first
+   member covers the whole text in one span cannot make progress until the
+   buffer grows. Both paths only show up on inputs bigger than a chunk. *)
+let test_chunked_walk () =
+  let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
+  let text, points, offsets = random_classified 60_000 in
+  equal
+    ~msg:(Printf.sprintf "GPT-2 spans of a %d byte text" (String.length text))
+    (list (pair int int))
+    (reference_gpt2_spans points offsets (String.length text))
+    (List.map snd (Pre.pre_tokenize tokenizer text));
+
+  (* No whitespace, so the first member yields a single span and the second
+     needs more room than the buffer holds. *)
+  let dense =
+    String.concat ""
+      (List.init 400 (fun i -> if i land 1 = 0 then "a" else "."))
+  in
+  equal ~msg:"Sequence over a whitespace-free text"
+    (list (pair string (pair int int)))
+    (Pre.pre_tokenize (Pre.punctuation ()) dense)
+    (Pre.pre_tokenize
+       (Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ])
+       dense)
+
+(* Serialization. Every expectation is the JSON HuggingFace writes for the same
+   pre-tokenizer, and every rejected shape is one it refuses to read. *)
+
+let json_text t =
+  match
+    Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json (Pre.to_json t)
+  with
+  | Ok text -> text
+  | Error e -> failwith e
+
+let of_text text =
+  match Jsont_bytesrw.decode_string Jsont.json text with
+  | Ok json -> Pre.of_json json
+  | Error e -> failwith e
+
+let test_json_shape () =
+  let shape name t expected =
+    equal
+      ~msg:(Printf.sprintf "%s serializes" name)
+      string expected (json_text t)
+  in
+  shape "split"
+    (Pre.split ~pattern:"," ())
+    {|{"type":"Split","pattern":{"String":","},"behavior":"Removed","invert":false}|};
+  shape "split ~invert"
+    (Pre.split ~pattern:"ab" ~behavior:`Isolated ~invert:true ())
+    {|{"type":"Split","pattern":{"String":"ab"},"behavior":"Isolated","invert":true}|};
+  shape "metaspace" (Pre.metaspace ())
+    {|{"type":"Metaspace","replacement":"▁","prepend_scheme":"always","split":true}|};
+  shape "metaspace ~prepend_scheme:`Never"
+    (Pre.metaspace ~replacement:"_" ~prepend_scheme:`Never ~split:false ())
+    {|{"type":"Metaspace","replacement":"_","prepend_scheme":"never","split":false}|}
+
+let test_json_round_trip () =
+  let round_trip name t =
+    match of_text (json_text t) with
+    | Ok t' ->
+        equal
+          ~msg:(Printf.sprintf "%s round-trips" name)
+          string (json_text t) (json_text t')
+    | Error e -> fail (Printf.sprintf "%s: %s" name e)
+  in
+  round_trip "byte_level" (Pre.byte_level ());
+  round_trip "bert" (Pre.bert ());
+  round_trip "whitespace" (Pre.whitespace ());
+  round_trip "whitespace_split" (Pre.whitespace_split ());
+  round_trip "punctuation" (Pre.punctuation ~behavior:`Merged_with_previous ());
+  round_trip "split" (Pre.split ~pattern:"::" ~behavior:`Isolated ());
+  round_trip "char_delimiter" (Pre.char_delimiter ",");
+  round_trip "char_delimiter ▁" (Pre.char_delimiter "▁");
+  round_trip "digits" (Pre.digits ~individual_digits:true ());
+  round_trip "metaspace" (Pre.metaspace ());
+  round_trip "metaspace ~prepend_scheme:`First"
+    (Pre.metaspace ~prepend_scheme:`First ());
+  round_trip "unicode_scripts" (Pre.unicode_scripts ());
+  round_trip "fixed_length" (Pre.fixed_length 4);
+  round_trip "sequence"
+    (Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ])
+
+let test_json_of_hf () =
+  let accepts name text expected =
+    match of_text text with
+    | Ok t ->
+        equal
+          ~msg:(Printf.sprintf "%s is read" name)
+          string expected (json_text t)
+    | Error e -> fail (Printf.sprintf "%s: %s" name e)
+  in
+  let rejects name text =
+    match of_text text with
+    | Ok _ -> fail (Printf.sprintf "%s was accepted" name)
+    | Error _ ->
+        equal ~msg:(Printf.sprintf "%s is rejected" name) bool true true
+  in
+  (* [prepend_scheme] and [split] default as they do in HuggingFace. HuggingFace
+     rejects a [Split] without [invert]; brot defaults it. *)
+  accepts "metaspace without prepend_scheme"
+    {|{"type":"Metaspace","replacement":"▁"}|}
+    {|{"type":"Metaspace","replacement":"▁","prepend_scheme":"always","split":true}|};
+  accepts "split without invert"
+    {|{"type":"Split","pattern":{"String":"-"},"behavior":"Isolated"}|}
+    {|{"type":"Split","pattern":{"String":"-"},"behavior":"Isolated","invert":false}|};
+  rejects "split with a bare pattern"
+    {|{"type":"Split","pattern":",","behavior":"Removed","invert":false}|};
+  rejects "split with a regex pattern"
+    {|{"type":"Split","pattern":{"Regex":"\\d+"},"behavior":"Removed","invert":false}|};
+  rejects "metaspace with a capitalised scheme"
+    {|{"type":"Metaspace","replacement":"_","prepend_scheme":"Always"}|};
+  rejects "metaspace without a replacement" {|{"type":"Metaspace"}|};
+  rejects "metaspace with a two-character replacement"
+    {|{"type":"Metaspace","replacement":"__"}|};
+  rejects "char delimiter of two characters"
+    {|{"type":"CharDelimiterSplit","delimiter":"ab"}|};
+  accepts "punctuation without behavior" {|{"type":"Punctuation"}|}
+    {|{"type":"Punctuation","behavior":"Isolated"}|}
 
 let () =
   run "Pre-tokenizers Test Suite"
@@ -683,6 +1108,8 @@ let () =
           test "ByteLevel special chars" test_byte_level_special_chars;
           test "ByteLevel unicode" test_byte_level_unicode;
           test "ByteLevel edge cases" test_byte_level_edge_cases;
+          test "ByteLevel matches the pattern" test_byte_level_matches_pattern;
+          test "ByteLevel on malformed UTF-8" test_byte_level_malformed_utf8;
         ];
       group "bert"
         [
@@ -700,11 +1127,23 @@ let () =
       group "split"
         [
           test "Split with patterns" test_split_pretokenizer;
+          test "Split MergedWithPrevious" test_split_merged_with_previous;
           test "CharDelimiterSplit" test_char_delimiter_split;
         ];
       group "sequence"
         [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
       group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];
       group "unicode_scripts" [ test "UnicodeScripts" test_unicode_scripts ];
-      group "metaspace" [ test "Metaspace basic" test_metaspace_basic ];
+      group "metaspace"
+        [
+          test "Metaspace basic" test_metaspace_basic;
+          test "Metaspace matches HuggingFace" test_metaspace_huggingface;
+        ];
+      group "chunking" [ test "walking a long text" test_chunked_walk ];
+      group "json"
+        [
+          test "HuggingFace shape" test_json_shape;
+          test "round-trip" test_json_round_trip;
+          test "reading HuggingFace JSON" test_json_of_hf;
+        ];
     ]

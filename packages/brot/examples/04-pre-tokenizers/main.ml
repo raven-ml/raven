@@ -33,7 +33,7 @@ let () =
 
   Printf.printf "=== Delimiter-based ===\n\n";
 
-  show "char_delimiter ','" (Pre_tokenizer.char_delimiter ',') "a,b,c";
+  show "char_delimiter ','" (Pre_tokenizer.char_delimiter ",") "a,b,c";
   show "split on '::'" (Pre_tokenizer.split ~pattern:"::" ()) "mod::func::arg";
   show "fixed_length 3" (Pre_tokenizer.fixed_length 3) "abcdefgh";
   show "metaspace" (Pre_tokenizer.metaspace ()) "Hello world today";

@@ -25,10 +25,10 @@ type t =
   | Whitespace_split
   | Punctuation of { behavior : behavior }
   | Split of { pattern : string; behavior : behavior; invert : bool }
-  | Char_delimiter of char
+  | Char_delimiter of string
   | Digits of { individual : bool }
   | Metaspace of {
-      replacement : char;
+      replacement : string;
       prepend_scheme : prepend_scheme;
       split : bool;
     }
@@ -36,87 +36,36 @@ type t =
   | Fixed_length of { length : int }
   | Unicode_scripts
 
+type rewrite =
+  | Verbatim
+  | Prefix_space
+  | Space_marker of { marker : string; prepend : bool }
+
+type plan = Walk of { rewrite : rewrite; splittable : bool } | Pieces
+
 (* Errors *)
 
 let strf = Printf.sprintf
 let err_unknown_behavior s = strf "unknown punctuation behavior '%s'" s
 let err_unknown_scheme s = strf "unknown prepend_scheme '%s'" s
 let err_unsupported_type s = strf "unsupported pre-tokenizer type '%s'" s
-let err_expected_char name = strf "expected single character for '%s'" name
 let err_missing_type = "missing 'type' field"
 let err_expected_object = "expected JSON object"
 let err_missing_behavior = "missing 'behavior' field"
 let err_split_missing = "requires 'pattern' and 'behavior'"
-let err_char_delim_missing = "requires 'delimiter'"
-let err_metaspace_missing = "requires 'replacement' and 'prepend_scheme'"
+let err_char_delim_missing = "requires 'delimiter' as one character"
+let err_split_pattern = "expected 'pattern' as {\"String\": ...}"
+let err_split_regex = "regular expression 'pattern' is not supported"
+let err_metaspace_missing = "requires a non-empty 'replacement'"
+let err_metaspace_scheme = "expected a string for 'prepend_scheme'"
 let err_sequence_missing = "requires 'pretokenizers' list"
 let err_fixed_length = "requires positive length"
+let err_no_walk = "pre-tokenizer is not a span walker"
+let err_range = "range is not within the text"
+let err_replacement = "metaspace replacement must be one character"
+let err_delimiter = "delimiter must be one character"
 
-(* Character classification *)
-
-(* ASCII property table: packed flags for O(1) classification. bit 0:
-   whitespace, bit 1: letter, bit 2: numeric, bit 3: punctuation *)
-
-let ascii_props =
-  let t = Array.make 128 0 in
-  for i = 9 to 13 do
-    t.(i) <- t.(i) lor 1
-  done;
-  t.(32) <- t.(32) lor 1;
-  for i = 65 to 90 do
-    t.(i) <- t.(i) lor 2
-  done;
-  for i = 97 to 122 do
-    t.(i) <- t.(i) lor 2
-  done;
-  for i = 48 to 57 do
-    t.(i) <- t.(i) lor 4
-  done;
-  for i = 33 to 126 do
-    if t.(i) land 6 = 0 then t.(i) <- t.(i) lor 8
-  done;
-  t
-
-let[@inline] is_whitespace code =
-  if code < 128 then Array.unsafe_get ascii_props code land 1 <> 0
-  else Uucp.White.is_white_space (Uchar.of_int code)
-
-(* [\p{L}]: the general category Letter. Narrower than the Alphabetic property,
-   which also holds for the combining marks of abugidas. *)
-let[@inline] is_letter code =
-  if code < 128 then Array.unsafe_get ascii_props code land 2 <> 0
-  else
-    match Uucp.Gc.general_category (Uchar.of_int code) with
-    | `Ll | `Lm | `Lo | `Lt | `Lu -> true
-    | _ -> false
-
-(* [\p{N}] *)
-let[@inline] is_numeric code =
-  if code < 128 then Array.unsafe_get ascii_props code land 4 <> 0
-  else
-    match Uucp.Gc.general_category (Uchar.of_int code) with
-    | `Nd | `Nl | `No -> true
-    | _ -> false
-
-(* [\w]: alphabetic, combining marks, decimal digits, connector punctuation and
-   the joiners. Note that it holds for ["Ⅰ"] (a letter number) but not for ["½"]
-   (an other number). *)
-let[@inline] is_word code =
-  if code < 128 then Array.unsafe_get ascii_props code land 6 <> 0 || code = 95
-  else
-    let u = Uchar.of_int code in
-    Uucp.Alpha.is_alphabetic u
-    || (match Uucp.Gc.general_category u with
-      | `Mc | `Me | `Mn | `Nd | `Pc -> true
-      | _ -> false)
-    || Uucp.Func.is_join_control u
-
-let[@inline] is_punctuation code =
-  if code < 128 then Array.unsafe_get ascii_props code land 8 <> 0
-  else
-    match Uucp.Gc.general_category (Uchar.of_int code) with
-    | `Pc | `Pd | `Pe | `Pf | `Pi | `Po | `Ps -> true
-    | _ -> false
+(* Byte-level encoding *)
 
 (* Returns (codepoint lsl 3) lor byte_length — zero allocation. *)
 let[@inline] utf8_next s i =
@@ -174,47 +123,30 @@ let byte_to_unicode, unicode_to_byte =
   done;
   (byte_to_unicode, unicode_to_byte)
 
-let byte_level_encode text =
-  let len = String.length text in
-  (* Worst case: every byte remaps to a 2-byte UTF-8 sequence *)
-  let result = Bytes.create (len * 2) in
+(* Writes the byte-level encoding of [s.\[start..stop-1\]] at the start of
+   [buf], which must hold [2 * (stop - start)] bytes, and returns its length. *)
+let byte_level_blit buf s ~start ~stop =
   let j = ref 0 in
-  for i = 0 to len - 1 do
+  for i = start to stop - 1 do
     let u =
-      Array.unsafe_get byte_to_unicode (Char.code (String.unsafe_get text i))
+      Array.unsafe_get byte_to_unicode (Char.code (String.unsafe_get s i))
     in
     if u < 128 then begin
-      Bytes.unsafe_set result !j (Char.unsafe_chr u);
+      Bytes.unsafe_set buf !j (Char.unsafe_chr u);
       incr j
     end
     else begin
-      Bytes.unsafe_set result !j (Char.unsafe_chr (0xC0 lor (u lsr 6)));
-      Bytes.unsafe_set result (!j + 1)
-        (Char.unsafe_chr (0x80 lor (u land 0x3F)));
+      Bytes.unsafe_set buf !j (Char.unsafe_chr (0xC0 lor (u lsr 6)));
+      Bytes.unsafe_set buf (!j + 1) (Char.unsafe_chr (0x80 lor (u land 0x3F)));
       j := !j + 2
     end
   done;
-  Bytes.sub_string result 0 !j
+  !j
 
-let byte_level_encode_range text ~start ~len =
-  let result = Bytes.create (len * 2) in
-  let j = ref 0 in
-  for i = start to start + len - 1 do
-    let u =
-      Array.unsafe_get byte_to_unicode (Char.code (String.unsafe_get text i))
-    in
-    if u < 128 then begin
-      Bytes.unsafe_set result !j (Char.unsafe_chr u);
-      incr j
-    end
-    else begin
-      Bytes.unsafe_set result !j (Char.unsafe_chr (0xC0 lor (u lsr 6)));
-      Bytes.unsafe_set result (!j + 1)
-        (Char.unsafe_chr (0x80 lor (u land 0x3F)));
-      j := !j + 2
-    end
-  done;
-  Bytes.sub_string result 0 !j
+let byte_level_encode text =
+  let stop = String.length text in
+  let buf = Bytes.create (stop * 2) in
+  Bytes.sub_string buf 0 (byte_level_blit buf text ~start:0 ~stop)
 
 let byte_level_decode text =
   let len = String.length text in
@@ -246,481 +178,485 @@ let byte_level_decode text =
   done;
   Buffer.contents result
 
-(* [[^\s\p{L}\p{N}]] *)
-let[@inline] is_other code =
-  (not (is_whitespace code)) && (not (is_letter code)) && not (is_numeric code)
+(* Byte-level walker
 
-(* The GPT-2 pattern ['s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+|
+   The GPT-2 pattern ['s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+|
    ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+], matched by taking the first alternative
-   that applies at each position. *)
-let split_gpt2_pattern text =
-  let len = String.length text in
-  if len = 0 then []
-  else
-    let spans = ref [] in
-    let pos = ref 0 in
+   that applies at each position. The dispatch is on the leading byte: the four
+   character categories plus the space and the apostrophe, which open
+   alternatives of their own, and the two shapes of non-ASCII byte. *)
 
-    (* Try: optional leading space + run of chars matching a class.
-       [ascii_mask]: bitmask into ascii_props for the ASCII fast path. [invert]:
-       when true, match chars where (props land mask) = 0. [classify]: predicate
-       for non-ASCII codepoints (slow path only). *)
-    let try_space_run ~ascii_mask ~invert ~classify () =
-      let start = !pos in
-      (* [ ?] is a space, not any whitespace: ["\tab"] is ["\t"] then ["ab"]. *)
-      let has_space = String.unsafe_get text !pos = ' ' in
-      let run_start = if has_space then start + 1 else start in
-      if run_start < len then
-        let b = Char.code (String.unsafe_get text run_start) in
-        let ok, clen =
-          if b < 128 then
-            let v = Array.unsafe_get ascii_props b land ascii_mask in
-            ((if invert then v = 0 else v <> 0), 1)
-          else
-            let p = utf8_next text run_start in
-            let code = p lsr 3 and cl = p land 7 in
-            (classify code, cl)
-        in
-        if ok then (
-          let j = ref (run_start + clen) in
-          let continue = ref true in
-          while !j < len && !continue do
-            let b = Char.code (String.unsafe_get text !j) in
-            if b < 128 then
-              let v = Array.unsafe_get ascii_props b land ascii_mask in
-              if if invert then v = 0 else v <> 0 then j := !j + 1
-              else continue := false
-            else
-              let p = utf8_next text !j in
-              if classify (p lsr 3) then j := !j + (p land 7)
-              else continue := false
-          done;
-          spans := (start, !j - start) :: !spans;
-          pos := !j;
-          true)
-        else false
-      else false
+let c_other = Char_class.other
+let c_whitespace = Char_class.whitespace
+let c_letter = Char_class.letter
+let c_numeric = Char_class.numeric
+let c_space = 4
+let c_apostrophe = 5
+let c_lead = 6
+let c_continuation = 7
+
+let lead_class =
+  let t = Bytes.make 256 (Char.unsafe_chr c_lead) in
+  for b = 0 to 127 do
+    Bytes.set t b (Char.unsafe_chr (Char_class.category b))
+  done;
+  Bytes.set t 32 (Char.unsafe_chr c_space);
+  Bytes.set t 39 (Char.unsafe_chr c_apostrophe);
+  for b = 0x80 to 0xBF do
+    Bytes.set t b (Char.unsafe_chr c_continuation)
+  done;
+  t
+
+external get64u : string -> int -> int64 = "%caml_string_get64u"
+
+let debruijn = 0x03f79d71b4ca8b09L
+
+let debruijn_index =
+  let t = Bytes.make 64 '\000' in
+  for i = 0 to 63 do
+    let k =
+      Int64.to_int
+        (Int64.shift_right_logical
+           (Int64.mul (Int64.shift_left 1L i) debruijn)
+           58)
     in
+    Bytes.set t k (Char.unsafe_chr i)
+  done;
+  t
 
-    let rec loop () =
-      if !pos >= len then ()
+let[@inline] ctz64 x =
+  let low = Int64.logand x (Int64.neg x) in
+  Char.code
+    (Bytes.unsafe_get debruijn_index
+       (Int64.to_int (Int64.shift_right_logical (Int64.mul low debruijn) 58)))
+
+let hi_bits = 0x8080808080808080L
+let lo_bits = 0x7F7F7F7F7F7F7F7FL
+
+(* Bit 7 of each byte that is not an ASCII letter. *)
+let[@inline] non_letters w =
+  let ascii = Int64.logand w lo_bits in
+  let lowered = Int64.logor ascii 0x2020202020202020L in
+  let ge_a = Int64.sub (Int64.logor lowered hi_bits) 0x6161616161616161L in
+  let le_z = Int64.sub 0xFAFAFAFAFAFAFAFAL lowered in
+  let letters = Int64.logand (Int64.logand ge_a le_z) hi_bits in
+  Int64.logand (Int64.logor (Int64.lognot letters) w) hi_bits
+
+let letters_swar s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j + 8 <= stop do
+    let m = non_letters (get64u s !j) in
+    if Int64.equal m 0L then j := !j + 8
+    else begin
+      j := !j + (ctz64 m lsr 3);
+      scanning := false
+    end
+  done;
+  !j
+
+(* End of the run of characters of category [category] starting at [i]. The
+   apostrophe and the space are folded back into their category. *)
+let category_run s i stop category =
+  let j = ref (if category = c_letter then letters_swar s i stop else i) in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let b = Char.code (String.unsafe_get s !j) in
+    let c = Char.code (Bytes.unsafe_get lead_class b) in
+    if c < c_lead then begin
+      let c =
+        if c = c_apostrophe then c_other
+        else if c = c_space then c_whitespace
+        else c
+      in
+      if c = category then incr j else scanning := false
+    end
+    else if c = c_lead then begin
+      let d = Char_class.at s !j ~stop in
+      if Char_class.at_category d = category then j := !j + Char_class.at_len d
+      else scanning := false
+    end
+    else if category = c_other then incr j
+    else scanning := false
+  done;
+  !j
+
+(* End of the [\s+(?!\S)] or [\s+] span starting at the whitespace at [i]: the
+   whole run, or all but its last character when a non-whitespace character
+   follows it. *)
+let whitespace_span s i stop =
+  let j = ref i in
+  let last = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let b = Char.code (String.unsafe_get s !j) in
+    let c = Char.code (Bytes.unsafe_get lead_class b) in
+    if c = c_whitespace || c = c_space then begin
+      last := !j;
+      incr j
+    end
+    else if c = c_lead then begin
+      let d = Char_class.at s !j ~stop in
+      if Char_class.at_category d = c_whitespace then begin
+        last := !j;
+        j := !j + Char_class.at_len d
+      end
+      else scanning := false
+    end
+    else scanning := false
+  done;
+  if !j = stop then !j else if !last > i then !last else !j
+
+let contraction s i stop =
+  if stop - i < 2 then stop
+  else
+    let c1 = String.unsafe_get s (i + 1) in
+    if c1 = 's' || c1 = 't' || c1 = 'm' || c1 = 'd' then i + 2
+    else if
+      stop - i >= 3
+      &&
+      let c2 = String.unsafe_get s (i + 2) in
+      (c1 = 'r' && c2 = 'e') || (c1 = 'v' && c2 = 'e') || (c1 = 'l' && c2 = 'l')
+    then i + 3
+    else category_run s (i + 1) stop c_other
+
+let fill_byte_level s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let b = Char.code (String.unsafe_get s i) in
+    let c = Char.code (Bytes.unsafe_get lead_class b) in
+    let e =
+      if c = c_letter then category_run s (i + 1) stop c_letter
+      else if c = c_space then
+        if i + 1 >= stop then stop
+        else
+          let d = Char_class.at s (i + 1) ~stop in
+          let category = Char_class.at_category d in
+          if category = c_whitespace then whitespace_span s i stop
+          else category_run s (i + 1 + Char_class.at_len d) stop category
+      else if c = c_apostrophe then contraction s i stop
+      else if c = c_numeric then category_run s (i + 1) stop c_numeric
+      else if c = c_other then category_run s (i + 1) stop c_other
+      else if c = c_whitespace then whitespace_span s i stop
+      else if c = c_lead then
+        let d = Char_class.at s i ~stop in
+        let category = Char_class.at_category d in
+        if category = c_whitespace then whitespace_span s i stop
+        else category_run s (i + Char_class.at_len d) stop category
+      else category_run s (i + 1) stop c_other
+    in
+    Spans.write spans !n i e;
+    incr n;
+    p := e
+  done;
+  Spans.set_count spans !n;
+  !p
+
+(* The other walkers *)
+
+let fill_whole ~pos ~stop spans =
+  let n = Spans.count spans in
+  if pos < stop && n < Spans.capacity spans then begin
+    Spans.write spans n pos stop;
+    Spans.set_count spans (n + 1);
+    stop
+  end
+  else pos
+
+let skip_whitespace s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let d = Char_class.at s !j ~stop in
+    if Char_class.at_category d = Char_class.whitespace then
+      j := !j + Char_class.at_len d
+    else scanning := false
+  done;
+  !j
+
+let fill_whitespace_split s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  let go = ref true in
+  while !go do
+    let i = skip_whitespace s !p stop in
+    p := i;
+    if i >= stop || !n >= capacity then go := false
+    else begin
+      let j = ref i in
+      let scanning = ref true in
+      while !scanning && !j < stop do
+        let d = Char_class.at s !j ~stop in
+        if Char_class.at_category d = Char_class.whitespace then
+          scanning := false
+        else j := !j + Char_class.at_len d
+      done;
+      Spans.write spans !n i !j;
+      incr n;
+      p := !j
+    end
+  done;
+  Spans.set_count spans !n;
+  !p
+
+(* [\w+|[^\w\s]+] *)
+let fill_whitespace s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  let go = ref true in
+  while !go do
+    let i = skip_whitespace s !p stop in
+    p := i;
+    if i >= stop || !n >= capacity then go := false
+    else begin
+      let d = Char_class.at s i ~stop in
+      let word = Char_class.at_is_word d in
+      let j = ref (i + Char_class.at_len d) in
+      let scanning = ref true in
+      while !scanning && !j < stop do
+        let d = Char_class.at s !j ~stop in
+        if
+          Char_class.at_is_word d = word
+          && (word || Char_class.at_category d <> Char_class.whitespace)
+        then j := !j + Char_class.at_len d
+        else scanning := false
+      done;
+      Spans.write spans !n i !j;
+      incr n;
+      p := !j
+    end
+  done;
+  Spans.set_count spans !n;
+  !p
+
+let fill_bert s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  let go = ref true in
+  while !go do
+    let i = skip_whitespace s !p stop in
+    p := i;
+    if i >= stop || !n >= capacity then go := false
+    else begin
+      let d = Char_class.at s i ~stop in
+      let l = Char_class.at_len d in
+      if Char_class.at_is_punctuation d then begin
+        Spans.write spans !n i (i + l);
+        incr n;
+        p := i + l
+      end
       else begin
-        (* Contractions: 's 't 'm 'd 're 've 'll *)
-        let matched_contraction =
-          text.[!pos] = '\''
-          &&
-          let remaining = len - !pos in
-          remaining >= 2
-          &&
-          let c1 = String.unsafe_get text (!pos + 1) in
-          if c1 = 's' || c1 = 't' || c1 = 'm' || c1 = 'd' then (
-            spans := (!pos, 2) :: !spans;
-            pos := !pos + 2;
-            true)
-          else
-            remaining >= 3
-            &&
-            let c2 = String.unsafe_get text (!pos + 2) in
-            if
-              (c1 = 'r' && c2 = 'e')
-              || (c1 = 'v' && c2 = 'e')
-              || (c1 = 'l' && c2 = 'l')
-            then (
-              spans := (!pos, 3) :: !spans;
-              pos := !pos + 3;
-              true)
-            else false
-        in
-        if matched_contraction then ()
-        else if try_space_run ~ascii_mask:2 ~invert:false ~classify:is_letter ()
-        then ()
-        else if
-          try_space_run ~ascii_mask:4 ~invert:false ~classify:is_numeric ()
-        then ()
-        else if try_space_run ~ascii_mask:7 ~invert:true ~classify:is_other ()
-        then ()
+        let j = ref (i + l) in
+        let scanning = ref true in
+        while !scanning && !j < stop do
+          let d = Char_class.at s !j ~stop in
+          if
+            Char_class.at_is_punctuation d
+            || Char_class.at_category d = Char_class.whitespace
+          then scanning := false
+          else j := !j + Char_class.at_len d
+        done;
+        Spans.write spans !n i !j;
+        incr n;
+        p := !j
+      end
+    end
+  done;
+  Spans.set_count spans !n;
+  !p
+
+let punctuation_run s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let d = Char_class.at s !j ~stop in
+    if Char_class.at_is_punctuation d then j := !j + Char_class.at_len d
+    else scanning := false
+  done;
+  !j
+
+let plain_run s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let d = Char_class.at s !j ~stop in
+    if Char_class.at_is_punctuation d then scanning := false
+    else j := !j + Char_class.at_len d
+  done;
+  !j
+
+(* A piece opens at every punctuation character and runs to the next one. *)
+let fill_punctuation_merged_next s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let e =
+      plain_run s (i + Char_class.at_len (Char_class.at s i ~stop)) stop
+    in
+    Spans.write spans !n i e;
+    incr n;
+    p := e
+  done;
+  Spans.set_count spans !n;
+  !p
+
+let fill_punctuation ~behavior s ~pos ~stop spans =
+  match behavior with
+  | `Merged_with_previous -> fill_whole ~pos ~stop spans
+  | `Merged_with_next -> fill_punctuation_merged_next s ~pos ~stop spans
+  | `Isolated | `Removed | `Contiguous ->
+      let keep = behavior <> `Removed in
+      let group = behavior = `Contiguous in
+      let capacity = Spans.capacity spans in
+      let n = ref (Spans.count spans) in
+      let p = ref pos in
+      let go = ref true in
+      while !go do
+        if !p >= stop || !n >= capacity then go := false
         else begin
-          (* Whatever is left starts a whitespace run, every other character
-             having matched one of the alternatives above. [\s+(?!\S)] takes the
-             whole run, or all but its last character when a non-whitespace
-             character follows; [\s+] then takes that last character on its own,
-             unless it is a space, which the next span starts with. *)
-          let j = ref !pos in
-          let last = ref !pos in
-          let scanning = ref true in
-          while !scanning && !j < len do
-            let b = Char.code (String.unsafe_get text !j) in
-            let ws, clen =
-              if b < 128 then (Array.unsafe_get ascii_props b land 1 <> 0, 1)
-              else
-                let p = utf8_next text !j in
-                (is_whitespace (p lsr 3), p land 7)
+          let i = !p in
+          let d = Char_class.at s i ~stop in
+          if Char_class.at_is_punctuation d then begin
+            let e =
+              if group then punctuation_run s i stop
+              else i + Char_class.at_len d
             in
-            if ws then begin
-              last := !j;
-              j := !j + clen
-            end
-            else scanning := false
-          done;
-          let stop = if !j < len && !last > !pos then !last else !j in
-          spans := (!pos, stop - !pos) :: !spans;
-          pos := stop
-        end;
-        loop ()
+            if keep then begin
+              Spans.write spans !n i e;
+              incr n
+            end;
+            p := e
+          end
+          else begin
+            let e = plain_run s i stop in
+            Spans.write spans !n i e;
+            incr n;
+            p := e
+          end
+        end
+      done;
+      Spans.set_count spans !n;
+      !p
+
+let fill_digits ~individual s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let d = Char_class.at s i ~stop in
+    let digit = Char_class.at_category d = Char_class.numeric in
+    let e =
+      if digit && individual then i + Char_class.at_len d
+      else begin
+        let j = ref (i + Char_class.at_len d) in
+        let scanning = ref true in
+        while !scanning && !j < stop do
+          let d = Char_class.at s !j ~stop in
+          let numeric = Char_class.at_category d = Char_class.numeric in
+          if numeric = digit then j := !j + Char_class.at_len d
+          else scanning := false
+        done;
+        !j
       end
     in
-    loop ();
-    List.rev !spans
-
-(* Pre-tokenize implementations *)
-
-let pre_tokenize_whitespace_split text =
-  let pieces = ref [] in
-  let start = ref (-1) in
-  let i = ref 0 in
-  let len = String.length text in
-  let flush () =
-    if !start >= 0 then begin
-      pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
-      start := -1
-    end
-  in
-  while !i < len do
-    let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then
-      if Array.unsafe_get ascii_props b land 1 <> 0 then (
-        flush ();
-        i := !i + 1)
-      else (
-        if !start < 0 then start := !i;
-        i := !i + 1)
-    else
-      let p = utf8_next text !i in
-      let code = p lsr 3 and l = p land 7 in
-      if is_whitespace code then (
-        flush ();
-        i := !i + l)
-      else (
-        if !start < 0 then start := !i;
-        i := !i + l)
+    Spans.write spans !n i e;
+    incr n;
+    p := e
   done;
-  flush ();
-  List.rev !pieces
+  Spans.set_count spans !n;
+  !p
 
-let pre_tokenize_whitespace text =
-  let pieces = ref [] in
-  let start = ref (-1) in
-  let i = ref 0 in
-  let len = String.length text in
-  let in_word = ref false in
-  let in_punct = ref false in
-  let flush () =
-    if !start >= 0 then begin
-      pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
-      start := -1
-    end
-  in
-  while !i < len do
-    let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then
-      let p = Array.unsafe_get ascii_props b in
-      if p land 6 <> 0 || b = 95 then (
-        if !in_punct then flush ();
-        if !start < 0 then start := !i;
-        in_word := true;
-        in_punct := false;
-        i := !i + 1)
-      else if p land 1 <> 0 then (
-        flush ();
-        in_word := false;
-        in_punct := false;
-        i := !i + 1)
-      else (
-        if !in_word then flush ();
-        if !start < 0 then start := !i;
-        in_word := false;
-        in_punct := true;
-        i := !i + 1)
-    else
-      let p = utf8_next text !i in
-      let code = p lsr 3 and l = p land 7 in
-      if is_word code then (
-        if !in_punct then flush ();
-        if !start < 0 then start := !i;
-        in_word := true;
-        in_punct := false;
-        i := !i + l)
-      else if is_whitespace code then (
-        flush ();
-        in_word := false;
-        in_punct := false;
-        i := !i + l)
-      else (
-        if !in_word then flush ();
-        if !start < 0 then start := !i;
-        in_word := false;
-        in_punct := true;
-        i := !i + l)
+let[@inline] matches pattern plen s i stop =
+  i + plen <= stop
+  &&
+  let k = ref 0 in
+  while
+    !k < plen && String.unsafe_get s (i + !k) = String.unsafe_get pattern !k
+  do
+    incr k
   done;
-  flush ();
-  List.rev !pieces
+  !k = plen
 
-let pre_tokenize_byte_level ~add_prefix_space ~use_regex ~trim_offsets:_ text =
-  let orig_len = String.length text in
-  let text, prefix_added =
-    if add_prefix_space && orig_len > 0 && text.[0] <> ' ' then
-      (" " ^ text, true)
-    else (text, false)
-  in
-  if use_regex then
-    let spans = split_gpt2_pattern text in
-    List.map
-      (fun (start, plen) ->
-        let o_start =
-          if prefix_added then if start = 0 then 0 else start - 1 else start
-        in
-        let o_end =
-          min orig_len (if prefix_added then start + plen - 1 else start + plen)
-        in
-        (byte_level_encode_range text ~start ~len:plen, (max 0 o_start, o_end)))
-      spans
-  else [ (byte_level_encode text, (0, orig_len)) ]
+(* Byte length of the delimiter at [i], or zero when [i] does not start one. *)
+let[@inline] delimiter_at pattern plen invert s i stop =
+  if matches pattern plen s i stop then if invert then 0 else plen
+  else if invert then 1
+  else 0
 
-let pre_tokenize_bert text =
-  let pieces = ref [] in
-  let start = ref (-1) in
-  let i = ref 0 in
-  let len = String.length text in
-  let flush () =
-    if !start >= 0 then begin
-      pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
-      start := -1
-    end
-  in
-  while !i < len do
-    let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then
-      let p = Array.unsafe_get ascii_props b in
-      if p land 1 <> 0 then (
-        flush ();
-        i := !i + 1)
-      else if p land 8 <> 0 then (
-        flush ();
-        pieces := (String.sub text !i 1, (!i, !i + 1)) :: !pieces;
-        i := !i + 1)
-      else (
-        if !start < 0 then start := !i;
-        i := !i + 1)
-    else
-      let p = utf8_next text !i in
-      let code = p lsr 3 and l = p land 7 in
-      if is_whitespace code then (
-        flush ();
-        i := !i + l)
-      else if is_punctuation code then (
-        flush ();
-        pieces := (String.sub text !i l, (!i, !i + l)) :: !pieces;
-        i := !i + l)
-      else (
-        if !start < 0 then start := !i;
-        i := !i + l)
-  done;
-  flush ();
-  List.rev !pieces
-
-let pre_tokenize_punctuation ~behavior text =
-  let pieces = ref [] in
-  let start = ref (-1) in
-  let i = ref 0 in
-  let len = String.length text in
-  let last_was_punc = ref false in
-  let flush () =
-    if !start >= 0 then begin
-      pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
-      start := -1
-    end
-  in
-  let handle_char is_p l =
-    if is_p then (
-      (match behavior with
-      | `Isolated ->
-          flush ();
-          pieces := (String.sub text !i l, (!i, !i + l)) :: !pieces
-      | `Removed -> flush ()
-      | `Merged_with_previous -> if !start < 0 then start := !i
-      | `Merged_with_next ->
-          flush ();
-          start := !i
-      | `Contiguous ->
-          if not (!start >= 0 && !last_was_punc) then begin
-            flush ();
-            start := !i
-          end);
-      last_was_punc := true;
-      i := !i + l)
-    else (
-      if behavior = `Contiguous && !start >= 0 && !last_was_punc then flush ();
-      if !start < 0 then start := !i;
-      i := !i + l;
-      last_was_punc := false)
-  in
-  while !i < len do
-    let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then handle_char (Array.unsafe_get ascii_props b land 8 <> 0) 1
-    else
-      let p = utf8_next text !i in
-      let code = p lsr 3 and l = p land 7 in
-      handle_char (is_punctuation code) l
-  done;
-  flush ();
-  List.rev !pieces
-
-let pre_tokenize_split ~pattern ~behavior ~invert text =
-  let plen = String.length pattern in
-  if plen = 0 then [ (text, (0, String.length text)) ]
-  else
-    let pieces = ref [] in
-    let current = Buffer.create 16 in
-    let current_start = ref 0 in
-    let i = ref 0 in
-    let flush_current () =
-      if Buffer.length current > 0 then (
-        pieces :=
-          ( Buffer.contents current,
-            (!current_start, !current_start + Buffer.length current) )
-          :: !pieces;
-        Buffer.clear current)
-    in
-    while !i < String.length text do
-      let is_match =
-        !i + plen <= String.length text && String.sub text !i plen = pattern
-      in
-      let is_delim = if invert then not is_match else is_match in
-      let delim_len = if is_delim then if invert then 1 else plen else 1 in
-      if is_delim then (
-        (match behavior with
-        | `Removed -> flush_current ()
-        | `Isolated ->
-            flush_current ();
-            let delim_str = String.sub text !i delim_len in
-            pieces := (delim_str, (!i, !i + delim_len)) :: !pieces
-        | `Merged_with_previous ->
-            Buffer.add_string current (String.sub text !i delim_len);
-            flush_current ()
-        | `Merged_with_next ->
-            flush_current ();
-            current_start := !i;
-            Buffer.add_string current (String.sub text !i delim_len)
-        | `Contiguous ->
-            if Buffer.length current > 0 && is_delim then
-              Buffer.add_string current (String.sub text !i delim_len)
-            else (
-              flush_current ();
-              Buffer.add_string current (String.sub text !i delim_len)));
-        i := !i + delim_len)
-      else (
-        if Buffer.length current = 0 then current_start := !i;
-        Buffer.add_string current (String.sub text !i 1);
-        i := !i + 1)
-    done;
-    flush_current ();
-    List.rev !pieces
-
-let pre_tokenize_digits ~individual text =
-  let pieces = ref [] in
-  let start = ref (-1) in
-  let i = ref 0 in
-  let len = String.length text in
-  let in_digits = ref false in
-  let flush () =
-    if !start >= 0 then begin
-      pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
-      start := -1
-    end
-  in
-  let handle_char is_d l =
-    if individual && is_d then (
-      flush ();
-      pieces := (String.sub text !i l, (!i, !i + l)) :: !pieces;
-      i := !i + l)
-    else (
-      if is_d <> !in_digits then (
-        flush ();
-        in_digits := is_d);
-      if !start < 0 then start := !i;
-      i := !i + l)
-  in
-  while !i < len do
-    let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then handle_char (Array.unsafe_get ascii_props b land 4 <> 0) 1
-    else
-      let p = utf8_next text !i in
-      let code = p lsr 3 and l = p land 7 in
-      handle_char (is_numeric code) l
-  done;
-  flush ();
-  List.rev !pieces
-
-let pre_tokenize_metaspace ~replacement ~prepend_scheme ~split text =
-  let repl = String.make 1 replacement in
-  let text =
-    match prepend_scheme with
-    | (`Always | `First) when String.length text > 0 && text.[0] <> ' ' ->
-        " " ^ text
-    | _ -> text
-  in
-  let len = String.length text in
-  let buf = Buffer.create len in
-  let i = ref 0 in
-  while !i < len do
-    if text.[!i] = ' ' then (
-      Buffer.add_string buf repl;
-      incr i)
-    else
-      let l = utf8_next text !i land 7 in
-      Buffer.add_substring buf text !i l;
-      i := !i + l
-  done;
-  let transformed = Buffer.contents buf in
-  if split then (
-    let tlen = String.length transformed in
-    let rlen = String.length repl in
-    let splits = ref [] in
-    let start = ref 0 in
-    let pos = ref 0 in
-    while !pos < tlen do
-      if !pos + rlen <= tlen && String.sub transformed !pos rlen = repl then (
-        if !pos > !start then
-          splits :=
-            (String.sub transformed !start (!pos - !start), (!start, !pos))
-            :: !splits;
-        start := !pos;
-        pos := !pos + rlen)
-      else incr pos
-    done;
-    if !pos > !start then
-      splits :=
-        (String.sub transformed !start (!pos - !start), (!start, !pos))
-        :: !splits;
-    List.rev !splits)
-  else [ (transformed, (0, len)) ]
-
-let pre_tokenize_fixed_length ~length text =
-  if length <= 0 || String.length text = 0 then []
-  else
-    let pieces = ref [] in
-    let len = String.length text in
-    let i = ref 0 in
-    while !i < len do
-      let start = !i in
-      let count = ref 0 in
-      while !i < len && !count < length do
-        let l = utf8_next text !i land 7 in
-        i := !i + l;
-        incr count
+let fill_split ~pattern ~behavior ~invert s ~pos ~stop spans =
+  match behavior with
+  | `Contiguous -> fill_whole ~pos ~stop spans
+  | `Isolated | `Removed | `Merged_with_previous | `Merged_with_next ->
+      let plen = String.length pattern in
+      let keep = behavior <> `Removed in
+      let previous = behavior = `Merged_with_previous in
+      let next = behavior = `Merged_with_next in
+      let capacity = Spans.capacity spans in
+      let n = ref (Spans.count spans) in
+      let p = ref pos in
+      let go = ref true in
+      while !go do
+        if !p >= stop || !n >= capacity then go := false
+        else begin
+          let i = !p in
+          let d = delimiter_at pattern plen invert s i stop in
+          if d > 0 && not (previous || next) then begin
+            if keep then begin
+              Spans.write spans !n i (i + d);
+              incr n
+            end;
+            p := i + d
+          end
+          else begin
+            let j = ref (if next then i + d else i) in
+            let scanning = ref true in
+            while !scanning && !j < stop do
+              if delimiter_at pattern plen invert s !j stop > 0 then
+                scanning := false
+              else incr j
+            done;
+            let e =
+              if previous && !j < stop then
+                !j + delimiter_at pattern plen invert s !j stop
+              else !j
+            in
+            Spans.write spans !n i e;
+            incr n;
+            p := e
+          end
+        end
       done;
-      pieces := (String.sub text start (!i - start), (start, !i)) :: !pieces
+      Spans.set_count spans !n;
+      !p
+
+(* Metaspace splits before every occurrence of its marker. *)
+let fill_marker marker s ~pos ~stop spans =
+  let mlen = String.length marker in
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let j = ref (if matches marker mlen s i stop then i + mlen else i) in
+    let scanning = ref true in
+    while !scanning && !j < stop do
+      if matches marker mlen s !j stop then scanning := false else incr j
     done;
-    List.rev !pieces
+    Spans.write spans !n i !j;
+    incr n;
+    p := !j
+  done;
+  Spans.set_count spans !n;
+  !p
 
 (* [`Any] joins whichever run surrounds it. HuggingFace gives it to U+0020 and
    to the code points its script table does not know; every other whitespace
@@ -729,54 +665,360 @@ let pre_tokenize_fixed_length ~length text =
 type script = [ `Any | Uucp.Script.t ]
 
 let fixed_script code : script =
-  if code = 0x30FC then (`Hani :> script)
+  if not (Uchar.is_valid code) then `Any
+  else if code = 0x30FC then (`Hani :> script)
   else
-    match Uucp.Script.script (Uchar.of_int code) with
+    match Uucp.Script.script (Uchar.unsafe_of_int code) with
     | `Hira | `Kana -> (`Hani :> script)
     | `Zzzz -> `Any
     | s -> (s :> script)
 
+let script_at s i d : script =
+  let b = Char.code (String.unsafe_get s i) in
+  match Char_class.at_len d with
+  | 1 ->
+      if b >= 0x80 then `Any
+      else if b = 32 then `Any
+      else if Char_class.category b = Char_class.letter then `Latn
+      else `Zyyy
+  | 2 ->
+      fixed_script
+        (((b land 0x1F) lsl 6)
+        lor (Char.code (String.unsafe_get s (i + 1)) land 0x3F))
+  | 3 ->
+      fixed_script
+        (((b land 0x0F) lsl 12)
+        lor ((Char.code (String.unsafe_get s (i + 1)) land 0x3F) lsl 6)
+        lor (Char.code (String.unsafe_get s (i + 2)) land 0x3F))
+  | _ ->
+      fixed_script
+        (((b land 0x07) lsl 18)
+        lor ((Char.code (String.unsafe_get s (i + 1)) land 0x3F) lsl 12)
+        lor ((Char.code (String.unsafe_get s (i + 2)) land 0x3F) lsl 6)
+        lor (Char.code (String.unsafe_get s (i + 3)) land 0x3F))
+
 (* A piece runs from a script change to the next one, absorbing the [`Any]
-   characters it meets. Any leading [`Any] run belongs to no piece and is
-   dropped: a piece can only open on a script change. [last_script] holds [`Any]
-   until the first such change, which no script it is compared against can
-   be. *)
-let pre_tokenize_unicode_scripts text =
-  let pieces = ref [] in
-  let start = ref (-1) in
-  let len = String.length text in
-  let i = ref 0 in
-  let last_script : script ref = ref `Any in
-  let flush () =
-    if !start >= 0 then begin
-      pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
-      start := -1
+   characters it meets. A leading [`Any] run belongs to no piece and is dropped:
+   a piece can only open on a script change. *)
+let fill_unicode_scripts s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  let go = ref true in
+  while !go do
+    let i = ref !p in
+    let opening = ref true in
+    while !opening && !i < stop do
+      let d = Char_class.at s !i ~stop in
+      if script_at s !i d = `Any then i := !i + Char_class.at_len d
+      else opening := false
+    done;
+    p := !i;
+    if !i >= stop || !n >= capacity then go := false
+    else begin
+      let start = !i in
+      let d = Char_class.at s start ~stop in
+      let script = script_at s start d in
+      let j = ref (start + Char_class.at_len d) in
+      let scanning = ref true in
+      while !scanning && !j < stop do
+        let d = Char_class.at s !j ~stop in
+        let s' = script_at s !j d in
+        if s' <> `Any && s' <> script then scanning := false
+        else j := !j + Char_class.at_len d
+      done;
+      Spans.write spans !n start !j;
+      incr n;
+      p := !j
     end
-  in
-  let emit (script : script) l =
-    if script <> `Any && !last_script <> script then begin
-      flush ();
-      start := !i;
-      last_script := script
-    end;
-    i := !i + l
-  in
-  while !i < len do
-    let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then
-      let script : script =
-        if b = 32 then `Any
-        else if Array.unsafe_get ascii_props b land 2 <> 0 then `Latn
-        else `Zyyy
-      in
-      emit script 1
-    else
-      let p = utf8_next text !i in
-      let code = p lsr 3 and l = p land 7 in
-      emit (fixed_script code) l
   done;
-  flush ();
+  Spans.set_count spans !n;
+  !p
+
+(* Plan and fill *)
+
+let rec last = function [] -> None | [ t ] -> Some t | _ :: ts -> last ts
+
+(* The pieces of a byte-level pre-tokenizer are byte-level encoded, so a
+   sequence member that ends in one hands encoded text to the next. *)
+let rec ends_byte_level t =
+  match t with
+  | Byte_level _ -> true
+  | Sequence ts -> (
+      match last ts with Some t -> ends_byte_level t | None -> false)
+  | _ -> false
+
+(* Shared, so that [plan] allocates only for the pre-tokenizers whose rewrite
+   carries a marker. *)
+let walk_verbatim = Walk { rewrite = Verbatim; splittable = false }
+let walk_split_free = Walk { rewrite = Verbatim; splittable = true }
+let walk_prefix = Walk { rewrite = Prefix_space; splittable = false }
+let walk_prefix_split_free = Walk { rewrite = Prefix_space; splittable = true }
+
+let rec plan t =
+  match t with
+  | Byte_level { add_prefix_space; use_regex; _ } -> (
+      match (add_prefix_space, use_regex) with
+      | false, false -> walk_verbatim
+      | false, true -> walk_split_free
+      | true, false -> walk_prefix
+      | true, true -> walk_prefix_split_free)
+  | Bert | Whitespace | Whitespace_split -> walk_split_free
+  | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts ->
+      walk_verbatim
+  | Split { pattern; _ } -> if pattern = "" then Pieces else walk_verbatim
+  | Metaspace { replacement; prepend_scheme; split } ->
+      if not split then Pieces
+      else
+        let marker = replacement and prepend = prepend_scheme <> `Never in
+        Walk { rewrite = Space_marker { marker; prepend }; splittable = false }
+  | Fixed_length _ -> Pieces
+  | Sequence ts -> plan_sequence ts
+
+and plan_sequence ts =
+  let rec inner_byte_level = function
+    | [] | [ _ ] -> false
+    | t :: ts -> ends_byte_level t || inner_byte_level ts
+  in
+  let walks_verbatim t =
+    match plan t with Walk { rewrite = Verbatim; _ } -> true | _ -> false
+  in
+  match ts with
+  | [] -> Pieces
+  | first :: rest -> (
+      match plan first with
+      | Pieces -> Pieces
+      | Walk _ as walk ->
+          if inner_byte_level ts || not (List.for_all walks_verbatim rest) then
+            Pieces
+          else walk)
+
+let walkable t = match plan t with Walk _ -> true | Pieces -> false
+
+let rec fill_walk t s ~pos ~stop spans =
+  match t with
+  | Byte_level { use_regex; _ } ->
+      if use_regex then fill_byte_level s ~pos ~stop spans
+      else fill_whole ~pos ~stop spans
+  | Bert -> fill_bert s ~pos ~stop spans
+  | Whitespace -> fill_whitespace s ~pos ~stop spans
+  | Whitespace_split -> fill_whitespace_split s ~pos ~stop spans
+  | Punctuation { behavior } -> fill_punctuation ~behavior s ~pos ~stop spans
+  | Split { pattern; behavior; invert } ->
+      if pattern = "" then invalid_arg err_no_walk
+      else fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
+  | Char_delimiter delimiter ->
+      fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
+        ~stop spans
+  | Digits { individual } -> fill_digits ~individual s ~pos ~stop spans
+  | Metaspace { replacement; _ } -> fill_marker replacement s ~pos ~stop spans
+  | Unicode_scripts -> fill_unicode_scripts s ~pos ~stop spans
+  | Fixed_length _ -> invalid_arg err_no_walk
+  | Sequence ts -> fill_sequence ts s ~pos ~stop spans
+
+(* Each member is filled over the spans of the previous one, through one scratch
+   buffer per member rather than one per span. A member that runs out of room
+   leaves its outer span unfinished: the spans it did emit are dropped and the
+   fill resumes at that span's start. *)
+and fill_sequence ts s ~pos ~stop out =
+  match ts with
+  | [] -> invalid_arg err_no_walk
+  | [ t ] -> fill_walk t s ~pos ~stop out
+  | _ ->
+      let capacity = Spans.capacity out in
+      let scratch =
+        Array.init (List.length ts - 1) (fun _ -> Spans.create ~capacity)
+      in
+      fill_chain ts s ~pos ~stop out scratch 0
+
+and fill_chain ts s ~pos ~stop out scratch level =
+  match ts with
+  | [] -> invalid_arg err_no_walk
+  | [ t ] -> fill_walk t s ~pos ~stop out
+  | t :: rest ->
+      let capacity = Spans.capacity out in
+      let buffer = scratch.(level) in
+      let p = ref pos in
+      let go = ref true in
+      while !go && !p < stop && Spans.count out < capacity do
+        Spans.clear buffer;
+        let resume = fill_walk t s ~pos:!p ~stop buffer in
+        let n = Spans.count buffer in
+        if n = 0 then begin
+          if resume <= !p then go := false;
+          p := resume
+        end
+        else begin
+          let k = ref 0 in
+          while !go && !k < n do
+            let start = Spans.start buffer !k in
+            let finish = Spans.stop buffer !k in
+            let mark = Spans.count out in
+            if
+              fill_chain rest s ~pos:start ~stop:finish out scratch (level + 1)
+              < finish
+            then begin
+              Spans.set_count out mark;
+              p := start;
+              go := false
+            end
+            else incr k
+          done;
+          if !go then p := resume
+        end
+      done;
+      !p
+
+let fill t s ~pos ~stop spans =
+  if not (walkable t) then invalid_arg err_no_walk;
+  if pos < 0 || stop < pos || stop > String.length s then invalid_arg err_range;
+  fill_walk t s ~pos ~stop spans
+
+(* Pre-tokenize *)
+
+let span_chunk = 1024
+
+(* Spaces become [marker]; one is prepended unless the marked text starts with
+   one already, which is what HuggingFace does. A space never occurs inside a
+   UTF-8 sequence, so this walks bytes. *)
+let metaspace_text ~marker ~prepend text =
+  let stop = String.length text in
+  if stop = 0 then ""
+  else begin
+    let buf = Buffer.create (stop + String.length marker) in
+    if
+      prepend
+      && String.unsafe_get text 0 <> ' '
+      && not (String.starts_with ~prefix:marker text)
+    then Buffer.add_string buf marker;
+    let run = ref 0 in
+    for i = 0 to stop - 1 do
+      if String.unsafe_get text i = ' ' then begin
+        if i > !run then Buffer.add_substring buf text !run (i - !run);
+        Buffer.add_string buf marker;
+        run := i + 1
+      end
+    done;
+    if stop > !run then Buffer.add_substring buf text !run (stop - !run);
+    Buffer.contents buf
+  end
+
+let pre_tokenize_fixed_length ~length text =
+  if length <= 0 || String.length text = 0 then []
+  else
+    let pieces = ref [] in
+    let stop = String.length text in
+    let i = ref 0 in
+    while !i < stop do
+      let start = !i in
+      let count = ref 0 in
+      while !i < stop && !count < length do
+        i := !i + Char_class.at_len (Char_class.at text !i ~stop);
+        incr count
+      done;
+      pieces := (String.sub text start (!i - start), (start, !i)) :: !pieces
+    done;
+    List.rev !pieces
+
+(* Walks [text] a chunk of spans at a time. [shift] is set when a prefix space
+   was prepended, in which case offsets are those of the text as given. *)
+let walk_pieces t text ~encode ~shift =
+  let stop = String.length text in
+  let capacity = ref (max 32 (min span_chunk ((stop / 8) + 1))) in
+  let spans = ref (Spans.create ~capacity:!capacity) in
+  let scratch = ref Bytes.empty in
+  let pieces = ref [] in
+  let p = ref 0 in
+  while !p < stop do
+    Spans.clear !spans;
+    let resume = fill t text ~pos:!p ~stop !spans in
+    let n = Spans.count !spans in
+    if n = 0 && resume = !p then begin
+      capacity := !capacity * 2;
+      spans := Spans.create ~capacity:!capacity
+    end
+    else begin
+      for k = 0 to n - 1 do
+        let start = Spans.start !spans k and stop = Spans.stop !spans k in
+        let piece =
+          if not encode then String.sub text start (stop - start)
+          else begin
+            let need = (stop - start) * 2 in
+            if Bytes.length !scratch < need then scratch := Bytes.create need;
+            let buf = !scratch in
+            Bytes.sub_string buf 0 (byte_level_blit buf text ~start ~stop)
+          end
+        in
+        let offsets =
+          if not shift then (start, stop)
+          else ((if start = 0 then 0 else start - 1), stop - 1)
+        in
+        pieces := (piece, offsets) :: !pieces
+      done;
+      p := resume
+    end
+  done;
   List.rev !pieces
+
+let is_one_character s =
+  let stop = String.length s in
+  stop > 0 && Char_class.at_len (Char_class.at s 0 ~stop) = stop
+
+let[@inline] prefix_space text =
+  if String.length text > 0 && String.unsafe_get text 0 <> ' ' then " " ^ text
+  else text
+
+(* An empty text has no piece, whichever the pre-tokenizer — a sequence of none
+   being the identity, and so the exception. *)
+let rec pre_tokenize t text =
+  if text = "" then match t with Sequence [] -> [ ("", (0, 0)) ] | _ -> []
+  else
+    match t with
+    | Byte_level { add_prefix_space; use_regex = false; _ } ->
+        let prefixed = if add_prefix_space then prefix_space text else text in
+        [ (byte_level_encode prefixed, (0, String.length text)) ]
+    | _ -> pre_tokenize_planned t text
+
+and pre_tokenize_planned t text =
+  match plan t with
+  | Pieces -> pre_tokenize_pieces t text
+  | Walk { rewrite; _ } -> (
+      match rewrite with
+      | Verbatim -> walk_pieces t text ~encode:(ends_byte_level t) ~shift:false
+      | Prefix_space ->
+          let prefixed = prefix_space text in
+          let shift = String.length prefixed <> String.length text in
+          walk_pieces t prefixed ~encode:(ends_byte_level t) ~shift
+      | Space_marker { marker; prepend } ->
+          let marked = metaspace_text ~marker ~prepend text in
+          walk_pieces t marked ~encode:(ends_byte_level t) ~shift:false)
+
+and pre_tokenize_pieces t text =
+  match t with
+  | Fixed_length { length } -> pre_tokenize_fixed_length ~length text
+  | Metaspace { replacement; prepend_scheme; _ } ->
+      let marked =
+        metaspace_text ~marker:replacement ~prepend:(prepend_scheme <> `Never)
+          text
+      in
+      [ (marked, (0, String.length text)) ]
+  | Split _ -> [ (text, (0, String.length text)) ]
+  | Sequence ts -> pre_tokenize_sequence ts text
+  | _ -> [ (text, (0, String.length text)) ]
+
+and pre_tokenize_sequence ts text =
+  let initial = [ (text, (0, String.length text)) ] in
+  List.fold_left
+    (fun pieces t ->
+      List.concat_map
+        (fun (s, (o_start, _)) ->
+          let sub_pieces = pre_tokenize t s in
+          List.map
+            (fun (p, (p_start, p_end)) ->
+              (p, (o_start + p_start, o_start + p_end)))
+            sub_pieces)
+        pieces)
+    initial ts
 
 (* Constructors *)
 
@@ -793,54 +1035,21 @@ let punctuation ?(behavior = `Isolated) () = Punctuation { behavior }
 let split ~pattern ?(behavior = `Removed) ?(invert = false) () =
   Split { pattern; behavior; invert }
 
-let char_delimiter c = Char_delimiter c
+let char_delimiter delimiter =
+  if not (is_one_character delimiter) then invalid_arg err_delimiter;
+  Char_delimiter delimiter
 
 let digits ?(individual_digits = false) () =
   Digits { individual = individual_digits }
 
-let metaspace ?(replacement = '_') ?(prepend_scheme = `Always) ?(split = true)
-    () =
+let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always)
+    ?(split = true) () =
+  if not (is_one_character replacement) then invalid_arg err_replacement;
   Metaspace { replacement; prepend_scheme; split }
 
 let unicode_scripts () = Unicode_scripts
 let fixed_length n = Fixed_length { length = n }
 let sequence ts = Sequence ts
-
-(* Dispatch *)
-
-let rec pre_tokenize t text =
-  match t with
-  | Whitespace -> pre_tokenize_whitespace text
-  | Whitespace_split -> pre_tokenize_whitespace_split text
-  | Bert -> pre_tokenize_bert text
-  | Byte_level { add_prefix_space; use_regex; trim_offsets } ->
-      pre_tokenize_byte_level ~add_prefix_space ~use_regex ~trim_offsets text
-  | Punctuation { behavior } -> pre_tokenize_punctuation ~behavior text
-  | Split { pattern; behavior; invert } ->
-      pre_tokenize_split ~pattern ~behavior ~invert text
-  | Char_delimiter c ->
-      pre_tokenize_split ~pattern:(String.make 1 c) ~behavior:`Removed
-        ~invert:false text
-  | Digits { individual } -> pre_tokenize_digits ~individual text
-  | Metaspace { replacement; prepend_scheme; split } ->
-      pre_tokenize_metaspace ~replacement ~prepend_scheme ~split text
-  | Unicode_scripts -> pre_tokenize_unicode_scripts text
-  | Fixed_length { length } -> pre_tokenize_fixed_length ~length text
-  | Sequence ts -> pre_tokenize_sequence ts text
-
-and pre_tokenize_sequence ts text =
-  let initial = [ (text, (0, String.length text)) ] in
-  List.fold_left
-    (fun pieces t ->
-      List.concat_map
-        (fun (s, (o_start, _)) ->
-          let sub_pieces = pre_tokenize t s in
-          List.map
-            (fun (p, (p_start, p_end)) ->
-              (p, (o_start + p_start, o_start + p_end)))
-            sub_pieces)
-        pieces)
-    initial ts
 
 (* Serialization *)
 
@@ -863,14 +1072,14 @@ let behavior_of_string = function
   | other -> Error (err_unknown_behavior other)
 
 let scheme_to_string = function
-  | `First -> "First"
-  | `Never -> "Never"
-  | `Always -> "Always"
+  | `First -> "first"
+  | `Never -> "never"
+  | `Always -> "always"
 
 let scheme_of_string = function
-  | "First" -> Ok `First
-  | "Never" -> Ok `Never
-  | "Always" -> Ok `Always
+  | "first" -> Ok `First
+  | "never" -> Ok `Never
+  | "always" -> Ok `Always
   | other -> Error (err_unknown_scheme other)
 
 (* Formatting *)
@@ -889,11 +1098,11 @@ let rec pp ppf = function
       Format.fprintf ppf "@[<1>Split(%S,@ %s,@ invert=%b)@]" pattern
         (behavior_to_string behavior)
         invert
-  | Char_delimiter c -> Format.fprintf ppf "CharDelimiter(%C)" c
+  | Char_delimiter delimiter -> Format.fprintf ppf "CharDelimiter(%S)" delimiter
   | Digits { individual } ->
       Format.fprintf ppf "Digits(individual=%b)" individual
   | Metaspace { replacement; prepend_scheme; split } ->
-      Format.fprintf ppf "@[<1>Metaspace(%C,@ %s,@ split=%b)@]" replacement
+      Format.fprintf ppf "@[<1>Metaspace(%S,@ %s,@ split=%b)@]" replacement
         (scheme_to_string prepend_scheme)
         split
   | Sequence ts ->
@@ -928,7 +1137,7 @@ let rec to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "Split");
-          ("pattern", Jsont.Json.string pattern);
+          ("pattern", json_obj [ ("String", Jsont.Json.string pattern) ]);
           ("behavior", Jsont.Json.string (behavior_to_string behavior));
           ("invert", Jsont.Json.bool invert);
         ]
@@ -936,7 +1145,7 @@ let rec to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "CharDelimiterSplit");
-          ("delimiter", Jsont.Json.string (String.make 1 delimiter));
+          ("delimiter", Jsont.Json.string delimiter);
         ]
   | Digits { individual } ->
       json_obj
@@ -948,7 +1157,7 @@ let rec to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "Metaspace");
-          ("replacement", Jsont.Json.string (String.make 1 replacement));
+          ("replacement", Jsont.Json.string replacement);
           ("prepend_scheme", Jsont.Json.string (scheme_to_string prepend_scheme));
           ("split", Jsont.Json.bool split);
         ]
@@ -986,9 +1195,20 @@ let int_field name default fields =
       match int_of_string_opt s with Some v -> v | None -> default)
   | _ -> default
 
-let char_of_field name = function
-  | Jsont.String (s, _) when String.length s = 1 -> Ok s.[0]
-  | _ -> Error (err_expected_char name)
+(* HuggingFace tags a split pattern with the way it is to be matched. *)
+let split_pattern_of_json = function
+  | Jsont.Object (fields, _) -> (
+      match (find_field "String" fields, find_field "Regex" fields) with
+      | Some (Jsont.String (pattern, _)), _ -> Ok pattern
+      | _, Some _ -> Error err_split_regex
+      | _ -> Error err_split_pattern)
+  | _ -> Error err_split_pattern
+
+let scheme_field fields =
+  match find_field "prepend_scheme" fields with
+  | None -> Ok `Always
+  | Some (Jsont.String (scheme, _)) -> scheme_of_string scheme
+  | Some _ -> Error err_metaspace_scheme
 
 let rec of_json = function
   | Jsont.Object (fields, _) -> (
@@ -1003,42 +1223,39 @@ let rec of_json = function
       | Some (Jsont.String ("WhitespaceSplit", _)) -> Ok Whitespace_split
       | Some (Jsont.String ("Punctuation", _)) -> (
           match find_field "behavior" fields with
+          | None -> Ok (Punctuation { behavior = `Isolated })
           | Some (Jsont.String (s, _)) ->
               Result.map
                 (fun b -> Punctuation { behavior = b })
                 (behavior_of_string s)
-          | _ -> Error err_missing_behavior)
+          | Some _ -> Error err_missing_behavior)
       | Some (Jsont.String ("Split", _)) -> (
           match (find_field "pattern" fields, find_field "behavior" fields) with
-          | ( Some (Jsont.String (pattern, _)),
-              Some (Jsont.String (behavior_str, _)) ) ->
-              Result.map
-                (fun behavior ->
-                  let invert = bool_field "invert" false fields in
-                  Split { pattern; behavior; invert })
-                (behavior_of_string behavior_str)
+          | Some pattern, Some (Jsont.String (behavior_str, _)) ->
+              Result.bind (split_pattern_of_json pattern) (fun pattern ->
+                  Result.map
+                    (fun behavior ->
+                      let invert = bool_field "invert" false fields in
+                      Split { pattern; behavior; invert })
+                    (behavior_of_string behavior_str))
           | _ -> Error err_split_missing)
       | Some (Jsont.String ("CharDelimiterSplit", _)) -> (
           match find_field "delimiter" fields with
-          | Some v ->
-              Result.map
-                (fun c -> Char_delimiter c)
-                (char_of_field "delimiter" v)
-          | None -> Error err_char_delim_missing)
+          | Some (Jsont.String (delimiter, _)) when is_one_character delimiter
+            ->
+              Ok (Char_delimiter delimiter)
+          | _ -> Error err_char_delim_missing)
       | Some (Jsont.String ("Digits", _)) ->
           let individual = bool_field "individual_digits" false fields in
           Ok (Digits { individual })
       | Some (Jsont.String ("Metaspace", _)) -> (
-          match
-            (find_field "replacement" fields, find_field "prepend_scheme" fields)
-          with
-          | Some (Jsont.String (repl, _)), Some (Jsont.String (scheme, _))
-            when String.length repl = 1 ->
+          match find_field "replacement" fields with
+          | Some (Jsont.String (repl, _)) when is_one_character repl ->
               Result.map
                 (fun prepend_scheme ->
                   let split = bool_field "split" true fields in
-                  Metaspace { replacement = repl.[0]; prepend_scheme; split })
-                (scheme_of_string scheme)
+                  Metaspace { replacement = repl; prepend_scheme; split })
+                (scheme_field fields)
           | _ -> Error err_metaspace_missing)
       | Some (Jsont.String ("Sequence", _)) -> (
           match find_field "pretokenizers" fields with

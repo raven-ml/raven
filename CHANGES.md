@@ -1087,6 +1087,34 @@ thread.
 
 ### Brot
 
+- Pre-tokenizers walk byte spans instead of building intermediate pieces:
+  `Pre_tokenizer.pre_tokenize` is 1.2–2.1× faster and the byte-level (GPT-2)
+  split runs at ~245 MB/s allocating nothing.
+- `Pre_tokenizer.metaspace`'s `?replacement` is a `string` defaulting to `"▁"`
+  (U+2581), which a `char` could not hold, and must be exactly one character.
+  The marker is prepended only when the marked text does not already start
+  with one, and `~split:false` reports the offsets of the text as given — both
+  matching HuggingFace, which brot diverged from on text already containing the
+  marker.
+- `Pre_tokenizer.char_delimiter` takes a `string` of one character, so a
+  multi-byte delimiter such as `"▁"` now works; HuggingFace's
+  `CharDelimiterSplit` allows one.
+- `Pre_tokenizer.pre_tokenize` returns no piece for an empty text, as
+  HuggingFace does; `Byte_level ~use_regex:false`, `metaspace ~split:false` and
+  `split ~pattern:""` used to return one empty piece.
+- `Pre_tokenizer.pre_tokenize` no longer raises or reads past the input on
+  malformed UTF-8: a truncated sequence, a byte that cannot lead one, and a
+  surrogate encoding are each one byte of no category. It used to raise
+  `Invalid_argument` on WTF-8 input.
+- `Pre_tokenizer.split ~behavior:`Merged_with_previous`` reports the offsets of
+  a delimiter that follows another delimiter instead of repeating the previous
+  piece's; this matches HuggingFace.
+- `Pre_tokenizer.to_json` writes a `Split` pattern as `{"String": …}` and a
+  `Metaspace` `prepend_scheme` in lower case, the shapes HuggingFace requires;
+  it used to write a bare string and `"Always"`, which HuggingFace refused to
+  load. `of_json` reads both, defaults `prepend_scheme`, `split` and
+  `Punctuation`'s `behavior` when absent, and reports a clear error for a
+  `{"Regex": …}` pattern, which has no equivalent in brot.
 - `Normalizer.to_json` writes `BertNormalizer`, the type name HuggingFace uses,
   so a saved tokenizer round-trips unchanged; it previously wrote `Bert`, which
   HuggingFace accepts but rewrites. Reading a `Strip` normalizer with a missing
