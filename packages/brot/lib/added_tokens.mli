@@ -45,8 +45,10 @@ val token_to_id : t -> string -> int option
 *)
 
 val id_to_token : t -> int -> string option
-(** [id_to_token t id] is the content of the added token with identifier [id].
-*)
+(** [id_to_token t id] is the text the added token with identifier [id] matches:
+    its content, or the normalized form of it for a token matched against
+    normalized text. That form is what the decoder is given, since it is what
+    the token stood for in the input. *)
 
 val is_special : t -> int -> bool
 (** [is_special t id] is [true] iff [id] is that of an added token whose

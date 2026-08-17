@@ -422,7 +422,10 @@ val token_to_id : t -> string -> int option
 
 val id_to_token : t -> int -> string option
 (** [id_to_token t id] is the token string for [id] in [t], if any. Added tokens
-    take precedence over the model. *)
+    take precedence over the model, and an added token matched against
+    normalized text gives the normalized form of its content, since that is the
+    text it stood for: on a SentencePiece model, [id_to_token t 2] is
+    ["\u{2581}</s>"] where {!token_to_id} takes ["</s>"]. *)
 
 (** {1:encoding Encoding and decoding} *)
 

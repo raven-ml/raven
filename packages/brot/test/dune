@@ -12,6 +12,7 @@
   test_processors
   test_pretokenizers
   test_added_tokens
+  test_json
   test_parity)
  (package brot)
  (deps
@@ -19,4 +20,4 @@
   ; Downloaded by bench/download_data.sh; a missing tokenizer is skipped
   ; unless BROT_REQUIRE_FIXTURES is set.
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
- (libraries brot windtrap unix jsont))
+ (libraries brot windtrap unix jsont jsont.bytesrw))

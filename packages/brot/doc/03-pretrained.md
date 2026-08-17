@@ -124,10 +124,12 @@ let tokens = Encoding.tokens enc (* [| "Hello"; "Ġworld" |] *)
 let decoded = decode tokenizer (Encoding.ids enc) (* "Hello world" *)
 ```
 
-### SentencePiece-style (T5, ALBERT)
+### SentencePiece-style (LLaMA, T5, ALBERT)
 
-SentencePiece models use Unigram with metaspace pre-tokenization (spaces
-replaced by a visible marker) and metaspace decoding:
+SentencePiece models write spaces as a visible marker, `▁` (U+2581). The
+normalizer prepends one to the text and turns every space into one; decoding
+turns them back into spaces and drops the one that was prepended. This is the
+pipeline LLaMA's `tokenizer.json` carries, minus the byte fallback:
 
 ```ocaml
 open Brot
@@ -139,8 +141,14 @@ let tokenizer =
         ("\xe2\x96\x81the", -1.5); ("\xe2\x96\x81cat", -1.8);
         ("\xe2\x96\x81is", -1.6); ("\xe2\x96\x81play", -2.0);
         ("ing", -2.5); ("\xe2\x96\x81a", -1.4); ("\xe2\x96\x81good", -2.1) ]
-    ~pre:(Pre_tokenizer.metaspace ~replacement:'\xe2' ())
-    ~decoder:(Decoder.metaspace ~replacement:'\xe2' ())
+    ~normalizer:
+      (Normalizer.sequence
+         [ Normalizer.prepend "\xe2\x96\x81";
+           Normalizer.replace ~pattern:" " ~replacement:"\xe2\x96\x81" ])
+    ~decoder:
+      (Decoder.sequence
+         [ Decoder.replace ~pattern:"\xe2\x96\x81" ~by:" " ();
+           Decoder.strip ~content:" " ~start:1 () ])
     ~unk_token:"<unk>" ()
 
 let enc = encode tokenizer "the cat is playing"

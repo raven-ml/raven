@@ -740,6 +740,10 @@ let get_vocab_size model = Hashtbl.length model.vocab
 let get_unk_token model = model.unk_token
 let get_continuing_subword_prefix model = model.continuing_subword_prefix
 let get_end_of_word_suffix model = model.end_of_word_suffix
+let get_dropout model = model.dropout
+let get_fuse_unk model = model.fuse_unk
+let get_byte_fallback model = model.byte_fallback
+let get_ignore_merges model = model.ignore_merges
 
 let get_merges model =
   Merge_map.fold

@@ -1087,6 +1087,42 @@ thread.
 
 ### Brot
 
+- Loading and saving a tokenizer now carry the BPE model's `byte_fallback`,
+  `fuse_unk`, `ignore_merges` and `dropout`. LLaMA and other SentencePiece
+  models were dropping `byte_fallback` on load, so every character outside the
+  vocabulary became `<unk>` instead of its `<0xNN>` byte tokens, and
+  `save_pretrained` wrote the flags back as `false`.
+- Decoders rewrite each token instead of joining the list first.
+  `Decoder.replace`, `Decoder.strip`, `Decoder.wordpiece` and `Decoder.ctc`
+  were collapsing, which stopped a later `Decoder.byte_fallback` in a
+  `Decoder.sequence` from ever seeing a byte token — LLaMA decoded `<0x0A>`
+  literally.
+- `Decoder.ctc` cuts `pad_token` out of a token wherever it occurs rather than
+  only dropping tokens equal to it, and drops the tokens left empty:
+  `["x<pad>y"]` decodes to `"xy"`.
+- `Decoder.strip` takes `~content:string ~start:int ~stop:int`, the counts
+  HuggingFace serializes, instead of `~left ~right` booleans; `~content` was a
+  `char` and could not hold a marker like `▁`.
+- `Decoder.metaspace` takes `~replacement:string` and `~prepend_scheme` instead
+  of a `char` and `~add_prefix_space`, and drops every marker in the first
+  token rather than one leading space.
+- `Decoder.bpe` turns every occurrence of its suffix into the space that
+  follows the word, and `~suffix` now defaults to `"</w>"`. It no longer
+  inserts a space after a token that has no suffix.
+- `Decoder.byte_fallback` decodes a run of byte tokens that is not valid UTF-8
+  as one U+FFFD per byte, instead of returning invalid bytes.
+- `Decoder.to_json` writes the type names and the `Replace` pattern shape
+  HuggingFace reads; the files it produced before were rejected by
+  `tokenizers` for `byte_level`, `byte_fallback` and `wordpiece` decoders.
+- `Decoder.of_json` reads only HuggingFace's spellings; the brot-only
+  `"Byte_level"`, `"Byte_fallback"`, `"Word_piece"` and bare-string `Replace`
+  pattern are gone. A tokenizer saved by an earlier brot carries them and must
+  be re-saved to load again — those files were never readable by `tokenizers`
+  either.
+- `Brot.id_to_token` and `Brot.decode` give an added token matched against
+  normalized text its normalized form, as HuggingFace does: `id_to_token t 2`
+  on LLaMA is `"▁</s>"` while `token_to_id` still takes `"</s>"`, and a `<s>`
+  written literally in the input round-trips through encode and decode.
 - `train_bpe` now applies `end_of_word_suffix` and `continuing_subword_prefix`
   while learning: the vocabulary gains the affixed characters (`w</w>`) and the
   merges are written over them (`lo w</w>`). A model trained with a suffix

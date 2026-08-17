@@ -8,11 +8,14 @@ type t =
   | Byte_level
   | Byte_fallback
   | Word_piece of { prefix : string; cleanup : bool }
-  | Metaspace of { replacement : char; add_prefix_space : bool }
+  | Metaspace of {
+      replacement : string;
+      prepend_scheme : Pre_tokenizer.prepend_scheme;
+    }
   | CTC of { pad_token : string; word_delimiter_token : string; cleanup : bool }
   | Sequence of t list
   | Replace of { pattern : string; replacement : string }
-  | Strip of { left : bool; right : bool; content : char }
+  | Strip of { content : string; start : int; stop : int }
   | Fuse
 
 (* Errors *)
@@ -20,11 +23,16 @@ type t =
 let strf = Printf.sprintf
 let err_replace_missing_pattern = "missing pattern in Replace decoder"
 
+let err_replace_regex_pattern =
+  "Replace decoder: a regular expression pattern is not supported, only a \
+   literal one"
+
 let err_seq_missing_decoders =
   "invalid Sequence decoder: missing decoders array"
 
 let err_unknown_type typ = strf "unknown decoder type: %s" typ
 let err_expected_object = "invalid decoder JSON: expected object"
+let err_unknown_scheme s = strf "unknown prepend_scheme '%s'" s
 
 (* Decoding *)
 
@@ -66,19 +74,17 @@ let replace_all ~pattern ~by s =
       if !i < slen then Buffer.add_substring buf s !i (slen - !i);
       Buffer.contents buf
 
+(* The suffix marks the end of a word, so it stands for the space that follows
+   it—except on the last token, where no space follows. *)
 let decode_bpe ~suffix tokens =
-  let suffix_len = String.length suffix in
-  let strip token =
-    if suffix_len > 0 && String.ends_with ~suffix token then
-      String.sub token 0 (String.length token - suffix_len)
-    else token
-  in
-  let rec loop acc = function
-    | [] -> List.rev acc
-    | [ token ] -> List.rev (strip token :: acc)
-    | token :: rest -> loop (" " :: strip token :: acc) rest
-  in
-  loop [] tokens
+  match tokens with
+  | [] -> []
+  | _ ->
+      let last = List.length tokens - 1 in
+      List.mapi
+        (fun i token ->
+          replace_all ~pattern:suffix ~by:(if i = last then "" else " ") token)
+        tokens
 
 let decode_byte_level tokens =
   let buf = Buffer.create 128 in
@@ -87,30 +93,54 @@ let decode_byte_level tokens =
     tokens;
   Buffer.contents buf
 
-let decode_byte_fallback tokens =
-  let flush acc = function
-    | [] -> acc
-    | byte_acc ->
-        let bytes = List.rev byte_acc in
-        let s = Bytes.create (List.length bytes) in
-        List.iteri (fun i b -> Bytes.unsafe_set s i (Char.chr b)) bytes;
-        Bytes.unsafe_to_string s :: acc
-  in
-  let is_byte_token token =
+let replacement_char = "\xef\xbf\xbd"
+
+let hex_digit c =
+  match c with
+  | '0' .. '9' -> Char.code c - Char.code '0'
+  | 'a' .. 'f' -> Char.code c - Char.code 'a' + 10
+  | 'A' .. 'F' -> Char.code c - Char.code 'A' + 10
+  | _ -> -1
+
+let byte_token_value token =
+  if
     String.length token = 6
     && String.starts_with ~prefix:"<0x" token
     && String.ends_with ~suffix:">" token
+  then
+    let hi = hex_digit (String.unsafe_get token 3) in
+    let lo = hex_digit (String.unsafe_get token 4) in
+    if hi >= 0 && lo >= 0 then Some (Char.unsafe_chr ((hi * 16) + lo)) else None
+  else None
+
+(* A run of byte tokens spells one UTF-8 sequence. A run that does not is
+   unrecoverable, so each of its bytes becomes a replacement character. *)
+let decode_byte_fallback tokens =
+  let run = Buffer.create 16 in
+  let flush acc =
+    if Buffer.length run = 0 then acc
+    else
+      let bytes = Buffer.contents run in
+      Buffer.clear run;
+      if String.is_valid_utf_8 bytes then bytes :: acc
+      else begin
+        let acc = ref acc in
+        for _ = 1 to String.length bytes do
+          acc := replacement_char :: !acc
+        done;
+        !acc
+      end
   in
-  let rec loop acc byte_acc = function
-    | [] -> List.rev (flush acc byte_acc)
-    | token :: rest when is_byte_token token -> (
-        let hex = String.sub token 3 2 in
-        match int_of_string_opt ("0x" ^ hex) with
-        | Some b when b >= 0 && b <= 255 -> loop acc (b :: byte_acc) rest
-        | _ -> loop (token :: flush acc byte_acc) [] rest)
-    | token :: rest -> loop (token :: flush acc byte_acc) [] rest
+  let rec loop acc = function
+    | [] -> List.rev (flush acc)
+    | token :: rest -> (
+        match byte_token_value token with
+        | Some b ->
+            Buffer.add_char run b;
+            loop acc rest
+        | None -> loop (token :: flush acc) rest)
   in
-  loop [] [] tokens
+  loop [] tokens
 
 let detokenization_cleanups =
   [
@@ -138,8 +168,7 @@ let cleanup_piece piece =
 
 let decode_wordpiece ~prefix ~cleanup tokens =
   let plen = String.length prefix in
-  let buf = Buffer.create 128 in
-  List.iteri
+  List.mapi
     (fun i token ->
       let piece =
         if i = 0 then token
@@ -147,17 +176,18 @@ let decode_wordpiece ~prefix ~cleanup tokens =
           String.sub token plen (String.length token - plen)
         else " " ^ token
       in
-      Buffer.add_string buf (if cleanup then cleanup_piece piece else piece))
-    tokens;
-  Buffer.contents buf
+      if cleanup then cleanup_piece piece else piece)
+    tokens
 
-let decode_metaspace ~replacement ~add_prefix_space tokens =
+(* The replacement stands for a space, except on the first token when it was
+   prepended: there it stands for nothing and every occurrence goes. *)
+let decode_metaspace ~replacement ~prepend_scheme tokens =
+  let prepended = prepend_scheme <> `Never in
   List.mapi
     (fun i token ->
-      let s = String.map (fun c -> if c = replacement then ' ' else c) token in
-      if add_prefix_space && i = 0 && String.length s > 0 && s.[0] = ' ' then
-        String.sub s 1 (String.length s - 1)
-      else s)
+      replace_all ~pattern:replacement
+        ~by:(if prepended && i = 0 then "" else " ")
+        token)
     tokens
 
 let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
@@ -169,54 +199,58 @@ let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
   in
   dedup [] tokens
   |> List.filter_map (fun token ->
-      if String.equal token pad_token then None
-      else
-        let s =
-          if cleanup then
-            replace_all ~pattern:word_delimiter_token ~by:" "
-              (cleanup_piece token)
-          else token
-        in
-        if String.equal s "" then None else Some s)
+      let token = replace_all ~pattern:pad_token ~by:"" token in
+      let token =
+        if cleanup then
+          replace_all ~pattern:word_delimiter_token ~by:" "
+            (cleanup_piece token)
+        else token
+      in
+      if String.equal token "" then None else Some token)
 
-let decode_replace ~pattern ~replacement tokens =
-  [ replace_all ~pattern ~by:replacement (String.concat "" tokens) ]
-
-let strip_token ~left ~right content token =
+let strip_token ~content ~start ~stop token =
+  let clen = String.length content in
   let len = String.length token in
-  let start =
-    if left then
-      let rec find i =
-        if i < len && Char.equal token.[i] content then find (i + 1) else i
+  if clen = 0 then token
+  else
+    let match_at i =
+      let rec check j =
+        j >= clen
+        || String.unsafe_get token (i + j) = String.unsafe_get content j
+           && check (j + 1)
       in
-      find 0
-    else 0
-  in
-  let stop =
-    if right then
-      let rec find i =
-        if i >= 0 && Char.equal token.[i] content then find (i - 1) else i + 1
-      in
-      find (len - 1)
-    else len
-  in
-  if start < stop then String.sub token start (stop - start) else ""
+      i + clen <= len && check 0
+    in
+    let first = ref 0 in
+    let stripped = ref 0 in
+    while !stripped < start && match_at !first do
+      first := !first + clen;
+      incr stripped
+    done;
+    let last = ref len in
+    stripped := 0;
+    while
+      !stripped < stop && !last - clen >= !first && match_at (!last - clen)
+    do
+      last := !last - clen;
+      incr stripped
+    done;
+    if !first >= !last then "" else String.sub token !first (!last - !first)
 
 let rec decode_chain decoder tokens =
   match decoder with
   | BPE { suffix } -> decode_bpe ~suffix tokens
   | Byte_level -> [ decode_byte_level tokens ]
   | Byte_fallback -> decode_byte_fallback tokens
-  | Word_piece { prefix; cleanup } ->
-      [ decode_wordpiece ~prefix ~cleanup tokens ]
-  | Metaspace { replacement; add_prefix_space } ->
-      decode_metaspace ~replacement ~add_prefix_space tokens
+  | Word_piece { prefix; cleanup } -> decode_wordpiece ~prefix ~cleanup tokens
+  | Metaspace { replacement; prepend_scheme } ->
+      decode_metaspace ~replacement ~prepend_scheme tokens
   | CTC { pad_token; word_delimiter_token; cleanup } ->
       decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens
   | Replace { pattern; replacement } ->
-      decode_replace ~pattern ~replacement tokens
-  | Strip { left; right; content } ->
-      [ strip_token ~left ~right content (String.concat "" tokens) ]
+      List.map (replace_all ~pattern ~by:replacement) tokens
+  | Strip { content; start; stop } ->
+      List.map (strip_token ~content ~start ~stop) tokens
   | Fuse -> [ String.concat "" tokens ]
   | Sequence decoders ->
       List.fold_left (fun toks dec -> decode_chain dec toks) tokens decoders
@@ -225,15 +259,15 @@ let decode decoder tokens = String.concat "" (decode_chain decoder tokens)
 
 (* Constructors *)
 
-let bpe ?(suffix = "") () = BPE { suffix }
+let bpe ?(suffix = "</w>") () = BPE { suffix }
 let byte_level () = Byte_level
 let byte_fallback () = Byte_fallback
 
 let wordpiece ?(prefix = "##") ?(cleanup = true) () =
   Word_piece { prefix; cleanup }
 
-let metaspace ?(replacement = '_') ?(add_prefix_space = true) () =
-  Metaspace { replacement; add_prefix_space }
+let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always) () =
+  Metaspace { replacement; prepend_scheme }
 
 let ctc ?(pad_token = "<pad>") ?(word_delimiter_token = "|") ?(cleanup = true)
     () =
@@ -242,33 +276,37 @@ let ctc ?(pad_token = "<pad>") ?(word_delimiter_token = "|") ?(cleanup = true)
 let sequence decoders = Sequence decoders
 let replace ~pattern ~by () = Replace { pattern; replacement = by }
 
-let strip ?(left = false) ?(right = false) ?(content = ' ') () =
-  Strip { left; right; content }
+let strip ?(content = " ") ?(start = 0) ?(stop = 0) () =
+  Strip { content; start; stop }
 
 let fuse () = Fuse
 
 (* Formatting *)
 
+let scheme_to_string = function
+  | `First -> "first"
+  | `Never -> "never"
+  | `Always -> "always"
+
 let rec pp ppf = function
-  | BPE { suffix } ->
-      if suffix <> "" then Format.fprintf ppf "bpe ~suffix:%S" suffix
-      else Format.fprintf ppf "bpe"
+  | BPE { suffix } -> Format.fprintf ppf "bpe ~suffix:%S" suffix
   | Byte_level -> Format.fprintf ppf "byte_level"
   | Byte_fallback -> Format.fprintf ppf "byte_fallback"
   | Word_piece { prefix; cleanup } ->
       Format.fprintf ppf "wordpiece ~prefix:%S ~cleanup:%b" prefix cleanup
-  | Metaspace { replacement; add_prefix_space } ->
-      Format.fprintf ppf "metaspace ~replacement:%C ~add_prefix_space:%b"
-        replacement add_prefix_space
+  | Metaspace { replacement; prepend_scheme } ->
+      Format.fprintf ppf "metaspace ~replacement:%S ~prepend_scheme:%s"
+        replacement
+        (scheme_to_string prepend_scheme)
   | CTC { pad_token; word_delimiter_token; cleanup } ->
       Format.fprintf ppf
         "ctc ~pad_token:%S ~word_delimiter_token:%S ~cleanup:%b" pad_token
         word_delimiter_token cleanup
   | Replace { pattern; replacement } ->
       Format.fprintf ppf "replace ~pattern:%S ~by:%S" pattern replacement
-  | Strip { left; right; content } ->
-      Format.fprintf ppf "strip ~left:%b ~right:%b ~content:%C" left right
-        content
+  | Strip { content; start; stop } ->
+      Format.fprintf ppf "strip ~content:%S ~start:%d ~stop:%d" content start
+        stop
   | Fuse -> Format.fprintf ppf "fuse"
   | Sequence decoders ->
       Format.fprintf ppf "@[<hv 2>sequence [%a]@]"
@@ -289,21 +327,29 @@ let rec to_json = function
           ("type", Jsont.Json.string "BPEDecoder");
           ("suffix", Jsont.Json.string suffix);
         ]
-  | Byte_level -> json_obj [ ("type", Jsont.Json.string "Byte_level") ]
-  | Byte_fallback -> json_obj [ ("type", Jsont.Json.string "Byte_fallback") ]
+  (* The byte-level decoder reads neither member, but HuggingFace requires both
+     to be present. *)
+  | Byte_level ->
+      json_obj
+        [
+          ("type", Jsont.Json.string "ByteLevel");
+          ("add_prefix_space", Jsont.Json.bool true);
+          ("trim_offsets", Jsont.Json.bool true);
+        ]
+  | Byte_fallback -> json_obj [ ("type", Jsont.Json.string "ByteFallback") ]
   | Word_piece { prefix; cleanup } ->
       json_obj
         [
-          ("type", Jsont.Json.string "Word_piece");
+          ("type", Jsont.Json.string "WordPiece");
           ("prefix", Jsont.Json.string prefix);
           ("cleanup", Jsont.Json.bool cleanup);
         ]
-  | Metaspace { replacement; add_prefix_space } ->
+  | Metaspace { replacement; prepend_scheme } ->
       json_obj
         [
           ("type", Jsont.Json.string "Metaspace");
-          ("replacement", Jsont.Json.string (String.make 1 replacement));
-          ("add_prefix_space", Jsont.Json.bool add_prefix_space);
+          ("replacement", Jsont.Json.string replacement);
+          ("prepend_scheme", Jsont.Json.string (scheme_to_string prepend_scheme));
         ]
   | CTC { pad_token; word_delimiter_token; cleanup } ->
       json_obj
@@ -317,16 +363,16 @@ let rec to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "Replace");
-          ("pattern", Jsont.Json.string pattern);
+          ("pattern", json_obj [ ("String", Jsont.Json.string pattern) ]);
           ("content", Jsont.Json.string replacement);
         ]
-  | Strip { left; right; content } ->
+  | Strip { content; start; stop } ->
       json_obj
         [
           ("type", Jsont.Json.string "Strip");
-          ("strip_left", Jsont.Json.bool left);
-          ("strip_right", Jsont.Json.bool right);
-          ("content", Jsont.Json.string (String.make 1 content));
+          ("content", Jsont.Json.string content);
+          ("start", Jsont.Json.int start);
+          ("stop", Jsont.Json.int stop);
         ]
   | Fuse -> json_obj [ ("type", Jsont.Json.string "Fuse") ]
   | Sequence decoders ->
@@ -348,21 +394,26 @@ let bool_field fields name ~default =
   | Some (Jsont.Bool (b, _)) -> b
   | _ -> default
 
-let char_field fields name ~default =
+let int_field fields name ~default =
   match find_field fields name with
-  | Some (Jsont.String (s, _)) when String.length s > 0 -> s.[0]
+  | Some (Jsont.Number (f, _)) -> int_of_float f
   | _ -> default
+
+let scheme_of_string = function
+  | "first" -> Ok `First
+  | "never" -> Ok `Never
+  | "always" -> Ok `Always
+  | s -> Error (err_unknown_scheme s)
 
 let rec of_json = function
   | Jsont.Object (fields, _) -> (
       let ( let* ) = Result.bind in
       match find_field fields "type" with
       | Some (Jsont.String ("BPEDecoder", _)) ->
-          Ok (BPE { suffix = string_field fields "suffix" ~default:"" })
-      | Some (Jsont.String (("Byte_level" | "ByteLevel"), _)) -> Ok Byte_level
-      | Some (Jsont.String (("Byte_fallback" | "ByteFallback"), _)) ->
-          Ok Byte_fallback
-      | Some (Jsont.String (("Word_piece" | "WordPiece"), _)) ->
+          Ok (BPE { suffix = string_field fields "suffix" ~default:"</w>" })
+      | Some (Jsont.String ("ByteLevel", _)) -> Ok Byte_level
+      | Some (Jsont.String ("ByteFallback", _)) -> Ok Byte_fallback
+      | Some (Jsont.String ("WordPiece", _)) ->
           Ok
             (Word_piece
                {
@@ -370,12 +421,16 @@ let rec of_json = function
                  cleanup = bool_field fields "cleanup" ~default:true;
                })
       | Some (Jsont.String ("Metaspace", _)) ->
+          let* prepend_scheme =
+            scheme_of_string
+              (string_field fields "prepend_scheme" ~default:"always")
+          in
           Ok
             (Metaspace
                {
-                 replacement = char_field fields "replacement" ~default:'_';
-                 add_prefix_space =
-                   bool_field fields "add_prefix_space" ~default:true;
+                 replacement =
+                   string_field fields "replacement" ~default:"\xe2\x96\x81";
+                 prepend_scheme;
                })
       | Some (Jsont.String ("CTC", _)) ->
           Ok
@@ -393,7 +448,12 @@ let rec of_json = function
             | Some (Jsont.Object (pattern_fields, _)) -> (
                 match Jsont.Json.find_mem "String" pattern_fields with
                 | Some (_, Jsont.String (p, _)) -> Ok p
-                | _ -> Error err_replace_missing_pattern)
+                | _ ->
+                    if
+                      Option.is_some
+                        (Jsont.Json.find_mem "Regex" pattern_fields)
+                    then Error err_replace_regex_pattern
+                    else Error err_replace_missing_pattern)
             | _ -> Error err_replace_missing_pattern
           in
           Ok
@@ -406,9 +466,9 @@ let rec of_json = function
           Ok
             (Strip
                {
-                 left = bool_field fields "strip_left" ~default:false;
-                 right = bool_field fields "strip_right" ~default:false;
-                 content = char_field fields "content" ~default:' ';
+                 content = string_field fields "content" ~default:" ";
+                 start = int_field fields "start" ~default:0;
+                 stop = int_field fields "stop" ~default:0;
                })
       | Some (Jsont.String ("Fuse", _)) -> Ok Fuse
       | Some (Jsont.String ("Sequence", _)) -> (

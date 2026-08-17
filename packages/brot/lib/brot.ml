@@ -859,16 +859,16 @@ let alg_to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "BPE");
-          ("dropout", Jsont.Json.null ());
+          ("dropout", json_option_of Jsont.Json.number (Bpe.get_dropout bpe));
           ("unk_token", json_option_of Jsont.Json.string (Bpe.get_unk_token bpe));
           ( "continuing_subword_prefix",
             json_option_of Jsont.Json.string
               (Bpe.get_continuing_subword_prefix bpe) );
           ( "end_of_word_suffix",
             json_option_of Jsont.Json.string (Bpe.get_end_of_word_suffix bpe) );
-          ("fuse_unk", Jsont.Json.bool false);
-          ("byte_fallback", Jsont.Json.bool false);
-          ("ignore_merges", Jsont.Json.bool false);
+          ("fuse_unk", Jsont.Json.bool (Bpe.get_fuse_unk bpe));
+          ("byte_fallback", Jsont.Json.bool (Bpe.get_byte_fallback bpe));
+          ("ignore_merges", Jsont.Json.bool (Bpe.get_ignore_merges bpe));
           ("vocab", vocab_json);
           ("merges", merges_json);
         ]
@@ -979,16 +979,22 @@ let parse_merge = function
 let alg_of_json mj =
   let mem name = json_mem name mj in
   let str name = json_string_or_null (mem name) in
+  let flag name = match mem name with Jsont.Bool (b, _) -> b | _ -> false in
   match infer_model_type mj with
   | "BPE" ->
       let vocab_list = json_to_assoc (mem "vocab") in
       let merges = json_to_list (mem "merges") |> List.map parse_merge in
+      let dropout =
+        match mem "dropout" with Jsont.Number (f, _) -> Some f | _ -> None
+      in
       Alg_bpe
         (Bpe.create
            ~vocab:(vocab_to_hashtbl vocab_list)
-           ~merges ?unk_token:(str "unk_token")
+           ~merges ?dropout ?unk_token:(str "unk_token")
            ?continuing_subword_prefix:(str "continuing_subword_prefix")
-           ?end_of_word_suffix:(str "end_of_word_suffix") ())
+           ?end_of_word_suffix:(str "end_of_word_suffix")
+           ~fuse_unk:(flag "fuse_unk") ~byte_fallback:(flag "byte_fallback")
+           ~ignore_merges:(flag "ignore_merges") ())
   | "WordPiece" ->
       let vocab_list = json_to_assoc (mem "vocab") in
       let unk_token = str "unk_token" |> Option.value ~default:"[UNK]" in

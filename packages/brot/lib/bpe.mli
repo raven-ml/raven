@@ -120,6 +120,21 @@ val get_end_of_word_suffix : t -> string option
 (** [get_end_of_word_suffix t] is the word-end suffix, if configured (e.g.
     ["</w>"]). *)
 
+val get_dropout : t -> float option
+(** [get_dropout t] is the merge dropout probability, if configured. *)
+
+val get_fuse_unk : t -> bool
+(** [get_fuse_unk t] is [true] iff consecutive unknown bytes are fused into a
+    single unknown token. *)
+
+val get_byte_fallback : t -> bool
+(** [get_byte_fallback t] is [true] iff a character absent from the vocabulary
+    falls back to byte tokens rather than the unknown token. *)
+
+val get_ignore_merges : t -> bool
+(** [get_ignore_merges t] is [true] iff a word that is itself in the vocabulary
+    is emitted as one token without merging. *)
+
 val get_merges : t -> (string * string) list
 (** [get_merges t] is the merge rules in priority order. *)
 

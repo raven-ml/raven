@@ -230,28 +230,25 @@ Decoders reverse encoding-specific transformations to produce natural text
 from token strings. They operate on token *strings* (looked up from the
 vocabulary), not IDs.
 
-Decoders fall into two categories:
-
-- **Per-token** — transform each token independently: `bpe`, `byte_fallback`, `metaspace`
-- **Collapsing** — process the entire token list as a whole: `byte_level`, `wordpiece`, `replace`, `strip`, `fuse`
-
-This distinction matters when composing with `sequence`: per-token decoders
-pass a list of transformed tokens to the next decoder, while collapsing
-decoders produce a single result.
+A decoder rewrites a token list into another token list; `decode` is the
+concatenation of the result. Most decoders rewrite each token on its own, some
+also join or drop tokens, and two collapse the list into a single token. This
+matters when composing with `sequence`: a collapsing decoder hides token
+boundaries from the decoders that follow it.
 
 Available decoders:
 
-| Decoder                   | Type       | Description                                      |
-| ------------------------- | ---------- | ------------------------------------------------ |
-| `bpe ()`                  | Per-token  | Strip end-of-word suffix, insert spaces          |
-| `byte_fallback ()`        | Per-token  | Convert `<0x41>` hex tokens to bytes             |
-| `metaspace ()`            | Per-token  | Convert metaspace markers to spaces              |
-| `byte_level ()`           | Collapsing | Reverse GPT-2 byte-to-Unicode encoding           |
-| `wordpiece ()`            | Collapsing | Strip `##` prefix, join subwords                 |
-| `replace ~pattern ~by ()` | Collapsing | Replace literal pattern in joined text           |
-| `strip ()`                | Collapsing | Remove leading/trailing characters               |
-| `fuse ()`                 | Collapsing | Concatenate all tokens with no delimiter         |
-| `ctc ()`                  | Per-token  | CTC output decoding (deduplication, pad removal) |
+| Decoder                   | Type       | Description                                       |
+| ------------------------- | ---------- | ------------------------------------------------- |
+| `bpe ()`                  | Per-token  | Turn the end-of-word suffix into the space it marks |
+| `metaspace ()`            | Per-token  | Convert metaspace markers to spaces               |
+| `wordpiece ()`            | Per-token  | Strip `##` prefix, space out the other subwords   |
+| `replace ~pattern ~by ()` | Per-token  | Replace a literal pattern in every token          |
+| `strip ()`                | Per-token  | Remove leading/trailing occurrences of a string   |
+| `byte_fallback ()`        | Joining    | Convert runs of `<0x41>` hex tokens to text       |
+| `ctc ()`                  | Joining    | CTC output decoding (deduplication, pad removal)  |
+| `byte_level ()`           | Collapsing | Reverse GPT-2 byte-to-Unicode encoding            |
+| `fuse ()`                 | Collapsing | Concatenate all tokens with no delimiter          |
 
 ```ocaml
 open Brot

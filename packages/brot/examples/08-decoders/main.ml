@@ -24,15 +24,15 @@ let () =
   show "metaspace" (Decoder.metaspace ())
     [ "\xe2\x96\x81Hello"; "\xe2\x96\x81world" ];
 
-  show "byte_fallback" (Decoder.byte_fallback ()) [ "hello"; "<0x21>" ];
-
-  Printf.printf "\n=== Collapsing Decoders ===\n\n";
-
-  show "fuse" (Decoder.fuse ()) [ "h"; "e"; "l"; "l"; "o" ];
-
   show "replace ('_' -> ' ')"
     (Decoder.replace ~pattern:"_" ~by:" " ())
     [ "hello_world" ];
+
+  Printf.printf "\n=== Joining and Collapsing Decoders ===\n\n";
+
+  show "byte_fallback" (Decoder.byte_fallback ()) [ "hello"; "<0x21>" ];
+
+  show "fuse" (Decoder.fuse ()) [ "h"; "e"; "l"; "l"; "o" ];
 
   Printf.printf "\n=== Composed Decoder ===\n\n";
 

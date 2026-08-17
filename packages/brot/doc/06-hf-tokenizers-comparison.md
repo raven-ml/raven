@@ -180,6 +180,13 @@ let text_clean =
     [| 101; 7592; 2088; 999; 102 |]
 ```
 
+**Divergence.** `skip_special_tokens` drops a special added token in brot
+whenever its ID appears. HuggingFace matches the token by the string it decodes
+to, which for a token whose `normalized` is set is the normalized form, while
+the set it looks that string up in holds unnormalized content — so a normalizer
+that rewrites the content stops the token from being skipped at all. On LLaMA,
+`decode([0], skip_special_tokens=True)` is `"<unk>"` there and `""` here.
+
 ### 4.2 Batch decoding
 
 **HuggingFace**

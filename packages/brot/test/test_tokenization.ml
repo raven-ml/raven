@@ -301,8 +301,186 @@ let test_ctc_decoder () =
      a space is not itself eligible for the punctuation rules. *)
   case ~cleanup:true [ "|." ] " .";
   case ~cleanup:true [ "  x  " ] "  x  ";
+  (* The pad token is cut out wherever it falls in a token, not only when it is
+     the whole of one, and cleanup has no say in it. *)
+  case ~cleanup:true [ "x<pad>y" ] "xy";
+  case ~cleanup:true [ "<pad>x<pad>" ] "x";
+  case ~cleanup:true [ "a<pad>b<pad>c" ] "abc";
+  case ~cleanup:true [ "<pad>x"; "y<pad>" ] "xy";
+  case ~cleanup:false [ "x<pad>y" ] "xy";
+  case ~cleanup:false [ "<pad>x<pad>" ] "x";
+  (* A token left empty goes, but one left with a space stays. *)
+  case ~cleanup:true [ "<pad>" ] "";
+  case ~cleanup:true [ ""; "a" ] "a";
+  case ~cleanup:true [ "a"; ""; "b" ] "ab";
+  case ~cleanup:true [ "|" ] " ";
   case ~cleanup:false [ "a"; " ,"; "b" ] "a ,b";
-  case ~cleanup:false [ "h"; "e"; "l"; "l"; "o"; "|"; "w" ] "helo|w"
+  case ~cleanup:false [ "h"; "e"; "l"; "l"; "o"; "|"; "w" ] "helo|w";
+  (* Dropping the emptied token is what makes the next decoder in a sequence see
+     ["▁a"] as its first token. *)
+  let sequenced tokens expected =
+    equal
+      ~msg:(Printf.sprintf "ctc then metaspace %s" (String.concat " " tokens))
+      string expected
+      (Decoder.decode
+         (Decoder.sequence [ Decoder.ctc (); Decoder.metaspace () ])
+         tokens)
+  in
+  sequenced [ "<pad>"; "\xe2\x96\x81a" ] "a";
+  sequenced [ "\xe2\x96\x81a"; "\xe2\x96\x81b" ] "a b"
+
+let decodes decoder cases =
+  List.iter
+    (fun (tokens, expected) ->
+      equal
+        ~msg:(Printf.sprintf "[%s]" (String.concat "|" tokens))
+        string expected
+        (Decoder.decode decoder tokens))
+    cases
+
+(* Expectations from HuggingFace [decoders.BPEDecoder(suffix="</w>")]. *)
+let test_bpe_decoder () =
+  (* The suffix stands for the space that follows the word, wherever in the
+     token it occurs, and for nothing at all in the last token. *)
+  decodes
+    (Decoder.bpe ~suffix:"</w>" ())
+    [
+      ([ "hel"; "lo</w>"; "wor"; "ld</w>" ], "hello world");
+      ([ "a</w>"; "b</w>" ], "a b");
+      ([ "a</w>b"; "c" ], "a bc");
+      ([ "</w>"; "a" ], " a");
+      ([ "only</w>" ], "only");
+      (* A token without the suffix is not a word end, so no space is added. *)
+      ([ "x"; "y" ], "xy");
+      ([], "");
+    ]
+
+(* Expectations from HuggingFace [decoders.ByteFallback()]. *)
+let test_byte_fallback_decoder () =
+  decodes (Decoder.byte_fallback ())
+    [
+      ([ "<0x41>" ], "A");
+      ([ "<0x0a>" ], "\n");
+      ([ "<0xE2>"; "<0x96>"; "<0x81>" ], "\xe2\x96\x81");
+      ([ "a"; "<0xC3>"; "<0xA9>"; "b" ], "a\xc3\xa9b");
+      ([ "<0x0A>"; "x"; "<0x0A>" ], "\nx\n");
+      (* A run that is not valid UTF-8 is unrecoverable: one replacement
+         character per byte, not one for the run. *)
+      ([ "<0xFF>" ], "\xef\xbf\xbd");
+      ([ "<0xFF>"; "<0xFE>" ], "\xef\xbf\xbd\xef\xbf\xbd");
+      (* Only six-byte [<0xNN>] tokens with two hex digits are byte tokens. *)
+      ([ "<0xGG>" ], "<0xGG>");
+      ([ "<0x1>" ], "<0x1>");
+      ([ "<0x_1>" ], "<0x_1>");
+      ([ "plain" ], "plain");
+      ([], "");
+    ]
+
+(* Expectations from HuggingFace [decoders.Metaspace(prepend_scheme=...)]. *)
+let test_metaspace_decoder () =
+  (* The marker was prepended to the text rather than standing for a space, so
+     it is dropped throughout the first token and becomes a space after it. *)
+  decodes (Decoder.metaspace ())
+    [
+      ([ "\xe2\x96\x81Hello"; "\xe2\x96\x81world" ], "Hello world");
+      ([ "\xe2\x96\x81"; "\xe2\x96\x81a" ], " a");
+      ([ "a\xe2\x96\x81b"; "\xe2\x96\x81c" ], "ab c");
+      ([ "\xe2\x96\x81\xe2\x96\x81a"; "b" ], "ab");
+      ([ "\xe2\x96\x81" ], "");
+      ([], "");
+    ];
+  decodes
+    (Decoder.metaspace ~prepend_scheme:`Never ())
+    [
+      ([ "\xe2\x96\x81Hello"; "\xe2\x96\x81world" ], " Hello world");
+      ([ "\xe2\x96\x81"; "\xe2\x96\x81a" ], "  a");
+      ([ "a\xe2\x96\x81b"; "\xe2\x96\x81c" ], "a b c");
+      ([ "\xe2\x96\x81" ], " ");
+    ]
+
+(* Expectations from HuggingFace [decoders.Replace(pattern, content)] and
+   [decoders.Strip(content, left, right)]. *)
+let test_replace_and_strip_decoders () =
+  decodes
+    (Decoder.replace ~pattern:"\xe2\x96\x81" ~by:" " ())
+    [ ([ "\xe2\x96\x81a"; "\xe2\x96\x81b" ], " a b"); ([ "a" ], "a"); ([], "") ];
+  (* Every token is stripped, not just the ends of the joined text. *)
+  decodes
+    (Decoder.strip ~content:" " ~start:1 ())
+    [ ([ "  a  "; "  b  " ], " a   b  "); ([ "   " ], "  "); ([ "a" ], "a") ];
+  decodes
+    (Decoder.strip ~content:" " ~stop:1 ())
+    [ ([ "  a  "; "  b  " ], "  a   b ") ];
+  decodes
+    (Decoder.strip ~content:" " ~start:2 ~stop:2 ())
+    [ ([ "  a  "; "  b  " ], "ab"); ([ "a" ], "a"); ([], "") ];
+  (* [content] is a string, so a multi-byte marker counts as one occurrence. *)
+  decodes
+    (Decoder.strip ~content:"\xe2\x96\x81" ~start:1 ())
+    [ ([ "\xe2\x96\x81\xe2\x96\x81x" ], "\xe2\x96\x81x"); ([ "  a" ], "  a") ]
+
+(* Expectations from HuggingFace for the decoder LLaMA and other SentencePiece
+   models carry: [decoders.Sequence([Replace("▁", " "), ByteFallback(), Fuse(),
+   Strip(content=" ", left=1)])]. *)
+let test_sentencepiece_decoder () =
+  let sp =
+    Decoder.sequence
+      [
+        Decoder.replace ~pattern:"\xe2\x96\x81" ~by:" " ();
+        Decoder.byte_fallback ();
+        Decoder.fuse ();
+        Decoder.strip ~content:" " ~start:1 ();
+      ]
+  in
+  decodes sp
+    [
+      ([ "\xe2\x96\x81a"; "\xe2\x96\x81"; "\xe2\x96\x81b" ], "a  b");
+      ([ "\xe2\x96\x81"; "<0x0A>"; "<0x0A>"; "Not" ], "\n\nNot");
+      ([ "\xe2\x96\x81Hello"; "\xe2\x96\x81world" ], "Hello world");
+      (* [Replace] rewrites each token, so [ByteFallback] still sees the byte
+         tokens as tokens of their own. *)
+      ([ "\xe2\x96\x81"; "<0xE2>"; "<0x9C>"; "<0x93>" ], "\xe2\x9c\x93");
+      ([ "<0xFF>"; "\xe2\x96\x81a" ], "\xef\xbf\xbd a");
+      ([ "\xe2\x96\x81" ], "");
+      ([], "");
+    ]
+
+(* [skip_special_tokens] drops a special added token wherever its identifier
+   appears. HuggingFace instead matches the token by the string it decodes to,
+   which for a token whose [normalized] is set is the normalized form, and looks
+   that string up among unnormalized contents — so on a configuration like this
+   one it skips nothing and decodes ["<s> a b"] either way. Brot does not follow
+   it there. *)
+let test_skip_special_tokens () =
+  let marker = "\xe2\x96\x81" in
+  let t =
+    bpe
+      ~normalizer:
+        (Normalizer.sequence
+           [
+             Normalizer.prepend marker;
+             Normalizer.replace ~pattern:" " ~replacement:marker;
+           ])
+      ~decoder:
+        (Decoder.sequence
+           [
+             Decoder.replace ~pattern:marker ~by:" " ();
+             Decoder.fuse ();
+             Decoder.strip ~content:" " ~start:1 ();
+           ])
+      ~added_tokens:[ added_token ~normalized:true "<s>" ]
+      ~vocab:[ ("<s>", 1); (marker ^ "a", 2); (marker ^ "b", 3) ]
+      ~merges:[] ()
+  in
+  equal ~msg:"the added token stands for the text it matched" (option string)
+    (Some (marker ^ "<s>"))
+    (id_to_token t 1);
+  equal ~msg:"kept" string "<s> a b"
+    (decode t ~skip_special_tokens:false [| 1; 2; 3 |]);
+  equal ~msg:"skipped" string "a b"
+    (decode t ~skip_special_tokens:true [| 1; 2; 3 |]);
+  equal ~msg:"nothing but the skipped token" string ""
+    (decode t ~skip_special_tokens:true [| 1 |])
 
 (* Test Suite *)
 
@@ -338,6 +516,12 @@ let tokenization_tests =
     (* Decoding *)
     test "wordpiece decoder" test_wordpiece_decoder;
     test "ctc decoder" test_ctc_decoder;
+    test "bpe decoder" test_bpe_decoder;
+    test "byte fallback decoder" test_byte_fallback_decoder;
+    test "metaspace decoder" test_metaspace_decoder;
+    test "replace and strip decoders" test_replace_and_strip_decoders;
+    test "sentencepiece decoder" test_sentencepiece_decoder;
+    test "skip special tokens" test_skip_special_tokens;
   ]
 
 let () = run "brot tokenization" [ group "tokenization" tokenization_tests ]

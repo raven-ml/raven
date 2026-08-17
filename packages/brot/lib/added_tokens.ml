@@ -24,7 +24,7 @@ type matcher = pattern array array
 type t = {
   tokens : token list;
   by_content : (string, int) Hashtbl.t;
-  by_id : (int, token) Hashtbl.t;
+  by_id : (int, pattern) Hashtbl.t;
   raw : matcher;
   normalized : matcher;
 }
@@ -225,7 +225,7 @@ let make ~normalize tokens =
       | Some pattern ->
           Hashtbl.replace by_content token.content token.id;
           if not (Hashtbl.mem by_id token.id) then
-            Hashtbl.replace by_id token.id token;
+            Hashtbl.replace by_id token.id pattern;
           kept := token :: !kept;
           if token.normalized then normalized := pattern :: !normalized
           else raw := pattern :: !raw)
@@ -244,12 +244,12 @@ let token_to_id t content = Hashtbl.find_opt t.by_content content
 
 let id_to_token t id =
   match Hashtbl.find_opt t.by_id id with
-  | Some token -> Some token.content
+  | Some pattern -> Some pattern.text
   | None -> None
 
 let is_special t id =
   match Hashtbl.find_opt t.by_id id with
-  | Some token -> token.special
+  | Some pattern -> pattern.token.special
   | None -> false
 
 let find_raw t text ~pos = find t.raw text ~pos
