@@ -133,6 +133,101 @@ let test_pretrained_decoder_json () =
    ^ {|"},"content":" "},{"type":"ByteFallback"},{"type":"Fuse"},{"type":"Strip","content":" ","start":1,"stop":0}]}|}
     )
 
+(* Every post-processor, with JSON HuggingFace reads back as the same processor.
+   It requires [add_prefix_space] and [trim_offsets] on [ByteLevel], all four
+   members on [RobertaProcessing] (with either flag missing it reads the object
+   as a [BertProcessing] instead), and an array for [TemplateProcessing]'s
+   [pair] ([null] is rejected). [ByteLevel]'s [use_regex] is left out: only a
+   pre-tokenizer reads it, and HuggingFace defaults it to [true]. Every text
+   below was read back by [Tokenizer.from_str] as the same processor. *)
+let post_processors =
+  [
+    ( Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) (),
+      {|{"type":"BertProcessing","sep":["[SEP]",102],"cls":["[CLS]",101]}|} );
+    ( Post_processor.roberta ~sep:("</s>", 2) ~cls:("<s>", 0) (),
+      {|{"type":"RobertaProcessing","sep":["</s>",2],"cls":["<s>",0],"trim_offsets":true,"add_prefix_space":true}|}
+    );
+    ( Post_processor.roberta ~sep:("</s>", 2) ~cls:("<s>", 0)
+        ~add_prefix_space:false (),
+      {|{"type":"RobertaProcessing","sep":["</s>",2],"cls":["<s>",0],"trim_offsets":true,"add_prefix_space":false}|}
+    );
+    ( Post_processor.byte_level (),
+      {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":true}|} );
+    ( Post_processor.byte_level ~add_prefix_space:false ~trim_offsets:false (),
+      {|{"type":"ByteLevel","add_prefix_space":false,"trim_offsets":false}|} );
+    ( Post_processor.template ~single:"$A" (),
+      {|{"type":"TemplateProcessing","single":[{"Sequence":{"id":"A","type_id":0}}],"pair":[{"Sequence":{"id":"A","type_id":0}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{}}|}
+    );
+    ( Post_processor.template ~single:"[CLS] $A [SEP]"
+        ~pair:"[CLS] $A [SEP] $B:1 [SEP]:1"
+        ~special_tokens:[ ("[CLS]", 101); ("[SEP]", 102) ]
+        (),
+      {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"[CLS]","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"[SEP]","type_id":0}}],"pair":[{"SpecialToken":{"id":"[CLS]","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"[SEP]","type_id":0}},{"Sequence":{"id":"B","type_id":1}},{"SpecialToken":{"id":"[SEP]","type_id":1}}],"special_tokens":{"[CLS]":{"id":"[CLS]","ids":[101],"tokens":["[CLS]"]},"[SEP]":{"id":"[SEP]","ids":[102],"tokens":["[SEP]"]}}}|}
+    );
+    ( Post_processor.sequence
+        [
+          Post_processor.byte_level ();
+          Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) ();
+        ],
+      {|{"type":"Sequence","processors":[{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":true},{"type":"BertProcessing","sep":["[SEP]",102],"cls":["[CLS]",101]}]}|}
+    );
+  ]
+
+let test_post_processor_json () =
+  List.iter
+    (fun (processor, expected) ->
+      let text = json_text (Post_processor.to_json processor) in
+      equal ~msg:expected string expected text;
+      match Post_processor.of_json (json_of_text text) with
+      | Error msg -> failf "%s does not read back: %s" expected msg
+      | Ok reloaded ->
+          equal ~msg:("round trip " ^ expected) string expected
+            (json_text (Post_processor.to_json reloaded)))
+    post_processors
+
+(* The members HuggingFace writes that brot does not model must not change the
+   processor: [use_regex] is a pre-tokenizer's, and a [pair] template is what
+   HuggingFace fills in for one brot was not given. *)
+let test_post_processor_hf_members () =
+  let case ~msg text expected =
+    match Post_processor.of_json (json_of_text text) with
+    | Error err -> failf "cannot read %s: %s" text err
+    | Ok processor ->
+        equal ~msg string expected
+          (json_text (Post_processor.to_json processor))
+  in
+  case ~msg:"use_regex"
+    {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":false,"use_regex":true}|}
+    {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":false}|};
+  case ~msg:"null pair"
+    {|{"type":"TemplateProcessing","single":[{"Sequence":{"id":"A","type_id":0}}],"pair":null,"special_tokens":{}}|}
+    {|{"type":"TemplateProcessing","single":[{"Sequence":{"id":"A","type_id":0}}],"pair":[{"Sequence":{"id":"A","type_id":0}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{}}|}
+
+(* Loading a pretrained tokenizer and writing it back must give HuggingFace the
+   post-processor it had: GPT-2 keeps [add_prefix_space], which brot used to
+   drop, leaving JSON HuggingFace refused to load. *)
+let test_pretrained_post_processor_json () =
+  let case model expected =
+    Fixture.with_download
+      ("../bench/data/" ^ model ^ ".json")
+      ~from:"bench/download_data.sh"
+      (fun path ->
+        match from_file path with
+        | Error msg -> failf "cannot load %s: %s" model msg
+        | Ok t -> (
+            match post_processor t with
+            | None -> failf "%s has no post-processor" model
+            | Some p ->
+                equal ~msg:model string expected
+                  (json_text (Post_processor.to_json p))))
+  in
+  case "gpt2"
+    {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":false}|};
+  case "bert_base"
+    {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"[CLS]","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"[SEP]","type_id":0}}],"pair":[{"SpecialToken":{"id":"[CLS]","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"[SEP]","type_id":0}},{"Sequence":{"id":"B","type_id":1}},{"SpecialToken":{"id":"[SEP]","type_id":1}}],"special_tokens":{"[CLS]":{"id":"[CLS]","ids":[101],"tokens":["[CLS]"]},"[SEP]":{"id":"[SEP]","ids":[102],"tokens":["[SEP]"]}}}|};
+  case "llama"
+    {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"<s>","type_id":0}},{"Sequence":{"id":"A","type_id":0}}],"pair":[{"SpecialToken":{"id":"<s>","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"<s>","type_id":1}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{"<s>":{"id":"<s>","ids":[1],"tokens":["<s>"]}}}|}
+
 (* A BPE model whose flags each change how ["abc"] is tokenized, so that a flag
    dropped in either direction of the JSON shows up in the ids. *)
 let bpe_model ~byte_fallback ~fuse_unk =
@@ -238,6 +333,47 @@ let test_llama () =
                    (encode tokenizer ~add_special_tokens:true "Hello world")))
             [ (t, false); (reload t, true) ])
 
+let with_saved_tokenizer t f =
+  let folder = Filename.temp_file "brot-save-" "" in
+  Sys.remove folder;
+  save_pretrained t ~path:folder;
+  let file = Filename.concat folder "tokenizer.json" in
+  Fun.protect
+    ~finally:(fun () ->
+      Sys.remove file;
+      Sys.rmdir folder)
+    (fun () -> f file)
+
+(* GPT-2, end to end: what [save_pretrained] writes must load back into a
+   tokenizer that encodes the same ids. The written file was also read by
+   HuggingFace [Tokenizer.from_file], which encodes the same ids from it; brot
+   used to write a post-processor HuggingFace refused to load at all. *)
+let test_gpt2_round_trip () =
+  Fixture.with_download "../bench/data/gpt2.json" ~from:"bench/download_data.sh"
+    (fun path ->
+      match from_file path with
+      | Error msg -> failf "cannot load gpt2.json: %s" msg
+      | Ok t ->
+          with_saved_tokenizer t (fun file ->
+              match from_file file with
+              | Error msg -> failf "cannot load what was saved: %s" msg
+              | Ok saved ->
+                  List.iter
+                    (fun text ->
+                      equal ~msg:text (array int)
+                        (encode_ids t ~add_special_tokens:true text)
+                        (encode_ids saved ~add_special_tokens:true text))
+                    [
+                      "Hello world";
+                      " leading";
+                      "a  b";
+                      "\n\nNot";
+                      "caf\xc3\xa9!";
+                    ];
+                  equal ~msg:"post-processor survives" string
+                    (json_text (to_json t |> json_member "post_processor"))
+                    (json_text (to_json saved |> json_member "post_processor"))))
+
 let () =
   run "brot json"
     [
@@ -247,7 +383,12 @@ let () =
           test "replace regex json" test_replace_regex_json;
           test "sentencepiece decoder json" test_sentencepiece_decoder_json;
           test "pretrained decoder json" test_pretrained_decoder_json;
+          test "post processor json" test_post_processor_json;
+          test "post processor hf members" test_post_processor_hf_members;
+          test "pretrained post processor json"
+            test_pretrained_post_processor_json;
           test "bpe flags json" test_bpe_flags_json;
           test "llama" test_llama;
+          test "gpt2 round trip" test_gpt2_round_trip;
         ];
     ]

@@ -1087,6 +1087,21 @@ thread.
 
 ### Brot
 
+- `save_pretrained` writes a post-processor HuggingFace can read. The
+  `ByteLevel` post-processor was missing `add_prefix_space`, which HuggingFace
+  requires alongside `trim_offsets`, so a saved GPT-2 tokenizer failed to load
+  at all; `TemplateProcessing` wrote `"pair": null`, which HuggingFace also
+  rejects, and now writes the pair template.
+- `Post_processor.roberta` honours `trim_offsets` and `add_prefix_space`, which
+  it stored and ignored, and `Post_processor.byte_level` takes
+  `?add_prefix_space`. Trimming now matches HuggingFace: it counts the space
+  marker and whitespace in the encoded token, so a byte-level encoded tab or
+  newline keeps its offsets, and a token that is only whitespace loses both
+  ends.
+- `Post_processor.template` without `~pair` uses HuggingFace's default
+  `$A:0 $B:1` instead of raising when a pair is processed, `to_json` writes it,
+  and `added_tokens ~is_pair:true` counts that pair rather than the single
+  template's special tokens.
 - Pre-tokenizers walk byte spans instead of building intermediate pieces:
   `Pre_tokenizer.pre_tokenize` is 1.2–2.1× faster and the byte-level (GPT-2)
   split runs at ~245 MB/s allocating nothing.

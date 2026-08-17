@@ -115,6 +115,79 @@ let test_template_pair_type_ids () =
   equal ~msg:"no-special ids" (array int) (Encoding.ids seq_a)
     (Encoding.ids no_special)
 
+(* A template built without a pair still processes a pair, with the template
+   HuggingFace fills in: [$A:0 $B:1]. *)
+let test_template_default_pair () =
+  let processor = Post_processor.template ~single:"$A" () in
+  let seq_a = make_encoding ~ids:[| 10 |] ~tokens:[| "hello" |] ~type_id:0 in
+  let seq_b = make_encoding ~ids:[| 20 |] ~tokens:[| "pair" |] ~type_id:0 in
+  let encoding =
+    Post_processor.process processor ~pair:seq_b seq_a ~add_special_tokens:true
+  in
+  equal ~msg:"ids" (array int) [| 10; 20 |] (Encoding.ids encoding);
+  equal ~msg:"type ids" (array int) [| 0; 1 |] (Encoding.type_ids encoding);
+  equal ~msg:"added tokens" int 0
+    (Post_processor.added_tokens processor ~is_pair:true)
+
+let byte_level_encoding tokens offsets =
+  let len = Array.length tokens in
+  Encoding.create ~ids:(Array.make len 0) ~type_ids:(Array.make len 0)
+    ~tokens:(Array.copy tokens) ~words:(Array.make len None)
+    ~offsets:(Array.copy offsets) ~special_tokens_mask:(Array.make len 0)
+    ~attention_mask:(Array.make len 1) ()
+
+let trimmed processor tokens offsets =
+  Encoding.offsets
+    (Post_processor.process processor
+       (byte_level_encoding tokens offsets)
+       ~add_special_tokens:false)
+
+(* Trimming drops the whitespace a byte-level token carries, except the space
+   the pre-tokenizer prepended to a token starting at offset 0: it is not in the
+   input. Every expectation is what HuggingFace produces for the same tokens and
+   offsets. *)
+let test_byte_level_trim_offsets () =
+  let tokens = [| "\xc4\xa0Hello"; "\xc4\xa0world" |] in
+  let offsets = [| (0, 6); (6, 12) |] in
+  let trimmed processor = trimmed processor tokens offsets in
+  equal ~msg:"prefix space kept"
+    (array (pair int int))
+    [| (0, 6); (7, 12) |]
+    (trimmed (Post_processor.byte_level ()));
+  equal ~msg:"prefix space trimmed"
+    (array (pair int int))
+    [| (1, 6); (7, 12) |]
+    (trimmed (Post_processor.byte_level ~add_prefix_space:false ()));
+  equal ~msg:"trimming off"
+    (array (pair int int))
+    offsets
+    (trimmed (Post_processor.byte_level ~trim_offsets:false ()))
+
+(* A token that is nothing but the prepended space still loses its trailing
+   whitespace: the two ends are counted independently. *)
+let test_byte_level_trim_whitespace_token () =
+  let tokens = [| "\xc4\xa0"; "\xc4\xa0quick" |] in
+  let offsets = [| (0, 1); (1, 7) |] in
+  let trimmed processor = trimmed processor tokens offsets in
+  equal ~msg:"prefix space kept"
+    (array (pair int int))
+    [| (0, 0); (2, 7) |]
+    (trimmed (Post_processor.byte_level ()));
+  equal ~msg:"prefix space trimmed"
+    (array (pair int int))
+    [| (1, 1); (2, 7) |]
+    (trimmed (Post_processor.byte_level ~add_prefix_space:false ()))
+
+(* Byte-level encoding maps a newline to U+010A, a letter rather than
+   whitespace, so trimming leaves that token's offsets where they are. *)
+let test_byte_level_trim_encoded_newline () =
+  let tokens = [| "\xc4\xa0a"; "\xc4\xa0"; "\xc4\x8a"; "\xc4\xa0b" |] in
+  let offsets = [| (0, 1); (1, 2); (2, 3); (3, 5) |] in
+  equal ~msg:"newline kept"
+    (array (pair int int))
+    [| (0, 1); (2, 2); (2, 3); (4, 5) |]
+    (trimmed (Post_processor.byte_level ()) tokens offsets)
+
 let () =
   run "Processors"
     [
@@ -122,5 +195,13 @@ let () =
         [
           test "multi-id special expansion" test_template_multi_special;
           test "pair template semantics" test_template_pair_type_ids;
+          test "default pair template" test_template_default_pair;
+        ];
+      group "byte level"
+        [
+          test "trim offsets" test_byte_level_trim_offsets;
+          test "trim whitespace-only token"
+            test_byte_level_trim_whitespace_token;
+          test "keep encoded newline" test_byte_level_trim_encoded_newline;
         ];
     ]

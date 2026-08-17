@@ -35,14 +35,19 @@ val roberta :
 
     Single: [<s> A </s>]. Pair: [<s> A </s> </s> B </s>]. All type IDs are [0].
 
-    [trim_offsets] defaults to [true]. [add_prefix_space] defaults to [true]. *)
+    [trim_offsets] removes leading and trailing whitespace from the offsets of
+    byte-level tokens; it defaults to [true]. [add_prefix_space] tells the
+    trimming that a single leading space on a token that starts at offset [0]
+    was added by the pre-tokenizer and must be kept; it defaults to [true]. *)
 
-val byte_level : ?trim_offsets:bool -> unit -> t
+val byte_level : ?add_prefix_space:bool -> ?trim_offsets:bool -> unit -> t
 (** [byte_level ()] is a byte-level post-processor that adjusts character
     offsets for byte-level encoding.
 
     [trim_offsets] removes leading and trailing whitespace from offsets.
-    Defaults to [true]. *)
+    Defaults to [true]. [add_prefix_space] tells the trimming that a single
+    leading space on a token that starts at offset [0] was added by the
+    pre-tokenizer and must be kept; it defaults to [true]. *)
 
 val template :
   single:string -> ?pair:string -> ?special_tokens:token list -> unit -> t
@@ -52,6 +57,7 @@ val template :
     token names (e.g. [[CLS]]). Type IDs can be specified with a colon suffix:
     [$A:0], [[SEP]:1].
 
+    [pair] must reference both [$A] and [$B]; it defaults to ["$A:0 $B:1"].
     [special_tokens] defaults to [[]]. *)
 
 val sequence : t list -> t

@@ -12,7 +12,6 @@ let err_expected what v = strf "expected %s, got %s" what v
 let err_seq_id = "sequence id must be \"A\", \"B\", 0 or 1"
 let err_type_id_field = "expected number for 'type_id'"
 let err_missing_sequence = "template references a sequence not provided"
-let err_pair_required = "pair template required when two sequences are provided"
 let err_pair_must_ref_both = "pair template must reference both $A and $B"
 let err_template_def = "expected string, array or null for template"
 let err_unsupported_piece = "expected Sequence or SpecialToken object"
@@ -43,14 +42,13 @@ type t =
   | Roberta of {
       sep : token;
       cls : token;
-      pad : token;
       trim_offsets : bool;
       add_prefix_space : bool;
     }
-  | ByteLevel of { trim_offsets : bool }
+  | ByteLevel of { add_prefix_space : bool; trim_offsets : bool }
   | Template of {
       single : template;
-      pair : template option;
+      pair : template;
       special_tokens : special_token list;
     }
   | Sequence of t list
@@ -68,10 +66,6 @@ let with_type_id enc type_id =
     ~special_tokens_mask:(Encoding.special_tokens_mask enc)
     ~attention_mask:(Encoding.attention_mask enc)
     ()
-
-let is_ws = function
-  | ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c' -> true
-  | _ -> false
 
 let build_special_lookup special_tokens =
   let tbl = Hashtbl.create (List.length special_tokens + 1) in
@@ -112,6 +106,74 @@ let json_str_int_pair fields name ~default =
 
 (* Processors *)
 
+(* The characters trimmed off each end of a byte-level token are the space
+   marker U+0120 and those with the White_Space property. A tab or a newline
+   encodes to U+0109 or U+010A, which are letters, so a token made of them keeps
+   its offsets. *)
+let count_trimmable token =
+  let stop = String.length token in
+  let rec loop i leading trailing at_start =
+    if i >= stop then (leading, trailing)
+    else
+      let c = Char_class.at token i ~stop in
+      let len = Char_class.at_len c in
+      let trimmable =
+        (len = 2 && token.[i] = '\xc4' && token.[i + 1] = '\xa0')
+        || Char_class.at_category c = Char_class.whitespace
+      in
+      if trimmable then
+        loop (i + len)
+          (if at_start then leading + 1 else leading)
+          (trailing + 1) at_start
+      else loop (i + len) leading 0 false
+  in
+  loop 0 0 0 true
+
+let trim_offset ~add_prefix_space enc_tokens idx (start, stop) =
+  if start >= stop then (start, stop)
+  else
+    let token =
+      if idx < Array.length enc_tokens then enc_tokens.(idx) else ""
+    in
+    let leading, trailing = count_trimmable token in
+    let start =
+      if leading = 0 then start
+      else
+        (* The space a byte-level pre-tokenizer prepends is not in the input, so
+           trimming it would move the offset past the first real character. Two
+           of them it did not add, and both go. *)
+        let leading =
+          if add_prefix_space && leading = 1 && (idx = 0 || start = 0) then 0
+          else leading
+        in
+        min (start + leading) stop
+    in
+    let stop =
+      if trailing > 0 && stop >= trailing then max (stop - trailing) start
+      else stop
+    in
+    (start, stop)
+
+let trim_encodings ~add_prefix_space encodings =
+  List.map
+    (fun encoding ->
+      let enc_tokens = Encoding.tokens encoding in
+      let new_offsets =
+        Array.mapi
+          (trim_offset ~add_prefix_space enc_tokens)
+          (Encoding.offsets encoding)
+      in
+      Encoding.create ~ids:(Encoding.ids encoding)
+        ~type_ids:(Encoding.type_ids encoding)
+        ~tokens:enc_tokens
+        ~words:(Encoding.word_ids encoding)
+        ~offsets:new_offsets
+        ~special_tokens_mask:(Encoding.special_tokens_mask encoding)
+        ~attention_mask:(Encoding.attention_mask encoding)
+        ~overflowing:(Encoding.overflowing encoding)
+        ())
+    encodings
+
 let process_bert ~sep ~cls encodings ~add_special_tokens =
   if not add_special_tokens then encodings
   else
@@ -138,8 +200,12 @@ let process_bert ~sep ~cls encodings ~add_special_tokens =
         ]
     | _ -> encodings
 
-let process_roberta ~sep ~cls ~pad:_ ~trim_offsets:_ ~add_prefix_space:_
-    encodings ~add_special_tokens =
+let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
+    ~add_special_tokens =
+  let encodings =
+    if trim_offsets then trim_encodings ~add_prefix_space encodings
+    else encodings
+  in
   if not add_special_tokens then encodings
   else
     let cls_str, cls_id = cls in
@@ -164,49 +230,9 @@ let process_roberta ~sep ~cls ~pad:_ ~trim_offsets:_ ~add_prefix_space:_
         ]
     | _ -> encodings
 
-let trim_offset enc_tokens idx (start, stop) =
-  if start >= stop then (start, stop)
-  else
-    let token =
-      if idx < Array.length enc_tokens then enc_tokens.(idx) else ""
-    in
-    let decoded = Pre_tokenizer.byte_level_decode token in
-    let len = String.length decoded in
-    let rec leading i =
-      if i >= len then len else if is_ws decoded.[i] then leading (i + 1) else i
-    in
-    let rec trailing i =
-      if i <= 0 then len
-      else if is_ws decoded.[i - 1] then trailing (i - 1)
-      else i
-    in
-    let lead = leading 0 in
-    let trail = trailing len in
-    let trimmed_lead = min (stop - start) lead in
-    let trimmed_trail = min (stop - start - trimmed_lead) (len - trail) in
-    let new_start = start + trimmed_lead in
-    let new_stop = max new_start (stop - trimmed_trail) in
-    (new_start, new_stop)
-
-let process_byte_level ~trim_offsets encodings ~add_special_tokens:_ =
-  if not trim_offsets then encodings
-  else
-    List.map
-      (fun encoding ->
-        let enc_tokens = Encoding.tokens encoding in
-        let new_offsets =
-          Array.mapi (trim_offset enc_tokens) (Encoding.offsets encoding)
-        in
-        Encoding.create ~ids:(Encoding.ids encoding)
-          ~type_ids:(Encoding.type_ids encoding)
-          ~tokens:enc_tokens
-          ~words:(Encoding.word_ids encoding)
-          ~offsets:new_offsets
-          ~special_tokens_mask:(Encoding.special_tokens_mask encoding)
-          ~attention_mask:(Encoding.attention_mask encoding)
-          ~overflowing:(Encoding.overflowing encoding)
-          ())
-      encodings
+let process_byte_level ~add_prefix_space ~trim_offsets encodings
+    ~add_special_tokens:_ =
+  if trim_offsets then trim_encodings ~add_prefix_space encodings else encodings
 
 (* Template parsing *)
 
@@ -397,11 +423,7 @@ let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
     match Array.length source with
     | 0 -> []
     | 1 -> [ build_encoding_from_pieces single source special_lookup ]
-    | 2 ->
-        let pair =
-          match pair with Some p -> p | None -> invalid_arg err_pair_required
-        in
-        [ build_encoding_from_pieces pair source special_lookup ]
+    | 2 -> [ build_encoding_from_pieces pair source special_lookup ]
     | _ -> encodings
 
 (* Processing *)
@@ -409,11 +431,12 @@ let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
 let rec process_list processor encodings ~add_special_tokens =
   match processor with
   | Bert { sep; cls } -> process_bert ~sep ~cls encodings ~add_special_tokens
-  | Roberta { sep; cls; pad; trim_offsets; add_prefix_space } ->
-      process_roberta ~sep ~cls ~pad ~trim_offsets ~add_prefix_space encodings
+  | Roberta { sep; cls; trim_offsets; add_prefix_space } ->
+      process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
         ~add_special_tokens
-  | ByteLevel { trim_offsets } ->
-      process_byte_level ~trim_offsets encodings ~add_special_tokens
+  | ByteLevel { add_prefix_space; trim_offsets } ->
+      process_byte_level ~add_prefix_space ~trim_offsets encodings
+        ~add_special_tokens
   | Template { single; pair; special_tokens } ->
       process_template ~single ~pair ~special_tokens encodings
         ~add_special_tokens
@@ -447,11 +470,7 @@ let rec added_tokens processor ~is_pair =
             | _ -> acc)
           0 pieces
       in
-      if is_pair then
-        match pair with
-        | Some p -> count_special p
-        | None -> count_special single
-      else count_special single
+      count_special (if is_pair then pair else single)
   | Sequence processors ->
       List.fold_left
         (fun acc proc -> acc + added_tokens proc ~is_pair)
@@ -462,10 +481,16 @@ let rec added_tokens processor ~is_pair =
 let bert ~sep ~cls () = Bert { sep; cls }
 
 let roberta ~sep ~cls ?(trim_offsets = true) ?(add_prefix_space = true) () =
-  let pad = ("<pad>", 1) in
-  Roberta { sep; cls; pad; trim_offsets; add_prefix_space }
+  Roberta { sep; cls; trim_offsets; add_prefix_space }
 
-let byte_level ?(trim_offsets = true) () = ByteLevel { trim_offsets }
+let byte_level ?(add_prefix_space = true) ?(trim_offsets = true) () =
+  ByteLevel { add_prefix_space; trim_offsets }
+
+let default_pair =
+  [
+    Piece_sequence { id = Sequence_a; type_id = 0 };
+    Piece_sequence { id = Sequence_b; type_id = 1 };
+  ]
 
 let template ~single ?pair ?(special_tokens = []) () =
   let specials =
@@ -483,12 +508,12 @@ let template ~single ?pair ?(special_tokens = []) () =
   in
   let pair =
     match pair with
-    | None -> None
+    | None -> default_pair
     | Some p ->
         let tpl = parse_template_string ~special_lookup:lookup p in
         if not (has_sequence tpl Sequence_a && has_sequence tpl Sequence_b) then
           invalid_arg err_pair_must_ref_both;
-        Some tpl
+        tpl
   in
   Template { single; pair; special_tokens = specials }
 
@@ -499,10 +524,16 @@ let sequence processors = Sequence processors
 let rec pp ppf = function
   | Bert { sep = sep_s, _; cls = cls_s, _ } ->
       Format.fprintf ppf "@[<2>Bert@ ~cls:%S@ ~sep:%S@]" cls_s sep_s
-  | Roberta { sep = sep_s, _; cls = cls_s, _; _ } ->
-      Format.fprintf ppf "@[<2>Roberta@ ~cls:%S@ ~sep:%S@]" cls_s sep_s
-  | ByteLevel { trim_offsets } ->
-      Format.fprintf ppf "@[<2>ByteLevel@ ~trim_offsets:%b@]" trim_offsets
+  | Roberta { sep = sep_s, _; cls = cls_s, _; trim_offsets; add_prefix_space }
+    ->
+      Format.fprintf ppf
+        "@[<2>Roberta@ ~cls:%S@ ~sep:%S@ ~trim_offsets:%b@ \
+         ~add_prefix_space:%b@]"
+        cls_s sep_s trim_offsets add_prefix_space
+  | ByteLevel { add_prefix_space; trim_offsets } ->
+      Format.fprintf ppf
+        "@[<2>ByteLevel@ ~add_prefix_space:%b@ ~trim_offsets:%b@]"
+        add_prefix_space trim_offsets
   | Template _ -> Format.fprintf ppf "Template"
   | Sequence processors ->
       Format.fprintf ppf "@[<2>Sequence[@,%a]@]"
@@ -540,28 +571,23 @@ let rec to_json = function
           ("sep", token_pair_to_json sep);
           ("cls", token_pair_to_json cls);
         ]
-  | Roberta { sep; cls; pad; trim_offsets; add_prefix_space } ->
+  | Roberta { sep; cls; trim_offsets; add_prefix_space } ->
       json_obj
         [
           ("type", Jsont.Json.string "RobertaProcessing");
           ("sep", token_pair_to_json sep);
           ("cls", token_pair_to_json cls);
-          ("pad", token_pair_to_json pad);
           ("trim_offsets", Jsont.Json.bool trim_offsets);
           ("add_prefix_space", Jsont.Json.bool add_prefix_space);
         ]
-  | ByteLevel { trim_offsets } ->
+  | ByteLevel { add_prefix_space; trim_offsets } ->
       json_obj
         [
           ("type", Jsont.Json.string "ByteLevel");
+          ("add_prefix_space", Jsont.Json.bool add_prefix_space);
           ("trim_offsets", Jsont.Json.bool trim_offsets);
         ]
   | Template { single; pair; special_tokens } ->
-      let pair_json =
-        match pair with
-        | None -> Jsont.Json.null ()
-        | Some p -> template_to_json p
-      in
       let special_token_json tok =
         let ids = Jsont.Json.list (List.map Jsont.Json.int tok.value_ids) in
         let tokens =
@@ -580,7 +606,7 @@ let rec to_json = function
         [
           ("type", Jsont.Json.string "TemplateProcessing");
           ("single", template_to_json single);
-          ("pair", pair_json);
+          ("pair", template_to_json pair);
           ("special_tokens", special_json);
         ]
   | Sequence processors ->
@@ -653,19 +679,21 @@ let rec of_json_exn json =
       | Some (Jsont.String ("RobertaProcessing", _)) ->
           let sep = json_str_int_pair fields "sep" ~default:("</s>", 2) in
           let cls = json_str_int_pair fields "cls" ~default:("<s>", 0) in
-          let pad = json_str_int_pair fields "pad" ~default:("<pad>", 1) in
           let trim_offsets =
             json_bool_field fields "trim_offsets" ~default:true
           in
           let add_prefix_space =
             json_bool_field fields "add_prefix_space" ~default:true
           in
-          Roberta { sep; cls; pad; trim_offsets; add_prefix_space }
+          Roberta { sep; cls; trim_offsets; add_prefix_space }
       | Some (Jsont.String ("ByteLevel", _)) ->
+          let add_prefix_space =
+            json_bool_field fields "add_prefix_space" ~default:true
+          in
           let trim_offsets =
             json_bool_field fields "trim_offsets" ~default:true
           in
-          ByteLevel { trim_offsets }
+          ByteLevel { add_prefix_space; trim_offsets }
       | Some (Jsont.String ("TemplateProcessing", _)) ->
           let special_tokens = parse_special_tokens_json fields in
           let lookup = build_special_lookup special_tokens in
@@ -676,9 +704,8 @@ let rec of_json_exn json =
           in
           let pair =
             match json_find "pair" fields with
-            | Some (Jsont.Null _) | None -> None
-            | Some json ->
-                Some (parse_template_definition ~special_lookup:lookup json)
+            | Some (Jsont.Null _) | None -> default_pair
+            | Some json -> parse_template_definition ~special_lookup:lookup json
           in
           Template { single; pair; special_tokens }
       | Some (Jsont.String ("Sequence", _)) -> (
