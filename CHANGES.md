@@ -1087,6 +1087,30 @@ thread.
 
 ### Brot
 
+- `train_bpe`, `train_wordpiece`, `train_wordlevel` and `train_unigram` count
+  the pre-tokens their own pipeline produces: every text goes through
+  `?normalizer` then `?pre`, and each piece is one word, as in HuggingFace.
+  Training used to split on spaces whatever the pipeline was, so a byte-level
+  model learned merges over words it would never meet. With no `?pre` a whole
+  text is one word — pass `~pre:(Pre_tokenizer.whitespace_split ())` for the
+  old behaviour. Training from `` `Files`` keeps each line's newline, as
+  HuggingFace does, so a byte-level model trained from a file learns a token
+  for it and blank lines count as a `"\n"` word.
+- `initial_alphabet` entries are code points, not bytes:
+  `train_bpe ~initial_alphabet:["é"]` now puts `é` in the vocabulary instead
+  of the raw byte `"\xc3"`. Each string contributes the code point it starts
+  with; empty or invalid entries are dropped.
+- `train_bpe` and `train_wordpiece` no longer cap the alphabet at 1000
+  characters when `limit_alphabet` is omitted, matching HuggingFace and the
+  documented default of keeping every character.
+- `train_wordlevel` numbers words after the special tokens instead of reusing
+  ids `0..n-1` for both, which produced a vocabulary with two tokens per id;
+  special tokens now count against `vocab_size`, as in HuggingFace.
+- The `train_*` documentation now matches the code: `init` carries added and
+  special tokens but never the model, `show_progress` displays nothing,
+  `max_token_length` counts characters and holds a merge back once the joined
+  run reaches it, and `train_unigram` states that its EM training is not
+  implemented.
 - `save_pretrained` writes a post-processor HuggingFace can read. The
   `ByteLevel` post-processor was missing `add_prefix_space`, which HuggingFace
   requires alongside `trim_offsets`, so a saved GPT-2 tokenizer failed to load

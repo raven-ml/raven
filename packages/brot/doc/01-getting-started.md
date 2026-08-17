@@ -156,6 +156,7 @@ open Brot
 
 let tokenizer =
   train_bpe ~vocab_size:80 ~show_progress:false
+    ~pre:(Pre_tokenizer.whitespace ())
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked loudly at the brown fox";
@@ -206,6 +207,7 @@ open Brot
 
 let tokenizer =
   train_bpe ~vocab_size:80 ~show_progress:false
+    ~pre:(Pre_tokenizer.whitespace ())
     ~added_tokens:(List.map added_token [ "[PAD]" ])
     ~pad_token:"[PAD]"
     (`Seq (List.to_seq

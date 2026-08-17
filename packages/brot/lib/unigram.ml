@@ -219,34 +219,19 @@ let save model ~folder () =
   [ "unigram.json" ]
 
 let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
-    ~unk_token ~max_piece_length ~n_sub_iterations texts existing =
+    ~unk_token ~max_piece_length ~n_sub_iterations word_counts =
   let _ =
     ( show_progress,
       shrinking_factor,
       unk_token,
       max_piece_length,
-      n_sub_iterations,
-      existing )
+      n_sub_iterations )
   in
-  let counts = Hashtbl.create 10000 in
-  List.iter
-    (fun line ->
-      let words = Re.split (Re.compile (Re.rep1 (Re.set " \t\n\r"))) line in
-      List.iter
-        (fun word ->
-          if word <> "" then
-            Hashtbl.replace counts word
-              (1 + Option.value ~default:0 (Hashtbl.find_opt counts word)))
-        words)
-    texts;
-
   let total =
-    Hashtbl.fold (fun _ count acc -> acc + count) counts 0 |> float_of_int
+    List.fold_left (fun acc (_, count) -> acc + count) 0 word_counts
+    |> float_of_int
   in
-  let sorted =
-    Hashtbl.fold (fun token count acc -> (token, count) :: acc) counts []
-    |> List.sort (fun (_, c1) (_, c2) -> compare c2 c1)
-  in
+  let sorted = List.sort (fun (_, c1) (_, c2) -> compare c2 c1) word_counts in
 
   let take_first n lst =
     let rec aux i = function

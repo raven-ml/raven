@@ -59,20 +59,18 @@ val train :
   unk_token:string option ->
   max_piece_length:int ->
   n_sub_iterations:int ->
-  string list ->
-  t option ->
+  (string * int) list ->
   t * string list
 (** [train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
-     ~unk_token ~max_piece_length ~n_sub_iterations texts init] learns a unigram
-    model from [texts].
+     ~unk_token ~max_piece_length ~n_sub_iterations word_counts] learns a
+    unigram model from [word_counts], each word paired with the number of times
+    it occurs.
 
     - [vocab_size] is the target vocabulary size.
-    - [show_progress] enables progress output on [stderr].
+    - [show_progress] is ignored.
     - [special_tokens] are added to the vocabulary first.
-    - [shrinking_factor] controls vocabulary pruning rate.
-    - [unk_token] is the unknown token, if any.
-    - [max_piece_length] limits the byte length of vocabulary pieces.
-    - [n_sub_iterations] is the number of EM sub-iterations.
-    - [init], when provided, seeds the vocabulary from an existing model.
+    - [shrinking_factor], [unk_token], [max_piece_length] and [n_sub_iterations]
+      are ignored: no EM training is run. The vocabulary is the most frequent
+      words, each scored by how often it occurs.
 
     Returns [(model, special_tokens)]. *)

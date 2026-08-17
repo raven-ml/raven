@@ -112,25 +112,24 @@ val train :
   show_progress:bool ->
   special_tokens:string list ->
   limit_alphabet:int option ->
-  initial_alphabet:char list ->
+  initial_alphabet:string list ->
   continuing_subword_prefix:string ->
   end_of_word_suffix:string option ->
-  string list ->
-  t option ->
+  (string * int) list ->
   t * string list
 (** [train ~min_frequency ~vocab_size ~show_progress ~special_tokens
      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-     ~end_of_word_suffix texts init] learns a WordPiece vocabulary from [texts]
-    using BPE merge training internally.
+     ~end_of_word_suffix word_counts] learns a WordPiece vocabulary from
+    [word_counts], each word paired with the number of times it occurs, using
+    BPE merge training internally.
 
     - [min_frequency] is the minimum pair frequency to merge.
     - [vocab_size] is the target vocabulary size.
-    - [show_progress] enables progress output on [stderr].
+    - [show_progress] is ignored.
     - [special_tokens] are added to the vocabulary first.
     - [limit_alphabet] caps the number of distinct initial characters kept.
-    - [initial_alphabet] seeds the character set.
+    - [initial_alphabet] seeds the character set, one code point per string.
     - [continuing_subword_prefix] is set on the resulting model.
     - [end_of_word_suffix] appended to final subwords if given.
-    - [init], when provided, seeds the vocabulary from an existing model.
 
     Returns [(model, special_tokens)]. *)

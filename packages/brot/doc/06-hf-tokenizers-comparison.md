@@ -31,6 +31,7 @@ If you already use HuggingFace Tokenizers, this should be enough to become produ
 - Padding and truncation are per-call parameters, not global tokenizer state.
 - Added tokens use a record type (`Brot.added_token`) with explicit control over stripping and normalization. Like HuggingFace's added tokens, they are matched atomically in the input on `encode`.
 - `encode` returns `Encoding.t`; use `encode_ids` when you only need the ID array.
+- The `train_*` functions count the pre-tokens their own pipeline produces, as HuggingFace's trainers do: pass the `~normalizer` and `~pre` you intend to encode with, or a whole line of the corpus counts as one word.
 
 ---
 
@@ -622,9 +623,11 @@ Brot returns `option` for each stage, since any stage can be absent.
 ```python
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
+from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import BpeTrainer
 
 tokenizer = Tokenizer(BPE())
+tokenizer.pre_tokenizer = Whitespace()
 trainer = BpeTrainer(
     vocab_size=30000,
     min_frequency=2,
@@ -642,6 +645,7 @@ let tokenizer =
     (`Files [ "corpus.txt" ])
     ~vocab_size:30000
     ~min_frequency:2
+    ~pre:(Brot.Pre_tokenizer.whitespace ())
     ~added_tokens:[
       Brot.added_token "[UNK]";
       Brot.added_token "[CLS]";
@@ -660,9 +664,11 @@ Brot combines the `Tokenizer` + `Trainer` pattern into a single function call. T
 
 ```python
 from tokenizers.models import WordPiece
+from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import WordPieceTrainer
 
 tokenizer = Tokenizer(WordPiece(unk_token="[UNK]"))
+tokenizer.pre_tokenizer = Whitespace()
 trainer = WordPieceTrainer(vocab_size=30000, special_tokens=["[UNK]", "[PAD]"])
 tokenizer.train(["corpus.txt"], trainer)
 ```
@@ -675,6 +681,7 @@ let tokenizer =
   Brot.train_wordpiece
     (`Files [ "corpus.txt" ])
     ~vocab_size:30000
+    ~pre:(Brot.Pre_tokenizer.whitespace ())
     ~unk_token:"[UNK]"
     ~added_tokens:[ Brot.added_token "[UNK]"; Brot.added_token "[PAD]" ]
     ~pad_token:"[PAD]"
@@ -686,9 +693,11 @@ let tokenizer =
 
 ```python
 from tokenizers.models import Unigram
+from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import UnigramTrainer
 
 tokenizer = Tokenizer(Unigram())
+tokenizer.pre_tokenizer = Whitespace()
 trainer = UnigramTrainer(vocab_size=8000, special_tokens=["<unk>", "<pad>"])
 tokenizer.train(["corpus.txt"], trainer)
 ```
@@ -701,6 +710,7 @@ let tokenizer =
   Brot.train_unigram
     (`Files [ "corpus.txt" ])
     ~vocab_size:8000
+    ~pre:(Brot.Pre_tokenizer.whitespace ())
     ~unk_token:"<unk>"
     ~added_tokens:[ Brot.added_token "<unk>"; Brot.added_token "<pad>" ]
     ~pad_token:"<pad>"
@@ -713,9 +723,11 @@ let tokenizer =
 ```python
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
+from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import BpeTrainer
 
 tokenizer = Tokenizer(BPE())
+tokenizer.pre_tokenizer = Whitespace()
 trainer = BpeTrainer(vocab_size=1000)
 tokenizer.train_from_iterator(
     ["Hello world", "How are you?", "Hello again"],
@@ -730,6 +742,7 @@ tokenizer.train_from_iterator(
 let texts = [ "Hello world"; "How are you?"; "Hello again" ]
 let tokenizer =
   Brot.train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
+    ~pre:(Brot.Pre_tokenizer.whitespace ())
 ```
 
 ### 10.5 Extending an existing tokenizer

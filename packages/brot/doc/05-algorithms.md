@@ -46,6 +46,7 @@ open Brot
 
 let tokenizer =
   train_bpe ~vocab_size:80 ~min_frequency:1 ~show_progress:false
+    ~pre:(Pre_tokenizer.whitespace ())
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the brown fox";
@@ -96,6 +97,7 @@ open Brot
 
 let tokenizer =
   train_wordpiece ~vocab_size:80 ~show_progress:false
+    ~pre:(Pre_tokenizer.whitespace ())
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the brown fox";
@@ -145,6 +147,7 @@ open Brot
 
 let tokenizer =
   train_unigram ~vocab_size:60 ~show_progress:false
+    ~pre:(Pre_tokenizer.whitespace ())
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the brown fox";

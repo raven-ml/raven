@@ -46,7 +46,10 @@
     {[
     let texts = [ "Hello world"; "How are you?"; "Hello again" ] in
     let tokenizer =
-      Brot.train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
+      Brot.train_bpe
+        (`Seq (List.to_seq texts))
+        ~vocab_size:1000
+        ~pre:(Brot.Pre_tokenizer.byte_level ())
     in
     Brot.save_pretrained tokenizer ~path:"./my_tokenizer"
     ]}
@@ -136,7 +139,9 @@ type truncation = { max_length : int; direction : direction }
 type data = [ `Files of string list | `Seq of string Seq.t ]
 (** The type for training data sources.
 
-    - [`Files paths]: read training text from files, one line per example.
+    - [`Files paths]: read training text from files, one line per example. A
+      line keeps the newline that ends it, so a byte-level pipeline trained from
+      a file learns a token for it.
     - [`Seq seq]: use a sequence of strings. *)
 
 val added_token :
@@ -525,22 +530,40 @@ val train_bpe :
   t
 (** [train_bpe data] trains a BPE tokenizer from [data].
 
-    Learns merge rules by iteratively merging the most frequent adjacent pairs
-    until reaching the target vocabulary size.
+    The words counted are the pre-tokens the trained tokenizer will itself
+    produce: every text is normalized by [normalizer], then cut by [pre], and
+    each piece counts as one word — for a byte-level [pre] the words are in
+    encoded form, and merges are learned over that form. With no [pre] a whole
+    text is one word, so training on space-separated words needs
+    [~pre:(Pre_tokenizer.whitespace_split ())].
 
-    - [init]: existing tokenizer to extend. Default: create new.
+    The most frequent adjacent pair of characters is then merged over and over
+    until [vocab_size] is reached, no pair is left, or the best pair falls below
+    [min_frequency].
+
+    - [init]: a tokenizer whose added and special tokens carry over into the
+      trained one. Its model does not: training always starts from an empty
+      vocabulary. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [30000].
     - [min_frequency]: minimum pair frequency to be merged. Default: [0].
-    - [limit_alphabet]: maximum number of initial characters to keep. Default:
-      none (keep all).
-    - [initial_alphabet]: characters to include regardless of frequency.
-      Default: [[]].
-    - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
-      none.
-    - [end_of_word_suffix]: suffix marking word boundaries. Default: none.
-    - [show_progress]: display progress bar. Default: [true].
-    - [max_token_length]: maximum token length. Default: none.
+    - [limit_alphabet]: maximum number of distinct characters to keep; the
+      rarest go first, and words drop the characters that did not make the cut.
+      Default: none (keep all).
+    - [initial_alphabet]: characters to keep whatever their frequency. Each
+      string stands for the code point it starts with, so ["été"] and ["é"] both
+      mean [é]; a string that starts with no code point — empty, or not valid
+      UTF-8 — is dropped. Default: [[]].
+    - [continuing_subword_prefix]: prefix put on every character of a word but
+      the first, before any pair is counted, so merges are learned — and written
+      — over the affixed forms. Default: none.
+    - [end_of_word_suffix]: suffix put on the last character of a word, before
+      any pair is counted. Default: none.
+    - [show_progress]: accepted for HuggingFace compatibility; nothing is
+      displayed. Default: [true].
+    - [max_token_length]: holds a merge back once the run of characters it would
+      join reaches that many, so tokens stay shorter than it. The merges of
+      single characters that open the training are exempt. Default: none.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
@@ -567,21 +590,23 @@ val train_wordpiece :
   t
 (** [train_wordpiece data] trains a WordPiece tokenizer from [data].
 
-    Learns subword vocabulary by maximizing language model likelihood.
+    Learns the vocabulary with the BPE merge training of {!train_bpe}, over the
+    same words, and keeps the merged tokens as WordPiece subwords.
 
-    - [init]: existing tokenizer to extend. Default: create new.
+    - [init]: a tokenizer whose added and special tokens carry over into the
+      trained one. Its model does not. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [30000].
-    - [min_frequency]: minimum frequency for a subword to be included. Default:
-      [0].
-    - [limit_alphabet]: maximum number of initial characters to keep. Default:
+    - [min_frequency]: minimum pair frequency to be merged. Default: [0].
+    - [limit_alphabet]: maximum number of distinct characters to keep. Default:
       none (keep all).
-    - [initial_alphabet]: characters to include regardless of frequency.
-      Default: [[]].
+    - [initial_alphabet]: characters to keep whatever their frequency, one code
+      point per string as in {!train_bpe}. Default: [[]].
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
     - [end_of_word_suffix]: suffix marking word boundaries. Default: none.
-    - [show_progress]: display progress bar. Default: [true].
+    - [show_progress]: accepted for HuggingFace compatibility; nothing is
+      displayed. Default: [true].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
@@ -604,15 +629,17 @@ val train_wordlevel :
   t
 (** [train_wordlevel data] trains a word-level tokenizer from [data].
 
-    Builds vocabulary by collecting unique words, optionally filtering by
-    frequency. No subword splitting.
+    The vocabulary is the most frequent of the words counted as in {!train_bpe},
+    so it holds whole pre-tokens and nothing is split further.
 
-    - [init]: existing tokenizer to extend. Default: create new.
+    - [init]: a tokenizer whose added and special tokens carry over into the
+      trained one. Its model does not. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [30000].
     - [min_frequency]: minimum frequency for a word to be included. Default:
       [0].
-    - [show_progress]: display progress bar. Default: [true].
+    - [show_progress]: accepted for HuggingFace compatibility; nothing is
+      displayed. Default: [true].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
@@ -637,17 +664,20 @@ val train_unigram :
   t
 (** [train_unigram data] trains a Unigram tokenizer from [data].
 
-    Learns probabilistic subword vocabulary using EM algorithm.
+    {b Warning.} The EM training of the unigram model is not implemented: the
+    vocabulary is the most frequent of the words counted as in {!train_bpe},
+    each scored by how often it occurs, and no subword piece is ever proposed.
+    [shrinking_factor], [max_piece_length] and [n_sub_iterations] are accepted
+    for HuggingFace compatibility and have no effect.
 
-    - [init]: existing tokenizer to extend. Default: create new.
+    - [init]: a tokenizer whose added and special tokens carry over into the
+      trained one. Its model does not. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [8000].
-    - [show_progress]: display progress bar. Default: [true].
-    - [shrinking_factor]: fraction of vocabulary to retain in each pruning
-      iteration. Default: [0.75].
-    - [max_piece_length]: maximum subword length. Default: [16].
-    - [n_sub_iterations]: number of EM sub-iterations per pruning round.
-      Default: [2].
+    - [show_progress]: accepted for HuggingFace compatibility; nothing is
+      displayed. Default: [true].
+    - [shrinking_factor], [max_piece_length], [n_sub_iterations]: inert, as
+      above. Defaults: [0.75], [16], [2].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)

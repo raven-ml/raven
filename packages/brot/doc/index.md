@@ -58,6 +58,7 @@ open Brot
 
 let tokenizer =
   train_bpe ~vocab_size:100 ~show_progress:false
+    ~pre:(Pre_tokenizer.whitespace ())
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the fox";

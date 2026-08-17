@@ -1702,18 +1702,8 @@ let iter_chars word f =
 
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-    ~end_of_word_suffix ~max_token_length texts existing =
-  let _ = (show_progress, existing) in
-  let word_counts = Hashtbl.create 10000 in
-  List.iter
-    (fun text ->
-      List.iter
-        (fun word ->
-          if String.length word > 0 then
-            Hashtbl.replace word_counts word
-              (1 + try Hashtbl.find word_counts word with Not_found -> 0))
-        (String.split_on_char ' ' text))
-    texts;
+    ~end_of_word_suffix ~max_token_length word_counts =
+  let _ = show_progress in
   let vocab = Hashtbl.create 10000 in
   let tokens = Dynarray.create () in
   let intern token =
@@ -1727,15 +1717,13 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
   in
   List.iter (fun token -> ignore (intern token)) special_tokens;
   let alphabet = Hashtbl.create 1024 in
-  Hashtbl.iter
-    (fun word count ->
+  List.iter
+    (fun (word, count) ->
       iter_chars word (fun c ~is_first:_ ~is_last:_ ->
           Hashtbl.replace alphabet c
             (count + try Hashtbl.find alphabet c with Not_found -> 0)))
     word_counts;
-  List.iter
-    (fun c -> Hashtbl.replace alphabet (String.make 1 c) max_int)
-    initial_alphabet;
+  List.iter (fun c -> Hashtbl.replace alphabet c max_int) initial_alphabet;
   let kept =
     Hashtbl.fold (fun c count acc -> (c, count) :: acc) alphabet []
     |> List.sort (fun (c1, n1) (c2, n2) ->
@@ -1756,8 +1744,7 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
   let prefix = affix continuing_subword_prefix in
   let suffix = affix end_of_word_suffix in
   let corpus =
-    Hashtbl.fold (fun word count acc -> (word, count) :: acc) word_counts []
-    |> List.sort (fun (w1, _) (w2, _) -> String.compare w1 w2)
+    List.sort (fun (w1, _) (w2, _) -> String.compare w1 w2) word_counts
   in
   let word_total = List.length corpus in
   let words = Array.make word_total [||] in

@@ -613,8 +613,10 @@ let test_long_word_merges () =
     [ 1; 2; 3; 7; 15; 16; 31; 32; 33; 64; 65; 200 ]
 
 (* Training. Every expectation below was probed with the [tokenizers] wheel,
-   running its [BpeTrainer] over the same corpus behind a [WhitespaceSplit]
-   pre-tokenizer, which cuts words where [train_bpe] cuts them. *)
+   running its [BpeTrainer] over the same corpus behind the same pre-tokenizer,
+   which is what cuts the words the trainer counts. *)
+
+let split = Pre_tokenizer.whitespace_split ()
 
 let train_corpus =
   [
@@ -649,7 +651,7 @@ let trained_merges tokenizer =
 
 let test_train () =
   let tokenizer =
-    train_bpe ~vocab_size:30 ~show_progress:false
+    train_bpe ~pre:split ~vocab_size:30 ~show_progress:false
       (`Seq (List.to_seq train_corpus))
   in
   (* The corpus runs out of pairs before the target size is reached. *)
@@ -700,7 +702,8 @@ let test_train () =
 
 let test_train_suffix () =
   let tokenizer =
-    train_bpe ~vocab_size:40 ~end_of_word_suffix:"</w>" ~show_progress:false
+    train_bpe ~pre:split ~vocab_size:40 ~end_of_word_suffix:"</w>"
+      ~show_progress:false
       (`Seq (List.to_seq train_corpus))
   in
   (* The suffix joins the last character before any pair is counted, so the
@@ -765,7 +768,7 @@ let test_train_suffix () =
 
 let test_train_prefix () =
   let tokenizer =
-    train_bpe ~vocab_size:30 ~continuing_subword_prefix:"##"
+    train_bpe ~pre:split ~vocab_size:30 ~continuing_subword_prefix:"##"
       ~show_progress:false
       (`Seq (List.to_seq train_corpus))
   in
@@ -834,9 +837,10 @@ let test_train_limit_alphabet () =
   (* [z] outranks [b], so a limit of two drops [b], and the word holding it
      loses the character instead of merging it. *)
   let corpus = `Seq (List.to_seq [ "aza aza aza ab ab" ]) in
-  let whole = train_bpe ~vocab_size:20 ~show_progress:false corpus in
+  let whole = train_bpe ~pre:split ~vocab_size:20 ~show_progress:false corpus in
   let limited =
-    train_bpe ~vocab_size:20 ~limit_alphabet:2 ~show_progress:false corpus
+    train_bpe ~pre:split ~vocab_size:20 ~limit_alphabet:2 ~show_progress:false
+      corpus
   in
   equal ~msg:"whole alphabet" (list string)
     [ "a"; "b"; "z"; "az"; "aza"; "ab" ]
@@ -852,7 +856,7 @@ let test_train_max_token_length () =
      exclusive — under a limit of four a merge stops at three characters — and
      the single-character merges the training opens with are exempt from it. *)
   let trained ?max_token_length corpus =
-    train_bpe ~vocab_size:40 ?max_token_length ~show_progress:false
+    train_bpe ~pre:split ~vocab_size:40 ?max_token_length ~show_progress:false
       (`Seq (List.to_seq [ corpus ]))
   in
   let eight = "αβγδεζηθ αβγδεζηθ αβγδεζηθ" in
@@ -872,7 +876,7 @@ let test_train_repeated_merge () =
      second time. The model keeps the rank it was given last, which is why [###
      ##a] is written once here. *)
   let tokenizer =
-    train_bpe ~vocab_size:24 ~continuing_subword_prefix:"##"
+    train_bpe ~pre:split ~vocab_size:24 ~continuing_subword_prefix:"##"
       ~show_progress:false
       (`Seq (List.to_seq [ "###a b### a" ]))
   in
@@ -883,10 +887,222 @@ let test_train_repeated_merge () =
     [ "### ###"; "# ####"; "b ####"; "### ##a"; "b## ###" ]
     (trained_merges tokenizer)
 
+let test_train_initial_alphabet () =
+  (* An entry of the initial alphabet stands for the code point it starts with,
+     so ["ét"] adds [é] and not the byte ["\xc3"], and an empty entry adds
+     nothing. The wheel keeps the first character of each string the same
+     way. *)
+  let tokenizer =
+    train_bpe ~pre:split ~vocab_size:30 ~initial_alphabet:[ "é"; "ét"; "" ]
+      ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  equal ~msg:"vocabulary" (list string)
+    [
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "é";
+      "es";
+      "est";
+      "lo";
+      "low";
+      "ew";
+      "new";
+      "newest";
+      "dest";
+      "idest";
+      "widest";
+      "er";
+      "lower";
+      "lowest";
+    ]
+    (trained_vocab tokenizer)
+
+let test_train_byte_level () =
+  (* A byte-level pre-tokenizer hands the trainer encoded pieces, so the merges
+     are learned over the encoded form and the vocabulary holds it — which is
+     what the trained tokenizer meets again when it encodes. *)
+  let tokenizer =
+    train_bpe
+      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+      ~decoder:(Decoder.byte_level ()) ~vocab_size:40 ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  equal ~msg:"vocabulary" (list string)
+    [
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "Ġ";
+      "es";
+      "est";
+      "lo";
+      "low";
+      "Ġlow";
+      "ew";
+      "new";
+      "newest";
+      "Ġnewest";
+      "dest";
+      "idest";
+      "widest";
+      "er";
+      "Ġwidest";
+      "Ġlower";
+      "Ġlowest";
+    ]
+    (trained_vocab tokenizer);
+  equal ~msg:"merges" (list string)
+    [
+      "e s";
+      "es t";
+      "l o";
+      "lo w";
+      "Ġ low";
+      "e w";
+      "n ew";
+      "new est";
+      "Ġ newest";
+      "d est";
+      "i dest";
+      "w idest";
+      "e r";
+      "Ġ widest";
+      "Ġlow er";
+      "Ġlow est";
+    ]
+    (trained_merges tokenizer);
+  equal ~msg:"the space of the second word is part of its token" (list string)
+    [ "low"; "Ġlower" ]
+    (tokens tokenizer "low lower");
+  equal ~msg:"round trip" string "low lower"
+    (decode tokenizer (encode tokenizer "low lower" |> Encoding.ids))
+
+let test_train_whole_text () =
+  (* With no pre-tokenizer a text is one word, spaces and all, so the merges
+     reach across the words. *)
+  let tokenizer =
+    train_bpe ~vocab_size:30 ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  equal ~msg:"vocabulary" (list string)
+    [
+      " ";
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "es";
+      "est";
+      "lo";
+      "est ";
+      "low";
+      " low";
+      "ew";
+      "new";
+      "est new";
+      " low low";
+      "est newest new";
+      "dest ";
+      "idest ";
+      "widest ";
+      "er";
+      " lower";
+      "widest widest ";
+      "lowest";
+      "low low low";
+    ]
+    (trained_vocab tokenizer)
+
+let test_train_normalizer () =
+  (* The normalizer runs before the pre-tokenizer, so the words counted — and
+     the vocabulary learned — are the normalized ones. *)
+  let tokenizer =
+    train_bpe ~normalizer:Normalizer.lowercase ~pre:split ~vocab_size:20
+      ~show_progress:false
+      (`Seq (List.to_seq [ "LOW Low low LOWER lower" ]))
+  in
+  equal ~msg:"vocabulary" (list string)
+    [ "e"; "l"; "o"; "r"; "w"; "lo"; "low"; "er"; "lower" ]
+    (trained_vocab tokenizer)
+
+let with_corpus_file contents f =
+  let path = Filename.temp_file "brot_corpus" ".txt" in
+  let oc = open_out_bin path in
+  output_string oc contents;
+  close_out oc;
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
+
+let test_train_files () =
+  (* A line of a corpus file keeps the newline that ends it, so a byte-level
+     pipeline meets it and the vocabulary holds ["Ċ"] — the same vocabulary the
+     wheel learns from the same file. *)
+  let tokenizer =
+    with_corpus_file
+      (String.concat "\n" train_corpus ^ "\n")
+      (fun path ->
+        train_bpe
+          ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+          ~vocab_size:40 ~show_progress:false (`Files [ path ]))
+  in
+  equal ~msg:"vocabulary" (list string)
+    [
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "Ċ";
+      "Ġ";
+      "es";
+      "est";
+      "lo";
+      "low";
+      "Ġlow";
+      "ew";
+      "new";
+      "newest";
+      "Ġnewest";
+      "dest";
+      "idest";
+      "widest";
+      "er";
+      "Ġwidest";
+      "Ġlower";
+      "Ġlowest";
+    ]
+    (trained_vocab tokenizer)
+
 let test_train_min_frequency () =
   (* Of the three pairs only [a a], seen three times, reaches the floor. *)
   let tokenizer =
-    train_bpe ~vocab_size:20 ~min_frequency:3 ~show_progress:false
+    train_bpe ~pre:split ~vocab_size:20 ~min_frequency:3 ~show_progress:false
       (`Seq (List.to_seq [ "aa aa aa bb cc cc" ]))
   in
   equal ~msg:"vocabulary" (list string) [ "a"; "b"; "c"; "aa" ]
@@ -938,8 +1154,13 @@ let () =
           test "end-of-word suffix" test_train_suffix;
           test "continuing subword prefix" test_train_prefix;
           test "limit_alphabet" test_train_limit_alphabet;
+          test "initial_alphabet" test_train_initial_alphabet;
           test "max_token_length" test_train_max_token_length;
           test "min_frequency" test_train_min_frequency;
+          test "a byte-level pre-tokenizer" test_train_byte_level;
+          test "a normalizer" test_train_normalizer;
+          test "no pre-tokenizer" test_train_whole_text;
+          test "training from files" test_train_files;
           test "a pair merged twice" test_train_repeated_merge;
         ];
       group "parallel"

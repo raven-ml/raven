@@ -481,14 +481,12 @@ let from_bpe bpe =
 
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-    ~end_of_word_suffix texts existing =
-  let _ = existing in
-  (* WordPiece training uses BPE algorithm internally *)
+    ~end_of_word_suffix word_counts =
   let bpe_trained, result_tokens =
     Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
       ~limit_alphabet ~initial_alphabet
       ~continuing_subword_prefix:(Some continuing_subword_prefix)
-      ~end_of_word_suffix ~max_token_length:None texts None
+      ~end_of_word_suffix ~max_token_length:None word_counts
   in
   let wordpiece_model = from_bpe bpe_trained in
   (wordpiece_model, result_tokens)

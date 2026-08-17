@@ -482,6 +482,90 @@ let test_skip_special_tokens () =
   equal ~msg:"nothing but the skipped token" string ""
     (decode t ~skip_special_tokens:true [| 1 |])
 
+(* Training. Every trainer counts the pre-tokens the pipeline hands the model,
+   which is what the [tokenizers] wheel counts; the words below were probed with
+   it. The unigram vocabulary is brot's own: its trainer keeps the most frequent
+   words rather than running the EM training the wheel runs. *)
+
+let train_corpus =
+  [
+    "low low low low low lower lower";
+    "newest newest newest newest newest newest";
+    "widest widest widest lowest";
+  ]
+
+let sorted_vocab tokenizer =
+  vocab tokenizer |> List.map fst |> List.sort String.compare
+
+let test_train_wordpiece_words () =
+  let tokenizer =
+    train_wordpiece
+      ~pre:(Pre_tokenizer.whitespace_split ())
+      ~vocab_size:30 ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  equal ~msg:"a trained word is one token, an unseen one is split" (list string)
+    [ "newest"; "low"; "##est" ]
+    (encode tokenizer "newest lowest" |> Encoding.tokens |> Array.to_list)
+
+let test_train_wordlevel_words () =
+  let corpus = `Seq (List.to_seq [ "a a a b b c" ]) in
+  let encoded =
+    train_wordlevel
+      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+      ~vocab_size:20 ~show_progress:false corpus
+  in
+  equal ~msg:"the words are the byte-level pieces" (list string)
+    [ "a"; "Ġa"; "Ġb"; "Ġc" ]
+    (sorted_vocab encoded);
+  let whole = train_wordlevel ~vocab_size:20 ~show_progress:false corpus in
+  equal ~msg:"with no pre-tokenizer a text is one word" (list string)
+    [ "a a a b b c" ] (sorted_vocab whole)
+
+let test_train_wordlevel_specials () =
+  (* The special tokens take the first ids and count against [vocab_size], so
+     the words are numbered after them and one of the three drops out. *)
+  let tokenizer =
+    train_wordlevel
+      ~pre:(Pre_tokenizer.whitespace_split ())
+      ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]" ])
+      ~vocab_size:4 ~show_progress:false
+      (`Seq (List.to_seq [ "a a a b b c" ]))
+  in
+  equal ~msg:"vocabulary"
+    (list (pair string int))
+    [ ("[UNK]", 0); ("[CLS]", 1); ("a", 2); ("b", 3) ]
+    (vocab tokenizer |> List.sort (fun (_, i) (_, j) -> compare i j))
+
+let test_train_line_separators () =
+  (* A line of a corpus file keeps the newline that ends it: a CRLF line keeps
+     both bytes, a blank line is a ["\n"] word of its own, and a last line
+     without a newline keeps none. *)
+  let path = Filename.temp_file "brot_corpus" ".txt" in
+  let oc = open_out_bin path in
+  output_string oc "a b\nc d\r\n\ne f";
+  close_out oc;
+  let tokenizer =
+    Fun.protect
+      ~finally:(fun () -> Sys.remove path)
+      (fun () ->
+        train_wordlevel ~vocab_size:20 ~show_progress:false (`Files [ path ]))
+  in
+  equal ~msg:"the words are the lines, separators and all" (list string)
+    [ "\n"; "a b\n"; "c d\r\n"; "e f" ]
+    (sorted_vocab tokenizer)
+
+let test_train_unigram_words () =
+  let tokenizer =
+    train_unigram
+      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+      ~vocab_size:20 ~show_progress:false
+      (`Seq (List.to_seq [ "low lower low" ]))
+  in
+  equal ~msg:"the words are the byte-level pieces" (list string)
+    [ "low"; "Ġlow"; "Ġlower" ]
+    (sorted_vocab tokenizer)
+
 (* Test Suite *)
 
 let tokenization_tests =
@@ -522,6 +606,12 @@ let tokenization_tests =
     test "replace and strip decoders" test_replace_and_strip_decoders;
     test "sentencepiece decoder" test_sentencepiece_decoder;
     test "skip special tokens" test_skip_special_tokens;
+    (* Training *)
+    test "wordpiece trains on pre-tokens" test_train_wordpiece_words;
+    test "wordlevel trains on pre-tokens" test_train_wordlevel_words;
+    test "wordlevel special token ids" test_train_wordlevel_specials;
+    test "a line keeps its separator" test_train_line_separators;
+    test "unigram trains on pre-tokens" test_train_unigram_words;
   ]
 
 let () = run "brot tokenization" [ group "tokenization" tokenization_tests ]

@@ -216,23 +216,22 @@ val train :
   show_progress:bool ->
   special_tokens:string list ->
   limit_alphabet:int option ->
-  initial_alphabet:char list ->
+  initial_alphabet:string list ->
   continuing_subword_prefix:string option ->
   end_of_word_suffix:string option ->
   max_token_length:int option ->
-  string list ->
-  t option ->
+  (string * int) list ->
   t * string list
 (** [train ~min_frequency ~vocab_size ~show_progress ~special_tokens
      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-     ~end_of_word_suffix ~max_token_length texts init] learns BPE merges from
-    [texts].
+     ~end_of_word_suffix ~max_token_length word_counts] learns BPE merges from
+    [word_counts], each word paired with the number of times it occurs.
 
-    Words are the space-separated runs of [texts]. Each word starts out as its
-    characters, in the form the affixes give them, and the most frequent
-    adjacent pair is merged over and over until [vocab_size] is reached, no pair
-    is left, or the best pair falls below [min_frequency]. Pairs of equal
-    frequency are merged lowest vocabulary id first.
+    Each word starts out as its characters, in the form the affixes give them,
+    and the most frequent adjacent pair is merged over and over until
+    [vocab_size] is reached, no pair is left, or the best pair falls below
+    [min_frequency]. Pairs of equal frequency are merged lowest vocabulary id
+    first.
 
     - [min_frequency] is the number of occurrences a pair needs to be merged.
     - [vocab_size] is the target size, special tokens and alphabet included.
@@ -240,7 +239,8 @@ val train :
     - [special_tokens] take the first ids, in order.
     - [limit_alphabet] caps how many distinct characters are kept; the rarest go
       first, and words drop the characters that did not make the cut.
-    - [initial_alphabet] are characters kept whatever their frequency.
+    - [initial_alphabet] are characters kept whatever their frequency. Each
+      string is one code point.
     - [continuing_subword_prefix] goes on every character of a word but the
       first and [end_of_word_suffix] on the last, before any pair is counted, so
       merges are learned — and written — over the affixed forms: a model trained
@@ -248,6 +248,5 @@ val train :
     - [max_token_length] holds a merge back once the run of characters it would
       join reaches that many. The merges of single characters that open the
       training are not held back.
-    - [init] is ignored.
 
     Returns [(model, special_tokens)]. *)

@@ -68,4 +68,5 @@ let tokenizer =
 ```ocaml
 let tokenizer =
   train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
+    ~pre:(Pre_tokenizer.whitespace ())
 ```

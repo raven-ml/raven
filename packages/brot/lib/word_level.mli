@@ -60,16 +60,16 @@ val train :
   min_frequency:int ->
   show_progress:bool ->
   special_tokens:string list ->
-  string list ->
-  t option ->
+  (string * int) list ->
   t * string list
-(** [train ~vocab_size ~min_frequency ~show_progress ~special_tokens texts init]
-    learns a vocabulary from [texts] by counting word frequencies.
+(** [train ~vocab_size ~min_frequency ~show_progress ~special_tokens
+     word_counts] learns a vocabulary from [word_counts], each word paired with
+    the number of times it occurs.
 
     - [vocab_size] is the target vocabulary size.
     - [min_frequency] is the minimum word frequency to include.
-    - [show_progress] enables progress output on [stderr].
-    - [special_tokens] are added to the vocabulary first.
-    - [init], when provided, seeds the vocabulary from an existing model.
+    - [show_progress] is ignored.
+    - [special_tokens] take the first ids, in order; the words are numbered
+      after them.
 
     Returns [(model, special_tokens)]. *)

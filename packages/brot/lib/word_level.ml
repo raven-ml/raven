@@ -86,49 +86,22 @@ let save model ~folder () =
     (fun () -> output_string oc (json_to_string json));
   [ "wordlevel.json" ]
 
-let train ~vocab_size ~min_frequency ~show_progress ~special_tokens texts
-    existing =
+let train ~vocab_size ~min_frequency ~show_progress ~special_tokens word_counts
+    =
   let _ = show_progress in
-  let counts = Hashtbl.create 10000 in
-  List.iter
-    (fun line ->
-      let words = Re.split (Re.compile (Re.rep1 (Re.set " \t\n\r"))) line in
-      List.iter
-        (fun word ->
-          if word <> "" then
-            Hashtbl.replace counts word
-              (1 + Option.value ~default:0 (Hashtbl.find_opt counts word)))
-        words)
-    texts;
-
   let items =
-    Hashtbl.fold
-      (fun word count acc ->
-        if count >= min_frequency then (word, count) :: acc else acc)
-      counts []
+    List.filter (fun (_, count) -> count >= min_frequency) word_counts
     |> List.sort (fun (_, c1) (_, c2) -> compare c2 c1)
   in
+  let specials = List.mapi (fun i token -> (token, i)) special_tokens in
+  (* The words are numbered after the special tokens, and count against
+     [vocab_size] together with them. *)
   let vocab_items = ref [] in
-  let idx = ref 0 in
+  let idx = ref (List.length special_tokens) in
   List.iter
-    (fun token ->
+    (fun (word, _) ->
       if !idx < vocab_size then (
-        vocab_items := (fst token, !idx) :: !vocab_items;
+        vocab_items := (word, !idx) :: !vocab_items;
         incr idx))
     items;
-  let vocab_items = List.rev !vocab_items in
-
-  let specials = List.mapi (fun i token -> (token, i)) special_tokens in
-  let vocab = specials @ vocab_items in
-  let model =
-    match existing with
-    | Some model ->
-        model.vocab |> Hashtbl.clear;
-        model.vocab_r |> Hashtbl.clear;
-        List.iter
-          (fun (token, id) -> add_token model.vocab model.vocab_r token id)
-          vocab;
-        model
-    | None -> create ~vocab ()
-  in
-  (model, special_tokens)
+  (create ~vocab:(specials @ List.rev !vocab_items) (), special_tokens)

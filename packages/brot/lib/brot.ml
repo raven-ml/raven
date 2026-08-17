@@ -691,24 +691,76 @@ let merge_added_tokens_from_training ~requested ~trained_tokens =
   in
   dedup_by (fun (a : added_token) -> a.content) items
 
-let data_to_strings = function
+(* A line keeps the newline that ends it, so a corpus file's line breaks reach
+   the pre-tokenizer and a byte-level model learns a token for them. *)
+let iter_lines ic f =
+  let buf = Buffer.create 4096 in
+  let chunk = Bytes.create 65536 in
+  let rec loop () =
+    let n = input ic chunk 0 (Bytes.length chunk) in
+    if n > 0 then begin
+      let start = ref 0 in
+      for i = 0 to n - 1 do
+        if Bytes.unsafe_get chunk i = '\n' then begin
+          Buffer.add_subbytes buf chunk !start (i - !start + 1);
+          f (Buffer.contents buf);
+          Buffer.clear buf;
+          start := i + 1
+        end
+      done;
+      Buffer.add_subbytes buf chunk !start (n - !start);
+      loop ()
+    end
+  in
+  loop ();
+  if Buffer.length buf > 0 then f (Buffer.contents buf)
+
+let iter_texts data f =
+  match data with
   | `Files files ->
-      let lines = ref [] in
       List.iter
         (fun file ->
-          let ic = open_in file in
-          (try
-             while true do
-               lines := input_line ic :: !lines
-             done
-           with End_of_file -> ());
-          close_in ic)
-        files;
-      List.rev !lines
-  | `Seq seq -> List.of_seq seq
+          let ic = open_in_bin file in
+          Fun.protect
+            ~finally:(fun () -> close_in ic)
+            (fun () -> iter_lines ic f))
+        files
+  | `Seq seq -> Seq.iter f seq
 
+(* The words a model is trained on are the pre-tokens the pipeline would hand
+   it: every text is normalized, then cut by the pre-tokenizer. With no
+   pre-tokenizer a text is one word. *)
+let training_words ?normalizer ?pre data =
+  let counts = Hashtbl.create 10000 in
+  let add word =
+    if word <> "" then
+      Hashtbl.replace counts word
+        (1 + try Hashtbl.find counts word with Not_found -> 0)
+  in
+  iter_texts data (fun text ->
+      let normalized =
+        match normalizer with Some n -> Normalizer.apply n text | None -> text
+      in
+      match pre with
+      | Some pre ->
+          List.iter
+            (fun (piece, _) -> add piece)
+            (Pre_tokenizer.pre_tokenize pre normalized)
+      | None -> add normalized);
+  Hashtbl.fold (fun word count acc -> (word, count) :: acc) counts []
+
+(* Each entry of the initial alphabet stands for the code point it starts with;
+   an entry that holds none is dropped. *)
 let initial_alphabet_of strs =
-  List.map (fun s -> if String.length s > 0 then s.[0] else ' ') strs
+  List.filter_map
+    (fun s ->
+      if String.length s = 0 then None
+      else
+        let d = String.get_utf_8_uchar s 0 in
+        if Uchar.utf_decode_is_valid d then
+          Some (String.sub s 0 (Uchar.utf_decode_length d))
+        else None)
+    strs
 
 let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000) ?(min_frequency = 0)
@@ -718,16 +770,11 @@ let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
-  let limit_alphabet = Some (Option.value limit_alphabet ~default:1000) in
-  let texts = data_to_strings data in
-  let existing_bpe =
-    Option.bind init (fun t ->
-        match t.algorithm with Alg_bpe m -> Some m | _ -> None)
-  in
+  let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
     Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
       ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-      ~end_of_word_suffix ~max_token_length texts existing_bpe
+      ~end_of_word_suffix ~max_token_length words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
@@ -744,16 +791,11 @@ let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
-  let limit_alphabet = Some (Option.value limit_alphabet ~default:1000) in
-  let texts = data_to_strings data in
-  let existing_wp =
-    Option.bind init (fun t ->
-        match t.algorithm with Alg_wordpiece m -> Some m | _ -> None)
-  in
+  let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
     Wordpiece.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
       ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-      ~end_of_word_suffix texts existing_wp
+      ~end_of_word_suffix words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
@@ -765,14 +807,10 @@ let train_wordlevel ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
     ?(min_frequency = 0) ?(show_progress = true) data =
   let special_tokens = special_tokens_for_training init added_tokens in
-  let texts = data_to_strings data in
-  let existing_wl =
-    Option.bind init (fun t ->
-        match t.algorithm with Alg_wordlevel m -> Some m | _ -> None)
-  in
+  let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
     Word_level.train ~vocab_size ~min_frequency ~show_progress ~special_tokens
-      texts existing_wl
+      words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
@@ -785,14 +823,10 @@ let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?(show_progress = true) ?(shrinking_factor = 0.75) ?(max_piece_length = 16)
     ?(n_sub_iterations = 2) data =
   let special_tokens = special_tokens_for_training init added_tokens in
-  let texts = data_to_strings data in
-  let existing_ug =
-    Option.bind init (fun t ->
-        match t.algorithm with Alg_unigram m -> Some m | _ -> None)
-  in
+  let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
     Unigram.train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
-      ~unk_token ~max_piece_length ~n_sub_iterations texts existing_ug
+      ~unk_token ~max_piece_length ~n_sub_iterations words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
