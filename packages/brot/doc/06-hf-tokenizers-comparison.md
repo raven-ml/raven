@@ -507,6 +507,11 @@ Common pre-tokenizers:
 | `pre_tokenizers.Split(pattern, ...)`   | `Pre_tokenizer.split ~pattern ()`   |
 | `pre_tokenizers.Sequence([...])`       | `Pre_tokenizer.sequence [...]`      |
 
+`unicode_scripts` reads the script of a character from the current Unicode
+data, where HuggingFace ships an older table that reports every character
+assigned since as scriptless and joins it to the preceding piece, so the two
+split differently around recent additions such as "₿" (U+20BF).
+
 ### 9.3 Post-processor
 
 **HuggingFace**
