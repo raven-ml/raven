@@ -24,6 +24,7 @@ module Merge_map = struct
     let h = key * 0x1B873593 in
     h lxor (h lsr 16)
 
+  (* A key given twice keeps the value it was given last. *)
   let create entries =
     let n = List.length entries in
     let cap = ref 16 in
@@ -36,7 +37,9 @@ module Merge_map = struct
     List.iter
       (fun (key, value) ->
         let h = ref (hash key land mask) in
-        while Array.unsafe_get keys !h >= 0 do
+        while
+          Array.unsafe_get keys !h >= 0 && Array.unsafe_get keys !h <> key
+        do
           h := (!h + 1) land mask
         done;
         Array.unsafe_set keys !h key;
@@ -960,213 +963,376 @@ let save model ~path ?name () =
       in
       List.iter (fun (_, a, b) -> Printf.fprintf oc "%s %s\n" a b) merges_list)
 
+(* Training *)
+
+(* A pair of symbol ids packed into one int, which orders pairs the way ties
+   between equally frequent pairs are settled: by left id, then by right. *)
+let[@inline] pair_key a b = (a lsl 31) lor b
+let[@inline] pair_left key = key lsr 31
+let[@inline] pair_right key = key land 0x7FFFFFFF
+
+(* Merge candidates, most frequent first, ties going to the lowest pair. An
+   entry holds the count its pair had when it was pushed, and the words the pair
+   turned up in since the pair was last queued; a count that moved since is
+   corrected when the entry comes out. *)
+module Pair_queue = struct
+  type t = {
+    mutable counts : int array;
+    mutable keys : int array;
+    mutable words : int list array;
+    mutable size : int;
+  }
+
+  let create () =
+    {
+      counts = Array.make 1024 0;
+      keys = Array.make 1024 0;
+      words = Array.make 1024 [];
+      size = 0;
+    }
+
+  let[@inline] precedes c1 k1 c2 k2 = c1 > c2 || (c1 = c2 && k1 < k2)
+
+  let push t count key words =
+    let s = t.size in
+    if s = Array.length t.counts then begin
+      let cap = s * 2 in
+      let grow a =
+        let b = Array.make cap 0 in
+        Array.blit a 0 b 0 s;
+        b
+      in
+      t.counts <- grow t.counts;
+      t.keys <- grow t.keys;
+      let b = Array.make cap [] in
+      Array.blit t.words 0 b 0 s;
+      t.words <- b
+    end;
+    let counts = t.counts and keys = t.keys and where = t.words in
+    let i = ref s in
+    let cont = ref (s > 0) in
+    while !cont do
+      let p = (!i - 1) / 2 in
+      if
+        precedes count key (Array.unsafe_get counts p) (Array.unsafe_get keys p)
+      then begin
+        Array.unsafe_set counts !i (Array.unsafe_get counts p);
+        Array.unsafe_set keys !i (Array.unsafe_get keys p);
+        Array.unsafe_set where !i (Array.unsafe_get where p);
+        i := p;
+        cont := !i > 0
+      end
+      else cont := false
+    done;
+    Array.unsafe_set counts !i count;
+    Array.unsafe_set keys !i key;
+    Array.unsafe_set where !i words;
+    t.size <- s + 1
+
+  let pop t =
+    if t.size = 0 then None
+    else begin
+      let counts = t.counts and keys = t.keys and where = t.words in
+      let top =
+        ( Array.unsafe_get counts 0,
+          Array.unsafe_get keys 0,
+          Array.unsafe_get where 0 )
+      in
+      let size = t.size - 1 in
+      t.size <- size;
+      if size > 0 then begin
+        let count = Array.unsafe_get counts size in
+        let key = Array.unsafe_get keys size in
+        let words = Array.unsafe_get where size in
+        Array.unsafe_set where size [];
+        let i = ref 0 in
+        let cont = ref true in
+        while !cont do
+          let l = (2 * !i) + 1 in
+          if l >= size then cont := false
+          else begin
+            let r = l + 1 in
+            let c =
+              if
+                r < size
+                && precedes
+                     (Array.unsafe_get counts r)
+                     (Array.unsafe_get keys r)
+                     (Array.unsafe_get counts l)
+                     (Array.unsafe_get keys l)
+              then r
+              else l
+            in
+            if
+              precedes
+                (Array.unsafe_get counts c)
+                (Array.unsafe_get keys c) count key
+            then begin
+              Array.unsafe_set counts !i (Array.unsafe_get counts c);
+              Array.unsafe_set keys !i (Array.unsafe_get keys c);
+              Array.unsafe_set where !i (Array.unsafe_get where c);
+              i := c
+            end
+            else cont := false
+          end
+        done;
+        Array.unsafe_set counts !i count;
+        Array.unsafe_set keys !i key;
+        Array.unsafe_set where !i words
+      end
+      else Array.unsafe_set where 0 [];
+      Some top
+    end
+end
+
+(* What the trainer knows about a pair: how often it occurs, the words it has
+   turned up in since it was last queued, and whether the count has risen since
+   then, which is what earns it a fresh queue entry. *)
+type pair_state = {
+  mutable pair_count : int;
+  mutable pair_words : int list;
+  mutable pair_raised : bool;
+}
+
+(* Calls [f] on each character of [word] with the place it holds in it, which is
+   what decides the affixes it carries. *)
+let iter_chars word f =
+  let len = String.length word in
+  let pos = ref 0 in
+  while !pos < len do
+    let d = String.get_utf_8_uchar word !pos in
+    let n = Uchar.utf_decode_length d in
+    if Uchar.utf_decode_is_valid d then
+      f (String.sub word !pos n) ~is_first:(!pos = 0) ~is_last:(!pos + n >= len);
+    pos := !pos + n
+  done
+
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
     ~end_of_word_suffix ~max_token_length texts existing =
   let _ = (show_progress, existing) in
-
-  (* Count words from texts *)
   let word_counts = Hashtbl.create 10000 in
   List.iter
     (fun text ->
-      let words = String.split_on_char ' ' text in
       List.iter
         (fun word ->
           if String.length word > 0 then
             Hashtbl.replace word_counts word
               (1 + try Hashtbl.find word_counts word with Not_found -> 0))
-        words)
+        (String.split_on_char ' ' text))
     texts;
-
-  let compute_pair_counts words_copy =
-    let pair_counts = Hashtbl.create 10000 in
-    Hashtbl.iter
-      (fun word count ->
-        let chars = String.split_on_char ' ' word in
-        for i = 0 to List.length chars - 2 do
-          let a = List.nth chars i in
-          let b = List.nth chars (i + 1) in
-          let pair = (a, b) in
-          Hashtbl.replace pair_counts pair
-            (count + try Hashtbl.find pair_counts pair with Not_found -> 0)
-        done)
-      words_copy;
-    pair_counts
-  in
-
-  (* Build vocabulary *)
   let vocab = Hashtbl.create 10000 in
-  let vocab_size_ref = ref 0 in
-  List.iter
-    (fun token ->
-      if not (Hashtbl.mem vocab token) then (
-        Hashtbl.add vocab token !vocab_size_ref;
-        incr vocab_size_ref))
-    special_tokens;
-
-  (* Build alphabet *)
-  let alphabet = Hashtbl.create 10000 in
+  let tokens = Dynarray.create () in
+  let intern token =
+    match Hashtbl.find_opt vocab token with
+    | Some id -> id
+    | None ->
+        let id = Dynarray.length tokens in
+        Hashtbl.add vocab token id;
+        Dynarray.add_last tokens token;
+        id
+  in
+  List.iter (fun token -> ignore (intern token)) special_tokens;
+  let alphabet = Hashtbl.create 1024 in
   Hashtbl.iter
     (fun word count ->
-      let len = String.length word in
-      let buf = Buffer.create 4 in
-      let rec loop i =
-        if i >= len then ()
-        else
-          let d = String.get_utf_8_uchar word i in
-          let n = Uchar.utf_decode_length d in
-          if Uchar.utf_decode_is_valid d then (
-            let u = Uchar.utf_decode_uchar d in
-            Buffer.clear buf;
-            Buffer.add_utf_8_uchar buf u;
-            let char_str = Buffer.contents buf in
-            Hashtbl.replace alphabet char_str
-              (count + try Hashtbl.find alphabet char_str with Not_found -> 0));
-          loop (i + n)
-      in
-      loop 0)
+      iter_chars word (fun c ~is_first:_ ~is_last:_ ->
+          Hashtbl.replace alphabet c
+            (count + try Hashtbl.find alphabet c with Not_found -> 0)))
     word_counts;
-
   List.iter
-    (fun c ->
-      let char_str = String.make 1 c in
-      Hashtbl.replace alphabet char_str max_int)
+    (fun c -> Hashtbl.replace alphabet (String.make 1 c) max_int)
     initial_alphabet;
-
-  let kept = Hashtbl.fold (fun k v acc -> (k, v) :: acc) alphabet [] in
-  let kept = List.sort (fun (_, v1) (_, v2) -> compare v1 v2) kept in
+  let kept =
+    Hashtbl.fold (fun c count acc -> (c, count) :: acc) alphabet []
+    |> List.sort (fun (c1, n1) (c2, n2) ->
+        if n1 <> n2 then compare n1 n2 else String.compare c1 c2)
+  in
   let to_remove =
     match limit_alphabet with
     | Some limit -> max 0 (List.length kept - limit)
     | None -> 0
   in
-  let kept = list_drop to_remove kept in
-  let kept = List.sort (fun (k1, _) (k2, _) -> compare k1 k2) kept in
-  let csp_str = affix continuing_subword_prefix in
-  let csp_len = String.length csp_str in
   List.iter
-    (fun (c, _) ->
-      if not (Hashtbl.mem vocab c) then (
-        Hashtbl.add vocab c !vocab_size_ref;
-        incr vocab_size_ref);
-      if csp_len > 0 then (
-        let clen = String.length c in
-        let s = Bytes.create (csp_len + clen) in
-        Bytes.blit_string csp_str 0 s 0 csp_len;
-        Bytes.blit_string c 0 s csp_len clen;
-        let prefixed = Bytes.unsafe_to_string s in
-        if not (Hashtbl.mem vocab prefixed) then (
-          Hashtbl.add vocab prefixed !vocab_size_ref;
-          incr vocab_size_ref)))
-    kept;
-
-  (* Learn merges *)
-  let merges = ref [] in
-  let words_copy = ref (Hashtbl.create (Hashtbl.length word_counts)) in
-  Hashtbl.iter
-    (fun word count ->
-      let len = String.length word in
-      let chars = ref [] in
-      let buf = Buffer.create 8 in
-      let is_first = ref true in
-      let rec loop i =
-        if i >= len then ()
-        else
-          let d = String.get_utf_8_uchar word i in
-          let n = Uchar.utf_decode_length d in
-          if Uchar.utf_decode_is_valid d then (
-            let u = Uchar.utf_decode_uchar d in
-            Buffer.clear buf;
-            if csp_len > 0 && not !is_first then Buffer.add_string buf csp_str;
-            Buffer.add_utf_8_uchar buf u;
-            is_first := false;
-            chars := Buffer.contents buf :: !chars);
-          loop (i + n)
+    (fun (c, _) -> ignore (intern c))
+    (list_drop to_remove kept
+    |> List.sort (fun (c1, _) (c2, _) -> String.compare c1 c2));
+  (* Words are laid out as arrays of vocabulary ids, each character in the form
+     its place gives it. A character the alphabet limit left out is dropped from
+     the word rather than merged. *)
+  let prefix = affix continuing_subword_prefix in
+  let suffix = affix end_of_word_suffix in
+  let corpus =
+    Hashtbl.fold (fun word count acc -> (word, count) :: acc) word_counts []
+    |> List.sort (fun (w1, _) (w2, _) -> String.compare w1 w2)
+  in
+  let word_total = List.length corpus in
+  let words = Array.make word_total [||] in
+  (* How many characters of the word each symbol spans, which is what
+     [max_token_length] caps. It belongs to the occurrence, not to the token: a
+     merge can arrive at a token a character is already spelled as, and the two
+     span a different number of characters. *)
+  let lengths = Array.make word_total [||] in
+  let word_size = Array.make word_total 0 in
+  let counts = Array.make word_total 0 in
+  let symbols = ref (Array.make 64 0) in
+  List.iteri
+    (fun i (word, count) ->
+      if Array.length !symbols < String.length word then
+        symbols := Array.make (String.length word) 0;
+      let n = ref 0 in
+      iter_chars word (fun c ~is_first ~is_last ->
+          if Hashtbl.mem vocab c then begin
+            let token =
+              (if is_first then "" else prefix)
+              ^ c
+              ^ if is_last then suffix else ""
+            in
+            !symbols.(!n) <- intern token;
+            incr n
+          end);
+      words.(i) <- Array.sub !symbols 0 !n;
+      lengths.(i) <- Array.make !n 1;
+      word_size.(i) <- !n;
+      counts.(i) <- count)
+    corpus;
+  let max_chars = match max_token_length with Some l -> l | None -> max_int in
+  let pairs = Hashtbl.create 10000 in
+  let queue = Pair_queue.create () in
+  let raised = ref [] in
+  let state key =
+    match Hashtbl.find_opt pairs key with
+    | Some s -> s
+    | None ->
+        let s = { pair_count = 0; pair_words = []; pair_raised = false } in
+        Hashtbl.add pairs key s;
+        s
+  in
+  let record s word =
+    match s.pair_words with
+    | w :: _ when w = word -> ()
+    | l -> s.pair_words <- word :: l
+  in
+  let drop_pair a b count =
+    let s = state (pair_key a b) in
+    s.pair_count <- s.pair_count - count
+  in
+  (* A pair only counts while the run of characters it would join stays under
+     [max_token_length], so an over-long merge never becomes a candidate. The
+     single characters counted below are the exception: they are what the first
+     merges are drawn from. *)
+  let bump_pair a b chars word count =
+    if chars < max_chars then begin
+      let key = pair_key a b in
+      let s = state key in
+      s.pair_count <- s.pair_count + count;
+      record s word;
+      if not s.pair_raised then begin
+        s.pair_raised <- true;
+        raised := key :: !raised
+      end
+    end
+  in
+  for i = 0 to word_total - 1 do
+    let syms = words.(i) in
+    let count = counts.(i) in
+    for j = 0 to word_size.(i) - 2 do
+      let s =
+        state
+          (pair_key (Array.unsafe_get syms j) (Array.unsafe_get syms (j + 1)))
       in
-      loop 0;
-      let separated = String.concat " " (List.rev !chars) in
-      Hashtbl.add !words_copy separated count)
-    word_counts;
-
-  while !vocab_size_ref < vocab_size do
-    let pair_counts = compute_pair_counts !words_copy in
-    let best_pair = ref None in
-    let best_count = ref (-1) in
-    let best_pair_tie = ref ("", "") in
-    Hashtbl.iter
-      (fun pair count ->
-        if count > !best_count then (
-          best_count := count;
-          best_pair := Some pair;
-          best_pair_tie := pair)
-        else if count = !best_count then
-          if compare pair !best_pair_tie < 0 then best_pair_tie := pair)
-      pair_counts;
-    match !best_pair with
-    | None -> vocab_size_ref := vocab_size
-    | Some (a, b) ->
-        if !best_count < min_frequency then vocab_size_ref := vocab_size
-        else
-          let blen = String.length b in
-          let new_token =
-            if
-              csp_len > 0 && blen > csp_len
-              && String.starts_with ~prefix:csp_str b
-            then (
-              let alen = String.length a in
-              let brest = blen - csp_len in
-              let s = Bytes.create (alen + brest) in
-              Bytes.blit_string a 0 s 0 alen;
-              Bytes.blit_string b csp_len s alen brest;
-              Bytes.unsafe_to_string s)
-            else a ^ b
-          in
-          let skip =
-            match max_token_length with
-            | Some l when String.length new_token > l -> true
-            | _ -> false
-          in
-          if not skip then (
-            if not (Hashtbl.mem vocab new_token) then (
-              Hashtbl.add vocab new_token !vocab_size_ref;
-              incr vocab_size_ref);
-            merges := (a, b) :: !merges;
-            let new_words = Hashtbl.create (Hashtbl.length !words_copy) in
-            let pat = a ^ " " ^ b in
-            let pat_len = String.length pat in
-            Hashtbl.iter
-              (fun word count ->
-                let wlen = String.length word in
-                if wlen < pat_len then Hashtbl.add new_words word count
-                else
-                  let buf = Buffer.create wlen in
-                  let pos = ref 0 in
-                  let changed = ref false in
-                  while !pos <= wlen - pat_len do
-                    let at_boundary =
-                      (!pos = 0
-                      || Char.equal (String.unsafe_get word (!pos - 1)) ' ')
-                      && (!pos + pat_len = wlen
-                         || Char.equal
-                              (String.unsafe_get word (!pos + pat_len))
-                              ' ')
-                    in
-                    if at_boundary && String.sub word !pos pat_len = pat then (
-                      Buffer.add_string buf new_token;
-                      pos := !pos + pat_len;
-                      changed := true)
-                    else (
-                      Buffer.add_char buf (String.unsafe_get word !pos);
-                      incr pos)
-                  done;
-                  if !changed then (
-                    Buffer.add_substring buf word !pos (wlen - !pos);
-                    Hashtbl.add new_words (Buffer.contents buf) count)
-                  else Hashtbl.add new_words word count)
-              !words_copy;
-            words_copy := new_words)
+      s.pair_count <- s.pair_count + count;
+      record s i
+    done
   done;
-
+  Hashtbl.iter
+    (fun key s ->
+      Pair_queue.push queue s.pair_count key s.pair_words;
+      s.pair_words <- [])
+    pairs;
+  let plen = String.length prefix in
+  let merges = ref [] in
+  let stop = ref false in
+  while (not !stop) && Dynarray.length tokens < vocab_size do
+    match Pair_queue.pop queue with
+    | None -> stop := true
+    | Some (count, key, where) ->
+        let s = Hashtbl.find pairs key in
+        if s.pair_count <> count then
+          begin if s.pair_count > 0 then
+            Pair_queue.push queue s.pair_count key where
+          end
+        else if count < 1 || count < min_frequency then stop := true
+        else begin
+          let a = pair_left key and b = pair_right key in
+          let left = Dynarray.get tokens a and right = Dynarray.get tokens b in
+          let tail =
+            if plen > 0 && String.starts_with ~prefix right then
+              String.sub right plen (String.length right - plen)
+            else right
+          in
+          let new_id = intern (left ^ tail) in
+          merges := (left, right) :: !merges;
+          List.iter
+            (fun i ->
+              let syms = words.(i) in
+              let lens = lengths.(i) in
+              let n = word_size.(i) in
+              let count = counts.(i) in
+              let j = ref 0 in
+              let w = ref 0 in
+              while !j < n do
+                if
+                  !j + 1 < n
+                  && Array.unsafe_get syms !j = a
+                  && Array.unsafe_get syms (!j + 1) = b
+                then begin
+                  let chars =
+                    Array.unsafe_get lens !j + Array.unsafe_get lens (!j + 1)
+                  in
+                  if !w > 0 then begin
+                    let prev = Array.unsafe_get syms (!w - 1) in
+                    drop_pair prev a count;
+                    bump_pair prev new_id
+                      (Array.unsafe_get lens (!w - 1) + chars)
+                      i count
+                  end;
+                  if !j + 2 < n then begin
+                    let next = Array.unsafe_get syms (!j + 2) in
+                    drop_pair b next count;
+                    bump_pair new_id next
+                      (chars + Array.unsafe_get lens (!j + 2))
+                      i count
+                  end;
+                  Array.unsafe_set syms !w new_id;
+                  Array.unsafe_set lens !w chars;
+                  incr w;
+                  j := !j + 2
+                end
+                else begin
+                  Array.unsafe_set syms !w (Array.unsafe_get syms !j);
+                  Array.unsafe_set lens !w (Array.unsafe_get lens !j);
+                  incr w;
+                  incr j
+                end
+              done;
+              word_size.(i) <- !w)
+            where;
+          (* The pair keeps whatever occurrences this entry did not carry, and a
+             later merge can put the same two symbols side by side again, so a
+             pair can be merged more than once. The merge map settles a repeat
+             by keeping the rank the pair was given last. *)
+          List.iter
+            (fun key ->
+              let s = Hashtbl.find pairs key in
+              s.pair_raised <- false;
+              if s.pair_count > 0 then
+                Pair_queue.push queue s.pair_count key s.pair_words;
+              s.pair_words <- [])
+            !raised;
+          raised := []
+        end
+  done;
   let trained_model =
     create ~vocab ~merges:(List.rev !merges) ?continuing_subword_prefix
       ?end_of_word_suffix ()

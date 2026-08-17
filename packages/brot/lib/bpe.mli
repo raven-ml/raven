@@ -151,19 +151,26 @@ val train :
      ~end_of_word_suffix ~max_token_length texts init] learns BPE merges from
     [texts].
 
-    The algorithm counts word frequencies, builds an initial character alphabet,
-    then iteratively finds and merges the highest-frequency adjacent pair until
-    [vocab_size] is reached or pair frequency drops below [min_frequency].
+    Words are the space-separated runs of [texts]. Each word starts out as its
+    characters, in the form the affixes give them, and the most frequent
+    adjacent pair is merged over and over until [vocab_size] is reached, no pair
+    is left, or the best pair falls below [min_frequency]. Pairs of equal
+    frequency are merged lowest vocabulary id first.
 
-    - [min_frequency] is the minimum pair frequency to merge.
-    - [vocab_size] is the target vocabulary size.
-    - [show_progress] enables progress output on [stderr].
-    - [special_tokens] are added to the vocabulary first.
-    - [limit_alphabet] caps the number of distinct initial characters kept.
-    - [initial_alphabet] seeds the character set.
-    - [continuing_subword_prefix] is set on the resulting model.
-    - [end_of_word_suffix] is set on the resulting model.
-    - [max_token_length] limits the byte length of merged tokens.
-    - [init], when provided, seeds the vocabulary from an existing model.
+    - [min_frequency] is the number of occurrences a pair needs to be merged.
+    - [vocab_size] is the target size, special tokens and alphabet included.
+    - [show_progress] is ignored.
+    - [special_tokens] take the first ids, in order.
+    - [limit_alphabet] caps how many distinct characters are kept; the rarest go
+      first, and words drop the characters that did not make the cut.
+    - [initial_alphabet] are characters kept whatever their frequency.
+    - [continuing_subword_prefix] goes on every character of a word but the
+      first and [end_of_word_suffix] on the last, before any pair is counted, so
+      merges are learned — and written — over the affixed forms: a model trained
+      with [end_of_word_suffix:"</w>"] holds ["w</w>"] and merges ["lo w</w>"].
+    - [max_token_length] holds a merge back once the run of characters it would
+      join reaches that many. The merges of single characters that open the
+      training are not held back.
+    - [init] is ignored.
 
     Returns [(model, special_tokens)]. *)

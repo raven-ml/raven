@@ -1087,6 +1087,23 @@ thread.
 
 ### Brot
 
+- `train_bpe` now applies `end_of_word_suffix` and `continuing_subword_prefix`
+  while learning: the vocabulary gains the affixed characters (`w</w>`) and the
+  merges are written over them (`lo w</w>`). A model trained with a suffix
+  previously held no suffixed entry at all, so every word-final character
+  missed at encode time.
+- `train_bpe` now drops characters excluded by `limit_alphabet` from the words
+  instead of merging them, counts `max_token_length` in characters rather than
+  bytes, settles equally frequent pairs by vocabulary id, and can merge a pair
+  a second time when it reappears, recording it once at its later rank. Trained
+  vocabularies and merges match HuggingFace's `BpeTrainer` exactly wherever
+  that trainer is deterministic.
+- `train_bpe` learns merges from an incremental pair index instead of
+  recounting every pair each round: a 1 MB corpus trains in 0.03 s instead of
+  3.0 s.
+- A merge pair listed twice in a `merges.txt` or `tokenizer.json` now takes the
+  rank of its last occurrence, as HuggingFace does; the first occurrence used
+  to win.
 - `Brot.special` is now `Brot.added_token` and the record it builds is
   `added_token`, its `token` field renamed to `content`; `?specials` is
   `?added_tokens` on every constructor and `specials` is `added_tokens`. The

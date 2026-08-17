@@ -332,6 +332,287 @@ let test_parallel_cache () =
   equal ~msg:"parallel tokenization agrees with single-domain" int 0
     (Atomic.get mismatches)
 
+(* Training. Every expectation below was probed with the [tokenizers] wheel,
+   running its [BpeTrainer] over the same corpus behind a [WhitespaceSplit]
+   pre-tokenizer, which cuts words where [train_bpe] cuts them. *)
+
+let train_corpus =
+  [
+    "low low low low low lower lower";
+    "newest newest newest newest newest newest";
+    "widest widest widest lowest";
+  ]
+
+let trained_vocab tokenizer =
+  let entries = vocab tokenizer in
+  let ordered = Array.make (List.length entries) "" in
+  List.iter (fun (token, id) -> ordered.(id) <- token) entries;
+  Array.to_list ordered
+
+let trained_merges tokenizer =
+  let folder = Filename.temp_dir "brot_merges" "" in
+  let files = save_model_files tokenizer ~folder () in
+  let path = List.find (fun f -> Filename.check_suffix f ".txt") files in
+  let ic = open_in path in
+  let lines = ref [] in
+  (try
+     while true do
+       lines := input_line ic :: !lines
+     done
+   with End_of_file -> ());
+  close_in ic;
+  List.iter Sys.remove files;
+  Unix.rmdir folder;
+  List.filter
+    (fun line -> not (String.starts_with ~prefix:"#version" line))
+    (List.rev !lines)
+
+let test_train () =
+  let tokenizer =
+    train_bpe ~vocab_size:30 ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  (* The corpus runs out of pairs before the target size is reached. *)
+  equal ~msg:"vocabulary" (list string)
+    [
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "es";
+      "est";
+      "lo";
+      "low";
+      "ew";
+      "new";
+      "newest";
+      "dest";
+      "idest";
+      "widest";
+      "er";
+      "lower";
+      "lowest";
+    ]
+    (trained_vocab tokenizer);
+  equal ~msg:"merges" (list string)
+    [
+      "e s";
+      "es t";
+      "l o";
+      "lo w";
+      "e w";
+      "n ew";
+      "new est";
+      "d est";
+      "i dest";
+      "w idest";
+      "e r";
+      "low er";
+      "low est";
+    ]
+    (trained_merges tokenizer)
+
+let test_train_suffix () =
+  let tokenizer =
+    train_bpe ~vocab_size:40 ~end_of_word_suffix:"</w>" ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  (* The suffix joins the last character before any pair is counted, so the
+     vocabulary holds suffixed characters and the merges name them. The three
+     suffixed characters come out in the order their words do, which the wheel
+     draws at random; the merges it learns are the ones below. *)
+  equal ~msg:"vocabulary" (list string)
+    [
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "w</w>";
+      "r</w>";
+      "t</w>";
+      "es";
+      "est</w>";
+      "lo";
+      "west</w>";
+      "ewest</w>";
+      "newest</w>";
+      "low</w>";
+      "dest</w>";
+      "idest</w>";
+      "widest</w>";
+      "er</w>";
+      "wer</w>";
+      "lower</w>";
+      "lowest</w>";
+    ]
+    (trained_vocab tokenizer);
+  equal ~msg:"merges" (list string)
+    [
+      "e s";
+      "es t</w>";
+      "l o";
+      "w est</w>";
+      "e west</w>";
+      "n ewest</w>";
+      "lo w</w>";
+      "d est</w>";
+      "i dest</w>";
+      "w idest</w>";
+      "e r</w>";
+      "w er</w>";
+      "lo wer</w>";
+      "lo west</w>";
+    ]
+    (trained_merges tokenizer);
+  equal ~msg:"a trained word is one suffixed token" (list string) [ "low</w>" ]
+    (tokens tokenizer "low");
+  equal ~msg:"and so is a longer one" (list string) [ "lowest</w>" ]
+    (tokens tokenizer "lowest");
+  equal ~msg:"an unseen word still ends in the suffix" (list string)
+    [ "s"; "low</w>" ] (tokens tokenizer "slow")
+
+let test_train_prefix () =
+  let tokenizer =
+    train_bpe ~vocab_size:30 ~continuing_subword_prefix:"##"
+      ~show_progress:false
+      (`Seq (List.to_seq train_corpus))
+  in
+  (* Only the characters that turn up after the first one of a word are learned
+     in prefixed form: ["##l"] is absent because no word here has an [l] later
+     on, which is why ["slow"] loses its [l]. *)
+  equal ~msg:"vocabulary" (list string)
+    [
+      "d";
+      "e";
+      "i";
+      "l";
+      "n";
+      "o";
+      "r";
+      "s";
+      "t";
+      "w";
+      "##o";
+      "##w";
+      "##e";
+      "##r";
+      "##s";
+      "##t";
+      "##i";
+      "##d";
+      "##es";
+      "##est";
+      "lo";
+      "low";
+      "ne";
+      "##west";
+      "newest";
+      "wi";
+      "##dest";
+      "widest";
+      "##er";
+      "lower";
+    ]
+    (trained_vocab tokenizer);
+  equal ~msg:"merges" (list string)
+    [
+      "##e ##s";
+      "##es ##t";
+      "l ##o";
+      "lo ##w";
+      "n ##e";
+      "##w ##est";
+      "ne ##west";
+      "w ##i";
+      "##d ##est";
+      "wi ##dest";
+      "##e ##r";
+      "low ##er";
+    ]
+    (trained_merges tokenizer);
+  equal ~msg:"a trained word is one token" (list string) [ "newest" ]
+    (tokens tokenizer "newest");
+  equal ~msg:"an unseen word breaks into prefixed pieces" (list string)
+    [ "low"; "##est" ]
+    (tokens tokenizer "lowest");
+  equal ~msg:"a character with no prefixed form drops out" (list string)
+    [ "s"; "##o"; "##w" ] (tokens tokenizer "slow")
+
+let test_train_limit_alphabet () =
+  (* [z] outranks [b], so a limit of two drops [b], and the word holding it
+     loses the character instead of merging it. *)
+  let corpus = `Seq (List.to_seq [ "aza aza aza ab ab" ]) in
+  let whole = train_bpe ~vocab_size:20 ~show_progress:false corpus in
+  let limited =
+    train_bpe ~vocab_size:20 ~limit_alphabet:2 ~show_progress:false corpus
+  in
+  equal ~msg:"whole alphabet" (list string)
+    [ "a"; "b"; "z"; "az"; "aza"; "ab" ]
+    (trained_vocab whole);
+  equal ~msg:"two characters" (list string) [ "a"; "z"; "az"; "aza" ]
+    (trained_vocab limited);
+  equal ~msg:"a dropped character leaves the word" (list string) [ "a" ]
+    (tokens limited "ab")
+
+let test_train_max_token_length () =
+  (* The limit counts characters, not bytes: these take two bytes each, and a
+     four-character token is still learned under a limit of five. It is
+     exclusive — under a limit of four a merge stops at three characters — and
+     the single-character merges the training opens with are exempt from it. *)
+  let trained ?max_token_length corpus =
+    train_bpe ~vocab_size:40 ?max_token_length ~show_progress:false
+      (`Seq (List.to_seq [ corpus ]))
+  in
+  let eight = "αβγδεζηθ αβγδεζηθ αβγδεζηθ" in
+  equal ~msg:"no limit" (list string) [ "αβγδεζηθ" ]
+    (tokens (trained eight) "αβγδεζηθ");
+  equal ~msg:"five characters" (list string) [ "αβγδ"; "εζηθ" ]
+    (tokens (trained ~max_token_length:5 eight) "αβγδεζηθ");
+  equal ~msg:"two characters still reached" (list string)
+    [ "αβ"; "γδ"; "εζ"; "ηθ" ]
+    (tokens (trained ~max_token_length:2 eight) "αβγδεζηθ");
+  equal ~msg:"four characters stops at three" (list string) [ "αβ"; "γδε" ]
+    (tokens (trained ~max_token_length:4 "αβγδε αβγδε αβγδε") "αβγδε")
+
+let test_train_repeated_merge () =
+  (* A queue entry carries the words its pair was found in when it was queued,
+     so a pair found again afterwards is merged a second time and recorded a
+     second time. The model keeps the rank it was given last, which is why [###
+     ##a] is written once here. *)
+  let tokenizer =
+    train_bpe ~vocab_size:24 ~continuing_subword_prefix:"##"
+      ~show_progress:false
+      (`Seq (List.to_seq [ "###a b### a" ]))
+  in
+  equal ~msg:"vocabulary" (list string)
+    [ "#"; "a"; "b"; "###"; "##a"; "####"; "b##"; "###a"; "b###" ]
+    (trained_vocab tokenizer);
+  equal ~msg:"merges" (list string)
+    [ "### ###"; "# ####"; "b ####"; "### ##a"; "b## ###" ]
+    (trained_merges tokenizer)
+
+let test_train_min_frequency () =
+  (* Of the three pairs only [a a], seen three times, reaches the floor. *)
+  let tokenizer =
+    train_bpe ~vocab_size:20 ~min_frequency:3 ~show_progress:false
+      (`Seq (List.to_seq [ "aa aa aa bb cc cc" ]))
+  in
+  equal ~msg:"vocabulary" (list string) [ "a"; "b"; "c"; "aa" ]
+    (trained_vocab tokenizer);
+  equal ~msg:"merges" (list string) [ "a a" ] (trained_merges tokenizer)
+
 let () =
   run "BPE tests"
     [
@@ -355,6 +636,16 @@ let () =
             test_prefix_and_suffix;
           test "tokenizer integration" test_tokenizer_integration;
           test "unknown character" test_unknown_character;
+        ];
+      group "training"
+        [
+          test "vocabulary and merges" test_train;
+          test "end-of-word suffix" test_train_suffix;
+          test "continuing subword prefix" test_train_prefix;
+          test "limit_alphabet" test_train_limit_alphabet;
+          test "max_token_length" test_train_max_token_length;
+          test "min_frequency" test_train_min_frequency;
+          test "a pair merged twice" test_train_repeated_merge;
         ];
       group "parallel"
         [ test "shared cache across domains" test_parallel_cache ];
