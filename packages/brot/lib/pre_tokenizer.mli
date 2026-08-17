@@ -102,8 +102,13 @@ val metaspace :
 val unicode_scripts : unit -> t
 (** [unicode_scripts ()] splits on Unicode script boundaries.
 
-    Separates text when the writing system changes (e.g., Latin to Cyrillic,
-    Latin to Han). *)
+    A piece opens where the writing system changes (e.g. Latin to Cyrillic,
+    Latin to Han) and runs to the next change. Hiragana and Katakana count as
+    Han, as does the prolonged sound mark ["ー"] (U+30FC).
+
+    Spaces and characters of no known script join the piece they follow, so a
+    leading run of them belongs to no piece: unlike the other pre-tokenizers,
+    the pieces need not cover the input. *)
 
 val fixed_length : int -> t
 (** [fixed_length n] splits into fixed-length character chunks.

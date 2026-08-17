@@ -722,22 +722,31 @@ let pre_tokenize_fixed_length ~length text =
     done;
     List.rev !pieces
 
+(* [`Any] joins whichever run surrounds it. HuggingFace gives it to U+0020 and
+   to the code points its script table does not know; every other whitespace
+   character keeps its own script, [`Zyyy] (Common) for all of them but the
+   Ogham space mark. *)
 type script = [ `Any | Uucp.Script.t ]
 
 let fixed_script code : script =
   if code = 0x30FC then (`Hani :> script)
-  else if is_whitespace code then `Any
   else
     match Uucp.Script.script (Uchar.of_int code) with
     | `Hira | `Kana -> (`Hani :> script)
+    | `Zzzz -> `Any
     | s -> (s :> script)
 
+(* A piece runs from a script change to the next one, absorbing the [`Any]
+   characters it meets. Any leading [`Any] run belongs to no piece and is
+   dropped: a piece can only open on a script change. [last_script] holds [`Any]
+   until the first such change, which no script it is compared against can
+   be. *)
 let pre_tokenize_unicode_scripts text =
   let pieces = ref [] in
   let start = ref (-1) in
   let len = String.length text in
   let i = ref 0 in
-  let last_script = ref None in
+  let last_script : script ref = ref `Any in
   let flush () =
     if !start >= 0 then begin
       pieces := (String.sub text !start (!i - !start), (!start, !i)) :: !pieces;
@@ -745,19 +754,20 @@ let pre_tokenize_unicode_scripts text =
     end
   in
   let emit (script : script) l =
-    if
-      script <> `Any && !last_script <> Some `Any && !last_script <> Some script
-    then flush ();
-    if !start < 0 then start := !i;
-    i := !i + l;
-    if script <> `Any then last_script := Some script
+    if script <> `Any && !last_script <> script then begin
+      flush ();
+      start := !i;
+      last_script := script
+    end;
+    i := !i + l
   in
   while !i < len do
     let b = Char.code (String.unsafe_get text !i) in
     if b < 128 then
-      let p = Array.unsafe_get ascii_props b in
       let script : script =
-        if p land 1 <> 0 then `Any else if p land 2 <> 0 then `Latn else `Zyyy
+        if b = 32 then `Any
+        else if Array.unsafe_get ascii_props b land 2 <> 0 then `Latn
+        else `Zyyy
       in
       emit script 1
     else

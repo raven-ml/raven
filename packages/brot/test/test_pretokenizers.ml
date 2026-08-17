@@ -556,23 +556,107 @@ let test_fixed_length () =
   test_case 2 "café" [ ("ca", (0, 2)); ("fé", (2, 5)) ]
 (* e is 2 bytes *)
 
+(* Expectations checked against tokenizers.pre_tokenizers.UnicodeScripts(), with
+   its character offsets converted to byte offsets. *)
 let test_unicode_scripts () =
-  let test_case text desc =
-    let tokenizer = Pre.unicode_scripts () in
-    let result = Pre.pre_tokenize tokenizer text in
-    (* Just verify it runs without crashing and produces something reasonable *)
-    equal
-      ~msg:(Printf.sprintf "UnicodeScripts %s" desc)
-      bool true
-      (List.length result >= 0)
+  let test_case text expected =
+    let result = Pre.pre_tokenize (Pre.unicode_scripts ()) text in
+    check_tokenization (Printf.sprintf "UnicodeScripts %S" text) result expected
   in
 
-  test_case "Hello world" "Latin text";
-  test_case "Hello世界" "Mixed Latin and Chinese";
-  test_case "Привет мир" "Cyrillic";
-  test_case "مرحبا بالعالم" "Arabic";
-  test_case "こんにちは世界" "Japanese";
-  test_case "" "Empty string"
+  test_case "Hello world" [ ("Hello world", (0, 11)) ];
+  test_case "abc!def" [ ("abc", (0, 3)); ("!", (3, 4)); ("def", (4, 7)) ];
+  test_case "a b" [ ("a b", (0, 3)) ];
+  test_case "" [];
+
+  (* A leading run of spaces opens no piece and is dropped. *)
+  test_case "  !  " [ ("!  ", (2, 5)) ];
+  test_case " abc" [ ("abc", (1, 4)) ];
+  test_case "  \u{6587}" [ ("\u{6587}", (2, 5)) ];
+  test_case "   " [];
+  test_case "abc  " [ ("abc  ", (0, 5)) ];
+
+  (* Only U+0020 joins the surrounding run. Every other whitespace character
+     keeps its own script: Common, except for the Ogham space mark. *)
+  test_case "a\tb" [ ("a", (0, 1)); ("\t", (1, 2)); ("b", (2, 3)) ];
+  test_case "a\rb" [ ("a", (0, 1)); ("\r", (1, 2)); ("b", (2, 3)) ];
+  test_case "\n\nabc def" [ ("\n\n", (0, 2)); ("abc def", (2, 9)) ];
+  test_case "  \n  abc" [ ("\n  ", (2, 5)); ("abc", (5, 8)) ];
+  (* U+00A0 no-break space, U+3000 ideographic space. *)
+  test_case "a\u{a0}\u{3000}b"
+    [ ("a", (0, 1)); ("\u{a0}\u{3000}", (1, 6)); ("b", (6, 7)) ];
+  (* U+2028 line separator, U+2029 paragraph separator, U+202F narrow no-break
+     space, U+205F medium mathematical space. *)
+  test_case "a\u{2028}b" [ ("a", (0, 1)); ("\u{2028}", (1, 4)); ("b", (4, 5)) ];
+  test_case "a\u{2029}b" [ ("a", (0, 1)); ("\u{2029}", (1, 4)); ("b", (4, 5)) ];
+  test_case "a\u{202f}b" [ ("a", (0, 1)); ("\u{202f}", (1, 4)); ("b", (4, 5)) ];
+  test_case "a\u{205f}b" [ ("a", (0, 1)); ("\u{205f}", (1, 4)); ("b", (4, 5)) ];
+  (* U+1680 ogham space mark, script Ogham. *)
+  test_case "\u{1680}abc" [ ("\u{1680}", (0, 3)); ("abc", (3, 6)) ];
+
+  (* A character of no known script also joins the surrounding run, and is
+     dropped when it leads: U+E000 is private use. *)
+  test_case "a\u{e000}b" [ ("a\u{e000}b", (0, 5)) ];
+  test_case "\u{e000}abc" [ ("abc", (3, 6)) ];
+  test_case "  \u{e000}  abc" [ ("abc", (7, 10)) ];
+
+  (* Kana folds into Han; so does the prolonged sound mark U+30FC, which is
+     Common. The iteration mark U+3005 is Han already. *)
+  test_case "\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30c8}"
+    [ ("\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30c8}", (0, 18)) ];
+  test_case "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}\u{4e16}\u{754c}"
+    [ ("\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}\u{4e16}\u{754c}", (0, 21)) ];
+  test_case "\u{4e2d}\u{30fc}\u{3042}" [ ("\u{4e2d}\u{30fc}\u{3042}", (0, 9)) ];
+  test_case "\u{4e2d}\u{3005}\u{4e2d} abc"
+    [ ("\u{4e2d}\u{3005}\u{4e2d} ", (0, 10)); ("abc", (10, 13)) ];
+
+  (* A script change splits; digits are Common. *)
+  test_case "\u{4e2d}\u{6587} abc"
+    [ ("\u{4e2d}\u{6587} ", (0, 7)); ("abc", (7, 10)) ];
+  test_case "Hello\u{4e16}\u{754c}"
+    [ ("Hello", (0, 5)); ("\u{4e16}\u{754c}", (5, 11)) ];
+  test_case "a\u{ff11}\u{ff12}\u{ff13}"
+    [ ("a", (0, 1)); ("\u{ff11}\u{ff12}\u{ff13}", (1, 10)) ];
+  test_case " 123 \u{4e2d}\u{6587} abc "
+    [ ("123 ", (1, 5)); ("\u{4e2d}\u{6587} ", (5, 12)); ("abc ", (12, 16)) ];
+
+  (* One script, one piece, however many words. *)
+  test_case "\u{395}\u{3bb}\u{3bb}\u{3b7}\u{3bd}\u{3b9}\u{3ba}\u{3ac} abc"
+    [
+      ("\u{395}\u{3bb}\u{3bb}\u{3b7}\u{3bd}\u{3b9}\u{3ba}\u{3ac} ", (0, 17));
+      ("abc", (17, 20));
+    ];
+  test_case "\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} \u{43c}\u{438}\u{440}"
+    [
+      ( "\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} \u{43c}\u{438}\u{440}",
+        (0, 19) );
+    ];
+  test_case "abc \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}"
+    [
+      ("abc ", (0, 4)); ("\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}", (4, 16));
+    ];
+  test_case
+    "\u{645}\u{631}\u{62d}\u{628}\u{627} \
+     \u{628}\u{627}\u{644}\u{639}\u{627}\u{644}\u{645}"
+    [
+      ( "\u{645}\u{631}\u{62d}\u{628}\u{627} \
+         \u{628}\u{627}\u{644}\u{639}\u{627}\u{644}\u{645}",
+        (0, 25) );
+    ];
+  test_case "\u{5e9}\u{5dc}\u{5d5}\u{5dd} abc"
+    [ ("\u{5e9}\u{5dc}\u{5d5}\u{5dd} ", (0, 9)); ("abc", (9, 12)) ];
+  test_case "\u{c548}\u{b155} abc"
+    [ ("\u{c548}\u{b155} ", (0, 7)); ("abc", (7, 10)) ];
+  test_case "\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947} abc"
+    [
+      ("\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947} ", (0, 19)); ("abc", (19, 22));
+    ];
+
+  (* Inherited is a script of its own, so a combining mark and a variation
+     selector each split off what they attach to. *)
+  test_case "e\u{301}x" [ ("e", (0, 1)); ("\u{301}", (1, 3)); ("x", (3, 4)) ];
+  test_case "a\u{2764}\u{fe0f}b"
+    [ ("a", (0, 1)); ("\u{2764}", (1, 4)); ("\u{fe0f}", (4, 7)); ("b", (7, 8)) ]
 
 let test_metaspace_basic () =
   let test_case text expected =

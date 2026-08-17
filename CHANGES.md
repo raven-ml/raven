@@ -1087,6 +1087,12 @@ thread.
 
 ### Brot
 
+- `Pre_tokenizer.unicode_scripts` now matches HuggingFace on whitespace and
+  unknown scripts. A leading run of spaces used to be emitted as a piece of its
+  own; it is now dropped, since the first piece opens at the first script
+  change. Only U+0020 and characters of no known script join the surrounding
+  run — the other whitespace characters (`\t`, `\n`, U+00A0, U+3000, …) carry
+  their own script and split.
 - `encode` now splits added and special tokens out of the input ahead of the
   pre-tokenizer and the model, matching HuggingFace: `"a<|endoftext|>b"` with
   GPT-2 gives `[64; 50256; 65]` instead of tokenizing the marker as text. At a
