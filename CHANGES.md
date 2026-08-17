@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- `Normalizer.to_json` writes `BertNormalizer`, the type name HuggingFace uses,
+  so a saved tokenizer round-trips unchanged; it previously wrote `Bert`, which
+  HuggingFace accepts but rewrites. Reading a `Strip` normalizer with a missing
+  `strip_left` or `strip_right` now defaults it to `true`, matching
+  `Normalizer.strip`, instead of stripping only on the right.
 - `Normalizer.apply_aligned` returns the normalized text together with an
   `alignment` mapping its bytes back to the input, and
   `Normalizer.original_span` reads a span off it. Inserted characters take the

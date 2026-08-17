@@ -758,7 +758,7 @@ let typed_with name pairs = json_obj (("type", Jsont.Json.string name) :: pairs)
 
 let rec to_json = function
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
-      typed_with "Bert"
+      typed_with "BertNormalizer"
         [
           ("clean_text", Jsont.Json.bool clean_text);
           ("handle_chinese_chars", Jsont.Json.bool handle_chinese_chars);
@@ -820,10 +820,12 @@ let rec of_json = function
                  lowercase = get_bool "lowercase" true;
                })
       | Some (Jsont.String ("Strip", _)) ->
+          (* HuggingFace requires both members; brot falls back on the defaults
+             of {!val-strip} rather than rejecting the file. *)
           Ok
             (Strip
                {
-                 left = get_bool "strip_left" false;
+                 left = get_bool "strip_left" true;
                  right = get_bool "strip_right" true;
                })
       | Some (Jsont.String ("StripAccents", _)) -> Ok Strip_accents
