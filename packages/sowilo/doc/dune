@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package sowilo)
- (libraries sowilo))
+ (libraries sowilo unix))

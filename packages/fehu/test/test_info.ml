@@ -1,7 +1,7 @@
 open Fehu
 open Windtrap
 
-let value = testable ~pp:Value.pp ~equal:Value.equal ()
+let value = Testable.make ~pp:Value.pp ~equal:Value.equal
 
 (* Operations *)
 
@@ -45,8 +45,8 @@ let test_of_list_to_list_round_trip () =
 (* Errors *)
 
 let test_find_exn_missing () =
-  raises_invalid_arg "Info.find_exn: key \"missing\" not present" (fun () ->
-      ignore (Info.find_exn "missing" Info.empty))
+  raises (Invalid_argument "Info.find_exn: key \"missing\" not present")
+    (fun () -> ignore (Info.find_exn "missing" Info.empty))
 
 (* Convenience *)
 

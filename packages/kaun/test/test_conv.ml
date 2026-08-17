@@ -180,27 +180,32 @@ let test_conv_input_gradients () =
   grads_ok (Rune.check_grads (module Tensor64) loss x)
 
 let test_conv_rejects_bad_geometry () =
-  raises_invalid_arg
-    "Conv.make: channels and kernel size must be positive, got in_channels=0 \
-     out_channels=4 kernel_size=(3, 3)" (fun () ->
+  raises
+    (Invalid_argument
+       "Conv.make: channels and kernel size must be positive, got \
+        in_channels=0 out_channels=4 kernel_size=(3, 3)") (fun () ->
       Conv.make ~in_channels:0 ~out_channels:4 ~kernel_size:(3, 3) Nx.float32);
-  raises_invalid_arg
-    "Conv.make: channels and kernel size must be positive, got in_channels=2 \
-     out_channels=2 kernel_size=(3, 0)" (fun () ->
+  raises
+    (Invalid_argument
+       "Conv.make: channels and kernel size must be positive, got \
+        in_channels=2 out_channels=2 kernel_size=(3, 0)") (fun () ->
       Conv.make ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 0) Nx.float32)
 
 let test_conv_rejects_bad_input () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 3) in
-  raises_invalid_arg
-    "Conv.apply: input must be [batch; channels; height; width], got rank 3"
+  raises
+    (Invalid_argument
+       "Conv.apply: input must be [batch; channels; height; width], got rank 3")
     (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 2; 4; 4 |]));
-  raises_invalid_arg "Conv.apply: input has 3 channels but the layer expects 2"
+  raises
+    (Invalid_argument "Conv.apply: input has 3 channels but the layer expects 2")
     (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 1; 3; 4; 4 |]));
-  raises_invalid_arg "Conv.apply: stride must be positive, got (0, 1)"
+  raises (Invalid_argument "Conv.apply: stride must be positive, got (0, 1)")
     (fun () ->
       Conv.apply ~stride:(0, 1) p (Nx.zeros Nx.float32 [| 1; 2; 4; 4 |]));
-  raises_invalid_arg "Conv.apply: kernel (3, 3) does not fit input (2, 5)"
+  raises
+    (Invalid_argument "Conv.apply: kernel (3, 3) does not fit input (2, 5)")
     (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 1; 2; 2; 5 |]))
 
 (* Pool *)
@@ -262,14 +267,20 @@ let test_pool_gradients () =
 
 let test_pool_rejects_bad_input () =
   let x = Nx.zeros Nx.float32 [| 1; 1; 2; 5 |] in
-  raises_invalid_arg "Pool.max_pool2d: kernel_size must be positive, got (0, 2)"
-    (fun () -> Pool.max_pool2d ~kernel_size:(0, 2) x);
-  raises_invalid_arg "Pool.avg_pool2d: stride must be positive, got (1, 0)"
+  raises
+    (Invalid_argument
+       "Pool.max_pool2d: kernel_size must be positive, got (0, 2)") (fun () ->
+      Pool.max_pool2d ~kernel_size:(0, 2) x);
+  raises
+    (Invalid_argument "Pool.avg_pool2d: stride must be positive, got (1, 0)")
     (fun () -> Pool.avg_pool2d ~kernel_size:(2, 2) ~stride:(1, 0) x);
-  raises_invalid_arg
-    "Pool.max_pool2d: input must have at least 2 axes, got rank 1" (fun () ->
+  raises
+    (Invalid_argument
+       "Pool.max_pool2d: input must have at least 2 axes, got rank 1")
+    (fun () ->
       Pool.max_pool2d ~kernel_size:(1, 1) (Nx.zeros Nx.float32 [| 4 |]));
-  raises_invalid_arg "Pool.max_pool2d: kernel (3, 3) does not fit input (2, 5)"
+  raises
+    (Invalid_argument "Pool.max_pool2d: kernel (3, 3) does not fit input (2, 5)")
     (fun () -> Pool.max_pool2d ~kernel_size:(3, 3) x)
 
 let () =

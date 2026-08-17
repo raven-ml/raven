@@ -58,7 +58,7 @@ let test_constants_are_not_differentiated () =
 
 let test_unsupported_op_raises_when_tracked () =
   let x = Nx.create f32 [| 2; 2 |] [| 4.0; 1.0; 1.0; 3.0 |] in
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.grad'
            (fun x ->
@@ -67,11 +67,11 @@ let test_unsupported_op_raises_when_tracked () =
            x))
 
 let test_grad_requires_scalar () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.grad' (fun x -> Nx.mul x x) (vec32 [| 1.0; 2.0 |])))
 
 let test_mutation_raises () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.grad'
            (fun x ->

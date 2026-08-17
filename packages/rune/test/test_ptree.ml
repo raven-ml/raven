@@ -38,17 +38,17 @@ let test_iter_visits_every_leaf () =
 let test_map2_structure_mismatch () =
   let a = P.list [ P.tensor (vec32 [| 1.0 |]) ] in
   let b = P.dict [ ("x", P.tensor (vec32 [| 1.0 |])) ] in
-  raises_invalid_arg (fun () -> ignore (P.map2 (fun x _ -> x) a b))
+  raises_match Exn.invalid_arg (fun () -> ignore (P.map2 (fun x _ -> x) a b))
 
 let test_map2_dict_key_mismatch () =
   let a = P.dict [ ("x", P.tensor (vec32 [| 1.0 |])) ] in
   let b = P.dict [ ("y", P.tensor (vec32 [| 1.0 |])) ] in
-  raises_invalid_arg (fun () -> ignore (P.map2 (fun x _ -> x) a b))
+  raises_match Exn.invalid_arg (fun () -> ignore (P.map2 (fun x _ -> x) a b))
 
 let test_map2_dtype_mismatch () =
   let a = P.tensor (vec32 [| 1.0 |]) in
   let b = P.tensor (vec64 [| 1.0 |]) in
-  raises_invalid_arg (fun () -> ignore (P.map2 (fun x _ -> x) a b))
+  raises_match Exn.invalid_arg (fun () -> ignore (P.map2 (fun x _ -> x) a b))
 
 let test_grad_over_ptree () =
   let f tree =

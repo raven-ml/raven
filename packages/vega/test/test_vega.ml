@@ -27,11 +27,6 @@ let converges ~msg ~tol tx =
   equal ~msg:(msg ^ "[0]") (float tol) 0.0 v.(0);
   equal ~msg:(msg ^ "[1]") (float tol) 0.0 v.(1)
 
-let raises_invalid_arg f =
-  raises_match
-    (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    f
-
 (* Schedules *)
 
 let test_polynomial_decay () =
@@ -69,9 +64,9 @@ let test_piecewise_constant () =
   equal ~msg:"segment 3" (float 1e-10) 0.01 (s 25)
 
 let test_piecewise_constant_validation () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (S.piecewise_constant ~boundaries:[ 10 ] ~values:[ 1.0 ] 0));
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (S.piecewise_constant ~boundaries:[ 20; 10 ] ~values:[ 1.; 2.; 3. ] 0))
 
@@ -103,8 +98,9 @@ let test_join_step_reset () =
     (List.rev !calls)
 
 let test_join_validation () =
-  raises_invalid_arg (fun () -> ignore (S.join [] 0));
-  raises_invalid_arg (fun () -> ignore (S.join [ (0, S.constant 1.0) ] 0))
+  raises_match Exn.invalid_arg (fun () -> ignore (S.join [] 0));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (S.join [ (0, S.constant 1.0) ] 0))
 
 let test_cosine_decay_restarts () =
   let s = S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:100 () in
@@ -461,21 +457,27 @@ let test_serialization_round_trip () =
 
 let test_wrong_tensor_count () =
   let tx = Vega.adam lr01 in
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Vega.state_of_tensors tx ~count:1 [| vec [| 0. |] |]))
 
 (* Validation *)
 
 let test_validation () =
-  raises_invalid_arg (fun () -> ignore (Vega.scale_by_lion ~b1:1.0 ()));
-  raises_invalid_arg (fun () -> ignore (Vega.scale_by_lion ~b2:(-0.1) ()));
-  raises_invalid_arg (fun () -> ignore (Vega.scale_by_adan ~b1:1.0 ()));
-  raises_invalid_arg (fun () -> ignore (Vega.scale_by_adan ~b2:(-0.1) ()));
-  raises_invalid_arg (fun () -> ignore (Vega.scale_by_adan ~b3:1.0 ()));
-  raises_invalid_arg (fun () -> ignore (Vega.adan ~weight_decay:(-1.) lr01));
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Vega.scale_by_lion ~b1:1.0 ()));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Vega.scale_by_lion ~b2:(-0.1) ()));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Vega.scale_by_adan ~b1:1.0 ()));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Vega.scale_by_adan ~b2:(-0.1) ()));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Vega.scale_by_adan ~b3:1.0 ()));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Vega.adan ~weight_decay:(-1.) lr01));
+  raises_match Exn.invalid_arg (fun () ->
       ignore (S.cosine_decay_restarts ~init_value:1. ~decay_steps:0 () 0));
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (S.one_cycle ~max_value:1. ~total_steps:0 () 0))
 
 (* Entry point *)
@@ -497,19 +499,20 @@ let () =
           test "cosine_decay_restarts t_mul" test_cosine_decay_restarts_t_mul;
           test "cosine_decay_restarts m_mul" test_cosine_decay_restarts_m_mul;
           test "one_cycle" test_one_cycle;
-          prop2 "constant is constant" (float 0.) nat (fun v step ->
-              S.constant v step = v);
-          prop' "cosine_decay bounded" nat (fun step ->
+          prop "constant is constant"
+            Gen.(pair float nat)
+            (fun (v, step) -> equal (float 0.) v (S.constant v step));
+          prop "cosine_decay bounded" Gen.nat (fun step ->
               let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in
               let v = s step in
               is_true ~msg:">=0" (v >= 0.0);
               is_true ~msg:"<=1" (v <= 1.0 +. 1e-10));
-          prop' "one_cycle bounded" nat (fun step ->
+          prop "one_cycle bounded" Gen.nat (fun step ->
               let s = S.one_cycle ~max_value:1.0 ~total_steps:100 () in
               let v = s step in
               is_true ~msg:">=0" (v >= 0.0);
               is_true ~msg:"<=max" (v <= 1.0 +. 1e-10));
-          prop' "cosine_decay_restarts periodic" nat (fun step ->
+          prop "cosine_decay_restarts periodic" Gen.nat (fun step ->
               let period = 50 in
               let s =
                 S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:period ()

@@ -866,10 +866,10 @@ let display_formatting_tests =
   [
     test "pp" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        equal ~msg:"compact tensor" string "float32 [2,2] \n[[1, 2],\n [3, 4]]"
+        equal ~msg:"compact tensor" text "float32 [2,2] \n[[1, 2],\n [3, 4]]"
           (Format.asprintf "%a" Nx.pp a);
         let empty = Nx.empty Nx.float32 [| 0; 3 |] in
-        equal ~msg:"empty matrix retains metadata" string "float32 [0,3] \n[]"
+        equal ~msg:"empty matrix retains metadata" text "float32 [0,3] \n[]"
           (Format.asprintf "%a" Nx.pp empty));
     test "to_string follows pp" (fun () ->
         let a = Nx.arange Nx.int32 0 6 1 in

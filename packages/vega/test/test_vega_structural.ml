@@ -99,19 +99,23 @@ let test_warmup_cosine () =
   equal (float 1e-12) 0.0 (sched 110)
 
 let test_schedule_validation () =
-  raises_invalid_arg "Schedule.exponential_decay: decay_steps must be positive"
-    (fun () ->
+  raises
+    (Invalid_argument
+       "Schedule.exponential_decay: decay_steps must be positive") (fun () ->
       ignore
         (S.exponential_decay ~init_value:1.0 ~decay_rate:0.5 ~decay_steps:0 0));
-  raises_invalid_arg "Schedule.cosine_decay: decay_steps must be positive"
+  raises
+    (Invalid_argument "Schedule.cosine_decay: decay_steps must be positive")
     (fun () -> ignore (S.cosine_decay ~init_value:1.0 ~decay_steps:(-1) () 0));
-  raises_invalid_arg
-    "Schedule.warmup_cosine_decay: warmup_steps must be positive" (fun () ->
+  raises
+    (Invalid_argument
+       "Schedule.warmup_cosine_decay: warmup_steps must be positive") (fun () ->
       ignore
         (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:0
            ~decay_steps:10 () 0));
-  raises_invalid_arg
-    "Schedule.warmup_cosine_decay: decay_steps must be positive" (fun () ->
+  raises
+    (Invalid_argument
+       "Schedule.warmup_cosine_decay: decay_steps must be positive") (fun () ->
       ignore
         (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
            ~decay_steps:0 () 0))
@@ -148,10 +152,12 @@ let test_clip_by_value () =
 
 let test_clip_validation () =
   let grads = pair [| 1.0 |] [| 1.0 |] in
-  raises_invalid_arg "Vega.clip_by_global_norm: expected max_norm > 0.0, got 0"
-    (fun () -> Vega.clip_by_global_norm (module Pair) ~max_norm:0.0 grads);
-  raises_invalid_arg "Vega.clip_by_value: expected max > 0.0, got -1" (fun () ->
-      Vega.clip_by_value (module Pair) ~max:(-1.0) grads)
+  raises
+    (Invalid_argument
+       "Vega.clip_by_global_norm: expected max_norm > 0.0, got 0") (fun () ->
+      Vega.clip_by_global_norm (module Pair) ~max_norm:0.0 grads);
+  raises (Invalid_argument "Vega.clip_by_value: expected max > 0.0, got -1")
+    (fun () -> Vega.clip_by_value (module Pair) ~max:(-1.0) grads)
 
 (* SGD *)
 

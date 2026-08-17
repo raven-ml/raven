@@ -3,6 +3,7 @@
  (package ppx_ptree)
  (flags
   (:standard -warn-error +a))
+ (modules test_ptree test_signature test_integration)
  (libraries nx nx.effect rune vega kaun windtrap)
  (preprocess
   (pps ppx_ptree)))
@@ -12,6 +13,7 @@
  (package ppx_ptree)
  (flags
   (:standard -warn-error +a))
+ (modules test_locations)
  (libraries ppxlib ppx_ptree windtrap)
  (link_flags -linkall)
  (deps

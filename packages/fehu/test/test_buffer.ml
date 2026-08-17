@@ -24,12 +24,12 @@ let test_capacity () =
   equal ~msg:"capacity = 10" int 10 (Buffer.capacity buf)
 
 let test_create_zero_capacity () =
-  raises_invalid_arg "Buffer.create: capacity must be positive" (fun () ->
-      Buffer.create ~capacity:0)
+  raises (Invalid_argument "Buffer.create: capacity must be positive")
+    (fun () -> Buffer.create ~capacity:0)
 
 let test_create_negative_capacity () =
-  raises_invalid_arg "Buffer.create: capacity must be positive" (fun () ->
-      Buffer.create ~capacity:(-1))
+  raises (Invalid_argument "Buffer.create: capacity must be positive")
+    (fun () -> Buffer.create ~capacity:(-1))
 
 (* Add/Size *)
 
@@ -66,14 +66,14 @@ let test_sample_batch_size () =
 
 let test_sample_empty_raises () =
   let buf = Buffer.create ~capacity:10 in
-  raises_invalid_arg "Buffer.sample: buffer is empty" (fun () ->
+  raises (Invalid_argument "Buffer.sample: buffer is empty") (fun () ->
       Buffer.sample buf ~batch_size:1)
 
 let test_sample_zero_batch_raises () =
   let buf = Buffer.create ~capacity:10 in
   Buffer.add buf (make_transition 1 0 1.0 2 false false);
-  raises_invalid_arg "Buffer.sample: batch_size must be positive" (fun () ->
-      Buffer.sample buf ~batch_size:0)
+  raises (Invalid_argument "Buffer.sample: batch_size must be positive")
+    (fun () -> Buffer.sample buf ~batch_size:0)
 
 let test_sample_arrays_lengths () =
   let buf = Buffer.create ~capacity:10 in
@@ -92,7 +92,7 @@ let test_sample_arrays_lengths () =
 
 let test_sample_arrays_empty_raises () =
   let buf = Buffer.create ~capacity:10 in
-  raises_invalid_arg "Buffer.sample: buffer is empty" (fun () ->
+  raises (Invalid_argument "Buffer.sample: buffer is empty") (fun () ->
       Buffer.sample_arrays buf ~batch_size:1)
 
 (* Clear *)

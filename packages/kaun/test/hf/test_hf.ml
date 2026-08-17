@@ -103,7 +103,7 @@ let test_cached_file_served () =
 
 let test_offline_miss_raises () =
   with_cache_dir @@ fun cache_dir ->
-  raises_failure "Not cached (offline): acme/tiny/vocab.json" (fun () ->
+  raises (Failure "Not cached (offline): acme/tiny/vocab.json") (fun () ->
       Hf.download_file ~cache_dir ~offline:true ~file:"vocab.json" "acme/tiny")
 
 let test_clear_cache () =
@@ -181,7 +181,7 @@ let test_load_sharded () =
 
 let test_load_missing_raises () =
   with_cache_dir @@ fun cache_dir ->
-  raises_failure "No safetensors found for acme/empty" (fun () ->
+  raises (Failure "No safetensors found for acme/empty") (fun () ->
       Hf.load_checkpoint ~cache_dir ~offline:true "acme/empty")
 
 (* Adapting foreign checkpoints *)
@@ -199,11 +199,11 @@ let test_rename () =
   check_entry ~msg:"renamed entry keeps its tensor" [| 1.0; 2.0 |] "x.w" ckpt
 
 let test_rename_collision () =
-  raises_invalid_arg "Kaun_hf.rename: duplicate name \"b\"" (fun () ->
+  raises (Invalid_argument "Kaun_hf.rename: duplicate name \"b\"") (fun () ->
       Hf.rename (fun _ -> "b") (two_entries ()))
 
 let test_rename_empty () =
-  raises_invalid_arg "Kaun_hf.rename: empty entry name" (fun () ->
+  raises (Invalid_argument "Kaun_hf.rename: empty entry name") (fun () ->
       Hf.rename (fun _ -> "") (Checkpoint.of_tensor "a" (vec [| 1.0 |])))
 
 let test_transpose () =
@@ -213,10 +213,11 @@ let test_transpose () =
   check_entry ~msg:"values" [| 1.0; 4.0; 2.0; 5.0; 3.0; 6.0 |] "w" ckpt
 
 let test_transpose_errors () =
-  raises_invalid_arg "Kaun_hf.transpose: no entry named \"w\"" (fun () ->
+  raises (Invalid_argument "Kaun_hf.transpose: no entry named \"w\"") (fun () ->
       Hf.transpose "w" Checkpoint.empty);
-  raises_invalid_arg
-    "Kaun_hf.transpose: entry \"v\" has 1 axes, needs at least 2" (fun () ->
+  raises
+    (Invalid_argument
+       "Kaun_hf.transpose: entry \"v\" has 1 axes, needs at least 2") (fun () ->
       Hf.transpose "v" (Checkpoint.of_tensor "v" (vec [| 1.0 |])))
 
 let test_split () =
@@ -242,18 +243,19 @@ let test_split_axis () =
   check_entry ~msg:"bottom" [| 3.0; 4.0 |] "bottom" ckpt
 
 let test_split_errors () =
-  raises_invalid_arg "Kaun_hf.split: no entry named \"x\"" (fun () ->
+  raises (Invalid_argument "Kaun_hf.split: no entry named \"x\"") (fun () ->
       Hf.split "x" ~into:[ "a" ] Checkpoint.empty);
   let ckpt = Checkpoint.of_tensor "x" (vec [| 1.0; 2.0; 3.0 |]) in
-  raises_invalid_arg "Kaun_hf.split: empty name list" (fun () ->
+  raises (Invalid_argument "Kaun_hf.split: empty name list") (fun () ->
       Hf.split "x" ~into:[] ckpt);
-  raises_invalid_arg
-    "Kaun_hf.split: axis 0 of entry \"x\" has size 3, not a multiple of 2"
+  raises
+    (Invalid_argument
+       "Kaun_hf.split: axis 0 of entry \"x\" has size 3, not a multiple of 2")
     (fun () -> Hf.split "x" ~into:[ "a"; "b" ] ckpt);
-  raises_invalid_arg "Kaun_hf.split: axis out of bounds for entry \"x\""
+  raises (Invalid_argument "Kaun_hf.split: axis out of bounds for entry \"x\"")
     (fun () -> Hf.split ~axis:1 "x" ~into:[ "a" ] ckpt);
   let two = two_entries () in
-  raises_invalid_arg "Kaun_hf.split: duplicate name \"b\"" (fun () ->
+  raises (Invalid_argument "Kaun_hf.split: duplicate name \"b\"") (fun () ->
       Hf.split "a" ~into:[ "b"; "c" ] two)
 
 (* End to end: a GPT-2-style fused attention block, remapped into a typed

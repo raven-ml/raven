@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package vega)
- (libraries vega nx))
+ (libraries vega nx unix))

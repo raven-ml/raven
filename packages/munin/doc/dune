@@ -1,4 +1,5 @@
 (mdx
  (files *.md)
  (package munin)
+ (libraries unix)
  (deps))

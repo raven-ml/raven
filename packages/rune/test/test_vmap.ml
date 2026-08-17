@@ -208,7 +208,7 @@ let test_in_axes_negative_axis () =
   check_arr ~msg:"negative axis" (to_arr expected) y
 
 let test_in_axes_out_of_bounds () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vmap ~in_axes:[ Some 2; None ]
            (module Pair)
@@ -216,7 +216,7 @@ let test_in_axes_out_of_bounds () =
            { fst = xs (); snd = xs () }))
 
 let test_in_axes_length_mismatch () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vmap ~in_axes:[ Some 0 ]
            (module Pair)
@@ -224,7 +224,7 @@ let test_in_axes_length_mismatch () =
            { fst = xs (); snd = xs () }))
 
 let test_in_axes_maps_no_leaf () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vmap ~in_axes:[ None; None ]
            (module Pair)
@@ -242,7 +242,7 @@ let test_structural_out_axis () =
   check_arr ~msg:"values" (to_arr (Nx.transpose (Nx.add (xs ()) (xs ())))) y
 
 let test_batch_size_mismatch () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vmap
            (module Pair)
@@ -250,11 +250,11 @@ let test_batch_size_mismatch () =
            { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 1.0; 2.0; 3.0 |] }))
 
 let test_scalar_leaf_rejected () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.vmap' (fun x -> x) (Nx.scalar f64 1.0)))
 
 let test_reading_batched_value_raises () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vmap'
            (fun r ->
@@ -270,7 +270,7 @@ let test_reading_constant_value_is_fine () =
   check_arr ~msg:"constant read" (to_arr (Nx.mul_s (xs ()) 2.0)) y
 
 let test_no_rule_raises () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vmap'
            (fun m -> Nx.cholesky m)

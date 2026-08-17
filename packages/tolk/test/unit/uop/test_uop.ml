@@ -8,9 +8,9 @@ let string_option =
     | None -> Format.pp_print_string fmt "None"
     | Some s -> Format.fprintf fmt "Some %S" s
   in
-  testable ~pp ~equal:(Option.equal String.equal) ()
+  Testable.make ~pp ~equal:(Option.equal String.equal)
 
-let op_testable = testable ~pp:Ops.pp ~equal:Ops.equal ()
+let op_testable = Testable.make ~pp:Ops.pp ~equal:Ops.equal
 
 let launch_value_testable =
   let pp fmt = function
@@ -24,7 +24,7 @@ let launch_value_testable =
         Float.equal a b
     | _ -> false
   in
-  testable ~pp ~equal ()
+  Testable.make ~pp ~equal
 
 let contains haystack needle =
   let n = String.length haystack and m = String.length needle in
@@ -1388,7 +1388,7 @@ let debug_prints_toposort_like_tinygrad () =
      \   1 Ops.CONST           :            dtypes.weakint                           []                               2\n\
      \   2 Ops.ADD             :            dtypes.weakint                           ['1', '2']                       None\n"
   in
-  equal string expected (Render.uops_to_string add)
+  equal text expected (Render.uops_to_string add)
 
 let debug_prints_ranges_and_supplied_list_sources () =
   let r =
@@ -1401,12 +1401,12 @@ let debug_prints_ranges_and_supplied_list_sources () =
      \   2 Ops.CONST           :            dtypes.weakint                           []                               1\n\
      \   3 Ops.ADD             : 0          dtypes.weakint                           [1, '1']                         None\n"
   in
-  equal string expected_toposort (Render.uops_to_string expr);
+  equal text expected_toposort (Render.uops_to_string expr);
   let expected_list =
     "   0 Ops.ADD             : 0          dtypes.weakint                           [1, '--']                        None\n\
      \   1 Ops.RANGE           : 0          dtypes.weakint                           ['--']                           (0, AxisType.WEAK)\n"
   in
-  equal string expected_list (Render.uops_list_to_string [ expr; r ])
+  equal text expected_list (Render.uops_list_to_string [ expr; r ])
 
 let debug_prints_tinygrad_dtype_reprs () =
   let vec = Uop.stack [ Uop.const_int 1; Uop.const_int 2 ] in
@@ -1553,7 +1553,7 @@ let debug_print_ignores_side_metadata () =
     { name = "trace"; backward = true }
   in
   ignore (Uop.with_metadata [ metadata ] base);
-  equal string before (Render.uops_to_string base)
+  equal text before (Render.uops_to_string base)
 
 let debug_listing_omits_tags () =
   let leaf = Uop.with_tag "golden-leaf" (Uop.const_int 303) in

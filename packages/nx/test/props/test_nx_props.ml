@@ -18,59 +18,61 @@ let arithmetic_props =
   [
     (* Addition *)
     prop "add commutative (f32)" f32_pair (fun (a, b) ->
-        approx_equal (Nx.add a b) (Nx.add b a));
+        equal (approx ()) (Nx.add b a) (Nx.add a b));
     prop "add commutative (i32)" i32_pair (fun (a, b) ->
-        exact_equal (Nx.add a b) (Nx.add b a));
+        equal (exact ()) (Nx.add b a) (Nx.add a b));
     prop "add identity (f32)" f32_any (fun a ->
-        approx_equal (Nx.add a (Nx.zeros_like a)) a);
+        equal (approx ()) a (Nx.add a (Nx.zeros_like a)));
     prop "add identity (i32)" i32_any (fun a ->
-        exact_equal (Nx.add a (Nx.zeros_like a)) a);
+        equal (exact ()) a (Nx.add a (Nx.zeros_like a)));
     prop "add inverse (f32)" f32_any (fun a ->
         let z = Nx.add a (Nx.neg a) in
-        approx_equal z (Nx.zeros_like a));
+        equal (approx ()) (Nx.zeros_like a) z);
     prop "sub is add neg (f32)" f32_pair (fun (a, b) ->
-        approx_equal (Nx.sub a b) (Nx.add a (Nx.neg b)));
+        equal (approx ()) (Nx.add a (Nx.neg b)) (Nx.sub a b));
     prop "sub is add neg (i32)" i32_pair (fun (a, b) ->
-        exact_equal (Nx.sub a b) (Nx.add a (Nx.neg b)));
+        equal (exact ()) (Nx.add a (Nx.neg b)) (Nx.sub a b));
     (* Multiplication *)
     prop "mul commutative (f32)" f32_pair (fun (a, b) ->
-        approx_equal (Nx.mul a b) (Nx.mul b a));
+        equal (approx ()) (Nx.mul b a) (Nx.mul a b));
     prop "mul commutative (i32)" i32_pair (fun (a, b) ->
-        exact_equal (Nx.mul a b) (Nx.mul b a));
+        equal (exact ()) (Nx.mul b a) (Nx.mul a b));
     prop "mul identity (f32)" f32_any (fun a ->
-        approx_equal (Nx.mul a (Nx.ones_like a)) a);
+        equal (approx ()) a (Nx.mul a (Nx.ones_like a)));
     prop "mul identity (i32)" i32_any (fun a ->
-        exact_equal (Nx.mul a (Nx.ones_like a)) a);
+        equal (exact ()) a (Nx.mul a (Nx.ones_like a)));
     prop "mul zero (f32)" f32_any (fun a ->
-        approx_equal (Nx.mul a (Nx.zeros_like a)) (Nx.zeros_like a));
+        equal (approx ()) (Nx.zeros_like a) (Nx.mul a (Nx.zeros_like a)));
     prop "mul zero (i32)" i32_any (fun a ->
-        exact_equal (Nx.mul a (Nx.zeros_like a)) (Nx.zeros_like a));
+        equal (exact ()) (Nx.zeros_like a) (Nx.mul a (Nx.zeros_like a)));
     prop "distributive (i32)" i32_triple (fun (a, b, c) ->
-        exact_equal (Nx.mul a (Nx.add b c)) (Nx.add (Nx.mul a b) (Nx.mul a c)));
+        equal (exact ())
+          (Nx.add (Nx.mul a b) (Nx.mul a c))
+          (Nx.mul a (Nx.add b c)));
     (* Division / Modulo *)
     prop "div inverse of mul (f32)" f32_pair (fun (a, b) ->
         assume (all_nonzero_f32 b);
-        allclose ~atol:1e-3 ~rtol:1e-3 (Nx.div (Nx.mul a b) b) a);
+        equal (close ~atol:1e-3 ~rtol:1e-3 ()) a (Nx.div (Nx.mul a b) b));
     prop "div self = ones (f32)" f32_any (fun a ->
         assume (all_nonzero_f32 a);
-        approx_equal (Nx.div a a) (Nx.ones_like a));
+        equal (approx ()) (Nx.ones_like a) (Nx.div a a));
     prop "int div/mod relation (i32)" i32_pair_b_nonzero (fun (a, b) ->
-        exact_equal (Nx.add (Nx.mul (Nx.div a b) b) (Nx.mod_ a b)) a);
+        equal (exact ()) a (Nx.add (Nx.mul (Nx.div a b) b) (Nx.mod_ a b)));
     (* Negation *)
     prop "neg involution (f32)" f32_any (fun a ->
-        approx_equal (Nx.neg (Nx.neg a)) a);
+        equal (approx ()) a (Nx.neg (Nx.neg a)));
     prop "neg involution (i32)" i32_any (fun a ->
-        exact_equal (Nx.neg (Nx.neg a)) a);
+        equal (exact ()) a (Nx.neg (Nx.neg a)));
     (* Min / Max *)
     prop "maximum commutative (f32)" f32_pair (fun (a, b) ->
         assume (no_nan a && no_nan b);
-        approx_equal (Nx.maximum a b) (Nx.maximum b a));
+        equal (approx ()) (Nx.maximum b a) (Nx.maximum a b));
     prop "minimum commutative (f32)" f32_pair (fun (a, b) ->
         assume (no_nan a && no_nan b);
-        approx_equal (Nx.minimum a b) (Nx.minimum b a));
+        equal (approx ()) (Nx.minimum b a) (Nx.minimum a b));
     prop "maximum idempotent (f32)" f32_any (fun a ->
         assume (no_nan a);
-        approx_equal (Nx.maximum a a) a);
+        equal (approx ()) a (Nx.maximum a a));
   ]
 
 (* ── Shape Manipulation Properties ── *)
@@ -79,32 +81,31 @@ let shape_props =
   [
     prop "reshape roundtrip (f32)" f32_any (fun t ->
         let flat = Nx.flatten t in
-        approx_equal (Nx.reshape (Nx.shape t) flat) t);
+        equal (approx ()) t (Nx.reshape (Nx.shape t) flat));
     prop "flatten preserves data (f32)" f32_any (fun t ->
-        Nx.to_array (Nx.flatten t) = Nx.to_array t);
+        equal (array float_exact) (Nx.to_array t) (Nx.to_array (Nx.flatten t)));
     prop "transpose involution (2d f32)" f32_2d (fun t ->
-        approx_equal (Nx.transpose (Nx.transpose t)) t);
+        equal (approx ()) t (Nx.transpose (Nx.transpose t)));
     prop "transpose shape (2d f32)" f32_2d (fun t ->
         let s = Nx.shape t in
-        let ts = Nx.shape (Nx.transpose t) in
-        ts = [| s.(1); s.(0) |]);
+        equal (array int) [| s.(1); s.(0) |] (Nx.shape (Nx.transpose t)));
     prop "flip involution (f32)" f32_any (fun t ->
-        approx_equal (Nx.flip (Nx.flip t)) t);
+        equal (approx ()) t (Nx.flip (Nx.flip t)));
     prop "copy preserves data (f32)" f32_any (fun t ->
-        approx_equal (Nx.copy t) t);
+        equal (approx ()) t (Nx.copy t));
     prop "copy independence (f32)" f32_any (fun t ->
         assume (Nx.numel t > 0);
         let c = Nx.copy t in
         let orig_first = Nx.item [ 0 ] (Nx.flatten t) in
         Nx.set_item [ 0 ] 99999.0 (Nx.flatten c);
-        let after_first = Nx.item [ 0 ] (Nx.flatten t) in
-        Float.equal orig_first after_first);
+        equal ~msg:"the source is untouched" float_exact orig_first
+          (Nx.item [ 0 ] (Nx.flatten t)));
     prop "contiguous is contiguous (f32)" f32_any (fun t ->
-        Nx.is_c_contiguous (Nx.contiguous t));
+        is_true (Nx.is_c_contiguous (Nx.contiguous t)));
     prop "contiguous preserves data (f32)" f32_any (fun t ->
-        approx_equal (Nx.contiguous t) t);
+        equal (approx ()) t (Nx.contiguous t));
     prop "reshape preserves numel (f32)" f32_any (fun t ->
-        Nx.numel (Nx.flatten t) = Nx.numel t);
+        equal int (Nx.numel t) (Nx.numel (Nx.flatten t)));
   ]
 
 (* ── Comparison Properties ── *)
@@ -113,20 +114,22 @@ let comparison_props =
   [
     prop "equal reflexive (f32)" f32_any (fun a ->
         assume (no_nan a);
-        all_true (Nx.equal a a));
+        is_true @@ all_true (Nx.equal a a));
     prop "less irreflexive (f32)" f32_any (fun a ->
-        all_true (Nx.logical_not (Nx.less a a)));
+        is_true @@ all_true (Nx.logical_not (Nx.less a a)));
     prop "less/greater complement (f32)" f32_pair (fun (a, b) ->
-        all_true (Nx.array_equal (Nx.less a b) (Nx.greater b a)));
+        is_true @@ all_true (Nx.array_equal (Nx.less a b) (Nx.greater b a)));
     prop "less_equal from less|equal (f32)" f32_pair (fun (a, b) ->
         assume (no_nan a && no_nan b);
-        all_true
-          (Nx.array_equal (Nx.less_equal a b)
-             (Nx.logical_or (Nx.less a b) (Nx.equal a b))));
+        is_true
+        @@ all_true
+             (Nx.array_equal (Nx.less_equal a b)
+                (Nx.logical_or (Nx.less a b) (Nx.equal a b))));
     prop "not_equal complement of equal (f32)" f32_pair (fun (a, b) ->
         assume (no_nan a && no_nan b);
-        all_true
-          (Nx.array_equal (Nx.not_equal a b) (Nx.logical_not (Nx.equal a b))));
+        is_true
+        @@ all_true
+             (Nx.array_equal (Nx.not_equal a b) (Nx.logical_not (Nx.equal a b))));
   ]
 
 (* ── Logical & Bitwise Properties ── *)
@@ -134,43 +137,42 @@ let comparison_props =
 let logical_bitwise_props =
   [
     prop "bitwise_not involution (i32)" i32_any (fun a ->
-        exact_equal (Nx.bitwise_not (Nx.bitwise_not a)) a);
+        equal (exact ()) a (Nx.bitwise_not (Nx.bitwise_not a)));
     prop "bitwise_and commutative (i32)" i32_pair (fun (a, b) ->
-        exact_equal (Nx.bitwise_and a b) (Nx.bitwise_and b a));
+        equal (exact ()) (Nx.bitwise_and b a) (Nx.bitwise_and a b));
     prop "bitwise_or commutative (i32)" i32_pair (fun (a, b) ->
-        exact_equal (Nx.bitwise_or a b) (Nx.bitwise_or b a));
+        equal (exact ()) (Nx.bitwise_or b a) (Nx.bitwise_or a b));
     prop "bitwise_xor self = zeros (i32)" i32_any (fun a ->
-        exact_equal (Nx.bitwise_xor a a) (Nx.zeros_like a));
+        equal (exact ()) (Nx.zeros_like a) (Nx.bitwise_xor a a));
     prop "de morgan and (i32)" i32_pair (fun (a, b) ->
-        exact_equal
-          (Nx.bitwise_not (Nx.bitwise_and a b))
-          (Nx.bitwise_or (Nx.bitwise_not a) (Nx.bitwise_not b)));
+        equal (exact ())
+          (Nx.bitwise_or (Nx.bitwise_not a) (Nx.bitwise_not b))
+          (Nx.bitwise_not (Nx.bitwise_and a b)));
     prop "de morgan or (i32)" i32_pair (fun (a, b) ->
-        exact_equal
-          (Nx.bitwise_not (Nx.bitwise_or a b))
-          (Nx.bitwise_and (Nx.bitwise_not a) (Nx.bitwise_not b)));
+        equal (exact ())
+          (Nx.bitwise_and (Nx.bitwise_not a) (Nx.bitwise_not b))
+          (Nx.bitwise_not (Nx.bitwise_or a b)));
   ]
 
 (* ── Rounding Properties ── *)
 
 let rounding_props =
-  let open Nx in
   [
     prop "floor <= input (f32)" f32_any (fun x ->
         assume (all_finite x);
-        all_true (less_equal (floor x) x));
+        is_true @@ all_true (Nx.less_equal (Nx.floor x) x));
     prop "ceil >= input (f32)" f32_any (fun x ->
         assume (all_finite x);
-        all_true (greater_equal (ceil x) x));
+        is_true @@ all_true (Nx.greater_equal (Nx.ceil x) x));
     prop "floor idempotent (f32)" f32_any (fun x ->
         assume (all_finite x);
-        approx_equal (floor (floor x)) (floor x));
+        equal (approx ()) (Nx.floor x) (Nx.floor (Nx.floor x)));
     prop "ceil idempotent (f32)" f32_any (fun x ->
         assume (all_finite x);
-        approx_equal (ceil (ceil x)) (ceil x));
+        equal (approx ()) (Nx.ceil x) (Nx.ceil (Nx.ceil x)));
     prop "round idempotent (f32)" f32_any (fun x ->
         assume (all_finite x);
-        approx_equal (round (round x)) (round x));
+        equal (approx ()) (Nx.round x) (Nx.round (Nx.round x)));
   ]
 
 (* ── Sorting Properties ── *)
@@ -180,36 +182,34 @@ let sorting_props =
     prop "sort is sorted (f32 1d)" f32_1d (fun x ->
         assume (no_nan x);
         let sorted, _indices = Nx.sort x in
-        let n = Nx.numel sorted in
-        let rec check i =
-          if i >= n then true
-          else Nx.item [ i - 1 ] sorted <= Nx.item [ i ] sorted && check (i + 1)
-        in
-        n <= 1 || check 1);
+        let values = Nx.to_array sorted in
+        equal ~msg:"sorted" (array float_exact)
+          (Array.of_list (List.sort Float.compare (Array.to_list values)))
+          values);
     prop "sort idempotent (f32 1d)" f32_1d (fun x ->
         assume (no_nan x);
         let s1, _ = Nx.sort x in
         let s2, _ = Nx.sort s1 in
-        approx_equal s1 s2);
+        equal (approx ()) s2 s1);
     prop "sort preserves shape (f32 1d)" f32_1d (fun x ->
         let sorted, _ = Nx.sort x in
-        Nx.shape sorted = Nx.shape x);
+        equal (array int) (Nx.shape x) (Nx.shape sorted));
     prop "argsort valid indices (f32 1d)" f32_1d (fun x ->
         let _, indices = Nx.sort x in
         let n = Nx.numel x in
-        let valid = ref true in
-        for i = 0 to n - 1 do
-          let idx = Int32.to_int (Nx.item [ i ] indices) in
-          if idx < 0 || idx >= n then valid := false
-        done;
-        !valid);
+        Array.iter
+          (fun i ->
+            satisfies ~msg:"index in range" int32
+              (fun i -> Int32.to_int i >= 0 && Int32.to_int i < n)
+              i)
+          (Nx.to_array indices));
     prop "sort preserves elements (i32 1d)" i32_1d (fun x ->
         let sorted, _ = Nx.sort x in
         let a = Array.copy (Nx.to_array x) in
         let b = Array.copy (Nx.to_array sorted) in
         Array.sort Int32.compare a;
         Array.sort Int32.compare b;
-        a = b);
+        equal (array int32) a b);
   ]
 
 (* ── Math Function Properties ── *)
@@ -221,7 +221,7 @@ let math_function_props =
       let* shape = gen_shape ~max_ndim:3 ~max_dim:4 in
       gen_tensor_with_values Nx.float32 gen_val shape
     in
-    mk_testable_f32 gen
+    tensor gen
   in
   let f32_small = mk_f32_constrained gen_float_small in
   let f32_positive = mk_f32_constrained gen_float_positive in
@@ -231,31 +231,35 @@ let math_function_props =
   [
     prop "exp/log inverse (f32)" f32_small (fun x ->
         assume (all_finite x);
-        allclose ~atol:1e-4 ~rtol:1e-4 (Nx.log (Nx.exp x)) x);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) x (Nx.log (Nx.exp x)));
     prop "log/exp inverse (f32)" f32_positive (fun x ->
-        allclose ~atol:1e-4 ~rtol:1e-4 (Nx.exp (Nx.log x)) x);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) x (Nx.exp (Nx.log x)));
     prop "sin^2 + cos^2 = 1 (f32)" f32_trig (fun x ->
         let sum = Nx.add (Nx.square (Nx.sin x)) (Nx.square (Nx.cos x)) in
-        allclose ~atol:1e-4 ~rtol:0. sum (Nx.ones_like x));
+        equal (close ~atol:1e-4 ~rtol:0. ()) (Nx.ones_like x) sum);
     prop "sqrt(square(x)) = abs(x) (f32)" f32_any (fun x ->
         assume (all_finite x);
-        allclose ~atol:1e-4 ~rtol:1e-4 (Nx.sqrt (Nx.square x)) (Nx.abs x));
+        equal
+          (close ~atol:1e-4 ~rtol:1e-4 ())
+          (Nx.abs x)
+          (Nx.sqrt (Nx.square x)));
     prop "abs idempotent (f32)" f32_any (fun x ->
-        approx_equal (Nx.abs (Nx.abs x)) (Nx.abs x));
+        equal (approx ()) (Nx.abs x) (Nx.abs (Nx.abs x)));
     prop "sign * abs = x (f32)" f32_any (fun x ->
         assume (all_finite x && all_nonzero_f32 x);
-        approx_equal (Nx.mul (Nx.sign x) (Nx.abs x)) x);
+        equal (approx ()) x (Nx.mul (Nx.sign x) (Nx.abs x)));
     prop "tanh range (f32)" f32_any (fun x ->
         assume (all_finite x);
-        all_true (Nx.less_equal (Nx.abs (Nx.tanh x)) (Nx.ones_like x)));
+        is_true
+        @@ all_true (Nx.less_equal (Nx.abs (Nx.tanh x)) (Nx.ones_like x)));
     prop "recip involution (f32)" f32_recip (fun x ->
-        allclose ~atol:1e-3 ~rtol:1e-3 (Nx.recip (Nx.recip x)) x);
+        equal (close ~atol:1e-3 ~rtol:1e-3 ()) x (Nx.recip (Nx.recip x)));
     prop "square = mul self (f32)" f32_any (fun x ->
-        approx_equal (Nx.square x) (Nx.mul x x));
+        equal (approx ()) (Nx.mul x x) (Nx.square x));
     prop "asin(sin(x)) = x (f32)" f32_unit (fun x ->
         (* asin(sin(x)) = x only when x in [-pi/2, pi/2]; use values in (-1,1)
            which are well within that range when interpreted as radians *)
-        allclose ~atol:1e-4 ~rtol:1e-4 (Nx.asin (Nx.sin x)) x);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) x (Nx.asin (Nx.sin x)));
   ]
 
 (* ── Reduction Properties ── *)
@@ -264,38 +268,41 @@ let reduction_props =
   [
     prop "sum of ones = numel (f32)" f32_any (fun t ->
         let ones = Nx.ones_like t in
-        let s = Nx.item [] (Nx.sum ones) in
-        Float.abs (s -. Float.of_int (Nx.numel t)) < 1e-5);
+        equal (float 1e-5)
+          (Float.of_int (Nx.numel t))
+          (Nx.item [] (Nx.sum ones)));
     prop "prod of ones = 1 (f32)" f32_any (fun t ->
         let ones = Nx.ones_like t in
-        Float.abs (Nx.item [] (Nx.prod ones) -. 1.0) < 1e-5);
+        equal (float 1e-5) 1.0 (Nx.item [] (Nx.prod ones)));
     prop "mean = sum / numel (f32)" f32_any (fun t ->
         assume (Nx.numel t > 0);
         let m = Nx.item [] (Nx.mean t) in
         let s = Nx.item [] (Nx.sum t) in
         let n = Float.of_int (Nx.numel t) in
-        Float.abs (m -. (s /. n)) < 1e-4);
+        equal (float 1e-4) (s /. n) m);
     prop "max >= all elements (f32)" f32_any (fun t ->
         assume (no_nan t && Nx.numel t > 0);
         let mx = Nx.max t in
-        all_true (Nx.less_equal t (Nx.broadcast_to (Nx.shape t) mx)));
+        is_true @@ all_true (Nx.less_equal t (Nx.broadcast_to (Nx.shape t) mx)));
     prop "min <= all elements (f32)" f32_any (fun t ->
         assume (no_nan t && Nx.numel t > 0);
         let mn = Nx.min t in
-        all_true (Nx.greater_equal t (Nx.broadcast_to (Nx.shape t) mn)));
+        is_true
+        @@ all_true (Nx.greater_equal t (Nx.broadcast_to (Nx.shape t) mn)));
     prop "var >= 0 (f32)" f32_any (fun t ->
         assume (Nx.numel t > 0);
-        Nx.item [] (Nx.var t) >= 0.0);
+        satisfies ~msg:"non-negative" float_exact
+          (fun v -> v >= 0.0)
+          (Nx.item [] (Nx.var t)));
     prop "sum linearity (f32)" f32_pair (fun (a, b) ->
         let lhs = Nx.item [] (Nx.sum (Nx.add a b)) in
         let rhs = Nx.item [] (Nx.sum a) +. Nx.item [] (Nx.sum b) in
-        Float.abs (lhs -. rhs) < 1e-2);
+        equal (float 1e-2) rhs lhs);
     prop "cumsum last = sum (f32 1d)" f32_1d (fun t ->
         assume (all_finite t && Nx.numel t > 0);
         let cs = Nx.cumsum t in
         let last = Nx.item [ Nx.numel t - 1 ] cs in
-        let total = Nx.item [] (Nx.sum t) in
-        Float.abs (last -. total) < 1e-3);
+        equal (float 1e-3) (Nx.item [] (Nx.sum t)) last);
   ]
 
 (* ── Linear Algebra Properties ── *)
@@ -305,7 +312,7 @@ let linalg_props =
     prop "matmul identity (f64)" square_f64 (fun a ->
         let n = (Nx.shape a).(0) in
         let eye = Nx.eye Nx.float64 n in
-        approx_equal ~epsilon:1e-10 (Nx.matmul a eye) a);
+        equal (approx ~epsilon:1e-10 ()) a (Nx.matmul a eye));
     prop "transpose matmul (f64)"
       (let gen =
          let open Gen in
@@ -317,44 +324,37 @@ let linalg_props =
          in
          (a, b)
        in
-       Testable.make
-         ~pp:(pp_pair pp_tensor pp_tensor)
-         ~equal:(fun (a1, b1) (a2, b2) ->
-           approx_equal ~epsilon:1e-10 a1 a2
-           && approx_equal ~epsilon:1e-10 b1 b2)
-         ~gen ())
+       Gen.with_pp (pp_pair pp_tensor pp_tensor) gen)
       (fun (a, b) ->
         let lhs = Nx.transpose (Nx.matmul a b) in
         let rhs = Nx.matmul (Nx.transpose b) (Nx.transpose a) in
-        approx_equal ~epsilon:1e-8 lhs rhs);
+        equal (approx ~epsilon:1e-8 ()) rhs lhs);
     prop "trace = sum diagonal (f64)" square_f64 (fun a ->
         let tr = Nx.item [] (Nx.trace a) in
-        let diag_sum = Nx.item [] (Nx.sum (Nx.diagonal a)) in
-        Float.abs (tr -. diag_sum) < 1e-10);
+        equal (float 1e-10) (Nx.item [] (Nx.sum (Nx.diagonal a))) tr);
     prop "inv roundtrip (f64 posdef)" posdef_f64 (fun a ->
         let n = (Nx.shape a).(0) in
         let eye = Nx.eye Nx.float64 n in
         let inv_a = Nx.inv a in
-        allclose ~atol:1e-6 ~rtol:1e-6 (Nx.matmul inv_a a) eye);
+        equal (close ~atol:1e-6 ~rtol:1e-6 ()) eye (Nx.matmul inv_a a));
     prop "qr reconstruction (f64)" square_f64 (fun a ->
         let q, r = Nx.qr a in
-        allclose ~atol:1e-6 ~rtol:1e-6 (Nx.matmul q r) a);
+        equal (close ~atol:1e-6 ~rtol:1e-6 ()) a (Nx.matmul q r));
     prop "svd reconstruction (f64)" square_f64 (fun a ->
         let u, s, vh = Nx.svd a in
         let n = (Nx.shape a).(0) in
         let s_diag = Nx.mul (Nx.eye Nx.float64 n) (Nx.reshape [| 1; n |] s) in
         let reconstructed = Nx.matmul (Nx.matmul u s_diag) vh in
-        allclose ~atol:1e-6 ~rtol:1e-6 reconstructed a);
+        equal (close ~atol:1e-6 ~rtol:1e-6 ()) a reconstructed);
     prop "cholesky reconstruction (f64 posdef)" posdef_f64 (fun a ->
         let l = Nx.cholesky a in
         let reconstructed = Nx.matmul l (Nx.transpose l) in
-        allclose ~atol:1e-6 ~rtol:1e-6 reconstructed a);
+        equal (close ~atol:1e-6 ~rtol:1e-6 ()) a reconstructed);
     prop "det of identity = 1"
-      (Testable.make ~pp:Format.pp_print_int ~equal:Int.equal
-         ~gen:(Gen.int_range 1 6) ())
+      (Gen.with_pp Format.pp_print_int (Gen.int_range 1 6))
       (fun n ->
         let eye = Nx.eye Nx.float64 n in
-        Float.abs (Nx.item [] (Nx.det eye) -. 1.0) < 1e-10);
+        equal (float 1e-10) 1.0 (Nx.item [] (Nx.det eye)));
   ]
 
 (* ── Concatenation Properties ── *)
@@ -362,7 +362,7 @@ let linalg_props =
 let concat_props =
   [
     prop "concat single = identity (f32)" f32_any (fun t ->
-        approx_equal (Nx.concatenate ~axis:0 [ t ]) t);
+        equal (approx ()) t (Nx.concatenate ~axis:0 [ t ]));
     prop "concat shape (f32)" f32_pair (fun (a, b) ->
         let sa = Nx.shape a and sb = Nx.shape b in
         assume
@@ -371,16 +371,17 @@ let concat_props =
           && Array.sub sa 1 (Array.length sa - 1)
              = Array.sub sb 1 (Array.length sb - 1));
         let c = Nx.concatenate ~axis:0 [ a; b ] in
-        (Nx.shape c).(0) = sa.(0) + sb.(0));
+        equal int (sa.(0) + sb.(0)) (Nx.shape c).(0));
     prop "stack creates axis (f32)" f32_pair (fun (a, b) ->
         assume (Nx.shape a = Nx.shape b);
         let s = Nx.stack ~axis:0 [ a; b ] in
-        Nx.ndim s = Nx.ndim a + 1 && (Nx.shape s).(0) = 2);
+        equal ~msg:"rank" int (Nx.ndim a + 1) (Nx.ndim s);
+        equal ~msg:"new axis" int 2 (Nx.shape s).(0));
     prop "concat/split roundtrip (f32 1d)" f32_1d (fun t ->
         let n = Nx.numel t in
         assume (n >= 2 && n mod 2 = 0);
         let parts = Nx.split ~axis:0 2 t in
-        approx_equal (Nx.concatenate ~axis:0 parts) t);
+        equal (approx ()) t (Nx.concatenate ~axis:0 parts));
   ]
 
 (* ── Indexing Properties ── *)
@@ -391,42 +392,39 @@ let indexing_props =
         let c = Nx.copy t in
         let v = 42.0 in
         Nx.set_item indices v c;
-        Float.equal (Nx.item indices c) v);
+        equal float_exact v (Nx.item indices c));
     prop "get/set roundtrip (f32)" f32_any (fun t ->
         assume (Nx.ndim t >= 1);
         let c = Nx.copy t in
         let idx = [ 0 ] in
         let sub = Nx.get idx t in
         Nx.set idx c sub;
-        approx_equal (Nx.get idx c) sub);
+        equal (approx ()) sub (Nx.get idx c));
     prop "slice A is identity (f32)" f32_any (fun t ->
         let spec = List.init (Nx.ndim t) (fun _ -> Nx.A) in
-        approx_equal (Nx.slice spec t) t);
+        equal (approx ()) t (Nx.slice spec t));
     prop "slice full range = identity (f32 1d)" f32_1d (fun t ->
         let n = Nx.numel t in
-        approx_equal (Nx.slice [ Nx.R (0, n) ] t) t);
+        equal (approx ()) t (Nx.slice [ Nx.R (0, n) ] t));
     prop "take all indices = identity (f32 1d)" f32_1d (fun t ->
         let n = Nx.numel t in
         let indices = Nx.arange Nx.int32 0 n 1 in
-        approx_equal (Nx.take ~indices t) t);
+        equal (approx ()) t (Nx.take ~indices t));
     prop "take indices valid (f32 1d)" f32_1d_with_take_indices
       (fun (t, indices) ->
         let taken = Nx.take ~indices t in
-        let n_idx = Nx.numel indices in
-        let ok = ref true in
-        for i = 0 to n_idx - 1 do
+        for i = 0 to Nx.numel indices - 1 do
           let idx = Int32.to_int (Nx.item [ i ] indices) in
-          let expected = Nx.item [ idx ] t in
-          let actual = Nx.item [ i ] taken in
-          if not (Float.equal expected actual) then ok := false
-        done;
-        !ok);
+          equal
+            ~msg:(Printf.sprintf "element %d" i)
+            float_exact (Nx.item [ idx ] t) (Nx.item [ i ] taken)
+        done);
     prop "take_along_axis with argsort = sort (f32 1d)" f32_1d (fun t ->
         assume (no_nan t);
         let sorted, _ = Nx.sort t in
         let arg_indices = Nx.argsort t in
         let gathered = Nx.take_along_axis ~axis:0 ~indices:arg_indices t in
-        approx_equal gathered sorted);
+        equal (approx ()) sorted gathered);
     prop "extract preserves count (f32)" f32_with_mask (fun (t, mask) ->
         let extracted = Nx.extract ~condition:mask t in
         let n_true =
@@ -437,25 +435,24 @@ let indexing_props =
           done;
           !count
         in
-        Nx.numel extracted = n_true);
+        equal int n_true (Nx.numel extracted));
     prop "set_slice/slice roundtrip (f32)" f32_any (fun t ->
         assume (Nx.ndim t >= 1 && (Nx.shape t).(0) >= 1);
         let spec = [ Nx.R (0, 1) ] in
         let sub = Nx.slice spec t in
         let c = Nx.copy t in
         Nx.set_slice spec c sub;
-        approx_equal c t);
+        equal (approx ()) t c);
     prop "nonzero indices are valid (i32 1d)" i32_1d (fun t ->
         let nz = Nx.nonzero t in
         let indices = nz.(0) in
         let n = Nx.numel t in
-        let ok = ref true in
-        for i = 0 to Nx.numel indices - 1 do
-          let idx = Int32.to_int (Nx.item [ i ] indices) in
-          if idx < 0 || idx >= n then ok := false
-          else if Int32.equal (Nx.item [ idx ] t) 0l then ok := false
-        done;
-        !ok);
+        Array.iter
+          (fun i ->
+            let idx = Int32.to_int i in
+            satisfies ~msg:"index in range" int (fun i -> i >= 0 && i < n) idx;
+            not_equal ~msg:"selects a nonzero" int32 0l (Nx.item [ idx ] t))
+          (Nx.to_array indices));
   ]
 
 (* ── Broadcasting Properties ── *)
@@ -465,44 +462,50 @@ let broadcasting_props =
     prop "broadcast_to idempotent (f32)" f32_with_broadcast_shape
       (fun (t, target) ->
         let b = Nx.broadcast_to target t in
-        approx_equal (Nx.broadcast_to target b) b);
+        equal (approx ()) b (Nx.broadcast_to target b));
     prop "broadcast_to preserves values (f32)" f32_with_broadcast_shape
       (fun (t, target) ->
         let b = Nx.broadcast_to target t in
         (* Every element in broadcast result must exist in original *)
         let orig_vals = Nx.to_array (Nx.flatten (Nx.contiguous t)) in
         let bc_vals = Nx.to_array (Nx.flatten (Nx.contiguous b)) in
-        Array.for_all
-          (fun v -> Array.exists (fun o -> Float.equal v o) orig_vals)
+        Array.iter
+          (fun v ->
+            satisfies ~msg:"value came from the source" float_exact
+              (fun v -> Array.exists (fun o -> Float.equal v o) orig_vals)
+              v)
           bc_vals);
     prop "broadcasted common shape (f32)" f32_broadcastable_pair (fun (a, b) ->
         let a', b' = Nx.broadcasted a b in
-        Nx.shape a' = Nx.shape b');
+        equal (array int) (Nx.shape a') (Nx.shape b'));
     prop "broadcasted symmetric shape (f32)" f32_broadcastable_pair
       (fun (a, b) ->
         let a1, _ = Nx.broadcasted a b in
         let _, b2 = Nx.broadcasted b a in
-        Nx.shape a1 = Nx.shape b2);
+        equal (array int) (Nx.shape a1) (Nx.shape b2));
     prop "broadcast scalar to any shape (f32)" f32_any (fun t ->
         let v = 3.0 in
         let s = Nx.scalar Nx.float32 v in
         let b = Nx.broadcast_to (Nx.shape t) s in
-        Nx.shape b = Nx.shape t && all_true (Nx.equal b (Nx.full_like t v)));
+        equal ~msg:"shape" (array int) (Nx.shape t) (Nx.shape b);
+        is_true ~msg:"every element is the scalar"
+        @@ all_true (Nx.equal b (Nx.full_like t v)));
     prop "add with broadcast = add after broadcast (f32)" f32_broadcastable_pair
       (fun (a, b) ->
         let result = Nx.add a b in
         let a', b' = Nx.broadcasted a b in
         let result2 = Nx.add a' b' in
-        approx_equal result result2);
+        equal (approx ()) result2 result);
     prop "expand_dims/squeeze roundtrip (f32)" f32_any (fun t ->
         let expanded = Nx.unsqueeze ~axes:[ 0 ] t in
         let squeezed = Nx.squeeze ~axes:[ 0 ] expanded in
-        approx_equal squeezed t);
+        equal (approx ()) t squeezed);
     prop "broadcast_arrays consistent with broadcasted (f32)"
       f32_broadcastable_pair (fun (a, b) ->
         let arr = Nx.broadcast_arrays [ a; b ] in
         let a', b' = Nx.broadcasted a b in
-        approx_equal (List.nth arr 0) a' && approx_equal (List.nth arr 1) b');
+        equal (approx ()) a' (List.nth arr 0);
+        equal (approx ()) b' (List.nth arr 1));
   ]
 
 (* ── Einsum Equivalence Properties ── *)
@@ -517,10 +520,7 @@ let einsum_props =
       let+ a = gen_f32 [| m; n |] and+ b = gen_f32 [| n; k |] in
       (a, b)
     in
-    Testable.make
-      ~pp:(pp_pair pp_tensor pp_tensor)
-      ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-      ~gen ()
+    Gen.with_pp (pp_pair pp_tensor pp_tensor) gen
   in
   let mk_f32_1d_pair =
     let gen =
@@ -529,10 +529,7 @@ let einsum_props =
       let+ a = gen_f32 [| n |] and+ b = gen_f32 [| n |] in
       (a, b)
     in
-    Testable.make
-      ~pp:(pp_pair pp_tensor pp_tensor)
-      ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-      ~gen ()
+    Gen.with_pp (pp_pair pp_tensor pp_tensor) gen
   in
   let mk_f32_outer_pair =
     let gen =
@@ -542,37 +539,32 @@ let einsum_props =
       let+ a = gen_f32 [| m |] and+ b = gen_f32 [| n |] in
       (a, b)
     in
-    Testable.make
-      ~pp:(pp_pair pp_tensor pp_tensor)
-      ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-      ~gen ()
+    Gen.with_pp (pp_pair pp_tensor pp_tensor) gen
   in
   [
     (* einsum matmul = Nx.matmul *)
     prop "einsum ij,jk->ik = matmul" mk_f32_matmul_pair (fun (a, b) ->
         let via_einsum = Nx.einsum "ij,jk->ik" [| a; b |] in
         let via_matmul = Nx.matmul a b in
-        allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_matmul);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) via_matmul via_einsum);
     (* einsum transpose = Nx.transpose *)
     prop "einsum ij->ji = transpose" f32_2d (fun a ->
         let via_einsum = Nx.einsum "ij->ji" [| a |] in
         let via_transpose = Nx.transpose a in
-        approx_equal via_einsum via_transpose);
+        equal (approx ()) via_transpose via_einsum);
     (* einsum trace = Nx.trace *)
     prop "einsum ii-> = trace" square_f64 (fun a ->
         let via_einsum = Nx.item [] (Nx.einsum "ii->" [| a |]) in
-        let via_trace = Nx.item [] (Nx.trace a) in
-        Float.abs (via_einsum -. via_trace) < 1e-10);
+        equal (float 1e-10) (Nx.item [] (Nx.trace a)) via_einsum);
     (* einsum diagonal = Nx.diagonal *)
     prop "einsum ii->i = diagonal" square_f64 (fun a ->
         let via_einsum = Nx.einsum "ii->i" [| a |] in
         let via_diagonal = Nx.diagonal a in
-        approx_equal ~epsilon:1e-10 via_einsum via_diagonal);
+        equal (approx ~epsilon:1e-10 ()) via_diagonal via_einsum);
     (* einsum dot product = sum of elementwise mul *)
     prop "einsum i,i-> = dot" mk_f32_1d_pair (fun (a, b) ->
         let via_einsum = Nx.item [] (Nx.einsum "i,i->" [| a; b |]) in
-        let via_sum_mul = Nx.item [] (Nx.sum (Nx.mul a b)) in
-        Float.abs (via_einsum -. via_sum_mul) < 1e-3);
+        equal (float 1e-3) (Nx.item [] (Nx.sum (Nx.mul a b))) via_einsum);
     (* einsum outer product *)
     prop "einsum i,j->ij = outer" mk_f32_outer_pair (fun (a, b) ->
         let via_einsum = Nx.einsum "i,j->ij" [| a; b |] in
@@ -581,27 +573,26 @@ let einsum_props =
             (Nx.reshape [| Nx.numel a; 1 |] a)
             (Nx.reshape [| 1; Nx.numel b |] b)
         in
-        allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_outer);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) via_outer via_einsum);
     (* einsum total sum = Nx.sum *)
     prop "einsum ij-> = sum" f32_2d (fun a ->
         let via_einsum = Nx.item [] (Nx.einsum "ij->" [| a |]) in
-        let via_sum = Nx.item [] (Nx.sum a) in
-        Float.abs (via_einsum -. via_sum) < 1e-3);
+        equal (float 1e-3) (Nx.item [] (Nx.sum a)) via_einsum);
     (* einsum row sum = sum axis 1 *)
     prop "einsum ij->i = sum axis 1" f32_2d (fun a ->
         let via_einsum = Nx.einsum "ij->i" [| a |] in
         let via_sum = Nx.sum ~axes:[ 1 ] a in
-        allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_sum);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) via_sum via_einsum);
     (* einsum col sum = sum axis 0 *)
     prop "einsum ij->j = sum axis 0" f32_2d (fun a ->
         let via_einsum = Nx.einsum "ij->j" [| a |] in
         let via_sum = Nx.sum ~axes:[ 0 ] a in
-        allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_sum);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) via_sum via_einsum);
     (* einsum hadamard = elementwise mul *)
     prop "einsum i,i->i = mul" mk_f32_1d_pair (fun (a, b) ->
         let via_einsum = Nx.einsum "i,i->i" [| a; b |] in
         let via_mul = Nx.mul a b in
-        approx_equal via_einsum via_mul);
+        equal (approx ()) via_mul via_einsum);
     (* einsum Frobenius inner product *)
     prop "einsum ij,ij-> = sum(mul)"
       (let gen =
@@ -610,15 +601,10 @@ let einsum_props =
          let+ a = gen_f32 shape and+ b = gen_f32 shape in
          (a, b)
        in
-       Testable.make
-         ~pp:(pp_pair pp_tensor pp_tensor)
-         ~equal:(fun (a1, b1) (a2, b2) ->
-           approx_equal a1 a2 && approx_equal b1 b2)
-         ~gen ())
+       Gen.with_pp (pp_pair pp_tensor pp_tensor) gen)
       (fun (a, b) ->
         let via_einsum = Nx.item [] (Nx.einsum "ij,ij->" [| a; b |]) in
-        let via_sum_mul = Nx.item [] (Nx.sum (Nx.mul a b)) in
-        Float.abs (via_einsum -. via_sum_mul) < 1e-3);
+        equal (float 1e-3) (Nx.item [] (Nx.sum (Nx.mul a b))) via_einsum);
     (* einsum matvec = matmul with reshaped vector *)
     prop "einsum ij,j->i = matvec"
       (let gen =
@@ -628,11 +614,7 @@ let einsum_props =
          let+ a = gen_f32 [| m; n |] and+ b = gen_f32 [| n |] in
          (a, b)
        in
-       Testable.make
-         ~pp:(pp_pair pp_tensor pp_tensor)
-         ~equal:(fun (a1, b1) (a2, b2) ->
-           approx_equal a1 a2 && approx_equal b1 b2)
-         ~gen ())
+       Gen.with_pp (pp_pair pp_tensor pp_tensor) gen)
       (fun (a, b) ->
         let via_einsum = Nx.einsum "ij,j->i" [| a; b |] in
         let via_matmul =
@@ -640,33 +622,27 @@ let einsum_props =
             [| (Nx.shape a).(0) |]
             (Nx.matmul a (Nx.reshape [| Nx.numel b; 1 |] b))
         in
-        allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_matmul);
+        equal (close ~atol:1e-4 ~rtol:1e-4 ()) via_matmul via_einsum);
   ]
 
 (* ── Stress Tests: Strided Views, Non-Contiguous Ops, High Rank ── *)
 
-let stress_config =
-  { Windtrap_prop.Prop.default_config with count = 500; max_gen = 1500 }
-
 let stress_props =
   [
     (* Transpose then slice, verify data integrity *)
-    prop ~config:stress_config "transpose+slice preserves data (f32)"
-      f32_2d_plus (fun t ->
+    prop ~count:500 "transpose+slice preserves data (f32)" f32_2d_plus (fun t ->
         let tr = Nx.transpose t in
         let spec = List.init (Nx.ndim tr) (fun _ -> Nx.A) in
         let sliced = Nx.slice spec tr in
-        approx_equal (Nx.contiguous sliced) (Nx.contiguous tr));
+        equal (approx ()) (Nx.contiguous tr) (Nx.contiguous sliced));
     (* Transpose+slice then flatten vs direct flatten of transpose *)
-    prop ~config:stress_config
-      "transpose+contiguous = contiguous+transpose data (f32)" f32_2d_plus
-      (fun t ->
+    prop ~count:500 "transpose+contiguous = contiguous+transpose data (f32)"
+      f32_2d_plus (fun t ->
         let a = Nx.to_array (Nx.contiguous (Nx.transpose t)) in
-        let b = Nx.to_array (Nx.transpose t |> Nx.contiguous) in
-        a = b);
+        equal (array float_exact) a
+          (Nx.to_array (Nx.transpose t |> Nx.contiguous)));
     (* Slice a non-trivial range after transpose, check item access *)
-    prop ~config:stress_config "item on transposed view (f32)" f32_2d_plus
-      (fun t ->
+    prop ~count:500 "item on transposed view (f32)" f32_2d_plus (fun t ->
         let s = Nx.shape t in
         let tr = Nx.transpose t in
         let ts = Nx.shape tr in
@@ -674,67 +650,65 @@ let stress_props =
            original since both index the same element *)
         let zeros_orig = List.init (Array.length s) (fun _ -> 0) in
         let zeros_tr = List.init (Array.length ts) (fun _ -> 0) in
-        Float.equal (Nx.item zeros_orig t) (Nx.item zeros_tr tr));
+        equal float_exact (Nx.item zeros_orig t) (Nx.item zeros_tr tr));
     (* Flip + slice: flip is a strided view, slicing it compounds strides *)
-    prop ~config:stress_config "flip+slice data integrity (f32)" f32_2d_plus
-      (fun t ->
+    prop ~count:500 "flip+slice data integrity (f32)" f32_2d_plus (fun t ->
         let flipped = Nx.flip t in
         let spec = [ Nx.R (0, (Nx.shape flipped).(0)) ] in
         let sliced = Nx.slice spec flipped in
-        approx_equal (Nx.contiguous sliced) (Nx.contiguous flipped));
+        equal (approx ()) (Nx.contiguous flipped) (Nx.contiguous sliced));
     (* Double transpose on high-rank tensor *)
-    prop ~config:stress_config "double transpose high rank (f32)" f32_stress
-      (fun t ->
+    prop ~count:500 "double transpose high rank (f32)" f32_stress (fun t ->
         assume (Nx.ndim t >= 2);
-        approx_equal (Nx.transpose (Nx.transpose t)) t);
+        equal (approx ()) t (Nx.transpose (Nx.transpose t)));
     (* Contiguous on strided views: transpose then contiguous should equal copy
        of transpose *)
-    prop ~config:stress_config "contiguous of strided view (f32)" f32_2d_plus
-      (fun t ->
+    prop ~count:500 "contiguous of strided view (f32)" f32_2d_plus (fun t ->
         let tr = Nx.transpose t in
         let c = Nx.contiguous tr in
-        Nx.is_c_contiguous c && approx_equal c tr);
+        is_true ~msg:"contiguous" (Nx.is_c_contiguous c);
+        equal (approx ()) tr c);
     (* Arithmetic on non-contiguous views *)
-    prop ~config:stress_config "add on transposed views (f32)" f32_stress_pair
+    prop ~count:500 "add on transposed views (f32)" f32_stress_pair
       (fun (a, b) ->
         assume (Nx.ndim a >= 2);
         let at = Nx.transpose a in
         let bt = Nx.transpose b in
         let sum_then_transpose = Nx.transpose (Nx.add a b) in
         let transpose_then_sum = Nx.add at bt in
-        approx_equal sum_then_transpose transpose_then_sum);
+        equal (approx ()) transpose_then_sum sum_then_transpose);
     (* Reduction on transposed view *)
-    prop ~config:stress_config "sum of transpose = sum of original (f32)"
-      f32_stress (fun t ->
+    prop ~count:500 "sum of transpose = sum of original (f32)" f32_stress
+      (fun t ->
         assume (all_finite t);
         let s1 = Nx.item [] (Nx.sum t) in
-        let s2 = Nx.item [] (Nx.sum (Nx.transpose t)) in
-        Float.abs (s1 -. s2) < 1e-2);
+        equal (float 1e-2) s1 (Nx.item [] (Nx.sum (Nx.transpose t))));
     (* Broadcasting + arithmetic on high-rank tensors *)
-    prop ~config:stress_config "mul broadcast high rank (f32)"
-      f32_broadcastable_stress (fun (a, b) ->
+    prop ~count:500 "mul broadcast high rank (f32)" f32_broadcastable_stress
+      (fun (a, b) ->
         let result = Nx.mul a b in
         let a', b' = Nx.broadcasted a b in
-        approx_equal result (Nx.mul a' b'));
+        equal (approx ()) (Nx.mul a' b') result);
     (* Slice with step on high-rank tensor *)
-    prop ~config:stress_config "slice with step roundtrip (f32)" f32_stress
-      (fun t ->
+    prop ~count:500 "slice with step roundtrip (f32)" f32_stress (fun t ->
         assume (Nx.ndim t >= 1 && (Nx.shape t).(0) >= 2);
         let dim0 = (Nx.shape t).(0) in
         let sliced = Nx.slice [ Nx.Rs (0, dim0, 2) ] t in
         let expected_len = (dim0 + 1) / 2 in
-        (Nx.shape sliced).(0) = expected_len && Nx.ndim sliced = Nx.ndim t);
+        equal ~msg:"length" int expected_len (Nx.shape sliced).(0);
+        equal ~msg:"rank" int (Nx.ndim t) (Nx.ndim sliced));
     (* Copy of a strided view preserves data *)
-    prop ~config:stress_config "copy strided view (f32)" f32_2d_plus (fun t ->
+    prop ~count:500 "copy strided view (f32)" f32_2d_plus (fun t ->
         let tr = Nx.transpose t in
         let c = Nx.copy tr in
-        approx_equal c tr && Nx.is_c_contiguous c);
+        equal (approx ()) tr c;
+        is_true ~msg:"copy is contiguous" (Nx.is_c_contiguous c));
     (* Reshape after contiguous on strided view *)
-    prop ~config:stress_config "reshape contiguous strided (f32)" f32_2d_plus
-      (fun t ->
+    prop ~count:500 "reshape contiguous strided (f32)" f32_2d_plus (fun t ->
         let tr = Nx.contiguous (Nx.transpose t) in
         let flat = Nx.reshape [| Nx.numel t |] tr in
-        Nx.numel flat = Nx.numel t && Nx.to_array flat = Nx.to_array tr);
+        equal ~msg:"numel" int (Nx.numel t) (Nx.numel flat);
+        equal (array float_exact) (Nx.to_array tr) (Nx.to_array flat));
   ]
 
 (* ── Suite ── *)

@@ -39,11 +39,6 @@ let as_f32 (type a b) (x : (a, b) Nx.t) : Nx.float32_t =
   | Some Type.Equal -> x
   | None -> failwith "expected a float32 leaf"
 
-let raises_invalid_arg f =
-  raises_match
-    (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    f
-
 (* A statically-typed parameter record with mixed dtypes: the canonical Ptree.S
    instance used across suites. *)
 

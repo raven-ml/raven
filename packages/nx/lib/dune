@@ -8,4 +8,4 @@
  (package nx)
  (files nx.mli)
  (preludes prelude.ml)
- (libraries nx nx_buffer))
+ (libraries nx nx_buffer unix))

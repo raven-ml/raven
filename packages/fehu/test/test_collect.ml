@@ -59,8 +59,9 @@ let test_rollout_no_log_probs () =
   let env = make_test_env () in
   let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let traj = Collect.rollout env ~policy ~n_steps:3 in
-  is_none ~msg:"log_probs" traj.log_probs;
-  is_none ~msg:"values" traj.values
+  let floats = option (array (float 0.)) in
+  equal ~msg:"log_probs" floats None traj.log_probs;
+  equal ~msg:"values" floats None traj.values
 
 let test_rollout_with_log_probs () =
   let env = make_test_env () in
@@ -68,10 +69,10 @@ let test_rollout_with_log_probs () =
     (Nx.create Nx.int32 [| 1 |] [| 1l |], Some (-0.5), Some 1.0)
   in
   let traj = Collect.rollout env ~policy ~n_steps:4 in
-  is_some ~msg:"log_probs present" traj.log_probs;
-  is_some ~msg:"values present" traj.values;
-  equal ~msg:"log_probs length" int 4 (Array.length (Option.get traj.log_probs));
-  equal ~msg:"values length" int 4 (Array.length (Option.get traj.values))
+  equal ~msg:"log_probs length" int 4
+    (Array.length (require_some ~msg:"log_probs present" traj.log_probs));
+  equal ~msg:"values length" int 4
+    (Array.length (require_some ~msg:"values present" traj.values))
 
 (* Episodes *)
 
@@ -101,7 +102,8 @@ let test_concat_two () =
   equal ~msg:"total length" int 7 (Collect.length t)
 
 let test_concat_empty_raises () =
-  raises_invalid_arg "Collect.concat: empty list" (fun () -> Collect.concat [])
+  raises (Invalid_argument "Collect.concat: empty list") (fun () ->
+      Collect.concat [])
 
 let test_concat_singleton () =
   let env = make_test_env () in

@@ -6,7 +6,7 @@ module U = Uop
 module D = Dtype
 module C = Const
 
-let dtype = testable ~pp:D.pp ~equal:D.equal ()
+let dtype = Testable.make ~pp:D.pp ~equal:D.equal
 let src node i = (U.src node).(i)
 
 let rewrite pm u = U.graph_rewrite (Upat.Pattern_matcher.rewrite pm) u

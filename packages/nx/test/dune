@@ -34,7 +34,7 @@
  (name test_backend_contract)
  (package nx)
  (modules backend_contract test_backend_contract)
- (libraries nx.buffer nx.c nx.core windtrap windtrap.prop))
+ (libraries nx.buffer nx.c nx.core windtrap))
 
 (test
  (name test_oxcaml_backend)

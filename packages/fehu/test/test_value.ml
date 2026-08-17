@@ -1,7 +1,7 @@
 open Fehu
 open Windtrap
 
-let value = testable ~pp:Value.pp ~equal:Value.equal ()
+let value = Testable.make ~pp:Value.pp ~equal:Value.equal
 
 (* Equality *)
 

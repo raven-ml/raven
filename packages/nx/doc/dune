@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package nx)
- (libraries nx nx.io))
+ (libraries nx nx.io unix))

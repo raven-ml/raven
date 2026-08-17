@@ -352,12 +352,12 @@ let test_sharded_writeback_raises () =
 (* Errors *)
 
 let test_empty_devices () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       let g = Rune.pmap ~devices:[] (module Single_f32) Fun.id in
       ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_mixed_backends () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       let g =
         Rune.pmap ~devices:[ "CPU:1"; "CUDA:0" ] (module Single_f32) Fun.id
       in
@@ -365,7 +365,8 @@ let test_mixed_backends () =
 
 let test_non_divisible_axis () =
   let g = Rune.pmap ~devices:devs2 (module Single_f32) Fun.id in
-  raises_invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0; 3.0 |])))
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (g (vec32 [| 1.0; 2.0; 3.0 |])))
 
 let test_in_axes_arity () =
   let g =
@@ -373,13 +374,13 @@ let test_in_axes_arity () =
       (module Single_f32)
       Fun.id
   in
-  raises_invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
+  raises_match Exn.invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_axis_out_of_range () =
   let g =
     Rune.pmap ~devices:devs2 ~in_axes:[ Some 3 ] (module Single_f32) Fun.id
   in
-  raises_invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
+  raises_match Exn.invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
 
 (* Under an enclosing transformation the pmapped function runs eagerly, so grad
    over pmap differentiates the plain function. *)

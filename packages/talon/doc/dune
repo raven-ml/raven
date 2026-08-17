@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package talon)
- (libraries talon talon.csv nx))
+ (libraries talon talon.csv nx unix))

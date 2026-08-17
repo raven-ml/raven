@@ -119,21 +119,24 @@ let test_core_masked_gradients () =
 
 let test_core_rejects_bad_shapes () =
   let t shape = Nx.zeros Nx.float32 shape in
-  raises_invalid_arg
-    "Attention.scaled_dot_product_attention: q, k and v must have at least 2 \
-     axes" (fun () ->
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: q, k and v must have at least \
+        2 axes") (fun () ->
       Attention.scaled_dot_product_attention (t [| 3 |])
         (t [| 3; 2 |])
         (t [| 3; 2 |]));
-  raises_invalid_arg
-    "Attention.scaled_dot_product_attention: q has 2 features but k has 3"
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: q has 2 features but k has 3")
     (fun () ->
       Attention.scaled_dot_product_attention
         (t [| 1; 2 |])
         (t [| 4; 3 |])
         (t [| 4; 2 |]));
-  raises_invalid_arg
-    "Attention.scaled_dot_product_attention: k has 2 positions but v has 3"
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: k has 2 positions but v has 3")
     (fun () ->
       Attention.scaled_dot_product_attention
         (t [| 1; 2 |])
@@ -432,19 +435,25 @@ let test_cached_rejects_bad_geometry () =
   let apply ?(pos = pos_at 0) x =
     Attention.apply_cached ~num_heads:2 ~pos ~cache p x
   in
-  raises_invalid_arg
-    "Attention.Cache.make: batch, num_heads, head_dim and len must be \
-     positive, got batch=1 num_heads=2 head_dim=2 len=0" (fun () ->
+  raises
+    (Invalid_argument
+       "Attention.Cache.make: batch, num_heads, head_dim and len must be \
+        positive, got batch=1 num_heads=2 head_dim=2 len=0") (fun () ->
       Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:0 Nx.float32);
-  raises_invalid_arg
-    "Attention.apply_cached: input must have shape [batch; seq; embed]"
+  raises
+    (Invalid_argument
+       "Attention.apply_cached: input must have shape [batch; seq; embed]")
     (fun () -> apply (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises_invalid_arg
-    "Attention.apply_cached: cache has shape [1; 2; _; 2] but the input needs \
-     [2; 2; _; 2]" (fun () -> apply (Nx.zeros Nx.float32 [| 2; 1; 4 |]));
-  raises_invalid_arg "Attention.apply_cached: seq 5 exceeds the cache length 4"
+  raises
+    (Invalid_argument
+       "Attention.apply_cached: cache has shape [1; 2; _; 2] but the input \
+        needs [2; 2; _; 2]") (fun () ->
+      apply (Nx.zeros Nx.float32 [| 2; 1; 4 |]));
+  raises
+    (Invalid_argument "Attention.apply_cached: seq 5 exceeds the cache length 4")
     (fun () -> apply (Nx.zeros Nx.float32 [| 1; 5; 4 |]));
-  raises_invalid_arg "Attention.apply_cached: pos must have a single element"
+  raises
+    (Invalid_argument "Attention.apply_cached: pos must have a single element")
     (fun () ->
       apply
         ~pos:(Nx.create Nx.int32 [| 2 |] [| 0l; 1l |])
@@ -452,19 +461,23 @@ let test_cached_rejects_bad_geometry () =
 
 let test_rejects_bad_geometry () =
   Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
-  raises_invalid_arg "Attention.make: embed_dim must be positive, got 0"
+  raises (Invalid_argument "Attention.make: embed_dim must be positive, got 0")
     (fun () -> Attention.make ~embed_dim:0 Nx.float32);
   let p = Attention.init ~embed_dim:4 in
-  raises_invalid_arg
-    "Attention.apply: input must have at least sequence and feature axes"
+  raises
+    (Invalid_argument
+       "Attention.apply: input must have at least sequence and feature axes")
     (fun () -> Attention.apply p (Nx.zeros Nx.float32 [| 4 |]));
-  raises_invalid_arg
-    "Attention.apply: last axis has size 3 but the layer attends over 4 \
-     features" (fun () -> Attention.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
-  raises_invalid_arg "Attention.apply: num_heads must be positive, got 0"
+  raises
+    (Invalid_argument
+       "Attention.apply: last axis has size 3 but the layer attends over 4 \
+        features") (fun () ->
+      Attention.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
+  raises (Invalid_argument "Attention.apply: num_heads must be positive, got 0")
     (fun () -> Attention.apply ~num_heads:0 p (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises_invalid_arg
-    "Attention.apply: num_heads (3) must divide the embedding dimension (4)"
+  raises
+    (Invalid_argument
+       "Attention.apply: num_heads (3) must divide the embedding dimension (4)")
     (fun () -> Attention.apply ~num_heads:3 p (Nx.zeros Nx.float32 [| 2; 4 |]))
 
 let () =

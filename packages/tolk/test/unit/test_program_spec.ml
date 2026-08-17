@@ -151,7 +151,7 @@ let () =
                   Program_spec.launch_dims spec [ "threads", 11 ]
                 in
                 equal (array int) [| 1; 1; 11 |] global;
-                equal (option pass) None local
+                is_none local
             | _ -> failwith "expected flat thread launch metadata");
           test "core_id is explicit runtime metadata" (fun () ->
             let arg = define_var "arg" 0 9 in
@@ -202,18 +202,20 @@ let () =
             let c4 = i32 4 in
             let gid0 = special (Gpu_dim.Group_id 0) c4 in
             let gid1 = special (Gpu_dim.Group_id 0) c4 in
-            raises_invalid_arg "group_id axis 0 appears more than once"
+            raises (Invalid_argument "group_id axis 0 appears more than once")
               (fun () -> ignore (spec_of [ c4; gid0; gid1 ])));
           test "mixed launch models are rejected" (fun () ->
             let c4 = i32 4 in
             let group = special (Gpu_dim.Group_id 0) c4 in
             let flat = special (Gpu_dim.Global_idx 1) c4 in
-            raises_invalid_arg
-              "launch metadata cannot mix flat-thread and thread-group specials"
+            raises
+              (Invalid_argument
+                 "launch metadata cannot mix flat-thread and thread-group \
+                  specials")
               (fun () -> ignore (spec_of [ c4; group; flat ])));
           test "core_id lower bound must be zero" (fun () ->
             let cid = define_var "core_id" 2 7 in
-            raises_invalid_arg "core_id must have lower bound 0"
+            raises (Invalid_argument "core_id must have lower bound 0")
               (fun () -> ignore (spec_of [ cid ])));
           test "exact estimates can be forwarded" (fun () ->
             let estimates =

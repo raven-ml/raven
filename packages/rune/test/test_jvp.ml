@@ -80,7 +80,7 @@ let test_jvp_aux () =
   equal ~msg:"aux" string "aux" aux
 
 let test_jvp_tangent_shape_mismatch () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.jvp' (fun x -> Nx.sum x) (vec64 [| 1.0; 2.0 |]) (vec64 [| 1.0 |])))
 
@@ -354,7 +354,7 @@ let test_detach_stops_tangents () =
 
 let test_jvp_structural_shape_mismatch () =
   (* The per-leaf shape check also guards the structural entry point. *)
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.jvp
            (module Pair)
@@ -364,7 +364,7 @@ let test_jvp_structural_shape_mismatch () =
 
 let test_unsupported_op_raises_when_active () =
   let x = Nx.create f64 [| 2; 2 |] [| 4.0; 1.0; 1.0; 3.0 |] in
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.jvp'
            (fun x ->
@@ -373,7 +373,7 @@ let test_unsupported_op_raises_when_active () =
            x (tangent_like x)))
 
 let test_mutation_raises () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.jvp'
            (fun x ->

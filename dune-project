@@ -32,6 +32,11 @@
  (package
   (name thumper)))
 
+(pin
+ (url "git+https://github.com/invariant-hq/windtrap.git")
+ (package
+  (name windtrap)))
+
 (package
  (name nx)
  (dir packages/nx)

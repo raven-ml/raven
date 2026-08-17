@@ -49,11 +49,14 @@ let test_action_space () =
 
 let test_render_mode_default () =
   let env = make_test_env () in
-  is_none ~msg:"render_mode default is None" (Env.render_mode env)
+  is_none ~msg:"render_mode default is None"
+    ~pp:(fun ppf m -> Format.pp_print_string ppf (Env.render_mode_to_string m))
+    (Env.render_mode env)
 
 let test_render_mode_invalid () =
-  raises_invalid_arg ~msg:"render_mode not in render_modes"
-    "Env.create: render mode 'human' not in render_modes []" (fun () ->
+  raises ~msg:"render_mode not in render_modes"
+    (Invalid_argument "Env.create: render mode 'human' not in render_modes []")
+    (fun () ->
       let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 1.0 |] in
       let act_space = Space.Discrete.create 2 in
       Env.create ~observation_space:obs_space ~action_space:act_space
@@ -80,9 +83,9 @@ let test_step_after_reset () =
 
 let test_step_before_reset () =
   let env = make_test_env () in
-  raises_invalid_arg ~msg:"step before reset"
-    "Env: operation 'step' requires calling reset first" (fun () ->
-      Env.step env action_left)
+  raises ~msg:"step before reset"
+    (Invalid_argument "Env: operation 'step' requires calling reset first")
+    (fun () -> Env.step env action_left)
 
 let test_step_after_terminal () =
   let env = make_test_env () in
@@ -93,9 +96,9 @@ let test_step_after_terminal () =
   done;
   let step = Env.step env action_left in
   is_true ~msg:"terminated" step.terminated;
-  raises_invalid_arg ~msg:"step after terminal"
-    "Env: operation 'step' requires calling reset first" (fun () ->
-      Env.step env action_left)
+  raises ~msg:"step after terminal"
+    (Invalid_argument "Env: operation 'step' requires calling reset first")
+    (fun () -> Env.step env action_left)
 
 let test_reset_after_terminal () =
   let env = make_test_env () in
@@ -115,22 +118,23 @@ let test_step_on_closed () =
   let env = make_test_env () in
   let _obs, _info = Env.reset env () in
   Env.close env;
-  raises_invalid_arg ~msg:"step on closed"
-    "Env: operation 'step' on a closed environment" (fun () ->
-      Env.step env action_left)
+  raises ~msg:"step on closed"
+    (Invalid_argument "Env: operation 'step' on a closed environment")
+    (fun () -> Env.step env action_left)
 
 let test_reset_on_closed () =
   let env = make_test_env () in
   Env.close env;
-  raises_invalid_arg ~msg:"reset on closed"
-    "Env: operation 'reset' on a closed environment" (fun () ->
-      Env.reset env ())
+  raises ~msg:"reset on closed"
+    (Invalid_argument "Env: operation 'reset' on a closed environment")
+    (fun () -> Env.reset env ())
 
 let test_render_on_closed () =
   let env = make_test_env () in
   Env.close env;
-  raises_invalid_arg ~msg:"render on closed"
-    "Env: operation 'render' on a closed environment" (fun () -> Env.render env)
+  raises ~msg:"render on closed"
+    (Invalid_argument "Env: operation 'render' on a closed environment")
+    (fun () -> Env.render env)
 
 let test_close_idempotent () =
   let env = make_test_env () in
@@ -171,9 +175,9 @@ let test_time_limit_needs_reset () =
   done;
   let s3 = Env.step wrapped action_right in
   is_true ~msg:"step 3 truncated" s3.truncated;
-  raises_invalid_arg ~msg:"step after time_limit truncation requires reset"
-    "Env: operation 'step' requires calling reset first" (fun () ->
-      Env.step wrapped action_right)
+  raises ~msg:"step after time_limit truncation requires reset"
+    (Invalid_argument "Env: operation 'step' requires calling reset first")
+    (fun () -> Env.step wrapped action_right)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

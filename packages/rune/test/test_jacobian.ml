@@ -39,7 +39,7 @@ let test_pullback_shape_mismatch () =
       (fun p -> Nx.add p.fst p.snd)
       { fst = v3 (); snd = v3 () }
   in
-  raises_invalid_arg (fun () -> ignore (pullback (vec64 [| 1.0 |])))
+  raises_match Exn.invalid_arg (fun () -> ignore (pullback (vec64 [| 1.0 |])))
 
 let dtype_name x = Nx_core.Dtype.to_string (Nx.dtype x)
 

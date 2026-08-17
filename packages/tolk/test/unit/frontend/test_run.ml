@@ -335,7 +335,9 @@ let cat_tests =
       test "shapes must match off the joined axis" (fun () ->
           let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
           let b = fa ~shape:[ 2; 3 ] (Array.make 6 0.) in
-          raises_invalid_arg "Op.cat: shapes must match off the concatenated axis"
+          raises
+            (Invalid_argument
+               "Op.cat: shapes must match off the concatenated axis")
             (fun () -> ignore (Op.cat a [ b ])));
     ]
 

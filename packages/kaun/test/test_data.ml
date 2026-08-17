@@ -145,20 +145,20 @@ let test_seq_fold_left () =
 (* Errors *)
 
 let test_invalid_batch_size () =
-  raises_invalid_arg "Data.batches: batch_size must be positive, got 0"
+  raises (Invalid_argument "Data.batches: batch_size must be positive, got 0")
     (fun () -> Data.batches ~batch_size:0 (arange 4 1));
-  raises_invalid_arg "Data.batches2: batch_size must be positive, got -1"
+  raises (Invalid_argument "Data.batches2: batch_size must be positive, got -1")
     (fun () -> Data.batches2 ~batch_size:(-1) (paired 4))
 
 let test_scalar_input () =
   let scalar = Nx.create Nx.float32 [||] [| 1. |] in
-  raises_invalid_arg "Data.batches: input must not be a scalar" (fun () ->
-      Data.batches ~batch_size:1 scalar)
+  raises (Invalid_argument "Data.batches: input must not be a scalar")
+    (fun () -> Data.batches ~batch_size:1 scalar)
 
 let test_mismatched_examples () =
   let x = arange 4 1 and y = arange 3 1 in
-  raises_invalid_arg "Data.batches2: x has 4 examples but y has 3" (fun () ->
-      Data.batches2 ~batch_size:2 (x, y))
+  raises (Invalid_argument "Data.batches2: x has 4 examples but y has 3")
+    (fun () -> Data.batches2 ~batch_size:2 (x, y))
 
 let tests =
   [

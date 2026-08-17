@@ -132,8 +132,8 @@ let test_resume_finished_raises () =
   let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
   let run = Session.run session in
-  raises_invalid_arg "Munin.Session.resume: run is not resumable" (fun () ->
-      ignore (Session.resume run))
+  raises (Invalid_argument "Munin.Session.resume: run is not resumable")
+    (fun () -> ignore (Session.resume run))
 
 let test_ops_after_finish_ignored () =
   with_temp_dir @@ fun root ->
@@ -865,7 +865,7 @@ let test_log_artifact_closed_raises () =
   let src = make_file root "model.bin" "weights" in
   let session = Session.start ~store ~experiment:"exp" () in
   Session.finish session;
-  raises_failure "Munin.Session.log_artifact: closed session" (fun () ->
+  raises (Failure "Munin.Session.log_artifact: closed session") (fun () ->
       ignore
         (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()))
 
@@ -873,8 +873,9 @@ let test_log_artifact_missing_path_raises () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  raises_invalid_arg
-    "Munin.Session.log_artifact: path does not exist: /nonexistent/path"
+  raises
+    (Invalid_argument
+       "Munin.Session.log_artifact: path does not exist: /nonexistent/path")
     (fun () ->
       ignore
         (Session.log_artifact session ~name:"model" ~kind:`Model
@@ -1181,7 +1182,8 @@ let test_last_event_at () =
   let session = Session.start ~store ~experiment:"exp" () in
   let x = Session.metric session "x" in
   let run = Session.run session in
-  is_none ~msg:"no timestamped events yet" (Run.last_event_at run);
+  equal ~msg:"no timestamped events yet" (option float_exact) None
+    (Run.last_event_at run);
   Metric.log x ~step:1 1.0;
   Metric.log x ~step:2 2.0;
   let run = Run.reload run in
@@ -1420,7 +1422,9 @@ let test_auto_summary_none () =
   Metric.log (Session.metric session ~summary:`None "x") ~step:1 1.0;
   Session.finish session;
   let run = Session.run session in
-  is_none ~msg:"no auto-summary" (Run.find_summary run "x")
+  equal ~msg:"no auto-summary"
+    (option (Testable.make ~pp:Value.pp ~equal:( = )))
+    None (Run.find_summary run "x")
 
 let test_explicit_summary_wins () =
   with_temp_dir @@ fun root ->
@@ -1561,8 +1565,9 @@ let test_log_media_missing_path_raises () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
-  raises_invalid_arg
-    "Munin.Session.log_media: path does not exist: /no/such/file" (fun () ->
+  raises
+    (Invalid_argument
+       "Munin.Session.log_media: path does not exist: /no/such/file") (fun () ->
       Session.log_media session ~step:1 ~key:"x" ~kind:`File
         ~path:"/no/such/file");
   Session.finish session

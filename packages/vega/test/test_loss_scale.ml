@@ -29,11 +29,6 @@ module Pair = struct
     f b
 end
 
-let raises_invalid_arg f =
-  raises_match
-    (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    f
-
 let finite = Nx.scalar Nx.bool true
 let nonfinite = Nx.scalar Nx.bool false
 
@@ -48,8 +43,8 @@ let test_constructors () =
   equal ~msg:"dynamic counter starts at 0" int32 0l (steps_of d);
   equal ~msg:"dynamic ~init" (float 0.0) 4.0
     (scale_of (Ls.dynamic ~init:4.0 ()));
-  raises_invalid_arg (fun () -> Ls.static 0.0);
-  raises_invalid_arg (fun () -> Ls.dynamic ~init:(-1.0) ())
+  raises_match Exn.invalid_arg (fun () -> Ls.static 0.0);
+  raises_match Exn.invalid_arg (fun () -> Ls.dynamic ~init:(-1.0) ())
 
 (* Scaling and unscaling *)
 
@@ -141,9 +136,12 @@ let test_adjust_static_identity () =
 
 let test_adjust_validation () =
   let ls = Ls.dynamic () in
-  raises_invalid_arg (fun () -> Ls.adjust ~growth_interval:0 ls ~finite);
-  raises_invalid_arg (fun () -> Ls.adjust ~growth_factor:0.0 ls ~finite);
-  raises_invalid_arg (fun () -> Ls.adjust ~backoff_factor:(-0.5) ls ~finite)
+  raises_match Exn.invalid_arg (fun () ->
+      Ls.adjust ~growth_interval:0 ls ~finite);
+  raises_match Exn.invalid_arg (fun () ->
+      Ls.adjust ~growth_factor:0.0 ls ~finite);
+  raises_match Exn.invalid_arg (fun () ->
+      Ls.adjust ~backoff_factor:(-0.5) ls ~finite)
 
 let tests =
   [

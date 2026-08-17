@@ -265,7 +265,7 @@ let test_find_get () =
   let ckpt = Checkpoint.of_tensor "w" (vec32 [| 1.0 |]) in
   is_some ~msg:"find present" (Checkpoint.find "w" ckpt);
   is_none ~msg:"find absent" (Checkpoint.find "nope" ckpt);
-  raises_invalid_arg "Checkpoint.get: no entry named \"nope\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.get: no entry named \"nope\"") (fun () ->
       Checkpoint.get "nope" ckpt)
 
 (* Error contracts *)
@@ -278,7 +278,8 @@ let test_missing_entry () =
         Checkpoint.of_tensor "scale" (vec64 [| 1.0 |]);
       ]
   in
-  raises_invalid_arg "Checkpoint.to_params: missing entry \"b\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.to_params: missing entry \"b\"")
+    (fun () ->
       Checkpoint.to_params (module Params) ~like:(fresh_params ()) ckpt)
 
 let test_extra_entries_ignored () =
@@ -289,10 +290,7 @@ let test_extra_entries_ignored () =
         Checkpoint.of_tensor "unrelated" (vec32 [| 9.0 |]);
       ]
   in
-  let p =
-    no_raise (fun () ->
-        Checkpoint.to_params (module Params) ~like:(fresh_params ()) ckpt)
-  in
+  let p = Checkpoint.to_params (module Params) ~like:(fresh_params ()) ckpt in
   check_arr ~msg:"w" [| 1.5; -2.0; 3.25 |] p.w
 
 let test_shape_mismatch () =
@@ -304,8 +302,9 @@ let test_shape_mismatch () =
         Checkpoint.of_tensor "scale" (vec64 [| 1.0 |]);
       ]
   in
-  raises_invalid_arg
-    "Checkpoint.to_params: shape mismatch for \"b\": expected [1], got [2]"
+  raises
+    (Invalid_argument
+       "Checkpoint.to_params: shape mismatch for \"b\": expected [1], got [2]")
     (fun () ->
       Checkpoint.to_params (module Params) ~like:(fresh_params ()) ckpt)
 
@@ -318,9 +317,10 @@ let test_dtype_mismatch_and_cast () =
         Checkpoint.of_tensor "scale" (vec32 [| 4.0 |]);
       ]
   in
-  raises_invalid_arg
-    "Checkpoint.to_params: dtype mismatch for \"scale\": expected float64, got \
-     float32 (pass ~cast:true to convert)" (fun () ->
+  raises
+    (Invalid_argument
+       "Checkpoint.to_params: dtype mismatch for \"scale\": expected float64, \
+        got float32 (pass ~cast:true to convert)") (fun () ->
       Checkpoint.to_params (module Params) ~like:(fresh_params ()) ckpt);
   let p =
     Checkpoint.to_params (module Params) ~cast:true ~like:(fresh_params ()) ckpt
@@ -328,7 +328,7 @@ let test_dtype_mismatch_and_cast () =
   check_arr ~msg:"scale cast to float64" [| 4.0 |] p.scale
 
 let test_concat_duplicate () =
-  raises_invalid_arg "Checkpoint.concat: duplicate name \"w\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.concat: duplicate name \"w\"") (fun () ->
       Checkpoint.concat
         [
           Checkpoint.of_tensor "w" (vec32 [| 1.0 |]);
@@ -348,16 +348,18 @@ module Duplicated = struct
 end
 
 let test_invalid_names () =
-  raises_invalid_arg "Checkpoint.of_params: 1 name(s) for 3 tensor leaves"
+  raises
+    (Invalid_argument "Checkpoint.of_params: 1 name(s) for 3 tensor leaves")
     (fun () -> Checkpoint.of_params (module Misnamed) (params ()));
-  raises_invalid_arg "Checkpoint.to_params: 1 name(s) for 3 tensor leaves"
+  raises
+    (Invalid_argument "Checkpoint.to_params: 1 name(s) for 3 tensor leaves")
     (fun () ->
       Checkpoint.to_params (module Misnamed) ~like:(params ()) Checkpoint.empty);
-  raises_invalid_arg "Checkpoint.of_params: duplicate name \"w\"" (fun () ->
-      Checkpoint.of_params (module Duplicated) (params ()))
+  raises (Invalid_argument "Checkpoint.of_params: duplicate name \"w\"")
+    (fun () -> Checkpoint.of_params (module Duplicated) (params ()))
 
 let test_empty_name () =
-  raises_invalid_arg "Checkpoint.of_tensor: empty tensor name" (fun () ->
+  raises (Invalid_argument "Checkpoint.of_tensor: empty tensor name") (fun () ->
       Checkpoint.of_tensor "" (vec32 [| 1.0 |]))
 
 let test_to_int_errors () =
@@ -368,12 +370,14 @@ let test_to_int_errors () =
         Checkpoint.of_tensor "v" (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]);
       ]
   in
-  raises_invalid_arg "Checkpoint.to_int: no entry named \"step\"" (fun () ->
-      Checkpoint.to_int "step" ckpt);
-  raises_invalid_arg
-    "Checkpoint.to_int: \"w\" is not an int32 entry (dtype float32)" (fun () ->
-      Checkpoint.to_int "w" ckpt);
-  raises_invalid_arg "Checkpoint.to_int: \"v\" is not a scalar (shape [2])"
+  raises (Invalid_argument "Checkpoint.to_int: no entry named \"step\"")
+    (fun () -> Checkpoint.to_int "step" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_int: \"w\" is not an int32 entry (dtype float32)")
+    (fun () -> Checkpoint.to_int "w" ckpt);
+  raises
+    (Invalid_argument "Checkpoint.to_int: \"v\" is not a scalar (shape [2])")
     (fun () -> Checkpoint.to_int "v" ckpt)
 
 let () =

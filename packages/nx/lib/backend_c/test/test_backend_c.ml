@@ -11,7 +11,7 @@ external dtype_tag : ('a, 'b) Nx_buffer.t -> int = "caml_nx_c_dtype_tag"
 let ctx = B.create_context ()
 
 let fexact =
-  testable ~pp:(fun ppf x -> Format.fprintf ppf "%g" x) ~equal:( = ) ()
+  Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%g" x) ~equal:( = )
 
 let tests =
   group "binding-abi"

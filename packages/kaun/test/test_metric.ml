@@ -41,15 +41,17 @@ let accuracy_tests =
         close 1.
           (Metric.accuracy (vec [| 0.; 2.; 1. |]) (Nx.scalar Nx.int32 1l)));
     test "rejects mismatched label shapes" (fun () ->
-        raises_invalid_arg
-          "Metric.accuracy: labels shape [2] does not match predictions batch \
-           shape [4]" (fun () ->
+        raises
+          (Invalid_argument
+             "Metric.accuracy: labels shape [2] does not match predictions \
+              batch shape [4]") (fun () ->
             Metric.accuracy (mat 4 3 (Array.make 12 0.)) (labels [| 0l; 0l |])));
     test "rejects an empty batch" (fun () ->
-        raises_invalid_arg "Metric.accuracy: there are no examples" (fun () ->
-            Metric.accuracy (mat 0 3 [||]) (labels [||])));
+        raises (Invalid_argument "Metric.accuracy: there are no examples")
+          (fun () -> Metric.accuracy (mat 0 3 [||]) (labels [||])));
     test "rejects out-of-range labels" (fun () ->
-        raises_invalid_arg "Metric.accuracy: label 3 is out of range [0;2]"
+        raises
+          (Invalid_argument "Metric.accuracy: label 3 is out of range [0;2]")
           (fun () -> Metric.accuracy (predicting 3 [| 0 |]) (labels [| 3l |])));
   ]
 
@@ -74,11 +76,13 @@ let top_k_tests =
         close 1. (Metric.top_k_accuracy ~k:1 tied (labels [| 1l |]));
         close 0. (Metric.accuracy tied (labels [| 1l |])));
     test "rejects k below 1" (fun () ->
-        raises_invalid_arg "Metric.top_k_accuracy: k must be in [1;3] (got 0)"
+        raises
+          (Invalid_argument "Metric.top_k_accuracy: k must be in [1;3] (got 0)")
           (fun () ->
             Metric.top_k_accuracy ~k:0 (predicting 3 [| 0 |]) (labels [| 0l |])));
     test "rejects k above the class count" (fun () ->
-        raises_invalid_arg "Metric.top_k_accuracy: k must be in [1;3] (got 4)"
+        raises
+          (Invalid_argument "Metric.top_k_accuracy: k must be in [1;3] (got 4)")
           (fun () ->
             Metric.top_k_accuracy ~k:4 (predicting 3 [| 0 |]) (labels [| 0l |])));
   ]
@@ -111,20 +115,20 @@ let confusion_tests =
           [| 2; 0; 0; 0; 0; 0; 0; 0; 0 |]
           (Array.map Int32.to_int (Nx.to_array m)));
     test "rejects out-of-range labels" (fun () ->
-        raises_invalid_arg
-          "Metric.confusion_matrix: label 3 is out of range [0;2]" (fun () ->
+        raises
+          (Invalid_argument
+             "Metric.confusion_matrix: label 3 is out of range [0;2]")
+          (fun () ->
             Metric.confusion_matrix (predicting 3 [| 0 |]) (labels [| 3l |])));
   ]
 
 (* Precision, recall, F1 *)
 
 let predictions_and_labels =
-  Testable.with_gen
-    Gen.(
-      pair
-        (list_size (pure 12) (float_range (-5.) 5.))
-        (list_size (pure 4) (int_range 0 2)))
-    (pair (list (float 1e-12)) (list int))
+  Gen.(
+    pair
+      (list ~size:(pure 12) (float_range (-5.) 5.))
+      (list ~size:(pure 4) (int_range 0 2)))
 
 let prf_tests =
   [
@@ -152,7 +156,7 @@ let prf_tests =
         close 0.5 (Metric.precision p l);
         close 0.5 (Metric.recall p l);
         close 0.5 (Metric.f1 p l));
-    prop' "micro F1 equals accuracy" predictions_and_labels (fun (xs, ls) ->
+    prop "micro F1 equals accuracy" predictions_and_labels (fun (xs, ls) ->
         let p = mat 4 3 (Array.of_list xs) in
         let l = labels (Array.of_list (List.map Int32.of_int ls)) in
         close (Metric.accuracy p l) (Metric.f1 ~average:`Micro p l));
@@ -161,8 +165,7 @@ let prf_tests =
 (* AUC-ROC *)
 
 (* Scores drawn from four integer values, so ties are frequent. *)
-let tied_scores =
-  Testable.with_gen Gen.(list_size (pure 6) (int_range 0 3)) (list int)
+let tied_scores = Gen.(list ~size:(pure 6) (int_range 0 3))
 
 let auc_tests =
   [
@@ -185,7 +188,7 @@ let auc_tests =
           (Metric.auc_roc
              (vec [| 0.3; 0.3; 0.3; 0.3 |])
              (labels [| 1l; 1l; 0l; 0l |])));
-    prop' "agrees with exhaustive pair counting" tied_scores (fun xs ->
+    prop "agrees with exhaustive pair counting" tied_scores (fun xs ->
         let scores = Array.of_list (List.map float_of_int xs) in
         let positive = [| true; false; true; false; true; false |] in
         let wins = ref 0.0 and pairs = ref 0 in
@@ -205,14 +208,16 @@ let auc_tests =
           (!wins /. float_of_int !pairs)
           (Metric.auc_roc (vec scores) (labels [| 1l; 0l; 1l; 0l; 1l; 0l |])));
     test "rejects labels other than 0 and 1" (fun () ->
-        raises_invalid_arg "Metric.auc_roc: label 2 is neither 0 nor 1"
+        raises (Invalid_argument "Metric.auc_roc: label 2 is neither 0 nor 1")
           (fun () -> Metric.auc_roc (vec [| 0.1; 0.9 |]) (labels [| 0l; 2l |])));
     test "rejects a single-class batch" (fun () ->
-        raises_invalid_arg "Metric.auc_roc: labels must contain both classes"
+        raises
+          (Invalid_argument "Metric.auc_roc: labels must contain both classes")
           (fun () -> Metric.auc_roc (vec [| 0.1; 0.9 |]) (labels [| 1l; 1l |])));
     test "rejects mismatched shapes" (fun () ->
-        raises_invalid_arg
-          "Metric.auc_roc: labels shape [2] does not match scores shape [3]"
+        raises
+          (Invalid_argument
+             "Metric.auc_roc: labels shape [2] does not match scores shape [3]")
           (fun () ->
             Metric.auc_roc (vec [| 0.1; 0.5; 0.9 |]) (labels [| 0l; 1l |])));
   ]

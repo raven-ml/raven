@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package fehu)
- (libraries fehu fehu.envs nx))
+ (libraries fehu fehu.envs nx unix))

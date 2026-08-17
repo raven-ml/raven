@@ -42,11 +42,11 @@ let test_three_stops_midpoint () =
   is_true ~msg:"green channel high at midpoint" (g > r)
 
 let test_one_stop_raises () =
-  raises_invalid_arg "Cmap.of_colors: need at least 2 stops" (fun () ->
+  raises (Invalid_argument "Cmap.of_colors: need at least 2 stops") (fun () ->
       Cmap.of_colors [| Color.black |])
 
 let test_empty_raises () =
-  raises_invalid_arg "Cmap.of_colors: need at least 2 stops" (fun () ->
+  raises (Invalid_argument "Cmap.of_colors: need at least 2 stops") (fun () ->
       Cmap.of_colors [||])
 
 (* predefined *)

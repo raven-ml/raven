@@ -28,7 +28,6 @@ let float_bits : float testable =
     ~pp:(fun ppf v -> Format.fprintf ppf "%h" v)
     ~equal:(fun x y ->
       Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y))
-    ()
 
 let complex_bits : Complex.t testable =
   Testable.make
@@ -40,7 +39,6 @@ let complex_bits : Complex.t testable =
       && Int64.equal
            (Int64.bits_of_float x.Complex.im)
            (Int64.bits_of_float y.Complex.im))
-    ()
 
 let bit_testable (type a b) (dtype : (a, b) Nx.dtype) : a testable =
   match dtype with

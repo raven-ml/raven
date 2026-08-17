@@ -194,7 +194,7 @@ let () =
           test "requires non-runtime scalar variables" (fun () ->
             let state = runtime_state () in
             let n = variable "n" 0 16 in
-            raises_invalid_arg "missing variable \"n\"" (fun () ->
+            raises (Invalid_argument "missing variable \"n\"") (fun () ->
                 ignore (call_runner state [ n ] [])));
         ];
       group "Program cache"
@@ -307,7 +307,7 @@ let () =
                 ~dest_device:(Device.Buffer.device dest)
                 ~src_device:(Device.Buffer.device src)
             in
-            raises_invalid_arg "buffer copy: size or dtype mismatch"
+            raises (Invalid_argument "buffer copy: size or dtype mismatch")
               (fun () ->
                  ignore (Realize.Runner.call runner [ dest; src ] []
                            ~wait:false ~timeout:None)));

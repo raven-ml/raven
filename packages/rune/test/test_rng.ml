@@ -115,12 +115,13 @@ let test_bernoulli_probability () =
   equal ~msg:"fraction of ones near p" (float 0.02) 0.3 (mean a)
 
 let test_sampler_argument_errors () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Nx.Rng.randint (Nx.Rng.key 0) ~low:3 ~high:3 [| 4 |]));
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Nx.Rng.bernoulli (Nx.Rng.key 0) ~p:1.5 [| 4 |]));
-  raises_invalid_arg (fun () -> ignore (Nx.Rng.split ~n:0 (Nx.Rng.key 0)));
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Nx.Rng.split ~n:0 (Nx.Rng.key 0)));
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Nx.Rng.uniform (Nx.zeros Nx.int32 [| 3 |]) f32 [| 4 |]))
 
 (* Key derivation *)

@@ -43,8 +43,8 @@ let test_spaces_match_first_env () =
   equal ~msg:"act space shape" (option (array int)) first_act act_shape
 
 let test_empty_list_raises () =
-  raises_invalid_arg "Vec_env.create: env list must not be empty" (fun () ->
-      ignore (Vec_env.create []))
+  raises (Invalid_argument "Vec_env.create: env list must not be empty")
+    (fun () -> ignore (Vec_env.create []))
 
 let test_incompatible_spaces_raises () =
   let obs1 = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
@@ -96,7 +96,7 @@ let test_wrong_action_count_raises () =
   let _obs, _infos = Vec_env.reset venv () in
   let action = Nx.create Nx.int32 [| 1 |] [| 1l |] in
   let actions = Array.make 2 action in
-  raises_invalid_arg "Vec_env.step: expected 3 actions, got 2" (fun () ->
+  raises (Invalid_argument "Vec_env.step: expected 3 actions, got 2") (fun () ->
       ignore (Vec_env.step venv actions))
 
 let test_autoreset_final_observation () =

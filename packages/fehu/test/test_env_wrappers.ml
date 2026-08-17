@@ -31,7 +31,7 @@ let read_obs obs =
   let arr : float array = Nx.to_array (Nx.reshape [| 1 |] obs) in
   arr.(0)
 
-let value = testable ~pp:Value.pp ~equal:Value.equal ()
+let value = Testable.make ~pp:Value.pp ~equal:Value.equal
 
 (* State sharing *)
 
@@ -274,12 +274,12 @@ let test_time_limit_counter_resets () =
 
 let test_time_limit_nonpositive () =
   let env = make_test_env () in
-  raises_invalid_arg ~msg:"max_episode_steps=0"
-    "Env.time_limit: max_episode_steps must be positive" (fun () ->
-      Env.time_limit ~max_episode_steps:0 env);
-  raises_invalid_arg ~msg:"max_episode_steps=-1"
-    "Env.time_limit: max_episode_steps must be positive" (fun () ->
-      Env.time_limit ~max_episode_steps:(-1) env)
+  raises ~msg:"max_episode_steps=0"
+    (Invalid_argument "Env.time_limit: max_episode_steps must be positive")
+    (fun () -> Env.time_limit ~max_episode_steps:0 env);
+  raises ~msg:"max_episode_steps=-1"
+    (Invalid_argument "Env.time_limit: max_episode_steps must be positive")
+    (fun () -> Env.time_limit ~max_episode_steps:(-1) env)
 
 let test_time_limit_needs_reset () =
   let env = make_test_env () in
@@ -288,9 +288,9 @@ let test_time_limit_needs_reset () =
   let _s1 = Env.step wrapped action_right in
   let s2 = Env.step wrapped action_right in
   is_true ~msg:"truncated at limit" s2.truncated;
-  raises_invalid_arg ~msg:"step after time_limit truncation"
-    "Env: operation 'step' requires calling reset first" (fun () ->
-      Env.step wrapped action_right)
+  raises ~msg:"step after time_limit truncation"
+    (Invalid_argument "Env: operation 'step' requires calling reset first")
+    (fun () -> Env.step wrapped action_right)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

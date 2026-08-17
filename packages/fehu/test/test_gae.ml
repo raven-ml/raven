@@ -57,7 +57,8 @@ let test_compute_truncation () =
     advantages_term.(1)
 
 let test_compute_length_mismatch () =
-  raises_invalid_arg "Gae: all arrays must have the same length" (fun () ->
+  raises (Invalid_argument "Gae: all arrays must have the same length")
+    (fun () ->
       Gae.compute ~rewards:[| 1.0; 1.0 |] ~values:[| 0.5 |]
         ~terminated:[| false; false |] ~truncated:[| false; false |]
         ~next_values:[| 0.5; 0.5 |] ~gamma:0.99 ~lambda:0.95)
@@ -116,9 +117,10 @@ let test_returns_truncated () =
   equal ~msg:"ret[2]" f 1.0 ret.(2)
 
 let test_returns_length_mismatch () =
-  raises_invalid_arg
-    "Gae.returns: rewards, terminated, and truncated must have the same length"
-    (fun () ->
+  raises
+    (Invalid_argument
+       "Gae.returns: rewards, terminated, and truncated must have the same \
+        length") (fun () ->
       Gae.returns ~rewards:[| 1.0; 1.0 |] ~terminated:[| false |]
         ~truncated:[| false; false |] ~gamma:0.99)
 

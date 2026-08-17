@@ -89,18 +89,17 @@ struct
       d <= abs || d <= rel *. Float.max (Float.abs a) (Float.abs b)
 
   let ftest ~rel ~abs : float testable =
-    testable
+    Testable.make
       ~pp:(fun ppf x -> Format.fprintf ppf "%.9g" x)
-      ~equal:(float_close ~rel ~abs) ()
+      ~equal:(float_close ~rel ~abs)
 
   let ctest ~rel ~abs : Complex.t testable =
-    testable
+    Testable.make
       ~pp:(fun ppf z ->
         Format.fprintf ppf "(%.9g, %.9g)" z.Complex.re z.Complex.im)
       ~equal:(fun a b ->
         float_close ~rel ~abs a.Complex.re b.Complex.re
         && float_close ~rel ~abs a.Complex.im b.Complex.im)
-      ()
 
   (* ───── Dtype tables ─────
 

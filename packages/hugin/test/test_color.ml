@@ -61,16 +61,16 @@ let test_hex_case_insensitive () =
   check_rgba "case insensitive" (r1, g1, b1, 1.) (r2, g2, b2, 1.)
 
 let test_hex_invalid_length () =
-  raises_invalid_arg "Color.hex: expected 6 or 8 hex digits, got 3" (fun () ->
-      Color.hex "#FFF")
+  raises (Invalid_argument "Color.hex: expected 6 or 8 hex digits, got 3")
+    (fun () -> Color.hex "#FFF")
 
 let test_hex_invalid_chars () =
-  raises_invalid_arg "Color.hex: invalid hex digit 'G'" (fun () ->
+  raises (Invalid_argument "Color.hex: invalid hex digit 'G'") (fun () ->
       Color.hex "#GGGGGG")
 
 let test_hex_empty () =
-  raises_invalid_arg "Color.hex: expected 6 or 8 hex digits, got 0" (fun () ->
-      Color.hex "")
+  raises (Invalid_argument "Color.hex: expected 6 or 8 hex digits, got 0")
+    (fun () -> Color.hex "")
 
 (* OKLCH constructors *)
 

@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package tolk)
- (libraries tolk))
+ (libraries tolk unix))

@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package quill)
- (libraries quill quill.markdown))
+ (libraries quill quill.markdown unix))

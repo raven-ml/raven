@@ -36,9 +36,10 @@ let fail_loud_tests =
              checks and reaches the uninstalled runner rather than raising a
              size or dtype mismatch. *)
           let dst = allocated_i32 4 and src = allocated_i32 4 in
-          raises_invalid_arg
-            "Device.Buffer.copy_from: no copy runner installed; link the \
-             realize engine to route buffer copies" (fun () ->
+          raises
+            (Invalid_argument
+               "Device.Buffer.copy_from: no copy runner installed; link the \
+                realize engine to route buffer copies") (fun () ->
               Device.Buffer.copy_from ~dst ~src));
     ]
 

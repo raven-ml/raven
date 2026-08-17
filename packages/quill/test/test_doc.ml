@@ -27,7 +27,9 @@ let accessor_tests =
         (match Doc.nth 1 d with
         | Some c -> equal string "second" (Cell.source c)
         | None -> fail "expected Some for nth 1");
-        is_none (Doc.nth 2 d));
+        is_none
+          ~pp:(fun ppf c -> Format.pp_print_string ppf (Cell.source c))
+          (Doc.nth 2 d));
     test "find" (fun () ->
         let c1 = Cell.text "hello" in
         let id = Cell.id c1 in
@@ -39,7 +41,7 @@ let accessor_tests =
         let c1 = Cell.text "a" in
         let c2 = Cell.text "b" in
         let d = Doc.of_cells [ c1; c2 ] in
-        some int 1 (Doc.find_index (Cell.id c2) d));
+        equal (option int) (Some 1) (Doc.find_index (Cell.id c2) d));
   ]
 
 let modification_tests =

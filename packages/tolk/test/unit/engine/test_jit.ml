@@ -152,7 +152,7 @@ let () =
       group "TinyJit"
         [
           test "create requires a function or a captured schedule" (fun () ->
-            raises_invalid_arg "need either a function or a CapturedJit"
+            raises (Invalid_argument "need either a function or a CapturedJit")
               (fun () ->
                 ignore (Jit.create ~device ~to_program ())));
           test "reset requires a function-backed jit" (fun () ->

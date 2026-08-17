@@ -37,7 +37,6 @@ let complex_testable =
     ~pp:(fun ppf v -> Format.fprintf ppf "(%g, %g)" v.Complex.re v.Complex.im)
     ~equal:(fun a b ->
       a.Complex.re = b.Complex.re && a.Complex.im = b.Complex.im)
-    ()
 
 (* Oracle checks against per-element stdlib Complex loops *)
 

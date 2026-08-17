@@ -60,7 +60,8 @@ let test_vmap_of_scan () =
   check_arr ~msg:"vmap scan" (to_arr (Nx.cumsum ~axis:1 x)) y
 
 let test_scan_rejects_scalar () =
-  raises_invalid_arg (fun () -> ignore (cumsum_scan (Nx.scalar f64 1.0)))
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (cumsum_scan (Nx.scalar f64 1.0)))
 
 let test_cond_branches () =
   let branch x =

@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package norn)
- (libraries norn nx rune))
+ (libraries norn nx rune unix))

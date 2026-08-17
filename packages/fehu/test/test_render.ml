@@ -14,9 +14,10 @@ let test_valid_rgb_image () =
 
 let test_wrong_data_length_raises () =
   let data = make_data 10 in
-  raises_invalid_arg
-    "Render.image: data length 10 does not match width * height * channels = 12"
-    (fun () -> ignore (Render.image ~width:2 ~height:2 data))
+  raises
+    (Invalid_argument
+       "Render.image: data length 10 does not match width * height * channels \
+        = 12") (fun () -> ignore (Render.image ~width:2 ~height:2 data))
 
 let test_rgba_channels () =
   let data = make_data 16 in

@@ -145,17 +145,18 @@ let test_float64_dtype () =
 (* Validation *)
 
 let test_negative_scale_rejected () =
-  raises_invalid_arg "scale must be >= 0, got -1" (fun () ->
+  raises (Invalid_argument "scale must be >= 0, got -1") (fun () ->
       Init.uniform ~scale:(-1.0));
-  raises_invalid_arg "stddev must be >= 0, got -0.1" (fun () ->
+  raises (Invalid_argument "stddev must be >= 0, got -0.1") (fun () ->
       Init.normal ~stddev:(-0.1));
-  raises_invalid_arg "scale must be >= 0, got -1" (fun () ->
+  raises (Invalid_argument "scale must be >= 0, got -1") (fun () ->
       Init.variance_scaling ~scale:(-1.0) ~mode:`Fan_in ~distribution:`Uniform)
 
 let test_non_positive_fan_rejected () =
-  raises_invalid_arg "fans must be positive, got fan_in=0 fan_out=4" (fun () ->
-      Init.he_normal ~fan_in:0 ~fan_out:4 Nx.float32 [| 4; 4 |]);
-  raises_invalid_arg "fans must be positive, got fan_in=3 fan_out=-1" (fun () ->
+  raises (Invalid_argument "fans must be positive, got fan_in=0 fan_out=4")
+    (fun () -> Init.he_normal ~fan_in:0 ~fan_out:4 Nx.float32 [| 4; 4 |]);
+  raises (Invalid_argument "fans must be positive, got fan_in=3 fan_out=-1")
+    (fun () ->
       Init.variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Normal
         ~fan_in:3 ~fan_out:(-1) Nx.float32 [| 3 |])
 

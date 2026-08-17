@@ -13,7 +13,7 @@ module Gen = Windtrap.Gen
 let gen_shape ~max_ndim ~max_dim =
   let open Gen in
   let* ndim = int_range 1 max_ndim in
-  let+ dims = list_size (pure ndim) (int_range 1 max_dim) in
+  let+ dims = list ~size:(pure ndim) (int_range 1 max_dim) in
   Array.of_list dims
 
 let gen_shape_2d ~max_dim =
@@ -35,7 +35,7 @@ let gen_int32_safe =
   Int32.of_int n
 
 let gen_int32_nonzero =
-  Gen.oneof
+  Gen.one_of
     [
       Gen.map Int32.of_int (Gen.int_range (-100) (-1));
       Gen.map Int32.of_int (Gen.int_range 1 100);
@@ -47,7 +47,7 @@ let gen_tensor_with_values (type a b) (dtype : (a, b) Nx.dtype)
     (gen_val : a Gen.t) (shape : int array) =
   let size = Array.fold_left ( * ) 1 shape in
   let open Gen in
-  let+ data = list_size (pure size) gen_val in
+  let+ data = list ~size:(pure size) gen_val in
   Nx.create dtype shape (Array.of_list data)
 
 let gen_f32 shape = gen_tensor_with_values Nx.float32 gen_float_safe shape
@@ -142,7 +142,7 @@ let gen_i32_1d =
   let* len = int_range 1 20 in
   gen_i32 [| len |]
 
-(* ── Testable Wrappers ── *)
+(* ── Witnesses and Printing Generators ── *)
 
 let pp_tensor fmt t = Format.fprintf fmt "%s" (Nx.to_string t)
 
@@ -158,63 +158,59 @@ let approx_equal (type b) ?(epsilon = 1e-5) (a : (float, b) Nx.t)
 let exact_equal (type a b) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
   Nx.shape x = Nx.shape y && Nx.item [] (Nx.array_equal x y)
 
-let mk_testable_f32 gen =
-  Testable.make ~pp:pp_tensor
-    ~equal:(fun a b -> approx_equal ~epsilon:1e-5 a b)
-    ~gen ()
+let allclose (type b) ?(atol = 1e-5) ?(rtol = 1e-5) (a : (float, b) Nx.t)
+    (b : (float, b) Nx.t) =
+  if Nx.shape a <> Nx.shape b then false
+  else
+    let diff = Nx.abs (Nx.sub a b) in
+    let tol = Nx.add_s (Nx.mul_s (Nx.abs b) rtol) atol in
+    Nx.item [] (Nx.all (Nx.less_equal diff tol))
 
-let mk_testable_f32_tol ~epsilon gen =
-  Testable.make ~pp:pp_tensor
-    ~equal:(fun a b -> approx_equal ~epsilon a b)
-    ~gen ()
+(* Assertion witnesses. Each is a function so that one call site can compare
+   float32 tensors and another float64 ones. *)
 
-let mk_testable_i32 gen = Testable.make ~pp:pp_tensor ~equal:exact_equal ~gen ()
+let approx (type b) ?(epsilon = 1e-5) () : (float, b) Nx.t testable =
+  Testable.make ~pp:pp_tensor ~equal:(fun a b -> approx_equal ~epsilon a b)
 
-let mk_testable_f64 gen =
-  Testable.make ~pp:pp_tensor
-    ~equal:(fun a b -> approx_equal ~epsilon:1e-10 a b)
-    ~gen ()
+let exact (type a b) () : (a, b) Nx.t testable =
+  Testable.make ~pp:pp_tensor ~equal:exact_equal
 
-(* Single tensor testables *)
-let f32_any = mk_testable_f32 gen_f32_any
-let i32_any = mk_testable_i32 gen_i32_any
-let f32_2d = mk_testable_f32 gen_f32_2d
+(* [allclose] scales its relative term by the second argument, and [equal] hands
+   a witness (expected, actual). Pass the expected side second so the tolerance
+   keys off the reference rather than off a computed value that may itself be
+   wrong. *)
+let close (type b) ?(atol = 1e-5) ?(rtol = 1e-5) () : (float, b) Nx.t testable =
+  Testable.make ~pp:pp_tensor ~equal:(fun expected actual ->
+      allclose ~atol ~rtol actual expected)
 
-(* Pair testables *)
+(* Generators print through [pp_tensor], so a shrunk counterexample shows the
+   tensor rather than its provenance. *)
+let tensor gen = Gen.with_pp pp_tensor gen
+
+(* Single tensors *)
+let f32_any = tensor gen_f32_any
+let i32_any = tensor gen_i32_any
+let f32_2d = tensor gen_f32_2d
+
+(* Pairs and triples *)
 let pp_pair pp1 pp2 fmt (a, b) = Format.fprintf fmt "(%a, %a)" pp1 a pp2 b
 
 let pp_triple pp1 pp2 pp3 fmt (a, b, c) =
   Format.fprintf fmt "(%a, %a, %a)" pp1 a pp2 b pp3 c
 
-let f32_pair =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-    ~gen:gen_f32_pair ()
-
-let i32_pair =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) -> exact_equal a1 a2 && exact_equal b1 b2)
-    ~gen:gen_i32_pair ()
+let f32_pair = Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_f32_pair
+let i32_pair = Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_i32_pair
 
 let i32_pair_b_nonzero =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) -> exact_equal a1 a2 && exact_equal b1 b2)
-    ~gen:gen_i32_pair_b_nonzero ()
+  Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_i32_pair_b_nonzero
 
 let i32_triple =
-  Testable.make
-    ~pp:(pp_triple pp_tensor pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1, c1) (a2, b2, c2) ->
-      exact_equal a1 a2 && exact_equal b1 b2 && exact_equal c1 c2)
-    ~gen:gen_i32_triple ()
+  Gen.with_pp (pp_triple pp_tensor pp_tensor pp_tensor) gen_i32_triple
 
-let f32_1d = mk_testable_f32 gen_f32_1d
-let i32_1d = mk_testable_i32 gen_i32_1d
-let square_f64 = mk_testable_f64 (gen_square_f64 ~max_n:4)
-let posdef_f64 = mk_testable_f64 (gen_posdef_f64 ~max_n:4)
+let f32_1d = tensor gen_f32_1d
+let i32_1d = tensor gen_i32_1d
+let square_f64 = tensor (gen_square_f64 ~max_n:4)
+let posdef_f64 = tensor (gen_posdef_f64 ~max_n:4)
 
 (* ── Indexing Generators ── *)
 
@@ -240,7 +236,7 @@ let gen_f32_1d_with_take_indices =
   let* t = gen_f32 [| len |] in
   let* num_indices = int_range 1 8 in
   let+ idx_list =
-    list_size (pure num_indices) (map Int32.of_int (int_range 0 (len - 1)))
+    list ~size:(pure num_indices) (map Int32.of_int (int_range 0 (len - 1)))
   in
   let indices = Nx.create Nx.int32 [| num_indices |] (Array.of_list idx_list) in
   (t, indices)
@@ -251,7 +247,7 @@ let gen_f32_with_mask =
   let* shape = gen_shape ~max_ndim:3 ~max_dim:4 in
   let size = Array.fold_left ( * ) 1 shape in
   let* t = gen_f32 shape in
-  let+ bools = list_size (pure size) bool in
+  let+ bools = list ~size:(pure size) bool in
   let mask = Nx.create Nx.bool shape (Array.of_list bools) in
   (t, mask)
 
@@ -263,9 +259,9 @@ let gen_f32_with_mask =
 let gen_broadcastable_shapes =
   let open Gen in
   let* ndim = int_range 1 3 in
-  let* dims = list_size (pure ndim) (int_range 1 5) in
+  let* dims = list ~size:(pure ndim) (int_range 1 5) in
   let result_shape = Array.of_list dims in
-  let+ choices = list_size (pure ndim) (int_range 0 2) in
+  let+ choices = list ~size:(pure ndim) (int_range 0 2) in
   let shape_a = Array.copy result_shape in
   let shape_b = Array.copy result_shape in
   List.iteri
@@ -288,17 +284,17 @@ let gen_f32_broadcastable_pair =
 let gen_f32_with_broadcast_shape =
   let open Gen in
   let* ndim = int_range 1 3 in
-  let* dims = list_size (pure ndim) (int_range 1 5) in
+  let* dims = list ~size:(pure ndim) (int_range 1 5) in
   let target = Array.of_list dims in
   (* Build source shape: randomly set some dims to 1 *)
-  let* which_ones = list_size (pure ndim) bool in
+  let* which_ones = list ~size:(pure ndim) bool in
   let source =
     Array.mapi (fun i d -> if List.nth which_ones i then 1 else d) target
   in
   let+ t = gen_f32 source in
   (t, target)
 
-(* ── Indexing & Broadcasting Testables ── *)
+(* ── Indexing & Broadcasting Generators ── *)
 
 let pp_int_list fmt l =
   Format.fprintf fmt "[%s]" (String.concat "; " (List.map string_of_int l))
@@ -308,35 +304,18 @@ let pp_int_array fmt a =
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let f32_with_index =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_int_list)
-    ~equal:(fun (t1, i1) (t2, i2) -> approx_equal t1 t2 && i1 = i2)
-    ~gen:gen_f32_with_index ()
+  Gen.with_pp (pp_pair pp_tensor pp_int_list) gen_f32_with_index
 
 let f32_1d_with_take_indices =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (t1, i1) (t2, i2) -> approx_equal t1 t2 && exact_equal i1 i2)
-    ~gen:gen_f32_1d_with_take_indices ()
+  Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_f32_1d_with_take_indices
 
-let f32_with_mask =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (t1, m1) (t2, m2) ->
-      approx_equal t1 t2 && Nx.shape m1 = Nx.shape m2)
-    ~gen:gen_f32_with_mask ()
+let f32_with_mask = Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_f32_with_mask
 
 let f32_broadcastable_pair =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-    ~gen:gen_f32_broadcastable_pair ()
+  Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_f32_broadcastable_pair
 
 let f32_with_broadcast_shape =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_int_array)
-    ~equal:(fun (t1, s1) (t2, s2) -> approx_equal t1 t2 && s1 = s2)
-    ~gen:gen_f32_with_broadcast_shape ()
+  Gen.with_pp (pp_pair pp_tensor pp_int_array) gen_f32_with_broadcast_shape
 
 (* ── Stress-Test Generators ── *)
 
@@ -346,7 +325,7 @@ let gen_f32_stress =
   let* shape = gen_shape ~max_ndim:5 ~max_dim:8 in
   gen_f32 shape
 
-let f32_stress = mk_testable_f32 gen_f32_stress
+let f32_stress = tensor gen_f32_stress
 
 let gen_f32_stress_pair =
   let open Gen in
@@ -355,27 +334,24 @@ let gen_f32_stress_pair =
   (a, b)
 
 let f32_stress_pair =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-    ~gen:gen_f32_stress_pair ()
+  Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_f32_stress_pair
 
 (* 2D+ tensor for transpose+slice combos *)
 let gen_f32_2d_plus =
   let open Gen in
   let* ndim = int_range 2 4 in
-  let* dims = list_size (pure ndim) (int_range 2 6) in
+  let* dims = list ~size:(pure ndim) (int_range 2 6) in
   gen_f32 (Array.of_list dims)
 
-let f32_2d_plus = mk_testable_f32 gen_f32_2d_plus
+let f32_2d_plus = tensor gen_f32_2d_plus
 
 (* Broadcastable pair with higher ranks *)
 let gen_broadcastable_shapes_stress =
   let open Gen in
   let* ndim = int_range 2 5 in
-  let* dims = list_size (pure ndim) (int_range 1 6) in
+  let* dims = list ~size:(pure ndim) (int_range 1 6) in
   let result_shape = Array.of_list dims in
-  let+ choices = list_size (pure ndim) (int_range 0 2) in
+  let+ choices = list ~size:(pure ndim) (int_range 0 2) in
   let shape_a = Array.copy result_shape in
   let shape_b = Array.copy result_shape in
   List.iteri
@@ -394,10 +370,7 @@ let gen_f32_broadcastable_stress =
   (a, b)
 
 let f32_broadcastable_stress =
-  Testable.make
-    ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
-    ~gen:gen_f32_broadcastable_stress ()
+  Gen.with_pp (pp_pair pp_tensor pp_tensor) gen_f32_broadcastable_stress
 
 (* ── Helper Predicates ── *)
 
@@ -410,13 +383,5 @@ let all_finite (type b) (t : (float, b) Nx.t) =
 let all_nonzero_f32 (type b) (t : (float, b) Nx.t) =
   let zeros = Nx.zeros_like t in
   not (Nx.item [] (Nx.any (Nx.equal t zeros)))
-
-let allclose (type b) ?(atol = 1e-5) ?(rtol = 1e-5) (a : (float, b) Nx.t)
-    (b : (float, b) Nx.t) =
-  if Nx.shape a <> Nx.shape b then false
-  else
-    let diff = Nx.abs (Nx.sub a b) in
-    let tol = Nx.add_s (Nx.mul_s (Nx.abs b) rtol) atol in
-    Nx.item [] (Nx.all (Nx.less_equal diff tol))
 
 let all_true (type b) (t : (bool, b) Nx.t) = Nx.item [] (Nx.all t)

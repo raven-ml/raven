@@ -7,4 +7,4 @@
  (names test_nx_props)
  (package nx)
  (modules :standard \ test_nx_props_support)
- (libraries nx nx_core windtrap windtrap.prop test_nx_props_support))
+ (libraries nx nx_core windtrap test_nx_props_support))

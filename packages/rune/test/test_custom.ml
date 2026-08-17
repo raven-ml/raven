@@ -93,7 +93,7 @@ let test_multi_leaf_rule () =
   check_arr ~msg:"db" (to_arr a) g.snd
 
 let test_custom_vjp_rejects_forward_mode () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.jvp' my_sin (v3 ()) (tangent_like (v3 ()))))
 
 (* custom_jvp *)
@@ -124,7 +124,7 @@ let test_correct_jvp_rule_matches_autodiff () =
   check_arr ~msg:"my_sin_fwd jvp" (to_arr expected) actual
 
 let test_custom_jvp_rejects_reverse_mode () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.grad' (fun x -> Nx.sum (my_sin_fwd x)) (v3 ())))
 
 let test_custom_jvp_undifferentiated () =

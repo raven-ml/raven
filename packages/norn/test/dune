@@ -1,8 +1,10 @@
 (test
  (name test_norn)
  (package norn)
+ (modules test_norn)
  (libraries nx rune norn windtrap))
 
 (executable
  (name debug_nuts)
+ (modules debug_nuts)
  (libraries nx rune norn))

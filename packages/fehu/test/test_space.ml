@@ -1,7 +1,7 @@
 open Fehu
 open Windtrap
 
-let value = testable ~pp:Value.pp ~equal:Value.equal ()
+let value = Testable.make ~pp:Value.pp ~equal:Value.equal
 
 (* Helpers *)
 
@@ -55,12 +55,14 @@ let test_discrete_pack_unpack () =
   let packed = Space.pack s v in
   equal ~msg:"pack produces Int 2" value (Value.Int 2) packed;
   let unpacked = Space.unpack s packed in
-  is_ok ~msg:"unpack succeeds" unpacked
+  ignore (require_ok ~msg:"unpack succeeds" unpacked)
 
 let test_discrete_unpack_invalid () =
   let s = Space.Discrete.create 3 in
-  is_error ~msg:"unpack out of range" (Space.unpack s (Value.Int 5));
-  is_error ~msg:"unpack wrong type" (Space.unpack s (Value.String "x"))
+  ignore
+    (require_error ~msg:"unpack out of range" (Space.unpack s (Value.Int 5)));
+  ignore
+    (require_error ~msg:"unpack wrong type" (Space.unpack s (Value.String "x")))
 
 let test_discrete_boundary_values () =
   let s = Space.Discrete.create 3 in
@@ -76,14 +78,14 @@ let test_discrete_boundary_single () =
 
 let test_discrete_shape () =
   let s = Space.Discrete.create 3 in
-  is_none ~msg:"discrete shape is None" (Space.shape s)
+  equal ~msg:"discrete shape is None" (option (array int)) None (Space.shape s)
 
 let test_discrete_error_zero () =
-  raises_invalid_arg "Space.Discrete.create: n must be strictly positive"
+  raises (Invalid_argument "Space.Discrete.create: n must be strictly positive")
     (fun () -> Space.Discrete.create 0)
 
 let test_discrete_error_negative () =
-  raises_invalid_arg "Space.Discrete.create: n must be strictly positive"
+  raises (Invalid_argument "Space.Discrete.create: n must be strictly positive")
     (fun () -> Space.Discrete.create (-1))
 
 (* Box *)
@@ -112,12 +114,8 @@ let test_box_pack_unpack () =
   let v = float32_vec [| 5.0 |] in
   let packed = Space.pack s v in
   let unpacked = Space.unpack s packed in
-  is_ok ~msg:"round-trip succeeds" unpacked;
-  match unpacked with
-  | Ok t ->
-      let arr = read_float32_vec t in
-      equal ~msg:"value preserved" (float 0.01) 5.0 arr.(0)
-  | Error _ -> fail "unreachable"
+  let arr = read_float32_vec (require_ok ~msg:"round-trip succeeds" unpacked) in
+  equal ~msg:"value preserved" (float 0.01) 5.0 arr.(0)
 
 let test_box_boundary_values () =
   let s = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
@@ -131,8 +129,8 @@ let test_box_boundary_identical () =
 
 let test_box_shape_1d () =
   let s = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
-  is_some ~msg:"shape is Some" (Space.shape s);
-  equal ~msg:"shape [|1|]" (array int) [| 1 |] (Option.get (Space.shape s))
+  equal ~msg:"shape [|1|]" (array int) [| 1 |]
+    (require_some ~msg:"shape is Some" (Space.shape s))
 
 let test_box_2d () =
   let s = Space.Box.create ~low:[| 0.0; -1.0 |] ~high:[| 1.0; 1.0 |] in
@@ -142,12 +140,13 @@ let test_box_2d () =
     (Space.contains s (float32_vec [| 0.5; 2.0 |]))
 
 let test_box_error_empty () =
-  raises_invalid_arg "Space.Box.create: low cannot be empty" (fun () ->
+  raises (Invalid_argument "Space.Box.create: low cannot be empty") (fun () ->
       Space.Box.create ~low:[||] ~high:[||])
 
 let test_box_error_mismatch () =
-  raises_invalid_arg
-    "Space.Box.create: low and high must have identical lengths" (fun () ->
+  raises
+    (Invalid_argument
+       "Space.Box.create: low and high must have identical lengths") (fun () ->
       Space.Box.create ~low:[| 0.0 |] ~high:[| 1.0; 2.0 |])
 
 let test_box_error_low_gt_high () =
@@ -180,7 +179,8 @@ let test_mb_shape () =
   equal ~msg:"shape [|3|]" (option (array int)) (Some [| 3 |]) (Space.shape s)
 
 let test_mb_error () =
-  raises_invalid_arg "Space.Multi_binary.create: n must be strictly positive"
+  raises
+    (Invalid_argument "Space.Multi_binary.create: n must be strictly positive")
     (fun () -> Space.Multi_binary.create 0)
 
 (* Multi_discrete *)
@@ -203,7 +203,8 @@ let test_md_shape () =
   equal ~msg:"shape [|2|]" (option (array int)) (Some [| 2 |]) (Space.shape s)
 
 let test_md_error_empty () =
-  raises_invalid_arg "Space.Multi_discrete.create: nvec must not be empty"
+  raises
+    (Invalid_argument "Space.Multi_discrete.create: nvec must not be empty")
     (fun () -> Space.Multi_discrete.create [||])
 
 let test_md_error_zero_element () =
@@ -238,7 +239,7 @@ let test_tuple_pack_unpack () =
   let v = [ Value.Int 1; Value.Float_array [| 0.5 |] ] in
   let packed = Space.pack s v in
   let unpacked = Space.unpack s packed in
-  is_ok ~msg:"round-trip succeeds" unpacked
+  ignore (require_ok ~msg:"round-trip succeeds" unpacked)
 
 let test_tuple_empty () =
   let s = Space.Tuple.create [] in
@@ -308,12 +309,12 @@ let test_text_boundary_values () =
   equal ~msg:"2 boundaries" int 2 (List.length bvs)
 
 let test_text_error_max_length () =
-  raises_invalid_arg "Space.Text.create: max_length must be positive" (fun () ->
-      Space.Text.create ~max_length:0 ())
+  raises (Invalid_argument "Space.Text.create: max_length must be positive")
+    (fun () -> Space.Text.create ~max_length:0 ())
 
 let test_text_error_charset () =
-  raises_invalid_arg "Space.Text.create: charset must not be empty" (fun () ->
-      Space.Text.create ~charset:"" ())
+  raises (Invalid_argument "Space.Text.create: charset must not be empty")
+    (fun () -> Space.Text.create ~charset:"" ())
 
 (* Sequence *)
 
@@ -352,16 +353,18 @@ let test_seq_pack_unpack () =
   let v = [ int32_scalar 0; int32_scalar 1 ] in
   let packed = Space.pack s v in
   let unpacked = Space.unpack s packed in
-  is_ok ~msg:"round-trip succeeds" unpacked
+  ignore (require_ok ~msg:"round-trip succeeds" unpacked)
 
 let test_seq_error_min_negative () =
   let ds = Space.Discrete.create 3 in
-  raises_invalid_arg "Space.Sequence.create: min_length must be non-negative"
+  raises
+    (Invalid_argument "Space.Sequence.create: min_length must be non-negative")
     (fun () -> Space.Sequence.create ~min_length:(-1) ds)
 
 let test_seq_error_max_lt_min () =
   let ds = Space.Discrete.create 3 in
-  raises_invalid_arg "Space.Sequence.create: max_length must be >= min_length"
+  raises
+    (Invalid_argument "Space.Sequence.create: max_length must be >= min_length")
     (fun () -> Space.Sequence.create ~min_length:5 ~max_length:2 ds)
 
 (* Discrete helpers *)
@@ -435,13 +438,14 @@ let test_tuple_unpack_validates_elements () =
   let s = Space.Tuple.create [ Pack ds ] in
   (* Value.Int 5 is out of range for Discrete(n=3, start=0) *)
   let bad = Value.List [ Value.Int 5 ] in
-  is_error ~msg:"unpack rejects invalid element" (Space.unpack s bad)
+  ignore
+    (require_error ~msg:"unpack rejects invalid element" (Space.unpack s bad))
 
 let test_tuple_unpack_valid () =
   let ds = Space.Discrete.create 3 in
   let s = Space.Tuple.create [ Pack ds ] in
   let good = Value.List [ Value.Int 1 ] in
-  is_ok ~msg:"unpack accepts valid element" (Space.unpack s good)
+  ignore (require_ok ~msg:"unpack accepts valid element" (Space.unpack s good))
 
 (* Entry point *)
 

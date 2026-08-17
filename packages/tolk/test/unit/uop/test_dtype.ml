@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk_uop
 
-let dtype = testable ~pp:Dtype.pp ~equal:Dtype.equal ()
+let dtype = Testable.make ~pp:Dtype.pp ~equal:Dtype.equal
 
 let bound =
   let pp fmt = function
@@ -19,7 +19,7 @@ let bound =
         Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
     | _ -> false
   in
-  testable ~pp ~equal ()
+  Testable.make ~pp ~equal
 
 let storage_scalar =
   let pp fmt = function
@@ -35,25 +35,25 @@ let storage_scalar =
         Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
     | _ -> false
   in
-  testable ~pp ~equal ()
+  Testable.make ~pp ~equal
 
 let char_option =
   let pp fmt = function
     | None -> Format.pp_print_string fmt "None"
     | Some c -> Format.fprintf fmt "Some %C" c
   in
-  testable ~pp ~equal:( = ) ()
+  Testable.make ~pp ~equal:( = )
 
 let float_bits =
   let pp fmt f = Format.fprintf fmt "%h" f in
   let equal a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b) in
-  testable ~pp ~equal ()
+  Testable.make ~pp ~equal
 
 let int_pair =
   let pp fmt (a, b) = Format.fprintf fmt "(%d, %d)" a b in
-  testable ~pp ~equal:( = ) ()
+  Testable.make ~pp ~equal:( = )
 
-let const = testable ~pp:Const.pp ~equal:Const.equal ()
+let const = Testable.make ~pp:Const.pp ~equal:Const.equal
 
 let raises_invalid f =
   try
@@ -184,9 +184,7 @@ let promotable_dtypes =
       float16; bfloat16; float32; float64; fp8e4m3; fp8e5m2;
     ]
 
-let promotable_dtype =
-  let gen = Gen.oneofl promotable_dtypes in
-  testable ~pp:Dtype.pp ~equal:Dtype.equal ~gen ()
+let promotable_dtype = Gen.of_list ~pp:Dtype.pp promotable_dtypes
 
 let promotion_matrix () =
   Array.iteri
@@ -210,7 +208,8 @@ let promotion_edges () =
   equal dtype Dtype.float32 (lub [ Dtype.float16; Dtype.bfloat16 ])
 
 let promotion_errors () =
-  raises_invalid_arg "Dtype.least_upper_dtype: empty list" (fun () -> lub []);
+  raises (Invalid_argument "Dtype.least_upper_dtype: empty list")
+    (fun () -> lub []);
   equal dtype Dtype.weakint (lub [ Dtype.weakint ]);
   is_true ~msg:"void is outside the lattice"
     (raises_invalid (fun () -> lub [ Dtype.void; Dtype.int32 ]))
@@ -328,13 +327,8 @@ let fp8_conversion () =
 let int_dtypes =
   Dtype.[ bool; int8; int16; int32; uint8; uint16; uint32 ]
 
-let int_dtype =
-  let gen = Gen.oneofl int_dtypes in
-  testable ~pp:Dtype.pp ~equal:Dtype.equal ~gen ()
-
-let fp8_byte =
-  let gen = Gen.int_range 0 255 in
-  testable ~pp:Format.pp_print_int ~equal:Int.equal ~gen ()
+let int_dtype = Gen.of_list ~pp:Dtype.pp int_dtypes
+let fp8_byte = Gen.int_range 0 255
 
 let integer_truncation () =
   equal int 42 (Dtype.truncate_int Dtype.int8 42);
@@ -410,7 +404,8 @@ let bounds () =
   equal bound (`SInt Int64.min_int) (Dtype.min Dtype.weakint);
   equal bound (`SInt Int64.max_int) (Dtype.max Dtype.weakint);
   equal bound (`Float neg_infinity) (Dtype.min Dtype.weakfloat);
-  raises_invalid_arg "void has no numeric bounds" (fun () -> Dtype.min Dtype.void)
+  raises (Invalid_argument "void has no numeric bounds")
+    (fun () -> Dtype.min Dtype.void)
 
 let float_info () =
   equal int_pair (5, 10) (Dtype.finfo Dtype.float16);
@@ -419,7 +414,7 @@ let float_info () =
   equal int_pair (11, 52) (Dtype.finfo Dtype.float64);
   equal int_pair (4, 3) (Dtype.finfo Dtype.fp8e4m3);
   equal int_pair (5, 2) (Dtype.finfo Dtype.fp8e5m2);
-  raises_invalid_arg "finfo: not a floating-point dtype" (fun () ->
+  raises (Invalid_argument "finfo: not a floating-point dtype") (fun () ->
       Dtype.finfo Dtype.int32);
   is_true ~msg:"finfo rejects weakfloat"
     (raises_invalid (fun () -> Dtype.finfo Dtype.weakfloat))
@@ -529,35 +524,37 @@ let const_uop_float_identity () =
 
 let properties =
   [
-    prop2 "promotion commutative" promotable_dtype promotable_dtype
-      (fun a b -> Dtype.equal (lub [ a; b ]) (lub [ b; a ]));
+    prop "promotion commutative"
+      Gen.(pair promotable_dtype promotable_dtype)
+      (fun (a, b) -> equal dtype (lub [ a; b ]) (lub [ b; a ]));
     prop "promotion idempotent" promotable_dtype (fun a ->
-        Dtype.equal (lub [ a; a ]) a);
+        equal dtype a (lub [ a; a ]));
     prop "lossless reflexive" promotable_dtype (fun a ->
-        Dtype.can_lossless_cast a a);
+        is_true (Dtype.can_lossless_cast a a));
     prop "sum_acc idempotent" promotable_dtype (fun a ->
-        Dtype.equal
-          (Dtype.sum_acc_dtype (Dtype.sum_acc_dtype a))
-          (Dtype.sum_acc_dtype a));
-    prop "fp16 idempotent" (float 0.0) (fun x ->
+        equal dtype
+          (Dtype.sum_acc_dtype a)
+          (Dtype.sum_acc_dtype (Dtype.sum_acc_dtype a)));
+    (* [float_exact] equates every NaN, so a NaN result round-trips like any
+       other value and needs no branch of its own. *)
+    prop "fp16 idempotent" Gen.float_any (fun x ->
         let r = Dtype.float_to_fp16 x in
-        if Float.is_nan r then Float.is_nan (Dtype.float_to_fp16 r)
-        else Float.equal r (Dtype.float_to_fp16 r));
-    prop "bf16 idempotent" (float 0.0) (fun x ->
+        equal float_exact r (Dtype.float_to_fp16 r));
+    prop "bf16 idempotent" Gen.float_any (fun x ->
         let r = Dtype.float_to_bf16 x in
-        if Float.is_nan r then Float.is_nan (Dtype.float_to_bf16 r)
-        else Float.equal r (Dtype.float_to_bf16 r));
+        equal float_exact r (Dtype.float_to_bf16 r));
     prop "fp8 byte round-trip stable" fp8_byte (fun byte ->
-        List.for_all
+        List.iter
           (fun s ->
             let f = Dtype.fp8_to_float s byte in
-            let byte' = Dtype.float_to_fp8 s f in
-            let f' = Dtype.fp8_to_float s byte' in
-            (Float.is_nan f && Float.is_nan f') || Float.equal f f')
+            equal float_exact f
+              (Dtype.fp8_to_float s (Dtype.float_to_fp8 s f)))
           Dtype.[ fp8e4m3; fp8e5m2 ]);
-    prop "truncate_int idempotent" (pair int_dtype int) (fun (dt, x) ->
+    prop "truncate_int idempotent"
+      Gen.(pair int_dtype int)
+      (fun (dt, x) ->
         let r = Dtype.truncate_int dt x in
-        r = Dtype.truncate_int dt r);
+        equal int r (Dtype.truncate_int dt r));
   ]
 
 let tests =

@@ -510,16 +510,13 @@ let make_comparison mk_op =
 
 (* Property test support *)
 
-let renderer_testable =
-  let gen = Gen.oneofl all_renderers in
-  let pp fmt (name, _) = Format.pp_print_string fmt name in
-  testable ~pp ~equal:(fun (a, _) (b, _) -> String.equal a b) ~gen ()
+let renderer_gen =
+  Gen.of_list
+    ~pp:(fun fmt (name, _) -> Format.pp_print_string fmt name)
+    all_renderers
 
 let safe_dtypes = [ Dtype.int32; Dtype.float32; Dtype.float64; Dtype.uint32 ]
-
-let safe_dtype =
-  let gen = Gen.oneofl safe_dtypes in
-  testable ~pp:Dtype.pp ~equal:Dtype.equal ~gen ()
+let safe_dtype_gen = Gen.of_list ~pp:Dtype.pp safe_dtypes
 
 (* Runner *)
 
@@ -1443,22 +1440,26 @@ let () =
       group "Properties"
         [
           prop "non-empty output"
-            (pair safe_dtype renderer_testable)
+            Gen.(pair safe_dtype_gen renderer_gen)
             (fun (dt, (_name, renderer)) ->
               let const_value =
                 match dt with
                 | Dtype.Float32 | Dtype.Float64 -> Const.float dt 1.0
                 | _ -> Const.int dt 1
               in
-              String.length (render renderer (make_store_const dt const_value)) > 0);
-          prop "contains kernel name" renderer_testable (fun (_name, renderer) ->
-            contains
+              satisfies ~msg:"non-empty" string
+                (fun out -> String.length out > 0)
+                (render renderer (make_store_const dt const_value)));
+          prop "contains kernel name" renderer_gen (fun (_name, renderer) ->
+            assert_contains "kernel name"
               (Renderer.render renderer ~name:"test_prop_kernel" f32_1)
               "test_prop_kernel");
-          prop "balanced braces" renderer_testable (fun (_name, renderer) ->
+          prop "balanced braces" renderer_gen (fun (_name, renderer) ->
             let output = render renderer (make_loop ()) in
-            count_char output '{' = count_char output '}');
-          prop "deterministic" renderer_testable (fun (_name, renderer) ->
-            String.equal (render renderer f32_1) (render renderer f32_1));
+            equal ~msg:"braces balance" int
+              (count_char output '{')
+              (count_char output '}'));
+          prop "deterministic" renderer_gen (fun (_name, renderer) ->
+            equal text (render renderer f32_1) (render renderer f32_1));
         ];
     ]

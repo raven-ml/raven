@@ -115,7 +115,7 @@ let test_vjp2_structured_output () =
   check_arr ~msg:"db" (to_arr expected.snd) g.snd
 
 let test_vjp2_cotangent_shape_mismatch () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.vjp2
            (module Pair)
@@ -147,7 +147,7 @@ let test_remat_value () =
 (* A single tensor has nowhere to carry a non-differentiable value, so an
    integer argument there is simply the wrong dtype. *)
 let test_grad_rejects_integer_leaves () =
-  raises_invalid_arg (fun () ->
+  raises_match Exn.invalid_arg (fun () ->
       ignore
         (Rune.grad'
            (fun x -> Nx.sum x)

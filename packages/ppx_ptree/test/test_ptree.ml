@@ -394,16 +394,18 @@ let test_containers_and_helpers () =
     [ (1, 1); (2, 2); (3, 3); (4, 4); (5, 5); (6, 6); (7, 7) ]
     (List.rev !paired_sizes);
   equal string "left" mapped.name;
-  raises_invalid_arg "Test_ptree.Composite.map2: list length mismatch at layers"
-    (fun () ->
+  raises
+    (Invalid_argument
+       "Test_ptree.Composite.map2: list length mismatch at layers") (fun () ->
       Stdlib.ignore
         (Composite.map2
            (fun left right ->
              Stdlib.ignore right;
              left)
            value { right with layers = [] }));
-  raises_invalid_arg
-    "Test_ptree.Composite.map2: option constructor mismatch at optional"
+  raises
+    (Invalid_argument
+       "Test_ptree.Composite.map2: option constructor mismatch at optional")
     (fun () ->
       Stdlib.ignore
         (Composite.map2
@@ -412,8 +414,9 @@ let test_containers_and_helpers () =
              left)
            value
            { right with optional = None }));
-  raises_invalid_arg
-    "Test_ptree.Composite.map2: array length mismatch at buffers" (fun () ->
+  raises
+    (Invalid_argument
+       "Test_ptree.Composite.map2: array length mismatch at buffers") (fun () ->
       Stdlib.ignore
         (Composite.map2
            (fun left right ->

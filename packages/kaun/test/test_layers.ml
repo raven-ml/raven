@@ -108,16 +108,18 @@ let test_linear_map2_bias_mismatch () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p = Linear.init ~inputs:2 ~outputs:2 in
   let q = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
-  raises_invalid_arg "Linear.map2: bias mismatch" (fun () ->
+  raises (Invalid_argument "Linear.map2: bias mismatch") (fun () ->
       Linear.map2 (fun a _ -> a) p q)
 
 let test_linear_rejects_bad_geometry () =
-  raises_invalid_arg
-    "Linear.make: inputs and outputs must be positive, got inputs=0 outputs=4"
-    (fun () -> Linear.make ~inputs:0 ~outputs:4 Nx.float32);
-  raises_invalid_arg
-    "Linear.make: inputs and outputs must be positive, got inputs=3 outputs=-1"
-    (fun () -> Linear.make ~inputs:3 ~outputs:(-1) Nx.float32)
+  raises
+    (Invalid_argument
+       "Linear.make: inputs and outputs must be positive, got inputs=0 \
+        outputs=4") (fun () -> Linear.make ~inputs:0 ~outputs:4 Nx.float32);
+  raises
+    (Invalid_argument
+       "Linear.make: inputs and outputs must be positive, got inputs=3 \
+        outputs=-1") (fun () -> Linear.make ~inputs:3 ~outputs:(-1) Nx.float32)
 
 (* Embedding *)
 
@@ -181,8 +183,9 @@ let test_embedding_rejects_out_of_bounds () =
     (fun () -> Embedding.apply p (Nx.create Nx.int32 [| 1 |] [| 4l |]))
 
 let test_embedding_rejects_bad_geometry () =
-  raises_invalid_arg
-    "Embedding.make: vocab and dim must be positive, got vocab=0 dim=3"
+  raises
+    (Invalid_argument
+       "Embedding.make: vocab and dim must be positive, got vocab=0 dim=3")
     (fun () -> Embedding.make ~vocab:0 ~dim:3 Nx.float32)
 
 (* Layer norm *)
@@ -254,13 +257,15 @@ let test_layer_norm_gradients () =
 
 let test_layer_norm_rejects_bad_input () =
   let p = Layer_norm.init ~dim:4 in
-  raises_invalid_arg
-    "Layer_norm.apply: last axis has size 3 but the layer normalizes 4 features"
-    (fun () -> Layer_norm.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
-  raises_invalid_arg "Layer_norm.apply: eps must be >= 0, got -1" (fun () ->
-      Layer_norm.apply ~eps:(-1.0) p (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises_invalid_arg "Layer_norm.make: dim must be positive, got 0" (fun () ->
-      Layer_norm.make ~dim:0 Nx.float32)
+  raises
+    (Invalid_argument
+       "Layer_norm.apply: last axis has size 3 but the layer normalizes 4 \
+        features") (fun () ->
+      Layer_norm.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
+  raises (Invalid_argument "Layer_norm.apply: eps must be >= 0, got -1")
+    (fun () -> Layer_norm.apply ~eps:(-1.0) p (Nx.zeros Nx.float32 [| 2; 4 |]));
+  raises (Invalid_argument "Layer_norm.make: dim must be positive, got 0")
+    (fun () -> Layer_norm.make ~dim:0 Nx.float32)
 
 let () =
   run "kaun layers"

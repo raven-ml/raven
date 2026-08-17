@@ -73,7 +73,7 @@ let huber_tests =
         close 1.625
           (Loss.huber ~reduction:`Sum (vec [| 0.5; 2. |]) (vec [| 0.; 0. |])));
     test "rejects a non-positive delta" (fun () ->
-        raises_invalid_arg "Loss.huber: delta must be positive (got 0)"
+        raises (Invalid_argument "Loss.huber: delta must be positive (got 0)")
           (fun () -> Loss.huber ~delta:0. (vec [| 1. |]) (vec [| 0. |])));
   ]
 
@@ -142,26 +142,27 @@ let softmax_ce_tests =
              (mat 1 2 [| 1000.; 0. |])
              (mat 1 2 [| 0.; 1. |])));
     test "rejects mismatched target shapes" (fun () ->
-        raises_invalid_arg
-          "Loss.softmax_cross_entropy: targets shape [2; 2] does not match \
-           logits shape [2; 3]" (fun () ->
+        raises
+          (Invalid_argument
+             "Loss.softmax_cross_entropy: targets shape [2; 2] does not match \
+              logits shape [2; 3]") (fun () ->
             Loss.softmax_cross_entropy
               (mat 2 3 (Array.make 6 0.))
               (mat 2 2 (Array.make 4 0.))));
     test "rejects rank-0 logits" (fun () ->
-        raises_invalid_arg
-          "Loss.softmax_cross_entropy: logits must have rank >= 1" (fun () ->
+        raises
+          (Invalid_argument
+             "Loss.softmax_cross_entropy: logits must have rank >= 1")
+          (fun () ->
             Loss.softmax_cross_entropy (Nx.scalar Nx.float64 0.)
               (Nx.scalar Nx.float64 1.)));
   ]
 
 let logits_and_labels =
-  Testable.with_gen
-    Gen.(
-      pair
-        (list_size (pure 6) (float_range (-10.) 10.))
-        (list_size (pure 2) (int_range 0 2)))
-    (pair (list (float 1e-12)) (list int))
+  Gen.(
+    pair
+      (list ~size:(pure 6) (float_range (-10.) 10.))
+      (list ~size:(pure 2) (int_range 0 2)))
 
 let softmax_ce_sparse_tests =
   [
@@ -170,7 +171,7 @@ let softmax_ce_sparse_tests =
           (Loss.softmax_cross_entropy_sparse
              (mat 1 2 [| 0.; 0. |])
              (labels [| 0l |])));
-    prop' "matches the dense loss on one-hot targets" logits_and_labels
+    prop "matches the dense loss on one-hot targets" logits_and_labels
       (fun (xs, ls) ->
         let logits = mat 2 3 (Array.of_list xs) in
         let ls = labels (Array.of_list (List.map Int32.of_int ls)) in
@@ -195,9 +196,10 @@ let softmax_ce_sparse_tests =
              (mat 2 2 [| 0.; 0.; 0.; 0. |])
              (labels [| 0l; 1l |])));
     test "rejects labels that keep the class axis" (fun () ->
-        raises_invalid_arg
-          "Loss.softmax_cross_entropy_sparse: labels shape [2; 3] does not \
-           match logits batch shape [2]" (fun () ->
+        raises
+          (Invalid_argument
+             "Loss.softmax_cross_entropy_sparse: labels shape [2; 3] does not \
+              match logits batch shape [2]") (fun () ->
             Loss.softmax_cross_entropy_sparse
               (mat 2 3 (Array.make 6 0.))
               (Nx.create Nx.int32 [| 2; 3 |] (Array.make 6 0l))));
