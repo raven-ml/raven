@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generate the expected token ids that brot is checked against.
+"""Generate the expected encodings that brot is checked against.
 
 Run from anywhere:
 
     uv run --with tokenizers python3 packages/brot/test/scripts/gen_parity_expected.py
 
 The reference is the HuggingFace `tokenizers` library. `test_parity.ml` reads
-the files this writes and requires brot to produce exactly the same ids, so
-regenerate only when a fixture changes or when a divergence has been confirmed
-to be a bug in the reference rather than in brot.
+the files this writes and requires brot to produce exactly the same encodings,
+so regenerate only when a fixture changes or when a divergence has been
+confirmed to be a bug in the reference rather than in brot.
 
 Corpora
 -------
@@ -18,8 +18,8 @@ Corpora
 64 KB), `bench/data/news_1k.txt`, and a few of the project's own English
 documentation pages, which add code identifiers, URLs and punctuation.
 `fixtures/parity/edge_cases.txt` is hand-written and covers whitespace runs,
-contractions, digits, scripts, combining marks, emoji, over-long words and
-special tokens.
+contractions, digits, scripts, combining marks, emoji, over-long words, special
+tokens, and spans whose byte and character extents differ.
 
 Fixture format
 --------------
@@ -31,25 +31,53 @@ final document. Splitting is line-based, so a separator at the start or end of
 the file, and two adjacent separators, all denote empty documents; a line that
 merely starts with `====` is ordinary text. See `documents` below.
 
-Expected-ids format
--------------------
+Expected-encoding format
+------------------------
 
 For corpus `<corpus>.txt` and tokenizer `<name>` this writes
 `fixtures/parity/<corpus>.<name>.ids`:
 
     # a header comment, recording the reference version
-    <ids of document 0, space separated>
+    IDS <ids of document 0, add_special_tokens=False>
+    OFFSETS <byte spans of document 0, one `start,end` per IDS token>
+    DECODE <the IDS row decoded back to text, as a JSON string>
+    SPECIAL <ids of document 0, add_special_tokens=True>
+    MASK <special-token mask of the SPECIAL row>
+    IDS <ids of document 1>
     ...
     ALL <ids of the whole corpus file as a single document>
 
-Lines starting with `#` are comments. Every other line is one document's ids in
-order, and may be empty when a document encodes to no tokens at all. The final
-line is prefixed `ALL ` and holds the whole corpus file (again minus its final
-newline) encoded as one document, which exercises the long-input paths.
+Lines starting with `#` are comments. Every other line is a row `<KIND>` or
+`<KIND> <value> <value> ...`; a row with no values is a document that encodes
+to no tokens at all. Rows of the five per-document kinds appear once per
+document, in document order, so the n-th `IDS` row and the n-th `OFFSETS` row
+describe the same document. The trailing `ALL` row holds the whole corpus file
+(again minus its final newline) encoded as one document, which exercises the
+long-input paths; only its ids are recorded, because its offsets would more
+than double the size of these fixtures for no coverage the per-document rows
+do not already give.
+
+`OFFSETS` values are byte spans into the document. The reference reports
+character spans, which `byte_spans` converts through a UTF-8 prefix sum. The
+conversion is per span, so a character whose bytes are split across several
+tokens keeps one span repeated once per token, as the reference reports it.
+
+`DECODE` is the one row whose value is text rather than numbers, so it is
+written as a JSON string: the quotes keep leading and trailing spaces visible,
+and the escapes keep a newline or a tab in decoded text from breaking the
+line-based format. Non-ASCII characters stay literal, which keeps the row
+readable and the file small. It records `decode` of the `IDS` row with
+`skip_special_tokens=False`, which is a round trip only up to what the
+tokenizer's normalizer and decoder discard.
+
+There is no row for `type_ids` or `attention_mask`: for a single sequence they
+are all `0` and all `1`, so `test_parity.ml` asserts that directly rather than
+carrying tens of thousands of constants here.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -71,6 +99,26 @@ def documents(text: str) -> list[str]:
             current.append(line)
     docs.append("\n".join(current))
     return docs
+
+
+def byte_spans(
+    text: str, spans: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Map character spans into `text` to byte spans."""
+    starts = [0]
+    total = 0
+    for char in text:
+        total += len(char.encode("utf-8"))
+        starts.append(total)
+    return [(starts[start], starts[stop]) for start, stop in spans]
+
+
+def row(kind: str, values: list[str]) -> str:
+    return " ".join([kind, *values])
+
+
+def ints(values: list[int]) -> list[str]:
+    return [str(value) for value in values]
 
 
 def main() -> int:
@@ -95,15 +143,29 @@ def main() -> int:
                     "# generated by gen_parity_expected.py with tokenizers "
                     f"{tokenizers.__version__}"
                 ),
-                f"# corpus {corpus}.txt, tokenizer {name}, add_special_tokens=False",
+                f"# corpus {corpus}.txt, tokenizer {name}",
             ]
             for document in documents(text):
-                ids = tokenizer.encode(document, add_special_tokens=False).ids
-                lines.append(" ".join(map(str, ids)))
+                plain = tokenizer.encode(document, add_special_tokens=False)
+                special = tokenizer.encode(document, add_special_tokens=True)
+                offsets = [
+                    f"{start},{stop}"
+                    for start, stop in byte_spans(document, plain.offsets)
+                ]
+                decoded = tokenizer.decode(
+                    plain.ids, skip_special_tokens=False
+                )
+                lines.append(row("IDS", ints(plain.ids)))
+                lines.append(row("OFFSETS", offsets))
+                lines.append(
+                    row("DECODE", [json.dumps(decoded, ensure_ascii=False)])
+                )
+                lines.append(row("SPECIAL", ints(special.ids)))
+                lines.append(row("MASK", ints(special.special_tokens_mask)))
             whole = tokenizer.encode(
                 text.removesuffix("\n"), add_special_tokens=False
-            ).ids
-            lines.append("ALL " + " ".join(map(str, whole)))
+            )
+            lines.append(row("ALL", ints(whole.ids)))
 
             out = parity_dir / f"{corpus}.{name}.ids"
             out.write_text(
