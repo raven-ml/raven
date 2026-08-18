@@ -22,7 +22,7 @@ let () =
     "caf\xc3\xa9 r\xc3\xa9sum\xc3\xa9";
   show "strip" (Normalizer.strip ()) "  hello  ";
   show "replace"
-    (Normalizer.replace ~pattern:"\\d+" ~replacement:"<NUM>")
+    (Normalizer.replace_regex ~pattern:"\\d+" ~replacement:"<NUM>")
     "I have 42 apples and 3 oranges";
   show "prepend" (Normalizer.prepend ">> ") "hello";
 

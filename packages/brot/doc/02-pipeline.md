@@ -62,9 +62,9 @@ model-specific preprocessing.
 Available normalizers:
 
 - **Unicode**: `nfc`, `nfd`, `nfkc`, `nfkd`
-- **Text transforms**: `lowercase`, `strip_accents`, `strip`, `replace`, `prepend`
+- **Text transforms**: `lowercase`, `strip_accents`, `strip`, `replace`, `replace_regex`, `prepend`
 - **Byte-level**: `byte_level` (GPT-2 style byte-to-Unicode mapping)
-- **Model-specific**: `bert` (clean text, CJK padding, optional lowercasing and accent stripping)
+- **Model-specific**: `bert` (clean text, CJK padding, optional lowercasing and accent stripping), `nmt` (control character cleanup)
 
 Compose normalizers with `sequence`:
 

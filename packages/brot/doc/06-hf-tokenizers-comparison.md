@@ -469,9 +469,11 @@ Common normalizers:
 | `normalizers.StripAccents()`        | `Normalizer.strip_accents`                 |
 | `normalizers.Strip()`               | `Normalizer.strip ()`                      |
 | `normalizers.Replace(pattern, rep)` | `Normalizer.replace ~pattern ~replacement` |
+| `normalizers.Replace(Regex(pat), rep)` | `Normalizer.replace_regex ~pattern ~replacement` |
 | `normalizers.Prepend(s)`            | `Normalizer.prepend s`                     |
 | `normalizers.BertNormalizer()`      | `Normalizer.bert ()`                       |
-| `normalizers.ByteLevel()`           | `Normalizer.byte_level ()`                 |
+| `normalizers.ByteLevel()`           | `Normalizer.byte_level`                    |
+| `normalizers.Nmt()`                 | `Normalizer.nmt`                           |
 | `normalizers.Sequence([...])`       | `Normalizer.sequence [...]`                |
 
 ### 9.2 Pre-tokenizer

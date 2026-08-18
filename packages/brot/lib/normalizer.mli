@@ -57,11 +57,27 @@ val strip : ?left:bool -> ?right:bool -> unit -> t
     text boundaries. [left] and [right] default to [true]. *)
 
 val replace : pattern:string -> replacement:string -> t
-(** [replace ~pattern ~replacement] is a normalizer that replaces all [pattern]
-    matches with [replacement]. [pattern] is a PCRE regular expression, compiled
-    once at construction time.
+(** [replace ~pattern ~replacement] is a normalizer that replaces every
+    occurrence of the string [pattern] with [replacement], scanning left to
+    right without overlap. An empty [pattern] occurs before every character and
+    at the end of the text. Empty text is returned unchanged. *)
 
-    Raises [Re.Pcre.Parse_error] if [pattern] is not valid PCRE. *)
+val replace_regex : pattern:string -> replacement:string -> t
+(** [replace_regex ~pattern ~replacement] is a normalizer that replaces every
+    match of the regular expression [pattern] with [replacement]. Matches are
+    found left to right, leftmost first, without overlap; an empty match right
+    after another match is skipped. Empty text is returned unchanged.
+
+    [pattern] is written in the dialect of tokenizer files: Unicode-aware, so
+    that [\s], [\d] and [\w] and their negations, [.] and negated classes stand
+    for characters rather than bytes, and [\p{..}] selects a general category
+    ([L], [Lu], [Nd], ...). [^] and [$] are line anchors, [\A], [\z] and [\Z]
+    text anchors. Groups, alternation, greedy and lazy quantifiers and bracket
+    classes are supported; case-insensitive matching, lookaround,
+    backreferences, word boundaries and possessive quantifiers are not.
+
+    Raises [Invalid_argument] if [pattern] is invalid or uses an unsupported
+    construct; the message says which. *)
 
 val prepend : string -> t
 (** [prepend s] is a normalizer that prepends [s] to non-empty text. Empty text
@@ -69,14 +85,19 @@ val prepend : string -> t
 
 (** {2:byte_level Byte-level encoding} *)
 
-val byte_level : ?add_prefix_space:bool -> unit -> t
-(** [byte_level ?add_prefix_space ()] is GPT-2 style byte-level encoding. Each
-    byte is mapped to a printable Unicode codepoint using the GPT-2
-    byte-to-unicode table.
-    - [add_prefix_space] adds a space prefix when the text does not start with
-      whitespace. Defaults to [false]. *)
+val byte_level : t
+(** [byte_level] is GPT-2 style byte-level encoding: each byte of the text is
+    mapped to a printable Unicode character using the GPT-2 byte-to-unicode
+    table. A space, for instance, becomes [U+0120]. *)
 
 (** {2:model Model-specific} *)
+
+val nmt : t
+(** [nmt] is the control character cleanup of neural machine translation models.
+    It removes [U+0001-U+0008], [U+000B], [U+000E-U+001F], [U+007F], [U+008F]
+    and [U+009F], and replaces with a space the tab, line feed, form feed and
+    carriage return, [U+1680], [U+200B-U+200F], [U+2028], [U+2029], [U+2581],
+    [U+FEFF] and [U+FFFD]. *)
 
 val bert :
   ?clean_text:bool ->

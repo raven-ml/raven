@@ -35,6 +35,87 @@ let json_without names = function
 
 let marker = "\xe2\x96\x81"
 
+(* Every normalizer, with JSON HuggingFace reads back as the same normalizer.
+   [Replace] writes its pattern as a [String] or a [Regex]; [ByteLevel] and
+   [Nmt] carry nothing. Every text below was read back by [Tokenizer.from_str]
+   as the same normalizer. *)
+let normalizers =
+  [
+    (Normalizer.nfc, {|{"type":"NFC"}|});
+    (Normalizer.nfd, {|{"type":"NFD"}|});
+    (Normalizer.nfkc, {|{"type":"NFKC"}|});
+    (Normalizer.nfkd, {|{"type":"NFKD"}|});
+    (Normalizer.lowercase, {|{"type":"Lowercase"}|});
+    (Normalizer.strip_accents, {|{"type":"StripAccents"}|});
+    ( Normalizer.strip (),
+      {|{"type":"Strip","strip_left":true,"strip_right":true}|} );
+    ( Normalizer.strip ~left:false (),
+      {|{"type":"Strip","strip_left":false,"strip_right":true}|} );
+    ( Normalizer.replace ~pattern:" " ~replacement:marker,
+      {|{"type":"Replace","pattern":{"String":" "},"content":"|} ^ marker
+      ^ {|"}|} );
+    ( Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ",
+      {|{"type":"Replace","pattern":{"Regex":"\\s+"},"content":" "}|} );
+    ( Normalizer.prepend marker,
+      {|{"type":"Prepend","prepend":"|} ^ marker ^ {|"}|} );
+    (Normalizer.byte_level, {|{"type":"ByteLevel"}|});
+    (Normalizer.nmt, {|{"type":"Nmt"}|});
+    ( Normalizer.bert (),
+      {|{"type":"BertNormalizer","clean_text":true,"handle_chinese_chars":true,"strip_accents":null,"lowercase":true}|}
+    );
+    ( Normalizer.bert ~clean_text:false ~strip_accents:(Some false)
+        ~lowercase:false (),
+      {|{"type":"BertNormalizer","clean_text":false,"handle_chinese_chars":true,"strip_accents":false,"lowercase":false}|}
+    );
+    ( Normalizer.sequence
+        [
+          Normalizer.nfc;
+          Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ";
+          Normalizer.lowercase;
+        ],
+      {|{"type":"Sequence","normalizers":[{"type":"NFC"},{"type":"Replace","pattern":{"Regex":"\\s+"},"content":" "},{"type":"Lowercase"}]}|}
+    );
+  ]
+
+let test_normalizer_json () =
+  List.iter
+    (fun (normalizer, expected) ->
+      let text = json_text (Normalizer.to_json normalizer) in
+      equal ~msg:expected string expected text;
+      match Normalizer.of_json (json_of_text text) with
+      | Error msg -> failf "%s does not read back: %s" expected msg
+      | Ok reloaded ->
+          equal ~msg:("round trip " ^ expected) string
+            (Format.asprintf "%a" Normalizer.pp normalizer)
+            (Format.asprintf "%a" Normalizer.pp reloaded))
+    normalizers
+
+(* A [ByteLevel] normalizer HuggingFace wrote with the members of its
+   pre-tokenizer namesake loads, and writes back without them. *)
+let test_normalizer_hf_members () =
+  match
+    Normalizer.of_json
+      (json_of_text
+         {|{"type":"ByteLevel","add_prefix_space":true,"use_regex":true}|})
+  with
+  | Error msg -> failf "cannot read: %s" msg
+  | Ok n ->
+      equal ~msg:"byte level" string {|{"type":"ByteLevel"}|}
+        (json_text (Normalizer.to_json n))
+
+(* A regular expression the translation refuses is rejected with its reason. *)
+let test_normalizer_regex_json () =
+  match
+    Normalizer.of_json
+      (json_of_text
+         {|{"type":"Replace","pattern":{"Regex":"(?i)a"},"content":"b"}|})
+  with
+  | Ok _ -> failf "an unsupported regular expression was accepted"
+  | Error msg ->
+      equal ~msg:"says why" string
+        {|invalid regular expression "(?i)a": group options are not supported|}
+        msg
+
 (* Every decoder, with JSON HuggingFace reads back as the same decoder. The
    members that only a pre-tokenizer reads are written at their defaults when
    HuggingFace requires them ([ByteLevel]) and left out when it does not
@@ -379,6 +460,9 @@ let () =
     [
       group "serialization"
         [
+          test "normalizer json" test_normalizer_json;
+          test "normalizer hf members" test_normalizer_hf_members;
+          test "normalizer regex json" test_normalizer_regex_json;
           test "decoder json" test_decoder_json;
           test "replace regex json" test_replace_regex_json;
           test "sentencepiece decoder json" test_sentencepiece_decoder_json;

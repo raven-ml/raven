@@ -30,10 +30,15 @@ type t =
   | NFKC
   | NFKD
   | Lowercase
-  | Replace of { pattern : string; replacement : string; compiled : Re.re }
+  | Replace of { pattern : pattern; replacement : string }
   | Prepend of string
-  | Byte_level of { add_prefix_space : bool; use_regex : bool }
+  | Byte_level
+  | Nmt
   | Sequence of t list
+
+and pattern =
+  | Literal of string
+  | Regex of { source : string; compiled : Re.re }
 
 (* UTF-8 helpers *)
 
@@ -537,40 +542,97 @@ let strip_bounds s ~left ~right =
   in
   (start, stop)
 
-(* The replacement stands for the last byte of what it replaced, so a token made
-   of it reports the last character of the match. Empty matches are advanced
-   past exactly as [Re.replace] does, the byte they sit on being copied
-   through. *)
-let replace_text compiled ~replacement s o =
+(* The replacement stands for the last byte of what it replaced, or, when it
+   replaced nothing, for the byte before, so a token made of it reports the last
+   character of the match. *)
+
+let replace_literal ~pattern ~replacement s o =
+  let len = String.length s and plen = String.length pattern in
+  if plen = 0 then begin
+    let i = ref 0 in
+    while !i < len do
+      add_string o (!i - 1) replacement;
+      let n = Uchar.utf_decode_length (String.get_utf_8_uchar s !i) in
+      copy o s !i n;
+      i := !i + n
+    done;
+    add_string o (len - 1) replacement;
+    text o
+  end
+  else
+    let first = String.unsafe_get pattern 0 in
+    let matches_at start =
+      let rec loop k =
+        k = plen
+        || String.unsafe_get s (start + k) = String.unsafe_get pattern k
+           && loop (k + 1)
+      in
+      loop 1
+    in
+    let rec search pos last matched =
+      if pos + plen > len then finish last matched
+      else
+        match String.index_from_opt s pos first with
+        | Some start when start + plen <= len ->
+            if matches_at start then begin
+              copy o s last (start - last);
+              add_string o (start + plen - 1) replacement;
+              search (start + plen) (start + plen) true
+            end
+            else search (start + 1) last matched
+        | _ -> finish last matched
+    and finish last matched =
+      if not matched then s
+      else begin
+        copy o s last (len - last);
+        text o
+      end
+    in
+    search 0 0 false
+
+(* Matches are taken leftmost first without overlap. An empty match right after
+   a match is skipped, and the search resumes one character further. *)
+let replace_regex compiled ~replacement s o =
   let len = String.length s in
-  let rec search pos last on_match matched =
-    if pos > len then done_ last matched
+  let rec search pos last last_match matched =
+    if pos > len then finish last matched
     else
       match Re.exec_opt ~pos compiled s with
-      | None -> done_ last matched
+      | None -> finish last matched
       | Some group ->
           let start = Re.Group.start group 0 and stop = Re.Group.stop group 0 in
-          (* An empty match right after a match is stepped over, the byte it
-             sits on staying in the text. *)
-          if on_match && start = pos && start = stop then
-            search (pos + 1) last false matched
-          else begin
+          if start < stop then begin
             copy o s last (start - last);
             add_string o (stop - 1) replacement;
-            if start < stop then search stop stop true true
-            else begin
-              if stop < len then copy o s stop 1;
-              search (stop + 1) (stop + 1) false true
-            end
+            search stop stop stop true
           end
-  and done_ last matched =
+          else
+            let next =
+              if stop < len then
+                stop + Uchar.utf_decode_length (String.get_utf_8_uchar s stop)
+              else stop + 1
+            in
+            if stop = last_match then search next last last_match matched
+            else begin
+              copy o s last (start - last);
+              add_string o (stop - 1) replacement;
+              search next stop stop true
+            end
+  and finish last matched =
     if not matched then s
     else begin
-      if last < len then copy o s last (len - last);
+      copy o s last (len - last);
       text o
     end
   in
-  search 0 0 false false
+  search 0 0 (-1) false
+
+let replace_text pattern ~replacement s o =
+  if String.length s = 0 then s
+  else
+    match pattern with
+    | Literal pattern -> replace_literal ~pattern ~replacement s o
+    | Regex { compiled; _ } -> replace_regex compiled ~replacement s o
 
 (* Byte-level encoding *)
 
@@ -588,13 +650,46 @@ let byte_to_unicode =
   done;
   tbl
 
-let apply_byte_level ~add_prefix_space ~use_regex:_ s o =
-  let len = String.length s in
-  if add_prefix_space && len > 0 && not (is_whitespace (utf8_next s 0 lsr 3))
-  then add_uchar o 0 (Uchar.of_int byte_to_unicode.(Char.code ' '));
-  for i = 0 to len - 1 do
+let byte_level_text s o =
+  for i = 0 to String.length s - 1 do
     add_uchar o i
       (Uchar.of_int byte_to_unicode.(Char.code (String.unsafe_get s i)))
+  done;
+  text o
+
+(* Machine translation cleanup *)
+
+let nmt_removes code =
+  (code >= 0x01 && code <= 0x08)
+  || code = 0x0B
+  || (code >= 0x0E && code <= 0x1F)
+  || code = 0x7F || code = 0x8F || code = 0x9F
+
+let nmt_spaces code =
+  code = 0x09 || code = 0x0A || code = 0x0C || code = 0x0D || code = 0x1680
+  || (code >= 0x200B && code <= 0x200F)
+  || code = 0x2028 || code = 0x2029 || code = 0x2581 || code = 0xFEFF
+  || code = 0xFFFD
+
+let nmt_text s o =
+  let len = String.length s in
+  let i = ref 0 in
+  while !i < len do
+    let b0 = Char.code (String.unsafe_get s !i) in
+    if b0 < 128 then begin
+      if nmt_spaces b0 then add_char o !i ' '
+      else if not (nmt_removes b0) then add_char o !i (Char.unsafe_chr b0);
+      incr i
+    end
+    else begin
+      let d = String.get_utf_8_uchar s !i in
+      let clen = Uchar.utf_decode_length d in
+      let code = Uchar.to_int (Uchar.utf_decode_uchar d) in
+      if not (Uchar.utf_decode_is_valid d) then add_sub o !i s !i clen
+      else if nmt_spaces code then add_char o !i ' '
+      else if not (nmt_removes code) then add_sub o !i s !i clen;
+      i := !i + clen
+    end
   done;
   text o
 
@@ -609,12 +704,20 @@ let strip_accents = Strip_accents
 let strip ?(left = true) ?(right = true) () = Strip { left; right }
 
 let replace ~pattern ~replacement =
-  Replace { pattern; replacement; compiled = Re.compile (Re.Pcre.re pattern) }
+  Replace { pattern = Literal pattern; replacement }
+
+let regex source =
+  Result.map (fun compiled -> Regex { source; compiled }) (Regex.compile source)
+
+let replace_regex ~pattern ~replacement =
+  match regex pattern with
+  | Ok pattern -> Replace { pattern; replacement }
+  | Error msg ->
+      invalid_arg (strf "invalid regular expression %S: %s" pattern msg)
 
 let prepend s = Prepend s
-
-let byte_level ?(add_prefix_space = false) () =
-  Byte_level { add_prefix_space; use_regex = false }
+let byte_level = Byte_level
+let nmt = Nmt
 
 let bert ?(clean_text = true) ?(handle_chinese_chars = true)
     ?(strip_accents = None) ?(lowercase = true) () =
@@ -677,8 +780,8 @@ let rec normalize t s a ~track =
         let len = stop - start in
         ( String.sub s start len,
           if track then slice_alignment a start len else a )
-  | Replace { compiled; replacement; _ } ->
-      step s a ~track (replace_text compiled ~replacement s)
+  | Replace { pattern; replacement } ->
+      step s a ~track (replace_text pattern ~replacement s)
   | Prepend prefix ->
       if String.length s = 0 then (s, a)
       else
@@ -686,8 +789,8 @@ let rec normalize t s a ~track =
           if track then
             prepend_alignment a (String.length prefix) (String.length s)
           else a )
-  | Byte_level { add_prefix_space; use_regex } ->
-      step s a ~track (apply_byte_level ~add_prefix_space ~use_regex s)
+  | Byte_level -> step s a ~track (byte_level_text s)
+  | Nmt -> step s a ~track (nmt_text s)
   | Bert
       {
         clean_text = ct;
@@ -728,12 +831,13 @@ let rec pp ppf = function
   | Strip_accents -> Format.pp_print_string ppf "StripAccents"
   | Strip { left; right } ->
       Format.fprintf ppf "@[<1>Strip(left=%b,@ right=%b)@]" left right
-  | Replace { pattern; replacement; _ } ->
+  | Replace { pattern = Literal pattern; replacement } ->
       Format.fprintf ppf "@[<1>Replace(%S,@ %S)@]" pattern replacement
+  | Replace { pattern = Regex { source; _ }; replacement } ->
+      Format.fprintf ppf "@[<1>Replace(Regex(%S),@ %S)@]" source replacement
   | Prepend s -> Format.fprintf ppf "Prepend(%S)" s
-  | Byte_level { add_prefix_space; use_regex } ->
-      Format.fprintf ppf "@[<1>ByteLevel(add_prefix_space=%b,@ use_regex=%b)@]"
-        add_prefix_space use_regex
+  | Byte_level -> Format.pp_print_string ppf "ByteLevel"
+  | Nmt -> Format.pp_print_string ppf "Nmt"
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
       Format.fprintf ppf
         "@[<1>Bert(clean_text=%b,@ handle_chinese_chars=%b,@ \
@@ -780,20 +884,21 @@ let rec to_json = function
   | NFKC -> typed "NFKC"
   | NFKD -> typed "NFKD"
   | Lowercase -> typed "Lowercase"
-  | Replace { pattern; replacement; _ } ->
+  | Replace { pattern; replacement } ->
+      let pattern =
+        match pattern with
+        | Literal s -> ("String", Jsont.Json.string s)
+        | Regex { source; _ } -> ("Regex", Jsont.Json.string source)
+      in
       typed_with "Replace"
         [
-          ("pattern", json_obj [ ("String", Jsont.Json.string pattern) ]);
+          ("pattern", json_obj [ pattern ]);
           ("content", Jsont.Json.string replacement);
         ]
   | Prepend prefix ->
       typed_with "Prepend" [ ("prepend", Jsont.Json.string prefix) ]
-  | Byte_level { add_prefix_space; use_regex } ->
-      typed_with "ByteLevel"
-        [
-          ("add_prefix_space", Jsont.Json.bool add_prefix_space);
-          ("use_regex", Jsont.Json.bool use_regex);
-        ]
+  | Byte_level -> typed "ByteLevel"
+  | Nmt -> typed "Nmt"
   | Sequence ns ->
       typed_with "Sequence"
         [ ("normalizers", Jsont.Json.list (List.map to_json ns)) ]
@@ -838,8 +943,16 @@ let rec of_json = function
           let pattern =
             match find "pattern" with
             | Some (Jsont.Object (pf, _)) -> (
-                match Jsont.Json.find_mem "String" pf with
-                | Some (_, Jsont.String (p, _)) -> Ok p
+                match
+                  ( Jsont.Json.find_mem "String" pf,
+                    Jsont.Json.find_mem "Regex" pf )
+                with
+                | Some (_, Jsont.String (s, _)), None -> Ok (Literal s)
+                | None, Some (_, Jsont.String (r, _)) ->
+                    Result.map_error
+                      (fun msg ->
+                        strf "invalid regular expression %S: %s" r msg)
+                      (regex r)
                 | _ -> Error err_replace_invalid_pattern)
             | _ -> Error err_replace_missing_pattern
           in
@@ -848,21 +961,16 @@ let rec of_json = function
             | Some (Jsont.String (r, _)) -> Ok r
             | _ -> Error err_replace_missing_content
           in
-          Result.bind pattern (fun p ->
+          Result.bind pattern (fun pattern ->
               Result.map
-                (fun r -> replace ~pattern:p ~replacement:r)
+                (fun replacement -> Replace { pattern; replacement })
                 replacement)
       | Some (Jsont.String ("Prepend", _)) -> (
           match find "prepend" with
           | Some (Jsont.String (p, _)) -> Ok (Prepend p)
           | _ -> Error err_prepend_missing)
-      | Some (Jsont.String ("ByteLevel", _)) ->
-          Ok
-            (Byte_level
-               {
-                 add_prefix_space = get_bool "add_prefix_space" false;
-                 use_regex = get_bool "use_regex" false;
-               })
+      | Some (Jsont.String ("ByteLevel", _)) -> Ok Byte_level
+      | Some (Jsont.String ("Nmt", _)) -> Ok Nmt
       | Some (Jsont.String ("Sequence", _)) -> (
           match find "normalizers" with
           | Some (Jsont.Array (l, _)) ->

@@ -1087,6 +1087,26 @@ thread.
 
 ### Brot
 
+- **Breaking:** `Normalizer.replace ~pattern ~replacement` now replaces a
+  literal string with a plain scan (2.3× faster and 2.2× less allocation than
+  through the regex engine). Regular expressions move to the new
+  `Normalizer.replace_regex`, which reads the Unicode-aware dialect of
+  tokenizer files (`\s`, `\d`, `\w`, `\p{..}` by short or long general
+  category name; `.` and negated classes match characters, not bytes) and
+  rejects unsupported constructs (`(?i)`, lookaround, backreferences, `\b`,
+  ...) with a message saying which.
+- **Breaking:** `Normalizer.byte_level` is a plain value: it dropped
+  `add_prefix_space`, which HuggingFace's `ByteLevel` normalizer has no field
+  for, so the JSON is canonical and the behaviour identical.
+- Add `Normalizer.nmt`, the `Nmt` control-character cleanup, matching
+  HuggingFace character for character.
+- Normalizer JSON now round-trips `Replace` patterns written as `{"String":..}`
+  or `{"Regex":..}`, `{"type":"ByteLevel"}` and `{"type":"Nmt"}`, so
+  CLIP-style tokenizer files load; an unsupported regex is reported as
+  `invalid regular expression "...": <why>`.
+- Fix regex `Replace` splitting a multibyte character when stepping over an
+  empty match: empty matches now advance by whole characters and one right
+  after a match is skipped, as HuggingFace does.
 - `Pre_tokenizer.punctuation ~behavior:`Merged_with_previous`` and
   `Pre_tokenizer.split ~behavior:`Contiguous`` returned the whole text as one
   piece instead of splitting it. They now match HuggingFace: the first keeps

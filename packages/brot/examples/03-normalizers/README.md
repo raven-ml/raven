@@ -25,7 +25,8 @@ dune exec brot/examples/03-normalizers/main.exe
 | `Normalizer.lowercase`     | Unicode case folding               |
 | `Normalizer.strip_accents` | Remove combining marks             |
 | `Normalizer.strip`         | Strip boundary whitespace          |
-| `Normalizer.replace`       | Regex-based replacement            |
+| `Normalizer.replace`       | Literal string replacement         |
+| `Normalizer.replace_regex` | Regular expression replacement     |
 | `Normalizer.prepend`       | Prepend a string to non-empty text |
 | `Normalizer.bert`          | BERT-specific normalizer           |
 | `Normalizer.sequence`      | Compose normalizers left-to-right  |

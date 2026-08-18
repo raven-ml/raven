@@ -31,11 +31,320 @@ let test_normalization_sequence () =
       [
         Normalizer.lowercase;
         Normalizer.strip ();
-        Normalizer.replace ~pattern:"\\s+" ~replacement:" ";
+        Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ";
       ]
   in
   let result = Normalizer.apply normalizer text in
   equal ~msg:"sequence" string "hello world" result
+
+(* Expectations from HuggingFace [normalizers.Replace(pattern, content)] with a
+   string pattern. *)
+let test_replace () =
+  let case pattern replacement text expected =
+    equal
+      ~msg:(Printf.sprintf "replace %S by %S in %S" pattern replacement text)
+      string expected
+      (Normalizer.apply (Normalizer.replace ~pattern ~replacement) text)
+  in
+  case " " "\xE2\x96\x81" "a  b" "a\xE2\x96\x81\xE2\x96\x81b";
+  case "" "_" "ab" "_a_b_";
+  case "" "_" "" "";
+  case "" "_" "\xC3\xA9" "_\xC3\xA9_";
+  case "a" "bb" "aaa" "bbbbbb";
+  case "aa" "b" "aaaaa" "bba";
+  case "a.b" "X" "a.baxb" "Xaxb";
+  case "\\s" "X" "a\\sb b" "aXb b";
+  case "\xC3\xA9" "e" "a\xC3\xA9\xC3\xA9b" "aeeb";
+  case "``" "\"" "``a''" "\"a''";
+  case "ab" "_" "a" "a";
+  case "abc" "_" "ab" "ab"
+
+(* Expectations from HuggingFace [normalizers.Replace(Regex(pattern), content)],
+   whose engine matches Unicode text: [\s], [\d], [\w], [.], [\p{..}] and
+   negated classes stand for characters, [^] and [$] are line anchors, [{n}?] is
+   an optional repetition, an empty match right after a match is skipped and the
+   search moves on by whole characters. Regenerate with [uv run --with
+   tokenizers python3] on the same calls. *)
+let test_replace_regex () =
+  let case pattern replacement text expected =
+    equal
+      ~msg:
+        (Printf.sprintf "replace regex %S by %S in %S" pattern replacement text)
+      string expected
+      (Normalizer.apply (Normalizer.replace_regex ~pattern ~replacement) text)
+  in
+  case "\\s+" " "
+    "a  b\x09\x0Ac\xC2\xA0d\xE3\x80\x80e\xE2\x80\x8Bf\xEF\xBB\xBFg\xE2\x80\xA8h"
+    "a b c d e\xE2\x80\x8Bf\xEF\xBB\xBFg h";
+  case "\\s+" "_"
+    "a\xE1\x9A\x80b\xE2\x80\x80\xE2\x80\x8Ac\xE2\x80\xAFd\xE2\x81\x9Fe\xC2\x85f\x0Bg\x0Ch"
+    "a_b_c_d_e_f_g_h";
+  case " {2,}" " " "a  b c   d    e" "a b c d e";
+  case "\\d" "#" "a1\xD9\xA3\xC2\xB2\xE0\xA5\xA7\xEF\xBC\x91b" "a##\xC2\xB2##b";
+  case "\\d+" "#" "12ab\xD9\xA3\xD9\xA4c" "#ab#c";
+  case "\\D+" "#" "12ab\xD9\xA3\xD9\xA4c" "12#\xD9\xA3\xD9\xA4#";
+  case "\\w+" "_"
+    "h\xC3\xA9llo w\xC3\xB6rld_1 \xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E! \
+     \xC2\xB2\xC2\xBD \xE2\x80\x8C\xE2\x80\x8D x"
+    "_ _ _! _ \xE2\x80\x8C\xE2\x80\x8D _";
+  case "\\W+" "_"
+    "h\xC3\xA9llo w\xC3\xB6rld_1 \xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E! \
+     \xC2\xB2\xC2\xBD x"
+    "h\xC3\xA9llo_w\xC3\xB6rld_1_\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E_\xC2\xB2\xC2\xBD_x";
+  case "\\w" "_" "a\xCC\x81\xE2\x85\xA0\xE2\x93\x90\xE2\x91\xA0\xE2\x88\x80"
+    "____\xE2\x91\xA0\xE2\x88\x80";
+  (* The Latin-1 quirk applies to a standalone [\w] only, not in a class. *)
+  case "[\\w]" "_" "a\xC2\xB2" "_\xC2\xB2";
+  case "[^\\W]+" "_" "a\xC2\xB2b" "_\xC2\xB2_";
+  case "\\w+" "_" "a\xC2\xB2b" "_";
+  case "\\S+" "_" " a\xC2\xA0b " " _\xC2\xA0_ ";
+  case "." "_" "a\x0A\xF0\x9F\x98\x80b\x0D" "_\x0A___";
+  case ".+" "_" "ab\x0Acd" "_\x0A_";
+  case "[^a]" "_" "a\x0A\xF0\x9F\x98\x80b" "a___";
+  case "[^\\w\\s]+" "_" "a-b_c d.e\xE2\x80\x9C" "a_b_c d_e_";
+  case "[\\r\\n]+" " " "a\x0D\x0Ab\x0A\x0Ac\x0Dd" "a b c d";
+  case "\\r\\n|\\n" " " "a\x0D\x0Ab\x0A\x0Ac" "a b  c";
+  case "\\n|\\r\\n" " " "a\x0D\x0Ab\x0A\x0Ac" "a b  c";
+  case "\\p{L}+" "_" "ab1cd \xC3\xA9\xE6\x97\xA5 \xCC\x81" "_1_ _ \xCC\x81";
+  case "\\P{L}+" "_" "ab1cd \xC3\xA9\xE6\x97\xA5 \xCC\x81"
+    "ab_cd_\xC3\xA9\xE6\x97\xA5_";
+  case "\\p{^L}+" "_" "ab1cd \xC3\xA9\xE6\x97\xA5" "ab_cd_\xC3\xA9\xE6\x97\xA5";
+  case "\\P{^L}+" "_" "ab1cd \xC3\xA9\xE6\x97\xA5" "_1_ _";
+  case "\\p{Lu}" "_" "aA\xC3\x89\xC3\xA9\xC7\x85" "a__\xC3\xA9\xC7\x85";
+  case "\\p{ lu }" "_" "aA\xC3\x89\xC3\xA9" "a__\xC3\xA9";
+  case "\\p{L_u}" "_" "aA" "a_";
+  case "\\p{Letter}+" "_" "ab1cd" "_1_";
+  case "\\p{Uppercase_Letter}" "_" "aAb" "a_b";
+  case "\\p{ Decimal-Number }" "_" "a1b" "a_b";
+  case "\\p{Nd}+" "_" "a12\xD9\xA3\xC2\xB2b" "a_\xC2\xB2b";
+  case "\\p{N}+" "_" "a12\xD9\xA3\xC2\xB2\xE2\x85\xA0b" "a_b";
+  case "\\p{P}+" "_" "a-b_c d.e!\xE2\x80\x9C" "a_b_c d_e_";
+  case "\\p{Z}+" "_" "a  b\xC2\xA0\xE3\x80\x80c\xE2\x80\xA8d" "a_b_c_d";
+  case "\\p{Zs}+" "_" "a  b\xC2\xA0\xE3\x80\x80c\xE2\x80\xA8d"
+    "a_b_c\xE2\x80\xA8d";
+  case "\\p{C}+" "_" "a\x00\x1F\xE2\x80\x8Bb\xF3\xA0\x82\x80c" "a_b_c";
+  case "\\p{Cn}" "_" "a\xF3\xA0\x82\x80b" "a_b";
+  case "\\p{Co}" "_" "a\xEE\x80\x80b" "a_b";
+  case "\\p{M}+" "_" "e\xCC\x81\xCC\xA3\xE0\xA4\xBF\xE2\x83\x9Dx" "e_x";
+  case "\\p{S}+" "_" "a$+^\xC2\xA9b" "a_b";
+  case "\\p{Any}" "_" "a\x0Ab" "___";
+  case "\\p{LC}" "_" "aA\xC7\x85\xCA\xB0" "___\xCA\xB0";
+  case "[\\p{Ll}A]" "_" "aAbB" "___B";
+  case "[^\\p{Ll}A]" "_" "aAbB" "aAb_";
+  case "[\\P{Ll}]" "_" "aAbB" "a_b_";
+  case "[^\\W\\d]+" "_" "a-b1c" "_-_1_";
+  case "[\\d-]" "_" "a-1" "a__";
+  case "[a-]" "_" "a-b" "__b";
+  case "[-a]" "_" "a-b" "__b";
+  case "[]a]" "_" "a]b" "__b";
+  case "[]-a]" "_" "a]^b" "___b";
+  case "[^]]" "_" "a]b" "_]_";
+  case "[a^]" "_" "a^b" "__b";
+  case "[\\-\\]\\[\\^]" "_" "a-][^b" "a____b";
+  case "[a-z]+" "_" "abc\xC3\xA9d" "_\xC3\xA9_";
+  case "[\xC3\xA9-\xC3\xBC]+" "_" "a\xC3\xA9\xC3\xB2\xC3\xBCb" "a_b";
+  case "[\\x{1F600}-\\x{1F64F}]" "_"
+    "a\xF0\x9F\x98\x80\xF0\x9F\x99\x8F\xF0\x9F\x99\x90b" "a__\xF0\x9F\x99\x90b";
+  case "\\x{2581}" " " "a\xE2\x96\x81b" "a b";
+  case "\\x41\\x{42}" "_" "aABb" "a_b";
+  case "\\x4" "_" "a\x04b" "a_b";
+  case "\\t\\n\\r\\f\\v\\e\\a" "_" "a\x09\x0A\x0D\x0C\x0B\x1B\x07b" "a_b";
+  case "\\0\\07\\077\\0777" "_" "a\x00\x07??7b" "a_b";
+  case "\\/\\-\\ \\.\\*\\+\\?\\(\\)\\{\\}\\|\\\\" "_" "a/- .*+?(){}|\\b" "a_b";
+  case "\\\xC3\xA9" "_" "a\xC3\xA9b" "a_b";
+  case "a{" "_" "a{b" "_b";
+  case "a{x}" "_" "a{x}b" "_b";
+  case "a{2" "_" "a{2b" "_b";
+  case "a{,}" "_" "a{,}b" "_b";
+  case "a{2,,3}" "_" "a{2,,3}b" "_b";
+  case "a{ 2}" "_" "a{ 2}b" "_b";
+  case "a{,2}" "_" "aaab" "__b_";
+  case "a{2,}" "_" "aaab" "_b";
+  case "a{2,3}" "_" "aaaab" "_ab";
+  case "a{02}" "_" "aaab" "_ab";
+  case "a{0}" "_" "aab" "_a_a_b_";
+  case "a{2}?" "_" "aaaab" "__b_";
+  case "a{2,3}?" "_" "aaaab" "__b";
+  case "a{1,2}{2}" "_" "aaaaa" "_a";
+  (* A lazy quantifier leaves the quantifiers under it greedy. *)
+  case "(a*){1,3}?" "_" "a" "_";
+  case "(a+?)+" "_" "aaa" "_";
+  case "(a*)+?b" "_" "aab" "_";
+  case "a*?" "_" "aab" "_a_a_b_";
+  case "a??" "_" "aab" "_a_a_b_";
+  case "a+?" "_" "aab" "__b";
+  case "a**" "_" "aab" "_b_";
+  case "a?*" "_" "aab" "_b_";
+  case "a*{2}" "_" "aab" "_b_";
+  case "x*" "_" "a\xC3\xA9 b" "_a_\xC3\xA9_ _b_";
+  case "x*" "_" "xa" "_a_";
+  case "x*" "_" "x\xC3\xA9x" "_\xC3\xA9_";
+  case "x*" "_" "\xF0\x9F\x98\x80a" "_\xF0\x9F\x98\x80_a_";
+  case "x*" "_" "x" "_";
+  case "x*" "_" "" "";
+  case "" "_" "ab" "_a_b_";
+  case "" "_" "" "";
+  case "a|" "_" "bab" "_b_b_";
+  case "|a" "_" "bab" "_b_a_b_";
+  case "(a|)" "_" "ab" "_b_";
+  case "(|)" "_" "ab" "_a_b_";
+  case "a|ab" "_" "abab" "_b_b";
+  case "ab|a" "_" "abab" "__";
+  case "(a|ab)(c|bcd)" "_" "abcd" "_";
+  case "(a|ab)c" "_" "abc" "_";
+  case "a*b|a" "_" "aab" "_";
+  case "(a*)(a*)" "_" "aab" "_b_";
+  case "a??b" "_" "aab" "a_";
+  case "(a|b)*c" "_" "ababc" "_";
+  case "(a|b)*?" "_" "aab" "_a_a_b_";
+  case "(?:ab)+" "_" "ababc" "_c";
+  case "(?<n>ab)+" "_" "ababc" "_c";
+  case "(?<_1>ab)+" "_" "ababc" "_c";
+  case "a(?#comment)b" "_" "ab" "_";
+  case "(?#)a" "_" "aab" "__b";
+  case "a$" "_" "a\x0Ab" "_\x0Ab";
+  case "a$" "_" "a\x0A" "_\x0A";
+  case "a$" "_" "a\x0A\x0A" "_\x0A\x0A";
+  case "$" "_" "a\x0Ab" "a_\x0Ab_";
+  case "$" "_" "\x0A\x0A" "_\x0A_\x0A_";
+  case "$" "_" "" "";
+  case "a\\z" "_" "a\x0A" "a\x0A";
+  case "\\z" "_" "a\x0Ab\x0A" "a\x0Ab\x0A_";
+  case "\\Z" "_" "a\x0Ab\x0A" "a\x0Ab_\x0A_";
+  case "\\Z" "_" "a\x0A\x0A" "a\x0A_\x0A_";
+  case "a\\Z" "_" "a\x0A\x0A" "a\x0A\x0A";
+  case "\\A" "_" "a\x0Ab\x0A" "_a\x0Ab\x0A";
+  case "\\Aa" "_" "aa" "_a";
+  case "\\Ga" "_" "aab" "__b";
+  case "^a" "_" "\x0Aa" "\x0A_";
+  case "^\\s+" "_" "  a\x0A  b" "_a\x0A_b";
+  case "\\s+$" "_" "a  \x0Ab  " "a_\x0Ab_";
+  case "a^b" "_" "a\x0Ab" "a\x0Ab";
+  case "a\\n^b" "_" "a\x0Ab" "_";
+  case "a$\\nb" "_" "a\x0Ab" "_";
+  case "\\n(^b)" "_" "a\x0Ab\x0A" "a_\x0A";
+  case "a[^\\x00-\\x{10FFFF}]|b" "_" "axyb" "axy_";
+  case "\\p{Cs}" "_" "axyb" "axyb";
+  case "\\P{Any}" "_" "axyb" "axyb";
+  case "ab*c" "_" "abbc ac abc" "_ _ _";
+  case "\\s" "_" "\xF0\x9F\x98\x80 \xF0\x9F\x98\x80"
+    "\xF0\x9F\x98\x80_\xF0\x9F\x98\x80";
+  (* The pattern CLIP's tokenizer file splits on. *)
+  let clip_split =
+    "<\\|startoftext\\|>|<\\|endoftext\\|>|'s|'t|'re|'ve|'m|'ll|'d|[\\p{L}]+|[\\p{N}]|[^\\s\\p{L}\\p{N}]+"
+  in
+  case clip_split "|"
+    "<|startoftext|>a photo of 2 cats' toys, don't!  \xC3\xA9t\xC3\xA9 \
+     \xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E 42<|endoftext|>"
+    "|| | | | || || |||  | | |||";
+  case clip_split "|" "it's 3.5% -- ok\xE2\x80\xA6" "|| |||| | ||"
+
+(* What the translation refuses, with a message that says why. *)
+let test_replace_regex_rejected () =
+  let case pattern reason =
+    match Normalizer.replace_regex ~pattern ~replacement:"" with
+    | exception Invalid_argument msg ->
+        equal
+          ~msg:(Printf.sprintf "rejecting %S" pattern)
+          string
+          (Printf.sprintf "invalid regular expression %S: %s" pattern reason)
+          msg
+    | _ -> failf "%S was accepted" pattern
+  in
+  case "(?i)a" "group options are not supported";
+  case "(?i:a)" "group options are not supported";
+  case "(?m)." "group options are not supported";
+  case "a(?=b)" "lookaround is not supported";
+  case "(?<=a)b" "lookaround is not supported";
+  case "(?>a)" "atomic groups are not supported";
+  case "(a)\\1" "backreferences are not supported";
+  case "\\ba" "word boundaries are not supported";
+  case "a++" "possessive quantifiers are not supported";
+  case "[[:alpha:]]" "POSIX bracket expressions are not supported";
+  case "[a[b]]" "nested character classes are not supported";
+  case "[a-z&&[^aeiou]]" "character class intersection is not supported";
+  case "\\p{Han}" "unsupported property \\p{Han}";
+  case "\\p{Foo}" "unsupported property \\p{Foo}";
+  case "\\h" "unsupported escape \\h";
+  case "\\R" "unsupported escape \\R";
+  case "\\xc3\\xa9" "byte escapes above \\x7F are not supported, use \\x{..}";
+  case "\\x{110000}" "invalid code point escape";
+  case "\\x{D800}" "invalid code point escape";
+  case "\\xg" "invalid hexadecimal escape";
+  case "^" "a ^ that can end a match is not supported";
+  case "^\\s*" "a ^ that can end a match is not supported";
+  case "\\n^" "a ^ that can end a match is not supported";
+  case "(^|x)a*" "a ^ that can end a match is not supported";
+  case "*a" "nothing to repeat";
+  case "{2}" "nothing to repeat";
+  case "a|*" "nothing to repeat";
+  case "(" "unmatched (";
+  case ")" "unmatched )";
+  case "a\\" "pattern ends with a backslash";
+  case "[a" "unterminated character class";
+  case "[z-a]" "empty range in character class";
+  case "[\\d-z]" "invalid range in character class";
+  case "[a-\\d]" "invalid range in character class";
+  case "a{3,2}" "invalid interval {3,2}";
+  case "a{100001}" "repeat count above 100000";
+  case "\\p{L" "unterminated property escape";
+  case "\\pL" "invalid property escape";
+  case "(?<1a>x)" "invalid group name";
+  case "(?#a" "unterminated comment";
+  case "\xC3" "pattern is not valid UTF-8"
+
+(* Expectations from HuggingFace [normalizers.Nmt()]. *)
+let test_nmt () =
+  let case text expected =
+    equal
+      ~msg:(Printf.sprintf "nmt %S" text)
+      string expected
+      (Normalizer.apply Normalizer.nmt text)
+  in
+  case
+    "a\x01b\x08c\x0E\x1F\x7F\xC2\x80\xC2\x8F\xC2\x9F\xEF\xBB\xBF\xE2\x80\x8B\xC2\xADx\x00\x09\x0A\x0D\x0B\x0C\xC2\x85 "
+    "abc\xC2\x80  \xC2\xADx\x00    \xC2\x85 ";
+  case
+    "a\xE1\x9A\x80b\xE2\x80\x8Fc\xE2\x80\xA8d\xE2\x80\xA9e\xE2\x96\x81f\xEF\xBF\xBDg\xE2\x80\x8A"
+    "a b c d e f g\xE2\x80\x8A";
+  case "" "";
+  (* Bytes that are not UTF-8 pass through. *)
+  case "a\xFFb" "a\xFFb"
+
+(* Expectations from HuggingFace [normalizers.ByteLevel()], which takes no
+   options: no prefix space is added. *)
+let test_byte_level () =
+  let case text expected =
+    equal
+      ~msg:(Printf.sprintf "byte level %S" text)
+      string expected
+      (Normalizer.apply Normalizer.byte_level text)
+  in
+  case " x" "\xC4\xA0x";
+  case "a\xC3\xA9" "a\xC3\x83\xC2\xA9";
+  case "ab" "ab";
+  case "" ""
+
+(* The CLIP normalizer, as its tokenizer file writes it. Expectations from
+   HuggingFace [normalizers.Sequence([NFC(), Replace(Regex(r"\s+"), " "),
+   Lowercase()])]. *)
+let test_clip_normalizer () =
+  let n =
+    Normalizer.sequence
+      [
+        Normalizer.nfc;
+        Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ";
+        Normalizer.lowercase;
+      ]
+  in
+  let case text expected =
+    equal
+      ~msg:(Printf.sprintf "clip %S" text)
+      string expected (Normalizer.apply n text)
+  in
+  case "A\xCC\x81  Photo\x09\x0Aof\xC2\xA0a\xE3\x80\x80CAT "
+    "\xC3\xA1 photo of a cat ";
+  case "x" "x"
 
 (* Case mapping is not case folding: the ligatures and the sharp s lower to
    themselves. Expectations from HuggingFace [normalizers.Lowercase()]. *)
@@ -204,24 +513,41 @@ let test_align_text_transforms () =
     (Normalizer.strip ~left:false ())
     "strip right" " a b \n" " a b" "0,1 1,2 2,3 3,4"
 
-(* A replacement stands for the last character it replaced, whatever its
-   length. *)
+(* A replacement stands for the last character it replaced, whatever its length,
+   and one that replaced nothing for the character before it: an empty span at
+   the very start. *)
 let test_align_replace () =
   aligned
     (Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81")
     "replace string" "a  b" "a\xE2\x96\x81\xE2\x96\x81b" "0,1 1,2 2,3 3,4";
   aligned
-    (Normalizer.replace ~pattern:"\\s+" ~replacement:" ")
+    (Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ")
     "replace collapse" "a \t\n b" "a b" "0,1 4,5 5,6";
   aligned
     (Normalizer.replace ~pattern:"a" ~replacement:"xyz")
     "replace grow" "za z" "zxyz z" "0,1 1,2 1,2 1,2 2,3 3,4";
   aligned
-    (Normalizer.replace ~pattern:"ab+" ~replacement:"X")
+    (Normalizer.replace_regex ~pattern:"ab+" ~replacement:"X")
     "replace shrink" "zabbbz" "zXz" "0,1 4,5 5,6";
   aligned
-    (Normalizer.replace ~pattern:"\\s+" ~replacement:"")
-    "replace delete" "a \t b" "ab" "0,1 4,5"
+    (Normalizer.replace_regex ~pattern:"\\s+" ~replacement:"")
+    "replace delete" "a \t b" "ab" "0,1 4,5";
+  aligned
+    (Normalizer.replace_regex ~pattern:"x*" ~replacement:"_")
+    "replace empty" "a\xC3\xA9 b" "_a_\xC3\xA9_ _b_"
+    "0,0 0,1 0,1 1,3 1,3 3,4 3,4 4,5 4,5";
+  aligned
+    (Normalizer.replace_regex ~pattern:"x*" ~replacement:"_")
+    "replace empty" "xa" "_a_" "0,1 1,2 1,2";
+  aligned
+    (Normalizer.replace ~pattern:"" ~replacement:"_")
+    "replace empty string" "a\xC3\xA9" "_a_\xC3\xA9_" "0,0 0,1 0,1 1,3 1,3";
+  aligned
+    (Normalizer.replace_regex ~pattern:"\\p{L}+" ~replacement:"L")
+    "replace class" "ab1\xC3\xA9\xE6\x97\xA5" "L1L" "1,2 2,3 5,8";
+  aligned
+    (Normalizer.replace_regex ~pattern:"$" ~replacement:"!")
+    "replace anchor" "a\nb" "a!\nb!" "0,1 0,1 1,2 2,3 2,3"
 
 (* An inserted character stands for the one it was put next to: the prefix and
    the first character of the text share a span. *)
@@ -265,15 +591,26 @@ let test_align_sequence () =
     "nfd strip lower" "Caf\xC3\xA9" "cafe" "0,1 1,2 2,3 3,5"
 
 (* Each byte becomes one character, so a character split across bytes reports
-   itself whole. [add_prefix_space] has no counterpart in HuggingFace's
-   [normalizers.ByteLevel()], which takes no arguments; the rest matches it. *)
+   itself whole. *)
 let test_align_byte_level () =
-  aligned (Normalizer.byte_level ()) "byte level" "a\xC3\xA9"
-    "a\xC3\x83\xC2\xA9" "0,1 1,3 1,3";
-  aligned (Normalizer.byte_level ()) "byte level" " x" "\xC4\xA0x" "0,1 1,2";
+  aligned Normalizer.byte_level "byte level" "a\xC3\xA9" "a\xC3\x83\xC2\xA9"
+    "0,1 1,3 1,3";
+  aligned Normalizer.byte_level "byte level" " x" "\xC4\xA0x" "0,1 1,2"
+
+(* A removed character leaves a hole, a replaced one stands for itself. *)
+let test_align_nmt () =
+  aligned Normalizer.nmt "nmt" "a\x01b\tc\xE2\x80\x8Bd" "ab c d"
+    "0,1 2,3 3,4 4,5 5,8 8,9"
+
+let test_align_clip () =
   aligned
-    (Normalizer.byte_level ~add_prefix_space:true ())
-    "byte level prefix" "ab" "\xC4\xA0ab" "0,1 0,1 1,2"
+    (Normalizer.sequence
+       [
+         Normalizer.nfc;
+         Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ";
+         Normalizer.lowercase;
+       ])
+    "clip" "\xC3\x81  B\tc" "\xC3\xA1 b c" "0,2 3,4 4,5 5,6 6,7"
 
 (* Normalizing the text away leaves one empty span, and it stands for the whole
    of what was normalized rather than for the end of it. *)
@@ -339,9 +676,13 @@ let alignment_normalizers =
     ("lowercase", Normalizer.lowercase);
     ("strip_accents", Normalizer.strip_accents);
     ("strip", Normalizer.strip ());
-    ("replace", Normalizer.replace ~pattern:"\\s+" ~replacement:" ");
+    ("replace", Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81");
+    ("replace regex", Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ");
+    ( "replace empty",
+      Normalizer.replace_regex ~pattern:"\\p{L}*" ~replacement:"_" );
     ("prepend", Normalizer.prepend "\xE2\x96\x81");
-    ("byte_level", Normalizer.byte_level ~add_prefix_space:true ());
+    ("byte_level", Normalizer.byte_level);
+    ("nmt", Normalizer.nmt);
     ("bert", Normalizer.bert ());
     ( "llama",
       Normalizer.sequence
@@ -399,7 +740,7 @@ let test_tokenize_with_normalization () =
     Normalizer.sequence
       [
         Normalizer.lowercase;
-        Normalizer.replace ~pattern:"\\s+" ~replacement:" ";
+        Normalizer.replace_regex ~pattern:"\\s+" ~replacement:" ";
       ]
   in
   let tokenizer =
@@ -440,6 +781,12 @@ let unicode_tests =
     test "strip accents keeps composition" test_strip_accents_keeps_composition;
     test "bert normalizer" test_bert_normalizer;
     test "normalization sequence" test_normalization_sequence;
+    test "replace" test_replace;
+    test "replace regex" test_replace_regex;
+    test "replace regex rejected" test_replace_regex_rejected;
+    test "nmt" test_nmt;
+    test "byte level" test_byte_level;
+    test "clip normalizer" test_clip_normalizer;
     (* Alignment *)
     test "nfd alignment" test_align_nfd;
     test "nfc alignment" test_align_nfc;
@@ -450,6 +797,8 @@ let unicode_tests =
     test "bert alignment" test_align_bert;
     test "sequence alignment" test_align_sequence;
     test "byte level alignment" test_align_byte_level;
+    test "nmt alignment" test_align_nmt;
+    test "clip alignment" test_align_clip;
     test "emptied text alignment" test_align_emptied;
     test "identity alignment" test_identity_alignment;
     test "aligned matches apply" test_aligned_matches_apply;
