@@ -32,8 +32,15 @@ val bpe : ?suffix:string -> unit -> t
 *)
 
 val byte_level : unit -> t
-(** [byte_level ()] is a collapsing decoder that reverses GPT-2 style
-    byte-to-Unicode encoding back to original bytes. *)
+(** [byte_level ()] is a collapsing decoder that reads GPT-2 style
+    byte-to-Unicode tokens back as the text their bytes spell.
+
+    A token is mapped character by character, and one character outside the
+    byte-level alphabet leaves the whole token to stand for its own bytes. The
+    bytes of every token are then read as one text, so a character spelled
+    across two tokens comes back whole, and every maximal ill-formed byte
+    sequence becomes one U+FFFD — four stray bytes cost four, while a four-byte
+    character cut short costs one. *)
 
 val byte_fallback : unit -> t
 (** [byte_fallback ()] is a decoder for byte fallback tokens. Each run of hex

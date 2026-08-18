@@ -86,14 +86,38 @@ let decode_bpe ~suffix tokens =
           replace_all ~pattern:suffix ~by:(if i = last then "" else " ") token)
         tokens
 
+let replacement_char = "\xef\xbf\xbd"
+
+(* Bytes as text, the way HuggingFace reads them back: each maximal ill-formed
+   subpart becomes one replacement character, which is what a decode that fails
+   skips over. A lone [\xE9] and a four-byte sequence cut short cost one each,
+   while [\xC3\x28] costs one and keeps the ['(']. *)
+let utf8_lossy s =
+  if String.is_valid_utf_8 s then s
+  else begin
+    let len = String.length s in
+    let buf = Buffer.create (len + 8) in
+    let i = ref 0 in
+    while !i < len do
+      let decode = String.get_utf_8_uchar s !i in
+      let step = Uchar.utf_decode_length decode in
+      if Uchar.utf_decode_is_valid decode then
+        Buffer.add_substring buf s !i step
+      else Buffer.add_string buf replacement_char;
+      i := !i + step
+    done;
+    Buffer.contents buf
+  end
+
+(* Each token maps to bytes on its own, but the text they spell is read whole,
+   so a character split across two tokens decodes and only what the bytes of no
+   run of tokens spell is replaced. *)
 let decode_byte_level tokens =
   let buf = Buffer.create 128 in
   List.iter
     (fun token -> Buffer.add_string buf (Pre_tokenizer.byte_level_decode token))
     tokens;
-  Buffer.contents buf
-
-let replacement_char = "\xef\xbf\xbd"
+  utf8_lossy (Buffer.contents buf)
 
 let hex_digit c =
   match c with

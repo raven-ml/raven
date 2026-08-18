@@ -113,8 +113,9 @@ val metaspace :
       marked text does not start with one already. Default: [`Always].
     - [split]: whether to split before each marker. Default: [true].
 
-    Pieces are those of the marked text, and so are offsets unless [split] is
-    [false].
+    Pieces are those of the marked text; their offsets are the bytes of the text
+    they were made from. A marker that replaced a space stands at that space,
+    and a prepended one at the character it opens.
 
     Raises [Invalid_argument] if [replacement] is not exactly one character. *)
 
@@ -143,11 +144,18 @@ val sequence : t list -> t
 (** {1 Operations} *)
 
 val pre_tokenize : t -> string -> (string * (int * int)) list
-(** [pre_tokenize t text] splits [text] into pieces with character offsets.
+(** [pre_tokenize t text] splits [text] into pieces with byte offsets.
 
     Returns a list of [(piece, (start, end_))] where [start] and [end_] are byte
-    positions in the original [text]. Offsets are non-overlapping and in
-    ascending order. *)
+    positions in [text], ascending and within it. A piece is the bytes of its
+    span unless [t] rewrote or encoded them, in which case the span is where the
+    bytes it was made from lie.
+
+    Two spans can cover the same bytes. A span is widened to whole characters,
+    so pieces of a [text] that is not valid UTF-8 can share one; and the pieces
+    a member of a {!sequence} cuts from one whose text its predecessor rewrote
+    or encoded all report that piece's span, nothing in it being placeable more
+    finely than the whole of it. *)
 
 (** {1 Formatting} *)
 
@@ -157,8 +165,13 @@ val pp : Format.formatter -> t -> unit
 (** {1:byte_level_decode Byte-level decoding} *)
 
 val byte_level_decode : string -> string
-(** [byte_level_decode s] reverses byte-level encoding by converting the special
-    Unicode codepoints back to original byte values. *)
+(** [byte_level_decode s] is the bytes the byte-level alphabet spells [s] from:
+    one byte per character. A single character outside the alphabet, an
+    invalidly encoded one included, leaves [s] as it is — the fallback is over
+    the whole string, not the character.
+
+    The result needs not be valid UTF-8: it is bytes, and turning them into text
+    is the caller's step. *)
 
 (** {1 Serialization} *)
 
@@ -189,8 +202,9 @@ type rewrite =
           back by one. *)
   | Space_marker of { marker : string; prepend : bool }
       (** Spaces become [marker], and one is prepended when [prepend] holds and
-          the text does not already start with a space. Offsets are those of the
-          marked text. *)
+          the text is neither empty nor already starting with a space or with
+          [marker]. Offsets are those of the marked text the caller filled,
+          which {!pre_tokenize} maps back to the text it was given. *)
 
 (** The type for how a pre-tokenizer takes part in the walking path.
     [splittable] is [true] when cutting the input at a space that separates two

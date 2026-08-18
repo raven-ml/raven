@@ -1087,6 +1087,21 @@ thread.
 
 ### Brot
 
+- `Decoder.byte_level` now decodes as HuggingFace does: a token whose
+  characters are not all in the byte-level alphabet stands for its own bytes as
+  a whole rather than character by character, and the bytes of every token are
+  read as one text. A character spelled across two tokens now decodes, and
+  every maximal ill-formed byte sequence becomes one `U+FFFD` instead of being
+  returned as invalid UTF-8.
+- `Pre_tokenizer.pre_tokenize` now reports offsets into the text it was given
+  for every pre-tokenizer. A `metaspace`, alone or in a `sequence`, reported
+  offsets into the marked text, which could run past the end of the input —
+  `Sequence [WhitespaceSplit; Metaspace]` placed the second piece of
+  `"Hello world"` at `(6, 14)` instead of `(6, 11)`.
+- `Pre_tokenizer.metaspace ~split:false` now gives every token exact byte
+  offsets. Its pre-tokenizer joined the walking path, where before it fell
+  back to whole pieces and every token of a document reported the document's
+  span.
 - `Encoding.offsets` reports byte spans of the text as it was passed in rather
   than of the normalized text: a token of `"café"` under an accent-stripping
   normalizer spans the accented bytes. They were in normalized coordinates

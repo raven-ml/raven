@@ -67,29 +67,6 @@ let err_delimiter = "delimiter must be one character"
 
 (* Byte-level encoding *)
 
-(* Returns (codepoint lsl 3) lor byte_length — zero allocation. *)
-let[@inline] utf8_next s i =
-  let c = Char.code (String.unsafe_get s i) in
-  if c < 0x80 then (c lsl 3) lor 1
-  else if c < 0xE0 then
-    (((c land 0x1F) lsl 6)
-    lor (Char.code (String.unsafe_get s (i + 1)) land 0x3F))
-    lsl 3
-    lor 2
-  else if c < 0xF0 then
-    (((c land 0x0F) lsl 12)
-    lor ((Char.code (String.unsafe_get s (i + 1)) land 0x3F) lsl 6)
-    lor (Char.code (String.unsafe_get s (i + 2)) land 0x3F))
-    lsl 3
-    lor 3
-  else
-    (((c land 0x07) lsl 18)
-    lor ((Char.code (String.unsafe_get s (i + 1)) land 0x3F) lsl 12)
-    lor ((Char.code (String.unsafe_get s (i + 2)) land 0x3F) lsl 6)
-    lor (Char.code (String.unsafe_get s (i + 3)) land 0x3F))
-    lsl 3
-    lor 4
-
 (* Pre-computed byte ↔ unicode mappings for byte-level encode/decode *)
 let byte_to_unicode, unicode_to_byte =
   let is_direct = Array.make 256 false in
@@ -148,35 +125,36 @@ let byte_level_encode text =
   let buf = Bytes.create (stop * 2) in
   Bytes.sub_string buf 0 (byte_level_blit buf text ~start:0 ~stop)
 
+(* One character outside the alphabet costs the whole token its mapping, as it
+   does in HuggingFace. Every character of the alphabet is one or two UTF-8
+   bytes, so a longer one is outside it, and so is a byte sequence that is not
+   UTF-8 at all. *)
 let byte_level_decode text =
   let len = String.length text in
-  let result = Buffer.create len in
-  let i = ref 0 in
-  while !i < len do
+  let bytes = Bytes.create len in
+  let i = ref 0 and j = ref 0 and mapped = ref true in
+  while !mapped && !i < len do
     let b0 = Char.code (String.unsafe_get text !i) in
-    if b0 < 128 then begin
-      (* ASCII: direct lookup, no utf8_next needed *)
-      let byte = Array.unsafe_get unicode_to_byte b0 in
-      Buffer.add_char result
-        (if byte >= 0 then Char.chr byte else Char.unsafe_chr b0);
-      incr i
-    end
-    else begin
-      let p = utf8_next text !i in
-      let code = p lsr 3 and clen = p land 7 in
-      let byte =
-        if code < Array.length unicode_to_byte then unicode_to_byte.(code)
-        else -1
-      in
-      if byte >= 0 then Buffer.add_char result (Char.chr byte)
+    let code, width =
+      if b0 < 0x80 then (b0, 1)
+      else if b0 < 0xC2 || b0 >= 0xE0 || !i + 1 >= len then (-1, 1)
       else
-        for j = !i to !i + clen - 1 do
-          Buffer.add_char result (String.unsafe_get text j)
-        done;
-      i := !i + clen
+        let b1 = Char.code (String.unsafe_get text (!i + 1)) in
+        if b1 land 0xC0 <> 0x80 then (-1, 1)
+        else (((b0 land 0x1F) lsl 6) lor (b1 land 0x3F), 2)
+    in
+    let byte =
+      if code < 0 || code >= Array.length unicode_to_byte then -1
+      else Array.unsafe_get unicode_to_byte code
+    in
+    if byte < 0 then mapped := false
+    else begin
+      Bytes.unsafe_set bytes !j (Char.unsafe_chr byte);
+      incr j;
+      i := !i + width
     end
   done;
-  Buffer.contents result
+  if !mapped then Bytes.sub_string bytes 0 !j else text
 
 (* Byte-level walker
 
@@ -756,6 +734,19 @@ let rec ends_byte_level t =
 
 let encodes_bytes = ends_byte_level
 
+(* Whether the pieces of [t] are bytes of the text it was given, which is what
+   lets the member of a sequence that follows it place its own pieces inside
+   them. A byte-level pre-tokenizer encodes its pieces and a metaspace marks
+   them, and neither hands on text that the next member's offsets could
+   index. *)
+let rec pieces_are_slices t =
+  match t with
+  | Byte_level _ | Metaspace _ -> false
+  | Sequence ts -> List.for_all pieces_are_slices ts
+  | Bert | Whitespace | Whitespace_split | Punctuation _ | Split _
+  | Char_delimiter _ | Digits _ | Fixed_length _ | Unicode_scripts ->
+      true
+
 (* Shared, so that [plan] allocates only for the pre-tokenizers whose rewrite
    carries a marker. *)
 let walk_verbatim = Walk { rewrite = Verbatim; splittable = false }
@@ -774,11 +765,9 @@ let rec plan t =
   | Bert | Whitespace | Whitespace_split -> walk_split_free
   | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts | Split _ ->
       walk_verbatim
-  | Metaspace { replacement; prepend_scheme; split } ->
-      if not split then Pieces
-      else
-        let marker = replacement and prepend = prepend_scheme <> `Never in
-        Walk { rewrite = Space_marker { marker; prepend }; splittable = false }
+  | Metaspace { replacement; prepend_scheme; _ } ->
+      let marker = replacement and prepend = prepend_scheme <> `Never in
+      Walk { rewrite = Space_marker { marker; prepend }; splittable = false }
   | Fixed_length _ -> Pieces
   | Sequence ts -> plan_sequence ts
 
@@ -823,6 +812,9 @@ let rec fill_walk t s ~pos ~stop spans =
       fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
         ~stop spans
   | Digits { individual } -> fill_digits ~individual s ~pos ~stop spans
+  (* Without splitting the marked text is one piece, and one span is what places
+     the tokens of the model inside it. *)
+  | Metaspace { split = false; _ } -> fill_whole ~pos ~stop spans
   | Metaspace { replacement; _ } -> fill_marker replacement s ~pos ~stop spans
   | Unicode_scripts -> fill_unicode_scripts s ~pos ~stop spans
   | Fixed_length _ -> invalid_arg err_no_walk
@@ -890,30 +882,27 @@ let fill t s ~pos ~stop spans =
 
 let span_chunk = 1024
 
-(* Spaces become [marker]; one is prepended unless the marked text starts with
-   one already, which is what HuggingFace does. A space never occurs inside a
-   UTF-8 sequence, so this walks bytes. *)
-let metaspace_text ~marker ~prepend text =
-  let stop = String.length text in
-  if stop = 0 then ""
-  else begin
-    let buf = Buffer.create (stop + String.length marker) in
-    if
-      prepend
-      && String.unsafe_get text 0 <> ' '
-      && not (String.starts_with ~prefix:marker text)
-    then Buffer.add_string buf marker;
-    let run = ref 0 in
-    for i = 0 to stop - 1 do
-      if String.unsafe_get text i = ' ' then begin
-        if i > !run then Buffer.add_substring buf text !run (i - !run);
-        Buffer.add_string buf marker;
-        run := i + 1
-      end
-    done;
-    if stop > !run then Buffer.add_substring buf text !run (stop - !run);
-    Buffer.contents buf
-  end
+(* A rewrite is the normalizer it behaves as, which is the one [Brot] composes
+   for the same plan, so that a piece is placed back in the text the caller gave
+   through the one alignment the library has. [None] is the rewrite firing on
+   nothing, which leaves the text as it is. *)
+let rewrite_normalizer rewrite text =
+  match rewrite with
+  | Verbatim -> None
+  | Prefix_space ->
+      if String.length text > 0 && String.unsafe_get text 0 <> ' ' then
+        Some (Normalizer.prepend " ")
+      else None
+  | Space_marker { marker; prepend } ->
+      if String.length text = 0 then None
+      else
+        let mark = Normalizer.replace ~pattern:" " ~replacement:marker in
+        if
+          prepend
+          && String.unsafe_get text 0 <> ' '
+          && not (String.starts_with ~prefix:marker text)
+        then Some (Normalizer.sequence [ mark; Normalizer.prepend marker ])
+        else Some mark
 
 let pre_tokenize_fixed_length ~length text =
   if length <= 0 || String.length text = 0 then []
@@ -932,9 +921,10 @@ let pre_tokenize_fixed_length ~length text =
     done;
     List.rev !pieces
 
-(* Walks [text] a chunk of spans at a time. [shift] is set when a prefix space
-   was prepended, in which case offsets are those of the text as given. *)
-let walk_pieces t text ~encode ~shift =
+(* Walks [text] a chunk of spans at a time. [span] places a byte range of [text]
+   in the text the caller gave, which a rewrite may have made a longer one, so
+   that offsets are always the caller's. *)
+let walk_pieces t text ~encode ~span =
   let stop = String.length text in
   let capacity = ref (max 32 (min span_chunk ((stop / 8) + 1))) in
   let spans = ref (Spans.create ~capacity:!capacity) in
@@ -961,11 +951,7 @@ let walk_pieces t text ~encode ~shift =
             Bytes.sub_string buf 0 (byte_level_blit buf text ~start ~stop)
           end
         in
-        let offsets =
-          if not shift then (start, stop)
-          else ((if start = 0 then 0 else start - 1), stop - 1)
-        in
-        pieces := (piece, offsets) :: !pieces
+        pieces := (piece, span ~start ~stop) :: !pieces
       done;
       p := resume
     end
@@ -976,60 +962,57 @@ let is_one_character s =
   let stop = String.length s in
   stop > 0 && Char_class.at_len (Char_class.at s 0 ~stop) = stop
 
-let[@inline] prefix_space text =
-  if String.length text > 0 && String.unsafe_get text 0 <> ' ' then " " ^ text
-  else text
-
 (* An empty text has no piece, whichever the pre-tokenizer — a sequence of none
    being the identity, and so the exception. *)
 let rec pre_tokenize t text =
   if text = "" then match t with Sequence [] -> [ ("", (0, 0)) ] | _ -> []
-  else
-    match t with
-    | Byte_level { add_prefix_space; use_regex = false; _ } ->
-        let prefixed = if add_prefix_space then prefix_space text else text in
-        [ (byte_level_encode prefixed, (0, String.length text)) ]
-    | _ -> pre_tokenize_planned t text
+  else pre_tokenize_planned t text
+
+and verbatim_span ~start ~stop = (start, stop)
 
 and pre_tokenize_planned t text =
+  let encode = ends_byte_level t in
   match plan t with
   | Pieces -> pre_tokenize_pieces t text
   | Walk { rewrite; _ } -> (
-      match rewrite with
-      | Verbatim -> walk_pieces t text ~encode:(ends_byte_level t) ~shift:false
-      | Prefix_space ->
-          let prefixed = prefix_space text in
-          let shift = String.length prefixed <> String.length text in
-          walk_pieces t prefixed ~encode:(ends_byte_level t) ~shift
-      | Space_marker { marker; prepend } ->
-          let marked = metaspace_text ~marker ~prepend text in
-          walk_pieces t marked ~encode:(ends_byte_level t) ~shift:false)
+      match rewrite_normalizer rewrite text with
+      | None -> walk_pieces t text ~encode ~span:verbatim_span
+      | Some n ->
+          let rewritten, align = Normalizer.apply_aligned n text in
+          walk_pieces t rewritten ~encode ~span:(Normalizer.original_span align)
+      )
 
 and pre_tokenize_pieces t text =
   match t with
   | Fixed_length { length } -> pre_tokenize_fixed_length ~length text
-  | Metaspace { replacement; prepend_scheme; _ } ->
-      let marked =
-        metaspace_text ~marker:replacement ~prepend:(prepend_scheme <> `Never)
-          text
-      in
-      [ (marked, (0, String.length text)) ]
   | Sequence ts -> pre_tokenize_sequence ts text
-  | _ -> [ (text, (0, String.length text)) ]
+  (* [plan] is [Pieces] for those two alone. *)
+  | _ -> assert false
 
+(* Each member cuts the pieces of the one before it and places its own inside
+   them, which reads as the caller's text only while a piece still stands byte
+   for byte where it was cut from. A member that encodes or marks its pieces
+   ends that, and nothing cut from what it hands on can be placed more finely
+   than the whole of it. *)
 and pre_tokenize_sequence ts text =
-  let initial = [ (text, (0, String.length text)) ] in
-  List.fold_left
-    (fun pieces t ->
-      List.concat_map
-        (fun (s, (o_start, _)) ->
-          let sub_pieces = pre_tokenize t s in
-          List.map
-            (fun (p, (p_start, p_end)) ->
-              (p, (o_start + p_start, o_start + p_end)))
-            sub_pieces)
-        pieces)
-    initial ts
+  let cut =
+    List.fold_left
+      (fun pieces t ->
+        let slices = pieces_are_slices t in
+        List.concat_map
+          (fun (s, ((o_start, _) as span), stands) ->
+            let cut = pre_tokenize t s in
+            if stands then
+              List.map
+                (fun (p, (p_start, p_end)) ->
+                  (p, (o_start + p_start, o_start + p_end), slices))
+                cut
+            else List.map (fun (p, _) -> (p, span, false)) cut)
+          pieces)
+      [ (text, (0, String.length text), true) ]
+      ts
+  in
+  List.map (fun (p, span, _) -> (p, span)) cut
 
 (* Constructors *)
 

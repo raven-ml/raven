@@ -376,6 +376,66 @@ let test_byte_fallback_decoder () =
       ([], "");
     ]
 
+(* Expectations from HuggingFace [decoders.ByteLevel()]. A token is mapped
+   character by character and falls back whole when one of them is outside the
+   alphabet; the bytes of every token are then read as one text. *)
+let test_byte_level_decoder () =
+  decodes (Decoder.byte_level ())
+    [
+      ([], "");
+      ([ "" ], "");
+      ([ "\xc4\xa0Hello" ], " Hello");
+      ([ "\xc4\x80" ], "\x00");
+      (* A character spelled across tokens comes back whole: these are the four
+         bytes of U+1F44D, cut in every way. *)
+      ([ "\xc3\xb0\xc5\x81\xc4\xb3\xc4\xaf" ], "\xf0\x9f\x91\x8d");
+      ([ "\xc3\xb0\xc5\x81"; "\xc4\xb3\xc4\xaf" ], "\xf0\x9f\x91\x8d");
+      ([ "\xc3\xb0"; "\xc5\x81"; "\xc4\xb3"; "\xc4\xaf" ], "\xf0\x9f\x91\x8d");
+      ([ "\xc3\xa6"; "\xc4\xb9"; "\xc2\xa5" ], "\xe6\x97\xa5");
+      (* Bytes that spell nothing become one replacement character per maximal
+         subpart: one for a lone [\xE9] and one for a four-byte sequence cut
+         short, but one and a ['('] for [\xC3\x28]. *)
+      ([ "\xc3\xa9" ], "\xef\xbf\xbd");
+      ([ "\xc3\xb0\xc5\x81\xc4\xb3" ], "\xef\xbf\xbd");
+      ([ "\xc3\xb0\xc5\x81\xc4\xb3(" ], "\xef\xbf\xbd(");
+      ([ "\xc3\x83(" ], "\xef\xbf\xbd(");
+      ( [ "\xc2\xa1"; "\xc2\xac"; "\xc2\xae"; "\xc3\xbf" ],
+        "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd" );
+      (* The lead of a sequence whose second byte is out of range is a subpart
+         of its own, so the bytes after it are subparts too: an overlong
+         encoding, a surrogate and a value above U+10FFFF all cost one each. *)
+      ([ "\xc3\xa0\xc4\xa2\xc4\xa2" ], "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd");
+      ([ "\xc3\xad\xc5\x82\xc4\xa2" ], "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd");
+      ( [ "\xc3\xb0\xc4\xa2\xc4\xa2\xc4\xa2" ],
+        "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd" );
+      ( [ "\xc3\xb4\xc4\xb2\xc4\xa2\xc4\xa2" ],
+        "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd" );
+      ( [ "\xc3\xb5\xc4\xa2\xc4\xa2\xc4\xa2" ],
+        "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd" );
+      ([ "\xc3\x81\xc4\xa2" ], "\xef\xbf\xbd\xef\xbf\xbd");
+      ([ "\xc3\x80\xc4\xa2" ], "\xef\xbf\xbd\xef\xbf\xbd");
+      ([ "\xc4\xa2" ], "\xef\xbf\xbd");
+      ([ "\xc3\xbf" ], "\xef\xbf\xbd");
+      (* A sequence broken after its second byte costs one for the pair. *)
+      ([ "\xc3\xa1\xc4\xa2A" ], "\xef\xbf\xbdA");
+      ([ "\xc3\xb0\xc5\x81A" ], "\xef\xbf\xbdA");
+      (* The edges of what is well formed still decode. *)
+      ([ "\xc3\xa2\xc4\xa4\xc2\xac" ], "\xe2\x82\xac");
+      ([ "\xc3\xa0\xc5\x82\xc4\xa2" ], "\xe0\xa0\x80");
+      ([ "\xc3\xad\xc5\x81\xc2\xbf" ], "\xed\x9f\xbf");
+      ([ "\xc3\xb4\xc4\xb1\xc2\xbf\xc2\xbf" ], "\xf4\x8f\xbf\xbf");
+      (* One character outside the alphabet costs the whole token its mapping,
+         so it stands for its own bytes — and its neighbours still map. The two
+         tokens below differ in their last character alone: without it every
+         character maps, [\xc4\xa0] and [\xc3\xa9] among them, and with it none
+         does. *)
+      ([ "\xc4\xa0caf\xc3\xa9X" ], " caf\xef\xbf\xbdX");
+      ([ "\xc4\xa0caf\xc3\xa9\xe6\x97\xa5" ], "\xc4\xa0caf\xc3\xa9\xe6\x97\xa5");
+      ([ "\xc4\xa0\xe6\x97\xa5" ], "\xc4\xa0\xe6\x97\xa5");
+      ([ "a b" ], "a b");
+      ([ "\xc4\xa0a"; "\xe6\x97\xa5"; "\xc4\xa0b" ], " a\xe6\x97\xa5 b");
+    ]
+
 (* Expectations from HuggingFace [decoders.Metaspace(prepend_scheme=...)]. *)
 let test_metaspace_decoder () =
   (* The marker was prepended to the text rather than standing for a space, so
@@ -444,6 +504,86 @@ let test_sentencepiece_decoder () =
       ([ "\xe2\x96\x81" ], "");
       ([], "");
     ]
+
+(* Expectations from HuggingFace: a Unigram model behind [Metaspace(split=False,
+   prepend_scheme=...)]. The pre-tokenizer hands the model the whole marked text
+   as one piece, and every token still reports the bytes of the input it stands
+   for rather than that whole piece. *)
+let test_metaspace_no_split_offsets () =
+  let vocab =
+    [
+      ("<unk>", 0.0);
+      ("\xe2\x96\x81", -3.0);
+      ("\xe2\x96\x81Hello", -1.0);
+      ("\xe2\x96\x81world", -1.0);
+      ("\xe2\x96\x81leading", -1.0);
+      ("\xe2\x96\x81trailing", -1.0);
+      ("\xe2\x96\x81multi", -1.0);
+      ("\xe2\x96\x81space", -1.0);
+      ("\xe2\x96\x81\xe6\x97\xa5\xe6\x9c\xac", -1.0);
+      ("\xe2\x96\x81\xe8\xaa\x9e", -1.0);
+      ("\xe2\x96\x81already", -1.0);
+      ("\xe2\x96\x81a", -1.0);
+      ("\xe2\x96\x81b", -1.0);
+      ("\xe2\x96\x81x", -1.0);
+      ("Hello", -2.0);
+      ("world", -2.0);
+      ("trailing", -2.0);
+      ("multi", -2.0);
+      ("a", -4.0);
+      ("b", -4.0);
+      ("\xe6\x97\xa5\xe6\x9c\xac", -2.0);
+      ("\xe8\xaa\x9e", -2.0);
+      ("already", -2.0);
+      ("y", -4.0);
+      ("x", -4.0);
+      ("\xc2\xa0", -4.0);
+    ]
+  in
+  let tokenizer prepend_scheme =
+    unigram ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizer.metaspace ~prepend_scheme ~split:false ())
+      ()
+  in
+  let case t text ids offsets =
+    let encoding = encode t text in
+    equal
+      ~msg:(Printf.sprintf "ids %S" text)
+      (list int) ids
+      (Array.to_list (Encoding.ids encoding));
+    equal
+      ~msg:(Printf.sprintf "offsets %S" text)
+      (list (pair int int))
+      offsets
+      (Array.to_list (Encoding.offsets encoding))
+  in
+  let always = tokenizer `Always in
+  case always "Hello world" [ 2; 3 ] [ (0, 5); (5, 11) ];
+  case always "  leading" [ 1; 4 ] [ (0, 1); (1, 9) ];
+  case always "trailing " [ 5; 1 ] [ (0, 8); (8, 9) ];
+  case always "" [] [];
+  case always " " [ 1 ] [ (0, 1) ];
+  case always "  " [ 1; 1 ] [ (0, 1); (1, 2) ];
+  (* A no-break space is not a space, so no marker stands in for it. *)
+  case always "a\xc2\xa0b" [ 11; 25; 19 ] [ (0, 1); (1, 3); (3, 4) ];
+  case always "multi  space" [ 6; 1; 7 ] [ (0, 5); (5, 6); (6, 12) ];
+  case always "\xe2\x96\x81already" [ 10 ] [ (0, 10) ];
+  case always "\xe6\x97\xa5\xe6\x9c\xac \xe8\xaa\x9e" [ 8; 9 ]
+    [ (0, 6); (6, 10) ];
+  case always "x y" [ 13; 1; 23 ] [ (0, 1); (1, 2); (2, 3) ];
+  let never = tokenizer `Never in
+  case never "Hello world" [ 14; 3 ] [ (0, 5); (5, 11) ];
+  case never "  leading" [ 1; 4 ] [ (0, 1); (1, 9) ];
+  case never "trailing " [ 16; 1 ] [ (0, 8); (8, 9) ];
+  case never "" [] [];
+  case never " " [ 1 ] [ (0, 1) ];
+  case never "  " [ 1; 1 ] [ (0, 1); (1, 2) ];
+  case never "a\xc2\xa0b" [ 18; 25; 19 ] [ (0, 1); (1, 3); (3, 4) ];
+  case never "multi  space" [ 17; 1; 7 ] [ (0, 5); (5, 6); (6, 12) ];
+  case never "\xe2\x96\x81already" [ 10 ] [ (0, 10) ];
+  case never "\xe6\x97\xa5\xe6\x9c\xac \xe8\xaa\x9e" [ 20; 9 ]
+    [ (0, 6); (6, 10) ];
+  case never "x y" [ 24; 1; 23 ] [ (0, 1); (1, 2); (2, 3) ]
 
 (* [skip_special_tokens] drops a special added token wherever its identifier
    appears. HuggingFace instead matches the token by the string it decodes to,
@@ -627,8 +767,11 @@ let tokenization_tests =
     test "ctc decoder" test_ctc_decoder;
     test "bpe decoder" test_bpe_decoder;
     test "byte fallback decoder" test_byte_fallback_decoder;
+    test "byte level decoder" test_byte_level_decoder;
     test "byte level after a split" test_byte_level_after_a_split;
     test "metaspace decoder" test_metaspace_decoder;
+    test "metaspace without splitting places tokens"
+      test_metaspace_no_split_offsets;
     test "replace and strip decoders" test_replace_and_strip_decoders;
     test "sentencepiece decoder" test_sentencepiece_decoder;
     test "skip special tokens" test_skip_special_tokens;

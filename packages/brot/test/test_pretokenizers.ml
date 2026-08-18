@@ -823,6 +823,110 @@ let test_metaspace_huggingface () =
     []
     (Pre.pre_tokenize (Pre.metaspace ~split:false ()) "")
 
+(* Both metaspaces walk: without splitting the walk is one span over the marked
+   text, which is what places a model's tokens inside it. A sequence carries the
+   rewrite only when the metaspace opens it. *)
+let test_metaspace_plan () =
+  let describe t =
+    match Pre.plan t with
+    | Pre.Pieces -> "pieces"
+    | Pre.Walk { rewrite = Pre.Verbatim; splittable } ->
+        Printf.sprintf "verbatim splittable=%b" splittable
+    | Pre.Walk { rewrite = Pre.Prefix_space; splittable } ->
+        Printf.sprintf "prefix space splittable=%b" splittable
+    | Pre.Walk { rewrite = Pre.Space_marker { marker; prepend }; splittable } ->
+        Printf.sprintf "marker=%S prepend=%b splittable=%b" marker prepend
+          splittable
+  in
+  let check name t expected = equal ~msg:name string expected (describe t) in
+  check "split" (Pre.metaspace ())
+    "marker=\"\\226\\150\\129\" prepend=true splittable=false";
+  check "no split"
+    (Pre.metaspace ~split:false ())
+    "marker=\"\\226\\150\\129\" prepend=true splittable=false";
+  check "no split, no prepend"
+    (Pre.metaspace ~replacement:"_" ~prepend_scheme:`Never ~split:false ())
+    "marker=\"_\" prepend=false splittable=false";
+  check "no split, then a verbatim walker"
+    (Pre.sequence [ Pre.metaspace ~split:false (); Pre.punctuation () ])
+    "marker=\"\\226\\150\\129\" prepend=true splittable=false";
+  (* A rewrite applies to the whole text, so a metaspace that is not the first
+     member has no walk to take part in. *)
+  check "after another walker"
+    (Pre.sequence [ Pre.whitespace_split (); Pre.metaspace ~split:false () ])
+    "pieces"
+
+(* Every expectation is the output of HuggingFace [Metaspace], whose offsets are
+   those of the text a piece was made from and never of the marked text: a piece
+   spans the union of what its characters came from, and a prepended marker came
+   from nothing. *)
+let test_metaspace_offsets () =
+  let case t text expected =
+    check_tokenization (Printf.sprintf "%S" text) (Pre.pre_tokenize t text)
+      expected
+  in
+  let m = "\u{2581}" in
+  let split = Pre.metaspace () in
+  case split "Hello world" [ (m ^ "Hello", (0, 5)); (m ^ "world", (5, 11)) ];
+  case split "trailing " [ (m ^ "trailing", (0, 8)); (m, (8, 9)) ];
+  case split "  two  spaces"
+    [ (m, (0, 1)); (m ^ "two", (1, 5)); (m, (5, 6)); (m ^ "spaces", (6, 13)) ];
+  case split "" [];
+  case split " " [ (m, (0, 1)) ];
+  case split "\u{65e5}\u{672c} \u{8a9e}"
+    [ (m ^ "\u{65e5}\u{672c}", (0, 6)); (m ^ "\u{8a9e}", (6, 10)) ];
+  case split (m ^ "already") [ (m ^ "already", (0, 10)) ];
+  case split "a\u{a0}b" [ (m ^ "a\u{a0}b", (0, 4)) ];
+  let never = Pre.metaspace ~prepend_scheme:`Never () in
+  case never "Hello world" [ ("Hello", (0, 5)); (m ^ "world", (5, 11)) ];
+  case never "trailing " [ ("trailing", (0, 8)); (m, (8, 9)) ];
+  case never "a\u{a0}b" [ ("a\u{a0}b", (0, 4)) ];
+  let whole = Pre.metaspace ~split:false () in
+  case whole "Hello world" [ (m ^ "Hello" ^ m ^ "world", (0, 11)) ];
+  case whole "trailing " [ (m ^ "trailing" ^ m, (0, 9)) ];
+  case whole "  two  spaces" [ (m ^ m ^ "two" ^ m ^ m ^ "spaces", (0, 13)) ];
+  case whole "" [];
+  case whole " " [ (m, (0, 1)) ];
+  (* T5 carries this one. The whitespace split drops the run that separates two
+     pieces, so a piece starts where its own text does and the trailing space is
+     gone before the marker could stand for it. *)
+  let t5 = Pre.sequence [ Pre.whitespace_split (); Pre.metaspace () ] in
+  case t5 "Hello world" [ (m ^ "Hello", (0, 5)); (m ^ "world", (6, 11)) ];
+  case t5 "trailing " [ (m ^ "trailing", (0, 8)) ];
+  case t5 "  two  spaces" [ (m ^ "two", (2, 5)); (m ^ "spaces", (7, 13)) ];
+  case t5 "" [];
+  case t5 " " [];
+  case t5 "\u{65e5}\u{672c} \u{8a9e}"
+    [ (m ^ "\u{65e5}\u{672c}", (0, 6)); (m ^ "\u{8a9e}", (7, 10)) ];
+  (* A marker cut into a piece of its own by a later member takes the span of
+     what it opens, rather than none at all: the marker that replaced a space is
+     at that space, and a prepended one at the first character. *)
+  let marked_then_split replacement =
+    Pre.sequence [ Pre.metaspace ~replacement (); Pre.punctuation () ]
+  in
+  let underscore = marked_then_split "_" in
+  case underscore "a" [ ("_", (0, 1)); ("a", (0, 1)) ];
+  case underscore "Hello world"
+    [ ("_", (0, 1)); ("Hello", (0, 5)); ("_", (5, 6)); ("world", (6, 11)) ];
+  case underscore "!!!"
+    [ ("_", (0, 1)); ("!", (0, 1)); ("!", (1, 2)); ("!", (2, 3)) ];
+  case underscore "_a_b"
+    [ ("_", (0, 1)); ("a", (1, 2)); ("_", (2, 3)); ("b", (3, 4)) ];
+  let block = marked_then_split m in
+  case block "a" [ (m ^ "a", (0, 1)) ];
+  case block "!!!" [ (m, (0, 1)); ("!", (0, 1)); ("!", (1, 2)); ("!", (2, 3)) ];
+  case block "_a_b"
+    [ (m, (0, 1)); ("_", (0, 1)); ("a", (1, 2)); ("_", (2, 3)); ("b", (3, 4)) ];
+  (* A member that follows one whose pieces are not bytes of its input places
+     nothing more finely than the whole of the piece it was handed: HuggingFace,
+     which carries an alignment through the chain, has ["!"] at [(3, 4)]
+     here. *)
+  let punctuated =
+    Pre.sequence
+      [ Pre.whitespace_split (); Pre.metaspace (); Pre.punctuation () ]
+  in
+  case punctuated "a b!" [ (m ^ "a", (0, 1)); (m ^ "b", (2, 4)); ("!", (2, 4)) ]
+
 let test_metaspace_basic () =
   let test_case ?(replacement = "_") text expected =
     let result =
@@ -837,13 +941,15 @@ let test_metaspace_basic () =
   test_case " starts with space" [ "_starts"; "_with"; "_space" ];
   test_case "" [];
 
-  (* The default replacement is U+2581, which no single character could hold. *)
+  (* The default replacement is U+2581, which no single character could hold.
+     The pieces are eight bytes each and the text they were made from five and
+     six, which is what the offsets report. *)
   let default = Pre.pre_tokenize (Pre.metaspace ()) "Hello world" in
   check_strings "Metaspace default marker" default
     [ "\u{2581}Hello"; "\u{2581}world" ];
   equal ~msg:"Metaspace default offsets"
     (list (pair int int))
-    [ (0, 8); (8, 16) ]
+    [ (0, 5); (5, 11) ]
     (List.map snd default);
   test_case ~replacement:"\u{2581}" "a b" [ "\u{2581}a"; "\u{2581}b" ]
 
@@ -1091,6 +1197,115 @@ let test_byte_level_malformed_utf8 () =
     check (random_malformed 8)
   done
 
+(* Offsets place a piece in the text the caller gave, whichever pre-tokenizer
+   and whatever it rewrote on the way: a piece cut from marked or byte-level
+   encoded text can be longer than the text it came from, and it is that text a
+   span has to name. *)
+let test_offsets_are_source_spans () =
+  let tokenizers =
+    [
+      ("metaspace", Pre.metaspace ());
+      ("metaspace ~split:false", Pre.metaspace ~split:false ());
+      ("metaspace `Never", Pre.metaspace ~prepend_scheme:`Never ());
+      ("metaspace ~replacement:_", Pre.metaspace ~replacement:"_" ());
+      ("byte_level", Pre.byte_level ());
+      ("byte_level ~use_regex:false", Pre.byte_level ~use_regex:false ());
+      ("bert", Pre.bert ());
+      ("whitespace", Pre.whitespace ());
+      ("unicode_scripts", Pre.unicode_scripts ());
+      ("fixed_length 3", Pre.fixed_length 3);
+      ( "sequence [whitespace_split; metaspace]",
+        Pre.sequence [ Pre.whitespace_split (); Pre.metaspace () ] );
+      ( "sequence [metaspace; punctuation]",
+        Pre.sequence [ Pre.metaspace (); Pre.punctuation () ] );
+      ( "sequence [whitespace_split; metaspace; punctuation]",
+        Pre.sequence
+          [ Pre.whitespace_split (); Pre.metaspace (); Pre.punctuation () ] );
+      ( "sequence [byte_level; punctuation]",
+        Pre.sequence [ Pre.byte_level (); Pre.punctuation () ] );
+      ( "sequence [metaspace ~split:false]",
+        Pre.sequence [ Pre.metaspace ~split:false () ] );
+      ( "sequence [fixed_length; metaspace]",
+        Pre.sequence [ Pre.fixed_length 3; Pre.metaspace () ] );
+    ]
+  in
+  let check text =
+    let len = String.length text in
+    List.iter
+      (fun (name, t) ->
+        let previous = ref 0 in
+        List.iter
+          (fun (_, (start, stop)) ->
+            let msg =
+              Printf.sprintf "%s on %S gives %d,%d" name text start stop
+            in
+            equal ~msg bool true (0 <= start && start <= stop && stop <= len);
+            equal ~msg:(msg ^ ", ascending") bool true (start >= !previous);
+            previous := start)
+          (Pre.pre_tokenize t text))
+      tokenizers
+  in
+  List.iter check
+    [
+      "";
+      " ";
+      "  ";
+      "Hello world";
+      "trailing ";
+      "  two  spaces";
+      "a b!";
+      "\u{65e5}\u{672c} \u{8a9e}";
+      "\u{2581}already";
+      "a\u{a0}b";
+      "tab\tx";
+      "don't stop, 3.14!";
+    ];
+  Array.iter check malformed;
+  for _ = 1 to 500 do
+    check (random_malformed 6)
+  done
+
+(* [byte_level_decode] is the raw bytes of one token: no replacement character
+   is written here, and one character outside the alphabet leaves the token as
+   it is. Every expectation is what HuggingFace's [CHAR_BYTES] lookup gives
+   before its lossy conversion. *)
+let test_byte_level_decode () =
+  let check token expected =
+    equal
+      ~msg:(Printf.sprintf "byte_level_decode %S" token)
+      string expected
+      (Pre.byte_level_decode token)
+  in
+  check "" "";
+  check "\xc4\xa0Hello" " Hello";
+  check "\xc4\x80" "\x00";
+  check "\xc3\xb0\xc5\x81\xc4\xb3\xc4\xaf" "\xf0\x9f\x91\x8d";
+  check "\xc3\xa9" "\xe9";
+  check "\xc2\xa1\xc2\xac\xc2\xae\xc3\xbf" "\xa1\xac\xae\xff";
+  (* Neither a character above the alphabet, a literal space, nor a byte
+     sequence that is not UTF-8 maps, and each takes the whole token with it. *)
+  check "\xe6\x97\xa5" "\xe6\x97\xa5";
+  check "\xc4\xa0\xe6\x97\xa5" "\xc4\xa0\xe6\x97\xa5";
+  check "a b" "a b";
+  check "\xc4\xa0a\xc3" "\xc4\xa0a\xc3";
+  check "\xc4" "\xc4";
+  (* Encoding then decoding is the identity, on any bytes at all. *)
+  let roundtrip text =
+    equal
+      ~msg:(Printf.sprintf "round trip of %S" text)
+      string text
+      (Pre.byte_level_decode
+         (fst
+            (List.hd
+               (Pre.pre_tokenize
+                  (Pre.byte_level ~use_regex:false ~add_prefix_space:false ())
+                  text))))
+  in
+  Array.iter roundtrip malformed;
+  for _ = 1 to 2000 do
+    roundtrip (random_malformed 8)
+  done
+
 (* [fill] hands out spans a bounded chunk at a time, and a sequence whose first
    member covers the whole text in one span cannot make progress until the
    buffer grows. Both paths only show up on inputs bigger than a chunk. *)
@@ -1225,7 +1440,10 @@ let () =
           test "ByteLevel edge cases" test_byte_level_edge_cases;
           test "ByteLevel matches the pattern" test_byte_level_matches_pattern;
           test "ByteLevel on malformed UTF-8" test_byte_level_malformed_utf8;
+          test "byte-level decoding" test_byte_level_decode;
         ];
+      group "offsets"
+        [ test "offsets are source spans" test_offsets_are_source_spans ];
       group "bert"
         [
           test "BERT tokenization" test_bert_pretokenizer;
@@ -1256,6 +1474,8 @@ let () =
         [
           test "Metaspace basic" test_metaspace_basic;
           test "Metaspace matches HuggingFace" test_metaspace_huggingface;
+          test "Metaspace walks with or without splitting" test_metaspace_plan;
+          test "Metaspace offsets are of the source" test_metaspace_offsets;
         ];
       group "chunking" [ test "walking a long text" test_chunked_walk ];
       group "json"
