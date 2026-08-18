@@ -1087,6 +1087,15 @@ thread.
 
 ### Brot
 
+- Add `Brot.encode_batch_ids`, the throughput path: the ids of a whole batch
+  in one `int32` Bigarray (`Brot.ids`) plus per-row lengths, straight into
+  `Nx` via `Nx.of_bigarray`; no `Encoding.t` and nothing allocated per token,
+  and a long text is spread over domains when its pipeline allows. 7–8× over
+  one domain on 8+ cores.
+- `Brot.encode_batch` and `Brot.encode_pairs_batch` take `?domains` and split
+  work by bytes rather than by document count, so one long text no longer
+  leaves the other domains idle and small batches no longer pay for spawning
+  domains (a 32-document batch went from 3.7 ms to 0.6 ms).
 - Unigram tokenization now finds the segmentation whose scores add up to the
   most, as SentencePiece and HuggingFace do, instead of the longest match at
   each position, which mis-cut e.g. `traces` as `▁trace`+`s`; a run of

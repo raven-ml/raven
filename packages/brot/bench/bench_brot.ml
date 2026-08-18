@@ -41,6 +41,7 @@ end
 
 let encode_single tok text = encode tok text
 let encode_batch tok texts = encode_batch tok texts
+let encode_batch_ids tok texts = encode_batch_ids tok texts
 let decode_ids tok ids = decode tok ids
 
 let make_suite ~label ~tokenizer =
@@ -57,6 +58,8 @@ let make_suite ~label ~tokenizer =
           encode_single tokenizer long_text);
       Thumper.bench "Encode/batch_32" (fun () ->
           encode_batch tokenizer batch_32);
+      Thumper.bench "Encode/batch_ids_32" (fun () ->
+          encode_batch_ids tokenizer batch_32);
       Thumper.bench "Decode/long" (fun () -> decode_ids tokenizer decode_input);
     ]
   in

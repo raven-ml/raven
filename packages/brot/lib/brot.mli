@@ -488,24 +488,31 @@ val encode_batch :
   ?add_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
+  ?domains:int ->
   string list ->
   Encoding.t list
 (** [encode_batch t texts] is the encoding of each text in [texts].
 
-    Optional parameters are as in {!encode}. For sentence-pair tasks, use
-    {!encode_pairs_batch}. *)
+    - [domains]: how many domains to encode on. Default:
+      [Domain.recommended_domain_count ()]. Work is handed out by bytes, in
+      chunks of 64 KB to 256 KB, and a batch holding under 64 KB is encoded on
+      the calling domain whatever this says. Raises [Invalid_argument] if under
+      one.
+    - Other optional parameters are as in {!encode}. For sentence-pair tasks,
+      use {!encode_pairs_batch}. *)
 
 val encode_pairs_batch :
   t ->
   ?add_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
+  ?domains:int ->
   (string * string) list ->
   Encoding.t list
 (** [encode_pairs_batch t pairs] encodes a batch of sentence pairs. Each element
     is [(primary, secondary)].
 
-    Optional parameters are as in {!encode}. *)
+    Optional parameters are as in {!encode_batch}. *)
 
 val encode_ids :
   t ->
@@ -520,6 +527,40 @@ val encode_ids :
     this asks for none of it.
 
     Optional parameters are as in {!encode}. *)
+
+type ids = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
+(** The type for flat token id buffers: the rows of a batch, one after the
+    other. Hand one to [Nx] with
+    [Nx.of_bigarray (Bigarray.genarray_of_array1 ids)]. *)
+
+val encode_batch_ids :
+  t ->
+  ?add_special_tokens:bool ->
+  ?padding:padding ->
+  ?truncation:truncation ->
+  ?domains:int ->
+  string list ->
+  ids * int array
+(** [encode_batch_ids t texts] is [(ids, lengths)]: the token ids of every text
+    end to end in one buffer, and the number of ids each of them holds. Row [i]
+    starts at the sum of [lengths.(0)] up to [lengths.(i - 1)]; under a padding
+    that makes the rows equal, a buffer with at least one row reshapes to
+    [Array.length lengths] by [lengths.(0)].
+
+    This is the throughput path. It builds no {!Encoding.t} and allocates
+    nothing per token: a row is what {!encode_ids} gives for that text, with
+    [`Batch_longest] resolved over the whole batch as {!encode_batch} resolves
+    it. Overflowing windows produced by [truncation] are dropped, since an [ids]
+    buffer has nowhere to put them; {!encode_batch} keeps them. A long text is
+    spread over several domains too, in pieces cut where the pipeline cannot
+    tell the difference — a pipeline with a normalizer, or one that does not
+    split on spaces, encodes each text on one domain.
+
+    Identifiers are narrowed to 32 bits. No vocabulary reaches that far: an
+    identifier is an index into the token table, which holds one string per
+    token.
+
+    Optional parameters are as in {!encode_batch}. *)
 
 val decode : t -> ?skip_special_tokens:bool -> int array -> string
 (** [decode t ids] is the text obtained by decoding [ids] through [t]'s

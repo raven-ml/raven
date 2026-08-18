@@ -108,6 +108,62 @@ let pairs =
     [ ("the cat sat", "how are you"); ("good", "the cat") ]
 ```
 
+Both spread the batch over `Domain.recommended_domain_count ()` domains,
+splitting the work by bytes so that one long text does not leave the
+other domains idle. Pass `~domains` to encode on a given number instead;
+a batch holding under 64 KB is encoded on the calling domain.
+
+## Flat ID Buffers
+
+`encode_batch` builds one `Encoding.t` per text, carrying tokens,
+offsets and masks. When the IDs are all you need — feeding a model, or
+tokenizing a training corpus — `encode_batch_ids` writes the whole batch
+into a single `int32` buffer and reports how long each row is. It builds
+no encodings and allocates nothing per token.
+
+```ocaml
+open Brot
+
+let tokenizer =
+  word_level
+    ~vocab:[ ("[PAD]", 0); ("[UNK]", 1); ("the", 2); ("cat", 3); ("sat", 4) ]
+    ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]" ])
+    ~pre:(Pre_tokenizer.whitespace ())
+    ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
+
+let ids, lengths =
+  encode_batch_ids tokenizer
+    ~padding:(padding `Batch_longest)
+    [ "the cat"; "the cat sat" ]
+(* lengths: [| 3; 3 |] — both rows padded to the longest of the batch *)
+
+let first_row_first_id = Int32.to_int (Bigarray.Array1.get ids 0) (* 2 *)
+let second_row_first_id = Int32.to_int (Bigarray.Array1.get ids 3) (* 2 *)
+```
+
+Row `i` starts at the sum of the lengths before it. Under a padding that
+makes the rows equal the buffer is rectangular, so it reaches `Nx`
+without a copy:
+
+<!-- $MDX skip -->
+```ocaml
+let x =
+  Nx.reshape
+    [| Array.length lengths; lengths.(0) |]
+    (Nx.of_bigarray (Bigarray.genarray_of_array1 ids))
+```
+
+A row of the buffer is what `encode_ids` gives for that text, so padding
+and truncation behave as they do everywhere else. The one thing an
+`ids` buffer cannot hold is the overflowing windows truncation produces:
+they are dropped, and `encode_batch` is the way to keep them.
+
+A single long text is spread over the domains as well: when the pipeline
+has no normalizer and its pre-tokenizer splits on spaces, the text is cut
+at spaces the pipeline cannot tell were cut, and the pieces are encoded
+side by side. A pipeline that could tell — one with a normalizer, or one
+that keeps its spaces, like Metaspace — encodes each text on one domain.
+
 ## Padding
 
 Models require uniform sequence lengths within a batch. Padding extends

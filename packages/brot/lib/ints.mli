@@ -42,3 +42,14 @@ val add4 : t -> int -> int -> int -> int -> count:int -> unit
 
 val to_array : t -> int array
 (** [to_array t] is a fresh array of the integers of [t]. *)
+
+val blit_to_int32 :
+  t ->
+  pos:int ->
+  len:int ->
+  (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  at:int ->
+  unit
+(** [blit_to_int32 t ~pos ~len dst ~at] writes the [len] integers of [t] from
+    [pos] into [dst] from [at], narrowed to 32 bits. Unchecked: [pos + len] must
+    be at most [length t] and [at + len] at most the length of [dst]. *)

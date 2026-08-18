@@ -904,71 +904,143 @@ let apply_padding t encodings = function
           | _ -> pad enc (pad_target cfg (Encoding.length enc)))
         encodings
 
-(* Parallel batch encoding *)
+(* Batch driver *)
 
-let encode_parallel t sequences ~add_special_tokens ~truncation =
-  let arr = Array.of_list sequences in
-  let n = Array.length arr in
-  let results =
-    Array.make n (encode_single t ~add_special_tokens ~truncation arr.(0))
-  in
-  let num_domains = min n (Domain.recommended_domain_count ()) in
-  if num_domains <= 1 then
-    for i = 1 to n - 1 do
-      results.(i) <- encode_single t ~add_special_tokens ~truncation arr.(i)
-    done
+(* Work is handed out by bytes rather than by document, so that a batch of one
+   long text and a thousand short ones fills every domain just as evenly. A
+   chunk is a run of consecutive documents holding about a [2 * domains]th of
+   the batch, so that every domain has a couple to balance over — but never less
+   than [min_chunk_bytes]: a domain costs about a millisecond before it encodes
+   its first byte, its spawn and then the model state it builds and seeds, which
+   is what encoding a hundred kilobytes takes; and never more than
+   [max_chunk_bytes], past which a large batch balances too coarsely. The last
+   chunk of a batch holds whatever is left, and a batch that does not fill one
+   chunk never spawns a domain. *)
+let min_chunk_bytes = 1 lsl 16
+let max_chunk_bytes = 1 lsl 18
+
+let chunk_size ~domains bytes =
+  max min_chunk_bytes (min max_chunk_bytes (bytes / (2 * domains)))
+
+type chunk = { first : int; stop : int; bytes : int }
+
+let chunks_of ~chunk ~bytes count =
+  let chunks = ref [] and first = ref 0 and acc = ref 0 in
+  for i = 0 to count - 1 do
+    acc := !acc + bytes i;
+    if !acc >= chunk then begin
+      chunks := { first = !first; stop = i + 1; bytes = !acc } :: !chunks;
+      first := i + 1;
+      acc := 0
+    end
+  done;
+  if !first < count then
+    chunks := { first = !first; stop = count; bytes = !acc } :: !chunks;
+  Array.of_list (List.rev !chunks)
+
+let domain_count = function
+  | Some n when n < 1 -> invalid_arg "domains must be at least one"
+  | Some n -> n
+  | None -> Domain.recommended_domain_count ()
+
+(* [work] over every chunk, on [domains] domains at once. Chunks are claimed one
+   at a time through a single counter, largest first, so that a domain drawing
+   the longest chunk is not left holding the batch on its own. The caller's
+   domain works too. Whatever a domain raises — or a spawn that fails — is
+   re-raised to the caller once every domain spawned has been joined, and the
+   handout stops there: a batch leaves no domain running and no result comes out
+   of a failure. *)
+let run_chunks ~domains chunks work =
+  let count = Array.length chunks in
+  let order = Array.init count Fun.id in
+  Array.sort (fun a b -> Int.compare chunks.(b).bytes chunks.(a).bytes) order;
+  if min domains count <= 1 then Array.iter work order
   else begin
-    let chunk_size = n / num_domains in
-    let remainder = n mod num_domains in
-    let domains =
-      Array.init (num_domains - 1) (fun d ->
-          let start = ((d + 1) * chunk_size) + min (d + 1) remainder in
-          let len = chunk_size + if d + 1 < remainder then 1 else 0 in
-          Domain.spawn (fun () ->
-              for i = start to start + len - 1 do
-                results.(i) <-
-                  encode_single t ~add_special_tokens ~truncation arr.(i)
-              done))
+    let cursor = Atomic.make 0 in
+    let pull () =
+      let claim = ref (Atomic.fetch_and_add cursor 1) in
+      while !claim < count do
+        work order.(!claim);
+        claim := Atomic.fetch_and_add cursor 1
+      done
     in
-    let main_len = chunk_size + if 0 < remainder then 1 else 0 in
-    for i = 1 to main_len - 1 do
-      results.(i) <- encode_single t ~add_special_tokens ~truncation arr.(i)
-    done;
-    Array.iter Domain.join domains
-  end;
-  Array.to_list results
+    let failure = ref None in
+    let failed e =
+      if Option.is_none !failure then begin
+        failure := Some (e, Printexc.get_raw_backtrace ());
+        Atomic.set cursor count
+      end
+    in
+    let spawned = Array.make (min domains count - 1) None in
+    (try
+       for i = 0 to Array.length spawned - 1 do
+         spawned.(i) <- Some (Domain.spawn pull)
+       done;
+       pull ()
+     with e -> failed e);
+    Array.iter
+      (function
+        | None -> ()
+        | Some domain -> (
+            match Domain.join domain with () -> () | exception e -> failed e))
+      spawned;
+    match !failure with
+    | None -> ()
+    | Some (e, backtrace) -> Printexc.raise_with_backtrace e backtrace
+  end
 
-let encode_sequences t sequences ~add_special_tokens ~padding ~truncation =
-  let n = List.length sequences in
-  let raw =
-    if n >= 4 then encode_parallel t sequences ~add_special_tokens ~truncation
-    else List.map (encode_single t ~add_special_tokens ~truncation) sequences
-  in
-  apply_padding t raw padding
+let encode_sequences t sequences ~add_special_tokens ~padding ~truncation
+    ~domains =
+  match sequences with
+  | [] -> []
+  | _ ->
+      let sequences = Array.of_list sequences in
+      let count = Array.length sequences in
+      let results = Array.make count Encoding.empty in
+      let bytes i =
+        let seq = sequences.(i) in
+        String.length seq.text
+        + match seq.pair with Some pair -> String.length pair | None -> 0
+      in
+      let total = ref 0 in
+      for i = 0 to count - 1 do
+        total := !total + bytes i
+      done;
+      let chunk = chunk_size ~domains !total in
+      let chunks = chunks_of ~chunk ~bytes count in
+      run_chunks ~domains chunks (fun c ->
+          for i = chunks.(c).first to chunks.(c).stop - 1 do
+            results.(i) <-
+              encode_single t ~add_special_tokens ~truncation sequences.(i)
+          done);
+      apply_padding t (Array.to_list results) padding
 
 let encode t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
   match
-    encode_sequences t
-      [ { text; pair } ]
-      ~add_special_tokens ~padding ~truncation
+    apply_padding t
+      [ encode_single t ~add_special_tokens ~truncation { text; pair } ]
+      padding
   with
   | [ encoding ] -> encoding
   | _ -> assert false
 
-let encode_batch t ?(add_special_tokens = true) ?padding ?truncation = function
+let encode_batch t ?(add_special_tokens = true) ?padding ?truncation ?domains =
+  function
   | [] -> []
   | texts ->
       let sequences = List.map (fun text -> { text; pair = None }) texts in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
+        ~domains:(domain_count domains)
 
-let encode_pairs_batch t ?(add_special_tokens = true) ?padding ?truncation =
-  function
+let encode_pairs_batch t ?(add_special_tokens = true) ?padding ?truncation
+    ?domains = function
   | [] -> []
   | pairs ->
       let sequences =
         List.map (fun (text, pair) -> { text; pair = Some pair }) pairs
       in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
+        ~domains:(domain_count domains)
 
 (* Asked for the ids alone, there is no encoding to build whenever the
    post-processor only wraps the sequence: what is left is the body, a prefix
@@ -1025,6 +1097,277 @@ let encode_ids t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
             Array.blit ids 0 padded at length;
             padded
           end)
+
+(* Cutting a document *)
+
+(* A document at least twice a chunk long is encoded in pieces of about a chunk,
+   so that one document can occupy more than one domain — when it can be cut at
+   all: at a space with an alphanumeric before it and a letter after it, that no
+   added token touches, in a pipeline whose walker promises that such a cut
+   leaves its spans as they were and that has no normalizer, since a normalizer
+   is free to act across the cut and none is asked whether it does. [cuttable]
+   is the pipeline's part of the rule, [cut_document] the text's. *)
+let cuttable t =
+  Option.is_none t.normalizer
+  &&
+  match t.cut with
+  | Whole | Pieces _ -> false
+  | Walk pre -> (
+      match Pre_tokenizer.plan pre with
+      | Pre_tokenizer.Walk { splittable; _ } -> splittable
+      | Pre_tokenizer.Pieces -> false)
+
+let ascii_letter c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+let ascii_alnum c = ascii_letter c || (c >= '0' && c <= '9')
+
+(* Whether the content of [token] lies over the byte before [at], the one at it
+   or the one after it. Added tokens are matched by one scan of the text, and
+   the scan of a piece agrees with the scan of the whole as long as the whole
+   scan reaches the cut and no match — kept, or refused for not standing alone
+   as a word — covers it or takes in the space at it. Every such match puts a
+   content over one of those three bytes: an alphanumeric on either side of the
+   space stops the white space an [lstrip] or [rstrip] token takes in from
+   reaching any further. *)
+let touches text ~at (token : Added_tokens.token) =
+  let content = token.content in
+  let rec from p =
+    p <= at + 1 && (is_slice text ~at:p content || from (p + 1))
+  in
+  from (max 0 (at - String.length content))
+
+(* [text] in pieces of about [chunk] bytes, cut on a space between an ASCII
+   alphanumeric and an ASCII letter — the space is then a whole character, and
+   so are its neighbours — that no added token touches. The space opens the
+   piece that follows it, so that a pipeline prepending a space or a marker to a
+   text not starting with one leaves every piece but the first as it found it. A
+   boundary with no such space near it is not cut. *)
+let cut_document t ~chunk text =
+  let len = String.length text in
+  let count = len / chunk in
+  let tokens = Added_tokens.tokens t.added in
+  let safe at =
+    String.unsafe_get text at = ' '
+    && ascii_alnum (String.unsafe_get text (at - 1))
+    && ascii_letter (String.unsafe_get text (at + 1))
+    && not (List.exists (touches text ~at) tokens)
+  in
+  let pieces = ref [] and start = ref 0 in
+  for k = 1 to count - 1 do
+    let target = max (!start + 1) (k * len / count) in
+    let limit = min (len - 1) (target + (len / count)) in
+    let at = ref target in
+    while !at < limit && not (safe !at) do
+      incr at
+    done;
+    if !at < limit then begin
+      pieces := String.sub text !start (!at - !start) :: !pieces;
+      start := !at
+    end
+  done;
+  List.rev (String.sub text !start (len - !start) :: !pieces)
+
+(* Flat batches *)
+
+type ids = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+let create_ids n = Bigarray.Array1.create Bigarray.Int32 Bigarray.C_layout n
+
+(* The pieces of a batch — a document is one piece unless it was cut — as the
+   text of each and the row it belongs to. The pieces of a row are consecutive.
+   A batch with nothing to cut is its own pieces. *)
+let pieces_of t rows ~cut ~chunk =
+  let nrows = Array.length rows in
+  let long text = cut && String.length text >= 2 * chunk in
+  if not (Array.exists long rows) then (rows, Array.init nrows Fun.id)
+  else begin
+    let texts = ref [] and owners = ref [] in
+    Array.iteri
+      (fun row text ->
+        List.iter
+          (fun piece ->
+            texts := piece :: !texts;
+            owners := row :: !owners)
+          (if long text then cut_document t ~chunk text else [ text ]))
+      rows;
+    (Array.of_list (List.rev !texts), Array.of_list (List.rev !owners))
+  end
+
+(* The throughput path: {!encode_ids} over a batch, with the ids of every
+   document in one buffer. A chunk of pieces is encoded into a buffer of its
+   own, so that a domain writes nothing another one reads, and the buffers are
+   copied into the result at offsets that are known only once every chunk has
+   been encoded — a row's length is the whole batch's business as soon as
+   padding is [`Batch_longest]. Affixes, truncation and padding are applied
+   during that copy, chunk by chunk again: they move no ids the model produced.
+   The buffers are [ids] rather than [Ints.t]: they hold the bulk of a batch,
+   and outside the heap the collector neither scans nor sweeps them. *)
+let encode_batch_ids t ?(add_special_tokens = true) ?padding ?truncation
+    ?domains texts =
+  let rows = Array.of_list texts in
+  let nrows = Array.length rows in
+  let affixes =
+    match t.post_processor with
+    | None -> Some ([||], [||])
+    | Some processor -> Post_processor.affixes processor ~add_special_tokens
+  in
+  let wrapped = Option.is_some affixes in
+  let prefix, suffix = Option.value affixes ~default:([||], [||]) in
+  let np = Array.length prefix and ns = Array.length suffix in
+  let domains = domain_count domains in
+  let chunk =
+    chunk_size ~domains
+      (Array.fold_left (fun total text -> total + String.length text) 0 rows)
+  in
+  let texts, owner = pieces_of t rows ~cut:(wrapped && cuttable t) ~chunk in
+  let npieces = Array.length texts in
+  let chunks =
+    chunks_of ~chunk ~bytes:(fun i -> String.length texts.(i)) npieces
+  in
+  (* Where a piece's ids lie: in the buffer of its chunk, which the worker puts
+     in place of the placeholder, from [start] to [stop]. *)
+  let buffers = Array.make (Array.length chunks) (create_ids 0) in
+  let chunk_of = Array.make npieces 0 in
+  let start = Array.make npieces 0 and stop = Array.make npieces 0 in
+  run_chunks ~domains chunks (fun c ->
+      let chunk = chunks.(c) in
+      let buffer = ref (create_ids (max 64 (chunk.bytes / 3))) in
+      let used = ref 0 in
+      (* [keep into i] moves the ids of piece [i] from [into] to the buffer. *)
+      let keep into i =
+        let n = Ints.length into in
+        let held = Bigarray.Array1.dim !buffer in
+        if !used + n > held then begin
+          let grown = create_ids (2 * max held (!used + n)) in
+          Bigarray.Array1.blit
+            (Bigarray.Array1.sub !buffer 0 !used)
+            (Bigarray.Array1.sub grown 0 !used);
+          buffer := grown
+        end;
+        Ints.blit_to_int32 into ~pos:0 ~len:n !buffer ~at:!used;
+        Ints.clear into;
+        chunk_of.(i) <- c;
+        start.(i) <- !used;
+        used := !used + n;
+        stop.(i) <- !used
+      in
+      if wrapped then
+        with_scratch (fun sc ->
+            for i = chunk.first to chunk.stop - 1 do
+              let (_ : Run.t option) =
+                encode_document t sc texts.(i) ~record:false
+              in
+              keep sc.ids i
+            done)
+      else begin
+        (* The post-processor does more than wrap: a piece is then a whole
+           document, encoded the long way and truncated already. *)
+        let into = Ints.create () in
+        for i = chunk.first to chunk.stop - 1 do
+          let ids =
+            Encoding.ids
+              (encode_single t ~add_special_tokens ~truncation
+                 { text = texts.(i); pair = None })
+          in
+          for k = 0 to Array.length ids - 1 do
+            Ints.add into (Array.unsafe_get ids k)
+          done;
+          keep into i
+        done
+      end;
+      buffers.(c) <- !buffer);
+  (* A row's body is its pieces' ids end to end; [place] is where each of them
+     begins in it. *)
+  let body = Array.make nrows 0 and place = Array.make npieces 0 in
+  for i = 0 to npieces - 1 do
+    let row = owner.(i) in
+    place.(i) <- body.(row);
+    body.(row) <- body.(row) + stop.(i) - start.(i)
+  done;
+  let budget =
+    match truncation with
+    | Some { max_length; _ } when wrapped -> max 0 (max_length - np - ns)
+    | _ -> max_int
+  in
+  let content = Array.init nrows (fun row -> np + min body.(row) budget + ns) in
+  let lengths =
+    match padding with
+    | None -> content
+    | Some cfg ->
+        let longest = Array.fold_left max 0 content in
+        Array.map
+          (fun size ->
+            max size
+              (match cfg.length with
+              | `Batch_longest -> longest
+              | _ -> pad_target cfg size))
+          content
+  in
+  let offset = Array.make (nrows + 1) 0 in
+  for row = 0 to nrows - 1 do
+    offset.(row + 1) <- offset.(row) + lengths.(row)
+  done;
+  let result = create_ids offset.(nrows) in
+  (* The pad token is looked up only when a row needs it, as {!encode_ids} looks
+     it up. *)
+  let pad_id =
+    match padding with
+    | Some cfg when offset.(nrows) > Array.fold_left ( + ) 0 content ->
+        let _, pad_id, _ = resolve_pad t cfg in
+        Int32.of_int pad_id
+    | _ -> 0l
+  in
+  let pad_left =
+    match padding with Some { direction = `Left; _ } -> true | _ -> false
+  in
+  let trim_left =
+    match truncation with
+    | Some { direction = `Left; _ } -> wrapped
+    | _ -> false
+  in
+  let write ids ~at =
+    for k = 0 to Array.length ids - 1 do
+      Bigarray.Array1.unsafe_set result (at + k)
+        (Int32.of_int (Array.unsafe_get ids k))
+    done
+  in
+  let fill ~at ~len =
+    if len > 0 then
+      Bigarray.Array1.fill (Bigarray.Array1.sub result at len) pad_id
+  in
+  let copy (buffer : ids) ~pos ~len ~at =
+    for k = 0 to len - 1 do
+      Bigarray.Array1.unsafe_set result (at + k)
+        (Bigarray.Array1.unsafe_get buffer (pos + k))
+    done
+  in
+  (* A piece copies the part of itself that truncation keeps; the first piece of
+     a row lays out the row around the body. *)
+  run_chunks ~domains chunks (fun c ->
+      let chunk = chunks.(c) in
+      for i = chunk.first to chunk.stop - 1 do
+        let row = owner.(i) in
+        let padded = lengths.(row) - content.(row) in
+        let front = if pad_left then padded else 0 in
+        let kept = min body.(row) budget in
+        let skip = if trim_left then body.(row) - kept else 0 in
+        let base = offset.(row) + front + np in
+        let held = stop.(i) - start.(i) in
+        let lo = max place.(i) skip
+        and hi = min (place.(i) + held) (skip + kept) in
+        if lo < hi then
+          copy
+            buffers.(chunk_of.(i))
+            ~pos:(start.(i) + lo - place.(i))
+            ~len:(hi - lo)
+            ~at:(base + lo - skip);
+        if i = 0 || owner.(i - 1) <> row then begin
+          fill ~at:offset.(row) ~len:front;
+          fill ~at:(base + kept + ns) ~len:(padded - front);
+          write prefix ~at:(offset.(row) + front);
+          write suffix ~at:(base + kept)
+        end
+      done);
+  (result, lengths)
 
 (* Decoding *)
 

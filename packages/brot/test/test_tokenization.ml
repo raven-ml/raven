@@ -741,6 +741,331 @@ let test_byte_level_after_a_split () =
   equal ~msg:"encode_ids agrees" (array int) [| 1; 0 |]
     (encode_ids tokenizer ~add_special_tokens:false "b a")
 
+(* Batch encoding *)
+
+(* The parity corpora, as the documents the parity gate encodes them as. *)
+let parity_documents corpus =
+  let text =
+    Fixture.read (Filename.concat "fixtures/parity" (corpus ^ ".txt"))
+  in
+  let lines = String.split_on_char '\n' text in
+  let join current = String.concat "\n" (List.rev current) in
+  let rec split docs current = function
+    | [] -> List.rev (join current :: docs)
+    | "====" :: rest -> split (join current :: docs) [] rest
+    | line :: rest -> split docs (line :: current) rest
+  in
+  split [] [] lines
+
+let with_pretrained model f =
+  Fixture.with_download
+    (Filename.concat "../bench/data" (model ^ ".json"))
+    ~from:"packages/brot/bench/download_data.sh"
+    (fun path ->
+      match from_file path with
+      | Ok tokenizer -> f tokenizer
+      | Error msg -> failf "failed to load %s: %s" path msg)
+
+(* The pretrained tokenizers name no pad token, so the padding names one. *)
+let pad ?direction length =
+  padding ?direction ~pad_id:0 ~pad_token:"<pad>" length
+
+(* The rows of a flat batch buffer, read back through the lengths that place
+   them. Checks that the buffer holds exactly the rows and nothing else. *)
+let rows (buffer, lengths) =
+  let total = Array.fold_left ( + ) 0 lengths in
+  equal ~msg:"buffer holds the rows and nothing else" int total
+    (Bigarray.Array1.dim buffer);
+  let at = ref 0 in
+  Array.to_list
+    (Array.map
+       (fun length ->
+         let row =
+           Array.init length (fun k ->
+               Int32.to_int (Bigarray.Array1.get buffer (!at + k)))
+         in
+         at := !at + length;
+         row)
+       lengths)
+
+let check_batch ?add_special_tokens ?padding ?truncation ?domains ~msg tokenizer
+    documents =
+  equal ~msg
+    (list (array int))
+    (List.map
+       (encode_ids tokenizer ?add_special_tokens ?padding ?truncation)
+       documents)
+    (rows
+       (encode_batch_ids tokenizer ?add_special_tokens ?padding ?truncation
+          ?domains documents))
+
+let test_batch_ids_matches_encode_ids model () =
+  with_pretrained model (fun tokenizer ->
+      let documents =
+        parity_documents "sample" @ parity_documents "edge_cases"
+      in
+      check_batch ~msg:"plain" tokenizer documents;
+      check_batch ~msg:"padded to a fixed length"
+        ~padding:(pad (`Fixed 48))
+        tokenizer documents;
+      check_batch ~msg:"padded to a multiple, on the left"
+        ~padding:(pad ~direction:`Left (`To_multiple 8))
+        tokenizer documents;
+      check_batch ~msg:"truncated" ~truncation:(truncation 24) tokenizer
+        documents;
+      check_batch ~msg:"truncated from the left"
+        ~truncation:(truncation ~direction:`Left 24)
+        tokenizer documents;
+      check_batch ~msg:"truncated and padded" ~truncation:(truncation 24)
+        ~padding:(pad (`Fixed 24))
+        tokenizer documents;
+      check_batch ~msg:"without special tokens" ~add_special_tokens:false
+        ~padding:(pad (`Fixed 32))
+        tokenizer documents)
+
+(* [`Batch_longest] takes the batch as its unit, which is the one thing a row
+   does not decide on its own. *)
+let test_batch_ids_pads_to_the_longest () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let documents = parity_documents "sample" in
+      let padding = pad `Batch_longest in
+      let expected =
+        List.map Encoding.ids (encode_batch tokenizer ~padding documents)
+      in
+      equal ~msg:"rows"
+        (list (array int))
+        expected
+        (rows (encode_batch_ids tokenizer ~padding documents)))
+
+let test_batch_ids_one_domain () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let documents = parity_documents "sample" in
+      equal ~msg:"one domain and all of them agree"
+        (list (array int))
+        (rows (encode_batch_ids tokenizer ~domains:1 documents))
+        (rows (encode_batch_ids tokenizer documents)))
+
+let test_batch_ids_empty () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let buffer, lengths = encode_batch_ids tokenizer [] in
+      equal ~msg:"no rows" (array int) [||] lengths;
+      equal ~msg:"no ids" int 0 (Bigarray.Array1.dim buffer);
+      check_batch ~msg:"empty documents" tokenizer [ ""; "a"; ""; "" ];
+      check_batch ~msg:"empty documents, padded"
+        ~padding:(pad (`Fixed 4))
+        tokenizer [ ""; "a"; "" ])
+
+(* A post-processor that does more than wrap the sequence sends the batch the
+   long way, through encodings. *)
+let test_batch_ids_without_affixes () =
+  let tokenizer =
+    word_level
+      ~vocab:[ ("the", 0); ("cat", 1); ("sat", 2); ("[SEP]", 3); ("[UNK]", 4) ]
+      ~pre:(Pre_tokenizer.whitespace ())
+      ~unk_token:"[UNK]"
+      ~post:
+        (Post_processor.template ~single:"$A [SEP] $A"
+           ~special_tokens:[ ("[SEP]", 3) ]
+           ())
+      ()
+  in
+  equal ~msg:"the sequence is named twice" (array int) [| 0; 1; 3; 0; 1 |]
+    (encode_ids tokenizer "the cat");
+  let documents = [ "the cat sat"; ""; "sat on the mat"; "the" ] in
+  check_batch ~msg:"plain" tokenizer documents;
+  check_batch ~msg:"truncated and padded"
+    ~truncation:(truncation ~direction:`Left 4)
+    ~padding:(pad (`Fixed 6))
+    tokenizer documents
+
+(* A document past the cutting threshold is encoded in pieces on several
+   domains, which may not change an id of it. *)
+let repeat text length =
+  let buffer = Buffer.create (length + String.length text) in
+  while Buffer.length buffer < length do
+    Buffer.add_string buffer text
+  done;
+  Buffer.contents buffer
+
+let test_batch_ids_cut_document model () =
+  with_pretrained model (fun tokenizer ->
+      let corpus =
+        repeat (String.concat "\n" (parity_documents "sample")) (5 * 1024 * 1024)
+      in
+      equal ~msg:"the ids of the pieces are the ids of the document"
+        (list (array int))
+        [ encode_ids tokenizer corpus ]
+        (rows (encode_batch_ids tokenizer [ corpus ]));
+      let documents = [ "a short one"; corpus; ""; "another short one" ] in
+      check_batch ~msg:"among short documents" tokenizer documents;
+      check_batch ~msg:"on two domains" ~domains:2 tokenizer documents;
+      check_batch ~msg:"among short documents, truncated from the left"
+        ~truncation:(truncation ~direction:`Left 64)
+        tokenizer documents)
+
+(* Added tokens are matched by one scan of the whole document, and a piece
+   starting where the whole did not is not the whole: a [single_word] token
+   turned down in the whole for the word before it stands alone at the head of a
+   piece, and the scan of the whole skips the bytes of a token it turned down,
+   which a piece's scan reads. A cut lands only where the pieces cannot tell. *)
+let test_batch_ids_cut_avoids_added_tokens () =
+  let tokenizer =
+    word_level
+      ~vocab:
+        [
+          ("hello", 0);
+          ("world", 1);
+          ("the", 2);
+          ("cat", 3);
+          ("sat", 4);
+          ("on", 5);
+          ("mat", 6);
+          ("[UNK]", 7);
+        ]
+      ~pre:(Pre_tokenizer.whitespace ())
+      ~unk_token:"[UNK]"
+      ~added_tokens:
+        [
+          added_token ~special:false ~single_word:true " world";
+          added_token ~special:false ~single_word:true ~normalized:false "n th";
+          added_token ~special:false ~normalized:false "th";
+        ]
+      ()
+  in
+  equal ~msg:"the whole turns the added tokens down" (array int)
+    [| 0; 1; 5; 2 |]
+    (encode_ids tokenizer "hello world on the");
+  equal ~msg:"a piece would not" (array int) [| 8 |]
+    (encode_ids tokenizer " world");
+  equal ~msg:"nor read what the whole skipped" (array int) [| 10; 7 |]
+    (encode_ids tokenizer " the");
+  let mib = 1024 * 1024 in
+  let documents =
+    [
+      repeat "hello world " mib;
+      repeat "hello world the cat sat on the mat " (2 * mib);
+      "the cat";
+      repeat "cat sat on the mat hello world " mib;
+    ]
+  in
+  check_batch ~msg:"cut documents keep their ids" tokenizer documents;
+  check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
+
+(* A normalizer may act across a space, so a pipeline with one is never cut,
+   however long the document. *)
+let test_batch_ids_uncut_under_normalizer () =
+  let tokenizer =
+    word_level
+      ~normalizer:(Normalizer.replace ~pattern:"e c" ~replacement:"ec")
+      ~pre:(Pre_tokenizer.whitespace ())
+      ~vocab:[ ("the", 0); ("cat", 1); ("thecat", 2); ("[UNK]", 3) ]
+      ~unk_token:"[UNK]" ()
+  in
+  equal ~msg:"the normalizer joins the words" (array int) [| 2; 2 |]
+    (encode_ids tokenizer "the cat the cat");
+  let mib = 1024 * 1024 in
+  let documents =
+    List.init 4 (fun j -> String.make j 'x' ^ repeat "the cat the cat " mib)
+  in
+  check_batch ~msg:"whole documents" tokenizer documents;
+  check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
+
+(* A vocabulary of space runs sees a cut inside a run: the guards on the bytes
+   either side of the cut keep the run whole. *)
+let test_batch_ids_cut_keeps_space_runs () =
+  let tokenizer =
+    word_level
+      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+      ~vocab:
+        [
+          (" ", 0);
+          ("  ", 1);
+          ("   ", 2);
+          (" the", 3);
+          (" cat", 4);
+          ("the", 5);
+          ("[UNK]", 6);
+          ("x", 7);
+        ]
+      ~unk_token:"[UNK]" ()
+  in
+  equal ~msg:"space runs are tokens" (array int) [| 5; 1; 4; 0; 3; 0 |]
+    (encode_ids tokenizer "the   cat  the ");
+  let mib = 1024 * 1024 in
+  let documents =
+    List.init 5 (fun j -> String.make j 'x' ^ repeat "the   cat  the " mib)
+  in
+  check_batch ~msg:"cut documents keep their runs" tokenizer documents;
+  check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
+
+(* A document a worker cannot encode fails the whole batch, once every domain
+   has been joined, and leaves the tokenizer usable. *)
+let test_batch_worker_failure () =
+  let tokenizer =
+    unigram
+      ~vocab:
+        [
+          ("hello", 0.);
+          ("world", 0.);
+          ("h", -5.);
+          ("e", -5.);
+          ("l", -5.);
+          ("o", -5.);
+          ("w", -5.);
+          ("r", -5.);
+          ("d", -5.);
+        ]
+      ~pre:(Pre_tokenizer.whitespace ())
+      ()
+  in
+  let mib = 1024 * 1024 in
+  let good = List.init 8 (fun _ -> repeat "hello world " (2 * mib)) in
+  let bad = List.concat [ good; [ "hello world zzz" ]; good ] in
+  let failure = function Failure _ -> true | _ -> false in
+  raises_match ~msg:"encode_batch_ids fails" failure (fun () ->
+      encode_batch_ids tokenizer ~domains:6 bad);
+  raises_match ~msg:"encode_batch fails" failure (fun () ->
+      encode_batch tokenizer ~domains:6 bad);
+  check_batch ~msg:"the tokenizer still encodes" ~domains:6 tokenizer good;
+  equal ~msg:"encodings too" int (List.length good)
+    (List.length (encode_batch tokenizer ~domains:6 good))
+
+let test_batch_domains_at_least_one () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let refused = Invalid_argument "domains must be at least one" in
+      raises ~msg:"encode_batch_ids" refused (fun () ->
+          encode_batch_ids tokenizer ~domains:0 [ "a" ]);
+      raises ~msg:"encode_batch" refused (fun () ->
+          encode_batch tokenizer ~domains:(-1) [ "a" ]))
+
+let batch_tests =
+  [
+    test "batch ids agree with encode_ids (gpt2)"
+      (test_batch_ids_matches_encode_ids "gpt2");
+    test "batch ids agree with encode_ids (bert)"
+      (test_batch_ids_matches_encode_ids "bert_base");
+    test "batch ids agree with encode_ids (llama)"
+      (test_batch_ids_matches_encode_ids "llama");
+    test "batch ids agree with encode_ids (roberta)"
+      (test_batch_ids_matches_encode_ids "roberta_base");
+    test "batch ids pad to the longest of the batch"
+      test_batch_ids_pads_to_the_longest;
+    test "batch ids do not depend on the domain count" test_batch_ids_one_domain;
+    test "batch ids of an empty batch" test_batch_ids_empty;
+    test "batch ids under a post-processor that does not wrap"
+      test_batch_ids_without_affixes;
+    test "a cut document keeps its ids (gpt2)"
+      (test_batch_ids_cut_document "gpt2");
+    test "a cut document keeps its ids (roberta)"
+      (test_batch_ids_cut_document "roberta_base");
+    test "a cut avoids the added tokens" test_batch_ids_cut_avoids_added_tokens;
+    test "a pipeline with a normalizer is not cut"
+      test_batch_ids_uncut_under_normalizer;
+    test "a cut keeps space runs whole" test_batch_ids_cut_keeps_space_runs;
+    test "a worker failure fails the batch" test_batch_worker_failure;
+    test "domains must be at least one" test_batch_domains_at_least_one;
+  ]
+
 (* Test Suite *)
 
 let tokenization_tests =
@@ -793,4 +1118,6 @@ let tokenization_tests =
     test "unigram trains on pre-tokens" test_train_unigram_words;
   ]
 
-let () = run "brot tokenization" [ group "tokenization" tokenization_tests ]
+let () =
+  run "brot tokenization"
+    [ group "tokenization" tokenization_tests; group "batch" batch_tests ]

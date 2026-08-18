@@ -32,6 +32,15 @@ let[@inline] add t n =
   Array.unsafe_set t.values t.count n;
   t.count <- t.count + 1
 
+let blit_to_int32 t ~pos ~len
+    (dst : (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t) ~at
+    =
+  let values = t.values in
+  for i = 0 to len - 1 do
+    Bigarray.Array1.unsafe_set dst (at + i)
+      (Int32.of_int (Array.unsafe_get values (pos + i)))
+  done
+
 let[@inline] add4 t a b c d ~count =
   ensure t 4;
   let n = t.count in
