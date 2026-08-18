@@ -1087,6 +1087,21 @@ thread.
 
 ### Brot
 
+- BERT-style normalization (`Normalizer.bert`) runs as one pass with an ASCII
+  fast lane: 24× faster on English text (18 → 440 MB/s), 2–3× on non-Latin
+  scripts, identical output and offsets. `Brot.encode` with offsets on
+  bert-base goes from 14.7 to 3.4 ms per 64 KB document, `encode_ids` from
+  5.0 to 1.6.
+- Unicode normalization (`nfc`, `nfd`, `nfkc`, `nfkd`) is streamed with a fast
+  lane for ASCII and for characters already in normal form: 6–7× faster on
+  mostly-ASCII text and 10–40% faster on Cyrillic, Greek, Vietnamese, Korean,
+  Arabic and CJK; `lowercase`, `strip_accents`, `nmt` and `strip` are 3–5×
+  faster; `apply_aligned` costs 1.3–1.5× `apply` instead of 2–7×, so offsets
+  on normalized text are 3–35× cheaper, and `prepend`/`strip` track
+  alignments for free.
+- Fixed `apply_aligned` under `nfc`/`nfkc` composing an LV Hangul syllable
+  with the following U+11C3 (a plain starter, not a trailing jamo); `apply`
+  and HuggingFace never did.
 - Offsets are exact through pre-tokenizer sequences that rewrite after
   splitting (`Sequence [WhitespaceSplit; Metaspace]` as in T5/ALBERT/XLNet,
   `Sequence [Split; ByteLevel]`): each token now reports its own bytes instead

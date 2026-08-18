@@ -50,6 +50,8 @@ let[@inline] utf8_next s i =
 let[@inline] is_continuation s i =
   Char.code (String.unsafe_get s i) land 0xC0 = 0x80
 
+let[@inline] is_ascii s i = Char.code (String.unsafe_get s i) < 0x80
+
 (* Character classification *)
 
 let[@inline] is_whitespace code =
@@ -65,14 +67,41 @@ let[@inline] is_control code =
     | `Cc | `Cf | `Co -> true
     | _ -> false
 
+(* Byte scanning, eight bytes at a time *)
+
+external word : string -> int -> int64 = "%caml_string_get64u"
+
+let ones = 0x0101010101010101L
+let highs = 0x8080808080808080L
+
+(* [true] iff a byte of [w] is zero. *)
+let[@inline] has_zero w =
+  Int64.logand (Int64.logand (Int64.sub w ones) (Int64.lognot w)) highs <> 0L
+
+let lows = 0x7F7F7F7F7F7F7F7FL
+
+(* The number of zero bytes of [w]: the high bit of every zero byte and no other
+   is set, then those bits are summed into the top byte. *)
+let[@inline] zero_bytes w =
+  let marks =
+    Int64.logand
+      (Int64.lognot (Int64.logor (Int64.add (Int64.logand w lows) lows) w))
+      highs
+  in
+  Int64.to_int
+    (Int64.shift_right_logical
+       (Int64.mul (Int64.shift_right_logical marks 7) ones)
+       56)
+
+let rec has_non_ascii_from s i =
+  let len = String.length s in
+  if i + 8 <= len then
+    Int64.logand (word s i) highs <> 0L || has_non_ascii_from s (i + 8)
+  else i < len && ((not (is_ascii s i)) || has_non_ascii_from s (i + 1))
+
 (* Text that is all ASCII holds no mark, no ideograph and nothing to decompose,
    so the stages that only touch those can be skipped whole. *)
-let has_non_ascii s =
-  let len = String.length s in
-  let rec loop i =
-    i < len && (Char.code (String.unsafe_get s i) >= 128 || loop (i + 1))
-  in
-  loop 0
+let has_non_ascii s = has_non_ascii_from s 0
 
 let needs_lowering s =
   let len = String.length s in
@@ -83,6 +112,43 @@ let needs_lowering s =
     (byte >= 0x41 && byte <= 0x5A) || byte >= 128 || loop (i + 1)
   in
   loop 0
+
+(* The number of bytes [c] in [s]. *)
+let count_byte s c =
+  let len = String.length s in
+  let pattern = Int64.mul (Int64.of_int (Char.code c)) ones in
+  let count = ref 0 and i = ref 0 in
+  while !i + 8 <= len do
+    count := !count + zero_bytes (Int64.logxor (word s !i) pattern);
+    i := !i + 8
+  done;
+  while !i < len do
+    if String.unsafe_get s !i = c then incr count;
+    incr i
+  done;
+  !count
+
+(* The first byte [c] of [s] at or after [pos], or [-1]. *)
+let index_byte s c pos =
+  let len = String.length s in
+  let pattern = Int64.mul (Int64.of_int (Char.code c)) ones in
+  let i = ref pos and found = ref (-1) in
+  while !found < 0 && !i + 8 <= len do
+    if has_zero (Int64.logxor (word s !i) pattern) then begin
+      while String.unsafe_get s !i <> c do
+        incr i
+      done;
+      found := !i
+    end
+    else i := !i + 8
+  done;
+  if !found < 0 then begin
+    while !i < len && String.unsafe_get s !i <> c do
+      incr i
+    done;
+    if !i < len then found := !i
+  end;
+  !found
 
 let[@inline] is_chinese_char code =
   (code >= 0x4E00 && code <= 0x9FFF)
@@ -101,49 +167,156 @@ let[@inline] is_chinese_char code =
    reports the range of its first byte joined with the range of its last.
    Insertions stand for the range of the character they were put next to,
    deletions for nothing at all, so the ranges are ascending but need not tile
-   the original. *)
+   the original.
+
+   A range is one [int], its start in the high half and its stop in the low one,
+   which holds texts up to 2 GiB, and a map keeps one per byte in a byte string,
+   which the collector does not scan, so a lookup is one load. Text that was
+   only prefixed or sliced keeps a view on the alignment of what it came from
+   rather than a copy of it: byte [i] of the text stands for what byte [anchor]
+   of the base stands for while [i < head], and byte [i + shift] after that.
+   Views flatten, so the base of a view is never a view. *)
 type alignment =
   | Identity of string
-  | Map of { starts : int array; stops : int array; original : int }
+  | Map of { spans : Bytes.t; count : int; original : int }
+  | View of {
+      head : int;
+      anchor : int;
+      shift : int;
+      count : int;
+      base : alignment;
+    }
+
+let[@inline] pack high low = (high lsl 32) lor low
+let[@inline] high p = p lsr 32
+let[@inline] low p = p land 0xFFFF_FFFF
+
+external span_get64 : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
+external span_set64 : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
+
+let[@inline] span_get spans i = Int64.to_int (span_get64 spans (i lsl 3))
+let[@inline] span_set spans i r = span_set64 spans (i lsl 3) (Int64.of_int r)
+let spans_create n = Bytes.create (n lsl 3)
+
+let spans_blit src pos dst at n =
+  Bytes.blit src (pos lsl 3) dst (at lsl 3) (n lsl 3)
 
 let identity s = Identity s
 
 let normalized_length = function
   | Identity s -> String.length s
-  | Map m -> Array.length m.starts
+  | Map m -> m.count
+  | View v -> v.count
 
-let original_length = function
+let rec original_length = function
   | Identity s -> String.length s
   | Map m -> m.original
+  | View v -> original_length v.base
 
-(* The bytes of the character byte [i] falls in. Byte [-1] is what a character
-   inserted before anything stands for. Kept as two lookups rather than one
-   returning a pair: they run once per byte of every stage, and a pair would be
-   a boxed allocation each time. *)
-let span_start a i =
+(* A character of text that was not normalized is a byte that is not a
+   continuation byte and the continuation bytes after it. *)
+let identity_range s i =
+  let len = String.length s in
+  let start = ref i in
+  while !start > 0 && is_continuation s !start do
+    decr start
+  done;
+  let stop = ref (i + 1) in
+  while !stop < len && is_continuation s !stop do
+    incr stop
+  done;
+  pack !start !stop
+
+(* The range of the character byte [i] falls in. Byte [-1] is what a character
+   inserted before anything stands for. *)
+let rec range_through a i =
+  match a with
+  | Identity s -> identity_range s i
+  | Map m -> span_get m.spans i
+  | View v ->
+      range_through v.base (if i < v.head then v.anchor else i + v.shift)
+
+let[@inline] range a i =
   if i < 0 then 0
   else
     match a with
-    | Identity s ->
-        let start = ref i in
-        while !start > 0 && is_continuation s !start do
-          decr start
-        done;
-        !start
-    | Map m -> Array.unsafe_get m.starts i
+    | Identity s -> identity_range s i
+    | Map m -> span_get m.spans i
+    | View _ -> range_through a i
 
-let span_stop a i =
-  if i < 0 then 0
-  else
-    match a with
-    | Identity s ->
-        let len = String.length s in
-        let stop = ref (i + 1) in
-        while !stop < len && is_continuation s !stop do
-          incr stop
-        done;
-        !stop
-    | Map m -> Array.unsafe_get m.stops i
+(* The range of ASCII byte [i] of a stage's input, which is the original text
+   when the alignment is the identity: the byte itself, and any continuation
+   bytes that follow it. *)
+let[@inline] ascii_range a i =
+  match a with
+  | Identity s ->
+      if i + 1 < String.length s && is_continuation s (i + 1) then
+        identity_range s i
+      else pack i (i + 1)
+  | Map m -> span_get m.spans i
+  | View _ -> range a i
+
+(* Entries [at] onwards of [spans] receive the ranges of bytes [pos] to [pos + n
+   - 1] of [a]: a blit from a map, and from the identity a walk that only stops
+   on the bytes of a multi-byte character. *)
+let rec fill spans at a pos n =
+  match a with
+  | Map m -> spans_blit m.spans pos spans at n
+  | Identity s ->
+      let len = String.length s in
+      let r = ref 0 in
+      for k = 0 to n - 1 do
+        let j = pos + k in
+        let b = Char.code (String.unsafe_get s j) in
+        if k > 0 && b land 0xC0 = 0x80 then ()
+        else if b < 0x80 && (j + 1 = len || not (is_continuation s (j + 1)))
+        then r := pack j (j + 1)
+        else r := identity_range s j;
+        span_set spans (at + k) !r
+      done
+  | View v ->
+      let h = min n (max 0 (v.head - pos)) in
+      if h > 0 then begin
+        let r = range v.base v.anchor in
+        for k = at to at + h - 1 do
+          span_set spans k r
+        done
+      end;
+      if n > h then fill spans (at + h) v.base (pos + h + v.shift) (n - h)
+
+let prefixed a prefix =
+  match a with
+  | View v ->
+      View
+        {
+          head = prefix + v.head;
+          anchor = (if v.head > 0 then v.anchor else v.shift);
+          shift = v.shift - prefix;
+          count = prefix + v.count;
+          base = v.base;
+        }
+  | base ->
+      View
+        {
+          head = prefix;
+          anchor = 0;
+          shift = -prefix;
+          count = prefix + normalized_length base;
+          base;
+        }
+
+let sliced a offset count =
+  match a with
+  | View v ->
+      View
+        {
+          head = max 0 (v.head - offset);
+          anchor = v.anchor;
+          shift = offset + v.shift;
+          count;
+          base = v.base;
+        }
+  | base -> View { head = 0; anchor = 0; shift = offset; count; base }
 
 let original_span a ~start ~stop =
   let len = normalized_length a in
@@ -153,272 +326,544 @@ let original_span a ~start ~stop =
   (* Normalizing the text away leaves nothing to map through, so the only span
      there is stands for the whole of what was normalized. *)
   if len = 0 then (0, original_length a)
-  else if start < stop then (span_start a start, span_stop a (stop - 1))
+  else if start < stop then (high (range a start), low (range a (stop - 1)))
   else
-    let at = if start < len then span_start a start else original_length a in
+    let at = if start < len then high (range a start) else original_length a in
     (at, at)
 
 (* Output *)
 
-(* A stage's text, and, while tracking, the input byte every output byte stands
-   for. [apply] runs untracked, so [mark] is the only cost it pays. *)
+(* A stage's text and, while tracking, the range of the original every output
+   byte stands for, looked up through the alignment of the stage's input as the
+   byte is written. [apply] runs untracked, so the only cost it pays is the test
+   of [track]. *)
 type out = {
-  buf : Buffer.t;
-  mutable from : int array;
+  mutable bytes : Bytes.t;
+  mutable spans : Bytes.t;
   mutable len : int;
+  base : alignment;
   track : bool;
 }
 
-let out ~track n =
+let out ~track base n =
+  let cap = max n 16 in
   {
-    buf = Buffer.create (max n 16);
-    from = (if track then Array.make (max n 16) 0 else [||]);
+    bytes = Bytes.create cap;
+    spans = (if track then spans_create cap else Bytes.empty);
     len = 0;
+    base;
     track;
   }
 
-let room o n =
-  let need = o.len + n in
-  if need > Array.length o.from then begin
-    let grown = Array.make (max need (2 * Array.length o.from)) 0 in
-    Array.blit o.from 0 grown 0 o.len;
-    o.from <- grown
+let grow o n =
+  let cap = max (o.len + n) (2 * Bytes.length o.bytes) in
+  let bytes = Bytes.create cap in
+  Bytes.blit o.bytes 0 bytes 0 o.len;
+  o.bytes <- bytes;
+  if o.track then begin
+    let spans = spans_create cap in
+    spans_blit o.spans 0 spans 0 o.len;
+    o.spans <- spans
   end
 
+let[@inline] ensure o n = if o.len + n > Bytes.length o.bytes then grow o n
+
+(* The next [n] output bytes stand for input byte [src]. *)
 let[@inline] mark o src n =
   if o.track then begin
-    room o n;
-    Array.fill o.from o.len n src;
-    o.len <- o.len + n
+    let r = range o.base src in
+    for k = o.len to o.len + n - 1 do
+      span_set o.spans k r
+    done
   end
 
 let[@inline] add_char o src c =
-  Buffer.add_char o.buf c;
-  mark o src 1
+  ensure o 1;
+  Bytes.unsafe_set o.bytes o.len c;
+  mark o src 1;
+  o.len <- o.len + 1
 
-let[@inline] add_uchar o src u =
-  Buffer.add_utf_8_uchar o.buf u;
-  mark o src (Uchar.utf_8_byte_length u)
+let add_code o src u =
+  ensure o 4;
+  let b = o.bytes and p = o.len in
+  let n =
+    if u < 0x80 then begin
+      Bytes.unsafe_set b p (Char.unsafe_chr u);
+      1
+    end
+    else if u < 0x800 then begin
+      Bytes.unsafe_set b p (Char.unsafe_chr (0xC0 lor (u lsr 6)));
+      Bytes.unsafe_set b (p + 1) (Char.unsafe_chr (0x80 lor (u land 0x3F)));
+      2
+    end
+    else if u < 0x10000 then begin
+      Bytes.unsafe_set b p (Char.unsafe_chr (0xE0 lor (u lsr 12)));
+      Bytes.unsafe_set b (p + 1)
+        (Char.unsafe_chr (0x80 lor ((u lsr 6) land 0x3F)));
+      Bytes.unsafe_set b (p + 2) (Char.unsafe_chr (0x80 lor (u land 0x3F)));
+      3
+    end
+    else begin
+      Bytes.unsafe_set b p (Char.unsafe_chr (0xF0 lor (u lsr 18)));
+      Bytes.unsafe_set b (p + 1)
+        (Char.unsafe_chr (0x80 lor ((u lsr 12) land 0x3F)));
+      Bytes.unsafe_set b (p + 2)
+        (Char.unsafe_chr (0x80 lor ((u lsr 6) land 0x3F)));
+      Bytes.unsafe_set b (p + 3) (Char.unsafe_chr (0x80 lor (u land 0x3F)));
+      4
+    end
+  in
+  mark o src n;
+  o.len <- p + n
 
-let[@inline] add_sub o src s pos n =
-  Buffer.add_substring o.buf s pos n;
-  mark o src n
+let rec add_codes o src = function
+  | [] -> ()
+  | u :: us ->
+      add_code o src (Uchar.to_int u);
+      add_codes o src us
 
-let[@inline] add_string o src str =
-  Buffer.add_string o.buf str;
-  mark o src (String.length str)
+let add_sub o src s pos n =
+  ensure o n;
+  Bytes.blit_string s pos o.bytes o.len n;
+  mark o src n;
+  o.len <- o.len + n
+
+let add_string o src str = add_sub o src str 0 (String.length str)
 
 (* Bytes kept as they are, each standing for itself. *)
 let copy o s pos n =
-  Buffer.add_substring o.buf s pos n;
-  if o.track then begin
-    room o n;
-    for i = 0 to n - 1 do
-      Array.unsafe_set o.from (o.len + i) (pos + i)
-    done;
-    o.len <- o.len + n
-  end
+  ensure o n;
+  Bytes.blit_string s pos o.bytes o.len n;
+  if o.track then fill o.spans o.len o.base pos n;
+  o.len <- o.len + n
 
-let text o = Buffer.contents o.buf
+(* The ASCII bytes of [s] from [i] on, each standing for itself and becoming
+   [table.(byte)], or nothing when that is negative; stops at the first byte
+   that is not ASCII, or, with [lookahead], at the last one before it. Returns
+   where it stopped. The stage's state is held in locals through the loop, which
+   is what makes this the fast lane. *)
+let ascii_run o s i ~lookahead table =
+  let len = String.length s in
+  ensure o (len - i);
+  let bytes = o.bytes
+  and spans = o.spans
+  and base = o.base
+  and track = o.track in
+  let p = ref o.len and j = ref i in
+  while
+    !j < len && is_ascii s !j
+    && ((not lookahead) || !j + 1 = len || is_ascii s (!j + 1))
+  do
+    let c = Array.unsafe_get table (Char.code (String.unsafe_get s !j)) in
+    if c >= 0 then begin
+      Bytes.unsafe_set bytes !p (Char.unsafe_chr c);
+      if track then span_set spans !p (ascii_range base !j);
+      incr p
+    end;
+    incr j
+  done;
+  o.len <- !p;
+  !j
+
+let ascii_identity = Array.init 128 (fun b -> b)
+
+let text o =
+  if o.len = Bytes.length o.bytes then Bytes.unsafe_to_string o.bytes
+  else Bytes.sub_string o.bytes 0 o.len
 
 let compose a o =
-  let n = o.len in
-  let starts = Array.make n 0 and stops = Array.make n 0 in
-  for i = 0 to n - 1 do
-    let from = Array.unsafe_get o.from i in
-    Array.unsafe_set starts i (span_start a from);
-    Array.unsafe_set stops i (span_stop a from)
-  done;
-  Map { starts; stops; original = original_length a }
+  Map { spans = o.spans; count = o.len; original = original_length a }
 
 (* Unicode normalization *)
+
+(* Hangul composition is arithmetic. It is done here rather than left to
+   [Uunf.composite], whose trailing jamo bound in uunf 17.0.0 is one too high
+   (U+11C3, a plain starter, composes as a T). *)
+let hangul_l = 0x1100
+let hangul_v = 0x1161
+let hangul_t = 0x11A7
+let hangul_s = 0xAC00
+let hangul_v_count = 21
+let hangul_t_count = 28
+
+(* The primary composite of [starter] and [scalar], or [-1]. *)
+let composite starter scalar =
+  if starter >= hangul_l && starter < hangul_l + 19 then
+    if scalar >= hangul_v && scalar < hangul_v + hangul_v_count then
+      hangul_s
+      + (((starter - hangul_l) * hangul_v_count) + (scalar - hangul_v))
+        * hangul_t_count
+    else -1
+  else if starter >= hangul_s && starter <= 0xD7A3 then
+    if
+      (starter - hangul_s) mod hangul_t_count = 0
+      && scalar > hangul_t
+      && scalar < hangul_t + hangul_t_count
+    then starter + scalar - hangul_t
+    else -1
+  else
+    match
+      Uunf.composite (Uchar.unsafe_of_int starter) (Uchar.unsafe_of_int scalar)
+    with
+    | Some c -> Uchar.to_int c
+    | None -> -1
+
+(* A value computed on first use and kept. A domain that finds the cell empty
+   while another is filling it computes the same value again, harmlessly. *)
+let once f =
+  let cell = ref None in
+  fun () ->
+    match !cell with
+    | Some v -> v
+    | None ->
+        let v = f () in
+        cell := Some v;
+        v
+
+(* Three bitmaps, one bit per code point below [bits_limit], computed once from
+   the decompositions. [seconds]: the code points that can be the second
+   character of a primary composite, that is the second of a two-character
+   canonical decomposition, and the vowel and trailing jamo. [stable_nfc] and
+   [stable_nfkc]: the starters that are no second and normalize to themselves,
+   so that one followed by another comes out as it is, without decomposing.
+   Nothing decomposes into two characters above the Musical Symbols block
+   (U+1D1C0); the limit covers the CJK ideographs above, whose compatibility
+   forms normalize to something else. *)
+type bits = { seconds : Bytes.t; stable_nfc : Bytes.t; stable_nfkc : Bytes.t }
+
+let bits_limit = 0x30000
+
+let[@inline] bit bits u =
+  u < bits_limit
+  && Char.code (Bytes.unsafe_get bits (u lsr 3)) land (1 lsl (u land 7)) <> 0
+
+let set_bit bits u =
+  let i = u lsr 3 in
+  Bytes.unsafe_set bits i
+    (Char.unsafe_chr
+       (Char.code (Bytes.unsafe_get bits i) lor (1 lsl (u land 7))))
+
+let bits =
+  once (fun () ->
+      let seconds = Bytes.make (bits_limit lsr 3) '\000' in
+      let stable_nfc = Bytes.make (bits_limit lsr 3) '\000' in
+      let stable_nfkc = Bytes.make (bits_limit lsr 3) '\000' in
+      let hangul u = u >= hangul_s && u <= 0xD7A3 in
+      for u = 0 to bits_limit - 1 do
+        if Uchar.is_valid u && not (hangul u) then begin
+          let d = Uunf.decomp (Uchar.unsafe_of_int u) in
+          if Array.length d = 2 && not (Uunf.d_compatibility d.(0)) then
+            set_bit seconds d.(1)
+        end
+      done;
+      for u = hangul_v to hangul_v + hangul_v_count - 1 do
+        set_bit seconds u
+      done;
+      for u = hangul_t + 1 to hangul_t + hangul_t_count - 1 do
+        set_bit seconds u
+      done;
+      let rec self ~compat u =
+        hangul u
+        ||
+        let d = Uunf.decomp (Uchar.unsafe_of_int u) in
+        Array.length d = 0
+        || ((not compat) && Uunf.d_compatibility d.(0))
+        || Array.length d = 2
+           &&
+           let a = Uchar.to_int (Uunf.d_uchar d.(0)) in
+           self ~compat a && self ~compat d.(1) && composite a d.(1) = u
+      in
+      for u = 0 to bits_limit - 1 do
+        if
+          Uchar.is_valid u
+          && Uunf.ccc (Uchar.unsafe_of_int u) = 0
+          && not (bit seconds u)
+        then begin
+          if self ~compat:false u then set_bit stable_nfc u;
+          if self ~compat:true u then set_bit stable_nfkc u
+        end
+      done;
+      { seconds; stable_nfc; stable_nfkc })
 
 (* Normalization tracks alignments by decomposing every character on its own:
    the first character of a decomposition stands for its source, the rest stand
    for nothing. Canonical ordering then permutes a run of marks, carrying that
    with it, so a character can end up standing for a source other than the one
    it came from; composition adds up what it folds together. This is the
-   accounting HuggingFace reports offsets with. *)
+   accounting HuggingFace reports offsets with.
 
-(* Decomposed characters: scalar values, combining classes, and the number of
-   input characters each stands for. [ordered] is how much of the run has been
-   canonically ordered already. *)
-type run = {
+   The text is normalized as it is read. Characters are decomposed; the marks
+   join a run, which is canonically ordered and handed to the composer once a
+   starter arrives, since nothing after a starter moves before it, and the
+   starter follows; what comes out of the composer goes to [sink] with the
+   source byte it stands for: a character standing for one or more source
+   characters takes the first byte of the first of them, one standing for none
+   takes the last byte of the last source character accounted for. *)
+type nf = {
+  compat : bool;
+  compose : bool;
+  seconds : Bytes.t;
+  stable : Bytes.t;
+  sink : int -> int -> unit;
+  (* a stable starter waiting for the next character: it comes out as it is if
+     that is stable too, and goes through the decomposer otherwise *)
+  mutable plain : int;
+  (* the run of marks: scalars, combining classes, source characters each stands
+     for *)
   mutable scalars : int array;
   mutable classes : int array;
-  mutable stands_for : int array;
+  mutable stands : int array;
   mutable count : int;
-  mutable ordered : int;
+  (* the composer: the starter what follows may compose into, [-1] for none, and
+     the marks blocked from it, which come out after it *)
+  mutable starter : int;
+  mutable starter_stands : int;
+  mutable last_class : int;
+  mutable held : int array;
+  mutable held_stands : int array;
+  mutable held_count : int;
+  (* first and last byte of the source characters not accounted for yet, and the
+     last byte of the last one that was *)
+  mutable sources : int array;
+  mutable head : int;
+  mutable tail : int;
+  mutable last : int;
 }
 
-let run n =
+let nf ~compat ~compose sink =
   {
-    scalars = Array.make n 0;
-    classes = Array.make n 0;
-    stands_for = Array.make n 0;
+    compat;
+    compose;
+    seconds = (if compose then (bits ()).seconds else Bytes.empty);
+    stable =
+      (if not compose then Bytes.empty
+       else if compat then (bits ()).stable_nfkc
+       else (bits ()).stable_nfc);
+    sink;
+    plain = -1;
+    scalars = Array.make 16 0;
+    classes = Array.make 16 0;
+    stands = Array.make 16 0;
     count = 0;
-    ordered = 0;
+    starter = -1;
+    starter_stands = 0;
+    last_class = -1;
+    held = Array.make 16 0;
+    held_stands = Array.make 16 0;
+    held_count = 0;
+    sources = Array.make 16 0;
+    head = 0;
+    tail = 0;
+    last = -1;
   }
 
-let grow r =
-  let cap = 2 * Array.length r.scalars in
-  let scalars = Array.make cap 0
-  and classes = Array.make cap 0
-  and stands_for = Array.make cap 0 in
-  Array.blit r.scalars 0 scalars 0 r.count;
-  Array.blit r.classes 0 classes 0 r.count;
-  Array.blit r.stands_for 0 stands_for 0 r.count;
-  r.scalars <- scalars;
-  r.classes <- classes;
-  r.stands_for <- stands_for
+let grown a =
+  let b = Array.make (2 * Array.length a) 0 in
+  Array.blit a 0 b 0 (Array.length a);
+  b
 
-(* Insertion sort: stable, as canonical ordering must be, and a run of marks is
-   short. *)
-let order r =
-  for i = r.ordered + 1 to r.count - 1 do
-    let scalar = r.scalars.(i)
-    and cls = r.classes.(i)
-    and stands = r.stands_for.(i) in
-    let j = ref (i - 1) in
-    while !j >= r.ordered && r.classes.(!j) > cls do
-      r.scalars.(!j + 1) <- r.scalars.(!j);
-      r.classes.(!j + 1) <- r.classes.(!j);
-      r.stands_for.(!j + 1) <- r.stands_for.(!j);
-      decr j
-    done;
-    r.scalars.(!j + 1) <- scalar;
-    r.classes.(!j + 1) <- cls;
-    r.stands_for.(!j + 1) <- stands
-  done;
-  r.ordered <- r.count
-
-let push r u stands =
-  let cls = Uunf.ccc u in
-  if cls = 0 then order r;
-  if r.count = Array.length r.scalars then grow r;
-  r.scalars.(r.count) <- Uchar.to_int u;
-  r.classes.(r.count) <- cls;
-  r.stands_for.(r.count) <- stands;
-  r.count <- r.count + 1
-
-let rec decompose ~compatibility u emit =
-  let d = Uunf.decomp u in
-  if Array.length d = 0 || ((not compatibility) && Uunf.d_compatibility d.(0))
-  then emit u
+(* The source byte a character standing for [stands] source characters stands
+   for, those characters accounted for. *)
+let account nf stands =
+  if stands = 0 then nf.last
   else begin
-    decompose ~compatibility (Uunf.d_uchar d.(0)) emit;
-    for i = 1 to Array.length d - 1 do
-      decompose ~compatibility (Uchar.of_int d.(i)) emit
-    done
+    let first = high (Array.unsafe_get nf.sources nf.head) in
+    nf.head <- nf.head + stands;
+    nf.last <- low (Array.unsafe_get nf.sources (nf.head - 1));
+    if nf.head = nf.tail then begin
+      nf.head <- 0;
+      nf.tail <- 0
+    end;
+    first
   end
 
-let decomposed ~compatibility s =
-  let len = String.length s in
-  let r = run (max 16 len) in
-  let i = ref 0 in
-  while !i < len do
-    let d = String.get_utf_8_uchar s !i in
-    let u = Uchar.utf_decode_uchar d in
-    if Uchar.to_int u < 0x80 then push r u 1
-    else begin
-      let first = ref true in
-      decompose ~compatibility u (fun c ->
-          push r c (if !first then 1 else 0);
-          first := false)
-    end;
-    i := !i + Uchar.utf_decode_length d
-  done;
-  order r;
-  r
+let emit nf scalar stands = nf.sink scalar (account nf stands)
 
 (* Composition folds a starter and the marks that reach it into one character
    standing for all of them; marks blocked from the starter are held back and
    come out after it. *)
-let composed r =
-  let n = r.count in
-  let scalars = Array.make (max n 1) 0
-  and stands_for = Array.make (max n 1) 0 in
-  let count = ref 0 in
-  let emit scalar stands =
-    scalars.(!count) <- scalar;
-    stands_for.(!count) <- stands;
-    incr count
-  in
-  let held = Array.make (max n 1) 0 and held_stands = Array.make (max n 1) 0 in
-  let held_count = ref 0 in
-  let starter = ref (-1) and starter_stands = ref 0 and last_class = ref (-1) in
-  let hold scalar stands cls =
-    held.(!held_count) <- scalar;
-    held_stands.(!held_count) <- stands;
-    incr held_count;
-    last_class := cls
-  in
-  let release () =
-    for i = 0 to !held_count - 1 do
-      emit held.(i) held_stands.(i)
-    done;
-    held_count := 0
-  in
-  for i = 0 to n - 1 do
-    let scalar = r.scalars.(i)
-    and stands = r.stands_for.(i)
-    and cls = r.classes.(i) in
-    if !starter < 0 then
-      if cls <> 0 then emit scalar stands
-      else begin
-        starter := scalar;
-        starter_stands := stands
-      end
-    else
-      match
-        if !last_class >= cls then None
-        else Uunf.composite (Uchar.of_int !starter) (Uchar.of_int scalar)
-      with
-      | Some c ->
-          starter := Uchar.to_int c;
-          starter_stands := !starter_stands + stands
-      | None ->
-          if cls <> 0 then hold scalar stands cls
-          else begin
-            emit !starter !starter_stands;
-            release ();
-            starter := scalar;
-            starter_stands := stands;
-            last_class := -1
-          end
-  done;
-  if !starter >= 0 then emit !starter !starter_stands;
-  release ();
-  (scalars, stands_for, !count)
+let hold nf scalar stands cls =
+  if nf.held_count = Array.length nf.held then begin
+    nf.held <- grown nf.held;
+    nf.held_stands <- grown nf.held_stands
+  end;
+  nf.held.(nf.held_count) <- scalar;
+  nf.held_stands.(nf.held_count) <- stands;
+  nf.held_count <- nf.held_count + 1;
+  nf.last_class <- cls
 
-(* Walk the output against the input: a character standing for one or more input
-   characters takes the range of the first of them, one standing for none takes
-   the range of the byte before, which is the last input character consumed. *)
-let emit_normalized s scalars stands_for count o =
-  let at = ref 0 in
-  for i = 0 to count - 1 do
-    let stands = Array.unsafe_get stands_for i in
-    add_uchar o
-      (if stands = 0 then !at - 1 else !at)
-      (Uchar.of_int (Array.unsafe_get scalars i));
-    for _ = 1 to stands do
-      at := !at + Uchar.utf_decode_length (String.get_utf_8_uchar s !at)
-    done
+let release nf =
+  emit nf nf.starter nf.starter_stands;
+  for i = 0 to nf.held_count - 1 do
+    emit nf nf.held.(i) nf.held_stands.(i)
   done;
+  nf.held_count <- 0;
+  nf.starter <- -1;
+  nf.last_class <- -1
+
+let feed nf scalar stands cls =
+  if not nf.compose then emit nf scalar stands
+  else if nf.starter < 0 then
+    if cls <> 0 then emit nf scalar stands
+    else begin
+      nf.starter <- scalar;
+      nf.starter_stands <- stands
+    end
+  else
+    let c =
+      if nf.last_class >= cls || not (bit nf.seconds scalar) then -1
+      else composite nf.starter scalar
+    in
+    if c >= 0 then begin
+      nf.starter <- c;
+      nf.starter_stands <- nf.starter_stands + stands
+    end
+    else if cls <> 0 then hold nf scalar stands cls
+    else begin
+      release nf;
+      nf.starter <- scalar;
+      nf.starter_stands <- stands
+    end
+
+(* Insertion sort: stable, as canonical ordering must be, and a run of marks is
+   short. *)
+let order nf =
+  for i = 1 to nf.count - 1 do
+    let scalar = nf.scalars.(i)
+    and cls = nf.classes.(i)
+    and stands = nf.stands.(i) in
+    let j = ref (i - 1) in
+    while !j >= 0 && nf.classes.(!j) > cls do
+      nf.scalars.(!j + 1) <- nf.scalars.(!j);
+      nf.classes.(!j + 1) <- nf.classes.(!j);
+      nf.stands.(!j + 1) <- nf.stands.(!j);
+      decr j
+    done;
+    nf.scalars.(!j + 1) <- scalar;
+    nf.classes.(!j + 1) <- cls;
+    nf.stands.(!j + 1) <- stands
+  done
+
+let finish_run nf =
+  order nf;
+  for i = 0 to nf.count - 1 do
+    feed nf nf.scalars.(i) nf.stands.(i) nf.classes.(i)
+  done;
+  nf.count <- 0
+
+(* A starter never moves, so it ends the run of marks before it and goes
+   straight to the composer; a mark joins the run. *)
+let push nf scalar stands =
+  let cls = Uunf.ccc (Uchar.unsafe_of_int scalar) in
+  if cls = 0 then begin
+    if nf.count > 0 then finish_run nf;
+    feed nf scalar stands 0
+  end
+  else begin
+    if nf.count = Array.length nf.scalars then begin
+      nf.scalars <- grown nf.scalars;
+      nf.classes <- grown nf.classes;
+      nf.stands <- grown nf.stands
+    end;
+    nf.scalars.(nf.count) <- scalar;
+    nf.classes.(nf.count) <- cls;
+    nf.stands.(nf.count) <- stands;
+    nf.count <- nf.count + 1
+  end
+
+let flush_run nf =
+  if nf.count > 0 then finish_run nf;
+  if nf.starter >= 0 then release nf
+
+let rec push_decomposed nf scalar stands =
+  let d = Uunf.decomp (Uchar.unsafe_of_int scalar) in
+  if Array.length d = 0 || ((not nf.compat) && Uunf.d_compatibility d.(0)) then
+    push nf scalar stands
+  else begin
+    push_decomposed nf (Uchar.to_int (Uunf.d_uchar d.(0))) stands;
+    for i = 1 to Array.length d - 1 do
+      push_decomposed nf d.(i) 0
+    done
+  end
+
+(* A source character, bytes [first] to [last] of the input. *)
+let push_char nf scalar ~first ~last =
+  if nf.tail = Array.length nf.sources then
+    begin if nf.head > 0 then begin
+      Array.blit nf.sources nf.head nf.sources 0 (nf.tail - nf.head);
+      nf.tail <- nf.tail - nf.head;
+      nf.head <- 0
+    end
+    else nf.sources <- grown nf.sources
+    end;
+  nf.sources.(nf.tail) <- pack first last;
+  nf.tail <- nf.tail + 1;
+  if nf.compose && bit nf.stable scalar then begin
+    if nf.plain >= 0 then emit nf nf.plain 1
+    else if nf.count > 0 || nf.starter >= 0 then flush_run nf;
+    nf.plain <- scalar
+  end
+  else begin
+    if nf.plain >= 0 then begin
+      let plain = nf.plain in
+      nf.plain <- -1;
+      push_decomposed nf plain 1
+    end;
+    if scalar < 0x80 then push nf scalar 1 else push_decomposed nf scalar 1
+  end
+
+let pending nf = nf.plain >= 0 || nf.count > 0 || nf.starter >= 0
+
+(* Everything read comes out: what follows is a starter that nothing composes
+   into, or the end. *)
+let flush nf =
+  if nf.plain >= 0 then begin
+    emit nf nf.plain 1;
+    nf.plain <- -1
+  end;
+  flush_run nf
+
+let normalize_text form s o =
+  let compat = match form with `NFKC | `NFKD -> true | `NFC | `NFD -> false in
+  let compose =
+    match form with `NFC | `NFKC -> true | `NFD | `NFKD -> false
+  in
+  let nf = nf ~compat ~compose (fun scalar src -> add_code o src scalar) in
+  let len = String.length s in
+  let i = ref 0 in
+  while !i < len do
+    if is_ascii s !i then begin
+      (* An ASCII byte is a starter nothing composes into, so what came before
+         it is complete; and it neither decomposes nor composes with an ASCII
+         neighbour, so with ASCII after it it comes out as it is. *)
+      if pending nf then flush nf;
+      let j = ascii_run o s !i ~lookahead:compose ascii_identity in
+      if j > !i then begin
+        nf.last <- j - 1;
+        i := j
+      end
+      else begin
+        push_char nf (Char.code (String.unsafe_get s !i)) ~first:!i ~last:!i;
+        incr i
+      end
+    end
+    else begin
+      let d = String.get_utf_8_uchar s !i in
+      let n = Uchar.utf_decode_length d in
+      push_char nf
+        (Uchar.to_int (Uchar.utf_decode_uchar d))
+        ~first:!i
+        ~last:(!i + n - 1);
+      i := !i + n
+    end
+  done;
+  flush nf;
   text o
 
-let normalize_aligned nf s o =
-  let compatibility =
-    match nf with `NFKC | `NFKD -> true | `NFC | `NFD -> false
-  in
-  let r = decomposed ~compatibility s in
-  match nf with
-  | `NFD | `NFKD -> emit_normalized s r.scalars r.stands_for r.count o
-  | `NFC | `NFKC ->
-      let scalars, stands_for, count = composed r in
-      emit_normalized s scalars stands_for count o
-
 (* Text transforms *)
+
+let ascii_lower =
+  Array.init 128 (fun b -> if b >= 0x41 && b <= 0x5A then b + 32 else b)
 
 (* The full Unicode lowercase mapping, which is not case folding: ["ß"] and
    ["ﬁ"] lowercase to themselves but fold to ["ss"] and ["fi"]. *)
@@ -426,92 +871,129 @@ let lowercase_text s o =
   let len = String.length s in
   let i = ref 0 in
   while !i < len do
-    let byte = Char.code (String.unsafe_get s !i) in
-    if byte < 128 then begin
-      let c = if byte >= 0x41 && byte <= 0x5A then byte + 32 else byte in
-      add_char o !i (Char.unsafe_chr c);
-      incr i
-    end
-    else
+    if is_ascii s !i then i := ascii_run o s !i ~lookahead:false ascii_lower
+    else begin
       let d = String.get_utf_8_uchar s !i in
       let n = Uchar.utf_decode_length d in
       (if Uchar.utf_decode_is_valid d then
-         let u = Uchar.utf_decode_uchar d in
-         match Uucp.Case.Map.to_lower u with
-         | `Self -> add_uchar o !i u
-         | `Uchars us -> List.iter (fun u -> add_uchar o !i u) us);
+         match Uucp.Case.Map.to_lower (Uchar.utf_decode_uchar d) with
+         | `Self -> add_sub o !i s !i n
+         | `Uchars us -> add_codes o !i us);
       i := !i + n
+    end
   done;
   text o
 
-(* [~nonspacing_only] drops the marks of general category [Mn], which are the
-   accents proper; otherwise every mark goes, spacing ([Mc]) and enclosing
-   ([Me]) included. *)
-let drop_marks ~nonspacing_only s o =
+(* Every mark goes: spacing ([Mc]) and enclosing ([Me]) as well as the accents
+   proper ([Mn]). *)
+let drop_marks s o =
   let len = String.length s in
   let i = ref 0 in
   while !i < len do
-    let byte = Char.code (String.unsafe_get s !i) in
-    if byte < 128 then begin
-      add_char o !i (Char.unsafe_chr byte);
-      incr i
-    end
-    else
+    if is_ascii s !i then i := ascii_run o s !i ~lookahead:false ascii_identity
+    else begin
       let d = String.get_utf_8_uchar s !i in
       let n = Uchar.utf_decode_length d in
       (if Uchar.utf_decode_is_valid d then
-         let u = Uchar.utf_decode_uchar d in
-         match Uucp.Gc.general_category u with
-         | `Mn -> ()
-         | (`Mc | `Me) when not nonspacing_only -> ()
-         | _ -> add_uchar o !i u);
+         match Uucp.Gc.general_category (Uchar.utf_decode_uchar d) with
+         | `Mn | `Mc | `Me -> ()
+         | _ -> add_sub o !i s !i n);
       i := !i + n
+    end
   done;
+  text o
+
+(* BERT *)
+
+(* What an ASCII byte becomes: the byte to write, or [-1] to drop it. *)
+let bert_ascii ~clean_text ~lowercase =
+  Array.init 128 (fun b ->
+      let b =
+        if not clean_text then b
+        else if b = 9 || b = 10 || b = 13 || b = 32 then 32
+        else if b >= 33 && b < 127 then b
+        else -1
+      in
+      if lowercase && b >= 0x41 && b <= 0x5A then b + 32 else b)
+
+let bert_tables =
+  Array.init 4 (fun k ->
+      bert_ascii ~clean_text:(k land 1 = 1) ~lowercase:(k land 2 = 2))
+
+(* Cleaning, spacing of ideographs, decomposition with the nonspacing marks
+   dropped, and lowercasing, in that order for every character, so that the text
+   and its alignment are those of the four passes. ASCII is decided by a table
+   lookup; other characters go through the Unicode tables, and through the
+   decomposer when accents are stripped, in which case an ASCII byte that is
+   kept, being a starter, first flushes the run of marks before it. A dropped
+   character leaves the run open, as it is not there for the marks after it to
+   see. *)
+let bert_text ~clean_text ~handle_chinese_chars ~strip_accents ~lowercase s o =
+  let table =
+    bert_tables.((if clean_text then 1 else 0) lor if lowercase then 2 else 0)
+  in
+  let sink scalar src =
+    if scalar < 0x80 then
+      let c =
+        if lowercase && scalar >= 0x41 && scalar <= 0x5A then scalar + 32
+        else scalar
+      in
+      add_char o src (Char.unsafe_chr c)
+    else
+      match Uucp.Gc.general_category (Uchar.unsafe_of_int scalar) with
+      | `Mn -> ()
+      | _ -> (
+          if not lowercase then add_code o src scalar
+          else
+            match Uucp.Case.Map.to_lower (Uchar.unsafe_of_int scalar) with
+            | `Self -> add_code o src scalar
+            | `Uchars us -> add_codes o src us)
+  in
+  let nf = nf ~compat:false ~compose:false sink in
+  let space src =
+    if pending nf then flush nf;
+    add_char o src ' '
+  in
+  let len = String.length s in
+  let i = ref 0 in
+  while !i < len do
+    if is_ascii s !i then
+      begin if Array.unsafe_get table (Char.code (String.unsafe_get s !i)) < 0
+      then incr i
+      else begin
+        if pending nf then flush nf;
+        i := ascii_run o s !i ~lookahead:false table
+      end
+      end
+    else begin
+      let d = String.get_utf_8_uchar s !i in
+      let n = Uchar.utf_decode_length d in
+      let code = Uchar.to_int (Uchar.utf_decode_uchar d) in
+      if clean_text && (code = 0xFFFD || is_control code) then ()
+      else if clean_text && is_whitespace code then space !i
+      else begin
+        let ideograph = handle_chinese_chars && is_chinese_char code in
+        if ideograph then space !i;
+        if strip_accents then push_char nf code ~first:!i ~last:!i
+        else if lowercase then
+          begin if Uchar.utf_decode_is_valid d then
+            match Uucp.Case.Map.to_lower (Uchar.unsafe_of_int code) with
+            | `Self -> add_sub o !i s !i n
+            | `Uchars us -> add_codes o !i us
+          end
+        else add_sub o !i s !i n;
+        if ideograph then space !i
+      end;
+      i := !i + n
+    end
+  done;
+  flush nf;
   text o
 
 (* Operations *)
 
-let clean_text s o =
-  let len = String.length s in
-  let i = ref 0 in
-  while !i < len do
-    let b0 = Char.code (String.unsafe_get s !i) in
-    if b0 < 128 then begin
-      if b0 = 9 || b0 = 10 || b0 = 13 || b0 = 32 then add_char o !i ' '
-      else if b0 >= 33 && b0 < 127 then add_char o !i (Char.unsafe_chr b0);
-      incr i
-    end
-    else begin
-      let p = utf8_next s !i in
-      let code = p lsr 3 and clen = p land 7 in
-      if code <> 0xFFFD && not (is_control code) then
-        if is_whitespace code then add_char o !i ' ' else add_sub o !i s !i clen;
-      i := !i + clen
-    end
-  done;
-  text o
-
-let handle_chinese_chars s o =
-  let len = String.length s in
-  let i = ref 0 in
-  while !i < len do
-    let b0 = Char.code (String.unsafe_get s !i) in
-    if b0 < 128 then begin
-      add_char o !i (Char.unsafe_chr b0);
-      incr i
-    end
-    else begin
-      let p = utf8_next s !i in
-      let code = p lsr 3 and clen = p land 7 in
-      if is_chinese_char code then (
-        add_char o !i ' ';
-        add_sub o !i s !i clen;
-        add_char o !i ' ')
-      else add_sub o !i s !i clen;
-      i := !i + clen
-    end
-  done;
-  text o
+(* [true] iff the ASCII byte [b] is white space. *)
+let[@inline] is_ascii_space b = (b >= 0x09 && b <= 0x0D) || b = 0x20
 
 let strip_bounds s ~left ~right =
   let len = String.length s in
@@ -520,9 +1002,12 @@ let strip_bounds s ~left ~right =
       let rec loop i =
         if i >= len then len
         else
-          let p = utf8_next s i in
-          let code = p lsr 3 and clen = p land 7 in
-          if is_whitespace code then loop (i + clen) else i
+          let b = Char.code (String.unsafe_get s i) in
+          if b < 0x80 then if is_ascii_space b then loop (i + 1) else i
+          else
+            let p = utf8_next s i in
+            let code = p lsr 3 and clen = p land 7 in
+            if is_whitespace code then loop (i + clen) else i
       in
       loop 0
     else 0
@@ -532,67 +1017,85 @@ let strip_bounds s ~left ~right =
       let rec loop i last =
         if i >= len then last
         else
-          let p = utf8_next s i in
-          let code = p lsr 3 and clen = p land 7 in
-          let next = i + clen in
-          if is_whitespace code then loop next last else loop next next
+          let b = Char.code (String.unsafe_get s i) in
+          if b < 0x80 then
+            loop (i + 1) (if is_ascii_space b then last else i + 1)
+          else
+            let p = utf8_next s i in
+            let code = p lsr 3 and clen = p land 7 in
+            let next = i + clen in
+            if is_whitespace code then loop next last else loop next next
       in
       loop start start
     else len
   in
   (start, stop)
 
+(* The first match of [pattern] at or after [pos], or [-1]. Matches of the empty
+   pattern are the character boundaries. *)
+let rec literal_at s pattern start k =
+  k = String.length pattern
+  || String.unsafe_get s (start + k) = String.unsafe_get pattern k
+     && literal_at s pattern start (k + 1)
+
+let rec literal_from s pattern first pos =
+  let at = index_byte s first pos in
+  if at < 0 || at + String.length pattern > String.length s then -1
+  else if literal_at s pattern at 1 then at
+  else literal_from s pattern first (at + 1)
+
+let next_literal ~pattern s pos =
+  if String.length pattern = 0 then if pos <= String.length s then pos else -1
+  else literal_from s pattern (String.unsafe_get pattern 0) pos
+
+(* Empty text has no match, not even of the empty pattern. *)
+let count_literal ~pattern s =
+  let len = String.length s and plen = String.length pattern in
+  if len = 0 then 0
+  else if plen = 1 then count_byte s (String.unsafe_get pattern 0)
+  else
+    let rec loop pos count =
+      let at = next_literal ~pattern s pos in
+      if at < 0 then count
+      else if plen > 0 then loop (at + plen) (count + 1)
+      else if at = len then count + 1
+      else
+        loop
+          (at + Uchar.utf_decode_length (String.get_utf_8_uchar s at))
+          (count + 1)
+    in
+    loop 0 0
+
 (* The replacement stands for the last byte of what it replaced, or, when it
    replaced nothing, for the byte before, so a token made of it reports the last
    character of the match. *)
-
-let replace_literal ~pattern ~replacement s o =
+let replace_literal ~pattern ~replacement s ~matches o =
   let len = String.length s and plen = String.length pattern in
-  if plen = 0 then begin
-    let i = ref 0 in
-    while !i < len do
-      add_string o (!i - 1) replacement;
-      let n = Uchar.utf_decode_length (String.get_utf_8_uchar s !i) in
-      copy o s !i n;
-      i := !i + n
-    done;
-    add_string o (len - 1) replacement;
-    text o
-  end
-  else
-    let first = String.unsafe_get pattern 0 in
-    let matches_at start =
-      let rec loop k =
-        k = plen
-        || String.unsafe_get s (start + k) = String.unsafe_get pattern k
-           && loop (k + 1)
-      in
-      loop 1
-    in
-    let rec search pos last matched =
-      if pos + plen > len then finish last matched
-      else
-        match String.index_from_opt s pos first with
-        | Some start when start + plen <= len ->
-            if matches_at start then begin
-              copy o s last (start - last);
-              add_string o (start + plen - 1) replacement;
-              search (start + plen) (start + plen) true
-            end
-            else search (start + 1) last matched
-        | _ -> finish last matched
-    and finish last matched =
-      if not matched then s
-      else begin
-        copy o s last (len - last);
-        text o
+  let rec loop pos last left =
+    if left = 0 then copy o s last (len - last)
+    else
+      let at = next_literal ~pattern s pos in
+      copy o s last (at - last);
+      if plen > 0 then begin
+        add_string o (at + plen - 1) replacement;
+        loop (at + plen) (at + plen) (left - 1)
       end
-    in
-    search 0 0 false
+      else begin
+        add_string o (at - 1) replacement;
+        if at < len then begin
+          let n = Uchar.utf_decode_length (String.get_utf_8_uchar s at) in
+          copy o s at n;
+          loop (at + n) (at + n) (left - 1)
+        end
+        else loop (at + 1) at (left - 1)
+      end
+  in
+  loop 0 0 matches;
+  text o
 
 (* Matches are taken leftmost first without overlap. An empty match right after
    a match is skipped, and the search resumes one character further. *)
-let replace_regex compiled ~replacement s o =
+let replace_matches compiled ~replacement s o =
   let len = String.length s in
   let rec search pos last last_match matched =
     if pos > len then finish last matched
@@ -627,13 +1130,6 @@ let replace_regex compiled ~replacement s o =
   in
   search 0 0 (-1) false
 
-let replace_text pattern ~replacement s o =
-  if String.length s = 0 then s
-  else
-    match pattern with
-    | Literal pattern -> replace_literal ~pattern ~replacement s o
-    | Regex { compiled; _ } -> replace_regex compiled ~replacement s o
-
 (* Byte-level encoding *)
 
 let byte_to_unicode =
@@ -652,8 +1148,7 @@ let byte_to_unicode =
 
 let byte_level_text s o =
   for i = 0 to String.length s - 1 do
-    add_uchar o i
-      (Uchar.of_int byte_to_unicode.(Char.code (String.unsafe_get s i)))
+    add_code o i byte_to_unicode.(Char.code (String.unsafe_get s i))
   done;
   text o
 
@@ -671,16 +1166,15 @@ let nmt_spaces code =
   || code = 0x2028 || code = 0x2029 || code = 0x2581 || code = 0xFEFF
   || code = 0xFFFD
 
+let ascii_nmt =
+  Array.init 128 (fun b ->
+      if nmt_spaces b then 32 else if nmt_removes b then -1 else b)
+
 let nmt_text s o =
   let len = String.length s in
   let i = ref 0 in
   while !i < len do
-    let b0 = Char.code (String.unsafe_get s !i) in
-    if b0 < 128 then begin
-      if nmt_spaces b0 then add_char o !i ' '
-      else if not (nmt_removes b0) then add_char o !i (Char.unsafe_chr b0);
-      incr i
-    end
+    if is_ascii s !i then i := ascii_run o s !i ~lookahead:false ascii_nmt
     else begin
       let d = String.get_utf_8_uchar s !i in
       let clen = Uchar.utf_decode_length d in
@@ -728,9 +1222,10 @@ let sequence ns = Sequence ns
 (* Apply *)
 
 (* A stage that returns its input unchanged leaves the alignment alone; one that
-   rewrites it composes what it recorded onto the alignment so far. *)
-let step s a ~track transform =
-  let o = out ~track (String.length s) in
+   rewrites it has recorded the alignment of what it wrote. *)
+let step ?cap s a ~track transform =
+  let cap = match cap with Some cap -> cap | None -> String.length s in
+  let o = out ~track a cap in
   let s' = transform o in
   if s' == s then (s, a) else (s', if track then compose a o else a)
 
@@ -739,77 +1234,55 @@ let step s a ~track transform =
 let step_if changes s a ~track transform =
   if changes s then step s a ~track transform else (s, a)
 
-let normalize_step nf s a ~track =
-  if not (has_non_ascii s) then (s, a)
-  else if track then step s a ~track (normalize_aligned nf s)
-  else (Uunf_string.normalize_utf_8 nf s, a)
-
-(* The prefix and the first character of the text both stand for that first
-   character. *)
-let prepend_alignment a prefix len =
-  let n = prefix + len in
-  let starts = Array.make n 0 and stops = Array.make n 0 in
-  for i = 0 to n - 1 do
-    let from = if i < prefix then 0 else i - prefix in
-    starts.(i) <- span_start a from;
-    stops.(i) <- span_stop a from
-  done;
-  Map { starts; stops; original = original_length a }
-
-let slice_alignment a start len =
-  let starts = Array.make len 0 and stops = Array.make len 0 in
-  for i = 0 to len - 1 do
-    starts.(i) <- span_start a (start + i);
-    stops.(i) <- span_stop a (start + i)
-  done;
-  Map { starts; stops; original = original_length a }
-
 let rec normalize t s a ~track =
   match t with
-  | NFC -> normalize_step `NFC s a ~track
-  | NFD -> normalize_step `NFD s a ~track
-  | NFKC -> normalize_step `NFKC s a ~track
-  | NFKD -> normalize_step `NFKD s a ~track
+  | NFC -> step_if has_non_ascii s a ~track (normalize_text `NFC s)
+  | NFD -> step_if has_non_ascii s a ~track (normalize_text `NFD s)
+  | NFKC -> step_if has_non_ascii s a ~track (normalize_text `NFKC s)
+  | NFKD -> step_if has_non_ascii s a ~track (normalize_text `NFKD s)
   | Lowercase -> step_if needs_lowering s a ~track (lowercase_text s)
-  | Strip_accents ->
-      step_if has_non_ascii s a ~track (drop_marks ~nonspacing_only:false s)
+  | Strip_accents -> step_if has_non_ascii s a ~track (drop_marks s)
   | Strip { left; right } ->
       let start, stop = strip_bounds s ~left ~right in
       if start = 0 && stop = String.length s then (s, a)
       else
-        let len = stop - start in
-        ( String.sub s start len,
-          if track then slice_alignment a start len else a )
-  | Replace { pattern; replacement } ->
-      step s a ~track (replace_text pattern ~replacement s)
+        let count = stop - start in
+        (String.sub s start count, if track then sliced a start count else a)
+  | Replace { pattern = Literal pattern; replacement } ->
+      let matches = count_literal ~pattern s in
+      if matches = 0 then (s, a)
+      else
+        let cap =
+          String.length s
+          + (matches * (String.length replacement - String.length pattern))
+        in
+        step ~cap s a ~track (replace_literal ~pattern ~replacement s ~matches)
+  | Replace { pattern = Regex { compiled; _ }; replacement } ->
+      if String.length s = 0 then (s, a)
+      else step s a ~track (replace_matches compiled ~replacement s)
   | Prepend prefix ->
       if String.length s = 0 then (s, a)
-      else
-        ( prefix ^ s,
-          if track then
-            prepend_alignment a (String.length prefix) (String.length s)
-          else a )
+      else (prefix ^ s, if track then prefixed a (String.length prefix) else a)
   | Byte_level -> step s a ~track (byte_level_text s)
   | Nmt -> step s a ~track (nmt_text s)
-  | Bert
-      {
-        clean_text = ct;
-        handle_chinese_chars = hcc;
-        strip_accents = sa;
-        lowercase = lc;
-      } ->
-      let s, a = if ct then step s a ~track (clean_text s) else (s, a) in
-      let s, a =
-        if hcc then step_if has_non_ascii s a ~track (handle_chinese_chars s)
-        else (s, a)
+  | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
+      let strip_accents =
+        match strip_accents with Some v -> v | None -> lowercase
       in
-      let s, a =
-        if match sa with Some v -> v | None -> lc then
-          let s, a = normalize_step `NFD s a ~track in
-          step_if has_non_ascii s a ~track (drop_marks ~nonspacing_only:true s)
-        else (s, a)
+      (* Without cleaning, the passes left only touch what is not ASCII, or not
+         lower case. *)
+      let nothing_to_do =
+        (not clean_text)
+        && if lowercase then not (needs_lowering s) else not (has_non_ascii s)
       in
-      if lc then step_if needs_lowering s a ~track (lowercase_text s) else (s, a)
+      if
+        nothing_to_do
+        || not (clean_text || handle_chinese_chars || strip_accents || lowercase)
+      then (s, a)
+      else
+        step s a ~track
+          (bert_text ~clean_text ~handle_chinese_chars ~strip_accents ~lowercase
+             s)
   | Sequence ns ->
       List.fold_left (fun (s, a) n -> normalize n s a ~track) (s, a) ns
 

@@ -364,6 +364,29 @@ let test_lowercase_is_not_folding () =
   case "\xC7\x85" "\xC7\x86";
   case "\xC3\x80\xC3\x89\xC3\x8E" "\xC3\xA0\xC3\xA9\xC3\xAE"
 
+(* Composition, at its edges: Hangul is composed by arithmetic, an LVT syllable
+   takes no further trailing jamo and U+11C3 is not one; a mark blocked by one
+   of the same combining class stays; a truncated sequence is the replacement
+   character. Expectations from HuggingFace [normalizers.NFC()]. *)
+let test_nfc_edges () =
+  let case text expected =
+    equal
+      ~msg:(Printf.sprintf "nfc %S" text)
+      string expected
+      (Normalizer.apply Normalizer.nfc text);
+    equal
+      ~msg:(Printf.sprintf "nfc %S aligned" text)
+      string expected
+      (fst (Normalizer.apply_aligned Normalizer.nfc text))
+  in
+  case "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xA8" "\xEA\xB0\x81";
+  case "\xEA\xB0\x80\xE1\x86\xA8" "\xEA\xB0\x81";
+  case "\xEA\xB0\x81\xE1\x86\xA8" "\xEA\xB0\x81\xE1\x86\xA8";
+  case "\xEA\xB0\x80\xE1\x87\x83" "\xEA\xB0\x80\xE1\x87\x83";
+  case "\xE1\x84\x80\xE1\x85\xA1\xE1\x87\x83" "\xEA\xB0\x80\xE1\x87\x83";
+  case "a\xCC\x96\xCC\xA3" "a\xCC\x96\xCC\xA3";
+  case "abc\xC3" "abc\xEF\xBF\xBD"
+
 (* Expectations from HuggingFace [normalizers.StripAccents()], which removes
    every mark and does not decompose. *)
 let test_strip_accents_keeps_composition () =
@@ -430,6 +453,56 @@ let test_bert_normalizer () =
   case "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E"
     " \xE6\x97\xA5  \xE6\x9C\xAC  \xE8\xAA\x9E "
 
+(* Text is scanned eight bytes at a time for what a stage has to do; a byte of
+   interest must be found wherever it falls with respect to those words. *)
+let test_word_scans () =
+  for k = 0 to 24 do
+    let before = String.make k 'a' and after = String.make (24 - k) 'b' in
+    equal
+      ~msg:(Printf.sprintf "nfc at %d" k)
+      string
+      (before ^ "\xC3\xA9" ^ after)
+      (Normalizer.apply Normalizer.nfc (before ^ "e\xCC\x81" ^ after));
+    equal
+      ~msg:(Printf.sprintf "lowercase at %d" k)
+      string
+      (before ^ "x" ^ after)
+      (Normalizer.apply Normalizer.lowercase (before ^ "X" ^ after));
+    let text = before ^ " " ^ after in
+    let normalized, alignment =
+      Normalizer.apply_aligned
+        (Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81")
+        text
+    in
+    equal
+      ~msg:(Printf.sprintf "replace at %d" k)
+      string
+      (before ^ "\xE2\x96\x81" ^ after)
+      normalized;
+    equal
+      ~msg:(Printf.sprintf "replace at %d: span" k)
+      (pair int int)
+      (k, k + 1)
+      (Normalizer.original_span alignment ~start:k ~stop:(k + 3));
+    equal
+      ~msg:(Printf.sprintf "strip at %d" k)
+      string (String.make k 'a')
+      (Normalizer.apply (Normalizer.strip ())
+         (String.make k 'a' ^ String.make (24 - k) ' '))
+  done;
+  let spaces = "aaaaaaa aaaaaaa a a" in
+  equal ~msg:"replace many" string
+    "aaaaaaa\xE2\x96\x81aaaaaaa\xE2\x96\x81a\xE2\x96\x81a"
+    (Normalizer.apply
+       (Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81")
+       spaces);
+  equal ~msg:"replace none" string spaces
+    (Normalizer.apply (Normalizer.replace ~pattern:"z" ~replacement:"y") spaces);
+  equal ~msg:"replace all" string (String.make 20 '.')
+    (Normalizer.apply
+       (Normalizer.replace ~pattern:"a" ~replacement:".")
+       (String.make 20 'a'))
+
 (* Alignment *)
 
 (* The span every character of the normalized text reports on the input, in the
@@ -482,7 +555,8 @@ let test_align_nfc () =
   case "a\xCC\x81\xCC\x96" "\xC3\xA1\xCC\x96" "0,1 3,5";
   case "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xA8Z" "\xEA\xB0\x81Z" "0,3 9,10";
   case "e\xCC\xA3\xCC\x81\xCC\x96" "\xE1\xBA\xB9\xCC\x96\xCC\x81" "0,1 3,5 5,7";
-  case "\xE1\xBA\x9B\xCC\xA3xy" "\xE1\xBA\x9B\xCC\xA3xy" "0,3 3,5 5,6 6,7"
+  case "\xE1\xBA\x9B\xCC\xA3xy" "\xE1\xBA\x9B\xCC\xA3xy" "0,3 3,5 5,6 6,7";
+  case "\xEA\xB0\x80\xE1\x87\x83" "\xEA\xB0\x80\xE1\x87\x83" "0,3 3,6"
 
 let test_align_nfkc_nfkd () =
   let case = aligned Normalizer.nfkc "nfkc" in
@@ -571,7 +645,174 @@ let test_align_bert () =
   case
     "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87"
     "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA4\xA4" "0,3 3,6 6,9 12,15";
-  case "Caf\xC3\xA9" "cafe" "0,1 1,2 2,3 3,5"
+  case "Caf\xC3\xA9" "cafe" "0,1 1,2 2,3 3,5";
+  case "\xE1\xBA\x9B\xCC\xA3 x" "\xC5\xBF x" "0,3 5,6 6,7";
+  case "\xEA\xB0\x81Z" "\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xA8z" "0,3 0,3 0,3 3,4";
+  case "\xC2\xA0\xC4\xB0\xE2\x80\xA8" " i " "0,2 2,4 4,7";
+  (* A dropped control does not separate the marks around it, so a spacing mark
+     of a lower combining class still moves before the accent and stands for
+     it. *)
+  case "a\xCC\x81\x01\xF0\x9D\x85\xA5" "a\xF0\x9D\x85\xA5" "0,1 1,3";
+  case "a\xF0\x9D\x85\xAD\x7F\xCC\x81\xF0\x9D\x85\xA5"
+    "a\xF0\x9D\x85\xA5\xF0\x9D\x85\xAD" "0,1 1,5 6,8";
+  case "a\xCC\x81\x00\xF0\x9D\x85\xA5b" "a\xF0\x9D\x85\xA5b" "0,1 1,3 8,9";
+  aligned
+    (Normalizer.bert ~lowercase:false ())
+    "bert nolower" "\xC3\x87a \xE6\xBC\xA2 \xC3\xA1x"
+    "\xC3\x87a  \xE6\xBC\xA2  \xC3\xA1x"
+    "0,2 2,3 3,4 4,7 4,7 4,7 7,8 8,10 10,11";
+  aligned
+    (Normalizer.bert ~clean_text:false ())
+    "bert noclean" "a\x01\xC3\x89\tb" "a\x01e\tb" "0,1 1,2 2,4 4,5 5,6";
+  aligned
+    (Normalizer.bert ~strip_accents:(Some false) ())
+    "bert nostrip" "\xC3\x89a" "\xC3\xA9a" "0,2 2,3"
+
+(* Prefixing and slicing compose without copying the alignment: the prefix
+   stands for the first character of what it was put before, whatever came
+   before that. *)
+let test_align_views () =
+  let strip = Normalizer.strip ()
+  and prepend = Normalizer.prepend "\xE2\x96\x81" in
+  let replace = Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81" in
+  aligned
+    (Normalizer.sequence [ strip; prepend ])
+    "strip prepend" "  ab " "\xE2\x96\x81ab" "2,3 2,3 3,4";
+  aligned
+    (Normalizer.sequence [ strip; prepend ])
+    "strip prepend" " x" "\xE2\x96\x81x" "1,2 1,2";
+  aligned
+    (Normalizer.sequence [ Normalizer.prepend "<<"; strip ])
+    "prepend strip" " a " "<< a" "0,1 0,1 0,1 1,2";
+  aligned
+    (Normalizer.sequence [ Normalizer.prepend "<<"; strip ])
+    "prepend strip" "a " "<<a" "0,1 0,1 0,1";
+  aligned
+    (Normalizer.sequence
+       [ Normalizer.prepend "  x"; Normalizer.strip ~right:false () ])
+    "prepend strip left" " a " "x a " "0,1 0,1 1,2 2,3";
+  aligned
+    (Normalizer.sequence [ prepend; Normalizer.prepend "x" ])
+    "prepend prepend" "ab" "x\xE2\x96\x81ab" "0,1 0,1 0,1 1,2";
+  aligned
+    (Normalizer.sequence
+       [ Normalizer.strip ~right:false (); Normalizer.strip ~left:false () ])
+    "strip strip" "  a b  " "a b" "2,3 3,4 4,5";
+  aligned
+    (Normalizer.sequence [ prepend; strip; replace ])
+    "prepend strip replace" "  a b "
+    "\xE2\x96\x81\xE2\x96\x81\xE2\x96\x81a\xE2\x96\x81b"
+    "0,1 0,1 1,2 2,3 3,4 4,5";
+  aligned
+    (Normalizer.sequence [ strip; prepend; replace ])
+    "strip prepend replace" "  a b " "\xE2\x96\x81a\xE2\x96\x81b"
+    "2,3 2,3 3,4 4,5";
+  aligned
+    (Normalizer.sequence [ strip; Normalizer.lowercase ])
+    "strip lowercase" " A\xC3\x89 " "a\xC3\xA9" "1,2 2,4";
+  aligned
+    (Normalizer.sequence [ prepend; Normalizer.nfd ])
+    "prepend nfd" "\xC3\xA9" "\xE2\x96\x81e\xCC\x81" "0,2 0,2 0,2"
+
+(* The BERT normalizer runs its four passes as one; on text where the extra
+   passes have nothing to do, that one pass must agree with the single stages,
+   text and alignment alike. *)
+let bert_corpus =
+  [
+    "";
+    "Hello, World!";
+    "Caf\xC3\xA9 NA\xC3\x8FVE r\xC3\xA9sum\xC3\xA9";
+    "A\xCC\x81\xCC\xA3 a\xCC\xA3\xCC\x81 \xE1\xBA\x9B\xCC\xA3";
+    "\xC3\x87a \xE6\xBC\xA2 \xC3\xA1x \xE6\x97\xA5\xE6\x9C\xAC";
+    "\xEA\xB0\x81Z \xED\x95\x9C\xEA\xB8\x80 \
+     \xE1\x84\x80\xE1\x85\xA1\xE1\x86\xA8";
+    "\xCE\x9F\xCE\x94\xCE\x9F\xCE\xA3 \
+     \xCE\xA3\xCE\xAF\xCF\x83\xCF\x85\xCF\x86\xCE\xBF\xCF\x82";
+    "\xC4\xB0stanbul I\xCC\x87 \xC3\x9F \xE1\xBA\x9E \xEF\xAC\x81";
+    "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82, \
+     \xD0\xBC\xD0\xB8\xD1\x80!";
+    "Ti\xE1\xBA\xBFng Vi\xE1\xBB\x87t c\xC3\xB3 d\xE1\xBA\xA5u";
+    "a\xF0\x9F\x98\x80b \xEF\xBC\xA1\xEF\xBC\xA2 \xE2\x91\xA0";
+    "Hello" ^ String.make 1 '\xFF' ^ String.make 1 '\xFE' ^ "World";
+    "\xE6\xBC\xA2\x80\xE6\xBC \xE6\xBC\xA2";
+    String.concat ""
+      (List.init 40 (fun i -> if i mod 7 = 3 then "\xC3\x89" else "aB"));
+  ]
+
+let same_alignment label a b =
+  List.iteri
+    (fun i text ->
+      let ta, sa = char_spans a text and tb, sb = char_spans b text in
+      equal ~msg:(Printf.sprintf "%s on %d: text" label i) string tb ta;
+      equal ~msg:(Printf.sprintf "%s on %d: spans" label i) string sb sa)
+    bert_corpus
+
+let test_bert_single_stages () =
+  same_alignment "bert lowercase only"
+    (Normalizer.bert ~clean_text:false ~handle_chinese_chars:false
+       ~strip_accents:(Some false) ())
+    Normalizer.lowercase;
+  (* The corpus has no spacing or enclosing mark, so dropping the nonspacing
+     marks is dropping the marks. *)
+  same_alignment "bert strip only"
+    (Normalizer.bert ~clean_text:false ~handle_chinese_chars:false
+       ~lowercase:false ~strip_accents:(Some true) ())
+    (Normalizer.sequence [ Normalizer.nfd; Normalizer.strip_accents ]);
+  same_alignment "bert strip and lowercase"
+    (Normalizer.bert ~clean_text:false ~handle_chinese_chars:false ())
+    (Normalizer.sequence
+       [ Normalizer.nfd; Normalizer.strip_accents; Normalizer.lowercase ]);
+  List.iter
+    (fun text ->
+      equal ~msg:"bert with nothing to do" string text
+        (Normalizer.apply
+           (Normalizer.bert ~clean_text:false ~handle_chinese_chars:false
+              ~lowercase:false ~strip_accents:(Some false) ())
+           text))
+    bert_corpus
+
+(* On ASCII the BERT normalizer is a byte map: controls go, white space becomes
+   a space, letters lower, and every byte kept stands for itself. *)
+let test_bert_ascii () =
+  let reference text =
+    let b = Buffer.create (String.length text) in
+    String.iter
+      (fun c ->
+        let code = Char.code c in
+        if code = 9 || code = 10 || code = 13 || code = 32 then
+          Buffer.add_char b ' '
+        else if code >= 33 && code < 127 then
+          Buffer.add_char b (Char.lowercase_ascii c))
+      text;
+    Buffer.contents b
+  in
+  let n = Normalizer.bert () in
+  let texts =
+    List.init 200 (fun i ->
+        String.init i (fun j -> Char.chr (((j * 37) + (i * 11)) mod 128)))
+    @ [ "\x00\x07\x7F"; "  Hello\tWorld\r\n"; String.make 100 'A' ]
+  in
+  List.iter
+    (fun text ->
+      let expected = reference text in
+      equal
+        ~msg:(Printf.sprintf "bert ascii %S" text)
+        string expected (Normalizer.apply n text);
+      let normalized, alignment = Normalizer.apply_aligned n text in
+      equal ~msg:"bert ascii aligned text" string expected normalized;
+      let src = ref 0 in
+      for i = 0 to String.length normalized - 1 do
+        while reference (String.make 1 text.[!src]) = "" do
+          incr src
+        done;
+        equal
+          ~msg:(Printf.sprintf "bert ascii %S byte %d" text i)
+          (pair int int)
+          (!src, !src + 1)
+          (Normalizer.original_span alignment ~start:i ~stop:(i + 1));
+        incr src
+      done)
+    texts
 
 let test_align_sequence () =
   let llama =
@@ -684,6 +925,23 @@ let alignment_normalizers =
     ("byte_level", Normalizer.byte_level);
     ("nmt", Normalizer.nmt);
     ("bert", Normalizer.bert ());
+    ("bert nolower", Normalizer.bert ~lowercase:false ());
+    ("bert noclean", Normalizer.bert ~clean_text:false ());
+    ("bert nostrip", Normalizer.bert ~strip_accents:(Some false) ());
+    ( "bert nocjk noclean",
+      Normalizer.bert ~clean_text:false ~handle_chinese_chars:false () );
+    ( "strip prepend replace",
+      Normalizer.sequence
+        [
+          Normalizer.strip ();
+          Normalizer.prepend "\xE2\x96\x81";
+          Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81";
+        ] );
+    ( "prepend strip",
+      Normalizer.sequence [ Normalizer.prepend "  x"; Normalizer.strip () ] );
+    ( "nfkc strip lower",
+      Normalizer.sequence
+        [ Normalizer.nfkc; Normalizer.strip_accents; Normalizer.lowercase ] );
     ( "llama",
       Normalizer.sequence
         [
@@ -780,6 +1038,8 @@ let unicode_tests =
     test "strip accents normalization" test_strip_accents_normalization;
     test "strip accents keeps composition" test_strip_accents_keeps_composition;
     test "bert normalizer" test_bert_normalizer;
+    test "word scans" test_word_scans;
+    test "nfc edges" test_nfc_edges;
     test "normalization sequence" test_normalization_sequence;
     test "replace" test_replace;
     test "replace regex" test_replace_regex;
@@ -795,6 +1055,9 @@ let unicode_tests =
     test "replace alignment" test_align_replace;
     test "prepend alignment" test_align_prepend;
     test "bert alignment" test_align_bert;
+    test "view alignment" test_align_views;
+    test "bert single stages" test_bert_single_stages;
+    test "bert ascii" test_bert_ascii;
     test "sequence alignment" test_align_sequence;
     test "byte level alignment" test_align_byte_level;
     test "nmt alignment" test_align_nmt;
