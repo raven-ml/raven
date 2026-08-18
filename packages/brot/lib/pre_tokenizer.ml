@@ -471,15 +471,25 @@ let fill_bert s ~pos ~stop spans =
   Spans.set_count spans !n;
   !p
 
-let punctuation_run s i stop =
-  let j = ref i in
-  let scanning = ref true in
-  while !scanning && !j < stop do
-    let d = Char_class.at s !j ~stop in
-    if Char_class.at_is_punctuation d then j := !j + Char_class.at_len d
-    else scanning := false
-  done;
-  !j
+(* Splitting
+
+   The pieces of [Punctuation] and [Split] are runs of segments, which alternate
+   between the delimiters — the punctuation characters, or the occurrences of
+   the pattern — and the text they separate. Each behavior is a rule over
+   neighbouring segments. [`Isolated] gives every segment a piece of its own,
+   and [`Removed] does the same but drops the delimiters. [`Contiguous] joins
+   the neighbours that share a role. [`Merged_with_previous] and
+   [`Merged_with_next] are one rule read from either side — a segment takes in
+   the one that follows it when their roles differ — applied to the text and to
+   the delimiters respectively.
+
+   A segment is read as [(stop lsl 1) lor is_delimiter], which allocates
+   nothing, and its role alone is read without walking to its end, which is all
+   the grouping loop needs. The two walkers below are this one loop over the two
+   kinds of delimiter: a change to either belongs in both. *)
+
+let[@inline] segment_stop g = g lsr 1
+let[@inline] segment_is_delimiter g = g land 1 = 1
 
 let plain_run s i stop =
   let j = ref i in
@@ -491,60 +501,44 @@ let plain_run s i stop =
   done;
   !j
 
-(* A piece opens at every punctuation character and runs to the next one. *)
-let fill_punctuation_merged_next s ~pos ~stop spans =
+let[@inline] punctuation_delimits s i stop =
+  Char_class.at_is_punctuation (Char_class.at s i ~stop)
+
+let punctuation_segment s i stop =
+  let d = Char_class.at s i ~stop in
+  if Char_class.at_is_punctuation d then ((i + Char_class.at_len d) lsl 1) lor 1
+  else plain_run s i stop lsl 1
+
+let fill_punctuation ~behavior s ~pos ~stop spans =
+  let keep = behavior <> `Removed in
+  let group = behavior = `Contiguous in
+  let merge_previous = behavior = `Merged_with_previous in
+  let merge_next = behavior = `Merged_with_next in
   let capacity = Spans.capacity spans in
   let n = ref (Spans.count spans) in
   let p = ref pos in
   while !p < stop && !n < capacity do
     let i = !p in
-    let e =
-      plain_run s (i + Char_class.at_len (Char_class.at s i ~stop)) stop
-    in
-    Spans.write spans !n i e;
-    incr n;
-    p := e
+    let g = punctuation_segment s i stop in
+    let delimiter = segment_is_delimiter g in
+    let merge = if delimiter then merge_next else merge_previous in
+    let e = ref (segment_stop g) in
+    if group then
+      while !e < stop && punctuation_delimits s !e stop = delimiter do
+        e := segment_stop (punctuation_segment s !e stop)
+      done
+    else if merge && !e < stop then begin
+      let g = punctuation_segment s !e stop in
+      if segment_is_delimiter g <> delimiter then e := segment_stop g
+    end;
+    if keep || not delimiter then begin
+      Spans.write spans !n i !e;
+      incr n
+    end;
+    p := !e
   done;
   Spans.set_count spans !n;
   !p
-
-let fill_punctuation ~behavior s ~pos ~stop spans =
-  match behavior with
-  | `Merged_with_previous -> fill_whole ~pos ~stop spans
-  | `Merged_with_next -> fill_punctuation_merged_next s ~pos ~stop spans
-  | `Isolated | `Removed | `Contiguous ->
-      let keep = behavior <> `Removed in
-      let group = behavior = `Contiguous in
-      let capacity = Spans.capacity spans in
-      let n = ref (Spans.count spans) in
-      let p = ref pos in
-      let go = ref true in
-      while !go do
-        if !p >= stop || !n >= capacity then go := false
-        else begin
-          let i = !p in
-          let d = Char_class.at s i ~stop in
-          if Char_class.at_is_punctuation d then begin
-            let e =
-              if group then punctuation_run s i stop
-              else i + Char_class.at_len d
-            in
-            if keep then begin
-              Spans.write spans !n i e;
-              incr n
-            end;
-            p := e
-          end
-          else begin
-            let e = plain_run s i stop in
-            Spans.write spans !n i e;
-            incr n;
-            p := e
-          end
-        end
-      done;
-      Spans.set_count spans !n;
-      !p
 
 let fill_digits ~individual s ~pos ~stop spans =
   let capacity = Spans.capacity spans in
@@ -586,57 +580,69 @@ let[@inline] matches pattern plen s i stop =
   done;
   !k = plen
 
-(* Byte length of the delimiter at [i], or zero when [i] does not start one. *)
-let[@inline] delimiter_at pattern plen invert s i stop =
-  if matches pattern plen s i stop then if invert then 0 else plen
-  else if invert then 1
-  else 0
+(* [invert] makes the text between the occurrences the delimiters, and the
+   occurrences the text. *)
+
+let[@inline] split_delimits pattern plen invert s i stop =
+  matches pattern plen s i stop <> invert
+
+let split_segment pattern plen invert s i stop =
+  if matches pattern plen s i stop then
+    ((i + plen) lsl 1) lor if invert then 0 else 1
+  else begin
+    let j = ref (i + 1) in
+    while !j < stop && not (matches pattern plen s !j stop) do
+      incr j
+    done;
+    (!j lsl 1) lor if invert then 1 else 0
+  end
 
 let fill_split ~pattern ~behavior ~invert s ~pos ~stop spans =
-  match behavior with
-  | `Contiguous -> fill_whole ~pos ~stop spans
-  | `Isolated | `Removed | `Merged_with_previous | `Merged_with_next ->
-      let plen = String.length pattern in
-      let keep = behavior <> `Removed in
-      let previous = behavior = `Merged_with_previous in
-      let next = behavior = `Merged_with_next in
-      let capacity = Spans.capacity spans in
-      let n = ref (Spans.count spans) in
-      let p = ref pos in
-      let go = ref true in
-      while !go do
-        if !p >= stop || !n >= capacity then go := false
-        else begin
-          let i = !p in
-          let d = delimiter_at pattern plen invert s i stop in
-          if d > 0 && not (previous || next) then begin
-            if keep then begin
-              Spans.write spans !n i (i + d);
-              incr n
-            end;
-            p := i + d
-          end
-          else begin
-            let j = ref (if next then i + d else i) in
-            let scanning = ref true in
-            while !scanning && !j < stop do
-              if delimiter_at pattern plen invert s !j stop > 0 then
-                scanning := false
-              else incr j
-            done;
-            let e =
-              if previous && !j < stop then
-                !j + delimiter_at pattern plen invert s !j stop
-              else !j
-            in
-            Spans.write spans !n i e;
-            incr n;
-            p := e
-          end
-        end
-      done;
-      Spans.set_count spans !n;
-      !p
+  let plen = String.length pattern in
+  let keep = behavior <> `Removed in
+  let group = behavior = `Contiguous in
+  let merge_previous = behavior = `Merged_with_previous in
+  let merge_next = behavior = `Merged_with_next in
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let g = split_segment pattern plen invert s i stop in
+    let delimiter = segment_is_delimiter g in
+    let merge = if delimiter then merge_next else merge_previous in
+    let e = ref (segment_stop g) in
+    if group then
+      while
+        !e < stop && split_delimits pattern plen invert s !e stop = delimiter
+      do
+        e := segment_stop (split_segment pattern plen invert s !e stop)
+      done
+    else if merge && !e < stop then begin
+      let g = split_segment pattern plen invert s !e stop in
+      if segment_is_delimiter g <> delimiter then e := segment_stop g
+    end;
+    if keep || not delimiter then begin
+      Spans.write spans !n i !e;
+      incr n
+    end;
+    p := !e
+  done;
+  Spans.set_count spans !n;
+  !p
+
+let fill_characters s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let e = !p + Char_class.at_len (Char_class.at s !p ~stop) in
+    Spans.write spans !n !p e;
+    incr n;
+    p := e
+  done;
+  Spans.set_count spans !n;
+  !p
 
 (* Metaspace splits before every occurrence of its marker. *)
 let fill_marker marker s ~pos ~stop spans =
@@ -748,6 +754,8 @@ let rec ends_byte_level t =
       match last ts with Some t -> ends_byte_level t | None -> false)
   | _ -> false
 
+let encodes_bytes = ends_byte_level
+
 (* Shared, so that [plan] allocates only for the pre-tokenizers whose rewrite
    carries a marker. *)
 let walk_verbatim = Walk { rewrite = Verbatim; splittable = false }
@@ -764,9 +772,8 @@ let rec plan t =
       | true, false -> walk_prefix
       | true, true -> walk_prefix_split_free)
   | Bert | Whitespace | Whitespace_split -> walk_split_free
-  | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts ->
+  | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts | Split _ ->
       walk_verbatim
-  | Split { pattern; _ } -> if pattern = "" then Pieces else walk_verbatim
   | Metaspace { replacement; prepend_scheme; split } ->
       if not split then Pieces
       else
@@ -804,9 +811,14 @@ let rec fill_walk t s ~pos ~stop spans =
   | Whitespace -> fill_whitespace s ~pos ~stop spans
   | Whitespace_split -> fill_whitespace_split s ~pos ~stop spans
   | Punctuation { behavior } -> fill_punctuation ~behavior s ~pos ~stop spans
+  (* An empty pattern matches at every position, so its occurrences are empty
+     and the pieces are the characters — unless [invert] makes those occurrences
+     the text, and [`Removed] then leaves nothing, the range being consumed
+     without a span. *)
+  | Split { pattern = ""; behavior = `Removed; invert = true } -> stop
+  | Split { pattern = ""; _ } -> fill_characters s ~pos ~stop spans
   | Split { pattern; behavior; invert } ->
-      if pattern = "" then invalid_arg err_no_walk
-      else fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
+      fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
   | Char_delimiter delimiter ->
       fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
         ~stop spans
@@ -1002,7 +1014,6 @@ and pre_tokenize_pieces t text =
           text
       in
       [ (marked, (0, String.length text)) ]
-  | Split _ -> [ (text, (0, String.length text)) ]
   | Sequence ts -> pre_tokenize_sequence ts text
   | _ -> [ (text, (0, String.length text)) ]
 

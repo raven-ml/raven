@@ -49,15 +49,22 @@ val byte_level :
 *)
 
 type behavior =
-  [ `Isolated  (** Keep delimiter as separate piece *)
-  | `Removed  (** Remove delimiter *)
-  | `Merged_with_previous  (** Merge delimiter with previous piece *)
-  | `Merged_with_next  (** Merge delimiter with next piece *)
-  | `Contiguous  (** Group consecutive delimiters together *) ]
-(** Delimiter handling behavior for splitting operations. *)
+  [ `Isolated  (** Keep each delimiter as a piece of its own *)
+  | `Removed  (** Drop the delimiters *)
+  | `Merged_with_previous  (** Keep a delimiter with what precedes it *)
+  | `Merged_with_next  (** Keep a delimiter with what follows it *)
+  | `Contiguous
+    (** Keep neighbours that are both delimiters, or both not, as one piece *)
+  ]
+(** Delimiter handling behavior for splitting operations.
+
+    [`Merged_with_previous] and [`Merged_with_next] merge a delimiter into the
+    text beside it only: a delimiter that follows another one is a piece of its
+    own. *)
 
 val punctuation : ?behavior:behavior -> unit -> t
-(** [punctuation ()] separates punctuation from alphanumeric content.
+(** [punctuation ()] separates punctuation characters from the text around them,
+    whitespace included. Every punctuation character is a delimiter.
 
     [behavior] defaults to [`Isolated]. *)
 
@@ -65,8 +72,13 @@ val split : pattern:string -> ?behavior:behavior -> ?invert:bool -> unit -> t
 (** [split ~pattern ()] splits on a literal string [pattern]. HuggingFace's
     regular expression patterns have no equivalent here.
 
-    [behavior] defaults to [`Removed]. When [invert] is [true], splits on
-    everything {e except} the pattern; defaults to [false]. *)
+    [behavior] defaults to [`Removed]. When [invert] is [true] the delimiters
+    are the runs of text between the occurrences of [pattern], and those
+    occurrences are what they separate; defaults to [false].
+
+    An empty [pattern] matches at every position, so the pieces are the
+    characters — and none of them when [invert] is [true] and [behavior] is
+    [`Removed]. *)
 
 val char_delimiter : string -> t
 (** [char_delimiter c] splits on the character [c], removing it from the output.
@@ -190,6 +202,12 @@ type plan =
 
 val plan : t -> plan
 (** [plan t] is how [t] takes part in the walking path. *)
+
+val encodes_bytes : t -> bool
+(** [encodes_bytes t] is [true] iff the pieces of [t] are byte-level encoded,
+    that is iff [t] is a byte-level pre-tokenizer or a sequence ending in one.
+    {!fill} does no such rewriting, so a model behind one is handed the raw
+    bytes of a span and has to match its vocabulary against those. *)
 
 val fill : t -> string -> pos:int -> stop:int -> Spans.t -> int
 (** [fill t text ~pos ~stop spans] appends to [spans] the pretoken spans of the

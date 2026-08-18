@@ -1087,6 +1087,18 @@ thread.
 
 ### Brot
 
+- `Pre_tokenizer.punctuation ~behavior:`Merged_with_previous`` and
+  `Pre_tokenizer.split ~behavior:`Contiguous`` returned the whole text as one
+  piece instead of splitting it. They now match HuggingFace: the first keeps
+  each delimiter with the text before it, the second keeps neighbours that are
+  both delimiters, or both not, as one piece.
+- `Pre_tokenizer.split ~invert:true` treated every byte outside the pattern as
+  a delimiter of its own. It now inverts whole segments as HuggingFace does, so
+  `~pattern:","` inverted splits `"a,,b"` into the two commas rather than into
+  single bytes.
+- `Pre_tokenizer.split ~pattern:""` returned the whole text. An empty pattern
+  now makes every character a piece, and no pieces at all with `~invert:true
+  ~behavior:`Removed``.
 - `Post_processor.process` keeps both sequences of a pair when
   `~add_special_tokens:false`. It used to return only the first, silently
   dropping the second sentence. The second sequence gets type ID `1`, except

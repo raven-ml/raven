@@ -520,6 +520,15 @@ data, where HuggingFace ships an older table that reports every character
 assigned since as scriptless and joins it to the preceding piece, so the two
 split differently around recent additions such as "₿" (U+20BF).
 
+The same skew runs through the character classes. Brot reads them from Uucp,
+which carries Unicode 17.0.0, where HuggingFace's Rust dependencies ship older
+tables: `\p{L}` and `\p{N}`, which `byte_level` splits on, disagree on about
+4,600 and 13 code points respectively, and the punctuation class of `bert` and
+`punctuation` on 143. Nearly all of those are characters assigned since
+HuggingFace's tables were generated, which brot classifies as letters, numbers
+or punctuation and HuggingFace does not; two go the other way (U+166D and
+U+111C9 are punctuation to HuggingFace and not to Unicode 17).
+
 ### 9.3 Post-processor
 
 **HuggingFace**

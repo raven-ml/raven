@@ -12,6 +12,13 @@ let check_tokenization name input expected =
 let check_strings name input expected =
   equal ~msg:name (list string) expected (List.map fst input)
 
+let behavior_name = function
+  | `Isolated -> "Isolated"
+  | `Removed -> "Removed"
+  | `Merged_with_previous -> "MergedWithPrevious"
+  | `Merged_with_next -> "MergedWithNext"
+  | `Contiguous -> "Contiguous"
+
 let test_byte_level_basic () =
   let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
 
@@ -434,6 +441,46 @@ let test_punctuation_pretokenizer () =
   test_isolated "test—end" [ ("test", (0, 4)); ("—", (4, 7)); ("end", (7, 10)) ]
 (* em dash is 3 bytes *)
 
+(* The pieces run from one delimiter to the next: a punctuation character for
+   Punctuation, an occurrence of the pattern for Split, which [invert] swaps for
+   the text between the occurrences. The two merging behaviors are one rule read
+   from either side — a piece takes in what follows it when the roles differ —
+   so a delimiter that follows another one stands alone. Every expectation below
+   is that of HuggingFace tokenizers 0.23.1. *)
+
+let test_punctuation_behaviors () =
+  let case behavior text expected =
+    check_tokenization
+      (Printf.sprintf "Punctuation %s on %S" (behavior_name behavior) text)
+      (Pre.pre_tokenize (Pre.punctuation ~behavior ()) text)
+      expected
+  in
+  case `Isolated "a,b,c"
+    [
+      ("a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (",", (3, 4)); ("c", (4, 5));
+    ];
+  case `Isolated "a,,b"
+    [ ("a", (0, 1)); (",", (1, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  case `Isolated "«x»" [ ("«", (0, 2)); ("x", (2, 3)); ("»", (3, 5)) ];
+  case `Removed "a,b,c" [ ("a", (0, 1)); ("b", (2, 3)); ("c", (4, 5)) ];
+  case `Removed "a,,b" [ ("a", (0, 1)); ("b", (3, 4)) ];
+  case `Removed "«x»" [ ("x", (2, 3)) ];
+  case `Merged_with_previous "a,b,c"
+    [ ("a,", (0, 2)); ("b,", (2, 4)); ("c", (4, 5)) ];
+  case `Merged_with_previous "a,,b"
+    [ ("a,", (0, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  case `Merged_with_previous "«x»" [ ("«", (0, 2)); ("x»", (2, 5)) ];
+  case `Merged_with_next "a,b,c"
+    [ ("a", (0, 1)); (",b", (1, 3)); (",c", (3, 5)) ];
+  case `Merged_with_next "a,,b" [ ("a", (0, 1)); (",", (1, 2)); (",b", (2, 4)) ];
+  case `Merged_with_next "«x»" [ ("«x", (0, 3)); ("»", (3, 5)) ];
+  case `Contiguous "a,b,c"
+    [
+      ("a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (",", (3, 4)); ("c", (4, 5));
+    ];
+  case `Contiguous "a,,b" [ ("a", (0, 1)); (",,", (1, 3)); ("b", (3, 4)) ];
+  case `Contiguous "«x»" [ ("«", (0, 2)); ("x", (2, 3)); ("»", (3, 5)) ]
+
 let test_digits_pretokenizer () =
   let test_individual text expected =
     let tokenizer = Pre.digits ~individual_digits:true () in
@@ -460,41 +507,120 @@ let test_digits_pretokenizer () =
     [ ("a", (0, 1)); ("123", (1, 4)); ("b", (4, 5)); ("456", (5, 8)) ];
   test_grouped "3.14" [ ("3", (0, 1)); (".", (1, 2)); ("14", (2, 4)) ]
 
-let test_split_pretokenizer () =
-  let test_case pattern behavior text expected =
-    let tokenizer = Pre.split ~pattern ~behavior () in
-    let result = Pre.pre_tokenize tokenizer text in
-    check_tokenization
-      (Printf.sprintf "Split pattern=%S behavior=%s text=%S" pattern
-         (match behavior with
-         | `Isolated -> "Isolated"
-         | `Removed -> "Removed"
-         | `Merged_with_previous -> "MergedPrev"
-         | `Merged_with_next -> "MergedNext"
-         | `Contiguous -> "Contiguous")
-         text)
-      result expected
-  in
+let split_case ?(pattern = ",") behavior ~invert text expected =
+  check_tokenization
+    (Printf.sprintf "Split %S %s ~invert:%b on %S" pattern
+       (behavior_name behavior) invert text)
+    (Pre.pre_tokenize (Pre.split ~pattern ~behavior ~invert ()) text)
+    expected
 
-  (* Test different behaviors *)
-  test_case "," `Isolated "a,b,c"
+let test_split_behaviors () =
+  let case = split_case in
+  case `Isolated ~invert:false "a,b,c"
     [
       ("a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (",", (3, 4)); ("c", (4, 5));
     ];
-
-  test_case "," `Removed "a,b,c" [ ("a", (0, 1)); ("b", (2, 3)); ("c", (4, 5)) ];
-
-  test_case "," `Merged_with_previous "a,b,c"
+  case `Isolated ~invert:false "a,,b"
+    [ ("a", (0, 1)); (",", (1, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  case `Isolated ~invert:false ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Isolated ~invert:true "a,b,c"
+    [
+      ("a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (",", (3, 4)); ("c", (4, 5));
+    ];
+  case `Isolated ~invert:true "a,,b"
+    [ ("a", (0, 1)); (",", (1, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  case `Isolated ~invert:true ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Removed ~invert:false "a,b,c"
+    [ ("a", (0, 1)); ("b", (2, 3)); ("c", (4, 5)) ];
+  case `Removed ~invert:false "a,,b" [ ("a", (0, 1)); ("b", (3, 4)) ];
+  case `Removed ~invert:false ",," [];
+  case `Removed ~invert:true "a,b,c" [ (",", (1, 2)); (",", (3, 4)) ];
+  case `Removed ~invert:true "a,,b" [ (",", (1, 2)); (",", (2, 3)) ];
+  case `Removed ~invert:true ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Merged_with_previous ~invert:false "a,b,c"
     [ ("a,", (0, 2)); ("b,", (2, 4)); ("c", (4, 5)) ];
-
-  test_case "," `Merged_with_next "a,b,c"
+  case `Merged_with_previous ~invert:false "a,,b"
+    [ ("a,", (0, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  case `Merged_with_previous ~invert:false ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Merged_with_previous ~invert:true "a,b,c"
     [ ("a", (0, 1)); (",b", (1, 3)); (",c", (3, 5)) ];
+  case `Merged_with_previous ~invert:true "a,,b"
+    [ ("a", (0, 1)); (",", (1, 2)); (",b", (2, 4)) ];
+  case `Merged_with_previous ~invert:true ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Merged_with_next ~invert:false "a,b,c"
+    [ ("a", (0, 1)); (",b", (1, 3)); (",c", (3, 5)) ];
+  case `Merged_with_next ~invert:false "a,,b"
+    [ ("a", (0, 1)); (",", (1, 2)); (",b", (2, 4)) ];
+  case `Merged_with_next ~invert:false ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Merged_with_next ~invert:true "a,b,c"
+    [ ("a,", (0, 2)); ("b,", (2, 4)); ("c", (4, 5)) ];
+  case `Merged_with_next ~invert:true "a,,b"
+    [ ("a,", (0, 2)); (",", (2, 3)); ("b", (3, 4)) ];
+  case `Merged_with_next ~invert:true ",," [ (",", (0, 1)); (",", (1, 2)) ];
+  case `Contiguous ~invert:false "a,b,c"
+    [
+      ("a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (",", (3, 4)); ("c", (4, 5));
+    ];
+  case `Contiguous ~invert:false "a,,b"
+    [ ("a", (0, 1)); (",,", (1, 3)); ("b", (3, 4)) ];
+  case `Contiguous ~invert:false ",," [ (",,", (0, 2)) ];
+  case `Contiguous ~invert:true "a,b,c"
+    [
+      ("a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (",", (3, 4)); ("c", (4, 5));
+    ];
+  case `Contiguous ~invert:true "a,,b"
+    [ ("a", (0, 1)); (",,", (1, 3)); ("b", (3, 4)) ];
+  case `Contiguous ~invert:true ",," [ (",,", (0, 2)) ]
 
-  (* Test with longer pattern *)
-  test_case "::" `Isolated "a::b::c"
+(* A pattern of several characters, one that is several bytes, and the empty
+   pattern, which matches between every pair of characters. *)
+let test_split_patterns () =
+  let case = split_case in
+  case ~pattern:"::" `Isolated ~invert:false "a::b::c"
     [
       ("a", (0, 1)); ("::", (1, 3)); ("b", (3, 4)); ("::", (4, 6)); ("c", (6, 7));
-    ]
+    ];
+  case ~pattern:"ab" `Isolated ~invert:false "xababy"
+    [ ("x", (0, 1)); ("ab", (1, 3)); ("ab", (3, 5)); ("y", (5, 6)) ];
+  case ~pattern:"ab" `Isolated ~invert:true "xababy"
+    [ ("x", (0, 1)); ("ab", (1, 3)); ("ab", (3, 5)); ("y", (5, 6)) ];
+  case ~pattern:"ab" `Removed ~invert:false "xababy"
+    [ ("x", (0, 1)); ("y", (5, 6)) ];
+  case ~pattern:"ab" `Removed ~invert:true "xababy"
+    [ ("ab", (1, 3)); ("ab", (3, 5)) ];
+  case ~pattern:"ab" `Merged_with_previous ~invert:false "xababy"
+    [ ("xab", (0, 3)); ("ab", (3, 5)); ("y", (5, 6)) ];
+  case ~pattern:"ab" `Merged_with_previous ~invert:true "xababy"
+    [ ("x", (0, 1)); ("ab", (1, 3)); ("aby", (3, 6)) ];
+  case ~pattern:"ab" `Merged_with_next ~invert:false "xababy"
+    [ ("x", (0, 1)); ("ab", (1, 3)); ("aby", (3, 6)) ];
+  case ~pattern:"ab" `Merged_with_next ~invert:true "xababy"
+    [ ("xab", (0, 3)); ("ab", (3, 5)); ("y", (5, 6)) ];
+  case ~pattern:"ab" `Contiguous ~invert:false "xababy"
+    [ ("x", (0, 1)); ("abab", (1, 5)); ("y", (5, 6)) ];
+  case ~pattern:"ab" `Contiguous ~invert:true "xababy"
+    [ ("x", (0, 1)); ("abab", (1, 5)); ("y", (5, 6)) ];
+
+  (* Inverted, a text without an occurrence is one delimiter, not one per
+     byte. *)
+  case `Isolated ~invert:true "  " [ ("  ", (0, 2)) ];
+  case `Removed ~invert:true "  " [];
+  case ~pattern:"、" `Isolated ~invert:false "a、、b"
+    [ ("a", (0, 1)); ("、", (1, 4)); ("、", (4, 7)); ("b", (7, 8)) ];
+  case ~pattern:"、" `Isolated ~invert:true "a、、b"
+    [ ("a", (0, 1)); ("、", (1, 4)); ("、", (4, 7)); ("b", (7, 8)) ];
+  case ~pattern:"、" `Removed ~invert:true "a、、b"
+    [ ("、", (1, 4)); ("、", (4, 7)) ];
+  case ~pattern:"、" `Contiguous ~invert:false "a、、b"
+    [ ("a", (0, 1)); ("、、", (1, 7)); ("b", (7, 8)) ];
+
+  (* The empty pattern makes every character a piece, and inverted its empty
+     occurrences are the text, so [`Removed] leaves nothing. *)
+  case ~pattern:"" `Isolated ~invert:false "aé" [ ("a", (0, 1)); ("é", (1, 3)) ];
+  case ~pattern:"" `Removed ~invert:false "aé" [ ("a", (0, 1)); ("é", (1, 3)) ];
+  case ~pattern:"" `Contiguous ~invert:true "aé"
+    [ ("a", (0, 1)); ("é", (1, 3)) ];
+  case ~pattern:"" `Removed ~invert:true "aé" []
 
 let test_char_delimiter_split () =
   let test_case delim text expected =
@@ -965,17 +1091,6 @@ let test_byte_level_malformed_utf8 () =
     check (random_malformed 8)
   done
 
-(* HuggingFace splits before every delimiter and keeps it with what precedes;
-   consecutive delimiters used to be reported at the offsets of the first. *)
-let test_split_merged_with_previous () =
-  let tokenizer = Pre.split ~pattern:"," ~behavior:`Merged_with_previous () in
-  check_tokenization "Split MergedWithPrevious on \"a,,b\""
-    (Pre.pre_tokenize tokenizer "a,,b")
-    [ ("a,", (0, 2)); (",", (2, 3)); ("b", (3, 4)) ];
-  check_tokenization "Split MergedWithPrevious on \",,\""
-    (Pre.pre_tokenize tokenizer ",,")
-    [ (",", (0, 1)); (",", (1, 2)) ]
-
 (* [fill] hands out spans a bounded chunk at a time, and a sequence whose first
    member covers the whole text in one span cannot make progress until the
    buffer grows. Both paths only show up on inputs bigger than a chunk. *)
@@ -1122,12 +1237,15 @@ let () =
           test "WhitespaceSplit" test_whitespace_split;
         ];
       group "punctuation"
-        [ test "Punctuation behaviors" test_punctuation_pretokenizer ];
+        [
+          test "Punctuation behaviors" test_punctuation_pretokenizer;
+          test "every behavior" test_punctuation_behaviors;
+        ];
       group "digits" [ test "Digits tokenization" test_digits_pretokenizer ];
       group "split"
         [
-          test "Split with patterns" test_split_pretokenizer;
-          test "Split MergedWithPrevious" test_split_merged_with_previous;
+          test "every behavior and invert" test_split_behaviors;
+          test "patterns of several characters and bytes" test_split_patterns;
           test "CharDelimiterSplit" test_char_delimiter_split;
         ];
       group "sequence"
