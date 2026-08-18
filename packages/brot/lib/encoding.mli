@@ -13,7 +13,11 @@
     {!val-truncate} and {!val-pad}. All parallel arrays ({!val-ids},
     {!val-type_ids}, {!val-tokens}, {!val-word_ids}, {!val-offsets},
     {!val-special_tokens_mask}, {!val-attention_mask}) share the same length,
-    equal to {!val-length}. *)
+    equal to {!val-length}.
+
+    {!val-tokens}, {!val-word_ids} and {!val-offsets} are derived when they are
+    first asked for and kept afterwards: a caller that only reads {!val-ids}
+    pays for none of them. *)
 
 type t
 (** The type for tokenization encodings. *)
@@ -47,14 +51,6 @@ val token :
     {!val-word_ids} is [None]; otherwise {!val-special_tokens_mask} is [0].
     {!val-attention_mask} is always [1]. *)
 
-val from_tokens :
-  (int * string * (int * int)) list -> type_id:int -> base:int -> t
-(** [from_tokens tokens ~type_id ~base] is an encoding from a list of
-    [(id, token_string, (start, end_offset))] triples. Offsets count from
-    [base], which is where the tokenized text starts in the text being encoded.
-    Every token gets the given [type_id], {!val-attention_mask} [1],
-    {!val-special_tokens_mask} [0] and {!val-word_ids} [None]. *)
-
 val concat : t -> t -> t
 (** [concat a b] is the encoding with [a]'s tokens followed by [b]'s.
     {!val-overflowing} and sequence ranges are taken from [a]. *)
@@ -77,16 +73,22 @@ val tokens : t -> string array
 (** [tokens enc] is the string representation of each token. *)
 
 val word_ids : t -> int option array
-(** [word_ids enc] maps each token to its source word index, or [None] for
-    special tokens. *)
+(** [word_ids enc] maps each token to the index of the pretoken it came from,
+    counting from [0] in each sequence. The tokens a post-processor inserts, and
+    padding, are [None]. *)
 
 val offsets : t -> (int * int) array
-(** [offsets enc] is the [(start, end_)] byte offset spans into the original
-    text for each token. *)
+(** [offsets enc] is the [(start, end_)] byte span of each token in the text
+    that was encoded, before normalization: a token of ["café"] normalized to
+    ["cafe"] reports the bytes of the accented text. Spans are ascending but
+    need not tile the text, since a pre-tokenizer drops its delimiters and a
+    normalizer may remove characters. The tokens a post-processor inserts, and
+    padding, report [(0, 0)]. *)
 
 val special_tokens_mask : t -> int array
 (** [special_tokens_mask enc] is [1] for special tokens ([CLS], [SEP], padding)
-    and [0] for content tokens. *)
+    and [0] for content tokens. An added token found in the input is [0],
+    special or not: only what a post-processor inserts is masked. *)
 
 val attention_mask : t -> int array
 (** [attention_mask enc] is [1] for real tokens and [0] for padding tokens. *)
@@ -103,6 +105,15 @@ val length : t -> int
 (** [length enc] is the number of tokens in [enc]. *)
 
 (** {1:ops Operations} *)
+
+val with_type_id : t -> int -> t
+(** [with_type_id enc type_id] is [enc] with every {!val-type_ids} entry set to
+    [type_id]. Nothing else is read, so an encoding that has not worked out its
+    {!val-tokens}, {!val-offsets} or {!val-word_ids} still has not. *)
+
+val with_overflowing : t -> t list -> t
+(** [with_overflowing enc windows] is [enc] with [windows] as its
+    {!val-overflowing}. Nothing else is read. *)
 
 val truncate :
   t -> max_length:int -> stride:int -> direction:[ `Left | `Right ] -> t
@@ -131,3 +142,15 @@ val pad :
     [1]. If [length enc >= target_length], [enc] is returned unchanged. Padding
     is applied recursively to {!val-overflowing} encodings. When [direction] is
     [`Left], {!val-offsets} and sequence ranges are shifted accordingly. *)
+
+(** {1:internals Internals}
+
+    Building an encoding from the run of spans the encode path produced. [Run.t]
+    belongs to a module the library does not export, so {!of_run} has no caller
+    outside it. *)
+
+val of_run : Run.t -> ids:int array -> t
+(** [of_run run ~ids] is the encoding of [ids], whose {!val-tokens},
+    {!val-word_ids} and {!val-offsets} are derived from [run] when they are
+    asked for. Every token gets type id [0], {!val-attention_mask} [1] and
+    {!val-special_tokens_mask} [0]. *)

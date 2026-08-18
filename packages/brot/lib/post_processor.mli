@@ -83,6 +83,17 @@ val added_tokens : t -> is_pair:bool -> int
 (** [added_tokens t ~is_pair] is the number of special tokens [t] adds. Useful
     for calculating the truncation budget. *)
 
+val affixes : t -> add_special_tokens:bool -> (int array * int array) option
+(** [affixes t ~add_special_tokens] is the [(prefix, suffix)] of special token
+    ids [t] puts around a single sequence, and [None] when [t] does more to that
+    sequence's ids than wrap them — a template naming the sequence more than
+    once, or not at all. Everything else a processor does — assigning type ids,
+    trimming byte-level offsets — leaves the ids untouched.
+
+    Where {!added_tokens} counts what a processor adds, this says what it adds,
+    so a caller that wants ids alone can produce them without an {!Encoding.t}.
+*)
+
 (** {1:fmt Formatting} *)
 
 val pp : Format.formatter -> t -> unit

@@ -72,11 +72,16 @@ parallel array of the same length:
 
 - `ids` — integer token IDs for model input
 - `tokens` — string representation of each token
-- `offsets` — `(start, end)` byte positions in the original text
+- `offsets` — `(start, end)` byte positions in the text you passed in, before
+  normalization: a token of `"café"` reports the bytes of the accented text even
+  when the normalizer stripped the accent
 - `type_ids` — segment IDs (0 for first sentence, 1 for second in pair tasks)
 - `attention_mask` — 1 for real tokens, 0 for padding
 - `special_tokens_mask` — 1 for special tokens (`[CLS]`, `[SEP]`, padding), 0 for content
 - `word_ids` — maps each token to its source word index, or `None` for special tokens
+
+`tokens`, `offsets` and `word_ids` are worked out the first time you read them,
+so encoding a corpus for its IDs alone costs none of them.
 
 ```ocaml
 open Brot

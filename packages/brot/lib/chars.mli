@@ -18,9 +18,17 @@ val create : unit -> t
 
 (** {1:tokenization Tokenization} *)
 
-val tokenize : t -> string -> (int * string * (int * int)) list
-(** [tokenize t s] is the tokenization of [s] as
-    [(byte_value, char_string, (start, stop))] triples, one per byte. *)
+val encode_into : t -> Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t ids text ~pos ~len] appends the byte values of
+    [text.\[pos..pos+len)] to [ids], one per byte. The range must lie within
+    [text]; it is not checked. *)
+
+val token_table : t -> string array
+(** [token_table t] maps a byte value to the one-byte string it stands for.
+    Owned by [t]; do not mutate. *)
+
+val len_table : t -> int array
+(** [len_table t] maps every byte value to [1]. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 
@@ -34,7 +42,7 @@ val get_vocab : t -> (string * int) list
 (** [get_vocab t] is [[]] (no explicit vocabulary). *)
 
 val get_vocab_size : t -> int
-(** [get_vocab_size t] is [1114112] (all Unicode code points). *)
+(** [get_vocab_size t] is [256], one entry per byte value. *)
 
 (** {1:serialization Serialization} *)
 

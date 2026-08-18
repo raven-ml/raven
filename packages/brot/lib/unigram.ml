@@ -111,10 +111,10 @@ let[@inline] trie_step trie node byte =
   done;
   !result
 
-let trie_longest_match trie text ~start =
+let trie_longest_match trie text ~start ~stop =
   if Array.length trie.trie_ids = 0 then None
   else
-    let text_len = String.length text in
+    let text_len = stop in
     let last_id = ref (-1) in
     let last_end = ref start in
     let current = ref 0 in
@@ -140,6 +140,8 @@ let trie_longest_match trie text ~start =
 type t = {
   vocab : (string * float) array;
   token_to_ids : (string, int) Hashtbl.t;
+  token_table : string array;
+  len_table : int array;
   trie : trie;
 }
 
@@ -149,8 +151,10 @@ let create vocab_list =
   Array.iteri
     (fun idx (token, _) -> Hashtbl.replace token_to_ids token idx)
     vocab;
+  let token_table = Array.map fst vocab in
+  let len_table = Array.map String.length token_table in
   let trie = build_trie token_to_ids in
-  { vocab; token_to_ids; trie }
+  { vocab; token_to_ids; token_table; len_table; trie }
 
 let token_to_id model token = Hashtbl.find_opt model.token_to_ids token
 
@@ -163,27 +167,34 @@ let id_to_token model id =
 let get_vocab model = Array.to_list model.vocab
 let get_vocab_size model = Array.length model.vocab
 
-let tokenize model text =
-  let len = String.length text in
-  let rec consume pos acc =
-    if pos >= len then List.rev acc
-    else if
-      text.[pos] = ' '
-      || text.[pos] = '\n'
-      || text.[pos] = '\t'
-      || text.[pos] = '\r'
-    then consume (pos + 1) acc
-    else
-      match trie_longest_match model.trie text ~start:pos with
-      | Some (id, end_pos) ->
-          let s = String.sub text pos (end_pos - pos) in
-          consume end_pos ((id, s, (pos, end_pos)) :: acc)
-      | None ->
-          let s = String.sub text pos 1 in
-          let id = match token_to_id model s with Some id -> id | None -> 0 in
-          consume (pos + 1) ((id, s, (pos, pos + 1)) :: acc)
-  in
-  consume 0 []
+(* Longest vocabulary match at each position, ASCII white space carrying no
+   token of its own. A character the vocabulary does not hold falls back to id
+   [0], and a model with no vocabulary at all emits nothing. *)
+let encode_into model ids text ~pos ~len =
+  if Array.length model.token_table > 0 then begin
+    let stop = pos + len in
+    let p = ref pos in
+    while !p < stop do
+      match String.unsafe_get text !p with
+      | ' ' | '\n' | '\t' | '\r' -> incr p
+      | _ -> (
+          match trie_longest_match model.trie text ~start:!p ~stop with
+          | Some (id, finish) ->
+              Ints.add ids id;
+              p := finish
+          | None ->
+              let id =
+                match token_to_id model (String.sub text !p 1) with
+                | Some id -> id
+                | None -> 0
+              in
+              Ints.add ids id;
+              incr p)
+    done
+  end
+
+let token_table model = model.token_table
+let len_table model = model.len_table
 
 let json_obj pairs =
   Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)

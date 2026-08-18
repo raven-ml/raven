@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type token = { id : int; value : string; offsets : int * int }
-
 (* Compact trie for zero-allocation longest-prefix matching *)
 
 type trie = {
@@ -174,8 +172,13 @@ let trie_longest_match trie sequence ~start ~prefix ~prefix_len =
 type t = {
   vocab : (string, int) Hashtbl.t;
   vocab_r : string array;
+  (* How many bytes of a word an id accounts for: the entry, stripped of the
+     prefix a continuation subword carries. The unknown token stands for a whole
+     word, so its length is not a property of the id and reads as zero. *)
+  len_table : int array;
   trie : trie;
   unk_token : string;
+  unk_id : int;
   continuing_subword_prefix : string;
   max_input_chars_per_word : int;
 }
@@ -187,12 +190,30 @@ let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
   Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;
   if Hashtbl.length vocab > 0 && not (Hashtbl.mem vocab unk_token) then
     invalid_arg "Wordpiece.create: unk_token not in vocab";
+  let prefix_len = String.length continuing_subword_prefix in
+  let len_table =
+    Array.map
+      (fun token ->
+        let n = String.length token in
+        if
+          prefix_len > 0
+          && String.starts_with ~prefix:continuing_subword_prefix token
+        then n - prefix_len
+        else n)
+      vocab_r
+  in
+  let unk_id =
+    match Hashtbl.find_opt vocab unk_token with Some id -> id | None -> -1
+  in
+  if unk_id >= 0 then len_table.(unk_id) <- 0;
   let trie = build_trie vocab in
   {
     vocab;
     vocab_r;
+    len_table;
     trie;
     unk_token;
+    unk_id;
     continuing_subword_prefix;
     max_input_chars_per_word;
   }
@@ -227,205 +248,77 @@ let count_chars s =
   done;
   !n
 
-let tokenize model sequence =
-  if Hashtbl.length model.vocab = 0 then []
-  else
-    let seq_len = String.length sequence in
-    if count_chars sequence > model.max_input_chars_per_word then
-      let id = Hashtbl.find model.vocab model.unk_token in
-      [ { id; value = model.unk_token; offsets = (0, seq_len) } ]
-    else
-      let prefix = model.continuing_subword_prefix in
-      let prefix_len = String.length prefix in
-      let rec greedy start acc =
-        if start >= seq_len then List.rev acc
-        else
-          let p = if start > 0 then prefix else "" in
-          let pl = if start > 0 then prefix_len else 0 in
-          match
-            trie_longest_match model.trie sequence ~start ~prefix:p
-              ~prefix_len:pl
-          with
-          | Some (id, end_byte) ->
-              let value = Array.unsafe_get model.vocab_r id in
-              greedy end_byte ({ id; value; offsets = (start, end_byte) } :: acc)
-          | None ->
-              let id = Hashtbl.find model.vocab model.unk_token in
-              [ { id; value = model.unk_token; offsets = (0, seq_len) } ]
-      in
-      greedy 0 []
-
-let tokenize_ids model sequence =
-  if Hashtbl.length model.vocab = 0 then [||]
-  else
-    let seq_len = String.length sequence in
-    if count_chars sequence > model.max_input_chars_per_word then
-      let id = Hashtbl.find model.vocab model.unk_token in
-      [| id |]
-    else
-      let prefix = model.continuing_subword_prefix in
-      let prefix_len = String.length prefix in
-      let ids = ref [] in
-      let n = ref 0 in
-      let rec greedy start =
-        if start >= seq_len then ()
-        else
-          let p = if start > 0 then prefix else "" in
-          let pl = if start > 0 then prefix_len else 0 in
-          match
-            trie_longest_match model.trie sequence ~start ~prefix:p
-              ~prefix_len:pl
-          with
-          | Some (id, end_byte) ->
-              ids := id :: !ids;
-              incr n;
-              greedy end_byte
-          | None ->
-              let unk_id = Hashtbl.find model.vocab model.unk_token in
-              ids := [ unk_id ];
-              n := 1
-      in
-      greedy 0;
-      let result = Array.make !n 0 in
-      List.iteri (fun i id -> result.(!n - 1 - i) <- id) !ids;
-      result
-
-let tokenize_spans_encoding model pre_tokens ~type_id ~base =
-  if Hashtbl.length model.vocab = 0 then Encoding.empty
-  else
-    let trie = model.trie in
-    let prefix = model.continuing_subword_prefix in
-    let prefix_len = String.length prefix in
-    let unk_id = Hashtbl.find model.vocab model.unk_token in
-    let max_chars = model.max_input_chars_per_word in
-    let vocab_r = model.vocab_r in
-    let unk_token_str = model.unk_token in
-    (* Single pass: convert pre_tokens to array for direct access (no closure),
-       tokenize all fragments and fill growable output arrays directly. *)
-    let pre_arr = Array.of_list pre_tokens in
-    let n_pre = Array.length pre_arr in
-    let cap = ref (max 16 (n_pre * 2)) in
-    let ids = ref (Array.make !cap 0) in
-    let token_strs = ref (Array.make !cap "") in
-    let offsets_arr = ref (Array.make !cap (0, 0)) in
-    let n = ref 0 in
-    let grow () =
-      let new_cap = !cap * 2 in
-      let new_ids = Array.make new_cap 0 in
-      Array.blit !ids 0 new_ids 0 !n;
-      ids := new_ids;
-      let new_strs = Array.make new_cap "" in
-      Array.blit !token_strs 0 new_strs 0 !n;
-      token_strs := new_strs;
-      let new_off = Array.make new_cap (0, 0) in
-      Array.blit !offsets_arr 0 new_off 0 !n;
-      offsets_arr := new_off;
-      cap := new_cap
-    in
-    (* Hoisted mutable state for trie matching — allocated once *)
-    let current = ref 0 in
-    let stopped = ref false in
-    let last_id = ref (-1) in
-    let last_end = ref 0 in
-    let pos = ref 0 in
-    let is_unk = ref false in
-    let char_count = ref 0 in
-    let i_ref = ref 0 in
-    let j_ref = ref 0 in
-    for frag_idx = 0 to n_pre - 1 do
-      let fragment, _ = Array.unsafe_get pre_arr frag_idx in
-      let seq_len = String.length fragment in
-      char_count := 0;
-      for k = 0 to seq_len - 1 do
-        if Char.code (String.unsafe_get fragment k) land 0xC0 <> 0x80 then
-          incr char_count
-      done;
-      if !char_count > max_chars then begin
-        if !n >= !cap then grow ();
-        Array.unsafe_set !ids !n unk_id;
-        Array.unsafe_set !token_strs !n unk_token_str;
-        Array.unsafe_set !offsets_arr !n (base, base + seq_len);
-        incr n
-      end
-      else begin
-        pos := 0;
-        is_unk := false;
-        let start_n = !n in
-        while !pos < seq_len && not !is_unk do
-          let match_start = !pos in
-          current := 0;
-          stopped := false;
-          last_id := -1;
-          last_end := !pos;
-          if !pos > 0 then begin
-            i_ref := 0;
-            while !i_ref < prefix_len && not !stopped do
-              let child =
-                trie_step trie !current
-                  (Char.code (String.unsafe_get prefix !i_ref))
-              in
-              if child < 0 then stopped := true
-              else begin
-                current := child;
-                incr i_ref
-              end
-            done
-          end;
-          if not !stopped then begin
-            j_ref := !pos;
-            while !j_ref < seq_len && not !stopped do
-              let child =
-                trie_step trie !current
-                  (Char.code (String.unsafe_get fragment !j_ref))
-              in
-              if child < 0 then stopped := true
-              else begin
-                current := child;
-                incr j_ref;
-                let tid = Array.unsafe_get trie.trie_ids child in
-                if tid >= 0 then begin
-                  last_id := tid;
-                  last_end := !j_ref
-                end
-              end
-            done
-          end;
-          if !last_id >= 0 then begin
-            if !n >= !cap then grow ();
-            Array.unsafe_set !ids !n !last_id;
-            Array.unsafe_set !token_strs !n (Array.unsafe_get vocab_r !last_id);
-            Array.unsafe_set !offsets_arr !n
-              (base + match_start, base + !last_end);
-            incr n;
-            pos := !last_end
-          end
-          else is_unk := true
-        done;
-        if !is_unk then begin
-          n := start_n;
-          if !n >= !cap then grow ();
-          Array.unsafe_set !ids !n unk_id;
-          Array.unsafe_set !token_strs !n unk_token_str;
-          Array.unsafe_set !offsets_arr !n (base, base + seq_len);
-          n := start_n + 1
-        end
-      end
+(* The ids of [text.\[pos..pos+len)], appended to [ids]. A word no run of
+   subwords covers is one unknown token, so the ids already written for it are
+   dropped. The trie cursors are held outside the walk: a [ref] taken per
+   position would allocate once per subword. *)
+let encode_into model ids text ~pos ~len =
+  if Hashtbl.length model.vocab > 0 && len > 0 then begin
+    let stop = pos + len in
+    let chars = ref 0 in
+    for k = pos to stop - 1 do
+      if Char.code (String.unsafe_get text k) land 0xC0 <> 0x80 then incr chars
     done;
-    let total = !n in
-    if total = 0 then Encoding.empty
-    else
-      let final_ids = if total = !cap then !ids else Array.sub !ids 0 total in
-      let final_strs =
-        if total = !cap then !token_strs else Array.sub !token_strs 0 total
-      in
-      let final_off =
-        if total = !cap then !offsets_arr else Array.sub !offsets_arr 0 total
-      in
-      Encoding.create ~ids:final_ids ~type_ids:(Array.make total type_id)
-        ~tokens:final_strs ~words:(Array.make total None) ~offsets:final_off
-        ~special_tokens_mask:(Array.make total 0)
-        ~attention_mask:(Array.make total 1) ()
+    if !chars > model.max_input_chars_per_word then Ints.add ids model.unk_id
+    else begin
+      let trie = model.trie in
+      let prefix = model.continuing_subword_prefix in
+      let prefix_len = String.length prefix in
+      let written = Ints.length ids in
+      let p = ref pos and unknown = ref false in
+      let node = ref 0 and stopped = ref false in
+      let last_id = ref 0 and last_end = ref 0 and i = ref 0 in
+      while !p < stop && not !unknown do
+        node := 0;
+        stopped := false;
+        last_id := -1;
+        last_end := !p;
+        if !p > pos then begin
+          i := 0;
+          while !i < prefix_len && not !stopped do
+            let child =
+              trie_step trie !node (Char.code (String.unsafe_get prefix !i))
+            in
+            if child < 0 then stopped := true
+            else begin
+              node := child;
+              incr i
+            end
+          done
+        end;
+        if not !stopped then begin
+          i := !p;
+          while !i < stop && not !stopped do
+            let child =
+              trie_step trie !node (Char.code (String.unsafe_get text !i))
+            in
+            if child < 0 then stopped := true
+            else begin
+              node := child;
+              incr i;
+              let id = Array.unsafe_get trie.trie_ids child in
+              if id >= 0 then begin
+                last_id := id;
+                last_end := !i
+              end
+            end
+          done
+        end;
+        if !last_id >= 0 then begin
+          Ints.add ids !last_id;
+          p := !last_end
+        end
+        else unknown := true
+      done;
+      if !unknown then begin
+        Ints.truncate ids written;
+        Ints.add ids model.unk_id
+      end
+    end
+  end
 
+let token_table model = model.vocab_r
+let len_table model = model.len_table
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =

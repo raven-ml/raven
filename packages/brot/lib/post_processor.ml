@@ -58,15 +58,6 @@ type t =
 let special_token ~id ~token ~type_id =
   Encoding.token ~id ~token ~offset:(0, 0) ~type_id ~special:true
 
-let with_type_id enc type_id =
-  Encoding.create ~ids:(Encoding.ids enc)
-    ~type_ids:(Array.make (Encoding.length enc) type_id)
-    ~tokens:(Encoding.tokens enc) ~words:(Encoding.word_ids enc)
-    ~offsets:(Encoding.offsets enc)
-    ~special_tokens_mask:(Encoding.special_tokens_mask enc)
-    ~attention_mask:(Encoding.attention_mask enc)
-    ~overflowing:(Encoding.overflowing enc) ()
-
 let build_special_lookup special_tokens =
   let tbl = Hashtbl.create (List.length special_tokens + 1) in
   List.iter (fun tok -> Hashtbl.replace tbl tok.key tok) special_tokens;
@@ -109,11 +100,12 @@ let json_str_int_pair fields name ~default =
 (* The characters trimmed off each end of a byte-level token are the space
    marker U+0120 and those with the White_Space property. A tab or a newline
    encodes to U+0109 or U+010A, which are letters, so a token made of them keeps
-   its offsets. *)
+   its offsets. [chars] is how many characters the token has in all, which is
+   what says that the whole of it is trimmable. *)
 let count_trimmable token =
   let stop = String.length token in
-  let rec loop i leading trailing at_start =
-    if i >= stop then (leading, trailing)
+  let rec loop i leading trailing chars at_start =
+    if i >= stop then (leading, trailing, chars)
     else
       let c = Char_class.at token i ~stop in
       let len = Char_class.at_len c in
@@ -124,10 +116,10 @@ let count_trimmable token =
       if trimmable then
         loop (i + len)
           (if at_start then leading + 1 else leading)
-          (trailing + 1) at_start
-      else loop (i + len) leading 0 false
+          (trailing + 1) (chars + 1) at_start
+      else loop (i + len) leading 0 (chars + 1) false
   in
-  loop 0 0 0 true
+  loop 0 0 0 0 true
 
 let trim_offset ~add_prefix_space enc_tokens idx (start, stop) =
   if start >= stop then (start, stop)
@@ -135,24 +127,32 @@ let trim_offset ~add_prefix_space enc_tokens idx (start, stop) =
     let token =
       if idx < Array.length enc_tokens then enc_tokens.(idx) else ""
     in
-    let leading, trailing = count_trimmable token in
-    let start =
-      if leading = 0 then start
+    let leading, trailing, chars = count_trimmable token in
+    if leading = 0 && trailing = 0 then (start, stop)
+    else
+      (* The space a byte-level pre-tokenizer prepends is not in the input, so
+         trimming it would move the offset past the first real character. Two of
+         them it did not add, and both go. *)
+      let leading =
+        if add_prefix_space && leading = 1 && (idx = 0 || start = 0) then 0
+        else leading
+      in
+      if trailing >= chars then
+        (* Nothing but white space: the token stands for no text, so its span
+           closes rather than losing a byte per character. The counts are
+           characters of the token and the span is bytes of the input, and the
+           two only agree when the token spells the bytes it stands for — a
+           prepended space, which is in no input, is exactly when they do
+           not. *)
+        let at = if leading = 0 then start else stop in
+        (at, at)
       else
-        (* The space a byte-level pre-tokenizer prepends is not in the input, so
-           trimming it would move the offset past the first real character. Two
-           of them it did not add, and both go. *)
-        let leading =
-          if add_prefix_space && leading = 1 && (idx = 0 || start = 0) then 0
-          else leading
+        let start = if leading = 0 then start else min (start + leading) stop in
+        let stop =
+          if trailing > 0 && stop >= trailing then max (stop - trailing) start
+          else stop
         in
-        min (start + leading) stop
-    in
-    let stop =
-      if trailing > 0 && stop >= trailing then max (stop - trailing) start
-      else stop
-    in
-    (start, stop)
+        (start, stop)
 
 let trim_encodings ~add_prefix_space encodings =
   List.map
@@ -197,7 +197,7 @@ let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
   in
   (* RoBERTa has a single segment: the second sequence of a pair keeps type id
      0, with or without special tokens. *)
-  let encodings = List.map (fun enc -> with_type_id enc 0) encodings in
+  let encodings = List.map (fun enc -> Encoding.with_type_id enc 0) encodings in
   if not add_special_tokens then encodings
   else
     let cls_str, cls_id = cls in
@@ -335,60 +335,21 @@ let find_special special_tokens key =
   | Some special -> special
   | None -> invalid_arg (err_unknown_special key)
 
-let piece_length source special_tokens = function
-  | Piece_sequence { id; _ } ->
-      Encoding.length (source_encoding source (sequence_id_to_index id))
-  | Piece_special { key; _ } ->
-      List.length (find_special special_tokens key).value_ids
-
-let build_encoding_from_pieces pieces source special_tokens =
-  let total =
-    List.fold_left
-      (fun acc piece -> acc + piece_length source special_tokens piece)
-      0 pieces
-  in
-  let ids = Array.make total 0 in
-  let type_ids = Array.make total 0 in
-  let tokens = Array.make total "" in
-  let words = Array.make total None in
-  let offsets = Array.make total (0, 0) in
-  let special_mask = Array.make total 0 in
-  let attention = Array.make total 0 in
-  let pos = ref 0 in
-  List.iter
-    (function
-      | Piece_sequence { id; type_id } ->
-          let src = source_encoding source (sequence_id_to_index id) in
-          let len = Encoding.length src in
-          let at = !pos in
-          Array.blit (Encoding.ids src) 0 ids at len;
-          Array.fill type_ids at len type_id;
-          Array.blit (Encoding.tokens src) 0 tokens at len;
-          Array.blit (Encoding.word_ids src) 0 words at len;
-          Array.blit (Encoding.offsets src) 0 offsets at len;
-          Array.blit (Encoding.special_tokens_mask src) 0 special_mask at len;
-          Array.blit (Encoding.attention_mask src) 0 attention at len;
-          pos := at + len
-      | Piece_special { key; type_id } ->
-          let special = find_special special_tokens key in
-          let rec write value_ids value_tokens =
-            match (value_ids, value_tokens) with
-            | id :: rest_ids, token :: rest_tokens ->
-                let at = !pos in
-                ids.(at) <- id;
-                type_ids.(at) <- type_id;
-                tokens.(at) <- token;
-                special_mask.(at) <- 1;
-                attention.(at) <- 1;
-                pos := at + 1;
-                write rest_ids rest_tokens
-            | [], [] -> ()
-            | _ -> invalid_arg (err_mismatch key)
-          in
-          write special.value_ids special.value_tokens)
-    pieces;
-  Encoding.create ~ids ~type_ids ~tokens ~words ~offsets
-    ~special_tokens_mask:special_mask ~attention_mask:attention ()
+(* A piece keeps the arrays of what it was built from, so a sequence that has
+   not worked out its tokens, offsets or word ids still has not. *)
+let encoding_of_piece source special_tokens = function
+  | Piece_sequence { id; type_id } ->
+      Encoding.with_type_id
+        (source_encoding source (sequence_id_to_index id))
+        type_id
+  | Piece_special { key; type_id } ->
+      let special = find_special special_tokens key in
+      if List.compare_lengths special.value_ids special.value_tokens <> 0 then
+        invalid_arg (err_mismatch key);
+      Encoding.concat_list
+        (List.map2
+           (fun id token -> special_token ~id ~token ~type_id)
+           special.value_ids special.value_tokens)
 
 (* Without special tokens the template still decides the order and type ids of
    the sequences; only its special pieces are dropped. A template left with a
@@ -405,8 +366,12 @@ let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
     match pieces with
     | [ Piece_sequence { id; type_id } ] ->
         let src = source_encoding source (sequence_id_to_index id) in
-        [ with_type_id src type_id ]
-    | _ -> [ build_encoding_from_pieces pieces source special_tokens ]
+        [ Encoding.with_type_id src type_id ]
+    | _ ->
+        [
+          Encoding.concat_list
+            (List.map (encoding_of_piece source special_tokens) pieces);
+        ]
   in
   match Array.length source with
   | 0 -> []
@@ -435,9 +400,65 @@ let rec process_list processor encodings ~add_special_tokens =
 
 let process processor ?pair enc ~add_special_tokens =
   let encodings =
-    match pair with None -> [ enc ] | Some p -> [ enc; with_type_id p 1 ]
+    match pair with
+    | None -> [ enc ]
+    | Some p -> [ enc; Encoding.with_type_id p 1 ]
   in
   Encoding.concat_list (process_list processor encodings ~add_special_tokens)
+
+(* What a processor puts around a single sequence, when that is all it does to
+   its ids. A template says so structurally: the pieces before the one sequence
+   it names are the prefix and those after it the suffix. *)
+let template_affixes pieces special_tokens =
+  let ids key = Array.of_list (find_special special_tokens key).value_ids in
+  let names_sequence = function Piece_sequence _ -> true | _ -> false in
+  let special_ids pieces =
+    Array.concat
+      (List.filter_map
+         (function Piece_special { key; _ } -> Some (ids key) | _ -> None)
+         pieces)
+  in
+  match List.partition names_sequence pieces with
+  | [ _ ], _ ->
+      let before, after =
+        let rec split before = function
+          | piece :: rest when names_sequence piece -> (List.rev before, rest)
+          | piece :: rest -> split (piece :: before) rest
+          | [] -> (List.rev before, [])
+        in
+        split [] pieces
+      in
+      Some (special_ids before, special_ids after)
+  | _ -> None
+
+let rec affixes processor ~add_special_tokens =
+  let wrap prefix suffix =
+    if add_special_tokens then Some ([| prefix |], [| suffix |])
+    else Some ([||], [||])
+  in
+  match processor with
+  | Bert { sep = _, sep; cls = _, cls } -> wrap cls sep
+  | Roberta { sep = _, sep; cls = _, cls; _ } -> wrap cls sep
+  | ByteLevel _ -> Some ([||], [||])
+  | Template { single; special_tokens; _ } ->
+      let pieces =
+        if add_special_tokens then single
+        else
+          List.filter (function Piece_special _ -> false | _ -> true) single
+      in
+      template_affixes pieces special_tokens
+  | Sequence processors ->
+      (* Each processor wraps what the one before it produced. *)
+      List.fold_left
+        (fun affixed processor ->
+          match (affixed, affixes processor ~add_special_tokens) with
+          | Some (prefix, suffix), Some (outer_prefix, outer_suffix) ->
+              Some
+                ( Array.append outer_prefix prefix,
+                  Array.append suffix outer_suffix )
+          | _ -> None)
+        (Some ([||], [||]))
+        processors
 
 let rec added_tokens processor ~is_pair =
   match processor with

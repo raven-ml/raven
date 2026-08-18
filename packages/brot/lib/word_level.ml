@@ -6,7 +6,10 @@
 type t = {
   vocab : (string, int) Hashtbl.t;
   vocab_r : (int, string) Hashtbl.t;
+  token_table : string array;
+  len_table : int array;
   unk_token : string;
+  unk_id : int;
 }
 
 let create ?(vocab = []) ?(unk_token = "<unk>") () =
@@ -18,35 +21,42 @@ let create ?(vocab = []) ?(unk_token = "<unk>") () =
       Hashtbl.replace vocab_tbl token id;
       Hashtbl.replace vocab_r_tbl id token)
     vocab;
-  { vocab = vocab_tbl; vocab_r = vocab_r_tbl; unk_token }
+  let max_id = List.fold_left (fun acc (_, id) -> max acc id) (-1) vocab in
+  let token_table = Array.make (max_id + 1) "" in
+  List.iter (fun (token, id) -> token_table.(id) <- token) vocab;
+  let len_table = Array.map String.length token_table in
+  let unk_id =
+    match Hashtbl.find_opt vocab_tbl unk_token with Some id -> id | None -> -1
+  in
+  if unk_id >= 0 then len_table.(unk_id) <- 0;
+  {
+    vocab = vocab_tbl;
+    vocab_r = vocab_r_tbl;
+    token_table;
+    len_table;
+    unk_token;
+    unk_id;
+  }
 
 let add_token vocab vocab_r token id =
   Hashtbl.replace vocab token id;
   Hashtbl.replace vocab_r id token
 
-let tokenize model text =
-  if String.length text = 0 then []
-  else
-    (* Match HuggingFace tokenizers semantics exactly: 1. Try to find token in
-       vocab 2. Fall back to UNK token if available 3. Return empty list if
-       neither exists (error case) *)
-    match Hashtbl.find_opt model.vocab text with
-    | Some id -> [ (id, text, (0, String.length text)) ]
-    | None -> (
-        match Hashtbl.find_opt model.vocab model.unk_token with
-        | Some unk_id -> [ (unk_id, model.unk_token, (0, String.length text)) ]
-        | None -> [] (* Token not found and no UNK token - return empty *))
+(* A word absent from the vocabulary is the unknown token, and nothing at all
+   when the vocabulary does not hold that either. *)
+let encode_into model ids text ~pos ~len =
+  if len > 0 then begin
+    let word =
+      if pos = 0 && len = String.length text then text
+      else String.sub text pos len
+    in
+    match Hashtbl.find_opt model.vocab word with
+    | Some id -> Ints.add ids id
+    | None -> if model.unk_id >= 0 then Ints.add ids model.unk_id
+  end
 
-let tokenize_ids model text =
-  if String.length text = 0 then [||]
-  else
-    match Hashtbl.find_opt model.vocab text with
-    | Some id -> [| id |]
-    | None -> (
-        match Hashtbl.find_opt model.vocab model.unk_token with
-        | Some unk_id -> [| unk_id |]
-        | None -> [||])
-
+let token_table model = model.token_table
+let len_table model = model.len_table
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 let id_to_token model id = Hashtbl.find_opt model.vocab_r id
 

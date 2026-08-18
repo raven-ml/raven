@@ -13,7 +13,7 @@ field serves a specific purpose in model input preparation:
 | --------------------- | ------------------- | ----------------------------------------------- |
 | `ids`                 | `int array`         | Token IDs for model input                       |
 | `tokens`              | `string array`      | String representation of each token             |
-| `offsets`             | `(int * int) array` | `(start, end)` byte positions in source text    |
+| `offsets`             | `(int * int) array` | `(start, end)` byte positions in the text as given, before normalization |
 | `type_ids`            | `int array`         | Segment IDs: 0 for sentence A, 1 for sentence B |
 | `attention_mask`      | `int array`         | 1 for real tokens, 0 for padding                |
 | `special_tokens_mask` | `int array`         | 1 for special tokens, 0 for content             |
@@ -262,8 +262,8 @@ let text = "hello playing world"
 let enc = encode tokenizer text
 let offsets = Encoding.offsets enc
 (* offsets.(0) = (0, 5)   -> "hello"
-   offsets.(1) = (6, 13)  -> "playing" (start of "play")
-   offsets.(2) = (6, 13)  -> "playing" (extent of "##ing")
+   offsets.(1) = (6, 10)  -> "play"
+   offsets.(2) = (10, 13) -> "ing"
    offsets.(3) = (14, 19) -> "world" *)
 
 (* Extract source span for a token *)

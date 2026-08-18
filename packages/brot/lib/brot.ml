@@ -53,13 +53,31 @@ type algorithm =
   | Alg_unigram of Unigram.t
   | Alg_chars of Chars.t
 
+(* How the pipeline cuts a stretch of normalized text into pretokens. *)
+type cut =
+  | Whole  (** No pre-tokenizer: the stretch is one pretoken. *)
+  | Walk of Pre_tokenizer.t  (** Byte ranges, through {!Pre_tokenizer.fill}. *)
+  | Pieces of Pre_tokenizer.t
+      (** Strings, through {!Pre_tokenizer.pre_tokenize}: the pretokens are not
+          ranges of the text they were cut from. *)
+
 type t = {
   algorithm : algorithm;
   normalizer : Normalizer.t option;
   pre_tokenizer : Pre_tokenizer.t option;
+  cut : cut;
+  (* The rewrite a stretch of text goes through before the walker sees it, as
+     the normalizer that performs it, so that its alignment comes from the same
+     place as the pipeline normalizer's. [None] when the pre-tokenizer walks the
+     text as it is, which is what spares the walked path a substring. *)
+  rewrite : (string -> Normalizer.t option) option;
   post_processor : Post_processor.t option;
   decoder : Decoder.t option;
   added : Added_tokens.t;
+  (* An identifier to its token string and to the source bytes it accounts for,
+     over the model vocabulary and the added tokens together. *)
+  token_table : string array;
+  len_table : int array;
   bos_token : string option;
   eos_token : string option;
   pad_token : string option;
@@ -128,30 +146,30 @@ let alg_save algorithm ~folder ?prefix () =
   | Alg_unigram m -> Unigram.save m ~folder ()
   | Alg_chars m -> Chars.save m ~folder ()
 
-let alg_tokenize algorithm text =
-  match algorithm with
-  | Alg_bpe m ->
-      Bpe.tokenize m text
-      |> List.map (fun (tok : Bpe.token) -> (tok.id, tok.value, tok.offsets))
-  | Alg_wordpiece m ->
-      Wordpiece.tokenize m text
-      |> List.map (fun (tok : Wordpiece.token) ->
-          (tok.id, tok.value, tok.offsets))
-  | Alg_wordlevel m -> Word_level.tokenize m text
-  | Alg_unigram m -> Unigram.tokenize m text
-  | Alg_chars m -> Chars.tokenize m text
+let alg_token_table = function
+  | Alg_bpe m -> Bpe.token_table m
+  | Alg_wordpiece m -> Wordpiece.token_table m
+  | Alg_wordlevel m -> Word_level.token_table m
+  | Alg_unigram m -> Unigram.token_table m
+  | Alg_chars m -> Chars.token_table m
 
-let alg_tokenize_ids algorithm text =
+let alg_len_table = function
+  | Alg_bpe m -> Bpe.len_table m
+  | Alg_wordpiece m -> Wordpiece.len_table m
+  | Alg_wordlevel m -> Word_level.len_table m
+  | Alg_unigram m -> Unigram.len_table m
+  | Alg_chars m -> Chars.len_table m
+
+(* The model's span encoder for a document. A BPE model's merge buffers and
+   pretoken cache are claimed once for the document rather than once per span,
+   and the closure keeps the dispatch out of the span loop. *)
+let with_span_encoder algorithm f =
   match algorithm with
-  | Alg_bpe m -> Bpe.tokenize_ids m text
-  | Alg_wordpiece m -> Wordpiece.tokenize_ids m text
-  | Alg_wordlevel m -> Word_level.tokenize_ids m text
-  | Alg_unigram m ->
-      Unigram.tokenize m text
-      |> List.map (fun (id, _, _) -> id)
-      |> Array.of_list
-  | Alg_chars m ->
-      Chars.tokenize m text |> List.map (fun (id, _, _) -> id) |> Array.of_list
+  | Alg_bpe m -> Bpe.with_state m (fun st -> f (Bpe.encode_into m st))
+  | Alg_wordpiece m -> f (Wordpiece.encode_into m)
+  | Alg_wordlevel m -> f (Word_level.encode_into m)
+  | Alg_unigram m -> f (Unigram.encode_into m)
+  | Alg_chars m -> f (Chars.encode_into m)
 
 let alg_name = function
   | Alg_bpe _ -> "BPE"
@@ -236,8 +254,110 @@ let added_tokens_of algorithm tokens =
 
 (* Construction *)
 
+let cut_of = function
+  | None -> Whole
+  | Some pre -> (
+      match Pre_tokenizer.plan pre with
+      | Pre_tokenizer.Walk _ -> Walk pre
+      | Pre_tokenizer.Pieces -> Pieces pre)
+
+(* A pre-tokenizer that rewrites the text before walking it does so with the
+   same effect as a normalizer, and whether it fires is decided by the text it
+   is given, so the rewrite is a normalizer picked per stretch. Prepending the
+   marker before or after replacing the spaces gives the same text, the marker
+   holding no space. *)
+let rewriter = function
+  | None -> None
+  | Some pre -> (
+      match Pre_tokenizer.plan pre with
+      | Pre_tokenizer.Pieces | Pre_tokenizer.Walk { rewrite = Verbatim; _ } ->
+          None
+      | Pre_tokenizer.Walk { rewrite = Prefix_space; _ } ->
+          let space = Normalizer.prepend " " in
+          Some
+            (fun text ->
+              if String.length text > 0 && String.unsafe_get text 0 <> ' ' then
+                Some space
+              else None)
+      | Pre_tokenizer.Walk { rewrite = Space_marker { marker; prepend }; _ } ->
+          let mark = Normalizer.replace ~pattern:" " ~replacement:marker in
+          let mark_and_prepend =
+            Normalizer.sequence [ mark; Normalizer.prepend marker ]
+          in
+          Some
+            (fun text ->
+              if String.length text = 0 then None
+              else if
+                prepend
+                && String.unsafe_get text 0 <> ' '
+                && not (String.starts_with ~prefix:marker text)
+              then Some mark_and_prepend
+              else Some mark))
+
+(* An added token's identifier may lie past the model vocabulary. How many
+   source bytes it accounts for is a property of the text it matched rather than
+   of the identifier, so it reads as zero and its span's own end places it. *)
+let id_tables algorithm added =
+  let tokens = alg_token_table algorithm and lens = alg_len_table algorithm in
+  let size =
+    List.fold_left
+      (fun acc (tok : Added_tokens.token) -> max acc (tok.id + 1))
+      (Array.length tokens)
+      (Added_tokens.tokens added)
+  in
+  if size = Array.length tokens then (tokens, lens)
+  else begin
+    let token_table = Array.make size "" in
+    Array.blit tokens 0 token_table 0 (Array.length tokens);
+    let len_table = Array.make size 0 in
+    Array.blit lens 0 len_table 0 (Array.length lens);
+    List.iter
+      (fun (tok : Added_tokens.token) ->
+        if tok.id >= Array.length tokens then
+          token_table.(tok.id) <- tok.content)
+      (Added_tokens.tokens added);
+    (token_table, len_table)
+  end
+
+(* Spans index the text as it is, so a byte-level pre-tokenizer hands the model
+   the raw bytes of a pretoken rather than their encoded form, and the model has
+   to match its vocabulary against those bytes. The flip is derived from the
+   pipeline and is never a knob of its own. *)
+(* Only on the walked path: there the spans index the text as it is, so the
+   model is handed raw bytes. A pre-tokenizer that hands back pieces has already
+   encoded them, and a model flipped to raw bytes would encode them twice. *)
+let byte_level_pipeline pre =
+  match pre with
+  | None -> false
+  | Some pre -> (
+      Pre_tokenizer.encodes_bytes pre
+      &&
+      match Pre_tokenizer.plan pre with
+      | Pre_tokenizer.Walk _ -> true
+      | Pre_tokenizer.Pieces -> false)
+
+(* A model built for another pipeline — one just trained, say — is rebuilt on
+   the same vocabulary and merges. The constructors that hold those already flip
+   the model as they build it, so this only ever fires for the others. *)
+let fit_to_pipeline pre algorithm =
+  match (algorithm, pre) with
+  | Alg_bpe model, _
+    when byte_level_pipeline pre && not (Bpe.get_byte_level model) ->
+      Alg_bpe
+        (Bpe.create
+           ~vocab:(vocab_to_hashtbl (Bpe.get_vocab model))
+           ~merges:(Bpe.get_merges model) ~byte_level:true
+           ~cache_capacity:(Bpe.get_cache_capacity model)
+           ?dropout:(Bpe.get_dropout model) ?unk_token:(Bpe.get_unk_token model)
+           ~fuse_unk:(Bpe.get_fuse_unk model)
+           ~byte_fallback:(Bpe.get_byte_fallback model)
+           ~ignore_merges:(Bpe.get_ignore_merges model)
+           ())
+  | _ -> algorithm
+
 let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     ?eos_token ?pad_token ?unk_token algorithm =
+  let algorithm = fit_to_pipeline pre algorithm in
   let given =
     List.filter (fun (a : added_token) -> a.content <> "") added_tokens
   in
@@ -254,13 +374,18 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     | None -> alg_token_to_id algorithm token
   in
   let pad_id = Option.bind pad_token token_id in
+  let token_table, len_table = id_tables algorithm added in
   {
     algorithm;
     normalizer;
     pre_tokenizer = pre;
+    cut = cut_of pre;
+    rewrite = rewriter pre;
     post_processor = post;
     decoder;
     added;
+    token_table;
+    len_table;
     bos_token;
     eos_token;
     pad_token;
@@ -327,8 +452,9 @@ let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     Alg_bpe
       (Bpe.create ~vocab:vocab_tbl
          ~merges:(Option.value merges ~default:[])
-         ?cache_capacity ?dropout ?unk_token ?continuing_subword_prefix
-         ?end_of_word_suffix ?fuse_unk ?byte_fallback ?ignore_merges ())
+         ~byte_level:(byte_level_pipeline pre) ?cache_capacity ?dropout
+         ?unk_token ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk
+         ?byte_fallback ?ignore_merges ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
@@ -375,7 +501,9 @@ let from_model_file ~vocab ?merges ?normalizer ?pre ?post ?decoder ?added_tokens
   let algorithm =
     match merges with
     | Some merges_file ->
-        Alg_bpe (Bpe.from_files ~vocab_file:vocab ~merges_file)
+        Alg_bpe
+          (Bpe.from_files ~byte_level:(byte_level_pipeline pre)
+             ~vocab_file:vocab ~merges_file ())
     | None -> Alg_wordpiece (Wordpiece.from_file ~vocab_file:vocab)
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
@@ -390,85 +518,257 @@ let add_tokens t tokens =
 
 (* Encoding *)
 
-let normalize t text =
-  match t.normalizer with Some n -> Normalizer.apply n text | None -> text
-
 let slice text start stop =
   if start = 0 && stop = String.length text then text
   else String.sub text start (stop - start)
 
-let pre_tokenize t normalized =
-  match t.pre_tokenizer with
-  | Some pre -> Pre_tokenizer.pre_tokenize pre normalized
-  | None -> [ (normalized, (0, String.length normalized)) ]
-
-let encode_normalized t normalized ~base =
-  let pre_tokens = pre_tokenize t normalized in
-  match (t.algorithm, pre_tokens) with
-  | Alg_bpe m, [ (fragment, _) ] ->
-      Bpe.tokenize_encoding m fragment ~type_id:0 ~base
-  | Alg_wordpiece m, _ ->
-      Wordpiece.tokenize_spans_encoding m pre_tokens ~type_id:0 ~base
-  | _ ->
-      pre_tokens
-      |> List.concat_map (fun (fragment, _) ->
-          alg_tokenize t.algorithm fragment)
-      |> Encoding.from_tokens ~type_id:0 ~base
-
-(* Added tokens are matched before normalization and pre-tokenization: first the
-   ones matched against raw text, then, in each remaining piece once normalized,
-   the ones matched against normalized text. [segment] receives the normalized
-   text of a piece, the range of it left to the model, and where the piece
-   starts in [text]; [added] receives a matched token, the string it was found
-   in and where that string starts in [text]. *)
-let split_added t text ~segment ~added =
-  let len = String.length text in
-  let normalized_pass ~base raw =
-    let normalized = normalize t raw in
-    let normalized_len = String.length normalized in
-    let pos = ref 0 and scanning = ref true in
-    while !scanning do
-      match Added_tokens.find_normalized t.added normalized ~pos:!pos with
-      | None ->
-          segment ~base normalized ~start:!pos ~stop:normalized_len;
-          scanning := false
-      | Some (start, stop, id) ->
-          segment ~base normalized ~start:!pos ~stop:start;
-          added ~base normalized ~start ~stop ~id;
-          pos := stop
-    done
+(* Whether [piece] is the bytes of [text] at [at]: what tells a pre-tokenizer
+   that only cut its input from one that handed back text of its own. *)
+let is_slice text ~at piece =
+  let len = String.length piece in
+  at + len <= String.length text
+  &&
+  let rec same i =
+    i = len
+    || String.unsafe_get text (at + i) = String.unsafe_get piece i
+       && same (i + 1)
   in
-  let pos = ref 0 and scanning = ref true in
-  while !scanning do
-    match Added_tokens.find_raw t.added text ~pos:!pos with
+  same 0
+
+(* The buffers a document is encoded through, one set per domain and claimed for
+   the duration of the document: the ids, and the bounds and marks of the spans
+   they came from. *)
+type scratch = {
+  mutable spans : Spans.t;
+  ids : Ints.t;
+  span_start : Ints.t;
+  span_stop : Ints.t;
+  marks : Ints.t;
+  busy : bool Atomic.t;
+}
+
+let span_chunk = 1024
+
+let new_scratch () =
+  {
+    spans = Spans.create ~capacity:span_chunk;
+    ids = Ints.create ();
+    span_start = Ints.create ();
+    span_stop = Ints.create ();
+    marks = Ints.create ();
+    busy = Atomic.make false;
+  }
+
+let scratch_key = Domain.DLS.new_key new_scratch
+
+(* Threads of one domain share its buffers, each of which has a single writer,
+   so the second to ask gets buffers of its own instead. The claim is given back
+   even when [f] raises. *)
+let with_scratch f =
+  let sc = Domain.DLS.get scratch_key in
+  let sc =
+    if Atomic.compare_and_set sc.busy false true then sc else new_scratch ()
+  in
+  Ints.clear sc.ids;
+  Ints.clear sc.span_start;
+  Ints.clear sc.span_stop;
+  Ints.clear sc.marks;
+  match f sc with
+  | value ->
+      Atomic.set sc.busy false;
+      value
+  | exception e ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      Atomic.set sc.busy false;
+      Printexc.raise_with_backtrace e backtrace
+
+(* A document, encoded into [sc.ids]. [record] keeps what an encoding derives
+   its tokens, offsets and word ids from: the bounds of every span, the id
+   cursor after each of them, and the frames that place the spans back in
+   [text]. A frame is the only thing that needs to know how the text was
+   normalized, so that is handed back exactly when frames are being built, which
+   is why a [Some] map and [record] say the same thing.
+
+   Added tokens matched against raw text cut the input first, then, in each
+   remaining stretch once normalized, the ones matched against normalized text.
+   They never reach the walker or the model, so they cannot be split. *)
+let encode_document t sc text ~record =
+  let frames = ref [] and frame_stops = ref [] in
+  let raw_align = lazy (Run.Known (Normalizer.identity text)) in
+  let close ~literal ~walked ~place ~rewrite ~base = function
+    | None -> ()
+    | Some align ->
+        frames :=
+          { Run.text = walked; literal; place; rewrite; align; base } :: !frames;
+        frame_stops := Ints.length sc.marks :: !frame_stops
+  in
+  let verbatim = Run.Shifted 0 in
+  (* The alignment of a normalization is left for the offsets to ask for, so a
+     document normalizes once whether or not they are ever read. *)
+  let apply n source =
+    ( Normalizer.apply n source,
+      if record then
+        Some (Run.Deferred { normalizer = n; source; alignment = None })
+      else None )
+  in
+  let normalized raw =
+    match t.normalizer with
+    | Some n -> apply n raw
     | None ->
-        if !pos < len then normalized_pass ~base:!pos (slice text !pos len);
-        scanning := false
-    | Some (start, stop, id) ->
-        if !pos < start then normalized_pass ~base:!pos (slice text !pos start);
-        added ~base:0 text ~start ~stop ~id;
-        pos := stop
-  done
+        ( raw,
+          if record then Some (Run.Known (Normalizer.identity raw)) else None )
+  in
+  let rewritten choose source =
+    match choose source with Some n -> apply n source | None -> (source, None)
+  in
+  with_span_encoder t.algorithm (fun encode ->
+      let walk pre walked ~pos ~stop =
+        let p = ref pos in
+        while !p < stop do
+          Spans.clear sc.spans;
+          let resume = Pre_tokenizer.fill pre walked ~pos:!p ~stop sc.spans in
+          let n = Spans.count sc.spans in
+          if n = 0 && resume = !p then
+            sc.spans <- Spans.create ~capacity:(2 * Spans.capacity sc.spans)
+          else begin
+            let spans = sc.spans in
+            for k = 0 to n - 1 do
+              let start = Spans.start spans k in
+              let finish = Spans.stop spans k in
+              encode sc.ids walked ~pos:start ~len:(finish - start);
+              if record then begin
+                Ints.add sc.span_start start;
+                Ints.add sc.span_stop finish;
+                Ints.add sc.marks (Ints.length sc.ids)
+              end
+            done;
+            p := resume
+          end
+        done
+      in
+      (* A stretch of normalized text with no added token left in it. *)
+      let segment norm align ~base ~start ~stop =
+        if start < stop then
+          match t.cut with
+          | Whole ->
+              encode sc.ids norm ~pos:start ~len:(stop - start);
+              if record then begin
+                Ints.add sc.span_start start;
+                Ints.add sc.span_stop stop;
+                Ints.add sc.marks (Ints.length sc.ids)
+              end;
+              close ~literal:false ~walked:norm ~place:verbatim ~rewrite:None
+                ~base align
+          | Walk pre -> (
+              match t.rewrite with
+              | None ->
+                  walk pre norm ~pos:start ~stop;
+                  close ~literal:false ~walked:norm ~place:verbatim
+                    ~rewrite:None ~base align
+              | Some choose ->
+                  let walked, rewrite =
+                    rewritten choose (slice norm start stop)
+                  in
+                  walk pre walked ~pos:0 ~stop:(String.length walked);
+                  close ~literal:false ~walked ~place:(Run.Shifted start)
+                    ~rewrite ~base align)
+          | Pieces pre ->
+              let source = slice norm start stop in
+              let length = String.length source in
+              List.iter
+                (fun (piece, (at, finish)) ->
+                  let len = String.length piece in
+                  encode sc.ids piece ~pos:0 ~len;
+                  if record then begin
+                    Ints.add sc.span_start 0;
+                    Ints.add sc.span_stop len;
+                    Ints.add sc.marks (Ints.length sc.ids)
+                  end;
+                  (* A piece the pre-tokenizer cut from the text is that text
+                     byte for byte, and its tokens are placed inside it; one it
+                     rewrote — a metaspace marker — can only be placed whole.
+                     The range it reports is taken on trust no further than the
+                     text it was cut from, since a pre-tokenizer that rewrites
+                     may report the range of what it produced instead. *)
+                  let at = min (max 0 at) length in
+                  let finish = min (max at finish) length in
+                  let place =
+                    if is_slice source ~at piece then Run.Shifted (start + at)
+                    else Run.Fixed { start = start + at; stop = start + finish }
+                  in
+                  close ~literal:false ~walked:piece ~place ~rewrite:None ~base
+                    align)
+                (Pre_tokenizer.pre_tokenize pre source)
+      in
+      (* An added token is one span of one id, and its token string is the text
+         it matched: [lstrip] and [rstrip] take in the white space beside it,
+         which the identifier alone does not describe. *)
+      let literal walked align ~base ~start ~stop ~id =
+        Ints.add sc.ids id;
+        if record then begin
+          Ints.add sc.span_start start;
+          Ints.add sc.span_stop stop;
+          Ints.add sc.marks (Ints.length sc.ids)
+        end;
+        close ~literal:true ~walked ~place:verbatim ~rewrite:None ~base align
+      in
+      let stretch ~base raw =
+        let norm, align = normalized raw in
+        let stop = String.length norm in
+        let pos = ref 0 and scanning = ref true in
+        while !scanning do
+          match Added_tokens.find_normalized t.added norm ~pos:!pos with
+          | None ->
+              segment norm align ~base ~start:!pos ~stop;
+              scanning := false
+          | Some (start, finish, id) ->
+              segment norm align ~base ~start:!pos ~stop:start;
+              literal norm align ~base ~start ~stop:finish ~id;
+              pos := finish
+        done
+      in
+      if Added_tokens.is_empty t.added then stretch ~base:0 text
+      else begin
+        let len = String.length text in
+        let pos = ref 0 and scanning = ref true in
+        while !scanning do
+          match Added_tokens.find_raw t.added text ~pos:!pos with
+          | None ->
+              if !pos < len then stretch ~base:!pos (slice text !pos len);
+              scanning := false
+          | Some (start, finish, id) ->
+              if !pos < start then stretch ~base:!pos (slice text !pos start);
+              literal text
+                (if record then Some (Lazy.force raw_align) else None)
+                ~base:0 ~start ~stop:finish ~id;
+              pos := finish
+        done
+      end;
+      if not record then None
+      else
+        Some
+          {
+            Run.frames = Array.of_list (List.rev !frames);
+            frame_stop = Array.of_list (List.rev !frame_stops);
+            span_start = Ints.to_array sc.span_start;
+            span_stop = Ints.to_array sc.span_stop;
+            marks = Ints.to_array sc.marks;
+            token_table = t.token_table;
+            len_table = t.len_table;
+          })
 
 let encode_text t text =
-  if Added_tokens.is_empty t.added then
-    encode_normalized t (normalize t text) ~base:0
-  else begin
-    let parts = ref [] in
-    split_added t text
-      ~segment:(fun ~base normalized ~start ~stop ->
-        if start < stop then
-          let piece = slice normalized start stop in
-          parts := encode_normalized t piece ~base:(base + start) :: !parts)
-      ~added:(fun ~base source ~start ~stop ~id ->
-        let token = String.sub source start (stop - start) in
-        let offset = (base + start, base + stop) in
-        (* Only the tokens a post-processor inserts are masked: HuggingFace
-           reports 0 for an added token found in the input, special or not. *)
-        parts :=
-          Encoding.token ~id ~token ~offset ~type_id:0 ~special:false :: !parts);
-    Encoding.concat_list (List.rev !parts)
-  end
+  with_scratch (fun sc ->
+      let run = encode_document t sc text ~record:true in
+      let ids = Ints.to_array sc.ids in
+      match run with
+      | Some run -> Encoding.of_run run ~ids
+      | None -> Encoding.empty)
+
+let ids_of_text t text =
+  with_scratch (fun sc ->
+      let (_ : Run.t option) = encode_document t sc text ~record:false in
+      Ints.to_array sc.ids)
 
 let post_process t ~add_special primary pair =
   match t.post_processor with
@@ -478,14 +778,69 @@ let post_process t ~add_special primary pair =
       Post_processor.process processor ?pair primary
         ~add_special_tokens:add_special
 
+(* Truncation happens before the post-processor runs, on a budget the tokens it
+   will add are taken out of, so that a special token never pushes content past
+   [max_length]. A pair gives up tokens from whichever of the two is longer at
+   the time, one at a time, until the budget is met. *)
+(* How HuggingFace divides a budget between the two sequences of a pair,
+   transcribed from the longest-first branch of [utils/truncation.rs] in
+   tokenizers 0.23.1: the shorter sequence keeps what it has while the longer
+   can give up the difference, and otherwise the budget is halved, the odd token
+   going to the longer of the two. *)
+let split_budget ~budget first second =
+  let swap = first > second in
+  let short = if swap then second else first in
+  let long = if short > budget then short else max short (budget - short) in
+  let short, long =
+    if short + long > budget then (budget / 2, (budget / 2) + (budget mod 2))
+    else (short, long)
+  in
+  if swap then (long, short) else (short, long)
+
+let truncate_before_post t ~add_special_tokens ~truncation primary pair =
+  match truncation with
+  | None -> (primary, pair)
+  | Some { max_length; direction } -> (
+      let added =
+        match t.post_processor with
+        | Some processor when add_special_tokens ->
+            Post_processor.added_tokens processor ~is_pair:(Option.is_some pair)
+        | _ -> 0
+      in
+      let budget = max 0 (max_length - added) in
+      let truncate encoding length =
+        if Encoding.length encoding <= length then encoding
+        else Encoding.truncate encoding ~max_length:length ~stride:0 ~direction
+      in
+      match pair with
+      | None -> (truncate primary budget, None)
+      | Some pair ->
+          let first, second =
+            split_budget ~budget (Encoding.length primary)
+              (Encoding.length pair)
+          in
+          (truncate primary first, Some (truncate pair second)))
+
+(* An overflowing window is a sequence in its own right, so the post-processor
+   runs over it too and it carries the same special tokens. The windows of a
+   pair's second sequence are dropped: HuggingFace pairs every window of one
+   with every window of the other, a shape brot's truncation — which has no
+   stride — has no use for. *)
 let encode_single t ~add_special_tokens ~truncation seq =
   let primary = encode_text t seq.text in
   let pair = Option.map (encode_text t) seq.pair in
+  let primary, pair =
+    truncate_before_post t ~add_special_tokens ~truncation primary pair
+  in
   let processed = post_process t ~add_special:add_special_tokens primary pair in
-  match truncation with
-  | None -> processed
-  | Some { max_length; direction } ->
-      Encoding.truncate processed ~max_length ~stride:0 ~direction
+  match Encoding.overflowing primary with
+  | [] -> processed
+  | windows ->
+      Encoding.with_overflowing processed
+        (List.map
+           (fun window ->
+             post_process t ~add_special:add_special_tokens window None)
+           windows)
 
 (* Padding *)
 
@@ -512,9 +867,17 @@ let resolve_pad t (cfg : padding) =
 
 let round_up_to_multiple n m = if n mod m = 0 then n else (n + m - 1) / m * m
 
+(* How long a sequence of [length] tokens is padded to. Only `Batch_longest
+   looks past the sequence itself, so it is the caller's to resolve. *)
+let pad_target cfg length =
+  match cfg.length with
+  | `Fixed n -> n
+  | `Batch_longest -> length
+  | `To_multiple m -> if m <= 0 then length else round_up_to_multiple length m
+
 let apply_padding t encodings = function
   | None -> encodings
-  | Some cfg -> (
+  | Some cfg ->
       let pad_token, pad_id, pad_type_id = resolve_pad t cfg in
       let direction = cfg.direction in
       let pad enc target =
@@ -523,22 +886,17 @@ let apply_padding t encodings = function
           Encoding.pad enc ~target_length:target ~pad_id ~pad_type_id ~pad_token
             ~direction
       in
-      match cfg.length with
-      | `Fixed n -> List.map (fun enc -> pad enc n) encodings
-      | `Batch_longest ->
-          let max_len =
-            List.fold_left
-              (fun acc enc -> max acc (Encoding.length enc))
-              0 encodings
-          in
-          List.map (fun enc -> pad enc max_len) encodings
-      | `To_multiple m ->
-          if m <= 0 then encodings
-          else
-            List.map
-              (fun enc ->
-                pad enc (round_up_to_multiple (Encoding.length enc) m))
-              encodings)
+      let longest =
+        List.fold_left
+          (fun acc enc -> max acc (Encoding.length enc))
+          0 encodings
+      in
+      List.map
+        (fun enc ->
+          match cfg.length with
+          | `Batch_longest -> pad enc longest
+          | _ -> pad enc (pad_target cfg (Encoding.length enc)))
+        encodings
 
 (* Parallel batch encoding *)
 
@@ -606,49 +964,61 @@ let encode_pairs_batch t ?(add_special_tokens = true) ?padding ?truncation =
       in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
 
-let ids_of_normalized t normalized =
-  pre_tokenize t normalized
-  |> List.map (fun (fragment, _) -> alg_tokenize_ids t.algorithm fragment)
-
-let encode_ids t ?pair ?add_special_tokens ?padding ?truncation text =
-  let use_fast_path =
-    Option.is_none pair
-    && (add_special_tokens = None || add_special_tokens = Some false)
-    && Option.is_none padding && Option.is_none truncation
-    && Option.is_none t.post_processor
+(* Asked for the ids alone, there is no encoding to build whenever the
+   post-processor only wraps the sequence: what is left is the body, a prefix
+   and a suffix, with truncation and padding over the three. A pair genuinely
+   interleaves two sequences, so it goes the long way, and so does anything the
+   post-processor does not describe as affixes. Overflowing windows have nowhere
+   to go in an [int array] and are dropped. *)
+let encode_ids t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
+  let affixes =
+    match pair with
+    | Some _ -> None
+    | None -> (
+        match t.post_processor with
+        | None -> Some ([||], [||])
+        | Some processor -> Post_processor.affixes processor ~add_special_tokens
+        )
   in
-  if not use_fast_path then
-    Encoding.ids (encode t ?pair ?add_special_tokens ?padding ?truncation text)
-  else
-    let id_arrays =
-      if Added_tokens.is_empty t.added then
-        ids_of_normalized t (normalize t text)
-      else begin
-        let parts = ref [] in
-        split_added t text
-          ~segment:(fun ~base:_ normalized ~start ~stop ->
-            if start < stop then
-              parts :=
-                List.rev_append
-                  (ids_of_normalized t (slice normalized start stop))
-                  !parts)
-          ~added:(fun ~base:_ _ ~start:_ ~stop:_ ~id ->
-            parts := [| id |] :: !parts);
-        List.rev !parts
-      end
-    in
-    let total_len =
-      List.fold_left (fun acc a -> acc + Array.length a) 0 id_arrays
-    in
-    let result = Array.make total_len 0 in
-    let pos = ref 0 in
-    List.iter
-      (fun a ->
-        let len = Array.length a in
-        Array.blit a 0 result !pos len;
-        pos := !pos + len)
-      id_arrays;
-    result
+  match affixes with
+  | None ->
+      Encoding.ids
+        (encode t ?pair ~add_special_tokens ?padding ?truncation text)
+  | Some (prefix, suffix) -> (
+      let body = ids_of_text t text in
+      let body =
+        match truncation with
+        | None -> body
+        | Some { max_length; direction } -> (
+            let budget =
+              max 0 (max_length - Array.length prefix - Array.length suffix)
+            in
+            let length = Array.length body in
+            if length <= budget then body
+            else
+              match direction with
+              | `Right -> Array.sub body 0 budget
+              | `Left -> Array.sub body (length - budget) budget)
+      in
+      let ids =
+        if Array.length prefix = 0 && Array.length suffix = 0 then body
+        else Array.concat [ prefix; body; suffix ]
+      in
+      let length = Array.length ids in
+      match padding with
+      | None -> ids
+      | Some cfg ->
+          let target = pad_target cfg length in
+          if target <= length then ids
+          else begin
+            let _, pad_id, _ = resolve_pad t cfg in
+            let padded = Array.make target pad_id in
+            let at =
+              match cfg.direction with `Left -> target - length | `Right -> 0
+            in
+            Array.blit ids 0 padded at length;
+            padded
+          end)
 
 (* Decoding *)
 
@@ -1010,7 +1380,7 @@ let parse_merge = function
       | _ -> failwith "Invalid merge string format")
   | _ -> failwith "Invalid merge entry"
 
-let alg_of_json mj =
+let alg_of_json ~byte_level mj =
   let mem name = json_mem name mj in
   let str name = json_string_or_null (mem name) in
   let flag name = match mem name with Jsont.Bool (b, _) -> b | _ -> false in
@@ -1024,7 +1394,7 @@ let alg_of_json mj =
       Alg_bpe
         (Bpe.create
            ~vocab:(vocab_to_hashtbl vocab_list)
-           ~merges ?dropout ?unk_token:(str "unk_token")
+           ~merges ~byte_level ?dropout ?unk_token:(str "unk_token")
            ?continuing_subword_prefix:(str "continuing_subword_prefix")
            ?end_of_word_suffix:(str "end_of_word_suffix")
            ~fuse_unk:(flag "fuse_unk") ~byte_fallback:(flag "byte_fallback")
@@ -1073,7 +1443,9 @@ let from_json json =
       json_result_to_option Post_processor.of_json (mem "post_processor")
     in
     let decoder = json_result_to_option Decoder.of_json (mem "decoder") in
-    let algorithm = alg_of_json (mem "model") in
+    let algorithm =
+      alg_of_json ~byte_level:(byte_level_pipeline pre) (mem "model")
+    in
     let added_tokens =
       match mem "added_tokens" with
       | Jsont.Array (l, _) -> List.map added_token_of_json l

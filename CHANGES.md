@@ -1087,6 +1087,30 @@ thread.
 
 ### Brot
 
+- `Encoding.offsets` reports byte spans of the text as it was passed in rather
+  than of the normalized text: a token of `"café"` under an accent-stripping
+  normalizer spans the accented bytes. They were in normalized coordinates
+  before, which for BERT- and LLaMA-style pipelines pointed at the wrong bytes.
+  Reading `offsets` on a pipeline with a normalizer costs a second
+  normalization pass; reading only `ids` costs none.
+- `Encoding.word_ids` is `Some` for every content token, numbering the
+  pretokens of a sequence from `0`, an added token counting as one. It was
+  `None` throughout.
+- `Encoding.tokens`, `Encoding.offsets` and `Encoding.word_ids` are worked out
+  when first read, so `encode` costs no more than `encode_ids` for a caller
+  that only wants the ids.
+- `Brot.encode` truncates before the post-processor runs, on a budget of
+  `max_length` minus the special tokens it will add, and a pair gives up
+  tokens the way HuggingFace's `LongestFirst` does. Truncation ran on the
+  finished encoding before, so special tokens pushed content past
+  `max_length`.
+- `Brot.encode` truncates from the left by keeping the last `max_length`
+  tokens, matching HuggingFace; it previously kept the first and left the rest
+  in `overflowing`.
+- `Brot.encode_ids` is ~5.9× faster on a 64 KB GPT-2 document and allocates
+  about a thousandth of what it did (330 → 56 ns per pretoken, 778k → 0.9k
+  minor words); `Encoding.with_type_id`, `Encoding.with_overflowing` and
+  `Post_processor.affixes` are new.
 - **Breaking:** `Normalizer.replace ~pattern ~replacement` now replaces a
   literal string with a plain scan (2.3× faster and 2.2× less allocation than
   through the regex engine). Regular expressions move to the new

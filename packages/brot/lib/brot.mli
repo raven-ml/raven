@@ -177,7 +177,14 @@ val padding :
 
 val truncation : ?direction:direction -> int -> truncation
 (** [truncation max_length] is a truncation configuration limiting sequences to
-    [max_length] tokens. [direction] defaults to [`Right]. *)
+    [max_length] tokens. [direction] defaults to [`Right]: the tokens kept are
+    the first [max_length], and [`Left] keeps the last.
+
+    Truncation runs before the post-processor, on what is left of [max_length]
+    once the special tokens it will add are counted, so a special token never
+    pushes content out. A [max_length] at or below that count leaves no room for
+    content: the special tokens are still added and the result is longer than
+    [max_length]. *)
 
 (** {1:constructors Constructors} *)
 
@@ -449,6 +456,13 @@ val encode :
     Added tokens occurring in [text] are matched atomically and emitted with
     their own ID, whatever [add_special_tokens] is.
 
+    {!Encoding.offsets} are byte spans of [text] itself, not of the normalized
+    form: a token of ["café"] under a normalizer that strips accents reports the
+    bytes of the accented text. {!Encoding.word_ids} number the pretokens of
+    [text] from [0], an added token counting as one. Both are worked out when
+    they are first read, so a caller that only wants {!Encoding.ids} pays for
+    neither.
+
     - [pair]: a second sentence for sentence-pair tasks. The post-processor
       merges both sequences with appropriate type IDs. Default: none.
     - [add_special_tokens]: whether to insert special tokens via the
@@ -488,7 +502,9 @@ val encode_ids :
   ?truncation:truncation ->
   string ->
   int array
-(** [encode_ids t text] is [Encoding.ids (encode t text)].
+(** [encode_ids t text] is [Encoding.ids (encode t text)], without building the
+    encoding when it can be avoided: the alignment metadata is what costs, and
+    this asks for none of it.
 
     Optional parameters are as in {!encode}. *)
 

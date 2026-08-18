@@ -24,9 +24,20 @@ val create : (string * float) list -> t
 
 (** {1:tokenization Tokenization} *)
 
-val tokenize : t -> string -> (int * string * (int * int)) list
-(** [tokenize t s] is the tokenization of [s] as [(id, token, (start, stop))]
-    triples. Offsets are byte positions in [s]. *)
+val encode_into : t -> Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t ids text ~pos ~len] appends the ids of [text.\[pos..pos+len)]
+    to [ids]. The range must lie within [text]; it is not checked.
+
+    ASCII white space carries no token of its own, and a character the
+    vocabulary does not hold falls back to id [0]. *)
+
+val token_table : t -> string array
+(** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
+*)
+
+val len_table : t -> int array
+(** [len_table t] maps an id to the byte length of its token string. Owned by
+    [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

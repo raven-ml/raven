@@ -6,7 +6,9 @@
   bpe
   char_class
   chars
+  ints
   regex
+  run
   spans
   unigram
   word_level

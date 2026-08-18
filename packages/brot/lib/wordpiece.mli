@@ -49,32 +49,24 @@ val from_file : vocab_file:string -> t
 
 (** {1:tokenization Tokenization} *)
 
-type token = { id : int; value : string; offsets : int * int }
-(** The type for tokens. [id] is the vocabulary index, [value] the string
-    content, and [offsets] the [(start, stop)] byte span in the source text. *)
+val encode_into : t -> Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t ids text ~pos ~len] appends the ids of the word
+    [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
+    checked.
 
-val tokenize : t -> string -> token list
-(** [tokenize t s] is the WordPiece decomposition of [s].
+    A word longer than {!create}'s [max_input_chars_per_word] in UTF-8
+    characters, and one that no run of subwords covers, is the unknown token
+    alone. *)
 
-    If [s] exceeds {!create}'s [max_input_chars_per_word] (in UTF-8 characters),
-    a single [unk_token] token spanning the whole input is returned. If
-    decomposition fails at any position, the result is likewise a single
-    [unk_token]. *)
+val token_table : t -> string array
+(** [token_table t] maps an id to its token string, prefix included. Owned by
+    [t]; do not mutate. *)
 
-val tokenize_ids : t -> string -> int array
-(** [tokenize_ids t s] is like {!tokenize} but returns only token IDs. *)
-
-val tokenize_spans_encoding :
-  t -> (string * (int * int)) list -> type_id:int -> base:int -> Encoding.t
-(** [tokenize_spans_encoding t spans ~type_id ~base] tokenizes all [spans] and
-    builds an {!Encoding.t} directly. Each element of [spans] is
-    [(fragment, (start, stop))] where offsets are byte positions in the original
-    text. Offsets count from [base], which is where the pre-tokenized text
-    starts in the text being encoded.
-
-    This is a single-pass variant that avoids intermediate list and record
-    allocation: mutable refs are hoisted, growable arrays are filled in place,
-    and trie matching is inlined. *)
+val len_table : t -> int array
+(** [len_table t] maps an id to the number of source bytes an occurrence of it
+    accounts for: the entry stripped of the continuation prefix. The unknown
+    token reads [0], the word it stands for being a property of the text rather
+    than of the id. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

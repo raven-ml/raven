@@ -193,50 +193,6 @@ module Merge_queue = struct
     end
 end
 
-type token = { id : int; value : string; offsets : int * int }
-
-(* A run of token ids, grown by doubling and reused between pretokens. *)
-module Ids = struct
-  type t = { mutable ids : int array; mutable count : int }
-
-  let create ?(capacity = 64) () =
-    { ids = Array.make (max 4 capacity) 0; count = 0 }
-
-  let clear t = t.count <- 0
-  let length t = t.count
-  let[@inline] get t i = Array.unsafe_get t.ids i
-  let to_array t = Array.sub t.ids 0 t.count
-
-  let grow t needed =
-    let cap = ref (Array.length t.ids * 2) in
-    while !cap < needed do
-      cap := !cap * 2
-    done;
-    let a = Array.make !cap 0 in
-    Array.blit t.ids 0 a 0 t.count;
-    t.ids <- a
-
-  let[@inline] ensure t extra =
-    if t.count + extra > Array.length t.ids then grow t (t.count + extra)
-
-  let[@inline] add t id =
-    ensure t 1;
-    Array.unsafe_set t.ids t.count id;
-    t.count <- t.count + 1
-
-  (* Four ids are stored whatever the count is and the cursor advances by
-     [count]; the stores past it are dead. *)
-  let[@inline] add4 t a b c d ~count =
-    ensure t 4;
-    let n = t.count in
-    let ids = t.ids in
-    Array.unsafe_set ids n a;
-    Array.unsafe_set ids (n + 1) b;
-    Array.unsafe_set ids (n + 2) c;
-    Array.unsafe_set ids (n + 3) d;
-    t.count <- n + count
-end
-
 (* Pretoken cache.
 
    One 32-byte entry per slot, direct-mapped: a pretoken has exactly one slot, a
@@ -353,8 +309,6 @@ type state = {
   st_rank : int array;
   st_cache : cache;
   st_long : (string, int array) Hashtbl.t;
-  st_ids : Ids.t;
-  st_lens : Ids.t;
   st_busy : bool Atomic.t;
 }
 
@@ -931,8 +885,6 @@ let private_state () =
     st_rank = Array.make max_linear 0;
     st_cache = no_cache;
     st_long = Hashtbl.create 16;
-    st_ids = Ids.create ();
-    st_lens = Ids.create ();
     st_busy = Atomic.make true;
   }
 
@@ -989,8 +941,6 @@ let make_state model =
     st_rank = Array.make max_linear 0;
     st_cache = cache;
     st_long = Hashtbl.create 512;
-    st_ids = Ids.create ();
-    st_lens = Ids.create ();
     st_busy = Atomic.make false;
   }
 
@@ -1046,7 +996,7 @@ let encode_into model st ids text ~pos ~len =
       then begin
         let v0 = Int64.to_int (bytes_get64u table (slot + 16)) in
         let v1 = Int64.to_int (bytes_get64u table (slot + 24)) in
-        Ids.add4 ids (v0 land 0xFFFFFF)
+        Ints.add4 ids (v0 land 0xFFFFFF)
           ((v0 lsr 32) land 0xFFFFFF)
           (v1 land 0xFFFFFF)
           ((v1 lsr 32) land 0xFFFFFF)
@@ -1056,7 +1006,7 @@ let encode_into model st ids text ~pos ~len =
         build_word model st text pos len;
         let word = st.st_word in
         for i = 0 to word.size - 1 do
-          Ids.add ids (Array.unsafe_get word.sym_c i)
+          Ints.add ids (Array.unsafe_get word.sym_c i)
         done;
         if cacheable model word len then store cache slot k0 k1 word
       end
@@ -1070,13 +1020,13 @@ let encode_into model st ids text ~pos ~len =
       match Hashtbl.find_opt long key with
       | Some a ->
           for i = 0 to Array.length a - 1 do
-            Ids.add ids (Array.unsafe_get a i)
+            Ints.add ids (Array.unsafe_get a i)
           done
       | None ->
           build_word model st text pos len;
           let word = st.st_word in
           for i = 0 to word.size - 1 do
-            Ids.add ids (Array.unsafe_get word.sym_c i)
+            Ints.add ids (Array.unsafe_get word.sym_c i)
           done;
           if exact model word len then begin
             if Hashtbl.length long >= long_capacity then Hashtbl.reset long;
@@ -1087,146 +1037,15 @@ let encode_into model st ids text ~pos ~len =
       build_word model st text pos len;
       let word = st.st_word in
       for i = 0 to word.size - 1 do
-        Ids.add ids (Array.unsafe_get word.sym_c i)
+        Ints.add ids (Array.unsafe_get word.sym_c i)
       done
     end
   end
 
-(* Ids and the source bytes each of them accounts for, which is what offsets are
-   built from. Every cached word is exact, so a hit reads its lengths off
-   [len_table]; a miss has them from the merge itself. *)
-let encode_run model st ids lens text ~pos ~len =
-  let[@inline] emit_word word =
-    for i = 0 to word.size - 1 do
-      Ids.add ids (Array.unsafe_get word.sym_c i);
-      Ids.add lens (Array.unsafe_get word.sym_len i)
-    done
-  in
-  let[@inline] emit_id id =
-    Ids.add ids id;
-    Ids.add lens (Array.unsafe_get model.len_table id)
-  in
-  if len > 0 then begin
-    let cache = st.st_cache in
-    if cache.mask >= 0 && len <= max_key_len then begin
-      let n = String.length text in
-      let k0 = key0 text n pos len in
-      let k1 = key1 text n pos len in
-      let slot = slot_of cache k0 k1 in
-      let table = cache.table in
-      if
-        (bytes_get64u table slot : int64) = k0
-        && (bytes_get64u table (slot + 8) : int64) = k1
-      then begin
-        let v0 = Int64.to_int (bytes_get64u table (slot + 16)) in
-        let v1 = Int64.to_int (bytes_get64u table (slot + 24)) in
-        let count = (v0 lsr 24) land 0xFF in
-        emit_id (v0 land 0xFFFFFF);
-        if count > 1 then emit_id ((v0 lsr 32) land 0xFFFFFF);
-        if count > 2 then emit_id (v1 land 0xFFFFFF);
-        if count > 3 then emit_id ((v1 lsr 32) land 0xFFFFFF)
-      end
-      else begin
-        build_word model st text pos len;
-        let word = st.st_word in
-        emit_word word;
-        if cacheable model word len then store cache slot k0 k1 word
-      end
-    end
-    else if cache.mask >= 0 && len <= long_max_len then begin
-      let long = st.st_long in
-      let key =
-        if pos = 0 && len = String.length text then text
-        else String.sub text pos len
-      in
-      match Hashtbl.find_opt long key with
-      | Some a ->
-          for i = 0 to Array.length a - 1 do
-            emit_id (Array.unsafe_get a i)
-          done
-      | None ->
-          build_word model st text pos len;
-          let word = st.st_word in
-          emit_word word;
-          if exact model word len then begin
-            if Hashtbl.length long >= long_capacity then Hashtbl.reset long;
-            Hashtbl.replace long key (Array.sub word.sym_c 0 word.size)
-          end
-    end
-    else begin
-      build_word model st text pos len;
-      emit_word st.st_word
-    end
-  end
-
-let[@inline] token_value model id =
-  let vr = model.vocab_r in
-  if id >= 0 && id < Array.length vr then Array.unsafe_get vr id else "<unk>"
-
-let tokenize model text =
-  let len = String.length text in
-  if len = 0 then []
-  else
-    with_state model (fun st ->
-        let ids = st.st_ids and lens = st.st_lens in
-        Ids.clear ids;
-        Ids.clear lens;
-        encode_run model st ids lens text ~pos:0 ~len;
-        let n = Ids.length ids in
-        let stop = ref 0 in
-        for i = 0 to n - 1 do
-          stop := !stop + Ids.get lens i
-        done;
-        let tokens = ref [] in
-        for i = n - 1 downto 0 do
-          let id = Ids.get ids i in
-          let e = !stop in
-          let s = e - Ids.get lens i in
-          stop := s;
-          tokens :=
-            { id; value = token_value model id; offsets = (s, e) } :: !tokens
-        done;
-        !tokens)
-
-let tokenize_ids model text =
-  let len = String.length text in
-  if len = 0 then [||]
-  else
-    with_state model (fun st ->
-        let ids = st.st_ids in
-        Ids.clear ids;
-        encode_into model st ids text ~pos:0 ~len;
-        Ids.to_array ids)
-
-let tokenize_encoding model text ~type_id ~base =
-  let len = String.length text in
-  if len = 0 then Encoding.empty
-  else
-    with_state model (fun st ->
-        let run = st.st_ids and lens = st.st_lens in
-        Ids.clear run;
-        Ids.clear lens;
-        encode_run model st run lens text ~pos:0 ~len;
-        let n = Ids.length run in
-        let ids = Array.make n 0 in
-        let tokens = Array.make n "" in
-        let offsets = Array.make n (0, 0) in
-        let offset = ref base in
-        for i = 0 to n - 1 do
-          let id = Ids.get run i in
-          Array.unsafe_set ids i id;
-          Array.unsafe_set tokens i (token_value model id);
-          let s = !offset in
-          let e = s + Ids.get lens i in
-          Array.unsafe_set offsets i (s, e);
-          offset := e
-        done;
-        Encoding.create ~ids ~type_ids:(Array.make n type_id) ~tokens
-          ~words:(Array.make n None) ~offsets
-          ~special_tokens_mask:(Array.make n 0) ~attention_mask:(Array.make n 1)
-          ())
-
 let len_table model = model.len_table
+let token_table model = model.vocab_r
+let get_byte_level model = model.byte_level
+let get_cache_capacity model = model.cache_slots
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =
@@ -1506,9 +1325,9 @@ let read_files ~vocab_file ~merges_file =
   in
   (vocab, merges)
 
-let from_files ~vocab_file ~merges_file =
+let from_files ?byte_level ~vocab_file ~merges_file () =
   let vocab, merges = read_files ~vocab_file ~merges_file in
-  create ~vocab ~merges ()
+  create ?byte_level ~vocab ~merges ()
 
 let save model ~path ?name () =
   let vocab_file =

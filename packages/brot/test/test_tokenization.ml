@@ -566,6 +566,31 @@ let test_train_unigram_words () =
     [ "low"; "Ġlow"; "Ġlower" ]
     (sorted_vocab tokenizer)
 
+(* A pre-tokenizer that ends in a byte-level one hands the model pieces it has
+   already encoded, so the model must match its vocabulary as it is written
+   rather than against raw bytes. Encoding them a second time turned [Ġa] into
+   [Ä]+[Å]. Read off HuggingFace [tokenizers] 0.23.1 with the same vocabulary
+   and merges. *)
+let test_byte_level_after_a_split () =
+  let tokenizer =
+    bpe
+      ~pre:
+        (Pre_tokenizer.sequence
+           [
+             Pre_tokenizer.whitespace_split ();
+             Pre_tokenizer.byte_level ~add_prefix_space:true ();
+           ])
+      ~vocab:[ ("Ġa", 0); ("Ġb", 1); ("Ġ", 2); ("a", 3); ("b", 4) ]
+      ~merges:[ ("Ġ", "a"); ("Ġ", "b") ]
+      ()
+  in
+  equal ~msg:"ids" (array int) [| 0; 1 |]
+    (Encoding.ids (encode tokenizer ~add_special_tokens:false "a b"));
+  equal ~msg:"tokens" (array string) [| "Ġa"; "Ġb" |]
+    (Encoding.tokens (encode tokenizer ~add_special_tokens:false "a b"));
+  equal ~msg:"encode_ids agrees" (array int) [| 1; 0 |]
+    (encode_ids tokenizer ~add_special_tokens:false "b a")
+
 (* Test Suite *)
 
 let tokenization_tests =
@@ -602,6 +627,7 @@ let tokenization_tests =
     test "ctc decoder" test_ctc_decoder;
     test "bpe decoder" test_bpe_decoder;
     test "byte fallback decoder" test_byte_fallback_decoder;
+    test "byte level after a split" test_byte_level_after_a_split;
     test "metaspace decoder" test_metaspace_decoder;
     test "replace and strip decoders" test_replace_and_strip_decoders;
     test "sentencepiece decoder" test_sentencepiece_decoder;

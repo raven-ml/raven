@@ -29,76 +29,50 @@ type t = {
   normalized : matcher;
 }
 
-(* Character classes *)
-
-let ascii_word =
-  let table = Bytes.make 128 '\000' in
-  let set first last =
-    for code = first to last do
-      Bytes.set table code '\001'
-    done
-  in
-  set 48 57;
-  set 65 90;
-  set 97 122;
-  Bytes.set table 95 '\001';
-  Bytes.unsafe_to_string table
-
-(* [\w]: alphabetic, combining marks, decimal digits, connector punctuation and
-   the joiners. It holds for ["Ⅰ"] (a letter number) but not for ["½"] (an other
-   number). *)
-let is_word u =
-  let code = Uchar.to_int u in
-  if code < 128 then String.unsafe_get ascii_word code = '\001'
-  else
-    Uucp.Alpha.is_alphabetic u
-    || (match Uucp.Gc.general_category u with
-      | `Mc | `Me | `Mn | `Nd | `Pc -> true
-      | _ -> false)
-    || Uucp.Func.is_join_control u
-
-(* Character boundaries. Malformed bytes decode to no character, which makes
-   them neither word nor white space, so a match beside one stands. *)
+(* Character boundaries. Malformed bytes are a character of no class, which
+   makes them neither word nor white space, so a match beside one stands. *)
 
 let[@inline] is_continuation c = Char.code c land 0xc0 = 0x80
 
-(* [uchar_before text i] is the character ending at [i] and where it starts. *)
-let uchar_before text i =
+(* [char_before text i] is the character ending at [i], as {!Char_class.at}
+   packs it, and where it starts. *)
+let char_before text i =
   if i <= 0 then None
   else begin
     let start = ref (i - 1) in
     while !start > 0 && is_continuation (String.unsafe_get text !start) do
       decr start
     done;
-    let decode = String.get_utf_8_uchar text !start in
-    if
-      Uchar.utf_decode_is_valid decode
-      && !start + Uchar.utf_decode_length decode = i
-    then Some (Uchar.utf_decode_uchar decode, !start)
-    else None
+    let c = Char_class.at text !start ~stop:i in
+    if !start + Char_class.at_len c = i then Some (c, !start) else None
   end
 
-(* [uchar_at text i] is the character starting at [i] and where it ends. *)
-let uchar_at text i =
-  if i >= String.length text then None
+(* [char_at text i] is the character starting at [i] and where it ends. *)
+let char_at text i =
+  let stop = String.length text in
+  if i >= stop then None
   else
-    let decode = String.get_utf_8_uchar text i in
-    if Uchar.utf_decode_is_valid decode then
-      Some (Uchar.utf_decode_uchar decode, i + Uchar.utf_decode_length decode)
-    else None
+    let c = Char_class.at text i ~stop in
+    Some (c, i + Char_class.at_len c)
 
 let ends_with_word text i =
-  match uchar_before text i with Some (u, _) -> is_word u | None -> false
+  match char_before text i with
+  | Some (c, _) -> Char_class.at_is_word c
+  | None -> false
 
 let starts_with_word text i =
-  match uchar_at text i with Some (u, _) -> is_word u | None -> false
+  match char_at text i with
+  | Some (c, _) -> Char_class.at_is_word c
+  | None -> false
+
+let[@inline] is_space c = Char_class.at_category c = Char_class.whitespace
 
 (* [space_before text i] is the start of the white space run ending at [i]. *)
 let space_before text i =
   let start = ref i and scanning = ref true in
   while !scanning do
-    match uchar_before text !start with
-    | Some (u, at) when Uucp.White.is_white_space u -> start := at
+    match char_before text !start with
+    | Some (c, at) when is_space c -> start := at
     | _ -> scanning := false
   done;
   !start
@@ -107,8 +81,8 @@ let space_before text i =
 let space_after text i =
   let stop = ref i and scanning = ref true in
   while !scanning do
-    match uchar_at text !stop with
-    | Some (u, at) when Uucp.White.is_white_space u -> stop := at
+    match char_at text !stop with
+    | Some (c, at) when is_space c -> stop := at
     | _ -> scanning := false
   done;
   !stop

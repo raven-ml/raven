@@ -24,13 +24,22 @@ val create : ?vocab:(string * int) list -> ?unk_token:string -> unit -> t
 
 (** {1:tokenization Tokenization} *)
 
-val tokenize : t -> string -> (int * string * (int * int)) list
-(** [tokenize t s] is [[(id, token, (start, stop))]] for [s]. If [s] is not in
-    the vocabulary, [unk_token] is used. If [unk_token] itself is not in the
-    vocabulary, the empty list is returned. *)
+val encode_into : t -> Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t ids text ~pos ~len] appends the id of the word
+    [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
+    checked.
 
-val tokenize_ids : t -> string -> int array
-(** [tokenize_ids t s] is like {!tokenize} but returns only token IDs. *)
+    A word absent from the vocabulary is [unk_token], and nothing at all when
+    the vocabulary does not hold that either. *)
+
+val token_table : t -> string array
+(** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
+*)
+
+val len_table : t -> int array
+(** [len_table t] maps an id to the byte length of its token string, and the
+    unknown token to [0], the word it stands for being a property of the text
+    rather than of the id. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

@@ -82,52 +82,16 @@ val create :
       that single token, without applying any merge; other words are merged as
       usual. Defaults to [false]. *)
 
-val from_files : vocab_file:string -> merges_file:string -> t
-(** [from_files ~vocab_file ~merges_file] loads a BPE model from
-    HuggingFace-format files.
+val from_files :
+  ?byte_level:bool -> vocab_file:string -> merges_file:string -> unit -> t
+(** [from_files ~vocab_file ~merges_file ()] loads a BPE model from
+    HuggingFace-format files. [byte_level] is as in {!create}.
 
     - [vocab_file] is a JSON object mapping token strings to integer IDs.
     - [merges_file] is a text file with one space-separated merge pair per line.
       An optional [#version:] header line is skipped. *)
 
 (** {1:tokenization Tokenization} *)
-
-type token = { id : int; value : string; offsets : int * int }
-(** The type for tokens. [id] is the vocabulary index, [value] the string
-    content, and [offsets] the [(start, stop)] byte span in the source text. *)
-
-val tokenize : t -> string -> token list
-(** [tokenize t s] is the BPE tokenization of [s]. *)
-
-val tokenize_ids : t -> string -> int array
-(** [tokenize_ids t s] is like {!tokenize} but returns only token IDs. *)
-
-val tokenize_encoding : t -> string -> type_id:int -> base:int -> Encoding.t
-(** [tokenize_encoding t s ~type_id ~base] tokenizes [s] and builds an
-    {!Encoding.t} directly, avoiding intermediate list allocation. Offsets count
-    from [base], which is where [s] starts in the text being encoded. *)
-
-(** {1:buffered Buffered encoding} *)
-
-(** A run of token ids. *)
-module Ids : sig
-  type t
-
-  val create : ?capacity:int -> unit -> t
-  (** [create ()] is an empty run. [capacity] defaults to [64] ids. *)
-
-  val clear : t -> unit
-  (** [clear t] drops every id, keeping the buffer. *)
-
-  val length : t -> int
-  (** [length t] is the number of ids in [t]. *)
-
-  val get : t -> int -> int
-  (** [get t i] is the [i]th id. Unchecked. *)
-
-  val to_array : t -> int array
-  (** [to_array t] is a fresh array of the ids of [t]. *)
-end
 
 type state
 (** The type for a model's encoding scratch: merge buffers and the pretoken
@@ -142,13 +106,17 @@ val with_state : t -> (state -> 'a) -> 'a
     domain is encoding — gets unshared buffers and no cache instead, so [f] is
     always correct and only sometimes fast. [st] must not escape [f]. *)
 
-val encode_into : t -> state -> Ids.t -> string -> pos:int -> len:int -> unit
+val encode_into : t -> state -> Ints.t -> string -> pos:int -> len:int -> unit
 (** [encode_into t st ids text ~pos ~len] appends the ids of
     [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
     checked.
 
     This is the throughput path: nothing is allocated per pretoken that hits the
     cache. *)
+
+val token_table : t -> string array
+(** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
+*)
 
 val len_table : t -> int array
 (** [len_table t] maps an id to the number of source bytes an occurrence of it
@@ -184,6 +152,14 @@ val get_end_of_word_suffix : t -> string option
 
 val get_dropout : t -> float option
 (** [get_dropout t] is the merge dropout probability, if configured. *)
+
+val get_byte_level : t -> bool
+(** [get_byte_level t] is [true] iff [t] matches pretokens against the bytes its
+    entries stand for rather than against the entries. *)
+
+val get_cache_capacity : t -> int
+(** [get_cache_capacity t] is the number of pretoken cache slots asked for at
+    creation, [0] when caching is off. *)
 
 val get_fuse_unk : t -> bool
 (** [get_fuse_unk t] is [true] iff consecutive unknown bytes are fused into a
