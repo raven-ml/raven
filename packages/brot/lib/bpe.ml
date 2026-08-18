@@ -195,22 +195,32 @@ end
 
 (* Pretoken cache.
 
-   One 32-byte entry per slot, direct-mapped: a pretoken has exactly one slot, a
-   miss overwrites whatever the slot held, and nothing is ever probed, evicted
-   or grown.
+   Two-way set-associative: the table is 64-byte sets of two 32-byte ways, a
+   pretoken hashes to exactly one set and may sit in either way. A miss stores
+   into way 0 after shifting way 0 into way 1, so the older of the two goes and
+   no state bits are kept. Nothing is ever probed beyond the set or grown.
 
-   [0..7] k0: bytes 0..7 of the pretoken, zero-padded [8..15] k1: bytes 8..14
-   zero-padded, the length 1..15 in the top byte [16..23] ids 0 and 1 as 24-bit
-   fields, the token count in bits 24..31 [24..31] ids 2 and 3
+   Way 0 is at byte 0 of its set and way 1 at byte 32. Within a way:
 
-   Carrying the length in the key means keys of different lengths never collide
-   and a live key is never zero, so a zeroed table reads as empty. A hit is two
-   64-bit compares and two 64-bit loads.
+   [0..7] k0: bytes 0..7 of the pretoken, zero-padded;
+
+   [8..15] k1: bytes 8..14 zero-padded, the length 1..15 in the top byte;
+
+   [16..23] ids 0 and 1 as 24-bit fields at bits 0 and 32, the token count in
+   bits 24..31;
+
+   [24..31] ids 2 and 3 in the same two fields.
+
+   Every word is stored native-endian, so a table has one format wherever it is
+   read. Carrying the length in the key means keys of different lengths never
+   collide and a live key is never zero, so a zeroed table reads as empty. A hit
+   is at most four 64-bit compares within one set and two 64-bit loads.
 
    A table is written by whichever thread holds the claim on the state that owns
    it, so there is never a second writer. The value words are still published
-   before the key words, and [k0] last of all, so that a read torn by anything
-   at all comes out a miss rather than a wrong hit. *)
+   before the key words, and [k0] last of all — for the way being shifted as for
+   the way being filled — so that a read torn by anything at all comes out a
+   miss rather than a wrong hit. *)
 
 external string_get64u : string -> int -> int64 = "%caml_string_get64u"
 external bytes_get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
@@ -219,6 +229,7 @@ external bytes_set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
 let max_key_len = 15
 let max_lanes = 4
 let entry_bytes = 32
+let set_bytes = 2 * entry_bytes
 let cached_id_limit = 1 lsl 24
 
 (* For each length, the mask keeping the bytes each key word holds. *)
@@ -273,24 +284,27 @@ let[@inline] key1 text n pos len =
     in
     Int64.logor tag (Int64.logand w (bytes_get64u key_masks ((len lsl 4) + 8)))
 
+(* [mask] is the set index mask: the table holds [mask + 1] sets. *)
 type cache = { table : Bytes.t; mask : int }
 
 let no_cache = { table = Bytes.empty; mask = -1 }
 
-let[@inline] slot_of cache k0 k1 =
+(* The byte offset of the set a key belongs to. *)
+let[@inline] set_of cache k0 k1 =
   let h =
     Int64.mul
       (Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L))
       0xD6E8FEB86659FD93L
   in
-  (Int64.to_int (Int64.shift_right_logical h 24) land cache.mask) lsl 5
+  (Int64.to_int (Int64.shift_right_logical h 24) land cache.mask) lsl 6
 
-let create_cache slots =
-  let cap = ref 1 in
-  while !cap < slots do
-    cap := !cap * 2
+(* [entries] rounded up to a power of two, two per set; at least one set. *)
+let create_cache entries =
+  let sets = ref 1 in
+  while !sets * 2 < entries do
+    sets := !sets * 2
   done;
-  { table = Bytes.make (!cap * entry_bytes) '\000'; mask = !cap - 1 }
+  { table = Bytes.make (!sets * set_bytes) '\000'; mask = !sets - 1 }
 
 (* Pretokens above [max_key_len] bytes are keyed by their bytes; they are a
    percent or two of a corpus, so one substring per lookup is affordable. The
@@ -862,19 +876,32 @@ let in_lanes word =
 
 let[@inline] cacheable model word len = in_lanes word && exact model word len
 
-let store cache slot k0 k1 word =
+(* Writes the entry [(k0, k1, v0, v1)] into way 0 of the set at [set], after
+   shifting what way 0 held into way 1. *)
+let[@inline] store cache set k0 k1 v0 v1 =
   let table = cache.table in
+  bytes_set64u table (set + 48) (bytes_get64u table (set + 16));
+  bytes_set64u table (set + 56) (bytes_get64u table (set + 24));
+  bytes_set64u table (set + 40) (bytes_get64u table (set + 8));
+  bytes_set64u table (set + 32) (bytes_get64u table set);
+  bytes_set64u table (set + 16) v0;
+  bytes_set64u table (set + 24) v1;
+  bytes_set64u table (set + 8) k1;
+  bytes_set64u table set k0
+
+(* The two value words of a cacheable word. *)
+let[@inline] value_lo word =
   let n = word.size in
   let c = word.sym_c in
-  let id0 = Array.unsafe_get c 0 in
   let id1 = if n > 1 then Array.unsafe_get c 1 else 0 in
+  Int64.of_int (Array.unsafe_get c 0 lor (n lsl 24) lor (id1 lsl 32))
+
+let[@inline] value_hi word =
+  let n = word.size in
+  let c = word.sym_c in
   let id2 = if n > 2 then Array.unsafe_get c 2 else 0 in
   let id3 = if n > 3 then Array.unsafe_get c 3 else 0 in
-  bytes_set64u table (slot + 16)
-    (Int64.of_int (id0 lor (n lsl 24) lor (id1 lsl 32)));
-  bytes_set64u table (slot + 24) (Int64.of_int (id2 lor (id3 lsl 32)));
-  bytes_set64u table (slot + 8) k1;
-  bytes_set64u table slot k0
+  Int64.of_int (id2 lor (id3 lsl 32))
 
 (* Buffers of its own and no cache, for the thread that does not claim the
    domain's state and for building the seed. *)
@@ -903,14 +930,10 @@ let build_seeds model =
         build_word model st text 0 len;
         let word = st.st_word in
         if cacheable model word len then begin
-          let n = word.size in
-          let c = word.sym_c in
-          let id j = if j < n then Array.unsafe_get c j else 0 in
           Buffer.add_int64_ne buf (key0 text len 0 len);
           Buffer.add_int64_ne buf (key1 text len 0 len);
-          Buffer.add_int64_ne buf
-            (Int64.of_int (id 0 lor (n lsl 24) lor (id 1 lsl 32)));
-          Buffer.add_int64_ne buf (Int64.of_int (id 2 lor (id 3 lsl 32)))
+          Buffer.add_int64_ne buf (value_lo word);
+          Buffer.add_int64_ne buf (value_hi word)
         end
       end)
     model.source_vocab;
@@ -918,16 +941,13 @@ let build_seeds model =
 
 let seed_cache model cache =
   let seeds = model.seeds in
-  let table = cache.table in
   for i = 0 to (Bytes.length seeds / entry_bytes) - 1 do
     let o = i * entry_bytes in
     let k0 = bytes_get64u seeds o in
     let k1 = bytes_get64u seeds (o + 8) in
-    let slot = slot_of cache k0 k1 in
-    bytes_set64u table slot k0;
-    bytes_set64u table (slot + 8) k1;
-    bytes_set64u table (slot + 16) (bytes_get64u seeds (o + 16));
-    bytes_set64u table (slot + 24) (bytes_get64u seeds (o + 24))
+    store cache (set_of cache k0 k1) k0 k1
+      (bytes_get64u seeds (o + 16))
+      (bytes_get64u seeds (o + 24))
   done
 
 let make_state model =
@@ -1006,14 +1026,22 @@ let encode_into model st ids ~opaque text ~pos ~len =
       let n = String.length text in
       let k0 = key0 text n pos len in
       let k1 = key1 text n pos len in
-      let slot = slot_of cache k0 k1 in
+      let set = set_of cache k0 k1 in
       let table = cache.table in
-      if
-        (bytes_get64u table slot : int64) = k0
-        && (bytes_get64u table (slot + 8) : int64) = k1
-      then begin
-        let v0 = Int64.to_int (bytes_get64u table (slot + 16)) in
-        let v1 = Int64.to_int (bytes_get64u table (slot + 24)) in
+      let way =
+        if
+          (bytes_get64u table set : int64) = k0
+          && (bytes_get64u table (set + 8) : int64) = k1
+        then set
+        else if
+          (bytes_get64u table (set + 32) : int64) = k0
+          && (bytes_get64u table (set + 40) : int64) = k1
+        then set + 32
+        else -1
+      in
+      if way >= 0 then begin
+        let v0 = Int64.to_int (bytes_get64u table (way + 16)) in
+        let v1 = Int64.to_int (bytes_get64u table (way + 24)) in
         Ints.add4 ids (v0 land 0xFFFFFF)
           ((v0 lsr 32) land 0xFFFFFF)
           (v1 land 0xFFFFFF)
@@ -1024,7 +1052,8 @@ let encode_into model st ids ~opaque text ~pos ~len =
         build_word model st text pos len;
         let word = st.st_word in
         emit_word model word ids ~opaque;
-        if cacheable model word len then store cache slot k0 k1 word
+        if cacheable model word len then
+          store cache set k0 k1 (value_lo word) (value_hi word)
       end
     end
     else if cache.mask >= 0 && len <= long_max_len then begin

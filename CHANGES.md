@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- BPE's pretoken cache is now two-way set-associative in the same 8 MB: a
+  colliding pair of pretokens no longer evict each other, cutting the miss
+  rate from 7.9% to 4.8% on real text (`encode_batch_ids` on OpenWebText runs
+  ~9% faster). `cache_capacity` keeps its meaning — entries, rounded up to a
+  power of two, `0` disables.
 - BERT-style normalization (`Normalizer.bert`) runs as one pass with an ASCII
   fast lane: 24× faster on English text (18 → 440 MB/s), 2–3× on non-Latin
   scripts, identical output and offsets. `Brot.encode` with offsets on

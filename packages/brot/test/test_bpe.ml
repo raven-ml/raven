@@ -332,8 +332,9 @@ let test_unknown_character () =
     (tokens "az")
 
 (* Every domain builds a pretoken cache of its own, seeded from the same
-   vocabulary. These 169 words share the single slot of the smallest cache, so
-   each domain rewrites that slot continuously while the others read theirs. *)
+   vocabulary. These 169 words share the single two-way set of the smallest
+   cache, so each domain rewrites that set continuously while the others read
+   theirs. *)
 let test_parallel_cache () =
   let letter i = Char.chr (Char.code 'a' + i) in
   let vocab =
@@ -363,8 +364,8 @@ let test_parallel_cache () =
     (Atomic.get mismatches)
 
 (* The pretoken cache. Every expectation here is that the cache changes nothing:
-   a direct-mapped table with no probing and no eviction answers a pretoken from
-   whatever its one slot holds, so a collision, a seeded entry and a merge run
+   a two-way set-associative table answers a pretoken from whichever way of its
+   one set holds it, so a collision, an eviction, a seeded entry and a merge run
    from scratch must all agree. *)
 
 (* Eight letters, every two-letter merge, one four-letter merge per letter, and
@@ -411,7 +412,7 @@ let collide ?(ignore_merges = false) cache_capacity =
 let test_cache_agrees_with_merges () =
   let uncached = collide 0 in
   let expected = Array.map (fun w -> encode_ids uncached w) collide_words in
-  (* One slot: every pretoken collides with every other, so no answer can come
+  (* One set: every pretoken collides with every other, so no answer can come
      from a stale entry and survive. *)
   List.iter
     (fun capacity ->
@@ -421,7 +422,7 @@ let test_cache_agrees_with_merges () =
         Array.iteri
           (fun i word ->
             equal
-              ~msg:(Printf.sprintf "%d slots, pass %d, %S" capacity pass word)
+              ~msg:(Printf.sprintf "%d entries, pass %d, %S" capacity pass word)
               (array int) expected.(i)
               (encode_ids tokenizer word))
           collide_words
@@ -490,6 +491,27 @@ let test_cache_long_and_wide () =
     words;
   equal ~msg:"more than four tokens" bool true
     (Array.length (encode_ids cached "aaaabbbbccccddddeeeeffffgggghhhh") > 4)
+
+(* Three pretokens that share the one set of the smallest cache: a miss stores
+   into way 0 after shifting way 0 into way 1 and dropping what way 1 held, so
+   cycling through three words evicts on every step, and a mixed order re-reads
+   entries in either way and just past eviction. Every answer must come out as
+   the merges say. *)
+let test_set_eviction () =
+  let uncached = collide 0 in
+  let cached = collide 1 in
+  let words = [| "abcd"; "bcda"; "cdab" |] in
+  let expected = Array.map (fun w -> encode_ids uncached w) words in
+  let check round i =
+    equal
+      ~msg:(Printf.sprintf "round %d, %S" round words.(i))
+      (array int) expected.(i)
+      (encode_ids cached words.(i))
+  in
+  for round = 1 to 4 do
+    Array.iteri (fun i _ -> check round i) words
+  done;
+  List.iter (check 5) [ 0; 1; 0; 2; 1; 0; 2; 2; 0; 1 ]
 
 (* Byte fallback and the unknown token. Expectations probed with the
    [tokenizers] wheel: a fallback never lets a pending unknown token out, so the
@@ -648,6 +670,50 @@ let trained_merges tokenizer =
   List.filter
     (fun line -> not (String.starts_with ~prefix:"#version" line))
     (List.rev !lines)
+
+(* Real text against tiny tables: a model trained on one parity corpus encodes
+   both corpora to the same ids whatever the cache holds. [0] disables caching
+   and is the reference. *)
+let test_cache_capacities_on_parity_corpus () =
+  let sample = Fixture.read "fixtures/parity/sample.txt" in
+  let edge_cases = Fixture.read "fixtures/parity/edge_cases.txt" in
+  let trained =
+    train_bpe ~pre:split ~vocab_size:300 ~show_progress:false
+      (`Seq (List.to_seq [ sample ]))
+  in
+  let vocab = vocab trained in
+  let merges =
+    List.map
+      (fun line ->
+        match String.index_opt line ' ' with
+        | Some i ->
+            ( String.sub line 0 i,
+              String.sub line (i + 1) (String.length line - i - 1) )
+        | None -> failf "malformed merge %S" line)
+      (trained_merges trained)
+  in
+  let model capacity =
+    bpe ~pre:split ~vocab ~merges ~cache_capacity:capacity ()
+  in
+  let reference = model 0 in
+  let corpora =
+    [
+      ("sample", sample, encode_ids reference sample);
+      ("edge_cases", edge_cases, encode_ids reference edge_cases);
+    ]
+  in
+  List.iter
+    (fun capacity ->
+      let cached = model capacity in
+      for pass = 1 to 2 do
+        List.iter
+          (fun (name, text, expected) ->
+            equal
+              ~msg:(Printf.sprintf "%d entries, pass %d, %s" capacity pass name)
+              (array int) expected (encode_ids cached text))
+          corpora
+      done)
+    [ 1; 2; 4; 64; 262144 ]
 
 let test_train () =
   let tokenizer =
@@ -1147,6 +1213,9 @@ let () =
           test "the seed agrees with the merges" test_seed_agrees_with_merges;
           test "the seed under ignore_merges" test_seed_ignore_merges;
           test "long and many-token pretokens" test_cache_long_and_wide;
+          test "a set filled beyond two ways" test_set_eviction;
+          test "small capacities on the parity corpora"
+            test_cache_capacities_on_parity_corpus;
         ];
       group "training"
         [

@@ -12,9 +12,9 @@
     priority order (earlier rules have higher priority). Merging continues until
     no more rules apply.
 
-    Tokenizations are cached per pretoken in a direct-mapped table seeded with
-    the whole vocabulary, so a word the vocabulary holds is answered without
-    merging. *)
+    Tokenizations are cached per pretoken in a two-way set-associative table
+    seeded with the whole vocabulary, so a word the vocabulary holds is answered
+    without merging. *)
 
 type t
 (** The type for BPE models. Immutable after creation.
@@ -56,11 +56,12 @@ val create :
       {!get_vocab} and {!save} keep speaking the encoded form. Raises
       [Invalid_argument] together with [continuing_subword_prefix] or
       [end_of_word_suffix]. Defaults to [false].
-    - [cache_capacity] is the number of slots in the direct-mapped pretoken
-      cache, rounded up to a power of two. Each slot costs 32 bytes and each
-      domain encoding with the model keeps a table of its own. Defaults to
-      [262144] (8 MB). Set to [0] to disable caching. Pretokens over 4096 bytes
-      are never cached.
+    - [cache_capacity] is the number of entries in the pretoken cache, rounded
+      up to a power of two and held two per set: a pretoken may sit in either
+      entry of its set, and a miss evicts the older of the two. Each entry costs
+      32 bytes and each domain encoding with the model keeps a table of its own.
+      Defaults to [262144] (8 MB). Set to [0] to disable caching. Pretokens over
+      4096 bytes are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which
@@ -163,7 +164,7 @@ val get_byte_level : t -> bool
     entries stand for rather than against the entries. *)
 
 val get_cache_capacity : t -> int
-(** [get_cache_capacity t] is the number of pretoken cache slots asked for at
+(** [get_cache_capacity t] is the number of pretoken cache entries asked for at
     creation, [0] when caching is off. *)
 
 val get_fuse_unk : t -> bool

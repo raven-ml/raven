@@ -230,10 +230,12 @@ val bpe :
     - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
-    - [cache_capacity]: number of slots in the pretoken cache, rounded up to a
-      power of two. A slot costs 32 bytes and holds one pretoken's tokens; each
-      domain encoding with the tokenizer keeps a table of its own, seeded with
-      the vocabulary. Default: [262144] (8 MB). [0] disables caching.
+    - [cache_capacity]: number of entries in the pretoken cache, rounded up to
+      a power of two and held two per set: a pretoken may sit in either entry
+      of its set, and a miss evicts the older. An entry costs 32 bytes and
+      holds one pretoken's tokens; each domain encoding with the tokenizer
+      keeps a table of its own, seeded with the vocabulary. Default: [262144]
+      (8 MB). [0] disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
