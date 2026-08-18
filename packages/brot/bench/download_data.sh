@@ -17,4 +17,8 @@ curl -sL -o "$DATA_DIR/llama.json" \
   "https://huggingface.co/hf-internal-testing/llama-tokenizer/resolve/main/tokenizer.json"
 echo "  LLaMA (BPE, 32K vocab)"
 
+curl -sL -o "$DATA_DIR/roberta_base.json" \
+  "https://huggingface.co/FacebookAI/roberta-base/resolve/main/tokenizer.json"
+echo "  RoBERTa-base (byte-level BPE, 50K vocab, RobertaProcessing)"
+
 echo "Done."

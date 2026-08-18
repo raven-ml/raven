@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
 """Generate the expected encodings that brot is checked against.
 
-Run from anywhere:
+Run from anywhere, with the version the committed fixtures were generated with:
 
-    uv run --with tokenizers python3 packages/brot/test/scripts/gen_parity_expected.py
+    uv run --with tokenizers==0.23.1 python3 packages/brot/test/scripts/gen_parity_expected.py
 
 The reference is the HuggingFace `tokenizers` library. `test_parity.ml` reads
 the files this writes and requires brot to produce exactly the same encodings,
 so regenerate only when a fixture changes or when a divergence has been
-confirmed to be a bug in the reference rather than in brot.
+confirmed to be a bug in the reference rather than in brot. Regenerating with
+the pinned version rewrites every file byte for byte, so a `git diff` after a
+run over an unchanged corpus is a reference that moved, not a fixture to
+accept.
+
+Tokenizers
+----------
+
+`bench/download_data.sh` writes the tokenizer files this reads to `bench/data/`,
+and `test_parity.ml` reads the same files, so the reference and brot are always
+given one tokenizer:
+
+- `gpt2` — byte-level BPE, ByteLevel pre-tokenizer and decoder.
+- `llama` — BPE with byte fallback, a Prepend/Replace normalizer, no
+  pre-tokenizer.
+- `bert_base` — WordPiece, BertNormalizer, BertPreTokenizer, TemplateProcessing.
+- `roberta_base` — byte-level BPE with `RobertaProcessing`, which trims the
+  offsets the ByteLevel pre-tokenizer produced and wraps the ids in
+  `<s>`/`</s>`.
 
 Corpora
 -------
@@ -85,7 +103,7 @@ import tokenizers
 from tokenizers import Tokenizer
 
 CORPORA = ("sample", "edge_cases")
-TOKENIZERS = ("gpt2", "llama", "bert_base")
+TOKENIZERS = ("gpt2", "llama", "bert_base", "roberta_base")
 
 
 def documents(text: str) -> list[str]:

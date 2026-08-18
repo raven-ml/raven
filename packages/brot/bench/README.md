@@ -13,6 +13,11 @@ Benchmark inputs live in `./data/`:
 - `gpt2.json` — OpenAI GPT-2 (BPE, 50K vocab, 50K merges)
 - `bert_base.json` — Google BERT-base-uncased (WordPiece, 30K vocab)
 - `llama.json` — Meta LLaMA (BPE, 32K vocab, 61K merges, no pre-tokenizer)
+- `roberta_base.json` — FacebookAI RoBERTa-base (BPE, 50K vocab,
+  RobertaProcessing)
+
+The last one is read by the HuggingFace parity test rather than by the
+benchmarks; `test/scripts/gen_parity_expected.py` documents the whole set.
 
 Download the tokenizer model files:
 
