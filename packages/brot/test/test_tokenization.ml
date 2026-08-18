@@ -180,8 +180,18 @@ let test_unigram_special_tokens () =
   equal ~msg:"id to unicode" (option string) (Some "世界")
     (id_to_token tokenizer 4)
 
+(* A vocabulary of whole words holds no piece for a single character, so the
+   only way into a word's second byte is an unknown token: the model needs one
+   to record there even though the best path, the whole word, never spends
+   it. *)
 let test_unigram_encode_sequence () =
-  let tokenizer = unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] () in
+  let tokenizer =
+    unigram
+      ~vocab:[ ("<unk>", 0.0); ("hello", 0.0); ("world", 0.0) ]
+      ~unk_id:0 ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizer.whitespace ())
+      ()
+  in
   let encoding = encode tokenizer "hello world" in
   let tokens = Encoding.tokens encoding |> Array.to_list in
   equal ~msg:"unigram encode tokens" (list string) [ "hello"; "world" ] tokens
@@ -541,7 +551,7 @@ let test_metaspace_no_split_offsets () =
     ]
   in
   let tokenizer prepend_scheme =
-    unigram ~vocab ~unk_token:"<unk>"
+    unigram ~vocab ~unk_id:0 ~unk_token:"<unk>"
       ~pre:(Pre_tokenizer.metaspace ~prepend_scheme ~split:false ())
       ()
   in

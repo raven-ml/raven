@@ -122,8 +122,12 @@ Key parameters:
 - `max_piece_length` — maximum subword length (default: 16)
 - `n_sub_iterations` — EM sub-iterations per pruning round (default: 2)
 
-Vocabulary entries are `(token, score)` pairs where scores are negative
-log probabilities:
+Vocabulary entries are `(token, score)` pairs where scores are
+log-probabilities (negative numbers). An entry is identified by its
+position in the list, and `unk_token` names the one that stands in for a
+run of characters the vocabulary does not hold (`unk_id` names it by
+position, as a `tokenizer.json` does) — without one, meeting such a
+character is an error:
 
 ```ocaml
 open Brot
@@ -131,7 +135,7 @@ open Brot
 let tokenizer =
   unigram
     ~vocab:
-      [ ("<unk>", 0.0); ("the", -1.0); ("cat", -1.5);
+      [ ("<unk>", 0.0); ("the", -5.0); ("cat", -1.5);
         ("th", -2.0); ("e", -2.5); ("c", -3.0); ("a", -3.0);
         ("t", -3.0); ("at", -2.0); ("he", -2.0);
         ("sat", -1.8); ("on", -1.5) ]
@@ -140,7 +144,13 @@ let tokenizer =
 let enc = encode tokenizer "the cat sat on"
 ```
 
-Training Unigram:
+The segmentation maximizes the total score rather than taking the longest
+match at each position: `"the"` comes out as `"th"` plus `"e"` at `-4.5`,
+not as the whole entry at `-5.0`.
+
+Training Unigram. The unknown token has to be among the special tokens so
+that the trained vocabulary holds it: the model needs one for any character
+its pieces do not cover on their own.
 
 ```ocaml
 open Brot
@@ -148,6 +158,7 @@ open Brot
 let tokenizer =
   train_unigram ~vocab_size:60 ~show_progress:false
     ~pre:(Pre_tokenizer.whitespace ())
+    ~added_tokens:[ added_token "<unk>" ] ~unk_token:"<unk>"
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the brown fox";

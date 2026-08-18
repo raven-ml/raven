@@ -216,7 +216,7 @@ let test_offsets_of_a_rewriting_pre_tokenizer () =
            [ Pre_tokenizer.whitespace_split (); Pre_tokenizer.metaspace () ])
       ~vocab:
         [ ("<unk>", 0.0); ("▁", -1.0); ("▁a", 0.0); ("▁b", 0.0); ("a", 0.0) ]
-      ()
+      ~unk_id:0 ()
   in
   List.iter
     (fun text ->

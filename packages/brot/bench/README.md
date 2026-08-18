@@ -15,8 +15,10 @@ Benchmark inputs live in `./data/`:
 - `llama.json` — Meta LLaMA (BPE, 32K vocab, 61K merges, no pre-tokenizer)
 - `roberta_base.json` — FacebookAI RoBERTa-base (BPE, 50K vocab,
   RobertaProcessing)
+- `t5_base_nonorm.json` — Google T5-base with its `Precompiled` normalizer
+  dropped, which brot does not implement (Unigram, 32K vocab, Metaspace)
 
-The last one is read by the HuggingFace parity test rather than by the
+The last two are read by the HuggingFace parity test rather than by the
 benchmarks; `test/scripts/gen_parity_expected.py` documents the whole set.
 
 Download the tokenizer model files:

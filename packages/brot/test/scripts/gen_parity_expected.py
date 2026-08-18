@@ -27,6 +27,25 @@ given one tokenizer:
 - `roberta_base` — byte-level BPE with `RobertaProcessing`, which trims the
   offsets the ByteLevel pre-tokenizer produced and wraps the ids in
   `<s>`/`</s>`.
+- `t5_base_nonorm` — Unigram with a Metaspace pre-tokenizer and decoder, and a
+  TemplateProcessing that appends `</s>`.
+
+`t5_base_nonorm` is not stock T5: T5's only normalizer is a `Precompiled`
+SentencePiece charsmap, which brot does not implement and refuses to load, so
+`download_data.sh` drops the `normalizer` field on the way in. What that costs
+is the NFKC-like character folding the charsmap performs, which on these corpora
+reaches little more than the edge cases; both sides read the derived file, so
+the fixture stays self-consistent.
+
+A Unigram model is rebuilt from the file's scores as Python reads them (see
+`load_tokenizer`). `Tokenizer.from_file` reads them through a decimal
+conversion that is off by one unit in the last place for about a quarter of
+them (serde_json without its `float_roundtrip` feature: 8334 of T5's 32100
+scores). A segmentation is a sum of scores compared for the maximum, and a run
+of one repeated character can tie exactly between two orders of the same pieces
+— `▁ - --- ---` against `▁ --- --- -` — where that last place decides. brot
+reads the numbers as written, so the reference is made to score the same
+vocabulary; the ids `from_file` gives differ from these only on such ties.
 
 Corpora
 -------
@@ -100,10 +119,10 @@ import sys
 from pathlib import Path
 
 import tokenizers
-from tokenizers import Tokenizer
+from tokenizers import Tokenizer, models
 
 CORPORA = ("sample", "edge_cases")
-TOKENIZERS = ("gpt2", "llama", "bert_base", "roberta_base")
+TOKENIZERS = ("gpt2", "llama", "bert_base", "roberta_base", "t5_base_nonorm")
 
 
 def documents(text: str) -> list[str]:
@@ -139,6 +158,21 @@ def ints(values: list[int]) -> list[str]:
     return [str(value) for value in values]
 
 
+def load_tokenizer(path: Path) -> Tokenizer:
+    """The tokenizer at `path`, a Unigram model rebuilt from the scores as
+    Python reads them rather than as `from_file` reads them (see above)."""
+    tokenizer = Tokenizer.from_file(str(path))
+    with path.open(encoding="utf-8") as file:
+        model = json.load(file)["model"]
+    if model.get("type") == "Unigram" or "unk_id" in model:
+        tokenizer.model = models.Unigram(
+            [(token, score) for token, score in model["vocab"]],
+            unk_id=model["unk_id"],
+            byte_fallback=model.get("byte_fallback", False),
+        )
+    return tokenizer
+
+
 def main() -> int:
     test_root = Path(__file__).resolve().parents[1]
     parity_dir = test_root / "fixtures" / "parity"
@@ -152,7 +186,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        tokenizer = Tokenizer.from_file(str(model))
+        tokenizer = load_tokenizer(model)
 
         for corpus in CORPORA:
             text = (parity_dir / f"{corpus}.txt").read_bytes().decode("utf-8")

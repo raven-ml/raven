@@ -168,7 +168,7 @@ let with_span_encoder algorithm f =
   | Alg_bpe m -> Bpe.with_state m (fun st -> f (Bpe.encode_into m st))
   | Alg_wordpiece m -> f (Wordpiece.encode_into m)
   | Alg_wordlevel m -> f (Word_level.encode_into m)
-  | Alg_unigram m -> f (Unigram.encode_into m)
+  | Alg_unigram m -> Unigram.with_state (fun st -> f (Unigram.encode_into m st))
   | Alg_chars m -> f (Chars.encode_into m)
 
 let alg_name = function
@@ -483,10 +483,16 @@ let word_level ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?pad_token ?unk_token algorithm
 
 let unigram ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token ?vocab () =
-  let algorithm =
-    Alg_unigram (Unigram.create (Option.value vocab ~default:[]))
+    ?pad_token ?unk_token ?vocab ?unk_id ?byte_fallback () =
+  let vocab = Option.value vocab ~default:[] in
+  let unk_id =
+    match unk_id with
+    | Some _ -> unk_id
+    | None ->
+        Option.bind unk_token (fun unk ->
+            List.find_index (fun (token, _) -> token = unk) vocab)
   in
+  let algorithm = Alg_unigram (Unigram.create ?unk_id ?byte_fallback vocab) in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
@@ -1303,8 +1309,9 @@ let alg_to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "Unigram");
-          ("unk_id", Jsont.Json.null ());
+          ("unk_id", json_option_of Jsont.Json.int (Unigram.get_unk_id ug));
           ("vocab", vocab_json);
+          ("byte_fallback", Jsont.Json.bool (Unigram.get_byte_fallback ug));
         ]
   | Alg_chars _ ->
       json_obj [ ("type", Jsont.Json.string "Chars"); ("vocab", json_obj []) ]
@@ -1426,7 +1433,13 @@ let alg_of_json ~byte_level mj =
             | [ token; score ] -> (json_to_string token, json_to_float score)
             | _ -> failwith "Invalid unigram vocab format")
       in
-      Alg_unigram (Unigram.create vocab)
+      let unk_id =
+        match mem "unk_id" with
+        | Jsont.Number (f, _) -> Some (int_of_float f)
+        | _ -> None
+      in
+      Alg_unigram
+        (Unigram.create ?unk_id ~byte_fallback:(flag "byte_fallback") vocab)
   | "Chars" -> Alg_chars (Chars.create ())
   | s -> failwith (strf "Unsupported model type: %s" s)
 

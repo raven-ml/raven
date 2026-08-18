@@ -316,16 +316,29 @@ val unigram :
   ?pad_token:string ->
   ?unk_token:string ->
   ?vocab:(string * float) list ->
+  ?unk_id:int ->
+  ?byte_fallback:bool ->
   unit ->
   t
 (** [unigram ()] is a Unigram tokenizer. Used by AlBERT, T5, mBART.
 
-    Unigram uses probabilistic segmentation to find optimal subword splits based
-    on token log-probabilities.
+    A pretoken is cut into the vocabulary pieces whose scores add up to the
+    most, rather than into the longest match at each byte. A character no piece
+    covers costs an unknown token, scored ten below the rarest piece of the
+    vocabulary.
 
     - [vocab]: initial vocabulary as [(token, score)] pairs where scores are
-      negative log probabilities. Default: [[]].
-    - [unk_token]: token for unknown characters. Default: none.
+      log-probabilities (negative numbers). An entry is identified by its
+      position. Default: [[]].
+    - [unk_id]: the entry standing for a run of characters the vocabulary does
+      not hold, one token for the whole run, as a [tokenizer.json] names it.
+      Without one, encoding raises [Failure] as soon as the best path into some
+      character would spend an unknown token on it. Default: the position of
+      [unk_token] in [vocab], if it is there.
+    - [byte_fallback]: spell such a run out as byte tokens (["<0xFF>"]) when the
+      vocabulary holds one for every byte of it. Default: [false].
+    - [unk_token]: the role marker, and the model's unknown entry when [vocab]
+      holds it and [unk_id] is not given. Default: none.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -694,6 +707,10 @@ val train_unigram :
       displayed. Default: [true].
     - [shrinking_factor], [max_piece_length], [n_sub_iterations]: inert, as
       above. Defaults: [0.75], [16], [2].
+    - [unk_token]: also names the model's unknown entry when [added_tokens] or
+      [init] carries it, since a trained vocabulary of whole words covers no
+      character on its own. Without one, the trained tokenizer raises [Failure]
+      on any word it was not trained on. Default: none.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)

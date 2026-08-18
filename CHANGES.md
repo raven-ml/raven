@@ -1087,6 +1087,18 @@ thread.
 
 ### Brot
 
+- Unigram tokenization now finds the segmentation whose scores add up to the
+  most, as SentencePiece and HuggingFace do, instead of the longest match at
+  each position, which mis-cut e.g. `traces` as `▁trace`+`s`; a run of
+  characters the vocabulary does not hold is one unknown token, or its bytes
+  under `byte_fallback`, and white space inside a pretoken is no longer
+  dropped. `Brot.unigram` gains `?unk_id` and `?byte_fallback` (`unk_token`
+  names the unknown entry when the vocabulary holds it; without one an
+  uncovered character raises `Failure`); T5-style `tokenizer.json` (`unk_id`,
+  `byte_fallback`) loads and saves faithfully.
+- Unigram encoding is at least as fast as the greedy encoder it replaces
+  (about 1.2×) and model loading about twice as fast, through a double-array
+  trie.
 - `Decoder.byte_level` now decodes as HuggingFace does: a token whose
   characters are not all in the byte-level alphabet stands for its own bytes as
   a whole rather than character by character, and the bytes of every token are

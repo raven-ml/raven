@@ -7,6 +7,7 @@
   test_encoding
   test_unicode
   test_bpe
+  test_unigram
   test_wordpiece
   test_hf_tokenizers
   test_processors

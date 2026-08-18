@@ -32,6 +32,7 @@ If you already use HuggingFace Tokenizers, this should be enough to become produ
 - Added tokens use a record type (`Brot.added_token`) with explicit control over stripping and normalization. Like HuggingFace's added tokens, they are matched atomically in the input on `encode`.
 - `encode` returns `Encoding.t`; use `encode_ids` when you only need the ID array.
 - The `train_*` functions count the pre-tokens their own pipeline produces, as HuggingFace's trainers do: pass the `~normalizer` and `~pre` you intend to encode with, or a whole line of the corpus counts as one word.
+- Unigram models segment as HuggingFace does, with two known skews. `tokenizers` reads many scores of a `tokenizer.json` off by one unit in the last place (its JSON number parsing is lossy), so an exact tie between two orders of the same pieces — a run of `-` cut as `-`, `---`, `---` or `---`, `---`, `-` — can fall the other way in Brot, which scores the numbers as written. And each byte-fallback token reports the span of the character it spells out, where HuggingFace gives every token of the run the whole run's span.
 
 ---
 
