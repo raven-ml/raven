@@ -171,18 +171,13 @@ let create ?unk_id ?(byte_fallback = false) vocab_list =
     | Some id -> byte_ids.(b) <- id
     | None -> ()
   done;
-  (* An identifier accounts for the bytes of its entry, except the byte a
-     fallback token spells out and the unknown token, which stands for a stretch
-     of text no entry covers and so for no fixed number of bytes at all. *)
-  let len_table = Array.map String.length token_table in
-  if byte_fallback then
-    Array.iter (fun id -> if id >= 0 then len_table.(id) <- 1) byte_ids;
-  if unk_id >= 0 then len_table.(unk_id) <- 0;
   {
     token_table;
     scores;
     token_to_ids;
-    len_table;
+    (* An identifier accounts for the bytes of its entry; a run of text no entry
+       covers records what stands for it as it is emitted. *)
+    len_table = Array.map String.length token_table;
     trie = build_trie token_table;
     min_score = Array.fold_left min infinity scores;
     unk_id;
@@ -281,8 +276,9 @@ let all_bytes_known model text ~first ~last =
    vocabulary hold one, else its bytes one token each when byte fallback is on
    and the vocabulary holds every one of them, else the unknown token. Only a
    run of several pieces can spell an entry: a single one would have been
-   matched. *)
-let add_unknown model ids text ~first ~last ~fused =
+   matched. The bytes and the unknown token stand for the whole stretch, which
+   is recorded with them: every byte token of a stretch spans all of it. *)
+let add_unknown model ids ~opaque text ~first ~last ~fused =
   let entry =
     if fused then
       Hashtbl.find_opt model.token_to_ids (String.sub text first (last - first))
@@ -291,19 +287,27 @@ let add_unknown model ids text ~first ~last ~fused =
   match entry with
   | Some id -> Ints.add ids id
   | None ->
-      if model.byte_fallback && all_bytes_known model text ~first ~last then
+      let bytes = last - first in
+      Ints.add opaque (Ints.length ids);
+      if model.byte_fallback && all_bytes_known model text ~first ~last then begin
+        Ints.add opaque bytes;
         for i = first to last - 1 do
           Ints.add ids
             (Array.unsafe_get model.byte_ids
                (Char.code (String.unsafe_get text i)))
         done
-      else Ints.add ids model.unk_id
+      end
+      else begin
+        Ints.add opaque 1;
+        Ints.add ids model.unk_id
+      end;
+      Ints.add opaque bytes
 
 (* The best path read back from the end of the pretoken and walked forward
    again. A run of characters the vocabulary does not hold is one unknown token
    rather than one each — or the entry the run spells, should the vocabulary
    hold that — and byte fallback spells out the whole run. *)
-let emit model st ids text ~pos ~len =
+let emit model st ids ~opaque text ~pos ~len =
   let back = st.back and piece = st.piece and path = st.path in
   let count = ref 0 in
   let node = ref len in
@@ -340,14 +344,14 @@ let emit model st ids text ~pos ~len =
       let first =
         if !k = !count - 1 then 0 else Array.unsafe_get path (!k + 1)
       in
-      add_unknown model ids text ~first:(pos + first)
+      add_unknown model ids ~opaque text ~first:(pos + first)
         ~last:(pos + Array.unsafe_get path last)
         ~fused:(last < !k)
     end;
     k := last - 1
   done
 
-let encode_into model st ids text ~pos ~len =
+let encode_into model st ids ~opaque text ~pos ~len =
   if len > 0 then begin
     grow st (len + 1);
     let score = st.score and back = st.back and piece = st.piece in
@@ -414,7 +418,7 @@ let encode_into model st ids text ~pos ~len =
       end;
       at := !at + width
     done;
-    emit model st ids text ~pos ~len
+    emit model st ids ~opaque text ~pos ~len
   end
 
 (* Serialization *)

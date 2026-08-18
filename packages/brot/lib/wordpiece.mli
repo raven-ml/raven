@@ -49,14 +49,16 @@ val from_file : vocab_file:string -> t
 
 (** {1:tokenization Tokenization} *)
 
-val encode_into : t -> Ints.t -> string -> pos:int -> len:int -> unit
-(** [encode_into t ids text ~pos ~len] appends the ids of the word
+val encode_into :
+  t -> Ints.t -> opaque:Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t ids ~opaque text ~pos ~len] appends the ids of the word
     [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
     checked.
 
     A word longer than {!create}'s [max_input_chars_per_word] in UTF-8
     characters, and one that no run of subwords covers, is the unknown token
-    alone. *)
+    alone, recorded in [opaque] as three integers: its index in [ids], [1], and
+    [len], the bytes of the word it stands for. *)
 
 val token_table : t -> string array
 (** [token_table t] maps an id to its token string, prefix included. Owned by
@@ -64,9 +66,9 @@ val token_table : t -> string array
 
 val len_table : t -> int array
 (** [len_table t] maps an id to the number of source bytes an occurrence of it
-    accounts for: the entry stripped of the continuation prefix. The unknown
-    token reads [0], the word it stands for being a property of the text rather
-    than of the id. Owned by [t]; do not mutate. *)
+    accounts for when it is a match of its entry: the entry stripped of the
+    continuation prefix. The unknown token spent on a word stands for the word,
+    which {!encode_into} records. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

@@ -173,8 +173,8 @@ type t = {
   vocab : (string, int) Hashtbl.t;
   vocab_r : string array;
   (* How many bytes of a word an id accounts for: the entry, stripped of the
-     prefix a continuation subword carries. The unknown token stands for a whole
-     word, so its length is not a property of the id and reads as zero. *)
+     prefix a continuation subword carries. The unknown token spent on a whole
+     word is recorded as it is emitted. *)
   len_table : int array;
   trie : trie;
   unk_token : string;
@@ -205,7 +205,6 @@ let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
   let unk_id =
     match Hashtbl.find_opt vocab unk_token with Some id -> id | None -> -1
   in
-  if unk_id >= 0 then len_table.(unk_id) <- 0;
   let trie = build_trie vocab in
   {
     vocab;
@@ -248,18 +247,26 @@ let count_chars s =
   done;
   !n
 
+(* The unknown token, standing for the whole word. *)
+let add_unknown model ids ~opaque ~len =
+  Ints.add opaque (Ints.length ids);
+  Ints.add opaque 1;
+  Ints.add opaque len;
+  Ints.add ids model.unk_id
+
 (* The ids of [text.\[pos..pos+len)], appended to [ids]. A word no run of
    subwords covers is one unknown token, so the ids already written for it are
    dropped. The trie cursors are held outside the walk: a [ref] taken per
    position would allocate once per subword. *)
-let encode_into model ids text ~pos ~len =
+let encode_into model ids ~opaque text ~pos ~len =
   if Hashtbl.length model.vocab > 0 && len > 0 then begin
     let stop = pos + len in
     let chars = ref 0 in
     for k = pos to stop - 1 do
       if Char.code (String.unsafe_get text k) land 0xC0 <> 0x80 then incr chars
     done;
-    if !chars > model.max_input_chars_per_word then Ints.add ids model.unk_id
+    if !chars > model.max_input_chars_per_word then
+      add_unknown model ids ~opaque ~len
     else begin
       let trie = model.trie in
       let prefix = model.continuing_subword_prefix in
@@ -312,7 +319,7 @@ let encode_into model ids text ~pos ~len =
       done;
       if !unknown then begin
         Ints.truncate ids written;
-        Ints.add ids model.unk_id
+        add_unknown model ids ~opaque ~len
       end
     end
   end

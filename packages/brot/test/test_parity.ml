@@ -11,7 +11,7 @@ open Brot
 open Windtrap
 
 let corpora = [ "sample"; "edge_cases" ]
-let models = [ "gpt2"; "llama"; "bert_base"; "roberta_base" ]
+let models = [ "gpt2"; "llama"; "bert_base"; "roberta_base"; "t5_base_nonorm" ]
 let corpus_path corpus = Filename.concat "fixtures/parity" (corpus ^ ".txt")
 
 let ids_path corpus model =

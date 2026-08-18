@@ -825,35 +825,94 @@ let test_metaspace_huggingface () =
 
 (* Both metaspaces walk: without splitting the walk is one span over the marked
    text, which is what places a model's tokens inside it. A sequence carries the
-   rewrite only when the metaspace opens it. *)
+   rewrite as a single walk when the metaspace opens it, and as a segmented one
+   when verbatim walkers come before it: those cut the segments the metaspace
+   marks one by one. *)
 let test_metaspace_plan () =
+  let scheme = function
+    | `First -> "first"
+    | `Never -> "never"
+    | `Always -> "always"
+  in
+  let rewrite = function
+    | Pre.Verbatim -> "verbatim"
+    | Pre.Prefix_space -> "prefix space"
+    | Pre.Space_marker { marker; prepend } ->
+        Printf.sprintf "marker=%S prepend=%s" marker (scheme prepend)
+  in
+  let flat t =
+    let buffer = Buffer.create 64 in
+    let ppf = Format.formatter_of_buffer buffer in
+    Format.pp_set_margin ppf max_int;
+    Format.fprintf ppf "%a@?" Pre.pp t;
+    Buffer.contents buffer
+  in
   let describe t =
     match Pre.plan t with
     | Pre.Pieces -> "pieces"
-    | Pre.Walk { rewrite = Pre.Verbatim; splittable } ->
-        Printf.sprintf "verbatim splittable=%b" splittable
-    | Pre.Walk { rewrite = Pre.Prefix_space; splittable } ->
-        Printf.sprintf "prefix space splittable=%b" splittable
-    | Pre.Walk { rewrite = Pre.Space_marker { marker; prepend }; splittable } ->
-        Printf.sprintf "marker=%S prepend=%b splittable=%b" marker prepend
-          splittable
+    | Pre.Walk { rewrite = r; splittable } ->
+        Printf.sprintf "%s splittable=%b" (rewrite r) splittable
+    | Pre.Segmented { outer; rewrite = r; inner; splittable } ->
+        Printf.sprintf "%s | %s | %s splittable=%b" (flat outer) (rewrite r)
+          (flat inner) splittable
   in
   let check name t expected = equal ~msg:name string expected (describe t) in
   check "split" (Pre.metaspace ())
-    "marker=\"\\226\\150\\129\" prepend=true splittable=false";
+    "marker=\"\\226\\150\\129\" prepend=always splittable=false";
   check "no split"
     (Pre.metaspace ~split:false ())
-    "marker=\"\\226\\150\\129\" prepend=true splittable=false";
+    "marker=\"\\226\\150\\129\" prepend=always splittable=false";
   check "no split, no prepend"
     (Pre.metaspace ~replacement:"_" ~prepend_scheme:`Never ~split:false ())
-    "marker=\"_\" prepend=false splittable=false";
+    "marker=\"_\" prepend=never splittable=false";
+  check "first"
+    (Pre.metaspace ~prepend_scheme:`First ())
+    "marker=\"\\226\\150\\129\" prepend=first splittable=false";
   check "no split, then a verbatim walker"
     (Pre.sequence [ Pre.metaspace ~split:false (); Pre.punctuation () ])
-    "marker=\"\\226\\150\\129\" prepend=true splittable=false";
-  (* A rewrite applies to the whole text, so a metaspace that is not the first
-     member has no walk to take part in. *)
+    "marker=\"\\226\\150\\129\" prepend=always splittable=false";
+  (* The walkers before the metaspace cut the segments it marks, and whether a
+     cut at a space is safe is the first of them's business. *)
   check "after another walker"
     (Pre.sequence [ Pre.whitespace_split (); Pre.metaspace ~split:false () ])
+    "WhitespaceSplit | marker=\"\\226\\150\\129\" prepend=always | \
+     Metaspace(\"\\226\\150\\129\", always, split=false) splittable=true";
+  check "after two walkers, before another"
+    (Pre.sequence
+       [
+         Pre.punctuation ();
+         Pre.whitespace_split ();
+         Pre.metaspace ();
+         Pre.digits ();
+       ])
+    "Sequence[Punctuation(Isolated), WhitespaceSplit] | \
+     marker=\"\\226\\150\\129\" prepend=always | \
+     Sequence[Metaspace(\"\\226\\150\\129\", always, split=true), \
+     Digits(individual=false)] splittable=false";
+  check "byte level after a walker"
+    (Pre.sequence [ Pre.whitespace_split (); Pre.byte_level () ])
+    "WhitespaceSplit | prefix space | ByteLevel(add_prefix_space=true, \
+     use_regex=true, trim_offsets=true) splittable=true";
+  (* A nested sequence is its members in place. *)
+  check "nested"
+    (Pre.sequence
+       [
+         Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ];
+         Pre.metaspace ();
+       ])
+    "Sequence[WhitespaceSplit, Punctuation(Isolated)] | \
+     marker=\"\\226\\150\\129\" prepend=always | \
+     Metaspace(\"\\226\\150\\129\", always, split=true) splittable=true";
+  (* Two rewrites, or a member that hands on encoded text, leave nothing to
+     walk. *)
+  check "two metaspaces"
+    (Pre.sequence [ Pre.metaspace (); Pre.metaspace () ])
+    "pieces";
+  check "byte level before another member"
+    (Pre.sequence [ Pre.byte_level ~add_prefix_space:false (); Pre.digits () ])
+    "pieces";
+  check "fixed length"
+    (Pre.sequence [ Pre.fixed_length 3; Pre.metaspace () ])
     "pieces"
 
 (* Every expectation is the output of HuggingFace [Metaspace], whose offsets are
@@ -917,15 +976,168 @@ let test_metaspace_offsets () =
   case block "!!!" [ (m, (0, 1)); ("!", (0, 1)); ("!", (1, 2)); ("!", (2, 3)) ];
   case block "_a_b"
     [ (m, (0, 1)); ("_", (0, 1)); ("a", (1, 2)); ("_", (2, 3)); ("b", (3, 4)) ];
-  (* A member that follows one whose pieces are not bytes of its input places
-     nothing more finely than the whole of the piece it was handed: HuggingFace,
-     which carries an alignment through the chain, has ["!"] at [(3, 4)]
-     here. *)
+  (* A member that follows the metaspace cuts the marked segments, and its
+     pieces are placed through the alignment of the marking, as HuggingFace
+     places them. *)
   let punctuated =
     Pre.sequence
       [ Pre.whitespace_split (); Pre.metaspace (); Pre.punctuation () ]
   in
-  case punctuated "a b!" [ (m ^ "a", (0, 1)); (m ^ "b", (2, 4)); ("!", (2, 4)) ]
+  case punctuated "a b!" [ (m ^ "a", (0, 1)); (m ^ "b", (2, 3)); ("!", (3, 4)) ];
+  case punctuated "a,b c"
+    [ (m ^ "a", (0, 1)); (",", (1, 2)); ("b", (2, 3)); (m ^ "c", (4, 5)) ];
+  case punctuated "!!" [ (m, (0, 1)); ("!", (0, 1)); ("!", (1, 2)) ];
+  (* The segments a punctuation split hands to the metaspace can hold spaces,
+     which the marker then stands at, and a marker prepended to a lone
+     punctuation mark stands at that mark. *)
+  let punctuation_first =
+    Pre.sequence [ Pre.punctuation (); Pre.metaspace () ]
+  in
+  case punctuation_first "a b!"
+    [ (m ^ "a", (0, 1)); (m ^ "b", (1, 3)); (m ^ "!", (3, 4)) ];
+  case punctuation_first "a, b"
+    [ (m ^ "a", (0, 1)); (m ^ ",", (1, 2)); (m ^ "b", (2, 4)) ];
+  (* Without splitting, each segment is one marked piece. *)
+  let unsplit =
+    Pre.sequence [ Pre.whitespace_split (); Pre.metaspace ~split:false () ]
+  in
+  case unsplit "a b!c" [ (m ^ "a", (0, 1)); (m ^ "b!c", (2, 5)) ];
+  case unsplit "  x" [ (m ^ "x", (2, 3)) ];
+  (* Members nested in a sequence take part as if written in place. *)
+  let nested =
+    Pre.sequence
+      [
+        Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ];
+        Pre.metaspace ();
+      ]
+  in
+  case nested "a b!c"
+    [
+      (m ^ "a", (0, 1)); (m ^ "b", (2, 3)); (m ^ "!", (3, 4)); (m ^ "c", (4, 5));
+    ];
+  let nested_inner =
+    Pre.sequence
+      [
+        Pre.whitespace_split ();
+        Pre.sequence [ Pre.metaspace (); Pre.punctuation () ];
+      ]
+  in
+  case nested_inner "a b!c"
+    [ (m ^ "a", (0, 1)); (m ^ "b", (2, 3)); ("!", (3, 4)); ("c", (4, 5)) ];
+  (* Members that walk verbatim can be as many as needed before the metaspace,
+     and a leading run that belongs to no piece belongs to no segment. *)
+  let digits =
+    Pre.sequence [ Pre.digits ~individual_digits:true (); Pre.metaspace () ]
+  in
+  case digits "a1 b" [ (m ^ "a", (0, 1)); (m ^ "1", (1, 2)); (m ^ "b", (2, 4)) ];
+  let scripts = Pre.sequence [ Pre.unicode_scripts (); Pre.metaspace () ] in
+  case scripts " ab" [ (m ^ "ab", (1, 3)) ];
+  case scripts "ab\u{433}\u{434}"
+    [ (m ^ "ab", (0, 2)); (m ^ "\u{433}\u{434}", (2, 6)) ]
+
+(* [`First] prepends the marker to the piece that opens the document alone,
+   which in a sequence is the first piece of the member before it — and not even
+   that one when white space comes before it. Every expectation is the output of
+   HuggingFace [Metaspace(prepend_scheme="first")]. *)
+let test_metaspace_first () =
+  let case t text expected =
+    check_tokenization (Printf.sprintf "%S" text) (Pre.pre_tokenize t text)
+      expected
+  in
+  let m = "\u{2581}" in
+  let first = Pre.metaspace ~prepend_scheme:`First () in
+  case first "Hello world" [ (m ^ "Hello", (0, 5)); (m ^ "world", (5, 11)) ];
+  case first " Hello world" [ (m ^ "Hello", (0, 6)); (m ^ "world", (6, 12)) ];
+  case first (m ^ "x y") [ (m ^ "x", (0, 4)); (m ^ "y", (4, 6)) ];
+  case first "  a" [ (m, (0, 1)); (m ^ "a", (1, 3)) ];
+  let unsplit = Pre.metaspace ~prepend_scheme:`First ~split:false () in
+  case unsplit "Hello world" [ (m ^ "Hello" ^ m ^ "world", (0, 11)) ];
+  case unsplit " Hello world" [ (m ^ "Hello" ^ m ^ "world", (0, 12)) ];
+  let split_first =
+    Pre.sequence
+      [ Pre.whitespace_split (); Pre.metaspace ~prepend_scheme:`First () ]
+  in
+  case split_first "Hello world" [ (m ^ "Hello", (0, 5)); ("world", (6, 11)) ];
+  case split_first " Hello world" [ ("Hello", (1, 6)); ("world", (7, 12)) ];
+  case split_first (m ^ "x y") [ (m ^ "x", (0, 4)); ("y", (5, 6)) ];
+  case split_first "  a" [ ("a", (2, 3)) ];
+  (* The rule holds on the pieces path too: a fixed-length member, a byte-level
+     member after the metaspace, or a second metaspace, each of which the
+     walkers cannot take. *)
+  let fixed =
+    Pre.sequence
+      [
+        Pre.whitespace_split ();
+        Pre.fixed_length 2;
+        Pre.metaspace ~prepend_scheme:`First ();
+      ]
+  in
+  case fixed "trailing "
+    [ (m ^ "tr", (0, 2)); ("ai", (2, 4)); ("li", (4, 6)); ("ng", (6, 8)) ];
+  case fixed " ab cd" [ ("ab", (1, 3)); ("cd", (4, 6)) ];
+  case fixed "abc" [ (m ^ "ab", (0, 2)); ("c", (2, 3)) ];
+  let g = "\u{120}" in
+  let then_bytes =
+    Pre.sequence
+      [
+        Pre.whitespace_split ();
+        Pre.metaspace ~prepend_scheme:`First ();
+        Pre.byte_level ~use_regex:false ();
+      ]
+  in
+  case then_bytes "  two  spaces"
+    [ (g ^ "two", (2, 5)); (g ^ "spaces", (7, 13)) ];
+  case then_bytes "two spaces"
+    [ (g ^ "\u{e2}\u{138}\u{123}two", (0, 3)); (g ^ "spaces", (4, 10)) ];
+  let twice =
+    Pre.sequence
+      [
+        Pre.metaspace ~prepend_scheme:`First ();
+        Pre.metaspace ~prepend_scheme:`First ();
+      ]
+  in
+  case twice "a b" [ (m ^ "a", (0, 1)); (m ^ "b", (1, 3)) ];
+  case twice " a b" [ (m ^ "a", (0, 2)); (m ^ "b", (2, 4)) ]
+
+(* A byte-level member after a walker prepends its space to each piece the
+   walker hands it and encodes each on its own; the space stands at the
+   character it opens. Every expectation is the output of HuggingFace. *)
+let test_byte_level_after_a_walker () =
+  let case t text expected =
+    check_tokenization (Printf.sprintf "%S" text) (Pre.pre_tokenize t text)
+      expected
+  in
+  let g = "\u{120}" in
+  let whole =
+    Pre.sequence [ Pre.whitespace_split (); Pre.byte_level ~use_regex:false () ]
+  in
+  case whole "Hello world" [ (g ^ "Hello", (0, 5)); (g ^ "world", (6, 11)) ];
+  case whole " Hello  w\u{f6}rld "
+    [ (g ^ "Hello", (1, 6)); (g ^ "w\u{c3}\u{b6}rld", (8, 14)) ];
+  case whole "a" [ (g ^ "a", (0, 1)) ];
+  let regex = Pre.sequence [ Pre.whitespace_split (); Pre.byte_level () ] in
+  case regex "Hello world" [ (g ^ "Hello", (0, 5)); (g ^ "world", (6, 11)) ];
+  case regex "it's  x" [ (g ^ "it", (0, 2)); ("'s", (2, 4)); (g ^ "x", (6, 7)) ];
+  case regex "ab12 c" [ (g ^ "ab", (0, 2)); ("12", (2, 4)); (g ^ "c", (5, 6)) ];
+  let punctuated = Pre.sequence [ Pre.punctuation (); Pre.byte_level () ] in
+  case punctuated "Hello, world!"
+    [
+      (g ^ "Hello", (0, 5));
+      (g ^ ",", (5, 6));
+      (g ^ "world", (6, 12));
+      (g ^ "!", (12, 13));
+    ];
+  case punctuated "a b" [ (g ^ "a", (0, 1)); (g ^ "b", (1, 3)) ];
+  let split =
+    Pre.sequence
+      [
+        Pre.split ~pattern:" " ~behavior:`Merged_with_next ();
+        Pre.byte_level ~add_prefix_space:false ();
+      ]
+  in
+  case split "Hello world" [ ("Hello", (0, 5)); (g ^ "world", (5, 11)) ];
+  let removed = Pre.sequence [ Pre.split ~pattern:" " (); Pre.byte_level () ] in
+  case removed "Hello  world" [ (g ^ "Hello", (0, 5)); (g ^ "world", (7, 12)) ]
 
 let test_metaspace_basic () =
   let test_case ?(replacement = "_") text expected =
@@ -1476,6 +1688,9 @@ let () =
           test "Metaspace matches HuggingFace" test_metaspace_huggingface;
           test "Metaspace walks with or without splitting" test_metaspace_plan;
           test "Metaspace offsets are of the source" test_metaspace_offsets;
+          test "Metaspace prepends on first to the opening piece"
+            test_metaspace_first;
+          test "Byte level after a walker" test_byte_level_after_a_walker;
         ];
       group "chunking" [ test "walking a long text" test_chunked_walk ];
       group "json"

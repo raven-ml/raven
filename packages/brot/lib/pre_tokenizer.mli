@@ -93,10 +93,13 @@ val digits : ?individual_digits:bool -> unit -> t
     [false] (default), consecutive digits are grouped. *)
 
 type prepend_scheme =
-  [ `First  (** Only prepend to first piece *)
+  [ `First  (** Prepend to the piece that opens the document only *)
   | `Never  (** Never prepend *)
-  | `Always  (** Always prepend if not starting with space *) ]
-(** Controls when metaspace prepends the replacement character. *)
+  | `Always  (** Prepend to every piece not starting with a space *) ]
+(** Controls when metaspace prepends the replacement character. In a {!sequence}
+    the pieces are those of the member before it, so [`First] marks the first of
+    them and [`Always] each — and the {!Brot} pipeline counts a piece as opening
+    the document only when nothing, an added token included, comes before it. *)
 
 val metaspace :
   ?replacement:string ->
@@ -153,9 +156,9 @@ val pre_tokenize : t -> string -> (string * (int * int)) list
 
     Two spans can cover the same bytes. A span is widened to whole characters,
     so pieces of a [text] that is not valid UTF-8 can share one; and the pieces
-    a member of a {!sequence} cuts from one whose text its predecessor rewrote
-    or encoded all report that piece's span, nothing in it being placeable more
-    finely than the whole of it. *)
+    a member of a {!sequence} cuts from one that was rewritten more than once,
+    cut by a fixed-length member, or encoded all report that piece's span,
+    nothing in it being placeable more finely than the whole of it. *)
 
 (** {1 Formatting} *)
 
@@ -200,11 +203,12 @@ type rewrite =
   | Prefix_space
       (** A [' '] is prepended unless the text starts with one; offsets shift
           back by one. *)
-  | Space_marker of { marker : string; prepend : bool }
-      (** Spaces become [marker], and one is prepended when [prepend] holds and
-          the text is neither empty nor already starting with a space or with
-          [marker]. Offsets are those of the marked text the caller filled,
-          which {!pre_tokenize} maps back to the text it was given. *)
+  | Space_marker of { marker : string; prepend : prepend_scheme }
+      (** Spaces become [marker], and one is prepended when [prepend] asks for
+          it — on [`First] only to text that opens the document — and the text
+          is neither empty nor already starting with a space or with [marker].
+          Offsets are those of the marked text the caller filled, which
+          {!pre_tokenize} maps back to the text it was given. *)
 
 (** The type for how a pre-tokenizer takes part in the walking path.
     [splittable] is [true] when cutting the input at a space that separates two
@@ -212,10 +216,30 @@ type rewrite =
     whole. *)
 type plan =
   | Walk of { rewrite : rewrite; splittable : bool }
+      (** One walk over the text once [rewrite] has been applied to it. *)
+  | Segmented of { outer : t; rewrite : rewrite; inner : t; splittable : bool }
+      (** [outer] walks the text as it is into segments, and [inner] walks each
+          segment once [rewrite] has been applied to it, which is how a
+          {!sequence} rewrites: member by member over the pieces of the one
+          before. Both parts are walkable, and neither is a rewrite of the
+          other's text: [inner] is handed the rewritten segment. *)
   | Pieces  (** Not walkable: {!pre_tokenize} is the only implementation. *)
 
 val plan : t -> plan
 (** [plan t] is how [t] takes part in the walking path. *)
+
+val rewriter : rewrite -> first:bool Lazy.t -> string -> Normalizer.t option
+(** [rewriter rewrite ~first text] is the normalizer that performs [rewrite] on
+    [text], or [None] when it would leave [text] as it is. [first] says whether
+    [text] opens the document, and is only forced by a [Space_marker] that
+    prepends on [`First]. The normalizers are built when [rewriter rewrite] is
+    applied, so a caller with many texts applies it once. *)
+
+val pieces : t -> first:bool Lazy.t -> string -> (string * (int * int)) list
+(** [pieces t ~first text] is {!pre_tokenize} for a [text] that opens the
+    document iff [first] does: the marker a metaspace prepends on [`First] goes
+    to the piece at [0] only then. [first] is forced only by such a metaspace.
+    {!pre_tokenize} is [pieces] with [first] holding. *)
 
 val encodes_bytes : t -> bool
 (** [encodes_bytes t] is [true] iff the pieces of [t] are byte-level encoded,
@@ -237,5 +261,6 @@ val fill : t -> string -> pos:int -> stop:int -> Spans.t -> int
     before it. A caller that reaches that state makes no progress until it calls
     again with a larger buffer.
 
-    Raises [Invalid_argument] if [plan t] is [Pieces], or if [pos] and [stop]
-    are not within [0] and [String.length text]. *)
+    Raises [Invalid_argument] unless [plan t] is [Walk], or if [pos] and [stop]
+    are not within [0] and [String.length text]. The parts of a [Segmented] plan
+    are filled on their own. *)

@@ -106,10 +106,16 @@ val with_state : t -> (state -> 'a) -> 'a
     domain is encoding — gets unshared buffers and no cache instead, so [f] is
     always correct and only sometimes fast. [st] must not escape [f]. *)
 
-val encode_into : t -> state -> Ints.t -> string -> pos:int -> len:int -> unit
-(** [encode_into t st ids text ~pos ~len] appends the ids of
+val encode_into :
+  t -> state -> Ints.t -> opaque:Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t st ids ~opaque text ~pos ~len] appends the ids of
     [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
     checked.
+
+    An id that stands for bytes other than the ones {!len_table} gives it — the
+    unknown token for the run it covers, a fallback token merged from the text
+    spelling its name — is recorded in [opaque] as three integers: its index in
+    [ids], [1], and the number of bytes it stands for.
 
     This is the throughput path: nothing is allocated per pretoken that hits the
     cache. *)
@@ -120,10 +126,9 @@ val token_table : t -> string array
 
 val len_table : t -> int array
 (** [len_table t] maps an id to the number of source bytes an occurrence of it
-    accounts for: the bytes an entry stands for in a byte-level model, and the
-    entry stripped of its affixes otherwise. A byte fallback token reads [1] and
-    the unknown token [0], its length being a property of the text rather than
-    of the id. Owned by [t]; do not mutate. *)
+    accounts for unless {!encode_into} recorded otherwise: the bytes an entry
+    stands for in a byte-level model, and the entry stripped of its affixes
+    otherwise. A byte fallback token reads [1]. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

@@ -1087,6 +1087,24 @@ thread.
 
 ### Brot
 
+- Offsets are exact through pre-tokenizer sequences that rewrite after
+  splitting (`Sequence [WhitespaceSplit; Metaspace]` as in T5/ALBERT/XLNet,
+  `Sequence [Split; ByteLevel]`): each token now reports its own bytes instead
+  of the whole word's, and `Pre_tokenizer.pre_tokenize` places the pieces of
+  later members exactly. Such pipelines also encode faster (T5 `encode_ids`
+  ~1.6×) and take part in cut-document parallel batches.
+- `Pre_tokenizer.metaspace ~prepend_scheme:`First` is honoured: the marker is
+  prepended only to the piece that opens the document — not after white
+  space, an added token, or bytes a normalizer removed — as HuggingFace does
+  (`Always` was used before).
+- Offsets of unknown tokens and byte-fallback runs match HuggingFace: a fused
+  unknown run and every byte token of a fallback run stand for the run's
+  bytes, so the tokens after them are no longer shifted (`Encoding.offsets`
+  on Unigram/BPE models).
+- A Unigram, WordPiece or WordLevel model behind a byte-level pre-tokenizer
+  (`Pre_tokenizer.byte_level`, alone or in a sequence) is now handed
+  byte-level-encoded pieces and matches its vocabulary in that form, as
+  HuggingFace does; before, its ids were wrong.
 - Add `Brot.encode_batch_ids`, the throughput path: the ids of a whole batch
   in one `int32` Bigarray (`Brot.ids`) plus per-row lengths, straight into
   `Nx` via `Nx.of_bigarray`; no `Encoding.t` and nothing allocated per token,

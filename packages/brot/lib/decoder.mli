@@ -67,7 +67,8 @@ val metaspace :
     to spaces. [replacement] defaults to ["\u{2581}"]. Unless [prepend_scheme]
     is [`Never], the marker was prepended to the text rather than standing for a
     space, so every occurrence of it in the {e first} token is dropped instead
-    of becoming a space. [prepend_scheme] defaults to [`Always]. *)
+    of becoming a space — on [`First] as on [`Always], the two prepending to the
+    same first token. [prepend_scheme] defaults to [`Always]. *)
 
 val ctc :
   ?pad_token:string ->

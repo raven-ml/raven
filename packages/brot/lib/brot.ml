@@ -53,10 +53,26 @@ type algorithm =
   | Alg_unigram of Unigram.t
   | Alg_chars of Chars.t
 
+(* The rewrite a text goes through before a walker sees it, as the normalizer
+   that performs it, so that its alignment comes from the same place as the
+   pipeline normalizer's; [None] when it leaves the text as it is. *)
+type rewrite = first:bool Lazy.t -> string -> Normalizer.t option
+
 (* How the pipeline cuts a stretch of normalized text into pretokens. *)
 type cut =
   | Whole  (** No pre-tokenizer: the stretch is one pretoken. *)
-  | Walk of Pre_tokenizer.t  (** Byte ranges, through {!Pre_tokenizer.fill}. *)
+  | Walk of Pre_tokenizer.t
+      (** Byte ranges of the stretch as it is, through {!Pre_tokenizer.fill},
+          which is what spares the walked path a substring. *)
+  | Rewritten of { pre : Pre_tokenizer.t; rewrite : rewrite }
+      (** Byte ranges of the stretch once rewritten. *)
+  | Segmented of {
+      outer : Pre_tokenizer.t;
+      rewrite : rewrite;
+      inner : Pre_tokenizer.t;
+    }
+      (** [outer] cuts the stretch into segments, and [inner] walks each once
+          rewritten. *)
   | Pieces of Pre_tokenizer.t
       (** Strings, through {!Pre_tokenizer.pre_tokenize}: the pretokens are not
           ranges of the text they were cut from. *)
@@ -66,11 +82,6 @@ type t = {
   normalizer : Normalizer.t option;
   pre_tokenizer : Pre_tokenizer.t option;
   cut : cut;
-  (* The rewrite a stretch of text goes through before the walker sees it, as
-     the normalizer that performs it, so that its alignment comes from the same
-     place as the pipeline normalizer's. [None] when the pre-tokenizer walks the
-     text as it is, which is what spares the walked path a substring. *)
-  rewrite : (string -> Normalizer.t option) option;
   post_processor : Post_processor.t option;
   decoder : Decoder.t option;
   added : Added_tokens.t;
@@ -254,49 +265,31 @@ let added_tokens_of algorithm tokens =
 
 (* Construction *)
 
-let cut_of = function
+(* Spans index the text as it is, so a walked byte-level pre-tokenizer hands the
+   model the raw bytes of a pretoken rather than their encoded form; only a BPE
+   model can match its vocabulary against those (it is flipped below), so any
+   other model behind one is handed pieces, which come encoded. *)
+let cut_of ~algorithm = function
   | None -> Whole
   | Some pre -> (
+      let matches_bytes =
+        match algorithm with Alg_bpe _ -> true | _ -> false
+      in
       match Pre_tokenizer.plan pre with
-      | Pre_tokenizer.Walk _ -> Walk pre
+      | (Pre_tokenizer.Walk _ | Pre_tokenizer.Segmented _)
+        when Pre_tokenizer.encodes_bytes pre && not matches_bytes ->
+          Pieces pre
+      | Pre_tokenizer.Walk { rewrite = Verbatim; _ } -> Walk pre
+      | Pre_tokenizer.Walk { rewrite; _ } ->
+          Rewritten { pre; rewrite = Pre_tokenizer.rewriter rewrite }
+      | Pre_tokenizer.Segmented { outer; rewrite; inner; _ } ->
+          Segmented { outer; rewrite = Pre_tokenizer.rewriter rewrite; inner }
       | Pre_tokenizer.Pieces -> Pieces pre)
-
-(* A pre-tokenizer that rewrites the text before walking it does so with the
-   same effect as a normalizer, and whether it fires is decided by the text it
-   is given, so the rewrite is a normalizer picked per stretch. Prepending the
-   marker before or after replacing the spaces gives the same text, the marker
-   holding no space. *)
-let rewriter = function
-  | None -> None
-  | Some pre -> (
-      match Pre_tokenizer.plan pre with
-      | Pre_tokenizer.Pieces | Pre_tokenizer.Walk { rewrite = Verbatim; _ } ->
-          None
-      | Pre_tokenizer.Walk { rewrite = Prefix_space; _ } ->
-          let space = Normalizer.prepend " " in
-          Some
-            (fun text ->
-              if String.length text > 0 && String.unsafe_get text 0 <> ' ' then
-                Some space
-              else None)
-      | Pre_tokenizer.Walk { rewrite = Space_marker { marker; prepend }; _ } ->
-          let mark = Normalizer.replace ~pattern:" " ~replacement:marker in
-          let mark_and_prepend =
-            Normalizer.sequence [ mark; Normalizer.prepend marker ]
-          in
-          Some
-            (fun text ->
-              if String.length text = 0 then None
-              else if
-                prepend
-                && String.unsafe_get text 0 <> ' '
-                && not (String.starts_with ~prefix:marker text)
-              then Some mark_and_prepend
-              else Some mark))
 
 (* An added token's identifier may lie past the model vocabulary. How many
    source bytes it accounts for is a property of the text it matched rather than
-   of the identifier, so it reads as zero and its span's own end places it. *)
+   of the identifier, so it reads as zero: the literal frame it stands in places
+   it by its span. *)
 let id_tables algorithm added =
   let tokens = alg_token_table algorithm and lens = alg_len_table algorithm in
   let size =
@@ -319,13 +312,11 @@ let id_tables algorithm added =
     (token_table, len_table)
   end
 
-(* Spans index the text as it is, so a byte-level pre-tokenizer hands the model
-   the raw bytes of a pretoken rather than their encoded form, and the model has
-   to match its vocabulary against those bytes. The flip is derived from the
-   pipeline and is never a knob of its own. *)
-(* Only on the walked path: there the spans index the text as it is, so the
-   model is handed raw bytes. A pre-tokenizer that hands back pieces has already
-   encoded them, and a model flipped to raw bytes would encode them twice. *)
+(* Whether a BPE model is to match raw bytes: behind a walked byte-level
+   pre-tokenizer, which hands it the bytes of a pretoken rather than their
+   encoded form. The flip is derived from the pipeline and is never a knob of
+   its own; a pre-tokenizer that hands back pieces has already encoded them, and
+   a model flipped to raw bytes would encode them twice. *)
 let byte_level_pipeline pre =
   match pre with
   | None -> false
@@ -333,7 +324,7 @@ let byte_level_pipeline pre =
       Pre_tokenizer.encodes_bytes pre
       &&
       match Pre_tokenizer.plan pre with
-      | Pre_tokenizer.Walk _ -> true
+      | Pre_tokenizer.Walk _ | Pre_tokenizer.Segmented _ -> true
       | Pre_tokenizer.Pieces -> false)
 
 (* A model built for another pipeline — one just trained, say — is rebuilt on
@@ -379,8 +370,7 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     algorithm;
     normalizer;
     pre_tokenizer = pre;
-    cut = cut_of pre;
-    rewrite = rewriter pre;
+    cut = cut_of ~algorithm pre;
     post_processor = post;
     decoder;
     added;
@@ -546,7 +536,9 @@ let is_slice text ~at piece =
    they came from. *)
 type scratch = {
   mutable spans : Spans.t;
+  mutable segments : Spans.t;
   ids : Ints.t;
+  opaque : Ints.t;
   span_start : Ints.t;
   span_stop : Ints.t;
   marks : Ints.t;
@@ -558,7 +550,9 @@ let span_chunk = 1024
 let new_scratch () =
   {
     spans = Spans.create ~capacity:span_chunk;
+    segments = Spans.create ~capacity:span_chunk;
     ids = Ints.create ();
+    opaque = Ints.create ();
     span_start = Ints.create ();
     span_stop = Ints.create ();
     marks = Ints.create ();
@@ -588,6 +582,9 @@ let with_scratch f =
       Atomic.set sc.busy false;
       Printexc.raise_with_backtrace e backtrace
 
+let opening = Lazy.from_val true
+let continuing = Lazy.from_val false
+
 (* A document, encoded into [sc.ids]. [record] keeps what an encoding derives
    its tokens, offsets and word ids from: the bounds of every span, the id
    cursor after each of them, and the frames that place the spans back in
@@ -599,6 +596,7 @@ let with_scratch f =
    remaining stretch once normalized, the ones matched against normalized text.
    They never reach the walker or the model, so they cannot be split. *)
 let encode_document t sc text ~record =
+  Ints.clear sc.opaque;
   let frames = ref [] and frame_stops = ref [] in
   let raw_align = lazy (Run.Known (Normalizer.identity text)) in
   let close ~literal ~walked ~place ~rewrite ~base = function
@@ -624,78 +622,112 @@ let encode_document t sc text ~record =
         ( raw,
           if record then Some (Run.Known (Normalizer.identity raw)) else None )
   in
-  let rewritten choose source =
-    match choose source with Some n -> apply n source | None -> (source, None)
+  (* Whether the first stretch still opens the document once normalized by [n],
+     which is what a marker prepended on [`First] asks: it does unless the
+     normalizer took away the bytes that opened it, which only its alignment
+     tells. Forced at most once per document, and only by such a marker. *)
+  let opens_document n norm align raw =
+    let align =
+      match align with
+      | Some align -> Run.force align
+      | None -> snd (Normalizer.apply_aligned n raw)
+    in
+    String.length norm > 0
+    && fst (Normalizer.original_span align ~start:0 ~stop:1) = 0
   in
   with_span_encoder t.algorithm (fun encode ->
+      let[@inline] encode_span walked start finish =
+        encode sc.ids ~opaque:sc.opaque walked ~pos:start ~len:(finish - start);
+        if record then begin
+          Ints.add sc.span_start start;
+          Ints.add sc.span_stop finish;
+          Ints.add sc.marks (Ints.length sc.ids)
+        end
+      in
+      (* The spans of [pre] over [walked] between [pos] and [stop], each encoded
+         as it is found, a buffer at a time; the buffer grows when a single span
+         does not fit it. *)
       let walk pre walked ~pos ~stop =
         let p = ref pos in
         while !p < stop do
-          Spans.clear sc.spans;
-          let resume = Pre_tokenizer.fill pre walked ~pos:!p ~stop sc.spans in
-          let n = Spans.count sc.spans in
+          let spans = sc.spans in
+          Spans.clear spans;
+          let resume = Pre_tokenizer.fill pre walked ~pos:!p ~stop spans in
+          let n = Spans.count spans in
           if n = 0 && resume = !p then
-            sc.spans <- Spans.create ~capacity:(2 * Spans.capacity sc.spans)
+            sc.spans <- Spans.create ~capacity:(2 * Spans.capacity spans)
           else begin
-            let spans = sc.spans in
             for k = 0 to n - 1 do
-              let start = Spans.start spans k in
-              let finish = Spans.stop spans k in
-              encode sc.ids walked ~pos:start ~len:(finish - start);
-              if record then begin
-                Ints.add sc.span_start start;
-                Ints.add sc.span_stop finish;
-                Ints.add sc.marks (Ints.length sc.ids)
-              end
+              encode_span walked (Spans.start spans k) (Spans.stop spans k)
             done;
             p := resume
           end
         done
       in
-      (* A stretch of normalized text with no added token left in it. *)
-      let segment norm align ~base ~start ~stop =
+      (* [norm] from [start] to [stop], rewritten and walked by [pre] as one
+         frame placed at [start]. [first] says whether it opens the document. *)
+      let rewritten pre rewrite norm align ~base ~start ~stop ~first =
+        let source = slice norm start stop in
+        let walked, alignment =
+          match rewrite ~first source with
+          | Some n -> apply n source
+          | None -> (source, None)
+        in
+        walk pre walked ~pos:0 ~stop:(String.length walked);
+        close ~literal:false ~walked ~place:(Run.Shifted start)
+          ~rewrite:alignment ~base align
+      in
+      (* A stretch of normalized text with no added token left in it. [opens]
+         says whether the stretch opens the document. *)
+      let segment norm align ~base ~start ~stop ~opens =
         if start < stop then
           match t.cut with
           | Whole ->
-              encode sc.ids norm ~pos:start ~len:(stop - start);
-              if record then begin
-                Ints.add sc.span_start start;
-                Ints.add sc.span_stop stop;
-                Ints.add sc.marks (Ints.length sc.ids)
-              end;
+              encode_span norm start stop;
               close ~literal:false ~walked:norm ~place:verbatim ~rewrite:None
                 ~base align
-          | Walk pre -> (
-              match t.rewrite with
-              | None ->
-                  walk pre norm ~pos:start ~stop;
-                  close ~literal:false ~walked:norm ~place:verbatim
-                    ~rewrite:None ~base align
-              | Some choose ->
-                  let walked, rewrite =
-                    rewritten choose (slice norm start stop)
-                  in
-                  walk pre walked ~pos:0 ~stop:(String.length walked);
-                  close ~literal:false ~walked ~place:(Run.Shifted start)
-                    ~rewrite ~base align)
+          | Walk pre ->
+              walk pre norm ~pos:start ~stop;
+              close ~literal:false ~walked:norm ~place:verbatim ~rewrite:None
+                ~base align
+          | Rewritten { pre; rewrite } ->
+              rewritten pre rewrite norm align ~base ~start ~stop
+                ~first:(if start = 0 then opens else continuing)
+          | Segmented { outer; rewrite; inner } ->
+              let p = ref start in
+              while !p < stop do
+                let spans = sc.segments in
+                Spans.clear spans;
+                let resume =
+                  Pre_tokenizer.fill outer norm ~pos:!p ~stop spans
+                in
+                let n = Spans.count spans in
+                if n = 0 && resume = !p then
+                  sc.segments <-
+                    Spans.create ~capacity:(2 * Spans.capacity spans)
+                else begin
+                  for k = 0 to n - 1 do
+                    let start = Spans.start spans k in
+                    rewritten inner rewrite norm align ~base ~start
+                      ~stop:(Spans.stop spans k)
+                      ~first:(if start = 0 then opens else continuing)
+                  done;
+                  p := resume
+                end
+              done
           | Pieces pre ->
               let source = slice norm start stop in
               let length = String.length source in
+              let first = if start = 0 then opens else continuing in
               List.iter
                 (fun (piece, (at, finish)) ->
-                  let len = String.length piece in
-                  encode sc.ids piece ~pos:0 ~len;
-                  if record then begin
-                    Ints.add sc.span_start 0;
-                    Ints.add sc.span_stop len;
-                    Ints.add sc.marks (Ints.length sc.ids)
-                  end;
+                  encode_span piece 0 (String.length piece);
                   (* A piece the pre-tokenizer cut from the text is that text
                      byte for byte, and its tokens are placed inside it; one it
-                     rewrote — a metaspace marker — can only be placed whole.
-                     The range it reports is taken on trust no further than the
-                     text it was cut from, since a pre-tokenizer that rewrites
-                     may report the range of what it produced instead. *)
+                     rewrote can only be placed whole. The range it reports is
+                     taken on trust no further than the text it was cut from,
+                     since a pre-tokenizer that rewrites may report the range of
+                     what it produced instead. *)
                   let at = min (max 0 at) length in
                   let finish = min (max at finish) length in
                   let place =
@@ -704,7 +736,7 @@ let encode_document t sc text ~record =
                   in
                   close ~literal:false ~walked:piece ~place ~rewrite:None ~base
                     align)
-                (Pre_tokenizer.pre_tokenize pre source)
+                (Pre_tokenizer.pieces pre ~first source)
       in
       (* An added token is one span of one id, and its token string is the text
          it matched: [lstrip] and [rstrip] take in the white space beside it,
@@ -720,15 +752,22 @@ let encode_document t sc text ~record =
       in
       let stretch ~base raw =
         let norm, align = normalized raw in
+        let opens =
+          if base > 0 then continuing
+          else
+            match t.normalizer with
+            | None -> opening
+            | Some n -> lazy (opens_document n norm align raw)
+        in
         let stop = String.length norm in
         let pos = ref 0 and scanning = ref true in
         while !scanning do
           match Added_tokens.find_normalized t.added norm ~pos:!pos with
           | None ->
-              segment norm align ~base ~start:!pos ~stop;
+              segment norm align ~base ~start:!pos ~stop ~opens;
               scanning := false
           | Some (start, finish, id) ->
-              segment norm align ~base ~start:!pos ~stop:start;
+              segment norm align ~base ~start:!pos ~stop:start ~opens;
               literal norm align ~base ~start ~stop:finish ~id;
               pos := finish
         done
@@ -759,6 +798,7 @@ let encode_document t sc text ~record =
             span_start = Ints.to_array sc.span_start;
             span_stop = Ints.to_array sc.span_stop;
             marks = Ints.to_array sc.marks;
+            opaque = Ints.to_array sc.opaque;
             token_table = t.token_table;
             len_table = t.len_table;
           })
@@ -1108,14 +1148,19 @@ let encode_ids t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
    is free to act across the cut and none is asked whether it does. [cuttable]
    is the pipeline's part of the rule, [cut_document] the text's. *)
 let cuttable t =
+  let splittable pre =
+    match Pre_tokenizer.plan pre with
+    | Pre_tokenizer.Walk { splittable; _ }
+    | Pre_tokenizer.Segmented { splittable; _ } ->
+        splittable
+    | Pre_tokenizer.Pieces -> false
+  in
   Option.is_none t.normalizer
   &&
   match t.cut with
   | Whole | Pieces _ -> false
-  | Walk pre -> (
-      match Pre_tokenizer.plan pre with
-      | Pre_tokenizer.Walk { splittable; _ } -> splittable
-      | Pre_tokenizer.Pieces -> false)
+  | Walk pre | Rewritten { pre; _ } -> splittable pre
+  | Segmented { outer; _ } -> splittable outer
 
 let ascii_letter c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 let ascii_alnum c = ascii_letter c || (c >= '0' && c <= '9')

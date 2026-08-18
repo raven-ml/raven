@@ -109,13 +109,11 @@ let test_byte_fallback () =
   case t "a\xe2\x80\x8bb" [ 1; 229; 131; 142; 2 ];
   case t "a\xe2\x80\x8b\xe2\x80\x8cb" [ 1; 229; 131; 142; 229; 131; 143; 2 ];
   case t "\xe2\x80\x8b" [ 229; 131; 142 ];
-  (* A byte token stands for one byte, and a span never cuts a character short,
-     so each gets the character it spells out. HuggingFace gives every byte
-     token the span of the whole run instead: the same on a run of one
-     character, and (1, 7) throughout on the run of two. *)
+  (* Every byte token of a run stands for the whole run, as it does in
+     HuggingFace: (1, 7) throughout on the run of two characters. *)
   spans t "a\xe2\x80\x8bb" [ (0, 1); (1, 4); (1, 4); (1, 4); (4, 5) ];
   spans t "a\xe2\x80\x8b\xe2\x80\x8cb"
-    [ (0, 1); (1, 4); (1, 4); (1, 4); (4, 7); (4, 7); (4, 7); (7, 8) ];
+    [ (0, 1); (1, 7); (1, 7); (1, 7); (1, 7); (1, 7); (1, 7); (7, 8) ];
   (* [0xE2] has no entry, so the run falls back to the unknown token. *)
   let partial =
     unigram

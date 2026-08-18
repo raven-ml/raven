@@ -466,6 +466,16 @@ let test_metaspace_decoder () =
       ([ "\xe2\x96\x81"; "\xe2\x96\x81a" ], "  a");
       ([ "a\xe2\x96\x81b"; "\xe2\x96\x81c" ], "a b c");
       ([ "\xe2\x96\x81" ], " ");
+    ];
+  (* [`First] decodes as [`Always] does: whichever piece the marker was
+     prepended to, it is the first token that carries it. *)
+  decodes
+    (Decoder.metaspace ~prepend_scheme:`First ())
+    [
+      ([ "\xe2\x96\x81Hello"; "\xe2\x96\x81world" ], "Hello world");
+      ( [ "\xe2\x96\x81Hello"; "\xe2\x96\x81world"; "\xe2\x96\x81\xe2\x96\x81x" ],
+        "Hello world  x" );
+      ([ "\xe2\x96\x81"; "\xe2\x96\x81a" ], " a");
     ]
 
 (* Expectations from HuggingFace [decoders.Replace(pattern, content)] and
@@ -971,23 +981,43 @@ let test_batch_ids_uncut_under_normalizer () =
   check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
 
 (* A vocabulary of space runs sees a cut inside a run: the guards on the bytes
-   either side of the cut keep the run whole. *)
+   either side of the cut keep the run whole. Only a BPE model walks a
+   byte-level pre-tokenizer, so only one can be cut. *)
 let test_batch_ids_cut_keeps_space_runs () =
+  let g = "\u{120}" in
   let tokenizer =
-    word_level
+    bpe
       ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
       ~vocab:
         [
-          (" ", 0);
-          ("  ", 1);
-          ("   ", 2);
-          (" the", 3);
-          (" cat", 4);
+          (g, 0);
+          (g ^ g, 1);
+          (g ^ g ^ g, 2);
+          (g ^ "the", 3);
+          (g ^ "cat", 4);
           ("the", 5);
-          ("[UNK]", 6);
-          ("x", 7);
+          ("x", 6);
+          ("t", 7);
+          ("h", 8);
+          ("e", 9);
+          ("c", 10);
+          ("a", 11);
+          ("th", 12);
+          ("ca", 13);
+          ("cat", 14);
         ]
-      ~unk_token:"[UNK]" ()
+      ~merges:
+        [
+          (g, g);
+          (g ^ g, g);
+          ("t", "h");
+          ("th", "e");
+          (g, "the");
+          ("c", "a");
+          ("ca", "t");
+          (g, "cat");
+        ]
+      ()
   in
   equal ~msg:"space runs are tokens" (array int) [| 5; 1; 4; 0; 3; 0 |]
     (encode_ids tokenizer "the   cat  the ");

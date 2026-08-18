@@ -27,6 +27,7 @@ type t = {
   span_start : int array;
   span_stop : int array;
   marks : int array;
+  opaque : int array;
   token_table : string array;
   len_table : int array;
 }
@@ -93,15 +94,16 @@ let tokens run ~ids =
   result
 
 (* The tokens of a span tile it in the order they were emitted, each covering
-   the source bytes its identifier accounts for. An unknown token stands for
-   whatever no identifier describes and reads as zero, so the last such token of
-   a span takes the bytes up to where the ones after it begin — which is what
-   makes a span holding one of them exact, the common case. Several share what
-   is left, a character each and the rest to the last. *)
+   the source bytes its identifier accounts for — or, when it opens an opaque
+   run, the bytes the model recorded for the run, which every id of the run
+   covers. What the model handed back is taken on trust no further than the
+   span: a tiling never reaches past it, and whatever closes it runs to its
+   end. *)
 let offsets run ~ids =
   let result = Array.make (Array.length ids) (0, 0) in
-  let lens = run.len_table in
-  let span = ref 0 and at = ref 0 in
+  let lens = run.len_table and opaque = run.opaque in
+  let runs = Array.length opaque in
+  let span = ref 0 and at = ref 0 and next = ref 0 in
   for f = 0 to Array.length run.frames - 1 do
     let frame = Array.unsafe_get run.frames f in
     let last = Array.unsafe_get run.frame_stop f in
@@ -111,33 +113,48 @@ let offsets run ~ids =
     let base = frame.base in
     while !span < last do
       let mark = Array.unsafe_get run.marks !span in
+      let start = Array.unsafe_get run.span_start !span in
       let stop = Array.unsafe_get run.span_stop !span in
-      let opaque = ref (-1) and tail = ref 0 in
-      for i = !at to mark - 1 do
-        let len = Array.unsafe_get lens (Array.unsafe_get ids i) in
-        if len = 0 then begin
-          opaque := i;
-          tail := 0
-        end
-        else tail := !tail + len
-      done;
-      let cursor = ref (Array.unsafe_get run.span_start !span) in
-      while !at < mark do
-        let len = Array.unsafe_get lens (Array.unsafe_get ids !at) in
-        let finish =
-          if !at = mark - 1 then stop
-          else if len > 0 then min stop (!cursor + len)
-          else if !at = !opaque then max !cursor (stop - !tail)
-          else
-            min stop
-              (!cursor
-              + Char_class.at_len (Char_class.at frame.text !cursor ~stop))
-        in
-        result.(!at) <-
-          span_in_input ~place ~rewrite ~align ~base ~start:!cursor ~stop:finish;
-        cursor := finish;
-        incr at
-      done;
+      if frame.literal then begin
+        let span = span_in_input ~place ~rewrite ~align ~base ~start ~stop in
+        while !at < mark do
+          result.(!at) <- span;
+          incr at
+        done
+      end
+      else begin
+        let cursor = ref start in
+        while !at < mark do
+          if !next < runs && Array.unsafe_get opaque !next = !at then begin
+            let count = Array.unsafe_get opaque (!next + 1) in
+            let finish =
+              if !at + count = mark then stop
+              else min stop (!cursor + Array.unsafe_get opaque (!next + 2))
+            in
+            let span =
+              span_in_input ~place ~rewrite ~align ~base ~start:!cursor
+                ~stop:finish
+            in
+            for i = !at to !at + count - 1 do
+              result.(i) <- span
+            done;
+            at := !at + count;
+            cursor := finish;
+            next := !next + 3
+          end
+          else begin
+            let len = Array.unsafe_get lens (Array.unsafe_get ids !at) in
+            let finish =
+              if !at = mark - 1 then stop else min stop (!cursor + len)
+            in
+            result.(!at) <-
+              span_in_input ~place ~rewrite ~align ~base ~start:!cursor
+                ~stop:finish;
+            cursor := finish;
+            incr at
+          end
+        done
+      end;
       incr span
     done
   done;

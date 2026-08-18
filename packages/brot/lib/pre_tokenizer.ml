@@ -39,9 +39,12 @@ type t =
 type rewrite =
   | Verbatim
   | Prefix_space
-  | Space_marker of { marker : string; prepend : bool }
+  | Space_marker of { marker : string; prepend : prepend_scheme }
 
-type plan = Walk of { rewrite : rewrite; splittable : bool } | Pieces
+type plan =
+  | Walk of { rewrite : rewrite; splittable : bool }
+  | Segmented of { outer : t; rewrite : rewrite; inner : t; splittable : bool }
+  | Pieces
 
 (* Errors *)
 
@@ -754,6 +757,12 @@ let walk_split_free = Walk { rewrite = Verbatim; splittable = true }
 let walk_prefix = Walk { rewrite = Prefix_space; splittable = false }
 let walk_prefix_split_free = Walk { rewrite = Prefix_space; splittable = true }
 
+(* A sequence nested in a sequence is its members in place. *)
+let rec flatten ts =
+  List.concat_map (function Sequence ts -> flatten ts | t -> [ t ]) ts
+
+let of_members = function [ t ] -> t | ts -> Sequence ts
+
 let rec plan t =
   match t with
   | Byte_level { add_prefix_space; use_regex; _ } -> (
@@ -766,11 +775,15 @@ let rec plan t =
   | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts | Split _ ->
       walk_verbatim
   | Metaspace { replacement; prepend_scheme; _ } ->
-      let marker = replacement and prepend = prepend_scheme <> `Never in
+      let marker = replacement and prepend = prepend_scheme in
       Walk { rewrite = Space_marker { marker; prepend }; splittable = false }
   | Fixed_length _ -> Pieces
-  | Sequence ts -> plan_sequence ts
+  | Sequence ts -> plan_sequence (flatten ts)
 
+(* The members before the one that rewrites cut the text into segments, and it
+   and the members after it walk each segment once rewritten. Whether a cut at a
+   space is safe is the first member's business, whichever role it plays: the
+   spans of every later member lie inside its own. *)
 and plan_sequence ts =
   let rec inner_byte_level = function
     | [] | [ _ ] -> false
@@ -779,17 +792,45 @@ and plan_sequence ts =
   let walks_verbatim t =
     match plan t with Walk { rewrite = Verbatim; _ } -> true | _ -> false
   in
-  match ts with
-  | [] -> Pieces
-  | first :: rest -> (
-      match plan first with
-      | Pieces -> Pieces
-      | Walk _ as walk ->
-          if inner_byte_level ts || not (List.for_all walks_verbatim rest) then
-            Pieces
-          else walk)
+  let splittable =
+    match ts with
+    | [] -> false
+    | first :: _ -> (
+        match plan first with
+        | Walk { splittable; _ } -> splittable
+        | Segmented _ | Pieces -> false)
+  in
+  let rec split outer = function
+    | [] ->
+        if outer = [] then Pieces else Walk { rewrite = Verbatim; splittable }
+    | t :: rest -> (
+        match plan t with
+        | Walk { rewrite = Verbatim; _ } -> split (t :: outer) rest
+        | Walk { rewrite; _ } ->
+            if not (List.for_all walks_verbatim rest) then Pieces
+            else if outer = [] then Walk { rewrite; splittable }
+            else
+              Segmented
+                {
+                  outer = of_members (List.rev outer);
+                  rewrite;
+                  inner = of_members (t :: rest);
+                  splittable;
+                }
+        | Segmented _ | Pieces -> Pieces)
+  in
+  if inner_byte_level ts then Pieces else split [] ts
 
-let walkable t = match plan t with Walk _ -> true | Pieces -> false
+(* Whether [fill] applies: a single walk, which for a sequence takes the plan to
+   tell. *)
+let walkable t =
+  match t with
+  | Fixed_length _ -> false
+  | Sequence ts -> (
+      match plan_sequence (flatten ts) with
+      | Walk _ -> true
+      | Segmented _ | Pieces -> false)
+  | _ -> true
 
 let rec fill_walk t s ~pos ~stop spans =
   match t with
@@ -821,15 +862,16 @@ let rec fill_walk t s ~pos ~stop spans =
   | Sequence ts -> fill_sequence ts s ~pos ~stop spans
 
 (* Each member is filled over the spans of the previous one, through one scratch
-   buffer per member rather than one per span. A member that runs out of room
-   leaves its outer span unfinished: the spans it did emit are dropped and the
-   fill resumes at that span's start. *)
+   buffer per member rather than one per span, sized to the range since no span
+   is empty: a segment of a few bytes costs a few words. A member that runs out
+   of room leaves its outer span unfinished: the spans it did emit are dropped
+   and the fill resumes at that span's start. *)
 and fill_sequence ts s ~pos ~stop out =
   match ts with
   | [] -> invalid_arg err_no_walk
   | [ t ] -> fill_walk t s ~pos ~stop out
   | _ ->
-      let capacity = Spans.capacity out in
+      let capacity = min (Spans.capacity out) (stop - pos + 1) in
       let scratch =
         Array.init (List.length ts - 1) (fun _ -> Spans.create ~capacity)
       in
@@ -885,24 +927,39 @@ let span_chunk = 1024
 (* A rewrite is the normalizer it behaves as, which is the one [Brot] composes
    for the same plan, so that a piece is placed back in the text the caller gave
    through the one alignment the library has. [None] is the rewrite firing on
-   nothing, which leaves the text as it is. *)
-let rewrite_normalizer rewrite text =
+   nothing, which leaves the text as it is. Prepending the marker before or
+   after replacing the spaces gives the same text, the marker holding no
+   space. *)
+let rewriter rewrite =
   match rewrite with
-  | Verbatim -> None
+  | Verbatim -> fun ~first:_ _ -> None
   | Prefix_space ->
-      if String.length text > 0 && String.unsafe_get text 0 <> ' ' then
-        Some (Normalizer.prepend " ")
-      else None
-  | Space_marker { marker; prepend } ->
-      if String.length text = 0 then None
-      else
-        let mark = Normalizer.replace ~pattern:" " ~replacement:marker in
-        if
-          prepend
-          && String.unsafe_get text 0 <> ' '
-          && not (String.starts_with ~prefix:marker text)
-        then Some (Normalizer.sequence [ mark; Normalizer.prepend marker ])
-        else Some mark
+      let space = Normalizer.prepend " " in
+      fun ~first:_ text ->
+        if String.length text > 0 && String.unsafe_get text 0 <> ' ' then
+          Some space
+        else None
+  | Space_marker { marker; prepend } -> (
+      let mark = Normalizer.replace ~pattern:" " ~replacement:marker in
+      let mark_and_prepend =
+        Normalizer.sequence [ mark; Normalizer.prepend marker ]
+      in
+      let unmarked text =
+        String.unsafe_get text 0 <> ' '
+        && not (String.starts_with ~prefix:marker text)
+      in
+      match prepend with
+      | `Never -> fun ~first:_ text -> if text = "" then None else Some mark
+      | `Always ->
+          fun ~first:_ text ->
+            if text = "" then None
+            else if unmarked text then Some mark_and_prepend
+            else Some mark
+      | `First ->
+          fun ~first text ->
+            if text = "" then None
+            else if unmarked text && Lazy.force first then Some mark_and_prepend
+            else Some mark)
 
 let pre_tokenize_fixed_length ~length text =
   if length <= 0 || String.length text = 0 then []
@@ -962,30 +1019,49 @@ let is_one_character s =
   let stop = String.length s in
   stop > 0 && Char_class.at_len (Char_class.at s 0 ~stop) = stop
 
+let opening = Lazy.from_val true
+let continuing = Lazy.from_val false
+
+(* The pieces of [inner] over [text] once rewritten, placed in the text the
+   caller gave, where [text] starts at [base]; [first] says whether it opens the
+   document. *)
+let walk_rewritten inner rewrite text ~base ~first ~encode =
+  let span ~start ~stop = (base + start, base + stop) in
+  match rewriter rewrite ~first text with
+  | None -> walk_pieces inner text ~encode ~span
+  | Some n ->
+      let rewritten, align = Normalizer.apply_aligned n text in
+      let span ~start ~stop =
+        let start, stop = Normalizer.original_span align ~start ~stop in
+        (base + start, base + stop)
+      in
+      walk_pieces inner rewritten ~encode ~span
+
 (* An empty text has no piece, whichever the pre-tokenizer — a sequence of none
    being the identity, and so the exception. *)
-let rec pre_tokenize t text =
+let rec pieces t ~first text =
   if text = "" then match t with Sequence [] -> [ ("", (0, 0)) ] | _ -> []
-  else pre_tokenize_planned t text
+  else pre_tokenize_planned t ~first text
 
 and verbatim_span ~start ~stop = (start, stop)
 
-and pre_tokenize_planned t text =
+and pre_tokenize_planned t ~first text =
   let encode = ends_byte_level t in
   match plan t with
-  | Pieces -> pre_tokenize_pieces t text
-  | Walk { rewrite; _ } -> (
-      match rewrite_normalizer rewrite text with
-      | None -> walk_pieces t text ~encode ~span:verbatim_span
-      | Some n ->
-          let rewritten, align = Normalizer.apply_aligned n text in
-          walk_pieces t rewritten ~encode ~span:(Normalizer.original_span align)
-      )
+  | Pieces -> pre_tokenize_pieces t ~first text
+  | Walk { rewrite; _ } -> walk_rewritten t rewrite text ~base:0 ~first ~encode
+  | Segmented { outer; rewrite; inner; _ } ->
+      List.concat_map
+        (fun (segment, (base, _)) ->
+          walk_rewritten inner rewrite segment ~base
+            ~first:(if base = 0 then first else continuing)
+            ~encode)
+        (walk_pieces outer text ~encode:false ~span:verbatim_span)
 
-and pre_tokenize_pieces t text =
+and pre_tokenize_pieces t ~first text =
   match t with
   | Fixed_length { length } -> pre_tokenize_fixed_length ~length text
-  | Sequence ts -> pre_tokenize_sequence ts text
+  | Sequence ts -> pre_tokenize_sequence ts ~first text
   (* [plan] is [Pieces] for those two alone. *)
   | _ -> assert false
 
@@ -993,26 +1069,31 @@ and pre_tokenize_pieces t text =
    them, which reads as the caller's text only while a piece still stands byte
    for byte where it was cut from. A member that encodes or marks its pieces
    ends that, and nothing cut from what it hands on can be placed more finely
-   than the whole of it. *)
-and pre_tokenize_sequence ts text =
+   than the whole of it. A piece opens the document iff the text does and it
+   starts where the text does. *)
+and pre_tokenize_sequence ts ~first text =
   let cut =
     List.fold_left
-      (fun pieces t ->
+      (fun previous t ->
         let slices = pieces_are_slices t in
         List.concat_map
           (fun (s, ((o_start, _) as span), stands) ->
-            let cut = pre_tokenize t s in
+            let cut =
+              pieces t ~first:(if o_start = 0 then first else continuing) s
+            in
             if stands then
               List.map
                 (fun (p, (p_start, p_end)) ->
                   (p, (o_start + p_start, o_start + p_end), slices))
                 cut
             else List.map (fun (p, _) -> (p, span, false)) cut)
-          pieces)
+          previous)
       [ (text, (0, String.length text), true) ]
       ts
   in
   List.map (fun (p, span, _) -> (p, span)) cut
+
+let pre_tokenize t text = pieces t ~first:opening text
 
 (* Constructors *)
 

@@ -7,7 +7,7 @@ type t = unit
 
 let create () = ()
 
-let encode_into () ids text ~pos ~len =
+let encode_into () ids ~opaque:_ text ~pos ~len =
   for i = pos to pos + len - 1 do
     Ints.add ids (Char.code (String.unsafe_get text i))
   done

@@ -28,7 +28,6 @@ let create ?(vocab = []) ?(unk_token = "<unk>") () =
   let unk_id =
     match Hashtbl.find_opt vocab_tbl unk_token with Some id -> id | None -> -1
   in
-  if unk_id >= 0 then len_table.(unk_id) <- 0;
   {
     vocab = vocab_tbl;
     vocab_r = vocab_r_tbl;
@@ -42,9 +41,10 @@ let add_token vocab vocab_r token id =
   Hashtbl.replace vocab token id;
   Hashtbl.replace vocab_r id token
 
-(* A word absent from the vocabulary is the unknown token, and nothing at all
-   when the vocabulary does not hold that either. *)
-let encode_into model ids text ~pos ~len =
+(* A word absent from the vocabulary is the unknown token, recorded as standing
+   for the whole word, and nothing at all when the vocabulary does not hold that
+   either. *)
+let encode_into model ids ~opaque text ~pos ~len =
   if len > 0 then begin
     let word =
       if pos = 0 && len = String.length text then text
@@ -52,7 +52,13 @@ let encode_into model ids text ~pos ~len =
     in
     match Hashtbl.find_opt model.vocab word with
     | Some id -> Ints.add ids id
-    | None -> if model.unk_id >= 0 then Ints.add ids model.unk_id
+    | None ->
+        if model.unk_id >= 0 then begin
+          Ints.add opaque (Ints.length ids);
+          Ints.add opaque 1;
+          Ints.add opaque len;
+          Ints.add ids model.unk_id
+        end
   end
 
 let token_table model = model.token_table

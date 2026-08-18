@@ -65,12 +65,22 @@ type t = {
   span_start : int array;  (** Per span, its first byte in its frame's text. *)
   span_stop : int array;  (** Per span, one past its last byte. *)
   marks : int array;  (** Per span, one past the index of its last id. *)
+  opaque : int array;
+      (** The runs of ids that stand for bytes their entries do not spell — an
+          unknown token, the byte tokens a character or a run of them fell back
+          to — three integers each, in the order they were emitted: the index of
+          the run's first id, how many ids it holds, and the bytes it stands
+          for, which every id of the run covers. *)
   token_table : string array;  (** An id to its token string. *)
   len_table : int array;
-      (** An id to the number of source bytes an occurrence of it accounts for,
-          or [0] when that is a property of the text rather than of the id. *)
+      (** An id to the number of source bytes an occurrence of it accounts for
+          when it is a match of its own entry. *)
 }
 (** The type for pretoken runs. *)
+
+val force : alignment -> Normalizer.alignment
+(** [force a] is the alignment [a] stands for, worked out and kept if it was
+    deferred. *)
 
 val tokens : t -> ids:int array -> string array
 (** [tokens t ~ids] is the token string of each id. A span of a literal frame
@@ -82,10 +92,10 @@ val offsets : t -> ids:int array -> (int * int) array
 (** [offsets t ~ids] is the byte span of each id in the input.
 
     The tokens of a span tile it in the order they were emitted, each covering
-    the bytes its identifier accounts for. An identifier whose {!len_table}
-    entry is [0] stands for whatever the others do not describe, so the last
-    such token of a span takes the bytes up to where the ones after it begin;
-    several share what is left, a character each and the rest to the last. *)
+    the bytes its identifier accounts for, or, for the ids of an {!opaque} run,
+    the bytes the run stands for; the tiling never reaches past the span, and
+    whatever closes it runs to its end. A span of a literal frame is the span of
+    its one token. *)
 
 val words : t -> ids:int array -> int option array
 (** [words t ~ids] is the index of the span each id came from, counting from

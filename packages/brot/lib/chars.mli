@@ -18,10 +18,12 @@ val create : unit -> t
 
 (** {1:tokenization Tokenization} *)
 
-val encode_into : t -> Ints.t -> string -> pos:int -> len:int -> unit
-(** [encode_into t ids text ~pos ~len] appends the byte values of
+val encode_into :
+  t -> Ints.t -> opaque:Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t ids ~opaque text ~pos ~len] appends the byte values of
     [text.\[pos..pos+len)] to [ids], one per byte. The range must lie within
-    [text]; it is not checked. *)
+    [text]; it is not checked. Every id accounts for its own byte, so nothing is
+    recorded in [opaque]. *)
 
 val token_table : t -> string array
 (** [token_table t] maps a byte value to the one-byte string it stands for.

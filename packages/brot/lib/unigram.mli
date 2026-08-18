@@ -48,10 +48,16 @@ val with_state : (state -> 'a) -> 'a
     first asks; a thread that finds it already held gets a state of its own.
     [st] must not escape [f]. *)
 
-val encode_into : t -> state -> Ints.t -> string -> pos:int -> len:int -> unit
-(** [encode_into t st ids text ~pos ~len] appends the ids of
+val encode_into :
+  t -> state -> Ints.t -> opaque:Ints.t -> string -> pos:int -> len:int -> unit
+(** [encode_into t st ids ~opaque text ~pos ~len] appends the ids of
     [text.\[pos..pos+len)] to [ids]. The range must lie within [text]; it is not
     checked. Nothing is allocated per pretoken.
+
+    A run of characters no entry covers is recorded in [opaque] as three
+    integers: the index in [ids] of the first token spent on it, how many there
+    are — one unknown token, or one byte token per byte of the run — and the
+    number of bytes of the run, which every one of those tokens stands for.
 
     Raises [Failure] when the best path into some character would spend an
     unknown token and [t] has none. *)
@@ -62,9 +68,9 @@ val token_table : t -> string array
 
 val len_table : t -> int array
 (** [len_table t] maps an id to the number of source bytes an occurrence of it
-    accounts for: the entry itself, [1] for a byte fallback token, and [0] for
-    the unknown token, whose length is a property of the text rather than of the
-    id. Owned by [t]; do not mutate. *)
+    accounts for when it is a match of its entry: the entry's length. The tokens
+    spent on a run no entry covers stand for the run instead, which
+    {!encode_into} records. Owned by [t]; do not mutate. *)
 
 (** {1:vocabulary Vocabulary} *)
 

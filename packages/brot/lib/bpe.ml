@@ -981,7 +981,25 @@ let with_state model f =
       Atomic.set st.st_busy false;
       Printexc.raise_with_backtrace e backtrace
 
-let encode_into model st ids text ~pos ~len =
+(* The ids of a merged word. A symbol whose bytes are not what its id accounts
+   for — the unknown token, a fallback token the text spelled by name — is
+   recorded with them, which is the same test the cache applies: a cached word
+   is one that never needs recording. *)
+let emit_word model word ids ~opaque =
+  let len_table = model.len_table in
+  let limit = Array.length len_table in
+  for i = 0 to word.size - 1 do
+    let id = Array.unsafe_get word.sym_c i in
+    let l = Array.unsafe_get word.sym_len i in
+    if id >= limit || Array.unsafe_get len_table id <> l then begin
+      Ints.add opaque (Ints.length ids);
+      Ints.add opaque 1;
+      Ints.add opaque l
+    end;
+    Ints.add ids id
+  done
+
+let encode_into model st ids ~opaque text ~pos ~len =
   if len > 0 then begin
     let cache = st.st_cache in
     if cache.mask >= 0 && len <= max_key_len then begin
@@ -1005,9 +1023,7 @@ let encode_into model st ids text ~pos ~len =
       else begin
         build_word model st text pos len;
         let word = st.st_word in
-        for i = 0 to word.size - 1 do
-          Ints.add ids (Array.unsafe_get word.sym_c i)
-        done;
+        emit_word model word ids ~opaque;
         if cacheable model word len then store cache slot k0 k1 word
       end
     end
@@ -1025,9 +1041,7 @@ let encode_into model st ids text ~pos ~len =
       | None ->
           build_word model st text pos len;
           let word = st.st_word in
-          for i = 0 to word.size - 1 do
-            Ints.add ids (Array.unsafe_get word.sym_c i)
-          done;
+          emit_word model word ids ~opaque;
           if exact model word len then begin
             if Hashtbl.length long >= long_capacity then Hashtbl.reset long;
             Hashtbl.replace long key (Array.sub word.sym_c 0 word.size)
@@ -1035,10 +1049,7 @@ let encode_into model st ids text ~pos ~len =
     end
     else begin
       build_word model st text pos len;
-      let word = st.st_word in
-      for i = 0 to word.size - 1 do
-        Ints.add ids (Array.unsafe_get word.sym_c i)
-      done
+      emit_word model st.st_word ids ~opaque
     end
   end
 
@@ -1123,10 +1134,11 @@ let next_stamp = Atomic.make 0
 
 (* How many bytes of a pretoken an id accounts for: the entry it stands for,
    stripped of the affixes its position gives it, or the byte a fallback token
-   spells out. The unknown token stands for a run of bytes no entry covers, so
-   its length is not a property of the id at all and reads as zero. *)
+   spells out. A symbol that stands for anything else — the unknown token for
+   the run of bytes no entry covers, a fallback token merged from the text that
+   spells its name — is recorded as it is emitted. *)
 let build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
-    ~byte_fallback_ids ~unk_id =
+    ~byte_fallback_ids =
   let plen = String.length prefix in
   let slen = String.length suffix in
   let table =
@@ -1148,7 +1160,6 @@ let build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
     Array.iter
       (fun id -> if id >= 0 && id < Array.length table then table.(id) <- 1)
       byte_fallback_ids;
-  if unk_id >= 0 && unk_id < Array.length table then table.(unk_id) <- 0;
   table
 
 let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
@@ -1252,7 +1263,7 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       byte_ids;
       len_table =
         build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
-          ~byte_fallback_ids ~unk_id;
+          ~byte_fallback_ids;
       chars;
       prefixed_chars;
       suffixed_chars;
