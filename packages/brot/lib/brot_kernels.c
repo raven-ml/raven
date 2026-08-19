@@ -26,6 +26,12 @@
 
 #include <caml/mlvalues.h>
 
+#if defined(__aarch64__) && defined(__ARM_NEON) \
+    && (defined(__GNUC__) || defined(__clang__))
+#define BROT_MASK_NEON 1
+#include <arm_neon.h>
+#endif
+
 /* ABI pins, mirrored in kernel.ml — change neither without the other. */
 
 /* Kernel.reason constructor order. */
@@ -310,6 +316,324 @@ static intnat next_span(walker *w, intnat i)
   }
 }
 
+/* The mask scanner. Instead of walking span by span, each full 64-byte
+   batch of the range is classified once into per-byte class bitmasks, the
+   byte-level boundary rules are evaluated on all 64 positions at once as
+   u64 shift algebra, and the walk pops one "a span starts here" bit per
+   span. Bits the masks cannot decide are a bad zone that [next_span]
+   re-derives — the scalar walker above stays the ground truth and runs
+   the last partial batch outright, so no byte at or past [stop] is read;
+   the one byte of lookahead a whitespace split needs is read only below
+   [stop]. Bad zones are: non-ASCII bytes and both neighbours (their
+   category comes from the Unicode table, which can also be incomplete —
+   the scalar path raises the Class hand-back); a whitespace byte at the
+   batch edge whose lookahead is non-ASCII; an apostrophe whose bits are
+   already bad, plus the two suffix bytes its contraction could absorb (the
+   contraction is the one rule that reaches two bytes ahead); and an
+   apostrophe opening a span less than three bytes before the batch edge,
+   whose moved boundary the next batch could not see. */
+
+/* Class bitmasks of one 64-byte batch: bit k describes byte [scan + k]. */
+typedef struct {
+  uint64_t letter; /* ASCII letters */
+  uint64_t digit;  /* ASCII digits */
+  uint64_t space;  /* 0x20 */
+  uint64_t ws;     /* 0x09..0x0D and 0x20 */
+  uint64_t hi;     /* >= 0x80 */
+  uint64_t apo;    /* 0x27 */
+} batch_classes;
+
+#ifdef BROT_MASK_NEON
+
+/* Four 16-lane 0x00/0xFF compare results to one u64, bit i = lane i: each
+   lane keeps its bit weight and a pairwise-add tree folds the 64 lanes
+   into lane 0. The tree is pinned as asm: adjacent weighted lanes hold
+   disjoint bits, so the compiler rewrites vpaddq_u8 into uzp1/uzp2/orr
+   triples, nearly doubling the op count of the six calls per batch. */
+static inline uint64_t movemask64(uint8x16_t a0, uint8x16_t a1, uint8x16_t a2,
+                                  uint8x16_t a3)
+{
+  static const uint8_t weights[16] = {1, 2, 4, 8, 16, 32, 64, 128,
+                                      1, 2, 4, 8, 16, 32, 64, 128};
+  uint8x16_t w = vld1q_u8(weights);
+  a0 = vandq_u8(a0, w);
+  a1 = vandq_u8(a1, w);
+  a2 = vandq_u8(a2, w);
+  a3 = vandq_u8(a3, w);
+  __asm__("addp %[a0].16b, %[a0].16b, %[a1].16b\n\t"
+          "addp %[a2].16b, %[a2].16b, %[a3].16b\n\t"
+          "addp %[a0].16b, %[a0].16b, %[a2].16b\n\t"
+          "addp %[a0].16b, %[a0].16b, %[a0].16b"
+          : [a0] "+&w"(a0), [a2] "+w"(a2)
+          : [a1] "w"(a1), [a3] "w"(a3));
+  return vgetq_lane_u64(vreinterpretq_u64_u8(a0), 0);
+}
+
+static void batch_classify(const unsigned char *p, batch_classes *c)
+{
+  uint8x16_t l[4], d[4], sp[4], ws[4], hi[4], ap[4];
+  int k;
+  for (k = 0; k < 4; k++) {
+    uint8x16_t v = vld1q_u8(p + 16 * k);
+    uint8x16_t lowered = vorrq_u8(v, vdupq_n_u8(0x20));
+    l[k] = vcleq_u8(vsubq_u8(lowered, vdupq_n_u8('a')), vdupq_n_u8(25));
+    d[k] = vcleq_u8(vsubq_u8(v, vdupq_n_u8('0')), vdupq_n_u8(9));
+    sp[k] = vceqq_u8(v, vdupq_n_u8(' '));
+    ws[k] =
+        vorrq_u8(sp[k], vcleq_u8(vsubq_u8(v, vdupq_n_u8(9)), vdupq_n_u8(4)));
+    hi[k] = vcgeq_u8(v, vdupq_n_u8(0x80));
+    ap[k] = vceqq_u8(v, vdupq_n_u8('\''));
+  }
+  c->letter = movemask64(l[0], l[1], l[2], l[3]);
+  c->digit = movemask64(d[0], d[1], d[2], d[3]);
+  c->space = movemask64(sp[0], sp[1], sp[2], sp[3]);
+  c->ws = movemask64(ws[0], ws[1], ws[2], ws[3]);
+  c->hi = movemask64(hi[0], hi[1], hi[2], hi[3]);
+  c->apo = movemask64(ap[0], ap[1], ap[2], ap[3]);
+}
+
+#else
+
+/* The SWAR batch classifier: the same masks, eight bytes at a time. Each
+   predicate leaves 0x80 per qualifying byte; the multiply gathers the
+   eight high bits into bits 0..7 (bit k = byte k, little-endian order as
+   [letters_swar] assumes). Range tests run on the low seven bits with the
+   high bit pre-set so no borrow crosses a byte; non-ASCII bytes are
+   excluded explicitly. */
+
+#define BROT_LO 0x0101010101010101ULL
+#define BROT_HI 0x8080808080808080ULL
+
+static inline uint64_t swar_pack(uint64_t m)
+{
+  return ((m >> 7) * 0x0102040810204080ULL) >> 56;
+}
+
+static inline uint64_t swar_ge(uint64_t ascii7, uint64_t c)
+{
+  return ((ascii7 | BROT_HI) - c * BROT_LO) & BROT_HI;
+}
+
+static inline uint64_t swar_le(uint64_t ascii7, uint64_t c)
+{
+  return ((c * BROT_LO | BROT_HI) - ascii7) & BROT_HI;
+}
+
+static void batch_classify(const unsigned char *p, batch_classes *c)
+{
+  int j;
+  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = 0;
+  for (j = 0; j < 8; j++) {
+    uint64_t v = load64(p + 8 * j);
+    uint64_t hi = v & BROT_HI;
+    uint64_t ascii = v & ~BROT_HI;
+    uint64_t lowered = ascii | 0x2020202020202020ULL;
+    uint64_t letter = swar_ge(lowered, 'a') & swar_le(lowered, 'z') & ~hi;
+    uint64_t digit = swar_ge(ascii, '0') & swar_le(ascii, '9') & ~hi;
+    uint64_t space = swar_ge(ascii, ' ') & swar_le(ascii, ' ') & ~hi;
+    uint64_t ws = (space | (swar_ge(ascii, 9) & swar_le(ascii, 13))) & ~hi;
+    uint64_t apo = swar_ge(ascii, '\'') & swar_le(ascii, '\'') & ~hi;
+    int sh = 8 * j;
+    c->letter |= swar_pack(letter) << sh;
+    c->digit |= swar_pack(digit) << sh;
+    c->space |= swar_pack(space) << sh;
+    c->ws |= swar_pack(ws) << sh;
+    c->hi |= swar_pack(hi) << sh;
+    c->apo |= swar_pack(apo) << sh;
+  }
+}
+
+#endif
+
+/* The boundary masks of the batch at [scan]: bit k of [usable] is a
+   trustworthy span start at [scan + k], bit k of [bad] sends byte
+   [scan + k] to the scalar walker; the two never overlap. Requires
+   [scan + 64 <= stop]. [anchor] is the position this call's walk began
+   at — a span start by the resume protocol — so the batch there takes no
+   carries and bit 0 is trivially a start; later batches read the byte
+   before the batch, which is inside the range, for the four one-step
+   carries the rules need. */
+static void batch_masks(const walker *w, intnat anchor, intnat scan,
+                        uint64_t *usable, uint64_t *bad_out)
+{
+  const unsigned char *s = w->s;
+  batch_classes c;
+  uint64_t pl = 0, pd = 0, psp = 0, pws = 0, po = 0;
+  uint64_t other, cont_same, after_sp, nb, split_ok, pwsb, boundary, bad;
+  uint64_t apo_bad, cand;
+  batch_classify(s + scan, &c);
+  other = ~(c.letter | c.digit | c.ws);
+  bad = c.hi | (c.hi << 1) | (c.hi >> 1);
+  if (scan > anchor) {
+    unsigned b = s[scan - 1];
+    if (b >= 0x80)
+      bad |= 1; /* the carries are the straddling char's class: scalar */
+    else {
+      pl = (unsigned)((b | 0x20) - 'a') <= 25;
+      pd = (unsigned)(b - '0') <= 9;
+      psp = b == ' ';
+      pws = psp | ((unsigned)(b - 9) <= 4);
+      po = !(pl | pd | pws);
+    }
+  }
+  /* A span continues over its own category, [ ?] glues a space to what
+     follows, and a whitespace run opens where no whitespace precedes or
+     at its last character when what follows is not whitespace — the
+     [\s+(?!\S)] give-back. The apostrophe and the space sit in [other]
+     and [ws] exactly as [lead_class] folds them. */
+  cont_same = (c.letter & ((c.letter << 1) | pl))
+              | (c.digit & ((c.digit << 1) | pd))
+              | (other & ((other << 1) | po));
+  after_sp = (c.space << 1) | psp;
+  nb = ~c.ws & ~cont_same & ~after_sp;
+  split_ok = c.ws & (~c.ws >> 1);
+  if (c.ws >> 63) {
+    /* Bit 63's give-back needs the next byte; at the end of the range the
+       run runs out instead and keeps its last character. */
+    if (scan + 64 < w->stop) {
+      unsigned b = s[scan + 64];
+      if (b >= 0x80)
+        bad |= (uint64_t)1 << 63;
+      else if (!(b == ' ' || (unsigned)(b - 9) <= 4))
+        split_ok |= (uint64_t)1 << 63;
+    }
+  }
+  pwsb = (c.ws << 1) | pws;
+  boundary = nb | (c.ws & (~pwsb | split_ok));
+  /* Whether an apostrophe opens a span decides its contraction, so an
+     apostrophe on bad bits hides the two bytes a contraction could
+     absorb. On trusted bits, one that opens a span moves the boundary
+     past a matching suffix, as [contraction] does; within three bytes of
+     the batch edge the moved boundary could escape the batch, so the
+     tail of the batch goes to the scalar walker instead. */
+  apo_bad = c.apo & bad;
+  bad |= (apo_bad << 1) | (apo_bad << 2);
+  cand = c.apo & boundary & ~bad;
+  while (cand) {
+    intnat i = ctz64(cand);
+    unsigned c1, c2;
+    intnat k = 0;
+    cand &= cand - 1;
+    if (i >= 61) {
+      bad |= ~(uint64_t)0 << i;
+      break;
+    }
+    c1 = s[scan + i + 1];
+    c2 = s[scan + i + 2];
+    if (c1 == 's' || c1 == 't' || c1 == 'm' || c1 == 'd')
+      k = 2;
+    else if ((c1 == 'l' && c2 == 'l') || (c1 == 'v' && c2 == 'e')
+             || (c1 == 'r' && c2 == 'e'))
+      k = 3;
+    if (k) {
+      boundary &= ~((uint64_t)1 << (i + 1));
+      boundary |= (uint64_t)1 << (i + k);
+    }
+  }
+  *usable = boundary & ~bad;
+  *bad_out = bad;
+}
+
+/* The batch walk. [rem] holds the pop-ready boundary bits of the current
+   segment; a bad zone parks them and aims [scalar_until] at the next
+   trusted boundary (or the batch end), sending every span opening before
+   it through [next_span]; the batch after the current one is classified
+   eagerly so its chain retires under the pops; scalar overruns keep the
+   64-byte grid, so that precompute survives them. The state lives for one
+   kernel call — the masks are pure functions of the bytes, so a resumed
+   call rebuilds them from its own anchor. */
+typedef struct {
+  intnat anchor;     /* the call's start position, carry-free by contract */
+  intnat scan;       /* base of the next batch to classify */
+  intnat mask_base;  /* base the rem/batch bits refer to */
+  uint64_t rem;      /* pop-ready boundary bits of the current segment */
+  uint64_t batch_usable;
+  uint64_t batch_bad;
+  intnat scalar_until; /* walk spans via next_span while below this */
+  intnat pre_base;     /* base of the precomputed batch, -1 for none */
+  uint64_t pre_usable;
+  uint64_t pre_bad;
+} mask_state;
+
+static void mask_init(mask_state *ms, intnat pos)
+{
+  ms->anchor = pos;
+  ms->scan = pos;
+  ms->mask_base = pos;
+  ms->rem = 0;
+  ms->batch_usable = 0;
+  ms->batch_bad = 0;
+  ms->scalar_until = pos;
+  ms->pre_base = -1;
+  ms->pre_usable = 0;
+  ms->pre_bad = 0;
+}
+
+/* Load the segment of usable bits in [from_bit, next bad run) into [rem];
+   a bad run parks the rest and aims [scalar_until] past it. A bit at the
+   pending span's own start opens that span rather than ending it, so it
+   never pops. */
+static void mask_load_segment(mask_state *ms, intnat pos, intnat from_bit)
+{
+  uint64_t live = ~(uint64_t)0 << from_bit;
+  uint64_t seg_bad = ms->batch_bad & live;
+  if (seg_bad == 0) {
+    ms->rem = ms->batch_usable & live;
+    ms->batch_bad = 0;
+  } else {
+    intnat nb = ctz64(seg_bad);
+    uint64_t rest = ms->batch_usable & (~(uint64_t)0 << nb);
+    ms->rem = ms->batch_usable & live & (((uint64_t)1 << nb) - 1);
+    ms->scalar_until =
+        rest != 0 ? ms->mask_base + ctz64(rest) : ms->mask_base + 64;
+  }
+  if (pos == ms->mask_base + from_bit)
+    ms->rem &= ~((uint64_t)1 << from_bit);
+}
+
+/* [next_span] through the masks: the end of the span opening at [i], or
+   -1 with [w->cp] set. [i] is the previous call's return (the pending
+   span's start), as the entry loop maintains. */
+static intnat mask_next_span(mask_state *ms, walker *w, intnat i)
+{
+  for (;;) {
+    uint64_t usable, bad;
+    if (ms->rem != 0) {
+      intnat e = ms->mask_base + ctz64(ms->rem);
+      ms->rem &= ms->rem - 1;
+      return e;
+    }
+    if (i < ms->scalar_until) return next_span(w, i);
+    /* Continue with the current batch's next trusted segment after a
+       scalar gap; each batch is classified exactly once. */
+    if (ms->batch_bad != 0 && i < ms->mask_base + 64) {
+      mask_load_segment(ms, i, i - ms->mask_base);
+      continue;
+    }
+    ms->batch_bad = 0;
+    while (ms->scan + 64 <= i) ms->scan += 64;
+    if (ms->scan + 64 > w->stop) {
+      ms->scalar_until = w->stop; /* partial tail: scalar to the end */
+      continue;
+    }
+    if (ms->pre_base == ms->scan) {
+      usable = ms->pre_usable;
+      bad = ms->pre_bad;
+    } else
+      batch_masks(w, ms->anchor, ms->scan, &usable, &bad);
+    ms->mask_base = ms->scan;
+    ms->scan += 64;
+    ms->batch_usable = usable;
+    ms->batch_bad = bad;
+    if (ms->scan + 64 <= w->stop) {
+      batch_masks(w, ms->anchor, ms->scan, &ms->pre_usable, &ms->pre_bad);
+      ms->pre_base = ms->scan;
+    } else
+      ms->pre_base = -1;
+    mask_load_segment(ms, i, i > ms->mask_base ? i - ms->mask_base : 0);
+  }
+}
+
 /* The cache probe — Bpe.key0/key1/set_of and the two-way layout of the
    64-byte set, bit for bit: every word is loaded and stored native-endian,
    so the table OCaml writes and the table written here are one format. A key
@@ -514,6 +838,7 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
   intnat nmarks = (intnat)load64(cur + CUR_MARKS);
 
   walker w;
+  mask_state ms;
   intnat i = Long_val(vpos);
   intnat resume;
   int reason;
@@ -524,6 +849,7 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
   w.uni = Bytes_val(vunicode);
   w.uni_len = (intnat)caml_string_length(vunicode);
   w.cp = 0;
+  mask_init(&ms, i);
 
   /* The loop is software-pipelined over the cache line: span k's walk, keys
      and set are computed and the set's line prefetched one iteration ahead,
@@ -543,7 +869,7 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
       uint64_t k0 = 0, k1 = 0;
       int walked = 0;
       if (i < stop) {
-        e = next_span(&w, i);
+        e = mask_next_span(&ms, &w, i);
         walked = 1;
         if (e >= 0) {
           len = e - i;

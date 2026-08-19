@@ -154,6 +154,46 @@ let adversarial =
     done;
     Buffer.contents buf
   in
+  (* Batch-alignment adversaries for the mask-scanner walker: the walk
+     classifies 64-byte batches on a grid anchored at the range start, so each
+     family plants its shape at every offset 0..80. The padding is short
+     pretokens ("ab " cycles) and the tails run at least 64 bytes past the
+     shape: a padding run over 15 bytes would take the Encode hand-back and
+     re-anchor the grid at the shape, and a short tail would route the shape's
+     batch to the scalar tail — either way the shape would never cross a
+     streamed batch edge, which is the point of the sweep. [span64] keeps the
+     long-run padding deliberately: that family exercises the hand-back
+     re-anchor path itself. [giveback_nbsp] is the whitespace give-back decided
+     by a non-ASCII whitespace character, which only the bad-zone widening
+     around non-ASCII bytes sends to the scalar walker. The [cls] family uses a
+     distinct code point per offset, so a first-met class hand-back re-enters
+     the walk mid-batch everywhere. *)
+  let batch_alignments =
+    let pad n = String.init n (fun i -> "ab ".[i mod 3]) in
+    let fam name shape =
+      List.init 81 (fun off -> (Printf.sprintf "%s_%d" name off, shape off))
+    in
+    List.concat
+      [
+        fam "bz_hi" (fun off -> pad off ^ "\195\169" ^ pad 80);
+        fam "bz_hi_ws" (fun off -> pad off ^ " \194\160 " ^ pad 80);
+        fam "bz_giveback_nbsp" (fun off ->
+            String.make off 'x' ^ "  \194\160 " ^ String.make 80 'y');
+        fam "bz_apo" (fun off -> pad off ^ "'ll they've o'x " ^ pad 80);
+        fam "bz_ws" (fun off -> pad off ^ "  \t\r\n  b " ^ pad 80);
+        fam "bz_span64" (fun off ->
+            String.make off 'z' ^ " " ^ String.make 63 'w' ^ " tail");
+        fam "bz_digit" (fun off ->
+            pad off ^ " " ^ String.make 20 '8' ^ "a9 " ^ pad 64);
+        fam "bz_cls" (fun off ->
+            let buf = Buffer.create 192 in
+            Buffer.add_string buf (pad off);
+            Buffer.add_utf_8_uchar buf (Uchar.of_int (0x2460 + off));
+            Buffer.add_char buf ' ';
+            Buffer.add_string buf (pad 80);
+            Buffer.contents buf);
+      ]
+  in
   cases
   @ [
       ("letters_100k", String.make 100_000 'x');
@@ -165,6 +205,7 @@ let adversarial =
       ("random_utf8_512k", random_utf8 524_288);
       ("random_bytes_short", random_bytes 300);
     ]
+  @ batch_alignments
 
 (* The parity corpora, whole and split into their documents. *)
 

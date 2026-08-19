@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- Faster GPT-2 byte-level encoding: the C kernel now classifies text in
+  64-byte batches (NEON on arm64, SWAR elsewhere) and derives pretoken
+  boundaries with bitmask algebra, walking only non-ASCII neighbourhoods and
+  batch edges byte by byte. `encode_ids` on wiki-64k drops ~12.7 to
+  ~10.3 ns/pretoken; single-domain OpenWebText throughput rises ~10%.
 - Faster byte-level batch encoding on real text: the C kernel's
   pretoken-cache probe is software-pipelined, fetching each span's cache line
   while the next span is walked — ~12% faster single-domain and ~7%

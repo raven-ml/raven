@@ -184,6 +184,66 @@ let test_class_hand_back () =
     [| space_a; 194; 160; 206; 177; 217; 160; space_a |]
     (ids tok text)
 
+(* The mask-scanner walker classifies 64-byte batches on a grid anchored at the
+   range start. Each shape that can cross a batch edge — letter runs, a span of
+   exactly 64 bytes, non-ASCII bad zones, contractions, whitespace give-backs
+   (including one decided by a non-ASCII whitespace character), digit runs — is
+   planted at every offset 0..80 and the resulting spans are held to the OCaml
+   pre-tokenizer's, read back through offsets and word ids. The padding is short
+   pretokens and the tails run at least 64 bytes past the shape, so the shape
+   crosses streamed batch edges rather than re-anchoring the grid through an
+   Encode hand-back or falling to the scalar tail; the 64-byte-span family keeps
+   its long-run padding to exercise that re-anchor path. *)
+let test_batch_alignments () =
+  let tok = Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre ()) () in
+  let pre = pre () in
+  let reference text =
+    Array.of_list (List.map snd (Brot.Pre_tokenizer.pre_tokenize pre text))
+  in
+  let kernel_spans text =
+    let e = Brot.encode tok ~add_special_tokens:false text in
+    let offsets = Brot.Encoding.offsets e in
+    let words = Brot.Encoding.word_ids e in
+    let n = Array.length offsets in
+    let spans = ref [] in
+    let i = ref 0 in
+    while !i < n do
+      let w = words.(!i) in
+      let start = fst offsets.(!i) in
+      let j = ref !i in
+      while !j + 1 < n && words.(!j + 1) = w do
+        incr j
+      done;
+      spans := (start, snd offsets.(!j)) :: !spans;
+      i := !j + 1
+    done;
+    Array.of_list (List.rev !spans)
+  in
+  let pad n = String.init n (fun i -> "ab ".[i mod 3]) in
+  let families =
+    [
+      ("letters across the edge", fun off -> pad off ^ " " ^ String.make 70 'y');
+      ( "a span of exactly 64 bytes",
+        fun off -> String.make off 'z' ^ " " ^ String.make 63 'w' ^ " t" );
+      ("non-ASCII", fun off -> pad off ^ "\195\169" ^ pad 80);
+      ("contractions", fun off -> pad off ^ "'ll they've o'x " ^ pad 80);
+      ("whitespace give-back", fun off -> pad off ^ "  \t\r\n  b " ^ pad 80);
+      ( "give-back before non-ASCII whitespace",
+        fun off -> String.make off 'x' ^ "  \194\160 " ^ String.make 80 'y' );
+      ("digits", fun off -> pad off ^ " " ^ String.make 20 '8' ^ "a9 " ^ pad 64);
+    ]
+  in
+  List.iter
+    (fun (name, shape) ->
+      for off = 0 to 80 do
+        let text = shape off in
+        equal
+          ~msg:(Printf.sprintf "%s at offset %d" name off)
+          (array (pair int int))
+          (reference text) (kernel_spans text)
+      done)
+    families
+
 let () =
   run "brot kernels"
     [
@@ -195,6 +255,8 @@ let () =
           test "maximal multi-id spans across chunks" test_many_ids_per_span;
           test "a span larger than the ids buffer" test_huge_span;
         ];
+      group "batch walker"
+        [ test "every shape at every batch alignment" test_batch_alignments ];
       group "selection and refusals"
         [
           test "caching off" test_cache_off;
