@@ -17,8 +17,10 @@ Benchmark inputs live in `./data/`:
   RobertaProcessing)
 - `t5_base_nonorm.json` — Google T5-base with its `Precompiled` normalizer
   dropped, which brot does not implement (Unigram, 32K vocab, Metaspace)
+- `mistral.json` — Mistral-7B-v0.1 (BPE with byte fallback, 32K vocab,
+  non-splitting Metaspace pre-tokenizer)
 
-The last two are read by the HuggingFace parity test rather than by the
+The last three are read by the HuggingFace parity test rather than by the
 benchmarks; `test/scripts/gen_parity_expected.py` documents the whole set.
 
 Download the tokenizer model files:

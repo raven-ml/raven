@@ -29,6 +29,9 @@ given one tokenizer:
   `<s>`/`</s>`.
 - `t5_base_nonorm` — Unigram with a Metaspace pre-tokenizer and decoder, and a
   TemplateProcessing that appends `</s>`.
+- `mistral` — BPE with byte fallback, no normalizer, and a Metaspace
+  pre-tokenizer with `split: false`, so the whole text reaches BPE as one
+  span with a `▁` prepended to the first word.
 
 `t5_base_nonorm` is not stock T5: T5's only normalizer is a `Precompiled`
 SentencePiece charsmap, which brot does not implement and refuses to load, so
@@ -122,7 +125,14 @@ import tokenizers
 from tokenizers import Tokenizer, models
 
 CORPORA = ("sample", "edge_cases")
-TOKENIZERS = ("gpt2", "llama", "bert_base", "roberta_base", "t5_base_nonorm")
+TOKENIZERS = (
+    "gpt2",
+    "llama",
+    "bert_base",
+    "roberta_base",
+    "t5_base_nonorm",
+    "mistral",
+)
 
 
 def documents(text: str) -> list[str]:

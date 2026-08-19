@@ -30,4 +30,8 @@ curl -sL "https://huggingface.co/google-t5/t5-base/resolve/main/tokenizer.json" 
   > "$DATA_DIR/t5_base_nonorm.json"
 echo "  T5-base without its Precompiled normalizer (Unigram, 32K vocab, Metaspace)"
 
+curl -sL -o "$DATA_DIR/mistral.json" \
+  "https://huggingface.co/mistralai/Mistral-7B-v0.1/resolve/main/tokenizer.json"
+echo "  Mistral-7B-v0.1 (BPE with byte fallback, 32K vocab, Metaspace)"
+
 echo "Done."
