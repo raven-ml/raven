@@ -82,6 +82,10 @@ type t = {
   normalizer : Normalizer.t option;
   pre_tokenizer : Pre_tokenizer.t option;
   cut : cut;
+  (* Whether documents walk and encode through the fused C kernel: a walked
+     byte-level pre-tokenizer over a BPE model the kernel covers, decided once
+     here and dispatched with a plain [if]. *)
+  fused : bool;
   post_processor : Post_processor.t option;
   decoder : Decoder.t option;
   added : Added_tokens.t;
@@ -173,14 +177,19 @@ let alg_len_table = function
 
 (* The model's span encoder for a document. A BPE model's merge buffers and
    pretoken cache are claimed once for the document rather than once per span,
-   and the closure keeps the dispatch out of the span loop. *)
-let with_span_encoder algorithm f =
-  match algorithm with
-  | Alg_bpe m -> Bpe.with_state m (fun st -> f (Bpe.encode_into m st))
-  | Alg_wordpiece m -> f (Wordpiece.encode_into m)
-  | Alg_wordlevel m -> f (Word_level.encode_into m)
-  | Alg_unigram m -> Unigram.with_state (fun st -> f (Unigram.encode_into m st))
-  | Alg_chars m -> f (Chars.encode_into m)
+   and the closure keeps the dispatch out of the span loop. A fused BPE also
+   hands out its walking encoder, which cuts and encodes in one pass. *)
+let with_span_encoder t f =
+  match t.algorithm with
+  | Alg_bpe m ->
+      Bpe.with_state m (fun st ->
+          f (Bpe.encode_into m st)
+            (if t.fused then Some (Bpe.encode_walk m st) else None))
+  | Alg_wordpiece m -> f (Wordpiece.encode_into m) None
+  | Alg_wordlevel m -> f (Word_level.encode_into m) None
+  | Alg_unigram m ->
+      Unigram.with_state (fun st -> f (Unigram.encode_into m st) None)
+  | Alg_chars m -> f (Chars.encode_into m) None
 
 let alg_name = function
   | Alg_bpe _ -> "BPE"
@@ -366,11 +375,18 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
   in
   let pad_id = Option.bind pad_token token_id in
   let token_table, len_table = id_tables algorithm added in
+  let cut = cut_of ~algorithm pre in
+  let fused =
+    match (cut, algorithm) with
+    | Walk pre, Alg_bpe m -> Pre_tokenizer.walks_byte_level pre && Bpe.fused m
+    | _ -> false
+  in
   {
     algorithm;
     normalizer;
     pre_tokenizer = pre;
-    cut = cut_of ~algorithm pre;
+    cut;
+    fused;
     post_processor = post;
     decoder;
     added;
@@ -635,7 +651,7 @@ let encode_document t sc text ~record =
     String.length norm > 0
     && fst (Normalizer.original_span align ~start:0 ~stop:1) = 0
   in
-  with_span_encoder t.algorithm (fun encode ->
+  with_span_encoder t (fun encode encode_walk ->
       let[@inline] encode_span walked start finish =
         encode sc.ids ~opaque:sc.opaque walked ~pos:start ~len:(finish - start);
         if record then begin
@@ -646,23 +662,50 @@ let encode_document t sc text ~record =
       in
       (* The spans of [pre] over [walked] between [pos] and [stop], each encoded
          as it is found, a buffer at a time; the buffer grows when a single span
-         does not fit it. *)
+         does not fit it. A fused encoder walks and encodes in one pass and
+         appends the marks itself, hand-backs included, so on the record path
+         they stay aligned with the span bounds read off the buffer; on the
+         ids-only path they are dropped chunk by chunk. *)
       let walk pre walked ~pos ~stop =
-        let p = ref pos in
-        while !p < stop do
-          let spans = sc.spans in
-          Spans.clear spans;
-          let resume = Pre_tokenizer.fill pre walked ~pos:!p ~stop spans in
-          let n = Spans.count spans in
-          if n = 0 && resume = !p then
-            sc.spans <- Spans.create ~capacity:(2 * Spans.capacity spans)
-          else begin
-            for k = 0 to n - 1 do
-              encode_span walked (Spans.start spans k) (Spans.stop spans k)
-            done;
-            p := resume
-          end
-        done
+        match encode_walk with
+        | Some encode_walk ->
+            let p = ref pos in
+            while !p < stop do
+              let spans = sc.spans in
+              Spans.clear spans;
+              if not record then Ints.clear sc.marks;
+              let resume =
+                encode_walk sc.ids ~opaque:sc.opaque ~marks:sc.marks spans
+                  walked ~pos:!p ~stop
+              in
+              let n = Spans.count spans in
+              if n = 0 && resume = !p then
+                sc.spans <- Spans.create ~capacity:(2 * Spans.capacity spans)
+              else begin
+                if record then
+                  for k = 0 to n - 1 do
+                    Ints.add sc.span_start (Spans.start spans k);
+                    Ints.add sc.span_stop (Spans.stop spans k)
+                  done;
+                p := resume
+              end
+            done
+        | None ->
+            let p = ref pos in
+            while !p < stop do
+              let spans = sc.spans in
+              Spans.clear spans;
+              let resume = Pre_tokenizer.fill pre walked ~pos:!p ~stop spans in
+              let n = Spans.count spans in
+              if n = 0 && resume = !p then
+                sc.spans <- Spans.create ~capacity:(2 * Spans.capacity spans)
+              else begin
+                for k = 0 to n - 1 do
+                  encode_span walked (Spans.start spans k) (Spans.stop spans k)
+                done;
+                p := resume
+              end
+            done
       in
       (* [norm] from [start] to [stop], rewritten and walked by [pre] as one
          frame placed at [start]. [first] says whether it opens the document. *)

@@ -920,6 +920,10 @@ let fill t s ~pos ~stop spans =
   if pos < 0 || stop < pos || stop > String.length s then invalid_arg err_range;
   fill_walk t s ~pos ~stop spans
 
+let walks_byte_level = function
+  | Byte_level { use_regex = true; _ } -> true
+  | _ -> false
+
 (* Pre-tokenize *)
 
 let span_chunk = 1024

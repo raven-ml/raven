@@ -41,6 +41,13 @@ let blit_to_int32 t ~pos ~len
       (Int32.of_int (Array.unsafe_get values (pos + i)))
   done
 
+(* Internals *)
+
+let[@inline] buffer t = t.values
+let[@inline] capacity t = Array.length t.values
+let[@inline] reserve t extra = ensure t extra
+let[@inline] set_length t n = t.count <- n
+
 let[@inline] add4 t a b c d ~count =
   ensure t 4;
   let n = t.count in

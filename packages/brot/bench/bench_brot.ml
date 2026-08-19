@@ -56,6 +56,7 @@ let make_suite ~label ~tokenizer =
           encode_single tokenizer short_text);
       Thumper.bench "Encode/single_long" (fun () ->
           encode_single tokenizer long_text);
+      Thumper.bench "Encode/ids_long" (fun () -> encode_ids tokenizer long_text);
       Thumper.bench "Encode/batch_32" (fun () ->
           encode_batch tokenizer batch_32);
       Thumper.bench "Encode/batch_ids_32" (fun () ->

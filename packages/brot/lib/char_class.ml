@@ -138,3 +138,7 @@ let[@inline] at s i ~stop =
   let c = Char.code (String.unsafe_get s i) in
   if c < 0x80 then (Char.code (Bytes.unsafe_get ascii c) lsl 3) lor 1
   else decode s i stop
+
+(* Internals *)
+
+let unicode_table () = !unicode

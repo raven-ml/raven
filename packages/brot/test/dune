@@ -13,8 +13,7 @@
   test_processors
   test_pretokenizers
   test_added_tokens
-  test_json
-  test_parity)
+  test_json)
  (package brot)
  (deps
   (glob_files fixtures/parity/*)
@@ -22,3 +21,66 @@
   ; unless BROT_REQUIRE_FIXTURES is set.
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (libraries brot windtrap unix jsont jsont.bytesrw))
+
+; These two suites run twice: the native binary exercises the C kernels, the
+; byte_complete one (stubs linked statically; a plain .bc could not find them)
+; the OCaml reference that Sys.backend_type selects. The tests stanza runs
+; only the native exe on runtest, so the bytecode runs are explicit rules.
+(tests
+ (names test_parity test_kernels)
+ (modes exe byte_complete)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*.json))
+ (libraries brot windtrap unix jsont jsont.bytesrw))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*.json))
+ (action
+  (run %{dep:test_parity.bc.exe})))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*.json))
+ (action
+  (run %{dep:test_kernels.bc.exe})))
+
+; The native-vs-bytecode differential: the same deterministic dump from the
+; kernel and from the reference must be byte-identical. Both files are build
+; targets, so a difference fails outright rather than offering promotion.
+(executable
+ (name dump_kernels)
+ (modes exe byte_complete)
+ (libraries brot))
+
+(rule
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (with-stdout-to
+   dump.native
+   (run %{dep:dump_kernels.exe}))))
+
+(rule
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (with-stdout-to
+   dump.byte
+   (run %{dep:dump_kernels.bc.exe}))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (action
+  (diff dump.native dump.byte)))

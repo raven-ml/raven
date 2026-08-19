@@ -264,3 +264,16 @@ val fill : t -> string -> pos:int -> stop:int -> Spans.t -> int
     Raises [Invalid_argument] unless [plan t] is [Walk], or if [pos] and [stop]
     are not within [0] and [String.length text]. The parts of a [Segmented] plan
     are filled on their own. *)
+
+(** {1:internals Internals} *)
+
+val lead_class : Bytes.t
+(** [lead_class] is the byte-level walker's dispatch table: byte [b]'s class,
+    {!Char_class.category} on ASCII with the space and the apostrophe given
+    classes of their own, and the two shapes of non-ASCII byte. Read by the C
+    kernels. *)
+
+val walks_byte_level : t -> bool
+(** [walks_byte_level t] is [true] iff {!fill} walks [t] with the byte-level
+    pattern: [t] is a byte-level pre-tokenizer using the GPT-2 regex, and not
+    one wrapped in a sequence. *)

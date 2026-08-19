@@ -48,3 +48,10 @@ val write : t -> int -> int -> int -> unit
 val set_count : t -> int -> unit
 (** [set_count t n] makes [t] hold its first [n] spans. Unchecked: [n] must be
     at most [capacity t] and spans [0] to [n-1] must have been {!write}n. *)
+
+(** {1:internals Internals} *)
+
+val buffer : t -> Bytes.t
+(** [buffer t] is [t]'s storage: span [k] is the eight bytes at [8 * k], the
+    start in the low 32 bits and the stop in the high 32, native-endian. The C
+    kernels write spans through it; {!set_count} publishes them. *)

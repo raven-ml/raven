@@ -1,3 +1,10 @@
+; No -march, no -ffast-math, no OpenMP: the stubs must build and run with the
+; C compiler OCaml itself required, on any CPU of the arch. The arithmetic
+; that must wrap is unsigned, so -fwrapv is not relied on. -Werror is a
+; development/CI gate, not a release constraint: a future compiler's new
+; warning must not break user installs, so the release profile drops only the
+; fatality while -Wall -Wextra apply everywhere.
+
 (library
  (name brot)
  (public_name brot)
@@ -7,10 +14,33 @@
   char_class
   chars
   ints
+  kernel
   regex
   run
   spans
   unigram
   word_level
   wordpiece)
+ (foreign_stubs
+  (language c)
+  (names brot_kernels)
+  (flags :standard -std=c11 -O3 -Wall -Wextra (:include werror_flags.sexp)))
  (libraries re jsont jsont.bytesrw uucp uunf))
+
+(rule
+ (target werror_flags.sexp)
+ (enabled_if
+  (<> %{profile} release))
+ (action
+  (with-stdout-to
+   werror_flags.sexp
+   (echo "(-Werror)"))))
+
+(rule
+ (target werror_flags.sexp)
+ (enabled_if
+  (= %{profile} release))
+ (action
+  (with-stdout-to
+   werror_flags.sexp
+   (echo "()"))))

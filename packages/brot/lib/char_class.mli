@@ -66,3 +66,12 @@ val at_is_word : int -> bool
     word character, that is of the regular expression class [\w]: alphabetic
     characters, the marks, the decimal digits, connector punctuation and the
     joiners. *)
+
+(** {1:internals Internals} *)
+
+val unicode_table : unit -> Bytes.t
+(** [unicode_table ()] is the Unicode class table as it stands: byte [cp - 128]
+    holds the packed properties of code point [cp], [0] when it has not been
+    classified yet. Empty until the first non-ASCII code point is classified.
+    The C kernels read it and hand back any code point whose byte is [0];
+    {!category} fills it, from OCaml alone. *)

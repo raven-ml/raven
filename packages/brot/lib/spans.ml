@@ -25,3 +25,7 @@ let[@inline] stop t k =
 let[@inline] write t k s e =
   set64u t.buf (k * 8)
     (Int64.logor (Int64.of_int s) (Int64.shift_left (Int64.of_int e) 32))
+
+(* Internals *)
+
+let[@inline] buffer t = t.buf

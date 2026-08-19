@@ -324,6 +324,8 @@ type state = {
   st_cache : cache;
   st_long : (string, int array) Hashtbl.t;
   st_busy : bool Atomic.t;
+  st_kernel : Kernel.byte_level;
+  st_cursor : Bytes.t;
 }
 
 (* Vocabulary ids of single characters in one affixed form, keyed by the
@@ -903,9 +905,25 @@ let[@inline] value_hi word =
   let id3 = if n > 3 then Array.unsafe_get c 3 else 0 in
   Int64.of_int (id2 lor (id3 lsl 32))
 
+(* The tables the C kernel reads, in the field order it pins. A miss may be
+   merged in C unless [ignore_merges] asks for the whole-word lookup, which
+   needs [source_vocab]; dropout rules the kernel out at selection instead. *)
+let kernel_tables model cache =
+  {
+    Kernel.lead = Pre_tokenizer.lead_class;
+    cache = cache.table;
+    cache_mask = cache.mask;
+    byte_ids = model.byte_ids;
+    merge_keys = model.merges.Merge_map.keys;
+    merge_values = model.merges.Merge_map.values;
+    merge_mask = model.merges.Merge_map.mask;
+    len_table = model.len_table;
+    merge = not model.ignore_merges;
+  }
+
 (* Buffers of its own and no cache, for the thread that does not claim the
    domain's state and for building the seed. *)
-let private_state () =
+let private_state model =
   {
     st_word = create_word 16;
     st_queue = Merge_queue.create 16;
@@ -913,6 +931,8 @@ let private_state () =
     st_cache = no_cache;
     st_long = Hashtbl.create 16;
     st_busy = Atomic.make true;
+    st_kernel = kernel_tables model no_cache;
+    st_cursor = Kernel.cursor ();
   }
 
 (* Every vocabulary entry short enough to be keyed, tokenized by the very
@@ -921,7 +941,7 @@ let private_state () =
    vocabulary holds entries no merge builds, and HuggingFace spells those
    out. *)
 let build_seeds model =
-  let st = private_state () in
+  let st = private_state model in
   let buf = Buffer.create (entry_bytes * 1024) in
   Hashtbl.iter
     (fun text _ ->
@@ -962,6 +982,8 @@ let make_state model =
     st_cache = cache;
     st_long = Hashtbl.create 512;
     st_busy = Atomic.make false;
+    st_kernel = kernel_tables model cache;
+    st_cursor = Kernel.cursor ();
   }
 
 (* Two threads of one domain that both find no state for the model build one
@@ -990,7 +1012,7 @@ let with_state model f =
   let st = state model in
   let st =
     if Atomic.compare_and_set st.st_busy false true then st
-    else private_state ()
+    else private_state model
   in
   match f st with
   | v ->
@@ -1081,6 +1103,59 @@ let encode_into model st ids ~opaque text ~pos ~len =
       emit_word model st.st_word ids ~opaque
     end
   end
+
+let fused model =
+  Kernel.available && model.byte_level && not (uses_dropout model)
+
+let err_range = "range is not within the text"
+
+(* The fused walk: the C kernel cuts spans, probes the cache and merges short
+   misses, and everything it refuses comes back here with a resume position — an
+   unclassified code point is classified and the call re-entered, a full ids
+   buffer is grown, and an [Encode] span (over 15 bytes, a byte without an id,
+   [ignore_merges], a merge result [emit_word] would record) goes through
+   [encode_into], which owns the miss reference. The contract is
+   {!Pre_tokenizer.fill}'s: [stop] once the range is exhausted, otherwise the
+   start of the first span that did not fit, and a call that appends nothing and
+   returns [pos] means the span buffer is too small. *)
+let encode_walk model st ids ~opaque ~marks spans text ~pos ~stop =
+  if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
+  then invalid_arg err_range;
+  let cur = st.st_cursor and t = st.st_kernel in
+  let rec go p =
+    if p >= stop then stop
+    else begin
+      Ints.reserve ids (max 4096 (min (stop - p) 65536));
+      Ints.reserve marks (Spans.capacity spans - Spans.count spans);
+      Kernel.set cur ~spans:(Spans.count spans) ~ids:(Ints.length ids)
+        ~marks:(Ints.length marks);
+      let r =
+        Kernel.byte_level_encode text p stop (Spans.buffer spans)
+          (Ints.buffer ids) (Ints.buffer marks) cur
+          (Char_class.unicode_table ())
+          t
+      in
+      Spans.set_count spans (Kernel.spans cur);
+      Ints.set_length ids (Kernel.ids cur);
+      Ints.set_length marks (Kernel.marks cur);
+      let resume = Kernel.resume cur in
+      match r with
+      | Kernel.Done | Kernel.Spans_full -> resume
+      | Kernel.Ids_full ->
+          if resume = p then Ints.reserve ids (2 * Ints.capacity ids);
+          go resume
+      | Kernel.Class ->
+          ignore (Char_class.category (Kernel.code_point cur) : int);
+          go resume
+      | Kernel.Encode ->
+          let k = Spans.count spans - 1 in
+          let start = Spans.start spans k and finish = Spans.stop spans k in
+          encode_into model st ids ~opaque text ~pos:start ~len:(finish - start);
+          Ints.add marks (Ints.length ids);
+          go finish
+    end
+  in
+  go pos
 
 let len_table model = model.len_table
 let token_table model = model.vocab_r

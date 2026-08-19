@@ -121,6 +121,36 @@ val encode_into :
     This is the throughput path: nothing is allocated per pretoken that hits the
     cache. *)
 
+val fused : t -> bool
+(** [fused t] is [true] iff {!encode_walk} runs the fused C kernel: native code,
+    a byte-level model, no dropout. Bytecode and js_of_ocaml walk and encode in
+    OCaml through the same public API, which is the reference the kernel is held
+    to. *)
+
+val encode_walk :
+  t ->
+  state ->
+  Ints.t ->
+  opaque:Ints.t ->
+  marks:Ints.t ->
+  Spans.t ->
+  string ->
+  pos:int ->
+  stop:int ->
+  int
+(** [encode_walk t st ids ~opaque ~marks spans text ~pos ~stop] walks
+    [text.\[pos..stop)] with the byte-level pattern and encodes each pretoken as
+    it is cut: the spans go to [spans], their ids to [ids], the id count after
+    each span to [marks], and opaque runs to [opaque] as {!encode_into} records
+    them. Returns as {!Pre_tokenizer.fill} does: [stop] once the range is
+    exhausted, otherwise the start of the first span that did not fit, and a
+    call that appends nothing and returns [pos] means [spans] is too small.
+    Spans are never cut. Only meaningful when {!fused} — the walker is the
+    byte-level one whatever the tokenizer's pre-tokenizer says.
+
+    Raises [Invalid_argument] if [pos] and [stop] are not within [0] and
+    [String.length text], or if [stop] does not fit in 32 bits. *)
+
 val token_table : t -> string array
 (** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
 *)

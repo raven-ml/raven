@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- On native code, byte-level BPE (GPT-2, RoBERTa) now encodes through a fused
+  C kernel: the byte-level pattern walk, the pretoken-cache probe and the
+  merging of pretokens up to 15 bytes run in one pass over the text, roughly
+  halving `encode_ids`/`encode_batch_ids` time on English text. Results are
+  identical to the pure-OCaml path, which bytecode and js_of_ocaml keep using.
 - BPE's pretoken cache is now two-way set-associative in the same 8 MB: a
   colliding pair of pretokens no longer evict each other, cutting the miss
   rate from 7.9% to 4.8% on real text (`encode_batch_ids` on OpenWebText runs

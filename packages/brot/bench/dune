@@ -4,6 +4,12 @@
  (name bench_brot)
  (libraries brot thumper unix))
 
+; Throughput over a large corpus, run by hand (see bench_owt.ml); not on any
+; alias.
+(executable
+ (name bench_owt)
+ (libraries brot unix))
+
 ; Not attached to runtest on purpose: run with `dune build @bench`
 ; (or run the built exe directly; `list` prints case ids).
 

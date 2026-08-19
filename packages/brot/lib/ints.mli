@@ -53,3 +53,21 @@ val blit_to_int32 :
 (** [blit_to_int32 t ~pos ~len dst ~at] writes the [len] integers of [t] from
     [pos] into [dst] from [at], narrowed to 32 bits. Unchecked: [pos + len] must
     be at most [length t] and [at + len] at most the length of [dst]. *)
+
+(** {1:internals Internals}
+
+    The raw view a kernel driver appends through. *)
+
+val buffer : t -> int array
+(** [buffer t] is [t]'s storage: the first [length t] entries are the contents.
+    Invalidated by whatever grows [t]. *)
+
+val capacity : t -> int
+(** [capacity t] is the number of integers {!buffer} holds. *)
+
+val reserve : t -> int -> unit
+(** [reserve t extra] ensures [t] has room for [extra] more integers. *)
+
+val set_length : t -> int -> unit
+(** [set_length t n] makes [t] hold its first [n] entries. Unchecked: [n] must
+    be at most {!capacity} and the entries below it must have been written. *)
