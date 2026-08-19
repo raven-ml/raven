@@ -1087,6 +1087,16 @@ thread.
 
 ### Brot
 
+- Tokenizers with added tokens configured encode faster: the scan for
+  added-token occurrences now seeks candidate first bytes a word at a time
+  instead of probing a table per byte, lifting single-domain GPT-2
+  `encode_batch_ids` from ~99 to ~122 MB/s, with similar gains for RoBERTa and
+  BERT.
+- Tokenizers with added tokens configured encode faster: the scan for
+  added-token occurrences now seeks candidate first bytes a word at a time
+  instead of probing a table per byte, lifting single-domain GPT-2
+  `encode_batch_ids` from ~99 to ~122 MB/s, with similar gains for RoBERTa and
+  BERT.
 - On native code, byte-level BPE (GPT-2, RoBERTa) now encodes through a fused
   C kernel: the byte-level pattern walk, the pretoken-cache probe and the
   merging of pretokens up to 15 bytes run in one pass over the text, roughly

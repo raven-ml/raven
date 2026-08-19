@@ -287,6 +287,87 @@ let test_json_round_trip () =
       equal ~msg:"plain survives" string "a<p>"
         (decode reloaded ~skip_special_tokens:true (ids_of reloaded "a <p>"))
 
+(* The scan skips to the next byte that can start a token — with a SWAR search
+   when the tokens start with one or two distinct bytes, bytewise past that. The
+   tests below pin each shape, matches at every alignment of the eight-byte
+   loop, and near-matches that trigger the scan without completing a token. *)
+
+let scan_vocab =
+  let chars = "abcs<>[]{}d" in
+  List.init (String.length chars) (fun i -> (String.make 1 chars.[i], i))
+
+let scan_tokenizer tokens =
+  bpe ~vocab:scan_vocab ~merges:[] ~added_tokens:tokens ()
+
+let test_scan_offsets () =
+  let t = scan_tokenizer [ added_token "<s>" ] in
+  for o = 0 to 20 do
+    let text = String.make o 'a' ^ "<s>" ^ String.make (20 - o) 'b' in
+    let ids =
+      Array.concat [ Array.make o 0; [| 11 |]; Array.make (20 - o) 1 ]
+    in
+    equal ~msg:(Printf.sprintf "match at %d" o) (array int) ids (ids_of t text);
+    let offsets = Encoding.offsets (encode t text) in
+    equal
+      ~msg:(Printf.sprintf "offsets at %d" o)
+      (pair int int)
+      (o, o + 3)
+      offsets.(o)
+  done
+
+let test_scan_two_firsts () =
+  let t = scan_tokenizer [ added_token "<s>"; added_token "[c]" ] in
+  equal ~msg:"both found" (array int)
+    [| 0; 6; 2; 0; 4; 3; 0; 12; 0; 11; 0 |]
+    (ids_of t "a[ca<sa[c]a<s>a");
+  equal ~msg:"near matches around a match" (array int)
+    [| 4; 4; 3; 12; 4; 5; 3 |] (ids_of t "<<s[c]<>s");
+  (* The [ sits in a full SWAR window holding no <: a scan seeking only the
+     first first byte would skip it. *)
+  equal ~msg:"second first byte alone in a full window" (array int)
+    (Array.concat [ Array.make 10 0; [| 12 |]; Array.make 10 0 ])
+    (ids_of t (String.make 10 'a' ^ "[c]" ^ String.make 10 'a'))
+
+let test_scan_three_firsts () =
+  let t =
+    scan_tokenizer [ added_token "<s>"; added_token "[c]"; added_token "{d}" ]
+  in
+  equal ~msg:"all found" (array int)
+    [| 0; 13; 1; 11; 2; 12; 10 |]
+    (ids_of t "a{d}b<s>c[c]d")
+
+let test_scan_dense_near () =
+  let t = scan_tokenizer [ added_token "<s>" ] in
+  equal ~msg:"near matches all along" (array int) [| 4; 4; 3; 11; 3; 5 |]
+    (ids_of t "<<s<s>s>")
+
+let test_scan_long_stretch () =
+  let t = scan_tokenizer [ added_token "<s>" ] in
+  let run = String.make 100 'a' in
+  let ids = ids_of t (run ^ "<s>" ^ run ^ "<s>") in
+  equal ~msg:"two matches" (array int)
+    (Array.concat [ Array.make 100 0; [| 11 |]; Array.make 100 0; [| 11 |] ])
+    ids;
+  equal ~msg:"match first" (array int)
+    (Array.append [| 11 |] (Array.make 100 0))
+    (ids_of t ("<s>" ^ run));
+  equal ~msg:"no match" (array int) (Array.make 200 0) (ids_of t (run ^ run))
+
+let test_scan_single_word_resume () =
+  let t = tokenizer [ added_token ~single_word:true "SW" ] in
+  equal ~msg:"refused then matched" (array int)
+    (Array.concat
+       [ Array.make 10 0; [| 13; 14 |]; Array.make 10 0; [| 6; 17; 6 |] ])
+    (ids_of t "aaaaaaaaaaSWaaaaaaaaaa.SW.")
+
+let test_scan_long_space_run () =
+  let t = tokenizer [ added_token ~lstrip:true "L" ] in
+  check_encode t
+    ("a" ^ String.make 12 ' ' ^ "L")
+    ~ids:[| 0; 17 |]
+    ~tokens:[| "a"; String.make 12 ' ' ^ "L" |]
+    ~offsets:[| (0, 1); (1, 14) |]
+
 let suite =
   [
     test "leftmost longest" test_leftmost_longest;
@@ -308,6 +389,13 @@ let suite =
     test "normalized after raw" test_normalized_after_raw;
     test "add_special_tokens false" test_add_special_tokens_false;
     test "json round trip" test_json_round_trip;
+    test "scan offsets" test_scan_offsets;
+    test "scan two firsts" test_scan_two_firsts;
+    test "scan three firsts" test_scan_three_firsts;
+    test "scan dense near" test_scan_dense_near;
+    test "scan long stretch" test_scan_long_stretch;
+    test "scan single word resume" test_scan_single_word_resume;
+    test "scan long space run" test_scan_long_space_run;
   ]
 
 let () = run "Added tokens" [ group "added_tokens" suite ]

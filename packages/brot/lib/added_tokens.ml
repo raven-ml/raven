@@ -16,10 +16,17 @@ type token = {
 (* The text a token matches: its content, or the normalized form of it. *)
 type pattern = { text : string; token : token }
 
-(* Patterns bucketed by their first byte, longest first within a bucket, so that
-   a position starting no pattern costs one array load. The empty matcher has no
-   buckets at all. *)
-type matcher = pattern array array
+(* How the scan seeks the next byte that can start a pattern: a SWAR search for
+   one or two broadcast bytes, eight bytes per load, or the bytewise [starts]
+   test when the patterns start with more than two distinct bytes. *)
+type seek = Seek_one of int64 | Seek_two of int64 * int64 | Seek_bytewise
+
+(* Patterns bucketed by their first byte, longest first within a bucket.
+   [starts] flags the 256 bytes that can start a pattern; [seek] is how the scan
+   skips to the next flagged byte, so that text holding none costs a load and a
+   compare per eight bytes rather than a bucket probe per byte. The empty
+   matcher has no buckets at all. *)
+type matcher = { buckets : pattern array array; starts : Bytes.t; seek : seek }
 
 type t = {
   tokens : token list;
@@ -89,29 +96,88 @@ let space_after text i =
 
 (* Matching *)
 
+external word64 : string -> int -> int64 = "%caml_string_get64u"
+
+let ones = 0x0101010101010101L
+let highs = 0x8080808080808080L
+let lows = 0x7F7F7F7F7F7F7F7FL
+
+(* The high bit of every zero byte of [w], and of no other byte. *)
+let[@inline] zero_marks w =
+  Int64.logand
+    (Int64.lognot (Int64.logor (Int64.add (Int64.logand w lows) lows) w))
+    highs
+
+let[@inline] broadcast byte = Int64.mul (Int64.of_int byte) ones
+
 let matcher patterns =
   match patterns with
-  | [] -> [||]
+  | [] -> { buckets = [||]; starts = Bytes.empty; seek = Seek_bytewise }
   | _ ->
       let buckets = Array.make 256 [||] in
       let pending = Array.make 256 [] in
+      let starts = Bytes.make 256 '\000' in
       List.iter
         (fun pattern ->
           let first = Char.code pattern.text.[0] in
+          Bytes.set starts first '\001';
           pending.(first) <- pattern :: pending.(first))
         patterns;
       let longest_first a b =
         Int.compare (String.length b.text) (String.length a.text)
       in
-      for first = 0 to 255 do
+      let firsts = ref [] in
+      for first = 255 downto 0 do
         match pending.(first) with
         | [] -> ()
         | candidates ->
             let bucket = Array.of_list candidates in
             Array.sort longest_first bucket;
-            buckets.(first) <- bucket
+            buckets.(first) <- bucket;
+            firsts := first :: !firsts
       done;
-      buckets
+      let seek =
+        match !firsts with
+        | [ b ] -> Seek_one (broadcast b)
+        | [ b0; b1 ] -> Seek_two (broadcast b0, broadcast b1)
+        | _ -> Seek_bytewise
+      in
+      { buckets; starts; seek }
+
+let[@inline] starts_pattern m c =
+  Bytes.unsafe_get m.starts (Char.code c) <> '\000'
+
+(* [candidate m text ~pos ~len] is the first position at or after [pos] whose
+   byte can start a pattern of [m], or [len] if there is none. The SWAR loops
+   stop on the eight-byte window holding such a byte; the bytewise loop pins it
+   down, and covers the trailing window, which keeps every load within [text] —
+   the primitive is bounds-checked under the bytecode runtime. *)
+let candidate m text ~pos ~len =
+  let i = ref pos in
+  (match m.seek with
+  | Seek_one b ->
+      let scanning = ref true in
+      while !scanning && !i + 8 <= len do
+        if zero_marks (Int64.logxor (word64 text !i) b) = 0L then i := !i + 8
+        else scanning := false
+      done
+  | Seek_two (b0, b1) ->
+      let scanning = ref true in
+      while !scanning && !i + 8 <= len do
+        let w = word64 text !i in
+        if
+          Int64.logor
+            (zero_marks (Int64.logxor w b0))
+            (zero_marks (Int64.logxor w b1))
+          = 0L
+        then i := !i + 8
+        else scanning := false
+      done
+  | Seek_bytewise -> ());
+  while !i < len && not (starts_pattern m (String.unsafe_get text !i)) do
+    incr i
+  done;
+  !i
 
 let matches_at text pos pattern =
   let len = String.length pattern in
@@ -122,41 +188,49 @@ let matches_at text pos pattern =
   in
   same 0
 
-let find matcher text ~pos =
-  if Array.length matcher = 0 then None
+let find m text ~pos =
+  if Array.length m.buckets = 0 then None
   else begin
     let len = String.length text in
     let at = ref pos in
     let hit = ref None in
-    while Option.is_none !hit && !at < len do
-      let bucket =
-        Array.unsafe_get matcher (Char.code (String.unsafe_get text !at))
-      in
-      let count = Array.length bucket in
-      let index = ref 0 in
-      let candidate = ref None in
-      while Option.is_none !candidate && !index < count do
-        let pattern = Array.unsafe_get bucket !index in
-        if
-          !at + String.length pattern.text <= len
-          && matches_at text !at pattern.text
-        then candidate := Some pattern
-        else incr index
-      done;
-      match !candidate with
-      | None -> incr at
-      | Some { text = matched; token } ->
-          let start = !at and stop = !at + String.length matched in
+    let scanning = ref true in
+    while !scanning do
+      let start = candidate m text ~pos:!at ~len in
+      if start >= len then scanning := false
+      else begin
+        let bucket =
+          Array.unsafe_get m.buckets (Char.code (String.unsafe_get text start))
+        in
+        let count = Array.length bucket in
+        let index = ref 0 in
+        let matched = ref None in
+        while Option.is_none !matched && !index < count do
+          let pattern = Array.unsafe_get bucket !index in
           if
-            token.single_word
-            && (ends_with_word text start || starts_with_word text stop)
-          then at := stop
-          else
-            let start =
-              if token.lstrip then max pos (space_before text start) else start
-            in
-            let stop = if token.rstrip then space_after text stop else stop in
-            hit := Some (start, stop, token.id)
+            start + String.length pattern.text <= len
+            && matches_at text start pattern.text
+          then matched := Some pattern
+          else incr index
+        done;
+        match !matched with
+        | None -> at := start + 1
+        | Some { text = content; token } ->
+            let stop = start + String.length content in
+            if
+              token.single_word
+              && (ends_with_word text start || starts_with_word text stop)
+            then at := stop
+            else begin
+              let start =
+                if token.lstrip then max pos (space_before text start)
+                else start
+              in
+              let stop = if token.rstrip then space_after text stop else stop in
+              hit := Some (start, stop, token.id);
+              scanning := false
+            end
+      end
     done;
     !hit
   end
