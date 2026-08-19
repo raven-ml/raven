@@ -40,6 +40,8 @@ enum { BROT_DONE, BROT_SPANS_FULL, BROT_IDS_FULL, BROT_CLASS, BROT_ENCODE };
 /* Kernel.byte_level field order. */
 enum {
   BROT_BL_LEAD,
+  BROT_BL_FRONT,
+  BROT_BL_FRONT_MASK,
   BROT_BL_CACHE,
   BROT_BL_CACHE_MASK,
   BROT_BL_BYTE_IDS,
@@ -634,9 +636,10 @@ static intnat mask_next_span(mask_state *ms, walker *w, intnat i)
   }
 }
 
-/* The cache probe — Bpe.key0/key1/set_of and the two-way layout of the
-   64-byte set, bit for bit: every word is loaded and stored native-endian,
-   so the table OCaml writes and the table written here are one format. A key
+/* The cache probe — Bpe.key0/key1/hash_of, the direct-mapped front table and
+   the two-way layout of the 64-byte back set, bit for bit: every word is
+   loaded and stored native-endian, so the table OCaml writes and the table
+   written here are one format. A key
    word is one eight-byte read masked to the bytes it keeps; a pretoken
    ending within eight bytes of the end of the text reads the last eight
    bytes shifted down, and a text shorter than eight bytes gathers bytes one
@@ -673,17 +676,16 @@ static inline uint64_t key_word1(const unsigned char *s, intnat n, intnat pos,
   return tag | (w & ((1ULL << (8 * (len - 8))) - 1));
 }
 
-/* Bpe.set_of: the byte offset of a key's set. OCaml truncates the Int64 hash
-   to 63 bits before masking; the mask is far below bit 63, so the two
-   agree. */
-static inline intnat set_of(uint64_t k0, uint64_t k1, intnat mask)
+/* Bpe.hash_of: OCaml truncates the shifted hash to 63 bits; only 40 bits are
+   set after the shift, so the two agree. The back set and front slot byte
+   offsets are Bpe.set_at and Bpe.front_at on this one hash. */
+static inline uint64_t hash_of(uint64_t k0, uint64_t k1)
 {
-  uint64_t h = (k0 ^ (k1 * 0x9E3779B97F4A7C15ULL)) * 0xD6E8FEB86659FD93ULL;
-  return (intnat)(((h >> 24) & (uint64_t)mask) << 6);
+  return ((k0 ^ (k1 * 0x9E3779B97F4A7C15ULL)) * 0xD6E8FEB86659FD93ULL) >> 24;
 }
 
-/* The hit test of Bpe.encode_into: way 0 then way 1. Returns the byte offset
-   of the way, or -1. */
+/* The hit test of Bpe.encode_into on the back table: way 0 then way 1.
+   Returns the byte offset of the way, or -1. */
 static inline intnat probe(const unsigned char *tbl, intnat set, uint64_t k0,
                            uint64_t k1)
 {
@@ -707,6 +709,28 @@ static void cache_store(unsigned char *tbl, intnat set, uint64_t k0,
   store64(tbl + set + 24, v1);
   store64(tbl + set + 8, k1);
   store64(tbl + set, k0);
+}
+
+/* Bpe.promote: a back-table hit is written into its front slot, in
+   cache_store's publish order. */
+static inline void front_store(unsigned char *front, intnat fslot, uint64_t k0,
+                               uint64_t k1, uint64_t v0, uint64_t v1)
+{
+  store64(front + fslot + 16, v0);
+  store64(front + fslot + 24, v1);
+  store64(front + fslot + 8, k1);
+  store64(front + fslot, k0);
+}
+
+/* Bpe.add_cached: a hit's four lanes are stored unconditionally, as
+   Ints.add4 does; the returned count advances the id cursor. */
+static inline intnat emit_lanes(value *lane, uint64_t v0, uint64_t v1)
+{
+  lane[0] = Val_long((intnat)(v0 & 0xFFFFFF));
+  lane[1] = Val_long((intnat)((v0 >> 32) & 0xFFFFFF));
+  lane[2] = Val_long((intnat)(v1 & 0xFFFFFF));
+  lane[3] = Val_long((intnat)((v1 >> 32) & 0xFFFFFF));
+  return (intnat)((v0 >> 24) & 0xFF);
 }
 
 /* The short merge — Bpe.Merge_map.find, init_word_bytes and merge_linear
@@ -821,6 +845,8 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
   unsigned char *cur = Bytes_val(vcursor);
 
   const unsigned char *lead = Bytes_val(Field(vt, BROT_BL_LEAD));
+  unsigned char *front = Bytes_val(Field(vt, BROT_BL_FRONT));
+  intnat front_mask = Long_val(Field(vt, BROT_BL_FRONT_MASK));
   unsigned char *cache = Bytes_val(Field(vt, BROT_BL_CACHE));
   intnat cache_mask = Long_val(Field(vt, BROT_BL_CACHE_MASK));
   const value *byte_ids = (const value *)&Field(Field(vt, BROT_BL_BYTE_IDS), 0);
@@ -854,18 +880,21 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
   /* The loop is software-pipelined over the cache line: span k's walk, keys
      and set are computed and the set's line prefetched one iteration ahead,
      so the walk of span k+1 runs while span k's line is in flight; span k's
-     probe, merge and stores — and its room checks, in the reference's order —
-     resolve after that walk. The observable exit states are the reference's
-     exactly: a span whose resolve exits discards the span walked after it,
+     probes, merge and stores — and its room checks, in the reference's order —
+     resolve after that walk. The front table too is probed at resolve
+     time, never ahead, so every probe sees every earlier span's stores
+     and the tables stay bit for bit the reference's. The observable exit
+     states are the reference's exactly: a span whose resolve exits
+     discards the span walked after it,
      which the reference would never have walked, and a walked span's Class
      hand-back is reported only once every span before it has resolved and
      the span room it would need has been checked. */
   {
     int have = 0;
-    intnat p_i = 0, p_e = 0, p_len = 0, p_set = -1;
+    intnat p_i = 0, p_e = 0, p_len = 0, p_set = -1, p_fslot = 0;
     uint64_t p_k0 = 0, p_k1 = 0;
     for (;;) {
-      intnat e = -1, len = 0, set = -1;
+      intnat e = -1, len = 0, set = -1, fslot = 0;
       uint64_t k0 = 0, k1 = 0;
       int walked = 0;
       if (i < stop) {
@@ -874,9 +903,12 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
         if (e >= 0) {
           len = e - i;
           if (len <= 15 && cache_mask >= 0) {
+            uint64_t hh;
             k0 = key_word0(s, n, i, len);
             k1 = key_word1(s, n, i, len);
-            set = set_of(k0, k1, cache_mask);
+            hh = hash_of(k0, k1);
+            set = (intnat)((hh & (uint64_t)cache_mask) << 6);
+            fslot = (intnat)((hh & (uint64_t)front_mask) << 5);
             BROT_PREFETCH(cache + set);
           }
         }
@@ -895,16 +927,18 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
         }
         if (p_len > 15) goto hand_back;
         if (p_set >= 0) {
+          if (load64(front + p_fslot) == p_k0
+              && load64(front + p_fslot + 8) == p_k1) {
+            nids += emit_lanes(ids_base + nids, load64(front + p_fslot + 16),
+                               load64(front + p_fslot + 24));
+            goto emitted;
+          }
           intnat way = probe(cache, p_set, p_k0, p_k1);
           if (way >= 0) {
             uint64_t v0 = load64(cache + way + 16);
             uint64_t v1 = load64(cache + way + 24);
-            value *lane = ids_base + nids;
-            lane[0] = Val_long((intnat)(v0 & 0xFFFFFF));
-            lane[1] = Val_long((intnat)((v0 >> 32) & 0xFFFFFF));
-            lane[2] = Val_long((intnat)(v1 & 0xFFFFFF));
-            lane[3] = Val_long((intnat)((v1 >> 32) & 0xFFFFFF));
-            nids += (intnat)((v0 >> 24) & 0xFF);
+            front_store(front, p_fslot, p_k0, p_k1, v0, v1);
+            nids += emit_lanes(ids_base + nids, v0, v1);
             goto emitted;
           }
         }
@@ -964,6 +998,7 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
       p_k0 = k0;
       p_k1 = k1;
       p_set = set;
+      p_fslot = fslot;
       have = 1;
       i = e;
     }

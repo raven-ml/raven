@@ -513,6 +513,49 @@ let test_set_eviction () =
   done;
   List.iter (check 5) [ 0; 1; 0; 2; 1; 0; 2; 2; 0; 1 ]
 
+(* The front table: a small direct-mapped table probed before the two-way one,
+   filled by promoting whatever the back table answers. Every word of length up
+   to four over eight letters is more distinct pretokens than the front has
+   slots, so three passes in three orders exercise a promotion, a front hit, an
+   eviction by a colliding promotion and a re-promotion — and every answer must
+   still be the merges'. *)
+let test_front_promotion_and_eviction () =
+  let uncached = collide 0 in
+  let cached = collide 262144 in
+  let words =
+    let acc = ref [] in
+    let rec go prefix len =
+      if len > 0 then
+        for c = 0 to 7 do
+          let w = prefix ^ String.make 1 (Char.chr (Char.code 'a' + c)) in
+          acc := w :: !acc;
+          go w (len - 1)
+        done
+    in
+    go "" 4;
+    Array.of_list (List.rev !acc)
+  in
+  let n = Array.length words in
+  let expected = Array.map (fun w -> encode_ids uncached w) words in
+  let check pass i =
+    equal
+      ~msg:(Printf.sprintf "pass %d, %S" pass words.(i))
+      (array int) expected.(i)
+      (encode_ids cached words.(i))
+  in
+  for i = 0 to n - 1 do
+    check 1 i
+  done;
+  for i = n - 1 downto 0 do
+    check 2 i
+  done;
+  (* A coprime stride visits every word once more, mixing hot and cold. *)
+  let j = ref 0 in
+  for _ = 0 to n - 1 do
+    check 3 !j;
+    j := (!j + 2311) mod n
+  done
+
 (* Byte fallback and the unknown token. Expectations probed with the
    [tokenizers] wheel: a fallback never lets a pending unknown token out, so the
    unknown token follows the bytes that came after it and comes out at the next
@@ -1214,6 +1257,7 @@ let () =
           test "the seed under ignore_merges" test_seed_ignore_merges;
           test "long and many-token pretokens" test_cache_long_and_wide;
           test "a set filled beyond two ways" test_set_eviction;
+          test "front promotion and eviction" test_front_promotion_and_eviction;
           test "small capacities on the parity corpora"
             test_cache_capacities_on_parity_corpus;
         ];

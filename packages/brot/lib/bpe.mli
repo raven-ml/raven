@@ -14,7 +14,9 @@
 
     Tokenizations are cached per pretoken in a two-way set-associative table
     seeded with the whole vocabulary, so a word the vocabulary holds is answered
-    without merging. *)
+    without merging. A small cache-resident front table, filled by promoting
+    whatever the main table answers, serves the most frequent pretokens without
+    touching the main table's memory. *)
 
 type t
 (** The type for BPE models. Immutable after creation.
@@ -59,9 +61,10 @@ val create :
     - [cache_capacity] is the number of entries in the pretoken cache, rounded
       up to a power of two and held two per set: a pretoken may sit in either
       entry of its set, and a miss evicts the older of the two. Each entry costs
-      32 bytes and each domain encoding with the model keeps a table of its own.
-      Defaults to [262144] (8 MB). Set to [0] to disable caching. Pretokens over
-      4096 bytes are never cached.
+      32 bytes and each domain encoding with the model keeps a table of its own,
+      fronted by a table of 4096 entries (128 KB) that hits answer from without
+      touching the main one. Defaults to [262144] (8 MB). Set to [0] to disable
+      caching, front table included. Pretokens over 4096 bytes are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which

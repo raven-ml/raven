@@ -16,8 +16,13 @@ val available : bool
 
 type byte_level = {
   lead : Bytes.t;  (** {!Pre_tokenizer.lead_class}. *)
+  front : Bytes.t;
+      (** The state's front pretoken table, probed first; empty when caching is
+          off. *)
+  front_mask : int;
+      (** The front table's entry index mask, [-1] when caching is off. *)
   cache : Bytes.t;
-      (** The state's pretoken table; empty when caching is off. *)
+      (** The state's back pretoken table; empty when caching is off. *)
   cache_mask : int;  (** The set index mask, [-1] when caching is off. *)
   byte_ids : int array;  (** The 256 ids of single bytes, [-1] for none. *)
   merge_keys : int array;

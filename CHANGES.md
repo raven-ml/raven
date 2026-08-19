@@ -1087,6 +1087,10 @@ thread.
 
 ### Brot
 
+- The BPE pretoken cache gained a small resident front table (128 KB,
+  direct-mapped, filled by promoting the main table's hits) probed before the
+  8 MB main table, cutting its memory traffic on large corpora.
+  `cache_capacity 0` disables both tables.
 - Faster GPT-2 byte-level encoding: the C kernel now classifies text in
   64-byte batches (NEON on arm64, SWAR elsewhere) and derives pretoken
   boundaries with bitmask algebra, walking only non-ASCII neighbourhoods and

@@ -12,14 +12,16 @@ let available = Sys.backend_type = Sys.Native
 
 type byte_level = {
   lead : Bytes.t; (* 0: BROT_BL_LEAD *)
-  cache : Bytes.t; (* 1: BROT_BL_CACHE *)
-  cache_mask : int; (* 2: BROT_BL_CACHE_MASK *)
-  byte_ids : int array; (* 3: BROT_BL_BYTE_IDS *)
-  merge_keys : int array; (* 4: BROT_BL_MERGE_KEYS *)
-  merge_values : int array; (* 5: BROT_BL_MERGE_VALUES *)
-  merge_mask : int; (* 6: BROT_BL_MERGE_MASK *)
-  len_table : int array; (* 7: BROT_BL_LEN_TABLE *)
-  merge : bool; (* 8: BROT_BL_MERGE *)
+  front : Bytes.t; (* 1: BROT_BL_FRONT *)
+  front_mask : int; (* 2: BROT_BL_FRONT_MASK *)
+  cache : Bytes.t; (* 3: BROT_BL_CACHE *)
+  cache_mask : int; (* 4: BROT_BL_CACHE_MASK *)
+  byte_ids : int array; (* 5: BROT_BL_BYTE_IDS *)
+  merge_keys : int array; (* 6: BROT_BL_MERGE_KEYS *)
+  merge_values : int array; (* 7: BROT_BL_MERGE_VALUES *)
+  merge_mask : int; (* 8: BROT_BL_MERGE_MASK *)
+  len_table : int array; (* 9: BROT_BL_LEN_TABLE *)
+  merge : bool; (* 10: BROT_BL_MERGE *)
 }
 
 type reason = Done | Spans_full | Ids_full | Class | Encode

@@ -195,12 +195,18 @@ end
 
 (* Pretoken cache.
 
-   Two-way set-associative: the table is 64-byte sets of two 32-byte ways, a
-   pretoken hashes to exactly one set and may sit in either way. A miss stores
-   into way 0 after shifting way 0 into way 1, so the older of the two goes and
-   no state bits are kept. Nothing is ever probed beyond the set or grown.
+   Two levels sharing one 32-byte entry layout. The front table is small,
+   direct-mapped and probed first: pretoken frequency is Zipfian, so a few
+   thousand distinct pretokens answer most probes from a table that stays cache
+   resident where the back table's megabytes cannot. The back table is two-way
+   set-associative: 64-byte sets of two 32-byte ways, a pretoken hashes to
+   exactly one set and may sit in either way. A miss stores into way 0 of the
+   back table after shifting way 0 into way 1, so the older of the two goes and
+   no state bits are kept; a back-table hit promotes the entry into its front
+   slot. Nothing is ever probed beyond the set or grown.
 
-   Way 0 is at byte 0 of its set and way 1 at byte 32. Within a way:
+   Way 0 is at byte 0 of its set and way 1 at byte 32. Within a way (and within
+   a front entry):
 
    [0..7] k0: bytes 0..7 of the pretoken, zero-padded;
 
@@ -219,8 +225,8 @@ end
    A table is written by whichever thread holds the claim on the state that owns
    it, so there is never a second writer. The value words are still published
    before the key words, and [k0] last of all — for the way being shifted as for
-   the way being filled — so that a read torn by anything at all comes out a
-   miss rather than a wrong hit. *)
+   the way being filled, in the front table as in the back — so that a read torn
+   by anything at all comes out a miss rather than a wrong hit. *)
 
 external string_get64u : string -> int -> int64 = "%caml_string_get64u"
 external bytes_get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
@@ -231,6 +237,13 @@ let max_lanes = 4
 let entry_bytes = 32
 let set_bytes = 2 * entry_bytes
 let cached_id_limit = 1 lsl 24
+
+(* The front table's entry count (128 KB at 32 bytes each). Measured on a 290 MB
+   OpenWebText sample with the GPT-2 vocabulary: the 4096 most frequent
+   pretokens cover 82 % of short-pretoken occurrences, and a direct-mapped table
+   this size answers 75 % of probes — 79 % of all cache hits — with 2^14 entries
+   adding only 8 points for four times the footprint. *)
+let front_entries = 4096
 
 (* For each length, the mask keeping the bytes each key word holds. *)
 let key_masks =
@@ -284,19 +297,25 @@ let[@inline] key1 text n pos len =
     in
     Int64.logor tag (Int64.logand w (bytes_get64u key_masks ((len lsl 4) + 8)))
 
-(* [mask] is the set index mask: the table holds [mask + 1] sets. *)
-type cache = { table : Bytes.t; mask : int }
+(* [mask] is the back table's set index mask: it holds [mask + 1] sets. The
+   front table holds [fmask + 1] entries, indexed by the same hash. *)
+type cache = { front : Bytes.t; fmask : int; table : Bytes.t; mask : int }
 
-let no_cache = { table = Bytes.empty; mask = -1 }
+let no_cache =
+  { front = Bytes.empty; fmask = -1; table = Bytes.empty; mask = -1 }
 
-(* The byte offset of the set a key belongs to. *)
-let[@inline] set_of cache k0 k1 =
-  let h =
-    Int64.mul
-      (Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L))
-      0xD6E8FEB86659FD93L
-  in
-  (Int64.to_int (Int64.shift_right_logical h 24) land cache.mask) lsl 6
+let[@inline] hash_of k0 k1 =
+  Int64.to_int
+    (Int64.shift_right_logical
+       (Int64.mul
+          (Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L))
+          0xD6E8FEB86659FD93L)
+       24)
+
+(* The byte offsets of a hash's back set and front slot. *)
+let[@inline] set_at h mask = (h land mask) lsl 6
+let[@inline] front_at h fmask = (h land fmask) lsl 5
+let[@inline] set_of cache k0 k1 = set_at (hash_of k0 k1) cache.mask
 
 (* [entries] rounded up to a power of two, two per set; at least one set. *)
 let create_cache entries =
@@ -304,7 +323,12 @@ let create_cache entries =
   while !sets * 2 < entries do
     sets := !sets * 2
   done;
-  { table = Bytes.make (!sets * set_bytes) '\000'; mask = !sets - 1 }
+  {
+    front = Bytes.make (front_entries * entry_bytes) '\000';
+    fmask = front_entries - 1;
+    table = Bytes.make (!sets * set_bytes) '\000';
+    mask = !sets - 1;
+  }
 
 (* Pretokens above [max_key_len] bytes are keyed by their bytes; they are a
    percent or two of a corpus, so one substring per lookup is affordable. The
@@ -891,6 +915,15 @@ let[@inline] store cache set k0 k1 v0 v1 =
   bytes_set64u table (set + 8) k1;
   bytes_set64u table set k0
 
+(* Writes the entry into the front slot at [fslot], in [store]'s publish
+   order. *)
+let[@inline] promote cache fslot k0 k1 v0 v1 =
+  let front = cache.front in
+  bytes_set64u front (fslot + 16) v0;
+  bytes_set64u front (fslot + 24) v1;
+  bytes_set64u front (fslot + 8) k1;
+  bytes_set64u front fslot k0
+
 (* The two value words of a cacheable word. *)
 let[@inline] value_lo word =
   let n = word.size in
@@ -911,6 +944,8 @@ let[@inline] value_hi word =
 let kernel_tables model cache =
   {
     Kernel.lead = Pre_tokenizer.lead_class;
+    front = cache.front;
+    front_mask = cache.fmask;
     cache = cache.table;
     cache_mask = cache.mask;
     byte_ids = model.byte_ids;
@@ -1041,6 +1076,14 @@ let emit_word model word ids ~opaque =
     Ints.add ids id
   done
 
+(* The lanes of a cache entry's value words, appended as ids. *)
+let[@inline] add_cached ids v0 v1 =
+  Ints.add4 ids (v0 land 0xFFFFFF)
+    ((v0 lsr 32) land 0xFFFFFF)
+    (v1 land 0xFFFFFF)
+    ((v1 lsr 32) land 0xFFFFFF)
+    ~count:((v0 lsr 24) land 0xFF)
+
 let encode_into model st ids ~opaque text ~pos ~len =
   if len > 0 then begin
     let cache = st.st_cache in
@@ -1048,34 +1091,43 @@ let encode_into model st ids ~opaque text ~pos ~len =
       let n = String.length text in
       let k0 = key0 text n pos len in
       let k1 = key1 text n pos len in
-      let set = set_of cache k0 k1 in
-      let table = cache.table in
-      let way =
-        if
-          (bytes_get64u table set : int64) = k0
-          && (bytes_get64u table (set + 8) : int64) = k1
-        then set
-        else if
-          (bytes_get64u table (set + 32) : int64) = k0
-          && (bytes_get64u table (set + 40) : int64) = k1
-        then set + 32
-        else -1
-      in
-      if way >= 0 then begin
-        let v0 = Int64.to_int (bytes_get64u table (way + 16)) in
-        let v1 = Int64.to_int (bytes_get64u table (way + 24)) in
-        Ints.add4 ids (v0 land 0xFFFFFF)
-          ((v0 lsr 32) land 0xFFFFFF)
-          (v1 land 0xFFFFFF)
-          ((v1 lsr 32) land 0xFFFFFF)
-          ~count:((v0 lsr 24) land 0xFF)
-      end
+      let h = hash_of k0 k1 in
+      let fslot = front_at h cache.fmask in
+      let front = cache.front in
+      if
+        (bytes_get64u front fslot : int64) = k0
+        && (bytes_get64u front (fslot + 8) : int64) = k1
+      then
+        add_cached ids
+          (Int64.to_int (bytes_get64u front (fslot + 16)))
+          (Int64.to_int (bytes_get64u front (fslot + 24)))
       else begin
-        build_word model st text pos len;
-        let word = st.st_word in
-        emit_word model word ids ~opaque;
-        if cacheable model word len then
-          store cache set k0 k1 (value_lo word) (value_hi word)
+        let set = set_at h cache.mask in
+        let table = cache.table in
+        let way =
+          if
+            (bytes_get64u table set : int64) = k0
+            && (bytes_get64u table (set + 8) : int64) = k1
+          then set
+          else if
+            (bytes_get64u table (set + 32) : int64) = k0
+            && (bytes_get64u table (set + 40) : int64) = k1
+          then set + 32
+          else -1
+        in
+        if way >= 0 then begin
+          let v0 = bytes_get64u table (way + 16) in
+          let v1 = bytes_get64u table (way + 24) in
+          promote cache fslot k0 k1 v0 v1;
+          add_cached ids (Int64.to_int v0) (Int64.to_int v1)
+        end
+        else begin
+          build_word model st text pos len;
+          let word = st.st_word in
+          emit_word model word ids ~opaque;
+          if cacheable model word len then
+            store cache set k0 k1 (value_lo word) (value_hi word)
+        end
       end
     end
     else if cache.mask >= 0 && len <= long_max_len then begin
