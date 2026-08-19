@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- Faster byte-level batch encoding on real text: the C kernel's
+  pretoken-cache probe is software-pipelined, fetching each span's cache line
+  while the next span is walked — ~12% faster single-domain and ~7%
+  multi-domain `encode_batch_ids` (GPT-2/RoBERTa over OpenWebText), at a
+  small cost on single small documents.
 - Tokenizers with added tokens configured encode faster: the scan for
   added-token occurrences now seeks candidate first bytes a word at a time
   instead of probing a table per byte, lifting single-domain GPT-2

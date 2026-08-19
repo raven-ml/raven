@@ -82,6 +82,13 @@ static inline int ctz64(uint64_t x)
 static inline int ctz64(uint64_t x) { return __builtin_ctzll(x); }
 #endif
 
+/* The prefetch is advisory: GCC/Clang emit it, other compilers drop it. */
+#if defined(__GNUC__) || defined(__clang__)
+#define BROT_PREFETCH(p) __builtin_prefetch(p)
+#else
+#define BROT_PREFETCH(p) ((void)(p))
+#endif
+
 /* The walker — Pre_tokenizer.fill_byte_level and Char_class.at, line for
    line. A class the Unicode table does not hold yet cannot be filled here
    (Uucp stays in OCaml): the walk stops, [cp] carries the code point out and
@@ -508,6 +515,7 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
 
   walker w;
   intnat i = Long_val(vpos);
+  intnat resume;
   int reason;
 
   w.s = s;
@@ -517,95 +525,135 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
   w.uni_len = (intnat)caml_string_length(vunicode);
   w.cp = 0;
 
-  while (i < stop) {
-    intnat e, len;
-    if (nspans == spans_cap) {
-      reason = BROT_SPANS_FULL;
-      goto out;
-    }
-    e = next_span(&w, i);
-    if (e < 0) {
-      store64(cur + CUR_CP, (uint64_t)w.cp);
-      reason = BROT_CLASS;
-      goto out;
-    }
-    len = e - i;
-    if (ids_cap - nids < (len < 4 ? 4 : len)) {
-      reason = BROT_IDS_FULL;
-      goto out;
-    }
-    if (len > 15) goto hand_back;
-    {
+  /* The loop is software-pipelined over the cache line: span k's walk, keys
+     and set are computed and the set's line prefetched one iteration ahead,
+     so the walk of span k+1 runs while span k's line is in flight; span k's
+     probe, merge and stores — and its room checks, in the reference's order —
+     resolve after that walk. The observable exit states are the reference's
+     exactly: a span whose resolve exits discards the span walked after it,
+     which the reference would never have walked, and a walked span's Class
+     hand-back is reported only once every span before it has resolved and
+     the span room it would need has been checked. */
+  {
+    int have = 0;
+    intnat p_i = 0, p_e = 0, p_len = 0, p_set = -1;
+    uint64_t p_k0 = 0, p_k1 = 0;
+    for (;;) {
+      intnat e = -1, len = 0, set = -1;
       uint64_t k0 = 0, k1 = 0;
-      intnat set = -1;
-      if (cache_mask >= 0) {
-        intnat way;
-        k0 = key_word0(s, n, i, len);
-        k1 = key_word1(s, n, i, len);
-        set = set_of(k0, k1, cache_mask);
-        way = probe(cache, set, k0, k1);
-        if (way >= 0) {
-          uint64_t v0 = load64(cache + way + 16);
-          uint64_t v1 = load64(cache + way + 24);
-          value *lane = ids_base + nids;
-          lane[0] = Val_long((intnat)(v0 & 0xFFFFFF));
-          lane[1] = Val_long((intnat)((v0 >> 32) & 0xFFFFFF));
-          lane[2] = Val_long((intnat)(v1 & 0xFFFFFF));
-          lane[3] = Val_long((intnat)((v1 >> 32) & 0xFFFFFF));
-          nids += (intnat)((v0 >> 24) & 0xFF);
-          goto emitted;
-        }
-      }
-      if (!can_merge) goto hand_back;
-      {
-        int32_t ids15[15];
-        int k;
-        int m = merge_short(mkeys, mvals, mmask, byte_ids, len_tab, len_n, s,
-                            i, len, ids15);
-        if (m < 0) goto hand_back;
-        for (k = 0; k < m; k++)
-          ids_base[nids + k] = Val_long((intnat)ids15[k]);
-        nids += m;
-        if (cache_mask >= 0 && m <= 4) {
-          int fits = 1;
-          for (k = 0; k < m; k++)
-            if (ids15[k] >= 1 << 24) fits = 0;
-          if (fits) {
-            /* Bpe.value_lo/value_hi: two 24-bit lanes per word, the count in
-               bits 24..31 of the first, absent lanes zero. */
-            uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
-                          | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
-            uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)
-                          | (m > 3 ? (uint64_t)ids15[3] << 32 : 0);
-            cache_store(cache, set, k0, k1, v0, v1);
+      int walked = 0;
+      if (i < stop) {
+        e = next_span(&w, i);
+        walked = 1;
+        if (e >= 0) {
+          len = e - i;
+          if (len <= 15 && cache_mask >= 0) {
+            k0 = key_word0(s, n, i, len);
+            k1 = key_word1(s, n, i, len);
+            set = set_of(k0, k1, cache_mask);
+            BROT_PREFETCH(cache + set);
           }
         }
-        goto emitted;
       }
+      if (have) {
+        have = 0;
+        if (nspans == spans_cap) {
+          reason = BROT_SPANS_FULL;
+          resume = p_i;
+          goto out;
+        }
+        if (ids_cap - nids < (p_len < 4 ? 4 : p_len)) {
+          reason = BROT_IDS_FULL;
+          resume = p_i;
+          goto out;
+        }
+        if (p_len > 15) goto hand_back;
+        if (p_set >= 0) {
+          intnat way = probe(cache, p_set, p_k0, p_k1);
+          if (way >= 0) {
+            uint64_t v0 = load64(cache + way + 16);
+            uint64_t v1 = load64(cache + way + 24);
+            value *lane = ids_base + nids;
+            lane[0] = Val_long((intnat)(v0 & 0xFFFFFF));
+            lane[1] = Val_long((intnat)((v0 >> 32) & 0xFFFFFF));
+            lane[2] = Val_long((intnat)(v1 & 0xFFFFFF));
+            lane[3] = Val_long((intnat)((v1 >> 32) & 0xFFFFFF));
+            nids += (intnat)((v0 >> 24) & 0xFF);
+            goto emitted;
+          }
+        }
+        if (!can_merge) goto hand_back;
+        {
+          int32_t ids15[15];
+          int k;
+          int m = merge_short(mkeys, mvals, mmask, byte_ids, len_tab, len_n,
+                              s, p_i, p_len, ids15);
+          if (m < 0) goto hand_back;
+          for (k = 0; k < m; k++)
+            ids_base[nids + k] = Val_long((intnat)ids15[k]);
+          nids += m;
+          if (p_set >= 0 && m <= 4) {
+            int fits = 1;
+            for (k = 0; k < m; k++)
+              if (ids15[k] >= 1 << 24) fits = 0;
+            if (fits) {
+              /* Bpe.value_lo/value_hi: two 24-bit lanes per word, the count
+                 in bits 24..31 of the first, absent lanes zero. */
+              uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
+                            | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
+              uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)
+                            | (m > 3 ? (uint64_t)ids15[3] << 32 : 0);
+              cache_store(cache, p_set, p_k0, p_k1, v0, v1);
+            }
+          }
+          goto emitted;
+        }
+      emitted:
+        /* Spans.write's word: the start in the low 32 bits, the stop in the
+           high; the mark is the id count after the span. */
+        store64(spans + 8 * nspans, ((uint64_t)p_e << 32) | (uint64_t)p_i);
+        marks_base[nmarks] = Val_long(nids);
+        nspans++;
+        nmarks++;
+      }
+      if (!walked) { /* i = stop and every span resolved */
+        reason = BROT_DONE;
+        resume = i;
+        goto out;
+      }
+      if (e < 0) {
+        if (nspans == spans_cap) {
+          reason = BROT_SPANS_FULL;
+          resume = i;
+          goto out;
+        }
+        store64(cur + CUR_CP, (uint64_t)w.cp);
+        reason = BROT_CLASS;
+        resume = i;
+        goto out;
+      }
+      p_i = i;
+      p_e = e;
+      p_len = len;
+      p_k0 = k0;
+      p_k1 = k1;
+      p_set = set;
+      have = 1;
+      i = e;
     }
-  emitted:
-    /* Spans.write's word: the start in the low 32 bits, the stop in the
-       high; the mark is the id count after the span. */
-    store64(spans + 8 * nspans, ((uint64_t)e << 32) | (uint64_t)i);
-    marks_base[nmarks] = Val_long(nids);
-    nspans++;
-    nmarks++;
-    i = e;
-    continue;
   hand_back:
     /* The span is written and published but its ids and mark are not: the
        driver encodes it in OCaml, appends its mark and resumes after it. */
-    store64(spans + 8 * nspans, ((uint64_t)e << 32) | (uint64_t)i);
+    store64(spans + 8 * nspans, ((uint64_t)p_e << 32) | (uint64_t)p_i);
     nspans++;
     reason = BROT_ENCODE;
-    goto out;
+    resume = p_i;
   }
-  reason = BROT_DONE;
 out:
   store64(cur + CUR_SPANS, (uint64_t)nspans);
   store64(cur + CUR_IDS, (uint64_t)nids);
   store64(cur + CUR_MARKS, (uint64_t)nmarks);
-  store64(cur + CUR_RESUME, (uint64_t)i);
+  store64(cur + CUR_RESUME, (uint64_t)resume);
   return Val_int(reason);
 }
 
