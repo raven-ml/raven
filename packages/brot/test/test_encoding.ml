@@ -550,28 +550,87 @@ let test_truncation_budgets_special_tokens () =
    second instead, which is what pins the rule rather than the arithmetic. *)
 let test_truncation_of_a_pair () =
   let tokenizer = bounded_tokenizer () in
-  let ids max_length =
-    Encoding.ids
-      (encode tokenizer ~truncation:(truncation max_length) ~pair:"e f a"
-         "a b c d")
+  let encode max_length =
+    encode tokenizer ~truncation:(truncation max_length) ~pair:"e f a" "a b c d"
   in
   equal ~msg:"three against two" (array int)
     [| 8; 0; 1; 2; 9; 4; 5; 9 |]
-    (ids 8);
-  equal ~msg:"one each" (array int) [| 8; 0; 9; 4; 9 |] (ids 5)
+    (Encoding.ids (encode 8));
+  equal ~msg:"one each" (array int) [| 8; 0; 9; 4; 9 |]
+    (Encoding.ids (encode 5))
+
+(* The windows of a pair are combined as HuggingFace combines them: each window
+   of the first sequence against the second's kept part and then against each of
+   its windows, and last the first's kept part against each window of the
+   second. Expected values from tokenizers 0.23.1 on the same pipeline. *)
+let test_pair_windows () =
+  let tokenizer = bounded_tokenizer () in
+  let encode max_length =
+    encode tokenizer ~truncation:(truncation max_length) ~pair:"e f a" "a b c d"
+  in
+  equal ~msg:"three against two"
+    (list (array int))
+    [ [| 8; 3; 9; 4; 5; 9 |]; [| 8; 3; 9; 0; 9 |]; [| 8; 0; 1; 2; 9; 0; 9 |] ]
+    (List.map Encoding.ids (Encoding.overflowing (encode 8)));
+  equal ~msg:"one each"
+    (list (array int))
+    [
+      [| 8; 1; 9; 4; 9 |];
+      [| 8; 1; 9; 5; 9 |];
+      [| 8; 1; 9; 0; 9 |];
+      [| 8; 2; 9; 4; 9 |];
+      [| 8; 2; 9; 5; 9 |];
+      [| 8; 2; 9; 0; 9 |];
+      [| 8; 3; 9; 4; 9 |];
+      [| 8; 3; 9; 5; 9 |];
+      [| 8; 3; 9; 0; 9 |];
+      [| 8; 0; 9; 5; 9 |];
+      [| 8; 0; 9; 0; 9 |];
+    ]
+    (List.map Encoding.ids (Encoding.overflowing (encode 5)))
 
 (* An overflowing window is a sequence of its own, so it carries the same
-   special tokens as the one it was cut from. *)
+   special tokens as the one it was cut from. HuggingFace tokenizes only up to
+   [max_length] tokens — rounded up to a whole pretoken — when truncation is
+   configured, so the windows cover what is left of those, not of the whole
+   text: here tokens [e] and [f] are never tokenized at all. *)
 let test_truncation_overflowing () =
   let tokenizer = bounded_tokenizer () in
   let encoding = encode tokenizer ~truncation:(truncation 4) "a b c d e f" in
   equal ~msg:"first window" (array int) [| 8; 0; 1; 9 |] (Encoding.ids encoding);
-  equal ~msg:"the rest, each wrapped in turn"
+  equal ~msg:"the rest, wrapped"
     (list (array int))
-    [ [| 8; 2; 3; 9 |]; [| 8; 4; 5; 9 |] ]
+    [ [| 8; 2; 3; 9 |] ]
     (List.map Encoding.ids (Encoding.overflowing encoding));
   equal ~msg:"a window's mask" (array int) [| 1; 0; 0; 1 |]
     (Encoding.special_tokens_mask (List.hd (Encoding.overflowing encoding)))
+
+(* Successive windows overlap by [stride] tokens and stop at the last tokenized
+   pretoken. Expected values from tokenizers 0.23.1 on the same pipeline. *)
+let test_truncation_stride () =
+  let tokenizer = bounded_tokenizer () in
+  let windows truncation text =
+    List.map Encoding.ids
+      (Encoding.overflowing (encode tokenizer ~truncation text))
+  in
+  equal ~msg:"stride 1"
+    (list (array int))
+    [ [| 8; 1; 2; 9 |]; [| 8; 2; 3; 9 |] ]
+    (windows (truncation ~stride:1 4) "a b c d e f");
+  equal ~msg:"stride 2"
+    (list (array int))
+    [ [| 8; 1; 2; 3; 9 |]; [| 8; 2; 3; 4; 9 |] ]
+    (windows (truncation ~stride:2 5) "a b c d e f")
+
+let test_truncation_stride_invalid () =
+  raises ~msg:"stride at max_length"
+    (Invalid_argument
+       "truncation: stride must be non-negative and less than max_length")
+    (fun () -> ignore (truncation ~stride:4 4));
+  raises ~msg:"negative stride"
+    (Invalid_argument
+       "truncation: stride must be non-negative and less than max_length")
+    (fun () -> ignore (truncation ~stride:(-1) 4))
 
 (* [encode_ids] skips the encoding when the post-processor only wraps the
    sequence, so it has to answer exactly what reading the ids off one does. *)
@@ -595,7 +654,9 @@ let test_encode_ids_matches_encode_with_specials () =
     ]
 
 (* Truncating from the left keeps the {e last} tokens, which is what HuggingFace
-   does; the windows that did not fit run leftwards from there. *)
+   does. With no post-processor the budget is all of [max_length], so nothing
+   past the tokenized pretokens is left to window: tokenizers 0.23.1 reports no
+   overflow here. *)
 let test_truncation_from_the_left () =
   let tokenizer =
     make_word_tokenizer ~vocab:(words [ "a"; "b"; "c"; "d" ]) ()
@@ -603,12 +664,31 @@ let test_truncation_from_the_left () =
   let truncation = truncation ~direction:`Left 2 in
   let encoding = encode tokenizer ~truncation "a b c d" in
   equal ~msg:"the last two" (array int) [| 2; 3 |] (Encoding.ids encoding);
-  equal ~msg:"and the rest, rightmost first"
+  equal ~msg:"no window"
     (list (array int))
-    [ [| 0; 1 |] ]
+    []
     (List.map Encoding.ids (Encoding.overflowing encoding));
   equal ~msg:"encode_ids agrees" (array int) [| 2; 3 |]
     (encode_ids tokenizer ~truncation "a b c d")
+
+(* [Encoding.truncate] itself windows the whole encoding: the walk steps by
+   [max_length - stride] and stops with the window that reaches the end. *)
+let test_truncate_windows () =
+  let tokenizer =
+    make_word_tokenizer ~vocab:(words [ "a"; "b"; "c"; "d"; "e" ]) ()
+  in
+  let encoding =
+    encode tokenizer ~add_special_tokens:false "a b c d e a b c d e"
+  in
+  let truncated = Encoding.truncate encoding ~max_length:4 ~stride:2 in
+  equal ~msg:"kept" (array int) [| 0; 1; 2; 3 |] (Encoding.ids truncated);
+  equal ~msg:"windows stop at the end"
+    (list (array int))
+    [ [| 2; 3; 4; 0 |]; [| 4; 0; 1; 2 |]; [| 1; 2; 3; 4 |] ]
+    (List.map Encoding.ids (Encoding.overflowing truncated));
+  raises ~msg:"stride must be under max_length"
+    (Invalid_argument "Encoding.truncate: stride must be less than max_length")
+    (fun () -> ignore (Encoding.truncate encoding ~max_length:4 ~stride:4))
 
 let test_create_validates_lengths () =
   raises ~msg:"short tokens"
@@ -672,10 +752,14 @@ let suite =
     test "truncation budgets the special tokens"
       test_truncation_budgets_special_tokens;
     test "truncation of a pair" test_truncation_of_a_pair;
+    test "pair windows" test_pair_windows;
     test "truncation from the left" test_truncation_from_the_left;
+    test "truncate windows the whole encoding" test_truncate_windows;
     test "create validates the array lengths" test_create_validates_lengths;
     test "offsets of an unknown token" test_offsets_of_an_unknown_token;
     test "truncation keeps the overflowing windows" test_truncation_overflowing;
+    test "truncation windows overlap by the stride" test_truncation_stride;
+    test "stride must be under max_length" test_truncation_stride_invalid;
     test "encode_ids matches encode with special tokens"
       test_encode_ids_matches_encode_with_specials;
     test "truncation without a post-processor"

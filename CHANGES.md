@@ -1087,6 +1087,15 @@ thread.
 
 ### Brot
 
+- Honour a `stride` when truncation overflows: `truncation` gains a `stride`
+  field and `?stride` argument, successive overflow windows overlap by it,
+  and windows now match HuggingFace exactly — a pair's windows are the same
+  combinations `tokenizers` produces (they were dropped before), and windows
+  cover the tokenized pretokens rather than the whole excess, since
+  HuggingFace stops tokenizing once truncation's `max_length` is reached.
+- `Encoding.truncate`'s `~stride` and `~direction` are now optional,
+  defaulting to `0` and `` `Right``; a stride at or past `max_length` raises
+  `Invalid_argument` when the encoding is actually truncated.
 - **Breaking:** Tidy the public API: `encode_pairs_batch` is now
   `encode_batch_pairs`, `from_json` is `of_json` and `train_wordlevel` is
   `train_word_level`; `Pre_tokenizer.whitespace`, `whitespace_split`, `bert`,

@@ -42,7 +42,7 @@ type padding = {
   pad_token : string option;
 }
 
-type truncation = { max_length : int; direction : direction }
+type truncation = { max_length : int; stride : int; direction : direction }
 type data = [ `Files of string list | `Seq of string Seq.t ]
 type sequence = { text : string; pair : string option }
 
@@ -109,7 +109,11 @@ let added_token ?(special = true) ?(single_word = false) ?(lstrip = false)
 let padding ?(direction = `Right) ?pad_id ?pad_type_id ?pad_token length =
   { length; direction; pad_id; pad_type_id; pad_token }
 
-let truncation ?(direction = `Right) max_length = { max_length; direction }
+let truncation ?(stride = 0) ?(direction = `Right) max_length =
+  if stride < 0 || (max_length > 0 && stride >= max_length) then
+    invalid_arg
+      "truncation: stride must be non-negative and less than max_length";
+  { max_length; stride; direction }
 
 (* Algorithm dispatch *)
 
@@ -886,10 +890,48 @@ let split_budget ~budget first second =
   in
   if swap then (long, short) else (short, long)
 
+(* HuggingFace tokenizes only as many pretokens as it takes to reach
+   [max_length] tokens when truncation is configured, keeping whole the pretoken
+   that crosses the limit; the excess past it never reaches the overflow
+   windows. The kept tokens are not affected — the budget is at most
+   [max_length] — so only what lands in {!Encoding.overflowing} sees the
+   difference. *)
+let limit_to_pretokens encoding ~max_length ~direction =
+  let len = Encoding.length encoding in
+  if max_length <= 0 || len <= max_length then encoding
+  else
+    let words = Encoding.word_ids encoding in
+    let keep =
+      match direction with
+      | `Right ->
+          let last = words.(max_length - 1) in
+          let stop = ref max_length in
+          if Option.is_some last then
+            while !stop < len && words.(!stop) = last do
+              incr stop
+            done;
+          !stop
+      | `Left ->
+          let first = words.(len - max_length) in
+          let start = ref (len - max_length) in
+          if Option.is_some first then
+            while !start > 0 && words.(!start - 1) = first do
+              decr start
+            done;
+          len - !start
+    in
+    if keep = len then encoding
+    else
+      Encoding.with_overflowing
+        (Encoding.truncate encoding ~max_length:keep ~direction)
+        []
+
 let truncate_before_post t ~add_special_tokens ~truncation primary pair =
   match truncation with
   | None -> (primary, pair)
-  | Some { max_length; direction } -> (
+  | Some { max_length; stride; direction } -> (
+      let primary = limit_to_pretokens primary ~max_length ~direction in
+      let pair = Option.map (limit_to_pretokens ~max_length ~direction) pair in
       let added =
         match t.post_processor with
         | Some processor when add_special_tokens ->
@@ -899,7 +941,7 @@ let truncate_before_post t ~add_special_tokens ~truncation primary pair =
       let budget = max 0 (max_length - added) in
       let truncate encoding length =
         if Encoding.length encoding <= length then encoding
-        else Encoding.truncate encoding ~max_length:length ~stride:0 ~direction
+        else Encoding.truncate encoding ~max_length:length ~stride ~direction
       in
       match pair with
       | None -> (truncate primary budget, None)
@@ -911,10 +953,11 @@ let truncate_before_post t ~add_special_tokens ~truncation primary pair =
           (truncate primary first, Some (truncate pair second)))
 
 (* An overflowing window is a sequence in its own right, so the post-processor
-   runs over it too and it carries the same special tokens. The windows of a
-   pair's second sequence are dropped: HuggingFace pairs every window of one
-   with every window of the other, a shape brot's truncation — which has no
-   stride — has no use for. *)
+   runs over it too and it carries the same special tokens. On a pair,
+   HuggingFace pairs the windows of the two sequences with each other and with
+   the kept parts: each window of the first against the second's kept part and
+   then against each of its windows, and last the first's kept part against each
+   window of the second. *)
 let encode_single t ~add_special_tokens ~truncation seq =
   let primary = encode_text t seq.text in
   let pair = Option.map (encode_text t) seq.pair in
@@ -922,14 +965,34 @@ let encode_single t ~add_special_tokens ~truncation seq =
     truncate_before_post t ~add_special_tokens ~truncation primary pair
   in
   let processed = post_process t ~add_special:add_special_tokens primary pair in
-  match Encoding.overflowing primary with
-  | [] -> processed
-  | windows ->
-      Encoding.with_overflowing processed
-        (List.map
-           (fun window ->
-             post_process t ~add_special:add_special_tokens window None)
-           windows)
+  match pair with
+  | None -> (
+      match Encoding.overflowing primary with
+      | [] -> processed
+      | windows ->
+          Encoding.with_overflowing processed
+            (List.map
+               (fun window ->
+                 post_process t ~add_special:add_special_tokens window None)
+               windows))
+  | Some pair -> (
+      match (Encoding.overflowing primary, Encoding.overflowing pair) with
+      | [], [] -> processed
+      | primary_windows, pair_windows ->
+          let process p q =
+            post_process t ~add_special:add_special_tokens p (Some q)
+          in
+          let kept_primary = Encoding.with_overflowing primary [] in
+          let kept_pair = Encoding.with_overflowing pair [] in
+          let windows =
+            List.concat_map
+              (fun window ->
+                process window kept_pair
+                :: List.map (process window) pair_windows)
+              primary_windows
+            @ List.map (process kept_primary) pair_windows
+          in
+          Encoding.with_overflowing processed windows)
 
 (* Padding *)
 
@@ -1150,7 +1213,7 @@ let encode_ids t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
       let body =
         match truncation with
         | None -> body
-        | Some { max_length; direction } -> (
+        | Some { max_length; direction; _ } -> (
             let budget =
               max 0 (max_length - Array.length prefix - Array.length suffix)
             in

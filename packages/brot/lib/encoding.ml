@@ -193,21 +193,24 @@ let slice t start len =
     sequence_ranges = empty_ranges;
   }
 
-let truncate t ~max_length ~stride ~direction =
+let truncate ?(stride = 0) ?(direction = `Right) t ~max_length =
   let encoding_len = length t in
   if max_length >= encoding_len then t
   else if max_length = 0 then { empty with overflowing = [ t ] }
   else begin
-    assert (stride < max_length);
+    if stride >= max_length then
+      invalid_arg "Encoding.truncate: stride must be less than max_length";
     let step = max_length - stride in
     let ranges =
       match direction with
       | `Right ->
+          (* The walk stops with the window that reaches the end of the
+             encoding, so a stride never opens a window past it. *)
           let rec loop start acc =
-            if start >= encoding_len then List.rev acc
-            else
-              let stop = min (start + max_length) encoding_len in
-              loop (start + step) ((start, stop) :: acc)
+            let stop = min (start + max_length) encoding_len in
+            let acc = (start, stop) :: acc in
+            if stop = encoding_len then List.rev acc
+            else loop (start + step) acc
           in
           loop 0 []
       | `Left ->

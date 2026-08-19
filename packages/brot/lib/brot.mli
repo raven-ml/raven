@@ -134,9 +134,10 @@ type padding = {
     configured padding token is used. Raises [Invalid_argument] at padding time
     if no padding token is configured and these fields are [None]. *)
 
-type truncation = { max_length : int; direction : direction }
+type truncation = { max_length : int; stride : int; direction : direction }
 (** The type for truncation configurations. Sequences exceeding [max_length]
-    tokens are trimmed from the given [direction]. *)
+    tokens are trimmed from the given [direction]; [stride] is the overlap
+    between successive overflow windows. *)
 
 type data = [ `Files of string list | `Seq of string Seq.t ]
 (** The type for training data sources.
@@ -177,7 +178,7 @@ val padding :
     [direction] defaults to [`Right]. Other fields default to [None] (falls back
     to the tokenizer's configured padding token). *)
 
-val truncation : ?direction:direction -> int -> truncation
+val truncation : ?stride:int -> ?direction:direction -> int -> truncation
 (** [truncation max_length] is a truncation configuration limiting sequences to
     [max_length] tokens. [direction] defaults to [`Right]: the tokens kept are
     the first [max_length], and [`Left] keeps the last.
@@ -186,7 +187,14 @@ val truncation : ?direction:direction -> int -> truncation
     once the special tokens it will add are counted, so a special token never
     pushes content out. A [max_length] at or below that count leaves no room for
     content: the special tokens are still added and the result is longer than
-    [max_length]. *)
+    [max_length].
+
+    [stride] is the overlap between successive overflow windows: each window in
+    {!Encoding.overflowing} opens [stride] tokens before the end of the one
+    before it, which is how the sliding-window question-answering workflow keeps
+    context across windows. Defaults to [0]. It must be less than the tokens
+    left for content — on a pair, less than either sequence's share — or
+    {!encode} raises [Invalid_argument]. *)
 
 (** {1:constructors Constructors} *)
 

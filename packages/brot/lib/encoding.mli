@@ -108,16 +108,20 @@ val with_overflowing : t -> t list -> t
     {!val-overflowing}. Nothing else is read. *)
 
 val truncate :
-  t -> max_length:int -> stride:int -> direction:[ `Left | `Right ] -> t
-(** [truncate enc ~max_length ~stride ~direction] limits [enc] to at most
-    [max_length] tokens.
+  ?stride:int -> ?direction:[ `Left | `Right ] -> t -> max_length:int -> t
+(** [truncate enc ~max_length] limits [enc] to at most [max_length] tokens.
 
-    Excess tokens are split into sliding windows of size [max_length] with
-    overlap [stride] and stored in {!val-overflowing}. If
-    [length enc <= max_length], [enc] is returned unchanged.
+    The tokens kept are the first [max_length] when [direction] is [`Right] (the
+    default) and the last [max_length] when it is [`Left]. The excess is split
+    into windows of [max_length] tokens overlapping the previous window by
+    [stride] (default [0]) and stored in {!val-overflowing}, walking away from
+    the kept tokens; the last window stops at the encoding's edge, so it may be
+    shorter. If [length enc <= max_length], [enc] is returned unchanged. When
+    [max_length] is [0], all tokens move to {!val-overflowing} and {!val-empty}
+    is returned.
 
-    [stride] must be strictly less than [max_length]. When [max_length] is [0],
-    all tokens move to {!val-overflowing} and {!val-empty} is returned. *)
+    Raises [Invalid_argument] if [enc] is truncated and [stride] is not less
+    than [max_length]. *)
 
 val pad :
   t ->
