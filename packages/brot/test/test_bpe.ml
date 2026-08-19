@@ -275,7 +275,7 @@ let test_bpe_save_load () =
 
   (* Save the model *)
   let temp_dir = Filename.temp_dir "bpe_test" "" in
-  let files = save_model_files tokenizer ~folder:temp_dir () in
+  let files = save_model_files tokenizer ~folder:temp_dir in
 
   (* Load the model *)
   let vocab_file = List.find (fun f -> Filename.check_suffix f ".json") files in
@@ -681,7 +681,7 @@ let test_long_word_merges () =
    running its [BpeTrainer] over the same corpus behind the same pre-tokenizer,
    which is what cuts the words the trainer counts. *)
 
-let split = Pre_tokenizer.whitespace_split ()
+let split = Pre_tokenizer.whitespace_split
 
 let train_corpus =
   [
@@ -698,7 +698,7 @@ let trained_vocab tokenizer =
 
 let trained_merges tokenizer =
   let folder = Filename.temp_dir "brot_merges" "" in
-  let files = save_model_files tokenizer ~folder () in
+  let files = save_model_files tokenizer ~folder in
   let path = List.find (fun f -> Filename.check_suffix f ".txt") files in
   let ic = open_in path in
   let lines = ref [] in
@@ -721,8 +721,7 @@ let test_cache_capacities_on_parity_corpus () =
   let sample = Fixture.read "fixtures/parity/sample.txt" in
   let edge_cases = Fixture.read "fixtures/parity/edge_cases.txt" in
   let trained =
-    train_bpe ~pre:split ~vocab_size:300 ~show_progress:false
-      (`Seq (List.to_seq [ sample ]))
+    train_bpe ~pre:split ~vocab_size:300 (`Seq (List.to_seq [ sample ]))
   in
   let vocab = vocab trained in
   let merges =
@@ -760,8 +759,7 @@ let test_cache_capacities_on_parity_corpus () =
 
 let test_train () =
   let tokenizer =
-    train_bpe ~pre:split ~vocab_size:30 ~show_progress:false
-      (`Seq (List.to_seq train_corpus))
+    train_bpe ~pre:split ~vocab_size:30 (`Seq (List.to_seq train_corpus))
   in
   (* The corpus runs out of pairs before the target size is reached. *)
   equal ~msg:"vocabulary" (list string)
@@ -812,7 +810,6 @@ let test_train () =
 let test_train_suffix () =
   let tokenizer =
     train_bpe ~pre:split ~vocab_size:40 ~end_of_word_suffix:"</w>"
-      ~show_progress:false
       (`Seq (List.to_seq train_corpus))
   in
   (* The suffix joins the last character before any pair is counted, so the
@@ -878,7 +875,6 @@ let test_train_suffix () =
 let test_train_prefix () =
   let tokenizer =
     train_bpe ~pre:split ~vocab_size:30 ~continuing_subword_prefix:"##"
-      ~show_progress:false
       (`Seq (List.to_seq train_corpus))
   in
   (* Only the characters that turn up after the first one of a word are learned
@@ -946,11 +942,8 @@ let test_train_limit_alphabet () =
   (* [z] outranks [b], so a limit of two drops [b], and the word holding it
      loses the character instead of merging it. *)
   let corpus = `Seq (List.to_seq [ "aza aza aza ab ab" ]) in
-  let whole = train_bpe ~pre:split ~vocab_size:20 ~show_progress:false corpus in
-  let limited =
-    train_bpe ~pre:split ~vocab_size:20 ~limit_alphabet:2 ~show_progress:false
-      corpus
-  in
+  let whole = train_bpe ~pre:split ~vocab_size:20 corpus in
+  let limited = train_bpe ~pre:split ~vocab_size:20 ~limit_alphabet:2 corpus in
   equal ~msg:"whole alphabet" (list string)
     [ "a"; "b"; "z"; "az"; "aza"; "ab" ]
     (trained_vocab whole);
@@ -965,7 +958,7 @@ let test_train_max_token_length () =
      exclusive — under a limit of four a merge stops at three characters — and
      the single-character merges the training opens with are exempt from it. *)
   let trained ?max_token_length corpus =
-    train_bpe ~pre:split ~vocab_size:40 ?max_token_length ~show_progress:false
+    train_bpe ~pre:split ~vocab_size:40 ?max_token_length
       (`Seq (List.to_seq [ corpus ]))
   in
   let eight = "αβγδεζηθ αβγδεζηθ αβγδεζηθ" in
@@ -986,7 +979,6 @@ let test_train_repeated_merge () =
      ##a] is written once here. *)
   let tokenizer =
     train_bpe ~pre:split ~vocab_size:24 ~continuing_subword_prefix:"##"
-      ~show_progress:false
       (`Seq (List.to_seq [ "###a b### a" ]))
   in
   equal ~msg:"vocabulary" (list string)
@@ -1003,7 +995,6 @@ let test_train_initial_alphabet () =
      way. *)
   let tokenizer =
     train_bpe ~pre:split ~vocab_size:30 ~initial_alphabet:[ "é"; "ét"; "" ]
-      ~show_progress:false
       (`Seq (List.to_seq train_corpus))
   in
   equal ~msg:"vocabulary" (list string)
@@ -1042,7 +1033,7 @@ let test_train_byte_level () =
   let tokenizer =
     train_bpe
       ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-      ~decoder:(Decoder.byte_level ()) ~vocab_size:40 ~show_progress:false
+      ~decoder:Decoder.byte_level ~vocab_size:40
       (`Seq (List.to_seq train_corpus))
   in
   equal ~msg:"vocabulary" (list string)
@@ -1105,10 +1096,7 @@ let test_train_byte_level () =
 let test_train_whole_text () =
   (* With no pre-tokenizer a text is one word, spaces and all, so the merges
      reach across the words. *)
-  let tokenizer =
-    train_bpe ~vocab_size:30 ~show_progress:false
-      (`Seq (List.to_seq train_corpus))
-  in
+  let tokenizer = train_bpe ~vocab_size:30 (`Seq (List.to_seq train_corpus)) in
   equal ~msg:"vocabulary" (list string)
     [
       " ";
@@ -1149,7 +1137,6 @@ let test_train_normalizer () =
      the vocabulary learned — are the normalized ones. *)
   let tokenizer =
     train_bpe ~normalizer:Normalizer.lowercase ~pre:split ~vocab_size:20
-      ~show_progress:false
       (`Seq (List.to_seq [ "LOW Low low LOWER lower" ]))
   in
   equal ~msg:"vocabulary" (list string)
@@ -1173,7 +1160,7 @@ let test_train_files () =
       (fun path ->
         train_bpe
           ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-          ~vocab_size:40 ~show_progress:false (`Files [ path ]))
+          ~vocab_size:40 (`Files [ path ]))
   in
   equal ~msg:"vocabulary" (list string)
     [
@@ -1211,7 +1198,7 @@ let test_train_files () =
 let test_train_min_frequency () =
   (* Of the three pairs only [a a], seen three times, reaches the floor. *)
   let tokenizer =
-    train_bpe ~pre:split ~vocab_size:20 ~min_frequency:3 ~show_progress:false
+    train_bpe ~pre:split ~vocab_size:20 ~min_frequency:3
       (`Seq (List.to_seq [ "aa aa aa bb cc cc" ]))
   in
   equal ~msg:"vocabulary" (list string) [ "a"; "b"; "c"; "aa" ]

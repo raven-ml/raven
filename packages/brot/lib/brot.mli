@@ -18,8 +18,10 @@
       {!Post_processor}.
     + {e Padding/Truncation}: adjust sequence lengths for batching.
 
-    Each stage is optional and configurable. Open the module to use it, it
-    defines only modules in your scope.
+    Each stage is optional and configurable. Open the module to use it.
+
+    The pre-tokenizer cuts text into {e pretokens} (HuggingFace calls them
+    words); {!Encoding.word_ids} numbers them.
 
     {1:quick_start Quick start}
 
@@ -230,12 +232,10 @@ val bpe :
     - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
-    - [cache_capacity]: number of entries in the pretoken cache, rounded up to
-      a power of two and held two per set: a pretoken may sit in either entry
-      of its set, and a miss evicts the older. An entry costs 32 bytes and
-      holds one pretoken's tokens; each domain encoding with the tokenizer
-      keeps a table of its own, seeded with the vocabulary. Default: [262144]
-      (8 MB). [0] disables caching.
+    - [cache_capacity]: number of entries in the pretoken cache, rounded up to a
+      power of two. An entry costs about 32 bytes, and each domain encoding with
+      the tokenizer keeps a table of its own. Default: [262144] (8 MB). [0]
+      disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
@@ -357,10 +357,9 @@ val chars :
   ?unk_token:string ->
   unit ->
   t
-(** [chars ()] is a character-level tokenizer.
-
-    Each byte in the input becomes a separate token with ID equal to its ordinal
-    value. No vocabulary is required.
+(** [chars ()] is a byte-level tokenizer: each byte of the input is one token
+    whose ID is the byte's value. A multi-byte character is as many tokens as it
+    has bytes. No vocabulary is required.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -476,7 +475,8 @@ val encode :
     bytes of the accented text. {!Encoding.word_ids} number the pretokens of
     [text] from [0], an added token counting as one. Both are worked out when
     they are first read, so a caller that only wants {!Encoding.ids} pays for
-    neither.
+    neither; the {!Encoding} module doc says how that first read behaves across
+    domains.
 
     - [pair]: a second sentence for sentence-pair tasks. The post-processor
       merges both sequences with appropriate type IDs. Default: none.
@@ -501,9 +501,9 @@ val encode_batch :
       the calling domain whatever this says. Raises [Invalid_argument] if under
       one.
     - Other optional parameters are as in {!encode}. For sentence-pair tasks,
-      use {!encode_pairs_batch}. *)
+      use {!encode_batch_pairs}. *)
 
-val encode_pairs_batch :
+val encode_batch_pairs :
   t ->
   ?add_special_tokens:bool ->
   ?padding:padding ->
@@ -511,8 +511,11 @@ val encode_pairs_batch :
   ?domains:int ->
   (string * string) list ->
   Encoding.t list
-(** [encode_pairs_batch t pairs] encodes a batch of sentence pairs. Each element
+(** [encode_batch_pairs t pairs] encodes a batch of sentence pairs. Each element
     is [(primary, secondary)].
+
+    There is no ids fast path for pairs: a pair-throughput workload goes through
+    this function and reads {!Encoding.ids} off each encoding.
 
     Optional parameters are as in {!encode_batch}. *)
 
@@ -596,15 +599,14 @@ val train_bpe :
   ?initial_alphabet:string list ->
   ?continuing_subword_prefix:string ->
   ?end_of_word_suffix:string ->
-  ?show_progress:bool ->
   ?max_token_length:int ->
   data ->
   t
 (** [train_bpe data] trains a BPE tokenizer from [data].
 
-    The words counted are the pre-tokens the trained tokenizer will itself
+    The words counted are the pretokens the trained tokenizer will itself
     produce: every text is normalized by [normalizer], then cut by [pre], and
-    each piece counts as one word — for a byte-level [pre] the words are in
+    each pretoken counts as one word — for a byte-level [pre] the words are in
     encoded form, and merges are learned over that form. With no [pre] a whole
     text is one word, so training on space-separated words needs
     [~pre:(Pre_tokenizer.whitespace_split ())].
@@ -631,8 +633,6 @@ val train_bpe :
       — over the affixed forms. Default: none.
     - [end_of_word_suffix]: suffix put on the last character of a word, before
       any pair is counted. Default: none.
-    - [show_progress]: accepted for HuggingFace compatibility; nothing is
-      displayed. Default: [true].
     - [max_token_length]: holds a merge back once the run of characters it would
       join reaches that many, so tokens stay shorter than it. The merges of
       single characters that open the training are exempt. Default: none.
@@ -657,7 +657,6 @@ val train_wordpiece :
   ?initial_alphabet:string list ->
   ?continuing_subword_prefix:string ->
   ?end_of_word_suffix:string ->
-  ?show_progress:bool ->
   data ->
   t
 (** [train_wordpiece data] trains a WordPiece tokenizer from [data].
@@ -677,13 +676,11 @@ val train_wordpiece :
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
     - [end_of_word_suffix]: suffix marking word boundaries. Default: none.
-    - [show_progress]: accepted for HuggingFace compatibility; nothing is
-      displayed. Default: [true].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
 
-val train_wordlevel :
+val train_word_level :
   ?init:t ->
   ?normalizer:Normalizer.t ->
   ?pre:Pre_tokenizer.t ->
@@ -696,13 +693,12 @@ val train_wordlevel :
   ?unk_token:string ->
   ?vocab_size:int ->
   ?min_frequency:int ->
-  ?show_progress:bool ->
   data ->
   t
-(** [train_wordlevel data] trains a word-level tokenizer from [data].
+(** [train_word_level data] trains a word-level tokenizer from [data].
 
     The vocabulary is the most frequent of the words counted as in {!train_bpe},
-    so it holds whole pre-tokens and nothing is split further.
+    so it holds whole pretokens and nothing is split further.
 
     - [init]: a tokenizer whose added and special tokens carry over into the
       trained one. Its model does not. Default: create new.
@@ -710,8 +706,6 @@ val train_wordlevel :
       [30000].
     - [min_frequency]: minimum frequency for a word to be included. Default:
       [0].
-    - [show_progress]: accepted for HuggingFace compatibility; nothing is
-      displayed. Default: [true].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
@@ -728,10 +722,6 @@ val train_unigram :
   ?pad_token:string ->
   ?unk_token:string ->
   ?vocab_size:int ->
-  ?show_progress:bool ->
-  ?shrinking_factor:float ->
-  ?max_piece_length:int ->
-  ?n_sub_iterations:int ->
   data ->
   t
 (** [train_unigram data] trains a Unigram tokenizer from [data].
@@ -739,17 +729,11 @@ val train_unigram :
     {b Warning.} The EM training of the unigram model is not implemented: the
     vocabulary is the most frequent of the words counted as in {!train_bpe},
     each scored by how often it occurs, and no subword piece is ever proposed.
-    [shrinking_factor], [max_piece_length] and [n_sub_iterations] are accepted
-    for HuggingFace compatibility and have no effect.
 
     - [init]: a tokenizer whose added and special tokens carry over into the
       trained one. Its model does not. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [8000].
-    - [show_progress]: accepted for HuggingFace compatibility; nothing is
-      displayed. Default: [true].
-    - [shrinking_factor], [max_piece_length], [n_sub_iterations]: inert, as
-      above. Defaults: [0.75], [16], [2].
     - [unk_token]: also names the model's unknown entry when [added_tokens] or
       [init] carries it, since a trained vocabulary of whole words covers no
       character on its own. Without one, the trained tokenizer raises [Failure]
@@ -767,11 +751,9 @@ val export_tiktoken : t -> merges_path:string -> vocab_path:string -> unit
     {b Warning.} Only BPE tokenizers are supported. Raises [Failure] for other
     model types. *)
 
-val save_model_files :
-  t -> folder:string -> ?prefix:string -> unit -> string list
-(** [save_model_files t ~folder ?prefix ()] saves [t]'s underlying model files
-    (vocabulary and merges) to [folder] and returns the list of created file
-    paths.
+val save_model_files : ?prefix:string -> t -> folder:string -> string list
+(** [save_model_files t ~folder] saves [t]'s underlying model files (vocabulary
+    and merges) to [folder] and returns the list of created file paths.
 
     [prefix] defaults to [""]. *)
 
@@ -781,8 +763,8 @@ val from_file : string -> (t, string) result
 (** [from_file path] is a tokenizer loaded from a HuggingFace [tokenizer.json]
     file. Errors if the file cannot be read or has invalid format. *)
 
-val from_json : Jsont.json -> (t, string) result
-(** [from_json json] is a tokenizer deserialized from HuggingFace JSON format.
+val of_json : Jsont.json -> (t, string) result
+(** [of_json json] is a tokenizer deserialized from HuggingFace JSON format.
     Errors if [json] has a missing or unknown model type, or invalid parameters.
 
     The [added_tokens] member gives the tokens matched atomically in the input.

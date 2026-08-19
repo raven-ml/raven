@@ -32,11 +32,10 @@ let () =
     ]
   in
   let added_tokens = List.map added_token [ "[CLS]"; "[SEP]"; "[UNK]" ] in
-  let post = Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) () in
+  let post = Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) in
   let tokenizer =
     word_level ~vocab ~unk_token:"[UNK]" ~added_tokens ~post
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~pre:Pre_tokenizer.whitespace ()
   in
 
   (* Single sentence: [CLS] A [SEP] *)
@@ -64,8 +63,7 @@ let () =
   in
   let tok2 =
     word_level ~vocab ~unk_token:"[UNK]" ~added_tokens ~post:template_post
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~pre:Pre_tokenizer.whitespace ()
   in
   Printf.printf "Template: \"[CLS] $A [SEP] $B:1 [SEP]:1\"\n";
   Printf.printf "A: \"hello\", B: \"world\"\n\n";

@@ -1101,9 +1101,9 @@ let pre_tokenize t text = pieces t ~first:opening text
 
 (* Constructors *)
 
-let whitespace () = Whitespace
-let whitespace_split () = Whitespace_split
-let bert () = Bert
+let whitespace = Whitespace
+let whitespace_split = Whitespace_split
+let bert = Bert
 
 let byte_level ?(add_prefix_space = true) ?(use_regex = true)
     ?(trim_offsets = true) () =
@@ -1126,7 +1126,7 @@ let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always)
   if not (is_one_character replacement) then invalid_arg err_replacement;
   Metaspace { replacement; prepend_scheme; split }
 
-let unicode_scripts () = Unicode_scripts
+let unicode_scripts = Unicode_scripts
 let fixed_length n = Fixed_length { length = n }
 let sequence ts = Sequence ts
 

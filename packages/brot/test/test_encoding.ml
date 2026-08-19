@@ -7,7 +7,7 @@ open Windtrap
 open Brot
 
 let make_word_tokenizer ?(added_tokens = []) ?(vocab = []) () =
-  word_level ~pre:(Pre_tokenizer.whitespace ()) ~added_tokens ~vocab ()
+  word_level ~pre:Pre_tokenizer.whitespace ~added_tokens ~vocab ()
 
 let words = List.mapi (fun id word -> (word, id))
 
@@ -134,8 +134,7 @@ let accent_free =
 
 let test_offsets_through_normalizer () =
   let tokenizer =
-    word_level ~normalizer:accent_free
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~normalizer:accent_free ~pre:Pre_tokenizer.whitespace
       ~vocab:(words [ "cafe"; "x" ])
       ()
   in
@@ -185,8 +184,7 @@ let test_word_ids () =
 (* The tokens a post-processor inserts belong to no word and cover nothing. *)
 let test_word_ids_of_special_tokens () =
   let tokenizer =
-    word_level
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~pre:Pre_tokenizer.whitespace
       ~post:
         (Post_processor.template ~single:"[CLS] $A"
            ~special_tokens:[ ("[CLS]", 2) ]
@@ -239,7 +237,7 @@ let test_offsets_of_a_rewriting_pre_tokenizer () =
   let t5 =
     tokenizer
       (Pre_tokenizer.sequence
-         [ Pre_tokenizer.whitespace_split (); Pre_tokenizer.metaspace () ])
+         [ Pre_tokenizer.whitespace_split; Pre_tokenizer.metaspace () ])
   in
   case t5 "" [] [];
   case t5 "a b" [ m ^ "a"; m ^ "b" ] [ (0, 1); (2, 3) ];
@@ -257,7 +255,7 @@ let test_offsets_of_a_rewriting_pre_tokenizer () =
     tokenizer
       (Pre_tokenizer.sequence
          [
-           Pre_tokenizer.whitespace_split ();
+           Pre_tokenizer.whitespace_split;
            Pre_tokenizer.metaspace ();
            Pre_tokenizer.punctuation ();
          ])
@@ -274,7 +272,7 @@ let test_prepend_first () =
   let vocab = words [ "[UNK]"; m ^ "a"; m ^ "b"; "a"; "b"; m ^ "ab"; "ab" ] in
   let first = Pre_tokenizer.metaspace ~prepend_scheme:`First () in
   let split_first =
-    Pre_tokenizer.sequence [ Pre_tokenizer.whitespace_split (); first ]
+    Pre_tokenizer.sequence [ Pre_tokenizer.whitespace_split; first ]
   in
   let tokenizer ?normalizer ?(added_tokens = []) pre =
     word_level ?normalizer ~pre ~added_tokens ~vocab ()
@@ -323,7 +321,7 @@ let test_prepend_first () =
      follows the same rule, added tokens and normalizer included. *)
   let fixed =
     Pre_tokenizer.sequence
-      [ Pre_tokenizer.whitespace_split (); Pre_tokenizer.fixed_length 2; first ]
+      [ Pre_tokenizer.whitespace_split; Pre_tokenizer.fixed_length 2; first ]
   in
   let pieces = tokenizer ~added_tokens:[ added_token "<s>" ] fixed in
   case pieces "ab a" [ m ^ "ab"; "a" ] [ (0, 2); (3, 4) ];
@@ -358,7 +356,7 @@ let test_byte_level_behind_a_non_bpe_model () =
   in
   let split_then_bytes =
     Pre_tokenizer.sequence
-      [ Pre_tokenizer.whitespace_split (); Pre_tokenizer.byte_level () ]
+      [ Pre_tokenizer.whitespace_split; Pre_tokenizer.byte_level () ]
   in
   let vocab =
     [
@@ -401,7 +399,7 @@ let test_byte_level_behind_a_non_bpe_model () =
       ~pre:
         (Pre_tokenizer.sequence
            [
-             Pre_tokenizer.whitespace_split ();
+             Pre_tokenizer.whitespace_split;
              Pre_tokenizer.byte_level ~add_prefix_space:false ();
            ])
       ~vocab:[ ("<unk>", 0.0); ("a", -1.0); ("b", -1.0); ("ab", -1.5) ]
@@ -463,7 +461,7 @@ let test_offsets_of_unknown_runs () =
     ("a<unk>" ^ zw ^ "b")
     [ "a"; "<unk>"; "b" ]
     [ (0, 1); (1, 12); (12, 13) ];
-  let split = Pre_tokenizer.whitespace_split () in
+  let split = Pre_tokenizer.whitespace_split in
   case
     (wordpiece ~pre:split
        ~vocab:(words [ "[UNK]"; "a"; "b"; "##b" ])
@@ -484,7 +482,7 @@ let test_offsets_of_byte_level_after_a_walker () =
     bpe
       ~pre:
         (Pre_tokenizer.sequence
-           [ Pre_tokenizer.whitespace_split (); Pre_tokenizer.byte_level () ])
+           [ Pre_tokenizer.whitespace_split; Pre_tokenizer.byte_level () ])
       ~vocab:
         [ ("\u{120}a", 0); ("\u{120}b", 1); ("a", 2); ("b", 3); ("\u{120}", 4) ]
       ~merges:[] ()
@@ -508,8 +506,7 @@ let test_offsets_of_byte_level_after_a_walker () =
 
 let test_encode_ids_matches_encode () =
   let tokenizer =
-    word_level ~normalizer:accent_free
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~normalizer:accent_free ~pre:Pre_tokenizer.whitespace
       ~vocab:(words [ "cafe"; "x" ])
       ()
   in
@@ -527,9 +524,8 @@ let test_encode_ids_matches_encode () =
    tokens from whichever of the two is longer, the first one on a tie. *)
 
 let bounded_tokenizer () =
-  word_level
-    ~pre:(Pre_tokenizer.whitespace ())
-    ~post:(Post_processor.bert ~cls:("[CLS]", 8) ~sep:("[SEP]", 9) ())
+  word_level ~pre:Pre_tokenizer.whitespace
+    ~post:(Post_processor.bert ~cls:("[CLS]", 8) ~sep:("[SEP]", 9))
     ~vocab:(words [ "a"; "b"; "c"; "d"; "e"; "f"; "[PAD]" ])
     ~pad_token:"[PAD]" ()
 
@@ -614,6 +610,16 @@ let test_truncation_from_the_left () =
   equal ~msg:"encode_ids agrees" (array int) [| 2; 3 |]
     (encode_ids tokenizer ~truncation "a b c d")
 
+let test_create_validates_lengths () =
+  raises ~msg:"short tokens"
+    (Invalid_argument "Encoding.create: arrays must all have the same length")
+    (fun () ->
+      ignore
+        (Encoding.create ~ids:[| 1; 2 |] ~type_ids:[| 0; 0 |] ~tokens:[| "a" |]
+           ~words:[| None; None |]
+           ~offsets:[| (0, 1); (1, 2) |]
+           ~special_tokens_mask:[| 0; 0 |] ~attention_mask:[| 1; 1 |] ()))
+
 (* An unknown token stands for whatever the identifiers around it do not
    describe, so one in the middle of a pretoken takes the bytes between its
    neighbours rather than none at all. *)
@@ -667,6 +673,7 @@ let suite =
       test_truncation_budgets_special_tokens;
     test "truncation of a pair" test_truncation_of_a_pair;
     test "truncation from the left" test_truncation_from_the_left;
+    test "create validates the array lengths" test_create_validates_lengths;
     test "offsets of an unknown token" test_offsets_of_an_unknown_token;
     test "truncation keeps the overflowing windows" test_truncation_overflowing;
     test "encode_ids matches encode with special tokens"

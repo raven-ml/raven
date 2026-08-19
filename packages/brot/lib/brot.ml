@@ -482,7 +482,7 @@ let wordpiece ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
 let word_level ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?vocab () =
   let pre =
-    match pre with Some _ -> pre | None -> Some (Pre_tokenizer.whitespace ())
+    match pre with Some _ -> pre | None -> Some Pre_tokenizer.whitespace
   in
   let algorithm = Alg_wordlevel (Word_level.create ?vocab ?unk_token ()) in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
@@ -1115,7 +1115,7 @@ let encode_batch t ?(add_special_tokens = true) ?padding ?truncation ?domains =
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
         ~domains:(domain_count domains)
 
-let encode_pairs_batch t ?(add_special_tokens = true) ?padding ?truncation
+let encode_batch_pairs t ?(add_special_tokens = true) ?padding ?truncation
     ?domains = function
   | [] -> []
   | pairs ->
@@ -1572,14 +1572,14 @@ let initial_alphabet_of strs =
 let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000) ?(min_frequency = 0)
     ?limit_alphabet ?initial_alphabet ?continuing_subword_prefix
-    ?end_of_word_suffix ?(show_progress = true) ?max_token_length data =
+    ?end_of_word_suffix ?max_token_length data =
   let special_tokens = special_tokens_for_training init added_tokens in
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
   let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
-    Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
+    Bpe.train ~min_frequency ~vocab_size ~show_progress:false ~special_tokens
       ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
       ~end_of_word_suffix ~max_token_length words
   in
@@ -1592,17 +1592,16 @@ let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
 let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
     ?(min_frequency = 0) ?limit_alphabet ?initial_alphabet
-    ?(continuing_subword_prefix = "##") ?end_of_word_suffix
-    ?(show_progress = true) data =
+    ?(continuing_subword_prefix = "##") ?end_of_word_suffix data =
   let special_tokens = special_tokens_for_training init added_tokens in
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
   let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
-    Wordpiece.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
-      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-      ~end_of_word_suffix words
+    Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
+      ~special_tokens ~limit_alphabet ~initial_alphabet
+      ~continuing_subword_prefix ~end_of_word_suffix words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
@@ -1610,14 +1609,14 @@ let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
   create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
     ?eos_token ?pad_token ?unk_token (Alg_wordpiece trained_model)
 
-let train_wordlevel ?init ?normalizer ?pre ?post ?decoder ?added_tokens
+let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
-    ?(min_frequency = 0) ?(show_progress = true) data =
+    ?(min_frequency = 0) data =
   let special_tokens = special_tokens_for_training init added_tokens in
   let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
-    Word_level.train ~vocab_size ~min_frequency ~show_progress ~special_tokens
-      words
+    Word_level.train ~vocab_size ~min_frequency ~show_progress:false
+      ~special_tokens words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
@@ -1626,14 +1625,13 @@ let train_wordlevel ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?eos_token ?pad_token ?unk_token (Alg_wordlevel trained_model)
 
 let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
-    ?eos_token ?pad_token ?unk_token ?(vocab_size = 8000)
-    ?(show_progress = true) ?(shrinking_factor = 0.75) ?(max_piece_length = 16)
-    ?(n_sub_iterations = 2) data =
+    ?eos_token ?pad_token ?unk_token ?(vocab_size = 8000) data =
   let special_tokens = special_tokens_for_training init added_tokens in
   let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
-    Unigram.train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
-      ~unk_token ~max_piece_length ~n_sub_iterations words
+    Unigram.train ~vocab_size ~show_progress:false ~special_tokens
+      ~shrinking_factor:0.75 ~unk_token ~max_piece_length:16 ~n_sub_iterations:2
+      words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
@@ -1874,7 +1872,7 @@ let alg_of_json ~byte_level mj =
   | "Chars" -> Alg_chars (Chars.create ())
   | s -> failwith (strf "Unsupported model type: %s" s)
 
-let from_json json =
+let of_json json =
   try
     let mem name = json_mem name json in
     let normalizer =
@@ -1915,7 +1913,7 @@ let from_file path =
         (fun () -> really_input_string ic (in_channel_length ic))
     in
     match Jsont_bytesrw.decode_string Jsont.json s with
-    | Ok json -> from_json json
+    | Ok json -> of_json json
     | Error e -> Error e
   with
   | Sys_error msg -> Error ("File error: " ^ msg)
@@ -1958,8 +1956,7 @@ let export_tiktoken t ~merges_path ~vocab_path =
             (Bpe.get_merges bpe))
   | _ -> invalid_arg err_export_tiktoken
 
-let save_model_files t ~folder ?prefix () =
-  alg_save t.algorithm ~folder ?prefix ()
+let save_model_files ?prefix t ~folder = alg_save t.algorithm ~folder ?prefix ()
 
 (* Formatting *)
 

@@ -183,10 +183,9 @@ let process_bert ~sep ~cls encodings ~add_special_tokens =
     let sep_tok tid = special_token ~id:sep_id ~token:sep_str ~type_id:tid in
     match encodings with
     | [] -> []
-    | [ encoding ] ->
-        [ Encoding.concat_list [ cls_tok 0; encoding; sep_tok 0 ] ]
+    | [ encoding ] -> [ Encoding.concat [ cls_tok 0; encoding; sep_tok 0 ] ]
     | [ enc1; enc2 ] ->
-        [ Encoding.concat_list [ cls_tok 0; enc1; sep_tok 0; enc2; sep_tok 1 ] ]
+        [ Encoding.concat [ cls_tok 0; enc1; sep_tok 0; enc2; sep_tok 1 ] ]
     | _ -> encodings
 
 let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
@@ -206,12 +205,9 @@ let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
     let sep_tok = special_token ~id:sep_id ~token:sep_str ~type_id:0 in
     match encodings with
     | [] -> []
-    | [ encoding ] -> [ Encoding.concat_list [ cls_tok; encoding; sep_tok ] ]
+    | [ encoding ] -> [ Encoding.concat [ cls_tok; encoding; sep_tok ] ]
     | [ enc1; enc2 ] ->
-        [
-          Encoding.concat_list
-            [ cls_tok; enc1; sep_tok; sep_tok; enc2; sep_tok ];
-        ]
+        [ Encoding.concat [ cls_tok; enc1; sep_tok; sep_tok; enc2; sep_tok ] ]
     | _ -> encodings
 
 let process_byte_level ~add_prefix_space ~trim_offsets encodings
@@ -346,7 +342,7 @@ let encoding_of_piece source special_tokens = function
       let special = find_special special_tokens key in
       if List.compare_lengths special.value_ids special.value_tokens <> 0 then
         invalid_arg (err_mismatch key);
-      Encoding.concat_list
+      Encoding.concat
         (List.map2
            (fun id token -> special_token ~id ~token ~type_id)
            special.value_ids special.value_tokens)
@@ -369,7 +365,7 @@ let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
         [ Encoding.with_type_id src type_id ]
     | _ ->
         [
-          Encoding.concat_list
+          Encoding.concat
             (List.map (encoding_of_piece source special_tokens) pieces);
         ]
   in
@@ -404,7 +400,7 @@ let process processor ?pair enc ~add_special_tokens =
     | None -> [ enc ]
     | Some p -> [ enc; Encoding.with_type_id p 1 ]
   in
-  Encoding.concat_list (process_list processor encodings ~add_special_tokens)
+  Encoding.concat (process_list processor encodings ~add_special_tokens)
 
 (* What a processor puts around a single sequence, when that is all it does to
    its ids. A template says so structurally: the pieces before the one sequence
@@ -486,7 +482,7 @@ let rec added_tokens processor ~is_pair =
 
 (* Constructors *)
 
-let bert ~sep ~cls () = Bert { sep; cls }
+let bert ~sep ~cls = Bert { sep; cls }
 
 let roberta ~sep ~cls ?(trim_offsets = true) ?(add_prefix_space = true) () =
   Roberta { sep; cls; trim_offsets; add_prefix_space }

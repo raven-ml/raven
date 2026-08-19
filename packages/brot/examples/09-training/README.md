@@ -20,7 +20,7 @@ dune exec brot/examples/09-training/main.exe
 | ---------------------- | ------------------------------------------------ |
 | `Brot.train_bpe`       | Train a BPE tokenizer (learns merge rules)       |
 | `Brot.train_wordpiece` | Train a WordPiece tokenizer (learns subwords)    |
-| `Brot.train_wordlevel` | Train a word-level tokenizer (collects words)    |
+| `Brot.train_word_level` | Train a word-level tokenizer (collects words)    |
 | `Brot.train_unigram`   | Train a Unigram tokenizer (learns probabilities) |
 | `Brot.vocab_size`      | Check learned vocabulary size                    |
 | `Brot.token_to_id`     | Look up a token's ID                             |

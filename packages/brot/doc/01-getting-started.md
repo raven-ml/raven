@@ -92,9 +92,9 @@ let tokenizer =
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("play", 5); ("##ing", 6) ]
     ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
-    ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
+    ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2))
     ~decoder:(Decoder.wordpiece ())
-    ~pre:(Pre_tokenizer.whitespace ())
+    ~pre:(Pre_tokenizer.whitespace)
     ~unk_token:"[UNK]" ()
 
 let enc = encode tokenizer "the cat playing"
@@ -128,8 +128,8 @@ open Brot
 let tokenizer =
   wordpiece
     ~normalizer:(Normalizer.bert ~lowercase:true ())
-    ~pre:(Pre_tokenizer.bert ())
-    ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
+    ~pre:(Pre_tokenizer.bert)
+    ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2))
     ~decoder:(Decoder.wordpiece ())
     ~vocab:
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2); ("[PAD]", 3);
@@ -160,8 +160,8 @@ WordPiece, Unigram, and word-level tokenizers:
 open Brot
 
 let tokenizer =
-  train_bpe ~vocab_size:80 ~show_progress:false
-    ~pre:(Pre_tokenizer.whitespace ())
+  train_bpe ~vocab_size:80
+    ~pre:(Pre_tokenizer.whitespace)
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked loudly at the brown fox";
@@ -196,7 +196,7 @@ open Brot
 let tokenizer =
   from_model_file ~vocab:"vocab.json" ~merges:"merges.txt"
     ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-    ~decoder:(Decoder.byte_level ())
+    ~decoder:(Decoder.byte_level)
     ()
 ```
 
@@ -211,8 +211,8 @@ Encode multiple texts at once with padding to uniform length:
 open Brot
 
 let tokenizer =
-  train_bpe ~vocab_size:80 ~show_progress:false
-    ~pre:(Pre_tokenizer.whitespace ())
+  train_bpe ~vocab_size:80
+    ~pre:(Pre_tokenizer.whitespace)
     ~added_tokens:(List.map added_token [ "[PAD]" ])
     ~pad_token:"[PAD]"
     (`Seq (List.to_seq

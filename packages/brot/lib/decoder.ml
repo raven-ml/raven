@@ -284,8 +284,8 @@ let decode decoder tokens = String.concat "" (decode_chain decoder tokens)
 (* Constructors *)
 
 let bpe ?(suffix = "</w>") () = BPE { suffix }
-let byte_level () = Byte_level
-let byte_fallback () = Byte_fallback
+let byte_level = Byte_level
+let byte_fallback = Byte_fallback
 
 let wordpiece ?(prefix = "##") ?(cleanup = true) () =
   Word_piece { prefix; cleanup }
@@ -303,7 +303,7 @@ let replace ~pattern ~by () = Replace { pattern; replacement = by }
 let strip ?(content = " ") ?(start = 0) ?(stop = 0) () =
   Strip { content; start; stop }
 
-let fuse () = Fuse
+let fuse = Fuse
 
 (* Formatting *)
 

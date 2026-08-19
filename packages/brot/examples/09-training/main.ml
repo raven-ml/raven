@@ -38,38 +38,31 @@ let () =
   Printf.printf "Training corpus: %d sentences\n\n" (List.length corpus);
 
   (* Train BPE: learns merge rules by iteratively combining frequent pairs *)
-  let bpe_tok =
-    train_bpe data ~vocab_size:100 ~show_progress:false
-      ~pre:(Pre_tokenizer.whitespace ())
-  in
+  let bpe_tok = train_bpe data ~vocab_size:100 ~pre:Pre_tokenizer.whitespace in
   show_trained "BPE" bpe_tok test_texts;
 
   (* Train WordPiece: learns subword prefixes (## for continuation tokens) *)
   let wp_tok =
-    train_wordpiece data ~vocab_size:100 ~show_progress:false
-      ~pre:(Pre_tokenizer.whitespace ())
+    train_wordpiece data ~vocab_size:100 ~pre:Pre_tokenizer.whitespace
   in
   show_trained "WordPiece" wp_tok test_texts;
 
   (* Train word-level: each unique word is a token *)
   let wl_tok =
-    train_wordlevel data ~vocab_size:50 ~show_progress:false
-      ~pre:(Pre_tokenizer.whitespace ())
+    train_word_level data ~vocab_size:50 ~pre:Pre_tokenizer.whitespace
   in
   show_trained "Word-level" wl_tok test_texts;
 
   (* Train Unigram: probabilistic subword segmentation *)
   let uni_tok =
-    train_unigram data ~vocab_size:100 ~show_progress:false
-      ~pre:(Pre_tokenizer.whitespace ())
+    train_unigram data ~vocab_size:100 ~pre:Pre_tokenizer.whitespace
   in
   show_trained "Unigram" uni_tok test_texts;
 
   (* Training with special tokens *)
   Printf.printf "=== Training with Special Tokens ===\n\n";
   let wp_with_specials =
-    train_wordpiece data ~vocab_size:100 ~show_progress:false
-      ~pre:(Pre_tokenizer.whitespace ())
+    train_wordpiece data ~vocab_size:100 ~pre:Pre_tokenizer.whitespace
       ~added_tokens:
         [ added_token "[CLS]"; added_token "[SEP]"; added_token "[PAD]" ]
       ~pad_token:"[PAD]"
@@ -89,13 +82,11 @@ let () =
   (* Add a post-processor to insert special tokens during encoding *)
   Printf.printf "\n  Encoding with post-processor:\n";
   let wp_full =
-    train_wordpiece data ~vocab_size:100 ~show_progress:false
-      ~pre:(Pre_tokenizer.whitespace ())
+    train_wordpiece data ~vocab_size:100 ~pre:Pre_tokenizer.whitespace
       ~post:
         (Post_processor.bert
            ~cls:("[CLS]", Option.get (token_to_id wp_with_specials "[CLS]"))
-           ~sep:("[SEP]", Option.get (token_to_id wp_with_specials "[SEP]"))
-           ())
+           ~sep:("[SEP]", Option.get (token_to_id wp_with_specials "[SEP]")))
       ~added_tokens:
         [ added_token "[CLS]"; added_token "[SEP]"; added_token "[PAD]" ]
       ~pad_token:"[PAD]"

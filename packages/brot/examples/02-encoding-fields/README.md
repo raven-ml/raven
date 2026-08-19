@@ -28,6 +28,7 @@ dune exec brot/examples/02-encoding-fields/main.exe
 | `Encoding.attention_mask`      | 1 for real tokens, 0 for padding                  |
 | `Encoding.special_tokens_mask` | 1 for special tokens, 0 for content               |
 | `Encoding.length`              | Number of tokens                                  |
+| `Encoding.pp`                  | Print every field side by side, one row per token |
 
 ## Offsets
 

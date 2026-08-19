@@ -30,7 +30,7 @@ let () =
   let tokenizer =
     from_model_file ~vocab:vocab_file ~merges:merges_file
       ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-      ~decoder:(Decoder.byte_level ()) ()
+      ~decoder:Decoder.byte_level ()
   in
   Printf.printf "\nVocabulary: %d tokens\n\n" (vocab_size tokenizer);
 

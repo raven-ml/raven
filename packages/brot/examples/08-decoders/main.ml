@@ -30,9 +30,9 @@ let () =
 
   Printf.printf "\n=== Joining and Collapsing Decoders ===\n\n";
 
-  show "byte_fallback" (Decoder.byte_fallback ()) [ "hello"; "<0x21>" ];
+  show "byte_fallback" Decoder.byte_fallback [ "hello"; "<0x21>" ];
 
-  show "fuse" (Decoder.fuse ()) [ "h"; "e"; "l"; "l"; "o" ];
+  show "fuse" Decoder.fuse [ "h"; "e"; "l"; "l"; "o" ];
 
   Printf.printf "\n=== Composed Decoder ===\n\n";
 
@@ -58,7 +58,7 @@ let () =
   let tokenizer =
     wordpiece ~vocab ~unk_token:"[UNK]"
       ~added_tokens:[ added_token "[CLS]"; added_token "[SEP]" ]
-      ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
+      ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2))
       ~decoder:(Decoder.wordpiece ()) ()
   in
 

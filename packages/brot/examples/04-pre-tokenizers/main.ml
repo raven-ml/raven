@@ -20,9 +20,9 @@ let () =
   Printf.printf "=== Common Pre-tokenizers ===\n\n";
   Printf.printf "Text: %S\n\n" text;
 
-  show "whitespace" (Pre_tokenizer.whitespace ()) text;
-  show "whitespace_split" (Pre_tokenizer.whitespace_split ()) text;
-  show "bert" (Pre_tokenizer.bert ()) text;
+  show "whitespace" Pre_tokenizer.whitespace text;
+  show "whitespace_split" Pre_tokenizer.whitespace_split text;
+  show "bert" Pre_tokenizer.bert text;
   show "punctuation" (Pre_tokenizer.punctuation ()) text;
   show "digits (individual)"
     (Pre_tokenizer.digits ~individual_digits:true ())
@@ -43,7 +43,7 @@ let () =
   let composed =
     Pre_tokenizer.sequence
       [
-        Pre_tokenizer.whitespace_split ();
+        Pre_tokenizer.whitespace_split;
         Pre_tokenizer.punctuation ~behavior:`Isolated ();
       ]
   in

@@ -90,9 +90,7 @@ let test_pad_token_absent_from_vocab () =
   let tokenizer =
     word_level
       ~vocab:[ ("a", 0) ]
-      ~pad_token:"[PAD]"
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~pad_token:"[PAD]" ~pre:Pre_tokenizer.whitespace ()
   in
   equal ~msg:"[PAD]" (option int) (Some 1) (token_to_id tokenizer "[PAD]");
   equal ~msg:"vocab size" int 2 (vocab_size tokenizer);
@@ -104,7 +102,7 @@ let test_pad_token_absent_from_vocab () =
     encode tokenizer ~padding:(padding (`Fixed 3)) "a" |> Encoding.ids
   in
   equal ~msg:"pads with it" (array int) [| 0; 1; 1 |] padded;
-  match from_json (to_json tokenizer) with
+  match of_json (to_json tokenizer) with
   | Error msg -> failf "round trip failed: %s" msg
   | Ok reloaded ->
       equal ~msg:"survives the round trip" (option int) (Some 1)
@@ -114,8 +112,7 @@ let test_pad_token_absent_from_vocab () =
 
 let test_vocab_encode_decode () =
   let tokenizer =
-    word_level
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~pre:Pre_tokenizer.whitespace
       ~vocab:[ ("hello", 0); ("world", 1) ]
       ()
   in
@@ -146,7 +143,7 @@ let test_vocab_save_load () =
     Brot.word_level ~vocab:[ ("hello", 0); ("world", 1); ("test", 2) ] ()
   in
   let json = to_json tokenizer in
-  match from_json json with
+  match of_json json with
   | Error msg -> failf "failed to round-trip tokenizer: %s" msg
   | Ok reloaded ->
       let original_vocab = vocab tokenizer in

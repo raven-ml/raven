@@ -31,9 +31,9 @@ val bpe : ?suffix:string -> unit -> t
     except in the last token where it is dropped. [suffix] defaults to ["</w>"].
 *)
 
-val byte_level : unit -> t
-(** [byte_level ()] is a collapsing decoder that reads GPT-2 style
-    byte-to-Unicode tokens back as the text their bytes spell.
+val byte_level : t
+(** [byte_level] is a collapsing decoder that reads GPT-2 style byte-to-Unicode
+    tokens back as the text their bytes spell.
 
     A token is mapped character by character, and one character outside the
     byte-level alphabet leaves the whole token to stand for its own bytes. The
@@ -42,10 +42,10 @@ val byte_level : unit -> t
     sequence becomes one U+FFFD — four stray bytes cost four, while a four-byte
     character cut short costs one. *)
 
-val byte_fallback : unit -> t
-(** [byte_fallback ()] is a decoder for byte fallback tokens. Each run of hex
-    byte tokens (e.g. ["<0x41>"]) becomes the text those bytes spell; a run that
-    is not valid UTF-8 becomes one U+FFFD per byte. Other tokens pass through
+val byte_fallback : t
+(** [byte_fallback] is a decoder for byte fallback tokens. Each run of hex byte
+    tokens (e.g. ["<0x41>"]) becomes the text those bytes spell; a run that is
+    not valid UTF-8 becomes one U+FFFD per byte. Other tokens pass through
     unchanged. *)
 
 val wordpiece : ?prefix:string -> ?cleanup:bool -> unit -> t
@@ -102,8 +102,8 @@ val strip : ?content:string -> ?start:int -> ?stop:int -> unit -> t
     HuggingFace reads [content] as a single character, so {!to_json} on a
     decoder whose [content] is longer, or empty, writes a decoder it rejects. *)
 
-val fuse : unit -> t
-(** [fuse ()] is a collapsing decoder that concatenates all tokens into a single
+val fuse : t
+(** [fuse] is a collapsing decoder that concatenates all tokens into a single
     string with no delimiter. *)
 
 (** {1:ops Operations} *)

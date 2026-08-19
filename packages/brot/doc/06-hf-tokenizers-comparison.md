@@ -344,11 +344,11 @@ let type_ids = Encoding.type_ids enc  (* 0s for first, 1s for second *)
 
 (* Batch of pairs *)
 let encodings =
-  Brot.encode_pairs_batch tokenizer
+  Brot.encode_batch_pairs tokenizer
     [ ("premise1", "hyp1"); ("premise2", "hyp2") ]
 ```
 
-Brot uses the `~pair` optional argument on `encode` for single pairs and a dedicated `encode_pairs_batch` for batches, instead of overloading the same function with tuples.
+Brot uses the `~pair` optional argument on `encode` for single pairs and a dedicated `encode_batch_pairs` for batches, instead of overloading the same function with tuples.
 
 ---
 
@@ -496,7 +496,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
 ```ocaml
 let pre =
   Pre_tokenizer.sequence
-    [ Pre_tokenizer.whitespace_split ();
+    [ Pre_tokenizer.whitespace_split;
       Pre_tokenizer.punctuation () ]
 
 let tokenizer = Brot.bpe ~pre ()
@@ -506,14 +506,14 @@ Common pre-tokenizers:
 
 | HuggingFace                            | Brot                                |
 | -------------------------------------- | ----------------------------------- |
-| `pre_tokenizers.Whitespace()`          | `Pre_tokenizer.whitespace ()`       |
-| `pre_tokenizers.WhitespaceSplit()`     | `Pre_tokenizer.whitespace_split ()` |
-| `pre_tokenizers.BertPreTokenizer()`    | `Pre_tokenizer.bert ()`             |
+| `pre_tokenizers.Whitespace()`          | `Pre_tokenizer.whitespace`       |
+| `pre_tokenizers.WhitespaceSplit()`     | `Pre_tokenizer.whitespace_split` |
+| `pre_tokenizers.BertPreTokenizer()`    | `Pre_tokenizer.bert`             |
 | `pre_tokenizers.ByteLevel()`           | `Pre_tokenizer.byte_level ()`       |
 | `pre_tokenizers.Punctuation()`         | `Pre_tokenizer.punctuation ()`      |
 | `pre_tokenizers.Digits()`              | `Pre_tokenizer.digits ()`           |
 | `pre_tokenizers.Metaspace()`           | `Pre_tokenizer.metaspace ()`        |
-| `pre_tokenizers.UnicodeScripts()`      | `Pre_tokenizer.unicode_scripts ()`  |
+| `pre_tokenizers.UnicodeScripts()`      | `Pre_tokenizer.unicode_scripts`  |
 | `pre_tokenizers.CharDelimiterSplit(c)` | `Pre_tokenizer.char_delimiter c`    |
 | `pre_tokenizers.Split(pattern, ...)`   | `Pre_tokenizer.split ~pattern ()`   |
 | `pre_tokenizers.Sequence([...])`       | `Pre_tokenizer.sequence [...]`      |
@@ -553,7 +553,6 @@ let post =
   Post_processor.bert
     ~sep:("[SEP]", 102)
     ~cls:("[CLS]", 101)
-    ()
 
 let tokenizer = Brot.bpe ~post ()
 ```
@@ -562,7 +561,7 @@ Common post-processors:
 
 | HuggingFace                                                   | Brot                                                       |
 | ------------------------------------------------------------- | ---------------------------------------------------------- |
-| `processors.BertProcessing(sep, cls)`                         | `Post_processor.bert ~sep ~cls ()`                         |
+| `processors.BertProcessing(sep, cls)`                         | `Post_processor.bert ~sep ~cls`                         |
 | `processors.RobertaProcessing(sep, cls)`                      | `Post_processor.roberta ~sep ~cls ()`                      |
 | `processors.ByteLevel()`                                      | `Post_processor.byte_level ()`                             |
 | `processors.TemplateProcessing(single, pair, special_tokens)` | `Post_processor.template ~single ?pair ~special_tokens ()` |
@@ -591,14 +590,14 @@ Common decoders:
 | HuggingFace                     | Brot                              |
 | ------------------------------- | --------------------------------- |
 | `decoders.BPEDecoder(suffix)`   | `Decoder.bpe ~suffix ()`          |
-| `decoders.ByteLevel()`          | `Decoder.byte_level ()`           |
-| `decoders.ByteFallback()`       | `Decoder.byte_fallback ()`        |
+| `decoders.ByteLevel()`          | `Decoder.byte_level`           |
+| `decoders.ByteFallback()`       | `Decoder.byte_fallback`        |
 | `decoders.WordPiece(prefix)`    | `Decoder.wordpiece ~prefix ()`    |
 | `decoders.Metaspace()`          | `Decoder.metaspace ()`            |
 | `decoders.CTC()`                | `Decoder.ctc ()`                  |
 | `decoders.Replace(pattern, by)` | `Decoder.replace ~pattern ~by ()` |
 | `decoders.Strip()`              | `Decoder.strip ()`                |
-| `decoders.Fuse()`               | `Decoder.fuse ()`                 |
+| `decoders.Fuse()`               | `Decoder.fuse`                 |
 | `decoders.Sequence([...])`      | `Decoder.sequence [...]`          |
 
 ### 9.5 Inspecting the pipeline
@@ -657,7 +656,7 @@ let tokenizer =
     (`Files [ "corpus.txt" ])
     ~vocab_size:30000
     ~min_frequency:2
-    ~pre:(Brot.Pre_tokenizer.whitespace ())
+    ~pre:(Brot.Pre_tokenizer.whitespace)
     ~added_tokens:[
       Brot.added_token "[UNK]";
       Brot.added_token "[CLS]";
@@ -693,7 +692,7 @@ let tokenizer =
   Brot.train_wordpiece
     (`Files [ "corpus.txt" ])
     ~vocab_size:30000
-    ~pre:(Brot.Pre_tokenizer.whitespace ())
+    ~pre:(Brot.Pre_tokenizer.whitespace)
     ~unk_token:"[UNK]"
     ~added_tokens:[ Brot.added_token "[UNK]"; Brot.added_token "[PAD]" ]
     ~pad_token:"[PAD]"
@@ -722,7 +721,7 @@ let tokenizer =
   Brot.train_unigram
     (`Files [ "corpus.txt" ])
     ~vocab_size:8000
-    ~pre:(Brot.Pre_tokenizer.whitespace ())
+    ~pre:(Brot.Pre_tokenizer.whitespace)
     ~unk_token:"<unk>"
     ~added_tokens:[ Brot.added_token "<unk>"; Brot.added_token "<pad>" ]
     ~pad_token:"<pad>"
@@ -754,7 +753,7 @@ tokenizer.train_from_iterator(
 let texts = [ "Hello world"; "How are you?"; "Hello again" ]
 let tokenizer =
   Brot.train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
-    ~pre:(Brot.Pre_tokenizer.whitespace ())
+    ~pre:(Brot.Pre_tokenizer.whitespace)
 ```
 
 ### 10.5 Extending an existing tokenizer
@@ -816,7 +815,7 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 | Encode IDs only     | `tokenizer.encode("Hello").ids`                             | `Brot.encode_ids tokenizer "Hello"`                              |
 | Encode batch        | `tokenizer.encode_batch(["a", "b"])`                        | `Brot.encode_batch tokenizer ["a"; "b"]`                         |
 | Encode pair         | `tokenizer.encode("a", "b")`                                | `Brot.encode tokenizer ~pair:"b" "a"`                            |
-| Encode pairs batch  | `tokenizer.encode_batch([("a","b"), ...])`                  | `Brot.encode_pairs_batch tokenizer [("a","b"); ...]`             |
+| Encode pairs batch  | `tokenizer.encode_batch([("a","b"), ...])`                  | `Brot.encode_batch_pairs tokenizer [("a","b"); ...]`             |
 | Decode              | `tokenizer.decode(ids)`                                     | `Brot.decode tokenizer ids`                                      |
 | Decode batch        | `tokenizer.decode_batch([ids1, ids2])`                      | `Brot.decode_batch tokenizer [ids1; ids2]`                       |
 | Get token IDs       | `output.ids`                                                | `Encoding.ids enc`                                               |
@@ -835,6 +834,6 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 | Train from iterator | `tokenizer.train_from_iterator(iter, trainer)`              | `Brot.train_bpe (`Seq seq) ~vocab_size:1000`                     |
 | Set normalizer      | `tokenizer.normalizer = normalizers.Lowercase()`            | `Brot.bpe ~normalizer:Normalizer.lowercase ()`                   |
 | Set pre-tokenizer   | `tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()`      | `Brot.bpe ~pre:(Pre_tokenizer.byte_level ()) ()`                 |
-| Set post-processor  | `tokenizer.post_processor = processors.BertProcessing(...)` | `Brot.bpe ~post:(Post_processor.bert ~sep ~cls ()) ()`           |
+| Set post-processor  | `tokenizer.post_processor = processors.BertProcessing(...)` | `Brot.bpe ~post:(Post_processor.bert ~sep ~cls) ()`           |
 | Set decoder         | `tokenizer.decoder = decoders.WordPiece()`                  | `Brot.bpe ~decoder:(Decoder.wordpiece ()) ()`                    |
 | Add special tokens  | `tokenizer.add_special_tokens([AddedToken(...)])`           | Pass `~added_tokens:[Brot.added_token "..."; ...]` at construction, or `Brot.add_tokens` after it (any model) |

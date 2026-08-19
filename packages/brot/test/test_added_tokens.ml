@@ -265,7 +265,7 @@ let test_json_round_trip () =
         added_token ~normalized:true ~rstrip:true "<q>";
       ]
   in
-  match from_json (to_json t) with
+  match of_json (to_json t) with
   | Error msg -> failf "round trip failed: %s" msg
   | Ok reloaded ->
       let flags (a : added_token) =

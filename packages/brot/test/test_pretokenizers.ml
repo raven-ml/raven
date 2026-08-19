@@ -268,7 +268,7 @@ let test_byte_level_edge_cases () =
 
 let test_bert_pretokenizer () =
   let test_case text expected =
-    let result = Pre.pre_tokenize (Pre.bert ()) text in
+    let result = Pre.pre_tokenize Pre.bert text in
     check_tokenization
       (Printf.sprintf "BERT tokenization of %S" text)
       result expected
@@ -303,7 +303,7 @@ let test_bert_pretokenizer () =
 let ascii_punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 
 let test_punctuation_class () =
-  let bert_pieces text = List.map fst (Pre.pre_tokenize (Pre.bert ()) text) in
+  let bert_pieces text = List.map fst (Pre.pre_tokenize Pre.bert text) in
   let punct_pieces text =
     List.map fst
       (Pre.pre_tokenize (Pre.punctuation ~behavior:`Isolated ()) text)
@@ -351,7 +351,7 @@ let test_punctuation_class () =
 
 let test_whitespace_pretokenizer () =
   let test_case text expected =
-    let result = Pre.pre_tokenize (Pre.whitespace ()) text in
+    let result = Pre.pre_tokenize Pre.whitespace text in
     check_tokenization
       (Printf.sprintf "Whitespace tokenization of %S" text)
       result expected
@@ -376,7 +376,7 @@ let test_whitespace_pretokenizer () =
   let check_words text expected =
     check_strings
       (Printf.sprintf "Whitespace words of %S" text)
-      (Pre.pre_tokenize (Pre.whitespace ()) text)
+      (Pre.pre_tokenize Pre.whitespace text)
       expected
   in
   check_words "a\xe0\xbd\xb1b" [ "a\xe0\xbd\xb1b" ];
@@ -388,7 +388,7 @@ let test_whitespace_pretokenizer () =
 
 let test_whitespace_split () =
   let test_case text expected =
-    let result = Pre.pre_tokenize (Pre.whitespace_split ()) text in
+    let result = Pre.pre_tokenize Pre.whitespace_split text in
     check_tokenization
       (Printf.sprintf "WhitespaceSplit of %S" text)
       result expected
@@ -641,7 +641,7 @@ let test_char_delimiter_split () =
 let test_sequence_pretokenizer () =
   (* Combine whitespace split then punctuation isolation *)
   let tokenizers =
-    [ Pre.whitespace_split (); Pre.punctuation ~behavior:`Isolated () ]
+    [ Pre.whitespace_split; Pre.punctuation ~behavior:`Isolated () ]
   in
   let tokenizer = Pre.sequence tokenizers in
 
@@ -687,7 +687,7 @@ let test_fixed_length () =
    its character offsets converted to byte offsets. *)
 let test_unicode_scripts () =
   let test_case text expected =
-    let result = Pre.pre_tokenize (Pre.unicode_scripts ()) text in
+    let result = Pre.pre_tokenize Pre.unicode_scripts text in
     check_tokenization (Printf.sprintf "UnicodeScripts %S" text) result expected
   in
 
@@ -874,14 +874,14 @@ let test_metaspace_plan () =
   (* The walkers before the metaspace cut the segments it marks, and whether a
      cut at a space is safe is the first of them's business. *)
   check "after another walker"
-    (Pre.sequence [ Pre.whitespace_split (); Pre.metaspace ~split:false () ])
+    (Pre.sequence [ Pre.whitespace_split; Pre.metaspace ~split:false () ])
     "WhitespaceSplit | marker=\"\\226\\150\\129\" prepend=always | \
      Metaspace(\"\\226\\150\\129\", always, split=false) splittable=true";
   check "after two walkers, before another"
     (Pre.sequence
        [
          Pre.punctuation ();
-         Pre.whitespace_split ();
+         Pre.whitespace_split;
          Pre.metaspace ();
          Pre.digits ();
        ])
@@ -890,14 +890,14 @@ let test_metaspace_plan () =
      Sequence[Metaspace(\"\\226\\150\\129\", always, split=true), \
      Digits(individual=false)] splittable=false";
   check "byte level after a walker"
-    (Pre.sequence [ Pre.whitespace_split (); Pre.byte_level () ])
+    (Pre.sequence [ Pre.whitespace_split; Pre.byte_level () ])
     "WhitespaceSplit | prefix space | ByteLevel(add_prefix_space=true, \
      use_regex=true, trim_offsets=true) splittable=true";
   (* A nested sequence is its members in place. *)
   check "nested"
     (Pre.sequence
        [
-         Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ];
+         Pre.sequence [ Pre.whitespace_split; Pre.punctuation () ];
          Pre.metaspace ();
        ])
     "Sequence[WhitespaceSplit, Punctuation(Isolated)] | \
@@ -949,7 +949,7 @@ let test_metaspace_offsets () =
   (* T5 carries this one. The whitespace split drops the run that separates two
      pieces, so a piece starts where its own text does and the trailing space is
      gone before the marker could stand for it. *)
-  let t5 = Pre.sequence [ Pre.whitespace_split (); Pre.metaspace () ] in
+  let t5 = Pre.sequence [ Pre.whitespace_split; Pre.metaspace () ] in
   case t5 "Hello world" [ (m ^ "Hello", (0, 5)); (m ^ "world", (6, 11)) ];
   case t5 "trailing " [ (m ^ "trailing", (0, 8)) ];
   case t5 "  two  spaces" [ (m ^ "two", (2, 5)); (m ^ "spaces", (7, 13)) ];
@@ -980,8 +980,7 @@ let test_metaspace_offsets () =
      pieces are placed through the alignment of the marking, as HuggingFace
      places them. *)
   let punctuated =
-    Pre.sequence
-      [ Pre.whitespace_split (); Pre.metaspace (); Pre.punctuation () ]
+    Pre.sequence [ Pre.whitespace_split; Pre.metaspace (); Pre.punctuation () ]
   in
   case punctuated "a b!" [ (m ^ "a", (0, 1)); (m ^ "b", (2, 3)); ("!", (3, 4)) ];
   case punctuated "a,b c"
@@ -999,7 +998,7 @@ let test_metaspace_offsets () =
     [ (m ^ "a", (0, 1)); (m ^ ",", (1, 2)); (m ^ "b", (2, 4)) ];
   (* Without splitting, each segment is one marked piece. *)
   let unsplit =
-    Pre.sequence [ Pre.whitespace_split (); Pre.metaspace ~split:false () ]
+    Pre.sequence [ Pre.whitespace_split; Pre.metaspace ~split:false () ]
   in
   case unsplit "a b!c" [ (m ^ "a", (0, 1)); (m ^ "b!c", (2, 5)) ];
   case unsplit "  x" [ (m ^ "x", (2, 3)) ];
@@ -1007,7 +1006,7 @@ let test_metaspace_offsets () =
   let nested =
     Pre.sequence
       [
-        Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ];
+        Pre.sequence [ Pre.whitespace_split; Pre.punctuation () ];
         Pre.metaspace ();
       ]
   in
@@ -1018,7 +1017,7 @@ let test_metaspace_offsets () =
   let nested_inner =
     Pre.sequence
       [
-        Pre.whitespace_split ();
+        Pre.whitespace_split;
         Pre.sequence [ Pre.metaspace (); Pre.punctuation () ];
       ]
   in
@@ -1030,7 +1029,7 @@ let test_metaspace_offsets () =
     Pre.sequence [ Pre.digits ~individual_digits:true (); Pre.metaspace () ]
   in
   case digits "a1 b" [ (m ^ "a", (0, 1)); (m ^ "1", (1, 2)); (m ^ "b", (2, 4)) ];
-  let scripts = Pre.sequence [ Pre.unicode_scripts (); Pre.metaspace () ] in
+  let scripts = Pre.sequence [ Pre.unicode_scripts; Pre.metaspace () ] in
   case scripts " ab" [ (m ^ "ab", (1, 3)) ];
   case scripts "ab\u{433}\u{434}"
     [ (m ^ "ab", (0, 2)); (m ^ "\u{433}\u{434}", (2, 6)) ]
@@ -1055,7 +1054,7 @@ let test_metaspace_first () =
   case unsplit " Hello world" [ (m ^ "Hello" ^ m ^ "world", (0, 12)) ];
   let split_first =
     Pre.sequence
-      [ Pre.whitespace_split (); Pre.metaspace ~prepend_scheme:`First () ]
+      [ Pre.whitespace_split; Pre.metaspace ~prepend_scheme:`First () ]
   in
   case split_first "Hello world" [ (m ^ "Hello", (0, 5)); ("world", (6, 11)) ];
   case split_first " Hello world" [ ("Hello", (1, 6)); ("world", (7, 12)) ];
@@ -1067,7 +1066,7 @@ let test_metaspace_first () =
   let fixed =
     Pre.sequence
       [
-        Pre.whitespace_split ();
+        Pre.whitespace_split;
         Pre.fixed_length 2;
         Pre.metaspace ~prepend_scheme:`First ();
       ]
@@ -1080,7 +1079,7 @@ let test_metaspace_first () =
   let then_bytes =
     Pre.sequence
       [
-        Pre.whitespace_split ();
+        Pre.whitespace_split;
         Pre.metaspace ~prepend_scheme:`First ();
         Pre.byte_level ~use_regex:false ();
       ]
@@ -1109,13 +1108,13 @@ let test_byte_level_after_a_walker () =
   in
   let g = "\u{120}" in
   let whole =
-    Pre.sequence [ Pre.whitespace_split (); Pre.byte_level ~use_regex:false () ]
+    Pre.sequence [ Pre.whitespace_split; Pre.byte_level ~use_regex:false () ]
   in
   case whole "Hello world" [ (g ^ "Hello", (0, 5)); (g ^ "world", (6, 11)) ];
   case whole " Hello  w\u{f6}rld "
     [ (g ^ "Hello", (1, 6)); (g ^ "w\u{c3}\u{b6}rld", (8, 14)) ];
   case whole "a" [ (g ^ "a", (0, 1)) ];
-  let regex = Pre.sequence [ Pre.whitespace_split (); Pre.byte_level () ] in
+  let regex = Pre.sequence [ Pre.whitespace_split; Pre.byte_level () ] in
   case regex "Hello world" [ (g ^ "Hello", (0, 5)); (g ^ "world", (6, 11)) ];
   case regex "it's  x" [ (g ^ "it", (0, 2)); ("'s", (2, 4)); (g ^ "x", (6, 7)) ];
   case regex "ab12 c" [ (g ^ "ab", (0, 2)); ("12", (2, 4)); (g ^ "c", (5, 6)) ];
@@ -1422,17 +1421,17 @@ let test_offsets_are_source_spans () =
       ("metaspace ~replacement:_", Pre.metaspace ~replacement:"_" ());
       ("byte_level", Pre.byte_level ());
       ("byte_level ~use_regex:false", Pre.byte_level ~use_regex:false ());
-      ("bert", Pre.bert ());
-      ("whitespace", Pre.whitespace ());
-      ("unicode_scripts", Pre.unicode_scripts ());
+      ("bert", Pre.bert);
+      ("whitespace", Pre.whitespace);
+      ("unicode_scripts", Pre.unicode_scripts);
       ("fixed_length 3", Pre.fixed_length 3);
       ( "sequence [whitespace_split; metaspace]",
-        Pre.sequence [ Pre.whitespace_split (); Pre.metaspace () ] );
+        Pre.sequence [ Pre.whitespace_split; Pre.metaspace () ] );
       ( "sequence [metaspace; punctuation]",
         Pre.sequence [ Pre.metaspace (); Pre.punctuation () ] );
       ( "sequence [whitespace_split; metaspace; punctuation]",
         Pre.sequence
-          [ Pre.whitespace_split (); Pre.metaspace (); Pre.punctuation () ] );
+          [ Pre.whitespace_split; Pre.metaspace (); Pre.punctuation () ] );
       ( "sequence [byte_level; punctuation]",
         Pre.sequence [ Pre.byte_level (); Pre.punctuation () ] );
       ( "sequence [metaspace ~split:false]",
@@ -1540,7 +1539,7 @@ let test_chunked_walk () =
     (list (pair string (pair int int)))
     (Pre.pre_tokenize (Pre.punctuation ()) dense)
     (Pre.pre_tokenize
-       (Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ])
+       (Pre.sequence [ Pre.whitespace_split; Pre.punctuation () ])
        dense)
 
 (* Serialization. Every expectation is the JSON HuggingFace writes for the same
@@ -1586,9 +1585,9 @@ let test_json_round_trip () =
     | Error e -> fail (Printf.sprintf "%s: %s" name e)
   in
   round_trip "byte_level" (Pre.byte_level ());
-  round_trip "bert" (Pre.bert ());
-  round_trip "whitespace" (Pre.whitespace ());
-  round_trip "whitespace_split" (Pre.whitespace_split ());
+  round_trip "bert" Pre.bert;
+  round_trip "whitespace" Pre.whitespace;
+  round_trip "whitespace_split" Pre.whitespace_split;
   round_trip "punctuation" (Pre.punctuation ~behavior:`Merged_with_previous ());
   round_trip "split" (Pre.split ~pattern:"::" ~behavior:`Isolated ());
   round_trip "char_delimiter" (Pre.char_delimiter ",");
@@ -1597,10 +1596,10 @@ let test_json_round_trip () =
   round_trip "metaspace" (Pre.metaspace ());
   round_trip "metaspace ~prepend_scheme:`First"
     (Pre.metaspace ~prepend_scheme:`First ());
-  round_trip "unicode_scripts" (Pre.unicode_scripts ());
+  round_trip "unicode_scripts" Pre.unicode_scripts;
   round_trip "fixed_length" (Pre.fixed_length 4);
   round_trip "sequence"
-    (Pre.sequence [ Pre.whitespace_split (); Pre.punctuation () ])
+    (Pre.sequence [ Pre.whitespace_split; Pre.punctuation () ])
 
 let test_json_of_hf () =
   let accepts name text expected =

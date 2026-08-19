@@ -89,9 +89,7 @@ let () =
   let wl_tok =
     word_level
       ~vocab:[ ("playing", 0); ("hello", 1); ("<unk>", 2) ]
-      ~unk_token:"<unk>"
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~unk_token:"<unk>" ~pre:Pre_tokenizer.whitespace ()
   in
 
   (* --- Character-level: one byte per token --- *)

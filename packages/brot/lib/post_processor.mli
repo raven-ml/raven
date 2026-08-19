@@ -18,8 +18,8 @@ type token = string * int
 
 (** {1:constructors Constructors} *)
 
-val bert : sep:token -> cls:token -> unit -> t
-(** [bert ~sep ~cls ()] is a BERT-style post-processor.
+val bert : sep:token -> cls:token -> t
+(** [bert ~sep ~cls] is a BERT-style post-processor.
 
     Single: [[CLS] A [SEP]]. Pair: [[CLS] A [SEP] B [SEP]]. Type IDs: [0] for
     the first sequence, [1] for the second. *)

@@ -16,20 +16,20 @@ type t
 
 (** {1:constructors Constructors} *)
 
-val whitespace : unit -> t
-(** [whitespace ()] splits on whitespace using pattern [\w+|[^\w\s]+].
+val whitespace : t
+(** [whitespace] splits on whitespace using pattern [\w+|[^\w\s]+].
 
     Groups word characters (letters, digits, underscore) together and groups
     non-word, non-space characters together. Whitespace is used as delimiter but
     not included in output. *)
 
-val whitespace_split : unit -> t
-(** [whitespace_split ()] splits on any whitespace characters.
+val whitespace_split : t
+(** [whitespace_split] splits on any whitespace characters.
 
     Removes whitespace from output. Simplest and fastest pre-tokenizer. *)
 
-val bert : unit -> t
-(** [bert ()] applies BERT-style pre-tokenization.
+val bert : t
+(** [bert] applies BERT-style pre-tokenization.
 
     Splits on whitespace, isolates punctuation, and separates CJK characters
     individually. *)
@@ -122,8 +122,8 @@ val metaspace :
 
     Raises [Invalid_argument] if [replacement] is not exactly one character. *)
 
-val unicode_scripts : unit -> t
-(** [unicode_scripts ()] splits on Unicode script boundaries.
+val unicode_scripts : t
+(** [unicode_scripts] splits on Unicode script boundaries.
 
     A piece opens where the writing system changes (e.g. Latin to Cyrillic,
     Latin to Han) and runs to the next change. Hiragana and Katakana count as
@@ -187,15 +187,13 @@ val of_json : Jsont.json -> (t, string) result
     invalid parameters, or is a ["Split"] whose pattern is a regular expression
     ([{"Regex": ...}]) rather than a literal ([{"String": ...}]). *)
 
-(** {1:internals Internals}
+(**/**)
 
-    Pre-tokenization as the encode path sees it: byte ranges written into a
-    buffer, rather than pieces. {!pre_tokenize} is these functions plus the
-    strings.
-
-    These are for {!Brot}'s own use and are not part of the stable interface.
-    [Spans.t] belongs to a module the library does not export, so {!fill} has no
-    caller outside it. *)
+(* Internals. Pre-tokenization as the encode path sees it: byte ranges written
+   into a buffer, rather than pieces. [pre_tokenize] is these functions plus the
+   strings. These are for Brot's own use and are not part of the stable
+   interface; [Spans.t] belongs to a module the library does not export, so
+   [fill] has no caller outside it. *)
 
 (** The type for text rewrites that precede a walk. *)
 type rewrite =
@@ -265,15 +263,19 @@ val fill : t -> string -> pos:int -> stop:int -> Spans.t -> int
     are not within [0] and [String.length text]. The parts of a [Segmented] plan
     are filled on their own. *)
 
-(** {1:internals Internals} *)
-
 val lead_class : Bytes.t
 (** [lead_class] is the byte-level walker's dispatch table: byte [b]'s class,
     {!Char_class.category} on ASCII with the space and the apostrophe given
     classes of their own, and the two shapes of non-ASCII byte. Read by the C
-    kernels. *)
+    kernels.
+
+    {b Warning.} The library owns these bytes: they are built once and read on
+    every byte-level encode. Never write to them — a mutation silently corrupts
+    every encode in the process. *)
 
 val walks_byte_level : t -> bool
 (** [walks_byte_level t] is [true] iff {!fill} walks [t] with the byte-level
     pattern: [t] is a byte-level pre-tokenizer using the GPT-2 regex, and not
     one wrapped in a sequence. *)
+
+(**/**)

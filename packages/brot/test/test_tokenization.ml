@@ -11,9 +11,7 @@ open Brot
 (* Helper function to tokenize text *)
 let tokenize_text text =
   (* Pre-tokenize to get all unique tokens *)
-  let pre_tokens =
-    Pre_tokenizer.pre_tokenize (Pre_tokenizer.whitespace ()) text
-  in
+  let pre_tokens = Pre_tokenizer.pre_tokenize Pre_tokenizer.whitespace text in
   let unique_tokens =
     List.fold_left
       (fun acc (tok, _) -> if List.mem tok acc then acc else tok :: acc)
@@ -31,7 +29,7 @@ let tokenize_text text =
 
   (* Create WordLevel tokenizer with the vocabulary *)
   let tokenizer =
-    word_level ~vocab ~unk_token:"<unk>" ~pre:(Pre_tokenizer.whitespace ()) ()
+    word_level ~vocab ~unk_token:"<unk>" ~pre:Pre_tokenizer.whitespace ()
   in
   encode tokenizer text |> Encoding.tokens |> Array.to_list
 
@@ -188,9 +186,7 @@ let test_unigram_encode_sequence () =
   let tokenizer =
     unigram
       ~vocab:[ ("<unk>", 0.0); ("hello", 0.0); ("world", 0.0) ]
-      ~unk_id:0 ~unk_token:"<unk>"
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~unk_id:0 ~unk_token:"<unk>" ~pre:Pre_tokenizer.whitespace ()
   in
   let encoding = encode tokenizer "hello world" in
   let tokens = Encoding.tokens encoding |> Array.to_list in
@@ -199,8 +195,7 @@ let test_unigram_encode_sequence () =
 let test_pad_token_set_at_construction () =
   let vocab = [ ("hello", 0); ("world", 1); ("<unk>", 2); ("[PAD]", 3) ] in
   let tokenizer =
-    word_level ~vocab ~unk_token:"<unk>"
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~vocab ~unk_token:"<unk>" ~pre:Pre_tokenizer.whitespace
       ~added_tokens:[ added_token "[PAD]" ]
       ~pad_token:"[PAD]" ()
   in
@@ -367,7 +362,7 @@ let test_bpe_decoder () =
 
 (* Expectations from HuggingFace [decoders.ByteFallback()]. *)
 let test_byte_fallback_decoder () =
-  decodes (Decoder.byte_fallback ())
+  decodes Decoder.byte_fallback
     [
       ([ "<0x41>" ], "A");
       ([ "<0x0a>" ], "\n");
@@ -390,7 +385,7 @@ let test_byte_fallback_decoder () =
    character by character and falls back whole when one of them is outside the
    alphabet; the bytes of every token are then read as one text. *)
 let test_byte_level_decoder () =
-  decodes (Decoder.byte_level ())
+  decodes Decoder.byte_level
     [
       ([], "");
       ([ "" ], "");
@@ -507,8 +502,8 @@ let test_sentencepiece_decoder () =
     Decoder.sequence
       [
         Decoder.replace ~pattern:"\xe2\x96\x81" ~by:" " ();
-        Decoder.byte_fallback ();
-        Decoder.fuse ();
+        Decoder.byte_fallback;
+        Decoder.fuse;
         Decoder.strip ~content:" " ~start:1 ();
       ]
   in
@@ -625,7 +620,7 @@ let test_skip_special_tokens () =
         (Decoder.sequence
            [
              Decoder.replace ~pattern:marker ~by:" " ();
-             Decoder.fuse ();
+             Decoder.fuse;
              Decoder.strip ~content:" " ~start:1 ();
            ])
       ~added_tokens:[ added_token ~normalized:true "<s>" ]
@@ -659,37 +654,34 @@ let sorted_vocab tokenizer =
 
 let test_train_wordpiece_words () =
   let tokenizer =
-    train_wordpiece
-      ~pre:(Pre_tokenizer.whitespace_split ())
-      ~vocab_size:30 ~show_progress:false
+    train_wordpiece ~pre:Pre_tokenizer.whitespace_split ~vocab_size:30
       (`Seq (List.to_seq train_corpus))
   in
   equal ~msg:"a trained word is one token, an unseen one is split" (list string)
     [ "newest"; "low"; "##est" ]
     (encode tokenizer "newest lowest" |> Encoding.tokens |> Array.to_list)
 
-let test_train_wordlevel_words () =
+let test_train_word_level_words () =
   let corpus = `Seq (List.to_seq [ "a a a b b c" ]) in
   let encoded =
-    train_wordlevel
+    train_word_level
       ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-      ~vocab_size:20 ~show_progress:false corpus
+      ~vocab_size:20 corpus
   in
   equal ~msg:"the words are the byte-level pieces" (list string)
     [ "a"; "Ġa"; "Ġb"; "Ġc" ]
     (sorted_vocab encoded);
-  let whole = train_wordlevel ~vocab_size:20 ~show_progress:false corpus in
+  let whole = train_word_level ~vocab_size:20 corpus in
   equal ~msg:"with no pre-tokenizer a text is one word" (list string)
     [ "a a a b b c" ] (sorted_vocab whole)
 
-let test_train_wordlevel_specials () =
+let test_train_word_level_specials () =
   (* The special tokens take the first ids and count against [vocab_size], so
      the words are numbered after them and one of the three drops out. *)
   let tokenizer =
-    train_wordlevel
-      ~pre:(Pre_tokenizer.whitespace_split ())
+    train_word_level ~pre:Pre_tokenizer.whitespace_split
       ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]" ])
-      ~vocab_size:4 ~show_progress:false
+      ~vocab_size:4
       (`Seq (List.to_seq [ "a a a b b c" ]))
   in
   equal ~msg:"vocabulary"
@@ -708,8 +700,7 @@ let test_train_line_separators () =
   let tokenizer =
     Fun.protect
       ~finally:(fun () -> Sys.remove path)
-      (fun () ->
-        train_wordlevel ~vocab_size:20 ~show_progress:false (`Files [ path ]))
+      (fun () -> train_word_level ~vocab_size:20 (`Files [ path ]))
   in
   equal ~msg:"the words are the lines, separators and all" (list string)
     [ "\n"; "a b\n"; "c d\r\n"; "e f" ]
@@ -719,7 +710,7 @@ let test_train_unigram_words () =
   let tokenizer =
     train_unigram
       ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-      ~vocab_size:20 ~show_progress:false
+      ~vocab_size:20
       (`Seq (List.to_seq [ "low lower low" ]))
   in
   equal ~msg:"the words are the byte-level pieces" (list string)
@@ -737,7 +728,7 @@ let test_byte_level_after_a_split () =
       ~pre:
         (Pre_tokenizer.sequence
            [
-             Pre_tokenizer.whitespace_split ();
+             Pre_tokenizer.whitespace_split;
              Pre_tokenizer.byte_level ~add_prefix_space:true ();
            ])
       ~vocab:[ ("Ġa", 0); ("Ġb", 1); ("Ġ", 2); ("a", 3); ("b", 4) ]
@@ -871,8 +862,7 @@ let test_batch_ids_without_affixes () =
   let tokenizer =
     word_level
       ~vocab:[ ("the", 0); ("cat", 1); ("sat", 2); ("[SEP]", 3); ("[UNK]", 4) ]
-      ~pre:(Pre_tokenizer.whitespace ())
-      ~unk_token:"[UNK]"
+      ~pre:Pre_tokenizer.whitespace ~unk_token:"[UNK]"
       ~post:
         (Post_processor.template ~single:"$A [SEP] $A"
            ~special_tokens:[ ("[SEP]", 3) ]
@@ -932,8 +922,7 @@ let test_batch_ids_cut_avoids_added_tokens () =
           ("mat", 6);
           ("[UNK]", 7);
         ]
-      ~pre:(Pre_tokenizer.whitespace ())
-      ~unk_token:"[UNK]"
+      ~pre:Pre_tokenizer.whitespace ~unk_token:"[UNK]"
       ~added_tokens:
         [
           added_token ~special:false ~single_word:true " world";
@@ -967,7 +956,7 @@ let test_batch_ids_uncut_under_normalizer () =
   let tokenizer =
     word_level
       ~normalizer:(Normalizer.replace ~pattern:"e c" ~replacement:"ec")
-      ~pre:(Pre_tokenizer.whitespace ())
+      ~pre:Pre_tokenizer.whitespace
       ~vocab:[ ("the", 0); ("cat", 1); ("thecat", 2); ("[UNK]", 3) ]
       ~unk_token:"[UNK]" ()
   in
@@ -1045,8 +1034,7 @@ let test_batch_worker_failure () =
           ("r", -5.);
           ("d", -5.);
         ]
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~pre:Pre_tokenizer.whitespace ()
   in
   let mib = 1024 * 1024 in
   let good = List.init 8 (fun _ -> repeat "hello world " (2 * mib)) in
@@ -1142,8 +1130,8 @@ let tokenization_tests =
     test "skip special tokens" test_skip_special_tokens;
     (* Training *)
     test "wordpiece trains on pre-tokens" test_train_wordpiece_words;
-    test "wordlevel trains on pre-tokens" test_train_wordlevel_words;
-    test "wordlevel special token ids" test_train_wordlevel_specials;
+    test "wordlevel trains on pre-tokens" test_train_word_level_words;
+    test "wordlevel special token ids" test_train_word_level_specials;
     test "a line keeps its separator" test_train_line_separators;
     test "unigram trains on pre-tokens" test_train_unigram_words;
   ]

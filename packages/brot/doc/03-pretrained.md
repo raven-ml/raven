@@ -43,13 +43,13 @@ open Brot
 let tokenizer =
   from_model_file ~vocab:"vocab.json" ~merges:"merges.txt"
     ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-    ~decoder:(Decoder.byte_level ())
+    ~decoder:(Decoder.byte_level)
     ()
 
 (* WordPiece: vocab only, no merges *)
 let tokenizer =
   from_model_file ~vocab:"vocab.txt"
-    ~pre:(Pre_tokenizer.bert ())
+    ~pre:(Pre_tokenizer.bert)
     ~decoder:(Decoder.wordpiece ())
     ()
 ```
@@ -83,8 +83,8 @@ let tokenizer =
         ("play", 9); ("##ing", 10); ("##ed", 11); ("a", 12);
         ("is", 13); ("good", 14) ]
     ~normalizer:(Normalizer.bert ~lowercase:true ())
-    ~pre:(Pre_tokenizer.bert ())
-    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
+    ~pre:(Pre_tokenizer.bert)
+    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3))
     ~decoder:(Decoder.wordpiece ())
     ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]" ()
@@ -116,7 +116,7 @@ let tokenizer =
         ("Ġ", "w"); ("o", "r"); ("l", "d"); ("or", "ld");
         ("Ġw", "orld") ]
     ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-    ~decoder:(Decoder.byte_level ())
+    ~decoder:(Decoder.byte_level)
     ()
 
 let enc = encode tokenizer "Hello world"
@@ -184,8 +184,7 @@ let tokenizer =
   train_bpe
     ~vocab_size:120
     ~min_frequency:1
-    ~show_progress:false
-    ~pre:(Pre_tokenizer.whitespace ())
+    ~pre:(Pre_tokenizer.whitespace)
     ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]"
     (`Seq (List.to_seq

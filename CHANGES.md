@@ -1087,6 +1087,20 @@ thread.
 
 ### Brot
 
+- **Breaking:** Tidy the public API: `encode_pairs_batch` is now
+  `encode_batch_pairs`, `from_json` is `of_json` and `train_wordlevel` is
+  `train_word_level`; `Pre_tokenizer.whitespace`, `whitespace_split`, `bert`,
+  `unicode_scripts` and `Decoder.byte_level`, `byte_fallback`, `fuse` are
+  plain values; `Post_processor.bert` drops its `unit`; `Encoding.concat`
+  takes a list, replacing `concat_list`; `save_model_files` is
+  `?prefix -> t -> folder:string -> string list`, dropping its `unit`.
+- **Breaking:** Remove the trainer options that did nothing: `?show_progress`
+  on all four trainers, and `?shrinking_factor`, `?max_piece_length` and
+  `?n_sub_iterations` on `train_unigram`.
+- `Encoding.create` now validates that its seven arrays share one length and
+  raises `Invalid_argument`, instead of crashing later on mismatched arrays.
+- Add `Encoding.pp`, formatting an encoding as a table of tokens, ids,
+  offsets, word ids and masks.
 - The BPE pretoken cache gained a small resident front table (128 KB,
   direct-mapped, filled by promoting the main table's hits) probed before the
   8 MB main table, cutting its memory traffic on large corpora.

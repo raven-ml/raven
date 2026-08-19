@@ -40,6 +40,15 @@ let empty =
 
 let create ~ids ~type_ids ~tokens ~words ~offsets ~special_tokens_mask
     ~attention_mask ?(overflowing = []) () =
+  let n = Array.length ids in
+  if
+    Array.length type_ids <> n
+    || Array.length tokens <> n
+    || Array.length words <> n
+    || Array.length offsets <> n
+    || Array.length special_tokens_mask <> n
+    || Array.length attention_mask <> n
+  then invalid_arg "Encoding.create: arrays must all have the same length";
   {
     ids;
     type_ids;
@@ -130,7 +139,7 @@ let gather total encodings read fill =
     encodings;
   dst
 
-let concat_list encodings =
+let concat encodings =
   match encodings with
   | [] -> empty
   | [ single ] -> single
@@ -163,8 +172,6 @@ let concat_list encodings =
         overflowing = first.overflowing;
         sequence_ranges = first.sequence_ranges;
       }
-
-let concat a b = concat_list [ a; b ]
 
 let with_type_id t type_id =
   { t with type_ids = Array.make (Array.length t.ids) type_id }
@@ -269,3 +276,23 @@ let rec pad t ~target_length ~pad_id ~pad_type_id ~pad_token ~direction =
       overflowing;
       sequence_ranges;
     }
+
+(* Formatting *)
+
+let pp ppf t =
+  let tokens = tokens t and offsets = offsets t and words = word_ids t in
+  let token_width =
+    Array.fold_left
+      (fun acc token -> max acc (String.length token))
+      (String.length "Token") tokens
+  in
+  Format.fprintf ppf "@[<v>%-5s %-*s %6s %-12s %5s %5s %5s %8s" "Index"
+    token_width "Token" "ID" "Offsets" "Word" "Type" "Attn" "Special";
+  for i = 0 to length t - 1 do
+    let start, stop = offsets.(i) in
+    let word = match words.(i) with Some w -> string_of_int w | None -> "-" in
+    Format.fprintf ppf "@,%-5d %-*s %6d (%4d,%4d) %5s %5d %5d %8d" i token_width
+      tokens.(i) t.ids.(i) start stop word t.type_ids.(i) t.attention_mask.(i)
+      t.special_tokens_mask.(i)
+  done;
+  Format.fprintf ppf "@]"

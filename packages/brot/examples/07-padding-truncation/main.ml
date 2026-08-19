@@ -35,9 +35,7 @@ let () =
   let tokenizer =
     word_level ~vocab ~unk_token:"<unk>"
       ~added_tokens:[ added_token "[PAD]" ]
-      ~pad_token:"[PAD]"
-      ~pre:(Pre_tokenizer.whitespace ())
-      ()
+      ~pad_token:"[PAD]" ~pre:Pre_tokenizer.whitespace ()
   in
 
   let texts = [ "hello"; "hello world"; "how are you doing today" ] in

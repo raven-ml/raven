@@ -220,7 +220,7 @@ let test_pair_without_special_tokens () =
     Post_processor.process processor ~pair:seq_b seq_a ~add_special_tokens:false
   in
   let bert =
-    merged (Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) ())
+    merged (Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101))
   in
   equal ~msg:"bert ids" (array int) [| 10; 11; 20 |] (Encoding.ids bert);
   equal ~msg:"bert type ids" (array int) [| 0; 0; 1 |] (Encoding.type_ids bert);
@@ -248,7 +248,7 @@ let test_pair_with_special_tokens () =
     Post_processor.process processor ~pair:seq_b seq_a ~add_special_tokens:true
   in
   let bert =
-    merged (Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) ())
+    merged (Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101))
   in
   equal ~msg:"bert ids" (array int)
     [| 101; 10; 11; 102; 20; 102 |]

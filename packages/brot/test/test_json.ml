@@ -123,9 +123,9 @@ let test_normalizer_regex_json () =
 let decoders =
   [
     (Decoder.bpe (), {|{"type":"BPEDecoder","suffix":"</w>"}|});
-    ( Decoder.byte_level (),
+    ( Decoder.byte_level,
       {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":true}|} );
-    (Decoder.byte_fallback (), {|{"type":"ByteFallback"}|});
+    (Decoder.byte_fallback, {|{"type":"ByteFallback"}|});
     (Decoder.wordpiece (), {|{"type":"WordPiece","prefix":"##","cleanup":true}|});
     ( Decoder.metaspace (),
       {|{"type":"Metaspace","replacement":"|} ^ marker
@@ -140,7 +140,7 @@ let decoders =
       ^ {|"},"content":" "}|} );
     ( Decoder.strip ~content:" " ~start:1 (),
       {|{"type":"Strip","content":" ","start":1,"stop":0}|} );
-    (Decoder.fuse (), {|{"type":"Fuse"}|});
+    (Decoder.fuse, {|{"type":"Fuse"}|});
   ]
 
 let test_decoder_json () =
@@ -223,7 +223,7 @@ let test_pretrained_decoder_json () =
    below was read back by [Tokenizer.from_str] as the same processor. *)
 let post_processors =
   [
-    ( Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) (),
+    ( Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101),
       {|{"type":"BertProcessing","sep":["[SEP]",102],"cls":["[CLS]",101]}|} );
     ( Post_processor.roberta ~sep:("</s>", 2) ~cls:("<s>", 0) (),
       {|{"type":"RobertaProcessing","sep":["</s>",2],"cls":["<s>",0],"trim_offsets":true,"add_prefix_space":true}|}
@@ -248,7 +248,7 @@ let post_processors =
     ( Post_processor.sequence
         [
           Post_processor.byte_level ();
-          Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) ();
+          Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101);
         ],
       {|{"type":"Sequence","processors":[{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":true},{"type":"BertProcessing","sep":["[SEP]",102],"cls":["[CLS]",101]}]}|}
     );
@@ -327,12 +327,12 @@ let tokenizer_text model =
     model
 
 let load text =
-  match from_json (json_of_text text) with
+  match of_json (json_of_text text) with
   | Ok t -> t
   | Error msg -> failf "cannot load %s: %s" text msg
 
 let reload t =
-  match from_json (to_json t) with
+  match of_json (to_json t) with
   | Ok t -> t
   | Error msg -> failf "cannot reload: %s" msg
 

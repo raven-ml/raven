@@ -54,8 +54,8 @@ Training BPE:
 open Brot
 
 let tokenizer =
-  train_bpe ~vocab_size:80 ~min_frequency:1 ~show_progress:false
-    ~pre:(Pre_tokenizer.whitespace ())
+  train_bpe ~vocab_size:80 ~min_frequency:1
+    ~pre:(Pre_tokenizer.whitespace)
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the brown fox";
@@ -88,7 +88,7 @@ let tokenizer =
       [ ("[UNK]", 0); ("the", 1); ("cat", 2); ("play", 3);
         ("##ing", 4); ("##ed", 5); ("##s", 6); ("un", 7);
         ("##happy", 8); ("##ly", 9) ]
-    ~pre:(Pre_tokenizer.whitespace ())
+    ~pre:(Pre_tokenizer.whitespace)
     ~decoder:(Decoder.wordpiece ())
     ~unk_token:"[UNK]" ()
 
@@ -105,8 +105,8 @@ Training WordPiece:
 open Brot
 
 let tokenizer =
-  train_wordpiece ~vocab_size:80 ~show_progress:false
-    ~pre:(Pre_tokenizer.whitespace ())
+  train_wordpiece ~vocab_size:80
+    ~pre:(Pre_tokenizer.whitespace)
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
          "The dog barked at the brown fox";
@@ -120,16 +120,15 @@ let enc = encode tokenizer "The brown fox"
 
 Unigram uses probabilistic segmentation: given a vocabulary of subwords
 with log-probabilities, it finds the segmentation that maximizes the
-total likelihood. Training uses the EM algorithm to iteratively prune the
-vocabulary. Used by T5, ALBERT, mBART, and XLNet.
+total likelihood. Used by T5, ALBERT, mBART, and XLNet.
 
-Constructor: `Brot.unigram`. Trainer: `Brot.train_unigram`.
+Constructor: `Brot.unigram`. Trainer: `Brot.train_unigram` — note that the
+EM training of the unigram model is not implemented: the trainer keeps the
+most frequent whole words, scored by how often they occur, and never
+proposes a subword piece.
 
 Key parameters:
 - `vocab_size` — target vocabulary size (default: 8000)
-- `shrinking_factor` — fraction of vocabulary to retain per pruning round (default: 0.75)
-- `max_piece_length` — maximum subword length (default: 16)
-- `n_sub_iterations` — EM sub-iterations per pruning round (default: 2)
 
 Vocabulary entries are `(token, score)` pairs where scores are
 log-probabilities (negative numbers). An entry is identified by its
@@ -165,8 +164,8 @@ its pieces do not cover on their own.
 open Brot
 
 let tokenizer =
-  train_unigram ~vocab_size:60 ~show_progress:false
-    ~pre:(Pre_tokenizer.whitespace ())
+  train_unigram ~vocab_size:60
+    ~pre:(Pre_tokenizer.whitespace)
     ~added_tokens:[ added_token "<unk>" ] ~unk_token:"<unk>"
     (`Seq (List.to_seq
        [ "The quick brown fox jumps over the lazy dog";
@@ -183,7 +182,7 @@ Word-level tokenization maps each word directly to a token ID. No
 subword splitting is performed — words not in the vocabulary are replaced
 by the unknown token.
 
-Constructor: `Brot.word_level`. Trainer: `Brot.train_wordlevel`.
+Constructor: `Brot.word_level`. Trainer: `Brot.train_word_level`.
 
 Best suited for small controlled vocabularies and prototyping. For
 production use with open vocabulary, prefer a subword algorithm.
@@ -236,5 +235,5 @@ let ids = Encoding.ids enc       (* [| 72; 105; 33 |] *)
 | BPE             | Iterative merge of frequent pairs         | 30K-50K       | GPT-2, RoBERTa, LLaMA     | `bpe`        | `train_bpe`       |
 | WordPiece       | Greedy longest-match with `##` prefix     | 30K           | BERT, DistilBERT, Electra | `wordpiece`  | `train_wordpiece` |
 | Unigram         | Probabilistic max-likelihood segmentation | 8K-32K        | T5, ALBERT, mBART, XLNet  | `unigram`    | `train_unigram`   |
-| Word-level      | Whole words, no splitting                 | Varies        | Simple models             | `word_level` | `train_wordlevel` |
+| Word-level      | Whole words, no splitting                 | Varies        | Simple models             | `word_level` | `train_word_level` |
 | Character-level | Each byte is a token                      | 256           | Byte-level models         | `chars`      | —                 |

@@ -214,7 +214,7 @@ let test_json_round_trip () =
       ~unk_id:0 ~byte_fallback:true ~unk_token:"<unk>" ()
   in
   let json = to_json t in
-  (match from_json json with
+  (match of_json json with
   | Ok reloaded -> case reloaded "a\xe2\x80\x8bb" [ 1; 229; 131; 142; 2 ]
   | Error msg -> failf "cannot reload: %s" msg);
   let model_text =

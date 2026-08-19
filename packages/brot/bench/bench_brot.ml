@@ -76,8 +76,8 @@ let pre_tokenizer_suite =
   Thumper.group "Pre-tokenize"
     [
       case "byte_level" (Pre_tokenizer.byte_level ());
-      case "bert" (Pre_tokenizer.bert ());
-      case "whitespace" (Pre_tokenizer.whitespace ());
+      case "bert" Pre_tokenizer.bert;
+      case "whitespace" Pre_tokenizer.whitespace;
       case "metaspace" (Pre_tokenizer.metaspace ());
       Thumper.bench "byte_level/short" (fun () ->
           Pre_tokenizer.pre_tokenize (Pre_tokenizer.byte_level ()) short_text);

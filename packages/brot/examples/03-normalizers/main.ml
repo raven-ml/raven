@@ -43,11 +43,10 @@ let () =
     [ ("hello", 0); ("world", 1); ("cafe", 2); ("resume", 3); ("<unk>", 4) ]
   in
   let no_norm =
-    word_level ~vocab ~unk_token:"<unk>" ~pre:(Pre_tokenizer.whitespace ()) ()
+    word_level ~vocab ~unk_token:"<unk>" ~pre:Pre_tokenizer.whitespace ()
   in
   let with_norm =
-    word_level ~vocab ~unk_token:"<unk>"
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~vocab ~unk_token:"<unk>" ~pre:Pre_tokenizer.whitespace
       ~normalizer:composed ()
   in
 

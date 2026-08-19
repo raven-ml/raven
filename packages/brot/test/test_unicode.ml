@@ -1002,8 +1002,7 @@ let test_tokenize_with_normalization () =
       ]
   in
   let tokenizer =
-    word_level ~normalizer
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~normalizer ~pre:Pre_tokenizer.whitespace
       ~vocab:[ ("hello", 0); ("world", 1); ("!", 2) ]
       ()
   in
@@ -1014,8 +1013,7 @@ let test_tokenize_with_normalization () =
 let test_tokenize_unicode_words () =
   let text = "café résumé naïve" in
   let tokenizer =
-    word_level
-      ~pre:(Pre_tokenizer.whitespace ())
+    word_level ~pre:Pre_tokenizer.whitespace
       ~vocab:[ ("café", 0); ("résumé", 1); ("naïve", 2) ]
       ()
   in

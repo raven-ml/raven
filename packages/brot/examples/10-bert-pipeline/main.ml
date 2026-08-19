@@ -61,8 +61,8 @@ let () =
   let tokenizer =
     wordpiece ~vocab ~unk_token:"[UNK]"
       ~normalizer:(Normalizer.bert ~lowercase:true ())
-      ~pre:(Pre_tokenizer.bert ())
-      ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
+      ~pre:Pre_tokenizer.bert
+      ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3))
       ~decoder:(Decoder.wordpiece ()) ~added_tokens ~pad_token:"[PAD]" ()
   in
 
@@ -91,7 +91,7 @@ let () =
   (* Sentence pairs batch with padding and truncation *)
   Printf.printf "=== Sentence Pairs (pad=12, trunc=12) ===\n\n";
   let pairs =
-    encode_pairs_batch tokenizer
+    encode_batch_pairs tokenizer
       ~padding:(padding (`Fixed 12))
       ~truncation:(truncation 12)
       [ ("the cat sat", "how are you"); ("good dog", "is a friend") ]

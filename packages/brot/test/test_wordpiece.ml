@@ -107,7 +107,7 @@ let test_wordpiece_save_load () =
 
   (* Save the model *)
   let temp_dir = Filename.temp_dir "wordpiece_test" "" in
-  let files = save_model_files tokenizer ~folder:temp_dir () in
+  let files = save_model_files tokenizer ~folder:temp_dir in
 
   (* Load the model *)
   let vocab_file = List.find (fun f -> Filename.check_suffix f ".txt") files in

@@ -56,8 +56,8 @@ let text = decode tokenizer ids
 let tokenizer =
   wordpiece ~vocab
     ~normalizer:(Normalizer.bert ~lowercase:true ())
-    ~pre:(Pre_tokenizer.bert ())
-    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
+    ~pre:(Pre_tokenizer.bert)
+    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3))
     ~decoder:(Decoder.wordpiece ())
     ~added_tokens:(List.map added_token [ "[CLS]"; "[SEP]"; "[PAD]" ])
     ~pad_token:"[PAD]" ()
@@ -68,5 +68,5 @@ let tokenizer =
 ```ocaml
 let tokenizer =
   train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
-    ~pre:(Pre_tokenizer.whitespace ())
+    ~pre:(Pre_tokenizer.whitespace)
 ```

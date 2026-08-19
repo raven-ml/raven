@@ -17,7 +17,9 @@
 
     {!val-tokens}, {!val-word_ids} and {!val-offsets} are derived when they are
     first asked for and kept afterwards: a caller that only reads {!val-ids}
-    pays for none of them. *)
+    pays for none of them. Deriving is a mutation: do not race the first read of
+    {!val-tokens}, {!val-offsets} or {!val-word_ids} from several domains — read
+    them from one domain, or read them before sharing. *)
 
 type t
 (** The type for tokenization encodings. *)
@@ -39,26 +41,16 @@ val create :
   unit ->
   t
 (** [create ~ids ~type_ids ~tokens ~words ~offsets ~special_tokens_mask
-     ~attention_mask ()] is an encoding from the given arrays.
+     ~attention_mask ()] is an encoding from the given arrays. [overflowing]
+    defaults to [[]].
 
-    All arrays must have the same length; no validation is performed.
-    [overflowing] defaults to [[]]. *)
+    Raises [Invalid_argument] if the seven arrays do not all have the same
+    length. *)
 
-val token :
-  id:int -> token:string -> offset:int * int -> type_id:int -> special:bool -> t
-(** [token ~id ~token ~offset ~type_id ~special] is a single-token encoding.
-    When [special] is [true], {!val-special_tokens_mask} is [1] and
-    {!val-word_ids} is [None]; otherwise {!val-special_tokens_mask} is [0].
-    {!val-attention_mask} is always [1]. *)
-
-val concat : t -> t -> t
-(** [concat a b] is the encoding with [a]'s tokens followed by [b]'s.
-    {!val-overflowing} and sequence ranges are taken from [a]. *)
-
-val concat_list : t list -> t
-(** [concat_list encs] is the concatenation of [encs] in order.
-    {!val-overflowing} and sequence ranges are taken from the first element.
-    Allocates once rather than creating intermediate arrays per pair. *)
+val concat : t list -> t
+(** [concat encs] is the encoding with the tokens of each element of [encs] in
+    order. {!val-overflowing} is taken from the first element. Allocates once
+    rather than creating intermediate arrays per pair. *)
 
 (** {1:access Accessors} *)
 
@@ -141,16 +133,34 @@ val pad :
     Padding tokens have {!val-attention_mask} [0] and {!val-special_tokens_mask}
     [1]. If [length enc >= target_length], [enc] is returned unchanged. Padding
     is applied recursively to {!val-overflowing} encodings. When [direction] is
-    [`Left], {!val-offsets} and sequence ranges are shifted accordingly. *)
+    [`Left], {!val-offsets} are shifted accordingly. *)
 
-(** {1:internals Internals}
+(** {1:fmt Formatting} *)
 
-    Building an encoding from the run of spans the encode path produced. [Run.t]
-    belongs to a module the library does not export, so {!of_run} has no caller
-    outside it. *)
+val pp : Format.formatter -> t -> unit
+(** [pp ppf enc] formats [enc] as a table for inspection, one row per token:
+    index, token, ID, byte offsets, word ID, type ID, attention and
+    special-token masks. Reading the table forces the derived {!val-tokens},
+    {!val-offsets} and {!val-word_ids}. *)
+
+(**/**)
+
+(* Internals. Building an encoding from the run of spans the encode path
+   produced; [Run.t] belongs to a module the library does not export, so
+   [of_run] has no caller outside it. [token]'s only caller is
+   [post_processor.ml]. *)
+
+val token :
+  id:int -> token:string -> offset:int * int -> type_id:int -> special:bool -> t
+(** [token ~id ~token ~offset ~type_id ~special] is a single-token encoding.
+    When [special] is [true], {!val-special_tokens_mask} is [1] and
+    {!val-word_ids} is [None]; otherwise {!val-special_tokens_mask} is [0].
+    {!val-attention_mask} is always [1]. *)
 
 val of_run : Run.t -> ids:int array -> t
 (** [of_run run ~ids] is the encoding of [ids], whose {!val-tokens},
     {!val-word_ids} and {!val-offsets} are derived from [run] when they are
     asked for. Every token gets type id [0], {!val-attention_mask} [1] and
     {!val-special_tokens_mask} [0]. *)
+
+(**/**)

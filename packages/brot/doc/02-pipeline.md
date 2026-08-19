@@ -121,11 +121,11 @@ open Brot
 let text = "Hello, world! How's it going?"
 
 let whitespace_pieces =
-  Pre_tokenizer.pre_tokenize (Pre_tokenizer.whitespace ()) text
+  Pre_tokenizer.pre_tokenize (Pre_tokenizer.whitespace) text
 (* [("Hello", (0,5)); (",", (5,6)); ("world", (7,12)); ("!", (12,13)); ...] *)
 
 let bert_pieces =
-  Pre_tokenizer.pre_tokenize (Pre_tokenizer.bert ()) text
+  Pre_tokenizer.pre_tokenize (Pre_tokenizer.bert) text
 
 let punct_pieces =
   Pre_tokenizer.pre_tokenize (Pre_tokenizer.punctuation ()) text
@@ -139,7 +139,7 @@ open Brot
 
 let pre =
   Pre_tokenizer.sequence
-    [ Pre_tokenizer.whitespace_split (); Pre_tokenizer.digits () ]
+    [ Pre_tokenizer.whitespace_split; Pre_tokenizer.digits () ]
 
 let pieces = Pre_tokenizer.pre_tokenize pre "order 42 shipped"
 (* [("order", _); ("4", _); ("2", _); ("shipped", _)] *)
@@ -184,8 +184,8 @@ let tokenizer =
       [ ("[UNK]", 0); ("[CLS]", 1); ("[SEP]", 2);
         ("the", 3); ("cat", 4); ("sat", 5); ("how", 6); ("are", 7); ("you", 8) ]
     ~added_tokens:(List.map added_token [ "[UNK]"; "[CLS]"; "[SEP]" ])
-    ~pre:(Pre_tokenizer.whitespace ())
-    ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2) ())
+    ~pre:(Pre_tokenizer.whitespace)
+    ~post:(Post_processor.bert ~cls:("[CLS]", 1) ~sep:("[SEP]", 2))
     ~decoder:(Decoder.wordpiece ())
     ~unk_token:"[UNK]" ()
 
@@ -210,7 +210,7 @@ let tokenizer =
     ~vocab:
       [ ("[BOS]", 0); ("[EOS]", 1); ("hello", 2); ("world", 3) ]
     ~added_tokens:(List.map added_token [ "[BOS]"; "[EOS]" ])
-    ~pre:(Pre_tokenizer.whitespace ())
+    ~pre:(Pre_tokenizer.whitespace)
     ~post:
       (Post_processor.template
          ~single:"[BOS]:0 $A:0 [EOS]:0"
@@ -259,7 +259,7 @@ let text = Decoder.decode wp [ "[CLS]"; "play"; "##ing"; "cat"; "##s"; "[SEP]" ]
 (* "[CLS] playing cats [SEP]" *)
 
 (* Sequence of decoders *)
-let seq = Decoder.sequence [ Decoder.fuse (); Decoder.replace ~pattern:"_" ~by:" " () ]
+let seq = Decoder.sequence [ Decoder.fuse; Decoder.replace ~pattern:"_" ~by:" " () ]
 let text2 = Decoder.decode seq [ "_Hello"; "_world" ]
 (* " Hello world" *)
 ```
@@ -279,7 +279,7 @@ let tokenizer =
     (* 1. Normalizer: lowercase and clean text *)
     ~normalizer:(Normalizer.bert ~lowercase:true ())
     (* 2. Pre-tokenizer: BERT-style splitting *)
-    ~pre:(Pre_tokenizer.bert ())
+    ~pre:(Pre_tokenizer.bert)
     (* 3. Algorithm: WordPiece with ## prefix *)
     ~vocab:
       [ ("[PAD]", 0); ("[UNK]", 1); ("[CLS]", 2); ("[SEP]", 3);
@@ -288,7 +288,7 @@ let tokenizer =
     ~added_tokens:(List.map added_token [ "[PAD]"; "[UNK]"; "[CLS]"; "[SEP]" ])
     ~unk_token:"[UNK]" ~pad_token:"[PAD]"
     (* 4. Post-processor: add [CLS] and [SEP] *)
-    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
+    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3))
     (* 5. Decoder: strip ## and join *)
     ~decoder:(Decoder.wordpiece ())
     ()

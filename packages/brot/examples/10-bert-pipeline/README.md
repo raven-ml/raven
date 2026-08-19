@@ -14,7 +14,7 @@ dune exec brot/examples/10-bert-pipeline/main.exe
 - How all stages work together end-to-end
 - Single sentence and sentence-pair encoding
 - Batch encoding with padding
-- Sentence-pair batch encoding with `encode_pairs_batch`
+- Sentence-pair batch encoding with `encode_batch_pairs`
 - Decoding with and without special tokens
 - Inspecting tokenizer configuration with `Brot.pp`
 
@@ -28,7 +28,7 @@ dune exec brot/examples/10-bert-pipeline/main.exe
 | `Post_processor.bert`              | Insert `[CLS]` and `[SEP]` tokens             |
 | `Decoder.wordpiece`                | Reverse `##` prefix joining                   |
 | `Brot.encode ~pair`                | Encode a sentence pair                        |
-| `Brot.encode_pairs_batch`          | Batch-encode sentence pairs                   |
+| `Brot.encode_batch_pairs`          | Batch-encode sentence pairs                   |
 | `Brot.decode ~skip_special_tokens` | Decode without `[CLS]`/`[SEP]`                |
 | `Brot.pp`                          | Pretty-print tokenizer configuration          |
 
