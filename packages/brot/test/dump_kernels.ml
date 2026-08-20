@@ -8,9 +8,9 @@
    [Sys.backend_type] selects; both print this deterministic dump and the build
    diffs the two. Inputs cover every kernel exit: unclassified code points,
    malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
-   huge spans, more pretokens than a span chunk, bytes without an id,
-   [ignore_merges], caching off, and a merge whose result stands for other bytes
-   than its entry's.
+   huge spans, more pretokens than a span chunk, every exit at the staged
+   chunk's seams, bytes without an id, [ignore_merges], caching off, and a merge
+   whose result stands for other bytes than its entry's.
 
    An optional corpus path argument appends [encode_batch_ids] digests over that
    file split on <|endoftext|>, for dev-time runs over a large corpus. *)
@@ -194,18 +194,47 @@ let adversarial =
             Buffer.contents buf);
       ]
   in
+  (* Chunk-seam adversaries for the two-phase kernel: the entry loop stages 256
+     spans per chunk, so each family plants its event at span indices 250..262 —
+     an Encode hand-back, a Class hand-back (a code point per index, first met
+     there), identical adjacent pretokens (miss, store, hit across the harvest
+     seam) and a plain stream whose length lands on the seam.
+     [ids_full_midchunk] outgrows the driver's 65536-id reserve inside one call,
+     so Ids_full parks and resumes a chunk mid-stage. *)
+  let chunk_seams =
+    let spans k = String.concat "" (List.init k (fun _ -> " a")) in
+    let fam name shape =
+      List.init 13 (fun o ->
+          (Printf.sprintf "%s_%d" name (250 + o), shape (250 + o)))
+    in
+    List.concat
+      [
+        fam "seam_encode" (fun k ->
+            spans k ^ " " ^ String.make 20 'b' ^ spans 300);
+        fam "seam_class" (fun k ->
+            let buf = Buffer.create 1024 in
+            Buffer.add_string buf (spans k);
+            Buffer.add_utf_8_uchar buf (Uchar.of_int (0x2500 + k));
+            Buffer.add_string buf (spans 300);
+            Buffer.contents buf);
+        fam "seam_twin" (fun k -> spans k ^ " zq zq" ^ spans 300);
+        fam "seam_plain" spans;
+      ]
+  in
   cases
   @ [
       ("letters_100k", String.make 100_000 'x');
       ("spaces_100k", String.make 100_000 ' ');
       ( "pretokens_3000",
         String.concat " " (List.init 3000 (fun i -> Printf.sprintf "w%d" i)) );
+      ( "ids_full_midchunk",
+        String.concat "" (List.init 5000 (fun _ -> " abcdefghijklmn")) );
       ("random_ascii_512k", random_ascii 524_288);
       ("random_bytes_512k", random_bytes 524_288);
       ("random_utf8_512k", random_utf8 524_288);
       ("random_bytes_short", random_bytes 300);
     ]
-  @ batch_alignments
+  @ batch_alignments @ chunk_seams
 
 (* The parity corpora, whole and split into their documents. *)
 

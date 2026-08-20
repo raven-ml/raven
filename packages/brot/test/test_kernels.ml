@@ -8,9 +8,10 @@
    reference, so every expectation here is checked against both; the dump
    differential separately holds the two identical on adversarial input. Each
    case drives one hand-back or refusal: a document crossing the span chunk,
-   maximal multi-id spans, caching off, [ignore_merges], dropout (kernel not
-   selected), pretokens past the 15-byte key, bytes without an id, and a merge
-   whose result stands for other bytes than its entry's. *)
+   hand-backs at the staged chunk's seams, maximal multi-id spans, caching off,
+   [ignore_merges], dropout (kernel not selected), pretokens past the 15-byte
+   key, bytes without an id, and a merge whose result stands for other bytes
+   than its entry's. *)
 
 open Windtrap
 
@@ -49,8 +50,8 @@ let ids tok text = Brot.encode_ids tok ~add_special_tokens:false text
 let byte_ids text =
   Array.init (String.length text) (fun i -> Char.code text.[i])
 
-(* 1500 pretokens " a": crosses the 1024-span chunk, every span a cache hit of
-   one id. *)
+(* 1500 pretokens " a": crosses the 256-span staged chunk and the 1024-span
+   buffer, every span a cache hit of one id. *)
 let test_chunk_boundary () =
   let tok = simple () in
   let text = String.concat "" (List.init 1500 (fun _ -> " a")) in
@@ -99,6 +100,64 @@ let test_long_pretoken_hand_back () =
     words.(610);
   equal ~msg:"the span after the hand-back" (option int) (Some 601) words.(621)
 
+(* Pretoken counts at and around the 256-span chunk seam, exact ids each. *)
+let test_chunk_seam_lengths () =
+  let tok = simple () in
+  List.iter
+    (fun count ->
+      let text = String.concat "" (List.init count (fun _ -> " a")) in
+      equal
+        ~msg:(Printf.sprintf "%d pretokens" count)
+        (array int) (Array.make count space_a) (ids tok text))
+    [ 1; 255; 256; 257; 258; 511; 512; 513 ]
+
+(* An [Encode] hand-back at the first and at the last span of a staged chunk:
+   the exit parks the chunk and the re-entry after [encode_into] continues it
+   mid-stage. *)
+let test_encode_at_chunk_edges () =
+  let tok = simple () in
+  let long = String.make 20 'b' in
+  let long_ids = Array.append [| 32 |] (Array.make 20 (Char.code 'b')) in
+  List.iter
+    (fun k ->
+      let text =
+        String.concat ""
+          (List.init k (fun _ -> " a")
+          @ [ " "; long ]
+          @ List.init 300 (fun _ -> " a"))
+      in
+      let expect =
+        Array.concat [ Array.make k space_a; long_ids; Array.make 300 space_a ]
+      in
+      equal
+        ~msg:(Printf.sprintf "hand-back at span %d" k)
+        (array int) expect (ids tok text))
+    [ 0; 254; 255; 256; 257 ]
+
+(* A class hand-back right after an [Encode] resume: the chunk that was parked
+   by the hand-back drains, and the next harvest meets a code point classified
+   on demand. *)
+let test_class_after_encode_resume () =
+  let tok = simple () in
+  let buf = Buffer.create 1024 in
+  for _ = 1 to 255 do
+    Buffer.add_string buf " a"
+  done;
+  Buffer.add_string buf (" " ^ String.make 20 'b');
+  Buffer.add_utf_8_uchar buf (Uchar.of_int 0x2723);
+  Buffer.add_string buf " a";
+  let expect =
+    Array.concat
+      [
+        Array.make 255 space_a;
+        [| 32 |];
+        Array.make 20 (Char.code 'b');
+        [| 226; 156; 163 |];
+        [| space_a |];
+      ]
+  in
+  equal ~msg:"ids" (array int) expect (ids tok (Buffer.contents buf))
+
 (* 15-byte pretokens with no merges: chunks of maximal multi-id spans across the
    span-chunk boundary. The per-call ids reserve covers this consumption, so
    [Ids_full] itself does not fire here; the dump differential reaches it on its
@@ -115,10 +174,12 @@ let test_huge_span () =
   let text = String.make 8000 'c' in
   equal ~msg:"ids" (array int) (byte_ids text) (ids tok text)
 
+(* Caching off still stages and merges in C — the spans are unkeyed and the
+   probes skipped; 600 pretokens cross chunk seams in that shape. *)
 let test_cache_off () =
   let tok = simple ~cache_capacity:0 () in
-  let text = String.concat "" (List.init 100 (fun _ -> " a")) in
-  equal ~msg:"ids" (array int) (Array.make 100 space_a) (ids tok text)
+  let text = String.concat "" (List.init 600 (fun _ -> " a")) in
+  equal ~msg:"ids" (array int) (Array.make 600 space_a) (ids tok text)
 
 (* Under ignore_merges the kernel may not merge: misses hand back, the
    whole-word lookup answers for vocabulary words and the merges for the
@@ -250,8 +311,12 @@ let () =
       group "resume protocol"
         [
           test "a document crossing the span chunk" test_chunk_boundary;
+          test "pretoken counts at the chunk seam" test_chunk_seam_lengths;
           test "a long pretoken hands back between chunks"
             test_long_pretoken_hand_back;
+          test "hand-backs at the chunk's edges" test_encode_at_chunk_edges;
+          test "a class hand-back after an encode resume"
+            test_class_after_encode_resume;
           test "maximal multi-id spans across chunks" test_many_ids_per_span;
           test "a span larger than the ids buffer" test_huge_span;
         ];
