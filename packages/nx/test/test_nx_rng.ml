@@ -137,10 +137,10 @@ let test_uniform_half_open () =
     let hi, lo = scan name dt p n in
     equal
       ~msg:(name ^ " reaches 1 - 2^-p")
-      (float 0.0)
+      float_exact
       (1.0 -. Float.ldexp 1.0 (-p))
       hi;
-    equal ~msg:(name ^ " reaches 0") (float 0.0) 0.0 lo
+    equal ~msg:(name ^ " reaches 0") float_exact 0.0 lo
   in
   grid "float8_e5m2" float8_e5m2 3 2_000;
   grid "float8_e4m3" float8_e4m3 4 2_000;
@@ -280,7 +280,7 @@ let test_shuffle_preserves_shape () =
   Array.sort compare sorted_orig;
   Array.sort compare sorted_shuffled;
   equal ~msg:"shuffle preserves multiset"
-    (array (float 0.0))
+    (array float_exact)
     sorted_orig sorted_shuffled;
 
   let shuffled_again = Rng.with_key (Rng.key 7) (fun () -> shuffle x) in

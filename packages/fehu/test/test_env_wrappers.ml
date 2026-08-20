@@ -67,7 +67,7 @@ let test_reset_wrapper_clears_inner () =
   in
   let _obs, _info = Env.reset wrapped () in
   let step = Env.step env action_left in
-  equal ~msg:"inner step works" (float 0.0) 1.0 step.reward
+  equal ~msg:"inner step works" float_exact 1.0 step.reward
 
 (* map_observation *)
 
@@ -82,7 +82,7 @@ let test_map_observation_reset () =
       env
   in
   let obs, _info = Env.reset wrapped () in
-  equal ~msg:"doubled reset obs" (float 0.0) 10.0 (read_obs obs)
+  equal ~msg:"doubled reset obs" float_exact 10.0 (read_obs obs)
 
 let test_map_observation_step () =
   let env = make_test_env () in
@@ -97,7 +97,7 @@ let test_map_observation_step () =
   let _obs, _info = Env.reset wrapped () in
   let step = Env.step wrapped action_right in
   (* Inner: 5 + 1 = 6, doubled: 12 *)
-  equal ~msg:"doubled step obs" (float 0.0) 12.0 (read_obs step.observation)
+  equal ~msg:"doubled step obs" float_exact 12.0 (read_obs step.observation)
 
 let test_map_observation_id () =
   let env = make_test_env () in
@@ -125,7 +125,7 @@ let test_map_action_flip () =
   let _obs, _info = Env.reset wrapped () in
   (* Send left (0) to wrapper; inner sees right (1): 5 -> 6 *)
   let step = Env.step wrapped action_left in
-  equal ~msg:"flipped: left becomes right" (float 0.0) 6.0
+  equal ~msg:"flipped: left becomes right" float_exact 6.0
     (read_obs step.observation)
 
 let test_map_action_id () =
@@ -145,7 +145,7 @@ let test_map_reward () =
   in
   let _obs, _info = Env.reset wrapped () in
   let step = Env.step wrapped action_right in
-  equal ~msg:"doubled reward" (float 0.0) 2.0 step.reward
+  equal ~msg:"doubled reward" float_exact 2.0 step.reward
 
 let test_map_reward_id () =
   let env = make_test_env () in
@@ -181,9 +181,9 @@ let test_clip_action () =
   let wrapped = Env.clip_action env in
   let _obs, _info = Env.reset wrapped () in
   let _step = Env.step wrapped (Nx.create Nx.float32 [| 1 |] [| 2.0 |]) in
-  equal ~msg:"clamped to upper" (float 0.0) 1.0 !last_action;
+  equal ~msg:"clamped to upper" float_exact 1.0 !last_action;
   let _step = Env.step wrapped (Nx.create Nx.float32 [| 1 |] [| -0.5 |]) in
-  equal ~msg:"clamped to lower" (float 0.0) 0.0 !last_action
+  equal ~msg:"clamped to lower" float_exact 0.0 !last_action
 
 (* clip_observation *)
 
@@ -212,19 +212,19 @@ let test_clip_observation () =
   (* Step right: inner obs = 8.0, clipped to 8.0 *)
   let s1 = Env.step wrapped action_right in
   let arr1 : float array = Nx.to_array (Nx.reshape [| 1 |] s1.observation) in
-  equal ~msg:"clipped to upper" (float 0.0) 8.0 arr1.(0);
+  equal ~msg:"clipped to upper" float_exact 8.0 arr1.(0);
   let _obs, _info = Env.reset wrapped () in
   (* Step left: inner obs = 2.0, within bounds *)
   let s2 = Env.step wrapped action_left in
   let arr2 : float array = Nx.to_array (Nx.reshape [| 1 |] s2.observation) in
-  equal ~msg:"within bounds" (float 0.0) 2.0 arr2.(0)
+  equal ~msg:"within bounds" float_exact 2.0 arr2.(0)
 
 let test_clip_observation_space () =
   let env = make_box_obs_env () in
   let wrapped = Env.clip_observation ~low:[| 2.0 |] ~high:[| 8.0 |] env in
   let low, high = Space.Box.bounds (Env.observation_space wrapped) in
-  equal ~msg:"clipped low" (array (float 0.0)) [| 2.0 |] low;
-  equal ~msg:"clipped high" (array (float 0.0)) [| 8.0 |] high
+  equal ~msg:"clipped low" (array float_exact) [| 2.0 |] low;
+  equal ~msg:"clipped high" (array float_exact) [| 8.0 |] high
 
 (* time_limit *)
 

@@ -170,15 +170,19 @@ let model_tests =
           let out = forward m tokens in
           equal (list int) [ 1 ] (Tensor.shape out);
           let id = Run.item_int out in
-          is_true (id >= 0 && id < vocab_size));
-      test "prompt-mode generation is deterministic" (fun () ->
+          satisfies
+            ~claim:(Printf.sprintf "a token id in [0, %d)" vocab_size)
+            int
+            (fun id -> id >= 0 && id < vocab_size)
+            id);
+      slow "prompt-mode generation is deterministic" (fun () ->
           let m = build () in
           State.load_state_dict (state_dict m) (random_state_dict m);
           let a = generate m [ 10; 20; 30 ] 4 in
           let b = generate m [ 10; 20; 30 ] 4 in
           equal (list int) a b;
           equal int 7 (List.length a));
-      test "seeded sampling is deterministic and seed-sensitive" (fun () ->
+      slow "seeded sampling is deterministic and seed-sensitive" (fun () ->
           let m = build () in
           State.load_state_dict (state_dict m) (random_state_dict m);
           let sample seed =

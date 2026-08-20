@@ -17,7 +17,7 @@ let shapes seq = List.of_seq (Seq.map (fun b -> Array.to_list (Nx.shape b)) seq)
 let elements seq =
   List.concat_map (fun b -> Array.to_list (Nx.to_array b)) (List.of_seq seq)
 
-let exact = float 0.
+let exact = float_exact
 let sorted l = List.sort Float.compare l
 
 (* Batch shapes *)

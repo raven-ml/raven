@@ -199,7 +199,7 @@ let jit_tests =
           equal int 5 (List.length (List.sort_uniq Float.compare r1));
           Rand.manual_seed 1234;
           let r2 = five_draws a b in
-          equal (list (float 0.)) r1 r2;
+          equal (list float_exact) r1 r2;
           Rand.manual_seed 3421;
           let r3 = five_draws a b in
           equal int 5 (List.length (List.sort_uniq Float.compare r3));
@@ -257,7 +257,7 @@ let dropout_tests =
               let a = Run.to_float_array (Rand.dropout (Cr.ones [ 32 ])) in
               Rand.manual_seed 123;
               let b = Run.to_float_array (Rand.dropout (Cr.ones [ 32 ])) in
-              equal (array (float 0.)) a b));
+              equal (array float_exact) a b));
       test "survivors scale by 1/(1-p)" (fun () ->
           with_training (fun () ->
               Rand.manual_seed 5;

@@ -711,7 +711,7 @@ let constant_tests =
           check_floats [| 0.; 0.; 0. |]
             (El.mul (vec [| 1.; 2.; 3. |]) (T.f 0.0)));
       test "constant scalar reads back" (fun () ->
-          equal (float 0.0) 5.0 (Run.item_float (T.f 5.0)));
+          equal float_exact 5.0 (Run.item_float (T.f 5.0)));
       test "constant realizes into a buffer only once" (fun () ->
           let t = Creation.full ~buffer:false [ 2; 3 ] (T.Sfloat 1.5) in
           check_floats [| 1.5; 1.5; 1.5; 1.5; 1.5; 1.5 |] t;

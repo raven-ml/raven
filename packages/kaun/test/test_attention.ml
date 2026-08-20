@@ -38,7 +38,8 @@ let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
 
 let values_are ?msg ~tol expected t =
-  equal ?msg (array (float tol)) expected (Nx.to_array t)
+  let ft = if tol = 0. then float_exact else float tol in
+  equal ?msg (array ft) expected (Nx.to_array t)
 
 (* Identity projections without bias: [apply] reduces to the attention core on
    [x] itself, so layer results can be checked analytically. *)
@@ -319,7 +320,7 @@ let test_cached_update_is_functional () =
     Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
   in
   equal ~msg:"argument cache still empty"
-    (array (float 0.0))
+    (array float_exact)
     (Array.make 16 0.0)
     (flat cache.Attention.Cache.keys);
   is_true ~msg:"returned cache holds the written keys"
@@ -340,7 +341,7 @@ let test_cached_write_past_len_is_dropped () =
       (Nx.slice [ A; R (0, 1) ] x)
   in
   equal ~msg:"a write at pos = len leaves the cache unchanged"
-    (array (float 0.0))
+    (array float_exact)
     (flat cache.Attention.Cache.keys)
     (flat cache'.Attention.Cache.keys)
 

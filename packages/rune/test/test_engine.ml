@@ -98,7 +98,7 @@ let test_grad_is_repeatable () =
   let x = vec32 [| 1.0; -2.0; 3.0 |] in
   let g1 = to_arr (Rune.grad' f x) in
   let g2 = to_arr (Rune.grad' f x) in
-  equal ~msg:"same gradient" (array (float 0.0)) g1 g2
+  equal ~msg:"same gradient" (array float_exact) g1 g2
 
 let test_engine_fixes =
   [

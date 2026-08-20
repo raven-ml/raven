@@ -184,7 +184,7 @@ let promotable_dtypes =
       float16; bfloat16; float32; float64; fp8e4m3; fp8e5m2;
     ]
 
-let promotable_dtype = Gen.of_list ~pp:Dtype.pp promotable_dtypes
+let promotable_dtype = Gen.with_pp Dtype.pp (Gen.of_list promotable_dtypes)
 
 let promotion_matrix () =
   Array.iteri
@@ -263,7 +263,7 @@ let sum_acc () =
 (* FP conversion *)
 
 let fp16_conversion () =
-  let eq = equal (float 0.0) in
+  let eq = equal float_exact in
   eq 1.0 (Dtype.float_to_fp16 1.0);
   eq (-1.0) (Dtype.float_to_fp16 (-1.0));
   eq 0.0 (Dtype.float_to_fp16 0.0);
@@ -277,7 +277,7 @@ let fp16_conversion () =
   is_true (Float.is_nan (Dtype.float_to_fp16 Float.nan))
 
 let bf16_conversion () =
-  let eq = equal (float 0.0) in
+  let eq = equal float_exact in
   eq 1.0 (Dtype.float_to_bf16 1.0);
   eq 0.0 (Dtype.float_to_bf16 0.0);
   eq 128.0 (Dtype.float_to_bf16 128.0);
@@ -287,7 +287,7 @@ let bf16_conversion () =
   is_true (Float.is_nan (Dtype.float_to_bf16 Float.nan))
 
 let fp8_conversion () =
-  let eq = equal (float 0.0) in
+  let eq = equal float_exact in
   equal int 0 (Dtype.float_to_fp8 Dtype.fp8e4m3 0.0);
   equal int 0 (Dtype.float_to_fp8 Dtype.fp8e5m2 0.0);
   eq 0.0 (Dtype.fp8_to_float Dtype.fp8e4m3 0);
@@ -327,8 +327,17 @@ let fp8_conversion () =
 let int_dtypes =
   Dtype.[ bool; int8; int16; int32; uint8; uint16; uint32 ]
 
-let int_dtype = Gen.of_list ~pp:Dtype.pp int_dtypes
+let int_dtype = Gen.with_pp Dtype.pp (Gen.of_list int_dtypes)
 let fp8_byte = Gen.int_range 0 255
+
+(* Every IEEE 754 bit pattern — NaNs and infinities included, which
+   [Gen.float] rejects and the conversion claims below must cover. *)
+let float_any =
+  Gen.with_pp
+    (fun fmt x -> Format.fprintf fmt "%h" x)
+    (Gen.map Int64.float_of_bits Gen.int64)
+
+let float_specials = [ Float.nan; Float.infinity; Float.neg_infinity ]
 
 let integer_truncation () =
   equal int 42 (Dtype.truncate_int Dtype.int8 42);
@@ -537,10 +546,10 @@ let properties =
           (Dtype.sum_acc_dtype (Dtype.sum_acc_dtype a)));
     (* [float_exact] equates every NaN, so a NaN result round-trips like any
        other value and needs no branch of its own. *)
-    prop "fp16 idempotent" Gen.float_any (fun x ->
+    prop "fp16 idempotent" ~examples:float_specials float_any (fun x ->
         let r = Dtype.float_to_fp16 x in
         equal float_exact r (Dtype.float_to_fp16 r));
-    prop "bf16 idempotent" Gen.float_any (fun x ->
+    prop "bf16 idempotent" ~examples:float_specials float_any (fun x ->
         let r = Dtype.float_to_bf16 x in
         equal float_exact r (Dtype.float_to_bf16 r));
     prop "fp8 byte round-trip stable" fp8_byte (fun byte ->

@@ -59,7 +59,7 @@ let test_rollout_no_log_probs () =
   let env = make_test_env () in
   let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let traj = Collect.rollout env ~policy ~n_steps:3 in
-  let floats = option (array (float 0.)) in
+  let floats = option (array float_exact) in
   equal ~msg:"log_probs" floats None traj.log_probs;
   equal ~msg:"values" floats None traj.values
 

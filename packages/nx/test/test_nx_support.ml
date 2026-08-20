@@ -14,13 +14,14 @@ let check_failure msg pattern f = raises ~msg (Failure pattern) f
 
 let testable_of_dtype (type a b) ?(eps = 1e-6) (dtype : (a, b) Nx.dtype) :
     a testable =
+  let ft = if eps = 0. then float_exact else float eps in
   match dtype with
-  | Nx.Float16 -> float eps
-  | Nx.Float32 -> float eps
-  | Nx.Float64 -> float eps
-  | Nx.BFloat16 -> float eps
-  | Nx.Float8_e4m3 -> float eps
-  | Nx.Float8_e5m2 -> float eps
+  | Nx.Float16 -> ft
+  | Nx.Float32 -> ft
+  | Nx.Float64 -> ft
+  | Nx.BFloat16 -> ft
+  | Nx.Float8_e4m3 -> ft
+  | Nx.Float8_e5m2 -> ft
   | Nx.Int8 -> int
   | Nx.Int16 -> int
   | Nx.Int32 -> int32

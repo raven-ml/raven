@@ -40,8 +40,8 @@ let test_id () =
 let test_observation_space () =
   let env = make_test_env () in
   let low, high = Space.Box.bounds (Env.observation_space env) in
-  equal ~msg:"obs low" (array (float 0.0)) [| 0.0 |] low;
-  equal ~msg:"obs high" (array (float 0.0)) [| 10.0 |] high
+  equal ~msg:"obs low" (array float_exact) [| 0.0 |] low;
+  equal ~msg:"obs high" (array float_exact) [| 10.0 |] high
 
 let test_action_space () =
   let env = make_test_env () in
@@ -71,13 +71,13 @@ let test_reset_obs () =
   let env = make_test_env () in
   let obs, _info = Env.reset env () in
   equal ~msg:"reset obs shape" (array int) [| 1 |] (Nx.shape obs);
-  equal ~msg:"reset obs value" (float 0.0) 5.0 (read_obs obs)
+  equal ~msg:"reset obs value" float_exact 5.0 (read_obs obs)
 
 let test_step_after_reset () =
   let env = make_test_env () in
   let _obs, _info = Env.reset env () in
   let step = Env.step env action_right in
-  equal ~msg:"reward" (float 0.0) 1.0 step.reward;
+  equal ~msg:"reward" float_exact 1.0 step.reward;
   is_false ~msg:"not terminated" step.terminated;
   is_false ~msg:"not truncated" step.truncated
 
@@ -107,7 +107,7 @@ let test_reset_after_terminal () =
     ignore (Env.step env action_left)
   done;
   let obs, _info = Env.reset env () in
-  equal ~msg:"reset clears terminal" (float 0.0) 5.0 (read_obs obs)
+  equal ~msg:"reset clears terminal" float_exact 5.0 (read_obs obs)
 
 let test_close () =
   let env = make_test_env () in
@@ -147,7 +147,7 @@ let test_close_idempotent () =
 let test_step_result_defaults () =
   let obs = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
   let s = Env.step_result ~observation:obs () in
-  equal ~msg:"default reward" (float 0.0) 0.0 s.reward;
+  equal ~msg:"default reward" float_exact 0.0 s.reward;
   is_false ~msg:"default terminated" s.terminated;
   is_false ~msg:"default truncated" s.truncated;
   is_true ~msg:"default info empty" (Info.is_empty s.info)
@@ -159,7 +159,7 @@ let test_step_result_custom () =
     Env.step_result ~observation:obs ~reward:5.0 ~terminated:true
       ~truncated:false ~info ()
   in
-  equal ~msg:"custom reward" (float 0.0) 5.0 s.reward;
+  equal ~msg:"custom reward" float_exact 5.0 s.reward;
   is_true ~msg:"custom terminated" s.terminated;
   is_false ~msg:"custom truncated" s.truncated;
   is_some ~msg:"custom info has key" (Info.find "k" s.info)

@@ -183,10 +183,10 @@ let check_quantize name dt cases =
     (fun (v, expected) ->
       equal
         ~msg:(Printf.sprintf "%s cast %.17g" name v)
-        (float 0.0) expected (via_cast dt v);
+        float_exact expected (via_cast dt v);
       equal
         ~msg:(Printf.sprintf "%s store %.17g" name v)
-        (float 0.0) expected (via_store dt v))
+        float_exact expected (via_store dt v))
     cases
 
 (* bfloat16: 7 stored mantissa bits, step 2^-7 near 1.0. Round to nearest, ties
@@ -248,9 +248,9 @@ let test_float16_subnormals () =
     ]
 
 let test_float16_overflow_to_inf () =
-  equal ~msg:"float16 overflow" (float 0.0) Float.infinity
+  equal ~msg:"float16 overflow" float_exact Float.infinity
     (via_cast Nx_core.Dtype.float16 65536.0);
-  equal ~msg:"float16 negative overflow" (float 0.0) Float.neg_infinity
+  equal ~msg:"float16 negative overflow" float_exact Float.neg_infinity
     (via_cast Nx_core.Dtype.float16 (-65536.0))
 
 let test_half_cast_roundtrip (type b) name (dt : (float, b) Nx.dtype) () =
@@ -265,7 +265,7 @@ let test_half_cast_roundtrip (type b) name (dt : (float, b) Nx.dtype) () =
   let twice = Nx.cast Nx.float32 (Nx.cast dt once) in
   equal
     ~msg:(name ^ " quantization is idempotent")
-    (float 0.0) (Nx.item [] once) (Nx.item [] twice);
+    float_exact (Nx.item [] once) (Nx.item [] twice);
   (* 0.1 is not representable: the roundtrip must move it, but only within one
      unit in the last place. *)
   let err = Float.abs (Nx.item [] once -. 0.1) in
@@ -276,8 +276,8 @@ let test_half_special_values (type b) name (dt : (float, b) Nx.dtype) () =
   let specials = [| Float.infinity; Float.neg_infinity; Float.nan |] in
   let t = Nx.cast dt (Nx.create Nx.float32 [| 3 |] specials) in
   let back = Nx.to_array (Nx.cast Nx.float32 t) in
-  equal ~msg:(name ^ " +inf") (float 0.0) Float.infinity back.(0);
-  equal ~msg:(name ^ " -inf") (float 0.0) Float.neg_infinity back.(1);
+  equal ~msg:(name ^ " +inf") float_exact Float.infinity back.(0);
+  equal ~msg:(name ^ " -inf") float_exact Float.neg_infinity back.(1);
   is_true ~msg:(name ^ " nan") (Float.is_nan back.(2))
 
 (* Binary ops compute wide and round the result back to the half dtype. *)
@@ -285,18 +285,18 @@ let test_half_binary_rounding () =
   (* bfloat16: 256 + 1 ties between 256 and 258 -> 256. *)
   let bf16 = Nx_core.Dtype.bfloat16 in
   let r = Nx.add (Nx.scalar bf16 256.0) (Nx.scalar bf16 1.0) in
-  equal ~msg:"bfloat16 256+1" (float 0.0) 256.0 (Nx.item [] r);
+  equal ~msg:"bfloat16 256+1" float_exact 256.0 (Nx.item [] r);
   (* float16: 2048 + 1 ties between 2048 and 2050 -> 2048. *)
   let f16 = Nx_core.Dtype.float16 in
   let r = Nx.add (Nx.scalar f16 2048.0) (Nx.scalar f16 1.0) in
-  equal ~msg:"float16 2048+1" (float 0.0) 2048.0 (Nx.item [] r);
+  equal ~msg:"float16 2048+1" float_exact 2048.0 (Nx.item [] r);
   (* mul: (1 + 2^-7)^2 = 1 + 2^-6 + 2^-14 rounds to 1 + 2^-6 at bfloat16. *)
   let x = Nx.scalar bf16 1.0078125 in
-  equal ~msg:"bfloat16 (1+2^-7)^2" (float 0.0) 1.015625
+  equal ~msg:"bfloat16 (1+2^-7)^2" float_exact 1.015625
     (Nx.item [] (Nx.mul x x));
   (* mul: (1 + 2^-10)^2 rounds to 1 + 2^-9 at float16. *)
   let x = Nx.scalar f16 1.0009765625 in
-  equal ~msg:"float16 (1+2^-10)^2" (float 0.0) 1.001953125
+  equal ~msg:"float16 (1+2^-10)^2" float_exact 1.001953125
     (Nx.item [] (Nx.mul x x))
 
 let test_half_binary_exact (type b) name (dt : (float, b) Nx.dtype) () =
@@ -313,10 +313,10 @@ let test_half_binary_exact (type b) name (dt : (float, b) Nx.dtype) () =
 let test_half_sum_accumulates_wide () =
   let f16 = Nx_core.Dtype.float16 in
   let s = Nx.sum (Nx.ones f16 [| 4096 |]) in
-  equal ~msg:"float16 sum of 4096 ones" (float 0.0) 4096.0 (Nx.item [] s);
+  equal ~msg:"float16 sum of 4096 ones" float_exact 4096.0 (Nx.item [] s);
   let bf16 = Nx_core.Dtype.bfloat16 in
   let s = Nx.sum (Nx.ones bf16 [| 1024 |]) in
-  equal ~msg:"bfloat16 sum of 1024 ones" (float 0.0) 1024.0 (Nx.item [] s)
+  equal ~msg:"bfloat16 sum of 1024 ones" float_exact 1024.0 (Nx.item [] s)
 
 let test_half_reductions (type b) name (dt : (float, b) Nx.dtype) ~mean () =
   let t = Nx.create dt [| 2; 3 |] [| 1.0; -2.0; 3.5; 0.5; 4.0; -1.5 |] in

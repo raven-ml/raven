@@ -14,6 +14,24 @@ let render ?(width = 400.) ?(height = 300.) spec =
     ~finally:(fun () -> close_in ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
+(* Non-overlapping occurrence count of [sub] in [s]. A count through [equal]
+   reports the number it rejected, where a presence check could only say
+   "false". *)
+let count_substring s sub =
+  let len_s = String.length s and len_sub = String.length sub in
+  if len_sub = 0 || len_sub > len_s then 0
+  else begin
+    let count = ref 0 and i = ref 0 in
+    while !i <= len_s - len_sub do
+      if String.sub s !i len_sub = sub then begin
+        incr count;
+        i := !i + len_sub
+      end
+      else incr i
+    done;
+    !count
+  end
+
 let sample_x = Nx.init Float32 [| 5 |] (fun i -> float_of_int i.(0))
 let sample_y = Nx.init Float32 [| 5 |] (fun i -> float_of_int i.(0))
 let line () = Hugin.line ~x:sample_x ~y:sample_y ()
@@ -95,7 +113,7 @@ let test_markers_in_svg () =
 let test_marker_count_matches_points () =
   (* One <use> per sample point: a count, not a presence check. *)
   let svg = render (Hugin.line ~x:sample_x ~y:sample_y ~marker:Circle ()) in
-  contains ~sub:"<use " ~count:(Nx.numel sample_x) svg
+  equal int (Nx.numel sample_x) (count_substring svg "<use ")
 
 let test_scatter_markers () =
   let svg = render (Hugin.point ~x:sample_x ~y:sample_y ()) in

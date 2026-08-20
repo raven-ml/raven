@@ -157,53 +157,53 @@ let store_get k v =
 
 let test_bfloat16_semantics () =
   let rt = store_get bfloat16 in
-  equal ~msg:"bf16 1.0" (float 0.0) 1.0 (rt 1.0);
+  equal ~msg:"bf16 1.0" float_exact 1.0 (rt 1.0);
   (* 1 + 2^-8 is halfway between 1 and 1 + 2^-7: ties to even, down. *)
-  equal ~msg:"bf16 tie to even down" (float 0.0) 1.0 (rt 1.00390625);
+  equal ~msg:"bf16 tie to even down" float_exact 1.0 (rt 1.00390625);
   (* 1 + 2^-7 + 2^-8 is halfway with an odd mantissa: ties to even, up. *)
-  equal ~msg:"bf16 tie to even up" (float 0.0) 1.015625 (rt 1.01171875);
-  equal ~msg:"bf16 inf" (float 0.0) Float.infinity (rt Float.infinity);
+  equal ~msg:"bf16 tie to even up" float_exact 1.015625 (rt 1.01171875);
+  equal ~msg:"bf16 inf" float_exact Float.infinity (rt Float.infinity);
   (* Max finite float32 is beyond the max finite bfloat16: rounds to inf. *)
-  equal ~msg:"bf16 overflow" (float 0.0) Float.infinity (rt 3.4028234e38);
+  equal ~msg:"bf16 overflow" float_exact Float.infinity (rt 3.4028234e38);
   equal ~msg:"bf16 nan" bool true (Float.is_nan (rt Float.nan))
 
 let test_float8_e4m3_semantics () =
   let rt = store_get float8_e4m3 in
-  equal ~msg:"e4m3 1.0" (float 0.0) 1.0 (rt 1.0);
+  equal ~msg:"e4m3 1.0" float_exact 1.0 (rt 1.0);
   (* Exponent 15 is a normal binade in e4m3fn: 256..448 are representable. *)
-  equal ~msg:"e4m3 256" (float 0.0) 256.0 (rt 256.0);
-  equal ~msg:"e4m3 max finite" (float 0.0) 448.0 (rt 448.0);
-  equal ~msg:"e4m3 300 rounds to 288" (float 0.0) 288.0 (rt 300.0);
+  equal ~msg:"e4m3 256" float_exact 256.0 (rt 256.0);
+  equal ~msg:"e4m3 max finite" float_exact 448.0 (rt 448.0);
+  equal ~msg:"e4m3 300 rounds to 288" float_exact 288.0 (rt 300.0);
   (* No infinities: overflow and infinities convert to NaN, matching the
      ml_dtypes and PyTorch e4m3fn casts. 464 is the round-to-nearest boundary
      past 448 and ties to the even finite value. *)
-  equal ~msg:"e4m3 460 rounds back to 448" (float 0.0) 448.0 (rt 460.0);
-  equal ~msg:"e4m3 tie at 464 stays finite" (float 0.0) 448.0 (rt 464.0);
+  equal ~msg:"e4m3 460 rounds back to 448" float_exact 448.0 (rt 460.0);
+  equal ~msg:"e4m3 tie at 464 stays finite" float_exact 448.0 (rt 464.0);
   equal ~msg:"e4m3 overflow is nan" bool true (Float.is_nan (rt 465.0));
   equal ~msg:"e4m3 512 is nan" bool true (Float.is_nan (rt 512.0));
   equal ~msg:"e4m3 inf is nan" bool true (Float.is_nan (rt Float.infinity));
   equal ~msg:"e4m3 -inf is nan" bool true (Float.is_nan (rt Float.neg_infinity));
   (* Subnormals: min subnormal is 2^-9. *)
-  equal ~msg:"e4m3 min subnormal" (float 0.0) 0x1p-9 (rt 0x1p-9);
-  equal ~msg:"e4m3 subnormal rounds up" (float 0.0) 0x1p-9 (rt 0x1.8p-10);
+  equal ~msg:"e4m3 min subnormal" float_exact 0x1p-9 (rt 0x1p-9);
+  equal ~msg:"e4m3 subnormal rounds up" float_exact 0x1p-9 (rt 0x1.8p-10);
   (* Half the min subnormal ties to even: zero. *)
-  equal ~msg:"e4m3 underflow" (float 0.0) 0.0 (rt 0x1p-10);
+  equal ~msg:"e4m3 underflow" float_exact 0.0 (rt 0x1p-10);
   equal ~msg:"e4m3 nan" bool true (Float.is_nan (rt Float.nan))
 
 let test_float8_e5m2_semantics () =
   let rt = store_get float8_e5m2 in
-  equal ~msg:"e5m2 1.0" (float 0.0) 1.0 (rt 1.0);
-  equal ~msg:"e5m2 max finite" (float 0.0) 57344.0 (rt 57344.0);
-  equal ~msg:"e5m2 below tie stays finite" (float 0.0) 57344.0 (rt 61439.0);
+  equal ~msg:"e5m2 1.0" float_exact 1.0 (rt 1.0);
+  equal ~msg:"e5m2 max finite" float_exact 57344.0 (rt 57344.0);
+  equal ~msg:"e5m2 below tie stays finite" float_exact 57344.0 (rt 61439.0);
   (* 61440 is halfway between 57344 and 65536: ties to even, to inf. *)
-  equal ~msg:"e5m2 tie overflows to inf" (float 0.0) Float.infinity (rt 61440.0);
-  equal ~msg:"e5m2 inf" (float 0.0) Float.infinity (rt Float.infinity);
+  equal ~msg:"e5m2 tie overflows to inf" float_exact Float.infinity (rt 61440.0);
+  equal ~msg:"e5m2 inf" float_exact Float.infinity (rt Float.infinity);
   (* Subnormals: min subnormal is 2^-16. *)
-  equal ~msg:"e5m2 min subnormal" (float 0.0) 0x1p-16 (rt 0x1p-16);
+  equal ~msg:"e5m2 min subnormal" float_exact 0x1p-16 (rt 0x1p-16);
   (* 1.5 * 2^-16 is halfway between 2^-16 and 2^-15: ties to even, up. *)
-  equal ~msg:"e5m2 subnormal tie to even" (float 0.0) 0x1p-15 (rt 0x1.8p-16);
+  equal ~msg:"e5m2 subnormal tie to even" float_exact 0x1p-15 (rt 0x1.8p-16);
   (* Half the min subnormal ties to even: zero. *)
-  equal ~msg:"e5m2 underflow" (float 0.0) 0.0 (rt 0x1p-17);
+  equal ~msg:"e5m2 underflow" float_exact 0.0 (rt 0x1p-17);
   equal ~msg:"e5m2 nan" bool true (Float.is_nan (rt Float.nan))
 
 let test_int4_clamping () =

@@ -37,7 +37,8 @@ let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
 
 let values_are ?msg ~tol expected t =
-  equal ?msg (array (float tol)) expected (Nx.to_array t)
+  let ft = if tol = 0. then float_exact else float tol in
+  equal ?msg (array ft) expected (Nx.to_array t)
 
 (* Linear *)
 

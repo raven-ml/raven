@@ -3,10 +3,9 @@ open Windtrap
 
 (* Helpers *)
 
-(* Non-overlapping occurrence count, matching the semantics of windtrap's
-   [contains ~count]. Used only where the claim is a *difference* between two
-   renders: a delta cancels the chart frame, which lets the assertion state the
-   exact number of elements a feature adds rather than "more than before". *)
+(* Non-overlapping occurrence count of [sub] in [s]. A count through
+   [equal]/[satisfies] reports the number it rejected, where a presence check
+   could only say "false". *)
 let count_substring s sub =
   let len_s = String.length s and len_sub = String.length sub in
   if len_sub = 0 || len_sub > len_s then 0
@@ -115,13 +114,16 @@ let test_hist_bins () =
 let test_hist_density () =
   let data = Nx.init Float32 [| 100 |] (fun i -> float_of_int i.(0)) in
   let svg = render (Hugin.hist ~x:data ~bins:(`Num 5) ~density:true ()) in
-  greater_equal ~msg:"5 bins produce at least 5 closed paths" int ~than:5
+  satisfies ~msg:"5 bins produce at least 5 closed paths" ~claim:"at least 5"
+    int
+    (fun n -> n >= 5)
     (count_substring svg " Z\"")
 
 let test_hist_edges () =
   let data = Nx.init Float32 [| 100 |] (fun i -> float_of_int i.(0)) in
   let svg = render (Hugin.hist ~x:data ~bins:(`Edges [| 0.; 50.; 100. |]) ()) in
-  greater_equal ~msg:"3 edges give 2 bins" int ~than:2
+  satisfies ~msg:"3 edges give 2 bins" ~claim:"at least 2" int
+    (fun n -> n >= 2)
     (count_substring svg " Z\"")
 
 let test_hist_bin_count_tracks_bins () =
@@ -130,7 +132,12 @@ let test_hist_bin_count_tracks_bins () =
   let bars n =
     count_substring (render (Hugin.hist ~x:data ~bins:(`Num n) ())) " Z\""
   in
-  greater ~msg:"10 bins beat 3" int ~than:(bars 3) (bars 10)
+  let bars3 = bars 3 in
+  satisfies ~msg:"10 bins beat 3"
+    ~claim:(Printf.sprintf "more than %d" bars3)
+    int
+    (fun n -> n > bars3)
+    (bars 10)
 
 (* auto coloring *)
 
@@ -139,7 +146,8 @@ let test_auto_color_different () =
   let y2 = Nx.init Float32 [| 5 |] (fun i -> float_of_int i.(0) *. 3.) in
   let line2 = Hugin.line ~x:sample_x ~y:y2 () in
   let svg = render (Hugin.layers [ line1; line2 ]) in
-  greater_equal ~msg:"two series get two strokes" int ~than:2
+  satisfies ~msg:"two series get two strokes" ~claim:"at least 2" int
+    (fun n -> n >= 2)
     (count_substring svg "stroke=\"rgb(")
 
 let test_explicit_color_preserved () =
@@ -155,7 +163,7 @@ let test_grid_2x2 () =
   in
   (* All four panels render, in row-major order, each with its own clip. *)
   in_order ~subs:[ ">A<"; ">B<"; ">C<"; ">D<" ] svg;
-  contains ~msg:"4 panels = 4 clip regions" ~sub:"<clipPath" ~count:4 svg
+  equal ~msg:"4 panels = 4 clip regions" int 4 (count_substring svg "<clipPath")
 
 let test_grid_empty () =
   let svg = render (Hugin.grid []) in
@@ -190,8 +198,11 @@ let test_dark_theme_differs_from_default () =
 let test_minimal_theme () =
   let paths spec = count_substring (render spec) "<path" in
   (* minimal theme has no grid, so fewer paths *)
-  less_equal ~msg:"minimal draws no more paths than default" int
-    ~than:(paths (sample_line ()))
+  let default_paths = paths (sample_line ()) in
+  satisfies ~msg:"minimal draws no more paths than default"
+    ~claim:(Printf.sprintf "at most %d" default_paths)
+    int
+    (fun n -> n <= default_paths)
     (paths (sample_line () |> Hugin.with_theme Theme.minimal))
 
 (* grid_lines *)
@@ -200,7 +211,12 @@ let test_grid_lines_off () =
   let paths on =
     count_substring (render (sample_line () |> Hugin.grid_lines on)) "<path"
   in
-  less ~msg:"grid off draws fewer paths" int ~than:(paths true) (paths false)
+  let with_grid = paths true in
+  satisfies ~msg:"grid off draws fewer paths"
+    ~claim:(Printf.sprintf "fewer than %d" with_grid)
+    int
+    (fun n -> n < with_grid)
+    (paths false)
 
 (* legend *)
 
@@ -279,12 +295,14 @@ let test_errorbar_symmetric () =
   (* 5 points × 3 paths each (stem + 2 caps). This counts the whole document,
      frame included, so it is a floor rather than an equality; the exact
      per-point cost is pinned by the xerr delta below. *)
-  greater_equal ~msg:"5 error bars need at least 15 paths" int ~than:15
+  satisfies ~msg:"5 error bars need at least 15 paths" ~claim:"at least 15" int
+    (fun n -> n >= 15)
     (paths_of
        (Hugin.errorbar ~x:sample_x ~y:sample_y ~yerr:(`Symmetric (err 0.5)) ()))
 
 let test_errorbar_asymmetric () =
-  greater_equal ~msg:"5 error bars need at least 15 paths" int ~than:15
+  satisfies ~msg:"5 error bars need at least 15 paths" ~claim:"at least 15" int
+    (fun n -> n >= 15)
     (paths_of
        (Hugin.errorbar ~x:sample_x ~y:sample_y
           ~yerr:(`Asymmetric (err 0.3, err 0.7))
@@ -326,7 +344,7 @@ let test_heatmap_custom_fmt () =
          ())
   in
   (* every one of the 2x2 cells carries the formatted value *)
-  contains ~msg:"one annotation per cell" ~sub:">50%<" ~count:4 svg
+  equal ~msg:"one annotation per cell" int 4 (count_substring svg ">50%<")
 
 (* imshow *)
 
@@ -376,7 +394,8 @@ let test_contour_unfilled_has_stroked_paths () =
   let svg = render (contour ~levels:(`Num 4) ()) in
   (* Unfilled contours are stroked paths (stroke=, fill="none") *)
   contains ~sub:"stroke=\"rgb(" svg;
-  greater_equal ~msg:"4 levels give at least 4 paths" int ~than:4
+  satisfies ~msg:"4 levels give at least 4 paths" ~claim:"at least 4" int
+    (fun n -> n >= 4)
     (count_substring svg "<path")
 
 let test_contour_filled_more_paths () =
@@ -389,7 +408,12 @@ let test_contour_level_count_affects_paths () =
   let paths n =
     count_substring (render (contour ~levels:(`Num n) ())) "<path"
   in
-  greater ~msg:"8 levels beat 2" int ~than:(paths 2) (paths 8)
+  let paths2 = paths 2 in
+  satisfies ~msg:"8 levels beat 2"
+    ~claim:(Printf.sprintf "more than %d" paths2)
+    int
+    (fun n -> n > paths2)
+    (paths 8)
 
 let test_contour_legend () =
   contains ~sub:">density<"

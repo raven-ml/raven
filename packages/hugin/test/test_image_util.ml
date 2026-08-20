@@ -44,7 +44,8 @@ let test_pp_data_uri () =
     String.sub output (String.length uri_prefix)
       (String.length output - String.length uri_prefix - 1)
   in
-  greater ~msg:"the data URI carries a payload" int ~than:0
+  satisfies ~claim:"a non-empty payload" int
+    (fun n -> n > 0)
     (String.length payload);
   equal ~msg:"payload is base64" (list char) [] (base64_offenders payload);
   (* base64 encodes 3 bytes into 4 characters, so the payload is a multiple of
@@ -65,7 +66,6 @@ let png_iend = "\x00\x00\x00\x00IEND\xae\x42\x60\x82"
 
 let test_render_to_buffer () =
   let buf = Hugin.render_to_buffer (sample_line ()) in
-  greater ~msg:"non-empty" int ~than:0 (String.length buf);
   starts_with ~msg:"PNG signature" ~affix:png_magic buf;
   ends_with ~msg:"PNG IEND chunk" ~affix:png_iend buf
 

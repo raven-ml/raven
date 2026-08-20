@@ -82,7 +82,7 @@ let test_pmap_axes_and_tuple_output () =
       (module Pmap_input)
       (fun value -> Nx.add value.rows (Nx.transpose value.columns))
   in
-  equal (array (float 0.)) (Nx.to_array eager) (Nx.to_array (parallel input));
+  equal (array float_exact) (Nx.to_array eager) (Nx.to_array (parallel input));
   let tuple_parallel =
     Rune.pmap2 ~devices ~in_axes:axes
       (module Pmap_input)
@@ -90,9 +90,9 @@ let test_pmap_axes_and_tuple_output () =
       (fun value -> (value.rows, Nx.transpose value.columns))
   in
   let rows_result, columns_result = tuple_parallel input in
-  equal (array (float 0.)) (Nx.to_array rows) (Nx.to_array rows_result);
+  equal (array float_exact) (Nx.to_array rows) (Nx.to_array rows_result);
   equal
-    (array (float 0.))
+    (array float_exact)
     (Nx.to_array (Nx.transpose columns))
     (Nx.to_array columns_result)
 
@@ -180,7 +180,7 @@ let test_rng_key_field_is_a_leaf () =
   in
   let at k = Nx.to_array (step { params with Stepper.key = Nx.Rng.key k }) in
   is_true ~msg:"a compiled draw follows the key it is given" (at 5 <> at 6);
-  equal ~msg:"and replays for the same key" (array (float 0.)) (at 5) (at 5)
+  equal ~msg:"and replays for the same key" (array float_exact) (at 5) (at 5)
 
 let tests =
   [

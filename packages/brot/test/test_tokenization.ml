@@ -1080,7 +1080,7 @@ let batch_tests =
     test "a pipeline with a normalizer is not cut"
       test_batch_ids_uncut_under_normalizer;
     test "a cut keeps space runs whole" test_batch_ids_cut_keeps_space_runs;
-    test "a worker failure fails the batch" test_batch_worker_failure;
+    slow "a worker failure fails the batch" test_batch_worker_failure;
     test "domains must be at least one" test_batch_domains_at_least_one;
   ]
 

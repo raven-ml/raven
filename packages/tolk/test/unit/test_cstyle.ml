@@ -511,12 +511,12 @@ let make_comparison mk_op =
 (* Property test support *)
 
 let renderer_gen =
-  Gen.of_list
-    ~pp:(fun fmt (name, _) -> Format.pp_print_string fmt name)
-    all_renderers
+  Gen.with_pp
+    (fun fmt (name, _) -> Format.pp_print_string fmt name)
+    (Gen.of_list all_renderers)
 
 let safe_dtypes = [ Dtype.int32; Dtype.float32; Dtype.float64; Dtype.uint32 ]
-let safe_dtype_gen = Gen.of_list ~pp:Dtype.pp safe_dtypes
+let safe_dtype_gen = Gen.with_pp Dtype.pp (Gen.of_list safe_dtypes)
 
 (* Runner *)
 

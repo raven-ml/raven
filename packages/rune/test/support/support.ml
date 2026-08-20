@@ -23,11 +23,11 @@ let sliding_window ~axis ~window ~step x =
   Nx_effect.sliding_window x ~axis ~window ~step
 
 let check_arr ?(eps = 1e-5) ~msg expected actual =
+  let t = if eps = 0. then float_exact else float eps in
   let actual = to_arr actual in
   equal ~msg int (Array.length expected) (Array.length actual);
   Array.iteri
-    (fun i e ->
-      equal ~msg:(Printf.sprintf "%s[%d]" msg i) (float eps) e actual.(i))
+    (fun i e -> equal ~msg:(Printf.sprintf "%s[%d]" msg i) t e actual.(i))
     expected
 
 let scalar_like (type a b) (t : (a, b) Nx.t) (v : float) : (a, b) Nx.t =

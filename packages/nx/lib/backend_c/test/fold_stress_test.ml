@@ -31,7 +31,7 @@ let test_threaded_overlap () =
     Array.init len (fun i -> values.(i) *. float_of_int (coverage i))
   in
   equal ~msg:"overlapping windows have exclusive output ownership"
-    (array (float 0.))
+    (array float_exact)
     expected (F.to_array folded)
 
 let () =

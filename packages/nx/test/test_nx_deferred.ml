@@ -37,17 +37,17 @@ let test_metadata_never_fills () =
 
 let test_item_fills_once () =
   let t, fills = make_deferred values in
-  equal ~msg:"item [1;2]" (float 0.0) 6.0 (Nx.item [ 1; 2 ] t);
+  equal ~msg:"item [1;2]" float_exact 6.0 (Nx.item [ 1; 2 ] t);
   equal ~msg:"first data access fills" int 1 !fills;
-  equal ~msg:"item [0;0]" (float 0.0) 1.0 (Nx.item [ 0; 0 ] t);
+  equal ~msg:"item [0;0]" float_exact 1.0 (Nx.item [ 0; 0 ] t);
   equal ~msg:"the fill is memoized" int 1 !fills;
   equal ~msg:"forced handle has no id" (option int) None
     (Nx_effect.deferred_id t)
 
 let test_to_array_fills_once () =
   let t, fills = make_deferred values in
-  equal ~msg:"to_array" (array (float 0.0)) values (Nx.to_array t);
-  equal ~msg:"to_array" (array (float 0.0)) values (Nx.to_array t);
+  equal ~msg:"to_array" (array float_exact) values (Nx.to_array t);
+  equal ~msg:"to_array" (array float_exact) values (Nx.to_array t);
   equal ~msg:"one fill for both reads" int 1 !fills
 
 let test_eager_op_forces () =
@@ -55,7 +55,7 @@ let test_eager_op_forces () =
   let y = Nx.add t (Nx.ones Nx.float32 [| 2; 3 |]) in
   equal ~msg:"an eager op fills its operand" int 1 !fills;
   equal ~msg:"result"
-    (array (float 0.0))
+    (array float_exact)
     [| 2.0; 3.0; 4.0; 5.0; 6.0; 7.0 |]
     (Nx.to_array y)
 
@@ -64,7 +64,7 @@ let test_blit_into_deferred () =
   Nx.blit (Nx.zeros Nx.float32 [| 2; 3 |]) t;
   equal ~msg:"assign forces the destination first" int 1 !fills;
   equal ~msg:"mutation is observed"
-    (array (float 0.0))
+    (array float_exact)
     [| 0.0; 0.0; 0.0; 0.0; 0.0; 0.0 |]
     (Nx.to_array t);
   equal ~msg:"no refill after mutation" int 1 !fills
@@ -73,8 +73,8 @@ let test_set_item_into_deferred () =
   let t, fills = make_deferred values in
   Nx.set_item [ 0; 1 ] 42.0 t;
   equal ~msg:"set_item forces first" int 1 !fills;
-  equal ~msg:"element updated" (float 0.0) 42.0 (Nx.item [ 0; 1 ] t);
-  equal ~msg:"other elements kept" (float 0.0) 6.0 (Nx.item [ 1; 2 ] t)
+  equal ~msg:"element updated" float_exact 42.0 (Nx.item [ 0; 1 ] t);
+  equal ~msg:"other elements kept" float_exact 6.0 (Nx.item [ 1; 2 ] t)
 
 let tests =
   [

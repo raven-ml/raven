@@ -36,12 +36,12 @@ let nonfinite = Nx.scalar Nx.bool false
 
 let test_constructors () =
   let s = Ls.static 128.0 in
-  equal ~msg:"static scale" (float 0.0) 128.0 (scale_of s);
+  equal ~msg:"static scale" float_exact 128.0 (scale_of s);
   equal ~msg:"static marker" int32 (-1l) (steps_of s);
   let d = Ls.dynamic () in
-  equal ~msg:"dynamic default init is 2^15" (float 0.0) 32768.0 (scale_of d);
+  equal ~msg:"dynamic default init is 2^15" float_exact 32768.0 (scale_of d);
   equal ~msg:"dynamic counter starts at 0" int32 0l (steps_of d);
-  equal ~msg:"dynamic ~init" (float 0.0) 4.0
+  equal ~msg:"dynamic ~init" float_exact 4.0
     (scale_of (Ls.dynamic ~init:4.0 ()));
   raises_match Exn.invalid_arg (fun () -> Ls.static 0.0);
   raises_match Exn.invalid_arg (fun () -> Ls.dynamic ~init:(-1.0) ())
@@ -51,17 +51,17 @@ let test_constructors () =
 let test_scale_unscale_round_trip () =
   let ls = Ls.dynamic ~init:1024.0 () in
   let loss = Nx.scalar f32 1.5 in
-  equal ~msg:"scale multiplies" (float 0.0) 1536.0
+  equal ~msg:"scale multiplies" float_exact 1536.0
     (Nx.item [] (Ls.scale ls loss));
   let grads = { Pair.a = vec [| 1.0; -0.5 |]; b = vec [| 0.25 |] } in
   let scaled = { Pair.a = Ls.scale ls grads.Pair.a; b = Ls.scale ls grads.b } in
   let back = Ls.unscale (module Pair) ls scaled in
   (* Powers of two scale exactly. *)
   equal ~msg:"round-trip leaf a"
-    (array (float 0.0))
+    (array float_exact)
     [| 1.0; -0.5 |] (Nx.to_array back.Pair.a);
   equal ~msg:"round-trip leaf b"
-    (array (float 0.0))
+    (array float_exact)
     [| 0.25 |] (Nx.to_array back.Pair.b)
 
 let test_scale_half_dtype () =
@@ -70,7 +70,7 @@ let test_scale_half_dtype () =
   let scaled = Ls.scale ls loss in
   is_true ~msg:"scale keeps the input dtype"
     (Nx_core.Dtype.equal (Nx.dtype scaled) Nx.float16);
-  equal ~msg:"scaled value" (float 0.0) 16.0 (Nx.item [] scaled)
+  equal ~msg:"scaled value" float_exact 16.0 (Nx.item [] scaled)
 
 (* Finiteness *)
 
@@ -90,10 +90,10 @@ let test_grads_finite () =
 let test_adjust_backoff () =
   let ls = Ls.dynamic ~init:1024.0 () in
   let ls = Ls.adjust ls ~finite:nonfinite in
-  equal ~msg:"overflow halves the scale" (float 0.0) 512.0 (scale_of ls);
+  equal ~msg:"overflow halves the scale" float_exact 512.0 (scale_of ls);
   equal ~msg:"overflow resets the counter" int32 0l (steps_of ls);
   let ls = Ls.adjust ~backoff_factor:0.25 ls ~finite:nonfinite in
-  equal ~msg:"backoff_factor" (float 0.0) 128.0 (scale_of ls)
+  equal ~msg:"backoff_factor" float_exact 128.0 (scale_of ls)
 
 let test_adjust_growth () =
   let ls = ref (Ls.dynamic ~init:1024.0 ()) in
@@ -101,15 +101,15 @@ let test_adjust_growth () =
     ls := Ls.adjust ~growth_interval:3 !ls ~finite;
     equal
       ~msg:(Printf.sprintf "scale unchanged after %d finite steps" i)
-      (float 0.0) 1024.0 (scale_of !ls);
+      float_exact 1024.0 (scale_of !ls);
     equal ~msg:"counter advances" int32 (Int32.of_int i) (steps_of !ls)
   done;
   ls := Ls.adjust ~growth_interval:3 !ls ~finite;
-  equal ~msg:"scale doubles at the growth interval" (float 0.0) 2048.0
+  equal ~msg:"scale doubles at the growth interval" float_exact 2048.0
     (scale_of !ls);
   equal ~msg:"growth resets the counter" int32 0l (steps_of !ls);
   let grown = Ls.adjust ~growth_interval:1 ~growth_factor:4.0 !ls ~finite in
-  equal ~msg:"growth_factor" (float 0.0) 8192.0 (scale_of grown)
+  equal ~msg:"growth_factor" float_exact 8192.0 (scale_of grown)
 
 let test_adjust_backoff_resets_progress () =
   let ls = Ls.dynamic ~init:1024.0 () in
@@ -117,19 +117,19 @@ let test_adjust_backoff_resets_progress () =
   let ls = Ls.adjust ~growth_interval:3 ls ~finite in
   (* Two finite steps, then an overflow: the counter restarts from zero. *)
   let ls = Ls.adjust ~growth_interval:3 ls ~finite:nonfinite in
-  equal ~msg:"overflow halves" (float 0.0) 512.0 (scale_of ls);
+  equal ~msg:"overflow halves" float_exact 512.0 (scale_of ls);
   let ls = Ls.adjust ~growth_interval:3 ls ~finite in
-  equal ~msg:"no growth right after backoff" (float 0.0) 512.0 (scale_of ls);
+  equal ~msg:"no growth right after backoff" float_exact 512.0 (scale_of ls);
   equal ~msg:"counter restarted" int32 1l (steps_of ls)
 
 let test_adjust_static_identity () =
   let ls = Ls.static 64.0 in
   let after_ok = Ls.adjust ~growth_interval:1 ls ~finite in
-  equal ~msg:"static scale ignores finite steps" (float 0.0) 64.0
+  equal ~msg:"static scale ignores finite steps" float_exact 64.0
     (scale_of after_ok);
   equal ~msg:"static marker preserved" int32 (-1l) (steps_of after_ok);
   let after_bad = Ls.adjust ls ~finite:nonfinite in
-  equal ~msg:"static scale ignores overflows" (float 0.0) 64.0
+  equal ~msg:"static scale ignores overflows" float_exact 64.0
     (scale_of after_bad);
   equal ~msg:"static marker preserved on overflow" int32 (-1l)
     (steps_of after_bad)

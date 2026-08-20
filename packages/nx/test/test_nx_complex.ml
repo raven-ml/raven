@@ -177,16 +177,16 @@ let test_non_finite_exact () =
       ]
   in
   let re = Nx.to_array (Nx.real Nx.float64 z) in
-  equal ~msg:"real inf" (float 0.0) inf re.(0);
-  equal ~msg:"real -inf" (float 0.0) (-.inf) re.(1);
+  equal ~msg:"real inf" float_exact inf re.(0);
+  equal ~msg:"real -inf" float_exact (-.inf) re.(1);
   is_true ~msg:"real nan" (Float.is_nan re.(3));
-  equal ~msg:"real large" (float 0.0) 1e300 re.(4);
+  equal ~msg:"real large" float_exact 1e300 re.(4);
   (* the modulus is infinite even when the other component is NaN, and large
      finite components do not saturate *)
   let mag = Nx.to_array (Nx.magnitude Nx.float64 z) in
-  equal ~msg:"magnitude inf" (float 0.0) inf mag.(0);
-  equal ~msg:"magnitude -inf" (float 0.0) inf mag.(1);
-  equal ~msg:"magnitude (inf, nan)" (float 0.0) inf mag.(2);
+  equal ~msg:"magnitude inf" float_exact inf mag.(0);
+  equal ~msg:"magnitude -inf" float_exact inf mag.(1);
+  equal ~msg:"magnitude (inf, nan)" float_exact inf mag.(2);
   is_true ~msg:"magnitude (nan, finite)" (Float.is_nan mag.(3));
   equal ~msg:"magnitude no overflow" (float 1e285) (1e300 *. sqrt 2.0) mag.(4)
 
@@ -197,8 +197,8 @@ let test_non_finite_degraded () =
     of_list [ Complex.{ re = 2.0; im = inf }; Complex.{ re = 0.0; im = 1e300 } ]
   in
   let im = Nx.to_array (Nx.imag Nx.float64 finite_re) in
-  equal ~msg:"imag (finite, inf)" (float 0.0) inf im.(0);
-  equal ~msg:"imag (finite, large)" (float 0.0) 1e300 im.(1);
+  equal ~msg:"imag (finite, inf)" float_exact inf im.(0);
+  equal ~msg:"imag (finite, large)" float_exact 1e300 im.(1);
   (* a non-finite real component is the limitation: it contaminates the
      imaginary one through the rotation *)
   let bad_re =
@@ -216,8 +216,8 @@ let test_non_finite_degraded () =
     (Float.is_nan conj.(0).Complex.re);
   let big = of_list [ Complex.{ re = 1e308; im = 2.0 } ] in
   let conj_big = (Nx.to_array (Nx.conjugate big)).(0) in
-  equal ~msg:"conjugate large re" (float 0.0) 1e308 conj_big.Complex.re;
-  equal ~msg:"conjugate large im" (float 0.0) (-2.0) conj_big.Complex.im
+  equal ~msg:"conjugate large re" float_exact 1e308 conj_big.Complex.re;
+  equal ~msg:"conjugate large im" float_exact (-2.0) conj_big.Complex.im
 
 (* Interaction with rfft: magnitude spectrum of a known signal *)
 

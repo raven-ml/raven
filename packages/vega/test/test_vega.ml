@@ -501,7 +501,7 @@ let () =
           test "one_cycle" test_one_cycle;
           prop "constant is constant"
             Gen.(pair float nat)
-            (fun (v, step) -> equal (float 0.) v (S.constant v step));
+            (fun (v, step) -> equal float_exact v (S.constant v step));
           prop "cosine_decay bounded" Gen.nat (fun step ->
               let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in
               let v = s step in

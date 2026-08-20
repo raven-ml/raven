@@ -15,7 +15,8 @@ let t32 shape xs = Nx.create Nx.float32 shape xs
 let vec xs = t32 [| Array.length xs |] xs
 
 let check_arr ?(eps = 1e-5) ?msg expected actual =
-  equal ?msg (array (float eps)) expected (Nx.to_array actual)
+  let t = if eps = 0. then float_exact else float eps in
+  equal ?msg (array t) expected (Nx.to_array actual)
 
 (* Batch norm *)
 
@@ -362,7 +363,7 @@ let test_dropout_keyless_scope_jit_compiles () =
   in
   let at k = Nx.to_array (f (Nx.Rng.key k)) in
   is_true ~msg:"the compiled mask follows the key it is given" (at 1 <> at 2);
-  equal ~msg:"and replays for the same key" (array (float 0.)) (at 1) (at 1)
+  equal ~msg:"and replays for the same key" (array float_exact) (at 1) (at 1)
 
 module Keyed_x = struct
   type t = { x : Nx.float32_t; key : Nx.Rng.key }

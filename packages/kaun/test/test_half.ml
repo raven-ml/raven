@@ -22,7 +22,8 @@ let mat dt r c xs = Nx.create dt [| r; c |] xs
 let to_arr t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 let close ?msg ~tol expected actual =
-  equal ?msg (array (float tol)) (to_arr expected) (to_arr actual)
+  let ft = if tol = 0. then float_exact else float tol in
+  equal ?msg (array ft) (to_arr expected) (to_arr actual)
 
 let dtype_is ?msg dt t = is_true ?msg (Nx_core.Dtype.equal (Nx.dtype t) dt)
 
@@ -310,7 +311,7 @@ let test_f16_train_loss_scaled () =
   | _ -> fail "expected three losses");
   (* Three finite steps with growth_interval 3: the scale must have doubled
      inside the jitted step — the state is an input, not a captured constant. *)
-  equal ~msg:"scale grew across jitted steps" (float 0.0) 2048.0
+  equal ~msg:"scale grew across jitted steps" float_exact 2048.0
     (Nx.item [] !ls.Vega.Loss_scale.scale);
   (* A poisoned batch: 1e5 overflows float16, the gradients go non-finite, the
      update is skipped and the scale backs off — same compiled step. *)
@@ -318,9 +319,9 @@ let test_f16_train_loss_scaled () =
   let poisoned = Nx.full f32 [| 4; 2 |] 1.0e5 in
   ignore (run_step poisoned);
   equal ~msg:"overflowed step leaves the weights untouched"
-    (array (float 0.0))
+    (array float_exact)
     w_before (to_arr !w);
-  equal ~msg:"overflow halves the scale" (float 0.0) 1024.0
+  equal ~msg:"overflow halves the scale" float_exact 1024.0
     (Nx.item [] !ls.Vega.Loss_scale.scale);
   (* Training resumes at the backed-off scale. *)
   let resumed = run_step x in

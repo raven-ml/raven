@@ -41,7 +41,8 @@ let pair a b =
   }
 
 let check_vec ?(eps = 1e-9) ?msg expected actual =
-  equal ?msg (array (float eps)) expected (Nx.to_array actual)
+  let t = if eps = 0. then float_exact else float eps in
+  equal ?msg (array t) expected (Nx.to_array actual)
 
 (* Quadratic bowl over [Pair]: f p = ||p - target||^2, with analytic gradients,
    so tests exercise the optimizer alone. *)
@@ -68,8 +69,8 @@ let descend ~steps ~step params =
 
 let test_constant () =
   let sched = S.constant 0.1 in
-  equal (float 0.) 0.1 (sched 0);
-  equal (float 0.) 0.1 (sched 1000)
+  equal float_exact 0.1 (sched 0);
+  equal float_exact 0.1 (sched 1000)
 
 let test_exponential_decay () =
   let sched =

@@ -18,7 +18,7 @@ let entry name ckpt =
   match Checkpoint.get name ckpt with Rune.Ptree.P x -> Nx.cast f32 x
 
 let check_entry ~msg expected name ckpt =
-  equal ~msg (array (float 0.0)) expected (to_arr (entry name ckpt))
+  equal ~msg (array float_exact) expected (to_arr (entry name ckpt))
 
 (* Filesystem helpers *)
 
@@ -294,13 +294,13 @@ let test_remap_into_attention () =
   in
   let like = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Attention.init ~embed_dim:2 in
   let p = Checkpoint.to_params (module Attention) ~like ours in
-  equal ~msg:"q.w" (array (float 0.0)) [| 1.0; 2.0; 7.0; 8.0 |] (to_arr p.q.w);
+  equal ~msg:"q.w" (array float_exact) [| 1.0; 2.0; 7.0; 8.0 |] (to_arr p.q.w);
   equal ~msg:"v.b"
-    (array (float 0.0))
+    (array float_exact)
     [| 2.5; 3.5 |]
     (to_arr (Option.get p.v.b));
   equal ~msg:"out.w transposed"
-    (array (float 0.0))
+    (array float_exact)
     [| 1.0; 3.0; 2.0; 4.0 |] (to_arr p.out.w)
 
 let () =

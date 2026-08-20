@@ -14,7 +14,7 @@ let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
 (* Checkpoints round-trip bit-exactly, so comparisons are exact. *)
 let check_arr ~msg expected actual =
-  equal ~msg (array (float 0.0)) expected (to_arr actual)
+  equal ~msg (array float_exact) expected (to_arr actual)
 
 (* Runs [f] with a fresh checkpoint file path in a temporary directory, removed
    afterwards even on failure. *)
@@ -258,8 +258,8 @@ let test_ptree_paths () =
     with
     | T.P x -> to_arr (Nx.cast f64 x)
   in
-  equal ~msg:"layers.1.w" (array (float 0.0)) [| 2.0 |] (leaf "layers.1.w");
-  equal ~msg:"head" (array (float 0.0)) [| 3.0 |] (leaf "head")
+  equal ~msg:"layers.1.w" (array float_exact) [| 2.0 |] (leaf "layers.1.w");
+  equal ~msg:"head" (array float_exact) [| 3.0 |] (leaf "head")
 
 let test_find_get () =
   let ckpt = Checkpoint.of_tensor "w" (vec32 [| 1.0 |]) in

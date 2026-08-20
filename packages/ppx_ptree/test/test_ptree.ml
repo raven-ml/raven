@@ -275,7 +275,7 @@ let test_single_aliases_and_delegation () =
       tensor
   in
   equal int 1 !count;
-  equal (array (float 0.)) [| 1.; 2. |] (Nx.to_array mapped);
+  equal (array float_exact) [| 1.; 2. |] (Nx.to_array mapped);
   let automatic =
     Automatic_params.{ nested = Existing_params.{ value = tensor } }
   in
@@ -301,7 +301,7 @@ let test_simple_order () =
   Simple.iter (fun tensor -> layouts := Nx.numel tensor :: !layouts) value;
   equal (list int) [ 2; 1 ] (List.rev !layouts);
   let mapped = Simple.map (fun tensor -> tensor) value in
-  equal (array (float 0.)) [| 1.; 2. |] (Nx.to_array mapped.weight);
+  equal (array float_exact) [| 1.; 2. |] (Nx.to_array mapped.weight);
   let combined =
     Simple.map2
       (fun left right ->
@@ -309,7 +309,7 @@ let test_simple_order () =
         left)
       value mapped
   in
-  equal (array (float 0.)) [| 3. |] (Nx.to_array combined.bias)
+  equal (array float_exact) [| 3. |] (Nx.to_array combined.bias)
 
 let test_matches_handwritten_traversal () =
   let value = Simple.{ weight = f32 [| 1.; 2. |]; bias = f64 [| 3. |] } in
@@ -325,11 +325,11 @@ let test_matches_handwritten_traversal () =
   let derived = Simple.map (fun tensor -> tensor) value in
   let handwritten = Manual_simple.map (fun tensor -> tensor) value in
   equal
-    (array (float 0.))
+    (array float_exact)
     (Nx.to_array handwritten.weight)
     (Nx.to_array derived.weight);
   equal
-    (array (float 0.))
+    (array float_exact)
     (Nx.to_array handwritten.bias)
     (Nx.to_array derived.bias)
 
@@ -512,12 +512,12 @@ let test_annotations_and_ignored () =
 let test_generic_and_mutable () =
   let generic = Generic.{ weight = f32 [| 1. |] } in
   equal
-    (array (float 0.))
+    (array float_exact)
     [| 1. |]
     (Nx.to_array (Generic.map (fun tensor -> tensor) generic).weight);
   let generic64 = Generic.{ weight = f64 [| 2. |] } in
   equal
-    (array (float 0.))
+    (array float_exact)
     [| 2. |]
     (Nx.to_array (Generic.map (fun tensor -> tensor) generic64).weight);
   let mutable_value = Mutable.{ weight = f32 [| 2. |]; tag = "tag" } in
@@ -540,8 +540,8 @@ let test_rune_and_vega_integration () =
       }
   in
   let gradients = Rune.grad (module Integration) integration_loss params in
-  equal (array (float 0.)) [| 2.; -4.; 6. |] (Nx.to_array gradients.weight);
-  equal (array (float 0.)) [| 1. |] (Nx.to_array gradients.bias);
+  equal (array float_exact) [| 2.; -4.; 6. |] (Nx.to_array gradients.weight);
+  equal (array float_exact) [| 1. |] (Nx.to_array gradients.bias);
   is_true (Vega.global_norm (module Integration) gradients > 0.);
   let checkpoint =
     Kaun.Checkpoint.of_params (module Integration_named) params
@@ -554,7 +554,7 @@ let test_rune_and_vega_integration () =
       (fun value -> Rune.grad (module Integration) integration_loss value)
   in
   let first = jitted params in
-  equal (array (float 0.)) [| 2.; -4.; 6. |] (Nx.to_array first.weight);
+  equal (array float_exact) [| 2.; -4.; 6. |] (Nx.to_array first.weight);
   let second_params =
     Integration.
       {
@@ -564,7 +564,7 @@ let test_rune_and_vega_integration () =
       }
   in
   let second = jitted second_params in
-  equal (array (float 0.)) [| 4.; 6.; 8. |] (Nx.to_array second.weight);
+  equal (array float_exact) [| 4.; 6.; 8. |] (Nx.to_array second.weight);
   equal ~msg:"ignored metadata is fixed by the first JIT trace" string
     "first trace" second.label;
   let replay_structure =

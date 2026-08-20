@@ -93,7 +93,7 @@ let test_on_render_passthrough () =
   let wrapped = Render.on_render ~sink:(fun _ -> ()) env in
   let _obs, _info = Env.reset wrapped () in
   let step = Env.step wrapped action_right in
-  equal ~msg:"reward unchanged" (float 0.0) 1.0 step.reward;
+  equal ~msg:"reward unchanged" float_exact 1.0 step.reward;
   is_false ~msg:"not terminated" step.terminated;
   is_false ~msg:"not truncated" step.truncated
 

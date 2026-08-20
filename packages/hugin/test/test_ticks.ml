@@ -79,8 +79,8 @@ let test_reasonable_count () =
   (* Each tick generates a <text> element, so the count is x ticks + y ticks.
      Two separate bounds report the number they rejected; one boolean AND of
      both reports only "false". *)
-  greater ~msg:"more than a couple of labels" int ~than:2 (labels svg);
-  less ~msg:"not an absurd number of labels" int ~than:40 (labels svg)
+  satisfies ~claim:"more than 2 labels" int (fun n -> n > 2) (labels svg);
+  satisfies ~claim:"fewer than 40 labels" int (fun n -> n < 40) (labels svg)
 
 (* log tick formatting *)
 
@@ -97,8 +97,10 @@ let test_large_range () =
   let x = vec [ 0.; 1e6 ] in
   let y = vec [ 0.; 1. ] in
   let svg = render (Hugin.line ~x ~y ()) in
-  less ~msg:"tick count bounded" int ~than:40 (labels svg);
-  greater ~msg:"a million-wide axis still gets labelled" int ~than:2
+  satisfies ~claim:"fewer than 40 labels" int (fun n -> n < 40) (labels svg);
+  satisfies ~msg:"a million-wide axis still gets labelled"
+    ~claim:"more than 2 labels" int
+    (fun n -> n > 2)
     (labels svg)
 
 (* small fractional range *)
@@ -111,7 +113,9 @@ let test_fractional_range () =
   ends_with ~affix:"</svg>\n" svg;
   (* A range this narrow is where tick stepping divides by a tiny number. *)
   not_contains ~sub:"NaN" svg;
-  greater ~msg:"the axis is still labelled" int ~than:2 (labels svg)
+  satisfies ~msg:"the axis is still labelled" ~claim:"more than 2 labels" int
+    (fun n -> n > 2)
+    (labels svg)
 
 let () =
   run "Ticks"

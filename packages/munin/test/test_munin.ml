@@ -192,7 +192,7 @@ let test_metric_log () =
     | None -> failwith "missing"
   in
   equal ~msg:"step" int 1 m.step;
-  equal ~msg:"value" (float 0.0) 1.5 m.value
+  equal ~msg:"value" float_exact 1.5 m.value
 
 let test_log_metrics_batch () =
   with_temp_dir @@ fun root ->
@@ -219,7 +219,7 @@ let test_log_metrics_shared_timestamp () =
     | Some (m : Metric.sample) -> m.timestamp
     | None -> failwith "missing"
   in
-  equal ~msg:"one timestamp for the batch" (float 0.0) (timestamp "a")
+  equal ~msg:"one timestamp for the batch" float_exact (timestamp "a")
     (timestamp "b")
 
 let test_metric_history_chronological () =
@@ -235,7 +235,7 @@ let test_metric_history_chronological () =
   let history = Run.metric_history run "x" in
   equal ~msg:"length" int 3 (List.length history);
   let values = List.map (fun (m : Metric.sample) -> m.value) history in
-  equal ~msg:"order" (list (float 0.0)) [ 3.0; 2.0; 1.0 ] values
+  equal ~msg:"order" (list float_exact) [ 3.0; 2.0; 1.0 ] values
 
 let test_latest_metrics () =
   with_temp_dir @@ fun root ->
@@ -252,7 +252,7 @@ let test_latest_metrics () =
     | None -> failwith "missing"
   in
   equal ~msg:"latest step" int 2 latest.step;
-  equal ~msg:"latest value" (float 0.0) 2.0 latest.value
+  equal ~msg:"latest value" float_exact 2.0 latest.value
 
 let test_metric_keys_sorted () =
   with_temp_dir @@ fun root ->
@@ -279,7 +279,7 @@ let test_explicit_timestamp () =
     | Some m -> m
     | None -> failwith "missing"
   in
-  equal ~msg:"timestamp" (float 0.0) 42.0 m.timestamp
+  equal ~msg:"timestamp" float_exact 42.0 m.timestamp
 
 let test_missing_metric_history_empty () =
   with_temp_dir @@ fun root ->
@@ -1370,7 +1370,7 @@ let test_auto_summary_min () =
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"min summary"
-    (option (float 0.0))
+    (option float_exact)
     (Some 0.3) (summary_float run "loss")
 
 let test_auto_summary_max () =
@@ -1384,7 +1384,7 @@ let test_auto_summary_max () =
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"max summary"
-    (option (float 0.0))
+    (option float_exact)
     (Some 0.9) (summary_float run "acc")
 
 let test_auto_summary_mean () =
@@ -1398,7 +1398,7 @@ let test_auto_summary_mean () =
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"mean summary"
-    (option (float 0.0))
+    (option float_exact)
     (Some 2.0) (summary_float run "x")
 
 let test_auto_summary_last () =
@@ -1412,7 +1412,7 @@ let test_auto_summary_last () =
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"last summary"
-    (option (float 0.0))
+    (option float_exact)
     (Some 3.0) (summary_float run "x")
 
 let test_auto_summary_none () =
@@ -1437,7 +1437,7 @@ let test_explicit_summary_wins () =
   Session.finish session;
   let run = Session.run session in
   equal ~msg:"explicit wins"
-    (option (float 0.0))
+    (option float_exact)
     (Some 999.0) (summary_float run "loss")
 
 let auto_summaries =

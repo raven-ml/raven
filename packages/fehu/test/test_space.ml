@@ -93,8 +93,8 @@ let test_discrete_error_negative () =
 let test_box_1d () =
   let s = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
   let low, high = Space.Box.bounds s in
-  equal ~msg:"low" (array (float 0.)) [| 0.0 |] low;
-  equal ~msg:"high" (array (float 0.)) [| 10.0 |] high
+  equal ~msg:"low" (array float_exact) [| 0.0 |] low;
+  equal ~msg:"high" (array float_exact) [| 10.0 |] high
 
 let test_box_contains () =
   let s = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
