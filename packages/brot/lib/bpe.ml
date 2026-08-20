@@ -358,6 +358,12 @@ type state = {
    character packed into an int. *)
 type char_table = { ascii : int array; multi : Merge_map.t }
 
+(* The punctuation tables of the SentencePiece sub-cut ([encode_into]):
+   [punct_slot] maps a byte to its split slot, -1 for none, and
+   [punct_safe.((slot lsl 8) lor prev)] says a unit may end between [prev] and
+   the slot's byte. *)
+type sp_cut = { punct_slot : int array; punct_safe : bool array }
+
 type t = {
   stamp : int;
   vocab : vocab;
@@ -376,8 +382,9 @@ type t = {
   byte_fallback : bool;
   ignore_merges : bool;
   (* Whether a long span may be cut into SentencePiece word units before
-     encoding, decided once at creation: see the walker in [encode_into]. *)
-  sp_cut : bool;
+     encoding, decided once at creation, and the punctuation tables the walker
+     splits with: see [encode_into]. *)
+  sp_cut : sp_cut option;
   (* Byte-level models match raw bytes: [source] holds every entry decoded
      through the byte-to-unicode table, [source_vocab] inverts it and [byte_ids]
      gives the id of each single byte. The vocabulary itself keeps the encoded
@@ -1175,21 +1182,34 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
    argument reads piece names as the bytes they cover, which the unknown token
    and byte-fallback tokens break — [<0xE2>] is one byte, not six — so a model
    whose merges draw on such a token keeps whole merges too. [create] checks the
-   vocabulary once and leaves [sp_cut] false when the scan finds such a piece,
-   for byte-level models (their vocabularies encode text differently), under
+   vocabulary once and leaves [sp_cut] off when the scan finds such a piece, for
+   byte-level models (their vocabularies encode text differently), under
    [ignore_merges] and dropout (whole-word lookup and stochastic merges have no
    per-unit equivalence), under affixes (a cut changes which characters carry
    them), and when the unknown token could reach across a boundary: unless no
    unknown token is set or every byte has a fallback token, ▁ itself must be a
    vocabulary piece, so that an unknown run can never contain a boundary and
    pending unknowns flush at the same places cut or not. The byte tests are
-   exact on valid UTF-8, where 0xE2 only ever leads a character. *)
+   exact on valid UTF-8, where 0xE2 only ever leads a character.
+
+   A unit also ends before one of eight frequent punctuation bytes when no
+   vocabulary piece holds its previous byte and it side by side — the same
+   argument byte by byte: a token spanning such a boundary would hold that very
+   pair. Without this, every ▁word|punctuation combination is a distinct unit
+   and the cache drowns in them; with it, the punctuation run is a unit of its
+   own that both neighbours reuse. The tables come from one adjacency scan of
+   the vocabulary at creation, and under a reachable unknown token a split byte
+   must itself be a vocabulary piece or its slot is dropped, for the same reason
+   ▁ must be one. *)
 
 let[@inline] sp_mark text p limit =
   p + 3 <= limit
   && String.unsafe_get text p = '\xE2'
   && String.unsafe_get text (p + 1) = '\x96'
   && String.unsafe_get text (p + 2) = '\x81'
+
+(* ▁ as [pack_char_key] packs it. *)
+let sp_marker_key = 0xE29681
 
 let sp_crossing vocab_r =
   Array.exists
@@ -1222,29 +1242,67 @@ let sp_opaque_merge merges ~unk_id ~byte_fallback_ids =
       || Hashtbl.mem opaque (key land 0x1FFFFF))
     merges false
 
+let sp_split_bytes = [ '.'; ','; '"'; ')'; ';'; ':'; '!'; '?' ]
+
+let sp_cut_tables vocab_r chars ~unk_reachable =
+  let adjacent = Array.make 65536 false in
+  Array.iter
+    (fun piece ->
+      for i = 0 to String.length piece - 2 do
+        adjacent.((Char.code (String.unsafe_get piece i) lsl 8)
+                  lor Char.code (String.unsafe_get piece (i + 1))) <- true
+      done)
+    vocab_r;
+  let punct_slot = Array.make 256 (-1) in
+  let punct_safe = Array.make (8 * 256) false in
+  List.iteri
+    (fun slot c ->
+      if (not unk_reachable) || chars.ascii.(Char.code c) >= 0 then begin
+        punct_slot.(Char.code c) <- slot;
+        for prev = 0 to 255 do
+          punct_safe.((slot lsl 8) lor prev) <-
+            not adjacent.((prev lsl 8) lor Char.code c)
+        done
+      end)
+    sp_split_bytes;
+  { punct_slot; punct_safe }
+
 let encode_into model st ids ~opaque text ~pos ~len =
-  if (not model.sp_cut) || len <= max_key_len then
-    encode_unit_into model st ids ~opaque text ~pos ~len
-  else begin
-    let stop = pos + len in
-    let unit_start = ref pos in
-    let p = ref pos in
-    while !p < stop do
-      let c = String.unsafe_get text !p in
-      if c = '\xE2' && sp_mark text !p stop then begin
-        if !p > !unit_start && not (!p >= pos + 3 && sp_mark text (!p - 3) stop)
-        then begin
-          encode_unit_into model st ids ~opaque text ~pos:!unit_start
-            ~len:(!p - !unit_start);
-          unit_start := !p
-        end;
-        p := !p + 3
-      end
-      else incr p
-    done;
-    encode_unit_into model st ids ~opaque text ~pos:!unit_start
-      ~len:(stop - !unit_start)
-  end
+  match model.sp_cut with
+  | Some cut when len > max_key_len ->
+      let punct_slot = cut.punct_slot and punct_safe = cut.punct_safe in
+      let stop = pos + len in
+      let unit_start = ref pos in
+      let p = ref pos in
+      while !p < stop do
+        let c = String.unsafe_get text !p in
+        if c = '\xE2' && sp_mark text !p stop then begin
+          if
+            !p > !unit_start && not (!p >= pos + 3 && sp_mark text (!p - 3) stop)
+          then begin
+            encode_unit_into model st ids ~opaque text ~pos:!unit_start
+              ~len:(!p - !unit_start);
+            unit_start := !p
+          end;
+          p := !p + 3
+        end
+        else begin
+          let slot = Array.unsafe_get punct_slot (Char.code c) in
+          if
+            slot >= 0 && !p > !unit_start
+            && Array.unsafe_get punct_safe
+                 ((slot lsl 8) lor Char.code (String.unsafe_get text (!p - 1)))
+          then begin
+            encode_unit_into model st ids ~opaque text ~pos:!unit_start
+              ~len:(!p - !unit_start);
+            unit_start := !p
+          end;
+          incr p
+        end
+      done;
+      encode_unit_into model st ids ~opaque text ~pos:!unit_start
+        ~len:(stop - !unit_start)
+  | _ -> encode_unit_into model st ids ~opaque text ~pos ~len
 
 let fused model =
   Kernel.available && model.byte_level && not (uses_dropout model)
@@ -1458,15 +1516,21 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
   in
   (* The SentencePiece sub-cut's gates, argued where the walker lives. *)
   let sp_cut =
-    (not byte_level) && (not ignore_merges)
-    && (match dropout with Some p -> p <= 0.0 | None -> true)
-    && continuing_subword_prefix = None
-    && end_of_word_suffix = None
-    && (unk_id < 0
-       || (byte_fallback && Array.for_all (fun id -> id >= 0) byte_fallback_ids)
-       || Merge_map.find chars.multi 0xE29681 >= 0)
-    && (not (sp_crossing vocab_r))
-    && not (sp_opaque_merge merges ~unk_id ~byte_fallback_ids)
+    let unk_reachable =
+      unk_id >= 0
+      && not
+           (byte_fallback && Array.for_all (fun id -> id >= 0) byte_fallback_ids)
+    in
+    if
+      (not byte_level) && (not ignore_merges)
+      && (match dropout with Some p -> p <= 0.0 | None -> true)
+      && continuing_subword_prefix = None
+      && end_of_word_suffix = None
+      && ((not unk_reachable) || Merge_map.find chars.multi sp_marker_key >= 0)
+      && (not (sp_crossing vocab_r))
+      && not (sp_opaque_merge merges ~unk_id ~byte_fallback_ids)
+    then Some (sp_cut_tables vocab_r chars ~unk_reachable)
+    else None
   in
   (* The source form of an entry is what a pretoken is matched against: the
      entry itself, or, for a byte-level model, the bytes it stands for. Ids

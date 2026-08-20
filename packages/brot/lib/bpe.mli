@@ -19,7 +19,8 @@
     touching the main table's memory.
 
     A span longer than a cache key is first cut into SentencePiece word units —
-    each opening at a ["▁"] that follows a non-["▁"] character — whenever
+    each opening at a ["▁"] that follows a non-["▁"] character, or at one of
+    eight punctuation bytes no vocabulary piece reaches across — whenever
     scanning the vocabulary at creation proves the cut exact, so pipelines that
     hand the model whole documents (Llama, Mistral, Gemma) encode through the
     cache and the linear merge too. *)

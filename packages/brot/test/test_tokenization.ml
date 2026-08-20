@@ -1350,6 +1350,9 @@ let sp_bait_docs =
     String.concat " " (List.init 40 (fun i -> Printf.sprintf "w%d" i));
     String.make 5000 'a';
     String.concat "" (List.init 30 (fun _ -> "    indent"));
+    String.concat "." (List.init 12 (fun _ -> "ab"));
+    "so, it says: \"yes\" (twice); really?! yes... end.";
+    ".,\");:!?.,\");:!?" ^ String.concat "," (List.init 8 (fun _ -> "1"));
   ]
 
 let sp_random_docs n =
@@ -1439,6 +1442,28 @@ let test_sp_fuse_unk_gate () =
   in
   equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
 
+(* A unit may end before a punctuation byte only after a byte that never
+   precedes it inside any vocabulary piece: [a.] is a piece here, so cutting
+   between [a] and [.] would keep it from ever merging. *)
+let test_sp_punct_adjacency () =
+  let vocab = [ ("b", 0); ("a", 1); (".", 2); ("a.", 3) ] in
+  let t = bpe ~vocab ~merges:[ ("a", ".") ] () in
+  let doc = String.concat "" (List.init 6 (fun _ -> "ba.")) in
+  let expected = Array.concat (List.init 6 (fun _ -> [| "b"; "a." |])) in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* Under a reachable unknown token a split byte with no vocabulary piece loses
+   its slot: [.] here can sit inside a fused unknown run, which a cut would
+   split in two. ▁ keeps its boundary — it is a piece. *)
+let test_sp_punct_unk_gate () =
+  let vocab = [ ("a", 0); (sp, 1); ("<u>", 2) ] in
+  let t = bpe ~vocab ~merges:[] ~unk_token:"<u>" ~fuse_unk:true () in
+  let doc = "aaaa" ^ "..." ^ "aaaa" ^ sp ^ "aaaa" in
+  let expected =
+    [| "a"; "a"; "a"; "a"; "<u>"; "a"; "a"; "a"; "a"; sp; "a"; "a"; "a"; "a" |]
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
 (* A byte-fallback token covers the byte its name only spells, so a merge over
    one can cross a unit boundary neither vocabulary scan can see: any such merge
    disables the sub-cut. Here [a<0xE2>] must swallow the ▁'s lead byte across
@@ -1480,16 +1505,59 @@ let test_sp_ignore_merges_gate () =
   let expected = Array.concat [ Array.make 16 "a"; [| sp; "a"; "b" |] ] in
   equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
 
+(* The punctuation face of the opaque-merge hole: the adjacency scan reads
+   names, and [<0x2E><0x2E>]'s name never puts [.] beside [.], so it would
+   certify the split the merge forbids. *)
+let test_sp_opaque_merge_punct () =
+  let vocab = [ ("a", 0); ("<0x2E>", 1); ("<0x2E><0x2E>", 2) ] in
+  let t = bpe ~vocab ~merges:[ ("<0x2E>", "<0x2E>") ] ~byte_fallback:true () in
+  let doc = String.make 16 'a' ^ ".." ^ "aaaa" in
+  let expected =
+    Array.concat [ Array.make 16 "a"; [| "<0x2E><0x2E>" |]; Array.make 4 "a" ]
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* Enablement tripwire: nothing else observes the sub-cut being on — every other
+   test passes with it silently disabled, at whole-document heap-merge speed.
+   The heap merge allocates ~3.3× the words the sub-cut does on a long fresh
+   document, and the count is bit-deterministic, so a bound between the two
+   regimes (on ≈ 1.3 M, off ≈ 4.3 M words for this document) fails loudly if the
+   cut ever stops engaging. *)
+let test_sp_allocation_tripwire () =
+  with_pretrained "llama" (fun tok ->
+      let doc =
+        String.concat " "
+          (List.init 20_000 (fun i ->
+               Printf.sprintf "word%d rank%d." i (i mod 97)))
+      in
+      ignore (encode_ids tok "warm");
+      let minor, promoted, major = Gc.counters () in
+      ignore (Sys.opaque_identity (encode_ids tok doc));
+      let minor', promoted', major' = Gc.counters () in
+      let words =
+        minor' +. major' -. promoted' -. (minor +. major -. promoted)
+      in
+      is_true
+        ~msg:(Printf.sprintf "%.0f words allocated" words)
+        (words < 2_500_000.))
+
 let sentencepiece_tests =
   [
     test "sub-cut matches whole merges on llama" test_sp_subcut_differential;
     test "sub-cut keeps mark runs whole" test_sp_mark_runs;
     test "a crossing piece disables the sub-cut" test_sp_crossing_fallback;
     test "fused unknowns need a mark piece" test_sp_fuse_unk_gate;
+    test "punctuation splits only where the vocabulary allows"
+      test_sp_punct_adjacency;
+    test "an unknown punctuation byte keeps no slot" test_sp_punct_unk_gate;
     test "a merge over a fallback token disables the sub-cut"
       test_sp_opaque_merge_fallback;
     test "affixes disable the sub-cut" test_sp_affix_gate;
     test "ignore_merges disables the sub-cut" test_sp_ignore_merges_gate;
+    test "a fallback merge blocks a punctuation split"
+      test_sp_opaque_merge_punct;
+    test "the sub-cut stays engaged (allocation tripwire)"
+      test_sp_allocation_tripwire;
   ]
 
 let tokenization_tests =

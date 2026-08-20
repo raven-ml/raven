@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- SentencePiece word units also end before the eight frequent punctuation
+  bytes no vocabulary piece or merge reaches across, shrinking the distinct
+  units the pretoken cache holds: another ~1.3× on Llama and Mistral. The
+  same split applies to any non-byte-level BPE vocabulary that passes the
+  safety scan, `▁`-free ones included, on pretokens longer than a cache key.
 - SentencePiece-style BPE tokenizers (Llama 1/2, Mistral, Gemma 2) encode
   4–5× faster: when a creation-time vocabulary scan proves no piece or merge
   can cross a `▁`-opened word boundary, `encode`/`encode_ids`/
