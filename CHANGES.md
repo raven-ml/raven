@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- SentencePiece-style BPE tokenizers (Llama 1/2, Mistral, Gemma 2) encode
+  another ~1.2–1.35× faster on native code (llama 33 → 40 MB/s, mistral
+  44 → 58 single-threaded): the `▁`/punctuation unit walk, the pretoken-cache
+  probe and the short merge run fused in the C kernel, as the byte-level path
+  already does. Bytecode and js_of_ocaml keep the OCaml path.
 - SentencePiece word units also end before the eight frequent punctuation
   bytes no vocabulary piece or merge reaches across, shrinking the distinct
   units the pretoken cache holds: another ~1.3× on Llama and Mistral. The

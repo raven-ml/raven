@@ -37,6 +37,41 @@ type byte_level = {
     Field order is the C ABI — [brot_kernels.c] reads the record as its
     [BROT_BL_*] slots; change neither without the other. *)
 
+(** {1:sp The fused SentencePiece kernel} *)
+
+type sp = {
+  front : Bytes.t;
+      (** The state's front pretoken table, probed first; empty when caching is
+          off. *)
+  front_mask : int;
+      (** The front table's entry index mask, [-1] when caching is off. *)
+  cache : Bytes.t;
+      (** The state's back pretoken table; empty when caching is off. *)
+  cache_mask : int;  (** The set index mask, [-1] when caching is off. *)
+  merge_keys : int array;
+      (** The merge map's open-addressing keys, [-1] empty. *)
+  merge_values : int array;  (** Packed [(rank lsl 21) lor new_id]. *)
+  merge_mask : int;  (** The merge map's slot index mask. *)
+  len_table : int array;  (** The bytes each id accounts for. *)
+  ascii_ids : int array;  (** The 128 ids of single ASCII characters, [-1]. *)
+  char_keys : int array;
+      (** The multi-byte character map's keys ([Bpe.pack_char_key]), [-1] empty;
+          the same open-addressing layout as the merge map. *)
+  char_values : int array;  (** The multi-byte characters' ids. *)
+  char_mask : int;  (** The character map's slot index mask. *)
+  scan : Bytes.t;
+      (** What each of the 256 byte values opens: [0] nothing, [1 + slot] a
+          punctuation split byte, [9] the ["\xE2"] lead of ["▁"]. *)
+  punct_safe : bool array;
+      (** Whether a unit may end between a previous byte and a slot's byte, at
+          [(slot lsl 8) lor prev] — [Bpe.sp_cut]'s table. *)
+}
+(** Tables of the fused SentencePiece kernel: the ▁/punctuation unit walker over
+    normalized bytes, the pretoken cache probe and the character-level short
+    merge, built once per [Bpe.state]. Field order is the C ABI —
+    [brot_kernels.c] reads the record as its [BROT_SP_*] slots; change neither
+    without the other. *)
+
 type reason =
   | Done
   | Spans_full
@@ -79,6 +114,11 @@ val resume : Bytes.t -> int
 val code_point : Bytes.t -> int
 (** [code_point cur] is the code point needing a class, after [Class]. *)
 
+val unit_stop : Bytes.t -> int
+(** [unit_stop cur] is the end of the unit that needs OCaml, after
+    {!sp_encode}'s [Encode]; its start is {!resume}. Shares the cursor word
+    {!code_point} reads — only one of the two entries writes it. *)
+
 (** {1:entry The entry} *)
 
 val byte_level_encode :
@@ -108,3 +148,22 @@ val byte_level_encode :
     [\[pos..stop)], except the cache key words, whose masked reads stay within
     the whole of [text] exactly as the OCaml key builder's do. Allocates
     nothing, raises nothing, holds nothing across calls. *)
+
+val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
+(** [sp_encode text pos stop ids cursor t] cuts [text.\[pos..stop)] at
+    SentencePiece unit boundaries — before each ["▁"] whose previous character
+    is not itself ["▁"] and before each vocabulary-safe punctuation byte,
+    exactly as [Bpe.encode_into]'s walker does — and appends each unit's token
+    ids to [ids] from the id count [cursor] holds, probing the pretoken cache
+    and short-merging misses character by character. Returns [Done], [Ids_full]
+    or [Encode] only; on [Encode] the unit at [{!resume}..{!unit_stop})] needs
+    OCaml — over 15 bytes, or holding a character without a direct piece or a
+    merge result [Bpe.emit_word] would record — and nothing was appended for it.
+    No span or mark buffers are involved: the caller records the whole stretch
+    as one span, as the OCaml walker's caller does.
+
+    Unchecked, native only: the caller validates
+    [0 <= pos <= stop <= String.length text] and that the id count in [cursor]
+    is within [ids]; ids room is checked per unit. [pos] must be the start of
+    the stretch or a unit boundary of it, which every {!resume} and {!unit_stop}
+    is. Reads and allocates as {!byte_level_encode} does. *)

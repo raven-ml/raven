@@ -3,15 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The fused kernel's resume protocol, observed through the public API. The
-   native binary runs the C kernel and the byte_complete one the OCaml
+(* The fused kernels' resume protocols, observed through the public API. The
+   native binary runs the C kernels and the byte_complete one the OCaml
    reference, so every expectation here is checked against both; the dump
    differential separately holds the two identical on adversarial input. Each
-   case drives one hand-back or refusal: a document crossing the span chunk,
-   hand-backs at the staged chunk's seams, maximal multi-id spans, caching off,
-   [ignore_merges], dropout (kernel not selected), pretokens past the 15-byte
-   key, bytes without an id, and a merge whose result stands for other bytes
-   than its entry's. *)
+   byte-level case drives one hand-back or refusal: a document crossing the span
+   chunk, hand-backs at the staged chunk's seams, maximal multi-id spans,
+   caching off, [ignore_merges], dropout (kernel not selected), pretokens past
+   the 15-byte key, bytes without an id, and a merge whose result stands for
+   other bytes than its entry's. The SentencePiece cases at the end drive the
+   unit walker's: units past the key, characters without a piece, the resume
+   look-behind at a ▁ run, punctuation adjacency, byte-fallback caching, a
+   stream outgrowing one call's ids reserve, and the len_table refusal. *)
 
 open Windtrap
 
@@ -305,6 +308,173 @@ let test_batch_alignments () =
       done)
     families
 
+(* The SentencePiece kernel: models with no pre-tokenizer hand the whole
+   document to the model as one span, and the sub-cut walker owns any span past
+   the 15-byte key. The mark is written literally in the texts (no normalizer),
+   and every expectation pins ids the OCaml walker and the C walker must both
+   produce; word ids pin that the fused path still records one span per
+   document. *)
+
+let sp_mark = "\xE2\x96\x81"
+
+(* ▁ is 0, letters a..z are 1..26, "." 27, "," 28, "é" 29, "▁a" 30. *)
+let sp_vocab =
+  (sp_mark, 0)
+  :: List.init 26 (fun i -> (String.make 1 (Char.chr (0x61 + i)), 1 + i))
+  @ [ (".", 27); (",", 28); ("\195\169", 29); (sp_mark ^ "a", 30) ]
+
+let sp_simple ?cache_capacity ?dropout () =
+  Brot.bpe ~vocab:sp_vocab
+    ~merges:[ (sp_mark, "a") ]
+    ?cache_capacity ?dropout ()
+
+(* A cache-hit stream: every unit is the seeded "▁a", and the whole document
+   stays one span whether the C kernel or the OCaml walker cut it. *)
+let test_sp_stream () =
+  let tok = sp_simple () in
+  let text = String.concat "" (List.init 1500 (fun _ -> sp_mark ^ "a")) in
+  equal ~msg:"ids" (array int) (Array.make 1500 30) (ids tok text);
+  let e = Brot.encode tok ~add_special_tokens:false text in
+  equal ~msg:"offsets"
+    (array (pair int int))
+    (Array.init 1500 (fun i -> (4 * i, (4 * i) + 4)))
+    (Brot.Encoding.offsets e);
+  equal ~msg:"one span whatever cut it"
+    (array (option int))
+    (Array.make 1500 (Some 0)) (Brot.Encoding.word_ids e)
+
+(* 100k units outgrow the per-call ids reserve: Ids_full parks the walk at a
+   unit boundary and the next call resumes it. *)
+let test_sp_ids_full () =
+  let tok = sp_simple () in
+  let text = String.concat "" (List.init 100_000 (fun _ -> sp_mark ^ "a")) in
+  equal ~msg:"ids" (array int) (Array.make 100_000 30) (ids tok text)
+
+(* A unit past the 15-byte key between short units: an [Encode] hand-back for
+   length, encoded whole by OCaml. *)
+let test_sp_long_unit () =
+  let tok = sp_simple () in
+  let text =
+    String.concat ""
+      (List.init 3 (fun _ -> sp_mark ^ "a")
+      @ [ sp_mark; String.make 20 'b' ]
+      @ List.init 3 (fun _ -> sp_mark ^ "a"))
+  in
+  let expect =
+    Array.concat [ Array.make 3 30; [| 0 |]; Array.make 20 2; Array.make 3 30 ]
+  in
+  equal ~msg:"ids" (array int) expect (ids tok text)
+
+(* A character with no piece and no unknown token: the unit hands back and OCaml
+   drops the character. *)
+let test_sp_missing_char () =
+  let tok = sp_simple () in
+  let text =
+    sp_mark ^ "a" ^ sp_mark ^ "\195\188" ^ sp_mark ^ "a" ^ sp_mark ^ "a"
+  in
+  equal ~msg:"ids" (array int) [| 30; 0; 30; 30 |] (ids tok text)
+
+(* The resume look-behind: the unit after a hand-back opens with a ▁ run, and
+   the re-entered walk must keep the run whole — a wrong look-behind at the
+   resume position would cut it and the ("▁", "▁") merge makes that cut visible
+   in the ids. *)
+let test_sp_resume_mark_run () =
+  let vocab = sp_vocab @ [ (sp_mark ^ sp_mark, 31) ] in
+  let tok = Brot.bpe ~vocab ~merges:[ (sp_mark, sp_mark); (sp_mark, "a") ] () in
+  let text =
+    sp_mark ^ "\195\188" ^ sp_mark ^ sp_mark ^ sp_mark ^ "a" ^ sp_mark ^ "a"
+  in
+  equal ~msg:"ids" (array int) [| 0; 31; 30; 30 |] (ids tok text)
+
+(* Punctuation adjacency decides the split: with no piece holding "a.", the unit
+   ends before the dot; a vocabulary that holds "a." (and merges it) keeps the
+   dot in the unit. *)
+let test_sp_punct_adjacency () =
+  let text = sp_mark ^ "a.b" ^ sp_mark ^ "c" ^ sp_mark ^ "a" ^ sp_mark ^ "a" in
+  let split = Brot.bpe ~vocab:sp_vocab ~merges:[] () in
+  equal ~msg:"safe dot splits" (array int)
+    [| 0; 1; 27; 2; 0; 3; 0; 1; 0; 1 |]
+    (ids split text);
+  let joined =
+    Brot.bpe ~vocab:(sp_vocab @ [ ("a.", 31) ]) ~merges:[ ("a", ".") ] ()
+  in
+  equal ~msg:"a vocabulary piece across the dot keeps it" (array int)
+    [| 0; 31; 2; 0; 3; 0; 1; 0; 1 |]
+    (ids joined text)
+
+(* Byte fallback: the first ü hands back and OCaml spells it as <0xC3> <0xBC> —
+   an exact, cacheable answer — so the second is served by the kernel from the
+   cache. Both must come out the same. *)
+let test_sp_fallback_cached () =
+  let fallback =
+    List.init 256 (fun b -> (Printf.sprintf "<0x%02X>" b, 40 + b))
+  in
+  let tok =
+    Brot.bpe ~vocab:(sp_vocab @ fallback)
+      ~merges:[ (sp_mark, "a") ]
+      ~byte_fallback:true ()
+  in
+  let unit = sp_mark ^ "\195\188" in
+  let text = sp_mark ^ "a" ^ unit ^ sp_mark ^ "a" ^ unit in
+  equal ~msg:"ids" (array int)
+    [| 30; 0; 40 + 0xC3; 40 + 0xBC; 30; 0; 40 + 0xC3; 40 + 0xBC |]
+    (ids tok text)
+
+(* The merge chain spelling out <0x41>, whose len_table entry reads 1 where the
+   merged symbol covers 6 bytes: the kernel refuses the unit, OCaml records the
+   opaque run, and the offsets must tile the document. *)
+let test_sp_len_table_disagreement () =
+  let spell =
+    [
+      ("<", 31);
+      ("0", 32);
+      ("4", 33);
+      ("1", 34);
+      (">", 35);
+      ("<0", 36);
+      ("<0x", 37);
+      ("<0x4", 38);
+      ("1>", 39);
+      ("<0x41>", 40);
+    ]
+  in
+  let tok =
+    Brot.bpe ~vocab:(sp_vocab @ spell)
+      ~merges:
+        [
+          (sp_mark, "a");
+          ("<", "0");
+          ("<0", "x");
+          ("<0x", "4");
+          ("1", ">");
+          ("<0x4", "1>");
+        ]
+      ~byte_fallback:true ()
+  in
+  let text = sp_mark ^ "a<0x41>" ^ sp_mark ^ "b" ^ sp_mark ^ "c" in
+  equal ~msg:"ids" (array int) [| 30; 40; 0; 2; 0; 3 |] (ids tok text);
+  let e = Brot.encode tok ~add_special_tokens:false text in
+  equal ~msg:"offsets"
+    (array (pair int int))
+    [| (0, 4); (4, 10); (10, 13); (13, 14); (14, 17); (17, 18) |]
+    (Brot.Encoding.offsets e)
+
+(* Caching off still cuts and merges in C: the units are unkeyed and the probes
+   skipped. *)
+let test_sp_cache_off () =
+  let tok = sp_simple ~cache_capacity:0 () in
+  let text = String.concat "" (List.init 600 (fun _ -> sp_mark ^ "a")) in
+  equal ~msg:"ids" (array int) (Array.make 600 30) (ids tok text)
+
+(* Dropout leaves the sub-cut off at creation; at probability one every merge is
+   skipped, deterministically, through the whole-document path. *)
+let test_sp_dropout_not_selected () =
+  let tok = sp_simple ~dropout:1.0 () in
+  let text = String.concat "" (List.init 8 (fun _ -> sp_mark ^ "a")) in
+  equal ~msg:"ids" (array int)
+    (Array.concat (List.init 8 (fun _ -> [| 0; 1 |])))
+    (ids tok text)
+
 let () =
   run "brot kernels"
     [
@@ -331,5 +501,19 @@ let () =
           test "a merge result len_table disagrees with"
             test_len_table_disagreement;
           test "unclassified code points" test_class_hand_back;
+        ];
+      group "sentencepiece resume protocol"
+        [
+          test "a cache-hit stream stays one span" test_sp_stream;
+          test "a stream outgrowing the ids reserve" test_sp_ids_full;
+          test "a unit past the key hands back" test_sp_long_unit;
+          test "a character without a piece" test_sp_missing_char;
+          test "a mark run right after a resume" test_sp_resume_mark_run;
+          test "punctuation adjacency" test_sp_punct_adjacency;
+          test "byte fallback is cached and then served" test_sp_fallback_cached;
+          test "a merge result len_table disagrees with"
+            test_sp_len_table_disagreement;
+          test "caching off" test_sp_cache_off;
+          test "dropout leaves the sub-cut off" test_sp_dropout_not_selected;
         ];
     ]

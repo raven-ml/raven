@@ -221,7 +221,56 @@ let adversarial =
         fam "seam_plain" spans;
       ]
   in
-  cases
+  (* SentencePiece adversaries: \xE2\x96\x81 (▁) runs, truncated and stray
+     marks, punctuation boundaries with every neighbour shape, units at and past
+     the 15-byte key, characters without a piece next to boundaries, and a
+     stream long enough to outgrow one call's ids reserve. Under the byte-level
+     models these are just more soup; under llama, mistral and the synthetic
+     SentencePiece models they land on the unit walker's edges. *)
+  let sp_mark = "\xE2\x96\x81" in
+  let sp_adversarial =
+    let seams =
+      (* A hand-back unit (over 15 bytes, or a piece-less character) after k
+         short units: the Encode resume re-enters the walk at every small
+         offset, and the trailing mark run leans on the resume-position
+         look-behind. *)
+      List.concat_map
+        (fun k ->
+          let units = String.concat "" (List.init k (fun _ -> sp_mark ^ "a")) in
+          [
+            ( Printf.sprintf "sp_seam_long_%d" k,
+              units ^ sp_mark ^ String.make 20 'b' ^ units );
+            ( Printf.sprintf "sp_seam_char_%d" k,
+              units ^ sp_mark ^ "\240\159\167\161" ^ units ^ sp_mark ^ sp_mark
+              ^ "tail" );
+          ])
+        [ 0; 1; 2; 3; 7; 8 ]
+    in
+    [
+      ( "sp_mark_runs",
+        sp_mark ^ sp_mark ^ sp_mark ^ "word " ^ sp_mark ^ " x" ^ sp_mark
+        ^ sp_mark );
+      ("sp_mark_truncated", "a\xE2\x96 b\xE2 c" ^ sp_mark ^ "d\xE2");
+      ("sp_mark_after_cont", "x\x80" ^ sp_mark ^ "y \xBF" ^ sp_mark);
+      ("sp_punct_mix", "foo.bar, baz)qux;quux:corge!grault?garply\"waldo");
+      ("sp_punct_runs", "a...b!!!c???d,,,e.,\";:!?)");
+      ("sp_punct_marks", "hello .world ." ^ sp_mark ^ ". , !" ^ sp_mark ^ "!");
+      ( "sp_unit_key_edge",
+        sp_mark ^ "abcdefghijkl" ^ sp_mark ^ "abcdefghijklm" ^ sp_mark
+        ^ "abcdefghijk" );
+      ("sp_unit_long", " " ^ String.make 30 'w' ^ " ok");
+      ( "sp_cjk_run",
+        String.concat ""
+          (List.init 20 (fun _ -> "\230\151\165\230\156\172\232\170\158")) );
+      ( "sp_charless",
+        "a\244\143\191\189b \240\159\167\161" ^ sp_mark ^ "\240\159\167\161. x"
+      );
+      ("sp_ctl", "a\000b \001\002" ^ sp_mark ^ "\000");
+      ("sp_ids_full", String.concat "" (List.init 100_000 (fun _ -> " a")));
+    ]
+    @ seams
+  in
+  cases @ sp_adversarial
   @ [
       ("letters_100k", String.make 100_000 'x');
       ("spaces_100k", String.make 100_000 ' ');
@@ -340,6 +389,69 @@ let synth_disagree () =
   let vocab = [ ("\196", 0); ("\138", 1); ("\196\138", 2); ("a", 3) ] in
   Brot.bpe ~vocab ~merges:[ ("\196", "\138") ] ~pre:(pre ()) ()
 
+(* Synthetic SentencePiece models: no pre-tokenizer, so the whole document is
+   one span and the sub-cut walker owns it. The mark and letters are pieces,
+   merges grow a few words, and each variant drives one hand-back family the
+   real models reach more rarely. *)
+
+let sp_mark_piece = "\xE2\x96\x81"
+
+let sp_base_vocab =
+  (sp_mark_piece :: List.init 26 (fun i -> String.make 1 (Char.chr (0x61 + i))))
+  @ [ "."; ","; "\195\169" ]
+
+let sp_base_merges =
+  [ (sp_mark_piece, "a"); ("t", "h"); ("th", "e"); (sp_mark_piece ^ "a", "t") ]
+
+let sp_vocab_of pieces =
+  let derived =
+    List.map (fun (a, b) -> a ^ b) sp_base_merges
+    |> List.filter (fun m -> not (List.mem m pieces))
+  in
+  List.mapi (fun i piece -> (piece, i)) (pieces @ derived)
+
+(* Letters, the mark, two punctuation pieces and one accented character; a
+   character outside these hands the unit back and is dropped (no unknown
+   token). *)
+let synth_sp ?cache_capacity () =
+  Brot.bpe
+    ~vocab:(sp_vocab_of sp_base_vocab)
+    ~merges:sp_base_merges ?cache_capacity ()
+
+(* An unknown token under fuse_unk: unknown runs fuse within a unit, and the
+   punctuation bytes without a piece lose their slots. *)
+let synth_sp_unk () =
+  Brot.bpe
+    ~vocab:(sp_vocab_of (sp_base_vocab @ [ "<unk>" ]))
+    ~merges:sp_base_merges ~unk_token:"<unk>" ~fuse_unk:true ()
+
+(* Byte fallback: a piece-less character is spelled out as <0xNN> tokens by
+   OCaml on hand-back, cached, and served from the cache by the kernel
+   thereafter. *)
+let synth_sp_fallback () =
+  let fallback = List.init 256 (fun b -> Printf.sprintf "<0x%02X>" b) in
+  Brot.bpe
+    ~vocab:(sp_vocab_of (sp_base_vocab @ fallback))
+    ~merges:sp_base_merges ~byte_fallback:true ()
+
+(* A merge chain spelling out the fallback token <0x41>, whose len_table entry
+   reads 1 where the merged symbol covers 6 bytes: the kernel must refuse the
+   unit and OCaml records the opaque run. *)
+let synth_sp_disagree () =
+  let spell = [ "<"; "0"; "4"; "1"; ">"; "<0"; "<0x"; "<0x4"; "1>" ] in
+  let merges =
+    sp_base_merges
+    @ [ ("<", "0"); ("<0", "x"); ("<0x", "4"); ("1", ">"); ("<0x4", "1>") ]
+  in
+  let pieces = sp_base_vocab @ spell @ [ "<0x41>" ] in
+  let derived =
+    List.map (fun (a, b) -> a ^ b) merges
+    |> List.filter (fun m -> not (List.mem m pieces))
+  in
+  Brot.bpe
+    ~vocab:(List.mapi (fun i piece -> (piece, i)) (pieces @ derived))
+    ~merges ~byte_fallback:true ()
+
 let () =
   let corpus_arg =
     if Array.length Sys.argv > 1 then Some Sys.argv.(1) else None
@@ -393,8 +505,19 @@ let () =
   (match file_tok "roberta_base" with
   | Some tok -> run "roberta_base" tok
   | None -> pf "roberta_base: skipped\n");
+  (match file_tok "llama" with
+  | Some tok -> run "llama" tok
+  | None -> pf "llama: skipped\n");
+  (match file_tok "mistral" with
+  | Some tok -> run "mistral" tok
+  | None -> pf "mistral: skipped\n");
   run "synth_full" (synth_full ());
   run "synth_nocache" (synth_full ~cache_capacity:0 ());
   run "synth_ignore" (synth_full ~ignore_merges:true ());
   run "synth_missing" (synth_missing ());
-  run "synth_disagree" (synth_disagree ())
+  run "synth_disagree" (synth_disagree ());
+  run "synth_sp" (synth_sp ());
+  run "synth_sp_nocache" (synth_sp ~cache_capacity:0 ());
+  run "synth_sp_unk" (synth_sp_unk ());
+  run "synth_sp_fallback" (synth_sp_fallback ());
+  run "synth_sp_disagree" (synth_sp_disagree ())

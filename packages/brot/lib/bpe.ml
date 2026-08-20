@@ -350,6 +350,7 @@ type state = {
   st_long : (string, int array) Hashtbl.t;
   st_busy : bool Atomic.t;
   st_kernel : Kernel.byte_level;
+  st_sp : Kernel.sp option;
   st_cursor : Bytes.t;
 }
 
@@ -967,6 +968,38 @@ let kernel_tables model cache =
     merge = not model.ignore_merges;
   }
 
+(* The tables the SentencePiece kernel reads, in the field order it pins; [None]
+   when the walk stays in OCaml: bytecode, or no sub-cut. The scan byte says
+   what a byte value opens — 0 nothing, 1 + slot a punctuation split byte, 9 the
+   0xE2 lead of the mark — matching kernel.mli's pins. *)
+let sp_kernel_tables model cache : Kernel.sp option =
+  match model.sp_cut with
+  | Some cut when Kernel.available ->
+      let scan = Bytes.make 256 '\000' in
+      Array.iteri
+        (fun b slot ->
+          if slot >= 0 then Bytes.unsafe_set scan b (Char.chr (1 + slot)))
+        cut.punct_slot;
+      Bytes.set scan 0xE2 (Char.chr 9);
+      Some
+        {
+          Kernel.front = cache.front;
+          front_mask = cache.fmask;
+          cache = cache.table;
+          cache_mask = cache.mask;
+          merge_keys = model.merges.Merge_map.keys;
+          merge_values = model.merges.Merge_map.values;
+          merge_mask = model.merges.Merge_map.mask;
+          len_table = model.len_table;
+          ascii_ids = model.chars.ascii;
+          char_keys = model.chars.multi.Merge_map.keys;
+          char_values = model.chars.multi.Merge_map.values;
+          char_mask = model.chars.multi.Merge_map.mask;
+          scan;
+          punct_safe = cut.punct_safe;
+        }
+  | _ -> None
+
 (* Buffers of its own and no cache, for the thread that does not claim the
    domain's state and for building the seed. *)
 let private_state model =
@@ -978,6 +1011,7 @@ let private_state model =
     st_long = Hashtbl.create 16;
     st_busy = Atomic.make true;
     st_kernel = kernel_tables model no_cache;
+    st_sp = sp_kernel_tables model no_cache;
     st_cursor = Kernel.cursor ();
   }
 
@@ -1029,6 +1063,7 @@ let make_state model =
     st_long = Hashtbl.create 512;
     st_busy = Atomic.make false;
     st_kernel = kernel_tables model cache;
+    st_sp = sp_kernel_tables model cache;
     st_cursor = Kernel.cursor ();
   }
 
@@ -1200,7 +1235,12 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
    own that both neighbours reuse. The tables come from one adjacency scan of
    the vocabulary at creation, and under a reachable unknown token a split byte
    must itself be a vocabulary piece or its slot is dropped, for the same reason
-   ▁ must be one. *)
+   ▁ must be one.
+
+   On native code the walk, the cache probe and the short merge run fused in the
+   C kernel ([encode_sp_kernel]); the OCaml walker below is the reference
+   bytecode and js_of_ocaml run, and everything the kernel refuses funnels back
+   through [encode_unit_into]. *)
 
 let[@inline] sp_mark text p limit =
   p + 3 <= limit
@@ -1267,41 +1307,77 @@ let sp_cut_tables vocab_r chars ~unk_reachable =
     sp_split_bytes;
   { punct_slot; punct_safe }
 
+let encode_sp_units model st cut ids ~opaque text ~pos ~len =
+  let punct_slot = cut.punct_slot and punct_safe = cut.punct_safe in
+  let stop = pos + len in
+  let unit_start = ref pos in
+  let p = ref pos in
+  while !p < stop do
+    let c = String.unsafe_get text !p in
+    if c = '\xE2' && sp_mark text !p stop then begin
+      if !p > !unit_start && not (!p >= pos + 3 && sp_mark text (!p - 3) stop)
+      then begin
+        encode_unit_into model st ids ~opaque text ~pos:!unit_start
+          ~len:(!p - !unit_start);
+        unit_start := !p
+      end;
+      p := !p + 3
+    end
+    else begin
+      let slot = Array.unsafe_get punct_slot (Char.code c) in
+      if
+        slot >= 0 && !p > !unit_start
+        && Array.unsafe_get punct_safe
+             ((slot lsl 8) lor Char.code (String.unsafe_get text (!p - 1)))
+      then begin
+        encode_unit_into model st ids ~opaque text ~pos:!unit_start
+          ~len:(!p - !unit_start);
+        unit_start := !p
+      end;
+      incr p
+    end
+  done;
+  encode_unit_into model st ids ~opaque text ~pos:!unit_start
+    ~len:(stop - !unit_start)
+
+(* The fused SentencePiece walk: the C kernel cuts units, probes the cache and
+   merges short misses, and everything it refuses comes back here with a resume
+   position — a full ids buffer is grown, and an [Encode] unit (over 15 bytes, a
+   character without a direct piece, a merge result [emit_word] would record)
+   goes through [encode_unit_into], which owns the miss reference, before the
+   walk re-enters at its end. Every resume position is a unit boundary or the
+   stretch start, which [Kernel.sp_encode]'s contract asks for. *)
+let encode_sp_kernel model st t ids ~opaque text ~pos ~len =
+  let cur = st.st_cursor in
+  let stop = pos + len in
+  let rec go p =
+    if p < stop then begin
+      Ints.reserve ids (max 4096 (min (stop - p) 65536));
+      Kernel.set cur ~spans:0 ~ids:(Ints.length ids) ~marks:0;
+      let r = Kernel.sp_encode text p stop (Ints.buffer ids) cur t in
+      Ints.set_length ids (Kernel.ids cur);
+      let resume = Kernel.resume cur in
+      match r with
+      | Kernel.Done -> ()
+      | Kernel.Ids_full ->
+          if resume = p then Ints.reserve ids (2 * Ints.capacity ids);
+          go resume
+      | Kernel.Encode ->
+          let finish = Kernel.unit_stop cur in
+          encode_unit_into model st ids ~opaque text ~pos:resume
+            ~len:(finish - resume);
+          go finish
+      | Kernel.Spans_full | Kernel.Class -> assert false
+    end
+  in
+  go pos
+
 let encode_into model st ids ~opaque text ~pos ~len =
   match model.sp_cut with
-  | Some cut when len > max_key_len ->
-      let punct_slot = cut.punct_slot and punct_safe = cut.punct_safe in
-      let stop = pos + len in
-      let unit_start = ref pos in
-      let p = ref pos in
-      while !p < stop do
-        let c = String.unsafe_get text !p in
-        if c = '\xE2' && sp_mark text !p stop then begin
-          if
-            !p > !unit_start && not (!p >= pos + 3 && sp_mark text (!p - 3) stop)
-          then begin
-            encode_unit_into model st ids ~opaque text ~pos:!unit_start
-              ~len:(!p - !unit_start);
-            unit_start := !p
-          end;
-          p := !p + 3
-        end
-        else begin
-          let slot = Array.unsafe_get punct_slot (Char.code c) in
-          if
-            slot >= 0 && !p > !unit_start
-            && Array.unsafe_get punct_safe
-                 ((slot lsl 8) lor Char.code (String.unsafe_get text (!p - 1)))
-          then begin
-            encode_unit_into model st ids ~opaque text ~pos:!unit_start
-              ~len:(!p - !unit_start);
-            unit_start := !p
-          end;
-          incr p
-        end
-      done;
-      encode_unit_into model st ids ~opaque text ~pos:!unit_start
-        ~len:(stop - !unit_start)
+  | Some cut when len > max_key_len -> (
+      match st.st_sp with
+      | Some t -> encode_sp_kernel model st t ids ~opaque text ~pos ~len
+      | None -> encode_sp_units model st cut ids ~opaque text ~pos ~len)
   | _ -> encode_unit_into model st ids ~opaque text ~pos ~len
 
 let fused model =

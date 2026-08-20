@@ -24,6 +24,23 @@ type byte_level = {
   merge : bool; (* 10: BROT_BL_MERGE *)
 }
 
+type sp = {
+  front : Bytes.t; (* 0: BROT_SP_FRONT *)
+  front_mask : int; (* 1: BROT_SP_FRONT_MASK *)
+  cache : Bytes.t; (* 2: BROT_SP_CACHE *)
+  cache_mask : int; (* 3: BROT_SP_CACHE_MASK *)
+  merge_keys : int array; (* 4: BROT_SP_MERGE_KEYS *)
+  merge_values : int array; (* 5: BROT_SP_MERGE_VALUES *)
+  merge_mask : int; (* 6: BROT_SP_MERGE_MASK *)
+  len_table : int array; (* 7: BROT_SP_LEN_TABLE *)
+  ascii_ids : int array; (* 8: BROT_SP_ASCII_IDS *)
+  char_keys : int array; (* 9: BROT_SP_CHAR_KEYS *)
+  char_values : int array; (* 10: BROT_SP_CHAR_VALUES *)
+  char_mask : int; (* 11: BROT_SP_CHAR_MASK *)
+  scan : Bytes.t; (* 12: BROT_SP_SCAN *)
+  punct_safe : bool array; (* 13: BROT_SP_PUNCT_SAFE *)
+}
+
 type reason = Done | Spans_full | Ids_full | Class | Encode
 
 external get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
@@ -41,6 +58,7 @@ let[@inline] ids cur = Int64.to_int (get64u cur 8)
 let[@inline] marks cur = Int64.to_int (get64u cur 16)
 let[@inline] resume cur = Int64.to_int (get64u cur 24)
 let[@inline] code_point cur = Int64.to_int (get64u cur 32)
+let[@inline] unit_stop cur = Int64.to_int (get64u cur 32)
 
 (* [@@noalloc] holds by construction: the C allocates nothing, raises nothing
    and never releases the runtime lock, so there is no GC point in a call. *)
@@ -55,4 +73,9 @@ external byte_level_encode :
   Bytes.t ->
   byte_level ->
   reason = "brot_byte_level_encode_byte" "brot_byte_level_encode"
+[@@noalloc]
+
+external sp_encode :
+  string -> int -> int -> int array -> Bytes.t -> sp -> reason
+  = "brot_sp_encode_byte" "brot_sp_encode"
 [@@noalloc]

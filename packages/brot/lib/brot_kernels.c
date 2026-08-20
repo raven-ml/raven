@@ -3,15 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The fused byte-level kernel: the GPT-2 byte-level walker, the pretoken
-   cache probe and the short byte-level BPE merge over a range of text, one
-   call per chunk of spans. Everything rare is handed back to OCaml with a
-   resume position: an unclassified code point, a pretoken over 15 bytes, a
-   byte without a vocabulary id, a model whose misses may not be merged here,
-   and a merge whose result stands for other bytes than its entry's. The
-   OCaml implementations in pre_tokenizer.ml, char_class.ml and bpe.ml are
-   the reference; every function here mirrors one there by name, and the
-   native-vs-bytecode dump differential holds the two together.
+/* The fused kernels: the byte-level one — the GPT-2 byte-level walker, the
+   pretoken cache probe and the short byte-level BPE merge over a range of
+   text, one call per chunk of spans — and the SentencePiece one at the end
+   of this file, which cuts ▁/punctuation word units and feeds them through
+   the same probe and merge machinery. Everything rare is handed back to
+   OCaml with a resume position: an unclassified code point, a pretoken over
+   15 bytes, a byte or character without a vocabulary id, a model whose
+   misses may not be merged here, and a merge whose result stands for other
+   bytes than its entry's. The OCaml implementations in pre_tokenizer.ml,
+   char_class.ml and bpe.ml are the reference; every function here mirrors
+   one there by name, and the native-vs-bytecode dump differential holds the
+   two together.
 
    Nothing is allocated, raised or called back — the entry is [@@noalloc] —
    so no GC point exists, every derived pointer stays valid for the whole
@@ -50,6 +53,24 @@ enum {
   BROT_BL_MERGE_MASK,
   BROT_BL_LEN_TABLE,
   BROT_BL_MERGE
+};
+
+/* Kernel.sp field order. */
+enum {
+  BROT_SP_FRONT,
+  BROT_SP_FRONT_MASK,
+  BROT_SP_CACHE,
+  BROT_SP_CACHE_MASK,
+  BROT_SP_MERGE_KEYS,
+  BROT_SP_MERGE_VALUES,
+  BROT_SP_MERGE_MASK,
+  BROT_SP_LEN_TABLE,
+  BROT_SP_ASCII_IDS,
+  BROT_SP_CHAR_KEYS,
+  BROT_SP_CHAR_VALUES,
+  BROT_SP_CHAR_MASK,
+  BROT_SP_SCAN,
+  BROT_SP_PUNCT_SAFE
 };
 
 /* Kernel.cursor byte offsets. */
@@ -764,35 +785,26 @@ static inline intnat rank_of(const value *mkeys, const value *mvals,
   return v >= 0 ? v : RANK_NONE;
 }
 
-/* Merges the [len] bytes at [s + pos] and writes the resulting ids to [out].
-   Returns their count, or -1 when the span must go back to OCaml: a byte has
-   no id (unk, fuse and byte-fallback semantics stay there), or a merged
-   symbol stands for other bytes than len_table gives its id — the one case
+/* Bpe.merge_linear's loop and emit over [n] initialized symbols, shared by
+   the byte-level and SentencePiece short merges. Writes the resulting ids to
+   [out] and returns their count, or -1 when the span must go back to OCaml:
+   a symbol stands for other bytes than len_table gives its id — the one case
    Bpe.emit_word would record in the opaque runs, which only OCaml appends
-   to. Single bytes always account for exactly their byte, so the check can
-   only fire on a merge result. */
-static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
-                       const value *byte_ids, const value *len_tab,
-                       intnat len_n, const unsigned char *s, intnat pos,
-                       intnat len, int32_t out[15])
+   to. */
+static int merge_run(const value *mkeys, const value *mvals, intnat mmask,
+                     const value *len_tab, intnat len_n, intnat n,
+                     intnat sym_c[15], intnat sym_len[15], intnat sym_prev[15],
+                     intnat sym_next[15], int32_t out[15])
 {
-  intnat sym_c[15], sym_len[15], sym_prev[15], sym_next[15], rank[15];
+  intnat rank[15];
   intnat k, cur;
   int m;
-  for (k = 0; k < len; k++) {
-    intnat id = Long_val(byte_ids[s[pos + k]]);
-    if (id < 0) return -1;
-    sym_c[k] = id;
-    sym_len[k] = 1;
-    sym_prev[k] = k - 1;
-    sym_next[k] = k + 1 < len ? k + 1 : -1;
-  }
-  for (k = 0; k + 1 < len; k++)
+  for (k = 0; k + 1 < n; k++)
     rank[k] = rank_of(mkeys, mvals, mmask, sym_c[k], sym_c[k + 1]);
-  rank[len - 1] = RANK_NONE;
+  rank[n - 1] = RANK_NONE;
   for (;;) {
     intnat best = RANK_NONE, bp = -1, gone, next, prev;
-    for (k = 0; k < len; k++)
+    for (k = 0; k < n; k++)
       if (rank[k] < best) {
         best = rank[k];
         bp = k;
@@ -821,6 +833,30 @@ static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
     out[m++] = (int32_t)id;
   }
   return m;
+}
+
+/* Merges the [len] bytes at [s + pos] and writes the resulting ids to [out].
+   Returns their count, or -1 when the span must go back to OCaml: a byte has
+   no id (unk, fuse and byte-fallback semantics stay there), or the merge-run
+   refusal above. Single bytes always account for exactly their byte, so the
+   emit check can only fire on a merge result. */
+static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
+                       const value *byte_ids, const value *len_tab,
+                       intnat len_n, const unsigned char *s, intnat pos,
+                       intnat len, int32_t out[15])
+{
+  intnat sym_c[15], sym_len[15], sym_prev[15], sym_next[15];
+  intnat k;
+  for (k = 0; k < len; k++) {
+    intnat id = Long_val(byte_ids[s[pos + k]]);
+    if (id < 0) return -1;
+    sym_c[k] = id;
+    sym_len[k] = 1;
+    sym_prev[k] = k - 1;
+    sym_next[k] = k + 1 < len ? k + 1 : -1;
+  }
+  return merge_run(mkeys, mvals, mmask, len_tab, len_n, len, sym_c, sym_len,
+                   sym_prev, sym_next, out);
 }
 
 /* The entry. The caller validates the range and the cursor counts once; ids
@@ -1023,4 +1059,269 @@ CAMLprim value brot_byte_level_encode_byte(value *argv, int argn)
   (void)argn;
   return brot_byte_level_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
                                 argv[5], argv[6], argv[7], argv[8]);
+}
+
+/* The fused SentencePiece kernel: Bpe.encode_into's unit walker, the same
+   cache probe, and the short merge initialized per character rather than per
+   byte. No Unicode classes come into it — the only boundary candidates are
+   the three ▁ bytes and the eight punctuation split bytes — so the walk
+   never fails and only Done, Ids_full and Encode are returned. An Encode
+   hand-back carries the unit through the cursor alone: its start in
+   CUR_RESUME, its end in the word Class code points use, and no span or
+   mark buffer is touched — the caller records the whole stretch as one
+   span, exactly as the OCaml walker's caller does. */
+
+/* Kernel.sp scan values (kernel.mli pins them): 1 + slot for a punctuation
+   split byte, this for the 0xE2 lead of ▁. */
+#define SP_SCAN_MARK 9
+
+/* Bpe.encode_into's unit cut, line for line: the end of the unit opening at
+   [u]. [anchor] is the position this call's walk began at — the stretch
+   start or a unit boundary by the resume contract — standing in for the
+   walker's [pos] in the ▁-run look-behind guard. The change is
+   unobservable: within [anchor, anchor+3) the look-behind window always
+   covers the boundary's opening byte, which is an 0xE2 lead or an ASCII
+   punct byte, never a mark continuation, so the guard resolves as the
+   walker's would. */
+static intnat sp_next_unit(const unsigned char *s, intnat stop, intnat anchor,
+                           const unsigned char *scan, const value *safe,
+                           intnat u)
+{
+  intnat p = u;
+  while (p < stop) {
+    intnat k = scan[s[p]];
+    if (k == 0) {
+      p++;
+      continue;
+    }
+    if (k == SP_SCAN_MARK) {
+      if (p + 3 <= stop && s[p + 1] == 0x96 && s[p + 2] == 0x81) {
+        if (p > u
+            && !(p >= anchor + 3 && s[p - 3] == 0xE2 && s[p - 2] == 0x96
+                 && s[p - 1] == 0x81))
+          return p;
+        p += 3;
+      } else
+        p++;
+    } else {
+      if (p > u && Bool_val(safe[((k - 1) << 8) | s[p - 1]])) return p;
+      p++;
+    }
+  }
+  return stop;
+}
+
+/* Bpe.utf8_byte_len. */
+static inline intnat utf8_len(intnat b)
+{
+  if ((b & 0x80) == 0) return 1;
+  if ((b & 0xE0) == 0xC0) return 2;
+  if ((b & 0xF0) == 0xE0) return 3;
+  if ((b & 0xF8) == 0xF0) return 4;
+  return 1;
+}
+
+/* Bpe.pack_char_key. */
+static inline intnat pack_char_key(const unsigned char *p, intnat blen)
+{
+  switch (blen) {
+  case 1: return p[0];
+  case 2: return ((intnat)p[0] << 8) | p[1];
+  case 3: return ((intnat)p[0] << 16) | ((intnat)p[1] << 8) | p[2];
+  default:
+    return ((intnat)p[0] << 24) | ((intnat)p[1] << 16) | ((intnat)p[2] << 8)
+           | p[3];
+  }
+}
+
+/* The short merge over a unit — Bpe.init_word_fast restricted to characters
+   with a direct piece, then the shared merge run. Returns the id count, or
+   -1 when the unit must go back to OCaml: a character without a piece (unk,
+   fuse and byte-fallback semantics stay there, a truncated character packs
+   no whole character's key and lands here too), or the merge-run refusal.
+   The character map is probed with merge_find: the two maps share the
+   Merge_map layout. */
+static int sp_merge_short(const value *mkeys, const value *mvals, intnat mmask,
+                          const value *ascii_ids, const value *ckeys,
+                          const value *cvals, intnat cmask,
+                          const value *len_tab, intnat len_n,
+                          const unsigned char *s, intnat pos, intnat len,
+                          int32_t out[15])
+{
+  intnat sym_c[15], sym_len[15], sym_prev[15], sym_next[15];
+  intnat n = 0, k = 0;
+  while (k < len) {
+    intnat b = s[pos + k], id, blen;
+    if (b < 128) {
+      blen = 1;
+      id = Long_val(ascii_ids[b]);
+    } else {
+      blen = utf8_len(b);
+      if (blen > len - k) blen = len - k;
+      id = merge_find(ckeys, cvals, cmask, pack_char_key(s + pos + k, blen));
+    }
+    if (id < 0) return -1;
+    sym_c[n] = id;
+    sym_len[n] = blen;
+    sym_prev[n] = n - 1;
+    sym_next[n] = n + 1;
+    n++;
+    k += blen;
+  }
+  sym_next[n - 1] = -1;
+  return merge_run(mkeys, mvals, mmask, len_tab, len_n, n, sym_c, sym_len,
+                   sym_prev, sym_next, out);
+}
+
+/* The entry. The caller validates the range and the cursor's id count once;
+   ids room is checked here per unit, a hit storing its four lanes
+   unconditionally as Ints.add4 does. The loop is software-pipelined exactly
+   as the byte-level entry's: unit k+1 is walked, keyed and its set
+   prefetched while unit k's line is in flight; unit k's probes, merge and
+   stores resolve after that walk, so every probe sees every earlier unit's
+   stores and the tables stay bit for bit the reference's. An exit at unit
+   k's resolve discards the unit walked after it, which the reference would
+   never have walked. */
+CAMLprim value brot_sp_encode(value text, value vpos, value vstop, value vids,
+                              value vcursor, value vt)
+{
+  const unsigned char *s = (const unsigned char *)String_val(text);
+  intnat n = (intnat)caml_string_length(text);
+  intnat stop = Long_val(vstop);
+  /* One writer, no GC point: the volatile qualifier is cast away as in the
+     byte-level entry. */
+  value *ids_base = (value *)&Field(vids, 0);
+  intnat ids_cap = (intnat)Wosize_val(vids);
+  unsigned char *cur = Bytes_val(vcursor);
+
+  unsigned char *front = Bytes_val(Field(vt, BROT_SP_FRONT));
+  intnat front_mask = Long_val(Field(vt, BROT_SP_FRONT_MASK));
+  unsigned char *cache = Bytes_val(Field(vt, BROT_SP_CACHE));
+  intnat cache_mask = Long_val(Field(vt, BROT_SP_CACHE_MASK));
+  const value *mkeys = (const value *)&Field(Field(vt, BROT_SP_MERGE_KEYS), 0);
+  const value *mvals =
+      (const value *)&Field(Field(vt, BROT_SP_MERGE_VALUES), 0);
+  intnat mmask = Long_val(Field(vt, BROT_SP_MERGE_MASK));
+  const value *len_tab =
+      (const value *)&Field(Field(vt, BROT_SP_LEN_TABLE), 0);
+  intnat len_n = (intnat)Wosize_val(Field(vt, BROT_SP_LEN_TABLE));
+  const value *ascii_ids =
+      (const value *)&Field(Field(vt, BROT_SP_ASCII_IDS), 0);
+  const value *ckeys = (const value *)&Field(Field(vt, BROT_SP_CHAR_KEYS), 0);
+  const value *cvals =
+      (const value *)&Field(Field(vt, BROT_SP_CHAR_VALUES), 0);
+  intnat cmask = Long_val(Field(vt, BROT_SP_CHAR_MASK));
+  const unsigned char *scan = Bytes_val(Field(vt, BROT_SP_SCAN));
+  const value *safe = (const value *)&Field(Field(vt, BROT_SP_PUNCT_SAFE), 0);
+
+  intnat nids = (intnat)load64(cur + CUR_IDS);
+  intnat anchor = Long_val(vpos);
+  intnat i = anchor;
+  intnat resume;
+  int reason;
+
+  {
+    int have = 0;
+    intnat p_i = 0, p_e = 0, p_len = 0, p_set = -1, p_fslot = 0;
+    uint64_t p_k0 = 0, p_k1 = 0;
+    for (;;) {
+      intnat e = -1, len = 0, set = -1, fslot = 0;
+      uint64_t k0 = 0, k1 = 0;
+      int walked = 0;
+      if (i < stop) {
+        e = sp_next_unit(s, stop, anchor, scan, safe, i);
+        walked = 1;
+        len = e - i;
+        if (len <= 15 && cache_mask >= 0) {
+          uint64_t hh;
+          k0 = key_word0(s, n, i, len);
+          k1 = key_word1(s, n, i, len);
+          hh = hash_of(k0, k1);
+          set = (intnat)((hh & (uint64_t)cache_mask) << 6);
+          fslot = (intnat)((hh & (uint64_t)front_mask) << 5);
+          BROT_PREFETCH(cache + set);
+        }
+      }
+      if (have) {
+        have = 0;
+        if (p_len > 15) goto hand_back;
+        if (ids_cap - nids < (p_len < 4 ? 4 : p_len)) {
+          reason = BROT_IDS_FULL;
+          resume = p_i;
+          goto out;
+        }
+        if (p_set >= 0) {
+          if (load64(front + p_fslot) == p_k0
+              && load64(front + p_fslot + 8) == p_k1) {
+            nids += emit_lanes(ids_base + nids, load64(front + p_fslot + 16),
+                               load64(front + p_fslot + 24));
+            goto emitted;
+          }
+          intnat way = probe(cache, p_set, p_k0, p_k1);
+          if (way >= 0) {
+            uint64_t v0 = load64(cache + way + 16);
+            uint64_t v1 = load64(cache + way + 24);
+            front_store(front, p_fslot, p_k0, p_k1, v0, v1);
+            nids += emit_lanes(ids_base + nids, v0, v1);
+            goto emitted;
+          }
+        }
+        {
+          int32_t ids15[15];
+          int k;
+          int m = sp_merge_short(mkeys, mvals, mmask, ascii_ids, ckeys, cvals,
+                                 cmask, len_tab, len_n, s, p_i, p_len, ids15);
+          if (m < 0) goto hand_back;
+          for (k = 0; k < m; k++)
+            ids_base[nids + k] = Val_long((intnat)ids15[k]);
+          nids += m;
+          if (p_set >= 0 && m <= 4) {
+            int fits = 1;
+            for (k = 0; k < m; k++)
+              if (ids15[k] >= 1 << 24) fits = 0;
+            if (fits) {
+              /* Bpe.value_lo/value_hi: two 24-bit lanes per word, the count
+                 in bits 24..31 of the first, absent lanes zero. */
+              uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
+                            | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
+              uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)
+                            | (m > 3 ? (uint64_t)ids15[3] << 32 : 0);
+              cache_store(cache, p_set, p_k0, p_k1, v0, v1);
+            }
+          }
+        }
+      emitted:;
+      }
+      if (!walked) { /* i = stop and every unit resolved */
+        reason = BROT_DONE;
+        resume = i;
+        goto out;
+      }
+      p_i = i;
+      p_e = e;
+      p_len = len;
+      p_k0 = k0;
+      p_k1 = k1;
+      p_set = set;
+      p_fslot = fslot;
+      have = 1;
+      i = e;
+    }
+  hand_back:
+    /* Nothing was appended for the unit: the driver encodes
+       [p_i, p_e) in OCaml and resumes at its end. */
+    store64(cur + CUR_CP, (uint64_t)p_e);
+    reason = BROT_ENCODE;
+    resume = p_i;
+  }
+out:
+  store64(cur + CUR_IDS, (uint64_t)nids);
+  store64(cur + CUR_RESUME, (uint64_t)resume);
+  return Val_int(reason);
+}
+
+CAMLprim value brot_sp_encode_byte(value *argv, int argn)
+{
+  (void)argn;
+  return brot_sp_encode(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }

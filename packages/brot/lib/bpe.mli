@@ -23,7 +23,9 @@
     eight punctuation bytes no vocabulary piece reaches across — whenever
     scanning the vocabulary at creation proves the cut exact, so pipelines that
     hand the model whole documents (Llama, Mistral, Gemma) encode through the
-    cache and the linear merge too. *)
+    cache and the linear merge too. On native code that walk, the cache probe
+    and the short merge run fused in the C kernel; bytecode and js_of_ocaml run
+    the OCaml walk, which is the reference the kernel is held to. *)
 
 type t
 (** The type for BPE models. Immutable after creation.
