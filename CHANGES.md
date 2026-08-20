@@ -1087,6 +1087,13 @@ thread.
 
 ### Brot
 
+- SentencePiece-style BPE tokenizers (Llama 1/2, Mistral, Gemma 2) encode
+  4–5× faster: when a creation-time vocabulary scan proves no piece or merge
+  can cross a `▁`-opened word boundary, `encode`/`encode_ids`/
+  `encode_batch_ids` cut a whole-document span into `▁`-run word units that
+  take the pretoken cache and the linear merge instead of one whole-document
+  heap merge. Ids, offsets and tokens are unchanged; a vocabulary that fails
+  the scan (Gemma 3) keeps the previous path.
 - Honour a `stride` when truncation overflows: `truncation` gains a `stride`
   field and `?stride` argument, successive overflow windows overlap by it,
   and windows now match HuggingFace exactly — a pair's windows are the same

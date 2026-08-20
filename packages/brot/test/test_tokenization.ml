@@ -1282,6 +1282,216 @@ let stride_tests =
       (check_stride_cases "bert_base" bert_stride_cases);
   ]
 
+(* SentencePiece word-unit sub-cut. A pipeline with no splitting pre-tokenizer
+   hands the BPE model whole documents; when no vocabulary piece crosses a
+   ▁-opened word boundary the model cuts them into word units and merges each
+   alone, which must be invisible: ids, offsets and tokens all match the
+   whole-document merge. *)
+
+let sp = "\xe2\x96\x81"
+
+(* The fixture plus one crossing vocabulary piece that no merge builds: its only
+   effect is to turn the sub-cut off, so the pair encodes through the two paths
+   of the same model. *)
+let sp_add_crossing_piece root piece id =
+  let open Jsont in
+  let in_object name f = function
+    | Object (mems, meta) ->
+        Object
+          ( List.map
+              (fun ((k, km), v) -> ((k, km), if k = name then f v else v))
+              mems,
+            meta )
+    | _ -> failf "expected a JSON object around %S" name
+  in
+  in_object "model"
+    (in_object "vocab" (function
+      | Object (mems, meta) ->
+          Object (mems @ [ (Json.name piece, Json.int id) ], meta)
+      | _ -> failf "expected the vocabulary to be a JSON object"))
+    root
+
+let sp_llama_pair f =
+  Fixture.with_download "../bench/data/llama.json"
+    ~from:"packages/brot/bench/download_data.sh" (fun path ->
+      let text = In_channel.with_open_bin path In_channel.input_all in
+      let json =
+        match Jsont_bytesrw.decode_string Jsont.json text with
+        | Ok json -> json
+        | Error msg -> failf "llama.json: %s" msg
+      in
+      let load json =
+        match of_json json with
+        | Ok tokenizer -> tokenizer
+        | Error msg -> failf "llama tokenizer: %s" msg
+      in
+      let on = load json in
+      let max_id = List.fold_left (fun m (_, id) -> max m id) (-1) (vocab on) in
+      let off =
+        load (sp_add_crossing_piece json ("zz" ^ sp ^ "zz") (max_id + 1))
+      in
+      f on off)
+
+let sp_bait_docs =
+  [
+    "";
+    " ";
+    "hello world";
+    "  leading and   trailing  ";
+    "a" ^ sp ^ "b";
+    sp ^ sp ^ sp;
+    "tabs\tand\nnewlines\r\nCRLF";
+    "nbsp\xc2\xa0and\xc2\xa0runs";
+    "caf\xc3\xa9 na\xc3\xafve \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
+    "emoji \xf0\x9f\x98\x80\xf0\x9f\xa7\xa0 fallback";
+    "<s> specials </s> inline";
+    "punct.,\");:!? runs ... !!! ??? end.";
+    "digits 1234567890 mix3d w0rds";
+    String.concat " " (List.init 40 (fun i -> Printf.sprintf "w%d" i));
+    String.make 5000 'a';
+    String.concat "" (List.init 30 (fun _ -> "    indent"));
+  ]
+
+let sp_random_docs n =
+  let st = Random.State.make [| 0x7352 |] in
+  let doc () =
+    let len = 1 + Random.State.int st 400 in
+    let b = Buffer.create (len * 2) in
+    for _ = 1 to len do
+      match Random.State.int st 100 with
+      | 0 | 1 | 2 -> Buffer.add_string b sp
+      | 3 | 4 -> Buffer.add_string b "  "
+      | 5 -> Buffer.add_string b "    "
+      | 6 -> Buffer.add_char b '\t'
+      | 7 -> Buffer.add_char b '\n'
+      | 8 -> Buffer.add_string b "\xc3\xa9"
+      | 9 -> Buffer.add_string b "\xe6\x97\xa5"
+      | 10 -> Buffer.add_string b "\xf0\x9f\x98\x80"
+      | 11 -> Buffer.add_string b "\xd0\xb6"
+      | 12 -> Buffer.add_char b (Char.chr (1 + Random.State.int st 31))
+      | 13 -> Buffer.add_string b "<s>"
+      | 14 -> Buffer.add_string b "</s>"
+      | k when k < 40 -> Buffer.add_char b ' '
+      | k when k < 55 ->
+          Buffer.add_char b (Char.chr (Char.code '0' + Random.State.int st 10))
+      | k when k < 70 ->
+          Buffer.add_char b ".,\"();:!?-'".[Random.State.int st 11]
+      | _ ->
+          Buffer.add_char b (Char.chr (Char.code 'a' + Random.State.int st 26))
+    done;
+    Buffer.contents b
+  in
+  List.init n (fun _ -> doc ())
+
+let test_sp_subcut_differential () =
+  sp_llama_pair (fun on off ->
+      List.iteri
+        (fun i doc ->
+          let a = encode on ~add_special_tokens:false doc in
+          let b = encode off ~add_special_tokens:false doc in
+          let msg what = Printf.sprintf "doc %d %s" i what in
+          equal ~msg:(msg "ids") (array int) (Encoding.ids b) (Encoding.ids a);
+          equal ~msg:(msg "offsets")
+            (array (pair int int))
+            (Encoding.offsets b) (Encoding.offsets a);
+          equal ~msg:(msg "tokens") (array string) (Encoding.tokens b)
+            (Encoding.tokens a))
+        (sp_bait_docs @ sp_random_docs 300))
+
+(* ▁-runs must stay with the word they open: a cut at every mark would keep [▁▁]
+   from ever forming. The document is long enough for the sub-cut to walk it,
+   and the vocabulary has no crossing piece, so it is on. *)
+let test_sp_mark_runs () =
+  let vocab = [ ("a", 0); ("b", 1); (sp, 2); (sp ^ sp, 3) ] in
+  let t = bpe ~vocab ~merges:[ (sp, sp) ] () in
+  let doc = String.concat "" (List.init 5 (fun _ -> "a" ^ sp ^ sp ^ "b")) in
+  let expected =
+    Array.concat (List.init 5 (fun _ -> [| "a"; sp ^ sp; "b" |]))
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* One vocabulary piece with ▁ after a non-▁ character makes the cut unsafe
+   (gemma-3's [>▁</] is the live case): the model must fall back to whole
+   merges. The merges here build the crossing piece, so a wrongly enabled
+   sub-cut could never assemble [a▁b] across its unit boundary. *)
+let test_sp_crossing_fallback () =
+  let vocab =
+    [
+      ("z", 0); ("a", 1); ("b", 2); (sp, 3); ("a" ^ sp, 4); ("a" ^ sp ^ "b", 5);
+    ]
+  in
+  let t = bpe ~vocab ~merges:[ ("a", sp); ("a" ^ sp, "b") ] () in
+  let doc = String.concat "" (List.init 4 (fun _ -> "za" ^ sp ^ "b")) in
+  let expected =
+    Array.concat (List.init 4 (fun _ -> [| "z"; "a" ^ sp ^ "b" |]))
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* Under [fuse_unk] with no ▁ piece and no byte fallback, an unknown run can
+   contain a ▁: cutting there would split one fused unknown into two, so the
+   sub-cut must stay off. *)
+let test_sp_fuse_unk_gate () =
+  let vocab = [ ("a", 0); ("<u>", 1) ] in
+  let t = bpe ~vocab ~merges:[] ~unk_token:"<u>" ~fuse_unk:true () in
+  let doc = "aaaaa" ^ "xx" ^ sp ^ "xx" ^ "aaaaa" in
+  let expected =
+    [| "a"; "a"; "a"; "a"; "a"; "<u>"; "a"; "a"; "a"; "a"; "a" |]
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* A byte-fallback token covers the byte its name only spells, so a merge over
+   one can cross a unit boundary neither vocabulary scan can see: any such merge
+   disables the sub-cut. Here [a<0xE2>] must swallow the ▁'s lead byte across
+   what would be a unit boundary. *)
+let test_sp_opaque_merge_fallback () =
+  let vocab =
+    [ ("a", 0); ("<0xE2>", 1); ("<0x96>", 2); ("<0x81>", 3); ("a<0xE2>", 4) ]
+  in
+  let t = bpe ~vocab ~merges:[ ("a", "<0xE2>") ] ~byte_fallback:true () in
+  let doc = String.make 16 'a' ^ sp ^ "aaaa" in
+  let expected =
+    Array.concat
+      [
+        Array.make 15 "a"; [| "a<0xE2>"; "<0x96>"; "<0x81>" |]; Array.make 4 "a";
+      ]
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* Affixes give a character the form its place in the word dictates, so a cut
+   would hand each unit a word-first character of its own: the sub-cut must stay
+   off. The [.] mid-word must come out [##.], never bare [.]. *)
+let test_sp_affix_gate () =
+  let vocab = [ ("a", 0); ("##a", 1); (".", 2); ("##.", 3) ] in
+  let t = bpe ~vocab ~merges:[] ~continuing_subword_prefix:"##" () in
+  let doc = String.make 16 'a' ^ "." ^ "aaaa" in
+  let expected =
+    Array.concat
+      [ [| "a" |]; Array.make 15 "##a"; [| "##." |]; Array.make 4 "##a" ]
+  in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+(* [ignore_merges] emits a word that is itself a vocabulary entry as that one
+   token, and a unit is not the word: the sub-cut must stay off. The unit [▁ab]
+   is an entry here; the whole span is not. *)
+let test_sp_ignore_merges_gate () =
+  let vocab = [ ("a", 0); ("b", 1); (sp, 2); (sp ^ "ab", 3) ] in
+  let t = bpe ~vocab ~merges:[] ~ignore_merges:true () in
+  let doc = String.make 16 'a' ^ sp ^ "ab" in
+  let expected = Array.concat [ Array.make 16 "a"; [| sp; "a"; "b" |] ] in
+  equal ~msg:"tokens" (array string) expected (Encoding.tokens (encode t doc))
+
+let sentencepiece_tests =
+  [
+    test "sub-cut matches whole merges on llama" test_sp_subcut_differential;
+    test "sub-cut keeps mark runs whole" test_sp_mark_runs;
+    test "a crossing piece disables the sub-cut" test_sp_crossing_fallback;
+    test "fused unknowns need a mark piece" test_sp_fuse_unk_gate;
+    test "a merge over a fallback token disables the sub-cut"
+      test_sp_opaque_merge_fallback;
+    test "affixes disable the sub-cut" test_sp_affix_gate;
+    test "ignore_merges disables the sub-cut" test_sp_ignore_merges_gate;
+  ]
+
 let tokenization_tests =
   [
     (* Words tokenization *)
@@ -1338,4 +1548,5 @@ let () =
       group "tokenization" tokenization_tests;
       group "batch" batch_tests;
       group "stride" stride_tests;
+      group "sentencepiece" sentencepiece_tests;
     ]

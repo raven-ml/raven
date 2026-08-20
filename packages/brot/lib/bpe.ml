@@ -222,11 +222,12 @@ end
    collide and a live key is never zero, so a zeroed table reads as empty. A hit
    is at most four 64-bit compares within one set and two 64-bit loads.
 
-   A table is written by whichever thread holds the claim on the state that owns
-   it, so there is never a second writer. The value words are still published
-   before the key words, and [k0] last of all — for the way being shifted as for
-   the way being filled, in the front table as in the back — so that a read torn
-   by anything at all comes out a miss rather than a wrong hit. *)
+   A table is written — and read — only by the thread holding the claim on the
+   state that owns it, so no probe ever races a store: that single-claimant
+   rule, not the order of the writes, is what keeps the tables safe. [store] and
+   [promote] still publish values before keys and [k0] last of all, which
+   narrows what a reader outside the claim could misread, but does not protect
+   one — values are overwritten while the old keys still stand. *)
 
 external string_get64u : string -> int -> int64 = "%caml_string_get64u"
 external bytes_get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
@@ -374,6 +375,9 @@ type t = {
   fuse_unk : bool;
   byte_fallback : bool;
   ignore_merges : bool;
+  (* Whether a long span may be cut into SentencePiece word units before
+     encoding, decided once at creation: see the walker in [encode_into]. *)
+  sp_cut : bool;
   (* Byte-level models match raw bytes: [source] holds every entry decoded
      through the byte-to-unicode table, [source_vocab] inverts it and [byte_ids]
      gives the id of each single byte. The vocabulary itself keeps the encoded
@@ -1084,7 +1088,7 @@ let[@inline] add_cached ids v0 v1 =
     ((v1 lsr 32) land 0xFFFFFF)
     ~count:((v0 lsr 24) land 0xFF)
 
-let encode_into model st ids ~opaque text ~pos ~len =
+let encode_unit_into model st ids ~opaque text ~pos ~len =
   if len > 0 then begin
     let cache = st.st_cache in
     if cache.mask >= 0 && len <= max_key_len then begin
@@ -1154,6 +1158,92 @@ let encode_into model st ids ~opaque text ~pos ~len =
       build_word model st text pos len;
       emit_word model st.st_word ids ~opaque
     end
+  end
+
+(* SentencePiece pipelines — a ▁-marked vocabulary behind a pipeline with no
+   splitting pre-tokenizer — hand [encode_into] the whole document as one span,
+   and merging it whole is what the heap costs O(n log n). Such a span is cut
+   into word units instead, each unit opening at a ▁ (bytes E2 96 81) whose
+   previous character is not itself ▁, so a ▁-run stays with the word it
+   indents. Units are a few bytes, so they take the pretoken cache and the
+   linear merge.
+
+   The cut is exact when no vocabulary piece contains a ▁ in that opening
+   position: a merge result is always a vocabulary piece covering the very bytes
+   it was merged from, so no token of the whole-span merge can then span a unit
+   boundary, and merging the units independently gives the same tokens. That
+   argument reads piece names as the bytes they cover, which the unknown token
+   and byte-fallback tokens break — [<0xE2>] is one byte, not six — so a model
+   whose merges draw on such a token keeps whole merges too. [create] checks the
+   vocabulary once and leaves [sp_cut] false when the scan finds such a piece,
+   for byte-level models (their vocabularies encode text differently), under
+   [ignore_merges] and dropout (whole-word lookup and stochastic merges have no
+   per-unit equivalence), under affixes (a cut changes which characters carry
+   them), and when the unknown token could reach across a boundary: unless no
+   unknown token is set or every byte has a fallback token, ▁ itself must be a
+   vocabulary piece, so that an unknown run can never contain a boundary and
+   pending unknowns flush at the same places cut or not. The byte tests are
+   exact on valid UTF-8, where 0xE2 only ever leads a character. *)
+
+let[@inline] sp_mark text p limit =
+  p + 3 <= limit
+  && String.unsafe_get text p = '\xE2'
+  && String.unsafe_get text (p + 1) = '\x96'
+  && String.unsafe_get text (p + 2) = '\x81'
+
+let sp_crossing vocab_r =
+  Array.exists
+    (fun piece ->
+      let crossing = ref false in
+      for i = 1 to String.length piece - 3 do
+        if
+          sp_mark piece i (String.length piece)
+          && not (i >= 3 && sp_mark piece (i - 3) i)
+        then crossing := true
+      done;
+      !crossing)
+    vocab_r
+
+(* A token that does not stand for the bytes of its own name — the unknown
+   token, a byte fallback — lends those bytes to whatever is merged from it, so
+   a merge over one covers text the vocabulary scans cannot see. The built map
+   is scanned rather than the merge list: its keys hold the input ids
+   directly. *)
+let sp_opaque_merge merges ~unk_id ~byte_fallback_ids =
+  let opaque = Hashtbl.create 256 in
+  if unk_id >= 0 then Hashtbl.replace opaque unk_id ();
+  Array.iter
+    (fun id -> if id >= 0 then Hashtbl.replace opaque id ())
+    byte_fallback_ids;
+  Merge_map.fold
+    (fun key _ found ->
+      found
+      || Hashtbl.mem opaque (key lsr 21)
+      || Hashtbl.mem opaque (key land 0x1FFFFF))
+    merges false
+
+let encode_into model st ids ~opaque text ~pos ~len =
+  if (not model.sp_cut) || len <= max_key_len then
+    encode_unit_into model st ids ~opaque text ~pos ~len
+  else begin
+    let stop = pos + len in
+    let unit_start = ref pos in
+    let p = ref pos in
+    while !p < stop do
+      let c = String.unsafe_get text !p in
+      if c = '\xE2' && sp_mark text !p stop then begin
+        if !p > !unit_start && not (!p >= pos + 3 && sp_mark text (!p - 3) stop)
+        then begin
+          encode_unit_into model st ids ~opaque text ~pos:!unit_start
+            ~len:(!p - !unit_start);
+          unit_start := !p
+        end;
+        p := !p + 3
+      end
+      else incr p
+    done;
+    encode_unit_into model st ids ~opaque text ~pos:!unit_start
+      ~len:(stop - !unit_start)
   end
 
 let fused model =
@@ -1366,6 +1456,18 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
         match Hashtbl.find_opt vocab unk with Some id -> id | None -> -1)
     | None -> -1
   in
+  (* The SentencePiece sub-cut's gates, argued where the walker lives. *)
+  let sp_cut =
+    (not byte_level) && (not ignore_merges)
+    && (match dropout with Some p -> p <= 0.0 | None -> true)
+    && continuing_subword_prefix = None
+    && end_of_word_suffix = None
+    && (unk_id < 0
+       || (byte_fallback && Array.for_all (fun id -> id >= 0) byte_fallback_ids)
+       || Merge_map.find chars.multi 0xE29681 >= 0)
+    && (not (sp_crossing vocab_r))
+    && not (sp_opaque_merge merges ~unk_id ~byte_fallback_ids)
+  in
   (* The source form of an entry is what a pretoken is matched against: the
      entry itself, or, for a byte-level model, the bytes it stands for. Ids
      ascend so the lowest one wins whenever two entries share a source. *)
@@ -1413,6 +1515,7 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       fuse_unk;
       byte_fallback;
       ignore_merges;
+      sp_cut;
       byte_level;
       source;
       source_vocab;

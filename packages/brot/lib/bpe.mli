@@ -16,7 +16,13 @@
     seeded with the whole vocabulary, so a word the vocabulary holds is answered
     without merging. A small cache-resident front table, filled by promoting
     whatever the main table answers, serves the most frequent pretokens without
-    touching the main table's memory. *)
+    touching the main table's memory.
+
+    A span longer than a cache key is first cut into SentencePiece word units —
+    each opening at a ["▁"] that follows a non-["▁"] character — whenever
+    scanning the vocabulary at creation proves the cut exact, so pipelines that
+    hand the model whole documents (Llama, Mistral, Gemma) encode through the
+    cache and the linear merge too. *)
 
 type t
 (** The type for BPE models. Immutable after creation.
