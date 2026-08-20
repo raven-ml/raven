@@ -823,98 +823,6 @@ let test_metaspace_huggingface () =
     []
     (Pre.pre_tokenize (Pre.metaspace ~split:false ()) "")
 
-(* Both metaspaces walk: without splitting the walk is one span over the marked
-   text, which is what places a model's tokens inside it. A sequence carries the
-   rewrite as a single walk when the metaspace opens it, and as a segmented one
-   when verbatim walkers come before it: those cut the segments the metaspace
-   marks one by one. *)
-let test_metaspace_plan () =
-  let scheme = function
-    | `First -> "first"
-    | `Never -> "never"
-    | `Always -> "always"
-  in
-  let rewrite = function
-    | Pre.Verbatim -> "verbatim"
-    | Pre.Prefix_space -> "prefix space"
-    | Pre.Space_marker { marker; prepend } ->
-        Printf.sprintf "marker=%S prepend=%s" marker (scheme prepend)
-  in
-  let flat t =
-    let buffer = Buffer.create 64 in
-    let ppf = Format.formatter_of_buffer buffer in
-    Format.pp_set_margin ppf max_int;
-    Format.fprintf ppf "%a@?" Pre.pp t;
-    Buffer.contents buffer
-  in
-  let describe t =
-    match Pre.plan t with
-    | Pre.Pieces -> "pieces"
-    | Pre.Walk { rewrite = r; splittable } ->
-        Printf.sprintf "%s splittable=%b" (rewrite r) splittable
-    | Pre.Segmented { outer; rewrite = r; inner; splittable } ->
-        Printf.sprintf "%s | %s | %s splittable=%b" (flat outer) (rewrite r)
-          (flat inner) splittable
-  in
-  let check name t expected = equal ~msg:name string expected (describe t) in
-  check "split" (Pre.metaspace ())
-    "marker=\"\\226\\150\\129\" prepend=always splittable=false";
-  check "no split"
-    (Pre.metaspace ~split:false ())
-    "marker=\"\\226\\150\\129\" prepend=always splittable=false";
-  check "no split, no prepend"
-    (Pre.metaspace ~replacement:"_" ~prepend_scheme:`Never ~split:false ())
-    "marker=\"_\" prepend=never splittable=false";
-  check "first"
-    (Pre.metaspace ~prepend_scheme:`First ())
-    "marker=\"\\226\\150\\129\" prepend=first splittable=false";
-  check "no split, then a verbatim walker"
-    (Pre.sequence [ Pre.metaspace ~split:false (); Pre.punctuation () ])
-    "marker=\"\\226\\150\\129\" prepend=always splittable=false";
-  (* The walkers before the metaspace cut the segments it marks, and whether a
-     cut at a space is safe is the first of them's business. *)
-  check "after another walker"
-    (Pre.sequence [ Pre.whitespace_split; Pre.metaspace ~split:false () ])
-    "WhitespaceSplit | marker=\"\\226\\150\\129\" prepend=always | \
-     Metaspace(\"\\226\\150\\129\", always, split=false) splittable=true";
-  check "after two walkers, before another"
-    (Pre.sequence
-       [
-         Pre.punctuation ();
-         Pre.whitespace_split;
-         Pre.metaspace ();
-         Pre.digits ();
-       ])
-    "Sequence[Punctuation(Isolated), WhitespaceSplit] | \
-     marker=\"\\226\\150\\129\" prepend=always | \
-     Sequence[Metaspace(\"\\226\\150\\129\", always, split=true), \
-     Digits(individual=false)] splittable=false";
-  check "byte level after a walker"
-    (Pre.sequence [ Pre.whitespace_split; Pre.byte_level () ])
-    "WhitespaceSplit | prefix space | ByteLevel(add_prefix_space=true, \
-     use_regex=true, trim_offsets=true) splittable=true";
-  (* A nested sequence is its members in place. *)
-  check "nested"
-    (Pre.sequence
-       [
-         Pre.sequence [ Pre.whitespace_split; Pre.punctuation () ];
-         Pre.metaspace ();
-       ])
-    "Sequence[WhitespaceSplit, Punctuation(Isolated)] | \
-     marker=\"\\226\\150\\129\" prepend=always | \
-     Metaspace(\"\\226\\150\\129\", always, split=true) splittable=true";
-  (* Two rewrites, or a member that hands on encoded text, leave nothing to
-     walk. *)
-  check "two metaspaces"
-    (Pre.sequence [ Pre.metaspace (); Pre.metaspace () ])
-    "pieces";
-  check "byte level before another member"
-    (Pre.sequence [ Pre.byte_level ~add_prefix_space:false (); Pre.digits () ])
-    "pieces";
-  check "fixed length"
-    (Pre.sequence [ Pre.fixed_length 3; Pre.metaspace () ])
-    "pieces"
-
 (* Every expectation is the output of HuggingFace [Metaspace], whose offsets are
    those of the text a piece was made from and never of the marked text: a piece
    spans the union of what its characters came from, and a prepended marker came
@@ -1685,7 +1593,6 @@ let () =
         [
           test "Metaspace basic" test_metaspace_basic;
           test "Metaspace matches HuggingFace" test_metaspace_huggingface;
-          test "Metaspace walks with or without splitting" test_metaspace_plan;
           test "Metaspace offsets are of the source" test_metaspace_offsets;
           test "Metaspace prepends on first to the opening piece"
             test_metaspace_first;

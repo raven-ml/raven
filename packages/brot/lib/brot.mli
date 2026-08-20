@@ -58,20 +58,737 @@
 
     {!modules:Encoding Normalizer Pre_tokenizer Post_processor Decoder} *)
 
-module Normalizer = Normalizer
-(** Text normalization. *)
+module Encoding : sig
+  (** Tokenization encodings.
 
-module Pre_tokenizer = Pre_tokenizer
-(** Pre-tokenization. *)
+      An encoding bundles token IDs for model input with alignment metadata:
+      byte offsets, word indices, segment type IDs, attention masks, and
+      special-token flags.
 
-module Post_processor = Post_processor
-(** Post-processing. *)
+      Encodings are produced by {!Brot.encode} and post-processed with
+      {!val-truncate} and {!val-pad}. All parallel arrays ({!val-ids},
+      {!val-type_ids}, {!val-tokens}, {!val-word_ids}, {!val-offsets},
+      {!val-special_tokens_mask}, {!val-attention_mask}) share the same length,
+      equal to {!val-length}.
 
-module Decoder = Decoder
-(** Token decoding. *)
+      {!val-tokens}, {!val-word_ids} and {!val-offsets} are derived when they
+      are first asked for and kept afterwards: a caller that only reads
+      {!val-ids} pays for none of them. Deriving is a mutation: do not race the
+      first read of {!val-tokens}, {!val-offsets} or {!val-word_ids} from
+      several domains — read them from one domain, or read them before sharing.
+  *)
 
-module Encoding = Encoding
-(** Tokenization encodings. *)
+  type t
+  (** The type for tokenization encodings. *)
+
+  (** {1:construct Construction} *)
+
+  val empty : t
+  (** [empty] is the encoding with no tokens. *)
+
+  val create :
+    ids:int array ->
+    type_ids:int array ->
+    tokens:string array ->
+    words:int option array ->
+    offsets:(int * int) array ->
+    special_tokens_mask:int array ->
+    attention_mask:int array ->
+    ?overflowing:t list ->
+    unit ->
+    t
+  (** [create ~ids ~type_ids ~tokens ~words ~offsets ~special_tokens_mask
+       ~attention_mask ()] is an encoding from the given arrays. [overflowing]
+      defaults to [[]].
+
+      Raises [Invalid_argument] if the seven arrays do not all have the same
+      length. *)
+
+  val concat : t list -> t
+  (** [concat encs] is the encoding with the tokens of each element of [encs] in
+      order. {!val-overflowing} is taken from the first element. Allocates once
+      rather than creating intermediate arrays per pair. *)
+
+  (** {1:access Accessors} *)
+
+  val ids : t -> int array
+  (** [ids enc] is the token ID array. *)
+
+  val type_ids : t -> int array
+  (** [type_ids enc] is the segment ID array. Typically [0] for the first
+      sequence and [1] for the second in sentence-pair tasks. *)
+
+  val tokens : t -> string array
+  (** [tokens enc] is the string representation of each token. *)
+
+  val word_ids : t -> int option array
+  (** [word_ids enc] maps each token to the index of the pretoken it came from,
+      counting from [0] in each sequence. The tokens a post-processor inserts,
+      and padding, are [None]. *)
+
+  val offsets : t -> (int * int) array
+  (** [offsets enc] is the [(start, end_)] byte span of each token in the text
+      that was encoded, before normalization: a token of ["café"] normalized to
+      ["cafe"] reports the bytes of the accented text. Spans are ascending but
+      need not tile the text, since a pre-tokenizer drops its delimiters and a
+      normalizer may remove characters. The tokens a post-processor inserts, and
+      padding, report [(0, 0)]. *)
+
+  val special_tokens_mask : t -> int array
+  (** [special_tokens_mask enc] is [1] for special tokens ([CLS], [SEP],
+      padding) and [0] for content tokens. An added token found in the input is
+      [0], special or not: only what a post-processor inserts is masked. *)
+
+  val attention_mask : t -> int array
+  (** [attention_mask enc] is [1] for real tokens and [0] for padding tokens. *)
+
+  val overflowing : t -> t list
+  (** [overflowing enc] is the list of overflow encodings produced by
+      {!val-truncate} when the input exceeds [max_length]. Each element is a
+      sliding window over the excess tokens. *)
+
+  val is_empty : t -> bool
+  (** [is_empty enc] is [true] iff [enc] has no tokens. *)
+
+  val length : t -> int
+  (** [length enc] is the number of tokens in [enc]. *)
+
+  (** {1:ops Operations} *)
+
+  val with_type_id : t -> int -> t
+  (** [with_type_id enc type_id] is [enc] with every {!val-type_ids} entry set
+      to [type_id]. Nothing else is read, so an encoding that has not worked out
+      its {!val-tokens}, {!val-offsets} or {!val-word_ids} still has not. *)
+
+  val truncate :
+    ?stride:int -> ?direction:[ `Left | `Right ] -> t -> max_length:int -> t
+  (** [truncate enc ~max_length] limits [enc] to at most [max_length] tokens.
+
+      The tokens kept are the first [max_length] when [direction] is [`Right]
+      (the default) and the last [max_length] when it is [`Left]. The excess is
+      split into windows of [max_length] tokens overlapping the previous window
+      by [stride] (default [0]) and stored in {!val-overflowing}, walking away
+      from the kept tokens; the last window stops at the encoding's edge, so it
+      may be shorter. If [length enc <= max_length], [enc] is returned
+      unchanged. When [max_length] is [0], all tokens move to {!val-overflowing}
+      and {!val-empty} is returned.
+
+      Raises [Invalid_argument] if [enc] is truncated and [stride] is not less
+      than [max_length]. *)
+
+  val pad :
+    t ->
+    target_length:int ->
+    pad_id:int ->
+    pad_type_id:int ->
+    pad_token:string ->
+    direction:[ `Left | `Right ] ->
+    t
+  (** [pad enc ~target_length ~pad_id ~pad_type_id ~pad_token ~direction]
+      extends [enc] to exactly [target_length] tokens.
+
+      Padding tokens have {!val-attention_mask} [0] and
+      {!val-special_tokens_mask} [1]. If [length enc >= target_length], [enc] is
+      returned unchanged. Padding is applied recursively to {!val-overflowing}
+      encodings. When [direction] is [`Left], {!val-offsets} are shifted
+      accordingly. *)
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf enc] formats [enc] as a table for inspection, one row per token:
+      index, token, ID, byte offsets, word ID, type ID, attention and
+      special-token masks. Reading the table forces the derived {!val-tokens},
+      {!val-offsets} and {!val-word_ids}. *)
+end
+
+module Normalizer : sig
+  (** Text normalization.
+
+      Normalizers transform text before tokenization: lowercasing, accent
+      removal, Unicode normalization, whitespace cleanup, and model-specific
+      preprocessing. They are the first stage in the tokenization pipeline,
+      applied before {!Pre_tokenizer} and vocabulary-based encoding.
+
+      Compose normalizers with {!val-sequence}:
+      {[
+      let n =
+        Normalizer.sequence
+          [ Normalizer.nfd; Normalizer.strip_accents; Normalizer.lowercase ]
+      in
+      Normalizer.apply n "Caf\u{00E9}"
+      (* "cafe" *)
+      ]} *)
+
+  type t
+  (** The type for normalizers. *)
+
+  (** {1:normalizers Normalizers} *)
+
+  (** {2:unicode Unicode normalization} *)
+
+  val nfc : t
+  (** [nfc] is Unicode NFC normalization (canonical composition). *)
+
+  val nfd : t
+  (** [nfd] is Unicode NFD normalization (canonical decomposition). *)
+
+  val nfkc : t
+  (** [nfkc] is Unicode NFKC normalization (compatibility composition). *)
+
+  val nfkd : t
+  (** [nfkd] is Unicode NFKD normalization (compatibility decomposition). *)
+
+  (** {2:text Text transforms} *)
+
+  val lowercase : t
+  (** [lowercase] is the full Unicode lowercase mapping. It is not case folding:
+      ["ß"] and ["ﬁ"] lowercase to themselves. *)
+
+  val strip_accents : t
+  (** [strip_accents] removes every mark ([Mn], [Mc], [Me]). It does not
+      decompose: compose it after {!val-nfd} to also remove the accents of
+      precomposed characters. *)
+
+  val strip : ?left:bool -> ?right:bool -> unit -> t
+  (** [strip ?left ?right ()] is a normalizer that strips Unicode whitespace
+      from text boundaries. [left] and [right] default to [true]. *)
+
+  val replace : pattern:string -> replacement:string -> t
+  (** [replace ~pattern ~replacement] is a normalizer that replaces every
+      occurrence of the string [pattern] with [replacement], scanning left to
+      right without overlap. An empty [pattern] occurs before every character
+      and at the end of the text. Empty text is returned unchanged. *)
+
+  val replace_regex : pattern:string -> replacement:string -> t
+  (** [replace_regex ~pattern ~replacement] is a normalizer that replaces every
+      match of the regular expression [pattern] with [replacement]. Matches are
+      found left to right, leftmost first, without overlap; an empty match right
+      after another match is skipped. Empty text is returned unchanged.
+
+      [pattern] is written in the dialect of tokenizer files: Unicode-aware, so
+      that [\s], [\d] and [\w] and their negations, [.] and negated classes
+      stand for characters rather than bytes, and [\p{..}] selects a general
+      category ([L], [Lu], [Nd], ...). [^] and [$] are line anchors, [\A], [\z]
+      and [\Z] text anchors. Groups, alternation, greedy and lazy quantifiers
+      and bracket classes are supported; case-insensitive matching, lookaround,
+      backreferences, word boundaries and possessive quantifiers are not.
+
+      Raises [Invalid_argument] if [pattern] is invalid or uses an unsupported
+      construct; the message says which. *)
+
+  val prepend : string -> t
+  (** [prepend s] is a normalizer that prepends [s] to non-empty text. Empty
+      text is returned unchanged. *)
+
+  (** {2:byte_level Byte-level encoding} *)
+
+  val byte_level : t
+  (** [byte_level] is GPT-2 style byte-level encoding: each byte of the text is
+      mapped to a printable Unicode character using the GPT-2 byte-to-unicode
+      table. A space, for instance, becomes [U+0120]. *)
+
+  (** {2:model Model-specific} *)
+
+  val nmt : t
+  (** [nmt] is the control character cleanup of neural machine translation
+      models. It removes [U+0001-U+0008], [U+000B], [U+000E-U+001F], [U+007F],
+      [U+008F] and [U+009F], and replaces with a space the tab, line feed, form
+      feed and carriage return, [U+1680], [U+200B-U+200F], [U+2028], [U+2029],
+      [U+2581], [U+FEFF] and [U+FFFD]. *)
+
+  val bert :
+    ?clean_text:bool ->
+    ?handle_chinese_chars:bool ->
+    ?strip_accents:bool option ->
+    ?lowercase:bool ->
+    unit ->
+    t
+  (** [bert ()] is a BERT normalizer.
+
+      - [clean_text]: remove control characters and normalize whitespace.
+        Default: [true].
+      - [handle_chinese_chars]: pad CJK ideographs with spaces. Default: [true].
+      - [strip_accents]: decompose to NFD and remove the nonspacing marks.
+        Unlike {!val-strip_accents}, spacing and enclosing marks are kept, so
+        that the vowel signs of abugidas survive. When [None], accents are
+        stripped iff [lowercase] is [true]. Default: [None].
+      - [lowercase]: apply the Unicode lowercase mapping. Default: [true]. *)
+
+  (** {2:composition Composition} *)
+
+  val sequence : t list -> t
+  (** [sequence ns] is the composition of normalizers [ns], applied left to
+      right. *)
+
+  (** {1:applying Applying} *)
+
+  val apply : t -> string -> string
+  (** [apply n s] is [s] normalized by [n]. *)
+
+  (** {1:alignment Alignment}
+
+      Normalizing moves text around: {!val-nfd} splits a character in two,
+      {!val-strip_accents} drops one, {!val-prepend} adds one. An alignment
+      records where the result came from, so that token offsets can be reported
+      on the text the user passed in rather than on the normalized text. *)
+
+  type alignment
+  (** The type for maps from the bytes of a normalized text back to the bytes of
+      the text it was normalized from. *)
+
+  val identity : string -> alignment
+  (** [identity s] is the alignment of [s] on itself, for text that was not
+      normalized. *)
+
+  val apply_aligned : t -> string -> string * alignment
+  (** [apply_aligned n s] is [apply n s] with its alignment on [s]. *)
+
+  val original_span : alignment -> start:int -> stop:int -> int * int
+  (** [original_span a ~start ~stop] is the span of the original text that the
+      normalized bytes \[[start];[stop]) come from: from the first byte the byte
+      at [start] comes from to the last byte the byte at [stop - 1] comes from.
+
+      Every byte of a character has the span of the whole character, so a span
+      cutting a character short still reports it whole. A character the
+      normalizer inserted has the span of the character it was inserted next to,
+      and one it removed has no span at all, so the result can cover original
+      bytes that no span reports. An empty [start = stop] gives an empty span.
+
+      Raises [Invalid_argument] unless [0 <= start <= stop <= n], where [n] is
+      the length of the normalized text. *)
+
+  (** {1:formatting Formatting} *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf n] formats [n] for inspection. *)
+
+  (** {1:serialization Serialization} *)
+
+  val to_json : t -> Jsont.json
+  (** [to_json n] is [n] serialized to HuggingFace-compatible JSON. *)
+
+  val of_json : Jsont.json -> (t, string) result
+  (** [of_json json] is a normalizer deserialized from HuggingFace JSON. Errors
+      if [json] is not an object, has a missing or unknown ["type"] field, or
+      has invalid parameters. *)
+end
+
+module Pre_tokenizer : sig
+  (** Pre-tokenization.
+
+      Pre-tokenizers split raw text into pretokens before vocabulary-based
+      tokenization (BPE, WordPiece, etc.) is applied. Each pretoken carries byte
+      offsets into the original text. *)
+
+  type t
+  (** The type for pre-tokenizers. *)
+
+  (** {1:constructors Constructors} *)
+
+  val whitespace : t
+  (** [whitespace] splits on whitespace using pattern [\w+|[^\w\s]+].
+
+      Groups word characters (letters, digits, underscore) together and groups
+      non-word, non-space characters together. Whitespace is used as delimiter
+      but not included in output. *)
+
+  val whitespace_split : t
+  (** [whitespace_split] splits on any whitespace characters.
+
+      Removes whitespace from output. Simplest and fastest pre-tokenizer. *)
+
+  val bert : t
+  (** [bert] applies BERT-style pre-tokenization.
+
+      Splits on whitespace, isolates punctuation, and separates CJK characters
+      individually. *)
+
+  val byte_level :
+    ?add_prefix_space:bool -> ?use_regex:bool -> ?trim_offsets:bool -> unit -> t
+  (** [byte_level ()] is a byte-level pre-tokenizer. Used by GPT-2, GPT-3,
+      RoBERTa.
+
+      Converts text to byte representation and applies GPT-2's regex pattern for
+      splitting.
+
+      - [add_prefix_space]: add space at beginning if text does not start with
+        whitespace. Default: [true].
+      - [use_regex]: use GPT-2's regex pattern for splitting. Default: [true].
+      - [trim_offsets]: adjust offsets for byte-level encoding. Default: [true].
+  *)
+
+  type behavior =
+    [ `Isolated  (** Keep each delimiter as a pretoken of its own *)
+    | `Removed  (** Drop the delimiters *)
+    | `Merged_with_previous  (** Keep a delimiter with what precedes it *)
+    | `Merged_with_next  (** Keep a delimiter with what follows it *)
+    | `Contiguous
+      (** Keep neighbours that are both delimiters, or both not, as one pretoken
+      *) ]
+  (** Delimiter handling behavior for splitting operations.
+
+      [`Merged_with_previous] and [`Merged_with_next] merge a delimiter into the
+      text beside it only: a delimiter that follows another one is a pretoken of
+      its own. *)
+
+  val punctuation : ?behavior:behavior -> unit -> t
+  (** [punctuation ()] separates punctuation characters from the text around
+      them, whitespace included. Every punctuation character is a delimiter.
+
+      [behavior] defaults to [`Isolated]. *)
+
+  val split : pattern:string -> ?behavior:behavior -> ?invert:bool -> unit -> t
+  (** [split ~pattern ()] splits on a literal string [pattern]. HuggingFace's
+      regular expression patterns have no equivalent here.
+
+      [behavior] defaults to [`Removed]. When [invert] is [true] the delimiters
+      are the runs of text between the occurrences of [pattern], and those
+      occurrences are what they separate; defaults to [false].
+
+      An empty [pattern] matches at every position, so the pretokens are the
+      characters — and none of them when [invert] is [true] and [behavior] is
+      [`Removed]. *)
+
+  val char_delimiter : string -> t
+  (** [char_delimiter c] splits on the character [c], removing it from the
+      output. Equivalent to [split ~pattern:c ~behavior:`Removed ()].
+
+      Raises [Invalid_argument] if [c] is not exactly one character. *)
+
+  val digits : ?individual_digits:bool -> unit -> t
+  (** [digits ()] splits on digit boundaries.
+
+      When [individual_digits] is [true], each digit is a separate pretoken;
+      when [false] (default), consecutive digits are grouped. *)
+
+  type prepend_scheme =
+    [ `First  (** Prepend to the pretoken that opens the document only *)
+    | `Never  (** Never prepend *)
+    | `Always  (** Prepend to every pretoken not starting with a space *) ]
+  (** Controls when metaspace prepends the replacement character. In a
+      {!sequence} the pretokens are those of the member before it, so [`First]
+      marks the first of them and [`Always] each — and the encode pipeline
+      counts a pretoken as opening the document only when nothing, an added
+      token included, comes before it. *)
+
+  val metaspace :
+    ?replacement:string ->
+    ?prepend_scheme:prepend_scheme ->
+    ?split:bool ->
+    unit ->
+    t
+  (** [metaspace ()] replaces spaces with a visible marker. Used by
+      SentencePiece models.
+
+      - [replacement]: the marker spaces are replaced with. Default: ["▁"]
+        (U+2581). It must be exactly one character.
+      - [prepend_scheme]: when to prepend the marker, which happens only if the
+        marked text does not start with one already. Default: [`Always].
+      - [split]: whether to split before each marker. Default: [true].
+
+      Pretokens are those of the marked text; their offsets are the bytes of the
+      text they were made from. A marker that replaced a space stands at that
+      space, and a prepended one at the character it opens.
+
+      Raises [Invalid_argument] if [replacement] is not exactly one character.
+  *)
+
+  val unicode_scripts : t
+  (** [unicode_scripts] splits on Unicode script boundaries.
+
+      A pretoken opens where the writing system changes (e.g. Latin to Cyrillic,
+      Latin to Han) and runs to the next change. Hiragana and Katakana count as
+      Han, as does the prolonged sound mark ["ー"] (U+30FC).
+
+      Spaces and characters of no known script join the pretoken they follow, so
+      a leading run of them belongs to no pretoken: unlike the other
+      pre-tokenizers, the pretokens need not cover the input. *)
+
+  val fixed_length : int -> t
+  (** [fixed_length n] cuts the text into pretokens of [n] characters.
+
+      The last pretoken may be shorter than [n]. *)
+
+  val sequence : t list -> t
+  (** [sequence ts] chains multiple pre-tokenizers left-to-right.
+
+      Each pre-tokenizer processes the pretokens from the previous one. Offsets
+      are composed correctly through the chain. *)
+
+  (** {1:ops Operations} *)
+
+  val pre_tokenize : t -> string -> (string * (int * int)) list
+  (** [pre_tokenize t text] splits [text] into pretokens with byte offsets.
+
+      Returns a list of [(pretoken, (start, end_))] where [start] and [end_] are
+      byte positions in [text], ascending and within it. A pretoken is the bytes
+      of its span unless [t] rewrote or encoded them, in which case the span is
+      where the bytes it was made from lie.
+
+      Two spans can cover the same bytes. A span is widened to whole characters,
+      so pretokens of a [text] that is not valid UTF-8 can share one; and the
+      pretokens a member of a {!sequence} cuts from one that was rewritten more
+      than once, cut by a fixed-length member, or encoded all report that
+      pretoken's span, nothing in it being placeable more finely than the whole
+      of it. *)
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf t] formats [t] for inspection. *)
+
+  (** {1:byte_level_decode Byte-level decoding} *)
+
+  val byte_level_decode : string -> string
+  (** [byte_level_decode s] is the bytes the byte-level alphabet spells [s]
+      from: one byte per character. A single character outside the alphabet, an
+      invalidly encoded one included, leaves [s] as it is — the fallback is over
+      the whole string, not the character.
+
+      The result needs not be valid UTF-8: it is bytes, and turning them into
+      text is the caller's step. *)
+
+  (** {1:serialization Serialization} *)
+
+  val to_json : t -> Jsont.json
+  (** [to_json t] serializes [t] to HuggingFace JSON format. *)
+
+  val of_json : Jsont.json -> (t, string) result
+  (** [of_json json] is a pre-tokenizer from HuggingFace JSON format. Errors if
+      [json] is not an object, has a missing or unknown ["type"] field, has
+      invalid parameters, or is a ["Split"] whose pattern is a regular
+      expression ([{"Regex": ...}]) rather than a literal ([{"String": ...}]).
+  *)
+end
+
+module Post_processor : sig
+  (** Post-processing tokenization output with special tokens.
+
+      Post-processors add special tokens and type IDs to tokenized sequences
+      after core tokenization. They handle model-specific requirements like
+      [[CLS]] and [[SEP]] for BERT, sentence pair formatting, and byte-level
+      offset adjustments. *)
+
+  type t
+  (** The type for post-processors. *)
+
+  type token = string * int
+  (** A special token as [(text, id)]. *)
+
+  (** {1:constructors Constructors} *)
+
+  val bert : sep:token -> cls:token -> t
+  (** [bert ~sep ~cls] is a BERT-style post-processor.
+
+      Single: [[CLS] A [SEP]]. Pair: [[CLS] A [SEP] B [SEP]]. Type IDs: [0] for
+      the first sequence, [1] for the second. *)
+
+  val roberta :
+    sep:token ->
+    cls:token ->
+    ?trim_offsets:bool ->
+    ?add_prefix_space:bool ->
+    unit ->
+    t
+  (** [roberta ~sep ~cls ()] is a RoBERTa-style post-processor.
+
+      Single: [<s> A </s>]. Pair: [<s> A </s> </s> B </s>]. All type IDs are
+      [0].
+
+      [trim_offsets] removes leading and trailing whitespace from the offsets of
+      byte-level tokens; it defaults to [true]. [add_prefix_space] tells the
+      trimming that a single leading space on a token that starts at offset [0]
+      was added by the pre-tokenizer and must be kept; it defaults to [true]. *)
+
+  val byte_level : ?add_prefix_space:bool -> ?trim_offsets:bool -> unit -> t
+  (** [byte_level ()] is a byte-level post-processor that adjusts character
+      offsets for byte-level encoding.
+
+      [trim_offsets] removes leading and trailing whitespace from offsets.
+      Defaults to [true]. [add_prefix_space] tells the trimming that a single
+      leading space on a token that starts at offset [0] was added by the
+      pre-tokenizer and must be kept; it defaults to [true]. *)
+
+  val template :
+    single:string -> ?pair:string -> ?special_tokens:token list -> unit -> t
+  (** [template ~single ()] is a template-based post-processor.
+
+      Templates use [$A] and [$B] as sequence placeholders and literal special
+      token names (e.g. [[CLS]]). Type IDs can be specified with a colon suffix:
+      [$A:0], [[SEP]:1].
+
+      [pair] must reference both [$A] and [$B]; it defaults to ["$A:0 $B:1"].
+      [special_tokens] defaults to [[]]. *)
+
+  val sequence : t list -> t
+  (** [sequence processors] chains [processors] left-to-right. *)
+
+  (** {1:processing Processing} *)
+
+  val process :
+    t -> ?pair:Encoding.t -> Encoding.t -> add_special_tokens:bool -> Encoding.t
+  (** [process t enc ~add_special_tokens] adds special tokens and sets type IDs
+      on [enc].
+
+      When [~pair] is provided, both sequences are merged into a single
+      encoding. [pair] enters as the second segment, with type ID [1], which [t]
+      may override. Offsets are not shifted: each sequence keeps the offsets
+      into its own text.
+
+      When [~add_special_tokens] is [false], no special token is inserted, but
+      everything else still happens: the two sequences are still merged, type
+      IDs are still assigned, and byte-level offsets are still trimmed. *)
+
+  val added_tokens : t -> is_pair:bool -> int
+  (** [added_tokens t ~is_pair] is the number of special tokens [t] adds. Useful
+      for calculating the truncation budget. *)
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp] formats a post-processor for inspection. *)
+
+  (** {1:serialization Serialization} *)
+
+  val of_json : Jsont.json -> (t, string) result
+  (** [of_json json] is a post-processor from HuggingFace [tokenizer.json]
+      format. Errors if [json] is not an object, has a missing or unknown
+      ["type"] field, or has invalid parameters. *)
+
+  val to_json : t -> Jsont.json
+  (** [to_json t] is [t] serialized to HuggingFace [tokenizer.json] format. *)
+end
+
+module Decoder : sig
+  (** Decoding tokens back to text.
+
+      Decoders convert token strings back into natural text by reversing
+      encoding-specific transformations (prefix/suffix removal, byte-level
+      decoding, whitespace normalization, etc.).
+
+      Decoders operate on token {e strings}, not IDs. Convert IDs to strings via
+      vocabulary first, then apply {!val-decode}.
+
+      A decoder rewrites a token list into another token list, and {!val-decode}
+      is the concatenation of the result. Most decoders rewrite each token on
+      its own ({!val-bpe}, {!val-wordpiece}, {!val-metaspace}, {!val-replace},
+      {!val-strip}); {!val-byte_fallback} and {!val-ctc} also join or drop
+      tokens; {!val-byte_level} and {!val-fuse} collapse the whole list into one
+      token. The distinction matters when composing decoders with
+      {!val-sequence}: a collapsing decoder hides token boundaries from the
+      decoders that follow it. *)
+
+  type t
+  (** The type for decoders. *)
+
+  (** {1:constructors Constructors} *)
+
+  val bpe : ?suffix:string -> unit -> t
+  (** [bpe ~suffix ()] is a decoder for BPE-encoded tokens. Every occurrence of
+      [suffix], which marks the end of a word, becomes the space that follows
+      it, except in the last token where it is dropped. [suffix] defaults to
+      ["</w>"]. *)
+
+  val byte_level : t
+  (** [byte_level] is a collapsing decoder that reads GPT-2 style
+      byte-to-Unicode tokens back as the text their bytes spell.
+
+      A token is mapped character by character, and one character outside the
+      byte-level alphabet leaves the whole token to stand for its own bytes. The
+      bytes of every token are then read as one text, so a character spelled
+      across two tokens comes back whole, and every maximal ill-formed byte
+      sequence becomes one U+FFFD — four stray bytes cost four, while a
+      four-byte character cut short costs one. *)
+
+  val byte_fallback : t
+  (** [byte_fallback] is a decoder for byte fallback tokens. Each run of hex
+      byte tokens (e.g. ["<0x41>"]) becomes the text those bytes spell; a run
+      that is not valid UTF-8 becomes one U+FFFD per byte. Other tokens pass
+      through unchanged. *)
+
+  val wordpiece : ?prefix:string -> ?cleanup:bool -> unit -> t
+  (** [wordpiece ~prefix ~cleanup ()] is a decoder for WordPiece tokens. Strips
+      continuation [prefix] (default ["##"]) from non-initial subwords and gives
+      the others a leading space. When [cleanup] is [true] (default), applies
+      the detokenization cleanup to every token, once its joining space is
+      prepended: the space before [.], [?], [!], [,] and the English
+      contractions is taken back, and [" do not"] is rewritten to [" don't"]. So
+      ["hello"; ","; "world"] decodes to ["hello, world"], while
+      ["3"; "."; "14"] decodes to ["3. 14"] because the space after the full
+      stop was never the decoder's to remove. *)
+
+  val metaspace :
+    ?replacement:string ->
+    ?prepend_scheme:Pre_tokenizer.prepend_scheme ->
+    unit ->
+    t
+  (** [metaspace ~replacement ~prepend_scheme ()] converts metaspace markers
+      back to spaces. [replacement] defaults to ["\u{2581}"]. Unless
+      [prepend_scheme] is [`Never], the marker was prepended to the text rather
+      than standing for a space, so every occurrence of it in the {e first}
+      token is dropped instead of becoming a space — on [`First] as on
+      [`Always], the two prepending to the same first token. [prepend_scheme]
+      defaults to [`Always]. *)
+
+  val ctc :
+    ?pad_token:string ->
+    ?word_delimiter_token:string ->
+    ?cleanup:bool ->
+    unit ->
+    t
+  (** [ctc ~pad_token ~word_delimiter_token ~cleanup ()] is a decoder for
+      {{:https://distill.pub/2017/ctc/}CTC (Connectionist Temporal
+       Classification)} output. Deduplicates consecutive tokens, then cuts every
+      occurrence of [pad_token] (default ["<pad>"]) out of each token, wherever
+      in it they fall, and drops the tokens left empty. When [cleanup] is [true]
+      (default), applies the same detokenization cleanup as {!val-wordpiece} to
+      every token and then replaces [word_delimiter_token] (default ["|"]) with
+      spaces. *)
+
+  val sequence : t list -> t
+  (** [sequence decoders] chains [decoders] left-to-right. Each decoder's output
+      token list feeds into the next. *)
+
+  val replace : pattern:string -> by:string -> unit -> t
+  (** [replace ~pattern ~by ()] replaces every literal occurrence of [pattern]
+      with [by] in each token. *)
+
+  val strip : ?content:string -> ?start:int -> ?stop:int -> unit -> t
+  (** [strip ~content ~start ~stop ()] removes up to [start] leading and [stop]
+      trailing occurrences of [content] from each token. [content] defaults to
+      [" "], [start] and [stop] to [0]. A token left with nothing between the
+      two cuts becomes empty.
+
+      HuggingFace reads [content] as a single character, so {!val-to_json} on a
+      decoder whose [content] is longer, or empty, writes a decoder it rejects.
+  *)
+
+  val fuse : t
+  (** [fuse] is a collapsing decoder that concatenates all tokens into a single
+      string with no delimiter. *)
+
+  (** {1:ops Operations} *)
+
+  val decode : t -> string list -> string
+  (** [decode decoder tokens] applies [decoder] to [tokens] and returns the
+      decoded text. *)
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf decoder] formats [decoder] for debugging. *)
+
+  (** {1:serialization Serialization} *)
+
+  val to_json : t -> Jsont.json
+  (** [to_json decoder] serializes [decoder] to HuggingFace JSON format. *)
+
+  val of_json : Jsont.json -> (t, string) result
+  (** [of_json json] is a decoder from HuggingFace JSON format. Errors if [json]
+      is not an object, has a missing or unknown ["type"] field, or has invalid
+      parameters. *)
+end
 
 (** {1:types Types} *)
 

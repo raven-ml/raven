@@ -103,10 +103,6 @@ val with_type_id : t -> int -> t
     [type_id]. Nothing else is read, so an encoding that has not worked out its
     {!val-tokens}, {!val-offsets} or {!val-word_ids} still has not. *)
 
-val with_overflowing : t -> t list -> t
-(** [with_overflowing enc windows] is [enc] with [windows] as its
-    {!val-overflowing}. Nothing else is read. *)
-
 val truncate :
   ?stride:int -> ?direction:[ `Left | `Right ] -> t -> max_length:int -> t
 (** [truncate enc ~max_length] limits [enc] to at most [max_length] tokens.
@@ -147,12 +143,12 @@ val pp : Format.formatter -> t -> unit
     special-token masks. Reading the table forces the derived {!val-tokens},
     {!val-offsets} and {!val-word_ids}. *)
 
-(**/**)
+(* Internals. Assembling encodings on the encode path; the public API is the
+   subset written into [brot.mli]. *)
 
-(* Internals. Building an encoding from the run of spans the encode path
-   produced; [Run.t] belongs to a module the library does not export, so
-   [of_run] has no caller outside it. [token]'s only caller is
-   [post_processor.ml]. *)
+val with_overflowing : t -> t list -> t
+(** [with_overflowing enc windows] is [enc] with [windows] as its
+    {!val-overflowing}. Nothing else is read. *)
 
 val token :
   id:int -> token:string -> offset:int * int -> type_id:int -> special:bool -> t
@@ -166,5 +162,3 @@ val of_run : Run.t -> ids:int array -> t
     {!val-word_ids} and {!val-offsets} are derived from [run] when they are
     asked for. Every token gets type id [0], {!val-attention_mask} [1] and
     {!val-special_tokens_mask} [0]. *)
-
-(**/**)

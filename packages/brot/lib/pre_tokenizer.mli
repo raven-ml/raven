@@ -187,13 +187,9 @@ val of_json : Jsont.json -> (t, string) result
     invalid parameters, or is a ["Split"] whose pattern is a regular expression
     ([{"Regex": ...}]) rather than a literal ([{"String": ...}]). *)
 
-(**/**)
-
 (* Internals. Pre-tokenization as the encode path sees it: byte ranges written
    into a buffer, rather than pieces. [pre_tokenize] is these functions plus the
-   strings. These are for Brot's own use and are not part of the stable
-   interface; [Spans.t] belongs to a module the library does not export, so
-   [fill] has no caller outside it. *)
+   strings; the public API is the subset written into [brot.mli]. *)
 
 (** The type for text rewrites that precede a walk. *)
 type rewrite =
@@ -266,16 +262,10 @@ val fill : t -> string -> pos:int -> stop:int -> Spans.t -> int
 val lead_class : Bytes.t
 (** [lead_class] is the byte-level walker's dispatch table: byte [b]'s class,
     {!Char_class.category} on ASCII with the space and the apostrophe given
-    classes of their own, and the two shapes of non-ASCII byte. Read by the C
-    kernels.
-
-    {b Warning.} The library owns these bytes: they are built once and read on
-    every byte-level encode. Never write to them — a mutation silently corrupts
-    every encode in the process. *)
+    classes of their own, and the two shapes of non-ASCII byte. Built once and
+    only ever read, by the C kernels on every byte-level encode. *)
 
 val walks_byte_level : t -> bool
 (** [walks_byte_level t] is [true] iff {!fill} walks [t] with the byte-level
     pattern: [t] is a byte-level pre-tokenizer using the GPT-2 regex, and not
     one wrapped in a sequence. *)
-
-(**/**)

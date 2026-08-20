@@ -1087,6 +1087,11 @@ thread.
 
 ### Brot
 
+- **Breaking:** the stage modules' internal plumbing is no longer exported:
+  `Brot` is now published from a single signature, so
+  `Pre_tokenizer.plan`/`fill`/`lead_class`,
+  `Encoding.token`/`of_run`/`with_overflowing` and `Post_processor.affixes`
+  are gone from the public API. The documented API is unchanged.
 - `encode_batch_ids` is ~3–5% faster: the fused C kernels now write each
   chunk's ids straight into its int32 result buffer instead of filling an
   int buffer that was copied per document (GPT-2 batch 179 → 186 MB/s

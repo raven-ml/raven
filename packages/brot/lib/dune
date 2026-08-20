@@ -13,8 +13,13 @@
   bpe
   char_class
   chars
+  decoder
+  encoding
   ints
   kernel
+  normalizer
+  post_processor
+  pre_tokenizer
   regex
   run
   spans
