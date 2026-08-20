@@ -182,13 +182,23 @@ let alg_len_table = function
 (* The model's span encoder for a document. A BPE model's merge buffers and
    pretoken cache are claimed once for the document rather than once per span,
    and the closure keeps the dispatch out of the span loop. A fused BPE also
-   hands out its walking encoder, which cuts and encodes in one pass. *)
-let with_span_encoder t f =
+   hands out its walking encoder, which cuts and encodes in one pass. Handed a
+   batch sink, a BPE's encoders write the kernels' ids into it and treat the ids
+   buffer they are given as the spill; the others keep writing to that buffer,
+   which the batch driver flushes at document end either way. *)
+let with_span_encoder t ?ids32 f =
   match t.algorithm with
   | Alg_bpe m ->
       Bpe.with_state m (fun st ->
-          f (Bpe.encode_into m st)
-            (if t.fused then Some (Bpe.encode_walk m st) else None))
+          match ids32 with
+          | Some sink ->
+              f
+                (Bpe.encode_into_ids32 m st sink)
+                (if t.fused then Some (Bpe.encode_walk_ids32 m st sink)
+                 else None)
+          | None ->
+              f (Bpe.encode_into m st)
+                (if t.fused then Some (Bpe.encode_walk m st) else None))
   | Alg_wordpiece m -> f (Wordpiece.encode_into m) None
   | Alg_wordlevel m -> f (Word_level.encode_into m) None
   | Alg_unigram m ->
@@ -614,8 +624,13 @@ let continuing = Lazy.from_val false
 
    Added tokens matched against raw text cut the input first, then, in each
    remaining stretch once normalized, the ones matched against normalized text.
-   They never reach the walker or the model, so they cannot be split. *)
-let encode_document t sc text ~record =
+   They never reach the walker or the model, so they cannot be split.
+
+   [ids32] hands the span encoders a batch sink; [sc.ids] is then the spill of
+   whatever OCaml encodes, added-token literals here included, and the caller
+   flushes it at document end. Only the ids-only batch driver passes it, so
+   [record] is false whenever it is given. *)
+let encode_document t sc ?ids32 text ~record =
   Ints.clear sc.opaque;
   let frames = ref [] and frame_stops = ref [] in
   let raw_align = lazy (Run.Known (Normalizer.identity text)) in
@@ -655,7 +670,7 @@ let encode_document t sc text ~record =
     String.length norm > 0
     && fst (Normalizer.original_span align ~start:0 ~stop:1) = 0
   in
-  with_span_encoder t (fun encode encode_walk ->
+  with_span_encoder t ?ids32 (fun encode encode_walk ->
       let[@inline] encode_span walked start finish =
         encode sc.ids ~opaque:sc.opaque walked ~pos:start ~len:(finish - start);
         if record then begin
@@ -1381,37 +1396,31 @@ let encode_batch_ids t ?(add_special_tokens = true) ?padding ?truncation
   let start = Array.make npieces 0 and stop = Array.make npieces 0 in
   run_chunks ~domains chunks (fun c ->
       let chunk = chunks.(c) in
-      let buffer = ref (create_ids (max 64 (chunk.bytes / 3))) in
-      let used = ref 0 in
-      (* [keep into i] moves the ids of piece [i] from [into] to the buffer. *)
-      let keep into i =
-        let n = Ints.length into in
-        let held = Bigarray.Array1.dim !buffer in
-        if !used + n > held then begin
-          let grown = create_ids (2 * max held (!used + n)) in
-          Bigarray.Array1.blit
-            (Bigarray.Array1.sub !buffer 0 !used)
-            (Bigarray.Array1.sub grown 0 !used);
-          buffer := grown
-        end;
-        Ints.blit_to_int32 into ~pos:0 ~len:n !buffer ~at:!used;
-        Ints.clear into;
-        chunk_of.(i) <- c;
-        start.(i) <- !used;
-        used := !used + n;
-        stop.(i) <- !used
-      in
       if wrapped then
+        (* The fused kernels write their ids into the chunk's buffer as int32
+           directly; what OCaml encodes lands in [sc.ids], the spill, moved into
+           place at document end. *)
         with_scratch (fun sc ->
+            let sink =
+              { Bpe.ba = create_ids (max 64 (chunk.bytes / 3)); used = 0 }
+            in
             for i = chunk.first to chunk.stop - 1 do
+              let first = sink.Bpe.used in
               let (_ : Run.t option) =
-                encode_document t sc texts.(i) ~record:false
+                encode_document t sc ~ids32:sink texts.(i) ~record:false
               in
-              keep sc.ids i
-            done)
+              Bpe.flush_spill sink sc.ids;
+              chunk_of.(i) <- c;
+              start.(i) <- first;
+              stop.(i) <- sink.Bpe.used
+            done;
+            buffers.(c) <- sink.Bpe.ba)
       else begin
         (* The post-processor does more than wrap: a piece is then a whole
-           document, encoded the long way and truncated already. *)
+           document, encoded the long way and truncated already, its ids moved
+           to the chunk's buffer once done. *)
+        let buffer = ref (create_ids (max 64 (chunk.bytes / 3))) in
+        let used = ref 0 in
         let into = Ints.create () in
         for i = chunk.first to chunk.stop - 1 do
           let ids =
@@ -1422,10 +1431,24 @@ let encode_batch_ids t ?(add_special_tokens = true) ?padding ?truncation
           for k = 0 to Array.length ids - 1 do
             Ints.add into (Array.unsafe_get ids k)
           done;
-          keep into i
-        done
-      end;
-      buffers.(c) <- !buffer);
+          let n = Ints.length into in
+          let held = Bigarray.Array1.dim !buffer in
+          if !used + n > held then begin
+            let grown = create_ids (2 * max held (!used + n)) in
+            Bigarray.Array1.blit
+              (Bigarray.Array1.sub !buffer 0 !used)
+              (Bigarray.Array1.sub grown 0 !used);
+            buffer := grown
+          end;
+          Ints.blit_to_int32 into ~pos:0 ~len:n !buffer ~at:!used;
+          Ints.clear into;
+          chunk_of.(i) <- c;
+          start.(i) <- !used;
+          used := !used + n;
+          stop.(i) <- !used
+        done;
+        buffers.(c) <- !buffer
+      end);
   (* A row's body is its pieces' ids end to end; [place] is where each of them
      begins in it. *)
   let body = Array.make nrows 0 and place = Array.make npieces 0 in

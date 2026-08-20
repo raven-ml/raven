@@ -42,6 +42,7 @@ type sp = {
 }
 
 type reason = Done | Spans_full | Ids_full | Class | Encode
+type ids32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 external get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
 external set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
@@ -78,4 +79,22 @@ external byte_level_encode :
 external sp_encode :
   string -> int -> int -> int array -> Bytes.t -> sp -> reason
   = "brot_sp_encode_byte" "brot_sp_encode"
+[@@noalloc]
+
+external byte_level_encode_ids32 :
+  string ->
+  int ->
+  int ->
+  Bytes.t ->
+  ids32 ->
+  int array ->
+  Bytes.t ->
+  Bytes.t ->
+  byte_level ->
+  reason = "brot_byte_level_encode_ids32_byte" "brot_byte_level_encode_ids32"
+[@@noalloc]
+
+external sp_encode_ids32 :
+  string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
+  = "brot_sp_encode_ids32_byte" "brot_sp_encode_ids32"
 [@@noalloc]

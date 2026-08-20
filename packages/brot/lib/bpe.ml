@@ -1380,6 +1380,74 @@ let encode_into model st ids ~opaque text ~pos ~len =
       | None -> encode_sp_units model st cut ids ~opaque text ~pos ~len)
   | _ -> encode_unit_into model st ids ~opaque text ~pos ~len
 
+(* The batch sink: the int32 buffer the fused kernels write a chunk's ids into
+   directly, killing the per-document int-array-to-int32 copy of the batch
+   driver. Everything OCaml-side still appends to an [Ints.t] — now a spill
+   holding added-token literals and hand-back encodings — and one rule keeps the
+   id order: the spill is flushed into the sink before every kernel call and
+   once more at document end, by the driver. *)
+type sink = { mutable ba : Kernel.ids32; mutable used : int }
+
+let sink_reserve sink extra =
+  let need = sink.used + extra in
+  let held = Bigarray.Array1.dim sink.ba in
+  if need > held then begin
+    let grown =
+      Bigarray.Array1.create Bigarray.Int32 Bigarray.C_layout (2 * max held need)
+    in
+    Bigarray.Array1.blit
+      (Bigarray.Array1.sub sink.ba 0 sink.used)
+      (Bigarray.Array1.sub grown 0 sink.used);
+    sink.ba <- grown
+  end
+
+let flush_spill sink spill =
+  let n = Ints.length spill in
+  if n > 0 then begin
+    sink_reserve sink n;
+    Ints.blit_to_int32 spill ~pos:0 ~len:n sink.ba ~at:sink.used;
+    sink.used <- sink.used + n;
+    Ints.clear spill
+  end
+
+(* [encode_sp_kernel] on the sink: the kernel appends int32 ids at [sink.used],
+   a hand-back unit goes through [encode_unit_into] into the spill, and the
+   flush at the top of the next call keeps the order. *)
+let encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len =
+  let cur = st.st_cursor in
+  let stop = pos + len in
+  let rec go p =
+    if p < stop then begin
+      flush_spill sink spill;
+      sink_reserve sink (max 4096 (min (stop - p) 65536));
+      Kernel.set cur ~spans:0 ~ids:sink.used ~marks:0;
+      let r = Kernel.sp_encode_ids32 text p stop sink.ba cur t in
+      sink.used <- Kernel.ids cur;
+      let resume = Kernel.resume cur in
+      match r with
+      | Kernel.Done -> ()
+      | Kernel.Ids_full ->
+          if resume = p then sink_reserve sink (2 * Bigarray.Array1.dim sink.ba);
+          go resume
+      | Kernel.Encode ->
+          let finish = Kernel.unit_stop cur in
+          encode_unit_into model st spill ~opaque text ~pos:resume
+            ~len:(finish - resume);
+          go finish
+      | Kernel.Spans_full | Kernel.Class -> assert false
+    end
+  in
+  go pos
+
+let encode_into_ids32 model st sink spill ~opaque text ~pos ~len =
+  match model.sp_cut with
+  | Some cut when len > max_key_len -> (
+      match st.st_sp with
+      | Some t ->
+          encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len
+      | None -> encode_sp_units model st cut spill ~opaque text ~pos ~len)
+  | _ -> encode_unit_into model st spill ~opaque text ~pos ~len
+
 let fused model =
   Kernel.available && model.byte_level && not (uses_dropout model)
 
@@ -1428,6 +1496,52 @@ let encode_walk model st ids ~opaque ~marks spans text ~pos ~stop =
           let start = Spans.start spans k and finish = Spans.stop spans k in
           encode_into model st ids ~opaque text ~pos:start ~len:(finish - start);
           Ints.add marks (Ints.length ids);
+          go finish
+    end
+  in
+  go pos
+
+(* [encode_walk] on the sink: the kernel appends int32 ids at [sink.used] and an
+   [Encode] span goes through [encode_into] into the spill, its mark placed
+   where the flush at the top of the next call will put its ids. Only the batch
+   driver walks this way, with [record:false], so the marks are written and
+   never read — the protocol stays the one the kernel pins. *)
+let encode_walk_ids32 model st sink spill ~opaque ~marks spans text ~pos ~stop =
+  if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
+  then invalid_arg err_range;
+  let cur = st.st_cursor and t = st.st_kernel in
+  let rec go p =
+    if p >= stop then stop
+    else begin
+      flush_spill sink spill;
+      sink_reserve sink (max 4096 (min (stop - p) 65536));
+      Ints.reserve marks (Spans.capacity spans - Spans.count spans);
+      Kernel.set cur ~spans:(Spans.count spans) ~ids:sink.used
+        ~marks:(Ints.length marks);
+      let r =
+        Kernel.byte_level_encode_ids32 text p stop (Spans.buffer spans) sink.ba
+          (Ints.buffer marks) cur
+          (Char_class.unicode_table ())
+          t
+      in
+      Spans.set_count spans (Kernel.spans cur);
+      sink.used <- Kernel.ids cur;
+      Ints.set_length marks (Kernel.marks cur);
+      let resume = Kernel.resume cur in
+      match r with
+      | Kernel.Done | Kernel.Spans_full -> resume
+      | Kernel.Ids_full ->
+          if resume = p then sink_reserve sink (2 * Bigarray.Array1.dim sink.ba);
+          go resume
+      | Kernel.Class ->
+          ignore (Char_class.category (Kernel.code_point cur) : int);
+          go resume
+      | Kernel.Encode ->
+          let k = Spans.count spans - 1 in
+          let start = Spans.start spans k and finish = Spans.stop spans k in
+          encode_into model st spill ~opaque text ~pos:start
+            ~len:(finish - start);
+          Ints.add marks (sink.used + Ints.length spill);
           go finish
     end
   in

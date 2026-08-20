@@ -163,6 +163,51 @@ val encode_walk :
     Raises [Invalid_argument] if [pos] and [stop] are not within [0] and
     [String.length text], or if [stop] does not fit in 32 bits. *)
 
+type sink = { mutable ba : Kernel.ids32; mutable used : int }
+(** The type for batch id sinks: an int32 buffer the fused kernels write token
+    ids into directly, holding [used] ids, grown as needed. What OCaml encodes —
+    added-token literals, hand-backs — is appended to an [Ints.t] spill instead,
+    which {!flush_spill} moves into the sink; the ids32 encoders flush it before
+    every kernel call, and the driver once more at document end, so the sink
+    then holds every id in order. *)
+
+val flush_spill : sink -> Ints.t -> unit
+(** [flush_spill sink spill] appends the ids of [spill] to [sink], narrowed to
+    32 bits, and clears [spill]. *)
+
+val encode_into_ids32 :
+  t ->
+  state ->
+  sink ->
+  Ints.t ->
+  opaque:Ints.t ->
+  string ->
+  pos:int ->
+  len:int ->
+  unit
+(** [encode_into_ids32 t st sink spill ~opaque text ~pos ~len] is {!encode_into}
+    with the kernel's ids written to [sink] and everything OCaml encodes to
+    [spill], under {!sink}'s flush rule. On paths no kernel serves — bytecode,
+    short ranges, no SentencePiece cut — every id goes to [spill], and the
+    document-end flush makes the two encoders agree. *)
+
+val encode_walk_ids32 :
+  t ->
+  state ->
+  sink ->
+  Ints.t ->
+  opaque:Ints.t ->
+  marks:Ints.t ->
+  Spans.t ->
+  string ->
+  pos:int ->
+  stop:int ->
+  int
+(** [encode_walk_ids32 t st sink spill ~opaque ~marks spans text ~pos ~stop] is
+    {!encode_walk} with the kernel's ids written to [sink] and every hand-back's
+    to [spill], under {!sink}'s flush rule. Only meaningful when {!fused}, like
+    {!encode_walk}. *)
+
 val token_table : t -> string array
 (** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
 *)

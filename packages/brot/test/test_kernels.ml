@@ -475,6 +475,81 @@ let test_sp_dropout_not_selected () =
     (Array.concat (List.init 8 (fun _ -> [| 0; 1 |])))
     (ids tok text)
 
+(* The batch sink. [encode_batch_ids] writes the kernels' ids straight into a
+   chunk's int32 buffer, while added-token literals and hand-backs go through an
+   OCaml spill flushed before every kernel call and at document end. Each
+   document interleaves the three sources, so a flush out of order or a lost
+   spill shows up as a permuted row; every row must be what [encode_ids] gives
+   for that text alone. *)
+
+let batch_rows tok docs domains =
+  let buf, lengths =
+    Brot.encode_batch_ids tok ~add_special_tokens:false ~domains docs
+  in
+  let pos = ref 0 in
+  Array.to_list lengths
+  |> List.map (fun n ->
+      let row =
+        Array.init n (fun k ->
+            Int32.to_int (Bigarray.Array1.get buf (!pos + k)))
+      in
+      pos := !pos + n;
+      row)
+
+let check_batch tok docs =
+  List.iter
+    (fun domains ->
+      List.iteri
+        (fun i (row, doc) ->
+          equal
+            ~msg:(Printf.sprintf "row %d over %d domains" i domains)
+            (array int) (ids tok doc) row)
+        (List.combine (batch_rows tok docs domains) docs))
+    [ 1; 4 ]
+
+(* Byte-level: cache-hit runs (kernel, sink), <sep> literals and a 20-byte
+   pretoken (OCaml, spill) interleaved; enough ids that the sink outgrows its
+   bytes/3 sizing, and a 70k-letter span whose ids-room check grows the sink at
+   a stuck resume before handing the span back. *)
+let test_batch_sink_spill_order () =
+  let vocab = base_vocab @ [ ("\196\160a", space_a) ] in
+  let tok =
+    Brot.bpe ~vocab
+      ~merges:[ ("\196\160", "a") ]
+      ~pre:(pre ())
+      ~added_tokens:[ Brot.added_token "<sep>" ]
+      ()
+  in
+  let hits k = String.concat "" (List.init k (fun _ -> " a")) in
+  let long = " " ^ String.make 20 'b' in
+  let docs =
+    [
+      hits 3000 ^ "<sep>" ^ long ^ "<sep>" ^ hits 3000;
+      "<sep>";
+      "";
+      hits 5 ^ long;
+      " " ^ String.make 70_000 'x';
+    ]
+  in
+  check_batch tok docs
+
+(* SentencePiece: "▁a" streams (kernel, sink) around a 21-byte unit and <sep>
+   literals (spill), one document ending on a hand-back so the last flush is the
+   document-end one. *)
+let test_sp_batch_sink_spill_order () =
+  let tok =
+    Brot.bpe ~vocab:sp_vocab
+      ~merges:[ (sp_mark, "a") ]
+      ~added_tokens:[ Brot.added_token "<sep>" ]
+      ()
+  in
+  let units k = String.concat "" (List.init k (fun _ -> sp_mark ^ "a")) in
+  let long = sp_mark ^ String.make 20 'b' in
+  let docs =
+    [ units 3000 ^ "<sep>" ^ long ^ units 3000; "<sep>"; units 2 ^ long ]
+  in
+  check_batch tok docs
+
 let () =
   run "brot kernels"
     [
@@ -515,5 +590,12 @@ let () =
             test_sp_len_table_disagreement;
           test "caching off" test_sp_cache_off;
           test "dropout leaves the sub-cut off" test_sp_dropout_not_selected;
+        ];
+      group "batch sink"
+        [
+          test "literals and hand-backs spill in order"
+            test_batch_sink_spill_order;
+          test "sentencepiece literals and hand-backs spill in order"
+            test_sp_batch_sink_spill_order;
         ];
     ]

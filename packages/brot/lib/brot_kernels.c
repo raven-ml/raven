@@ -21,12 +21,14 @@
    call and no CAMLparam rooting is needed. Stores into the ids and marks
    buffers are immediates over immediates in int arrays, which is what
    Array.unsafe_set compiles to and needs no write barrier (the OCaml 5
-   deletion barrier only darkens pointer old values); Bytes stores are raw.
-   All arithmetic that must wrap is unsigned. */
+   deletion barrier only darkens pointer old values); Bytes stores are raw,
+   and so are the int32 stores of the ids32 entries, whose sink is a
+   Bigarray outside the heap. All arithmetic that must wrap is unsigned. */
 
 #include <stdint.h>
 #include <string.h>
 
+#include <caml/bigarray.h>
 #include <caml/mlvalues.h>
 
 #if defined(__aarch64__) && defined(__ARM_NEON) \
@@ -754,6 +756,17 @@ static inline intnat emit_lanes(value *lane, uint64_t v0, uint64_t v1)
   return (intnat)((v0 >> 24) & 0xFF);
 }
 
+/* The same four lanes as raw int32 stores, for the batch sink. Lane values
+   are 24-bit, so the narrowing is exact. */
+static inline intnat emit_lanes32(int32_t *lane, uint64_t v0, uint64_t v1)
+{
+  lane[0] = (int32_t)(v0 & 0xFFFFFF);
+  lane[1] = (int32_t)((v0 >> 32) & 0xFFFFFF);
+  lane[2] = (int32_t)(v1 & 0xFFFFFF);
+  lane[3] = (int32_t)((v1 >> 32) & 0xFFFFFF);
+  return (intnat)((v0 >> 24) & 0xFF);
+}
+
 /* The short merge — Bpe.Merge_map.find, init_word_bytes and merge_linear
    restricted to a pretoken of at most 15 bytes, on stack arrays. */
 
@@ -859,12 +872,16 @@ static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
                    sym_prev, sym_next, out);
 }
 
-/* The entry. The caller validates the range and the cursor counts once; ids
-   room is checked here per span, a hit storing its four lanes
-   unconditionally as Ints.add4 does. */
-CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
-                                      value vspans, value vids, value vmarks,
-                                      value vcursor, value vunicode, value vt)
+/* The entry's body. The caller validates the range and the cursor counts
+   once; ids room is checked here per span, a hit storing its four lanes
+   unconditionally as Ints.add4 does. [emit32] selects the ids sink — the
+   int array of Kernel.byte_level_encode or the int32 Bigarray of
+   Kernel.byte_level_encode_ids32 — and is a compile-time constant in each
+   wrapper, so its branches cost nothing. */
+static value byte_level_encode_impl(value text, value vpos, value vstop,
+                                    value vspans, value vids, value vmarks,
+                                    value vcursor, value vunicode, value vt,
+                                    int emit32)
 {
   const unsigned char *s = (const unsigned char *)String_val(text);
   intnat n = (intnat)caml_string_length(text);
@@ -875,8 +892,10 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
      writer (the thread holding the state claim) and no GC point exists in a
      call, so the qualifier is cast away and the compiler may keep loads in
      registers. */
-  value *ids_base = (value *)&Field(vids, 0);
-  intnat ids_cap = (intnat)Wosize_val(vids);
+  value *ids_base = emit32 ? NULL : (value *)&Field(vids, 0);
+  int32_t *ids32_base = emit32 ? (int32_t *)Caml_ba_data_val(vids) : NULL;
+  intnat ids_cap = emit32 ? Caml_ba_array_val(vids)->dim[0]
+                          : (intnat)Wosize_val(vids);
   value *marks_base = (value *)&Field(vmarks, 0);
   unsigned char *cur = Bytes_val(vcursor);
 
@@ -965,8 +984,10 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
         if (p_set >= 0) {
           if (load64(front + p_fslot) == p_k0
               && load64(front + p_fslot + 8) == p_k1) {
-            nids += emit_lanes(ids_base + nids, load64(front + p_fslot + 16),
-                               load64(front + p_fslot + 24));
+            uint64_t v0 = load64(front + p_fslot + 16);
+            uint64_t v1 = load64(front + p_fslot + 24);
+            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
+                           : emit_lanes(ids_base + nids, v0, v1);
             goto emitted;
           }
           intnat way = probe(cache, p_set, p_k0, p_k1);
@@ -974,7 +995,8 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
             uint64_t v0 = load64(cache + way + 16);
             uint64_t v1 = load64(cache + way + 24);
             front_store(front, p_fslot, p_k0, p_k1, v0, v1);
-            nids += emit_lanes(ids_base + nids, v0, v1);
+            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
+                           : emit_lanes(ids_base + nids, v0, v1);
             goto emitted;
           }
         }
@@ -985,8 +1007,11 @@ CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
           int m = merge_short(mkeys, mvals, mmask, byte_ids, len_tab, len_n,
                               s, p_i, p_len, ids15);
           if (m < 0) goto hand_back;
-          for (k = 0; k < m; k++)
-            ids_base[nids + k] = Val_long((intnat)ids15[k]);
+          if (emit32)
+            for (k = 0; k < m; k++) ids32_base[nids + k] = ids15[k];
+          else
+            for (k = 0; k < m; k++)
+              ids_base[nids + k] = Val_long((intnat)ids15[k]);
           nids += m;
           if (p_set >= 0 && m <= 4) {
             int fits = 1;
@@ -1054,11 +1079,37 @@ out:
   return Val_int(reason);
 }
 
+CAMLprim value brot_byte_level_encode(value text, value vpos, value vstop,
+                                      value vspans, value vids, value vmarks,
+                                      value vcursor, value vunicode, value vt)
+{
+  return byte_level_encode_impl(text, vpos, vstop, vspans, vids, vmarks,
+                                vcursor, vunicode, vt, 0);
+}
+
 CAMLprim value brot_byte_level_encode_byte(value *argv, int argn)
 {
   (void)argn;
   return brot_byte_level_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
                                 argv[5], argv[6], argv[7], argv[8]);
+}
+
+CAMLprim value brot_byte_level_encode_ids32(value text, value vpos,
+                                            value vstop, value vspans,
+                                            value vids, value vmarks,
+                                            value vcursor, value vunicode,
+                                            value vt)
+{
+  return byte_level_encode_impl(text, vpos, vstop, vspans, vids, vmarks,
+                                vcursor, vunicode, vt, 1);
+}
+
+CAMLprim value brot_byte_level_encode_ids32_byte(value *argv, int argn)
+{
+  (void)argn;
+  return brot_byte_level_encode_ids32(argv[0], argv[1], argv[2], argv[3],
+                                      argv[4], argv[5], argv[6], argv[7],
+                                      argv[8]);
 }
 
 /* The fused SentencePiece kernel: Bpe.encode_into's unit walker, the same
@@ -1173,25 +1224,28 @@ static int sp_merge_short(const value *mkeys, const value *mvals, intnat mmask,
                    sym_prev, sym_next, out);
 }
 
-/* The entry. The caller validates the range and the cursor's id count once;
-   ids room is checked here per unit, a hit storing its four lanes
-   unconditionally as Ints.add4 does. The loop is software-pipelined exactly
+/* The entry's body. The caller validates the range and the cursor's id
+   count once; ids room is checked here per unit, a hit storing its four
+   lanes unconditionally as Ints.add4 does. [emit32] selects the ids sink as
+   in the byte-level body. The loop is software-pipelined exactly
    as the byte-level entry's: unit k+1 is walked, keyed and its set
    prefetched while unit k's line is in flight; unit k's probes, merge and
    stores resolve after that walk, so every probe sees every earlier unit's
    stores and the tables stay bit for bit the reference's. An exit at unit
    k's resolve discards the unit walked after it, which the reference would
    never have walked. */
-CAMLprim value brot_sp_encode(value text, value vpos, value vstop, value vids,
-                              value vcursor, value vt)
+static value sp_encode_impl(value text, value vpos, value vstop, value vids,
+                            value vcursor, value vt, int emit32)
 {
   const unsigned char *s = (const unsigned char *)String_val(text);
   intnat n = (intnat)caml_string_length(text);
   intnat stop = Long_val(vstop);
   /* One writer, no GC point: the volatile qualifier is cast away as in the
      byte-level entry. */
-  value *ids_base = (value *)&Field(vids, 0);
-  intnat ids_cap = (intnat)Wosize_val(vids);
+  value *ids_base = emit32 ? NULL : (value *)&Field(vids, 0);
+  int32_t *ids32_base = emit32 ? (int32_t *)Caml_ba_data_val(vids) : NULL;
+  intnat ids_cap = emit32 ? Caml_ba_array_val(vids)->dim[0]
+                          : (intnat)Wosize_val(vids);
   unsigned char *cur = Bytes_val(vcursor);
 
   unsigned char *front = Bytes_val(Field(vt, BROT_SP_FRONT));
@@ -1253,8 +1307,10 @@ CAMLprim value brot_sp_encode(value text, value vpos, value vstop, value vids,
         if (p_set >= 0) {
           if (load64(front + p_fslot) == p_k0
               && load64(front + p_fslot + 8) == p_k1) {
-            nids += emit_lanes(ids_base + nids, load64(front + p_fslot + 16),
-                               load64(front + p_fslot + 24));
+            uint64_t v0 = load64(front + p_fslot + 16);
+            uint64_t v1 = load64(front + p_fslot + 24);
+            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
+                           : emit_lanes(ids_base + nids, v0, v1);
             goto emitted;
           }
           intnat way = probe(cache, p_set, p_k0, p_k1);
@@ -1262,7 +1318,8 @@ CAMLprim value brot_sp_encode(value text, value vpos, value vstop, value vids,
             uint64_t v0 = load64(cache + way + 16);
             uint64_t v1 = load64(cache + way + 24);
             front_store(front, p_fslot, p_k0, p_k1, v0, v1);
-            nids += emit_lanes(ids_base + nids, v0, v1);
+            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
+                           : emit_lanes(ids_base + nids, v0, v1);
             goto emitted;
           }
         }
@@ -1272,8 +1329,11 @@ CAMLprim value brot_sp_encode(value text, value vpos, value vstop, value vids,
           int m = sp_merge_short(mkeys, mvals, mmask, ascii_ids, ckeys, cvals,
                                  cmask, len_tab, len_n, s, p_i, p_len, ids15);
           if (m < 0) goto hand_back;
-          for (k = 0; k < m; k++)
-            ids_base[nids + k] = Val_long((intnat)ids15[k]);
+          if (emit32)
+            for (k = 0; k < m; k++) ids32_base[nids + k] = ids15[k];
+          else
+            for (k = 0; k < m; k++)
+              ids_base[nids + k] = Val_long((intnat)ids15[k]);
           nids += m;
           if (p_set >= 0 && m <= 4) {
             int fits = 1;
@@ -1320,8 +1380,27 @@ out:
   return Val_int(reason);
 }
 
+CAMLprim value brot_sp_encode(value text, value vpos, value vstop, value vids,
+                              value vcursor, value vt)
+{
+  return sp_encode_impl(text, vpos, vstop, vids, vcursor, vt, 0);
+}
+
 CAMLprim value brot_sp_encode_byte(value *argv, int argn)
 {
   (void)argn;
   return brot_sp_encode(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+}
+
+CAMLprim value brot_sp_encode_ids32(value text, value vpos, value vstop,
+                                    value vids, value vcursor, value vt)
+{
+  return sp_encode_impl(text, vpos, vstop, vids, vcursor, vt, 1);
+}
+
+CAMLprim value brot_sp_encode_ids32_byte(value *argv, int argn)
+{
+  (void)argn;
+  return brot_sp_encode_ids32(argv[0], argv[1], argv[2], argv[3], argv[4],
+                              argv[5]);
 }

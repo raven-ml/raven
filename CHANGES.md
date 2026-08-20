@@ -1087,6 +1087,10 @@ thread.
 
 ### Brot
 
+- `encode_batch_ids` is ~3–5% faster: the fused C kernels now write each
+  chunk's ids straight into its int32 result buffer instead of filling an
+  int buffer that was copied per document (GPT-2 batch 179 → 186 MB/s
+  single-threaded, 810 → 845 MB/s across domains; Mistral 58 → 60 MB/s).
 - SentencePiece-style BPE tokenizers (Llama 1/2, Mistral, Gemma 2) encode
   another ~1.2–1.35× faster on native code (llama 33 → 40 MB/s, mistral
   44 → 58 single-threaded): the `▁`/punctuation unit walk, the pretoken-cache

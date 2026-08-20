@@ -149,6 +149,28 @@ val byte_level_encode :
     the whole of [text] exactly as the OCaml key builder's do. Allocates
     nothing, raises nothing, holds nothing across calls. *)
 
+type ids32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
+(** The type for the batch id sink of the ids32 entries: token ids are written
+    to it as 32-bit integers, at the same positions the int-array entries would
+    write them. *)
+
+val byte_level_encode_ids32 :
+  string ->
+  int ->
+  int ->
+  Bytes.t ->
+  ids32 ->
+  int array ->
+  Bytes.t ->
+  Bytes.t ->
+  byte_level ->
+  reason
+(** [byte_level_encode_ids32] is {!byte_level_encode} with the ids sink an
+    {!ids32} buffer rather than an [Ints.buffer]: the same walk, probes, table
+    stores and exits, the ids stored as [int32]. Ids room is checked per span
+    against the buffer's length; every other contract is {!byte_level_encode}'s.
+*)
+
 val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
 (** [sp_encode text pos stop ids cursor t] cuts [text.\[pos..stop)] at
     SentencePiece unit boundaries — before each ["▁"] whose previous character
@@ -167,3 +189,9 @@ val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
     is within [ids]; ids room is checked per unit. [pos] must be the start of
     the stretch or a unit boundary of it, which every {!resume} and {!unit_stop}
     is. Reads and allocates as {!byte_level_encode} does. *)
+
+val sp_encode_ids32 : string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
+(** [sp_encode_ids32] is {!sp_encode} with the ids sink an {!ids32} buffer
+    rather than an [Ints.buffer]: the same cuts, probes, table stores and exits,
+    the ids stored as [int32]. Ids room is checked per unit against the buffer's
+    length; every other contract is {!sp_encode}'s. *)
