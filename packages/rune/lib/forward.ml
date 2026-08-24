@@ -102,9 +102,9 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
               invalid_arg
                 "in-place mutation (set_item, set_slice, blit, assign) cannot \
                  be used inside jvp — use scatter instead")
-      (* Scan: forward mode has no staged rule yet, so run the eager fold
-         under a nested instance of this handler — every step's operations
-         flow through it and acquire their tangents as they always did. *)
+      (* Scan: forward mode has no staged rule yet, so run the eager fold under
+         a nested instance of this handler — every step's operations flow
+         through it and acquire their tangents as they always did. *)
       | Rune_scan.E_scan req ->
           Some
             (fun k ->

@@ -5,42 +5,35 @@
 
 (* Staged scan.
 
-   [Rune.scan] is an eager fold. Under a jit trace, staging it as a loop in
-   the compiled program — instead of an unrolled trace — requires the fold
-   step to be captured once as a compiled sub-program and the scan itself to
-   become a loop construct at the schedule level. [scan] therefore performs
-   the [E_scan] effect; transformation handlers that cannot stage it
-   (everything but jit and reverse) fall back to the eager fold, as does
-   plain execution when no handler is present ([Effect.Unhandled] is
-   catchable since OCaml 5.2).
+   [Rune.scan] is an eager fold. Under a jit trace, staging it as a loop in the
+   compiled program — instead of an unrolled trace — requires the fold step to
+   be captured once as a compiled sub-program and the scan itself to become a
+   loop construct at the schedule level. [scan] therefore performs the [E_scan]
+   effect; transformation handlers that cannot stage it (everything but jit and
+   reverse) fall back to the eager fold, as does plain execution when no handler
+   is present ([Effect.Unhandled] is catchable since OCaml 5.2).
 
-   Because the carry and the scanned values are existentially typed through
-   the effect, they travel packed; packing and unpacking sites are the only
-   places that erase and recover the types, and both are construction sites
-   of the same module, so the coercion is sound by construction. *)
+   Because the carry and the scanned values are existentially typed through the
+   effect, they travel packed; packing and unpacking sites are the only places
+   that erase and recover the types, and both are construction sites of the same
+   module, so the coercion is sound by construction. *)
 
 type packed_t = Packed_t : ('a, 'b) Nx_effect.t -> packed_t
 
 type c_packed =
   | Packed_c : (module Nx.Ptree.S with type t = 'c) * 'c -> c_packed
 
-(* One fold step, type-erased: [run] applies the scan body to a packed carry
-   and element, returning the packed next carry and output. *)
+(* One fold step, type-erased: [run] applies the scan body to a packed carry and
+   element, returning the packed next carry and output. *)
 type step = { run : c_packed -> packed_t -> c_packed * packed_t }
-
 type scan_res = { r_carry : c_packed; r_y : packed_t }
-
-type scan_req = {
-  req_carry : c_packed;
-  req_x : packed_t;
-  req_step : step;
-}
+type scan_req = { req_carry : c_packed; req_x : packed_t; req_step : step }
 
 (* A backward scan, performed by the tape entry reverse-mode records for a
-   staged [E_scan]. Carries everything jit needs to capture the body's
-   pullback as a sub-program and emit the reversed loop: the body re-runner,
-   the forward pass's inputs (to accumulate into), the cotangents of the
-   scan's outputs, and the static shapes. *)
+   staged [E_scan]. Carries everything jit needs to capture the body's pullback
+   as a sub-program and emit the reversed loop: the body re-runner, the forward
+   pass's inputs (to accumulate into), the cotangents of the scan's outputs, and
+   the static shapes. *)
 type scan_bwd = {
   bwd_step : step;
   bwd_carry : c_packed; (* the scan's init carry, accumulated into *)
@@ -81,19 +74,16 @@ let eager (req : scan_req) : scan_res =
   let rec stack_list : type a b. (a, b) Nx.t -> packed_t list -> packed_t =
    fun y0 rest ->
     let rest =
-      List.map
-        (fun (Packed_t y) -> (Obj.magic y : (a, b) Nx.t))
-        rest
+      List.map (fun (Packed_t y) -> (Obj.magic y : (a, b) Nx.t)) rest
     in
     Packed_t (Nx.stack ~axis:0 (y0 :: rest))
   in
   match List.rev !ys with
-  | Packed_t y0 :: rest ->
-      { r_carry = !carry; r_y = stack_list y0 rest }
+  | Packed_t y0 :: rest -> { r_carry = !carry; r_y = stack_list y0 rest }
   | [] -> assert false
 
-(* [scan] itself. The typed body is packed into [step] with a locally
-   abstract type witness; the effect result is unpacked back. *)
+(* [scan] itself. The typed body is packed into [step] with a locally abstract
+   type witness; the effect result is unpacked back. *)
 
 let scan (type c) (module C : Nx.Ptree.S with type t = c)
     ~(f : c -> ('a, 'b) Nx.t -> c * ('d, 'e) Nx.t) ~(init : c)
@@ -121,14 +111,14 @@ let scan (type c) (module C : Nx.Ptree.S with type t = c)
     }
   in
   match Effect.perform (E_scan req) with
-  | res ->
-      (match res with
+  | res -> (
+      match res with
       | { r_carry = Packed_c (_, c'); r_y = Packed_t y } ->
           ((Obj.magic c' : c), (Obj.magic y : ('d, 'e) Nx.t)))
-  | exception Effect.Unhandled _ ->
+  | exception Effect.Unhandled _ -> (
       (* No staging handler (or none that claims the effect): the eager fold,
          observed by whatever transformation handlers are installed. *)
       let res = eager req in
-      (match res with
+      match res with
       | { r_carry = Packed_c (_, c'); r_y = Packed_t y } ->
           ((Obj.magic c' : c), (Obj.magic y : ('d, 'e) Nx.t)))
