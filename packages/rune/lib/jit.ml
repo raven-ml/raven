@@ -298,8 +298,8 @@ type state = {
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
   scan_stacks : (Obj.t * Obj.t * Obj.t, U.t list) Hashtbl.t;
       (* staged scans: (step, carry init, xs) identities -> the per-leaf
-         carry-stack buffer nodes the forward loop wrote, for the backward
-         loop to read *)
+         carry-stack buffer nodes the forward loop wrote, for the backward loop
+         to read *)
 }
 
 let shape_of x = NV.shape (Nx_effect.view x)
@@ -542,18 +542,17 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
 
 (* Staged scan.
 
-   [Rune.scan] performs [Rune_scan.E_scan]; this tracer stages it as a loop
-   call in the compiled program instead of an unrolled trace. The body is
-   traced once with fresh placeholder slot tensors, scheduled as its own
-   compiled sub-program, and embedded as the payload of a
-   CALL(CUSTOM_FUNCTION "loop") node — see [Tolk.Realize.exec_loop] for the
-   payload encoding and the replay semantics. *)
+   [Rune.scan] performs [Rune_scan.E_scan]; this tracer stages it as a loop call
+   in the compiled program instead of an unrolled trace. The body is traced once
+   with fresh placeholder slot tensors, scheduled as its own compiled
+   sub-program, and embedded as the payload of a CALL(CUSTOM_FUNCTION "loop")
+   node — see [Tolk.Realize.exec_loop] for the payload encoding and the replay
+   semantics. *)
 
-(* Schedule the traced body sink as its own compiled linear. Captured
-   unplanned, so the loop's slot buffers stay intact (the memory planner
-   would rewrite them into arenas); body PARAMs are substituted with the
-   body call's argument nodes, which the loop executor rebinds per
-   iteration. *)
+(* Schedule the traced body sink as its own compiled linear. Captured unplanned,
+   so the loop's slot buffers stay intact (the memory planner would rewrite them
+   into arenas); body PARAMs are substituted with the body call's argument
+   nodes, which the loop executor rebinds per iteration. *)
 let schedule_body_linear st body_sink =
   let body_call = fst (Tolk.Callify.transform_to_call body_sink) in
   let captured = ref None in
@@ -571,19 +570,19 @@ let schedule_body_linear st body_sink =
   | Some (body_linear, body_vars) ->
       if body_vars <> [] then
         err
-          "Rune.jit: the scan body uses symbolic variables, which staged \
-           loops do not support yet";
+          "Rune.jit: the scan body uses symbolic variables, which staged loops \
+           do not support yet";
       let body_linear =
         match U.as_call body_call with
         | Some { args; _ } ->
             let mappings =
               U.toposort ~enter_calls:true body_linear
               |> List.filter_map (fun n ->
-                     match U.as_param n with
-                     | Some { param = { slot; _ }; _ }
-                       when slot >= 0 && slot < List.length args ->
-                         Some (n, List.nth args slot)
-                     | _ -> None)
+                  match U.as_param n with
+                  | Some { param = { slot; _ }; _ }
+                    when slot >= 0 && slot < List.length args ->
+                      Some (n, List.nth args slot)
+                  | _ -> None)
             in
             if mappings = [] then body_linear
             else U.substitute ~walk:true mappings body_linear
@@ -625,8 +624,12 @@ let build_loop_call ~body_linear ~reversed ~n ~in_slots ~out_slots ~copies
   let payload =
     U.custom_function ~name:"loop"
       ~srcs:
-        ([ body_linear; cint n; cint (if reversed then 1 else 0);
-           cint (List.length in_slots) ]
+        ([
+           body_linear;
+           cint n;
+           cint (if reversed then 1 else 0);
+           cint (List.length in_slots);
+         ]
         @ List.concat_map slot_children in_slots
         @ [ cint (List.length out_slots) ]
         @ List.concat_map slot_children out_slots
@@ -644,20 +647,21 @@ let build_loop_call ~body_linear ~reversed ~n ~in_slots ~out_slots ~copies
       aux = None;
     }
   in
-  (* Assembled with [replace], like the graph batcher's calls: the compiled
-     body carries its launch ranges, which [U.call]'s range check rejects. *)
+  (* Assembled with [replace], like the graph batcher's calls: the compiled body
+     carries its launch ranges, which [U.call]'s range check rejects. *)
   match args with
   | [] -> assert false
   | hd :: _ ->
       U.replace
-        (U.call ~body:(U.custom_function ~name:"loop" ~srcs:[])
+        (U.call
+           ~body:(U.custom_function ~name:"loop" ~srcs:[])
            ~args:[ hd ] ~info)
         ~src:(Array.of_list (payload :: args))
         ()
 
 (* A loop-call argument must resolve to a buffer. Buffer-identity nodes pass
-   through; a computed value is realized; a device-less constant (e.g. a
-   scalar carry init) is stored into a fresh buffer once, before the loop. *)
+   through; a computed value is realized; a device-less constant (e.g. a scalar
+   carry init) is stored into a fresh buffer once, before the loop. *)
 let realize_arg st (tt : F.Tensor.t) : U.t =
   let u = F.Tensor.uop tt in
   if U.has_buffer_identity u then u
@@ -670,7 +674,8 @@ let realize_arg st (tt : F.Tensor.t) : U.t =
 
 (* Handler *)
 
-let rec handler : type r. state -> (r, r) Effect.Deep.handler = fun st ->
+let rec handler : type r. state -> (r, r) Effect.Deep.handler =
+ fun st ->
   let open Effect.Deep in
   (* Answer an intercepted operation: record the graph node and continue with a
      fresh placeholder carrying the result's shape and dtype. *)
@@ -999,16 +1004,16 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler = fun st ->
           (fun k ->
             if st.st_multi <> None then
               err
-                "Rune.jit: scan under pmap is not supported yet; move the \
-                 scan outside the jitted function";
+                "Rune.jit: scan under pmap is not supported yet; move the scan \
+                 outside the jitted function";
             stage_scan st req k)
     | Rune_scan.E_scan_bwd bwd ->
         Some
           (fun k ->
             if st.st_multi <> None then
               err
-                "Rune.jit: scan under pmap is not supported yet; move the \
-                 scan outside the jitted function";
+                "Rune.jit: scan under pmap is not supported yet; move the scan \
+                 outside the jitted function";
             stage_scan_bwd st bwd k)
     (* Indexed access *)
     | E_gather { data; indices; axis } ->
@@ -1107,29 +1112,38 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler = fun st ->
   in
   { retc = Fun.id; exnc = raise; effc }
 
-(* The forward scan: trace the body once, compile it as a sub-program, and
-   emit the loop call. The carry is a structure, so every tensor leaf has its
-   own double-buffered carry pair, final-carry buffer, and stack slot; leaves
-   pair with their buffers by traversal position (one [P.map]/[P.iter]
-   instance visits leaves in a fixed order). The carry stack is written every
-   iteration — the backward loop reads it — and carrying it always keeps the
-   forward loop's shape independent of whether a backward pass exists.
+(* The forward scan: trace the body once, compile it as a sub-program, and emit
+   the loop call. The carry is a structure, so every tensor leaf has its own
+   double-buffered carry pair, final-carry buffer, and stack slot; leaves pair
+   with their buffers by traversal position (one [P.map]/[P.iter] instance
+   visits leaves in a fixed order). The carry stack is written every iteration —
+   the backward loop reads it — and carrying it always keeps the forward loop's
+   shape independent of whether a backward pass exists.
 
    Forward loop argument layout: 0 = xs, then per leaf [src; carry0; carry1],
    then ys, then per leaf [final; stack]. *)
-and stage_scan : type r. state -> Rune_scan.scan_req ->
-    (Rune_scan.scan_res, r) Effect.Deep.continuation -> r =
+and stage_scan : type r.
+    state ->
+    Rune_scan.scan_req ->
+    (Rune_scan.scan_res, r) Effect.Deep.continuation ->
+    r =
  fun st req k ->
-  let (Rune_scan.{ req_carry = Rune_scan.Packed_c (cmod, c);
-                   req_x = Rune_scan.Packed_t x; req_step = step }) = req in
+  let Rune_scan.
+        {
+          req_carry = Rune_scan.Packed_c (cmod, c);
+          req_x = Rune_scan.Packed_t x;
+          req_step = step;
+        } =
+    req
+  in
   let module C = (val cmod) in
   let xdt = Nx_effect.dtype x in
   let x_shape = shape_of x in
   let n = x_shape.(0) in
   let x_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
   let numel_x = numel x_shape in
-  (* Per-leaf carry slots, paired by identity: the slot placeholder is bound
-     to the leaf's input buffer node inside the map callback. *)
+  (* Per-leaf carry slots, paired by identity: the slot placeholder is bound to
+     the leaf's input buffer node inside the map callback. *)
   let slot_infos = ref [] in
   let slot_c =
     C.map
@@ -1169,9 +1183,9 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
       (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t) ->
         if shape_of a <> shape_of b then
           err
-            "Rune.jit: the scan body must return a carry of the same shapes \
-             it receives (shape-stable carry); move this scan outside jit or \
-             keep the carry shapes constant";
+            "Rune.jit: the scan body must return a carry of the same shapes it \
+             receives (shape-stable carry); move this scan outside jit or keep \
+             the carry shapes constant";
         b)
       c_next c
   in
@@ -1185,7 +1199,9 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
       c_next_nodes := tolk_of st leaf :: !c_next_nodes)
     c_next;
   let c_next_nodes = List.rev !c_next_nodes in
-  let infos = List.map2 (fun info node -> (info, node)) slot_infos c_next_nodes in
+  let infos =
+    List.map2 (fun info node -> (info, node)) slot_infos c_next_nodes
+  in
   let n_leaves = List.length infos in
   let pos_src i = 1 + (3 * i) in
   let pos_carry0 i = 2 + (3 * i) in
@@ -1193,8 +1209,8 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
   let pos_ys = 1 + (3 * n_leaves) in
   let pos_final i = 2 + (3 * n_leaves) + (2 * i) in
   let pos_stack i = 3 + (3 * n_leaves) + (2 * i) in
-  (* The body sub-program: realize every output into an explicit buffer the
-     loop executor can rebind per iteration. *)
+  (* The body sub-program: realize every output into an explicit buffer the loop
+     executor can rebind per iteration. *)
   let y_out = make_node st (tolk_dtype (Nx_effect.dtype y)) numel_y in
   let body_sink =
     U.sink
@@ -1219,8 +1235,8 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
         ])
   in
   let body_linear = schedule_body_linear st body_sink in
-  (* The loop's outer buffers and the per-leaf carry stacks, registered by
-     the scan's identity so the backward loop can read them. *)
+  (* The loop's outer buffers and the per-leaf carry stacks, registered by the
+     scan's identity so the backward loop can read them. *)
   let xs_node = realize_arg st (tolk_of st x) in
   let src_nodes = ref [] in
   C.iter
@@ -1238,11 +1254,11 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
       infos
   in
   let ys_buf = make_node st (tolk_dtype (Nx_effect.dtype y)) (n * numel_y) in
-  Hashtbl.replace st.scan_stacks (Obj.repr step, Obj.repr c, Obj.repr x)
+  Hashtbl.replace st.scan_stacks
+    (Obj.repr step, Obj.repr c, Obj.repr x)
     (List.map (fun (_, _, _, stack) -> stack) leaf_bufs);
   let args_nodes =
-    [ xs_node ]
-    @ src_args
+    [ xs_node ] @ src_args
     @ List.map (fun (_, c0, _, _) -> c0) leaf_bufs
     @ List.map (fun (_, _, c1, _) -> c1) leaf_bufs
     @ [ ys_buf ]
@@ -1328,8 +1344,8 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
         Format.eprintf "scan loop arg %d: tag %d %a\n%!" i (U.tag a) U.pp a)
       args_nodes;
   let loop_call =
-    build_loop_call ~body_linear ~reversed:false ~n ~in_slots ~out_slots
-      ~copies ~stacks ~args:args_nodes
+    build_loop_call ~body_linear ~reversed:false ~n ~in_slots ~out_slots ~copies
+      ~stacks ~args:args_nodes
   in
   (* Every output stores the same call: graph rewriting preserves shared
      subgraphs, so the loop is scheduled once. *)
@@ -1338,8 +1354,7 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
       (fun (_, _, final, _) ((cdt, c_shape, _, _), _) ->
         ( cdt,
           c_shape,
-          U.after ~src:final
-            ~deps:[ U.store ~dst:final ~value:loop_call () ] ))
+          U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ] ))
       leaf_bufs infos
   in
   let ys_shape = Array.append [| n |] y_shape in
@@ -1350,13 +1365,12 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
   let c_final_ph =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let (_, _, after) = List.nth after_cs !after_idx in
+        let _, _, after = List.nth after_cs !after_idx in
         incr after_idx;
         let ph =
           Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
         in
-        Tbl.replace st.table (Obj.repr ph)
-          (buffer_tensor after (shape_of leaf));
+        Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
         Tbl.replace st.traced (Obj.repr ph) ();
         ph)
       c
@@ -1375,13 +1389,16 @@ and stage_scan : type r. state -> Rune_scan.scan_req ->
    recover its residuals — and emit a reversed loop carrying the cotangent
    double-buffers. Reads the carry of step i from the forward loop's stack.
 
-   Backward loop argument layout: 0 = xs, then per leaf the stack slot, then
-   the stacked output cotangents, then per leaf [dc0; dc1], then the stacked
-   input cotangents, then per leaf [final out; incoming cotangent]. *)
-and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
-    (Rune_scan.scan_res, r) Effect.Deep.continuation -> r =
+   Backward loop argument layout: 0 = xs, then per leaf the stack slot, then the
+   stacked output cotangents, then per leaf [dc0; dc1], then the stacked input
+   cotangents, then per leaf [final out; incoming cotangent]. *)
+and stage_scan_bwd : type r.
+    state ->
+    Rune_scan.scan_bwd ->
+    (Rune_scan.scan_res, r) Effect.Deep.continuation ->
+    r =
  fun st bwd k ->
-  let (Rune_scan.
+  let Rune_scan.
         {
           bwd_step = step;
           bwd_carry = Rune_scan.Packed_c (cmod, c0);
@@ -1390,18 +1407,20 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
           bwd_dc = Rune_scan.Packed_c (_, dc);
           bwd_dy = Rune_scan.Packed_t dy;
           bwd_y_shape = y_shape;
-        }) = bwd in
+        } =
+    bwd
+  in
   let module C = (val cmod) in
-  (* The two packs bind distinct existential instances; both are this
-     module's [t]. *)
+  (* The two packs bind distinct existential instances; both are this module's
+     [t]. *)
   let dc = Obj.magic dc in
   let xdt = Nx_effect.dtype xs0 in
   let x_shape = shape_of xs0 in
   let x_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
   let numel_x = numel x_shape in
   let numel_y = numel y_shape in
-  (* The backward body's slots: the step's carry and element, the incoming
-     carry cotangent (a structure), and the output cotangent. *)
+  (* The backward body's slots: the step's carry and element, the incoming carry
+     cotangent (a structure), and the output cotangent. *)
   let slot_infos = ref [] in
   let slot_c =
     C.map
@@ -1440,10 +1459,10 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
   let dy_in = make_node st (tolk_dtype (Nx_effect.dtype dy)) numel_y in
   Tbl.replace st.table (Obj.repr slot_dy) (buffer_tensor dy_in y_shape);
   Tbl.replace st.traced (Obj.repr slot_dy) ();
-  (* Capture the pullback: run the body once under a private reverse tape,
-     then replay the tape against the placeholder cotangents — every op lands
-     in the trace, forming the backward body (the forward step's ops are
-     recomputed inside it to recover residuals). *)
+  (* Capture the pullback: run the body once under a private reverse tape, then
+     replay the tape against the placeholder cotangents — every op lands in the
+     trace, forming the backward body (the forward step's ops are recomputed
+     inside it to recover residuals). *)
   let tape = Tape.create () in
   C.iter
     (fun (type a b) (leaf : (a, b) Nx_effect.t) -> Tape.track tape leaf)
@@ -1469,8 +1488,8 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
       (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t) ->
         if shape_of a <> shape_of b then
           err
-            "Rune.jit: the scan body must return a carry of the same shapes \
-             it receives (shape-stable carry)";
+            "Rune.jit: the scan body must return a carry of the same shapes it \
+             receives (shape-stable carry)";
         b)
       c_next c0
   in
@@ -1479,7 +1498,8 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
       (fun () ->
         ignore
           (C.map2
-             (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t) ->
+             (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t)
+                ->
                Tape.accumulate tape a b;
                b)
              c_next slot_dc);
@@ -1492,8 +1512,8 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
           Tape.cotangent tape slot_x ))
       () (handler st)
   in
-  (* The backward body: per-leaf carry cotangent buffers plus the stacked
-     input cotangent. *)
+  (* The backward body: per-leaf carry cotangent buffers plus the stacked input
+     cotangent. *)
   let dc_i_nodes = ref [] in
   C.iter
     (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
@@ -1564,9 +1584,7 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
   let dc_src_nodes = List.rev !dc_src_nodes in
   let dc_src_args = List.map (realize_arg st) dc_src_nodes in
   let args_nodes =
-    [ xs_node ]
-    @ stack_bufs
-    @ [ dys_node ]
+    [ xs_node ] @ stack_bufs @ [ dys_node ]
     @ List.map (fun (dc0, _, _) -> dc0) leaf_bufs
     @ List.map (fun (_, dc1, _) -> dc1) leaf_bufs
     @ [ dxs_buf ]
@@ -1595,7 +1613,8 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
       slot_infos
     |> List.concat
     |> fun in_carry ->
-    in_carry @ [
+    in_carry
+    @ [
         {
           ls_node = x_in;
           ls_pos0 = 0;
@@ -1654,16 +1673,15 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
     |> List.concat
   in
   let loop_call =
-    build_loop_call ~body_linear ~reversed:true ~n ~in_slots ~out_slots
-      ~copies ~stacks:[] ~args:args_nodes
+    build_loop_call ~body_linear ~reversed:true ~n ~in_slots ~out_slots ~copies
+      ~stacks:[] ~args:args_nodes
   in
   let after_dcs =
     List.map2
       (fun (_, _, final) (cdt, c_shape, _, _) ->
         ( cdt,
           c_shape,
-          U.after ~src:final
-            ~deps:[ U.store ~dst:final ~value:loop_call () ] ))
+          U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ] ))
       leaf_bufs dc_outs
   in
   let dxs_shape = Array.append [| n |] x_shape in
@@ -1674,13 +1692,12 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
   let dc0_ph =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let (_, _, after) = List.nth after_dcs !after_idx in
+        let _, _, after = List.nth after_dcs !after_idx in
         incr after_idx;
         let ph =
           Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
         in
-        Tbl.replace st.table (Obj.repr ph)
-          (buffer_tensor after (shape_of leaf));
+        Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
         Tbl.replace st.traced (Obj.repr ph) ();
         ph)
       c0
@@ -1693,7 +1710,6 @@ and stage_scan_bwd : type r. state -> Rune_scan.scan_bwd ->
       Rune_scan.r_carry = Rune_scan.Packed_c (cmod, dc0_ph);
       r_y = Rune_scan.Packed_t dxs_ph;
     }
-
 
 (* Host transfers *)
 

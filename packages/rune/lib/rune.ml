@@ -32,8 +32,8 @@ let differentiable_leaf leaf =
   let dt = Nx.dtype leaf in
   Nx_core.Dtype.is_float dt || Nx_core.Dtype.is_complex dt
 
-(* The single-tensor forms have no structure to carry a non-differentiable
-   value in, so there the dtype is simply wrong. *)
+(* The single-tensor forms have no structure to carry a non-differentiable value
+   in, so there the dtype is simply wrong. *)
 let require_float_leaf name leaf =
   if not (differentiable_leaf leaf) then
     invalid_arg
@@ -48,7 +48,9 @@ let require_float_leaf name leaf =
 let run_reverse (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t) : (c, d) Nx.t * P.t =
   let tape = Tape.create () in
-  P.iter (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf) params;
+  P.iter
+    (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf)
+    params;
   let y = run_transform f params (Reverse.handler tape) in
   Tape.accumulate tape y (seed y);
   Tape.backward tape;
@@ -97,7 +99,9 @@ let err_cotangent_shape leaf cotangent =
 let vjp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
     (params : P.t) (cotangents : Q.t) : Q.t * P.t =
   let tape = Tape.create () in
-  P.iter (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf) params;
+  P.iter
+    (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf)
+    params;
   let y = run_transform f params (Reverse.handler tape) in
   let (_ : Q.t) =
     Q.map2
@@ -113,7 +117,9 @@ let vjp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
 let vjp_fun (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t) =
   let tape = Tape.create () in
-  P.iter (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf) params;
+  P.iter
+    (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf)
+    params;
   let y = run_transform f params (Reverse.handler tape) in
   let pullback ct =
     if Nx.shape ct <> Nx.shape y then
@@ -441,9 +447,9 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S)
 
 (* Control flow. Eager implementations with staging-ready signatures: a future
    jit stages these as structured control flow instead of unrolled traces.
-   [scan] attempts the staged [Rune_scan.E_scan] effect; when no handler
-   claims it, the eager fold below runs, observed by whatever transformation
-   handlers are installed. *)
+   [scan] attempts the staged [Rune_scan.E_scan] effect; when no handler claims
+   it, the eager fold below runs, observed by whatever transformation handlers
+   are installed. *)
 
 let scan (module C : Ptree.S) ~f ~init xs =
   Rune_scan.scan (module C) ~f ~init xs
