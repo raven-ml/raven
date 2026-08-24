@@ -1470,7 +1470,11 @@ let find_bufs n =
                 | _ -> U.Ref_tbl.replace read_from b ptr_op)
            | _ -> ())
       | None -> ())
-    (U.toposort n ~gate:(fun x -> U.op x <> Ops.After));
+    (* [enter_calls:false]: a precompiled call's payload (e.g. a staged
+       loop's body linear) is a separate program, not part of this kernel;
+       its INDEX/LOAD structure must not be read as this kernel's buffer
+       accesses. *)
+    (U.toposort n ~enter_calls:false ~gate:(fun x -> U.op x <> Ops.After));
   None
 
 let to_define_global ctx n =
@@ -1618,6 +1622,31 @@ let split_store n =
                    && not (U.Ref_tbl.mem ctx.buf_shapes ptr)
                 then record ptr tail
             | None -> ()) nodes;
+        (* A precompiled call stored as the value (e.g. a staged loop) is its
+           own kernel, returned as-is below: the kernel rewrite debufs its
+           argument buffers like any other, but without the formals mapping
+           that [compact_kernel_params] applies, the fresh params would never
+           resolve back to the nodes they stand for. Capture the call's
+           original arguments here and restore them on the split result. *)
+        let precompiled_args =
+          let value =
+            match U.as_store n with
+            | Some { value; _ } -> Some value
+            | None -> (
+                match U.as_end n with
+                | Some { value; _ } -> (
+                    match U.as_store value with
+                    | Some { value = v; _ } -> Some v
+                    | None -> None)
+                | None -> None)
+          in
+          match value with
+          | Some v when U.op v = Ops.Call -> (
+              match U.as_call v with
+              | Some { args; _ } -> Some args
+              | None -> None)
+          | _ -> None
+        in
         let rewrite =
           U.first_match
             [ to_define_global ctx; Simplify.flatten_range; pm_mop_through_index ]
@@ -1732,7 +1761,10 @@ let split_store n =
              (* A precompiled call (e.g. a staged loop) is its own kernel: it
                 replaces the STORE as the AFTER's kernel dep, so the scheduler
                 emits it once with the buffer as its write. *)
-             Some stored
+             (match (precompiled_args, U.as_call stored) with
+              | Some args, Some { body; _ } ->
+                  Some (U.replace stored ~src:(Array.of_list (body :: args)) ())
+              | _ -> Some stored)
          | Some stored ->
              let info : U.call_info =
                {

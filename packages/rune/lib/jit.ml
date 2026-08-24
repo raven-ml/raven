@@ -296,10 +296,13 @@ type state = {
   mutable consts : (U.t * packed) list; (* reverse order *)
   mutable writebacks : packed list; (* reverse order *)
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
-  scan_stacks : (Obj.t * Obj.t * Obj.t, U.t list) Hashtbl.t;
-      (* staged scans: (step, carry init, xs) identities -> the per-leaf
-         carry-stack buffer nodes the forward loop wrote, for the backward loop
-         to read *)
+  scan_stacks : U.t list Tbl.t;
+      (* staged scans: the step record's identity -> the per-leaf carry-stack
+         buffer nodes the forward loop wrote, for the backward loop to read. The
+         step record is shared between the forward staging and the tape-recorded
+         backward thunk, and is fresh per [Rune.scan] call, so it identifies the
+         scan. Identity-keyed: a structural table compares the record's closure
+         on a hash collision. *)
 }
 
 let shape_of x = NV.shape (Nx_effect.view x)
@@ -549,6 +552,19 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
    node — see [Tolk.Realize.exec_loop] for the payload encoding and the replay
    semantics. *)
 
+(* The scheduling pipeline allocates internal kernel buffers from a counter
+   seeded at the scheduled graph's maximum slot. That counter is local to the
+   schedule: [make_node]'s global slots must never collide with a live
+   scheduled buffer (buffer identity is the slot), so advance [next_slot]
+   past every non-negative buffer slot the linear mentions. *)
+let reserve_slots_of linear =
+  U.toposort ~enter_calls:true linear
+  |> List.iter (fun n ->
+         match U.as_buffer n with
+         | Some { buffer = { slot; _ }; _ } when slot >= 0 ->
+             if slot >= !next_slot then next_slot := slot + 1
+         | _ -> ())
+
 (* Schedule the traced body sink as its own compiled linear. Captured unplanned,
    so the loop's slot buffers stay intact (the memory planner would rewrite them
    into arenas); body PARAMs are substituted with the body call's argument
@@ -588,6 +604,7 @@ let schedule_body_linear st body_sink =
             else U.substitute ~walk:true mappings body_linear
         | None -> assert false
       in
+      reserve_slots_of body_linear;
       Tolk.Realize.pm_compile ~device:st.st_device
         ~to_program:(to_program st.st_device) body_linear
 
@@ -1120,8 +1137,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
    the backward loop reads it — and carrying it always keeps the forward loop's
    shape independent of whether a backward pass exists.
 
-   Forward loop argument layout: 0 = xs, then per leaf [src; carry0; carry1],
-   then ys, then per leaf [final; stack]. *)
+   Forward loop argument layout: 0 = xs, then per leaf the carry init (src),
+   then per leaf carry0, then per leaf carry1, then ys, then per leaf the final
+   carry, then per leaf the carry stack. *)
 and stage_scan : type r.
     state ->
     Rune_scan.scan_req ->
@@ -1143,8 +1161,12 @@ and stage_scan : type r.
   let x_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
   let numel_x = numel x_shape in
   (* Per-leaf carry slots, paired by identity: the slot placeholder is bound to
-     the leaf's input buffer node inside the map callback. *)
-  let slot_infos = ref [] in
+     the leaf's input buffer node inside the map callback. The pairing is
+     recovered by traversing the slot structure with [C.iter] — a [C.map]
+     callback's side effects run in evaluation order (right-to-left for
+     constructor arguments), which need not match [C.iter]'s traversal order,
+     and the per-leaf lists below must all follow the latter. *)
+  let slot_ins = Tbl.create 4 in
   let slot_c =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
@@ -1152,13 +1174,19 @@ and stage_scan : type r.
         let c_shape = shape_of leaf in
         let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
         let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
-        let c_out = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
-        slot_infos := (tolk_dtype cdt, c_shape, c_in, c_out) :: !slot_infos;
+        Tbl.replace slot_ins (Obj.repr slot) (tolk_dtype cdt, c_shape, c_in);
         slot)
       c
   in
+  let slot_infos = ref [] in
+  C.iter
+    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+      let tdt, c_shape, c_in = Tbl.find slot_ins (Obj.repr leaf) in
+      let c_out = make_node st tdt (numel c_shape) in
+      slot_infos := (tdt, c_shape, c_in, c_out) :: !slot_infos)
+    slot_c;
   let slot_infos = List.rev !slot_infos in
   let slot_x = Nx_effect.buffer st.st_ctx xdt x_shape in
   let x_in = make_node st (tolk_dtype xdt) numel_x in
@@ -1186,7 +1214,7 @@ and stage_scan : type r.
             "Rune.jit: the scan body must return a carry of the same shapes it \
              receives (shape-stable carry); move this scan outside jit or keep \
              the carry shapes constant";
-        b)
+        a)
       c_next c
   in
   let y_shape = shape_of y in
@@ -1203,12 +1231,12 @@ and stage_scan : type r.
     List.map2 (fun info node -> (info, node)) slot_infos c_next_nodes
   in
   let n_leaves = List.length infos in
-  let pos_src i = 1 + (3 * i) in
-  let pos_carry0 i = 2 + (3 * i) in
-  let pos_carry1 i = 3 + (3 * i) in
+  let pos_src i = 1 + i in
+  let pos_carry0 i = 1 + n_leaves + i in
+  let pos_carry1 i = 1 + (2 * n_leaves) + i in
   let pos_ys = 1 + (3 * n_leaves) in
-  let pos_final i = 2 + (3 * n_leaves) + (2 * i) in
-  let pos_stack i = 3 + (3 * n_leaves) + (2 * i) in
+  let pos_final i = 2 + (3 * n_leaves) + i in
+  let pos_stack i = 2 + (4 * n_leaves) + i in
   (* The body sub-program: realize every output into an explicit buffer the loop
      executor can rebind per iteration. *)
   let y_out = make_node st (tolk_dtype (Nx_effect.dtype y)) numel_y in
@@ -1254,13 +1282,10 @@ and stage_scan : type r.
       infos
   in
   let ys_buf = make_node st (tolk_dtype (Nx_effect.dtype y)) (n * numel_y) in
-  Hashtbl.replace st.scan_stacks
-    (Obj.repr step, Obj.repr c, Obj.repr x)
-    (List.map (fun (_, _, _, stack) -> stack) leaf_bufs);
   let args_nodes =
     [ xs_node ] @ src_args
-    @ List.map (fun (_, c0, _, _) -> c0) leaf_bufs
-    @ List.map (fun (_, _, c1, _) -> c1) leaf_bufs
+    @ List.map (fun (c0, _, _, _) -> c0) leaf_bufs
+    @ List.map (fun (_, c1, _, _) -> c1) leaf_bufs
     @ [ ys_buf ]
     @ List.map (fun (_, _, f, _) -> f) leaf_bufs
     @ List.map (fun (_, _, _, stk) -> stk) leaf_bufs
@@ -1338,15 +1363,20 @@ and stage_scan : type r.
         })
       infos
   in
-  if Lazy.force jit_debug <> 0 then
-    List.iteri
-      (fun i a ->
-        Format.eprintf "scan loop arg %d: tag %d %a\n%!" i (U.tag a) U.pp a)
-      args_nodes;
   let loop_call =
     build_loop_call ~body_linear ~reversed:false ~n ~in_slots ~out_slots ~copies
       ~stacks ~args:args_nodes
   in
+  (* Register the carry stacks as outputs of the forward loop, wrapped in their
+     AFTERs: the backward loop reads them, and only a graph-visible dependency
+     keeps the forward loop reachable (and so scheduled) when the scan's
+     declared outputs are dead — e.g. under [grad], which discards the loss
+     value. *)
+  Tbl.replace st.scan_stacks (Obj.repr step)
+    (List.map
+       (fun (_, _, _, stack) ->
+         U.after ~src:stack ~deps:[ U.store ~dst:stack ~value:loop_call () ])
+       leaf_bufs);
   (* Every output stores the same call: graph rewriting preserves shared
      subgraphs, so the loop is scheduled once. *)
   let after_cs =
@@ -1389,9 +1419,10 @@ and stage_scan : type r.
    recover its residuals — and emit a reversed loop carrying the cotangent
    double-buffers. Reads the carry of step i from the forward loop's stack.
 
-   Backward loop argument layout: 0 = xs, then per leaf the stack slot, then the
-   stacked output cotangents, then per leaf [dc0; dc1], then the stacked input
-   cotangents, then per leaf [final out; incoming cotangent]. *)
+   Backward loop argument layout: 0 = xs, then per leaf the carry stack, then
+   the stacked output cotangents (dys), then per leaf dc0, per leaf dc1, the
+   stacked input cotangents (dxs), per leaf the final dc output, and per leaf
+   the incoming (final-carry) cotangent. *)
 and stage_scan_bwd : type r.
     state ->
     Rune_scan.scan_bwd ->
@@ -1420,8 +1451,11 @@ and stage_scan_bwd : type r.
   let numel_x = numel x_shape in
   let numel_y = numel y_shape in
   (* The backward body's slots: the step's carry and element, the incoming carry
-     cotangent (a structure), and the output cotangent. *)
-  let slot_infos = ref [] in
+     cotangent (a structure), and the output cotangent. The per-leaf nodes are
+     recovered by identity through [C.iter] passes: a [C.map] callback's side
+     effects run in evaluation order (right-to-left for constructor arguments),
+     which need not match [C.iter]'s traversal order. *)
+  let slot_ins = Tbl.create 4 in
   let slot_c =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
@@ -1431,12 +1465,17 @@ and stage_scan_bwd : type r.
         let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
-        slot_infos := (tolk_dtype cdt, c_shape, c_in) :: !slot_infos;
+        Tbl.replace slot_ins (Obj.repr slot) (tolk_dtype cdt, c_shape, c_in);
         slot)
       c0
   in
+  let slot_infos = ref [] in
+  C.iter
+    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+      slot_infos := Tbl.find slot_ins (Obj.repr leaf) :: !slot_infos)
+    slot_c;
   let slot_infos = List.rev !slot_infos in
-  let dc_infos = ref [] in
+  let dc_ins = Tbl.create 4 in
   let slot_dc =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
@@ -1446,10 +1485,15 @@ and stage_scan_bwd : type r.
         let dc_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor dc_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
-        dc_infos := dc_in :: !dc_infos;
+        Tbl.replace dc_ins (Obj.repr slot) dc_in;
         slot)
       c0
   in
+  let dc_infos = ref [] in
+  C.iter
+    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+      dc_infos := Tbl.find dc_ins (Obj.repr leaf) :: !dc_infos)
+    slot_dc;
   let dc_infos = List.rev !dc_infos in
   let slot_x = Nx_effect.buffer st.st_ctx xdt x_shape in
   let x_in = make_node st (tolk_dtype xdt) numel_x in
@@ -1490,7 +1534,7 @@ and stage_scan_bwd : type r.
           err
             "Rune.jit: the scan body must return a carry of the same shapes it \
              receives (shape-stable carry)";
-        b)
+        a)
       c_next c0
   in
   let dc_i, dx_i =
@@ -1552,20 +1596,18 @@ and stage_scan_bwd : type r.
   let body_linear = schedule_body_linear st body_sink in
   (* The forward loop's carry stacks, by identity of the scan it staged. *)
   let stack_bufs =
-    match
-      Hashtbl.find_opt st.scan_stacks (Obj.repr step, Obj.repr c0, Obj.repr xs0)
-    with
+    match Tbl.find_opt st.scan_stacks (Obj.repr step) with
     | Some bufs -> bufs
     | None -> assert false
   in
   let n_leaves = List.length dc_outs in
   let pos_stack i = 1 + i in
   let pos_dys = 1 + n_leaves in
-  let pos_dc0 i = 2 + n_leaves + (2 * i) in
-  let pos_dc1 i = 3 + n_leaves + (2 * i) in
+  let pos_dc0 i = 2 + n_leaves + i in
+  let pos_dc1 i = 2 + (2 * n_leaves) + i in
   let pos_dxs = 2 + (3 * n_leaves) in
   let pos_final i = 3 + (3 * n_leaves) + i in
-  let pos_src i = 4 + (3 * n_leaves) + i in
+  let pos_src i = 3 + (4 * n_leaves) + i in
   let xs_node = realize_arg st (tolk_of st xs0) in
   let dys_node = realize_arg st (tolk_of st dy) in
   let leaf_bufs =
@@ -2006,7 +2048,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       consts = [];
       writebacks = [];
       axis_index = None;
-      scan_stacks = Hashtbl.create 4;
+      scan_stacks = Tbl.create 4;
     }
   in
   (* One placeholder per distinct leaf; one input record per leaf visit, in
@@ -2210,7 +2252,9 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
   let cached = Option.bind cache_key (fun key -> Jit_cache.load ~key call) in
   let linear, var_vals =
     match cached with
-    | Some hit -> hit
+    | Some (linear, _ as hit) ->
+        reserve_slots_of linear;
+        hit
     | None ->
         (* Schedule under a capture hook: the captured linear is unplanned,
            which keeps buffer nodes stable so the seeded input and constant
@@ -2240,6 +2284,10 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
               Tolk.Helpers.Context_var.(
                 with_context [ B (Tolk.Search.beam_parallel, n) ] compile)
         in
+        (* The scheduler's internal buffer slots come from a counter local to
+           this schedule; reserve them globally so later traces (and scan
+           bodies) never hand out a colliding buffer slot. *)
+        reserve_slots_of linear;
         Option.iter
           (fun key -> Jit_cache.store ~key call linear var_vals)
           cache_key;
@@ -2251,8 +2299,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
      outputs) are diff-patched into the recorded graph by [Realize.run_linear]'s
      graph runner. Honors JIT (>= 2 disables) and JIT_BATCH_SIZE. *)
   let linear = Tolk.Jit.batch_graphs ~device:dev linear in
-  if Lazy.force jit_debug <> 0 then
-    Format.eprintf "rune.jit: compiled linear:\n%a\n%!" U.pp linear;
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   let reserved = Hashtbl.create 16 in
   List.iter

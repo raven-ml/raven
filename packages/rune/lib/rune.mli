@@ -591,10 +591,10 @@ val reset_jit_stats : unit -> unit
 (** {1:flow Control flow}
 
     Eager combinators with staging-ready signatures: code written with them
-    differentiates and vectorizes today, and a future staging [jit] can trace
-    them as structured control flow instead of unrolled traces. Today,
-    {!val-jit} unrolls {!scan} and rejects data-dependent {!cond} and
-    {!while_loop} predicates. *)
+    differentiates and vectorizes today, and a staging [jit] traces them as
+    structured control flow instead of unrolled traces. Today, {!val-jit}
+    compiles {!scan} as a loop, forward and reverse, and rejects
+    data-dependent {!cond} and {!while_loop} predicates. *)
 
 val scan :
   (module Ptree.S with type t = 'p) ->
@@ -603,9 +603,11 @@ val scan :
   ('a, 'b) Nx.t ->
   'p * ('c, 'd) Nx.t
 (** [scan (module C) ~f ~init xs] folds [f] over slices of [xs] along axis 0:
-    [f carry x] returns the next carry and a per-step output. The result is the
-    final carry and the outputs stacked along a new axis 0. Differentiating
-    traces every step.
+    [f carry x] returns the next carry and a per-step output. The result is
+    the final carry and the outputs stacked along a new axis 0. Under
+    {!val-jit} the fold step compiles once and runs as a loop in the compiled
+    program, and differentiating compiles a reversed loop over the step's
+    pullback; everywhere else the scan folds eagerly, tracing every step.
 
     Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
 
