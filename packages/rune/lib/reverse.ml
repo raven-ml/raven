@@ -60,7 +60,7 @@ let err_no_rule op =
 
 (* Handler *)
 
-let handler (tape : Tape.t) =
+let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler = fun tape ->
   let open Effect.Deep in
   let tracked x = Tape.tracked tape x in
   let track x = Tape.track tape x in
@@ -141,6 +141,72 @@ let handler (tape : Tape.t) =
               invalid_arg
                 "in-place mutation (set_item, set_slice, blit, assign) cannot \
                  be used inside grad/value_and_grad — use scatter instead")
+      (* Staged scan: re-perform the effect so an enclosing jit can stage the
+         forward loop, then record one tape entry that, at backward time,
+         performs the transposed scan. Without a staging jit the eager fold
+         runs under a nested copy of this handler, exactly as before. *)
+      | Rune_scan.E_scan req ->
+          Some
+            (fun k ->
+              match Effect.perform (Rune_scan.E_scan req) with
+              | res ->
+                  let (Rune_scan.{ r_carry = Rune_scan.Packed_c (_, c');
+                                  r_y = Rune_scan.Packed_t ys }) = res in
+                  let (Rune_scan.{ req_carry = Rune_scan.Packed_c (cmod, c0);
+                                  req_x = Rune_scan.Packed_t xs0;
+                                  req_step = step }) = req in
+                  let module C = (val cmod) in
+                  (* Both packs bind this module's [t]. *)
+                  let c' = Obj.magic c' in
+                  track ys;
+                  C.iter
+                    (fun (type a b) (leaf : (a, b) t) -> track leaf)
+                    c';
+                  Tape.record tape (fun () ->
+                      let dy = Tape.cotangent tape ys in
+                      let dc =
+                        C.map
+                          (fun (type a b) (leaf : (a, b) t) ->
+                            Tape.cotangent tape leaf)
+                          c'
+                      in
+                      let bwd =
+                        Rune_scan.
+                          {
+                            bwd_step = step;
+                            bwd_carry = Rune_scan.Packed_c (cmod, c0);
+                            bwd_x = Rune_scan.Packed_t xs0;
+                            bwd_n = (T.shape xs0).(0);
+                            bwd_dc = Rune_scan.Packed_c (cmod, dc);
+                            bwd_dy = Rune_scan.Packed_t dy;
+                            bwd_y_shape =
+                              Array.sub (T.shape ys) 1
+                                (Array.length (T.shape ys) - 1);
+                          }
+                      in
+                      match Effect.perform (Rune_scan.E_scan_bwd bwd) with
+                      | Rune_scan.{ r_carry = Rune_scan.Packed_c (_, dc0);
+                                    r_y = Rune_scan.Packed_t dxs } ->
+                          let dc0 = Obj.magic dc0 in
+                          let dxs = Obj.magic dxs in
+                          ignore
+                            (C.map2
+                               (fun (type a b) (a : (a, b) t)
+                                   (b : (a, b) t) ->
+                                 Tape.accumulate tape a b;
+                                 b)
+                               c0 dc0);
+                          Tape.accumulate tape xs0 dxs);
+                  continue k res
+              | exception Effect.Unhandled _ ->
+                  (* No staging jit: the eager fold, observed by a nested copy
+                     of this handler. *)
+                  let res : Rune_scan.scan_res =
+                    Effect.Deep.match_with
+                      (fun () -> Rune_scan.eager req)
+                      () (handler tape)
+                  in
+                  continue k res)
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)
       | E_sub { a; b } -> Some (fun k -> pull2 k (sub a b) a b Fun.id T.neg)

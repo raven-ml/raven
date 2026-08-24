@@ -1726,6 +1726,11 @@ let split_store n =
         in
         (match stored with
          | None -> None
+         | Some stored when U.op stored = Ops.Call ->
+             (* A precompiled call (e.g. a staged loop) is its own kernel: it
+                replaces the STORE as the AFTER's kernel dep, so the scheduler
+                emits it once with the buffer as its write. *)
+             Some stored
          | Some stored ->
              let info : U.call_info =
                {

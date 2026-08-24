@@ -13,7 +13,8 @@
   derivs
   jit
   jit_cache
-  jit_device)
+  jit_device
+  rune_scan)
  (libraries
   nx.core
   nx

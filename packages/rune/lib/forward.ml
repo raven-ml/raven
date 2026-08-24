@@ -30,7 +30,8 @@ let err_no_rule op =
         differentiation should not flow through it"
        op)
 
-let handler (tangents : Tensor_map.t) =
+let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
+ fun tangents ->
   let open Effect.Deep in
   let tangent x = Tensor_map.find tangents x in
   let active x = Option.is_some (tangent x) in
@@ -101,6 +102,18 @@ let handler (tangents : Tensor_map.t) =
               invalid_arg
                 "in-place mutation (set_item, set_slice, blit, assign) cannot \
                  be used inside jvp — use scatter instead")
+      (* Scan: forward mode has no staged rule yet, so run the eager fold
+         under a nested instance of this handler — every step's operations
+         flow through it and acquire their tangents as they always did. *)
+      | Rune_scan.E_scan req ->
+          Some
+            (fun k ->
+              let res : Rune_scan.scan_res =
+                Effect.Deep.match_with
+                  (fun () -> Rune_scan.eager req)
+                  () (handler tangents)
+              in
+              continue k res)
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> lift2 k (add a b) a b T.add)
       | E_sub { a; b } -> Some (fun k -> lift2 k (sub a b) a b T.sub)
