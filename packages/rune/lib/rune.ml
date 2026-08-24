@@ -440,24 +440,15 @@ let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S with ty
     (Ok ()) directions
 
 (* Control flow. Eager implementations with staging-ready signatures: a future
-   jit stages these as structured control flow instead of unrolled traces. *)
+   jit stages these as structured control flow instead of unrolled traces.
+   [scan] attempts the staged [Rune_scan.E_scan] effect; when no handler
+   claims it, the eager fold below runs, observed by whatever transformation
+   handlers are installed. *)
 
 let scan (type p) (module C : Ptree.S with type t = p)
     ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t)
     ~(init : C.t) (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
-  let shape = Nx.shape xs in
-  if Array.length shape = 0 then
-    invalid_arg "Rune.scan: xs must have a leading scan axis";
-  let n = shape.(0) in
-  if n = 0 then invalid_arg "Rune.scan: xs is empty along the scan axis";
-  let carry = ref init in
-  let ys = ref [] in
-  for i = 0 to n - 1 do
-    let c, y = f !carry (Nx.slice [ Nx.I i ] xs) in
-    carry := c;
-    ys := y :: !ys
-  done;
-  (!carry, Nx.stack ~axis:0 (List.rev !ys))
+  Rune_scan.scan (module C) ~f ~init xs
 
 let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
     ~(else_ : unit -> 'r) : 'r =

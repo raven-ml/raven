@@ -456,6 +456,13 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     (* Operations on constants, and effects from other libraries, fall through.
        A new Nx tensor operation must be added to this match: an unmatched
        batched operand would silently produce wrong shapes. *)
+    | Rune_scan.E_scan req ->
+        Some
+          (fun k ->
+            let res : Rune_scan.scan_res =
+              match_with (fun () -> Rune_scan.eager req) () (handler st)
+            in
+            continue k res)
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }
