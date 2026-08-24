@@ -1,8 +1,10 @@
 # Staged scan — smart jit compilation of `Rune.scan`
 
 > Design notes for compiling `scan` (and its reverse pass) as a loop in the
-> compiled program instead of an unrolled trace. Status: **analysis complete,
-> implementation tractable without redesigning Nx or Tolk**.
+> compiled program instead of an unrolled trace. Status: **implemented** —
+> forward and reverse scans stage as `CALL(CUSTOM_FUNCTION "loop")` nodes;
+> see `progress.md` for the fixes the implementation required beyond this
+> design.
 
 ## Today: eager scan, unrolled traces
 

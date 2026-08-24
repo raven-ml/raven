@@ -81,29 +81,187 @@ let test_jit_under_vmap_is_transparent () =
   let y = Rune.vmap' g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
   check_arr ~msg:"vmap over jit" [| 2.0; 4.0; 6.0; 8.0 |] y
 
-let test_scan_unrolls_inside_jit () =
-  let module C = struct
-    type t = Nx.float32_t
+(* Staged scans: under jit a [Rune.scan] compiles the fold step once and runs
+   it as a loop in the compiled program, and [grad] through it compiles a
+   reversed loop over the body's pullback. Every case compares against the
+   eager (unrolled) scan and the eager gradient. *)
 
-    let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
+(* A single-tensor carry. *)
+module Csingle = struct
+  type t = Nx.float32_t
 
-    let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-      f a b
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
 
-    let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-  end in
-  let cumsum xs =
-    snd
-      (Rune.scan
-         (module C)
-         ~f:(fun c x ->
-           let c = Nx.add c x in
-           (c, c))
-         ~init:(Nx.scalar f32 0.0) xs)
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
+end
+
+let cumsum xs =
+  Rune.scan
+    (module Csingle)
+    ~f:(fun c x ->
+      let c = Nx.add c x in
+      (c, c))
+    ~init:(Nx.scalar f32 0.0) xs
+
+(* A two-tensor carry. *)
+module Pair = struct
+  type t = { u : Nx.float32_t; v : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { u; v } =
+    { u = f u; v = f v }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { u = f p.u q.u; v = f p.v q.v }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { u; v } =
+    f u;
+    f v
+end
+
+type pair = Pair.t
+
+let test_scan_matches_eager () =
+  let g = Rune.jit' (fun xs -> snd (cumsum xs)) in
+  let xs = vec32 [| 1.0; 2.0; 3.0 |] in
+  check_arr ~msg:"cumulative sum" (to_arr (snd (cumsum xs))) (g xs);
+  (* Replay computes on fresh data. *)
+  check_arr ~msg:"replay" [| 0.5; 2.5; 5.5 |] (g (vec32 [| 0.5; 2.0; 3.0 |]))
+
+let test_grad_through_scan_matches_eager () =
+  (* c' = tanh (c + x): the pullback reads the carry stack the forward loop
+     records. *)
+  let loss xs =
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.tanh (Nx.add c x) in
+          (c, c))
+        ~init:(Nx.scalar f32 0.0) xs
+    in
+    Nx.add (Nx.reshape [||] c) (Nx.sum ys)
   in
-  let g = Rune.jit' cumsum in
-  check_arr ~msg:"cumulative sum" [| 1.0; 3.0; 6.0 |]
-    (g (vec32 [| 1.0; 2.0; 3.0 |]))
+  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
+  let g = Rune.jit' (fun xs -> Rune.grad' loss xs) in
+  check_arr ~msg:"tanh recurrence" (to_arr (Rune.grad' loss xs)) (g xs);
+  check_arr ~msg:"replay with fresh data"
+    (to_arr (Rune.grad' loss (vec32 [| 0.25; -1.0; 1.5; 0.75 |])))
+    (g (vec32 [| 0.25; -1.0; 1.5; 0.75 |]));
+  (* n = 1 *)
+  check_arr ~msg:"single step"
+    (to_arr (Rune.grad' loss (vec32 [| 2.0 |])))
+    (g (vec32 [| 2.0 |]))
+
+let test_grad_through_scan_ys_only () =
+  (* The loss reads only the stacked outputs: the final carry's cotangent is
+     zero. *)
+  let loss xs =
+    let _c, ys = cumsum xs in
+    Nx.sum ys
+  in
+  let xs = vec32 [| 1.0; 2.0; 3.0 |] in
+  check_arr ~msg:"ys only" (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
+let test_grad_through_scan_carry_only () =
+  (* The loss reads only the final carry: the stacked outputs' cotangent is
+     zero. *)
+  let loss xs =
+    let c, _ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.mul c x in
+          (c, c))
+        ~init:(Nx.scalar f32 1.0) xs
+    in
+    Nx.reshape [||] c
+  in
+  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
+  check_arr ~msg:"final carry only" (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
+let test_grad_through_scan_multi_leaf () =
+  let loss xs =
+    let p, ys =
+      Rune.scan
+        (module Pair)
+        ~f:(fun p x ->
+          let u = Nx.add p.u x and v = Nx.mul p.v x in
+          ({ u; v }, Nx.mul u v))
+        ~init:{ u = Nx.scalar f32 0.0; v = Nx.scalar f32 1.0 }
+        xs
+    in
+    Nx.add (Nx.add (Nx.reshape [||] p.u) (Nx.reshape [||] p.v)) (Nx.sum ys)
+  in
+  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
+  check_arr ~msg:"pair carry" (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
+let test_grad_through_scan_nested () =
+  (* The body itself scans (over the elements of a vector x). *)
+  let loss xs =
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let ci, inner =
+            Rune.scan
+              (module Csingle)
+              ~f:(fun ci xi ->
+                let ci = Nx.add ci xi in
+                (ci, Nx.mul ci xi))
+              ~init:c x
+          in
+          let c = Nx.add ci (Nx.sum inner) in
+          (c, c))
+        ~init:(Nx.zeros f32 [| 2 |])
+        xs
+    in
+    Nx.add (Nx.sum c) (Nx.sum ys)
+  in
+  let xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |] in
+  check_arr ~msg:"forward" (to_arr (loss xs)) (Rune.jit' loss xs);
+  check_arr ~msg:"grad" (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
+let test_grad_through_scan_captured_weight () =
+  (* The body reads a closure capture (a compile-time constant). *)
+  let w = vec32 [| 2.0 |] in
+  let loss xs =
+    let _c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.add c (Nx.mul x (Nx.reshape [||] w)) in
+          (c, Nx.mul c c))
+        ~init:(Nx.scalar f32 0.0) xs
+    in
+    Nx.sum ys
+  in
+  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
+  check_arr ~msg:"captured weight" (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
+let test_grad_through_scan_vector_carry () =
+  let loss xs =
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.tanh (Nx.add c x) in
+          (c, Nx.mul c c))
+        ~init:(Nx.zeros f32 [| 2 |])
+        xs
+    in
+    Nx.add (Nx.sum c) (Nx.sum ys)
+  in
+  let xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |] in
+  check_arr ~msg:"vector carry" (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 (* In-place state *)
 
@@ -322,22 +480,6 @@ let delta f =
   ( r,
     s1.bytes_to_device - s0.bytes_to_device,
     s1.bytes_from_device - s0.bytes_from_device )
-
-type pair = { u : Nx.float32_t; v : Nx.float32_t }
-
-module Pair = struct
-  type t = pair
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { u; v } =
-    { u = f u; v = f v }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { u = f p.u q.u; v = f p.v q.v }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { u; v } =
-    f u;
-    f v
-end
 
 let test_feedback_chain_moves_no_bytes () =
   with_force_copy (fun () ->
@@ -656,7 +798,20 @@ let tests =
         test "grad inside jit matches eager grad" test_grad_inside_jit;
         test "jit under grad runs eagerly" test_jit_under_grad_is_transparent;
         test "jit under vmap runs eagerly" test_jit_under_vmap_is_transparent;
-        test "scan unrolls into the trace" test_scan_unrolls_inside_jit;
+        test "scan matches eager" test_scan_matches_eager;
+        test "grad through a scan matches eager"
+          test_grad_through_scan_matches_eager;
+        test "grad through a scan, stacked outputs only"
+          test_grad_through_scan_ys_only;
+        test "grad through a scan, final carry only"
+          test_grad_through_scan_carry_only;
+        test "grad through a scan with a multi-leaf carry"
+          test_grad_through_scan_multi_leaf;
+        test "grad through nested scans" test_grad_through_scan_nested;
+        test "grad through a scan with a captured weight"
+          test_grad_through_scan_captured_weight;
+        test "grad through a scan with a vector carry"
+          test_grad_through_scan_vector_carry;
       ];
     group "sliding windows"
       [
