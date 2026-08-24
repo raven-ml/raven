@@ -1058,7 +1058,7 @@ let exec_graph binding ctx ~device call =
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
    executor, which replays a compiled sub-linear per iteration. *)
-let dispatch_call binding ctx ~device call =
+let rec dispatch_call binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body; _ } -> (
@@ -1069,6 +1069,10 @@ let dispatch_call binding ctx ~device call =
       | Tolk_uop.Ops.Custom_function
         when U.Arg.as_string (U.arg body) = Some "graph" ->
           exec_graph binding ctx ~device call
+      (* A nested staged loop (a scan inside a scan's body). *)
+      | Tolk_uop.Ops.Custom_function
+        when U.Arg.as_string (U.arg body) = Some "loop" ->
+          exec_loop binding ctx ~device call
       | _ ->
           invalid_arg
             (Format.asprintf "run_linear: unexpected call body %a" U.pp body))
@@ -1109,7 +1113,7 @@ let dispatch_call binding ctx ~device call =
    buffer positions alternate by the iteration counter [j]. Slot buffers are
    seeded into the binding before each iteration; a slot with a nonzero stride
    is bound to a view of its argument buffer at the data-index offset. *)
-let exec_loop binding ctx ~device call =
+and exec_loop binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   let int_child children i =
     match U.const_int_value (List.nth children i) with
@@ -1162,14 +1166,34 @@ let exec_loop binding ctx ~device call =
       in
       let arg_nodes = call_arg_uops args in
       if debug >= 2 then begin
-        Format.eprintf "exec_loop call: %a\n%!" U.pp call;
+        (* Tag-level dump only: [U.pp] of a DAG unfolds shared subgraphs and
+           explodes in size. *)
         List.iteri
           (fun i a ->
             match U.as_param a with
             | Some { param = { slot; _ }; _ } ->
                 Format.eprintf "exec_loop arg %d: PARAM slot %d (tag %d)\n%!" i slot (U.tag a)
-            | None -> Format.eprintf "exec_loop arg %d: %a\n%!" i U.pp a)
-          arg_nodes
+            | None -> Format.eprintf "exec_loop arg %d: tag %d\n%!" i (U.tag a))
+          arg_nodes;
+        List.iter
+          (fun (node, pos0, pos1, size, stride) ->
+            Format.eprintf "  in_slot node tag %d pos0 %d pos1 %d size %d stride %d\n%!"
+              (U.tag node) pos0 pos1 size stride)
+          in_slots;
+        List.iter
+          (fun (node, pos0, pos1, size, stride) ->
+            Format.eprintf "  out_slot node tag %d pos0 %d pos1 %d size %d stride %d\n%!"
+              (U.tag node) pos0 pos1 size stride)
+          out_slots;
+        List.iter
+          (fun c ->
+            match U.as_call c with
+            | Some { args; _ } ->
+                Format.eprintf "  body call args: %s\n%!"
+                  (String.concat ", "
+                     (List.map (fun a -> strf "tag %d" (U.tag a)) args))
+            | None -> ())
+          (U.children body_linear)
       end;
       let bufs = Array.of_list (List.map (resolve binding ctx) arg_nodes) in
       let buf i =
@@ -1181,9 +1205,25 @@ let exec_loop binding ctx ~device call =
       let view buf size offset =
         let dt = Device.Buffer.dtype buf in
         Device.Buffer.view buf ~size ~dtype:dt
-          ~offset:(offset * size * Tolk_uop.Dtype.itemsize dt)
+          ~offset:(offset * Tolk_uop.Dtype.itemsize dt)
       in
-      let copy_bytes dst src = Device.Buffer.copy_from ~dst ~src in
+      let copy_bytes dst src =
+        (* Same path as [exec_copy]: the ambient device when the buffer's name
+           agrees, so no device-registry lookup is needed for same-device
+           copies (a jit's own device may not be registered). *)
+        Device.Buffer.ensure_allocated dst;
+        Device.Buffer.ensure_allocated src;
+        let runner =
+          buffer_copy
+            ~device:(device_for ~device dst)
+            ~total_sz:(Device.Buffer.nbytes dst)
+            ~dest_device:(Device.Buffer.device dst)
+            ~src_device:(Device.Buffer.device src)
+        in
+        ignore
+          (Runner.call runner [ dst; src ] ctx.var_vals ~wait:ctx.wait
+             ~timeout:None)
+      in
       let run_iteration j =
         let i = if reversed then trip - 1 - j else j in
         (* Input slots: the body reads its inputs through these nodes. *)
@@ -1211,7 +1251,7 @@ let exec_loop binding ctx ~device call =
         List.iter
           (fun (carry0, carry1, stack, size) ->
             let cbuf = buf (if j mod 2 = 0 then carry0 else carry1) in
-            copy_bytes (view (buf stack) size i) cbuf)
+            copy_bytes (view (buf stack) size (i * size)) cbuf)
           stacks;
         List.iter
           (dispatch_call binding ctx ~device)

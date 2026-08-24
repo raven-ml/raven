@@ -58,11 +58,6 @@ let eager (req : scan_req) : scan_res =
   let n = shape.(0) in
   let carry = ref req.req_carry in
   let ys = ref [] in
-  for _ = 0 to n - 1 do
-    let i = !ys |> List.length |> fun _ -> () in
-    ignore i;
-    ()
-  done;
   for i = 0 to n - 1 do
     let xi = Nx.slice [ Nx.I i ] xs in
     let c', y = req.req_step.run !carry (Packed_t xi) in
