@@ -1795,12 +1795,24 @@ let fix_war_deps root =
         List.iter (fun s ->
             if s != u_buf then
               match U.Ref_tbl.find_opt kernel_assign s with
-              | Some a when not (call_of a <> None && call_of a = call_of u) ->
-                  let prev =
-                    Option.value (U.Ref_tbl.find_opt assign_rep a) ~default:[]
-                  in
-                  if not (List.exists (( == ) u) prev) then
-                    U.Ref_tbl.replace assign_rep a (u :: prev)
+              | Some a -> (
+                  (* A WAR dep between two AFTERs is only needed across
+                     different calls: within one call the ordering is the
+                     call's own business. Calls are unique graph nodes, so
+                     identity is the test — structural equality walks both
+                     calls' whole payload DAGs (a staged loop call carries
+                     its entire body program), which is pathologically slow
+                     and compares nodes that should simply be [==]. *)
+                  match (call_of a, call_of u) with
+                  | Some ca, Some cu when ca == cu -> ()
+                  | _ ->
+                      let prev =
+                        Option.value
+                          (U.Ref_tbl.find_opt assign_rep a)
+                          ~default:[]
+                      in
+                      if not (List.exists (( == ) u) prev) then
+                        U.Ref_tbl.replace assign_rep a (u :: prev))
               | _ -> ()) reads) afters;
     if U.Ref_tbl.length assign_rep = 0 then root
     else
