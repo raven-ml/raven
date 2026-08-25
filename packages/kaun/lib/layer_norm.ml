@@ -3,23 +3,25 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'b params = { gamma : (float, 'b) Nx.t; beta : (float, 'b) Nx.t }
-type t = Nx.float32_elt params
+type 'a t = { gamma : 'a; beta : 'a }
 
-let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { gamma; beta } =
-  { gamma = f gamma; beta = f beta }
+let map f { gamma; beta } =
+  let gamma = f gamma in
+  let beta = f beta in
+  { gamma; beta }
 
-let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p q =
-  { gamma = f p.gamma q.gamma; beta = f p.beta q.beta }
+let map2 f p q =
+  let gamma = f p.gamma q.gamma in
+  let beta = f p.beta q.beta in
+  { gamma; beta }
 
-let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { gamma; beta } =
+let iter f { gamma; beta } =
   f gamma;
   f beta
 
-let astype dt { gamma; beta } =
-  { gamma = Nx.cast dt gamma; beta = Nx.cast dt beta }
-
-let names _ = [ "gamma"; "beta" ]
+let fold f acc { gamma; beta } = f "beta" (f "gamma" acc gamma) beta
+let fold2 f acc p q = f "beta" (f "gamma" acc p.gamma q.gamma) p.beta q.beta
+let names _ = { gamma = "gamma"; beta = "beta" }
 
 let make ~dim dtype =
   if dim <= 0 then

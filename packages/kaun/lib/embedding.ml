@@ -3,18 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'b params = { table : (float, 'b) Nx.t }
-type t = Nx.float32_elt params
+type 'a t = { table : 'a }
 
-let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { table } =
-  { table = f table }
-
-let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p q =
-  { table = f p.table q.table }
-
-let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { table } = f table
-let astype dt { table } = { table = Nx.cast dt table }
-let names _ = [ "table" ]
+let map f { table } = { table = f table }
+let map2 f p q = { table = f p.table q.table }
+let iter f { table } = f table
+let fold f acc { table } = f "table" acc table
+let fold2 f acc p q = f "table" acc p.table q.table
+let names _ = { table = "table" }
 
 let make ?init ~vocab ~dim dtype =
   if vocab <= 0 || dim <= 0 then

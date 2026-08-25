@@ -455,6 +455,21 @@ thread.
 - Runtimes: CPU (via Clang) and Metal. Renderers additionally target CUDA,
   AMD/HIP, and OpenCL for GPU code generation.
 
+### Kaun
+
+- **Breaking:** the layers are payload-generic parameter trees: `Linear`,
+  `Conv`, `Embedding`, `Layer_norm`, `Batch_norm` (and its `Stats`),
+  `Attention` (and its `Cache`) each expose one `'a t` record with payload
+  holes and the six `Nx.Ptree.Uniform` traversals (`map`, `map2`, `iter`,
+  `fold`, `fold2`, `names`). Parameters are the record at tensor payloads —
+  `Nx.float32_t Linear.t` replaces the old `Nx.float32_elt Linear.params` and
+  the zero-argument `Linear.t` alias. One declaration now also serves
+  parameter-shaped data: freeze masks (`bool t`), per-leaf learning rates
+  (`float t`), checkpoint names (`string t`).
+- **Breaking:** the layers' `astype` is removed — `map (Nx.cast dt)` is the
+  same differentiable cast — and the `names : _ -> string list` functions are
+  replaced by the tree-shaped `names` and path-threading `fold` of the
+  `Uniform` contract.
 ### Vega (new)
 
 - The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
