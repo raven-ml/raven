@@ -625,6 +625,33 @@ let test_dp_training_matches_jit () =
     stats.bytes_to_device;
   ignore (Sys.opaque_identity s2)
 
+(* A multi-device trace declines to stage a scan (its probe answer is
+   [false]): the recurrence and its gradient unroll into each shard's trace as
+   they did before staging existed. The scan folds the columns, so sharding
+   the rows commutes with it and the concatenated shard gradients equal the
+   single-device gradient. *)
+let test_grad_through_scan_inside_pmap () =
+  let loss x =
+    let rows = (Nx.shape x).(0) in
+    let _, ys =
+      Rune.scan
+        (module Single_f32)
+        ~f:(fun c col ->
+          let c = Nx.tanh (Nx.add c col) in
+          (c, Nx.mul c c))
+        ~init:(Nx.zeros f32 [| rows |])
+        (Nx.transpose x)
+    in
+    Nx.sum ys
+  in
+  let grads x = Rune.grad (module Single_f32) loss x in
+  let x = m46 () in
+  let expect = Rune.jit2 (module Single_f32) (module Single_f32) grads x in
+  let g =
+    Rune.pmap2 ~devices:devs2 (module Single_f32) (module Single_f32) grads
+  in
+  check_arr ~msg:"sharded grads" (to_arr expect) (g x)
+
 let tests =
   [
     group "numerics"
@@ -685,6 +712,8 @@ let tests =
         test "dropout under pmap+grad decorrelates masks"
           test_pmap_dropout_grad_decorrelates;
         test "two collectively reduced outputs" test_two_collective_outputs;
+        test "grad through a scan unrolls into the shard traces"
+          test_grad_through_scan_inside_pmap;
       ];
     group "training"
       [

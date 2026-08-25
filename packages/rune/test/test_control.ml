@@ -63,6 +63,34 @@ let test_scan_rejects_scalar () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (cumsum_scan (Nx.scalar f64 1.0)))
 
+(* Compositions where another transformation claims the scan below any stager:
+   reverse-mode must fold eagerly so every step lands on its tape. Each case
+   compares against the identical computation over the cumsum primitive. *)
+
+let quad_scan xs = Nx.sum (Nx.mul (cumsum_scan xs) (cumsum_scan xs))
+let quad_prim xs = Nx.sum (Nx.mul (Nx.cumsum xs) (Nx.cumsum xs))
+
+let test_vmap_of_grad_through_scan () =
+  let x =
+    Nx.create f64 [| 2; 4 |] [| 0.5; -1.2; 2.1; 0.8; 1.7; -0.4; 0.9; 0.2 |]
+  in
+  check_arr ~msg:"per-sample grads"
+    (to_arr (Rune.vmap' (Rune.grad' quad_prim) x))
+    (Rune.vmap' (Rune.grad' quad_scan) x)
+
+let test_grad_of_grad_through_scan () =
+  let second f xs = Rune.grad' (fun xs -> Nx.sum (Rune.grad' f xs)) xs in
+  check_arr ~msg:"second order"
+    (to_arr (second quad_prim (v4 ())))
+    (second quad_scan (v4 ()))
+
+let test_hvp_through_scan () =
+  (* Forward-over-reverse. *)
+  let v = vec64 [| 1.0; 0.0; -1.0; 0.5 |] in
+  check_arr ~msg:"hvp"
+    (to_arr (Rune.hvp' quad_prim (v4 ()) v))
+    (Rune.hvp' quad_scan (v4 ()) v)
+
 let test_cond_branches () =
   let branch x =
     Rune.cond
@@ -118,6 +146,9 @@ let tests =
         test "differentiates like the primitive" test_grad_through_scan;
         test "vectorizes over the batch" test_vmap_of_scan;
         test "rejects a scalar input" test_scan_rejects_scalar;
+        test "per-sample gradients (vmap of grad)" test_vmap_of_grad_through_scan;
+        test "second-order gradients (grad of grad)" test_grad_of_grad_through_scan;
+        test "hessian-vector product (jvp of grad)" test_hvp_through_scan;
       ];
     group "cond"
       [
