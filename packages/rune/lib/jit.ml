@@ -1190,7 +1190,10 @@ and stage_scan : type r.
      so record them against the scan's identity. The snapshot is taken before
      the slot placeholders exist, and tensors first touched by the body itself
      (constants it captures) are absent from it — they can never be tracked by
-     an enclosing grad, whose tape only sees traced tensors. *)
+     an enclosing grad, whose tape only sees traced tensors. The float filter
+     stands for differentiability: complex would qualify too, but [tolk_dtype]
+     refuses complex tensors long before one could reach this hook — widen the
+     filter if tolk ever takes them. *)
   let before = Tbl.create 16 in
   Tbl.iter (fun k _ -> Tbl.replace before k ()) st.table;
   let closed = ref [] in

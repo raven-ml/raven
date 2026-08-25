@@ -937,6 +937,14 @@ thread.
 
 ### Rune
 
+- `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
+  step compiles once and runs per slice — instead of unrolling every step into
+  the trace, and `grad` through a jitted scan compiles a reversed loop over the
+  step's pullback. Compile time for a scanned recurrence (an RNN, a sampling
+  loop) no longer grows with its sequence length. A carry that changes shape
+  across steps, and a scan reached through `vmap` or `pmap`, unroll into the
+  trace as before.
+
 - `grad`, `vjp`, and `jvp` now differentiate `Nx.rfft` and `Nx.irfft` — both
   are linear, so each rule is an exact transpose — and `vmap` batches all four
   FFT transforms (`fft`, `ifft`, `rfft`, `irfft`), so spectral losses built on
