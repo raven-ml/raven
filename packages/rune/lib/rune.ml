@@ -442,7 +442,8 @@ let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S with ty
 (* Control flow. Eager implementations with staging-ready signatures: a future
    jit stages these as structured control flow instead of unrolled traces. *)
 
-let scan (module C : Ptree.S) ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t)
+let scan (type p) (module C : Ptree.S with type t = p)
+    ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t)
     ~(init : C.t) (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
   let shape = Nx.shape xs in
   if Array.length shape = 0 then
@@ -462,7 +463,8 @@ let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
     ~(else_ : unit -> 'r) : 'r =
   if Nx.item [] pred then then_ () else else_ ()
 
-let while_loop (module C : Ptree.S) ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t)
+let while_loop (type p) (module C : Ptree.S with type t = p)
+    ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t)
     ~(body : C.t -> C.t) (init : C.t) : C.t =
   let rec go c = if Nx.item [] (cond c) then go (body c) else c in
   go init
