@@ -1038,23 +1038,24 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               end;
               continue k ()
             end)
-    (* Staged scans. *)
+    (* Staged scans. A multi-device (pmap) trace cannot stage a loop yet: it
+       answers the probe with [false] — so reverse-mode below tapes the eager
+       fold per step and never records an [E_scan_bwd] — and unrolls a directly
+       performed scan into the trace, as every jit did before staging. *)
+    | Rune_scan.E_scan_probe ->
+        Some (fun k -> continue k (Option.is_none st.st_multi))
     | Rune_scan.E_scan req ->
         Some
           (fun k ->
             if st.st_multi <> None then
-              err
-                "Rune.jit: scan under pmap is not supported yet; move the scan \
-                 outside the jitted function";
-            stage_scan st req k)
-    | Rune_scan.E_scan_bwd bwd ->
-        Some
-          (fun k ->
-            if st.st_multi <> None then
-              err
-                "Rune.jit: scan under pmap is not supported yet; move the scan \
-                 outside the jitted function";
-            stage_scan_bwd st bwd k)
+              let res : Rune_scan.scan_res =
+                Effect.Deep.match_with
+                  (fun () -> Rune_scan.eager req)
+                  () (handler st)
+              in
+              continue k res
+            else stage_scan st req k)
+    | Rune_scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
     (* Indexed access *)
     | E_gather { data; indices; axis } ->
         Some
@@ -1556,7 +1557,13 @@ and stage_scan_bwd : type r.
   let closed =
     match Tbl.find_opt st.scan_closed (Obj.repr step) with
     | Some closed -> closed
-    | None -> assert false
+    | None ->
+        (* Reachable only if a handler claimed [E_scan] without answering
+           [E_scan_probe]: reverse then recorded a transpose for a scan this
+           trace never staged. *)
+        err
+          "Rune.jit: backward scan for a scan this trace did not stage (a \
+           handler claimed E_scan without answering E_scan_probe)"
   in
   (* Capture the pullback: run the body once under a private reverse tape, then
      replay the tape against the placeholder cotangents — every op lands in the
@@ -1677,7 +1684,10 @@ and stage_scan_bwd : type r.
   let stack_bufs =
     match Tbl.find_opt st.scan_stacks (Obj.repr step) with
     | Some bufs -> bufs
-    | None -> assert false
+    | None ->
+        err
+          "Rune.jit: backward scan for a scan this trace did not stage (a \
+           handler claimed E_scan without answering E_scan_probe)"
   in
   let n_leaves = List.length dc_outs in
   let pos_stack i = 1 + i in

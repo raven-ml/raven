@@ -104,7 +104,9 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                  be used inside jvp — use scatter instead")
       (* Scan: forward mode has no staged rule yet, so run the eager fold under
          a nested instance of this handler — every step's operations flow
-         through it and acquire their tangents as they always did. *)
+         through it and acquire their tangents as they always did. Claiming
+         [E_scan] here obliges answering the probe with [false]. *)
+      | Rune_scan.E_scan_probe -> Some (fun k -> continue k false)
       | Rune_scan.E_scan req ->
           Some
             (fun k ->
