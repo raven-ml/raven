@@ -22,47 +22,46 @@ type config = {
 }
 (** The type for GPT-2 hyperparameters, as in HuggingFace's [config.json]. *)
 
-type 'b block = {
-  ln1 : 'b Kaun.Layer_norm.params;
-  attn : 'b Kaun.Attention.params;
-  ln2 : 'b Kaun.Layer_norm.params;
-  fc : 'b Kaun.Linear.params;  (** MLP up projection, [n_embd → n_inner]. *)
-  proj : 'b Kaun.Linear.params;  (** MLP down projection, [n_inner → n_embd]. *)
+type 'a block = {
+  ln1 : 'a Kaun.Layer_norm.t;
+  attn : 'a Kaun.Attention.t;
+  ln2 : 'a Kaun.Layer_norm.t;
+  fc : 'a Kaun.Linear.t;  (** MLP up projection, [n_embd → n_inner]. *)
+  proj : 'a Kaun.Linear.t;  (** MLP down projection, [n_inner → n_embd]. *)
 }
-(** The type for one pre-norm transformer block with float dtype layout ['b]. *)
+(** The type for one pre-norm transformer block over payload ['a]. *)
 
-type 'b params = {
-  wte : 'b Kaun.Embedding.params;
-      (** Token embeddings, also the tied LM head. *)
-  wpe : 'b Kaun.Embedding.params;  (** Learned position embeddings. *)
-  blocks : 'b block list;
-  ln_f : 'b Kaun.Layer_norm.params;
+type 'a params = {
+  wte : 'a Kaun.Embedding.t;  (** Token embeddings, also the tied LM head. *)
+  wpe : 'a Kaun.Embedding.t;  (** Learned position embeddings. *)
+  blocks : 'a block list;
+  ln_f : 'a Kaun.Layer_norm.t;
 }
-(** The type for GPT-2 parameters with float dtype layout ['b]. *)
+(** The type for GPT-2 parameters over payload ['a]. *)
 
-type t = Nx.float32_elt params
+type t = Nx.float32_t params
 (** The type for single-precision GPT-2 parameters, the checkpoint dtype. *)
 
-module Params : Kaun.Checkpoint.Named with type t = t
-(** Checkpoint plumbing for {!type:t}. Leaves are named [wte.table],
-    [blocks.0.attn.q.w], [ln_f.gamma], ... *)
+module Params : Nx.Ptree.Uniform with type 'a t = 'a params
+(** The parameter traversals: hand [Nx.Ptree.typed (module Params)] to the
+    transformations, and [(module Params)] to {!Kaun.Checkpoint.of_params} and
+    {!Kaun.Checkpoint.to_params}. Leaves are named [wte.table],
+    [blocks.0.attn.q.w], [ln_f.gamma], ...
+
+    [Params.map (Nx.cast dt) p] converts precision — for half precision
+    inference, cast a float32 checkpoint once; for mixed-precision training,
+    cast inside the loss function so the float32 parameters receive float32
+    gradients. The kaun layers keep their attention-score and layer-norm
+    statistics in float32 islands whatever [dt]. *)
 
 val make : config -> t
 (** [make cfg] is a zero-initialized model, the [~like] template for
     {!Kaun.Checkpoint.to_params}. *)
 
-val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
-(** [astype dt p] is [p] with every parameter leaf cast to [dt] — for half
-    precision inference, cast a float32 checkpoint once; for mixed-precision
-    training, cast inside the loss function so the float32 parameters receive
-    float32 gradients (see {!Kaun.Linear.astype}). The kaun layers keep their
-    attention-score and layer-norm statistics in float32 islands whatever [dt].
-*)
-
 val logits :
   config ->
   ?dropout:float * Nx.Rng.key ->
-  'b params ->
+  (float, 'b) Nx.t params ->
   (int32, Nx.int32_elt) Nx.t ->
   (float, 'b) Nx.t
 (** [logits cfg ?dropout p ids] is the next-token logits for the
@@ -80,22 +79,22 @@ val logits :
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
 
-type 'b cache = 'b Kaun.Attention.Cache.t list
-(** The type for decoding state with float dtype layout ['b]: one key-value
-    cache per block, in block order. *)
+type 'a cache = 'a Kaun.Attention.Cache.t list
+(** The type for decoding state over payload ['a]: one key-value cache per
+    block, in block order. *)
 
-val cache : config -> len:int -> (float, 'b) Nx.dtype -> 'b cache
+val cache : config -> len:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t cache
 (** [cache cfg ~len dtype] is an empty decoding state whose caches hold [len]
     positions: the total sequence length (prompt plus generated tokens) must not
     exceed [len]. [dtype] is the parameters' dtype. *)
 
 val logits_cached :
   config ->
-  'b params ->
+  (float, 'b) Nx.t params ->
   pos:(int32, Nx.int32_elt) Nx.t ->
-  'b cache ->
+  (float, 'b) Nx.t cache ->
   (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * 'b cache
+  (float, 'b) Nx.t * (float, 'b) Nx.t cache
 (** [logits_cached cfg p ~pos caches ids] is the next-token logits at the last
     position of [ids] — shape [[| batch; vocab_size |]] — and the updated
     caches, where [ids] holds the positions [pos] to [pos + seq - 1] of the
@@ -111,7 +110,11 @@ val logits_cached :
     {!Kaun.Attention.apply_cached}. *)
 
 val generate :
-  config -> 'b params -> max_tokens:int -> int32 array -> int32 array
+  config ->
+  (float, 'b) Nx.t params ->
+  max_tokens:int ->
+  int32 array ->
+  int32 array
 (** [generate cfg p ~max_tokens prompt] is [prompt] extended with [max_tokens]
     greedily decoded token ids: each step re-runs {!logits} on the whole
     sequence (the model keeps no key-value cache) and appends the argmax of the

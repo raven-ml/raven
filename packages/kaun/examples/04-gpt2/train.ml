@@ -18,9 +18,9 @@
    construction — same numbers as the single-device step up to fp32 reduction
    order - [--dropout RATE] (default 0, the reference protocol's dropout-free
    graph) enables the GPT-2 dropout sites in [Gpt2.logits]; the per-step mask
-   key is one more int32 leaf of the jitted step's inputs — keys must be inputs,
-   never captures — derived as [Nx.Rng.fold_in root step] from [--seed], so a
-   run is reproducible from its seed alone
+   key is one more int32 leaf of the jitted step's inputs — keys must be
+   inputs, never captures — derived as [Nx.Rng.fold_in root step] from
+   [--seed], so a run is reproducible from its seed alone
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
@@ -33,6 +33,8 @@
    untouched h.N.attn.bias mask buffers copied from the input). *)
 
 open Kaun
+
+let gpt2_tree = Nx.Ptree.typed (module Gpt2.Params)
 
 let gpt2_124m : Gpt2.config =
   {
@@ -110,8 +112,9 @@ let batch_of_ids ids =
     Nx.create Nx.int32 [| batch_size * seq_len |] (take 1) )
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
-   axis, NLL of the target id, mean. [?dropout] threads the rate and the step's
-   mask key to [Gpt2.logits]; absent, the graph is exactly the reference's. *)
+   axis, NLL of the target id, mean. [?dropout] threads the rate and the
+   step's mask key to [Gpt2.logits]; absent, the graph is exactly the
+   reference's. *)
 let loss_fn inputs targets ?dropout params =
   let logits = Gpt2.logits gpt2_124m ?dropout params inputs in
   let logits =
@@ -119,8 +122,9 @@ let loss_fn inputs targets ?dropout params =
   in
   Loss.softmax_cross_entropy_sparse logits targets
 
-(* Mixed-precision loss ([--compute-dtype bfloat16] or [float16]): the astype
-   sandwich. [Gpt2.astype] casts the float32 master weights to the compute dtype
+(* Mixed-precision loss ([--compute-dtype bfloat16] or [float16]): the cast
+   sandwich. [Params.map (Nx.cast dt)] casts the float32 master weights to the
+   compute dtype
    at the top of the objective and the logits come back up to float32 for the
    loss, so the objective's reductions run at full precision. The cast VJP
    returns cotangents at the pre-cast dtype, so the gradients — and the
@@ -134,7 +138,7 @@ let loss_fn inputs targets ?dropout params =
    DEBUG=4 shows them), so the bf16 weights are never materialized as a second
    tree. *)
 let loss_fn_half compute inputs targets ?dropout params =
-  let params = Gpt2.astype compute params in
+  let params = Gpt2.Params.map (Nx.cast compute) params in
   let logits = Gpt2.logits gpt2_124m ?dropout params inputs in
   let logits =
     Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
@@ -157,25 +161,19 @@ module Step_out = struct
 end
 
 let train_step objective params =
-  let loss, grads = Rune.value_and_grad (module Gpt2.Params) objective params in
+  let loss, grads = Rune.value_and_grad gpt2_tree objective params in
   (* Plain SGD: momentum is 0, so the zero velocity from [sgd_init] leaves the
      update exactly [w - lr * g] and needs no threading across steps. *)
-  let state = Vega.sgd_init (module Gpt2.Params) params in
+  let state = Vega.sgd_init gpt2_tree params in
   let params =
-    fst (Vega.sgd_step (module Gpt2.Params) ~lr state ~params ~grads)
+    fst (Vega.sgd_step gpt2_tree ~lr state ~params ~grads)
   in
   { Step_out.params; loss }
 
-(* The step's dropout key rides the input structures as one more optional int32
-   leaf: [Some key] when [--dropout] is positive, [None] otherwise — [None]
-   contributes no leaf, so dropout-free runs trace the exact reference graph.
-
-   The option is about whether dropout is on, not about where the key may live.
-   Rune carries a non-differentiable leaf through [grad] and [vjp], and Vega's
-   optimizers leave it alone, so the key could equally sit in the structure the
-   objective is differentiated against; the objective closes over it here only
-   because the loss-scaling path wants the parameters alone as its cotangent
-   domain. *)
+(* The step's dropout key rides the input structures as one more optional
+   int32 leaf: [Some key] when [--dropout] is positive, [None] otherwise —
+   [None] contributes no leaf, so dropout-free runs trace the exact reference
+   graph. *)
 let map2_key f a b =
   match (a, b) with
   | Some a, Some b -> Some (f a b)
@@ -208,7 +206,11 @@ end
    flag, so the step still traces once). *)
 
 module Scaled_in = struct
-  type t = { params : Gpt2.t; ls : Vega.Loss_scale.t; key : Nx.Rng.key option }
+  type t = {
+    params : Gpt2.t;
+    ls : Vega.Loss_scale.t;
+    key : Nx.Rng.key option;
+  }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
     {
@@ -262,15 +264,14 @@ let train_step_scaled objective { Scaled_in.params; ls; key } =
      of this model renders a whole-vocab-axis vectorized store,
      [make_float50257], which NVRTC rejects.) *)
   let loss, grads =
-    Rune.vjp
-      (module Gpt2.Params)
-      (objective key) params ls.Vega.Loss_scale.scale
+    Rune.vjp gpt2_tree (objective key) params
+      ls.Vega.Loss_scale.scale
   in
-  let grads = Vega.Loss_scale.unscale (module Gpt2.Params) ls grads in
-  let finite = Vega.Loss_scale.grads_finite (module Gpt2.Params) grads in
-  let state = Vega.sgd_init (module Gpt2.Params) params in
+  let grads = Vega.Loss_scale.unscale gpt2_tree ls grads in
+  let finite = Vega.Loss_scale.grads_finite gpt2_tree grads in
+  let state = Vega.sgd_init gpt2_tree params in
   let params' =
-    fst (Vega.sgd_step (module Gpt2.Params) ~lr state ~params ~grads)
+    fst (Vega.sgd_step gpt2_tree ~lr state ~params ~grads)
   in
   let params =
     Gpt2.Params.map2 (fun p p' -> Nx.where finite p' p) params params'
@@ -380,9 +381,9 @@ let bias name = function
 
 let checkpoint_of_params original (p : Gpt2.t) =
   let tensor = Checkpoint.of_tensor in
-  let block i (b : Nx.float32_elt Gpt2.block) =
+  let block i (b : Nx.float32_t Gpt2.block) =
     let key leaf = Printf.sprintf "h.%d.%s" i leaf in
-    let linear leaf (l : Linear.t) =
+    let linear leaf (l : Nx.float32_t Linear.t) =
       [
         tensor (key (leaf ^ ".weight")) l.w;
         tensor (key (leaf ^ ".bias")) (bias (key leaf) l.b);
@@ -528,8 +529,8 @@ let () =
         failwith
           ("--compute-dtype must be float32, bfloat16 or float16, got " ^ d)
   in
-  (* [obj key inputs targets] is the shard objective for one step's dropout key;
-     [None] (the default rate 0) is the dropout-free reference graph. *)
+  (* [obj key inputs targets] is the shard objective for one step's dropout
+     key; [None] (the default rate 0) is the dropout-free reference graph. *)
   let rate = !dropout in
   if rate < 0.0 || rate >= 1.0 then failwith "--dropout must be in [0, 1)";
   let obj key inputs targets params =
@@ -542,9 +543,9 @@ let () =
      capture. *)
   let root = Nx.Rng.key !seed in
   let key_at i = if rate = 0.0 then None else Some (Nx.Rng.fold_in root i) in
-  (* [step i] maps parameters to updated parameters and the pre-update loss; the
-     float16 variant additionally threads its loss-scale state, hidden in the
-     closure. *)
+  (* [step i] maps parameters to updated parameters and the pre-update loss;
+     the float16 variant additionally threads its loss-scale state, hidden in
+     the closure. *)
   let step : int -> Gpt2.t -> Gpt2.t * float =
     if !devices = "" then
       if !compute_dtype = "float16" then begin
@@ -583,7 +584,7 @@ let () =
       let in_axes =
         List.init n_params (fun _ -> None)
         @ [ Some 0; Some 0 ]
-        @ if rate = 0.0 then [] else [ None ]
+        @ (if rate = 0.0 then [] else [ None ])
       in
       let f =
         Rune.pmap2 ~devices:devs ~in_axes

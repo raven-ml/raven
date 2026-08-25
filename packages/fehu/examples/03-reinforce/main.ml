@@ -54,21 +54,27 @@ let sparkline values =
    Linear layers with hand-written traversals (the Nx.Ptree.S contract). *)
 
 module Policy = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+  let map f { l1; l2 } =
+    let l1 = Linear.map f l1 in
+    let l2 = Linear.map f l2 in
+    { l1; l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+  let map2 f p q =
+    let l1 = Linear.map2 f p.l1 q.l1 in
+    let l2 = Linear.map2 f p.l2 q.l2 in
+    { l1; l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   (* Forward pass: obs [batch; 4] -> logits [batch; 2] *)
   let apply p obs = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))
 end
+
+let policy_tree = Nx.Ptree.typed (module Policy)
 
 let count_parameters params =
   let n = ref 0 in
@@ -99,7 +105,7 @@ let () =
   Printf.printf "Parameters: %d\n\n" (count_parameters !params);
 
   (* Optimizer *)
-  let opt_state = ref (Vega.adam_init (module Policy) !params) in
+  let opt_state = ref (Vega.adam_init policy_tree !params) in
 
   let policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
@@ -162,9 +168,9 @@ let () =
       Nx.neg (Nx.mean weighted)
     in
 
-    let loss, grads = Rune.value_and_grad (module Policy) loss_fn !params in
+    let loss, grads = Rune.value_and_grad policy_tree loss_fn !params in
     let new_params, new_opt_state =
-      Vega.adam_step (module Policy) ~lr !opt_state ~params:!params ~grads
+      Vega.adam_step policy_tree ~lr !opt_state ~params:!params ~grads
     in
     params := new_params;
     opt_state := new_opt_state;

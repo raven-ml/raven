@@ -22,108 +22,126 @@ type config = {
 
 (* Model: plain records of kaun layers, generic over the float dtype *)
 
-type 'b block = {
-  ln1 : 'b Layer_norm.params;
-  attn : 'b Attention.params;
-  ln2 : 'b Layer_norm.params;
-  fc : 'b Linear.params;
-  proj : 'b Linear.params;
+type 'a block = {
+  ln1 : 'a Layer_norm.t;
+  attn : 'a Attention.t;
+  ln2 : 'a Layer_norm.t;
+  fc : 'a Linear.t;
+  proj : 'a Linear.t;
 }
 
-type 'b params = {
-  wte : 'b Embedding.params;
-  wpe : 'b Embedding.params;
-  blocks : 'b block list;
-  ln_f : 'b Layer_norm.params;
+type 'a params = {
+  wte : 'a Embedding.t;
+  wpe : 'a Embedding.t;
+  blocks : 'a block list;
+  ln_f : 'a Layer_norm.t;
 }
 
-type t = Nx.float32_elt params
+type t = Nx.float32_t params
 
 module Params = struct
-  type nonrec t = t
+  type nonrec 'a t = 'a params
 
-  let map_block (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b =
-    {
-      ln1 = Layer_norm.map f b.ln1;
-      attn = Attention.map f b.attn;
-      ln2 = Layer_norm.map f b.ln2;
-      fc = Linear.map f b.fc;
-      proj = Linear.map f b.proj;
-    }
+  let map_block f b =
+    let ln1 = Layer_norm.map f b.ln1 in
+    let attn = Attention.map f b.attn in
+    let ln2 = Layer_norm.map f b.ln2 in
+    let fc = Linear.map f b.fc in
+    let proj = Linear.map f b.proj in
+    { ln1; attn; ln2; fc; proj }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
-    {
-      wte = Embedding.map f p.wte;
-      wpe = Embedding.map f p.wpe;
-      blocks = List.map (map_block f) p.blocks;
-      ln_f = Layer_norm.map f p.ln_f;
-    }
+  let map f p =
+    let wte = Embedding.map f p.wte in
+    let wpe = Embedding.map f p.wpe in
+    let blocks = List.map (map_block f) p.blocks in
+    let ln_f = Layer_norm.map f p.ln_f in
+    { wte; wpe; blocks; ln_f }
 
-  let map2_block (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b
-      b' =
-    {
-      ln1 = Layer_norm.map2 f b.ln1 b'.ln1;
-      attn = Attention.map2 f b.attn b'.attn;
-      ln2 = Layer_norm.map2 f b.ln2 b'.ln2;
-      fc = Linear.map2 f b.fc b'.fc;
-      proj = Linear.map2 f b.proj b'.proj;
-    }
+  let map2_block f b b' =
+    let ln1 = Layer_norm.map2 f b.ln1 b'.ln1 in
+    let attn = Attention.map2 f b.attn b'.attn in
+    let ln2 = Layer_norm.map2 f b.ln2 b'.ln2 in
+    let fc = Linear.map2 f b.fc b'.fc in
+    let proj = Linear.map2 f b.proj b'.proj in
+    { ln1; attn; ln2; fc; proj }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p p' =
-    {
-      wte = Embedding.map2 f p.wte p'.wte;
-      wpe = Embedding.map2 f p.wpe p'.wpe;
-      blocks = List.map2 (map2_block f) p.blocks p'.blocks;
-      ln_f = Layer_norm.map2 f p.ln_f p'.ln_f;
-    }
+  let map2 f p p' =
+    let wte = Embedding.map2 f p.wte p'.wte in
+    let wpe = Embedding.map2 f p.wpe p'.wpe in
+    let blocks = List.map2 (map2_block f) p.blocks p'.blocks in
+    let ln_f = Layer_norm.map2 f p.ln_f p'.ln_f in
+    { wte; wpe; blocks; ln_f }
 
-  let iter_block (f : 'a 'b. ('a, 'b) Nx.t -> unit) b =
+  let iter_block f b =
     Layer_norm.iter f b.ln1;
     Attention.iter f b.attn;
     Layer_norm.iter f b.ln2;
     Linear.iter f b.fc;
     Linear.iter f b.proj
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
+  let iter f p =
     Embedding.iter f p.wte;
     Embedding.iter f p.wpe;
     List.iter (iter_block f) p.blocks;
     Layer_norm.iter f p.ln_f
 
-  let names p =
-    let pre prefix ns = List.map (fun n -> prefix ^ "." ^ n) ns in
-    let block b =
-      pre "ln1" (Layer_norm.names b.ln1)
-      @ pre "attn" (Attention.names b.attn)
-      @ pre "ln2" (Layer_norm.names b.ln2)
-      @ pre "fc" (Linear.names b.fc)
-      @ pre "proj" (Linear.names b.proj)
-    in
-    pre "wte" (Embedding.names p.wte)
-    @ pre "wpe" (Embedding.names p.wpe)
-    @ List.concat
-        (List.mapi
-           (fun i b -> pre (Printf.sprintf "blocks.%d" i) (block b))
-           p.blocks)
-    @ pre "ln_f" (Layer_norm.names p.ln_f)
-end
+  let fold_block f acc b =
+    let acc = Layer_norm.fold (fun s -> f ("ln1." ^ s)) acc b.ln1 in
+    let acc = Attention.fold (fun s -> f ("attn." ^ s)) acc b.attn in
+    let acc = Layer_norm.fold (fun s -> f ("ln2." ^ s)) acc b.ln2 in
+    let acc = Linear.fold (fun s -> f ("fc." ^ s)) acc b.fc in
+    Linear.fold (fun s -> f ("proj." ^ s)) acc b.proj
 
-let astype dt p =
-  let block b =
+  let fold f acc p =
+    let acc = Embedding.fold (fun s -> f ("wte." ^ s)) acc p.wte in
+    let acc = Embedding.fold (fun s -> f ("wpe." ^ s)) acc p.wpe in
+    let _, acc =
+      List.fold_left
+        (fun (i, acc) b ->
+          let pre = Printf.sprintf "blocks.%d." i in
+          (i + 1, fold_block (fun s -> f (pre ^ s)) acc b))
+        (0, acc) p.blocks
+    in
+    Layer_norm.fold (fun s -> f ("ln_f." ^ s)) acc p.ln_f
+
+  let fold2_block f acc b b' =
+    let acc = Layer_norm.fold2 (fun s -> f ("ln1." ^ s)) acc b.ln1 b'.ln1 in
+    let acc = Attention.fold2 (fun s -> f ("attn." ^ s)) acc b.attn b'.attn in
+    let acc = Layer_norm.fold2 (fun s -> f ("ln2." ^ s)) acc b.ln2 b'.ln2 in
+    let acc = Linear.fold2 (fun s -> f ("fc." ^ s)) acc b.fc b'.fc in
+    Linear.fold2 (fun s -> f ("proj." ^ s)) acc b.proj b'.proj
+
+  let fold2 f acc p p' =
+    let acc = Embedding.fold2 (fun s -> f ("wte." ^ s)) acc p.wte p'.wte in
+    let acc = Embedding.fold2 (fun s -> f ("wpe." ^ s)) acc p.wpe p'.wpe in
+    let _, acc =
+      List.fold_left2
+        (fun (i, acc) b b' ->
+          let pre = Printf.sprintf "blocks.%d." i in
+          (i + 1, fold2_block (fun s -> f (pre ^ s)) acc b b'))
+        (0, acc) p.blocks p'.blocks
+    in
+    Layer_norm.fold2 (fun s -> f ("ln_f." ^ s)) acc p.ln_f p'.ln_f
+
+  let names_block i b =
+    let pre field s = Printf.sprintf "blocks.%d.%s.%s" i field s in
     {
-      ln1 = Layer_norm.astype dt b.ln1;
-      attn = Attention.astype dt b.attn;
-      ln2 = Layer_norm.astype dt b.ln2;
-      fc = Linear.astype dt b.fc;
-      proj = Linear.astype dt b.proj;
+      ln1 = Layer_norm.map (pre "ln1") (Layer_norm.names b.ln1);
+      attn = Attention.map (pre "attn") (Attention.names b.attn);
+      ln2 = Layer_norm.map (pre "ln2") (Layer_norm.names b.ln2);
+      fc = Linear.map (pre "fc") (Linear.names b.fc);
+      proj = Linear.map (pre "proj") (Linear.names b.proj);
     }
-  in
-  {
-    wte = Embedding.astype dt p.wte;
-    wpe = Embedding.astype dt p.wpe;
-    blocks = List.map block p.blocks;
-    ln_f = Layer_norm.astype dt p.ln_f;
-  }
+
+  let names p =
+    let pre field s = field ^ "." ^ s in
+    {
+      wte = Embedding.map (pre "wte") (Embedding.names p.wte);
+      wpe = Embedding.map (pre "wpe") (Embedding.names p.wpe);
+      blocks = List.mapi names_block p.blocks;
+      ln_f = Layer_norm.map (pre "ln_f") (Layer_norm.names p.ln_f);
+    }
+end
 
 let make cfg =
   let zeros = Init.zeros in

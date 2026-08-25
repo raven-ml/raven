@@ -12,20 +12,26 @@ let batch_size = 128
 let lr = 1e-3
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+  let map f { l1; l2 } =
+    let l1 = Linear.map f l1 in
+    let l2 = Linear.map f l2 in
+    { l1; l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+  let map2 f p q =
+    let l1 = Linear.map2 f p.l1 q.l1 in
+    let l2 = Linear.map2 f p.l2 q.l2 in
+    { l1; l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let mlp = Nx.Ptree.typed (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -50,9 +56,9 @@ let () =
       (* Training step: value_and_grad + one AdamW update *)
       let step (params, ostate) (x, y) =
         let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
-        let l, grads = Rune.value_and_grad (module Mlp) loss params in
+        let l, grads = Rune.value_and_grad mlp loss params in
         let params, ostate =
-          Vega.adamw_step (module Mlp) ~lr ostate ~params ~grads
+          Vega.adamw_step mlp ~lr ostate ~params ~grads
         in
         ((params, ostate), Nx.item [] l)
       in
@@ -69,7 +75,7 @@ let () =
             if i mod 50 = 0 || i = n_batches then
               Printf.printf "  batch %3d/%d  loss %.4f\n%!" i n_batches l;
             (state, i + 1))
-          ((params, Vega.adamw_init (module Mlp) params), 1)
+          ((params, Vega.adamw_init mlp params), 1)
           batches
       in
 

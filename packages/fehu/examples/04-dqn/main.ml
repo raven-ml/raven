@@ -61,19 +61,21 @@ let sparkline values =
    Nx.Ptree.S contract). *)
 
 module Q = struct
-  type t = { l1 : Linear.t; l2 : Linear.t; l3 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t; l3 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2; l3 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2; l3 = Linear.map f l3 }
+  let map f { l1; l2; l3 } =
+    let l1 = Linear.map f l1 in
+    let l2 = Linear.map f l2 in
+    let l3 = Linear.map f l3 in
+    { l1; l2; l3 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      l1 = Linear.map2 f p.l1 q.l1;
-      l2 = Linear.map2 f p.l2 q.l2;
-      l3 = Linear.map2 f p.l3 q.l3;
-    }
+  let map2 f p q =
+    let l1 = Linear.map2 f p.l1 q.l1 in
+    let l2 = Linear.map2 f p.l2 q.l2 in
+    let l3 = Linear.map2 f p.l3 q.l3 in
+    { l1; l2; l3 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2; l3 } =
+  let iter f { l1; l2; l3 } =
     Linear.iter f l1;
     Linear.iter f l2;
     Linear.iter f l3
@@ -83,6 +85,8 @@ module Q = struct
     Linear.apply p.l3
       (Fn.relu (Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))))
 end
+
+let q_tree = Nx.Ptree.typed (module Q)
 
 let count_parameters params =
   let n = ref 0 in
@@ -129,7 +133,7 @@ let () =
   Printf.printf "Parameters: %d\n\n" (count_parameters !params);
 
   (* Optimizer *)
-  let opt_state = ref (Vega.adam_init (module Q) !params) in
+  let opt_state = ref (Vega.adam_init q_tree !params) in
 
   (* Replay buffer *)
   let buffer = Buffer.create ~capacity:buffer_capacity in
@@ -205,9 +209,9 @@ let () =
       Nx.mean (Nx.mul diff diff)
     in
 
-    let loss, grads = Rune.value_and_grad (module Q) loss_fn !params in
+    let loss, grads = Rune.value_and_grad q_tree loss_fn !params in
     let new_params, new_opt_state =
-      Vega.adam_step (module Q) ~lr !opt_state ~params:!params ~grads
+      Vega.adam_step q_tree ~lr !opt_state ~params:!params ~grads
     in
     params := new_params;
     opt_state := new_opt_state;

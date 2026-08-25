@@ -21,38 +21,47 @@ let lr = 0.001
    (the Nx.Ptree.S contract plus checkpoint names). *)
 
 module Cnn = struct
-  type t = { c1 : Conv.t; c2 : Conv.t; l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { c1; c2; l1; l2 } =
-    {
-      c1 = Conv.map f c1;
-      c2 = Conv.map f c2;
-      l1 = Linear.map f l1;
-      l2 = Linear.map f l2;
-    }
+  let map f { c1; c2; l1; l2 } =
+    let c1 = Conv.map f c1 in
+    let c2 = Conv.map f c2 in
+    let l1 = Linear.map f l1 in
+    let l2 = Linear.map f l2 in
+    { c1; c2; l1; l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      c1 = Conv.map2 f p.c1 q.c1;
-      c2 = Conv.map2 f p.c2 q.c2;
-      l1 = Linear.map2 f p.l1 q.l1;
-      l2 = Linear.map2 f p.l2 q.l2;
-    }
+  let map2 f p q =
+    let c1 = Conv.map2 f p.c1 q.c1 in
+    let c2 = Conv.map2 f p.c2 q.c2 in
+    let l1 = Linear.map2 f p.l1 q.l1 in
+    let l2 = Linear.map2 f p.l2 q.l2 in
+    { c1; c2; l1; l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { c1; c2; l1; l2 } =
+  let iter f { c1; c2; l1; l2 } =
     Conv.iter f c1;
     Conv.iter f c2;
     Linear.iter f l1;
     Linear.iter f l2
 
-  let names { c1; c2; l1; l2 } =
-    List.concat
-      [
-        List.map (( ^ ) "c1.") (Conv.names c1);
-        List.map (( ^ ) "c2.") (Conv.names c2);
-        List.map (( ^ ) "l1.") (Linear.names l1);
-        List.map (( ^ ) "l2.") (Linear.names l2);
-      ]
+  let fold f acc { c1; c2; l1; l2 } =
+    let acc = Conv.fold (fun p -> f ("c1." ^ p)) acc c1 in
+    let acc = Conv.fold (fun p -> f ("c2." ^ p)) acc c2 in
+    let acc = Linear.fold (fun p -> f ("l1." ^ p)) acc l1 in
+    Linear.fold (fun p -> f ("l2." ^ p)) acc l2
+
+  let fold2 f acc p q =
+    let acc = Conv.fold2 (fun s -> f ("c1." ^ s)) acc p.c1 q.c1 in
+    let acc = Conv.fold2 (fun s -> f ("c2." ^ s)) acc p.c2 q.c2 in
+    let acc = Linear.fold2 (fun s -> f ("l1." ^ s)) acc p.l1 q.l1 in
+    Linear.fold2 (fun s -> f ("l2." ^ s)) acc p.l2 q.l2
+
+  let names p =
+    {
+      c1 = Conv.map (( ^ ) "c1.") (Conv.names p.c1);
+      c2 = Conv.map (( ^ ) "c2.") (Conv.names p.c2);
+      l1 = Linear.map (( ^ ) "l1.") (Linear.names p.l1);
+      l2 = Linear.map (( ^ ) "l2.") (Linear.names p.l2);
+    }
 
   let apply p x =
     let x = Fn.relu (Conv.apply ~padding:`Same p.c1 x) in
@@ -62,6 +71,8 @@ module Cnn = struct
     let x = Nx.reshape [| (Nx.shape x).(0); 32 * 7 * 7 |] x in
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let cnn = Nx.Ptree.typed (module Cnn)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -104,14 +115,14 @@ let () =
         l2 = Linear.init ~inputs:128 ~outputs:10;
       }
   in
-  let ostate = ref (Vega.adam_init (module Cnn) !params) in
+  let ostate = ref (Vega.adam_init cnn !params) in
 
   (* Training step: value_and_grad + one Adam update. *)
   let train_step (x, y) =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
-    let l, grads = Rune.value_and_grad (module Cnn) loss_fn !params in
+    let l, grads = Rune.value_and_grad cnn loss_fn !params in
     let params', ostate' =
-      Vega.adam_step (module Cnn) ~lr !ostate ~params:!params ~grads
+      Vega.adam_step cnn ~lr !ostate ~params:!params ~grads
     in
     params := params';
     ostate := ostate';
