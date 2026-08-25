@@ -112,6 +112,18 @@ end
     is [tensor U.t], and its traversals check leafwise that dtypes agree. *)
 module Make (U : Uniform) : S with type t = tensor U.t
 
+val typed :
+  (module U : Uniform) -> (module S with type t = ('a, 'b) Nx_effect.t U.t)
+(** [typed (module U)] is the parameter tree over [U] at a single tensor type:
+    the structure instantiated at typed leaves, satisfying {!S} with no packing.
+    Bind it once per structure and pass it wherever a first-class {!S} module is
+    expected:
+
+    {[
+      let mlp = Nx.Ptree.typed (module Mlp) in
+      let grads = grad mlp loss params
+    ]} *)
+
 val unpack :
   ?at:string -> ('a, 'b) Nx_core.Dtype.t -> tensor -> ('a, 'b) Nx_effect.t
 (** [unpack ?at dt p] unpacks the packed tensor [p] and returns it with the

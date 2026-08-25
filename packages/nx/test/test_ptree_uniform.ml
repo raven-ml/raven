@@ -120,6 +120,21 @@ let test_map2_dtype_mismatch () =
     (fun e -> match e with Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (T.map2 (fun x _ -> x) (params ()) b))
 
+let test_typed_instance () =
+  let module TP =
+    (val Nx.Ptree.typed (module U)
+        : Nx.Ptree.S with type t = Nx.float32_t U.t)
+  in
+  let p = { U.w = vec32 [| 1.0; -2.0 |]; b = vec32 [| 3.0 |] } in
+  let r = TP.map (fun x -> Nx.mul x x) p in
+  check ~msg:"typed map w" [| 1.0; 4.0 |] (raw r.U.w);
+  check ~msg:"typed map b" [| 9.0 |] (raw r.U.b);
+  let s = TP.map2 (fun x y -> Nx.add x y) p p in
+  check ~msg:"typed map2 w" [| 2.0; -4.0 |] (raw s.U.w);
+  let count = ref 0 in
+  TP.iter (fun _ -> incr count) p;
+  equal ~msg:"typed iter leaves" int 2 !count
+
 let test_unpack_ok () =
   let x = vec32 [| 1.0; 2.0 |] in
   check ~msg:"unpack" [| 1.0; 2.0 |] (raw (Nx.Ptree.unpack f32 (pack x)))
@@ -155,6 +170,8 @@ let tests =
       ];
     group "structure errors"
       [ test "map2 rejects dtype mismatch" test_map2_dtype_mismatch ];
+    group "typed instance"
+      [ test "typed traverses with typed leaves" test_typed_instance ];
     group "unpack"
       [
         test "unpack succeeds on matching dtype" test_unpack_ok;
