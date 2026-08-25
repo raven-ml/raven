@@ -210,6 +210,39 @@ let test_grad_through_bridge () =
   check_arr ~msg:"dw" [| 2.0; -4.0; 6.0 |] (Nx.Ptree.unpack Nx.float32 g.Lin.w);
   check_arr ~msg:"db" [| 3.0 |] (Nx.Ptree.unpack Nx.float32 g.Lin.b)
 
+(* ——— rank-2 records nesting a uniform module ——— *)
+
+(* A concrete record whose field is a uniform module's concrete alias. The
+   rank-2 traversals delegate through the alias to the module's rank-1 uniform
+   traversals, which accept the rank-2 callback at the alias's leaf type. This
+   is the shape Kaun layers take once they are payload-generic. *)
+module Gain = struct
+  type 'a params = { g : 'a; label : string } [@@deriving ptree]
+  type t = Nx.float32_t params
+end
+
+module Head = struct
+  type t = { bias : Nx.float32_t; gain : Gain.t } [@@deriving ptree]
+end
+
+let head () =
+  {
+    Head.bias = vec32 [| 1.0; 2.0 |];
+    gain = { Gain.g = vec32 [| 3.0 |]; label = "gain" };
+  }
+
+let test_rank2_delegates_to_uniform () =
+  let doubled = Head.map (fun x -> Nx.add x x) (head ()) in
+  check_arr ~msg:"own leaves map" [| 2.0; 4.0 |] doubled.Head.bias;
+  check_arr ~msg:"delegated leaves map" [| 6.0 |] doubled.Head.gain.Gain.g;
+  equal ~msg:"delegated static fields are preserved" string "gain"
+    doubled.Head.gain.Gain.label;
+  let summed = Head.map2 (fun x y -> Nx.add x y) (head ()) doubled in
+  check_arr ~msg:"map2 delegates leafwise" [| 9.0 |] summed.Head.gain.Gain.g;
+  let count = ref 0 in
+  Head.iter (fun _ -> incr count) (head ());
+  equal ~msg:"iter visits delegated leaves" int 2 !count
+
 (* ——— mirror mode ——— *)
 
 module Dense = struct
@@ -331,6 +364,11 @@ let tests =
       ];
     group "Ptree.S bridge"
       [ test "grad through Nx.Ptree.Make" test_grad_through_bridge ];
+    group "rank-2 delegation"
+      [
+        test "a concrete record delegates to a uniform module"
+          test_rank2_delegates_to_uniform;
+      ];
     group "mirror"
       [
         test "fold over the packed mirror" test_mirror_paths;
