@@ -50,6 +50,8 @@ module U = struct
 
   let fold2 (f : string -> 'acc -> 'a -> 'b -> 'acc) acc a b =
     f "b" (f "w" acc a.w b.w) a.b b.b
+
+  let names _ = { w = "w"; b = "b" }
 end
 
 module T = Nx.Ptree.Make (U)
