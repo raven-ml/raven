@@ -571,11 +571,11 @@ val reset_jit_stats : unit -> unit
     {!while_loop} predicates. *)
 
 val scan :
-  (module C : Ptree.S) ->
-  f:(C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t) ->
-  init:C.t ->
+  (module Ptree.S with type t = 'p) ->
+  f:('p -> ('a, 'b) Nx.t -> 'p * ('c, 'd) Nx.t) ->
+  init:'p ->
   ('a, 'b) Nx.t ->
-  C.t * ('c, 'd) Nx.t
+  'p * ('c, 'd) Nx.t
 (** [scan (module C) ~f ~init xs] folds [f] over slices of [xs] along axis 0:
     [f carry x] returns the next carry and a per-step output. The result is the
     final carry and the outputs stacked along a new axis 0. Differentiating
@@ -590,8 +590,8 @@ val cond :
     on the mapped inputs raises, since the lanes could diverge. *)
 
 val while_loop :
-  (module C : Ptree.S) ->
-  cond:(C.t -> (bool, Nx.bool_elt) Nx.t) -> body:(C.t -> C.t) -> C.t -> C.t
+  (module Ptree.S with type t = 'p) ->
+  cond:('p -> (bool, Nx.bool_elt) Nx.t) -> body:('p -> 'p) -> 'p -> 'p
 (** [while_loop (module C) ~cond ~body init] iterates [body] on the carry while
     [cond] holds. Reading the predicate concretizes it, with the same
     {!val-vmap} caveat as {!cond}. Differentiating traces every iteration
