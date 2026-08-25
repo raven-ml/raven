@@ -6,32 +6,30 @@
 open Windtrap
 open Kaun
 
+(* Each layer's traversals satisfy the Uniform contract, so a layer is a valid
+   [@@deriving ptree] delegate by construction. *)
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Linear.t = Linear
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Conv.t = Conv
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Embedding.t = Embedding
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Layer_norm.t = Layer_norm
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.t = Batch_norm
+
+module _ :
+  Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.Stats.t =
+  Batch_norm.Stats
+
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.t = Attention
+
+module _ :
+  Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t =
+  Attention.Cache
+
 (* Float64 instances for gradient checking; the layer traversals are
    dtype-generic, so each instance is just a type pin. *)
 
-module Linear64 = struct
-  type t = Nx.float64_elt Linear.params
-
-  let map = Linear.map
-  let map2 = Linear.map2
-  let iter = Linear.iter
-end
-
-module Embedding64 = struct
-  type t = Nx.float64_elt Embedding.params
-
-  let map = Embedding.map
-  let map2 = Embedding.map2
-  let iter = Embedding.iter
-end
-
-module Layer_norm64 = struct
-  type t = Nx.float64_elt Layer_norm.params
-
-  let map = Layer_norm.map
-  let map2 = Layer_norm.map2
-  let iter = Layer_norm.iter
-end
+let linear64 = Nx.Ptree.typed (module Linear)
+let embedding64 = Nx.Ptree.typed (module Embedding)
+let layer_norm64 = Nx.Ptree.typed (module Layer_norm)
 
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
@@ -89,9 +87,12 @@ let test_linear_custom_inits () =
 let test_linear_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let with_bias = Linear.init ~inputs:2 ~outputs:2 in
-  equal ~msg:"with bias" (list string) [ "w"; "b" ] (Linear.names with_bias);
+  let paths p = List.rev (Linear.fold (fun path acc _ -> path :: acc) [] p) in
+  equal ~msg:"with bias" (list string) [ "w"; "b" ] (paths with_bias);
+  equal ~msg:"names agree with fold" (option string) (Some "b")
+    (Linear.names with_bias).Linear.b;
   let no_bias = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
-  equal ~msg:"without bias" (list string) [ "w" ] (Linear.names no_bias)
+  equal ~msg:"without bias" (list string) [ "w" ] (paths no_bias)
 
 let test_linear_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
@@ -101,9 +102,9 @@ let test_linear_gradients () =
     Nx.sum (Nx.mul y y)
   in
   let p = Linear.make ~inputs:3 ~outputs:2 Nx.float64 in
-  grads_ok (Rune.check_grads (module Linear64) loss p);
+  grads_ok (Rune.check_grads linear64 loss p);
   let no_bias = Linear.make ~bias:false ~inputs:3 ~outputs:2 Nx.float64 in
-  grads_ok (Rune.check_grads (module Linear64) loss no_bias)
+  grads_ok (Rune.check_grads linear64 loss no_bias)
 
 let test_linear_map2_bias_mismatch () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
@@ -135,7 +136,7 @@ let test_embedding_init_shape () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Embedding.init ~vocab:7 ~dim:4 in
   shape_is ~msg:"table shape" [| 7; 4 |] p.Embedding.table;
-  equal ~msg:"names" (list string) [ "table" ] (Embedding.names p)
+  equal ~msg:"names" string "table" (Embedding.names p).Embedding.table
 
 let test_embedding_gathers_rows () =
   let p = embedding_4x3 () in
@@ -161,7 +162,7 @@ let test_embedding_duplicate_id_gradient () =
   let p = Embedding.make ~vocab:3 ~dim:2 Nx.float64 in
   let ids = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 0l |] in
   let loss p = Nx.sum (Embedding.apply p ids) in
-  let g = Rune.grad (module Embedding64) loss p in
+  let g = Rune.grad embedding64 loss p in
   (* Row 0 is gathered twice, row 1 never, row 2 once. *)
   values_are ~msg:"gradient counts occurrences" ~tol:1e-12
     [| 2.; 2.; 0.; 0.; 1.; 1. |]
@@ -175,7 +176,7 @@ let test_embedding_gradients () =
     let y = Embedding.apply p ids in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Embedding64) loss p)
+  grads_ok (Rune.check_grads embedding64 loss p)
 
 let test_embedding_rejects_out_of_bounds () =
   let p = embedding_4x3 () in
@@ -197,7 +198,8 @@ let test_layer_norm_init_shapes () =
   shape_is ~msg:"beta shape" [| 6 |] p.Layer_norm.beta;
   values_are ~msg:"gamma is ones" ~tol:0.0 (Array.make 6 1.0) p.Layer_norm.gamma;
   values_are ~msg:"beta is zeros" ~tol:0.0 (Array.make 6 0.0) p.Layer_norm.beta;
-  equal ~msg:"names" (list string) [ "gamma"; "beta" ] (Layer_norm.names p)
+  let paths = List.rev (Layer_norm.fold (fun path acc _ -> path :: acc) [] p) in
+  equal ~msg:"names" (list string) [ "gamma"; "beta" ] paths
 
 let test_layer_norm_analytic () =
   (* Per row: mean 1, variance 1, so x normalizes to [-1; 1] (up to eps), then
@@ -254,7 +256,7 @@ let test_layer_norm_gradients () =
     let y = Layer_norm.apply p x in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Layer_norm64) loss p)
+  grads_ok (Rune.check_grads layer_norm64 loss p)
 
 let test_layer_norm_rejects_bad_input () =
   let p = Layer_norm.init ~dim:4 in

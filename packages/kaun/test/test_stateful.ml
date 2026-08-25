@@ -108,10 +108,11 @@ let test_bn_grads_flow_to_params () =
     let y, _ = Batch_norm.apply p stats ~training:true x in
     Nx.sum (Nx.mul y y)
   in
-  (match Rune.check_grads ~tol:0.05 (module Batch_norm) f params with
+  let bn = Nx.Ptree.typed (module Batch_norm) in
+  (match Rune.check_grads ~tol:0.05 bn f params with
   | Ok () -> ()
   | Error msg -> failf "gradient check failed: %s" msg);
-  let grads = Rune.grad (module Batch_norm) f params in
+  let grads = Rune.grad bn f params in
   is_true ~msg:"gamma gradient is non-zero"
     (Array.exists
        (fun g -> Float.abs g > 1e-3)
@@ -164,19 +165,21 @@ let test_bn_init_validates () =
 (* The full training-step round trip: a model mixing stateless and stateful
    layers, stats threaded through value_and_grad_aux's aux channel. *)
 module Model = struct
-  type t = { lin : Linear.t; bn : Batch_norm.t; out : Linear.t }
+  type 'a t = { lin : 'a Linear.t; bn : 'a Batch_norm.t; out : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { lin; bn; out } =
-    { lin = Linear.map f lin; bn = Batch_norm.map f bn; out = Linear.map f out }
+  let map f { lin; bn; out } =
+    let lin = Linear.map f lin in
+    let bn = Batch_norm.map f bn in
+    let out = Linear.map f out in
+    { lin; bn; out }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      lin = Linear.map2 f p.lin q.lin;
-      bn = Batch_norm.map2 f p.bn q.bn;
-      out = Linear.map2 f p.out q.out;
-    }
+  let map2 f p q =
+    let lin = Linear.map2 f p.lin q.lin in
+    let bn = Batch_norm.map2 f p.bn q.bn in
+    let out = Linear.map2 f p.out q.out in
+    { lin; bn; out }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { lin; bn; out } =
+  let iter f { lin; bn; out } =
     Linear.iter f lin;
     Batch_norm.iter f bn;
     Linear.iter f out
@@ -187,6 +190,8 @@ module Model = struct
     let h = Nx.tanh h in
     (Linear.apply p.out h, stats)
 end
+
+let model = Nx.Ptree.typed (module Model)
 
 let test_bn_train_step_roundtrip () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -206,14 +211,14 @@ let test_bn_train_step_roundtrip () =
       (Loss.mse pred y, stats')
     in
     let loss, grads, stats' =
-      Rune.value_and_grad_aux (module Model) objective params
+      Rune.value_and_grad_aux model objective params
     in
     let params, ostate =
-      Vega.adam_step (module Model) ~lr:0.02 ostate ~params ~grads
+      Vega.adam_step model ~lr:0.02 ostate ~params ~grads
     in
     ((params, stats', ostate), Nx.item [] loss)
   in
-  let state = ref (params, stats, Vega.adam_init (module Model) params) in
+  let state = ref (params, stats, Vega.adam_init model params) in
   let first = snd (step !state) in
   let last = ref first in
   for _ = 1 to 300 do

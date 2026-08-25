@@ -10,13 +10,7 @@ open Kaun
    so the instance is just a type pin. Tensor64 treats a bare tensor as a
    one-leaf parameter tree, for gradients with respect to an input. *)
 
-module Conv64 = struct
-  type t = Nx.float64_elt Conv.params
-
-  let map = Conv.map
-  let map2 = Conv.map2
-  let iter = Conv.iter
-end
+let conv64 = Nx.Ptree.typed (module Conv)
 
 module Tensor64 = struct
   type t = (float, Nx.float64_elt) Nx.t
@@ -140,12 +134,14 @@ let test_conv_no_bias () =
       Nx.float32
   in
   is_true ~msg:"no bias parameter" (p.Conv.b = None);
-  equal ~msg:"names without bias" (list string) [ "w" ] (Conv.names p)
+  let paths = List.rev (Conv.fold (fun path acc _ -> path :: acc) [] p) in
+  equal ~msg:"paths without bias" (list string) [ "w" ] paths
 
 let test_conv_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2) in
-  equal ~msg:"with bias" (list string) [ "w"; "b" ] (Conv.names p)
+  let paths = List.rev (Conv.fold (fun path acc _ -> path :: acc) [] p) in
+  equal ~msg:"with bias" (list string) [ "w"; "b" ] paths
 
 let test_conv_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
@@ -157,7 +153,7 @@ let test_conv_gradients () =
   let p =
     Conv.make ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2) Nx.float64
   in
-  grads_ok (Rune.check_grads (module Conv64) loss p);
+  grads_ok (Rune.check_grads conv64 loss p);
   let no_bias =
     Conv.make ~bias:false ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 3)
       Nx.float64
@@ -166,7 +162,7 @@ let test_conv_gradients () =
     let y = Conv.apply ~stride:(2, 2) ~padding:`Same p x in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Conv64) strided_loss no_bias)
+  grads_ok (Rune.check_grads conv64 strided_loss no_bias)
 
 let test_conv_input_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->

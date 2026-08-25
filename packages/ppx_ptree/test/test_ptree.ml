@@ -232,15 +232,7 @@ module Integration = struct
     bias : Nx.float64_t;
     label : string; [@ptree.ignore]
   }
-  [@@deriving ptree]
-end
-
-module Integration_named = struct
-  include Integration
-
-  let names value =
-    Stdlib.ignore value;
-    [ "weight"; "bias" ]
+  [@@deriving ptree ~mirror]
 end
 
 module Jit_structure = struct
@@ -544,7 +536,9 @@ let test_rune_and_vega_integration () =
   equal (array float_exact) [| 1. |] (Nx.to_array gradients.bias);
   is_true (Vega.global_norm (module Integration) gradients > 0.);
   let checkpoint =
-    Kaun.Checkpoint.of_params (module Integration_named) params
+    Kaun.Checkpoint.of_packed
+      (module Integration.Uniform)
+      (Integration.to_uniform params)
   in
   equal (list string) [ "bias"; "weight" ] (Kaun.Checkpoint.names checkpoint);
   let jitted =
