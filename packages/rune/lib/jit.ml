@@ -1227,7 +1227,7 @@ type 'q compiled = {
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
 
-let signature_of (module P : Nx.Ptree.S) (params : P.t) =
+let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) =
   let acc = ref [] in
   P.iter
     (fun leaf ->
@@ -1235,8 +1235,8 @@ let signature_of (module P : Nx.Ptree.S) (params : P.t) =
     params;
   List.rev !acc
 
-let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
-    (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (f : P.t -> Q.t)
+let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi
+    (module P : Nx.Ptree.S with type t = p) (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t)
     (params : P.t) : Q.t compiled =
   let st =
     {
@@ -1618,7 +1618,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
     cp_scratch = scratch;
   }
 
-let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
+let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p) (module Q : Nx.Ptree.S with type t = q)
     (c : Q.t compiled) (params : P.t) : Q.t =
   drain_releases ();
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
@@ -1908,8 +1908,8 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
 
 (* Public entry points *)
 
-let jit2 ?(device = "CPU") ?(donate = false) (module P : Nx.Ptree.S)
-    (module Q : Nx.Ptree.S) (f : P.t -> Q.t) : P.t -> Q.t =
+let jit2 (type p q) ?(device = "CPU") ?(donate = false) (module P : Nx.Ptree.S with type t = p)
+    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
   let dev = get_device device in
   let zero_copy = is_cpu device && not (force_copy ()) in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
@@ -1935,7 +1935,7 @@ let jit2 ?(device = "CPU") ?(donate = false) (module P : Nx.Ptree.S)
       in
       replay ~donate (module P) (module Q) c params
 
-let jit (type c d) ?device ?donate (module P : Nx.Ptree.S)
+let jit (type p c d) ?device ?donate (module P : Nx.Ptree.S with type t = p)
     (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
   let module Q = struct
     type t = (c, d) Nx_effect.t
@@ -1996,8 +1996,8 @@ let pmap_names devices =
     names;
   names
 
-let pmap2 ~devices ?in_axes ?(donate = false) (module P : Nx.Ptree.S)
-    (module Q : Nx.Ptree.S) (f : P.t -> Q.t) : P.t -> Q.t =
+let pmap2 (type p q) ~devices ?in_axes ?(donate = false) (module P : Nx.Ptree.S with type t = p)
+    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
   let names = pmap_names devices in
   (* Multi-device buffers resolve through the tolk device registry; route it to
      the same factory the single-device jit uses. *)
@@ -2069,7 +2069,7 @@ let pmap2 ~devices ?in_axes ?(donate = false) (module P : Nx.Ptree.S)
       replay ~donate (module P) (module Q) c params
     end
 
-let pmap (type c d) ~devices ?in_axes ?donate (module P : Nx.Ptree.S)
+let pmap (type p c d) ~devices ?in_axes ?donate (module P : Nx.Ptree.S with type t = p)
     (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
   let module Q = struct
     type t = (c, d) Nx_effect.t
