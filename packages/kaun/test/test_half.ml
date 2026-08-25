@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Mixed precision through the kaun layers: per-layer [astype], the float32
+(* Mixed precision through the kaun layers: per-layer [map (Nx.cast dt)], the
+   float32
    islands (attention scores and normalization statistics), the astype-sandwich
    gradient, and a jitted float16 training loop with Vega's loss scaling.
 
@@ -31,34 +32,34 @@ let dtype_is ?msg dt t = is_true ?msg (Nx_core.Dtype.equal (Nx.dtype t) dt)
    range. *)
 let grid n = Array.init n (fun i -> 0.25 *. float_of_int ((i mod 13) - 6))
 
-(* ───── astype ───── *)
+(* ───── cast ───── *)
 
 let linear_params () =
   { Linear.w = mat f32 3 2 (grid 6); b = Some (vec f32 [| 0.5; -0.25 |]) }
 
-let test_astype_dtypes () =
-  let lin = Linear.astype f16 (linear_params ()) in
+let test_cast_dtypes () =
+  let lin = Linear.map (Nx.cast f16) (linear_params ()) in
   dtype_is ~msg:"linear w" f16 lin.Linear.w;
   dtype_is ~msg:"linear b" f16 (Option.get lin.Linear.b);
-  let emb = Embedding.astype f16 { Embedding.table = mat f32 4 3 (grid 12) } in
+  let emb = Embedding.map (Nx.cast f16) { Embedding.table = mat f32 4 3 (grid 12) } in
   dtype_is ~msg:"embedding table" f16 emb.Embedding.table;
-  let ln = Layer_norm.astype f16 (Layer_norm.init ~dim:4) in
+  let ln = Layer_norm.map (Nx.cast f16) (Layer_norm.init ~dim:4) in
   dtype_is ~msg:"layer norm gamma" f16 ln.Layer_norm.gamma;
-  let attn = Attention.astype f16 (Attention.init ~embed_dim:4) in
+  let attn = Attention.map (Nx.cast f16) (Attention.init ~embed_dim:4) in
   dtype_is ~msg:"attention q.w" f16 attn.Attention.q.Linear.w;
   let bn, stats = Batch_norm.init ~features:3 in
-  dtype_is ~msg:"batch norm gamma" f16 (Batch_norm.astype f16 bn).gamma;
+  dtype_is ~msg:"batch norm gamma" f16 (Batch_norm.map (Nx.cast f16) bn).gamma;
   dtype_is ~msg:"batch norm stats mean" f16
-    (Batch_norm.Stats.astype f16 stats).mean;
+    (Batch_norm.Stats.map (Nx.cast f16) stats).mean;
   let conv = Conv.init ~in_channels:1 ~out_channels:2 ~kernel_size:(2, 2) in
-  dtype_is ~msg:"conv w" f16 (Conv.astype f16 conv).Conv.w;
+  dtype_is ~msg:"conv w" f16 (Conv.map (Nx.cast f16) conv).Conv.w;
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:3 Nx.float32 in
-  dtype_is ~msg:"cache keys" f16 (Attention.Cache.astype f16 cache).keys
+  dtype_is ~msg:"cache keys" f16 (Attention.Cache.map (Nx.cast f16) cache).keys
 
-let test_astype_round_trip () =
-  (* Grid values are exact at both halves: astype down and back is lossless. *)
+let test_cast_round_trip () =
+  (* Grid values are exact at both halves: cast down and back is lossless. *)
   let p = linear_params () in
-  let back dt = Linear.astype f32 (Linear.astype dt p) in
+  let back dt = Linear.map (Nx.cast f32) (Linear.map (Nx.cast dt) p) in
   close ~msg:"float16 w" ~tol:0.0 p.Linear.w (back f16).Linear.w;
   close ~msg:"bfloat16 w" ~tol:0.0 p.Linear.w (back bf16).Linear.w
 
@@ -68,7 +69,7 @@ let test_linear_apply (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   let p = linear_params () in
   let x = mat f32 4 3 (grid 12) in
   let expected = Linear.apply p x in
-  let actual = Linear.apply (Linear.astype dt p) (Nx.cast dt x) in
+  let actual = Linear.apply (Linear.map (Nx.cast dt) p) (Nx.cast dt x) in
   dtype_is ~msg:"output dtype" dt actual;
   close ~tol expected actual
 
@@ -77,7 +78,7 @@ let test_embedding_apply () =
   let ids = vec Nx.int32 [| 0l; 3l; 4l |] in
   (* A gather rounds nothing: exact at float16. *)
   close ~msg:"float16 gather is exact" ~tol:0.0 (Embedding.apply p ids)
-    (Embedding.apply (Embedding.astype f16 p) ids)
+    (Embedding.apply (Embedding.map (Nx.cast f16) p) ids)
 
 let test_conv_apply () =
   let p =
@@ -88,7 +89,7 @@ let test_conv_apply () =
   in
   let x = Nx.create f32 [| 1; 1; 4; 4 |] (grid 16) in
   close ~msg:"float16 conv" ~tol:0.02 (Conv.apply p x)
-    (Conv.apply (Conv.astype f16 p) (Nx.cast f16 x))
+    (Conv.apply (Conv.map (Nx.cast f16) p) (Nx.cast f16 x))
 
 (* ───── float32 islands ───── *)
 
@@ -109,7 +110,7 @@ let test_layer_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
      reference is the float32 computation on the same rounded values. *)
   let xh = Nx.cast dt x in
   let expected = Layer_norm.apply p (Nx.cast f32 xh) in
-  let actual = Layer_norm.apply (Layer_norm.astype dt p) xh in
+  let actual = Layer_norm.apply (Layer_norm.map (Nx.cast dt) p) xh in
   is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
   close ~tol expected actual
 
@@ -147,7 +148,7 @@ let test_attention_apply_half () =
   let x = mat f32 3 dim (grid 12) in
   let expected = Attention.apply ~num_heads:2 ~causal:true p x in
   let actual =
-    Attention.apply ~num_heads:2 ~causal:true (Attention.astype f16 p)
+    Attention.apply ~num_heads:2 ~causal:true (Attention.map (Nx.cast f16) p)
       (Nx.cast f16 x)
   in
   close ~msg:"multi-head causal at float16" ~tol:0.01 expected actual
@@ -173,8 +174,8 @@ let test_batch_norm_island () =
   let p, stats = Batch_norm.init ~features:3 in
   let expected, estats = Batch_norm.apply p stats ~training:true x in
   let actual, astats =
-    Batch_norm.apply (Batch_norm.astype f16 p)
-      (Batch_norm.Stats.astype f16 stats)
+    Batch_norm.apply (Batch_norm.map (Nx.cast f16) p)
+      (Batch_norm.Stats.map (Nx.cast f16) stats)
       ~training:true (Nx.cast f16 x)
   in
   is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
@@ -183,21 +184,15 @@ let test_batch_norm_island () =
     astats.Batch_norm.Stats.mean;
   let expected_eval, _ = Batch_norm.apply p estats ~training:false x in
   let actual_eval, _ =
-    Batch_norm.apply (Batch_norm.astype f16 p)
-      (Batch_norm.Stats.astype f16 estats)
+    Batch_norm.apply (Batch_norm.map (Nx.cast f16) p)
+      (Batch_norm.Stats.map (Nx.cast f16) estats)
       ~training:false (Nx.cast f16 x)
   in
   close ~msg:"eval normalization" ~tol:0.05 expected_eval actual_eval
 
 (* ───── The astype-sandwich gradient ───── *)
 
-module Linear32 = struct
-  type t = Linear.t
-
-  let map = Linear.map
-  let map2 = Linear.map2
-  let iter = Linear.iter
-end
+let linear32 = Nx.Ptree.typed (module Linear)
 
 let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   ignore name;
@@ -206,12 +201,12 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   let loss compute p =
     Nx.cast f32
       (Nx.mean
-         (Nx.tanh (Linear.apply (Linear.astype compute p) (Nx.cast compute x))))
+         (Nx.tanh (Linear.apply (Linear.map (Nx.cast compute) p) (Nx.cast compute x))))
   in
-  let v, grads = Rune.value_and_grad (module Linear32) (loss dt) p in
+  let v, grads = Rune.value_and_grad linear32 (loss dt) p in
   (* [grads : Linear.t]: float32 by type; the cast VJP makes it so at run time,
      and the values must track the all-float32 gradient. *)
-  let v32, grads32 = Rune.value_and_grad (module Linear32) (loss f32) p in
+  let v32, grads32 = Rune.value_and_grad linear32 (loss f32) p in
   close ~msg:"loss" ~tol v32 v;
   close ~msg:"dw" ~tol grads32.Linear.w grads.Linear.w;
   close ~msg:"db" ~tol (Option.get grads32.Linear.b) (Option.get grads.Linear.b)
@@ -330,10 +325,10 @@ let test_f16_train_loss_scaled () =
 
 let tests =
   [
-    group "astype"
+    group "cast"
       [
-        test "casts every leaf of every layer" test_astype_dtypes;
-        test "round-trips exact values" test_astype_round_trip;
+        test "casts every leaf of every layer" test_cast_dtypes;
+        test "round-trips exact values" test_cast_round_trip;
       ];
     group "dtype-generic apply"
       [
@@ -355,7 +350,7 @@ let tests =
         test "attention apply float16" test_attention_apply_half;
         test "batch norm float16" test_batch_norm_island;
       ];
-    group "astype sandwich"
+    group "cast sandwich"
       [
         test "float16 grads are float32 and track the reference"
           (test_sandwich_grad "float16" f16 ~tol:0.005);

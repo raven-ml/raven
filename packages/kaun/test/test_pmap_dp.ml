@@ -25,7 +25,11 @@ let lr = 0.05
 (* The model: pre-norm causal self-attention with a residual, then a linear head
    over the vocabulary. *)
 
-type model = { ln : Layer_norm.t; attn : Attention.t; head : Linear.t }
+type model = {
+  ln : Nx.float32_t Layer_norm.t;
+  attn : Nx.float32_t Attention.t;
+  head : Nx.float32_t Linear.t;
+}
 
 module Model = struct
   type t = model

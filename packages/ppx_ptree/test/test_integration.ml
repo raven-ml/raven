@@ -24,50 +24,20 @@ module Optimizer_params = struct
   [@@deriving ptree]
 end
 
-(* A key is a tensor, and it belongs in the structure whenever a compiled step
-   draws from it — that is how the draw reaches the trace as an input rather
-   than a frozen constant. Spelled [Nx.Rng.key], not [(int32, int32_elt) Nx.t].
-*)
-module Stepper = struct
-  type t = { weight : Nx.float32_t; key : Nx.Rng.key } [@@deriving ptree]
-end
-
+(* A uniform user model nesting the hand-written kaun layers: the derived
+   traversals delegate to [Kaun.Linear]'s, and checkpoint names come from the
+   derived [fold]. *)
 module Block = struct
-  type t = { projection : Kaun.Linear.t } [@@deriving ptree]
+  type 'a t = { projection : 'a Kaun.Linear.t } [@@deriving ptree]
 end
 
 module Model = struct
-  type t = {
-    stem : Kaun.Linear.t;
-    blocks : Block.t list;
-    head : Kaun.Linear.t option;
+  type 'a t = {
+    stem : 'a Kaun.Linear.t;
+    blocks : 'a Block.t list;
+    head : 'a Kaun.Linear.t option;
   }
   [@@deriving ptree]
-end
-
-module Model_named = struct
-  include Model
-
-  let linear_names prefix linear =
-    List.map (fun name -> prefix ^ "." ^ name) (Kaun.Linear.names linear)
-
-  let names model =
-    let stem = linear_names "stem" model.stem in
-    let blocks =
-      List.mapi
-        (fun index block ->
-          linear_names
-            (Printf.sprintf "blocks.%d.projection" index)
-            block.Block.projection)
-        model.blocks
-      |> List.concat
-    in
-    let head =
-      match model.head with
-      | None -> []
-      | Some linear -> linear_names "head" linear
-    in
-    stem @ blocks @ head
 end
 
 let test_pmap_axes_and_tuple_output () =
@@ -82,7 +52,7 @@ let test_pmap_axes_and_tuple_output () =
       (module Pmap_input)
       (fun value -> Nx.add value.rows (Nx.transpose value.columns))
   in
-  equal (array float_exact) (Nx.to_array eager) (Nx.to_array (parallel input));
+  equal (array (float 0.)) (Nx.to_array eager) (Nx.to_array (parallel input));
   let tuple_parallel =
     Rune.pmap2 ~devices ~in_axes:axes
       (module Pmap_input)
@@ -90,9 +60,9 @@ let test_pmap_axes_and_tuple_output () =
       (fun value -> (value.rows, Nx.transpose value.columns))
   in
   let rows_result, columns_result = tuple_parallel input in
-  equal (array float_exact) (Nx.to_array rows) (Nx.to_array rows_result);
+  equal (array (float 0.)) (Nx.to_array rows) (Nx.to_array rows_result);
   equal
-    (array float_exact)
+    (array (float 0.))
     (Nx.to_array (Nx.transpose columns))
     (Nx.to_array columns_result)
 
@@ -121,7 +91,7 @@ let test_vega_optimizer_step () =
   equal (array (float 1e-6)) [| 2.; -4. |] (Nx.to_array state.velocity.weight)
 
 let test_nested_kaun_model_and_checkpoint_order () =
-  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
+  Nx.Rng.run ~seed:7 @@ fun () ->
   let model =
     Model.
       {
@@ -140,7 +110,7 @@ let test_nested_kaun_model_and_checkpoint_order () =
       Stdlib.ignore tensor;
       incr traversal_count)
     model;
-  let names = Model_named.names model in
+  let names = List.rev (Model.fold (fun path acc _ -> path :: acc) [] model) in
   equal ~msg:"one checkpoint name per generated traversal leaf" int
     (List.length names) !traversal_count;
   equal (list string)
@@ -155,7 +125,7 @@ let test_nested_kaun_model_and_checkpoint_order () =
       "head.b";
     ]
     names;
-  let checkpoint = Kaun.Checkpoint.of_params (module Model_named) model in
+  let checkpoint = Kaun.Checkpoint.of_params (module Model) model in
   List.iter
     (fun name ->
       is_some
@@ -163,29 +133,8 @@ let test_nested_kaun_model_and_checkpoint_order () =
         (Kaun.Checkpoint.find name checkpoint))
     names
 
-(* The key must traverse as a leaf, and — the point of putting it there — reach
-   a jitted step as an input, so the draw follows the key it is handed instead
-   of replaying one baked in at trace time. *)
-let test_rng_key_field_is_a_leaf () =
-  let params =
-    Stepper.{ weight = f32 [| 2 |] [| 1.0; 2.0 |]; key = Nx.Rng.key 5 }
-  in
-  let leaves = ref 0 in
-  Stepper.iter (fun _ -> incr leaves) params;
-  equal ~msg:"the key traverses alongside the weight" int 2 !leaves;
-  let step =
-    Rune.jit
-      (module Stepper)
-      (fun p -> Nx.mul p.Stepper.weight (Nx.Rng.uniform p.Stepper.key Nx.float32 [| 2 |]))
-  in
-  let at k = Nx.to_array (step { params with Stepper.key = Nx.Rng.key k }) in
-  is_true ~msg:"a compiled draw follows the key it is given" (at 5 <> at 6);
-  equal ~msg:"and replays for the same key" (array float_exact) (at 5) (at 5)
-
 let tests =
   [
-    test "derives a traversal over an Nx.Rng.key field"
-      test_rng_key_field_is_a_leaf;
     test "preserves derived leaf order through pmap axes and tuple output"
       test_pmap_axes_and_tuple_output;
     test "runs a Vega optimizer step over a derived module"
