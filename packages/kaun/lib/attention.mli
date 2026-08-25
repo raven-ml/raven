@@ -11,8 +11,8 @@
     which splits the projections into heads, runs
     {!scaled_dot_product_attention} on each head and merges the results through
     the output projection. Like the other layers, it composes into models
-    through record nesting; {!map}, {!map2}, {!iter} and {!names} supply the
-    {!Nx.Ptree.S} and checkpoint plumbing.
+    through record nesting; the traversals supply the {!Nx.Ptree.Uniform} and
+    checkpoint plumbing.
 
     The head count is not a parameter: the projections are
     [embed_dim × embed_dim] whatever the head count, so [num_heads] is an
@@ -25,18 +25,14 @@
 
 (** {1:types Types} *)
 
-type 'b params = {
-  q : 'b Linear.params;
-  k : 'b Linear.params;
-  v : 'b Linear.params;
-  out : 'b Linear.params;
+type 'a t = {
+  q : 'a Linear.t;
+  k : 'a Linear.t;
+  v : 'a Linear.t;
+  out : 'a Linear.t;
 }
-(** The type for attention parameters with float dtype layout ['b]: the query,
-    key, value and output projections, each [embed_dim] to [embed_dim] features.
-*)
-
-type t = Nx.float32_elt params
-(** The type for single-precision attention layers, the common case. *)
+(** The type for attention parameters over payload ['a]: the query, key, value
+    and output projections, each [embed_dim] to [embed_dim] features. *)
 
 (** {1:constructors Constructors} *)
 
@@ -46,7 +42,7 @@ val make :
   ?bias:bool ->
   embed_dim:int ->
   (float, 'b) Nx.dtype ->
-  'b params
+  (float, 'b) Nx.t t
 (** [make ~embed_dim dtype] is a fresh layer attending over [embed_dim]
     features: four {!Linear.make} projections with [inputs] and [outputs] both
     [embed_dim]. [w_init], [bias_init] and [bias] are passed to every projection
@@ -56,7 +52,7 @@ val make :
 
     Raises [Invalid_argument] if [embed_dim] is not positive. *)
 
-val init : embed_dim:int -> t
+val init : embed_dim:int -> Nx.float32_t t
 (** [init ~embed_dim] is [make ~embed_dim Nx.float32]: Glorot-uniform weights,
     zero biases. *)
 
@@ -65,7 +61,7 @@ val init : embed_dim:int -> t
 val apply :
   ?num_heads:int ->
   ?causal:bool ->
-  'b params ->
+  (float, 'b) Nx.t t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t
 (** [apply p x] is multi-head self-attention over [x], with:
@@ -104,9 +100,9 @@ val apply :
 
 (** Key-value caches. *)
 module Cache : sig
-  type 'b t = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
-  (** The type for key-value caches with float dtype layout ['b]: the projected
-      keys and values of the positions seen so far, each of shape
+  type 'a t = { keys : 'a; values : 'a }
+  (** The type for key-value caches over payload ['a]: the projected keys and
+      values of the positions seen so far, at tensor payloads each of shape
       [[| batch; num_heads; len; head_dim |]]. Slots at positions not yet seen
       hold zeros and are never attended to. *)
 
@@ -116,7 +112,7 @@ module Cache : sig
     head_dim:int ->
     len:int ->
     (float, 'b) Nx.dtype ->
-    'b t
+    (float, 'b) Nx.t t
   (** [make ~num_heads ~head_dim ~len dtype] is an empty cache of [len] slots:
       zero tensors of shape [[| batch; num_heads; len; head_dim |]]. [batch]
       defaults to [1]. [len] bounds the total sequence length (prompt plus
@@ -124,36 +120,36 @@ module Cache : sig
 
       Raises [Invalid_argument] if any dimension is not positive. *)
 
-  val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b t -> 'b t
+  val map : ('a -> 'b) -> 'a t -> 'b t
   (** [map f c] is [c] with [f] applied to [c.keys] and [c.values], in that
-      order. With {!map2} and {!iter} it satisfies the {!Nx.Ptree.S} contract at
-      any fixed ['b], so caches can be leaves of a jitted step's parameter tree.
-  *)
+      order. The traversals satisfy the {!Nx.Ptree.Uniform} contract, so caches
+      can be part of a jitted step's parameter tree. *)
 
-  val map2 :
-    ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
-    'b t ->
-    'b t ->
-    'b t
+  val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
   (** [map2 f c c'] combines [c] and [c'] leafwise with [f]. *)
 
-  val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b t -> unit
+  val iter : ('a -> unit) -> 'a t -> unit
   (** [iter f c] applies [f] to [c.keys] and [c.values], in that order. *)
 
-  val astype : (float, 'c) Nx.dtype -> 'b t -> 'c t
-  (** [astype dt c] is [c] with [c.keys] and [c.values] cast to [dt].
-      Differentiable through Rune: gradients flow back at each original leaf's
-      dtype, so an astype of float32 parameters inside a loss function yields
-      float32 gradients. *)
+  val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+  (** [fold f acc c] reduces [c] leafwise; leaf paths are ["keys"] and
+      ["values"]. *)
+
+  val fold2 :
+    (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
+  (** [fold2 f acc c c'] is like {!fold} across two caches. *)
+
+  val names : 'a t -> string t
+  (** [names c] is [{ keys = "keys"; values = "values" }]. *)
 end
 
 val apply_cached :
   ?num_heads:int ->
   pos:(int32, Nx.int32_elt) Nx.t ->
-  cache:'b Cache.t ->
-  'b params ->
+  cache:(float, 'b) Nx.t Cache.t ->
+  (float, 'b) Nx.t t ->
   (float, 'b) Nx.t ->
-  (float, 'b) Nx.t * 'b Cache.t
+  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
 (** [apply_cached ~pos ~cache p x] is causal multi-head self-attention of [x]
     over the cached sequence: the result, of [x]'s shape, and the cache with
     [x]'s keys and values written at slots [pos] to [pos + seq - 1].
@@ -212,34 +208,32 @@ val scaled_dot_product_attention :
 
 (** {1:traversals Traversals}
 
-    Plain traversals over the parameter leaves, in the order [q], [k], [v],
-    [out], each traversed as by {!Linear}. They satisfy the {!Nx.Ptree.S}
-    contract at any fixed ['b]. *)
+    Payload traversals in the order [q], [k], [v], [out], each traversed as by
+    {!Linear}, satisfying the {!Nx.Ptree.Uniform} contract. Leaf paths are the
+    projections' paths prefixed with the field name (["q.w"], ["q.b"], ...,
+    ["out.b"]). *)
 
-val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
-(** [map f p] is [p] with [f] applied to every parameter leaf. *)
+val map : ('a -> 'b) -> 'a t -> 'b t
+(** [map f p] is [p] with [f] applied to every payload leaf. [map (Nx.cast dt)]
+    converts a layer's precision; the cast is differentiable through Rune. *)
 
-val map2 :
-  ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
-  'b params ->
-  'b params ->
-  'b params
+val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
 (** [map2 f p p'] combines [p] and [p'] leafwise with [f].
 
     Raises [Invalid_argument] if a projection of [p] has a bias and the
     corresponding projection of [p'] does not (see {!Linear.map2}). *)
 
-val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
-(** [iter f p] applies [f] to every parameter leaf of [p]. *)
+val iter : ('a -> unit) -> 'a t -> unit
+(** [iter f p] applies [f] to every payload leaf of [p]. *)
 
-val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
-(** [astype dt p] is [p] with every parameter leaf cast to [dt]. Differentiable
-    through Rune: gradients flow back at each original leaf's dtype, so an
-    astype of float32 parameters inside a loss function yields float32
-    gradients. *)
+val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+(** [fold f acc p] reduces [p] leafwise, threading each leaf's path. *)
 
-val names : 'b params -> string list
-(** [names p] is the checkpoint name of each parameter leaf of [p], in traversal
-    order: each projection's {!Linear.names} prefixed with ["q."], ["k."],
-    ["v."] and ["out."] (e.g. [["q.w"; "q.b"; ...; "out.b"]]). See
-    {!Checkpoint.Named}. *)
+val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
+(** [fold2 f acc p p'] is like {!fold} across two structurally equal layers.
+
+    Raises [Invalid_argument] if a projection of [p] has a bias and the
+    corresponding projection of [p'] does not. *)
+
+val names : 'a t -> string t
+(** [names p] is [p] with every payload replaced by its path. *)

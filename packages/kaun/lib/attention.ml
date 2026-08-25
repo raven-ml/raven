@@ -3,48 +3,50 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'b params = {
-  q : 'b Linear.params;
-  k : 'b Linear.params;
-  v : 'b Linear.params;
-  out : 'b Linear.params;
+type 'a t = {
+  q : 'a Linear.t;
+  k : 'a Linear.t;
+  v : 'a Linear.t;
+  out : 'a Linear.t;
 }
 
-type t = Nx.float32_elt params
+let map f { q; k; v; out } =
+  let q = Linear.map f q in
+  let k = Linear.map f k in
+  let v = Linear.map f v in
+  let out = Linear.map f out in
+  { q; k; v; out }
 
-let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { q; k; v; out } =
-  {
-    q = Linear.map f q;
-    k = Linear.map f k;
-    v = Linear.map f v;
-    out = Linear.map f out;
-  }
+let map2 f p p' =
+  let q = Linear.map2 f p.q p'.q in
+  let k = Linear.map2 f p.k p'.k in
+  let v = Linear.map2 f p.v p'.v in
+  let out = Linear.map2 f p.out p'.out in
+  { q; k; v; out }
 
-let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p p' =
-  {
-    q = Linear.map2 f p.q p'.q;
-    k = Linear.map2 f p.k p'.k;
-    v = Linear.map2 f p.v p'.v;
-    out = Linear.map2 f p.out p'.out;
-  }
-
-let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { q; k; v; out } =
+let iter f { q; k; v; out } =
   Linear.iter f q;
   Linear.iter f k;
   Linear.iter f v;
   Linear.iter f out
 
-let astype dt { q; k; v; out } =
-  {
-    q = Linear.astype dt q;
-    k = Linear.astype dt k;
-    v = Linear.astype dt v;
-    out = Linear.astype dt out;
-  }
+let join prefix path = if path = "" then prefix else prefix ^ "." ^ path
+
+let fold f acc { q; k; v; out } =
+  let under prefix acc l = Linear.fold (fun path -> f (join prefix path)) acc l in
+  under "out" (under "v" (under "k" (under "q" acc q) k) v) out
+
+let fold2 f acc p p' =
+  let under prefix acc l l' =
+    Linear.fold2 (fun path -> f (join prefix path)) acc l l'
+  in
+  under "out"
+    (under "v" (under "k" (under "q" acc p.q p'.q) p.k p'.k) p.v p'.v)
+    p.out p'.out
 
 let names p =
-  let sub prefix l = List.map (fun n -> prefix ^ "." ^ n) (Linear.names l) in
-  sub "q" p.q @ sub "k" p.k @ sub "v" p.v @ sub "out" p.out
+  let sub prefix l = Linear.map (join prefix) (Linear.names l) in
+  { q = sub "q" p.q; k = sub "k" p.k; v = sub "v" p.v; out = sub "out" p.out }
 
 let make ?w_init ?bias_init ?bias ~embed_dim dtype =
   if embed_dim <= 0 then
@@ -110,7 +112,7 @@ let scaled_dot_product_attention ?mask q k v =
 (* Key-value cache *)
 
 module Cache = struct
-  type 'b t = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
+  type 'a t = { keys : 'a; values : 'a }
 
   let make ?(batch = 1) ~num_heads ~head_dim ~len dtype =
     if batch <= 0 || num_heads <= 0 || head_dim <= 0 || len <= 0 then
@@ -121,18 +123,26 @@ module Cache = struct
     let shape = [| batch; num_heads; len; head_dim |] in
     { keys = Nx.zeros dtype shape; values = Nx.zeros dtype shape }
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { keys; values } =
-    { keys = f keys; values = f values }
+  let map f { keys; values } =
+    let keys = f keys in
+    let values = f values in
+    { keys; values }
 
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) c c' =
-    { keys = f c.keys c'.keys; values = f c.values c'.values }
+  let map2 f c c' =
+    let keys = f c.keys c'.keys in
+    let values = f c.values c'.values in
+    { keys; values }
 
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { keys; values } =
+  let iter f { keys; values } =
     f keys;
     f values
 
-  let astype dt { keys; values } =
-    { keys = Nx.cast dt keys; values = Nx.cast dt values }
+  let fold f acc { keys; values } = f "values" (f "keys" acc keys) values
+
+  let fold2 f acc c c' =
+    f "values" (f "keys" acc c.keys c'.keys) c.values c'.values
+
+  let names _ = { keys = "keys"; values = "values" }
 end
 
 let apply_cached ?(num_heads = 1) ~pos ~cache p x =

@@ -3,32 +3,40 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'b params = { w : (float, 'b) Nx.t; b : (float, 'b) Nx.t option }
-type t = Nx.float32_elt params
+type 'a t = { w : 'a; b : 'a option }
 
-let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { w; b } =
-  { w = f w; b = (match b with None -> None | Some b -> Some (f b)) }
+let map f { w; b } =
+  let w = f w in
+  let b = match b with None -> None | Some b -> Some (f b) in
+  { w; b }
 
-let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p q =
+let map2 f p q =
+  let w = f p.w q.w in
   let b =
     match (p.b, q.b) with
     | Some pb, Some qb -> Some (f pb qb)
     | None, None -> None
     | Some _, None | None, Some _ -> invalid_arg "Linear.map2: bias mismatch"
   in
-  { w = f p.w q.w; b }
+  { w; b }
 
-let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { w; b } =
+let iter f { w; b } =
   f w;
   match b with None -> () | Some b -> f b
 
-let astype dt { w; b } =
-  {
-    w = Nx.cast dt w;
-    b = (match b with None -> None | Some b -> Some (Nx.cast dt b));
-  }
+let fold f acc { w; b } =
+  let acc = f "w" acc w in
+  match b with None -> acc | Some b -> f "b" acc b
 
-let names p = match p.b with None -> [ "w" ] | Some _ -> [ "w"; "b" ]
+let fold2 f acc p q =
+  let acc = f "w" acc p.w q.w in
+  match (p.b, q.b) with
+  | Some pb, Some qb -> f "b" acc pb qb
+  | None, None -> acc
+  | Some _, None | None, Some _ -> invalid_arg "Linear.fold2: bias mismatch"
+
+let names p =
+  { w = "w"; b = (match p.b with None -> None | Some _ -> Some "b") }
 
 let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
     ?(bias = true) ~inputs ~outputs dtype =

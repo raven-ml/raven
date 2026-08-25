@@ -10,33 +10,29 @@
     ([gamma]) and shift ([beta]). Unlike batch normalization it is stateless and
     independent of the batch: the same function at training and inference time.
     Construct parameters with {!init} or {!make} and normalize with {!apply};
-    {!map}, {!map2}, {!iter} and {!names} supply the {!Nx.Ptree.S} and
-    checkpoint plumbing. *)
+    the traversals supply the {!Nx.Ptree.Uniform} and checkpoint plumbing. *)
 
 (** {1:types Types} *)
 
-type 'b params = { gamma : (float, 'b) Nx.t; beta : (float, 'b) Nx.t }
-(** The type for layer-norm parameters with float dtype layout ['b]. [gamma]
-    (the scale) and [beta] (the shift) both have shape [[| dim |]], one entry
-    per normalized feature. *)
-
-type t = Nx.float32_elt params
-(** The type for single-precision layer norms, the common case. *)
+type 'a t = { gamma : 'a; beta : 'a }
+(** The type for layer-norm parameters over payload ['a]. At tensor payloads,
+    [gamma] (the scale) and [beta] (the shift) both have shape [[| dim |]], one
+    entry per normalized feature. *)
 
 (** {1:constructors Constructors} *)
 
-val make : dim:int -> (float, 'b) Nx.dtype -> 'b params
+val make : dim:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
 (** [make ~dim dtype] is a fresh identity normalization over [dim] features:
     [gamma] all ones, [beta] all zeros.
 
     Raises [Invalid_argument] if [dim] is not positive. *)
 
-val init : dim:int -> t
+val init : dim:int -> Nx.float32_t t
 (** [init ~dim] is [make ~dim Nx.float32]. *)
 
 (** {1:applying Applying} *)
 
-val apply : ?eps:float -> 'b params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val apply : ?eps:float -> (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [apply p x] normalizes each vector along [x]'s last axis and rescales it:
 
     {v (x - mean(x)) / sqrt (var(x) + eps) * gamma + beta v}
@@ -57,28 +53,24 @@ val apply : ?eps:float -> 'b params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 
 (** {1:traversals Traversals}
 
-    Plain traversals over the parameter leaves, in the order [gamma] then
-    [beta]. They satisfy the {!Nx.Ptree.S} contract at any fixed ['b]. *)
+    Payload traversals in the order [gamma] then [beta], satisfying the
+    {!Nx.Ptree.Uniform} contract. Leaf paths are ["gamma"] and ["beta"]. *)
 
-val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
-(** [map f p] is [p] with [f] applied to every parameter leaf. *)
+val map : ('a -> 'b) -> 'a t -> 'b t
+(** [map f p] is [p] with [f] applied to every payload leaf. [map (Nx.cast dt)]
+    converts a layer's precision; the cast is differentiable through Rune. *)
 
-val map2 :
-  ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
-  'b params ->
-  'b params ->
-  'b params
+val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
 (** [map2 f p q] combines [p] and [q] leafwise with [f]. *)
 
-val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
-(** [iter f p] applies [f] to every parameter leaf of [p]. *)
+val iter : ('a -> unit) -> 'a t -> unit
+(** [iter f p] applies [f] to every payload leaf of [p]. *)
 
-val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
-(** [astype dt p] is [p] with every parameter leaf cast to [dt]. Differentiable
-    through Rune: gradients flow back at each original leaf's dtype, so an
-    astype of float32 parameters inside a loss function yields float32
-    gradients. *)
+val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+(** [fold f acc p] reduces [p] leafwise, threading each leaf's path. *)
 
-val names : 'b params -> string list
-(** [names p] is [["gamma"; "beta"]], the checkpoint names of the parameter
-    leaves in traversal order. See {!Checkpoint.Named}. *)
+val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
+(** [fold2 f acc p q] is like {!fold} across two layers. *)
+
+val names : 'a t -> string t
+(** [names p] is [{ gamma = "gamma"; beta = "beta" }]. *)

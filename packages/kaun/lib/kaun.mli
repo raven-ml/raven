@@ -5,19 +5,22 @@
 
 (** Neural networks as typed parameter records.
 
-    Kaun has no layer or trainer abstraction. A layer is a plain record of
-    tensors with an [apply] function; a model is a record of layers with
-    hand-written one-line traversals ({!Nx.Ptree.S} plus checkpoint [names], see
-    {!Linear} for the pattern); a training step composes {!Rune.value_and_grad}
-    with a [Vega] optimizer update; the training loop is ordinary [Seq]
-    iteration over {!Data} minibatches.
+    Kaun has no layer or trainer abstraction. A layer is a record of parameters
+    with a payload hole and an [apply] function; a model is a record of layers
+    with one-line traversals (the {!Nx.Ptree.Uniform} contract, hand-written or
+    derived with [ppx_ptree]; see {!Linear} for the pattern). [Nx.Ptree.typed]
+    instantiates the model at its tensor type, a training step composes
+    {!Rune.value_and_grad} with a [Vega] optimizer update, and the training
+    loop is ordinary [Seq] iteration over {!Data} minibatches.
 
     {[
+    let model = Nx.Ptree.typed (module Model)
+
     let step (params, ostate) (x, y) =
       let loss p = Loss.softmax_cross_entropy_sparse (Model.apply p x) y in
-      let l, grads = Rune.value_and_grad (module Model) loss params in
+      let l, grads = Rune.value_and_grad model loss params in
       let params, ostate =
-        Vega.adamw_step (module Model) ~lr:1e-3 ostate ~params ~grads
+        Vega.adamw_step model ~lr:1e-3 ostate ~params ~grads
       in
       ((params, ostate), Nx.item [] l)
     ]}
