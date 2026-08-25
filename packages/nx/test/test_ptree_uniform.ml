@@ -135,6 +135,26 @@ let test_typed_instance () =
   TP.iter (fun _ -> incr count) p;
   equal ~msg:"typed iter leaves" int 2 !count
 
+let test_tree_paths () =
+  let t =
+    Nx.Ptree.dict
+      [
+        ( "layers",
+          Nx.Ptree.list
+            [
+              Nx.Ptree.tensor (vec32 [| 1.0 |]);
+              Nx.Ptree.tensor (vec32 [| 2.0 |]);
+            ] );
+        ("head", Nx.Ptree.tensor (vec32 [| 3.0 |]));
+      ]
+  in
+  let expected = [ "layers.0"; "layers.1"; "head" ] in
+  let paths = List.rev (Nx.Ptree.Tree.fold (fun p acc _ -> p :: acc) [] t) in
+  equal ~msg:"tree paths" (list string) expected paths;
+  let names = Nx.Ptree.Tree.names t in
+  equal ~msg:"tree names agrees with fold" (list string) expected
+    (List.rev (Nx.Ptree.Tree.fold (fun _ acc p -> p :: acc) [] names))
+
 let test_unpack_ok () =
   let x = vec32 [| 1.0; 2.0 |] in
   check ~msg:"unpack" [| 1.0; 2.0 |] (raw (Nx.Ptree.unpack f32 (pack x)))
@@ -172,6 +192,8 @@ let tests =
       [ test "map2 rejects dtype mismatch" test_map2_dtype_mismatch ];
     group "typed instance"
       [ test "typed traverses with typed leaves" test_typed_instance ];
+    group "stock tree"
+      [ test "list and dict positions become paths" test_tree_paths ];
     group "unpack"
       [
         test "unpack succeeds on matching dtype" test_unpack_ok;

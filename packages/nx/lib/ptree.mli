@@ -131,20 +131,30 @@ val unpack :
     optional [~at] string, if non-empty, is included in the error message as the
     location of the mismatch. *)
 
-(** The stock dynamic parameter tree; itself satisfies {!S}. *)
-type t =
-  | Tensor of tensor  (** A tensor leaf. *)
-  | List of t list  (** An ordered list branch. *)
-  | Dict of (string * t) list  (** A dict branch. Keys are strings. *)
+(** The stock dynamic tree: ordered lists and string-keyed dicts, generic in
+    the payload. It satisfies {!module-type:Uniform}, with zero-based list
+    positions and dict keys as path segments. *)
+module Tree : sig
+  type 'a t =
+    | Leaf of 'a  (** A payload leaf. *)
+    | List of 'a t list  (** An ordered list branch. *)
+    | Dict of (string * 'a t) list  (** A dict branch. Keys are strings. *)
+
+  include Uniform with type 'a t := 'a t
+end
+
+type t = tensor Tree.t
+(** The stock dynamic parameter tree — {!Tree} with packed tensor leaves;
+    itself satisfies {!S}. *)
 
 val tensor : ('a, 'b) Nx_effect.t -> t
-(** [tensor x] is [Tensor (P x)]. *)
+(** [tensor x] is [Tree.Leaf (P x)]. *)
 
 val list : t list -> t
-(** [list ts] is [List ts]. *)
+(** [list ts] is [Tree.List ts]. *)
 
 val dict : (string * t) list -> t
-(** [dict kvs] is [Dict kvs]. *)
+(** [dict kvs] is [Tree.Dict kvs]. *)
 
 val map : ('a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) -> t -> t
 (** [map f t] is [t] with [f] applied to every tensor leaf. *)
