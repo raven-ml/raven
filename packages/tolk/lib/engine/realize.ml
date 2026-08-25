@@ -359,10 +359,15 @@ module Buffers = struct
            runs, unlike lazily allocated intermediates. Sticky across
            [remove], so graph replay keeps repatching a node that is reseeded
            per call. *)
+    loop_scratch : (int, Device.Buffer.t) Hashtbl.t;
+        (* Scratch buffers owned by the loop executor, keyed by slot-node
+           tag so they persist across loop calls and outlive async work
+           that has the stream queued but not yet drained. *)
   }
 
   let create ~device =
-    { device; tbl = Hashtbl.create 64; seeded = Hashtbl.create 16 }
+    { device; tbl = Hashtbl.create 64; seeded = Hashtbl.create 16;
+      loop_scratch = Hashtbl.create 8 }
 
   let seed t node buf =
     let tag = Tolk_uop.Uop.tag node in
@@ -1254,14 +1259,23 @@ and exec_loop binding ctx ~device call =
       let prepare slots =
         List.map
           (fun ((node, pos0, pos1, size, stride) as slot) ->
+            let tag = U.tag node in
             let b = buf pos0 in
             let scratch =
               if misaligned stride b then
                 let s =
-                  Device.create_buffer ~size ~dtype:(Device.Buffer.dtype b)
-                    (device_for ~device b)
+                  match Hashtbl.find_opt binding.Buffers.loop_scratch tag with
+                  | Some s -> s
+                  | None ->
+                      let s =
+                        Device.create_buffer ~size
+                          ~dtype:(Device.Buffer.dtype b)
+                          (device_for ~device b)
+                      in
+                      Device.Buffer.ensure_allocated s;
+                      Hashtbl.replace binding.Buffers.loop_scratch tag s;
+                      s
                 in
-                Device.Buffer.ensure_allocated s;
                 Some s
               else None
             in
@@ -1342,7 +1356,16 @@ and exec_loop binding ctx ~device call =
         (fun (src0, src1, dst, _size) ->
           if src1 >= 0 then
             copy_bytes (buf dst) (buf (if trip mod 2 = 0 then src0 else src1)))
-        copies
+        copies;
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: trip=%d sync start\n%!" trip;
+      (* The body kernels and copy-backs are async-launched (CUDA stream 0).
+         Block until they complete so scratch buffers and transient views are
+         safe to reuse. *)
+      let dev = device_for ~device (buf 0) in
+      Device.synchronize dev;
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: trip=%d sync done\n%!" trip
   | None -> invalid_arg "exec_loop: expected CALL"
 
 let run_linear ~device ~to_program binding ?(var_vals = []) ?(input_uops = [||])
