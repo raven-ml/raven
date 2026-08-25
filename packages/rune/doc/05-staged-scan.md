@@ -2,9 +2,7 @@
 
 > Design notes for compiling `scan` (and its reverse pass) as a loop in the
 > compiled program instead of an unrolled trace. Status: **implemented** —
-> forward and reverse scans stage as `CALL(CUSTOM_FUNCTION "loop")` nodes;
-> see `progress.md` for the fixes the implementation required beyond this
-> design.
+> forward and reverse scans stage as `CALL(CUSTOM_FUNCTION "loop")` nodes.
 
 ## Today: eager scan, unrolled traces
 
