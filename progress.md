@@ -112,14 +112,37 @@ input, and the outer tape received nothing for it.
 Verified by three new `test_jit.ml` cases: grad w.r.t. an external scalar weight and
 external matrices (replay included), and a matrix (2-D) carry/output scan.
 
+## Fix landed: CUDA misaligned address (error 716) on strided loop slots
+
+On strict-alignment devices (CUDA, Metal) a vectorized kernel access through a pointer
+whose address is not aligned to the access width faults with error 716. The loop
+executor's per-iteration slot views pass `base + i * stride * itemsize` byte-offset
+pointers to the body kernels, but the body kernels are compiled once assuming an
+*aligned* base pointer — the offset is invisible to the compiler, and its vectorization
+decision checks only index-expression divisibility (`coalesce_divides`), not the
+runtime address.  When `stride * itemsize` is not a multiple of the widest vector
+access (16 bytes, i.e. float4/half8) the offset view is misaligned for a vectorized
+load or store.
+
+`exec_loop` now routes such slots through an aligned scratch buffer allocated per slot:
+the slice is copied in before the body runs (in-slots) and copied back after it (out-
+slots).  memcpys have no alignment requirement and are stream-ordered with the kernel
+launches (both use the NULL stream on CUDA).  Slots with stride ⋅ itemsize mod 16 = 0
+use direct views as before — the common aligned case (e.g. carry rows of 4 floats =
+16 bytes) keeps its vectorized accesses and has no overhead.
+
+Scratch buffers are allocated once per loop call through the device allocator (whose
+Lru_allocator recycles by size), and are reclaimed by GC finalisers like transient
+views.
+
 ## Tests
 
 `packages/rune/test/test_jit.ml` (the old `scan unrolls into the trace` is gone — the
-scan no longer unrolls): forward scan matches eager (+replay); grad of a tanh recurrence
-(carry+ys in the loss, fresh-data replay, `n=1`); grad with only the stacked outputs or
-only the final carry in the loss (zero cotangents); multi-leaf (record) carry; nested
-scan (forward and grad); captured weight in the body; vector carry; external (closed-
-over) scalar weight and matrices; matrix carry.
+scan no longer unrolls): 54 tests including forward scan matches eager (+replay); grad
+of a tanh recurrence (carry+ys in the loss, fresh-data replay, `n=1`); grad with only
+the stacked outputs or only the final carry in the loss (zero cotangents); multi-leaf
+(record) carry; nested scan (forward and grad); captured weight in the body; vector
+carry; external (closed-over) scalar weight and matrices; matrix carry.
 
 ## Known v1 restrictions (documented in 05-staged-scan.md)
 
