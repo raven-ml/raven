@@ -1213,6 +1213,9 @@ and exec_loop binding ctx ~device call =
           (U.children body_linear)
       end;
       let bufs = Array.of_list (List.map (resolve binding ctx) arg_nodes) in
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: resolved args trip=%d reversed=%b\n%!" trip
+          reversed;
       let buf i =
         if i < 0 || i >= Array.length bufs then
           invalid_arg
@@ -1340,15 +1343,25 @@ and exec_loop binding ctx ~device call =
             copy_bytes (view b size (i * stride)) s)
           !writebacks
       in
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: initial copies start\n%!";
       (* Initial copies (e.g. seed the carry double buffer from the scan's
          init value): a copy naming a single source ([src1] = -1). *)
       List.iter
         (fun (src0, src1, dst, _size) ->
           if src1 < 0 then copy_bytes (buf dst) (buf src0))
         copies;
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: starting %d iterations\n%!" trip;
       for j = 0 to trip - 1 do
+        if debug >= 3 then
+          Printf.eprintf "exec_loop: iter %d / %d\n%!" j trip;
         run_iteration j
       done;
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: iterations done\n%!";
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: final copies start\n%!";
       (* Final copies (e.g. carry the double-buffered result into the loop's
          output buffer): a copy naming a buffer pair, taken at position
          [trip mod 2]. *)
@@ -1368,15 +1381,46 @@ and exec_loop binding ctx ~device call =
         Printf.eprintf "exec_loop: trip=%d sync done\n%!" trip
   | None -> invalid_arg "exec_loop: expected CALL"
 
-let run_linear ~device ~to_program binding ?(var_vals = []) ?(input_uops = [||])
-    ?(jit = false) ?(wait = false) (linear : Tolk_uop.Uop.t) =
+let rec run_linear ~device ~to_program binding ?(var_vals = [])
+    ?(input_uops = [||]) ?(jit = false) ?(wait = false)
+    (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in
   let linear = if jit then linear else pm_compile ~device ~to_program linear in
   let ctx =
     exec_context ~var_vals ~input_uops ~jit ~wait:(wait || debug >= 2) ()
   in
+  if debug >= 2 then begin
+    let names =
+      List.map
+        (fun call ->
+          match U.as_call call with
+          | Some { body; _ } when U.op body = Tolk_uop.Ops.Program -> "kernel"
+          | Some { body; _ }
+            when U.op body = Tolk_uop.Ops.Custom_function
+                 && U.Arg.as_string (U.arg body) = Some "loop" ->
+              "loop"
+          | Some { body; _ }
+            when U.op body = Tolk_uop.Ops.Custom_function
+                 && U.Arg.as_string (U.arg body) = Some "graph" ->
+              "graph"
+          | Some { body; _ } when U.op body = Tolk_uop.Ops.Copy -> "copy"
+          | Some { body; _ } when U.op body = Tolk_uop.Ops.Slice -> "slice"
+          | _ -> "?")
+        (U.children linear)
+    in
+    Printf.eprintf "run_linear: %d calls [%s]\n%!" (List.length names)
+      (String.concat " " names)
+  end;
   List.iter
     (fun call ->
+      if debug >= 3 then begin
+        let name =
+          match U.as_call call with
+          | Some { body; _ } -> Tolk_uop.Ops.name (U.op body)
+          | None -> "?"
+        in
+        Printf.eprintf "run_linear: dispatch %s\n%!" name
+      end;
       match U.as_call call with
       | Some { body; _ }
         when U.op body = Tolk_uop.Ops.Custom_function
