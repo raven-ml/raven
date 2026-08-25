@@ -44,9 +44,25 @@ type scan_bwd = {
   bwd_y_shape : int array; (* shape of one element of the output stack *)
 }
 
+(* A tensor the scan body closes over (an external input of the loop) and the
+   cotangent accumulated for it across the backward loop's iterations. The pair
+   binds one existential instance, so the two tensors share a dtype by
+   construction. *)
+type closed_ctan =
+  | Closed_ctan : ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t -> closed_ctan
+
+(* Result of a staged backward scan: the cotangent of the init carry, the
+   cotangent of the input sequence, and the cotangents of the tensors the body
+   closes over. *)
+type scan_bwd_res = {
+  br_carry : c_packed;
+  br_y : packed_t;
+  br_closed : closed_ctan list;
+}
+
 type _ Effect.t +=
   | E_scan : scan_req -> scan_res Effect.t
-  | E_scan_bwd : scan_bwd -> scan_res Effect.t
+  | E_scan_bwd : scan_bwd -> scan_bwd_res Effect.t
 
 (* The eager fold, over the packed representation. Runs the body with ordinary
    Nx operations, so an enclosing handler (or a nested one installed by a
