@@ -7,11 +7,12 @@
 
     A checkpoint is an immutable collection of tensors keyed by distinct,
     non-empty names, stored as a
-    {{:https://huggingface.co/docs/safetensors/}safetensors} file. Typed
-    parameter structures enter and leave checkpoints through {!Named}, which
-    extends {!Nx.Ptree.S} with stable leaf names: {!of_params} turns a structure
-    into named entries, and {!to_params} rebuilds one from them, using an
-    existing value as the template for structure, dtypes, and shapes.
+    {{:https://huggingface.co/docs/safetensors/}safetensors} file. Parameter
+    structures enter and leave checkpoints through their {!Nx.Ptree.Uniform}
+    instance: {!of_params} names each leaf by its path — record fields and
+    container positions joined with ["."] — and {!to_params} rebuilds a
+    structure from its entries, using an existing value as the template for
+    structure, dtypes, and shapes.
 
     Entries not named by the template are ignored on extraction, so one file
     holds several sections side by side — model parameters, parameter-shaped
@@ -33,29 +34,11 @@
     [to_params (module Model) ~prefix:"model" ~like:model (Checkpoint.load
      path)]. To load a file into a partially different model (say, a new head on
     a pretrained backbone), extract each sub-structure with its own module and
-    prefix. *)
+    prefix.
 
-(** {1:named Named structures} *)
-
-(** Parameter trees with stable leaf names.
-
-    Implementations must ensure that [names x] has exactly one name per tensor
-    leaf of [x], paired with leaves in traversal order (the order [iter] and
-    [map] visit them), and that the names are distinct and non-empty. By
-    convention leaves are named after record fields, with nested structures
-    joined by ["."] (e.g. ["encoder.w"]). *)
-module type Named = sig
-  include Nx.Ptree.S
-
-  val names : t -> string list
-  (** [names x] is the name of each tensor leaf of [x], in traversal order. *)
-end
-
-module Ptree : Named with type t = Rune.Ptree.t
-(** Dynamic parameter trees as a named structure. Leaves are named by their path
-    from the root: dict keys and zero-based list positions joined with ["."]
-    (e.g. ["layers.0.w"]). A bare root tensor has the empty path and is named by
-    the [prefix] argument of {!of_params} and {!to_params} alone. *)
+    Structures with mixed leaf dtypes — the stock dynamic tree
+    {!Rune.Ptree.t} among them — hold packed leaves, and enter and leave
+    checkpoints through {!of_packed} and {!to_packed}. *)
 
 (** {1:checkpoints Checkpoints} *)
 
@@ -66,13 +49,29 @@ type t
 val empty : t
 (** [empty] is the checkpoint with no entries. *)
 
-val of_params : (module P : Named) -> ?prefix:string -> P.t -> t
-(** [of_params (module P) ?prefix params] is a checkpoint with one entry per
-    tensor leaf of [params], named by [P.names params]. When [prefix] is given,
-    each name becomes [prefix ^ "." ^ name] ([prefix] alone for an empty name).
+val of_params :
+  (module U : Nx.Ptree.Uniform) -> ?prefix:string -> ('a, 'b) Nx.t U.t -> t
+(** [of_params (module U) ?prefix params] is a checkpoint with one entry per
+    leaf of [params], named by its path ([U.fold]'s path convention). When
+    [prefix] is given, each name becomes [prefix ^ "." ^ path] ([prefix] alone
+    for the empty path).
 
-    Raises [Invalid_argument] if [P.names params] does not have exactly one name
-    per leaf, or if the resulting names are not distinct and non-empty. *)
+    Raises [Invalid_argument] if the resulting names are not distinct and
+    non-empty. *)
+
+val of_packed :
+  (module U : Nx.Ptree.Uniform) ->
+  ?prefix:string ->
+  Rune.Ptree.tensor U.t ->
+  t
+(** [of_packed (module U) ?prefix params] is like {!of_params} for a structure
+    with packed leaves, whose dtypes may differ. For the stock dynamic tree,
+    pass [(module Rune.Ptree.Tree)]: leaves are named by dict keys and
+    zero-based list positions joined with ["."] (e.g. ["layers.0.w"]), and a
+    bare root tensor has the empty path and is named by [prefix] alone.
+
+    Raises [Invalid_argument] if the resulting names are not distinct and
+    non-empty. *)
 
 val of_tensor : string -> ('a, 'b) Nx.t -> t
 (** [of_tensor name x] is a checkpoint with the single entry [name] holding [x].
@@ -107,19 +106,35 @@ val get : string -> t -> Rune.Ptree.tensor
 (** {1:extraction Typed extraction} *)
 
 val to_params :
-  (module P : Named) -> ?prefix:string -> ?cast:bool -> like:P.t -> t -> P.t
-(** [to_params (module P) ?prefix ?cast ~like t] is [like] with every tensor
-    leaf replaced by [t]'s entry of the same name — [P.names like], prefixed as
-    in {!of_params}. [like] supplies the structure, names, dtypes, and shapes;
-    its values are discarded. Entries of [t] not named by [like] are ignored.
+  (module U : Nx.Ptree.Uniform) ->
+  ?prefix:string ->
+  ?cast:bool ->
+  like:('a, 'b) Nx.t U.t ->
+  t ->
+  ('a, 'b) Nx.t U.t
+(** [to_params (module U) ?prefix ?cast ~like t] is [like] with every leaf
+    replaced by [t]'s entry of the same name — the leaf's path, prefixed as in
+    {!of_params}. [like] supplies the structure, names, dtypes, and shapes; its
+    values are discarded. Entries of [t] not named by [like] are ignored.
 
-    Each entry must have its leaf's shape, and its dtype: when [cast] is [false]
-    (default) a dtype mismatch raises, when [true] mismatched entries are cast
-    to the leaf's dtype.
+    Each entry must have its leaf's shape, and its dtype: when [cast] is
+    [false] (default) a dtype mismatch raises, when [true] mismatched entries
+    are cast to the leaf's dtype.
 
     Raises [Invalid_argument] if an entry named by [like] is missing, on shape
-    mismatch, on dtype mismatch when [cast] is [false], or if [P.names like] is
-    invalid (see {!of_params}). *)
+    mismatch, on dtype mismatch when [cast] is [false], or if [like]'s names
+    are not distinct and non-empty. *)
+
+val to_packed :
+  (module U : Nx.Ptree.Uniform) ->
+  ?prefix:string ->
+  ?cast:bool ->
+  like:Rune.Ptree.tensor U.t ->
+  t ->
+  Rune.Ptree.tensor U.t
+(** [to_packed (module U) ?prefix ?cast ~like t] is like {!to_params} for a
+    structure with packed leaves, with names as in {!of_packed}. Each template
+    leaf's runtime dtype and shape check the corresponding entry. *)
 
 val to_int : string -> t -> int
 (** [to_int name t] is the integer stored at [name] by {!of_int}.
