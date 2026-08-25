@@ -1,0 +1,4 @@
+(executable
+ (name rnn)
+ (modules rnn)
+ (libraries rune nx nx.core))

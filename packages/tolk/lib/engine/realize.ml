@@ -1236,27 +1236,78 @@ and exec_loop binding ctx ~device call =
           (Runner.call runner [ dst; src ] ctx.var_vals ~wait:ctx.wait
              ~timeout:None)
       in
+      (* Strict-alignment devices (CUDA faults with error 716, Metal
+         similarly) cannot take a vectorized access to a buffer whose address
+         is not aligned to the access width: the runtime slot views carry an
+         element offset beyond the allocation's 256-byte alignment, but the
+         body kernels were compiled assuming the base pointer itself is
+         aligned (the offset is invisible to the compiler).  Slots whose
+         per-iteration byte offset is not a multiple of the widest vector
+         access (16 bytes, i.e. float4/half8) are therefore routed through an
+         aligned scratch buffer: the slice is copied in before the body runs
+         and copied back after it for outputs. *)
+      let misaligned stride b =
+        stride <> 0
+        && (stride * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype b)) mod 16
+           <> 0
+      in
+      let prepare slots =
+        List.map
+          (fun ((node, pos0, pos1, size, stride) as slot) ->
+            let b = buf pos0 in
+            let scratch =
+              if misaligned stride b then
+                let s =
+                  Device.create_buffer ~size ~dtype:(Device.Buffer.dtype b)
+                    (device_for ~device b)
+                in
+                Device.Buffer.ensure_allocated s;
+                Some s
+              else None
+            in
+            (slot, scratch))
+          slots
+      in
+      let in_slots = prepare in_slots in
+      let out_slots = prepare out_slots in
       let run_iteration j =
         let i = if reversed then trip - 1 - j else j in
+        let writebacks = ref [] in
         (* Input slots: the body reads its inputs through these nodes. *)
         List.iter
-          (fun (node, pos0, pos1, size, stride) ->
+          (fun ((node, pos0, pos1, size, stride), scratch) ->
             let b =
               if pos1 < 0 then buf pos0
               else buf (if j mod 2 = 0 then pos0 else pos1)
             in
-            let b = if stride = 0 then b else view b size (i * stride) in
+            let b =
+              if stride = 0 then b
+              else
+                let v = view b size (i * stride) in
+                (match scratch with
+                | Some s ->
+                    copy_bytes s v;
+                    s
+                | None -> v)
+            in
             Buffers.seed binding node b)
           in_slots;
         (* Output slots: the body writes its outputs into these nodes. *)
         List.iter
-          (fun (node, pos0, pos1, size, stride) ->
+          (fun ((node, pos0, pos1, size, stride), scratch) ->
             let b =
               if pos1 < 0 then buf pos0
               else buf (if (j + 1) mod 2 = 0 then pos0 else pos1)
             in
-            let b = if stride = 0 then b else view b size (i * stride) in
-            Buffers.seed binding node b)
+            (match scratch with
+            | Some s ->
+                (* Write into aligned scratch; copy back after the body. *)
+                Buffers.seed binding node s;
+                writebacks :=
+                  (s, b, size, stride, i) :: !writebacks
+            | None ->
+                Buffers.seed binding node
+                  (if stride = 0 then b else view b size (i * stride))))
           out_slots;
         (* Stack: record the carry entering iteration i for the backward
            loop. *)
@@ -1267,7 +1318,13 @@ and exec_loop binding ctx ~device call =
           stacks;
         List.iter
           (dispatch_call binding ctx ~device)
-          (U.children body_linear)
+          (U.children body_linear);
+        (* Copy any aligned scratch buffers back into the strided-out views
+           the body wrote. *)
+        List.iter
+          (fun (s, b, size, stride, i) ->
+            copy_bytes (view b size (i * stride)) s)
+          !writebacks
       in
       (* Initial copies (e.g. seed the carry double buffer from the scan's
          init value): a copy naming a single source ([src1] = -1). *)
