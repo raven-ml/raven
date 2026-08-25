@@ -470,6 +470,14 @@ thread.
   same differentiable cast — and the `names : _ -> string list` functions are
   replaced by the tree-shaped `names` and path-threading `fold` of the
   `Uniform` contract.
+- **Breaking:** `Checkpoint` consumes `Nx.Ptree.Uniform` instances directly
+  and `Checkpoint.Named` is removed: `of_params`/`to_params` take
+  `(module U : Nx.Ptree.Uniform)` with typed leaves and name entries by leaf
+  paths, and the new `of_packed`/`to_packed` handle structures with mixed
+  leaf dtypes (the stock dynamic tree via `(module Rune.Ptree.Tree)`).
+  Hand-written `names` lists — and the name-per-leaf mismatch errors —
+  disappear: names are structural, so they can no longer be miscounted.
+
 ### Vega (new)
 
 - The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
