@@ -1,17 +1,29 @@
-; Dev: rebuild dist from sources and promote to source tree
+; dist/ is committed so building quill needs no node toolchain. The bundle's
+; bytes depend on the local esbuild install, so it is refreshed only via
+; `dune build @assets --auto-promote`, never by the default build.
+
+(alias
+ (name default))
 
 (rule
- (targets
-  (dir dist))
- (enabled_if
-  (= %{profile} dev))
+ (targets app.js.gen app.css.gen)
  (deps
+  (sandbox always)
   (glob_files src/*.js)
   (glob_files css/*.css)
   (glob_files fonts/*.woff2)
   esbuild.config.mjs
   (source_tree node_modules))
- (mode
-  (promote (until-clean)))
  (action
-  (bash "node esbuild.config.mjs --production 2>&1")))
+  (bash
+   "node esbuild.config.mjs --production 2>&1 && mv dist/app.js app.js.gen && mv dist/app.css app.css.gen")))
+
+(rule
+ (alias assets)
+ (action
+  (diff dist/app.js app.js.gen)))
+
+(rule
+ (alias assets)
+ (action
+  (diff dist/app.css app.css.gen)))
