@@ -80,13 +80,46 @@ checkout; they fail identically on the base branch).
    `reserve_slots_of` advances `next_slot` past every non-negative buffer slot after
    each scheduling (scan bodies, top-level compiles, and disk-cache loads).
 
+## Fix landed: external co-tangents (grad w.r.t. tensors the body closes over)
+
+Gradients w.r.t. **external inputs** of a scan — differentiable tensors the body closes
+over (e.g. RNN weights), as opposed to the carry and the scanned sequence — were zero
+under jit. The backward body's private-tape capture tracked only the carry and `x`
+slots, so the pullback never computed the per-step contributions `dg_i` of an external
+input, and the outer tape received nothing for it.
+
+- **Discovery** (`stage_scan`): while the body is traced, a `tolk_of` hook
+  (`st.scan_collectors`, a stack so nested scans propagate outward) records which
+  *pre-existing* traced tensors the body reads — its free inputs. Registered per scan in
+  `st.scan_closed`, keyed by `Obj.repr step` like `scan_stacks`. Constants the body
+  captures are first touched inside the trace, so they never enter the list (they cannot
+  be tracked by an enclosing grad anyway).
+- **Accumulation** (`stage_scan_bwd`): the external inputs are tracked on the private
+  tape, so the captured pullback emits `dg_i`; the backward loop totals each in a
+  zero-seeded double-buffered accumulator (same parity scheme as the carry cotangents),
+  the body writing `acc + dg_i` each iteration.
+- **Delivery**: `E_scan_bwd` returns `scan_bwd_res` carrying `(tensor, cotangent)` pairs
+  (`Rune_scan.Closed_ctan`); the reverse tape entry accumulates each into the outer tape
+  for tensors it tracks (loop slots and constants never are, so spurious entries
+  collected in nested scans are filtered out there).
+- **Flat body stores**: the accumulation stores tripped a latent rangeify gap — a
+  multi-d value stored into a loop's flat 1-D buffer leaves a rank-mismatched
+  `INDEX(RESHAPE(buffer, …), flat_range)` that lowering cannot handle ("memory
+  coalescing should be on INDEX, not INDEX"); the same pattern breaks multi-d carries
+  and per-step outputs of the *forward* loop too. All body stores now flatten the value
+  first (`store_flat`), so flat buffers meet flat values.
+
+Verified by three new `test_jit.ml` cases: grad w.r.t. an external scalar weight and
+external matrices (replay included), and a matrix (2-D) carry/output scan.
+
 ## Tests
 
 `packages/rune/test/test_jit.ml` (the old `scan unrolls into the trace` is gone — the
 scan no longer unrolls): forward scan matches eager (+replay); grad of a tanh recurrence
 (carry+ys in the loss, fresh-data replay, `n=1`); grad with only the stacked outputs or
 only the final carry in the loss (zero cotangents); multi-leaf (record) carry; nested
-scan (forward and grad); captured weight in the body; vector carry.
+scan (forward and grad); captured weight in the body; vector carry; external (closed-
+over) scalar weight and matrices; matrix carry.
 
 ## Known v1 restrictions (documented in 05-staged-scan.md)
 

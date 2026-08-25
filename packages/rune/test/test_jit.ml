@@ -81,10 +81,10 @@ let test_jit_under_vmap_is_transparent () =
   let y = Rune.vmap' g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
   check_arr ~msg:"vmap over jit" [| 2.0; 4.0; 6.0; 8.0 |] y
 
-(* Staged scans: under jit a [Rune.scan] compiles the fold step once and runs
-   it as a loop in the compiled program, and [grad] through it compiles a
-   reversed loop over the body's pullback. Every case compares against the
-   eager (unrolled) scan and the eager gradient. *)
+(* Staged scans: under jit a [Rune.scan] compiles the fold step once and runs it
+   as a loop in the compiled program, and [grad] through it compiles a reversed
+   loop over the body's pullback. Every case compares against the eager
+   (unrolled) scan and the eager gradient. *)
 
 (* A single-tensor carry. *)
 module Csingle = struct
@@ -163,7 +163,8 @@ let test_grad_through_scan_ys_only () =
     Nx.sum ys
   in
   let xs = vec32 [| 1.0; 2.0; 3.0 |] in
-  check_arr ~msg:"ys only" (to_arr (Rune.grad' loss xs))
+  check_arr ~msg:"ys only"
+    (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 let test_grad_through_scan_carry_only () =
@@ -181,7 +182,8 @@ let test_grad_through_scan_carry_only () =
     Nx.reshape [||] c
   in
   let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"final carry only" (to_arr (Rune.grad' loss xs))
+  check_arr ~msg:"final carry only"
+    (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 let test_grad_through_scan_multi_leaf () =
@@ -198,7 +200,8 @@ let test_grad_through_scan_multi_leaf () =
     Nx.add (Nx.add (Nx.reshape [||] p.u) (Nx.reshape [||] p.v)) (Nx.sum ys)
   in
   let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"pair carry" (to_arr (Rune.grad' loss xs))
+  check_arr ~msg:"pair carry"
+    (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 let test_grad_through_scan_nested () =
@@ -218,14 +221,14 @@ let test_grad_through_scan_nested () =
           in
           let c = Nx.add ci (Nx.sum inner) in
           (c, c))
-        ~init:(Nx.zeros f32 [| 2 |])
-        xs
+        ~init:(Nx.zeros f32 [| 2 |]) xs
     in
     Nx.add (Nx.sum c) (Nx.sum ys)
   in
   let xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |] in
   check_arr ~msg:"forward" (to_arr (loss xs)) (Rune.jit' loss xs);
-  check_arr ~msg:"grad" (to_arr (Rune.grad' loss xs))
+  check_arr ~msg:"grad"
+    (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 let test_grad_through_scan_captured_weight () =
@@ -243,7 +246,8 @@ let test_grad_through_scan_captured_weight () =
     Nx.sum ys
   in
   let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"captured weight" (to_arr (Rune.grad' loss xs))
+  check_arr ~msg:"captured weight"
+    (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 let test_grad_through_scan_vector_carry () =
@@ -254,13 +258,124 @@ let test_grad_through_scan_vector_carry () =
         ~f:(fun c x ->
           let c = Nx.tanh (Nx.add c x) in
           (c, Nx.mul c c))
-        ~init:(Nx.zeros f32 [| 2 |])
-        xs
+        ~init:(Nx.zeros f32 [| 2 |]) xs
     in
     Nx.add (Nx.sum c) (Nx.sum ys)
   in
   let xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |] in
-  check_arr ~msg:"vector carry" (to_arr (Rune.grad' loss xs))
+  check_arr ~msg:"vector carry"
+    (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
+let test_grad_through_scan_external_input () =
+  (* The body closes over a *differentiated* input that is neither the carry nor
+     the scanned sequence: an external co-tangent the backward loop must total
+     across the steps. *)
+  let loss (p : pair) =
+    let w = p.Pair.u and xs = p.Pair.v in
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.tanh (Nx.add (Nx.mul c (Nx.reshape [||] w)) x) in
+          (c, c))
+        ~init:(Nx.scalar f32 0.0) xs
+    in
+    Nx.add (Nx.reshape [||] c) (Nx.sum ys)
+  in
+  let p = { Pair.u = Nx.scalar f32 0.5; v = vec32 [| 1.0; 2.0; 3.0; 0.5 |] } in
+  let expected = Rune.grad (module Pair) loss p in
+  let g =
+    Rune.jit2
+      (module Pair)
+      (module Pair)
+      (fun p -> Rune.grad (module Pair) loss p)
+  in
+  let actual = g p in
+  check_arr ~msg:"external weight" (to_arr expected.Pair.u) actual.Pair.u;
+  check_arr ~msg:"scanned input" (to_arr expected.Pair.v) actual.Pair.v;
+  (* Replay computes the totals on fresh data. *)
+  let p2 =
+    { Pair.u = Nx.scalar f32 (-0.25); v = vec32 [| 0.25; -1.0; 1.5; 0.75 |] }
+  in
+  let expected2 = Rune.grad (module Pair) loss p2 in
+  let actual2 = g p2 in
+  check_arr ~msg:"external weight, replay" (to_arr expected2.Pair.u)
+    actual2.Pair.u;
+  check_arr ~msg:"scanned input, replay" (to_arr expected2.Pair.v)
+    actual2.Pair.v
+
+(* A three-leaf input structure. *)
+module Trio = struct
+  type t = { a : Nx.float32_t; b : Nx.float32_t; xs : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { a; b; xs } =
+    { a = f a; b = f b; xs = f xs }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { a = f p.a q.a; b = f p.b q.b; xs = f p.xs q.xs }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { a; b; xs } =
+    f a;
+    f b;
+    f xs
+end
+
+let test_grad_through_scan_external_matrices () =
+  (* An RNN step: the recurrence and input matrices are external inputs of the
+     loop, each earning a cotangent contribution per step. *)
+  let loss (p : Trio.t) =
+    let step x ut =
+      let x = Nx.tanh (Nx.add (Nx.matmul x p.Trio.a) (Nx.matmul ut p.Trio.b)) in
+      (x, x)
+    in
+    let _, ys =
+      Rune.scan (module Csingle) ~f:step ~init:(Nx.zeros f32 [| 2 |]) p.Trio.xs
+    in
+    Nx.sum ys
+  in
+  let p =
+    Trio.
+      {
+        a = Nx.create f32 [| 2; 2 |] [| 0.5; 0.25; 0.0; 0.75 |];
+        b = Nx.create f32 [| 2; 2 |] [| 1.0; -0.5; 0.25; 0.5 |];
+        xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |];
+      }
+  in
+  let expected = Rune.grad (module Trio) loss p in
+  let g =
+    Rune.jit2
+      (module Trio)
+      (module Trio)
+      (fun p -> Rune.grad (module Trio) loss p)
+  in
+  let actual = g p in
+  check_arr ~msg:"recurrence matrix" (to_arr expected.Trio.a) actual.Trio.a;
+  check_arr ~msg:"input matrix" (to_arr expected.Trio.b) actual.Trio.b;
+  check_arr ~msg:"scanned input" (to_arr expected.Trio.xs) actual.Trio.xs
+
+let test_grad_through_scan_matrix_carry () =
+  (* A 2-D carry and per-step output: the loop's flat slot buffers store them
+     flattened. *)
+  let loss xs =
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.tanh (Nx.add c x) in
+          (c, Nx.mul c c))
+        ~init:(Nx.zeros f32 [| 2; 2 |])
+        xs
+    in
+    Nx.add (Nx.sum c) (Nx.sum ys)
+  in
+  let xs =
+    Nx.create f32 [| 3; 2; 2 |]
+      [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0; 0.75; -0.5; -0.25; 0.0; 1.5; 0.5 |]
+  in
+  check_arr ~msg:"matrix carry forward" (to_arr (loss xs)) (Rune.jit' loss xs);
+  check_arr ~msg:"matrix carry grad"
+    (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
 (* In-place state *)
@@ -812,6 +927,12 @@ let tests =
           test_grad_through_scan_captured_weight;
         test "grad through a scan with a vector carry"
           test_grad_through_scan_vector_carry;
+        test "grad through a scan with an external input"
+          test_grad_through_scan_external_input;
+        test "grad through a scan with external matrices"
+          test_grad_through_scan_external_matrices;
+        test "grad through a scan with a matrix carry"
+          test_grad_through_scan_matrix_carry;
       ];
     group "sliding windows"
       [
