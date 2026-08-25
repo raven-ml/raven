@@ -7,7 +7,15 @@
 
 (* Port of tinygrad/schedule/rangeify.py to the tolk_uop IR.
    Transforms a tensor-level SINK into a kernel graph with CALL nodes
-   wrapping kernel ASTs. *)
+   wrapping kernel ASTs.
+
+   Two branches have no tinygrad counterpart and must survive a pin move:
+   [find_bufs] walks with [enter_calls:false], and [split_store] passes a
+   precompiled CALL value through as its own kernel. Both exist for rune's
+   staged scan (a CALL(CUSTOM_FUNCTION "loop") whose payload embeds a
+   compiled sub-linear — see engine/realize.ml's loop executor); tinygrad
+   has no cross-kernel loop construct, and neither branch can fire on a
+   graph tinygrad could produce. *)
 
 open Tolk_uop
 module U = Uop

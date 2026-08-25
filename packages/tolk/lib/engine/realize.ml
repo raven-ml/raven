@@ -1087,6 +1087,13 @@ let rec dispatch_call binding ctx ~device call =
 
 (* Loop executor
 
+   No tinygrad counterpart: tinygrad has no cross-kernel loop construct — its
+   answer to a recurrence is an unrolled schedule replayed by TinyJit. The
+   named-CUSTOM_FUNCTION payload mechanism is upstream's own extension seam
+   (the reference dispatches "graph", "encdec" and "hcq" calls the same way);
+   "loop" is a tolk-local name in it, so parity-relevant code paths never see
+   one.
+
    A CALL(CUSTOM_FUNCTION "loop", ...) replays a compiled sub-linear once per
    iteration, rebinding the loop's input and output slots between iterations.
    The payload (the children of the CUSTOM_FUNCTION body) encodes:

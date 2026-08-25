@@ -232,58 +232,6 @@ Nothing external blocks these; each could be picked up today.
   from the frontend. The `pm_reduce_collapse` half of `e684fcc68` is a
   separate, independent change.
 
-## Deliberate divergences (do not port)
-
-Reviewed and declined. Each would add machinery whose only producers are
-runtimes or dependency orders tolk does not have. Do not re-open without a
-consumer.
-
-- **The void-RANGE loop header** (`b764599d8`, `39924387b`, plus its
-  `spec.py` rules). The reference threads a "backedge" (the void range plus its
-  bool condition) through `flatten_range` and `do_split_ends`, guards
-  `simplify_merge_adjacent` against a non-RANGE ended child, filters void
-  ranges out of `Scheduler.rngs`, and adds an `END(body, range, cond)` spec
-  rule. The feature exists for HCQ wait loops — a runtime tolk does not port —
-  and nothing in tolk constructs a void range, so all of it would be
-  unreachable. `Axis_type.Loop` exists and names this concept, with no
-  constructor; that is intentional. Port with a producer, never before.
-
-  *What would catch a bad port*: **nothing, and nothing can** — there is no way
-  to build a void range, so no test can reach the branches. The producer and
-  the branches have to land together, with the producer's own test.
-
-- **`Renderer` has no `abi` field and no CALL-in-C rule** (`d1f215d37`,
-  `6e979b879`). Both exist upstream for the CPU uop worker, a runtime tolk does
-  not port. `abi` is `"__attribute__((ms_abi)) "` on win32 and empty elsewhere;
-  with CALL-in-C absent its only use is `kernel_typedef = abi + "void"`, which
-  tolk already spells statically. CALL-in-C renders a function-pointer cast for
-  an address-valued `CALL`, which needs `ret_dtype` on `Uop.call`, a
-  `dtype_from_uop` arm, a `_shape` arm, and a spec arm — all to render a node
-  no tolk pass constructs. Port them together if a host-callable runtime lands.
-
-- **`ParamArg` has no `volatile` flag** (`a6fda6b10`). Its only producers
-  upstream are `ops_cpu.py`, `ops_qcom.py`, and `hcq2.py`; its only consumers
-  are the cstyle parameter list and the LLVM renderer. tolk would carry an
-  always-false field. Add it with the first runtime that needs uncached
-  parameter memory.
-
-- **`ProgramInfo` carries no `target`, and `aux` is deleted rather than
-  renamed** (`9fdaa4bff`). The reference swaps `aux` for `target` so
-  `UOp.to_elf()` can build a `TinyELF`. That is the runtime restructure tolk
-  does not port — tolk dispatches through `lib/compiler.ml`, and
-  `Program_spec.t` already carries `device` — so `target` would be a field
-  with no reader. tolk's `aux` had no reader either: its only producer was
-  `OpenCLRenderer.aux`, and nothing in `lib/runtime/` consumed it; it reached
-  only the diskcache key and the debug repr. The whole channel is gone.
-  `call_info.aux` is unrelated and stays; the reference keeps it.
-
-- **The host-scalar `bitcast` stays in `symbolic.ml`** rather than moving to
-  `dtype.ml` as the reference does (`67dc02d7e`). Forced, not skipped: tolk's
-  equivalent (`bitcast_const_storage`) takes a `Const.t`, and `Const` depends on
-  `Dtype`, so the move is impossible without re-cutting it to `storage_scalar`
-  — for a consumer tolk does not have, since `lib/frontend/rand.ml` builds
-  `_bits_to_rand` out of UOp `Bitcast` nodes rather than host-side arithmetic.
-
 ## Post-wave sweep — landed
 
 All four changed a declaration in `lib/uop/` plus every reader across
@@ -528,7 +476,7 @@ file:
 - (6) `linearizer.ml:248` `chain` skipping an END whose ended child is not a
   single RANGE is not an unguarded hazard — it is the tolk-side counterpart of
   the guard the reference puts on `simplify_merge_adjacent`, and belongs to the
-  void-RANGE loop header under "Deliberate divergences". Leave it until that
+  void-RANGE loop header in DIVERGENCES.md. Leave it until that
   feature acquires a producer.
 - `uop.ml` `ended_ranges` (and its copy in `codegen_lower.ml:505`) returning
   `[]` where `_tinygrad_next` returns `src[1:]` for UNSHARD is not a new
