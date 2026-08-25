@@ -734,7 +734,7 @@ let state_of_tensors tx ~count tensors =
 
 (* Gradient transformations *)
 
-let global_norm (module P : Nx.Ptree.S) (grads : P.t) : float =
+let global_norm (type p) (module P : Nx.Ptree.S with type t = p) (grads : P.t) : float =
   let acc = ref 0.0 in
   P.iter
     (fun g ->
@@ -742,7 +742,7 @@ let global_norm (module P : Nx.Ptree.S) (grads : P.t) : float =
     grads;
   Stdlib.sqrt !acc
 
-let clip_by_global_norm (module P : Nx.Ptree.S) ~max_norm (grads : P.t) : P.t =
+let clip_by_global_norm (type p) (module P : Nx.Ptree.S with type t = p) ~max_norm (grads : P.t) : P.t =
   validate_positive "Vega.clip_by_global_norm" "max_norm" max_norm;
   let norm = global_norm (module P) grads in
   if norm <= max_norm then grads
@@ -750,7 +750,7 @@ let clip_by_global_norm (module P : Nx.Ptree.S) ~max_norm (grads : P.t) : P.t =
     let c = max_norm /. norm in
     P.map (fun g -> Nx.mul g (scalar (Nx.dtype g) c)) grads
 
-let clip_by_value (module P : Nx.Ptree.S) ~max (grads : P.t) : P.t =
+let clip_by_value (type p) (module P : Nx.Ptree.S with type t = p) ~max (grads : P.t) : P.t =
   validate_positive "Vega.clip_by_value" "max" max;
   P.map
     (fun g ->
@@ -788,10 +788,10 @@ module Loss_scale = struct
 
   let scale t x = Nx.mul x (Nx.cast (Nx.dtype x) t.scale)
 
-  let unscale (module P : Nx.Ptree.S) t (grads : P.t) : P.t =
+  let unscale (type p) (module P : Nx.Ptree.S with type t = p) t (grads : P.t) : P.t =
     P.map (fun g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
 
-  let grads_finite (module P : Nx.Ptree.S) (grads : P.t) =
+  let grads_finite (type p) (module P : Nx.Ptree.S with type t = p) (grads : P.t) =
     let acc = ref (Nx.scalar Nx.bool true) in
     P.iter (fun g -> acc := Nx.logical_and !acc (Nx.all (Nx.isfinite g))) grads;
     !acc
@@ -821,10 +821,10 @@ end
 
 type 'p sgd_state = { velocity : 'p }
 
-let sgd_init (module P : Nx.Ptree.S) (params : P.t) : P.t sgd_state =
+let sgd_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) : P.t sgd_state =
   { velocity = P.map (fun leaf -> Nx.zeros_like leaf) params }
 
-let sgd_step (module P : Nx.Ptree.S) ~lr ?(momentum = 0.0) (st : P.t sgd_state)
+let sgd_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr ?(momentum = 0.0) (st : P.t sgd_state)
     ~(params : P.t) ~(grads : P.t) : P.t * P.t sgd_state =
   let velocity =
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
@@ -850,13 +850,13 @@ let sgd_step (module P : Nx.Ptree.S) ~lr ?(momentum = 0.0) (st : P.t sgd_state)
 
 type 'p adam_state = { mu : 'p; nu : 'p; step : int }
 
-let adam_init (module P : Nx.Ptree.S) (params : P.t) : P.t adam_state =
+let adam_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) : P.t adam_state =
   let zeros () = P.map (fun leaf -> Nx.zeros_like leaf) params in
   { mu = zeros (); nu = zeros (); step = 0 }
 
 (* Advances the moments and computes the bias-corrected update direction shared
    by [adam_step] and [adamw_step]. *)
-let adam_direction (module P : Nx.Ptree.S) ~b1 ~b2 ~eps (st : P.t adam_state)
+let adam_direction (type p) (module P : Nx.Ptree.S with type t = p) ~b1 ~b2 ~eps (st : P.t adam_state)
     ~(grads : P.t) : P.t * P.t adam_state =
   let step = st.step + 1 in
   let mu =
@@ -894,7 +894,7 @@ let adam_direction (module P : Nx.Ptree.S) ~b1 ~b2 ~eps (st : P.t adam_state)
   in
   (direction, { mu; nu; step })
 
-let adam_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
+let adam_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
     ?(eps = 1e-8) (st : P.t adam_state) ~(params : P.t) ~(grads : P.t) :
     P.t * P.t adam_state =
   let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in
@@ -906,10 +906,10 @@ let adam_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
   in
   (params, st)
 
-let adamw_init (module P : Nx.Ptree.S) (params : P.t) : P.t adam_state =
+let adamw_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) : P.t adam_state =
   adam_init (module P) params
 
-let adamw_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
+let adamw_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
     ?(eps = 1e-8) ?(weight_decay = 0.01) (st : P.t adam_state) ~(params : P.t)
     ~(grads : P.t) : P.t * P.t adam_state =
   let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in

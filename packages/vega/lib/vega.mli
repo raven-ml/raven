@@ -62,12 +62,12 @@ module Schedule = Schedule
     Pure functions on gradient structures, applied between the backward pass and
     the optimizer step. *)
 
-val global_norm : (module P : Nx.Ptree.S) -> P.t -> float
+val global_norm : (module Nx.Ptree.S with type t = 'p) -> 'p -> float
 (** [global_norm (module P) grads] is the L2 norm of all leaves of [grads] taken
     together: [sqrt (sum of every element squared)]. *)
 
 val clip_by_global_norm :
-  (module P : Nx.Ptree.S) -> max_norm:float -> P.t -> P.t
+  (module Nx.Ptree.S with type t = 'p) -> max_norm:float -> 'p -> 'p
 (** [clip_by_global_norm (module P) ~max_norm grads] scales [grads] so that its
     {!global_norm} does not exceed [max_norm]. Gradients within the bound
     (including all-zero gradients) are returned unchanged; larger ones are
@@ -75,7 +75,7 @@ val clip_by_global_norm :
 
     Raises [Invalid_argument] if [max_norm <= 0.]. *)
 
-val clip_by_value : (module P : Nx.Ptree.S) -> max:float -> P.t -> P.t
+val clip_by_value : (module Nx.Ptree.S with type t = 'p) -> max:float -> 'p -> 'p
 (** [clip_by_value (module P) ~max grads] clips every gradient element to the
     interval \[[-. max];[max]\].
 
@@ -133,12 +133,12 @@ module Loss_scale : sig
   (** [scale ls x] is [x] times the current scale, at [x]'s dtype. Apply it to
       the loss, inside the differentiated objective. *)
 
-  val unscale : (module P : Nx.Ptree.S) -> t -> P.t -> P.t
+  val unscale : (module Nx.Ptree.S with type t = 'p) -> t -> 'p -> 'p
   (** [unscale (module P) ls grads] divides every leaf of [grads] by the current
       scale, at the leaf's dtype. Apply it to the gradients before any gradient
       transformation or optimizer step. *)
 
-  val grads_finite : (module P : Nx.Ptree.S) -> P.t -> (bool, Nx.bool_elt) Nx.t
+  val grads_finite : (module Nx.Ptree.S with type t = 'p) -> 'p -> (bool, Nx.bool_elt) Nx.t
   (** [grads_finite (module P) grads] is a scalar boolean tensor: [true] iff
       every element of every leaf of [grads] is finite (no NaN or infinity).
       Feed it to {!adjust} and use it to skip the parameter update of an
@@ -188,18 +188,18 @@ type 'p sgd_state = { velocity : 'p }
 (** The state for {!sgd_step}: the momentum velocity, with the shape of the
     parameters. *)
 
-val sgd_init : (module P : Nx.Ptree.S) -> P.t -> P.t sgd_state
+val sgd_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p sgd_state
 (** [sgd_init (module P) params] is the initial state for optimizing [params]:
     an all-zero velocity of [params]' shape. *)
 
 val sgd_step :
-  (module P : Nx.Ptree.S) ->
+  (module Nx.Ptree.S with type t = 'p) ->
   lr:float ->
   ?momentum:float ->
-  P.t sgd_state ->
-  params:P.t ->
-  grads:P.t ->
-  P.t * P.t sgd_state
+  'p sgd_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p sgd_state
 (** [sgd_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
     step of gradient descent with heavy-ball momentum. Per element:
 
@@ -219,20 +219,20 @@ type 'p adam_state = { mu : 'p; nu : 'p; step : int }
     steps apply the correction when computing the update), each with the
     parameters' shape. [step] is the number of completed steps. *)
 
-val adam_init : (module P : Nx.Ptree.S) -> P.t -> P.t adam_state
+val adam_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
 (** [adam_init (module P) params] is the initial state for optimizing [params]:
     all-zero moments and [step = 0]. *)
 
 val adam_step :
-  (module P : Nx.Ptree.S) ->
+  (module Nx.Ptree.S with type t = 'p) ->
   lr:float ->
   ?b1:float ->
   ?b2:float ->
   ?eps:float ->
-  P.t adam_state ->
-  params:P.t ->
-  grads:P.t ->
-  P.t * P.t adam_state
+  'p adam_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adam_state
 (** [adam_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
     Adam step (Kingma and Ba, 2015). Per element, with [t = st.step + 1]:
 
@@ -245,20 +245,20 @@ val adam_step :
 
     [b1] defaults to [0.9], [b2] to [0.999], [eps] to [1e-8]. *)
 
-val adamw_init : (module P : Nx.Ptree.S) -> P.t -> P.t adam_state
+val adamw_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
 (** [adamw_init] is {!adam_init}: AdamW shares Adam's state. *)
 
 val adamw_step :
-  (module P : Nx.Ptree.S) ->
+  (module Nx.Ptree.S with type t = 'p) ->
   lr:float ->
   ?b1:float ->
   ?b2:float ->
   ?eps:float ->
   ?weight_decay:float ->
-  P.t adam_state ->
-  params:P.t ->
-  grads:P.t ->
-  P.t * P.t adam_state
+  'p adam_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adam_state
 (** [adamw_step (module P) ~lr st ~params ~grads] is like {!adam_step} with
     decoupled weight decay (Loshchilov and Hutter, 2019): with [d] Adam's
     bias-corrected direction, the parameter update becomes
