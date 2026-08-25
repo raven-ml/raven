@@ -238,6 +238,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                               if Tape.tracked tape g then
                                 Tape.accumulate tape g dg)
                             br_closed);
+                  continue k res
+              | exception Rune_scan.Not_staged ->
+                  (* The stager declined after tracing the body (e.g. a
+                     shape-unstable carry): fold eagerly, taping every step. *)
+                  let res : Rune_scan.scan_res =
+                    Effect.Deep.match_with
+                      (fun () -> Rune_scan.eager req)
+                      () (handler tape)
+                  in
                   continue k res)
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)

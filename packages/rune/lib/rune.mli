@@ -581,7 +581,10 @@ val scan :
     the final carry and the outputs stacked along a new axis 0. Under
     {!val-jit} the fold step compiles once and runs as a loop in the compiled
     program, and differentiating compiles a reversed loop over the step's
-    pullback; everywhere else the scan folds eagerly, tracing every step.
+    pullback. Staging needs the carry to keep its shapes across steps; a fold
+    that changes them — or one reached through {!val-vmap} or {!val-pmap} —
+    unrolls into the compiled program instead. Everywhere else the scan folds
+    eagerly, tracing every step.
 
     Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
 

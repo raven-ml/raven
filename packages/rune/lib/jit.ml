@@ -1259,18 +1259,21 @@ and stage_scan : type r.
             (Obj.magic c_next, Obj.magic y))
   in
   Tbl.replace st.scan_closed (Obj.repr step) !closed;
-  (* Shape-stable check, leaf by leaf (and a stable output shape). *)
+  (* A loop can only be compiled from a shape-stable carry (the single
+     prototype trace stands for every step). A body that changes a carry
+     shape declines staging — the scan folds eagerly and unrolls into this
+     trace, as every jit did before staging existed. The traced body's nodes
+     are unreachable from any output and never get scheduled. *)
+  let stable = ref true in
   let c_next =
     C.map2
       (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t) ->
-        if shape_of a <> shape_of b then
-          err
-            "Rune.jit: the scan body must return a carry of the same shapes it \
-             receives (shape-stable carry); move this scan outside jit or keep \
-             the carry shapes constant";
+        if shape_of a <> shape_of b then stable := false;
         a)
       c_next c
   in
+  if not !stable then Effect.Deep.discontinue k Rune_scan.Not_staged
+  else
   let y_shape = shape_of y in
   let numel_y = numel y_shape in
   (* The body's output leaf nodes, in traversal order (the same order
