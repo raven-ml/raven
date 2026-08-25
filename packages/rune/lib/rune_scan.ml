@@ -73,6 +73,13 @@ type _ Effect.t +=
   | E_scan_bwd : scan_bwd -> scan_bwd_res Effect.t
   | E_scan_probe : bool Effect.t
 
+(* A stager may decline an [E_scan] it claimed when tracing the body reveals a
+   loop it cannot compile (a carry whose shape changes across steps): it
+   discontinues the scan with [Not_staged]. Every performer of [E_scan] must
+   treat [Not_staged] like [Effect.Unhandled] and fold eagerly — the probe is
+   an optimistic answer, not a promise. *)
+exception Not_staged
+
 (* The eager fold, over the packed representation. Runs the body with ordinary
    Nx operations, so an enclosing handler (or a nested one installed by a
    handler's own [E_scan] case) observes every step, exactly as the historical
@@ -135,9 +142,10 @@ let scan (type c) (module C : Nx.Ptree.S with type t = c)
       match res with
       | { r_carry = Packed_c (_, c'); r_y = Packed_t y } ->
           ((Obj.magic c' : c), (Obj.magic y : ('d, 'e) Nx.t)))
-  | exception Effect.Unhandled _ -> (
-      (* No staging handler (or none that claims the effect): the eager fold,
-         observed by whatever transformation handlers are installed. *)
+  | exception (Effect.Unhandled _ | Not_staged) -> (
+      (* No staging handler (none claims the effect, or the claimer declined):
+         the eager fold, observed by whatever transformation handlers are
+         installed. *)
       let res = eager req in
       match res with
       | { r_carry = Packed_c (_, c'); r_y = Packed_t y } ->
