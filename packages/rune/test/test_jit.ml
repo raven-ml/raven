@@ -232,6 +232,27 @@ let test_grad_through_scan_asymmetric_pair () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
+let test_scan_shape_unstable_carry_unrolls () =
+  (* The carry grows a slot per step, so no single compiled body can stand for
+     every iteration: the jit declines staging and the fold unrolls into the
+     trace, forward and under grad. *)
+  let loss xs =
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          (Nx.concatenate ~axis:0 [ c; Nx.reshape [| 1 |] x ], Nx.sum c))
+        ~init:(Nx.zeros f32 [| 1 |])
+        xs
+    in
+    Nx.add (Nx.sum c) (Nx.sum ys)
+  in
+  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
+  check_arr ~msg:"unstable forward" (to_arr (loss xs)) (Rune.jit' loss xs);
+  check_arr ~msg:"unstable grad"
+    (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
 let test_grad_through_scan_nested () =
   (* The body itself scans (over the elements of a vector x). *)
   let loss xs =
@@ -952,6 +973,8 @@ let tests =
           test_grad_through_scan_multi_leaf;
         test "grad through a scan with an asymmetric pair carry"
           test_grad_through_scan_asymmetric_pair;
+        test "shape-unstable carry unrolls instead of staging"
+          test_scan_shape_unstable_carry_unrolls;
         test "grad through nested scans" test_grad_through_scan_nested;
         test "grad through a scan with a captured weight"
           test_grad_through_scan_captured_weight;
