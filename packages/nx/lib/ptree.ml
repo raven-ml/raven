@@ -58,6 +58,26 @@ module Make (U : Uniform) = struct
     U.iter (fun (P x) -> f x) t
 end
 
+let typed (type a b) (module U : Uniform) :
+    (module S with type t = (a, b) Nx_effect.t U.t) =
+  (module struct
+    type t = (a, b) Nx_effect.t U.t
+
+    let map (f : 'p 'q. ('p, 'q) Nx_effect.t -> ('p, 'q) Nx_effect.t) (t : t) :
+        t =
+      U.map (fun x -> f x) t
+
+    let map2
+        (f :
+          'p 'q.
+          ('p, 'q) Nx_effect.t -> ('p, 'q) Nx_effect.t -> ('p, 'q) Nx_effect.t)
+        (a : t) (b : t) : t =
+      U.map2 (fun x y -> f x y) a b
+
+    let iter (f : 'p 'q. ('p, 'q) Nx_effect.t -> unit) (t : t) : unit =
+      U.iter (fun x -> f x) t
+  end)
+
 let unpack ?(at = "") (type a b) (dt : (a, b) Nx_core.Dtype.t) (p : tensor) :
     (a, b) Nx_effect.t =
   match p with
