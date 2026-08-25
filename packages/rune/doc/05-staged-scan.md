@@ -52,29 +52,45 @@ localized change rather than a redesign:
 
 ### 1. A staged `E_scan` effect with eager fallback
 
-`scan` probes for a jit tracer, then performs a new rune-defined effect;
-otherwise it keeps the eager loop. The probe and the scan effect live entirely
-in rune — Nx's effect type is extensible (`Nx_effect`), so **Nx needs no
-changes**.
+`scan` performs a new rune-defined effect and falls back to the eager loop
+when nothing claims it (`Effect.Unhandled`) or the claimer declines
+(`Not_staged`, see below). The effects live entirely in rune — Nx's effect
+type is extensible (`Nx_effect`), so **Nx needs no changes**. `E_scan`
+carries an existentially packed carry and a type-erased body re-runner (the
+same `Packed` GADT pattern jit already uses).
 
-<!-- $MDX skip -->
-```ocaml
-let scan (module C) ~f ~init xs =
-  if Rune.staged () then perform (E_scan { packed_carry; xs; body })
-  else eager_scan ~f ~init xs   (* today's loop, unchanged *)
+Three effects make up the protocol (`lib/rune_scan.ml`):
 
-let staged () =
-  match perform E_staged_probe with
-  | true -> true
-  | exception Effect.Unhandled -> false
-```
+- **`E_scan`** — the scan itself. The jit stages it; each transformation
+  handler (reverse, vmap, jvp, a pmap trace) claims it and runs the eager
+  fold under a nested copy of itself, so the steps get taped/batched exactly
+  as the unrolled loop always was. vmap's claim is unconditional by
+  necessity: the body may close over batched tensors that appear in neither
+  the carry nor the scanned input, so a scan can never be handed through
+  vmap to a stager above it.
+- **`E_scan_probe`** — "will the nearest `E_scan` claimer stage?". Every
+  handler with an `E_scan` case must answer it: the jit answers `true` on a
+  single-device trace and `false` under pmap; every transformation handler
+  answers `false`. Reverse-mode asks before re-performing `E_scan`, because
+  the staged-transpose tape entry it would record performs an `E_scan_bwd`
+  that only a staging jit can answer — on `false` it folds eagerly instead.
+  Unhandled means `false`.
+- **`Not_staged`** — a stager's decline. Shape instability is only visible
+  after tracing the body, so a jit that claimed `E_scan` may still
+  discontinue it with `Not_staged`; every performer of `E_scan` treats it
+  like `Effect.Unhandled` and folds eagerly. The probe is an optimistic
+  answer, not a promise.
 
-`E_scan` carries an existentially packed carry and a type-erased body re-runner
-(the same `Packed` GADT pattern jit already uses). `E_staged_probe` is
-answered `true` only by the jit handler, so `grad`/`vmap`/`jvp` without jit —
-and plain eager execution — keep today's semantics exactly: the fallback loop's
-body ops pass through whatever handlers are active and get taped/batched/pired
-as they do now.
+The resulting composition matrix, with a scan in `f`:
+
+| Composition | Behaviour |
+| --- | --- |
+| `jit f`, `jit (grad f)` | staged loop (reversed loop for the transpose) |
+| `grad f`, `vmap f`, `jvp f` (no jit) | eager fold, per-step taping/batching |
+| `jit (vmap f)`, `jit (vmap (grad f))` | unrolls into the trace |
+| `pmap f`, `pmap (grad f)` | unrolls into each shard's trace |
+| `grad (grad f)`, `hvp` | eager fold, per-step taping (no staged transpose-of-transpose) |
+| shape-unstable carry under `jit` | declines, unrolls into the trace |
 
 ### 2. Forward loop staging in `jit.ml`
 
@@ -135,13 +151,17 @@ into the enclosing tape for the tensors it tracks.
 Outside jit, none of this runs: the probe routes to the eager loop and the
 ordinary per-step taping.
 
-### 4. Forward-mode and vmap come for free
+### 4. Forward-mode and vmap fold eagerly
 
-`forward.ml` (jvp) and `vmap.ml` need **no `E_scan` cases**: their handlers
-intercept the body's Nx ops, so a staged loop body inherits jvp pairing and
-batching automatically — both passes are same-order as the forward loop, so the
-loop construct itself needs no transformation rule. (Reverse is different
-because its pass is a second, reversed loop.)
+`forward.ml` (jvp) and `vmap.ml` have no staged rule: each claims `E_scan`
+and runs the eager fold under a nested copy of itself, so the steps inherit
+tangent pairing and batching exactly as the unrolled loop did. The claims
+cannot fall through to a stager above: a vmap'd body may read batched
+closure captures the scan request never mentions, and a jvp'd body reads its
+tangent pairing from the handler's state — in both cases the step ops must
+flow through the transformation handler, which a staged body trace would
+bypass. (Reverse is different because its pass is a second, reversed loop —
+that is what stages, via the probe.)
 
 ### 5. The Tolk `Loop` construct
 
@@ -173,14 +193,17 @@ The Tolk work is the bulk of the effort but stays within one subsystem:
 - **Signatures.** The loop adds `(carry shapes, xs shape, n)` to the compiled
   signature; a new `n` retraces and recompiles (cheap — tracing is one body
   run, not `n`).
-- **Persistent cache.** v1 skips `Jit_cache` for loop-containing programs
-  (cache key is `None`); serializing hierarchical linears can come later.
-- **pmap.** v1 restricts loops to single-device traces; sharded scans are
+- **Persistent cache.** Loop-containing programs are never persisted: the
+  loop call's slot buffers keep process-local global slots, which
+  `Jit_cache.store`'s normalization guard refuses to export. Serializing
+  hierarchical linears can come later.
+- **pmap.** A multi-device trace answers the staging probe with `false` and
+  unrolls a directly performed scan into the trace; sharded staged loops are
   deferred.
-- **Shape stability.** The staged path requires the body to return a carry and
-  output of fixed shapes across iterations (the single prototype run can only
-  verify iteration 1). The staged path must check this and **fall back to
-  unrolling** on instability — graceful degradation to today's behaviour.
+- **Shape stability.** The staged path requires the body to return a carry of
+  the shapes it received (the single prototype run stands for every
+  iteration). Instability declines staging with `Not_staged` and the fold
+  **unrolls** — graceful degradation to the pre-staging behaviour.
 
 ## Scope and effort
 
