@@ -19,14 +19,14 @@ let tree () =
 
 let test_map_preserves_structure () =
   match P.map (fun t -> Nx.mul t t) (tree ()) with
-  | P.Dict [ ("w", P.Tensor (P.P w)); ("b", P.Tensor (P.P b)) ] ->
+  | P.Tree.Dict [ ("w", P.Tree.Leaf (P.P w)); ("b", P.Tree.Leaf (P.P b)) ] ->
       check_arr ~msg:"w" [| 1.0; 4.0; 9.0 |] (as_f32 w);
       check_arr ~msg:"b" [| 0.25 |] (as_f32 b)
   | _ -> fail "map changed the tree structure"
 
 let test_map2_combines_leafwise () =
   match P.map2 (fun a b -> Nx.add a b) (tree ()) (tree ()) with
-  | P.Dict [ ("w", P.Tensor (P.P w)); _ ] ->
+  | P.Tree.Dict [ ("w", P.Tree.Leaf (P.P w)); _ ] ->
       check_arr ~msg:"w" [| 2.0; -4.0; 6.0 |] (as_f32 w)
   | _ -> fail "map2 changed the tree structure"
 
@@ -53,14 +53,14 @@ let test_map2_dtype_mismatch () =
 let test_grad_over_ptree () =
   let f tree =
     match tree with
-    | P.Dict [ ("w", P.Tensor (P.P w)); ("b", P.Tensor (P.P b)) ] ->
+    | P.Tree.Dict [ ("w", P.Tree.Leaf (P.P w)); ("b", P.Tree.Leaf (P.P b)) ] ->
         let w = as_f32 w and b = as_f32 b in
         Nx.add (Nx.sum (Nx.mul w w)) (Nx.mul_s (Nx.sum b) 3.0)
     | _ -> assert false
   in
   let g = Rune.grad (module P) f (tree ()) in
   match g with
-  | P.Dict [ ("w", P.Tensor (P.P gw)); ("b", P.Tensor (P.P gb)) ] ->
+  | P.Tree.Dict [ ("w", P.Tree.Leaf (P.P gw)); ("b", P.Tree.Leaf (P.P gb)) ] ->
       check_arr ~msg:"dw" [| 2.0; -4.0; 6.0 |] (as_f32 gw);
       check_arr ~msg:"db" [| 3.0 |] (as_f32 gb)
   | _ -> fail "gradient tree does not match parameter tree structure"

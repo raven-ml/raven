@@ -22,19 +22,7 @@ module Ptree = struct
   include Rune.Ptree
 
   let names tree =
-    let join prefix seg = if prefix = "" then seg else prefix ^ "." ^ seg in
-    let rec go prefix acc = function
-      | Tensor _ -> prefix :: acc
-      | List ts ->
-          snd
-            (List.fold_left
-               (fun (i, acc) v ->
-                 (i + 1, go (join prefix (string_of_int i)) acc v))
-               (0, acc) ts)
-      | Dict kvs ->
-          List.fold_left (fun acc (k, v) -> go (join prefix k) acc v) acc kvs
-    in
-    List.rev (go "" [] tree)
+    List.rev (Tree.fold (fun path acc _ -> path :: acc) [] tree)
 end
 
 (* [leaf_names ~op (module P) ?prefix params] is the full entry name of each
