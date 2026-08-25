@@ -303,7 +303,18 @@ type state = {
          backward thunk, and is fresh per [Rune.scan] call, so it identifies the
          scan. Identity-keyed: a structural table compares the record's closure
          on a hash collision. *)
+  scan_closed : Rune_scan.packed_t list Tbl.t;
+      (* staged scans: the step record's identity -> the external inputs the
+         forward staging observed the body reading (tensors it closes over), for
+         the backward loop to accumulate their cotangents. Keyed as
+         [scan_stacks]. *)
+  mutable scan_collectors : tensor_hook list;
+      (* active observers of the tensors a scan body reads, innermost first;
+         consulted by [tolk_of] while a scan body is being traced *)
 }
+
+(* A polymorphic observer of the tensors flowing through [tolk_of]. *)
+and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
 
 let shape_of x = NV.shape (Nx_effect.view x)
 let numel shape = Array.fold_left ( * ) 1 shape
@@ -312,6 +323,15 @@ let numel shape = Array.fold_left ( * ) 1 shape
    graph; the reshape restores the logical shape. *)
 let buffer_tensor node shape =
   F.Movement.reshape (F.Tensor.of_uop node) (Array.to_list shape)
+
+(* Store [tt] into the flat buffer node [dst], flattening the value first. A
+   multi-d value stored as is leaves the scheduler with a flat iteration range
+   over the value's reshaped view, an index form the lowering cannot handle (the
+   view survives into a rank-mismatched INDEX). *)
+let store_flat dst n tt =
+  U.store ~dst
+    ~value:(U.contiguous ~src:(F.Tensor.uop (F.Movement.reshape tt [ n ])) ())
+    ()
 
 let make_node st dtolk n =
   let device =
@@ -343,6 +363,9 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
 (* A tensor entering the trace without a table entry is a closure capture. *)
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
+  (match st.scan_collectors with
+  | [] -> ()
+  | fs -> List.iter (fun h -> h.hook x) fs);
   match Tbl.find_opt st.table (Obj.repr x) with
   | Some t -> t
   | None ->
@@ -554,16 +577,16 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
 
 (* The scheduling pipeline allocates internal kernel buffers from a counter
    seeded at the scheduled graph's maximum slot. That counter is local to the
-   schedule: [make_node]'s global slots must never collide with a live
-   scheduled buffer (buffer identity is the slot), so advance [next_slot]
-   past every non-negative buffer slot the linear mentions. *)
+   schedule: [make_node]'s global slots must never collide with a live scheduled
+   buffer (buffer identity is the slot), so advance [next_slot] past every
+   non-negative buffer slot the linear mentions. *)
 let reserve_slots_of linear =
   U.toposort ~enter_calls:true linear
   |> List.iter (fun n ->
-         match U.as_buffer n with
-         | Some { buffer = { slot; _ }; _ } when slot >= 0 ->
-             if slot >= !next_slot then next_slot := slot + 1
-         | _ -> ())
+      match U.as_buffer n with
+      | Some { buffer = { slot; _ }; _ } when slot >= 0 ->
+          if slot >= !next_slot then next_slot := slot + 1
+      | _ -> ())
 
 (* Schedule the traced body sink as its own compiled linear. Captured unplanned,
    so the loop's slot buffers stay intact (the memory planner would rewrite them
@@ -1160,6 +1183,31 @@ and stage_scan : type r.
   let n = x_shape.(0) in
   let x_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
   let numel_x = numel x_shape in
+  (* Discover the body's external inputs — the differentiable tensors it closes
+     over: everything the body runs through [tolk_of] that predates its trace is
+     a free input of the loop. The backward loop accumulates their cotangents,
+     so record them against the scan's identity. The snapshot is taken before
+     the slot placeholders exist, and tensors first touched by the body itself
+     (constants it captures) are absent from it — they can never be tracked by
+     an enclosing grad, whose tape only sees traced tensors. *)
+  let before = Tbl.create 16 in
+  Tbl.iter (fun k _ -> Tbl.replace before k ()) st.table;
+  let closed = ref [] in
+  let collect =
+    {
+      hook =
+        (fun (type a b) (t : (a, b) Nx_effect.t) ->
+          let k = Obj.repr t in
+          if
+            ND.is_float (Nx_effect.dtype t)
+            && Tbl.mem before k
+            && not
+                 (List.exists
+                    (fun (Rune_scan.Packed_t g) -> Obj.repr g == k)
+                    !closed)
+          then closed := Rune_scan.Packed_t t :: !closed);
+    }
+  in
   (* Per-leaf carry slots, paired by identity: the slot placeholder is bound to
      the leaf's input buffer node inside the map callback. The pairing is
      recovered by traversing the slot structure with [C.iter] — a [C.map]
@@ -1192,19 +1240,24 @@ and stage_scan : type r.
   let x_in = make_node st (tolk_dtype xdt) numel_x in
   Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
   Tbl.replace st.traced (Obj.repr slot_x) ();
-  (* Trace the body once under a nested copy of this tracer. *)
-  let c_next, y =
-    match
-      Effect.Deep.match_with
-        (fun () ->
-          step.run
-            (Rune_scan.Packed_c (cmod, slot_c))
-            (Rune_scan.Packed_t slot_x))
-        () (handler st)
-    with
-    | Rune_scan.Packed_c (_, c_next), Rune_scan.Packed_t y ->
-        (Obj.magic c_next, Obj.magic y)
+  (* Trace the body once under a nested copy of this tracer, collecting its
+     external inputs. *)
+  let trace_body () =
+    Effect.Deep.match_with
+      (fun () ->
+        step.run (Rune_scan.Packed_c (cmod, slot_c)) (Rune_scan.Packed_t slot_x))
+      () (handler st)
   in
+  st.scan_collectors <- collect :: st.scan_collectors;
+  let c_next, y =
+    Fun.protect
+      ~finally:(fun () -> st.scan_collectors <- List.tl st.scan_collectors)
+      (fun () ->
+        match trace_body () with
+        | Rune_scan.Packed_c (_, c_next), Rune_scan.Packed_t y ->
+            (Obj.magic c_next, Obj.magic y))
+  in
+  Tbl.replace st.scan_closed (Obj.repr step) !closed;
   (* Shape-stable check, leaf by leaf (and a stable output shape). *)
   let c_next =
     C.map2
@@ -1243,24 +1296,11 @@ and stage_scan : type r.
   let body_sink =
     U.sink
       (List.map
-         (fun ((_, _, _, c_out), node) ->
-           U.after ~src:c_out
-             ~deps:
-               [
-                 U.store ~dst:c_out
-                   ~value:(U.contiguous ~src:(F.Tensor.uop node) ())
-                   ();
-               ])
+         (fun ((_, c_shape, _, c_out), node) ->
+           U.after ~src:c_out ~deps:[ store_flat c_out (numel c_shape) node ])
          infos
-      @ [
-          U.after ~src:y_out
-            ~deps:
-              [
-                U.store ~dst:y_out
-                  ~value:(U.contiguous ~src:(F.Tensor.uop (tolk_of st y)) ())
-                  ();
-              ];
-        ])
+      @ [ U.after ~src:y_out ~deps:[ store_flat y_out numel_y (tolk_of st y) ] ]
+      )
   in
   let body_linear = schedule_body_linear st body_sink in
   (* The loop's outer buffers and the per-leaf carry stacks, registered by the
@@ -1419,14 +1459,22 @@ and stage_scan : type r.
    recover its residuals — and emit a reversed loop carrying the cotangent
    double-buffers. Reads the carry of step i from the forward loop's stack.
 
+   The body's external inputs (the differentiable tensors it closes over,
+   observed by the forward staging) are tracked on the private tape, so the
+   captured pullback also emits their per-step cotangent contributions; the loop
+   totals each in a zero-seeded double-buffered accumulator — unlike the carry,
+   an external input's cotangent is a sum over the steps, not a thread through
+   them.
+
    Backward loop argument layout: 0 = xs, then per leaf the carry stack, then
    the stacked output cotangents (dys), then per leaf dc0, per leaf dc1, the
    stacked input cotangents (dxs), per leaf the final dc output, and per leaf
-   the incoming (final-carry) cotangent. *)
+   the incoming (final-carry) cotangent; then per external input a zero-seed
+   buffer, the two accumulator buffers, and the final total buffer. *)
 and stage_scan_bwd : type r.
     state ->
     Rune_scan.scan_bwd ->
-    (Rune_scan.scan_res, r) Effect.Deep.continuation ->
+    (Rune_scan.scan_bwd_res, r) Effect.Deep.continuation ->
     r =
  fun st bwd k ->
   let Rune_scan.
@@ -1503,15 +1551,24 @@ and stage_scan_bwd : type r.
   let dy_in = make_node st (tolk_dtype (Nx_effect.dtype dy)) numel_y in
   Tbl.replace st.table (Obj.repr slot_dy) (buffer_tensor dy_in y_shape);
   Tbl.replace st.traced (Obj.repr slot_dy) ();
+  (* The body's external inputs, discovered by the forward staging of this
+     scan. *)
+  let closed =
+    match Tbl.find_opt st.scan_closed (Obj.repr step) with
+    | Some closed -> closed
+    | None -> assert false
+  in
   (* Capture the pullback: run the body once under a private reverse tape, then
      replay the tape against the placeholder cotangents — every op lands in the
      trace, forming the backward body (the forward step's ops are recomputed
-     inside it to recover residuals). *)
+     inside it to recover residuals). The external inputs are tracked too, so
+     the pullback emits their per-step contributions. *)
   let tape = Tape.create () in
   C.iter
     (fun (type a b) (leaf : (a, b) Nx_effect.t) -> Tape.track tape leaf)
     slot_c;
   Tape.track tape slot_x;
+  List.iter (fun (Rune_scan.Packed_t g) -> Tape.track tape g) closed;
   let c_next, y =
     match
       Effect.Deep.match_with
@@ -1537,7 +1594,7 @@ and stage_scan_bwd : type r.
         a)
       c_next c0
   in
-  let dc_i, dx_i =
+  let dc_i, dx_i, dgs =
     Effect.Deep.match_with
       (fun () ->
         ignore
@@ -1553,7 +1610,11 @@ and stage_scan_bwd : type r.
             (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
               Tape.cotangent tape leaf)
             slot_c,
-          Tape.cotangent tape slot_x ))
+          Tape.cotangent tape slot_x,
+          List.map
+            (fun (Rune_scan.Packed_t g) ->
+              Rune_scan.Closed_ctan (g, Tape.cotangent tape g))
+            closed ))
       () (handler st)
   in
   (* The backward body: per-leaf carry cotangent buffers plus the stacked input
@@ -1571,27 +1632,45 @@ and stage_scan_bwd : type r.
       slot_infos dc_i_nodes
   in
   let dx_out = make_node st (tolk_dtype xdt) numel_x in
+  (* Per external input: the body's accumulator in/out nodes and the step's
+     cotangent contribution. The body writes [acc + dg_i]; the accumulation is
+     elementwise, so it runs on the flat buffers directly. The tensor itself
+     stays packed — unpacked, its type would escape its scope in the tuple. *)
+  let g_outs =
+    List.map
+      (fun (Rune_scan.Closed_ctan (g, dg)) ->
+        let g_shape = shape_of g in
+        let gdt = tolk_dtype (Nx_effect.dtype g) in
+        let gn = numel g_shape in
+        ( Rune_scan.Packed_t g,
+          g_shape,
+          gdt,
+          gn,
+          make_node st gdt gn,
+          make_node st gdt gn,
+          tolk_of st dg ))
+      dgs
+  in
   let body_sink =
     U.sink
       (List.map
-         (fun (_, _, dc_out, node) ->
-           U.after ~src:dc_out
-             ~deps:
-               [
-                 U.store ~dst:dc_out
-                   ~value:(U.contiguous ~src:(F.Tensor.uop node) ())
-                   ();
-               ])
+         (fun (_, c_shape, dc_out, node) ->
+           U.after ~src:dc_out ~deps:[ store_flat dc_out (numel c_shape) node ])
          dc_outs
       @ [
           U.after ~src:dx_out
-            ~deps:
-              [
-                U.store ~dst:dx_out
-                  ~value:(U.contiguous ~src:(F.Tensor.uop (tolk_of st dx_i)) ())
-                  ();
-              ];
-        ])
+            ~deps:[ store_flat dx_out numel_x (tolk_of st dx_i) ];
+        ]
+      @ List.map
+          (fun (_, _, _, gn, g_in, g_out, dg_tt) ->
+            U.after ~src:g_out
+              ~deps:
+                [
+                  store_flat g_out gn
+                    (F.Elementwise.add (F.Tensor.of_uop g_in)
+                       (F.Movement.reshape dg_tt [ gn ]));
+                ])
+          g_outs)
   in
   let body_linear = schedule_body_linear st body_sink in
   (* The forward loop's carry stacks, by identity of the scan it staged. *)
@@ -1608,6 +1687,11 @@ and stage_scan_bwd : type r.
   let pos_dxs = 2 + (3 * n_leaves) in
   let pos_final i = 3 + (3 * n_leaves) + i in
   let pos_src i = 3 + (4 * n_leaves) + i in
+  (* Per external input: a zero seed, the accumulator pair, and the total. *)
+  let pos_gzero j = 3 + (5 * n_leaves) + (4 * j) in
+  let pos_gacc0 j = pos_gzero j + 1 in
+  let pos_gacc1 j = pos_gzero j + 2 in
+  let pos_gfinal j = pos_gzero j + 3 in
   let xs_node = realize_arg st (tolk_of st xs0) in
   let dys_node = realize_arg st (tolk_of st dy) in
   let leaf_bufs =
@@ -1625,6 +1709,18 @@ and stage_scan_bwd : type r.
     dc;
   let dc_src_nodes = List.rev !dc_src_nodes in
   let dc_src_args = List.map (realize_arg st) dc_src_nodes in
+  (* The loop's per-external-input buffers: a zero seed (realized once, before
+     the loop), the accumulator double buffer, and the buffer holding the total
+     after the loop. *)
+  let g_bufs =
+    List.map
+      (fun (_, _, gdt, gn, _, _, _) ->
+        ( realize_arg st (F.Creation.zeros ~dtype:gdt [ gn ]),
+          make_node st gdt gn,
+          make_node st gdt gn,
+          make_node st gdt gn ))
+      g_outs
+  in
   let args_nodes =
     [ xs_node ] @ stack_bufs @ [ dys_node ]
     @ List.map (fun (dc0, _, _) -> dc0) leaf_bufs
@@ -1632,6 +1728,7 @@ and stage_scan_bwd : type r.
     @ [ dxs_buf ]
     @ List.map (fun (_, _, final) -> final) leaf_bufs
     @ dc_src_args
+    @ List.concat_map (fun (z, a0, a1, fin) -> [ z; a0; a1; fin ]) g_bufs
   in
   let in_slots =
     List.mapi
@@ -1672,6 +1769,16 @@ and stage_scan_bwd : type r.
           ls_stride = numel_y;
         };
       ]
+    @ List.mapi
+        (fun j (_, _, _, gn, g_in, _, _) ->
+          {
+            ls_node = g_in;
+            ls_pos0 = pos_gacc0 j;
+            ls_pos1 = pos_gacc1 j;
+            ls_size = gn;
+            ls_stride = 0;
+          })
+        g_outs
   in
   let out_slots =
     List.mapi
@@ -1693,6 +1800,16 @@ and stage_scan_bwd : type r.
           ls_stride = numel_x;
         };
       ]
+    @ List.mapi
+        (fun j (_, _, _, gn, _, g_out, _) ->
+          {
+            ls_node = g_out;
+            ls_pos0 = pos_gacc0 j;
+            ls_pos1 = pos_gacc1 j;
+            ls_size = gn;
+            ls_stride = 0;
+          })
+        g_outs
   in
   let copies =
     List.mapi
@@ -1712,6 +1829,25 @@ and stage_scan_bwd : type r.
           };
         ])
       dc_outs
+    @ List.mapi
+        (fun j (_, _, _, gn, _, _, _) ->
+          [
+            (* The accumulator starts at zero (its even position). *)
+            {
+              lc_src0 = pos_gzero j;
+              lc_src1 = -1;
+              lc_dst = pos_gacc0 j;
+              lc_size = gn;
+            };
+            (* ... and the last-written position holds the total. *)
+            {
+              lc_src0 = pos_gacc0 j;
+              lc_src1 = pos_gacc1 j;
+              lc_dst = pos_gfinal j;
+              lc_size = gn;
+            };
+          ])
+        g_outs
     |> List.concat
   in
   let loop_call =
@@ -1747,10 +1883,24 @@ and stage_scan_bwd : type r.
   let dxs_ph = Nx_effect.buffer st.st_ctx xdt dxs_shape in
   Tbl.replace st.table (Obj.repr dxs_ph) (buffer_tensor after_dxs dxs_shape);
   Tbl.replace st.traced (Obj.repr dxs_ph) ();
+  (* Each external input's total cotangent, as outputs of the loop. *)
+  let br_closed =
+    List.map2
+      (fun (Rune_scan.Packed_t g, g_shape, _, _, _, _, _) (_, _, _, final) ->
+        let after =
+          U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ]
+        in
+        let ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype g) g_shape in
+        Tbl.replace st.table (Obj.repr ph) (buffer_tensor after g_shape);
+        Tbl.replace st.traced (Obj.repr ph) ();
+        Rune_scan.Closed_ctan (g, ph))
+      g_outs g_bufs
+  in
   Effect.Deep.continue k
     {
-      Rune_scan.r_carry = Rune_scan.Packed_c (cmod, dc0_ph);
-      r_y = Rune_scan.Packed_t dxs_ph;
+      Rune_scan.br_carry = Rune_scan.Packed_c (cmod, dc0_ph);
+      br_y = Rune_scan.Packed_t dxs_ph;
+      br_closed;
     }
 
 (* Host transfers *)
@@ -2048,6 +2198,8 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       writebacks = [];
       axis_index = None;
       scan_stacks = Tbl.create 4;
+      scan_closed = Tbl.create 4;
+      scan_collectors = [];
     }
   in
   (* One placeholder per distinct leaf; one input record per leaf visit, in
@@ -2243,7 +2395,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
   let cached = Option.bind cache_key (fun key -> Jit_cache.load ~key call) in
   let linear, var_vals =
     match cached with
-    | Some (linear, _ as hit) ->
+    | Some ((linear, _) as hit) ->
         reserve_slots_of linear;
         hit
     | None ->

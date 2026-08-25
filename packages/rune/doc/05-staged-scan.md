@@ -124,6 +124,16 @@ The forward loop must carry a **carry stack** (it appends `carry_i` at slot
 is not recoverable from `carry_{i+1}` in general. This is O(n · |carry|)
 memory — the same price JAX pays for `lax.scan` under `grad`.
 
+**External inputs** (differentiable tensors the body closes over, e.g. RNN
+weights) transpose differently from the carry: each step contributes a
+per-step cotangent and the results *sum* over steps rather than threading
+through them. The forward staging discovers them (a `tolk_of` hook records the
+pre-existing traced tensors the body reads); the backward capture tracks them
+on the private tape so the pullback emits their contributions, and the
+backward loop totals each in a zero-seeded accumulator carried in a double
+buffer. The totals travel back in the `E_scan_bwd` result and are accumulated
+into the enclosing tape for the tensors it tracks.
+
 Outside jit, none of this runs: the probe routes to the eager loop and the
 ordinary per-step taping.
 

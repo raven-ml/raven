@@ -60,7 +60,8 @@ let err_no_rule op =
 
 (* Handler *)
 
-let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler = fun tape ->
+let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
+ fun tape ->
   let open Effect.Deep in
   let tracked x = Tape.tracked tape x in
   let track x = Tape.track tape x in
@@ -143,25 +144,33 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler = fun tape ->
                  be used inside grad/value_and_grad — use scatter instead")
       (* Staged scan: re-perform the effect so an enclosing jit can stage the
          forward loop, then record one tape entry that, at backward time,
-         performs the transposed scan. Without a staging jit the eager fold
-         runs under a nested copy of this handler, exactly as before. *)
+         performs the transposed scan. Without a staging jit the eager fold runs
+         under a nested copy of this handler, exactly as before. *)
       | Rune_scan.E_scan req ->
           Some
             (fun k ->
               match Effect.perform (Rune_scan.E_scan req) with
               | res ->
-                  let (Rune_scan.{ r_carry = Rune_scan.Packed_c (_, c');
-                                  r_y = Rune_scan.Packed_t ys }) = res in
-                  let (Rune_scan.{ req_carry = Rune_scan.Packed_c (cmod, c0);
-                                  req_x = Rune_scan.Packed_t xs0;
-                                  req_step = step }) = req in
+                  let Rune_scan.
+                        {
+                          r_carry = Rune_scan.Packed_c (_, c');
+                          r_y = Rune_scan.Packed_t ys;
+                        } =
+                    res
+                  in
+                  let Rune_scan.
+                        {
+                          req_carry = Rune_scan.Packed_c (cmod, c0);
+                          req_x = Rune_scan.Packed_t xs0;
+                          req_step = step;
+                        } =
+                    req
+                  in
                   let module C = (val cmod) in
                   (* Both packs bind this module's [t]. *)
                   let c' = Obj.magic c' in
                   track ys;
-                  C.iter
-                    (fun (type a b) (leaf : (a, b) t) -> track leaf)
-                    c';
+                  C.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) c';
                   Tape.record tape (fun () ->
                       let dy = Tape.cotangent tape ys in
                       let dc =
@@ -185,18 +194,32 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler = fun tape ->
                           }
                       in
                       match Effect.perform (Rune_scan.E_scan_bwd bwd) with
-                      | Rune_scan.{ r_carry = Rune_scan.Packed_c (_, dc0);
-                                    r_y = Rune_scan.Packed_t dxs } ->
+                      | Rune_scan.
+                          {
+                            br_carry = Rune_scan.Packed_c (_, dc0);
+                            br_y = Rune_scan.Packed_t dxs;
+                            br_closed;
+                          } ->
                           let dc0 = Obj.magic dc0 in
                           let dxs = Obj.magic dxs in
                           ignore
                             (C.map2
-                               (fun (type a b) (a : (a, b) t)
-                                   (b : (a, b) t) ->
+                               (fun (type a b) (a : (a, b) t) (b : (a, b) t) ->
                                  Tape.accumulate tape a b;
                                  b)
                                c0 dc0);
-                          Tape.accumulate tape xs0 dxs);
+                          Tape.accumulate tape xs0 dxs;
+                          (* External inputs of the loop (tensors the body
+                             closes over): accumulate the cotangents the
+                             backward loop totalled for them. Only a tensor
+                             tracked here receives a contribution — loop-slot
+                             placeholders and compile-time constants never
+                             are. *)
+                          List.iter
+                            (fun (Rune_scan.Closed_ctan (g, dg)) ->
+                              if Tape.tracked tape g then
+                                Tape.accumulate tape g dg)
+                            br_closed);
                   continue k res
               | exception Effect.Unhandled _ ->
                   (* No staging jit: the eager fold, observed by a nested copy
