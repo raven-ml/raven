@@ -27,7 +27,11 @@ let d_h2 = 128
 let d_out = 10
 let lr = 1e-3
 
-type mlp = { l1 : Kaun.Linear.t; l2 : Kaun.Linear.t; l3 : Kaun.Linear.t }
+type mlp = {
+  l1 : Nx.float32_t Kaun.Linear.t;
+  l2 : Nx.float32_t Kaun.Linear.t;
+  l3 : Nx.float32_t Kaun.Linear.t;
+}
 
 module Mlp = struct
   type t = mlp
@@ -65,7 +69,11 @@ let cnn_batch = 32
 let cnn_img = 28
 let cnn_feats = 16 * 5 * 5
 
-type cnn = { c1 : Kaun.Conv.t; c2 : Kaun.Conv.t; head : Kaun.Linear.t }
+type cnn = {
+  c1 : Nx.float32_t Kaun.Conv.t;
+  c2 : Nx.float32_t Kaun.Conv.t;
+  head : Nx.float32_t Kaun.Linear.t;
+}
 
 module Cnn = struct
   type t = cnn
@@ -184,6 +192,7 @@ let () =
         [
           Thumper.bench "linear fwd" (fun () -> Kaun.Linear.apply lin lx);
           Thumper.bench "linear fwd+bwd" (fun () ->
-              Rune.value_and_grad (module Kaun.Linear) lin_loss lin);
+              Rune.value_and_grad (Nx.Ptree.typed (module Kaun.Linear)) lin_loss
+                lin);
         ];
     ]

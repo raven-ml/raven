@@ -60,13 +60,14 @@ let load_tokenizer () =
    caches carry the same dtype as the weights, so [--dtype float16] decodes with
    half precision weights, activations and caches alike. *)
 
-let generate_jit (type b) ~device cfg (params : b Gpt2.params)
+let generate_jit (type b) ~device cfg
+    (params : (float, b) Nx.t Gpt2.params)
     (dt : (float, b) Nx.dtype) ~max_tokens prompt =
   let module Step = struct
     type t = {
       token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token *)
       pos : Nx.int32_t; (* [| 1 |], the position of [token]'s first entry *)
-      caches : b Gpt2.cache;
+      caches : (float, b) Nx.t Gpt2.cache;
     }
 
     let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; pos; caches } =
@@ -161,14 +162,16 @@ let () =
   let cfg, params = load_model () in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
-  let run : type b. (float, b) Nx.dtype -> b Gpt2.params -> int32 array =
+  let run :
+      type b. (float, b) Nx.dtype -> (float, b) Nx.t Gpt2.params -> int32 array
+      =
    fun dt params ->
     let bytes = ref 0 in
     let count_t t = bytes := !bytes + Nx.nbytes t in
     Kaun.Embedding.iter count_t params.wte;
     Kaun.Embedding.iter count_t params.wpe;
     List.iter
-      (fun (b : b Gpt2.block) ->
+      (fun (b : (float, b) Nx.t Gpt2.block) ->
         Kaun.Layer_norm.iter count_t b.ln1;
         Kaun.Attention.iter count_t b.attn;
         Kaun.Layer_norm.iter count_t b.ln2;
@@ -187,8 +190,8 @@ let () =
   let toks =
     match !dtype with
     | "float32" -> run Nx.float32 params
-    | "float16" -> run Nx.float16 (Gpt2.astype Nx.float16 params)
-    | "bfloat16" -> run Nx.bfloat16 (Gpt2.astype Nx.bfloat16 params)
+    | "float16" -> run Nx.float16 (Gpt2.Params.map (Nx.cast Nx.float16) params)
+    | "bfloat16" -> run Nx.bfloat16 (Gpt2.Params.map (Nx.cast Nx.bfloat16) params)
     | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
   in
   let dt = Unix.gettimeofday () -. t0 in

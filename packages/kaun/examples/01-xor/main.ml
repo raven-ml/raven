@@ -9,20 +9,26 @@
 open Kaun
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+  let map f { l1; l2 } =
+    let l1 = Linear.map f l1 in
+    let l2 = Linear.map f l2 in
+    { l1; l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+  let map2 f p q =
+    let l1 = Linear.map2 f p.l1 q.l1 in
+    let l2 = Linear.map2 f p.l2 q.l2 in
+    { l1; l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Nx.tanh (Linear.apply p.l1 x))
 end
+
+let mlp = Nx.Ptree.typed (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -43,15 +49,15 @@ let () =
   (* Training step: value_and_grad + one Adam update *)
   let loss p = Loss.sigmoid_bce (Mlp.apply p x) y in
   let step (params, ostate) =
-    let l, grads = Rune.value_and_grad (module Mlp) loss params in
+    let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step (module Mlp) ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step mlp ~lr:0.05 ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
 
   (* Fit *)
-  let state = ref (params, Vega.adam_init (module Mlp) params) in
+  let state = ref (params, Vega.adam_init mlp params) in
   for i = 1 to 500 do
     let s, l = step !state in
     state := s;

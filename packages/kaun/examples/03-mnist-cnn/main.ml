@@ -20,30 +20,41 @@ let lr = 3e-3
 (* conv(1->8) -> relu -> pool -> conv(8->16) -> relu -> pool -> dropout ->
    linear(400->10). Images are NCHW [n; 1; 28; 28]. *)
 module Cnn = struct
-  type t = { c1 : Conv.t; c2 : Conv.t; fc : Linear.t }
+  type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; fc : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { c1; c2; fc } =
-    { c1 = Conv.map f c1; c2 = Conv.map f c2; fc = Linear.map f fc }
+  let map f { c1; c2; fc } =
+    let c1 = Conv.map f c1 in
+    let c2 = Conv.map f c2 in
+    let fc = Linear.map f fc in
+    { c1; c2; fc }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      c1 = Conv.map2 f p.c1 q.c1;
-      c2 = Conv.map2 f p.c2 q.c2;
-      fc = Linear.map2 f p.fc q.fc;
-    }
+  let map2 f p q =
+    let c1 = Conv.map2 f p.c1 q.c1 in
+    let c2 = Conv.map2 f p.c2 q.c2 in
+    let fc = Linear.map2 f p.fc q.fc in
+    { c1; c2; fc }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { c1; c2; fc } =
+  let iter f { c1; c2; fc } =
     Conv.iter f c1;
     Conv.iter f c2;
     Linear.iter f fc
 
-  let names { c1; c2; fc } =
-    List.concat
-      [
-        List.map (( ^ ) "c1.") (Conv.names c1);
-        List.map (( ^ ) "c2.") (Conv.names c2);
-        List.map (( ^ ) "fc.") (Linear.names fc);
-      ]
+  let fold f acc { c1; c2; fc } =
+    let acc = Conv.fold (fun p -> f ("c1." ^ p)) acc c1 in
+    let acc = Conv.fold (fun p -> f ("c2." ^ p)) acc c2 in
+    Linear.fold (fun p -> f ("fc." ^ p)) acc fc
+
+  let fold2 f acc p q =
+    let acc = Conv.fold2 (fun s -> f ("c1." ^ s)) acc p.c1 q.c1 in
+    let acc = Conv.fold2 (fun s -> f ("c2." ^ s)) acc p.c2 q.c2 in
+    Linear.fold2 (fun s -> f ("fc." ^ s)) acc p.fc q.fc
+
+  let names p =
+    {
+      c1 = Conv.map (( ^ ) "c1.") (Conv.names p.c1);
+      c2 = Conv.map (( ^ ) "c2.") (Conv.names p.c2);
+      fc = Linear.map (( ^ ) "fc.") (Linear.names p.fc);
+    }
 
   let init () =
     {
@@ -63,10 +74,12 @@ module Cnn = struct
     |> Linear.apply p.fc
 end
 
+let cnn = Nx.Ptree.typed (module Cnn)
+
 let accuracy params (x, y) =
   Metric.accuracy (Cnn.apply params ~training:false x) y
 
-let save_training_state path (params, (ostate : Cnn.t Vega.adam_state)) =
+let save_training_state path (params, (ostate : Nx.float32_t Cnn.t Vega.adam_state)) =
   Checkpoint.save path
     (Checkpoint.concat
        [
@@ -79,7 +92,7 @@ let save_training_state path (params, (ostate : Cnn.t Vega.adam_state)) =
 let load_training_state path =
   let ckpt = Checkpoint.load path in
   let like = Cnn.init () in
-  let like_ostate = Vega.adamw_init (module Cnn) like in
+  let like_ostate = Vega.adamw_init cnn like in
   let params = Checkpoint.to_params (module Cnn) ~prefix:"model" ~like ckpt in
   let ostate =
     {
@@ -115,9 +128,9 @@ let () =
         let loss p =
           Loss.softmax_cross_entropy_sparse (Cnn.apply p ~training:true x) y
         in
-        let l, grads = Rune.value_and_grad (module Cnn) loss params in
+        let l, grads = Rune.value_and_grad cnn loss params in
         let params, ostate =
-          Vega.adamw_step (module Cnn) ~lr ostate ~params ~grads
+          Vega.adamw_step cnn ~lr ostate ~params ~grads
         in
         ((params, ostate), Nx.item [] l)
       in
@@ -127,7 +140,7 @@ let () =
       let batches =
         Data.batches2 ~shuffle:true ~batch_size (train_x, train_y)
       in
-      let state = ref (params, Vega.adamw_init (module Cnn) params) in
+      let state = ref (params, Vega.adamw_init cnn params) in
       for epoch = 1 to epochs do
         let losses = ref 0.0 and n = ref 0 in
         batches
