@@ -53,6 +53,12 @@ thread.
 
 ### Tolk (new)
 
+- Test same-call WAR dependencies by node identity instead of structural
+  equality in `fix_war_deps`. `Uop.t` nodes are hash-consed, so the two checks
+  give the same verdict, but polymorphic equality on the `call_of` options
+  descends into the full shared payload DAGs (exponentially on graphs with
+  heavy sharing) where `==` is O(1).
+
 - Reduce cold `BEAM`-search compile time by removing two sources of redundant
   CPU work: the device dispatch handle (driver module load, PTX → SASS JIT) is
   loaded once per compiled binary and reused across timed candidates, and
