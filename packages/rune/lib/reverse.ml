@@ -155,13 +155,31 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
               invalid_arg
                 "in-place mutation (set_item, set_slice, blit, assign) cannot \
                  be used inside grad/value_and_grad — use scatter instead")
-      (* Staged scan: re-perform the effect so an enclosing jit can stage the
-         forward loop, then record one tape entry that, at backward time,
-         performs the transposed scan. Without a staging jit the eager fold runs
-         under a nested copy of this handler, exactly as before. *)
+      (* Staged scan. The tape entry recorded for a staged scan performs
+         [E_scan_bwd], which only a staging jit answers — so take the staged
+         path only when the probe says the nearest [E_scan] claimer is one.
+         Re-performing blindly would let another transformation handler (vmap,
+         jvp, an outer grad) claim [E_scan]: the steps would run beyond this
+         tape's reach and the recorded [E_scan_bwd] would go unhandled at
+         backward time. On [false] the eager fold runs under a nested copy of
+         this handler, taping every step as the unrolled scan always did. *)
+      | Rune_scan.E_scan_probe -> Some (fun k -> continue k false)
       | Rune_scan.E_scan req ->
           Some
             (fun k ->
+              let stages =
+                match Effect.perform Rune_scan.E_scan_probe with
+                | stages -> stages
+                | exception Effect.Unhandled _ -> false
+              in
+              if not stages then
+                let res : Rune_scan.scan_res =
+                  Effect.Deep.match_with
+                    (fun () -> Rune_scan.eager req)
+                    () (handler tape)
+                in
+                continue k res
+              else
               match Effect.perform (Rune_scan.E_scan req) with
               | res ->
                   let Rune_scan.
@@ -233,15 +251,6 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                               if Tape.tracked tape g then
                                 Tape.accumulate tape g dg)
                             br_closed);
-                  continue k res
-              | exception Effect.Unhandled _ ->
-                  (* No staging jit: the eager fold, observed by a nested copy
-                     of this handler. *)
-                  let res : Rune_scan.scan_res =
-                    Effect.Deep.match_with
-                      (fun () -> Rune_scan.eager req)
-                      () (handler tape)
-                  in
                   continue k res)
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)

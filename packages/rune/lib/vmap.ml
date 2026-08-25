@@ -456,6 +456,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     (* Operations on constants, and effects from other libraries, fall through.
        A new Nx tensor operation must be added to this match: an unmatched
        batched operand would silently produce wrong shapes. *)
+    (* The scan claim is unconditional: the body may close over batched
+       tensors that appear in neither the carry nor the scanned input, so a
+       scan can never be handed to a stager above this handler — and the probe
+       must say so. *)
+    | Rune_scan.E_scan_probe -> Some (fun k -> continue k false)
     | Rune_scan.E_scan req ->
         Some
           (fun k ->

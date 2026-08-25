@@ -60,9 +60,18 @@ type scan_bwd_res = {
   br_closed : closed_ctan list;
 }
 
+(* [E_scan_probe] asks: will the nearest [E_scan] claimer stage the scan as a
+   compiled loop? Every handler with an [E_scan] case must also answer the
+   probe: a staging jit answers [true]; a transformation handler answers
+   [false], because its own [E_scan] case intercepts the scan before any stager
+   above it could. Reverse-mode asks before re-performing [E_scan] — it records
+   a staged-transpose tape entry (an [E_scan_bwd] only a staging jit can
+   answer) exactly when the probe says [true], and otherwise folds eagerly so
+   every step is taped. Unhandled means [false]. *)
 type _ Effect.t +=
   | E_scan : scan_req -> scan_res Effect.t
   | E_scan_bwd : scan_bwd -> scan_bwd_res Effect.t
+  | E_scan_probe : bool Effect.t
 
 (* The eager fold, over the packed representation. Runs the body with ordinary
    Nx operations, so an enclosing handler (or a nested one installed by a
