@@ -204,6 +204,34 @@ let test_grad_through_scan_multi_leaf () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
+let test_grad_through_scan_asymmetric_pair () =
+  (* Same-shaped leaves entering the loss with different weights: pairing a
+     final-carry buffer (or an init-carry cotangent) with the wrong leaf
+     changes the result instead of cancelling out. *)
+  let loss xs =
+    let p, ys =
+      Rune.scan
+        (module Pair)
+        ~f:(fun p x ->
+          let u = Nx.tanh (Nx.add p.u x)
+          and v = Nx.mul p.v (Nx.add_s x 0.5) in
+          ({ u; v }, Nx.add (Nx.mul_s u 2.0) v))
+        ~init:{ u = Nx.scalar f32 0.1; v = Nx.scalar f32 1.0 }
+        xs
+    in
+    Nx.add
+      (Nx.add
+         (Nx.mul_s (Nx.reshape [||] p.u) 3.0)
+         (Nx.reshape [||] p.v))
+      (Nx.sum ys)
+  in
+  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
+  check_arr ~msg:"asymmetric pair forward" (to_arr (loss xs))
+    (Rune.jit' loss xs);
+  check_arr ~msg:"asymmetric pair grad"
+    (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
 let test_grad_through_scan_nested () =
   (* The body itself scans (over the elements of a vector x). *)
   let loss xs =
@@ -922,6 +950,8 @@ let tests =
           test_grad_through_scan_carry_only;
         test "grad through a scan with a multi-leaf carry"
           test_grad_through_scan_multi_leaf;
+        test "grad through a scan with an asymmetric pair carry"
+          test_grad_through_scan_asymmetric_pair;
         test "grad through nested scans" test_grad_through_scan_nested;
         test "grad through a scan with a captured weight"
           test_grad_through_scan_captured_weight;

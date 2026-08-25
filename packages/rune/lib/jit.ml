@@ -1432,19 +1432,31 @@ and stage_scan : type r.
   let after_ys =
     U.after ~src:ys_buf ~deps:[ U.store ~dst:ys_buf ~value:loop_call () ]
   in
-  let after_idx = ref 0 in
+  (* Pair each leaf with its final-carry buffer through the identity of its
+     slot leaf — slots are fresh, so unique — never positionally: [after_cs]
+     follows [C.iter]'s stable order, and a [C.map] callback's evaluation
+     order can differ from it, silently crossing same-shaped leaves. *)
+  let final_afters = Tbl.create 4 in
+  (let rest = ref after_cs in
+   C.iter
+     (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+       match !rest with
+       | (_, _, after) :: tl ->
+           Tbl.replace final_afters (Obj.repr leaf) after;
+           rest := tl
+       | [] -> assert false)
+     slot_c);
   let c_final_ph =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let _, _, after = List.nth after_cs !after_idx in
-        incr after_idx;
+        let after = Tbl.find final_afters (Obj.repr leaf) in
         let ph =
           Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
         in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
         Tbl.replace st.traced (Obj.repr ph) ();
         ph)
-      c
+      slot_c
   in
   let ys_ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype y) ys_shape in
   Tbl.replace st.table (Obj.repr ys_ph) (buffer_tensor after_ys ys_shape);
@@ -1876,19 +1888,30 @@ and stage_scan_bwd : type r.
   let after_dxs =
     U.after ~src:dxs_buf ~deps:[ U.store ~dst:dxs_buf ~value:loop_call () ]
   in
-  let after_idx = ref 0 in
+  (* Identity pairing through the slot leaves, as for the forward loop's
+     final carry: positional pairing under [C.map] can cross same-shaped
+     leaves. *)
+  let dc_afters = Tbl.create 4 in
+  (let rest = ref after_dcs in
+   C.iter
+     (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+       match !rest with
+       | (_, _, after) :: tl ->
+           Tbl.replace dc_afters (Obj.repr leaf) after;
+           rest := tl
+       | [] -> assert false)
+     slot_c);
   let dc0_ph =
     C.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let _, _, after = List.nth after_dcs !after_idx in
-        incr after_idx;
+        let after = Tbl.find dc_afters (Obj.repr leaf) in
         let ph =
           Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
         in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
         Tbl.replace st.traced (Obj.repr ph) ();
         ph)
-      c0
+      slot_c
   in
   let dxs_ph = Nx_effect.buffer st.st_ctx xdt dxs_shape in
   Tbl.replace st.table (Obj.repr dxs_ph) (buffer_tensor after_dxs dxs_shape);
