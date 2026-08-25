@@ -42,7 +42,7 @@ module Ptree = Nx.Ptree
 
 (** {1:reverse Reverse-mode differentiation} *)
 
-val grad : (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t
+val grad : (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
 (** [grad (module P) f params] is the gradient of [f] at [params], with the same
     structure and leaf types as [params]. Leaves of [params] that do not
     contribute to the result have all-zero gradients.
@@ -60,29 +60,29 @@ val grad : (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t
     an explicit cotangent. *)
 
 val value_and_grad :
-  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t * P.t
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * 'p
 (** [value_and_grad (module P) f params] is
     [(f params, grad (module P) f params)], computed in a single forward and
     backward pass. *)
 
 val value_and_grad_aux :
-  (module P : Ptree.S) ->
-  (P.t -> ('c, 'd) Nx.t * 'aux) -> P.t -> ('c, 'd) Nx.t * P.t * 'aux
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t * 'aux) -> 'p -> ('c, 'd) Nx.t * 'p * 'aux
 (** [value_and_grad_aux (module P) f params] is like {!value_and_grad} for an
     objective returning auxiliary data alongside its result. The auxiliary value
     is returned as-is and does not contribute to the gradient. *)
 
 val vjp :
-  (module P : Ptree.S) ->
-  (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t -> ('c, 'd) Nx.t * P.t
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t -> ('c, 'd) Nx.t * 'p
 (** [vjp (module P) f params cotangent] is [(f params, grads)] where [grads] is
     the vector-Jacobian product of [f] at [params] against [cotangent], with the
     same structure and leaf types as [params]. [cotangent] must have
     [f params]'s shape and dtype. *)
 
 val vjp2 :
-  (module P : Ptree.S) ->
-  (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t -> Q.t * P.t
+  (module Ptree.S with type t = 'p) ->
+  (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q -> 'q * 'p
 (** [vjp2 (module P) (module Q) f params cotangents] is like {!vjp} for an
     objective returning a structured output: [cotangents] provides one cotangent
     per output leaf, each with its output leaf's shape and dtype, and the
@@ -92,8 +92,8 @@ val vjp2 :
     output leaf's shape. *)
 
 val vjp_fun :
-  (module P : Ptree.S) ->
-  (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t * (('c, 'd) Nx.t -> P.t)
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * (('c, 'd) Nx.t -> 'p)
 (** [vjp_fun (module P) f params] is [(f params, pullback)]. [pullback ct] is
     the vector-Jacobian product of [f] at [params] against [ct]; it may be
     called any number of times with different cotangents, each call running one
@@ -112,8 +112,8 @@ val vjp_fun' :
 (** {1:forward Forward-mode differentiation} *)
 
 val jvp :
-  (module P : Ptree.S) ->
-  (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t -> ('c, 'd) Nx.t * ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> ('c, 'd) Nx.t * ('c, 'd) Nx.t
 (** [jvp (module P) f params tangents] is [(f params, df)] where [df] is the
     Jacobian-vector product of [f] at [params] against [tangents], computed in a
     single forward pass. [tangents] must be structurally equal to [params]; each
@@ -124,18 +124,18 @@ val jvp :
     parameter leaf's shape. *)
 
 val jvp_aux :
-  (module P : Ptree.S) ->
-  (P.t -> ('c, 'd) Nx.t * 'aux) ->
-  P.t ->
-  P.t ->
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t * 'aux) ->
+  'p ->
+  'p ->
   ('c, 'd) Nx.t * ('c, 'd) Nx.t * 'aux
 (** [jvp_aux (module P) f params tangents] is like {!jvp} for an objective
     returning auxiliary data alongside its result. The auxiliary value is
     returned as-is and does not contribute to the tangent. *)
 
 val jvp2 :
-  (module P : Ptree.S) ->
-  (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> P.t -> Q.t * Q.t
+  (module Ptree.S with type t = 'p) ->
+  (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
 (** [jvp2 (module P) (module Q) f params tangents] is like {!jvp} for an
     objective returning a structured output: the result tangent has the output's
     structure, one tangent per output leaf. *)
@@ -178,7 +178,7 @@ val jvp2 :
 val vmap :
   ?in_axes:int option list ->
   ?out_axis:int ->
-  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
 (** [vmap ?in_axes ?out_axis (module P) f params] maps [f] over the tensor
     leaves of [params]. [f] is written for unbatched values: it observes each
     mapped leaf without its mapped axis, and its result gains a batch axis at
@@ -209,7 +209,7 @@ val vmap :
 val vmap2 :
   ?in_axes:int option list ->
   ?out_axis:int ->
-  (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
+  (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
 (** [vmap2 ?in_axes ?out_axis (module P) (module Q) f params] is like
     {!val-vmap} for a mapped function returning a structured output: every
     output leaf gains a batch axis at [out_axis], and output leaves that do not
@@ -228,10 +228,10 @@ val vmap' :
 (** {1:custom Custom differentiation rules} *)
 
 val custom_vjp :
-  (module P : Ptree.S) ->
-  fwd:(P.t -> ('c, 'd) Nx.t * 'res) ->
-  bwd:('res -> ('c, 'd) Nx.t -> P.t) ->
-  P.t ->
+  (module Ptree.S with type t = 'p) ->
+  fwd:('p -> ('c, 'd) Nx.t * 'res) ->
+  bwd:('res -> ('c, 'd) Nx.t -> 'p) ->
+  'p ->
   ('c, 'd) Nx.t
 (** [custom_vjp (module P) ~fwd ~bwd params] is [fst (fwd params)], with a
     user-defined reverse rule. Under the innermost reverse-mode transformation,
@@ -245,10 +245,10 @@ val custom_vjp :
     define a {!custom_jvp} rule for that. *)
 
 val custom_jvp :
-  (module P : Ptree.S) ->
-  f:(P.t -> ('c, 'd) Nx.t) ->
-  jvp:(P.t -> P.t -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
-  P.t ->
+  (module Ptree.S with type t = 'p) ->
+  f:('p -> ('c, 'd) Nx.t) ->
+  jvp:('p -> 'p -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
+  'p ->
   ('c, 'd) Nx.t
 (** [custom_jvp (module P) ~f ~jvp params] is [f params], with a user-defined
     forward rule. Under the innermost forward-mode transformation,
@@ -287,7 +287,7 @@ val jvp' :
 (** {1:remat Gradient checkpointing} *)
 
 val remat :
-  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
 (** [remat (module P) f params] is [f params], recomputed during the backward
     pass instead of having its intermediate results retained by the tape:
     reverse-mode differentiation of a [remat]ed function trades compute for
@@ -315,7 +315,7 @@ val hessian' :
 (** [hessian' f x] is the Hessian of the scalar objective [f] at [x], with shape
     [shape x @ shape x] (forward over reverse). *)
 
-val hvp : (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t -> P.t
+val hvp : (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> 'p
 (** [hvp (module P) f params v] is the Hessian-vector product of the scalar
     objective [f] at [params] against [v], with [params]' structure, computed
     without materializing the Hessian (forward over reverse). *)
@@ -332,7 +332,7 @@ val hvp' :
 val check_grads :
   ?eps:float ->
   ?tol:float ->
-  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> (unit, string) result
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> (unit, string) result
 (** [check_grads (module P) f params] compares the reverse-mode gradient of the
     scalar objective [f] at [params] against central-difference directional
     derivatives along deterministic directions. [Ok ()] means they agree within
@@ -375,7 +375,7 @@ exception Jit_error of string
 val jit :
   ?device:string ->
   ?donate:bool ->
-  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
 (** [jit (module P) f] is [f] compiled. The first application traces [f],
     compiles the traced computation into fused kernels, and runs them; later
     applications with the same leaf signature — dtypes and shapes, in traversal
@@ -482,7 +482,7 @@ val jit :
 val jit2 :
   ?device:string ->
   ?donate:bool ->
-  (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
+  (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
 (** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
     structured output. *)
 
@@ -498,7 +498,7 @@ val pmap :
   devices:string list ->
   ?in_axes:int option list ->
   ?donate:bool ->
-  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
 (** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
     [devices] — {!val-jit} whose inputs are placed on a device tuple instead of
     one device. Device names are as in {!val-jit}, with an instance suffix to
@@ -541,7 +541,7 @@ val pmap2 :
   devices:string list ->
   ?in_axes:int option list ->
   ?donate:bool ->
-  (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
+  (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
 (** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
     a structured output. *)
 
