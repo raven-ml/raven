@@ -48,6 +48,8 @@ module U = struct
 
   let fold2 (f : string -> 'acc -> 'a -> 'b -> 'acc) acc a b =
     f "b" (f "w" acc a.w b.w) a.b b.b
+
+  let names _ = { w = "w"; b = "b" }
 end
 
 (* ——— Ptree.S bridge ——— *)
@@ -101,6 +103,12 @@ let test_uniform_fold2 () =
   let merged = List.rev merged in
   equal ~msg:"merged count" int 2 (List.length merged)
 
+let test_uniform_names () =
+  let names = U.names (params ()) in
+  let paths = List.rev (U.fold (fun path acc _ -> path :: acc) [] names) in
+  equal ~msg:"names agrees with fold's paths" (list string) [ "w"; "b" ] paths;
+  equal ~msg:"each payload carries its own path" string "w" names.U.w
+
 let test_map2_dtype_mismatch () =
   let b =
     {
@@ -143,6 +151,7 @@ let tests =
       [
         test "fold paths" test_uniform_fold_paths;
         test "fold2" test_uniform_fold2;
+        test "names is the tree of paths" test_uniform_names;
       ];
     group "structure errors"
       [ test "map2 rejects dtype mismatch" test_map2_dtype_mismatch ];

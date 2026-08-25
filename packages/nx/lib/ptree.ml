@@ -29,6 +29,8 @@ module type Uniform = sig
 
   val fold2 :
     (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
+
+  val names : 'a t -> string t
 end
 
 module Make (U : Uniform) = struct

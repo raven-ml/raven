@@ -62,11 +62,15 @@ type tensor =
       the structure of [t].
     - [map2 f a b] applies [f] to corresponding payloads of [a] and [b], which
       must be structurally equal.
-    - [iter f t] applies [f] to every payload of [t] exactly once, in a stable
-      order.
-    - [fold f acc t] visits every payload in stable order; the [string] argument
-      is the path to the current position.
-    - [fold2] is like [fold] but across two structurally equal trees. *)
+    - [iter f t] applies [f] to every payload of [t] exactly once.
+    - [fold f acc t] visits every payload; the [string] argument is the path to
+      the current position.
+    - [fold2] is like [fold] but across two structurally equal trees.
+    - [names t] is [t] with every payload replaced by its path, so
+      [names (map f t)] is [names t].
+    - Every traversal visits the payloads of a value in the same order: [map],
+      [iter], [fold], and [names] agree on the payload sequence, and [map2] and
+      [fold2] visit corresponding pairs in that order. *)
 module type Uniform = sig
   type 'a t
   (** The structure type, parameterised by the uniform payload type. *)
@@ -98,6 +102,10 @@ module type Uniform = sig
   (** [fold2 f acc a b] is like {!fold} but across two structurally equal trees.
 
       Raises [Invalid_argument] if [a] and [b] are not structurally equal. *)
+
+  val names : 'a t -> string t
+  (** [names t] is [t] with every payload replaced by its path (see {!fold} for
+      the path convention). *)
 end
 
 (** [Make (U)] is the parameter tree over [U] with packed tensor leaves: its [t]
