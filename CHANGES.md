@@ -59,6 +59,12 @@ thread.
 
 ### Tolk (new)
 
+- Reduce cold `BEAM`-search compile time by removing two sources of redundant
+  CPU work: the device dispatch handle (driver module load, PTX → SASS JIT) is
+  loaded once per compiled binary and reused across timed candidates, and
+  candidates whose AST was already compiled are deduplicated up front via the
+  hash-consed tag instead of only after `nvrtc`.
+
 - Fix CUDA tensor-core kernels failing to compile. Every `__WMMA_*` primitive
   was emitted with scalar parameters and empty asm operand lists —
   `float f(half a, half b, float c)` — while the kernel body correctly built
