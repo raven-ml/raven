@@ -37,14 +37,24 @@ let buffer_params ast =
 let make_beam_search device beam_width =
   Option.map
     (fun dev k ->
+      (* Timing buffers for this kernel's candidates. [nolru] so their
+         release returns the memory to the driver: the LRU cache matches by
+         exact size, so buffers of distinct per-kernel shapes would otherwise
+         pile up in it for the rest of the compile and can OOM the device on
+         large graphs. Freed explicitly below — [beam_search] only times on
+         them — rather than waiting for a GC that may run much later. *)
+      let spec = { Device.Buffer_spec.default with nolru = true } in
       let rawbufs =
         List.map
-          (fun (_, dtype, size) -> Device.create_buffer ~size ~dtype dev)
+          (fun (_, dtype, size) -> Device.create_buffer ~size ~dtype ~spec dev)
           (buffer_params (Postrange.ast k))
       in
-      Search.beam_search
-        ~allow_test_size:(beam_estimate () <> 0)
-        k rawbufs beam_width dev)
+      Fun.protect
+        ~finally:(fun () -> List.iter Device.Buffer.deallocate rawbufs)
+        (fun () ->
+          Search.beam_search
+            ~allow_test_size:(beam_estimate () <> 0)
+            k rawbufs beam_width dev))
     device
 
 let beam_width sink =

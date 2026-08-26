@@ -52,6 +52,14 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- Free `BEAM`-search timing buffers as soon as each kernel's search finishes:
+  they were reclaimed only when the GC ran, and then into the unbounded LRU
+  allocator cache (which matches by exact size), so a model with many
+  distinct kernel shapes accumulated their GPU memory until a failed
+  allocation flushed the cache — OOM on large graphs with `BEAM>=1` where
+  `BEAM=0` fits. Timing buffers now bypass the LRU cache and are released
+  deterministically per kernel.
+
 - Compile `BEAM`-search candidates in parallel domains (`BEAM_PARALLEL=N`,
   default off): the CPU-side compile of a step's candidates — optimize, lower,
   render, nvrtc — now overlaps across domains, while the GPU timing phase

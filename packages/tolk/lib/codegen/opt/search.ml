@@ -354,7 +354,12 @@ let buffer_reqs ast =
 let normalize_buffer_req device req buf =
   if Device.Buffer.size buf < req.size
      || not (Dtype.equal (Device.Buffer.dtype buf) req.dtype)
-  then Device.create_buffer ~size:req.size ~dtype:req.dtype device
+  then
+    (* A beam timing buffer: bypass the LRU cache so a GC-collected
+       replacement returns its memory to the driver instead of piling up
+       in the allocator cache. *)
+    Device.create_buffer ~size:req.size ~dtype:req.dtype
+      ~spec:{ Device.Buffer_spec.default with nolru = true } device
   else buf
 
 let indexed_rawbufs ~device ast rawbufs =
