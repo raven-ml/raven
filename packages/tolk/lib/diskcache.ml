@@ -71,13 +71,19 @@ let get ~table ~key =
 
 (* Write-then-rename keeps entries atomic: a concurrent reader or writer of
    the same key never observes a partially written file, only the previous
-   complete entry or the new one. The temporary name is per-pid, so
-   concurrent writers in different processes cannot clobber each other's
+   complete entry or the new one. The temporary name carries the pid and a
+   process-unique counter, so concurrent writers — in different processes or
+   in different domains of the same one — cannot clobber each other's
    in-progress writes. *)
+let tmp_counter = Atomic.make 0
+
 let put ~table ~key value =
   let path = cache_path ~table ~key in
   ensure_dir (Filename.dirname path);
-  let tmp = path ^ ".tmp." ^ string_of_int (Unix.getpid ()) in
+  let tmp =
+    Printf.sprintf "%s.tmp.%d.%d" path (Unix.getpid ())
+      (Atomic.fetch_and_add tmp_counter 1)
+  in
   try
     let oc = open_out_bin tmp in
     (try

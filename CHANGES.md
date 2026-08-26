@@ -52,6 +52,15 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- Compile `BEAM`-search candidates in parallel domains (`BEAM_PARALLEL=N`,
+  default off): the CPU-side compile of a step's candidates — optimize, lower,
+  render, nvrtc — now overlaps across domains, while the GPU timing phase
+  still runs one candidate at a time so timings never contend. Shared state
+  (hash-consing, shape memoisation, kernel naming, program cache, disk cache)
+  is guarded for concurrent access. On the RNN grad repro (CUDA, `BEAM=2`,
+  cleared tolk and driver JIT caches): 27s -> 6s with `BEAM_PARALLEL=8`;
+  with warm caches ~11s -> ~7s.
+
 
 - Stop `BEAM` search when progress drops below timer noise: the default
   `BEAM_MIN_PROGRESS` is now 5µs (still µs-denominated, matching upstream

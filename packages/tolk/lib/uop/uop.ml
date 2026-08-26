@@ -286,7 +286,14 @@ module H = Hashcons.Make (Node_hashed)
 
 let global_table = H.create 4096
 
-let intern_node node = H.hashcons global_table node
+(* Hash-consing and node metadata are global mutable state: beam search can
+   compile candidates in parallel domains, so every access takes this lock.
+   No other [intern_mutex] section nests inside one, and [min_max_mutex]
+   below is a separate lock, so there is no lock ordering to deadlock on. *)
+let intern_mutex = Mutex.create ()
+
+let intern_node node =
+  Mutex.protect intern_mutex (fun () -> H.hashcons global_table node)
 
 module Side_metadata_tbl = Hashtbl.Make (struct
   type nonrec t = t
@@ -366,11 +373,14 @@ let src u = u.Hashcons.node.src
 let arg u = u.Hashcons.node.arg
 let node_tag u = u.Hashcons.node.node_tag
 let tag u = u.Hashcons.tag
-let metadata u = Option.value (Side_metadata_tbl.find_opt side_metadata u) ~default:[]
+let metadata u =
+  Mutex.protect intern_mutex (fun () ->
+      Option.value (Side_metadata_tbl.find_opt side_metadata u) ~default:[])
 
 let with_metadata md u =
-  Side_metadata_tbl.replace side_metadata u md;
-  u
+  Mutex.protect intern_mutex (fun () ->
+      Side_metadata_tbl.replace side_metadata u md;
+      u)
 
 let children u = Array.to_list (src u)
 let equal a b = a.Hashcons.tag = b.Hashcons.tag
@@ -1696,12 +1706,16 @@ let substitute ?(walk = false) mappings root =
 
 let min_max_cache : (int * int) Ref_tbl.t = Ref_tbl.create 1024
 
+let min_max_mutex = Mutex.create ()
+
 let rec min_max u =
-  match Ref_tbl.find_opt min_max_cache u with
+  match
+    Mutex.protect min_max_mutex (fun () -> Ref_tbl.find_opt min_max_cache u)
+  with
   | Option.Some mm -> mm
   | Option.None ->
       let mm = compute_min_max u in
-      Ref_tbl.replace min_max_cache u mm;
+      Mutex.protect min_max_mutex (fun () -> Ref_tbl.replace min_max_cache u mm);
       mm
 
 and compute_min_max u =

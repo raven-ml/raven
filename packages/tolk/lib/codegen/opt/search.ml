@@ -28,6 +28,11 @@ let beam_uops_max () = Helpers.getenv "BEAM_UOPS_MAX" 3000
 let beam_timeout_sec () = Helpers.getenv "BEAM_TIMEOUT_SEC" 10
 let beam_strict_mode () = Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0
 let beam_dev_timeout () = Helpers.getenv "BEAM_DEV_TIMEOUT" 1 <> 0
+(* [BEAM_PARALLEL] sets the number of domains compiling a beam step's
+   candidates concurrently; 0 (the default) compiles sequentially. Only the
+   CPU-side compile runs in parallel — the GPU timing phase below always runs
+   one candidate at a time. *)
+let beam_parallel () = Helpers.getenv "BEAM_PARALLEL" 0
 let cachelevel () = Helpers.getenv "CACHELEVEL" 1
 let ignore_beam_cache () = Helpers.getenv "IGNORE_BEAM_CACHE" 0 <> 0
 
@@ -259,6 +264,39 @@ let try_compile ~use_timeout ((idx, s) : int * P.t) (device : Device.t)
     | _ when not (beam_strict_mode ()) -> None
   in
   (idx, result)
+
+(* Compile a beam step's candidates, optionally across domains
+   ([beam_parallel] sets the worker count; 0 is sequential). Workers only run
+   the CPU-side compile (optimize, lower, render, nvrtc); the GPU timing phase
+   runs afterwards in the main domain, one candidate at a time, so timings
+   never contend for the device. In parallel mode the per-candidate alarm
+   timeout is skipped: SIGALRM is process-global. *)
+let compile_candidates ~device ~nworkers candidates =
+  let n = List.length candidates in
+  let compiled : compiled option array = Array.make n None in
+  let compile_one ~use_timeout i cand =
+    compiled.(i) <- snd (try_compile ~use_timeout (i, cand) device)
+  in
+  if nworkers <= 0 || n < 2 then begin
+    List.iteri (compile_one ~use_timeout:true) candidates;
+    compiled
+  end else begin
+    let nworkers = min nworkers (min 16 n) in
+    let cands = Array.of_list candidates in
+    let chunk = (n + nworkers - 1) / nworkers in
+    let workers =
+      List.init nworkers (fun w ->
+          let lo = w * chunk in
+          let hi = min ((w + 1) * chunk) n in
+          Domain.spawn (fun () ->
+              for i = lo to hi - 1 do
+                compiled.(i) <-
+                  snd (try_compile ~use_timeout:false (i, cands.(i)) device)
+              done))
+    in
+    List.iter Domain.join workers;
+    compiled
+  end
 
 (* Timing *)
 
@@ -500,6 +538,7 @@ let beam_search ?(allow_test_size = true) ?disable_cache
          the expensive part. Nodes are hash-consed, so the AST's tag is an
          exact identity key. *)
       let seen_asts : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+      let nworkers = beam_parallel () in
       if beam_debug > 0 then
         Format.eprintf "BEAM_SEARCH:@\n%a@." U.pp (P.ast s);
       if debug >= 2 then
@@ -548,10 +587,10 @@ let beam_search ?(allow_test_size = true) ?disable_cache
              | Failure _ | Invalid_argument _ -> ()
              | _ -> raise exn)
       in
-      let step_one timed least_compute_ops n_candidates i cand =
-        match try_compile ~use_timeout:true (i, cand) device with
-        | _, None -> ()
-        | _, Some { program; compile_time } ->
+      let consume_one timed least_compute_ops n_candidates i cand compiled =
+        match compiled with
+        | None -> ()
+        | Some { program; compile_time } ->
             let lib = match Program_spec.lib program with
               | Some l -> l
               | None -> assert false
@@ -589,8 +628,11 @@ let beam_search ?(allow_test_size = true) ?disable_cache
         let timed = ref [] in
         let least_compute_ops = ref infinity in
         let n_candidates = List.length candidates in
+        let compiled = compile_candidates ~device ~nworkers candidates in
         List.iteri
-          (step_one timed least_compute_ops n_candidates)
+          (fun i cand ->
+            consume_one timed least_compute_ops n_candidates i cand
+              compiled.(i))
           candidates;
         let opts =
           List.sort (fun (_, t1) (_, t2) -> Float.compare t1 t2) !timed
