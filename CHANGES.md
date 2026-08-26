@@ -59,6 +59,13 @@ thread.
 
 ### Tolk (new)
 
+- Stop `BEAM` search when progress drops below timer noise: the default
+  `BEAM_MIN_PROGRESS` is now 5µs (still µs-denominated, matching upstream
+  tinygrad). The previous default of 0.01µs sat below the CUDA event timer
+  resolution, so neither progress-based exit condition could ever fire and
+  every kernel ran extra search steps until candidates ran out — ~2.6× more
+  candidate compiles on a CUDA `BEAM=2` pass.
+
 - Test same-call WAR dependencies by node identity instead of structural
   equality in `fix_war_deps`. `Uop.t` nodes are hash-consed, so the two checks
   give the same verdict, but polymorphic equality on the `call_of` options
