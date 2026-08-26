@@ -347,6 +347,16 @@ let indexed_rawbufs ~device ast rawbufs =
     (fun (req, buf) -> (req.slot, normalize_buffer_req device req buf))
     pairs
 
+(* Device dispatch handles for already-loaded compiled binaries, shared across
+   every kernel's beam search in this process and keyed by device: the driver's
+   module load (PTX -> SASS JIT) is pure CPU work and would otherwise run once
+   per timed candidate. The entry name is always "test" in beam search, so
+   the binary identifies the module; runtimevars join the key because some
+   runtimes capture them at handle creation. *)
+let prog_caches : (string, ((bytes * string), Device.prog) Hashtbl.t)
+    Hashtbl.t =
+  Hashtbl.create 4
+
 (* Time a compiled program on device. Returns a list of timing samples. *)
 let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
     ~allow_test_size ~dev_timeout =
@@ -365,7 +375,34 @@ let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
       factor := f;
       Program_spec.with_global_dims scaled_global p
   in
-  let car = Realize.Compiled_runner.create ~device p in
+  let prg =
+    match Program_spec.lib p with
+    | Some lib ->
+        let dname = Device.name device in
+        let cache =
+          match Hashtbl.find_opt prog_caches dname with
+          | Some cache -> cache
+          | None ->
+              let cache = Hashtbl.create 64 in
+              Hashtbl.replace prog_caches dname cache;
+              cache
+        in
+        let runtimevars =
+          Tolk_uop.Uop.program_runtimevars (Program_spec.program_info p)
+        in
+        let key = (lib, String.concat "," (List.map fst runtimevars)) in
+        (match Hashtbl.find_opt cache key with
+         | Some prg -> Some prg
+         | None ->
+             let name =
+               Tolk_uop.Uop.sanitize_function_name (Program_spec.name p)
+             in
+             let prg = Device.runtime device name lib ~runtimevars in
+             Hashtbl.replace cache key prg;
+             Some prg)
+    | None -> None
+  in
+  let car = Realize.Compiled_runner.create ~device ?prg p in
   let input_bufs =
     List.map
       (fun slot ->
@@ -452,6 +489,11 @@ let beam_search ?(allow_test_size = true) ?disable_cache
   | None ->
       let beam = ref [(s, infinity)] in
       let seen_libs : (bytes, unit) Hashtbl.t = Hashtbl.create 256 in
+      (* Candidates whose AST has already been compiled: applying actions in
+         different orders converges to identical programs, and compiling is
+         the expensive part. Nodes are hash-consed, so the AST's tag is an
+         exact identity key. *)
+      let seen_asts : (int, unit) Hashtbl.t = Hashtbl.create 256 in
       if beam_debug > 0 then
         Format.eprintf "BEAM_SEARCH:@\n%a@." U.pp (P.ast s);
       if debug >= 2 then
@@ -526,6 +568,17 @@ let beam_search ?(allow_test_size = true) ?disable_cache
             (fun (si, _) ->
               List.map snd (get_kernel_actions ~include_0:false si))
             !beam
+        in
+        let candidates =
+          List.filter
+            (fun cand ->
+              let k = U.tag (P.ast cand) in
+              if Hashtbl.mem seen_asts k then false
+              else begin
+                Hashtbl.replace seen_asts k ();
+                true
+              end)
+            candidates
         in
         let timed = ref [] in
         let least_compute_ops = ref infinity in
