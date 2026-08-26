@@ -267,6 +267,8 @@ let to_function_name s =
   Buffer.contents buf
 
 let kernel_cnt : (string, int) Hashtbl.t = Hashtbl.create 16
+(* Guarded: beam search can generate kernel names from parallel domains. *)
+let kernel_cnt_mutex = Mutex.create ()
 
 (* Apply [flatten_range] locally: toposort-reorder range children of
    Reduce/Store/End nodes.  Inline port of [Simplify.pm_flatten_range]
@@ -334,8 +336,14 @@ let make_kernel_name t =
         (List.map (fun s -> "_" ^ s) (special_strs @ rng_strs))
   in
   let fn = to_function_name raw in
-  let cnt = 1 + Option.value ~default:0 (Hashtbl.find_opt kernel_cnt fn) in
-  Hashtbl.replace kernel_cnt fn cnt;
+  let cnt =
+    Mutex.protect kernel_cnt_mutex (fun () ->
+        let cnt =
+          1 + Option.value ~default:0 (Hashtbl.find_opt kernel_cnt fn)
+        in
+        Hashtbl.replace kernel_cnt fn cnt;
+        cnt)
+  in
   raw ^ if cnt > 1 then strf "n%d" (cnt - 1) else ""
 
 (* Finalize the kernel: generate a debug name, flatten ranges, and attach

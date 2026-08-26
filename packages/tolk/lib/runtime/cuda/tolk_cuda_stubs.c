@@ -11,6 +11,7 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -708,11 +709,14 @@ static nvrtcResult (*p_nvrtcDestroyProgram)(nvrtcProgram *);
 
 static void *nvrtc_handle = NULL;
 
-static void ensure_nvrtc(void) {
+/* pthread_once: beam search can call nvrtc_compile from several OCaml
+   domains concurrently, and the first of them loads the library. */
+static pthread_once_t nvrtc_once = PTHREAD_ONCE_INIT;
+
+static void load_nvrtc(void) {
   static const char *names[] = {"libnvrtc.so", "libnvrtc.so.13",
                                 "libnvrtc.so.12",
                                 "/usr/local/cuda/lib64/libnvrtc.so", NULL};
-  if (nvrtc_handle != NULL) return;
   for (int i = 0; nvrtc_handle == NULL && names[i] != NULL; ++i)
     nvrtc_handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
   if (nvrtc_handle == NULL)
@@ -732,6 +736,11 @@ static void ensure_nvrtc(void) {
   LOAD_NVRTC(p_nvrtcGetErrorString, "nvrtcGetErrorString");
   LOAD_NVRTC(p_nvrtcDestroyProgram, "nvrtcDestroyProgram");
 #undef LOAD_NVRTC
+}
+
+static void ensure_nvrtc(void) {
+  if (pthread_once(&nvrtc_once, load_nvrtc) != 0)
+    caml_failwith("NVRTC initialisation failed");
 }
 
 CAMLprim value caml_tolk_cuda_nvrtc_version(value unit) {

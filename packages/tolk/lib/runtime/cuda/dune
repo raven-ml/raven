@@ -7,4 +7,5 @@
  (foreign_stubs
   (language c)
   (names tolk_cuda_stubs))
- (c_library_flags (-ldl)))
+ (c_library_flags
+  (-ldl -lpthread)))

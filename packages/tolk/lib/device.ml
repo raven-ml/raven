@@ -693,32 +693,39 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
       }
   in
   let ckey = make_key ~device:d.name ~base:false in
-  Mutex.lock Program_cache.mutex;
-  Fun.protect
-    ~finally:(fun () -> Mutex.unlock Program_cache.mutex)
-    (fun () ->
-      match Program_cache.Cache.find_opt Program_cache.cache ckey with
-      | Some cached -> cached
-      | None ->
-          let bkey =
-            make_key ~device:(Program_cache.base_device d.name) ~base:true
-          in
-          let build_spec () =
+  (* The mutex only guards the table: render and nvrtc run unlocked, so
+     beam-search candidates compiled in parallel domains overlap. A
+     concurrent build of the same key is benign — identical work — and the
+     first insertion wins. *)
+  let cache_find key =
+    Mutex.protect Program_cache.mutex (fun () ->
+        Program_cache.Cache.find_opt Program_cache.cache key)
+  in
+  let cache_add key spec =
+    Mutex.protect Program_cache.mutex (fun () ->
+        match Program_cache.Cache.find_opt Program_cache.cache key with
+        | Some existing -> existing
+        | None ->
+            Program_cache.Cache.add Program_cache.cache key spec;
+            spec)
+  in
+  match cache_find ckey with
+  | Some cached -> cached
+  | None ->
+      let bkey =
+        make_key ~device:(Program_cache.base_device d.name) ~base:true
+      in
+      let spec =
+        match cache_find bkey with
+        | Some cached -> cached
+        | None ->
             let src = Renderer.render ren ~name:kernel_name program in
             let lib = Compiler.compile_cached comp src in
             Program_spec.of_program ~name:kernel_name ~src ~device:d.name
               ~lib ~applied_opts ~estimates program
-          in
-          let spec =
-            match Program_cache.Cache.find_opt Program_cache.cache bkey with
-            | Some cached -> cached
-            | None ->
-                let s = build_spec () in
-                Program_cache.Cache.add Program_cache.cache bkey s;
-                s
-          in
-          Program_cache.Cache.add Program_cache.cache ckey spec;
-          spec)
+      in
+      ignore (cache_add bkey spec);
+      cache_add ckey spec
 
 let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
