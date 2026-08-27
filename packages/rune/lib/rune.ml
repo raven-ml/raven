@@ -66,7 +66,7 @@ let value_and_grad (type p c d) (module P : Ptree.S with type t = p) (f : P.t ->
   in
   (y, grads)
 
-let grad (type c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
+let grad (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
     : P.t =
   snd (value_and_grad (module P) f params)
 

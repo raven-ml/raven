@@ -18,17 +18,16 @@ All notable changes to this project will be documented in this file.
   but the deriver only knew qualified types whose name ends in `t`, so the field
   had to be spelled `(int32, int32_elt) Nx.t`.
 
+- Add `~mirror` to the deriver: `[@@deriving ptree ~mirror]` on a concrete
+  record also generates its payload-generic `module Uniform`, `to_uniform`, and
+  — when every leaf dtype is statically known — a dtype-checked `of_uniform`.
+- Extend `[@@deriving ptree]` to payload-generic types: a type with one
+  parameter occurring outside tensor leaves derives `map`, `map2`, `iter`,
+  `fold` and `fold2` over dot-joined leaf paths, plus `names : 'a t -> string t`.
 - Add the `ppx_ptree` deriver, which generates the `map`, `map2`, and `iter`
   operations required by `Nx.Ptree.S` for records, products, containers, and
   recursive parameter types, with generated code and diagnostics located at the
   originating source forms.
-- Extend `[@@deriving ptree]` to payload-generic types: on a type with one
-  parameter occurring outside tensor leaves it derives the uniform traversals
-  (`map`, `map2`, `iter`, `fold` and `fold2` with dot-joined leaf paths, and
-  `names : 'a t -> string t`, the tree of leaf paths). Concrete types keep the
-  rank-2 traversals, and `[@@deriving ptree ~mirror]` additionally generates
-  their uniform mirror (`module Uniform`, `to_uniform`, and — when leaf dtypes
-  are statically known — `of_uniform` with per-leaf error paths).
 - Add a runnable linear-regression example using a derived parameter module
   directly with `Rune.grad` and `Rune.jit2`.
 
@@ -455,32 +454,6 @@ thread.
 - Runtimes: CPU (via Clang) and Metal. Renderers additionally target CUDA,
   AMD/HIP, and OpenCL for GPU code generation.
 
-### Kaun
-
-- Add `Kaun.ptree`, an alias of `Nx.Ptree.instantiate`: `let mlp = Kaun.ptree
-  (module Mlp)` is the walker the transformations take, so kaun users never
-  touch the `Nx.Ptree` machinery directly.
-- **Breaking:** the layers are payload-generic parameter trees: `Linear`,
-  `Conv`, `Embedding`, `Layer_norm`, `Batch_norm` (and its `Stats`),
-  `Attention` (and its `Cache`) each expose one `'a t` record with payload
-  holes and the six `Nx.Ptree.Uniform` traversals (`map`, `map2`, `iter`,
-  `fold`, `fold2`, `names`). Parameters are the record at tensor payloads —
-  `Nx.float32_t Linear.t` replaces the old `Nx.float32_elt Linear.params` and
-  the zero-argument `Linear.t` alias. One declaration now also serves
-  parameter-shaped data: freeze masks (`bool t`), per-leaf learning rates
-  (`float t`), checkpoint names (`string t`).
-- **Breaking:** the layers' `astype` is removed — `map (Nx.cast dt)` is the
-  same differentiable cast — and the `names : _ -> string list` functions are
-  replaced by the tree-shaped `names` and path-threading `fold` of the
-  `Uniform` contract.
-- **Breaking:** `Checkpoint` consumes `Nx.Ptree.Uniform` instances directly
-  and `Checkpoint.Named` is removed: `of_params`/`to_params` take
-  `(module U : Nx.Ptree.Uniform)` with typed leaves and name entries by leaf
-  paths, and the new `of_packed`/`to_packed` handle structures with mixed
-  leaf dtypes (the stock dynamic tree via `(module Rune.Ptree.Tree)`).
-  Hand-written `names` lists — and the name-per-leaf mismatch errors —
-  disappear: names are structural, so they can no longer be miscounted.
-
 ### Vega (new)
 
 - The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
@@ -488,6 +461,10 @@ thread.
   carrying an `Nx.Rng.key` alongside its parameters survives a step. Adam is
   where it showed: its direction runs each leaf through a square root and a
   division.
+- The structural functions take their parameter-tree module as
+  `(module Nx.Ptree.S with type t = 'p)`, so a first-class module value —
+  e.g. the result of `Nx.Ptree.instantiate` — can be bound once and passed
+  to the optimizer steps and gradient transformations.
 - Add `Loss_scale` for float16 training: static and dynamic loss scales
   with `scale`/`unscale`/`grads_finite`/`adjust`; all state is scalar
   tensors updated by `Nx.where` arithmetic, so it threads through
@@ -610,6 +587,22 @@ thread.
 - Fix `Nx.Rng.randint` skewing towards zero for a negative `low`: it truncated
   the shifted float, so `low` was never drawn and `0` was drawn twice as often.
   Values for a fixed key change.
+- **Breaking:** the stock dynamic tree is payload-generic: `Nx.Ptree.Tree` is
+  a `Uniform` structure (constructors `Leaf`/`List`/`Dict`, paths from list
+  positions and dict keys) and `Nx.Ptree.t` is `tensor Tree.t`. The `Tensor`
+  constructor is now `Tree.Leaf`; the `tensor`/`list`/`dict` constructors and
+  the rank-2 traversals are unchanged.
+- Add `Nx.Ptree.instantiate`, which fills a `Ptree.Uniform` structure's payload
+  hole at one tensor type as a first-class `Ptree.S` module — `let mlp =
+  Ptree.instantiate (module Mlp)` — so a payload-generic tree passes to
+  `Rune.grad` and the Vega optimizers with typed leaves and no packing.
+- Add the payload-generic module types `Nx.Ptree.Traverse` (the traversal
+  core: `map`, `map2`, `iter`) and `Nx.Ptree.Uniform` (the core plus
+  `fold`/`fold2` over dot-joined leaf paths and `names`, the tree of those
+  paths), and `Nx.Ptree.Make`, which turns a `Traverse` into an `Nx.Ptree.S`
+  with packed tensor leaves — so one `'a params` declaration serves both the
+  model and parameter-shaped data. `Nx.Ptree.unpack` recovers a typed tensor
+  from a packed leaf, naming the position in the error on a dtype mismatch.
 - **Breaking:** the real FFT family (`rfft`, `irfft`, `hfft`, `ihfft` and their
   2-D/N-D variants) and `fftfreq`/`rfftfreq` now take the output dtype first,
   like the constructors. It selects storage precision independent of the
@@ -863,12 +856,6 @@ thread.
   user structure implementing its three traversals (`map`, `map2`, `iter`).
   A stock dynamic tree (`Ptree.t` with tensor, list, and dict nodes) covers
   structures only known at runtime.
-- Add `Nx.Ptree.Uniform`, the module type of payload-generic structures
-  (`map`, `map2`, `iter`, `fold` and `fold2` with dot-joined leaf paths), and
-  the `Nx.Ptree.Make` functor deriving an `Nx.Ptree.S` from any `Uniform` with
-  packed tensor leaves, so one `'a params` declaration serves both the model
-  and parameter-shaped data. Add `Nx.Ptree.unpack` for dtype-checked
-  unpacking of packed tensors with an optional path in the error message.
 - Require OCaml >= 5.5.0 (module-dependent functions are used by the
   `Ptree.S`-based APIs downstream).
 - Fix `flatten` raising on rank-0 tensors; it now reshapes them to `[|1|]`.
@@ -919,6 +906,10 @@ thread.
 - Fix the derivative of `abs` on complex tensors for cotangents that are not
   real: the modulus is real-valued, so the rule now keeps only the real part of
   the cotangent and pushes forward to a real tangent.
+- The transformations take their parameter-tree module as
+  `(module Ptree.S with type t = 'p)` instead of a dependent module argument,
+  so a first-class module value — e.g. the result of `Nx.Ptree.instantiate` —
+  can be bound once and passed to `grad`, `jit`, `vjp`, and friends.
 - Fix the derivative of `abs` on complex tensors, in both forward and reverse
   mode: it pulled back through `sign z` instead of its conjugate, which negated
   the imaginary part's contribution. Gradients of a real-valued function that

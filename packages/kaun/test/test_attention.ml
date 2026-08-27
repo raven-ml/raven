@@ -32,7 +32,8 @@ let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
 
 let values_are ?msg ~tol expected t =
-  equal ?msg (array (float tol)) expected (Nx.to_array t)
+  let ft = if tol = 0. then float_exact else float tol in
+  equal ?msg (array ft) expected (Nx.to_array t)
 
 (* Identity projections without bias: [apply] reduces to the attention core on
    [x] itself, so layer results can be checked analytically. *)
@@ -81,7 +82,7 @@ let test_core_mask_zeroes_weights () =
     (Attention.scaled_dot_product_attention ~mask q k v)
 
 let test_core_gradients () =
-  Nx.Rng.run ~seed:1 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p =
     {
       Qkv64.q = Nx.randn Nx.float64 [| 3; 2 |];
@@ -96,7 +97,7 @@ let test_core_gradients () =
   grads_ok (Rune.check_grads (module Qkv64) loss p)
 
 let test_core_masked_gradients () =
-  Nx.Rng.run ~seed:2 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
   let p =
     {
       Qkv64.q = Nx.randn Nx.float64 [| 2; 2 |];
@@ -113,21 +114,21 @@ let test_core_masked_gradients () =
 
 let test_core_rejects_bad_shapes () =
   let t shape = Nx.zeros Nx.float32 shape in
-  raises_invalid_arg
-    "Attention.scaled_dot_product_attention: q, k and v must have at least 2 \
-     axes" (fun () ->
+  raises
+    (Invalid_argument "Attention.scaled_dot_product_attention: q, k and v must have at least 2 \
+     axes") (fun () ->
       Attention.scaled_dot_product_attention (t [| 3 |])
         (t [| 3; 2 |])
         (t [| 3; 2 |]));
-  raises_invalid_arg
-    "Attention.scaled_dot_product_attention: q has 2 features but k has 3"
+  raises
+    (Invalid_argument "Attention.scaled_dot_product_attention: q has 2 features but k has 3")
     (fun () ->
       Attention.scaled_dot_product_attention
         (t [| 1; 2 |])
         (t [| 4; 3 |])
         (t [| 4; 2 |]));
-  raises_invalid_arg
-    "Attention.scaled_dot_product_attention: k has 2 positions but v has 3"
+  raises
+    (Invalid_argument "Attention.scaled_dot_product_attention: k has 2 positions but v has 3")
     (fun () ->
       Attention.scaled_dot_product_attention
         (t [| 1; 2 |])
@@ -137,7 +138,7 @@ let test_core_rejects_bad_shapes () =
 (* Multi-head self-attention layer *)
 
 let test_init_shapes () =
-  Nx.Rng.run ~seed:3 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   List.iter
     (fun (name, (l : Nx.float32_t Linear.t)) ->
@@ -153,7 +154,7 @@ let test_init_shapes () =
     ]
 
 let test_names () =
-  Nx.Rng.run ~seed:4 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let paths p =
     List.rev (Attention.fold (fun path acc _ -> path :: acc) [] p)
   in
@@ -169,7 +170,7 @@ let test_names () =
     (paths no_bias)
 
 let test_apply_shapes () =
-  Nx.Rng.run ~seed:5 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let batched = Nx.zeros Nx.float32 [| 2; 5; 8 |] in
   shape_is ~msg:"batched input keeps its shape" [| 2; 5; 8 |]
@@ -215,7 +216,7 @@ let test_causal_first_position_is_itself () =
     [| 1.; 2. |] (Array.sub y 0 2)
 
 let test_causal_ignores_the_future () =
-  Nx.Rng.run ~seed:6 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let base = Array.init 32 (fun i -> sin (float_of_int i)) in
   let changed = Array.mapi (fun i a -> if i >= 24 then a +. 10.0 else a) base in
@@ -238,7 +239,7 @@ let test_causal_ignores_the_future () =
 let test_permutation_equivariance () =
   (* Self-attention has no notion of position: permuting the sequence permutes
      the output the same way. *)
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let base = Array.init 12 (fun i -> cos (float_of_int i)) in
   let perm = [| 2; 0; 1 |] in
@@ -254,7 +255,7 @@ let test_permutation_equivariance () =
     (permute perm y) yp
 
 let test_gradients () =
-  Nx.Rng.run ~seed:8 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 3; 4 |] in
   let p = Attention.make ~embed_dim:4 Nx.float64 in
   let loss ?causal p =
@@ -270,7 +271,7 @@ let pos_at i = Nx.create Nx.int32 [| 1 |] [| Int32.of_int i |]
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
 let test_cached_prefill_matches_causal () =
-  Nx.Rng.run ~seed:20 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 20) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let full = Attention.apply ~num_heads:2 ~causal:true p x in
@@ -281,7 +282,7 @@ let test_cached_prefill_matches_causal () =
     (flat full) (flat y)
 
 let test_cached_decode_matches_causal () =
-  Nx.Rng.run ~seed:21 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let full = Attention.apply ~num_heads:2 ~causal:true p x in
@@ -307,7 +308,7 @@ let test_cached_decode_matches_causal () =
     (flat full) (flat y)
 
 let test_cached_update_is_functional () =
-  Nx.Rng.run ~seed:22 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
@@ -315,7 +316,7 @@ let test_cached_update_is_functional () =
     Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
   in
   equal ~msg:"argument cache still empty"
-    (array (float 0.0))
+    (array float_exact)
     (Array.make 16 0.0)
     (flat cache.Attention.Cache.keys);
   is_true ~msg:"returned cache holds the written keys"
@@ -324,7 +325,7 @@ let test_cached_update_is_functional () =
        (flat cache'.Attention.Cache.keys))
 
 let test_cached_write_past_len_is_dropped () =
-  Nx.Rng.run ~seed:23 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:2 Nx.float32 in
@@ -336,7 +337,7 @@ let test_cached_write_past_len_is_dropped () =
       (Nx.slice [ A; R (0, 1) ] x)
   in
   equal ~msg:"a write at pos = len leaves the cache unchanged"
-    (array (float 0.0))
+    (array float_exact)
     (flat cache.Attention.Cache.keys)
     (flat cache'.Attention.Cache.keys)
 
@@ -369,7 +370,7 @@ module Step = struct
 end
 
 let test_cached_step_jits_once () =
-  Nx.Rng.run ~seed:24 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
   let decode step_fn =
@@ -404,7 +405,7 @@ let test_cached_step_jits_once () =
   equal ~msg:"all four steps share one trace" int 1 !traces
 
 let test_cached_gradients () =
-  Nx.Rng.run ~seed:25 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 25) @@ fun () ->
   let x = Nx.randn Nx.float64 [| 1; 3; 4 |] in
   let p = Attention.make ~embed_dim:4 Nx.float64 in
   let loss p =
@@ -423,45 +424,45 @@ let test_cached_gradients () =
   grads_ok (Rune.check_grads attention64 loss p)
 
 let test_cached_rejects_bad_geometry () =
-  Nx.Rng.run ~seed:26 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 26) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
   let apply ?(pos = pos_at 0) x =
     Attention.apply_cached ~num_heads:2 ~pos ~cache p x
   in
-  raises_invalid_arg
-    "Attention.Cache.make: batch, num_heads, head_dim and len must be \
-     positive, got batch=1 num_heads=2 head_dim=2 len=0" (fun () ->
+  raises
+    (Invalid_argument "Attention.Cache.make: batch, num_heads, head_dim and len must be \
+     positive, got batch=1 num_heads=2 head_dim=2 len=0") (fun () ->
       Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:0 Nx.float32);
-  raises_invalid_arg
-    "Attention.apply_cached: input must have shape [batch; seq; embed]"
+  raises
+    (Invalid_argument "Attention.apply_cached: input must have shape [batch; seq; embed]")
     (fun () -> apply (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises_invalid_arg
-    "Attention.apply_cached: cache has shape [1; 2; _; 2] but the input needs \
-     [2; 2; _; 2]" (fun () -> apply (Nx.zeros Nx.float32 [| 2; 1; 4 |]));
-  raises_invalid_arg "Attention.apply_cached: seq 5 exceeds the cache length 4"
+  raises
+    (Invalid_argument "Attention.apply_cached: cache has shape [1; 2; _; 2] but the input needs \
+     [2; 2; _; 2]") (fun () -> apply (Nx.zeros Nx.float32 [| 2; 1; 4 |]));
+  raises (Invalid_argument "Attention.apply_cached: seq 5 exceeds the cache length 4")
     (fun () -> apply (Nx.zeros Nx.float32 [| 1; 5; 4 |]));
-  raises_invalid_arg "Attention.apply_cached: pos must have a single element"
+  raises (Invalid_argument "Attention.apply_cached: pos must have a single element")
     (fun () ->
       apply
         ~pos:(Nx.create Nx.int32 [| 2 |] [| 0l; 1l |])
         (Nx.zeros Nx.float32 [| 1; 1; 4 |]))
 
 let test_rejects_bad_geometry () =
-  Nx.Rng.run ~seed:9 @@ fun () ->
-  raises_invalid_arg "Attention.make: embed_dim must be positive, got 0"
+  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
+  raises (Invalid_argument "Attention.make: embed_dim must be positive, got 0")
     (fun () -> Attention.make ~embed_dim:0 Nx.float32);
   let p = Attention.init ~embed_dim:4 in
-  raises_invalid_arg
-    "Attention.apply: input must have at least sequence and feature axes"
+  raises
+    (Invalid_argument "Attention.apply: input must have at least sequence and feature axes")
     (fun () -> Attention.apply p (Nx.zeros Nx.float32 [| 4 |]));
-  raises_invalid_arg
-    "Attention.apply: last axis has size 3 but the layer attends over 4 \
-     features" (fun () -> Attention.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
-  raises_invalid_arg "Attention.apply: num_heads must be positive, got 0"
+  raises
+    (Invalid_argument "Attention.apply: last axis has size 3 but the layer attends over 4 \
+     features") (fun () -> Attention.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
+  raises (Invalid_argument "Attention.apply: num_heads must be positive, got 0")
     (fun () -> Attention.apply ~num_heads:0 p (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises_invalid_arg
-    "Attention.apply: num_heads (3) must divide the embedding dimension (4)"
+  raises
+    (Invalid_argument "Attention.apply: num_heads (3) must divide the embedding dimension (4)")
     (fun () -> Attention.apply ~num_heads:3 p (Nx.zeros Nx.float32 [| 2; 4 |]))
 
 let () =

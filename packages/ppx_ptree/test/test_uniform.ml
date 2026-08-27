@@ -63,16 +63,16 @@ let test_map2_heterogeneous () =
 
 let test_map2_mismatch () =
   let shorter = { params with Params.layers = [] } in
-  raises_invalid_arg "Test_uniform.Params.map2: list length mismatch at layers"
+  raises (Invalid_argument "Test_uniform.Params.map2: list length mismatch at layers")
     (fun () -> Stdlib.ignore (Params.map2 (fun a _ -> a) params shorter));
   let absent = { params with Params.head = { Params.lw = 4; lb = None } } in
-  raises_invalid_arg
-    "Test_uniform.Params.map2_layer: option constructor mismatch at lb"
+  raises
+    (Invalid_argument "Test_uniform.Params.map2_layer: option constructor mismatch at lb")
     (fun () -> Stdlib.ignore (Params.map2 (fun a _ -> a) params absent))
 
 let test_fold2_mismatch () =
   let shorter = { params with Params.layers = [] } in
-  raises_invalid_arg "Test_uniform.Params.fold2: list length mismatch at layers"
+  raises (Invalid_argument "Test_uniform.Params.fold2: list length mismatch at layers")
     (fun () ->
       Stdlib.ignore (Params.fold2 (fun _ acc _ _ -> acc) 0 params shorter))
 
@@ -172,7 +172,7 @@ let test_nested_container_paths () =
 
 let test_nested_container_mismatch () =
   let shorter = { deep with Deep.rows = [| [ 1 ]; [ 3 ] |] } in
-  raises_invalid_arg "Test_uniform.Deep.fold2: list length mismatch at rows.0"
+  raises (Invalid_argument "Test_uniform.Deep.fold2: list length mismatch at rows.0")
     (fun () -> Stdlib.ignore (Deep.fold2 (fun _ acc _ _ -> acc) 0 deep shorter))
 
 (* ——— Ptree.S bridge and differentiation ——— *)
@@ -292,7 +292,7 @@ let test_mirror_dtype_mismatch () =
     let u = Dense.to_uniform dense in
     { u with Dense.Uniform.w = Nx.Ptree.P (Nx.zeros Nx.float64 [| 2 |]) }
   in
-  raises_invalid_arg "Ptree.unpack: dtype mismatch at w" (fun () ->
+  raises (Invalid_argument "Ptree.unpack: dtype mismatch at w") (fun () ->
       Stdlib.ignore (Dense.of_uniform forged))
 
 (* ——— mirror over containers ——— *)
@@ -339,7 +339,7 @@ let test_mirror_container_dtype_mismatch () =
         ];
     }
   in
-  raises_invalid_arg "Ptree.unpack: dtype mismatch at layers.1" (fun () ->
+  raises (Invalid_argument "Ptree.unpack: dtype mismatch at layers.1") (fun () ->
       Stdlib.ignore (Stack.of_uniform forged))
 
 let tests =
