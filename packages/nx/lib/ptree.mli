@@ -45,18 +45,20 @@ type tensor =
   | P : ('a, 'b) Nx_effect.t -> tensor
       (** A packed tensor. The wrapper hides dtype and layout parameters. *)
 
-(** Structures with a uniform payload: the traversal core.
+(** Structures with a uniform payload.
 
-    An ['a t] satisfying {!module-type:Traverse} is a structure whose payload
+    An ['a t] satisfying {!module-type:Uniform} is a structure whose payload
     positions all have type ['a]. Instantiating the payload turns one
     declaration into a family of trees — the model itself and any
     parameter-shaped data (masks, symmetries, per-leaf learning rates) — with
     type-changing traversals like
-    [map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t] connecting them.
+    [map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t] connecting them. It is
+    the contract checkpointing consumes and the one [\[@@deriving ptree\]]
+    derives for payload-generic types.
 
     {!module-type:S} is the same structure specialised to packed tensor leaves;
-    {!module-Make} and {!val-instantiate} convert any {!module-type:Traverse}
-    into an {!S}. {!module-type:Uniform} extends the core with leaf paths.
+    {!module-Make} and {!val-instantiate} convert any {!module-type:Uniform}
+    into an {!S}.
 
     Implementations must satisfy:
     - [map f t] applies [f] to every payload of [t] exactly once and preserves
@@ -66,8 +68,14 @@ type tensor =
     - [iter f t] applies [f] to every payload of [t] exactly once.
     - Every traversal visits the payloads of a value in the same order: [map]
       and [iter] agree on the payload sequence, and [map2] visits corresponding
-      pairs in that order. *)
-module type Traverse = sig
+      pairs in that order.
+    - [fold f acc t] visits every payload in the traversal order; the [string]
+      argument is the path to the current position.
+    - [fold2] is like [fold] but across two structurally equal trees.
+    - [names t] is [t] with every payload replaced by its path, so
+      [names (map f t)] is [names t] and [fold] pairs with any traversal
+      positionally. *)
+module type Uniform = sig
   type 'a t
   (** The structure type, parameterised by the uniform payload type. *)
 
@@ -81,21 +89,6 @@ module type Traverse = sig
 
   val iter : ('a -> unit) -> 'a t -> unit
   (** [iter f t] applies [f] to every payload leaf of [t]. *)
-end
-
-(** Structures with a uniform payload and leaf paths.
-
-    {!module-type:Uniform} extends {!module-type:Traverse} with path-threading
-    reductions; it is the contract checkpointing consumes and the one
-    [\[@@deriving ptree\]] derives for payload-generic types. Additional laws:
-    - [fold f acc t] visits every payload in the traversal order; the [string]
-      argument is the path to the current position.
-    - [fold2] is like [fold] but across two structurally equal trees.
-    - [names t] is [t] with every payload replaced by its path, so
-      [names (map f t)] is [names t] and [fold] pairs with any traversal
-      positionally. *)
-module type Uniform = sig
-  include Traverse
 
   val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
   (** [fold f acc t] reduces [t] to an accumulator, threading the path of each
@@ -121,10 +114,10 @@ end
 
 (** [Make (U)] is the parameter tree over [U] with packed tensor leaves: its [t]
     is [tensor U.t], and its traversals check leafwise that dtypes agree. *)
-module Make (U : Traverse) : S with type t = tensor U.t
+module Make (U : Uniform) : S with type t = tensor U.t
 
 val instantiate :
-  (module U : Traverse) -> (module S with type t = ('a, 'b) Nx_effect.t U.t)
+  (module U : Uniform) -> (module S with type t = ('a, 'b) Nx_effect.t U.t)
 (** [instantiate (module U)] fills a payload-generic structure's hole at a
     single tensor type: the result satisfies {!S} with typed leaves and no
     packing. Bind it once per model and pass the value to the transformations:

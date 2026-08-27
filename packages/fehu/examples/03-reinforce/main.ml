@@ -70,6 +70,20 @@ module Policy = struct
     Linear.iter f l1;
     Linear.iter f l2
 
+  let fold f acc { l1; l2 } =
+    let acc = Linear.fold (fun p -> f ("l1." ^ p)) acc l1 in
+    Linear.fold (fun p -> f ("l2." ^ p)) acc l2
+
+  let fold2 f acc p q =
+    let acc = Linear.fold2 (fun s -> f ("l1." ^ s)) acc p.l1 q.l1 in
+    Linear.fold2 (fun s -> f ("l2." ^ s)) acc p.l2 q.l2
+
+  let names p =
+    {
+      l1 = Linear.map (( ^ ) "l1.") (Linear.names p.l1);
+      l2 = Linear.map (( ^ ) "l2.") (Linear.names p.l2);
+    }
+
   (* Forward pass: obs [batch; 4] -> logits [batch; 2] *)
   let apply p obs = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))
 end

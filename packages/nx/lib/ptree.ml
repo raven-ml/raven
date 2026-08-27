@@ -19,17 +19,12 @@ end
 
 type tensor = P : ('a, 'b) Nx_effect.t -> tensor
 
-module type Traverse = sig
+module type Uniform = sig
   type 'a t
 
   val map : ('a -> 'b) -> 'a t -> 'b t
   val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
   val iter : ('a -> unit) -> 'a t -> unit
-end
-
-module type Uniform = sig
-  include Traverse
-
   val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
 
   val fold2 :
@@ -38,7 +33,7 @@ module type Uniform = sig
   val names : 'a t -> string t
 end
 
-module Make (U : Traverse) = struct
+module Make (U : Uniform) = struct
   type t = tensor U.t
 
   let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) (t : t) : t
@@ -63,7 +58,7 @@ module Make (U : Traverse) = struct
     U.iter (fun (P x) -> f x) t
 end
 
-let instantiate (type a b) (module U : Traverse) :
+let instantiate (type a b) (module U : Uniform) :
     (module S with type t = (a, b) Nx_effect.t U.t) =
   (module struct
     type t = (a, b) Nx_effect.t U.t
