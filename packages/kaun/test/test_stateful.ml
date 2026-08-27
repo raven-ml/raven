@@ -184,6 +184,23 @@ module Model = struct
     Batch_norm.iter f bn;
     Linear.iter f out
 
+  let fold f acc { lin; bn; out } =
+    let acc = Linear.fold (fun p -> f ("lin." ^ p)) acc lin in
+    let acc = Batch_norm.fold (fun p -> f ("bn." ^ p)) acc bn in
+    Linear.fold (fun p -> f ("out." ^ p)) acc out
+
+  let fold2 f acc p q =
+    let acc = Linear.fold2 (fun s -> f ("lin." ^ s)) acc p.lin q.lin in
+    let acc = Batch_norm.fold2 (fun s -> f ("bn." ^ s)) acc p.bn q.bn in
+    Linear.fold2 (fun s -> f ("out." ^ s)) acc p.out q.out
+
+  let names p =
+    {
+      lin = Linear.map (( ^ ) "lin.") (Linear.names p.lin);
+      bn = Batch_norm.map (( ^ ) "bn.") (Batch_norm.names p.bn);
+      out = Linear.map (( ^ ) "out.") (Linear.names p.out);
+    }
+
   let forward p stats ~training x =
     let h = Linear.apply p.lin x in
     let h, stats = Batch_norm.apply p.bn stats ~training h in
