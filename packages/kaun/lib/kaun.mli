@@ -32,7 +32,7 @@
     draws inside compile, exactly as an explicit key ({!Dropout}) would. *)
 
 val ptree :
-  (module U : Nx.Ptree.Uniform) ->
+  (module U : Nx.Ptree.Traverse) ->
   (module Nx.Ptree.S with type t = ('a, 'b) Nx.t U.t)
 (** [ptree (module Model)] is your model's parameter tree: the walker the
     transformations take. Bind it once per model:
