@@ -52,7 +52,7 @@ let test_pmap_axes_and_tuple_output () =
       (module Pmap_input)
       (fun value -> Nx.add value.rows (Nx.transpose value.columns))
   in
-  equal (array (float 0.)) (Nx.to_array eager) (Nx.to_array (parallel input));
+  equal (array float_exact) (Nx.to_array eager) (Nx.to_array (parallel input));
   let tuple_parallel =
     Rune.pmap2 ~devices ~in_axes:axes
       (module Pmap_input)
@@ -60,9 +60,9 @@ let test_pmap_axes_and_tuple_output () =
       (fun value -> (value.rows, Nx.transpose value.columns))
   in
   let rows_result, columns_result = tuple_parallel input in
-  equal (array (float 0.)) (Nx.to_array rows) (Nx.to_array rows_result);
+  equal (array float_exact) (Nx.to_array rows) (Nx.to_array rows_result);
   equal
-    (array (float 0.))
+    (array float_exact)
     (Nx.to_array (Nx.transpose columns))
     (Nx.to_array columns_result)
 
@@ -91,7 +91,7 @@ let test_vega_optimizer_step () =
   equal (array (float 1e-6)) [| 2.; -4. |] (Nx.to_array state.velocity.weight)
 
 let test_nested_kaun_model_and_checkpoint_order () =
-  Nx.Rng.run ~seed:7 @@ fun () ->
+  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let model =
     Model.
       {

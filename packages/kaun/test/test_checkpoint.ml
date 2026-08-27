@@ -14,7 +14,7 @@ let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
 (* Checkpoints round-trip bit-exactly, so comparisons are exact. *)
 let check_arr ~msg expected actual =
-  equal ~msg (array (float 0.0)) expected (to_arr actual)
+  equal ~msg (array float_exact) expected (to_arr actual)
 
 (* Runs [f] with a fresh checkpoint file path in a temporary directory, removed
    afterwards even on failure. *)
@@ -281,8 +281,8 @@ let test_ptree_paths () =
     match Checkpoint.get name (Checkpoint.of_packed (module T.Tree) tree') with
     | T.P x -> to_arr (Nx.cast f64 x)
   in
-  equal ~msg:"layers.1.w" (array (float 0.0)) [| 2.0 |] (leaf "layers.1.w");
-  equal ~msg:"head" (array (float 0.0)) [| 3.0 |] (leaf "head")
+  equal ~msg:"layers.1.w" (array float_exact) [| 2.0 |] (leaf "layers.1.w");
+  equal ~msg:"head" (array float_exact) [| 3.0 |] (leaf "head")
 
 (* A one-leaf structure whose payload sits at its own root: without a prefix
    its name is empty. *)
@@ -302,14 +302,14 @@ let test_root_leaf_prefix () =
   let ckpt = Checkpoint.of_packed (module Root) ~prefix:"w" x in
   equal ~msg:"prefix names the root" (list string) [ "w" ]
     (Checkpoint.names ckpt);
-  raises_invalid_arg "Checkpoint.of_packed: empty tensor name" (fun () ->
+  raises (Invalid_argument "Checkpoint.of_packed: empty tensor name") (fun () ->
       Checkpoint.of_packed (module Root) x)
 
 let test_find_get () =
   let ckpt = Checkpoint.of_tensor "w" (vec32 [| 1.0 |]) in
   is_some ~msg:"find present" (Checkpoint.find "w" ckpt);
   is_none ~msg:"find absent" (Checkpoint.find "nope" ckpt);
-  raises_invalid_arg "Checkpoint.get: no entry named \"nope\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.get: no entry named \"nope\"") (fun () ->
       Checkpoint.get "nope" ckpt)
 
 (* Error contracts *)
@@ -322,7 +322,7 @@ let test_missing_entry () =
         Checkpoint.of_tensor "scale" (vec64 [| 1.0 |]);
       ]
   in
-  raises_invalid_arg "Checkpoint.to_packed: missing entry \"b\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.to_packed: missing entry \"b\"") (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
 
 let test_extra_entries_ignored () =
@@ -333,10 +333,7 @@ let test_extra_entries_ignored () =
         Checkpoint.of_tensor "unrelated" (vec32 [| 9.0 |]);
       ]
   in
-  let p =
-    no_raise (fun () ->
-        Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
-  in
+  let p = Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt in
   check_arr ~msg:"w" [| 1.5; -2.0; 3.25 |] (unpack32 p.Params.w)
 
 let test_shape_mismatch () =
@@ -348,8 +345,8 @@ let test_shape_mismatch () =
         Checkpoint.of_tensor "scale" (vec64 [| 1.0 |]);
       ]
   in
-  raises_invalid_arg
-    "Checkpoint.to_packed: shape mismatch for \"b\": expected [1], got [2]"
+  raises
+    (Invalid_argument "Checkpoint.to_packed: shape mismatch for \"b\": expected [1], got [2]")
     (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
 
@@ -362,9 +359,9 @@ let test_dtype_mismatch_and_cast () =
         Checkpoint.of_tensor "scale" (vec32 [| 4.0 |]);
       ]
   in
-  raises_invalid_arg
-    "Checkpoint.to_packed: dtype mismatch for \"scale\": expected float64, got \
-     float32 (pass ~cast:true to convert)" (fun () ->
+  raises
+    (Invalid_argument "Checkpoint.to_packed: dtype mismatch for \"scale\": expected float64, got \
+     float32 (pass ~cast:true to convert)") (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt);
   let p =
     Checkpoint.to_packed (module Params) ~cast:true ~like:(fresh_params ()) ckpt
@@ -372,7 +369,7 @@ let test_dtype_mismatch_and_cast () =
   check_arr ~msg:"scale cast to float64" [| 4.0 |] (unpack64 p.Params.scale)
 
 let test_concat_duplicate () =
-  raises_invalid_arg "Checkpoint.concat: duplicate name \"w\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.concat: duplicate name \"w\"") (fun () ->
       Checkpoint.concat
         [
           Checkpoint.of_tensor "w" (vec32 [| 1.0 |]);
@@ -388,15 +385,15 @@ module Duplicated = struct
 end
 
 let test_duplicate_names () =
-  raises_invalid_arg "Checkpoint.of_packed: duplicate name \"w\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.of_packed: duplicate name \"w\"") (fun () ->
       Checkpoint.of_packed (module Duplicated) (params ()));
-  raises_invalid_arg "Checkpoint.to_packed: duplicate name \"w\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.to_packed: duplicate name \"w\"") (fun () ->
       Checkpoint.to_packed
         (module Duplicated)
         ~like:(params ()) Checkpoint.empty)
 
 let test_empty_name () =
-  raises_invalid_arg "Checkpoint.of_tensor: empty tensor name" (fun () ->
+  raises (Invalid_argument "Checkpoint.of_tensor: empty tensor name") (fun () ->
       Checkpoint.of_tensor "" (vec32 [| 1.0 |]))
 
 let test_to_int_errors () =
@@ -407,12 +404,12 @@ let test_to_int_errors () =
         Checkpoint.of_tensor "v" (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]);
       ]
   in
-  raises_invalid_arg "Checkpoint.to_int: no entry named \"step\"" (fun () ->
+  raises (Invalid_argument "Checkpoint.to_int: no entry named \"step\"") (fun () ->
       Checkpoint.to_int "step" ckpt);
-  raises_invalid_arg
-    "Checkpoint.to_int: \"w\" is not an int32 entry (dtype float32)" (fun () ->
+  raises
+    (Invalid_argument "Checkpoint.to_int: \"w\" is not an int32 entry (dtype float32)") (fun () ->
       Checkpoint.to_int "w" ckpt);
-  raises_invalid_arg "Checkpoint.to_int: \"v\" is not a scalar (shape [2])"
+  raises (Invalid_argument "Checkpoint.to_int: \"v\" is not a scalar (shape [2])")
     (fun () -> Checkpoint.to_int "v" ckpt)
 
 let () =
