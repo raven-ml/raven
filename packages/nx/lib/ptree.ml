@@ -63,7 +63,7 @@ module Make (U : Traverse) = struct
     U.iter (fun (P x) -> f x) t
 end
 
-let typed (type a b) (module U : Traverse) :
+let instantiate (type a b) (module U : Traverse) :
     (module S with type t = (a, b) Nx_effect.t U.t) =
   (module struct
     type t = (a, b) Nx_effect.t U.t

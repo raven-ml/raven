@@ -34,7 +34,7 @@
 
 open Kaun
 
-let gpt2_tree = Nx.Ptree.typed (module Gpt2.Params)
+let gpt2_tree = Nx.Ptree.instantiate (module Gpt2.Params)
 
 let gpt2_124m : Gpt2.config =
   {

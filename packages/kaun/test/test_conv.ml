@@ -10,7 +10,7 @@ open Kaun
    so the instance is just a type pin. Tensor64 treats a bare tensor as a
    one-leaf parameter tree, for gradients with respect to an input. *)
 
-let conv64 = Nx.Ptree.typed (module Conv)
+let conv64 = Nx.Ptree.instantiate (module Conv)
 
 module Tensor64 = struct
   type t = (float, Nx.float64_elt) Nx.t

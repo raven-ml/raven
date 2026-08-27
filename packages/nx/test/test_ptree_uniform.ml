@@ -122,7 +122,7 @@ let test_map2_dtype_mismatch () =
 
 let test_typed_instance () =
   let module TP =
-    (val Nx.Ptree.typed (module U)
+    (val Nx.Ptree.instantiate (module U)
         : Nx.Ptree.S with type t = Nx.float32_t U.t)
   in
   let p = { U.w = vec32 [| 1.0; -2.0 |]; b = vec32 [| 3.0 |] } in

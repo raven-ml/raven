@@ -96,7 +96,7 @@ module Cnn = struct
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let cnn = Nx.Ptree.typed (module Cnn)
+let cnn = Nx.Ptree.instantiate (module Cnn)
 
 (* The jitted step's input: the batch joins the parameters as leaves — values
    that change between calls must be inputs, never captures. *)

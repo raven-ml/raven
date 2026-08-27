@@ -12,7 +12,9 @@
     instance: {!of_params} names each leaf by its path — record fields and
     container positions joined with ["."] — and {!to_params} rebuilds a
     structure from its entries, using an existing value as the template for
-    structure, dtypes, and shapes.
+    structure, dtypes, and shapes. Unlike the transformations, which take an
+    instantiated walker ({!Nx.Ptree.instantiate}), checkpointing takes the
+    structure's module itself: leaf names come from the structure's shape.
 
     Entries not named by the template are ignored on extraction, so one file
     holds several sections side by side — model parameters, parameter-shaped
