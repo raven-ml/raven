@@ -84,7 +84,7 @@ let test_uniform_fold_paths_in_grad () =
   equal ~msg:"first path" string "w" (List.nth paths 0);
   equal ~msg:"second path" string "b" (List.nth paths 1)
 
-(* Typed instance via Ptree.typed: leaves stay typed, no packing. *)
+(* Typed instance via Ptree.instantiate: leaves stay typed, no packing. *)
 
 let typed_params () = { U.w = vec32 [| 1.0; -2.0; 3.0 |]; b = vec32 [| 0.5 |] }
 
@@ -92,7 +92,7 @@ let typed_loss (t : Nx.float32_t U.t) : Nx.float32_t =
   Nx.add (Nx.sum (Nx.mul t.U.w t.U.w)) (Nx.mul_s (Nx.sum t.U.b) 3.0)
 
 let test_grad_through_typed () =
-  let u = Nx.Ptree.typed (module U) in
+  let u = Nx.Ptree.instantiate (module U) in
   let g = Rune.grad u typed_loss (typed_params ()) in
   check_arr ~msg:"dw" [| 2.0; -4.0; 6.0 |] g.U.w;
   check_arr ~msg:"db" [| 3.0 |] g.U.b

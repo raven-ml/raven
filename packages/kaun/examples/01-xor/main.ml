@@ -28,7 +28,7 @@ module Mlp = struct
   let apply p x = Linear.apply p.l2 (Nx.tanh (Linear.apply p.l1 x))
 end
 
-let mlp = Nx.Ptree.typed (module Mlp)
+let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

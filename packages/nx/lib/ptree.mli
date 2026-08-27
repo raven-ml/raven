@@ -55,8 +55,8 @@ type tensor =
     [map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t] connecting them.
 
     {!module-type:S} is the same structure specialised to packed tensor leaves;
-    {!module-Make} and {!val-typed} convert any {!module-type:Traverse} into an
-    {!S}. {!module-type:Uniform} extends the core with leaf paths.
+    {!module-Make} and {!val-instantiate} convert any {!module-type:Traverse}
+    into an {!S}. {!module-type:Uniform} extends the core with leaf paths.
 
     Implementations must satisfy:
     - [map f t] applies [f] to every payload of [t] exactly once and preserves
@@ -123,17 +123,21 @@ end
     is [tensor U.t], and its traversals check leafwise that dtypes agree. *)
 module Make (U : Traverse) : S with type t = tensor U.t
 
-val typed :
+val instantiate :
   (module U : Traverse) -> (module S with type t = ('a, 'b) Nx_effect.t U.t)
-(** [typed (module U)] is the parameter tree over [U] at a single tensor type:
-    the structure instantiated at typed leaves, satisfying {!S} with no packing.
-    Bind it once per structure and pass it wherever a first-class {!S} module is
-    expected:
+(** [instantiate (module U)] fills a payload-generic structure's hole at a
+    single tensor type: the result satisfies {!S} with typed leaves and no
+    packing. Bind it once per model and pass the value to the transformations:
 
     {[
-      let mlp = Nx.Ptree.typed (module Mlp) in
+      let mlp = Nx.Ptree.instantiate (module Mlp) in
       let grads = grad mlp loss params
-    ]} *)
+    ]}
+
+    Transformations only walk tensor leaves, so they take this instantiated
+    walker. Checkpointing also names leaves, and names come from the
+    structure's shape, so it takes the structure's module itself (see
+    [Kaun.Checkpoint]). *)
 
 val unpack :
   ?at:string -> ('a, 'b) Nx_core.Dtype.t -> tensor -> ('a, 'b) Nx_effect.t

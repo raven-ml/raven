@@ -192,7 +192,7 @@ let () =
         [
           Thumper.bench "linear fwd" (fun () -> Kaun.Linear.apply lin lx);
           Thumper.bench "linear fwd+bwd" (fun () ->
-              Rune.value_and_grad (Nx.Ptree.typed (module Kaun.Linear)) lin_loss
+              Rune.value_and_grad (Nx.Ptree.instantiate (module Kaun.Linear)) lin_loss
                 lin);
         ];
     ]

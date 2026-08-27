@@ -8,13 +8,13 @@
     Kaun has no layer or trainer abstraction. A layer is a record of parameters
     with a payload hole and an [apply] function; a model is a record of layers
     with one-line traversals (the {!Nx.Ptree.Uniform} contract, hand-written or
-    derived with [ppx_ptree]; see {!Linear} for the pattern). [Nx.Ptree.typed]
+    derived with [ppx_ptree]; see {!Linear} for the pattern). [Nx.Ptree.instantiate]
     instantiates the model at its tensor type, a training step composes
     {!Rune.value_and_grad} with a [Vega] optimizer update, and the training
     loop is ordinary [Seq] iteration over {!Data} minibatches.
 
     {[
-    let model = Nx.Ptree.typed (module Model)
+    let model = Nx.Ptree.instantiate (module Model)
 
     let step (params, ostate) (x, y) =
       let loss p = Loss.softmax_cross_entropy_sparse (Model.apply p x) y in

@@ -9,7 +9,7 @@ open Kaun
 (* Float64 instances for gradient checking; the traversals are dtype-generic, so
    each instance is just a type pin. *)
 
-let attention64 = Nx.Ptree.typed (module Attention)
+let attention64 = Nx.Ptree.instantiate (module Attention)
 
 (* Raw q/k/v inputs as a parameter structure, to gradient-check the attention
    core with respect to its inputs. *)

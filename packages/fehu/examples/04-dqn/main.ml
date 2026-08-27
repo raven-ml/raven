@@ -86,7 +86,7 @@ module Q = struct
       (Fn.relu (Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))))
 end
 
-let q_tree = Nx.Ptree.typed (module Q)
+let q_tree = Nx.Ptree.instantiate (module Q)
 
 let count_parameters params =
   let n = ref 0 in

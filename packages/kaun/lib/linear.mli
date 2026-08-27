@@ -10,7 +10,7 @@
     rate; filled with strings, the checkpoint names. Construct one with {!init}
     or {!make}, transform inputs with {!apply}, and compose layers into models
     by nesting records — the traversals give any such model a one-line
-    {!Nx.Ptree.Uniform} instance, and [Nx.Ptree.typed] turns that into the
+    {!Nx.Ptree.Uniform} instance, and [Nx.Ptree.instantiate] turns that into the
     {!Nx.Ptree.S} the transformations take:
 
     {[
