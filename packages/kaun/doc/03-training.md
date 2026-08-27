@@ -14,37 +14,39 @@ Every training step in kaun has the same three lines: a loss closing over the ba
 open Kaun
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
+let mlp = Kaun.ptree (module Mlp)
+
 let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
-  let l, grads = Rune.value_and_grad (module Mlp) loss params in
+  let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step (module Mlp) ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
 
-The state is a pair `(params, ostate)` of ordinary values — parameters of type `Mlp.t`, optimizer state a record of `Mlp.t`-shaped moments. Nothing is hidden: print a gradient leaf, swap the optimizer, or checkpoint everything mid-run.
+The state is a pair `(params, ostate)` of ordinary values — parameters of type `Nx.float32_t Mlp.t`, optimizer state a record of like-shaped moments. Nothing is hidden: print a gradient leaf, swap the optimizer, or checkpoint everything mid-run.
 
 Because the step is yours, extensions are insertions, not configuration. Gradient clipping goes between the backward pass and the update:
 
 <!-- $MDX skip -->
 ```ocaml
-let grads = Vega.clip_by_global_norm (module Mlp) ~max_norm:1.0 grads in
+let grads = Vega.clip_by_global_norm mlp ~max_norm:1.0 grads in
 ```
 
 A learning-rate schedule is a function `int -> float` you evaluate at your own step counter:
@@ -56,7 +58,7 @@ let sched =
 in
 let step k (params, ostate) (x, y) =
   ...
-  Vega.adamw_step (module Mlp) ~lr:(sched k) ostate ~params ~grads
+  Vega.adamw_step mlp ~lr:(sched k) ostate ~params ~grads
 ```
 
 ## Optimizers
@@ -80,8 +82,8 @@ let () =
       l2 = Linear.init ~inputs:16 ~outputs:3;
     }
   in
-  let ostate = Vega.adamw_init (module Mlp) params in
-  (* The moments are Mlp.t values, inspectable like the parameters. *)
+  let ostate = Vega.adamw_init mlp params in
+  (* The moments have the parameters' type, inspectable like them. *)
   Format.printf "mu.l1.w: %a  step: %d@." Nx.pp_shape
     (Nx.shape ostate.mu.l1.w)
     ostate.step
@@ -132,7 +134,7 @@ Without shuffling, batches are views of the data, not copies, in order. With `~s
 ```ocaml
 Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
 let data = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
-let state = ref (params, Vega.adamw_init (module Mlp) params) in
+let state = ref (params, Vega.adamw_init mlp params) in
 for _epoch = 1 to 10 do
   data |> Seq.iter (fun batch -> state := fst (step !state batch))
 done

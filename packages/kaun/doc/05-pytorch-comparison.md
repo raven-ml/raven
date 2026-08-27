@@ -17,18 +17,18 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Language | Python, dynamic | OCaml, statically typed |
 | Model definition | `nn.Module` subclass with `forward` | plain record + `apply` function |
 | Parameter storage | mutable attributes, auto-registered | fields of your record |
-| Parameter traversal | `model.parameters()` (reflection) | `map`/`map2`/`iter` — 3 one-liners you write |
+| Parameter traversal | `model.parameters()` (reflection) | `map`/`map2`/`iter` — one-liners you write (or `[@@deriving ptree]`) |
 | Forward pass | `model(x)` (stateful method) | `Model.apply params x` (pure function) |
 | Autograd | dynamic tape on tensors (`loss.backward()`) | `Rune.value_and_grad` (effect handlers) |
 | Gradients | `.grad` attributes, mutated in place | a fresh value of your record type |
-| Optimizer | `torch.optim.AdamW(model.parameters())` | `Vega.adamw_step (module Model)` — pure, state threaded explicitly |
+| Optimizer | `torch.optim.AdamW(model.parameters())` | `Vega.adamw_step model` — pure, state threaded explicitly |
 | Train/eval mode | `model.train()` / `model.eval()` | explicit `~training` arguments |
 | Buffers (running stats) | hidden module state | explicit `Stats.t` you thread through the loop |
 | Data loading | `DataLoader` | `Data.batches2` returning a `Seq.t` |
 | Checkpointing | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Checkpoint` |
 | Pretrained models | `from_pretrained` per architecture | `kaun.hf` + generic `rename`/`transpose`/`split` |
 | RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
-| Device | `model.to("cuda")` | CPU only |
+| Device | `model.to("cuda")` | eager on CPU; GPU via `Rune.jit ~device` |
 
 ---
 
@@ -57,20 +57,22 @@ model = MLP()
 open Kaun
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let mlp = Kaun.ptree (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -84,7 +86,7 @@ let () =
   ignore y
 ```
 
-Where `nn.Module` registers parameters by reflection on attribute assignment, kaun asks you to write the traversal by hand — three mechanical one-liners per record. That is the entire cost, and it buys full typing: `model.l1.w` is a tensor field you can read directly, gradients of `Mlp.t` are `Mlp.t`, and there is no string-keyed parameter store to drift out of sync.
+Where `nn.Module` registers parameters by reflection on attribute assignment, kaun asks you to write the traversal by hand (or derive it with `[@@deriving ptree]`) — mechanical one-liners per record, instantiated once by `Kaun.ptree`. That is the entire cost, and it buys full typing: `model.l1.w` is a tensor field you can read directly, gradients of a model value have the model's own record type, and there is no string-keyed parameter store to drift out of sync.
 
 One deliberate difference: layer *hyper*-parameters that do not change the parameter shapes are arguments of `apply`, not stored configuration — `Attention.apply ~num_heads:12 ~causal:true`, `Layer_norm.apply ~eps:1e-5`.
 
@@ -110,19 +112,19 @@ def step(x, y):
 ```ocaml
 let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
-  let l, grads = Rune.value_and_grad (module Mlp) loss params in
+  let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step (module Mlp) ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
 
 Point-by-point:
 
-- `loss.backward()` → `Rune.value_and_grad (module Mlp) loss params`. No `.grad` attributes: the gradient is returned as a value.
+- `loss.backward()` → `Rune.value_and_grad mlp loss params`. No `.grad` attributes: the gradient is returned as a value.
 - `opt.zero_grad()` → nothing. Gradients are fresh values, never accumulated in place.
-- `opt.step()` → `Vega.adamw_step`. The optimizer holds no reference to the model; its state (`mu`, `nu`, `step`) is a record of `Mlp.t`-shaped values your loop threads explicitly.
-- `torch.nn.utils.clip_grad_norm_` → `Vega.clip_by_global_norm (module Mlp) ~max_norm grads`, a pure function applied between the two.
+- `opt.step()` → `Vega.adamw_step`. The optimizer holds no reference to the model; its state (`mu`, `nu`, `step`) is a record of parameter-shaped values your loop threads explicitly.
+- `torch.nn.utils.clip_grad_norm_` → `Vega.clip_by_global_norm mlp ~max_norm grads`, a pure function applied between the two.
 - LR schedulers → a `Vega.Schedule.t` is `int -> float`; evaluate it at your own step counter and pass `~lr`.
 
 Note the layering: `Vega` is an independent package composed in user code — kaun's library does not depend on it.
@@ -189,7 +191,7 @@ ckpt = torch.load(path)
 model.load_state_dict(ckpt["model"])
 ```
 
-**kaun** — `state_dict()` becomes `Checkpoint.of_params` over a `Named` module (your traversals plus a `names` one-liner), and files are safetensors, not pickles:
+**kaun** — `state_dict()` becomes `Checkpoint.of_params` over your model's `Nx.Ptree.Uniform` module (the same traversals; `names` supplies the leaf paths), and files are safetensors, not pickles:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -237,10 +239,10 @@ let params =
 
 | PyTorch feature | Status in kaun |
 | --- | --- |
-| GPU / `model.to("cuda")` | Not available. Everything runs eagerly on CPU through Nx. |
-| `torch.compile` / JIT | Not available. |
-| Layer coverage | Deliberately small: no recurrent layers; `Attention` has no rotary embeddings or KV cache (write them from `scaled_dot_product_attention`); `Conv` is im2col-based and not tuned for large inputs. |
-| Mixed precision / AMP | No; `Batch_norm` is single-precision only, other layers are generic over float dtypes. |
+| GPU / `model.to("cuda")` | Eager execution is CPU-only; compile a step with `Rune.jit` and pass `~device:"CUDA"` or `~device:"METAL"`. |
+| `torch.compile` / JIT | `Rune.jit` compiles a step (note it unrolls `Rune.scan`). |
+| Layer coverage | Deliberately small: no recurrent layers; `Attention` has no rotary embeddings (write them from `scaled_dot_product_attention`; decoding uses `Attention.apply_cached`'s KV cache); `Conv` is im2col-based and not tuned for large inputs. |
+| Mixed precision / AMP | Manual: cast with `map (Nx.cast dt)` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |
 | `DataLoader` workers | No; data is in-memory tensors and a `Seq.t`. |
 | Distributed (`DDP`) | Not available. |
 
@@ -250,12 +252,12 @@ let params =
 
 | Task | PyTorch | kaun |
 | --- | --- | --- |
-| Define a model | `nn.Module` subclass | record + `apply` + 3 traversals |
+| Define a model | `nn.Module` subclass | record + `apply` + one-line traversals |
 | Construct | `MLP()` | `{ l1 = Linear.init ~inputs ~outputs; ... }` |
 | Forward | `model(x)` | `Mlp.apply params x` |
-| Backward | `loss.backward()` | `Rune.value_and_grad (module Mlp) loss params` |
+| Backward | `loss.backward()` | `Rune.value_and_grad mlp loss params` |
 | Zero grads | `opt.zero_grad()` | not needed |
-| Optimizer step | `opt.step()` | `Vega.adamw_step (module Mlp) ~lr st ~params ~grads` |
+| Optimizer step | `opt.step()` | `Vega.adamw_step mlp ~lr st ~params ~grads` |
 | Clip gradients | `clip_grad_norm_` | `Vega.clip_by_global_norm` |
 | LR schedule | `lr_scheduler` object | `Vega.Schedule.t`, evaluated at your counter |
 | Train mode | `model.train()` | `~training:true` arguments |

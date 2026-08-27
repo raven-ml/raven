@@ -30,7 +30,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Gradient stopping | `jax.lax.stop_gradient` | `detach`, `no_grad` |
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
 | Randomness | Explicit splittable keys (`jax.random`) | Implicit scoped RNG (`Nx.Rng.with_key`) |
-| JIT compilation | `jax.jit` | Not yet implemented |
+| JIT compilation | `jax.jit` | `jit` — traces once per leaf signature; CPU, CUDA, or Metal |
 | Devices | `jax.device_put`, GPU/TPU | CPU only |
 
 ---
@@ -276,7 +276,7 @@ let () =
   ignore (Rune.grad' f (Nx.scalar Nx.float32 2.0))
 ```
 
-Rune still provides `scan`, `cond`, and `while_loop` — not because you need them today, but because their signatures are staging-ready: code written with them differentiates and vectorizes now, and a future `jit` can stage them as structured control flow instead of unrolled traces. `lax.scan`'s carry-and-stacked-outputs contract translates directly:
+Rune still provides `scan`, `cond`, and `while_loop` — not because you need them today, but because their signatures are staging-ready: code written with them differentiates and vectorizes now, and a future staging `jit` can trace them as structured control flow. Today `jit` unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates. `lax.scan`'s carry-and-stacked-outputs contract translates directly:
 
 ```python
 final, ys = jax.lax.scan(f, init, xs)
@@ -351,13 +351,13 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 
 | JAX feature | Status in rune |
 | --- | --- |
-| `jax.jit` | Not implemented. Everything runs eagerly; `scan`/`cond`/`while_loop` are designed so a future `jit` can stage them. |
-| GPU/TPU, `jax.device_put` | Not implemented. CPU only. |
+| `jax.jit` | `jit (module P) f` compiles to fused kernels, cached per leaf signature. It unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates. |
+| GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. |
 | `jax.pmap` / distributed | Not implemented. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `rfft`, `irfft`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
 | Full op coverage under `vmap` | The `fft` family and decompositions raise on batched inputs. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |
-| Donation, sharding, `pjit` | Not applicable without a compiler. |
+| Donation, sharding, `pjit` | `jit ~donate:true` reuses input storage; no sharding or `pjit`. |
 
 Rune's failure model is deliberate: operations without a rule raise `Invalid_argument` rather than silently producing zero or wrong gradients.
 
@@ -389,4 +389,4 @@ Rune's failure model is deliberate: operations without a rule raise `Invalid_arg
 | Block region from AD | — | `no_grad (fun () -> ...)` |
 | Gradient check | `check_grads(f, (x,), 1)` | `check_grads (module P) f params` |
 | Debug tracing | `jax.debug.print` | `with_debug (fun () -> ...)` |
-| JIT | `jax.jit(f)` | Not yet available |
+| JIT | `jax.jit(f)` | `jit (module P) f` |

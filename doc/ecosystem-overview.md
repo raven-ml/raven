@@ -108,7 +108,7 @@ compose `Rune.value_and_grad` with a Vega optimizer update.
 ```ocaml
 open Kaun
 
-type mlp = { l1 : Linear.t; l2 : Linear.t }
+type 'a mlp = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
 let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 

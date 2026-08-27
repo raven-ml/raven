@@ -119,6 +119,6 @@ let tx =
 | Learning rate | Float or schedule | Always `Schedule.t` (`int -> float`) |
 | Weight decay rate | Float | `Schedule.t` (dynamic decay) |
 | Noise eta | Float | `Schedule.t` (dynamic noise) |
-| Gradient clipping | Global norm across all params | Per-tensor norm |
-| Parameter trees | Built-in (JAX pytrees) | Handled by Kaun's `Ptree.t` |
+| Gradient clipping | Global norm across all params | Per-tensor `clip_by_norm`; structural `clip_by_global_norm` |
+| Parameter trees | Built-in (JAX pytrees) | Structural steps (`adam_step`, ...) over any `Nx.Ptree.S` structure |
 | `centralize` | Function call `centralize()` | Value `centralize` (no arguments) |

@@ -110,7 +110,7 @@ The intent is that rune never returns a wrong gradient quietly.
 
 ## Implications for Users
 
-**No graph construction step.** Everything runs eagerly. Every operation happens immediately, and transformations intercept operations as they execute. `if`, `match`, `for`, recursion, and higher-order functions all work inside differentiated code — there is no "graph-compatible" subset of the language. (The `scan`/`cond`/`while_loop` combinators exist for a future `jit` that could stage them; they are not required today.)
+**No graph construction step.** Everything runs eagerly. Every operation happens immediately, and transformations intercept operations as they execute. `if`, `match`, `for`, recursion, and higher-order functions all work inside differentiated code — there is no "graph-compatible" subset of the language. (The `scan`/`cond`/`while_loop` combinators exist for a future staging `jit` that could trace them as structured control flow; they are not required today.)
 
 **Side effects run in the forward pass.** Printing or logging inside a differentiated function executes during the forward pass. The backward pass runs the recorded pull thunks; it does not re-execute your function — unless you asked for that with `remat`.
 

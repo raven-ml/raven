@@ -353,7 +353,7 @@ The check is directional, not per-element: it validates gradients cheaply rather
 
 ## Control Flow
 
-Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside every transformation, because rune runs eagerly and intercepts operations as they execute. The `scan`, `cond`, and `while_loop` combinators exist for a different reason: their signatures are staging-ready, so code written with them differentiates and vectorizes today, and a future `jit` can stage them as structured control flow instead of unrolled traces.
+Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside every transformation, because rune runs eagerly and intercepts operations as they execute. The `scan`, `cond`, and `while_loop` combinators exist for a different reason: their signatures are staging-ready, so code written with them differentiates and vectorizes today, and a future staging `jit` can trace them as structured control flow (today `Rune.jit` unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates).
 
 ### scan
 
@@ -428,7 +428,7 @@ Rune fails loudly rather than returning wrong gradients:
 - **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, `rfft`, `irfft`, `psum`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky` and reverse-mode `qr` are supported.)
 - **`vmap` has no rule for `fft`-family and decomposition ops** (`fft`, `ifft`, `rfft`, `irfft`, `cholesky`, `qr`, `svd`, `eig`, `eigh`) over batched inputs.
 - **In-place mutation** (`set_item`, `set_slice`, `blit`, `assign`) raises during differentiation; write the update functionally.
-- **No JIT yet.** Everything runs eagerly; `scan`/`cond`/`while_loop` are designed so a future `jit` can stage them without unrolling.
+- **`Rune.jit` unrolls `scan`** and rejects data-dependent `cond`/`while_loop` predicates, so a recurrence's compile time grows with its sequence length.
 
 ## Summary
 

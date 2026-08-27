@@ -6,10 +6,10 @@ Kaun has no layer abstraction. A layer is a plain record of tensors with an `app
 
 Every parameterized layer module follows the same shape, with `Linear` as the reference:
 
-- a parameter record — `Linear.t` is `{ w; b }` with `w : [| inputs; outputs |]` and an optional bias;
+- a parameter record with a payload hole — `'a Linear.t` is `{ w; b }`, at tensor payloads `w : [| inputs; outputs |]` and an optional bias;
 - constructors — `Linear.init ~inputs ~outputs` for the float32 defaults, `Linear.make` for initializer, bias, and dtype control;
 - an `apply` function — `Linear.apply p x` is `x @ p.w + p.b`, treating leading axes as batch axes;
-- traversals — `map`, `map2`, `iter` satisfying `Nx.Ptree.S`, plus `names` for checkpointing.
+- traversals — `map`, `map2`, `iter`, `fold`, `fold2`, `names` satisfying `Nx.Ptree.Uniform`.
 
 ```ocaml
 open Kaun
@@ -49,49 +49,51 @@ Every `apply` is differentiable through rune, in both reverse and forward mode.
 
 ## Models Are Records of Layers
 
-Records nest into records, and the traversals delegate field by field. Adding `names` — one name per leaf, prefixed by field — makes the same module usable with `Checkpoint`:
+Records nest into records, and the traversals delegate field by field, prefixing each leaf's path with the field name:
 
 ```ocaml
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let names { l1; l2 } =
-    List.map (( ^ ) "l1.") (Linear.names l1)
-    @ List.map (( ^ ) "l2.") (Linear.names l2)
+    {
+      l1 = Linear.map (( ^ ) "l1.") (Linear.names l1);
+      l2 = Linear.map (( ^ ) "l2.") (Linear.names l2);
+    }
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 ```
 
-The `map`/`map2`/`iter` trio is what `Rune.grad`, `Vega.adam_step`, and friends consume; `names` is the extra line `Checkpoint` needs (the `Checkpoint.Named` module type). This scales without new concepts: a transformer block is a record of five layers, a transformer is a record with a `block list` field traversed with `List.map`/`List.map2`/`List.iter`. [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) defines all of GPT-2 this way in ~150 lines.
+The `map`/`map2`/`iter` trio, instantiated by `Kaun.ptree`, is what `Rune.grad`, `Vega.adam_step`, and friends consume; `names` (with `fold`/`fold2`, one-liners of the same shape) is what `Checkpoint` needs — together the `Nx.Ptree.Uniform` contract, which `[@@deriving ptree]` derives in one line. This scales without new concepts: a transformer block is a record of five layers, a transformer is a record with a `block list` field traversed with `List.map`/`List.map2`/`List.iter`. [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) defines all of GPT-2 this way in ~150 lines.
 
 A CNN mixes parameterized and stateless pieces freely, since a forward pass is just function composition:
 
 ```ocaml
 module Cnn = struct
-  type t = { c1 : Conv.t; c2 : Conv.t; fc : Linear.t }
+  type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; fc : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { c1; c2; fc } =
+  let map f { c1; c2; fc } =
     { c1 = Conv.map f c1; c2 = Conv.map f c2; fc = Linear.map f fc }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     {
       c1 = Conv.map2 f p.c1 q.c1;
       c2 = Conv.map2 f p.c2 q.c2;
       fc = Linear.map2 f p.fc q.fc;
     }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { c1; c2; fc } =
+  let iter f { c1; c2; fc } =
     Conv.iter f c1;
     Conv.iter f c2;
     Linear.iter f fc
@@ -152,7 +154,7 @@ let () =
   (* [3; 4] — one weighted average of value rows per query row *)
 ```
 
-There are no rotary embeddings or KV cache; write them from this core when needed.
+There are no rotary embeddings; write them from this core when needed. For autoregressive decoding, `apply_cached` runs causal self-attention over a functional key-value cache (`Attention.Cache`), so a generation step keeps fixed shapes and compiles once.
 
 ## Stateful Layers: Batch_norm
 
@@ -162,19 +164,19 @@ There are no rotary embeddings or KV cache; write them from this core when neede
 
 ```ocaml
 module Net = struct
-  type t = { l1 : Linear.t; bn : Batch_norm.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; bn : 'a Batch_norm.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; bn; l2 } =
+  let map f { l1; bn; l2 } =
     { l1 = Linear.map f l1; bn = Batch_norm.map f bn; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     {
       l1 = Linear.map2 f p.l1 q.l1;
       bn = Batch_norm.map2 f p.bn q.bn;
       l2 = Linear.map2 f p.l2 q.l2;
     }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; bn; l2 } =
+  let iter f { l1; bn; l2 } =
     Linear.iter f l1;
     Batch_norm.iter f bn;
     Linear.iter f l2
@@ -184,6 +186,8 @@ module Net = struct
     let h, stats = Batch_norm.apply p.bn stats ~training h in
     (Linear.apply p.l2 (Fn.relu h), stats)
 end
+
+let net = Kaun.ptree (module Net)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -205,15 +209,15 @@ let () =
       (Loss.mse pred y, stats')
     in
     let loss, grads, stats' =
-      Rune.value_and_grad_aux (module Net) objective params
+      Rune.value_and_grad_aux net objective params
     in
     let params, ostate =
-      Vega.adam_step (module Net) ~lr:1e-2 ostate ~params ~grads
+      Vega.adam_step net ~lr:1e-2 ostate ~params ~grads
     in
     ((params, stats', ostate), Nx.item [] loss)
   in
 
-  let state = ref (params, stats, Vega.adam_init (module Net) params) in
+  let state = ref (params, stats, Vega.adam_init net params) in
   for _ = 1 to 20 do
     let s, _ = step !state in
     state := s
@@ -226,9 +230,9 @@ let () =
   Format.printf "eval predictions: %a@." Nx.pp_shape (Nx.shape pred)
 ```
 
-The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own traversals and `names` (`Batch_norm.Stats` is itself a `Ptree.S` structure), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained/).
+The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own traversals and `names` (`Batch_norm.Stats` satisfies `Nx.Ptree.Uniform` itself), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained/).
 
-`Batch_norm` is single-precision only; the other layers are generic over float dtypes via their `make` constructors.
+`Batch_norm.init` builds float32 parameters (cast with `map (Nx.cast dt)` for other precisions); `apply` is generic over float dtypes, like the other layers' `make`, computing half- and quarter-precision statistics in a float32 island.
 
 ## Initializers
 
