@@ -88,7 +88,7 @@ module Policy = struct
   let apply p obs = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))
 end
 
-let policy_tree = Nx.Ptree.instantiate (module Policy)
+let policy_tree = Kaun.ptree (module Policy)
 
 let count_parameters params =
   let n = ref 0 in

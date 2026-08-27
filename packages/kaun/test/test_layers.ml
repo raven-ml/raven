@@ -27,9 +27,9 @@ module _ :
 (* Float64 instances for gradient checking; the layer traversals are
    dtype-generic, so each instance is just a type pin. *)
 
-let linear64 = Nx.Ptree.instantiate (module Linear)
-let embedding64 = Nx.Ptree.instantiate (module Embedding)
-let layer_norm64 = Nx.Ptree.instantiate (module Layer_norm)
+let linear64 = Kaun.ptree (module Linear)
+let embedding64 = Kaun.ptree (module Embedding)
+let layer_norm64 = Kaun.ptree (module Layer_norm)
 
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)

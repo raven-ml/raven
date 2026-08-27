@@ -74,7 +74,7 @@ module Cnn = struct
     |> Linear.apply p.fc
 end
 
-let cnn = Nx.Ptree.instantiate (module Cnn)
+let cnn = Kaun.ptree (module Cnn)
 
 let accuracy params (x, y) =
   Metric.accuracy (Cnn.apply params ~training:false x) y

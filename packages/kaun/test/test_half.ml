@@ -192,7 +192,7 @@ let test_batch_norm_island () =
 
 (* ───── The astype-sandwich gradient ───── *)
 
-let linear32 = Nx.Ptree.instantiate (module Linear)
+let linear32 = Kaun.ptree (module Linear)
 
 let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   ignore name;

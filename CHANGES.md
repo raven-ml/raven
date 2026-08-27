@@ -457,6 +457,9 @@ thread.
 
 ### Kaun
 
+- Add `Kaun.ptree`, an alias of `Nx.Ptree.instantiate`: `let mlp = Kaun.ptree
+  (module Mlp)` is the walker the transformations take, so kaun users never
+  touch the `Nx.Ptree` machinery directly.
 - **Breaking:** the layers are payload-generic parameter trees: `Linear`,
   `Conv`, `Embedding`, `Layer_norm`, `Batch_norm` (and its `Stats`),
   `Attention` (and its `Cache`) each expose one `'a t` record with payload

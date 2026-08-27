@@ -17,3 +17,5 @@ module Pool = Pool
 module Conv = Conv
 module Attention = Attention
 module Checkpoint = Checkpoint
+
+let ptree = Nx.Ptree.instantiate

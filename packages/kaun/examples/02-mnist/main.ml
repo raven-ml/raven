@@ -45,7 +45,7 @@ module Mlp = struct
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let mlp = Nx.Ptree.instantiate (module Mlp)
+let mlp = Kaun.ptree (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

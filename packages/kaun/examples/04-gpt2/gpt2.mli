@@ -43,7 +43,7 @@ type t = Nx.float32_t params
 (** The type for single-precision GPT-2 parameters, the checkpoint dtype. *)
 
 module Params : Nx.Ptree.Uniform with type 'a t = 'a params
-(** The parameter traversals: hand [Nx.Ptree.instantiate (module Params)] to the
+(** The parameter traversals: hand [Kaun.ptree (module Params)] to the
     transformations, and [(module Params)] to {!Kaun.Checkpoint.of_params} and
     {!Kaun.Checkpoint.to_params}. Leaves are named [wte.table],
     [blocks.0.attn.q.w], [ln_f.gamma], ...
