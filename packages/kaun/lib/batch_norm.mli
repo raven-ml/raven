@@ -19,7 +19,7 @@
     auxiliary channel — they ride through differentiation undifferentiated:
 
     {[
-    let model = Nx.Ptree.instantiate (module Model) in
+    let model = Kaun.ptree (module Model) in
     let step (params, stats, ostate) =
       let objective p =
         let pred, stats' = Model.forward p stats ~training:true x in

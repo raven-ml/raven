@@ -100,7 +100,7 @@ module Lin = struct
   let names _ = { lw = "w"; lb = "b" }
 end
 
-let lin = Nx.Ptree.instantiate (module Lin)
+let lin = Kaun.ptree (module Lin)
 
 (* Round-trip *)
 

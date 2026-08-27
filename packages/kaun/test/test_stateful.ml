@@ -108,7 +108,7 @@ let test_bn_grads_flow_to_params () =
     let y, _ = Batch_norm.apply p stats ~training:true x in
     Nx.sum (Nx.mul y y)
   in
-  let bn = Nx.Ptree.instantiate (module Batch_norm) in
+  let bn = Kaun.ptree (module Batch_norm) in
   (match Rune.check_grads ~tol:0.05 bn f params with
   | Ok () -> ()
   | Error msg -> failf "gradient check failed: %s" msg);
@@ -208,7 +208,7 @@ module Model = struct
     (Linear.apply p.out h, stats)
 end
 
-let model = Nx.Ptree.instantiate (module Model)
+let model = Kaun.ptree (module Model)
 
 let test_bn_train_step_roundtrip () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
