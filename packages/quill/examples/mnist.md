@@ -61,15 +61,15 @@ leaves — no special layer type:
 <!-- quill:cell id="c_mnist_model_code" -->
 ```ocaml
 module Model = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
@@ -77,6 +77,8 @@ module Model = struct
     let x = Nx.reshape [| (Nx.shape x).(0); 784 |] x in
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let model = Kaun.ptree (module Model)
 ```
 
 <!-- quill:cell id="c_mnist_trainer_text" -->
@@ -94,7 +96,7 @@ let params =
   Model.{ l1 = Linear.init ~inputs:784 ~outputs:128;
           l2 = Linear.init ~inputs:128 ~outputs:10 }
 
-let st = ref (params, Vega.adam_init (module Model) params)
+let st = ref (params, Vega.adam_init model params)
 ```
 
 <!-- quill:cell id="c_mnist_train_text" -->
@@ -118,11 +120,11 @@ let () =
     |> Seq.iter (fun (x, y) ->
         let params, ostate = !st in
         let loss, grads =
-          Rune.value_and_grad (module Model)
+          Rune.value_and_grad model
             (fun p -> Loss.softmax_cross_entropy_sparse (Model.apply p x) y)
             params
         in
-        st := Vega.adam_step (module Model) ~lr:0.001 ostate ~params ~grads;
+        st := Vega.adam_step model ~lr:0.001 ostate ~params ~grads;
         incr step;
         Printf.printf "\r  epoch %d  batch %d/%d  loss: %.4f%!" epoch !step
           num_batches (Nx.item [] loss));

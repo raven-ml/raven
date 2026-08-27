@@ -64,6 +64,8 @@ nest into records, so models compose structurally — see
   finite differences
 - **Control flow** — `scan`, `cond`, `while_loop` combinators with
   staging-ready signatures
+- **Compilation** — `jit` traces a function once and replays it as
+  fused kernels, on CPU (the default), CUDA, or Metal via `~device`
 - **Debugging** — `with_debug` logs every tensor operation; `detach`
   and `no_grad` stop gradient flow
 - **Structured outputs** — `vjp2`, `jvp2`, `vmap2` for functions
@@ -126,8 +128,8 @@ Current gaps:
   mapped inputs instead.
 - **In-place mutation** (`set_item`, `set_slice`, `blit`, `assign`)
   raises during differentiation; write the update functionally.
-- **No JIT yet.** Everything runs eagerly; `scan`/`cond`/`while_loop`
-  are designed so a future `jit` can stage them without unrolling.
+- **`jit` unrolls `scan`**, so a recurrence's compile time grows with
+  its sequence length.
 
 ## Contributing
 

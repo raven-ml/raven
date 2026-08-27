@@ -4,33 +4,43 @@ A checkpoint is an immutable collection of tensors keyed by distinct, non-empty 
 
 ## Named Structures
 
-`Checkpoint` consumes `Checkpoint.Named` modules: `Nx.Ptree.S` plus one function, `names`, giving each tensor leaf a stable name in traversal order. By convention leaves are named after record fields, with nested structures joined by `"."`:
+`Checkpoint` consumes the structure's `Nx.Ptree.Uniform` module — the same traversals the model already has, whose `fold`/`fold2`/`names` give each tensor leaf a stable path. Leaves are named after record fields, with nested structures joined by `"."`:
 
 ```ocaml
 open Kaun
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
+  let fold f acc { l1; l2 } =
+    let acc = Linear.fold (fun s -> f ("l1." ^ s)) acc l1 in
+    Linear.fold (fun s -> f ("l2." ^ s)) acc l2
+
+  let fold2 f acc p q =
+    let acc = Linear.fold2 (fun s -> f ("l1." ^ s)) acc p.l1 q.l1 in
+    Linear.fold2 (fun s -> f ("l2." ^ s)) acc p.l2 q.l2
+
   let names { l1; l2 } =
-    List.map (( ^ ) "l1.") (Linear.names l1)
-    @ List.map (( ^ ) "l2.") (Linear.names l2)
+    {
+      l1 = Linear.map (( ^ ) "l1.") (Linear.names l1);
+      l2 = Linear.map (( ^ ) "l2.") (Linear.names l2);
+    }
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 ```
 
-Each layer module ships its own `names` (`Linear.names` is `["w"; "b"]`, or `["w"]` without a bias), so a model's `names` is the same one-liner shape as its traversals. For structures only known at runtime, `Checkpoint.Ptree` names dynamic `Rune.Ptree.t` trees by their path from the root.
+Each layer module ships its own traversals (`Linear.names p` is `{ w = "w"; b = Some "b" }`, with `b` absent when the layer has no bias), so a model's `fold`/`fold2`/`names` are one-liners of the same shape as its `map` — or one `[@@deriving ptree]`. Structures with mixed leaf dtypes hold packed leaves and go through `of_packed`/`to_packed` instead; for the stock dynamic tree `Rune.Ptree.t`, pass `(module Rune.Ptree.Tree)`, which names leaves by dict keys and list positions from the root.
 
 ## Saving and Loading
 
@@ -82,7 +92,7 @@ let () =
     }
   in
   let params = init () in
-  let ostate = Vega.adam_init (module Mlp) params in
+  let ostate = Vega.adam_init (Kaun.ptree (module Mlp)) params in
 
   let path = Filename.temp_file "kaun-doc" ".safetensors" in
   Checkpoint.save path
@@ -112,7 +122,7 @@ let () =
   Printf.printf "resumed at step %d\n" ostate.step
 ```
 
-The optimizer moments checkpoint with the *model's* module because they have the model's shape — one more payoff of parameter-shaped state. `Batch_norm` running statistics work the same way, under their own prefix with `(module Model.Stats)`.
+The optimizer moments checkpoint with the *model's* module because they have the model's shape — one more payoff of parameter-shaped state. `Batch_norm` running statistics work the same way, under their own prefix with `(module Batch_norm.Stats)`.
 
 To load a file into a partially different model — a new head on a pretrained backbone, say — extract each sub-structure with its own module and prefix; entries for the parts you replace are simply never asked for.
 

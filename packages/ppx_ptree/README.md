@@ -105,8 +105,9 @@ Paths compose: a leaf the delegate reports as `"w"` under a field `head` becomes
 
 ### Bridge to Ptree.S
 
-A uniform type instantiated at `Nx.Ptree.tensor` satisfies `Nx.Ptree.S` via
-the `Nx.Ptree.Make` functor:
+`Nx.Ptree.instantiate` fills a uniform type's payload at a single tensor
+type, yielding the `Nx.Ptree.S` walker the transformations take (in kaun,
+`Kaun.ptree` is the same function):
 
 ```ocaml
 module Params = struct
@@ -114,13 +115,15 @@ module Params = struct
   [@@deriving ptree]
 end
 
-module P = Nx.Ptree.Make (Params)
+let p = Nx.Ptree.instantiate (module Params)
 
-let g = Rune.grad (module P) loss params
+let g = Rune.grad p loss params
 ```
 
-`P.t` is `Nx.Ptree.tensor Params.t`, so the leaves are packed; recover a typed
-tensor from one with `Nx.Ptree.unpack`.
+For mixed leaf dtypes, the `Nx.Ptree.Make` functor packs the leaves instead:
+`Nx.Ptree.Make (Params)` satisfies `Nx.Ptree.S` with `t` equal to
+`Nx.Ptree.tensor Params.t`; recover a typed tensor from one with
+`Nx.Ptree.unpack`.
 
 ### Mirror mode (concrete records)
 

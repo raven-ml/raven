@@ -8,7 +8,7 @@ checkpoints — as plain records and pure functions. There is no layer
 object and no trainer: a model is a typed record you write, and a
 training step is a few lines you own end to end.
 
-The glue is `Nx.Ptree.S`, the traversal interface from [nx](../nx/):
+The glue is `Nx.Ptree`, the traversal interface from [nx](../nx/):
 [rune](../rune/) (transformations) and [vega](../vega/)
 (optimizers) each sit on nx independently, kaun's library depends
 only on nx and rune, and the three compose in your code through
@@ -16,28 +16,32 @@ the one record type you define.
 
 ## The Core Idea
 
-A model is a record of layer records, made traversable by three
-one-liners. The same traversals serve differentiation (`Rune`),
+A model is a record of layer records with a payload hole, made
+traversable by one-line traversals (hand-written or
+`[@@deriving ptree]`); `Kaun.ptree` instantiates it at its tensor
+type. The same traversals serve differentiation (`Rune`),
 optimization (`Vega`), and checkpointing (`Checkpoint`):
 
 ```ocaml
 open Kaun
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let mlp = Kaun.ptree (module Mlp)
 ```
 
 A training step composes `value_and_grad` with one optimizer update —
@@ -46,9 +50,9 @@ no framework in between:
 ```ocaml
 let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
-  let l, grads = Rune.value_and_grad (module Mlp) loss params in
+  let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step (module Mlp) ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
@@ -59,7 +63,7 @@ it; add `vega` to your own project's dependencies.)
 And the training loop is ordinary `Seq` iteration over minibatches:
 
 ```ocaml
-let state = ref (params, Vega.adamw_init (module Mlp) params) in
+let state = ref (params, Vega.adamw_init mlp params) in
 Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y)
 |> Seq.iter (fun batch ->
     let s, l = step !state batch in
@@ -74,7 +78,7 @@ checkpoint, or swap.
 ## Features
 
 - **Layers** — `Linear`, `Conv` (2-D, NCHW), `Embedding`, `Attention`
-  (multi-head, causal masking, plus the pure
+  (multi-head, causal masking, a KV cache for decoding, plus the pure
   `scaled_dot_product_attention` core), `Layer_norm`, `Batch_norm`
   (running statistics as explicit state); each is a parameter record
   with `init`/`make`, `apply`, and traversals
@@ -96,7 +100,7 @@ checkpoint, or swap.
   hold model, optimizer state, and counters side by side
 - **Optimizers** — from the independent [vega](../vega/) package:
   `adam`, `adamw`, `sgd` steps over the same record structures
-  (`Vega.adam_step (module Model) ...`); depend on it from your own
+  (`Vega.adam_step model ...`); depend on it from your own
   project
 - **Pretrained models** — `kaun.hf` downloads HuggingFace Hub
   checkpoints and adapts them (`rename`, `transpose`, `split`) onto your
@@ -122,13 +126,13 @@ let () =
   in
   let loss p = Loss.sigmoid_bce (Mlp.apply p x) y in
   let step (params, ostate) =
-    let l, grads = Rune.value_and_grad (module Mlp) loss params in
+    let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step (module Mlp) ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step mlp ~lr:0.05 ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
-  let state = ref (params, Vega.adam_init (module Mlp) params) in
+  let state = ref (params, Vega.adam_init mlp params) in
   for _ = 1 to 500 do
     let s, _ = step !state in
     state := s
@@ -187,11 +191,12 @@ weights, and generates text.
   flag. Note that `jit` unrolls `Rune.scan`, so a recurrence's compile
   time grows with its sequence length.
 - Layer coverage is deliberately small: no recurrent layers, and
-  `Attention` has no rotary embeddings or KV cache (write them from the
+  `Attention` has no rotary embeddings (write them from the
   `scaled_dot_product_attention` core when needed). `Conv` is
   im2col-based and not tuned for large inputs.
-- `Batch_norm` is single-precision only; the other layers are generic
-  over float dtypes.
+- `Batch_norm.init` builds float32 parameters (cast with
+  `map (Nx.cast dt)` for other precisions); `apply` is generic over
+  float dtypes, like the other layers.
 - `Metric.auc_roc` and macro-averaged scores do not decompose over
   batches — compute them on the full evaluation set (see the `Metric`
   docs).

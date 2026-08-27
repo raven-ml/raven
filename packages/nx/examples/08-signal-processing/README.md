@@ -28,7 +28,7 @@ dune exec nx/examples/08-signal-processing/main.exe
 | `magnitude dtype z`           | Element-wise modulus of a complex spectrum        |
 | `linspace dtype start stop n` | Evenly spaced time samples                        |
 | `sin t`                       | Element-wise sine                                 |
-| `Rng.normal ~key dtype shape` | Gaussian noise                                    |
+| `randn dtype shape`           | Gaussian noise from the ambient `Rng` scope       |
 | `Nx.Infix` (`+`, `*`, `*$`)   | Clean arithmetic on arrays                        |
 
 ## Output Walkthrough

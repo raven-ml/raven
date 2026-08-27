@@ -35,7 +35,7 @@ let a = Nx.create Nx.Int32 [|3|] [|1l; 2l; 3l|]
 (* Nx.add a (Nx.scalar Nx.Float32 1.5)  -- type error *)
 
 (* Cast explicitly *)
-let a_f = Nx.astype Nx.Float32 a
+let a_f = Nx.cast Nx.Float32 a
 let b = Nx.add a_f (Nx.scalar Nx.Float32 1.5)
 ```
 
@@ -130,7 +130,7 @@ model = Model()
 <!-- $MDX skip -->
 ```ocaml
 (* Kaun: a model is a typed record of layer records *)
-type model = { linear : Kaun.Linear.t }
+type 'a model = { linear : 'a Kaun.Linear.t }
 
 let apply p x = Kaun.Linear.apply p.linear x
 let params = { linear = Kaun.Linear.init ~inputs:784 ~outputs:10 }

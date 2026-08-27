@@ -30,29 +30,31 @@ Note the layering: kaun's library depends only on nx and rune. Optimizers come f
 
 ## A Model Is a Record
 
-A kaun layer is a plain record of tensors with an `apply` function; `Linear.t` holds a weight matrix and an optional bias. A model is a record of layers, made traversable by three one-liners that delegate to each field — the `Nx.Ptree.S` interface shared by the whole Raven ecosystem:
+A kaun layer is a plain record with a payload hole and an `apply` function; `'a Linear.t` holds a weight matrix and an optional bias. A model is a record of layers, made traversable by three one-liners that delegate to each field (hand-written here; `[@@deriving ptree]` derives them). `Kaun.ptree` instantiates the model at its tensor type into the `Nx.Ptree.S` walker shared by the whole Raven ecosystem:
 
 ```ocaml
 open Kaun
 
 module Mlp = struct
-  type t = { l1 : Linear.t; l2 : Linear.t }
+  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+  let map f { l1; l2 } =
     { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+  let iter f { l1; l2 } =
     Linear.iter f l1;
     Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Nx.tanh (Linear.apply p.l1 x))
 end
+
+let mlp = Kaun.ptree (module Mlp)
 ```
 
-`apply` is just a function — no base class, no forward method, no parameter registry. The three traversals are what let `Rune` differentiate values of `Mlp.t`, `Vega` step them, and `Checkpoint` save them.
+`apply` is just a function — no base class, no forward method, no parameter registry. The traversals are what let `Rune` differentiate your parameter values, `Vega` step them, and `Checkpoint` save them.
 
 ## Initialize Parameters
 
@@ -79,17 +81,17 @@ let () =
   let loss p = Loss.sigmoid_bce (Mlp.apply p x) y in
 
   (* The training step: value_and_grad + one Adam update. Gradients and
-     optimizer moments are values of Mlp.t, like the parameters. *)
+     optimizer moments have the parameters' record type. *)
   let step (params, ostate) =
-    let l, grads = Rune.value_and_grad (module Mlp) loss params in
+    let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step (module Mlp) ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step mlp ~lr:0.05 ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
 
   (* The loop: plain OCaml. *)
-  let state = ref (params, Vega.adam_init (module Mlp) params) in
+  let state = ref (params, Vega.adam_init mlp params) in
   for i = 1 to 500 do
     let s, l = step !state in
     state := s;
@@ -108,9 +110,9 @@ let () =
 
 This is the complete program — it is [`examples/01-xor`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/01-xor) nearly verbatim. Three things to notice:
 
-- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Mlp.t` values you can print, inspect, checkpoint, or swap.
-- **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm (module Mlp) ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
-- **`(module Mlp)` is the only plumbing.** The same first-class module drives differentiation, optimization, and (with `names` added) checkpointing.
+- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Nx.float32_t Mlp.t` values you can print, inspect, checkpoint, or swap.
+- **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm mlp ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
+- **`Kaun.ptree (module Mlp)` is the only plumbing.** Bind the walker once; it drives differentiation and optimization, while `Checkpoint` takes `(module Mlp)` itself, since leaf names come from the structure.
 
 ## Scaling Up: Minibatches
 
@@ -120,7 +122,7 @@ For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibat
 ```ocaml
 let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
 let batches = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
-let state = ref (params, Vega.adamw_init (module Mlp) params) in
+let state = ref (params, Vega.adamw_init mlp params) in
 for _epoch = 1 to 3 do
   batches
   |> Seq.iter (fun (x, y) ->
@@ -135,9 +137,9 @@ where `step` now takes the batch as an argument so the loss closes over it:
 ```ocaml
 let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
-  let l, grads = Rune.value_and_grad (module Mlp) loss params in
+  let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step (module Mlp) ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
