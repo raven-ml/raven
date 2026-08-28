@@ -51,6 +51,19 @@ let unbroadcast (type a b) (g : (a, b) T.t) (src_shape : int array) : (a, b) T.t
         if T.shape summed <> src_shape then T.reshape src_shape summed
         else summed
 
+(* Single-axis resizes: [pad_axis ax (lo, hi) v x] pads [x] along [ax] with [v];
+   [shrink_axis ax (lo, hi) x] keeps indices [lo, hi) along [ax]. Other axes are
+   untouched. *)
+let pad_axis ax (lo, hi) v x =
+  let cfg = Array.make (T.ndim x) (0, 0) in
+  cfg.(ax) <- (lo, hi);
+  T.pad cfg v x
+
+let shrink_axis ax (lo, hi) x =
+  let lim = Array.map (fun d -> (0, d)) (T.shape x) in
+  lim.(ax) <- (lo, hi);
+  T.shrink lim x
+
 let err_no_rule op =
   invalid_arg
     (Printf.sprintf
@@ -379,19 +392,15 @@ let handler (tape : Tape.t) =
                     match Tape.find tape out with
                     | None -> ()
                     | Some g ->
-                        let g_shape = T.shape g in
                         let off = ref 0 in
                         List.iter
                           (fun x ->
                             let len = (T.shape x).(axis) in
-                            let limits =
-                              Array.init (Array.length g_shape) (fun i ->
-                                  if i = axis then (!off, !off + len)
-                                  else (0, g_shape.(i)))
-                            in
+                            let lo = !off in
                             off := !off + len;
                             if tracked x then
-                              Tape.accumulate tape x (T.shrink limits g))
+                              Tape.accumulate tape x
+                                (shrink_axis axis (lo, lo + len) g))
                           t_list)
               end;
               continue k out)
@@ -487,13 +496,8 @@ let handler (tape : Tape.t) =
                   | `Prod ->
                       let prefix_exclusive axis x =
                         let shape = T.shape x in
-                        let pad_config =
-                          Array.mapi
-                            (fun i _ -> if i = axis then (1, 0) else (0, 0))
-                            shape
-                        in
                         let one = Nx_core.Dtype.one (T.dtype x) in
-                        let padded = T.pad pad_config one x in
+                        let padded = pad_axis axis (1, 0) one x in
                         let slice_specs =
                           Array.map (fun dim -> T.R (0, dim)) shape
                         in
@@ -508,12 +512,9 @@ let handler (tape : Tape.t) =
                         let suffix_inclusive =
                           T.flip (T.cumprod ~axis flipped) ~axes:[ axis ]
                         in
-                        let pad_config =
-                          Array.mapi
-                            (fun i _ -> if i = axis then (0, 1) else (0, 0))
-                            shape
+                        let padded =
+                          pad_axis axis (0, 1) one suffix_inclusive
                         in
-                        let padded = T.pad pad_config one suffix_inclusive in
                         let slice_specs =
                           Array.mapi
                             (fun i dim ->
@@ -557,12 +558,7 @@ let handler (tape : Tape.t) =
                         | `Max -> Nx_core.Dtype.min_value dt
                         | _ -> Nx_core.Dtype.max_value dt
                       in
-                      let pad_left =
-                        Array.mapi
-                          (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
-                          shape
-                      in
-                      let padded = T.pad pad_left boundary out in
+                      let padded = pad_axis axis_norm (1, 0) boundary out in
                       let slice_specs =
                         Array.map (fun dim -> T.R (0, dim)) shape
                       in
