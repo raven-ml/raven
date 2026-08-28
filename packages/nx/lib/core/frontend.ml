@@ -4180,9 +4180,11 @@ module Make (B : Backend_intf.S) = struct
     let s_param =
       match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
     in
-    (* [s] names output lengths along every transformed axis, but the backend
-       resizes only the last, real one. Crop or zero-pad the leading, complex
-       axes here, exactly as [ifftn] would. *)
+    (* [s] names output lengths along every transformed axis. Crop or zero-pad
+       the leading, complex axes to those lengths, as [ifftn] would, and the
+       last axis to the s/2 + 1 bins its length supports. The resize policy
+       lives here alone: the backend always sees a spectrum whose bins match the
+       requested output. *)
     let x =
       match s with
       | None -> x
@@ -4190,8 +4192,7 @@ module Make (B : Backend_intf.S) = struct
           let last = List.length axes_list - 1 in
           let targets =
             List.mapi
-              (fun i size ->
-                if i = last then dim (List.nth axes_list last) x else size)
+              (fun i size -> if i = last then (size / 2) + 1 else size)
               sizes
           in
           pad_or_truncate_for_fft x axes_list (Some targets)
