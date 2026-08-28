@@ -644,7 +644,16 @@ module type S = sig
       specifies output sizes along the transformed axes; [None] infers sizes
       from the input. When an explicit last-axis size needs fewer or more
       frequency bins than [t] supplies, the backend truncates or zero-pads the
-      half-spectrum. *)
+      half-spectrum.
+
+      The input need not actually be conjugate-symmetric. The result is defined
+      for every input as the real part of the inverse DFT over [axes] of the
+      spectrum whose last transformed axis is extended with the conjugated
+      mirror of bins [1] to [ceil (n/2) - 1], where [n] is the last-axis output
+      size; the imaginary parts of bin [0] and, for even [n], bin [n/2]
+      therefore never contribute. Backends must implement exactly this linear
+      map: differentiation rules are transposes of it, and they operate off the
+      symmetric subspace. *)
 
   (** {1 Linear Algebra}
 
