@@ -727,7 +727,6 @@ let handler (tape : Tape.t) =
          anywhere: the forward never built one, so the transpose never reads
          one. *)
       | E_rfft { t; dtype; axes } ->
-          ignore dtype;
           Some
             (fun k ->
               pull1 k (rfft t ~dtype ~axes) t (fun g ->
