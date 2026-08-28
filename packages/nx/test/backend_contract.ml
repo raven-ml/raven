@@ -2922,6 +2922,9 @@ struct
       Array.init n (fun i ->
           z (float_of_int ((i mod 5) - 2)) (float_of_int ((i mod 3) - 1)))
     in
+    let rdata n =
+      Array.init n (fun i -> (float_of_int ((i mod 7) - 3) /. 2.) +. 0.25)
+    in
     let cscale s =
       Array.map (fun w -> z (w.Complex.re *. s) (w.Complex.im *. s))
     in
@@ -3155,6 +3158,101 @@ struct
                      (float_of_int n *. ex))
                 (Float.abs (ex_hat -. (float_of_int n *. ex))
                 <= 1e-6 *. float_of_int n *. ex));
+          (* rfft is the first n/2+1 bins of the forward DFT; even lengths are
+             stated separately from the roundtrips above because a real-input
+             fast path may treat them specially (n=34's half is prime). *)
+          case classify path "rfft-vs-dft-even" (fun () ->
+              let n = 12 in
+              let data = rdata n in
+              let t = F.create ctx F.float64 [| n |] data in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
+              equal ~msg:"rfft = DFT half" (array ct)
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
+          case classify path "rfft-vs-dft-even-bluestein-half" (fun () ->
+              let n = 34 in
+              let data = rdata n in
+              let t = F.create ctx F.float64 [| n |] data in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
+              equal ~msg:"rfft = DFT half" (array ct)
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
+          case classify path "rfft-complex64-even" (fun () ->
+              (* f32 in, c32 out: gather upcasts, store rounds *)
+              let n = 12 in
+              let data = rdata n in
+              let t = F.create ctx F.float32 [| n |] data in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
+              equal ~msg:"f32 rfft = DFT half"
+                (array (ctest ~rel:1e-4 ~abs:1e-4))
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex64 ~axes:[| 0 |])));
+          case classify path "rfft-strided-axis-vs-dft" (fun () ->
+              let n = 34 in
+              let data = rdata n in
+              let interleaved =
+                Array.init (n * 2) (fun i ->
+                    if i mod 2 = 0 then 99. else data.(i / 2))
+              in
+              let base = F.create ctx F.float64 [| n; 2 |] interleaved in
+              let t = B.shrink base [| (0, n); (1, 2) |] in
+              let full =
+                dft ~inverse:false (Array.map (fun v -> z v 0.) data)
+              in
+              equal ~msg:"strided rfft = DFT half" (array ct)
+                (Array.sub full 0 ((n / 2) + 1))
+                (F.to_array (B.rfft t ~dtype:F.complex128 ~axes:[| 0 |])));
+          case classify path "irfft-vs-dft-even" (fun () ->
+              (* unnormalized: B.irfft = real part of the +sign DFT of the
+                 Hermitian-extended spectrum (Im of DC/Nyquist discarded) *)
+              let n = 12 in
+              let half = (n / 2) + 1 in
+              let g = cdata half in
+              let f = Array.make n Complex.zero in
+              Array.blit g 0 f 0 half;
+              f.(0) <- z g.(0).Complex.re 0.;
+              f.(n / 2) <- z g.(n / 2).Complex.re 0.;
+              for k = 1 to half - 2 do
+                f.(n - k) <- Complex.conj f.(k)
+              done;
+              let want =
+                Array.map (fun v -> v.Complex.re) (dft ~inverse:true f)
+              in
+              let spec = F.create ctx F.complex128 [| half |] g in
+              equal ~msg:"irfft = symmetrized inverse DFT"
+                (array (ftest ~rel:1e-9 ~abs:1e-9))
+                want
+                (F.to_array
+                   (B.irfft ~s:[| n |] spec ~dtype:F.float64 ~axes:[| 0 |])));
+          case classify path "irfft-complex64-odd" (fun () ->
+              (* c32 half-spectrum with an explicit odd s: the odd (full-size)
+                 inverse path gathers the input at its own precision, so it
+                 needs its own case — the even cases all take the packed path.
+                 Oracle on the c32-rounded bins the gather reads. *)
+              let n = 9 in
+              let half = (n + 1) / 2 in
+              let spec = F.create ctx F.complex64 [| half |] (cdata half) in
+              let g = F.to_array spec in
+              let f = Array.make n Complex.zero in
+              Array.blit g 0 f 0 half;
+              f.(0) <- z g.(0).Complex.re 0.;
+              for k = 1 to half - 1 do
+                f.(n - k) <- Complex.conj f.(k)
+              done;
+              let want =
+                Array.map (fun v -> v.Complex.re) (dft ~inverse:true f)
+              in
+              equal ~msg:"c32 odd irfft = symmetrized inverse DFT"
+                (array (ftest ~rel:1e-4 ~abs:1e-4))
+                want
+                (F.to_array
+                   (B.irfft ~s:[| n |] spec ~dtype:F.float32 ~axes:[| 0 |])));
         ];
     ]
 
