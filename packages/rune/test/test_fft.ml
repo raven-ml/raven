@@ -231,7 +231,10 @@ let test_vmap_rfft () =
   check_cvmap ~msg:"rfft" (fun x -> Nx.rfft c128 x) (xs ())
 
 let test_vmap_irfft () =
-  check_vmap ~msg:"irfft" (fun z -> Nx.irfft f64 ~n:6 z) (zs ())
+  (* n:5 differs from the inferred default 2 * (4 - 1) = 6 of the 4-bin lanes:
+     an arm that dropped ?s would produce a different length, not a
+     byte-identical result. *)
+  check_vmap ~msg:"irfft" (fun z -> Nx.irfft f64 ~n:5 z) (zs ())
 
 let test_vmap_fft_non_last_axis () =
   check_cvmap ~msg:"fft axis 0" (fun m -> Nx.fft ~axis:0 m) (csig [| 2; 4; 2 |])
