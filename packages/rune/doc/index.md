@@ -56,4 +56,3 @@ Leaves may mix dtypes freely: a single forward and backward pass produces gradie
 - [Transformations](02-transformations/) — complete guide to grad, vjp, jvp, vmap, remat, custom rules, and control flow
 - [How It Works](03-how-it-works/) — effects, handlers, and the tape
 - [JAX Comparison](04-jax-comparison/) — mapping JAX vocabulary to rune
-- [Staged scan](05-staged-scan/) — design notes for compiling `scan` as a loop instead of an unrolled trace

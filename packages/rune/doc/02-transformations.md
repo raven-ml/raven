@@ -353,7 +353,7 @@ The check is directional, not per-element: it validates gradients cheaply rather
 
 ## Control Flow
 
-Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside every transformation, because rune runs eagerly and intercepts operations as they execute. The `scan`, `cond`, and `while_loop` combinators exist for a different reason: their signatures are staging-ready, so code written with them differentiates and vectorizes today, and a future staging `jit` can trace them as structured control flow (today `Rune.jit` unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates).
+Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside every transformation, because rune runs eagerly and intercepts operations as they execute. The `scan`, `cond`, and `while_loop` combinators exist for a different reason: they give the loop structure a name the compiler can see. Under `Rune.jit` a `scan` compiles its fold step once and runs it as a loop in the compiled program, so a recurrence's compile time is independent of its sequence length; `cond` and `while_loop` still require data-independent predicates under `jit`.
 
 ### scan
 
@@ -375,7 +375,7 @@ let () =
   (* the running sums [1. 3. 6. 10.] *)
 ```
 
-Differentiating traces every step.
+Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop over the step's pullback — the compiled program's size does not depend on the number of steps. Staging needs the carry to keep its shapes across steps; a fold that changes them, or one reached through `vmap` or `pmap`, unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
 
 ### cond and while_loop
 
@@ -428,7 +428,7 @@ Rune fails loudly rather than returning wrong gradients:
 - **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT family are supported.)
 - **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`, `svd`, `eig`, `eigh`) over batched inputs.
 - **In-place mutation** (`set_item`, `set_slice`, `blit`, `assign`) raises during differentiation; write the update functionally.
-- **`Rune.jit` unrolls `scan`** and rejects data-dependent `cond`/`while_loop` predicates, so a recurrence's compile time grows with its sequence length.
+- **`Rune.jit` rejects data-dependent `cond`/`while_loop` predicates**; a scalar the compiled program would need to branch on cannot be read at trace time.
 
 ## Summary
 
@@ -444,7 +444,7 @@ Rune fails loudly rather than returning wrong gradients:
 | `hvp` | Matrix-free Hessian-vector product | Large second-order computations |
 | `remat` | Recompute in the backward pass | Memory-bound backward passes |
 | `custom_vjp` / `custom_jvp` | User-defined rules | Stability, speed, opaque interiors |
-| `scan` / `cond` / `while_loop` | Staging-ready control flow | Future-proof loops and branches |
+| `scan` / `cond` / `while_loop` | Structured control flow | Recurrences that compile as loops under `jit` |
 | `check_grads` | Verify gradients | Testing custom rules and models |
 | `detach` / `no_grad` | Stop gradient flow | Baselines, targets, unruled ops |
 | `with_debug` | Log every operation | Understanding and debugging |
