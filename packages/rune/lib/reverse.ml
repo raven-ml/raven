@@ -730,30 +730,21 @@ let handler (tape : Tape.t) =
                   let n = (T.shape t).(last) in
                   let m = (T.shape g).(last) in
                   let g =
-                    if n > m then begin
-                      let cfg = Array.make (T.ndim g) (0, 0) in
-                      cfg.(last) <- (0, n - m);
-                      T.pad cfg Complex.zero g
-                    end
-                    else g
+                    if n > m then pad_axis last (0, n - m) Complex.zero g else g
                   in
                   T.real (T.dtype t) (fft g ~axes)))
       (* irfft factors as Hermitian-extend along the last transformed axis, ifft
-         over every transformed axis, then the real part. The pull runs the
-         transposes in reverse: complex-embed the real cotangent, ifft it
-         through itself, then transpose the extension — bin k of the input fed
-         slot k directly and slot n - k through a conjugate, so the pull folds
-         conj of the mirror slots onto bins 1 .. n - m (bin 0, and the Nyquist
-         bin when n is even, fed one slot only). The fold is spelled out rather
-         than collapsed into a doubling: with leading axes transformed too, the
-         spectrum's symmetry pairs (j, k) with (-j, -k) across axes, so the
-         mirror along the last axis alone is not the conjugate of what it folds
-         onto. The leading c2c pass — its own transpose — runs after the fold,
-         never inside it: conjugation anti-commutes with a complex transform, so
-         folding a leading-transformed mirror would pull those axes through the
-         wrong direction. The forward ignores bins past what n supports and
-         zero-fills a short spectrum, so the pull shrinks or pads back to the
-         input's bins before that final pass. *)
+         over every transformed axis, then the real part. The transpose embeds
+         the real cotangent, runs the same inverse transform, and folds the
+         extension back: bin k of the input fed slot k directly and slot n - k
+         through a conjugate. The cotangent is real, so its transform is
+         Hermitian along the last axis and the conjugated mirror equals the head
+         itself: the fold is a plain doubling of bins 1 .. n - m (bin 0, and the
+         Nyquist bin when n is even, fed one slot only). A per-bin real scale
+         along the last axis commutes with the transform over the leading axes,
+         so one inverse over all the axes serves, mirroring the rfft pull's
+         single forward transform. The frontend resizes the spectrum to exactly
+         n/2 + 1 bins before the effect, so no other adjustment remains. *)
       | E_irfft { t; dtype; axes; s } ->
           Some
             (fun k ->
@@ -761,38 +752,15 @@ let handler (tape : Tape.t) =
                   let last = axes.(Array.length axes - 1) in
                   let n = (T.shape g).(last) in
                   let m = (n / 2) + 1 in
-                  let m_in = (T.shape t).(last) in
-                  let cdtype = T.dtype t in
-                  let gz = ifft (T.cast cdtype g) ~axes:[| last |] in
-                  let sub lo hi x =
-                    let lim = Array.map (fun d -> (0, d)) (T.shape x) in
-                    lim.(last) <- (lo, hi);
-                    T.shrink lim x
-                  in
-                  let head = sub 0 m gz in
-                  let gi =
-                    if n - m >= 1 then begin
-                      let mirror =
-                        T.conjugate (T.flip ~axes:[ last ] (sub m n gz))
-                      in
-                      let cfg = Array.make (T.ndim mirror) (0, 0) in
-                      cfg.(last) <- (1, m - 1 - (n - m));
-                      T.add head (T.pad cfg Complex.zero mirror)
-                    end
-                    else head
-                  in
-                  let gi =
-                    if m_in > m then begin
-                      let cfg = Array.make (T.ndim gi) (0, 0) in
-                      cfg.(last) <- (0, m_in - m);
-                      T.pad cfg Complex.zero gi
-                    end
-                    else if m_in < m then sub 0 m_in gi
-                    else gi
-                  in
-                  if Array.length axes > 1 then
-                    ifft gi ~axes:(Array.sub axes 0 (Array.length axes - 1))
-                  else gi))
+                  let gz = ifft (T.cast (T.dtype t) g) ~axes in
+                  let head = shrink_axis last (0, m) gz in
+                  if n - m >= 1 then
+                    T.add head
+                      (pad_axis last
+                         (1, m - 1 - (n - m))
+                         Complex.zero
+                         (shrink_axis last (1, n - m + 1) head))
+                  else head))
       | E_psum { t_in } ->
           Some
             (fun k -> no_rule k "psum" (tracked t_in) (fun () -> op_psum t_in))

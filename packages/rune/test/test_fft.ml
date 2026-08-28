@@ -76,15 +76,15 @@ let test_grad_ortho_norm () =
     (x8 ())
 
 let test_grad_padded_spectrum () =
-  (* n:6 needs 4 bins but rfft of 4 samples supplies 3: the forward zero-fills
-     and the pull drops the extra bin's cotangent. *)
+  (* n:6 needs 4 bins but rfft of 4 samples supplies 3: the frontend zero-fills,
+     and the pad's own pull drops the extra bin's cotangent. *)
   check_grad ~msg:"irfft ~n:6 (rfft x), 4 samples"
     (fun x -> Nx.irfft f64 ~n:6 (Nx.rfft c128 x))
     (x4 ())
 
 let test_grad_truncated_spectrum () =
-  (* n:4 keeps 3 of the 5 supplied bins: the pull zero-fills the ignored
-     bins. *)
+  (* n:4 keeps 3 of the 5 supplied bins: the frontend crops, and the shrink's
+     own pull zero-fills the ignored bins. *)
   check_grad ~msg:"irfft ~n:4 (rfft x), 8 samples"
     (fun x -> Nx.irfft f64 ~n:4 (Nx.rfft c128 x))
     (x8 ())
@@ -110,9 +110,9 @@ let test_grad_spectral_energy () =
    conjugation of its own. The pull of [rfft] at sample j is Re (sum_k ct_k
    e^{-2 pi i j k / n}) — the forward twiddle over the zero-padded half spectrum
    — and the pull of [irfft] at bin k is factor_k / n * sum_j w_j e^{+2 pi i j k
-   / n}, where factor_k doubles exactly the bins the forward mirrors (the fold
-   of a real cotangent's own symmetry; the rule spells the fold out for the
-   multi-axis case). *)
+   / n}, where factor_k doubles exactly the bins the forward mirrors: the
+   cotangent is real, so its inverse transform is Hermitian along the last axis
+   and the mirror fold is that doubling. *)
 
 let rfft_pull_reference n (ct : Complex.t array) =
   Array.init n (fun j ->
