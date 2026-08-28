@@ -277,9 +277,12 @@ module Buffer = struct
     match b.buf with Some raw -> b.allocator.addr raw | None -> assert false
 
   (* XXX: copy_between belongs in the engine layer, not the device layer.
-     tinygrad's BufferCopy and BufferXfer live in realize.py with fast paths
-     (disk, zero-copy via _as_buffer, device-to-device _transfer).  This
-     naive CPU bounce should move when tolk gains an engine/realize module. *)
+     tinygrad's buffer-to-buffer copies live in realize.py with fast paths
+     (disk, zero-copy via _as_buffer, device-to-device _transfer), and tolk's
+     engine has that path too ([Realize.exec_copy]).  This naive CPU bounce
+     survives for one caller: rune's single-device jit replay drives buffers
+     directly and opts out of the device registry the engine path resolves
+     through.  Delete it when that caller migrates. *)
   let copy_between ~dst ~src =
     if size dst <> size src then invalid_arg "buffer copy size mismatch";
     if not (Dtype.equal (dtype dst) (dtype src)) then

@@ -1,0 +1,89 @@
+# Divergences
+
+Intentional divergence from the tinygrad reference.
+Standing rulings; work items live in TODO.md. Anchors reference the tinygrad
+clone pin named there.
+
+## Declined ports
+
+Do not re-open without a consumer.
+
+- **Void-RANGE loop header** (`b764599d8`, `39924387b`, its `spec.py` rules).
+  Serves HCQ wait loops, a runtime tolk does not port; nothing in tolk
+  constructs a void range, so every branch would be unreachable and no test
+  could catch a bad port. `Axis_type.Loop` names the concept, deliberately
+  without a constructor. Port together with a producer and its test.
+
+- **`Renderer.abi` and CALL-in-C** (`d1f215d37`, `6e979b879`). Both serve the
+  CPU uop worker runtime. `abi` only feeds `kernel_typedef`, which tolk spells
+  statically; CALL-in-C renders an address-valued CALL nothing constructs.
+  Port together with a host-callable runtime.
+
+- **`ParamArg.volatile`** (`a6fda6b10`). Producers are `ops_cpu.py`,
+  `ops_qcom.py`, `hcq2.py`; tolk would carry an always-false field. Add with
+  the first runtime that needs uncached parameter memory.
+
+- **`ProgramInfo.target`; tolk's `aux` deleted rather than renamed**
+  (`9fdaa4bff`). `target` exists so `UOp.to_elf()` can build a `TinyELF` — a
+  runtime restructure tolk does not port; `Program_spec.t` already carries
+  `device`. `aux` had no reader. (`call_info.aux` is unrelated and stays.)
+
+- **Host-scalar `bitcast` stays in `symbolic.ml`**, upstream moved it to
+  `dtype.ml` (`67dc02d7e`). Forced by layering: `Const` depends on `Dtype`.
+  The only would-be consumer is host-side rand arithmetic, and
+  `lib/frontend/rand.ml` builds `_bits_to_rand` from UOp `Bitcast` nodes.
+
+## Beam search
+
+Behavior changed relative to the reference, each reviewed with the beam
+campaign.
+
+- **`BEAM_MIN_PROGRESS` defaults to 5µs; the reference defaults to 0.01µs.**
+  0.01µs sits below device timer resolution (~0.5µs), so the progress exits
+  never fire on real gains and searches run to exhaustion. The reference's
+  own production configs use 5–10µs. Env still overrides.
+
+- **`BEAM_PARALLEL=N` compiles candidates across N domains, default off; the
+  reference uses a `PARALLEL` process pool, default on for GPU devices.**
+  Domains share the process, so: global state is lock-guarded and the
+  per-node memo caches are domain-local; workers never touch the device; the
+  SIGALRM compile timeout is skipped in parallel mode (it is process-global);
+  and each step compiles all candidates before timing any, instead of
+  streaming, so timing never contends with compile load.
+
+- **Dispatch handles for timed candidates are cached for the process; the
+  reference loads one per candidate and unloads it after timing.** tolk never
+  unloaded them anyway (`Device.prog.free` has no caller), so caching
+  strictly reduces loads. Deterministic unload remains open.
+
+- **Candidates dedup by optimized-AST tag before compiling; the reference
+  dedups by binary after.** Same AST means same binary, so verdicts are
+  unchanged and duplicates skip nvrtc. Side effect: a candidate rejected by
+  the 1000× compute-ops filter is never reconsidered at a later step.
+
+- **Timing buffers bypass the LRU cache (`nolru`) and are freed per kernel;
+  the reference allocates them normally.** It can: refcounting frees
+  promptly. Under a lazy GC the exact-size LRU cache hoards every searched
+  shape, and driver module loads OOM without triggering the allocator's
+  failure flush.
+
+## Tolk extensions
+
+Code tolk carries that the reference does not. Every site has a comment
+containing the phrase "tinygrad counterpart" — `grep -rn "tinygrad
+counterpart" lib` lists them. An extension needs a consumer; without one,
+delete it rather than registering it.
+
+- **`CALL(CUSTOM_FUNCTION "loop")` — the staged-scan loop**
+  (`engine/realize.ml` `exec_loop`; `schedule/rangeify.ml` `find_bufs`
+  walking `enter_calls:false` and `split_store` passing a precompiled CALL
+  through as its own kernel; builder with its consumer in rune's `jit.ml`).
+  Rune stages `Rune.scan` as one compiled body replayed per slice
+  (`rune/doc/05-staged-scan.md`); the reference's answer to a recurrence is
+  unrolling plus TinyJit, so there is nothing to port. The named-payload
+  mechanism is upstream's own ("graph", "encdec", "hcq"); "loop" is a
+  tolk-local name in it, and no tinygrad-shaped graph can reach the new
+  branches. Pin moves must keep the two rangeify branches — a re-sync of
+  `rangeify.py` will not find them upstream. The tolk corpus cannot build a
+  loop call; rune's `test_jit.ml` scan groups are this extension's parity
+  suite.
