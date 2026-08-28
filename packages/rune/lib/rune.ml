@@ -447,14 +447,14 @@ let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S with ty
 
 (* Control flow. Eager implementations with staging-ready signatures: a future
    jit stages these as structured control flow instead of unrolled traces.
-   [scan] attempts the staged [Rune_scan.E_scan] effect; when no handler claims
+   [scan] attempts the staged [Scan.E_scan] effect; when no handler claims
    it, the eager fold below runs, observed by whatever transformation handlers
    are installed. *)
 
 let scan (type p) (module C : Ptree.S with type t = p)
     ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t)
     ~(init : C.t) (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
-  Rune_scan.scan (module C) ~f ~init xs
+  Scan.scan (module C) ~f ~init xs
 
 let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
     ~(else_ : unit -> 'r) : 'r =

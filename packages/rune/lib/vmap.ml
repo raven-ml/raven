@@ -460,12 +460,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        tensors that appear in neither the carry nor the scanned input, so a
        scan can never be handed to a stager above this handler — and the probe
        must say so. *)
-    | Rune_scan.E_scan_probe -> Some (fun k -> continue k false)
-    | Rune_scan.E_scan req ->
+    | Scan.E_scan_probe -> Some (fun k -> continue k false)
+    | Scan.E_scan req ->
         Some
           (fun k ->
-            let res : Rune_scan.scan_res =
-              match_with (fun () -> Rune_scan.eager req) () (handler st)
+            let res : Scan.scan_res =
+              match_with (fun () -> Scan.eager req) () (handler st)
             in
             continue k res)
     | _ -> None

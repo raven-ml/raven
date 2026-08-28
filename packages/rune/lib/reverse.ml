@@ -163,36 +163,36 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          tape's reach and the recorded [E_scan_bwd] would go unhandled at
          backward time. On [false] the eager fold runs under a nested copy of
          this handler, taping every step as the unrolled scan always did. *)
-      | Rune_scan.E_scan_probe -> Some (fun k -> continue k false)
-      | Rune_scan.E_scan req ->
+      | Scan.E_scan_probe -> Some (fun k -> continue k false)
+      | Scan.E_scan req ->
           Some
             (fun k ->
               let stages =
-                match Effect.perform Rune_scan.E_scan_probe with
+                match Effect.perform Scan.E_scan_probe with
                 | stages -> stages
                 | exception Effect.Unhandled _ -> false
               in
               if not stages then
-                let res : Rune_scan.scan_res =
+                let res : Scan.scan_res =
                   Effect.Deep.match_with
-                    (fun () -> Rune_scan.eager req)
+                    (fun () -> Scan.eager req)
                     () (handler tape)
                 in
                 continue k res
               else
-              match Effect.perform (Rune_scan.E_scan req) with
+              match Effect.perform (Scan.E_scan req) with
               | res ->
-                  let Rune_scan.
+                  let Scan.
                         {
-                          r_carry = Rune_scan.Packed_c (_, c');
-                          r_y = Rune_scan.Packed_t ys;
+                          r_carry = Scan.Packed_c (_, c');
+                          r_y = Scan.Packed_t ys;
                         } =
                     res
                   in
-                  let Rune_scan.
+                  let Scan.
                         {
-                          req_carry = Rune_scan.Packed_c (cmod, c0);
-                          req_x = Rune_scan.Packed_t xs0;
+                          req_carry = Scan.Packed_c (cmod, c0);
+                          req_x = Scan.Packed_t xs0;
                           req_step = step;
                         } =
                     req
@@ -211,24 +211,24 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           c'
                       in
                       let bwd =
-                        Rune_scan.
+                        Scan.
                           {
                             bwd_step = step;
-                            bwd_carry = Rune_scan.Packed_c (cmod, c0);
-                            bwd_x = Rune_scan.Packed_t xs0;
+                            bwd_carry = Scan.Packed_c (cmod, c0);
+                            bwd_x = Scan.Packed_t xs0;
                             bwd_n = (T.shape xs0).(0);
-                            bwd_dc = Rune_scan.Packed_c (cmod, dc);
-                            bwd_dy = Rune_scan.Packed_t dy;
+                            bwd_dc = Scan.Packed_c (cmod, dc);
+                            bwd_dy = Scan.Packed_t dy;
                             bwd_y_shape =
                               Array.sub (T.shape ys) 1
                                 (Array.length (T.shape ys) - 1);
                           }
                       in
-                      match Effect.perform (Rune_scan.E_scan_bwd bwd) with
-                      | Rune_scan.
+                      match Effect.perform (Scan.E_scan_bwd bwd) with
+                      | Scan.
                           {
-                            br_carry = Rune_scan.Packed_c (_, dc0);
-                            br_y = Rune_scan.Packed_t dxs;
+                            br_carry = Scan.Packed_c (_, dc0);
+                            br_y = Scan.Packed_t dxs;
                             br_closed;
                           } ->
                           let dc0 = Obj.magic dc0 in
@@ -247,17 +247,17 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                              placeholders and compile-time constants never
                              are. *)
                           List.iter
-                            (fun (Rune_scan.Closed_ctan (g, dg)) ->
+                            (fun (Scan.Closed_ctan (g, dg)) ->
                               if Tape.tracked tape g then
                                 Tape.accumulate tape g dg)
                             br_closed);
                   continue k res
-              | exception Rune_scan.Not_staged ->
+              | exception Scan.Not_staged ->
                   (* The stager declined after tracing the body (e.g. a
                      shape-unstable carry): fold eagerly, taping every step. *)
-                  let res : Rune_scan.scan_res =
+                  let res : Scan.scan_res =
                     Effect.Deep.match_with
-                      (fun () -> Rune_scan.eager req)
+                      (fun () -> Scan.eager req)
                       () (handler tape)
                   in
                   continue k res)
