@@ -10,11 +10,6 @@
 open Windtrap
 open Rune_test_support.Support
 
-let raises_jit_error f =
-  raises_match
-    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> ignore (f ()))
-
 (* loss p = sum (w * w) + 3 * sum b. d/dw = 2w, d/db = 3, d/dscale = 0. *)
 let quadratic p = Nx.add (Nx.sum (Nx.mul p.w p.w)) (Nx.mul_s (Nx.sum p.b) 3.0)
 

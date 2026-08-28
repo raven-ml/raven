@@ -264,6 +264,23 @@ let check_cclose ~tol ~msg expected actual =
 let check_carr ?(eps = 1e-10) ~msg expected actual =
   check_cclose ~tol:eps ~msg expected (to_carr actual)
 
+(* Loop oracle for vmap: [vmap' f x] must equal stacking [f] applied to each
+   slice of [x] along the mapped axis. *)
+let loop_map f x =
+  let b = (Nx.shape x).(0) in
+  Nx.stack ~axis:0 (List.init b (fun i -> f (Nx.slice [ Nx.I i ] x)))
+
+let check_vmap ~msg f x =
+  check_arr ~msg (to_arr (loop_map f x)) (Rune.vmap' f x)
+
+let check_cvmap ~msg f x =
+  check_carr ~msg (to_carr (loop_map f x)) (Rune.vmap' f x)
+
+let raises_jit_error f =
+  raises_match
+    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
+    f
+
 (* [cvjp_numeric ~h f z w] is the cotangent [w] pulled back through the real
    Jacobian of [f] at [z], measured by central differences: perturb each
    component of each input, read how each component of each output responds, and

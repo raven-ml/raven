@@ -187,16 +187,6 @@ let test_jvp_vjp_consistency () =
 
 (* vmap against the loop oracle *)
 
-let loop_map f x =
-  let b = (Nx.shape x).(0) in
-  Nx.stack ~axis:0 (List.init b (fun i -> f (Nx.slice [ Nx.I i ] x)))
-
-let check_vmap_c ~msg f x =
-  check_carr ~msg (to_carr (loop_map f x)) (Rune.vmap' f x)
-
-let check_vmap_r ~msg f x =
-  check_arr ~msg (to_arr (loop_map f x)) (Rune.vmap' f x)
-
 let zs () =
   Nx.create c128 [| 3; 4 |]
     (Array.init 12 (fun i ->
@@ -208,14 +198,14 @@ let xs () =
   Nx.create f64 [| 3; 5 |]
     (Array.init 15 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.0))
 
-let test_vmap_fft () = check_vmap_c ~msg:"fft" (fun z -> Nx.fft z) (zs ())
-let test_vmap_ifft () = check_vmap_c ~msg:"ifft" (fun z -> Nx.ifft z) (zs ())
+let test_vmap_fft () = check_cvmap ~msg:"fft" (fun z -> Nx.fft z) (zs ())
+let test_vmap_ifft () = check_cvmap ~msg:"ifft" (fun z -> Nx.ifft z) (zs ())
 
 let test_vmap_rfft () =
-  check_vmap_c ~msg:"rfft" (fun x -> Nx.rfft c128 x) (xs ())
+  check_cvmap ~msg:"rfft" (fun x -> Nx.rfft c128 x) (xs ())
 
 let test_vmap_irfft () =
-  check_vmap_r ~msg:"irfft" (fun z -> Nx.irfft f64 ~n:6 z) (zs ())
+  check_vmap ~msg:"irfft" (fun z -> Nx.irfft f64 ~n:6 z) (zs ())
 
 let test_vmap_fft_non_last_axis () =
   let z =
@@ -225,14 +215,14 @@ let test_vmap_fft_non_last_axis () =
              (float_of_int ((i * 3 mod 7) - 3) /. 2.0)
              (float_of_int ((i * 5 mod 11) - 5) /. 4.0)))
   in
-  check_vmap_c ~msg:"fft axis 0" (fun m -> Nx.fft ~axis:0 m) z
+  check_cvmap ~msg:"fft axis 0" (fun m -> Nx.fft ~axis:0 m) z
 
 let test_vmap_rfft_non_last_axis () =
   let x =
     Nx.create f64 [| 2; 4; 3 |]
       (Array.init 24 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.0))
   in
-  check_vmap_c ~msg:"rfft axis 0" (fun m -> Nx.rfft c128 ~axis:0 m) x
+  check_cvmap ~msg:"rfft axis 0" (fun m -> Nx.rfft c128 ~axis:0 m) x
 
 let test_vmap_non_leading_batch_axis () =
   (* Mapping axis 1: the batch dimension crosses the transformed axis. *)
@@ -254,14 +244,9 @@ let test_vmap_of_grad () =
     let y = Nx.irfft f64 ~n:5 (Nx.rfft c128 x) in
     Nx.sum (Nx.mul y y)
   in
-  check_vmap_r ~msg:"per-sample spectral gradients" (Rune.grad' energy) x
+  check_vmap ~msg:"per-sample spectral gradients" (Rune.grad' energy) x
 
 (* jit: the FFT family is refused under tracing (Tolk cannot express it). *)
-
-let raises_jit_error f =
-  raises_match
-    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
-    f
 
 let test_jit_rfft_refused () =
   let g = Rune.jit' (fun x -> Nx.rfft c128 x) in

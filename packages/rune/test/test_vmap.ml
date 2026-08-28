@@ -10,13 +10,6 @@
 open Windtrap
 open Rune_test_support.Support
 
-let loop_map f x =
-  let b = (Nx.shape x).(0) in
-  Nx.stack ~axis:0 (List.init b (fun i -> f (Nx.slice [ Nx.I i ] x)))
-
-let check_vmap ~msg f x =
-  check_arr ~msg (to_arr (loop_map f x)) (Rune.vmap' f x)
-
 (* Batched inputs: 4 rows of 3, and a batch of 2x3 matrices. *)
 let xs () =
   Nx.create f64 [| 4; 3 |]

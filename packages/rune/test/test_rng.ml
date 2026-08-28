@@ -52,11 +52,6 @@ module Draw = struct
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
 end
 
-let raises_jit_error f =
-  raises_match
-    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> ignore (f ()))
-
 (* Bitwise equality of float tensors: the parity claims are exact, not
    approximate. *)
 let check_bits ~msg expected actual =

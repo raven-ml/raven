@@ -14,11 +14,6 @@ open Rune_test_support.Support
 let devs2 = [ "CPU:1"; "CPU:2" ]
 let devs4 = [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
 
-let raises_jit_error f =
-  raises_match
-    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> ignore (f ()))
-
 (* A single-tensor Ptree.S instance. *)
 module Single_f32 = struct
   type t = Nx.float32_t
