@@ -37,6 +37,11 @@
  (package
   (name windtrap)))
 
+(pin
+ (url "git+https://github.com/invariant-hq/litany.git")
+ (package
+  (name litany)))
+
 (package
  (name nx)
  (dir packages/nx)
@@ -350,6 +355,7 @@
   (hugin
    (= :version))
   (quill
-   (= :version)))
+   (= :version))
+  (litany :with-test))
  (tags
   (machine-learning data-science numerical-computation)))
