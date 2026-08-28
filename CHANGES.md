@@ -538,6 +538,11 @@ thread.
 
 ### Nx
 
+- `irfftn` and `irfft2` now honour `s` along every transformed axis: the
+  leading, complex axes are cropped or zero-padded to the requested lengths,
+  as in `ifftn`. Previously only the last axis was resized while the
+  normalization still divided by the full product of `s`, so a leading-axis
+  size change returned the wrong shape and scale.
 - **Breaking**: `Rng.run ~seed f` is replaced by `Rng.with_key (Rng.key seed) f`,
   and `Rng.split_off` is renamed `Rng.next_key`. The two entry points were one
   handler differing only in what it rooted at, and `~seed` was the one that

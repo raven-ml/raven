@@ -4155,6 +4155,10 @@ module Make (B : Backend_intf.S) = struct
       | Some values ->
           List.map (fun axis -> if axis < 0 then nd + axis else axis) values
     in
+    (match s with
+    | Some sizes when List.length sizes <> List.length axes_list ->
+        invalid_arg "irfft: s parameter must have same length as axes"
+    | _ -> ());
     let input_shape = shape x in
     let output_sizes =
       match s with
@@ -4175,6 +4179,22 @@ module Make (B : Backend_intf.S) = struct
     in
     let s_param =
       match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
+    in
+    (* [s] names output lengths along every transformed axis, but the backend
+       resizes only the last, real one. Crop or zero-pad the leading, complex
+       axes here, exactly as [ifftn] would. *)
+    let x =
+      match s with
+      | None -> x
+      | Some sizes ->
+          let last = List.length axes_list - 1 in
+          let targets =
+            List.mapi
+              (fun i size ->
+                if i = last then dim (List.nth axes_list last) x else size)
+              sizes
+          in
+          pad_or_truncate_for_fft x axes_list (Some targets)
     in
     let r = B.irfft ?s:s_param x ~dtype ~axes:(Array.of_list axes_list) in
     if norm_scale <> 1.0 then

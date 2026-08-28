@@ -504,6 +504,29 @@ let test_rfft_size () =
     [| (trunc_size / 2) + 1 |]
     (Nx.shape rfft_trunc)
 
+let test_irfft_leading_axes () =
+  (* [s] applies to every transformed axis: the leading, complex axes are
+     cropped or zero-padded like [ifftn]'s, so [irfftn] is [ifft] over the
+     leading axes followed by [irfft] over the last. *)
+  let x =
+    Nx.create Nx.float64 [| 3; 4 |]
+      (Array.init 12 (fun i -> Float.of_int ((i * 7 mod 13) - 6) /. 4.0))
+  in
+  let z = Nx.rfft2 Nx.complex128 x in
+  let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t)) in
+  let padded = Nx.irfft2 Nx.float64 z ~s:[ 4; 4 ] in
+  equal ~msg:"irfft2 padded leading shape" (array int) [| 4; 4 |]
+    (Nx.shape padded);
+  let oracle = Nx.irfft Nx.float64 ~axis:1 ~n:4 (Nx.ifft ~axis:0 ~n:4 z) in
+  check_t ~eps:1e-10 "irfft2 padded leading values" [| 4; 4 |] (flat oracle)
+    padded;
+  let cropped = Nx.irfft2 Nx.float64 z ~s:[ 2; 4 ] in
+  equal ~msg:"irfft2 cropped leading shape" (array int) [| 2; 4 |]
+    (Nx.shape cropped);
+  let oracle = Nx.irfft Nx.float64 ~axis:1 ~n:4 (Nx.ifft ~axis:0 ~n:2 z) in
+  check_t ~eps:1e-10 "irfft2 cropped leading values" [| 2; 4 |] (flat oracle)
+    cropped
+
 let test_rfft_norm () =
   let n = 4 in
   let shape = [| n |] in
@@ -927,6 +950,7 @@ let suite =
         test "basic" test_rfft_irfft;
         test "axes" test_rfft_axes;
         test "size" test_rfft_size;
+        test "leading axes of s" test_irfft_leading_axes;
         test "norm" test_rfft_norm;
         test "edge_cases" test_rfft_edge_cases;
         test "dtypes" test_rfft_dtypes;
