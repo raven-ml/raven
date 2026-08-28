@@ -284,6 +284,37 @@ consumer.
   — for a consumer tolk does not have, since `lib/frontend/rand.ml` builds
   `_bits_to_rand` out of UOp `Bitcast` nodes rather than host-side arithmetic.
 
+## Deliberate divergences — beam search
+
+- **`BEAM_MIN_PROGRESS` defaults to 5µs; the reference defaults to 0.01µs.**
+  0.01µs sits below device timer resolution (~0.5µs), so the progress exits
+  never fire on real gains and searches run to exhaustion. The reference's
+  own production configs use 5–10µs. Env still overrides.
+
+- **`BEAM_PARALLEL=N` compiles candidates across N domains, default off; the
+  reference uses a `PARALLEL` process pool, default on for GPU devices.**
+  Domains share the process, so: global state is lock-guarded and the
+  per-node memo caches are domain-local; workers never touch the device; the
+  SIGALRM compile timeout is skipped in parallel mode (it is process-global);
+  and each step compiles all candidates before timing any, instead of
+  streaming, so timing never contends with compile load.
+
+- **Dispatch handles for timed candidates are cached for the process; the
+  reference loads one per candidate and unloads it after timing.** tolk never
+  unloaded them anyway (`Device.prog.free` has no caller), so caching
+  strictly reduces loads. Deterministic unload remains open.
+
+- **Candidates dedup by optimized-AST tag before compiling; the reference
+  dedups by binary after.** Same AST means same binary, so verdicts are
+  unchanged and duplicates skip nvrtc. Side effect: a candidate rejected by
+  the 1000× compute-ops filter is never reconsidered at a later step.
+
+- **Timing buffers bypass the LRU cache (`nolru`) and are freed per kernel;
+  the reference allocates them normally.** It can: refcounting frees
+  promptly. Under a lazy GC the exact-size LRU cache hoards every searched
+  shape, and driver module loads OOM without triggering the allocator's
+  failure flush.
+
 ## Post-wave sweep — landed
 
 All four changed a declaration in `lib/uop/` plus every reader across

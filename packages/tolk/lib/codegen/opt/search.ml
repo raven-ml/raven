@@ -36,12 +36,11 @@ let beam_parallel () = Helpers.getenv "BEAM_PARALLEL" 0
 let cachelevel () = Helpers.getenv "CACHELEVEL" 1
 let ignore_beam_cache () = Helpers.getenv "IGNORE_BEAM_CACHE" 0 <> 0
 
-(* Minimum measurable progress per beam step, in microseconds (matching
-   tinygrad's [BEAM_MIN_PROGRESS] convention). The default must sit above the
-   device timer resolution — CUDA events resolve ~0.5us — otherwise the two
-   progress-based exit conditions in [beam_search] can never fire and the
-   search only stops when candidates run out. 5us is what upstream's
-   production configs use. *)
+(* Minimum measurable progress per beam step, in microseconds. Must sit above
+   the device timer resolution (~0.5us for CUDA events): below it the exit
+   conditions only fire when a step improves by nothing at all, and searches
+   run to exhaustion. The reference defaults to 0.01, its production configs
+   to 5-10; 5us is a deliberate divergence (TODO.md). *)
 let beam_min_progress () =
   (match Sys.getenv_opt "BEAM_MIN_PROGRESS" with
    | Some s -> (try Float.of_string s with Failure _ -> 5.0)

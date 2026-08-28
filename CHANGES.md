@@ -70,18 +70,17 @@ thread.
   default off): the CPU-side compile of a step's candidates — optimize, lower,
   render, nvrtc — now overlaps across domains, while the GPU timing phase
   still runs one candidate at a time so timings never contend. Shared state
-  (hash-consing, shape memoisation, kernel naming, program cache, disk cache)
-  is guarded for concurrent access. On the RNN grad repro (CUDA, `BEAM=2`,
-  cleared tolk and driver JIT caches): 27s -> 6s with `BEAM_PARALLEL=8`;
-  with warm caches ~11s -> ~7s.
+  (hash-consing, value-range memoisation, kernel naming, program cache, disk
+  cache) is guarded for concurrent access. On the RNN grad repro (CUDA,
+  `BEAM=2`, cleared tolk and driver JIT caches): 27s -> 6s with
+  `BEAM_PARALLEL=8`; with warm caches ~11s -> ~7s.
 
-
-- Stop `BEAM` search when progress drops below timer noise: the default
-  `BEAM_MIN_PROGRESS` is now 5µs (still µs-denominated, matching upstream
-  tinygrad). The previous default of 0.01µs sat below the CUDA event timer
-  resolution, so neither progress-based exit condition could ever fire and
-  every kernel ran extra search steps until candidates ran out — ~2.6× more
-  candidate compiles on a CUDA `BEAM=2` pass.
+- Stop `BEAM` search when progress falls below timer noise: the default
+  `BEAM_MIN_PROGRESS` is now 5µs (env still overrides). The old 0.01µs
+  default sat below the ~0.5µs device timer resolution, so search only
+  stopped when a step brought no improvement at all — kernels kept searching
+  on measurement noise, ~2.6× more candidate compiles on a CUDA `BEAM=2`
+  pass.
 
 - Test same-call WAR dependencies by node identity instead of structural
   equality in `fix_war_deps`. `Uop.t` nodes are hash-consed, so the two checks
