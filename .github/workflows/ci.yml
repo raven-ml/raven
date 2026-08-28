@@ -30,6 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           opam pin add thumper git+https://github.com/invariant-hq/thumper.git --no-action
+          opam pin add windtrap git+https://github.com/invariant-hq/windtrap.git --no-action
           opam pin add litany git+https://github.com/invariant-hq/litany.git --no-action
           opam install . --deps-only --with-test
 
