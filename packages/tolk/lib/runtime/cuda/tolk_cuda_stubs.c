@@ -709,9 +709,16 @@ static nvrtcResult (*p_nvrtcDestroyProgram)(nvrtcProgram *);
 
 static void *nvrtc_handle = NULL;
 
-/* pthread_once: beam search can call nvrtc_compile from several OCaml
-   domains concurrently, and the first of them loads the library. */
-static pthread_once_t nvrtc_once = PTHREAD_ONCE_INIT;
+/* Guarded lazy init: beam search can call nvrtc_compile from several OCaml
+   domains concurrently, and the first of them loads the library. A mutex and
+   an explicit state rather than pthread_once: the failure path raises an
+   OCaml exception, and the longjmp out of a pthread_once init routine would
+   leave the once control permanently in progress — every later caller would
+   deadlock instead of seeing the error. The raise happens outside the lock,
+   and a failed load is retried on the next call, as before. */
+static pthread_mutex_t nvrtc_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int nvrtc_loaded = 0;
+static char nvrtc_error[128];
 
 static void load_nvrtc(void) {
   static const char *names[] = {"libnvrtc.so", "libnvrtc.so.13",
@@ -719,12 +726,19 @@ static void load_nvrtc(void) {
                                 "/usr/local/cuda/lib64/libnvrtc.so", NULL};
   for (int i = 0; nvrtc_handle == NULL && names[i] != NULL; ++i)
     nvrtc_handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
-  if (nvrtc_handle == NULL)
-    caml_failwith("NVRTC library (libnvrtc.so) not found");
-#define LOAD_NVRTC(var, name)                                    \
-  do {                                                           \
-    var = dlsym(nvrtc_handle, name);                             \
-    if (var == NULL) caml_failwith("NVRTC is missing " name);    \
+  if (nvrtc_handle == NULL) {
+    snprintf(nvrtc_error, sizeof(nvrtc_error),
+             "NVRTC library (libnvrtc.so) not found");
+    return;
+  }
+#define LOAD_NVRTC(var, name)                                          \
+  do {                                                                 \
+    var = dlsym(nvrtc_handle, name);                                   \
+    if (var == NULL) {                                                 \
+      snprintf(nvrtc_error, sizeof(nvrtc_error),                       \
+               "NVRTC is missing " name);                              \
+      return;                                                          \
+    }                                                                  \
   } while (0)
   LOAD_NVRTC(p_nvrtcVersion, "nvrtcVersion");
   LOAD_NVRTC(p_nvrtcCreateProgram, "nvrtcCreateProgram");
@@ -736,11 +750,18 @@ static void load_nvrtc(void) {
   LOAD_NVRTC(p_nvrtcGetErrorString, "nvrtcGetErrorString");
   LOAD_NVRTC(p_nvrtcDestroyProgram, "nvrtcDestroyProgram");
 #undef LOAD_NVRTC
+  nvrtc_loaded = 1;
 }
 
 static void ensure_nvrtc(void) {
-  if (pthread_once(&nvrtc_once, load_nvrtc) != 0)
-    caml_failwith("NVRTC initialisation failed");
+  char err[sizeof(nvrtc_error)];
+  int loaded;
+  pthread_mutex_lock(&nvrtc_mutex);
+  if (!nvrtc_loaded) load_nvrtc();
+  loaded = nvrtc_loaded;
+  if (!loaded) snprintf(err, sizeof(err), "%s", nvrtc_error);
+  pthread_mutex_unlock(&nvrtc_mutex);
+  if (!loaded) caml_failwith(err);
 }
 
 CAMLprim value caml_tolk_cuda_nvrtc_version(value unit) {
