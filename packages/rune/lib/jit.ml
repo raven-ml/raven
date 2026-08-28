@@ -303,7 +303,7 @@ type state = {
          backward thunk, and is fresh per [Rune.scan] call, so it identifies the
          scan. Identity-keyed: a structural table compares the record's closure
          on a hash collision. *)
-  scan_closed : Rune_scan.packed_t list Tbl.t;
+  scan_closed : Scan.packed_t list Tbl.t;
       (* staged scans: the step record's identity -> the external inputs the
          forward staging observed the body reading (tensors it closes over), for
          the backward loop to accumulate their cotangents. Keyed as
@@ -568,7 +568,7 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
 
 (* Staged scan.
 
-   [Rune.scan] performs [Rune_scan.E_scan]; this tracer stages it as a loop call
+   [Rune.scan] performs [Scan.E_scan]; this tracer stages it as a loop call
    in the compiled program instead of an unrolled trace. The body is traced once
    with fresh placeholder slot tensors, scheduled as its own compiled
    sub-program, and embedded as the payload of a CALL(CUSTOM_FUNCTION "loop")
@@ -1042,20 +1042,20 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        answers the probe with [false] — so reverse-mode below tapes the eager
        fold per step and never records an [E_scan_bwd] — and unrolls a directly
        performed scan into the trace, as every jit did before staging. *)
-    | Rune_scan.E_scan_probe ->
+    | Scan.E_scan_probe ->
         Some (fun k -> continue k (Option.is_none st.st_multi))
-    | Rune_scan.E_scan req ->
+    | Scan.E_scan req ->
         Some
           (fun k ->
             if st.st_multi <> None then
-              let res : Rune_scan.scan_res =
+              let res : Scan.scan_res =
                 Effect.Deep.match_with
-                  (fun () -> Rune_scan.eager req)
+                  (fun () -> Scan.eager req)
                   () (handler st)
               in
               continue k res
             else stage_scan st req k)
-    | Rune_scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
+    | Scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
     (* Indexed access *)
     | E_gather { data; indices; axis } ->
         Some
@@ -1166,14 +1166,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
    carry, then per leaf the carry stack. *)
 and stage_scan : type r.
     state ->
-    Rune_scan.scan_req ->
-    (Rune_scan.scan_res, r) Effect.Deep.continuation ->
+    Scan.scan_req ->
+    (Scan.scan_res, r) Effect.Deep.continuation ->
     r =
  fun st req k ->
-  let Rune_scan.
+  let Scan.
         {
-          req_carry = Rune_scan.Packed_c (cmod, c);
-          req_x = Rune_scan.Packed_t x;
+          req_carry = Scan.Packed_c (cmod, c);
+          req_x = Scan.Packed_t x;
           req_step = step;
         } =
     req
@@ -1207,9 +1207,9 @@ and stage_scan : type r.
             && Tbl.mem before k
             && not
                  (List.exists
-                    (fun (Rune_scan.Packed_t g) -> Obj.repr g == k)
+                    (fun (Scan.Packed_t g) -> Obj.repr g == k)
                     !closed)
-          then closed := Rune_scan.Packed_t t :: !closed);
+          then closed := Scan.Packed_t t :: !closed);
     }
   in
   (* Per-leaf carry slots, paired by identity: the slot placeholder is bound to
@@ -1249,7 +1249,7 @@ and stage_scan : type r.
   let trace_body () =
     Effect.Deep.match_with
       (fun () ->
-        step.run (Rune_scan.Packed_c (cmod, slot_c)) (Rune_scan.Packed_t slot_x))
+        step.run (Scan.Packed_c (cmod, slot_c)) (Scan.Packed_t slot_x))
       () (handler st)
   in
   st.scan_collectors <- collect :: st.scan_collectors;
@@ -1258,7 +1258,7 @@ and stage_scan : type r.
       ~finally:(fun () -> st.scan_collectors <- List.tl st.scan_collectors)
       (fun () ->
         match trace_body () with
-        | Rune_scan.Packed_c (_, c_next), Rune_scan.Packed_t y ->
+        | Scan.Packed_c (_, c_next), Scan.Packed_t y ->
             (Obj.magic c_next, Obj.magic y))
   in
   Tbl.replace st.scan_closed (Obj.repr step) !closed;
@@ -1275,7 +1275,7 @@ and stage_scan : type r.
         a)
       c_next c
   in
-  if not !stable then Effect.Deep.discontinue k Rune_scan.Not_staged
+  if not !stable then Effect.Deep.discontinue k Scan.Not_staged
   else
   let y_shape = shape_of y in
   let numel_y = numel y_shape in
@@ -1469,8 +1469,8 @@ and stage_scan : type r.
   Tbl.replace st.traced (Obj.repr ys_ph) ();
   Effect.Deep.continue k
     {
-      Rune_scan.r_carry = Rune_scan.Packed_c (cmod, c_final_ph);
-      r_y = Rune_scan.Packed_t ys_ph;
+      Scan.r_carry = Scan.Packed_c (cmod, c_final_ph);
+      r_y = Scan.Packed_t ys_ph;
     }
 
 (* The backward scan (the transpose): capture the body's pullback against
@@ -1492,18 +1492,18 @@ and stage_scan : type r.
    buffer, the two accumulator buffers, and the final total buffer. *)
 and stage_scan_bwd : type r.
     state ->
-    Rune_scan.scan_bwd ->
-    (Rune_scan.scan_bwd_res, r) Effect.Deep.continuation ->
+    Scan.scan_bwd ->
+    (Scan.scan_bwd_res, r) Effect.Deep.continuation ->
     r =
  fun st bwd k ->
-  let Rune_scan.
+  let Scan.
         {
           bwd_step = step;
-          bwd_carry = Rune_scan.Packed_c (cmod, c0);
-          bwd_x = Rune_scan.Packed_t xs0;
+          bwd_carry = Scan.Packed_c (cmod, c0);
+          bwd_x = Scan.Packed_t xs0;
           bwd_n = n;
-          bwd_dc = Rune_scan.Packed_c (_, dc);
-          bwd_dy = Rune_scan.Packed_t dy;
+          bwd_dc = Scan.Packed_c (_, dc);
+          bwd_dy = Scan.Packed_t dy;
           bwd_y_shape = y_shape;
         } =
     bwd
@@ -1593,7 +1593,7 @@ and stage_scan_bwd : type r.
     (fun (type a b) (leaf : (a, b) Nx_effect.t) -> Tape.track tape leaf)
     slot_c;
   Tape.track tape slot_x;
-  List.iter (fun (Rune_scan.Packed_t g) -> Tape.track tape g) closed;
+  List.iter (fun (Scan.Packed_t g) -> Tape.track tape g) closed;
   let c_next, y =
     match
       Effect.Deep.match_with
@@ -1601,12 +1601,12 @@ and stage_scan_bwd : type r.
           Effect.Deep.match_with
             (fun () ->
               step.run
-                (Rune_scan.Packed_c (cmod, slot_c))
-                (Rune_scan.Packed_t slot_x))
+                (Scan.Packed_c (cmod, slot_c))
+                (Scan.Packed_t slot_x))
             () (Reverse.handler tape))
         () (handler st)
     with
-    | Rune_scan.Packed_c (_, c_next), Rune_scan.Packed_t y ->
+    | Scan.Packed_c (_, c_next), Scan.Packed_t y ->
         (Obj.magic c_next, Obj.magic y)
   in
   let c_next =
@@ -1637,8 +1637,8 @@ and stage_scan_bwd : type r.
             slot_c,
           Tape.cotangent tape slot_x,
           List.map
-            (fun (Rune_scan.Packed_t g) ->
-              Rune_scan.Closed_ctan (g, Tape.cotangent tape g))
+            (fun (Scan.Packed_t g) ->
+              Scan.Closed_ctan (g, Tape.cotangent tape g))
             closed ))
       () (handler st)
   in
@@ -1663,11 +1663,11 @@ and stage_scan_bwd : type r.
      stays packed — unpacked, its type would escape its scope in the tuple. *)
   let g_outs =
     List.map
-      (fun (Rune_scan.Closed_ctan (g, dg)) ->
+      (fun (Scan.Closed_ctan (g, dg)) ->
         let g_shape = shape_of g in
         let gdt = tolk_dtype (Nx_effect.dtype g) in
         let gn = numel g_shape in
-        ( Rune_scan.Packed_t g,
+        ( Scan.Packed_t g,
           g_shape,
           gdt,
           gn,
@@ -1925,20 +1925,20 @@ and stage_scan_bwd : type r.
   (* Each external input's total cotangent, as outputs of the loop. *)
   let br_closed =
     List.map2
-      (fun (Rune_scan.Packed_t g, g_shape, _, _, _, _, _) (_, _, _, final) ->
+      (fun (Scan.Packed_t g, g_shape, _, _, _, _, _) (_, _, _, final) ->
         let after =
           U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ]
         in
         let ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype g) g_shape in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after g_shape);
         Tbl.replace st.traced (Obj.repr ph) ();
-        Rune_scan.Closed_ctan (g, ph))
+        Scan.Closed_ctan (g, ph))
       g_outs g_bufs
   in
   Effect.Deep.continue k
     {
-      Rune_scan.br_carry = Rune_scan.Packed_c (cmod, dc0_ph);
-      br_y = Rune_scan.Packed_t dxs_ph;
+      Scan.br_carry = Scan.Packed_c (cmod, dc0_ph);
+      br_y = Scan.Packed_t dxs_ph;
       br_closed;
     }
 

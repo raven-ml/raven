@@ -14,7 +14,7 @@
   jit
   jit_cache
   jit_device
-  rune_scan)
+  scan)
  (libraries
   nx.core
   nx

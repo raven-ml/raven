@@ -106,13 +106,13 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
          a nested instance of this handler — every step's operations flow
          through it and acquire their tangents as they always did. Claiming
          [E_scan] here obliges answering the probe with [false]. *)
-      | Rune_scan.E_scan_probe -> Some (fun k -> continue k false)
-      | Rune_scan.E_scan req ->
+      | Scan.E_scan_probe -> Some (fun k -> continue k false)
+      | Scan.E_scan req ->
           Some
             (fun k ->
-              let res : Rune_scan.scan_res =
+              let res : Scan.scan_res =
                 Effect.Deep.match_with
-                  (fun () -> Rune_scan.eager req)
+                  (fun () -> Scan.eager req)
                   () (handler tangents)
               in
               continue k res)
