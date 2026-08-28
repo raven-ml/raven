@@ -247,6 +247,7 @@ let ctangent_like t =
            (float_of_int ((i mod 4) + 2) /. 3.0)))
 
 let check_cclose ~tol ~msg expected actual =
+  equal ~msg int (Array.length expected) (Array.length actual);
   Array.iteri
     (fun i (e : Complex.t) ->
       let a : Complex.t = actual.(i) in
@@ -257,6 +258,11 @@ let check_cclose ~tol ~msg expected actual =
         ~msg:(Printf.sprintf "%s[%d].im" msg i)
         (float tol) e.Complex.im a.Complex.im)
     expected
+
+(* [check_carr ~msg expected t] is {!check_cclose} on the flattened complex
+   tensor [t]. *)
+let check_carr ?(eps = 1e-10) ~msg expected actual =
+  check_cclose ~tol:eps ~msg expected (to_carr actual)
 
 (* [cvjp_numeric ~h f z w] is the cotangent [w] pulled back through the real
    Jacobian of [f] at [z], measured by central differences: perturb each

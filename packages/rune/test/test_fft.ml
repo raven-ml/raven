@@ -14,28 +14,6 @@
 open Windtrap
 open Rune_test_support.Support
 
-let c128 = Nx.complex128
-let cx re im = { Complex.re; im }
-let pi = 4.0 *. Stdlib.atan 1.0
-
-let cvec xs =
-  Nx.create c128 [| Array.length xs |] (Array.map (fun (re, im) -> cx re im) xs)
-
-let to_carr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
-
-let check_carr ?(eps = 1e-10) ~msg (expected : Complex.t array) actual =
-  let actual = to_carr actual in
-  equal ~msg int (Array.length expected) (Array.length actual);
-  Array.iteri
-    (fun i e ->
-      equal
-        ~msg:(Printf.sprintf "%s[%d].re" msg i)
-        (float eps) e.Complex.re actual.(i).Complex.re;
-      equal
-        ~msg:(Printf.sprintf "%s[%d].im" msg i)
-        (float eps) e.Complex.im actual.(i).Complex.im)
-    expected
-
 (* Deterministic signals. *)
 let x8 () = vec64 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3 |]
 let x7 () = vec64 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2 |]
@@ -44,8 +22,7 @@ let x4 () = vec64 [| 0.5; -1.2; 2.1; 1.7 |]
 (* A real-valued spectral mask for x8's 5 bins: multiplying the spectrum by it
    and measuring the filtered energy is a per-bin weighted |X|^2 loss. *)
 let h5 () =
-  Nx.create c128 [| 5 |]
-    [| cx 1.0 0.0; cx 0.5 0.0; cx 2.0 0.0; cx 0.25 0.0; cx 1.5 0.0 |]
+  cvec [| (1.0, 0.0); (0.5, 0.0); (2.0, 0.0); (0.25, 0.0); (1.5, 0.0) |]
 
 (* Gradients against finite differences *)
 
@@ -119,7 +96,7 @@ let rfft_pull_reference n (ct : Complex.t array) =
       let acc = ref 0.0 in
       Array.iteri
         (fun k c ->
-          let th = 2.0 *. pi *. float_of_int (j * k) /. float_of_int n in
+          let th = 2.0 *. Float.pi *. float_of_int (j * k) /. float_of_int n in
           acc :=
             !acc
             +. (c.Complex.re *. Stdlib.cos th)
@@ -133,7 +110,7 @@ let irfft_pull_reference n m (w : float array) =
       let re = ref 0.0 and im = ref 0.0 in
       Array.iteri
         (fun j wj ->
-          let th = 2.0 *. pi *. float_of_int (j * k) /. float_of_int n in
+          let th = 2.0 *. Float.pi *. float_of_int (j * k) /. float_of_int n in
           re := !re +. (wj *. Stdlib.cos th);
           im := !im +. (wj *. Stdlib.sin th))
         w;
@@ -324,8 +301,7 @@ let test_grad_irfft2_of_lift () =
     x
 
 let hc5 () =
-  Nx.create c128 [| 5 |]
-    [| cx 1.0 0.7; cx 0.5 (-0.3); cx 2.0 1.1; cx 0.25 0.4; cx 1.5 (-0.8) |]
+  cvec [| (1.0, 0.7); (0.5, -0.3); (2.0, 1.1); (0.25, 0.4); (1.5, -0.8) |]
 
 let test_grad_complex_mask_even () =
   check_grad ~msg:"complex-mask energy, even length"
@@ -333,10 +309,7 @@ let test_grad_complex_mask_even () =
     (x8 ())
 
 let test_grad_complex_mask_odd () =
-  let h4 =
-    Nx.create c128 [| 4 |]
-      [| cx 1.0 0.7; cx 0.5 (-0.3); cx 2.0 1.1; cx 0.25 0.4 |]
-  in
+  let h4 = cvec [| (1.0, 0.7); (0.5, -0.3); (2.0, 1.1); (0.25, 0.4) |] in
   check_grad ~msg:"complex-mask energy, odd length"
     (fun x -> Nx.square (Nx.magnitude f64 (Nx.mul (Nx.rfft c128 x) h4)))
     (x7 ())
