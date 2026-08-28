@@ -68,4 +68,4 @@ Raven has zero system dependencies by design. It's part of why we chose tinygrad
 
 ## Support us
 
-If your team wants to take part, as an early adopter, a production pilot, or a sponsor, see [Support Raven](/docs/support-raven/).
+If your team wants to take part, as an early adopter, a production pilot, or a sponsor, see [Support Raven](/doc/support-raven.md/).
