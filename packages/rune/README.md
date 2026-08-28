@@ -116,13 +116,12 @@ Rune aims to fail loudly rather than return wrong gradients.
 Current gaps:
 
 - **Ops without differentiation rules raise.** Reverse mode has no rule
-  for `svd`, `eig`, `eigh`, `rfft`, `irfft`, `psum`, and `mod`; forward
-  mode additionally lacks `qr`. Differentiating through them raises
-  `Invalid_argument` — `detach` the input if gradients should not flow
-  through. (`cholesky` and reverse-mode `qr` are supported.)
-- **`vmap` has no rule for `fft`-family and decomposition ops**
-  (`fft`, `ifft`, `rfft`, `irfft`, `cholesky`, `qr`, `svd`, `eig`,
-  `eigh`) over batched inputs.
+  for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally
+  lacks `qr`. Differentiating through them raises `Invalid_argument` —
+  `detach` the input if gradients should not flow through. (`cholesky`,
+  reverse-mode `qr`, and the whole FFT family are supported.)
+- **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`,
+  `svd`, `eig`, `eigh`) over batched inputs.
 - **Implicit RNG under `vmap` draws identical values for every lane** —
   the RNG key is a constant of the map. Thread distinct randomness in as
   mapped inputs instead.

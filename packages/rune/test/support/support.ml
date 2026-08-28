@@ -17,8 +17,8 @@ let scalar t = (to_arr t).(0)
 
 (* The sliding-window movement is internal — it backs [Nx.stft] and is not part
    of Nx's public surface — but the transformation rules are written against its
-   effect, so exercise it there rather than through a caller that would also
-   drag in [rfft], which has no rule of its own. *)
+   effect, so exercise it there rather than through a caller whose surrounding
+   ops would obscure which rule failed. *)
 let sliding_window ~axis ~window ~step x =
   Nx_effect.sliding_window x ~axis ~window ~step
 

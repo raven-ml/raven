@@ -198,7 +198,7 @@ let per_sample =
 
 Two honest caveats relative to `jax.vmap`:
 
-- rune's `vmap` has no batching rule for the `fft` family and matrix decompositions (`cholesky`, `qr`, `svd`, `eig`, `eigh`); those raise on batched inputs.
+- rune's `vmap` has no batching rule for the matrix decompositions (`cholesky`, `qr`, `svd`, `eig`, `eigh`); those raise on batched inputs.
 - Implicit RNG inside the mapped function draws identical values for every lane (JAX avoids this by making you thread keys; in rune, thread randomness in as mapped inputs).
 
 ---
@@ -354,8 +354,8 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 | `jax.jit` | `jit (module P) f` compiles to fused kernels, cached per leaf signature. It unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates. |
 | GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. |
 | `jax.pmap` / distributed | Not implemented. |
-| Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `rfft`, `irfft`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
-| Full op coverage under `vmap` | The `fft` family and decompositions raise on batched inputs. |
+| Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
+| Full op coverage under `vmap` | The decompositions raise on batched inputs. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |
 | Donation, sharding, `pjit` | `jit ~donate:true` reuses input storage; no sharding or `pjit`. |
 
