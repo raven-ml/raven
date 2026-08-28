@@ -90,6 +90,23 @@ let test_grad_2d () =
     (fun x -> Nx.irfft2 f64 ~s:[ 3; 4 ] (Nx.rfft2 c128 x))
     (mat64 3 4 v12)
 
+let test_grad_axes_permuted () =
+  (* axes [1; 0]: the real-transformed axis is axis 0, not the tensor's last —
+     the rules key on axes.(len - 1) and the leading c2c pass on the axes array,
+     never on ndim. *)
+  check_grad ~msg:"irfftn(rfftn x) with axes [1; 0]"
+    (fun x ->
+      Nx.irfftn f64 ~axes:[ 1; 0 ] ~s:[ 4; 3 ] (Nx.rfftn c128 ~axes:[ 1; 0 ] x))
+    (mat64 3 4 v12)
+
+let test_grad_axes_permuted_resized () =
+  (* The permuted order with n = 5 along the real axis: the 2-bin spectrum is
+     zero-padded to 3 bins while a leading transformed axis is in play. *)
+  check_grad ~msg:"irfftn ~s:[4;5] (rfftn x) with axes [1; 0]"
+    (fun x ->
+      Nx.irfftn f64 ~axes:[ 1; 0 ] ~s:[ 4; 5 ] (Nx.rfftn c128 ~axes:[ 1; 0 ] x))
+    (mat64 3 4 v12)
+
 let test_grad_spectral_energy () =
   (* Filtered energy: sum ((irfft (h * rfft x))^2) is, by Parseval, a per-bin
      weighted spectral magnitude-squared loss. *)
@@ -312,6 +329,8 @@ let tests =
         test "zero-padded spectrum" test_grad_padded_spectrum;
         test "truncated spectrum" test_grad_truncated_spectrum;
         test "2-D round trip" test_grad_2d;
+        test "permuted axes" test_grad_axes_permuted;
+        test "permuted axes, resized spectrum" test_grad_axes_permuted_resized;
         test "filtered spectral energy" test_grad_spectral_energy;
       ];
     group "one-way losses"
