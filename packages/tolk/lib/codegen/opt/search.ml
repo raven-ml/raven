@@ -32,7 +32,7 @@ let beam_dev_timeout () = Helpers.getenv "BEAM_DEV_TIMEOUT" 1 <> 0
    candidates concurrently; 0 (the default) compiles sequentially. Only the
    CPU-side compile runs in parallel — the GPU timing phase below always runs
    one candidate at a time. *)
-let beam_parallel () = Helpers.getenv "BEAM_PARALLEL" 0
+let beam_parallel = Helpers.Context_var.int ~key:"BEAM_PARALLEL" ~default:0
 let cachelevel () = Helpers.getenv "CACHELEVEL" 1
 let ignore_beam_cache () = Helpers.getenv "IGNORE_BEAM_CACHE" 0 <> 0
 
@@ -542,7 +542,7 @@ let beam_search ?(allow_test_size = true) ?disable_cache
          the expensive part. Nodes are hash-consed, so the AST's tag is an
          exact identity key. *)
       let seen_asts : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-      let nworkers = beam_parallel () in
+      let nworkers = Helpers.Context_var.get beam_parallel in
       if beam_debug > 0 then
         Format.eprintf "BEAM_SEARCH:@\n%a@." U.pp (P.ast s);
       if debug >= 2 then

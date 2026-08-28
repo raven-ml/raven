@@ -58,6 +58,10 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- `Search.beam_parallel` is a `Helpers.Context_var`, so a caller can scope
+  the `BEAM_PARALLEL` worker count to one compilation with
+  `Context_var.with_context` instead of setting it process-wide.
+
 - `Realize.pm_compile` takes `?beam`, stamping kernels that do not already
   carry a beam width, so a caller can enable beam-search autotuning for one
   compilation instead of process-wide through the `BEAM` environment
@@ -926,6 +930,11 @@ thread.
   offset in the underlying buffer.
 
 ### Rune
+
+- `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` take `?beam_parallel`: the
+  number of domains compiling a beam-search round's candidates, scoping the
+  `BEAM_PARALLEL` setting to one compiled function. It only changes compile
+  time, never the compiled code.
 
 - `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` take `?beam`: beam-search
   autotuning of the compiled function's kernels, equivalent to compiling under

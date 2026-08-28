@@ -15,6 +15,13 @@ val actions : Tolk_uop.Uop.Opt.t list
     round applies one of these to every scheduler kept from the previous
     round. *)
 
+val beam_parallel : int Helpers.Context_var.t
+(** [beam_parallel] is the number of domains {!beam_search} uses to compile a
+    round's candidates concurrently ([BEAM_PARALLEL] environment variable;
+    [0], the default, compiles sequentially). Only the CPU-side compile runs
+    in parallel; candidates are always timed one at a time. Override it for a
+    scope with {!Helpers.Context_var.with_context}. *)
+
 val beam_search :
   ?allow_test_size:bool ->
   ?disable_cache:bool ->

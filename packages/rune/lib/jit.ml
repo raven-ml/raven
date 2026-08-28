@@ -1236,7 +1236,7 @@ let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
   List.rev !acc
 
 let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
-    (module P : Nx.Ptree.S with type t = p)
+    ?beam_parallel (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t)
     (params : P.t) : Q.t compiled =
   let st =
@@ -1476,8 +1476,15 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
           | None -> err "Rune.jit: scheduling captured no computation"
         in
         let linear =
-          Tolk.Realize.pm_compile ~device:dev ?beam
-            ~to_program:(to_program dev) linear
+          let compile () =
+            Tolk.Realize.pm_compile ~device:dev ?beam
+              ~to_program:(to_program dev) linear
+          in
+          match beam_parallel with
+          | None -> compile ()
+          | Some n ->
+              Tolk.Helpers.Context_var.(
+                with_context [ B (Tolk.Search.beam_parallel, n) ] compile)
         in
         Option.iter
           (fun key -> Jit_cache.store ~key call linear var_vals)
@@ -1917,7 +1924,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p) (module Q 
 
 (* Public entry points *)
 
-let jit2 (type p q) ?(device = "CPU") ?(donate = false) ?beam
+let jit2 (type p q) ?(device = "CPU") ?(donate = false) ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
   let dev = get_device device in
@@ -1936,6 +1943,7 @@ let jit2 (type p q) ?(device = "CPU") ?(donate = false) ?beam
         | None ->
             let c =
               trace_compile ~device:dev ~zero_copy ~const_cache ?beam
+                ?beam_parallel
                 (module P)
                 (module Q)
                 f params
@@ -1945,7 +1953,7 @@ let jit2 (type p q) ?(device = "CPU") ?(donate = false) ?beam
       in
       replay ~donate (module P) (module Q) c params
 
-let jit (type p c d) ?device ?donate ?beam
+let jit (type p c d) ?device ?donate ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
   let module Q = struct
@@ -1962,9 +1970,9 @@ let jit (type p c d) ?device ?donate ?beam
 
     let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
   end in
-  jit2 ?device ?donate ?beam (module P) (module Q) f
+  jit2 ?device ?donate ?beam ?beam_parallel (module P) (module Q) f
 
-let jit' (type a b c d) ?device ?donate ?beam
+let jit' (type a b c d) ?device ?donate ?beam ?beam_parallel
     (f : (a, b) Nx_effect.t -> (c, d) Nx_effect.t) :
     (a, b) Nx_effect.t -> (c, d) Nx_effect.t =
   let module L = struct
@@ -1981,7 +1989,7 @@ let jit' (type a b c d) ?device ?donate ?beam
 
     let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
   end in
-  jit ?device ?donate ?beam (module L) f
+  jit ?device ?donate ?beam ?beam_parallel (module L) f
 
 (* pmap: multi-device parallel jit. The compiled core is [trace_compile] /
    [replay] with a multi-device placement; pmap only derives the placement from
@@ -2007,7 +2015,7 @@ let pmap_names devices =
     names;
   names
 
-let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam
+let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
   let names = pmap_names devices in
@@ -2070,7 +2078,7 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam
         | None ->
             let c =
               trace_compile ~device:dev ~zero_copy:false ~const_cache ?beam
-                ~multi:(spec, places)
+                ?beam_parallel ~multi:(spec, places)
                 (module P)
                 (module Q)
                 f params
@@ -2081,7 +2089,7 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam
       replay ~donate (module P) (module Q) c params
     end
 
-let pmap (type p c d) ~devices ?in_axes ?donate ?beam
+let pmap (type p c d) ~devices ?in_axes ?donate ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
   let module Q = struct
@@ -2098,4 +2106,4 @@ let pmap (type p c d) ~devices ?in_axes ?donate ?beam
 
     let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
   end in
-  pmap2 ~devices ?in_axes ?donate ?beam (module P) (module Q) f
+  pmap2 ~devices ?in_axes ?donate ?beam ?beam_parallel (module P) (module Q) f
