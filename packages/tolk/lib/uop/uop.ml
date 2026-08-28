@@ -288,8 +288,8 @@ let global_table = H.create 4096
 
 (* Hash-consing and node metadata are global mutable state: beam search can
    compile candidates in parallel domains, so every access takes this lock.
-   No other [intern_mutex] section nests inside one, and [min_max_mutex]
-   below is a separate lock, so there is no lock ordering to deadlock on. *)
+   No other [intern_mutex] section nests inside one, and it is the only
+   lock in this module, so there is no lock ordering to deadlock on. *)
 let intern_mutex = Mutex.create ()
 
 let intern_node node =
@@ -388,10 +388,17 @@ let compare a b = Int.compare a.Hashcons.tag b.Hashcons.tag
 
 (* The set of ops appearing among a node's direct children, deduplicated.
    Memoised across rewrite passes: pattern-matcher early-reject consults it on
-   every candidate, and nodes are immutable so the set is stable. *)
-let child_ops_cache : Ops.t list Ref_tbl.t = Ref_tbl.create 1024
+   every candidate, and nodes are immutable so the set is stable.
+
+   Domain-local, like every per-node memo cache in this module and its
+   consumers: each memoizes a pure function of an immutable hash-consed node,
+   so beam-search workers compiling candidates in parallel domains fill their
+   own tables instead of racing on one unsynchronized Hashtbl. *)
+let child_ops_cache : Ops.t list Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
 
 let child_ops u =
+  let child_ops_cache = Domain.DLS.get child_ops_cache in
   match Ref_tbl.find_opt child_ops_cache u with
   | Some ops -> ops
   | None ->
@@ -567,9 +574,11 @@ let as_bind u =
   | Ops.Bind, [ var; value ] -> Option.Some { var; value }
   | _ -> Option.None
 
-let device_cache : device option Ref_tbl.t = Ref_tbl.create 32
+let device_cache : device option Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 32)
 
 let rec device_of u =
+  let device_cache = Domain.DLS.get device_cache in
   match Ref_tbl.find_opt device_cache u with
   | Some d -> d
   | None ->
@@ -997,9 +1006,11 @@ let rec base u =
 
 (* Memoized: an unmemoized walk revisits shared subgraphs and goes
    exponential on wide unrolled ALU chains. *)
-let addrspace_cache : Dtype.addr_space option Ref_tbl.t = Ref_tbl.create 256
+let addrspace_cache : Dtype.addr_space option Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 256)
 
 let rec addrspace u =
+  let addrspace_cache = Domain.DLS.get addrspace_cache in
   match Ref_tbl.find_opt addrspace_cache u with
   | Some a -> a
   | None ->
@@ -1316,9 +1327,11 @@ module Ref_set = Set.Make (struct
   let compare a b = Int.compare a.Hashcons.tag b.Hashcons.tag
 end)
 
-let ranges_cache : Ref_set.t Ref_tbl.t = Ref_tbl.create 64
+let ranges_cache : Ref_set.t Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 64)
 
 let rec ranges_set u =
+  let ranges_cache = Domain.DLS.get ranges_cache in
   match Ref_tbl.find_opt ranges_cache u with
   | Some set -> set
   | None ->
@@ -1360,9 +1373,11 @@ and ended_ranges u =
    pruned to the only dtype a condition can have. Memoized, since the
    where-closure fold queries it on every WHERE and an unmemoized walk
    revisits shared subgraphs. *)
-let bool_slice_cache : Ref_set.t Ref_tbl.t = Ref_tbl.create 256
+let bool_slice_cache : Ref_set.t Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 256)
 
 let rec bool_slice u =
+  let bool_slice_cache = Domain.DLS.get bool_slice_cache in
   match Ref_tbl.find_opt bool_slice_cache u with
   | Some s -> s
   | None ->
@@ -1374,9 +1389,11 @@ let rec bool_slice u =
 
 let bool_slice_mem root u = Ref_set.mem u (bool_slice root)
 
-let ranges_list_cache : t list Ref_tbl.t = Ref_tbl.create 64
+let ranges_list_cache : t list Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 64)
 
 let ranges u =
+  let ranges_list_cache = Domain.DLS.get ranges_list_cache in
   let mem_ref x xs = List.exists (fun y -> y == x) xs in
   let add_unique_rev acc r = if mem_ref r acc then acc else r :: acc in
   let remove_many acc rs =
@@ -1704,18 +1721,16 @@ let substitute ?(walk = false) mappings root =
 
 (* Analysis *)
 
-let min_max_cache : (int * int) Ref_tbl.t = Ref_tbl.create 1024
-
-let min_max_mutex = Mutex.create ()
+let min_max_cache : (int * int) Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
 
 let rec min_max u =
-  match
-    Mutex.protect min_max_mutex (fun () -> Ref_tbl.find_opt min_max_cache u)
-  with
+  let min_max_cache = Domain.DLS.get min_max_cache in
+  match Ref_tbl.find_opt min_max_cache u with
   | Option.Some mm -> mm
   | Option.None ->
       let mm = compute_min_max u in
-      Mutex.protect min_max_mutex (fun () -> Ref_tbl.replace min_max_cache u mm);
+      Ref_tbl.replace min_max_cache u mm;
       mm
 
 and compute_min_max u =
@@ -2122,7 +2137,8 @@ let substitute_function_shape_args fn dims =
    pure function of the node; caching it by node identity (as [device_of] and
    [min_max] already do) avoids recomputing shared subgraphs, which would
    otherwise re-walk a diamond once per parent and blow up exponentially. *)
-let shape_cache : t list option Ref_tbl.t = Ref_tbl.create 1024
+let shape_cache : t list option Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
 
 let rec shape u =
   match shape_opt u with
@@ -2133,6 +2149,7 @@ let rec shape u =
            (Ops.name (op u)))
 
 and shape_opt u =
+  let shape_cache = Domain.DLS.get shape_cache in
   match Ref_tbl.find_opt shape_cache u with
   | Some cached -> cached
   | None ->
@@ -2348,9 +2365,11 @@ let max_numel u = List.fold_left ( * ) 1 (max_shape u)
 
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
    exponential in residual depth. *)
-let axis_cache : int option Ref_tbl.t = Ref_tbl.create 1024
+let axis_cache : int option Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
 
 let rec axis u =
+  let axis_cache = Domain.DLS.get axis_cache in
   match Ref_tbl.find_opt axis_cache u with
   | Some cached -> cached
   | None ->

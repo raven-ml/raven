@@ -217,9 +217,11 @@ module Dtype_set = Set.Make (struct
   let compare = Stdlib.compare
 end)
 
-let ancestor_cache : (t, Dtype_set.t) Hashtbl.t = Hashtbl.create 16
+let ancestor_cache : (t, Dtype_set.t) Hashtbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
 
 let rec ancestors s =
+  let ancestor_cache = Domain.DLS.get ancestor_cache in
   match Hashtbl.find_opt ancestor_cache s with
   | Some set -> set
   | None ->

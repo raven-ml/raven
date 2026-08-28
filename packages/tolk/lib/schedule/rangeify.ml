@@ -135,9 +135,11 @@ let broadcast_shape_expr shapes =
    a naive walk re-descends the same subgraph once per path and blows up
    exponentially. Both are pure functions of a hash-consed node, so memoise on
    node identity — mirroring the node-keyed caches in [Uop]. *)
-let shape_of_cache : int list option U.Ref_tbl.t = U.Ref_tbl.create 256
+let shape_of_cache : int list option U.Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> U.Ref_tbl.create 256)
 
 let rec shape_of n =
+  let shape_of_cache = Domain.DLS.get shape_of_cache in
   match U.Ref_tbl.find_opt shape_of_cache n with
   | Some r -> r
   | None ->

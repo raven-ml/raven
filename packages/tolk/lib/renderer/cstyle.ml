@@ -344,9 +344,11 @@ let render_dtype (ctx : ctx) (dtype : Dtype.t) : string =
 
 (* Memoized: an unmemoized walk revisits shared subgraphs and goes
    exponential on wide unrolled ALU chains. *)
-let expr_numel_cache : int U.Ref_tbl.t = U.Ref_tbl.create 256
+let expr_numel_cache : int U.Ref_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> U.Ref_tbl.create 256)
 
 let rec expr_numel u =
+  let expr_numel_cache = Domain.DLS.get expr_numel_cache in
   match U.Ref_tbl.find_opt expr_numel_cache u with
   | Some n -> n
   | None ->

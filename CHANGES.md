@@ -79,8 +79,9 @@ thread.
   default off): the CPU-side compile of a step's candidates — optimize, lower,
   render, nvrtc — now overlaps across domains, while the GPU timing phase
   still runs one candidate at a time so timings never contend. Shared state
-  (hash-consing, value-range memoisation, kernel naming, program cache, disk
-  cache) is guarded for concurrent access. On the RNN grad repro (CUDA,
+  is safe under domains: the hash-cons table, kernel naming, program cache,
+  and disk cache take locks, and the per-node memo caches are domain-local.
+  On the RNN grad repro (CUDA,
   `BEAM=2`, cleared tolk and driver JIT caches): 27s -> 6s with
   `BEAM_PARALLEL=8`; with warm caches ~11s -> ~7s.
 
