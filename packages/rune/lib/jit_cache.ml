@@ -94,7 +94,7 @@ let slot_matches sd u =
 
 (* Key *)
 
-let key ~device call =
+let key ~device ~beam call =
   if not (enabled ()) then None
   else
     match U.as_call call with
@@ -110,11 +110,12 @@ let key ~device call =
               ^ Option.value ~default:"" (Tolk.Compiler.cachekey c)
           | None -> ""
         in
-        (* Exactly the environment knobs that change lowering output for a fixed
-           binary: the optimization toggles read by [Tolk.Codegen]. *)
+        (* Exactly the knobs that change lowering output for a fixed binary:
+           the optimization toggles read by [Tolk.Codegen], with [beam] the
+           effective beam width (per-call override or the BEAM env var). *)
         let knobs =
           Printf.sprintf "NOOPT=%d,BEAM=%d,BEAM_ESTIMATE=%d" (env_int "NOOPT" 0)
-            (env_int "BEAM" 0)
+            beam
             (env_int "BEAM_ESTIMATE" 1)
         in
         Some

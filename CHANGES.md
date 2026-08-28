@@ -58,6 +58,11 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- `Realize.pm_compile` takes `?beam`, stamping kernels that do not already
+  carry a beam width, so a caller can enable beam-search autotuning for one
+  compilation instead of process-wide through the `BEAM` environment
+  variable.
+
 - Free `BEAM`-search timing buffers as soon as each kernel's search finishes:
   they were reclaimed only when the GC ran, and then into the unbounded LRU
   allocator cache (which matches by exact size), so a model with many
@@ -921,6 +926,12 @@ thread.
   offset in the underlying buffer.
 
 ### Rune
+
+- `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` take `?beam`: beam-search
+  autotuning of the compiled function's kernels, equivalent to compiling under
+  `BEAM=n` but scoped to that one function. The width is part of the
+  persistent compile-cache key, so tuned and untuned compilations of the same
+  trace do not collide.
 
 - A parameter structure may now hold leaves that are not parameters — an
   `Nx.Rng.key` threaded through a compiled step, a step counter, a batch of

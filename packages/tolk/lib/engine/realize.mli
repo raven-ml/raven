@@ -156,17 +156,25 @@ val buffer_copy :
 
 val pm_compile :
   device:Device.t ->
+  ?beam:int ->
   to_program:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t
-(** [pm_compile ~device ~to_program linear] rewrites every kernel
+(** [pm_compile ~device ?beam ~to_program linear] rewrites every kernel
     {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
     into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
     [to_program]. {!Tolk_uop.Ops.Slice} and {!Tolk_uop.Ops.Copy} calls are left
     unchanged.
 
+    When [beam] is [b >= 1], every kernel sink that does not already carry a
+    beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]
+    before compilation, enabling beam-search autotuning for it regardless of
+    the [BEAM] environment variable. When omitted or [< 1], kernels compile
+    under the ambient environment settings.
+
     Compiled programs are cached by the kernel's semantic key and the device,
-    so kernels that differ only by diagnostic tags share one compilation. *)
+    so kernels that differ only by diagnostic tags share one compilation; the
+    stamped beam width is part of the key. *)
 
 (** {1:capture Capture registry} *)
 

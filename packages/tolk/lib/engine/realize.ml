@@ -268,13 +268,25 @@ let local_size_cache : (int, int array) Hashtbl.t = Hashtbl.create 16
 
 (* Rewrite each kernel CALL(SINK) in [linear] to CALL(PROGRAM), compiling the
    body with [to_program] and caching the compiled PROGRAM by the SINK's
-   semantic key. SLICE and COPY calls pass through unchanged. *)
-let pm_compile ~device ~to_program linear =
+   semantic key. SLICE and COPY calls pass through unchanged. [beam] stamps
+   sinks that carry no beam width of their own; kernel_info is part of the
+   semantic key, so a stamped sink gets its own cache entry. *)
+let pm_compile ~device ?beam ~to_program linear =
   let module U = Tolk_uop.Uop in
+  let stamp body =
+    match beam with
+    | Some b when b >= 1 -> (
+        match U.as_kernel_info body with
+        | Some ki when ki.U.beam = 0 ->
+            U.replace body ~arg:(U.Arg.Kernel_info { ki with U.beam = b }) ()
+        | Some _ | None -> body)
+    | Some _ | None -> body
+  in
   let compile_call call =
     match U.as_call call with
     | Some { body; _ }
       when Tolk_uop.Ops.equal (U.op body) Tolk_uop.Ops.Sink ->
+        let body = stamp body in
         let ckey = cache_key ~device ~ast_key:(U.semantic_key body) in
         let program =
           match Hashtbl.find_opt program_cache ckey with

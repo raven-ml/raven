@@ -375,6 +375,7 @@ exception Jit_error of string
 val jit :
   ?device:string ->
   ?donate:bool ->
+  ?beam:int ->
   (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
 (** [jit (module P) f] is [f] compiled. The first application traces [f],
     compiles the traced computation into fused kernels, and runs them; later
@@ -416,6 +417,15 @@ val jit :
     already read are unaffected. A handle appearing as several input leaves is
     donated once, and a leaf the function updates in place is materialized on
     the host by the writeback rather than donated.
+
+    [beam] enables beam-search autotuning of this function's kernels with the
+    given width: instead of scheduling each kernel by fixed heuristics, the
+    compiler explores candidate schedules round by round, compiling and timing
+    them on the device and keeping the [beam] best at each step. Compilation
+    gets much slower and the compiled code usually faster; the tuned result
+    lands in the persistent cache like any other compilation, so the cost is
+    paid once per trace rather than once per process. When omitted (or
+    [< 1]), the [BEAM] environment variable applies.
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
@@ -482,6 +492,7 @@ val jit :
 val jit2 :
   ?device:string ->
   ?donate:bool ->
+  ?beam:int ->
   (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
 (** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
     structured output. *)
@@ -489,6 +500,7 @@ val jit2 :
 val jit' :
   ?device:string ->
   ?donate:bool ->
+  ?beam:int ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t
@@ -498,6 +510,7 @@ val pmap :
   devices:string list ->
   ?in_axes:int option list ->
   ?donate:bool ->
+  ?beam:int ->
   (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
 (** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
     [devices] — {!val-jit} whose inputs are placed on a device tuple instead of
@@ -541,6 +554,7 @@ val pmap2 :
   devices:string list ->
   ?in_axes:int option list ->
   ?donate:bool ->
+  ?beam:int ->
   (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
 (** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
     a structured output. *)
