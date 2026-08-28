@@ -14,10 +14,30 @@
 open Windtrap
 open Rune_test_support.Support
 
-(* Deterministic signals. *)
+(* Deterministic signals. The generated ones avoid accidental symmetry — a
+   spectrum with a zero or Hermitian-paired bin is exactly what lets a wrong
+   fold agree by coincidence — so every shape draws from one formula. *)
 let x8 () = vec64 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3 |]
 let x7 () = vec64 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2 |]
 let x4 () = vec64 [| 0.5; -1.2; 2.1; 1.7 |]
+let v12 = [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |]
+
+let rsig shape =
+  Nx.create f64 shape
+    (Array.init (Array.fold_left ( * ) 1 shape) (fun i ->
+         float_of_int ((i * 7 mod 13) - 6) /. 4.0))
+
+let csig shape =
+  Nx.create c128 shape
+    (Array.init (Array.fold_left ( * ) 1 shape) (fun i ->
+         cx
+           (float_of_int ((i * 3 mod 7) - 3) /. 2.0)
+           (float_of_int ((i * 5 mod 11) - 5) /. 4.0)))
+
+let poly34 () =
+  Nx.create f64 [| 3; 4 |]
+    (Array.init 12 (fun i ->
+         0.3 +. (0.17 *. float_of_int i) -. (0.05 *. float_of_int (i * i mod 7))))
 
 (* A real-valued spectral mask for x8's 5 bins: multiplying the spectrum by it
    and measuring the filtered energy is a per-bin weighted |X|^2 loss. *)
@@ -39,8 +59,7 @@ let test_grad_roundtrip_odd () =
 let test_grad_axis_even () =
   check_grad ~msg:"irfft(rfft x) along axis 0, n=4"
     (fun x -> Nx.irfft f64 ~axis:0 (Nx.rfft c128 ~axis:0 x))
-    (mat64 4 3
-       [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |])
+    (mat64 4 3 v12)
 
 let test_grad_axis_odd () =
   check_grad ~msg:"irfft(rfft x) along axis 0, n=5"
@@ -69,8 +88,7 @@ let test_grad_truncated_spectrum () =
 let test_grad_2d () =
   check_grad ~msg:"irfft2(rfft2 x)"
     (fun x -> Nx.irfft2 f64 ~s:[ 3; 4 ] (Nx.rfft2 c128 x))
-    (mat64 3 4
-       [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |])
+    (mat64 3 4 v12)
 
 let test_grad_spectral_energy () =
   (* Filtered energy: sum ((irfft (h * rfft x))^2) is, by Parseval, a per-bin
@@ -127,7 +145,7 @@ let test_rfft_pull_even () =
     g
 
 let test_rfft_pull_odd () =
-  let ct = cvec [| (0.3, -1.1); (1.0, 0.4); (-0.7, 0.9) |] in
+  let ct = ct4 () in
   let x = vec64 [| 0.5; -1.2; 2.1; 1.7; -0.4 |] in
   let _, g = Rune.vjp' (Nx.rfft c128) x ct in
   check_arr ~eps:1e-10 ~msg:"rfft pull, n=5"
@@ -187,17 +205,8 @@ let test_jvp_vjp_consistency () =
 
 (* vmap against the loop oracle *)
 
-let zs () =
-  Nx.create c128 [| 3; 4 |]
-    (Array.init 12 (fun i ->
-         cx
-           (float_of_int ((i * 3 mod 7) - 3) /. 2.0)
-           (float_of_int ((i * 5 mod 11) - 5) /. 4.0)))
-
-let xs () =
-  Nx.create f64 [| 3; 5 |]
-    (Array.init 15 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.0))
-
+let zs () = csig [| 3; 4 |]
+let xs () = rsig [| 3; 5 |]
 let test_vmap_fft () = check_cvmap ~msg:"fft" (fun z -> Nx.fft z) (zs ())
 let test_vmap_ifft () = check_cvmap ~msg:"ifft" (fun z -> Nx.ifft z) (zs ())
 
@@ -208,38 +217,23 @@ let test_vmap_irfft () =
   check_vmap ~msg:"irfft" (fun z -> Nx.irfft f64 ~n:6 z) (zs ())
 
 let test_vmap_fft_non_last_axis () =
-  let z =
-    Nx.create c128 [| 2; 4; 2 |]
-      (Array.init 16 (fun i ->
-           cx
-             (float_of_int ((i * 3 mod 7) - 3) /. 2.0)
-             (float_of_int ((i * 5 mod 11) - 5) /. 4.0)))
-  in
-  check_cvmap ~msg:"fft axis 0" (fun m -> Nx.fft ~axis:0 m) z
+  check_cvmap ~msg:"fft axis 0" (fun m -> Nx.fft ~axis:0 m) (csig [| 2; 4; 2 |])
 
 let test_vmap_rfft_non_last_axis () =
-  let x =
-    Nx.create f64 [| 2; 4; 3 |]
-      (Array.init 24 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.0))
-  in
-  check_cvmap ~msg:"rfft axis 0" (fun m -> Nx.rfft c128 ~axis:0 m) x
+  check_cvmap ~msg:"rfft axis 0"
+    (fun m -> Nx.rfft c128 ~axis:0 m)
+    (rsig [| 2; 4; 3 |])
 
 let test_vmap_non_leading_batch_axis () =
   (* Mapping axis 1: the batch dimension crosses the transformed axis. *)
-  let x =
-    Nx.create f64 [| 5; 3 |]
-      (Array.init 15 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.0))
-  in
+  let x = rsig [| 5; 3 |] in
   let looped = loop_map (fun r -> Nx.rfft c128 r) (Nx.transpose x) in
   check_carr ~msg:"rfft over axis-1 lanes" (to_carr looped)
     (Rune.vmap' ~in_axis:1 (fun r -> Nx.rfft c128 r) x)
 
 let test_vmap_of_grad () =
   (* Per-sample gradients of the spectral round-trip energy, odd length. *)
-  let x =
-    Nx.create f64 [| 3; 5 |]
-      (Array.init 15 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.0))
-  in
+  let x = xs () in
   let energy x =
     let y = Nx.irfft f64 ~n:5 (Nx.rfft c128 x) in
     Nx.sum (Nx.mul y y)
@@ -260,30 +254,16 @@ let test_jit_rfft_refused () =
    symmetric test and wrong in training. *)
 
 let test_grad_rfft2_energy () =
-  let x =
-    Nx.create f64 [| 3; 4 |]
-      (Array.init 12 (fun i ->
-           0.3
-           +. (0.17 *. float_of_int i)
-           -. (0.05 *. float_of_int (i * i mod 7))))
-  in
   check_grad ~msg:"rfft2 energy, no inverse"
     (fun x -> Nx.square (Nx.magnitude f64 (Nx.rfft2 c128 x)))
-    x
+    (poly34 ())
 
 let test_grad_irfft2_of_lift () =
-  let x =
-    Nx.create f64 [| 3; 4 |]
-      (Array.init 12 (fun i ->
-           0.3
-           +. (0.17 *. float_of_int i)
-           -. (0.05 *. float_of_int (i * i mod 7))))
-  in
   check_grad ~msg:"irfft2 of a lifted spectrum"
     (fun x ->
       let z = Nx.complex c128 ~re:x ~im:(Nx.mul_s x 0.25) in
       Nx.irfft2 f64 ~s:[ 3; 4 ] z)
-    x
+    (poly34 ())
 
 let hc5 () =
   cvec [| (1.0, 0.7); (0.5, -0.3); (2.0, 1.1); (0.25, 0.4); (1.5, -0.8) |]
