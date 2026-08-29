@@ -86,7 +86,10 @@ let save_training_state path (params, (ostate : Nx.float32_t Cnn.t Vega.adam_sta
          Checkpoint.of_params (module Cnn) ~prefix:"model" params;
          Checkpoint.of_params (module Cnn) ~prefix:"optim.mu" ostate.mu;
          Checkpoint.of_params (module Cnn) ~prefix:"optim.nu" ostate.nu;
-         Checkpoint.of_int "optim.step" ostate.step;
+         Checkpoint.of_tensor "optim.c1" ostate.c1;
+         Checkpoint.of_tensor "optim.c2" ostate.c2;
+         Checkpoint.of_int "optim.step"
+           (Int32.to_int (Nx.item [] ostate.step));
        ])
 
 let load_training_state path =
@@ -104,7 +107,11 @@ let load_training_state path =
         Checkpoint.to_params
           (module Cnn)
           ~prefix:"optim.nu" ~like:like_ostate.nu ckpt;
-      step = Checkpoint.to_int "optim.step" ckpt;
+      c1 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c1" ckpt);
+      c2 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c2" ckpt);
+      step =
+        Nx.scalar Nx.int32
+          (Int32.of_int (Checkpoint.to_int "optim.step" ckpt));
     }
   in
   (params, ostate)
@@ -130,7 +137,7 @@ let () =
         in
         let l, grads = Rune.value_and_grad cnn loss params in
         let params, ostate =
-          Vega.adamw_step cnn ~lr ostate ~params ~grads
+          Vega.adamw_step cnn ~lr:(Vega.lr lr) ostate ~params ~grads
         in
         ((params, ostate), Nx.item [] l)
       in
@@ -163,5 +170,5 @@ let () =
       let restored_params, restored_ostate = load_training_state path in
       Printf.printf "restored accuracy: %.2f%% (optimizer step %d)\n"
         (100. *. accuracy restored_params test)
-        restored_ostate.step;
+        (Int32.to_int (Nx.item [] restored_ostate.step));
       Sys.remove path

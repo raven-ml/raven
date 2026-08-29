@@ -143,7 +143,7 @@ let loss (p : Nx.float32_t Lin.t) =
 
 let adam_train_step (p, st) =
   let grads = Rune.grad lin loss p in
-  Vega.adam_step lin ~lr:0.05 st ~params:p ~grads
+  Vega.adam_step lin ~lr:(Vega.lr 0.05) st ~params:p ~grads
 
 let rec train_adam_steps n s =
   if n = 0 then s else train_adam_steps (n - 1) (adam_train_step s)
@@ -160,7 +160,10 @@ let test_resume_training () =
          Checkpoint.of_params (module Lin) ~prefix:"model" p3;
          Checkpoint.of_params (module Lin) ~prefix:"optim.mu" st3.Vega.mu;
          Checkpoint.of_params (module Lin) ~prefix:"optim.nu" st3.Vega.nu;
-         Checkpoint.of_int "optim.step" st3.Vega.step;
+         Checkpoint.of_tensor "optim.c1" st3.Vega.c1;
+         Checkpoint.of_tensor "optim.c2" st3.Vega.c2;
+         Checkpoint.of_int "optim.step"
+           (Int32.to_int (Nx.item [] st3.Vega.step));
        ]);
   let expected, _ = train_adam_steps 2 (p3, st3) in
   (* Restore into freshly initialized values and continue training. *)
@@ -177,7 +180,10 @@ let test_resume_training () =
         Checkpoint.to_params
           (module Lin)
           ~prefix:"optim.nu" ~like:like.Vega.nu ckpt;
-      step = Checkpoint.to_int "optim.step" ckpt;
+      c1 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c1" ckpt);
+      c2 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c2" ckpt);
+      step =
+        Nx.scalar Nx.int32 (Int32.of_int (Checkpoint.to_int "optim.step" ckpt));
     }
   in
   let resumed, _ = train_adam_steps 2 (p3', st3') in
@@ -191,7 +197,7 @@ let test_resume_training () =
 
 let sgd_train_step (p, st) =
   let grads = Rune.grad lin loss p in
-  Vega.sgd_step lin ~lr:0.05 ~momentum:0.9 st ~params:p ~grads
+  Vega.sgd_step lin ~lr:(Vega.lr 0.05) ~momentum:0.9 st ~params:p ~grads
 
 let rec train_sgd_steps n s =
   if n = 0 then s else train_sgd_steps (n - 1) (sgd_train_step s)
@@ -284,8 +290,8 @@ let test_ptree_paths () =
   equal ~msg:"layers.1.w" (array float_exact) [| 2.0 |] (leaf "layers.1.w");
   equal ~msg:"head" (array float_exact) [| 3.0 |] (leaf "head")
 
-(* A one-leaf structure whose payload sits at its own root: without a prefix
-   its name is empty. *)
+(* A one-leaf structure whose payload sits at its own root: without a prefix its
+   name is empty. *)
 module Root = struct
   type 'a t = 'a
 
@@ -322,7 +328,8 @@ let test_missing_entry () =
         Checkpoint.of_tensor "scale" (vec64 [| 1.0 |]);
       ]
   in
-  raises (Invalid_argument "Checkpoint.to_packed: missing entry \"b\"") (fun () ->
+  raises (Invalid_argument "Checkpoint.to_packed: missing entry \"b\"")
+    (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
 
 let test_extra_entries_ignored () =
@@ -346,7 +353,8 @@ let test_shape_mismatch () =
       ]
   in
   raises
-    (Invalid_argument "Checkpoint.to_packed: shape mismatch for \"b\": expected [1], got [2]")
+    (Invalid_argument
+       "Checkpoint.to_packed: shape mismatch for \"b\": expected [1], got [2]")
     (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
 
@@ -360,8 +368,9 @@ let test_dtype_mismatch_and_cast () =
       ]
   in
   raises
-    (Invalid_argument "Checkpoint.to_packed: dtype mismatch for \"scale\": expected float64, got \
-     float32 (pass ~cast:true to convert)") (fun () ->
+    (Invalid_argument
+       "Checkpoint.to_packed: dtype mismatch for \"scale\": expected float64, \
+        got float32 (pass ~cast:true to convert)") (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt);
   let p =
     Checkpoint.to_packed (module Params) ~cast:true ~like:(fresh_params ()) ckpt
@@ -385,9 +394,10 @@ module Duplicated = struct
 end
 
 let test_duplicate_names () =
-  raises (Invalid_argument "Checkpoint.of_packed: duplicate name \"w\"") (fun () ->
-      Checkpoint.of_packed (module Duplicated) (params ()));
-  raises (Invalid_argument "Checkpoint.to_packed: duplicate name \"w\"") (fun () ->
+  raises (Invalid_argument "Checkpoint.of_packed: duplicate name \"w\"")
+    (fun () -> Checkpoint.of_packed (module Duplicated) (params ()));
+  raises (Invalid_argument "Checkpoint.to_packed: duplicate name \"w\"")
+    (fun () ->
       Checkpoint.to_packed
         (module Duplicated)
         ~like:(params ()) Checkpoint.empty)
@@ -404,12 +414,14 @@ let test_to_int_errors () =
         Checkpoint.of_tensor "v" (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]);
       ]
   in
-  raises (Invalid_argument "Checkpoint.to_int: no entry named \"step\"") (fun () ->
-      Checkpoint.to_int "step" ckpt);
+  raises (Invalid_argument "Checkpoint.to_int: no entry named \"step\"")
+    (fun () -> Checkpoint.to_int "step" ckpt);
   raises
-    (Invalid_argument "Checkpoint.to_int: \"w\" is not an int32 entry (dtype float32)") (fun () ->
-      Checkpoint.to_int "w" ckpt);
-  raises (Invalid_argument "Checkpoint.to_int: \"v\" is not a scalar (shape [2])")
+    (Invalid_argument
+       "Checkpoint.to_int: \"w\" is not an int32 entry (dtype float32)")
+    (fun () -> Checkpoint.to_int "w" ckpt);
+  raises
+    (Invalid_argument "Checkpoint.to_int: \"v\" is not a scalar (shape [2])")
     (fun () -> Checkpoint.to_int "v" ckpt)
 
 let () =

@@ -11,6 +11,42 @@ All notable changes to this project will be documented in this file.
 
 - Add compatibility with OCaml 5.5.
 
+### Vega
+
+- Optimizer state now compiles. The structural states are parameter trees —
+  `Sgd_state.Make (P)` and `Adam_state.Make (P)` produce the `Nx.Ptree.S`
+  for the state over a parameter tree `P` (plus flat `map`/`map2`/`iter`), so
+  the state is one field of a `Rune.jit2`/`pmap2` step's input and output
+  records, threaded across compiled calls as ordinary leaves. The leaf order
+  (payload leaves, then scalars) is part of a compiled step's leaf signature
+  and is fixed.
+- **Breaking:** `adam_state` is `{ mu; nu; c1; c2; step }` — the bias
+  corrections `c1 = 1 - b1^step` and `c2 = 1 - b2^step` are scalar `float64`
+  tensors and `step` is a scalar `int32` tensor, advanced inside the step by
+  affine recurrences (`c' = (1 - b) + b*c`). A host `int` counter burned the
+  correction into the trace at compile time and replayed it stale on every
+  later call; the tensors track correctly under `jit`. Seed values: zero
+  corrections, counter zero.
+- **Breaking:** the structural step functions take the learning rate as a
+  scalar tensor: `~lr:(float, 'b) Nx.t`, cast to each leaf's dtype.
+  `Vega.lr v` is the constant-rate helper (`Nx.scalar Nx.float64 v`); a
+  scheduled rate derives from the state's `step` leaf inside the step — see
+  the new tensor schedules. The per-element arithmetic is otherwise
+  unchanged, and eager trajectories are preserved (float32 parameters see
+  bit-identical updates).
+- Add tensor schedules mirroring the scalar family over a scalar `int32` step
+  counter, so a learning rate is derived inside a compiled program:
+  `Schedule.constant_t`, `linear_t`, `cosine_decay_t`, `warmup_cosine_t`,
+  `warmup_cosine_decay_t`, `one_cycle_t`, `piecewise_constant_t`. At every
+  integer step the tensor value matches the scalar schedule's (to float32
+  rounding). `exponential_decay`, `polynomial_decay` and
+  `cosine_decay_restarts` remain scalar-only for now (they need `pow` and
+  integer division on tensors).
+- `clip_by_global_norm` computes its scale factor in tensor arithmetic and
+  selects it with `Nx.where` — no host read — so it traces under `jit` and can
+  sit between a jitted backward pass and a jitted optimizer step.
+  `global_norm` remains the host-float read for reporting.
+
 ### Ppx_ptree (new)
 
 - `[@@deriving ptree]` recognises a field typed `Nx.Rng.key` as a tensor leaf.

@@ -139,3 +139,109 @@ val join : (int * t) list -> t
     segment's schedule is used for all steps beyond the total.
 
     Raises [Invalid_argument] if [segments] is empty or any [n <= 0]. *)
+
+(** {1:tensor Tensor schedules}
+
+    The scalar family above evaluates on the host: inside a {!Rune.val-jit}ed
+    step a schedule value would be a compile-time constant, replayed stale on
+    every call. The [*_t] mirrors below compute the same formulas in tensor
+    arithmetic from a step counter that is itself a tensor — the [step] leaf of
+    an optimizer state ({!Adam_state}) — so the learning rate is derived
+    {e inside} the compiled program and tracks the state across calls.
+
+    Each [*_t] function takes the counter as its final argument, a scalar
+    [int32] tensor of completed steps (0-based, the structural loops'
+    convention), and returns a scalar [float32] tensor. At every integer step
+    the tensor value matches the scalar schedule's (to float32 rounding); a
+    property the test suites hold both families to. The subset covers the
+    schedules expressible with tensor arithmetic; [exponential_decay],
+    [polynomial_decay] and [cosine_decay_restarts] need [pow] and integer
+    division on tensors and remain scalar-only.
+
+    {[
+      let st = Vega.adam_init model params in
+      let step p st =
+        let lr = Vega.Schedule.cosine_decay_t ~init_value:1e-3
+            ~decay_steps:1000 st.step in
+        Vega.adam_step model ~lr st ~params:p ~grads
+    ]} *)
+
+val constant_t : float -> (int32, Nx.int32_elt) Nx.t -> Nx.float32_t
+(** [constant_t v step] is the scalar-tensor mirror of {!constant}. *)
+
+val linear_t :
+  init_value:float ->
+  end_value:float ->
+  steps:int ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t
+(** [linear_t] is the tensor mirror of {!linear}: linear interpolation from
+    [init_value] to [end_value] over [steps], clamped to [end_value] after.
+
+    Raises [Invalid_argument] if [steps] is not positive. *)
+
+val cosine_decay_t :
+  init_value:float ->
+  decay_steps:int ->
+  ?alpha:float ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t
+(** [cosine_decay_t] is the tensor mirror of {!cosine_decay}: cosine decay from
+    [init_value] to [alpha * init_value] over [decay_steps], clamped.
+
+    [alpha] defaults to [0.].
+
+    Raises [Invalid_argument] if [decay_steps] is not positive. *)
+
+val warmup_cosine_t :
+  init_value:float ->
+  peak_value:float ->
+  warmup_steps:int ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t
+(** [warmup_cosine_t] is the tensor mirror of {!warmup_cosine}: cosine warmup
+    from [init_value] to [peak_value] over [warmup_steps], clamped.
+
+    Raises [Invalid_argument] if [warmup_steps] is not positive. *)
+
+val warmup_cosine_decay_t :
+  init_value:float ->
+  peak_value:float ->
+  warmup_steps:int ->
+  decay_steps:int ->
+  ?end_value:float ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t
+(** [warmup_cosine_decay_t] is the tensor mirror of {!warmup_cosine_decay}:
+    linear warmup from [init_value] to [peak_value] over [warmup_steps], then
+    cosine decay to [end_value] over [decay_steps].
+
+    [end_value] defaults to [0.].
+
+    Raises [Invalid_argument] if [warmup_steps] or [decay_steps] is not
+    positive. *)
+
+val one_cycle_t :
+  max_value:float ->
+  total_steps:int ->
+  ?div_factor:float ->
+  ?final_div_factor:float ->
+  ?pct_start:float ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t
+(** [one_cycle_t] is the tensor mirror of {!one_cycle}.
+
+    [div_factor] defaults to [25.0], [final_div_factor] to [10000.0] and
+    [pct_start] to [0.3].
+
+    Raises [Invalid_argument] if [total_steps] is not positive. *)
+
+val piecewise_constant_t :
+  boundaries:int list ->
+  values:float list ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t
+(** [piecewise_constant_t] is the tensor mirror of {!piecewise_constant}.
+
+    Raises [Invalid_argument] under the same conditions as
+    {!piecewise_constant}. *)

@@ -11,8 +11,11 @@
    targets columns 1..64, the same batch every step - mean cross-entropy over
    all 4*64 positions - plain SGD, lr 1e-4, no momentum; the LM head is tied to
    [wte] so the embedding's gradient accumulates from both of its uses - the
-   whole step (forward, backward, update) compiles as one [Rune.jit2] program;
-   the loss recorded at step i is computed before update i - [--devices]
+   whole step (forward, backward, update) compiles as one [Rune.jit2] program,
+   [~donate:true] so each step releases the previous generation's unread
+   buffers (the metrics read a few leaves per step; donation consumes only
+   unread resident inputs); the loss recorded at step i is computed before
+   update i - [--devices]
    switches the step to data-parallel [Rune.pmap2]: parameters replicated on
    every device, the batch sharded on axis 0, gradients allreduced by
    construction — same numbers as the single-device step up to fp32 reduction
@@ -166,7 +169,7 @@ let train_step objective params =
      update exactly [w - lr * g] and needs no threading across steps. *)
   let state = Vega.sgd_init gpt2_tree params in
   let params =
-    fst (Vega.sgd_step gpt2_tree ~lr state ~params ~grads)
+    fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads)
   in
   { Step_out.params; loss }
 
@@ -271,7 +274,7 @@ let train_step_scaled objective { Scaled_in.params; ls; key } =
   let finite = Vega.Loss_scale.grads_finite gpt2_tree grads in
   let state = Vega.sgd_init gpt2_tree params in
   let params' =
-    fst (Vega.sgd_step gpt2_tree ~lr state ~params ~grads)
+    fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads)
   in
   let params =
     Gpt2.Params.map2 (fun p p' -> Nx.where finite p' p) params params'
@@ -550,7 +553,7 @@ let () =
     if !devices = "" then
       if !compute_dtype = "float16" then begin
         let f =
-          Rune.jit2 ~device:!device
+          Rune.jit2 ~device:!device ~donate:true
             (module Scaled_in)
             (module Scaled_out)
             (train_step_scaled (fun key -> obj key inputs targets))
@@ -563,7 +566,7 @@ let () =
       end
       else
         let f =
-          Rune.jit2 ~device:!device
+          Rune.jit2 ~device:!device ~donate:true
             (module Keyed_in)
             (module Step_out)
             (fun { Keyed_in.params; key } ->
@@ -587,7 +590,7 @@ let () =
         @ (if rate = 0.0 then [] else [ None ])
       in
       let f =
-        Rune.pmap2 ~devices:devs ~in_axes
+        Rune.pmap2 ~devices:devs ~in_axes ~donate:true
           (module Step_in)
           (module Step_out)
           (fun { Step_in.params; inputs; targets; key } ->

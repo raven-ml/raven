@@ -83,7 +83,7 @@ let test_vega_optimizer_step () =
   let updated, state =
     Vega.sgd_step
       (module Optimizer_params)
-      ~lr:0.1 state ~params ~grads:gradients
+      ~lr:(Vega.lr 0.1) state ~params ~grads:gradients
   in
   equal (array (float 1e-6)) [| 0.8; -1.6 |] (Nx.to_array updated.weight);
   equal (array (float 1e-6)) [| 0.4 |] (Nx.to_array updated.bias);

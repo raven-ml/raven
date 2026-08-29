@@ -122,7 +122,7 @@ let () =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let l, grads = Rune.value_and_grad cnn loss_fn !params in
     let params', ostate' =
-      Vega.adam_step cnn ~lr !ostate ~params:!params ~grads
+      Vega.adam_step cnn ~lr:(Vega.lr lr) !ostate ~params:!params ~grads
     in
     params := params';
     ostate := ostate';

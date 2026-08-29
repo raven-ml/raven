@@ -65,7 +65,7 @@ let grads =
 
 let test_adam_step_on_uniform () =
   let st = Vega.adam_init (module T) params in
-  let p', _ = Vega.adam_step (module T) ~lr:0.1 st ~params ~grads in
+  let p', _ = Vega.adam_step (module T) ~lr:(Vega.lr 0.1) st ~params ~grads in
   let { U.w = Nx.Ptree.P w'; b = Nx.Ptree.P b' } = p' in
   let w' = as_f32 w' and b' = as_f32 b' in
   check_t "w after adam step" [| 3 |] [| 0.9; -2.1; 2.9 |] w';

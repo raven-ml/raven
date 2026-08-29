@@ -157,3 +157,150 @@ let join segments =
     done;
     let _, sched = segments.(!i) in
     sched !remaining
+
+(* Tensor schedules: the scalar formulas in tensor arithmetic over a scalar
+   int32 step counter, so a learning rate can be derived inside a jitted step
+   from the optimizer state's step leaf. Everything is [where]/[minimum]/[cos]
+   arithmetic on the counter — no host reads — so the schedules trace. *)
+
+let f32 = Nx.float32
+let step_f32 step = Nx.cast f32 step
+
+let clamp_ratio_t ctx param ~steps step =
+  if steps <= 0 then
+    invalid_arg (Printf.sprintf "Schedule.%s: %s must be positive" ctx param);
+  Nx.div_s
+    (Nx.minimum step (Nx.scalar f32 (float_of_int steps)))
+    (float_of_int steps)
+
+let constant_t value _step = Nx.scalar f32 value
+
+let linear_t ~init_value ~end_value ~steps step =
+  let ratio = clamp_ratio_t "linear_t" "steps" ~steps (step_f32 step) in
+  Nx.add_s (Nx.mul_s ratio (end_value -. init_value)) init_value
+
+let cosine_decay_t ~init_value ~decay_steps ?(alpha = 0.) step =
+  let ratio =
+    clamp_ratio_t "cosine_decay_t" "decay_steps" ~steps:decay_steps
+      (step_f32 step)
+  in
+  let cosine_val =
+    Nx.mul_s (Nx.add_s (Nx.cos (Nx.mul_s ratio Float.pi)) 1.0) 0.5
+  in
+  Nx.mul_s (Nx.add_s (Nx.mul_s cosine_val (1.0 -. alpha)) alpha) init_value
+
+let warmup_cosine_t ~init_value ~peak_value ~warmup_steps step =
+  let ratio =
+    clamp_ratio_t "warmup_cosine_t" "warmup_steps" ~steps:warmup_steps
+      (step_f32 step)
+  in
+  let cosine_val =
+    Nx.rsub_s 1.0
+      (Nx.mul_s (Nx.add_s (Nx.cos (Nx.mul_s ratio Float.pi)) 1.0) 0.5)
+  in
+  Nx.add_s (Nx.mul_s cosine_val (peak_value -. init_value)) init_value
+
+let warmup_cosine_decay_t ~init_value ~peak_value ~warmup_steps ~decay_steps
+    ?(end_value = 0.) step =
+  if warmup_steps <= 0 then
+    invalid_arg "Schedule.warmup_cosine_decay_t: warmup_steps must be positive";
+  let s = step_f32 step in
+  let warm_ratio =
+    Nx.div_s
+      (Nx.minimum s (Nx.scalar f32 (float_of_int warmup_steps)))
+      (float_of_int warmup_steps)
+  in
+  let linear_part =
+    Nx.add_s (Nx.mul_s warm_ratio (peak_value -. init_value)) init_value
+  in
+  let decay_step = Nx.maximum_s (Nx.sub_s s (float_of_int warmup_steps)) 0.0 in
+  let decay_ratio =
+    clamp_ratio_t "warmup_cosine_decay_t" "decay_steps" ~steps:decay_steps
+      decay_step
+  in
+  let cosine_val =
+    Nx.mul_s (Nx.add_s (Nx.cos (Nx.mul_s decay_ratio Float.pi)) 1.0) 0.5
+  in
+  let decay_part =
+    Nx.add_s (Nx.mul_s cosine_val (peak_value -. end_value)) end_value
+  in
+  Nx.where (Nx.greater_s s (float_of_int warmup_steps)) decay_part linear_part
+
+let one_cycle_t ~max_value ~total_steps ?(div_factor = 25.0)
+    ?(final_div_factor = 10000.0) ?(pct_start = 0.3) step =
+  if total_steps <= 0 then
+    invalid_arg "Schedule.one_cycle_t: total_steps must be positive";
+  let warmup_steps = int_of_float (pct_start *. float_of_int total_steps) in
+  let init_value = max_value /. div_factor in
+  let end_value = max_value /. final_div_factor in
+  let s = step_f32 step in
+  let decay_steps = total_steps - warmup_steps in
+  if warmup_steps <= 0 then
+    (* All decay: warmup is degenerate, the counter ramps straight down. *)
+    let decay_ratio =
+      clamp_ratio_t "one_cycle_t" "total_steps" ~steps:decay_steps s
+    in
+    let cosine_val =
+      Nx.mul_s (Nx.add_s (Nx.cos (Nx.mul_s decay_ratio Float.pi)) 1.0) 0.5
+    in
+    Nx.add_s (Nx.mul_s cosine_val (max_value -. end_value)) end_value
+  else if decay_steps <= 0 then
+    (* All warmup: the schedule never leaves its ramp. *)
+    let warm_ratio =
+      clamp_ratio_t "one_cycle_t" "total_steps" ~steps:warmup_steps s
+    in
+    Nx.add_s (Nx.mul_s warm_ratio (max_value -. init_value)) init_value
+  else
+    let decay_step =
+      Nx.maximum_s (Nx.sub_s s (float_of_int warmup_steps)) 0.0
+    in
+    let decay_ratio =
+      clamp_ratio_t "one_cycle_t" "total_steps" ~steps:decay_steps decay_step
+    in
+    let cosine_val =
+      Nx.mul_s (Nx.add_s (Nx.cos (Nx.mul_s decay_ratio Float.pi)) 1.0) 0.5
+    in
+    let decay_part =
+      Nx.add_s (Nx.mul_s cosine_val (max_value -. end_value)) end_value
+    in
+    let warm_ratio =
+      Nx.div_s
+        (Nx.minimum s (Nx.scalar f32 (float_of_int warmup_steps)))
+        (float_of_int warmup_steps)
+    in
+    let linear_part =
+      Nx.add_s (Nx.mul_s warm_ratio (max_value -. init_value)) init_value
+    in
+    Nx.where (Nx.greater_s s (float_of_int warmup_steps)) decay_part linear_part
+
+let piecewise_constant_t ~boundaries ~values step =
+  let n_boundaries = List.length boundaries in
+  let n_values = List.length values in
+  if n_values <> n_boundaries + 1 then
+    invalid_arg
+      (Printf.sprintf
+         "Schedule.piecewise_constant_t: expected %d values for %d boundaries, \
+          got %d"
+         (n_boundaries + 1) n_boundaries n_values);
+  let rec check_increasing = function
+    | [] | [ _ ] -> ()
+    | a :: (b :: _ as rest) ->
+        if b <= a then
+          invalid_arg
+            "Schedule.piecewise_constant_t: boundaries must be strictly \
+             increasing";
+        check_increasing rest
+  in
+  check_increasing boundaries;
+  let boundaries = Array.of_list boundaries in
+  let values = Array.of_list values in
+  let s = step_f32 step in
+  let acc = ref (Nx.scalar f32 values.(Array.length values - 1)) in
+  for i = Array.length boundaries - 1 downto 0 do
+    acc :=
+      Nx.where
+        (Nx.greater_equal_s s (float_of_int boundaries.(i) +. 1.0))
+        !acc
+        (Nx.scalar f32 values.(i))
+  done;
+  !acc
