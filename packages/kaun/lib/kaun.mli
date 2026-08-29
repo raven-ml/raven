@@ -20,7 +20,7 @@
       let loss p = Loss.softmax_cross_entropy_sparse (Model.apply p x) y in
       let l, grads = Rune.value_and_grad model loss params in
       let params, ostate =
-        Vega.adamw_step model ~lr:1e-3 ostate ~params ~grads
+        Vega.adamw_step model ~lr:(Vega.lr 1e-3) ostate ~params ~grads
       in
       ((params, ostate), Nx.item [] l)
     ]}

@@ -199,7 +199,7 @@ let train_step spec (s : Step_in.t) =
   let params, st =
     Vega.sgd_step
       (module Model)
-      ~lr:spec.lr ~momentum:spec.momentum { velocity = s.velocity }
+      ~lr:(Vega.lr spec.lr) ~momentum:spec.momentum { velocity = s.velocity }
       ~params:s.params ~grads
   in
   { Step_out.params; velocity = st.velocity; loss = l }

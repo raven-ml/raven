@@ -35,7 +35,7 @@ let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
   let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:(Vega.lr 1e-3) ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
@@ -49,7 +49,7 @@ Because the step is yours, extensions are insertions, not configuration. Gradien
 let grads = Vega.clip_by_global_norm mlp ~max_norm:1.0 grads in
 ```
 
-A learning-rate schedule is a function `int -> float` you evaluate at your own step counter:
+A learning-rate schedule is a function `int -> float` you evaluate at your own step counter — or, inside a jitted step, its tensor mirror evaluated at the state's own step leaf:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -59,6 +59,13 @@ in
 let step k (params, ostate) (x, y) =
   ...
   Vega.adamw_step mlp ~lr:(sched k) ostate ~params ~grads
+
+(* jitted: the rate derives inside the compiled program from ostate.step *)
+let lr =
+  Vega.Schedule.cosine_decay_t ~init_value:1e-3 ~decay_steps:1000
+    ostate.step
+in
+... Vega.adamw_step mlp ~lr ostate ~params ~grads
 ```
 
 ## Optimizers
@@ -68,8 +75,8 @@ Vega's structural optimizers step whole parameter structures. Each keeps its sta
 | Optimizer | Init | Step | State |
 |-----------|------|------|-------|
 | SGD (+ momentum) | `Vega.sgd_init` | `Vega.sgd_step ~lr ?momentum` | `{ velocity }` |
-| Adam | `Vega.adam_init` | `Vega.adam_step ~lr ?b1 ?b2 ?eps` | `{ mu; nu; step }` |
-| AdamW | `Vega.adamw_init` | `Vega.adamw_step ~lr ... ?weight_decay` | `{ mu; nu; step }` |
+| Adam | `Vega.adam_init` | `Vega.adam_step ~lr ?b1 ?b2 ?eps` | `{ mu; nu; c1; c2; step }` |
+| AdamW | `Vega.adamw_init` | `Vega.adamw_step ~lr ... ?weight_decay` | `{ mu; nu; c1; c2; step }` |
 
 Steps are pure: they consume a state and return `(params', state')`. AdamW's `weight_decay` defaults to `0.01` and is decoupled — applied to the parameters directly rather than through the adaptive scaling.
 
@@ -83,10 +90,11 @@ let () =
     }
   in
   let ostate = Vega.adamw_init mlp params in
-  (* The moments have the parameters' type, inspectable like them. *)
+  (* The moments have the parameters' type, inspectable like them; the
+     corrections and the counter are scalar tensors. *)
   Format.printf "mu.l1.w: %a  step: %d@." Nx.pp_shape
     (Nx.shape ostate.mu.l1.w)
-    ostate.step
+    (Int32.to_int (Nx.item [] ostate.step))
 ```
 
 ## Losses

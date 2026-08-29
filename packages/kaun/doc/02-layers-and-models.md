@@ -212,7 +212,7 @@ let () =
       Rune.value_and_grad_aux net objective params
     in
     let params, ostate =
-      Vega.adam_step net ~lr:1e-2 ostate ~params ~grads
+      Vega.adam_step net ~lr:(Vega.lr 1e-2) ostate ~params ~grads
     in
     ((params, stats', ostate), Nx.item [] loss)
   in

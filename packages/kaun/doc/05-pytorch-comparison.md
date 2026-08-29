@@ -114,7 +114,7 @@ let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
   let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:(Vega.lr 1e-3) ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```

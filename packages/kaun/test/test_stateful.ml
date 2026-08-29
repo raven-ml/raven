@@ -214,7 +214,7 @@ let test_bn_train_step_roundtrip () =
       Rune.value_and_grad_aux model objective params
     in
     let params, ostate =
-      Vega.adam_step model ~lr:0.02 ostate ~params ~grads
+      Vega.adam_step model ~lr:(Vega.lr 0.02) ostate ~params ~grads
     in
     ((params, stats', ostate), Nx.item [] loss)
   in

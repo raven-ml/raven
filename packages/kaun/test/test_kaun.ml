@@ -49,7 +49,7 @@ let test_xor_trains () =
   let step (params, ostate) =
     let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step mlp ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step mlp ~lr:(Vega.lr 0.05) ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
@@ -86,7 +86,7 @@ let test_sgd_decreases_loss () =
     let params, ostate = !state in
     let _, grads = Rune.value_and_grad mlp loss params in
     state :=
-      Vega.sgd_step mlp ~lr:0.1 ~momentum:0.9 ostate ~params ~grads
+      Vega.sgd_step mlp ~lr:(Vega.lr 0.1) ~momentum:0.9 ostate ~params ~grads
   done;
   let l1 = Nx.item [] (loss (fst !state)) in
   is_true ~msg:"sgd decreases the loss" (l1 < l0 *. 0.5)

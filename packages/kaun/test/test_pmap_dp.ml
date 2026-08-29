@@ -8,9 +8,10 @@
    replicated and the batch sharded over two CPU devices. The loss trajectory
    and final weights must match the single-device [Rune.jit2] step up to fp32
    reduction order (the cross-device gradient allreduce reorders the batch sum).
-   A momentum run checks that replicated optimizer state threaded through the
-   pmapped step stays coherent across devices. Runs on CPU device instances; no
-   pretrained weights involved. *)
+   Momentum runs thread a real [Vega.Sgd_state] through the step — the state is
+   a parameter tree ([Vega.Sgd_state.Make (Model)]) whose leaves replicate like
+   the parameters — and the pmapped trajectory must match the jitted one. Runs
+   on CPU device instances; no pretrained weights involved. *)
 
 open Windtrap
 open Kaun
@@ -87,13 +88,15 @@ let loss_fn x tgt m =
   in
   Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
 
-(* Step structures for pmap2: the batch joins the parameters (and, for the
-   momentum run, the velocity) as leaves so it can be sharded on axis 0 while
-   everything else replicates. *)
+(* Step structures for pmap2: the batch joins the parameters (and the optimizer
+   state) as leaves so it can be sharded on axis 0 while everything else
+   replicates. The state rides as one field, walked by its own parameter tree —
+   [Opt.map f s.opt] — instead of a duplicated model structure. *)
+module Opt = Vega.Sgd_state.Make (Model)
 
 type step_in = {
   m : model;
-  v : model option;
+  opt : Opt.t;
   x : Nx.float32_t;
   tgt : (int32, Nx.int32_elt) Nx.t;
 }
@@ -102,86 +105,59 @@ module Step_in = struct
   type t = step_in
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    {
-      m = Model.map f s.m;
-      v = Option.map (Model.map f) s.v;
-      x = f s.x;
-      tgt = f s.tgt;
-    }
+    { m = Model.map f s.m; opt = Opt.map f s.opt; x = f s.x; tgt = f s.tgt }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
     {
       m = Model.map2 f a.m b.m;
-      v =
-        (match (a.v, b.v) with
-        | Some va, Some vb -> Some (Model.map2 f va vb)
-        | None, None -> None
-        | _ -> invalid_arg "Step_in.map2: velocity mismatch");
+      opt = Opt.map2 f a.opt b.opt;
       x = f a.x b.x;
       tgt = f a.tgt b.tgt;
     }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
     Model.iter f s.m;
-    Option.iter (Model.iter f) s.v;
+    Opt.iter f s.opt;
     f s.x;
     f s.tgt
 end
 
-type step_out = { m' : model; v' : model option; loss : Nx.float32_t }
+type step_out = { m' : model; opt' : Opt.t; loss : Nx.float32_t }
 
 module Step_out = struct
   type t = step_out
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    {
-      m' = Model.map f s.m';
-      v' = Option.map (Model.map f) s.v';
-      loss = f s.loss;
-    }
+    { m' = Model.map f s.m'; opt' = Opt.map f s.opt'; loss = f s.loss }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
     {
       m' = Model.map2 f a.m' b.m';
-      v' =
-        (match (a.v', b.v') with
-        | Some va, Some vb -> Some (Model.map2 f va vb)
-        | None, None -> None
-        | _ -> invalid_arg "Step_out.map2: velocity mismatch");
+      opt' = Opt.map2 f a.opt' b.opt';
       loss = f a.loss b.loss;
     }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
     Model.iter f s.m';
-    Option.iter (Model.iter f) s.v';
+    Opt.iter f s.opt';
     f s.loss
 end
 
 (* One SGD step: value_and_grad inside the (jitted or pmapped) function, so
-   under pmap the gradients allreduce across devices before the update. *)
-let train_step ~momentum { m; v; x; tgt } =
+   under pmap the gradients allreduce across devices before the update. With
+   momentum 0 the velocity is never read; with momentum the state advances from
+   the replicated leaves on every device, identically. *)
+let train_step ~momentum { m; opt; x; tgt } =
   let loss, grads = Rune.value_and_grad (module Model) (loss_fn x tgt) m in
-  match v with
-  | None ->
-      let st = Vega.sgd_init (module Model) m in
-      let m', _ = Vega.sgd_step (module Model) ~lr st ~params:m ~grads in
-      { m'; v' = None; loss }
-  | Some velocity ->
-      let m', st =
-        Vega.sgd_step
-          (module Model)
-          ~lr ~momentum { Vega.velocity } ~params:m ~grads
-      in
-      { m'; v' = Some st.Vega.velocity; loss }
+  let m', opt' =
+    Vega.sgd_step (module Model) ~lr:(Vega.lr lr) ~momentum opt ~params:m ~grads
+  in
+  { m'; opt'; loss }
 
-let init ~momentum =
+let init ~momentum:_ =
   let m = model_init () in
-  {
-    m;
-    v = (if momentum then Some (Model.map Nx.zeros_like m) else None);
-    x = x_init ();
-    tgt = tgt_init ();
-  }
+  let opt = Vega.sgd_init (module Model) m in
+  { m; opt; x = x_init (); tgt = tgt_init () }
 
 (* One [in_axes] entry per leaf: everything replicated except the two batch
    leaves, sharded on axis 0. *)
@@ -194,7 +170,7 @@ let trajectory ~momentum ~steps step0 =
   let s = ref (init ~momentum) in
   Array.init steps (fun _ ->
       let out = step0 !s in
-      s := { !s with m = out.m'; v = out.v' };
+      s := { !s with m = out.m'; opt = out.opt' };
       (Nx.item [] out.loss, out.m'))
 
 let run_both ~momentum ~steps =

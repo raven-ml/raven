@@ -27,7 +27,7 @@
       in
       let loss, grads, stats' = Rune.value_and_grad_aux model objective params in
       let params, ostate =
-        Vega.adam_step model ~lr:1e-3 ostate ~params ~grads
+        Vega.adam_step model ~lr:(Vega.lr 1e-3) ostate ~params ~grads
       in
       ((params, stats', ostate), Nx.item [] loss)
     ]}

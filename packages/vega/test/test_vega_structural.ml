@@ -101,8 +101,8 @@ let test_warmup_cosine () =
 
 let test_schedule_validation () =
   raises
-    (Invalid_argument
-       "Schedule.exponential_decay: decay_steps must be positive") (fun () ->
+    (Invalid_argument "Schedule.exponential_decay: decay_steps must be positive")
+    (fun () ->
       ignore
         (S.exponential_decay ~init_value:1.0 ~decay_rate:0.5 ~decay_steps:0 0));
   raises
@@ -154,9 +154,8 @@ let test_clip_by_value () =
 let test_clip_validation () =
   let grads = pair [| 1.0 |] [| 1.0 |] in
   raises
-    (Invalid_argument
-       "Vega.clip_by_global_norm: expected max_norm > 0.0, got 0") (fun () ->
-      Vega.clip_by_global_norm (module Pair) ~max_norm:0.0 grads);
+    (Invalid_argument "Vega.clip_by_global_norm: expected max_norm > 0.0, got 0")
+    (fun () -> Vega.clip_by_global_norm (module Pair) ~max_norm:0.0 grads);
   raises (Invalid_argument "Vega.clip_by_value: expected max > 0.0, got -1")
     (fun () -> Vega.clip_by_value (module Pair) ~max:(-1.0) grads)
 
@@ -168,7 +167,7 @@ let test_sgd_first_step () =
   let st = Vega.sgd_init (module Vec) params in
   (* Zero velocity: the first step is plain descent even with momentum. *)
   let params', st' =
-    Vega.sgd_step (module Vec) ~lr:0.1 ~momentum:0.9 st ~params ~grads
+    Vega.sgd_step (module Vec) ~lr:(Vega.lr 0.1) ~momentum:0.9 st ~params ~grads
   in
   check_vec [| 0.95; -1.9 |] params';
   check_vec ~msg:"velocity is the gradient" [| 0.5; -1.0 |] st'.velocity
@@ -179,12 +178,12 @@ let test_sgd_velocity_threads () =
   let params, st =
     Vega.sgd_step
       (module Vec)
-      ~lr:0.1 ~momentum:0.5 st ~params ~grads:(vec [| 1.0 |])
+      ~lr:(Vega.lr 0.1) ~momentum:0.5 st ~params ~grads:(vec [| 1.0 |])
   in
   let _, st =
     Vega.sgd_step
       (module Vec)
-      ~lr:0.1 ~momentum:0.5 st ~params ~grads:(vec [| 2.0 |])
+      ~lr:(Vega.lr 0.1) ~momentum:0.5 st ~params ~grads:(vec [| 2.0 |])
   in
   (* v2 = 0.5 *. v1 +. g2 = 0.5 *. 1. +. 2. *)
   check_vec [| 2.5 |] st.velocity
@@ -193,7 +192,7 @@ let test_sgd_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Vega.sgd_step (module Pair) ~lr:0.1 st ~params ~grads
+    Vega.sgd_step (module Pair) ~lr:(Vega.lr 0.1) st ~params ~grads
   in
   let params, _ =
     descend ~steps:100 ~step (params, Vega.sgd_init (module Pair) params)
@@ -204,7 +203,9 @@ let test_sgd_momentum_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Vega.sgd_step (module Pair) ~lr:0.05 ~momentum:0.9 st ~params ~grads
+    Vega.sgd_step
+      (module Pair)
+      ~lr:(Vega.lr 0.05) ~momentum:0.9 st ~params ~grads
   in
   let params, _ =
     descend ~steps:200 ~step (params, Vega.sgd_init (module Pair) params)
@@ -215,7 +216,9 @@ let test_sgd_pairs_leaves_structurally () =
   let params = pair [| 1.0; 2.0 |] [| 3.0 |] in
   let grads = pair [| 0.0; 0.0 |] [| 1.0 |] in
   let st = Vega.sgd_init (module Pair) params in
-  let params', _ = Vega.sgd_step (module Pair) ~lr:0.5 st ~params ~grads in
+  let params', _ =
+    Vega.sgd_step (module Pair) ~lr:(Vega.lr 0.5) st ~params ~grads
+  in
   check_vec ~eps:0. ~msg:"zero-gradient leaf untouched" [| 1.0; 2.0 |] params'.a;
   check_vec ~eps:0. [| 2.5 |] params'.b
 
@@ -227,7 +230,7 @@ let test_adam_first_step () =
   let params = vec [| 1.0; -2.0; 3.0 |] in
   let st = Vega.adam_init (module Vec) params in
   let params', st' =
-    Vega.adam_step (module Vec) ~lr st ~params ~grads:(vec g)
+    Vega.adam_step (module Vec) ~lr:(Vega.lr lr) st ~params ~grads:(vec g)
   in
   (* First step analytically: mu = (1-b1) g, nu = (1-b2) g^2, and the
      bias-corrected direction is g / (|g| + eps). *)
@@ -239,7 +242,7 @@ let test_adam_first_step () =
   check_vec expected params';
   check_vec ~msg:"mu" (Array.map (fun g -> (1. -. b1) *. g) g) st'.mu;
   check_vec ~msg:"nu" (Array.map (fun g -> (1. -. b2) *. g *. g) g) st'.nu;
-  equal ~msg:"step count" int 1 st'.step
+  equal ~msg:"step count" int 1 (Int32.to_int (Nx.item [] st'.step))
 
 let test_adam_reference_trajectory () =
   let b1 = 0.9 and b2 = 0.999 and eps = 1e-8 and lr = 0.05 in
@@ -263,7 +266,7 @@ let test_adam_reference_trajectory () =
     (fun i e ->
       let grads = Nx.mul_s (Nx.sub_s !params 1.0) 2.0 in
       let params', st' =
-        Vega.adam_step (module Vec) ~lr !st ~params:!params ~grads
+        Vega.adam_step (module Vec) ~lr:(Vega.lr lr) !st ~params:!params ~grads
       in
       params := params';
       st := st';
@@ -274,7 +277,7 @@ let test_adam_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Vega.adam_step (module Pair) ~lr:0.02 st ~params ~grads
+    Vega.adam_step (module Pair) ~lr:(Vega.lr 0.02) st ~params ~grads
   in
   let params, _ =
     descend ~steps:800 ~step (params, Vega.adam_init (module Pair) params)
@@ -282,14 +285,15 @@ let test_adam_converges () =
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
 
 let test_adam_with_schedule_converges () =
-  let sched = S.cosine_decay ~init_value:0.1 ~decay_steps:300 () in
+  (* The learning rate comes from the state's own step counter via a tensor
+     schedule — the jitted loop's shape, run eagerly. *)
   let params = Lazy.force bowl_start in
-  let st = Vega.adam_init (module Pair) params in
-  let state = ref (params, st) in
-  for k = 0 to 299 do
+  let state = ref (params, Vega.adam_init (module Pair) params) in
+  for _k = 1 to 300 do
     let params, st = !state in
     let grads = bowl_grads params in
-    state := Vega.adam_step (module Pair) ~lr:(sched k) st ~params ~grads
+    let lr = S.cosine_decay_t ~init_value:0.1 ~decay_steps:300 st.step in
+    state := Vega.adam_step (module Pair) ~lr st ~params ~grads
   done;
   is_true ~msg:"decayed steps settle at the bottom"
     (bowl_distance (fst !state) < 0.02)
@@ -298,17 +302,24 @@ let test_adam_zero_grads () =
   let params = vec [| 1.0; -2.0 |] in
   let st = Vega.adam_init (module Vec) params in
   let params', st' =
-    Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads:(vec [| 0.0; 0.0 |])
+    Vega.adam_step
+      (module Vec)
+      ~lr:(Vega.lr 0.1) st ~params
+      ~grads:(vec [| 0.0; 0.0 |])
   in
   check_vec ~eps:0. ~msg:"parameters unchanged" [| 1.0; -2.0 |] params';
-  equal ~msg:"step still advances" int 1 st'.step
+  equal ~msg:"step still advances" int 1 (Int32.to_int (Nx.item [] st'.step))
 
 let test_adam_step_is_pure () =
   let params = vec [| 3.0; -1.0 |] in
   let grads = vec [| 0.7; 0.3 |] in
   let st = Vega.adam_init (module Vec) params in
-  let once, _ = Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads in
-  let again, _ = Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads in
+  let once, _ =
+    Vega.adam_step (module Vec) ~lr:(Vega.lr 0.1) st ~params ~grads
+  in
+  let again, _ =
+    Vega.adam_step (module Vec) ~lr:(Vega.lr 0.1) st ~params ~grads
+  in
   check_vec ~eps:0. ~msg:"same state, same step" (Nx.to_array once) again
 
 (* AdamW *)
@@ -327,11 +338,13 @@ let test_adamw_zero_decay_is_adam () =
   in
   let adam =
     run (fun st ~params ~grads ->
-        Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads)
+        Vega.adam_step (module Vec) ~lr:(Vega.lr 0.1) st ~params ~grads)
   in
   let adamw =
     run (fun st ~params ~grads ->
-        Vega.adamw_step (module Vec) ~lr:0.1 ~weight_decay:0.0 st ~params ~grads)
+        Vega.adamw_step
+          (module Vec)
+          ~lr:(Vega.lr 0.1) ~weight_decay:0.0 st ~params ~grads)
   in
   check_vec ~eps:0. (Nx.to_array adam) adamw
 
@@ -346,7 +359,7 @@ let test_adamw_decays_weights () =
     let params', st' =
       Vega.adamw_step
         (module Vec)
-        ~lr ~weight_decay:wd !st ~params:!params
+        ~lr:(Vega.lr lr) ~weight_decay:wd !st ~params:!params
         ~grads:(vec [| 0.0; 0.0 |])
     in
     params := params';
@@ -359,19 +372,20 @@ let test_adamw_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Vega.adamw_step (module Pair) ~lr:0.02 ~weight_decay:1e-3 st ~params ~grads
+    Vega.adamw_step
+      (module Pair)
+      ~lr:(Vega.lr 0.02) ~weight_decay:1e-3 st ~params ~grads
   in
   let params, _ =
     descend ~steps:800 ~step (params, Vega.adamw_init (module Pair) params)
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
 
-(* A parameter structure may carry leaves that are not parameters. The
-   canonical one is an RNG key, which has to sit in the structure to reach a
-   compiled step as an input but is not something to optimize. Rune leaves its
-   gradient slot at zero; the optimizers must leave the value alone. Adam is
-   where it would show: its direction runs each leaf through a square root and
-   a division. *)
+(* A parameter structure may carry leaves that are not parameters. The canonical
+   one is an RNG key, which has to sit in the structure to reach a compiled step
+   as an input but is not something to optimize. Rune leaves its gradient slot
+   at zero; the optimizers must leave the value alone. Adam is where it would
+   show: its direction runs each leaf through a square root and a division. *)
 module Stepper = struct
   type t = { w : Nx.float64_t; key : Nx.Rng.key }
 
@@ -414,7 +428,7 @@ let test_optimizers_carry_a_non_parameter_leaf () =
   let sgd, _ =
     Vega.sgd_step
       (module Stepper)
-      ~lr:0.1
+      ~lr:(Vega.lr 0.1)
       (Vega.sgd_init (module Stepper) params)
       ~params ~grads
   in
@@ -422,7 +436,7 @@ let test_optimizers_carry_a_non_parameter_leaf () =
   let momentum, _ =
     Vega.sgd_step
       (module Stepper)
-      ~lr:0.1 ~momentum:0.9
+      ~lr:(Vega.lr 0.1) ~momentum:0.9
       (Vega.sgd_init (module Stepper) params)
       ~params ~grads
   in
@@ -430,7 +444,7 @@ let test_optimizers_carry_a_non_parameter_leaf () =
   let adam, _ =
     Vega.adam_step
       (module Stepper)
-      ~lr:0.1
+      ~lr:(Vega.lr 0.1)
       (Vega.adam_init (module Stepper) params)
       ~params ~grads
   in
@@ -438,11 +452,141 @@ let test_optimizers_carry_a_non_parameter_leaf () =
   let adamw, _ =
     Vega.adamw_step
       (module Stepper)
-      ~lr:0.1
+      ~lr:(Vega.lr 0.1)
       (Vega.adamw_init (module Stepper) params)
       ~params ~grads
   in
   check "adamw" adamw
+
+(* Optimizer state as a parameter tree *)
+
+let test_adam_state_scalars_advance () =
+  let params = vec [| 1.0 |] in
+  let grads = vec [| 1.0 |] in
+  let st = ref (Vega.adam_init (module Vec) params) in
+  let lr = Vega.lr 0.1 in
+  (* After k steps the corrections are the closed-form 1 - b^k. *)
+  let b1 = 0.9 and b2 = 0.999 in
+  List.iter
+    (fun k ->
+      (* Advance until the counter reads [k]. *)
+      while Int32.to_int (Nx.item [] !st.step) < k do
+        let _, st' = Vega.adam_step (module Vec) ~lr !st ~params ~grads in
+        st := st'
+      done;
+      equal
+        ~msg:(Printf.sprintf "step after %d" k)
+        int k
+        (Int32.to_int (Nx.item [] !st.step));
+      check_vec
+        ~msg:(Printf.sprintf "c1 at %d" k)
+        [| 1.0 -. (b1 ** float_of_int k) |]
+        !st.c1;
+      check_vec
+        ~msg:(Printf.sprintf "c2 at %d" k)
+        [| 1.0 -. (b2 ** float_of_int k) |]
+        !st.c2)
+    [ 1; 2; 5 ]
+
+let test_state_traversals () =
+  (* Both state modules are parameter trees: map/map2/iter walk every tensor
+     leaf — payload leaves and the scalar leaves — in a fixed order. *)
+  let double (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
+    Nx.cast (Nx.dtype t) (Nx.mul_s (Nx.cast Nx.float64 t) 2.0)
+  in
+  let params = pair [| 1.0; 2.0 |] [| 3.0 |] in
+  let st = Vega.adam_init (module Pair) params in
+  (* map doubles everything; iter counts the leaves it visits. *)
+  let doubled = Vega.Adam_state.map (module Pair) double st in
+  check_vec ~msg:"mu doubled" [| 0.0; 0.0 |] doubled.mu.a;
+  equal ~msg:"c1 doubled" (float 1e-12) 0.0 (Nx.item [] doubled.c1);
+  let n = ref 0 in
+  Vega.Adam_state.iter (module Pair) (fun _ -> incr n) st;
+  (* 2 mu leaves + 2 nu leaves + c1 + c2 + step. *)
+  equal ~msg:"adam leaf count" int 7 !n;
+  (* map2 merges leafwise: take the right state everywhere. *)
+  let st' = Vega.Adam_state.map2 (module Pair) (fun _ r -> r) st doubled in
+  check_vec ~msg:"merged mu" [| 0.0 |] st'.mu.b;
+  equal ~msg:"merged step" int32 0l (Nx.item [] st'.step);
+  (* The sgd state's single payload leaf. *)
+  let sst = Vega.sgd_init (module Pair) params in
+  let n = ref 0 in
+  Vega.Sgd_state.iter (module Pair) (fun _ -> incr n) sst;
+  equal ~msg:"sgd leaf count" int 2 !n
+
+let test_state_make_is_a_ptree () =
+  (* [Make] produces an Nx.Ptree.S: the state can sit inside another tree — the
+     shape a jitted step's input record takes. *)
+  let module Opt = Vega.Adam_state.Make (Pair) in
+  let params = pair [| 1.0 |] [| 2.0 |] in
+  let grads = pair [| 0.5 |] [| -0.5 |] in
+  let st = Vega.adam_init (module Pair) params in
+  (* Run the step through the state's own walker: embedding the state in an
+     outer record and mapping over it must reproduce the state exactly. *)
+  let roundtrip =
+    Opt.map (fun t -> t) (Opt.map2 (fun _ r -> r) (Opt.map (fun t -> t) st) st)
+  in
+  let params', _ =
+    Vega.adam_step (module Pair) ~lr:(Vega.lr 0.1) roundtrip ~params ~grads
+  in
+  let expected, _ =
+    Vega.adam_step (module Pair) ~lr:(Vega.lr 0.1) st ~params ~grads
+  in
+  check_vec ~msg:"roundtrip state steps identically" (Nx.to_array expected.a)
+    params'.a
+
+(* Tensor schedules match the scalar family at integer steps. *)
+
+let parity ~msg sched sched_t =
+  List.iter
+    (fun k ->
+      let scalar = sched k in
+      let tensor = Nx.item [] (sched_t (Nx.scalar Nx.int32 (Int32.of_int k))) in
+      equal ~msg:(Printf.sprintf "%s at %d" msg k) (float 1e-6) scalar tensor)
+    [ 0; 1; 3; 7; 50; 99; 100; 250 ]
+
+let test_tensor_schedules_match_scalar () =
+  parity ~msg:"constant" (S.constant 0.1) (S.constant_t 0.1);
+  parity ~msg:"linear"
+    (S.linear ~init_value:0.2 ~end_value:0.001 ~steps:100)
+    (S.linear_t ~init_value:0.2 ~end_value:0.001 ~steps:100);
+  parity ~msg:"cosine decay"
+    (S.cosine_decay ~init_value:0.1 ~decay_steps:100 ~alpha:0.1 ())
+    (S.cosine_decay_t ~init_value:0.1 ~decay_steps:100 ~alpha:0.1);
+  parity ~msg:"warmup cosine"
+    (S.warmup_cosine ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:50)
+    (S.warmup_cosine_t ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:50);
+  parity ~msg:"warmup cosine decay"
+    (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
+       ~decay_steps:100 ())
+    (S.warmup_cosine_decay_t ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
+       ~decay_steps:100);
+  parity ~msg:"one cycle"
+    (S.one_cycle ~max_value:0.1 ~total_steps:120 ())
+    (S.one_cycle_t ~max_value:0.1 ~total_steps:120);
+  parity ~msg:"piecewise constant"
+    (S.piecewise_constant ~boundaries:[ 10; 50 ] ~values:[ 0.1; 0.01; 0.001 ])
+    (S.piecewise_constant_t ~boundaries:[ 10; 50 ] ~values:[ 0.1; 0.01; 0.001 ])
+
+let test_tensor_schedule_validation () =
+  raises (Invalid_argument "Schedule.linear_t: steps must be positive")
+    (fun () ->
+      ignore
+        (S.linear_t ~init_value:1.0 ~end_value:0.0 ~steps:0
+           (Nx.scalar Nx.int32 0l)));
+  raises
+    (Invalid_argument "Schedule.cosine_decay_t: decay_steps must be positive")
+    (fun () ->
+      ignore
+        (S.cosine_decay_t ~init_value:1.0 ~decay_steps:(-1)
+           (Nx.scalar Nx.int32 0l)));
+  raises
+    (Invalid_argument
+       "Schedule.piecewise_constant_t: expected 2 values for 1 boundaries, got \
+        1") (fun () ->
+      ignore
+        (S.piecewise_constant_t ~boundaries:[ 10 ] ~values:[ 0.1 ]
+           (Nx.scalar Nx.int32 0l)))
 
 let tests =
   [
@@ -482,6 +626,8 @@ let tests =
         test "converges on a quadratic bowl" test_adam_converges;
         test "converges under a cosine schedule"
           test_adam_with_schedule_converges;
+        test "corrections and counter advance as tensors"
+          test_adam_state_scalars_advance;
         test "zero gradients leave parameters unchanged" test_adam_zero_grads;
         test "stepping is pure in the threaded state" test_adam_step_is_pure;
       ];
@@ -491,6 +637,19 @@ let tests =
         test "zero gradients decay weights geometrically"
           test_adamw_decays_weights;
         test "converges on a quadratic bowl" test_adamw_converges;
+      ];
+    group "optimizer state as a parameter tree"
+      [
+        test "state traversals walk every leaf" test_state_traversals;
+        test "Make produces a Ptree.S that steps identically"
+          test_state_make_is_a_ptree;
+      ];
+    group "tensor schedules"
+      [
+        test "tensor schedules match the scalar family"
+          test_tensor_schedules_match_scalar;
+        test "tensor schedule constructors reject bad step counts"
+          test_tensor_schedule_validation;
       ];
     group "non-parameter leaves"
       [

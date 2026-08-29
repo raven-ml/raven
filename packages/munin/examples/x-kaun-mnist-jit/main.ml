@@ -216,11 +216,15 @@ let () =
   let train_step { Step_in.params; x; y } =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
-    let params, _ = Vega.sgd_step cnn ~lr:!lr state ~params ~grads in
+    let params, _ = Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads in
     { Step_out.params; loss }
   in
+  (* ~donate:true releases the previous generation's device buffers once each
+     call completes — the loop reads only the fresh loss, never the pre-step
+     state, so the resident loop turns over about two generations of buffers. *)
   let step =
-    Rune.jit2 ~device:!device (module Step_in) (module Step_out) train_step
+    Rune.jit2 ~device:!device ~donate:true (module Step_in) (module Step_out)
+      train_step
   in
   let forward =
     Rune.jit ~device:!device

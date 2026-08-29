@@ -211,7 +211,7 @@ let () =
 
     let loss, grads = Rune.value_and_grad q_tree loss_fn !params in
     let new_params, new_opt_state =
-      Vega.adam_step q_tree ~lr !opt_state ~params:!params ~grads
+      Vega.adam_step q_tree ~lr:(Vega.lr lr) !opt_state ~params:!params ~grads
     in
     params := new_params;
     opt_state := new_opt_state;
