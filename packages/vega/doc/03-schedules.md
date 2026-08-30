@@ -2,19 +2,25 @@
 
 A learning rate schedule controls how the learning rate changes over the
 course of training. In Vega, a schedule is simply a function from step
-number to learning rate.
+counter to learning rate.
 
 ## How Schedules Work
 
-`Schedule.t` is `int -> float`. Given a 1-based step number, it returns
-the learning rate for that step:
+`Schedule.t` maps a scalar `int32` step tensor to a scalar `float32` rate
+tensor — tensor arithmetic, so a schedule computes eagerly and traces inside
+a `Rune.jit`-compiled training step alike. In a structural loop, apply it to
+the optimizer state's own counter; `Schedule.eval` reads a schedule at a host
+step number:
 
 <!-- $MDX skip -->
 ```ocaml
 let lr = Vega.Schedule.constant 0.001 in
-Printf.printf "step 1:   %f\n" (lr 1);    (* 0.001 *)
-Printf.printf "step 100: %f\n" (lr 100)   (* 0.001 *)
+Printf.printf "step 1:   %f\n" (Vega.Schedule.eval lr 1);    (* 0.001 *)
+Printf.printf "step 100: %f\n" (Vega.Schedule.eval lr 100)   (* 0.001 *)
 ```
+
+In the per-tensor tier, schedules are evaluated at the chain's own update
+count, starting at 1 on the first update.
 
 Schedules plug into optimizers as the last positional argument:
 
@@ -189,13 +195,15 @@ Vega.Schedule.join [
 
 ### Custom Schedules
 
-Since `Schedule.t` is just `int -> float`, you can write arbitrary functions:
+Since `Schedule.t` is just a function on a scalar step tensor, you can write
+arbitrary ones with `Nx` arithmetic:
 
 <!-- $MDX skip -->
 ```ocaml
 (* Step decay: halve every 1000 steps *)
 let step_decay : Vega.Schedule.t = fun step ->
-  0.01 *. (0.5 ** float_of_int (step / 1000))
+  let k = Nx.floor (Nx.div_s (Nx.cast Nx.float32 step) 1000.) in
+  Nx.mul_s (Nx.rpow_s 0.5 k) 0.01
 ```
 
 ## Using Schedules with Optimizers

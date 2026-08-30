@@ -9,7 +9,7 @@ dune exec packages/vega/examples/03-learning-rate-schedules/main.exe
 
 ## What You'll Learn
 
-- That a schedule is simply `int -> float` (step number to learning rate)
+- That a schedule is simply a function from a step-counter tensor to a learning-rate tensor, read on the host with `Schedule.eval`
 - How `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, and
   `piecewise_constant` shape the learning rate curve
 - Composing schedules end-to-end with `Schedule.join`

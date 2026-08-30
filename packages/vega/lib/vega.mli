@@ -17,35 +17,39 @@
 
     There is no optimizer object; composition is function application. Transform
     gradients before the step (for example {!clip_by_global_norm}) and derive
-    the step's learning rate from the state's step counter with a tensor
-    schedule ({!Schedule}). Because optimizer state is itself a parameter tree
+    the step's learning rate from the state's step counter with a schedule
+    ({!Schedule}). Because optimizer state is itself a parameter tree
     ({!Adam_state}, {!Sgd_state}), a whole training step — forward, backward and
     update — is an ordinary function of [(params, state)] that threads both
     through one {!Rune.val-jit} call, so the step compiles into a single program
     on any device and the state rides it as ordinary input and output leaves:
 
     {[
-    module Opt = Vega.Adam_state.Make (Model)
+    module Opt = Vega.Adam_state (Model)
 
-    type step_in = {
-      params : Model.t;
-      opt : Opt.t; (* [\[@ptree.using Opt\]] with ppx_ptree *)
-      inputs : Nx.float32_t;
-      targets : (int32, Nx.int32_elt) Nx.t;
-    }
+    module Step_in = struct
+      type t = {
+        params : Model.t;
+        opt : Opt.t;
+        inputs : Nx.float32_t;
+        targets : (int32, Nx.int32_elt) Nx.t;
+      }
 
-    (* step_out carries [params], [opt] and the loss; both records derive
-       [map]/[map2]/[iter] by hand or with [ppx_ptree]. *)
+      (* map/map2/iter: one-line delegations to [Model] and [Opt] over the
+         fields — or [@@deriving ptree] with ppx_ptree. [Step_out] carries
+         [params], [opt] and the loss the same way. *)
+    end
 
-    let train_step { params; opt; inputs; targets } =
+    let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
+
+    let train_step { Step_in.params; opt; inputs; targets } =
       let loss, grads =
         Rune.value_and_grad model (objective inputs targets) params
       in
       let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-      let lr =
-        Vega.Schedule.cosine_decay_t ~init_value:1e-3 ~decay_steps:1000 opt.step
+      let params, opt =
+        Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
       in
-      let params, opt = Vega.adamw_step model ~lr opt ~params ~grads in
       { Step_out.params; opt; loss }
 
     (* ~donate:true hands the previous generation's device buffers back to the
@@ -57,8 +61,8 @@
 
     Hyperparameters that do not change across steps ([b1], [b2], [eps],
     [weight_decay], [max_norm]) are compile-time constants. Everything that does
-    — the moments, the bias corrections, the step counter, the learning rate —
-    is a tensor leaf, so the compiled program replays correctly on every call:
+    — the moments, the step counter, the learning rate — is a tensor leaf or
+    derived from one, so the compiled program replays correctly on every call:
     no data transfers, no retracing. [~donate:true] keeps the state-to-state
     loop at about two generations of device buffers instead of one per call
     awaiting collection; it consumes the handles it frees — reading the pre-step
@@ -66,7 +70,7 @@
     the state it feeds in. On the CPU device it changes nothing: outputs are
     host tensors there. Steps are pure traversals — a step consumes a state and
     returns the next one — so checkpointing an optimizer means saving a record
-    of parameter-shaped values plus three scalar leaves.
+    of parameter-shaped values plus a step counter leaf.
 
     {b Non-parameter leaves.} A structure may carry leaves that are not
     parameters — an {!Nx.Rng.key} threaded through a compiled step, a counter, a
@@ -79,10 +83,12 @@
 (** {1:schedules Learning-Rate Schedules}
 
     A schedule maps a step counter to a learning rate; it is a plain function
-    [int -> float], shared by both tiers. Structural training loops evaluate a
-    schedule at the loop's step counter and pass the result as [~lr]; the
-    per-tensor {!scale_by_learning_rate} and {!scale_by_schedule} consume a
-    schedule value directly. *)
+    from a scalar [int32] step tensor to a scalar [float32] rate tensor, shared
+    by both tiers. Structural training loops apply a schedule to the state's
+    step counter and pass the result as [~lr] — tensor arithmetic, so the same
+    code runs eagerly and inside a compiled step; the per-tensor
+    {!scale_by_learning_rate} and {!scale_by_schedule} evaluate a schedule at
+    the chain's own update count. *)
 
 module Schedule = Schedule
 
@@ -102,10 +108,11 @@ val clip_by_global_norm :
     (including all-zero gradients) are returned unchanged; larger ones are
     scaled by [max_norm /. norm], preserving their direction.
 
-    The scale factor is computed in tensor arithmetic and selected with
+    The scale factor is computed in float32 tensor arithmetic and selected with
     {!Nx.where} — no host read — so the transform traces under {!Rune.val-jit}
-    and can sit between a jitted backward pass and a jitted optimizer step.
-    {!global_norm} remains the host-float read for reporting.
+    on any device and can sit between a jitted backward pass and a jitted
+    optimizer step. {!global_norm} remains the float64 host read for
+    reporting.
 
     Raises [Invalid_argument] if [max_norm <= 0.]. *)
 
@@ -221,15 +228,15 @@ end
 (** {1:lr Learning Rates}
 
     A structural step applies its learning rate as a scalar tensor, cast to each
-    leaf's dtype. A constant rate is one call to {!lr}; a scheduled one is
-    derived from the state's step counter inside the step with a tensor schedule
-    ({!Schedule}), which is what makes schedules work under {!Rune.val-jit}. *)
+    leaf's dtype. A constant rate is one call to {!lr}; a scheduled one is a
+    {!Schedule} applied to the state's step counter — tensor arithmetic either
+    way, which is what makes the rate track correctly under {!Rune.val-jit}. *)
 
-val lr : float -> Nx.float64_t
+val lr : float -> Nx.float32_t
 (** [lr v] is the learning rate [v] as a scalar tensor, the form the step
     functions' [~lr] argument takes. The value is cast to each leaf's dtype when
     the step applies it, so one value serves any parameter dtype: [Vega.lr 1e-3]
-    is exactly [Nx.scalar Nx.float64 1e-3]. *)
+    is exactly [Nx.scalar Nx.float32 1e-3]. *)
 
 (** {1:sgd Stochastic Gradient Descent} *)
 
@@ -237,55 +244,28 @@ type 'p sgd_state = { velocity : 'p }
 (** The state for {!sgd_step}: the momentum velocity, with the shape of the
     parameters. *)
 
-(** The state for {!sgd_step}, over a parameter structure ['p]. Optimizer state
-    is a parameter tree like the parameters themselves — it satisfies
-    {!Nx.Ptree.S} through {!Make}, in the fixed leaf order of the [velocity]
-    payload — so it can be a field of a {!Rune.val-jit}ed step's input and
-    output records and thread across compiled calls. *)
-module Sgd_state : sig
-  type 'p t = 'p sgd_state
-  (** The state type. *)
+(** [Sgd_state (P)] is the state over the parameter tree [P] as a parameter
+    tree itself: its [t] is [P.t sgd_state] and its traversals walk the state's
+    leaves through [P]. Bind it once per model and embed it in a jitted step's
+    input/output records, whose traversals delegate to it field by field
+    (by hand, or with [ppx_ptree]'s [@@deriving ptree]):
 
-  val map :
-    (module Nx.Ptree.S with type t = 'p) ->
-    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
-    'p t ->
-    'p t
-  (** [map (module P) f st] is [st] with [f] applied to every tensor leaf. *)
+    {[
+      module Opt = Vega.Sgd_state (Model)
 
-  val map2 :
-    (module Nx.Ptree.S with type t = 'p) ->
-    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
-    'p t ->
-    'p t ->
-    'p t
-  (** [map2 (module P) f a b] combines [a] and [b] leafwise with [f].
+      module Step_in = struct
+        type t = { params : Model.t; opt : Opt.t; x : Nx.float32_t }
 
-      Raises [Invalid_argument] if [a] and [b] are not structurally equal. *)
+        let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
+          { params = Model.map f s.params; opt = Opt.map f s.opt; x = f s.x }
 
-  val iter :
-    (module Nx.Ptree.S with type t = 'p) ->
-    ('a 'b. ('a, 'b) Nx.t -> unit) ->
-    'p t ->
-    unit
-  (** [iter (module P) f st] applies [f] to every tensor leaf, in the state's
-      traversal order. *)
+        (* map2 and iter: the same one-liners. *)
+      end
+    ]}
 
-  (** [Make (P)] is the state over the parameter tree [P] as a parameter tree
-      itself: its [t] is [P.t sgd_state] and its traversals walk the state's
-      leaves through [P]. Bind it once per model and embed it in a jitted step's
-      input/output records — directly, or via [ppx_ptree]'s [[@ptree.using]]
-      delegation:
-
-      {[
-        module Opt = Vega.Sgd_state.Make (Model)
-        type step_in = { params : Model.t; opt : Opt.t [\[@ptree.using Opt\]] }
-      ]}
-
-      The resulting leaf order — every leaf of [velocity], in [P]'s order — is
-      part of a compiled step's leaf signature and is fixed for good. *)
-  module Make (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t sgd_state
-end
+    The resulting leaf order — every leaf of [velocity], in [P]'s order — is
+    part of a compiled step's leaf signature and is fixed for good. *)
+module Sgd_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t sgd_state
 
 val sgd_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p sgd_state
 (** [sgd_init (module P) params] is the initial state for optimizing [params]:
@@ -321,64 +301,22 @@ type 'p adam_state = {
   nu : 'p;
       (** Exponential moving average of squared gradients, with the parameters'
           shape. *)
-  c1 : Nx.float64_t;
-      (** Bias correction for [mu]: [1 - b1^step], a scalar tensor advanced by
-          an affine recurrence each step. *)
-  c2 : Nx.float64_t;
-      (** Bias correction for [nu]: [1 - b2^step], a scalar tensor. *)
   step : Nx.int32_t;
-      (** Completed steps, a scalar tensor; also the counter tensor schedules
-          take. *)
+      (** Completed steps, a scalar tensor — not a host [int], which would be
+          burned into a compiled trace as a constant and replayed stale. The
+          steps derive their bias corrections from it, and it is the counter
+          schedules take. *)
 }
 
-(** The state for {!adam_step} and {!adamw_step}, over a parameter structure
-    ['p]. Like {!Sgd_state}, it is a parameter tree through {!Make} — the fixed
-    leaf order is [mu]'s leaves, then [nu]'s, then the three scalars [c1], [c2],
-    [step] — so it threads through compiled training steps. The bias corrections
-    and the counter are tensors, not host values: under {!Rune.val-jit} a host
-    [int] would be burned into the trace as a constant and replayed stale,
-    silently corrupting the corrections on every later call. *)
-module Adam_state : sig
-  type 'p t = 'p adam_state
-  (** The state type. *)
-
-  val map :
-    (module Nx.Ptree.S with type t = 'p) ->
-    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
-    'p t ->
-    'p t
-  (** [map (module P) f st] is [st] with [f] applied to every tensor leaf — the
-      leaves of [mu] and [nu] through the parameter tree, then the scalar leaves
-      [c1], [c2], [step]. *)
-
-  val map2 :
-    (module Nx.Ptree.S with type t = 'p) ->
-    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
-    'p t ->
-    'p t ->
-    'p t
-  (** [map2 (module P) f a b] combines [a] and [b] leafwise with [f].
-
-      Raises [Invalid_argument] if [a] and [b] are not structurally equal. *)
-
-  val iter :
-    (module Nx.Ptree.S with type t = 'p) ->
-    ('a 'b. ('a, 'b) Nx.t -> unit) ->
-    'p t ->
-    unit
-  (** [iter (module P) f st] applies [f] to every tensor leaf, in the state's
-      traversal order. *)
-
-  (** [Make (P)] is the state over the parameter tree [P] as a parameter tree
-      itself — see {!Sgd_state.Make}. The leaf order — every leaf of [mu] in
-      [P]'s order, every leaf of [nu], then [c1], [c2], [step] — is part of a
-      compiled step's leaf signature and is fixed for good. *)
-  module Make (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t adam_state
-end
+(** [Adam_state (P)] is the state over the parameter tree [P] as a parameter
+    tree itself — see {!Sgd_state}. The leaf order — every leaf of [mu] in
+    [P]'s order, every leaf of [nu], then [step] — is part of a compiled step's
+    leaf signature and is fixed for good. *)
+module Adam_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t adam_state
 
 val adam_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
 (** [adam_init (module P) params] is the initial state for optimizing [params]:
-    all-zero moments, zero bias corrections and [step = 0]. *)
+    all-zero moments and [step = 0]. *)
 
 val adam_step :
   (module Nx.Ptree.S with type t = 'p) ->
@@ -391,20 +329,20 @@ val adam_step :
   grads:'p ->
   'p * 'p adam_state
 (** [adam_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
-    Adam step (Kingma and Ba, 2015). Per element, with [t = st.step + 1] and the
-    corrections advanced in state:
+    Adam step (Kingma and Ba, 2015). Per element, with [t = st.step + 1]:
 
     {v
-    c1' = (1 - b1) + b1 * c1        c2' = (1 - b2) + b2 * c2
-    mu' = b1 * mu + (1 - b1) * g    nu' = b2 * nu + (1 - b2) * g^2
-    d   = (mu' / c1') / (sqrt (nu' / c2') + eps)
+    mu' = b1 * mu + (1 - b1) * g
+    nu' = b2 * nu + (1 - b2) * g^2
+    d   = (mu' / (1 - b1^t)) / (sqrt (nu' / (1 - b2^t)) + eps)
     p'  = p - lr * d
     v}
 
     [lr] is a scalar tensor ({!lr}). [b1] defaults to [0.9], [b2] to [0.999],
     [eps] to [1e-8]; they are compile-time constants, safe captures under
-    {!Rune.val-jit}. The whole step is tensor arithmetic over [(params, st)] —
-    it traces, and the returned state feeds the next call. *)
+    {!Rune.val-jit}. The bias corrections are derived from the state's counter
+    per leaf, at the leaf's dtype, in tensor arithmetic — so the whole step
+    traces, and the returned state feeds the next call. *)
 
 val adamw_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
 (** [adamw_init] is {!adam_init}: AdamW shares Adam's state. *)

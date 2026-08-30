@@ -160,10 +160,7 @@ let test_resume_training () =
          Checkpoint.of_params (module Lin) ~prefix:"model" p3;
          Checkpoint.of_params (module Lin) ~prefix:"optim.mu" st3.Vega.mu;
          Checkpoint.of_params (module Lin) ~prefix:"optim.nu" st3.Vega.nu;
-         Checkpoint.of_tensor "optim.c1" st3.Vega.c1;
-         Checkpoint.of_tensor "optim.c2" st3.Vega.c2;
-         Checkpoint.of_int "optim.step"
-           (Int32.to_int (Nx.item [] st3.Vega.step));
+         Checkpoint.of_tensor "optim.step" st3.Vega.step;
        ]);
   let expected, _ = train_adam_steps 2 (p3, st3) in
   (* Restore into freshly initialized values and continue training. *)
@@ -180,10 +177,7 @@ let test_resume_training () =
         Checkpoint.to_params
           (module Lin)
           ~prefix:"optim.nu" ~like:like.Vega.nu ckpt;
-      c1 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c1" ckpt);
-      c2 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c2" ckpt);
-      step =
-        Nx.scalar Nx.int32 (Int32.of_int (Checkpoint.to_int "optim.step" ckpt));
+      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
     }
   in
   let resumed, _ = train_adam_steps 2 (p3', st3') in

@@ -86,10 +86,7 @@ let save_training_state path (params, (ostate : Nx.float32_t Cnn.t Vega.adam_sta
          Checkpoint.of_params (module Cnn) ~prefix:"model" params;
          Checkpoint.of_params (module Cnn) ~prefix:"optim.mu" ostate.mu;
          Checkpoint.of_params (module Cnn) ~prefix:"optim.nu" ostate.nu;
-         Checkpoint.of_tensor "optim.c1" ostate.c1;
-         Checkpoint.of_tensor "optim.c2" ostate.c2;
-         Checkpoint.of_int "optim.step"
-           (Int32.to_int (Nx.item [] ostate.step));
+         Checkpoint.of_tensor "optim.step" ostate.step;
        ])
 
 let load_training_state path =
@@ -107,11 +104,7 @@ let load_training_state path =
         Checkpoint.to_params
           (module Cnn)
           ~prefix:"optim.nu" ~like:like_ostate.nu ckpt;
-      c1 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c1" ckpt);
-      c2 = Nx.Ptree.unpack Nx.float64 (Checkpoint.get "optim.c2" ckpt);
-      step =
-        Nx.scalar Nx.int32
-          (Int32.of_int (Checkpoint.to_int "optim.step" ckpt));
+      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
     }
   in
   (params, ostate)

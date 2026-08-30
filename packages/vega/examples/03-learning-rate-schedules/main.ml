@@ -5,8 +5,9 @@
 
 (* Learning rate schedules control how the learning rate changes over training.
 
-   A schedule is simply a function [int -> float]: given a 1-based step number,
-   it returns the learning rate. This example evaluates several schedules and
+   A schedule maps a step counter to a learning rate in tensor arithmetic, so
+   the same schedule drives an eager loop and a compiled one; [Schedule.eval]
+   reads it at a host step number. This example evaluates several schedules and
    prints their values, then uses warmup + cosine decay in an optimization
    loop. *)
 
@@ -14,7 +15,7 @@ module S = Vega.Schedule
 
 let print_schedule name s steps =
   Printf.printf "  %-30s" name;
-  List.iter (fun step -> Printf.printf "  %3d:%.6f" step (s step)) steps;
+  List.iter (fun step -> Printf.printf "  %3d:%.6f" step (S.eval s step)) steps;
   Printf.printf "\n"
 
 let sample = [ 1; 25; 50; 75; 100 ]
@@ -71,6 +72,6 @@ let () =
     param := p;
     st := s;
     if i mod 20 = 0 then
-      Printf.printf "  step %3d  lr=%.6f  x = %s\n" i (lr i)
+      Printf.printf "  step %3d  lr=%.6f  x = %s\n" i (S.eval lr i)
         (Nx.to_string !param)
   done

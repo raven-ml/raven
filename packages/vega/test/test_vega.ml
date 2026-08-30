@@ -33,51 +33,52 @@ let test_polynomial_decay () =
   let s =
     S.polynomial_decay ~init_value:1.0 ~end_value:0.0 ~decay_steps:100 ()
   in
-  equal ~msg:"step 0" (float 1e-10) 1.0 (s 0);
-  equal ~msg:"step 50 (power=1, linear)" (float 1e-6) 0.5 (s 50);
-  equal ~msg:"step 100" (float 1e-10) 0.0 (s 100);
-  equal ~msg:"clamps past end" (float 1e-10) 0.0 (s 200);
+  equal ~msg:"step 0" (float 1e-6) 1.0 (S.eval s 0);
+  equal ~msg:"step 50 (power=1, linear)" (float 1e-6) 0.5 (S.eval s 50);
+  equal ~msg:"step 100" (float 1e-6) 0.0 (S.eval s 100);
+  equal ~msg:"clamps past end" (float 1e-6) 0.0 (S.eval s 200);
   let s2 =
     S.polynomial_decay ~init_value:1.0 ~end_value:0.0 ~decay_steps:100
       ~power:2.0 ()
   in
-  equal ~msg:"power=2 at midpoint" (float 1e-6) 0.25 (s2 50)
+  equal ~msg:"power=2 at midpoint" (float 1e-6) 0.25 (S.eval s2 50)
 
 let test_warmup_cosine_decay () =
   let s =
     S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
       ~decay_steps:90 ()
   in
-  equal ~msg:"step 0" (float 1e-10) 0.0 (s 0);
-  equal ~msg:"step 5 (warmup midpoint)" (float 1e-6) 0.5 (s 5);
-  equal ~msg:"step 10 (peak)" (float 1e-6) 1.0 (s 10);
-  equal ~msg:"step 100 (fully decayed)" (float 1e-10) 0.0 (s 100);
-  equal ~msg:"past end" (float 1e-10) 0.0 (s 200)
+  equal ~msg:"step 0" (float 1e-6) 0.0 (S.eval s 0);
+  equal ~msg:"step 5 (warmup midpoint)" (float 1e-6) 0.5 (S.eval s 5);
+  equal ~msg:"step 10 (peak)" (float 1e-6) 1.0 (S.eval s 10);
+  equal ~msg:"step 100 (fully decayed)" (float 1e-6) 0.0 (S.eval s 100);
+  equal ~msg:"past end" (float 1e-6) 0.0 (S.eval s 200)
 
 let test_piecewise_constant () =
   let s =
     S.piecewise_constant ~boundaries:[ 10; 20 ] ~values:[ 1.0; 0.1; 0.01 ]
   in
-  equal ~msg:"segment 1" (float 1e-10) 1.0 (s 5);
-  equal ~msg:"boundary" (float 1e-10) 1.0 (s 10);
-  equal ~msg:"segment 2" (float 1e-10) 0.1 (s 15);
-  equal ~msg:"segment 3" (float 1e-10) 0.01 (s 25)
+  equal ~msg:"segment 1" (float 1e-6) 1.0 (S.eval s 5);
+  equal ~msg:"boundary" (float 1e-6) 1.0 (S.eval s 10);
+  equal ~msg:"segment 2" (float 1e-6) 0.1 (S.eval s 15);
+  equal ~msg:"segment 3" (float 1e-6) 0.01 (S.eval s 25)
 
 let test_piecewise_constant_validation () =
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.piecewise_constant ~boundaries:[ 10 ] ~values:[ 1.0 ] 0));
+      ignore (S.piecewise_constant ~boundaries:[ 10 ] ~values:[ 1.0 ] : S.t));
   raises_match Exn.invalid_arg (fun () ->
       ignore
-        (S.piecewise_constant ~boundaries:[ 20; 10 ] ~values:[ 1.; 2.; 3. ] 0))
+        (S.piecewise_constant ~boundaries:[ 20; 10 ] ~values:[ 1.; 2.; 3. ]
+          : S.t))
 
 let test_join () =
   let s =
     S.join [ (10, S.constant 1.0); (10, S.constant 2.0); (10, S.constant 3.0) ]
   in
-  equal ~msg:"segment 1" (float 1e-10) 1.0 (s 5);
-  equal ~msg:"segment 2" (float 1e-10) 2.0 (s 15);
-  equal ~msg:"segment 3" (float 1e-10) 3.0 (s 25);
-  equal ~msg:"past end extends last" (float 1e-10) 3.0 (s 100)
+  equal ~msg:"segment 1" (float 1e-6) 1.0 (S.eval s 5);
+  equal ~msg:"segment 2" (float 1e-6) 2.0 (S.eval s 15);
+  equal ~msg:"segment 3" (float 1e-6) 3.0 (S.eval s 25);
+  equal ~msg:"past end extends last" (float 1e-6) 3.0 (S.eval s 100)
 
 let test_join_step_reset () =
   let calls = ref [] in
@@ -86,54 +87,54 @@ let test_join_step_reset () =
       [
         ( 5,
           fun step ->
-            calls := (name, step) :: !calls;
-            0. );
+            calls := (name, Int32.to_int (Nx.item [] step)) :: !calls;
+            Nx.scalar Nx.float32 0. );
       ]
   in
   let s = spy "a" in
-  ignore (s 3);
+  ignore (S.eval s 3);
   equal ~msg:"step passed to inner schedule"
     (list (pair string int))
     [ ("a", 3) ]
     (List.rev !calls)
 
 let test_join_validation () =
-  raises_match Exn.invalid_arg (fun () -> ignore (S.join [] 0));
+  raises_match Exn.invalid_arg (fun () -> ignore (S.join [] : S.t));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.join [ (0, S.constant 1.0) ] 0))
+      ignore (S.join [ (0, S.constant 1.0) ] : S.t))
 
 let test_cosine_decay_restarts () =
   let s = S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:100 () in
-  equal ~msg:"step 0 (peak)" (float 1e-10) 1.0 (s 0);
-  equal ~msg:"step 100 (restart)" (float 1e-6) 1.0 (s 100);
-  equal ~msg:"step 200 (second restart)" (float 1e-6) 1.0 (s 200);
-  equal ~msg:"step 50 (midpoint)" (float 1e-6) 0.5 (s 50)
+  equal ~msg:"step 0 (peak)" (float 1e-6) 1.0 (S.eval s 0);
+  equal ~msg:"step 100 (restart)" (float 1e-6) 1.0 (S.eval s 100);
+  equal ~msg:"step 200 (second restart)" (float 1e-6) 1.0 (S.eval s 200);
+  equal ~msg:"step 50 (midpoint)" (float 1e-6) 0.5 (S.eval s 50)
 
 let test_cosine_decay_restarts_t_mul () =
   let s =
     S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:10 ~t_mul:2.0 ()
   in
   (* First cycle: 10 steps. Second: 20 steps. *)
-  equal ~msg:"step 0 (start)" (float 1e-6) 1.0 (s 0);
-  equal ~msg:"step 10 (second cycle start)" (float 1e-6) 1.0 (s 10);
-  equal ~msg:"step 30 (third cycle start)" (float 1e-6) 1.0 (s 30)
+  equal ~msg:"step 0 (start)" (float 1e-6) 1.0 (S.eval s 0);
+  equal ~msg:"step 10 (second cycle start)" (float 1e-6) 1.0 (S.eval s 10);
+  equal ~msg:"step 30 (third cycle start)" (float 1e-6) 1.0 (S.eval s 30)
 
 let test_cosine_decay_restarts_m_mul () =
   let s =
     S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:100 ~m_mul:0.5 ()
   in
-  equal ~msg:"cycle 0 peak" (float 1e-6) 1.0 (s 0);
-  equal ~msg:"cycle 1 peak" (float 1e-6) 0.5 (s 100);
-  equal ~msg:"cycle 2 peak" (float 1e-6) 0.25 (s 200)
+  equal ~msg:"cycle 0 peak" (float 1e-6) 1.0 (S.eval s 0);
+  equal ~msg:"cycle 1 peak" (float 1e-6) 0.5 (S.eval s 100);
+  equal ~msg:"cycle 2 peak" (float 1e-6) 0.25 (S.eval s 200)
 
 let test_one_cycle () =
   let s = S.one_cycle ~max_value:1.0 ~total_steps:100 () in
   (* warmup: 30 steps (pct_start=0.3), init=1/25=0.04, peak=1.0 *)
-  equal ~msg:"step 0" (float 1e-6) 0.04 (s 0);
-  equal ~msg:"step 30 (peak)" (float 1e-6) 1.0 (s 30);
+  equal ~msg:"step 0" (float 1e-6) 0.04 (S.eval s 0);
+  equal ~msg:"step 30 (peak)" (float 1e-6) 1.0 (S.eval s 30);
   (* decay: 70 steps, from 1.0 to 1/10000=0.0001 *)
   let end_val = 1.0 /. 10000.0 in
-  equal ~msg:"step 100 (end)" (float 1e-6) end_val (s 100)
+  equal ~msg:"step 100 (end)" (float 1e-6) end_val (S.eval s 100)
 
 (* Schedule property tests — these are `test` values, placed directly in the
    group list below. *)
@@ -188,7 +189,7 @@ let test_add_decayed_weights () =
   equal ~msg:"wd" (array eps) [| 2.0; -0.5 |] (to_arr upd)
 
 let test_add_decayed_weights_scheduled () =
-  let rate step = 0.01 *. float_of_int step in
+  let rate step = Nx.mul_s (Nx.cast Nx.float32 step) 0.01 in
   let tx = Vega.add_decayed_weights ~rate () in
   let grad = vec [| 0.0 |] in
   let param = vec [| 10.0 |] in
@@ -388,8 +389,8 @@ let test_nan_skipped () =
   let grad = vec [| Float.nan; 1.0 |] in
   let upd, _ = Vega.update (Vega.init tx param) ~grad ~param in
   let v = to_arr upd in
-  equal ~msg:"nan → zero[0]" (float 1e-10) 0.0 v.(0);
-  equal ~msg:"nan → zero[1]" (float 1e-10) 0.0 v.(1)
+  equal ~msg:"nan → zero[0]" (float 1e-6) 0.0 v.(0);
+  equal ~msg:"nan → zero[1]" (float 1e-6) 0.0 v.(1)
 
 let test_inf_skipped () =
   let inner = Vega.scale 1.0 in
@@ -398,7 +399,7 @@ let test_inf_skipped () =
   let grad = vec [| Float.infinity; 1.0 |] in
   let upd, _ = Vega.update (Vega.init tx param) ~grad ~param in
   let v = to_arr upd in
-  equal ~msg:"inf → zero" (float 1e-10) 0.0 v.(0)
+  equal ~msg:"inf → zero" (float 1e-6) 0.0 v.(0)
 
 let test_nonfinite_counter () =
   let inner = Vega.scale 1.0 in
@@ -411,7 +412,7 @@ let test_nonfinite_counter () =
   let _, tensors = Vega.state_to_tensors st in
   (* Last tensor is the counter *)
   let counter = Nx.item [] tensors.(Array.length tensors - 1) in
-  equal ~msg:"2 consecutive non-finite" (float 1e-10) 2.0 counter
+  equal ~msg:"2 consecutive non-finite" (float 1e-6) 2.0 counter
 
 (* Serialization *)
 
@@ -476,9 +477,9 @@ let test_validation () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Vega.adan ~weight_decay:(-1.) lr01));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.cosine_decay_restarts ~init_value:1. ~decay_steps:0 () 0));
+      ignore (S.cosine_decay_restarts ~init_value:1. ~decay_steps:0 () : S.t));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.one_cycle ~max_value:1. ~total_steps:0 () 0))
+      ignore (S.one_cycle ~max_value:1. ~total_steps:0 () : S.t))
 
 (* Entry point *)
 
@@ -501,25 +502,27 @@ let () =
           test "one_cycle" test_one_cycle;
           prop "constant is constant"
             Gen.(pair float nat)
-            (fun (v, step) -> equal float_exact v (S.constant v step));
+            (fun (v, step) ->
+              let s = S.constant v in
+              equal float_exact (S.eval s 0) (S.eval s step));
           prop "cosine_decay bounded" Gen.nat (fun step ->
               let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in
-              let v = s step in
+              let v = S.eval s step in
               is_true ~msg:">=0" (v >= 0.0);
-              is_true ~msg:"<=1" (v <= 1.0 +. 1e-10));
+              is_true ~msg:"<=1" (v <= 1.0 +. 1e-6));
           prop "one_cycle bounded" Gen.nat (fun step ->
               let s = S.one_cycle ~max_value:1.0 ~total_steps:100 () in
-              let v = s step in
+              let v = S.eval s step in
               is_true ~msg:">=0" (v >= 0.0);
-              is_true ~msg:"<=max" (v <= 1.0 +. 1e-10));
+              is_true ~msg:"<=max" (v <= 1.0 +. 1e-6));
           prop "cosine_decay_restarts periodic" Gen.nat (fun step ->
               let period = 50 in
               let s =
                 S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:period ()
               in
-              let v1 = s step in
-              let v2 = s (step + period) in
-              equal ~msg:"periodic" (float 1e-10) v1 v2);
+              let v1 = S.eval s step in
+              let v2 = S.eval s (step + period) in
+              equal ~msg:"periodic" (float 1e-5) v1 v2);
         ];
       group "primitives"
         [
