@@ -52,6 +52,17 @@ Behavior changed relative to the reference; each keeps its env override.
   residual serial depth at depth/256 for depths in [16384, 32768). Env still
   overrides.
 
+- **The split's second-stage reduce materializes when its output is small
+  (at most 4096 elements); the reference leaves it free to fuse.** Left
+  free, the sum over the first stage's partials fuses into whatever consumes
+  it, and a consumer whose global range exceeds the stage's output — a
+  broadcast consumer, or an elementwise kernel over a much wider tensor —
+  re-derives the whole divisor-deep partial sum in every thread. On the
+  reproducer above that meant ~102,000 threads each re-reading a [32, 32,
+  245] partials buffer (~100 GB of L2 traffic per launch, 189 ms replay
+  where 18 ms was available). Large outputs keep fusing: a consumer indexed
+  1:1 over them reads each partial once either way.
+
 ## Beam search
 
 Behavior changed relative to the reference, each reviewed with the beam

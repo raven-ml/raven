@@ -1038,7 +1038,9 @@ let split_reduce_tests =
                 let red = U.reduce_axis ~src:param ~op:Ops.Add ~axes:[ 0 ] in
                 wrap_sink red)
           in
-          equal int 2 calls;
+          (* First-stage partials, the materialized small second stage, and
+             the sink's store. *)
+          equal int 3 calls;
           let reduces =
             List.filter (fun u -> op_is Ops.Reduce u) (U.toposort graph)
           in

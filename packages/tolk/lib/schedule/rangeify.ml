@@ -630,6 +630,17 @@ let split_reduceop_rule n =
                 let second =
                   U.reduce_axis ~src:first ~op ~axes:[ second_axis ]
                 in
+                (* Materialize a small second stage too. Left free, it fuses
+                   into whatever consumes it, and a consumer whose global
+                   range exceeds the stage's output re-derives the whole
+                   [divisor]-deep sum per thread — the same fusion pathology
+                   this split exists to prevent, one level down. Large
+                   outputs keep fusing: a consumer indexed 1:1 over them
+                   reads each partial once either way. *)
+                let second =
+                  if prod out_shape <= 4096 then U.contiguous ~src:second ()
+                  else second
+                in
                 Some (U.reshape ~src:second ~shape:(shape_node out_shape)))
        | _ -> None)
   | _ -> None
