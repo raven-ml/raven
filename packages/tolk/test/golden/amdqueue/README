@@ -1,0 +1,134 @@
+PM4/SDMA packet-stream goldens for the AMD queue builders
+=========================================================
+
+Each .expected file is the dword stream a reference (tinygrad clone at
+_tinygrad/, pinned) AMDComputeQueue or AMDCopyQueue accumulates in its
+internal queue (_q) after a single builder-method call, driven with the
+stub device and fixed constants below. No device, memory, bind() or
+_submit() is involved: the builders are pure functions from (device
+config, call arguments) to dwords, and these files pin that function.
+
+The OCaml generate_actual.ml (lands with the port) must construct the same
+two device configs, make the same single call per stream with the same
+constants, and print its queue in the same format.
+
+Format: one dword per line, lowercase %08x, trailing newline, no headers.
+
+Regenerate:
+  uv run python packages/tolk/test/golden/amdqueue/generate_expected.py
+Re-running is byte-identical; output depends only on the pinned clone.
+
+Chip configs
+------------
+Wiring replicates AMDDevice.__init__ (tinygrad/runtime/ops_amd.py); IP
+versions are what the KFD topology reports for each chip, and module
+resolution (import_module / import_asic_regs, support/amd.py) picks the
+same autogen tables the real device would.
+
+gfx1100 (Navi 31):
+  target=(11,0,0)  xccs=1
+  soc=soc_11  pm4=pm4_nv  ip offsets=navi_offsets
+  gc=AMDIP('gc',(11,0,0))  nbio=AMDIP('nbio',(4,3,0))  sdma=sdma_6_0_0
+  max_copy_size=0x40000000 (sdma major >= 5)
+
+gfx942 (MI300, 8 XCCs -> exercises pred_exec and the soc15/gfx9 branches):
+  target=(9,4,2)  xccs=8
+  soc=soc_9  pm4=pm4_soc15  ip offsets=vega_offsets
+  gc=AMDIP('gc',(9,4,3))  nbio=AMDIP('nbio',(7,9,0))  sdma ip=(4,4,2) -> sdma_4_0_0
+  max_copy_size=0x400000 (sdma major 4)
+  (gfx_target_version 90403 maps to 90402, hence target (9,4,2) with gc 9.4.3)
+
+The stub device answers is_am() = False (KFD-style device): that is what
+routes timeline signals down the queue-event mailbox path.
+
+Fixed fake constants (mirror these exactly)
+-------------------------------------------
+  PROG_ADDR             0x100000    program prog_addr (256-byte aligned)
+  SCRATCH_VA            0x200000    dev scratch buffer address
+  SCRATCH_SIZE          0x80000     dev scratch buffer size
+  KERNARG_VA            0x300000    kernarg buffer address
+  SIGNAL_VALUE_ADDR     0x400000    signal value address
+  SIGNAL_TIMESTAMP_ADDR 0x400008    signal timestamp address
+  MAILBOX_PTR           0x500000    dev queue_event_mailbox_ptr
+  EVENT_ID              0x2a        dev queue_event.event_id
+  WRITE_VA              0x600000    write32/write64 target buffer
+  POLL_VA               0x700000    poll_bit target buffer
+  COPY_SRC_VA           0x10000000
+  COPY_DST_VA           0x20000000
+  TMPRING_SIZE          0x00200008  dev tmpring_size, written verbatim
+  RSRC1/RSRC2/RSRC3     0x1111 / 0x2222 / 0x3333
+  WAVE32                true        (cs_w32_en; only affects gfx11)
+  SIGNAL_VALUE          0x42
+  WAIT_VALUE            0x42
+  WRITE32_VALUE         0x12345678
+  WRITE64_VALUE         0x1122334455667788
+  POLL_MASK             0x1         poll_bit called with val = mask
+  GLOBAL_SIZE           (4,3,2)
+  LOCAL_SIZE            (8,4,1)
+  COPY_SMALL            0x1000
+  COPY_LARGE            2*max_copy_size + 0x400  (per chip; 3 chunks)
+
+Streams and the method each one pins
+------------------------------------
+Compute (AMDComputeQueue), per chip:
+  exec_<chip>             exec(prog, args, GLOBAL_SIZE, LOCAL_SIZE),
+                          prog without private-segment sgpr, no dispatch ptr
+  exec_scratch_<chip>     same with enable_private_segment_sgpr=1
+                          (gfx1100 only, see Skipped)
+  signal_<chip>           signal(sig, SIGNAL_VALUE), plain signal
+  signal_timeline_<chip>  signal(sig, SIGNAL_VALUE), timeline signal owned
+                          by a non-AM device -> extra mailbox release_mem
+  wait_<chip>             wait(sig, WAIT_VALUE)
+  timestamp_<chip>        timestamp(sig)
+  write32_<chip>          write(buf, WRITE32_VALUE)
+  write64_<chip>          write(buf, WRITE64_VALUE, b64=True)
+  poll_bit_<chip>         poll_bit(buf, POLL_MASK, POLL_MASK)
+  memory_barrier_<chip>   memory_barrier()
+
+SDMA (AMDCopyQueue with the chip's max_copy_size), per chip:
+  sdma_copy_small_<chip>       copy(dst, src, COPY_SMALL) -> 1 packet
+  sdma_copy_large_<chip>       copy(dst, src, COPY_LARGE) -> 3 packets
+                               (2 full max_copy_size chunks + 0x400)
+  sdma_signal_<chip>           signal, plain -> single fence
+  sdma_signal_timeline_<chip>  signal, timeline -> fence + mailbox fence + trap
+  sdma_wait_<chip>             wait
+  sdma_timestamp_<chip>        timestamp
+  sdma_write32_<chip>          write 32-bit
+  sdma_write64_<chip>          write 64-bit
+
+Purity contract (what the builders read; the port must need no more)
+--------------------------------------------------------------------
+Device fields: target, xccs, soc, pm4, gc, nbio (compute); sdma, target
+(copy); sqtt_enabled (exec; false here), tmpring_size and scratch
+{va_addr,size} (exec), is_am() plus queue_event_mailbox_ptr and
+queue_event.event_id (signal, timeline path only).
+Program fields (exec): prog_addr, rsrc1, rsrc2, rsrc3, wave32,
+enable_private_segment_sgpr, enable_dispatch_ptr (0 here), dev backref.
+kernargs_segment_size is read only on the dispatch-ptr path (not taken).
+Args state (exec): buf.va_addr, bind_data (empty: no symbolic args).
+Signal fields: value_addr, timestamp_addr, owner, is_timeline.
+Buffers: va_addr only (size unread by the emitting paths).
+Env: WAVES_PER_SH unset -> COMPUTE_RESOURCE_LIMITS waves_per_sh=0.
+
+Skipped streams
+---------------
+exec_scratch_gfx942: exec asserts xccs == 1 when the private-segment sgpr
+  is enabled ("Only architected flat scratch is supported on multi-xcc"),
+  so no such stream exists for an 8-xcc chip.
+AQL exec (gfx942): a real 8-xcc device defaults to AMDComputeAQLQueue,
+  whose exec appends an hsa dispatch struct (not dwords) and writes
+  through live buffer views; that is device policy, not the PM4 builder.
+  These goldens pin the plain AMDComputeQueue PM4 builder on both chips.
+enable_dispatch_ptr=1 exec: writes an hsa dispatch packet through a
+  memory view of the kernarg buffer; not producible as a pure dword
+  stream (and not needed by the port's v1).
+
+Worked example (exec_gfx1100, first packet)
+-------------------------------------------
+exec starts with acquire_mem(gli=0, gl2=0). On gfx11 that is
+pkt3(PACKET3_ACQUIRE_MEM=0x58, 0, sz_lo, sz_hi, addr_lo, addr_hi, 0, gcr)
+with 7 payload dwords, so the type-3 header is
+(3<<30)|(6<<16)|(0x58<<8) = c0065800 (file line 1); sz = 2^64-1 gives
+ffffffff ffffffff, addr 0 gives 00000000 00000000, and the GCR word with
+glm=glk=glv=gl1=1, gli=gl2=0 is GLM_WB|GLM_INV|GLK_WB|GLK_INV|GLV_INV|
+GL1_INV = 000003f0 (file line 8).
