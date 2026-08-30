@@ -107,3 +107,9 @@
  (modules test_nv_tables)
  (package tolk)
  (libraries tolk.nv windtrap))
+
+(tests
+ (names test_runtime_nv)
+ (modules test_runtime_nv)
+ (package tolk)
+ (libraries tolk tolk.hcq tolk.nv windtrap))
