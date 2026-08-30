@@ -1,5 +1,9 @@
 (* Typed access to the generated AMD hardware tables. *)
 
+module Am_defs = Amd_am_defs
+module Smu_defs = Amd_smu_defs
+module Fw_defs = Amd_fw_defs
+
 module Reg = struct
   type t = {
     name : string;
@@ -182,6 +186,56 @@ let sdma ~version : (module Sdma) =
       let v0, v1, v2 = version in
       invalid_arg
         (Printf.sprintf "no sdma packet format for version %d.%d.%d" v0 v1 v2)
+
+module type Smu = sig
+  val ppsmc_msg_setdriverdramaddrhigh : int
+  val ppsmc_msg_setdriverdramaddrlow : int
+  val ppsmc_msg_enableallsmufeatures : int
+  val ppsmc_msg_getsmuversion : int
+  val ppsmc_msg_mode1reset : int option
+  val ppsmc_msg_gfxdriverreset : int option
+  val ppsmc_msg_transfertablesmu2dram : int option
+  val ppsmc_msg_getmetricstable : int option
+  val ppsmc_msg_getdpmfreqbyindex : int
+  val ppsmc_msg_setsoftminbyfreq : int
+  val ppsmc_msg_setsoftmaxbyfreq : int
+  val ppsmc_msg_setpptlimit : int
+  val ppsmc_msg_queryvalidmcacount : int option
+  val ppsmc_msg_queryvalidmcacecount : int option
+  val ppsmc_msg_mcabankdumpdw : int option
+  val ppsmc_msg_mcabankcedumpdw : int option
+  val ppclk_uclk : int
+  val ppclk_fclk : int
+  val ppclk_socclk : int
+  val ppclk_gfxclk : int option
+end
+
+let smu ~version : (module Smu) =
+  (* 13.0.7 firmware speaks the 13.0.0 message interface, not 13.0.6's. *)
+  let version = if version = (13, 0, 7) then (13, 0, 0) else version in
+  let resolved =
+    List.fold_left
+      (fun best (v, m) ->
+        if
+          Ip.major v = Ip.major version
+          && v <= version
+          && match best with Some (bv, _) -> v > bv | None -> true
+        then Some (v, m)
+        else best)
+      None
+      [
+        ((13, 0, 0), (module Amd_smu_defs.V13_0_0 : Smu));
+        ((13, 0, 6), (module Amd_smu_defs.V13_0_6));
+        ((13, 0, 12), (module Amd_smu_defs.V13_0_12));
+        ((14, 0, 2), (module Amd_smu_defs.V14_0_2));
+      ]
+  in
+  match resolved with
+  | Some (_, m) -> m
+  | None ->
+      let v0, v1, v2 = version in
+      invalid_arg
+        (Printf.sprintf "no smu message table for version %d.%d.%d" v0 v1 v2)
 
 let tmpring_field name (shift, width) value =
   if value < 0 || value lsr width <> 0 then

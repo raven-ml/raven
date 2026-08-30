@@ -15,6 +15,16 @@
     [Amd_pm4_defs.Soc15] or [Amd_pm4_defs.Nv] inside code already branched on
     the generation. *)
 
+module Am_defs : module type of Amd_am_defs
+(** Raw driver-less-tier data: discovery and firmware layouts, PSP protocol
+    constants, page-table flags, interrupt tables, queue descriptors. *)
+
+module Smu_defs : module type of Amd_smu_defs
+(** Raw SMU message tables, per firmware interface version. *)
+
+module Fw_defs : module type of Amd_fw_defs
+(** Firmware file digests. *)
+
 module Reg : sig
   type t = {
     name : string;
@@ -45,8 +55,9 @@ module Ip : sig
 
   val create : name:string -> version:int * int * int -> bases:int array -> t
   (** [create ~name ~version ~bases] resolves the register family for the IP
-      block [name] (["gc"], ["nbio"], or ["nbif"]): the greatest available
-      family with the same major version that is [<= version]. [bases] are the
+      block [name] (["gc"], ["nbio"], ["nbif"], ["mmhub"], ["mp"], ["hdp"],
+      ["osssys"], or ["sdma"]): the greatest available family with the same
+      major version that is [<= version]. [bases] are the
       block's address-space segment bases for die instance 0; each register's
       [Reg.addr] is [bases.(segment) + offset]. Raises [Invalid_argument] when
       no family matches. *)
@@ -140,6 +151,39 @@ val sdma : version:int * int * int -> (module Sdma)
     [Amd_sdma_defs.V4_0_0], majors 6 and above select [Amd_sdma_defs.V6_0_0].
     Raises [Invalid_argument] for other majors. The 6.0.0-only fence-header
     mtype encoder lives in [Amd_sdma_defs.V6_0_0] outside this signature. *)
+
+(** The SMU message surface shared by all firmware interface versions.
+    Messages absent from some versions are options; a caller already branched
+    on the management-processor version can rely on the messages that version
+    provides. *)
+module type Smu = sig
+  val ppsmc_msg_setdriverdramaddrhigh : int
+  val ppsmc_msg_setdriverdramaddrlow : int
+  val ppsmc_msg_enableallsmufeatures : int
+  val ppsmc_msg_getsmuversion : int
+  val ppsmc_msg_mode1reset : int option
+  val ppsmc_msg_gfxdriverreset : int option
+  val ppsmc_msg_transfertablesmu2dram : int option
+  val ppsmc_msg_getmetricstable : int option
+  val ppsmc_msg_getdpmfreqbyindex : int
+  val ppsmc_msg_setsoftminbyfreq : int
+  val ppsmc_msg_setsoftmaxbyfreq : int
+  val ppsmc_msg_setpptlimit : int
+  val ppsmc_msg_queryvalidmcacount : int option
+  val ppsmc_msg_queryvalidmcacecount : int option
+  val ppsmc_msg_mcabankdumpdw : int option
+  val ppsmc_msg_mcabankcedumpdw : int option
+  val ppclk_uclk : int
+  val ppclk_fclk : int
+  val ppclk_socclk : int
+  val ppclk_gfxclk : int option
+end
+
+val smu : version:int * int * int -> (module Smu)
+(** [smu ~version] is the SMU message table for the discovered management
+    processor version: the greatest available interface version with the same
+    major that is [<= version], except that 13.0.7 uses the 13.0.0 interface.
+    Raises [Invalid_argument] when no interface version matches. *)
 
 val tmpring_size : target_major:int -> waves:int -> wavesize:int -> int
 (** [tmpring_size ~target_major ~waves ~wavesize] encodes the scratch-ring
