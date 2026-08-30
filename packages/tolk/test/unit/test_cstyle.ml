@@ -1269,6 +1269,25 @@ let () =
               (render (Cstyle.cuda Gpu_target.SM80) (make_launch_bounds ()))
               "__launch_bounds__");
         ];
+      group "CUDA Device Name"
+        [
+          test "device override changes the name, not the source" (fun () ->
+            let cuda = Cstyle.cuda Gpu_target.SM80 in
+            let nv = Cstyle.cuda ~device:"NV" Gpu_target.SM80 in
+            equal ~msg:"default device" text "CUDA" (Renderer.device cuda);
+            equal ~msg:"overridden device" text "NV" (Renderer.device nv);
+            let wmma =
+              make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
+                ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
+                ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
+                ~a_count:8 ~b_count:4 ~c_count:4 ()
+            in
+            List.iter
+              (fun prog ->
+                equal ~msg:"identical source" text (render cuda prog)
+                  (render nv prog))
+              [ f32_1; make_launch_bounds (); make_shared_memory (); wmma ]);
+        ];
       group "uint spelling"
         [
           test "cuda declares uint in the prefix" (fun () ->

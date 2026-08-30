@@ -2805,14 +2805,14 @@ let metal arch =
     ~supports_dtype:(supports_metal_dtype arch)
     ~render:(render metal_language) ()
 
-let cuda arch =
+let cuda ?(device = "CUDA") arch =
   let tensor_cores =
     match arch with
     | Gpu_target.SM75 -> Tc.cuda_sm75
     | Gpu_target.SM80 -> Tc.cuda_sm80
     | Gpu_target.SM89 | Gpu_target.SM90 -> Tc.cuda_sm89
   in
-  Renderer.make ~name:"cuda" ~device:"CUDA" ~has_local:true
+  Renderer.make ~name:"cuda" ~device ~has_local:true
     ~has_shared:true
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~tensor_cores

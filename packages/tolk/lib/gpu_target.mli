@@ -38,6 +38,11 @@ val host_cpu : unit -> cpu
 
     Raises [Invalid_argument] if the host architecture is unsupported. *)
 
+val cuda_of_sm : int -> cuda option
+(** [cuda_of_sm sm] is the source-generation tier for compute capability [sm],
+    given as major*10+minor (e.g. [89] for sm_89). Capabilities newer than the
+    highest supported tier map to that tier. Returns [None] below [75]. *)
+
 val cuda_of_env : unit -> cuda option
 (** [cuda_of_env ()] resolves [CUDA_ARCH] or [CUDA_SM] to the nearest supported
     CUDA SM tier. Returns [None] when no supported tier is configured. *)

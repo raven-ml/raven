@@ -96,22 +96,15 @@ module Ffi = struct
     = "caml_tolk_cuda_graph_launch"
 
   external graph_destroy : nativeint -> unit = "caml_tolk_cuda_graph_destroy"
-
-  external nvrtc_version : unit -> int * int = "caml_tolk_cuda_nvrtc_version"
-
-  external nvrtc_compile : string -> string array -> (bytes, string) result
-    = "caml_tolk_cuda_nvrtc_compile"
 end
 
-(* Compute capabilities newer than the highest supported source-generation
-   tier fall back to that tier; the driver JIT-compiles its PTX for the actual
-   GPU. Extend both functions when a new tier is added. *)
+(* Compute capabilities outside the supported source-generation tiers fall
+   back to the nearest tier; the driver JIT-compiles its PTX for the actual
+   GPU. Extend [arch_of_target] when a new tier is added. *)
 let target_of_capability ~major ~minor =
-  match (major * 10) + minor with
-  | v when v >= 90 -> Gpu_target.SM90
-  | v when v >= 89 -> Gpu_target.SM89
-  | v when v >= 80 -> Gpu_target.SM80
-  | _ -> Gpu_target.SM75
+  match Gpu_target.cuda_of_sm ((major * 10) + minor) with
+  | Some target -> target
+  | None -> Gpu_target.SM75
 
 let arch_of_target = function
   | Gpu_target.SM75 -> "sm_75"
@@ -240,27 +233,6 @@ module Allocator = struct
     Device.Allocator.Pack allocator
 end
 
-module Compiler_nvrtc = struct
-  let compile_options arch =
-    let includes =
-      match Helpers.getenv_str "CUDA_PATH" "" with
-      | "" -> [ "-I/usr/local/cuda/include"; "-I/usr/include"; "-I/opt/cuda/include" ]
-      | cuda_path -> [ "-I" ^ cuda_path ^ "/include" ]
-    in
-    let options = ("--gpu-architecture=" ^ arch) :: includes in
-    let major, minor = Ffi.nvrtc_version () in
-    if (major, minor) >= (12, 4) then options @ [ "--minimal" ] else options
-
-  let create arch =
-    let options = Array.of_list (compile_options arch) in
-    let compile src =
-      match Ffi.nvrtc_compile src options with
-      | Ok ptx -> ptx
-      | Error msg -> raise (Compiler.Compile_error msg)
-    in
-    Compiler.make ~name:"CUDA" ~cachekey:("compile_cuda_" ^ arch) ~compile ()
-end
-
 module Program = struct
   let runtime state entry_name lib ~runtimevars:_ =
     Ffi.ctx_set_current state.State.context;
@@ -327,7 +299,10 @@ let create name =
   in
   let state = State.create device_id in
   let allocator = Allocator.create state in
-  let compiler = Compiler_nvrtc.create (arch_of_target state.State.target) in
+  let compiler =
+    Tolk_nvrtc.Compiler_nvrtc.create ~cache_key:"cuda"
+      (arch_of_target state.State.target)
+  in
   let renderer =
     Renderer.with_compiler compiler (Cstyle.cuda state.State.target)
   in

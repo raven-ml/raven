@@ -46,6 +46,13 @@ let parse_cuda_arch arch =
   if Buffer.length buf = 0 then None
   else int_of_string_opt (Buffer.contents buf)
 
+let cuda_of_sm sm =
+  if sm >= 90 then Some SM90
+  else if sm >= 89 then Some SM89
+  else if sm >= 80 then Some SM80
+  else if sm >= 75 then Some SM75
+  else None
+
 let cuda_of_env () =
   let raw =
     match Sys.getenv_opt "CUDA_ARCH" with
@@ -56,11 +63,8 @@ let cuda_of_env () =
         | _ -> "")
   in
   match parse_cuda_arch raw with
-  | Some ver when ver >= 90 -> Some SM90
-  | Some ver when ver >= 89 -> Some SM89
-  | Some ver when ver >= 80 -> Some SM80
-  | Some ver when ver >= 75 -> Some SM75
-  | _ -> None
+  | Some ver -> cuda_of_sm ver
+  | None -> None
 
 let parse_amd_arch arch =
   let arch = String.trim arch |> String.lowercase_ascii in

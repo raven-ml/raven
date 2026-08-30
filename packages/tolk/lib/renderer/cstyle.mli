@@ -119,7 +119,7 @@ val metal : Gpu_target.metal -> Renderer.t
 
 (** {1:cuda CUDA} *)
 
-val cuda : Gpu_target.cuda -> Renderer.t
+val cuda : ?device:string -> Gpu_target.cuda -> Renderer.t
 (** [cuda arch] is a CUDA renderer for NVIDIA GPUs.
 
     Generates CUDA C code using [blockIdx]/[threadIdx] for thread indexing. Uses
@@ -127,7 +127,9 @@ val cuda : Gpu_target.cuda -> Renderer.t
     known. Half-precision intrinsics ([hexp2], [hlog2], [hsqrt], etc.) are used
     for float16 and bfloat16 transcendentals.
 
-    Device is ["CUDA"]. Shared memory limit is 48KB. Global grid max is
+    Device is [device] (default ["CUDA"]): the identifier a backend sharing
+    this renderer reports to codegen passes and caches. It does not affect the
+    emitted source. Shared memory limit is 48KB. Global grid max is
     \[2{^ 31}-1, 65535, 65535\]. Local block max is \[1024, 1024, 64\].
 
     [arch] selects tensor core and dtype capabilities:
