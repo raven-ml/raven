@@ -243,6 +243,62 @@ let test_triangular_solve_batched () =
           a b))
     x
 
+(* Wide right-hand sides take the blocked path: rows are partitioned into
+   32-row blocks, each solved with one GEMM against the rows solved so far
+   after its diagonal block has been inverted once. This size spans several
+   blocks plus a partial trailing block; check the residual, which is
+   independent of the solver. *)
+let test_triangular_solve_blocked () =
+  let n = 80 in
+  let a =
+    Nx.init Nx.float64 [| n; n |] (fun idx ->
+        let i, j = idx.(0), idx.(1) in
+        if i > j then
+          Float.of_int ((((i * 37) + (j * 11)) mod 13) - 6) /. 8.0
+        else if i = j then 2.0
+        else 0.0)
+  in
+  let b =
+    Nx.init Nx.float64 [| n; n |] (fun idx ->
+        Float.of_int ((((idx.(0) * 5) + idx.(1)) mod 7) - 3))
+  in
+  let resid =
+    Rune.jit'
+      (fun m ->
+        let x =
+          Nx.triangular_solve ~upper:false ~transpose:false ~unit_diag:false m
+            b
+        in
+        Nx.max (Nx.abs (Nx.sub (Nx.matmul m x) b)))
+      a
+  in
+  check_close ~tol:1e-9 ~msg:"blocked triangular solve residual" [| 0.0 |]
+    (to_arr resid);
+  (* The flags compose with blocking. ~upper reads the strict upper triangle
+     of a matrix whose stored diagonal is garbage (never read under
+     ~unit_diag), and ~transpose solves the transposed system — so the
+     effective system is [I + strict_upper(m)]ᵀ. *)
+  let au =
+    Nx.add
+      (Nx.mul_s (Nx.triu ~k:1 (Nx.transpose ~axes:[ 1; 0 ] a)) 0.125)
+      (Nx.mul_s (Nx.eye Nx.float64 n) 7.0)
+  in
+  let resid_flags =
+    Rune.jit'
+      (fun m ->
+        let x =
+          Nx.triangular_solve ~upper:true ~transpose:true ~unit_diag:true m b
+        in
+        let e =
+          Nx.add (Nx.eye Nx.float64 n)
+            (Nx.transpose ~axes:[ 1; 0 ] (Nx.triu ~k:1 m))
+        in
+        Nx.max (Nx.abs (Nx.sub (Nx.matmul e x) b)))
+      au
+  in
+  check_close ~tol:1e-9 ~msg:"blocked flags residual" [| 0.0 |]
+    (to_arr resid_flags)
+
 (* Differentiating a QR-using loss inside jit: the forward factorization
    compiles via [Linalg_graph], and the reverse pullback (recorded on the tape
    by the nested grad) traces too — its matmuls and triangular solve are
@@ -1318,6 +1374,8 @@ let tests =
         test "triangular solve takes a vector right-hand side"
           test_triangular_solve_vector_rhs;
         test "triangular solve is batched" test_triangular_solve_batched;
+        test "wide right-hand sides take the blocked path"
+          test_triangular_solve_blocked;
         test "a linear solve is the QR + triangular-solve composition"
           test_linear_solve_composition;
         test "the gradient of a QR-using loss compiles"

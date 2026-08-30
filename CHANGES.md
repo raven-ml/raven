@@ -959,10 +959,16 @@ thread.
   no-reflector convention. A linear solve inside jit is the same composition
   written out by hand (`Nx.solve` itself still refuses to trace, because its
   singularity check reads a traced value); a singular system yields infinities
-  rather than an error. Compile time grows linearly in the matrix dimension,
-  and `grad` inside a jitted function now also differentiates through `qr`:
-  the tape pullback's `diag` use read host bytes and refused to trace, so the
-  QR and Cholesky pullbacks (and the Cholesky JVP rule) form the diagonal
+  rather than an error. Wide right-hand sides (nrhs ≥ 32, n > 64) solve
+  block-by-block — 32-row blocks, diagonal blocks inverted once, one GEMM per
+  block against the rows solved so far — instead of unrolling one thin matmul
+  per row, which cuts the compiled solve's O(n²·nrhs) concatenation copying to
+  O(n²·nrhs/32): replay at 256×256 drops ~80× (58 ms to 0.7 ms) and the
+  compiled solve now beats the eager C kernel 3-5× from 128×128 up. Compile
+  time grows linearly in the matrix dimension, and `grad` inside a jitted
+  function now also differentiates through `qr` and `cholesky`: the tape
+  pullbacks' `diag` use read host bytes and refused to trace, so the QR and
+  Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
   terms from the identity instead.
 
 - `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
