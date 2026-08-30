@@ -54,14 +54,13 @@ let swap2 t =
     (List.init rank (fun i ->
          if i = rank - 2 then rank - 1 else if i = rank - 1 then rank - 2 else i))
 
-(* A constant of shape [batch @ [d1; d2]] in [t]'s dtype. *)
-let scalar2 t batch d1 d2 v =
-  F.Creation.full ~buffer:false ~dtype:(F.Tensor.val_dtype t)
-    (batch @ [ d1; d2 ])
+(* A constant of shape [batch @ [d1; d2]] with dtype [dt]. *)
+let scalar2 dt batch d1 d2 v =
+  F.Creation.full ~buffer:false ~dtype:dt (batch @ [ d1; d2 ])
     (F.Tensor.Sfloat v)
 
-let zero1 t batch = scalar2 t batch 1 1 0.0
-let one1 t batch = scalar2 t batch 1 1 1.0
+let zero1 dt batch = scalar2 dt batch 1 1 0.0
+let one1 dt batch = scalar2 dt batch 1 1 1.0
 
 (* Concatenate matrix pieces along the second-to-last axis, dropping empty
    pieces ([cat] of a zero-height piece pads by zero, but there is no need to
@@ -92,7 +91,8 @@ let require_float ~what dt =
 
 let qr ~reduced a =
   let module E = F.Elementwise in
-  require_float ~what:"qr" (F.Tensor.val_dtype a);
+  let dt = F.Tensor.val_dtype a in
+  require_float ~what:"qr" dt;
   let shape = F.Tensor.shape a in
   let rank = List.length shape in
   if rank < 2 then
@@ -101,28 +101,28 @@ let qr ~reduced a =
   let batch = List.filteri (fun i _ -> i < rank - 2) shape in
   let k = Stdlib.min m n in
   let work = ref a in
-  let taus = Array.make k (zero1 a batch) in
+  let taus = Array.make k (zero1 dt batch) in
   for j = 0 to k - 1 do
     let mtail = m - j - 1 in
     let alpha = slice2 !work (Some (j, j + 1)) (Some (j, j + 1)) in
     let tail = slice2 !work (Some (j + 1, m)) (Some (j, j + 1)) in
     let xnorm2 =
-      if mtail = 0 then zero1 a batch
+      if mtail = 0 then zero1 dt batch
       else
-        F.Reduce.sum ~axis:[ -2 ] ~keepdim:true ~dtype:(F.Tensor.val_dtype a)
+        F.Reduce.sum ~axis:[ -2 ] ~keepdim:true ~dtype:dt
           (E.mul tail tail)
     in
     (* beta = -sign(alpha)·‖x‖; a zero tail takes no reflector. *)
-    let has = E.ne xnorm2 (zero1 a batch) in
+    let has = E.ne xnorm2 (zero1 dt batch) in
     let anorm = E.sqrt (E.add (E.mul alpha alpha) xnorm2) in
-    let beta = E.where (E.ge alpha (zero1 a batch)) (E.neg anorm) anorm in
-    let tau = E.where has (E.div (E.sub beta alpha) beta) (zero1 a batch) in
+    let beta = E.where (E.ge alpha (zero1 dt batch)) (E.neg anorm) anorm in
+    let tau = E.where has (E.div (E.sub beta alpha) beta) (zero1 dt batch) in
     (* The reflector vector: 1 at the pivot, the scaled tail below, exactly 0
        throughout when no reflector is taken (so the trailing update is a no-op
        rather than a nan source when [alpha - beta] vanishes). *)
     let vtail =
       if mtail = 0 then tail
-      else E.where has (E.div tail (E.sub alpha beta)) (zero1 a batch)
+      else E.where has (E.div tail (E.sub alpha beta)) (zero1 dt batch)
     in
     taus.(j) <- tau;
     (* Overwrite column j: the rows above the pivot are R's and stay, beta lands
@@ -145,8 +145,8 @@ let qr ~reduced a =
         let trailing = slice2 !work None (Some (j + 1, n)) in
         let v =
           cat2
-            ((if j > 0 then [ scalar2 a batch j 1 0.0 ] else [])
-            @ [ one1 a batch ]
+            ((if j > 0 then [ scalar2 dt batch j 1 0.0 ] else [])
+            @ [ one1 dt batch ]
             @ if mtail > 0 then [ vtail ] else [])
         in
         let proj = F.Op.matmul (swap2 v) trailing in
@@ -167,14 +167,14 @@ let qr ~reduced a =
   let q =
     ref
       (F.Movement.expand
-         (F.Op.eye ~m:nq ~dtype:(F.Tensor.val_dtype a) m)
+         (F.Op.eye ~m:nq ~dtype:dt m)
          (batch @ [ m; nq ]))
   in
   for j = k - 1 downto 0 do
     let v =
       cat2
-        ((if j > 0 then [ scalar2 a batch j 1 0.0 ] else [])
-        @ [ one1 a batch ]
+        ((if j > 0 then [ scalar2 dt batch j 1 0.0 ] else [])
+        @ [ one1 dt batch ]
         @
         if m - j - 1 > 0 then
           [ slice2 !work (Some (j + 1, m)) (Some (j, j + 1)) ]
@@ -187,18 +187,62 @@ let qr ~reduced a =
 
 (* {1 Triangular solve}
 
-   Forward substitution over a lower triangular matrix, unrolled over the rows:
-   row i subtracts the accumulated contributions [L[i, :i]·x[:i]] (a [1×i] by
-   [i×nrhs] matmul) from the right-hand side and divides by the diagonal. The
-   four flag combinations normalize to this one loop — the operand is transposed
-   when [transpose] is set, and the whole system (coefficient matrix, right-hand
-   side, and result, each on their row axis) is flipped when the triangle points
-   up. Vector right-hand sides ride through the loop with a trailing unit axis
-   and are squeezed at the end. *)
+   Forward substitution over a lower triangular matrix. All four flag
+   combinations normalize to one solve — the operand is transposed when
+   [transpose] is set, and the whole system (coefficient matrix, right-hand
+   side, and result, each on their row axis) is flipped when the effective
+   triangle points up. Vector right-hand sides ride through with a trailing
+   unit axis and are squeezed at the end.
+
+   Two kernels for the same substitution:
+
+   - Unblocked, one row per step: row [i] subtracts the accumulated
+     contributions [L[i, :i]·x[:i]] (a [1×i] by [i×nrhs] matmul) from the
+     right-hand side and divides by the diagonal. Cheap in kernels — but the
+     running solution is assembled by concatenation, copying O(n²·nrhs)
+     elements over a full solve.
+
+   - Blocked, for wide right-hand sides: rows are partitioned into blocks of
+     [block_rows]. Each block's off-diagonal contribution lands in one GEMM
+     against the rows solved so far, each diagonal block is inverted once
+     (its inverse does not depend on the right-hand side), and a second GEMM
+     solves the block, spliced in with a pad-and-add. The copying drops to
+     O(n²·nrhs / block_rows) and the substitution arithmetic runs as real
+     GEMMs. *)
+
+(* The unblocked kernel over a lower triangular [low] and matrix right-hand
+   side [rhs]; also the diagonal-block solver of the blocked path. *)
+let forward_solve_unblocked ~unit_diag ~dt ~batch low rhs =
+  let module E = F.Elementwise in
+  let sh = F.Tensor.shape low in
+  let n = List.nth sh (List.length sh - 2) in
+  let diag_or_one i =
+    if unit_diag then one1 dt batch
+    else slice2 low (Some (i, i + 1)) (Some (i, i + 1))
+  in
+  let x = ref (E.div (slice2 rhs (Some (0, 1)) None) (diag_or_one 0)) in
+  for i = 1 to n - 1 do
+    let row = slice2 low (Some (i, i + 1)) (Some (0, i)) in
+    let partial = F.Op.matmul row !x in
+    x :=
+      F.Op.cat ~dim:(-2) !x
+        [ E.div
+            (E.sub (slice2 rhs (Some (i, i + 1)) None) partial)
+            (diag_or_one i) ]
+  done;
+  !x
+
+let block_rows = 32
+
+(* Right-hand sides at least this wide take the blocked path; below it the
+   unrolled substitution's smaller kernel count wins (its crossover on the
+   reference machine measured around [nrhs ≈ 3500 / n]). *)
+let block_threshold = 32
 
 let triangular_solve ~upper ~transpose ~unit_diag a b =
   let module E = F.Elementwise in
-  require_float ~what:"triangular_solve" (F.Tensor.val_dtype a);
+  let dt = F.Tensor.val_dtype a in
+  require_float ~what:"triangular_solve" dt;
   let shape = F.Tensor.shape a in
   let rank = List.length shape in
   let n = List.nth shape (rank - 1) in
@@ -215,23 +259,52 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
     in
     let flipped = upper <> transpose in
     let rhs = if flipped then F.Movement.flip bm [ -2 ] else bm in
-    let diag_or_one i =
-      if unit_diag then one1 a batch
-      else slice2 low (Some (i, i + 1)) (Some (i, i + 1))
+    let nrhs = List.nth (F.Tensor.shape bm) (rank - 1) in
+    let x =
+      if nrhs >= block_threshold && n > 2 * block_rows then begin
+        let nblocks = (n + block_rows - 1) / block_rows in
+        (* The inverse of each diagonal block — independent of the
+           right-hand side, so computed once up front. *)
+        let inverses =
+          Array.init nblocks (fun k ->
+              let lo = k * block_rows in
+              let w = Stdlib.min block_rows (n - lo) in
+              forward_solve_unblocked ~unit_diag ~dt ~batch
+                (slice2 low (Some (lo, lo + w)) (Some (lo, lo + w)))
+                (F.Movement.expand
+                   (F.Op.eye ~m:w ~dtype:dt w)
+                   (batch @ [ w; w ])))
+        in
+        let x =
+          ref
+            (F.Creation.full ~buffer:false ~dtype:dt (batch @ [ n; nrhs ])
+               (F.Tensor.Sfloat 0.0))
+        in
+        for k = 0 to nblocks - 1 do
+          let lo = k * block_rows in
+          let w = Stdlib.min block_rows (n - lo) in
+          let hi = lo + w in
+          let rhs_k =
+            let base = slice2 rhs (Some (lo, hi)) None in
+            if k = 0 then base
+            else
+              E.sub base
+                (F.Op.matmul (slice2 low (Some (lo, hi)) (Some (0, lo)))
+                   (slice2 !x (Some (0, lo)) None))
+          in
+          let xk = F.Op.matmul inverses.(k) rhs_k in
+          (* Splice the solved rows into the running solution. *)
+          x :=
+            E.add !x
+              (F.Movement.pad xk
+                 (List.map (fun _ -> (0, 0)) batch
+                 @ [ (lo, n - hi); (0, 0) ]))
+        done;
+        !x
+      end
+      else forward_solve_unblocked ~unit_diag ~dt ~batch low rhs
     in
-    let x = ref (E.div (slice2 rhs (Some (0, 1)) None) (diag_or_one 0)) in
-    for i = 1 to n - 1 do
-      let row = slice2 low (Some (i, i + 1)) (Some (0, i)) in
-      let partial = F.Op.matmul row !x in
-      x :=
-        F.Op.cat ~dim:(-2) !x
-          [
-            E.div
-              (E.sub (slice2 rhs (Some (i, i + 1)) None) partial)
-              (diag_or_one i);
-          ]
-    done;
-    let x = if flipped then F.Movement.flip !x [ -2 ] else !x in
+    let x = if flipped then F.Movement.flip x [ -2 ] else x in
     if vector_rhs then F.Movement.squeeze ~dim:(-1) x else x
 
 (* {1 Cholesky}
@@ -249,7 +322,8 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
 
 let cholesky ~upper a =
   let module E = F.Elementwise in
-  require_float ~what:"cholesky" (F.Tensor.val_dtype a);
+  let dt = F.Tensor.val_dtype a in
+  require_float ~what:"cholesky" dt;
   let shape = F.Tensor.shape a in
   let rank = List.length shape in
   if rank < 2 then
@@ -259,14 +333,17 @@ let cholesky ~upper a =
   let low = if upper then swap2 a else a in
   if n = 0 then if upper then swap2 low else low
   else
-    let dt = F.Tensor.val_dtype a in
-    let l = ref (F.Creation.full ~buffer:false ~dtype:dt (batch @ [ n; 0 ]) (F.Tensor.Sfloat 0.0)) in
+    let l =
+      ref
+        (F.Creation.full ~buffer:false ~dtype:dt (batch @ [ n; 0 ])
+           (F.Tensor.Sfloat 0.0))
+    in
     for j = 0 to n - 1 do
       (* Project the finished columns off the current column of [A]: the
          sums [Σ_k L[i,k]·L[j,k] for every row i] in one [n×j by j×1]
          product. Empty at [j = 0]. *)
       let proj =
-        if j = 0 then zero1 a batch
+        if j = 0 then zero1 dt batch
         else F.Op.matmul !l (swap2 (slice2 !l (Some (j, j + 1)) None))
       in
       let col = E.sub (slice2 low None (Some (j, j + 1))) proj in
@@ -279,7 +356,7 @@ let cholesky ~upper a =
          tail below. *)
       let new_col =
         cat2
-          ((if j > 0 then [ scalar2 a batch j 1 0.0 ] else [])
+          ((if j > 0 then [ scalar2 dt batch j 1 0.0 ] else [])
           @ [ ljj ]
           @ if n - j - 1 > 0 then [ tail ] else [])
       in
