@@ -9,6 +9,7 @@ pipeline.
 
 import contextlib
 import io
+import math
 import os
 import re
 import sys
@@ -26,12 +27,14 @@ from tinygrad.codegen import (  # noqa: E402
 )
 from tinygrad.codegen.late.linearizer import linearize  # noqa: E402
 from tinygrad.codegen.opt import tc  # noqa: E402
+from tinygrad.dtype import dtypes  # noqa: E402
 from tinygrad.helpers import Target  # noqa: E402
 from tinygrad.renderer.cstyle import (  # noqa: E402
-    ClangRenderer, CUDARenderer, MetalRenderer, OpenCLRenderer,
+    ClangRenderer, CUDARenderer, HIPRenderer, MetalRenderer, OpenCLRenderer,
+    _wmma_name, base_rewrite, fp8_index, pm_manual_bf16_cast,
 )
 from tinygrad.schedule.rangeify import get_kernel_graph  # noqa: E402
-from tinygrad.uop.ops import KernelInfo, Ops  # noqa: E402
+from tinygrad.uop.ops import KernelInfo, Ops, PatternMatcher, UPat  # noqa: E402
 from tinygrad.uop.render import print_uops  # noqa: E402
 
 
@@ -49,12 +52,45 @@ class _CudaNoNvrtc(CUDARenderer):
         )
 
 
+class _HipNoComgr(HIPRenderer):
+    """HIPRenderer without comgr init — render-only, no execution.
+
+    Mirrors HIPRenderer.__init__ (cstyle.py) minus the compiler; the CDNA
+    string_rewrite block is copied verbatim and must be re-synced on pin
+    bumps.
+    """
+
+    def __init__(self, target):
+        self.target, self.compiler = target, None
+        self.tensor_cores = tc.get_amd(target.arch)
+        if not self.is_cdna4(target.arch):
+            self.extra_matcher = HIPRenderer.extra_matcher + pm_manual_bf16_cast
+        if self.is_cdna(target.arch):
+            self.string_rewrite = PatternMatcher([
+                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
+                  f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
+                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
+                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.nan}, {fp8_index(x.dtype)})" if math.isnan(x.val) else None),
+                (UPat(Ops.CONST, dtypes.fp8s, arg=math.inf, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.infinity}, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CONST, dtypes.fp8s, arg=-math.inf, name="x"), lambda ctx,x: f"f32_to_fp8(-{ctx.infinity}, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({x.val}f, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
+                  lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CAST, dtypes.float, (UPat.var("y", dtypes.fp8s),), name="x",),
+                  lambda ctx,x,y: f"__builtin_amdgcn_cvt_f32_{('fp8', 'bf8')[fp8_index(y.dtype)]}((unsigned int){ctx[x.src[0]]}, 0)"),
+            ]) + base_rewrite
+
+
 ALL_BACKENDS = {}
 for _name, _ctor in [
     ("cpu", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
     ("cuda", lambda: _CudaNoNvrtc(Target("CUDA", arch="sm_80"))),
     ("metal", lambda: MetalRenderer(Target("METAL", arch="Apple7"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
+    # amd stays last: auto-generated kernel names carry a per-process counter,
+    # so inserting a backend mid-list would renumber every later backend's
+    # kernels and rewrite the pre-existing goldens.
+    ("amd", lambda: _HipNoComgr(Target("AMD", arch="gfx1100"))),
 ]:
     try:
         ALL_BACKENDS[_name] = _ctor()

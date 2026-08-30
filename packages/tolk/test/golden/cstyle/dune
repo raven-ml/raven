@@ -5,6 +5,22 @@
 (rule
  (package tolk)
  (targets
+  amd_bitcast_f32_to_i32.actual
+  amd_cast_f16_to_f32.actual
+  amd_conditional.actual
+  amd_const_inf_nan.actual
+  amd_gated_load.actual
+  amd_loop.actual
+  amd_multi_param.actual
+  amd_nested_loops.actual
+  amd_shared_memory.actual
+  amd_simple_add_f32.actual
+  amd_simple_mul_i32.actual
+  amd_special_dims.actual
+  amd_unary_sqrt_f16.actual
+  amd_unary_sqrt_f32.actual
+  amd_vectorize_index.actual
+  amd_where_select.actual
   clang_bitcast_f32_to_i32.actual
   clang_cast_f16_to_f32.actual
   clang_conditional.actual
@@ -75,6 +91,22 @@
  (package tolk)
  (action
   (progn
+   (diff amd_bitcast_f32_to_i32.expected amd_bitcast_f32_to_i32.actual)
+   (diff amd_cast_f16_to_f32.expected amd_cast_f16_to_f32.actual)
+   (diff amd_conditional.expected amd_conditional.actual)
+   (diff amd_const_inf_nan.expected amd_const_inf_nan.actual)
+   (diff amd_gated_load.expected amd_gated_load.actual)
+   (diff amd_loop.expected amd_loop.actual)
+   (diff amd_multi_param.expected amd_multi_param.actual)
+   (diff amd_nested_loops.expected amd_nested_loops.actual)
+   (diff amd_shared_memory.expected amd_shared_memory.actual)
+   (diff amd_simple_add_f32.expected amd_simple_add_f32.actual)
+   (diff amd_simple_mul_i32.expected amd_simple_mul_i32.actual)
+   (diff amd_special_dims.expected amd_special_dims.actual)
+   (diff amd_unary_sqrt_f16.expected amd_unary_sqrt_f16.actual)
+   (diff amd_unary_sqrt_f32.expected amd_unary_sqrt_f32.actual)
+   (diff amd_vectorize_index.expected amd_vectorize_index.actual)
+   (diff amd_where_select.expected amd_where_select.actual)
    (diff clang_bitcast_f32_to_i32.expected clang_bitcast_f32_to_i32.actual)
    (diff clang_cast_f16_to_f32.expected clang_cast_f16_to_f32.actual)
    (diff clang_conditional.expected clang_conditional.actual)

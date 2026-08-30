@@ -1,0 +1,14 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((device, const)) float __ocml_sqrt_f32(float);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 2))) r_2_8n5(float* data0_2, float* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 2 */
+  int alu0 = (lidx0<<3);
+  float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
+  float4 val1 = (*((float4*)((data1_16+alu0))));
+  *(data0_2+lidx0) = __ocml_sqrt_f32(((((val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+9.999999747378752e-06f));
+}

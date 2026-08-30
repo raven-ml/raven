@@ -5,6 +5,27 @@
 (rule
  (package tolk)
  (targets
+  amd_dot_product.actual
+  amd_elementwise_2d.actual
+  amd_elementwise_add.actual
+  amd_elementwise_cast_f16.actual
+  amd_elementwise_int32.actual
+  amd_elementwise_sqrt.actual
+  amd_elementwise_where.actual
+  amd_gated_store.actual
+  amd_llama_embedding.actual
+  amd_llama_ffn_gate.actual
+  amd_llama_output_projection.actual
+  amd_llama_rmsnorm.actual
+  amd_llama_vector_scale.actual
+  amd_lorenz_fold.actual
+  amd_matmul_small.actual
+  amd_max_reduce.actual
+  amd_multi_output.actual
+  amd_no_optimize.actual
+  amd_parallel_reduce.actual
+  amd_reduce_rows.actual
+  amd_sum_reduce.actual
   clang_dot_product.actual
   clang_elementwise_add.actual
   clang_elementwise_cast_f16.actual
@@ -95,6 +116,27 @@
  (package tolk)
  (action
   (progn
+   (diff amd_dot_product.expected amd_dot_product.actual)
+   (diff amd_elementwise_2d.expected amd_elementwise_2d.actual)
+   (diff amd_elementwise_add.expected amd_elementwise_add.actual)
+   (diff amd_elementwise_cast_f16.expected amd_elementwise_cast_f16.actual)
+   (diff amd_elementwise_int32.expected amd_elementwise_int32.actual)
+   (diff amd_elementwise_sqrt.expected amd_elementwise_sqrt.actual)
+   (diff amd_elementwise_where.expected amd_elementwise_where.actual)
+   (diff amd_gated_store.expected amd_gated_store.actual)
+   (diff amd_llama_embedding.expected amd_llama_embedding.actual)
+   (diff amd_llama_ffn_gate.expected amd_llama_ffn_gate.actual)
+   (diff amd_llama_output_projection.expected amd_llama_output_projection.actual)
+   (diff amd_llama_rmsnorm.expected amd_llama_rmsnorm.actual)
+   (diff amd_llama_vector_scale.expected amd_llama_vector_scale.actual)
+   (diff amd_lorenz_fold.expected amd_lorenz_fold.actual)
+   (diff amd_matmul_small.expected amd_matmul_small.actual)
+   (diff amd_max_reduce.expected amd_max_reduce.actual)
+   (diff amd_multi_output.expected amd_multi_output.actual)
+   (diff amd_no_optimize.expected amd_no_optimize.actual)
+   (diff amd_parallel_reduce.expected amd_parallel_reduce.actual)
+   (diff amd_reduce_rows.expected amd_reduce_rows.actual)
+   (diff amd_sum_reduce.expected amd_sum_reduce.actual)
    (diff clang_dot_product.expected clang_dot_product.actual)
    (diff clang_elementwise_add.expected clang_elementwise_add.actual)
    (diff

@@ -107,6 +107,11 @@ thread.
   kernels using launch indices declared the OCKL intrinsics with the wrong
   signatures.
 
+- The AMD/HIP renderer (`Cstyle.amd`) is now covered by the tinygrad parity
+  and golden corpora on gfx1100, including tensor-core matmul cases across
+  RDNA3/RDNA4 (WMMA f16/bf16), CDNA3 (MFMA bf16), and CDNA4 (scaled MFMA
+  fp8).
+
 - `Search.beam_parallel` is a `Helpers.Context_var`, so a caller can scope
   the `BEAM_PARALLEL` worker count to one compilation with
   `Context_var.with_context` instead of setting it process-wide.

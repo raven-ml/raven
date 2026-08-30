@@ -13,6 +13,7 @@ After running, commit the generated .expected files. Dune's expect tests diff
 tolk's .actual output against these tinygrad-generated .expected files.
 """
 
+import math
 import os
 import sys
 
@@ -23,11 +24,14 @@ sys.path.insert(
     ),
 )
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, PatternMatcher, UPat
 from tinygrad.dtype import dtypes, AddrSpace
 from tinygrad.helpers import Target
 from tinygrad.codegen.opt import tc
-from tinygrad.renderer.cstyle import ClangRenderer, CUDARenderer, MetalRenderer, OpenCLRenderer
+from tinygrad.renderer.cstyle import (
+    ClangRenderer, CUDARenderer, HIPRenderer, MetalRenderer, OpenCLRenderer,
+    _wmma_name, base_rewrite, fp8_index, pm_manual_bf16_cast,
+)
 
 OUT_DIR = os.path.dirname(__file__)
 
@@ -46,11 +50,40 @@ class _RenderOnlyCUDARenderer(CUDARenderer):
             else []
         )
 
+class _RenderOnlyHIPRenderer(HIPRenderer):
+    """HIPRenderer without comgr init — render-only, no execution.
+
+    Mirrors HIPRenderer.__init__ (cstyle.py) minus the compiler; the CDNA
+    string_rewrite block is copied verbatim and must be re-synced on pin
+    bumps.
+    """
+
+    def __init__(self, target):
+        self.target, self.compiler = target, None
+        self.tensor_cores = tc.get_amd(target.arch)
+        if not self.is_cdna4(target.arch):
+            self.extra_matcher = HIPRenderer.extra_matcher + pm_manual_bf16_cast
+        if self.is_cdna(target.arch):
+            self.string_rewrite = PatternMatcher([
+                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
+                  f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
+                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
+                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.nan}, {fp8_index(x.dtype)})" if math.isnan(x.val) else None),
+                (UPat(Ops.CONST, dtypes.fp8s, arg=math.inf, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.infinity}, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CONST, dtypes.fp8s, arg=-math.inf, name="x"), lambda ctx,x: f"f32_to_fp8(-{ctx.infinity}, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({x.val}f, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
+                  lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
+                (UPat(Ops.CAST, dtypes.float, (UPat.var("y", dtypes.fp8s),), name="x",),
+                  lambda ctx,x,y: f"__builtin_amdgcn_cvt_f32_{('fp8', 'bf8')[fp8_index(y.dtype)]}((unsigned int){ctx[x.src[0]]}, 0)"),
+            ]) + base_rewrite
+
 for _name, _ctor in [
     ("cuda", lambda: _RenderOnlyCUDARenderer(Target("CUDA", arch="sm_80"))),
     ("metal", lambda: MetalRenderer(Target("METAL"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
     ("clang", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
+    ("amd", lambda: _RenderOnlyHIPRenderer(Target("AMD", arch="gfx1100"))),
 ]:
     try:
         RENDERERS[_name] = _ctor()
@@ -370,14 +403,14 @@ TEST_CASES = [
     ("simple_mul_i32", build_simple_mul_i32, None),
     ("loop", build_loop, None),
     ("gated_load", build_gated_load, None),
-    ("shared_memory", build_shared_memory, ["cuda", "metal", "opencl"]),
+    ("shared_memory", build_shared_memory, ["cuda", "metal", "opencl", "amd"]),
     ("where_select", build_where_select, None),
     ("cast_f16_to_f32", build_cast_f16_to_f32, None),
     ("nested_loops", build_nested_loops, None),
     ("multi_param", build_multi_param, None),
     ("unary_sqrt_f32", build_unary_sqrt_f32, None),
     ("unary_sqrt_f16", build_unary_sqrt_f16, None),
-    ("special_dims", build_special_dims, ["cuda", "metal", "opencl"]),
+    ("special_dims", build_special_dims, ["cuda", "metal", "opencl", "amd"]),
     ("bitcast_f32_to_i32", build_bitcast_f32_to_i32, None),
     ("conditional", build_conditional, None),
     ("const_inf_nan", build_const_inf_nan, None),

@@ -1,0 +1,9 @@
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(float* data0_-1) {
+  for (int Lidx0 = 0; Lidx0 < 10; Lidx0++) {
+    for (int Lidx1 = 0; Lidx1 < 5; Lidx1++) {
+      int alu0 = (Lidx0+Lidx1);
+      float val0 = (*(data0_-1+alu0));
+      *(data0_-1+alu0) = val0;
+    }
+  }
+}

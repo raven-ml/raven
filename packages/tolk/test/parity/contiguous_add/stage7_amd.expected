@@ -1,0 +1,27 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 8))) E_8_4n18(float* data0_32, float* data1_32, float* data2_32) {
+  int lidx0 = __ockl_get_local_id(0); /* 8 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((float4*)((data1_32+alu0))));
+  float4 val1 = (*((float4*)((data2_32+alu0))));
+  *((float4*)((data0_32+alu0))) = make_float4((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}
+---
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 8))) E_8_4n19(float* data0_32, float* data1_32, float* data2_32) {
+  int lidx0 = __ockl_get_local_id(0); /* 8 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((float4*)((data1_32+alu0))));
+  float4 val1 = (*((float4*)((data2_32+alu0))));
+  *((float4*)((data0_32+alu0))) = make_float4((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}

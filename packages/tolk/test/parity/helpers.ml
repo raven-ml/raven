@@ -12,6 +12,10 @@ let all_backends =
     ("cuda", Cstyle.cuda Gpu_target.SM80);
     ("metal", Cstyle.metal (Gpu_target.Apple 7));
     ("opencl", Cstyle.opencl "");
+    (* amd stays last: auto-generated kernel names carry a per-process
+       counter, so inserting a backend mid-list would renumber every later
+       backend's kernels and rewrite the pre-existing goldens. *)
+    ("amd", Cstyle.amd Gpu_target.RDNA3);
   ]
 
 let gpu_backends = List.filter (fun (name, _) -> name <> "cpu") all_backends

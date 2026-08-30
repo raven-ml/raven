@@ -318,6 +318,7 @@ let all_renderers =
     ("cuda", Cstyle.cuda Gpu_target.SM80);
     ("metal", Cstyle.metal (Gpu_target.Apple 7));
     ("opencl", Cstyle.opencl "");
+    ("amd", Cstyle.amd Gpu_target.RDNA3);
   ]
 
 let gpu_renderers = List.filter (fun (name, _) -> name <> "clang") all_renderers
@@ -394,7 +395,12 @@ let test_cases =
     {
       name = "vectorize_index";
       prog = make_vectorize_index ();
-      backends = [ ("metal", Cstyle.metal (Gpu_target.Apple 7)); ("opencl", Cstyle.opencl "") ];
+      backends =
+        [
+          ("metal", Cstyle.metal (Gpu_target.Apple 7));
+          ("opencl", Cstyle.opencl "");
+          ("amd", Cstyle.amd Gpu_target.RDNA3);
+        ];
     };
     {
       name = "vectorize_index";

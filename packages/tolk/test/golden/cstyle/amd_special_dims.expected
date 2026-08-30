@@ -1,0 +1,11 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) test(float* data0_-1) {
+  int gidx0 = __ockl_get_group_id(0); /* 32 */
+  int lidx0 = __ockl_get_local_id(0); /* 32 */
+  int alu0 = (gidx0+lidx0);
+  float val0 = (*(data0_-1+alu0));
+  *(data0_-1+alu0) = val0;
+}

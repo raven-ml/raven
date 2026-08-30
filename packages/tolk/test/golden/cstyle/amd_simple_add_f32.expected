@@ -1,0 +1,5 @@
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(float* data0_-1, float* data1_-1, float* data2_-1) {
+  float val0 = (*(data0_-1+0));
+  float val1 = (*(data1_-1+0));
+  *(data2_-1+0) = (val0+val1);
+}

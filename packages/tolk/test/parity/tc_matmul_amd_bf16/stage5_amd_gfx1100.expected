@@ -1,0 +1,170 @@
+   0 Ops.CONST           :            dtypes.int                               []                               256
+   1 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(0, dtypes.float, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               32
+   3 Ops.SPECIAL         :            dtypes.int                               ['32']                           lidx0
+   4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
+   5 Ops.PARAM           :            dtypes.bfloat16                          ['256']                          ParamArg(1, dtypes.bfloat16, device='CPU')
+   6 Ops.CONST           :            dtypes.int                               []                               15
+   7 Ops.AND             :            dtypes.int                               [3, '15']                        None
+   8 Ops.CONST           :            dtypes.int                               []                               4
+   9 Ops.SHL             :            dtypes.int                               [7, '4']                         None
+  10 Ops.INDEX           :            dtypes.bfloat16                          [5, 9]                           None
+  11 Ops.LOAD            :            dtypes.bfloat16                          [10]                             None
+  12 Ops.CONST           :            dtypes.int                               []                               1
+  13 Ops.ADD             :            dtypes.int                               [9, '1']                         None
+  14 Ops.INDEX           :            dtypes.bfloat16                          [5, 13]                          None
+  15 Ops.LOAD            :            dtypes.bfloat16                          [14]                             None
+  16 Ops.CONST           :            dtypes.int                               []                               2
+  17 Ops.ADD             :            dtypes.int                               [9, '2']                         None
+  18 Ops.INDEX           :            dtypes.bfloat16                          [5, 17]                          None
+  19 Ops.LOAD            :            dtypes.bfloat16                          [18]                             None
+  20 Ops.CONST           :            dtypes.int                               []                               3
+  21 Ops.ADD             :            dtypes.int                               [9, '3']                         None
+  22 Ops.INDEX           :            dtypes.bfloat16                          [5, 21]                          None
+  23 Ops.LOAD            :            dtypes.bfloat16                          [22]                             None
+  24 Ops.ADD             :            dtypes.int                               [9, '4']                         None
+  25 Ops.INDEX           :            dtypes.bfloat16                          [5, 24]                          None
+  26 Ops.LOAD            :            dtypes.bfloat16                          [25]                             None
+  27 Ops.CONST           :            dtypes.int                               []                               5
+  28 Ops.ADD             :            dtypes.int                               [9, '5']                         None
+  29 Ops.INDEX           :            dtypes.bfloat16                          [5, 28]                          None
+  30 Ops.LOAD            :            dtypes.bfloat16                          [29]                             None
+  31 Ops.CONST           :            dtypes.int                               []                               6
+  32 Ops.ADD             :            dtypes.int                               [9, '6']                         None
+  33 Ops.INDEX           :            dtypes.bfloat16                          [5, 32]                          None
+  34 Ops.LOAD            :            dtypes.bfloat16                          [33]                             None
+  35 Ops.CONST           :            dtypes.int                               []                               7
+  36 Ops.ADD             :            dtypes.int                               [9, '7']                         None
+  37 Ops.INDEX           :            dtypes.bfloat16                          [5, 36]                          None
+  38 Ops.LOAD            :            dtypes.bfloat16                          [37]                             None
+  39 Ops.CONST           :            dtypes.int                               []                               8
+  40 Ops.ADD             :            dtypes.int                               [9, '8']                         None
+  41 Ops.INDEX           :            dtypes.bfloat16                          [5, 40]                          None
+  42 Ops.LOAD            :            dtypes.bfloat16                          [41]                             None
+  43 Ops.CONST           :            dtypes.int                               []                               9
+  44 Ops.ADD             :            dtypes.int                               [9, '9']                         None
+  45 Ops.INDEX           :            dtypes.bfloat16                          [5, 44]                          None
+  46 Ops.LOAD            :            dtypes.bfloat16                          [45]                             None
+  47 Ops.CONST           :            dtypes.int                               []                               10
+  48 Ops.ADD             :            dtypes.int                               [9, '10']                        None
+  49 Ops.INDEX           :            dtypes.bfloat16                          [5, 48]                          None
+  50 Ops.LOAD            :            dtypes.bfloat16                          [49]                             None
+  51 Ops.CONST           :            dtypes.int                               []                               11
+  52 Ops.ADD             :            dtypes.int                               [9, '11']                        None
+  53 Ops.INDEX           :            dtypes.bfloat16                          [5, 52]                          None
+  54 Ops.LOAD            :            dtypes.bfloat16                          [53]                             None
+  55 Ops.CONST           :            dtypes.int                               []                               12
+  56 Ops.ADD             :            dtypes.int                               [9, '12']                        None
+  57 Ops.INDEX           :            dtypes.bfloat16                          [5, 56]                          None
+  58 Ops.LOAD            :            dtypes.bfloat16                          [57]                             None
+  59 Ops.CONST           :            dtypes.int                               []                               13
+  60 Ops.ADD             :            dtypes.int                               [9, '13']                        None
+  61 Ops.INDEX           :            dtypes.bfloat16                          [5, 60]                          None
+  62 Ops.LOAD            :            dtypes.bfloat16                          [61]                             None
+  63 Ops.CONST           :            dtypes.int                               []                               14
+  64 Ops.ADD             :            dtypes.int                               [9, '14']                        None
+  65 Ops.INDEX           :            dtypes.bfloat16                          [5, 64]                          None
+  66 Ops.LOAD            :            dtypes.bfloat16                          [65]                             None
+  67 Ops.ADD             :            dtypes.int                               [9, '15']                        None
+  68 Ops.INDEX           :            dtypes.bfloat16                          [5, 67]                          None
+  69 Ops.LOAD            :            dtypes.bfloat16                          [68]                             None
+  70 Ops.STACK           :            dtypes.bfloat16                          [11, 15, 19, 23, 26, 30, 34, 38, 42, 46, 50, 54, 58, 62, 66, 69] None
+  71 Ops.PARAM           :            dtypes.bfloat16                          ['256']                          ParamArg(2, dtypes.bfloat16, device='CPU')
+  72 Ops.INDEX           :            dtypes.bfloat16                          [71, 7]                          None
+  73 Ops.LOAD            :            dtypes.bfloat16                          [72]                             None
+  74 Ops.CONST           :            dtypes.int                               []                               16
+  75 Ops.ADD             :            dtypes.int                               [7, '16']                        None
+  76 Ops.INDEX           :            dtypes.bfloat16                          [71, 75]                         None
+  77 Ops.LOAD            :            dtypes.bfloat16                          [76]                             None
+  78 Ops.ADD             :            dtypes.int                               [7, '32']                        None
+  79 Ops.INDEX           :            dtypes.bfloat16                          [71, 78]                         None
+  80 Ops.LOAD            :            dtypes.bfloat16                          [79]                             None
+  81 Ops.CONST           :            dtypes.int                               []                               48
+  82 Ops.ADD             :            dtypes.int                               [7, '48']                        None
+  83 Ops.INDEX           :            dtypes.bfloat16                          [71, 82]                         None
+  84 Ops.LOAD            :            dtypes.bfloat16                          [83]                             None
+  85 Ops.CONST           :            dtypes.int                               []                               64
+  86 Ops.ADD             :            dtypes.int                               [7, '64']                        None
+  87 Ops.INDEX           :            dtypes.bfloat16                          [71, 86]                         None
+  88 Ops.LOAD            :            dtypes.bfloat16                          [87]                             None
+  89 Ops.CONST           :            dtypes.int                               []                               80
+  90 Ops.ADD             :            dtypes.int                               [7, '80']                        None
+  91 Ops.INDEX           :            dtypes.bfloat16                          [71, 90]                         None
+  92 Ops.LOAD            :            dtypes.bfloat16                          [91]                             None
+  93 Ops.CONST           :            dtypes.int                               []                               96
+  94 Ops.ADD             :            dtypes.int                               [7, '96']                        None
+  95 Ops.INDEX           :            dtypes.bfloat16                          [71, 94]                         None
+  96 Ops.LOAD            :            dtypes.bfloat16                          [95]                             None
+  97 Ops.CONST           :            dtypes.int                               []                               112
+  98 Ops.ADD             :            dtypes.int                               [7, '112']                       None
+  99 Ops.INDEX           :            dtypes.bfloat16                          [71, 98]                         None
+ 100 Ops.LOAD            :            dtypes.bfloat16                          [99]                             None
+ 101 Ops.CONST           :            dtypes.int                               []                               128
+ 102 Ops.ADD             :            dtypes.int                               [7, '128']                       None
+ 103 Ops.INDEX           :            dtypes.bfloat16                          [71, 102]                        None
+ 104 Ops.LOAD            :            dtypes.bfloat16                          [103]                            None
+ 105 Ops.CONST           :            dtypes.int                               []                               144
+ 106 Ops.ADD             :            dtypes.int                               [7, '144']                       None
+ 107 Ops.INDEX           :            dtypes.bfloat16                          [71, 106]                        None
+ 108 Ops.LOAD            :            dtypes.bfloat16                          [107]                            None
+ 109 Ops.CONST           :            dtypes.int                               []                               160
+ 110 Ops.ADD             :            dtypes.int                               [7, '160']                       None
+ 111 Ops.INDEX           :            dtypes.bfloat16                          [71, 110]                        None
+ 112 Ops.LOAD            :            dtypes.bfloat16                          [111]                            None
+ 113 Ops.CONST           :            dtypes.int                               []                               176
+ 114 Ops.ADD             :            dtypes.int                               [7, '176']                       None
+ 115 Ops.INDEX           :            dtypes.bfloat16                          [71, 114]                        None
+ 116 Ops.LOAD            :            dtypes.bfloat16                          [115]                            None
+ 117 Ops.CONST           :            dtypes.int                               []                               192
+ 118 Ops.ADD             :            dtypes.int                               [7, '192']                       None
+ 119 Ops.INDEX           :            dtypes.bfloat16                          [71, 118]                        None
+ 120 Ops.LOAD            :            dtypes.bfloat16                          [119]                            None
+ 121 Ops.CONST           :            dtypes.int                               []                               208
+ 122 Ops.ADD             :            dtypes.int                               [7, '208']                       None
+ 123 Ops.INDEX           :            dtypes.bfloat16                          [71, 122]                        None
+ 124 Ops.LOAD            :            dtypes.bfloat16                          [123]                            None
+ 125 Ops.CONST           :            dtypes.int                               []                               224
+ 126 Ops.ADD             :            dtypes.int                               [7, '224']                       None
+ 127 Ops.INDEX           :            dtypes.bfloat16                          [71, 126]                        None
+ 128 Ops.LOAD            :            dtypes.bfloat16                          [127]                            None
+ 129 Ops.CONST           :            dtypes.int                               []                               240
+ 130 Ops.ADD             :            dtypes.int                               [7, '240']                       None
+ 131 Ops.INDEX           :            dtypes.bfloat16                          [71, 130]                        None
+ 132 Ops.LOAD            :            dtypes.bfloat16                          [131]                            None
+ 133 Ops.STACK           :            dtypes.bfloat16                          [73, 77, 80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 128, 132] None
+ 134 Ops.CONST           :            dtypes.float                             []                               0.0
+ 135 Ops.STACK           :            dtypes.float                             ['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', '0.0', '0.0'] None
+ 136 Ops.WMMA            :            dtypes.float                             [70, 133, 135]                   ((16, 16, 16), dtypes.bfloat16, 'AMD', 32, None)
+ 137 Ops.CONST           :            dtypes.int                               []                               0
+ 138 Ops.INDEX           :            dtypes.float                             [136, '0']                       None
+ 139 Ops.STORE           :            dtypes.void                              [4, 138]                         None
+ 140 Ops.ADD             :            dtypes.int                               [3, '32']                        None
+ 141 Ops.INDEX           :            dtypes.float                             [1, 140]                         None
+ 142 Ops.INDEX           :            dtypes.float                             [136, '1']                       None
+ 143 Ops.STORE           :            dtypes.void                              [141, 142]                       None
+ 144 Ops.ADD             :            dtypes.int                               [3, '128']                       None
+ 145 Ops.INDEX           :            dtypes.float                             [1, 144]                         None
+ 146 Ops.INDEX           :            dtypes.float                             [136, '4']                       None
+ 147 Ops.STORE           :            dtypes.void                              [145, 146]                       None
+ 148 Ops.ADD             :            dtypes.int                               [3, '160']                       None
+ 149 Ops.INDEX           :            dtypes.float                             [1, 148]                         None
+ 150 Ops.INDEX           :            dtypes.float                             [136, '5']                       None
+ 151 Ops.STORE           :            dtypes.void                              [149, 150]                       None
+ 152 Ops.ADD             :            dtypes.int                               [3, '64']                        None
+ 153 Ops.INDEX           :            dtypes.float                             [1, 152]                         None
+ 154 Ops.INDEX           :            dtypes.float                             [136, '2']                       None
+ 155 Ops.STORE           :            dtypes.void                              [153, 154]                       None
+ 156 Ops.ADD             :            dtypes.int                               [3, '96']                        None
+ 157 Ops.INDEX           :            dtypes.float                             [1, 156]                         None
+ 158 Ops.INDEX           :            dtypes.float                             [136, '3']                       None
+ 159 Ops.STORE           :            dtypes.void                              [157, 158]                       None
+ 160 Ops.ADD             :            dtypes.int                               [3, '192']                       None
+ 161 Ops.INDEX           :            dtypes.float                             [1, 160]                         None
+ 162 Ops.INDEX           :            dtypes.float                             [136, '6']                       None
+ 163 Ops.STORE           :            dtypes.void                              [161, 162]                       None
+ 164 Ops.ADD             :            dtypes.int                               [3, '224']                       None
+ 165 Ops.INDEX           :            dtypes.float                             [1, 164]                         None
+ 166 Ops.INDEX           :            dtypes.float                             [136, '7']                       None
+ 167 Ops.STORE           :            dtypes.void                              [165, 166]                       None
+ 168 Ops.GROUP           :            dtypes.void                              [139, 143, 147, 151, 155, 159, 163, 167] None
+ 169 Ops.SINK            :            dtypes.void                              [168]                            KernelInfo(name='r_32_2_2_2_2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), opts_to_apply=None, estimates=None, beam=0)

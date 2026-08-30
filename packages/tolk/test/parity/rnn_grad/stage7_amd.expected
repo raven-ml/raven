@@ -1,0 +1,133 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_4_4_4_4n16(float* data0_16, float* data1_16, float* data2_16, float* data3_16, float* data4_16) {
+  float buf0[1];
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int lidx1 = __ockl_get_local_id(1); /* 4 */
+  int alu0 = (lidx0<<2);
+  *(buf0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 4; Ridx0++) {
+    float val0 = (*(data1_16+(alu0+Ridx0)));
+    float val1 = (*(data2_16+(lidx1+(Ridx0<<2))));
+    *(buf0+0) = ((*(buf0+0))+(val0*val1));
+  }
+  float val2 = (*(data4_16+lidx1));
+  float val3 = (*(data4_16+(lidx1+4)));
+  float val4 = (*(data4_16+(lidx1+8)));
+  float val5 = (*(data4_16+(lidx1+12)));
+  float4 val6 = (*((float4*)((data3_16+alu0))));
+  *(data0_16+(lidx1+alu0)) = ((*(buf0+0))+(val6.x*val2)+(val6.y*val3)+(val6.z*val4)+(val6.w*val5));
+}
+---
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_4_4_4_4n17(float* data0_16, float* data1_16, float* data2_16, float* data3_16, float* data4_16) {
+  float buf0[1];
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int lidx1 = __ockl_get_local_id(1); /* 4 */
+  int alu0 = (lidx0<<2);
+  *(buf0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 4; Ridx0++) {
+    float val0 = (*(data1_16+(alu0+Ridx0)));
+    float val1 = (*(data2_16+(lidx1+(Ridx0<<2))));
+    *(buf0+0) = ((*(buf0+0))+(val0*val1));
+  }
+  float val2 = (*(data4_16+lidx1));
+  float val3 = (*(data4_16+(lidx1+4)));
+  float val4 = (*(data4_16+(lidx1+8)));
+  float val5 = (*(data4_16+(lidx1+12)));
+  float4 val6 = (*((float4*)((data3_16+alu0))));
+  *(data0_16+(lidx1+alu0)) = (2.0f*((*(buf0+0))+(val6.x*val2)+(val6.y*val3)+(val6.z*val4)+(val6.w*val5)));
+}
+---
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_4_4_4n8(float* data0_16, float* data1_16, float* data2_16, float* data3_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int lidx1 = __ockl_get_local_id(1); /* 4 */
+  int alu0 = (lidx0<<2);
+  int alu1 = (lidx1+alu0);
+  float val0 = (*(data1_16+alu1));
+  float4 val1 = (*((float4*)((data2_16+alu0))));
+  float4 val2 = (*((float4*)((data3_16+(lidx1<<2)))));
+  *(data0_16+alu1) = ((2.0f*val0)+(val1.x*val2.x)+(val1.y*val2.y)+(val1.z*val2.z)+(val1.w*val2.w));
+}
+---
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_4_4_4_4n18(float* data0_16, float* data1_16, float* data2_16, float* data3_16, float* data4_16) {
+  float buf0[1];
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int lidx1 = __ockl_get_local_id(1); /* 4 */
+  *(buf0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 4; Ridx0++) {
+    int alu1 = (Ridx0<<2);
+    float val0 = (*(data1_16+(lidx0+alu1)));
+    float val1 = (*(data2_16+(lidx1+alu1)));
+    *(buf0+0) = ((*(buf0+0))+(val0*val1));
+  }
+  float val2 = (*(data3_16+lidx0));
+  float val3 = (*(data3_16+(lidx0+4)));
+  float val4 = (*(data3_16+(lidx0+8)));
+  float val5 = (*(data3_16+(lidx0+12)));
+  float val6 = (*(data4_16+lidx1));
+  float val7 = (*(data4_16+(lidx1+4)));
+  float val8 = (*(data4_16+(lidx1+8)));
+  float val9 = (*(data4_16+(lidx1+12)));
+  *(data0_16+(lidx1+(lidx0<<2))) = ((*(buf0+0))+(val2*val6)+(val3*val7)+(val4*val8)+(val5*val9));
+}
+---
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_4_4_4_4n19(float* data0_16, float* data1_16, float* data2_16, float* data3_16, float* data4_16) {
+  float buf0[1];
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int lidx1 = __ockl_get_local_id(1); /* 4 */
+  *(buf0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 4; Ridx0++) {
+    int alu1 = (Ridx0<<2);
+    float val0 = (*(data1_16+(lidx0+alu1)));
+    float val1 = (*(data2_16+(lidx1+alu1)));
+    *(buf0+0) = ((*(buf0+0))+(val0*val1));
+  }
+  float val2 = (*(data3_16+lidx0));
+  float val3 = (*(data3_16+(lidx0+4)));
+  float val4 = (*(data3_16+(lidx0+8)));
+  float val5 = (*(data3_16+(lidx0+12)));
+  float val6 = (*(data4_16+lidx1));
+  float val7 = (*(data4_16+(lidx1+4)));
+  float val8 = (*(data4_16+(lidx1+8)));
+  float val9 = (*(data4_16+(lidx1+12)));
+  *(data0_16+(lidx1+(lidx0<<2))) = ((*(buf0+0))+(val2*val6)+(val3*val7)+(val4*val8)+(val5*val9));
+}
+---
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_4_4_4n9(float* data0_16, float* data1_16, float* data2_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((float4*)((data1_16+alu0))));
+  int lidx1 = __ockl_get_local_id(1); /* 4 */
+  float4 val1 = (*((float4*)((data2_16+(lidx1<<2)))));
+  *(data0_16+(lidx1+alu0)) = ((val0.x*val1.x)+(val0.y*val1.y)+(val0.z*val1.z)+(val0.w*val1.w));
+}

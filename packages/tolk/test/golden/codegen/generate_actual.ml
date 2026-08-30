@@ -354,6 +354,12 @@ let make_llama_rmsnorm backend =
             U.Opt.Unroll { axis = 0; amount = 0 };
             U.Opt.Local { axis = 0; amount = 2 };
           ] )
+    | "amd" ->
+        ( "r_2_8n5",
+          [
+            U.Opt.Unroll { axis = 0; amount = 0 };
+            U.Opt.Local { axis = 0; amount = 2 };
+          ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
   U.sink
@@ -424,6 +430,12 @@ let make_llama_embedding backend =
             U.Opt.Upcast { axis = 0; amount = 0 };
             U.Opt.Local { axis = 0; amount = 8 };
           ] )
+    | "amd" ->
+        ( "E_8_2n5",
+          [
+            U.Opt.Upcast { axis = 0; amount = 0 };
+            U.Opt.Local { axis = 0; amount = 8 };
+          ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
   U.sink ~kernel_info:(model_kernel_info name opts_to_apply) [ e ]
@@ -485,6 +497,13 @@ let make_llama_ffn_gate backend =
             U.Opt.Local { axis = 0; amount = 2 };
             U.Opt.Local { axis = 0; amount = 8 };
           ] )
+    | "amd" ->
+        ( "r_2_8_8n5",
+          [
+            U.Opt.Unroll { axis = 0; amount = 0 };
+            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Local { axis = 0; amount = 8 };
+          ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
   U.sink ~kernel_info:(model_kernel_info name opts_to_apply) [ e ]
@@ -529,6 +548,13 @@ let make_llama_vector_scale backend =
           ] )
     | "opencl" ->
         ( "E_2_2_4n4",
+          [
+            U.Opt.Upcast { axis = 1; amount = 4 };
+            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Local { axis = 0; amount = 2 };
+          ] )
+    | "amd" ->
+        ( "E_2_2_4n5",
           [
             U.Opt.Upcast { axis = 1; amount = 4 };
             U.Opt.Local { axis = 0; amount = 2 };
@@ -580,6 +606,13 @@ let make_llama_output_projection backend =
             U.Opt.Local { axis = 0; amount = 2 };
             U.Opt.Local { axis = 0; amount = 16 };
           ] )
+    | "amd" ->
+        ( "r_2_2_16_8n3",
+          [
+            U.Opt.Unroll { axis = 0; amount = 0 };
+            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Local { axis = 0; amount = 16 };
+          ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
   U.sink ~kernel_info:(model_kernel_info name opts_to_apply) [ e ]
@@ -601,6 +634,7 @@ let all_renderers =
     ("cuda", Cstyle.cuda Gpu_target.SM80);
     ("metal", Cstyle.metal (Gpu_target.Apple 7));
     ("opencl", Cstyle.opencl "");
+    ("amd", Cstyle.amd Gpu_target.RDNA3);
   ]
 
 let gpu_renderers = List.filter (fun (name, _) -> name <> "clang") all_renderers

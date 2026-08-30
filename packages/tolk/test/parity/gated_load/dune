@@ -5,6 +5,7 @@
 (rule
  (package tolk)
  (targets
+  stage7_amd.actual
   stage7_cpu.actual
   stage7_cuda.actual
   stage7_metal.actual
@@ -17,6 +18,7 @@
  (package tolk)
  (action
   (progn
+   (diff stage7_amd.expected stage7_amd.actual)
    (diff stage7_cpu.expected stage7_cpu.actual)
    (diff stage7_cuda.expected stage7_cuda.actual)
    (diff stage7_metal.expected stage7_metal.actual)

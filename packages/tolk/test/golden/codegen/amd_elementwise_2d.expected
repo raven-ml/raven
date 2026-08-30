@@ -1,0 +1,10 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) elementwise_2d(float* data0_-1, float* data1_-1, float* data2_-1) {
+  int gidx0 = __ockl_get_group_id(0); /* 128 */
+  float val0 = (*(data0_-1+gidx0));
+  float val1 = (*(data1_-1+gidx0));
+  *(data2_-1+gidx0) = (val0+val1);
+}

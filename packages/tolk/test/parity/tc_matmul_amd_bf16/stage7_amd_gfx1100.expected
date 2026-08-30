@@ -1,0 +1,56 @@
+typedef long unsigned int size_t;
+typedef unsigned short hip_bfloat16;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef hip_bfloat16 hip_bfloat1616 __attribute__((ext_vector_type(16)));
+static inline __attribute__((device)) hip_bfloat1616 make_hip_bfloat1616(hip_bfloat16 x, hip_bfloat16 y, hip_bfloat16 z, hip_bfloat16 w, hip_bfloat16 a, hip_bfloat16 b, hip_bfloat16 c, hip_bfloat16 d, hip_bfloat16 e, hip_bfloat16 f, hip_bfloat16 g, hip_bfloat16 h, hip_bfloat16 i, hip_bfloat16 j, hip_bfloat16 k, hip_bfloat16 l) { return { x, y, z, w, a, b, c, d, e, f, g, h, i, j, k, l }; }
+typedef float float8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) float8 make_float8(float x, float y, float z, float w, float a, float b, float c, float d) { return { x, y, z, w, a, b, c, d }; }
+#define __WMMA_16_16_16___bf16_float __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) r_32_2_2_2_2n1(float* data0_256, hip_bfloat16* data1_256, hip_bfloat16* data2_256) {
+  int lidx0 = __ockl_get_local_id(0); /* 32 */
+  int alu0 = (lidx0&15);
+  int alu1 = (alu0<<4);
+  hip_bfloat16 val0 = (*(data1_256+(alu1+1)));
+  hip_bfloat16 val1 = (*(data1_256+(alu1+2)));
+  hip_bfloat16 val2 = (*(data1_256+(alu1+3)));
+  hip_bfloat16 val3 = (*(data1_256+(alu1+4)));
+  hip_bfloat16 val4 = (*(data1_256+(alu1+5)));
+  hip_bfloat16 val5 = (*(data1_256+(alu1+6)));
+  hip_bfloat16 val6 = (*(data1_256+(alu1+7)));
+  hip_bfloat16 val7 = (*(data1_256+(alu1+8)));
+  hip_bfloat16 val8 = (*(data1_256+(alu1+9)));
+  hip_bfloat16 val9 = (*(data1_256+(alu1+10)));
+  hip_bfloat16 val10 = (*(data1_256+(alu1+11)));
+  hip_bfloat16 val11 = (*(data1_256+(alu1+12)));
+  hip_bfloat16 val12 = (*(data1_256+(alu1+13)));
+  hip_bfloat16 val13 = (*(data1_256+(alu1+14)));
+  hip_bfloat16 val14 = (*(data1_256+(alu1+15)));
+  hip_bfloat16 val15 = (*(data1_256+alu1));
+  hip_bfloat16 val16 = (*(data2_256+(alu0+16)));
+  hip_bfloat16 val17 = (*(data2_256+(alu0+32)));
+  hip_bfloat16 val18 = (*(data2_256+(alu0+48)));
+  hip_bfloat16 val19 = (*(data2_256+(alu0+64)));
+  hip_bfloat16 val20 = (*(data2_256+(alu0+80)));
+  hip_bfloat16 val21 = (*(data2_256+(alu0+96)));
+  hip_bfloat16 val22 = (*(data2_256+(alu0+112)));
+  hip_bfloat16 val23 = (*(data2_256+(alu0+128)));
+  hip_bfloat16 val24 = (*(data2_256+(alu0+144)));
+  hip_bfloat16 val25 = (*(data2_256+(alu0+160)));
+  hip_bfloat16 val26 = (*(data2_256+(alu0+176)));
+  hip_bfloat16 val27 = (*(data2_256+(alu0+192)));
+  hip_bfloat16 val28 = (*(data2_256+(alu0+208)));
+  hip_bfloat16 val29 = (*(data2_256+(alu0+224)));
+  hip_bfloat16 val30 = (*(data2_256+(alu0+240)));
+  hip_bfloat16 val31 = (*(data2_256+alu0));
+  float8 wmma0 = __WMMA_16_16_16___bf16_float(make_hip_bfloat1616(val15,val0,val1,val2,val3,val4,val5,val6,val7,val8,val9,val10,val11,val12,val13,val14), make_hip_bfloat1616(val31,val16,val17,val18,val19,val20,val21,val22,val23,val24,val25,val26,val27,val28,val29,val30), make_float8(0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f));
+  *(data0_256+lidx0) = wmma0[0];
+  *(data0_256+(lidx0+32)) = wmma0[1];
+  *(data0_256+(lidx0+64)) = wmma0[2];
+  *(data0_256+(lidx0+96)) = wmma0[3];
+  *(data0_256+(lidx0+128)) = wmma0[4];
+  *(data0_256+(lidx0+160)) = wmma0[5];
+  *(data0_256+(lidx0+192)) = wmma0[6];
+  *(data0_256+(lidx0+224)) = wmma0[7];
+}

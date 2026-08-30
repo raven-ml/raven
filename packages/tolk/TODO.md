@@ -261,8 +261,11 @@ Ordered by how much they matter.
 
 - **The reciprocal of an `rsqrt` sits on the wrong side of a kernel boundary**
   (28 files: every `llama_*` case in `golden/codegen` and `golden/rangeify`,
-  all four backends). The reference stores `sqrt(s)` and divides at the
-  consumer; tolk stores `1.0f/sqrt(s)` and multiplies:
+  all four backends; plus 3 more since the AMD backend joined the corpus —
+  `amd_llama_rmsnorm`, `amd_llama_ffn_gate`, `amd_llama_vector_scale` in
+  `golden/codegen`, same cause, while `amd_llama_embedding` and
+  `amd_llama_output_projection` agree). The reference stores `sqrt(s)` and
+  divides at the consumer; tolk stores `1.0f/sqrt(s)` and multiplies:
 
   | | reference | tolk |
   |---|---|---|

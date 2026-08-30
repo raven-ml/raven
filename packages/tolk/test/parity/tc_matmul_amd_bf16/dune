@@ -1,0 +1,23 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+(rule
+ (package tolk)
+ (targets
+  stage5_amd_gfx1100.actual
+  stage5_amd_gfx942.actual
+  stage7_amd_gfx1100.actual
+  stage7_amd_gfx942.actual)
+ (action
+  (run ./main.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff stage5_amd_gfx1100.expected stage5_amd_gfx1100.actual)
+   (diff stage5_amd_gfx942.expected stage5_amd_gfx942.actual)
+   (diff stage7_amd_gfx1100.expected stage7_amd_gfx1100.actual)
+   (diff stage7_amd_gfx942.expected stage7_amd_gfx942.actual))))

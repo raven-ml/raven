@@ -4,7 +4,11 @@
 
 (rule
  (package tolk)
- (targets stage7_cuda.actual stage7_metal.actual stage7_opencl.actual)
+ (targets
+  stage7_amd.actual
+  stage7_cuda.actual
+  stage7_metal.actual
+  stage7_opencl.actual)
  (action
   (run ./main.exe .)))
 
@@ -13,6 +17,7 @@
  (package tolk)
  (action
   (progn
+   (diff stage7_amd.expected stage7_amd.actual)
    (diff stage7_cuda.expected stage7_cuda.actual)
    (diff stage7_metal.expected stage7_metal.actual)
    (diff stage7_opencl.expected stage7_opencl.actual))))

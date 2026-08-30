@@ -1,0 +1,33 @@
+typedef long unsigned int size_t;
+typedef unsigned short hip_bfloat16;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef hip_bfloat16 hip_bfloat164 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) hip_bfloat164 make_hip_bfloat164(hip_bfloat16 x, hip_bfloat16 y, hip_bfloat16 z, hip_bfloat16 w) { return { x, y, z, w }; }
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+#define __WMMA_16_16_16___bf16_float __builtin_amdgcn_mfma_f32_16x16x16bf16_1k
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 64))) r_64_2_2n1(float* data0_256, hip_bfloat16* data1_256, hip_bfloat16* data2_256) {
+  int lidx0 = __ockl_get_local_id(0); /* 64 */
+  int alu0 = (lidx0>>4);
+  int alu1 = (lidx0&15);
+  int alu2 = ((alu0<<2)+(alu1<<4));
+  hip_bfloat16 val0 = (*(data1_256+(alu2+1)));
+  hip_bfloat16 val1 = (*(data1_256+(alu2+2)));
+  hip_bfloat16 val2 = (*(data1_256+(alu2+3)));
+  hip_bfloat16 val3 = (*(data1_256+alu2));
+  int alu3 = ((alu0<<6)+alu1);
+  int alu4 = (alu3+16);
+  hip_bfloat16 val4 = (*(data2_256+alu4));
+  int alu5 = (alu3+32);
+  hip_bfloat16 val5 = (*(data2_256+alu5));
+  int alu6 = (alu3+48);
+  hip_bfloat16 val6 = (*(data2_256+alu6));
+  hip_bfloat16 val7 = (*(data2_256+alu3));
+  float4 wmma0 = __WMMA_16_16_16___bf16_float(make_hip_bfloat164(val3,val0,val1,val2), make_hip_bfloat164(val7,val4,val5,val6), make_float4(0.0f,0.0f,0.0f,0.0f), 0, 0, 0);
+  *(data0_256+alu4) = wmma0.y;
+  *(data0_256+alu5) = wmma0.z;
+  *(data0_256+alu6) = wmma0.w;
+  *(data0_256+alu3) = wmma0.x;
+}

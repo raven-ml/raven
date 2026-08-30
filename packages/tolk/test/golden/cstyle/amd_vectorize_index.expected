@@ -1,0 +1,11 @@
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(float* data0_-1, float* data1_-1) {
+  float val0 = (*(data0_-1+0));
+  float val1 = (*(data0_-1+1));
+  float val2 = (*(data0_-1+2));
+  float val3 = (*(data0_-1+3));
+  float4 cast0 = make_float4(val0,val1,val2,val3);
+  float val4 = (*(data0_-1+2));
+  *(data1_-1+0) = val4;
+}

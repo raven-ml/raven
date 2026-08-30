@@ -1,0 +1,14 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef int int2 __attribute__((ext_vector_type(2)));
+static inline __attribute__((device)) int2 make_int2(int x, int y) { return { x, y }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 8))) E_8_2n5(float* data0_16, int* data1_2, float* data2_256) {
+  int2 val0 = (*((int2*)((data1_2+0))));
+  int lidx0 = __ockl_get_local_id(0); /* 8 */
+  float val1 = (((-1<val0.x)&(val0.x<32))?*(data2_256+(lidx0+(val0.x<<3))):0.0f);
+  float val2 = (((-1<val0.y)&(val0.y<32))?*(data2_256+(lidx0+(val0.y<<3))):0.0f);
+  *(data0_16+lidx0) = val1;
+  *(data0_16+(lidx0+8)) = val2;
+}

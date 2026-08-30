@@ -1,0 +1,20 @@
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 8))) E_5_5_5_2_2_2n7(float* data0_1000, float* data1_100, float* data2_100) {
+  int gidx0 = __ockl_get_group_id(0); /* 5 */
+  int gidx1 = __ockl_get_group_id(1); /* 5 */
+  int lidx1 = __ockl_get_local_id(1); /* 2 */
+  int lidx2 = __ockl_get_local_id(2); /* 2 */
+  int alu0 = (lidx1+(gidx1<<1));
+  int alu1 = (alu0+(gidx0*20)+(lidx2*10));
+  float val0 = (*(data1_100+alu1));
+  int gidx2 = __ockl_get_group_id(2); /* 5 */
+  int lidx0 = __ockl_get_local_id(0); /* 2 */
+  int alu2 = (alu0+(gidx2*20)+(lidx0*10));
+  float val1 = (*(data1_100+alu2));
+  float val2 = (*(data2_100+alu1));
+  float val3 = (*(data2_100+alu2));
+  *(data0_1000+(lidx2+(gidx0<<1)+(gidx1*20)+(lidx1*10)+(gidx2*200)+(lidx0*100))) = (val1+val3+val0+val2);
+}

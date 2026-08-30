@@ -1,0 +1,66 @@
+typedef long unsigned int size_t;
+typedef unsigned char hip_bf8;
+typedef unsigned char hip_fp8;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef hip_fp8 hip_fp84 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) hip_fp84 make_hip_fp84(hip_fp8 x, hip_fp8 y, hip_fp8 z, hip_fp8 w) { return { x, y, z, w }; }
+typedef hip_fp8 hip_fp832 __attribute__((ext_vector_type(32)));
+static inline __attribute__((device)) hip_fp832 make_hip_fp832(hip_fp8 x, hip_fp8 y, hip_fp8 z, hip_fp8 w, hip_fp8 a, hip_fp8 b, hip_fp8 c, hip_fp8 d, hip_fp8 e, hip_fp8 f, hip_fp8 g, hip_fp8 h, hip_fp8 i, hip_fp8 j, hip_fp8 k, hip_fp8 l, hip_fp8 v16, hip_fp8 v17, hip_fp8 v18, hip_fp8 v19, hip_fp8 v20, hip_fp8 v21, hip_fp8 v22, hip_fp8 v23, hip_fp8 v24, hip_fp8 v25, hip_fp8 v26, hip_fp8 v27, hip_fp8 v28, hip_fp8 v29, hip_fp8 v30, hip_fp8 v31) { return { x, y, z, w, a, b, c, d, e, f, g, h, i, j, k, l, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31 }; }
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+#define __WMMA_16_16_128_float8_e4m3_float __builtin_amdgcn_mfma_scale_f32_16x16x128_f8f6f4
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 64))) r_64_2_2_2_2_2n1(float* data0_256, hip_fp8* data1_2048, hip_fp8* data2_2048) {
+  int lidx0 = __ockl_get_local_id(0); /* 64 */
+  int alu0 = (lidx0>>4);
+  int alu1 = (lidx0&15);
+  int alu2 = ((alu0<<9)+alu1);
+  hip_fp8 val0 = (*(data2_2048+(alu2+16)));
+  hip_fp8 val1 = (*(data2_2048+(alu2+32)));
+  hip_fp8 val2 = (*(data2_2048+(alu2+48)));
+  hip_fp8 val3 = (*(data2_2048+(alu2+64)));
+  hip_fp8 val4 = (*(data2_2048+(alu2+80)));
+  hip_fp8 val5 = (*(data2_2048+(alu2+96)));
+  hip_fp8 val6 = (*(data2_2048+(alu2+112)));
+  hip_fp8 val7 = (*(data2_2048+(alu2+128)));
+  hip_fp8 val8 = (*(data2_2048+(alu2+144)));
+  hip_fp8 val9 = (*(data2_2048+(alu2+160)));
+  hip_fp8 val10 = (*(data2_2048+(alu2+176)));
+  hip_fp8 val11 = (*(data2_2048+(alu2+192)));
+  hip_fp8 val12 = (*(data2_2048+(alu2+208)));
+  hip_fp8 val13 = (*(data2_2048+(alu2+224)));
+  hip_fp8 val14 = (*(data2_2048+(alu2+240)));
+  hip_fp8 val15 = (*(data2_2048+(alu2+256)));
+  hip_fp8 val16 = (*(data2_2048+(alu2+272)));
+  hip_fp8 val17 = (*(data2_2048+(alu2+288)));
+  hip_fp8 val18 = (*(data2_2048+(alu2+304)));
+  hip_fp8 val19 = (*(data2_2048+(alu2+320)));
+  hip_fp8 val20 = (*(data2_2048+(alu2+336)));
+  hip_fp8 val21 = (*(data2_2048+(alu2+352)));
+  hip_fp8 val22 = (*(data2_2048+(alu2+368)));
+  hip_fp8 val23 = (*(data2_2048+(alu2+384)));
+  hip_fp8 val24 = (*(data2_2048+(alu2+400)));
+  hip_fp8 val25 = (*(data2_2048+(alu2+416)));
+  hip_fp8 val26 = (*(data2_2048+(alu2+432)));
+  hip_fp8 val27 = (*(data2_2048+(alu2+448)));
+  hip_fp8 val28 = (*(data2_2048+(alu2+464)));
+  hip_fp8 val29 = (*(data2_2048+(alu2+480)));
+  hip_fp8 val30 = (*(data2_2048+(alu2+496)));
+  hip_fp8 val31 = (*(data2_2048+alu2));
+  int alu3 = ((alu0<<5)+(alu1<<7));
+  hip_fp84 val32 = (*((hip_fp84*)((data1_2048+(alu3+4)))));
+  hip_fp84 val33 = (*((hip_fp84*)((data1_2048+(alu3+8)))));
+  hip_fp84 val34 = (*((hip_fp84*)((data1_2048+(alu3+12)))));
+  hip_fp84 val35 = (*((hip_fp84*)((data1_2048+(alu3+16)))));
+  hip_fp84 val36 = (*((hip_fp84*)((data1_2048+(alu3+20)))));
+  hip_fp84 val37 = (*((hip_fp84*)((data1_2048+(alu3+24)))));
+  hip_fp84 val38 = (*((hip_fp84*)((data1_2048+(alu3+28)))));
+  hip_fp84 val39 = (*((hip_fp84*)((data1_2048+alu3))));
+  int alu4 = ((alu0<<6)+alu1);
+  float4 wmma0 = __WMMA_16_16_128_float8_e4m3_float(make_hip_fp832(val39.x,val32.x,val33.x,val34.x,val35.x,val36.x,val37.x,val38.x,val39.y,val32.y,val33.y,val34.y,val35.y,val36.y,val37.y,val38.y,val39.z,val32.z,val33.z,val34.z,val35.z,val36.z,val37.z,val38.z,val39.w,val32.w,val33.w,val34.w,val35.w,val36.w,val37.w,val38.w), make_hip_fp832(val31,val3,val7,val11,val15,val19,val23,val27,val0,val4,val8,val12,val16,val20,val24,val28,val1,val5,val9,val13,val17,val21,val25,val29,val2,val6,val10,val14,val18,val22,val26,val30), make_float4(0.0f,0.0f,0.0f,0.0f), 0, 0, 0, 0, 0, 0);
+  *(data0_256+(alu4+16)) = wmma0.y;
+  *(data0_256+(alu4+32)) = wmma0.z;
+  *(data0_256+(alu4+48)) = wmma0.w;
+  *(data0_256+alu4) = wmma0.x;
+}
