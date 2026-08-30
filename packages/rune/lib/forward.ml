@@ -510,9 +510,11 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                          ~unit_diag:false l_lower (T.transpose w))
                   in
                   let phi =
-                    let diag_m = T.diagonal m in
-                    let two = Nx_core.Dtype.of_float (T.dtype diag_m) 2.0 in
-                    T.sub (T.tril m) (T.diag (T.div_s diag_m two))
+                    (* Half the diagonal, via the identity rather than [diag] (a
+                       host-side op that refuses to trace under jit). *)
+                    let two = Nx_core.Dtype.of_float (T.dtype m) 2.0 in
+                    T.sub (T.tril m)
+                      (T.mul m (T.div_s (T.eye (T.dtype m) (T.shape m).(0)) two))
                   in
                   let dl_lower = T.matmul l_lower phi in
                   if upper then T.transpose dl_lower else dl_lower))
