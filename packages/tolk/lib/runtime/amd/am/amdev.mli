@@ -1,0 +1,240 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
+  Copyright (c) 2026 The Raven authors. ISC License.
+
+  SPDX-License-Identifier: MIT AND ISC
+  ---------------------------------------------------------------------------*)
+
+(** Driver-less AMD GPU device core.
+
+    Opens an AMD GPU over PCI without a kernel driver and exposes the
+    state everything else builds on: the mapped BARs, registers
+    addressed by name with named bitfields, the IP discovery table the
+    hardware publishes at the end of VRAM, and a device memory manager
+    over the GPU's multi-level page tables.
+
+    This is the passive device state only. Bringing the hardware up
+    (firmware loading, IP-block initialization, boot and recovery)
+    builds on top of it. *)
+
+(** {1:registers Registers} *)
+
+(** Registers bound to a device access path.
+
+    A register pairs its definition (absolute address and named
+    bitfields, see {!Amd_tables.Reg}) with the functions that reach it
+    on a concrete device. *)
+module Am_register : sig
+  type t
+  (** The type for device registers. *)
+
+  val make :
+    reg:Amd_tables.Reg.t -> rreg:(int -> int) -> wreg:(int -> int -> unit) -> t
+  (** [make ~reg ~rreg ~wreg] is [reg] accessed through [rreg] and
+      [wreg], which read and write 32-bit values at absolute dword
+      addresses. *)
+
+  val reg : t -> Amd_tables.Reg.t
+  (** [reg t] is the underlying register definition. *)
+
+  val read : t -> int
+  (** [read t] is the register's current 32-bit value. *)
+
+  val read_bitfields : t -> (string * int) list
+  (** [read_bitfields t] is {!read} decoded into the register's named
+      fields. *)
+
+  val write : t -> ?value:int -> (string * int) list -> unit
+  (** [write t fields] stores the named field assignments ored with
+      [value] (defaults to [0]); unnamed bits are written from [value]
+      alone. Raises [Invalid_argument] on an unknown field name. *)
+
+  val update : t -> (string * int) list -> unit
+  (** [update t fields] is a read-modify-write of [fields]: bits
+      outside the named fields keep their current value. Raises
+      [Invalid_argument] on an unknown field name. *)
+end
+
+(** {1:pt Page tables} *)
+
+(** Page tables in device memory.
+
+    Implements {!Tolk.Memory.pt_ops} over 4KB page tables stored in
+    VRAM, with the 64-bit entry encoding of the discovered
+    graphics-core generation. Entry words are read and written as
+    single volatile 64-bit accesses through the VRAM mapping. *)
+module Am_page_table : sig
+  type t
+  (** The type for views of one page table. *)
+
+  val pte_flags :
+    gc_ver:int * int * int ->
+    lv:int ->
+    table:bool ->
+    frag:int ->
+    uncached:bool ->
+    system:bool ->
+    snooped:bool ->
+    valid:bool ->
+    int64
+  (** [pte_flags ~gc_ver ~lv ...] is the flag word of a page-table
+      entry at level [lv] for the graphics-core generation [gc_ver],
+      without the physical-address bits. [table] marks an entry
+      pointing at a child page table; otherwise the entry maps a page,
+      gains read, write and execute permission bits and, above the leaf
+      level, the generation's huge-page marker. [frag] is the TLB
+      fragment-size exponent, [uncached] selects the generation's
+      uncached memory type, [system] points the entry at host memory
+      and [snooped] makes it cache-coherent with the host. Several
+      generations use bit 63, so the word must stay an [int64]. *)
+
+  val is_pte_huge_page : gc_ver:int * int * int -> lv:int -> int64 -> bool
+  (** [is_pte_huge_page ~gc_ver ~lv pte] is [true] iff the entry word
+      [pte] at level [lv] maps a page directly rather than pointing at
+      a child page table. *)
+
+  val ops :
+    vram:Hcq.Mmio.t ->
+    gc_ver:int * int * int ->
+    ?paddr_base:(unit -> int) ->
+    unit ->
+    t Tolk.Memory.pt_ops
+  (** [ops ~vram ~gc_ver ()] are page-table operations over tables
+      stored in [vram]. Device-local physical addresses are rebased by
+      [paddr_base ()] when written and un-rebased when read back
+      (defaults to no rebase, for devices whose local memory starts at
+      physical address [0]); the rebased address must fit the
+      generation's physical address width or [set_entry] raises
+      [Invalid_argument]. *)
+end
+
+(** {1:discovery IP discovery} *)
+
+type gc_info =
+  | Gc_info_v1 of {
+      num_se : int;
+      num_wgp0_per_sa : int;
+      num_wgp1_per_sa : int;
+      num_sa_per_se : int;
+      max_scratch_slots_per_cu : int;
+      max_waves_per_simd : int;
+      lds_size : int;
+    }
+  | Gc_info_v2 of {
+      num_se : int;
+      num_cu_per_sh : int;
+      num_sh_per_se : int;
+      max_scratch_slots_per_cu : int;
+      max_waves_per_simd : int;
+      lds_size : int;
+    }
+      (** The type for the graphics-core geometry published in the
+          discovery table, by table major version. *)
+
+type discovery = {
+  ip_ver : (int * (int * int * int)) list;
+      (** Hardware-IP id (e.g. {!Amd_tables.Am_defs.gc_hwip}) to its
+          discovered [(major, minor, revision)] version, in increasing
+          id order. *)
+  regs_offset : (int * (int * int array) list) list;
+      (** Hardware-IP id to per-instance register address-space segment
+          bases, ids and instance numbers in increasing order. *)
+  gc_info : gc_info;  (** Graphics-core geometry. *)
+}
+(** The type for parsed IP discovery tables. *)
+
+val parse_discovery : bytes -> discovery
+(** [parse_discovery blob] parses the IP discovery table [blob], the
+    10KB block located 64KB before the end of VRAM: the die headers and
+    their IP entries, each carrying one IP instance's version and
+    register-aperture base addresses, plus the graphics-core geometry
+    table. Raises [Failure] if a signature does not match or the
+    geometry table has an unknown major version. *)
+
+(** {1:devices Devices} *)
+
+type t
+(** The type for driver-less AMD GPU devices. *)
+
+val create : System.Pci_device.t -> t
+(** [create pci_dev] opens the GPU behind [pci_dev]: maps its VRAM,
+    doorbell and register BARs, sizes VRAM, reads and parses the IP
+    discovery table, resolves register families for the discovered IP
+    versions, and creates the device memory manager (a 32MB boot
+    region, a dedicated page-table region when VRAM exceeds the VRAM
+    BAR, and the main region behind them; four page-table levels over a
+    48-bit virtual space shared by all devices). The device starts in
+    the booting state: only boot-region memory can be allocated until
+    boot completes. Raises [Failure] if a BAR cannot be mapped or the
+    discovery table is malformed. *)
+
+val pci_dev : t -> System.Pci_device.t
+(** [pci_dev t] is the underlying PCI device. *)
+
+val devfmt : t -> string
+(** [devfmt t] is the device's PCI bus address, for messages. *)
+
+val vram : t -> Hcq.Mmio.t
+(** [vram t] is the mapping of the VRAM BAR. It covers all of VRAM only
+    when {!large_bar} is [true]. *)
+
+val doorbell64 : t -> Hcq.Mmio.t
+(** [doorbell64 t] is the mapping of the doorbell BAR. *)
+
+val mmio : t -> Hcq.Mmio.t
+(** [mmio t] is the mapping of the register BAR. *)
+
+val vram_size : t -> int
+(** [vram_size t] is the device's memory size in bytes. *)
+
+val large_bar : t -> bool
+(** [large_bar t] is [true] iff the VRAM BAR covers all of VRAM. *)
+
+val reserved_vram_size : t -> int
+(** [reserved_vram_size t] is the size of the VRAM tail reserved for
+    firmware structures; the memory manager stays below it. *)
+
+val discovery : t -> discovery
+(** [discovery t] is the device's parsed IP discovery table. *)
+
+val ip_ver : t -> int -> int * int * int
+(** [ip_ver t hwip] is the discovered version of the hardware IP
+    [hwip]. Raises [Invalid_argument] if discovery did not list it. *)
+
+val gc_info : t -> gc_info
+(** [gc_info t] is the device's graphics-core geometry. *)
+
+val is_booting : t -> bool
+(** [is_booting t] is [true] while the device is booting; only
+    boot-region memory can be allocated then. *)
+
+val mm : t -> Am_page_table.t Tolk.Memory.t
+(** [mm t] is the device's memory manager. *)
+
+(** {2:regaccess Register access} *)
+
+val reg : t -> string -> Am_register.t
+(** [reg t name] is the register [name] (e.g. ["regSCRATCH_REG7"])
+    resolved against the register families of the device's discovered
+    IP versions, bound to the device. Names are matched exactly; when
+    several families define the same name, the family resolved last
+    wins. Raises [Invalid_argument] if no family defines [name]. *)
+
+val rreg : t -> int -> int
+(** [rreg t reg] is the 32-bit value of the register at dword address
+    [reg], read through the register BAR, or through the indirect
+    index/data window for addresses beyond it. *)
+
+val wreg : t -> int -> int -> unit
+(** [wreg t reg v] writes the 32-bit value [v] to the register at dword
+    address [reg], like {!rreg}. *)
+
+val wreg_pair : t -> string -> lo:string -> hi:string -> int -> unit
+(** [wreg_pair t base ~lo ~hi v] writes the 64-bit value [v] across the
+    register pair named [base ^ lo] (low half) and [base ^ hi] (high
+    half). *)
+
+val indirect_wreg_pcie : t -> ?aid:int -> int -> int -> unit
+(** [indirect_wreg_pcie t reg v] writes [v] to the register at dword
+    address [reg] through the PCIe index/data window; [aid] addresses a
+    die other than the first (defaults to [0]). *)

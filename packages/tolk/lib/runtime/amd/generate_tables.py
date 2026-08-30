@@ -554,6 +554,7 @@ def gen_soc():
     for title, mod in [("Soc_9", soc_9), ("Soc_11", soc_11), ("Soc_12", soc_12)]:
         lines.append(f"module {title} = struct")
         lines.append(f"  {int_let('cs_partial_flush', mod.CS_PARTIAL_FLUSH)}")
+        lines.append(f"  {int_let('mtype_uc', mod.MTYPE_UC)}")
         lines.append("end")
         lines.append("")
     return lines[:-1]

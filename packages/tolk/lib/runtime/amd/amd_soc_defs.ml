@@ -3,12 +3,15 @@
 
 module Soc_9 = struct
   let cs_partial_flush = 7
+  let mtype_uc = 3
 end
 
 module Soc_11 = struct
   let cs_partial_flush = 7
+  let mtype_uc = 3
 end
 
 module Soc_12 = struct
   let cs_partial_flush = 7
+  let mtype_uc = 3
 end

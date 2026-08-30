@@ -24,6 +24,7 @@ module Hcq = Hcq
 module Compiler_amd = Compiler_amd
 module System = System
 module Amd_tables = Amd_tables
+module Amdev = Amdev
 
 (** {1:devices Devices} *)
 

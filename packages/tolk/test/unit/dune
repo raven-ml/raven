@@ -95,3 +95,9 @@
  (modules test_amd_tables)
  (package tolk)
  (libraries tolk.amd windtrap))
+
+(tests
+ (names test_amd_amdev)
+ (modules test_amd_amdev)
+ (package tolk)
+ (libraries tolk tolk.amd windtrap))
