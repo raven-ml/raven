@@ -20,6 +20,10 @@ All notable changes to this project will be documented in this file.
   delegate to it, by hand or via `ppx_ptree`), threaded across compiled
   calls as ordinary leaves. The leaf order (payload leaves, then the counter) is part
   of a compiled step's leaf signature and is fixed.
+- **Breaking:** `sgd_state` is `{ velocity; step }` — every structural state
+  now carries its step counter, a scalar `int32` tensor, so a schedule
+  applies to `st.step` whichever optimizer is stepping; without it an SGD
+  loop under `jit` had to thread a counter of its own.
 - **Breaking:** `adam_state` is `{ mu; nu; step }` — `step` is a scalar
   `int32` tensor, the number of completed steps. A host `int` counter burned
   the Adam bias corrections into the trace at compile time and replayed them

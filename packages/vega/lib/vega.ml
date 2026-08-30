@@ -117,6 +117,19 @@ let step st ~grad ~param =
 
 (* Scaling transforms *)
 
+(* A chain evaluates its schedule once per parameter per update, and the count
+   only moves once per step: remembering the last evaluation turns N tensor
+   evaluations per step into one. *)
+let memo_eval sched =
+  let last = ref (-1, 0.0) in
+  fun count ->
+    let c, v = !last in
+    if c = count then v
+    else
+      let v = Schedule.eval sched count in
+      last := (count, v);
+      v
+
 let scale s =
   [
     {
@@ -130,6 +143,7 @@ let scale s =
   ]
 
 let scale_by_schedule sched =
+  let sched = memo_eval sched in
   [
     {
       n_tensors = 0;
@@ -137,12 +151,13 @@ let scale_by_schedule sched =
       prim_update =
         (fun count _st updates _param ->
           let dt = Nx.dtype updates in
-          let s = Schedule.eval sched count in
+          let s = sched count in
           (Nx.mul updates (scalar dt s), [||]));
     };
   ]
 
 let scale_by_learning_rate lr =
+  let lr = memo_eval lr in
   [
     {
       n_tensors = 0;
@@ -150,7 +165,7 @@ let scale_by_learning_rate lr =
       prim_update =
         (fun count _st updates _param ->
           let dt = Nx.dtype updates in
-          let s = -.Schedule.eval lr count in
+          let s = -.lr count in
           (Nx.mul updates (scalar dt s), [||]));
     };
   ]
@@ -506,6 +521,7 @@ let trace ?(decay = 0.9) ?(nesterov = false) () =
 (* Regularization transforms *)
 
 let add_decayed_weights ?(rate = Schedule.constant 0.01) () =
+  let rate = memo_eval rate in
   [
     {
       n_tensors = 0;
@@ -513,7 +529,7 @@ let add_decayed_weights ?(rate = Schedule.constant 0.01) () =
       prim_update =
         (fun count _st updates param ->
           let dt = Nx.dtype updates in
-          let r = Schedule.eval rate count in
+          let r = rate count in
           (Nx.add updates (Nx.mul param (scalar dt r)), [||]));
     };
   ]
@@ -574,6 +590,7 @@ let centralize =
   ]
 
 let add_noise ~eta ?(gamma = 0.55) () =
+  let eta = memo_eval eta in
   [
     {
       n_tensors = 0;
@@ -582,7 +599,7 @@ let add_noise ~eta ?(gamma = 0.55) () =
         (fun count _st updates _param ->
           let dt = Nx.dtype updates in
           let variance =
-            Schedule.eval eta count /. Float.pow (1. +. float_of_int count) gamma
+            eta count /. Float.pow (1. +. float_of_int count) gamma
           in
           let noise =
             Nx.mul (randn dt (Nx.shape updates)) (scalar dt (sqrt variance))
@@ -839,25 +856,29 @@ let lr v = Nx.scalar Nx.float32 v
 
 (* SGD *)
 
-type 'p sgd_state = { velocity : 'p }
+type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
 
 module Sgd_state (P : Nx.Ptree.S) = struct
   type t = P.t sgd_state
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (st : t) : t =
-    { velocity = P.map f st.velocity }
+    { velocity = P.map f st.velocity; step = f st.step }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
       (b : t) : t =
-    { velocity = P.map2 f a.velocity b.velocity }
+    { velocity = P.map2 f a.velocity b.velocity; step = f a.step b.step }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (st : t) : unit =
-    P.iter f st.velocity
+    P.iter f st.velocity;
+    f st.step
 end
 
 let sgd_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) :
     P.t sgd_state =
-  { velocity = P.map (fun leaf -> Nx.zeros_like leaf) params }
+  {
+    velocity = P.map (fun leaf -> Nx.zeros_like leaf) params;
+    step = Nx.scalar Nx.int32 0l;
+  }
 
 let sgd_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr
     ?(momentum = 0.0) (st : P.t sgd_state) ~(params : P.t) ~(grads : P.t) :
@@ -865,7 +886,7 @@ let sgd_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr
   let velocity =
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
        the [momentum * v + g] arithmetic avoids touching (and, under [jit],
-       capturing) the state tensors at all. *)
+       capturing) the velocity tensors at all. *)
     if momentum = 0.0 then grads
     else
       P.map2
@@ -880,7 +901,7 @@ let sgd_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr
         if updates p then Nx.sub p (Nx.mul v (Nx.cast (Nx.dtype p) lr)) else p)
       params velocity
   in
-  (params, { velocity })
+  (params, { velocity; step = Nx.add_s st.step 1l })
 
 (* Adam and AdamW *)
 

@@ -209,6 +209,7 @@ let test_resume_sgd_momentum () =
          Checkpoint.of_params
            (module Lin)
            ~prefix:"optim.velocity" st3.Vega.velocity;
+         Checkpoint.of_tensor "optim.step" st3.Vega.step;
        ]);
   let expected, _ = train_sgd_steps 2 (p3, st3) in
   let ckpt = Checkpoint.load path in
@@ -220,6 +221,7 @@ let test_resume_sgd_momentum () =
         Checkpoint.to_params
           (module Lin)
           ~prefix:"optim.velocity" ~like:like.Vega.velocity ckpt;
+      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
     }
   in
   let resumed, _ = train_sgd_steps 2 (p3', st3') in

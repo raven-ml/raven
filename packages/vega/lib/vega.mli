@@ -240,9 +240,11 @@ val lr : float -> Nx.float32_t
 
 (** {1:sgd Stochastic Gradient Descent} *)
 
-type 'p sgd_state = { velocity : 'p }
+type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
 (** The state for {!sgd_step}: the momentum velocity, with the shape of the
-    parameters. *)
+    parameters, and the number of completed steps as a scalar tensor. Every
+    structural state carries its counter, so a {!Schedule} applies to
+    [st.step] whichever optimizer is stepping. *)
 
 (** [Sgd_state (P)] is the state over the parameter tree [P] as a parameter
     tree itself: its [t] is [P.t sgd_state] and its traversals walk the state's
@@ -263,13 +265,14 @@ type 'p sgd_state = { velocity : 'p }
       end
     ]}
 
-    The resulting leaf order — every leaf of [velocity], in [P]'s order — is
-    part of a compiled step's leaf signature and is fixed for good. *)
+    The resulting leaf order — every leaf of [velocity], in [P]'s order, then
+    [step] — is part of a compiled step's leaf signature and is fixed for
+    good. *)
 module Sgd_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t sgd_state
 
 val sgd_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p sgd_state
 (** [sgd_init (module P) params] is the initial state for optimizing [params]:
-    an all-zero velocity of [params]' shape. *)
+    an all-zero velocity of [params]' shape and [step = 0]. *)
 
 val sgd_step :
   (module Nx.Ptree.S with type t = 'p) ->
@@ -288,9 +291,9 @@ val sgd_step :
     v}
 
     [lr] is a scalar tensor ({!lr}); [momentum] defaults to [0.], plain gradient
-    descent: the velocity is then the last gradient, and the input state is not
-    read at all. The whole step is tensor arithmetic over [(params, st)] — it
-    traces under {!Rune.val-jit}. *)
+    descent: the velocity is then the last gradient, and the input velocity is
+    not read at all. The counter advances by one. The whole step is tensor
+    arithmetic over [(params, st)] — it traces under {!Rune.val-jit}. *)
 
 (** {1:adam Adam and AdamW} *)
 

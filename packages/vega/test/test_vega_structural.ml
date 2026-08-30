@@ -195,7 +195,8 @@ let test_sgd_velocity_threads () =
       ~lr:(lr64 0.1) ~momentum:0.5 st ~params ~grads:(vec [| 2.0 |])
   in
   (* v2 = 0.5 *. v1 +. g2 = 0.5 *. 1. +. 2. *)
-  check_vec [| 2.5 |] st.velocity
+  check_vec [| 2.5 |] st.velocity;
+  equal ~msg:"counter reads 2" int 2 (Int32.to_int (Nx.item [] st.step))
 
 let test_sgd_converges () =
   let params = Lazy.force bowl_start in
@@ -507,11 +508,11 @@ let test_state_traversals () =
   let st' = A.map2 (fun _ r -> r) st doubled in
   check_vec ~msg:"merged mu" [| 0.0 |] st'.mu.b;
   equal ~msg:"merged step" int32 0l (Nx.item [] st'.step);
-  (* The sgd state's single payload leaf. *)
+  (* The sgd state: 2 velocity leaves + step. *)
   let sst = Vega.sgd_init (module Pair) params in
   let n = ref 0 in
   Sg.iter (fun _ -> incr n) sst;
-  equal ~msg:"sgd leaf count" int 2 !n
+  equal ~msg:"sgd leaf count" int 3 !n
 
 let test_state_functor_is_a_ptree () =
   (* [Vega.Adam_state (P)] is an Nx.Ptree.S: the state can sit inside another
