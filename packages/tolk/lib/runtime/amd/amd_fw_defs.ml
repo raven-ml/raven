@@ -108,3 +108,7 @@ let hashes = [
   ("gc_9_4_4_rlc.bin", "e0c3585c72f8136670ca63e607fba32c1ae4948f493f13e33fc4d466bd6318a8");
   ("gc_9_5_0_rlc.bin", "9b1268f5751153fe57f527c9acb417bfa53ed42c9bc083c9d3da2ba61fe5fdc4");
 ]
+
+(* The pinned linux-firmware tree the digests were taken from. *)
+let upstream =
+  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/1e2c15348485939baf1b6d1f5a7a3b799d80703d/amdgpu"

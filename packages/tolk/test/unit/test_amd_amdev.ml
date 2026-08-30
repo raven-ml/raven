@@ -6,12 +6,15 @@
 (* The driver-less AMD device core, on pieces that run without hardware:
    the IP-discovery parser on synthesized tables, the page-table entry
    encoding against hand-computed golden words, page-table walks over an
-   anonymous mapping standing in for VRAM, and named-bitfield register
-   access over a fake register file. *)
+   anonymous mapping standing in for VRAM, named-bitfield register
+   access over a fake register file, and firmware loading and image
+   splitting over synthesized firmware blobs. *)
 
 open Windtrap
 module Amdev = Tolk_amd.Amdev
+module Firmware = Tolk_amd.Amdev.Firmware
 module Am = Tolk_amd.Amd_tables.Am_defs
+module Fw_defs = Tolk_amd.Amd_tables.Fw_defs
 module Reg = Tolk_amd.Amd_tables.Reg
 module Mmio = Tolk_amd.Hcq.Mmio
 module File_io = Tolk_amd.Hcq.File_io
@@ -137,6 +140,176 @@ let fake_register () =
       ~wreg:(fun a v -> Hashtbl.replace store a v)
   in
   (amr, store)
+
+(* Firmware fixtures: blobs synthesized at the struct offsets the
+   parser reads, with distinctive payload tags so descriptor slices can
+   be asserted whole. *)
+
+let put b off s = Bytes.blit_string s 0 b off (String.length s)
+
+let common_header b ~ver:(ma, mi) ~ucode_off ~ucode_size =
+  s16 b 8 ma;
+  s16 b 0xa mi;
+  s32 b 0x14 ucode_size;
+  s32 b 0x18 ucode_off
+
+(* A v2_0 sOS container with two components. *)
+let sos_blob () =
+  let b = Bytes.make 0x140 '\x00' in
+  common_header b ~ver:(2, 0) ~ucode_off:0x100 ~ucode_size:0;
+  s32 b 0x20 2;
+  (* component descriptors at the v2_0 bin offset 0x24 *)
+  s32 b 0x24 2;
+  s32 b 0x2c 0;
+  s32 b 0x30 4;
+  s32 b 0x34 3;
+  s32 b 0x3c 4;
+  s32 b 0x40 8;
+  put b 0x100 "SYS!";
+  put b 0x104 "KDB-DATA";
+  b
+
+let smu_blob_gfx11 () =
+  let b = Bytes.make 0x60 '\x00' in
+  common_header b ~ver:(1, 0) ~ucode_off:0x40 ~ucode_size:8;
+  put b 0x40 "SMUCODE!";
+  b
+
+(* A v2_1 SMU header whose soft-pptable list holds one P2S table. *)
+let smu_blob_gfx9 () =
+  let b = Bytes.make 0x100 '\x00' in
+  common_header b ~ver:(2, 1) ~ucode_off:0 ~ucode_size:0;
+  s32 b 0x24 2;
+  s32 b 0x28 0x40;
+  s32 b 0x40 0x11223344;
+  s32 b 0x44 0x98;
+  s32 b 0x48 4;
+  s32 b 0x4c 0x50325358;
+  s32 b 0x50 0x90;
+  s32 b 0x54 6;
+  put b 0x90 "P2STAB";
+  b
+
+let sdma_blob_v1 () =
+  let b = Bytes.make 0x60 '\x00' in
+  common_header b ~ver:(1, 0) ~ucode_off:0x40 ~ucode_size:12;
+  put b 0x40 "SDMA-CODE-12";
+  b
+
+let sdma_blob_v2 () =
+  let b = Bytes.make 0x80 '\x00' in
+  common_header b ~ver:(2, 0) ~ucode_off:0x40 ~ucode_size:0;
+  s32 b 0x24 8;
+  s32 b 0x30 0x60;
+  s32 b 0x34 6;
+  put b 0x40 "CTXCODE!";
+  put b 0x60 "CTLCOD";
+  b
+
+let sdma_blob_v3 () =
+  let b = Bytes.make 0x60 '\x00' in
+  common_header b ~ver:(3, 0) ~ucode_off:0x40 ~ucode_size:0;
+  s32 b 0x28 8;
+  put b 0x40 "SDMA3TH0";
+  b
+
+(* A v1_0 GFX header: code with a trailing jump table. *)
+let gfx_blob_v1 () =
+  let b = Bytes.make 0x80 '\x00' in
+  common_header b ~ver:(1, 0) ~ucode_off:0x40 ~ucode_size:0x20;
+  s32 b 0x24 6;
+  s32 b 0x28 2;
+  put b 0x40 "MEC-V1-CODE-24-BYTES-OK!";
+  put b 0x58 "MECJTAB!";
+  b
+
+(* A v2_0 GFX header: code, stack data, and a start address. *)
+let gfx_blob_v2 ~code ~stack ~start_lo ~start_hi =
+  let b = Bytes.make 0x80 '\x00' in
+  common_header b ~ver:(2, 0) ~ucode_off:0x40 ~ucode_size:0;
+  s32 b 0x24 8;
+  s32 b 0x2c 8;
+  s32 b 0x30 0x60;
+  s32 b 0x34 start_lo;
+  s32 b 0x38 start_hi;
+  put b 0x40 code;
+  put b 0x60 stack;
+  b
+
+let imu_blob () =
+  let b = Bytes.make 0x60 '\x00' in
+  common_header b ~ver:(1, 0) ~ucode_off:0x40 ~ucode_size:0;
+  s32 b 0x20 8;
+  s32 b 0x28 4;
+  put b 0x40 "IMUIRAM!";
+  put b 0x48 "IMUD";
+  b
+
+let rlc_blob_v2_1 () =
+  let b = Bytes.make 0x140 '\x00' in
+  common_header b ~ver:(2, 1) ~ucode_off:0x100 ~ucode_size:8;
+  s32 b 0x74 4;
+  s32 b 0x78 0x110;
+  s32 b 0x84 8;
+  s32 b 0x88 0x118;
+  s32 b 0x94 4;
+  s32 b 0x98 0x120;
+  put b 0x100 "RLCGCODE";
+  put b 0x110 "CNTL";
+  put b 0x118 "GPMLIST!";
+  put b 0x120 "SRM!";
+  b
+
+let rlc_blob_v2_3 () =
+  let b = Bytes.make 0x140 '\x00' in
+  common_header b ~ver:(2, 3) ~ucode_off:0x100 ~ucode_size:8;
+  s32 b 0x9c 8;
+  s32 b 0xa0 0x110;
+  s32 b 0xa4 4;
+  s32 b 0xa8 0x118;
+  s32 b 0xb4 8;
+  s32 b 0xb8 0x120;
+  s32 b 0xc4 4;
+  s32 b 0xc8 0x128;
+  put b 0x100 "RLCGCODE";
+  put b 0x110 "RLCIRAM!";
+  put b 0x118 "RLCD";
+  put b 0x120 "RLCPCODE";
+  put b 0x128 "RLCV";
+  b
+
+(* A loader over an in-memory file set that records what was asked. *)
+let fw_loader files =
+  let requested = ref [] in
+  let load name =
+    requested := name :: !requested;
+    match List.assoc_opt name files with
+    | Some b -> b
+    | None -> fail ("unexpected firmware request " ^ name)
+  in
+  (load, fun () -> List.rev !requested)
+
+let desc_strings descs =
+  List.map (fun (types, data) -> (types, Bytes.to_string data)) descs
+
+(* A firmware directory in a temp dir, handed to the loader's [dir]. *)
+let with_fw_dir f =
+  let dir = Filename.temp_file "tolk_fw_test" "" in
+  Sys.remove dir;
+  Sys.mkdir dir 0o700;
+  Fun.protect
+    ~finally:(fun () ->
+      Array.iter
+        (fun e -> Sys.remove (Filename.concat dir e))
+        (Sys.readdir dir);
+      Sys.rmdir dir)
+    (fun () -> f dir)
+
+let write_file path content =
+  Out_channel.with_open_bin path (fun oc ->
+      Out_channel.output_string oc content)
+
+let sha_abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
 let () =
   run "Amdev"
@@ -364,5 +537,235 @@ let () =
               raises_match
                 (Exn.invalid_arg ~substring:"has no field")
                 (fun () -> Amdev.Am_register.update amr [ ("nope", 1) ]));
+        ];
+      group "firmware"
+        [
+          test "loads and splits a gfx11 firmware set" (fun () ->
+              let files =
+                [
+                  ("psp_13_0_10_sos.bin", sos_blob ());
+                  ("smu_13_0_10.bin", smu_blob_gfx11 ());
+                  ("sdma_6_0_2.bin", sdma_blob_v2 ());
+                  ( "gc_11_0_2_mec.bin",
+                    gfx_blob_v2 ~code:"MECCODE1" ~stack:"MECSTAK1"
+                      ~start_lo:0x1000 ~start_hi:2 );
+                  ("gc_11_0_2_imu.bin", imu_blob ());
+                  ("gc_11_0_2_rlc.bin", rlc_blob_v2_3 ());
+                ]
+              in
+              let load, requested = fw_loader files in
+              let fw =
+                Firmware.create ~load
+                  [
+                    (Am.gc_hwip, (11, 0, 2));
+                    (Am.sdma0_hwip, (6, 0, 2));
+                    (Am.mp0_hwip, (13, 0, 10));
+                    (Am.mp1_hwip, (13, 0, 10));
+                  ]
+              in
+              equal (list string) (List.map fst files) (requested ());
+              equal
+                (list (pair int string))
+                [ (2, "SYS!"); (3, "KDB-DATA") ]
+                (List.map
+                   (fun (t, d) -> (t, Bytes.to_string d))
+                   fw.Firmware.sos_fw);
+              (match fw.Firmware.smu_psp_desc with
+              | Some (types, data) ->
+                  equal (list int) [ Am.gfx_fw_type_smu ] types;
+                  equal string "SMUCODE!" (Bytes.to_string data)
+              | None -> fail "expected an smu image");
+              equal
+                (list (pair string int))
+                [ ("MEC", 0x200001000) ]
+                fw.Firmware.ucode_start;
+              equal
+                (list (pair (list int) string))
+                [
+                  ([ Am.gfx_fw_type_sdma_ucode_th1 ], "CTLCOD");
+                  ([ Am.gfx_fw_type_sdma_ucode_th0 ], "CTXCODE!");
+                  ([ Am.gfx_fw_type_rs64_mec ], "MECCODE1");
+                  ([ Am.gfx_fw_type_rs64_mec_p0_stack ], "MECSTAK1");
+                  ([ Am.gfx_fw_type_imu_i ], "IMUIRAM!");
+                  ([ Am.gfx_fw_type_imu_d ], "IMUD");
+                  ([ Am.gfx_fw_type_rlc_iram ], "RLCIRAM!");
+                  ([ Am.gfx_fw_type_rlc_dram_boot ], "RLCD");
+                  ([ Am.gfx_fw_type_rlc_p ], "RLCPCODE");
+                  ([ Am.gfx_fw_type_rlc_v ], "RLCV");
+                  ([ Am.gfx_fw_type_rlc_g ], "RLCGCODE");
+                ]
+                (desc_strings fw.Firmware.descs));
+          test "gfx9: pptable scan, jump table, save-restore lists"
+            (fun () ->
+              let files =
+                [
+                  ("psp_13_0_6_sos.bin", sos_blob ());
+                  ("smu_13_0_6.bin", smu_blob_gfx9 ());
+                  ("sdma_4_4_2.bin", sdma_blob_v1 ());
+                  ("gc_9_4_3_mec.bin", gfx_blob_v1 ());
+                  ("gc_9_4_3_rlc.bin", rlc_blob_v2_1 ());
+                ]
+              in
+              let load, requested = fw_loader files in
+              let fw =
+                Firmware.create ~load
+                  [
+                    (Am.gc_hwip, (9, 4, 3));
+                    (Am.sdma0_hwip, (4, 4, 2));
+                    (Am.mp0_hwip, (13, 0, 6));
+                    (Am.mp1_hwip, (13, 0, 6));
+                  ]
+              in
+              equal (list string) (List.map fst files) (requested ());
+              equal bool true (fw.Firmware.smu_psp_desc = None);
+              equal (list (pair string int)) [] fw.Firmware.ucode_start;
+              equal
+                (list (pair (list int) string))
+                [
+                  ([ Am.gfx_fw_type_p2s_table ], "P2STAB");
+                  ( [
+                      Am.gfx_fw_type_sdma0; Am.gfx_fw_type_sdma1;
+                      Am.gfx_fw_type_sdma2; Am.gfx_fw_type_sdma3;
+                    ],
+                    "SDMA-CODE-12" );
+                  ([ Am.gfx_fw_type_cp_mec ], "MEC-V1-CODE-24-BYTES-OK!");
+                  ([ Am.gfx_fw_type_cp_mec_me1 ], "MECJTAB!");
+                  ([ Am.gfx_fw_type_rlc_restore_list_srm_cntl ], "CNTL");
+                  ([ Am.gfx_fw_type_rlc_restore_list_gpm_mem ], "GPMLIST!");
+                  ([ Am.gfx_fw_type_rlc_restore_list_srm_mem ], "SRM!");
+                  ([ Am.gfx_fw_type_rlc_g ], "RLCGCODE");
+                ]
+                (desc_strings fw.Firmware.descs));
+          test "gfx12: pfp and me images, smu 13.0.12 skipped" (fun () ->
+              let files =
+                [
+                  ("psp_14_0_3_sos.bin", sos_blob ());
+                  ("sdma_7_0_0.bin", sdma_blob_v3 ());
+                  ( "gc_12_0_1_pfp.bin",
+                    gfx_blob_v2 ~code:"PFPCODE1" ~stack:"PFPSTAK1"
+                      ~start_lo:0x100 ~start_hi:0 );
+                  ( "gc_12_0_1_me.bin",
+                    gfx_blob_v2 ~code:"ME-CODE1" ~stack:"ME-STAK1"
+                      ~start_lo:0x200 ~start_hi:0 );
+                  ( "gc_12_0_1_mec.bin",
+                    gfx_blob_v2 ~code:"MECCODE1" ~stack:"MECSTAK1"
+                      ~start_lo:0x1000 ~start_hi:2 );
+                  ("gc_12_0_1_imu.bin", imu_blob ());
+                  ("gc_12_0_1_rlc.bin", rlc_blob_v2_3 ());
+                ]
+              in
+              let load, requested = fw_loader files in
+              let fw =
+                Firmware.create ~load
+                  [
+                    (Am.gc_hwip, (12, 0, 1));
+                    (Am.sdma0_hwip, (7, 0, 0));
+                    (Am.mp0_hwip, (14, 0, 3));
+                    (Am.mp1_hwip, (13, 0, 12));
+                  ]
+              in
+              equal (list string) (List.map fst files) (requested ());
+              equal bool true (fw.Firmware.smu_psp_desc = None);
+              equal
+                (list (pair string int))
+                [ ("PFP", 0x100); ("ME", 0x200); ("MEC", 0x200001000) ]
+                fw.Firmware.ucode_start;
+              equal
+                (list (list int))
+                [
+                  [ Am.gfx_fw_type_sdma_ucode_th0 ];
+                  [ Am.gfx_fw_type_rs64_pfp ];
+                  [ Am.gfx_fw_type_rs64_pfp_p0_stack ];
+                  [ Am.gfx_fw_type_rs64_me ];
+                  [ Am.gfx_fw_type_rs64_me_p0_stack ];
+                  [ Am.gfx_fw_type_rs64_mec ];
+                  [ Am.gfx_fw_type_rs64_mec_p0_stack ];
+                  [ Am.gfx_fw_type_imu_i ];
+                  [ Am.gfx_fw_type_imu_d ];
+                  [ Am.gfx_fw_type_rlc_iram ];
+                  [ Am.gfx_fw_type_rlc_dram_boot ];
+                  [ Am.gfx_fw_type_rlc_p ];
+                  [ Am.gfx_fw_type_rlc_v ];
+                  [ Am.gfx_fw_type_rlc_g ];
+                ]
+                (List.map fst fw.Firmware.descs));
+          test "rejects unknown image header versions" (fun () ->
+              let b = Bytes.make 0x40 '\x00' in
+              common_header b ~ver:(9, 9) ~ucode_off:0 ~ucode_size:0;
+              raises_match
+                (Exn.failure ~substring:"unhandled psp firmware header v9_9")
+                (fun () ->
+                  Firmware.create
+                    ~load:(fun _ -> b)
+                    [
+                      (Am.gc_hwip, (11, 0, 2));
+                      (Am.sdma0_hwip, (6, 0, 2));
+                      (Am.mp0_hwip, (13, 0, 10));
+                      (Am.mp1_hwip, (13, 0, 10));
+                    ]));
+          test "fetches files whose digests match" (fun () ->
+              with_fw_dir (fun dir ->
+                  write_file (Filename.concat dir "fw.bin") "abc";
+                  equal string "abc"
+                    (Bytes.to_string
+                       (Firmware.fetch_fw ~dir "fw.bin" ~sha256:sha_abc));
+                  (* a message padding into a second sha256 block *)
+                  let msg =
+                    "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+                  in
+                  write_file (Filename.concat dir "fw2.bin") msg;
+                  equal string msg
+                    (Bytes.to_string
+                       (Firmware.fetch_fw ~dir "fw2.bin"
+                          ~sha256:
+                            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"))));
+          test "corrupted files fail naming both digests" (fun () ->
+              with_fw_dir (fun dir ->
+                  write_file (Filename.concat dir "smu_13_0_0.bin") "garbage";
+                  let pinned = List.assoc "smu_13_0_0.bin" Fw_defs.hashes in
+                  raises_match
+                    (Exn.failure
+                       ~substring:("fetch sha mismatch, expected " ^ pinned))
+                    (fun () -> Firmware.load_fw ~dir "smu_13_0_0.bin");
+                  (* the sha256 of "garbage" *)
+                  raises_match
+                    (Exn.failure
+                       ~substring:
+                         "795b6904e54f82411df4b0e27a373a55eea3f9d66dac5a9bce1dd92f7b401da5")
+                    (fun () -> Firmware.load_fw ~dir "smu_13_0_0.bin")));
+          test "missing files name the searched paths" (fun () ->
+              with_fw_dir (fun dir ->
+                  raises_match
+                    (Exn.failure
+                       ~substring:(Filename.concat dir "psp_13_0_0_sos.bin"))
+                    (fun () -> Firmware.load_fw ~dir "psp_13_0_0_sos.bin");
+                  raises_match
+                    (Exn.failure
+                       ~substring:
+                         (Filename.concat dir "psp_13_0_0_sos.bin.zst"))
+                    (fun () -> Firmware.load_fw ~dir "psp_13_0_0_sos.bin");
+                  raises_match
+                    (Exn.failure
+                       ~substring:"gitlab.com/kernel-firmware/linux-firmware")
+                    (fun () -> Firmware.load_fw ~dir "psp_13_0_0_sos.bin");
+                  raises_match
+                    (Exn.failure ~substring:"has no pinned sha256")
+                    (fun () -> Firmware.load_fw ~dir "unknown_fw.bin")));
+          test "decompresses the zst variant" (fun () ->
+              if Sys.command "command -v zstd >/dev/null 2>&1" <> 0 then
+                skip ~reason:"zstd not on PATH" ()
+              else
+                with_fw_dir (fun dir ->
+                    let raw = Filename.concat dir "fw.raw" in
+                    write_file raw "abc";
+                    equal int 0
+                      (Sys.command
+                         (Printf.sprintf "zstd -q %s -o %s"
+                            (Filename.quote raw)
+                            (Filename.quote
+                               (Filename.concat dir "fw.bin.zst"))));
+                    equal string "abc"
+                      (Bytes.to_string
+                         (Firmware.fetch_fw ~dir "fw.bin" ~sha256:sha_abc))));
         ];
     ]

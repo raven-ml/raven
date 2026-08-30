@@ -6,6 +6,8 @@
   ---------------------------------------------------------------------------*)
 
 module Am = Amd_tables.Am_defs
+module Fw = Amd_tables.Fw_defs
+module Helpers = Tolk.Helpers
 module Mmio = Hcq.Mmio
 module Memory = Tolk.Memory
 module Tlsf = Tolk.Tlsf
@@ -31,6 +33,400 @@ module Am_register = struct
   let update t fields =
     let mask = Amd_tables.Reg.fields_mask t.reg (List.map fst fields) in
     write t ~value:(read t land lnot mask) fields
+end
+
+(* Firmware: amdev.py AMFirmware, with helpers.py fetch_fw folded in
+   because the driver-less tier is its only consumer. The reference
+   downloads a missing or mismatched file from the pinned
+   linux-firmware tree; that fallback is deferred, so failures name
+   the pinned source instead. *)
+
+module Firmware = struct
+  type desc = int list * bytes
+
+  type t = {
+    sos_fw : (int * bytes) list;
+    ucode_start : (string * int) list;
+    smu_psp_desc : desc option;
+    descs : desc list;
+  }
+
+  let hex digest =
+    let n = Bytes.length digest in
+    let out = Bytes.create (n * 2) in
+    for i = 0 to n - 1 do
+      let v = Bytes.get_uint8 digest i in
+      Bytes.set out (2 * i) "0123456789abcdef".[v lsr 4];
+      Bytes.set out ((2 * i) + 1) "0123456789abcdef".[v land 0xf]
+    done;
+    Bytes.unsafe_to_string out
+
+  let zstd_dc path =
+    let tmp = Filename.temp_file "tolk_fw" ".bin" in
+    Fun.protect
+      ~finally:(fun () -> try Sys.remove tmp with Sys_error _ -> ())
+      (fun () ->
+        let cmd =
+          Printf.sprintf "zstd -q -d -c %s > %s" (Filename.quote path)
+            (Filename.quote tmp)
+        in
+        let status = Sys.command cmd in
+        if status <> 0 then
+          failwith
+            (Printf.sprintf "zstd -d -c %s failed with exit code %d" path
+               status);
+        Bytes.of_string (In_channel.with_open_bin tmp In_channel.input_all))
+
+  (* helpers.py fetch_fw *)
+  let fetch_fw ?dir name ~sha256 =
+    let dir =
+      match dir with
+      | Some d -> d
+      | None -> Helpers.getenv_str "AMD_FW_PATH" "/lib/firmware/amdgpu"
+    in
+    let plain = Filename.concat dir name in
+    let zst = plain ^ ".zst" in
+    let blob =
+      if Sys.file_exists plain then
+        Bytes.of_string (In_channel.with_open_bin plain In_channel.input_all)
+      else if Sys.file_exists zst then zstd_dc zst
+      else
+        failwith
+          (Printf.sprintf
+             "firmware %s not found: searched %s and %s; fetch it from %s/%s"
+             name plain zst Fw.upstream name)
+    in
+    let actual = hex (Helpers.sha256 blob) in
+    if not (String.equal actual sha256) then
+      failwith
+        (Printf.sprintf
+           "fetch sha mismatch, expected %s but got %s for %s (pinned source \
+            %s/%s)"
+           sha256 actual plain Fw.upstream name);
+    blob
+
+  (* amdev.py:110 load_fw *)
+  let load_fw ?dir fname =
+    match List.assoc_opt fname Fw.hashes with
+    | None ->
+        failwith (Printf.sprintf "firmware %s has no pinned sha256" fname)
+    | Some sha256 ->
+        let blob = fetch_fw ?dir fname ~sha256 in
+        if Helpers.getenv "AM_DEBUG" 0 >= 1 then
+          Printf.printf "am: loading firmware %s: %s\n%!" fname sha256;
+        blob
+
+  (* amdev.py:118 desc *)
+  let desc blob ~off ~size types = (types, Bytes.sub blob off size)
+
+  (* amdev.py:25 AMFirmware.__init__, over the ip versions parsed from
+     discovery so construction needs no device. Where the reference
+     resolves a versioned header struct or a composed GFX_FW_TYPE name,
+     an image outside the known set fails loudly here too. *)
+  let create ?load ip_ver =
+    let load = match load with Some f -> f | None -> fun n -> load_fw n in
+    let ver hwip =
+      match List.assoc_opt hwip ip_ver with
+      | Some v -> v
+      | None -> invalid_arg (Printf.sprintf "no discovered ip 0x%x" hwip)
+    in
+    let fmt_ver (ma, mi, rv) = Printf.sprintf "%d_%d_%d" ma mi rv in
+    let header_version blob =
+      ( Am.Common_firmware_header.header_version_major blob 0,
+        Am.Common_firmware_header.header_version_minor blob 0 )
+    in
+    let gc_ver = ver Am.gc_hwip in
+
+    (* Load SOS firmware. amdev.py:29 *)
+    let sos_blob =
+      load (Printf.sprintf "psp_%s_sos.bin" (fmt_ver (ver Am.mp0_hwip)))
+    in
+    let bin_count, bin_off =
+      match header_version sos_blob with
+      | 2, 0 ->
+          ( Am.Psp_firmware_header_v2_0.psp_fw_bin_count sos_blob 0,
+            Am.Psp_firmware_header_v2_0.psp_fw_bin_offset )
+      | 2, 1 ->
+          ( Am.Psp_firmware_header_v2_1.psp_fw_bin_count sos_blob 0,
+            Am.Psp_firmware_header_v2_1.psp_fw_bin_offset )
+      | ma, mi ->
+          failwith
+            (Printf.sprintf "unhandled psp firmware header v%d_%d" ma mi)
+    in
+    let sos_ucode_off =
+      Am.Common_firmware_header.ucode_array_offset_bytes sos_blob 0
+    in
+    let sos_fw =
+      List.init bin_count (fun i ->
+          let d = bin_off + (i * Am.Psp_fw_bin_desc.sizeof) in
+          let off = Am.Psp_fw_bin_desc.offset_bytes sos_blob d + sos_ucode_off in
+          ( Am.Psp_fw_bin_desc.fw_type sos_blob d,
+            Bytes.sub sos_blob off (Am.Psp_fw_bin_desc.size_bytes sos_blob d) ))
+    in
+
+    (* SMU firmware. amdev.py:44 *)
+    let smu_psp_desc, p2s_descs =
+      if ver Am.mp1_hwip = (13, 0, 12) then (None, [])
+      else
+        let blob =
+          load (Printf.sprintf "smu_%s.bin" (fmt_ver (ver Am.mp1_hwip)))
+        in
+        if gc_ver >= (11, 0, 0) then
+          ( Some
+              (desc blob
+                 ~off:(Am.Common_firmware_header.ucode_array_offset_bytes blob 0)
+                 ~size:(Am.Common_firmware_header.ucode_size_bytes blob 0)
+                 [ Am.gfx_fw_type_smu ]),
+            [] )
+        else
+          match header_version blob with
+          | 2, 1 ->
+              let entry_off =
+                Am.Smc_firmware_header_v2_1.pptable_entry_offset blob 0
+              in
+              let p2s =
+                List.filter_map
+                  (fun i ->
+                    let e =
+                      entry_off + (i * Am.Smc_soft_pptable_entry.sizeof)
+                    in
+                    (* amdev.py:52 __P2S_TABLE_ID_X *)
+                    if Am.Smc_soft_pptable_entry.id blob e = 0x50325358 then
+                      Some
+                        (desc blob
+                           ~off:
+                             (Am.Smc_soft_pptable_entry.ppt_offset_bytes blob e)
+                           ~size:
+                             (Am.Smc_soft_pptable_entry.ppt_size_bytes blob e)
+                           [ Am.gfx_fw_type_p2s_table ])
+                    else None)
+                  (List.init
+                     (Am.Smc_firmware_header_v2_1.pptable_count blob 0)
+                     Fun.id)
+              in
+              (None, p2s)
+          | ma, mi ->
+              failwith
+                (Printf.sprintf "unhandled smc firmware header v%d_%d" ma mi)
+    in
+
+    (* SDMA firmware. amdev.py:55 *)
+    let sdma_descs =
+      let blob =
+        load (Printf.sprintf "sdma_%s.bin" (fmt_ver (ver Am.sdma0_hwip)))
+      in
+      let ucode_off =
+        Am.Common_firmware_header.ucode_array_offset_bytes blob 0
+      in
+      match header_version blob with
+      | 1, 0 ->
+          [
+            desc blob ~off:ucode_off
+              ~size:(Am.Common_firmware_header.ucode_size_bytes blob 0)
+              [
+                Am.gfx_fw_type_sdma0; Am.gfx_fw_type_sdma1;
+                Am.gfx_fw_type_sdma2; Am.gfx_fw_type_sdma3;
+              ];
+          ]
+      | 2, 0 ->
+          [
+            desc blob
+              ~off:(Am.Sdma_firmware_header_v2_0.ctl_ucode_offset blob 0)
+              ~size:(Am.Sdma_firmware_header_v2_0.ctl_ucode_size_bytes blob 0)
+              [ Am.gfx_fw_type_sdma_ucode_th1 ];
+            desc blob ~off:ucode_off
+              ~size:(Am.Sdma_firmware_header_v2_0.ctx_ucode_size_bytes blob 0)
+              [ Am.gfx_fw_type_sdma_ucode_th0 ];
+          ]
+      | 3, 0 ->
+          [
+            desc blob ~off:ucode_off
+              ~size:(Am.Sdma_firmware_header_v3_0.ucode_size_bytes blob 0)
+              [ Am.gfx_fw_type_sdma_ucode_th0 ];
+          ]
+      | ma, mi ->
+          failwith
+            (Printf.sprintf "unhandled sdma firmware header v%d_%d" ma mi)
+    in
+
+    (* PFP, ME, MEC firmware. amdev.py:65 *)
+    let cp_fw_type = function
+      | "PFP" -> Am.gfx_fw_type_cp_pfp
+      | "ME" -> Am.gfx_fw_type_cp_me
+      | "MEC" -> Am.gfx_fw_type_cp_mec
+      | n -> invalid_arg (Printf.sprintf "no cp firmware type for %s" n)
+    in
+    let cp_me1_fw_type = function
+      | "MEC" -> Am.gfx_fw_type_cp_mec_me1
+      | n -> invalid_arg (Printf.sprintf "no cp jump-table firmware type for %s" n)
+    in
+    let rs64_fw_type = function
+      | "PFP" -> Am.gfx_fw_type_rs64_pfp
+      | "ME" -> Am.gfx_fw_type_rs64_me
+      | "MEC" -> Am.gfx_fw_type_rs64_mec
+      | n -> invalid_arg (Printf.sprintf "no rs64 firmware type for %s" n)
+    in
+    let rs64_stack_fw_type name i =
+      match (name, i) with
+      | "PFP", 0 -> Am.gfx_fw_type_rs64_pfp_p0_stack
+      | "ME", 0 -> Am.gfx_fw_type_rs64_me_p0_stack
+      | "MEC", 0 -> Am.gfx_fw_type_rs64_mec_p0_stack
+      | n, i ->
+          invalid_arg
+            (Printf.sprintf "no rs64 stack firmware type for %s p%d" n i)
+    in
+    let gfx_descs, ucode_start =
+      List.fold_left
+        (fun (descs, starts) (fw_name, fw_cnt) ->
+          let blob =
+            load
+              (Printf.sprintf "gc_%s_%s.bin" (fmt_ver gc_ver)
+                 (String.lowercase_ascii fw_name))
+          in
+          let ucode_off =
+            Am.Common_firmware_header.ucode_array_offset_bytes blob 0
+          in
+          match header_version blob with
+          | 1, 0 ->
+              let jt_offset = Am.Gfx_firmware_header_v1_0.jt_offset blob 0 in
+              let jt_size = Am.Gfx_firmware_header_v1_0.jt_size blob 0 in
+              ( descs
+                @ [
+                    (* Code *)
+                    desc blob ~off:ucode_off
+                      ~size:
+                        (Am.Common_firmware_header.ucode_size_bytes blob 0
+                        - (jt_size * 4))
+                      [ cp_fw_type fw_name ];
+                    (* JT *)
+                    desc blob
+                      ~off:(ucode_off + (jt_offset * 4))
+                      ~size:(jt_size * 4)
+                      [ cp_me1_fw_type fw_name ];
+                  ],
+                starts )
+          | 2, 0 ->
+              ( descs
+                @ [
+                    (* Code *)
+                    desc blob ~off:ucode_off
+                      ~size:(Am.Gfx_firmware_header_v2_0.ucode_size_bytes blob 0)
+                      [ rs64_fw_type fw_name ];
+                    (* Stack *)
+                    desc blob
+                      ~off:(Am.Gfx_firmware_header_v2_0.data_offset_bytes blob 0)
+                      ~size:(Am.Gfx_firmware_header_v2_0.data_size_bytes blob 0)
+                      (List.init fw_cnt (rs64_stack_fw_type fw_name));
+                  ],
+                starts
+                @ [
+                    ( fw_name,
+                      Am.Gfx_firmware_header_v2_0.ucode_start_addr_lo blob 0
+                      lor Am.Gfx_firmware_header_v2_0.ucode_start_addr_hi blob 0
+                          lsl 32 );
+                  ] )
+          | ma, mi ->
+              failwith
+                (Printf.sprintf "unhandled gfx firmware header v%d_%d" ma mi))
+        ([], [])
+        ((if gc_ver >= (12, 0, 0) then [ ("PFP", 1); ("ME", 1) ] else [])
+        @ [ ("MEC", 1) ])
+    in
+
+    (* IMU firmware. amdev.py:83 *)
+    let imu_descs =
+      if gc_ver >= (11, 0, 0) then (
+        let blob = load (Printf.sprintf "gc_%s_imu.bin" (fmt_ver gc_ver)) in
+        let imu_i_off =
+          Am.Common_firmware_header.ucode_array_offset_bytes blob 0
+        in
+        let imu_i_sz =
+          Am.Imu_firmware_header_v1_0.imu_iram_ucode_size_bytes blob 0
+        in
+        let imu_d_sz =
+          Am.Imu_firmware_header_v1_0.imu_dram_ucode_size_bytes blob 0
+        in
+        [
+          desc blob ~off:imu_i_off ~size:imu_i_sz [ Am.gfx_fw_type_imu_i ];
+          desc blob ~off:(imu_i_off + imu_i_sz) ~size:imu_d_sz
+            [ Am.gfx_fw_type_imu_d ];
+        ])
+      else []
+    in
+
+    (* RLC firmware. amdev.py:89 *)
+    let rlc_descs =
+      let blob = load (Printf.sprintf "gc_%s_rlc.bin" (fmt_ver gc_ver)) in
+      let minor = Am.Common_firmware_header.header_version_minor blob 0 in
+      (if minor = 1 then
+         [
+           desc blob
+             ~off:
+               (Am.Rlc_firmware_header_v2_1.save_restore_list_cntl_offset_bytes
+                  blob 0)
+             ~size:
+               (Am.Rlc_firmware_header_v2_1.save_restore_list_cntl_size_bytes
+                  blob 0)
+             [ Am.gfx_fw_type_rlc_restore_list_srm_cntl ];
+           desc blob
+             ~off:
+               (Am.Rlc_firmware_header_v2_1.save_restore_list_gpm_offset_bytes
+                  blob 0)
+             ~size:
+               (Am.Rlc_firmware_header_v2_1.save_restore_list_gpm_size_bytes
+                  blob 0)
+             [ Am.gfx_fw_type_rlc_restore_list_gpm_mem ];
+           desc blob
+             ~off:
+               (Am.Rlc_firmware_header_v2_1.save_restore_list_srm_offset_bytes
+                  blob 0)
+             ~size:
+               (Am.Rlc_firmware_header_v2_1.save_restore_list_srm_size_bytes
+                  blob 0)
+             [ Am.gfx_fw_type_rlc_restore_list_srm_mem ];
+         ]
+       else [])
+      @ (if minor >= 2 then
+           [
+             desc blob
+               ~off:
+                 (Am.Rlc_firmware_header_v2_2.rlc_iram_ucode_offset_bytes blob 0)
+               ~size:
+                 (Am.Rlc_firmware_header_v2_2.rlc_iram_ucode_size_bytes blob 0)
+               [ Am.gfx_fw_type_rlc_iram ];
+             desc blob
+               ~off:
+                 (Am.Rlc_firmware_header_v2_2.rlc_dram_ucode_offset_bytes blob 0)
+               ~size:
+                 (Am.Rlc_firmware_header_v2_2.rlc_dram_ucode_size_bytes blob 0)
+               [ Am.gfx_fw_type_rlc_dram_boot ];
+           ]
+         else [])
+      @ (if minor = 3 then
+           [
+             desc blob
+               ~off:(Am.Rlc_firmware_header_v2_3.rlcp_ucode_offset_bytes blob 0)
+               ~size:(Am.Rlc_firmware_header_v2_3.rlcp_ucode_size_bytes blob 0)
+               [ Am.gfx_fw_type_rlc_p ];
+             desc blob
+               ~off:(Am.Rlc_firmware_header_v2_3.rlcv_ucode_offset_bytes blob 0)
+               ~size:(Am.Rlc_firmware_header_v2_3.rlcv_ucode_size_bytes blob 0)
+               [ Am.gfx_fw_type_rlc_v ];
+           ]
+         else [])
+      @ [
+          desc blob
+            ~off:(Am.Common_firmware_header.ucode_array_offset_bytes blob 0)
+            ~size:(Am.Common_firmware_header.ucode_size_bytes blob 0)
+            [ Am.gfx_fw_type_rlc_g ];
+        ]
+    in
+    {
+      sos_fw;
+      ucode_start;
+      smu_psp_desc;
+      descs = p2s_descs @ sdma_descs @ gfx_descs @ imu_descs @ rlc_descs;
+    }
 end
 
 (* Am_page_table: amdev.py AMPageTableEntry; the entry encoding is

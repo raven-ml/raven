@@ -55,6 +55,63 @@ module Am_register : sig
       [Invalid_argument] on an unknown field name. *)
 end
 
+(** {1:firmware Firmware} *)
+
+(** Firmware images for device boot.
+
+    Loads the firmware files a device generation needs from the local
+    firmware directory, verifies each file against its pinned SHA-256
+    digest, and splits the files into the images handed to the
+    security processor while the device boots. *)
+module Firmware : sig
+  type desc = int list * bytes
+  (** The type for loadable firmware images: the firmware-type ids the
+      image serves (the [gfx_fw_type_*] values of
+      {!Amd_tables.Am_defs}) and the image bytes. *)
+
+  type t = {
+    sos_fw : (int * bytes) list;
+        (** Components of the security-processor operating system
+            container, keyed by component type (the [psp_fw_type_*]
+            values of {!Amd_tables.Am_defs}). *)
+    ucode_start : (string * int) list;
+        (** Instruction start address by compute-engine name (["PFP"],
+            ["ME"], ["MEC"]), for engines whose image carries one. *)
+    smu_psp_desc : desc option;
+        (** The power-management firmware image, on generations that
+            load it through the security processor. *)
+    descs : desc list;  (** The remaining images, in load order. *)
+  }
+  (** The type for a device's firmware set. *)
+
+  val fetch_fw : ?dir:string -> string -> sha256:string -> bytes
+  (** [fetch_fw name ~sha256] is the content of the firmware file
+      [name] in the directory [dir] (defaults to [$AMD_FW_PATH], or
+      [/lib/firmware/amdgpu] when unset): the plain file when present,
+      otherwise the [.zst]-suffixed variant decompressed with the
+      [zstd] tool. Raises [Failure] naming the searched paths and the
+      pinned upstream source when neither file exists, or naming the
+      expected and actual digests when the content's SHA-256 is not
+      [sha256]. *)
+
+  val load_fw : ?dir:string -> string -> bytes
+  (** [load_fw name] is {!fetch_fw} with the digest pinned for [name]
+      in {!Amd_tables.Fw_defs.hashes}. Raises [Failure] when no digest
+      is pinned. *)
+
+  val create : ?load:(string -> bytes) -> (int * (int * int * int)) list -> t
+  (** [create ip_ver] loads and splits the firmware set for the
+      discovered hardware-IP versions [ip_ver] (hardware-IP id to
+      version, as in {!type-discovery}): the security-processor OS
+      container, then the power-management (skipped on management
+      processors that boot their own), SDMA, compute-engine, and
+      graphics-core support images the generation needs. [load]
+      fetches one firmware file by name and defaults to {!load_fw}.
+      Raises [Failure] on a file whose image header version is
+      unknown, [Invalid_argument] when [ip_ver] lacks a needed
+      hardware IP. *)
+end
+
 (** {1:pt Page tables} *)
 
 (** Page tables in device memory.

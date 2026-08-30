@@ -23,7 +23,7 @@ module Smu_defs : module type of Amd_smu_defs
 (** Raw SMU message tables, per firmware interface version. *)
 
 module Fw_defs : module type of Amd_fw_defs
-(** Firmware file digests. *)
+(** Firmware file digests and the pinned tree they were taken from. *)
 
 module Reg : sig
   type t = {

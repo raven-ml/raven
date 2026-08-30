@@ -952,6 +952,11 @@ def gen_fw():
             raise ValueError(f"{name}: malformed digest")
         lines.append(f'  ("{name}", "{digest}");')
     lines.append("]")
+    lines.append("")
+    lines.append("(* The pinned linux-firmware tree the digests were taken from. *)")
+    lines.append("let upstream =")
+    lines.append('  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/'
+                 f'{pin}/amdgpu"')
     return lines
 
 
