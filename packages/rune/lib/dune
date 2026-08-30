@@ -14,6 +14,7 @@
   jit
   jit_cache
   jit_device
+  linalg_graph
   scan)
  (libraries
   nx.core

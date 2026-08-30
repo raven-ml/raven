@@ -603,6 +603,16 @@ thread.
 
 ### Nx
 
+- Add `Nx.triangular_solve ?upper ?transpose ?unit_diag a b`: a first-class
+  triangular solver (the scipy `solve_triangular` analog), previously reachable
+  only through the backend layer. It exploits triangularity instead of
+  factoring, so a pre-triangularized or pre-factorized `a` skips the
+  factorization cost of `solve`; `b` may be a vector or a stack of
+  right-hand-side matrices, batched like `a`. It also compiles through
+  `Rune.jit`, and is the building block of a linear solve inside jit
+  (`qr` + `triangular_solve`, since `solve`'s singularity check reads a traced
+  value).
+
 - `irfftn` and `irfft2` now honour `s` along every transformed axis: the
   leading, complex axes are cropped or zero-padded to the requested lengths,
   as in `ifftn`. Previously only the last axis was resized while the
@@ -1001,6 +1011,30 @@ thread.
   offset in the underlying buffer.
 
 ### Rune
+
+- `Rune.jit` compiles `Nx.cholesky` as well — the same trace-time unrolling,
+  one column of the factor per step. A non-positive-definite input, which the
+  eager kernel reports as [Linalg_error], yields nans in the compiled program.
+
+- `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
+  forward substitution unrolled at trace time into the fixed number of steps
+  their shapes imply, so the whole factorization lowers to ordinary Tolk
+  compositions and compiles for every Tolk device. Compiled results match the
+  eager kernels, including the LAPACK reflector sign and the zero-tail
+  no-reflector convention. A linear solve inside jit is the same composition
+  written out by hand (`Nx.solve` itself still refuses to trace, because its
+  singularity check reads a traced value); a singular system yields infinities
+  rather than an error. Wide right-hand sides (nrhs ≥ 32, n > 64) solve
+  block-by-block — 32-row blocks, diagonal blocks inverted once, one GEMM per
+  block against the rows solved so far — instead of unrolling one thin matmul
+  per row, which cuts the compiled solve's O(n²·nrhs) concatenation copying to
+  O(n²·nrhs/32): replay at 256×256 drops ~80× (58 ms to 0.7 ms) and the
+  compiled solve now beats the eager C kernel 3-5× from 128×128 up. Compile
+  time grows linearly in the matrix dimension, and `grad` inside a jitted
+  function now also differentiates through `qr` and `cholesky`: the tape
+  pullbacks' `diag` use read host bytes and refused to trace, so the QR and
+  Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
+  terms from the identity instead.
 
 - `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
   step compiles once and runs per slice — instead of unrolling every step into
