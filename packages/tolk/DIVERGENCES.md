@@ -33,6 +33,25 @@ Do not re-open without a consumer.
   The only would-be consumer is host-side rand arithmetic, and
   `lib/frontend/rand.ml` builds `_bits_to_rand` from UOp `Bitcast` nodes.
 
+## Scheduling defaults
+
+Behavior changed relative to the reference; each keeps its env override.
+
+- **`REDUCEOP_SPLIT_THRESHOLD` defaults to 16384; the reference defaults to
+  32768.** The threshold is the reduce depth per output element below which a
+  reduce stays fused into its consumer's kernel. Fusing a deep reduce into a
+  kernel whose global range is set by a small output is catastrophic on a
+  GPU: the kernel's few threads each re-run the whole reduction as a serial,
+  latency-bound loop, and the reference's own heuristic (GROUPTOP amount 16)
+  cannot group the result unless the reduced axis happens to divide by 16.
+  With a [32, 25480] x [25480, n] dot-product reduce (n in 1..31, i.e. just
+  below the reference threshold) inside a gradient graph, replay ran ~395x
+  slower than a padded variant of the same math and could crash the GPU (Xid
+  79); see the `tolk_shape_slowdown` reproducer in the workspace. 16384 keeps
+  every reduce the reference splits split, and additionally bounds the
+  residual serial depth at depth/256 for depths in [16384, 32768). Env still
+  overrides.
+
 ## Beam search
 
 Behavior changed relative to the reference, each reviewed with the beam

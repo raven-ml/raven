@@ -28,8 +28,17 @@ let symbolic =
 let v_openpilot = Helpers.Context_var.int ~key:"OPENPILOT_HACKS" ~default:0
 let v_float16 = Helpers.Context_var.int ~key:"FLOAT16" ~default:0
 let v_split_red = Helpers.Context_var.int ~key:"SPLIT_REDUCEOP" ~default:1
+(* Deliberately lower than the reference's 32768 (see DIVERGENCES.md,
+   "REDUCEOP_SPLIT_THRESHOLD"). A reduce this deep fused into a kernel whose
+   global range is set by a small consumer output runs entirely serial per
+   thread: with a [32, 25480] x [25480, n] dot-product reduce feeding a
+   16-thread kernel, every thread re-derives the full 32x32x25480 nested sum,
+   which dominated replay time and destabilised the GPU (see the
+   tolk_shape_slowdown workspace reproducer). Splitting at 16384 bounds the
+   residual serial depth at depth/256 for every reduce the reference still
+   fused. *)
 let v_split_thr =
-  Helpers.Context_var.int ~key:"REDUCEOP_SPLIT_THRESHOLD" ~default:32768
+  Helpers.Context_var.int ~key:"REDUCEOP_SPLIT_THRESHOLD" ~default:16384
 let v_split_sz = Helpers.Context_var.int ~key:"REDUCEOP_SPLIT_SIZE" ~default:22
 let v_max_bufs = Helpers.Context_var.int ~key:"MAX_KERNEL_BUFFERS" ~default:0
 let v_pcontig = Helpers.Context_var.int ~key:"PCONTIG" ~default:0

@@ -110,13 +110,31 @@ let key ~device ~beam call =
               ^ Option.value ~default:"" (Tolk.Compiler.cachekey c)
           | None -> ""
         in
-        (* Exactly the knobs that change lowering output for a fixed binary:
-           the optimization toggles read by [Tolk.Codegen], with [beam] the
-           effective beam width (per-call override or the BEAM env var). *)
+        (* Exactly the knobs that change the stored linear for a fixed
+           binary: the optimization toggles read by [Tolk.Codegen], the
+           rangeify and allreduce context vars that shape the schedule
+           itself, and [beam], the effective beam width (per-call override or
+           the BEAM env var). A knob missing here silently keeps serving the
+           schedule compiled under the old value. *)
         let knobs =
-          Printf.sprintf "NOOPT=%d,BEAM=%d,BEAM_ESTIMATE=%d" (env_int "NOOPT" 0)
-            beam
-            (env_int "BEAM_ESTIMATE" 1)
+          let env name default = Printf.sprintf "%s=%d" name (env_int name default) in
+          String.concat ","
+            [
+              env "NOOPT" 0;
+              Printf.sprintf "BEAM=%d" beam;
+              env "BEAM_ESTIMATE" 1;
+              env "OPENPILOT_HACKS" 0;
+              env "FLOAT16" 0;
+              env "SPLIT_REDUCEOP" 1;
+              env "REDUCEOP_SPLIT_THRESHOLD" 16384;
+              env "REDUCEOP_SPLIT_SIZE" 22;
+              env "MAX_KERNEL_BUFFERS" 0;
+              env "PCONTIG" 0;
+              env "RING" 1;
+              env "ALL2ALL" 0;
+              env "RING_ALLREDUCE_THRESHOLD" 256_000;
+              env "ALLREDUCE_CAST" 1;
+            ]
         in
         Some
           (Digest.to_hex
