@@ -1,0 +1,11 @@
+(include_subdirs no)
+
+(library
+ (name tolk_amd)
+ (public_name tolk.amd)
+ (libraries tolk)
+ (foreign_stubs
+  (language c)
+  (names tolk_amd_stubs tolk_amd_comgr_stubs))
+ (c_library_flags
+  (-ldl -lpthread)))

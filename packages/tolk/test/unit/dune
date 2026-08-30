@@ -78,3 +78,9 @@
  (modules test_runtime_cuda)
  (package tolk)
  (libraries tolk tolk.uop tolk.cuda windtrap))
+
+(tests
+ (names test_runtime_amd)
+ (modules test_runtime_amd)
+ (package tolk)
+ (libraries tolk tolk.uop tolk.amd windtrap))
