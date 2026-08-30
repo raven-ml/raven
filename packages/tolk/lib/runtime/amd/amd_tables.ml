@@ -162,6 +162,18 @@ module type Sdma = sig
   val sdma_pkt_trap_int_context_int_context : int -> int
 end
 
+module type Soc = sig
+  val cs_partial_flush : int
+end
+
+let soc ~target_major : (module Soc) =
+  match target_major with
+  | 9 -> (module Amd_soc_defs.Soc_9)
+  | 11 -> (module Amd_soc_defs.Soc_11)
+  | 12 -> (module Amd_soc_defs.Soc_12)
+  | _ ->
+      invalid_arg (Printf.sprintf "no soc event table for gfx%d" target_major)
+
 let sdma ~version : (module Sdma) =
   match Ip.major (min version (6, 0, 0)) with
   | 4 -> (module Amd_sdma_defs.V4_0_0)

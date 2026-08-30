@@ -192,6 +192,11 @@ module Q = struct
     if i < 0 || i >= t.len then invalid_arg "Q.get: index out of bounds";
     Array.unsafe_get t.buf i
 
+  let set t i v =
+    if i < 0 || i >= t.len then invalid_arg "Q.set: index out of bounds";
+    if v lsr 32 <> 0 then invalid_arg "Q.set: not a 32-bit value";
+    Array.unsafe_set t.buf i v
+
   let dwords t = Array.sub t.buf 0 t.len
   let clear t = t.len <- 0
 end

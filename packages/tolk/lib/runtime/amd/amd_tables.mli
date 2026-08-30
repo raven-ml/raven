@@ -102,6 +102,16 @@ val pm4 : gfx9:bool -> (module Pm4)
 (** [pm4 ~gfx9] is the compute-packet constant set for the generation:
     [Amd_pm4_defs.Soc15] when [gfx9], [Amd_pm4_defs.Nv] otherwise. *)
 
+(** The event-id surface shared by all generations. *)
+module type Soc = sig
+  val cs_partial_flush : int
+  (** Event id draining outstanding compute work from the pipeline. *)
+end
+
+val soc : target_major:int -> (module Soc)
+(** [soc ~target_major] is the event-id set for target generation 9, 11, or
+    12. Raises [Invalid_argument] for other generations. *)
+
 (** The SDMA packet surface shared by both packet-format versions. *)
 module type Sdma = sig
   val sdma_op_copy : int

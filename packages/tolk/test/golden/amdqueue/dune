@@ -1,0 +1,93 @@
+(executable
+ (name generate_actual)
+ (libraries tolk.amd))
+
+(rule
+ (package tolk)
+ (targets
+  exec_gfx1100.actual
+  exec_gfx942.actual
+  exec_scratch_gfx1100.actual
+  memory_barrier_gfx1100.actual
+  memory_barrier_gfx942.actual
+  poll_bit_gfx1100.actual
+  poll_bit_gfx942.actual
+  sdma_copy_large_gfx1100.actual
+  sdma_copy_large_gfx942.actual
+  sdma_copy_small_gfx1100.actual
+  sdma_copy_small_gfx942.actual
+  sdma_signal_gfx1100.actual
+  sdma_signal_gfx942.actual
+  sdma_signal_timeline_gfx1100.actual
+  sdma_signal_timeline_gfx942.actual
+  sdma_timestamp_gfx1100.actual
+  sdma_timestamp_gfx942.actual
+  sdma_wait_gfx1100.actual
+  sdma_wait_gfx942.actual
+  sdma_write32_gfx1100.actual
+  sdma_write32_gfx942.actual
+  sdma_write64_gfx1100.actual
+  sdma_write64_gfx942.actual
+  signal_gfx1100.actual
+  signal_gfx942.actual
+  signal_timeline_gfx1100.actual
+  signal_timeline_gfx942.actual
+  timestamp_gfx1100.actual
+  timestamp_gfx942.actual
+  wait_gfx1100.actual
+  wait_gfx942.actual
+  write32_gfx1100.actual
+  write32_gfx942.actual
+  write64_gfx1100.actual
+  write64_gfx942.actual)
+ (action
+  ; The goldens pin the WAVES_PER_SH-unset resource limits.
+  (setenv
+   WAVES_PER_SH
+   0
+   (run ./generate_actual.exe .))))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff exec_gfx1100.expected exec_gfx1100.actual)
+   (diff exec_gfx942.expected exec_gfx942.actual)
+   (diff exec_scratch_gfx1100.expected exec_scratch_gfx1100.actual)
+   (diff memory_barrier_gfx1100.expected memory_barrier_gfx1100.actual)
+   (diff memory_barrier_gfx942.expected memory_barrier_gfx942.actual)
+   (diff poll_bit_gfx1100.expected poll_bit_gfx1100.actual)
+   (diff poll_bit_gfx942.expected poll_bit_gfx942.actual)
+   (diff sdma_copy_large_gfx1100.expected sdma_copy_large_gfx1100.actual)
+   (diff sdma_copy_large_gfx942.expected sdma_copy_large_gfx942.actual)
+   (diff sdma_copy_small_gfx1100.expected sdma_copy_small_gfx1100.actual)
+   (diff sdma_copy_small_gfx942.expected sdma_copy_small_gfx942.actual)
+   (diff sdma_signal_gfx1100.expected sdma_signal_gfx1100.actual)
+   (diff sdma_signal_gfx942.expected sdma_signal_gfx942.actual)
+   (diff
+    sdma_signal_timeline_gfx1100.expected
+    sdma_signal_timeline_gfx1100.actual)
+   (diff
+    sdma_signal_timeline_gfx942.expected
+    sdma_signal_timeline_gfx942.actual)
+   (diff sdma_timestamp_gfx1100.expected sdma_timestamp_gfx1100.actual)
+   (diff sdma_timestamp_gfx942.expected sdma_timestamp_gfx942.actual)
+   (diff sdma_wait_gfx1100.expected sdma_wait_gfx1100.actual)
+   (diff sdma_wait_gfx942.expected sdma_wait_gfx942.actual)
+   (diff sdma_write32_gfx1100.expected sdma_write32_gfx1100.actual)
+   (diff sdma_write32_gfx942.expected sdma_write32_gfx942.actual)
+   (diff sdma_write64_gfx1100.expected sdma_write64_gfx1100.actual)
+   (diff sdma_write64_gfx942.expected sdma_write64_gfx942.actual)
+   (diff signal_gfx1100.expected signal_gfx1100.actual)
+   (diff signal_gfx942.expected signal_gfx942.actual)
+   (diff signal_timeline_gfx1100.expected signal_timeline_gfx1100.actual)
+   (diff signal_timeline_gfx942.expected signal_timeline_gfx942.actual)
+   (diff timestamp_gfx1100.expected timestamp_gfx1100.actual)
+   (diff timestamp_gfx942.expected timestamp_gfx942.actual)
+   (diff wait_gfx1100.expected wait_gfx1100.actual)
+   (diff wait_gfx942.expected wait_gfx942.actual)
+   (diff write32_gfx1100.expected write32_gfx1100.actual)
+   (diff write32_gfx942.expected write32_gfx942.actual)
+   (diff write64_gfx1100.expected write64_gfx1100.actual)
+   (diff write64_gfx942.expected write64_gfx942.actual))))

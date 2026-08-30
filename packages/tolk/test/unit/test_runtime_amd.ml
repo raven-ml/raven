@@ -43,6 +43,43 @@ let slot_buf ?va m =
   let va = match va with Some v -> v | None -> Mmio.addr m in
   Buffer.make ~va ~size:16 ~view:(Mmio.view m ~off:0 ~size:16 ()) ~meta:() ()
 
+let amd_dev ~target ~xccs ~gc_version ~nbio_version ~sdma_version ?sqtt_enabled
+    () =
+  Tolk_amd.device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
+    ?sqtt_enabled ~tmpring_size:0x00200008
+    ~scratch:(Buffer.make ~va:0x200000n ~size:0x80000 ~meta:() ())
+    ~is_am:false ~queue_event_mailbox_ptr:0x500000n
+    ~queue_event:{ Tolk_amd.event_id = 0x2a } ()
+
+let gfx1100 ?sqtt_enabled () =
+  amd_dev ~target:(11, 0, 0) ~xccs:1 ~gc_version:(11, 0, 0)
+    ~nbio_version:(4, 3, 0) ~sdma_version:(6, 0, 0) ?sqtt_enabled ()
+
+let gfx942 () =
+  amd_dev ~target:(9, 4, 2) ~xccs:8 ~gc_version:(9, 4, 3)
+    ~nbio_version:(7, 9, 0) ~sdma_version:(4, 4, 2) ()
+
+let amd_prog ?(private_segment = false) ?(dispatch_ptr = false) dev =
+  {
+    Tolk_amd.dev;
+    prog_addr = 0x100000n;
+    rsrc1 = 0;
+    rsrc2 = 0;
+    rsrc3 = 0;
+    wave32 = true;
+    enable_private_segment_sgpr = private_segment;
+    enable_dispatch_ptr = dispatch_ptr;
+  }
+
+let reg ~addr =
+  {
+    Tolk_amd.Amd_tables.Reg.name = "regTEST";
+    offset = 0;
+    segment = 0;
+    fields = [||];
+    addr;
+  }
+
 let () =
   run "Amd_runtime"
     [
@@ -167,6 +204,16 @@ let () =
               let q = Q.create () in
               raises_match is_invalid_arg (fun () -> Q.push q 0x100000000);
               raises_match is_invalid_arg (fun () -> Q.push q (-1)));
+          test "set replaces a dword in place" (fun () ->
+              let q = Q.create () in
+              Q.push q 1;
+              Q.push q 2;
+              Q.set q 1 0xFFFFFFFF;
+              equal (array int) [| 1; 0xFFFFFFFF |] (Q.dwords q);
+              raises_match is_invalid_arg (fun () -> Q.set q 2 0);
+              raises_match is_invalid_arg (fun () -> Q.set q (-1) 0);
+              raises_match is_invalid_arg (fun () -> Q.set q 0 0x100000000);
+              raises_match is_invalid_arg (fun () -> Q.set q 0 (-1)));
           test "push64 pushes the low dword first" (fun () ->
               let q = Q.create () in
               Q.push64 q 0x1122334455667788L;
@@ -354,6 +401,85 @@ let () =
                   equal nativeint 0x300000n (Buffer.va wrapped);
                   raises_match is_invalid_arg (fun () ->
                       Kernargs.alloc k 80)));
+        ];
+      group "Compute_queue"
+        [
+          test "wreg routes by register range" (fun () ->
+              let module Cq = Tolk_amd.Compute_queue in
+              let q = Cq.create (gfx1100 ()) in
+              Cq.wreg q (reg ~addr:0x2c00) [| 0xAB |];
+              Cq.wreg q (reg ~addr:0xc000) [| 0xCD |];
+              equal (array int)
+                [| 0xC0017600; 0x0; 0xAB; 0xC0017900; 0x0; 0xCD |]
+                (Q.dwords (Cq.q q)));
+          test "wreg rejects registers outside both ranges" (fun () ->
+              let module Cq = Tolk_amd.Compute_queue in
+              let q = Cq.create (gfx1100 ()) in
+              raises_match is_invalid_arg (fun () ->
+                  Cq.wreg q (reg ~addr:0x3000) [| 0 |]);
+              raises_match is_invalid_arg (fun () ->
+                  Cq.wreg q (reg ~addr:(0xc000 + 0xffff)) [| 0 |]);
+              (* the last register of each range still routes *)
+              Cq.wreg q (reg ~addr:0x2fff) [| 0 |];
+              Cq.wreg q (reg ~addr:(0xc000 + 0xfffe)) [| 0 |];
+              equal int 6 (Q.length (Cq.q q)));
+          test "exec rejects unsupported programs" (fun () ->
+              let module Cq = Tolk_amd.Compute_queue in
+              let kernargs = Buffer.make ~va:0x300000n ~size:64 ~meta:() () in
+              let exec dev prg =
+                Cq.exec (Cq.create dev) prg ~kernargs ~global_size:(1, 1, 1)
+                  ~local_size:(1, 1, 1)
+              in
+              let dev = gfx1100 () in
+              raises_match is_invalid_arg (fun () ->
+                  exec dev (amd_prog ~dispatch_ptr:true dev));
+              let sqtt_dev = gfx1100 ~sqtt_enabled:true () in
+              raises_match is_invalid_arg (fun () ->
+                  exec sqtt_dev (amd_prog sqtt_dev));
+              let multi_xcc = gfx942 () in
+              raises_match is_invalid_arg (fun () ->
+                  exec multi_xcc (amd_prog ~private_segment:true multi_xcc)));
+          test "a command value wider than 32 bits is rejected" (fun () ->
+              let module Cq = Tolk_amd.Compute_queue in
+              with_map 4096 (fun m ->
+                  let s = Signal.make (slot_buf ~va:0x400000n m) in
+                  let q = Cq.create (gfx1100 ()) in
+                  raises_match is_invalid_arg (fun () ->
+                      Cq.wait q ~value:0x100000000 s)));
+        ];
+      group "Copy_queue"
+        [
+          test "copy chunks at the copy-size cap" (fun () ->
+              let module Cp = Tolk_amd.Copy_queue in
+              let dev = gfx1100 () in
+              let src = Buffer.make ~va:0x10000000n ~size:0 ~meta:() () in
+              let dst = Buffer.make ~va:0x20000000n ~size:0 ~meta:() () in
+              let exact = Cp.create ~max_copy_size:0x1000 dev in
+              Cp.copy exact ~dest:dst ~src 0x1000;
+              equal (list int) [ 7 ] (Cp.cmd_sizes exact);
+              equal int 0xfff (Q.get (Cp.q exact) 1);
+              let split = Cp.create ~max_copy_size:0x1000 dev in
+              Cp.copy split ~dest:dst ~src 0x1001;
+              equal (list int) [ 7; 7 ] (Cp.cmd_sizes split);
+              let q = Cp.q split in
+              equal int 0xfff (Q.get q 1);
+              (* the second chunk copies the single remaining byte at
+                 +0x1000 *)
+              equal int 0 (Q.get q 8);
+              equal int 0x10001000 (Q.get q 10);
+              equal int 0x20001000 (Q.get q 12));
+          test "cmd_sizes records packet boundaries" (fun () ->
+              let module Cp = Tolk_amd.Copy_queue in
+              with_map 4096 (fun m ->
+                  let dev = gfx942 () in
+                  let s =
+                    Signal.make ~is_timeline:true ~owner:dev
+                      (slot_buf ~va:0x400000n m)
+                  in
+                  let q = Cp.create dev in
+                  Cp.signal q ~value:1 s;
+                  equal (list int) [ 4; 4; 2 ] (Cp.cmd_sizes q);
+                  equal int 10 (Q.length (Cp.q q))));
         ];
       group "Compiler"
         [

@@ -209,6 +209,12 @@ module Q : sig
   (** [get t i] is the [i]th dword of the stream. Raises
       [Invalid_argument] if [i] is out of bounds. *)
 
+  val set : t -> int -> int -> unit
+  (** [set t i v] replaces the [i]th dword of the stream with [v], for
+      packets whose fields are only known once later dwords have been
+      accumulated. Raises [Invalid_argument] if [i] is out of bounds, or
+      if [v] is negative or exceeds [0xFFFFFFFF]. *)
+
   val dwords : t -> int array
   (** [dwords t] is a fresh array of the accumulated dwords, in push
       order. *)
