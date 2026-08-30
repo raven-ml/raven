@@ -83,21 +83,21 @@
  (names test_runtime_amd)
  (modules test_runtime_amd)
  (package tolk)
- (libraries tolk tolk.uop tolk.amd windtrap))
+ (libraries tolk tolk.uop tolk.hcq tolk.amd windtrap))
 
 (tests
  (names test_amd_system)
  (modules test_amd_system)
  (package tolk)
- (libraries unix tolk tolk.amd windtrap))
+ (libraries unix tolk tolk.hcq tolk.amd windtrap))
 (tests
  (names test_amd_tables)
  (modules test_amd_tables)
  (package tolk)
- (libraries tolk.amd windtrap))
+ (libraries tolk.hcq tolk.amd windtrap))
 
 (tests
  (names test_amd_amdev)
  (modules test_amd_amdev)
  (package tolk)
- (libraries tolk tolk.amd windtrap))
+ (libraries tolk tolk.hcq tolk.amd windtrap))

@@ -3,9 +3,9 @@
 (library
  (name tolk_amd)
  (public_name tolk.amd)
- (libraries tolk)
+ (libraries tolk tolk_hcq)
  (foreign_stubs
   (language c)
-  (names tolk_amd_stubs tolk_amd_comgr_stubs tolk_amd_system_stubs))
+  (names tolk_amd_stubs tolk_amd_comgr_stubs))
  (c_library_flags
   (-ldl -lpthread)))

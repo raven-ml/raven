@@ -8,6 +8,7 @@
    generate_expected.py exactly; see README for the contract. *)
 
 open Tolk_amd
+module Hcq = Tolk_hcq.Hcq
 
 let out_dir = Sys.argv.(1)
 

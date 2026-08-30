@@ -19,38 +19,38 @@ module Ffi = struct
     map_noreserve : int;
   }
 
-  external constants : unit -> constants = "caml_tolk_amd_constants"
-  external openfile : string -> int -> int = "caml_tolk_amd_open"
-  external close : int -> unit = "caml_tolk_amd_close"
+  external constants : unit -> constants = "caml_tolk_hcq_constants"
+  external openfile : string -> int -> int = "caml_tolk_hcq_open"
+  external close : int -> unit = "caml_tolk_hcq_close"
 
   external mmap : nativeint -> int -> int -> int -> int -> int64 -> nativeint
-    = "caml_tolk_amd_mmap_bc" "caml_tolk_amd_mmap"
+    = "caml_tolk_hcq_mmap_bc" "caml_tolk_hcq_mmap"
 
-  external munmap : nativeint -> int -> unit = "caml_tolk_amd_munmap"
-  external read32 : nativeint -> int32 = "caml_tolk_amd_read32"
+  external munmap : nativeint -> int -> unit = "caml_tolk_hcq_munmap"
+  external read32 : nativeint -> int32 = "caml_tolk_hcq_read32"
 
-  external write32 : nativeint -> int32 -> unit = "caml_tolk_amd_write32"
+  external write32 : nativeint -> int32 -> unit = "caml_tolk_hcq_write32"
   [@@noalloc]
 
-  external read64 : nativeint -> int64 = "caml_tolk_amd_read64"
+  external read64 : nativeint -> int64 = "caml_tolk_hcq_read64"
 
-  external write64 : nativeint -> int64 -> unit = "caml_tolk_amd_write64"
+  external write64 : nativeint -> int64 -> unit = "caml_tolk_hcq_write64"
   [@@noalloc]
 
-  external fence : unit -> unit = "caml_tolk_amd_fence" [@@noalloc]
+  external fence : unit -> unit = "caml_tolk_hcq_fence" [@@noalloc]
 
-  external read64_int : nativeint -> int = "caml_tolk_amd_read64_int"
+  external read64_int : nativeint -> int = "caml_tolk_hcq_read64_int"
   [@@noalloc]
 
-  external monotonic_ms : unit -> int = "caml_tolk_amd_monotonic_ms"
+  external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms"
   [@@noalloc]
 
   external memcpy_to_ptr : nativeint -> bytes -> int -> int -> unit
-    = "caml_tolk_amd_memcpy_to_ptr"
+    = "caml_tolk_hcq_memcpy_to_ptr"
   [@@noalloc]
 
   external memcpy_from_ptr : bytes -> int -> nativeint -> int -> unit
-    = "caml_tolk_amd_memcpy_from_ptr"
+    = "caml_tolk_hcq_memcpy_from_ptr"
   [@@noalloc]
 end
 
@@ -305,6 +305,90 @@ module Signal = struct
   end
 end
 
+(* Timeline lifecycle and host-transfer staging shared by hardware-queue
+   device runtimes (hcq.py:384-517 HCQCompiled, :576-645 HCQAllocator). *)
+module Timeline = struct
+  type ('meta, 'dev) t = {
+    mutable timeline : ('meta, 'dev) Signal.t;
+    mutable shadow_timeline : ('meta, 'dev) Signal.t;
+    mutable timeline_value : int;
+    mutable error_state : exn option;
+    (* Rotating pinned staging buffers for host transfers; each slot records
+       the timeline value of its last use so reuse waits only for that
+       submission. *)
+    bounce : 'meta Buffer.t array;
+    bounce_timeline : int array;
+    mutable bounce_next : int;
+    on_hang : unit -> unit;
+  }
+
+  let next_timeline t =
+    t.timeline_value <- t.timeline_value + 1;
+    t.timeline_value - 1
+
+  (* The timeline counter must stay a signal dword: past 2^31 the counter
+     restarts at 1 on the shadow signal, whose stale value cannot be mistaken
+     for a future one, and the staging slots forget their old values. *)
+  let wrap_timeline_signal t =
+    let tl = t.timeline in
+    t.timeline <- t.shadow_timeline;
+    t.shadow_timeline <- tl;
+    t.timeline_value <- 1;
+    Signal.set_value t.timeline 0;
+    Array.fill t.bounce_timeline 0 (Array.length t.bounce_timeline) 0
+
+  (* A stalled or faulted wait latches the device error so every later
+     synchronize fails loudly with the fault report; a passed wait rolls the
+     timeline over before its counter outgrows the signal dword. *)
+  let guarded_wait t f =
+    match f () with
+    | r ->
+        if t.timeline_value > 1 lsl 31 then wrap_timeline_signal t;
+        r
+    | exception ((Signal.Timeout _ | Failure _) as e) ->
+        t.error_state <- Some e;
+        t.on_hang ();
+        raise e
+
+  let synchronize t =
+    (match t.error_state with Some e -> raise e | None -> ());
+    guarded_wait t (fun () -> Signal.wait t.timeline (t.timeline_value - 1))
+
+  let copyin t ~submit_chunk buf bytes =
+    let total = Bytes.length bytes in
+    let step = Buffer.size t.bounce.(0) in
+    let off = ref 0 in
+    while !off < total do
+      t.bounce_next <- (t.bounce_next + 1) mod Array.length t.bounce;
+      let slot = t.bounce_next in
+      Signal.wait t.timeline t.bounce_timeline.(slot);
+      let len = min step (total - !off) in
+      Mmio.blit_bytes
+        (Buffer.cpu_view t.bounce.(slot))
+        ~off:0
+        (Bytes.sub bytes !off len);
+      submit_chunk ~dest:(Buffer.offset buf ~off:!off ()) ~src:t.bounce.(slot)
+        len;
+      t.bounce_timeline.(slot) <- t.timeline_value - 1;
+      off := !off + len
+    done
+
+  let copyout t ~submit_chunk bytes buf =
+    let total = Bytes.length bytes in
+    let staging = t.bounce.(0) in
+    let step = Buffer.size staging in
+    let off = ref 0 in
+    while !off < total do
+      let len = min step (total - !off) in
+      submit_chunk ~dest:staging ~src:(Buffer.offset buf ~off:!off ()) len;
+      Signal.wait t.timeline (t.timeline_value - 1);
+      Bytes.blit
+        (Mmio.read_bytes (Buffer.cpu_view staging) ~off:0 ~len)
+        0 bytes !off len;
+      off := !off + len
+    done
+end
+
 module Kernargs = struct
   type 'meta t = { buf : 'meta Buffer.t; bump : Tolk.Bump.t }
 
@@ -313,12 +397,19 @@ module Kernargs = struct
   let alloc t size =
     Buffer.offset t.buf ~off:(Tolk.Bump.alloc t.bump size ~align:8 ()) ~size ()
 
-  let write_args slot ~bufs ~vals =
+  let write_args ?(prefix = [||]) slot ~bufs ~vals =
     let view = Buffer.cpu_view slot in
     Array.iteri
-      (fun i va -> Mmio.write64 view (8 * i) (Int64.of_nativeint va))
+      (fun i w ->
+        if w < 0 || w > 0xFFFF_FFFF then
+          invalid_arg "Kernargs.write_args: not a 32-bit value";
+        Mmio.write32 view (4 * i) (Int32.of_int w))
+      prefix;
+    let base = 4 * Array.length prefix in
+    Array.iteri
+      (fun i va -> Mmio.write64 view (base + (8 * i)) (Int64.of_nativeint va))
       bufs;
-    let base = 8 * Array.length bufs in
+    let base = base + (8 * Array.length bufs) in
     Array.iteri
       (fun i v ->
         if v < -0x8000_0000 || v > 0xFFFF_FFFF then

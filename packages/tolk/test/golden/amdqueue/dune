@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk.amd))
+ (libraries tolk.hcq tolk.amd))
 
 (rule
  (package tolk)

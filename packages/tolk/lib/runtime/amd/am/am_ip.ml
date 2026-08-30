@@ -10,7 +10,7 @@ module Am_register = Amdev.Am_register
 module Firmware = Amdev.Firmware
 module Helpers = Tolk.Helpers
 module Memory = Tolk.Memory
-module Mmio = Hcq.Mmio
+module Mmio = Tolk_hcq.Hcq.Mmio
 
 let debug = Helpers.getenv "DEBUG" 0
 

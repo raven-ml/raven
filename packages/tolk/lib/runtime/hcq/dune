@@ -1,0 +1,9 @@
+(include_subdirs no)
+
+(library
+ (name tolk_hcq)
+ (public_name tolk.hcq)
+ (libraries tolk)
+ (foreign_stubs
+  (language c)
+  (names tolk_hcq_stubs tolk_system_stubs)))

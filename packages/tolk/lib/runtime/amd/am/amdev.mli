@@ -151,7 +151,7 @@ module Am_page_table : sig
       a child page table. *)
 
   val ops :
-    vram:Hcq.Mmio.t ->
+    vram:Tolk_hcq.Hcq.Mmio.t ->
     gc_ver:int * int * int ->
     ?paddr_base:(unit -> int) ->
     unit ->
@@ -213,7 +213,7 @@ val parse_discovery : bytes -> discovery
 type t
 (** The type for driver-less AMD GPU devices. *)
 
-val create : System.Pci_device.t -> t
+val create : Tolk_hcq.System.Pci_device.t -> t
 (** [create pci_dev] opens the GPU behind [pci_dev]: maps its VRAM,
     doorbell and register BARs, sizes VRAM, reads and parses the IP
     discovery table, resolves register families for the discovered IP
@@ -227,14 +227,14 @@ val create : System.Pci_device.t -> t
     discovery table is malformed. *)
 
 val make :
-  ?pci_dev:System.Pci_device.t ->
+  ?pci_dev:Tolk_hcq.System.Pci_device.t ->
   ?now_ms:(unit -> int) ->
   ?is_booting:bool ref ->
   rreg:(int -> int) ->
   wreg:(int -> int -> unit) ->
-  vram:Hcq.Mmio.t ->
-  doorbell64:Hcq.Mmio.t ->
-  mmio:Hcq.Mmio.t ->
+  vram:Tolk_hcq.Hcq.Mmio.t ->
+  doorbell64:Tolk_hcq.Hcq.Mmio.t ->
+  mmio:Tolk_hcq.Hcq.Mmio.t ->
   vram_size:int ->
   large_bar:bool ->
   reserved_vram_size:int ->
@@ -259,21 +259,21 @@ val make :
     holding [true]; pass the reference the memory manager's booting
     predicate reads to keep the two in step. *)
 
-val pci_dev : t -> System.Pci_device.t option
+val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
 (** [pci_dev t] is the underlying PCI device; [None] for devices built
     by {!make} without one. *)
 
 val devfmt : t -> string
 (** [devfmt t] is the device's PCI bus address, for messages. *)
 
-val vram : t -> Hcq.Mmio.t
+val vram : t -> Tolk_hcq.Hcq.Mmio.t
 (** [vram t] is the mapping of the VRAM BAR. It covers all of VRAM only
     when {!large_bar} is [true]. *)
 
-val doorbell64 : t -> Hcq.Mmio.t
+val doorbell64 : t -> Tolk_hcq.Hcq.Mmio.t
 (** [doorbell64 t] is the mapping of the doorbell BAR. *)
 
-val mmio : t -> Hcq.Mmio.t
+val mmio : t -> Tolk_hcq.Hcq.Mmio.t
 (** [mmio t] is the mapping of the register BAR. *)
 
 val vram_size : t -> int

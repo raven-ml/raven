@@ -20,9 +20,9 @@
     copy the accumulated stream into a mapped queue ({!Queue_desc}) and
     ring its doorbell. *)
 
-module Hcq = Hcq
+module Hcq = Tolk_hcq.Hcq
 module Compiler_amd = Compiler_amd
-module System = System
+module System = Tolk_hcq.System
 module Amd_tables = Amd_tables
 module Amdev = Amdev
 module Am_ip = Am_ip

@@ -5,15 +5,16 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-module Hcq = Hcq
+module Hcq = Tolk_hcq.Hcq
 module Amd_tables = Amd_tables
 module Compiler_amd = Compiler_amd
-module System = System
+module System = Tolk_hcq.System
 module Amdev = Amdev
 module Am_ip = Am_ip
 module Reg = Amd_tables.Reg
 module Ip = Amd_tables.Ip
 module Q = Hcq.Q
+module Timeline = Hcq.Timeline
 
 let major (m, _, _) = m
 let lo32 v = Int64.to_int (Int64.logand v 0xFFFFFFFFL)
@@ -1244,107 +1245,51 @@ module State = struct
     sdma_queue : Queue_desc.t option;
     kernargs : Kfd_iface.mem Hcq.Kernargs.t;
     pool : Kfd_iface.mem Hcq.Signal.Pool.t;
-    mutable timeline : (Kfd_iface.mem, Kfd_iface.mem device) Hcq.Signal.t;
-    mutable shadow_timeline :
-      (Kfd_iface.mem, Kfd_iface.mem device) Hcq.Signal.t;
-    mutable timeline_value : int;
-    mutable error_state : exn option;
-    (* Rotating pinned staging buffers for DMA host transfers; each slot
-       records the timeline value of its last use so reuse waits only for
-       that submission. *)
-    bounce : Kfd_iface.mem Hcq.Buffer.t array;
-    bounce_timeline : int array;
-    mutable bounce_next : int;
+    tl : (Kfd_iface.mem, Kfd_iface.mem device) Timeline.t;
     (* The device's LRU-wrapped allocator; set right after creation and used
        for scratch sizing. *)
     mutable allocator : Kfd_iface.mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
   }
 
-  let next_timeline t =
-    t.timeline_value <- t.timeline_value + 1;
-    t.timeline_value - 1
-
-  (* The timeline counter must stay a signal dword: past 2^31 the counter
-     restarts at 1 on the shadow signal, whose stale value cannot be mistaken
-     for a future one, and the staging slots forget their old values. *)
-  let wrap_timeline_signal t =
-    let tl = t.timeline in
-    t.timeline <- t.shadow_timeline;
-    t.shadow_timeline <- tl;
-    t.timeline_value <- 1;
-    Hcq.Signal.set_value t.timeline 0;
-    Array.fill t.bounce_timeline 0 (Array.length t.bounce_timeline) 0
-
-  (* A stalled or faulted wait latches the device error so every later
-     synchronize fails loudly with the fault report; a passed wait rolls the
-     timeline over before its counter outgrows the signal dword. *)
-  let guarded_wait t f =
-    match f () with
-    | r ->
-        if t.timeline_value > 1 lsl 31 then wrap_timeline_signal t;
-        r
-    | exception ((Hcq.Signal.Timeout _ | Failure _) as e) ->
-        t.error_state <- Some e;
-        Kfd_iface.on_device_hang t.iface
-
-  let synchronize t =
-    (match t.error_state with Some e -> raise e | None -> ());
-    guarded_wait t (fun () ->
-        Hcq.Signal.wait t.timeline (t.timeline_value - 1))
-
   let invalidate_caches t =
     let cq = Compute_queue.create t.hw in
     Compute_queue.memory_barrier cq;
-    Compute_queue.signal cq ~value:(next_timeline t) t.timeline;
+    Compute_queue.signal cq
+      ~value:(Timeline.next_timeline t.tl)
+      t.tl.Timeline.timeline;
     Compute_queue.submit cq t.compute_queue;
-    synchronize t
+    Timeline.synchronize t.tl
 end
 
 module Allocator = struct
   (* One DMA stream ordered against the device timeline: wait for the last
      submitted work, append the packets of [build], advance the timeline. *)
   let submit_copy state qd build =
+    let tl = state.State.tl in
     let cp = Copy_queue.create state.State.hw in
     Copy_queue.wait cp
-      ~value:(state.State.timeline_value - 1)
-      state.State.timeline;
+      ~value:(tl.Timeline.timeline_value - 1)
+      tl.Timeline.timeline;
     build cp;
-    Copy_queue.signal cp ~value:(State.next_timeline state) state.State.timeline;
+    Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
     Copy_queue.submit cp qd
+
+  let submit_chunk state qd ~dest ~src len =
+    submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src len)
 
   let copyin state buf bytes =
     match state.State.sdma_queue with
     | None ->
         (* Without a DMA engine every buffer is host-visible: write the
            mapping directly once the device is idle. *)
-        State.synchronize state;
+        Timeline.synchronize state.State.tl;
         Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view buf) ~off:0 bytes
     | Some qd ->
-        let total = Bytes.length bytes in
-        let bounce = state.State.bounce in
-        let step = Hcq.Buffer.size bounce.(0) in
-        let off = ref 0 in
-        while !off < total do
-          state.State.bounce_next <-
-            (state.State.bounce_next + 1) mod Array.length bounce;
-          let slot = state.State.bounce_next in
-          Hcq.Signal.wait state.State.timeline
-            state.State.bounce_timeline.(slot);
-          let len = min step (total - !off) in
-          Hcq.Mmio.blit_bytes
-            (Hcq.Buffer.cpu_view bounce.(slot))
-            ~off:0
-            (Bytes.sub bytes !off len);
-          submit_copy state qd (fun cp ->
-              Copy_queue.copy cp
-                ~dest:(Hcq.Buffer.offset buf ~off:!off ())
-                ~src:bounce.(slot) len);
-          state.State.bounce_timeline.(slot) <- state.State.timeline_value - 1;
-          off := !off + len
-        done
+        Timeline.copyin state.State.tl ~submit_chunk:(submit_chunk state qd)
+          buf bytes
 
   let copyout state bytes buf =
-    State.synchronize state;
+    Timeline.synchronize state.State.tl;
     match state.State.sdma_queue with
     | None ->
         let len = Bytes.length bytes in
@@ -1352,22 +1297,8 @@ module Allocator = struct
           (Hcq.Mmio.read_bytes (Hcq.Buffer.cpu_view buf) ~off:0 ~len)
           0 bytes 0 len
     | Some qd ->
-        let total = Bytes.length bytes in
-        let staging = state.State.bounce.(0) in
-        let step = Hcq.Buffer.size staging in
-        let off = ref 0 in
-        while !off < total do
-          let len = min step (total - !off) in
-          submit_copy state qd (fun cp ->
-              Copy_queue.copy cp ~dest:staging
-                ~src:(Hcq.Buffer.offset buf ~off:!off ())
-                len);
-          Hcq.Signal.wait state.State.timeline (state.State.timeline_value - 1);
-          Bytes.blit
-            (Hcq.Mmio.read_bytes (Hcq.Buffer.cpu_view staging) ~off:0 ~len)
-            0 bytes !off len;
-          off := !off + len
-        done
+        Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state qd)
+          bytes buf
 
   let transfer state ~dest ~src nbytes =
     let qd = Option.get state.State.sdma_queue in
@@ -1440,10 +1371,11 @@ module Runtime = struct
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let local = Option.value local ~default:default_local in
       let vals = Array.map Int64.to_int vals in
-      let timeline_value = State.next_timeline state in
+      let tl = state.State.tl in
+      let timeline_value = Timeline.next_timeline tl in
       let launch ?timing () =
         Program.call prg ~kernargs:state.State.kernargs
-          ~queue:state.State.compute_queue ~timeline:state.State.timeline
+          ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
           ~timeline_value ?wait:timing ~bufs ~vals
           ~global_size:(global.(0), global.(1), global.(2))
           ~local_size:(local.(0), local.(1), local.(2))
@@ -1451,7 +1383,7 @@ module Runtime = struct
       in
       if not wait then launch ()
       else begin
-        (match state.State.error_state with Some e -> raise e | None -> ());
+        (match tl.Timeline.error_state with Some e -> raise e | None -> ());
         let st_slot = Hcq.Signal.Pool.get state.State.pool in
         let en_slot = Hcq.Signal.Pool.get state.State.pool in
         Fun.protect
@@ -1461,7 +1393,7 @@ module Runtime = struct
           (fun () ->
             let st = Hcq.Signal.make ~timestamp_divider:100. st_slot in
             let en = Hcq.Signal.make ~timestamp_divider:100. en_slot in
-            State.guarded_wait state (fun () -> launch ~timing:(st, en) ()))
+            Timeline.guarded_wait tl (fun () -> launch ~timing:(st, en) ()))
       end
     in
     let free () = Program.free ~free:(Kfd_iface.free state.State.iface) prg in
@@ -1606,15 +1538,19 @@ let create name =
         Hcq.Kernargs.create
           (Kfd_iface.alloc iface ~cpu_access:true (16 lsl 20));
       pool;
-      timeline = timeline_signal ();
-      shadow_timeline = timeline_signal ();
-      timeline_value = 1;
-      error_state = None;
-      bounce =
-        Array.init bounce_count (fun _ ->
-            Kfd_iface.alloc iface ~host:true bounce_size);
-      bounce_timeline = Array.make bounce_count 0;
-      bounce_next = 0;
+      tl =
+        {
+          Timeline.timeline = timeline_signal ();
+          shadow_timeline = timeline_signal ();
+          timeline_value = 1;
+          error_state = None;
+          bounce =
+            Array.init bounce_count (fun _ ->
+                Kfd_iface.alloc iface ~host:true bounce_size);
+          bounce_timeline = Array.make bounce_count 0;
+          bounce_next = 0;
+          on_hang = (fun () -> Kfd_iface.on_device_hang iface);
+        };
       allocator = None;
     }
   in
@@ -1636,6 +1572,6 @@ let create name =
   let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Runtime.runtime state)
-    ~synchronize:(fun () -> State.synchronize state)
+    ~synchronize:(fun () -> Timeline.synchronize state.State.tl)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ()

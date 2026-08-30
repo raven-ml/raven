@@ -11,8 +11,9 @@
     through memory-mapped command queues: raw file and mapping primitives
     ({!File_io}), bounds-checked volatile access to mapped device memory
     ({!Mmio}), device-memory regions ({!Buffer}), command-stream
-    accumulation ({!Q}), synchronization slots ({!Signal}) and kernel
-    argument staging ({!Kernargs}). *)
+    accumulation ({!Q}), synchronization slots ({!Signal}), device
+    completion timelines ({!Timeline}) and kernel argument staging
+    ({!Kernargs}). *)
 
 (** Files and memory mappings. *)
 module File_io : sig
@@ -334,6 +335,100 @@ module Signal : sig
   end
 end
 
+(** Device completion timelines.
+
+    A timeline orders a device's submitted work behind one
+    monotonically increasing counter: each submission takes the next
+    value with {!Timeline.next_timeline} and instructs the device to
+    write it to the timeline signal once the work completes, so waiting
+    for a value waits for everything submitted up to it. The timeline
+    latches device errors so failures stay loud, rolls the counter over
+    before it outgrows the signal's dword, and stages host transfers
+    through a rotating set of pinned bounce buffers. *)
+module Timeline : sig
+  type ('meta, 'dev) t = {
+    mutable timeline : ('meta, 'dev) Signal.t;
+        (** The signal completed work advances. *)
+    mutable shadow_timeline : ('meta, 'dev) Signal.t;
+        (** The spare signal {!wrap_timeline_signal} swaps in. *)
+    mutable timeline_value : int;
+        (** The counter value the next submission takes; starts at
+            [1]. *)
+    mutable error_state : exn option;
+        (** The latched device error: once a wait stalls or faults,
+            every later {!synchronize} re-raises it. *)
+    bounce : 'meta Buffer.t array;
+        (** Rotating CPU-mapped, pinned staging buffers for host
+            transfers, all of one size. *)
+    bounce_timeline : int array;
+        (** Per-slot timeline value of the slot's last use, so reuse
+            waits only for that submission. *)
+    mutable bounce_next : int;  (** The most recently used slot. *)
+    on_hang : unit -> unit;
+        (** Called after a wait stalled or faulted and the error was
+            latched; expected to raise [Failure] with the device's fault
+            report. The original error is re-raised if it returns. *)
+  }
+  (** The type for completion timelines over buffers with metadata
+      ['meta] and signals owned by devices of type ['dev]. *)
+
+  val next_timeline : ('meta, 'dev) t -> int
+  (** [next_timeline t] is the counter value for the next submission,
+      advancing the counter past it. The submission must signal the
+      timeline with the value once its work completes. *)
+
+  val wrap_timeline_signal : ('meta, 'dev) t -> unit
+  (** [wrap_timeline_signal t] restarts the counter at [1] on the
+      shadow signal, whose stale value cannot be mistaken for a future
+      one: the signals swap roles, the new timeline signal's value is
+      reset to [0], and the staging slots forget their recorded values.
+      All submitted work must have completed. *)
+
+  val guarded_wait : ('meta, 'dev) t -> (unit -> 'a) -> 'a
+  (** [guarded_wait t f] is [f ()], wrapping the timeline (see
+      {!wrap_timeline_signal}) after a successful return once the
+      counter outgrows the signal dword. When [f] raises
+      {!Signal.Timeout} or [Failure], the error is latched into
+      [error_state] and [on_hang] runs, so every later {!synchronize}
+      fails loudly with the device's fault report. *)
+
+  val synchronize : ('meta, 'dev) t -> unit
+  (** [synchronize t] waits until every value handed out so far has
+      completed. Raises the latched error if the device already failed,
+      and latches new stalls or faults (see {!guarded_wait}). *)
+
+  val copyin :
+    ('meta, 'dev) t ->
+    submit_chunk:(dest:'meta Buffer.t -> src:'meta Buffer.t -> int -> unit) ->
+    'meta Buffer.t ->
+    bytes ->
+    unit
+  (** [copyin t ~submit_chunk buf bytes] copies [bytes] into the device
+      region [buf] through the staging buffers: each chunk waits for
+      its staging slot's previous use to complete, blits the chunk into
+      the slot, and calls [submit_chunk ~dest ~src len] with [dest] the
+      chunk's sub-buffer of [buf] and [src] the slot. [submit_chunk]
+      must submit a device copy of [len] bytes ordered after all
+      previously submitted work and signal the timeline with a fresh
+      {!next_timeline} value; the slot records that value and is reused
+      only once it passes. *)
+
+  val copyout :
+    ('meta, 'dev) t ->
+    submit_chunk:(dest:'meta Buffer.t -> src:'meta Buffer.t -> int -> unit) ->
+    bytes ->
+    'meta Buffer.t ->
+    unit
+  (** [copyout t ~submit_chunk bytes buf] copies the device region
+      [buf] into [bytes] through the first staging buffer, chunk by
+      chunk: [submit_chunk ~dest ~src len] must submit a device copy of
+      the [len]-byte chunk ([src], a sub-buffer of [buf]) into the slot
+      ([dest]), ordered after all previously submitted work, and signal
+      the timeline with a fresh {!next_timeline} value; the copy waits
+      for that value and blits the slot into [bytes]. Callers
+      {!synchronize} first so earlier writes to [buf] have retired. *)
+end
+
 (** Kernel argument staging.
 
     A kernargs region hands out small slots of a CPU-mapped buffer for
@@ -353,10 +448,17 @@ module Kernargs : sig
       wrapping to the start of the region when the end is reached.
       Raises [Invalid_argument] if [size] exceeds the region. *)
 
-  val write_args : 'meta Buffer.t -> bufs:nativeint array -> vals:int array -> unit
+  val write_args :
+    ?prefix:int array ->
+    'meta Buffer.t ->
+    bufs:nativeint array ->
+    vals:int array ->
+    unit
   (** [write_args slot ~bufs ~vals] lays out kernel arguments in
-      [slot]: the addresses in [bufs] as 64-bit words from byte offset
-      [0], then the values in [vals] as 32-bit words. Raises
+      [slot]: the words of [prefix] as 32-bit words from byte offset
+      [0] (defaults to none), then the addresses in [bufs] as 64-bit
+      words, then the values in [vals] as 32-bit words. Raises
       [Invalid_argument] if the layout does not fit in [slot], if a
-      value does not fit in 32 bits, or if [slot] has no view. *)
+      prefix word is negative or exceeds [0xFFFFFFFF], if a value does
+      not fit in 32 bits, or if [slot] has no view. *)
 end

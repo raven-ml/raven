@@ -8,7 +8,8 @@
 module Am = Amd_tables.Am_defs
 module Fw = Amd_tables.Fw_defs
 module Helpers = Tolk.Helpers
-module Mmio = Hcq.Mmio
+module Mmio = Tolk_hcq.Hcq.Mmio
+module System = Tolk_hcq.System
 module Memory = Tolk.Memory
 module Tlsf = Tolk.Tlsf
 
@@ -670,7 +671,7 @@ let parse_discovery blob =
 
 (* Devices: amdev.py AMDev (without the boot state machine) *)
 
-external monotonic_ms : unit -> int = "caml_tolk_amd_monotonic_ms" [@@noalloc]
+external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
 type t = {
   pci_dev : System.Pci_device.t option;

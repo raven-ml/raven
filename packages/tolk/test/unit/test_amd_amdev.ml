@@ -20,8 +20,8 @@ module Smu = Tolk_amd.Am_ip.Smu
 module Am = Tolk_amd.Amd_tables.Am_defs
 module Fw_defs = Tolk_amd.Amd_tables.Fw_defs
 module Reg = Tolk_amd.Amd_tables.Reg
-module Mmio = Tolk_amd.Hcq.Mmio
-module File_io = Tolk_amd.Hcq.File_io
+module Mmio = Tolk_hcq.Hcq.Mmio
+module File_io = Tolk_hcq.Hcq.File_io
 module Memory = Tolk.Memory
 module Tlsf = Tolk.Tlsf
 

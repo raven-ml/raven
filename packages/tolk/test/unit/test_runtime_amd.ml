@@ -4,12 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module File_io = Tolk_amd.Hcq.File_io
-module Mmio = Tolk_amd.Hcq.Mmio
-module Buffer = Tolk_amd.Hcq.Buffer
-module Q = Tolk_amd.Hcq.Q
-module Signal = Tolk_amd.Hcq.Signal
-module Kernargs = Tolk_amd.Hcq.Kernargs
+module File_io = Tolk_hcq.Hcq.File_io
+module Mmio = Tolk_hcq.Hcq.Mmio
+module Buffer = Tolk_hcq.Hcq.Buffer
+module Q = Tolk_hcq.Hcq.Q
+module Signal = Tolk_hcq.Hcq.Signal
+module Kernargs = Tolk_hcq.Hcq.Kernargs
 module Compiler_amd = Tolk_amd.Compiler_amd
 module Program = Tolk_amd.Program
 
@@ -580,6 +580,25 @@ let () =
                         \x00\x20\x00\x00\x00\x00\x00\x00\
                         \x07\x00\x00\x00\xff\xff\xff\xff")
                     (Mmio.read_bytes m ~off:0 ~len:24)));
+          test "write_args lays a prefix before addresses and values"
+            (fun () ->
+              with_map 4096 (fun m ->
+                  let root =
+                    Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
+                  in
+                  let slot = Kernargs.alloc (Kernargs.create root) 32 in
+                  Kernargs.write_args slot
+                    ~prefix:[| 0xdeadbeef; 1 |]
+                    ~bufs:[| 0x1000n |] ~vals:[| 7 |];
+                  equal bytes
+                    (Bytes.of_string
+                       "\xef\xbe\xad\xde\x01\x00\x00\x00\
+                        \x00\x10\x00\x00\x00\x00\x00\x00\
+                        \x07\x00\x00\x00")
+                    (Mmio.read_bytes m ~off:0 ~len:20);
+                  raises_match is_invalid_arg (fun () ->
+                      Kernargs.write_args slot ~prefix:[| -1 |] ~bufs:[||]
+                        ~vals:[||])));
           test "write_args is bounds- and range-checked" (fun () ->
               with_map 4096 (fun m ->
                   let root =

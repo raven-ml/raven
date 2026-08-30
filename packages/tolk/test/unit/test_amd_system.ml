@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module System = Tolk_amd.System
-module Pci_device = Tolk_amd.System.Pci_device
-module File_io = Tolk_amd.Hcq.File_io
+module System = Tolk_hcq.System
+module Pci_device = Tolk_hcq.System.Pci_device
+module File_io = Tolk_hcq.Hcq.File_io
 
 let ( // ) = Filename.concat
 

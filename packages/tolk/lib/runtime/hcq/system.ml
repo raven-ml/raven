@@ -20,27 +20,27 @@ module Ffi = struct
     linux : bool;
   }
 
-  external constants : unit -> constants = "caml_tolk_amd_system_constants"
+  external constants : unit -> constants = "caml_tolk_system_constants"
 
   external open_mode : string -> int -> int -> int
-    = "caml_tolk_amd_system_open_mode"
+    = "caml_tolk_system_open_mode"
 
-  external flock_try : int -> bool = "caml_tolk_amd_system_flock_try"
+  external flock_try : int -> bool = "caml_tolk_system_flock_try"
   [@@noalloc]
 
-  external mlock : nativeint -> int -> bool = "caml_tolk_amd_system_mlock"
+  external mlock : nativeint -> int -> bool = "caml_tolk_system_mlock"
   [@@noalloc]
 
   external madvise_dontfork : nativeint -> int -> unit
-    = "caml_tolk_amd_system_madvise_dontfork"
+    = "caml_tolk_system_madvise_dontfork"
 
   external pread : int -> bytes -> int -> int -> int64 -> int
-    = "caml_tolk_amd_system_pread"
+    = "caml_tolk_system_pread"
 
   external pwrite : int -> bytes -> int -> int -> int64 -> int
-    = "caml_tolk_amd_system_pwrite"
+    = "caml_tolk_system_pwrite"
 
-  external write : int -> bytes -> int -> int = "caml_tolk_amd_system_write"
+  external write : int -> bytes -> int -> int = "caml_tolk_system_write"
 end
 
 let {

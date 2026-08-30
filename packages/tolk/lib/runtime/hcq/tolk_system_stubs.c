@@ -55,7 +55,7 @@ static void raise_errno(const char *what) {
   caml_failwith(buf);
 }
 
-CAMLprim value caml_tolk_amd_system_constants(value unit) {
+CAMLprim value caml_tolk_system_constants(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(v);
   v = caml_alloc_tuple(9);
@@ -78,8 +78,8 @@ CAMLprim value caml_tolk_amd_system_constants(value unit) {
 /* open(2) with an explicit creation mode; close-on-exec is always added and
    the mode is applied with fchmod so it does not depend on the process
    umask. */
-CAMLprim value caml_tolk_amd_system_open_mode(value v_path, value v_flags,
-                                              value v_mode) {
+CAMLprim value caml_tolk_system_open_mode(value v_path, value v_flags,
+                                          value v_mode) {
   CAMLparam3(v_path, v_flags, v_mode);
   int fd = open(String_val(v_path), Int_val(v_flags) | O_CLOEXEC,
                 (mode_t)Int_val(v_mode));
@@ -94,20 +94,19 @@ CAMLprim value caml_tolk_amd_system_open_mode(value v_path, value v_flags,
   CAMLreturn(Val_int(fd));
 }
 
-CAMLprim value caml_tolk_amd_system_flock_try(value v_fd) {
+CAMLprim value caml_tolk_system_flock_try(value v_fd) {
   int r;
   do r = flock(Int_val(v_fd), LOCK_EX | LOCK_NB);
   while (r != 0 && errno == EINTR);
   return Val_bool(r == 0);
 }
 
-CAMLprim value caml_tolk_amd_system_mlock(value v_addr, value v_size) {
+CAMLprim value caml_tolk_system_mlock(value v_addr, value v_size) {
   return Val_bool(
       mlock((void *)Nativeint_val(v_addr), (size_t)Long_val(v_size)) == 0);
 }
 
-CAMLprim value caml_tolk_amd_system_madvise_dontfork(value v_addr,
-                                                     value v_size) {
+CAMLprim value caml_tolk_system_madvise_dontfork(value v_addr, value v_size) {
 #ifdef __linux__
   if (madvise((void *)Nativeint_val(v_addr), (size_t)Long_val(v_size),
               MADV_DONTFORK) != 0)
@@ -124,8 +123,8 @@ CAMLprim value caml_tolk_amd_system_madvise_dontfork(value v_addr,
 /* The copies must keep the OCaml runtime lock held: the bytes value may move
    under the GC otherwise. */
 
-CAMLprim value caml_tolk_amd_system_pread(value v_fd, value v_buf, value v_pos,
-                                          value v_len, value v_off) {
+CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf, value v_pos,
+                                      value v_len, value v_off) {
   CAMLparam5(v_fd, v_buf, v_pos, v_len, v_off);
   ssize_t r;
   do
@@ -136,9 +135,8 @@ CAMLprim value caml_tolk_amd_system_pread(value v_fd, value v_buf, value v_pos,
   CAMLreturn(Val_long(r));
 }
 
-CAMLprim value caml_tolk_amd_system_pwrite(value v_fd, value v_buf,
-                                           value v_pos, value v_len,
-                                           value v_off) {
+CAMLprim value caml_tolk_system_pwrite(value v_fd, value v_buf, value v_pos,
+                                       value v_len, value v_off) {
   CAMLparam5(v_fd, v_buf, v_pos, v_len, v_off);
   ssize_t r;
   do
@@ -149,8 +147,7 @@ CAMLprim value caml_tolk_amd_system_pwrite(value v_fd, value v_buf,
   CAMLreturn(Val_long(r));
 }
 
-CAMLprim value caml_tolk_amd_system_write(value v_fd, value v_buf,
-                                          value v_len) {
+CAMLprim value caml_tolk_system_write(value v_fd, value v_buf, value v_len) {
   CAMLparam3(v_fd, v_buf, v_len);
   ssize_t r;
   do r = write(Int_val(v_fd), Bytes_val(v_buf), (size_t)Long_val(v_len));
