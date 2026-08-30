@@ -1133,12 +1133,19 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_ifft _ -> Some (fun k -> refuse k "ifft")
     | E_rfft _ -> Some (fun k -> refuse k "rfft")
     | E_irfft _ -> Some (fun k -> refuse k "irfft")
-    | E_cholesky _ -> Some (fun k -> refuse k "cholesky")
-    (* QR and triangular solves unroll at trace time (see [Linalg_graph]):
-       both take a number of steps fixed by the input shapes, so they lower to
-       ordinary Tolk compositions instead of the eager data-dependent C
-       kernels. Complex inputs cannot be traced at all; non-float dtypes are
-       refused here. *)
+    (* QR, triangular solves, and Cholesky unroll at trace time (see
+       [Linalg_graph]): all three take a number of steps fixed by the input
+       shapes, so they lower to ordinary Tolk compositions instead of the
+       eager data-dependent C kernels. Complex inputs cannot be traced at
+       all; non-float dtypes are refused here. A non-positive-definite
+       Cholesky input, which the eager kernel reports as [Linalg_error],
+       yields nans in the compiled program. *)
+    | E_cholesky { t_in; upper } ->
+        Some
+          (fun k ->
+            if ND.is_float (dt t_in) then
+              ret k (dt t_in) (Linalg_graph.cholesky ~upper (go t_in))
+            else refuse k "cholesky")
     | E_qr { t_in; reduced } ->
         Some
           (fun k ->

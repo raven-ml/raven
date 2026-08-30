@@ -34,7 +34,7 @@
   test_half
   test_uniform)
  (package rune)
- (libraries rune nx nx.core nx.effect unix windtrap rune_test_support))
+ (libraries rune nx nx.core unix windtrap rune_test_support))
 
 (executable
  (name repro_jit_beam)

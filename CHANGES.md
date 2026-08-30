@@ -538,6 +538,16 @@ thread.
 
 ### Nx
 
+- Add `Nx.triangular_solve ?upper ?transpose ?unit_diag a b`: a first-class
+  triangular solver (the scipy `solve_triangular` analog), previously reachable
+  only through the backend layer. It exploits triangularity instead of
+  factoring, so a pre-triangularized or pre-factorized `a` skips the
+  factorization cost of `solve`; `b` may be a vector or a stack of
+  right-hand-side matrices, batched like `a`. It also compiles through
+  `Rune.jit`, and is the building block of a linear solve inside jit
+  (`qr` + `triangular_solve`, since `solve`'s singularity check reads a traced
+  value).
+
 - `irfftn` and `irfft2` now honour `s` along every transformed axis: the
   leading, complex axes are cropped or zero-padded to the requested lengths,
   as in `ifftn`. Previously only the last axis was resized while the
@@ -936,6 +946,10 @@ thread.
   offset in the underlying buffer.
 
 ### Rune
+
+- `Rune.jit` compiles `Nx.cholesky` as well — the same trace-time unrolling,
+  one column of the factor per step. A non-positive-definite input, which the
+  eager kernel reports as [Linalg_error], yields nans in the compiled program.
 
 - `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
   forward substitution unrolled at trace time into the fixed number of steps
