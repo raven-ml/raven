@@ -42,6 +42,11 @@ val cuda_of_env : unit -> cuda option
 (** [cuda_of_env ()] resolves [CUDA_ARCH] or [CUDA_SM] to the nearest supported
     CUDA SM tier. Returns [None] when no supported tier is configured. *)
 
+val parse_amd_arch : string -> amd option
+(** [parse_amd_arch s] normalizes AMD architecture names such as ["gfx1100"]
+    or dotted graphics versions such as ["11.0.0"] to their renderer target
+    family. Returns [None] for an unsupported architecture. *)
+
 val amd_of_env : unit -> amd option
 (** [amd_of_env ()] resolves common AMD arch environment variables such as
     [AMD_ARCH], [HIP_ARCH], [HCC_AMDGPU_TARGET], or [HSA_OVERRIDE_GFX_VERSION].

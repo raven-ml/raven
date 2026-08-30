@@ -592,3 +592,23 @@ module Kfd_iface : sig
   (** [on_device_hang t] raises [Failure] describing the fault the
       device reported, polling for a pending report first. *)
 end
+
+(** {1:runtime Device runtime} *)
+
+val create : string -> Tolk.Device.t
+(** [create name] opens the AMD GPU named [name] — ["AMD"] for the
+    first usable GPU node, ["AMD:n"] for the [n]th — through the Linux
+    kernel driver and is its device runtime. Kernels are compiled with
+    {!Compiler_amd} for the discovered architecture (overridable through
+    the environment, see {!Tolk.Gpu_target.amd_of_env}) and dispatched
+    through a hardware compute queue; host transfers ride the DMA
+    engine when the node provides one, and fall back to host-visible
+    device memory otherwise.
+
+    Raises [Failure] when the driver is unavailable, when [name] names
+    no GPU node, or when the GPU is unsupported (supported: gfx942,
+    gfx950, and the gfx11 and gfx12 generations, single-die only);
+    [Invalid_argument] when [name]'s device suffix is not a number.
+    After a fault or a stalled wait, {!Tolk.Device.synchronize} raises
+    [Failure] with the device's fault report, and keeps raising: the
+    device does not recover. *)

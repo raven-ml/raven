@@ -1230,3 +1230,410 @@ module Kfd_iface = struct
     poll_events t ~timeout_ms;
     if t.mem_fault <> None || t.hw_fault <> None then on_device_hang t
 end
+
+(* Device runtime *)
+
+module State = struct
+  type t = {
+    iface : Kfd_iface.t;
+    hw : Kfd_iface.mem device;
+    props : (string * int) list;
+    compute_queue : Queue_desc.t;
+    sdma_queue : Queue_desc.t option;
+    kernargs : Kfd_iface.mem Hcq.Kernargs.t;
+    pool : Kfd_iface.mem Hcq.Signal.Pool.t;
+    mutable timeline : (Kfd_iface.mem, Kfd_iface.mem device) Hcq.Signal.t;
+    mutable shadow_timeline :
+      (Kfd_iface.mem, Kfd_iface.mem device) Hcq.Signal.t;
+    mutable timeline_value : int;
+    mutable error_state : exn option;
+    (* Rotating pinned staging buffers for DMA host transfers; each slot
+       records the timeline value of its last use so reuse waits only for
+       that submission. *)
+    bounce : Kfd_iface.mem Hcq.Buffer.t array;
+    bounce_timeline : int array;
+    mutable bounce_next : int;
+    (* The device's LRU-wrapped allocator; set right after creation and used
+       for scratch sizing. *)
+    mutable allocator : Kfd_iface.mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
+  }
+
+  let next_timeline t =
+    t.timeline_value <- t.timeline_value + 1;
+    t.timeline_value - 1
+
+  (* The timeline counter must stay a signal dword: past 2^31 the counter
+     restarts at 1 on the shadow signal, whose stale value cannot be mistaken
+     for a future one, and the staging slots forget their old values. *)
+  let wrap_timeline_signal t =
+    let tl = t.timeline in
+    t.timeline <- t.shadow_timeline;
+    t.shadow_timeline <- tl;
+    t.timeline_value <- 1;
+    Hcq.Signal.set_value t.timeline 0;
+    Array.fill t.bounce_timeline 0 (Array.length t.bounce_timeline) 0
+
+  (* A stalled or faulted wait latches the device error so every later
+     synchronize fails loudly with the fault report; a passed wait rolls the
+     timeline over before its counter outgrows the signal dword. *)
+  let guarded_wait t f =
+    match f () with
+    | r ->
+        if t.timeline_value > 1 lsl 31 then wrap_timeline_signal t;
+        r
+    | exception ((Hcq.Signal.Timeout _ | Failure _) as e) ->
+        t.error_state <- Some e;
+        Kfd_iface.on_device_hang t.iface
+
+  let synchronize t =
+    (match t.error_state with Some e -> raise e | None -> ());
+    guarded_wait t (fun () ->
+        Hcq.Signal.wait t.timeline (t.timeline_value - 1))
+
+  let invalidate_caches t =
+    let cq = Compute_queue.create t.hw in
+    Compute_queue.memory_barrier cq;
+    Compute_queue.signal cq ~value:(next_timeline t) t.timeline;
+    Compute_queue.submit cq t.compute_queue;
+    synchronize t
+end
+
+module Allocator = struct
+  (* One DMA stream ordered against the device timeline: wait for the last
+     submitted work, append the packets of [build], advance the timeline. *)
+  let submit_copy state qd build =
+    let cp = Copy_queue.create state.State.hw in
+    Copy_queue.wait cp
+      ~value:(state.State.timeline_value - 1)
+      state.State.timeline;
+    build cp;
+    Copy_queue.signal cp ~value:(State.next_timeline state) state.State.timeline;
+    Copy_queue.submit cp qd
+
+  let copyin state buf bytes =
+    match state.State.sdma_queue with
+    | None ->
+        (* Without a DMA engine every buffer is host-visible: write the
+           mapping directly once the device is idle. *)
+        State.synchronize state;
+        Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view buf) ~off:0 bytes
+    | Some qd ->
+        let total = Bytes.length bytes in
+        let bounce = state.State.bounce in
+        let step = Hcq.Buffer.size bounce.(0) in
+        let off = ref 0 in
+        while !off < total do
+          state.State.bounce_next <-
+            (state.State.bounce_next + 1) mod Array.length bounce;
+          let slot = state.State.bounce_next in
+          Hcq.Signal.wait state.State.timeline
+            state.State.bounce_timeline.(slot);
+          let len = min step (total - !off) in
+          Hcq.Mmio.blit_bytes
+            (Hcq.Buffer.cpu_view bounce.(slot))
+            ~off:0
+            (Bytes.sub bytes !off len);
+          submit_copy state qd (fun cp ->
+              Copy_queue.copy cp
+                ~dest:(Hcq.Buffer.offset buf ~off:!off ())
+                ~src:bounce.(slot) len);
+          state.State.bounce_timeline.(slot) <- state.State.timeline_value - 1;
+          off := !off + len
+        done
+
+  let copyout state bytes buf =
+    State.synchronize state;
+    match state.State.sdma_queue with
+    | None ->
+        let len = Bytes.length bytes in
+        Bytes.blit
+          (Hcq.Mmio.read_bytes (Hcq.Buffer.cpu_view buf) ~off:0 ~len)
+          0 bytes 0 len
+    | Some qd ->
+        let total = Bytes.length bytes in
+        let staging = state.State.bounce.(0) in
+        let step = Hcq.Buffer.size staging in
+        let off = ref 0 in
+        while !off < total do
+          let len = min step (total - !off) in
+          submit_copy state qd (fun cp ->
+              Copy_queue.copy cp ~dest:staging
+                ~src:(Hcq.Buffer.offset buf ~off:!off ())
+                len);
+          Hcq.Signal.wait state.State.timeline (state.State.timeline_value - 1);
+          Bytes.blit
+            (Hcq.Mmio.read_bytes (Hcq.Buffer.cpu_view staging) ~off:0 ~len)
+            0 bytes !off len;
+          off := !off + len
+        done
+
+  let transfer state ~dest ~src nbytes =
+    let qd = Option.get state.State.sdma_queue in
+    submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src nbytes)
+
+  let raw state =
+    let alloc size (spec : Tolk.Device.Buffer_spec.t) =
+      match spec.external_ptr with
+      | Some _ ->
+          invalid_arg "AMD buffers cannot adopt an external pointer"
+      | None ->
+          (* Without a DMA engine host transfers write the CPU mapping, so
+             every allocation must be host-visible. *)
+          Kfd_iface.alloc state.State.iface ~host:spec.host
+            ~uncached:spec.uncached
+            ~cpu_access:
+              (spec.cpu_access || Option.is_none state.State.sdma_queue)
+            size
+    in
+    let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
+      Kfd_iface.free state.State.iface buf
+    in
+    let offset buf size byte_offset =
+      Hcq.Buffer.offset buf ~off:byte_offset ~size ()
+    in
+    let has_sdma = Option.is_some state.State.sdma_queue in
+    {
+      Tolk.Device.Allocator.alloc;
+      free;
+      copyin = copyin state;
+      copyout = copyout state;
+      addr = Hcq.Buffer.va;
+      offset = Some offset;
+      transfer = (if has_sdma then Some (transfer state) else None);
+      supports_transfer = has_sdma;
+      copy_from_disk = None;
+      supports_copy_from_disk = false;
+    }
+
+  let create state =
+    let allocator = Tolk.Device.Lru_allocator.wrap (raw state) in
+    state.State.allocator <- Some allocator;
+    Tolk.Device.Allocator.Pack allocator
+end
+
+module Runtime = struct
+  (* Scratch backing goes through the LRU allocator so resizes reuse freed
+     device memory. *)
+  let ensure_scratch state size =
+    let allocator = Option.get state.State.allocator in
+    ensure_has_local_memory state.State.hw ~props:state.State.props
+      ~alloc:(fun size ->
+        allocator.Tolk.Device.Allocator.alloc size
+          Tolk.Device.Buffer_spec.default)
+      ~free:(fun buf ->
+        allocator.Tolk.Device.Allocator.free buf (Hcq.Buffer.size buf)
+          Tolk.Device.Buffer_spec.default)
+      size
+
+  let default_local = [| 1; 1; 1 |]
+
+  let runtime state name lib ~runtimevars:_ =
+    let prg =
+      Program.load state.State.hw
+        ~alloc:(fun size ->
+          Kfd_iface.alloc state.State.iface ~cpu_access:true size)
+        ~props:state.State.props ~name lib
+    in
+    ensure_scratch state prg.Program.private_segment_size;
+    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      let local = Option.value local ~default:default_local in
+      let vals = Array.map Int64.to_int vals in
+      let timeline_value = State.next_timeline state in
+      let launch ?timing () =
+        Program.call prg ~kernargs:state.State.kernargs
+          ~queue:state.State.compute_queue ~timeline:state.State.timeline
+          ~timeline_value ?wait:timing ~bufs ~vals
+          ~global_size:(global.(0), global.(1), global.(2))
+          ~local_size:(local.(0), local.(1), local.(2))
+          ()
+      in
+      if not wait then launch ()
+      else begin
+        (match state.State.error_state with Some e -> raise e | None -> ());
+        let st_slot = Hcq.Signal.Pool.get state.State.pool in
+        let en_slot = Hcq.Signal.Pool.get state.State.pool in
+        Fun.protect
+          ~finally:(fun () ->
+            Hcq.Signal.Pool.put state.State.pool en_slot;
+            Hcq.Signal.Pool.put state.State.pool st_slot)
+          (fun () ->
+            let st = Hcq.Signal.make ~timestamp_divider:100. st_slot in
+            let en = Hcq.Signal.make ~timestamp_divider:100. en_slot in
+            State.guarded_wait state (fun () -> launch ~timing:(st, en) ()))
+      end
+    in
+    let free () = Program.free ~free:(Kfd_iface.free state.State.iface) prg in
+    { Tolk.Device.call; free; handle = 0n }
+end
+
+let create name =
+  let device_id =
+    match String.index_opt name ':' with
+    | Some i -> (
+        let suffix = String.sub name (i + 1) (String.length name - i - 1) in
+        match int_of_string_opt suffix with
+        | Some id -> id
+        | None -> invalid_arg (Printf.sprintf "invalid AMD device %S" name))
+    | None -> 0
+  in
+  let iface = Kfd_iface.create ~device_id in
+  let props = Kfd_iface.props iface in
+  let ip = Kfd_iface.ip_versions iface in
+  let trgt = prop props "gfx_target_version" in
+  let target = (trgt / 10000, trgt / 100 mod 100, trgt mod 100) in
+  let tmaj, tmin, tstp = target in
+  let arch = Printf.sprintf "gfx%d%x%x" tmaj tmin tstp in
+  if not (List.mem target [ (9, 4, 2); (9, 5, 0) ] || tmaj = 11 || tmaj = 12)
+  then failwith ("Unsupported arch: " ^ arch);
+  let xccs =
+    match List.assoc_opt "num_xcc" props with Some n -> n | None -> 1
+  in
+  if xccs > 1 then
+    failwith
+      (arch
+     ^ ": multi-die devices need the AQL queue format, which is not supported \
+        yet");
+  let se_cnt =
+    prop props "array_count" / prop props "simd_arrays_per_engine" / xccs
+  in
+  let cu_cnt = prop props "simd_count" / prop props "simd_per_cu" / xccs in
+  let waves_per_cu =
+    prop props "max_waves_per_simd" * prop props "simd_per_cu"
+  in
+  let wave_cnt =
+    if tmaj <> 9 then cu_cnt * waves_per_cu
+    else min (cu_cnt * 40) (se_cnt * xccs * 512)
+  in
+  (* Compute-wave save/restore sizing: per-CU register, LDS and hardware
+     state, plus the preemption control stack, each rounded to whole pages. *)
+  let sgrp_size_per_cu = 0x4000 and hwreg_size_per_cu = 0x1000 in
+  let lds_size_per_cu =
+    if (tmaj, tmin) = (9, 5) then prop props "lds_size_in_kb" lsl 10
+    else 0x10000
+  in
+  let vgpr_size_per_cu =
+    if
+      List.mem target
+        [ (11, 0, 0); (11, 0, 1); (11, 5, 1); (12, 0, 0); (12, 0, 1) ]
+    then 0x60000
+    else if tmaj = 9 then 0x80000
+    else 0x40000
+  in
+  let wg_data_size =
+    round_up
+      ((vgpr_size_per_cu + sgrp_size_per_cu + lds_size_per_cu
+       + hwreg_size_per_cu)
+      * cu_cnt)
+      System.page_size
+  in
+  let ctl_stack_size =
+    round_up
+      (((if tmaj <> 9 then 12 else 8) * wave_cnt) + 8 + 40)
+      System.page_size
+  in
+  let debug_memory_size = round_up (wave_cnt * 32) 64 in
+  let create_queue queue_type ~ring_size ?(eop_buffer_size = 0)
+      ?(ctx_save_restore_size = 0) ?(ctl_stack_size = 0) () =
+    let ring = Kfd_iface.alloc iface ~uncached:true ~cpu_access:true ring_size in
+    let gart = Kfd_iface.alloc iface ~uncached:true ~cpu_access:true 0x100 in
+    let eop_buffer =
+      if eop_buffer_size = 0 then None
+      else Some (Kfd_iface.alloc iface eop_buffer_size)
+    in
+    let cwsr_buffer =
+      if ctx_save_restore_size = 0 then None
+      else
+        Some
+          (Kfd_iface.alloc iface
+             (round_up
+                ((ctx_save_restore_size + debug_memory_size) * xccs)
+                System.page_size))
+    in
+    (* The queue's pointers live at the dispatch-id slots of an HSA queue
+       descriptor laid out in the gart buffer. *)
+    Kfd_iface.create_queue iface queue_type ~ring ~gart
+      ~rptr:Amd_hsa_defs.Amd_queue.read_dispatch_id
+      ~wptr:Amd_hsa_defs.Amd_queue.write_dispatch_id ?eop_buffer ?cwsr_buffer
+      ~ctx_save_restore_size ~ctl_stack_size ()
+  in
+  let compute_queue =
+    create_queue Kfd_iface.Compute ~ring_size:(16 lsl 20)
+      ~eop_buffer_size:0x1000
+      ~ctx_save_restore_size:(wg_data_size + ctl_stack_size) ~ctl_stack_size ()
+  in
+  let sdma_queue =
+    if Tolk.Helpers.getenv "AMD_DISABLE_SDMA" 0 <> 0 then None
+    else
+      match create_queue Kfd_iface.Sdma ~ring_size:(16 lsl 20) () with
+      | qd -> Some qd
+      | exception Failure _ -> None
+  in
+  let hw =
+    device ~target ~xccs ~gc_version:ip.Kfd_iface.gc
+      ~nbio_version:ip.Kfd_iface.nbif ~sdma_version:ip.Kfd_iface.sdma
+      ~tmpring_size:0
+      ~scratch:
+        (Hcq.Buffer.make ~va:0n ~size:0
+           ~meta:{ Kfd_iface.handle = 0L; owner = 0 }
+           ())
+      ~is_am:false
+      ~queue_event_mailbox_ptr:(Kfd_iface.queue_event_mailbox_ptr iface)
+      ~queue_event:(Kfd_iface.queue_event iface) ()
+  in
+  let pool =
+    Hcq.Signal.Pool.create ~alloc_page:(fun () ->
+        Kfd_iface.alloc iface ~host:true ~uncached:true ~cpu_access:true 0x1000)
+  in
+  (* Long waits back off to driver-event sleeps, which also surface faults. *)
+  let sleep spent_ms =
+    if spent_ms > 2000 then Kfd_iface.sleep iface ~timeout_ms:200
+  in
+  let timeline_signal () =
+    Hcq.Signal.make ~is_timeline:true ~timestamp_divider:100. ~sleep ~owner:hw
+      (Hcq.Signal.Pool.get pool)
+  in
+  let bounce_count = 32 and bounce_size = 2 lsl 20 in
+  let state =
+    {
+      State.iface;
+      hw;
+      props;
+      compute_queue;
+      sdma_queue;
+      kernargs =
+        Hcq.Kernargs.create
+          (Kfd_iface.alloc iface ~cpu_access:true (16 lsl 20));
+      pool;
+      timeline = timeline_signal ();
+      shadow_timeline = timeline_signal ();
+      timeline_value = 1;
+      error_state = None;
+      bounce =
+        Array.init bounce_count (fun _ ->
+            Kfd_iface.alloc iface ~host:true bounce_size);
+      bounce_timeline = Array.make bounce_count 0;
+      bounce_next = 0;
+      allocator = None;
+    }
+  in
+  let allocator = Allocator.create state in
+  Runtime.ensure_scratch state 128;
+  let renderer_target =
+    match Tolk.Gpu_target.amd_of_env () with
+    | Some t -> t
+    | None -> (
+        match Tolk.Gpu_target.parse_amd_arch arch with
+        | Some t -> t
+        | None -> failwith ("Unsupported arch: " ^ arch))
+  in
+  let renderer =
+    Tolk.Renderer.with_compiler
+      (Compiler_amd.create ~arch)
+      (Tolk.Cstyle.amd renderer_target)
+  in
+  let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
+  Tolk.Device.make ~name ~allocator ~renderer_set
+    ~runtime:(Runtime.runtime state)
+    ~synchronize:(fun () -> State.synchronize state)
+    ~invalidate_caches:(fun () -> State.invalidate_caches state)
+    ()

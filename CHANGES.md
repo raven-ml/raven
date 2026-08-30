@@ -101,6 +101,12 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- AMD GPUs are now a runtime target: `DEV=AMD` (or `Tolk_amd.create`) drives
+  the GPU through the Linux kernel driver's hardware queues, with kernels
+  compiled by the ROCm comgr library. Supports gfx942, gfx950, and the
+  gfx11/gfx12 generations (single-die), with DMA-engine host transfers and
+  device-side execution timing.
+
 - Fix the AMD renderer's `__ockl_get_local_id`/`__ockl_get_group_id`/
   `__ockl_get_local_size` declarations: the return and argument types were
   swapped (`unsigned int f(size_t)` instead of `size_t f(unsigned int)`), so

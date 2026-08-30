@@ -231,6 +231,60 @@ let with_lib_alloc f =
 
 let lds64 = [ ("lds_size_in_kb", 64) ]
 
+(* Device-level fixtures: one lazily opened real device shared by the group;
+   every test using it skips when this machine cannot provide one (no kernel
+   driver, or an unsupported GPU). *)
+let amd_device =
+  let cached : Tolk.Device.t option ref = ref None in
+  fun () ->
+    match !cached with
+    | Some device -> device
+    | None -> (
+        try
+          let device = Tolk_amd.create "AMD" in
+          cached := Some device;
+          device
+        with Failure msg -> skip ~reason:msg ())
+
+module U = Tolk_uop.Uop
+module D = Tolk_uop.Dtype
+
+let i32_param ~slot =
+  U.param ~slot ~dtype:D.int32
+    ~shape:(U.stack [ U.const_int 16 ])
+    ~addrspace:D.Global ()
+
+(* dst[0] = src[0] + 1: the smallest kernel exercising a load, an ALU op,
+   and a store through the whole compile-and-dispatch path. *)
+let increment_program () =
+  let p0 = i32_param ~slot:0 in
+  let p1 = i32_param ~slot:1 in
+  let c0 = U.const (Tolk_uop.Const.int D.int32 0) in
+  let idx_src = U.index ~ptr:p1 ~idxs:[ c0 ] () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[ c0 ] () in
+  let l0 = U.load ~src:idx_src () in
+  let c1 = U.const (Tolk_uop.Const.int D.int32 1) in
+  let sum = U.alu_binary ~op:Tolk_uop.Ops.Add ~lhs:l0 ~rhs:c1 in
+  let store = U.store ~dst:idx_dst ~value:sum () in
+  [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
+
+let i32_buf device values =
+  let buf =
+    Tolk.Device.create_buffer ~size:(List.length values) ~dtype:D.int32 device
+  in
+  Tolk.Device.Buffer.ensure_allocated buf;
+  let bytes = Bytes.create (List.length values * 4) in
+  List.iteri
+    (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.of_int v))
+    values;
+  Tolk.Device.Buffer.copyin buf bytes;
+  buf
+
+let read_i32 buf =
+  let bytes = Tolk.Device.Buffer.as_bytes buf in
+  List.init (Bytes.length bytes / 4) (fun i ->
+      Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
+
 let () =
   run "Amd_runtime"
     [
@@ -1248,5 +1302,32 @@ let () =
                   let compiler = Compiler_amd.create ~arch:"gfx1100" in
                   raises_match is_comgr_compile_error (fun () ->
                       Tolk.Compiler.compile compiler "this is not hip"));
+        ];
+      group "Device"
+        [
+          test "create opens the device and synchronize completes" (fun () ->
+              let device = amd_device () in
+              equal string "AMD" (Tolk.Device.name device);
+              Tolk.Device.synchronize device);
+          test "compiles and runs one kernel" (fun () ->
+              let device = amd_device () in
+              (match Compiler_amd.version () with
+              | exception Failure msg -> skip ~reason:msg ()
+              | _ -> ());
+              let spec =
+                Tolk.Device.compile_program device ~name:"amd_add_one"
+                  (increment_program ())
+              in
+              let dst = i32_buf device [ 0 ] in
+              let src = i32_buf device [ 41 ] in
+              let runner = Tolk.Realize.Compiled_runner.create ~device spec in
+              (match
+                 Tolk.Realize.Compiled_runner.call runner [ dst; src ] []
+                   ~wait:true ~timeout:None
+               with
+              | Some tm -> is_true (tm >= 0.0)
+              | None -> fail "expected a device execution time");
+              Tolk.Device.synchronize device;
+              equal (list int) [ 42 ] (read_i32 dst));
         ];
     ]

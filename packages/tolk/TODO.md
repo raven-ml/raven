@@ -232,6 +232,38 @@ Nothing external blocks these; each could be picked up today.
   from the frontend. The `pm_reduce_collapse` half of `e684fcc68` is a
   separate, independent change.
 
+## AMD runtime — deferred (KFD path)
+
+The KFD-backed AMD device (`lib/runtime/amd`, wired as the `AMD` backend)
+covers compile, dispatch, DMA host transfers, and fault reporting on
+single-die parts. Deliberately not ported with it:
+
+- **HCQ graph support** (`runtime/graph/hcq.py`): batched replay of a call
+  sequence over the hardware queues. The device registers no `?graph`
+  capability, so the engine falls back to per-call dispatch.
+
+- **AQL queues / multi-XCC dispatch** (the `is_aql` path of
+  `AMDDevice.__init__`, `AMDComputeAQLQueue`): `Tolk_amd.create` rejects
+  parts with more than one compute die. The PM4 queue builders are already
+  multi-die aware (`pred_exec`, per-die scratch slices); the AQL descriptor
+  path is not built.
+
+- **SQTT and PMC profiling** (`sqtt_start`/`pmc_start` in `ops_amd.py`):
+  thread-trace and performance-counter capture. `sqtt_enabled` stays
+  `false` and `Compute_queue.exec` rejects it loudly.
+
+- **USB and remote device interfaces** (`USBIface`, the remote backend):
+  only the kernel-driver interface is wired here; the driver-less PCI tier
+  is its own workstream under `lib/runtime/amd/am`.
+
+- **A committed hsaco fixture** for `Program.load` against real compiler
+  output — generating one needs a Linux/ROCm machine. The hand-built ELF
+  fixture in `test/unit/test_runtime_amd.ml` covers the loader meanwhile.
+
+- **Real-hardware validation**: everything below the device layer is
+  exercised by unit tests over mapped memory, and the device-level tests
+  skip without `/dev/kfd`; nothing has run on a live GPU yet.
+
 ## Post-wave sweep — landed
 
 All four changed a declaration in `lib/uop/` plus every reader across

@@ -25,7 +25,11 @@ let all_backends : (string * (string -> Tolk.Device.t)) list =
   (match Device_metal.opener with
   | Some create -> [ ("METAL", create) ]
   | None -> [])
-  @ [ ("CUDA", Tolk_cuda.create); ("CPU", Tolk_cpu.create) ]
+  @ [
+      ("AMD", Tolk_amd.create);
+      ("CUDA", Tolk_cuda.create);
+      ("CPU", Tolk_cpu.create);
+    ]
 
 let () =
   List.iter
