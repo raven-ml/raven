@@ -233,3 +233,56 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
     done;
     let x = if flipped then F.Movement.flip !x [ -2 ] else !x in
     if vector_rhs then F.Movement.squeeze ~dim:(-1) x else x
+
+(* {1 Cholesky}
+
+   Left-looking factorization, unrolled over the columns: with the first [j]
+   columns of [L] finished, column [j] is the current column of [A] minus its
+   projection onto those finished columns, and the pivot [L[j][j]] is the
+   positive square root of the column's diagonal entry. This is the same
+   per-element arithmetic as the eager kernel's unblocked path (same sums, in
+   the same order), so results agree up to the blocked kernel's association
+   differences. The eager kernel raises [Linalg_error] on a non-positive-
+   definite matrix; the compiled graph has no host control flow to raise with,
+   so a non-positive-definite input yields nans instead. [A = Uᵀ·U] is the
+   transpose problem — factor [Aᵀ] and swap the result back. *)
+
+let cholesky ~upper a =
+  let module E = F.Elementwise in
+  require_float ~what:"cholesky" (F.Tensor.val_dtype a);
+  let shape = F.Tensor.shape a in
+  let rank = List.length shape in
+  if rank < 2 then
+    invalid_arg "linalg_graph.cholesky: input requires at least 2 dimensions";
+  let n = List.nth shape (rank - 1) in
+  let batch = List.filteri (fun i _ -> i < rank - 2) shape in
+  let low = if upper then swap2 a else a in
+  if n = 0 then if upper then swap2 low else low
+  else
+    let dt = F.Tensor.val_dtype a in
+    let l = ref (F.Creation.full ~buffer:false ~dtype:dt (batch @ [ n; 0 ]) (F.Tensor.Sfloat 0.0)) in
+    for j = 0 to n - 1 do
+      (* Project the finished columns off the current column of [A]: the
+         sums [Σ_k L[i,k]·L[j,k] for every row i] in one [n×j by j×1]
+         product. Empty at [j = 0]. *)
+      let proj =
+        if j = 0 then zero1 a batch
+        else F.Op.matmul !l (swap2 (slice2 !l (Some (j, j + 1)) None))
+      in
+      let col = E.sub (slice2 low None (Some (j, j + 1))) proj in
+      let ljj = E.sqrt (slice2 col (Some (j, j + 1)) (Some (0, 1))) in
+      let tail =
+        if n - j - 1 = 0 then col
+        else E.div (slice2 col (Some (j + 1, n)) (Some (0, 1))) ljj
+      in
+      (* The finished column: zeros above the diagonal, the pivot, the scaled
+         tail below. *)
+      let new_col =
+        cat2
+          ((if j > 0 then [ scalar2 a batch j 1 0.0 ] else [])
+          @ [ ljj ]
+          @ if n - j - 1 > 0 then [ tail ] else [])
+      in
+      l := (if j = 0 then new_col else F.Op.cat ~dim:(-1) !l [ new_col ])
+    done;
+    if upper then swap2 !l else !l

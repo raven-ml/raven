@@ -898,7 +898,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   let s = T.transpose y in
                   let da_sym =
-                    T.sub (T.add s (T.transpose s)) (T.diag (T.diagonal s))
+                    T.sub (T.add s (T.transpose s))
+                      (T.mul s (T.eye (T.dtype s) (T.shape s).(0)))
                   in
                   T.tril da_sym))
       | E_triangular_solve { a; b; upper; transpose; unit_diag } ->

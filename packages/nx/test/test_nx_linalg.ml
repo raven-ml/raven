@@ -206,6 +206,84 @@ let test_dot_scalar_result () =
 
 (* ───── Solve Inverse Tests ───── *)
 
+
+(* ───── Triangular Solve Tests ───── *)
+
+let tri_l =
+  Nx.create Nx.float32 [| 3; 3 |] [| 4.; 0.; 0.; 1.; 5.; 0.; 2.; 3.; 6. |]
+
+let tri_u =
+  Nx.create Nx.float32 [| 3; 3 |] [| 4.; 1.; 2.; 0.; 5.; 3.; 0.; 0.; 6. |]
+
+let tri_b = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+
+let test_triangular_lower () =
+  let x = Nx.triangular_solve tri_l tri_b in
+  check_nx ~epsilon:1e-5 "triangular lower" tri_b (Nx.matmul tri_l x)
+
+let test_triangular_upper () =
+  let x = Nx.triangular_solve ~upper:true tri_u tri_b in
+  check_nx ~epsilon:1e-5 "triangular upper" tri_b (Nx.matmul tri_u x)
+
+let test_triangular_transpose () =
+  (* transpose: Aᵀ·x = b for a lower A means x = (Aᵀ)⁻¹·b *)
+  let x = Nx.triangular_solve ~transpose:true tri_l tri_b in
+  check_nx ~epsilon:1e-5 "triangular transpose"
+    tri_b (Nx.matmul (Nx.transpose tri_l) x)
+
+let test_triangular_unit_diag () =
+  (* With the diagonal treated as ones, the stored 9. entries are not read:
+     x = [4; 10 - 3·4] = [4; -2]. *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| 9.; 0.; 3.; 9. |] in
+  let b = Nx.create Nx.float32 [| 2 |] [| 4.; 10. |] in
+  let x = Nx.triangular_solve ~unit_diag:true a b in
+  check_t ~eps:1e-6 "triangular unit diag" [| 2 |] [| 4.; -2. |] x
+
+let test_triangular_vector_rhs () =
+  let b = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let x = Nx.triangular_solve tri_l b in
+  check_shape "triangular vector rhs shape" [| 3 |] x;
+  check_nx ~epsilon:1e-5 "triangular vector rhs" b (Nx.matmul tri_l x)
+
+let test_triangular_batched () =
+  let a =
+    Nx.create Nx.float32 [| 2; 2; 2 |] [| 2.; 0.; 1.; 3.; 4.; 0.; 1.; 5. |]
+  in
+  let b = Nx.create Nx.float32 [| 2; 2; 1 |] [| 1.; 2.; 3.; 4. |] in
+  let x = Nx.triangular_solve a b in
+  check_shape "triangular batched shape" [| 2; 2; 1 |] x;
+  check_nx ~epsilon:1e-5 "triangular batched" b (Nx.matmul a x)
+
+let test_triangular_singular () =
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| 0.; 0.; 1.; 2. |] in
+  let b = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  raises ~msg:"triangular singular"
+    (Nx.Linalg_error { op = "triangular_solve"; kind = `Singular })
+    (fun () -> ignore (Nx.triangular_solve a b))
+
+let test_triangular_bad_rhs () =
+  check_invalid_arg "triangular rhs not matrix/vector"
+    "triangular_solve: b must be a [.., n] vector or a [.., n, nrhs] matrix"
+    (fun () ->
+      ignore
+        (Nx.triangular_solve tri_l
+           (Nx.create Nx.float32 [| 1; 2; 2 |] [| 1.; 2.; 3.; 4. |])));
+  check_invalid_arg "triangular rhs wrong length"
+    "triangular_solve: vector right-hand side length does not match a"
+    (fun () ->
+      ignore
+        (Nx.triangular_solve tri_l (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |])));
+  let a2 =
+    Nx.create Nx.float32 [| 2; 3; 3 |]
+      (Array.concat [ Array.init 9 float_of_int; Array.init 9 float_of_int ])
+  in
+  check_invalid_arg "triangular rhs batch mismatch"
+    "triangular_solve: matrix right-hand side batch dimension 0 does not match a"
+    (fun () ->
+      ignore
+        (Nx.triangular_solve a2
+           (Nx.create Nx.float32 [| 1; 3; 2 |] (Array.init 6 float_of_int))))
+
 let test_solve_identity () =
   let identity = Nx.eye Nx.float32 3 in
   let b = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -1688,6 +1766,18 @@ let advanced_norm_tests =
     test "cond" test_cond;
   ]
 
+let triangular_solve_tests =
+  [
+    test "triangular lower" test_triangular_lower;
+    test "triangular upper" test_triangular_upper;
+    test "triangular transpose" test_triangular_transpose;
+    test "triangular unit diag" test_triangular_unit_diag;
+    test "triangular vector rhs" test_triangular_vector_rhs;
+    test "triangular batched" test_triangular_batched;
+    test "triangular singular" test_triangular_singular;
+    test "triangular bad rhs" test_triangular_bad_rhs;
+  ]
+
 let advanced_solve_tests =
   [
     test "lstsq" test_lstsq;
@@ -1717,4 +1807,5 @@ let () =
       group "Eigen" eigen_tests;
       group "Advanced Norms" advanced_norm_tests;
       group "Advanced Solve" advanced_solve_tests;
+      group "Triangular Solve" triangular_solve_tests;
     ]

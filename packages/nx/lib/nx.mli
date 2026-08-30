@@ -2548,13 +2548,38 @@ val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
 
 (** {2:linalg_solve Solving} *)
 
+val triangular_solve :
+  ?upper:bool -> ?transpose:bool -> ?unit_diag:bool -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [triangular_solve ?upper ?transpose ?unit_diag a b] solves the triangular
+    system [a *@ x = b] for [x], exploiting that [a] is triangular instead of
+    factoring.
+
+    [a] is upper-triangular when [upper] is [true] (default [false]); its
+    diagonal is assumed to be all ones — and is not read — when [unit_diag] is
+    [true] (default [false]). When [transpose] is [true], the system solved is
+    [transpose a *@ x = b] (the conjugate transpose for complex [a]). Only the
+    triangle [upper] names is read: [a] is not checked for triangularity, and
+    the rest is silently ignored. Passing a pre-factorized or otherwise
+    pre-triangularized [a] skips the factorization cost of {!solve}.
+
+    [b] is one right-hand-side vector of shape [·.., n] or [nrhs] right-hand
+    sides stacked as [·.., n, nrhs] (with [n] the size of [a]), sharing the
+    batch dimensions of [a]; the result has the shape of [b].
+
+    Raises [Invalid_argument] if the dtype is not floating-point or complex,
+    [a] is not square, [a] and [b] differ in dtype, or [b]'s shape does not
+    match [a]'s. Raises {!Linalg_error} with kind [`Singular] if a diagonal
+    entry of [a] is zero and [unit_diag] is [false].
+
+    See also {!solve}. *)
+
 val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [solve a b] is [x] such that [a *@ x = b].
 
     Raises [Invalid_argument] if [a] is singular or the dtype is not
     floating-point or complex.
 
-    See also {!lstsq}, {!inv}. *)
+    See also {!triangular_solve}, {!lstsq}, {!inv}. *)
 
 val lstsq :
   ?rcond:float ->
