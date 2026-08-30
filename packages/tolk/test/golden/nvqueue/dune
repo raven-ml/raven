@@ -1,0 +1,111 @@
+(executable
+ (name generate_actual)
+ (libraries tolk.hcq tolk.nv))
+
+(rule
+ (package tolk)
+ (targets
+  dma_copy_large_ada.actual
+  dma_copy_large_blackwell.actual
+  dma_copy_small_ada.actual
+  dma_copy_small_blackwell.actual
+  dma_setup_ada.actual
+  dma_setup_blackwell.actual
+  dma_signal_ada.actual
+  dma_signal_blackwell.actual
+  dma_timestamp_ada.actual
+  dma_timestamp_blackwell.actual
+  dma_wait_ada.actual
+  dma_wait_blackwell.actual
+  exec_ada.actual
+  exec_blackwell.actual
+  exec_chained_ada.actual
+  exec_chained_blackwell.actual
+  exec_chained_qmd0_ada.actual
+  exec_chained_qmd0_blackwell.actual
+  exec_chained_qmd1_ada.actual
+  exec_chained_qmd1_blackwell.actual
+  exec_qmd_ada.actual
+  exec_qmd_blackwell.actual
+  memory_barrier_ada.actual
+  memory_barrier_blackwell.actual
+  poll_bit_clear_ada.actual
+  poll_bit_clear_blackwell.actual
+  poll_bit_set_ada.actual
+  poll_bit_set_blackwell.actual
+  qmd_init_ada.actual
+  qmd_init_blackwell.actual
+  setup_ada.actual
+  setup_blackwell.actual
+  setup_local_mem_ada.actual
+  setup_local_mem_blackwell.actual
+  signal_after_exec_ada.actual
+  signal_after_exec_blackwell.actual
+  signal_after_exec_qmd_ada.actual
+  signal_after_exec_qmd_blackwell.actual
+  signal_no_qmd_ada.actual
+  signal_no_qmd_blackwell.actual
+  timestamp_ada.actual
+  timestamp_blackwell.actual
+  wait_ada.actual
+  wait_blackwell.actual
+  write32_ada.actual
+  write32_blackwell.actual
+  write64_ada.actual
+  write64_blackwell.actual)
+ (action
+  (run ./generate_actual.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff dma_copy_large_ada.expected dma_copy_large_ada.actual)
+   (diff dma_copy_large_blackwell.expected dma_copy_large_blackwell.actual)
+   (diff dma_copy_small_ada.expected dma_copy_small_ada.actual)
+   (diff dma_copy_small_blackwell.expected dma_copy_small_blackwell.actual)
+   (diff dma_setup_ada.expected dma_setup_ada.actual)
+   (diff dma_setup_blackwell.expected dma_setup_blackwell.actual)
+   (diff dma_signal_ada.expected dma_signal_ada.actual)
+   (diff dma_signal_blackwell.expected dma_signal_blackwell.actual)
+   (diff dma_timestamp_ada.expected dma_timestamp_ada.actual)
+   (diff dma_timestamp_blackwell.expected dma_timestamp_blackwell.actual)
+   (diff dma_wait_ada.expected dma_wait_ada.actual)
+   (diff dma_wait_blackwell.expected dma_wait_blackwell.actual)
+   (diff exec_ada.expected exec_ada.actual)
+   (diff exec_blackwell.expected exec_blackwell.actual)
+   (diff exec_chained_ada.expected exec_chained_ada.actual)
+   (diff exec_chained_blackwell.expected exec_chained_blackwell.actual)
+   (diff exec_chained_qmd0_ada.expected exec_chained_qmd0_ada.actual)
+   (diff exec_chained_qmd0_blackwell.expected exec_chained_qmd0_blackwell.actual)
+   (diff exec_chained_qmd1_ada.expected exec_chained_qmd1_ada.actual)
+   (diff exec_chained_qmd1_blackwell.expected exec_chained_qmd1_blackwell.actual)
+   (diff exec_qmd_ada.expected exec_qmd_ada.actual)
+   (diff exec_qmd_blackwell.expected exec_qmd_blackwell.actual)
+   (diff memory_barrier_ada.expected memory_barrier_ada.actual)
+   (diff memory_barrier_blackwell.expected memory_barrier_blackwell.actual)
+   (diff poll_bit_clear_ada.expected poll_bit_clear_ada.actual)
+   (diff poll_bit_clear_blackwell.expected poll_bit_clear_blackwell.actual)
+   (diff poll_bit_set_ada.expected poll_bit_set_ada.actual)
+   (diff poll_bit_set_blackwell.expected poll_bit_set_blackwell.actual)
+   (diff qmd_init_ada.expected qmd_init_ada.actual)
+   (diff qmd_init_blackwell.expected qmd_init_blackwell.actual)
+   (diff setup_ada.expected setup_ada.actual)
+   (diff setup_blackwell.expected setup_blackwell.actual)
+   (diff setup_local_mem_ada.expected setup_local_mem_ada.actual)
+   (diff setup_local_mem_blackwell.expected setup_local_mem_blackwell.actual)
+   (diff signal_after_exec_ada.expected signal_after_exec_ada.actual)
+   (diff signal_after_exec_blackwell.expected signal_after_exec_blackwell.actual)
+   (diff signal_after_exec_qmd_ada.expected signal_after_exec_qmd_ada.actual)
+   (diff signal_after_exec_qmd_blackwell.expected signal_after_exec_qmd_blackwell.actual)
+   (diff signal_no_qmd_ada.expected signal_no_qmd_ada.actual)
+   (diff signal_no_qmd_blackwell.expected signal_no_qmd_blackwell.actual)
+   (diff timestamp_ada.expected timestamp_ada.actual)
+   (diff timestamp_blackwell.expected timestamp_blackwell.actual)
+   (diff wait_ada.expected wait_ada.actual)
+   (diff wait_blackwell.expected wait_blackwell.actual)
+   (diff write32_ada.expected write32_ada.actual)
+   (diff write32_blackwell.expected write32_blackwell.actual)
+   (diff write64_ada.expected write64_ada.actual)
+   (diff write64_blackwell.expected write64_blackwell.actual))))

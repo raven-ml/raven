@@ -1,0 +1,185 @@
+NV method-stream goldens for the NV queue builders
+==================================================
+
+Each .expected file is either the dword stream a reference (tinygrad clone
+at _tinygrad/, pinned) NVComputeQueue or NVCopyQueue accumulates in its
+internal queue (_q) after builder-method calls, or a QMD image dumped as
+dwords, driven with the stub device and fixed constants below. No device,
+driver, bind() or _submit() is involved: the builders are pure functions
+from (device config, call arguments, backed kernarg memory) to dwords, and
+these files pin that function.
+
+Unlike the amdqueue goldens, exec writes through memory: it copies the
+program's QMD image into the kernarg page and patches it via the CPU view,
+and a following exec or signal patches the previous QMD instead of emitting
+packets. The harness therefore backs kernarg buffers with anonymous mmap
+while their GPU VAs stay fixed fake constants, and dumps the QMD regions as
+separate *_qmd*.expected files.
+
+The OCaml generate_actual.ml (lands with the port) must construct the same
+two device configs, make the same calls per stream with the same constants,
+and print its queue dwords and QMD images in the same format.
+
+Format: one dword per line, lowercase %08x, trailing newline, no headers.
+
+Regenerate:
+  uv run python packages/tolk/test/golden/nvqueue/generate_expected.py
+Re-running is byte-identical; output depends only on the pinned clone.
+
+Chip configs
+------------
+The compute/DMA class pairs are what NVKIface.setup_usermode resolves on
+each chip; sm_version is what _query_gpu_info reports. sass_version is
+derived as in NVDevice.__init__: ((sm_version & 0xf00) >> 4) | (sm_version
+& 0xf).
+
+ada (e.g. RTX 4090):
+  compute_class=ADA_COMPUTE_A (0xc9c0)   dma_class=AMPERE_DMA_COPY_B (0xc7b5)
+  sm_version=0x809 (sm_89) -> sass_version=0x89
+  QMD version 3, image size 0x40 dwords (256 bytes)
+
+blackwell (e.g. RTX 5090):
+  compute_class=BLACKWELL_COMPUTE_B (0xcec0)  dma_class=BLACKWELL_DMA_COPY_B (0xcab5)
+  sm_version=0xa04 (sm_120) -> sass_version=0xa4
+  QMD version 5, image size 0x60 dwords (384 bytes)
+
+The QMD version split is compute_class >= BLACKWELL_COMPUTE_A (0xcdc0):
+ada is below, BLACKWELL_COMPUTE_B above.
+
+Fixed fake constants (mirror these exactly)
+-------------------------------------------
+  PROG_ADDR           0x100000    program address (256-byte aligned)
+  PROG_SZ             0x1800      program size -> prefetch min(sz>>8, 0x1ff)
+  REGS_USAGE          32          register count
+  SHMEM_USAGE         0x480       shared memory size (128-byte multiple)
+  SLM_PER_THREAD      0x240       dev slm_per_thread (32-byte multiple)
+  CONSTBUFS           {0: (0x110000, 0x160), 3: (0x118000, 0x200)}
+                                  constbuf index -> (addr, size); addrs
+                                  64-byte aligned (v5 stores addr >> 6)
+  KERNARG_VA          0x300000    kernarg buffer VA (64-byte aligned)
+  KERNARG2_VA         0x301000    second kernarg buffer (chained exec)
+  KERNARG_SIZE        0x1000
+  SIGNAL_VALUE_ADDR   0x400000    signal value address
+  WRITE_VA            0x600000    write32/write64 target buffer
+  POLL_VA             0x700000    poll_bit target buffer
+  LOCAL_MEM_VA        0x800000    shader local-memory buffer address
+  LOCAL_MEM_TPC_BYTES 0x30000     per-TPC local memory bytes
+  COPY_SRC_VA         0x10000000
+  COPY_DST_VA         0x20000000
+  SHARED_MEM_WINDOW   0x729400000000   dev shared_mem_window
+  LOCAL_MEM_WINDOW    0x729300000000   dev local_mem_window
+  SIGNAL_VALUE        0x100000042 64-bit, pins the hi/lo payload split
+  DMA_SIGNAL_VALUE    0x42        the copy signal payload is one dword
+  WAIT_VALUE          0x42
+  WRITE32_VALUE       0x12345678
+  WRITE64_VALUE       0x1122334455667788
+  POLL_MASK           0x1
+  GLOBAL_SIZE         (4,3,2)
+  LOCAL_SIZE          (8,4,1)
+  COPY_SMALL          0x1000      one copy packet triple
+  COPY_LARGE          2*(1<<31) + 0x400   3 chunks (chunk step is 1<<31)
+
+Streams and what each one pins
+------------------------------
+Compute (NVComputeQueue), per chip:
+  setup_<chip>              setup(compute_class, local_mem_window,
+                            shared_mem_window) - the gpfifo-setup shape
+  setup_local_mem_<chip>    setup(local_mem=LOCAL_MEM_VA,
+                            local_mem_tpc_bytes=LOCAL_MEM_TPC_BYTES) - the
+                            slm-growth shape, incl. the trailing 0xff arg
+  memory_barrier_<chip>     memory_barrier()
+  wait_<chip>               wait(sig, WAIT_VALUE)
+  timestamp_<chip>          timestamp(sig) (= signal with value 0)
+  signal_no_qmd_<chip>      signal(sig, SIGNAL_VALUE) with no active QMD:
+                            semaphore release + non-stall interrupt
+  write32_<chip>            write(buf, WRITE32_VALUE)
+  write64_<chip>            write(buf, WRITE64_VALUE, b64)
+  poll_bit_set_<chip>       poll_bit(buf, POLL_MASK, POLL_MASK) (acq_and)
+  poll_bit_clear_<chip>     poll_bit(buf, 0, POLL_MASK) (acq_nor, ~mask)
+  exec_<chip>               exec(prog, args@KERNARG_VA, GLOBAL, LOCAL):
+                            SEND_PCAS_A + SEND_SIGNALING_PCAS2_B
+  exec_qmd_<chip>           the QMD image exec wrote into the kernarg page
+                            (program QMD + grid/cta dims + constbuf 0 addr)
+  exec_chained_<chip>       exec twice (KERNARG_VA, then KERNARG2_VA); the
+                            second exec emits NO packets (stream is
+                            identical to exec_<chip>)
+  exec_chained_qmd0_<chip>  first QMD after chaining: dependent_qmd0
+                            pointer/action/prefetch/enable patched in
+  exec_chained_qmd1_<chip>  second QMD (differs from exec_qmd only in the
+                            constbuf-0 address, KERNARG2_VA)
+  signal_after_exec_<chip>  exec + signal(sig, SIGNAL_VALUE); the signal
+                            emits NO packets (stream identical to
+                            exec_<chip>)
+  signal_after_exec_qmd_<chip>  the QMD with release0 semaphore patched:
+                            enable, address, 64-bit payload
+  qmd_init_<chip>           the Program-built QMD image for the fixed
+                            program descriptor above, before any exec
+
+Copy (NVCopyQueue), per chip:
+  dma_setup_<chip>          setup(copy_class=dma_class)
+  dma_copy_small_<chip>     copy(dst, src, COPY_SMALL) -> 1 packet triple
+  dma_copy_large_<chip>     copy(dst, src, COPY_LARGE) -> 3 triples
+                            (2 full 1<<31 chunks + 0x400)
+  dma_signal_<chip>         signal(sig, DMA_SIGNAL_VALUE): semaphore A/B/
+                            payload + flushing LAUNCH_DMA
+  dma_wait_<chip>           wait(sig, WAIT_VALUE) (host semaphore methods,
+                            subchannel 0 - shared with compute)
+  dma_timestamp_<chip>      timestamp(sig) (= dma signal with value 0)
+
+The wait/timestamp/write/poll_bit/memory_barrier streams are identical
+across the two chips (the methods read no device state); both copies exist
+to pin exactly that.
+
+Purity contract (what the builders read; the port must need no more)
+--------------------------------------------------------------------
+Device fields: iface.compute_class (QMD version split + setup),
+iface.dma_class (dma_setup), pma_enabled (exec; False here, so no
+PM_TRIGGER packet - it is profiler state, not builder output),
+slm_per_thread, sass_version (program QMD image), shared_mem_window,
+local_mem_window (setup).
+Program fields (exec): constbufs[0].size (kernarg-page QMD offset =
+round_up(size, 256) = 0x200 here), the prebuilt QMD image, dev backref.
+Args state (exec): buf VA + backed CPU view, no symbolic binds.
+Signal fields: value_addr only.
+Buffers: va_addr only (size unread by the emitting paths).
+Memory backing: only the two kernarg pages are backed (anonymous mmap);
+exec asserts the QMD VA fits in 40 bits.
+Env: DEBUG/VIZ/PROFILE/PMA/IOCTL/DEV scrubbed; PMA would enable the
+PM_TRIGGER packet, the rest affect imports/profiling only.
+
+The QMD image constructed for qmd_init_* replicates the reference
+Program-init block (the qmd dict, smem_cfg, QMD(...) kwargs, and the
+constbuf loop) inline in generate_expected.py, specialized to the non-NAK
+(CUDA) path. That copy must be re-synced on every _tinygrad pin move; see
+the REPLICATED BLOCK comment in the generator.
+
+Skipped / not producible
+------------------------
+PM_TRIGGER exec prefix: only emitted with profiling enabled (pma_enabled);
+  deliberately excluded, the goldens pin the profiling-off stream.
+NAK-renderer QMD variant (shader_local_memory_low_size): mesa/NAK path,
+  not used by the port's v1; the goldens pin the CUDA path
+  (shader_local_memory_high_size).
+NVVideoQueue: video decode is out of the port's scope.
+Symbolic (UOp) grid sizes and 64-bit dma signal payloads: the copy-queue
+  payload register is a single dword; symbolic sizes need the variable
+  binding machinery, exercised elsewhere.
+
+Worked example (exec_ada + first QMD deltas)
+--------------------------------------------
+Method headers are (typ<<28)|(nargs<<16)|(subchannel<<13)|(method>>2) with
+typ=2. exec emits SEND_PCAS_A = method 0x2b4 on subchannel 1 with 1 arg:
+(2<<28)|(1<<16)|(1<<13)|0xad = 200120ad (file line 1); its argument is the
+QMD address >> 8: the QMD sits in the kernarg page at offset
+round_up(0x160, 256) = 0x200, so (0x300000+0x200)>>8 = 00003002 (line 2).
+Then SEND_SIGNALING_PCAS2_B = method 0x2c0, header 200120b0 (line 3) with
+argument 9 (invalidate|schedule, line 4).
+
+In exec_qmd_ada vs qmd_init_ada: dwords 13-15 (1-based) become 00000004
+00000003 00000002 (cta_raster_width/height/depth = GLOBAL_SIZE), dword 19
+gains 0008 in its upper half and dword 20 becomes 00010004
+(cta_thread_dimension0/1/2 = LOCAL_SIZE packed as 16/16/8-bit), and dword
+33 changes 00110000 -> 00300000 (constant-buffer-0 address rebased from
+CONSTBUFS[0] to the kernarg VA). In signal_no_qmd_ada, the semaphore
+payload dwords are 00000042 then 00000001: SIGNAL_VALUE = 0x100000042
+split little-endian, pinning the 64-bit path.
