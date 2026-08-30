@@ -31,8 +31,13 @@
 
    Reading the value of a traced tensor (for example [Nx.item] on a value that
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
-   data. Operations Tolk cannot express (FFT, linear algebra, complex dtypes)
-   raise [Jit_error] as well. Threefry (the RNG primitive) compiles, but only
+   data. Operations Tolk cannot express (FFT, complex dtypes) raise [Jit_error]
+   as well. QR and triangular solves lower at trace time instead (see
+   [Linalg_graph]): both take a number of steps fixed by the input shapes, so
+   they unroll into ordinary Tolk compositions and compile for every Tolk
+   device. A linear solve inside jit is the same composition written out by
+   hand — [qr] plus [triangular_solve] — because [Nx.solve]'s eager singularity
+   check reads a traced value. Threefry (the RNG primitive) compiles, but only
    when its key depends on the traced inputs: a constant key would burn one draw
    into the program and silently replay it on every call, so it raises
    [Jit_error] pointing at [Nx.Rng] key threading. *)
@@ -730,6 +735,21 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   in
   let dt x = Nx_effect.dtype x in
   let go x = tolk_of st x in
+  (* Like [ret] for a two-result operation: one placeholder per result, both
+     carrying the operation's shared dtype (qr's factors, e.g.). *)
+  let ret2 : type a b r.
+      ((a, b) Nx_effect.t * (a, b) Nx_effect.t, r) continuation ->
+      (a, b) ND.t -> F.Tensor.t -> F.Tensor.t -> r =
+   fun k dt tq tr ->
+    let shape tt = Array.of_list (F.Tensor.shape tt) in
+    let phq : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tq) in
+    let phr : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tr) in
+    Tbl.replace st.table (Obj.repr phq) tq;
+    Tbl.replace st.traced (Obj.repr phq) ();
+    Tbl.replace st.table (Obj.repr phr) tr;
+    Tbl.replace st.traced (Obj.repr phr) ();
+    continue k (phq, phr)
+  in
   let refuse k op =
     discontinue k
       (Jit_error
@@ -1114,13 +1134,35 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_rfft _ -> Some (fun k -> refuse k "rfft")
     | E_irfft _ -> Some (fun k -> refuse k "irfft")
     | E_cholesky _ -> Some (fun k -> refuse k "cholesky")
-    | E_qr _ -> Some (fun k -> refuse k "qr")
+    (* QR and triangular solves unroll at trace time (see [Linalg_graph]):
+       both take a number of steps fixed by the input shapes, so they lower to
+       ordinary Tolk compositions instead of the eager data-dependent C
+       kernels. Complex inputs cannot be traced at all; non-float dtypes are
+       refused here. *)
+    | E_qr { t_in; reduced } ->
+        Some
+          (fun k ->
+            if ND.is_float (dt t_in) then
+              let q, r = Linalg_graph.qr ~reduced (go t_in) in
+              ret2 k (dt t_in) q r
+            else refuse k "qr")
     | E_svd _ -> Some (fun k -> refuse k "svd")
     | E_eigvals _ -> Some (fun k -> refuse k "eigvals")
     | E_eig _ -> Some (fun k -> refuse k "eig")
     | E_eigvalsh _ -> Some (fun k -> refuse k "eigvalsh")
     | E_eigh _ -> Some (fun k -> refuse k "eigh")
-    | E_triangular_solve _ -> Some (fun k -> refuse k "triangular_solve")
+    | E_triangular_solve { a; b; upper; transpose; unit_diag } ->
+        Some
+          (fun k ->
+            if not (ND.is_float (dt a)) || not (ND.is_float (dt b)) then
+              refuse k "triangular_solve"
+            else if not (ND.equal (dt a) (dt b)) then
+              err "Rune.jit: triangular_solve requires both operands to have "
+                    "the same dtype"
+            else
+              ret k (dt a)
+                (Linalg_graph.triangular_solve ~upper ~transpose ~unit_diag
+                   (go a) (go b)))
     | E_psum _ ->
         Some
           (fun k ->

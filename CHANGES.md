@@ -937,6 +937,20 @@ thread.
 
 ### Rune
 
+- `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
+  forward substitution unrolled at trace time into the fixed number of steps
+  their shapes imply, so the whole factorization lowers to ordinary Tolk
+  compositions and compiles for every Tolk device. Compiled results match the
+  eager kernels, including the LAPACK reflector sign and the zero-tail
+  no-reflector convention. A linear solve inside jit is the same composition
+  written out by hand (`Nx.solve` itself still refuses to trace, because its
+  singularity check reads a traced value); a singular system yields infinities
+  rather than an error. Compile time grows linearly in the matrix dimension,
+  and `grad` inside a jitted function now also differentiates through `qr`:
+  the tape pullback's `diag` use read host bytes and refused to trace, so the
+  QR and Cholesky pullbacks (and the Cholesky JVP rule) form the diagonal
+  terms from the identity instead.
+
 - `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
   step compiles once and runs per slice — instead of unrolling every step into
   the trace, and `grad` through a jitted scan compiles a reversed loop over the

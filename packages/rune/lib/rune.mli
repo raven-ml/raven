@@ -369,8 +369,10 @@ exception Jit_error of string
     depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
     [Nx.Rng.with_key] on a constant key — the draw would be a compile-time constant replayed on
     every call; pass the key as an input instead), or it used an operation the
-    compiler does not support (FFT, linear algebra, complex, int4 and uint4
-    tensors, assigning into a view). *)
+    compiler does not support (FFT, Cholesky and eigensolvers, complex, int4
+    and uint4 tensors, assigning into a view). QR and triangular solves do
+    compile: they unroll at trace time into the fixed number of steps their
+    shapes imply. *)
 
 val jit :
   ?device:string ->

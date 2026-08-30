@@ -882,9 +882,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   let c = T.matmul (T.transpose l_lower) dl_lower in
                   let p =
-                    let diag_c = T.diagonal c in
-                    let two = Nx_core.Dtype.of_float (T.dtype diag_c) 2.0 in
-                    T.sub (T.tril c) (T.diag (T.div_s diag_c two))
+                    (* Half the diagonal, via the identity rather than [diag] (a
+                       host-side op that refuses to trace under jit). *)
+                    let two = Nx_core.Dtype.of_float (T.dtype c) 2.0 in
+                    T.sub (T.tril c)
+                      (T.mul c (T.div_s (T.eye (T.dtype c) (T.shape c).(0)) two))
                   in
                   let z =
                     triangular_solve ~upper:false ~transpose:true
@@ -962,7 +964,12 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                             (T.matmul (T.transpose gq) q)
                         in
                         let lower_strict = T.tril ~k:(-1) m in
-                        let diag_mat = T.diag (T.contiguous (T.diagonal m)) in
+                        (* [m]'s diagonal as a matrix, via the identity: [diag]
+                           itself reads host bytes, so it would refuse to trace
+                           under jit. *)
+                        let diag_mat =
+                          T.mul m (T.eye (T.dtype m) (T.shape m).(0))
+                        in
                         let copyltu =
                           T.add
                             (T.add lower_strict (T.transpose lower_strict))
