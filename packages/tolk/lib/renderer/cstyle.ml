@@ -2554,9 +2554,9 @@ let amd_preamble arch _lang uops =
     if List.exists (fun u -> U.op u = Ops.Special) uops then
       ( prefix @ [ "typedef long unsigned int size_t;" ],
         [
-          "extern \"C\" __attribute__((device, const)) unsigned int __ockl_get_local_id(size_t);";
-          "extern \"C\" __attribute__((device, const)) unsigned int __ockl_get_group_id(size_t);";
-          "extern \"C\" __attribute__((device, const)) unsigned int __ockl_get_local_size(size_t);";
+          "extern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);";
+          "extern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);";
+          "extern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);";
         ] )
     else (prefix, [])
   in

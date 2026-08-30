@@ -101,6 +101,12 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- Fix the AMD renderer's `__ockl_get_local_id`/`__ockl_get_group_id`/
+  `__ockl_get_local_size` declarations: the return and argument types were
+  swapped (`unsigned int f(size_t)` instead of `size_t f(unsigned int)`), so
+  kernels using launch indices declared the OCKL intrinsics with the wrong
+  signatures.
+
 - `Search.beam_parallel` is a `Helpers.Context_var`, so a caller can scope
   the `BEAM_PARALLEL` worker count to one compilation with
   `Context_var.with_context` instead of setting it process-wide.
