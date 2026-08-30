@@ -101,3 +101,9 @@
  (modules test_amd_amdev)
  (package tolk)
  (libraries tolk tolk.hcq tolk.amd windtrap))
+
+(tests
+ (names test_nv_tables)
+ (modules test_nv_tables)
+ (package tolk)
+ (libraries tolk.nv windtrap))

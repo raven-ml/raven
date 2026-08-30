@@ -1,0 +1,10 @@
+(include_subdirs unqualified)
+
+(library
+ (name tolk_nv)
+ (public_name tolk.nv)
+ (libraries tolk)
+ (foreign_stubs
+  (language c)
+  (names tolk_nv_stubs))
+ (c_library_flags (-lpthread)))
