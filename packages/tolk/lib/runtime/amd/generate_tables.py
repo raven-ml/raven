@@ -555,6 +555,10 @@ def gen_soc():
         lines.append(f"module {title} = struct")
         lines.append(f"  {int_let('cs_partial_flush', mod.CS_PARTIAL_FLUSH)}")
         lines.append(f"  {int_let('mtype_uc', mod.MTYPE_UC)}")
+        lines.append(f"  {int_let('sh_mem_address_mode_64', mod.SH_MEM_ADDRESS_MODE_64)}")
+        lines.append(
+            f"  {int_let('sh_mem_alignment_mode_unaligned', mod.SH_MEM_ALIGNMENT_MODE_UNALIGNED)}"
+        )
         lines.append("end")
         lines.append("")
     return lines[:-1]

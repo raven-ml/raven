@@ -150,6 +150,12 @@ module Am_page_table : sig
       [pte] at level [lv] maps a page directly rather than pointing at
       a child page table. *)
 
+  val paddr : t -> int
+  (** [paddr pt] is the physical address of the page table [pt]. *)
+
+  val lv : t -> int
+  (** [lv pt] is the level of the page table [pt] in the tree. *)
+
   val ops :
     vram:Tolk_hcq.Hcq.Mmio.t ->
     gc_ver:int * int * int ->
@@ -230,6 +236,7 @@ val make :
   ?pci_dev:Tolk_hcq.System.Pci_device.t ->
   ?now_ms:(unit -> int) ->
   ?is_booting:bool ref ->
+  ?on_range_mapped:(unit -> unit) ref ->
   rreg:(int -> int) ->
   wreg:(int -> int -> unit) ->
   vram:Tolk_hcq.Hcq.Mmio.t ->
@@ -257,7 +264,11 @@ val make :
     register access and anonymous-memory mappings. [pci_dev] is absent
     for such devices and [is_booting] defaults to a fresh reference
     holding [true]; pass the reference the memory manager's booting
-    predicate reads to keep the two in step. *)
+    predicate reads to keep the two in step. Likewise
+    [on_range_mapped] is the hook cell behind {!set_on_range_mapped}
+    (defaults to a fresh cell holding a no-op); pass the reference the
+    memory manager's mapping hook dereferences so installed hooks
+    reach it. *)
 
 val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
 (** [pci_dev t] is the underlying PCI device; [None] for devices built
@@ -300,8 +311,23 @@ val is_booting : t -> bool
 (** [is_booting t] is [true] while the device is booting; only
     boot-region memory can be allocated then. *)
 
+val is_err_state : t -> bool
+(** [is_err_state t] is [true] once a hardware fault was observed on
+    the device (see {!set_err_state}); recovery clears it. *)
+
+val set_err_state : t -> bool -> unit
+(** [set_err_state t v] records whether the device is in a fault
+    state. The interrupt handler raises the flag on faults; recovery
+    lowers it. *)
+
 val mm : t -> Am_page_table.t Tolk.Memory.t
 (** [mm t] is the device's memory manager. *)
+
+val set_on_range_mapped : t -> (unit -> unit) -> unit
+(** [set_on_range_mapped t f] installs [f] as the memory manager's
+    after-mapping hook: it runs after every mapping the manager
+    creates. The hook starts as a no-op; boot installs the TLB flush
+    once the memory hubs answer. *)
 
 val now_ms : t -> int
 (** [now_ms t] is the device's monotonic clock in milliseconds. The

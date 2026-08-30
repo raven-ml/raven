@@ -4,14 +4,20 @@
 module Soc_9 = struct
   let cs_partial_flush = 7
   let mtype_uc = 3
+  let sh_mem_address_mode_64 = 0
+  let sh_mem_alignment_mode_unaligned = 3
 end
 
 module Soc_11 = struct
   let cs_partial_flush = 7
   let mtype_uc = 3
+  let sh_mem_address_mode_64 = 0
+  let sh_mem_alignment_mode_unaligned = 3
 end
 
 module Soc_12 = struct
   let cs_partial_flush = 7
   let mtype_uc = 3
+  let sh_mem_address_mode_64 = 0
+  let sh_mem_alignment_mode_unaligned = 3
 end

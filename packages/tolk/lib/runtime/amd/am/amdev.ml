@@ -487,6 +487,9 @@ module Am_page_table = struct
         flags ||| Am.amdgpu_pde_pte
       else flags
 
+  let paddr pt = pt.paddr
+  let lv pt = pt.lv
+
   let is_pte_huge_page ~gc_ver ~lv pte =
     if gc_ver < (10, 0, 0) then
       if lv <> Am.amdgpu_vm_pdb0 then
@@ -691,6 +694,8 @@ type t = {
   mc_base : int;
   now_ms : unit -> int;
   is_booting : bool ref;
+  is_err_state : bool ref;
+  on_range_mapped : (unit -> unit) ref;
   mm : Am_page_table.t Memory.t;
 }
 
@@ -705,6 +710,9 @@ let reserved_vram_size t = t.reserved_vram_size
 let discovery t = t.discovery
 let gc_info t = t.discovery.gc_info
 let is_booting t = !(t.is_booting)
+let is_err_state t = !(t.is_err_state)
+let set_err_state t v = t.is_err_state := v
+let set_on_range_mapped t f = t.on_range_mapped := f
 let mm t = t.mm
 let now_ms t = t.now_ms ()
 
@@ -876,9 +884,10 @@ let gmc_state reg =
   in
   (xgmi_seg_sz, paddr_base, fb_base + paddr_base)
 
-let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true) ~rreg ~wreg
-    ~vram ~doorbell64 ~mmio ~vram_size ~large_bar ~reserved_vram_size
-    ~discovery ~mm ~devfmt () =
+let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
+    ?(on_range_mapped = ref (fun () -> ())) ~rreg ~wreg ~vram ~doorbell64
+    ~mmio ~vram_size ~large_bar ~reserved_vram_size ~discovery ~mm ~devfmt ()
+    =
   let rreg, wreg, reg =
     reg_access ~ips:(build_ips discovery) (`Fns (rreg, wreg))
   in
@@ -901,6 +910,8 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true) ~rreg ~wreg
     mc_base;
     now_ms;
     is_booting;
+    is_err_state = ref false;
+    on_range_mapped;
     mm;
   }
 
@@ -928,6 +939,7 @@ let create pci_dev =
   let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
   let xgmi_seg_sz, paddr_base, mc_base = gmc_state reg in
   let is_booting = ref true in
+  let on_range_mapped = ref (fun () -> ()) in
   let devfmt = System.Pci_device.pcibus pci_dev in
   let lv_span = 9 * (3 - Am.amdgpu_vm_pdb2) in
   let mm =
@@ -949,7 +961,9 @@ let create pci_dev =
       ~zero_vram:(fun ~paddr ~size ->
         Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
       ~first_lv:Am.amdgpu_vm_pdb2 ~reserve_ptable:(not large_bar)
-      ~dbg_name:devfmt ()
+      ~dbg_name:devfmt
+      ~on_range_mapped:(fun () -> !on_range_mapped ())
+      ()
   in
   {
     pci_dev = Some pci_dev;
@@ -969,5 +983,7 @@ let create pci_dev =
     mc_base;
     now_ms = monotonic_ms;
     is_booting;
+    is_err_state = ref false;
+    on_range_mapped;
     mm;
   }

@@ -17,6 +17,11 @@ module Firmware = Tolk_amd.Amdev.Firmware
 module Am_ip = Tolk_amd.Am_ip
 module Psp = Tolk_amd.Am_ip.Psp
 module Smu = Tolk_amd.Am_ip.Smu
+module Soc = Tolk_amd.Am_ip.Soc
+module Gmc = Tolk_amd.Am_ip.Gmc
+module Gfx = Tolk_amd.Am_ip.Gfx
+module Ih = Tolk_amd.Am_ip.Ih
+module Sdma = Tolk_amd.Am_ip.Sdma
 module Am = Tolk_amd.Amd_tables.Am_defs
 module Fw_defs = Tolk_amd.Amd_tables.Fw_defs
 module Reg = Tolk_amd.Amd_tables.Reg
@@ -332,16 +337,16 @@ let mp1_base = 0x20000
 let remap_hdp_addr = 0x42000 + 0x12d
 let flush_target = 0x15
 
-let dev_ips ~gc ~mp0 ~mp1 ~mmhub =
+let dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys =
   [
     (0xb, 0, gc, [ 0x8000; 0x9000 ]);
     (0x29, 0, (6, 0, 0), [ 0xa000 ]);
-    (0x2a, 0, (6, 0, 2), [ 0xb000 ]);
+    (0x2a, 0, sdma, [ 0xb000 ]);
     (0x22, 0, mmhub, [ mmhub_base ]);
-    (0x6c, 0, (4, 3, 0), [ 0x40000; 0x41000; 0x42000; 0x43000; 0x44000; 0x45000 ]);
+    (0x6c, 0, bif, [ 0x40000; 0x41000; 0x42000; 0x43000; 0x44000; 0x45000 ]);
     (0xff, 0, mp0, [ mp0_base; 0x11000 ]);
     (1, 0, mp1, [ mp1_base ]);
-    (0x28, 0, (6, 0, 0), [ 0xc000 ]);
+    (0x28, 0, osssys, [ 0xc000 ]);
   ]
 
 type fake_dev = {
@@ -354,7 +359,8 @@ type fake_dev = {
 }
 
 let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
-    ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(pre = fun _ -> ()) f =
+    ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(sdma = (6, 0, 2))
+    ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(pre = fun _ -> ()) f =
   with_fake_vram 0x2000000 (fun vram ->
       let store = Hashtbl.create 16 in
       let reads = Hashtbl.create 16 in
@@ -381,6 +387,7 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
       Hashtbl.replace store remap_hdp_addr 0x54;
       pre store;
       let booting = ref true in
+      let on_range_mapped = ref (fun () -> ()) in
       let mm =
         Memory.create
           ~pt_ops:(Amdev.Am_page_table.ops ~vram ~gc_ver:gc ())
@@ -392,7 +399,9 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ~is_booting:(fun () -> !booting)
           ~zero_vram:(fun ~paddr ~size ->
             Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
-          ~first_lv:Am.amdgpu_vm_pdb2 ()
+          ~first_lv:Am.amdgpu_vm_pdb2
+          ~on_range_mapped:(fun () -> !on_range_mapped ())
+          ()
       in
       let dev =
         Amdev.make ~rreg ~wreg ~vram
@@ -401,16 +410,27 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ~vram_size:(Mmio.size vram) ~large_bar:true ~reserved_vram_size:0
           ~discovery:
             (Amdev.parse_discovery
-               (discovery_blob (dev_ips ~gc ~mp0 ~mp1 ~mmhub)))
+               (discovery_blob (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys)))
           ~mm ~devfmt:"test"
           ~now_ms:(fun () ->
             incr clock;
             !clock)
-          ~is_booting:booting ()
+          ~is_booting:booting ~on_range_mapped ()
       in
       f { dev; fvram = vram; store; reads; wr_hooks; log })
 
 let raddr dev name = (Amdev.Am_register.reg (Amdev.reg dev name)).Reg.addr
+
+let rencode fd name fields =
+  Reg.encode (Amdev.Am_register.reg (Amdev.reg fd.dev name)) fields
+
+let rdecode fd name v =
+  Reg.decode (Amdev.Am_register.reg (Amdev.reg fd.dev name)) v
+
+(* The last value written to a register, [0] when untouched. *)
+let rstore fd name =
+  Option.value ~default:0 (Hashtbl.find_opt fd.store (raddr fd.dev name))
+
 let lo32 v = v land 0xffffffff
 let hi32 v = v lsr 32
 
@@ -1301,6 +1321,624 @@ let () =
                   equal
                     (list (pair int int))
                     (List.concat_map (fun c -> sets c 300) clks)
+                    (List.rev !(fd.log))));
+        ];
+      group "soc"
+        [
+          test "init_hw opens the doorbell aperture" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  Soc.init_hw soc ~vmhubs:1;
+                  equal
+                    (list (pair int int))
+                    [
+                      (raddr fd.dev "regRCC_DEV0_EPF2_STRAP2", 0);
+                      (raddr fd.dev "regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN", 1);
+                    ]
+                    (List.rev !(fd.log));
+                  Soc.set_clockgating_state soc;
+                  equal int
+                    (rencode fd "regHDP_MEM_POWER_CTRL"
+                       [
+                         ("atomic_mem_power_ctrl_en", 1);
+                         ("atomic_mem_power_ds_en", 1);
+                       ])
+                    (rstore fd "regHDP_MEM_POWER_CTRL")));
+          test "doorbell_enable encodes the numbered port fields" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  Soc.doorbell_enable soc ~port:2 ~awid:0xe
+                    ~awaddr_31_28_value:0x3 ~offset:0x200 ~size:4 ();
+                  equal int
+                    (rencode fd "regS2A_DOORBELL_ENTRY_2_CTRL"
+                       [
+                         ("s2a_doorbell_port2_enable", 1);
+                         ("s2a_doorbell_port2_awid", 0xe);
+                         ("s2a_doorbell_port2_range_size", 4);
+                         ("s2a_doorbell_port2_awaddr_31_28_value", 0x3);
+                         ("s2a_doorbell_port2_range_offset", 0x200);
+                       ])
+                    (rstore fd "regS2A_DOORBELL_ENTRY_2_CTRL")));
+          test "names interrupt clients and sources per generation" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  (match Soc.ih_client_name soc 0x14 with
+                  | Some n -> equal string "SOC21_IH_CLIENTID_GRBM_CP" n
+                  | None -> fail "expected a client name");
+                  equal string "CP_EOP_INTERRUPT"
+                    (Soc.ih_src_name soc ~client:0x14 ~src:0xb5);
+                  equal string "SDMA_TRAP"
+                    (Soc.ih_src_name soc ~client:0xa ~src:0x31);
+                  equal string "" (Soc.ih_src_name soc ~client:0x3 ~src:0xb5));
+              with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0) ~sdma:(4, 4, 2)
+                ~mp0:(13, 0, 6) ~mp1:(13, 0, 6) (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  (match Soc.ih_client_name soc 8 with
+                  | Some n -> equal string "SOC15_IH_CLIENTID_SDMA0" n
+                  | None -> fail "expected a client name");
+                  equal string "SDMA_TRAP"
+                    (Soc.ih_src_name soc ~client:8 ~src:0xe0);
+                  equal string "SQ_INTERRUPT_ID"
+                    (Soc.ih_src_name soc ~client:0xa ~src:0xef)));
+        ];
+      group "gmc"
+        [
+          test "init_hw programs the memory hub" (fun () ->
+              with_fake_dev (fun fd ->
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev "regMMMC_VM_FB_LOCATION_TOP")
+                    0x1f;
+                  let soc = Soc.create fd.dev in
+                  let gmc = Gmc.create fd.dev in
+                  equal int 1 (Gmc.vmhubs gmc);
+                  Gmc.init_hw gmc ~soc;
+                  equal int 0xffffff (rstore fd "regMMMC_VM_AGP_BOT");
+                  (* the system aperture covers the framebuffer window *)
+                  equal int 0x400
+                    (rstore fd "regMMMC_VM_SYSTEM_APERTURE_LOW_ADDR");
+                  equal int 0x7c0
+                    (rstore fd "regMMMC_VM_SYSTEM_APERTURE_HIGH_ADDR");
+                  let scratch =
+                    rstore fd "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"
+                    lsl 12
+                  in
+                  equal bool true
+                    (scratch > 0 && scratch < Mmio.size fd.fvram);
+                  (* context 0 translates through the root page table *)
+                  let root =
+                    Amdev.Am_page_table.paddr
+                      (Memory.root_page_table (Amdev.mm fd.dev))
+                  in
+                  equal int
+                    (lo32 (root lor 1))
+                    (rstore fd "regMMVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32");
+                  equal int (hi32 root)
+                    (rstore fd "regMMVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32");
+                  equal int 0
+                    (rstore fd "regMMVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32");
+                  equal int 0xffffffff
+                    (rstore fd "regMMVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32");
+                  equal int 0x7
+                    (rstore fd "regMMVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32");
+                  let cntl = rstore fd "regMMVM_CONTEXT0_CNTL" in
+                  equal int 0x1800000 (cntl land 0x1800000);
+                  let bf = rdecode fd "regMMVM_CONTEXT0_CNTL" cntl in
+                  equal int 1 (List.assoc "enable_context" bf);
+                  equal int 3 (List.assoc "page_table_depth" bf);
+                  equal int 1
+                    (List.assoc "range_protection_fault_enable_default" bf);
+                  let cntl3 =
+                    rdecode fd "regMMVM_L2_CNTL3" (rstore fd "regMMVM_L2_CNTL3")
+                  in
+                  equal int 9 (List.assoc "bank_select" cntl3);
+                  equal int 6 (List.assoc "l2_cache_bigk_fragment_size" cntl3);
+                  equal int
+                    (rencode fd "regMMVM_L2_CNTL5"
+                       [ ("walker_priority_client_id", 0x1ff) ])
+                    (rstore fd "regMMVM_L2_CNTL5");
+                  equal int 0xffffffff
+                    (rstore fd "regMMVM_INVALIDATE_ENG17_ADDR_RANGE_LO32");
+                  equal int 0x1f
+                    (rstore fd "regMMVM_INVALIDATE_ENG17_ADDR_RANGE_HI32")));
+          test "pf_status_reg names the generation's register" (fun () ->
+              with_fake_dev (fun fd ->
+                  let gmc = Gmc.create fd.dev in
+                  equal string "regGCVM_L2_PROTECTION_FAULT_STATUS"
+                    (Gmc.pf_status_reg gmc Gmc.Gc);
+                  equal string "regMMVM_L2_PROTECTION_FAULT_STATUS"
+                    (Gmc.pf_status_reg gmc Gmc.Mm));
+              with_fake_dev ~gc:(12, 0, 1) ~bif:(6, 3, 1) (fun fd ->
+                  let gmc = Gmc.create fd.dev in
+                  equal string "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32"
+                    (Gmc.pf_status_reg gmc Gmc.Gc)));
+          test "flush_tlb invalidates the hub and clears the semaphore"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let gmc = Gmc.create fd.dev in
+                  Hashtbl.replace fd.reads
+                    (raddr fd.dev "regMMVM_INVALIDATE_ENG17_SEM") (fun () -> 1);
+                  Hashtbl.replace fd.reads
+                    (raddr fd.dev "regMMVM_INVALIDATE_ENG17_ACK") (fun () -> 1);
+                  fd.log := [];
+                  Gmc.flush_tlb gmc ~xccs:1 Gmc.Mm ~vmid:0;
+                  equal
+                    (list (pair int int))
+                    [
+                      (flush_target, 0);
+                      ( raddr fd.dev "regMMVM_INVALIDATE_ENG17_REQ",
+                        rencode fd "regMMVM_INVALIDATE_ENG17_REQ"
+                          [
+                            ("per_vmid_invalidate_req", 1);
+                            ("invalidate_l2_ptes", 1);
+                            ("invalidate_l2_pde0", 1);
+                            ("invalidate_l2_pde1", 1);
+                            ("invalidate_l2_pde2", 1);
+                            ("invalidate_l1_ptes", 1);
+                          ] );
+                      (raddr fd.dev "regMMVM_INVALIDATE_ENG17_SEM", 0);
+                      ( raddr fd.dev "regMMVM_L2_BANK_SELECT_RESERVED_CID2",
+                        rencode fd "regMMVM_L2_BANK_SELECT_RESERVED_CID2"
+                          [ ("reserved_cache_private_invalidation", 1) ] );
+                    ]
+                    (List.rev !(fd.log))));
+          test "flush_tlb skips a hub that is not programmed yet" (fun () ->
+              with_fake_dev (fun fd ->
+                  let gmc = Gmc.create fd.dev in
+                  fd.log := [];
+                  Gmc.flush_tlb gmc ~xccs:1 Gmc.Gc ~vmid:0;
+                  equal
+                    (list (pair int int))
+                    [ (flush_target, 0) ]
+                    (List.rev !(fd.log))));
+          test "an installed mapping hook runs after map_range" (fun () ->
+              with_fake_dev (fun fd ->
+                  let calls = ref 0 in
+                  Amdev.set_on_range_mapped fd.dev (fun () -> incr calls);
+                  let mm = Amdev.mm fd.dev in
+                  let paddr = Memory.palloc mm 0x1000 ~zero:false ~boot:true () in
+                  let vaddr = Memory.alloc_vaddr mm 0x1000 () in
+                  let (_ : Memory.virt_mapping) =
+                    Memory.map_range mm ~vaddr ~size:0x1000
+                      [ (paddr, 0x1000) ]
+                      Memory.Phys ~boot:true ()
+                  in
+                  equal int 1 !calls));
+        ];
+      group "gfx engines"
+        [
+          test "init_hw boots the compute engines" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  let gmc = Gmc.create fd.dev in
+                  let fw =
+                    { no_fw with Firmware.ucode_start = [ ("MEC", 0x2000) ] }
+                  in
+                  let psp = Psp.create fd.dev ~fw in
+                  let gfx = Gfx.create fd.dev in
+                  equal int 1 (Gfx.xccs gfx);
+                  fd.log := [];
+                  Gfx.init_hw gfx ~soc ~gmc ~psp ~fw ~partial_boot:false;
+                  (* the graphics hub was programmed *)
+                  equal int
+                    (rencode fd "regGCVM_L2_CNTL5"
+                       [ ("walker_priority_client_id", 0x1ff) ])
+                    (rstore fd "regGCVM_L2_CNTL5");
+                  equal int 1
+                    (List.assoc "enable_context"
+                       (rdecode fd "regGCVM_CONTEXT0_CNTL"
+                          (rstore fd "regGCVM_CONTEXT0_CNTL")));
+                  (* processors pointed at their instruction start *)
+                  equal int (0x2000 lsr 2)
+                    (rstore fd "regCP_MEC_RS64_PRGRM_CNTR_START");
+                  equal int 0 (rstore fd "regCP_MEC_RS64_PRGRM_CNTR_START_HI");
+                  equal int 0x20000000 (rstore fd "regTCP_CNTL");
+                  equal int 0x1 (rstore fd "regRLC_CNTL");
+                  equal int 0xf (rstore fd "regRLC_SPM_MC_CNTL");
+                  equal int
+                    (rencode fd "regRLC_SRM_CNTL"
+                       [ ("srm_enable", 1); ("auto_incr_addr", 1) ])
+                    (rstore fd "regRLC_SRM_CNTL");
+                  (* doorbell routes for the engine ports *)
+                  equal bool true
+                    (Hashtbl.mem fd.store
+                       (raddr fd.dev "regS2A_DOORBELL_ENTRY_0_CTRL"));
+                  equal bool true
+                    (Hashtbl.mem fd.store
+                       (raddr fd.dev "regS2A_DOORBELL_ENTRY_3_CTRL"));
+                  (* shader memory configured for all 16 vm contexts *)
+                  equal int 16
+                    (List.length
+                       (List.filter
+                          (fun (a, _) -> a = raddr fd.dev "regSH_MEM_CONFIG")
+                          !(fd.log)));
+                  equal int
+                    (rencode fd "regSH_MEM_CONFIG"
+                       [
+                         ("initial_inst_prefetch", 3); ("address_mode", 0);
+                         ("alignment_mode", 3);
+                       ])
+                    (rstore fd "regSH_MEM_CONFIG");
+                  equal int
+                    (rencode fd "regSH_MEM_BASES"
+                       [ ("shared_base", 1); ("private_base", 2) ])
+                    (rstore fd "regSH_MEM_BASES");
+                  equal int 0 (rstore fd "regCP_MEC_DOORBELL_RANGE_LOWER");
+                  equal int 0xf8 (rstore fd "regCP_MEC_DOORBELL_RANGE_UPPER");
+                  (* processors released *)
+                  equal int 1
+                    (List.assoc "mec_pipe0_active"
+                       (rdecode fd "regCP_MEC_RS64_CNTL"
+                          (rstore fd "regCP_MEC_RS64_CNTL")));
+                  equal int 0 (rstore fd "regGRBM_GFX_CNTL")));
+          test "a partial boot resets the processors instead" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  let gmc = Gmc.create fd.dev in
+                  let fw =
+                    { no_fw with Firmware.ucode_start = [ ("MEC", 0x2000) ] }
+                  in
+                  let psp = Psp.create fd.dev ~fw in
+                  let gfx = Gfx.create fd.dev in
+                  fd.log := [];
+                  Gfx.init_hw gfx ~soc ~gmc ~psp ~fw ~partial_boot:true;
+                  equal
+                    (list (pair int int))
+                    [
+                      ( raddr fd.dev "regGRBM_SOFT_RESET",
+                        rencode fd "regGRBM_SOFT_RESET"
+                          [ ("soft_reset_cp", 1); ("soft_reset_cpc", 1) ] );
+                      (raddr fd.dev "regGRBM_SOFT_RESET", 0);
+                    ]
+                    (List.filter
+                       (fun (a, _) -> a = raddr fd.dev "regGRBM_SOFT_RESET")
+                       (List.rev !(fd.log)));
+                  equal int (0x2000 lsr 2)
+                    (rstore fd "regCP_MEC_RS64_PRGRM_CNTR_START");
+                  (* the full bring-up did not run *)
+                  equal bool false
+                    (Hashtbl.mem fd.store (raddr fd.dev "regRLC_SPM_MC_CNTL"))));
+          test "setup_ring builds the queue descriptor and mirrors it"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let gfx = Gfx.create fd.dev in
+                  fd.log := [];
+                  let doorbell =
+                    Gfx.setup_ring gfx ~ring_addr:0x100000 ~ring_size:0x800
+                      ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~eop_addr:0x13000
+                      ~eop_size:0x1000 ~idx:0 ~aql:false
+                  in
+                  equal int 3 doorbell;
+                  (* the descriptor's device address reaches the bring-up
+                     registers; recover it to check the content *)
+                  let base = raddr fd.dev "regCP_MQD_BASE_ADDR" in
+                  let mqd_mc =
+                    match List.assoc_opt base (List.rev !(fd.log)) with
+                    | Some v -> v
+                    | None -> fail "expected a descriptor base write"
+                  in
+                  let expected = Bytes.make 0x800 '\x00' in
+                  s32 expected 0x0 0xC0310800;
+                  s32 expected 0x200 mqd_mc;
+                  s32 expected 0x210
+                    (rencode fd "regCP_HQD_PERSISTENT_STATE"
+                       [ ("preload_size", 0x55); ("preload_req", 1) ]);
+                  s32 expected 0x214 0x2;
+                  s32 expected 0x218 0xf;
+                  s32 expected 0x21c 0x111;
+                  s32 expected 0x220 (0x100000 lsr 8);
+                  s32 expected 0x22c 0x11000;
+                  s32 expected 0x234 0x12000;
+                  s32 expected 0x23c
+                    (rencode fd "regCP_HQD_PQ_DOORBELL_CONTROL"
+                       [ ("doorbell_offset", 6); ("doorbell_en", 1) ]);
+                  s32 expected 0x244
+                    (rencode fd "regCP_HQD_PQ_CONTROL"
+                       [ ("rptr_block_size", 5); ("queue_size", 8) ]);
+                  s32 expected 0x254
+                    (rencode fd "regCP_HQD_IB_CONTROL"
+                       [ ("min_ib_avail_size", 3) ]);
+                  s32 expected 0x280 0x20004000;
+                  s32 expected 0x288
+                    (rencode fd "regCP_MQD_CONTROL" [ ("priv_state", 1) ]);
+                  s32 expected 0x294 (0x13000 lsr 8);
+                  s32 expected 0x29c
+                    (rencode fd "regCP_HQD_EOP_CONTROL" [ ("eop_size", 9) ]);
+                  List.iter
+                    (fun off -> s32 expected off 0xffffffff)
+                    [ 0x5c; 0x60; 0x68; 0x6c; 0xb0; 0xb4; 0xb8; 0xbc ];
+                  equal_bytes expected
+                    (Mmio.read_bytes fd.fvram ~off:(mqd_mc - 0x10000000)
+                       ~len:0x800);
+                  (* the register block mirrors the descriptor from its
+                     0x80th dword on *)
+                  let last = raddr fd.dev "regCP_HQD_PQ_WPTR_HI" in
+                  let expected_mirror =
+                    List.init (last - base + 1) (fun i ->
+                        ( base + i,
+                          Int32.to_int
+                            (Bytes.get_int32_le expected ((0x80 + i) * 4))
+                          land 0xffffffff ))
+                  in
+                  let active = raddr fd.dev "regCP_HQD_ACTIVE" in
+                  equal
+                    (list (pair int int))
+                    (expected_mirror
+                    @
+                    if active >= base && active <= last then [ (active, 1) ]
+                    else [])
+                    (List.filter
+                       (fun (a, _) -> a >= base && a <= last)
+                       (List.rev !(fd.log)));
+                  equal int 1 (rstore fd "regCP_HQD_ACTIVE")));
+          test "fini_hw drains active queues" (fun () ->
+              with_fake_dev (fun fd ->
+                  let gfx = Gfx.create fd.dev in
+                  let active = ref 1 in
+                  Hashtbl.replace fd.reads (raddr fd.dev "regCP_HQD_ACTIVE")
+                    (fun () ->
+                      let v = !active in
+                      active := 0;
+                      v);
+                  fd.log := [];
+                  Gfx.fini_hw gfx;
+                  equal int 0x2 (rstore fd "regCP_HQD_DEQUEUE_REQUEST");
+                  equal int 0x1 (rstore fd "regSPI_COMPUTE_QUEUE_RESET")));
+        ];
+      group "interrupt rings"
+        [
+          test "init_hw programs both rings" (fun () ->
+              with_fake_dev (fun fd ->
+                  let ih = Ih.create fd.dev in
+                  fd.log := [];
+                  Ih.init_hw ih;
+                  let r n = raddr fd.dev n in
+                  equal (list int)
+                    [
+                      r "regIH_RB_BASE"; r "regIH_RB_BASE_HI";
+                      r "regIH_RB_CNTL"; r "regIH_RB_WPTR_ADDR_LO";
+                      r "regIH_RB_WPTR_ADDR_HI"; r "regIH_RB_WPTR";
+                      r "regIH_RB_RPTR"; r "regIH_DOORBELL_RPTR";
+                      r "regIH_RB_BASE_RING1"; r "regIH_RB_BASE_HI_RING1";
+                      r "regIH_RB_CNTL_RING1"; r "regIH_RB_WPTR_RING1";
+                      r "regIH_RB_RPTR_RING1"; r "regIH_DOORBELL_RPTR_RING1";
+                      r "regIH_STORM_CLIENT_LIST_CNTL";
+                      r "regIH_INT_FLOOD_CNTL"; r "regIH_MSI_STORM_CTRL";
+                      r "regIH_RB_CNTL"; r "regIH_RB_CNTL_RING1";
+                    ]
+                    (List.map fst (List.rev !(fd.log)));
+                  let cntl0 =
+                    rencode fd "regIH_RB_CNTL"
+                      [
+                        ("mc_space", 4); ("wptr_overflow_clear", 1);
+                        ("rb_size", 16); ("mc_snoop", 1);
+                        ("wptr_overflow_enable", 1); ("rptr_rearm", 1);
+                      ]
+                  in
+                  (* the final toggle ors in the enable bits *)
+                  equal int
+                    (cntl0
+                    lor rencode fd "regIH_RB_CNTL"
+                          [ ("rb_enable", 1); ("enable_intr", 1) ])
+                    (rstore fd "regIH_RB_CNTL");
+                  equal int
+                    (rencode fd "regIH_RB_CNTL_RING1"
+                       [
+                         ("mc_space", 4); ("wptr_overflow_clear", 1);
+                         ("rb_size", 16); ("mc_snoop", 1);
+                         ("rb_full_drain_enable", 1); ("rb_enable", 1);
+                       ])
+                    (rstore fd "regIH_RB_CNTL_RING1");
+                  equal int
+                    (rencode fd "regIH_MSI_STORM_CTRL" [ ("delay", 3) ])
+                    (rstore fd "regIH_MSI_STORM_CTRL");
+                  (* the ring lives in device memory *)
+                  let ring_paddr =
+                    (rstore fd "regIH_RB_BASE" lsl 8) - 0x10000000
+                  in
+                  equal bool true
+                    (ring_paddr >= 0 && ring_paddr < Mmio.size fd.fvram)));
+          test "interrupt_handler decodes entries and flags faults" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  let gmc = Gmc.create fd.dev in
+                  let smu = Smu.create fd.dev in
+                  let ih = Ih.create fd.dev in
+                  Ih.init_hw ih;
+                  let ring_paddr =
+                    (rstore fd "regIH_RB_BASE" lsl 8) - 0x10000000
+                  in
+                  (* three entries: a trap to skip, a shader wave report
+                     and a translation fault *)
+                  let put_entry i dwords =
+                    List.iteri
+                      (fun j v ->
+                        Mmio.write32 fd.fvram
+                          (ring_paddr + (((i * 8) + j) * 4))
+                          (Int32.of_int v))
+                      dwords
+                  in
+                  put_entry 0 [ 0x310a; 0; 0; 0; 0; 0; 0; 0 ];
+                  put_entry 1 [ 0xef14; 0; 0; 0; 0; 0x40; 0; 0 ];
+                  put_entry 2 [ 0x0014; 0; 0; 0; 0; 0; 0; 0 ];
+                  Hashtbl.replace fd.reads (raddr fd.dev "regIH_RB_WPTR")
+                    (fun () -> 24 lsl 2);
+                  fd.log := [];
+                  Ih.interrupt_handler ih ~soc ~gmc ~smu;
+                  equal bool true (Amdev.is_err_state fd.dev);
+                  (* the fault status was cleared and the ring drained *)
+                  equal int
+                    (rencode fd "regGCVM_L2_PROTECTION_FAULT_CNTL"
+                       [ ("clear_protection_fault_status_addr", 1) ])
+                    (rstore fd "regGCVM_L2_PROTECTION_FAULT_CNTL");
+                  equal int 24 (rstore fd "regIH_RB_RPTR")));
+          test "trap sources do not mark the device errored" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  let gmc = Gmc.create fd.dev in
+                  let smu = Smu.create fd.dev in
+                  let ih = Ih.create fd.dev in
+                  Ih.init_hw ih;
+                  let ring_paddr =
+                    (rstore fd "regIH_RB_BASE" lsl 8) - 0x10000000
+                  in
+                  Mmio.write32 fd.fvram ring_paddr (Int32.of_int 0x310a);
+                  Hashtbl.replace fd.reads (raddr fd.dev "regIH_RB_WPTR")
+                    (fun () -> 8 lsl 2);
+                  Ih.interrupt_handler ih ~soc ~gmc ~smu;
+                  equal bool false (Amdev.is_err_state fd.dev);
+                  equal int 8 (rstore fd "regIH_RB_RPTR")));
+          test "drain clears an overflowed ring" (fun () ->
+              with_fake_dev (fun fd ->
+                  let ih = Ih.create fd.dev in
+                  Ih.init_hw ih;
+                  Hashtbl.replace fd.reads (raddr fd.dev "regIH_RB_WPTR")
+                    (fun () -> (4 lsl 2) lor 1);
+                  let cntl_before = rstore fd "regIH_RB_CNTL" in
+                  fd.log := [];
+                  Ih.drain ih;
+                  let ovf =
+                    rencode fd "regIH_RB_CNTL" [ ("wptr_overflow_clear", 1) ]
+                  in
+                  equal
+                    (list (pair int int))
+                    [
+                      (raddr fd.dev "regIH_RB_RPTR", 4);
+                      (raddr fd.dev "regIH_RB_WPTR", 4 lsl 2);
+                      (raddr fd.dev "regIH_RB_CNTL", cntl_before lor ovf);
+                      (raddr fd.dev "regIH_RB_CNTL", cntl_before land lnot ovf);
+                    ]
+                    (List.rev !(fd.log))));
+          test "bus fault lines dump the error banks" (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  let gmc = Gmc.create fd.dev in
+                  let smu = Smu.create fd.dev in
+                  let ih = Ih.create fd.dev in
+                  Ih.init_hw ih;
+                  ack_messages fd;
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev "regBIF_BX0_BIF_DOORBELL_INT_CNTL")
+                    (rencode fd "regBIF_BX0_BIF_DOORBELL_INT_CNTL"
+                       [ ("ras_cntlr_interrupt_status", 1) ]);
+                  Ih.interrupt_handler ih ~soc ~gmc ~smu;
+                  equal bool true (Amdev.is_err_state fd.dev);
+                  equal int
+                    (rencode fd "regBIF_BX0_BIF_DOORBELL_INT_CNTL"
+                       [ ("ras_cntlr_interrupt_clear", 1) ])
+                    (rstore fd "regBIF_BX0_BIF_DOORBELL_INT_CNTL")));
+        ];
+      group "sdma engines"
+        [
+          test "init_hw configures the engine and routes its doorbell"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let soc = Soc.create fd.dev in
+                  let sdma = Sdma.create fd.dev in
+                  fd.log := [];
+                  Sdma.init_hw sdma ~soc;
+                  equal
+                    (list (pair int int))
+                    [
+                      ( raddr fd.dev "regSDMA0_WATCHDOG_CNTL",
+                        rencode fd "regSDMA0_WATCHDOG_CNTL"
+                          [ ("queue_hang_count", 100) ] );
+                      ( raddr fd.dev "regSDMA0_UTCL1_CNTL",
+                        rencode fd "regSDMA0_UTCL1_CNTL"
+                          [ ("resp_mode", 3); ("redo_delay", 9) ] );
+                      ( raddr fd.dev "regSDMA0_UTCL1_PAGE",
+                        rencode fd "regSDMA0_UTCL1_PAGE"
+                          [
+                            ("rd_l2_policy", 2); ("wr_l2_policy", 3);
+                            ("llc_noalloc", 1);
+                          ] );
+                      (raddr fd.dev "regSDMA0_F32_CNTL", 0);
+                      ( raddr fd.dev "regSDMA0_CNTL",
+                        rencode fd "regSDMA0_CNTL" [ ("trap_enable", 1) ] );
+                      ( raddr fd.dev "regS2A_DOORBELL_ENTRY_2_CTRL",
+                        rencode fd "regS2A_DOORBELL_ENTRY_2_CTRL"
+                          [
+                            ("s2a_doorbell_port2_enable", 1);
+                            ("s2a_doorbell_port2_awid", 0xe);
+                            ("s2a_doorbell_port2_range_size", 4);
+                            ("s2a_doorbell_port2_awaddr_31_28_value", 0x3);
+                            ("s2a_doorbell_port2_range_offset", 0x200);
+                          ] );
+                    ]
+                    (List.rev !(fd.log))));
+          test "setup_ring programs the queue and returns its doorbell"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let sdma = Sdma.create fd.dev in
+                  fd.log := [];
+                  let doorbell =
+                    Sdma.setup_ring sdma ~ring_addr:0x40000 ~ring_size:0x800
+                      ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~idx:0
+                  in
+                  equal int 0x100 doorbell;
+                  let r n = raddr fd.dev ("regSDMA0_QUEUE0" ^ n) in
+                  equal
+                    (list (pair int int))
+                    [
+                      (r "_MINOR_PTR_UPDATE", 1);
+                      (r "_RB_RPTR", 0); (r "_RB_RPTR_HI", 0);
+                      (r "_RB_WPTR", 0); (r "_RB_WPTR_HI", 0);
+                      (r "_RB_BASE", 0x400); (r "_RB_BASE_HI", 0);
+                      (r "_RB_RPTR_ADDR_LO", 0x11000);
+                      (r "_RB_RPTR_ADDR_HI", 0);
+                      (r "_RB_WPTR_POLL_ADDR_LO", 0x12000);
+                      (r "_RB_WPTR_POLL_ADDR_HI", 0);
+                      ( r "_DOORBELL_OFFSET",
+                        rencode fd "regSDMA0_QUEUE0_DOORBELL_OFFSET"
+                          [ ("offset", 0x200) ] );
+                      ( r "_DOORBELL",
+                        rencode fd "regSDMA0_QUEUE0_DOORBELL"
+                          [ ("enable", 1) ] );
+                      (r "_MINOR_PTR_UPDATE", 0);
+                      ( r "_RB_CNTL",
+                        rencode fd "regSDMA0_QUEUE0_RB_CNTL"
+                          [
+                            ("f32_wptr_poll_enable", 1);
+                            ("rptr_writeback_enable", 1);
+                            ("rptr_writeback_timer", 4); ("rb_enable", 1);
+                            ("rb_priv", 1); ("rb_size", 9);
+                          ] );
+                      ( r "_IB_CNTL",
+                        rencode fd "regSDMA0_QUEUE0_IB_CNTL"
+                          [ ("ib_enable", 1) ] );
+                    ]
+                    (List.rev !(fd.log));
+                  raises_match
+                    (Exn.failure ~substring:"sdma queue 1 is not available")
+                    (fun () ->
+                      Sdma.setup_ring sdma ~ring_addr:0x40000 ~ring_size:0x800
+                        ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~idx:1)));
+          test "fini_hw disables the queues and pulses the soft reset"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let sdma = Sdma.create fd.dev in
+                  let (_ : int) =
+                    Sdma.setup_ring sdma ~ring_addr:0x40000 ~ring_size:0x800
+                      ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~idx:0
+                  in
+                  let rb_cntl = rstore fd "regSDMA0_QUEUE0_RB_CNTL" in
+                  fd.log := [];
+                  Sdma.fini_hw sdma;
+                  let en =
+                    rencode fd "regSDMA0_QUEUE0_RB_CNTL" [ ("rb_enable", 1) ]
+                  in
+                  equal
+                    (list (pair int int))
+                    [
+                      ( raddr fd.dev "regSDMA0_QUEUE0_RB_CNTL",
+                        rb_cntl land lnot en );
+                      (raddr fd.dev "regSDMA0_QUEUE0_IB_CNTL", 0);
+                      (raddr fd.dev "regSDMA0_QUEUE0_DOORBELL", 0);
+                      (raddr fd.dev "regSDMA0_QUEUE0_DOORBELL_OFFSET", 0);
+                      ( raddr fd.dev "regGRBM_SOFT_RESET",
+                        rencode fd "regGRBM_SOFT_RESET"
+                          [ ("soft_reset_sdma0", 1) ] );
+                      (raddr fd.dev "regGRBM_SOFT_RESET", 0);
+                    ]
                     (List.rev !(fd.log))));
         ];
     ]
