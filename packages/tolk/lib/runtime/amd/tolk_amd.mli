@@ -45,6 +45,9 @@ type 'meta device = {
       (** Scratch-ring size register value, written verbatim on launch. *)
   mutable scratch : 'meta Hcq.Buffer.t;
       (** Backing store for kernel scratch (private segments). *)
+  mutable max_private_segment_size : int;
+      (** Largest per-work-item private segment the scratch buffer has
+          been sized for; starts at [0]. *)
   is_am : bool;
       (** [true] when this process drives the GPU directly rather than
           through the kernel driver; such devices have no queue event. *)
@@ -79,6 +82,31 @@ val device :
     later, [0x400000] before). [sqtt_enabled] defaults to [false].
 
     Raises [Invalid_argument] when a version has no table. *)
+
+val ensure_has_local_memory :
+  'meta device ->
+  props:(string * int) list ->
+  alloc:(int -> 'meta Hcq.Buffer.t) ->
+  free:('meta Hcq.Buffer.t -> unit) ->
+  int ->
+  unit
+(** [ensure_has_local_memory dev ~props ~alloc ~free size] grows [dev]'s
+    scratch buffer until it covers a private segment of [size] bytes per
+    work-item, and stores the matching scratch-ring register value in
+    [dev.tmpring_size]. Does nothing when the scratch already covers
+    [size] (per [dev.max_private_segment_size]).
+
+    Growing frees the old buffer through [free] (unless it is empty,
+    the state of a freshly created device) and allocates the new one
+    through [alloc], sized from the device's compute topology in
+    [props]: ["simd_count"], ["simd_per_cu"], ["array_count"],
+    ["simd_arrays_per_engine"], and ["max_slots_scratch_cu"]. When
+    [alloc] raises [Failure] for the grown size, the old size is
+    allocated again and the sizing state is left unchanged, so the
+    device stays usable.
+
+    Raises [Failure] when a property is missing or when allocation
+    fails without a previous size to fall back to. *)
 
 type 'meta program = {
   dev : 'meta device;  (** Device the program was loaded on. *)
@@ -335,6 +363,100 @@ module Copy_queue : sig
 
       Raises [Invalid_argument] if the stream cannot fit in the ring at
       all. *)
+end
+
+(** {1:programs Programs} *)
+
+(** Loaded kernels.
+
+    Loading lays a compiled kernel object out in device memory and
+    derives its launch parameters; {!Program.call} then stages the
+    arguments for one launch and drives it through a mapped compute
+    queue. *)
+module Program : sig
+  type 'meta t = {
+    params : 'meta program;
+        (** Launch parameters, as consumed by {!Compute_queue.exec}. *)
+    name : string;  (** Kernel name, for diagnostics. *)
+    lib_gpu : 'meta Hcq.Buffer.t;
+        (** Device memory holding the kernel image. *)
+    group_segment_size : int;
+        (** Static workgroup-local memory, in bytes. *)
+    private_segment_size : int;
+        (** Per-work-item scratch the kernel needs, in bytes. The
+            device's scratch must be sized for it (see
+            {!ensure_has_local_memory}) before launching. *)
+    kernargs_segment_size : int;
+        (** Kernel-argument bytes the kernel reads. *)
+    kernargs_alloc_size : int;
+        (** Bytes staged per launch: the argument segment plus space for
+            launch metadata. *)
+  }
+  (** The type for loaded kernels. *)
+
+  val load :
+    'meta device ->
+    alloc:(int -> 'meta Hcq.Buffer.t) ->
+    props:(string * int) list ->
+    name:string ->
+    Bytes.t ->
+    'meta t
+  (** [load dev ~alloc ~props ~name lib] loads the compiled kernel
+      object [lib] (a shared object, as produced by {!Compiler_amd})
+      onto [dev]: it lays the object's sections out into a flat image,
+      resolves the object's internal relocations, copies the image into
+      device memory obtained from [alloc] (which must return a
+      CPU-mapped buffer of at least the requested size, a multiple of
+      [0x1000]), and parses the kernel descriptor at the start of the
+      object's [.rodata] section into launch parameters.
+
+      [props] must carry ["lds_size_in_kb"], bounding the
+      workgroup-local memory a kernel may request.
+
+      Raises [Failure] if the object has no [.rodata] section, uses a
+      relocation other than the 64-bit location-relative form, refers to
+      an undefined symbol, or requests more workgroup-local memory than
+      the device has; [Invalid_argument] if [lib] is not a loadable
+      object (see {!Tolk.Elf.load}). *)
+
+  val free : free:('meta Hcq.Buffer.t -> unit) -> 'meta t -> unit
+  (** [free ~free t] releases the device memory holding [t]'s image
+      through [free]. [t] must have no launches in flight. *)
+
+  val call :
+    'meta t ->
+    kernargs:'a Hcq.Kernargs.t ->
+    queue:Queue_desc.t ->
+    timeline:('b, 'meta device) Hcq.Signal.t ->
+    timeline_value:int ->
+    ?wait:('c, 'meta device) Hcq.Signal.t * ('d, 'meta device) Hcq.Signal.t ->
+    ?timeout_ms:int ->
+    bufs:nativeint array ->
+    vals:int array ->
+    global_size:int * int * int ->
+    local_size:int * int * int ->
+    unit ->
+    float option
+  (** [call t ~kernargs ~queue ~timeline ~timeline_value ~bufs ~vals
+      ~global_size ~local_size ()] enqueues one launch of [t]: it stages
+      [bufs] and [vals] into a fresh slot of [kernargs], then submits to
+      [queue] a stream that waits for the device's previous work
+      ([timeline] reaching [timeline_value - 1]), makes host writes
+      visible, launches the kernel over a [global_size] grid of
+      [local_size] workgroups, and signals [timeline] with
+      [timeline_value] once the launch retired. [timeline_value] must be
+      at least [1]; the caller owns the counter and submits the next
+      launch with the next value.
+
+      [wait], when given, brackets the launch with clock captures into
+      the two signals, blocks until [timeline] reaches [timeline_value]
+      ([timeout_ms] bounds the wait, see {!Hcq.Signal.wait}), and
+      returns the seconds elapsed between the two captures. Otherwise
+      the call returns [None] without blocking.
+
+      Raises [Invalid_argument] if [t] expects a dispatch-packet pointer
+      (not supported), or from the argument and queue builders when a
+      value does not fit its slot. *)
 end
 
 (** {1:kfd Kernel-driver interface} *)

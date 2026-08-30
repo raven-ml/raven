@@ -16,6 +16,13 @@ let major (m, _, _) = m
 let lo32 v = Int64.to_int (Int64.logand v 0xFFFFFFFFL)
 let hi32 v = Int64.to_int (Int64.shift_right_logical v 32)
 let va64 = Int64.of_nativeint
+let round_up n align = (n + align - 1) / align * align
+let ceildiv a b = (a + b - 1) / b
+
+let prop props name =
+  match List.assoc_opt name props with
+  | Some v -> v
+  | None -> failwith ("missing device property " ^ name)
 let event_index_partial_flush = 4
 let wait_reg_mem_function_eq = 3
 let wait_reg_mem_function_geq = 5
@@ -133,6 +140,7 @@ type 'meta device = {
   sqtt_enabled : bool;
   mutable tmpring_size : int;
   mutable scratch : 'meta Hcq.Buffer.t;
+  mutable max_private_segment_size : int;
   is_am : bool;
   queue_event_mailbox_ptr : nativeint;
   queue_event : queue_event;
@@ -162,10 +170,61 @@ let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
     sqtt_enabled;
     tmpring_size;
     scratch;
+    max_private_segment_size = 0;
     is_am;
     queue_event_mailbox_ptr;
     queue_event;
   }
+
+let ensure_has_local_memory (dev : 'meta device) ~props ~alloc ~free
+    private_segment_size =
+  if dev.max_private_segment_size < private_segment_size then begin
+    let lanes_per_wave = 64 in
+    let mem_alignment_size = if major dev.target <> 9 then 256 else 1024 in
+    let size_per_thread =
+      round_up private_segment_size (mem_alignment_size / lanes_per_wave)
+    in
+    let max_slots_scratch_cu = prop props "max_slots_scratch_cu" in
+    let cu_cnt =
+      prop props "simd_count" / prop props "simd_per_cu" / dev.xccs
+    in
+    let size_per_xcc =
+      size_per_thread * lanes_per_wave * max_slots_scratch_cu * cu_cnt
+    in
+    let old_size = Hcq.Buffer.size dev.scratch in
+    if old_size > 0 then free dev.scratch;
+    let scratch, grown =
+      match alloc (size_per_xcc * dev.xccs) with
+      | buf -> (buf, true)
+      (* out of memory: fall back to the old size so the device stays
+         usable, and leave the sizing state untouched *)
+      | exception Failure _ when old_size > 0 -> (alloc old_size, false)
+    in
+    dev.scratch <- scratch;
+    if grown then begin
+      let se_cnt =
+        prop props "array_count"
+        / prop props "simd_arrays_per_engine"
+        / dev.xccs
+      in
+      (* the per-die slicing below is only validated on generation-9
+         multi-die parts; every other supported chip is single-die *)
+      let max_scratch_waves = cu_cnt * max_slots_scratch_cu * dev.xccs in
+      let wave_scratch =
+        ceildiv (lanes_per_wave * size_per_thread) mem_alignment_size
+      in
+      let num_waves =
+        size_per_xcc
+        / (wave_scratch * mem_alignment_size)
+        / (if major dev.target <> 9 then se_cnt else 1)
+      in
+      dev.tmpring_size <-
+        Amd_tables.tmpring_size ~target_major:(major dev.target)
+          ~waves:(min num_waves max_scratch_waves)
+          ~wavesize:wave_scratch;
+      dev.max_private_segment_size <- private_segment_size
+    end
+  end
 
 (* Programs *)
 
@@ -691,6 +750,131 @@ module Copy_queue = struct
       qd.put_value <- qd.put_value + (rem_packet_cnt * 4)
     end;
     Queue_desc.signal_doorbell qd
+end
+
+(* Programs *)
+
+module Program = struct
+  type 'meta t = {
+    params : 'meta program;
+    name : string;
+    lib_gpu : 'meta Hcq.Buffer.t;
+    group_segment_size : int;
+    private_segment_size : int;
+    kernargs_segment_size : int;
+    kernargs_alloc_size : int;
+  }
+
+  let r_amdgpu_rel64 = 5
+
+  let load (dev : 'meta device) ~alloc ~props ~name lib =
+    let elf = Tolk.Elf.load lib in
+    let image = Tolk.Elf.image elf in
+    let sections = Tolk.Elf.sections elf in
+    let rodata =
+      match Tolk.Elf.find_section elf ".rodata" with
+      | Some s -> s.Tolk.Elf.addr
+      | None -> failwith ".rodata section not found"
+    in
+    List.iter
+      (fun (r : Tolk.Elf.reloc) ->
+        if r.symbol.shndx = 0 then
+          failwith
+            ("Attempting to relocate against an undefined symbol "
+           ^ r.symbol.name);
+        if r.r_type <> r_amdgpu_rel64 then
+          failwith (Printf.sprintf "unknown AMD reloc %d" r.r_type);
+        (* the patched slot holds the target's displacement from the slot *)
+        Bytes.set_int64_le image r.offset
+          (Int64.of_int
+             (sections.(r.symbol.shndx).addr + r.symbol.value - r.offset
+            + r.addend)))
+      (Tolk.Elf.relocs elf);
+    let lib_gpu = alloc (round_up (Bytes.length image) 0x1000) in
+    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
+    (* the kernel descriptor sits at the start of [.rodata] *)
+    let u32 off =
+      Int32.to_int (Bytes.get_int32_le image (rodata + off)) land 0xFFFFFFFF
+    in
+    let group_segment_size = u32 Amd_kd_defs.group_segment_fixed_size in
+    let private_segment_size = u32 Amd_kd_defs.private_segment_fixed_size in
+    let kernargs_segment_size = u32 Amd_kd_defs.kernarg_size in
+    let entry_off =
+      Int64.to_int
+        (Bytes.get_int64_le image
+           (rodata + Amd_kd_defs.kernel_code_entry_byte_offset))
+    in
+    let code_props =
+      Bytes.get_uint16_le image (rodata + Amd_kd_defs.kernel_code_properties)
+    in
+    let lds_size = (group_segment_size + 511) / 512 land 0x1FF in
+    if lds_size > prop props "lds_size_in_kb" * 1024 / 512 then
+      failwith "Too many resources requested: group_segment_size";
+    let enable_dispatch_ptr =
+      code_props
+      land Amd_hsa_defs.amd_kernel_code_properties_enable_sgpr_dispatch_ptr
+      <> 0
+    in
+    {
+      params =
+        {
+          dev;
+          prog_addr =
+            Nativeint.add (Hcq.Buffer.va lib_gpu)
+              (Nativeint.of_int (rodata + entry_off));
+          (* generation 11 must run waves privileged: unprivileged waves
+             are corrupted by compute-wave save/restore *)
+          rsrc1 =
+            (u32 Amd_kd_defs.compute_pgm_rsrc1
+            lor if major dev.target = 11 then 1 lsl 20 else 0);
+          rsrc2 = u32 Amd_kd_defs.compute_pgm_rsrc2 lor (lds_size lsl 15);
+          rsrc3 = u32 Amd_kd_defs.compute_pgm_rsrc3;
+          wave32 = code_props land 0x400 <> 0;
+          enable_private_segment_sgpr =
+            code_props
+            land
+            Amd_hsa_defs
+            .amd_kernel_code_properties_enable_sgpr_private_segment_buffer
+            <> 0;
+          enable_dispatch_ptr;
+        };
+      name;
+      lib_gpu;
+      group_segment_size;
+      private_segment_size;
+      kernargs_segment_size;
+      kernargs_alloc_size =
+        (kernargs_segment_size
+        +
+        if enable_dispatch_ptr then Amd_hsa_defs.Kernel_dispatch_packet.size
+        else 0);
+    }
+
+  let free ~free:release t = release t.lib_gpu
+
+  let call t ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms
+      ~bufs ~vals ~global_size ~local_size () =
+    if t.params.enable_dispatch_ptr then
+      invalid_arg "Program.call: dispatch-pointer programs are not supported";
+    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size in
+    Hcq.Kernargs.write_args slot ~bufs ~vals;
+    let cq = Compute_queue.create t.params.dev in
+    Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
+    Compute_queue.memory_barrier cq;
+    (match wait with
+    | Some (st, _) -> Compute_queue.timestamp cq st
+    | None -> ());
+    Compute_queue.exec cq t.params ~kernargs:slot ~global_size ~local_size;
+    (match wait with
+    | Some (_, en) -> Compute_queue.timestamp cq en
+    | None -> ());
+    Compute_queue.signal cq ~value:timeline_value timeline;
+    Compute_queue.submit cq queue;
+    match wait with
+    | None -> None
+    | Some (st, en) ->
+        Hcq.Signal.wait timeline ?timeout_ms timeline_value;
+        Some ((Hcq.Signal.timestamp en -. Hcq.Signal.timestamp st) /. 1e6)
 end
 
 (* Kernel-driver interface *)
