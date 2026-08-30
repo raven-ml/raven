@@ -49,23 +49,16 @@ Because the step is yours, extensions are insertions, not configuration. Gradien
 let grads = Vega.clip_by_global_norm mlp ~max_norm:1.0 grads in
 ```
 
-A learning-rate schedule is a function `int -> float` you evaluate at your own step counter — or, inside a jitted step, its tensor mirror evaluated at the state's own step leaf:
+A learning-rate schedule maps the state's step counter to that step's rate, in tensor arithmetic — so the same line works in an eager loop and inside a jitted step, where the rate derives from the state's own counter leaf:
 
 <!-- $MDX skip -->
 ```ocaml
 let sched =
   Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
 in
-let step k (params, ostate) (x, y) =
+let step (params, ostate) (x, y) =
   ...
-  Vega.adamw_step mlp ~lr:(sched k) ostate ~params ~grads
-
-(* jitted: the rate derives inside the compiled program from ostate.step *)
-let lr =
-  Vega.Schedule.cosine_decay_t ~init_value:1e-3 ~decay_steps:1000
-    ostate.step
-in
-... Vega.adamw_step mlp ~lr ostate ~params ~grads
+  Vega.adamw_step mlp ~lr:(sched ostate.step) ostate ~params ~grads
 ```
 
 ## Optimizers
@@ -75,8 +68,8 @@ Vega's structural optimizers step whole parameter structures. Each keeps its sta
 | Optimizer | Init | Step | State |
 |-----------|------|------|-------|
 | SGD (+ momentum) | `Vega.sgd_init` | `Vega.sgd_step ~lr ?momentum` | `{ velocity }` |
-| Adam | `Vega.adam_init` | `Vega.adam_step ~lr ?b1 ?b2 ?eps` | `{ mu; nu; c1; c2; step }` |
-| AdamW | `Vega.adamw_init` | `Vega.adamw_step ~lr ... ?weight_decay` | `{ mu; nu; c1; c2; step }` |
+| Adam | `Vega.adam_init` | `Vega.adam_step ~lr ?b1 ?b2 ?eps` | `{ mu; nu; step }` |
+| AdamW | `Vega.adamw_init` | `Vega.adamw_step ~lr ... ?weight_decay` | `{ mu; nu; step }` |
 
 Steps are pure: they consume a state and return `(params', state')`. AdamW's `weight_decay` defaults to `0.01` and is decoupled — applied to the parameters directly rather than through the adaptive scaling.
 
@@ -91,7 +84,7 @@ let () =
   in
   let ostate = Vega.adamw_init mlp params in
   (* The moments have the parameters' type, inspectable like them; the
-     corrections and the counter are scalar tensors. *)
+     counter is a scalar tensor. *)
   Format.printf "mu.l1.w: %a  step: %d@." Nx.pp_shape
     (Nx.shape ostate.mu.l1.w)
     (Int32.to_int (Nx.item [] ostate.step))

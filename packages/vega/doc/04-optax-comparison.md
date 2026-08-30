@@ -116,7 +116,7 @@ let tx =
 |--------|-------|------|
 | Language | Python/JAX | OCaml/Nx |
 | State type | PyTree of arrays | Typed `('a, 'b) state` |
-| Learning rate | Float or schedule | Always `Schedule.t` (`int -> float`) |
+| Learning rate | Float or schedule | Always `Schedule.t` (step tensor to rate tensor) |
 | Weight decay rate | Float | `Schedule.t` (dynamic decay) |
 | Noise eta | Float | `Schedule.t` (dynamic noise) |
 | Gradient clipping | Global norm across all params | Per-tensor `clip_by_norm`; structural `clip_by_global_norm` |

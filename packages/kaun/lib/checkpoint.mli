@@ -27,10 +27,7 @@
            Checkpoint.of_params (module Model) ~prefix:"model" params;
            Checkpoint.of_params (module Model) ~prefix:"optim.mu" st.mu;
            Checkpoint.of_params (module Model) ~prefix:"optim.nu" st.nu;
-           Checkpoint.of_tensor "optim.c1" st.c1;
-           Checkpoint.of_tensor "optim.c2" st.c2;
-           Checkpoint.of_int "optim.step"
-             (Int32.to_int (Nx.item [] st.step));
+           Checkpoint.of_tensor "optim.step" st.step;
          ])
     ]}
 
