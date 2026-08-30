@@ -73,6 +73,10 @@ module File_io : sig
 
   val map_fixed : int
   (** Place the mapping exactly at [addr]. *)
+
+  val map_noreserve : int
+  (** Do not reserve swap space for the mapping; [0] on systems without
+      the notion. *)
 end
 
 (** Bounds-checked access to a mapped device-memory region.

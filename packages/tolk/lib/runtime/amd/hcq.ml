@@ -16,6 +16,7 @@ module Ffi = struct
     map_private : int;
     map_anonymous : int;
     map_fixed : int;
+    map_noreserve : int;
   }
 
   external constants : unit -> constants = "caml_tolk_amd_constants"
@@ -64,6 +65,7 @@ module File_io = struct
         map_private;
         map_anonymous;
         map_fixed;
+        map_noreserve;
       } =
     Ffi.constants ()
 

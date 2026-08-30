@@ -9,14 +9,16 @@
 
     Building blocks for driving AMD GPUs through their hardware command
     queues: generic queue machinery ({!Hcq}), kernel compilation
-    ({!Compiler_amd}), hardware tables ({!Amd_tables}), and the
+    ({!Compiler_amd}), hardware tables ({!Amd_tables}), the
     command-stream builders ({!Compute_queue}, {!Copy_queue}) that
     translate work into the packet formats the compute and DMA engines
-    execute.
+    execute, and the kernel-driver interface ({!Kfd_iface}) that
+    allocates device memory and creates the hardware queues.
 
     The builders are pure: they read a {!type-device} description and
-    append dwords to an in-memory {!Hcq.Q.t}. Mapping queues, submitting
-    streams, and synchronizing with the hardware happen elsewhere. *)
+    append dwords to an in-memory {!Hcq.Q.t}. Their [submit] functions
+    copy the accumulated stream into a mapped queue ({!Queue_desc}) and
+    ring its doorbell. *)
 
 module Hcq = Hcq
 module Compiler_amd = Compiler_amd
@@ -94,6 +96,35 @@ type 'meta program = {
 }
 (** The launch parameters of a loaded kernel. *)
 
+(** {1:queue_desc Mapped queues} *)
+
+(** Hardware queues mapped into the process.
+
+    A descriptor bundles the mappings a submission needs: the command
+    ring, the pointers through which producer and consumer positions are
+    exchanged, and the doorbell that tells the hardware new work
+    arrived. Descriptors come from {!Kfd_iface.create_queue}; tests may
+    build them over any mapped memory. *)
+module Queue_desc : sig
+  type t = {
+    ring : Hcq.Mmio.t;  (** The command ring. *)
+    read_ptr : Hcq.Mmio.t;
+        (** 64-bit consumer position, advanced by the device. *)
+    write_ptr : Hcq.Mmio.t;
+        (** 64-bit producer position, published from [put_value]. *)
+    doorbell : Hcq.Mmio.t;  (** 64-bit doorbell slot of the queue. *)
+    mutable put_value : int;
+        (** End of the submitted stream: a dword count for compute
+            rings, a byte count for DMA rings. *)
+  }
+  (** The type for mapped queues. *)
+
+  val signal_doorbell : t -> unit
+  (** [signal_doorbell t] publishes [put_value] to the device: it writes
+      the write pointer, fences so all prior ring stores are visible,
+      then writes the doorbell. *)
+end
+
 (** {1:queues Queue builders} *)
 
 (** Compute-engine command streams.
@@ -158,6 +189,17 @@ module Compute_queue : sig
   (** [memory_barrier t] flushes the host-data-path caches and
       invalidates every GPU cache, making host writes visible to
       subsequent commands. *)
+
+  val submit : 'meta t -> Queue_desc.t -> unit
+  (** [submit t qd] copies the accumulated stream into [qd]'s ring at
+      [put_value], wrapping dword by dword at the ring end, then
+      advances [put_value] and rings the doorbell. The stream is kept:
+      submitting again replays it.
+
+      On multi-die devices the stream is placed behind an in-ring
+      indirect-buffer packet, padded so its body never straddles the
+      wrap point, because predication only takes effect inside indirect
+      buffers. *)
 
   (** {2:packets Packet-level interface}
 
@@ -281,4 +323,149 @@ module Copy_queue : sig
   (** [write t buf v] writes [v] to the start of [buf]: the full 64 bits
       when [b64] is [true], the low 32 otherwise (defaults to
       [false]). *)
+
+  val submit : 'meta t -> Queue_desc.t -> unit
+  (** [submit t qd] copies the accumulated packets into [qd]'s ring at
+      [put_value], advances [put_value] (in bytes) and rings the
+      doorbell. The engine fetches packets as units, so a packet never
+      straddles the ring end: when the next packet would, the remaining
+      tail is zero-filled and the stream continues at the ring start.
+      Blocks until the device has consumed enough of the ring for the
+      stream to fit. The stream is kept: submitting again replays it.
+
+      Raises [Invalid_argument] if the stream cannot fit in the ring at
+      all. *)
+end
+
+(** {1:kfd Kernel-driver interface} *)
+
+(** GPU access through the Linux kernel driver.
+
+    A {!Kfd_iface.t} owns one GPU node: it allocates and maps device
+    memory, creates hardware queues, and carries the interrupt events
+    used to sleep on completions and to detect faults. Construction and
+    every operation raise [Failure] with the system error when the
+    driver rejects a request; on systems without the driver,
+    {!Kfd_iface.create} and {!Kfd_iface.count} raise [Failure]. *)
+module Kfd_iface : sig
+  type mem
+  (** The type for driver metadata of an allocation: the kernel memory
+      handle and the owning GPU. Sub-buffers share their root's
+      metadata. *)
+
+  type t
+  (** The type for driver interfaces. One value per GPU node. *)
+
+  type ip_versions = {
+    gc : int * int * int;  (** Graphics-core version. *)
+    sdma : int * int * int;  (** DMA-engine version. *)
+    nbif : int * int * int;  (** Bus-interface version. *)
+  }
+  (** The type for discovered hardware-block versions. *)
+
+  val count : unit -> int
+  (** [count ()] is the number of usable GPU nodes on the system. *)
+
+  val create : device_id:int -> t
+  (** [create ~device_id] opens the [device_id]th usable GPU node (in
+      stable node order), acquires its virtual-memory space, and
+      registers the completion and fault events. Raises [Failure] if
+      [device_id] names no node. *)
+
+  val props : t -> (string * int) list
+  (** [props t] are the node's topology properties, e.g.
+      ["simd_count"]. *)
+
+  val ip_versions : t -> ip_versions
+  (** [ip_versions t] are the node's discovered hardware-block
+      versions. *)
+
+  val queue_event : t -> queue_event
+  (** [queue_event t] is the auto-reset event queues fire to wake
+      {!sleep}. *)
+
+  val queue_event_mailbox_ptr : t -> nativeint
+  (** [queue_event_mailbox_ptr t] is the device address of
+      {!queue_event}'s mailbox slot. *)
+
+  (** {2:memory Memory} *)
+
+  val alloc :
+    t ->
+    ?host:bool ->
+    ?uncached:bool ->
+    ?cpu_access:bool ->
+    ?cpu_addr:nativeint ->
+    int ->
+    mem Hcq.Buffer.t
+  (** [alloc t size] allocates [size] bytes of device memory, maps them
+      into this GPU, and is the resulting region. The CPU mapping lives
+      at the same virtual address as the device mapping.
+
+      [host] allocates pinned system memory instead of device memory
+      (registering the pages at [cpu_addr] when given, fresh ones
+      otherwise); [uncached] allocates device-coherent, CPU-uncached
+      memory for descriptors and rings; [cpu_access] requests
+      host-visible device memory. The buffer carries a CPU view exactly
+      when [cpu_access] or [host] is set (all default to [false]).
+
+      Raises [Failure] when memory is exhausted, or, for host-visible
+      device memory, when the device's visible aperture is too small
+      (resizable BAR disabled). *)
+
+  val free : t -> mem Hcq.Buffer.t -> unit
+  (** [free t buf] unmaps [buf]'s root allocation from this GPU and,
+      when this GPU owns it, releases the CPU mapping and the memory
+      itself. *)
+
+  val map : t -> mem Hcq.Buffer.t -> mem Hcq.Buffer.t
+  (** [map t buf] maps a region allocated through another interface
+      into this GPU and is the region as visible to it (without a CPU
+      view). *)
+
+  (** {2:queues Queues} *)
+
+  type queue_type =
+    | Compute  (** A compute-engine queue fed with type-3 packets. *)
+    | Sdma  (** A DMA-engine queue fed with byte-granular packets. *)
+  (** The type for hardware queue flavors. *)
+
+  val create_queue :
+    t ->
+    queue_type ->
+    ring:mem Hcq.Buffer.t ->
+    gart:mem Hcq.Buffer.t ->
+    rptr:int ->
+    wptr:int ->
+    ?eop_buffer:mem Hcq.Buffer.t ->
+    ?cwsr_buffer:mem Hcq.Buffer.t ->
+    ?ctl_stack_size:int ->
+    ?ctx_save_restore_size:int ->
+    ?xcc_id:int ->
+    unit ->
+    Queue_desc.t
+  (** [create_queue t kind ~ring ~gart ~rptr ~wptr ()] creates a
+      hardware queue of [kind] over the [ring] buffer, with its read and
+      write pointers at byte offsets [rptr] and [wptr] of the [gart]
+      buffer, and is its mapped descriptor.
+
+      [eop_buffer] backs end-of-pipe events (required for compute
+      queues that signal); [cwsr_buffer], [ctl_stack_size] and
+      [ctx_save_restore_size] back compute-wave save/restore for
+      preemption; [xcc_id] selects the die on multi-die devices
+      (defaults to [0]). The queue's priority is read from the
+      [AMD_KFD_QUEUE_PRIORITY] environment variable (defaults to
+      [7]). *)
+
+  (** {2:events Completion and faults} *)
+
+  val sleep : t -> timeout_ms:int -> unit
+  (** [sleep t ~timeout_ms] blocks until a queue fires the completion
+      event, a fault is reported, or the timeout elapses. Raises
+      [Failure] with the fault report when the device reported a memory
+      or hardware fault, now or on a previous call. *)
+
+  val on_device_hang : t -> 'a
+  (** [on_device_hang t] raises [Failure] describing the fault the
+      device reported, polling for a pending report first. *)
 end

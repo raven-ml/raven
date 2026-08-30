@@ -20,6 +20,103 @@ let event_index_partial_flush = 4
 let wait_reg_mem_function_eq = 3
 let wait_reg_mem_function_geq = 5
 
+(* Kernel-driver ioctls. The numeric ABI constants are pinned against the
+   vendored kfd_ioctl.h by _Static_asserts in tolk_amd_stubs.c. *)
+module Kfd = struct
+  type alloc_error = Einval | Enomem
+
+  type mem_fault = {
+    mmu_va : int64;
+    not_present : int;
+    read_only : int;
+    no_execute : int;
+    imprecise : int;
+  }
+
+  type hw_fault = {
+    reset_type : int;
+    reset_cause : int;
+    memory_lost : int;
+    hw_gpu_id : int;
+  }
+
+  external get_version : int -> int * int = "caml_tolk_kfd_get_version"
+
+  external acquire_vm : int -> drm_fd:int -> gpu_id:int -> unit
+    = "caml_tolk_kfd_acquire_vm"
+
+  external runtime_enable : int -> mode_mask:int -> unit
+    = "caml_tolk_kfd_runtime_enable"
+
+  external alloc_memory_of_gpu :
+    int ->
+    va:nativeint ->
+    size:int ->
+    gpu_id:int ->
+    flags:int ->
+    mmap_offset:int64 ->
+    (int64 * int64, alloc_error) result
+    = "caml_tolk_kfd_alloc_memory_of_gpu_bc" "caml_tolk_kfd_alloc_memory_of_gpu"
+
+  external free_memory_of_gpu : int -> handle:int64 -> unit
+    = "caml_tolk_kfd_free_memory_of_gpu"
+
+  external map_memory_to_gpu : int -> handle:int64 -> gpu_ids:int array -> unit
+    = "caml_tolk_kfd_map_memory_to_gpu"
+
+  external unmap_memory_from_gpu :
+    int -> handle:int64 -> gpu_ids:int array -> unit
+    = "caml_tolk_kfd_unmap_memory_from_gpu"
+
+  external create_event :
+    int -> event_page_offset:int64 -> event_type:int -> auto_reset:int ->
+    int * int
+    = "caml_tolk_kfd_create_event"
+
+  external wait_events :
+    int ->
+    queue_event_id:int ->
+    mem_fault_event_id:int ->
+    hw_fault_event_id:int ->
+    timeout_ms:int ->
+    mem_fault option * hw_fault option
+    = "caml_tolk_kfd_wait_events"
+
+  external create_queue :
+    int ->
+    ring_base:nativeint ->
+    ring_size:int ->
+    gpu_id:int ->
+    queue_type:int ->
+    queue_percentage:int ->
+    queue_priority:int ->
+    eop_buffer_address:nativeint ->
+    eop_buffer_size:int ->
+    ctx_save_restore_address:nativeint ->
+    ctx_save_restore_size:int ->
+    ctl_stack_size:int ->
+    write_pointer_address:nativeint ->
+    read_pointer_address:nativeint ->
+    int64 * nativeint * nativeint
+    = "caml_tolk_kfd_create_queue_bc" "caml_tolk_kfd_create_queue"
+
+  let alloc_mem_flags_vram = 1 lsl 0
+  let alloc_mem_flags_gtt = 1 lsl 1
+  let alloc_mem_flags_userptr = 1 lsl 2
+  let alloc_mem_flags_uncached = 1 lsl 25
+  let alloc_mem_flags_coherent = 1 lsl 26
+  let alloc_mem_flags_no_substitute = 1 lsl 28
+  let alloc_mem_flags_public = 1 lsl 29
+  let alloc_mem_flags_executable = 1 lsl 30
+  let alloc_mem_flags_writable = 1 lsl 31
+  let queue_type_compute = 0x0
+  let queue_type_sdma = 0x1
+  let event_type_signal = 0
+  let event_type_hw_exception = 3
+  let event_type_memory = 8
+  let max_queue_percentage = 100
+end
+
 (* Devices *)
 
 type queue_event = { event_id : int }
@@ -82,6 +179,25 @@ type 'meta program = {
   enable_private_segment_sgpr : bool;
   enable_dispatch_ptr : bool;
 }
+
+(* Queue descriptors *)
+
+module Queue_desc = struct
+  type t = {
+    ring : Hcq.Mmio.t;
+    read_ptr : Hcq.Mmio.t;
+    write_ptr : Hcq.Mmio.t;
+    doorbell : Hcq.Mmio.t;
+    mutable put_value : int;
+  }
+
+  let signal_doorbell t =
+    Hcq.Mmio.write64 t.write_ptr 0 (Int64.of_int t.put_value);
+    (* the doorbell read triggers a device fetch: every ring and pointer
+       store must be globally visible before it lands *)
+    Hcq.Mmio.fence ();
+    Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int t.put_value)
+end
 
 (* Compute queue *)
 
@@ -379,6 +495,46 @@ module Compute_queue = struct
                 P.int_sel__mec_release_mem__send_interrupt_after_write_confirm
               ~ctxid:dev.queue_event.event_id ()
         | _ -> ())
+
+  let submit t (qd : Queue_desc.t) =
+    let cmds = Q.dwords t.q in
+    let ring_len = Hcq.Mmio.size qd.ring / 4 in
+    let cmds =
+      if t.dev.xccs = 1 then cmds
+      else begin
+        (* predication only takes effect inside indirect buffers, not in the
+           ring itself: wrap the stream in an in-ring indirect buffer, padded
+           so its body never straddles the wrap point *)
+        let module P = (val t.dev.pm4) in
+        let n = Array.length cmds in
+        let ib_start = (qd.put_value + 5) mod ring_len in
+        let ib_pad = if ib_start + n > ring_len then ring_len - ib_start else 0 in
+        let ib_ptr =
+          Int64.add
+            (va64 (Hcq.Mmio.addr qd.ring))
+            (Int64.of_int ((qd.put_value + 5 + ib_pad) mod ring_len * 4))
+        in
+        Array.concat
+          [
+            [|
+              P.packet3 P.packet3_indirect_buffer 2;
+              lo32 ib_ptr;
+              hi32 ib_ptr;
+              n lor P.indirect_buffer_valid;
+              P.packet3 P.packet3_nop (ib_pad + n - 1);
+            |];
+            Array.make ib_pad 0;
+            cmds;
+          ]
+      end
+    in
+    for i = 0 to Array.length cmds - 1 do
+      Hcq.Mmio.write32 qd.ring
+        ((qd.put_value + i) mod ring_len * 4)
+        (Int32.of_int (Array.unsafe_get cmds i))
+    done;
+    qd.put_value <- qd.put_value + Array.length cmds;
+    Queue_desc.signal_doorbell qd
 end
 
 (* Copy queue *)
@@ -485,4 +641,407 @@ module Copy_queue = struct
     if b64 then
       cmd t [| S.sdma_op_write; lo32 va; hi32 va; 1; lo32 value; hi32 value |]
     else cmd t [| S.sdma_op_write; lo32 va; hi32 va; 0; lo32 value |]
+
+  let submit t (qd : Queue_desc.t) =
+    let cmds = Q.dwords t.q in
+    let n = Array.length cmds in
+    let nbytes = Hcq.Mmio.size qd.ring in
+    (* the engine fetches packets as units, so a packet must never straddle
+       the ring end: blit whole packets up to the end, and restart at the
+       ring start with the rest, zero-filling the gap *)
+    let tail_blit_dword =
+      let rec fit acc = function
+        | sz :: rest when (acc + sz) * 4 < nbytes - (qd.put_value mod nbytes) ->
+            fit (acc + sz) rest
+        | _ -> acc
+      in
+      fit 0 (cmd_sizes t)
+    in
+    let rem_packet_cnt = n - tail_blit_dword in
+    let total_bytes =
+      (if rem_packet_cnt = 0 then tail_blit_dword * 4
+       else (nbytes - (qd.put_value mod nbytes)) mod nbytes)
+      + (rem_packet_cnt * 4)
+    in
+    if total_bytes >= nbytes then
+      invalid_arg "Copy_queue.submit: stream does not fit in the ring";
+    while
+      qd.put_value + total_bytes - Int64.to_int (Hcq.Mmio.read64 qd.read_ptr 0)
+      > nbytes
+    do
+      ()
+    done;
+    let start = qd.put_value mod nbytes / 4 in
+    for i = 0 to tail_blit_dword - 1 do
+      Hcq.Mmio.write32 qd.ring
+        ((start + i) * 4)
+        (Int32.of_int (Array.unsafe_get cmds i))
+    done;
+    qd.put_value <- qd.put_value + (tail_blit_dword * 4);
+    if rem_packet_cnt > 0 then begin
+      let zero_fill = nbytes - (qd.put_value mod nbytes) in
+      for i = 0 to (zero_fill / 4) - 1 do
+        Hcq.Mmio.write32 qd.ring ((qd.put_value mod nbytes) + (i * 4)) 0l
+      done;
+      qd.put_value <- qd.put_value + zero_fill;
+      for i = 0 to rem_packet_cnt - 1 do
+        Hcq.Mmio.write32 qd.ring (i * 4)
+          (Int32.of_int (Array.unsafe_get cmds (tail_blit_dword + i)))
+      done;
+      qd.put_value <- qd.put_value + (rem_packet_cnt * 4)
+    end;
+    Queue_desc.signal_doorbell qd
+end
+
+(* Kernel-driver interface *)
+
+module Kfd_iface = struct
+  type mem = { handle : int64; owner : int }
+
+  type ip_versions = {
+    gc : int * int * int;
+    sdma : int * int * int;
+    nbif : int * int * int;
+  }
+
+  type queue_type = Compute | Sdma
+
+  type t = {
+    gpu_id : int;
+    props : (string * int) list;
+    ip_versions : ip_versions;
+    drm_fd : int;
+    queue_event : queue_event;
+    queue_event_mailbox_ptr : nativeint;
+    mem_fault_event_id : int;
+    hw_fault_event_id : int;
+    mutable doorbells : (int64 * nativeint) option;
+    mutable mem_fault : Kfd.mem_fault option;
+    mutable hw_fault : Kfd.hw_fault option;
+  }
+
+  let topology = "/sys/devices/virtual/kfd/kfd/topology/nodes"
+
+  (* Driver-wide state, shared by every device: the driver file descriptor,
+     the usable GPU nodes, and the one interrupt-mailbox page. *)
+  let state : (int * string array) option ref = ref None
+  let event_page : mem Hcq.Buffer.t option ref = ref None
+
+  let read_file path = In_channel.with_open_bin path In_channel.input_all
+  let int_of_file path = int_of_string (String.trim (read_file path))
+
+  let usable_gpu node =
+    match int_of_file (topology ^ "/" ^ node ^ "/gpu_id") with
+    | id -> id <> 0
+    | exception _ -> false
+
+  let scan () =
+    match !state with
+    | Some s -> s
+    | None ->
+        let fd = Hcq.File_io.openfile "/dev/kfd" ~flags:Hcq.File_io.o_rdwr in
+        let gpus =
+          Array.of_list (List.filter usable_gpu (Array.to_list (Sys.readdir topology)))
+        in
+        Array.sort
+          (fun a b -> Int.compare (int_of_string a) (int_of_string b))
+          gpus;
+        state := Some (fd, gpus);
+        (fd, gpus)
+
+  let count () = Array.length (snd (scan ()))
+
+  let parse_props text =
+    let tokens line =
+      List.filter (( <> ) "") (String.split_on_char ' ' (String.trim line))
+    in
+    List.filter_map
+      (fun line ->
+        match tokens line with
+        | key :: v :: _ -> Some (key, int_of_string v)
+        | _ -> None)
+      (String.split_on_char '\n' text)
+
+  let discover_ips sysfs_path =
+    let base = sysfs_path ^ "/ip_discovery/die/0" in
+    let version name hwid =
+      let part p = Printf.sprintf "%s/%d/0/%s" base hwid p in
+      match (int_of_file (part "major"), int_of_file (part "minor"),
+             int_of_file (part "revision"))
+      with
+      | v -> v
+      | exception Sys_error _ ->
+          failwith
+            (Printf.sprintf "Kfd_iface: no %s ip version under %s" name base)
+    in
+    {
+      gc = version "gc" Amd_regs_defs.gc_hwid;
+      sdma = version "sdma" Amd_regs_defs.sdma0_hwid;
+      nbif = version "nbif" Amd_regs_defs.nbif_hwid;
+    }
+
+  let map_to_gpu ~kfd ~gpu_id b =
+    Kfd.map_memory_to_gpu kfd ~handle:(Hcq.Buffer.meta b).handle
+      ~gpu_ids:[| gpu_id |]
+
+  let alloc_raw ~kfd ~drm_fd ~gpu_id ?(host = false) ?(uncached = false)
+      ?(cpu_access = false) ?cpu_addr size =
+    let flags =
+      Kfd.alloc_mem_flags_writable lor Kfd.alloc_mem_flags_executable
+      lor Kfd.alloc_mem_flags_no_substitute
+      lor (if uncached then
+             Kfd.alloc_mem_flags_coherent lor Kfd.alloc_mem_flags_uncached
+             lor Kfd.alloc_mem_flags_gtt
+           else if host then Kfd.alloc_mem_flags_userptr
+           else Kfd.alloc_mem_flags_vram)
+      (* an externally provided mapping must stay uncachable for the CPU *)
+      lor (match cpu_addr with
+          | Some _ ->
+              Kfd.alloc_mem_flags_coherent lor Kfd.alloc_mem_flags_uncached
+          | None -> 0)
+      lor (if cpu_access || host then Kfd.alloc_mem_flags_public else 0)
+    in
+    let userptr = flags land Kfd.alloc_mem_flags_userptr <> 0 in
+    let module F = Hcq.File_io in
+    (* reserve the virtual range now so the CPU mapping can later land at the
+       exact address the device was given *)
+    let addr =
+      if userptr then
+        match cpu_addr with
+        | Some a -> a
+        | None ->
+            F.mmap ~addr:0n ~size
+              ~prot:(F.prot_read lor F.prot_write)
+              ~flags:(F.map_shared lor F.map_anonymous)
+              ~fd:(-1) ~offset:0L
+      else
+        F.mmap ~addr:0n ~size ~prot:F.prot_none
+          ~flags:(F.map_private lor F.map_anonymous lor F.map_noreserve)
+          ~fd:(-1) ~offset:0L
+    in
+    let mmap_offset = if userptr then Int64.of_nativeint addr else 0L in
+    match Kfd.alloc_memory_of_gpu kfd ~va:addr ~size ~gpu_id ~flags ~mmap_offset with
+    | Error e ->
+        if cpu_addr = None then F.munmap addr ~size;
+        failwith
+          (match e with
+          | Kfd.Einval
+            when flags land Kfd.alloc_mem_flags_vram <> 0 && cpu_access ->
+              "Cannot allocate host-visible VRAM. Ensure the resizable BAR \
+               option is enabled on your system."
+          | Kfd.Einval -> "AMDKFD_IOC_ALLOC_MEMORY_OF_GPU: Invalid argument"
+          | Kfd.Enomem ->
+              Printf.sprintf "Cannot allocate %d bytes: no memory is available."
+                size)
+    | Ok (handle, mmap_offset) ->
+        if not userptr then begin
+          let mapped =
+            F.mmap ~addr ~size
+              ~prot:(F.prot_read lor F.prot_write)
+              ~flags:(F.map_shared lor F.map_fixed)
+              ~fd:drm_fd ~offset:mmap_offset
+          in
+          assert (mapped = addr)
+        end;
+        let view =
+          if cpu_access || host then Some (Hcq.Mmio.make ~addr ~size) else None
+        in
+        let b =
+          Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle; owner = gpu_id }
+            ()
+        in
+        map_to_gpu ~kfd ~gpu_id b;
+        b
+
+  let create ~device_id =
+    let kfd, gpus = scan () in
+    if device_id >= Array.length gpus then
+      failwith
+        (Printf.sprintf
+           "No device found for %d. Requesting more devices than the system \
+            has?"
+           device_id);
+    let node = topology ^ "/" ^ gpus.(device_id) in
+    let gpu_id = int_of_file (node ^ "/gpu_id") in
+    let props = parse_props (read_file (node ^ "/properties")) in
+    let drm_minor = List.assoc "drm_render_minor" props in
+    let ip_versions =
+      discover_ips (Printf.sprintf "/sys/class/drm/renderD%d/device" drm_minor)
+    in
+    let drm_fd =
+      Hcq.File_io.openfile
+        (Printf.sprintf "/dev/dri/renderD%d" drm_minor)
+        ~flags:Hcq.File_io.o_rdwr
+    in
+    let kfd_ver = Kfd.get_version kfd in
+    Kfd.acquire_vm kfd ~drm_fd ~gpu_id;
+    if kfd_ver >= (1, 14) then Kfd.runtime_enable kfd ~mode_mask:0;
+    let page =
+      match !event_page with
+      | Some page ->
+          map_to_gpu ~kfd ~gpu_id page;
+          page
+      | None ->
+          let page = alloc_raw ~kfd ~drm_fd ~gpu_id ~uncached:true 0x8000 in
+          (* register the page so signal-event slots live in it *)
+          ignore
+            (Kfd.create_event kfd
+               ~event_page_offset:(Hcq.Buffer.meta page).handle
+               ~event_type:Kfd.event_type_signal ~auto_reset:0
+              : int * int);
+          event_page := Some page;
+          page
+    in
+    let queue_event_id, queue_event_slot =
+      Kfd.create_event kfd ~event_page_offset:0L
+        ~event_type:Kfd.event_type_signal ~auto_reset:1
+    in
+    let mem_fault_event_id, _ =
+      Kfd.create_event kfd ~event_page_offset:0L
+        ~event_type:Kfd.event_type_memory ~auto_reset:0
+    in
+    let hw_fault_event_id, _ =
+      Kfd.create_event kfd ~event_page_offset:0L
+        ~event_type:Kfd.event_type_hw_exception ~auto_reset:0
+    in
+    {
+      gpu_id;
+      props;
+      ip_versions;
+      drm_fd;
+      queue_event = { event_id = queue_event_id };
+      queue_event_mailbox_ptr =
+        Nativeint.add (Hcq.Buffer.va page)
+          (Nativeint.of_int (queue_event_slot * 8));
+      mem_fault_event_id;
+      hw_fault_event_id;
+      doorbells = None;
+      mem_fault = None;
+      hw_fault = None;
+    }
+
+  let props t = t.props
+  let ip_versions t = t.ip_versions
+  let queue_event t = t.queue_event
+  let queue_event_mailbox_ptr t = t.queue_event_mailbox_ptr
+
+  let alloc t ?host ?uncached ?cpu_access ?cpu_addr size =
+    let kfd, _ = scan () in
+    alloc_raw ~kfd ~drm_fd:t.drm_fd ~gpu_id:t.gpu_id ?host ?uncached
+      ?cpu_access ?cpu_addr size
+
+  let free t b =
+    let kfd, _ = scan () in
+    let b = Hcq.Buffer.base b in
+    let meta = Hcq.Buffer.meta b in
+    Kfd.unmap_memory_from_gpu kfd ~handle:meta.handle ~gpu_ids:[| t.gpu_id |];
+    if meta.owner = t.gpu_id then begin
+      if Hcq.Buffer.va b <> 0n then
+        Hcq.File_io.munmap (Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b);
+      Kfd.free_memory_of_gpu kfd ~handle:meta.handle
+    end
+
+  let map t b =
+    let kfd, _ = scan () in
+    map_to_gpu ~kfd ~gpu_id:t.gpu_id b;
+    Hcq.Buffer.make ~va:(Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
+      ~meta:(Hcq.Buffer.meta b) ()
+
+  let create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
+      ?cwsr_buffer ?(ctl_stack_size = 0) ?(ctx_save_restore_size = 0)
+      ?(xcc_id = 0) () =
+    let kfd, _ = scan () in
+    let buf_va = function Some b -> Hcq.Buffer.va b | None -> 0n in
+    let buf_size = function Some b -> Hcq.Buffer.size b | None -> 0 in
+    let doorbell_offset, rptr_addr, wptr_addr =
+      Kfd.create_queue kfd
+        ~ring_base:(Hcq.Buffer.va ring)
+        ~ring_size:(Hcq.Buffer.size ring)
+        ~gpu_id:t.gpu_id
+        ~queue_type:
+          (match queue_type with
+          | Compute -> Kfd.queue_type_compute
+          | Sdma -> Kfd.queue_type_sdma)
+        ~queue_percentage:(Kfd.max_queue_percentage lor (xcc_id lsl 8))
+        ~queue_priority:(Tolk.Helpers.getenv "AMD_KFD_QUEUE_PRIORITY" 7)
+        ~eop_buffer_address:(buf_va eop_buffer)
+        ~eop_buffer_size:(buf_size eop_buffer)
+        ~ctx_save_restore_address:(buf_va cwsr_buffer)
+        ~ctx_save_restore_size ~ctl_stack_size
+        ~write_pointer_address:
+          (Nativeint.add (Hcq.Buffer.va gart) (Nativeint.of_int wptr))
+        ~read_pointer_address:
+          (Nativeint.add (Hcq.Buffer.va gart)
+             (Nativeint.of_int (rptr + (8 * xcc_id))))
+    in
+    let doorbells_base, doorbells_addr =
+      match t.doorbells with
+      | Some d -> d
+      | None ->
+          (* the doorbell region is two pages *)
+          let base = Int64.logand doorbell_offset (Int64.lognot 0x1fffL) in
+          let addr =
+            Hcq.File_io.mmap ~addr:0n ~size:0x2000
+              ~prot:(Hcq.File_io.prot_read lor Hcq.File_io.prot_write)
+              ~flags:Hcq.File_io.map_shared ~fd:kfd ~offset:base
+          in
+          t.doorbells <- Some (base, addr);
+          (base, addr)
+    in
+    {
+      Queue_desc.ring =
+        Hcq.Mmio.make ~addr:(Hcq.Buffer.va ring) ~size:(Hcq.Buffer.size ring);
+      read_ptr = Hcq.Mmio.make ~addr:rptr_addr ~size:8;
+      write_ptr = Hcq.Mmio.make ~addr:wptr_addr ~size:8;
+      doorbell =
+        Hcq.Mmio.make
+          ~addr:
+            (Nativeint.add doorbells_addr
+               (Nativeint.of_int
+                  (Int64.to_int (Int64.sub doorbell_offset doorbells_base))))
+          ~size:8;
+      put_value = 0;
+    }
+
+  let poll_events t ~timeout_ms =
+    let kfd, _ = scan () in
+    let memf, hwf =
+      Kfd.wait_events kfd ~queue_event_id:t.queue_event.event_id
+        ~mem_fault_event_id:t.mem_fault_event_id
+        ~hw_fault_event_id:t.hw_fault_event_id ~timeout_ms
+    in
+    (* fault data is latched: once seen, every later poll keeps raising *)
+    (match memf with Some _ -> t.mem_fault <- memf | None -> ());
+    match hwf with Some _ -> t.hw_fault <- hwf | None -> ()
+
+  let on_device_hang t =
+    if t.mem_fault = None && t.hw_fault = None then (
+      try poll_events t ~timeout_ms:1 with Failure _ -> ());
+    let report =
+      (match t.mem_fault with
+      | Some f ->
+          [
+            Printf.sprintf
+              "MMU fault: 0x%LX | NotPresent=%d ReadOnly=%d NoExecute=%d \
+               imprecise=%d"
+              f.Kfd.mmu_va f.Kfd.not_present f.Kfd.read_only f.Kfd.no_execute
+              f.Kfd.imprecise;
+          ]
+      | None -> [])
+      @
+      match t.hw_fault with
+      | Some f ->
+          [
+            Printf.sprintf
+              "HW fault: reset_type=%d reset_cause=%d memory_lost=%d gpu_id=%d"
+              f.Kfd.reset_type f.Kfd.reset_cause f.Kfd.memory_lost
+              f.Kfd.hw_gpu_id;
+          ]
+      | None -> []
+    in
+    failwith (String.concat "\n" report)
+
+  let sleep t ~timeout_ms =
+    poll_events t ~timeout_ms;
+    if t.mem_fault <> None || t.hw_fault <> None then on_device_hang t
 end
