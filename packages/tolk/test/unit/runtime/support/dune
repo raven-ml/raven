@@ -1,4 +1,4 @@
 (tests
- (names test_bump)
+ (names test_bump test_memory)
  (package tolk)
- (libraries tolk windtrap))
+ (libraries tolk unix windtrap))

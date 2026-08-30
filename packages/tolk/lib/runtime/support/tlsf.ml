@@ -14,6 +14,8 @@
    Allocation searches for the smallest block that fits, splitting if
    oversized. Deallocation merges the freed block with its neighbours. *)
 
+exception Out_of_memory of string
+
 let round_up n align = (n + align - 1) / align * align
 
 let bit_length n =
@@ -171,7 +173,8 @@ let alloc t req_size ?(align = 1) () =
     end;
     incr l1
   done;
-  if !result = -1 then raise Out_of_memory;
+  if !result = -1 then
+    raise (Out_of_memory (Printf.sprintf "Can't allocate %d bytes" req_size));
   !result
 
 let free t start =

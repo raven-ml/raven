@@ -22,6 +22,10 @@
 type t
 (** The type for TLSF allocators. Mutable. *)
 
+exception Out_of_memory of string
+(** Raised by {!alloc} when no free block can satisfy a request. The
+    payload describes the failed request. *)
+
 (** {1:constructors Constructors} *)
 
 val create :
@@ -47,7 +51,7 @@ val alloc : t -> int -> ?align:int -> unit -> int
     [align] defaults to [1]. The actual allocation is at least
     [block_size] bytes.
 
-    Raises [Out_of_memory] if no free block can satisfy the request. *)
+    Raises {!Out_of_memory} if no free block can satisfy the request. *)
 
 val free : t -> int -> unit
 (** [free t addr] returns the block at [addr] to the free pool and
