@@ -808,6 +808,7 @@ def gen_am():
     lines.append("module Psp_gfx_cmd_resp = struct")
     lines.append(f"  let sizeof = {ml_int(cmd.SIZE)}")
     lines += writer_lines(cmd, ["cmd_id"])
+    lines += reader_lines(cmd, ["cmd_id"])
     lines += reader_lines(am.struct_psp_gfx_resp, ["status", "tmr_size"], base=resp_off,
                           rename={"status": "resp_status", "tmr_size": "resp_tmr_size"})
     for title, arm, fields in [

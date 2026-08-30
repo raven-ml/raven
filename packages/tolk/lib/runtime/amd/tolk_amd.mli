@@ -25,6 +25,7 @@ module Compiler_amd = Compiler_amd
 module System = System
 module Amd_tables = Amd_tables
 module Amdev = Amdev
+module Am_ip = Am_ip
 
 (** {1:devices Devices} *)
 

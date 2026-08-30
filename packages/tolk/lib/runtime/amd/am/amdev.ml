@@ -670,8 +670,10 @@ let parse_discovery blob =
 
 (* Devices: amdev.py AMDev (without the boot state machine) *)
 
+external monotonic_ms : unit -> int = "caml_tolk_amd_monotonic_ms" [@@noalloc]
+
 type t = {
-  pci_dev : System.Pci_device.t;
+  pci_dev : System.Pci_device.t option;
   devfmt : string;
   vram : Mmio.t;
   doorbell64 : Mmio.t;
@@ -680,11 +682,13 @@ type t = {
   large_bar : bool;
   reserved_vram_size : int;
   discovery : discovery;
-  ips : Amd_tables.Ip.t list;
-      (* Most recently resolved family first: lookups prefer later
-         families, so a name defined twice resolves as if the tables
-         had been merged in resolution order. *)
-  regs : (string, Am_register.t) Hashtbl.t;
+  rreg : int -> int;
+  wreg : int -> int -> unit;
+  reg : string -> Am_register.t;
+  xgmi_seg_sz : int;
+  paddr_base : int;
+  mc_base : int;
+  now_ms : unit -> int;
   is_booting : bool ref;
   mm : Am_page_table.t Memory.t;
 }
@@ -701,48 +705,22 @@ let discovery t = t.discovery
 let gc_info t = t.discovery.gc_info
 let is_booting t = !(t.is_booting)
 let mm t = t.mm
+let now_ms t = t.now_ms ()
 
 let ip_ver t hwip =
   match List.assoc_opt hwip t.discovery.ip_ver with
   | Some v -> v
   | None -> invalid_arg (Printf.sprintf "no discovered ip 0x%x" hwip)
 
-let mmio_dwords t = Mmio.size t.mmio / 4
+(* amdev.py:241 is_hive, amdev.py:243-245 paddr conversions *)
+let is_hive t = t.xgmi_seg_sz > 0
+let paddr2mc t paddr = t.mc_base + paddr
+let paddr2xgmi t paddr = t.paddr_base + paddr
+let xgmi2paddr t xgmi_paddr = xgmi_paddr - t.paddr_base
 
-let rec rreg t r =
-  if r >= mmio_dwords t then indirect_rreg t r
-  else Int32.to_int (Mmio.read32 t.mmio (r * 4)) land 0xffffffff
-
-and wreg t r v =
-  if r >= mmio_dwords t then indirect_wreg t r v
-  else Mmio.write32 t.mmio (r * 4) (Int32.of_int v)
-
-and indirect_rreg t r =
-  Am_register.write (reg t "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
-  Am_register.read (reg t "regBIF_BX_PF0_RSMU_DATA")
-
-and indirect_wreg t r v =
-  Am_register.write (reg t "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
-  Am_register.write (reg t "regBIF_BX_PF0_RSMU_DATA") ~value:v []
-
-and reg t name =
-  match Hashtbl.find_opt t.regs name with
-  | Some r -> r
-  | None ->
-      (* Exact names only: Ip.reg's reg->mm fallback must not fire, or
-         a name absent from a later family could shadow the exact
-         definition in an earlier one. *)
-      let rec find = function
-        | [] -> invalid_arg (Printf.sprintf "device has no register %s" name)
-        | ip :: rest -> (
-            match Amd_tables.Ip.reg ip name with
-            | r when String.equal r.Amd_tables.Reg.name name -> r
-            | _ -> find rest
-            | exception Invalid_argument _ -> find rest)
-      in
-      let r = Am_register.make ~reg:(find t.ips) ~rreg:(rreg t) ~wreg:(wreg t) in
-      Hashtbl.add t.regs name r;
-      r
+let rreg t r = t.rreg r
+let wreg t r v = t.wreg r v
+let reg t name = t.reg name
 
 let wreg_pair t base ~lo ~hi v =
   Am_register.write (reg t (base ^ lo)) ~value:(v land 0xffffffff) [];
@@ -829,6 +807,102 @@ let mm_rcc_config_memsize = 0xde3
 let va_base = 0x200000000000
 let va_allocator = lazy (Tlsf.create ~size:(1 lsl 44) ~base:va_base ())
 
+(* The register-access closures stored in [t]: named lookup with its
+   cache, and dword access either over the register BAR (with the
+   indirect index/data window beyond it, amdev.py:249-258) or over
+   injected functions. *)
+let reg_access ~ips access =
+  let regs = Hashtbl.create 64 in
+  (* Exact names only: Ip.reg's reg->mm fallback must not fire, or a
+     name absent from a later family could shadow the exact definition
+     in an earlier one. [ips] holds the most recently resolved family
+     first, so lookups prefer later families and a name defined twice
+     resolves as if the tables had been merged in resolution order. *)
+  let find name =
+    let rec loop = function
+      | [] -> invalid_arg (Printf.sprintf "device has no register %s" name)
+      | ip :: rest -> (
+          match Amd_tables.Ip.reg ip name with
+          | r when String.equal r.Amd_tables.Reg.name name -> r
+          | _ -> loop rest
+          | exception Invalid_argument _ -> loop rest)
+    in
+    loop ips
+  in
+  let rec rreg r =
+    match access with
+    | `Bar mmio ->
+        if r >= Mmio.size mmio / 4 then indirect_rreg r else raw_rreg mmio r
+    | `Fns (rreg, _) -> rreg r
+  and wreg r v =
+    match access with
+    | `Bar mmio ->
+        if r >= Mmio.size mmio / 4 then indirect_wreg r v
+        else raw_wreg mmio r v
+    | `Fns (_, wreg) -> wreg r v
+  and indirect_rreg r =
+    Am_register.write (reg "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
+    Am_register.read (reg "regBIF_BX_PF0_RSMU_DATA")
+  and indirect_wreg r v =
+    Am_register.write (reg "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
+    Am_register.write (reg "regBIF_BX_PF0_RSMU_DATA") ~value:v []
+  and reg name =
+    match Hashtbl.find_opt regs name with
+    | Some r -> r
+    | None ->
+        let r = Am_register.make ~reg:(find name) ~rreg ~wreg in
+        Hashtbl.add regs name r;
+        r
+  in
+  (rreg, wreg, reg)
+
+(* ip.py:54-64 AM_GMC.init_sw: the XGMI topology and framebuffer base
+   behind the paddr conversions. Register-derived constants of the die,
+   read once at device creation; devices without the XGMI registers
+   read as a single-device topology. *)
+let gmc_state reg =
+  let bitfield name field =
+    match reg name with
+    | r -> List.assoc field (Am_register.read_bitfields r)
+    | exception Invalid_argument _ -> 0
+  in
+  let xgmi_phys_id = bitfield "regMMMC_VM_XGMI_LFB_CNTL" "pf_lfb_region" in
+  let xgmi_seg_sz = bitfield "regMMMC_VM_XGMI_LFB_SIZE" "pf_lfb_size" lsl 24 in
+  let paddr_base = xgmi_phys_id * xgmi_seg_sz in
+  let fb_base =
+    (Am_register.read (reg "regMMMC_VM_FB_LOCATION_BASE") land 0xFFFFFF)
+    lsl 24
+  in
+  (xgmi_seg_sz, paddr_base, fb_base + paddr_base)
+
+let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true) ~rreg ~wreg
+    ~vram ~doorbell64 ~mmio ~vram_size ~large_bar ~reserved_vram_size
+    ~discovery ~mm ~devfmt () =
+  let rreg, wreg, reg =
+    reg_access ~ips:(build_ips discovery) (`Fns (rreg, wreg))
+  in
+  let xgmi_seg_sz, paddr_base, mc_base = gmc_state reg in
+  {
+    pci_dev;
+    devfmt;
+    vram;
+    doorbell64;
+    mmio;
+    vram_size;
+    large_bar;
+    reserved_vram_size;
+    discovery;
+    rreg;
+    wreg;
+    reg;
+    xgmi_seg_sz;
+    paddr_base;
+    mc_base;
+    now_ms;
+    is_booting;
+    mm;
+  }
+
 let create pci_dev =
   let vram = System.Pci_device.map_bar pci_dev 0 in
   let doorbell64 = System.Pci_device.map_bar pci_dev 2 in
@@ -850,12 +924,17 @@ let create pci_dev =
   let reserved_vram_size =
     match gc_ver with 9, (4 | 5), _ -> 384 lsl 20 | _ -> 64 lsl 20
   in
+  let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
+  let xgmi_seg_sz, paddr_base, mc_base = gmc_state reg in
   let is_booting = ref true in
   let devfmt = System.Pci_device.pcibus pci_dev in
   let lv_span = 9 * (3 - Am.amdgpu_vm_pdb2) in
   let mm =
     Memory.create
-      ~pt_ops:(Am_page_table.ops ~vram ~gc_ver ())
+      ~pt_ops:
+        (Am_page_table.ops ~vram ~gc_ver
+           ~paddr_base:(fun () -> paddr_base)
+           ())
       ~vram_size:(vram_size - reserved_vram_size)
       ~boot_size:(32 lsl 20) ~va_bits:48
       ~va_shifts:[ 12; 21; 30; 39 ]
@@ -872,7 +951,7 @@ let create pci_dev =
       ~dbg_name:devfmt ()
   in
   {
-    pci_dev;
+    pci_dev = Some pci_dev;
     devfmt;
     vram;
     doorbell64;
@@ -881,8 +960,13 @@ let create pci_dev =
     large_bar;
     reserved_vram_size;
     discovery;
-    ips = build_ips discovery;
-    regs = Hashtbl.create 64;
+    rreg;
+    wreg;
+    reg;
+    xgmi_seg_sz;
+    paddr_base;
+    mc_base;
+    now_ms = monotonic_ms;
     is_booting;
     mm;
   }

@@ -7,12 +7,16 @@
    the IP-discovery parser on synthesized tables, the page-table entry
    encoding against hand-computed golden words, page-table walks over an
    anonymous mapping standing in for VRAM, named-bitfield register
-   access over a fake register file, and firmware loading and image
-   splitting over synthesized firmware blobs. *)
+   access over a fake register file, firmware loading and image
+   splitting over synthesized firmware blobs, and the security-processor
+   and power-management bring-up protocols over a scripted device. *)
 
 open Windtrap
 module Amdev = Tolk_amd.Amdev
 module Firmware = Tolk_amd.Amdev.Firmware
+module Am_ip = Tolk_amd.Am_ip
+module Psp = Tolk_amd.Am_ip.Psp
+module Smu = Tolk_amd.Am_ip.Smu
 module Am = Tolk_amd.Amd_tables.Am_defs
 module Fw_defs = Tolk_amd.Amd_tables.Fw_defs
 module Reg = Tolk_amd.Amd_tables.Reg
@@ -310,6 +314,195 @@ let write_file path content =
       Out_channel.output_string oc content)
 
 let sha_abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+(* Scripted devices for the IP-block protocols: a discovery table
+   covering every register family the device core resolves, a register
+   file over a hashtable with per-address read hooks and a write log,
+   an anonymous mapping standing in for VRAM, and a clock that advances
+   one millisecond per reading so waits and settle delays consume no
+   wall time. *)
+
+let mmhub_base = 0x3000
+let mp0_base = 0x10000
+let mp1_base = 0x20000
+
+(* regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL sits at segment 2 offset 0x12d
+   of the bus-interface family; scripted to hold byte address 0x54, so
+   flushes write dword address 0x15. *)
+let remap_hdp_addr = 0x42000 + 0x12d
+let flush_target = 0x15
+
+let dev_ips ~gc ~mp0 ~mp1 ~mmhub =
+  [
+    (0xb, 0, gc, [ 0x8000; 0x9000 ]);
+    (0x29, 0, (6, 0, 0), [ 0xa000 ]);
+    (0x2a, 0, (6, 0, 2), [ 0xb000 ]);
+    (0x22, 0, mmhub, [ mmhub_base ]);
+    (0x6c, 0, (4, 3, 0), [ 0x40000; 0x41000; 0x42000; 0x43000; 0x44000; 0x45000 ]);
+    (0xff, 0, mp0, [ mp0_base; 0x11000 ]);
+    (1, 0, mp1, [ mp1_base ]);
+    (0x28, 0, (6, 0, 0), [ 0xc000 ]);
+  ]
+
+type fake_dev = {
+  dev : Amdev.t;
+  fvram : Mmio.t;
+  store : (int, int) Hashtbl.t;
+  reads : (int, unit -> int) Hashtbl.t;
+  wr_hooks : (int, int -> unit) Hashtbl.t;
+  log : (int * int) list ref;
+}
+
+let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
+    ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(pre = fun _ -> ()) f =
+  with_fake_vram 0x2000000 (fun vram ->
+      let store = Hashtbl.create 16 in
+      let reads = Hashtbl.create 16 in
+      let wr_hooks = Hashtbl.create 16 in
+      let log = ref [] in
+      let clock = ref 0 in
+      let rreg addr =
+        match Hashtbl.find_opt reads addr with
+        | Some hook -> hook ()
+        | None -> Option.value ~default:0 (Hashtbl.find_opt store addr)
+      in
+      let wreg addr v =
+        log := (addr, v) :: !log;
+        Hashtbl.replace store addr v;
+        match Hashtbl.find_opt wr_hooks addr with
+        | Some hook -> hook v
+        | None -> ()
+      in
+      (* The framebuffer base field reads as 0x10, so the memory
+         controller sees local addresses at 0x10000000 + paddr; both
+         family generations' register offsets are populated. *)
+      Hashtbl.replace store (mmhub_base + 0x8ec) 0x10;
+      Hashtbl.replace store (mmhub_base + 0xc9c) 0x10;
+      Hashtbl.replace store remap_hdp_addr 0x54;
+      pre store;
+      let booting = ref true in
+      let mm =
+        Memory.create
+          ~pt_ops:(Amdev.Am_page_table.ops ~vram ~gc_ver:gc ())
+          ~vram_size:(Mmio.size vram) ~boot_size:0x1800000 ~va_bits:48
+          ~va_shifts:[ 12; 21; 30; 39 ]
+          ~va_base:0
+          ~palloc_ranges:[ (0x200000, 0x200000); (0x1000, 0x1000) ]
+          ~va_allocator:(Tlsf.create ~size:0x40000000 ~base:0 ())
+          ~is_booting:(fun () -> !booting)
+          ~zero_vram:(fun ~paddr ~size ->
+            Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
+          ~first_lv:Am.amdgpu_vm_pdb2 ()
+      in
+      let dev =
+        Amdev.make ~rreg ~wreg ~vram
+          ~doorbell64:(Mmio.view vram ~off:0 ~size:0x1000 ())
+          ~mmio:(Mmio.view vram ~off:0 ~size:0x1000 ())
+          ~vram_size:(Mmio.size vram) ~large_bar:true ~reserved_vram_size:0
+          ~discovery:
+            (Amdev.parse_discovery
+               (discovery_blob (dev_ips ~gc ~mp0 ~mp1 ~mmhub)))
+          ~mm ~devfmt:"test"
+          ~now_ms:(fun () ->
+            incr clock;
+            !clock)
+          ~is_booting:booting ()
+      in
+      f { dev; fvram = vram; store; reads; wr_hooks; log })
+
+let raddr dev name = (Amdev.Am_register.reg (Amdev.reg dev name)).Reg.addr
+let lo32 v = v land 0xffffffff
+let hi32 v = v lsr 32
+
+let hexdump b =
+  String.concat ""
+    (List.init (Bytes.length b) (fun i ->
+         Printf.sprintf "%02x" (Bytes.get_uint8 b i)))
+
+let equal_bytes expected actual = equal string (hexdump expected) (hexdump actual)
+
+let has_substring s sub =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+(* Expected PSP structures, built at the raw struct offsets so the
+   implementation's encoders are checked against an independent
+   derivation. *)
+
+let psp_cmd id fields =
+  let b = Bytes.make 0x400 '\x00' in
+  s32 b 8 id;
+  List.iter (fun (off, v) -> s32 b off v) fields;
+  b
+
+let rb_frame ~cmd_mc ~fence_mc ~fence_value =
+  let b = Bytes.make 0x40 '\x00' in
+  s32 b 0 (lo32 cmd_mc);
+  s32 b 4 (hi32 cmd_mc);
+  s32 b 0xc (lo32 fence_mc);
+  s32 b 0x10 (hi32 fence_mc);
+  s32 b 0x14 fence_value;
+  b
+
+(* An 8-byte firmware image as the staging buffer holds it: a 4-byte
+   zero tail padded to 16 bytes. *)
+let staged img =
+  let b = Bytes.make 16 '\x00' in
+  Bytes.blit_string img 0 b 0 (String.length img);
+  Bytes.to_string b
+
+(* Scripts the security processor's side of the protocol: the
+   bootloader and secure OS always report ready, the OS reports alive
+   once the sOS bootloader component was submitted, and each ring
+   doorbell snapshots the submitted command frame and staging buffer,
+   then completes the fence and answers a TMR size of 0x120000. *)
+
+type psp_script = {
+  r : int -> int;
+  frames : bytes list ref;
+  msg1s : string list ref;
+}
+
+let psp_script fd ~pref psp =
+  let r n = raddr fd.dev (Printf.sprintf "%s_%d" pref n) in
+  let frames = ref [] in
+  let msg1s = ref [] in
+  let sos_loaded = ref false in
+  Hashtbl.replace fd.reads (r 35) (fun () -> 0x80000000);
+  Hashtbl.replace fd.reads (r 64) (fun () -> 0x80000000);
+  Hashtbl.replace fd.reads (r 81) (fun () -> Bool.to_int !sos_loaded);
+  Hashtbl.replace fd.wr_hooks (r 35) (fun v ->
+      msg1s :=
+        Bytes.to_string
+          (Mmio.read_bytes fd.fvram ~off:(Psp.msg1_paddr psp) ~len:16)
+        :: !msg1s;
+      if v = Am.psp_bl__load_sosdrv then sos_loaded := true);
+  Hashtbl.replace fd.wr_hooks (r 67) (fun v ->
+      frames :=
+        Mmio.read_bytes fd.fvram ~off:(Psp.cmd_paddr psp)
+          ~len:Am.Psp_gfx_cmd_resp.sizeof
+        :: !frames;
+      Mmio.write32 fd.fvram (Psp.cmd_paddr psp + 0x370) 0x120000l;
+      Mmio.write32 fd.fvram (Psp.fence_paddr psp)
+        (Int32.of_int (v - 0x10 + 1)));
+  { r; frames; msg1s }
+
+let no_fw =
+  { Firmware.sos_fw = []; ucode_start = []; smu_psp_desc = None; descs = [] }
+
+(* Addresses of the power-management message triple, and a script that
+   acknowledges every message by raising the response register. *)
+let smu_addrs fd =
+  ( raddr fd.dev "mmMP1_SMN_C2PMSG_90",
+    raddr fd.dev "mmMP1_SMN_C2PMSG_82",
+    raddr fd.dev "mmMP1_SMN_C2PMSG_66" )
+
+let ack_messages fd =
+  let resp, _, msg = smu_addrs fd in
+  Hashtbl.replace fd.wr_hooks msg (fun _ -> Hashtbl.replace fd.store resp 1)
 
 let () =
   run "Amdev"
@@ -767,5 +960,347 @@ let () =
                     equal string "abc"
                       (Bytes.to_string
                          (Firmware.fetch_fw ~dir "fw.bin" ~sha256:sha_abc))));
+        ];
+      group "address topology"
+        [
+          test "reads the framebuffer and fabric position at creation"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  equal bool false (Amdev.is_hive fd.dev);
+                  equal int 0x10000123 (Amdev.paddr2mc fd.dev 0x123);
+                  equal int 0x123 (Amdev.paddr2xgmi fd.dev 0x123));
+              with_fake_dev ~mmhub:(1, 8, 0)
+                ~pre:(fun store ->
+                  (* pf_lfb_region = 2, pf_lfb_size = 0x40 *)
+                  Hashtbl.replace store (mmhub_base + 0xc97) 2;
+                  Hashtbl.replace store (mmhub_base + 0xc98) 0x40)
+                (fun fd ->
+                  equal bool true (Amdev.is_hive fd.dev);
+                  equal int 0x80000123 (Amdev.paddr2xgmi fd.dev 0x123);
+                  equal int 0x123 (Amdev.xgmi2paddr fd.dev 0x80000123);
+                  equal int 0x90000123 (Amdev.paddr2mc fd.dev 0x123)));
+        ];
+      group "psp protocol"
+        [
+          test "gfx11 boot: load sequence, command frames, staging"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let fw =
+                    {
+                      Firmware.sos_fw =
+                        [
+                          (Am.psp_fw_type_psp_kdb, Bytes.of_string "KDBIMAGE");
+                          (Am.psp_fw_type_psp_sos, Bytes.of_string "SOSIMAGE");
+                          (Am.psp_fw_type_psp_toc, Bytes.of_string "TOCIMAGE");
+                        ];
+                      ucode_start = [];
+                      smu_psp_desc =
+                        Some ([ Am.gfx_fw_type_smu ], Bytes.of_string "SMUIMAGE");
+                      descs =
+                        [ ([ Am.gfx_fw_type_rlc_g ], Bytes.of_string "RLCIMAGE") ];
+                    }
+                  in
+                  let psp = Psp.create fd.dev ~fw in
+                  let s = psp_script fd ~pref:"regMP0_SMN_C2PMSG" psp in
+                  Psp.init_hw psp;
+                  let mc = Amdev.paddr2mc fd.dev in
+                  let msg1_addr = mc (Psp.msg1_paddr psp) in
+                  let ring_mc = mc (Psp.ring_paddr psp) in
+                  let tmr = Psp.tmr_paddr psp in
+                  equal
+                    (list (pair int int))
+                    [
+                      (flush_target, 0);
+                      (s.r 36, msg1_addr lsr 20);
+                      (s.r 35, Am.psp_bl__load_key_database);
+                      (flush_target, 0);
+                      (s.r 36, msg1_addr lsr 20);
+                      (s.r 35, Am.psp_bl__load_tos_spl_table);
+                      (flush_target, 0);
+                      (s.r 36, msg1_addr lsr 20);
+                      (s.r 35, Am.psp_bl__load_sosdrv);
+                      (s.r 69, lo32 ring_mc);
+                      (s.r 70, hi32 ring_mc);
+                      (s.r 71, 0x10000);
+                      (s.r 64, Am.psp_ring_type__km lsl 16);
+                      (flush_target, 0);
+                      (s.r 67, 0x10);
+                      (flush_target, 0);
+                      (s.r 67, 0x20);
+                      (s.r 67, 0x30);
+                      (flush_target, 0);
+                      (s.r 67, 0x40);
+                      (s.r 67, 0x50);
+                    ]
+                    (List.rev !(fd.log));
+                  equal int 5 (List.length !(s.frames));
+                  List.iter2 equal_bytes
+                    [
+                      psp_cmd Am.gfx_cmd_id_load_toc
+                        [
+                          (0x1c, lo32 msg1_addr); (0x20, hi32 msg1_addr);
+                          (0x24, 8);
+                        ];
+                      psp_cmd Am.gfx_cmd_id_load_ip_fw
+                        [
+                          (0x1c, lo32 msg1_addr); (0x20, hi32 msg1_addr);
+                          (0x24, 8); (0x28, Am.gfx_fw_type_smu);
+                        ];
+                      psp_cmd Am.gfx_cmd_id_setup_tmr
+                        [
+                          (0x1c, lo32 (mc tmr)); (0x20, hi32 (mc tmr));
+                          (0x24, 0x120000); (0x28, 2); (0x2c, lo32 tmr);
+                          (0x30, hi32 tmr);
+                        ];
+                      psp_cmd Am.gfx_cmd_id_load_ip_fw
+                        [
+                          (0x1c, lo32 msg1_addr); (0x20, hi32 msg1_addr);
+                          (0x24, 8); (0x28, Am.gfx_fw_type_rlc_g);
+                        ];
+                      psp_cmd Am.gfx_cmd_id_autoload_rlc [];
+                    ]
+                    (List.rev !(s.frames));
+                  List.iteri
+                    (fun i expected ->
+                      equal_bytes expected
+                        (Mmio.read_bytes fd.fvram
+                           ~off:(Psp.ring_paddr psp + (i * 0x40))
+                           ~len:0x40))
+                    (List.init 5 (fun i ->
+                         rb_frame
+                           ~cmd_mc:(mc (Psp.cmd_paddr psp))
+                           ~fence_mc:(mc (Psp.fence_paddr psp))
+                           ~fence_value:((i * 0x10) + 1)));
+                  equal (list string)
+                    [ staged "KDBIMAGE"; staged "KDBIMAGE"; staged "SOSIMAGE" ]
+                    (List.rev !(s.msg1s));
+                  (* the staging buffer last held the descriptor image *)
+                  equal string (staged "RLCIMAGE")
+                    (Bytes.to_string
+                       (Mmio.read_bytes fd.fvram ~off:(Psp.msg1_paddr psp)
+                          ~len:16))));
+          test "mp0 14.x: MPASP mailbox, SPL key, boot-time TMR" (fun () ->
+              with_fake_dev ~mp0:(14, 0, 3) (fun fd ->
+                  let fw =
+                    {
+                      no_fw with
+                      Firmware.sos_fw =
+                        [
+                          (Am.psp_fw_type_psp_spl, Bytes.of_string "SPLIMAGE");
+                          (Am.psp_fw_type_psp_sos, Bytes.of_string "SOSIMAGE");
+                        ];
+                    }
+                  in
+                  let psp = Psp.create fd.dev ~fw in
+                  let s = psp_script fd ~pref:"regMPASP_SMN_C2PMSG" psp in
+                  Psp.init_hw psp;
+                  equal int 0 (Psp.tmr_paddr psp);
+                  let msg1_addr = Amdev.paddr2mc fd.dev (Psp.msg1_paddr psp) in
+                  let ring_mc = Amdev.paddr2mc fd.dev (Psp.ring_paddr psp) in
+                  equal
+                    (list (pair int int))
+                    [
+                      (flush_target, 0);
+                      (s.r 36, msg1_addr lsr 20);
+                      (s.r 35, Am.psp_bl__load_tos_spl_table);
+                      (flush_target, 0);
+                      (s.r 36, msg1_addr lsr 20);
+                      (s.r 35, Am.psp_bl__load_sosdrv);
+                      (s.r 69, lo32 ring_mc);
+                      (s.r 70, hi32 ring_mc);
+                      (s.r 71, 0x10000);
+                      (s.r 64, Am.psp_ring_type__km lsl 16);
+                      (s.r 67, 0x10);
+                    ]
+                    (List.rev !(fd.log));
+                  equal int 1 (List.length !(s.frames));
+                  equal_bytes
+                    (psp_cmd Am.gfx_cmd_id_autoload_rlc [])
+                    (List.hd !(s.frames))));
+          test "a live sOS skips the bootloader and recreates the ring"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let psp = Psp.create fd.dev ~fw:no_fw in
+                  let s = psp_script fd ~pref:"regMP0_SMN_C2PMSG" psp in
+                  Hashtbl.replace fd.reads (s.r 81) (fun () -> 1);
+                  Hashtbl.replace fd.store (s.r 71) 1;
+                  Psp.init_hw psp;
+                  let mc = Amdev.paddr2mc fd.dev in
+                  let ring_mc = mc (Psp.ring_paddr psp) in
+                  let tmr = Psp.tmr_paddr psp in
+                  equal
+                    (list (pair int int))
+                    [
+                      (s.r 64, Am.gfx_ctrl_cmd_id_destroy_rings);
+                      (s.r 69, lo32 ring_mc);
+                      (s.r 70, hi32 ring_mc);
+                      (s.r 71, 0x10000);
+                      (s.r 64, Am.psp_ring_type__km lsl 16);
+                      (s.r 67, 0x10);
+                      (s.r 67, 0x20);
+                    ]
+                    (List.rev !(fd.log));
+                  equal int 2 (List.length !(s.frames));
+                  (* no TOC was loaded, so the TMR sets up with size 0 *)
+                  List.iter2 equal_bytes
+                    [
+                      psp_cmd Am.gfx_cmd_id_setup_tmr
+                        [
+                          (0x1c, lo32 (mc tmr)); (0x20, hi32 (mc tmr));
+                          (0x28, 2); (0x2c, lo32 tmr); (0x30, hi32 tmr);
+                        ];
+                      psp_cmd Am.gfx_cmd_id_autoload_rlc [];
+                    ]
+                    (List.rev !(s.frames))));
+          test "an unanswered bootloader mailbox raises" (fun () ->
+              with_fake_dev (fun fd ->
+                  let fw =
+                    {
+                      no_fw with
+                      Firmware.sos_fw =
+                        [ (Am.psp_fw_type_psp_kdb, Bytes.of_string "KDBIMAGE") ];
+                    }
+                  in
+                  let psp = Psp.create fd.dev ~fw in
+                  raises_match
+                    (function
+                      | Am_ip.Timeout_error m ->
+                          has_substring m "BL not ready"
+                          && has_substring m "10000 ms"
+                      | _ -> false)
+                    (fun () -> Psp.init_hw psp)));
+          test "a rejected command names its id and status" (fun () ->
+              with_fake_dev (fun fd ->
+                  let psp = Psp.create fd.dev ~fw:no_fw in
+                  let s = psp_script fd ~pref:"regMP0_SMN_C2PMSG" psp in
+                  Hashtbl.replace fd.reads (s.r 81) (fun () -> 1);
+                  Hashtbl.replace fd.wr_hooks (s.r 67) (fun v ->
+                      Mmio.write32 fd.fvram (Psp.cmd_paddr psp + 0x360) 3l;
+                      Mmio.write32 fd.fvram (Psp.fence_paddr psp)
+                        (Int32.of_int (v - 0x10 + 1)));
+                  raises_match
+                    (Exn.failure ~substring:"PSP command failed 5 3")
+                    (fun () -> Psp.init_hw psp)));
+        ];
+      group "smu protocol"
+        [
+          test "init_hw speaks the discovered mp1 version's interface"
+            (fun () ->
+              let run_init mp1 =
+                with_fake_dev ~mp1 (fun fd ->
+                    let smu = Smu.create fd.dev in
+                    ack_messages fd;
+                    Smu.init_hw smu;
+                    ( smu_addrs fd,
+                      Amdev.paddr2mc fd.dev (Smu.driver_table_paddr smu),
+                      List.rev !(fd.log) ))
+              in
+              let (resp, arg, msg), dt, log = run_init (13, 0, 0) in
+              equal
+                (list (pair int int))
+                [
+                  (resp, 0); (arg, hi32 dt); (msg, 0xe);
+                  (resp, 0); (arg, lo32 dt); (msg, 0xf);
+                  (resp, 0); (arg, 0); (msg, 6);
+                ]
+                log;
+              (* 13.0.10 resolves the 13.0.6 interface: other ids *)
+              let (resp, arg, msg), dt, log = run_init (13, 0, 10) in
+              equal
+                (list (pair int int))
+                [
+                  (resp, 0); (arg, hi32 dt); (msg, 0xd);
+                  (resp, 0); (arg, lo32 dt); (msg, 0xe);
+                  (resp, 0); (arg, 0); (msg, 5);
+                ]
+                log);
+          test "mode1_reset picks the generation's message" (fun () ->
+              (* mp0 13.0.10 resets through the debug mailbox *)
+              with_fake_dev (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  let r54 = raddr fd.dev "mmMP1_SMN_C2PMSG_54" in
+                  let r53 = raddr fd.dev "mmMP1_SMN_C2PMSG_53" in
+                  let r75 = raddr fd.dev "mmMP1_SMN_C2PMSG_75" in
+                  Hashtbl.replace fd.wr_hooks r75 (fun _ ->
+                      Hashtbl.replace fd.store r54 1);
+                  Smu.mode1_reset smu;
+                  equal
+                    (list (pair int int))
+                    [ (r54, 0); (r53, 0); (r75, 2) ]
+                    (List.rev !(fd.log)));
+              (* mp0 13.0.6 resets through the driver-reset message *)
+              with_fake_dev ~mp0:(13, 0, 6) ~mp1:(13, 0, 6) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  Smu.mode1_reset smu;
+                  let resp, arg, msg = smu_addrs fd in
+                  equal
+                    (list (pair int int))
+                    [ (resp, 0); (arg, 1); (msg, 3) ]
+                    (List.rev !(fd.log)));
+              (* other generations use the plain mode-1 message *)
+              with_fake_dev ~mp0:(13, 0, 2) ~mp1:(13, 0, 0) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  Smu.mode1_reset smu;
+                  let resp, arg, msg = smu_addrs fd in
+                  equal
+                    (list (pair int int))
+                    [ (resp, 0); (arg, 0); (msg, 0x2f) ]
+                    (List.rev !(fd.log))));
+          test "is_smu_alive polls the response register" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  equal bool false (Smu.is_smu_alive smu);
+                  ack_messages fd;
+                  equal bool true (Smu.is_smu_alive smu)));
+          test "an unanswered message raises" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  raises_match
+                    (function
+                      | Am_ip.Timeout_error m ->
+                          has_substring m "SMU msg 0xe timeout"
+                      | _ -> false)
+                    (fun () -> Smu.init_hw smu)));
+          test "set_clocks queries levels once and pins by index" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  let resp, arg, msg = smu_addrs fd in
+                  let queue =
+                    ref [ 2; 300; 800; 2; 300; 800; 2; 300; 800; 2; 300; 800 ]
+                  in
+                  Hashtbl.replace fd.reads arg (fun () ->
+                      match !queue with
+                      | v :: rest ->
+                          queue := rest;
+                          v
+                      | [] -> fail "unexpected argument readback");
+                  Smu.set_clocks smu ~level:(Some (-1));
+                  let send m p = [ (resp, 0); (arg, p); (msg, m) ] in
+                  let queries clck =
+                    send 0x1f ((clck lsl 16) lor 0xff)
+                    @ send 0x1f (clck lsl 16)
+                    @ send 0x1f ((clck lsl 16) lor 1)
+                  in
+                  let sets clck v =
+                    send 0x19 ((clck lsl 16) lor v)
+                    @ send 0x1a ((clck lsl 16) lor v)
+                  in
+                  (* uclk, fclk, socclk, gfxclk of the 13.0.0 interface *)
+                  let clks = [ 2; 3; 1; 0 ] in
+                  equal
+                    (list (pair int int))
+                    (List.concat_map queries clks
+                    @ List.concat_map (fun c -> sets c 800) clks)
+                    (List.rev !(fd.log));
+                  fd.log := [];
+                  (* the second call hits the cache: no further queries *)
+                  Smu.set_clocks smu ~level:(Some 0);
+                  equal
+                    (list (pair int int))
+                    (List.concat_map (fun c -> sets c 300) clks)
+                    (List.rev !(fd.log))));
         ];
     ]

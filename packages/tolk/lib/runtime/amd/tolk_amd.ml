@@ -10,6 +10,7 @@ module Amd_tables = Amd_tables
 module Compiler_amd = Compiler_amd
 module System = System
 module Amdev = Amdev
+module Am_ip = Am_ip
 module Reg = Amd_tables.Reg
 module Ip = Amd_tables.Ip
 module Q = Hcq.Q

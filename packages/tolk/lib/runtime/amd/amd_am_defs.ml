@@ -615,6 +615,7 @@ let psp_gfx_fw_type_names = [
 module Psp_gfx_cmd_resp = struct
   let sizeof = 0x400
   let set_cmd_id b v = s32 b 8 v
+  let cmd_id b pos = g32 b (pos + 8)
   let resp_status b pos = g32 b (pos + 0x360)
   let resp_tmr_size b pos = g32 b (pos + 0x370)
   module Cmd_load_ip_fw = struct

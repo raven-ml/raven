@@ -217,16 +217,51 @@ val create : System.Pci_device.t -> t
 (** [create pci_dev] opens the GPU behind [pci_dev]: maps its VRAM,
     doorbell and register BARs, sizes VRAM, reads and parses the IP
     discovery table, resolves register families for the discovered IP
-    versions, and creates the device memory manager (a 32MB boot
-    region, a dedicated page-table region when VRAM exceeds the VRAM
-    BAR, and the main region behind them; four page-table levels over a
-    48-bit virtual space shared by all devices). The device starts in
-    the booting state: only boot-region memory can be allocated until
-    boot completes. Raises [Failure] if a BAR cannot be mapped or the
+    versions, reads the die's address topology (see {!paddr2mc}), and
+    creates the device memory manager (a 32MB boot region, a dedicated
+    page-table region when VRAM exceeds the VRAM BAR, and the main
+    region behind them; four page-table levels over a 48-bit virtual
+    space shared by all devices). The device starts in the booting
+    state: only boot-region memory can be allocated until boot
+    completes. Raises [Failure] if a BAR cannot be mapped or the
     discovery table is malformed. *)
 
-val pci_dev : t -> System.Pci_device.t
-(** [pci_dev t] is the underlying PCI device. *)
+val make :
+  ?pci_dev:System.Pci_device.t ->
+  ?now_ms:(unit -> int) ->
+  ?is_booting:bool ref ->
+  rreg:(int -> int) ->
+  wreg:(int -> int -> unit) ->
+  vram:Hcq.Mmio.t ->
+  doorbell64:Hcq.Mmio.t ->
+  mmio:Hcq.Mmio.t ->
+  vram_size:int ->
+  large_bar:bool ->
+  reserved_vram_size:int ->
+  discovery:discovery ->
+  mm:Am_page_table.t Tolk.Memory.t ->
+  devfmt:string ->
+  unit ->
+  t
+(** [make ~rreg ~wreg ... ()] is a device over caller-provided parts:
+    every register access goes through [rreg] and [wreg] (32-bit values
+    at absolute dword addresses, replacing the register-BAR path of
+    {!create} entirely), the BAR mappings, discovery table and memory
+    manager are taken as given, and [now_ms] is the monotonic
+    millisecond clock behind {!now_ms} (defaults to the system's).
+    Construction reads the address-topology registers through [rreg],
+    so they must already answer (see {!paddr2mc}).
+
+    This is the device's injection seam: {!create} is the PCI client of
+    the same state, while tests and tooling can supply scripted
+    register access and anonymous-memory mappings. [pci_dev] is absent
+    for such devices and [is_booting] defaults to a fresh reference
+    holding [true]; pass the reference the memory manager's booting
+    predicate reads to keep the two in step. *)
+
+val pci_dev : t -> System.Pci_device.t option
+(** [pci_dev t] is the underlying PCI device; [None] for devices built
+    by {!make} without one. *)
 
 val devfmt : t -> string
 (** [devfmt t] is the device's PCI bus address, for messages. *)
@@ -267,6 +302,35 @@ val is_booting : t -> bool
 
 val mm : t -> Am_page_table.t Tolk.Memory.t
 (** [mm t] is the device's memory manager. *)
+
+val now_ms : t -> int
+(** [now_ms t] is the device's monotonic clock in milliseconds. The
+    boot protocols time their register waits and settle delays against
+    it; injecting a clock through {!make} makes those waits scriptable. *)
+
+(** {2:addr Address topology}
+
+    A die can be one link of a larger memory fabric. The device reads
+    its position at creation time: its local physical addresses are
+    offset into the fabric's shared physical space, and the memory
+    controller additionally rebases them behind the framebuffer window.
+    On a single-device topology both conversions collapse to the
+    framebuffer base alone. *)
+
+val is_hive : t -> bool
+(** [is_hive t] is [true] iff the device is part of a multi-die memory
+    fabric. *)
+
+val paddr2mc : t -> int -> int
+(** [paddr2mc t paddr] is the device-local physical address [paddr] as
+    the memory controller sees it. *)
+
+val paddr2xgmi : t -> int -> int
+(** [paddr2xgmi t paddr] is the device-local physical address [paddr]
+    in the fabric's shared physical space. *)
+
+val xgmi2paddr : t -> int -> int
+(** [xgmi2paddr t addr] is the inverse of {!paddr2xgmi}. *)
 
 (** {2:regaccess Register access} *)
 
