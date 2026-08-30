@@ -1,0 +1,4 @@
+(tests
+ (names test_bump)
+ (package tolk)
+ (libraries tolk windtrap))
