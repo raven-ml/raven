@@ -6,6 +6,6 @@
  (libraries tolk)
  (foreign_stubs
   (language c)
-  (names tolk_amd_stubs tolk_amd_comgr_stubs))
+  (names tolk_amd_stubs tolk_amd_comgr_stubs tolk_amd_system_stubs))
  (c_library_flags
   (-ldl -lpthread)))

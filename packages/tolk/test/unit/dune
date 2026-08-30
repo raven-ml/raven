@@ -84,3 +84,9 @@
  (modules test_runtime_amd)
  (package tolk)
  (libraries tolk tolk.uop tolk.amd windtrap))
+
+(tests
+ (names test_amd_system)
+ (modules test_amd_system)
+ (package tolk)
+ (libraries unix tolk tolk.amd windtrap))
