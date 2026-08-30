@@ -67,7 +67,7 @@ Vega's structural optimizers step whole parameter structures. Each keeps its sta
 
 | Optimizer | Init | Step | State |
 |-----------|------|------|-------|
-| SGD (+ momentum) | `Vega.sgd_init` | `Vega.sgd_step ~lr ?momentum` | `{ velocity }` |
+| SGD (+ momentum) | `Vega.sgd_init` | `Vega.sgd_step ~lr ?momentum` | `{ velocity; step }` |
 | Adam | `Vega.adam_init` | `Vega.adam_step ~lr ?b1 ?b2 ?eps` | `{ mu; nu; step }` |
 | AdamW | `Vega.adamw_init` | `Vega.adamw_step ~lr ... ?weight_decay` | `{ mu; nu; step }` |
 
