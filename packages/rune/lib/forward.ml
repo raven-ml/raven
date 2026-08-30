@@ -532,7 +532,9 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   | Some da ->
                       let da_used =
                         let tri = if upper then T.triu da else T.tril da in
-                        if unit_diag then T.sub tri (T.diag (T.diagonal tri))
+                        if unit_diag then
+                          T.sub tri
+                            (T.mul tri (T.eye (T.dtype tri) (T.shape tri).(0)))
                         else tri
                       in
                       let da_op =

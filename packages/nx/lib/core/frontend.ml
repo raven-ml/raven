@@ -3752,6 +3752,49 @@ module Make (B : Backend_intf.S) = struct
       (diagonal ~offset:(Option.value offset ~default:0) a)
       ~axes:[ -1 ] ~keepdims:false
 
+  (* [triangular_solve ?upper ?transpose ?unit_diag a b] exploits triangularity
+     instead of factoring: only the [upper] triangle of [a] is read (the other
+     one is silently ignored, not checked), [transpose] solves the transposed
+     system (conjugate transpose for complex [a]), and [unit_diag] assumes a
+     diagonal of ones without reading it. *)
+  let triangular_solve ?(upper = false) ?(transpose = false) ?(unit_diag = false)
+      a b =
+    let op = "triangular_solve" in
+    check_square ~op a;
+    check_float_or_complex ~op a;
+    check_float_or_complex ~op b;
+    if not (Dtype.equal (dtype a) (dtype b)) then
+      err op "a and b must have the same dtype";
+    let sh_a = shape a in
+    let n = sh_a.(Array.length sh_a - 1) in
+    let batch = Array.sub sh_a 0 (Array.length sh_a - 2) in
+    let sb = shape b in
+    (* [leading] is how many leading dimensions of [b] are batch. *)
+    let check_batch what leading =
+      if leading <> Array.length batch then
+        err op "%s must share the batch dimensions of a" what;
+      Array.iteri
+        (fun i v ->
+          if sb.(i) <> v then
+            err op "%s batch dimension %d does not match a" what i)
+        batch
+    in
+    if Array.length sb = Array.length sh_a - 1 then begin
+      (* Vector right-hand side [batch, n]. *)
+      check_batch "vector right-hand side" (Array.length sb - 1);
+      if sb.(Array.length sb - 1) <> n then
+        err op "vector right-hand side length does not match a"
+    end
+    else begin
+      (* Matrix right-hand side [batch, n, nrhs]. *)
+      if Array.length sb <> Array.length sh_a then
+        err op "b must be a [.., n] vector or a [.., n, nrhs] matrix";
+      check_batch "matrix right-hand side" (Array.length sb - 2);
+      if sb.(Array.length sb - 2) <> n then
+        err op "matrix right-hand side row count does not match a"
+    end;
+    B.triangular_solve ~upper ~transpose ~unit_diag a b
+
   let solve a b =
     check_square ~op:"solve" a;
     check_float_or_complex ~op:"solve" a;

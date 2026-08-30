@@ -195,11 +195,11 @@ let test_triangular_solve_flags_match_eager () =
       let x =
         Rune.jit2 (module Pair32) (module Single32)
           (fun (a, b) ->
-            Nx_effect.triangular_solve ~upper ~transpose ~unit_diag a b)
+            Nx.triangular_solve ~upper ~transpose ~unit_diag a b)
           (a, b)
       in
       check_arr ~msg
-        (to_arr (Nx_effect.triangular_solve ~upper ~transpose ~unit_diag a b))
+        (to_arr (Nx.triangular_solve ~upper ~transpose ~unit_diag a b))
         x)
     [ (false, false, false); (true, false, false); (false, true, false);
       (true, true, false); (false, false, true); (true, false, true);
@@ -213,13 +213,13 @@ let test_triangular_solve_vector_rhs () =
   let x =
     Rune.jit2 (module Pair32) (module Single32)
       (fun (a, b) ->
-        Nx_effect.triangular_solve ~upper:false ~transpose:false
+        Nx.triangular_solve ~upper:false ~transpose:false
           ~unit_diag:false a b)
       (a, b)
   in
   check_arr ~msg:"vector right-hand side"
     (to_arr
-       (Nx_effect.triangular_solve ~upper:false ~transpose:false
+       (Nx.triangular_solve ~upper:false ~transpose:false
           ~unit_diag:false a b))
     x
 
@@ -233,13 +233,13 @@ let test_triangular_solve_batched () =
   let x =
     Rune.jit2 (module Pair32) (module Single32)
       (fun (a, b) ->
-        Nx_effect.triangular_solve ~upper:true ~transpose:false ~unit_diag:false
+        Nx.triangular_solve ~upper:true ~transpose:false ~unit_diag:false
           a b)
       (a, b)
   in
   check_arr ~msg:"batched upper"
     (to_arr
-       (Nx_effect.triangular_solve ~upper:true ~transpose:false ~unit_diag:false
+       (Nx.triangular_solve ~upper:true ~transpose:false ~unit_diag:false
           a b))
     x
 
@@ -265,13 +265,52 @@ let test_qr_gradient_compiles () =
     (to_arr (Rune.grad' loss a))
     (to_arr compiled)
 
+let test_cholesky_matches_eager () =
+  let a =
+    Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
+  in
+  let l = Rune.jit' (fun m -> Nx.cholesky m) a in
+  check_arr ~msg:"lower" (to_arr (Nx.cholesky a)) l;
+  let u = Rune.jit' (fun m -> Nx.cholesky ~upper:true m) a in
+  check_arr ~msg:"upper" (to_arr (Nx.cholesky ~upper:true a)) u
+
+let test_cholesky_reconstruction () =
+  let a =
+    Nx.create f32 [| 2; 3; 3 |]
+      [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0; 6.0; 2.0; 1.0; 2.0; 7.0;
+         2.0; 1.0; 2.0; 8.0 |]
+  in
+  let resid =
+    Rune.jit'
+      (fun m ->
+        let l = Nx.cholesky m in
+        Nx.max
+          (Nx.abs
+             (Nx.sub m (Nx.matmul l (Nx.transpose ~axes:[ 0; 2; 1 ] l)))))
+      a
+  in
+  check_close ~tol:1e-5 ~msg:"batched |A - LL'| " [| 0.0 |] (to_arr resid)
+
+(* The Cholesky pullback is jit-safe (its diagonal terms come from the
+   identity, and its triangular solves compile), so differentiating a
+   Cholesky-using loss inside jit compiles the whole backward pass. *)
+let test_cholesky_gradient_compiles () =
+  let loss m = Nx.sum (Nx.mul (Nx.cholesky m) (Nx.cholesky m)) in
+  let a =
+    mat64 3 3 [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
+  in
+  let compiled = Rune.jit' (fun m -> Rune.grad' loss m) a in
+  check_close ~tol:1e-10 ~msg:"grad through compiled Cholesky"
+    (to_arr (Rune.grad' loss a))
+    (to_arr compiled)
+
 (* A linear solve inside jit is the QR + triangular-solve composition written
    out by hand: [Nx.solve] itself refuses to trace because its singularity check
    reads a traced value. *)
 let test_linear_solve_composition () =
   let solve (a, b) =
     let q, r = Nx.qr ~mode:`Reduced a in
-    Nx_effect.triangular_solve ~upper:true ~transpose:false ~unit_diag:false r
+    Nx.triangular_solve ~upper:true ~transpose:false ~unit_diag:false r
       (Nx.matmul (Nx.transpose q) b)
   in
   let a =
@@ -1147,7 +1186,7 @@ let test_data_dependent_read_raises () =
   raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0 |]))
 
 let test_unsupported_op_raises () =
-  let g = Rune.jit' (fun x -> Nx.cholesky x) in
+  let g = Rune.jit' (fun x -> Nx.eigvals x) in
   raises_jit_error (fun () ->
       g (Nx.create f32 [| 2; 2 |] [| 4.0; 2.0; 2.0; 3.0 |]))
 
@@ -1269,6 +1308,11 @@ let tests =
         test "batched QR reconstructs" test_qr_batched_reconstruction;
         test "a zero-tail column takes no reflector"
           test_qr_zero_tail_matches_eager;
+        test "cholesky matches eager in both triangles"
+          test_cholesky_matches_eager;
+        test "batched cholesky reconstructs" test_cholesky_reconstruction;
+        test "the gradient of a Cholesky-using loss compiles"
+          test_cholesky_gradient_compiles;
         test "triangular solve matches eager for every flag combination"
           test_triangular_solve_flags_match_eager;
         test "triangular solve takes a vector right-hand side"
