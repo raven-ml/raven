@@ -84,7 +84,10 @@ let array_find_opt f a =
   in
   aux 0
 
+let et_rel = 1
+let et_dyn = 3
 let sht_null = 0
+let sht_progbits = 1
 let sht_symtab = 2
 let sht_rela = 4
 let sht_nobits = 8
@@ -134,7 +137,7 @@ let read_headers obj =
   let data = u8 obj 5 in
   if class_ <> 2 || data <> 1 then invalid_arg "unsupported ELF format";
   let e_type = u16 obj 16 in
-  if e_type <> 1 then invalid_arg "unsupported ELF type";
+  if e_type <> et_rel && e_type <> et_dyn then invalid_arg "unsupported ELF type";
   let e_shoff = Int64.to_int (u64 obj 40) in
   let e_shentsize = u16 obj 58 in
   let e_shnum = u16 obj 60 in
@@ -182,11 +185,18 @@ let read_headers obj =
 let is_alloc_section section =
   Int64.logand section.header.sh_flags shf_alloc <> 0L
 
+(* Program-data sections, plus allocatable zero-initialized sections
+   (e.g. [.bss]) so relocations against their symbols resolve into the
+   image. *)
+let in_image section =
+  section.header.sh_type = sht_progbits
+  || (section.header.sh_type = sht_nobits && is_alloc_section section)
+
 let build_image ?(force_section_align = 1) sections =
   let max_fixed =
     Array.fold_left
       (fun acc s ->
-        if is_alloc_section s && s.header.sh_addr <> 0 then
+        if in_image s && s.header.sh_addr <> 0 then
           max acc (s.header.sh_addr + s.header.sh_size)
         else acc)
       0 sections
@@ -194,7 +204,7 @@ let build_image ?(force_section_align = 1) sections =
   let image = Image.create max_fixed in
   Array.iter
     (fun s ->
-      if not (is_alloc_section s) then ()
+      if not (in_image s) then ()
       else if s.header.sh_addr <> 0 then
         if s.header.sh_type = sht_nobits then
           Image.set_zero image s.header.sh_addr s.header.sh_size

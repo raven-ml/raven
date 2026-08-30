@@ -5,10 +5,12 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Relocatable ELF object loading.
+(** ELF object loading.
 
-    Parses 64-bit little-endian ELF relocatable objects ([ET_REL]) and lays out
-    their allocatable sections into a contiguous flat image. Section and
+    Parses 64-bit little-endian ELF relocatable objects ([ET_REL]) and shared
+    objects ([ET_DYN]) and lays out their program-data sections into a
+    contiguous flat image. Sections carrying a fixed address keep it as their
+    image offset; the remaining sections are appended after them. Section and
     relocation metadata is preserved for backend-specific loaders, but no
     machine-specific relocations are applied. *)
 
@@ -54,15 +56,17 @@ type t
 (** {1:loading Loading} *)
 
 val load : ?force_section_align:int -> Bytes.t -> t
-(** [load ?force_section_align obj] parses ELF relocatable object [obj] and lays
-    out its allocatable sections into a flat image.
+(** [load ?force_section_align obj] parses ELF object [obj] and lays out its
+    program-data ([SHT_PROGBITS]) sections, plus allocatable [SHT_NOBITS]
+    sections as zero-filled ranges, into a flat image.
 
-    Sections with a fixed address ([sh_addr <> 0]) are placed first. Remaining
-    allocatable sections are appended sequentially, each aligned to the maximum
-    of the ELF section alignment and [force_section_align] (defaults to [1]).
+    Sections with a fixed address ([sh_addr <> 0]) are placed at that address,
+    with any gaps zero-filled. Remaining sections are appended sequentially
+    after them, each aligned to the maximum of the ELF section alignment and
+    [force_section_align] (defaults to [1]).
 
     Raises [Invalid_argument] if [obj] is not a valid 64-bit little-endian ELF
-    relocatable object. *)
+    relocatable ([ET_REL]) or shared ([ET_DYN]) object. *)
 
 (** {1:accessors Accessors} *)
 

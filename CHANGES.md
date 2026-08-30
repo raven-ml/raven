@@ -107,6 +107,11 @@ thread.
   kernels using launch indices declared the OCKL intrinsics with the wrong
   signatures.
 
+- `Elf` now loads shared-object (`ET_DYN`) images in addition to
+  relocatable objects, and builds the image from program sections rather
+  than all allocatable sections, so GPU code objects load with the same
+  layout their producers intended.
+
 - The AMD/HIP renderer (`Cstyle.amd`) is now covered by the tinygrad parity
   and golden corpora on gfx1100, including tensor-core matmul cases across
   RDNA3/RDNA4 (WMMA f16/bf16), CDNA3 (MFMA bf16), and CDNA4 (scaled MFMA
