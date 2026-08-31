@@ -6,6 +6,9 @@
 open Hugin
 
 let () =
+  (* Seeded: the build regenerates the committed image, so the data has to be
+     the same on every run. *)
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let x = Nx.linspace Nx.float32 0. 10. 100 in
 
   let p1 =

@@ -6,6 +6,9 @@
 open Hugin
 
 let () =
+  (* Seeded: the build regenerates the committed image, so the data has to be
+     the same on every run. *)
+  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let x = Nx.rand Nx.float32 [| 200 |] in
   let y = Nx.rand Nx.float32 [| 200 |] in
   let c = Nx.add x y in
