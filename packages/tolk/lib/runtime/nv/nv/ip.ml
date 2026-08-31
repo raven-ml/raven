@@ -6,8 +6,33 @@
   ---------------------------------------------------------------------------*)
 
 module G = Nv_gsp_defs
+module Mmio = Tolk_hcq.Hcq.Mmio
 
+let debug = Tolk.Helpers.getenv "DEBUG" 0
 let round_up n align = (n + align - 1) / align * align
+let ceildiv n d = (n + d - 1) / d
+
+external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
+
+exception Timeout_error of string
+
+(* helpers.py:538 wait_cond, over an injected clock so tests can script
+   the passage of time. *)
+let wait_cond now_ms ?(timeout_ms = 10000) ~value ~msg cb =
+  let start = now_ms () in
+  let rec go last =
+    if now_ms () - start < timeout_ms then begin
+      let v = cb () in
+      if v = value then () else go v
+    end
+    else
+      raise
+        (Timeout_error
+           (Printf.sprintf
+              "%s. Timed out after %d ms, condition not met: %d != %d" msg
+              timeout_ms last value))
+  in
+  go 0
 
 (* Little-endian field access over a plain byte image, keyed on the
    (byte offset, byte size) layout pairs from the generated tables. A
@@ -112,6 +137,218 @@ module Firmware = struct
             source %s)"
            name sha actual plain (url ~chip_dir name));
     blob
+end
+
+(* Rpc_queue: ip.py NVRpcQueue *)
+
+module Rpc_queue = struct
+  type t = {
+    view : Mmio.t;
+    queue : Mmio.t;
+    msg_size : int;
+    msg_count : int;
+    rx_hdr_off : int;
+    mutable rx : Mmio.t option;
+    mutable seq : int;
+    notify : unit -> unit;
+    on_run_cpu_seq : bytes -> unit;
+    on_error : unit -> unit;
+    devfmt : string;
+    now_ms : unit -> int;
+  }
+
+  (* Unsigned 32-bit access into a mapped view. *)
+  let u32r m off = Int32.to_int (Mmio.read32 m off) land 0xffffffff
+  let u32w m off v = Mmio.write32 m off (Int32.of_int (v land 0xffffffff))
+
+  (* ip.py:20 NVRpcQueue.__init__ *)
+  let make ?completion_q_view ?(now_ms = monotonic_ms) ?(devfmt = "?") ~notify
+      ~on_run_cpu_seq ~on_error view =
+    wait_cond now_ms ~value:0x1000 ~msg:"RPC queue not initialized" (fun () ->
+        u32r view (fst G.Msgq_tx_header.entryoff));
+    let hdr = Mmio.read_bytes view ~off:0 ~len:G.Msgq_tx_header.sizeof in
+    let msg_size = read_field hdr G.Msgq_tx_header.msgsize in
+    let msg_count = read_field hdr G.Msgq_tx_header.msgcount in
+    let entry_off = read_field hdr G.Msgq_tx_header.entryoff in
+    let rx =
+      match completion_q_view with
+      | None -> None
+      | Some comp ->
+          Some (Mmio.view comp ~off:(u32r comp (fst G.Msgq_tx_header.rxhdroff)) ())
+    in
+    {
+      view;
+      queue = Mmio.view view ~off:entry_off ~size:(msg_size * msg_count) ();
+      msg_size;
+      msg_count;
+      rx_hdr_off = read_field hdr G.Msgq_tx_header.rxhdroff;
+      rx;
+      seq = 0;
+      notify;
+      on_run_cpu_seq;
+      on_error;
+      devfmt;
+      now_ms;
+    }
+
+  let rx_hdr_off t = t.rx_hdr_off
+  let set_rx_view t rx = t.rx <- Some rx
+
+  (* ip.py:32 NVRpcQueue._checksum: xor of the frame's little-endian
+     64-bit words (zero-padded to a whole word), folded to 32 bits. *)
+  let checksum data =
+    let padded =
+      let r = round_up (Bytes.length data) 8 in
+      if r = Bytes.length data then data
+      else begin
+        let p = Bytes.make r '\000' in
+        Bytes.blit data 0 p 0 (Bytes.length data);
+        p
+      end
+    in
+    let c = ref 0L in
+    for i = 0 to (Bytes.length padded / 8) - 1 do
+      c := Int64.logxor !c (Bytes.get_int64_le padded (i * 8))
+    done;
+    Int64.to_int
+      (Int64.logxor (Int64.shift_right_logical !c 32) (Int64.logand !c 0xffffffffL))
+
+  (* ip.py:38 NVRpcQueue._send_rpc_record *)
+  let send_rpc_record t func msg =
+    let header = Bytes.make G.Rpc_message_header.sizeof '\000' in
+    set_field header G.Rpc_message_header.signature G.nv_vgpu_msg_signature_valid;
+    set_field header G.Rpc_message_header.rpc_result G.nv_vgpu_msg_result_rpc_pending;
+    set_field header G.Rpc_message_header.rpc_result_private
+      G.nv_vgpu_msg_result_rpc_pending;
+    set_field header G.Rpc_message_header.header_version (3 lsl 24);
+    set_field header G.Rpc_message_header.func func;
+    set_field header G.Rpc_message_header.length (Bytes.length msg + 0x20);
+    let msg = Bytes.cat header msg in
+    let elem_count =
+      ceildiv (Bytes.length msg + G.Gsp_msg_queue_element.sizeof) t.msg_size
+    in
+    let phdr = Bytes.make G.Gsp_msg_queue_element.sizeof '\000' in
+    set_field phdr G.Gsp_msg_queue_element.elemcount elem_count;
+    set_field phdr G.Gsp_msg_queue_element.seqnum t.seq;
+    set_field phdr G.Gsp_msg_queue_element.checksum (checksum (Bytes.cat phdr msg));
+    let frame = Bytes.make (elem_count * t.msg_size) '\000' in
+    Bytes.blit phdr 0 frame 0 G.Gsp_msg_queue_element.sizeof;
+    Bytes.blit msg 0 frame G.Gsp_msg_queue_element.sizeof (Bytes.length msg);
+    let wp = u32r t.view (fst G.Msgq_tx_header.writeptr) in
+    let off = wp * t.msg_size in
+    let first = min (Bytes.length frame) (Mmio.size t.queue - off) in
+    Mmio.blit_bytes t.queue ~off (Bytes.sub frame 0 first);
+    if first < Bytes.length frame then
+      Mmio.blit_bytes t.queue ~off:0
+        (Bytes.sub frame first (Bytes.length frame - first));
+    u32w t.view (fst G.Msgq_tx_header.writeptr) ((wp + elem_count) mod t.msg_count);
+    Mmio.fence ();
+    t.seq <- t.seq + 1;
+    t.notify ()
+
+  (* ip.py:57 NVRpcQueue.send_rpc: a message larger than one 16-element
+     frame continues in follow-on continuation records. *)
+  let send_rpc t func msg =
+    let max_payload =
+      (t.msg_size * 16) - G.Gsp_msg_queue_element.sizeof
+      - G.Rpc_message_header.sizeof
+    in
+    let len = Bytes.length msg in
+    send_rpc_record t func (Bytes.sub msg 0 (min len max_payload));
+    let off = ref max_payload in
+    while !off < len do
+      send_rpc_record t G.nv_vgpu_msg_function_continuation_record
+        (Bytes.sub msg !off (min max_payload (len - !off)));
+      off := !off + max_payload
+    done
+
+  (* ip.py:62 NVRpcQueue.read_resp *)
+  let read_resp t =
+    let rx =
+      match t.rx with
+      | Some rx -> rx
+      | None -> invalid_arg "Ip.Rpc_queue: queue has no read pointer"
+    in
+    let qsize = Mmio.size t.queue in
+    let rec step () =
+      let rp = u32r rx 0 in
+      if rp = u32r t.view (fst G.Msgq_tx_header.writeptr) then Seq.Nil
+      else begin
+        let off = rp * t.msg_size in
+        let hdr =
+          Mmio.read_bytes t.queue
+            ~off:(off + G.Gsp_msg_queue_element.sizeof)
+            ~len:G.Rpc_message_header.sizeof
+        in
+        let func = read_field hdr G.Rpc_message_header.func in
+        let length = read_field hdr G.Rpc_message_header.length in
+        let result = read_field hdr G.Rpc_message_header.rpc_result in
+        let start =
+          off + G.Gsp_msg_queue_element.sizeof + G.Rpc_message_header.sizeof
+        in
+        let msg =
+          Mmio.read_bytes t.queue ~off:start
+            ~len:(max 0 (min length (qsize - start)))
+        in
+        (* Handling special functions *)
+        if func = G.nv_vgpu_msg_event_gsp_run_cpu_sequencer then
+          t.on_run_cpu_seq msg
+        else if func = G.nv_vgpu_msg_event_os_error_log then begin
+          let text =
+            if Bytes.length msg > 12 then
+              Bytes.sub_string msg 12 (Bytes.length msg - 12)
+            else ""
+          in
+          let stop = ref (String.length text) in
+          while !stop > 0 && text.[!stop - 1] = '\000' do
+            decr stop
+          done;
+          Printf.printf "nv %s: GSP LOG: %s\n%!" t.devfmt (String.sub text 0 !stop)
+        end;
+        if
+          func = G.nv_vgpu_msg_event_os_error_log
+          || func = G.nv_vgpu_msg_event_mmu_fault_queued
+        then t.on_error ();
+        (* Update the read pointer *)
+        u32w rx 0 ((rp + (round_up length t.msg_size / t.msg_size)) mod t.msg_count);
+        Mmio.fence ();
+        if debug >= 3 then begin
+          let nm =
+            match List.assoc_opt func G.rpc_fns with
+            | Some nm -> nm
+            | None -> (
+                match List.assoc_opt func G.rpc_events with
+                | Some nm -> nm
+                | None -> Printf.sprintf "ev:%x" func)
+          in
+          Printf.printf "nv %s: in RPC: %s, res:0x%x\n%!" t.devfmt nm result
+        end;
+        if result <> 0 then
+          failwith
+            (Printf.sprintf "RPC call %d failed with result %d" func result);
+        Seq.Cons ((func, msg), step)
+      end
+    in
+    fun () ->
+      Mmio.fence ();
+      step ()
+
+  (* ip.py:87 NVRpcQueue.wait_resp *)
+  let wait_resp t ?(timeout_ms = 10000) cmd =
+    let start = t.now_ms () in
+    let rec attempt () =
+      if t.now_ms () - start < timeout_ms then
+        let found =
+          Seq.find_map
+            (fun (func, msg) -> if func = cmd then Some msg else None)
+            (read_resp t)
+        in
+        match found with Some msg -> msg | None -> attempt ()
+      else
+        failwith
+          (Printf.sprintf "Timeout waiting for RPC response for command %d" cmd)
+    in
+    attempt ()
 end
 
 (* Falcon microcontroller boot images *)
@@ -425,4 +662,56 @@ module Gsp = struct
       monitor_data_offset = read_field blob ~base:header_offset G.Rm_riscv_ucode_desc.monitordataoffset;
       manifest_offset = read_field blob ~base:header_offset G.Rm_riscv_ucode_desc.manifestoffset;
     }
+
+  (* ip.py:618 NV_GSP.run_cpu_seq *)
+  let run_cpu_seq ~rreg ~wreg ~now_ms ~sleep_us ~core_reset ~core_start
+      ~core_wait_halted ~core_resume buf =
+    let hdr_sz = G.Rpc_run_cpu_sequencer.sizeof in
+    let cmd_index = read_field buf G.Rpc_run_cpu_sequencer.cmdindex in
+    let words = min cmd_index ((Bytes.length buf - hdr_sz) / 4) in
+    let save = Array.make G.Rpc_run_cpu_sequencer.regsavearea_count 0 in
+    let pos = ref 0 in
+    let next () =
+      if !pos >= words then failwith "run_cpu_seq: truncated command stream";
+      let v = u32 buf (hdr_sz + (!pos * 4)) in
+      incr pos;
+      v
+    in
+    while !pos < words do
+      match next () with
+      | 0x0 ->
+          (* reg write *)
+          let addr = next () in
+          let v = next () in
+          wreg addr v
+      | 0x1 ->
+          (* reg modify *)
+          let addr = next () in
+          let v = next () in
+          let mask = next () in
+          wreg addr ((rreg addr land lnot mask) lor (v land mask))
+      | 0x2 ->
+          (* reg poll; the trailing two words of the command are unused *)
+          let addr = next () in
+          let mask = next () in
+          let v = next () in
+          ignore (next ());
+          ignore (next ());
+          wait_cond now_ms ~value:v
+            ~msg:
+              (Printf.sprintf "Register %#x not equal to %#x after polling" addr
+                 v)
+            (fun () -> rreg addr land mask)
+      | 0x3 -> sleep_us (next ()) (* delay us *)
+      | 0x4 ->
+          (* save reg *)
+          let addr = next () in
+          let index = next () in
+          save.(index) <- rreg addr
+      | 0x5 -> core_reset ()
+      | 0x6 -> core_start ()
+      | 0x7 -> core_wait_halted ()
+      | 0x8 -> core_resume ()
+      | op -> failwith (Printf.sprintf "Unknown op code %d in run_cpu_seq" op)
+    done
 end

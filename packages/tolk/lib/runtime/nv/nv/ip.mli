@@ -19,7 +19,17 @@
     VBIOS window, over an injected register read). Loading the images onto
     the device — allocating boot memory, programming falcon registers, and
     running the boot handshakes — builds on top of the values these
-    functions produce. *)
+    functions produce.
+
+    Once the GSP firmware runs, the CPU talks to it over shared-memory
+    message queues; {!Rpc_queue} is that transport, and
+    {!Gsp.run_cpu_seq} interprets the register command sequences the
+    firmware sends back over it during boot. *)
+
+exception Timeout_error of string
+(** Raised when a bounded hardware wait — a queue waiting to come up, a
+    register poll — does not reach its expected value in time. The
+    message names the wait and the last observed value. *)
 
 (** {1:firmware Firmware files} *)
 
@@ -36,6 +46,105 @@ module Firmware : sig
       the plain nor the compressed file is found (naming both searched
       paths, the expected digest, and the pinned upstream URL), or when the
       digest does not match. *)
+end
+
+(** {1:rpcq RPC message queues} *)
+
+(** The shared-memory RPC transport to the GSP firmware.
+
+    The CPU and the GSP each own one queue: a page-sized header region
+    followed by a ring of fixed-size elements. The owner publishes
+    messages by writing elements and advancing the write pointer in its
+    own header; the consumer acknowledges them by advancing a read
+    pointer that lives in the {e other} queue's header region, so each
+    side polls only memory the other side writes.
+
+    A message is one or more records. Each record spans whole ring
+    elements and carries a 48-byte element header (a frame checksum, a
+    sequence number, and the element count) followed by a 32-byte RPC
+    header (function id, byte length including that header, and result
+    fields) and the payload, zero-padded to the element boundary. A
+    payload that does not fit the 16-element frame limit continues in
+    follow-on continuation records.
+
+    Publishing and consuming touch only the queue memory and the
+    injected callbacks, so a queue can be driven against anonymous
+    memory with no device. *)
+module Rpc_queue : sig
+  type t
+  (** The type for RPC queues. *)
+
+  val make :
+    ?completion_q_view:Tolk_hcq.Hcq.Mmio.t ->
+    ?now_ms:(unit -> int) ->
+    ?devfmt:string ->
+    notify:(unit -> unit) ->
+    on_run_cpu_seq:(bytes -> unit) ->
+    on_error:(unit -> unit) ->
+    Tolk_hcq.Hcq.Mmio.t ->
+    t
+  (** [make view] is the queue whose memory is [view]: the transmit
+      header at its start and the element ring at the header's entry
+      offset. Construction waits up to ten seconds for the header's
+      entry offset to read [0x1000] — the queue owner publishing its
+      header — then snapshots the element geometry from it; the wait
+      raises {!Timeout_error} ("RPC queue not initialized").
+
+      [completion_q_view] is the memory of the opposite queue; when
+      given, the read pointer is taken from it at the offset its header
+      names (see {!rx_hdr_off}). A queue made without it cannot read
+      responses until {!set_rx_view}.
+
+      [notify] is invoked after each published record to signal the
+      consumer (the doorbell write). [on_run_cpu_seq] receives the
+      payload of a CPU-sequencer command message (see
+      {!Gsp.run_cpu_seq}), and [on_error] is invoked when an error-log
+      or MMU-fault event arrives; both fire while responses are being
+      read. [now_ms] is the monotonic clock behind the construction
+      wait and {!wait_resp} (defaults to the system's); [devfmt] names
+      the device in logged messages. *)
+
+  val rx_hdr_off : t -> int
+  (** [rx_hdr_off t] is the byte offset, within this queue's memory,
+      where the header places the {e consumer's} read pointer — the
+      offset at which the opposite queue finds its response pointer. *)
+
+  val set_rx_view : t -> Tolk_hcq.Hcq.Mmio.t -> unit
+  (** [set_rx_view t rx] sets the view holding [t]'s read pointer (a
+      32-bit element index at its start), for queues made without
+      [completion_q_view]. *)
+
+  val send_rpc : t -> int -> bytes -> unit
+  (** [send_rpc t fn msg] publishes the RPC call [fn] with payload
+      [msg]: the record is framed, checksummed, written into the ring
+      at the current write pointer (wrapping across the ring's end),
+      the write pointer advances, and [notify] rings the consumer. A
+      payload beyond the 16-element frame limit is split into
+      continuation records, each published the same way. Every record
+      consumes one sequence number. *)
+
+  val read_resp : t -> (int * bytes) Seq.t
+  (** [read_resp t] lazily consumes the messages published between
+      [t]'s read pointer and the producer's write pointer. Forcing an
+      element parses one message, dispatches it ([on_run_cpu_seq] for a
+      CPU-sequencer command, a log print and [on_error] for an
+      error-log event, [on_error] for a queued MMU fault), advances the
+      read pointer past it, and yields its function id and payload; the
+      payload is read at the length the RPC header declares, so it
+      carries 32 trailing ring bytes. The sequence ends when the queue
+      is drained; abandoning it leaves the remaining messages
+      unconsumed. Frame checksums are not verified on this path.
+
+      Raises [Failure] when a message carries a nonzero result, naming
+      the function id and the result, and [Invalid_argument] if the
+      queue has no read pointer yet. *)
+
+  val wait_resp : t -> ?timeout_ms:int -> int -> bytes
+  (** [wait_resp t fn] drains {!read_resp} until a message for the
+      function id [fn] arrives and is its payload; other messages are
+      consumed and dropped. Raises [Failure] when [timeout_ms]
+      (defaults to ten seconds) elapses without one, or as
+      {!read_resp} does. *)
 end
 
 (** {1:falcon Falcon boot images} *)
@@ -166,4 +275,41 @@ module Gsp : sig
       manifest offsets its descriptor names.
 
       Raises [Invalid_argument] on a read past the end of [blob]. *)
+
+  val run_cpu_seq :
+    rreg:(int -> int) ->
+    wreg:(int -> int -> unit) ->
+    now_ms:(unit -> int) ->
+    sleep_us:(int -> unit) ->
+    core_reset:(unit -> unit) ->
+    core_start:(unit -> unit) ->
+    core_wait_halted:(unit -> unit) ->
+    core_resume:(unit -> unit) ->
+    bytes ->
+    unit
+  (** [run_cpu_seq buf] interprets the command sequence the GSP firmware
+      sends the CPU during boot: a 40-byte header whose second word
+      counts the command words that follow, then that many 32-bit
+      words. Words past the count are ignored. The commands are:
+
+      - [0x0] [addr value] — write [value] to the register at [addr]
+        through [wreg].
+      - [0x1] [addr value mask] — read-modify-write: the register keeps
+        its bits outside [mask] and takes [value]'s inside it.
+      - [0x2] [addr mask value _ _] — poll [rreg addr land mask] until
+        it equals [value], up to ten seconds on [now_ms]; the two
+        trailing words are unused. Raises {!Timeout_error} naming the
+        register and value on expiry.
+      - [0x3] [us] — delay [us] microseconds through [sleep_us].
+      - [0x4] [addr index] — read the register at [addr] into slot
+        [index] of an eight-word scratch save area. Raises
+        [Invalid_argument] on an out-of-range slot.
+      - [0x5]–[0x8] — hand control to the injected boot actions:
+        [core_reset] (reset the firmware processor and detach its
+        memory interface), [core_start] (start it), [core_wait_halted]
+        (wait for it to halt), and [core_resume] (restart it through
+        the secure-boot handshake).
+
+      Raises [Failure] on an unknown command code (naming it) or when a
+      command's arguments run past the counted words. *)
 end
