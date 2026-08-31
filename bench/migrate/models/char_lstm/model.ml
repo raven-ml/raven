@@ -67,15 +67,15 @@ let read_spec path =
 
 (* Model *)
 
-module Model = struct
-  type t = {
-    emb : Kaun.Embedding.t;  (** [vocab; embed] *)
-    ih : Kaun.Linear.t;  (** [embed; 4 * hidden], the input-to-gate map *)
-    hh : Kaun.Linear.t;  (** [hidden; 4 * hidden], the state-to-gate map *)
-    head : Kaun.Linear.t;  (** [hidden; vocab] *)
+module Lstm = struct
+  type 'a t = {
+    emb : 'a Kaun.Embedding.t;  (** [vocab; embed] *)
+    ih : 'a Kaun.Linear.t;  (** [embed; 4 * hidden], the input-to-gate map *)
+    hh : 'a Kaun.Linear.t;  (** [hidden; 4 * hidden], the state-to-gate map *)
+    head : 'a Kaun.Linear.t;  (** [hidden; vocab] *)
   }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
+  let map f p =
     {
       emb = Kaun.Embedding.map f p.emb;
       ih = Kaun.Linear.map f p.ih;
@@ -83,7 +83,7 @@ module Model = struct
       head = Kaun.Linear.map f p.head;
     }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+  let map2 f p q =
     {
       emb = Kaun.Embedding.map2 f p.emb q.emb;
       ih = Kaun.Linear.map2 f p.ih q.ih;
@@ -91,12 +91,20 @@ module Model = struct
       head = Kaun.Linear.map2 f p.head q.head;
     }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
+  let iter f p =
     Kaun.Embedding.iter f p.emb;
     Kaun.Linear.iter f p.ih;
     Kaun.Linear.iter f p.hh;
     Kaun.Linear.iter f p.head
 end
+
+(* The parameter tree the transformations walk, and the momentum state over it,
+   itself a parameter tree so it rides the compiled step's records. *)
+
+module Model =
+  (val Kaun.ptree (module Lstm) : Nx.Ptree.S with type t = Nx.float32_t Lstm.t)
+
+module Opt = Vega.Sgd_state (Model)
 
 (* Logits for a whole [batch; seq_len] id grid, as [batch; seq_len; vocab].
 
@@ -105,14 +113,14 @@ end
    four gate blocks sit side by side along the last axis in the order the
    fixture's weights store them: input, forget, cell, output. *)
 let logits spec p ids =
-  let x = Kaun.Embedding.apply p.Model.emb ids in
-  let xg = Kaun.Linear.apply p.Model.ih x in
+  let x = Kaun.Embedding.apply p.Lstm.emb ids in
+  let xg = Kaun.Linear.apply p.Lstm.ih x in
   let zero = Nx.zeros Nx.float32 [| spec.batch; spec.hidden |] in
   let h = ref zero and c = ref zero in
   let outputs = ref [] in
   for t = 0 to spec.seq_len - 1 do
     let gates =
-      Nx.add (Nx.slice [ A; I t ] xg) (Kaun.Linear.apply p.Model.hh !h)
+      Nx.add (Nx.slice [ A; I t ] xg) (Kaun.Linear.apply p.Lstm.hh !h)
     in
     match Nx.split ~axis:1 4 gates with
     | [ gi; gf; gg; go ] ->
@@ -123,7 +131,7 @@ let logits spec p ids =
         outputs := !h :: !outputs
     | _ -> assert false
   done;
-  Kaun.Linear.apply p.Model.head (Nx.stack ~axis:1 (List.rev !outputs))
+  Kaun.Linear.apply p.Lstm.head (Nx.stack ~axis:1 (List.rev !outputs))
 
 let loss spec p inputs targets =
   let y = logits spec p inputs in
@@ -133,7 +141,7 @@ let loss spec p inputs targets =
 
 (* Training step
 
-   Parameters, the momentum velocity and the step's batch all ride the input
+   Parameters, the optimizer state and the step's batch all ride the input
    structure: they change every step, and a jitted function's inputs are
    exactly what may change between calls. The loss leaves with the updated
    state so a compiled step reports the value it trained on without a second
@@ -142,7 +150,7 @@ let loss spec p inputs targets =
 module Step_in = struct
   type t = {
     params : Model.t;
-    velocity : Model.t;
+    opt : Opt.t;
     inputs : Nx.int32_t;
     targets : Nx.int32_t;
   }
@@ -150,7 +158,7 @@ module Step_in = struct
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
     {
       params = Model.map f s.params;
-      velocity = Model.map f s.velocity;
+      opt = Opt.map f s.opt;
       inputs = f s.inputs;
       targets = f s.targets;
     }
@@ -158,72 +166,69 @@ module Step_in = struct
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
     {
       params = Model.map2 f a.params b.params;
-      velocity = Model.map2 f a.velocity b.velocity;
+      opt = Opt.map2 f a.opt b.opt;
       inputs = f a.inputs b.inputs;
       targets = f a.targets b.targets;
     }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
     Model.iter f s.params;
-    Model.iter f s.velocity;
+    Opt.iter f s.opt;
     f s.inputs;
     f s.targets
 end
 
 module Step_out = struct
-  type t = { params : Model.t; velocity : Model.t; loss : Nx.float32_t }
+  type t = { params : Model.t; opt : Opt.t; loss : Nx.float32_t }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    {
-      params = Model.map f s.params;
-      velocity = Model.map f s.velocity;
-      loss = f s.loss;
-    }
+    { params = Model.map f s.params; opt = Opt.map f s.opt; loss = f s.loss }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
     {
       params = Model.map2 f a.params b.params;
-      velocity = Model.map2 f a.velocity b.velocity;
+      opt = Opt.map2 f a.opt b.opt;
       loss = f a.loss b.loss;
     }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
     Model.iter f s.params;
-    Model.iter f s.velocity;
+    Opt.iter f s.opt;
     f s.loss
 end
 
 let train_step spec (s : Step_in.t) =
   let objective p = loss spec p s.inputs s.targets in
   let l, grads = Rune.value_and_grad (module Model) objective s.params in
-  let params, st =
+  let params, opt =
     Vega.sgd_step
       (module Model)
-      ~lr:(Vega.lr spec.lr) ~momentum:spec.momentum { velocity = s.velocity }
-      ~params:s.params ~grads
+      ~lr:(Vega.lr spec.lr) ~momentum:spec.momentum s.opt ~params:s.params
+      ~grads
   in
-  { Step_out.params; velocity = st.velocity; loss = l }
+  { Step_out.params; opt; loss = l }
 
 (* Fixture
 
    The file is a PyTorch state dict, so its weights are in PyTorch's layout:
    [outputs; inputs] for every affine map, against Kaun's [inputs; outputs].
    Loading is therefore two moves — read the entries under their PyTorch names
-   into a structure with the file's shapes, then transpose into the model. *)
+   into a structure with the file's shapes, then transpose into the model. The
+   weights are all float32, so they come out of the checkpoint as one structure;
+   the token grid is int32 and comes out as the entry it is. *)
 
-module Fixture = struct
-  type t = {
-    emb_weight : Nx.float32_t;  (** [vocab; embed] *)
-    head_bias : Nx.float32_t;  (** [vocab] *)
-    head_weight : Nx.float32_t;  (** [vocab; hidden] *)
-    bias_hh : Nx.float32_t;  (** [4 * hidden] *)
-    bias_ih : Nx.float32_t;  (** [4 * hidden] *)
-    weight_hh : Nx.float32_t;  (** [4 * hidden; hidden] *)
-    weight_ih : Nx.float32_t;  (** [4 * hidden; embed] *)
-    tokens : Nx.int32_t;  (** [steps; batch; seq_len + 1] *)
+module Weights = struct
+  type 'a t = {
+    emb_weight : 'a;  (** [vocab; embed] *)
+    head_bias : 'a;  (** [vocab] *)
+    head_weight : 'a;  (** [vocab; hidden] *)
+    bias_hh : 'a;  (** [4 * hidden] *)
+    bias_ih : 'a;  (** [4 * hidden] *)
+    weight_hh : 'a;  (** [4 * hidden; hidden] *)
+    weight_ih : 'a;  (** [4 * hidden; embed] *)
   }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x =
+  let map f x =
     {
       emb_weight = f x.emb_weight;
       head_bias = f x.head_bias;
@@ -232,10 +237,9 @@ module Fixture = struct
       bias_ih = f x.bias_ih;
       weight_hh = f x.weight_hh;
       weight_ih = f x.weight_ih;
-      tokens = f x.tokens;
     }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x y =
+  let map2 f x y =
     {
       emb_weight = f x.emb_weight y.emb_weight;
       head_bias = f x.head_bias y.head_bias;
@@ -244,66 +248,80 @@ module Fixture = struct
       bias_ih = f x.bias_ih y.bias_ih;
       weight_hh = f x.weight_hh y.weight_hh;
       weight_ih = f x.weight_ih y.weight_ih;
-      tokens = f x.tokens y.tokens;
     }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x =
+  let iter f x =
     f x.emb_weight;
     f x.head_bias;
     f x.head_weight;
     f x.bias_hh;
     f x.bias_ih;
     f x.weight_hh;
-    f x.weight_ih;
-    f x.tokens
+    f x.weight_ih
 
-  (* One name per leaf, in [iter] order. *)
+  (* Leaf paths are the state dict's own names. *)
   let names _ =
-    [
-      "emb.weight";
-      "head.bias";
-      "head.weight";
-      "lstm.bias_hh_l0";
-      "lstm.bias_ih_l0";
-      "lstm.weight_hh_l0";
-      "lstm.weight_ih_l0";
-      "tokens";
-    ]
+    {
+      emb_weight = "emb.weight";
+      head_bias = "head.bias";
+      head_weight = "head.weight";
+      bias_hh = "lstm.bias_hh_l0";
+      bias_ih = "lstm.bias_ih_l0";
+      weight_hh = "lstm.weight_hh_l0";
+      weight_ih = "lstm.weight_ih_l0";
+    }
+
+  let fold f acc x =
+    let n = names x in
+    let acc = f n.emb_weight acc x.emb_weight in
+    let acc = f n.head_bias acc x.head_bias in
+    let acc = f n.head_weight acc x.head_weight in
+    let acc = f n.bias_hh acc x.bias_hh in
+    let acc = f n.bias_ih acc x.bias_ih in
+    let acc = f n.weight_hh acc x.weight_hh in
+    f n.weight_ih acc x.weight_ih
+
+  let fold2 f acc x y =
+    let n = names x in
+    let acc = f n.emb_weight acc x.emb_weight y.emb_weight in
+    let acc = f n.head_bias acc x.head_bias y.head_bias in
+    let acc = f n.head_weight acc x.head_weight y.head_weight in
+    let acc = f n.bias_hh acc x.bias_hh y.bias_hh in
+    let acc = f n.bias_ih acc x.bias_ih y.bias_ih in
+    let acc = f n.weight_hh acc x.weight_hh y.weight_hh in
+    f n.weight_ih acc x.weight_ih y.weight_ih
 end
 
 let load_fixture spec path =
   let h4 = 4 * spec.hidden in
   let template =
     {
-      Fixture.emb_weight = Nx.zeros Nx.float32 [| spec.vocab; spec.embed |];
+      Weights.emb_weight = Nx.zeros Nx.float32 [| spec.vocab; spec.embed |];
       head_bias = Nx.zeros Nx.float32 [| spec.vocab |];
       head_weight = Nx.zeros Nx.float32 [| spec.vocab; spec.hidden |];
       bias_hh = Nx.zeros Nx.float32 [| h4 |];
       bias_ih = Nx.zeros Nx.float32 [| h4 |];
       weight_hh = Nx.zeros Nx.float32 [| h4; spec.hidden |];
       weight_ih = Nx.zeros Nx.float32 [| h4; spec.embed |];
-      tokens =
-        Nx.zeros Nx.int32 [| spec.batches; spec.batch; spec.seq_len + 1 |];
     }
   in
-  let f =
-    Kaun.Checkpoint.to_params
-      (module Fixture)
-      ~like:template
-      (Kaun.Checkpoint.load path)
-  in
+  let ckpt = Kaun.Checkpoint.load path in
+  let f = Kaun.Checkpoint.to_params (module Weights) ~like:template ckpt in
+  let tokens = Nx.Ptree.unpack Nx.int32 (Kaun.Checkpoint.get "tokens" ckpt) in
+  if Nx.shape tokens <> [| spec.batches; spec.batch; spec.seq_len + 1 |] then
+    failwith (path ^ ": the token grid does not have the spec's shape");
   let linear w b =
     { Kaun.Linear.w = Nx.contiguous (Nx.transpose w); b = Some b }
   in
   let params =
     {
-      Model.emb = { Kaun.Embedding.table = f.emb_weight };
+      Lstm.emb = { Kaun.Embedding.table = f.emb_weight };
       ih = linear f.weight_ih f.bias_ih;
       hh = linear f.weight_hh f.bias_hh;
       head = linear f.head_weight f.head_bias;
     }
   in
-  (params, f.tokens)
+  (params, tokens)
 
 (* Runner *)
 
@@ -324,7 +342,7 @@ let run spec ~fixture ~variant ~device ~steps =
     ref
       {
         Step_in.params;
-        velocity = Model.map (fun t -> Nx.zeros_like t) params;
+        opt = Vega.sgd_init (module Model) params;
         inputs = Nx.zeros Nx.int32 [| spec.batch; spec.seq_len |];
         targets = Nx.zeros Nx.int32 [| spec.batch; spec.seq_len |];
       }
@@ -346,8 +364,7 @@ let run spec ~fixture ~variant ~device ~steps =
     let t1 = now_ms () in
     losses.(i) <- l;
     step_ms.(i) <- t1 -. t0;
-    state :=
-      { !state with Step_in.params = out.params; velocity = out.velocity }
+    state := { !state with Step_in.params = out.params; opt = out.opt }
   done;
   (losses, step_ms)
 
