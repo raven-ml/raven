@@ -25,6 +25,7 @@
   tolk.frontend
   tolk.cpu
   tolk.amd
+  tolk.nv
   tolk.cuda
   (select
    jit_device.ml

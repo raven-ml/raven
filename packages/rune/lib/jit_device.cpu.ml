@@ -12,6 +12,11 @@ let create name =
     with Failure msg ->
       invalid_arg
         (Printf.sprintf "Rune.jit: device %s unavailable: %s" name msg)
+  else if String.starts_with ~prefix:"NV" name then
+    try Tolk_nv.create name
+    with Failure msg ->
+      invalid_arg
+        (Printf.sprintf "Rune.jit: device %s unavailable: %s" name msg)
   else if String.starts_with ~prefix:"CUDA" name then
     try Tolk_cuda.create name
     with Failure msg ->

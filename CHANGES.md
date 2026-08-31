@@ -1019,6 +1019,10 @@ thread.
 
 ### Rune
 
+- `Rune.jit` and `Rune.pmap` accept `~device:"NV"` — NVIDIA GPUs driven on
+  the kernel driver's hardware queues (Linux), with kernels compiled straight
+  to cubin. `"CUDA"` keeps selecting the userspace CUDA driver API backend.
+
 - `Rune.jit` and `Rune.pmap` accept `~device:"AMD"` (`"AMD:n"` for a specific
   GPU), running compiled programs on AMD GPUs on Linux. Previously the device
   factory rejected the name with `Invalid_argument: unknown device AMD:0`
