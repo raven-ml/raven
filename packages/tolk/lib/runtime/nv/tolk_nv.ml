@@ -492,3 +492,670 @@ module Copy_queue = struct
 
   let submit t qd = submit_to_gpfifo t.dev t.q qd
 end
+
+(* Driver interface seam *)
+
+module Nv_iface = struct
+  exception Out_of_memory of string
+
+  type mem = { h_memory : int; owner_id : int }
+  type nvdev = ..
+
+  type usermode = {
+    handle : int;
+    mmio : Hcq.Mmio.t;
+    compute_class : int;
+    dma_class : int;
+    gpfifo_class : int;
+  }
+
+  type t = {
+    root : int;
+    gpu_instance : int;
+    count : int;
+    set_device : nvdevice:int -> subdevice:int -> virtmem:int -> unit;
+    rm_alloc : parent:int -> cls:int -> ?params:Nv_tables.blob -> unit -> int;
+    rm_control : obj:int -> cmd:int -> ?params:Nv_tables.blob -> unit -> unit;
+    alloc :
+      ?host:bool ->
+      ?uncached:bool ->
+      ?cpu_access:bool ->
+      ?contiguous:bool ->
+      ?map_flags:int ->
+      ?cpu_addr:nativeint ->
+      int ->
+      mem Hcq.Buffer.t;
+    free : mem Hcq.Buffer.t -> unit;
+    map : mem Hcq.Buffer.t -> mem Hcq.Buffer.t;
+    setup_usermode : unit -> usermode;
+    setup_vm : vaspace:int -> unit;
+    setup_gpfifo_vm : gpfifo:int -> unit;
+    sleep : int -> unit;
+    device_fini : unit -> unit;
+    nvdev : nvdev option;
+  }
+
+  let is_nvd t = t.nvdev <> None
+end
+
+(* Kernel-driver interface *)
+
+module Nvk_iface = struct
+  module File_io = Hcq.File_io
+
+  type gpu = { gpu_id : int; minor_number : int }
+
+  type state = {
+    fd_ctl : int;
+    fd_uvm : int;
+    fd_uvm_2 : int;
+    root : int;
+    defs : Nv_defs_versions.t;
+    gpus_info : gpu array;
+  }
+
+  type t = {
+    device_id : int;
+    fd_dev : int;
+    gpu_minor : int;
+    gpu_instance : int;
+    mutable nvdevice : int;
+    mutable subdevice : int;
+    mutable virtmem : int;
+    mutable gpu_uuid : bytes;
+  }
+
+  (* Driver-wide state shared by every device in the process: the control
+     and memory-manager file descriptors, the root client, the installed
+     driver's parameter-structure generation, and the visible cards. *)
+  let state : state option ref = ref None
+
+  (* Host objects take handles from this private enumerator, so a handle
+     at or below its mark is one of ours rather than the driver's. *)
+  let host_object_enumerator = ref 0x1000
+
+  (* The 48-bit device virtual address space splits at 0x2000000000: the
+     64 GiB below are reserved for CPU-visible mappings, everything above
+     holds device-only ranges. Addresses are process-global and never
+     reused. *)
+  let low_uvm_vaddr_allocator =
+    Tolk.Bump.create ~size:0x1000000000 ~base:0x1000000000 ~wrap:false ()
+
+  let uvm_vaddr_allocator =
+    Tolk.Bump.create ~size:((1 lsl 48) - 1) ~base:0x2000000000 ~wrap:false ()
+
+  let alloc_gpu_vaddr ?(alignment = 4 lsl 10) ?(force_low = false) size =
+    Nativeint.of_int
+      (Tolk.Bump.alloc
+         (if force_low then low_uvm_vaddr_allocator else uvm_vaddr_allocator)
+         size ~align:alignment ())
+
+  let error_str defs status =
+    Printf.sprintf "%d: %s" status
+      (match
+         List.assoc_opt status defs.Nv_defs_versions.nv_status_codes
+       with
+      | Some name -> name
+      | None -> "Unknown error")
+
+  (* The address of a nested parameter blob travels through another blob
+     as a raw integer, invisible to the garbage collector: pin the nested
+     blob until after the driver call. *)
+  let keep_alive b = ignore (Sys.opaque_identity b)
+
+  let blit_bytes b ~off src =
+    for i = 0 to Bytes.length src - 1 do
+      Bigarray.Array1.set b (off + i) (Bytes.get src i)
+    done
+
+  let read_bytes b ~off ~len =
+    Bytes.init len (fun i -> Bigarray.Array1.get b (off + i))
+
+  (* Escape calls travel under request codes that embed the parameter
+     size; a nonzero return is a transport failure, the driver status
+     arrives inside the blob. *)
+  let escape fd ~nr b =
+    let request = Nv_tables.escape_code ~nr ~size:(Bigarray.Array1.dim b) in
+    let r = Nv_tables.ioctl ~fd ~request b in
+    if r <> 0 then failwith (Printf.sprintf "ioctl returned %d" r)
+
+  (* Memory-manager commands are their own request numbers and report
+     status in the parameter structure's status field. *)
+  let uvm' ~defs ~fd ~cmd ~rmstatus b =
+    let r = Nv_tables.ioctl ~fd ~request:cmd b in
+    if r <> 0 then failwith (Printf.sprintf "ioctl returned %d" r);
+    let status = Nv_tables.get_field b rmstatus in
+    if status <> 0 then failwith ("uvm returned " ^ error_str defs status)
+
+  let driver_version_major b =
+    let off, len =
+      Defs.Nv0000_ctrl_system_get_build_version_v2_params.driverversionbuffer
+    in
+    let stop = ref 0 in
+    while !stop < len && Bigarray.Array1.get b (off + !stop) <> '\000' do
+      incr stop
+    done;
+    let s = String.init !stop (fun i -> Bigarray.Array1.get b (off + i)) in
+    let major =
+      match String.index_opt s '.' with
+      | Some i -> String.sub s 0 i
+      | None -> s
+    in
+    match int_of_string_opt major with
+    | Some v -> v
+    | None -> failwith (Printf.sprintf "cannot parse driver version %S" s)
+
+  (* Parameter-structure constructors *)
+
+  let nvos21_params ~root ~parent ~cls ?params () =
+    let module P = Defs.Nvos21_parameters in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.hroot root;
+    Nv_tables.set_field b P.hobjectparent parent;
+    Nv_tables.set_field b P.hclass cls;
+    Option.iter
+      (fun p ->
+        Nv_tables.set_field b P.pallocparms
+          (Nativeint.to_int (Nv_tables.blob_addr p)))
+      params;
+    b
+
+  let memory_allocation_params ~root ~size ~page_size ~uncached ~contiguous
+      ~read_only =
+    let attr =
+      ((if contiguous then Defs.nvos32_attr_physicality_contiguous
+        else Defs.nvos32_attr_physicality_allow_noncontiguous)
+      lsl 27)
+      lor ((if page_size > 0x1000 then Defs.nvos32_attr_page_size_huge else 0)
+          lsl 23)
+      lor ((if uncached then Defs.nvos32_attr_location_pci else 0) lsl 25)
+    in
+    let attr2 =
+      ((if uncached then Defs.nvos32_attr2_gpu_cacheable_no
+        else Defs.nvos32_attr2_gpu_cacheable_yes)
+      lsl 2)
+      lor ((if page_size > 0x1000 then Defs.nvos32_attr2_page_size_huge_2mb
+            else 0)
+          lsl 20)
+      lor Defs.nvos32_attr2_zbc_prefer_no_zbc
+      lor (if read_only then Defs.nvos32_attr2_protection_user_read_only lsl 22
+           else 0)
+    in
+    let flags =
+      Defs.nvos32_alloc_flags_map_not_required
+      lor Defs.nvos32_alloc_flags_memory_handle_provided
+      lor Defs.nvos32_alloc_flags_alignment_force
+      lor Defs.nvos32_alloc_flags_ignore_bank_placement
+      lor (if not uncached then Defs.nvos32_alloc_flags_persistent_vidmem
+           else 0)
+    in
+    let cls = if uncached then Defs.nv1_memory_system else Defs.nv1_memory_user in
+    let module P = Defs.Nv_memory_allocation_params in
+    let p = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field p P.owner root;
+    Nv_tables.set_field p P.typ
+      (if uncached then Defs.nvos32_type_notifier else Defs.nvos32_type_image);
+    Nv_tables.set_field p P.flags flags;
+    Nv_tables.set_field p P.attr attr;
+    Nv_tables.set_field p P.attr2 attr2;
+    Nv_tables.set_field p P.format 6;
+    Nv_tables.set_field p P.size size;
+    Nv_tables.set_field p P.alignment page_size;
+    Nv_tables.set_field p P.limit (size - 1);
+    (cls, p)
+
+  let map_external_params ~rm_ctrl_fd ~root ~va ~size ~mem_handle ~gpu_uuid =
+    if Bytes.length gpu_uuid <> 16 then
+      invalid_arg "map_external_params: gpu uuid must be 16 bytes";
+    let module P = Defs.Uvm_map_external_allocation_params in
+    let module A = Defs.Uvm_gpu_mapping_attributes in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.base (Nativeint.to_int va);
+    Nv_tables.set_field b P.length size;
+    Nv_tables.set_field b P.rmctrlfd rm_ctrl_fd;
+    Nv_tables.set_field b P.hclient root;
+    Nv_tables.set_field b P.hmemory mem_handle;
+    Nv_tables.set_field b P.gpuattributescount 1;
+    blit_bytes b ~off:(P.pergpuattributes_offset + fst A.gpuuuid) gpu_uuid;
+    Nv_tables.set_field ~base:P.pergpuattributes_offset b A.gpumappingtype 1;
+    b
+
+  (* Object allocation and control *)
+
+  let rm_alloc' ~fd_ctl ~defs ~root ~parent ~cls ?params () =
+    let module P = Defs.Nvos21_parameters in
+    let b = nvos21_params ~root ~parent ~cls ?params () in
+    escape fd_ctl ~nr:Defs.nv_esc_rm_alloc b;
+    keep_alive params;
+    let status = Nv_tables.get_field b P.status in
+    if status = Defs.nv_err_no_memory then
+      raise
+        (Nv_iface.Out_of_memory ("rm_alloc returned " ^ error_str defs status));
+    if status <> 0 then failwith ("rm_alloc returned " ^ error_str defs status);
+    Nv_tables.get_field b P.hobjectnew
+
+  let rm_control' ~fd_ctl ~defs ~root ~obj ~cmd ?params () =
+    let module P = Defs.Nvos54_parameters in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.hclient root;
+    Nv_tables.set_field b P.hobject obj;
+    Nv_tables.set_field b P.cmd cmd;
+    Option.iter
+      (fun p ->
+        Nv_tables.set_field b P.paramssize (Bigarray.Array1.dim p);
+        Nv_tables.set_field b P.params
+          (Nativeint.to_int (Nv_tables.blob_addr p)))
+      params;
+    escape fd_ctl ~nr:Defs.nv_esc_rm_control b;
+    keep_alive params;
+    let status = Nv_tables.get_field b P.status in
+    if status <> 0 then failwith ("rm_control returned " ^ error_str defs status)
+
+  (* Root bootstrap *)
+
+  let init_root () =
+    match !state with
+    | Some st -> st
+    | None ->
+        let fd_ctl = File_io.openfile "/dev/nvidiactl" ~flags:File_io.o_rdwr in
+        let fd_uvm = File_io.openfile "/dev/nvidia-uvm" ~flags:File_io.o_rdwr in
+        let fd_uvm_2 =
+          File_io.openfile "/dev/nvidia-uvm" ~flags:File_io.o_rdwr
+        in
+        (* the root client exists before the driver generation is known;
+           the bootstrap decodes with the oldest layouts *)
+        let boot = Nv_defs_versions.v570 in
+        let root =
+          rm_alloc' ~fd_ctl ~defs:boot ~root:0 ~parent:0
+            ~cls:Defs.nv01_root_client ()
+        in
+        let module V = Defs.Nv0000_ctrl_system_get_build_version_v2_params in
+        let vb = Nv_tables.create_blob V.sizeof in
+        rm_control' ~fd_ctl ~defs:boot ~root ~obj:root
+          ~cmd:Defs.nv0000_ctrl_cmd_system_get_build_version_v2 ~params:vb ();
+        let defs = Nv_tables.defs_for_driver ~major:(driver_version_major vb) in
+        let module I = Defs.Uvm_initialize_params in
+        let ib = Nv_tables.create_blob I.sizeof in
+        uvm' ~defs ~fd:fd_uvm ~cmd:Defs.uvm_initialize ~rmstatus:I.rmstatus ib;
+        (* the memory-manager handshake may be unsupported; that failure
+           is expected and harmless *)
+        (try
+           let module M = Defs.Uvm_mm_initialize_params in
+           let mb = Nv_tables.create_blob M.sizeof in
+           Nv_tables.set_field mb M.uvmfd fd_uvm;
+           uvm' ~defs ~fd:fd_uvm_2 ~cmd:Defs.uvm_mm_initialize
+             ~rmstatus:M.rmstatus mb
+         with Failure _ -> ());
+        let module C = Defs.Nv_ioctl_card_info in
+        let cards = 64 in
+        let cb = Nv_tables.create_blob (cards * C.sizeof) in
+        escape fd_ctl ~nr:Defs.nv_esc_card_info cb;
+        let gpus = ref [] in
+        for i = cards - 1 downto 0 do
+          let base = i * C.sizeof in
+          if Nv_tables.get_field ~base cb C.valid <> 0 then
+            gpus :=
+              {
+                gpu_id = Nv_tables.get_field ~base cb C.gpu_id;
+                minor_number = Nv_tables.get_field ~base cb C.minor_number;
+              }
+              :: !gpus
+        done;
+        let st =
+          {
+            fd_ctl;
+            fd_uvm;
+            fd_uvm_2;
+            root;
+            defs;
+            gpus_info = Array.of_list !gpus;
+          }
+        in
+        state := Some st;
+        st
+
+  let rm_alloc st ~parent ~cls ?params () =
+    rm_alloc' ~fd_ctl:st.fd_ctl ~defs:st.defs ~root:st.root ~parent ~cls
+      ?params ()
+
+  let rm_control st ~obj ~cmd ?params () =
+    rm_control' ~fd_ctl:st.fd_ctl ~defs:st.defs ~root:st.root ~obj ~cmd
+      ?params ()
+
+  let uvm st ?fd ~cmd ~rmstatus b =
+    uvm' ~defs:st.defs
+      ~fd:(Option.value fd ~default:st.fd_uvm)
+      ~cmd ~rmstatus b
+
+  (* Devices *)
+
+  let new_gpu_fd st ~minor =
+    let fd =
+      File_io.openfile (Printf.sprintf "/dev/nvidia%d" minor)
+        ~flags:File_io.o_rdwr
+    in
+    let module P = Defs.Nv_ioctl_register_fd in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.ctl_fd st.fd_ctl;
+    escape fd ~nr:Defs.nv_esc_register_fd b;
+    fd
+
+  let create st ~device_id =
+    if device_id >= Array.length st.gpus_info then
+      failwith
+        (Printf.sprintf
+           "No device found for %d. Requesting more devices than the system \
+            has?"
+           device_id);
+    let gpu = st.gpus_info.(device_id) in
+    let fd_dev = new_gpu_fd st ~minor:gpu.minor_number in
+    let module P = Defs.Nv0000_ctrl_gpu_get_id_info_v2_params in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.gpuid gpu.gpu_id;
+    rm_control st ~obj:st.root ~cmd:Defs.nv0000_ctrl_cmd_gpu_get_id_info_v2
+      ~params:b ();
+    {
+      device_id;
+      fd_dev;
+      gpu_minor = gpu.minor_number;
+      gpu_instance = Nv_tables.get_field b P.deviceinstance;
+      nvdevice = 0;
+      subdevice = 0;
+      virtmem = 0;
+      gpu_uuid = Bytes.make 16 '\000';
+    }
+
+  (* Memory *)
+
+  let gpu_map_to_cpu st t ~memory_handle ~size ?target ?(flags = 0)
+      ?(system = false) () =
+    let fd =
+      if system then File_io.openfile "/dev/nvidiactl" ~flags:File_io.o_rdwr
+      else new_gpu_fd st ~minor:t.gpu_minor
+    in
+    let module W = Defs.Nv_ioctl_nvos33_parameters_with_fd in
+    let module P = Defs.Nvos33_parameters in
+    let b = Nv_tables.create_blob W.sizeof in
+    Nv_tables.set_field b P.hclient st.root;
+    Nv_tables.set_field b P.hdevice t.nvdevice;
+    Nv_tables.set_field b P.hmemory memory_handle;
+    Nv_tables.set_field b P.length size;
+    Nv_tables.set_field b P.flags flags;
+    Nv_tables.set_field b W.fd fd;
+    escape st.fd_ctl ~nr:Defs.nv_esc_rm_map_memory b;
+    let status = Nv_tables.get_field b P.status in
+    if status <> 0 then
+      failwith ("_gpu_map_to_cpu returned " ^ error_str st.defs status);
+    File_io.mmap
+      ~addr:(Option.value target ~default:0n)
+      ~size
+      ~prot:(File_io.prot_read lor File_io.prot_write)
+      ~flags:
+        (File_io.map_shared
+        lor (if target = None then 0 else File_io.map_fixed))
+      ~fd ~offset:0L
+
+  let gpu_uvm_map st t ~va ~size ~mem_handle ?(create_range = true)
+      ?(has_cpu_mapping = false) ?owner_id () =
+    if create_range then begin
+      let module C = Defs.Uvm_create_external_range_params in
+      let cb = Nv_tables.create_blob C.sizeof in
+      Nv_tables.set_field cb C.base (Nativeint.to_int va);
+      Nv_tables.set_field cb C.length size;
+      uvm st ~cmd:Defs.uvm_create_external_range ~rmstatus:C.rmstatus cb;
+      let open Nv_defs_versions in
+      let p46 = st.defs.nvos46_parameters in
+      let b = Nv_tables.create_blob p46.sizeof in
+      Nv_tables.set_field b p46.hclient st.root;
+      Nv_tables.set_field b p46.hdevice t.nvdevice;
+      Nv_tables.set_field b p46.hdma t.virtmem;
+      Nv_tables.set_field b p46.hmemory mem_handle;
+      Nv_tables.set_field b p46.length size;
+      Nv_tables.set_field b p46.flags
+        ((Defs.nvos46_flags_page_size_4kb lsl 8)
+        lor (Defs.nvos46_flags_cache_snoop_enable lsl 4)
+        lor (Defs.nvos46_flags_dma_offset_fixed_true lsl 15));
+      Nv_tables.set_field b p46.dmaoffset (Nativeint.to_int va);
+      escape st.fd_ctl ~nr:Defs.nv_esc_rm_map_memory_dma b;
+      let status = Nv_tables.get_field b p46.status in
+      if status <> 0 then
+        failwith ("nv_sys_alloc 1 returned " ^ error_str st.defs status);
+      assert (Nv_tables.get_field b p46.dmaoffset = Nativeint.to_int va)
+    end;
+    let module M = Defs.Uvm_map_external_allocation_params in
+    let mb =
+      map_external_params ~rm_ctrl_fd:st.fd_ctl ~root:st.root ~va ~size
+        ~mem_handle ~gpu_uuid:t.gpu_uuid
+    in
+    uvm st ~cmd:Defs.uvm_map_external_allocation ~rmstatus:M.rmstatus mb;
+    Hcq.Buffer.make ~va ~size
+      ?view:
+        (if has_cpu_mapping then Some (Hcq.Mmio.make ~addr:va ~size) else None)
+      ~meta:
+        {
+          Nv_iface.h_memory = mem_handle;
+          owner_id = Option.value owner_id ~default:t.device_id;
+        }
+      ()
+
+  let alloc st t ?(host = false) ?(uncached = false) ?(cpu_access = false)
+      ?(contiguous = false) ?(map_flags = 0) ?cpu_addr ?(read_only = false)
+      size =
+    (* uncached memory lives in system pages; huge pages only serve large
+       device-memory allocations *)
+    let page_size =
+      if uncached || host then 0x1000
+      else if size >= 8 lsl 20 then 2 lsl 20
+      else 4 lsl 10
+    in
+    let size = round_up size page_size in
+    let alloced = cpu_addr = None in
+    let va =
+      match cpu_addr with
+      | Some a -> a
+      | None -> alloc_gpu_vaddr ~alignment:page_size ~force_low:cpu_access size
+    in
+    if host then begin
+      let va =
+        if alloced then
+          File_io.mmap ~addr:va ~size
+            ~prot:(File_io.prot_read lor File_io.prot_write)
+            ~flags:
+              (File_io.map_fixed lor File_io.map_shared
+             lor File_io.map_anonymous)
+            ~fd:(-1) ~offset:0L
+        else va
+      in
+      let flags =
+        (Defs.nvos02_flags_physicality_noncontiguous lsl 4)
+        lor (Defs.nvos02_flags_coherency_cached lsl 12)
+        lor (Defs.nvos02_flags_mapping_no_map lsl 30)
+      in
+      incr host_object_enumerator;
+      let module W = Defs.Nv_ioctl_nvos02_parameters_with_fd in
+      let module P = Defs.Nvos02_parameters in
+      let b = Nv_tables.create_blob W.sizeof in
+      Nv_tables.set_field b P.hroot st.root;
+      Nv_tables.set_field b P.hobjectparent t.nvdevice;
+      Nv_tables.set_field b P.flags flags;
+      Nv_tables.set_field b P.hobjectnew !host_object_enumerator;
+      Nv_tables.set_field b P.hclass Defs.nv01_memory_system_os_descriptor;
+      Nv_tables.set_field b P.pmemory (Nativeint.to_int va);
+      Nv_tables.set_field b P.limit (size - 1);
+      Nv_tables.set_field b W.fd (-1);
+      escape t.fd_dev ~nr:Defs.nv_esc_rm_alloc_memory b;
+      let status = Nv_tables.get_field b P.status in
+      if status <> 0 then
+        failwith ("host alloc returned " ^ error_str st.defs status);
+      let mem_handle = Nv_tables.get_field b P.hobjectnew in
+      gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:true ()
+    end
+    else begin
+      let cls, params =
+        memory_allocation_params ~root:st.root ~size ~page_size ~uncached
+          ~contiguous ~read_only
+      in
+      let mem_handle = rm_alloc st ~parent:t.nvdevice ~cls ~params () in
+      let va =
+        if cpu_access then
+          gpu_map_to_cpu st t ~memory_handle:mem_handle ~size ~target:va
+            ~flags:map_flags ~system:uncached ()
+        else va
+      in
+      gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:cpu_access ()
+    end
+
+  let free st t buf =
+    let buf = Hcq.Buffer.base buf in
+    let meta = Hcq.Buffer.meta buf in
+    if meta.Nv_iface.owner_id = t.device_id then begin
+      (* a handle above the enumerator came from the driver: release its
+         physical memory; host objects only unregister through the
+         address-range free below *)
+      if meta.Nv_iface.h_memory > !host_object_enumerator then begin
+        let module P = Defs.Nvos00_parameters in
+        let b = Nv_tables.create_blob P.sizeof in
+        Nv_tables.set_field b P.hroot st.root;
+        Nv_tables.set_field b P.hobjectparent t.nvdevice;
+        Nv_tables.set_field b P.hobjectold meta.Nv_iface.h_memory;
+        escape st.fd_ctl ~nr:Defs.nv_esc_rm_free b;
+        let status = Nv_tables.get_field b P.status in
+        if status <> 0 then
+          failwith ("_gpu_free returned " ^ error_str st.defs status)
+      end;
+      let open Nv_defs_versions in
+      let fp = st.defs.uvm_free_params in
+      let b = Nv_tables.create_blob fp.sizeof in
+      Nv_tables.set_field b fp.base
+        (Nativeint.to_int (Hcq.Buffer.va buf));
+      Option.iter
+        (fun f -> Nv_tables.set_field b f (Hcq.Buffer.size buf))
+        fp.length;
+      uvm st ~cmd:Defs.uvm_free ~rmstatus:fp.rmstatus b;
+      match Hcq.Buffer.view buf with
+      | Some _ ->
+          File_io.munmap (Hcq.Buffer.va buf) ~size:(Hcq.Buffer.size buf)
+      | None -> ()
+    end
+
+  (* An import maps an already-created range: no new range or physical
+     memory, and the original allocator keeps ownership. *)
+  let map st t buf =
+    let meta = Hcq.Buffer.meta buf in
+    gpu_uvm_map st t ~va:(Hcq.Buffer.va buf) ~size:(Hcq.Buffer.size buf)
+      ~mem_handle:meta.Nv_iface.h_memory ~create_range:false
+      ~owner_id:meta.Nv_iface.owner_id ()
+
+  (* Channel set-up *)
+
+  let setup_usermode st t =
+    let module P = Defs.Nv0080_ctrl_gpu_get_classlist_params in
+    let nb = Nv_tables.create_blob P.sizeof in
+    rm_control st ~obj:t.nvdevice ~cmd:Defs.nv0080_ctrl_cmd_gpu_get_classlist
+      ~params:nb ();
+    let n = Nv_tables.get_field nb P.numclasses in
+    let listing = Nv_tables.create_blob (n * 4) in
+    let cb = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field cb P.numclasses n;
+    Nv_tables.set_field cb P.classlist
+      (Nativeint.to_int (Nv_tables.blob_addr listing));
+    rm_control st ~obj:t.nvdevice ~cmd:Defs.nv0080_ctrl_cmd_gpu_get_classlist
+      ~params:cb ();
+    keep_alive listing;
+    let n = Nv_tables.get_field cb P.numclasses in
+    let classes = List.init n (fun i -> Nv_tables.get_field listing (i * 4, 4)) in
+    let pick name candidates =
+      match List.find_opt (fun c -> List.mem c classes) candidates with
+      | Some c -> c
+      | None -> failwith ("setup_usermode: no supported " ^ name ^ " class")
+    in
+    let usermode_class =
+      pick "usermode" [ Defs.hopper_usermode_a; Defs.turing_usermode_a ]
+    in
+    let gpfifo_class =
+      pick "gpfifo"
+        [ Defs.blackwell_channel_gpfifo_a; Defs.ampere_channel_gpfifo_a ]
+    in
+    let compute_class =
+      pick "compute"
+        [ Defs.blackwell_compute_b; Defs.ada_compute_a; Defs.ampere_compute_b ]
+    in
+    let dma_class =
+      pick "dma" [ Defs.blackwell_dma_copy_b; Defs.ampere_dma_copy_b ]
+    in
+    let handle = rm_alloc st ~parent:t.subdevice ~cls:usermode_class () in
+    let mmio_size = 0x10000 in
+    let addr = gpu_map_to_cpu st t ~memory_handle:handle ~size:mmio_size () in
+    {
+      Nv_iface.handle;
+      mmio = Hcq.Mmio.make ~addr ~size:mmio_size;
+      compute_class;
+      dma_class;
+      gpfifo_class;
+    }
+
+  let setup_vm st t ~vaspace =
+    let module P = Defs.Nv2080_ctrl_gpu_get_gid_info_params in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.flags
+      Defs.nv2080_gpu_cmd_gpu_get_gid_flags_format_binary;
+    Nv_tables.set_field b P.length 16;
+    rm_control st ~obj:t.subdevice ~cmd:Defs.nv2080_ctrl_cmd_gpu_get_gid_info
+      ~params:b ();
+    t.gpu_uuid <- read_bytes b ~off:(fst P.data) ~len:16;
+    let module R = Defs.Uvm_register_gpu_params in
+    let rb = Nv_tables.create_blob R.sizeof in
+    blit_bytes rb ~off:(fst R.gpu_uuid) t.gpu_uuid;
+    Nv_tables.set_field rb R.rmctrlfd (-1);
+    uvm st ~cmd:Defs.uvm_register_gpu ~rmstatus:R.rmstatus rb;
+    let module V = Defs.Uvm_register_gpu_vaspace_params in
+    let vb = Nv_tables.create_blob V.sizeof in
+    blit_bytes vb ~off:(fst V.gpuuuid) t.gpu_uuid;
+    Nv_tables.set_field vb V.rmctrlfd st.fd_ctl;
+    Nv_tables.set_field vb V.hclient st.root;
+    Nv_tables.set_field vb V.hvaspace vaspace;
+    uvm st ~cmd:Defs.uvm_register_gpu_vaspace ~rmstatus:V.rmstatus vb
+
+  let setup_gpfifo_vm st t ~gpfifo =
+    let module P = Defs.Uvm_register_channel_params in
+    let b = Nv_tables.create_blob P.sizeof in
+    blit_bytes b ~off:(fst P.gpuuuid) t.gpu_uuid;
+    Nv_tables.set_field b P.rmctrlfd st.fd_ctl;
+    Nv_tables.set_field b P.hclient st.root;
+    Nv_tables.set_field b P.hchannel gpfifo;
+    Nv_tables.set_field b P.base
+      (Nativeint.to_int (alloc_gpu_vaddr ~force_low:true 0x4000000));
+    Nv_tables.set_field b P.length 0x4000000;
+    uvm st ~cmd:Defs.uvm_register_channel ~rmstatus:P.rmstatus b
+
+  let iface ~device_id : Nv_iface.t =
+    let st = init_root () in
+    let t = create st ~device_id in
+    {
+      Nv_iface.root = st.root;
+      gpu_instance = t.gpu_instance;
+      count = Array.length st.gpus_info;
+      set_device =
+        (fun ~nvdevice ~subdevice ~virtmem ->
+          t.nvdevice <- nvdevice;
+          t.subdevice <- subdevice;
+          t.virtmem <- virtmem);
+      rm_alloc =
+        (fun ~parent ~cls ?params () -> rm_alloc st ~parent ~cls ?params ());
+      rm_control =
+        (fun ~obj ~cmd ?params () -> rm_control st ~obj ~cmd ?params ());
+      alloc =
+        (fun ?host ?uncached ?cpu_access ?contiguous ?map_flags ?cpu_addr size ->
+          alloc st t ?host ?uncached ?cpu_access ?contiguous ?map_flags
+            ?cpu_addr size);
+      free = (fun buf -> free st t buf);
+      map = (fun buf -> map st t buf);
+      setup_usermode = (fun () -> setup_usermode st t);
+      setup_vm = (fun ~vaspace -> setup_vm st t ~vaspace);
+      setup_gpfifo_vm = (fun ~gpfifo -> setup_gpfifo_vm st t ~gpfifo);
+      (* no driver wait channel exists: signal waits spin *)
+      sleep = (fun (_ : int) -> ());
+      device_fini = (fun () -> ());
+      nvdev = None;
+    }
+end

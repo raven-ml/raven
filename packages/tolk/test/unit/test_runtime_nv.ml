@@ -9,10 +9,13 @@ module Mmio = Tolk_hcq.Hcq.Mmio
 module Buffer = Tolk_hcq.Hcq.Buffer
 module Q = Tolk_hcq.Hcq.Q
 module Signal = Tolk_hcq.Hcq.Signal
+module Tables = Tolk_nv.Nv_tables
 module Defs = Tolk_nv.Nv_tables.Defs
 module Qmd = Tolk_nv.Qmd
 module Compute_queue = Tolk_nv.Compute_queue
 module Copy_queue = Tolk_nv.Copy_queue
+module Nv_iface = Tolk_nv.Nv_iface
+module Nvk_iface = Tolk_nv.Nvk_iface
 
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
 
@@ -87,6 +90,40 @@ let nv_prog ?(cbuf0_size = 0x160) (dev : unit Tolk_nv.device) m =
 
 let dwords cq = Q.dwords (Compute_queue.q cq)
 let copy_dwords cq = Q.dwords (Copy_queue.q cq)
+
+(* Wire-format tests compare structures as hex strings so a mismatch
+   shows the whole layout. *)
+let blob_hex (b : Tables.blob) =
+  String.concat ""
+    (List.init (Bigarray.Array1.dim b) (fun i ->
+         Printf.sprintf "%02x" (Char.code (Bigarray.Array1.get b i))))
+
+let bytes_hex b =
+  String.concat ""
+    (List.init (Bytes.length b) (fun i ->
+         Printf.sprintf "%02x" (Char.code (Bytes.get b i))))
+
+let version_blob s =
+  let b =
+    Tables.create_blob
+      Defs.Nv0000_ctrl_system_get_build_version_v2_params.sizeof
+  in
+  String.iteri (fun i c -> Bigarray.Array1.set b i c) s;
+  b
+
+(* Opening the kernel driver needs Linux, the driver and a device; the
+   first failure to do so skips every device test. *)
+let nvk_iface =
+  let cached = ref None in
+  fun () ->
+    match !cached with
+    | Some i -> i
+    | None -> (
+        try
+          let i = Nvk_iface.iface ~device_id:0 in
+          cached := Some i;
+          i
+        with Failure msg -> skip ~reason:msg ())
 
 (* The kernel-argument area's descriptor copy: cbuf0_size 0x160 rounds
    up to 0x200. *)
@@ -522,5 +559,166 @@ let () =
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
                   equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
                   equal int 3 qd.Tolk_nv.Queue_desc.put_value));
+        ];
+      group "iface wire formats"
+        [
+          test "the allocation envelope wires the nested parameter pointer"
+            (fun () ->
+              let inner = Tables.create_blob 0x38 in
+              let b =
+                Nvk_iface.nvos21_params ~root:0xc1d00001 ~parent:0xbeef
+                  ~cls:0x80 ~params:inner ()
+              in
+              let expected = Bytes.make 0x20 '\000' in
+              Bytes.set_int32_le expected 0x00 0xc1d00001l;
+              Bytes.set_int32_le expected 0x04 0xbeefl;
+              Bytes.set_int32_le expected 0x0c 0x80l;
+              Bytes.set_int64_le expected 0x10
+                (Int64.of_nativeint (Tables.blob_addr inner));
+              equal string (bytes_hex expected) (blob_hex b);
+              (* without a parameter structure the pointer stays null *)
+              let bare = Nvk_iface.nvos21_params ~root:1 ~parent:2 ~cls:3 () in
+              equal int 0
+                (Tables.get_field bare Defs.Nvos21_parameters.pallocparms));
+          test "memory allocation parameters compose the attribute words"
+            (fun () ->
+              (* cached, contiguous device memory in 2 MiB pages *)
+              let cls, p =
+                Nvk_iface.memory_allocation_params ~root:0xc1d00001
+                  ~size:0x200000 ~page_size:0x200000 ~uncached:false
+                  ~contiguous:true ~read_only:false
+              in
+              equal int Defs.nv1_memory_user cls;
+              let expected = Bytes.make 0x80 '\000' in
+              Bytes.set_int32_le expected 0x00 0xc1d00001l;
+              (* map-not-required, handle-provided, forced alignment,
+                 ignored bank placement, persistent *)
+              Bytes.set_int32_le expected 0x08 0x1c101l;
+              (* contiguous at 27, huge pages at 23 *)
+              Bytes.set_int32_le expected 0x18 0x11800000l;
+              (* cacheable at 2, huge 2 MiB at 20, no zbc *)
+              Bytes.set_int32_le expected 0x1c 0x100005l;
+              Bytes.set_int32_le expected 0x20 6l;
+              Bytes.set_int64_le expected 0x40 0x200000L;
+              Bytes.set_int64_le expected 0x48 0x200000L;
+              Bytes.set_int64_le expected 0x58 0x1fffffL;
+              equal string (bytes_hex expected) (blob_hex p);
+              (* uncached, read-only system pages *)
+              let cls, p =
+                Nvk_iface.memory_allocation_params ~root:0xc1d00001 ~size:0x1000
+                  ~page_size:0x1000 ~uncached:true ~contiguous:false
+                  ~read_only:true
+              in
+              equal int Defs.nv1_memory_system cls;
+              let expected = Bytes.make 0x80 '\000' in
+              Bytes.set_int32_le expected 0x00 0xc1d00001l;
+              (* notifier type *)
+              Bytes.set_int32_le expected 0x04 0xdl;
+              (* no persistent-vidmem flag for system pages *)
+              Bytes.set_int32_le expected 0x08 0xc101l;
+              (* noncontiguous at 27, system location at 25 *)
+              Bytes.set_int32_le expected 0x18 0x1a000000l;
+              (* uncacheable at 2, no zbc, read-only protection at 22 *)
+              Bytes.set_int32_le expected 0x1c 0x400009l;
+              Bytes.set_int32_le expected 0x20 6l;
+              Bytes.set_int64_le expected 0x40 0x1000L;
+              Bytes.set_int64_le expected 0x48 0x1000L;
+              Bytes.set_int64_le expected 0x58 0xfffL;
+              equal string (bytes_hex expected) (blob_hex p));
+          test "the mapping request carries one gpu attribute" (fun () ->
+              let uuid = Bytes.init 16 (fun i -> Char.chr (0xa0 + i)) in
+              let b =
+                Nvk_iface.map_external_params ~rm_ctrl_fd:7 ~root:0xc1d00001
+                  ~va:0x1234500000n ~size:0x10000 ~mem_handle:0x5abc1234
+                  ~gpu_uuid:uuid
+              in
+              let expected = Bytes.make 0x2430 '\000' in
+              Bytes.set_int64_le expected 0x00 0x1234500000L;
+              Bytes.set_int64_le expected 0x08 0x10000L;
+              Bytes.blit uuid 0 expected 0x18 16;
+              (* mapping type of the single attribute entry *)
+              Bytes.set_int32_le expected 0x28 1l;
+              Bytes.set_int64_le expected 0x2418 1L;
+              Bytes.set_int32_le expected 0x2420 7l;
+              Bytes.set_int32_le expected 0x2424 0xc1d00001l;
+              Bytes.set_int32_le expected 0x2428 0x5abc1234l;
+              equal string (bytes_hex expected) (blob_hex b);
+              raises_match is_invalid_arg (fun () ->
+                  Nvk_iface.map_external_params ~rm_ctrl_fd:0 ~root:0 ~va:0n
+                    ~size:0 ~mem_handle:0 ~gpu_uuid:(Bytes.create 8)));
+          test "escape request codes embed the parameter sizes" (fun () ->
+              equal int 0xc00446c9
+                (Tables.escape_code ~nr:Defs.nv_esc_register_fd
+                   ~size:Defs.Nv_ioctl_register_fd.sizeof);
+              (* card enumeration passes an array of 64 entries *)
+              equal int 0xd20046c8
+                (Tables.escape_code ~nr:Defs.nv_esc_card_info
+                   ~size:(64 * Defs.Nv_ioctl_card_info.sizeof));
+              equal int 0xc020462a
+                (Tables.escape_code ~nr:Defs.nv_esc_rm_control
+                   ~size:Defs.Nvos54_parameters.sizeof);
+              equal int 0xc0104629
+                (Tables.escape_code ~nr:Defs.nv_esc_rm_free
+                   ~size:Defs.Nvos00_parameters.sizeof);
+              (* the dma-mapping parameters grew at 580, moving the code *)
+              equal int 0xc0384657
+                (Tables.escape_code ~nr:Defs.nv_esc_rm_map_memory_dma
+                   ~size:0x38);
+              equal int 0xc0404657
+                (Tables.escape_code ~nr:Defs.nv_esc_rm_map_memory_dma
+                   ~size:0x40));
+        ];
+      group "driver version"
+        [
+          test "the reported version selects the layout generation" (fun () ->
+              equal int 570
+                (Nvk_iface.driver_version_major (version_blob "570.144.03"));
+              let sel s =
+                Tables.defs_for_driver
+                  ~major:(Nvk_iface.driver_version_major (version_blob s))
+              in
+              is_true ~msg:"570" (sel "570.144.03" == Tables.Versions.v570);
+              is_true ~msg:"575" (sel "575.51.02" == Tables.Versions.v570);
+              is_true ~msg:"580" (sel "580.65.06" == Tables.Versions.v580);
+              is_true ~msg:"609" (sel "609.1" == Tables.Versions.v580);
+              is_true ~msg:"615" (sel "615.29" == Tables.Versions.v610);
+              raises_match
+                (function Failure _ -> true | _ -> false)
+                (fun () ->
+                  Nvk_iface.driver_version_major (version_blob "unknown")));
+        ];
+      group "va allocator"
+        [
+          test "cpu-visible ranges come from the low window" (fun () ->
+              let a =
+                Nativeint.to_int
+                  (Nvk_iface.alloc_gpu_vaddr ~force_low:true 0x4000)
+              in
+              let b =
+                Nativeint.to_int
+                  (Nvk_iface.alloc_gpu_vaddr ~force_low:true 0x4000)
+              in
+              is_true ~msg:"low base" (a >= 0x1000000000);
+              is_true ~msg:"below the split" (b + 0x4000 <= 0x2000000000);
+              is_true ~msg:"disjoint" (b >= a + 0x4000);
+              equal int 0 (a land 0xfff));
+          test "device-only ranges come from above the split" (fun () ->
+              let a = Nativeint.to_int (Nvk_iface.alloc_gpu_vaddr 0x1000) in
+              is_true ~msg:"high base" (a >= 0x2000000000);
+              let b =
+                Nativeint.to_int
+                  (Nvk_iface.alloc_gpu_vaddr ~alignment:0x200000 0x1000)
+              in
+              equal int 0 (b land 0x1fffff);
+              is_true ~msg:"disjoint" (b >= a + 0x1000));
+        ];
+      group "device"
+        [
+          test "the interface opens and enumerates" (fun () ->
+              let i = nvk_iface () in
+              is_true ~msg:"count" (i.Nv_iface.count >= 1);
+              is_true ~msg:"root" (i.Nv_iface.root <> 0);
+              is_true ~msg:"instance" (i.Nv_iface.gpu_instance >= 0);
+              is_true ~msg:"kernel driver" (not (Nv_iface.is_nvd i)));
         ];
     ]
