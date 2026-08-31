@@ -333,6 +333,85 @@ let mkdir_p path =
 let write_file path content =
   Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc content)
 
+(* The falcon execution layer, on a scripted device: a register file over
+   a hashtable with per-address read hooks and a chronological write log,
+   an anonymous mapping standing in for the VRAM BAR, and a clock that
+   advances one millisecond per reading so the boot delays consume no wall
+   time. The primitives are driven directly and their register traffic
+   checked against hand-computed goldens; init_sw and init_hw compose them
+   over parsed firmware and are exercised only on real hardware. *)
+
+module Nvdev = Tolk_nv.Nvdev
+module Nv_reg = Nvdev.Nv_reg
+
+let falcon_base = 0x00110000
+let sec2_base = 0x00840000
+
+type fake = {
+  dev : Nvdev.t;
+  reads : (int, unit -> int) Hashtbl.t;
+  log : (int * int) list ref;
+}
+
+let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1) f =
+  with_mem 0x5000000 (fun fvram ->
+      let store = Hashtbl.create 64 in
+      let reads = Hashtbl.create 64 in
+      let log = ref [] in
+      let clock = ref 0 in
+      Hashtbl.replace store 0x0 boot0 (* NV_PMC_BOOT_0 *);
+      Hashtbl.replace store 0xa00 ((arch lsl 24) lor (impl lsl 20))
+      (* NV_PMC_BOOT_42 *);
+      Hashtbl.replace store 0x1183a4 80 (* SCRATCH_GROUP_42: 80MB *);
+      let rreg addr =
+        match Hashtbl.find_opt reads addr with
+        | Some hook -> hook ()
+        | None -> Option.value ~default:0 (Hashtbl.find_opt store addr)
+      in
+      let wreg addr v =
+        log := (addr, v) :: !log;
+        Hashtbl.replace store addr v
+      in
+      let dev =
+        Nvdev.make
+          ~now_ms:(fun () ->
+            incr clock;
+            !clock)
+          ~bar1_base:0x40000000 ~rreg ~wreg
+          ~mmio:(Mmio.view fvram ~off:0 ~size:0x1000 ())
+          ~vram:fvram ~devfmt:"test" ()
+      in
+      f { dev; reads; log })
+
+(* The write log in the order the primitives issued it. *)
+let writes fd = List.rev !(fd.log)
+
+(* The write log as [addr:value] hex pairs, for goldens. *)
+let show_writes fd =
+  List.map (fun (a, v) -> Printf.sprintf "%x:%x" a v) (writes fd)
+
+(* The falcon register families init_sw would resolve, included up front
+   so the primitives can be driven on their own. *)
+let include_falcon fd =
+  List.iter
+    (fun (family, arch) -> Nvdev.include_regs fd.dev ~family ~arch)
+    [
+      ("dev_gsp", "ga102"); ("dev_falcon_v4", "ga102");
+      ("dev_riscv_pri", "ga102"); ("dev_fbif_v4", "ga102");
+      ("dev_falcon_second_pri", "ga102"); ("dev_sec_pri", "ga102");
+      ("dev_bus", "tu102");
+    ]
+
+let addr_of fd ?base ?idx name =
+  let r = Nvdev.reg fd.dev name in
+  let r = match base with Some b -> Nv_reg.with_base r b | None -> r in
+  let r = match idx with Some i -> Nv_reg.with_idx r i | None -> r in
+  Nv_reg.addr r
+
+(* Install a constant read-back at a register's resolved address. *)
+let set_read fd ?base ?idx name v =
+  Hashtbl.replace fd.reads (addr_of fd ?base ?idx name) (fun () -> v)
+
 let () =
   run "Nv_ip"
     [
@@ -840,5 +919,198 @@ let () =
           test "arguments past the command count fail loudly" (fun () ->
               raises_failure_with [ "truncated command stream" ] (fun () ->
                   ignore (run_seq ~cmd_index:2 [ 0x0; 0x42 ])));
+        ];
+      group "falcon reset"
+        [
+          test "the GSP falcon resets and selects its RISC-V core"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  (* scrubbing done, the block carries a RISC-V core, and
+                     it validates once selected. *)
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_HWCFG2"
+                    (1 lsl 10);
+                  set_read fd ~base:falcon_base "NV_PRISCV_RISCV_BCR_CTRL" 1;
+                  Ip.Flcn.reset flcn falcon_base;
+                  equal (list string)
+                    [
+                      "1103c0:1"; "1103c0:0"; "111668:0"; "110084:174000a1";
+                    ]
+                    (show_writes fd)));
+          test "a RISC-V reset leaves the core fetching its bootloader"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_HWCFG2" 0;
+                  Ip.Flcn.reset flcn ~riscv:true falcon_base;
+                  equal (list string)
+                    [ "1103c0:1"; "1103c0:0"; "111668:110" ]
+                    (show_writes fd)));
+          test "the SEC2 booter resets without a RISC-V core" (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:sec2_base "NV_PFALCON_FALCON_HWCFG2" 0;
+                  Ip.Flcn.reset flcn sec2_base;
+                  equal (list string)
+                    [ "8403c0:1"; "8403c0:0" ]
+                    (show_writes fd)));
+        ];
+      group "falcon core control"
+        [
+          test "disable_ctx_req opens context-free physical DMA" (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  Ip.Flcn.disable_ctx_req flcn falcon_base;
+                  equal (list string)
+                    [ "110624:80"; "11010c:0" ]
+                    (show_writes fd)));
+          test "start_cpu starts the core directly when no alias" (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_CPUCTL" 0;
+                  Ip.Flcn.start_cpu flcn falcon_base;
+                  equal (list string) [ "110100:2" ] (show_writes fd)));
+          test "start_cpu uses the alias register when enabled" (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_CPUCTL"
+                    (1 lsl 6);
+                  Ip.Flcn.start_cpu flcn falcon_base;
+                  equal (list string) [ "110130:2" ] (show_writes fd)));
+          test "wait_cpu_halted returns once the core halts" (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_CPUCTL"
+                    (1 lsl 4);
+                  Ip.Flcn.wait_cpu_halted flcn falcon_base;
+                  equal (list string) [] (show_writes fd)));
+          test "wait_cpu_halted times out on a running core" (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_CPUCTL" 0;
+                  raises_timeout_with [ "not halted" ] (fun () ->
+                      Ip.Flcn.wait_cpu_halted flcn falcon_base)));
+        ];
+      group "falcon execute_hs"
+        [
+          test "a heavy-secured run loads both memories and boots the core"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  (* the DMA queue is free and idle, and the core halts. *)
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_DMATRFCMD"
+                    0x2;
+                  set_read fd ~base:falcon_base "NV_PFALCON_FALCON_CPUCTL"
+                    (1 lsl 4);
+                  let r =
+                    Ip.Flcn.execute_hs flcn falcon_base ~img_paddr:0x10000000
+                      ~code_off:0x0 ~data_off:0x800 ~imem_pa:0x1000
+                      ~imem_va:0x100 ~imem_sz:256 ~dmem_pa:0x2000 ~dmem_va:0x0
+                      ~dmem_sz:256 ~pkc_off:0x300 ~engid:0x2 ~ucodeid:0x3 ()
+                  in
+                  equal (option (pair int int)) None r;
+                  equal (list string)
+                    [
+                      "110624:80"; "11010c:0"; "110600:4"; "110110:fffff";
+                      "110128:0"; "110114:1000"; "11011c:100"; "110118:614";
+                      "110110:100008"; "110128:0"; "110114:2000"; "11011c:0";
+                      "110118:600"; "111210:300"; "11119c:2"; "111198:3";
+                      "111180:1"; "110104:100"; "110100:2";
+                    ]
+                    (show_writes fd)));
+          test "a mailbox seed is written and the pair is read back"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  include_falcon fd;
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd ~base:sec2_base "NV_PFALCON_FALCON_DMATRFCMD" 0x2;
+                  set_read fd ~base:sec2_base "NV_PFALCON_FALCON_CPUCTL"
+                    (1 lsl 4);
+                  set_read fd ~base:sec2_base "NV_PFALCON_FALCON_MAILBOX0"
+                    0xdead;
+                  set_read fd ~base:sec2_base "NV_PFALCON_FALCON_MAILBOX1"
+                    0xbeef;
+                  let r =
+                    Ip.Flcn.execute_hs flcn sec2_base ~img_paddr:0x0
+                      ~code_off:0x0 ~data_off:0x0 ~imem_pa:0x0 ~imem_va:0x0
+                      ~imem_sz:0 ~dmem_pa:0x0 ~dmem_va:0x0 ~dmem_sz:0
+                      ~pkc_off:0x10 ~engid:1 ~ucodeid:3 ~mailbox:0x123456789 ()
+                  in
+                  equal (option (pair int int)) (Some (0xdead, 0xbeef)) r;
+                  let mb =
+                    List.filter_map
+                      (fun (a, v) ->
+                        if a = 0x840040 || a = 0x840044 then
+                          Some (Printf.sprintf "%x:%x" a v)
+                        else None)
+                      (writes fd)
+                  in
+                  equal (list string) [ "840040:23456789"; "840044:1" ] mb));
+        ];
+      group "falcon wait_for_reset"
+        [
+          test "returns once the boot-progress scratch reports complete"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd
+                    "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK" 1;
+                  set_read fd ~idx:0 "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05"
+                    0xff;
+                  Ip.Flcn.wait_for_reset flcn;
+                  equal (list string) [] (show_writes fd)));
+          test "keeps waiting until both conditions hold" (fun () ->
+              with_fake_dev (fun fd ->
+                  let flcn = Ip.Flcn.create fd.dev in
+                  set_read fd
+                    "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK" 1;
+                  set_read fd ~idx:0 "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05"
+                    0x00;
+                  raises_timeout_with [ "waiting for reset" ] (fun () ->
+                      Ip.Flcn.wait_for_reset flcn)));
+        ];
+      group "chain-of-trust execution"
+        [
+          test "wait_for_reset polls the thermal scratch" (fun () ->
+              with_fake_dev (fun fd ->
+                  let cot = Ip.Flcn_cot.create fd.dev in
+                  Hashtbl.replace fd.reads 0xad00bc (fun () -> 0xff);
+                  Ip.Flcn_cot.wait_for_reset cot;
+                  equal (list string) [] (show_writes fd)));
+          test "kfsp_send_msg frames, pushes and drains a message"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  Nvdev.include_regs fd.dev ~family:"dev_fsp_pri" ~arch:"gh100";
+                  let cot = Ip.Flcn_cot.create fd.dev in
+                  (* a reply is already queued: head past tail. *)
+                  Hashtbl.replace fd.reads 0x8f2c80 (fun () -> 1);
+                  Hashtbl.replace fd.reads 0x8f2c84 (fun () -> 0);
+                  let payload = Bytes.create 8 in
+                  set32 payload 0 0x44332211;
+                  set32 payload 4 0x88776655;
+                  Ip.Flcn_cot.kfsp_send_msg cot ~nvmd:0x14 payload;
+                  equal (list string)
+                    [
+                      "8f2ac0:1000000"; "8f2ac4:c0000000"; "8f2ac4:1410de7e";
+                      "8f2ac4:44332211"; "8f2ac4:88776655"; "8f2ac4:0";
+                      "8f2c04:10"; "8f2c00:0"; "8f2ac0:2000000"; "8f2c84:1";
+                    ]
+                    (show_writes fd)));
+          test "kfsp_send_msg rejects an oversized message" (fun () ->
+              with_fake_dev (fun fd ->
+                  Nvdev.include_regs fd.dev ~family:"dev_fsp_pri" ~arch:"gh100";
+                  let cot = Ip.Flcn_cot.create fd.dev in
+                  raises_failure_with [ "FSP message too long" ] (fun () ->
+                      Ip.Flcn_cot.kfsp_send_msg cot ~nvmd:0x14
+                        (Bytes.make 0x400 '\000'))));
         ];
     ]

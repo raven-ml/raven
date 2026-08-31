@@ -205,6 +205,107 @@ module Flcn : sig
       returning the image and its code and data spans.
 
       Raises [Invalid_argument] on a read past the end of [blob]. *)
+
+  (** {2:falcon_exec Falcon execution} *)
+
+  type t
+  (** The type for the falcon execution layer of one device. It drives
+      two microcontrollers: the GSP falcon that runs the resident
+      firmware and the SEC2 booter that unlocks the write-protected
+      region. *)
+
+  val create : Nvdev.t -> t
+  (** [create nvdev] is the falcon execution layer of [nvdev]. It holds
+      no prepared state until {!init_sw}. *)
+
+  val falcon : t -> int
+  (** [falcon t] is the register-block base of the GSP falcon. *)
+
+  val sec2 : t -> int
+  (** [sec2 t] is the register-block base of the SEC2 booter. *)
+
+  val wait_for_reset : t -> unit
+  (** [wait_for_reset t] blocks until the boot-progress scratch reports
+      the device is out of reset and secure boot has completed. Raises
+      {!Timeout_error} if it does not within ten seconds. *)
+
+  val init_sw : t -> unit
+  (** [init_sw t] resolves the falcon register families on the device,
+      reads the VBIOS, and loads the FWSEC ucode and the booter image
+      into device memory, remembering where they landed for {!init_hw}.
+
+      Raises [Failure] on a malformed VBIOS, a missing or mismatched
+      firmware file, or a boot-memory allocation that yields no
+      device-local address (see {!Firmware.fetch} and {!prep_ucode}). *)
+
+  val init_hw : t -> libos_args_sysmem:int -> wpr_meta_sysmem:int -> unit
+  (** [init_hw t ~libos_args_sysmem ~wpr_meta_sysmem] brings the falcons
+      up: it runs the FWSEC ucode to reserve the resident tables,
+      restarts the GSP falcon as RISC-V with [libos_args_sysmem] in its
+      mailbox, then runs the booter with [wpr_meta_sysmem] to unlock the
+      write-protected region, and confirms the GSP core is active. The
+      two addresses are the boot-argument and write-protect-metadata
+      regions the GSP client sets up.
+
+      Requires {!init_sw} to have run. Raises [Failure] if the resident
+      tables are not initialized, the booter reports a nonzero mailbox,
+      or the GSP core does not come up active, and {!Timeout_error} if a
+      hardware wait expires. *)
+
+  val reset : t -> ?riscv:bool -> int -> unit
+  (** [reset t base] resets the microcontroller at [base]: it pulses the
+      engine reset, waits for memory scrubbing to finish, and brings the
+      RISC-V core out of reset. [riscv] (defaults to [false]) leaves it
+      fetching its own bootloader; otherwise the falcon core is selected
+      and the chip id is stamped. Raises {!Timeout_error} on a wait
+      expiry. *)
+
+  val disable_ctx_req : t -> int -> unit
+  (** [disable_ctx_req t base] configures the microcontroller at [base]
+      to allow context-free physical DMA. *)
+
+  val start_cpu : t -> int -> unit
+  (** [start_cpu t base] starts the core of the microcontroller at
+      [base], through its alias register when the alias path is enabled
+      and directly otherwise. *)
+
+  val wait_cpu_halted : t -> int -> unit
+  (** [wait_cpu_halted t base] blocks until the core at [base] halts.
+      Raises {!Timeout_error} if it does not within ten seconds. *)
+
+  val execute_hs :
+    t ->
+    int ->
+    img_paddr:int ->
+    code_off:int ->
+    data_off:int ->
+    imem_pa:int ->
+    imem_va:int ->
+    imem_sz:int ->
+    dmem_pa:int ->
+    dmem_va:int ->
+    dmem_sz:int ->
+    pkc_off:int ->
+    engid:int ->
+    ucodeid:int ->
+    ?mailbox:int ->
+    unit ->
+    (int * int) option
+  (** [execute_hs t base ~img_paddr ~code_off ~data_off ~imem_pa ~imem_va
+      ~imem_sz ~dmem_pa ~dmem_va ~dmem_sz ~pkc_off ~engid ~ucodeid ()]
+      runs a heavy-secured image on the microcontroller at [base]: it
+      loads the image's instruction memory (from [img_paddr + code_off],
+      [imem_sz] bytes to [imem_pa] at virtual base [imem_va]) and data
+      memory (from [img_paddr + data_off], [dmem_sz] bytes to [dmem_pa]
+      at virtual base [dmem_va]) over physical DMA, programs the boot ROM
+      with the signature parameters ([pkc_off], [engid], [ucodeid]), and
+      runs the core to completion.
+
+      [mailbox], when given, seeds the mailbox before the run — the
+      booter reads its write-protect metadata address there — and the
+      result is the mailbox pair read back after the halt; without it the
+      result is [None]. Raises {!Timeout_error} on a DMA or halt wait
+      expiry. *)
 end
 
 (** {1:cot Chain-of-trust boot image} *)
@@ -224,6 +325,53 @@ module Flcn_cot : sig
 
       Raises [Failure] if a required section is missing, and
       [Invalid_argument] if [blob] is not a valid ELF object. *)
+
+  (** {2:cot_exec Chain-of-trust execution} *)
+
+  type t
+  (** The type for the chain-of-trust boot layer of one device, used on
+      chips that boot the GSP through the secure security processor
+      rather than the falcon bootloader. *)
+
+  val create : Nvdev.t -> t
+  (** [create nvdev] is the chain-of-trust boot layer of [nvdev]. It
+      holds no prepared state until {!init_sw}. *)
+
+  val wait_for_reset : t -> unit
+  (** [wait_for_reset t] resolves the thermal registers and blocks until
+      their scratch reports the device is out of reset. Raises
+      {!Timeout_error} if it does not within ten seconds. *)
+
+  val init_sw : t -> unit
+  (** [init_sw t] resolves the chain-of-trust register families on the
+      device, reserves the GSP boot-argument region, and loads the
+      chain-of-trust firmware image into device memory for {!init_hw}.
+
+      Raises [Failure] on a missing or mismatched firmware file (see
+      {!Firmware.fetch}). *)
+
+  val init_hw : t -> libos_args_sysmem:int -> wpr_meta_sysmem:int -> unit
+  (** [init_hw t ~libos_args_sysmem ~wpr_meta_sysmem] boots the GSP
+      through the security processor: it fills the boot-argument region
+      with the GSP-RM block (naming [wpr_meta_sysmem]) and the RM block
+      (naming [libos_args_sysmem]), builds the chain-of-trust payload
+      over the firmware's hash, signature and public key, hands it to the
+      security processor, and waits for the RISC-V boot lockdown to clear.
+      The two addresses are the boot-argument and write-protect-metadata
+      regions the GSP client sets up.
+
+      Requires {!init_sw} to have run. Raises {!Timeout_error} on a
+      security-processor or lockdown wait expiry, and [Failure] if the
+      payload exceeds the security processor's message window. *)
+
+  val kfsp_send_msg : t -> nvmd:int -> bytes -> unit
+  (** [kfsp_send_msg t ~nvmd msg] sends the single-packet message [msg]
+      on NVDM channel [nvmd] to the security processor through its
+      external memory window, waits for a reply, and drains the reply
+      queue. [msg] is framed with the packet and channel headers and
+      padded to a word; the framed message must be under 1 KiB. Raises
+      [Failure] when it is not, and {!Timeout_error} if no reply arrives
+      within ten seconds. *)
 end
 
 (** {1:gsp GSP firmware image} *)

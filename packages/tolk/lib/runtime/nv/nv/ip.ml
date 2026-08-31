@@ -351,7 +351,26 @@ module Rpc_queue = struct
     attempt ()
 end
 
-(* Falcon microcontroller boot images *)
+(* Falcon microcontroller boot images and execution *)
+
+module R = Nvdev.Nv_reg
+
+let lo32 v = v land 0xffffffff
+let hi32 v = v lsr 32
+
+(* A device register resolved by name and rebased onto a block. *)
+let based nvdev name base = R.with_base (Nvdev.reg nvdev name) base
+
+(* The device clock shaped for [wait_cond]. *)
+let dev_clock nvdev () = Nvdev.now_ms nvdev
+
+(* time.sleep over the device clock, so a scripted clock makes the boot
+   delays consume no wall time. *)
+let sleep_ms nvdev ms =
+  let start = Nvdev.now_ms nvdev in
+  while Nvdev.now_ms nvdev - start < ms do
+    ()
+  done
 
 module Flcn = struct
   type desc = {
@@ -569,6 +588,308 @@ module Flcn = struct
       code_off = app_offset;
       code_sz = app_size;
     }
+
+  (* The prepared boot state produced by {!init_sw}: the parsed images
+     and the device-local addresses they were loaded at. *)
+  type prepared = {
+    ucode : ucode;
+    frts_image_paddr : int;
+    booter_prep : booter;
+    booter_image_paddr : int;
+  }
+
+  (* The falcon execution layer drives two microcontrollers at their
+     fixed register-block bases: the GSP falcon and the SEC2 booter. *)
+  type t = {
+    nvdev : Nvdev.t;
+    falcon : int;
+    sec2 : int;
+    mutable prepared : prepared option;
+  }
+
+  let create nvdev =
+    { nvdev; falcon = 0x00110000; sec2 = 0x00840000; prepared = None }
+
+  let falcon t = t.falcon
+  let sec2 t = t.sec2
+
+  let require_prepared t =
+    match t.prepared with
+    | Some p -> p
+    | None -> invalid_arg "Flcn: init_sw must run before init_hw"
+
+  (* ip.py:94 NV_FLCN.wait_for_reset: the boot-progress scratch reports
+     the device is out of reset and secure boot has completed. *)
+  let wait_for_reset t =
+    wait_cond (dev_clock t.nvdev) ~value:1 ~msg:"waiting for reset" (fun () ->
+        let plm =
+          R.read_bitfields
+            (Nvdev.reg t.nvdev
+               "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK")
+        in
+        let scratch =
+          R.read
+            (R.with_idx
+               (Nvdev.reg t.nvdev "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05")
+               0)
+        in
+        if
+          List.assoc "read_protection_level0" plm = 1
+          && scratch land 0xff = 0xff
+        then 1
+        else 0)
+
+  (* ip.py:271 reset: pulse the engine reset, wait for memory scrubbing,
+     then bring the RISC-V core out of reset — either into bootloader
+     fetch ([riscv]) or by selecting the falcon core and stamping the
+     chip id. *)
+  let reset t ?(riscv = false) base =
+    let engine_reg =
+      if base = t.falcon then Nvdev.reg t.nvdev "NV_PGSP_FALCON_ENGINE"
+      else Nvdev.reg t.nvdev "NV_PSEC_FALCON_ENGINE"
+    in
+    R.write engine_reg [ ("reset", 1) ];
+    sleep_ms t.nvdev 100;
+    R.write engine_reg [ ("reset", 0) ];
+    wait_cond (dev_clock t.nvdev) ~value:0 ~msg:"Scrubbing not completed"
+      (fun () ->
+        List.assoc "mem_scrubbing"
+          (R.read_bitfields (based t.nvdev "NV_PFALCON_FALCON_HWCFG2" base)));
+    if riscv then
+      R.write
+        (based t.nvdev "NV_PRISCV_RISCV_BCR_CTRL" base)
+        [ ("core_select", 1); ("valid", 0); ("brfetch", 1) ]
+    else if
+      List.assoc "riscv"
+        (R.read_bitfields (based t.nvdev "NV_PFALCON_FALCON_HWCFG2" base))
+      = 1
+    then begin
+      R.write
+        (based t.nvdev "NV_PRISCV_RISCV_BCR_CTRL" base)
+        [ ("core_select", 0) ];
+      wait_cond (dev_clock t.nvdev) ~value:1 ~msg:"RISCV core not booted"
+        (fun () ->
+          List.assoc "valid"
+            (R.read_bitfields
+               (based t.nvdev "NV_PRISCV_RISCV_BCR_CTRL" base)));
+      R.write
+        (based t.nvdev "NV_PFALCON_FALCON_RM" base)
+        ~value:(Nvdev.chip_id t.nvdev) []
+    end
+
+  (* ip.py:267 disable_ctx_req: allow context-free physical DMA and clear
+     the DMA control so transfers need no bound context. *)
+  let disable_ctx_req t base =
+    R.update
+      (based t.nvdev "NV_PFALCON_FBIF_CTL" base)
+      [ ("allow_phys_no_ctx", 1) ];
+    R.write (based t.nvdev "NV_PFALCON_FALCON_DMACTL" base) ~value:0 []
+
+  (* ip.py:229 start_cpu: start the core through its alias when the alias
+     path is enabled, otherwise directly. *)
+  let start_cpu t base =
+    let cpuctl = based t.nvdev "NV_PFALCON_FALCON_CPUCTL" base in
+    if List.assoc "alias_en" (R.read_bitfields cpuctl) = 1 then
+      Nvdev.wreg t.nvdev
+        (base + Nvdev.const t.nvdev "NV_PFALCON_FALCON_CPUCTL_ALIAS")
+        0x2
+    else R.write cpuctl [ ("startcpu", 1) ]
+
+  (* ip.py:234 wait_cpu_halted *)
+  let wait_cpu_halted t base =
+    wait_cond (dev_clock t.nvdev) ~value:1 ~msg:"not halted" (fun () ->
+        List.assoc "halted"
+          (R.read_bitfields (based t.nvdev "NV_PFALCON_FALCON_CPUCTL" base)))
+
+  (* ip.py:212 execute_dma: point the DMA base at the source, then walk it
+     across the region in 256-byte transfers, waiting on the queue between
+     each and for the engine to idle at the end. *)
+  let execute_dma t base ~cmd ~dest ~mem_off ~src ~size =
+    let poll_full () =
+      wait_cond (dev_clock t.nvdev) ~value:0 ~msg:"DMA does not progress"
+        (fun () ->
+          List.assoc "full"
+            (R.read_bitfields
+               (based t.nvdev "NV_PFALCON_FALCON_DMATRFCMD" base)))
+    in
+    poll_full ();
+    R.write
+      (based t.nvdev "NV_PFALCON_FALCON_DMATRFBASE" base)
+      ~value:(lo32 (src lsr 8)) [];
+    R.write
+      (based t.nvdev "NV_PFALCON_FALCON_DMATRFBASE1" base)
+      ~value:(hi32 (src lsr 8) land 0x1ff) [];
+    let xfered = ref 0 in
+    while !xfered < size do
+      poll_full ();
+      R.write
+        (based t.nvdev "NV_PFALCON_FALCON_DMATRFMOFFS" base)
+        ~value:(dest + !xfered) [];
+      R.write
+        (based t.nvdev "NV_PFALCON_FALCON_DMATRFFBOFFS" base)
+        ~value:(mem_off + !xfered) [];
+      R.write (based t.nvdev "NV_PFALCON_FALCON_DMATRFCMD" base) ~value:cmd [];
+      xfered := !xfered + 256
+    done;
+    wait_cond (dev_clock t.nvdev) ~value:1 ~msg:"DMA does not complete"
+      (fun () ->
+        List.assoc "idle"
+          (R.read_bitfields
+             (based t.nvdev "NV_PFALCON_FALCON_DMATRFCMD" base)))
+
+  (* ip.py:236 execute_hs: load a heavy-secured image into the falcon's
+     instruction and data memory over physical DMA, program the boot ROM
+     with the signature parameters, and run the core to completion.
+     Returns the mailbox pair when a [mailbox] seeds it, else [None]. *)
+  let execute_hs t base ~img_paddr ~code_off ~data_off ~imem_pa ~imem_va
+      ~imem_sz ~dmem_pa ~dmem_va ~dmem_sz ~pkc_off ~engid ~ucodeid ?mailbox () =
+    disable_ctx_req t base;
+    let ctx_dma = 0 in
+    R.update
+      (R.with_idx (based t.nvdev "NV_PFALCON_FBIF_TRANSCFG" base) ctx_dma)
+      [
+        ("target", 0);
+        ( "mem_type",
+          Nvdev.const t.nvdev "NV_PFALCON_FBIF_TRANSCFG_MEM_TYPE_PHYSICAL" );
+      ];
+    let dmatrfcmd = based t.nvdev "NV_PFALCON_FALCON_DMATRFCMD" base in
+    let size_256b =
+      Nvdev.const t.nvdev "NV_PFALCON_FALCON_DMATRFCMD_SIZE_256B"
+    in
+    let cmd =
+      R.encode dmatrfcmd
+        [
+          ("write", 0); ("size", size_256b); ("ctxdma", ctx_dma); ("imem", 1);
+          ("sec", 1);
+        ]
+    in
+    execute_dma t base ~cmd ~dest:imem_pa ~mem_off:imem_va
+      ~src:(img_paddr + code_off - imem_va) ~size:imem_sz;
+    let cmd =
+      R.encode dmatrfcmd
+        [
+          ("write", 0); ("size", size_256b); ("ctxdma", ctx_dma); ("imem", 0);
+          ("sec", 0);
+        ]
+    in
+    execute_dma t base ~cmd ~dest:dmem_pa ~mem_off:dmem_va
+      ~src:(img_paddr + data_off - dmem_va) ~size:dmem_sz;
+    R.write
+      (R.with_idx (based t.nvdev "NV_PFALCON2_FALCON_BROM_PARAADDR" base) 0)
+      ~value:pkc_off [];
+    R.write
+      (based t.nvdev "NV_PFALCON2_FALCON_BROM_ENGIDMASK" base)
+      ~value:engid [];
+    R.write
+      (based t.nvdev "NV_PFALCON2_FALCON_BROM_CURR_UCODE_ID" base)
+      [ ("val", ucodeid) ];
+    R.write
+      (based t.nvdev "NV_PFALCON2_FALCON_MOD_SEL" base)
+      [ ("algo", Nvdev.const t.nvdev "NV_PFALCON2_FALCON_MOD_SEL_ALGO_RSA3K") ];
+    R.write (based t.nvdev "NV_PFALCON_FALCON_BOOTVEC" base) ~value:imem_va [];
+    (match mailbox with
+    | Some mb ->
+        R.write
+          (based t.nvdev "NV_PFALCON_FALCON_MAILBOX0" base)
+          ~value:(lo32 mb) [];
+        R.write
+          (based t.nvdev "NV_PFALCON_FALCON_MAILBOX1" base)
+          ~value:(hi32 mb) []
+    | None -> ());
+    start_cpu t base;
+    wait_cpu_halted t base;
+    match mailbox with
+    | Some _ ->
+        Some
+          ( R.read (based t.nvdev "NV_PFALCON_FALCON_MAILBOX0" base),
+            R.read (based t.nvdev "NV_PFALCON_FALCON_MAILBOX1" base) )
+    | None -> None
+
+  (* ip.py:98 init_sw: resolve the falcon register families, read the
+     VBIOS, and load the FWSEC ucode and the booter image into device
+     memory, remembering where they landed. *)
+  let init_sw t =
+    let nvdev = t.nvdev in
+    List.iter
+      (fun (family, arch) -> Nvdev.include_regs nvdev ~family ~arch)
+      [
+        ("dev_gsp", "ga102"); ("dev_falcon_v4", "ga102");
+        ("dev_riscv_pri", "ga102"); ("dev_fbif_v4", "ga102");
+        ("dev_falcon_second_pri", "ga102"); ("dev_sec_pri", "ga102");
+        ("dev_bus", "tu102");
+      ];
+    let load name image =
+      match Nvdev.alloc_boot_mem nvdev ~data:image ~sysmem:false
+              (Bytes.length image)
+      with
+      | _, Some paddr, _ -> paddr
+      | _, None, _ ->
+          failwith
+            (Printf.sprintf "Flcn: %s image needs a device-local address" name)
+    in
+    let rom = read_vbios ~read32:(Nvdev.rreg nvdev) in
+    let ucode = prep_ucode ~rom ~vram_size:(Nvdev.vram_size nvdev) in
+    let frts_image_paddr = load "FRTS" ucode.frts_image in
+    let booter_prep =
+      prep_booter
+        ~blob:
+          (Firmware.fetch ~chip_dir:(Nvdev.fw_name nvdev)
+             "booter_load-570.144.bin")
+    in
+    let booter_image_paddr = load "booter" booter_prep.image in
+    t.prepared <-
+      Some { ucode; frts_image_paddr; booter_prep; booter_image_paddr }
+
+  (* ip.py:186 init_hw: run the FWSEC ucode to reserve the resident
+     tables, restart the GSP falcon as RISC-V with the boot arguments in
+     its mailbox, then run the booter to unlock the write-protected
+     region, and confirm the GSP core is alive. *)
+  let init_hw t ~libos_args_sysmem ~wpr_meta_sysmem =
+    let p = require_prepared t in
+    let nvdev = t.nvdev in
+    let desc = p.ucode.desc in
+    reset t t.falcon;
+    ignore
+      (execute_hs t t.falcon ~img_paddr:p.frts_image_paddr ~code_off:0x0
+         ~data_off:desc.imem_load_size ~imem_pa:desc.imem_phys_base
+         ~imem_va:desc.imem_virt_base ~imem_sz:desc.imem_load_size
+         ~dmem_pa:desc.dmem_phys_base ~dmem_va:0x0 ~dmem_sz:desc.dmem_load_size
+         ~pkc_off:desc.pkc_data_offset ~engid:desc.engine_id_mask
+         ~ucodeid:desc.ucode_id ()
+        : (int * int) option);
+    if R.read (Nvdev.reg nvdev "NV_PFB_PRI_MMU_WPR2_ADDR_HI") = 0 then
+      failwith "WPR2 is not initialized";
+    reset t ~riscv:true t.falcon;
+    R.write
+      (Nvdev.reg nvdev "NV_PGSP_FALCON_MAILBOX0")
+      ~value:(lo32 libos_args_sysmem) [];
+    R.write
+      (Nvdev.reg nvdev "NV_PGSP_FALCON_MAILBOX1")
+      ~value:(hi32 libos_args_sysmem) [];
+    reset t t.sec2;
+    let mbx =
+      execute_hs t t.sec2 ~img_paddr:p.booter_image_paddr
+        ~code_off:p.booter_prep.code_off ~data_off:p.booter_prep.data_off
+        ~imem_pa:0x0 ~imem_va:p.booter_prep.code_off
+        ~imem_sz:p.booter_prep.code_sz ~dmem_pa:0x0 ~dmem_va:0x0
+        ~dmem_sz:p.booter_prep.data_sz ~pkc_off:0x10 ~engid:1 ~ucodeid:3
+        ~mailbox:wpr_meta_sysmem ()
+    in
+    (match mbx with
+    | Some (m0, m1) when m0 <> 0 ->
+        failwith
+          (Printf.sprintf "Booter failed to execute, mailbox is %08x, %08x" m0
+             m1)
+    | _ -> ());
+    R.write
+      (R.with_base (Nvdev.reg nvdev "NV_PFALCON_FALCON_OS") t.falcon)
+      ~value:0x0 [];
+    if
+      List.assoc "active_stat"
+        (R.read_bitfields
+           (R.with_base (Nvdev.reg nvdev "NV_PRISCV_RISCV_CPUCTL") t.falcon))
+      <> 1
+    then failwith "GSP Core is not active"
 end
 
 (* Chain-of-trust falcon boot image (Blackwell) *)
@@ -598,6 +919,155 @@ module Flcn_cot = struct
       signature = u32_array (section "signature");
       public_key = u32_array (Bytes.cat (section "publickey") (Bytes.make 3 '\000'));
     }
+
+  (* The prepared boot state produced by {!init_sw}: the chain-of-trust
+     image and the addresses of the boot-argument region and the booter
+     image in the memory the security processor reaches. *)
+  type prepared = {
+    fmc : fmc;
+    fmc_boot_args_view : Mmio.t;
+    fmc_boot_args_sysmem : int;
+    fmc_booter_bar1 : int;
+  }
+
+  type t = { nvdev : Nvdev.t; falcon : int; mutable prepared : prepared option }
+
+  let create nvdev = { nvdev; falcon = 0x00110000; prepared = None }
+
+  let require_prepared t =
+    match t.prepared with
+    | Some p -> p
+    | None -> invalid_arg "Flcn_cot: init_sw must run before init_hw"
+
+  (* ip.py:286 NV_FLCN_COT.wait_for_reset: the thermal scratch reports the
+     device is out of reset. *)
+  let wait_for_reset t =
+    Nvdev.include_regs t.nvdev ~family:"dev_therm" ~arch:"gb202";
+    wait_cond (dev_clock t.nvdev) ~value:0xff ~msg:"waiting for reset"
+      (fun () -> R.read (Nvdev.reg t.nvdev "NV_THERM_I2CS_SCRATCH"))
+
+  (* ip.py:328 kfsp_send_msg: push a message to the security processor
+     through its external memory window and wait for its reply, then drain
+     the reply queue. *)
+  let kfsp_send_msg t ~nvmd buf =
+    let nvdev = t.nvdev in
+    let headers = Bytes.create 8 in
+    (* single-packet framing: start and end of message to seid 0, then
+       the NVDM channel and message type. *)
+    set_field headers (0, 4) ((1 lsl 31) lor (1 lsl 30));
+    set_field headers (4, 4) (0x7e lor (0x10de lsl 8) lor (nvmd lsl 24));
+    let body = Bytes.cat headers buf in
+    let msg =
+      Bytes.cat body (Bytes.make (4 - (Bytes.length body mod 4)) '\000')
+    in
+    if Bytes.length msg >= 0x400 then
+      failwith
+        (Printf.sprintf "FSP message too long: %d bytes, max 1024 bytes"
+           (Bytes.length msg));
+    let ememc = R.with_idx (Nvdev.reg nvdev "NV_PFSP_EMEMC") 0 in
+    R.write ememc [ ("offs", 0); ("blk", 0); ("aincw", 1); ("aincr", 0) ];
+    let ememd = R.with_idx (Nvdev.reg nvdev "NV_PFSP_EMEMD") 0 in
+    let i = ref 0 in
+    while !i < Bytes.length msg do
+      R.write ememd ~value:(u32 msg !i) [];
+      i := !i + 4
+    done;
+    R.write
+      (R.with_idx (Nvdev.reg nvdev "NV_PFSP_QUEUE_TAIL") 0)
+      ~value:(Bytes.length msg - 4) [];
+    R.write (R.with_idx (Nvdev.reg nvdev "NV_PFSP_QUEUE_HEAD") 0) ~value:0 [];
+    let msgq_head () =
+      R.read (R.with_idx (Nvdev.reg nvdev "NV_PFSP_MSGQ_HEAD") 0)
+    in
+    let msgq_tail () =
+      R.read (R.with_idx (Nvdev.reg nvdev "NV_PFSP_MSGQ_TAIL") 0)
+    in
+    wait_cond (dev_clock nvdev) ~value:1 ~msg:"FSP didn't respond to message"
+      (fun () -> if msgq_head () <> msgq_tail () then 1 else 0);
+    R.write ememc [ ("offs", 0); ("blk", 0); ("aincw", 0); ("aincr", 1) ];
+    R.write
+      (R.with_idx (Nvdev.reg nvdev "NV_PFSP_MSGQ_TAIL") 0)
+      ~value:(msgq_head ()) []
+
+  (* ip.py:290 init_sw: resolve the chain-of-trust register families,
+     reserve the GSP boot-argument region, and load the chain-of-trust
+     firmware image. *)
+  let init_sw t =
+    let nvdev = t.nvdev in
+    List.iter
+      (fun (family, arch) -> Nvdev.include_regs nvdev ~family ~arch)
+      [
+        ("dev_gsp", "ga102"); ("dev_falcon_v4", "gh100"); ("dev_vm", "gh100");
+        ("dev_fsp_pri", "gh100"); ("dev_bus", "tu102");
+      ];
+    let fmc_boot_args_view, _, fmc_boot_addrs =
+      Nvdev.alloc_boot_mem nvdev
+        ~data:(Bytes.make G.Gsp_fmc_boot_params.sizeof '\000')
+        G.Gsp_fmc_boot_params.sizeof
+    in
+    let fmc_boot_args_sysmem = List.hd fmc_boot_addrs in
+    let fmc =
+      init_fmc_image
+        ~blob:
+          (Firmware.fetch ~chip_dir:(Nvdev.fw_name nvdev) "fmc-570.144.bin")
+    in
+    let _, _, booter_addrs =
+      Nvdev.alloc_boot_mem nvdev ~data:fmc.image (Bytes.length fmc.image)
+    in
+    let fmc_booter_bar1 = List.hd booter_addrs in
+    t.prepared <-
+      Some { fmc; fmc_boot_args_view; fmc_boot_args_sysmem; fmc_booter_bar1 }
+
+  (* ip.py:311 init_hw: fill the boot-argument region with the GSP-RM and
+     RM parameter blocks, build the chain-of-trust payload naming the
+     boot arguments and the booter image, hand it to the security
+     processor, and wait for the RISC-V boot lockdown to clear. *)
+  let init_hw t ~libos_args_sysmem ~wpr_meta_sysmem =
+    let p = require_prepared t in
+    let nvdev = t.nvdev in
+    let boot_args = Bytes.make G.Gsp_acr_boot_gsp_rm_params.sizeof '\000' in
+    set_field boot_args G.Gsp_acr_boot_gsp_rm_params.gsprmdescoffset
+      wpr_meta_sysmem;
+    set_field boot_args G.Gsp_acr_boot_gsp_rm_params.gsprmdescsize
+      G.Gsp_fw_wpr_meta.sizeof;
+    set_field boot_args G.Gsp_acr_boot_gsp_rm_params.target
+      G.gsp_dma_target_coherent_system;
+    set_field boot_args G.Gsp_acr_boot_gsp_rm_params.bisgsprmboot 1;
+    let rm_args = Bytes.make G.Gsp_rm_params.sizeof '\000' in
+    set_field rm_args G.Gsp_rm_params.bootargsoffset libos_args_sysmem;
+    set_field rm_args G.Gsp_rm_params.target G.gsp_dma_target_coherent_system;
+    let fmc_params = Bytes.make G.Gsp_fmc_boot_params.sizeof '\000' in
+    Bytes.blit boot_args 0 fmc_params
+      (fst G.Gsp_fmc_boot_params.bootgsprmparams)
+      G.Gsp_acr_boot_gsp_rm_params.sizeof;
+    Bytes.blit rm_args 0 fmc_params
+      (fst G.Gsp_fmc_boot_params.gsprmparams)
+      G.Gsp_rm_params.sizeof;
+    Mmio.blit_bytes p.fmc_boot_args_view ~off:0 fmc_params;
+    let cot = Bytes.make G.Nvdm_payload_cot.sizeof '\000' in
+    set_field cot G.Nvdm_payload_cot.version 0x2;
+    set_field cot G.Nvdm_payload_cot.size G.Nvdm_payload_cot.sizeof;
+    set_field cot G.Nvdm_payload_cot.frtsvidmemoffset 0x1c00000;
+    set_field cot G.Nvdm_payload_cot.frtsvidmemsize 0x100000;
+    set_field cot G.Nvdm_payload_cot.gspbootargssysmemoffset
+      p.fmc_boot_args_sysmem;
+    set_field cot G.Nvdm_payload_cot.gspfmcsysmemoffset p.fmc_booter_bar1;
+    let put_words off elem_size xs =
+      Array.iteri
+        (fun i x -> set_field cot (off + (i * elem_size), elem_size) x)
+        xs
+    in
+    put_words G.Nvdm_payload_cot.hash384_offset
+      G.Nvdm_payload_cot.hash384_elem_size p.fmc.hash;
+    put_words G.Nvdm_payload_cot.signature_offset
+      G.Nvdm_payload_cot.signature_elem_size p.fmc.signature;
+    put_words G.Nvdm_payload_cot.publickey_offset
+      G.Nvdm_payload_cot.publickey_elem_size p.fmc.public_key;
+    kfsp_send_msg t ~nvmd:G.nvdm_type_cot cot;
+    wait_cond (dev_clock nvdev) ~value:0
+      ~msg:"RISCV boot lockdown not cleared" (fun () ->
+        List.assoc "riscv_br_priv_lockdown"
+          (R.read_bitfields (based nvdev "NV_PFALCON_FALCON_HWCFG2" t.falcon)))
 end
 
 (* GSP firmware image and its page hierarchy *)
