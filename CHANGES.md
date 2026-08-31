@@ -1013,6 +1013,12 @@ thread.
 
 ### Rune
 
+- `Rune.jit` and `Rune.pmap` accept `~device:"AMD"` (`"AMD:n"` for a specific
+  GPU), running compiled programs on AMD GPUs on Linux. Previously the device
+  factory rejected the name with `Invalid_argument: unknown device AMD:0`
+  even though the runtime had landed; an AMD device that cannot open now
+  reports `device AMD:0 unavailable` with the reason, like CUDA.
+
 - `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
   step compiles once and runs per slice — instead of unrolling every step into
   the trace, and `grad` through a jitted scan compiles a reversed loop over the

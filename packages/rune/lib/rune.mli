@@ -385,7 +385,8 @@ val jit :
     triggers a fresh trace and compilation.
 
     [device] selects where the kernels compile and run: ["CPU"] (the default),
-    ["CUDA"] (NVIDIA GPUs), or ["METAL"] (macOS only). On the CPU device,
+    ["AMD"] (AMD GPUs, Linux only), ["CUDA"] (NVIDIA GPUs), or ["METAL"]
+    (macOS only). On the CPU device,
     contiguous inputs and captured tensors are read in place and outputs are
     computed directly into the returned tensors' storage; non-contiguous tensors
     are copied.
