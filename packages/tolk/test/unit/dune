@@ -121,3 +121,9 @@
  (modules test_nv_nvdev)
  (package tolk)
  (libraries tolk tolk.hcq tolk.nv windtrap))
+
+(tests
+ (names test_nv_ip)
+ (modules test_nv_ip)
+ (package tolk)
+ (libraries tolk tolk.hcq tolk.nv windtrap))

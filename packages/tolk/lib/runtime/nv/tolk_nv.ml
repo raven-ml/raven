@@ -8,6 +8,7 @@
 module Hcq = Tolk_hcq.Hcq
 module Nv_tables = Nv_tables
 module Nvdev = Nvdev
+module Ip = Ip
 module Defs = Nv_defs
 module Q = Hcq.Q
 
