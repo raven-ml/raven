@@ -2,15 +2,15 @@
  (name main)
  (libraries hugin nx))
 
-(alias
- (name default)
- (deps main.exe))
-
-; Image bytes vary with the local cairo; refresh via `dune build @assets`.
+; The images are committed and their bytes depend on the local cairo, so an
+; ordinary build never regenerates them: the rule is off unless asked for.
+; Refresh with REFRESH_ASSETS=true dune build @assets
 
 (rule
  (targets scatter.png)
  (deps main.exe)
+ (enabled_if
+  (= %{env:REFRESH_ASSETS=false} true))
  (action
   (run ./main.exe))
  (mode
