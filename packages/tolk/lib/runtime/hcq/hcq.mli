@@ -365,9 +365,9 @@ module Timeline : sig
             waits only for that submission. *)
     mutable bounce_next : int;  (** The most recently used slot. *)
     on_hang : unit -> unit;
-        (** Called after a wait stalled or faulted and the error was
-            latched; expected to raise [Failure] with the device's fault
-            report. The original error is re-raised if it returns. *)
+        (** Called after a wait stalled or faulted; expected to raise
+            [Failure] with the device's fault report, which is folded
+            into the raised error (see {!guarded_wait}). *)
   }
   (** The type for completion timelines over buffers with metadata
       ['meta] and signals owned by devices of type ['dev]. *)
@@ -388,9 +388,11 @@ module Timeline : sig
   (** [guarded_wait t f] is [f ()], wrapping the timeline (see
       {!wrap_timeline_signal}) after a successful return once the
       counter outgrows the signal dword. When [f] raises
-      {!Signal.Timeout} or [Failure], the error is latched into
-      [error_state] and [on_hang] runs, so every later {!synchronize}
-      fails loudly with the device's fault report. *)
+      {!Signal.Timeout} or [Failure], [on_hang] runs and a single
+      [Failure] folding the wait failure and the fault report — each
+      may be all the information there is — is latched into
+      [error_state] and raised, so every later {!synchronize} fails
+      loudly with the full story. *)
 
   val synchronize : ('meta, 'dev) t -> unit
   (** [synchronize t] waits until every value handed out so far has

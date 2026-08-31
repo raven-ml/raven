@@ -339,16 +339,39 @@ module Timeline = struct
 
   (* A stalled or faulted wait latches the device error so every later
      synchronize fails loudly with the fault report; a passed wait rolls the
-     timeline over before its counter outgrows the signal dword. *)
+     timeline over before its counter outgrows the signal dword. The wait
+     failure and the hang report are folded into one exception: each may be
+     all the information there is. *)
   let guarded_wait t f =
     match f () with
     | r ->
         if t.timeline_value > 1 lsl 31 then wrap_timeline_signal t;
         r
     | exception ((Signal.Timeout _ | Failure _) as e) ->
-        t.error_state <- Some e;
-        t.on_hang ();
-        raise e
+        let base =
+          match e with
+          | Signal.Timeout { timeout_ms; goal; value } ->
+              Printf.sprintf
+                "Wait timeout: %d ms! (the signal is not set to %d, but %d)"
+                timeout_ms goal value
+          | Failure msg -> msg
+          | e -> Printexc.to_string e
+        in
+        let report =
+          match t.on_hang () with
+          | () -> None
+          | exception Failure report -> Some report
+          | exception e -> Some (Printexc.to_string e)
+        in
+        let combined =
+          Failure
+            (match report with
+            | None | Some "" -> base
+            | Some r when String.equal r base -> base
+            | Some r -> base ^ "\n" ^ r)
+        in
+        t.error_state <- Some combined;
+        raise combined
 
   let synchronize t =
     (match t.error_state with Some e -> raise e | None -> ());

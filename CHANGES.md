@@ -101,6 +101,12 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- A stalled AMD device wait now fails with the whole story — the timeout
+  (expected and observed timeline values) folded with the driver's fault
+  report — where it could previously raise `Failure("")` when the driver had
+  no fault to report. Stalled waits also back off to the driver's event
+  sleep after 200ms instead of 2s, surfacing faults sooner.
+
 - NVIDIA GPUs are now a hardware-queue runtime target: `DEV=NV` (or
   `Tolk_nv.create`) drives the kernel driver's channels directly, with
   kernels compiled straight to cubin by nvrtc, covering the Ampere, Ada,

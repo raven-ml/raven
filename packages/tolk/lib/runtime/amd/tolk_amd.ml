@@ -1274,6 +1274,11 @@ module Kfd_iface = struct
           ]
       | None -> []
     in
+    let report =
+      match report with
+      | [] -> [ "no memory or hardware fault reported by the driver" ]
+      | r -> r
+    in
     failwith (String.concat "\n" report)
 
   let sleep t ~timeout_ms =
@@ -1301,7 +1306,7 @@ module Kfd_iface = struct
       (* long waits back off to driver-event sleeps, which also surface
          faults *)
       sleep =
-        (fun spent_ms -> if spent_ms > 2000 then sleep t ~timeout_ms:200);
+        (fun spent_ms -> if spent_ms > 200 then sleep t ~timeout_ms:200);
       on_device_hang = (fun () -> on_device_hang t);
       register = None;
       after_sync = None;
@@ -1559,7 +1564,7 @@ module Pci_iface = struct
             ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ());
       sleep =
         (fun spent_ms ->
-          if spent_ms > 2000 then sleep (am t) ~timeout_ms:200);
+          if spent_ms > 200 then sleep (am t) ~timeout_ms:200);
       on_device_hang = (fun () -> on_device_hang ());
       register =
         Some (fun ~compute_queue ~tl -> register ~am:(am t) ~compute_queue ~tl);

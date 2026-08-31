@@ -9,6 +9,7 @@ module Mmio = Tolk_hcq.Hcq.Mmio
 module Buffer = Tolk_hcq.Hcq.Buffer
 module Q = Tolk_hcq.Hcq.Q
 module Signal = Tolk_hcq.Hcq.Signal
+module Timeline = Tolk_hcq.Hcq.Timeline
 module Kernargs = Tolk_hcq.Hcq.Kernargs
 module Compiler_amd = Tolk_amd.Compiler_amd
 module Program = Tolk_amd.Program
@@ -587,6 +588,83 @@ let () =
                   Signal.Pool.put pool s5;
                   is_true (Signal.Pool.get pool == s5);
                   equal int 2 (List.length (Signal.Pool.pages pool))));
+        ];
+      group "Timeline"
+        [
+          test "a stalled wait folds the hang report into the timeout" (fun () ->
+              with_map 4096 (fun m ->
+                  let tl =
+                    {
+                      Timeline.timeline = Signal.make ~value:1 (slot_buf m);
+                      shadow_timeline =
+                        Signal.make (slot_buf ~va:0x10n (Mmio.view m ~off:16 ()));
+                      timeline_value = 3;
+                      error_state = None;
+                      bounce = [||];
+                      bounce_timeline = [||];
+                      bounce_next = 0;
+                      on_hang = (fun () -> failwith "MMU fault: 0xdead");
+                    }
+                  in
+                  let expect = function
+                    | Failure msg ->
+                        contains msg "Wait timeout: 5 ms!"
+                        && contains msg "(the signal is not set to 2, but 1)"
+                        && contains msg "MMU fault: 0xdead"
+                    | _ -> false
+                  in
+                  raises_match expect (fun () ->
+                      Timeline.guarded_wait tl (fun () ->
+                          Signal.wait tl.Timeline.timeline ~timeout_ms:5 2));
+                  (* The same folded error is latched for later waits. *)
+                  raises_match expect (fun () -> Timeline.synchronize tl)));
+          test "an empty hang report leaves the timeout alone" (fun () ->
+              with_map 4096 (fun m ->
+                  let tl =
+                    {
+                      Timeline.timeline = Signal.make (slot_buf m);
+                      shadow_timeline =
+                        Signal.make (slot_buf ~va:0x10n (Mmio.view m ~off:16 ()));
+                      timeline_value = 2;
+                      error_state = None;
+                      bounce = [||];
+                      bounce_timeline = [||];
+                      bounce_next = 0;
+                      on_hang = (fun () -> failwith "");
+                    }
+                  in
+                  raises_match
+                    (function
+                      | Failure msg ->
+                          contains msg "Wait timeout: 5 ms!"
+                          && not (contains msg "\n")
+                      | _ -> false)
+                    (fun () ->
+                      Timeline.guarded_wait tl (fun () ->
+                          Signal.wait tl.Timeline.timeline ~timeout_ms:5 1))));
+          test "a duplicated fault report is not repeated" (fun () ->
+              with_map 4096 (fun m ->
+                  let tl =
+                    {
+                      Timeline.timeline = Signal.make (slot_buf m);
+                      shadow_timeline =
+                        Signal.make (slot_buf ~va:0x10n (Mmio.view m ~off:16 ()));
+                      timeline_value = 2;
+                      error_state = None;
+                      bounce = [||];
+                      bounce_timeline = [||];
+                      bounce_next = 0;
+                      on_hang = (fun () -> failwith "HW fault: reset_type=1");
+                    }
+                  in
+                  raises_match
+                    (function
+                      | Failure msg ->
+                          String.equal msg "HW fault: reset_type=1"
+                      | _ -> false)
+                    (fun () ->
+                      Timeline.guarded_wait tl (fun () ->
+                          failwith "HW fault: reset_type=1"))));
         ];
       group "Kernargs"
         [
