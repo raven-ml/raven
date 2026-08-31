@@ -1330,7 +1330,6 @@ module Pci_iface = struct
     [ (0xffff, [ 0x74a1; 0x744c; 0x7480; 0x7550; 0x7551; 0x7590; 0x75a0 ]) ]
 
   let am t = Base.dev_impl t.base
-  let adev t = (am t).Am_boot.adev
 
   (* ops_amd.py:852 _compute_props: synthesize the topology properties
      the kernel driver would publish, from the discovery table *)
@@ -1450,51 +1449,76 @@ module Pci_iface = struct
 
   (* The open driver-less devices, so any wait can collect interrupts
      for all of them (the reference walks its global device table; the
-     runtime here has none, so the interface keeps its own). *)
-  type registered = {
-    r_am : Am_boot.t;
-    r_compute : Queue_desc.t;
-    r_tl : (mem, mem device) Timeline.t;
-  }
+     runtime here has none, so the interface keeps its own). The entry
+     hides the timeline's buffer metadata, so scripted devices register
+     like real ones. *)
+  type registered =
+    | Registered : {
+        r_am : Am_boot.t;
+        r_compute : Queue_desc.t;
+        r_tl : ('mem, 'mem device) Timeline.t;
+      }
+        -> registered
 
   let registry : registered list ref = ref []
+
+  let register ~am ~compute_queue ~tl =
+    registry :=
+      Registered { r_am = am; r_compute = compute_queue; r_tl = tl }
+      :: !registry
+
+  let unregister am =
+    registry := List.filter (fun (Registered r) -> r.r_am != am) !registry
 
   (* ops_amd.py:891 _collect_interrupts *)
   let collect_interrupts ?(reset = false) ?(drain_only = false) () =
     List.iter
-      (fun r ->
-        let boot = r.r_am in
-        if drain_only then Am_ip.Ih.drain boot.Am_boot.ih
-        else
-          Am_ip.Ih.interrupt_handler boot.Am_boot.ih ~soc:boot.Am_boot.soc
-            ~gmc:boot.Am_boot.gmc ~smu:boot.Am_boot.smu;
-        if
-          reset
-          && Am_boot.recover boot ~force:(r.r_tl.Timeline.error_state <> None)
-        then begin
-          (* the processors lost their queues: rebuild the compute queue
-             and rewind the timeline to the last completed value *)
-          r.r_compute.Queue_desc.put_value <- 0;
-          Hcq.Mmio.write64 r.r_compute.Queue_desc.read_ptr 0 0L;
-          Hcq.Mmio.write64 r.r_compute.Queue_desc.write_ptr 0 0L;
-          (match r.r_compute.Queue_desc.resetup with
-          | Some resetup -> resetup ()
-          | None -> ());
-          Hcq.Signal.set_value r.r_tl.Timeline.timeline
-            (r.r_tl.Timeline.timeline_value - 1);
-          r.r_tl.Timeline.error_state <- None
-        end)
+      (fun entry ->
+        match entry with
+        | Registered r ->
+            let boot = r.r_am in
+            if drain_only then Am_ip.Ih.drain boot.Am_boot.ih
+            else
+              Am_ip.Ih.interrupt_handler boot.Am_boot.ih ~soc:boot.Am_boot.soc
+                ~gmc:boot.Am_boot.gmc ~smu:boot.Am_boot.smu;
+            if
+              reset
+              && Am_boot.recover boot
+                   ~force:(r.r_tl.Timeline.error_state <> None)
+            then begin
+              (* the processors lost their queues: rebuild the compute
+                 queue and rewind the timeline to the last completed
+                 value *)
+              r.r_compute.Queue_desc.put_value <- 0;
+              Hcq.Mmio.write64 r.r_compute.Queue_desc.read_ptr 0 0L;
+              Hcq.Mmio.write64 r.r_compute.Queue_desc.write_ptr 0 0L;
+              (match r.r_compute.Queue_desc.resetup with
+              | Some resetup -> resetup ()
+              | None -> ());
+              Hcq.Signal.set_value r.r_tl.Timeline.timeline
+                (r.r_tl.Timeline.timeline_value - 1);
+              r.r_tl.Timeline.error_state <- None
+            end)
       !registry
 
-  (* ops_amd.py:898 sleep: the interrupt poller is not wired yet (it
-     needs vfio), so sleeping is a pure interrupt-collection pass *)
-  let sleep t =
-    collect_interrupts ();
-    if Amdev.is_err_state (adev t) then failwith "Device is in error state"
+  (* Protocol timeouts during interrupt collection surface as the
+     device's fault report, so the timeline latches them like any other
+     fault. *)
+  let as_fault f = try f () with Am_ip.Timeout_error msg -> failwith msg
+
+  (* ops_amd.py:898 PCIIface.sleep *)
+  let sleep boot ~timeout_ms =
+    as_fault (fun () ->
+        (match Amdev.pci_dev boot.Am_boot.adev with
+        | Some pci_dev -> System.Pci_device.wait_irq pci_dev ~timeout_ms
+        | None -> ());
+        collect_interrupts ();
+        if Amdev.is_err_state boot.Am_boot.adev then
+          failwith "Device is in error state")
 
   (* ops_amd.py:903 on_device_hang *)
   let on_device_hang () =
-    collect_interrupts ~reset:true ();
+    as_fault (fun () -> collect_interrupts ~reset:true ());
     failwith "Device hang detected"
 
   let iface t =
@@ -1533,14 +1557,12 @@ module Pci_iface = struct
              ?ctl_stack_size ?ctx_save_restore_size () ->
           create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
             ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ());
-      sleep = (fun spent_ms -> if spent_ms > 2000 then sleep t);
+      sleep =
+        (fun spent_ms ->
+          if spent_ms > 2000 then sleep (am t) ~timeout_ms:200);
       on_device_hang = (fun () -> on_device_hang ());
       register =
-        Some
-          (fun ~compute_queue ~tl ->
-            registry :=
-              { r_am = am t; r_compute = compute_queue; r_tl = tl }
-              :: !registry);
+        Some (fun ~compute_queue ~tl -> register ~am:(am t) ~compute_queue ~tl);
       after_sync = Some (fun () -> collect_interrupts ~drain_only:true ());
       device_fini = Some (fun () -> Am_boot.fini (am t));
     }

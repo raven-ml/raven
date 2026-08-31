@@ -77,6 +77,14 @@ campaign.
   choice. Promotion criterion: automatic KFD→PCI fallback once the path has
   been validated on hardware.
 
+- **The PCI iface base maps neither CPU-backend buffers nor remote devices,
+  and the multi-die `p2p_paddrs` override is not carried.** Buffers here
+  carry the PCI metadata type, so a CPU-backend buffer cannot be passed;
+  the remote-device backend is a declined port; and the multi-die override
+  only diverges from the base on fabrics the consumer PCI-id allowlist
+  keeps out. Revisit with the first cross-backend, remote, or multi-die
+  consumer.
+
 ## Tolk extensions
 
 Code tolk carries that the reference does not. Every site has a comment

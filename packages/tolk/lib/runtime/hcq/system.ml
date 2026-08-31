@@ -41,6 +41,24 @@ module Ffi = struct
     = "caml_tolk_system_pwrite"
 
   external write : int -> bytes -> int -> int = "caml_tolk_system_write"
+  external readlink : string -> string = "caml_tolk_system_readlink"
+  external eventfd : int -> int = "caml_tolk_system_eventfd"
+  external poll_in : int -> int -> bool = "caml_tolk_system_poll_in"
+  external eventfd_drain : int -> unit = "caml_tolk_system_eventfd_drain"
+
+  external vfio_check_extension : int -> unit
+    = "caml_tolk_system_vfio_check_extension"
+
+  external vfio_group_set_container : int -> int -> unit
+    = "caml_tolk_system_vfio_group_set_container"
+
+  external vfio_set_iommu : int -> bool = "caml_tolk_system_vfio_set_iommu"
+
+  external vfio_group_get_device_fd : int -> string -> int
+    = "caml_tolk_system_vfio_group_get_device_fd"
+
+  external vfio_set_irq_eventfd : int -> int -> unit
+    = "caml_tolk_system_vfio_set_irq_eventfd"
 end
 
 let {
@@ -207,6 +225,21 @@ let pci_scan_bus ?(sysfs = "/sys") ?base_class ~vendor devices =
   in
   List.sort String.compare (List.filter matches entries)
 
+(* system.py:30 System.vfio: the process-wide vfio container, opened in
+   no-iommu mode, or [None] when the system cannot provide it (no vfio
+   module, no /dev/vfio, or no permission) — devices then fall back to
+   interrupt-less operation. *)
+let vfio_container =
+  lazy
+    (try
+       if not (Sys.file_exists "/sys/module/vfio") then
+         ignore (Sys.command "sudo modprobe vfio-pci disable_idle_d3=1" : int);
+       write_str "/sys/module/vfio/parameters/enable_unsafe_noiommu_mode" "1";
+       let fd = File_io.openfile "/dev/vfio/vfio" ~flags:File_io.o_rdwr in
+       Ffi.vfio_check_extension fd;
+       Some fd
+     with Failure _ | Sys_error _ -> None)
+
 let flock_acquire name =
   let lock_name = Filename.concat (Filename.get_temp_dir_name ()) name in
   let fd =
@@ -234,6 +267,9 @@ module Pci_device = struct
     cfg_fd : int;
     bar_fds : (int, int) Hashtbl.t;
     bar_infos : (int, int * int) Hashtbl.t;
+    (* the vfio group, device and interrupt-eventfd descriptors, held
+       open so the MSI route stays armed; [None] without VFIO *)
+    vfio : (int * int * int) option;
   }
 
   let pcibus t = t.pcibus
@@ -271,7 +307,36 @@ module Pci_device = struct
       in
       if Sys.file_exists sib then write_str (sib ^ "/remove") "1"
     done;
-    write_str (dev_path ^ "/enable") "1";
+    (* system.py:172: with VFIO=1 and a usable container, bind the
+       vfio-pci driver and route the device's MSI vector to an eventfd
+       so waits can sleep on interrupts; otherwise plain sysfs enable *)
+    let vfio =
+      match
+        if Tolk.Helpers.getenv "VFIO" 0 <> 0 then Lazy.force vfio_container
+        else None
+      with
+      | None ->
+          write_str (dev_path ^ "/enable") "1";
+          None
+      | Some container ->
+          write_str (dev_path ^ "/driver_override") "vfio-pci";
+          write_str (sysfs ^ "/bus/pci/drivers_probe") pcibus;
+          let group =
+            Filename.basename (Ffi.readlink (dev_path ^ "/iommu_group"))
+          in
+          let group_fd =
+            File_io.openfile
+              ("/dev/vfio/noiommu-" ^ group)
+              ~flags:File_io.o_rdwr
+          in
+          Ffi.vfio_group_set_container group_fd container;
+          (* setting the iommu mode works only once per container *)
+          ignore (Ffi.vfio_set_iommu container : bool);
+          let dev_fd = Ffi.vfio_group_get_device_fd group_fd pcibus in
+          let irq_fd = Ffi.eventfd 0 in
+          Ffi.vfio_set_irq_eventfd dev_fd irq_fd;
+          Some (group_fd, dev_fd, irq_fd)
+    in
     let cfg_fd =
       File_io.openfile (dev_path ^ "/config")
         ~flags:(File_io.o_rdwr lor o_sync)
@@ -283,6 +348,7 @@ module Pci_device = struct
       cfg_fd;
       bar_fds = Hashtbl.create 4;
       bar_infos = Hashtbl.create 4;
+      vfio;
     }
 
   let alloc_sysmem ?(vaddr = 0n) ?(contiguous = false) size =
@@ -323,6 +389,15 @@ module Pci_device = struct
     ignore
       (Sys.command (Printf.sprintf "sudo sh -c 'echo 1 > %s/reset'" t.dev_path)
         : int)
+
+  (* ops_amd.py:899: block on the interrupt eventfd for at most
+     [timeout_ms] and drain its counter once an interrupt fired; a
+     device without the vfio route returns immediately. *)
+  let wait_irq t ~timeout_ms =
+    match t.vfio with
+    | None -> ()
+    | Some (_, _, irq_fd) ->
+        if Ffi.poll_in irq_fd timeout_ms then Ffi.eventfd_drain irq_fd
 
   let read_config t ~offset ~size =
     let buf = Bytes.create size in

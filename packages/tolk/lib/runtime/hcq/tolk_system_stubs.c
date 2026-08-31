@@ -9,6 +9,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -17,6 +18,14 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifdef __linux__
+#include <linux/vfio.h>
+#include <poll.h>
+#include <stdint.h>
+#include <sys/eventfd.h>
+#include <sys/ioctl.h>
+#endif
 
 /* Linux-only mmap flags. Zero values disable a flag, so portable callers can
    OR them in unconditionally; the header values are preferred and the
@@ -154,4 +163,145 @@ CAMLprim value caml_tolk_system_write(value v_fd, value v_buf, value v_len) {
   while (r < 0 && errno == EINTR);
   if (r < 0) raise_errno("write");
   CAMLreturn(Val_long(r));
+}
+
+CAMLprim value caml_tolk_system_readlink(value v_path) {
+  CAMLparam1(v_path);
+  char buf[4096];
+  ssize_t r = readlink(String_val(v_path), buf, sizeof(buf) - 1);
+  if (r < 0) raise_errno(String_val(v_path));
+  buf[r] = '\0';
+  CAMLreturn(caml_copy_string(buf));
+}
+
+/* VFIO interrupt plumbing (Linux only). Thin marshallers: the ioctl
+   numbers and struct layout come from <linux/vfio.h>. */
+
+CAMLprim value caml_tolk_system_eventfd(value v_initval) {
+#ifdef __linux__
+  int fd = eventfd((unsigned int)Int_val(v_initval), EFD_CLOEXEC);
+  if (fd < 0) raise_errno("eventfd");
+  return Val_int(fd);
+#else
+  (void)v_initval;
+  caml_failwith("eventfd requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+/* Blocks up to the timeout, so the OCaml runtime is released. */
+CAMLprim value caml_tolk_system_poll_in(value v_fd, value v_timeout_ms) {
+#ifdef __linux__
+  struct pollfd p = {.fd = Int_val(v_fd), .events = POLLIN, .revents = 0};
+  int timeout = Int_val(v_timeout_ms);
+  int r;
+  caml_release_runtime_system();
+  do r = poll(&p, 1, timeout);
+  while (r < 0 && errno == EINTR);
+  caml_acquire_runtime_system();
+  if (r < 0) raise_errno("poll");
+  return Val_bool(r > 0);
+#else
+  (void)v_fd;
+  (void)v_timeout_ms;
+  caml_failwith("poll requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+CAMLprim value caml_tolk_system_eventfd_drain(value v_fd) {
+#ifdef __linux__
+  uint64_t counter;
+  ssize_t r;
+  do r = read(Int_val(v_fd), &counter, sizeof(counter));
+  while (r < 0 && errno == EINTR);
+  if (r < 0) raise_errno("eventfd read");
+  return Val_unit;
+#else
+  (void)v_fd;
+  caml_failwith("eventfd requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+CAMLprim value caml_tolk_system_vfio_check_extension(value v_fd) {
+#ifdef __linux__
+  if (ioctl(Int_val(v_fd), VFIO_CHECK_EXTENSION,
+            (unsigned long)VFIO_NOIOMMU_IOMMU) < 0)
+    raise_errno("VFIO_CHECK_EXTENSION");
+  return Val_unit;
+#else
+  (void)v_fd;
+  caml_failwith("vfio requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+CAMLprim value caml_tolk_system_vfio_group_set_container(value v_group,
+                                                         value v_container) {
+#ifdef __linux__
+  int container_fd = Int_val(v_container);
+  if (ioctl(Int_val(v_group), VFIO_GROUP_SET_CONTAINER, &container_fd) < 0)
+    raise_errno("VFIO_GROUP_SET_CONTAINER");
+  return Val_unit;
+#else
+  (void)v_group;
+  (void)v_container;
+  caml_failwith("vfio requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+CAMLprim value caml_tolk_system_vfio_set_iommu(value v_fd) {
+#ifdef __linux__
+  return Val_bool(ioctl(Int_val(v_fd), VFIO_SET_IOMMU,
+                        (unsigned long)VFIO_NOIOMMU_IOMMU) == 0);
+#else
+  (void)v_fd;
+  caml_failwith("vfio requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+CAMLprim value caml_tolk_system_vfio_group_get_device_fd(value v_group,
+                                                         value v_pcibus) {
+#ifdef __linux__
+  CAMLparam2(v_group, v_pcibus);
+  int fd = ioctl(Int_val(v_group), VFIO_GROUP_GET_DEVICE_FD,
+                 String_val(v_pcibus));
+  if (fd < 0) raise_errno("VFIO_GROUP_GET_DEVICE_FD");
+  CAMLreturn(Val_int(fd));
+#else
+  (void)v_group;
+  (void)v_pcibus;
+  caml_failwith("vfio requires Linux");
+  return Val_unit; /* unreachable */
+#endif
+}
+
+/* Routes MSI vector 0 to the eventfd: one vfio_irq_set frame with the
+   descriptor as its payload. */
+CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(value v_dev,
+                                                     value v_eventfd) {
+#ifdef __linux__
+  struct {
+    struct vfio_irq_set set;
+    int fd;
+  } irqs;
+  memset(&irqs, 0, sizeof(irqs));
+  irqs.set.argsz = sizeof(irqs);
+  irqs.set.flags = VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER;
+  irqs.set.index = VFIO_PCI_MSI_IRQ_INDEX;
+  irqs.set.start = 0;
+  irqs.set.count = 1;
+  irqs.fd = Int_val(v_eventfd);
+  if (ioctl(Int_val(v_dev), VFIO_DEVICE_SET_IRQS, &irqs) < 0)
+    raise_errno("VFIO_DEVICE_SET_IRQS");
+  return Val_unit;
+#else
+  (void)v_dev;
+  (void)v_eventfd;
+  caml_failwith("vfio requires Linux");
+  return Val_unit; /* unreachable */
+#endif
 }

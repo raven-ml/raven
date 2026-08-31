@@ -101,6 +101,11 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- Driver-less AMD devices can now sleep on interrupts instead of spinning:
+  with `VFIO=1` (and the `vfio-pci` kernel module), the device's MSI vector
+  is routed to an eventfd that stalled waits block on. Without it, waits
+  poll as before.
+
 - AMD GPUs can now be driven over PCI with no kernel driver: setting
   `AMD_IFACE=PCI` boots the GPU directly — firmware loading, memory hubs,
   security processor, engines (`Tolk_amd.Pci_iface`) — covering the

@@ -122,7 +122,17 @@ module Pci_device : sig
       configuration space. [sysfs] is the sysfs mount point (defaults to
       ["/sys"]). Raises [Failure] if the device is inaccessible (with
       root and capability guidance on permission errors), if the driver
-      cannot be unbound, or if another process holds the device lock. *)
+      cannot be unbound, or if another process holds the device lock.
+
+      With [VFIO=1] in the environment and a usable [vfio] kernel
+      module, the device is bound to the [vfio-pci] driver in no-iommu
+      mode and its MSI interrupt vector is routed to an event
+      descriptor, so {!wait_irq} can sleep until the device raises an
+      interrupt. When the module, [/dev/vfio], or the permission for
+      either is missing the device is enabled without the route and
+      {!wait_irq} degrades to returning immediately; a failure after
+      that probe (the group cannot be opened or the vector cannot be
+      routed) raises [Failure]. *)
 
   val pcibus : t -> string
   (** [pcibus t] is the device's bus address. *)
@@ -179,6 +189,12 @@ module Pci_device : sig
   val reset : t -> unit
   (** [reset t] requests a function-level reset of the device through
       [sudo] in a subshell. Best effort: failures are not reported. *)
+
+  val wait_irq : t -> timeout_ms:int -> unit
+  (** [wait_irq t ~timeout_ms] blocks until the device raises an
+      interrupt, for at most [timeout_ms] milliseconds, and consumes the
+      pending interrupt event. Returns immediately on a device without
+      the interrupt route (see {!create}). *)
 end
 
 (** {1:iface Driver-less device interfaces} *)

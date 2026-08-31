@@ -533,6 +533,11 @@ let ack_messages fd =
    by clearing the command bit. *)
 
 module Am_boot = Tolk_amd.Am_boot
+module Pci_iface = Tolk_amd.Pci_iface
+module Queue_desc = Tolk_amd.Queue_desc
+module Signal = Tolk_hcq.Hcq.Signal
+module Timeline = Tolk_hcq.Hcq.Timeline
+module Hbuf = Tolk_hcq.Hcq.Buffer
 
 let boot_fw =
   {
@@ -591,6 +596,45 @@ let check_boot_stamps fd log =
   equal int 0xA0000008 v7;
   equal int (raddr fd.dev "regSCRATCH_REG6") r6;
   equal int 1 v6
+
+(* A scripted interrupt-collection registration over the fake device's
+   memory: a compute queue mid-stream whose [resetup] records its
+   replay, and a timeline mid-flight with a latched error. Offsets sit
+   in the main memory region, beyond every boot allocation. *)
+let scripted_registration fd t =
+  let view off size = Mmio.view fd.fvram ~off ~size () in
+  let slot off =
+    Hbuf.make ~va:(Nativeint.of_int off) ~size:16 ~view:(view off 16) ~meta:()
+      ()
+  in
+  let resetup_ran = ref 0 in
+  let qd =
+    {
+      Queue_desc.ring = view 0x1f10000 0x100;
+      read_ptr = view 0x1f10100 8;
+      write_ptr = view 0x1f10108 8;
+      doorbell = view 0x1f10110 8;
+      put_value = 42;
+      flush_hdp = None;
+      resetup = Some (fun () -> incr resetup_ran);
+    }
+  in
+  Mmio.write64 qd.Queue_desc.read_ptr 0 40L;
+  Mmio.write64 qd.Queue_desc.write_ptr 0 42L;
+  let tl =
+    {
+      Timeline.timeline = Signal.make (slot 0x1f20000);
+      shadow_timeline = Signal.make (slot 0x1f20010);
+      timeline_value = 7;
+      error_state = Some (Failure "wedged");
+      bounce = [||];
+      bounce_timeline = [||];
+      bounce_next = 0;
+      on_hang = (fun () -> ());
+    }
+  in
+  Pci_iface.register ~am:t ~compute_queue:qd ~tl;
+  (qd, tl, resetup_ran)
 
 let () =
   run "Amdev"
@@ -1390,6 +1434,38 @@ let () =
                     (list (pair int int))
                     (List.concat_map (fun c -> sets c 300) clks)
                     (List.rev !(fd.log))));
+          test "set_clocks None lifts the frequency limits" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  fd.log := [];
+                  Smu.set_clocks smu ~level:None;
+                  let resp, arg, msg = smu_addrs fd in
+                  let send m p = [ (resp, 0); (arg, p); (msg, m) ] in
+                  (* per clock: the soft minimum dropped to the floor and
+                     the soft maximum opened wide; no level queries *)
+                  equal
+                    (list (pair int int))
+                    (List.concat_map
+                       (fun clck ->
+                         send 0x19 (clck lsl 16)
+                         @ send 0x1a ((clck lsl 16) lor 0xffff))
+                       [ 2; 3; 1; 0 ])
+                    (List.rev !(fd.log))));
+          test "set_power_limit rounds to whole watts, at least one"
+            (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  fd.log := [];
+                  Smu.set_power_limit smu 249.6;
+                  Smu.set_power_limit smu 0.2;
+                  let resp, arg, msg = smu_addrs fd in
+                  let send p = [ (resp, 0); (arg, p); (msg, 0x32) ] in
+                  equal
+                    (list (pair int int))
+                    (send 250 @ send 1)
+                    (List.rev !(fd.log))));
         ];
       group "soc"
         [
@@ -2144,5 +2220,62 @@ let () =
                   (* force runs it on a healthy device too *)
                   fd.log := [];
                   equal bool true (Am_boot.recover ~force:true t)));
+        ];
+      group "driver-less recovery"
+        [
+          test "a ring fault latches the error state; the hang path recovers"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  Ih.init_hw t.Am_boot.ih;
+                  (* a translation-fault entry in the first ring *)
+                  let ring_paddr =
+                    (rstore fd "regIH_RB_BASE" lsl 8) - 0x10000000
+                  in
+                  Mmio.write32 fd.fvram ring_paddr (Int32.of_int 0x0014);
+                  Hashtbl.replace fd.reads (raddr fd.dev "regIH_RB_WPTR")
+                    (fun () -> 8 lsl 2);
+                  let qd, tl, resetup_ran = scripted_registration fd t in
+                  Fun.protect
+                    ~finally:(fun () -> Pci_iface.unregister t)
+                    (fun () ->
+                      (* sleeping collects the fault and reports it *)
+                      raises_match (Exn.failure ~substring:"error state")
+                        (fun () -> Pci_iface.sleep t ~timeout_ms:0);
+                      equal bool true (Amdev.is_err_state fd.dev);
+                      (* the hang path recovers the device, restores its
+                         queue and timeline, and re-raises *)
+                      raises_match
+                        (Exn.failure ~substring:"Device hang detected")
+                        (fun () -> Pci_iface.on_device_hang ());
+                      equal bool false (Amdev.is_err_state fd.dev);
+                      equal int 0 qd.Queue_desc.put_value;
+                      equal int64 0L (Mmio.read64 qd.Queue_desc.read_ptr 0);
+                      equal int64 0L (Mmio.read64 qd.Queue_desc.write_ptr 0);
+                      equal int 1 !resetup_ran;
+                      equal int 6 (Signal.value tl.Timeline.timeline);
+                      equal bool true (tl.Timeline.error_state = None);
+                      (* the recovered device sleeps cleanly again *)
+                      Pci_iface.sleep t ~timeout_ms:0)));
+          test
+            "a protocol timeout during collection surfaces as the fault \
+             report" (fun () ->
+              with_fake_dev (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  Ih.init_hw t.Am_boot.ih;
+                  (* the bus fault line is raised, but the power
+                     management firmware never answers the bank dump *)
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev "regBIF_BX0_BIF_DOORBELL_INT_CNTL")
+                    (rencode fd "regBIF_BX0_BIF_DOORBELL_INT_CNTL"
+                       [ ("ras_cntlr_interrupt_status", 1) ]);
+                  let (_ : Queue_desc.t * _ * _) =
+                    scripted_registration fd t
+                  in
+                  Fun.protect
+                    ~finally:(fun () -> Pci_iface.unregister t)
+                    (fun () ->
+                      raises_match (Exn.failure ~substring:"SMU msg")
+                        (fun () -> Pci_iface.sleep t ~timeout_ms:0))));
         ];
     ]

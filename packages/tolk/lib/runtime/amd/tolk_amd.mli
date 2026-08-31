@@ -728,14 +728,46 @@ module Pci_iface : sig
       version [gc_ver] and [xccs] compute dies: the [props] of the
       interface record. *)
 
+  val register :
+    am:Am_boot.t ->
+    compute_queue:Queue_desc.t ->
+    tl:('mem, 'mem device) Hcq.Timeline.t ->
+    unit
+  (** [register ~am ~compute_queue ~tl] makes a booted device visible
+      to {!collect_interrupts}: its interrupt rings are serviced on
+      every collection pass, and on recovery its compute queue is
+      rebuilt (via the queue's [resetup]) and its timeline rewound. The
+      device runtime registers each device once its queues exist. *)
+
+  val unregister : Am_boot.t -> unit
+  (** [unregister am] removes [am]'s registrations. Real devices stay
+      registered for the life of the process; a scripted device must
+      leave the registry before its mappings do. *)
+
   val collect_interrupts : ?reset:bool -> ?drain_only:bool -> unit -> unit
   (** [collect_interrupts ()] services the interrupt rings of every
-      open driver-less device: decoding and reporting pending entries
-      ([drain_only] discards them instead), and with [reset],
-      recovering devices that faulted — resetting their compute
-      processors, re-creating their compute queue, and rewinding their
-      timeline to the last completed value. Both default to
-      [false]. *)
+      registered device (see {!register}): decoding and reporting
+      pending entries ([drain_only] discards them instead), and with
+      [reset], recovering devices that faulted — resetting their
+      compute processors, re-creating their compute queue, and
+      rewinding their timeline to the last completed value. Both
+      default to [false]. *)
+
+  val sleep : Am_boot.t -> timeout_ms:int -> unit
+  (** [sleep am ~timeout_ms] parks a stalled wait: it blocks on the
+      device's interrupt route for at most [timeout_ms] milliseconds
+      (see {!System.Pci_device.wait_irq}; skipped for devices without
+      one), then collects pending interrupts for every registered
+      device. Raises [Failure] when [am] is in the error state
+      afterwards, or with a protocol fault report when collection
+      itself fails, so waits abort onto the recovery path. *)
+
+  val on_device_hang : unit -> 'a
+  (** [on_device_hang ()] handles a stalled or faulted wait: collects
+      pending interrupts, recovers every registered device that
+      faulted (see {!collect_interrupts}), and raises [Failure].
+      Recovered devices keep working; the raise reports the hang to
+      the caller whose work was lost. *)
 
   val iface : t -> mem Iface.t
   (** [iface t] is [t] as the interface record the device runtime
