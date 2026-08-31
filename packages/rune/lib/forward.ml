@@ -501,12 +501,12 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                     if upper then (T.transpose l, T.transpose da) else (l, da)
                   in
                   let w =
-                    triangular_solve ~upper:false ~transpose:false
+                    solve_triangular ~upper:false ~transpose:false
                       ~unit_diag:false l_lower da_lower
                   in
                   let m =
                     T.transpose
-                      (triangular_solve ~upper:false ~transpose:false
+                      (solve_triangular ~upper:false ~transpose:false
                          ~unit_diag:false l_lower (T.transpose w))
                   in
                   let phi =
@@ -518,10 +518,10 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   in
                   let dl_lower = T.matmul l_lower phi in
                   if upper then T.transpose dl_lower else dl_lower))
-      | E_triangular_solve { a; b; upper; transpose; unit_diag } ->
+      | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
             (fun k ->
-              let out = triangular_solve ~upper ~transpose ~unit_diag a b in
+              let out = solve_triangular ~upper ~transpose ~unit_diag a b in
               if active a || active b then begin
                 (* A_op X = B, so A_op dX = dB - dA_op X, with dA restricted to
                    the triangle the solve reads. *)
@@ -552,7 +552,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                       T.sub db prod
                 in
                 set_tangent out
-                  (triangular_solve ~upper ~transpose ~unit_diag a rhs)
+                  (solve_triangular ~upper ~transpose ~unit_diag a rhs)
               end;
               continue k out)
       | E_qr { t_in; reduced } ->

@@ -3,43 +3,41 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Trace-time linear algebra for the jit tracer.
+(* Linear algebra as unrolled compositions.
 
-   The eager backend runs QR and triangular solves as data-dependent C kernels
-   (nx_c_qr.c, nx_c_tri.c). Tolk cannot express those: its Uop vocabulary has no
-   host control flow, and reading a traced value to steer one is exactly what a
-   compiled trace excludes. Neither operation needs data-dependent iteration,
-   though — both take a number of steps fixed by the shapes alone. They are
-   therefore unrolled here, at trace time, into ordinary Tolk compositions
-   (matmuls, element-wise arithmetic, movement ops): min(m, n) Householder
-   reflectors for QR, n forward-substitution steps for a triangular solve. The
-   lowering sees a plain static graph and compiles it for every Tolk device.
+   Tolk's Uop vocabulary has no host control flow, so an operation whose eager
+   implementation iterates over data — a factorization's column loop, a
+   substitution's row loop — cannot be a single op. None of the operations
+   here actually need data-dependent iteration, though: QR, triangular solves,
+   and Cholesky all take a number of steps fixed by the input shapes alone.
+   They are therefore unrolled here, at graph-construction time, into ordinary
+   Tolk compositions (matmuls, element-wise arithmetic, movement ops): min(m,
+   n) Householder reflectors for QR, n forward-substitution steps for a
+   triangular solve, one column per step for Cholesky. The lowering sees a
+   plain static graph and compiles it for every Tolk device.
 
-   Conventions follow the eager kernels: the LAPACK reflector sign (beta =
-   -sign(alpha)·‖x‖, so R's diagonal takes the reflected sign) and a column
-   whose tail is already zero taking no reflector (tau = 0, R[j][j] = alpha).
-   Compiled results match eager execution up to floating-point association. The
-   subdiagonal of the factored working matrix stores the reflector tails — the
-   LAPACK layout, sound because column j is never touched after step j — so
-   forming Q re-reads them from the same graph with no extra storage.
+   Conventions follow LAPACK: the reflector sign (beta = -sign(alpha)·‖x‖, so
+   R's diagonal takes the reflected sign) and a column whose tail is already
+   zero taking no reflector (tau = 0, R[j][j] = alpha). Results match the
+   classic algorithms up to floating-point association. The subdiagonal of the
+   factored working matrix stores the reflector tails — the LAPACK layout,
+   sound because column j is never touched after step j — so forming Q re-reads
+   them from the same graph with no extra storage.
 
    Graph size grows linearly in the matrix dimension: one small kernel cluster
    per step. Blocked (panel) factorizations would amortize the constant, not
-   change the model. A linear solve is then a two-liner at trace time, [let q, r
-   = qr ~reduced:true a in triangular_solve r (matmul qᵀ b)]; the eager
-   [Nx.solve] itself still refuses to trace because its singularity check reads
-   a traced value, so inside jit the composition is written out by hand and a
-   singular system yields infinities rather than an error. *)
-
-module F = Tolk_frontend
+   change the model. A linear solve is then a two-liner at graph-construction
+   time, [let q, r = qr ~reduced:true a in solve_triangular r (matmul qᵀ b)];
+   callers that want host-side checks on the result (a singularity test, say)
+   add them outside the graph, where control flow lives. *)
 
 (* {1 Helpers} *)
 
 (* Slice the last two axes of [t]; [None] leaves an axis whole. *)
 let slice2 t rows cols =
-  let shape = F.Tensor.shape t in
+  let shape = Tensor.shape t in
   let rank = List.length shape in
-  F.Movement.shrink t
+  Movement.shrink t
     (List.mapi
        (fun i s ->
          if i = rank - 2 then Option.value rows ~default:(0, s)
@@ -49,15 +47,15 @@ let slice2 t rows cols =
 
 (* Swap the last two axes. *)
 let swap2 t =
-  let rank = List.length (F.Tensor.shape t) in
-  F.Movement.permute t
+  let rank = List.length (Tensor.shape t) in
+  Movement.permute t
     (List.init rank (fun i ->
          if i = rank - 2 then rank - 1 else if i = rank - 1 then rank - 2 else i))
 
 (* A constant of shape [batch @ [d1; d2]] with dtype [dt]. *)
 let scalar2 dt batch d1 d2 v =
-  F.Creation.full ~buffer:false ~dtype:dt (batch @ [ d1; d2 ])
-    (F.Tensor.Sfloat v)
+  Creation.full ~buffer:false ~dtype:dt (batch @ [ d1; d2 ])
+    (Tensor.Sfloat v)
 
 let zero1 dt batch = scalar2 dt batch 1 1 0.0
 let one1 dt batch = scalar2 dt batch 1 1 1.0
@@ -67,17 +65,17 @@ let one1 dt batch = scalar2 dt batch 1 1 1.0
    lean on that). At least one piece is never empty at every call site. *)
 let cat2 ts =
   let nonempty t =
-    let sh = F.Tensor.shape t in
+    let sh = Tensor.shape t in
     List.nth sh (List.length sh - 2) > 0
   in
   match List.filter nonempty ts with
-  | [] -> invalid_arg "linalg_graph.cat2: every piece is empty"
+  | [] -> invalid_arg "Linalg.cat2: every piece is empty"
   | [ x ] -> x
-  | x :: xs -> F.Op.cat ~dim:(-2) x xs
+  | x :: xs -> Op.cat ~dim:(-2) x xs
 
 let require_float ~what dt =
   if not (Tolk_uop.Dtype.is_float dt) then
-    invalid_arg (Printf.sprintf "linalg_graph.%s: dtype must be float" what)
+    invalid_arg (Printf.sprintf "Linalg.%s: dtype must be float" what)
 
 (* {1 QR}
 
@@ -85,18 +83,15 @@ let require_float ~what dt =
    reflects the column tail below (and including) the diagonal to [beta·e_j],
    overwrites column j with the reflector (beta on the diagonal, the tail
    divided by [alpha - beta] below — the stored v), and applies H_j to the
-   columns to the right as a rank-1 update built from two small matmuls. The
-   reflector sign and the no-reflector case for zero tails follow the eager
-   kernel. *)
+   columns to the right as a rank-1 update built from two small matmuls. *)
 
 let qr ~reduced a =
-  let module E = F.Elementwise in
-  let dt = F.Tensor.val_dtype a in
+  let module E = Elementwise in
+  let dt = Tensor.val_dtype a in
   require_float ~what:"qr" dt;
-  let shape = F.Tensor.shape a in
+  let shape = Tensor.shape a in
   let rank = List.length shape in
-  if rank < 2 then
-    invalid_arg "linalg_graph.qr: input requires at least 2 dimensions";
+  if rank < 2 then invalid_arg "Linalg.qr: input requires at least 2 dimensions";
   let m = List.nth shape (rank - 2) and n = List.nth shape (rank - 1) in
   let batch = List.filteri (fun i _ -> i < rank - 2) shape in
   let k = Stdlib.min m n in
@@ -108,9 +103,7 @@ let qr ~reduced a =
     let tail = slice2 !work (Some (j + 1, m)) (Some (j, j + 1)) in
     let xnorm2 =
       if mtail = 0 then zero1 dt batch
-      else
-        F.Reduce.sum ~axis:[ -2 ] ~keepdim:true ~dtype:dt
-          (E.mul tail tail)
+      else Reduce.sum ~axis:[ -2 ] ~keepdim:true ~dtype:dt (E.mul tail tail)
     in
     (* beta = -sign(alpha)·‖x‖; a zero tail takes no reflector. *)
     let has = E.ne xnorm2 (zero1 dt batch) in
@@ -140,7 +133,7 @@ let qr ~reduced a =
       if n - j - 1 = 0 then
         match left with
         | [] -> new_col
-        | l :: tl -> F.Op.cat ~dim:(-1) l (tl @ [ new_col ])
+        | l :: tl -> Op.cat ~dim:(-1) l (tl @ [ new_col ])
       else
         let trailing = slice2 !work None (Some (j + 1, n)) in
         let v =
@@ -149,26 +142,23 @@ let qr ~reduced a =
             @ [ one1 dt batch ]
             @ if mtail > 0 then [ vtail ] else [])
         in
-        let proj = F.Op.matmul (swap2 v) trailing in
-        let trailing' = E.sub trailing (E.mul tau (F.Op.matmul v proj)) in
+        let proj = Op.matmul (swap2 v) trailing in
+        let trailing' = E.sub trailing (E.mul tau (Op.matmul v proj)) in
         match left @ [ new_col; trailing' ] with
-        | hd :: tl -> F.Op.cat ~dim:(-1) hd tl
+        | hd :: tl -> Op.cat ~dim:(-1) hd tl
         | [] -> assert false
   done;
   let nq = if reduced then k else m in
   let r =
-    if reduced then slice2 (F.Op.triu !work) (Some (0, k)) None
-    else F.Op.triu !work
+    if reduced then slice2 (Op.triu !work) (Some (0, k)) None
+    else Op.triu !work
   in
   (* Q = H_0 · H_1 ··· H_{k-1}, applied to the identity in reverse order,
      reading each v back out of the stored subdiagonal. A tau of 0 makes the
      steps for skipped columns (and the empty-tail last column of a square
      matrix) no-ops. *)
   let q =
-    ref
-      (F.Movement.expand
-         (F.Op.eye ~m:nq ~dtype:dt m)
-         (batch @ [ m; nq ]))
+    ref (Movement.expand (Op.eye ~m:nq ~dtype:dt m) (batch @ [ m; nq ]))
   in
   for j = k - 1 downto 0 do
     let v =
@@ -180,8 +170,8 @@ let qr ~reduced a =
           [ slice2 !work (Some (j + 1, m)) (Some (j, j + 1)) ]
         else [])
     in
-    let proj = E.mul taus.(j) (F.Op.matmul (swap2 v) !q) in
-    q := E.sub !q (F.Op.matmul v proj)
+    let proj = E.mul taus.(j) (Op.matmul (swap2 v) !q) in
+    q := E.sub !q (Op.matmul v proj)
   done;
   (!q, r)
 
@@ -213,8 +203,8 @@ let qr ~reduced a =
 (* The unblocked kernel over a lower triangular [low] and matrix right-hand
    side [rhs]; also the diagonal-block solver of the blocked path. *)
 let forward_solve_unblocked ~unit_diag ~dt ~batch low rhs =
-  let module E = F.Elementwise in
-  let sh = F.Tensor.shape low in
+  let module E = Elementwise in
+  let sh = Tensor.shape low in
   let n = List.nth sh (List.length sh - 2) in
   let diag_or_one i =
     if unit_diag then one1 dt batch
@@ -223,9 +213,9 @@ let forward_solve_unblocked ~unit_diag ~dt ~batch low rhs =
   let x = ref (E.div (slice2 rhs (Some (0, 1)) None) (diag_or_one 0)) in
   for i = 1 to n - 1 do
     let row = slice2 low (Some (i, i + 1)) (Some (0, i)) in
-    let partial = F.Op.matmul row !x in
+    let partial = Op.matmul row !x in
     x :=
-      F.Op.cat ~dim:(-2) !x
+      Op.cat ~dim:(-2) !x
         [ E.div
             (E.sub (slice2 rhs (Some (i, i + 1)) None) partial)
             (diag_or_one i) ]
@@ -239,27 +229,27 @@ let block_rows = 32
    reference machine measured around [nrhs ≈ 3500 / n]). *)
 let block_threshold = 32
 
-let triangular_solve ~upper ~transpose ~unit_diag a b =
-  let module E = F.Elementwise in
-  let dt = F.Tensor.val_dtype a in
-  require_float ~what:"triangular_solve" dt;
-  let shape = F.Tensor.shape a in
+let solve_triangular ~upper ~transpose ~unit_diag a b =
+  let module E = Elementwise in
+  let dt = Tensor.val_dtype a in
+  require_float ~what:"solve_triangular" dt;
+  let shape = Tensor.shape a in
   let rank = List.length shape in
   let n = List.nth shape (rank - 1) in
   let batch = List.filteri (fun i _ -> i < rank - 2) shape in
-  let vector_rhs = List.length (F.Tensor.shape b) = rank - 1 in
-  let bm = if vector_rhs then F.Movement.unsqueeze b (-1) else b in
+  let vector_rhs = List.length (Tensor.shape b) = rank - 1 in
+  let bm = if vector_rhs then Movement.unsqueeze b (-1) else b in
   if n = 0 then bm
   else
     (* Transposing swaps which triangle is which, so the whole system flips
        exactly when the effective triangle points up: [upper <> transpose]. *)
     let low =
       let m0 = if transpose then swap2 a else a in
-      if upper <> transpose then F.Movement.flip m0 [ -2; -1 ] else m0
+      if upper <> transpose then Movement.flip m0 [ -2; -1 ] else m0
     in
     let flipped = upper <> transpose in
-    let rhs = if flipped then F.Movement.flip bm [ -2 ] else bm in
-    let nrhs = List.nth (F.Tensor.shape bm) (rank - 1) in
+    let rhs = if flipped then Movement.flip bm [ -2 ] else bm in
+    let nrhs = List.nth (Tensor.shape bm) (rank - 1) in
     let x =
       if nrhs >= block_threshold && n > 2 * block_rows then begin
         let nblocks = (n + block_rows - 1) / block_rows in
@@ -271,14 +261,12 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
               let w = Stdlib.min block_rows (n - lo) in
               forward_solve_unblocked ~unit_diag ~dt ~batch
                 (slice2 low (Some (lo, lo + w)) (Some (lo, lo + w)))
-                (F.Movement.expand
-                   (F.Op.eye ~m:w ~dtype:dt w)
-                   (batch @ [ w; w ])))
+                (Movement.expand (Op.eye ~m:w ~dtype:dt w) (batch @ [ w; w ])))
         in
         let x =
           ref
-            (F.Creation.full ~buffer:false ~dtype:dt (batch @ [ n; nrhs ])
-               (F.Tensor.Sfloat 0.0))
+            (Creation.full ~buffer:false ~dtype:dt (batch @ [ n; nrhs ])
+               (Tensor.Sfloat 0.0))
         in
         for k = 0 to nblocks - 1 do
           let lo = k * block_rows in
@@ -289,14 +277,14 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
             if k = 0 then base
             else
               E.sub base
-                (F.Op.matmul (slice2 low (Some (lo, hi)) (Some (0, lo)))
+                (Op.matmul (slice2 low (Some (lo, hi)) (Some (0, lo)))
                    (slice2 !x (Some (0, lo)) None))
           in
-          let xk = F.Op.matmul inverses.(k) rhs_k in
+          let xk = Op.matmul inverses.(k) rhs_k in
           (* Splice the solved rows into the running solution. *)
           x :=
             E.add !x
-              (F.Movement.pad xk
+              (Movement.pad xk
                  (List.map (fun _ -> (0, 0)) batch
                  @ [ (lo, n - hi); (0, 0) ]))
         done;
@@ -304,8 +292,8 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
       end
       else forward_solve_unblocked ~unit_diag ~dt ~batch low rhs
     in
-    let x = if flipped then F.Movement.flip x [ -2 ] else x in
-    if vector_rhs then F.Movement.squeeze ~dim:(-1) x else x
+    let x = if flipped then Movement.flip x [ -2 ] else x in
+    if vector_rhs then Movement.squeeze ~dim:(-1) x else x
 
 (* {1 Cholesky}
 
@@ -313,21 +301,22 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
    columns of [L] finished, column [j] is the current column of [A] minus its
    projection onto those finished columns, and the pivot [L[j][j]] is the
    positive square root of the column's diagonal entry. This is the same
-   per-element arithmetic as the eager kernel's unblocked path (same sums, in
-   the same order), so results agree up to the blocked kernel's association
-   differences. The eager kernel raises [Linalg_error] on a non-positive-
-   definite matrix; the compiled graph has no host control flow to raise with,
-   so a non-positive-definite input yields nans instead. [A = Uᵀ·U] is the
-   transpose problem — factor [Aᵀ] and swap the result back. *)
+   per-element arithmetic as the classic unblocked algorithm (same sums, in
+   the same order), so results agree with a blocked implementation up to
+   floating-point association. A non-positive-definite input is detected by
+   the host in the classic implementations, and the graph has no host control
+   flow to raise with — so a non-positive-definite input yields nans instead
+   of an error. [A = Uᵀ·U] is the transpose problem — factor [Aᵀ] and swap the
+   result back. *)
 
 let cholesky ~upper a =
-  let module E = F.Elementwise in
-  let dt = F.Tensor.val_dtype a in
+  let module E = Elementwise in
+  let dt = Tensor.val_dtype a in
   require_float ~what:"cholesky" dt;
-  let shape = F.Tensor.shape a in
+  let shape = Tensor.shape a in
   let rank = List.length shape in
   if rank < 2 then
-    invalid_arg "linalg_graph.cholesky: input requires at least 2 dimensions";
+    invalid_arg "Linalg.cholesky: input requires at least 2 dimensions";
   let n = List.nth shape (rank - 1) in
   let batch = List.filteri (fun i _ -> i < rank - 2) shape in
   let low = if upper then swap2 a else a in
@@ -335,8 +324,8 @@ let cholesky ~upper a =
   else
     let l =
       ref
-        (F.Creation.full ~buffer:false ~dtype:dt (batch @ [ n; 0 ])
-           (F.Tensor.Sfloat 0.0))
+        (Creation.full ~buffer:false ~dtype:dt (batch @ [ n; 0 ])
+           (Tensor.Sfloat 0.0))
     in
     for j = 0 to n - 1 do
       (* Project the finished columns off the current column of [A]: the
@@ -344,7 +333,7 @@ let cholesky ~upper a =
          product. Empty at [j = 0]. *)
       let proj =
         if j = 0 then zero1 dt batch
-        else F.Op.matmul !l (swap2 (slice2 !l (Some (j, j + 1)) None))
+        else Op.matmul !l (swap2 (slice2 !l (Some (j, j + 1)) None))
       in
       let col = E.sub (slice2 low None (Some (j, j + 1))) proj in
       let ljj = E.sqrt (slice2 col (Some (j, j + 1)) (Some (0, 1))) in
@@ -360,6 +349,6 @@ let cholesky ~upper a =
           @ [ ljj ]
           @ if n - j - 1 > 0 then [ tail ] else [])
       in
-      l := (if j = 0 then new_col else F.Op.cat ~dim:(-1) !l [ new_col ])
+      l := (if j = 0 then new_col else Op.cat ~dim:(-1) !l [ new_col ])
     done;
     if upper then swap2 !l else !l
