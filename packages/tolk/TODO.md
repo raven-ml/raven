@@ -264,6 +264,56 @@ single-die parts. Deliberately not ported with it:
   exercised by unit tests over mapped memory, and the device-level tests
   skip without `/dev/kfd`; nothing has run on a live GPU yet.
 
+## NV runtime — deferred (NVK path)
+
+The kernel-driver NVIDIA device (`lib/runtime/nv`, wired as the `NV` backend)
+covers compile, dispatch, DMA host transfers, and fault reporting on the
+Ampere/Ada/Blackwell generations. Deliberately not ported with it:
+
+- **HCQ graph support and queue `bind`** (`runtime/graph/hcq.py`, the
+  builders' `bind` fast path): batched replay of a call sequence over the
+  hardware queues. The device registers no `?graph` capability, so the
+  engine falls back to per-call dispatch — the same deferral as AMD.
+
+- **Video decode** (`NVVideoQueue`, `_encode_decode`, `_ensure_has_vid_hw`,
+  the viddec classes): the copy-engine surface here is compute and DMA
+  only, and the interface seam carries no video class.
+
+- **PMA profiling** (`_prof_init`, PC sampling, the `reg_ops` suite, and
+  the `NVB0CC` special cases): no profiler objects are created and
+  `Program.call` timing comes from the queue timestamps alone.
+
+- **PTX and NVCC compile routes** (`PTXRenderer`, `NVCCRenderer`,
+  nvJitLink) and the **NAK/Mesa path** (`NAKRenderer` over NIR plus Mesa's
+  NAK compiler): kernels compile through nvrtc straight to cubin. NAK is
+  the designated fully-toolkit-free route (no CUDA toolkit on the box);
+  it waits on a NIR renderer existing in tolk.
+
+- **UVM peer access / multi-GPU P2P** (`UVM_ENABLE_PEER_ACCESS`, the
+  cross-device `map` arm of the allocator): blocked on allocator device
+  identities (see the multi-device item above).
+
+- **Device-list filtering** (`hcq_filter_visible_devices`): `NV` and
+  `NV:<n>` open by enumeration order; there is no visible-devices
+  environment filter.
+
+- **The driver-less GSP tier** (`support/nv/nvdev.py` + `support/nv/ip.py`,
+  `PCIIface`): booting the GPU with no kernel driver over PCI is its own
+  workstream behind the same `Nv_iface` seam, mirroring the AMD `am` tier;
+  until it lands (and is validated), the kernel driver is the only
+  interface, and the reference's automatic kernel-driver-to-PCI fallback
+  stays off. MOCK, USB, and remote interfaces are out with it.
+
+- **A committed cubin fixture** for `Program.load` against real nvrtc
+  output — generating one needs a machine with the CUDA toolkit (no GPU
+  required, `test/fixtures/nv/generate_fixture.py`). The hand-built ELF
+  fixture in `test/unit/test_runtime_nv.ml` covers the loader meanwhile.
+
+- **Real-hardware validation**: the queue streams and launch descriptors
+  are pinned by the `nvqueue` goldens and unit tests over mapped memory,
+  and the device-level tests skip without `/dev/nvidiactl`; nothing has
+  run on a live GPU yet.
+
 ## Post-wave sweep — landed
 
 All four changed a declaration in `lib/uop/` plus every reader across

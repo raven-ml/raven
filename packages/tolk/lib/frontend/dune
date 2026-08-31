@@ -10,6 +10,7 @@
   tolk_amd
   tolk_cpu
   tolk_cuda
+  tolk_nv
   (select
    device_metal.ml
    from

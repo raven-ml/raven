@@ -515,6 +515,7 @@ module Nv_iface = struct
     root : int;
     gpu_instance : int;
     count : int;
+    defs : Nv_defs_versions.t;
     set_device : nvdevice:int -> subdevice:int -> virtmem:int -> unit;
     rm_alloc : parent:int -> cls:int -> ?params:Nv_tables.blob -> unit -> int;
     rm_control : obj:int -> cmd:int -> ?params:Nv_tables.blob -> unit -> unit;
@@ -1137,6 +1138,7 @@ module Nvk_iface = struct
       Nv_iface.root = st.root;
       gpu_instance = t.gpu_instance;
       count = Array.length st.gpus_info;
+      defs = st.defs;
       set_device =
         (fun ~nvdevice ~subdevice ~virtmem ->
           t.nvdevice <- nvdevice;
@@ -1488,3 +1490,544 @@ let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
       tl.Hcq.Timeline.timeline;
     Compute_queue.submit cq queue
   end
+
+(* Device runtime *)
+
+module Timeline = Hcq.Timeline
+
+(* The chip's shader ISA identity, derived from the reported SM version:
+   the generation and revision digits name the architecture, and the same
+   two components packed into a byte are the ISA revision launch
+   descriptors carry. The 0xa04 report names sm_120. *)
+let arch_of_sm_version sm_version =
+  if sm_version = 0xa04 then "sm_120"
+  else
+    let v = sm_version land 0xff in
+    Printf.sprintf "sm_%d%d"
+      ((sm_version lsr 8) land 0xff)
+      (if v > 0xf then v lsr 4 else v)
+
+let sass_of_sm_version sm_version =
+  ((sm_version land 0xf00) lsr 4) lor (sm_version land 0xf)
+
+let query_gpu_info (iface : Nv_iface.t) ~subdevice indices =
+  match iface.Nv_iface.nvdev with
+  | Some _ ->
+      (* an interface programming the hardware directly answers from the
+         static engine information of the first engine *)
+      let module P = Defs.Nv2080_ctrl_internal_static_gr_get_info_params in
+      let module I = Defs.Nv2080_ctrl_internal_static_gr_info in
+      let b = Nv_tables.create_blob P.sizeof in
+      iface.Nv_iface.rm_control ~obj:subdevice
+        ~cmd:Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info ~params:b ();
+      List.map
+        (fun idx ->
+          let base =
+            P.engineinfo_offset + I.infolist_offset
+            + (idx * I.infolist_elem_size)
+          in
+          Nv_tables.get_field ~base b Defs.Nv2080_ctrl_internal_gr_info.data)
+        indices
+  | None ->
+      let module I = Defs.Nv2080_ctrl_gr_info in
+      let n = List.length indices in
+      let infos = Nv_tables.create_blob (n * I.sizeof) in
+      List.iteri
+        (fun i idx ->
+          Nv_tables.set_field ~base:(i * I.sizeof) infos I.index idx)
+        indices;
+      let module P = Defs.Nv2080_ctrl_gr_get_info_params in
+      let b = Nv_tables.create_blob P.sizeof in
+      Nv_tables.set_field b P.grinfolistsize n;
+      Nv_tables.set_field b P.grinfolist
+        (Nativeint.to_int (Nv_tables.blob_addr infos));
+      iface.Nv_iface.rm_control ~obj:subdevice
+        ~cmd:Defs.nv2080_ctrl_cmd_gr_get_info ~params:b ();
+      List.mapi
+        (fun i _ -> Nv_tables.get_field ~base:(i * I.sizeof) infos I.data)
+        indices
+
+(* One mapped hardware channel: an error notifier, the channel object over
+   its slice of the shared ring area, the engine object bound to it, the
+   work-submission token, and the memory-manager registration. The compute
+   channel also creates the debugger objects fault reports are read
+   through; their handles are returned alongside the descriptor. *)
+let new_gpfifo (iface : Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevice
+    ~gpfifo_area ~ctxshare ~channel_group ~offset ~entries ~compute =
+  let notifier = iface.Nv_iface.alloc ~uncached:true (48 lsl 20) in
+  let open Nv_defs_versions in
+  let p = iface.Nv_iface.defs.nv_channelgpfifo_allocation_parameters in
+  let b = Nv_tables.create_blob p.sizeof in
+  Nv_tables.set_field b p.gpfifooffset
+    (Nativeint.to_int (Hcq.Buffer.va gpfifo_area) + offset);
+  Nv_tables.set_field b p.gpfifoentries entries;
+  Nv_tables.set_field b p.hcontextshare ctxshare;
+  Nv_tables.set_field b p.hobjecterror
+    (Hcq.Buffer.meta notifier).Nv_iface.h_memory;
+  Nv_tables.set_field b p.hobjectbuffer
+    (Hcq.Buffer.meta gpfifo_area).Nv_iface.h_memory;
+  Nv_tables.set_field b p.huserdmemory
+    (Hcq.Buffer.meta gpfifo_area).Nv_iface.h_memory;
+  Nv_tables.set_field b p.userdoffset ((entries * 8) + offset);
+  Nv_tables.set_field b p.enginetype 0;
+  let gpfifo =
+    iface.Nv_iface.rm_alloc ~parent:channel_group
+      ~cls:usermode.Nv_iface.gpfifo_class ~params:b ()
+  in
+  let debug =
+    if compute then begin
+      let debug_compute_obj =
+        iface.Nv_iface.rm_alloc ~parent:gpfifo
+          ~cls:usermode.Nv_iface.compute_class ()
+      in
+      let module D = Defs.Nv83de_alloc_parameters in
+      let db = Nv_tables.create_blob D.sizeof in
+      Nv_tables.set_field db D.happclient iface.Nv_iface.root;
+      Nv_tables.set_field db D.hclass3dobject debug_compute_obj;
+      Some
+        ( iface.Nv_iface.rm_alloc ~parent:nvdevice ~cls:Defs.gt200_debugger
+            ~params:db (),
+          gpfifo )
+    end
+    else begin
+      let (_ : int) =
+        iface.Nv_iface.rm_alloc ~parent:gpfifo
+          ~cls:usermode.Nv_iface.dma_class ()
+      in
+      None
+    end
+  in
+  let module W = Defs.Nvc36f_ctrl_cmd_gpfifo_get_work_submit_token_params in
+  let wb = Nv_tables.create_blob W.sizeof in
+  Nv_tables.set_field wb W.worksubmittoken (-1);
+  iface.Nv_iface.rm_control ~obj:gpfifo
+    ~cmd:Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token ~params:wb ();
+  iface.Nv_iface.setup_gpfifo_vm ~gpfifo;
+  let area = Hcq.Buffer.cpu_view gpfifo_area in
+  ( {
+      Queue_desc.ring = Hcq.Mmio.view area ~off:offset ~size:(entries * 8) ();
+      gpput =
+        Hcq.Mmio.view area
+          ~off:(offset + (entries * 8) + Defs.ampere_a_control_gpfifo_gpput)
+          ~size:4 ();
+      token = Nv_tables.get_field wb W.worksubmittoken;
+      put_value = 0;
+    },
+    debug )
+
+(* Fault reports: the per-SM error states read through the debugger, and
+   when they record an MMU fault, its address, type and access decoded by
+   name. *)
+let on_device_hang (iface : Nv_iface.t) ~debugger ~debug_channel () =
+  let report = ref [] in
+  let add line = report := line :: !report in
+  let module P = Defs.Nv83de_ctrl_debug_read_all_sm_error_states_params in
+  let b = Nv_tables.create_blob P.sizeof in
+  Nv_tables.set_field b P.htargetchannel debug_channel;
+  Nv_tables.set_field b P.numsmstoread 100;
+  iface.Nv_iface.rm_control ~obj:debugger
+    ~cmd:Defs.nv83de_ctrl_cmd_debug_read_all_sm_error_states ~params:b ();
+  if Nv_tables.get_field b P.mmufault_valid <> 0 then begin
+    let module M = Defs.Nv83de_ctrl_debug_read_mmu_fault_info_params in
+    let module E = Defs.Nv83de_ctrl_debug_read_mmu_fault_info_entry in
+    let mb = Nv_tables.create_blob M.sizeof in
+    iface.Nv_iface.rm_control ~obj:debugger
+      ~cmd:Defs.nv83de_ctrl_cmd_debug_read_mmu_fault_info ~params:mb ();
+    let name table id =
+      match List.assoc_opt id table with
+      | Some n -> n
+      | None -> string_of_int id
+    in
+    for i = 0 to Nv_tables.get_field mb M.count - 1 do
+      let base = M.mmufaultinfolist_offset + (i * E.sizeof) in
+      add
+        (Printf.sprintf "MMU fault: 0x%X | %s | %s"
+           (Nv_tables.get_field ~base mb E.faultaddress)
+           (name Defs.nv_pfault_fault_type
+              (Nv_tables.get_field ~base mb E.faulttype))
+           (name Defs.nv_pfault_access_type
+              (Nv_tables.get_field ~base mb E.accesstype)))
+    done
+  end
+  else begin
+    let module R = Defs.Nv83de_sm_error_state_registers in
+    for i = 0 to P.smerrorstatearray_count - 1 do
+      let base = P.smerrorstatearray_offset + (i * R.sizeof) in
+      let esr = Nv_tables.get_field ~base b R.hwwglobalesr in
+      let warp_esr = Nv_tables.get_field ~base b R.hwwwarpesr in
+      if esr <> 0 || warp_esr <> 0 then
+        add
+          (Printf.sprintf "SM %d fault: esr=%d warp_esr=0x%x warp_pc=0x%x" i
+             esr warp_esr
+             (Nv_tables.get_field ~base b R.hwwwarpesrpc64))
+    done
+  end;
+  failwith (String.concat "\n" (List.rev !report))
+
+module State = struct
+  type t = {
+    iface : Nv_iface.t;
+    hw : Nv_iface.mem device;
+    subdevice : int;
+    compute_queue : Queue_desc.t;
+    dma_queue : Queue_desc.t;
+    kernargs : Nv_iface.mem Hcq.Kernargs.t;
+    pool : Nv_iface.mem Hcq.Signal.Pool.t;
+    tl : (Nv_iface.mem, Nv_iface.mem device) Timeline.t;
+    num_gpcs : int;
+    num_tpc_per_gpc : int;
+    num_sm_per_tpc : int;
+    max_warps_per_sm : int;
+    (* The device's LRU-wrapped allocator; set right after creation and used
+       for local-memory sizing. *)
+    mutable allocator :
+      Nv_iface.mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
+  }
+
+  let invalidate_caches t =
+    if Nv_iface.is_nvd t.iface then
+      t.iface.Nv_iface.rm_control ~obj:t.subdevice
+        ~cmd:Defs.nv2080_ctrl_cmd_internal_bus_flush_with_sysmembar ()
+    else begin
+      let module P = Defs.Nv2080_ctrl_fb_flush_gpu_cache_params in
+      let b = Nv_tables.create_blob P.sizeof in
+      Nv_tables.set_field b P.flags
+        ((Defs.nv2080_ctrl_fb_flush_gpu_cache_flags_write_back_yes lsl 2)
+        lor (Defs.nv2080_ctrl_fb_flush_gpu_cache_flags_invalidate_yes lsl 3)
+        lor (Defs.nv2080_ctrl_fb_flush_gpu_cache_flags_flush_mode_full_cache
+            lsl 4));
+      t.iface.Nv_iface.rm_control ~obj:t.subdevice
+        ~cmd:Defs.nv2080_ctrl_cmd_fb_flush_gpu_cache ~params:b ()
+    end
+end
+
+module Allocator = struct
+  (* One DMA stream ordered against the device timeline: wait for the last
+     submitted work, append the packets of [build], advance the timeline. *)
+  let submit_copy state build =
+    let tl = state.State.tl in
+    let cp = Copy_queue.create state.State.hw in
+    Copy_queue.wait cp
+      ~value:(tl.Timeline.timeline_value - 1)
+      tl.Timeline.timeline;
+    build cp;
+    Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
+    Copy_queue.submit cp state.State.dma_queue
+
+  let submit_chunk state ~dest ~src len =
+    submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src len)
+
+  let copyin state buf bytes =
+    Timeline.copyin state.State.tl ~submit_chunk:(submit_chunk state) buf bytes
+
+  let copyout state bytes buf =
+    Timeline.synchronize state.State.tl;
+    Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state) bytes
+      buf
+
+  let transfer state ~dest ~src nbytes =
+    submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src nbytes)
+
+  let raw state =
+    let alloc size (spec : Tolk.Device.Buffer_spec.t) =
+      match spec.external_ptr with
+      | Some _ -> invalid_arg "NV buffers cannot adopt an external pointer"
+      | None ->
+          state.State.iface.Nv_iface.alloc ~host:spec.host
+            ~cpu_access:spec.cpu_access size
+    in
+    let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
+      state.State.iface.Nv_iface.free buf
+    in
+    let offset buf size byte_offset =
+      Hcq.Buffer.offset buf ~off:byte_offset ~size ()
+    in
+    {
+      Tolk.Device.Allocator.alloc;
+      free;
+      copyin = copyin state;
+      copyout = copyout state;
+      addr = Hcq.Buffer.va;
+      offset = Some offset;
+      transfer = Some (transfer state);
+      supports_transfer = true;
+      copy_from_disk = None;
+      supports_copy_from_disk = false;
+    }
+
+  let create state =
+    let allocator = Tolk.Device.Lru_allocator.wrap (raw state) in
+    state.State.allocator <- Some allocator;
+    Tolk.Device.Allocator.Pack allocator
+end
+
+module Runtime = struct
+  (* Local-memory backing goes through the LRU allocator so resizes reuse
+     freed device memory. *)
+  let ensure_local_memory state size =
+    let allocator = Option.get state.State.allocator in
+    ensure_has_local_memory state.State.hw
+      ~alloc:(fun size ->
+        allocator.Tolk.Device.Allocator.alloc size
+          Tolk.Device.Buffer_spec.default)
+      ~free:(fun buf ->
+        allocator.Tolk.Device.Allocator.free buf (Hcq.Buffer.size buf)
+          Tolk.Device.Buffer_spec.default)
+      ~num_gpcs:state.State.num_gpcs
+      ~num_tpc_per_gpc:state.State.num_tpc_per_gpc
+      ~num_sm_per_tpc:state.State.num_sm_per_tpc
+      ~max_warps_per_sm:state.State.max_warps_per_sm ~tl:state.State.tl
+      ~queue:state.State.compute_queue size
+
+  let default_local = [| 1; 1; 1 |]
+
+  let runtime state name lib ~runtimevars:_ =
+    let prg =
+      Program.load state.State.hw
+        ~alloc:(fun size ->
+          state.State.iface.Nv_iface.alloc ~cpu_access:true size)
+        ~ensure_local_memory:(ensure_local_memory state) ~name lib
+    in
+    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      let local = Option.value local ~default:default_local in
+      let vals = Array.map Int64.to_int vals in
+      let tl = state.State.tl in
+      let timeline_value = Timeline.next_timeline tl in
+      let launch ?timing () =
+        Program.call prg ~kernargs:state.State.kernargs
+          ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
+          ~timeline_value ?wait:timing ~bufs ~vals
+          ~global_size:(global.(0), global.(1), global.(2))
+          ~local_size:(local.(0), local.(1), local.(2))
+          ()
+      in
+      if not wait then launch ()
+      else begin
+        (match tl.Timeline.error_state with Some e -> raise e | None -> ());
+        let st_slot = Hcq.Signal.Pool.get state.State.pool in
+        let en_slot = Hcq.Signal.Pool.get state.State.pool in
+        Fun.protect
+          ~finally:(fun () ->
+            Hcq.Signal.Pool.put state.State.pool en_slot;
+            Hcq.Signal.Pool.put state.State.pool st_slot)
+          (fun () ->
+            let st = Hcq.Signal.make st_slot in
+            let en = Hcq.Signal.make en_slot in
+            Timeline.guarded_wait tl (fun () -> launch ~timing:(st, en) ()))
+      end
+    in
+    let free () = Program.free ~free:state.State.iface.Nv_iface.free prg in
+    { Tolk.Device.call; free; handle = 0n }
+end
+
+(* The shared device open path over the selected interface: everything from
+   object allocation through channel set-up and renderer wiring is
+   interface-independent. *)
+let open_device ~name (iface : Nv_iface.t) =
+  let module D = Defs.Nv0080_alloc_parameters in
+  let db = Nv_tables.create_blob D.sizeof in
+  Nv_tables.set_field db D.deviceid iface.Nv_iface.gpu_instance;
+  Nv_tables.set_field db D.hclientshare iface.Nv_iface.root;
+  Nv_tables.set_field db D.vamode
+    Defs.nv_device_allocation_vamode_optional_multiple_vaspaces;
+  let nvdevice =
+    iface.Nv_iface.rm_alloc ~parent:iface.Nv_iface.root ~cls:Defs.nv01_device_0
+      ~params:db ()
+  in
+  let subdevice =
+    iface.Nv_iface.rm_alloc ~parent:nvdevice ~cls:Defs.nv20_subdevice_0
+      ~params:(Nv_tables.create_blob Defs.Nv2080_alloc_parameters.sizeof)
+      ()
+  in
+  let module V = Defs.Nv_memory_virtual_allocation_params in
+  let vb = Nv_tables.create_blob V.sizeof in
+  Nv_tables.set_field vb V.limit 0x1ffffffffffff;
+  let virtmem =
+    iface.Nv_iface.rm_alloc ~parent:nvdevice ~cls:Defs.nv01_memory_virtual
+      ~params:vb ()
+  in
+  iface.Nv_iface.set_device ~nvdevice ~subdevice ~virtmem;
+  let usermode = iface.Nv_iface.setup_usermode () in
+  let module B = Defs.Nv2080_ctrl_perf_boost_params in
+  let bb = Nv_tables.create_blob B.sizeof in
+  Nv_tables.set_field bb B.duration 0xffffffff;
+  Nv_tables.set_field bb B.flags
+    ((Defs.nv2080_ctrl_perf_boost_flags_cuda_yes lsl 4)
+    lor (Defs.nv2080_ctrl_perf_boost_flags_cuda_priority_high lsl 6)
+    lor Defs.nv2080_ctrl_perf_boost_flags_cmd_boost_to_max);
+  iface.Nv_iface.rm_control ~obj:subdevice ~cmd:Defs.nv2080_ctrl_cmd_perf_boost
+    ~params:bb ();
+  let open Nv_defs_versions in
+  let vp = iface.Nv_iface.defs.nv_vaspace_allocation_parameters in
+  let vsb = Nv_tables.create_blob vp.sizeof in
+  Nv_tables.set_field vsb vp.vabase 0x1000;
+  Nv_tables.set_field vsb vp.vasize 0x1fffffb000000;
+  Nv_tables.set_field vsb vp.flags
+    (Defs.nv_vaspace_allocation_flags_enable_page_faulting
+    lor Defs.nv_vaspace_allocation_flags_is_externally_owned);
+  let vaspace =
+    iface.Nv_iface.rm_alloc ~parent:nvdevice ~cls:Defs.fermi_vaspace_a
+      ~params:vsb ()
+  in
+  iface.Nv_iface.setup_vm ~vaspace;
+  let module C = Defs.Nv_channel_group_allocation_parameters in
+  let cb = Nv_tables.create_blob C.sizeof in
+  Nv_tables.set_field cb C.enginetype Defs.nv2080_engine_type_graphics;
+  let channel_group =
+    iface.Nv_iface.rm_alloc ~parent:nvdevice ~cls:Defs.kepler_channel_group_a
+      ~params:cb ()
+  in
+  let gpfifo_area =
+    iface.Nv_iface.alloc ~contiguous:true ~cpu_access:true
+      ~map_flags:(Defs.nvos33_flags_caching_type_writecombined lsl 23)
+      0x300000
+  in
+  let module X = Defs.Nv_ctxshare_allocation_parameters in
+  let xb = Nv_tables.create_blob X.sizeof in
+  Nv_tables.set_field xb X.hvaspace vaspace;
+  Nv_tables.set_field xb X.flags
+    Defs.nv_ctxshare_allocation_flags_subcontext_async;
+  let ctxshare =
+    iface.Nv_iface.rm_alloc ~parent:channel_group
+      ~cls:Defs.fermi_context_share_a ~params:xb ()
+  in
+  let compute_queue, debug =
+    new_gpfifo iface ~usermode ~nvdevice ~gpfifo_area ~ctxshare ~channel_group
+      ~offset:0 ~entries:0x10000 ~compute:true
+  in
+  let dma_queue, _ =
+    new_gpfifo iface ~usermode ~nvdevice ~gpfifo_area ~ctxshare ~channel_group
+      ~offset:0x100000 ~entries:0x10000 ~compute:false
+  in
+  let debugger, debug_channel = Option.get debug in
+  let sp = iface.Nv_iface.defs.nva06c_ctrl_gpfifo_schedule_params in
+  let sb = Nv_tables.create_blob sp.sizeof in
+  Nv_tables.set_field sb sp.benable 1;
+  iface.Nv_iface.rm_control ~obj:channel_group
+    ~cmd:Defs.nva06c_ctrl_cmd_gpfifo_schedule ~params:sb ();
+  let cmdq_page = iface.Nv_iface.alloc ~cpu_access:true 0x200000 in
+  let num_gpcs, num_tpc_per_gpc, num_sm_per_tpc, max_warps_per_sm, sm_version =
+    match
+      query_gpu_info iface ~subdevice
+        [
+          Defs.nv2080_ctrl_gr_info_index_litter_num_gpcs;
+          Defs.nv2080_ctrl_gr_info_index_litter_num_tpc_per_gpc;
+          Defs.nv2080_ctrl_gr_info_index_litter_num_sm_per_tpc;
+          Defs.nv2080_ctrl_gr_info_index_max_warps_per_sm;
+          Defs.nv2080_ctrl_gr_info_index_sm_version;
+        ]
+    with
+    | [ a; b; c; d; e ] -> (a, b, c, d, e)
+    | _ -> assert false
+  in
+  let arch = arch_of_sm_version sm_version in
+  let hw =
+    device ~compute_class:usermode.Nv_iface.compute_class
+      ~dma_class:usermode.Nv_iface.dma_class
+      ~gpfifo_class:usermode.Nv_iface.gpfifo_class
+      ~sass_version:(sass_of_sm_version sm_version)
+      ~shared_mem_window:0x729400000000n ~local_mem_window:0x729300000000n
+      ~cmdq_page ~gpu_mmio:usermode.Nv_iface.mmio ()
+  in
+  let pool =
+    Hcq.Signal.Pool.create ~alloc_page:(fun () ->
+        iface.Nv_iface.alloc ~host:true ~uncached:true ~cpu_access:true 0x1000)
+  in
+  let timeline_signal () =
+    Hcq.Signal.make ~is_timeline:true ~sleep:iface.Nv_iface.sleep ~owner:hw
+      (Hcq.Signal.Pool.get pool)
+  in
+  let bounce_count = 32 and bounce_size = 2 lsl 20 in
+  let state =
+    {
+      State.iface;
+      hw;
+      subdevice;
+      compute_queue;
+      dma_queue;
+      kernargs =
+        Hcq.Kernargs.create
+          (iface.Nv_iface.alloc ~cpu_access:true (16 lsl 20));
+      pool;
+      tl =
+        {
+          Timeline.timeline = timeline_signal ();
+          shadow_timeline = timeline_signal ();
+          timeline_value = 1;
+          error_state = None;
+          bounce =
+            Array.init bounce_count (fun _ ->
+                iface.Nv_iface.alloc ~host:true bounce_size);
+          bounce_timeline = Array.make bounce_count 0;
+          bounce_next = 0;
+          on_hang = on_device_hang iface ~debugger ~debug_channel;
+        };
+      num_gpcs;
+      num_tpc_per_gpc;
+      num_sm_per_tpc;
+      max_warps_per_sm;
+      allocator = None;
+    }
+  in
+  (* the initial queue set-up: bind the engine classes and the memory
+     windows to the fresh channels, ordered on the timeline *)
+  let tl = state.State.tl in
+  let cq = Compute_queue.create hw in
+  Compute_queue.setup cq ~compute_class:usermode.Nv_iface.compute_class
+    ~local_mem_window:hw.local_mem_window
+    ~shared_mem_window:hw.shared_mem_window ();
+  Compute_queue.signal cq ~value:(Timeline.next_timeline tl)
+    tl.Timeline.timeline;
+  Compute_queue.submit cq compute_queue;
+  let cp = Copy_queue.create hw in
+  Copy_queue.wait cp ~value:(tl.Timeline.timeline_value - 1)
+    tl.Timeline.timeline;
+  Copy_queue.setup cp ~copy_class:usermode.Nv_iface.dma_class ();
+  Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
+  Copy_queue.submit cp dma_queue;
+  Timeline.synchronize tl;
+  at_exit (fun () ->
+      (* finalize even when the device faulted, so shutdown still reaches
+         the driver *)
+      (try Timeline.synchronize state.State.tl
+       with e ->
+         Printf.eprintf "%s synchronization failed before finalizing: %s\n%!"
+           name (Printexc.to_string e));
+      iface.Nv_iface.device_fini ());
+  let allocator = Allocator.create state in
+  (* the compiler targets the exact chip; the renderer needs only its
+     source-generation tier *)
+  let renderer_target =
+    match Tolk.Gpu_target.cuda_of_env () with
+    | Some t -> t
+    | None -> (
+        match
+          Tolk.Gpu_target.cuda_of_sm
+            (int_of_string (String.sub arch 3 (String.length arch - 3)))
+        with
+        | Some t -> t
+        | None -> Tolk.Gpu_target.SM75)
+  in
+  let renderer =
+    Tolk.Renderer.with_compiler
+      (Tolk_nvrtc.Compiler_nvrtc.create ~ptx:false ~cache_key:"nv" arch)
+      (Tolk.Cstyle.cuda ~device:"NV" renderer_target)
+  in
+  let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
+  Tolk.Device.make ~name ~allocator ~renderer_set
+    ~runtime:(Runtime.runtime state)
+    ~synchronize:(fun () -> Timeline.synchronize state.State.tl)
+    ~invalidate_caches:(fun () -> State.invalidate_caches state)
+    ()
+
+let create name =
+  let device_id =
+    match String.index_opt name ':' with
+    | Some i -> (
+        let suffix = String.sub name (i + 1) (String.length name - i - 1) in
+        match int_of_string_opt suffix with
+        | Some id -> id
+        | None -> invalid_arg (Printf.sprintf "invalid NV device %S" name))
+    | None -> 0
+  in
+  open_device ~name (Nvk_iface.iface ~device_id)

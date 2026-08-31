@@ -114,4 +114,4 @@
  (package tolk)
  (deps
   (glob_files ../fixtures/nv/*))
- (libraries tolk tolk.hcq tolk.nv windtrap))
+ (libraries tolk tolk.uop tolk.hcq tolk.nv windtrap))

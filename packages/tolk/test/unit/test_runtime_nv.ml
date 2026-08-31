@@ -372,6 +372,97 @@ let timeline m =
     on_hang = (fun () -> ());
   }
 
+(* A driver interface whose every unscripted call fails the test; the
+   topology tests script [rm_control] and read through the seam. *)
+type Nv_iface.nvdev += Fake_nvdev
+
+let fake_iface ?nvdev
+    ?(rm_control = fun ~obj:_ ~cmd:_ ?params:_ () -> fail "unscripted rm_control")
+    () =
+  {
+    Nv_iface.root = 0xc1d00001;
+    gpu_instance = 0;
+    count = 1;
+    defs = Tables.defs_for_driver ~major:570;
+    set_device = (fun ~nvdevice:_ ~subdevice:_ ~virtmem:_ -> fail "unscripted set_device");
+    rm_alloc = (fun ~parent:_ ~cls:_ ?params:_ () -> fail "unscripted rm_alloc");
+    rm_control;
+    alloc =
+      (fun ?host:_ ?uncached:_ ?cpu_access:_ ?contiguous:_ ?map_flags:_
+           ?cpu_addr:_ _ -> fail "unscripted alloc");
+    free = (fun _ -> fail "unscripted free");
+    map = (fun _ -> fail "unscripted map");
+    setup_usermode = (fun () -> fail "unscripted setup_usermode");
+    setup_vm = (fun ~vaspace:_ -> fail "unscripted setup_vm");
+    setup_gpfifo_vm = (fun ~gpfifo:_ -> fail "unscripted setup_gpfifo_vm");
+    sleep = (fun _ -> ());
+    device_fini = (fun () -> ());
+    nvdev;
+  }
+
+let topology_indices =
+  [
+    Defs.nv2080_ctrl_gr_info_index_litter_num_gpcs;
+    Defs.nv2080_ctrl_gr_info_index_litter_num_tpc_per_gpc;
+    Defs.nv2080_ctrl_gr_info_index_litter_num_sm_per_tpc;
+    Defs.nv2080_ctrl_gr_info_index_max_warps_per_sm;
+    Defs.nv2080_ctrl_gr_info_index_sm_version;
+  ]
+
+(* Device-level fixtures: one lazily opened real device shared by the
+   group; every test using it skips when this machine cannot provide one
+   (no kernel driver, or no device). *)
+let nv_device =
+  let cached : Tolk.Device.t option ref = ref None in
+  fun () ->
+    match !cached with
+    | Some device -> device
+    | None -> (
+        try
+          let device = Tolk_nv.create "NV" in
+          cached := Some device;
+          device
+        with Failure msg -> skip ~reason:msg ())
+
+module U = Tolk_uop.Uop
+module D = Tolk_uop.Dtype
+
+let i32_param ~slot =
+  U.param ~slot ~dtype:D.int32
+    ~shape:(U.stack [ U.const_int 16 ])
+    ~addrspace:D.Global ()
+
+(* dst[0] = src[0] + 1: the smallest kernel exercising a load, an ALU op,
+   and a store through the whole compile-and-dispatch path. *)
+let increment_program () =
+  let p0 = i32_param ~slot:0 in
+  let p1 = i32_param ~slot:1 in
+  let c0 = U.const (Tolk_uop.Const.int D.int32 0) in
+  let idx_src = U.index ~ptr:p1 ~idxs:[ c0 ] () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[ c0 ] () in
+  let l0 = U.load ~src:idx_src () in
+  let c1 = U.const (Tolk_uop.Const.int D.int32 1) in
+  let sum = U.alu_binary ~op:Tolk_uop.Ops.Add ~lhs:l0 ~rhs:c1 in
+  let store = U.store ~dst:idx_dst ~value:sum () in
+  [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
+
+let i32_buf device values =
+  let buf =
+    Tolk.Device.create_buffer ~size:(List.length values) ~dtype:D.int32 device
+  in
+  Tolk.Device.Buffer.ensure_allocated buf;
+  let bytes = Bytes.create (List.length values * 4) in
+  List.iteri
+    (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.of_int v))
+    values;
+  Tolk.Device.Buffer.copyin buf bytes;
+  buf
+
+let read_i32 buf =
+  let bytes = Tolk.Device.Buffer.as_bytes buf in
+  List.init (Bytes.length bytes / 4) (fun i ->
+      Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
+
 let failure_with prefix = function
   | Failure msg -> String.starts_with ~prefix msg
   | _ -> false
@@ -1409,6 +1500,69 @@ let () =
                     (fint "kernargs_alloc_size")
                     prg.Program.kernargs_alloc_size));
         ];
+      group "device info"
+        [
+          test "arch and sass derive from the sm version" (fun () ->
+              equal string "sm_89" (Tolk_nv.arch_of_sm_version 0x809);
+              equal string "sm_86" (Tolk_nv.arch_of_sm_version 0x806);
+              equal string "sm_120" (Tolk_nv.arch_of_sm_version 0xa04);
+              (* a revision byte above 0xf keeps only its high nibble *)
+              equal string "sm_91" (Tolk_nv.arch_of_sm_version 0x91f);
+              equal int 0x89 (Tolk_nv.sass_of_sm_version 0x809);
+              equal int 0xa4 (Tolk_nv.sass_of_sm_version 0xa04);
+              equal int 0x9f (Tolk_nv.sass_of_sm_version 0x91f));
+          test "topology reads through the info list" (fun () ->
+              let module I = Defs.Nv2080_ctrl_gr_info in
+              let module P = Defs.Nv2080_ctrl_gr_get_info_params in
+              let rm_control ~obj ~cmd ?params () =
+                equal ~msg:"obj" int 0x5d obj;
+                equal ~msg:"cmd" int Defs.nv2080_ctrl_cmd_gr_get_info cmd;
+                let b = Option.get params in
+                equal ~msg:"list size" int 5 (Tables.get_field b P.grinfolistsize);
+                let infos =
+                  Mmio.make
+                    ~addr:(Nativeint.of_int (Tables.get_field b P.grinfolist))
+                    ~size:(5 * I.sizeof)
+                in
+                List.iteri
+                  (fun i idx ->
+                    equal ~msg:"index" int idx
+                      (Int32.to_int (Mmio.read32 infos (i * I.sizeof)));
+                    Mmio.write32 infos
+                      ((i * I.sizeof) + fst I.data)
+                      (Int32.of_int (100 + i)))
+                  topology_indices
+              in
+              equal (list int)
+                [ 100; 101; 102; 103; 104 ]
+                (Tolk_nv.query_gpu_info
+                   (fake_iface ~rm_control ())
+                   ~subdevice:0x5d topology_indices));
+          test "the driver-less arm reads the static engine info" (fun () ->
+              let module P = Defs.Nv2080_ctrl_internal_static_gr_get_info_params
+              in
+              let module I = Defs.Nv2080_ctrl_internal_static_gr_info in
+              let rm_control ~obj ~cmd ?params () =
+                equal ~msg:"obj" int 0x5d obj;
+                equal ~msg:"cmd" int
+                  Defs.nv2080_ctrl_cmd_internal_static_kgr_get_info cmd;
+                let b = Option.get params in
+                equal ~msg:"size" int P.sizeof (Bigarray.Array1.dim b);
+                List.iteri
+                  (fun i idx ->
+                    Tables.set_field
+                      ~base:
+                        (P.engineinfo_offset + I.infolist_offset
+                        + (idx * I.infolist_elem_size))
+                      b Defs.Nv2080_ctrl_internal_gr_info.data (200 + i))
+                  topology_indices
+              in
+              equal (list int)
+                [ 200; 201; 202; 203; 204 ]
+                (Tolk_nv.query_gpu_info
+                   (fake_iface ~nvdev:Fake_nvdev ~rm_control ())
+                   ~subdevice:0x5d topology_indices));
+        ];
       group "device"
         [
           test "the interface opens and enumerates" (fun () ->
@@ -1417,5 +1571,26 @@ let () =
               is_true ~msg:"root" (i.Nv_iface.root <> 0);
               is_true ~msg:"instance" (i.Nv_iface.gpu_instance >= 0);
               is_true ~msg:"kernel driver" (not (Nv_iface.is_nvd i)));
+          test "create opens the device and synchronize completes" (fun () ->
+              let device = nv_device () in
+              equal string "NV" (Tolk.Device.name device);
+              Tolk.Device.synchronize device);
+          test "compiles and runs one kernel" (fun () ->
+              let device = nv_device () in
+              let spec =
+                Tolk.Device.compile_program device ~name:"nv_add_one"
+                  (increment_program ())
+              in
+              let dst = i32_buf device [ 0 ] in
+              let src = i32_buf device [ 41 ] in
+              let runner = Tolk.Realize.Compiled_runner.create ~device spec in
+              (match
+                 Tolk.Realize.Compiled_runner.call runner [ dst; src ] []
+                   ~wait:true ~timeout:None
+               with
+              | Some tm -> is_true (tm >= 0.0)
+              | None -> fail "expected a device execution time");
+              Tolk.Device.synchronize device;
+              equal (list int) [ 42 ] (read_i32 dst));
         ];
     ]

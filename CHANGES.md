@@ -101,6 +101,12 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- NVIDIA GPUs are now a hardware-queue runtime target: `DEV=NV` (or
+  `Tolk_nv.create`) drives the kernel driver's channels directly, with
+  kernels compiled straight to cubin by nvrtc, covering the Ampere, Ada,
+  and Blackwell generations. The userspace CUDA backend (`DEV=CUDA`)
+  remains available unchanged.
+
 - Driver-less AMD devices can now sleep on interrupts instead of spinning:
   with `VFIO=1` (and the `vfio-pci` kernel module), the device's MSI vector
   is routed to an eventfd that stalled waits block on. Without it, waits

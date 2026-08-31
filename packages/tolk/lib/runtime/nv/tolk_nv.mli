@@ -362,6 +362,10 @@ module Nv_iface : sig
     count : int;
         (** Number of devices this interface kind can open in this
             system. *)
+    defs : Nv_defs_versions.t;
+        (** Layouts of the parameter structures whose shape depends on
+            the driver generation behind the interface (see
+            {!Nv_tables.defs_for_driver}). *)
     set_device : nvdevice:int -> subdevice:int -> virtmem:int -> unit;
         (** [set_device ~nvdevice ~subdevice ~virtmem] hands the
             interface the handles of the device, subdevice and virtual
@@ -664,3 +668,36 @@ val ensure_has_local_memory :
     size, the old size is allocated again and the sizing state is
     restored, so the device stays usable; the exception propagates when
     there is no previous size to fall back to. *)
+
+(** {1:runtime Device runtime} *)
+
+val arch_of_sm_version : int -> string
+(** [arch_of_sm_version v] is the architecture string for the reported
+    SM version [v]: the generation and revision digits appended to
+    ["sm_"], so [0x809] is ["sm_89"]. A revision byte above [0xf] keeps
+    only its high nibble, and the [0xa04] report names ["sm_120"]. *)
+
+val sass_of_sm_version : int -> int
+(** [sass_of_sm_version v] is the shader ISA revision launch
+    descriptors carry for the reported SM version [v]: the generation
+    nibbles over the revision nibble, so [0x809] is [0x89]. *)
+
+val query_gpu_info : Nv_iface.t -> subdevice:int -> int list -> int list
+(** [query_gpu_info iface ~subdevice indices] is the value of each
+    graphics-engine information row in [indices], in order, queried
+    from the device behind [subdevice]. An interface that programs the
+    hardware directly answers from its static engine information
+    instead of the driver query. *)
+
+val create : string -> Tolk.Device.t
+(** [create name] opens the NVIDIA device [name] names — ["NV"] for the
+    first visible device, ["NV:1"] for the second, and so on — through
+    the kernel driver and is its runtime: a compute and a copy channel,
+    an allocator staging host transfers through the copy engine,
+    kernels compiled to the exact chip's binary format and dispatched
+    through {!Program.call}, execution timing from device clocks, and
+    fault reports raised through the completion timeline when the
+    device hangs.
+
+    Raises [Failure] when the driver or the device is unavailable, and
+    [Invalid_argument] when [name] carries a malformed device index. *)
