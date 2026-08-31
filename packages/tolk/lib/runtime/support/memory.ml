@@ -278,7 +278,7 @@ let ctx_next ctx ~size ?paddr ?(off = 0) f =
 let frag_size ?(must_cover = true) va sz =
   (* [1 lsl 61] stands in for infinity: it is the largest power of two
      a native int can hold without going negative, and addresses stay
-     below [2^48]. *)
+     below [2^61]. *)
   let va_pwr2_div = if va > 0 then va land -va else 1 lsl 61 in
   let sz_pwr2_div = sz land -sz in
   let sz_pwr2_max = 1 lsl (bit_length sz - 1) in

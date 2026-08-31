@@ -16,7 +16,7 @@
     target-specific and injected as {!type-pt_ops}.
 
     Page-table entry words are 64-bit ({!Int64.t}); addresses and
-    sizes are native [int]s and must stay below [2{^48}]. *)
+    sizes are native [int]s and must stay below [2{^61}]. *)
 
 (** {1:mappings Address spaces and mappings} *)
 
@@ -66,7 +66,9 @@ type 'pt pt_ops = {
           [0]). [aspace] defaults to {!Phys}; [uncached] and [snooped]
           default to [false]. *)
   entry : 'pt -> int -> int64;
-      (** [entry pt idx] is the raw 64-bit word of entry [idx]. *)
+      (** [entry pt idx] is a raw 64-bit image of entry [idx], used
+          only in diagnostic messages. A target whose entries are
+          wider than 64 bits chooses which word to expose. *)
   valid : 'pt -> int -> bool;
       (** [valid pt idx] is [true] iff entry [idx] is valid. *)
   address : 'pt -> int -> int;
