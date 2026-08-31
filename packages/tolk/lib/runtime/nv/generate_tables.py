@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Emit the OCaml NVIDIA driver tables (nv_defs.ml, nv_defs_versions.ml).
+"""Emit the OCaml NVIDIA driver tables (nv_defs.ml, nv_defs_versions.ml,
+nv/nv_reg_defs.ml, nv/nv_gsp_defs.ml).
 
 Regenerate with:
   uv run packages/tolk/lib/runtime/nv/generate_tables.py
@@ -901,6 +902,76 @@ FW_ORDER = ["booter_load-570.144.bin", "bootloader-570.144.bin",
             "gsp-570.144.bin", "fmc-570.144.bin"]
 FW_SINGLE_DIR = {"fmc-570.144.bin": "gb202"}
 
+# ip.py also drives the RM control surface through the driver-generation
+# module (its nv_gpu alias for the pinned 570 generation). Most of those
+# symbols are already emitted by nv_defs.ml or nv_defs_versions.ml; the rest
+# are curated here and emitted into nv_gsp_defs.ml from the 570 layouts. The
+# census below asserts that this bucket is exactly the uncovered remainder of
+# ip.py's nv_gpu usage, in both directions.
+
+GSP_GPU_STRUCTS = [
+    ("Nv2080_ctrl_gpu_promote_ctx_params", "NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS",
+     ["entryCount", "engineType", "hChanClient", "hObject", "promoteEntry/array"]),
+    ("Nv2080_ctrl_gpu_promote_ctx_buffer_entry",
+     "NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ENTRY",
+     ["gpuPhysAddr", "gpuVirtAddr", "size", "physAttr", "bufferId",
+      "bInitialize", "bNonmapped"]),
+    ("Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params",
+     "struct_NV90F1_CTRL_VASPACE_COPY_SERVER_RESERVED_PDES_PARAMS",
+     ["pageSize", "virtAddrLo", "virtAddrHi", "numLevelsToCopy", "levels/array"]),
+    ("Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params_level",
+     "struct_NV90F1_CTRL_VASPACE_COPY_SERVER_RESERVED_PDES_PARAMS_level",
+     ["physAddress", "size", "aperture", "pageShift"]),
+    ("Nv_memory_desc_params", "NV_MEMORY_DESC_PARAMS",
+     ["base", "size", "addressSpace", "cacheAttrib"]),
+    ("Nv2080_ctrl_internal_static_kgr_get_context_buffers_info_params",
+     "NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS",
+     ["engineContextBuffersInfo/array"]),
+    ("Nvb0cc_ctrl_internal_permissions_init_params",
+     "NVB0CC_CTRL_INTERNAL_PERMISSIONS_INIT_PARAMS",
+     ["bAdminProfilingPermitted", "bDevProfilingPermitted",
+      "bCtxProfilingPermitted", "bVideoMemoryProfilingPermitted",
+      "bSysMemoryProfilingPermitted"]),
+    # The versioned record deliberately carries only the fields the
+    # kernel-driver tier writes; the GSP tier builds the whole structure, so
+    # the full 570 layout is emitted here.
+    ("Nv_channelgpfifo_allocation_parameters",
+     "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS",
+     ["hObjectError", "hObjectBuffer", "gpFifoOffset", "gpFifoEntries",
+      "flags", "hContextShare", "hVASpace", "hUserdMemory/array",
+      "userdOffset/array", "engineType", "cid", "subDeviceId",
+      "hObjectEccError", "instanceMem/region", "userdMem/region",
+      "ramfcMem/region", "mthdbufMem/region", "hPhysChannelGroup",
+      "internalFlags", "errorNotifierMem/region", "eccErrorNotifierMem/region",
+      "ProcessID", "SubProcessID", "encryptIv/array", "decryptIv/array",
+      "hmacNonce/array", "tpcConfigID"]),
+]
+
+# Element layouts of the KGR context-buffers array, reached through the
+# parameter structure rather than by name, so they sit outside the census.
+GSP_GPU_NESTED_STRUCTS = [
+    ("Nv2080_ctrl_internal_static_gr_context_buffers_info",
+     "struct_NV2080_CTRL_INTERNAL_STATIC_GR_CONTEXT_BUFFERS_INFO",
+     ["engine/array"]),
+    ("Nv2080_ctrl_internal_engine_context_buffer_info",
+     "struct_NV2080_CTRL_INTERNAL_ENGINE_CONTEXT_BUFFER_INFO",
+     ["size", "alignment"]),
+]
+
+GSP_GPU_CONSTS = [
+    "NV1_ROOT",
+    "NV01_MEMORY_LIST_SYSTEM",
+    "NV2080_CTRL_CMD_GPU_PROMOTE_CTX",
+    "NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO",
+    "NV90F1_CTRL_CMD_VASPACE_COPY_SERVER_RESERVED_PDES",
+    "NVB0CC_CTRL_CMD_POWER_REQUEST_FEATURES",
+    "NVB0CC_CTRL_CMD_INTERNAL_PERMISSIONS_INIT",
+    "NVB0CC_CTRL_CMD_ALLOC_PMA_STREAM",
+    "NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_GRAPHICS",
+    "NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_GRAPHICS_PATCH",
+    "NVOS02_FLAGS_ALLOC_USER_READ_ONLY_YES",
+]
+
 
 def ip_used_symbols():
     """Every `nv.`-qualified symbol referenced in ip.py."""
@@ -908,8 +979,32 @@ def ip_used_symbols():
     return set(re.findall(r"\bnv\.([A-Za-z_][A-Za-z0-9_]*)", src))
 
 
-def gsp_const_line(name):
-    v = getattr(nv, name)
+def ip_used_gpu_symbols():
+    """Every `nv_gpu.`-qualified symbol referenced in ip.py."""
+    src = open(_IP_PY).read()
+    return set(re.findall(r"\bnv_gpu\.([A-Za-z_][A-Za-z0-9_]*)", src))
+
+
+def nv_defs_covered_symbols():
+    """The reference names nv_defs.ml and nv_defs_versions.ml already emit.
+
+    The versioned NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS record carries only
+    a field subset, so it does not count as covered here.
+    """
+    names = set()
+    for lst in [CLASS_IDS, ESCAPE_NUMBERS, MEMORY_FLAGS, CHANNEL_INTS,
+                CHANNEL_BIT_RANGES, CONTROL_INTS, ALLOCATION_FLAGS, ERROR_INTS,
+                UVM_COMMANDS, QMD_INTS]:
+        names |= set(lst)
+    names |= {name for _, name, _ in STRUCTS}
+    names |= {name for _, name, _ in PINNED_570_STRUCTS}
+    names |= {name for _, _, name, _ in VERSIONED_STRUCTS}
+    names.discard("NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS")
+    return names
+
+
+def gsp_const_line(mod, name):
+    v = getattr(mod, name)
     if not isinstance(v, int) or v < 0:
         raise ValueError(f"{name}: not a non-negative int constant")
     if name in GSP_CONSTS64:
@@ -929,17 +1024,35 @@ def gen_gsp_defs():
             f"  no longer used (drop): {sorted(emitted - used)}\n"
             f"  newly used (add): {sorted(used - emitted)}")
 
+    emitted_gpu = {name for _, name, _ in GSP_GPU_STRUCTS} | set(GSP_GPU_CONSTS)
+    uncovered_gpu = ip_used_gpu_symbols() - nv_defs_covered_symbols()
+    if emitted_gpu != uncovered_gpu:
+        raise ValueError(
+            "GSP nv_gpu symbol census drift against ip.py:\n"
+            f"  no longer used (drop): {sorted(emitted_gpu - uncovered_gpu)}\n"
+            f"  newly used (add): {sorted(uncovered_gpu - emitted_gpu)}")
+
     lines = [HEADER]
     lines.append("(* Scalar constants: RPC framing, message and event function"
                  " ids, libos and\n   GSP DMA constants, VBIOS/FALCON/BIT"
                  " parsing offsets. *)")
-    lines += [gsp_const_line(nm) for nm in GSP_CONSTS]
+    lines += [gsp_const_line(nv, nm) for nm in GSP_CONSTS]
     lines.append("")
 
     lines.append("(* Structure layouts: per used field (byte offset, byte size)"
                  " and total size;\n   arrays as offset/element-size/count. *)")
     for title, name, fields in GSP_STRUCTS:
         lines += struct_module(title, getattr(nv, name), fields)
+        lines.append("")
+
+    lines.append("(* RM control surface of the golden-image bring-up, emitted"
+                 " from the pinned\n   570 generation: class and control ids,"
+                 " flag values, and the parameter\n   layouts not already"
+                 " carried by the shared or versioned tables. *)")
+    lines += [gsp_const_line(nv_570, nm) for nm in GSP_GPU_CONSTS]
+    lines.append("")
+    for title, name, fields in GSP_GPU_STRUCTS + GSP_GPU_NESTED_STRUCTS:
+        lines += struct_module(title, getattr(nv_570, name), fields)
         lines.append("")
 
     lines.append("(* RPC function and event id -> name, for debug output. *)")

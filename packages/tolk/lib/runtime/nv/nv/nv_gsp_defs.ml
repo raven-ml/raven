@@ -393,6 +393,140 @@ module Rpc_unloading_guest_driver = struct
   let newlevel = (4, 4)
 end
 
+(* RM control surface of the golden-image bring-up, emitted from the pinned
+   570 generation: class and control ids, flag values, and the parameter
+   layouts not already carried by the shared or versioned tables. *)
+let nv1_root = 0
+let nv01_memory_list_system = 0x81
+let nv2080_ctrl_cmd_gpu_promote_ctx = 0x2080012b
+let nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info = 0x20800a32
+let nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes = 0x90f10106
+let nvb0cc_ctrl_cmd_power_request_features = 0xb0cc0301
+let nvb0cc_ctrl_cmd_internal_permissions_init = 0xb0cc0203
+let nvb0cc_ctrl_cmd_alloc_pma_stream = 0xb0cc0105
+let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics = 0
+let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_patch = 0x10
+let nvos02_flags_alloc_user_read_only_yes = 1
+
+module Nv2080_ctrl_gpu_promote_ctx_params = struct
+  let sizeof = 0x230
+  let entrycount = (0x28, 4)
+  let enginetype = (0, 4)
+  let hchanclient = (0xc, 4)
+  let hobject = (0x10, 4)
+  let promoteentry_offset = 0x30
+  let promoteentry_elem_size = 0x20
+  let promoteentry_count = 0x10
+end
+
+module Nv2080_ctrl_gpu_promote_ctx_buffer_entry = struct
+  let sizeof = 0x20
+  let gpuphysaddr = (0, 8)
+  let gpuvirtaddr = (8, 8)
+  let size = (0x10, 8)
+  let physattr = (0x18, 4)
+  let bufferid = (0x1c, 2)
+  let binitialize = (0x1e, 1)
+  let bnonmapped = (0x1f, 1)
+end
+
+module Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params = struct
+  let sizeof = 0xb8
+  let pagesize = (8, 8)
+  let virtaddrlo = (0x10, 8)
+  let virtaddrhi = (0x18, 8)
+  let numlevelstocopy = (0x20, 4)
+  let levels_offset = 0x28
+  let levels_elem_size = 0x18
+  let levels_count = 6
+end
+
+module Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params_level = struct
+  let sizeof = 0x18
+  let physaddress = (0, 8)
+  let size = (8, 8)
+  let aperture = (0x10, 4)
+  let pageshift = (0x14, 1)
+end
+
+module Nv_memory_desc_params = struct
+  let sizeof = 0x18
+  let base = (0, 8)
+  let size = (8, 8)
+  let addressspace = (0x10, 4)
+  let cacheattrib = (0x14, 4)
+end
+
+module Nv2080_ctrl_internal_static_kgr_get_context_buffers_info_params = struct
+  let sizeof = 0x680
+  let enginecontextbuffersinfo_offset = 0
+  let enginecontextbuffersinfo_elem_size = 0xd0
+  let enginecontextbuffersinfo_count = 8
+end
+
+module Nvb0cc_ctrl_internal_permissions_init_params = struct
+  let sizeof = 5
+  let badminprofilingpermitted = (0, 1)
+  let bdevprofilingpermitted = (1, 1)
+  let bctxprofilingpermitted = (2, 1)
+  let bvideomemoryprofilingpermitted = (3, 1)
+  let bsysmemoryprofilingpermitted = (4, 1)
+end
+
+module Nv_channelgpfifo_allocation_parameters = struct
+  let sizeof = 0x170
+  let hobjecterror = (0, 4)
+  let hobjectbuffer = (4, 4)
+  let gpfifooffset = (8, 8)
+  let gpfifoentries = (0x10, 4)
+  let flags = (0x14, 4)
+  let hcontextshare = (0x18, 4)
+  let hvaspace = (0x1c, 4)
+  let huserdmemory_offset = 0x20
+  let huserdmemory_elem_size = 4
+  let huserdmemory_count = 8
+  let userdoffset_offset = 0x40
+  let userdoffset_elem_size = 8
+  let userdoffset_count = 8
+  let enginetype = (0x80, 4)
+  let cid = (0x84, 4)
+  let subdeviceid = (0x88, 4)
+  let hobjecteccerror = (0x8c, 4)
+  let instancemem = (0x90, 0x18)
+  let userdmem = (0xa8, 0x18)
+  let ramfcmem = (0xc0, 0x18)
+  let mthdbufmem = (0xd8, 0x18)
+  let hphyschannelgroup = (0xf0, 4)
+  let internalflags = (0xf4, 4)
+  let errornotifiermem = (0xf8, 0x18)
+  let eccerrornotifiermem = (0x110, 0x18)
+  let processid = (0x128, 4)
+  let subprocessid = (0x12c, 4)
+  let encryptiv_offset = 0x130
+  let encryptiv_elem_size = 4
+  let encryptiv_count = 3
+  let decryptiv_offset = 0x13c
+  let decryptiv_elem_size = 4
+  let decryptiv_count = 3
+  let hmacnonce_offset = 0x148
+  let hmacnonce_elem_size = 4
+  let hmacnonce_count = 8
+  let tpcconfigid = (0x168, 4)
+end
+
+module Nv2080_ctrl_internal_static_gr_context_buffers_info = struct
+  let sizeof = 0xd0
+  let engine_offset = 0
+  let engine_elem_size = 8
+  let engine_count = 0x1a
+end
+
+module Nv2080_ctrl_internal_engine_context_buffer_info = struct
+  let sizeof = 8
+  let size = (0, 4)
+  let alignment = (4, 4)
+end
+
 (* RPC function and event id -> name, for debug output. *)
 let rpc_fns = [
   (0, "NV_VGPU_MSG_FUNCTION_NOP");

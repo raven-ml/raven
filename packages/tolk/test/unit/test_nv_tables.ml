@@ -244,5 +244,86 @@ let () =
               equal (list string) [ "ga102"; "ad102" ] (List.map fst booter);
               equal int 64
                 (String.length (List.assoc "ga102" booter)));
+          test "golden-image control commands" (fun () ->
+              equal int 0x2080012b Gsp.nv2080_ctrl_cmd_gpu_promote_ctx;
+              equal int 0x20800a32
+                Gsp.nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info;
+              equal int 0x90f10106
+                Gsp.nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes;
+              equal int 0xb0cc0301 Gsp.nvb0cc_ctrl_cmd_power_request_features;
+              equal int 0x81 Gsp.nv01_memory_list_system;
+              equal int 0 Gsp.nv1_root;
+              equal int 0x10
+                Gsp
+                .nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_patch);
+          test "golden-image parameter layouts" (fun () ->
+              equal int 0x230 Gsp.Nv2080_ctrl_gpu_promote_ctx_params.sizeof;
+              equal (pair int int) (0x28, 4)
+                Gsp.Nv2080_ctrl_gpu_promote_ctx_params.entrycount;
+              equal int 0x30
+                Gsp.Nv2080_ctrl_gpu_promote_ctx_params.promoteentry_offset;
+              equal int 0x20
+                Gsp.Nv2080_ctrl_gpu_promote_ctx_params.promoteentry_elem_size;
+              equal int 0x20 Gsp.Nv2080_ctrl_gpu_promote_ctx_buffer_entry.sizeof;
+              equal (pair int int) (0x1c, 2)
+                Gsp.Nv2080_ctrl_gpu_promote_ctx_buffer_entry.bufferid;
+              equal int 0xb8
+                Gsp.Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params.sizeof;
+              equal (pair int int) (0x18, 8)
+                Gsp.Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params
+                .virtaddrhi;
+              equal int 0x18
+                Gsp.Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params_level
+                .sizeof;
+              equal (pair int int) (0x14, 1)
+                Gsp.Nv90f1_ctrl_vaspace_copy_server_reserved_pdes_params_level
+                .pageshift;
+              equal int 0x18 Gsp.Nv_memory_desc_params.sizeof;
+              equal (pair int int) (0x10, 4)
+                Gsp.Nv_memory_desc_params.addressspace;
+              equal int 0x680
+                Gsp.Nv2080_ctrl_internal_static_kgr_get_context_buffers_info_params
+                .sizeof;
+              equal int 0xd0
+                Gsp.Nv2080_ctrl_internal_static_kgr_get_context_buffers_info_params
+                .enginecontextbuffersinfo_elem_size;
+              equal int 0x1a
+                Gsp.Nv2080_ctrl_internal_static_gr_context_buffers_info
+                .engine_count;
+              equal (pair int int) (4, 4)
+                Gsp.Nv2080_ctrl_internal_engine_context_buffer_info.alignment;
+              equal int 5 Gsp.Nvb0cc_ctrl_internal_permissions_init_params.sizeof);
+          test "full channelgpfifo layout" (fun () ->
+              (* The GSP tier writes the whole 570 structure, beyond the
+                 versioned record's field subset. *)
+              equal int 0x170 Gsp.Nv_channelgpfifo_allocation_parameters.sizeof;
+              equal (pair int int) (0x84, 4)
+                Gsp.Nv_channelgpfifo_allocation_parameters.cid;
+              equal (pair int int) (0x1c, 4)
+                Gsp.Nv_channelgpfifo_allocation_parameters.hvaspace;
+              equal (pair int int) (0xf4, 4)
+                Gsp.Nv_channelgpfifo_allocation_parameters.internalflags;
+              equal (pair int int) (0xc0, 0x18)
+                Gsp.Nv_channelgpfifo_allocation_parameters.ramfcmem;
+              equal (pair int int) (0x90, 0x18)
+                Gsp.Nv_channelgpfifo_allocation_parameters.instancemem;
+              equal (pair int int) (0xd8, 0x18)
+                Gsp.Nv_channelgpfifo_allocation_parameters.mthdbufmem;
+              equal (pair int int) (0xf8, 0x18)
+                Gsp.Nv_channelgpfifo_allocation_parameters.errornotifiermem;
+              equal (pair int int) (0xa8, 0x18)
+                Gsp.Nv_channelgpfifo_allocation_parameters.userdmem;
+              equal int 0x40
+                Gsp.Nv_channelgpfifo_allocation_parameters.userdoffset_offset;
+              equal int 8
+                Gsp.Nv_channelgpfifo_allocation_parameters.userdoffset_elem_size;
+              (* Matches the versioned record's element-0 pairs. *)
+              equal (pair int int)
+                (Tables.defs_for_driver ~major:570)
+                  .nv_channelgpfifo_allocation_parameters
+                  .huserdmemory
+                ( Gsp.Nv_channelgpfifo_allocation_parameters.huserdmemory_offset,
+                  Gsp.Nv_channelgpfifo_allocation_parameters
+                  .huserdmemory_elem_size ));
         ];
     ]
