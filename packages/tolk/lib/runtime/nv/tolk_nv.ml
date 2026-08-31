@@ -140,6 +140,7 @@ type 'meta device = {
   gpfifo_class : int;
   sass_version : int;
   mutable slm_per_thread : int;
+  mutable shader_local_mem : 'meta Hcq.Buffer.t option;
   shared_mem_window : nativeint;
   local_mem_window : nativeint;
   cmdq_page : 'meta Hcq.Buffer.t;
@@ -157,6 +158,7 @@ let device ~compute_class ~dma_class ~gpfifo_class ~sass_version
     gpfifo_class;
     sass_version;
     slm_per_thread;
+    shader_local_mem = None;
     shared_mem_window;
     local_mem_window;
     cmdq_page;
@@ -1159,3 +1161,330 @@ module Nvk_iface = struct
       nvdev = None;
     }
 end
+
+(* Loaded programs *)
+
+module Program = struct
+  type 'meta t = {
+    params : 'meta program;
+    name : string;
+    lib_gpu : 'meta Hcq.Buffer.t;
+    regs_usage : int;
+    shmem_usage : int;
+    lcmem_usage : int;
+    constbufs : (int * (nativeint * int)) list;
+    cbuf_0 : int array;
+    max_threads : int;
+    kernargs_alloc_size : int;
+  }
+
+  let r_cuda_64 = 2
+
+  (* ".nv.constant<N>" or ".nv.constant<N>.<kernel>" names carry the
+     constant-bank index right after the prefix. *)
+  let constant_index name =
+    let prefix = ".nv.constant" in
+    let plen = String.length prefix in
+    if String.length name <= plen || not (String.starts_with ~prefix name) then
+      None
+    else begin
+      let i = ref plen and v = ref 0 and digits = ref 0 in
+      while !i < String.length name && name.[!i] >= '0' && name.[!i] <= '9' do
+        v := (!v * 10) + Char.code name.[!i] - Char.code '0';
+        incr digits;
+        incr i
+      done;
+      if !digits = 0 then None else Some !v
+    end
+
+  let u16le b off = Bytes.get_uint16_le b off
+  let u32le b off = Int32.to_int (Bytes.get_int32_le b off) land 0xffffffff
+
+  (* ".nv.info" entries: a value-format byte, an attribute byte, and a
+     16-bit size that is the value itself except for format 4, where it
+     counts the payload bytes that follow. [f] receives the attribute
+     and the payload offset of each format-4 entry. *)
+  let iter_info (s : Tolk.Elf.section) f =
+    let off = ref 0 in
+    while !off < s.Tolk.Elf.size do
+      let typ = Char.code (Bytes.get s.content !off) in
+      let param = Char.code (Bytes.get s.content (!off + 1)) in
+      let sz = u16le s.content (!off + 2) in
+      (match typ with
+      | 1 | 2 | 3 -> ()
+      | 4 -> f param (!off + 4)
+      | _ ->
+          failwith (Printf.sprintf "unknown EIATTR format %d in %s" typ s.name));
+      off := !off + (if typ = 4 then sz else 0) + 4
+    done
+
+  let load (dev : 'meta device) ~alloc ~ensure_local_memory ~name lib =
+    let elf = Tolk.Elf.load ~force_section_align:128 lib in
+    let image = Tolk.Elf.image elf in
+    let sections = Tolk.Elf.sections elf in
+    (* at least 4 KiB of guard space after the image mitigates prefetch
+       memory faults *)
+    let lib_gpu = alloc (round_up (Bytes.length image) 0x1000 + 0x1000) in
+    let va = Nativeint.to_int (Hcq.Buffer.va lib_gpu) in
+    let regs_usage = ref 0
+    and shmem_usage = ref 0x400
+    and lcmem_usage = ref 0x240
+    and cbuf0_size = ref 0 in
+    let prog_addr = ref va and prog_sz = ref (Bytes.length image) in
+    let constbufs = ref [ (0, (0n, 0x160)) ] in
+    let set_constbuf i entry =
+      if List.mem_assoc i !constbufs then
+        constbufs :=
+          List.map
+            (fun (j, e) -> if j = i then (j, entry) else (j, e))
+            !constbufs
+      else constbufs := !constbufs @ [ (i, entry) ]
+    in
+    Array.iter
+      (fun (s : Tolk.Elf.section) ->
+        if s.name = ".nv.shared." ^ name then
+          shmem_usage := round_up (0x400 + s.size) 128;
+        if s.name = ".text." ^ name then begin
+          prog_addr := va + s.addr;
+          prog_sz := s.size
+        end
+        else
+          match constant_index s.name with
+          | Some i -> set_constbuf i (Nativeint.of_int (va + s.addr), s.size)
+          | None ->
+              if String.starts_with ~prefix:".nv.info" s.name then
+                iter_info s (fun param data ->
+                    (* attribute 0xa is the kernel's constant-bank
+                       descriptor: the bank size follows a 32-bit bank
+                       ordinal; 0x12 is the minimum stack size, to
+                       which the engine adds a 0x240-byte reserve;
+                       0x2f is the register count *)
+                    if s.name = ".nv.info." ^ name && param = 0xa then
+                      cbuf0_size := u16le s.content (data + 4)
+                    else if s.name = ".nv.info" && param = 0x12 then
+                      lcmem_usage := u32le s.content (data + 4) + 0x240
+                    else if s.name = ".nv.info" && param = 0x2f then
+                      regs_usage := u32le s.content (data + 4)))
+      sections;
+    List.iter
+      (fun (r : Tolk.Elf.reloc) ->
+        if r.symbol.shndx = 0 then
+          failwith
+            ("Attempting to relocate against an undefined symbol "
+           ^ r.symbol.name);
+        let target = va + sections.(r.symbol.shndx).addr + r.symbol.value in
+        if r.r_type = r_cuda_64 then
+          Bytes.set_int64_le image r.offset (Int64.of_int target)
+        else if r.r_type = 0x38 then
+          Bytes.set_int32_le image (r.offset + 4)
+            (Int32.of_int (target land 0xffffffff))
+        else if r.r_type = 0x39 then
+          Bytes.set_int32_le image (r.offset + 4) (Int32.of_int (target lsr 32))
+        else failwith (Printf.sprintf "unknown NV reloc %d" r.r_type))
+      (Tolk.Elf.relocs elf);
+    (* driver parameters occupy constant-buffer-0 entries up to index
+       223 on Blackwell, up to 11 before *)
+    let min_cbuf0_entries =
+      if dev.compute_class >= Defs.blackwell_compute_a then 224 else 12
+    in
+    let cbuf_0 = Array.make (max (!cbuf0_size / 4) min_cbuf0_entries) 0 in
+    ensure_local_memory !lcmem_usage;
+    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
+    let compute_class = dev.compute_class in
+    let qmd_size = Qmd.sizeof ~compute_class in
+    (* the template's backing bytes belong to the program; [free]
+       releases them *)
+    let qmd_addr =
+      Hcq.File_io.mmap ~addr:0n ~size:qmd_size
+        ~prot:(Hcq.File_io.prot_read lor Hcq.File_io.prot_write)
+        ~flags:(Hcq.File_io.map_private lor Hcq.File_io.map_anonymous)
+        ~fd:(-1) ~offset:0L
+    in
+    let qmd =
+      Qmd.create
+        ~view:(Hcq.Mmio.make ~addr:qmd_addr ~size:qmd_size)
+        ~compute_class
+    in
+    let sw = va64 dev.shared_mem_window and lw = va64 dev.local_mem_window in
+    let version_fields =
+      if compute_class >= Defs.blackwell_compute_a then begin
+        cbuf_0.(188) <- lo32 sw;
+        cbuf_0.(189) <- hi32 sw;
+        cbuf_0.(190) <- lo32 lw;
+        cbuf_0.(191) <- hi32 lw;
+        cbuf_0.(223) <- 0xfffdc0;
+        let pa4 = !prog_addr lsr 4 in
+        [
+          ("qmd_major_version", 5);
+          ("qmd_type", Defs.nvcec0_qmdv05_00_qmd_type_grid_cta);
+          ("program_address_upper_shifted4", pa4 lsr 32);
+          ("program_address_lower_shifted4", pa4 land 0xffffffff);
+          ("register_count", !regs_usage);
+          ("shared_memory_size_shifted7", !shmem_usage lsr 7);
+          ("shader_local_memory_high_size_shifted4", dev.slm_per_thread lsr 4);
+        ]
+      end
+      else begin
+        cbuf_0.(6) <- lo32 sw;
+        cbuf_0.(7) <- hi32 sw;
+        cbuf_0.(8) <- lo32 lw;
+        cbuf_0.(9) <- hi32 lw;
+        cbuf_0.(10) <- 0xfffdc0;
+        [
+          ("qmd_major_version", 3);
+          ("sm_global_caching_enable", 1);
+          ("program_address_upper", !prog_addr lsr 32);
+          ("program_address_lower", !prog_addr land 0xffffffff);
+          ("shared_memory_size", !shmem_usage);
+          ("register_count_v", !regs_usage);
+          ("shader_local_memory_high_size", dev.slm_per_thread);
+        ]
+      end
+    in
+    let smem_cfg =
+      match
+        List.find_opt (fun c -> c * 1024 >= !shmem_usage) [ 32; 64; 100 ]
+      with
+      | Some c -> (c * 1024 / 4096) + 1
+      | None ->
+          failwith
+            (Printf.sprintf
+               "shared memory size 0x%x exceeds the largest configuration"
+               !shmem_usage)
+    in
+    Qmd.write qmd
+      (version_fields
+      @ [
+          ("qmd_group_id", 0x3f);
+          ("invalidate_texture_header_cache", 1);
+          ("invalidate_texture_sampler_cache", 1);
+          ("invalidate_texture_data_cache", 1);
+          ("invalidate_shader_data_cache", 1);
+          ("api_visible_call_limit", 1);
+          ("sampler_index", 1);
+          ("barrier_count", 1);
+          ( "cwd_membar_type",
+            Defs.nvc6c0_qmdv03_00_cwd_membar_type_l1_sysmembar );
+          ("constant_buffer_invalidate_0", 1);
+          ("min_sm_config_shared_mem_size", smem_cfg);
+          ("target_sm_config_shared_mem_size", smem_cfg);
+          ("max_sm_config_shared_mem_size", 0x1a);
+          ("program_prefetch_size", min (!prog_sz lsr 8) 0x1ff);
+          ("sass_version", dev.sass_version);
+          ("program_prefetch_addr_upper_shifted", !prog_addr lsr 40);
+          ("program_prefetch_addr_lower_shifted", !prog_addr lsr 8);
+        ]);
+    List.iter
+      (fun (i, (addr, sz)) ->
+        Qmd.set_constant_buf_addr qmd i addr;
+        Qmd.write qmd
+          [
+            (Printf.sprintf "constant_buffer_size_shifted4_%d" i, sz);
+            (Printf.sprintf "constant_buffer_valid_%d" i, 1);
+          ])
+      !constbufs;
+    (* register allocation granularity is 256 per warp, warp allocation
+       granularity is 4, register file size 65536 *)
+    let max_threads =
+      65536 / round_up (max 1 !regs_usage * 32) 256 / 4 * 4 * 32
+    in
+    let cbuf0_bytes = snd (List.assoc 0 !constbufs) in
+    {
+      params = { dev; qmd; cbuf0_size = cbuf0_bytes };
+      name;
+      lib_gpu;
+      regs_usage = !regs_usage;
+      shmem_usage = !shmem_usage;
+      lcmem_usage = !lcmem_usage;
+      constbufs = !constbufs;
+      cbuf_0;
+      max_threads;
+      kernargs_alloc_size = round_up cbuf0_bytes 256 + 0x800;
+    }
+
+  let free ~free:release t =
+    release t.lib_gpu;
+    Hcq.File_io.munmap
+      (Hcq.Mmio.addr t.params.qmd.Qmd.view)
+      ~size:t.params.qmd.Qmd.size
+
+  let call t ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms ~bufs
+      ~vals ~global_size ~local_size () =
+    let gx, gy, gz = global_size and lx, ly, lz = local_size in
+    let threads = lx * ly * lz in
+    if
+      threads > 1024 || t.max_threads < threads
+      || t.lcmem_usage > t.params.dev.slm_per_thread
+    then
+      failwith
+        (Printf.sprintf
+           "Too many resources requested for launch, %d threads, max %d"
+           threads t.max_threads);
+    if
+      gx > 2147483647 || gy > 65535 || gz > 65535 || lx > 1024 || ly > 1024
+      || lz > 64
+    then
+      failwith
+        (Printf.sprintf "Invalid global/local dims (%d, %d, %d), (%d, %d, %d)"
+           gx gy gz lx ly lz);
+    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size in
+    Hcq.Kernargs.write_args ~prefix:t.cbuf_0 slot ~bufs ~vals;
+    let cq = Compute_queue.create t.params.dev in
+    Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
+    Compute_queue.memory_barrier cq;
+    (match wait with
+    | Some (st, _) -> Compute_queue.timestamp cq st
+    | None -> ());
+    Compute_queue.exec cq t.params ~kernargs:slot ~global_size ~local_size;
+    (match wait with
+    | Some (_, en) -> Compute_queue.timestamp cq en
+    | None -> ());
+    Compute_queue.signal cq ~value:timeline_value timeline;
+    Compute_queue.submit cq queue;
+    match wait with
+    | None -> None
+    | Some (st, en) ->
+        Hcq.Signal.wait timeline ?timeout_ms timeline_value;
+        Some ((Hcq.Signal.timestamp en -. Hcq.Signal.timestamp st) /. 1e6)
+end
+
+(* Local-memory sizing *)
+
+let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
+    ~num_tpc_per_gpc ~num_sm_per_tpc ~max_warps_per_sm ~tl ~queue required =
+  if dev.slm_per_thread < required then begin
+    let old_slm_per_thread = dev.slm_per_thread in
+    dev.slm_per_thread <- round_up required 32;
+    let bytes_per_tpc =
+      round_up
+        (round_up (dev.slm_per_thread * 32) 0x200
+        * max_warps_per_sm * num_sm_per_tpc)
+        0x8000
+    in
+    let old = dev.shader_local_mem in
+    Option.iter free old;
+    let shader_local_mem =
+      match
+        alloc (round_up (bytes_per_tpc * num_tpc_per_gpc * num_gpcs) 0x20000)
+      with
+      | buf -> buf
+      | exception Nv_iface.Out_of_memory _ when Option.is_some old ->
+          (* out of memory: reallocate the old size so the device stays
+             usable, and restore the sizing state *)
+          let buf = alloc (Hcq.Buffer.size (Option.get old)) in
+          dev.slm_per_thread <- old_slm_per_thread;
+          buf
+    in
+    dev.shader_local_mem <- Some shader_local_mem;
+    let cq = Compute_queue.create dev in
+    Compute_queue.wait cq
+      ~value:(tl.Hcq.Timeline.timeline_value - 1)
+      tl.Hcq.Timeline.timeline;
+    Compute_queue.setup cq
+      ~local_mem:(Hcq.Buffer.va shader_local_mem)
+      ~local_mem_tpc_bytes:bytes_per_tpc ();
+    Compute_queue.signal cq
+      ~value:(Hcq.Timeline.next_timeline tl)
+      tl.Hcq.Timeline.timeline;
+    Compute_queue.submit cq queue
+  end

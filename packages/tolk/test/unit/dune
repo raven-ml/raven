@@ -112,4 +112,6 @@
  (names test_runtime_nv)
  (modules test_runtime_nv)
  (package tolk)
+ (deps
+  (glob_files ../fixtures/nv/*))
  (libraries tolk tolk.hcq tolk.nv windtrap))

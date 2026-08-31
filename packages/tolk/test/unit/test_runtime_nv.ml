@@ -9,6 +9,8 @@ module Mmio = Tolk_hcq.Hcq.Mmio
 module Buffer = Tolk_hcq.Hcq.Buffer
 module Q = Tolk_hcq.Hcq.Q
 module Signal = Tolk_hcq.Hcq.Signal
+module Timeline = Tolk_hcq.Hcq.Timeline
+module Kernargs = Tolk_hcq.Hcq.Kernargs
 module Tables = Tolk_nv.Nv_tables
 module Defs = Tolk_nv.Nv_tables.Defs
 module Qmd = Tolk_nv.Qmd
@@ -16,6 +18,7 @@ module Compute_queue = Tolk_nv.Compute_queue
 module Copy_queue = Tolk_nv.Copy_queue
 module Nv_iface = Tolk_nv.Nv_iface
 module Nvk_iface = Tolk_nv.Nvk_iface
+module Program = Tolk_nv.Program
 
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
 
@@ -38,9 +41,10 @@ let with_map size f =
    the CPU mapping. *)
 let with_fixture f = with_map 0x8000 f
 
-let nv_dev ?(compute_class = Defs.ada_compute_a) ?(cmdq_size = 0x1000) m =
+let nv_dev ?(compute_class = Defs.ada_compute_a) ?(cmdq_size = 0x1000)
+    ?(sass_version = 0x59) ?slm_per_thread m =
   Tolk_nv.device ~compute_class ~dma_class:Defs.ampere_dma_copy_b
-    ~gpfifo_class:Defs.ampere_channel_gpfifo_a ~sass_version:0x59
+    ~gpfifo_class:Defs.ampere_channel_gpfifo_a ~sass_version ?slm_per_thread
     ~shared_mem_window:0x729400000000n ~local_mem_window:0x729300000000n
     ~cmdq_page:
       (Buffer.make ~va:0x400000n ~size:cmdq_size
@@ -133,6 +137,244 @@ let exec_qmd ~compute_class m ~kernarg_off =
       (Mmio.view m ~off:(kernarg_off + 0x200) ~size:(Qmd.sizeof ~compute_class)
          ())
     ~compute_class
+
+let set16 b off v = Bytes.set_uint16_le b off v
+let set32 b off v = Bytes.set_int32_le b off (Int32.of_int v)
+let set64 b off v = Bytes.set_int64_le b off (Int64.of_int v)
+
+(* Fresh anonymous mappings back the buffers Program.load writes through;
+   they live for the rest of the test process. *)
+let anon_mmio size =
+  let addr =
+    File_io.mmap ~addr:0n ~size
+      ~prot:(File_io.prot_read lor File_io.prot_write)
+      ~flags:(File_io.map_private lor File_io.map_anonymous)
+      ~fd:(-1) ~offset:0L
+  in
+  Mmio.make ~addr ~size
+
+(* Hand-crafted 64-bit little-endian shared object shaped like a cubin
+   for a kernel named "k": [.text.k] at image address 0x2000, constant
+   banks 0 and 3 at 0x12000 and 0x1a000, a shared-memory carrier of 0x80
+   bytes, the global and per-kernel [.nv.info] descriptor sections, and
+   three relocations patching [.text.k] against the constant banks.
+   Field values are spelled as literals so the loader's parsing is
+   checked against independently written numbers. *)
+let cubin_fixture ?(reloc0 = 2) ?(undefined_sym = false) ?(bad_info = false)
+    ?(regcount = 32) () =
+  let module Buf = Stdlib.Buffer in
+  let entry b typ param sz =
+    Buf.add_char b (Char.chr typ);
+    Buf.add_char b (Char.chr param);
+    Buf.add_char b (Char.chr (sz land 0xff));
+    Buf.add_char b (Char.chr (sz lsr 8))
+  in
+  let word b v =
+    for i = 0 to 3 do
+      Buf.add_char b (Char.chr ((v lsr (8 * i)) land 0xff))
+    done
+  in
+  let info = Buf.create 64 in
+  if bad_info then entry info 7 0x99 0;
+  (* a short-form value entry, then MIN_STACK_SIZE 0x140, REGCOUNT, and
+     an ignored payload entry (EXIT_INSTR_OFFSETS) *)
+  entry info 3 0x25 0x10;
+  entry info 4 0x12 8;
+  word info 4;
+  word info 0x140;
+  entry info 4 0x2f 8;
+  word info 4;
+  word info regcount;
+  entry info 4 0x1c 4;
+  word info 0x120;
+  let info_k = Buf.create 32 in
+  (* an ignored payload entry (KPARAM_INFO), then PARAM_CBANK: a 32-bit
+     bank ordinal followed by the 16-bit bank size *)
+  entry info_k 4 0x17 12;
+  word info_k 0;
+  word info_k 0;
+  word info_k 0;
+  entry info_k 4 0xa 8;
+  word info_k 0x18;
+  word info_k 0x160;
+  let info_b = Buf.to_bytes info and info_k_b = Buf.to_bytes info_k in
+  let symtab = Bytes.make 72 '\000' in
+  set32 symtab 24 1 (* st_name: "c0" *);
+  set16 symtab 30 (if undefined_sym then 0 else 3) (* st_shndx *);
+  set64 symtab 32 0x10 (* st_value *);
+  set32 symtab 48 4 (* st_name: "c3" *);
+  set16 symtab 54 4;
+  set64 symtab 56 0x20;
+  let strtab = Bytes.of_string "\000c0\000c3\000" in
+  let rela = Bytes.make 72 '\000' in
+  set64 rela 0 0x100 (* r_offset, within .text.k *);
+  set64 rela 8 ((1 lsl 32) lor reloc0);
+  set64 rela 24 0x200;
+  set64 rela 32 ((1 lsl 32) lor 0x38);
+  set64 rela 48 0x300;
+  set64 rela 56 ((2 lsl 32) lor 0x39);
+  let buf = Buf.create 16384 in
+  Buf.add_bytes buf (Bytes.make 64 '\000');
+  let pad_to align =
+    while Buf.length buf mod align <> 0 do
+      Buf.add_char buf '\000'
+    done
+  in
+  let add align content =
+    pad_to align;
+    let off = Buf.length buf in
+    Buf.add_bytes buf content;
+    off
+  in
+  let off_text = add 8 (Bytes.make 0x1800 '\xcc') in
+  let off_const0 = add 8 (Bytes.make 0x160 '\xaa') in
+  let off_const3 = add 8 (Bytes.make 0x200 '\xbb') in
+  let off_info = add 4 info_b in
+  let off_info_k = add 4 info_k_b in
+  let off_symtab = add 8 symtab in
+  let off_strtab = add 1 strtab in
+  let off_rela = add 8 rela in
+  let shstr = Buf.create 128 in
+  Buf.add_char shstr '\000';
+  let name s =
+    let off = Buf.length shstr in
+    Buf.add_string shstr s;
+    Buf.add_char shstr '\000';
+    off
+  in
+  let n_text = name ".text.k" in
+  let n_shared = name ".nv.shared.k" in
+  let n_const0 = name ".nv.constant0.k" in
+  let n_const3 = name ".nv.constant3.k" in
+  let n_info = name ".nv.info" in
+  let n_info_k = name ".nv.info.k" in
+  let n_symtab = name ".symtab" in
+  let n_strtab = name ".strtab" in
+  let n_rela = name ".rela.text.k" in
+  let n_shstrtab = name ".shstrtab" in
+  let shstr_b = Buf.to_bytes shstr in
+  let off_shstr = add 1 shstr_b in
+  pad_to 8;
+  let e_shoff = Buf.length buf in
+  let shdr ~nm ~ty ~flags ~addr ~off ~size ~link ~info ~salign ~entsize =
+    let b = Bytes.make 64 '\000' in
+    set32 b 0 nm;
+    set32 b 4 ty;
+    set64 b 8 flags;
+    set64 b 16 addr;
+    set64 b 24 off;
+    set64 b 32 size;
+    set32 b 40 link;
+    set32 b 44 info;
+    set64 b 48 salign;
+    set64 b 56 entsize;
+    Buf.add_bytes buf b
+  in
+  shdr ~nm:0 ~ty:0 ~flags:0 ~addr:0 ~off:0 ~size:0 ~link:0 ~info:0 ~salign:0
+    ~entsize:0;
+  shdr ~nm:n_text ~ty:1 ~flags:0x6 ~addr:0x2000 ~off:off_text ~size:0x1800
+    ~link:0 ~info:0 ~salign:128 ~entsize:0;
+  shdr ~nm:n_shared ~ty:8 ~flags:0 ~addr:0 ~off:0 ~size:0x80 ~link:0 ~info:0
+    ~salign:16 ~entsize:0;
+  shdr ~nm:n_const0 ~ty:1 ~flags:0x2 ~addr:0x12000 ~off:off_const0 ~size:0x160
+    ~link:0 ~info:0 ~salign:4 ~entsize:0;
+  shdr ~nm:n_const3 ~ty:1 ~flags:0x2 ~addr:0x1a000 ~off:off_const3 ~size:0x200
+    ~link:0 ~info:0 ~salign:4 ~entsize:0;
+  shdr ~nm:n_info ~ty:1 ~flags:0 ~addr:0 ~off:off_info
+    ~size:(Bytes.length info_b) ~link:0 ~info:0 ~salign:4 ~entsize:0;
+  shdr ~nm:n_info_k ~ty:1 ~flags:0 ~addr:0 ~off:off_info_k
+    ~size:(Bytes.length info_k_b) ~link:0 ~info:0 ~salign:4 ~entsize:0;
+  shdr ~nm:n_symtab ~ty:2 ~flags:0 ~addr:0 ~off:off_symtab ~size:72 ~link:8
+    ~info:1 ~salign:8 ~entsize:24;
+  shdr ~nm:n_strtab ~ty:3 ~flags:0 ~addr:0 ~off:off_strtab
+    ~size:(Bytes.length strtab) ~link:0 ~info:0 ~salign:1 ~entsize:0;
+  shdr ~nm:n_rela ~ty:4 ~flags:0 ~addr:0 ~off:off_rela ~size:72 ~link:7 ~info:1
+    ~salign:8 ~entsize:24;
+  shdr ~nm:n_shstrtab ~ty:3 ~flags:0 ~addr:0 ~off:off_shstr
+    ~size:(Bytes.length shstr_b) ~link:0 ~info:0 ~salign:1 ~entsize:0;
+  let obj = Buf.to_bytes buf in
+  Bytes.blit_string "\x7fELF\x02\x01\x01" 0 obj 0 7;
+  set16 obj 16 3 (* e_type: ET_DYN *);
+  set16 obj 18 190 (* e_machine: CUDA *);
+  set32 obj 20 1 (* e_version *);
+  set64 obj 40 e_shoff;
+  set16 obj 52 64 (* e_ehsize *);
+  set16 obj 58 64 (* e_shentsize *);
+  set16 obj 60 11 (* e_shnum *);
+  set16 obj 62 10 (* e_shstrndx *);
+  obj
+
+(* A [Program.load]-ready allocator recording the sizes it served; the
+   device address defaults to putting [.text.k] at 0x100000, the address
+   the qmd_init goldens pin. *)
+let lib_alloc ?(va = 0xfe000n) () =
+  let sizes = ref [] in
+  let alloc size =
+    sizes := size :: !sizes;
+    Buffer.make ~va ~size ~view:(anon_mmio size) ~meta:() ()
+  in
+  (alloc, sizes)
+
+let load_fixture ?va ?lib dev =
+  let alloc, _ = lib_alloc ?va () in
+  let lib = match lib with Some l -> l | None -> cubin_fixture () in
+  Program.load dev ~alloc ~ensure_local_memory:(fun _ -> ()) ~name:"k" lib
+
+let qmd_template_dwords prg =
+  let b = Qmd.to_bytes prg.Program.params.Tolk_nv.qmd in
+  Array.init (Bytes.length b / 4) (fun i ->
+      Int32.to_int (Bytes.get_int32_le b (4 * i)) land 0xffffffff)
+
+let staged_dwords m ~off n =
+  Array.init n (fun i -> Int32.to_int (Mmio.read32 m (off + (4 * i))) land 0xffffffff)
+
+(* The nonzero dwords of the qmd_init goldens
+   (test/golden/nvqueue/qmd_init_{ada,blackwell}.expected), which pin the
+   reference template for the same program descriptor. *)
+let qmd_expected words entries =
+  let a = Array.make words 0 in
+  List.iter (fun (i, v) -> a.(i) <- v) entries;
+  a
+
+let qmd_expected_ada =
+  qmd_expected 64
+    [
+      (4, 0x0000007f); (5, 0x3c000000); (8, 0x00001000); (11, 0x44010000);
+      (17, 0x34240480); (18, 0x00000030); (20, 0x00122009); (23, 0x08000000);
+      (32, 0x00110000); (33, 0x0b040000); (38, 0x00118000); (39, 0x10000000);
+      (48, 0x00100000); (50, 0x00000240); (51, 0x89003000);
+    ]
+
+let qmd_expected_blackwell =
+  qmd_expected 96
+    [
+      (4, 0x013f0000); (14, 0x0f5003a4); (19, 0x00010000); (32, 0x00010000);
+      (33, 0x03000000); (35, 0x00022000); (36, 0x04b44809); (37, 0x00240000);
+      (42, 0x00004400); (43, 0x0b000000); (48, 0x00004600); (49, 0x10000000);
+      (58, 0x00001009); (59, 0x00001000);
+    ]
+
+(* A ready timeline over two mapped slots; the counter starts at 1 as on
+   a fresh device. *)
+let timeline m =
+  let sig_at off va =
+    Signal.make ~is_timeline:true
+      (Buffer.make ~va ~size:16 ~view:(Mmio.view m ~off ~size:16 ()) ~meta:() ())
+  in
+  {
+    Timeline.timeline = sig_at 0x3000 0x200000010n;
+    shadow_timeline = sig_at 0x3010 0x200000020n;
+    timeline_value = 1;
+    error_state = None;
+    bounce = [||];
+    bounce_timeline = [||];
+    bounce_next = 0;
+    on_hang = (fun () -> ());
+  }
+
+let failure_with prefix = function
+  | Failure msg -> String.starts_with ~prefix msg
+  | _ -> false
 
 let () =
   run "Nv_runtime"
@@ -711,6 +953,461 @@ let () =
               in
               equal int 0 (b land 0x1fffff);
               is_true ~msg:"disjoint" (b >= a + 0x1000));
+        ];
+      group "program load"
+        [
+          test "load parses a hand-built kernel object" (fun () ->
+              with_fixture (fun m ->
+                  let dev =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x240 m
+                  in
+                  let alloc, sizes = lib_alloc () in
+                  let ensured = ref [] in
+                  let prg =
+                    Program.load dev ~alloc
+                      ~ensure_local_memory:(fun n -> ensured := n :: !ensured)
+                      ~name:"k" (cubin_fixture ())
+                  in
+                  (* image 0x1a29c rounds to 0x1b000 plus the 4 KiB guard *)
+                  equal (list int) [ 0x1c000 ] !sizes;
+                  equal (list int) [ 0x380 ] !ensured;
+                  equal string "k" prg.Program.name;
+                  equal int 32 prg.Program.regs_usage;
+                  equal int 0x480 prg.Program.shmem_usage;
+                  equal int 0x380 prg.Program.lcmem_usage;
+                  equal int 0x160 prg.Program.params.Tolk_nv.cbuf0_size;
+                  equal int 0xa00 prg.Program.kernargs_alloc_size;
+                  equal int 2048 prg.Program.max_threads;
+                  equal int 2 (List.length prg.Program.constbufs);
+                  let a0, s0 = List.assoc 0 prg.Program.constbufs in
+                  equal nativeint 0x110000n a0;
+                  equal int 0x160 s0;
+                  let a3, s3 = List.assoc 3 prg.Program.constbufs in
+                  equal nativeint 0x118000n a3;
+                  equal int 0x200 s3;
+                  (* the driver-parameter words: the two windows and the
+                     window-configuration constant at entries 6-11 *)
+                  equal int 88 (Array.length prg.Program.cbuf_0);
+                  equal (array int)
+                    [| 0; 0x7294; 0; 0x7293; 0xfffdc0; 0 |]
+                    (Array.sub prg.Program.cbuf_0 6 6);
+                  (* section contents landed at their fixed addresses,
+                     and the relocations patched the staged image *)
+                  let v = Buffer.cpu_view prg.Program.lib_gpu in
+                  let u32 off =
+                    Int32.to_int (Mmio.read32 v off) land 0xffffffff
+                  in
+                  equal int 0xcccccccc (u32 0x2000);
+                  equal int 0xaaaaaaaa (u32 0x12000);
+                  equal int 0xbbbbbbbb (u32 0x1a000);
+                  equal int64 0x110010L (Mmio.read64 v 0x2100);
+                  equal int 0x110010 (u32 0x2204);
+                  equal int 0 (u32 0x2304)));
+          test "the descriptor template matches the qmd_init goldens"
+            (fun () ->
+              with_fixture (fun m ->
+                  let ada =
+                    load_fixture
+                      (nv_dev ~sass_version:0x89 ~slm_per_thread:0x240 m)
+                  in
+                  equal (array int) qmd_expected_ada
+                    (qmd_template_dwords ada);
+                  let bw =
+                    load_fixture
+                      (nv_dev ~compute_class:Defs.blackwell_compute_b
+                         ~sass_version:0xa4 ~slm_per_thread:0x240 m)
+                  in
+                  equal (array int) qmd_expected_blackwell
+                    (qmd_template_dwords bw)));
+          test "relocation targets carry the image's high address bits"
+            (fun () ->
+              with_fixture (fun m ->
+                  let prg =
+                    load_fixture ~va:0x8000fe000n
+                      (nv_dev ~sass_version:0x89 ~slm_per_thread:0x240 m)
+                  in
+                  let v = Buffer.cpu_view prg.Program.lib_gpu in
+                  equal int64 0x800110010L (Mmio.read64 v 0x2100);
+                  equal int 0x110010
+                    (Int32.to_int (Mmio.read32 v 0x2204) land 0xffffffff);
+                  equal int 0x8
+                    (Int32.to_int (Mmio.read32 v 0x2304) land 0xffffffff)));
+          test "unsupported objects fail loudly" (fun () ->
+              with_fixture (fun m ->
+                  let dev =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x240 m
+                  in
+                  raises_match (failure_with "unknown NV reloc 55") (fun () ->
+                      load_fixture ~lib:(cubin_fixture ~reloc0:0x37 ()) dev);
+                  raises_match
+                    (failure_with
+                       "Attempting to relocate against an undefined symbol c0")
+                    (fun () ->
+                      load_fixture
+                        ~lib:(cubin_fixture ~undefined_sym:true ())
+                        dev);
+                  raises_match (failure_with "unknown EIATTR format 7")
+                    (fun () ->
+                      load_fixture ~lib:(cubin_fixture ~bad_info:true ()) dev)));
+          test "free releases the image" (fun () ->
+              with_fixture (fun m ->
+                  let prg =
+                    load_fixture
+                      (nv_dev ~sass_version:0x89 ~slm_per_thread:0x240 m)
+                  in
+                  let freed = ref [] in
+                  Program.free
+                    ~free:(fun b -> freed := Buffer.size b :: !freed)
+                    prg;
+                  equal (list int) [ 0x1c000 ] !freed));
+        ];
+      group "local memory"
+        [
+          test "growing sizes the store from the topology" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m in
+                  let qd = queue_desc m in
+                  let tl = timeline m in
+                  let allocs = ref [] and frees = ref [] in
+                  let alloc size =
+                    allocs := size :: !allocs;
+                    Buffer.make ~va:0x60000000n ~size ~meta:() ()
+                  in
+                  let free buf = frees := Buffer.size buf :: !frees in
+                  Tolk_nv.ensure_has_local_memory dev ~alloc ~free ~num_gpcs:2
+                    ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2 ~max_warps_per_sm:48
+                    ~tl ~queue:qd 0x100;
+                  (* 0x100 * 32 rounds to 0x2000 per warp slot; times 48
+                     warps and 2 SMs is 0xc0000 per TPC; times 6 TPCs is
+                     0x480000 *)
+                  equal int 0x100 dev.Tolk_nv.slm_per_thread;
+                  equal (list int) [ 0x480000 ] !allocs;
+                  equal (list int) [] !frees;
+                  (match dev.Tolk_nv.shader_local_mem with
+                  | Some b -> equal int 0x480000 (Buffer.size b)
+                  | None -> fail "expected a backing store");
+                  equal int 2 tl.Timeline.timeline_value;
+                  equal int 1 qd.Tolk_nv.Queue_desc.put_value;
+                  let expected =
+                    let cq = Compute_queue.create dev in
+                    Compute_queue.wait cq ~value:0 tl.Timeline.timeline;
+                    Compute_queue.setup cq ~local_mem:0x60000000n
+                      ~local_mem_tpc_bytes:0xc0000 ();
+                    Compute_queue.signal cq ~value:1 tl.Timeline.timeline;
+                    Q.dwords (Compute_queue.q cq)
+                  in
+                  equal (array int) expected
+                    (staged_dwords m ~off:0 (Array.length expected));
+                  (* a covered request changes nothing *)
+                  Tolk_nv.ensure_has_local_memory dev ~alloc ~free ~num_gpcs:2
+                    ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2 ~max_warps_per_sm:48
+                    ~tl ~queue:qd 0x80;
+                  equal int 1 (List.length !allocs);
+                  equal int 2 tl.Timeline.timeline_value));
+          test "out of memory reallocates the old size and restores the state"
+            (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m in
+                  let qd = queue_desc m in
+                  let tl = timeline m in
+                  let allocs = ref [] and frees = ref [] in
+                  let fail_next = ref false in
+                  let alloc size =
+                    allocs := size :: !allocs;
+                    if !fail_next then begin
+                      fail_next := false;
+                      raise (Nv_iface.Out_of_memory "scripted")
+                    end;
+                    Buffer.make ~va:0x60000000n ~size ~meta:() ()
+                  in
+                  let free buf = frees := Buffer.size buf :: !frees in
+                  let ensure required =
+                    Tolk_nv.ensure_has_local_memory dev ~alloc ~free
+                      ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
+                      ~max_warps_per_sm:48 ~tl ~queue:qd required
+                  in
+                  ensure 0x100;
+                  fail_next := true;
+                  ensure 0x200;
+                  (* the grow to 0x900000 failed: the old 0x480000 store
+                     is reallocated and the sizing state restored *)
+                  equal (list int)
+                    [ 0x480000; 0x900000; 0x480000 ]
+                    (List.rev !allocs);
+                  equal (list int) [ 0x480000 ] !frees;
+                  equal int 0x100 dev.Tolk_nv.slm_per_thread;
+                  (match dev.Tolk_nv.shader_local_mem with
+                  | Some b -> equal int 0x480000 (Buffer.size b)
+                  | None -> fail "expected a backing store");
+                  (* the engine is still repointed, with the attempted
+                     per-TPC size *)
+                  equal int 3 tl.Timeline.timeline_value;
+                  equal int 2 qd.Tolk_nv.Queue_desc.put_value;
+                  let expected =
+                    let cq = Compute_queue.create dev in
+                    Compute_queue.wait cq ~value:1 tl.Timeline.timeline;
+                    Compute_queue.setup cq ~local_mem:0x60000000n
+                      ~local_mem_tpc_bytes:0x180000 ();
+                    Compute_queue.signal cq ~value:2 tl.Timeline.timeline;
+                    Q.dwords (Compute_queue.q cq)
+                  in
+                  let first_len = 21 * 4 in
+                  equal (array int) expected
+                    (staged_dwords m
+                       ~off:((first_len + 15) / 16 * 16)
+                       (Array.length expected))));
+          test "out of memory without a fallback propagates" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m in
+                  let qd = queue_desc m in
+                  let tl = timeline m in
+                  raises_match
+                    (function Nv_iface.Out_of_memory _ -> true | _ -> false)
+                    (fun () ->
+                      Tolk_nv.ensure_has_local_memory dev
+                        ~alloc:(fun _ ->
+                          raise (Nv_iface.Out_of_memory "scripted"))
+                        ~free:(fun _ -> fail "nothing to free")
+                        ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
+                        ~max_warps_per_sm:48 ~tl ~queue:qd 0x10);
+                  equal int 0x20 dev.Tolk_nv.slm_per_thread;
+                  is_true (Option.is_none dev.Tolk_nv.shader_local_mem);
+                  equal int 1 tl.Timeline.timeline_value;
+                  equal int 0 qd.Tolk_nv.Queue_desc.put_value));
+        ];
+      group "program call"
+        [
+          test "call stages the arguments, descriptor and stream" (fun () ->
+              with_fixture (fun m ->
+                  let dev =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x380 m
+                  in
+                  let prg = load_fixture dev in
+                  let qd = queue_desc m in
+                  let tl_sig =
+                    Signal.make ~is_timeline:true
+                      (Buffer.make ~va:0x200000010n ~size:16
+                         ~view:(Mmio.view m ~off:0x3000 ~size:16 ())
+                         ~meta:() ())
+                  in
+                  let kernargs =
+                    Kernargs.create
+                      (Buffer.make ~va:0x30000000n ~size:0x1000
+                         ~view:(Mmio.view m ~off:0x4000 ~size:0x1000 ())
+                         ~meta:() ())
+                  in
+                  let r =
+                    Program.call prg ~kernargs ~queue:qd ~timeline:tl_sig
+                      ~timeline_value:1
+                      ~bufs:[| 0x111100000n; 0x222200000n |]
+                      ~vals:[| 7 |] ~global_size:(4, 3, 2)
+                      ~local_size:(8, 4, 1) ()
+                  in
+                  is_none r;
+                  (* wait for the previous work, make writes visible,
+                     launch; the timeline release rides the descriptor *)
+                  equal (array int)
+                    [|
+                      0x20050017; 0x10; 2; 0; 0; 0x01000003;
+                      0x200125a6; 0x1011;
+                      0x200120ad; 0x300002; 0x200120b0; 9;
+                    |]
+                    (staged_dwords m ~off:0 12);
+                  (* the argument slot: the driver-parameter words, then
+                     the buffer addresses, then the value *)
+                  equal (array int)
+                    [| 0; 0x7294; 0; 0x7293; 0xfffdc0; 0 |]
+                    (staged_dwords m ~off:(0x4000 + 24) 6);
+                  equal int64 0x111100000L (Mmio.read64 m (0x4000 + 0x160));
+                  equal int64 0x222200000L (Mmio.read64 m (0x4000 + 0x168));
+                  equal int32 7l (Mmio.read32 m (0x4000 + 0x170));
+                  let q =
+                    exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
+                      ~kernarg_off:0x4000
+                  in
+                  equal int 4 (Qmd.read q "cta_raster_width");
+                  equal int 3 (Qmd.read q "cta_raster_height");
+                  equal int 2 (Qmd.read q "cta_raster_depth");
+                  equal int 8 (Qmd.read q "cta_thread_dimension0");
+                  equal int 4 (Qmd.read q "cta_thread_dimension1");
+                  equal int 1 (Qmd.read q "cta_thread_dimension2");
+                  equal int 0x30000000
+                    (Qmd.read q "constant_buffer_addr_lower_0");
+                  equal int 1 (Qmd.read q "release0_enable");
+                  equal int 1 (Qmd.read q "release0_payload_lower");
+                  equal int 1 qd.Tolk_nv.Queue_desc.put_value;
+                  equal int32 0x1abcdl (Mmio.read32 m 0x1090)));
+          test "call with wait brackets the launch and reports the time"
+            (fun () ->
+              with_fixture (fun m ->
+                  let dev =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x380 m
+                  in
+                  let prg = load_fixture dev in
+                  let qd = queue_desc m in
+                  let slot_at off va =
+                    Buffer.make ~va ~size:16
+                      ~view:(Mmio.view m ~off ~size:16 ())
+                      ~meta:() ()
+                  in
+                  let tl_sig =
+                    Signal.make ~is_timeline:true (slot_at 0x3000 0x200000010n)
+                  in
+                  let st = Signal.make (slot_at 0x3010 0x200000020n) in
+                  let en = Signal.make (slot_at 0x3020 0x200000030n) in
+                  let kernargs =
+                    Kernargs.create
+                      (Buffer.make ~va:0x30000000n ~size:0x1000
+                         ~view:(Mmio.view m ~off:0x4000 ~size:0x1000 ())
+                         ~meta:() ())
+                  in
+                  (* completion and nanosecond clock captures the device
+                     would write: 25 ms elapsed *)
+                  Mmio.write64 m 0x3000 1L;
+                  Mmio.write64 m 0x3018 10_000_000L;
+                  Mmio.write64 m 0x3028 35_000_000L;
+                  let r =
+                    Program.call prg ~kernargs ~queue:qd ~timeline:tl_sig
+                      ~timeline_value:1 ~wait:(st, en) ~bufs:[||] ~vals:[||]
+                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) ()
+                  in
+                  (match r with
+                  | Some dt -> equal (float 1e-9) 0.025 dt
+                  | None -> fail "expected an execution time");
+                  (* the start capture is in the stream; the end capture
+                     and the timeline release ride the descriptor *)
+                  equal (array int)
+                    [|
+                      0x20050017; 0x10; 2; 0; 0; 0x01000003;
+                      0x200125a6; 0x1011;
+                      0x20050017; 0x20; 2; 0; 0; 0x03100001; 0x20010008; 0;
+                      0x200120ad; 0x300002; 0x200120b0; 9;
+                    |]
+                    (staged_dwords m ~off:0 20);
+                  let q =
+                    exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
+                      ~kernarg_off:0x4000
+                  in
+                  equal int 1 (Qmd.read q "release0_enable");
+                  equal int 1 (Qmd.read q "release1_enable")));
+          test "launch limits are enforced before staging" (fun () ->
+              with_fixture (fun m ->
+                  let dev =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x380 m
+                  in
+                  let prg = load_fixture dev in
+                  let qd = queue_desc m in
+                  let tl_sig = signal m in
+                  let kernargs =
+                    Kernargs.create
+                      (Buffer.make ~va:0x30000000n ~size:0x1000
+                         ~view:(Mmio.view m ~off:0x4000 ~size:0x1000 ())
+                         ~meta:() ())
+                  in
+                  let call ?(prg = prg) ~global_size ~local_size () =
+                    Program.call prg ~kernargs ~queue:qd ~timeline:tl_sig
+                      ~timeline_value:1 ~bufs:[||] ~vals:[||] ~global_size
+                      ~local_size ()
+                  in
+                  raises_match (failure_with "Invalid global/local dims")
+                    (fun () ->
+                      call ~global_size:(1, 1, 1) ~local_size:(1, 1, 65) ());
+                  raises_match (failure_with "Invalid global/local dims")
+                    (fun () ->
+                      call ~global_size:(1, 0x10000, 1) ~local_size:(1, 1, 1)
+                        ());
+                  raises_match (failure_with "Too many resources") (fun () ->
+                      call ~global_size:(1, 1, 1) ~local_size:(16, 16, 8) ());
+                  (* a register-hungry kernel caps the block size *)
+                  let hungry =
+                    load_fixture ~lib:(cubin_fixture ~regcount:256 ()) dev
+                  in
+                  equal int 256 hungry.Program.max_threads;
+                  raises_match (failure_with "Too many resources") (fun () ->
+                      call ~prg:hungry ~global_size:(1, 1, 1)
+                        ~local_size:(32, 32, 1) ());
+                  (* a device not sized for the kernel's local memory *)
+                  let small =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x240 m
+                  in
+                  let prg_small = load_fixture small in
+                  raises_match (failure_with "Too many resources") (fun () ->
+                      Program.call prg_small ~kernargs ~queue:qd
+                        ~timeline:tl_sig ~timeline_value:1 ~bufs:[||]
+                        ~vals:[||] ~global_size:(1, 1, 1)
+                        ~local_size:(1, 1, 1) ());
+                  (* nothing was staged or submitted *)
+                  equal nativeint 0x30000000n
+                    (Buffer.va (Kernargs.alloc kernargs 8));
+                  equal int 0 qd.Tolk_nv.Queue_desc.put_value));
+          test "blackwell programs use the wide driver-parameter layout"
+            (fun () ->
+              with_fixture (fun m ->
+                  let prg =
+                    load_fixture
+                      (nv_dev ~compute_class:Defs.blackwell_compute_b
+                         ~sass_version:0xa4 ~slm_per_thread:0x240 m)
+                  in
+                  equal int 224 (Array.length prg.Program.cbuf_0);
+                  equal (array int)
+                    [| 0; 0x7294; 0; 0x7293 |]
+                    (Array.sub prg.Program.cbuf_0 188 4);
+                  equal int 0xfffdc0 prg.Program.cbuf_0.(223)));
+        ];
+      group "cubin fixture"
+        [
+          test "the recorded nvrtc kernel parses to its recorded fields"
+            (fun () ->
+              let dir = "../fixtures/nv" in
+              let cubin = Filename.concat dir "simple_add_sm89.cubin" in
+              let fields_file = Filename.concat dir "simple_add_sm89.fields" in
+              if not (Sys.file_exists cubin && Sys.file_exists fields_file)
+              then
+                skip
+                  ~reason:
+                    "no cubin fixture (generate it with \
+                     test/fixtures/nv/generate_fixture.py on a box with the \
+                     CUDA toolkit)"
+                  ();
+              let fields =
+                List.filter_map
+                  (fun line ->
+                    match
+                      String.split_on_char ' ' (String.trim line)
+                    with
+                    | [ k; v ] -> Some (k, v)
+                    | _ -> None)
+                  (String.split_on_char '\n'
+                     (In_channel.with_open_bin fields_file
+                        In_channel.input_all))
+              in
+              let fint k = int_of_string (List.assoc k fields) in
+              let lib =
+                Bytes.of_string
+                  (In_channel.with_open_bin cubin In_channel.input_all)
+              in
+              with_fixture (fun m ->
+                  let dev =
+                    nv_dev ~sass_version:0x89 ~slm_per_thread:0x2000 m
+                  in
+                  let alloc size =
+                    Buffer.make ~va:0x100000n ~size ~view:(anon_mmio size)
+                      ~meta:() ()
+                  in
+                  let prg =
+                    Program.load dev ~alloc
+                      ~ensure_local_memory:(fun _ -> ())
+                      ~name:(List.assoc "name" fields)
+                      lib
+                  in
+                  equal int (fint "regs_usage") prg.Program.regs_usage;
+                  equal int (fint "shmem_usage") prg.Program.shmem_usage;
+                  equal int (fint "lcmem_usage") prg.Program.lcmem_usage;
+                  equal int (fint "constbuf0_size")
+                    prg.Program.params.Tolk_nv.cbuf0_size;
+                  equal int
+                    (fint "kernargs_alloc_size")
+                    prg.Program.kernargs_alloc_size));
         ];
       group "device"
         [
