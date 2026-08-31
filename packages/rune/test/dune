@@ -1,3 +1,11 @@
+; The generic suites assert CPU jit semantics; pin the process-wide default
+; device so they do not auto-select a GPU backend.
+
+(env
+ (_
+  (env-vars
+   (DEV CPU))))
+
 (tests
  (names
   test_grad

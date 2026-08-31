@@ -110,22 +110,24 @@ end)
 
 type packed = Packed : ('a, 'b) ND.t * ('a, 'b) Nx_effect.t -> packed
 
-(* Devices. One instance per canonical name, created on first use. *)
+(* Devices. Instances live in the shared tolk registry, one per canonical name,
+   so jit, pmap, the process-wide default, and the engine's multi-device
+   schedules all resolve the same instance. [Jit_device.create] is installed as
+   the opener so unknown and unavailable names keep rune's error text. *)
 
 let canonical name =
   let name = String.uppercase_ascii name in
   if String.contains name ':' then name else name ^ ":0"
 
-let devices : (string, Tolk.Device.t) Hashtbl.t = Hashtbl.create 4
+let device_prefix name =
+  match String.index_opt name ':' with
+  | Some i -> String.sub name 0 i
+  | None -> name
 
 let get_device name =
   let name = canonical name in
-  match Hashtbl.find_opt devices name with
-  | Some d -> d
-  | None ->
-      let d = Jit_device.create name in
-      Hashtbl.add devices name d;
-      d
+  Tolk.Device.register (device_prefix name) Jit_device.create;
+  Tolk.Device.get name
 
 (* Only the CPU device shares host memory with Nx tensors, so only it can run on
    wrapped buffers instead of copies. *)
@@ -2917,9 +2919,12 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p) (module Q 
 
 (* Public entry points *)
 
-let jit2 (type p q) ?(device = "CPU") ?(donate = false) ?beam ?beam_parallel
+let jit2 (type p q) ?device ?(donate = false) ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
+  (* No [device] means the process-wide default: the [DEV] environment variable,
+     else the best backend that opens. *)
+  let device = match device with Some d -> d | None -> F.Run.device_name () in
   let dev = get_device device in
   let zero_copy = is_cpu device && not (force_copy ()) in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
@@ -2988,11 +2993,6 @@ let jit' (type a b c d) ?device ?donate ?beam ?beam_parallel
    [replay] with a multi-device placement; pmap only derives the placement from
    [devices] and [in_axes] and validates it against the leaves. *)
 
-let device_prefix name =
-  match String.index_opt name ':' with
-  | Some i -> String.sub name 0 i
-  | None -> name
-
 let pmap_names devices =
   if devices = [] then
     invalid_arg "Rune.pmap: devices must name at least one device";
@@ -3012,12 +3012,7 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
   let names = pmap_names devices in
-  (* Multi-device buffers resolve through the tolk device registry; route it to
-     the same factory the single-device jit uses. *)
-  List.iter
-    (fun n -> Tolk.Device.register (device_prefix n) Jit_device.create)
-    names;
-  let devs = List.map Tolk.Device.get names in
+  let devs = List.map get_device names in
   let spec = { md_names = names; md_devs = devs } in
   let dev = List.hd devs in
   let ndev = List.length names in

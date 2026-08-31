@@ -1019,6 +1019,12 @@ thread.
 
 ### Rune
 
+- **Breaking:** when `~device` is omitted, `Rune.jit`, `jit2`, and `jit'` now
+  run on the best available backend — the `DEV` environment variable selects
+  one by name, otherwise METAL, AMD, NV, CUDA are probed in order with CPU as
+  the fallback — instead of always CPU. Pass `~device:"CPU"` or set `DEV=CPU`
+  to keep the old behavior.
+
 - `Rune.jit` and `Rune.pmap` accept `~device:"NV"` — NVIDIA GPUs driven on
   the kernel driver's hardware queues (Linux), with kernels compiled straight
   to cubin. `"CUDA"` keeps selecting the userspace CUDA driver API backend.

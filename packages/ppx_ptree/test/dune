@@ -1,3 +1,11 @@
+; The suites jit without naming a device and assert CPU semantics; pin the
+; process-wide default so they do not auto-select a GPU backend.
+
+(env
+ (_
+  (env-vars
+   (DEV CPU))))
+
 (tests
  (names test_ptree test_signature test_integration test_uniform)
  (package ppx_ptree)

@@ -384,13 +384,16 @@ val jit :
     order — replay the compiled program on the new leaf values. A new signature
     triggers a fresh trace and compilation.
 
-    [device] selects where the kernels compile and run: ["CPU"] (the default),
-    ["AMD"] (AMD GPUs, Linux only), ["NV"] (NVIDIA GPUs on the kernel
-    driver's hardware queues, Linux only), ["CUDA"] (NVIDIA GPUs through the
-    CUDA driver API), or ["METAL"] (macOS only). On the CPU device,
-    contiguous inputs and captured tensors are read in place and outputs are
-    computed directly into the returned tensors' storage; non-contiguous tensors
-    are copied.
+    [device] selects where the kernels compile and run: ["CPU"], ["AMD"] (AMD
+    GPUs, Linux only), ["NV"] (NVIDIA GPUs on the kernel driver's hardware
+    queues, Linux only), ["CUDA"] (NVIDIA GPUs through the CUDA driver API), or
+    ["METAL"] (macOS only). When [device] is omitted, the process-wide default
+    applies: the [DEV] environment variable selects a backend by name; otherwise
+    backends are probed in order METAL, AMD, NV, CUDA and the first that opens
+    wins, falling back to CPU. The default is resolved once per process, at its
+    first use. On the CPU device, contiguous inputs and captured tensors are
+    read in place and outputs are computed directly into the returned tensors'
+    storage; non-contiguous tensors are copied.
 
     On other devices, results are bit-identical but data moves lazily. Inputs
     are copied to the device on every call; outputs stay resident on the device
