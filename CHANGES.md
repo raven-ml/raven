@@ -562,6 +562,12 @@ thread.
   (`qr` + `solve_triangular`, since `solve`'s singularity check reads a traced
   value).
 
+- `Nx.diag` no longer reads its operand back to the host: extraction goes
+  through `take`, and construction scatters the vector into a zero template,
+  so `diag` traces under `Rune.jit` and its construction differentiates
+  through `scatter` instead of severing the tape (previously the operand was
+  read with `to_array` and the matrix rebuilt with `init`).
+
 - `irfftn` and `irfft2` now honour `s` along every transformed axis: the
   leading, complex axes are cropped or zero-padded to the requested lengths,
   as in `ifftn`. Previously only the last axis was resized while the
@@ -982,9 +988,8 @@ thread.
   compiled solve now beats the eager C kernel 3-5× from 128×128 up. Compile
   time grows linearly in the matrix dimension, and `grad` inside a jitted
   function now also differentiates through `qr` and `cholesky`: the tape
-  pullbacks' `diag` use read host bytes and refused to trace, so the QR and
-  Cholesky pullbacks (and the solve_triangular JVP rule) form the diagonal
-  terms from the identity instead.
+  pullbacks use `diag` for their diagonal terms, which compiles like any
+  other graph op.
 
 - `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
   step compiles once and runs per slice — instead of unrolling every step into

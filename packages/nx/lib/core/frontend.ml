@@ -1211,41 +1211,6 @@ module Make (B : Backend_intf.S) = struct
       done;
       create ctx dtype [| rows; cols |] arr
 
-  let diag ?(k = 0) v =
-    let v_shape = shape v in
-    let v_ndim = Array.length v_shape in
-    if v_ndim = 1 then
-      let n = v_shape.(0) in
-      let size = n + Int.abs k in
-      let v_arr = to_array v in
-      init (B.context v) (dtype v) [| size; size |] (fun indices ->
-          let row = indices.(0) in
-          let col = indices.(1) in
-          let diag_idx =
-            if k >= 0 then
-              if col = row + k && row >= 0 && row < n then row else -1
-            else if row = col - k && col >= 0 && col < n then col
-            else -1
-          in
-          if diag_idx >= 0 && diag_idx < n then v_arr.(diag_idx)
-          else Dtype.zero (dtype v))
-    else if v_ndim >= 2 then
-      let rows = v_shape.(0) in
-      let cols = v_shape.(1) in
-      let diag_len =
-        Stdlib.max 0
-          (if k >= 0 then Int.min rows (cols - k) else Int.min (rows + k) cols)
-      in
-      if diag_len = 0 then empty (B.context v) (dtype v) [| 0 |]
-      else
-        let v_arr = to_array v in
-        init (B.context v) (dtype v) [| diag_len |] (fun indices ->
-            let i = indices.(0) in
-            let row = if k >= 0 then i else i - k in
-            let col = if k >= 0 then i + k else i in
-            v_arr.((row * cols) + col))
-    else err "diag" "input, expected 1D or 2D array, got %dD" v_ndim
-
   let arange (type a b) ctx (dtype : (a, b) Dtype.t) start stop step =
     if start >= stop && step > 0 then
       err "arange"
@@ -2222,7 +2187,8 @@ module Make (B : Backend_intf.S) = struct
             in
             reshape shape (scale Dtype.float64 u)
         | _ ->
-            (* A Threefry row is two words, so [n] draws cost ceil (n/2) rows. *)
+            (* A Threefry row is two words, so [n] draws cost ceil (n/2)
+               rows. *)
             let bits =
               shrink [| (0, n) |] (flatten (blocks "uniform" k ((n + 1) / 2)))
             in
@@ -2260,11 +2226,12 @@ module Make (B : Backend_intf.S) = struct
             scalar ctx compute (Float.ldexp 1.0 (-significand_bits compute))
           in
           let r =
-            sqrt
-              (mul (scalar ctx compute (-2.0)) (log (maximum u1 smallest)))
+            sqrt (mul (scalar ctx compute (-2.0)) (log (maximum u1 smallest)))
           in
           let angle = mul u2 (scalar ctx compute (2.0 *. Float.pi)) in
-          let z = concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ] in
+          let z =
+            concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ]
+          in
           cast dtype (reshape shape (shrink [| (0, n) |] z))
         in
         match dtype with
@@ -2339,7 +2306,9 @@ module Make (B : Backend_intf.S) = struct
         (* The mean of Gamma(boosted, 1) is [boosted]: the least wrong constant
            for an element no round accepted. *)
         let acc = ref (full ctx compute shape boosted) in
-        let settled = ref (cmpne (zeros ctx compute shape) (zeros ctx compute shape)) in
+        let settled =
+          ref (cmpne (zeros ctx compute shape) (zeros ctx compute shape))
+        in
         for j = 0 to gamma_rounds - 1 do
           let xj = contiguous (slice [ I j ] x) in
           let uj = contiguous (slice [ I j ] u) in
@@ -2390,14 +2359,12 @@ module Make (B : Backend_intf.S) = struct
       let ks = split k in
       let g1 = gamma ks.(0) ~concentration:alpha dtype shape in
       let g2 = gamma ks.(1) ~concentration:beta dtype shape in
-      let tiny =
-        scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype))
-      in
+      let tiny = scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype)) in
       div g1 (maximum (add g1 g2) tiny)
 
     (* Dirichlet: one gamma per component, normalised across them. The
-       components go on a new trailing axis, so a draw of [shape] gives
-       [shape @ [| n |]] and every row sums to one. *)
+       components go on a new trailing axis, so a draw of [shape] gives [shape @
+       [| n |]] and every row sums to one. *)
     let dirichlet (type b) k ~concentration (dtype : (float, b) Dtype.t) shape :
         (float, b) t =
       let n = Array.length concentration in
@@ -2424,9 +2391,7 @@ module Make (B : Backend_intf.S) = struct
              concentration)
       in
       let stacked = stack ~axis components in
-      let tiny =
-        scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype))
-      in
+      let tiny = scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype)) in
       let total = sum ~axes:[ axis ] ~keepdims:true stacked in
       div stacked (maximum total tiny)
 
@@ -2467,8 +2432,7 @@ module Make (B : Backend_intf.S) = struct
       let running = cumprod ~axis:0 (uniform k Dtype.float64 attempts) in
       let threshold = scalar ctx Dtype.float64 (Float.exp (-.rate)) in
       cast Dtype.int32
-        (sum ~axes:[ 0 ]
-           (cast Dtype.float64 (cmpgt running threshold)))
+        (sum ~axes:[ 0 ] (cast Dtype.float64 (cmpgt running threshold)))
 
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking
@@ -2542,12 +2506,14 @@ module Make (B : Backend_intf.S) = struct
       let words = blocks "permutation" k n in
       let word col =
         cast Dtype.int64
-          (reshape [| n |] (contiguous (shrink [| (0, n); (col, col + 1) |] words)))
+          (reshape [| n |]
+             (contiguous (shrink [| (0, n); (col, col + 1) |] words)))
       in
       let low_32 = scalar ctx Dtype.int64 0xFFFF_FFFFL in
       let sort_key =
         add
-          (mul (bitwise_and (word 0) low_32)
+          (mul
+             (bitwise_and (word 0) low_32)
              (scalar ctx Dtype.int64 0x1_0000_0000L))
           (bitwise_and (word 1) low_32)
       in
@@ -2589,12 +2555,12 @@ module Make (B : Backend_intf.S) = struct
            ~axis:(axis + Array.length batch_shape)
            ~keepdims:false)
 
-    (* The scope: [next_key] performs [E_next_key]; [with_key] answers it
-       by [fold_in root counter] with an incrementing counter — the same
-       [fold_in] the explicit path uses, so the two front-ends share one stream.
-       Every derived key is therefore a tensor computation on the root, which is
-       what lets a scope rooted at a traced or batched key compile and batch
-       like an explicit one.
+    (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by
+       [fold_in root counter] with an incrementing counter — the same [fold_in]
+       the explicit path uses, so the two front-ends share one stream. Every
+       derived key is therefore a tensor computation on the root, which is what
+       lets a scope rooted at a traced or batched key compile and batch like an
+       explicit one.
 
        The handler is an effect handler, so it is per-fiber and per-domain: a
        draw on a domain spawned inside a scope does not see it and falls back
@@ -2791,6 +2757,75 @@ module Make (B : Backend_intf.S) = struct
           (scalar ctx Dtype.int32 (Int32.of_int start))
       in
       take ~axis:(nd - 2) ~indices:idx x_flat
+
+  (* [diag] for a 1-D [v]: [v] on the [k]-th diagonal of a zero [s × s] matrix,
+     [s = n + |k|], by scattering into a zero template at the diagonal
+     coordinates. Everything here is graph ops, so [diag] traces under jit and
+     differentiates through scatter — the previous implementation read [v] back
+     to the host with [to_array] and rebuilt the matrix with [init], which
+     severed the tape and refused to trace. *)
+  let diag_construct k v =
+    let n = (shape v).(0) in
+    let s = n + Int.abs k in
+    let ctx = B.context v in
+    let dt = dtype v in
+    if n = 0 then zeros ctx dt [| s; s |]
+    else
+      let template = zeros ctx dt [| s; s |] in
+      let i = arange ctx Dtype.int32 0 n 1 in
+      (* [B.scatter] needs [indices]' non-axis dimensions to match the
+         template's, so [s - n] dummy rows/columns ride along scattering zeros —
+         every written cell is distinct, and the dummies land where the template
+         is zero anyway, so they are inert. *)
+      let pad = s - n in
+      let extend ~axis ~dtype tail t =
+        if pad = 0 then t else concatenate ~axis [ t; zeros ctx dtype tail ]
+      in
+      if k >= 0 then
+        (* [v_i] at [i, i+k]: one index per row along axis 1. *)
+        B.scatter ~mode:`Set ~unique_indices:true template
+          ~indices:
+            (extend ~axis:0 ~dtype:Dtype.int32 [| pad; 1 |]
+               (reshape [| n; 1 |]
+                  (add i (scalar ctx Dtype.int32 (Int32.of_int k)))))
+          ~updates:
+            (extend ~axis:0 ~dtype:dt [| pad; 1 |] (reshape [| n; 1 |] v))
+          ~axis:1
+      else
+        (* [v_j] at [j+|k|, j]: one index per column along axis 0. *)
+        B.scatter ~mode:`Set ~unique_indices:true template
+          ~indices:
+            (extend ~axis:1 ~dtype:Dtype.int32 [| 1; pad |]
+               (reshape [| 1; n |]
+                  (add i (scalar ctx Dtype.int32 (Int32.of_int (-k))))))
+          ~updates:
+            (extend ~axis:1 ~dtype:dt [| 1; pad |] (reshape [| 1; n |] v))
+          ~axis:0
+
+  let diag ?(k = 0) v =
+    match ndim v with
+    | 1 -> diag_construct k v
+    | n when n >= 2 ->
+        let v_shape = shape v in
+        let rows = v_shape.(0) in
+        let cols = v_shape.(1) in
+        let diag_len =
+          Stdlib.max 0
+            (if k >= 0 then Int.min rows (cols - k) else Int.min (rows + k) cols)
+        in
+        if diag_len = 0 then empty (B.context v) (dtype v) [| 0 |]
+        else if n = 2 then diagonal ~offset:k v
+        else
+          (* Legacy: for >2-D inputs [diag] read the row-major flattening as a
+             [rows × cols] matrix. Kept, now traceably. *)
+          let m =
+            reshape [| rows; cols |]
+              (take
+                 ~indices:(arange (B.context v) Dtype.int32 0 (rows * cols) 1)
+                 v)
+          in
+          diagonal ~offset:k m
+    | _ -> err "diag" "input, expected 1D or 2D array, got %dD" (ndim v)
 
   let matrix_transpose x =
     let nd = ndim x in
@@ -3757,8 +3792,8 @@ module Make (B : Backend_intf.S) = struct
      one is silently ignored, not checked), [transpose] solves the transposed
      system (conjugate transpose for complex [a]), and [unit_diag] assumes a
      diagonal of ones without reading it. *)
-  let solve_triangular ?(upper = false) ?(transpose = false) ?(unit_diag = false)
-      a b =
+  let solve_triangular ?(upper = false) ?(transpose = false)
+      ?(unit_diag = false) a b =
     let op = "solve_triangular" in
     check_square ~op a;
     check_float_or_complex ~op a;

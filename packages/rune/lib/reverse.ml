@@ -180,87 +180,89 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                 in
                 continue k res
               else
-              match Effect.perform (Scan.E_scan req) with
-              | res ->
-                  let Scan.
-                        {
-                          r_carry = Scan.Packed_c (_, c');
-                          r_y = Scan.Packed_t ys;
-                        } =
-                    res
-                  in
-                  let Scan.
-                        {
-                          req_carry = Scan.Packed_c (cmod, c0);
-                          req_x = Scan.Packed_t xs0;
-                          req_step = step;
-                        } =
-                    req
-                  in
-                  let module C = (val cmod) in
-                  (* Both packs bind this module's [t]. *)
-                  let c' = Obj.magic c' in
-                  track ys;
-                  C.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) c';
-                  Tape.record tape (fun () ->
-                      let dy = Tape.cotangent tape ys in
-                      let dc =
-                        C.map
-                          (fun (type a b) (leaf : (a, b) t) ->
-                            Tape.cotangent tape leaf)
-                          c'
-                      in
-                      let bwd =
-                        Scan.
+                match Effect.perform (Scan.E_scan req) with
+                | res ->
+                    let Scan.
                           {
-                            bwd_step = step;
-                            bwd_carry = Scan.Packed_c (cmod, c0);
-                            bwd_x = Scan.Packed_t xs0;
-                            bwd_n = (T.shape xs0).(0);
-                            bwd_dc = Scan.Packed_c (cmod, dc);
-                            bwd_dy = Scan.Packed_t dy;
-                            bwd_y_shape =
-                              Array.sub (T.shape ys) 1
-                                (Array.length (T.shape ys) - 1);
-                          }
-                      in
-                      match Effect.perform (Scan.E_scan_bwd bwd) with
-                      | Scan.
+                            r_carry = Scan.Packed_c (_, c');
+                            r_y = Scan.Packed_t ys;
+                          } =
+                      res
+                    in
+                    let Scan.
                           {
-                            br_carry = Scan.Packed_c (_, dc0);
-                            br_y = Scan.Packed_t dxs;
-                            br_closed;
-                          } ->
-                          let dc0 = Obj.magic dc0 in
-                          let dxs = Obj.magic dxs in
-                          ignore
-                            (C.map2
-                               (fun (type a b) (a : (a, b) t) (b : (a, b) t) ->
-                                 Tape.accumulate tape a b;
-                                 b)
-                               c0 dc0);
-                          Tape.accumulate tape xs0 dxs;
-                          (* External inputs of the loop (tensors the body
-                             closes over): accumulate the cotangents the
-                             backward loop totalled for them. Only a tensor
-                             tracked here receives a contribution — loop-slot
-                             placeholders and compile-time constants never
-                             are. *)
-                          List.iter
-                            (fun (Scan.Closed_ctan (g, dg)) ->
-                              if Tape.tracked tape g then
-                                Tape.accumulate tape g dg)
-                            br_closed);
-                  continue k res
-              | exception Scan.Not_staged ->
-                  (* The stager declined after tracing the body (e.g. a
-                     shape-unstable carry): fold eagerly, taping every step. *)
-                  let res : Scan.scan_res =
-                    Effect.Deep.match_with
-                      (fun () -> Scan.eager req)
-                      () (handler tape)
-                  in
-                  continue k res)
+                            req_carry = Scan.Packed_c (cmod, c0);
+                            req_x = Scan.Packed_t xs0;
+                            req_step = step;
+                          } =
+                      req
+                    in
+                    let module C = (val cmod) in
+                    (* Both packs bind this module's [t]. *)
+                    let c' = Obj.magic c' in
+                    track ys;
+                    C.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) c';
+                    Tape.record tape (fun () ->
+                        let dy = Tape.cotangent tape ys in
+                        let dc =
+                          C.map
+                            (fun (type a b) (leaf : (a, b) t) ->
+                              Tape.cotangent tape leaf)
+                            c'
+                        in
+                        let bwd =
+                          Scan.
+                            {
+                              bwd_step = step;
+                              bwd_carry = Scan.Packed_c (cmod, c0);
+                              bwd_x = Scan.Packed_t xs0;
+                              bwd_n = (T.shape xs0).(0);
+                              bwd_dc = Scan.Packed_c (cmod, dc);
+                              bwd_dy = Scan.Packed_t dy;
+                              bwd_y_shape =
+                                Array.sub (T.shape ys) 1
+                                  (Array.length (T.shape ys) - 1);
+                            }
+                        in
+                        match Effect.perform (Scan.E_scan_bwd bwd) with
+                        | Scan.
+                            {
+                              br_carry = Scan.Packed_c (_, dc0);
+                              br_y = Scan.Packed_t dxs;
+                              br_closed;
+                            } ->
+                            let dc0 = Obj.magic dc0 in
+                            let dxs = Obj.magic dxs in
+                            ignore
+                              (C.map2
+                                 (fun (type a b) (a : (a, b) t) (b : (a, b) t)
+                                    ->
+                                   Tape.accumulate tape a b;
+                                   b)
+                                 c0 dc0);
+                            Tape.accumulate tape xs0 dxs;
+                            (* External inputs of the loop (tensors the body
+                               closes over): accumulate the cotangents the
+                               backward loop totalled for them. Only a tensor
+                               tracked here receives a contribution — loop-slot
+                               placeholders and compile-time constants never
+                               are. *)
+                            List.iter
+                              (fun (Scan.Closed_ctan (g, dg)) ->
+                                if Tape.tracked tape g then
+                                  Tape.accumulate tape g dg)
+                              br_closed);
+                    continue k res
+                | exception Scan.Not_staged ->
+                    (* The stager declined after tracing the body (e.g. a
+                       shape-unstable carry): fold eagerly, taping every
+                       step. *)
+                    let res : Scan.scan_res =
+                      Effect.Deep.match_with
+                        (fun () -> Scan.eager req)
+                        () (handler tape)
+                    in
+                    continue k res)
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)
       | E_sub { a; b } -> Some (fun k -> pull2 k (sub a b) a b Fun.id T.neg)
@@ -882,11 +884,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   let c = T.matmul (T.transpose l_lower) dl_lower in
                   let p =
-                    (* Half the diagonal, via the identity rather than [diag] (a
-                       host-side op that refuses to trace under jit). *)
-                    let two = Nx_core.Dtype.of_float (T.dtype c) 2.0 in
-                    T.sub (T.tril c)
-                      (T.mul c (T.div_s (T.eye (T.dtype c) (T.shape c).(0)) two))
+                    (* Strict lower + half diagonal. *)
+                    let diag_c = T.diagonal c in
+                    let two = Nx_core.Dtype.of_float (T.dtype diag_c) 2.0 in
+                    T.sub (T.tril c) (T.diag (T.div_s diag_c two))
                   in
                   let z =
                     solve_triangular ~upper:false ~transpose:true
@@ -898,8 +899,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   let s = T.transpose y in
                   let da_sym =
-                    T.sub (T.add s (T.transpose s))
-                      (T.mul s (T.eye (T.dtype s) (T.shape s).(0)))
+                    T.sub (T.add s (T.transpose s)) (T.diag (T.diagonal s))
                   in
                   T.tril da_sym))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
@@ -965,12 +965,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                             (T.matmul (T.transpose gq) q)
                         in
                         let lower_strict = T.tril ~k:(-1) m in
-                        (* [m]'s diagonal as a matrix, via the identity: [diag]
-                           itself reads host bytes, so it would refuse to trace
-                           under jit. *)
-                        let diag_mat =
-                          T.mul m (T.eye (T.dtype m) (T.shape m).(0))
-                        in
+                        (* [m]'s diagonal as a matrix. *)
+                        let diag_mat = T.diag (T.contiguous (T.diagonal m)) in
                         let copyltu =
                           T.add
                             (T.add lower_strict (T.transpose lower_strict))

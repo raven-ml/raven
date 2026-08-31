@@ -868,6 +868,19 @@ let test_scatter_matches_eager () =
   check_arr ~msg:"set replay" (to_arr (f `Set x)) (g_set x);
   check_arr ~msg:"add" (to_arr (f `Add x)) (g_add x)
 
+(* [Nx.diag] is traceable in both directions: extraction gathers, construction
+   scatters into a zero template. *)
+let test_diag_matches_eager () =
+  let m =
+    Nx.create f32 [| 3; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0 |]
+  in
+  let g = Rune.jit' (Nx.diag ~k:(-1)) in
+  check_arr ~msg:"extract" (to_arr (Nx.diag ~k:(-1) m)) (g m);
+  let v = vec32 [| 2.0; 3.0; 4.0 |] in
+  let g2 = Rune.jit' (Nx.diag ~k:1) in
+  check_arr ~msg:"construct" (to_arr (Nx.diag ~k:1 v)) (g2 v);
+  check_arr ~msg:"construct replay" (to_arr (Nx.diag ~k:1 v)) (g2 v)
+
 (* Training-step integration: a two-layer MLP trained by a jitted step must
    follow the eager trajectory exactly. *)
 
@@ -1298,7 +1311,10 @@ let tests =
         test "correlate matches eager" test_correlate_matches_eager;
       ];
     group "indexed access"
-      [ test "scatter matches eager" test_scatter_matches_eager ];
+      [
+        test "scatter matches eager" test_scatter_matches_eager;
+        test "diag matches eager" test_diag_matches_eager;
+      ];
     group "training"
       [
         test "jitted training follows the eager trajectory"
