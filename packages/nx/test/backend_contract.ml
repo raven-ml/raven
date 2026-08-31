@@ -2231,7 +2231,7 @@ struct
               in
               let b = mk64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
               let x =
-                B.triangular_solve ~upper:false ~transpose:false
+                B.solve_triangular ~upper:false ~transpose:false
                   ~unit_diag:false a b
               in
               let recon = F.to_array (mm a x) in
@@ -2246,7 +2246,7 @@ struct
               in
               let b = mk64 [| 3 |] [| 2.; 7.; 15. |] in
               let x =
-                B.triangular_solve ~upper:false ~transpose:false
+                B.solve_triangular ~upper:false ~transpose:false
                   ~unit_diag:false a b
               in
               equal ~msg:"shape" (array int) [| 3 |] (F.shape x);
@@ -2258,7 +2258,7 @@ struct
               in
               let bb = mk64 [| 2; 2 |] [| 2.; 7.; 12.; -11. |] in
               let bx =
-                B.triangular_solve ~upper:false ~transpose:false
+                B.solve_triangular ~upper:false ~transpose:false
                   ~unit_diag:false ba bb
               in
               equal ~msg:"batched shape" (array int) [| 2; 2 |] (F.shape bx);

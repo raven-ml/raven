@@ -733,14 +733,14 @@ module type S = sig
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
 
-  val triangular_solve :
+  val solve_triangular :
     upper:bool ->
     transpose:bool ->
     unit_diag:bool ->
     ('a, 'b) t ->
     ('a, 'b) t ->
     ('a, 'b) t
-  (** [triangular_solve ~upper ~transpose ~unit_diag a b] solves [A·x = b] or
+  (** [solve_triangular ~upper ~transpose ~unit_diag a b] solves [A·x = b] or
       [Aᴴ·x = b] where [A] is triangular.
 
       [upper]: [A] is upper triangular. [transpose]: solve [Aᴴ·x = b] — the

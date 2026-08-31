@@ -3752,14 +3752,14 @@ module Make (B : Backend_intf.S) = struct
       (diagonal ~offset:(Option.value offset ~default:0) a)
       ~axes:[ -1 ] ~keepdims:false
 
-  (* [triangular_solve ?upper ?transpose ?unit_diag a b] exploits triangularity
+  (* [solve_triangular ?upper ?transpose ?unit_diag a b] exploits triangularity
      instead of factoring: only the [upper] triangle of [a] is read (the other
      one is silently ignored, not checked), [transpose] solves the transposed
      system (conjugate transpose for complex [a]), and [unit_diag] assumes a
      diagonal of ones without reading it. *)
-  let triangular_solve ?(upper = false) ?(transpose = false) ?(unit_diag = false)
+  let solve_triangular ?(upper = false) ?(transpose = false) ?(unit_diag = false)
       a b =
-    let op = "triangular_solve" in
+    let op = "solve_triangular" in
     check_square ~op a;
     check_float_or_complex ~op a;
     check_float_or_complex ~op b;
@@ -3793,7 +3793,7 @@ module Make (B : Backend_intf.S) = struct
       if sb.(Array.length sb - 2) <> n then
         err op "matrix right-hand side row count does not match a"
     end;
-    B.triangular_solve ~upper ~transpose ~unit_diag a b
+    B.solve_triangular ~upper ~transpose ~unit_diag a b
 
   let solve a b =
     check_square ~op:"solve" a;
@@ -3820,7 +3820,7 @@ module Make (B : Backend_intf.S) = struct
     then invalid_arg "solve: matrix is singular";
     let y = matmul (matrix_transpose q) b_expanded in
     let result =
-      B.triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
+      B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r y
     in
     if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
@@ -3923,7 +3923,7 @@ module Make (B : Backend_intf.S) = struct
           else if ndim y = 1 then slice_internal [ R (0, n) ] y
           else slice_internal [ A; R (0, n); A ] y
         in
-        B.triangular_solve ~upper:true ~transpose:false ~unit_diag:false r_sq
+        B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r_sq
           y_top
       else matmul (pinv a ~rtol:rcond_value) b
     in

@@ -32,15 +32,17 @@
    Reading the value of a traced tensor (for example [Nx.item] on a value that
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
    data. Operations Tolk cannot express (FFT, complex dtypes) raise [Jit_error]
-   as well. QR and triangular solves lower at trace time instead (see
-   [Linalg_graph]): both take a number of steps fixed by the input shapes, so
-   they unroll into ordinary Tolk compositions and compile for every Tolk
-   device. A linear solve inside jit is the same composition written out by
-   hand — [qr] plus [triangular_solve] — because [Nx.solve]'s eager singularity
-   check reads a traced value. Threefry (the RNG primitive) compiles, but only
-   when its key depends on the traced inputs: a constant key would burn one draw
-   into the program and silently replay it on every call, so it raises
-   [Jit_error] pointing at [Nx.Rng] key threading. *)
+   as well. Much of the rest of the eager backend lowers at trace time instead:
+   many C-kernel operations — matmul and the linear-algebra factorizations among
+   them — have no single Tolk Uop, so the tracer builds them as ordinary Tolk
+   compositions, which compile for every Tolk device. The factorizations unroll
+   into a number of steps fixed by the input shapes alone (see
+   [Tolk_frontend.Linalg]). A linear solve inside jit is the same composition
+   written out by hand — [qr] plus [solve_triangular] — because [Nx.solve]'s
+   eager singularity check reads a traced value. Threefry (the RNG primitive)
+   compiles, but only when its key depends on the traced inputs: a constant key
+   would burn one draw into the program and silently replay it on every call, so
+   it raises [Jit_error] pointing at [Nx.Rng] key threading. *)
 
 open Nx_effect
 module F = Tolk_frontend
@@ -573,8 +575,8 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
 
 (* Staged scan.
 
-   [Rune.scan] performs [Scan.E_scan]; this tracer stages it as a loop call
-   in the compiled program instead of an unrolled trace. The body is traced once
+   [Rune.scan] performs [Scan.E_scan]; this tracer stages it as a loop call in
+   the compiled program instead of an unrolled trace. The body is traced once
    with fresh placeholder slot tensors, scheduled as its own compiled
    sub-program, and embedded as the payload of a CALL(CUSTOM_FUNCTION "loop")
    node — see [Tolk.Realize.exec_loop] for the payload encoding and the replay
@@ -739,7 +741,10 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
      carrying the operation's shared dtype (qr's factors, e.g.). *)
   let ret2 : type a b r.
       ((a, b) Nx_effect.t * (a, b) Nx_effect.t, r) continuation ->
-      (a, b) ND.t -> F.Tensor.t -> F.Tensor.t -> r =
+      (a, b) ND.t ->
+      F.Tensor.t ->
+      F.Tensor.t ->
+      r =
    fun k dt tq tr ->
     let shape tt = Array.of_list (F.Tensor.shape tt) in
     let phq : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tq) in
@@ -1133,24 +1138,24 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_ifft _ -> Some (fun k -> refuse k "ifft")
     | E_rfft _ -> Some (fun k -> refuse k "rfft")
     | E_irfft _ -> Some (fun k -> refuse k "irfft")
-    (* QR, triangular solves, and Cholesky unroll at trace time (see
-       [Linalg_graph]): all three take a number of steps fixed by the input
-       shapes, so they lower to ordinary Tolk compositions instead of the
-       eager data-dependent C kernels. Complex inputs cannot be traced at
-       all; non-float dtypes are refused here. A non-positive-definite
-       Cholesky input, which the eager kernel reports as [Linalg_error],
-       yields nans in the compiled program. *)
+    (* Linear algebra without a single Tolk Uop lowers at trace time into
+       ordinary Tolk compositions, like matmul and the other lowered C-kernel
+       ops; the factorizations unroll a number of steps fixed by the input
+       shapes (see [Tolk_frontend.Linalg]). Complex inputs cannot be traced at
+       all; non-float dtypes are refused here. A non-positive-definite Cholesky
+       input, which the eager kernel reports as [Linalg_error], yields nans in
+       the compiled program. *)
     | E_cholesky { t_in; upper } ->
         Some
           (fun k ->
             if ND.is_float (dt t_in) then
-              ret k (dt t_in) (Linalg_graph.cholesky ~upper (go t_in))
+              ret k (dt t_in) (F.Linalg.cholesky ~upper (go t_in))
             else refuse k "cholesky")
     | E_qr { t_in; reduced } ->
         Some
           (fun k ->
             if ND.is_float (dt t_in) then
-              let q, r = Linalg_graph.qr ~reduced (go t_in) in
+              let q, r = F.Linalg.qr ~reduced (go t_in) in
               ret2 k (dt t_in) q r
             else refuse k "qr")
     | E_svd _ -> Some (fun k -> refuse k "svd")
@@ -1158,18 +1163,18 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_eig _ -> Some (fun k -> refuse k "eig")
     | E_eigvalsh _ -> Some (fun k -> refuse k "eigvalsh")
     | E_eigh _ -> Some (fun k -> refuse k "eigh")
-    | E_triangular_solve { a; b; upper; transpose; unit_diag } ->
+    | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
         Some
           (fun k ->
-            if not (ND.is_float (dt a)) || not (ND.is_float (dt b)) then
-              refuse k "triangular_solve"
+            if (not (ND.is_float (dt a))) || not (ND.is_float (dt b)) then
+              refuse k "solve_triangular"
             else if not (ND.equal (dt a) (dt b)) then
-              err "Rune.jit: triangular_solve requires both operands to have "
-                    "the same dtype"
+              err "Rune.jit: solve_triangular requires both operands to have "
+                "the same dtype"
             else
               ret k (dt a)
-                (Linalg_graph.triangular_solve ~upper ~transpose ~unit_diag
-                   (go a) (go b)))
+                (F.Linalg.solve_triangular ~upper ~transpose ~unit_diag (go a)
+                   (go b)))
     | E_psum _ ->
         Some
           (fun k ->
@@ -1214,10 +1219,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
    then per leaf carry0, then per leaf carry1, then ys, then per leaf the final
    carry, then per leaf the carry stack. *)
 and stage_scan : type r.
-    state ->
-    Scan.scan_req ->
-    (Scan.scan_res, r) Effect.Deep.continuation ->
-    r =
+    state -> Scan.scan_req -> (Scan.scan_res, r) Effect.Deep.continuation -> r =
  fun st req k ->
   let Scan.
         {
@@ -1297,8 +1299,7 @@ and stage_scan : type r.
      external inputs. *)
   let trace_body () =
     Effect.Deep.match_with
-      (fun () ->
-        step.run (Scan.Packed_c (cmod, slot_c)) (Scan.Packed_t slot_x))
+      (fun () -> step.run (Scan.Packed_c (cmod, slot_c)) (Scan.Packed_t slot_x))
       () (handler st)
   in
   st.scan_collectors <- collect :: st.scan_collectors;
@@ -1311,11 +1312,11 @@ and stage_scan : type r.
             (Obj.magic c_next, Obj.magic y))
   in
   Tbl.replace st.scan_closed (Obj.repr step) !closed;
-  (* A loop can only be compiled from a shape-stable carry (the single
-     prototype trace stands for every step). A body that changes a carry
-     shape declines staging — the scan folds eagerly and unrolls into this
-     trace, as every jit did before staging existed. The traced body's nodes
-     are unreachable from any output and never get scheduled. *)
+  (* A loop can only be compiled from a shape-stable carry (the single prototype
+     trace stands for every step). A body that changes a carry shape declines
+     staging — the scan folds eagerly and unrolls into this trace, as every jit
+     did before staging existed. The traced body's nodes are unreachable from
+     any output and never get scheduled. *)
   let stable = ref true in
   let c_next =
     C.map2
@@ -1326,201 +1327,204 @@ and stage_scan : type r.
   in
   if not !stable then Effect.Deep.discontinue k Scan.Not_staged
   else
-  let y_shape = shape_of y in
-  let numel_y = numel y_shape in
-  (* The body's output leaf nodes, in traversal order (the same order
-     [slot_infos] was collected in). *)
-  let c_next_nodes = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      c_next_nodes := tolk_of st leaf :: !c_next_nodes)
-    c_next;
-  let c_next_nodes = List.rev !c_next_nodes in
-  let infos =
-    List.map2 (fun info node -> (info, node)) slot_infos c_next_nodes
-  in
-  let n_leaves = List.length infos in
-  let pos_src i = 1 + i in
-  let pos_carry0 i = 1 + n_leaves + i in
-  let pos_carry1 i = 1 + (2 * n_leaves) + i in
-  let pos_ys = 1 + (3 * n_leaves) in
-  let pos_final i = 2 + (3 * n_leaves) + i in
-  let pos_stack i = 2 + (4 * n_leaves) + i in
-  (* The body sub-program: realize every output into an explicit buffer the loop
-     executor can rebind per iteration. *)
-  let y_out = make_node st (tolk_dtype (Nx_effect.dtype y)) numel_y in
-  let body_sink =
-    U.sink
-      (List.map
-         (fun ((_, c_shape, _, c_out), node) ->
-           U.after ~src:c_out ~deps:[ store_flat c_out (numel c_shape) node ])
-         infos
-      @ [ U.after ~src:y_out ~deps:[ store_flat y_out numel_y (tolk_of st y) ] ]
-      )
-  in
-  let body_linear = schedule_body_linear st body_sink in
-  (* The loop's outer buffers and the per-leaf carry stacks, registered by the
-     scan's identity so the backward loop can read them. *)
-  let xs_node = realize_arg st (tolk_of st x) in
-  let src_nodes = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      src_nodes := tolk_of st leaf :: !src_nodes)
-    c;
-  let src_nodes = List.rev !src_nodes in
-  let src_args = List.map (realize_arg st) src_nodes in
-  let leaf_bufs =
-    List.map
-      (fun ((tdt, c_shape, _, _), _) ->
-        let mk () = make_node st tdt (numel c_shape) in
-        let mk_stack () = make_node st tdt (n * numel c_shape) in
-        (mk (), mk (), mk (), mk_stack ()))
-      infos
-  in
-  let ys_buf = make_node st (tolk_dtype (Nx_effect.dtype y)) (n * numel_y) in
-  let args_nodes =
-    [ xs_node ] @ src_args
-    @ List.map (fun (c0, _, _, _) -> c0) leaf_bufs
-    @ List.map (fun (_, c1, _, _) -> c1) leaf_bufs
-    @ [ ys_buf ]
-    @ List.map (fun (_, _, f, _) -> f) leaf_bufs
-    @ List.map (fun (_, _, _, stk) -> stk) leaf_bufs
-  in
-  let in_slots =
-    List.mapi
-      (fun i ((_, c_shape, c_in, _), _) ->
-        {
-          ls_node = c_in;
-          ls_pos0 = pos_carry0 i;
-          ls_pos1 = pos_carry1 i;
-          ls_size = numel c_shape;
-          ls_stride = 0;
-        })
-      infos
-    @ [
-        {
-          ls_node = x_in;
-          ls_pos0 = 0;
-          ls_pos1 = -1;
-          ls_size = numel_x;
-          ls_stride = numel_x;
-        };
-      ]
-  in
-  let out_slots =
-    List.mapi
-      (fun i ((_, c_shape, _, c_out), _) ->
-        {
-          ls_node = c_out;
-          ls_pos0 = pos_carry0 i;
-          ls_pos1 = pos_carry1 i;
-          ls_size = numel c_shape;
-          ls_stride = 0;
-        })
-      infos
-    @ [
-        {
-          ls_node = y_out;
-          ls_pos0 = pos_ys;
-          ls_pos1 = -1;
-          ls_size = numel_y;
-          ls_stride = numel_y;
-        };
-      ]
-  in
-  let copies =
-    List.mapi
-      (fun i ((_, c_shape, _, _), _) ->
-        [
+    let y_shape = shape_of y in
+    let numel_y = numel y_shape in
+    (* The body's output leaf nodes, in traversal order (the same order
+       [slot_infos] was collected in). *)
+    let c_next_nodes = ref [] in
+    C.iter
+      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+        c_next_nodes := tolk_of st leaf :: !c_next_nodes)
+      c_next;
+    let c_next_nodes = List.rev !c_next_nodes in
+    let infos =
+      List.map2 (fun info node -> (info, node)) slot_infos c_next_nodes
+    in
+    let n_leaves = List.length infos in
+    let pos_src i = 1 + i in
+    let pos_carry0 i = 1 + n_leaves + i in
+    let pos_carry1 i = 1 + (2 * n_leaves) + i in
+    let pos_ys = 1 + (3 * n_leaves) in
+    let pos_final i = 2 + (3 * n_leaves) + i in
+    let pos_stack i = 2 + (4 * n_leaves) + i in
+    (* The body sub-program: realize every output into an explicit buffer the
+       loop executor can rebind per iteration. *)
+    let y_out = make_node st (tolk_dtype (Nx_effect.dtype y)) numel_y in
+    let body_sink =
+      U.sink
+        (List.map
+           (fun ((_, c_shape, _, c_out), node) ->
+             U.after ~src:c_out ~deps:[ store_flat c_out (numel c_shape) node ])
+           infos
+        @ [
+            U.after ~src:y_out ~deps:[ store_flat y_out numel_y (tolk_of st y) ];
+          ])
+    in
+    let body_linear = schedule_body_linear st body_sink in
+    (* The loop's outer buffers and the per-leaf carry stacks, registered by the
+       scan's identity so the backward loop can read them. *)
+    let xs_node = realize_arg st (tolk_of st x) in
+    let src_nodes = ref [] in
+    C.iter
+      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+        src_nodes := tolk_of st leaf :: !src_nodes)
+      c;
+    let src_nodes = List.rev !src_nodes in
+    let src_args = List.map (realize_arg st) src_nodes in
+    let leaf_bufs =
+      List.map
+        (fun ((tdt, c_shape, _, _), _) ->
+          let mk () = make_node st tdt (numel c_shape) in
+          let mk_stack () = make_node st tdt (n * numel c_shape) in
+          (mk (), mk (), mk (), mk_stack ()))
+        infos
+    in
+    let ys_buf = make_node st (tolk_dtype (Nx_effect.dtype y)) (n * numel_y) in
+    let args_nodes =
+      [ xs_node ] @ src_args
+      @ List.map (fun (c0, _, _, _) -> c0) leaf_bufs
+      @ List.map (fun (_, c1, _, _) -> c1) leaf_bufs
+      @ [ ys_buf ]
+      @ List.map (fun (_, _, f, _) -> f) leaf_bufs
+      @ List.map (fun (_, _, _, stk) -> stk) leaf_bufs
+    in
+    let in_slots =
+      List.mapi
+        (fun i ((_, c_shape, c_in, _), _) ->
           {
-            lc_src0 = pos_src i;
-            lc_src1 = -1;
-            lc_dst = pos_carry0 i;
-            lc_size = numel c_shape;
+            ls_node = c_in;
+            ls_pos0 = pos_carry0 i;
+            ls_pos1 = pos_carry1 i;
+            ls_size = numel c_shape;
+            ls_stride = 0;
+          })
+        infos
+      @ [
+          {
+            ls_node = x_in;
+            ls_pos0 = 0;
+            ls_pos1 = -1;
+            ls_size = numel_x;
+            ls_stride = numel_x;
           };
+        ]
+    in
+    let out_slots =
+      List.mapi
+        (fun i ((_, c_shape, _, c_out), _) ->
+          {
+            ls_node = c_out;
+            ls_pos0 = pos_carry0 i;
+            ls_pos1 = pos_carry1 i;
+            ls_size = numel c_shape;
+            ls_stride = 0;
+          })
+        infos
+      @ [
+          {
+            ls_node = y_out;
+            ls_pos0 = pos_ys;
+            ls_pos1 = -1;
+            ls_size = numel_y;
+            ls_stride = numel_y;
+          };
+        ]
+    in
+    let copies =
+      List.mapi
+        (fun i ((_, c_shape, _, _), _) ->
+          [
+            {
+              lc_src0 = pos_src i;
+              lc_src1 = -1;
+              lc_dst = pos_carry0 i;
+              lc_size = numel c_shape;
+            };
+            {
+              lc_src0 = pos_carry0 i;
+              lc_src1 = pos_carry1 i;
+              lc_dst = pos_final i;
+              lc_size = numel c_shape;
+            };
+          ])
+        infos
+      |> List.concat
+    in
+    let stacks =
+      List.mapi
+        (fun i ((_, c_shape, _, _), _) ->
           {
             lc_src0 = pos_carry0 i;
             lc_src1 = pos_carry1 i;
-            lc_dst = pos_final i;
+            lc_dst = pos_stack i;
             lc_size = numel c_shape;
-          };
-        ])
-      infos
-    |> List.concat
-  in
-  let stacks =
-    List.mapi
-      (fun i ((_, c_shape, _, _), _) ->
-        {
-          lc_src0 = pos_carry0 i;
-          lc_src1 = pos_carry1 i;
-          lc_dst = pos_stack i;
-          lc_size = numel c_shape;
-        })
-      infos
-  in
-  let loop_call =
-    build_loop_call ~body_linear ~reversed:false ~n ~in_slots ~out_slots ~copies
-      ~stacks ~args:args_nodes
-  in
-  (* Register the carry stacks as outputs of the forward loop, wrapped in their
-     AFTERs: the backward loop reads them, and only a graph-visible dependency
-     keeps the forward loop reachable (and so scheduled) when the scan's
-     declared outputs are dead — e.g. under [grad], which discards the loss
-     value. *)
-  Tbl.replace st.scan_stacks (Obj.repr step)
-    (List.map
-       (fun (_, _, _, stack) ->
-         U.after ~src:stack ~deps:[ U.store ~dst:stack ~value:loop_call () ])
-       leaf_bufs);
-  (* Every output stores the same call: graph rewriting preserves shared
-     subgraphs, so the loop is scheduled once. *)
-  let after_cs =
-    List.map2
-      (fun (_, _, final, _) ((cdt, c_shape, _, _), _) ->
-        ( cdt,
-          c_shape,
-          U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ] ))
-      leaf_bufs infos
-  in
-  let ys_shape = Array.append [| n |] y_shape in
-  let after_ys =
-    U.after ~src:ys_buf ~deps:[ U.store ~dst:ys_buf ~value:loop_call () ]
-  in
-  (* Pair each leaf with its final-carry buffer through the identity of its
-     slot leaf — slots are fresh, so unique — never positionally: [after_cs]
-     follows [C.iter]'s stable order, and a [C.map] callback's evaluation
-     order can differ from it, silently crossing same-shaped leaves. *)
-  let final_afters = Tbl.create 4 in
-  (let rest = ref after_cs in
-   C.iter
-     (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-       match !rest with
-       | (_, _, after) :: tl ->
-           Tbl.replace final_afters (Obj.repr leaf) after;
-           rest := tl
-       | [] -> assert false)
-     slot_c);
-  let c_final_ph =
-    C.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let after = Tbl.find final_afters (Obj.repr leaf) in
-        let ph =
-          Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
-        in
-        Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
-        Tbl.replace st.traced (Obj.repr ph) ();
-        ph)
-      slot_c
-  in
-  let ys_ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype y) ys_shape in
-  Tbl.replace st.table (Obj.repr ys_ph) (buffer_tensor after_ys ys_shape);
-  Tbl.replace st.traced (Obj.repr ys_ph) ();
-  Effect.Deep.continue k
-    {
-      Scan.r_carry = Scan.Packed_c (cmod, c_final_ph);
-      r_y = Scan.Packed_t ys_ph;
-    }
+          })
+        infos
+    in
+    let loop_call =
+      build_loop_call ~body_linear ~reversed:false ~n ~in_slots ~out_slots
+        ~copies ~stacks ~args:args_nodes
+    in
+    (* Register the carry stacks as outputs of the forward loop, wrapped in
+       their AFTERs: the backward loop reads them, and only a graph-visible
+       dependency keeps the forward loop reachable (and so scheduled) when the
+       scan's declared outputs are dead — e.g. under [grad], which discards the
+       loss value. *)
+    Tbl.replace st.scan_stacks (Obj.repr step)
+      (List.map
+         (fun (_, _, _, stack) ->
+           U.after ~src:stack ~deps:[ U.store ~dst:stack ~value:loop_call () ])
+         leaf_bufs);
+    (* Every output stores the same call: graph rewriting preserves shared
+       subgraphs, so the loop is scheduled once. *)
+    let after_cs =
+      List.map2
+        (fun (_, _, final, _) ((cdt, c_shape, _, _), _) ->
+          ( cdt,
+            c_shape,
+            U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ]
+          ))
+        leaf_bufs infos
+    in
+    let ys_shape = Array.append [| n |] y_shape in
+    let after_ys =
+      U.after ~src:ys_buf ~deps:[ U.store ~dst:ys_buf ~value:loop_call () ]
+    in
+    (* Pair each leaf with its final-carry buffer through the identity of its
+       slot leaf — slots are fresh, so unique — never positionally: [after_cs]
+       follows [C.iter]'s stable order, and a [C.map] callback's evaluation
+       order can differ from it, silently crossing same-shaped leaves. *)
+    let final_afters = Tbl.create 4 in
+    (let rest = ref after_cs in
+     C.iter
+       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+         match !rest with
+         | (_, _, after) :: tl ->
+             Tbl.replace final_afters (Obj.repr leaf) after;
+             rest := tl
+         | [] -> assert false)
+       slot_c);
+    let c_final_ph =
+      C.map
+        (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+          let after = Tbl.find final_afters (Obj.repr leaf) in
+          let ph =
+            Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
+          in
+          Tbl.replace st.table (Obj.repr ph)
+            (buffer_tensor after (shape_of leaf));
+          Tbl.replace st.traced (Obj.repr ph) ();
+          ph)
+        slot_c
+    in
+    let ys_ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype y) ys_shape in
+    Tbl.replace st.table (Obj.repr ys_ph) (buffer_tensor after_ys ys_shape);
+    Tbl.replace st.traced (Obj.repr ys_ph) ();
+    Effect.Deep.continue k
+      {
+        Scan.r_carry = Scan.Packed_c (cmod, c_final_ph);
+        r_y = Scan.Packed_t ys_ph;
+      }
 
 (* The backward scan (the transpose): capture the body's pullback against
    placeholder slot tensors — recomputing the forward step inside the body to
@@ -1649,9 +1653,7 @@ and stage_scan_bwd : type r.
         (fun () ->
           Effect.Deep.match_with
             (fun () ->
-              step.run
-                (Scan.Packed_c (cmod, slot_c))
-                (Scan.Packed_t slot_x))
+              step.run (Scan.Packed_c (cmod, slot_c)) (Scan.Packed_t slot_x))
             () (Reverse.handler tape))
         () (handler st)
     with
@@ -1943,9 +1945,8 @@ and stage_scan_bwd : type r.
   let after_dxs =
     U.after ~src:dxs_buf ~deps:[ U.store ~dst:dxs_buf ~value:loop_call () ]
   in
-  (* Identity pairing through the slot leaves, as for the forward loop's
-     final carry: positional pairing under [C.map] can cross same-shaped
-     leaves. *)
+  (* Identity pairing through the slot leaves, as for the forward loop's final
+     carry: positional pairing under [C.map] can cross same-shaped leaves. *)
   let dc_afters = Tbl.create 4 in
   (let rest = ref after_dcs in
    C.iter
@@ -2260,7 +2261,8 @@ type 'q compiled = {
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
 
-let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) =
+let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
+    =
   let acc = ref [] in
   P.iter
     (fun leaf ->
@@ -2270,8 +2272,8 @@ let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
 
 let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     ?beam_parallel (module P : Nx.Ptree.S with type t = p)
-    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t)
-    (params : P.t) : Q.t compiled =
+    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t) :
+    Q.t compiled =
   let st =
     {
       st_device = dev;
@@ -2482,7 +2484,9 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
      otherwise the BEAM environment variable. Part of the persistent cache key
      because it changes the compiled kernels. *)
   let effective_beam =
-    match beam with Some b when b >= 1 -> b | Some _ | None -> env_int "BEAM" 0
+    match beam with
+    | Some b when b >= 1 -> b
+    | Some _ | None -> env_int "BEAM" 0
   in
   let cache_key =
     match multi with
@@ -2676,8 +2680,9 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     cp_scratch = scratch;
   }
 
-let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p) (module Q : Nx.Ptree.S with type t = q)
-    (c : Q.t compiled) (params : P.t) : Q.t =
+let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
+    (module Q : Nx.Ptree.S with type t = q) (c : Q.t compiled) (params : P.t) :
+    Q.t =
   drain_releases ();
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs. A leaf that is an unread output of an earlier call on this
@@ -2996,8 +3001,8 @@ let jit2 (type p q) ?(device = "CPU") ?(donate = false) ?beam ?beam_parallel
       replay ~donate (module P) (module Q) c params
 
 let jit (type p c d) ?device ?donate ?beam ?beam_parallel
-    (module P : Nx.Ptree.S with type t = p)
-    (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
+    (module P : Nx.Ptree.S with type t = p) (f : P.t -> (c, d) Nx_effect.t) :
+    P.t -> (c, d) Nx_effect.t =
   let module Q = struct
     type t = (c, d) Nx_effect.t
 
@@ -3132,8 +3137,8 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
     end
 
 let pmap (type p c d) ~devices ?in_axes ?donate ?beam ?beam_parallel
-    (module P : Nx.Ptree.S with type t = p)
-    (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
+    (module P : Nx.Ptree.S with type t = p) (f : P.t -> (c, d) Nx_effect.t) :
+    P.t -> (c, d) Nx_effect.t =
   let module Q = struct
     type t = (c, d) Nx_effect.t
 

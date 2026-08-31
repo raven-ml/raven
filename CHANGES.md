@@ -58,6 +58,20 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+
+- New `Tolk_frontend.Linalg` module: `qr`, `solve_triangular`, and
+  `cholesky` unroll at graph-construction time into ordinary Tolk
+  compositions (matmuls, element-wise arithmetic, movement ops) — min(m, n)
+  Householder reflectors, n forward-substitution steps, one column per step.
+  These operations have no single-Uop form (their classic implementations
+  iterate over data, and the Uop vocabulary has no host control flow), but
+  their step counts are fixed by the input shapes alone, so the lowering sees
+  a plain static graph and compiles it for every Tolk device. Conventions
+  follow LAPACK; results match the classic algorithms up to
+  floating-point association. Wide right-hand sides (≥ 32 columns on a
+  matrix of more than 64 rows) solve block-by-block — 32-row blocks, diagonal
+  blocks inverted once, one GEMM per block — which cuts the unrolled
+  substitution's O(n²·nrhs) concatenation copying to O(n²·nrhs/32).
 - `Search.beam_parallel` is a `Helpers.Context_var`, so a caller can scope
   the `BEAM_PARALLEL` worker count to one compilation with
   `Context_var.with_context` instead of setting it process-wide.
@@ -538,14 +552,14 @@ thread.
 
 ### Nx
 
-- Add `Nx.triangular_solve ?upper ?transpose ?unit_diag a b`: a first-class
-  triangular solver (the scipy `solve_triangular` analog), previously reachable
+- Add `Nx.solve_triangular ?upper ?transpose ?unit_diag a b`: a first-class
+  triangular solver, named after its scipy analog, previously reachable
   only through the backend layer. It exploits triangularity instead of
   factoring, so a pre-triangularized or pre-factorized `a` skips the
   factorization cost of `solve`; `b` may be a vector or a stack of
   right-hand-side matrices, batched like `a`. It also compiles through
   `Rune.jit`, and is the building block of a linear solve inside jit
-  (`qr` + `triangular_solve`, since `solve`'s singularity check reads a traced
+  (`qr` + `solve_triangular`, since `solve`'s singularity check reads a traced
   value).
 
 - `irfftn` and `irfft2` now honour `s` along every transformed axis: the
@@ -723,7 +737,7 @@ thread.
   the backend worker pool after `fork`.
 - Correct the backend interface docs: `reshape` never copies — it raises
   `Invalid_argument` when the existing strides cannot express the new shape —
-  and `triangular_solve`'s `transpose` solves with the conjugate transpose
+  and `solve_triangular`'s `transpose` solves with the conjugate transpose
   (`Aᴴ`) for complex dtypes.
 - Unify random number generation on one splittable Threefry generator, reached
   through `Nx.Rng`. The explicit samplers `Nx.Rng.uniform`/`normal`/`randint`/
@@ -947,14 +961,15 @@ thread.
 
 ### Rune
 
-- `Rune.jit` compiles `Nx.cholesky` as well — the same trace-time unrolling,
-  one column of the factor per step. A non-positive-definite input, which the
-  eager kernel reports as [Linalg_error], yields nans in the compiled program.
+- `Rune.jit` compiles `Nx.cholesky` as well — the same trace-time unrolling
+  (via `Tolk_frontend.Linalg`), one column of the factor per step. A
+  non-positive-definite input, which the eager kernel reports as
+  [Linalg_error], yields nans in the compiled program.
 
-- `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
+- `Rune.jit` compiles `Nx.qr` and `Nx.solve_triangular` — Householder QR and
   forward substitution unrolled at trace time into the fixed number of steps
-  their shapes imply, so the whole factorization lowers to ordinary Tolk
-  compositions and compiles for every Tolk device. Compiled results match the
+  their shapes imply (via `Tolk_frontend.Linalg`), so the whole factorization
+  lowers to ordinary Tolk compositions and compiles for every Tolk device. Compiled results match the
   eager kernels, including the LAPACK reflector sign and the zero-tail
   no-reflector convention. A linear solve inside jit is the same composition
   written out by hand (`Nx.solve` itself still refuses to trace, because its
@@ -968,7 +983,7 @@ thread.
   time grows linearly in the matrix dimension, and `grad` inside a jitted
   function now also differentiates through `qr` and `cholesky`: the tape
   pullbacks' `diag` use read host bytes and refused to trace, so the QR and
-  Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
+  Cholesky pullbacks (and the solve_triangular JVP rule) form the diagonal
   terms from the identity instead.
 
 - `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
@@ -1327,7 +1342,7 @@ thread.
   of the whole word's, and `Pre_tokenizer.pre_tokenize` places the pieces of
   later members exactly. Such pipelines also encode faster (T5 `encode_ids`
   ~1.6×) and take part in cut-document parallel batches.
-- `Pre_tokenizer.metaspace ~prepend_scheme:`First` is honoured: the marker is
+- `Pre_tokenizer.metaspace ~prepend_scheme:`First`is honoured: the marker is
   prepended only to the piece that opens the document — not after white
   space, an added token, or bytes a normalizer removed — as HuggingFace does
   (`Always` was used before).
@@ -1419,7 +1434,7 @@ thread.
 - Fix regex `Replace` splitting a multibyte character when stepping over an
   empty match: empty matches now advance by whole characters and one right
   after a match is skipped, as HuggingFace does.
-- `Pre_tokenizer.punctuation ~behavior:`Merged_with_previous`` and
+- `Pre_tokenizer.punctuation ~behavior:`Merged_with_previous``and
   `Pre_tokenizer.split ~behavior:`Contiguous`` returned the whole text as one
   piece instead of splitting it. They now match HuggingFace: the first keeps
   each delimiter with the text before it, the second keeps neighbours that are
@@ -1642,7 +1657,7 @@ thread.
   delimiter was replaced.
 - Fix BERT tokenization to match HuggingFace: the `Bert` and `Punctuation`
   pre-tokenizers now treat all 32 printable ASCII non-alphanumerics as
-  punctuation. `$ + < = > ^ ` | ~` were missing, so `==` tokenized as one word
+  punctuation. `$ + < = > ^` | ~` were missing, so `==` tokenized as one word
   instead of two.
 - `Normalizer.bert` now strips only nonspacing marks after NFD, keeping spacing
   and enclosing marks. Stripping every mark dropped the vowel signs of abugidas,
@@ -1916,7 +1931,7 @@ backends render.
 
 ## [1.0.0~alpha2] - 2025-11-03
 
-We're excited to announce the release of Raven 1.0.0~alpha2! Less than a month after alpha1, this release notably includes contributions from Outreachy applicants in preparation for the upcoming _two_ internships.
+We're excited to announce the release of Raven 1.0.0~alpha2! Less than a month after alpha1, this release notably includes contributions from Outreachy applicants in preparation for the upcoming *two* internships.
 
 Some highlights from this release include:
 
@@ -2080,21 +2095,27 @@ This release expands the Raven ecosystem with three new libraries (Talon, Saga, 
 ### New Libraries
 
 #### Talon - DataFrame Processing
+
 We've added Talon, a new DataFrame library inspired by pandas and polars:
+
 - Columnar data structures that support mixed types (integers, floats, strings, etc.) within a single table (aka heterogeneous datasets)
 - Operations: filter rows, group by columns, join tables, compute aggregates
 - Load and save data in CSV and JSON formats
 - Seamless conversion to/from Nx arrays for numerical operations
 
 #### Saga - NLP & Text Processing
+
 Saga is a new text processing library for building language models. It provides:
+
 - Tokenizers: Byte-pair encoding (BPE), WordPiece subword tokenization, and character-level splitting
 - Text generation: Control output with temperature scaling, top-k filtering, nucleus (top-p) sampling, and custom sampling strategies
 - Language models: Train and generate text with statistical n-gram models (bigrams, trigrams, etc.)
 - I/O: Read large text files line-by-line and batch-process corpora
 
 #### Fehu - Reinforcement Learning
+
 Fehu brings reinforcement learning to Raven, with an API inspired by Gymnasium and Stable-Baselines3:
+
 - Standard RL environment interface (reset, step, render) with example environments like Random Walk and CartPole
 - Environment wrappers to modify observations, rewards, or episode termination conditions
 - Vectorized environments to collect experience from multiple parallel rollouts
@@ -2105,7 +2126,9 @@ Fehu brings reinforcement learning to Raven, with an API inspired by Gymnasium a
 ### Major Enhancements
 
 #### Nx - Array Computing
+
 We've significantly expanded Nx's following early user feedback from alpha0:
+
 - Complete linear algebra suite: LAPACK-backed operations matching NumPy including singular value decomposition (SVD), QR factorization, Cholesky decomposition, eigenvalue/eigenvector computation, matrix inverse, and solving linear systems
 - FFT operations: Fast Fourier transforms (FFT/IFFT) for frequency domain analysis and signal processing
 - Advanced operations: Einstein summation notation (`einsum`) for complex tensor operations, extract/construct diagonal matrices (`diag`), cumulative sums and products along axes
@@ -2114,7 +2137,9 @@ We've significantly expanded Nx's following early user feedback from alpha0:
 - Lazy views: Array views only copy and reorder memory when stride patterns require it, avoiding unnecessary allocations
 
 #### Rune - Autodiff & JIT
+
 We've continued iterating on Rune's autodiff capabilities, and made progress on upcoming features:
+
 - Forward-mode AD: Compute Jacobian-vector products (`jvp`) for forward-mode automatic differentiation, complementing existing reverse-mode
 - JIT: Ongoing development of LLVM-based just-in-time compilation for Rune computations (currently in prototype stage)
 - vmap: Experimental support for vectorized mapping to automatically batch operations (work-in-progress, not yet stable)
@@ -2122,7 +2147,9 @@ We've continued iterating on Rune's autodiff capabilities, and made progress on 
 - Metal backend: Continued work on GPU acceleration for macOS using Metal compute shaders
 
 #### Kaun - Deep Learning
+
 We've expanded Kaun with high-level APIs for deep learning. These APIs are inspired by popular Python frameworks like TensorFlow, PyTorch, and Flax, and should feel familiar to users building models in Python:
+
 - High-level training: Keras-style `fit()` function to train models with automatic batching, gradient computation, and parameter updates
 - Training state: Encapsulated training state (TrainState) holding parameters, optimizer state, and step count; automatic history tracking of loss and metrics
 - Checkpoints: Save and load model weights to disk for model persistence and transfer learning
@@ -2198,6 +2225,7 @@ We're excited to release the zeroth alpha of Raven, an OCaml machine learning ec
 ### Known Issues
 
 This is an alpha release with several limitations:
+
 - Quill editor has UI bugs being addressed
 - APIs may change significantly before stable release
 

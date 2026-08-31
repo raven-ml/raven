@@ -2548,9 +2548,9 @@ val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
 
 (** {2:linalg_solve Solving} *)
 
-val triangular_solve :
+val solve_triangular :
   ?upper:bool -> ?transpose:bool -> ?unit_diag:bool -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [triangular_solve ?upper ?transpose ?unit_diag a b] solves the triangular
+(** [solve_triangular ?upper ?transpose ?unit_diag a b] solves the triangular
     system [a *@ x = b] for [x], exploiting that [a] is triangular instead of
     factoring.
 
@@ -2579,7 +2579,7 @@ val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     Raises [Invalid_argument] if [a] is singular or the dtype is not
     floating-point or complex.
 
-    See also {!triangular_solve}, {!lstsq}, {!inv}. *)
+    See also {!solve_triangular}, {!lstsq}, {!inv}. *)
 
 val lstsq :
   ?rcond:float ->

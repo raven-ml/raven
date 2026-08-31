@@ -312,7 +312,7 @@ type _ Effect.t +=
       t_in : ('a, 'b) t;
     }
       -> ((float, Dtype.float64_elt) t * ('a, 'b) t) Effect.t
-  | E_triangular_solve : {
+  | E_solve_triangular : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
       upper : bool;
@@ -726,9 +726,9 @@ let eigh t_in =
     let vals, vecs = Nx_backend.eigh (unwrap t_in) in
     (T vals, T vecs)
 
-let triangular_solve ~upper ~transpose ~unit_diag a b =
-  try Effect.perform (E_triangular_solve { a; b; upper; transpose; unit_diag })
+let solve_triangular ~upper ~transpose ~unit_diag a b =
+  try Effect.perform (E_solve_triangular { a; b; upper; transpose; unit_diag })
   with Effect.Unhandled _ ->
     T
-      (Nx_backend.triangular_solve ~upper ~transpose ~unit_diag (unwrap a)
+      (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag (unwrap a)
          (unwrap b))

@@ -54,7 +54,7 @@ let tests =
           in
           let rhs = F.create ctx F.float64 [| 2; 1 |] [| 1.; 2. |] in
           raises_linalg `Singular (fun () ->
-              B.triangular_solve ~upper:false ~transpose:false ~unit_diag:false
+              B.solve_triangular ~upper:false ~transpose:false ~unit_diag:false
                 singular rhs));
     ]
 

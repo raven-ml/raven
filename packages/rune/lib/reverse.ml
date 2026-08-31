@@ -889,11 +889,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                       (T.mul c (T.div_s (T.eye (T.dtype c) (T.shape c).(0)) two))
                   in
                   let z =
-                    triangular_solve ~upper:false ~transpose:true
+                    solve_triangular ~upper:false ~transpose:true
                       ~unit_diag:false l_lower p
                   in
                   let y =
-                    triangular_solve ~upper:false ~transpose:true
+                    solve_triangular ~upper:false ~transpose:true
                       ~unit_diag:false l_lower (T.transpose z)
                   in
                   let s = T.transpose y in
@@ -902,10 +902,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                       (T.mul s (T.eye (T.dtype s) (T.shape s).(0)))
                   in
                   T.tril da_sym))
-      | E_triangular_solve { a; b; upper; transpose; unit_diag } ->
+      | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
             (fun k ->
-              let out = triangular_solve ~upper ~transpose ~unit_diag a b in
+              let out = solve_triangular ~upper ~transpose ~unit_diag a b in
               let ta = tracked a and tb = tracked b in
               if ta || tb then begin
                 track out;
@@ -914,7 +914,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                     | None -> ()
                     | Some g ->
                         let grad_b =
-                          triangular_solve ~upper ~transpose:(not transpose)
+                          solve_triangular ~upper ~transpose:(not transpose)
                             ~unit_diag a g
                         in
                         if tb then Tape.accumulate tape b grad_b;
@@ -978,7 +978,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         in
                         let rhs = T.add gq (T.matmul q copyltu) in
                         let da_t =
-                          triangular_solve ~upper:true ~transpose:false
+                          solve_triangular ~upper:true ~transpose:false
                             ~unit_diag:false r (T.transpose rhs)
                         in
                         Tape.accumulate tape t_in (T.transpose da_t))

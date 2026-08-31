@@ -1983,5 +1983,5 @@ let eig _ = invalid_arg "eig: not implemented"
 let eigvalsh _ = invalid_arg "eigvalsh: not implemented"
 let eigh _ = invalid_arg "eigh: not implemented"
 
-let triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
-  invalid_arg "triangular_solve: not implemented"
+let solve_triangular ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
+  invalid_arg "solve_triangular: not implemented"
