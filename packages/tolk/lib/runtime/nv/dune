@@ -6,5 +6,4 @@
  (libraries tolk tolk_hcq)
  (foreign_stubs
   (language c)
-  (names tolk_nv_stubs))
- (c_library_flags (-lpthread)))
+  (names tolk_nv_stubs)))

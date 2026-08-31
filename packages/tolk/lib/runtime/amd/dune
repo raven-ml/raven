@@ -7,5 +7,28 @@
  (foreign_stubs
   (language c)
   (names tolk_amd_stubs tolk_amd_comgr_stubs))
+ ; The stubs dlopen the ROCm code-object manager. pthread needs no flag
+ ; of its own: the OCaml runtime already links it for its domain support.
  (c_library_flags
-  (-ldl -lpthread)))
+  (:include dl_flags.sexp)))
+
+; dlopen lives in libSystem on macOS, where an explicit -ldl only makes the
+; linker report a duplicate library; off macOS it is its own library.
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "()"))))
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "(-ldl)"))))
