@@ -11,6 +11,7 @@ module Compiler_amd = Compiler_amd
 module System = Tolk_hcq.System
 module Amdev = Amdev
 module Am_ip = Am_ip
+module Am_boot = Am_boot
 module Reg = Amd_tables.Reg
 module Ip = Amd_tables.Ip
 module Q = Hcq.Q
@@ -131,6 +132,13 @@ end
 (* Devices *)
 
 type queue_event = { event_id : int }
+type queue_type = Compute | Sdma
+
+type ip_versions = {
+  gc : int * int * int;
+  sdma : int * int * int;
+  nbif : int * int * int;
+}
 
 type 'meta device = {
   target : int * int * int;
@@ -252,6 +260,8 @@ module Queue_desc = struct
     write_ptr : Hcq.Mmio.t;
     doorbell : Hcq.Mmio.t;
     mutable put_value : int;
+    flush_hdp : (unit -> unit) option;
+    resetup : (unit -> unit) option;
   }
 
   let signal_doorbell t =
@@ -259,7 +269,50 @@ module Queue_desc = struct
     (* the doorbell read triggers a device fetch: every ring and pointer
        store must be globally visible before it lands *)
     Hcq.Mmio.fence ();
+    (* ops_amd.py:680-683: driver-less queues also flush the host data
+       path, so host writes to device memory reach the engines *)
+    (match t.flush_hdp with Some flush -> flush () | None -> ());
     Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int t.put_value)
+end
+
+(* The interface seam: the device runtime drives the GPU through one of
+   two interchangeable interfaces — the kernel driver ({!Kfd_iface}) or
+   the driver-less PCI path ({!Pci_iface}) — and this record is every
+   call the shared runtime makes on the selected one. *)
+module Iface = struct
+  type 'mem t = {
+    props : (string * int) list;
+    ip_versions : ip_versions;
+    is_am : bool;
+    queue_event : queue_event;
+    queue_event_mailbox_ptr : nativeint;
+    alloc :
+      ?host:bool -> ?uncached:bool -> ?cpu_access:bool -> int ->
+      'mem Hcq.Buffer.t;
+    free : 'mem Hcq.Buffer.t -> unit;
+    empty_scratch : 'mem Hcq.Buffer.t;
+    create_queue :
+      queue_type ->
+      ring:'mem Hcq.Buffer.t ->
+      gart:'mem Hcq.Buffer.t ->
+      rptr:int ->
+      wptr:int ->
+      ?eop_buffer:'mem Hcq.Buffer.t ->
+      ?cwsr_buffer:'mem Hcq.Buffer.t ->
+      ?ctl_stack_size:int ->
+      ?ctx_save_restore_size:int ->
+      unit ->
+      Queue_desc.t;
+    sleep : int -> unit;
+    on_device_hang : unit -> unit;
+    register :
+      (compute_queue:Queue_desc.t ->
+      tl:('mem, 'mem device) Timeline.t ->
+      unit)
+      option;
+    after_sync : (unit -> unit) option;
+    device_fini : (unit -> unit) option;
+  }
 end
 
 (* Compute queue *)
@@ -886,14 +939,6 @@ end
 module Kfd_iface = struct
   type mem = { handle : int64; owner : int }
 
-  type ip_versions = {
-    gc : int * int * int;
-    sdma : int * int * int;
-    nbif : int * int * int;
-  }
-
-  type queue_type = Compute | Sdma
-
   type t = {
     gpu_id : int;
     props : (string * int) list;
@@ -950,7 +995,7 @@ module Kfd_iface = struct
         | _ -> None)
       (String.split_on_char '\n' text)
 
-  let discover_ips sysfs_path =
+  let discover_ips sysfs_path : ip_versions =
     let base = sysfs_path ^ "/ip_discovery/die/0" in
     let version name hwid =
       let part p = Printf.sprintf "%s/%d/0/%s" base hwid p in
@@ -1189,6 +1234,8 @@ module Kfd_iface = struct
                   (Int64.to_int (Int64.sub doorbell_offset doorbells_base))))
           ~size:8;
       put_value = 0;
+      flush_hdp = None;
+      resetup = None;
     }
 
   let poll_events t ~timeout_ms =
@@ -1232,23 +1279,287 @@ module Kfd_iface = struct
   let sleep t ~timeout_ms =
     poll_events t ~timeout_ms;
     if t.mem_fault <> None || t.hw_fault <> None then on_device_hang t
+
+  let iface t =
+    {
+      Iface.props = t.props;
+      ip_versions = t.ip_versions;
+      is_am = false;
+      queue_event = t.queue_event;
+      queue_event_mailbox_ptr = t.queue_event_mailbox_ptr;
+      alloc =
+        (fun ?host ?uncached ?cpu_access size ->
+          alloc t ?host ?uncached ?cpu_access size);
+      free = free t;
+      empty_scratch =
+        Hcq.Buffer.make ~va:0n ~size:0 ~meta:{ handle = 0L; owner = 0 } ();
+      create_queue =
+        (fun queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer ?cwsr_buffer
+             ?ctl_stack_size ?ctx_save_restore_size () ->
+          create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
+            ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ());
+      (* long waits back off to driver-event sleeps, which also surface
+         faults *)
+      sleep =
+        (fun spent_ms -> if spent_ms > 2000 then sleep t ~timeout_ms:200);
+      on_device_hang = (fun () -> on_device_hang t);
+      register = None;
+      after_sync = None;
+      device_fini = None;
+    }
+end
+
+(* Driver-less PCI interface: ops_amd.py:843-908 PCIIface *)
+
+module Pci_iface = struct
+  module Base = System.Pci_iface_base
+  module Am_defs = Amd_tables.Am_defs
+
+  type mem = (Am_boot.t, Amdev.Am_page_table.t) Base.meta
+
+  type t = {
+    base : (Am_boot.t, Amdev.Am_page_table.t) Base.t;
+    props : (string * int) list;
+    ip_versions : ip_versions;
+  }
+
+  (* ops_amd.py:845: the supported consumer PCI ids (RDNA3/RDNA4) *)
+  let vendor = 0x1002
+
+  let pci_ids =
+    [ (0xffff, [ 0x74a1; 0x744c; 0x7480; 0x7550; 0x7551; 0x7590; 0x75a0 ]) ]
+
+  let am t = Base.dev_impl t.base
+  let adev t = (am t).Am_boot.adev
+
+  (* ops_amd.py:852 _compute_props: synthesize the topology properties
+     the kernel driver would publish, from the discovery table *)
+  let compute_props ~gc_info ~gc_ver:(ma, mi, rv) ~xccs =
+    let gfxver = (ma * 10000) + (mi * 100) + rv in
+    let cu_per_sa, max_sh_per_se, num_se, max_slots, max_waves, lds =
+      match gc_info with
+      | Amdev.Gc_info_v2 g ->
+          ( g.num_cu_per_sh,
+            g.num_sh_per_se,
+            g.num_se,
+            g.max_scratch_slots_per_cu,
+            g.max_waves_per_simd,
+            g.lds_size )
+      | Amdev.Gc_info_v1 g ->
+          ( 2 * (g.num_wgp0_per_sa + g.num_wgp1_per_sa),
+            g.num_sa_per_se,
+            g.num_se,
+            g.max_scratch_slots_per_cu,
+            g.max_waves_per_simd,
+            g.lds_size )
+    in
+    let array_count = max_sh_per_se * num_se * xccs in
+    [
+      ("cu_per_simd_array", cu_per_sa);
+      ("simd_count", 2 * cu_per_sa * array_count);
+      ("simd_per_cu", 2);
+      ("array_count", array_count);
+      ("max_slots_scratch_cu", max_slots);
+      ("max_waves_per_simd", max_waves);
+      ("simd_arrays_per_engine", max_sh_per_se);
+      ("lds_size_in_kb", lds);
+      ("num_xcc", xccs);
+      ("gfx_target_version", if gfxver = 90403 then 90402 else gfxver);
+    ]
+
+  (* ops_amd.py:844 PCIIface.__init__ *)
+  let create ~device_id =
+    let base =
+      Base.create ~name:"AMD" ~devpref:"AM" ~dev_id:device_id ~vendor
+        ~devices:pci_ids ~vram_bar:0
+        ~va_start:(Nativeint.of_int Amdev.va_base)
+        ~va_size:Amdev.va_size
+        ~dev_impl:(fun pci_dev ->
+          let boot = Am_boot.create (Amdev.create pci_dev) in
+          Am_boot.init boot;
+          boot)
+        ~mm:(fun boot -> Amdev.mm boot.Am_boot.adev)
+        ()
+    in
+    let boot = Base.dev_impl base in
+    let ip_ver hwip = Amdev.ip_ver boot.Am_boot.adev hwip in
+    {
+      base;
+      props =
+        compute_props
+          ~gc_info:(Amdev.gc_info boot.Am_boot.adev)
+          ~gc_ver:(ip_ver Am_defs.gc_hwip)
+          ~xccs:(Am_ip.Gfx.xccs boot.Am_boot.gfx);
+      ip_versions =
+        {
+          gc = ip_ver Am_defs.gc_hwip;
+          sdma = ip_ver Am_defs.sdma0_hwip;
+          nbif = ip_ver Am_defs.nbif_hwip;
+        };
+    }
+
+  let alloc t ?host ?uncached ?cpu_access size =
+    Base.alloc t.base ?host ?uncached ?cpu_access size
+
+  let free t b = Base.free t.base b
+
+  (* ops_amd.py:877 PCIIface.create_queue *)
+  let create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
+      ?cwsr_buffer ?(ctl_stack_size = 0) ?(ctx_save_restore_size = 0) () =
+    (* the driver-less path has no compute-wave save/restore *)
+    if cwsr_buffer <> None || ctl_stack_size <> 0 || ctx_save_restore_size <> 0
+    then invalid_arg "Pci_iface.create_queue: no cwsr state for am";
+    let boot = am t in
+    let ring_addr = Nativeint.to_int (Hcq.Buffer.va ring) in
+    let ring_size = Hcq.Buffer.size ring in
+    let rptr_addr = Nativeint.to_int (Hcq.Buffer.va gart) + rptr in
+    let wptr_addr = Nativeint.to_int (Hcq.Buffer.va gart) + wptr in
+    let setup =
+      match queue_type with
+      | Sdma ->
+          fun () ->
+            Am_ip.Sdma.setup_ring boot.Am_boot.sdma ~ring_addr ~ring_size
+              ~rptr_addr ~wptr_addr ~idx:0
+      | Compute ->
+          let eop =
+            match eop_buffer with
+            | Some eop -> eop
+            | None ->
+                invalid_arg
+                  "Pci_iface.create_queue: compute queues need an eop buffer"
+          in
+          fun () ->
+            Am_ip.Gfx.setup_ring boot.Am_boot.gfx ~ring_addr ~ring_size
+              ~rptr_addr ~wptr_addr
+              ~eop_addr:(Nativeint.to_int (Hcq.Buffer.va eop))
+              ~eop_size:(Hcq.Buffer.size eop) ~idx:0 ~aql:false
+    in
+    let doorbell_index = setup () in
+    {
+      Queue_desc.ring = Hcq.Buffer.cpu_view ring;
+      read_ptr = Hcq.Mmio.view (Hcq.Buffer.cpu_view gart) ~off:rptr ~size:8 ();
+      write_ptr = Hcq.Mmio.view (Hcq.Buffer.cpu_view gart) ~off:wptr ~size:8 ();
+      doorbell =
+        Hcq.Mmio.view
+          (Amdev.doorbell64 boot.Am_boot.adev)
+          ~off:(doorbell_index * 8) ~size:8 ();
+      put_value = 0;
+      flush_hdp = Some (fun () -> Am_ip.Gmc.flush_hdp boot.Am_boot.adev);
+      resetup = Some (fun () -> ignore (setup () : int));
+    }
+
+  (* The open driver-less devices, so any wait can collect interrupts
+     for all of them (the reference walks its global device table; the
+     runtime here has none, so the interface keeps its own). *)
+  type registered = {
+    r_am : Am_boot.t;
+    r_compute : Queue_desc.t;
+    r_tl : (mem, mem device) Timeline.t;
+  }
+
+  let registry : registered list ref = ref []
+
+  (* ops_amd.py:891 _collect_interrupts *)
+  let collect_interrupts ?(reset = false) ?(drain_only = false) () =
+    List.iter
+      (fun r ->
+        let boot = r.r_am in
+        if drain_only then Am_ip.Ih.drain boot.Am_boot.ih
+        else
+          Am_ip.Ih.interrupt_handler boot.Am_boot.ih ~soc:boot.Am_boot.soc
+            ~gmc:boot.Am_boot.gmc ~smu:boot.Am_boot.smu;
+        if
+          reset
+          && Am_boot.recover boot ~force:(r.r_tl.Timeline.error_state <> None)
+        then begin
+          (* the processors lost their queues: rebuild the compute queue
+             and rewind the timeline to the last completed value *)
+          r.r_compute.Queue_desc.put_value <- 0;
+          Hcq.Mmio.write64 r.r_compute.Queue_desc.read_ptr 0 0L;
+          Hcq.Mmio.write64 r.r_compute.Queue_desc.write_ptr 0 0L;
+          (match r.r_compute.Queue_desc.resetup with
+          | Some resetup -> resetup ()
+          | None -> ());
+          Hcq.Signal.set_value r.r_tl.Timeline.timeline
+            (r.r_tl.Timeline.timeline_value - 1);
+          r.r_tl.Timeline.error_state <- None
+        end)
+      !registry
+
+  (* ops_amd.py:898 sleep: the interrupt poller is not wired yet (it
+     needs vfio), so sleeping is a pure interrupt-collection pass *)
+  let sleep t =
+    collect_interrupts ();
+    if Amdev.is_err_state (adev t) then failwith "Device is in error state"
+
+  (* ops_amd.py:903 on_device_hang *)
+  let on_device_hang () =
+    collect_interrupts ~reset:true ();
+    failwith "Device hang detected"
+
+  let iface t =
+    {
+      Iface.props = t.props;
+      ip_versions = t.ip_versions;
+      is_am = true;
+      (* driver-less devices have no driver events; signal packets skip
+         the mailbox when the owner is_am *)
+      queue_event = { event_id = 0 };
+      queue_event_mailbox_ptr = 0n;
+      alloc =
+        (fun ?host ?uncached ?cpu_access size ->
+          alloc t ?host ?uncached ?cpu_access size);
+      free = free t;
+      empty_scratch =
+        Hcq.Buffer.make ~va:0n ~size:0
+          ~meta:
+            {
+              Base.mapping =
+                {
+                  Tolk.Memory.va_addr = 0;
+                  size = 0;
+                  paddrs = [];
+                  aspace = Tolk.Memory.Sys;
+                  uncached = false;
+                  snooped = false;
+                };
+              has_cpu_mapping = false;
+              hmemory = 0;
+              owner = t.base;
+            }
+          ();
+      create_queue =
+        (fun queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer ?cwsr_buffer
+             ?ctl_stack_size ?ctx_save_restore_size () ->
+          create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
+            ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ());
+      sleep = (fun spent_ms -> if spent_ms > 2000 then sleep t);
+      on_device_hang = (fun () -> on_device_hang ());
+      register =
+        Some
+          (fun ~compute_queue ~tl ->
+            registry :=
+              { r_am = am t; r_compute = compute_queue; r_tl = tl }
+              :: !registry);
+      after_sync = Some (fun () -> collect_interrupts ~drain_only:true ());
+      device_fini = Some (fun () -> Am_boot.fini (am t));
+    }
 end
 
 (* Device runtime *)
 
 module State = struct
-  type t = {
-    iface : Kfd_iface.t;
-    hw : Kfd_iface.mem device;
-    props : (string * int) list;
+  type 'mem t = {
+    iface : 'mem Iface.t;
+    hw : 'mem device;
     compute_queue : Queue_desc.t;
     sdma_queue : Queue_desc.t option;
-    kernargs : Kfd_iface.mem Hcq.Kernargs.t;
-    pool : Kfd_iface.mem Hcq.Signal.Pool.t;
-    tl : (Kfd_iface.mem, Kfd_iface.mem device) Timeline.t;
+    kernargs : 'mem Hcq.Kernargs.t;
+    pool : 'mem Hcq.Signal.Pool.t;
+    tl : ('mem, 'mem device) Timeline.t;
     (* The device's LRU-wrapped allocator; set right after creation and used
        for scratch sizing. *)
-    mutable allocator : Kfd_iface.mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
+    mutable allocator : 'mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
   }
 
   let invalidate_caches t =
@@ -1312,14 +1623,14 @@ module Allocator = struct
       | None ->
           (* Without a DMA engine host transfers write the CPU mapping, so
              every allocation must be host-visible. *)
-          Kfd_iface.alloc state.State.iface ~host:spec.host
+          state.State.iface.Iface.alloc ~host:spec.host
             ~uncached:spec.uncached
             ~cpu_access:
               (spec.cpu_access || Option.is_none state.State.sdma_queue)
             size
     in
     let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
-      Kfd_iface.free state.State.iface buf
+      state.State.iface.Iface.free buf
     in
     let offset buf size byte_offset =
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
@@ -1349,7 +1660,8 @@ module Runtime = struct
      device memory. *)
   let ensure_scratch state size =
     let allocator = Option.get state.State.allocator in
-    ensure_has_local_memory state.State.hw ~props:state.State.props
+    ensure_has_local_memory state.State.hw
+      ~props:state.State.iface.Iface.props
       ~alloc:(fun size ->
         allocator.Tolk.Device.Allocator.alloc size
           Tolk.Device.Buffer_spec.default)
@@ -1364,8 +1676,8 @@ module Runtime = struct
     let prg =
       Program.load state.State.hw
         ~alloc:(fun size ->
-          Kfd_iface.alloc state.State.iface ~cpu_access:true size)
-        ~props:state.State.props ~name lib
+          state.State.iface.Iface.alloc ~cpu_access:true size)
+        ~props:state.State.iface.Iface.props ~name lib
     in
     ensure_scratch state prg.Program.private_segment_size;
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
@@ -1396,23 +1708,17 @@ module Runtime = struct
             Timeline.guarded_wait tl (fun () -> launch ~timing:(st, en) ()))
       end
     in
-    let free () = Program.free ~free:(Kfd_iface.free state.State.iface) prg in
+    let free () =
+      Program.free ~free:state.State.iface.Iface.free prg
+    in
     { Tolk.Device.call; free; handle = 0n }
 end
 
-let create name =
-  let device_id =
-    match String.index_opt name ':' with
-    | Some i -> (
-        let suffix = String.sub name (i + 1) (String.length name - i - 1) in
-        match int_of_string_opt suffix with
-        | Some id -> id
-        | None -> invalid_arg (Printf.sprintf "invalid AMD device %S" name))
-    | None -> 0
-  in
-  let iface = Kfd_iface.create ~device_id in
-  let props = Kfd_iface.props iface in
-  let ip = Kfd_iface.ip_versions iface in
+(* The shared device open path over the selected interface: everything
+   from topology sizing to renderer wiring is interface-independent. *)
+let open_device ~name iface =
+  let props = iface.Iface.props in
+  let ip = iface.Iface.ip_versions in
   let trgt = prop props "gfx_target_version" in
   let target = (trgt / 10000, trgt / 100 mod 100, trgt mod 100) in
   let tmaj, tmin, tstp = target in
@@ -1468,62 +1774,58 @@ let create name =
   let debug_memory_size = round_up (wave_cnt * 32) 64 in
   let create_queue queue_type ~ring_size ?(eop_buffer_size = 0)
       ?(ctx_save_restore_size = 0) ?(ctl_stack_size = 0) () =
-    let ring = Kfd_iface.alloc iface ~uncached:true ~cpu_access:true ring_size in
-    let gart = Kfd_iface.alloc iface ~uncached:true ~cpu_access:true 0x100 in
+    let ring =
+      iface.Iface.alloc ~uncached:true ~cpu_access:true ring_size
+    in
+    let gart = iface.Iface.alloc ~uncached:true ~cpu_access:true 0x100 in
     let eop_buffer =
       if eop_buffer_size = 0 then None
-      else Some (Kfd_iface.alloc iface eop_buffer_size)
+      else Some (iface.Iface.alloc eop_buffer_size)
     in
     let cwsr_buffer =
       if ctx_save_restore_size = 0 then None
       else
         Some
-          (Kfd_iface.alloc iface
+          (iface.Iface.alloc
              (round_up
                 ((ctx_save_restore_size + debug_memory_size) * xccs)
                 System.page_size))
     in
     (* The queue's pointers live at the dispatch-id slots of an HSA queue
        descriptor laid out in the gart buffer. *)
-    Kfd_iface.create_queue iface queue_type ~ring ~gart
+    iface.Iface.create_queue queue_type ~ring ~gart
       ~rptr:Amd_hsa_defs.Amd_queue.read_dispatch_id
       ~wptr:Amd_hsa_defs.Amd_queue.write_dispatch_id ?eop_buffer ?cwsr_buffer
       ~ctx_save_restore_size ~ctl_stack_size ()
   in
   let compute_queue =
-    create_queue Kfd_iface.Compute ~ring_size:(16 lsl 20)
-      ~eop_buffer_size:0x1000
-      ~ctx_save_restore_size:(wg_data_size + ctl_stack_size) ~ctl_stack_size ()
+    (* driver-less devices carry no compute-wave save/restore state *)
+    create_queue Compute ~ring_size:(16 lsl 20) ~eop_buffer_size:0x1000
+      ~ctx_save_restore_size:
+        (if iface.Iface.is_am then 0 else wg_data_size + ctl_stack_size)
+      ~ctl_stack_size ()
   in
   let sdma_queue =
     if Tolk.Helpers.getenv "AMD_DISABLE_SDMA" 0 <> 0 then None
     else
-      match create_queue Kfd_iface.Sdma ~ring_size:(16 lsl 20) () with
+      match create_queue Sdma ~ring_size:(16 lsl 20) () with
       | qd -> Some qd
       | exception Failure _ -> None
   in
   let hw =
-    device ~target ~xccs ~gc_version:ip.Kfd_iface.gc
-      ~nbio_version:ip.Kfd_iface.nbif ~sdma_version:ip.Kfd_iface.sdma
-      ~tmpring_size:0
-      ~scratch:
-        (Hcq.Buffer.make ~va:0n ~size:0
-           ~meta:{ Kfd_iface.handle = 0L; owner = 0 }
-           ())
-      ~is_am:false
-      ~queue_event_mailbox_ptr:(Kfd_iface.queue_event_mailbox_ptr iface)
-      ~queue_event:(Kfd_iface.queue_event iface) ()
+    device ~target ~xccs ~gc_version:ip.gc ~nbio_version:ip.nbif
+      ~sdma_version:ip.sdma ~tmpring_size:0
+      ~scratch:iface.Iface.empty_scratch ~is_am:iface.Iface.is_am
+      ~queue_event_mailbox_ptr:iface.Iface.queue_event_mailbox_ptr
+      ~queue_event:iface.Iface.queue_event ()
   in
   let pool =
     Hcq.Signal.Pool.create ~alloc_page:(fun () ->
-        Kfd_iface.alloc iface ~host:true ~uncached:true ~cpu_access:true 0x1000)
-  in
-  (* Long waits back off to driver-event sleeps, which also surface faults. *)
-  let sleep spent_ms =
-    if spent_ms > 2000 then Kfd_iface.sleep iface ~timeout_ms:200
+        iface.Iface.alloc ~host:true ~uncached:true ~cpu_access:true 0x1000)
   in
   let timeline_signal () =
-    Hcq.Signal.make ~is_timeline:true ~timestamp_divider:100. ~sleep ~owner:hw
+    Hcq.Signal.make ~is_timeline:true ~timestamp_divider:100.
+      ~sleep:iface.Iface.sleep ~owner:hw
       (Hcq.Signal.Pool.get pool)
   in
   let bounce_count = 32 and bounce_size = 2 lsl 20 in
@@ -1531,12 +1833,10 @@ let create name =
     {
       State.iface;
       hw;
-      props;
       compute_queue;
       sdma_queue;
       kernargs =
-        Hcq.Kernargs.create
-          (Kfd_iface.alloc iface ~cpu_access:true (16 lsl 20));
+        Hcq.Kernargs.create (iface.Iface.alloc ~cpu_access:true (16 lsl 20));
       pool;
       tl =
         {
@@ -1546,14 +1846,29 @@ let create name =
           error_state = None;
           bounce =
             Array.init bounce_count (fun _ ->
-                Kfd_iface.alloc iface ~host:true bounce_size);
+                iface.Iface.alloc ~host:true bounce_size);
           bounce_timeline = Array.make bounce_count 0;
           bounce_next = 0;
-          on_hang = (fun () -> Kfd_iface.on_device_hang iface);
+          on_hang = iface.Iface.on_device_hang;
         };
       allocator = None;
     }
   in
+  (match iface.Iface.register with
+  | Some register -> register ~compute_queue ~tl:state.State.tl
+  | None -> ());
+  (match iface.Iface.device_fini with
+  | Some fini ->
+      at_exit (fun () ->
+          (* finalize even when the device faulted: the shutdown records
+             the session's error flag for the next boot *)
+          (try Timeline.synchronize state.State.tl
+           with e ->
+             Printf.eprintf
+               "%s synchronization failed before finalizing: %s\n%!" name
+               (Printexc.to_string e));
+          fini ())
+  | None -> ());
   let allocator = Allocator.create state in
   Runtime.ensure_scratch state 128;
   let renderer_target =
@@ -1572,6 +1887,31 @@ let create name =
   let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Runtime.runtime state)
-    ~synchronize:(fun () -> Timeline.synchronize state.State.tl)
+    ~synchronize:(fun () ->
+      Timeline.synchronize state.State.tl;
+      match iface.Iface.after_sync with
+      | Some after_sync -> after_sync ()
+      | None -> ())
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ()
+
+let create name =
+  let device_id =
+    match String.index_opt name ':' with
+    | Some i -> (
+        let suffix = String.sub name (i + 1) (String.length name - i - 1) in
+        match int_of_string_opt suffix with
+        | Some id -> id
+        | None -> invalid_arg (Printf.sprintf "invalid AMD device %S" name))
+    | None -> 0
+  in
+  (* The kernel driver is the only automatic choice; the driver-less
+     path is opt-in until it has been validated on hardware (the
+     reference falls back to it automatically). *)
+  match Tolk.Helpers.getenv_str "AMD_IFACE" "KFD" with
+  | "KFD" -> open_device ~name (Kfd_iface.iface (Kfd_iface.create ~device_id))
+  | "PCI" -> open_device ~name (Pci_iface.iface (Pci_iface.create ~device_id))
+  | other ->
+      failwith
+        (Printf.sprintf "AMD_IFACE=%s: unknown interface (use KFD or PCI)"
+           other)

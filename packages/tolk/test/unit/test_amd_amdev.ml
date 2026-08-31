@@ -524,6 +524,74 @@ let ack_messages fd =
   let resp, _, msg = smu_addrs fd in
   Hashtbl.replace fd.wr_hooks msg (fun _ -> Hashtbl.replace fd.store resp 1)
 
+(* Boot-machine fixtures: a firmware set covering every image the gfx11
+   bring-up feeds somewhere — secure-OS components for the bootloader,
+   ring-loaded images, and the compute-processor start address — plus
+   the scripting a full boot polls beyond the security processor: the
+   power-management block acknowledges every message and reports two
+   clock levels, and the compute block's safe-mode handshake completes
+   by clearing the command bit. *)
+
+module Am_boot = Tolk_amd.Am_boot
+
+let boot_fw =
+  {
+    Firmware.sos_fw =
+      [
+        (Am.psp_fw_type_psp_kdb, Bytes.of_string "KDBIMAGE");
+        (Am.psp_fw_type_psp_sos, Bytes.of_string "SOSIMAGE");
+      ];
+    ucode_start = [ ("MEC", 0x2000) ];
+    smu_psp_desc = Some ([ Am.gfx_fw_type_smu ], Bytes.of_string "SMUIMAGE");
+    descs = [ ([ Am.gfx_fw_type_rlc_g ], Bytes.of_string "RLCIMAGE") ];
+  }
+
+let script_smu fd =
+  ack_messages fd;
+  let _, arg, _ = smu_addrs fd in
+  Hashtbl.replace fd.reads arg (fun () -> 2)
+
+let script_boot fd t =
+  let s = psp_script fd ~pref:"regMP0_SMN_C2PMSG" t.Am_boot.psp in
+  script_smu fd;
+  let safe_mode = raddr fd.dev "regRLC_SAFE_MODE" in
+  Hashtbl.replace fd.wr_hooks safe_mode (fun v ->
+      Hashtbl.replace fd.store safe_mode (v land lnot 1));
+  s
+
+(* The chronological write log, and positions within it. *)
+let writes fd = List.rev !(fd.log)
+
+let first_write_to fd name log =
+  let addr = raddr fd.dev name in
+  let rec go i = function
+    | [] -> fail (Printf.sprintf "no write to %s" name)
+    | (a, _) :: rest -> if a = addr then i else go (i + 1) rest
+  in
+  go 0 log
+
+let wrote fd name log = List.mem_assoc (raddr fd.dev name) log
+
+let last_write log =
+  match List.rev log with
+  | last :: _ -> last
+  | [] -> fail "empty write log"
+
+(* The boot-session stamps must close the log, byte-exact: they are the
+   contract another driver of the protocol reads back. *)
+let check_boot_stamps fd log =
+  equal int 0xA0000008 Am_boot.version;
+  let rec last2 = function
+    | [ a; b ] -> (a, b)
+    | _ :: rest -> last2 rest
+    | [] -> fail "empty write log"
+  in
+  let (r7, v7), (r6, v6) = last2 log in
+  equal int (raddr fd.dev "regSCRATCH_REG7") r7;
+  equal int 0xA0000008 v7;
+  equal int (raddr fd.dev "regSCRATCH_REG6") r6;
+  equal int 1 v6
+
 let () =
   run "Amdev"
     [
@@ -1940,5 +2008,141 @@ let () =
                       (raddr fd.dev "regGRBM_SOFT_RESET", 0);
                     ]
                     (List.rev !(fd.log))));
+        ];
+      group "boot machine"
+        [
+          test "cold boot: block order and the scratch-register stamps"
+            (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  let (_ : psp_script) = script_boot fd t in
+                  fd.log := [];
+                  Am_boot.init t;
+                  equal bool false t.Am_boot.partial_boot;
+                  equal bool false (Amdev.is_booting fd.dev);
+                  let log = writes fd in
+                  (* one landmark register per block, in bring-up order:
+                     soc, gmc, ih, psp, smu, then gfx and sdma *)
+                  let order =
+                    List.map
+                      (fun name -> first_write_to fd name log)
+                      [
+                        "regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN";
+                        "regMMMC_VM_AGP_BOT"; "regIH_RB_BASE";
+                        "regMP0_SMN_C2PMSG_35"; "mmMP1_SMN_C2PMSG_66";
+                        "regRLC_SPM_MC_CNTL"; "regSDMA0_WATCHDOG_CNTL";
+                      ]
+                  in
+                  equal (list int) (List.sort compare order) order;
+                  check_boot_stamps fd log));
+          test "partial boot skips the boot-memory blocks" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev "regSCRATCH_REG7")
+                    0xA0000008;
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  let (_ : psp_script) = script_boot fd t in
+                  fd.log := [];
+                  Am_boot.init t;
+                  equal bool true t.Am_boot.partial_boot;
+                  equal bool false (Amdev.is_booting fd.dev);
+                  let log = writes fd in
+                  (* the boot-memory blocks kept the previous session's
+                     state *)
+                  equal bool false
+                    (wrote fd "regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN" log);
+                  equal bool false (wrote fd "regMMMC_VM_AGP_BOT" log);
+                  equal bool false (wrote fd "regIH_RB_BASE" log);
+                  equal bool false (wrote fd "regMP0_SMN_C2PMSG_35" log);
+                  (* the compute processors were reset, not brought up *)
+                  equal bool true (wrote fd "regGRBM_SOFT_RESET" log);
+                  equal bool false (wrote fd "regRLC_SPM_MC_CNTL" log);
+                  equal bool true (wrote fd "regSDMA0_WATCHDOG_CNTL" log);
+                  check_boot_stamps fd log));
+          test "a suspect previous session forces the full path" (fun () ->
+              (* an unclean shutdown: the session flag never cleared *)
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev "regSCRATCH_REG7")
+                    0xA0000008;
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG6") 1;
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  let (_ : psp_script) = script_boot fd t in
+                  fd.log := [];
+                  Am_boot.init t;
+                  equal bool false t.Am_boot.partial_boot;
+                  equal bool true (wrote fd "regMP0_SMN_C2PMSG_35" (writes fd)));
+              (* a latched translation fault *)
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev "regSCRATCH_REG7")
+                    0xA0000008;
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev (Gmc.pf_status_reg t.Am_boot.gmc Gmc.Gc))
+                    1;
+                  let (_ : psp_script) = script_boot fd t in
+                  fd.log := [];
+                  Am_boot.init t;
+                  equal bool false t.Am_boot.partial_boot;
+                  equal bool true (wrote fd "regMP0_SMN_C2PMSG_35" (writes fd))));
+          test "a live external driver gets a mode1 reset first" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  let s = script_boot fd t in
+                  (* the previous driver's firmware still answers *)
+                  Hashtbl.replace fd.reads (s.r 81) (fun () -> 1);
+                  let r54 = raddr fd.dev "mmMP1_SMN_C2PMSG_54" in
+                  let r75 = raddr fd.dev "mmMP1_SMN_C2PMSG_75" in
+                  Hashtbl.replace fd.wr_hooks r75 (fun _ ->
+                      Hashtbl.replace fd.store r54 1);
+                  fd.log := [];
+                  Am_boot.init t;
+                  let log = writes fd in
+                  (* the debug-mailbox reset ran before any block came up *)
+                  equal bool true
+                    (first_write_to fd "mmMP1_SMN_C2PMSG_75" log
+                    < first_write_to fd "regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN"
+                        log);
+                  equal bool false t.Am_boot.partial_boot;
+                  check_boot_stamps fd log));
+          test "fini drops the clocks and records the session flag" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  script_smu fd;
+                  fd.log := [];
+                  Am_boot.fini t;
+                  let log = writes fd in
+                  (* the engines went down, then the clocks *)
+                  equal bool true (wrote fd "regGRBM_SOFT_RESET" log);
+                  equal bool true (wrote fd "mmMP1_SMN_C2PMSG_66" log);
+                  let r6, v6 = last_write log in
+                  equal int (raddr fd.dev "regSCRATCH_REG6") r6;
+                  equal int 0 v6;
+                  (* a faulted session records the error flag instead *)
+                  Amdev.set_err_state fd.dev true;
+                  fd.log := [];
+                  Am_boot.fini t;
+                  let r6, v6 = last_write (writes fd) in
+                  equal int (raddr fd.dev "regSCRATCH_REG6") r6;
+                  equal int 1 v6));
+          test "recover resets the compute processors" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  fd.log := [];
+                  (* a healthy device declines *)
+                  equal bool false (Am_boot.recover t);
+                  equal (list (pair int int)) [] (writes fd);
+                  (* a faulted device restarts the processors and clears
+                     its error state *)
+                  Amdev.set_err_state fd.dev true;
+                  equal bool true (Am_boot.recover t);
+                  equal bool false (Amdev.is_err_state fd.dev);
+                  equal bool true (wrote fd "regGRBM_SOFT_RESET" (writes fd));
+                  equal int (0x2000 lsr 2)
+                    (rstore fd "regCP_MEC_RS64_PRGRM_CNTR_START");
+                  (* force runs it on a healthy device too *)
+                  fd.log := [];
+                  equal bool true (Am_boot.recover ~force:true t)));
         ];
     ]

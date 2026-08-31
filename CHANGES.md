@@ -101,6 +101,12 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- AMD GPUs can now be driven over PCI with no kernel driver: setting
+  `AMD_IFACE=PCI` boots the GPU directly — firmware loading, memory hubs,
+  security processor, engines (`Tolk_amd.Pci_iface`) — covering the
+  RDNA3/RDNA4 consumer parts. Opt-in and unvalidated on real hardware so
+  far; the kernel driver remains the default.
+
 - AMD GPUs are now a runtime target: `DEV=AMD` (or `Tolk_amd.create`) drives
   the GPU through the Linux kernel driver's hardware queues, with kernels
   compiled by the ROCm comgr library. Supports gfx942, gfx950, and the

@@ -407,3 +407,145 @@ module Pci_device = struct
               enabled."
              bar msg)
 end
+
+(* PCI iface base: system.py:249-307 PCIIfaceBase, minus the remote
+   arm (no remote backend) and the CPU-owner mapping arm (buffers here
+   carry PCI metadata, so a CPU-owned buffer cannot arrive). *)
+
+module Pci_iface_base = struct
+  module Memory = Tolk.Memory
+
+  type ('impl, 'pt) t = {
+    pci_dev : Pci_device.t;
+    vram_bar : int;
+    count : int;
+    dev_impl : 'impl;
+    mm : 'pt Memory.t;
+  }
+
+  and ('impl, 'pt) meta = {
+    mapping : Memory.virt_mapping;
+    has_cpu_mapping : bool;
+    hmemory : int;
+    owner : ('impl, 'pt) t;
+  }
+
+  let pci_dev t = t.pci_dev
+  let dev_impl t = t.dev_impl
+  let mm t = t.mm
+  let count t = t.count
+  let is_bar_small t = snd (Pci_device.bar_info t.pci_dev t.vram_bar) = 256 lsl 20
+
+  (* system.py:255 PCIIfaceBase.__init__ *)
+  let create ~name ~devpref ~dev_id ~vendor ~devices ?base_class ~vram_bar
+      ~va_start ~va_size ~dev_impl ~mm () =
+    let matching = pci_scan_bus ?base_class ~vendor devices in
+    let pcibus =
+      match List.nth_opt matching dev_id with
+      | Some pcibus -> pcibus
+      | None ->
+          failwith
+            (Printf.sprintf "%s:%d does not exist (%d device%s available)" name
+               dev_id (List.length matching)
+               (if List.length matching = 1 then "" else "s"))
+    in
+    let pci_dev = Pci_device.create ~devpref pcibus in
+    reserve_va ~va_start ~va_size;
+    (try Pci_device.resize_bar pci_dev vram_bar with Failure _ -> ());
+    let impl = dev_impl pci_dev in
+    {
+      pci_dev;
+      vram_bar;
+      count = List.length matching;
+      dev_impl = impl;
+      mm = mm impl;
+    }
+
+  (* system.py:263 PCIIfaceBase.alloc *)
+  let alloc t ?(host = false) ?(uncached = false) ?(cpu_access = false)
+      ?(contiguous = false) ?(force_devmem = false) size =
+    let should_use_sysmem =
+      host
+      || (if is_bar_small t then cpu_access else uncached && cpu_access)
+         && not force_devmem
+    in
+    (* Align size to huge pages for large allocations, otherwise the
+       unaligned tail falls back to 4KB pages, increasing TLB
+       pressure. *)
+    let size =
+      round_up size
+        (if should_use_sysmem then page_size
+         else if size >= 8 lsl 20 then 2 lsl 20
+         else 0x1000)
+    in
+    if should_use_sysmem then begin
+      let vaddr = Memory.alloc_vaddr t.mm size ~align:page_size () in
+      let view, paddrs =
+        Pci_device.alloc_sysmem ~vaddr:(Nativeint.of_int vaddr) ~contiguous size
+      in
+      let mapping =
+        Memory.map_range t.mm ~vaddr ~size
+          (List.map (fun paddr -> (paddr, 0x1000)) paddrs)
+          Memory.Sys ~snooped:true ~uncached:true ()
+      in
+      Hcq.Buffer.make ~va:(Nativeint.of_int vaddr) ~size ~view
+        ~meta:
+          { mapping; has_cpu_mapping = true; hmemory = List.hd paddrs; owner = t }
+        ()
+    end
+    else begin
+      let mapping = Memory.valloc t.mm size ~uncached ~contiguous:cpu_access () in
+      let paddr = fst (List.hd mapping.Memory.paddrs) in
+      let view =
+        if cpu_access then
+          Some
+            (Pci_device.map_bar t.pci_dev ~off:paddr ~size:mapping.Memory.size
+               t.vram_bar)
+        else None
+      in
+      Hcq.Buffer.make
+        ~va:(Nativeint.of_int mapping.Memory.va_addr)
+        ~size ?view
+        ~meta:{ mapping; has_cpu_mapping = cpu_access; hmemory = paddr; owner = t }
+        ()
+    end
+
+  (* system.py:283 PCIIfaceBase.free *)
+  let free t b =
+    let b = Hcq.Buffer.base b in
+    let meta = Hcq.Buffer.meta b in
+    if meta.owner != t then
+      Memory.unmap_range t.mm
+        ~vaddr:(Nativeint.to_int (Hcq.Buffer.va b))
+        ~size:(round_up (Hcq.Buffer.size b) 0x1000);
+    if meta.owner == t && meta.mapping.Memory.aspace = Memory.Phys then
+      Memory.vfree t.mm meta.mapping;
+    if meta.owner == t && meta.has_cpu_mapping then
+      File_io.munmap (Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
+
+  (* system.py:288 PCIIfaceBase.p2p_paddrs: peers address this device's
+     memory through its memory BAR on the bus. *)
+  let p2p_paddrs t paddrs =
+    let bar_base = fst (Pci_device.bar_info t.pci_dev t.vram_bar) in
+    (List.map (fun (paddr, size) -> (bar_base + paddr, size)) paddrs, Memory.Sys)
+
+  (* system.py:292 PCIIfaceBase.map *)
+  let map t b =
+    let meta = Hcq.Buffer.meta b in
+    let owner = meta.owner in
+    if is_bar_small owner then
+      failwith "P2P mapping not supported for small bar devices";
+    let uncached = meta.mapping.Memory.uncached in
+    let paddrs, aspace =
+      match meta.mapping.Memory.aspace with
+      | Memory.Sys -> (meta.mapping.Memory.paddrs, Memory.Sys)
+      | Memory.Phys | Memory.Peer -> p2p_paddrs owner meta.mapping.Memory.paddrs
+    in
+    ignore
+      (Memory.map_range t.mm
+         ~vaddr:(Nativeint.to_int (Hcq.Buffer.va b))
+         ~size:(round_up (Hcq.Buffer.size b) 0x1000)
+         paddrs aspace ~snooped:true ~uncached ()
+        : Memory.virt_mapping);
+    Hcq.Buffer.make ~va:(Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b) ~meta ()
+end

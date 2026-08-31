@@ -216,6 +216,14 @@ val parse_discovery : bytes -> discovery
 
 (** {1:devices Devices} *)
 
+val va_base : int
+(** [va_base] is the base of the virtual address space shared by every
+    device's memory manager. *)
+
+val va_size : int
+(** [va_size] is the size of the shared virtual address space in
+    bytes. *)
+
 type t
 (** The type for driver-less AMD GPU devices. *)
 
@@ -310,6 +318,11 @@ val gc_info : t -> gc_info
 val is_booting : t -> bool
 (** [is_booting t] is [true] while the device is booting; only
     boot-region memory can be allocated then. *)
+
+val set_is_booting : t -> bool -> unit
+(** [set_is_booting t v] records whether the device is booting. Boot
+    lowers the flag once the blocks whose state lives in boot memory
+    are up, unlocking allocation from the main memory region. *)
 
 val is_err_state : t -> bool
 (** [is_err_state t] is [true] once a hardware fault was observed on

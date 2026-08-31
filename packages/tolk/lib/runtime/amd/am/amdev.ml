@@ -710,6 +710,7 @@ let reserved_vram_size t = t.reserved_vram_size
 let discovery t = t.discovery
 let gc_info t = t.discovery.gc_info
 let is_booting t = !(t.is_booting)
+let set_is_booting t v = t.is_booting := v
 let is_err_state t = !(t.is_err_state)
 let set_err_state t v = t.is_err_state := v
 let set_on_range_mapped t f = t.on_range_mapped := f
@@ -814,7 +815,8 @@ let mm_rcc_config_memsize = 0xde3
 
 (* One virtual address space shared by every device. *)
 let va_base = 0x200000000000
-let va_allocator = lazy (Tlsf.create ~size:(1 lsl 44) ~base:va_base ())
+let va_size = 1 lsl 44
+let va_allocator = lazy (Tlsf.create ~size:va_size ~base:va_base ())
 
 (* The register-access closures stored in [t]: named lookup with its
    cache, and dword access either over the register BAR (with the

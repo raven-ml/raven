@@ -12,6 +12,8 @@ module Signal = Tolk_hcq.Hcq.Signal
 module Kernargs = Tolk_hcq.Hcq.Kernargs
 module Compiler_amd = Tolk_amd.Compiler_amd
 module Program = Tolk_amd.Program
+module Pci_iface = Tolk_amd.Pci_iface
+module Amdev = Tolk_amd.Amdev
 
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
 
@@ -103,6 +105,8 @@ let queue_desc ~ring_dwords m =
     write_ptr = Mmio.view m ~off:(ring_bytes + 8) ~size:8 ();
     doorbell = Mmio.view m ~off:(ring_bytes + 16) ~size:8 ();
     put_value = 0;
+    flush_hdp = None;
+    resetup = None;
   }
 
 let ring_dword m i = Int32.to_int (Mmio.read32 m (i * 4)) land 0xFFFFFFFF
@@ -230,6 +234,41 @@ let with_lib_alloc f =
       f alloc sizes m)
 
 let lds64 = [ ("lds_size_in_kb", 64) ]
+
+(* A sysfs tree holding just the PCI files the bus scan reads, so the
+   device allowlist is checked through the real probe path. *)
+let with_fake_sysfs devices f =
+  let root = Filename.temp_file "tolk_sysfs" "" in
+  Sys.remove root;
+  let devdir =
+    List.fold_left Filename.concat root [ "bus"; "pci"; "devices" ]
+  in
+  List.iter
+    (fun d -> Sys.mkdir d 0o700)
+    [
+      root;
+      Filename.concat root "bus";
+      List.fold_left Filename.concat root [ "bus"; "pci" ];
+      devdir;
+    ];
+  List.iter
+    (fun (addr, vendor, device) ->
+      let d = Filename.concat devdir addr in
+      Sys.mkdir d 0o700;
+      List.iter
+        (fun (name, v) ->
+          Out_channel.with_open_bin (Filename.concat d name) (fun oc ->
+              Out_channel.output_string oc (Printf.sprintf "0x%04x\n" v)))
+        [ ("vendor", vendor); ("device", device); ("class", 0x030000) ])
+    devices;
+  let rec rm_tree path =
+    if Sys.is_directory path then begin
+      Array.iter (fun e -> rm_tree (Filename.concat path e)) (Sys.readdir path);
+      Sys.rmdir path
+    end
+    else Sys.remove path
+  in
+  Fun.protect ~finally:(fun () -> rm_tree root) (fun () -> f root)
 
 (* Device-level fixtures: one lazily opened real device shared by the group;
    every test using it skips when this machine cannot provide one (no kernel
@@ -1277,6 +1316,100 @@ let () =
                   (function Failure _ -> true | _ -> false)
                   (fun () -> Tolk_amd.Kfd_iface.create ~device_id:0)
               end);
+        ];
+      group "Pci_iface"
+        [
+          test "the bus scan admits exactly the allowlisted ids" (fun () ->
+              with_fake_sysfs
+                [
+                  (* Navi 31 and an RDNA4 part match; an iGPU, the GPU's
+                     audio function, and a foreign vendor do not *)
+                  ("0000:03:00.0", 0x1002, 0x744c);
+                  ("0000:02:00.0", 0x1002, 0x7550);
+                  ("0000:01:00.0", 0x1002, 0x164e);
+                  ("0000:03:00.1", 0x1002, 0xab30);
+                  ("0000:04:00.0", 0x10de, 0x744c);
+                ]
+                (fun sysfs ->
+                  equal (list string)
+                    [ "0000:02:00.0"; "0000:03:00.0" ]
+                    (Tolk_hcq.System.pci_scan_bus ~sysfs
+                       ~vendor:Pci_iface.vendor Pci_iface.pci_ids)));
+          test "every allowlisted id is admitted" (fun () ->
+              let ids = List.concat_map snd Pci_iface.pci_ids in
+              with_fake_sysfs
+                (List.mapi
+                   (fun i id -> (Printf.sprintf "0000:%02x:00.0" i, 0x1002, id))
+                   ids)
+                (fun sysfs ->
+                  equal int (List.length ids)
+                    (List.length
+                       (Tolk_hcq.System.pci_scan_bus ~sysfs
+                          ~vendor:Pci_iface.vendor Pci_iface.pci_ids))));
+          test "props synthesis from the discovered geometry" (fun () ->
+              (* an RDNA3-style v2 geometry table *)
+              let props =
+                Pci_iface.compute_props
+                  ~gc_info:
+                    (Amdev.Gc_info_v2
+                       {
+                         num_se = 2;
+                         num_cu_per_sh = 8;
+                         num_sh_per_se = 1;
+                         max_scratch_slots_per_cu = 32;
+                         max_waves_per_simd = 16;
+                         lds_size = 64;
+                       })
+                  ~gc_ver:(11, 0, 2) ~xccs:1
+              in
+              equal
+                (list (pair string int))
+                [
+                  ("cu_per_simd_array", 8); ("simd_count", 32);
+                  ("simd_per_cu", 2); ("array_count", 2);
+                  ("max_slots_scratch_cu", 32); ("max_waves_per_simd", 16);
+                  ("simd_arrays_per_engine", 1); ("lds_size_in_kb", 64);
+                  ("num_xcc", 1); ("gfx_target_version", 110002);
+                ]
+                props;
+              (* a v1 geometry table counts compute units in work-group
+                 processor pairs *)
+              let props =
+                Pci_iface.compute_props
+                  ~gc_info:
+                    (Amdev.Gc_info_v1
+                       {
+                         num_se = 4;
+                         num_wgp0_per_sa = 2;
+                         num_wgp1_per_sa = 1;
+                         num_sa_per_se = 2;
+                         max_scratch_slots_per_cu = 32;
+                         max_waves_per_simd = 16;
+                         lds_size = 64;
+                       })
+                  ~gc_ver:(12, 0, 1) ~xccs:1
+              in
+              equal int 6 (List.assoc "cu_per_simd_array" props);
+              equal int 8 (List.assoc "array_count" props);
+              equal int 96 (List.assoc "simd_count" props);
+              equal int 120001 (List.assoc "gfx_target_version" props);
+              (* the one gfx-version quirk: 9.4.3 reports 9.4.2 *)
+              let props =
+                Pci_iface.compute_props
+                  ~gc_info:
+                    (Amdev.Gc_info_v2
+                       {
+                         num_se = 2;
+                         num_cu_per_sh = 8;
+                         num_sh_per_se = 1;
+                         max_scratch_slots_per_cu = 32;
+                         max_waves_per_simd = 16;
+                         lds_size = 64;
+                       })
+                  ~gc_ver:(9, 4, 3) ~xccs:8
+              in
+              equal int 90402 (List.assoc "gfx_target_version" props);
+              equal int 8 (List.assoc "num_xcc" props));
         ];
       group "Compiler"
         [

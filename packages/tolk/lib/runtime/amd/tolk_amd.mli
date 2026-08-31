@@ -26,12 +26,25 @@ module System = Tolk_hcq.System
 module Amd_tables = Amd_tables
 module Amdev = Amdev
 module Am_ip = Am_ip
+module Am_boot = Am_boot
 
 (** {1:devices Devices} *)
 
 type queue_event = { event_id : int }
 (** An interrupt event registered with the driver. [event_id] names the
     event slot a packet can fire to wake waiters. *)
+
+type queue_type =
+  | Compute  (** A compute-engine queue fed with type-3 packets. *)
+  | Sdma  (** A DMA-engine queue fed with byte-granular packets. *)
+      (** The type for hardware queue flavors. *)
+
+type ip_versions = {
+  gc : int * int * int;  (** Graphics-core version. *)
+  sdma : int * int * int;  (** DMA-engine version. *)
+  nbif : int * int * int;  (** Bus-interface version. *)
+}
+(** The type for discovered hardware-block versions. *)
 
 type 'meta device = {
   target : int * int * int;  (** Target graphics version, e.g. [(11, 0, 0)]. *)
@@ -147,13 +160,90 @@ module Queue_desc : sig
     mutable put_value : int;
         (** End of the submitted stream: a dword count for compute
             rings, a byte count for DMA rings. *)
+    flush_hdp : (unit -> unit) option;
+        (** Flushes the host-data-path write buffer, run before every
+            doorbell write; queues on devices driven without the kernel
+            driver need it so host stores to device memory reach the
+            engines. *)
+    resetup : (unit -> unit) option;
+        (** Re-creates the hardware queue with its original parameters;
+            fault recovery replays it after the engines were reset. *)
   }
   (** The type for mapped queues. *)
 
   val signal_doorbell : t -> unit
   (** [signal_doorbell t] publishes [put_value] to the device: it writes
       the write pointer, fences so all prior ring stores are visible,
-      then writes the doorbell. *)
+      runs [flush_hdp] when present, then writes the doorbell. *)
+end
+
+(** {1:iface Device interfaces}
+
+    The device runtime reaches the GPU through one of two
+    interchangeable interfaces: the Linux kernel driver
+    ({!Kfd_iface}) or the driver-less PCI path ({!Pci_iface}). An
+    {!Iface.t} is the record of every call the shared runtime makes on
+    the selected one. *)
+
+module Iface : sig
+  type 'mem t = {
+    props : (string * int) list;
+        (** Topology properties, e.g. ["simd_count"]. *)
+    ip_versions : ip_versions;  (** Discovered hardware-block versions. *)
+    is_am : bool;
+        (** [true] when the interface drives the GPU directly rather
+            than through the kernel driver. *)
+    queue_event : queue_event;
+        (** The completion event queues fire; unused when [is_am]. *)
+    queue_event_mailbox_ptr : nativeint;
+        (** The completion event's mailbox slot; [0n] when [is_am]. *)
+    alloc :
+      ?host:bool ->
+      ?uncached:bool ->
+      ?cpu_access:bool ->
+      int ->
+      'mem Hcq.Buffer.t;
+        (** Allocates mapped device memory (see {!Kfd_iface.alloc} for
+            the flags). *)
+    free : 'mem Hcq.Buffer.t -> unit;  (** Releases an allocation. *)
+    empty_scratch : 'mem Hcq.Buffer.t;
+        (** The zero-sized placeholder a fresh device's scratch starts
+            as, before the first sizing. *)
+    create_queue :
+      queue_type ->
+      ring:'mem Hcq.Buffer.t ->
+      gart:'mem Hcq.Buffer.t ->
+      rptr:int ->
+      wptr:int ->
+      ?eop_buffer:'mem Hcq.Buffer.t ->
+      ?cwsr_buffer:'mem Hcq.Buffer.t ->
+      ?ctl_stack_size:int ->
+      ?ctx_save_restore_size:int ->
+      unit ->
+      Queue_desc.t;
+        (** Creates a hardware queue (see {!Kfd_iface.create_queue}). *)
+    sleep : int -> unit;
+        (** Called from stalled signal waits with the milliseconds since
+            the last observed progress; may block briefly, and may raise
+            the device's fault report. *)
+    on_device_hang : unit -> unit;
+        (** Raises [Failure] with the device's fault report; run after a
+            wait stalls. May recover the device first. *)
+    register :
+      (compute_queue:Queue_desc.t ->
+      tl:('mem, 'mem device) Hcq.Timeline.t ->
+      unit)
+      option;
+        (** Hands the interface the device's compute queue and timeline
+            once they exist, for interrupt collection and fault
+            recovery. *)
+    after_sync : (unit -> unit) option;
+        (** Run after every successful device synchronization. *)
+    device_fini : (unit -> unit) option;
+        (** Shuts the device down; run at process exit. *)
+  }
+  (** The type for device interfaces whose allocations carry metadata
+      ['mem]. *)
 end
 
 (** {1:queues Queue builders} *)
@@ -481,13 +571,6 @@ module Kfd_iface : sig
   type t
   (** The type for driver interfaces. One value per GPU node. *)
 
-  type ip_versions = {
-    gc : int * int * int;  (** Graphics-core version. *)
-    sdma : int * int * int;  (** DMA-engine version. *)
-    nbif : int * int * int;  (** Bus-interface version. *)
-  }
-  (** The type for discovered hardware-block versions. *)
-
   val count : unit -> int
   (** [count ()] is the number of usable GPU nodes on the system. *)
 
@@ -550,11 +633,6 @@ module Kfd_iface : sig
 
   (** {2:queues Queues} *)
 
-  type queue_type =
-    | Compute  (** A compute-engine queue fed with type-3 packets. *)
-    | Sdma  (** A DMA-engine queue fed with byte-granular packets. *)
-  (** The type for hardware queue flavors. *)
-
   val create_queue :
     t ->
     queue_type ->
@@ -593,24 +671,103 @@ module Kfd_iface : sig
   val on_device_hang : t -> 'a
   (** [on_device_hang t] raises [Failure] describing the fault the
       device reported, polling for a pending report first. *)
+
+  val iface : t -> mem Iface.t
+  (** [iface t] is [t] as the interface record the device runtime
+      drives. *)
+end
+
+(** {1:pci Driver-less PCI interface} *)
+
+(** GPU access over PCI, with no kernel driver.
+
+    A {!Pci_iface.t} owns one GPU claimed straight from the PCI bus
+    (see {!System.Pci_iface_base}): creating it unbinds any kernel
+    driver, maps the device's BARs, and boots it — firmware loading,
+    memory hubs, security processor, engines (see {!Am_boot}). Device
+    memory then comes from the device's own memory manager, hardware
+    queues are written directly into engine registers, and faults are
+    read from the device's interrupt rings, with an engine reset in
+    place of the driver's recovery.
+
+    Everything here needs Linux, root or equivalent capabilities, and
+    the device firmware on disk; construction raises [Failure]
+    otherwise. This path has not been validated on hardware yet, so the
+    device runtime uses it only when the environment selects it (see
+    {!create}). *)
+module Pci_iface : sig
+  type mem = (Am_boot.t, Amdev.Am_page_table.t) System.Pci_iface_base.meta
+  (** The type for driver metadata of an allocation. *)
+
+  type t
+  (** The type for driver-less interfaces. One value per GPU. *)
+
+  val vendor : int
+  (** [vendor] is the PCI vendor id the interface probes for:
+      [0x1002]. *)
+
+  val pci_ids : (int * int list) list
+  (** [pci_ids] are the supported PCI device ids as [(mask, ids)]
+      pairs (see {!System.pci_scan_bus}): the RDNA3 and RDNA4 consumer
+      parts. *)
+
+  val create : device_id:int -> t
+  (** [create ~device_id] claims and boots the [device_id]th supported
+      GPU on the PCI bus (in bus-address order). Raises [Failure] when
+      no such device exists, the device cannot be claimed, or boot
+      fails. *)
+
+  val compute_props :
+    gc_info:Amdev.gc_info ->
+    gc_ver:int * int * int ->
+    xccs:int ->
+    (string * int) list
+  (** [compute_props ~gc_info ~gc_ver ~xccs] synthesizes the topology
+      properties the kernel driver would publish for a device with the
+      discovered graphics-core geometry [gc_info], graphics-core
+      version [gc_ver] and [xccs] compute dies: the [props] of the
+      interface record. *)
+
+  val collect_interrupts : ?reset:bool -> ?drain_only:bool -> unit -> unit
+  (** [collect_interrupts ()] services the interrupt rings of every
+      open driver-less device: decoding and reporting pending entries
+      ([drain_only] discards them instead), and with [reset],
+      recovering devices that faulted — resetting their compute
+      processors, re-creating their compute queue, and rewinding their
+      timeline to the last completed value. Both default to
+      [false]. *)
+
+  val iface : t -> mem Iface.t
+  (** [iface t] is [t] as the interface record the device runtime
+      drives. *)
 end
 
 (** {1:runtime Device runtime} *)
 
 val create : string -> Tolk.Device.t
 (** [create name] opens the AMD GPU named [name] — ["AMD"] for the
-    first usable GPU node, ["AMD:n"] for the [n]th — through the Linux
-    kernel driver and is its device runtime. Kernels are compiled with
-    {!Compiler_amd} for the discovered architecture (overridable through
-    the environment, see {!Tolk.Gpu_target.amd_of_env}) and dispatched
-    through a hardware compute queue; host transfers ride the DMA
-    engine when the node provides one, and fall back to host-visible
-    device memory otherwise.
+    first usable GPU, ["AMD:n"] for the [n]th — and is its device
+    runtime. Kernels are compiled with {!Compiler_amd} for the
+    discovered architecture (overridable through the environment, see
+    {!Tolk.Gpu_target.amd_of_env}) and dispatched through a hardware
+    compute queue; host transfers ride the DMA engine when the device
+    provides one, and fall back to host-visible device memory
+    otherwise.
 
-    Raises [Failure] when the driver is unavailable, when [name] names
-    no GPU node, or when the GPU is unsupported (supported: gfx942,
-    gfx950, and the gfx11 and gfx12 generations, single-die only);
-    [Invalid_argument] when [name]'s device suffix is not a number.
-    After a fault or a stalled wait, {!Tolk.Device.synchronize} raises
-    [Failure] with the device's fault report, and keeps raising: the
-    device does not recover. *)
+    The [AMD_IFACE] environment variable selects how the GPU is
+    reached: [KFD] (the default) goes through the Linux kernel driver
+    ({!Kfd_iface}); [PCI] drives the GPU directly over PCI with no
+    kernel driver ({!Pci_iface}) — deliberately opt-in, never a
+    fallback, until that path has been validated on hardware.
+
+    Raises [Failure] when the selected interface cannot open the GPU
+    (no driver, no such device, or a failed driver-less boot), when
+    the GPU is unsupported (supported: gfx942, gfx950, and the gfx11
+    and gfx12 generations, single-die only; the PCI interface covers
+    the RDNA3/RDNA4 consumer parts of {!Pci_iface.pci_ids}), or when
+    [AMD_IFACE] names an unknown interface; [Invalid_argument] when
+    [name]'s device suffix is not a number. After a fault or a stalled
+    wait, {!Tolk.Device.synchronize} raises [Failure] with the
+    device's fault report; the kernel-driver interface keeps raising
+    (the device does not recover), while the driver-less interface
+    resets the engines and the device keeps working. *)

@@ -180,3 +180,132 @@ module Pci_device : sig
   (** [reset t] requests a function-level reset of the device through
       [sudo] in a subshell. Best effort: failures are not reported. *)
 end
+
+(** {1:iface Driver-less device interfaces} *)
+
+(** The device-independent half of a driver-less PCI GPU interface.
+
+    Owns what every such interface shares: probing the bus for a
+    supported device and taking exclusive ownership of it, reserving
+    the GPU virtual address range, and serving memory requests over the
+    device implementation's memory manager — device memory from its
+    physical allocator, host memory as pinned system pages mapped
+    through the GPU page tables, and peer memory through the owning
+    device's memory BAR.
+
+    A vendor backend supplies the device-implementation constructor and
+    everything hardware-specific (queues, interrupts, shutdown) on
+    top. *)
+module Pci_iface_base : sig
+  type ('impl, 'pt) t
+  (** The type for interface bases over a device implementation
+      ['impl] whose memory manager writes ['pt] page tables. *)
+
+  type ('impl, 'pt) meta = {
+    mapping : Tolk.Memory.virt_mapping;
+        (** The allocation's GPU mapping on its owner. *)
+    has_cpu_mapping : bool;
+        (** The process holds a CPU mapping of the memory, released
+            with the allocation. *)
+    hmemory : int;
+        (** The allocation's backing physical address: the first host
+            page for host memory, the device-local address
+            otherwise. *)
+    owner : ('impl, 'pt) t;  (** The interface that allocated it. *)
+  }
+  (** The type for the driver metadata of an allocation. *)
+
+  val create :
+    name:string ->
+    devpref:string ->
+    dev_id:int ->
+    vendor:int ->
+    devices:(int * int list) list ->
+    ?base_class:int ->
+    vram_bar:int ->
+    va_start:nativeint ->
+    va_size:int ->
+    dev_impl:(Pci_device.t -> 'impl) ->
+    mm:('impl -> 'pt Tolk.Memory.t) ->
+    unit ->
+    ('impl, 'pt) t
+  (** [create ~name ~devpref ~dev_id ~vendor ~devices ~vram_bar
+      ~va_start ~va_size ~dev_impl ~mm ()] opens the [dev_id]th PCI
+      device (in bus order) matching [vendor], the [(mask, ids)] pairs
+      of [devices] and [base_class] (see {!pci_scan_bus}): it takes
+      exclusive ownership of the device (see {!Pci_device.create},
+      with [devpref] prefixing the device lock), reserves the GPU
+      virtual range ([va_start], [va_size]) in this process, grows the
+      device-memory BAR [vram_bar] to its full size where the platform
+      allows, and hands the device to [dev_impl], whose result — the
+      booted device implementation — serves all further operations
+      through the memory manager [mm] selects from it.
+
+      [name] names the backend in messages. Raises [Failure] when no
+      matching device has index [dev_id], when the device cannot be
+      claimed, or when [dev_impl] fails. *)
+
+  val pci_dev : ('impl, 'pt) t -> Pci_device.t
+  (** [pci_dev t] is the owned PCI device. *)
+
+  val dev_impl : ('impl, 'pt) t -> 'impl
+  (** [dev_impl t] is the device implementation built by {!create}. *)
+
+  val mm : ('impl, 'pt) t -> 'pt Tolk.Memory.t
+  (** [mm t] is the device implementation's memory manager. *)
+
+  val count : ('impl, 'pt) t -> int
+  (** [count t] is the number of matching devices on the bus. *)
+
+  val is_bar_small : ('impl, 'pt) t -> bool
+  (** [is_bar_small t] is [true] iff the device-memory BAR kept the
+      legacy 256MB window, so only a slice of device memory is
+      CPU-reachable. *)
+
+  val alloc :
+    ('impl, 'pt) t ->
+    ?host:bool ->
+    ?uncached:bool ->
+    ?cpu_access:bool ->
+    ?contiguous:bool ->
+    ?force_devmem:bool ->
+    int ->
+    ('impl, 'pt) meta Hcq.Buffer.t
+  (** [alloc t size] allocates [size] bytes for the device and is the
+      mapped region. Device memory is the default; [host] allocates
+      pinned system pages instead, mapped into the GPU as coherent
+      uncached memory. [uncached] requests uncached device memory;
+      [cpu_access] host-visible memory — the buffer carries a CPU view
+      exactly when the memory is host-backed or [cpu_access] is set.
+      Uncached host-visible requests are served from system memory (as
+      is everything CPU-visible on a small-BAR device) unless
+      [force_devmem] insists on device memory; [contiguous] makes
+      host-backed memory physically contiguous. All default to
+      [false].
+
+      Device memory is sized in whole huge pages from 8MB up so the
+      tail does not fall back to 4KB translations; smaller requests
+      and system memory round to the page size.
+
+      Raises [Failure] when memory is exhausted or pages cannot be
+      pinned. *)
+
+  val free : ('impl, 'pt) t -> ('impl, 'pt) meta Hcq.Buffer.t -> unit
+  (** [free t b] releases [b]: an allocation of [t] returns its device
+      memory and CPU mapping; one owned by a peer interface is only
+      unmapped from [t]'s page tables. *)
+
+  val map : ('impl, 'pt) t -> ('impl, 'pt) meta Hcq.Buffer.t -> ('impl, 'pt) meta Hcq.Buffer.t
+  (** [map t b] maps the peer allocation [b] into [t]'s page tables at
+      its existing virtual address and is the buffer as [t] sees it.
+      Host-backed memory maps by its system pages; device memory
+      through the owner's memory BAR (see {!p2p_paddrs}). Raises
+      [Failure] when the owner's BAR does not expose its whole memory
+      (see {!is_bar_small}). *)
+
+  val p2p_paddrs :
+    ('impl, 'pt) t -> (int * int) list -> (int * int) list * Tolk.Memory.addr_space
+  (** [p2p_paddrs t paddrs] are the device-local [(paddr, size)] ranges
+      [paddrs] as a peer on the bus reaches them: offset into [t]'s
+      device-memory BAR, addressed as system memory. *)
+end

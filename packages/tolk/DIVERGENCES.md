@@ -67,6 +67,16 @@ campaign.
   shape, and driver module loads OOM without triggering the allocator's
   failure flush.
 
+## AMD runtime
+
+- **The driver-less PCI interface is opt-in (`AMD_IFACE=PCI`); the reference
+  selects it automatically when the kernel driver cannot open the device.**
+  The path boots the GPU by writing firmware and engine registers directly
+  and has never run on hardware — a wrong sequence can wedge the device
+  until a bus-level reset — so the kernel driver stays the only automatic
+  choice. Promotion criterion: automatic KFD→PCI fallback once the path has
+  been validated on hardware.
+
 ## Tolk extensions
 
 Code tolk carries that the reference does not. Every site has a comment
