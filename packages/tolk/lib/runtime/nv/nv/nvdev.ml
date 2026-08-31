@@ -6,6 +6,8 @@
   ---------------------------------------------------------------------------*)
 
 module Helpers = Tolk.Helpers
+module Memory = Tolk.Memory
+module Tlsf = Tolk.Tlsf
 module Mmio = Tolk_hcq.Hcq.Mmio
 module System = Tolk_hcq.System
 
@@ -110,8 +112,149 @@ module Nv_reg = struct
     write t ~value:(read t land lnot m) fields
 end
 
+(* Nv_page_table: nvdev.py NVPageTableEntry *)
+
+module Nv_page_table = struct
+  type t = { view : Mmio.t; paddr : int; lv : int }
+
+  let paddr pt = pt.paddr
+  let lv pt = pt.lv
+
+  (* The entry-format generation fixes the tree: five levels over a
+     49-bit space for version 2, six levels over a 57-bit space for
+     version 3. nvdev.py:143 *)
+  let geometry mmu_ver =
+    if mmu_ver = 3 then (56, [ 12; 21; 29; 38; 47; 56 ])
+    else (48, [ 12; 21; 29; 38; 47 ])
+
+  (* The descriptor field ranges run past bit 63 at the paired level,
+     so encoding and extraction work on a (low, high) word pair; a
+     value shifted near the top of the low word carries into the high
+     one. *)
+  let field d nm =
+    match List.assoc_opt nm (Nv_reg.fields d) with
+    | Some r -> r
+    | None ->
+        invalid_arg (Printf.sprintf "%s has no field %s" (Nv_reg.name d) nm)
+
+  let encode d values =
+    List.fold_left
+      (fun (w0, w1) (nm, v) ->
+        let lo, _ = field d nm in
+        let v = Int64.of_int v in
+        if lo >= 64 then (w0, Int64.logor w1 (Int64.shift_left v (lo - 64)))
+        else
+          ( Int64.logor w0 (Int64.shift_left v lo),
+            if lo = 0 then w1
+            else Int64.logor w1 (Int64.shift_right_logical v (64 - lo)) ))
+      (0L, 0L) values
+
+  let extract d nm (w0, w1) =
+    let lo, hi = field d nm in
+    let bits =
+      if lo >= 64 then Int64.shift_right_logical w1 (lo - 64)
+      else if lo = 0 then w0
+      else
+        Int64.logor
+          (Int64.shift_right_logical w0 lo)
+          (Int64.shift_left w1 (64 - lo))
+    in
+    Int64.to_int bits land ((1 lsl (hi - lo + 1)) - 1)
+
+  let ops ~vram ~mmu_ver ~pte ~pde ~dual_pde () =
+    let _, shifts = geometry mmu_ver in
+    let level_cnt = List.length shifts in
+    let pte_covers = Array.of_list (List.rev_map (fun s -> 1 lsl s) shifts) in
+    (* nvdev.py:36 _is_dual_pde: the next-to-leaf level packs two
+       64-bit words per logical entry. *)
+    let is_dual pt = pt.lv = level_cnt - 2 in
+    let words pt idx =
+      if is_dual pt then
+        (Mmio.read64 pt.view (16 * idx), Mmio.read64 pt.view ((16 * idx) + 8))
+      else (Mmio.read64 pt.view (8 * idx), 0L)
+    in
+    (* nvdev.py:58 is_page *)
+    let is_page pt idx =
+      pt.lv >= level_cnt - 1 || Int64.logand (fst (words pt idx)) 1L = 1L
+    in
+    (* nvdev.py:54 read_fields: page entries decode as PTEs, table
+       entries by their level's directory descriptor. *)
+    let descriptor pt idx =
+      if is_page pt idx then pte else if is_dual pt then dual_pde else pde
+    in
+    {
+      Memory.make =
+        (fun ~paddr ~lv ->
+          { view = Mmio.view vram ~off:paddr ~size:0x1000 (); paddr; lv });
+      set_entry =
+        (fun pt ~idx ~paddr ?(table = false) ?(uncached = false)
+             ?(aspace = Memory.Phys) ?snooped:_ ?frag:_ ~valid () ->
+          (* nvdev.py:38 set_entry *)
+          let w0, w1 =
+            if not table then
+              encode pte
+                ([
+                   ("valid", if valid then 1 else 0);
+                   ("address_sys", paddr lsr 12);
+                   ("aperture", if aspace = Memory.Sys then 2 else 0);
+                   ("kind", 6);
+                 ]
+                @
+                if mmu_ver = 3 then [ ("pcf", if uncached then 1 else 0) ]
+                else [ ("vol", if uncached then 1 else 0) ])
+            else
+              let small = if is_dual pt then "_small" else "" in
+              let sys = if mmu_ver = 3 then "" else "_sys" in
+              encode
+                (if is_dual pt then dual_pde else pde)
+                ([
+                   ("is_pte", 0);
+                   ("aperture" ^ small, if valid then 1 else 0);
+                   ("address" ^ small ^ sys, paddr lsr 12);
+                 ]
+                @
+                if mmu_ver = 3 then [ ("pcf" ^ small, 0b10) ]
+                else [ ("no_ats", 1) ])
+          in
+          if is_dual pt then begin
+            Mmio.write64 pt.view (16 * idx) w0;
+            Mmio.write64 pt.view ((16 * idx) + 8) w1
+          end
+          else Mmio.write64 pt.view (8 * idx) w0);
+      entry = (fun pt idx -> fst (words pt idx));
+      valid =
+        (fun pt idx ->
+          (* nvdev.py:61 valid *)
+          let w = words pt idx in
+          if is_page pt idx then extract pte "valid" w <> 0
+          else
+            extract
+              (if is_dual pt then dual_pde else pde)
+              (if is_dual pt then "aperture_small" else "aperture")
+              w
+            <> 0);
+      address =
+        (fun pt idx ->
+          (* nvdev.py:65 address *)
+          let small = if is_dual pt then "_small" else "" in
+          let sys =
+            if mmu_ver = 2 || pt.lv = level_cnt - 1 then "_sys" else ""
+          in
+          extract (descriptor pt idx)
+            ("address" ^ small ^ sys)
+            (words pt idx)
+          lsl 12);
+      is_page;
+      supports_huge_page =
+        (fun pt ~paddr ->
+          pt.lv >= level_cnt - 3 && paddr mod pte_covers.(pt.lv) = 0);
+      paddr = (fun pt -> pt.paddr);
+      lv = (fun pt -> pt.lv);
+    }
+end
+
 (* Devices: nvdev.py NVDev, without the layers that build on this core
-   (page tables and memory manager, firmware, falcons, GSP client). *)
+   (firmware, falcons, GSP client). *)
 
 type resolved = Register of Nv_reg.t | Constant of int
 
@@ -135,8 +278,13 @@ type t = {
   now_ms : unit -> int;
   bar1_base : int;
   alloc_sysmem : contiguous:bool -> int -> Mmio.t * int list;
-  palloc : int -> int;
+  mm : Nv_page_table.t Memory.t;
 }
+
+(* nvdev.py:70: one virtual address space shared by every device. *)
+let va_base = 0x1000000000
+let va_size = 1 lsl 44
+let va_allocator = lazy (Tlsf.create ~size:va_size ~base:va_base ())
 
 external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
@@ -189,7 +337,7 @@ let sleep_ms now_ms ms =
   done
 
 let setup ~pci_dev ~devfmt ~mmio ~map_vram ~rreg ~wreg:raw_wreg ~read_config
-    ~write_config_flush ~reset ~now_ms ~alloc_sysmem ~bar1_base ~palloc () =
+    ~write_config_flush ~reset ~now_ms ~alloc_sysmem ~bar1_base () =
   (* nvdev.py:92 wreg *)
   let wreg addr v =
     raw_wreg addr v;
@@ -242,11 +390,42 @@ let setup ~pci_dev ~devfmt ~mmio ~map_vram ~rreg ~wreg:raw_wreg ~read_config
   (* nvdev.py:123 _early_mmu_init *)
   include_regs "dev_vm" "tu102";
   include_regs "dev_mmu" (if mmu_ver = 3 then "gh100" else "tu102");
+  (* nvdev.py:128: the entry descriptors of the chip's format. *)
+  let ver = Printf.sprintf "NV_MMU_VER%d" mmu_ver in
+  let pte_t = reg (ver ^ "_PTE")
+  and pde_t = reg (ver ^ "_PDE")
+  and dual_pde_t = reg (ver ^ "_DUAL_PDE") in
   let vram_size =
     Nv_reg.read (reg "NV_PGC6_AON_SECURE_SCRATCH_GROUP_42") lsl 20
   in
   let vram = map_vram () in
   let large_bar = Mmio.size vram >= vram_size in
+  let va_bits, va_shifts = Nv_page_table.geometry mmu_ver in
+  let is_booting = ref true in
+  (* nvdev.py:146: the tail of vram is reserved for falcon structs. *)
+  let mm =
+    Memory.create
+      ~pt_ops:
+        (Nv_page_table.ops ~vram ~mmu_ver ~pte:pte_t ~pde:pde_t
+           ~dual_pde:dual_pde_t ())
+      ~vram_size:(vram_size - (64 lsl 20))
+      ~boot_size:(2 lsl 20) ~va_bits ~va_shifts ~va_base:0
+      ~palloc_ranges:
+        (List.map (fun x -> (x, x)) [ 512 lsl 20; 2 lsl 20; 4 lsl 10 ])
+      ~va_allocator:(Lazy.force va_allocator)
+      ~is_booting:(fun () -> !is_booting)
+      ~zero_vram:(fun ~paddr ~size ->
+        Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
+      ~reserve_ptable:(not large_bar) ~dbg_name:devfmt
+      ~on_range_mapped:(fun () ->
+        (* nvdev.py:72 on_range_mapped: invalidate the TLBs after
+           every mapping. *)
+        Nv_reg.write
+          (reg "NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE")
+          ~value:((1 lsl 0) lor (1 lsl 1) lor (1 lsl 6) lor (1 lsl 31))
+          [])
+      ()
+  in
   let t =
     {
       pci_dev;
@@ -263,26 +442,21 @@ let setup ~pci_dev ~devfmt ~mmio ~map_vram ~rreg ~wreg:raw_wreg ~read_config
       fmc_boot;
       vram_size;
       large_bar;
-      is_booting = ref true;
+      is_booting;
       is_err_state = ref false;
       now_ms;
       bar1_base;
       alloc_sysmem;
-      palloc;
+      mm;
     }
   in
   (* No booting state, the gsp client is reinited every run. *)
   t.is_booting := false;
   t
 
-let no_palloc devfmt _ =
-  failwith
-    (Printf.sprintf "nv %s: no device-memory allocator to serve boot memory"
-       devfmt)
-
 let make ?pci_dev ?read_config ?write_config_flush ?reset
-    ?(now_ms = monotonic_ms) ?alloc_sysmem ?(bar1_base = 0) ?palloc ~rreg ~wreg
-    ~mmio ~vram ~devfmt () =
+    ?(now_ms = monotonic_ms) ?alloc_sysmem ?(bar1_base = 0) ~rreg ~wreg ~mmio
+    ~vram ~devfmt () =
   let read_config =
     match (read_config, pci_dev) with
     | Some f, _ -> f
@@ -311,11 +485,10 @@ let make ?pci_dev ?read_config ?write_config_flush ?reset
         fun ~contiguous size ->
           System.Pci_device.alloc_sysmem ~contiguous size
   in
-  let palloc = match palloc with Some f -> f | None -> no_palloc devfmt in
   setup ~pci_dev ~devfmt ~mmio
     ~map_vram:(fun () -> vram)
     ~rreg ~wreg ~read_config ~write_config_flush ~reset ~now_ms ~alloc_sysmem
-    ~bar1_base ~palloc ()
+    ~bar1_base ()
 
 let create pci_dev =
   let devfmt = System.Pci_device.pcibus pci_dev in
@@ -333,7 +506,7 @@ let create pci_dev =
     ~alloc_sysmem:(fun ~contiguous size ->
       System.Pci_device.alloc_sysmem ~contiguous size)
     ~bar1_base:(fst (System.Pci_device.bar_info pci_dev 1))
-    ~palloc:(no_palloc devfmt) ()
+    ()
 
 let pci_dev t = t.pci_dev
 let devfmt t = t.devfmt
@@ -348,6 +521,7 @@ let mmu_ver t = t.mmu_ver
 let fmc_boot t = t.fmc_boot
 let is_booting t = !(t.is_booting)
 let set_is_booting t v = t.is_booting := v
+let mm t = t.mm
 let is_err_state t = !(t.is_err_state)
 let set_err_state t v = t.is_err_state := v
 let now_ms t = t.now_ms ()
@@ -373,7 +547,7 @@ let alloc_boot_mem t ?data ?(contiguous = false) ?sysmem size =
       let view, sysaddr = t.alloc_sysmem ~contiguous size in
       (view, None, sysaddr)
     else
-      let paddr = t.palloc sz in
+      let paddr = Memory.palloc t.mm sz () in
       let view = Mmio.view t.vram ~off:paddr ~size:sz () in
       let sysaddr =
         List.init (sz / 0x1000) (fun i -> t.bar1_base + paddr + (i * 0x1000))

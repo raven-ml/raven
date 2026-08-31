@@ -104,7 +104,63 @@ module Nv_reg : sig
       native [int]. *)
 end
 
+(** {1:pt Page tables} *)
+
+(** Page tables in device memory.
+
+    Implements {!Tolk.Memory.pt_ops} over 4KB page tables stored in
+    VRAM, encoding entries with the bitfield descriptors of the chip's
+    page-table format (see {!mmu_ver}): version 2 spans five levels
+    over a 49-bit virtual space, version 3 six levels over a 57-bit
+    one. Entries are single 64-bit words except at the next-to-leaf
+    level, where each logical entry is a pair of words: a directory
+    entry there describes both a small-page and a large-page child
+    table, and its small-page fields sit past bit 63, in the second
+    word. Entry words are read and written as volatile 64-bit accesses
+    through the VRAM mapping. *)
+module Nv_page_table : sig
+  type t
+  (** The type for views of one page table. *)
+
+  val paddr : t -> int
+  (** [paddr pt] is the physical address of the page table [pt]. *)
+
+  val lv : t -> int
+  (** [lv pt] is the level of the page table [pt] in the tree. *)
+
+  val ops :
+    vram:Tolk_hcq.Hcq.Mmio.t ->
+    mmu_ver:int ->
+    pte:Nv_reg.t ->
+    pde:Nv_reg.t ->
+    dual_pde:Nv_reg.t ->
+    unit ->
+    t Tolk.Memory.pt_ops
+  (** [ops ~vram ~mmu_ver ~pte ~pde ~dual_pde ()] are page-table
+      operations over tables stored in [vram], composing entries from
+      the bitfield descriptors [pte], [pde] and [dual_pde] of the
+      format generation [mmu_ver] ([2] or [3]).
+
+      Page entries carry the generic-memory kind and point either at
+      device memory or, for the {!Tolk.Memory.Sys} address space, at
+      coherent system memory; an uncached mapping sets the format's
+      uncached bit. Directory entries always point at device memory;
+      their validity is their aperture field, so an invalidated
+      directory entry reads as invalid without a dedicated bit. The
+      entries ignore the manager's snoop and TLB-fragment hints, which
+      have no bits in this format. The raw {!Tolk.Memory.pt_ops.entry}
+      accessor exposes the first word of a paired entry. *)
+end
+
 (** {1:devices Devices} *)
+
+val va_base : int
+(** [va_base] is the base of the virtual address space shared by every
+    device's memory manager. *)
+
+val va_size : int
+(** [va_size] is the size of the shared virtual address space in
+    bytes. *)
 
 type t
 (** The type for driver-less NVIDIA GPU devices. *)
@@ -121,6 +177,15 @@ val create : Tolk_hcq.System.Pci_device.t -> t
     format and firmware directory are selected for it, VRAM is sized
     from the firmware scratch register, and the VRAM BAR is mapped.
 
+    The device memory manager is created over the chip's page-table
+    format: a 2MB boot region, a dedicated page-table region when VRAM
+    exceeds the VRAM BAR, the main region behind them, and the last
+    64MB of VRAM held out for the structures the boot firmware needs
+    at fixed physical addresses. All devices share one virtual address
+    space (see {!va_base}); every mapping ends by writing the MMU
+    invalidate register so the device's TLBs never serve stale
+    entries.
+
     Raises [Failure] on an unsupported chip (naming the architecture
     and boot id) or when a BAR cannot be mapped. *)
 
@@ -132,7 +197,6 @@ val make :
   ?now_ms:(unit -> int) ->
   ?alloc_sysmem:(contiguous:bool -> int -> Tolk_hcq.Hcq.Mmio.t * int list) ->
   ?bar1_base:int ->
-  ?palloc:(int -> int) ->
   rreg:(int -> int) ->
   wreg:(int -> int -> unit) ->
   mmio:Tolk_hcq.Hcq.Mmio.t ->
@@ -149,16 +213,19 @@ val make :
 
     This is the device's injection seam: {!create} is the PCI client
     of the same state, while tests and tooling supply scripted
-    register access and anonymous-memory mappings. The PCI actions of
-    the recovery path — [read_config] and [write_config_flush] on
-    configuration space, the full [reset] — and the boot-memory seams
-    — [alloc_sysmem] for pinned system memory, [bar1_base] for the
-    VRAM BAR's bus address (defaults to [0]), [palloc] for device
-    memory (defaults to raising) — default to the corresponding
-    operations of [pci_dev] when given and to inert stand-ins
-    otherwise. [now_ms] is the monotonic millisecond clock behind
-    {!now_ms} (defaults to the system's); the reset settle delay waits
-    on it, so injecting a clock makes the delay scriptable. *)
+    register access and anonymous-memory mappings. The memory manager
+    is created over [vram] exactly as in {!create}, so the VRAM size
+    read from the scratch register must exceed the tail reservation
+    plus the boot region and [vram] must reach the low addresses where
+    page tables live. The PCI actions of the recovery path —
+    [read_config] and [write_config_flush] on configuration space, the
+    full [reset] — and the boot-memory seams — [alloc_sysmem] for
+    pinned system memory, [bar1_base] for the VRAM BAR's bus address
+    (defaults to [0]) — default to the corresponding operations of
+    [pci_dev] when given and to inert stand-ins otherwise. [now_ms] is
+    the monotonic millisecond clock behind {!now_ms} (defaults to the
+    system's); the reset settle delay waits on it, so injecting a
+    clock makes the delay scriptable. *)
 
 val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
 (** [pci_dev t] is the underlying PCI device; [None] for devices built
@@ -200,6 +267,9 @@ val fmc_boot : t -> bool
 (** [fmc_boot t] is [true] when the chip boots firmware through the
     secure chain-of-trust microcontroller rather than the falcon
     bootloader. *)
+
+val mm : t -> Nv_page_table.t Tolk.Memory.t
+(** [mm t] is the device's memory manager. *)
 
 val is_booting : t -> bool
 (** [is_booting t] is [true] while the device is booting; only

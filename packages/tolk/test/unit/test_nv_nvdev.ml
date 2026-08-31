@@ -7,12 +7,16 @@
    hardware: register resolution over the included families, named
    bitfield access against hand-computed words, chip detection and the
    armed-firmware-region recovery over scripted register read-backs,
-   VRAM sizing, and boot-memory allocation over an anonymous mapping
-   standing in for the VRAM BAR. *)
+   VRAM sizing, page-table entry encoding for both format generations,
+   the memory manager's regions and mappings, and boot-memory
+   allocation over an anonymous mapping standing in for the VRAM
+   BAR. *)
 
 open Windtrap
 module Nvdev = Tolk_nv.Nvdev
 module Nv_reg = Nvdev.Nv_reg
+module Nv_page_table = Nvdev.Nv_page_table
+module Memory = Tolk.Memory
 module Mmio = Tolk_hcq.Hcq.Mmio
 module File_io = Tolk_hcq.Hcq.File_io
 
@@ -37,7 +41,9 @@ let scratch_42_addr = 0x1183a4
    read hooks and a write log, an anonymous mapping standing in for the
    VRAM BAR, counters for the PCI actions, and a clock that advances one
    millisecond per reading so the reset settle delay consumes no wall
-   time. *)
+   time. The default 80MB of VRAM leaves the memory manager 16MB past
+   its 64MB tail reservation: a 2MB boot region and 14MB of main
+   memory, whose first allocation lands at 0x200000. *)
 
 type fake = {
   dev : Nvdev.t;
@@ -47,12 +53,11 @@ type fake = {
   resets : int ref;
   cfg_writes : (int * int * int) list ref;
   clock : int ref;
-  pallocs : int list ref;
   sys_reqs : (bool * int) list ref;
 }
 
 let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
-    ?(scratch_mb = 2) ?(vram_bytes = 0x400000) ?(bar1_base = 0x40000000)
+    ?(scratch_mb = 80) ?(vram_bytes = 0x5000000) ?(bar1_base = 0x40000000)
     ?(cfg = 0x7) ?(pre = fun ~reads:_ ~resets:_ -> ()) f =
   with_fake_vram vram_bytes (fun fvram ->
       let store = Hashtbl.create 16 in
@@ -62,8 +67,6 @@ let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
       let cfg_writes = ref [] in
       let cfg_val = ref cfg in
       let clock = ref 0 in
-      let pallocs = ref [] in
-      let next_paddr = ref 0x1000 in
       let sys_reqs = ref [] in
       Hashtbl.replace store boot_0_addr boot0;
       Hashtbl.replace store boot_42_addr ((arch lsl 24) lor (impl lsl 20));
@@ -91,21 +94,30 @@ let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
           ~alloc_sysmem:(fun ~contiguous size ->
             sys_reqs := (contiguous, size) :: !sys_reqs;
             (Mmio.view fvram ~off:0x100000 ~size:0x1000 (), [ 0xaa000; 0xab000 ]))
-          ~bar1_base
-          ~palloc:(fun sz ->
-            pallocs := sz :: !pallocs;
-            let p = !next_paddr in
-            next_paddr := p + sz;
-            p)
-          ~rreg ~wreg
+          ~bar1_base ~rreg ~wreg
           ~mmio:(Mmio.view fvram ~off:0 ~size:0x1000 ())
           ~vram:fvram ~devfmt:"test" ()
       in
-      f { dev; fvram; store; log; resets; cfg_writes; clock; pallocs; sys_reqs })
+      f { dev; fvram; store; log; resets; cfg_writes; clock; sys_reqs })
 
 (* The chronological write log. *)
 let writes fd = List.rev !(fd.log)
 let cfg_writes fd = List.rev !(fd.cfg_writes)
+
+(* Page-table operations resolved against the device's own entry
+   descriptors, building tables in a scratch corner of the fake VRAM
+   clear of the manager's regions. *)
+let pt_ops fd =
+  let ver = Printf.sprintf "NV_MMU_VER%d" (Nvdev.mmu_ver fd.dev) in
+  Nv_page_table.ops ~vram:fd.fvram ~mmu_ver:(Nvdev.mmu_ver fd.dev)
+    ~pte:(Nvdev.reg fd.dev (ver ^ "_PTE"))
+    ~pde:(Nvdev.reg fd.dev (ver ^ "_PDE"))
+    ~dual_pde:(Nvdev.reg fd.dev (ver ^ "_DUAL_PDE"))
+    ()
+
+(* The MMU-invalidate poke issued after every mapping: all_va, all_pdb,
+   sys_membar and trigger, at dev_vm's 0xb80000 + 0x30b0. *)
+let invalidate_write = (0xb830b0, 0x80000043)
 
 let () =
   run "Nvdev"
@@ -282,13 +294,238 @@ let () =
       group "vram"
         [
           test "sizes vram from the scratch register" (fun () ->
-              with_fake_dev ~scratch_mb:2 ~vram_bytes:0x400000 (fun fd ->
-                  equal int 0x200000 (Nvdev.vram_size fd.dev);
+              with_fake_dev ~scratch_mb:80 ~vram_bytes:0x5000000 (fun fd ->
+                  equal int 0x5000000 (Nvdev.vram_size fd.dev);
                   equal bool true (Nvdev.large_bar fd.dev)));
           test "a bar smaller than vram is not large" (fun () ->
-              with_fake_dev ~scratch_mb:8 ~vram_bytes:0x400000 (fun fd ->
-                  equal int 0x800000 (Nvdev.vram_size fd.dev);
+              with_fake_dev ~scratch_mb:128 ~vram_bytes:0x1000000 (fun fd ->
+                  equal int 0x8000000 (Nvdev.vram_size fd.dev);
                   equal bool false (Nvdev.large_bar fd.dev)));
+        ];
+      (* Expected entry words are hand-computed from the descriptor
+         field positions in the pinned clone's generated register maps
+         (tinygrad/runtime/autogen/nv_regs/dev_mmu.py):
+         tu102 NV_MMU_VER2_PTE:468 valid(0) aperture(1,2) vol(3)
+         address_sys(8,53) kind(56,63); NV_MMU_VER2_PDE:424
+         aperture(1,2) no_ats(5) address_sys(8,53);
+         NV_MMU_VER2_DUAL_PDE:442 no_ats(5) aperture_small(65,66)
+         address_small_sys(72,117); gh100 NV_MMU_VER3_PTE:834 valid(0)
+         aperture(1,2) pcf(3,7) kind(8,11) address_sys(12,51);
+         NV_MMU_VER3_PDE:771 aperture(1,2) pcf(3,5) address(12,51);
+         NV_MMU_VER3_DUAL_PDE:794 aperture_small(65,66) pcf_small(67,69)
+         address_small(76,115). *)
+      group "page-table entries"
+        [
+          test "version-2 page entries" (fun () ->
+              with_fake_dev (fun fd ->
+                  let ops = pt_ops fd in
+                  (* Leaf level of the five-level tree. *)
+                  let pt = ops.Memory.make ~paddr:0x10000 ~lv:4 in
+                  ops.Memory.set_entry pt ~idx:3 ~paddr:0xabc000 ~valid:true ();
+                  equal int64 0x06000000000abc01L
+                    (Mmio.read64 fd.fvram (0x10000 + (3 * 8)));
+                  equal bool true (ops.Memory.valid pt 3);
+                  equal bool true (ops.Memory.is_page pt 3);
+                  equal int 0xabc000 (ops.Memory.address pt 3);
+                  ops.Memory.set_entry pt ~idx:4 ~paddr:0xabc000
+                    ~aspace:Memory.Sys ~uncached:true ~valid:true ();
+                  equal int64 0x06000000000abc0dL
+                    (Mmio.read64 fd.fvram (0x10000 + (4 * 8)))));
+          test "version-2 directory entries" (fun () ->
+              with_fake_dev (fun fd ->
+                  let ops = pt_ops fd in
+                  let pt = ops.Memory.make ~paddr:0x10000 ~lv:1 in
+                  ops.Memory.set_entry pt ~idx:0 ~paddr:0x5000 ~table:true
+                    ~valid:true ();
+                  equal int64 0x522L (Mmio.read64 fd.fvram 0x10000);
+                  equal bool true (ops.Memory.valid pt 0);
+                  equal bool false (ops.Memory.is_page pt 0);
+                  equal int 0x5000 (ops.Memory.address pt 0);
+                  (* An invalidated directory entry keeps its address
+                     bits; the zero aperture alone makes it invalid. *)
+                  ops.Memory.set_entry pt ~idx:1 ~paddr:0x5000 ~table:true
+                    ~valid:false ();
+                  equal int64 0x520L (Mmio.read64 fd.fvram (0x10000 + 8));
+                  equal bool false (ops.Memory.valid pt 1)));
+          test "version-2 paired entries at the next-to-leaf level"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let ops = pt_ops fd in
+                  let pt = ops.Memory.make ~paddr:0x11000 ~lv:3 in
+                  ops.Memory.set_entry pt ~idx:1 ~paddr:0x6000 ~table:true
+                    ~valid:true ();
+                  equal int64 0x20L (Mmio.read64 fd.fvram (0x11000 + 16));
+                  equal int64 0x602L (Mmio.read64 fd.fvram (0x11000 + 24));
+                  equal bool true (ops.Memory.valid pt 1);
+                  equal bool false (ops.Memory.is_page pt 1);
+                  equal int 0x6000 (ops.Memory.address pt 1);
+                  (* A page at this level is a whole 2MB mapping: the
+                     entry is a plain page word in the first slot. *)
+                  ops.Memory.set_entry pt ~idx:2 ~paddr:0x200000 ~valid:true ();
+                  equal int64 0x0600000000020001L
+                    (Mmio.read64 fd.fvram (0x11000 + 32));
+                  equal int64 0L (Mmio.read64 fd.fvram (0x11000 + 40));
+                  equal bool true (ops.Memory.is_page pt 2);
+                  equal bool true (ops.Memory.valid pt 2)));
+          test "version-3 entries" (fun () ->
+              with_fake_dev ~arch:0x1b (fun fd ->
+                  let ops = pt_ops fd in
+                  let leaf = ops.Memory.make ~paddr:0x10000 ~lv:5 in
+                  ops.Memory.set_entry leaf ~idx:0 ~paddr:0xabc000 ~valid:true
+                    ();
+                  equal int64 0xabc601L (Mmio.read64 fd.fvram 0x10000);
+                  equal int 0xabc000 (ops.Memory.address leaf 0);
+                  ops.Memory.set_entry leaf ~idx:1 ~paddr:0xabc000
+                    ~aspace:Memory.Sys ~uncached:true ~valid:true ();
+                  equal int64 0xabc60dL (Mmio.read64 fd.fvram (0x10000 + 8));
+                  let pde = ops.Memory.make ~paddr:0x11000 ~lv:1 in
+                  ops.Memory.set_entry pde ~idx:0 ~paddr:0x5000 ~table:true
+                    ~valid:true ();
+                  equal int64 0x5012L (Mmio.read64 fd.fvram 0x11000);
+                  equal int 0x5000 (ops.Memory.address pde 0);
+                  (* The paired level puts the whole directory entry in
+                     the second word. *)
+                  let dual = ops.Memory.make ~paddr:0x12000 ~lv:4 in
+                  ops.Memory.set_entry dual ~idx:0 ~paddr:0x6000 ~table:true
+                    ~valid:true ();
+                  equal int64 0L (Mmio.read64 fd.fvram 0x12000);
+                  equal int64 0x6012L (Mmio.read64 fd.fvram (0x12000 + 8));
+                  equal bool true (ops.Memory.valid dual 0);
+                  equal bool false (ops.Memory.is_page dual 0);
+                  equal int 0x6000 (ops.Memory.address dual 0)));
+          test "huge pages need a deep-enough level and alignment"
+            (fun () ->
+              with_fake_dev ~arch:0x1b (fun fd ->
+                  let ops = pt_ops fd in
+                  let at lv = ops.Memory.make ~paddr:0x10000 ~lv in
+                  equal bool false
+                    (ops.Memory.supports_huge_page (at 2) ~paddr:0);
+                  equal bool true
+                    (ops.Memory.supports_huge_page (at 3) ~paddr:(1 lsl 29));
+                  equal bool true
+                    (ops.Memory.supports_huge_page (at 4) ~paddr:0x200000);
+                  equal bool false
+                    (ops.Memory.supports_huge_page (at 4) ~paddr:0x1000);
+                  equal bool true
+                    (ops.Memory.supports_huge_page (at 5) ~paddr:0x1000)));
+        ];
+      group "memory manager"
+        [
+          test "the tree geometry follows the format generation" (fun () ->
+              with_fake_dev (fun fd ->
+                  let mm = Nvdev.mm fd.dev in
+                  equal int 5 (Memory.level_cnt mm);
+                  equal int 48 (Memory.va_bits mm);
+                  equal int 4 (Memory.pte_cnt mm 0);
+                  equal int 256 (Memory.pte_cnt mm 3);
+                  equal int 0x200000 (Memory.pte_covers mm 3);
+                  let root = Memory.root_page_table mm in
+                  equal int 0 (Nv_page_table.paddr root);
+                  equal int 0 (Nv_page_table.lv root));
+              with_fake_dev ~arch:0x1b (fun fd ->
+                  let mm = Nvdev.mm fd.dev in
+                  equal int 6 (Memory.level_cnt mm);
+                  equal int 56 (Memory.va_bits mm);
+                  equal int 2 (Memory.pte_cnt mm 0);
+                  equal int 256 (Memory.pte_cnt mm 4);
+                  equal int 0x200000 (Memory.pte_covers mm 4)));
+          test "regions: tail reservation, boot flip, zeroed pallocs"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let mm = Nvdev.mm fd.dev in
+                  (* 80MB of VRAM less the 64MB tail reservation. *)
+                  equal int 0x1000000 (Memory.vram_size mm);
+                  equal bool false (Nvdev.is_booting fd.dev);
+                  raises_match
+                    (Exn.invalid_arg ~substring:"only boot memory")
+                    (fun () -> Memory.palloc mm 0x1000 ~boot:true ());
+                  (* The main region starts past the 2MB boot region and
+                     hands out zeroed pages. *)
+                  Mmio.write64 fd.fvram 0x200100 0xdeadbeefL;
+                  equal int 0x200000 (Memory.palloc mm 0x1000 ());
+                  equal int64 0L (Mmio.read64 fd.fvram 0x200100)));
+          test "the virtual window is shared and starts at 64GB" (fun () ->
+              equal int 0x1000000000 Nvdev.va_base;
+              equal int (1 lsl 44) Nvdev.va_size;
+              with_fake_dev (fun fd ->
+                  let va = Memory.alloc_vaddr (Nvdev.mm fd.dev) 0x1000 () in
+                  equal bool true
+                    (va >= Nvdev.va_base && va < Nvdev.va_base + Nvdev.va_size)));
+          test "mapping writes exact table images and invalidates the TLBs"
+            (fun () ->
+              with_fake_dev (fun fd ->
+                  let mm = Nvdev.mm fd.dev in
+                  let vaddr = 0x1000000000 in
+                  let vm =
+                    Memory.map_range mm ~vaddr ~size:0x2000
+                      [ (0x400000, 0x2000) ]
+                      Memory.Phys ()
+                  in
+                  equal int vaddr vm.Memory.va_addr;
+                  equal (list int)
+                    [ 0x0; 0x200000; 0x201000; 0x202000; 0x203000 ]
+                    (List.map Nv_page_table.paddr
+                       (Memory.page_tables mm ~vaddr ~size:0x2000));
+                  equal int64 0x20022L (Mmio.read64 fd.fvram 0x0);
+                  equal int64 0x20122L (Mmio.read64 fd.fvram 0x200000);
+                  equal int64 0x20222L
+                    (Mmio.read64 fd.fvram (0x201000 + (128 * 8)));
+                  equal int64 0x20L (Mmio.read64 fd.fvram 0x202000);
+                  equal int64 0x20302L (Mmio.read64 fd.fvram (0x202000 + 8));
+                  equal int64 0x0600000000040001L
+                    (Mmio.read64 fd.fvram 0x203000);
+                  equal int64 0x0600000000040101L
+                    (Mmio.read64 fd.fvram (0x203000 + 8));
+                  equal (list (pair int int)) [ invalidate_write ] (writes fd)));
+          test "a huge page maps as one paired page entry" (fun () ->
+              with_fake_dev ~arch:0x1b (fun fd ->
+                  let mm = Nvdev.mm fd.dev in
+                  let vaddr = 0x1000000000 in
+                  let (_ : Memory.virt_mapping) =
+                    Memory.map_range mm ~vaddr ~size:0x200000
+                      [ (0x400000, 0x200000) ]
+                      Memory.Phys ()
+                  in
+                  equal int64 0x200012L (Mmio.read64 fd.fvram 0x0);
+                  equal int64 0x201012L (Mmio.read64 fd.fvram 0x200000);
+                  equal int64 0x202012L (Mmio.read64 fd.fvram 0x201000);
+                  equal int64 0x203012L
+                    (Mmio.read64 fd.fvram (0x202000 + (128 * 8)));
+                  equal int64 0x400601L (Mmio.read64 fd.fvram 0x203000);
+                  equal int64 0L (Mmio.read64 fd.fvram (0x203000 + 8));
+                  equal (list (pair int int)) [ invalidate_write ] (writes fd);
+                  (* Unmapping clears the page, frees the emptied chain
+                     back to the root and does not invalidate. *)
+                  Memory.unmap_range mm ~vaddr ~size:0x200000;
+                  equal int64 0x600L (Mmio.read64 fd.fvram 0x0);
+                  equal (list (pair int int)) [ invalidate_write ] (writes fd)));
+          test "valloc walks the allocation tiers" (fun () ->
+              with_fake_dev (fun fd ->
+                  let mm = Nvdev.mm fd.dev in
+                  let vm = Memory.valloc mm 0x201000 () in
+                  (* One 2MB range, then a 4KB one for the tail. *)
+                  equal (list (pair int int))
+                    [ (0x200000, 0x200000); (0x400000, 0x1000) ]
+                    vm.Memory.paddrs;
+                  equal bool true
+                    (vm.Memory.va_addr >= Nvdev.va_base
+                    && vm.Memory.va_addr < Nvdev.va_base + Nvdev.va_size);
+                  equal int 0 (vm.Memory.va_addr land 0x1fffff);
+                  Memory.vfree mm vm));
+          test "a small bar reserves a page-table region" (fun () ->
+              with_fake_dev ~scratch_mb:128 (fun fd ->
+                  (* 128MB of VRAM behind an 80MB BAR: page tables get a
+                     1MB carve-out behind the boot region and the main
+                     region starts after it. *)
+                  let mm = Nvdev.mm fd.dev in
+                  equal int 0x4000000 (Memory.vram_size mm);
+                  equal int 0x200000 (Memory.palloc mm 0x1000 ~ptable:true ());
+                  equal int 0x300000 (Memory.palloc mm 0x1000 ()));
+              with_fake_dev (fun fd ->
+                  (* A large bar keeps page tables in the main region. *)
+                  let mm = Nvdev.mm fd.dev in
+                  equal int 0x200000 (Memory.palloc mm 0x1000 ~ptable:true ());
+                  equal int 0x201000 (Memory.palloc mm 0x1000 ())));
         ];
       group "armed-region recovery"
         [
@@ -326,13 +563,14 @@ let () =
                     Nvdev.alloc_boot_mem fd.dev
                       ~data:(Bytes.of_string "BOOTMEM!") 0x1800
                   in
-                  equal (option int) (Some 0x1000) paddr;
-                  equal (list int) [ 0x2000 ] !(fd.pallocs);
+                  (* The manager's main region starts past the 2MB boot
+                     region. *)
+                  equal (option int) (Some 0x200000) paddr;
                   equal int 0x2000 (Mmio.size view);
-                  equal (list int) [ 0x40001000; 0x40002000 ] sysaddr;
+                  equal (list int) [ 0x40200000; 0x40201000 ] sysaddr;
                   equal string "BOOTMEM!"
                     (Bytes.to_string
-                       (Mmio.read_bytes fd.fvram ~off:0x1000 ~len:8))));
+                       (Mmio.read_bytes fd.fvram ~off:0x200000 ~len:8))));
           test "system memory keeps the raw size and has no paddr"
             (fun () ->
               with_fake_dev (fun fd ->
@@ -348,14 +586,16 @@ let () =
                     (Bytes.to_string
                        (Mmio.read_bytes fd.fvram ~off:0x100000 ~len:4))));
           test "a small bar defaults to system memory" (fun () ->
-              with_fake_dev ~scratch_mb:8 (fun fd ->
+              with_fake_dev ~scratch_mb:128 (fun fd ->
                   let _, paddr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
                   equal (option int) None paddr;
                   equal int 1 (List.length !(fd.sys_reqs));
-                  (* Forcing device memory overrides the default. *)
+                  (* Forcing device memory overrides the default; the
+                     main region sits past the boot region and the 1MB
+                     page-table carve-out. *)
                   let _, paddr, _ =
                     Nvdev.alloc_boot_mem fd.dev ~sysmem:false 0x1000
                   in
-                  equal (option int) (Some 0x1000) paddr));
+                  equal (option int) (Some 0x300000) paddr));
         ];
     ]
