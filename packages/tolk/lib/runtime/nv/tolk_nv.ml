@@ -1070,7 +1070,15 @@ module Nvk_iface = struct
     let pick name candidates =
       match List.find_opt (fun c -> List.mem c classes) candidates with
       | Some c -> c
-      | None -> failwith ("setup_usermode: no supported " ^ name ^ " class")
+      | None ->
+          failwith
+            (Printf.sprintf
+               "setup_usermode: no supported %s class: wanted one of [%s], GPU \
+                advertises [%s]"
+               name
+               (String.concat "; "
+                  (List.map (Printf.sprintf "0x%x") candidates))
+               (String.concat "; " (List.map (Printf.sprintf "0x%x") classes)))
     in
     let usermode_class =
       pick "usermode" [ Defs.hopper_usermode_a; Defs.turing_usermode_a ]
