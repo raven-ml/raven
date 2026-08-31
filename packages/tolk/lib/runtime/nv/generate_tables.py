@@ -21,8 +21,12 @@ curated as version-dependent stops differing, so a reference pin move that
 shifts the delta set fails loudly instead of silently curating.
 """
 
+import ast
 import ctypes
+import importlib
+import inspect
 import os
+import re
 import subprocess
 import sys
 
@@ -30,9 +34,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PIN = os.path.join(_HERE, "..", "..", "..", "..", "..", "_tinygrad")
 sys.path.insert(0, _PIN)
 
-from tinygrad.runtime.autogen import nv_570, nv_580, nv_610  # noqa: E402
+from tinygrad import helpers  # noqa: E402
+from tinygrad.runtime.autogen import nv, nv_570, nv_580, nv_610  # noqa: E402
+import tinygrad.runtime.autogen.nv_regs as nv_regs  # noqa: E402
 
 MODULES = [nv_570, nv_580, nv_610]
+
+_IP_PY = os.path.join(_PIN, "tinygrad", "runtime", "support", "nv", "ip.py")
 
 PIN_COMMIT = subprocess.run(
     ["git", "-C", _PIN, "rev-parse", "HEAD"],
@@ -309,7 +317,7 @@ STRUCTS = [
     ("Uvm_gpu_mapping_attributes", "UvmGpuMappingAttributes",
      ["gpuUuid/region", "gpuMappingType"]),
 ]
-RENAMES = {"type": "typ"}
+RENAMES = {"type": "typ", "function": "func"}
 
 # The driver-less tier reads this structure through an RPC layer that is
 # pinned to the 570-generation layouts, so it is emitted from that generation
@@ -411,6 +419,25 @@ def array_spec(cls, field):
     return off, ctypes.sizeof(typ._type_), typ._length_
 
 
+def bitfield_bytepair(cls, field):
+    """(offset, byte length) of a low-aligned bitfield.
+
+    Only bit_off 0 bitfields are representable as a plain (offset, size) pair;
+    they occupy the low ceil(width/8) bytes of their storage, so writing that
+    many bytes sets the field for any value it can hold (the higher bits in
+    those bytes belong to reserved fields, cleared to zero). A pin move that
+    shifts such a field off a byte boundary aborts generation loudly.
+    """
+    entry = next((f for f in cls._real_fields_ if f[0] == field), None)
+    if entry is None or len(entry) != 5:
+        raise ValueError(f"{cls.__name__}.{field}: not a bitfield")
+    _name, _typ, off, bit_width, bit_off = entry
+    if bit_off != 0:
+        raise ValueError(
+            f"{cls.__name__}.{field}: bit offset {bit_off} is not byte-aligned")
+    return off, (bit_width + 7) // 8
+
+
 def field_lines(cls, fields, indent="  "):
     lines = []
     for spec in fields:
@@ -426,6 +453,14 @@ def field_lines(cls, fields, indent="  "):
             off, size = region_pair(cls, field)
             lines.append(
                 f"{indent}let {emit_name(field)} = ({ml_int(off)}, {ml_int(size)})")
+        elif spec.endswith("/bits"):
+            outer, inner = spec.removesuffix("/bits").split(".")
+            outer_off, _ = region_pair(cls, outer)
+            _, typ, _ = struct_entry(cls, outer)
+            off, size = bitfield_bytepair(typ, inner)
+            lines.append(
+                f"{indent}let {emit_name(outer)}_{emit_name(inner)} = "
+                f"({ml_int(outer_off + off)}, {ml_int(size)})")
         elif "." in spec:
             outer, inner = spec.split(".")
             outer_off, _ = region_pair(cls, outer)
@@ -707,14 +742,372 @@ type t = {
     return lines[:-1]
 
 
+# GSP driver-less tier (nv_reg_defs.ml, nv_gsp_defs.ml)
+#
+# The GSP tier is pinned to the 570-generation layouts (ip.py imports nv_570
+# unconditionally and the nv module carries no version dispatch), so both
+# modules are emitted from a single reference generation. The census below is
+# checked against the true `nv.`-qualified usage in ip.py on every run, so a
+# reference pin that adds, drops, or renames a used symbol fails loudly.
+
+# GSP structures used by ip.py, as (module title, reference name, used fields).
+# Field specs follow field_lines: "f" scalar, "f/region" byte region, "f/array"
+# offset/element-size/count, "outer.inner/bits" a low-aligned nested bitfield.
+GSP_STRUCTS = [
+    ("Msgq_tx_header", "msgqTxHeader",
+     ["version", "size", "entryOff", "msgSize", "msgCount", "writePtr", "flags",
+      "rxHdrOff"]),
+    ("Rpc_message_header", "rpc_message_header_v",
+     ["signature", "rpc_result", "rpc_result_private", "header_version",
+      "function", "length"]),
+    ("Gsp_msg_queue_element", "GSP_MSG_QUEUE_ELEMENT",
+     ["elemCount", "seqNum", "checkSum"]),
+    ("Gsp_fw_wpr_meta", "GspFwWprMeta",
+     ["magic", "revision", "sysmemAddrOfRadix3Elf", "sizeOfRadix3Elf",
+      "sysmemAddrOfBootloader", "sizeOfBootloader", "bootloaderCodeOffset",
+      "bootloaderDataOffset", "bootloaderManifestOffset", "sysmemAddrOfSignature",
+      "sizeOfSignature", "gspFwRsvdStart", "nonWprHeapOffset", "nonWprHeapSize",
+      "gspFwWprStart", "gspFwHeapOffset", "gspFwHeapSize", "gspFwOffset",
+      "bootBinOffset", "frtsOffset", "frtsSize", "gspFwWprEnd", "fbSize",
+      "vgaWorkspaceOffset", "vgaWorkspaceSize", "pmuReservedSize"]),
+    ("Nvfw_bin_hdr", "struct_nvfw_bin_hdr",
+     ["header_offset", "data_offset", "data_size"]),
+    ("Nvfw_hs_header_v2", "struct_nvfw_hs_header_v2",
+     ["header_offset", "patch_loc", "patch_sig", "sig_prod_offset",
+      "sig_prod_size", "num_sig"]),
+    ("Nvfw_hs_load_header_v2", "struct_nvfw_hs_load_header_v2",
+     ["os_data_offset", "os_data_size"]),
+    ("Nvfw_hs_load_header_v2_app", "struct_nvfw_hs_load_header_v2_app",
+     ["offset", "size"]),
+    ("Rpc_run_cpu_sequencer", "rpc_run_cpu_sequencer_v17_00",
+     ["cmdIndex", "regSaveArea/array"]),
+    ("Packed_registry_table", "PACKED_REGISTRY_TABLE", ["size", "numEntries"]),
+    ("Packed_registry_entry", "PACKED_REGISTRY_ENTRY",
+     ["nameOffset", "type", "data", "length"]),
+    ("Nvdm_payload_cot", "NVDM_PAYLOAD_COT",
+     ["version", "size", "frtsVidmemOffset", "frtsVidmemSize",
+      "gspBootArgsSysmemOffset", "gspFmcSysmemOffset", "hash384/array",
+      "signature/array", "publicKey/array"]),
+    ("Libos_memory_region_init_argument", "LibosMemoryRegionInitArgument",
+     ["kind", "loc", "size", "id8", "pa"]),
+    ("Gsp_arguments_cached", "GSP_ARGUMENTS_CACHED",
+     ["bDmemStack", "messageQueueInitArguments/region"]),
+    ("Message_queue_init_arguments", "MESSAGE_QUEUE_INIT_ARGUMENTS",
+     ["sharedMemPhysAddr", "pageTableEntryCount", "cmdQueueOffset",
+      "statQueueOffset"]),
+    ("Fwseclic_read_vbios_desc", "FWSECLIC_READ_VBIOS_DESC",
+     ["version", "size", "flags"]),
+    ("Fwseclic_frts_region_desc", "FWSECLIC_FRTS_REGION_DESC",
+     ["version", "size", "frtsRegionOffset4K", "frtsRegionSize",
+      "frtsRegionMediaType"]),
+    ("Fwseclic_frts_cmd", "FWSECLIC_FRTS_CMD",
+     ["readVbiosDesc/region", "frtsRegionDesc/region"]),
+    ("Bit_header_v1_00", "BIT_HEADER_V1_00",
+     ["Signature", "TokenEntries", "HeaderSize", "TokenSize"]),
+    ("Bit_token_v1_00", "BIT_TOKEN_V1_00",
+     ["TokenId", "DataVersion", "DataSize", "DataPtr"]),
+    ("Bit_data_falcon_data_v2", "BIT_DATA_FALCON_DATA_V2",
+     ["FalconUcodeTablePtr"]),
+    ("Falcon_ucode_table_hdr_v1", "FALCON_UCODE_TABLE_HDR_V1",
+     ["EntryCount", "HeaderSize", "EntrySize"]),
+    ("Falcon_ucode_table_entry_v1", "FALCON_UCODE_TABLE_ENTRY_V1",
+     ["ApplicationID", "DescPtr"]),
+    ("Falcon_ucode_desc_header", "FALCON_UCODE_DESC_HEADER", ["vDesc"]),
+    ("Falcon_ucode_desc_v3", "FALCON_UCODE_DESC_V3",
+     ["StoredSize", "IMEMLoadSize", "InterfaceOffset", "PKCDataOffset",
+      "IMEMPhysBase", "IMEMVirtBase", "DMEMPhysBase", "DMEMLoadSize",
+      "EngineIdMask", "UcodeId"]),
+    ("Falcon_application_interface_header_v1",
+     "FALCON_APPLICATION_INTERFACE_HEADER_V1", ["entryCount"]),
+    ("Falcon_application_interface_entry_v1",
+     "FALCON_APPLICATION_INTERFACE_ENTRY_V1", ["id", "dmemOffset"]),
+    ("Falcon_application_interface_dmem_mapper_v3",
+     "FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3",
+     ["init_cmd", "cmd_in_buffer_offset"]),
+    ("Gsp_fmc_boot_params", "GSP_FMC_BOOT_PARAMS",
+     ["bootGspRmParams/region", "gspRmParams/region"]),
+    ("Gsp_acr_boot_gsp_rm_params", "GSP_ACR_BOOT_GSP_RM_PARAMS",
+     ["gspRmDescOffset", "gspRmDescSize", "target", "bIsGspRmBoot"]),
+    ("Gsp_rm_params", "GSP_RM_PARAMS", ["bootArgsOffset", "target"]),
+    ("Gsp_system_info", "GspSystemInfo",
+     ["gpuPhysAddr", "gpuPhysFbAddr", "gpuPhysInstAddr", "pciConfigMirrorBase",
+      "pciConfigMirrorSize", "nvDomainBusDeviceFunc", "bIsPassthru",
+      "PCIDeviceID", "PCISubDeviceID", "PCIRevisionID", "maxUserVa"]),
+    ("Rm_riscv_ucode_desc", "RM_RISCV_UCODE_DESC",
+     ["monitorCodeOffset", "monitorDataOffset", "manifestOffset"]),
+    ("Rpc_alloc_memory", "rpc_alloc_memory_v",
+     ["hClient", "hDevice", "hMemory", "hClass", "flags", "pteAdjust", "format",
+      "length", "pageCount", "pteDesc.idr/bits", "pteDesc.length/bits"]),
+    ("Pte_desc_pte_pde", "struct_pte_desc_pte_pde", ["pte"]),
+    ("Rpc_gsp_rm_alloc", "rpc_gsp_rm_alloc_v",
+     ["hClient", "hParent", "hObject", "hClass", "flags", "paramsSize"]),
+    ("Rpc_gsp_rm_control", "rpc_gsp_rm_control_v",
+     ["hClient", "hObject", "cmd", "flags", "paramsSize"]),
+    ("Rpc_set_page_directory", "rpc_set_page_directory_v",
+     ["hClient", "hDevice", "pasid", "params/region"]),
+    ("Nv0080_ctrl_dma_set_page_directory_params",
+     "struct_NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05",
+     ["physAddress", "numEntries", "flags", "hVASpace", "pasid", "subDeviceId",
+      "chId"]),
+    ("Rpc_unloading_guest_driver", "rpc_unloading_guest_driver_v",
+     ["bInPMTransition", "bGc6Entering", "newLevel"]),
+]
+
+# GSP scalar constants used by ip.py.
+GSP_CONSTS = [
+    "NV_VGPU_MSG_SIGNATURE_VALID",
+    "NV_VGPU_MSG_RESULT_RPC_PENDING",
+    "NV_VGPU_PTEDESC_IDR_NONE",
+    "NV_VGPU_MSG_FUNCTION_ALLOC_MEMORY",
+    "NV_VGPU_MSG_FUNCTION_CONTINUATION_RECORD",
+    "NV_VGPU_MSG_FUNCTION_GSP_RM_ALLOC",
+    "NV_VGPU_MSG_FUNCTION_GSP_RM_CONTROL",
+    "NV_VGPU_MSG_FUNCTION_SET_PAGE_DIRECTORY",
+    "NV_VGPU_MSG_FUNCTION_GSP_SET_SYSTEM_INFO",
+    "NV_VGPU_MSG_FUNCTION_SET_REGISTRY",
+    "NV_VGPU_MSG_FUNCTION_UNLOADING_GUEST_DRIVER",
+    "NV_VGPU_MSG_EVENT_GSP_INIT_DONE",
+    "NV_VGPU_MSG_EVENT_GSP_RUN_CPU_SEQUENCER",
+    "NV_VGPU_MSG_EVENT_OS_ERROR_LOG",
+    "NV_VGPU_MSG_EVENT_MMU_FAULT_QUEUED",
+    "LIBOS_MEMORY_REGION_CONTIGUOUS",
+    "LIBOS_MEMORY_REGION_LOC_SYSMEM",
+    "LIBOS_MEMORY_REGION_RADIX_PAGE_LOG2",
+    "GSP_DMA_TARGET_COHERENT_SYSTEM",
+    "GSP_FW_WPR_META_REVISION",
+    "GSP_FW_WPR_META_MAGIC",
+    "REGISTRY_TABLE_ENTRY_TYPE_DWORD",
+    "NVDM_TYPE_COT",
+    "PCI_ROM_IMAGE_BLOCK_SIZE",
+    "OFFSETOF_PCI_EXP_ROM_PCI_DATA_STRUCT_PTR",
+    "OFFSETOF_PCI_DATA_STRUCT_IMAGE_LEN",
+    "OFFSETOF_PCI_DATA_STRUCT_CODE_TYPE",
+    "NV_BCRT_HASH_INFO_BASE_CODE_TYPE_VBIOS_BASE",
+    "NV_BCRT_HASH_INFO_BASE_CODE_TYPE_VBIOS_EXT",
+    "BIT_TOKEN_FALCON_DATA",
+    "BIT_DATA_FALCON_DATA_V2_SIZE_4",
+    "FALCON_UCODE_ENTRY_APPID_FWSEC_PROD",
+    "FALCON_UCODE_DESC_V3_SIZE_44",
+    "FALCON_APPLICATION_INTERFACE_ENTRY_ID_DMEMMAPPER",
+]
+# Constants wider than a 63-bit OCaml int, emitted as int64 literals.
+GSP_CONSTS64 = {"GSP_FW_WPR_META_MAGIC"}
+
+# The GSP firmware files ip.py fetches, in load order. booter_load/bootloader
+# carry a per-chip sha; gsp is always taken from the ga102 dir (its per-chip
+# .fwsignature sections are selected at load time); fmc is fetched with one
+# sha from the COT-boot (gb202) dir.
+FW_ORDER = ["booter_load-570.144.bin", "bootloader-570.144.bin",
+            "gsp-570.144.bin", "fmc-570.144.bin"]
+FW_SINGLE_DIR = {"fmc-570.144.bin": "gb202"}
+
+
+def ip_used_symbols():
+    """Every `nv.`-qualified symbol referenced in ip.py."""
+    src = open(_IP_PY).read()
+    return set(re.findall(r"\bnv\.([A-Za-z_][A-Za-z0-9_]*)", src))
+
+
+def gsp_const_line(name):
+    v = getattr(nv, name)
+    if not isinstance(v, int) or v < 0:
+        raise ValueError(f"{name}: not a non-negative int constant")
+    if name in GSP_CONSTS64:
+        return f"let {name.lower()} = 0x{v:x}L"
+    if v.bit_length() > 62:
+        raise ValueError(f"{name}: exceeds OCaml int; add it to GSP_CONSTS64")
+    return int_let(name, v)
+
+
+def gen_gsp_defs():
+    emitted = {name for _, name, _ in GSP_STRUCTS} | set(GSP_CONSTS) \
+        | {"rpc_fns", "rpc_events"}
+    used = ip_used_symbols()
+    if emitted != used:
+        raise ValueError(
+            "GSP symbol census drift against ip.py:\n"
+            f"  no longer used (drop): {sorted(emitted - used)}\n"
+            f"  newly used (add): {sorted(used - emitted)}")
+
+    lines = [HEADER]
+    lines.append("(* Scalar constants: RPC framing, message and event function"
+                 " ids, libos and\n   GSP DMA constants, VBIOS/FALCON/BIT"
+                 " parsing offsets. *)")
+    lines += [gsp_const_line(nm) for nm in GSP_CONSTS]
+    lines.append("")
+
+    lines.append("(* Structure layouts: per used field (byte offset, byte size)"
+                 " and total size;\n   arrays as offset/element-size/count. *)")
+    for title, name, fields in GSP_STRUCTS:
+        lines += struct_module(title, getattr(nv, name), fields)
+        lines.append("")
+
+    lines.append("(* RPC function and event id -> name, for debug output. *)")
+    for value_name, table in [("rpc_fns", nv.rpc_fns), ("rpc_events", nv.rpc_events)]:
+        lines.append(f"let {value_name} = [")
+        lines += assoc_lines(table.items())
+        lines.append("]")
+        lines.append("")
+
+    lines.append("(* Firmware sha256 digests, pinned to the 570.144 GSP images,"
+                 " by driver dir. *)")
+    fw = firmware_hashes()
+    lines.append("let firmware = [")
+    for fname in FW_ORDER:
+        entries = "; ".join(f'("{chip}", "{sha}")' for chip, sha in fw[fname])
+        lines.append(f'  ("{fname}", [ {entries} ]);')
+    lines.append("]")
+    lines.append("")
+    lines.append("(* The pinned linux-firmware tree the digests were taken from;"
+                 "\n   a file lives at <upstream>/nvidia/<dir>/gsp/<name>. *)")
+    lines.append(f'let upstream =\n  "{linux_firmware_upstream()}"')
+    return lines
+
+
+def firmware_hashes():
+    """{filename: [(chip dir, sha256), ...]} extracted from ip.py's fetch_fw
+    calls without executing them."""
+    tree = ast.parse(open(_IP_PY).read())
+
+    def const_str(node):
+        return node.value if isinstance(node, ast.Constant) \
+            and isinstance(node.value, str) else None
+
+    def sha_dict(node):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Dict):
+            return {const_str(k): const_str(v)
+                    for k, v in zip(node.value.keys, node.value.values)}
+        return None
+
+    fw = {}
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        local = {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name):
+                d = sha_dict(node.value)
+                if d is not None:
+                    local[node.targets[0].id] = d
+        for call in ast.walk(fn):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "fetch_fw" and len(call.args) == 3):
+                continue
+            path_node, name_node, sha_node = call.args
+            fname = const_str(name_node)
+            if fname is None:
+                continue
+            fixed_dir = None
+            if isinstance(path_node, ast.Constant):
+                m = re.match(r"nvidia/(\w+)/gsp", path_node.value)
+                fixed_dir = m.group(1) if m else None
+            if isinstance(sha_node, ast.Constant):
+                entry = {fixed_dir or FW_SINGLE_DIR[fname]: sha_node.value}
+            elif sha_dict(sha_node) is not None:
+                entry = sha_dict(sha_node)
+            elif isinstance(sha_node, ast.Name) and sha_node.id in local:
+                entry = dict(local[sha_node.id])
+            else:
+                raise ValueError(f"{fname}: cannot resolve sha argument")
+            fw.setdefault(fname, {}).update(entry)
+
+    if set(fw) != set(FW_ORDER):
+        raise ValueError(f"firmware file set drift: {sorted(fw)} vs {FW_ORDER}")
+    out = {}
+    for fname, chips in fw.items():
+        for chip, sha in chips.items():
+            if not re.fullmatch(r"[0-9a-f]{64}", sha or ""):
+                raise ValueError(f"{fname}/{chip}: malformed sha256 {sha!r}")
+        out[fname] = list(chips.items())
+    return out
+
+
+def linux_firmware_upstream():
+    pin = re.search(r"kernel-firmware/linux-firmware/-/raw/([0-9a-f]{40})/",
+                    inspect.getsource(helpers.fetch_fw)).group(1)
+    return f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{pin}"
+
+
+def reg_entry_ml(value):
+    """One nv_regs entry as an OCaml `entry` value."""
+    if isinstance(value, int):
+        return f"Const {ml_int(value)}"
+    base, off, fields = value
+    parts = "; ".join(f'("{k}", ({lo}, {hi}))' for k, (lo, hi) in fields.items())
+    fields_ml = f"[ {parts} ]" if fields else "[]"
+    if base is None and off is None:
+        return f"Group {{ fields = {fields_ml} }}"
+    if callable(off):
+        o0, o1, o2 = off(0), off(1), off(2)
+        stride = o1 - o0
+        if o2 != o0 + 2 * stride:
+            raise ValueError(f"non-affine offset lambda: {o0}, {o1}, {o2}")
+        off_ml = f"Indexed {{ base = {ml_int(o0)}; stride = {ml_int(stride)} }}"
+    else:
+        off_ml = f"Fixed {ml_int(off)}"
+    return f"Reg {{ base = {ml_int(base)}; off = {off_ml}; fields = {fields_ml} }}"
+
+
+def gen_reg_defs():
+    lines = [HEADER]
+    lines.append("""\
+(* Per-family, per-architecture NVIDIA register maps. Each entry is a raw
+   constant, a register (block base offset, register offset, and named bitfield
+   ranges as inclusive (lo, hi) bit positions), or a bitfield-only group. An
+   indexed register's offset is the affine form base + stride * i. *)
+
+type off = Fixed of int | Indexed of { base : int; stride : int }
+
+type field = string * (int * int)
+
+type entry =
+  | Const of int
+  | Reg of { base : int; off : off; fields : field list }
+  | Group of { fields : field list }
+""")
+
+    bindings = []
+    for family in nv_regs.__all__:
+        mod = importlib.import_module(f"tinygrad.runtime.autogen.nv_regs.{family}")
+        arches = [(k, v) for k, v in vars(mod).items()
+                  if isinstance(v, dict) and not k.startswith("__")]
+        if not arches:
+            raise ValueError(f"nv_regs.{family}: no register dicts")
+        family_bindings = []
+        for arch, table in arches:
+            binding = f"{family}_{arch}"
+            family_bindings.append((arch, binding))
+            lines.append(f"let {binding} : (string * entry) list = [")
+            lines += [f'  ("{name}", {reg_entry_ml(value)});'
+                      for name, value in table.items()]
+            lines.append("]")
+            lines.append("")
+        bindings.append((family, family_bindings))
+
+    lines.append("(* family -> arch -> entries, mirroring nvdev.py include(). *)")
+    lines.append("let families "
+                 ": (string * (string * (string * entry) list) list) list = [")
+    for family, family_bindings in bindings:
+        archs = "; ".join(f'("{arch}", {binding})'
+                          for arch, binding in family_bindings)
+        lines.append(f'  ("{family}", [ {archs} ]);')
+    lines.append("]")
+    return lines
+
+
 def main():
     outputs = {
         "nv_defs.ml": gen_defs,
         "nv_defs_versions.ml": gen_versions,
+        os.path.join("nv", "nv_reg_defs.ml"): gen_reg_defs,
+        os.path.join("nv", "nv_gsp_defs.ml"): gen_gsp_defs,
     }
     for fname, gen in outputs.items():
         text = "\n".join(gen()) + "\n"
-        with open(os.path.join(_HERE, fname), "w") as f:
+        path = os.path.join(_HERE, fname)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
             f.write(text)
         print(f"wrote {fname} ({text.count(chr(10))} lines)")
 

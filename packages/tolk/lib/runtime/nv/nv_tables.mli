@@ -24,6 +24,16 @@ module Versions : module type of Nv_defs_versions
 (** The per-generation parameter-structure layouts and status-code names,
     as three values of the record type [Nv_defs_versions.t]. *)
 
+module Reg_defs : module type of Nv_reg_defs
+(** The generated GSP-tier register maps: per family and architecture, each
+    entry a raw constant, an addressed register with named bitfield ranges,
+    or a bitfield-only group. *)
+
+module Gsp_defs : module type of Nv_gsp_defs
+(** The generated GSP-tier RPC surface: message and event constants,
+    structure layouts, the RPC function and event name tables, and the
+    firmware image digests. *)
+
 val defs_for_driver : major:int -> Nv_defs_versions.t
 (** [defs_for_driver ~major] is the layout record for the installed driver's
     major version: 610 and above select the 610 layouts, 580 to 609 the 580

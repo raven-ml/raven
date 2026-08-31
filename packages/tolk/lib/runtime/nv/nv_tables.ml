@@ -2,6 +2,8 @@
 
 module Defs = Nv_defs
 module Versions = Nv_defs_versions
+module Reg_defs = Nv_reg_defs
+module Gsp_defs = Nv_gsp_defs
 
 let defs_for_driver ~major : Nv_defs_versions.t =
   if major >= 610 then Nv_defs_versions.v610

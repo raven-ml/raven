@@ -12,7 +12,13 @@
 open Windtrap
 module Tables = Tolk_nv.Nv_tables
 module Defs = Tolk_nv.Nv_tables.Defs
+module Regs = Tolk_nv.Nv_tables.Reg_defs
+module Gsp = Tolk_nv.Nv_tables.Gsp_defs
 open Tolk_nv.Nv_tables.Versions
+
+let reg family arch name =
+  let arches = List.assoc family Regs.families in
+  List.assoc name (List.assoc arch arches)
 
 let () =
   run "Nv_tables"
@@ -166,5 +172,77 @@ let () =
               (* A base addresses embedded structures and array elements. *)
               Tables.set_field ~base:4 b (0x10, 2) 0x1234;
               equal int 0x1234 (Tables.get_field b (0x14, 2)));
+        ];
+      group "register defs"
+        [
+          test "families cover the reference set" (fun () ->
+              equal int 14 (List.length Regs.families);
+              (* dev_falcon_v4 carries both the ampere and hopper layouts. *)
+              equal
+                (list string)
+                [ "ga102"; "gh100" ]
+                (List.map fst (List.assoc "dev_falcon_v4" Regs.families)));
+          test "fixed register with a nonzero block base" (fun () ->
+              (* NV_PMC_BOOT_0 lives at block base 0, offset 0. *)
+              (match reg "nv_ref" "regs" "NV_PMC_BOOT_0" with
+              | Regs.Reg { base = 0; off = Regs.Fixed 0; fields } ->
+                  equal (pair int int) (24, 28)
+                    (List.assoc "architecture_0" fields)
+              | _ -> fail "NV_PMC_BOOT_0 is not a fixed register");
+              (* NV_VIRTUAL_FUNCTION regs sit at block base 0xb80000. *)
+              match
+                reg "dev_vm" "tu102" "NV_VIRTUAL_FUNCTION_PRIV_L2_SYSMEM_INVALIDATE"
+              with
+              | Regs.Reg { base = 0xb80000; off = Regs.Fixed 0xf00; fields = [] }
+                ->
+                  ()
+              | _ -> fail "unexpected NV_VIRTUAL_FUNCTION register");
+          test "indexed register recovers base and stride" (fun () ->
+              match reg "dev_falcon_v4" "ga102" "NV_PFALCON_FALCON_IMEMC" with
+              | Regs.Reg
+                  { base = 0; off = Regs.Indexed { base = 0x180; stride = 0x10 };
+                    fields } ->
+                  equal (pair int int) (2, 7) (List.assoc "offs" fields);
+                  equal (pair int int) (28, 28) (List.assoc "secure" fields)
+              | _ -> fail "NV_PFALCON_FALCON_IMEMC is not indexed");
+          test "bitfield-only group and plain constant" (fun () ->
+              (match reg "dev_mmu" "gh100" "NV_MMU_VER2_PTE" with
+              | Regs.Group { fields } ->
+                  equal (pair int int) (0, 0) (List.assoc "valid" fields);
+                  equal (pair int int) (56, 63) (List.assoc "kind" fields)
+              | _ -> fail "NV_MMU_VER2_PTE is not a group");
+              match reg "nv_ref" "regs" "NV_PMC_BOOT_42_ARCHITECTURE_GA100" with
+              | Regs.Const 0x17 -> ()
+              | _ -> fail "unexpected architecture constant");
+        ];
+      group "gsp defs"
+        [
+          test "struct field offsets and sizes" (fun () ->
+              equal int 0x100 Gsp.Gsp_fw_wpr_meta.sizeof;
+              equal (pair int int) (0, 8) Gsp.Gsp_fw_wpr_meta.magic;
+              equal (pair int int) (0x98, 8) Gsp.Gsp_fw_wpr_meta.frtsoffset;
+              equal int 0x20 Gsp.Msgq_tx_header.sizeof;
+              equal (pair int int) (0x1c, 4) Gsp.Msgq_tx_header.entryoff;
+              (* A keyword field is renamed; a bitfield lowers to a byte pair. *)
+              equal (pair int int) (0xc, 4) Gsp.Rpc_message_header.func;
+              equal (pair int int) (0x30, 1) Gsp.Rpc_alloc_memory.ptedesc_idr;
+              equal (pair int int) (0x32, 2)
+                Gsp.Rpc_alloc_memory.ptedesc_length);
+          test "rpc id and 64-bit magic" (fun () ->
+              equal string "NV_VGPU_MSG_FUNCTION_GSP_RM_ALLOC"
+                (List.assoc 0x67 Gsp.rpc_fns);
+              equal string "NV_VGPU_MSG_EVENT_GSP_INIT_DONE"
+                (List.assoc 0x1001 Gsp.rpc_events);
+              equal int64 0xdc3aae21371a60b3L Gsp.gsp_fw_wpr_meta_magic);
+          test "firmware digests by driver dir" (fun () ->
+              let gsp = List.assoc "gsp-570.144.bin" Gsp.firmware in
+              equal int 1 (List.length gsp);
+              equal string
+                "a8c3ebeed280323aedb51c061f321e73379cce7a9ae643a33dd03915df027f7f"
+                (List.assoc "ga102" gsp);
+              let booter = List.assoc "booter_load-570.144.bin" Gsp.firmware in
+              equal (list string) [ "ga102"; "ad102" ] (List.map fst booter);
+              equal int 64
+                (String.length (List.assoc "ga102" booter)));
         ];
     ]
