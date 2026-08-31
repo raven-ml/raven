@@ -115,3 +115,9 @@
  (deps
   (glob_files ../fixtures/nv/*))
  (libraries tolk tolk.uop tolk.hcq tolk.nv windtrap))
+
+(tests
+ (names test_nv_nvdev)
+ (modules test_nv_nvdev)
+ (package tolk)
+ (libraries tolk tolk.hcq tolk.nv windtrap))

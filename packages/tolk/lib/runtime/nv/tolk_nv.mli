@@ -25,6 +25,7 @@
 
 module Hcq = Tolk_hcq.Hcq
 module Nv_tables = Nv_tables
+module Nvdev = Nvdev
 
 (** {1:qmd Launch descriptors} *)
 
