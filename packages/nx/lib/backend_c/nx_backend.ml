@@ -594,9 +594,9 @@ let irfft ?s x ~dtype ~axes =
   caml_irfft out x axes (match s with Some sizes -> sizes | None -> [||]);
   out
 
-(* linalg tier 1 (nx_c_linalg.c): cholesky, triangular_solve, qr. Each allocates
+(* linalg tier 1 (nx_c_linalg.c): cholesky, solve_triangular, qr. Each allocates
    its output(s) — cholesky/trsm mirror the input/rhs shape, qr the reduced or
-   full factor shapes — and hands C the operands. triangular_solve packs its
+   full factor shapes — and hands C the operands. solve_triangular packs its
    three booleans into one int (bit 0 upper, 1 transpose, 2 unit-diagonal) so
    the stub stays at four args. eig is the later tier (nx_c_eig.c, wired below);
    svd's own factorization (nx_c_linalg.c) is under rewrite but already wired
@@ -604,7 +604,7 @@ let irfft ?s x ~dtype ~axes =
 external caml_cholesky : ('a, 'b) t -> ('a, 'b) t -> bool -> unit
   = "caml_nx_c_cholesky"
 
-external caml_triangular_solve :
+external caml_solve_triangular :
   ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> int -> unit
   = "caml_nx_c_triangular_solve"
 
@@ -644,7 +644,7 @@ let cholesky ~upper x =
   reraise_linalg ~op:"cholesky" (fun () -> caml_cholesky out x upper);
   out
 
-let triangular_solve ~upper ~transpose ~unit_diag a b =
+let solve_triangular ~upper ~transpose ~unit_diag a b =
   let vector_rhs = Array.length b.shape = Array.length a.shape - 1 in
   let b_matrix =
     if vector_rhs then reshape b (Array.append b.shape [| 1 |]) else b
@@ -655,8 +655,8 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
     lor (if transpose then 2 else 0)
     lor if unit_diag then 4 else 0
   in
-  reraise_linalg ~op:"triangular_solve" (fun () ->
-      caml_triangular_solve out_matrix a b_matrix flags);
+  reraise_linalg ~op:"solve_triangular" (fun () ->
+      caml_solve_triangular out_matrix a b_matrix flags);
   if vector_rhs then reshape out_matrix b.shape else out_matrix
 
 let qr ~reduced x =

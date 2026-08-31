@@ -426,8 +426,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_eig { t_in } when batched st t_in -> err_no_rule "eig"
     | E_eigvalsh { t_in } when batched st t_in -> err_no_rule "eigvalsh"
     | E_eigh { t_in } when batched st t_in -> err_no_rule "eigh"
-    | E_triangular_solve { a; b; _ } when batched st a || batched st b ->
-        err_no_rule "triangular_solve"
+    | E_solve_triangular { a; b; _ } when batched st a || batched st b ->
+        err_no_rule "solve_triangular"
     (* Custom rules: vmap batches the forward function. The call runs in a
        nested fiber under this same handler state, so its operations are
        translated like any other code and enclosing transformations see the
