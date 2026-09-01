@@ -298,11 +298,22 @@ Ampere/Ada/Blackwell generations. Deliberately not ported with it:
   environment filter.
 
 - **The driver-less GSP tier** (`support/nv/nvdev.py` + `support/nv/ip.py`,
-  `PCIIface`): booting the GPU with no kernel driver over PCI is its own
-  workstream behind the same `Nv_iface` seam, mirroring the AMD `am` tier;
-  until it lands (and is validated), the kernel driver is the only
-  interface, and the reference's automatic kernel-driver-to-PCI fallback
-  stays off. MOCK, USB, and remote interfaces are out with it.
+  `PCIIface`): the device core, falcon and chain-of-trust bring-up, GSP boot
+  and RPC layer (`Ip.Gsp`), the golden-image channel and context setup, and
+  `Pci_iface` are landed behind the same `Nv_iface` seam, reachable through
+  `NV_IFACE=PCI`. Still open:
+
+  - **Automatic NVK→PCI fallback**: the reference selects PCI automatically
+    when the kernel driver cannot open the device; here it stays opt-in until
+    the path is validated on hardware. Restoring the automatic fallback is the
+    promotion criterion.
+  - **Hardening**: `fini`/unload robustness, err-state surfacing through the
+    timeline hang path, WPR2/reset recovery, and debug logging.
+  - **`force_devmem` on the shared open path**: the channel ring is allocated
+    without it, so the driver-less path may place it in system memory; revisit
+    at hardware validation.
+
+  MOCK, USB, and remote interfaces are out with it.
 
 - **A committed cubin fixture** for `Program.load` against real nvrtc
   output — generating one needs a machine with the CUDA toolkit (no GPU

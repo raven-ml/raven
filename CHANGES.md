@@ -101,6 +101,14 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- NVIDIA GPUs can now be driven over PCI with no kernel driver: setting
+  `NV_IFACE=PCI` boots the GPU's GSP firmware directly — the falcon and
+  chain-of-trust bring-up, the shared-memory RPC queues, the golden-image
+  channel and context setup, and the object, control and memory calls as GSP
+  remote procedures (`Tolk_nv.Pci_iface`), reading firmware from
+  `NV_FW_PATH`. Opt-in and unvalidated on hardware so far; the kernel driver
+  remains the default.
+
 - A stalled AMD device wait now fails with the whole story — the timeout
   (expected and observed timeline values) folded with the driver's fault
   report — where it could previously raise `Failure("")` when the driver had

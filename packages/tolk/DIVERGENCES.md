@@ -85,6 +85,26 @@ campaign.
   keeps out. Revisit with the first cross-backend, remote, or multi-die
   consumer.
 
+## NV runtime
+
+- **The driver-less PCI interface is opt-in (`NV_IFACE=PCI`); the reference
+  auto-falls-back NVK→PCI (`_select_iface`/`select_first_inited`) when the
+  kernel driver cannot open the device.** The path boots the GSP firmware by
+  writing engine and falcon registers directly and has never run on hardware,
+  so the kernel driver stays the only automatic choice. Promotion criterion:
+  restore the automatic NVK→PCI fallback once the path is validated on
+  hardware.
+
+- **The runtime carries the kernel-driver metadata type on every buffer, so
+  the PCI interface adapts the memory-manager buffers to it, keyed by virtual
+  address.** The `Nv_iface.t` seam fixes buffer metadata to
+  `{h_memory; owner_id}` (the reference parameterizes the whole runtime by
+  buffer metadata instead). The driver-less interface keeps its base
+  allocations in a side table so `free` and `map` reach the memory manager;
+  peer mapping across driver-less devices is out (single-device only). The
+  shared open path allocates the channel ring without `force_devmem`, a
+  divergence to revisit at hardware validation.
+
 ## Tolk extensions
 
 Code tolk carries that the reference does not. Every site has a comment

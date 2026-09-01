@@ -460,4 +460,250 @@ module Gsp : sig
 
       Raises [Failure] on an unknown command code (naming it) or when a
       command's arguments run past the counted words. *)
+
+  (** {2:gsp_builders Payload builders} *)
+
+  val registry_table : unit -> bytes
+  (** [registry_table ()] is the packed registry table the GSP reads at
+      boot: a header, one fixed-size entry per key, then the trailing
+      NUL-terminated key names each entry points at by offset. *)
+
+  val radix3_fill : image:bytes -> layout:radix3 -> page_addrs:int array -> bytes
+  (** [radix3_fill ~image ~layout ~page_addrs] is the byte image of the
+      page-hierarchy region for [layout]: [image] copied in at its offset,
+      and each directory level filled with the physical addresses (from
+      [page_addrs], the region's own page addresses) of the pages of the
+      level below. *)
+
+  val wpr_meta :
+    vram_size:int ->
+    fmc_boot:bool ->
+    radix3_addr:int ->
+    radix3_size:int ->
+    booter_addr:int ->
+    booter_size:int ->
+    signature_addr:int ->
+    code_off:int ->
+    data_off:int ->
+    manifest_off:int ->
+    frts_offset:int ->
+    bytes
+  (** [wpr_meta ~vram_size ~fmc_boot ...] is the write-protect-region
+      metadata that places the GSP image, bootloader, signature and heap
+      in VRAM. The chain-of-trust boot ([fmc_boot]) uses a fixed
+      reservation layout; the falcon boot packs the regions down from the
+      top of [vram_size] and requires the reserved-tables offset it
+      computes to equal [frts_offset] (the FWSEC ucode's), raising
+      [Failure] ("FRTS mismatch") otherwise. [frts_offset] is ignored on
+      the chain-of-trust boot. *)
+
+  val bdf_as_int : string -> int
+  (** [bdf_as_int pcibus] packs the bus address [pcibus] into the integer
+      the GSP system info carries: the bus, device and function digits of a
+      ["0000:03:00.0"]-style address; a non-PCI (USB or remote) transport
+      reports zero. *)
+
+  val gsp_system_info :
+    gpu_phys:int ->
+    gpu_phys_fb:int ->
+    gpu_phys_inst:int ->
+    fmc_boot:bool ->
+    bdf:int ->
+    pci_device_id:int ->
+    pci_subdevice_id:int ->
+    pci_revision_id:int ->
+    bytes
+  (** [gsp_system_info ~gpu_phys ...] is the system-info structure the GSP
+      reads at boot, carrying the device's BAR base addresses, its
+      configuration-mirror window (selected by [fmc_boot]), its bus
+      address [bdf], and its PCI identity. *)
+
+  val rm_alloc_request :
+    client:int ->
+    hparent:int ->
+    hobject:int ->
+    hclass:int ->
+    params:bytes ->
+    bytes
+  (** [rm_alloc_request ~client ~hparent ~hobject ~hclass ~params] is the
+      GSP_RM_ALLOC payload: the allocation envelope followed by the
+      class's parameter bytes. *)
+
+  val rm_control_request :
+    client:int -> hobject:int -> cmd:int -> params:bytes -> bytes
+  (** [rm_control_request ~client ~hobject ~cmd ~params] is the
+      GSP_RM_CONTROL payload: the control envelope followed by the
+      command's parameter bytes. *)
+
+  val rm_control_apply :
+    chip_name:string ->
+    cmd:int ->
+    response:bytes ->
+    params:Nv_tables.blob ->
+    unit
+  (** [rm_control_apply ~chip_name ~cmd ~response ~params] copies the
+      driver's in-place parameter update out of a GSP_RM_CONTROL
+      [response] (past its envelope echo) back into [params]. On a GB20x
+      part, the work-submit-token control additionally has the enable bit
+      patched into the returned token. *)
+
+  val set_channel_gpfifo_descs :
+    params:Nv_tables.blob ->
+    ramfc_paddr:int ->
+    method_paddr:int ->
+    userd:int option ->
+    unit
+  (** [set_channel_gpfifo_descs ~params ~ramfc_paddr ~method_paddr ~userd]
+      fills the embedded memory descriptors of a channel-allocation blob:
+      the RAM-FC and instance memory from the contiguous page at
+      [ramfc_paddr], the method buffer at [method_paddr], and — when
+      [userd] is the user-D physical base — the error-notifier and user-D
+      descriptors a user channel needs. *)
+
+  val reserved_pdes_params :
+    page_size:int ->
+    virt_addr_lo:int ->
+    virt_addr_hi:int ->
+    num_levels:int ->
+    levels:(int * int * int * int) list ->
+    bytes
+  (** [reserved_pdes_params ~page_size ~virt_addr_lo ~virt_addr_hi
+      ~num_levels ~levels] is the parameters that copy the server-reserved
+      page directory entries covering [\[virt_addr_lo, virt_addr_hi\]] into
+      a privileged address space. Each of [levels] is a page-table level's
+      [(physaddress, size, pageshift, aperture)]. *)
+
+  type promote_entry = {
+    buffer_id : int;  (** Which graphics context buffer this promotes. *)
+    gpu_virt_addr : int;  (** Virtual address to bind, or [0]. *)
+    gpu_phys_addr : int;  (** Physical address to bind, or [0]. *)
+    size : int;  (** Buffer size when promoting by physical address. *)
+    phys_attr : int;  (** Physical attributes when binding physically. *)
+    b_initialize : bool;  (** Initialize the buffer on promotion. *)
+    b_nonmapped : bool;  (** Bind physically without a virtual mapping. *)
+  }
+  (** One graphics-context-buffer promotion entry. *)
+
+  val promote_ctx_params :
+    client:int -> obj:int -> entries:promote_entry list -> bytes
+  (** [promote_ctx_params ~client ~obj ~entries] is the parameters that
+      promote the graphics context buffers [entries] to the channel [obj]
+      of [client]. *)
+
+  (** {2:gsp_boot Boot and RPC layer} *)
+
+  type boot = Falcon of Flcn.t | Cot of Flcn_cot.t
+  (** How the chip boots the GSP: through the falcon bootloader or, on the
+      newest parts, the chain-of-trust security processor. *)
+
+  val falcon_boot : Flcn.t -> boot
+  (** [falcon_boot f] is the falcon boot path over [f]. *)
+
+  val cot_boot : Flcn_cot.t -> boot
+  (** [cot_boot c] is the chain-of-trust boot path over [c]. *)
+
+  type core_actions = {
+    core_reset : unit -> unit;
+    core_start : unit -> unit;
+    core_wait_halted : unit -> unit;
+    core_resume : unit -> unit;
+  }
+  (** The boot actions the CPU sequencer drives during GSP boot (see
+      {!run_cpu_seq}). *)
+
+  val falcon_core_actions : Flcn.t -> libos_args_sysmem:int -> core_actions
+  (** [falcon_core_actions f ~libos_args_sysmem] is the CPU-sequencer boot
+      actions over the falcon [f]: reset and detach the GSP falcon, start
+      and wait on its core, and — for resume — restart it as RISC-V with
+      [libos_args_sysmem] in its mailbox, run the SEC2 booter, and wait for
+      the secure-boot handoff (raising {!Timeout_error} or [Failure] on a
+      handoff failure). *)
+
+  type t
+  (** The type for the GSP boot and RPC layer of one device. *)
+
+  val create : Nvdev.t -> boot:boot -> t
+  (** [create nvdev ~boot] is the GSP layer of [nvdev] booting through
+      [boot]. It holds no prepared state until {!init_sw}. *)
+
+  val libos_args_sysmem : t -> int
+  (** [libos_args_sysmem t] is the physical address of the GSP
+      boot-argument region, valid after {!init_sw}. *)
+
+  val wpr_meta_sysmem : t -> int
+  (** [wpr_meta_sysmem t] is the physical address of the
+      write-protect-region metadata, valid after {!init_sw}. *)
+
+  val gpfifo_class : t -> int
+  (** [gpfifo_class t] is the channel class selected for the chip, valid
+      after {!init_sw}. *)
+
+  val compute_class : t -> int
+  (** [compute_class t] is the compute engine class selected for the chip,
+      valid after {!init_sw}. *)
+
+  val dma_class : t -> int
+  (** [dma_class t] is the copy engine class selected for the chip, valid
+      after {!init_sw}. *)
+
+  val init_sw : t -> unit
+  (** [init_sw t] allocates the shared command and status queues and the
+      GSP boot arguments in system memory, loads the GSP firmware image
+      behind its page hierarchy and the RISC-V bootloader, builds the
+      write-protect metadata, prefills the command queue with the system
+      info and registry table, and selects the engine classes.
+
+      Requires the device's falcon layer to have run its [init_sw] first
+      (the write-protect metadata checks the reserved-tables offset
+      against it). Raises [Failure] on a missing or mismatched firmware
+      file, and {!Timeout_error} if the command queue does not come up. *)
+
+  val init_hw : t -> unit
+  (** [init_hw t] brings the status queue up, waits for the GSP to report
+      initialization done, programs the BAR1 block, and builds the golden
+      image: a privileged client, device, subdevice and address space, the
+      server-reserved page directory copy, a channel, and the promoted
+      graphics context buffers.
+
+      Requires {!init_sw} and the falcon layer's [init_hw] to have run.
+      Raises {!Timeout_error} if the GSP does not report ready, and
+      [Failure] on a driver error during the golden-image build. *)
+
+  val fini_hw : t -> unit
+  (** [fini_hw t] tells the GSP the driver is unloading, for a fast device
+      shutdown. Requires {!init_hw} to have brought the queues up. *)
+
+  val drain_responses : t -> unit
+  (** [drain_responses t] consumes any pending status-queue messages,
+      dispatching their events; an error-log or fault event latches the
+      device's error state. Requires {!init_hw} to have brought the status
+      queue up. *)
+
+  val rpc_rm_alloc :
+    t ->
+    hparent:int ->
+    hclass:int ->
+    ?params:Nv_tables.blob ->
+    client:int ->
+    unit ->
+    int
+  (** [rpc_rm_alloc t ~hparent ~hclass ?params ~client ()] allocates a
+      driver object of class [hclass] under [hparent] for [client] and is
+      its handle (the client handle for the root class). A channel
+      allocation gets its memory descriptors filled, a user address space
+      gets its page directory set, and a user compute object promotes the
+      graphics context to its channel. *)
+
+  val rpc_rm_control :
+    t ->
+    hobject:int ->
+    cmd:int ->
+    ?params:Nv_tables.blob ->
+    client:int ->
+    unit ->
+    unit
+  (** [rpc_rm_control t ~hobject ~cmd ?params ~client ()] invokes control
+      command [cmd] on [hobject] for [client]. The driver's in-place
+      update of [params] is copied back into it, with the GB20x
+      work-submit-token patch applied where it fires. *)
 end

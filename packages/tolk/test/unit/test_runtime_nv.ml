@@ -18,6 +18,7 @@ module Compute_queue = Tolk_nv.Compute_queue
 module Copy_queue = Tolk_nv.Copy_queue
 module Nv_iface = Tolk_nv.Nv_iface
 module Nvk_iface = Tolk_nv.Nvk_iface
+module Pci_iface = Tolk_nv.Pci_iface
 module Program = Tolk_nv.Program
 
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
@@ -466,6 +467,52 @@ let read_i32 buf =
 let failure_with prefix = function
   | Failure msg -> String.starts_with ~prefix msg
   | _ -> false
+
+let contains ~needle haystack =
+  let nl = String.length needle and hl = String.length haystack in
+  if nl = 0 then true
+  else
+    let rec loop i =
+      if i + nl > hl then false
+      else if String.sub haystack i nl = needle then true
+      else loop (i + 1)
+    in
+    loop 0
+
+(* A sysfs tree holding just the PCI files the bus scan reads, so the device
+   allowlist is checked through the real probe path. *)
+let with_fake_sysfs devices f =
+  let root = Filename.temp_file "tolk_sysfs" "" in
+  Sys.remove root;
+  let devdir =
+    List.fold_left Filename.concat root [ "bus"; "pci"; "devices" ]
+  in
+  List.iter
+    (fun d -> Sys.mkdir d 0o700)
+    [
+      root;
+      Filename.concat root "bus";
+      List.fold_left Filename.concat root [ "bus"; "pci" ];
+      devdir;
+    ];
+  List.iter
+    (fun (addr, vendor, device) ->
+      let d = Filename.concat devdir addr in
+      Sys.mkdir d 0o700;
+      List.iter
+        (fun (name, v) ->
+          Out_channel.with_open_bin (Filename.concat d name) (fun oc ->
+              Out_channel.output_string oc (Printf.sprintf "0x%04x\n" v)))
+        [ ("vendor", vendor); ("device", device); ("class", 0x030000) ])
+    devices;
+  let rec rm_tree path =
+    if Sys.is_directory path then begin
+      Array.iter (fun e -> rm_tree (Filename.concat path e)) (Sys.readdir path);
+      Sys.rmdir path
+    end
+    else Sys.remove path
+  in
+  Fun.protect ~finally:(fun () -> rm_tree root) (fun () -> f root)
 
 let () =
   run "Nv_runtime"
@@ -1562,6 +1609,47 @@ let () =
                 (Tolk_nv.query_gpu_info
                    (fake_iface ~nvdev:Fake_nvdev ~rm_control ())
                    ~subdevice:0x5d topology_indices));
+        ];
+      group "Pci_iface"
+        [
+          test "the bus scan admits exactly the allowlisted ids" (fun () ->
+              with_fake_sysfs
+                [
+                  (* two supported NVIDIA parts match; a non-GPU function, a
+                     non-matching NVIDIA id, and a foreign vendor do not *)
+                  ("0000:03:00.0", 0x10de, 0x2204);
+                  ("0000:02:00.0", 0x10de, 0x2f00);
+                  ("0000:01:00.0", 0x10de, 0x1234);
+                  ("0000:03:00.1", 0x10de, 0x1c03);
+                  ("0000:04:00.0", 0x1002, 0x2204);
+                ]
+                (fun sysfs ->
+                  equal (list string)
+                    [ "0000:02:00.0"; "0000:03:00.0" ]
+                    (Tolk_hcq.System.pci_scan_bus ~sysfs
+                       ~vendor:Pci_iface.vendor Pci_iface.pci_ids)));
+          test "every allowlisted id is admitted" (fun () ->
+              let ids = List.concat_map snd Pci_iface.pci_ids in
+              with_fake_sysfs
+                (List.mapi
+                   (fun i id -> (Printf.sprintf "0000:%02x:00.0" i, 0x10de, id))
+                   ids)
+                (fun sysfs ->
+                  equal int (List.length ids)
+                    (List.length
+                       (Tolk_hcq.System.pci_scan_bus ~sysfs
+                          ~vendor:Pci_iface.vendor Pci_iface.pci_ids))));
+          test "opening after the kernel driver is refused" (fun () ->
+              if not (Sys.file_exists "/dev/nvidiactl") then
+                skip ~reason:"no kernel driver to initialize first" ()
+              else begin
+                ignore (nvk_iface ());
+                raises_match
+                  (function
+                    | Failure m -> contains ~needle:"after the kernel driver" m
+                    | _ -> false)
+                  (fun () -> ignore (Pci_iface.create ~device_id:0))
+              end);
         ];
       group "device"
         [

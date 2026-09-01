@@ -574,6 +574,7 @@ module Nvk_iface = struct
      and memory-manager file descriptors, the root client, the installed
      driver's parameter-structure generation, and the visible cards. *)
   let state : state option ref = ref None
+  let is_initialized () = !state <> None
 
   (* Host objects take handles from this private enumerator, so a handle
      at or below its mark is one of ours rather than the driver's. *)
@@ -1171,6 +1172,177 @@ module Nvk_iface = struct
       sleep = (fun (_ : int) -> ());
       device_fini = (fun () -> ());
       nvdev = None;
+    }
+end
+
+(* Driver-less PCI interface: ops_nv.py:556-581 PCIIface *)
+
+module Pci_iface = struct
+  module Base = Tolk_hcq.System.Pci_iface_base
+  module System = Tolk_hcq.System
+
+  (* The booted device the interface drives: the passive device state and
+     the GSP boot-and-RPC layer over it. *)
+  type nv_boot = { nvdev : Nvdev.t; gsp : Ip.Gsp.t }
+
+  type t = {
+    base : (nv_boot, Nvdev.Nv_page_table.t) Base.t;
+    root : int;
+    (* the runtime carries the fixed {!Nv_iface.mem} metadata on its
+       buffers, so the base allocations are kept here, keyed by virtual
+       address, for free and map to reach *)
+    buffers : (int, (nv_boot, Nvdev.Nv_page_table.t) Base.meta Hcq.Buffer.t) Hashtbl.t;
+  }
+
+  type Nv_iface.nvdev += Nv_pci of nv_boot
+
+  let vendor = 0x10de
+
+  (* ops_nv.py:560 the supported consumer device ids, masked by 0xff00. *)
+  let pci_ids =
+    [
+      ( 0xff00,
+        [
+          0x2200; 0x2400; 0x2500; 0x2600; 0x2700; 0x2800; 0x2b00; 0x2c00;
+          0x2d00; 0x2f00;
+        ] );
+    ]
+
+  let impl t = Base.dev_impl t.base
+
+  (* nvdev.py:74 the device bring-up: construct the falcon and GSP layers,
+     wait for reset, then run their software and hardware init in order —
+     the falcon's software init reserves the tables the GSP's software init
+     checks, and the GSP's software init produces the boot arguments the
+     falcon's hardware init consumes. *)
+  let boot pci_dev =
+    let nvdev = Nvdev.create pci_dev in
+    (* the client is reinitialized every run, so leave the booting state
+       only for the memory manager the device already set up *)
+    Nvdev.set_is_booting nvdev false;
+    if Nvdev.fmc_boot nvdev then begin
+      let flcn = Ip.Flcn_cot.create nvdev in
+      let gsp = Ip.Gsp.create nvdev ~boot:(Ip.Gsp.cot_boot flcn) in
+      Ip.Flcn_cot.wait_for_reset flcn;
+      Ip.Flcn_cot.init_sw flcn;
+      Ip.Gsp.init_sw gsp;
+      Ip.Flcn_cot.init_hw flcn
+        ~libos_args_sysmem:(Ip.Gsp.libos_args_sysmem gsp)
+        ~wpr_meta_sysmem:(Ip.Gsp.wpr_meta_sysmem gsp);
+      Ip.Gsp.init_hw gsp;
+      { nvdev; gsp }
+    end
+    else begin
+      let flcn = Ip.Flcn.create nvdev in
+      let gsp = Ip.Gsp.create nvdev ~boot:(Ip.Gsp.falcon_boot flcn) in
+      Ip.Flcn.wait_for_reset flcn;
+      Ip.Flcn.init_sw flcn;
+      Ip.Gsp.init_sw gsp;
+      Ip.Flcn.init_hw flcn
+        ~libos_args_sysmem:(Ip.Gsp.libos_args_sysmem gsp)
+        ~wpr_meta_sysmem:(Ip.Gsp.wpr_meta_sysmem gsp);
+      Ip.Gsp.init_hw gsp;
+      { nvdev; gsp }
+    end
+
+  (* ops_nv.py:557 PCIIface.__init__: opening the PCI interface after the
+     kernel driver has run would overwrite its memory manager's mappings. *)
+  let create ~device_id =
+    if Nvk_iface.is_initialized () then
+      failwith
+        "Cannot use the PCI interface after the kernel driver has been \
+         initialized (would corrupt UVM memory)";
+    let base =
+      Base.create ~name:"NV" ~devpref:"NV" ~dev_id:device_id ~vendor
+        ~devices:pci_ids ~base_class:0x03 ~vram_bar:1
+        ~va_start:(Nativeint.of_int Nvdev.va_base)
+        ~va_size:Nvdev.va_size ~dev_impl:boot
+        ~mm:(fun impl -> Nvdev.mm impl.nvdev)
+        ()
+    in
+    { base; root = 0xc1000000; buffers = Hashtbl.create 64 }
+
+  (* The runtime's buffers carry the fixed metadata type; keep the base
+     allocation so free and map can reach the memory manager. *)
+  let adapt t base_buf =
+    Hashtbl.replace t.buffers (Nativeint.to_int (Hcq.Buffer.va base_buf)) base_buf;
+    let meta = Hcq.Buffer.meta base_buf in
+    Hcq.Buffer.make
+      ~va:(Hcq.Buffer.va base_buf)
+      ~size:(Hcq.Buffer.size base_buf)
+      ?view:(Hcq.Buffer.view base_buf)
+      ~meta:{ Nv_iface.h_memory = meta.Base.hmemory; owner_id = 0 }
+      ()
+
+  let alloc t ?host ?uncached ?cpu_access ?contiguous size =
+    adapt t (Base.alloc t.base ?host ?uncached ?cpu_access ?contiguous size)
+
+  let free t buf =
+    let va = Nativeint.to_int (Hcq.Buffer.va (Hcq.Buffer.base buf)) in
+    match Hashtbl.find_opt t.buffers va with
+    | Some base_buf ->
+        Base.free t.base base_buf;
+        Hashtbl.remove t.buffers va
+    | None -> ()
+
+  let map t buf =
+    let va = Nativeint.to_int (Hcq.Buffer.va buf) in
+    match Hashtbl.find_opt t.buffers va with
+    | Some base_buf -> adapt t (Base.map t.base base_buf)
+    | None ->
+        failwith
+          "Pci_iface.map: peer mapping across driver-less devices is not \
+           supported"
+
+  (* ops_nv.py:570 setup_usermode: the work-submission doorbell lives in a
+     fixed window of BAR0; the engine classes come from the GSP. *)
+  let setup_usermode t =
+    let g = (impl t).gsp in
+    {
+      Nv_iface.handle = 0xce000000;
+      mmio =
+        System.Pci_device.map_bar (Base.pci_dev t.base) ~off:0xbb0000
+          ~size:0x10000 0;
+      compute_class = Ip.Gsp.compute_class g;
+      dma_class = Ip.Gsp.dma_class g;
+      gpfifo_class = Ip.Gsp.gpfifo_class g;
+    }
+
+  (* ops_nv.py:579 sleep: drain the status queue for GSP events and surface
+     a latched device fault. *)
+  let sleep t =
+    Ip.Gsp.drain_responses (impl t).gsp;
+    if Nvdev.is_err_state (impl t).nvdev then failwith "Device fault detected"
+
+  let iface t : Nv_iface.t =
+    let g = (impl t).gsp in
+    {
+      Nv_iface.root = t.root;
+      gpu_instance = 0;
+      count = Base.count t.base;
+      defs = Nv_tables.defs_for_driver ~major:570;
+      (* the GSP tracks the device and subdevice handles itself *)
+      set_device = (fun ~nvdevice:_ ~subdevice:_ ~virtmem:_ -> ());
+      rm_alloc =
+        (fun ~parent ~cls ?params () ->
+          Ip.Gsp.rpc_rm_alloc g ~hparent:parent ~hclass:cls ?params
+            ~client:t.root ());
+      rm_control =
+        (fun ~obj ~cmd ?params () ->
+          Ip.Gsp.rpc_rm_control g ~hobject:obj ~cmd ?params ~client:t.root ());
+      alloc =
+        (fun ?host ?uncached ?cpu_access ?contiguous ?map_flags:_ ?cpu_addr:_
+             size ->
+          alloc t ?host ?uncached ?cpu_access ?contiguous size);
+      free = (fun buf -> free t buf);
+      map = (fun buf -> map t buf);
+      setup_usermode = (fun () -> setup_usermode t);
+      (* the driver-less path sets the vaspace page directory in rm_alloc *)
+      setup_vm = (fun ~vaspace:_ -> ());
+      setup_gpfifo_vm = (fun ~gpfifo:_ -> ());
+      sleep = (fun (_ : int) -> sleep t);
+      device_fini = (fun () -> Ip.Gsp.fini_hw g);
+      nvdev = Some (Nv_pci (impl t));
     }
 end
 
@@ -2040,4 +2212,12 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid NV device %S" name))
     | None -> 0
   in
-  open_device ~name (Nvk_iface.iface ~device_id)
+  (* The kernel driver is the only automatic choice; the driver-less path is
+     opt-in until it has been validated on hardware (the reference falls back
+     to it automatically). *)
+  match Tolk.Helpers.getenv_str "NV_IFACE" "NVK" with
+  | "NVK" -> open_device ~name (Nvk_iface.iface ~device_id)
+  | "PCI" -> open_device ~name (Pci_iface.iface (Pci_iface.create ~device_id))
+  | other ->
+      failwith
+        (Printf.sprintf "NV_IFACE=%s: unknown interface (use NVK or PCI)" other)

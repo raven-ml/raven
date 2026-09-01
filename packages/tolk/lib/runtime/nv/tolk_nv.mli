@@ -463,6 +463,12 @@ module Nvk_iface : sig
       [Failure] if the driver is unavailable or [device_id] is out of
       range. *)
 
+  val is_initialized : unit -> bool
+  (** [is_initialized ()] is [true] once the kernel driver has been
+      opened in this process (see {!iface}). The driver-less interface
+      refuses to open after this, since its fixed mappings would overwrite
+      the kernel driver's. *)
+
   val alloc_gpu_vaddr : ?alignment:int -> ?force_low:bool -> int -> nativeint
   (** [alloc_gpu_vaddr size] reserves [size] bytes of the process's
       device virtual address space and is the range's base address, a
@@ -529,6 +535,46 @@ module Nvk_iface : sig
       device identified by the 16-byte [gpu_uuid], with a single
       mapping-attribute entry. Raises [Invalid_argument] if [gpu_uuid]
       is not 16 bytes. *)
+end
+
+(** The driver-less PCI interface.
+
+    Drives a supported NVIDIA GPU with no kernel driver: it takes
+    exclusive ownership of the device over PCI, boots the GSP firmware
+    (see {!Ip}), and serves the runtime's object, control and memory
+    operations as GSP remote procedure calls over the device's own
+    memory manager. It fills the same {!Nv_iface.t} the kernel-driver
+    interface does, so the rest of the runtime is unchanged on top.
+
+    Opening the device programs its firmware and engine registers
+    directly, so it requires Linux, PCI access rights, and — until the
+    path is validated on hardware — is reached only through the
+    [NV_IFACE=PCI] opt-in. The device probe below is pure and runs
+    anywhere. *)
+module Pci_iface : sig
+  type t
+  (** The type for driver-less PCI interfaces. *)
+
+  val vendor : int
+  (** [vendor] is the PCI vendor id the device probe matches (NVIDIA). *)
+
+  val pci_ids : (int * int list) list
+  (** [pci_ids] is the device-id allowlist: [(mask, ids)] pairs whose
+      [ids] are the masked device ids of the supported consumer parts. *)
+
+  val create : device_id:int -> t
+  (** [create ~device_id] takes exclusive ownership of the [device_id]th
+      matching device on the bus and boots its GSP firmware end to end.
+      Raises [Failure] when the kernel driver is already open in this
+      process (its mappings would be corrupted), when no matching device
+      has that index, when the device cannot be claimed, or on a firmware
+      or boot failure. *)
+
+  val iface : t -> Nv_iface.t
+  (** [iface t] is the runtime interface over [t]: object and control
+      calls as GSP remote procedure calls, memory through the device's
+      memory manager, the work-submission doorbell in BAR0, and status
+      drained on each wait. *)
 end
 
 (** {1:loading Loaded kernels} *)
