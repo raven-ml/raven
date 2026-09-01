@@ -14,6 +14,26 @@ module System = Tolk_hcq.System
 let nv_debug = Helpers.getenv "NV_DEBUG" 0
 let debug = Helpers.getenv "DEBUG" 0
 
+exception Timeout_error of string
+
+(* helpers.py:538 wait_cond, over an injected clock so tests can script
+   the passage of time. *)
+let wait_cond now_ms ?(timeout_ms = 10000) ~value ~msg cb =
+  let start = now_ms () in
+  let rec go last =
+    if now_ms () - start < timeout_ms then begin
+      let v = cb () in
+      if v = value then () else go v
+    end
+    else
+      raise
+        (Timeout_error
+           (Printf.sprintf
+              "%s. Timed out after %d ms, condition not met: %d != %d" msg
+              timeout_ms last value))
+  in
+  go 0
+
 (* Nv_reg: nvdev.py NVReg *)
 
 module Nv_reg = struct
@@ -387,6 +407,30 @@ let setup ~pci_dev ~devfmt ~mmio ~map_vram ~rreg ~wreg:raw_wreg ~read_config
   let mmu_ver, fmc_boot =
     if architecture >= 0x1a then (3, true) else (2, false)
   in
+  (* nvdev.py:121 wait_for_reset (ip.py:94, ip.py:286): the boot firmware
+     must report the device out of reset before VRAM is sized and touched;
+     the boot layers live above this module, so the polls are inlined
+     here. *)
+  if fmc_boot then begin
+    include_regs "dev_therm" "gb202";
+    wait_cond now_ms ~value:0xff ~msg:"waiting for reset" (fun () ->
+        Nv_reg.read (reg "NV_THERM_I2CS_SCRATCH"))
+  end
+  else
+    wait_cond now_ms ~value:1 ~msg:"waiting for reset" (fun () ->
+        let plm =
+          Nv_reg.read_bitfields
+            (reg "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK")
+        in
+        let scratch =
+          Nv_reg.read
+            (Nv_reg.with_idx (reg "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05") 0)
+        in
+        if
+          List.assoc "read_protection_level0" plm = 1
+          && scratch land 0xff = 0xff
+        then 1
+        else 0);
   (* nvdev.py:123 _early_mmu_init *)
   include_regs "dev_vm" "tu102";
   include_regs "dev_mmu" (if mmu_ver = 3 then "gh100" else "tu102");

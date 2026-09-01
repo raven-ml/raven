@@ -1210,11 +1210,11 @@ module Pci_iface = struct
 
   let impl t = Base.dev_impl t.base
 
-  (* nvdev.py:74 the device bring-up: construct the falcon and GSP layers,
-     wait for reset, then run their software and hardware init in order —
-     the falcon's software init reserves the tables the GSP's software init
-     checks, and the GSP's software init produces the boot arguments the
-     falcon's hardware init consumes. *)
+  (* nvdev.py:74 the device bring-up: construct the falcon and GSP layers
+     over the reset-settled device, then run their software and hardware
+     init in order — the falcon's software init reserves the tables the
+     GSP's software init checks, and the GSP's software init produces the
+     boot arguments the falcon's hardware init consumes. *)
   let boot pci_dev =
     let nvdev = Nvdev.create pci_dev in
     (* the client is reinitialized every run, so leave the booting state
@@ -1223,7 +1223,6 @@ module Pci_iface = struct
     if Nvdev.fmc_boot nvdev then begin
       let flcn = Ip.Flcn_cot.create nvdev in
       let gsp = Ip.Gsp.create nvdev ~boot:(Ip.Gsp.cot_boot flcn) in
-      Ip.Flcn_cot.wait_for_reset flcn;
       Ip.Flcn_cot.init_sw flcn;
       Ip.Gsp.init_sw gsp;
       Ip.Flcn_cot.init_hw flcn
@@ -1235,7 +1234,6 @@ module Pci_iface = struct
     else begin
       let flcn = Ip.Flcn.create nvdev in
       let gsp = Ip.Gsp.create nvdev ~boot:(Ip.Gsp.falcon_boot flcn) in
-      Ip.Flcn.wait_for_reset flcn;
       Ip.Flcn.init_sw flcn;
       Ip.Gsp.init_sw gsp;
       Ip.Flcn.init_hw flcn
@@ -1244,6 +1242,15 @@ module Pci_iface = struct
       Ip.Gsp.init_hw gsp;
       { nvdev; gsp }
     end
+
+  (* nvdev.py:88 fini: the device finalizes its IPs in reverse
+     initialization order (the boot layers hold no hardware state, so
+     their finalization is a no-op). *)
+  let fini (b : nv_boot) =
+    Ip.Gsp.fini_hw b.gsp;
+    match Ip.Gsp.boot b.gsp with
+    | Ip.Gsp.Falcon f -> Ip.Flcn.fini_hw f
+    | Ip.Gsp.Cot c -> Ip.Flcn_cot.fini_hw c
 
   (* ops_nv.py:557 PCIIface.__init__: opening the PCI interface after the
      kernel driver has run would overwrite its memory manager's mappings. *)
@@ -1260,7 +1267,14 @@ module Pci_iface = struct
         ~mm:(fun impl -> Nvdev.mm impl.nvdev)
         ()
     in
-    { base; root = 0xc1000000; buffers = Hashtbl.create 64 }
+    let t = { base; root = 0xc1000000; buffers = Hashtbl.create 64 } in
+    (* ops_nv.py:564: register the client with the driver *)
+    let (_ : int) =
+      Ip.Gsp.rpc_rm_alloc (impl t).gsp ~hparent:0 ~hclass:Defs.nv01_root
+        ~params:(Nv_tables.create_blob Defs.Nv0000_alloc_parameters.sizeof)
+        ~client:t.root ()
+    in
+    t
 
   (* The runtime's buffers carry the fixed metadata type; keep the base
      allocation so free and map can reach the memory manager. *)
@@ -1340,8 +1354,10 @@ module Pci_iface = struct
       (* the driver-less path sets the vaspace page directory in rm_alloc *)
       setup_vm = (fun ~vaspace:_ -> ());
       setup_gpfifo_vm = (fun ~gpfifo:_ -> ());
-      sleep = (fun (_ : int) -> sleep t);
-      device_fini = (fun () -> Ip.Gsp.fini_hw g);
+      (* ops_nv.py:29 long waits back off to draining GSP events, which
+         also surface a latched device fault *)
+      sleep = (fun spent_ms -> if spent_ms > 200 then sleep t);
+      device_fini = (fun () -> fini (impl t));
       nvdev = Some (Nv_pci (impl t));
     }
 end

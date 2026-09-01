@@ -224,11 +224,6 @@ module Flcn : sig
   val sec2 : t -> int
   (** [sec2 t] is the register-block base of the SEC2 booter. *)
 
-  val wait_for_reset : t -> unit
-  (** [wait_for_reset t] blocks until the boot-progress scratch reports
-      the device is out of reset and secure boot has completed. Raises
-      {!Timeout_error} if it does not within ten seconds. *)
-
   val init_sw : t -> unit
   (** [init_sw t] resolves the falcon register families on the device,
       reads the VBIOS, and loads the FWSEC ucode and the booter image
@@ -251,6 +246,11 @@ module Flcn : sig
       tables are not initialized, the booter reports a nonzero mailbox,
       or the GSP core does not come up active, and {!Timeout_error} if a
       hardware wait expires. *)
+
+  val fini_hw : t -> unit
+  (** [fini_hw t] finalizes the layer's hardware. The falcon boot layer
+      holds none, so this is a no-op kept for the device's teardown
+      order. *)
 
   val reset : t -> ?riscv:bool -> int -> unit
   (** [reset t base] resets the microcontroller at [base]: it pulses the
@@ -337,11 +337,6 @@ module Flcn_cot : sig
   (** [create nvdev] is the chain-of-trust boot layer of [nvdev]. It
       holds no prepared state until {!init_sw}. *)
 
-  val wait_for_reset : t -> unit
-  (** [wait_for_reset t] resolves the thermal registers and blocks until
-      their scratch reports the device is out of reset. Raises
-      {!Timeout_error} if it does not within ten seconds. *)
-
   val init_sw : t -> unit
   (** [init_sw t] resolves the chain-of-trust register families on the
       device, reserves the GSP boot-argument region, and loads the
@@ -363,6 +358,11 @@ module Flcn_cot : sig
       Requires {!init_sw} to have run. Raises {!Timeout_error} on a
       security-processor or lockdown wait expiry, and [Failure] if the
       payload exceeds the security processor's message window. *)
+
+  val fini_hw : t -> unit
+  (** [fini_hw t] finalizes the layer's hardware. The chain-of-trust
+      boot layer holds none, so this is a no-op kept for the device's
+      teardown order. *)
 
   val kfsp_send_msg : t -> nvmd:int -> bytes -> unit
   (** [kfsp_send_msg t ~nvmd msg] sends the single-packet message [msg]
@@ -625,6 +625,9 @@ module Gsp : sig
   val create : Nvdev.t -> boot:boot -> t
   (** [create nvdev ~boot] is the GSP layer of [nvdev] booting through
       [boot]. It holds no prepared state until {!init_sw}. *)
+
+  val boot : t -> boot
+  (** [boot t] is the boot path [t] was created with. *)
 
   val libos_args_sysmem : t -> int
   (** [libos_args_sysmem t] is the physical address of the GSP

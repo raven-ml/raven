@@ -36,6 +36,9 @@ let boot_0_addr = 0x0
 let boot_42_addr = 0xa00
 let wpr2_hi_addr = 0x1fa828
 let scratch_42_addr = 0x1183a4
+let plm_05_addr = 0x118128
+let scratch_05_addr = 0x118234
+let therm_scratch_addr = 0xad00bc
 
 (* A scripted device: a register file over a hashtable with per-address
    read hooks and a write log, an anonymous mapping standing in for the
@@ -71,6 +74,11 @@ let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
       Hashtbl.replace store boot_0_addr boot0;
       Hashtbl.replace store boot_42_addr ((arch lsl 24) lor (impl lsl 20));
       Hashtbl.replace store scratch_42_addr scratch_mb;
+      (* the boot-progress scratches report ready, so the out-of-reset
+         wait returns at once; [pre] hooks can override them *)
+      Hashtbl.replace store plm_05_addr 1;
+      Hashtbl.replace store scratch_05_addr 0xff;
+      Hashtbl.replace store therm_scratch_addr 0xff;
       pre ~reads ~resets;
       let rreg addr =
         match Hashtbl.find_opt reads addr with
@@ -103,6 +111,17 @@ let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
 (* The chronological write log. *)
 let writes fd = List.rev !(fd.log)
 let cfg_writes fd = List.rev !(fd.cfg_writes)
+
+let contains ~needle haystack =
+  let nl = String.length needle and hl = String.length haystack in
+  if nl = 0 then true
+  else
+    let rec loop i =
+      if i + nl > hl then false
+      else if String.sub haystack i nl = needle then true
+      else loop (i + 1)
+    in
+    loop 0
 
 (* Page-table operations resolved against the device's own entry
    descriptors, building tables in a scratch corner of the fake VRAM
@@ -553,6 +572,44 @@ let () =
                   equal int 0
                     (Nv_reg.read
                        (Nvdev.reg fd.dev "NV_PFB_PRI_MMU_WPR2_ADDR_HI"))));
+        ];
+      group "boot-progress wait"
+        [
+          test "the boot scratch is polled before VRAM is sized" (fun () ->
+              let order = ref [] in
+              let record tag v () =
+                order := tag :: !order;
+                v
+              in
+              with_fake_dev
+                ~pre:(fun ~reads ~resets:_ ->
+                  Hashtbl.replace reads scratch_05_addr (record "gfw" 0xff);
+                  Hashtbl.replace reads scratch_42_addr (record "vram" 80))
+                (fun _ ->
+                  equal (list string) [ "gfw"; "vram" ] (List.rev !order)));
+          test "a device that never reports ready times out" (fun () ->
+              raises_match
+                (function
+                  | Nvdev.Timeout_error m ->
+                      contains ~needle:"waiting for reset" m
+                  | _ -> false)
+                (fun () ->
+                  with_fake_dev
+                    ~pre:(fun ~reads ~resets:_ ->
+                      Hashtbl.replace reads scratch_05_addr (fun () -> 0))
+                    (fun _ -> ())));
+          test "chain-of-trust chips wait on the thermal scratch" (fun () ->
+              let order = ref [] in
+              let record tag v () =
+                order := tag :: !order;
+                v
+              in
+              with_fake_dev ~arch:0x1b
+                ~pre:(fun ~reads ~resets:_ ->
+                  Hashtbl.replace reads therm_scratch_addr (record "therm" 0xff);
+                  Hashtbl.replace reads scratch_42_addr (record "vram" 80))
+                (fun _ ->
+                  equal (list string) [ "therm"; "vram" ] (List.rev !order)));
         ];
       group "boot memory"
         [

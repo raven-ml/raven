@@ -307,11 +307,17 @@ Ampere/Ada/Blackwell generations. Deliberately not ported with it:
     when the kernel driver cannot open the device; here it stays opt-in until
     the path is validated on hardware. Restoring the automatic fallback is the
     promotion criterion.
-  - **Hardening**: `fini`/unload robustness, err-state surfacing through the
-    timeline hang path, WPR2/reset recovery, and debug logging.
   - **`force_devmem` on the shared open path**: the channel ring is allocated
     without it, so the driver-less path may place it in system memory; revisit
     at hardware validation.
+
+  The hardening pass is closed: device `fini` iterates the IPs in reverse
+  init order, opening waits for the boot firmware's ready scratch before
+  sizing VRAM (on top of the WPR2 full-reset recovery), the GSP client is
+  registered at interface open, stalled waits back off to draining GSP
+  events after 200ms, the hang report and err-state surfacing are wired
+  through the timeline, and `NV_DEBUG>=4` wreg tracing plus the `DEBUG`
+  boot/RPC logs match the reference.
 
   MOCK, USB, and remote interfaces are out with it.
 

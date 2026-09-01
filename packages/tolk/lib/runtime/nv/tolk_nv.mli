@@ -737,6 +737,16 @@ val query_gpu_info : Nv_iface.t -> subdevice:int -> int list -> int list
     hardware directly answers from its static engine information
     instead of the driver query. *)
 
+val on_device_hang :
+  Nv_iface.t -> debugger:int -> debug_channel:int -> unit -> unit
+(** [on_device_hang iface ~debugger ~debug_channel ()] reads the per-SM
+    error states of the compute channel [debug_channel] through the
+    [debugger] object and raises [Failure] carrying the fault report:
+    when an MMU fault is recorded, one line per queued fault with its
+    address, fault type and access type decoded by name; otherwise one
+    line per SM with a latched error state. The device timeline calls
+    it when a wait stalls, folding the report into the timeout. *)
+
 val create : string -> Tolk.Device.t
 (** [create name] opens the NVIDIA device [name] names — ["NV"] for the
     first visible device, ["NV:1"] for the second, and so on — through

@@ -17,6 +17,26 @@
     (page tables, firmware loading, the security-processor boot chain)
     builds on top of it. *)
 
+(** {1:waits Waits} *)
+
+exception Timeout_error of string
+(** Raised when a bounded hardware wait — a register poll, a queue
+    waiting to come up — does not reach its expected value in time. The
+    message names the wait and the last observed value. *)
+
+val wait_cond :
+  (unit -> int) ->
+  ?timeout_ms:int ->
+  value:int ->
+  msg:string ->
+  (unit -> int) ->
+  unit
+(** [wait_cond now_ms ~value ~msg cb] polls [cb] until it returns
+    [value], reading the millisecond clock [now_ms] between polls.
+    Raises {!Timeout_error} naming [msg] and the last observed value
+    once [timeout_ms] (defaults to [10000]) milliseconds pass without
+    the condition holding. *)
+
 (** {1:registers Registers} *)
 
 (** Registers bound to a device access path.
@@ -173,9 +193,14 @@ val create : Tolk_hcq.System.Pci_device.t -> t
     cannot boot again — bus mastering is dropped and the device takes
     a full PCI reset followed by a settle delay. Bus mastering is then
     enabled, the chip generation is detected from the boot registers
-    (GA1xx, AD1xx and GB2xx parts are supported), the page-table
-    format and firmware directory are selected for it, VRAM is sized
-    from the firmware scratch register, and the VRAM BAR is mapped.
+    (GA1xx, AD1xx and GB2xx parts are supported), and the page-table
+    format and firmware directory are selected for it. Opening then
+    waits until the boot firmware reports the device fully out of
+    reset — on the boot-progress scratch, or the thermal scratch on
+    chips that boot through the security processor — so a device
+    opened mid-boot, or straight after the recovery reset, is not
+    touched before its firmware has settled. Only then is VRAM sized
+    from the firmware scratch register and the VRAM BAR mapped.
 
     The device memory manager is created over the chip's page-table
     format: a 2MB boot region, a dedicated page-table region when VRAM
@@ -187,7 +212,8 @@ val create : Tolk_hcq.System.Pci_device.t -> t
     entries.
 
     Raises [Failure] on an unsupported chip (naming the architecture
-    and boot id) or when a BAR cannot be mapped. *)
+    and boot id) or when a BAR cannot be mapped, and {!Timeout_error}
+    when the boot firmware never reports ready. *)
 
 val make :
   ?pci_dev:Tolk_hcq.System.Pci_device.t ->
@@ -208,8 +234,11 @@ val make :
     caller-provided parts, opened exactly like {!create}: every
     register access goes through [rreg] and [wreg] (32-bit values at
     absolute byte addresses), so construction reads the
-    write-protected-region, boot and VRAM-size registers through them
-    and they must already answer.
+    write-protected-region, boot, boot-progress and VRAM-size registers
+    through them and they must already answer — in particular the
+    boot-progress wait polls until its scratch reports ready, so a
+    register file that leaves it unanswered times out after ten seconds
+    of [now_ms] with {!Timeout_error}.
 
     This is the device's injection seam: {!create} is the PCI client
     of the same state, while tests and tooling supply scripted

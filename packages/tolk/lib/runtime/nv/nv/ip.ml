@@ -21,25 +21,9 @@ let bit_length n =
 
 external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
-exception Timeout_error of string
+exception Timeout_error = Nvdev.Timeout_error
 
-(* helpers.py:538 wait_cond, over an injected clock so tests can script
-   the passage of time. *)
-let wait_cond now_ms ?(timeout_ms = 10000) ~value ~msg cb =
-  let start = now_ms () in
-  let rec go last =
-    if now_ms () - start < timeout_ms then begin
-      let v = cb () in
-      if v = value then () else go v
-    end
-    else
-      raise
-        (Timeout_error
-           (Printf.sprintf
-              "%s. Timed out after %d ms, condition not met: %d != %d" msg
-              timeout_ms last value))
-  in
-  go 0
+let wait_cond = Nvdev.wait_cond
 
 (* Little-endian field access over a plain byte image, keyed on the
    (byte offset, byte size) layout pairs from the generated tables. A
@@ -628,27 +612,6 @@ module Flcn = struct
 
   let frts_offset t = (require_prepared t).ucode.frts_offset
 
-  (* ip.py:94 NV_FLCN.wait_for_reset: the boot-progress scratch reports
-     the device is out of reset and secure boot has completed. *)
-  let wait_for_reset t =
-    wait_cond (dev_clock t.nvdev) ~value:1 ~msg:"waiting for reset" (fun () ->
-        let plm =
-          R.read_bitfields
-            (Nvdev.reg t.nvdev
-               "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK")
-        in
-        let scratch =
-          R.read
-            (R.with_idx
-               (Nvdev.reg t.nvdev "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05")
-               0)
-        in
-        if
-          List.assoc "read_protection_level0" plm = 1
-          && scratch land 0xff = 0xff
-        then 1
-        else 0)
-
   (* ip.py:271 reset: pulse the engine reset, wait for memory scrubbing,
      then bring the RISC-V core out of reset — either into bootloader
      fetch ([riscv]) or by selecting the falcon core and stamping the
@@ -900,6 +863,10 @@ module Flcn = struct
            (R.with_base (Nvdev.reg nvdev "NV_PRISCV_RISCV_CPUCTL") t.falcon))
       <> 1
     then failwith "GSP Core is not active"
+
+  (* ip.py:17 fini_hw: the falcon boot layer holds no hardware state to
+     finalize. *)
+  let fini_hw (_ : t) = ()
 end
 
 (* Chain-of-trust falcon boot image (Blackwell) *)
@@ -948,13 +915,6 @@ module Flcn_cot = struct
     match t.prepared with
     | Some p -> p
     | None -> invalid_arg "Flcn_cot: init_sw must run before init_hw"
-
-  (* ip.py:286 NV_FLCN_COT.wait_for_reset: the thermal scratch reports the
-     device is out of reset. *)
-  let wait_for_reset t =
-    Nvdev.include_regs t.nvdev ~family:"dev_therm" ~arch:"gb202";
-    wait_cond (dev_clock t.nvdev) ~value:0xff ~msg:"waiting for reset"
-      (fun () -> R.read (Nvdev.reg t.nvdev "NV_THERM_I2CS_SCRATCH"))
 
   (* ip.py:328 kfsp_send_msg: push a message to the security processor
      through its external memory window and wait for its reply, then drain
@@ -1078,6 +1038,10 @@ module Flcn_cot = struct
       ~msg:"RISCV boot lockdown not cleared" (fun () ->
         List.assoc "riscv_br_priv_lockdown"
           (R.read_bitfields (based nvdev "NV_PFALCON_FALCON_HWCFG2" t.falcon)))
+
+  (* ip.py:17 fini_hw: the chain-of-trust boot layer holds no hardware
+     state to finalize. *)
+  let fini_hw (_ : t) = ()
 end
 
 (* GSP firmware image and its page hierarchy *)
@@ -1574,6 +1538,7 @@ module Gsp = struct
 
   let falcon_boot f = Falcon f
   let cot_boot c = Cot c
+  let boot t = t.boot
   let libos_args_sysmem t = t.libos_args_sysmem
   let wpr_meta_sysmem t = t.wpr_meta_sysmem
   let gpfifo_class t = t.gpfifo_class

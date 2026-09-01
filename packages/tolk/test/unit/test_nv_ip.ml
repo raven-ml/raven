@@ -365,6 +365,11 @@ let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1) f =
       Hashtbl.replace store 0xa00 ((arch lsl 24) lor (impl lsl 20))
       (* NV_PMC_BOOT_42 *);
       Hashtbl.replace store 0x1183a4 80 (* SCRATCH_GROUP_42: 80MB *);
+      (* the boot-progress scratches report ready, so construction's
+         out-of-reset wait returns at once *)
+      Hashtbl.replace store 0x118128 1 (* SCRATCH_GROUP_05_PRIV_LEVEL_MASK *);
+      Hashtbl.replace store 0x118234 0xff (* SCRATCH_GROUP_05(0) *);
+      Hashtbl.replace store 0xad00bc 0xff (* NV_THERM_I2CS_SCRATCH *);
       let rreg addr =
         match Hashtbl.find_opt reads addr with
         | Some hook -> hook ()
@@ -1058,36 +1063,27 @@ let () =
                   in
                   equal (list string) [ "840040:23456789"; "840044:1" ] mb));
         ];
-      group "falcon wait_for_reset"
+      group "fini"
         [
-          test "returns once the boot-progress scratch reports complete"
-            (fun () ->
+          test "the boot layers have no hardware finalization" (fun () ->
               with_fake_dev (fun fd ->
-                  let flcn = Ip.Flcn.create fd.dev in
-                  set_read fd
-                    "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK" 1;
-                  set_read fd ~idx:0 "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05"
-                    0xff;
-                  Ip.Flcn.wait_for_reset flcn;
+                  Ip.Flcn.fini_hw (Ip.Flcn.create fd.dev);
+                  Ip.Flcn_cot.fini_hw (Ip.Flcn_cot.create fd.dev);
                   equal (list string) [] (show_writes fd)));
-          test "keeps waiting until both conditions hold" (fun () ->
+          test "the gsp exposes the boot path it was created with" (fun () ->
               with_fake_dev (fun fd ->
                   let flcn = Ip.Flcn.create fd.dev in
-                  set_read fd
-                    "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK" 1;
-                  set_read fd ~idx:0 "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05"
-                    0x00;
-                  raises_timeout_with [ "waiting for reset" ] (fun () ->
-                      Ip.Flcn.wait_for_reset flcn)));
+                  let gsp =
+                    Ip.Gsp.create fd.dev ~boot:(Ip.Gsp.falcon_boot flcn)
+                  in
+                  is_true
+                    ~msg:"falcon boot"
+                    (match Ip.Gsp.boot gsp with
+                    | Ip.Gsp.Falcon _ -> true
+                    | Ip.Gsp.Cot _ -> false)));
         ];
       group "chain-of-trust execution"
         [
-          test "wait_for_reset polls the thermal scratch" (fun () ->
-              with_fake_dev (fun fd ->
-                  let cot = Ip.Flcn_cot.create fd.dev in
-                  Hashtbl.replace fd.reads 0xad00bc (fun () -> 0xff);
-                  Ip.Flcn_cot.wait_for_reset cot;
-                  equal (list string) [] (show_writes fd)));
           test "kfsp_send_msg frames, pushes and drains a message"
             (fun () ->
               with_fake_dev (fun fd ->

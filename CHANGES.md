@@ -101,6 +101,18 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- Driver-less NVIDIA (`NV_IFACE=PCI`) hardening: opening now waits for the
+  GPU's boot firmware to report ready before sizing VRAM (a device opened
+  mid-boot, or straight after the armed-region recovery reset, could read
+  garbage), the GSP client is registered before the first object call,
+  shutdown finalizes the boot layers in reverse bring-up order, and stalled
+  waits back off to draining GSP events after 200ms instead of on every
+  poll.
+
+- `NV_DEBUG=4` traces every register write on the driver-less NVIDIA path
+  (`wreg: 0x<addr> = 0x<value>`); `DEBUG>=2` logs the armed-region recovery
+  reset and `DEBUG>=3` decodes incoming GSP RPCs by name.
+
 - NVIDIA GPUs can now be driven over PCI with no kernel driver: setting
   `NV_IFACE=PCI` boots the GPU's GSP firmware directly — the falcon and
   chain-of-trust bring-up, the shared-memory RPC queues, the golden-image

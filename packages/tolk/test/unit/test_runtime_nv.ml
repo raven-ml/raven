@@ -1610,6 +1610,82 @@ let () =
                    (fake_iface ~nvdev:Fake_nvdev ~rm_control ())
                    ~subdevice:0x5d topology_indices));
         ];
+      group "device hang"
+        [
+          test "a queued MMU fault reports each fault decoded by name"
+            (fun () ->
+              let module P =
+                Defs.Nv83de_ctrl_debug_read_all_sm_error_states_params
+              in
+              let module M = Defs.Nv83de_ctrl_debug_read_mmu_fault_info_params
+              in
+              let module E = Defs.Nv83de_ctrl_debug_read_mmu_fault_info_entry
+              in
+              let seen = ref [] in
+              let rm_control ~obj ~cmd ?params () =
+                seen := (obj, cmd) :: !seen;
+                let b = Option.get params in
+                if cmd = Defs.nv83de_ctrl_cmd_debug_read_all_sm_error_states
+                then begin
+                  equal ~msg:"channel" int 0xc
+                    (Tables.get_field b P.htargetchannel);
+                  equal ~msg:"sms" int 100 (Tables.get_field b P.numsmstoread);
+                  Tables.set_field b P.mmufault_valid 1
+                end
+                else begin
+                  Tables.set_field b M.count 2;
+                  Tables.set_field b E.faultaddress 0xdead0000;
+                  Tables.set_field b E.faulttype 2;
+                  Tables.set_field b E.accesstype 1;
+                  Tables.set_field ~base:E.sizeof b E.faultaddress 0xbeef;
+                  (* an id outside the name tables falls back to the number *)
+                  Tables.set_field ~base:E.sizeof b E.faulttype 99;
+                  Tables.set_field ~base:E.sizeof b E.accesstype 0
+                end
+              in
+              raises_match
+                (function
+                  | Failure m ->
+                      String.equal m
+                        "MMU fault: 0xDEAD0000 | NV_PFAULT_FAULT_TYPE_PTE | \
+                         WRITE\n\
+                         MMU fault: 0xBEEF | 99 | READ"
+                  | _ -> false)
+                (fun () ->
+                  Tolk_nv.on_device_hang
+                    (fake_iface ~rm_control ())
+                    ~debugger:0xd ~debug_channel:0xc ());
+              equal
+                (list (pair int int))
+                [
+                  (0xd, Defs.nv83de_ctrl_cmd_debug_read_all_sm_error_states);
+                  (0xd, Defs.nv83de_ctrl_cmd_debug_read_mmu_fault_info);
+                ]
+                (List.rev !seen));
+          test "without an MMU fault the latched SM errors are reported"
+            (fun () ->
+              let module P =
+                Defs.Nv83de_ctrl_debug_read_all_sm_error_states_params
+              in
+              let module R = Defs.Nv83de_sm_error_state_registers in
+              let rm_control ~obj:_ ~cmd:_ ?params () =
+                let b = Option.get params in
+                let base = P.smerrorstatearray_offset + (3 * R.sizeof) in
+                Tables.set_field ~base b R.hwwglobalesr 5;
+                Tables.set_field ~base b R.hwwwarpesr 0xab;
+                Tables.set_field ~base b R.hwwwarpesrpc64 0x1234
+              in
+              raises_match
+                (function
+                  | Failure m ->
+                      String.equal m
+                        "SM 3 fault: esr=5 warp_esr=0xab warp_pc=0x1234"
+                  | _ -> false)
+                (fun () ->
+                  Tolk_nv.on_device_hang
+                    (fake_iface ~rm_control ())
+                    ~debugger:0xd ~debug_channel:0xc ()));
+        ];
       group "Pci_iface"
         [
           test "the bus scan admits exactly the allowlisted ids" (fun () ->
