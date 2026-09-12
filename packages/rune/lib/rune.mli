@@ -721,6 +721,56 @@ val scan :
 
     Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
 
+(** Claiming a scan from a handler of your own.
+
+    A handler that performs {e its own} effects inside a scan body — a
+    collector of little losses, say — must intercept {!scan} itself: an
+    enclosing transformation claims the fold and runs it outside the handler's
+    extent, where those effects are no longer observed. This module exposes
+    the claim {!val-scan} itself performs: answer {!E_scan_probe} with [false]
+    (a claimer cannot stage a loop, and answering is what stops a staging
+    handler above from claiming the fold), match {!E_scan} to take the
+    request, run {!eager} on it under a re-installed copy of the claiming
+    handler so the fold's operations and effects stay in its extent, and
+    continue with the result:
+
+    {[
+    let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+      fun eff ->
+      match eff with
+      | Rune.Scan_claim.E_scan_probe -> Some (fun k -> continue k false)
+      | Rune.Scan_claim.E_scan req ->
+        Some
+          (fun k ->
+            let res =
+              Effect.Deep.match_with
+                (fun () -> Rune.Scan_claim.eager req)
+                () (handler state)
+            in
+            continue k res)
+      | _ -> None
+    ]}
+
+    The innermost claimer wins, so a handler installed inside a transformation
+    keeps the fold inside itself while the operations still flow outward to
+    that transformation, which sees an ordinary unrolled fold. *)
+module Scan_claim : sig
+  type req
+  type res
+
+  (** [eager req] folds [req] step by step with ordinary operations; run it
+      under a re-installed copy of the claiming handler. *)
+  val eager : req -> res
+
+  (** [E_scan req] is the claim {!val-scan} performs. *)
+  type _ Effect.t += E_scan : req -> res Effect.t
+
+  (** [E_scan_probe] asks the nearest {!E_scan} claimer whether it will stage
+      the fold as a compiled loop. A handler that runs {!eager} answers
+      [false]. *)
+  type _ Effect.t += E_scan_probe : bool Effect.t
+end
+
 val cond :
   (bool, Nx.bool_elt) Nx.t -> then_:(unit -> 'r) -> else_:(unit -> 'r) -> 'r
 (** [cond pred ~then_ ~else_] runs one branch according to the scalar [pred].

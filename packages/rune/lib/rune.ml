@@ -610,6 +610,19 @@ let scan (type p) (module C : Ptree.S with type t = p)
     ~(init : C.t) (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
   Scan.scan (module C) ~f ~init xs
 
+(* The scan claim, exposed to handlers of other libraries: the effect
+   constructors are rebound, so a handler that matches [Scan_claim.E_scan]
+   intercepts exactly the effect [scan] performs. *)
+module Scan_claim = struct
+  type req = Scan.scan_req
+  type res = Scan.scan_res
+
+  type _ Effect.t += E_scan = Scan.E_scan
+  type _ Effect.t += E_scan_probe = Scan.E_scan_probe
+
+  let eager = Scan.eager
+end
+
 let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
     ~(else_ : unit -> 'r) : 'r =
   if Nx.item [] pred then then_ () else else_ ()
