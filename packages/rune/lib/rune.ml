@@ -203,6 +203,156 @@ let jvp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S wit
   let y = run_transform f params (Forward.handler store) in
   (y, Q.map (fun yleaf -> output_tangent store yleaf) y)
 
+(* Batched forward mode: k directions through one forward pass, each tensor's
+   tangent a [k]-lane batch stacked on a leading axis. See forward_k.ml for the
+   handler; the drivers below only derive [k] from the tangent structure,
+   validate it, and seed the store. *)
+
+(* The lane count is the leading dimension of the tangent structure's first
+   leaf; every other leaf is validated against it while seeding. *)
+let lane_count name (type p) (module P : Ptree.S with type t = p) (thetas : p) :
+    int =
+  let k = ref None in
+  P.iter
+    (fun leaf ->
+      match !k with
+      | Some _ -> ()
+      | None ->
+          let s = Tangent_store.shape_of leaf in
+          if Array.length s = 0 then
+            invalid_arg
+              (name
+             ^ ": a tangent leaf is a scalar; tangent leaves must stack their \
+                lanes on a leading axis")
+          else if s.(0) < 1 then
+            invalid_arg
+              (Printf.sprintf
+                 "%s: the tangent structure maps %d lanes; at least one is \
+                  required"
+                 name s.(0))
+          else k := Some s.(0))
+    thetas;
+  match !k with
+  | Some k -> k
+  | None ->
+      invalid_arg
+        (Printf.sprintf
+           "%s: the parameter structure has no leaves, so the lane count \
+            cannot be determined"
+           name)
+
+let err_lane_shape name k leaf theta =
+  let shape_theta = Tangent_store.shape_of theta in
+  let shape_leaf = Tangent_store.shape_of leaf in
+  let msg =
+    if
+      Array.length shape_theta = Array.length shape_leaf + 1
+      && Array.length shape_theta > 0
+      && shape_theta.(0) <> k
+    then
+      Printf.sprintf
+        "%s: tangent leaves disagree on the lane count (%d vs %d); all leaves \
+         of the tangent structure must stack the same number of lanes"
+        name shape_theta.(0) k
+    else
+      Printf.sprintf
+        "%s: tangent leaf shape [%s] does not stack lanes on the parameter \
+         leaf's shape [%s]; each tangent leaf must be [k; shape-of-leaf] for \
+         one shared lane count [k]"
+        name (shape_string shape_theta) (shape_string shape_leaf)
+  in
+  invalid_arg msg
+
+let seed_lanes (type p) name (module P : Ptree.S with type t = p) (params : p)
+    (thetas : p) : Tangent_store.t =
+  let k = lane_count name (module P) thetas in
+  let store = Tangent_store.create ~k in
+  let (_ : p) =
+    P.map2
+      (fun leaf theta ->
+        if
+          Tangent_store.shape_of theta
+          <> Array.append [| k |] (Tangent_store.shape_of leaf)
+        then err_lane_shape name k leaf theta;
+        Tangent_store.set store leaf theta;
+        leaf)
+      params thetas
+  in
+  store
+
+let output_tangent_k store y =
+  match Tangent_store.find store y with
+  | Some dy -> dy
+  | None ->
+      Nx.zeros (Nx.dtype y)
+        (Array.append [| Tangent_store.k store |] (Tangent_store.shape_of y))
+
+let jvp_k (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) (thetas : P.t) :
+    (c, d) Nx.t * (c, d) Nx.t =
+  let store = seed_lanes "Rune.jvp_k" (module P) params thetas in
+  let y =
+    Forward_k.with_active_store store (fun () ->
+        run_transform f params (Forward_k.handler store))
+  in
+  (y, output_tangent_k store y)
+
+let jvp_k_aux (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t * 'aux) (params : P.t) (thetas : P.t) :
+    (c, d) Nx.t * (c, d) Nx.t * 'aux =
+  let aux = ref None in
+  let f' ps =
+    let y, a = f ps in
+    aux := Some a;
+    y
+  in
+  let y, dy = jvp_k (module P) f' params thetas in
+  match !aux with
+  | Some a -> (y, dy, a)
+  | None -> assert false (* [f'] completed, so [aux] was set. *)
+
+let jvp_k2 (type p q) (module P : Ptree.S with type t = p)
+    (module Q : Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t)
+    (thetas : P.t) : Q.t * Q.t =
+  let store = seed_lanes "Rune.jvp_k2" (module P) params thetas in
+  let y =
+    Forward_k.with_active_store store (fun () ->
+        run_transform f params (Forward_k.handler store))
+  in
+  (y, Q.map (fun yleaf -> output_tangent_k store yleaf) y)
+
+let jvp_k' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
+    (thetas : (a, b) Nx.t) : (c, d) Nx.t * (c, d) Nx.t =
+  let s = Tangent_store.shape_of thetas in
+  if Array.length s = 0 then
+    invalid_arg
+      "Rune.jvp_k': the tangent is a scalar; it must stack its lanes on a \
+       leading axis";
+  if s.(0) < 1 then
+    invalid_arg
+      (Printf.sprintf
+         "Rune.jvp_k': the tangent maps %d lanes; at least one is required"
+         s.(0));
+  if s <> Array.append [| s.(0) |] (Tangent_store.shape_of x) then
+    invalid_arg
+      (Printf.sprintf
+         "Rune.jvp_k': tangent shape [%s] does not stack lanes on the input's \
+          shape [%s]; it must be [k; shape-of-input]"
+         (shape_string s)
+         (shape_string (Tangent_store.shape_of x)));
+  let store = Tangent_store.create ~k:s.(0) in
+  Tangent_store.set store x thetas;
+  let y =
+    Forward_k.with_active_store store (fun () ->
+        run_transform f x (Forward_k.handler store))
+  in
+  (y, output_tangent_k store y)
+
+(* The live-binding count of the innermost running batched forward store: the
+   memory probe that makes the ephemeron store's bounded-lifetime behavior
+   observable from inside the differentiated function. *)
+let live_tangent_entries = Forward_k.live_entries
+
 (* Custom differentiation rules *)
 
 let custom_vjp = Custom.custom_vjp

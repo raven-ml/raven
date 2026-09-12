@@ -6,9 +6,11 @@
   tape
   reverse
   forward
+  forward_k
   vmap
   debug
   tensor_map
+  tangent_store
   gate
   derivs
   jit
@@ -19,6 +21,7 @@
   nx.core
   nx
   nx.effect
+  nx.backend
   nx.buffer
   tolk.uop
   tolk
