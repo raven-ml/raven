@@ -48,7 +48,9 @@ nest into records, so models compose structurally — see
   pullback; `_aux` variants thread non-differentiated data out of the
   objective
 - **Forward mode** — `jvp` for Jacobian-vector products in a single
-  forward pass
+  forward pass; `tangent` reads the tangent a forward mode maintains for
+  any tensor it tracks, so libraries can consume tangents without
+  depending on how a transformation stores them
 - **Batched forward mode** — `jvp_k` pushes `k` directions through one
   forward pass, every tensor's tangent a `k`-lane batch on a leading axis:
   the primal is computed once and all `k` tangents together, and `jvp_k`

@@ -203,6 +203,10 @@ let jvp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S wit
   let y = run_transform f params (Forward.handler store) in
   (y, Q.map (fun yleaf -> output_tangent store yleaf) y)
 
+(* Reading tangents: what the installed forward mode maintains for a tensor,
+   for code that consumes tangents rather than producing them. *)
+let tangent = Tangent_query.query
+
 (* Batched forward mode: k directions through one forward pass, each tensor's
    tangent a [k]-lane batch stacked on a leading axis. See forward_k.ml for the
    handler; the drivers below only derive [k] from the tangent structure,

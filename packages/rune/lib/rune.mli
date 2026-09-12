@@ -140,6 +140,25 @@ val jvp2 :
     objective returning a structured output: the result tangent has the output's
     structure, one tangent per output leaf. *)
 
+val tangent : ('a, 'b) Nx.t -> ('a, 'b) Nx.t option
+(** [tangent x] is the tangent a forward mode maintains for [x], if any:
+    [Some dx] while a forward-mode transformation surrounds the call and tracks
+    [x], and [None] otherwise — no forward mode is installed, [x] is a constant
+    of the one that is (a value computed from constants, a {!detach}ed tensor,
+    anything inside {!no_grad}), or the innermost mode does not track it.
+
+    Which tangent is returned follows the installed mode: under {!jvp} it is the
+    single tangent of [x]'s shape, under {!jvp_k} the [k]-lane batch of shape
+    [k :: shape x]. The innermost transformation owns the answer and its shape
+    convention, so an enclosing forward mode never answers for a tensor the
+    current scope's mode does not itself track.
+
+    This is the query for code that {e consumes} tangents — a curvature
+    collector over a batched forward pass, a diagnostic — rather than producing
+    them: it reads the store the transformation already keeps and does not
+    perturb the computation. Treat [None] as "no tangent here", and note that
+    the shape tells the caller which forward mode answered. *)
+
 (** {1:batched_forward Batched forward mode} *)
 
 val jvp_k :

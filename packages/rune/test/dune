@@ -15,6 +15,7 @@
   test_ptree
   test_jvp
   test_jvp_k
+  test_tangent
   test_vmap
   test_custom
   test_fft
@@ -33,6 +34,7 @@
   test_ptree
   test_jvp
   test_jvp_k
+  test_tangent
   test_vmap
   test_custom
   test_fft

@@ -11,6 +11,7 @@
   debug
   tensor_map
   tangent_store
+  tangent_query
   gate
   derivs
   jit

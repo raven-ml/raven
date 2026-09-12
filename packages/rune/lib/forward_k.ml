@@ -193,6 +193,13 @@ let rec handler : type r. Tangent_store.t -> (r, r) Effect.Deep.handler =
               invalid_arg
                 "in-place mutation (set_item, set_slice, blit, assign) cannot \
                  be used inside jvp_k — use scatter instead")
+      (* The tangent query: answered from this store with the [k]-lane batch,
+         so a consumer inside the scope reads exactly the tangents this
+         differentiation maintains. A tensor the store does not track is
+         answered [None] rather than passed outward: the innermost forward mode
+         owns the tangent convention in its extent (a lane batch here, a single
+         tangent under [Forward] — see tangent_query.ml). *)
+      | Tangent_query.E_tangent x -> Some (fun k -> continue k (tangent x))
       (* Scan: forward mode has no staged rule yet, so run the eager fold under
          a nested instance of this handler — every step's operations flow
          through it and acquire their tangent batches as they always did.
