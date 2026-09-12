@@ -770,6 +770,69 @@ let test_vmap_outside_raises () =
              Nx.sum dy)
            stacked))
 
+(* An exception raised in an enclosing effect handler is re-raised in the
+   handler's fiber, abandoning the transformation's fiber without unwinding it,
+   so a transformation's installation cannot be tracked in a global counter with
+   [Fun.protect]: the cleanup is skipped and every later [jit] steps aside for
+   the rest of the process. The gate is asked as an effect instead, and these
+   are the cases that used to leak. *)
+
+type _ Effect.t += Boom : unit Effect.t
+
+let raising_handler : type r. (r, r) Effect.Deep.handler =
+  {
+    retc = Fun.id;
+    exnc = raise;
+    effc =
+      (fun (type c) (eff : c Effect.t) ->
+        match eff with Boom -> Some (fun _k -> failwith "boom") | _ -> None);
+  }
+
+(* [jit_is_active ()] is [true] when a [jit] trace still refuses to read a
+   traced value — that is, when no transformation is (wrongly) claiming to be
+   installed. *)
+let jit_is_active () =
+  let f = Rune.jit' (fun x -> Nx.scalar f64 (Nx.item [ 0 ] x)) in
+  match f (vec64 [| 1.0; 2.0 |]) with
+  | _ -> false
+  | exception Rune.Jit_error _ -> true
+
+let test_raising_handler_keeps_jit_active () =
+  equal ~msg:"jit is active to begin with" bool true (jit_is_active ());
+  let raises f =
+    match f () with
+    | _ -> fail "the enclosing handler should have raised"
+    | exception Failure _ -> ()
+  in
+  (* reverse mode *)
+  raises (fun () ->
+      Effect.Deep.match_with
+        (fun () ->
+          Rune.grad'
+            (fun x ->
+              Effect.perform Boom;
+              Nx.sum x)
+            (vec64 [| 1.0; 2.0 |]))
+        () raising_handler);
+  equal ~msg:"grad did not close the gate" bool true (jit_is_active ());
+  (* batched forward mode with an inner vmap: the abandoned fiber is the
+     map's *)
+  raises (fun () ->
+      Effect.Deep.match_with
+        (fun () ->
+          Rune.jvp_k'
+            (fun x ->
+              Nx.sum
+                (Rune.vmap'
+                   (fun y ->
+                     Effect.perform Boom;
+                     Nx.sum y)
+                   x))
+            (vec64 [| 1.0; 2.0 |])
+            (lane_batch ~k:1 (vec64 [| 1.0; 2.0 |])))
+        () raising_handler);
+  equal ~msg:"jvp_k of vmap did not close the gate" bool true (jit_is_active ())
+
 (* Memory: the ephemeron-keyed store *)
 
 let test_live_tangents_bounded_across_loop () =
@@ -882,6 +945,11 @@ let tests =
         test "rejects a scalar tangent" test_rejects_scalar_tangent;
         test "vmap outside raises the lane-invariant error"
           test_vmap_outside_raises;
+      ];
+    group "the transformation gate"
+      [
+        test "a raising handler keeps jit active"
+          test_raising_handler_keeps_jit_active;
       ];
     group "memory"
       [

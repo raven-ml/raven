@@ -114,6 +114,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
          extent (a single tangent here, a lane batch under [Forward_k] — see
          tangent_query.ml). *)
       | Tangent_query.E_tangent x -> Some (fun k -> continue k (tangent x))
+      (* [jit] asks whether to step aside; a forward mode is observing. *)
+      | Gate.E_transforming -> Some (fun k -> continue k true)
       (* Scan: forward mode has no staged rule yet, so run the eager fold under
          a nested instance of this handler — every step's operations flow
          through it and acquire their tangents as they always did. Claiming

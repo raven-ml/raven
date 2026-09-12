@@ -200,6 +200,8 @@ let rec handler : type r. Tangent_store.t -> (r, r) Effect.Deep.handler =
          owns the tangent convention in its extent (a lane batch here, a single
          tangent under [Forward] — see tangent_query.ml). *)
       | Tangent_query.E_tangent x -> Some (fun k -> continue k (tangent x))
+      (* [jit] asks whether to step aside; a batched forward mode is observing. *)
+      | Gate.E_transforming -> Some (fun k -> continue k true)
       (* Scan: forward mode has no staged rule yet, so run the eager fold under
          a nested instance of this handler — every step's operations flow
          through it and acquire their tangent batches as they always did.

@@ -17,10 +17,10 @@ let require_scalar name y =
          name
          (shape_string (Nx.shape y)))
 
-(* Install a transformation handler for the run of [f]. The recorded depth lets
-   [jit] step aside when a transformation is observing the operations. *)
-let run_transform f x handler =
-  Gate.with_transform (fun () -> Effect.Deep.match_with f x handler)
+(* Install a transformation handler for the run of [f]. The handler answers
+   [Gate.E_transforming], which is how [jit] learns to step aside while a
+   transformation observes the operations. *)
+let run_transform f x handler = Effect.Deep.match_with f x handler
 
 (* Gradients are defined with respect to real and complex leaves. A parameter
    structure may hold others — an RNG key threaded through a compiled step, a
