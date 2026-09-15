@@ -28,7 +28,9 @@ let unwrap = function Ok v -> v | Error err -> failwith (Error.to_string err)
 
 let load_image ?(grayscale = false) path = Image_io.load_image ~grayscale path
 
-let save_image ?(overwrite = true) path img =
+(* [uint8_pixels img] is the height, width, channel count and bytes of the image
+   tensor [img]. *)
+let uint8_pixels img =
   let h, w, c =
     match Nx.shape img with
     | [| h; w |] -> (h, w, 1)
@@ -40,22 +42,31 @@ let save_image ?(overwrite = true) path img =
         failwith (err_bad_dims (Array.length s) dims)
   in
   let buf = Nx.to_buffer img in
-  let data =
-    match Nx_buffer.kind buf with
-    | UInt8 -> Nx_buffer.to_bigarray1 buf
-    | _ -> failwith "save_image: expected uint8 tensor"
-  in
+  match Nx_buffer.kind buf with
+  | UInt8 -> (h, w, c, Nx_buffer.to_bigarray1 buf)
+  | _ -> failwith "expected uint8 tensor"
+
+let png_channels c =
+  if c <> 1 && c <> 3 && c <> 4 then
+    failwith "PNG requires one, three, or four channels"
+
+let save_image ?(overwrite = true) path img =
+  let h, w, c, data = uint8_pixels img in
   let ext = String.lowercase_ascii (Filename.extension path) in
   match ext with
   | ".png" ->
-      if c <> 1 && c <> 3 && c <> 4 then
-        failwith "save_image: PNG requires one, three, or four channels";
+      png_channels c;
       Image_io.save_png ~overwrite path data ~width:w ~height:h ~channels:c
   | ".jpg" | ".jpeg" ->
       if c <> 1 && c <> 3 then
         failwith "save_image: JPEG requires one or three channels";
       Image_io.save_jpeg ~overwrite path data ~width:w ~height:h ~channels:c
   | _ -> failwith (err_unsupported_ext ext)
+
+let encode_png img =
+  let h, w, c, data = uint8_pixels img in
+  png_channels c;
+  Image_io.encode_png data ~width:w ~height:h ~channels:c
 
 (* NumPy *)
 

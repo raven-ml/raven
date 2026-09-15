@@ -60,6 +60,14 @@ val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
       if [path] cannot be written or already exists when [overwrite] is [false].
 *)
 
+val encode_png : (int, Nx.uint8_elt) Nx.t -> string
+(** [encode_png t] is the contents of the PNG file {!save_image} would write for
+    [t], without touching the file system. Accepted shapes are
+    [[|height; width|]], [[|height; width; 1|]], [[|height; width; 3|]] and
+    [[|height; width; 4|]].
+
+    @raise Failure if the shape is unsupported or encoding fails. *)
+
 (** {1:numpy NumPy formats} *)
 
 val load_npy : string -> packed

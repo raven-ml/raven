@@ -599,25 +599,6 @@ static png_status write_all(int fd, const uint8_t *data, size_t len) {
   return PNG_OK;
 }
 
-static png_status write_chunk(int fd, const char type[4], const uint8_t *data,
-                              size_t len) {
-  if (len > UINT32_MAX)
-    return PNG_SIZE;
-  uint8_t header[8];
-  write_be32(header, (uint32_t)len);
-  memcpy(header + 4, type, 4);
-  png_status status = write_all(fd, header, sizeof(header));
-  if (status == PNG_OK)
-    status = write_all(fd, data, len);
-  uint32_t crc = crc_update(0xffffffffu, (const uint8_t *)type, 4);
-  crc = crc_update(crc, data, len) ^ 0xffffffffu;
-  uint8_t trailer[4];
-  write_be32(trailer, crc);
-  if (status == PNG_OK)
-    status = write_all(fd, trailer, sizeof(trailer));
-  return status;
-}
-
 static unsigned filter_byte(unsigned filter, unsigned raw, unsigned left,
                             unsigned up, unsigned upper_left) {
   unsigned predictor;
@@ -689,8 +670,23 @@ static png_status filter_image(const uint8_t *src, size_t width, size_t height,
   return PNG_OK;
 }
 
-static png_status encode_png(int fd, const uint8_t *src, size_t src_len,
-                             size_t width, size_t height, unsigned channels) {
+static void put_chunk(uint8_t **cursor, const char type[4],
+                      const uint8_t *data, size_t len) {
+  uint8_t *p = *cursor;
+  write_be32(p, (uint32_t)len);
+  memcpy(p + 4, type, 4);
+  if (len > 0)
+    memcpy(p + 8, data, len);
+  uint32_t crc = crc_update(0xffffffffu, (const uint8_t *)type, 4);
+  crc = crc_update(crc, data, len) ^ 0xffffffffu;
+  write_be32(p + 8 + len, crc);
+  *cursor = p + 12 + len;
+}
+
+/* Assembles the whole PNG file for [src] into a malloc'd buffer. */
+static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
+                            size_t height, unsigned channels, uint8_t **out,
+                            size_t *out_len) {
   if (width == 0 || height == 0 ||
       (channels != 1 && channels != 3 && channels != 4) ||
       width > SIZE_MAX / height || width * height > SIZE_MAX / channels ||
@@ -727,8 +723,21 @@ static png_status encode_png(int fd, const uint8_t *src, size_t src_len,
   zlib[1] = 0x01;
   write_be32(zlib + compressed.output_size + 2, adler);
   size_t zlib_len = compressed.output_size + 6;
-
-  status = write_all(fd, png_signature, sizeof(png_signature));
+  size_t idat_chunks = (zlib_len + PNG_IDAT_CHUNK - 1) / PNG_IDAT_CHUNK;
+  if (zlib_len > SIZE_MAX / 2 || idat_chunks > SIZE_MAX / 12) {
+    free(zlib);
+    return PNG_SIZE;
+  }
+  size_t total = sizeof(png_signature) + 12 + 13 + zlib_len +
+                 (idat_chunks * 12) + 12;
+  uint8_t *file = malloc(total);
+  if (file == NULL) {
+    free(zlib);
+    return PNG_NOMEM;
+  }
+  uint8_t *cursor = file;
+  memcpy(cursor, png_signature, sizeof(png_signature));
+  cursor += sizeof(png_signature);
   uint8_t ihdr[13];
   write_be32(ihdr, (uint32_t)width);
   write_be32(ihdr + 4, (uint32_t)height);
@@ -737,19 +746,32 @@ static png_status encode_png(int fd, const uint8_t *src, size_t src_len,
   ihdr[10] = 0;
   ihdr[11] = 0;
   ihdr[12] = 0;
-  if (status == PNG_OK)
-    status = write_chunk(fd, "IHDR", ihdr, sizeof(ihdr));
+  put_chunk(&cursor, "IHDR", ihdr, sizeof(ihdr));
   size_t off = 0;
-  while (status == PNG_OK && off < zlib_len) {
+  while (off < zlib_len) {
     size_t chunk = zlib_len - off;
     if (chunk > PNG_IDAT_CHUNK)
       chunk = PNG_IDAT_CHUNK;
-    status = write_chunk(fd, "IDAT", zlib + off, chunk);
+    put_chunk(&cursor, "IDAT", zlib + off, chunk);
     off += chunk;
   }
-  if (status == PNG_OK)
-    status = write_chunk(fd, "IEND", NULL, 0);
+  put_chunk(&cursor, "IEND", NULL, 0);
   free(zlib);
+  *out = file;
+  *out_len = total;
+  return PNG_OK;
+}
+
+static png_status encode_png(int fd, const uint8_t *src, size_t src_len,
+                             size_t width, size_t height, unsigned channels) {
+  uint8_t *file = NULL;
+  size_t file_len = 0;
+  png_status status =
+      build_png(src, src_len, width, height, channels, &file, &file_len);
+  if (status != PNG_OK)
+    return status;
+  status = write_all(fd, file, file_len);
+  free(file);
   return status;
 }
 
@@ -823,4 +845,30 @@ CAMLprim value caml_nx_io_png_encode(value vfd, value vsrc, value vwidth,
     caml_failwith(png_message(status));
   CAMLreturn(Val_unit);
 }
+CAMLprim value caml_nx_io_png_encode_string(value vsrc, value vwidth,
+                                            value vheight, value vchannels) {
+  CAMLparam4(vsrc, vwidth, vheight, vchannels);
+  CAMLlocal1(vresult);
+  const uint8_t *src;
+  size_t src_len;
+  checked_bytes(vsrc, &src, &src_len);
+  intnat width_i = Long_val(vwidth);
+  intnat height_i = Long_val(vheight);
+  intnat channels_i = Long_val(vchannels);
+  if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
+    caml_invalid_argument("Nx_io PNG: invalid image dimensions");
+  uint8_t *file = NULL;
+  size_t file_len = 0;
+  caml_release_runtime_system();
+  png_status status = build_png(src, src_len, (size_t)width_i,
+                                (size_t)height_i, (unsigned)channels_i, &file,
+                                &file_len);
+  caml_acquire_runtime_system();
+  if (status != PNG_OK)
+    caml_failwith(png_message(status));
+  vresult = caml_alloc_initialized_string(file_len, (const char *)file);
+  free(file);
+  CAMLreturn(vresult);
+}
 #endif
+

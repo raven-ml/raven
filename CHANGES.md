@@ -11,6 +11,12 @@ All notable changes to this project will be documented in this file.
 
 - Add compatibility with OCaml 5.5.
 
+### Nx
+
+- Add `Nx_io.encode_png`, the PNG bytes of a `uint8` image tensor as a
+  string, for embedding images in documents or sending them over a socket
+  without going through a file.
+
 ### Hugin
 
 - Add `hugin.canvas`, a 2D vector drawing library with no system

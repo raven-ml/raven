@@ -650,6 +650,30 @@ let test_png_save_load () =
       equal ~msg:"existing image preserved" (array int) expected
         (Nx_io.load_image path |> Nx.to_array))
 
+let test_png_encode () =
+  let values = Array.init (3 * 5 * 3) (fun i -> i * 53 land 0xff) in
+  let image = Nx.create Nx.uint8 [| 3; 5; 3 |] values in
+  let encoded = Nx_io.encode_png image in
+  starts_with ~msg:"PNG signature" ~affix:"\137PNG\r\n\026\n" encoded;
+  with_file_contents ".png" encoded (fun path ->
+      let loaded = Nx_io.load_image path in
+      equal ~msg:"shape" (array int) [| 3; 5; 3 |] (Nx.shape loaded);
+      equal ~msg:"pixels" (array int) values (Nx.to_array loaded));
+  let path = temp_file "nx_io_png_" ".png" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_image path image;
+      let channel = open_in_bin path in
+      let saved =
+        Fun.protect
+          ~finally:(fun () -> close_in channel)
+          (fun () -> really_input_string channel (in_channel_length channel))
+      in
+      equal ~msg:"same bytes as save_image" string saved encoded);
+  expect_failure "PNG requires" (fun () ->
+      Nx_io.encode_png (Nx.create Nx.uint8 [| 1; 1; 2 |] [| 0; 0 |]))
+
 let test_png_rejects_corruption () =
   let contents = string_of_hex png_filters_fixture |> Bytes.of_string in
   Bytes.set contents 48 (Char.chr (Char.code (Bytes.get contents 48) lxor 1));
@@ -1388,6 +1412,7 @@ let () =
           test "External sample depths" test_png_external_depths;
           test "External Adam7 palette" test_png_external_adam7_palette;
           test "Save/load and exclusive overwrite" test_png_save_load;
+          test "Encode to a string" test_png_encode;
           test "Reject corruption" test_png_rejects_corruption;
         ];
       group "jpeg"
