@@ -1239,6 +1239,28 @@ let test_donated_writeback_leaf_survives () =
       check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
       check_arr ~msg:"the written-back leaf is not consumed" [| 4.0; 8.0 |] h)
 
+(* One tensor behind both leaves on the tracing call: two inputs that happen to
+   be equal, each bound to its own position, so a later call may pass distinct
+   tensors to them. *)
+let test_aliased_input_leaves () =
+  let f (p : pair) = Nx.sub p.u (Nx.mul_s p.v 2.0) in
+  let g = Rune.jit (module Pair) f in
+  let x = vec32 [| 1.0; 2.0; 3.0 |] in
+  check_arr ~msg:"aliased call" [| -1.0; -2.0; -3.0 |] (g { u = x; v = x });
+  check_arr ~msg:"distinct call" [| -7.0; -8.0; -9.0 |]
+    (g { u = x; v = vec32 [| 4.0; 5.0; 6.0 |] });
+  (* Under grad inside jit the two leaves are separate parameters, as
+     eagerly. *)
+  let dg =
+    Rune.jit2
+      (module Pair)
+      (module Pair)
+      (fun p -> Rune.grad (module Pair) (fun p -> Nx.sum (f p)) p)
+      { u = x; v = x }
+  in
+  check_arr ~msg:"d/du" [| 1.0; 1.0; 1.0 |] dg.u;
+  check_arr ~msg:"d/dv" [| -2.0; -2.0; -2.0 |] dg.v
+
 (* Failure modes *)
 
 let test_data_dependent_read_raises () =
@@ -1259,6 +1281,8 @@ let tests =
         test "a new shape retraces" test_retrace_on_new_shape;
         test "closure-captured weights (matmul)" test_closure_matmul;
         test "jit2 returns structured outputs" test_jit2_structured_output;
+        test "aliased input leaves are separate inputs"
+          test_aliased_input_leaves;
       ];
     group "composition"
       [

@@ -68,6 +68,16 @@ All notable changes to this project will be documented in this file.
   jitted optimizer step. `global_norm` remains the `float64` host read for
   reporting.
 
+### Rune
+
+- A parameter structure is a positional sequence of leaves: a tensor behind
+  two leaves is two parameters. `jit` bound two such leaves to a single input
+  at trace time, so a later call passing distinct tensors read one of them for
+  both positions; every leaf visit is now its own input. `grad`, `vjp`, `jvp`
+  and their variants gave both leaves the summed gradient and, for `jvp`, one
+  leaf's tangent; each leaf now gets its own. Tie weights by structure, not by
+  aliasing.
+
 ### Ppx_ptree (new)
 
 - `[@@deriving ptree]` recognises a field typed `Nx.Rng.key` as a tensor leaf.

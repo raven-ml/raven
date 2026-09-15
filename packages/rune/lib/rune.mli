@@ -32,6 +32,12 @@
     let grads = Rune.grad (module Params) loss params
     ]}
 
+    A structure is a positional sequence of leaves. A tensor that sits behind
+    two leaves is two parameters that happen to be equal: each gets its own
+    gradient, and each is its own input of a compiled function, free to differ
+    on a later call. Tie weights by structure — one leaf, used twice by the
+    function — not by aliasing.
+
     Use {!Ptree} when the parameter structure is only known at runtime. *)
 
 (** {1:differentiable Ptree.S structures} *)

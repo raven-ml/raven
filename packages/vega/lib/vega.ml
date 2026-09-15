@@ -1081,8 +1081,6 @@ let lbfgs_init (type p v) (module P : Nx.Ptree.S with type t = p)
   if history < 1 then
     invalid_argf "Vega.lbfgs_init: expected history >= 1, got %d" history;
   let value, grads = f params in
-  (* Distinct tensors for [s] and [y]: a compiled step binds its inputs by leaf
-     identity, and one tensor behind two leaves is read back as one input. *)
   let memory () =
     P.map
       (fun leaf ->

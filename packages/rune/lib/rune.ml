@@ -43,10 +43,26 @@ let require_float_leaf name leaf =
          name
          (Nx_core.Dtype.to_string (Nx.dtype leaf)))
 
+(* A structure is a positional sequence of leaves: a tensor behind two leaves is
+   two parameters that happen to be equal, each with its own gradient — as they
+   are two inputs under [jit]. The tape and the tangent store key by identity,
+   so a leaf seen before is replaced by a copy before seeding. *)
+let untie (type p) (module P : Ptree.S with type t = p) (params : P.t) : P.t =
+  let seen = Tensor_map.Ids.create () in
+  P.map
+    (fun leaf ->
+      if Tensor_map.Ids.mem seen leaf then Nx.copy leaf
+      else begin
+        Tensor_map.Ids.add seen leaf;
+        leaf
+      end)
+    params
+
 (* Run [f params] under the reverse handler with the leaves of [params] tracked,
    seed the output cotangent, and pull gradients back to the leaves. *)
 let run_reverse (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t)
     (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t) : (c, d) Nx.t * P.t =
+  let params = untie (module P) params in
   let tape = Tape.create () in
   P.iter
     (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf)
@@ -98,6 +114,7 @@ let err_cotangent_shape leaf cotangent =
 
 let vjp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S with type t = q) (f : P.t -> Q.t)
     (params : P.t) (cotangents : Q.t) : Q.t * P.t =
+  let params = untie (module P) params in
   let tape = Tape.create () in
   P.iter
     (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf)
@@ -116,6 +133,7 @@ let vjp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S wit
 
 let vjp_fun (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t)
     (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t) =
+  let params = untie (module P) params in
   let tape = Tape.create () in
   P.iter
     (fun leaf -> if differentiable_leaf leaf then Tape.track tape leaf)
@@ -162,6 +180,7 @@ let output_tangent store y =
 
 let jvp (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
     (tangents : P.t) : (c, d) Nx.t * (c, d) Nx.t =
+  let params = untie (module P) params in
   let store = Tensor_map.create () in
   let (_ : P.t) =
     P.map2
@@ -190,6 +209,7 @@ let jvp_aux (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d)
 
 let jvp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S with type t = q) (f : P.t -> Q.t)
     (params : P.t) (tangents : P.t) : Q.t * Q.t =
+  let params = untie (module P) params in
   let store = Tensor_map.create () in
   let (_ : P.t) =
     P.map2

@@ -191,10 +191,30 @@ let test_grad_carries_a_key_leaf () =
     [| 0l; 0l |]
     (Nx.to_array g.Stepper.key)
 
+(* One tensor behind both leaves. A structure is positional: each leaf is its
+   own parameter with its own gradient (and, in forward mode, its own tangent),
+   not one tied parameter reported twice. *)
+let test_aliased_leaves_are_separate_parameters () =
+  let x = vec64 [| 1.0; 2.0 |] in
+  let f p = Nx.add (Nx.sum p.fst) (Nx.mul_s (Nx.sum p.snd) 3.0) in
+  let g = Rune.grad (module Pair) f { fst = x; snd = x } in
+  check_arr ~msg:"d/dfst" [| 1.0; 1.0 |] g.fst;
+  check_arr ~msg:"d/dsnd" [| 3.0; 3.0 |] g.snd;
+  let _, dy =
+    Rune.jvp
+      (module Pair)
+      f { fst = x; snd = x }
+      { fst = vec64 [| 1.0; 0.0 |]; snd = vec64 [| 0.0; 1.0 |] }
+  in
+  (* 1 * 1 + 3 * 1: each leaf contributes along its own tangent. *)
+  check_arr ~msg:"jvp" [| 4.0 |] dy
+
 let tests =
   [
     group "grad over records"
       [
+        test "aliased leaves are separate parameters"
+          test_aliased_leaves_are_separate_parameters;
         test "matches the analytic gradient" test_grad_record_analytic;
         test "unused leaf has zero gradient" test_grad_unused_leaf_zero;
         test "preserves structure and shapes" test_grad_preserves_structure;

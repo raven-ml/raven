@@ -2291,86 +2291,77 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       scan_collectors = [];
     }
   in
-  (* One placeholder per distinct leaf; one input record per leaf visit, in
-     traversal order, so replay can pair current leaves positionally. Pairing
-     placeholders inside [P.map] goes through the identity association because
-     the map callback's evaluation order is instance-defined. *)
-  let assoc = ref [] in
+  (* One placeholder and one input record per leaf visit, in traversal order, so
+     replay pairs current leaves positionally: a tensor behind two leaves is two
+     inputs, equal on this call and free to differ on the next. The placeholders
+     are made inside [P.map], whose callback order is instance-defined, and
+     paired with their positions by walking the mapped structure with [P.iter],
+     which visits it in [params]' order. *)
+  let ph_params =
+    P.map
+      (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
+        Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf))
+      params
+  in
+  let placeholders =
+    let acc = ref [] in
+    P.iter (fun ph -> acc := Obj.repr ph :: !acc) ph_params;
+    Array.of_list (List.rev !acc)
+  in
   let inputs = ref [] in
   let pos = ref 0 in
   P.iter
     (fun leaf ->
-      let key = Obj.repr leaf in
-      (match List.assq_opt key !assoc with
-      | Some (_, inp) -> inputs := inp :: !inputs
-      | None ->
-          let ldt = Nx_effect.dtype leaf in
-          let dtolk = tolk_dtype ldt in
-          let shape = shape_of leaf in
-          let n = numel shape in
-          let place =
-            match multi with
-            | None -> P_single
-            | Some (_, places) -> places.(!pos)
-          in
-          (* The trace-level tensor carries the global shape. A sharded leaf
-             becomes a per-shard buffer on the device tuple wrapped in MULTI
-             (whose shape multiplies the axis back up); a replicated leaf is a
-             full-size buffer on the tuple with no wrapper. *)
-          let node, tt, bufs =
-            match (place, multi) with
-            | P_single, _ ->
-                let node = make_node st dtolk n in
-                ( node,
-                  buffer_tensor node shape,
-                  [ Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev ] )
-            | P_replicated, Some (spec, _) ->
-                let node = make_node st dtolk n in
-                ( node,
-                  buffer_tensor node shape,
-                  List.map
-                    (fun d -> Tolk.Device.create_buffer ~size:n ~dtype:dtolk d)
-                    spec.md_devs )
-            | P_sharded a, Some (spec, _) ->
-                let ndev = List.length spec.md_names in
-                let per = n / ndev in
-                let node = make_node st dtolk per in
-                let shard_shape =
-                  Array.to_list shape
-                  |> List.mapi (fun i d -> if i = a then d / ndev else d)
-                in
-                let inner =
-                  U.reshape ~src:node ~shape:(F.Tensor.shape_uop shard_shape)
-                in
-                ( node,
-                  F.Tensor.of_uop (U.multi ~src:inner ~axis:a),
-                  List.map
-                    (fun d ->
-                      Tolk.Device.create_buffer ~size:per ~dtype:dtolk d)
-                    spec.md_devs )
-            | (P_replicated | P_sharded _), None -> assert false
-          in
-          let ph = Nx_effect.buffer st.st_ctx ldt shape in
-          Tbl.replace st.table (Obj.repr ph) tt;
-          Tbl.replace st.traced (Obj.repr ph) ();
-          Tbl.replace st.input_index (Obj.repr ph) !pos;
-          Hashtbl.replace st.input_tags (U.tag node) ();
-          let inp = { i_node = node; i_place = place; i_bufs = bufs } in
-          assoc := (key, (Packed (ldt, ph), inp)) :: !assoc;
-          inputs := inp :: !inputs);
+      let ph = placeholders.(!pos) in
+      let dtolk = tolk_dtype (Nx_effect.dtype leaf) in
+      let shape = shape_of leaf in
+      let n = numel shape in
+      let place =
+        match multi with None -> P_single | Some (_, places) -> places.(!pos)
+      in
+      (* The trace-level tensor carries the global shape. A sharded leaf becomes
+         a per-shard buffer on the device tuple wrapped in MULTI (whose shape
+         multiplies the axis back up); a replicated leaf is a full-size buffer
+         on the tuple with no wrapper. *)
+      let node, tt, bufs =
+        match (place, multi) with
+        | P_single, _ ->
+            let node = make_node st dtolk n in
+            ( node,
+              buffer_tensor node shape,
+              [ Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev ] )
+        | P_replicated, Some (spec, _) ->
+            let node = make_node st dtolk n in
+            ( node,
+              buffer_tensor node shape,
+              List.map
+                (fun d -> Tolk.Device.create_buffer ~size:n ~dtype:dtolk d)
+                spec.md_devs )
+        | P_sharded a, Some (spec, _) ->
+            let ndev = List.length spec.md_names in
+            let per = n / ndev in
+            let node = make_node st dtolk per in
+            let shard_shape =
+              Array.to_list shape
+              |> List.mapi (fun i d -> if i = a then d / ndev else d)
+            in
+            let inner =
+              U.reshape ~src:node ~shape:(F.Tensor.shape_uop shard_shape)
+            in
+            ( node,
+              F.Tensor.of_uop (U.multi ~src:inner ~axis:a),
+              List.map
+                (fun d -> Tolk.Device.create_buffer ~size:per ~dtype:dtolk d)
+                spec.md_devs )
+        | (P_replicated | P_sharded _), None -> assert false
+      in
+      Tbl.replace st.table ph tt;
+      Tbl.replace st.traced ph ();
+      Tbl.replace st.input_index ph !pos;
+      Hashtbl.replace st.input_tags (U.tag node) ();
+      inputs := { i_node = node; i_place = place; i_bufs = bufs } :: !inputs;
       incr pos)
     params;
-  let ph_params =
-    P.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
-        match List.assq_opt (Obj.repr leaf) !assoc with
-        | Some (Packed (pdt, ph), _) -> (
-            match ND.equal_witness pdt (Nx_effect.dtype leaf) with
-            | Some Type.Equal -> ph
-            | None -> assert false)
-        | None -> assert false)
-      params
-  in
   let y =
     Gate.with_transform (fun () ->
         Effect.Deep.match_with f ph_params (handler st))
@@ -2544,7 +2535,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   let reserved = Hashtbl.create 16 in
   List.iter
-    (fun (_, (_, inp)) ->
+    (fun inp ->
       Hashtbl.replace reserved (U.tag inp.i_node) ();
       match inp.i_bufs with
       | [ buf ] when inp.i_place = P_single ->
@@ -2552,7 +2543,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       | bufs ->
           Tolk.Realize.Buffers.seed_multi binding inp.i_node
             (Tolk.Device.Multi_buffer.of_bufs bufs))
-    !assoc;
+    !inputs;
   (* Bind each constant once, at compile time: alias its memory when the device
      shares host memory and the tensor is contiguous, copy its bytes to the
      device otherwise (to every device of a pmap tuple). *)
