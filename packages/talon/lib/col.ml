@@ -303,7 +303,7 @@ let reindex col indices =
   match col with
   | P (dtype, tensor, mask_opt) ->
       let n = Array.length indices in
-      if n = 0 then P (dtype, Nx.empty dtype [| 0 |], None)
+      if n = 0 then P (dtype, Nx.zeros dtype [| 0 |], None)
       else
         let idx_tensor =
           Nx.create Nx.int32 [| n |] (Array.map Int32.of_int indices)

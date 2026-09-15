@@ -106,10 +106,8 @@ end
 
 (* One-hot labels [0; 1; ...; d_out-1] cycled over [n] rows. *)
 let one_hot n =
-  let labels = Array.init n (fun i -> i mod d_out) in
-  let t = Nx.zeros Nx.float32 [| n; d_out |] in
-  Array.iteri (fun i c -> Nx.set_item [ i; c ] 1.0 t) labels;
-  t
+  let labels = Nx.init Nx.int32 [| n |] (fun i -> Int32.of_int (i.(0) mod d_out)) in
+  Nx.cast Nx.float32 (Nx.one_hot ~num_classes:d_out labels)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

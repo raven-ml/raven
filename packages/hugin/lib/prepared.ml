@@ -431,7 +431,11 @@ let rasterize_imshow ~stretch ~cmap ~vmin ~vmax (data : Nx.float32_t) =
   let vlo = match vmin with Some v -> v | None -> !lo in
   let vhi = match vmax with Some v -> v | None -> !hi in
   let vrange = if vhi = vlo then 1. else vhi -. vlo in
-  let rgb = Nx.zeros Nx.uint8 [| rows; cols; 3 |] in
+  (* Element-at-a-time construction fills a buffer, then wraps it. *)
+  let rgb =
+    Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
+      (rows * cols * 3)
+  in
   for r = 0 to rows - 1 do
     for c = 0 to cols - 1 do
       let v = Nx.item [ r; c ] data in
@@ -440,12 +444,13 @@ let rasterize_imshow ~stretch ~cmap ~vmin ~vmax (data : Nx.float32_t) =
       let t = Float.max 0. (Float.min 1. t) in
       let color = Cmap.eval cmap t in
       let cr, cg, cb, _ = Color.to_rgba color in
-      Nx.set_item [ r; c; 0 ] (int_of_float (cr *. 255.)) rgb;
-      Nx.set_item [ r; c; 1 ] (int_of_float (cg *. 255.)) rgb;
-      Nx.set_item [ r; c; 2 ] (int_of_float (cb *. 255.)) rgb
+      let k = ((r * cols) + c) * 3 in
+      rgb.{k} <- int_of_float (cr *. 255.);
+      rgb.{k + 1} <- int_of_float (cg *. 255.);
+      rgb.{k + 2} <- int_of_float (cb *. 255.)
     done
   done;
-  rgb
+  Nx.reshape [| rows; cols; 3 |] (Nx.of_bigarray (Bigarray.genarray_of_array1 rgb))
 
 let normalize_imshow (theme : Theme.t) marks =
   List.map

@@ -197,8 +197,8 @@ let sample ?(step_size = 0.01) ?(target_accept = 0.65) ?num_warmup ?report ~n
   done;
   let final_step_size = Adapt.step_size_final !ss in
   kern := make_kernel ~step_size:final_step_size ~metric:!met;
-  let samples = Nx.zeros f64 [| n; dim |] in
-  let log_densities = Nx.zeros f64 [| n |] in
+  let positions = ref [] in
+  let log_densities = Array.make n 0.0 in
   let total_accept = ref 0.0 in
   let num_divergent = ref 0 in
   for i = 0 to n - 1 do
@@ -206,13 +206,17 @@ let sample ?(step_size = 0.01) ?(target_accept = 0.65) ?num_warmup ?report ~n
     state := new_state;
     total_accept := !total_accept +. info.acceptance_rate;
     if info.is_divergent then incr num_divergent;
-    Nx.set_slice [ I i ] samples new_state.position;
-    Nx.set_item [ i ] new_state.log_density log_densities;
+    positions := new_state.position :: !positions;
+    log_densities.(i) <- new_state.log_density;
     match report with Some f -> f ~step:i new_state info | None -> ()
   done;
+  let samples =
+    if n = 0 then Nx.zeros f64 [| 0; dim |]
+    else Nx.stack ~axis:0 (List.rev !positions)
+  in
   {
     samples;
-    log_densities;
+    log_densities = Nx.create f64 [| n |] log_densities;
     stats =
       {
         accept_rate = !total_accept /. Float.of_int n;
@@ -241,47 +245,47 @@ let autocorr samples =
   let mean = Nx.mean ~axes:[ 0 ] samples in
   let centered = Nx.sub samples mean in
   let max_lag = n / 2 in
-  let acf = Nx.zeros f64 [| max_lag; dim |] in
+  let acf = Array.make (max_lag * dim) 0.0 in
   for d = 0 to dim - 1 do
-    let col = Nx.slice [ A; I d ] centered in
+    let col = Nx.to_array (Nx.slice [ A; I d ] centered) in
     let v = ref 0.0 in
     for i = 0 to n - 1 do
-      let x = Nx.item [ i ] col in
+      let x = col.(i) in
       v := !v +. (x *. x)
     done;
     v := !v /. Float.of_int n;
     for lag = 0 to max_lag - 1 do
       let c = ref 0.0 in
       for i = 0 to n - 1 - lag do
-        c := !c +. (Nx.item [ i ] col *. Nx.item [ i + lag ] col)
+        c := !c +. (col.(i) *. col.(i + lag))
       done;
-      Nx.set_item [ lag; d ] (!c /. (Float.of_int n *. !v)) acf
+      acf.((lag * dim) + d) <- !c /. (Float.of_int n *. !v)
     done
   done;
-  acf
+  Nx.create f64 [| max_lag; dim |] acf
 
 let ess samples =
   let n = (Nx.shape samples).(0) in
   let dim = (Nx.shape samples).(1) in
-  let acf = autocorr samples in
+  let acf = Nx.to_array (autocorr samples) in
   let max_lag = n / 2 in
-  let result = Nx.zeros f64 [| dim |] in
+  let result = Array.make dim 0.0 in
   for d = 0 to dim - 1 do
     let tau = ref 1.0 in
     let lag = ref 1 in
     let stop = ref false in
     while !lag < max_lag - 1 && not !stop do
-      let rho1 = Nx.item [ !lag; d ] acf in
-      let rho2 = Nx.item [ !lag + 1; d ] acf in
+      let rho1 = acf.((!lag * dim) + d) in
+      let rho2 = acf.(((!lag + 1) * dim) + d) in
       if rho1 +. rho2 < 0.0 then stop := true
       else begin
         tau := !tau +. (2.0 *. rho1);
         incr lag
       end
     done;
-    Nx.set_item [ d ] (Float.of_int n /. !tau) result
+    result.(d) <- Float.of_int n /. !tau
   done;
-  result
+  Nx.create f64 [| dim |] result
 
 let rhat chains =
   let m = Array.length chains in
