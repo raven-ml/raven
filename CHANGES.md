@@ -167,6 +167,10 @@ thread.
 
 ### Tolk (new)
 
+- CPU kernels run on Windows. Their entry now carries the Microsoft calling
+  convention there, as the reference does: the object is compiled for a
+  generic ELF target whose x86-64 convention is System V, so the host read
+  the kernel's arguments from the wrong registers and larger kernels crashed.
 - The CPU thread pool is sized from the runtime's recommended domain count
   instead of a `getconf` subprocess, which does not exist on Windows.
 - The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor

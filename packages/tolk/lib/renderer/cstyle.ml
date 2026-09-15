@@ -1780,7 +1780,14 @@ let fixed_abi_arg ctx buf_idx val_idx (u, _nm, (dt, _mut)) =
           (strf "fixed_abi_arg: unsupported parameter dtype %s"
              (Dtype.to_string dt))
 
-let clang_fixed_abi_render_kernel ctx ~function_name ~kernel ~bufs ~uops
+(* The entry is what the host runtime calls, so it follows the host's
+   convention. The object is compiled for a generic ELF target, whose x86-64
+   convention is System V; a Windows host calls with the Microsoft one. *)
+let entry_abi arch =
+  if Sys.win32 && arch = Gpu_target.X86_64 then "__attribute__((ms_abi)) "
+  else ""
+
+let clang_fixed_abi_render_kernel ~arch ctx ~function_name ~kernel ~bufs ~uops
     ~prefix =
   let inner_name = function_name ^ "_" in
   let inner_ctx =
@@ -1797,11 +1804,14 @@ let clang_fixed_abi_render_kernel ctx ~function_name ~kernel ~bufs ~uops
         (arg :: args, buf_idx, val_idx))
       ([], 0, 0) bufs
   in
-  strf "%s\nvoid %s(const unsigned long long *bufs, const long long *vals) {\n  %s(%s);\n}"
-    inner function_name inner_name (String.concat ", " (List.rev args))
+  strf
+    "%s\n%svoid %s(const unsigned long long *bufs, const long long *vals) {\n  \
+     %s(%s);\n}"
+    inner (entry_abi arch) function_name inner_name
+    (String.concat ", " (List.rev args))
 
-let clang_fixed_abi_language : language =
-  { clang_language with render_kernel = clang_fixed_abi_render_kernel }
+let clang_fixed_abi_language arch : language =
+  { clang_language with render_kernel = clang_fixed_abi_render_kernel ~arch }
 
 (* OpenCLRenderer *)
 
@@ -2751,10 +2761,10 @@ let clang ?(native_bf16 = true) arch =
     ~shared_max:0 ~global_max:[ host_cpu_count (); 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang
-    ~extra_matcher:clang_fixed_abi_language.extra_matcher
+    ~extra_matcher:(clang_fixed_abi_language arch).extra_matcher
     ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
     ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
-    ~render:(render clang_fixed_abi_language) ()
+    ~render:(render (clang_fixed_abi_language arch)) ()
 
 let opencl arch =
   Renderer.make ~name:"opencl" ~device:"CL" ~has_local:true
