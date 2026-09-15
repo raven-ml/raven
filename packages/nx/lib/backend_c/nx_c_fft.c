@@ -84,7 +84,7 @@
 /* One cache line (4 cx2) of separation between two co-live scratch buffers, to
    break power-of-two cache-set aliasing. Applied ONLY where it measured
    neutral-or-better: the Bluestein a/scr buffers (bluestein_exec) and the irfft
-   g/f/work buffers (irfft_last_body). The MAIN fft/ifft transform's two ping-pong
+   g/f/work buffers (irfft_full_body). The MAIN fft/ifft transform's two ping-pong
    buffers are deliberately left adjacent (no pad) — a pad there REGRESSED pow2
    (65536 1.20×→1.29×, measured), so native's ping-pong scratch is exactly n. */
 #define FFT_PAD 4
@@ -914,79 +914,75 @@ static const real_plan *real_plan_get(int64_t n, int sign) {
 /* ── Packed real path (even n) ────────────────────────────────────────────
    An even real line packs into a half-length complex line
    z[j] = (x[2j], x[2j+1]), j in [0, N), N = n/2 — one length-N transform of
-   the SAME sign, then an O(n) Hermitian untangle, instead of a length-n
-   complex transform of a half-zero line. The forward untangle
-   (Sorensen et al. 1987; Numerical Recipes 3rd ed. §12.3):
+   the SAME sign, then an O(n) Hermitian pass, instead of a length-n complex
+   transform of a half-zero line. The forward untangle (Sorensen et al. 1987;
+   Numerical Recipes 3rd ed. §12.3):
 
      X[k]   = (Z[k] + conj(Z[N−k]))/2 + T[k]·(Z[k] − conj(Z[N−k]))/2
      T[k]   = −i·ω_n^k = (−sin θ_k, −cos θ_k),  θ_k = 2πk/n
      X[0]   = Re Z[0] + Im Z[0]      X[N] = Re Z[0] − Im Z[0]
 
-   so DC and Nyquist come out EXACTLY real (matching numpy/pocketfft; the
-   full-length path left ~1e-17·‖x‖ residue there). In-place safety: the
-   edges touch slots 0 and N only, iteration k reads slots {k, N−k} before
-   writing exactly those slots, and distinct iterations touch disjoint pairs.
-   When N is even the last iteration k = N/2 is the self-pair and the same
-   code is correct without a branch: build_real pins rtw[N/2] = (−1, 0)
-   exactly, so both writes produce conj(Z[N/2]). Verified against the naive-DFT
-   oracle for every n in 1..256 (both parities of N) plus the targeted large
-   lengths in the oracle suite. */
-static void rfft_untangle(cx2 *restrict z, const cx2 *restrict rtw,
-                          int64_t N) {
-  /* edges first, from the ORIGINAL Z[0] (slot 0 is overwritten by X[0]) */
-  double z0r = z[0].r, z0i = z[0].i;
-  z[0].r = z0r + z0i;
-  z[0].i = 0.0;
-  z[N].r = z0r - z0i;
-  z[N].i = 0.0;
-  for (int64_t k = 1; k <= N / 2; k++) {
-    cx2 zk = z[k], znk = z[N - k], t = rtw[k];
-    double f1r = zk.r + znk.r, f1i = zk.i - znk.i; /* Z[k] + conj(Z[N−k]) */
-    double f2r = zk.r - znk.r, f2i = zk.i + znk.i; /* Z[k] − conj(Z[N−k]) */
-    double tr = f2r * t.r - f2i * t.i;
-    double ti = f2r * t.i + f2i * t.r;
-    z[k].r = 0.5 * (f1r + tr);
-    z[k].i = 0.5 * (f1i + ti);
-    z[N - k].r = 0.5 * (f1r - tr);
-    z[N - k].i = 0.5 * (ti - f1i);
-  }
-}
-
-/* The inverse dual: pre-twiddle the N+1 half-spectrum bins into the length-N
-   line G, run the unnormalized +sign length-N transform, and read the even/
-   odd output samples out of w[j] = (out[2j], out[2j+1]):
+   and its inverse dual, which pre-twiddles the N+1 half-spectrum bins into
+   the length-N line G whose unnormalized +sign transform holds the output
+   pairs w[j] = (out[2j], out[2j+1]):
 
      G[k] = (X[k] + conj(X[N−k])) + U[k]·(X[k] − conj(X[N−k]))
      U[k] = conj(T[k]) = (−sin θ_k, +cos θ_k)
      G[0] = (Re X[0] + Re X[N],  Re X[0] − Re X[N])
 
-   No 0.5 anywhere: the analytic factor 2 is folded into G, so ifft_N(G) is
-   EXACTLY s·x — the backend contract's unnormalized inverse with no
-   post-scale loop. The pairwise loop shape is identical to the forward's
-   because U[N−k] = conj(U[k]) gives G[N−k] = conj(s1) − conj(U[k]·d1). The
-   G[0] edge reads REAL PARTS ONLY: Im X[0] and Im X[N] are structurally
-   discarded, exactly as the full-spectrum reconstruction and numpy/pocketfft
-   discard them (their contribution to the real output is identically zero
-   there); using them would change results for non-Hermitian garbage inputs.
-   Slot N is dead after the edge, so the same N+1-slot buffer serves in
-   place. Self-pair k = N/2 (even N): rtw[N/2] is pinned to (−1, 0), so both
-   writes produce 2·conj(X[N/2]), same argument as the forward. */
+   Both directions are the same pair pass over k = 1..N/2 with the table
+   build_real made for their sign and a different scale: 1/2 forward, none
+   inverse — the analytic factor 2 is folded into G, so ifft_N(G) is EXACTLY
+   s·x, the backend contract's unnormalized inverse with no post-scale loop.
+   The pass is in place: iteration k reads slots {k, N−k} before writing
+   exactly those slots, distinct iterations touch disjoint pairs, and the
+   shape holds for both directions because U[N−k] = conj(U[k]) gives
+   G[N−k] = conj(s1) − conj(U[k]·d1). When N is even the last iteration
+   k = N/2 is the self-pair and needs no branch: build_real pins
+   rtw[N/2] = (−1, 0) exactly, so both writes produce scale·2·conj(x[N/2]).
+   Verified against the naive-DFT oracle for every n in 1..256 (both parities
+   of N) plus the targeted large lengths in the oracle suite. */
+static void hermitian_pairs(cx2 *restrict x, const cx2 *restrict rtw,
+                            int64_t N, double scale) {
+  for (int64_t k = 1; k <= N / 2; k++) {
+    cx2 xk = x[k], xnk = x[N - k], t = rtw[k];
+    double f1r = xk.r + xnk.r, f1i = xk.i - xnk.i; /* x[k] + conj(x[N−k]) */
+    double f2r = xk.r - xnk.r, f2i = xk.i + xnk.i; /* x[k] − conj(x[N−k]) */
+    double tr = f2r * t.r - f2i * t.i;
+    double ti = f2r * t.i + f2i * t.r;
+    x[k].r = scale * (f1r + tr);
+    x[k].i = scale * (f1i + ti);
+    x[N - k].r = scale * (f1r - tr);
+    x[N - k].i = scale * (ti - f1i);
+  }
+}
+
+/* Forward: Z in slots 0..N-1 (slot N free) → the N+1 half-spectrum bins. DC
+   and Nyquist come out EXACTLY real (matching numpy/pocketfft; the
+   full-length path left ~1e-17·‖x‖ residue there). The edges read the
+   ORIGINAL Z[0] before X[0] overwrites slot 0. */
+static void rfft_untangle(cx2 *restrict z, const cx2 *restrict rtw,
+                          int64_t N) {
+  double z0r = z[0].r, z0i = z[0].i;
+  z[0].r = z0r + z0i;
+  z[0].i = 0.0;
+  z[N].r = z0r - z0i;
+  z[N].i = 0.0;
+  hermitian_pairs(z, rtw, N, 0.5);
+}
+
+/* Inverse: the N+1 half-spectrum bins → G in slots 0..N-1 (slot N is dead
+   after the edge). The G[0] edge reads REAL PARTS ONLY: Im X[0] and Im X[N]
+   are structurally discarded, exactly as the full-spectrum reconstruction
+   and numpy/pocketfft discard them (their contribution to the real output is
+   identically zero there); using them would change results for
+   non-Hermitian garbage inputs. */
 static void irfft_pretwiddle(cx2 *restrict x, const cx2 *restrict rtw,
                              int64_t N) {
   double x0r = x[0].r, xnr = x[N].r;
   x[0].r = x0r + xnr;
   x[0].i = x0r - xnr;
-  for (int64_t k = 1; k <= N / 2; k++) {
-    cx2 xk = x[k], xnk = x[N - k], u = rtw[k]; /* rtw built with sign +1 */
-    double f1r = xk.r + xnk.r, f1i = xk.i - xnk.i; /* X[k] + conj(X[N−k]) */
-    double f2r = xk.r - xnk.r, f2i = xk.i + xnk.i; /* X[k] − conj(X[N−k]) */
-    double tr = f2r * u.r - f2i * u.i;
-    double ti = f2r * u.i + f2i * u.r;
-    x[k].r = f1r + tr;
-    x[k].i = f1i + ti;
-    x[N - k].r = f1r - tr;
-    x[N - k].i = ti - f1i;
-  }
+  hermitian_pairs(x, rtw, N, 1.0);
 }
 
 /* ── Gather / scatter one strided line, converting storage <-> cx2 ─────────
@@ -1090,42 +1086,83 @@ static int64_t line_base(const nx_c_ndarray *a, int axis, int64_t L) {
   return base;
 }
 
-/* ── One transform axis over all lines, pooled ────────────────────────────
-   Reads length-n lines from `src` along `axis`, transforms, writes to `dst`
-   along `axis` (src==dst ⇒ in place, decoupled through scratch). Per worker the
-   scratch is a line buffer (n_in cx2) followed by plan->work_cx of transform
-   scratch. n_in / n_out are the line lengths (equal for fft/ifft; differ for the
-   rfft/irfft last-axis packing, handled by the caller). */
+/* ── One pooled pass over the lines of an axis ────────────────────────────
+   Every driver below transforms the independent "lines" along `axis` (the
+   odometer over the other dims) of `src` into those of `dst` in one pool
+   region; src == dst transforms in place, decoupled through scratch. The
+   body carves its per-worker scratch of `slot` cx2 up as its own comment
+   says. n_in / n_out are the line lengths read and written: equal for
+   fft/ifft; the real length and the half-spectrum, or the reverse, for the
+   real transforms' last axis. */
 typedef struct {
   nx_c_dtype src_dt, dst_dt;
-  const nx_c_ndarray *src;
-  const nx_c_ndarray *dst;
+  const nx_c_ndarray *src, *dst;
   int axis;
   int64_t n_in, n_out;
   int64_t src_esz, dst_esz;
-  int src_real, dst_real;
-  const fft_plan *plan;
+  int src_real, dst_real; /* axis_body: gather / scatter the real part only */
+  const fft_plan *plan;   /* the complex plan the body runs */
+  const cx2 *rtw;         /* the packed bodies' twiddle table, else NULL */
   char *scratch;
   int64_t slot; /* per-worker cx2 count */
-} axis_ctx;
+} line_ctx;
 
+static cx2 *worker_scratch(const line_ctx *c, int worker) {
+  return (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
+}
+static const char *src_line(const line_ctx *c, int64_t L) {
+  return (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
+}
+static char *dst_line(const line_ctx *c, int64_t L) {
+  return (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
+}
+
+/* Sizes the per-worker scratch (slot_cx cx2, rounded up to a cache line),
+   picks the thread count for `lines` transforms of length n, fills the
+   context's derived fields and pools `body` over the lines with the scratch
+   as the region's free_on_exit. The caller looked the plan up first (lock
+   held). Nothing to do when there are no lines or n == 0. */
+static nx_c_status run_lines(line_ctx *c, int64_t n, int64_t slot_cx,
+                             nx_c_range_body body) {
+  int64_t lines = 1;
+  for (int d = 0; d < c->dst->ndim; d++)
+    if (d != c->axis) lines *= c->dst->shape[d];
+  if (lines == 0 || n == 0) return NX_C_OK;
+
+  int64_t bytes = lines * n * (int64_t)sizeof(cx2);
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n, bytes);
+  if (nth > lines) nth = (int)lines;
+  if (nth < 1) nth = 1;
+
+  int64_t slot_bytes = ((slot_cx * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
+  char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
+  if (!scratch) return NX_C_ERR_ALLOC;
+
+  c->src_esz = nx_c_elem_size(c->src_dt);
+  c->dst_esz = nx_c_elem_size(c->dst_dt);
+  c->scratch = scratch;
+  c->slot = slot_bytes / (int64_t)sizeof(cx2);
+  nx_c_parallel_for(nth, lines, bytes, body, c, scratch);
+  return NX_C_OK;
+}
+
+/* ── One complex transform axis ───────────────────────────────────────────
+   Per-worker scratch is [ x: n_in cx2 ][ work: work_cx cx2 ]. n_out <= n_in
+   trims the written line (the half-spectrum for an odd-length rfft). */
 static void axis_body(int64_t lo, int64_t hi, int worker, void *vctx) {
-  const axis_ctx *c = (const axis_ctx *)vctx;
-  cx2 *base = (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
-  cx2 *x = base;
-  cx2 *work = base + c->n_in;
+  const line_ctx *c = (const line_ctx *)vctx;
+  cx2 *x = worker_scratch(c, worker);
+  cx2 *work = x + c->n_in;
   int64_t sstride = c->src->strides[c->axis];
   int64_t dstride = c->dst->strides[c->axis];
   for (int64_t L = lo; L < hi; L++) {
-    const char *sb = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
-    char *db = (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
+    const char *sb = src_line(c, L);
+    char *db = dst_line(c, L);
     if (c->src_real)
       gather_real(c->src_dt, sb, sstride, c->src_esz, c->n_in, x);
     else
       gather_cx(c->src_dt, sb, sstride, c->src_esz, c->n_in, x);
     plan_exec(c->plan, x, work);
-    /* n_out <= n_in: the caller sizes the output line (full for fft/ifft, the
-       half-spectrum for rfft's last axis). */
     if (c->dst_real)
       scatter_real(c->dst_dt, db, dstride, c->dst_esz, c->n_out, x);
     else
@@ -1133,48 +1170,16 @@ static void axis_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
-/* Runs one axis pass: builds/gets the plan (lock held), sizes per-worker scratch
-   (a line + plan scratch), releases + pools over the lines via nx_c_parallel_for.
-   n_out<=n_in trims the written line. */
 static nx_c_status run_axis(nx_c_dtype src_dt, nx_c_dtype dst_dt,
                            const nx_c_ndarray *src, const nx_c_ndarray *dst,
                            int axis, int64_t n_in, int64_t n_out, int sign,
                            int src_real, int dst_real) {
-  const fft_plan *plan = plan_get(n_in, sign);
-  if (!plan) return NX_C_ERR_ALLOC;
-
-  int64_t lines = 1;
-  for (int d = 0; d < dst->ndim; d++)
-    if (d != axis) lines *= dst->shape[d];
-  if (lines == 0 || n_in == 0) return NX_C_OK;
-
-  int64_t slot = n_in + plan->work_cx; /* cx2 per worker */
-  int64_t bytes = lines * n_in * (int64_t)sizeof(cx2);
-  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n_in, bytes);
-  if (nth > lines) nth = (int)lines;
-  if (nth < 1) nth = 1;
-
-  int64_t slot_bytes = ((slot * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
-  char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
-  if (!scratch) return NX_C_ERR_ALLOC;
-
-  axis_ctx c;
-  c.src_dt = src_dt;
-  c.dst_dt = dst_dt;
-  c.src = src;
-  c.dst = dst;
-  c.axis = axis;
-  c.n_in = n_in;
-  c.n_out = n_out;
-  c.src_esz = nx_c_elem_size(src_dt);
-  c.dst_esz = nx_c_elem_size(dst_dt);
-  c.src_real = src_real;
-  c.dst_real = dst_real;
-  c.plan = plan;
-  c.scratch = scratch;
-  c.slot = slot_bytes / (int64_t)sizeof(cx2);
-  nx_c_parallel_for(nth, lines, bytes, axis_body, &c, scratch);
-  return NX_C_OK;
+  line_ctx c = {.src_dt = src_dt, .dst_dt = dst_dt, .src = src, .dst = dst,
+                .axis = axis, .n_in = n_in, .n_out = n_out,
+                .src_real = src_real, .dst_real = dst_real};
+  c.plan = plan_get(n_in, sign);
+  if (!c.plan) return NX_C_ERR_ALLOC;
+  return run_lines(&c, n_in, n_in + c.plan->work_cx, axis_body);
 }
 
 /* ── fft / ifft ───────────────────────────────────────────────────────────
@@ -1204,33 +1209,20 @@ static nx_c_status nx_c_fft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
    junction unpadded (a 64 B pad regressed pow2 65536 1.20×→1.29×). Thread
    policy is unchanged from run_axis (same lines/n/bytes inputs) even though
    the packed work is half — deliberately conservative. */
-typedef struct {
-  nx_c_dtype src_dt, dst_dt;
-  const nx_c_ndarray *src;
-  const nx_c_ndarray *dst;
-  int axis;
-  int64_t N; /* n/2 */
-  int64_t src_esz, dst_esz;
-  const fft_plan *plan; /* the real plan's length-N sub-plan, sign -1 */
-  const cx2 *rtw;       /* and its untangle table */
-  char *scratch;
-  int64_t slot;
-} rfft_packed_ctx;
-
 static void rfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
-  const rfft_packed_ctx *c = (const rfft_packed_ctx *)vctx;
-  cx2 *base = (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
-  cx2 *z = base;
-  cx2 *work = base + (c->N + 1);
+  const line_ctx *c = (const line_ctx *)vctx;
+  int64_t N = c->n_in / 2;
+  cx2 *z = worker_scratch(c, worker);
+  cx2 *work = z + (N + 1);
   int64_t sstride = c->src->strides[c->axis];
   int64_t dstride = c->dst->strides[c->axis];
   for (int64_t L = lo; L < hi; L++) {
-    const char *sb = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
-    char *db = (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
-    gather_real_pairs(c->src_dt, sb, sstride, c->src_esz, c->N, z);
+    const char *sb = src_line(c, L);
+    char *db = dst_line(c, L);
+    gather_real_pairs(c->src_dt, sb, sstride, c->src_esz, N, z);
     plan_exec(c->plan, z, work);
-    rfft_untangle(z, c->rtw, c->N);
-    scatter_cx(c->dst_dt, db, dstride, c->dst_esz, c->N + 1, z);
+    rfft_untangle(z, c->rtw, N);
+    scatter_cx(c->dst_dt, db, dstride, c->dst_esz, N + 1, z);
   }
 }
 
@@ -1240,38 +1232,10 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
                                   int64_t n) {
   const real_plan *plan = real_plan_get(n, -1);
   if (!plan) return NX_C_ERR_ALLOC;
-  int64_t N = n / 2;
-
-  int64_t lines = 1;
-  for (int d = 0; d < dst->ndim; d++)
-    if (d != axis) lines *= dst->shape[d];
-  if (lines == 0) return NX_C_OK;
-
-  int64_t slot = (N + 1) + plan->half->work_cx; /* cx2 per worker */
-  int64_t bytes = lines * n * (int64_t)sizeof(cx2);
-  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n, bytes);
-  if (nth > lines) nth = (int)lines;
-  if (nth < 1) nth = 1;
-
-  int64_t slot_bytes = ((slot * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
-  char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
-  if (!scratch) return NX_C_ERR_ALLOC;
-
-  rfft_packed_ctx c;
-  c.src_dt = src_dt;
-  c.dst_dt = dst_dt;
-  c.src = src;
-  c.dst = dst;
-  c.axis = axis;
-  c.N = N;
-  c.src_esz = nx_c_elem_size(src_dt);
-  c.dst_esz = nx_c_elem_size(dst_dt);
-  c.plan = plan->half;
-  c.rtw = plan->rtw;
-  c.scratch = scratch;
-  c.slot = slot_bytes / (int64_t)sizeof(cx2);
-  nx_c_parallel_for(nth, lines, bytes, rfft_packed_body, &c, scratch);
-  return NX_C_OK;
+  line_ctx c = {.src_dt = src_dt, .dst_dt = dst_dt, .src = src, .dst = dst,
+                .axis = axis, .n_in = n, .n_out = n / 2 + 1,
+                .plan = plan->half, .rtw = plan->rtw};
+  return run_lines(&c, n, (n / 2 + 1) + plan->half->work_cx, rfft_packed_body);
 }
 
 /* ── rfft ─────────────────────────────────────────────────────────────────
@@ -1311,42 +1275,30 @@ static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out
    length-s spectrum via conjugate symmetry, inverse FFTs it, and keeps the
    real part. Both discard Im X[0] (and the odd path never reads a Nyquist
    bin), so a non-Hermitian input transforms as its Hermitian projection. */
-typedef struct {
-  nx_c_dtype out_dt;
-  const nx_c_ndarray *out;
-  const nx_c_ndarray *src; /* half-spectrum source: `in` itself when only the
-                              last axis transforms, else the complex temp */
-  nx_c_dtype src_dt;
-  int axis;
-  int64_t half, s;
-  int64_t out_esz, src_esz;
-  const fft_plan *plan; /* length-s (odd s) or the real plan's length-s/2
-                           sub-plan (even s), sign +1 */
-  const cx2 *rtw;       /* the real plan's pre-twiddle table; even s only */
-  char *scratch;
-  int64_t slot;
-} irfft_ctx;
 
-static void irfft_last_body(int64_t lo, int64_t hi, int worker, void *vctx) {
-  const irfft_ctx *c = (const irfft_ctx *)vctx;
-  cx2 *base = (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
-  cx2 *g = base;                    /* gathered half-spectrum, length half */
-  cx2 *f = g + (c->half + FFT_PAD); /* reconstructed spectrum, length s */
-  cx2 *work = f + (c->s + FFT_PAD); /* transform scratch */
+/* Odd s, full length. Per-worker scratch is [ g: half+PAD ][ f: s+PAD ]
+   [ work ]: the gathered half bins, the reconstructed spectrum, and the
+   transform scratch. */
+static void irfft_full_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  const line_ctx *c = (const line_ctx *)vctx;
+  int64_t half = c->n_in, s = c->n_out;
+  cx2 *g = worker_scratch(c, worker);
+  cx2 *f = g + (half + FFT_PAD);
+  cx2 *work = f + (s + FFT_PAD);
   int64_t istride = c->src->strides[c->axis];
-  int64_t ostride = c->out->strides[c->axis];
+  int64_t ostride = c->dst->strides[c->axis];
   for (int64_t L = lo; L < hi; L++) {
-    const char *ib = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
-    char *ob = (char *)c->out->data + line_base(c->out, c->axis, L) * c->out_esz;
-    gather_cx(c->src_dt, ib, istride, c->src_esz, c->half, g);
+    const char *ib = src_line(c, L);
+    char *ob = dst_line(c, L);
+    gather_cx(c->src_dt, ib, istride, c->src_esz, half, g);
     /* An explicit output length may require padding or truncating the supplied
        half-spectrum. Missing frequencies are zero; excess ones were excluded
-       when c->half was computed. */
-    for (int64_t k = 0; k < c->s; k++) {
+       when half was computed. */
+    for (int64_t k = 0; k < s; k++) {
       f[k].r = 0.0;
       f[k].i = 0.0;
     }
-    for (int64_t k = 0; k < c->half; k++) f[k] = g[k];
+    for (int64_t k = 0; k < half; k++) f[k] = g[k];
     /* Im X[0] never reaches a real output: every other slot is
        Hermitian-paired below, and numpy/pocketfft discard it structurally.
        Discard it here too — a native length already drops it exactly (slot 0
@@ -1355,42 +1307,65 @@ static void irfft_last_body(int64_t lo, int64_t hi, int worker, void *vctx) {
        output. s is odd here (even s takes the packed body), so there is no
        Nyquist bin and no slot mirrors onto itself. */
     f[0].i = 0.0;
-    for (int64_t k = 1; k < c->half; k++) {
-      f[c->s - k].r = g[k].r;
-      f[c->s - k].i = -g[k].i;
+    for (int64_t k = 1; k < half; k++) {
+      f[s - k].r = g[k].r;
+      f[s - k].i = -g[k].i;
     }
     plan_exec(c->plan, f, work);
-    scatter_real(c->out_dt, ob, ostride, c->out_esz, c->s, f);
+    scatter_real(c->dst_dt, ob, ostride, c->dst_esz, s, f);
   }
 }
 
 /* Packed even-s inverse: gather the half bins into the N+1-slot line, zero
    the bins the pad rule leaves empty, pre-twiddle, run the length-N +sign
    sub-plan, unpack pairs. Per-worker scratch is [ x: N+1 cx2 ][ work ] — the
-   same one-extra-slot junction as the packed forward, replacing the odd
-   path's (half+PAD) + (s+PAD) reconstruct/mirror layout entirely. */
+   same one-extra-slot junction as the packed forward. */
 static void irfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
-  const irfft_ctx *c = (const irfft_ctx *)vctx;
-  cx2 *base = (cx2 *)(c->scratch + (int64_t)worker * c->slot * (int64_t)sizeof(cx2));
-  int64_t N = c->s / 2;
-  cx2 *x = base;
+  const line_ctx *c = (const line_ctx *)vctx;
+  int64_t half = c->n_in, N = c->n_out / 2;
+  cx2 *x = worker_scratch(c, worker);
   cx2 *work = x + (N + 1);
   int64_t istride = c->src->strides[c->axis];
-  int64_t ostride = c->out->strides[c->axis];
+  int64_t ostride = c->dst->strides[c->axis];
   for (int64_t L = lo; L < hi; L++) {
-    const char *ib = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
-    char *ob = (char *)c->out->data + line_base(c->out, c->axis, L) * c->out_esz;
-    gather_cx(c->src_dt, ib, istride, c->src_esz, c->half, x);
+    const char *ib = src_line(c, L);
+    char *ob = dst_line(c, L);
+    gather_cx(c->src_dt, ib, istride, c->src_esz, half, x);
     /* pad rule: frequencies above the supplied half-spectrum are zero
-       (excess ones were already excluded when c->half was computed) */
-    for (int64_t k = c->half; k <= N; k++) {
+       (excess ones were already excluded when half was computed) */
+    for (int64_t k = half; k <= N; k++) {
       x[k].r = 0.0;
       x[k].i = 0.0;
     }
     irfft_pretwiddle(x, c->rtw, N);
     plan_exec(c->plan, x, work);
-    scatter_real_pairs(c->out_dt, ob, ostride, c->out_esz, N, x);
+    scatter_real_pairs(c->dst_dt, ob, ostride, c->dst_esz, N, x);
   }
+}
+
+/* The last axis: `half` supplied bins per line of `src` (already clipped to
+   the s/2+1 that s can use) → real length s along `axis` of `dst`. Even s
+   (which the default s = 2·(in_half − 1) always is) takes the packed
+   half-size inverse; an explicit odd s keeps the full-length
+   reconstruct+mirror path. */
+static nx_c_status run_irfft_last(nx_c_dtype src_dt, nx_c_dtype dst_dt,
+                                 const nx_c_ndarray *src,
+                                 const nx_c_ndarray *dst, int axis,
+                                 int64_t half, int64_t s) {
+  line_ctx c = {.src_dt = src_dt, .dst_dt = dst_dt, .src = src, .dst = dst,
+                .axis = axis, .n_in = half, .n_out = s};
+  if (s >= 2 && (s & 1) == 0) {
+    const real_plan *plan = real_plan_get(s, 1);
+    if (!plan) return NX_C_ERR_ALLOC;
+    c.plan = plan->half;
+    c.rtw = plan->rtw;
+    return run_lines(&c, s, (s / 2 + 1) + plan->half->work_cx,
+                     irfft_packed_body);
+  }
+  c.plan = plan_get(s, 1);
+  if (!c.plan) return NX_C_ERR_ALLOC;
+  return run_lines(&c, s, (half + FFT_PAD) + (s + FFT_PAD) + c.plan->work_cx,
+                   irfft_full_body);
 }
 
 static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
@@ -1413,7 +1388,6 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
      to hold the intermediate inverse transforms between axis passes. */
   const nx_c_ndarray *src = in;
   nx_c_dtype src_dt = in_dt;
-  int64_t cesz = (int64_t)sizeof(cx2);
   nx_c_ndarray tmp;
   cx2 *tdata = NULL;
   if (naxes > 1) {
@@ -1432,7 +1406,7 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
     tmp = *in;
     int64_t nelem = 1;
     for (int d = 0; d < in->ndim; d++) nelem *= in->shape[d];
-    tdata = malloc((size_t)(nelem ? nelem : 1) * (size_t)cesz);
+    tdata = malloc((size_t)(nelem ? nelem : 1) * sizeof(cx2));
     if (!tdata) return NX_C_ERR_ALLOC;
     tmp.data = tdata;
     tmp.offset = 0;
@@ -1466,63 +1440,9 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
     src = &tmp;
     src_dt = NX_C_DTYPE_c64;
   }
-  /* last axis: half-spectrum → real length s. Even s (which the default
-     s = 2·(in_half − 1) always is) takes the packed half-size inverse; an
-     explicit odd s keeps the full-length reconstruct+mirror path. */
-  int packed = (s >= 2 && (s & 1) == 0);
-  const fft_plan *plan;
-  const cx2 *rtw = NULL;
-  int64_t slot; /* cx2 per worker */
-  if (packed) {
-    const real_plan *rp = real_plan_get(s, 1);
-    if (!rp) {
-      free(tdata);
-      return NX_C_ERR_ALLOC;
-    }
-    plan = rp->half;
-    rtw = rp->rtw;
-    slot = (s / 2 + 1) + plan->work_cx;
-  } else {
-    plan = plan_get(s, 1);
-    if (!plan) {
-      free(tdata);
-      return NX_C_ERR_ALLOC;
-    }
-    slot = (half + FFT_PAD) + (s + FFT_PAD) + plan->work_cx;
-  }
-  int64_t lines = 1;
-  for (int d = 0; d < out->ndim; d++)
-    if (d != last) lines *= out->shape[d];
-  if (lines > 0 && s > 0) {
-    int64_t slot_bytes = ((slot * cesz) + 63) & ~(int64_t)63;
-    int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, s, lines * s * cesz);
-    if (nth > lines) nth = (int)lines;
-    if (nth < 1) nth = 1;
-    char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
-    if (!scratch) {
-      free(tdata);
-      return NX_C_ERR_ALLOC;
-    }
-    irfft_ctx c;
-    c.out_dt = out_dt;
-    c.out = out;
-    c.src = src;
-    c.src_dt = src_dt;
-    c.axis = last;
-    c.half = half;
-    c.s = s;
-    c.out_esz = nx_c_elem_size(out_dt);
-    c.src_esz = nx_c_elem_size(src_dt);
-    c.plan = plan;
-    c.rtw = rtw;
-    c.scratch = scratch;
-    c.slot = slot_bytes / cesz;
-    /* scratch handed to the primitive as free_on_exit — do NOT free it here. */
-    nx_c_parallel_for(nth, lines, lines * s * cesz,
-                     packed ? irfft_packed_body : irfft_last_body, &c, scratch);
-  }
+  nx_c_status st = run_irfft_last(src_dt, out_dt, src, out, last, half, s);
   free(tdata);
-  return NX_C_OK;
+  return st;
 }
 
 /* ── FFI stubs ────────────────────────────────────────────────────────────*/
