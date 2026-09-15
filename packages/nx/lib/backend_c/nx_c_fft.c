@@ -1117,26 +1117,32 @@ static char *dst_line(const line_ctx *c, int64_t L) {
   return (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
 }
 
-/* Threads for a stack of `lines` independent length-n transforms. A transform
-   line is not a linear pass over n elements: it costs O(n log n), so the work
-   per line handed to the generic compute policy is n weighted by ceil(log2 n).
-   The policy's own serial floor still decides — a stack of a few short lines
-   stays on one worker — and the count is clamped to the number of lines, which
-   are the only splittable units. */
-static int fft_threads(int64_t lines, int64_t n, int64_t bytes) {
+/* Per-line work of a plan, in the compute policy's element units. A transform
+   is not one pass over its line: a native plan makes ceil(log2 n) butterfly
+   passes, and a Bluestein plan makes two of them over its padded length m.
+   The packed real drivers hand run_lines their half-length sub-plan, so
+   their lines weigh half a full-length one. One butterfly pass over a cx2
+   element counts as two policy units (a complex multiply-add on 16 bytes,
+   against the flat map elements the policy's per-thread quantum was set
+   by): at one unit a 23×2048 packed rfft stack stayed on 3 workers and lost
+   most of its speedup (measured 111 µs vs 56 µs at two units on an M1 Max),
+   while four units began splitting stacks of a few 1024-point lines that
+   run faster serially. */
+static int64_t plan_work(const fft_plan *p) {
+  int64_t n = p->kind == FFT_BLUESTEIN ? p->m : p->n;
   int64_t lg = 1;
   while (lg < 62 && ((int64_t)1 << lg) < n) lg++;
-  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n * lg, bytes);
-  if (nth > lines) nth = (int)lines;
-  if (nth < 1) nth = 1;
-  return nth;
+  return (p->kind == FFT_BLUESTEIN ? 4 : 2) * n * lg;
 }
 
 /* Sizes the per-worker scratch (slot_cx cx2, rounded up to a cache line),
-   picks the thread count for `lines` transforms of length n, fills the
-   context's derived fields and pools `body` over the lines with the scratch
-   as the region's free_on_exit. The caller looked the plan up first (lock
-   held). Nothing to do when there are no lines or n == 0. */
+   picks the thread count from the plan's work per line (the policy's own
+   serial floor keeps a stack of a few short lines on one worker; the count
+   is clamped to the lines, the only splittable units), fills the context's
+   derived fields and pools `body` over the lines with the scratch as the
+   region's free_on_exit. n is the line length, for the traffic figure. The
+   caller looked the plan up first (lock held). Nothing to do when there are
+   no lines or n == 0. */
 static nx_c_status run_lines(line_ctx *c, int64_t n, int64_t slot_cx,
                              nx_c_range_body body) {
   int64_t lines = 1;
@@ -1145,7 +1151,9 @@ static nx_c_status run_lines(line_ctx *c, int64_t n, int64_t slot_cx,
   if (lines == 0 || n == 0) return NX_C_OK;
 
   int64_t bytes = lines * n * (int64_t)sizeof(cx2);
-  int nth = fft_threads(lines, n, bytes);
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, plan_work(c->plan), bytes);
+  if (nth > lines) nth = (int)lines;
+  if (nth < 1) nth = 1;
 
   int64_t slot_bytes = ((slot_cx * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
   char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
@@ -1219,9 +1227,7 @@ static nx_c_status nx_c_fft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
    scratch is [ z: N+1 cx2 ][ work: work_cx cx2 ] — the z|work junction
    carries exactly the one extra Nyquist slot the algorithm forces, NOT an
    FFT_PAD on top: the header's measured doctrine keeps the main ping-pong
-   junction unpadded (a 64 B pad regressed pow2 65536 1.20×→1.29×). Thread
-   policy is unchanged from run_axis (same lines/n/bytes inputs) even though
-   the packed work is half — deliberately conservative. */
+   junction unpadded (a 64 B pad regressed pow2 65536 1.20×→1.29×). */
 static void rfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   const line_ctx *c = (const line_ctx *)vctx;
   int64_t N = c->n_in / 2;
