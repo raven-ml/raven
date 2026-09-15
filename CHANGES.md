@@ -20,6 +20,11 @@ All notable changes to this project will be documented in this file.
   any TrueType font with `Font.of_string`; it measures text with kerning
   (`advance`, `bounds`, `ascent`, `descent`) and turns it into paths
   (`outline`, `glyph_path`), so text looks the same on every machine.
+  `Picture` is the display list: fills with nonzero or even-odd rules,
+  strokes with caps, joins and dashes, text, Nx images, groups, path clips,
+  affine transforms, and `stamp` for drawing one picture at many points.
+  `Raster.render` draws a picture into an `[|height; width; 4|]` RGBA tensor
+  with analytic antialiasing.
 
 ### Vega
 

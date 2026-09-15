@@ -8,6 +8,7 @@
   test_svg_backend
   test_image_util
   test_canvas_geometry
-  test_canvas_font)
+  test_canvas_font
+  test_canvas_raster)
  (package hugin)
  (libraries hugin hugin.canvas nx windtrap))
