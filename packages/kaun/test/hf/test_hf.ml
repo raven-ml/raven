@@ -60,9 +60,9 @@ let write_string path s =
 
 let test_cache_path_layout () =
   equal string
-    (Filename.concat "/c" "openai-community-gpt2/main/config.json"
-    |> String.split_on_char '/'
-    |> String.concat Filename.dir_sep)
+    (Filename.concat "/c"
+       (Filename.concat "openai-community-gpt2"
+          (Filename.concat "main" "config.json")))
     (Hf.cache_path ~cache_dir:"/c" ~file:"config.json" "openai-community/gpt2")
 
 let test_cache_path_revision () =
@@ -292,16 +292,15 @@ let test_remap_into_attention () =
       | "attn.c_proj.bias" -> "out.b"
       | n -> n)
   in
-  let like = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Attention.init ~embed_dim:2 in
+  let like =
+    Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Attention.init ~embed_dim:2
+  in
   let p = Checkpoint.to_params (module Attention) ~like ours in
   equal ~msg:"q.w" (array float_exact) [| 1.0; 2.0; 7.0; 8.0 |] (to_arr p.q.w);
-  equal ~msg:"v.b"
-    (array float_exact)
-    [| 2.5; 3.5 |]
+  equal ~msg:"v.b" (array float_exact) [| 2.5; 3.5 |]
     (to_arr (Option.get p.v.b));
-  equal ~msg:"out.w transposed"
-    (array float_exact)
-    [| 1.0; 3.0; 2.0; 4.0 |] (to_arr p.out.w)
+  equal ~msg:"out.w transposed" (array float_exact) [| 1.0; 3.0; 2.0; 4.0 |]
+    (to_arr p.out.w)
 
 let () =
   run "kaun hf"
