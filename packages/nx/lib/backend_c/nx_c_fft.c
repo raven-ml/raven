@@ -1320,21 +1320,17 @@ static void irfft_last_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       f[k].i = 0.0;
     }
     for (int64_t k = 0; k < c->half; k++) f[k] = g[k];
-    /* Im X[0] and, for even s, Im X[s/2] never reach a real output: every
-       other slot is Hermitian-paired below, and numpy/pocketfft discard the
-       edge imaginaries structurally. Discard them here too — the native odd
-       path already drops them exactly (slot 0 never meets a stage twiddle),
-       but a Bluestein-executed length would otherwise leak ~1e-16 of garbage
-       from a non-Hermitian input into the output. The Nyquist store is
-       idempotent when the supplied spectrum stops short of that bin. */
+    /* Im X[0] never reaches a real output: every other slot is
+       Hermitian-paired below, and numpy/pocketfft discard it structurally.
+       Discard it here too — a native length already drops it exactly (slot 0
+       never meets a stage twiddle), but a Bluestein-executed length would
+       otherwise leak ~1e-16 of garbage from a non-Hermitian input into the
+       output. s is odd here (even s takes the packed body), so there is no
+       Nyquist bin and no slot mirrors onto itself. */
     f[0].i = 0.0;
-    if (c->s % 2 == 0) f[c->s / 2].i = 0.0;
     for (int64_t k = 1; k < c->half; k++) {
-      int64_t mirror = c->s - k;
-      if (mirror != k) {
-        f[mirror].r = g[k].r;
-        f[mirror].i = -g[k].i;
-      }
+      f[c->s - k].r = g[k].r;
+      f[c->s - k].i = -g[k].i;
     }
     plan_exec(c->plan, f, work);
     scatter_real(c->out_dt, ob, ostride, c->out_esz, c->s, f);
