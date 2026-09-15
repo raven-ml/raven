@@ -10,6 +10,134 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+
+/* No device files, locked memory, eventfd, or VFIO on Windows. The constants
+   are zeros so the module initializes; every operation fails at the call. */
+static value unsupported(void) {
+  caml_failwith("tolk system: unsupported on Windows");
+  return Val_unit; /* unreachable */
+}
+
+CAMLprim value caml_tolk_system_constants(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(v);
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  v = caml_alloc_tuple(9);
+  for (int i = 0; i < 7; i++) Store_field(v, i, Val_int(0));
+  Store_field(v, 7, Val_long(info.dwPageSize));
+  Store_field(v, 8, Val_false);
+  CAMLreturn(v);
+}
+
+CAMLprim value caml_tolk_system_open_mode(value v_path, value v_flags,
+                                          value v_mode) {
+  (void)v_path;
+  (void)v_flags;
+  (void)v_mode;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_flock_try(value v_fd) {
+  (void)v_fd;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_mlock(value v_addr, value v_size) {
+  (void)v_addr;
+  (void)v_size;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_madvise_dontfork(value v_addr, value v_size) {
+  (void)v_addr;
+  (void)v_size;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf, value v_pos,
+                                      value v_len, value v_off) {
+  (void)v_fd;
+  (void)v_buf;
+  (void)v_pos;
+  (void)v_len;
+  (void)v_off;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_pwrite(value v_fd, value v_buf, value v_pos,
+                                       value v_len, value v_off) {
+  (void)v_fd;
+  (void)v_buf;
+  (void)v_pos;
+  (void)v_len;
+  (void)v_off;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_write(value v_fd, value v_buf, value v_len) {
+  (void)v_fd;
+  (void)v_buf;
+  (void)v_len;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_readlink(value v_path) {
+  (void)v_path;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_eventfd(value v_initval) {
+  (void)v_initval;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_poll_in(value v_fd, value v_timeout_ms) {
+  (void)v_fd;
+  (void)v_timeout_ms;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_eventfd_drain(value v_fd) {
+  (void)v_fd;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_vfio_check_extension(value v_fd) {
+  (void)v_fd;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_vfio_group_set_container(value v_group,
+                                                         value v_container) {
+  (void)v_group;
+  (void)v_container;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_vfio_set_iommu(value v_fd) {
+  (void)v_fd;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_vfio_group_get_device_fd(value v_group,
+                                                         value v_pcibus) {
+  (void)v_group;
+  (void)v_pcibus;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(value v_dev,
+                                                     value v_eventfd) {
+  (void)v_dev;
+  (void)v_eventfd;
+  return unsupported();
+}
+
+#else /* !_WIN32 */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -87,7 +215,8 @@ CAMLprim value caml_tolk_system_constants(value unit) {
 /* open(2) with an explicit creation mode; close-on-exec is always added and
    the mode is applied with fchmod so it does not depend on the process
    umask. */
-CAMLprim value caml_tolk_system_open_mode(value v_path, value v_flags,
+CAMLprim value caml_tolk_system_open_mode(value v_path,
+                                          value v_flags,
                                           value v_mode) {
   CAMLparam3(v_path, v_flags, v_mode);
   int fd = open(String_val(v_path), Int_val(v_flags) | O_CLOEXEC,
@@ -132,8 +261,10 @@ CAMLprim value caml_tolk_system_madvise_dontfork(value v_addr, value v_size) {
 /* The copies must keep the OCaml runtime lock held: the bytes value may move
    under the GC otherwise. */
 
-CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf, value v_pos,
-                                      value v_len, value v_off) {
+CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf,
+                                      value v_pos,
+                                      value v_len,
+                                      value v_off) {
   CAMLparam5(v_fd, v_buf, v_pos, v_len, v_off);
   ssize_t r;
   do
@@ -144,8 +275,10 @@ CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf, value v_pos,
   CAMLreturn(Val_long(r));
 }
 
-CAMLprim value caml_tolk_system_pwrite(value v_fd, value v_buf, value v_pos,
-                                       value v_len, value v_off) {
+CAMLprim value caml_tolk_system_pwrite(value v_fd, value v_buf,
+                                       value v_pos,
+                                       value v_len,
+                                       value v_off) {
   CAMLparam5(v_fd, v_buf, v_pos, v_len, v_off);
   ssize_t r;
   do
@@ -237,7 +370,8 @@ CAMLprim value caml_tolk_system_vfio_check_extension(value v_fd) {
 #endif
 }
 
-CAMLprim value caml_tolk_system_vfio_group_set_container(value v_group,
+CAMLprim value caml_tolk_system_vfio_group_set_container(
+                                                         value v_group,
                                                          value v_container) {
 #ifdef __linux__
   int container_fd = Int_val(v_container);
@@ -263,7 +397,8 @@ CAMLprim value caml_tolk_system_vfio_set_iommu(value v_fd) {
 #endif
 }
 
-CAMLprim value caml_tolk_system_vfio_group_get_device_fd(value v_group,
+CAMLprim value caml_tolk_system_vfio_group_get_device_fd(
+                                                         value v_group,
                                                          value v_pcibus) {
 #ifdef __linux__
   CAMLparam2(v_group, v_pcibus);
@@ -281,7 +416,8 @@ CAMLprim value caml_tolk_system_vfio_group_get_device_fd(value v_group,
 
 /* Routes MSI vector 0 to the eventfd: one vfio_irq_set frame with the
    descriptor as its payload. */
-CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(value v_dev,
+CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(
+                                                     value v_dev,
                                                      value v_eventfd) {
 #ifdef __linux__
   struct {
@@ -305,3 +441,5 @@ CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(value v_dev,
   return Val_unit; /* unreachable */
 #endif
 }
+
+#endif /* _WIN32 */

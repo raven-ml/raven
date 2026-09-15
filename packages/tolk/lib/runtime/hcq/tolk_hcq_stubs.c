@@ -9,6 +9,113 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+
+#if defined(_WIN32)
+/* No device files or memory mappings on Windows. The constants are zeros so
+   the module initializes; every operation fails at the call. */
+static value unsupported(void) {
+  caml_failwith("tolk hcq: unsupported on Windows");
+  return Val_unit; /* unreachable */
+}
+
+CAMLprim value caml_tolk_hcq_constants(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(v);
+  v = caml_alloc_tuple(10);
+  for (int i = 0; i < 10; i++) Store_field(v, i, Val_int(0));
+  CAMLreturn(v);
+}
+
+CAMLprim value caml_tolk_hcq_open(value v_path, value v_flags) {
+  (void)v_path;
+  (void)v_flags;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_close(value v_fd) {
+  (void)v_fd;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_mmap(value v_addr, value v_size, value v_prot,
+                                  value v_flags, value v_fd, value v_offset) {
+  (void)v_addr;
+  (void)v_size;
+  (void)v_prot;
+  (void)v_flags;
+  (void)v_fd;
+  (void)v_offset;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_munmap(value v_addr, value v_size) {
+  (void)v_addr;
+  (void)v_size;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_read32(value v_addr) {
+  (void)v_addr;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_write32(value v_addr, value v_v) {
+  (void)v_addr;
+  (void)v_v;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_read64(value v_addr) {
+  (void)v_addr;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_write64(value v_addr, value v_v) {
+  (void)v_addr;
+  (void)v_v;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_read64_int(value v_addr) {
+  (void)v_addr;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_fence(value unit) {
+  (void)unit;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_monotonic_ms(value unit) {
+  (void)unit;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_memcpy_to_ptr(value v_dst, value v_src,
+                                           value v_src_off, value v_len) {
+  (void)v_dst;
+  (void)v_src;
+  (void)v_src_off;
+  (void)v_len;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_memcpy_from_ptr(value v_dst, value v_dst_off,
+                                             value v_src, value v_len) {
+  (void)v_dst;
+  (void)v_dst_off;
+  (void)v_src;
+  (void)v_len;
+  return unsupported();
+}
+
+CAMLprim value caml_tolk_hcq_mmap_bc(value *argv, int argn) {
+  (void)argv;
+  (void)argn;
+  return unsupported();
+}
+
+#else /* !_WIN32 */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdatomic.h>
@@ -68,8 +175,10 @@ CAMLprim value caml_tolk_hcq_close(value v_fd) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_hcq_mmap(value v_addr, value v_size, value v_prot,
-                                  value v_flags, value v_fd, value v_offset) {
+CAMLprim value caml_tolk_hcq_mmap(value v_addr, value v_size,
+                                  value v_prot,
+                                  value v_flags,
+                                  value v_fd, value v_offset) {
   CAMLparam5(v_addr, v_size, v_prot, v_flags, v_fd);
   CAMLxparam1(v_offset);
   void *p = mmap((void *)Nativeint_val(v_addr), (size_t)Long_val(v_size),
@@ -135,16 +244,22 @@ CAMLprim value caml_tolk_hcq_monotonic_ms(value unit) {
   return Val_long((intnat)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
-CAMLprim value caml_tolk_hcq_memcpy_to_ptr(value v_dst, value v_src,
-                                           value v_src_off, value v_len) {
+CAMLprim value caml_tolk_hcq_memcpy_to_ptr(value v_dst,
+                                           value v_src,
+                                           value v_src_off,
+                                           value v_len) {
   memcpy((void *)Nativeint_val(v_dst), Bytes_val(v_src) + Long_val(v_src_off),
          (size_t)Long_val(v_len));
   return Val_unit;
 }
 
-CAMLprim value caml_tolk_hcq_memcpy_from_ptr(value v_dst, value v_dst_off,
-                                             value v_src, value v_len) {
+CAMLprim value caml_tolk_hcq_memcpy_from_ptr(value v_dst,
+                                             value v_dst_off,
+                                             value v_src,
+                                             value v_len) {
   memcpy(Bytes_val(v_dst) + Long_val(v_dst_off), (void *)Nativeint_val(v_src),
          (size_t)Long_val(v_len));
   return Val_unit;
 }
+
+#endif /* _WIN32 */

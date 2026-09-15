@@ -10,7 +10,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
-#include <dlfcn.h>
+#include "tolk_dl.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,14 +117,19 @@ static void *cuda_handle = NULL;
 
 static void ensure_cuda(void) {
   if (cuda_handle != NULL) return;
-  cuda_handle = dlopen("libcuda.so.1", RTLD_LAZY | RTLD_LOCAL);
-  if (cuda_handle == NULL)
-    cuda_handle = dlopen("libcuda.so", RTLD_LAZY | RTLD_LOCAL);
-  if (cuda_handle == NULL)
-    caml_failwith("CUDA driver library (libcuda.so.1) not found");
+  static const char *names[] = {
+#if defined(_WIN32)
+      "nvcuda.dll",
+#else
+      "libcuda.so.1", "libcuda.so",
+#endif
+      NULL};
+  for (int i = 0; cuda_handle == NULL && names[i] != NULL; ++i)
+    cuda_handle = tolk_dlopen(names[i]);
+  if (cuda_handle == NULL) caml_failwith("CUDA driver library not found");
 #define LOAD_CUDA(var, name)                                          \
   do {                                                                \
-    var = dlsym(cuda_handle, name);                                   \
+    var = tolk_dlsym(cuda_handle, name);                                   \
     if (var == NULL) caml_failwith("CUDA driver is missing " name);   \
   } while (0)
   LOAD_CUDA(p_cuInit, "cuInit");

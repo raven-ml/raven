@@ -10,7 +10,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
-#include <dlfcn.h>
+#include "tolk_dl.h"
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -112,22 +112,27 @@ static int comgr_loaded = 0;
 static char comgr_load_error[128];
 
 static void load_comgr(void) {
+#if defined(_WIN32)
+  const char *names[] = {"amd_comgr_3.dll", "amd_comgr_2.dll", "amd_comgr.dll",
+                         NULL};
+#else
   char rocm_lib[4096];
   const char *rocm_path = getenv("ROCM_PATH");
   snprintf(rocm_lib, sizeof(rocm_lib), "%s/lib/libamd_comgr.so",
            rocm_path != NULL ? rocm_path : "/opt/rocm");
   const char *names[] = {rocm_lib, "libamd_comgr.so", "libamd_comgr.so.3",
                          "libamd_comgr.so.2", NULL};
+#endif
   for (int i = 0; comgr_handle == NULL && names[i] != NULL; ++i)
-    comgr_handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
+    comgr_handle = tolk_dlopen(names[i]);
   if (comgr_handle == NULL) {
     snprintf(comgr_load_error, sizeof(comgr_load_error),
-             "comgr library (libamd_comgr.so) not found");
+             "comgr library not found");
     return;
   }
 #define LOAD_COMGR(var, name)                                          \
   do {                                                                 \
-    var = dlsym(comgr_handle, name);                                   \
+    var = tolk_dlsym(comgr_handle, name);                                   \
     if (var == NULL) {                                                 \
       snprintf(comgr_load_error, sizeof(comgr_load_error),             \
                "comgr is missing " name);                              \

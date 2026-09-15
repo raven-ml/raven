@@ -10,7 +10,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
-#include <dlfcn.h>
+#include "tolk_dl.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,19 +53,23 @@ static int nvrtc_loaded = 0;
 static char nvrtc_error[128];
 
 static void load_nvrtc(void) {
-  static const char *names[] = {"libnvrtc.so", "libnvrtc.so.13",
-                                "libnvrtc.so.12",
-                                "/usr/local/cuda/lib64/libnvrtc.so", NULL};
+  static const char *names[] = {
+#if defined(_WIN32)
+      "nvrtc64_130_0.dll", "nvrtc64_120_0.dll",
+#else
+      "libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12",
+      "/usr/local/cuda/lib64/libnvrtc.so",
+#endif
+      NULL};
   for (int i = 0; nvrtc_handle == NULL && names[i] != NULL; ++i)
-    nvrtc_handle = dlopen(names[i], RTLD_LAZY | RTLD_LOCAL);
+    nvrtc_handle = tolk_dlopen(names[i]);
   if (nvrtc_handle == NULL) {
-    snprintf(nvrtc_error, sizeof(nvrtc_error),
-             "NVRTC library (libnvrtc.so) not found");
+    snprintf(nvrtc_error, sizeof(nvrtc_error), "NVRTC library not found");
     return;
   }
 #define LOAD_NVRTC(var, name)                                          \
   do {                                                                 \
-    var = dlsym(nvrtc_handle, name);                                   \
+    var = tolk_dlsym(nvrtc_handle, name);                                   \
     if (var == NULL) {                                                 \
       snprintf(nvrtc_error, sizeof(nvrtc_error),                       \
                "NVRTC is missing " name);                              \

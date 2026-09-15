@@ -136,6 +136,7 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+
 Local experiment tracking for Raven. Evolves `kaun-board` into a full
 experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.
 Declare a metric once with `Session.metric` and log samples through the handle
@@ -161,6 +162,10 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+
+- The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor
+  libraries load through `LoadLibrary`, and the hcq and system layers report
+  themselves unsupported there instead of failing to compile.
 - New `Tolk_frontend.Linalg`: `qr`, `solve_triangular`, and `cholesky` unroll
   at graph-construction time into ordinary Tolk compositions, so they compile
   for every Tolk device. Large systems solve block-by-block as GEMMs, with
