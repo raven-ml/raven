@@ -140,6 +140,108 @@ val jvp2 :
     objective returning a structured output: the result tangent has the output's
     structure, one tangent per output leaf. *)
 
+val tangent : ('a, 'b) Nx.t -> ('a, 'b) Nx.t option
+(** [tangent x] is the tangent a forward mode maintains for [x], if any:
+    [Some dx] while a forward-mode transformation surrounds the call and tracks
+    [x], and [None] otherwise — no forward mode is installed, [x] is a constant
+    of the one that is (a value computed from constants, a {!detach}ed tensor,
+    anything inside {!no_grad}), or the innermost mode does not track it.
+
+    Which tangent is returned follows the installed mode: under {!jvp} it is the
+    single tangent of [x]'s shape, under {!jvp_k} the [k]-lane batch of shape
+    [k :: shape x]. The innermost transformation owns the answer and its shape
+    convention, so an enclosing forward mode never answers for a tensor the
+    current scope's mode does not itself track.
+
+    This is the query for code that {e consumes} tangents — a curvature
+    collector over a batched forward pass, a diagnostic — rather than producing
+    them: it reads the store the transformation already keeps and does not
+    perturb the computation. Treat [None] as "no tangent here", and note that
+    the shape tells the caller which forward mode answered. *)
+
+(** {1:batched_forward Batched forward mode} *)
+
+val jvp_k :
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  'p ->
+  ('c, 'd) Nx.t * ('c, 'd) Nx.t
+(** [jvp_k (module P) f params thetas] is [(f params, dY)] where [dY] is the
+    Jacobian of [f] at [params] contracted with [k] directions at once. The
+    tangent leaves of [thetas] stack those directions on a leading axis — each
+    leaf has shape [k; shape-of-its-parameter-leaf], every leaf sharing one [k]
+    — and the output tangent gains the same leading axis, its [i]-th lane being
+    the Jacobian-vector product along the [i]-th direction. One forward pass
+    computes the primal once and all [k] tangents together: the lane axis
+    behaves as an ordinary batch axis of every tangent operation, so per
+    operation the cost is primal work ×1 plus tangent work ×[k] — never the
+    [k]-fold primal replication that composing {!val-vmap} around {!jvp} would
+    incur. [k = 1] degenerates to {!jvp} up to the leading unit axis.
+
+    Tangents are stored keyed weakly on their primals: when the differentiated
+    computation drops an intermediate — a loop moving past a step — that
+    intermediate's tangent becomes collectable, so memory follows the live
+    working set of the computation rather than its whole history. See
+    {!live_tangent_entries}.
+
+    Composes with the other transformations. Batch dimensions created by an
+    inner {!val-vmap} land inside the tangent axis: the natural way to write a
+    per-trial model is [jvp_k] of [vmap] of the per-trial loss, with trials
+    batched by [vmap] and directions by [jvp_k]. [jvp_k] of {!val-grad} computes
+    [k] Hessian-vector products in one pass; {!val-grad} of [jvp_k]
+    differentiates through the batched tangent computation. An outer [vmap]
+    whose lanes the tangents depend on would batch {e around} the tangent axis
+    and raises instead of computing wrong shapes: batch dimensions belong inside
+    it. {!val-jit} inside the differentiated function runs eagerly, as under any
+    transformation; a compiled function {e around} it traces the batched tangent
+    operations into the program beside the primal ones — though a {!val-scan} in
+    the forward scope unrolls into that trace.
+
+    Raises [Invalid_argument] if the tangent leaves do not share one leading
+    lane axis of their parameter leaf's shape, or if [k = 0]. Operations with no
+    batching rule for their tangent ([qr], [svd], [eig], and — unlike {!jvp} —
+    [cholesky] and [triangular_solve]) raise when an input is active. *)
+
+val jvp_k_aux :
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t * 'aux) ->
+  'p ->
+  'p ->
+  ('c, 'd) Nx.t * ('c, 'd) Nx.t * 'aux
+(** [jvp_k_aux (module P) f params thetas] is like {!jvp_k} for an objective
+    returning auxiliary data alongside its result. The auxiliary value is
+    returned as-is and does not contribute to the tangent. *)
+
+val jvp_k2 :
+  (module Ptree.S with type t = 'p) ->
+  (module Ptree.S with type t = 'q) ->
+  ('p -> 'q) ->
+  'p ->
+  'p ->
+  'q * 'q
+(** [jvp_k2 (module P) (module Q) f params thetas] is like {!jvp_k} for an
+    objective returning a structured output: the result tangent has the output's
+    structure, one [k]-lane tangent batch per output leaf. *)
+
+val jvp_k' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * ('c, 'd) Nx.t
+(** [jvp_k' f x thetas] is like {!jvp_k} for a function of a single tensor;
+    [thetas] has shape [k; shape x]. *)
+
+val live_tangent_entries : unit -> int
+(** [live_tangent_entries ()] is the number of tangent bindings currently held
+    by the innermost running {!jvp_k}-family store; zero outside one. Bindings
+    whose primals have been dropped are cleared by the garbage collector, so
+    reading this from inside the differentiated function measures the live
+    working set of the differentiation — the property that lets a long unrolled
+    loop run in memory bounded by one step rather than the whole horizon. Force
+    a major collection first if the measurement should not depend on collector
+    timing. *)
+
 (** {1:complex Complex tensors}
 
     A complex tensor is two real components per element, so a function of one is
@@ -618,6 +720,56 @@ val scan :
     eagerly, tracing every step.
 
     Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
+
+(** Claiming a scan from a handler of your own.
+
+    A handler that performs {e its own} effects inside a scan body — a
+    collector of little losses, say — must intercept {!scan} itself: an
+    enclosing transformation claims the fold and runs it outside the handler's
+    extent, where those effects are no longer observed. This module exposes
+    the claim {!val-scan} itself performs: answer {!E_scan_probe} with [false]
+    (a claimer cannot stage a loop, and answering is what stops a staging
+    handler above from claiming the fold), match {!E_scan} to take the
+    request, run {!eager} on it under a re-installed copy of the claiming
+    handler so the fold's operations and effects stay in its extent, and
+    continue with the result:
+
+    {[
+    let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+      fun eff ->
+      match eff with
+      | Rune.Scan_claim.E_scan_probe -> Some (fun k -> continue k false)
+      | Rune.Scan_claim.E_scan req ->
+        Some
+          (fun k ->
+            let res =
+              Effect.Deep.match_with
+                (fun () -> Rune.Scan_claim.eager req)
+                () (handler state)
+            in
+            continue k res)
+      | _ -> None
+    ]}
+
+    The innermost claimer wins, so a handler installed inside a transformation
+    keeps the fold inside itself while the operations still flow outward to
+    that transformation, which sees an ordinary unrolled fold. *)
+module Scan_claim : sig
+  type req
+  type res
+
+  (** [eager req] folds [req] step by step with ordinary operations; run it
+      under a re-installed copy of the claiming handler. *)
+  val eager : req -> res
+
+  (** [E_scan req] is the claim {!val-scan} performs. *)
+  type _ Effect.t += E_scan : req -> res Effect.t
+
+  (** [E_scan_probe] asks the nearest {!E_scan} claimer whether it will stage
+      the fold as a compiled loop. A handler that runs {!eager} answers
+      [false]. *)
+  type _ Effect.t += E_scan_probe : bool Effect.t
+end
 
 val cond :
   (bool, Nx.bool_elt) Nx.t -> then_:(unit -> 'r) -> else_:(unit -> 'r) -> 'r

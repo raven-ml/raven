@@ -48,7 +48,16 @@ nest into records, so models compose structurally — see
   pullback; `_aux` variants thread non-differentiated data out of the
   objective
 - **Forward mode** — `jvp` for Jacobian-vector products in a single
-  forward pass
+  forward pass; `tangent` reads the tangent a forward mode maintains for
+  any tensor it tracks, so libraries can consume tangents without
+  depending on how a transformation stores them
+- **Batched forward mode** — `jvp_k` pushes `k` directions through one
+  forward pass, every tensor's tangent a `k`-lane batch on a leading axis:
+  the primal is computed once and all `k` tangents together, and `jvp_k`
+  of `grad` is `k` Hessian-vector products in one pass. Tangent bindings
+  are keyed weakly on their primals, so a long unrolled loop holds the
+  live working set's tangents, not the whole history
+  (`live_tangent_entries` measures it)
 - **Vectorizing map** — `vmap` lifts a per-example function to batched
   inputs; `in_axes`/`out_axis` control which axes are mapped
 - **Composition** — transformations nest freely: `vmap` of `grad` is
@@ -117,9 +126,17 @@ Current gaps:
 
 - **Ops without differentiation rules raise.** Reverse mode has no rule
   for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally
-  lacks `qr`. Differentiating through them raises `Invalid_argument` —
-  `detach` the input if gradients should not flow through. (`cholesky`,
-  reverse-mode `qr`, and the whole FFT family are supported.)
+  lacks `qr`; batched forward mode (`jvp_k`) additionally lacks
+  `cholesky` and `triangular_solve` (its backend solves want
+  exactly-matching leading batch dimensions). Differentiating through
+  them raises `Invalid_argument` — `detach` the input if gradients should
+  not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT
+  family are supported.)
+- **Batched forward mode nests inside `vmap`, not around it.** `jvp_k`
+  keeps its lane axis first on every tangent, so the batch dimensions a
+  `vmap` creates have to land inside it (`jvp_k` of `vmap`); an enclosing
+  `vmap` whose lanes the tangents depend on raises `Invalid_argument`
+  rather than computing wrong shapes.
 - **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`,
   `svd`, `eig`, `eigh`) over batched inputs.
 - **Implicit RNG under `vmap` draws identical values for every lane** —
@@ -127,8 +144,12 @@ Current gaps:
   mapped inputs instead.
 - **In-place mutation** (`set_item`, `set_slice`, `blit`, `assign`)
   raises during differentiation; write the update functionally.
-- **`jit` unrolls `scan`**, so a recurrence's compile time grows with
-  its sequence length.
+- **`jit` stages `scan` as a loop** — one compilation per fold step, not
+  one per element — which keeps a recurrence's compile time independent of
+  its length. Under *forward-mode* differentiation (`jvp`, `jvp_k`) the
+  scan unrolls into the trace instead, because the forward handler tracks
+  every step eagerly: compile time then grows with the sequence length.
+  Staging a forward-mode scan as a loop is future work.
 
 ## Contributing
 

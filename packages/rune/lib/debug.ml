@@ -113,9 +113,11 @@ let handler ppf =
               (scatter ~mode ~unique_indices data_template ~indices ~updates
                  ~axis))
     | E_matmul { a; b } -> Some (fun k -> obs k "matmul" (matmul a b))
+    (* [jit] asks whether to step aside; the logger is observing the ops. *)
+    | Gate.E_transforming -> Some (fun k -> continue k true)
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }
 
 let with_debug ?(ppf = Format.err_formatter) f =
-  Gate.with_transform (fun () -> Effect.Deep.match_with f () (handler ppf))
+  Effect.Deep.match_with f () (handler ppf)

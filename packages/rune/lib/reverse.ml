@@ -163,6 +163,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          tape's reach and the recorded [E_scan_bwd] would go unhandled at
          backward time. On [false] the eager fold runs under a nested copy of
          this handler, taping every step as the unrolled scan always did. *)
+      | Gate.E_transforming -> Some (fun k -> continue k true)
       | Scan.E_scan_probe -> Some (fun k -> continue k false)
       | Scan.E_scan req ->
           Some

@@ -1040,6 +1040,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               end;
               continue k ()
             end)
+    (* A nested [jit] must step aside while this trace is being recorded. *)
+    | Gate.E_transforming -> Some (fun k -> continue k true)
     (* Staged scans. A multi-device (pmap) trace cannot stage a loop yet: it
        answers the probe with [false] — so reverse-mode below tapes the eager
        fold per step and never records an [E_scan_bwd] — and unrolls a directly
@@ -2324,10 +2326,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
         | None -> assert false)
       params
   in
-  let y =
-    Gate.with_transform (fun () ->
-        Effect.Deep.match_with f ph_params (handler st))
-  in
+  let y = Effect.Deep.match_with f ph_params (handler st) in
   (* Collect the output leaves; a leaf the trace never saw is a constant passing
      through unchanged. *)
   let out_assoc = ref [] in

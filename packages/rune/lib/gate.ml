@@ -13,15 +13,20 @@ let without_tracing f =
   enabled := false;
   Fun.protect f ~finally:(fun () -> enabled := prev)
 
-(* Depth of installed transformation handlers. [Rune.jit] consults it to step
-   aside when a transformation is observing the operations: a compiled replay
-   performs no effects, so running one under grad/vmap/debug would hide the
-   computation from the enclosing handler. *)
+(* Is a transformation observing operations at this point?
 
-let transform_depth = ref 0
+   [Rune.jit] must step aside inside a transformation: a compiled replay
+   performs no effects, so it would hide the computation from the enclosing
+   handler. The question is asked as an effect rather than tracked in a global
+   counter, because a counter cannot be maintained reliably: an exception raised
+   in a handler body is re-raised in the handler's fiber, abandoning the fiber
+   below it without unwinding it, so a [Fun.protect] around the installation
+   site never runs its cleanup. Each transformation handler answers the probe
+   from its own extent — the same idiom as [Scan.E_scan_probe]. *)
 
-let with_transform f =
-  incr transform_depth;
-  Fun.protect f ~finally:(fun () -> decr transform_depth)
+type _ Effect.t += E_transforming : bool Effect.t
 
-let transforming () = !transform_depth > 0
+let transforming () =
+  match Effect.perform E_transforming with
+  | b -> b
+  | exception Effect.Unhandled _ -> false
