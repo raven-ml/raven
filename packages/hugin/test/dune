@@ -10,6 +10,7 @@
   test_vg_geometry
   test_vg_font
   test_vg_raster
-  test_vg_svg)
+  test_vg_svg
+  test_vg_pdf)
  (package hugin)
- (libraries hugin hugin.vg hugin.vg.raster hugin.vg.svg nx windtrap))
+ (libraries hugin hugin.vg hugin.vg.raster hugin.vg.svg hugin.vg.pdf nx str windtrap))

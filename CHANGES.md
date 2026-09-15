@@ -30,9 +30,10 @@ All notable changes to this project will be documented in this file.
   even-odd rules, strokes with caps, joins and dashes, text, Nx images,
   groups, path clips, affine transforms, and `stamp` for drawing one
   picture at many points. `hugin.vg.raster` draws a picture into an
-  `[|height; width; 4|]` RGBA tensor with analytic antialiasing, and
-  `hugin.vg.svg` writes it as a self-contained SVG document with the fonts
-  it uses embedded.
+  `[|height; width; 4|]` RGBA tensor with analytic antialiasing;
+  `hugin.vg.svg` and `hugin.vg.pdf` write it as a self-contained SVG or
+  single-page PDF document, with text kept as text, the fonts it uses
+  embedded, and images stored losslessly.
 
 ### Vega
 

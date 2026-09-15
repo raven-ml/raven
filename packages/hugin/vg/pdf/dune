@@ -1,0 +1,4 @@
+(library
+ (name hugin_vg_pdf)
+ (public_name hugin.vg.pdf)
+ (libraries hugin.vg nx nx.buffer nx.io))
