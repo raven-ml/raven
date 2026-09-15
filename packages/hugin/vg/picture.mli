@@ -75,3 +75,9 @@ val bounds : t -> Box.t option
 (** [bounds pic] is the box enclosing [pic], or [None] if it draws nothing. The
     box is tight for fills, text and images; a stroke is enclosed by its pen
     width, and by its miter limit at miter joins. *)
+
+(** {1:printing Printing} *)
+
+val pp : Format.formatter -> t -> unit
+(** [pp fmt pic] prints [pic] as nested s-expressions, one per constructor, with
+    paths as SVG path data and images by their shape. *)

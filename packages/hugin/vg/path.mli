@@ -92,3 +92,9 @@ val flatten :
 
 val bounds : t -> Box.t option
 (** [bounds p] is the box enclosing [p], or [None] if [p] has no points. *)
+
+(** {1:printing Printing} *)
+
+val pp : Format.formatter -> t -> unit
+(** [pp fmt p] prints [p] as SVG path data, one segment per token: [M x y],
+    [L x y], [C c1x c1y c2x c2y x y] and [Z]. *)

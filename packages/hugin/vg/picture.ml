@@ -105,3 +105,57 @@ let rec bounds_under m = function
           !acc)
 
 let bounds p = bounds_under Affine.id p
+
+(* Printing *)
+
+let pp_color fmt (c : Color.t) =
+  if c.a = 1. then Format.fprintf fmt "rgb(%g %g %g)" c.r c.g c.b
+  else Format.fprintf fmt "rgba(%g %g %g %g)" c.r c.g c.b c.a
+
+let pp_stroke fmt (s : Stroke.t) =
+  Format.fprintf fmt "width:%g" s.width;
+  (match s.cap with
+  | `Round -> ()
+  | `Butt -> Format.fprintf fmt "@ cap:butt"
+  | `Square -> Format.fprintf fmt "@ cap:square");
+  (match s.join with
+  | `Round -> ()
+  | `Miter -> Format.fprintf fmt "@ join:miter@ miter-limit:%g" s.miter_limit
+  | `Bevel -> Format.fprintf fmt "@ join:bevel");
+  if Array.length s.dash > 0 then begin
+    Format.fprintf fmt "@ dash:[";
+    Array.iteri
+      (fun i d -> Format.fprintf fmt "%s%g" (if i = 0 then "" else " ") d)
+      s.dash;
+    Format.fprintf fmt "]"
+  end
+
+let rec pp fmt = function
+  | Empty -> Format.pp_print_string fmt "empty"
+  | Fill { rule; color; path } ->
+      Format.fprintf fmt "@[<2>(fill%s@ %a@ \"%a\")@]"
+        (match rule with `Nonzero -> "" | `Evenodd -> " evenodd")
+        pp_color color Path.pp path
+  | Stroke { stroke; color; path } ->
+      Format.fprintf fmt "@[<2>(stroke@ %a@ %a@ \"%a\")@]" pp_stroke stroke
+        pp_color color Path.pp path
+  | Text { font; size; color; x; y; text } ->
+      Format.fprintf fmt "@[<2>(text@ \"%s\"@ %d@ %g@ %a@ %g %g@ %S)@]"
+        (Font.family font) (Font.weight font) size pp_color color x y text
+  | Image { x; y; w; h; data } ->
+      Format.fprintf fmt "@[<2>(image@ %g %g %g %g@ [%s])@]" x y w h
+        (String.concat " "
+           (Array.to_list (Array.map string_of_int (Nx.shape data))))
+  | Group ps ->
+      Format.fprintf fmt "@[<2>(group";
+      List.iter (fun p -> Format.fprintf fmt "@ %a" pp p) ps;
+      Format.fprintf fmt ")@]"
+  | Clip { path; picture } ->
+      Format.fprintf fmt "@[<2>(clip@ \"%a\"@ %a)@]" Path.pp path pp picture
+  | Transform { m; picture } ->
+      Format.fprintf fmt "@[<2>(transform@ [%g %g %g %g %g %g]@ %a)@]" m.xx m.yx
+        m.xy m.yy m.x0 m.y0 pp picture
+  | Stamp { picture; xs; ys } ->
+      Format.fprintf fmt "@[<2>(stamp@ %d@ %a" (Array.length xs) pp picture;
+      Array.iteri (fun i x -> Format.fprintf fmt "@ %g %g" x ys.(i)) xs;
+      Format.fprintf fmt ")@]"

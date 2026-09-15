@@ -177,3 +177,25 @@ let bounds p =
     | Some b -> Some (Box.union b (Box.v x y x y))
   in
   flatten Affine.id ~move:grow ~line:grow ~close:Fun.id None p
+
+let pp fmt p =
+  let first = ref true in
+  let sep () =
+    if !first then first := false else Format.pp_print_space fmt ()
+  in
+  Format.pp_open_box fmt 0;
+  fold
+    ~move:(fun () x y ->
+      sep ();
+      Format.fprintf fmt "M %g %g" x y)
+    ~line:(fun () x y ->
+      sep ();
+      Format.fprintf fmt "L %g %g" x y)
+    ~curve:(fun () c1x c1y c2x c2y x y ->
+      sep ();
+      Format.fprintf fmt "C %g %g %g %g %g %g" c1x c1y c2x c2y x y)
+    ~close:(fun () ->
+      sep ();
+      Format.pp_print_string fmt "Z")
+    () p;
+  Format.pp_close_box fmt ()

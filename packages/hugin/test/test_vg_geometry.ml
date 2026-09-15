@@ -187,6 +187,40 @@ let test_path_bounds () =
   equal (float 0.02) 3. b.y0;
   equal (float 0.02) 7. b.y1
 
+let test_pp () =
+  let show p =
+    let b = Buffer.create 256 in
+    let fmt = Format.formatter_of_buffer b in
+    Format.pp_set_margin fmt 200;
+    Format.fprintf fmt "%a@?" Picture.pp p;
+    Buffer.contents b
+  in
+  equal string "empty" (show Picture.empty);
+  equal string "(fill rgb(1 0 0) \"M 0 0 L 2 0 L 2 1 L 0 1 Z\")"
+    (show (Picture.fill (Color.v 1. 0. 0.) (Path.rect 0. 0. 2. 1.)));
+  equal string
+    "(stroke width:2 cap:butt join:miter miter-limit:4 dash:[3 1] rgba(0 0 1 \
+     0.5) \"M 0 0 L 5 5\")"
+    (show
+       (Picture.stroke
+          (Stroke.v ~cap:`Butt ~join:`Miter ~dash:[| 3.; 1. |] 2.)
+          (Color.v ~a:0.5 0. 0. 1.)
+          (Path.polyline [| 0.; 5. |] [| 0.; 5. |])));
+  equal string "(text \"Inter\" 700 12 rgb(0 0 0) 1 2 \"a\\\"b\")"
+    (show (Picture.text Font.bold ~size:12. Color.black ~x:1. ~y:2. "a\"b"));
+  equal string "(image 0 0 4 4 [2 2 3])"
+    (show
+       (Picture.image ~x:0. ~y:0. ~w:4. ~h:4. (Nx.zeros Nx.uint8 [| 2; 2; 3 |])));
+  let sq = Picture.fill Color.black (Path.rect 0. 0. 1. 1.) in
+  equal string
+    "(clip \"M 0 0 L 9 0 L 9 9 L 0 9 Z\" (transform [2 0 0 2 0 0] (group (fill \
+     rgb(0 0 0) \"M 0 0 L 1 0 L 1 1 L 0 1 Z\") (stamp 2 (fill rgb(0 0 0) \"M 0 \
+     0 L 1 0 L 1 1 L 0 1 Z\") 3 4 5 6))))"
+    (show
+       (Picture.clip (Path.rect 0. 0. 9. 9.)
+          (Picture.transform (Affine.scale 2. 2.)
+             (Picture.group [ sq; Picture.stamp sq [| 3.; 5. |] [| 4.; 6. |] ]))))
+
 (* Stroke *)
 
 let test_stroke_defaults () =
@@ -234,6 +268,7 @@ let () =
       group "box" [ test "operations" test_box ];
       group "flatten"
         [ test "chords" test_flatten; test "bounds" test_path_bounds ];
+      group "printing" [ test "pictures" test_pp ];
       group "stroke"
         [
           test "defaults" test_stroke_defaults;
