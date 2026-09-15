@@ -157,11 +157,10 @@ val dtype : ('a, 'b) t -> ('a, 'b) dtype
 (** [dtype t] is the data type of [t]. *)
 
 val strides : ('a, 'b) t -> int array
-(** [strides t] is the byte stride for each dimension of [t].
-
-    Raises [Invalid_argument] if [t] does not have computable strides (e.g.
-    after certain non-contiguous view operations). Use {!is_c_contiguous} or
-    call {!contiguous} first. *)
+(** [strides t] is the byte stride for each dimension of [t]. Every tensor has
+    strides, including non-contiguous views; divide by {!itemsize} for element
+    strides. With {!offset} and {!data}, they locate each element of [t] in its
+    buffer. *)
 
 val dim : int -> ('a, 'b) t -> int
 (** [dim i t] is the size of dimension [i].
