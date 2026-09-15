@@ -15,9 +15,10 @@
 
 (** {1:types Types} *)
 
-type font = { family : string; size : float; weight : [ `Normal | `Bold ] }
-(** The type for font specifications. [size] is in points before
-    {!field-scale_factor} is applied. *)
+type font = { size : float; weight : [ `Normal | `Bold ] }
+(** The type for font specifications. [size] is in pixels before
+    {!field-scale_factor} is applied; [weight] picks the regular or bold face of
+    the bundled font. *)
 
 type line = { color : Color.t; width : float; dash : float list }
 (** The type for line styles. [dash] is a list of on/off lengths; empty means

@@ -19,6 +19,16 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- Hugin no longer depends on cairo or SDL2. Plots render through
+  `hugin.vg` with the bundled Inter font, so `opam install hugin` needs no
+  system libraries and a specification produces the same bytes on every
+  machine. PDF output keeps text as text with the font embedded, and SVG
+  output embeds the font too.
+- Remove `Hugin.show`. There is no interactive window any more; view plots
+  in Quill or render them to a file.
+- `Theme.font` loses its `family` field: the bundled font is used, and
+  `weight` picks its regular or bold face.
+- Fix y-axis labels, which read top to bottom; they now read bottom to top.
 - Add `hugin.vg`, a 2D vector picture model with no system dependencies,
   and one library per renderer. `Hugin_vg.Path` builds paths from lines,
   cubic Béziers and bulk polylines, `Affine` composes transforms, and

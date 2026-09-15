@@ -10,8 +10,6 @@
   prepared
   resolve
   image_util
-  cairo_sdl
-  cairo_backend
-  svg_backend
+  vg_backend
   cmap_data)
- (libraries nx nx.buffer ucairo usdl))
+ (libraries nx nx.io hugin.vg hugin.vg.raster hugin.vg.svg hugin.vg.pdf))

@@ -5,7 +5,7 @@ Declarative plotting and visualization library for OCaml.
 Hugin is part of the Raven ecosystem, providing a functional API to create
 publication-quality charts and figures from Nx arrays. You build immutable
 plot specifications with mark constructors, compose them with `|>` pipelines,
-and render to PNG, SVG, PDF, or an interactive SDL window.
+and render to PNG, SVG, or PDF.
 
 ## Features
 
@@ -16,7 +16,8 @@ and render to PNG, SVG, PDF, or an interactive SDL window.
 - Predefined colormaps: viridis, plasma, inferno, magma, cividis, coolwarm
 - Themes with context scaling (paper, notebook, talk, poster)
 - Axis scales: linear, log, sqrt, asinh, symlog
-- Cairo rendering (PNG, PDF), pure-OCaml SVG backend, interactive SDL display
+- Pure OCaml rendering to PNG, SVG, and PDF with a bundled font, so figures
+  are identical on every machine and need no system libraries
 - Format printer for Quill notebooks (`#install_printer`)
 
 ## Quick Start

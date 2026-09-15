@@ -2,8 +2,8 @@
  (name main)
  (libraries hugin nx))
 
-; The images are committed and their bytes depend on the local cairo, so an
-; ordinary build never regenerates them: the rule is off unless asked for.
+; The images are committed; the rule is off unless asked for so that an
+; ordinary build does not run every example.
 ; Refresh with REFRESH_ASSETS=true dune build @assets
 
 (rule

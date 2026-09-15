@@ -79,44 +79,35 @@ let vstack ?gap specs = Spec.grid_layout ?gap (List.map (fun s -> [ s ]) specs)
 let default_width = 1600.
 let default_height = 1200.
 
-(* Use Cairo text measurement for all backends for consistent layout *)
-let resolve_with_cairo ~theme ~width ~height spec =
-  let surface = Ucairo.Image.create ~w:1 ~h:1 in
-  let cr = Ucairo.create surface in
-  let tm = Cairo_backend.text_measurer cr in
-  let scene = Resolve.resolve ~text_measurer:tm ~theme ~width ~height spec in
-  Ucairo.Surface.finish surface;
-  scene
-
-let show ?(theme = Theme.default) ?(width = default_width)
-    ?(height = default_height) spec =
-  let prepared = Prepared.compile ~theme spec in
-  Cairo_backend.show_interactive ~theme ~width ~height prepared
+let resolve ~theme ~width ~height spec =
+  Resolve.resolve ~text_measurer:Vg_backend.text_measurer ~theme ~width ~height
+    spec
 
 let render_png ?(theme = Theme.default) ?(width = default_width)
     ?(height = default_height) filename spec =
-  let scene = resolve_with_cairo ~theme ~width ~height spec in
-  Cairo_backend.render_to_png filename ~width ~height scene
+  Vg_backend.render_png filename ~width ~height
+    (resolve ~theme ~width ~height spec)
 
 let render_pdf ?(theme = Theme.default) ?(width = default_width)
     ?(height = default_height) filename spec =
-  let scene = resolve_with_cairo ~theme ~width ~height spec in
-  Cairo_backend.render_to_pdf filename ~width ~height scene
-
-let render_svg ?(theme = Theme.default) ?(width = default_width)
-    ?(height = default_height) filename spec =
-  let scene = resolve_with_cairo ~theme ~width ~height spec in
-  Svg_backend.render_to_file filename scene
+  Vg_backend.render_pdf filename ~width ~height
+    (resolve ~theme ~width ~height spec)
 
 let render_svg_to_string ?(theme = Theme.default) ?(width = default_width)
     ?(height = default_height) spec =
-  let scene = resolve_with_cairo ~theme ~width ~height spec in
-  Svg_backend.render scene
+  Vg_backend.render_svg ~width ~height (resolve ~theme ~width ~height spec)
+
+let render_svg ?theme ?width ?height filename spec =
+  let oc = open_out_bin filename in
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () ->
+      output_string oc (render_svg_to_string ?theme ?width ?height spec))
 
 let render_to_buffer ?(theme = Theme.default) ?(width = default_width)
     ?(height = default_height) spec =
-  let scene = resolve_with_cairo ~theme ~width ~height spec in
-  Cairo_backend.render_to_buffer ~width ~height scene
+  Vg_backend.render_to_buffer ~width ~height
+    (resolve ~theme ~width ~height spec)
 
 let infer_dimensions spec =
   let rec grid_shape = function

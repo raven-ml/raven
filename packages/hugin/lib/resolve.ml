@@ -307,12 +307,7 @@ let emit_text_mark sx sy plot_area theme ~x ~y ~content ~color ~font_size =
         x = px;
         y = py;
         content;
-        font =
-          {
-            family = theme.font_label.family;
-            size = size *. theme.scale_factor;
-            weight = `Normal;
-          };
+        font = { size = size *. theme.scale_factor; weight = `Normal };
         color;
         anchor = `Start;
         baseline = `Bottom;
@@ -625,12 +620,7 @@ let emit_heatmap_mark sx sy plot_area theme ~data ~cmap ~annotate ~vmin ~vmax
               x = cx;
               y = cy;
               content = text;
-              font =
-                {
-                  family = theme.font_tick.family;
-                  size = font_size;
-                  weight = `Normal;
-                };
+              font = { size = font_size; weight = `Normal };
               color = text_color;
               anchor = `Middle;
               baseline = `Middle;
@@ -969,7 +959,7 @@ let emit_axes ~text_measurer sx sy plot_area (theme : Theme.t) ~xticks ~yticks
             color = axis_color;
             anchor = `Middle;
             baseline = `Middle;
-            angle = Float.pi /. 2.;
+            angle = -.Float.pi /. 2.;
           }
         :: !prims
   | None -> ()
@@ -1643,7 +1633,7 @@ let emit_grid_decorations ~text_measurer theme region
             color;
             anchor = `Middle;
             baseline = `Middle;
-            angle = Float.pi /. 2.;
+            angle = -.Float.pi /. 2.;
           }
         :: !prims;
       r := { !r with rx = !r.rx +. used; rw = !r.rw -. used }

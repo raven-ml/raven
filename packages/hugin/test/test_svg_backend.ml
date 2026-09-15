@@ -105,10 +105,10 @@ let test_dashed_and_dotted_differ () =
 (* Marker rendering *)
 
 let test_markers_in_svg () =
-  (* Markers use <defs><symbol>...<use> — the <use> must follow the symbol it
+  (* Markers use <defs><g id>...<use> — the <use> must follow the definition it
      instantiates, which three separate contains calls would not check. *)
   let svg = render (Hugin.line ~x:sample_x ~y:sample_y ~marker:Circle ()) in
-  in_order ~subs:[ "<defs"; "<symbol"; "<use " ] svg
+  in_order ~subs:[ "<defs"; "<g id=\"stamp"; "<use " ] svg
 
 let test_marker_count_matches_points () =
   (* One <use> per sample point: a count, not a presence check. *)

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type font = { family : string; size : float; weight : [ `Normal | `Bold ] }
+type font = { size : float; weight : [ `Normal | `Bold ] }
 type line = { color : Color.t; width : float; dash : float list }
 
 type t = {
@@ -44,9 +44,9 @@ let default =
       |];
     sequential = Cmap.viridis;
     diverging = Cmap.coolwarm;
-    font_title = { family = "sans-serif"; size = 28.; weight = `Bold };
-    font_label = { family = "sans-serif"; size = 22.; weight = `Normal };
-    font_tick = { family = "sans-serif"; size = 18.; weight = `Normal };
+    font_title = { size = 28.; weight = `Bold };
+    font_label = { size = 22.; weight = `Normal };
+    font_tick = { size = 18.; weight = `Normal };
     axis = { color = axis_color; width = 2.; dash = [] };
     grid = Some { color = grid_color; width = 1.; dash = [] };
     tick_length = 10.;

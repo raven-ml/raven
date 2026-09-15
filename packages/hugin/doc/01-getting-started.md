@@ -4,18 +4,7 @@ This guide covers installation, your first plot, and the key concepts behind Hug
 
 ## Installation
 
-Install system dependencies:
-
-<!-- $MDX skip -->
-```bash
-# macOS
-brew install cairo sdl2
-
-# Ubuntu/Debian
-apt install libcairo2-dev libsdl2-dev
-```
-
-Then install hugin:
+Hugin has no system dependencies. Install it with opam:
 
 <!-- $MDX skip -->
 ```bash
@@ -110,14 +99,13 @@ Layout.grid [ [ p1; p2 ] ] |> render_png "grid.png"
 
 ### Rendering
 
-Four output modes:
+Three output formats:
 
 | Function | Output |
 |----------|--------|
 | `render_png "file.png" t` | PNG image file |
 | `render_svg "file.svg" t` | SVG document file |
 | `render_pdf "file.pdf" t` | PDF document file |
-| `show t` | Interactive SDL window (resize, Esc to close) |
 
 All renderers accept optional `~width` and `~height` (default 1600×1200) and `~theme`.
 

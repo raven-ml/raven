@@ -406,14 +406,10 @@ val hstack : ?gap:float -> t list -> t
 val vstack : ?gap:float -> t list -> t
 (** [vstack specs] arranges [specs] in a single column. *)
 
-(** {1:rendering Rendering} *)
+(** {1:rendering Rendering}
 
-val show : ?theme:Theme.t -> ?width:float -> ?height:float -> t -> unit
-(** [show t] displays [t] in an interactive SDL window.
-
-    [width] defaults to [1600.0]. [height] defaults to [1200.0]. The window
-    supports resize (re-resolves at new dimensions) and closes on Escape or Q.
-*)
+    Rendering needs no system libraries and is deterministic: the same
+    specification gives the same bytes on every machine. *)
 
 val render_png :
   ?theme:Theme.t -> ?width:float -> ?height:float -> string -> t -> unit

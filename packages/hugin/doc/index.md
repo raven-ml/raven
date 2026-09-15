@@ -8,19 +8,6 @@ Hugin turns immutable plot specifications into rendered output. You build a spec
 
 Internally, rendering proceeds in three stages: the user-facing spec is compiled to a prepared tree (histograms binned, data bounds computed, marks auto-colored), then resolved to device-pixel coordinates, then drawn by a backend. Data compilation happens once; layout resolution is cheap and repeatable at different sizes.
 
-## System Requirements
-
-Hugin needs Cairo and SDL2 for rendering:
-
-<!-- $MDX skip -->
-```bash
-# macOS
-brew install cairo sdl2
-
-# Ubuntu/Debian
-apt install libcairo2-dev libsdl2-dev
-```
-
 ## Quick Start
 
 <!-- $MDX skip -->

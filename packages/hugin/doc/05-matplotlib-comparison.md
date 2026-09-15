@@ -296,8 +296,7 @@ plt.savefig("slide.png")
 let spec = line ~x ~y () |> title "My Plot" in
 spec |> render_png "plot.png";
 spec |> render_svg "plot.svg";
-spec |> render_pdf "plot.pdf";
-spec |> show  (* interactive SDL window *)
+spec |> render_pdf "plot.pdf"
 ```
 
 **Matplotlib:**
@@ -317,12 +316,8 @@ In Hugin, the spec is an immutable value. You can render the same spec to multip
 
 **Hugin:**
 
-<!-- $MDX skip -->
-```ocaml
-show ~width:1600. ~height:1200. spec
-```
-
-The SDL window is resizable. The plot re-renders at the new dimensions. Press Escape or Q to close.
+Hugin has no window of its own. In a Quill notebook a plot displays inline;
+elsewhere, render it to a file and open it with an image viewer.
 
 **Matplotlib:**
 

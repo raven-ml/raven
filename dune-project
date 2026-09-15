@@ -294,9 +294,6 @@
   (ocaml
    (>= 5.2.0))
   dune
-  (dune-configurator :build)
-  (conf-sdl2 :build)
-  (conf-cairo :build)
   (nx
    (= :version))
   (windtrap :with-test)
