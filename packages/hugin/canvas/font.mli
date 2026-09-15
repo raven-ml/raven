@@ -39,6 +39,10 @@ val weight : t -> int
 (** [weight f] is the font's CSS weight, [400] for regular and [700] for bold.
 *)
 
+val bytes : t -> string
+(** [bytes f] is the TrueType file [f] was read from, for embedding in
+    documents. *)
+
 (** {1:metrics Metrics}
 
     All metrics are in pixels for the given [size], the em height in pixels.

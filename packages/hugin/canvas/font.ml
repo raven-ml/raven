@@ -30,6 +30,7 @@ let regular = bundled Font_data.inter_regular
 let bold = bundled Font_data.inter_bold
 let family f = f.tt.family
 let weight f = f.tt.weight
+let bytes f = f.tt.data
 let scale f ~size = size /. float f.tt.units_per_em
 let ascent f ~size = float f.tt.ascender *. scale f ~size
 let descent f ~size = -.float f.tt.descender *. scale f ~size

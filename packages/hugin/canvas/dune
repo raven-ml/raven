@@ -2,7 +2,7 @@
  (name hugin_canvas)
  (public_name hugin.canvas)
  (private_modules truetype font_data flatten stroker)
- (libraries nx nx.buffer))
+ (libraries nx nx.buffer nx.io))
 
 (rule
  (target font_data.ml)
