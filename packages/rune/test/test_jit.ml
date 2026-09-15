@@ -645,6 +645,58 @@ let test_grad_through_scan_external_input () =
     actual2.Pair.v
 
 (* A three-leaf input structure. *)
+(* A tensor with a run-time window start: the shape of every decode step. *)
+type windowed = { x : Nx.float32_t; pos : Nx.int32_t }
+
+module Windowed = struct
+  type t = windowed
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { x; pos } =
+    { x = f x; pos = f pos }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { x = f p.x q.x; pos = f p.pos q.pos }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { x; pos } =
+    f x;
+    f pos
+end
+
+let pos_at i = Nx.scalar Nx.int32 (Int32.of_int i)
+
+(* One compiled program serves every window position: the start is read on
+   every call, so the second call must write where its own [pos] says, not
+   where the trace was taken. *)
+let test_set_traced_window_replays_position () =
+  let v = vec32 [| 9.0; 8.0 |] in
+  let f { x; pos } = Nx.set [ Nx.D (pos, 2) ] v x in
+  let g = Rune.jit2 (module Windowed) (module Csingle) f in
+  let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
+  let at i = { x; pos = pos_at i } in
+  check_arr ~msg:"first position" (to_arr (f (at 1))) (g (at 1));
+  check_arr ~msg:"second position, same program" (to_arr (f (at 3))) (g (at 3));
+  check_arr ~msg:"clamped start" (to_arr (f (at 9))) (g (at 9));
+  check_arr ~msg:"the input is a value" [| 0.0; 1.0; 2.0; 3.0; 4.0 |] x
+
+let test_set_static_window_matches_eager () =
+  let v = vec32 [| 9.0; 8.0 |] in
+  let f x = Nx.set [ Nx.R (1, 3) ] v x in
+  let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
+  check_arr ~msg:"window" (to_arr (f x)) (Rune.jit' f x);
+  let h x = Nx.set [ Nx.L [ 0; 3 ] ] v x in
+  check_arr ~msg:"gather" (to_arr (h x)) (Rune.jit' h x);
+  let m = Nx.create Nx.bool [| 5 |] [| true; false; true; false; false |] in
+  let k x = Nx.set [ Nx.M m ] (Nx.scalar f32 7.0) x in
+  check_arr ~msg:"mask" (to_arr (k x)) (Rune.jit' k x)
+
+let test_slice_traced_window_replays_position () =
+  let f { x; pos } = Nx.slice [ Nx.D (pos, 2) ] x in
+  let g = Rune.jit2 (module Windowed) (module Csingle) f in
+  let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
+  let at i = { x; pos = pos_at i } in
+  check_arr ~msg:"first position" [| 1.0; 2.0 |] (g (at 1));
+  check_arr ~msg:"second position, same program" [| 3.0; 4.0 |] (g (at 3))
+
 module Trio = struct
   type t = { a : Nx.float32_t; b : Nx.float32_t; xs : Nx.float32_t }
 
@@ -1314,6 +1366,15 @@ let tests =
         test "host inputs are unaffected" test_host_input_unaffected_by_donate;
         test "donate:false is the unchanged default"
           test_donate_false_leaves_handle_readable;
+      ];
+    group "values"
+      [
+        test "set with a traced window start replays the position"
+          test_set_traced_window_replays_position;
+        test "set with static specs matches eager"
+          test_set_static_window_matches_eager;
+        test "slice with a traced window start replays the position"
+          test_slice_traced_window_replays_position;
       ];
     group "linear algebra"
       [

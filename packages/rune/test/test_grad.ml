@@ -209,6 +209,29 @@ let test_aliased_leaves_are_separate_parameters () =
   (* 1 * 1 + 3 * 1: each leaf contributes along its own tangent. *)
   check_arr ~msg:"jvp" [| 4.0 |] dy
 
+(* The functional update differentiates through both operands: the window
+   shadows the template, and the value receives the window of the cotangent,
+   summed over the axes it was broadcast along. *)
+let test_set_grad_both_operands () =
+  let c = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+  let t = vec32 [| 0.0; 0.0; 0.0; 0.0 |] and v = vec32 [| 5.0; 6.0 |] in
+  let by_t t = Nx.sum (Nx.mul c (Nx.set [ Nx.R (1, 3) ] v t)) in
+  check_arr ~msg:"dt: the window is shadowed" [| 1.0; 0.0; 0.0; 4.0 |]
+    (Rune.grad' by_t t);
+  let by_v v = Nx.sum (Nx.mul c (Nx.set [ Nx.R (1, 3) ] v t)) in
+  check_arr ~msg:"dv: the window of the cotangent" [| 2.0; 3.0 |]
+    (Rune.grad' by_v v);
+  let by_s s = Nx.sum (Nx.mul c (Nx.set [ Nx.R (1, 3) ] s t)) in
+  check_arr ~msg:"a broadcast value sums its window" [| 5.0 |]
+    (Rune.grad' by_s (Nx.scalar f32 1.0));
+  let pos = Nx.scalar Nx.int32 2l in
+  let by_v_at v = Nx.sum (Nx.mul c (Nx.set [ Nx.D (pos, 2) ] v t)) in
+  check_arr ~msg:"dv through a run-time start" [| 3.0; 4.0 |]
+    (Rune.grad' by_v_at v);
+  let by_t_at t = Nx.sum (Nx.mul c (Nx.set [ Nx.D (pos, 2) ] v t)) in
+  check_arr ~msg:"dt through a run-time start" [| 1.0; 2.0; 0.0; 0.0 |]
+    (Rune.grad' by_t_at t)
+
 let tests =
   [
     group "grad over records"
@@ -240,6 +263,8 @@ let tests =
         test "gradients are unchanged" test_remat_same_gradient;
         test "values are unchanged" test_remat_value;
       ];
+    group "set"
+      [ test "differentiates both operands" test_set_grad_both_operands ];
     group "single-tensor variants"
       [
         test "grad' matches the analytic gradient" test_grad_single_tensor;

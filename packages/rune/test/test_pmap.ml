@@ -232,6 +232,46 @@ let test_mismatched_placement_forces () =
     (to_arr (Nx.add (Nx.add x x) (Nx.add x x)))
     (g1 y)
 
+(* A window write on the sharded axis: each device writes the part of the
+   window that falls in its shard, for a static and for a traced start. *)
+module Win = struct
+  type t = { x : Nx.float32_t; v : Nx.float32_t; pos : Nx.int32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { x; v; pos } =
+    { x = f x; v = f v; pos = f pos }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { x = f a.x b.x; v = f a.v b.v; pos = f a.pos b.pos }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { x; v; pos } =
+    f x;
+    f v;
+    f pos
+end
+
+let test_set_window_on_mapped_axis () =
+  let f (w : Win.t) = Nx.set [ Nx.R (1, 3); Nx.A ] w.v w.x in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] (module Win) f
+  in
+  let w =
+    { Win.x = m46 (); v = Nx.full f32 [| 2; 6 |] 9.0;
+      pos = Nx.scalar Nx.int32 1l }
+  in
+  check_arr ~eps:0.0 ~msg:"window spanning both shards" (to_arr (f w)) (g w)
+
+let test_set_traced_window_on_mapped_axis () =
+  let f (w : Win.t) = Nx.set [ Nx.D (w.pos, 2); Nx.A ] w.v w.x in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] (module Win) f
+  in
+  let w =
+    { Win.x = m46 (); v = Nx.full f32 [| 2; 6 |] 9.0;
+      pos = Nx.scalar Nx.int32 1l }
+  in
+  check_arr ~eps:0.0 ~msg:"traced window spanning both shards" (to_arr (f w))
+    (g w)
+
 let test_pass_through_output () =
   let g =
     Rune.pmap2 ~devices:devs2
@@ -653,6 +693,9 @@ let tests =
         test "grad through max keepdims matches jit" test_grad_max_keepdims;
         test "grad through sum keepdims matches jit" test_grad_sum_keepdims;
         test "grad through mean keepdims matches jit" test_grad_mean_keepdims;
+        test "window write on the mapped axis" test_set_window_on_mapped_axis;
+        test "traced window write on the mapped axis"
+          test_set_traced_window_on_mapped_axis;
       ];
     group "residency"
       [

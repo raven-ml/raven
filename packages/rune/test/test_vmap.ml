@@ -427,6 +427,53 @@ let test_jvp_through_vmap () =
   let expected = Nx.sum ~axes:[ 1 ] (Nx.mul_s (Nx.mul (xs ()) v) 2.0) in
   check_arr ~msg:"jvp through vmap" (to_arr expected) dy
 
+(* A window write batches over the template and the value; each row gets its
+   own window. *)
+module Row_pos = struct
+  type t = { row : Nx.float32_t; pos : Nx.int32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { row; pos } =
+    { row = f row; pos = f pos }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { row = f a.row b.row; pos = f a.pos b.pos }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { row; pos } =
+    f row;
+    f pos
+end
+
+(* A batched window start: each example writes and reads at its own clamped
+   position. *)
+let test_vmap_set_window_batched_start () =
+  let xs = Nx.create f32 [| 2; 4 |] [| 0.; 1.; 2.; 3.; 10.; 11.; 12.; 13. |] in
+  let pos = Nx.create Nx.int32 [| 2 |] [| 1l; 5l |] in
+  let v = vec32 [| 9.0; 8.0 |] in
+  check_arr ~msg:"per-example windows, the second clamped"
+    [| 0.; 9.; 8.; 3.; 10.; 11.; 9.; 8. |]
+    (Rune.vmap
+       (module Row_pos)
+       (fun r -> Nx.set [ Nx.D (r.pos, 2) ] v r.row)
+       { row = xs; pos });
+  check_arr ~msg:"per-example reads"
+    [| 1.; 2.; 12.; 13. |]
+    (Rune.vmap
+       (module Row_pos)
+       (fun r -> Nx.slice [ Nx.D (r.pos, 2) ] r.row)
+       { row = xs; pos })
+
+let test_vmap_set_window () =
+  let xs = Nx.create f32 [| 2; 4 |] [| 0.; 1.; 2.; 3.; 10.; 11.; 12.; 13. |] in
+  let v = vec32 [| 9.0; 8.0 |] in
+  let f row = Nx.set [ Nx.R (1, 3) ] v row in
+  check_arr ~msg:"per-row windows"
+    [| 0.; 9.; 8.; 3.; 10.; 9.; 8.; 13. |]
+    (Rune.vmap' f xs);
+  let vs = Nx.create f32 [| 2; 2 |] [| 9.; 8.; 7.; 6. |] in
+  check_arr ~msg:"batched values over one template row"
+    [| 0.; 9.; 8.; 3.; 0.; 7.; 6.; 3. |]
+    (Rune.vmap' (fun v -> Nx.set [ Nx.R (1, 3) ] v (Nx.get [ 0 ] xs)) vs)
+
 let tests =
   [
     group "loop oracle" oracle_tests;
@@ -451,6 +498,11 @@ let tests =
         test "reading a batched value raises" test_reading_batched_value_raises;
         test "reading a constant value is fine"
           test_reading_constant_value_is_fine;
+      ];
+    group "set"
+      [
+        test "window write batches" test_vmap_set_window;
+        test "a batched window start batches" test_vmap_set_window_batched_start;
       ];
     group "nesting" [ test "vmap of vmap" test_nested_vmap ];
     group "randomness"
