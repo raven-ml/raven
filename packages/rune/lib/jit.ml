@@ -1168,15 +1168,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
         Some
           (fun k ->
-            if (not (ND.is_float (dt a))) || not (ND.is_float (dt b)) then
-              refuse k "solve_triangular"
-            else if not (ND.equal (dt a) (dt b)) then
-              err "Rune.jit: solve_triangular requires both operands to have "
-                "the same dtype"
-            else
+            if ND.is_float (dt a) then
               ret k (dt a)
                 (F.Linalg.solve_triangular ~upper ~transpose ~unit_diag (go a)
-                   (go b)))
+                   (go b))
+            else refuse k "solve_triangular")
     | E_psum _ ->
         Some
           (fun k ->
