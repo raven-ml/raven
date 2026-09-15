@@ -142,7 +142,10 @@ let test_diag_extract () =
   let x = Nx.arange Nx.int32 0 9 1 |> Nx.reshape [| 3; 3 |] in
   check_t "diag main" [| 3 |] [| 0l; 4l; 8l |] (Nx.diag x);
   check_t "diag k=1" [| 2 |] [| 1l; 5l |] (Nx.diag ~k:1 x);
-  check_t "diag k=-1" [| 2 |] [| 3l; 7l |] (Nx.diag ~k:(-1) x)
+  check_t "diag k=-1" [| 2 |] [| 3l; 7l |] (Nx.diag ~k:(-1) x);
+  check_t "diag k out of range" [| 0 |] [||] (Nx.diag ~k:3 x);
+  check_invalid_arg "diag 3D" "diag: input, expected 1D or 2D array, got 3D"
+    (fun () -> Nx.diag (Nx.zeros Nx.int32 [| 2; 2; 2 |]))
 
 let test_diag_construct () =
   let v = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in

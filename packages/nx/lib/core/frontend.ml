@@ -2805,27 +2805,8 @@ module Make (B : Backend_intf.S) = struct
   let diag ?(k = 0) v =
     match ndim v with
     | 1 -> diag_construct k v
-    | n when n >= 2 ->
-        let v_shape = shape v in
-        let rows = v_shape.(0) in
-        let cols = v_shape.(1) in
-        let diag_len =
-          Stdlib.max 0
-            (if k >= 0 then Int.min rows (cols - k) else Int.min (rows + k) cols)
-        in
-        if diag_len = 0 then empty (B.context v) (dtype v) [| 0 |]
-        else if n = 2 then diagonal ~offset:k v
-        else
-          (* Legacy: for >2-D inputs [diag] read the row-major flattening as a
-             [rows × cols] matrix. Kept, now traceably. *)
-          let m =
-            reshape [| rows; cols |]
-              (take
-                 ~indices:(arange (B.context v) Dtype.int32 0 (rows * cols) 1)
-                 v)
-          in
-          diagonal ~offset:k m
-    | _ -> err "diag" "input, expected 1D or 2D array, got %dD" (ndim v)
+    | 2 -> diagonal ~offset:k v
+    | n -> err "diag" "input, expected 1D or 2D array, got %dD" n
 
   let matrix_transpose x =
     let nd = ndim x in
