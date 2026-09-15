@@ -222,6 +222,16 @@ let cholesky_tests =
           let u = Linalg.cholesky ~upper:true a in
           check_zero ~tol:1e-4 ~msg:"batched |A - U'U|"
             (El.sub a (Op.matmul (transpose2 u) u)));
+      test "only the lower triangle is read" (fun () ->
+          (* Garbage above the diagonal must not reach either factor. *)
+          let a = fa ~shape:[ 2; 2 ] [| 4.; 99.; 1.; 5. |] in
+          let sym = fa ~shape:[ 2; 2 ] [| 4.; 1.; 1.; 5. |] in
+          let l = Linalg.cholesky ~upper:false a in
+          check_zero ~tol:1e-4 ~msg:"|A_sym - LL'|"
+            (El.sub sym (Op.matmul l (transpose2 l)));
+          let u = Linalg.cholesky ~upper:true a in
+          check_zero ~tol:1e-4 ~msg:"|A_sym - U'U|"
+            (El.sub sym (Op.matmul (transpose2 u) u)));
       test "a non-positive-definite input yields nans" (fun () ->
           (* The graph has no host control flow to raise Linalg_error with, so
              the failed square root of a negative pivot propagates as nan. *)

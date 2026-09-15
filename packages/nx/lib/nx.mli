@@ -2394,10 +2394,11 @@ val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** {2:linalg_decomp Decompositions} *)
 
 val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [cholesky ?upper a] is the Cholesky factor of positive- definite matrix [a].
+(** [cholesky ?upper a] is the Cholesky factor of positive-definite matrix [a].
     When [upper] is [true], returns the upper-triangular factor [U] such that
     [a = Uᵀ U]; otherwise (default) returns the lower-triangular factor [L] such
-    that [a = L Lᵀ].
+    that [a = L Lᵀ]. Only the lower triangle of [a] is read; the upper triangle
+    may hold anything.
 
     Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
     positive-definite. Raises [Invalid_argument] if [a] is not square or the

@@ -306,8 +306,8 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
    floating-point association. A non-positive-definite input is detected by
    the host in the classic implementations, and the graph has no host control
    flow to raise with — so a non-positive-definite input yields nans instead
-   of an error. [A = Uᵀ·U] is the transpose problem — factor [Aᵀ] and swap the
-   result back. *)
+   of an error. Only the lower triangle of [A] is read, as in the eager kernel;
+   [upper] transposes the factor. *)
 
 let cholesky ~upper a =
   let module E = Elementwise in
@@ -319,8 +319,7 @@ let cholesky ~upper a =
     invalid_arg "Linalg.cholesky: input requires at least 2 dimensions";
   let n = List.nth shape (rank - 1) in
   let batch = List.filteri (fun i _ -> i < rank - 2) shape in
-  let low = if upper then swap2 a else a in
-  if n = 0 then if upper then swap2 low else low
+  if n = 0 then a
   else
     let l =
       ref
@@ -335,7 +334,7 @@ let cholesky ~upper a =
         if j = 0 then zero1 dt batch
         else Op.matmul !l (swap2 (slice2 !l (Some (j, j + 1)) None))
       in
-      let col = E.sub (slice2 low None (Some (j, j + 1))) proj in
+      let col = E.sub (slice2 a None (Some (j, j + 1))) proj in
       let ljj = E.sqrt (slice2 col (Some (j, j + 1)) (Some (0, 1))) in
       let tail =
         if n - j - 1 = 0 then col
