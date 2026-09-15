@@ -18,7 +18,7 @@ let find_repo_root () =
     else
       let parent = Filename.dirname dir in
       if String.equal parent dir then
-        invalid_arg "could not find vendored tinygrad checkout"
+        skip ~reason:"no vendored tinygrad checkout (_tinygrad) above the cwd" ()
       else loop parent
   in
   loop (Sys.getcwd ())
