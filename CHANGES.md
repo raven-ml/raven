@@ -679,6 +679,11 @@ thread.
 
 ### Nx
 
+- The inverse error function behind `Nx.Rng.truncated_normal` now has a finite
+  derivative at zero. Its tail branch took `sqrt` of a quantity that is zero
+  at that point, and although the branch is never selected there, its infinite
+  derivative turned the gradient into NaN under `Rune.grad`. Values are
+  unchanged.
 - Every keyed draw (`Nx.Rng.uniform`, `normal`, `permutation`, `split`, and
   the samplers built on them) no longer copies its key once per Threefry
   block before hashing. The copy was as large as the draw itself; the kernel

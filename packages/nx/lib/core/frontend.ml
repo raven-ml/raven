@@ -2044,6 +2044,10 @@ module Make (B : Backend_intf.S) = struct
         ]
         (sub w (scalar_like x 2.5))
     in
+    (* The tail is selected only at [w >= 5], so flooring [w] at 1 changes no
+       value; it keeps the unselected branch's derivative finite at [x = 0],
+       where [sqrt' 0] is infinite and would turn the zero cotangent [where]
+       sends there into NaN. *)
     let tail =
       poly
         [
@@ -2057,7 +2061,7 @@ module Make (B : Backend_intf.S) = struct
           1.00167406;
           2.83297682;
         ]
-        (sub (sqrt w) (scalar_like x 3.0))
+        (sub (sqrt (maximum w (scalar_like x 1.0))) (scalar_like x 3.0))
     in
     mul x (where (cmplt w (scalar_like x 5.0)) central tail)
 
