@@ -102,6 +102,28 @@ let structural_benchmarks () =
     Thumper.bench "sort rows 512x512" (fun () -> Nx.sort sort_input);
   ]
 
+(* Samplers at the sizes a training step draws: a dropout mask or an init at a
+   million elements, and the rejection samplers, whose cost per element is the
+   question, at fewer. Poisson is measured at one rate per regime of its
+   algorithm. *)
+let random_benchmarks () =
+  let key = Nx.Rng.key 7 in
+  let f32 = Nx.Float32 in
+  let large = [| 1_000_000 |] in
+  [
+    Thumper.bench "uniform 1M" (fun () -> Nx.Rng.uniform key f32 large);
+    Thumper.bench "normal 1M" (fun () -> Nx.Rng.normal key f32 large);
+    Thumper.bench "bernoulli 1M" (fun () -> Nx.Rng.bernoulli key ~p:0.9 large);
+    Thumper.bench "gamma 100k" (fun () ->
+        Nx.Rng.gamma key ~concentration:2.5 f32 [| 100_000 |]);
+    Thumper.bench "poisson rate 1 10k" (fun () ->
+        Nx.Rng.poisson key ~rate:1.0 [| 10_000 |]);
+    Thumper.bench "poisson rate 30 10k" (fun () ->
+        Nx.Rng.poisson key ~rate:30.0 [| 10_000 |]);
+    Thumper.bench "poisson rate 100 10k" (fun () ->
+        Nx.Rng.poisson key ~rate:100.0 [| 10_000 |]);
+  ]
+
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   Thumper.run "nx"
@@ -115,4 +137,5 @@ let () =
       Thumper.group "unary" (unary_benchmarks ());
       Thumper.group "reduce" (reduce_benchmarks ());
       Thumper.group "structural" (structural_benchmarks ());
+      Thumper.group "random" (random_benchmarks ());
     ]
