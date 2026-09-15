@@ -117,6 +117,25 @@ let test_randn_fills_the_whole_draw () =
    old closed-interval bug hit 1.0 about once in 2^24 float32 draws — so check
    the reachable value set instead: at a narrow dtype the whole grid shows up in
    a few thousand draws, which pins both ends exactly. *)
+(* [bits] is the generator's raw output and [uniform] at float32 is a fixed
+   function of it, so the two must agree word for word. *)
+let test_bits_underlie_uniform () =
+  let key = Rng.key 99 in
+  let shape = [| 3; 41 |] in
+  let words = Rng.bits key shape in
+  equal ~msg:"bits has the requested shape" (array int) shape (Nx.shape words);
+  equal ~msg:"bits is pure" bool true
+    (Nx.to_array words = Nx.to_array (Rng.bits key shape));
+  equal ~msg:"bits follows its key" bool true
+    (Nx.to_array words <> Nx.to_array (Rng.bits (Rng.key 100) shape));
+  let from_bits =
+    mul_s
+      (cast float32 (bitwise_and words (scalar Nx.int32 0xFF_FFFFl)))
+      (Float.ldexp 1.0 (-24))
+  in
+  equal ~msg:"uniform at float32 is the low 24 bits scaled" bool true
+    (Nx.to_array from_bits = Nx.to_array (Rng.uniform key float32 shape))
+
 let test_uniform_half_open () =
   let key = Rng.key 4242 in
   let scan (type b) name (dt : (float, b) Nx.dtype) p n =
@@ -942,6 +961,7 @@ let () =
           test "randn_fills_the_whole_draw" test_randn_fills_the_whole_draw;
           test "keyless float sampler dtypes" test_keyless_float_sampler_dtypes;
           test "randint" test_randint;
+          test "bits underlie uniform" test_bits_underlie_uniform;
           test "uniform_half_open" test_uniform_half_open;
           test "randint_covers_range_uniformly"
             test_randint_covers_range_uniformly;

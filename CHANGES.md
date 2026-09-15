@@ -711,6 +711,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.Rng.bits k shape`, the generator's raw uniformly random 32-bit
+  words, so a distribution the module does not provide can be built on the
+  same generator with the same purity and transform guarantees. `uniform` at
+  float32 is the low 24 bits of these words scaled into `[0, 1)`.
 - Add `Nx_io.encode_png`, the PNG bytes of a `uint8` image tensor as a
   string, for embedding images in documents or sending them over a socket
   without going through a file.

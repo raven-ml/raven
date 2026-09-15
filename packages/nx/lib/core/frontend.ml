@@ -2169,6 +2169,16 @@ module Make (B : Backend_intf.S) = struct
        parts and their combination are exact in float64. Widening a float32 draw
        instead would have left a double with 24 random bits, which is what this
        used to do. *)
+    (* The words every sampler is built from. A Threefry row is two words, so
+       [n] words cost ceil (n/2) rows. *)
+    let bits k shape =
+      check_shape "bits" shape;
+      let n = array_prod shape in
+      if n = 0 then zeros (B.context k) Dtype.int32 shape
+      else
+        reshape shape
+          (shrink [| (0, n) |] (flatten (blocks "bits" k ((n + 1) / 2))))
+
     let uniform (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
       check_shape "uniform" shape;
       let ctx = B.context k in
@@ -2200,19 +2210,14 @@ module Make (B : Backend_intf.S) = struct
             in
             reshape shape u
         | _ ->
-            (* A Threefry row is two words, so [n] draws cost ceil (n/2)
-               rows. *)
-            let bits =
-              shrink [| (0, n) |] (flatten (blocks "uniform" k ((n + 1) / 2)))
-            in
             let p = significand_bits dtype in
             let mask = scalar ctx Dtype.int32 (Int32.of_int ((1 lsl p) - 1)) in
             let u =
               mul
-                (cast Dtype.float32 (bitwise_and bits mask))
+                (cast Dtype.float32 (bitwise_and (bits k shape) mask))
                 (scalar ctx Dtype.float32 (Float.ldexp 1.0 (-p)))
             in
-            reshape shape (cast dtype u)
+            cast dtype u
 
     (* Box-Muller: a radius from one uniform and an angle from another give two
        independent samples, r cos(2 pi u2) and r sin(2 pi u2). Both are kept, so

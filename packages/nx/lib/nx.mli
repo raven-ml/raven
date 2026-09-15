@@ -571,6 +571,13 @@ module Rng : sig
       Float draws are computed at float64 for float64 parameters and at float32
       otherwise, then returned at the parameters' dtype. *)
 
+  val bits : key -> int array -> int32_t
+  (** [bits k shape] is a tensor of uniformly random 32-bit words, the raw
+      output of the generator that every sampler here is built from. For a
+      distribution this module does not provide: build it on [bits] and it is as
+      pure and as transform-safe as the rest. [uniform] at float32 is the low 24
+      bits of these words scaled by [2 ** -24]. *)
+
   val uniform : key -> (float, 'b) dtype -> int array -> (float, 'b) t
   (** [uniform k dtype shape] samples uniformly from [\[0, 1)].
 

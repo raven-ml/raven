@@ -176,6 +176,12 @@ let test_jit_uniform_bit_parity () =
   check_bits ~msg:"eager == jit, bitwise" (f k) (g k);
   check_bits ~msg:"replay" (f k) (g k)
 
+let test_jit_bits_parity () =
+  let f key = Nx.Rng.bits key [| 3; 41 |] in
+  let k = Nx.Rng.key 8 in
+  is_true ~msg:"bits are identical under jit"
+    (Nx.to_array (f k) = Nx.to_array (Rune.jit (module Key) f k))
+
 let test_jit_int_samplers_bit_parity () =
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
@@ -548,6 +554,7 @@ let tests =
     group "jit"
       [
         test "uniform is bit-identical under jit" test_jit_uniform_bit_parity;
+        test "bits are identical under jit" test_jit_bits_parity;
         test "randint and bernoulli are bit-identical under jit"
           test_jit_int_samplers_bit_parity;
         test "a traced parameter compiles" test_jit_traced_parameter;
