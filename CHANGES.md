@@ -658,7 +658,9 @@ thread.
   `E_triangular_solve` are renamed `solve_triangular` and `E_solve_triangular`.
   Out-of-tree backends and effect handlers must follow.
 - `Nx.diag` no longer reads its operand back to the host, so it traces under
-  `Rune.jit` and construction differentiates through `scatter`.
+  `Rune.jit` and construction differentiates through `scatter`. It now raises
+  for inputs of rank above 2, as documented; the undocumented reading of the
+  row-major flattening as a matrix is gone.
 
 - Speed up batched `fft`, `rfft` and `irfft` in the default C backend: the
   worker count was picked as though a transform line cost one pass over its
