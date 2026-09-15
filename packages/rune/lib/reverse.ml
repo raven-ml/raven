@@ -880,14 +880,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
               let l = cholesky ~upper t_in in
               pull1 k l t_in (fun dl ->
                   let l_lower, dl_lower =
-                    if upper then (T.transpose l, T.transpose dl) else (l, dl)
+                    if upper then (T.matrix_transpose l, T.matrix_transpose dl) else (l, dl)
                   in
-                  let c = T.matmul (T.transpose l_lower) dl_lower in
+                  let c = T.matmul (T.matrix_transpose l_lower) dl_lower in
                   let p =
                     (* Strict lower + half diagonal. *)
                     let diag_c = T.diagonal c in
                     let two = Nx_core.Dtype.of_float (T.dtype diag_c) 2.0 in
-                    T.sub (T.tril c) (T.diag (T.div_s diag_c two))
+                    T.sub (T.tril c) (Derivs.diag_matrix (T.div_s diag_c two))
                   in
                   let z =
                     solve_triangular ~upper:false ~transpose:true
@@ -895,11 +895,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   let y =
                     solve_triangular ~upper:false ~transpose:true
-                      ~unit_diag:false l_lower (T.transpose z)
+                      ~unit_diag:false l_lower (T.matrix_transpose z)
                   in
-                  let s = T.transpose y in
+                  let s = T.matrix_transpose y in
                   let da_sym =
-                    T.sub (T.add s (T.transpose s)) (T.diag (T.diagonal s))
+                    T.sub (T.add s (T.matrix_transpose s)) (Derivs.diag_matrix (T.diagonal s))
                   in
                   T.tril da_sym))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
@@ -920,15 +920,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         if tb then Tape.accumulate tape b grad_b;
                         if ta then begin
                           let out_2d, grad_b_2d =
-                            if Array.length (T.shape g) = 1 then
+                            if T.ndim g = T.ndim a - 1 then
                               ( T.unsqueeze ~axes:[ -1 ] out,
                                 T.unsqueeze ~axes:[ -1 ] grad_b )
                             else (out, grad_b)
                           in
                           let grad_a_full =
                             if transpose then
-                              T.neg (T.matmul out_2d (T.transpose grad_b_2d))
-                            else T.neg (T.matmul grad_b_2d (T.transpose out_2d))
+                              T.neg (T.matmul out_2d (T.matrix_transpose grad_b_2d))
+                            else T.neg (T.matmul grad_b_2d (T.matrix_transpose out_2d))
                           in
                           let grad_a =
                             if upper then T.triu grad_a_full
@@ -956,28 +956,27 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         in
                         let gr =
                           match found_r with
-                          | Some g -> T.transpose (T.tril (T.transpose g))
+                          | Some g -> T.matrix_transpose (T.tril (T.matrix_transpose g))
                           | None -> T.zeros_like r
                         in
                         let m =
                           T.sub
-                            (T.matmul r (T.transpose gr))
-                            (T.matmul (T.transpose gq) q)
+                            (T.matmul r (T.matrix_transpose gr))
+                            (T.matmul (T.matrix_transpose gq) q)
                         in
                         let lower_strict = T.tril ~k:(-1) m in
-                        (* [m]'s diagonal as a matrix. *)
-                        let diag_mat = T.diag (T.contiguous (T.diagonal m)) in
+                        let diag_mat = Derivs.diag_matrix (T.diagonal m) in
                         let copyltu =
                           T.add
-                            (T.add lower_strict (T.transpose lower_strict))
+                            (T.add lower_strict (T.matrix_transpose lower_strict))
                             diag_mat
                         in
                         let rhs = T.add gq (T.matmul q copyltu) in
                         let da_t =
                           solve_triangular ~upper:true ~transpose:false
-                            ~unit_diag:false r (T.transpose rhs)
+                            ~unit_diag:false r (T.matrix_transpose rhs)
                         in
-                        Tape.accumulate tape t_in (T.transpose da_t))
+                        Tape.accumulate tape t_in (T.matrix_transpose da_t))
               end;
               continue k (q, r))
       | E_svd { t_in; full_matrices } ->

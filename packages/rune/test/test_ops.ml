@@ -247,6 +247,28 @@ let linalg_tests =
             let q, r = Nx.qr ~mode:`Reduced x in
             Nx.add (Nx.sum q) (Nx.sum r))
           (mat64 3 2 [| 1.3; 0.4; -0.6; 1.8; 0.2; -1.1 |]));
+    test "cholesky (batched)" (fun () ->
+        check_grad ~msg:"cholesky batched" ~tol:5e-3
+          (fun x ->
+            let xxt = Nx.matmul x (Nx.matrix_transpose x) in
+            let spd = Nx.add xxt (Nx.mul_s (Nx.eye f64 2) 3.0) in
+            Nx.cholesky spd)
+          (Nx.create f64 [| 2; 2; 2 |]
+             [| 0.9; -0.4; 0.3; 1.2; 1.1; 0.2; -0.5; 0.8 |]));
+    test "qr (reduced, batched)" (fun () ->
+        check_grad ~msg:"qr batched" ~tol:5e-3
+          (fun x ->
+            let q, r = Nx.qr ~mode:`Reduced x in
+            Nx.add (Nx.sum q) (Nx.sum r))
+          (Nx.create f64 [| 2; 3; 2 |]
+             [| 1.3; 0.4; -0.6; 1.8; 0.2; -1.1; 0.7; -0.3; 1.1; 0.5; -0.9; 1.4 |]));
+    test "solve_triangular (batched vector rhs)" (fun () ->
+        (* Only the lower triangle is read, so the upper entries get a zero
+           gradient, and a vector right-hand side keeps its shape. *)
+        check_grad2 ~msg:"solve_triangular batched"
+          (fun a b -> Nx.solve_triangular a b)
+          (Nx.create f64 [| 2; 2; 2 |] [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
+          (Nx.create f64 [| 2; 2 |] [| 1.0; -2.0; 0.5; 3.0 |]));
   ]
 
 (* Composite functions: several rules interacting in one graph. *)

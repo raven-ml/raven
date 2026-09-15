@@ -1072,6 +1072,10 @@ thread.
 
 ### Rune
 
+- `grad` and `jvp` through a batch of matrices are now correct for
+  `Nx.cholesky`, `Nx.qr`, and `Nx.solve_triangular`: the rules reversed every
+  axis and extracted, rather than built, their diagonal terms, so a stack of
+  matrices gave wrong gradients or a shape error.
 - `Rune.jit` compiles `Nx.qr`, `Nx.solve_triangular`, and `Nx.cholesky`: they
   unroll at trace time into the fixed number of steps their shapes imply (see
   `Tolk_frontend.Linalg`), and `grad` through them compiles as well. A

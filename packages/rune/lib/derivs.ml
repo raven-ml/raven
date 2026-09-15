@@ -23,6 +23,11 @@ let real_part (type a b) (x : (a, b) T.t) : (a, b) T.t =
     T.cast (T.dtype x) (T.cast T.float64 x)
   else x
 
+(* [d] as a diagonal matrix: a [..; n] stack of diagonals gives the [..; n; n]
+   stack of matrices carrying them, so the linalg rules stay batched. *)
+let diag_matrix (type a b) (d : (a, b) T.t) : (a, b) T.t =
+  T.mul (T.eye (T.dtype d) (T.dim (-1) d)) (T.unsqueeze ~axes:[ -2 ] d)
+
 (* The scalar one in x's element type, for the [_s] operations. *)
 let one_like (type a b) (x : (a, b) T.t) : a = Nx_core.Dtype.one (T.dtype x)
 
