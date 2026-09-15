@@ -28,7 +28,7 @@ external cholesky : ('a, 'b) ffi -> ('a, 'b) ffi -> bool -> unit
 
 (* flags: bit0 upper, bit1 transpose, bit2 unit_diag *)
 external trsm : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> int -> unit
-  = "caml_nx_c_triangular_solve"
+  = "caml_nx_c_solve_triangular"
 
 (* qr q r in reduced *)
 external qr : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> bool -> unit

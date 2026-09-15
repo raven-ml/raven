@@ -606,7 +606,7 @@ external caml_cholesky : ('a, 'b) t -> ('a, 'b) t -> bool -> unit
 
 external caml_solve_triangular :
   ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> int -> unit
-  = "caml_nx_c_triangular_solve"
+  = "caml_nx_c_solve_triangular"
 
 external caml_qr : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> bool -> unit
   = "caml_nx_c_qr"

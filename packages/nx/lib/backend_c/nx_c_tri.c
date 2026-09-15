@@ -577,19 +577,19 @@ CAMLprim value caml_nx_c_cholesky(value vout, value vin, value vupper) {
 /* vflags packs the three booleans (bit 0 upper, bit 1 transpose, bit 2 unit
    diagonal) into one int so the stub stays at four arguments — no bytecode
    wrapper. out has b's shape; the binding allocates it. */
-CAMLprim value caml_nx_c_triangular_solve(value vout, value va, value vb,
+CAMLprim value caml_nx_c_solve_triangular(value vout, value va, value vb,
                                          value vflags) {
   CAMLparam4(vout, va, vb, vflags);
   nx_c_ndarray a, b, out;
   nx_c_status s = nx_c_ndarray_of_value(va, &a);
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vb, &b);
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vout, &out);
-  if (s != NX_C_OK) la_raise("triangular_solve", s);
+  if (s != NX_C_OK) la_raise("solve_triangular", s);
   nx_c_dtype dt = nx_c_dtype_of_value(va);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("triangular_solve", NX_C_ERR_BAD_KIND);
+  if (dt == NX_C_DTYPE_COUNT) la_raise("solve_triangular", NX_C_ERR_BAD_KIND);
   int flags = Int_val(vflags);
   s = nx_c_trsm_run(&a, &b, &out, dt, flags & 1, (flags >> 1) & 1,
                    (flags >> 2) & 1);
-  if (s != NX_C_OK) la_raise("triangular_solve", s);
+  if (s != NX_C_OK) la_raise("solve_triangular", s);
   CAMLreturn(Val_unit);
 }
