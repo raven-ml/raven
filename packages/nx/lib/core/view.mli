@@ -14,12 +14,16 @@ type t
 
 (** {1:constructors Construction} *)
 
-val create : ?offset:int -> ?strides:int array -> int array -> t
-(** [create ?offset ?strides shape] is a view over [shape].
+val create :
+  ?offset:int -> ?strides:int array -> ?injective:bool -> int array -> t
+(** [create ?offset ?strides ?injective shape] is a view over [shape].
 
     Defaults:
     - [offset] defaults to [0].
     - [strides] defaults to C-contiguous strides derived from [shape].
+    - [injective] defaults to [true]: explicit [strides] are taken to address
+      each element once, as a fresh allocation's do. Pass the value of
+      {!injective} on the view the strides came from when rebuilding one.
 
     If [shape] has a zero-size dimension, the resulting view has [offset = 0].
 
@@ -58,6 +62,15 @@ val stride : int -> t -> int
 val is_c_contiguous : t -> bool
 (** [is_c_contiguous v] is [true] iff [v] is recognized as C-contiguous. *)
 
+val injective : t -> bool
+(** [injective v] is [true] iff every index tuple of [v] addresses its own
+    element, which is what makes a write through [v] well defined. It is
+    cleared by {!expand} when a dimension is broadcast and by
+    {!sliding_window} when windows overlap, and inherited by every other
+    transformation. The answer is exact for those two and conservative after
+    {!shrink}: a slice of a broadcast view stays non-injective even where the
+    slice itself addresses each element once. *)
+
 (** {1:transform Transformations} *)
 
 val reshape : t -> int array -> t
@@ -78,7 +91,8 @@ val expand : t -> int array -> t
 (** [expand v new_shape] broadcasts singleton dimensions to [new_shape] by
     setting corresponding strides to [0].
 
-    Scalars ([ndim v = 0]) may expand to any rank.
+    Scalars ([ndim v = 0]) may expand to any rank. The result is not
+    {!injective} once any dimension is broadcast to more than one element.
 
     Raises [Invalid_argument] if ranks are incompatible for non-scalars, or if a
     non-singleton dimension would need expansion. *)
@@ -110,7 +124,8 @@ val sliding_window : t -> axis:int -> window:int -> step:int -> t
     The size of [axis] becomes [(size - window) / step + 1] and a trailing axis
     of length [window] is appended. The result multiplies the stride of [axis]
     by [step] and reuses it for the trailing axis, so overlapping windows alias
-    the same storage.
+    the same storage and the result is not {!injective} unless [step] is at
+    least [window] (or there is a single window).
 
     Raises [Invalid_argument] if [axis] is out of bounds, [window < 1],
     [step < 1], or [window] exceeds the size of [axis]. *)

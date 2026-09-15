@@ -504,6 +504,30 @@ let test_blit_self () =
   Nx.blit t t;
   check_t "blit self" [| 3 |] [| 1.; 2.; 3. |] t
 
+(* A broadcast view addresses one element from several positions, so a write
+   through it is refused before any backend runs; a slice of a real allocation
+   still takes the write. *)
+let test_blit_broadcast_rejected () =
+  let row = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let wide = Nx.broadcast_to [| 2; 3 |] row in
+  raises ~msg:"blit into a broadcast view"
+    (Invalid_argument
+       "blit: destination is a broadcast or overlapping view, which addresses \
+        one element from several positions; write into a copy instead")
+    (fun () -> Nx.blit (Nx.zeros Nx.float32 [| 2; 3 |]) wide);
+  check_t "base untouched" [| 3 |] [| 1.; 2.; 3. |] row;
+  raises ~msg:"set_slice into a broadcast view"
+    (Invalid_argument
+       "set_slice: destination is a broadcast or overlapping view, which \
+        addresses one element from several positions; write into a copy \
+        instead")
+    (fun () -> Nx.set_slice [ Nx.I 0 ] wide (Nx.zeros Nx.float32 [| 3 |]));
+  let base = Nx.zeros Nx.float32 [| 2; 3 |] in
+  Nx.blit row (Nx.get [ 1 ] base);
+  check_t "slice of an allocation takes the write" [| 2; 3 |]
+    [| 0.; 0.; 0.; 1.; 2.; 3. |]
+    base
+
 (* TODO: This test is currently failing due to overlapping memory regions in
    blit. See nx/test/failing/bug_blit_overlapping.ml for details. Uncomment when
    overlapping blit is properly handled (e.g., using
@@ -663,6 +687,7 @@ let utility_operations =
     test "blit incompatible" test_blit_incompatible;
     test "fill returns copy" test_fill_returns_copy;
     test "blit self" test_blit_self;
+    test "blit broadcast rejected" test_blit_broadcast_rejected;
     (* ("blit overlapping views", `Quick, test_blit_overlapping_views ); *)
   ]
 

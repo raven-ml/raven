@@ -1165,7 +1165,9 @@ val blit : ('a, 'b) t -> ('a, 'b) t -> unit
 (** [blit src dst] copies the elements of [src] into [dst] in-place. Shapes must
     match exactly.
 
-    Raises [Invalid_argument] if shapes differ. *)
+    Raises [Invalid_argument] if shapes differ, or if [dst] is a broadcast or
+    overlapping view: such a view addresses one element from several positions,
+    so a write through it has no defined result. Write into a copy instead. *)
 
 val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [fill v t] is a fresh copy of [t] with every element set to [v]. Does not

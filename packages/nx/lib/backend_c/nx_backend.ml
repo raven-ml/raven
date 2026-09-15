@@ -27,12 +27,13 @@ let create_context () = ()
    FIELD ORDER IS ABI: [t] is passed to C directly, no per-call FFI record. The
    engine reads an operand at fixed record slots (nx_c.h NX_C_FFI_ markers):
    slot 0 buffer (the bigarray), 1 shape, 2 strides, 3 offset — strides and
-   offset in ELEMENT units, exactly as View provides. C never touches slot 4
-   (dtype, which it derives from the bigarray kind) or slot 5 (context).
-   Reordering these six fields silently misreads every operand; the layout is
-   pinned by the ABI echo test in test/test_backend_c.ml, not by convention.
-   This declaration order MUST match {buffer; shape; strides; offset; dtype;
-   context}. *)
+   offset in ELEMENT units, exactly as View provides. C never touches the
+   slots after: 4 (dtype, which it derives from the bigarray kind), 5
+   (context) and 6 (injective, View's write-safety bit, carried here so the
+   View rebuilt by [view] keeps it). Reordering the first four fields silently
+   misreads every operand; the layout is pinned by the ABI echo test in
+   test/test_backend_c.ml, not by convention. This declaration order MUST
+   start with {buffer; shape; strides; offset}. *)
 type ('a, 'b) t = {
   buffer : ('a, 'b) buffer;
   shape : int array;
@@ -40,12 +41,13 @@ type ('a, 'b) t = {
   offset : int;
   dtype : ('a, 'b) Dtype.t;
   context : context;
+  injective : bool;
 }
 
 (* ── Accessors ─────────────────────────────────────────────────────────────*)
 
 let view (t : ('a, 'b) t) =
-  View.create ~offset:t.offset ~strides:t.strides t.shape
+  View.create ~offset:t.offset ~strides:t.strides ~injective:t.injective t.shape
 
 let dtype (t : ('a, 'b) t) = t.dtype
 let context (t : ('a, 'b) t) = t.context
@@ -63,6 +65,7 @@ let create_tensor ctx dtype shape =
     offset = 0;
     dtype;
     context = ctx;
+    injective = true;
   }
 
 let buffer ctx dtype shape = create_tensor ctx dtype shape
@@ -82,6 +85,7 @@ let from_host ctx buf =
     offset = 0;
     dtype;
     context = ctx;
+    injective = true;
   }
 
 (* ── Movement (pure View metadata) ─────────────────────────────────────────
@@ -97,6 +101,7 @@ let of_view (t : ('a, 'b) t) v =
     shape = View.shape v;
     strides = View.strides v;
     offset = View.offset v;
+    injective = View.injective v;
   }
 
 let expand t shape = of_view t (View.expand (view t) shape)

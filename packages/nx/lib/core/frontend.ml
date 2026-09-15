@@ -329,6 +329,16 @@ module Make (B : Backend_intf.S) = struct
   let contiguous x = B.contiguous x
   let copy x = B.copy x
 
+  (* Every in-place write lands here. A view that addresses one element from
+     several positions (a broadcast, or overlapping windows) has no defined
+     write order, so it is refused before any backend sees it. *)
+  let assign op dst src =
+    if not (View.injective (B.view dst)) then
+      err op
+        "destination is a broadcast or overlapping view, which addresses one \
+         element from several positions; write into a copy instead";
+    B.assign dst src
+
   let blit src dst =
     let ss = shape src and ds = shape dst in
     if ss <> ds then
@@ -336,7 +346,7 @@ module Make (B : Backend_intf.S) = struct
         "shape mismatch %s vs %s, source and destination must have identical \
          shapes"
         (Shape.to_string ss) (Shape.to_string ds);
-    B.assign dst src
+    assign "blit" dst src
 
   let create ctx dtype shape arr =
     let n = Array.fold_left ( * ) 1 shape in
@@ -1572,7 +1582,7 @@ module Make (B : Backend_intf.S) = struct
     in
     if is_view_compatible then
       let target = slice_internal full_specs x in
-      B.assign target (broadcast_to (shape target) y)
+      assign "set_slice" target (broadcast_to (shape target) y)
     else begin
       (* Slow path: scatter for fancy indexing *)
       let strides = Array.make nd 1 in
@@ -1628,7 +1638,7 @@ module Make (B : Backend_intf.S) = struct
           ~indices:(reshape [| numel !flat_idx |] !flat_idx)
           ~updates:y_flat ~axis:0
       in
-      B.assign x (reshape x_shape result)
+      assign "set_slice" x (reshape x_shape result)
     end
 
   let get indices x =

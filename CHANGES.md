@@ -651,6 +651,10 @@ thread.
 
 ### Nx
 
+- Writing into a broadcast view through `blit`, `set_slice` or `put` now raises
+  `Invalid_argument` from the frontend, on every backend. A view records
+  whether each of its positions addresses its own element, so the check is
+  exact; previously only the C backend caught this, from a zero stride.
 - Add `Nx.solve_triangular ?upper ?transpose ?unit_diag a b`, a first-class
   triangular solver named after its scipy analog. It skips the factorization
   cost of `solve` for a pre-triangularized `a`; `b` is a vector or a stack of

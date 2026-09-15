@@ -14,6 +14,14 @@ type t = {
   strides : int array;
   offset : int;
   layout : layout;
+  injective : bool;
+      (* every index tuple addresses its own element. Exactly two constructors
+         clear it — [expand] when it broadcasts a dimension and
+         [sliding_window] when its windows overlap — and every other
+         transformation inherits it, so a view built through this module knows
+         whether it can be written into without recovering that from its
+         strides. Conservative under [shrink]: a slice of a broadcast view
+         stays marked even where the slice addresses each element once. *)
 }
 
 (* ───── Helpers ───── *)
@@ -39,6 +47,7 @@ let stride axis v =
 
 let offset v = v.offset
 let is_c_contiguous v = v.layout = C_contiguous
+let injective v = v.injective
 
 let dim axis v =
   let ndim = Array.length v.shape in
@@ -51,7 +60,7 @@ let numel v = prod v.shape
 
 (* ───── View Creation ───── *)
 
-let create ?(offset = 0) ?strides shape =
+let create ?(offset = 0) ?strides ?(injective = true) shape =
   let is_zero_size = Array.exists (( = ) 0) shape in
   let current_shape =
     if is_zero_size then Array.map (fun s -> max s 0) shape else shape
@@ -75,6 +84,7 @@ let create ?(offset = 0) ?strides shape =
     strides = current_strides;
     offset = current_offset;
     layout = new_layout;
+    injective;
   }
 
 (* ───── View Manipulation ───── *)
@@ -85,7 +95,7 @@ let expand view new_shape =
   (* Allow expanding a scalar to any shape *)
   if old_ndim = 0 then
     let strides = Array.make new_ndim 0 in
-    { view with shape = new_shape; strides }
+    { view with shape = new_shape; strides; injective = prod new_shape <= 1 }
   else if new_ndim <> old_ndim then
     err "expand" "rank mismatch: %d vs %d" new_ndim old_ndim
   else
@@ -106,7 +116,11 @@ let expand view new_shape =
                 i s ns)
           new_arr
       in
-      create ~offset:view.offset ~strides new_shape
+      let injective =
+        view.injective
+        && Array.for_all2 (fun s ns -> s = ns || ns = 1) old_arr new_arr
+      in
+      create ~offset:view.offset ~strides ~injective new_shape
 
 let permute view axes =
   let n = ndim view in
@@ -125,7 +139,8 @@ let permute view axes =
 
   let new_shape = Array.init n (fun i -> view.shape.(axes.(i))) in
   let new_strides = Array.init n (fun i -> view.strides.(axes.(i))) in
-  create ~offset:view.offset ~strides:new_strides new_shape
+  create ~offset:view.offset ~strides:new_strides ~injective:view.injective
+    new_shape
 
 let reshape view new_shape =
   (* Early return if shapes are identical *)
@@ -142,15 +157,17 @@ let reshape view new_shape =
         (Shape.to_string new_arr)
     else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
     then create ~offset:0 new_shape (* Fast path for C-contiguous views *)
-    else if view.layout = C_contiguous then create ~offset:view.offset new_shape
+    else if view.layout = C_contiguous then
+      create ~offset:view.offset ~injective:view.injective new_shape
     else if
       (* Special case: reshaping to/from scalar *)
       Array.length new_shape = 0
-    then create ~offset:view.offset new_shape
+    then create ~offset:view.offset ~injective:view.injective new_shape
       (* Special case: all strides are 0 (broadcast from scalar) *)
     else if Array.for_all (( = ) 0) view.strides then
       let new_strides = Array.make (Array.length new_shape) 0 in
-      create ~offset:view.offset ~strides:new_strides new_shape
+      create ~offset:view.offset ~strides:new_strides ~injective:view.injective
+        new_shape
     (* Special case: only expanding/squeezing size-1 dimensions *)
       else
       let try_squeeze_unsqueeze () =
@@ -254,11 +271,13 @@ let reshape view new_shape =
       (* Try reshape strategies in order *)
       match try_squeeze_unsqueeze () with
       | Some new_strides ->
-          create ~offset:view.offset ~strides:new_strides new_shape
+          create ~offset:view.offset ~strides:new_strides
+            ~injective:view.injective new_shape
       | None -> (
           match try_merge_split () with
           | Some new_strides ->
-              create ~offset:view.offset ~strides:new_strides new_shape
+              create ~offset:view.offset ~strides:new_strides
+                ~injective:view.injective new_shape
           | None ->
               let expected_strides = Shape.c_contiguous_strides new_arr in
               let stride_str =
@@ -296,7 +315,8 @@ let shrink view arg =
     Array.iteri
       (fun i (a, _) -> new_offset := !new_offset + (a * view.strides.(i)))
       arg;
-    create ~offset:!new_offset ~strides:view.strides new_shape
+    create ~offset:!new_offset ~strides:view.strides ~injective:view.injective
+      new_shape
 
 let flip view flip_axes_bools =
   let ndim = Array.length view.shape in
@@ -318,7 +338,8 @@ let flip view flip_axes_bools =
           new_offset := !new_offset + ((s_i - 1) * strides.(i));
           new_strides.(i) <- -new_strides.(i)))
     flip_axes_bools;
-  create ~offset:!new_offset ~strides:new_strides view.shape
+  create ~offset:!new_offset ~strides:new_strides ~injective:view.injective
+    view.shape
 
 let sliding_window view ~axis ~window ~step =
   let ndim = Array.length view.shape in
@@ -333,6 +354,9 @@ let sliding_window view ~axis ~window ~step =
   let new_strides = Array.make (ndim + 1) view.strides.(axis) in
   Array.blit view.shape 0 new_shape 0 ndim;
   Array.blit view.strides 0 new_strides 0 ndim;
-  new_shape.(axis) <- ((size - window) / step) + 1;
+  let count = ((size - window) / step) + 1 in
+  new_shape.(axis) <- count;
   new_strides.(axis) <- view.strides.(axis) * step;
-  create ~offset:view.offset ~strides:new_strides new_shape
+  (* windows are disjoint iff each starts past the previous one's end *)
+  let injective = view.injective && (count <= 1 || step >= window) in
+  create ~offset:view.offset ~strides:new_strides ~injective new_shape

@@ -492,6 +492,8 @@ module type S = sig
   (** [assign dst src] copies elements from [src] into [dst] in-place.
 
       {b Frontend guarantees:} [dst] and [src] have matching shapes and dtypes.
+      [dst]'s view is {!View.injective}: never a broadcast or an overlapping
+      window, whose positions would be written in no defined order.
 
       {b Backend must:} write [src]'s data into [dst]'s buffer, respecting both
       tensors' strides. *)
