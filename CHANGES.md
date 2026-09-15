@@ -170,8 +170,9 @@ thread.
   instead of a `getconf` subprocess, which does not exist on Windows.
 - The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor
   libraries load through `LoadLibrary`; the hcq layer maps anonymous memory
-  through `VirtualAlloc`, so the queue builders run, while device files and
-  the system layer report themselves unsupported.
+  through `VirtualAlloc`, so the queue builders run; the system layer's file
+  primitives work, while the Linux kernel interfaces report themselves
+  unsupported.
 - New `Tolk_frontend.Linalg`: `qr`, `solve_triangular`, and `cholesky` unroll
   at graph-construction time into ordinary Tolk compositions, so they compile
   for every Tolk device. Large systems solve block-by-block as GEMMs, with

@@ -18,6 +18,7 @@
 #include <time.h>
 
 #if defined(_WIN32)
+#include <io.h>
 #include <windows.h>
 /* Windows has no mmap. The flag values only round-trip through the OCaml side
    back into caml_tolk_hcq_mmap, which honors anonymous private mappings and
@@ -71,19 +72,22 @@ CAMLprim value caml_tolk_hcq_constants(value unit) {
 
 #if defined(_WIN32)
 
-/* Device files are Linux driver nodes; on Windows only anonymous memory is
-   mapped, which is what the queue builders and their golden tests need. */
+/* Opening is plain file I/O; what Windows lacks is the driver node behind the
+   path and mmap, so only anonymous memory is mapped, which is what the queue
+   builders and their golden tests need. */
 
 CAMLprim value caml_tolk_hcq_open(value v_path, value v_flags) {
   CAMLparam2(v_path, v_flags);
-  caml_failwith("tolk hcq: device files are unsupported on Windows");
-  CAMLreturn(Val_unit); /* unreachable */
+  int fd =
+      _open(String_val(v_path), Int_val(v_flags) | _O_BINARY | _O_NOINHERIT);
+  if (fd < 0) raise_errno(String_val(v_path));
+  CAMLreturn(Val_int(fd));
 }
 
 CAMLprim value caml_tolk_hcq_close(value v_fd) {
   CAMLparam1(v_fd);
-  caml_failwith("tolk hcq: device files are unsupported on Windows");
-  CAMLreturn(Val_unit); /* unreachable */
+  if (_close(Int_val(v_fd)) != 0) raise_errno("close");
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_tolk_hcq_mmap(value v_addr, value v_size, value v_prot,

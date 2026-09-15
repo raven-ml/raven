@@ -11,141 +11,27 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
-#if defined(_WIN32)
-#include <windows.h>
-
-/* No device files, locked memory, eventfd, or VFIO on Windows. The constants
-   are zeros so the module initializes; every operation fails at the call. */
-static value unsupported(void) {
-  caml_failwith("tolk system: unsupported on Windows");
-  return Val_unit; /* unreachable */
-}
-
-CAMLprim value caml_tolk_system_constants(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal1(v);
-  SYSTEM_INFO info;
-  GetSystemInfo(&info);
-  v = caml_alloc_tuple(9);
-  for (int i = 0; i < 7; i++) Store_field(v, i, Val_int(0));
-  Store_field(v, 7, Val_long(info.dwPageSize));
-  Store_field(v, 8, Val_false);
-  CAMLreturn(v);
-}
-
-CAMLprim value caml_tolk_system_open_mode(value v_path, value v_flags,
-                                          value v_mode) {
-  (void)v_path;
-  (void)v_flags;
-  (void)v_mode;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_flock_try(value v_fd) {
-  (void)v_fd;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_mlock(value v_addr, value v_size) {
-  (void)v_addr;
-  (void)v_size;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_madvise_dontfork(value v_addr, value v_size) {
-  (void)v_addr;
-  (void)v_size;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf, value v_pos,
-                                      value v_len, value v_off) {
-  (void)v_fd;
-  (void)v_buf;
-  (void)v_pos;
-  (void)v_len;
-  (void)v_off;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_pwrite(value v_fd, value v_buf, value v_pos,
-                                       value v_len, value v_off) {
-  (void)v_fd;
-  (void)v_buf;
-  (void)v_pos;
-  (void)v_len;
-  (void)v_off;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_write(value v_fd, value v_buf, value v_len) {
-  (void)v_fd;
-  (void)v_buf;
-  (void)v_len;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_readlink(value v_path) {
-  (void)v_path;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_eventfd(value v_initval) {
-  (void)v_initval;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_poll_in(value v_fd, value v_timeout_ms) {
-  (void)v_fd;
-  (void)v_timeout_ms;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_eventfd_drain(value v_fd) {
-  (void)v_fd;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_vfio_check_extension(value v_fd) {
-  (void)v_fd;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_vfio_group_set_container(value v_group,
-                                                         value v_container) {
-  (void)v_group;
-  (void)v_container;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_vfio_set_iommu(value v_fd) {
-  (void)v_fd;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_vfio_group_get_device_fd(value v_group,
-                                                         value v_pcibus) {
-  (void)v_group;
-  (void)v_pcibus;
-  return unsupported();
-}
-
-CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(value v_dev,
-                                                     value v_eventfd) {
-  (void)v_dev;
-  (void)v_eventfd;
-  return unsupported();
-}
-
-#else /* !_WIN32 */
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+
+/* The file primitives are plain I/O and exist everywhere; mlock has a Win32
+   spelling. Everything that names a Linux kernel interface (madvise, eventfd,
+   poll, VFIO) already reports itself unsupported off Linux. */
+#if defined(_WIN32)
+#include <io.h>
+#include <windows.h>
+#ifndef O_SYNC
+#define O_SYNC 0
+#endif
+#else
 #include <sys/file.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #ifdef __linux__
 #include <linux/vfio.h>
@@ -192,6 +78,16 @@ static void raise_errno(const char *what) {
   caml_failwith(buf);
 }
 
+static long page_size(void) {
+#if defined(_WIN32)
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  return (long)info.dwPageSize;
+#else
+  return sysconf(_SC_PAGESIZE);
+#endif
+}
+
 CAMLprim value caml_tolk_system_constants(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(v);
@@ -203,7 +99,7 @@ CAMLprim value caml_tolk_system_constants(value unit) {
   Store_field(v, 4, Val_int(MAP_POPULATE));
   Store_field(v, 5, Val_int(MAP_HUGETLB));
   Store_field(v, 6, Val_int(MAP_FIXED_NOREPLACE));
-  Store_field(v, 7, Val_long(sysconf(_SC_PAGESIZE)));
+  Store_field(v, 7, Val_long(page_size()));
 #ifdef __linux__
   Store_field(v, 8, Val_true);
 #else
@@ -219,6 +115,13 @@ CAMLprim value caml_tolk_system_open_mode(value v_path,
                                           value v_flags,
                                           value v_mode) {
   CAMLparam3(v_path, v_flags, v_mode);
+#if defined(_WIN32)
+  /* Windows has owner read/write permission bits and nothing finer. */
+  int fd = _open(String_val(v_path),
+                 Int_val(v_flags) | _O_BINARY | _O_NOINHERIT,
+                 _S_IREAD | _S_IWRITE);
+  if (fd < 0) raise_errno(String_val(v_path));
+#else
   int fd = open(String_val(v_path), Int_val(v_flags) | O_CLOEXEC,
                 (mode_t)Int_val(v_mode));
   if (fd < 0) raise_errno(String_val(v_path));
@@ -229,19 +132,35 @@ CAMLprim value caml_tolk_system_open_mode(value v_path,
     errno = e;
     raise_errno(String_val(v_path));
   }
+#endif
   CAMLreturn(Val_int(fd));
 }
 
 CAMLprim value caml_tolk_system_flock_try(value v_fd) {
+#if defined(_WIN32)
+  /* The lock covers the whole file and, like flock's, ends with the handle. */
+  OVERLAPPED ov;
+  memset(&ov, 0, sizeof ov);
+  return Val_bool(LockFileEx((HANDLE)_get_osfhandle(Int_val(v_fd)),
+                             LOCKFILE_EXCLUSIVE_LOCK |
+                                 LOCKFILE_FAIL_IMMEDIATELY,
+                             0, MAXDWORD, MAXDWORD, &ov));
+#else
   int r;
   do r = flock(Int_val(v_fd), LOCK_EX | LOCK_NB);
   while (r != 0 && errno == EINTR);
   return Val_bool(r == 0);
+#endif
 }
 
 CAMLprim value caml_tolk_system_mlock(value v_addr, value v_size) {
+#if defined(_WIN32)
+  return Val_bool(
+      VirtualLock((void *)Nativeint_val(v_addr), (SIZE_T)Long_val(v_size)));
+#else
   return Val_bool(
       mlock((void *)Nativeint_val(v_addr), (size_t)Long_val(v_size)) == 0);
+#endif
 }
 
 CAMLprim value caml_tolk_system_madvise_dontfork(value v_addr, value v_size) {
@@ -260,6 +179,74 @@ CAMLprim value caml_tolk_system_madvise_dontfork(value v_addr, value v_size) {
 
 /* The copies must keep the OCaml runtime lock held: the bytes value may move
    under the GC otherwise. */
+
+#if defined(_WIN32)
+
+/* Positional I/O through the handle: an OVERLAPPED offset on a synchronous
+   handle is Win32's pread and pwrite. Reading at or past the end is 0. */
+static OVERLAPPED at_offset(value v_off) {
+  OVERLAPPED ov;
+  memset(&ov, 0, sizeof ov);
+  uint64_t off = (uint64_t)Int64_val(v_off);
+  ov.Offset = (DWORD)off;
+  ov.OffsetHigh = (DWORD)(off >> 32);
+  return ov;
+}
+
+static DWORD chunk_of(value v_len) {
+  intnat len = Long_val(v_len);
+  return len > 0x7fffffff ? 0x7fffffff : (DWORD)len;
+}
+
+CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf,
+                                      value v_pos,
+                                      value v_len,
+                                      value v_off) {
+  CAMLparam5(v_fd, v_buf, v_pos, v_len, v_off);
+  OVERLAPPED ov = at_offset(v_off);
+  DWORD n = 0;
+  if (!ReadFile((HANDLE)_get_osfhandle(Int_val(v_fd)),
+                Bytes_val(v_buf) + Long_val(v_pos), chunk_of(v_len), &n,
+                &ov)) {
+    if (GetLastError() != ERROR_HANDLE_EOF) {
+      errno = EIO;
+      raise_errno("pread");
+    }
+    n = 0;
+  }
+  CAMLreturn(Val_long(n));
+}
+
+CAMLprim value caml_tolk_system_pwrite(value v_fd, value v_buf,
+                                       value v_pos,
+                                       value v_len,
+                                       value v_off) {
+  CAMLparam5(v_fd, v_buf, v_pos, v_len, v_off);
+  OVERLAPPED ov = at_offset(v_off);
+  DWORD n = 0;
+  if (!WriteFile((HANDLE)_get_osfhandle(Int_val(v_fd)),
+                 Bytes_val(v_buf) + Long_val(v_pos), chunk_of(v_len), &n,
+                 &ov)) {
+    errno = EIO;
+    raise_errno("pwrite");
+  }
+  CAMLreturn(Val_long(n));
+}
+
+CAMLprim value caml_tolk_system_write(value v_fd, value v_buf, value v_len) {
+  CAMLparam3(v_fd, v_buf, v_len);
+  int r = _write(Int_val(v_fd), Bytes_val(v_buf), (unsigned)chunk_of(v_len));
+  if (r < 0) raise_errno("write");
+  CAMLreturn(Val_long(r));
+}
+
+CAMLprim value caml_tolk_system_readlink(value v_path) {
+  CAMLparam1(v_path);
+  caml_failwith("readlink: sysfs links do not exist on Windows");
+  CAMLreturn(Val_unit); /* unreachable */
+}
+
+#else /* !_WIN32 */
 
 CAMLprim value caml_tolk_system_pread(value v_fd, value v_buf,
                                       value v_pos,
@@ -306,6 +293,8 @@ CAMLprim value caml_tolk_system_readlink(value v_path) {
   buf[r] = '\0';
   CAMLreturn(caml_copy_string(buf));
 }
+
+#endif /* _WIN32 */
 
 /* VFIO interrupt plumbing (Linux only). Thin marshallers: the ioctl
    numbers and struct layout come from <linux/vfio.h>. */
@@ -441,5 +430,3 @@ CAMLprim value caml_tolk_system_vfio_set_irq_eventfd(
   return Val_unit; /* unreachable */
 #endif
 }
-
-#endif /* _WIN32 */
