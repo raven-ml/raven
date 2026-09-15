@@ -269,6 +269,13 @@ let linalg_tests =
           (fun a b -> Nx.solve_triangular a b)
           (Nx.create f64 [| 2; 2; 2 |] [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
           (Nx.create f64 [| 2; 2 |] [| 1.0; -2.0; 0.5; 3.0 |]));
+    test "solve_triangular (unit diagonal)" (fun () ->
+        (* With [unit_diag] the diagonal is never read, so its gradient is
+           zero. *)
+        check_grad2 ~msg:"solve_triangular unit_diag"
+          (fun a b -> Nx.solve_triangular ~unit_diag:true a b)
+          (mat64 2 2 [| 9.0; 9.0; 0.5; 9.0 |])
+          (mat64 2 2 [| 1.0; -2.0; 0.5; 3.0 |]));
   ]
 
 (* Composite functions: several rules interacting in one graph. *)

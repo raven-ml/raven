@@ -931,8 +931,13 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                             else T.neg (T.matmul grad_b_2d (T.matrix_transpose out_2d))
                           in
                           let grad_a =
-                            if upper then T.triu grad_a_full
-                            else T.tril grad_a_full
+                            let tri =
+                              if upper then T.triu grad_a_full
+                              else T.tril grad_a_full
+                            in
+                            if unit_diag then
+                              T.sub tri (Derivs.diag_matrix (T.diagonal tri))
+                            else tri
                           in
                           Tape.accumulate tape a grad_a
                         end)
