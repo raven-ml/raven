@@ -463,7 +463,7 @@ static nx_c_status nx_c_sort_drive(const nx_c_sort_table *tbl, nx_c_dtype dt,
   int nth = nx_c_threads_for(NX_C_COST_HEAVY, nslices, n, bytes);
   if (nth > nslices) nth = (int)nslices;
 
-  e.scratch = malloc((size_t)slot_bytes * (size_t)nth);
+  e.scratch = nx_c_aligned_alloc((size_t)slot_bytes * (size_t)nth);
   if (e.scratch == NULL) return NX_C_ERR_ALLOC;
   /* Hand the scratch to the primitive as free_on_exit: it frees after the join
      but before re-acquiring the lock, so a raise from leave_blocking_section
