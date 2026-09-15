@@ -195,11 +195,10 @@ let reorder_columns t names =
   create (requested @ remaining)
 
 let cast_column t name dtype =
-  match get_column t name with
-  | Some (Col.P (_, tensor, mask)) ->
-      let casted = Nx.cast dtype tensor in
-      add_column t name (Col.P (dtype, casted, mask))
-  | _ -> invalid_arg "cast_column: conversion not possible"
+  match get_column_exn t name with
+  | Col.P _ as col -> add_column t name (Col.cast dtype col)
+  | Col.S _ | Col.B _ ->
+      invalid_arg (Printf.sprintf "cast_column: column %S is not numeric" name)
 
 (* Extraction *)
 

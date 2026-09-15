@@ -220,6 +220,30 @@ let fill_nulls col ~value =
   | B arr, B varr -> B (fill_options arr varr)
   | _ -> invalid_arg "Col.fill_nulls: value type doesn't match column type"
 
+(* Casting *)
+
+(* Nx.cast carries a source dtype's null sentinel into the target dtype, so null
+   positions are rewritten with the target's own sentinel. *)
+let cast_values (type a b) (dtype : (a, b) Nx.dtype) tensor mask : a array =
+  let arr : a array = Nx.to_array (Nx.cast dtype tensor) in
+  (match mask with
+  | None -> ()
+  | Some mask ->
+      let default = numeric_default dtype in
+      Array.iteri (fun i is_null -> if is_null then arr.(i) <- default) mask);
+  arr
+
+let cast dtype col =
+  match col with
+  | P (_, tensor, None) -> P (dtype, Nx.cast dtype tensor, None)
+  | P (_, tensor, Some mask) ->
+      let arr = cast_values dtype tensor (Some mask) in
+      P
+        ( dtype,
+          Nx.create dtype [| Array.length arr |] arr,
+          Some (Array.copy mask) )
+  | S _ | B _ -> invalid_arg "Col.cast: column is not numeric"
+
 (* Extraction *)
 
 let to_tensor (type a b) (dtype : (a, b) Nx.dtype) col =
@@ -364,9 +388,7 @@ let concat_p (type a b) (dtype : (a, b) Nx.dtype) cols =
   let arrays_masks =
     List.map
       (function
-        | P (_, t, mask) ->
-            let arr : a array = Nx.to_array (Nx.cast dtype t) in
-            (arr, mask)
+        | P (_, t, mask) -> (cast_values dtype t mask, mask)
         | _ -> failwith "concat: column type mismatch")
       cols
   in

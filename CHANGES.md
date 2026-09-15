@@ -1929,6 +1929,11 @@ thread.
 
 ### Talon
 
+- Fix `cast_column` and mixed-dtype `concat` leaving a source dtype's null
+  sentinel in the cast tensor. Casting a nullable integer column to a float
+  dtype made `to_array` read its nulls as `Int64.min_int` converted to float
+  instead of `nan`; null positions now hold the target dtype's sentinel.
+  `cast_column` also raises `Not_found` for a missing column, as documented.
 - `to_nx` now takes the target dtype and an optional `?columns` selection,
   `to_nx ?columns dtype df`, instead of always producing a float32 tensor of
   every numeric column. Nulls become `nan` for float dtypes and raise for

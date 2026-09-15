@@ -209,7 +209,22 @@ let test_cast_preserves_mask () =
   let df_cast = cast_column df "x" Nx.float64 in
   check_option_bool_array "cast mask"
     (Some [| false; true |])
-    (mask_of_column df_cast "x")
+    (mask_of_column df_cast "x");
+  let df = create [ ("n", Col.int64_opt [| Some 1L; None |]) ] in
+  let df_cast = cast_column df "n" Nx.float64 in
+  check_option_bool_array "int cast mask"
+    (Some [| false; true |])
+    (mask_of_column df_cast "n");
+  (match to_array Nx.float64 df_cast "n" with
+  | Some arr -> check_bool "int null reads as nan" true (Float.is_nan arr.(1))
+  | None -> fail "cast column should read as float64");
+  let df1 = create [ ("n", Col.int64_opt [| Some 1L; None |]) ] in
+  let df2 = create [ ("n", Col.float64 [| 2.0 |]) ] in
+  let combined = concat ~axis:`Rows [ df2; df1 ] in
+  match to_array Nx.float64 combined "n" with
+  | Some arr ->
+      check_bool "concat cast null reads as nan" true (Float.is_nan arr.(2))
+  | None -> fail "concat should read as float64"
 
 let test_pct_change_has_no_mask () =
   let df = create [ ("x", Col.float32_opt [| Some 1.0; Some 2.0; None |]) ] in
