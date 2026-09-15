@@ -112,6 +112,8 @@ let outline_units f g =
       Hashtbl.replace f.outlines g !p;
       !p
 
+let glyph_advance f ~size g = float (Truetype.advance f.tt g) *. scale f ~size
+
 let glyph_path f ~size g =
   let k = scale f ~size in
   Path.transform (Affine.scale k (-.k)) (outline_units f g)

@@ -1,20 +1,23 @@
 (*---------------------------------------------------------------------------
-  Tests for the canvas rasterizer: coverage, fill rules, strokes, clipping,
+  Tests for the vg rasterizer: coverage, fill rules, strokes, clipping,
   transforms, stamps, text and images.
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Hugin_canvas
+open Hugin_vg
 
 let red = Color.v 1. 0. 0.
 let blue = Color.v 0. 0. 1.
-let render ?background ~w ~h p = Raster.render ?background ~width:w ~height:h p
+
+let render ?background ~w ~h p =
+  Hugin_vg_raster.render ?background ~width:w ~height:h p
+
 let px img y x c = Nx.item [ y; x; c ] img
 
-(* Alpha of pixel [(x, y)] as a coverage in [0;1] on a transparent canvas. *)
+(* Alpha of pixel [(x, y)] as a coverage in [0;1] on a transparent vg. *)
 let cov img y x = float_of_int (px img y x 3) /. 255.
 
-(* Total coverage of an image drawn on a transparent canvas. *)
+(* Total coverage of an image drawn on a transparent vg. *)
 let total img =
   let s = ref 0. in
   let shape = Nx.shape img in
@@ -34,8 +37,10 @@ let test_dimensions () =
   equal ~msg:"transparent by default" color (0, 0, 0, 0) (rgba img 1 1);
   let img = render ~background:blue ~w:2 ~h:2 Picture.empty in
   equal color (0, 0, 255, 255) (rgba img 0 0);
-  raises (Invalid_argument "Raster.render: width and height must be positive")
-    (fun () -> render ~w:0 ~h:2 Picture.empty)
+  raises
+    (Invalid_argument
+       "Hugin_vg_raster.render: width and height must be positive") (fun () ->
+      render ~w:0 ~h:2 Picture.empty)
 
 let test_full_rect () =
   let img = render ~w:4 ~h:3 (Picture.fill red (Path.rect 0. 0. 4. 3.)) in
@@ -98,8 +103,8 @@ let test_alpha_compositing () =
   satisfies ~msg:"red halfway" int (fun v -> abs (v - 128) <= 1) r;
   satisfies ~msg:"blue halfway" int (fun v -> abs (v - 128) <= 1) b;
   equal ~msg:"opaque background stays opaque" int 255 a;
-  (* On a transparent canvas the output alpha is the paint's and the color is
-     not premultiplied. *)
+  (* On a transparent vg the output alpha is the paint's and the color is not
+     premultiplied. *)
   let img = render ~w:1 ~h:1 (Picture.fill half (Path.rect 0. 0. 1. 1.)) in
   let r, _, _, a = rgba img 0 0 in
   satisfies int (fun v -> abs (v - 128) <= 1) a;
@@ -341,7 +346,7 @@ let test_image_downscale_averages () =
   let v, _, _, _ = rgba img 0 0 in
   satisfies int (fun v -> abs (v - 128) <= 2) v
 
-let test_image_partially_off_canvas () =
+let test_image_partially_off_vg () =
   let data = Nx.create Nx.uint8 [| 1; 1; 3 |] [| 255; 0; 0 |] in
   let img = render ~w:4 ~h:4 (Picture.image ~x:2. ~y:2. ~w:10. ~h:10. data) in
   equal (float 0.01) 4. (total img)
@@ -363,9 +368,9 @@ let test_non_finite_points_break_lines () =
   equal (float 0.01) 0. (cov img 0 5)
 
 let () =
-  run "Canvas raster"
+  run "Vg raster"
     [
-      group "canvas"
+      group "vg"
         [
           test "dimensions and background" test_dimensions;
           test "alpha compositing" test_alpha_compositing;
@@ -411,7 +416,7 @@ let () =
           test "nearest" test_image_nearest;
           test "gray and alpha" test_image_gray_and_alpha;
           test "downscale averages" test_image_downscale_averages;
-          test "partially off canvas" test_image_partially_off_canvas;
+          test "partially off vg" test_image_partially_off_vg;
           test "shape validation" test_image_shape_validation;
         ];
     ]

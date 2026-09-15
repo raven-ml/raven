@@ -7,9 +7,9 @@
   test_resolve
   test_svg_backend
   test_image_util
-  test_canvas_geometry
-  test_canvas_font
-  test_canvas_raster
-  test_canvas_svg)
+  test_vg_geometry
+  test_vg_font
+  test_vg_raster
+  test_vg_svg)
  (package hugin)
- (libraries hugin hugin.canvas nx windtrap))
+ (libraries hugin hugin.vg hugin.vg.raster hugin.vg.svg nx windtrap))

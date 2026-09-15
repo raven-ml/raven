@@ -72,6 +72,9 @@ val glyphs : t -> size:float -> string -> (int * float) list
 (** [glyphs f ~size s] are the glyph ids of [s] in order, each with the pen x
     offset at which it is drawn. *)
 
+val glyph_advance : t -> size:float -> int -> float
+(** [glyph_advance f ~size g] is the pen advance of glyph [g] at [size]. *)
+
 val glyph_path : t -> size:float -> int -> Path.t
 (** [glyph_path f ~size g] is the outline of glyph [g] at [size], with its
     origin at [(0, 0)] on the baseline, y down. *)

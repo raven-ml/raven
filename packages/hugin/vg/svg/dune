@@ -1,0 +1,4 @@
+(library
+ (name hugin_vg_svg)
+ (public_name hugin.vg.svg)
+ (libraries hugin.vg nx nx.io))

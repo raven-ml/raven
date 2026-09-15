@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_vg
+
 (* Paths to device-space polylines. *)
 
 type polyline = { xs : float array; ys : float array; closed : bool }

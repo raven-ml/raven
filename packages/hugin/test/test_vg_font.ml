@@ -1,10 +1,10 @@
 (*---------------------------------------------------------------------------
-  Tests for the canvas fonts: the bundled Inter faces, their metrics, kerning
-  and outlines.
+  Tests for the vg fonts: the bundled Inter faces, their metrics, kerning and
+  outlines.
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Hugin_canvas
+open Hugin_vg
 
 let approx = float 1e-6
 let size = 100.
@@ -124,7 +124,7 @@ let test_of_string_errors () =
     | _ -> false)
 
 let () =
-  run "Canvas font"
+  run "Vg font"
     [
       test "identity" test_identity;
       test "em metrics" test_em_metrics;

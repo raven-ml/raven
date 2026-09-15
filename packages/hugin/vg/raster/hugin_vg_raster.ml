@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_vg
 open Bigarray
 
 (* Pixels are premultiplied RGBA8 in row-major order. *)
@@ -445,7 +446,7 @@ let rec draw canvas clip m (p : Picture.t) =
 
 let render ?(background = Color.transparent) ~width ~height picture =
   if width <= 0 || height <= 0 then
-    invalid_arg "Raster.render: width and height must be positive";
+    invalid_arg "Hugin_vg_raster.render: width and height must be positive";
   let canvas = create width height in
   let br, bg, bb, ba = premultiplied background in
   if ba > 0. then

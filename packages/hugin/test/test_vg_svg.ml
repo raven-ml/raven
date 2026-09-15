@@ -1,12 +1,12 @@
 (*---------------------------------------------------------------------------
-  Tests for the canvas SVG renderer.
+  Tests for the vg SVG renderer.
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Hugin_canvas
+open Hugin_vg
 
 let red = Color.v 1. 0. 0.
-let render p = Svg.render ~width:100. ~height:50. p
+let render p = Hugin_vg_svg.render ~width:100. ~height:50. p
 
 (* Non-overlapping occurrences of [sub] in [s]. *)
 let count ~sub s =
@@ -140,7 +140,7 @@ let test_clip_transform_stamp () =
   equal ~msg:"non-finite positions are skipped" int 2 (count ~sub:"<use " svg)
 
 let () =
-  run "Canvas svg"
+  run "Vg svg"
     [
       test "document" test_document;
       test "fill" test_fill;

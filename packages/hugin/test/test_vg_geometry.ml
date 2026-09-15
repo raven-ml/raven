@@ -1,9 +1,9 @@
 (*---------------------------------------------------------------------------
-  Tests for the canvas geometry: affine transforms, paths and stroke styles.
+  Tests for the vg geometry: affine transforms, paths and stroke styles.
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Hugin_canvas
+open Hugin_vg
 
 let point = pair (float 1e-9) (float 1e-9)
 
@@ -152,7 +152,7 @@ let test_stroke_invariants () =
     dotted.dash
 
 let () =
-  run "Canvas geometry"
+  run "Vg geometry"
     [
       group "affine"
         [

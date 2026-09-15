@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_vg
+
 (* Numbers and strings *)
 
 (* Two decimals is a hundredth of a pixel; trailing zeros are dropped. *)

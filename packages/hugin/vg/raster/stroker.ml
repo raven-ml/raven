@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_vg
+
 (* Strokes to fill polygons. Each segment body, join and cap becomes its own
    closed polygon with positive orientation, so the nonzero union of the pieces
    is the stroked outline and shared edges cancel exactly. *)
