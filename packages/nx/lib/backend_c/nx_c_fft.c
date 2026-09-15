@@ -53,8 +53,9 @@
    scattering back. The real transforms' last axis packs an even length into a
    half-size complex transform: rfft as pack → FFT_N → Hermitian untangle,
    irfft as pre-twiddle → IFFT_N → unpack (see the packed real path below).
-   Odd lengths keep the full-size complex transform, byte-identical to the
-   pre-packing code. */
+   Odd lengths keep the full-size complex transform: rfft transforms the real
+   line as a complex one and keeps the half-spectrum, irfft mirrors the
+   half-spectrum into a full Hermitian line and keeps the real output. */
 
 /* DEFERRED PERF (correctness-first; none affects correctness, all verified
    against the DFT oracle):
@@ -1250,9 +1251,8 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
 
 /* ── rfft ─────────────────────────────────────────────────────────────────
    Real→complex. Last transformed axis: even n takes the packed half-size
-   path; odd n keeps the full-length transform (packing needs pairs — the
-   status-quo path, byte-identical). Other transformed axes: full complex FFT
-   of `out` in place. */
+   path; odd n keeps the full-length transform (packing needs pairs). Other
+   transformed axes: full complex FFT of `out` in place. */
 static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
                                nx_c_dtype in_dt, nx_c_dtype out_dt,
                                const int *axes, int naxes) {
@@ -1279,9 +1279,13 @@ static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out
 }
 
 /* ── irfft ────────────────────────────────────────────────────────────────
-   Complex half-spectrum → real. Other axes ifft first (in a complex temp), then
-   the last axis: reconstruct the full length-s spectrum via conjugate symmetry,
-   inverse FFT, take the real part. Output length s along `last`. */
+   Complex half-spectrum → real, output length s along the last transformed
+   axis. With one transform axis the pool reads `in` directly; with several,
+   the other axes ifft first in a complex temp that then feeds the last-axis
+   pass. Even s takes the packed half-size inverse; odd s reconstructs the full
+   length-s spectrum via conjugate symmetry, inverse FFTs it, and keeps the
+   real part. Both discard Im X[0] (and the odd path never reads a Nyquist
+   bin), so a non-Hermitian input transforms as its Hermitian projection. */
 typedef struct {
   nx_c_dtype out_dt;
   const nx_c_ndarray *out;
@@ -1463,8 +1467,7 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
   }
   /* last axis: half-spectrum → real length s. Even s (which the default
      s = 2·(in_half − 1) always is) takes the packed half-size inverse; an
-     explicit odd s keeps the full-length reconstruct+mirror path,
-     byte-identical to before. */
+     explicit odd s keeps the full-length reconstruct+mirror path. */
   int packed = (s >= 2 && (s & 1) == 0);
   const fft_plan *plan = packed ? plan_get_kind(s, 1, 1) : plan_get(s, 1);
   if (!plan) {
