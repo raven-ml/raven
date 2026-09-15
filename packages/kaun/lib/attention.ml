@@ -185,30 +185,21 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
   let q = split (Linear.apply p.q x) in
   let k = split (Linear.apply p.k x) in
   let v = split (Linear.apply p.v x) in
-  let pos = Nx.reshape [| 1; 1 |] pos in
-  let slots = Nx.reshape [| len; 1 |] (Nx.arange Nx.int32 0 len 1) in
-  (* [positions.(0).(i) = pos + i]: the cache slot input position [i] fills. *)
+  (* The rows land in the [seq] slots from [start], the position clamped so
+     the window fits the cache; the mask reasons over the same slots. *)
+  let start =
+    Nx.clamp ~min:0l ~max:(Int32.of_int (len - seq)) (Nx.reshape [||] pos)
+  in
+  (* [positions.(0).(i) = start + i]: the cache slot input position [i] fills. *)
   let positions =
-    Nx.add pos (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
+    Nx.add
+      (Nx.reshape [| 1; 1 |] start)
+      (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
   in
-  (* Slot [c] gathers the fresh row at input position [c - pos] (clamped into
-     range: [written] is false outside [pos, pos + seq), so those slots keep
-     their cached rows). Everything is expressed on fixed shapes with [pos] a
-     plain tensor, so one jitted decode step serves every position. *)
-  let src =
-    Nx.broadcast_to
-      [| batch; num_heads; len; head_dim |]
-      (Nx.reshape [| 1; 1; len; 1 |]
-         (Nx.clamp ~min:0l ~max:(Int32.of_int (seq - 1)) (Nx.sub slots pos)))
-  in
-  let written =
-    Nx.reshape [| 1; 1; len; 1 |]
-      (Nx.logical_and
-         (Nx.greater_equal slots pos)
-         (Nx.less slots (Nx.add_s pos (Int32.of_int seq))))
-  in
+  (* A window write whose start is a tensor, so one jitted decode step serves
+     every position and a compiler may perform it in place. *)
   let update cached fresh =
-    Nx.where written (Nx.take_along_axis ~axis:2 ~indices:src fresh) cached
+    Nx.set [ Nx.A; Nx.A; Nx.D (start, seq) ] fresh cached
   in
   let keys = update cache.Cache.keys k
   and values = update cache.Cache.values v in

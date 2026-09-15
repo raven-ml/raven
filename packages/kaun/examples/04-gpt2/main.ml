@@ -94,7 +94,7 @@ let generate_jit (type b) ~device cfg
   let tokens = Array.make len 0l in
   Array.blit prompt 0 tokens 0 n0;
   let step_fn =
-    Rune.jit2 ~device
+    Rune.jit2 ~device ~donate:true
       (module Step)
       (module Step)
       (fun { Step.token; pos; caches } ->

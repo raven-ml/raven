@@ -324,22 +324,26 @@ let test_cached_update_is_functional () =
        (fun v -> Float.abs v > 1e-6)
        (flat cache'.Attention.Cache.keys))
 
-let test_cached_write_past_len_is_dropped () =
+let test_cached_write_past_len_is_clamped () =
   Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
-  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:2 Nx.float32 in
+  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
   let _, cache =
     Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
   in
-  let _, cache' =
-    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 2) ~cache p
-      (Nx.slice [ A; R (0, 1) ] x)
+  let out_past, past =
+    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 3) ~cache p x
   in
-  equal ~msg:"a write at pos = len leaves the cache unchanged"
+  let out_last, last =
+    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 2) ~cache p x
+  in
+  equal ~msg:"a write past the end lands on the last slots"
     (array float_exact)
-    (flat cache.Attention.Cache.keys)
-    (flat cache'.Attention.Cache.keys)
+    (flat last.Attention.Cache.keys)
+    (flat past.Attention.Cache.keys);
+  equal ~msg:"the mask follows the clamped slots" (array float_exact)
+    (flat out_last) (flat out_past)
 
 (* The decode step as a jittable function: position and cache enter as tensors,
    so one compilation serves every step. *)
@@ -505,8 +509,8 @@ let () =
           test "incremental decode matches causal apply"
             test_cached_decode_matches_causal;
           test "the update is functional" test_cached_update_is_functional;
-          test "writes past the cache length are dropped"
-            test_cached_write_past_len_is_dropped;
+          test "writes past the cache length are clamped"
+            test_cached_write_past_len_is_clamped;
           test "one jitted step serves every position"
             test_cached_step_jits_once;
           test "gradients flow through the cache" test_cached_gradients;

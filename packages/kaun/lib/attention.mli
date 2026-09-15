@@ -161,12 +161,14 @@ val apply_cached :
     single-token step ([seq = 1]) attends to every position seen so far.
     [num_heads] is as in {!apply}.
 
-    Slots are addressed with tensor arithmetic on [pos] (a gather and a position
-    mask), never its value, so the step traces once under {!Rune.jit} whatever
-    the position. Differentiable through Rune.
+    The write is a window of [seq] slots starting at [pos] ([Nx.set] with a
+    run-time start), never a read of [pos]'s value, so the step traces once
+    under {!Rune.jit} whatever the position, and a compiler may write the
+    cache in place. Differentiable through Rune.
 
-    The caller steps [pos] itself and must keep [pos + seq <= len]: writes past
-    the last slot are silently dropped.
+    The caller steps [pos] itself and must keep [pos + seq <= len]: the window
+    is clamped into the cache, so a write past the last slot lands on the last
+    [seq] slots instead.
 
     Raises [Invalid_argument] if [x] is not of rank 3 or its last axis is not
     [embed], [num_heads] is invalid, the cache's batch, heads or head dimension
