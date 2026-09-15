@@ -43,7 +43,7 @@ let () =
         ];
       Thumper.group "irfft"
         [
-          icase "c64 65536 power-of-two" 65536;
-          icase_batched "c64 256x4097 batched" 256 8192;
+          icase "c128 65536 power-of-two" 65536;
+          icase_batched "c128 256x4097 batched" 256 8192;
         ];
     ]
