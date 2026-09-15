@@ -46,8 +46,14 @@
   %{exe:pp.exe}
   (glob_files cases/*.ml)))
 
+; ocamlc hands -ppx to the platform shell, and cmd.exe cannot start a "./"
+; program, so the compiler diagnostic cases do not run on Windows.
 (rule
  (alias runtest)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
  (targets
   compiler_leaf.actual
   compiler_missing_delegate.actual
