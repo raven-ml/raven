@@ -129,6 +129,9 @@ let drain fd =
 (* Run [exe] with the given role and cache dir; return (stdout, cache events).
    Cache events are the "rune.jit: compile cache <event> <key>" lines, reduced
    to their <event> word, in order. *)
+(* A child's text-mode stdout ends lines with CRLF on Windows. *)
+let strip_cr s = String.concat "" (String.split_on_char '\r' s)
+
 let run_child ?(exe = Sys.executable_name) ?(extra = []) ~cache role =
   let env =
     child_env
@@ -142,8 +145,8 @@ let run_child ?(exe = Sys.executable_name) ?(extra = []) ~cache role =
   in
   Unix.close out_write;
   Unix.close err_write;
-  let out = drain out_read in
-  let errs = drain err_read in
+  let out = strip_cr (drain out_read) in
+  let errs = strip_cr (drain err_read) in
   let _, status = Unix.waitpid [] pid in
   (match status with
   | Unix.WEXITED 0 -> ()
