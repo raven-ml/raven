@@ -9,7 +9,7 @@ open Windtrap
 let temp_file prefix suffix = Filename.temp_file prefix suffix
 
 let read_file path =
-  let ic = open_in path in
+  let ic = open_in_bin path in
   Fun.protect
     ~finally:(fun () -> close_in ic)
     (fun () ->
@@ -227,8 +227,7 @@ let test_npy_external_variants () =
   with_hex_file ".npy" npy_fortran_fixture (fun path ->
       let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.float32 in
       equal ~msg:"Fortran shape" (array int) [| 2; 3 |] (Nx.shape actual);
-      equal ~msg:"Fortran values"
-        (array float_exact)
+      equal ~msg:"Fortran values" (array float_exact)
         [| 1.; 2.; 3.; 4.; 5.; 6. |]
         (Nx.to_array actual));
   with_hex_file ".npy" npy_big_endian_fixture (fun path ->
@@ -256,7 +255,9 @@ let test_npy_rejects_trailing_payload () =
 
 (* Test NPZ format *)
 let test_npz_save_load_multiple () =
-  let weights = Nx.Rng.with_key (Nx.Rng.key 0) (fun () -> Nx.randn Nx.float32 [| 5; 3 |]) in
+  let weights =
+    Nx.Rng.with_key (Nx.Rng.key 0) (fun () -> Nx.randn Nx.float32 [| 5; 3 |])
+  in
   let bias = Nx.zeros Nx.float32 [| 3 |] in
   let scale = Nx.ones Nx.float64 [| 3 |] in
   let path = temp_file "test_npz_" ".npz" in
@@ -350,9 +351,8 @@ let test_npz_external_deflate () =
       let archive = Nx_io.load_npz path in
       equal ~msg:"external entry count" int 2 (Hashtbl.length archive);
       let a = Hashtbl.find archive "a" |> Nx_io.to_typed Nx.float32 in
-      equal ~msg:"external float values"
-        (array float_exact)
-        [| 1.5; -2. |] (Nx.to_array a);
+      equal ~msg:"external float values" (array float_exact) [| 1.5; -2. |]
+        (Nx.to_array a);
       let b = Hashtbl.find archive "b" |> Nx_io.to_typed Nx.int64 in
       equal ~msg:"external int values" (array int64) [| 3L; 4L; 5L |]
         (Nx.to_array b))
@@ -675,10 +675,14 @@ let test_png_encode () =
       Nx_io.encode_png (Nx.create Nx.uint8 [| 1; 1; 2 |] [| 0; 0 |]))
 
 let test_zlib_round_trip () =
-  let text = String.concat "" (List.init 200 (fun i -> Printf.sprintf "line %d\n" i)) in
+  let text =
+    String.concat "" (List.init 200 (fun i -> Printf.sprintf "line %d\n" i))
+  in
   let z = Nx_io.deflate text in
   starts_with ~msg:"zlib header" ~affix:"\x78\x01" z;
-  satisfies ~msg:"smaller than the text" int (fun n -> n < String.length text) (String.length z);
+  satisfies ~msg:"smaller than the text" int
+    (fun n -> n < String.length text)
+    (String.length z);
   equal ~msg:"round trip" string text (Nx_io.inflate z);
   equal ~msg:"empty round trip" string "" (Nx_io.inflate (Nx_io.deflate ""));
   let big = String.init 300_000 (fun i -> Char.chr (i * 7 mod 251)) in
@@ -1276,14 +1280,12 @@ let test_safetensors_half_values_roundtrip () =
   let values = [| 0.0; -0.5; 1.5; -384.0; 0.00390625; 3.0 |] in
   let f16_data = Nx.create Nx.float16 [| 2; 3 |] values in
   let f16_loaded = safetensors_roundtrip Nx.float16 f16_data in
-  equal ~msg:"float16 values exact"
-    (array float_exact)
-    values (Nx.to_array f16_loaded);
+  equal ~msg:"float16 values exact" (array float_exact) values
+    (Nx.to_array f16_loaded);
   let bf16_data = Nx.create Nx.bfloat16 [| 2; 3 |] values in
   let bf16_loaded = safetensors_roundtrip Nx.bfloat16 bf16_data in
-  equal ~msg:"bfloat16 values exact"
-    (array float_exact)
-    values (Nx.to_array bf16_loaded)
+  equal ~msg:"bfloat16 values exact" (array float_exact) values
+    (Nx.to_array bf16_loaded)
 
 let test_safetensors_rank0_half () =
   let f16_scalar = Nx.scalar Nx.float16 (-2.5) in

@@ -745,6 +745,8 @@ thread.
   registers no fork handlers there. The I/O layer writes through Windows file
   handles, so `save_npy`, `save_npz`, `save_txt`, the image encoders, and gzip
   output work there.
+- `save_txt` writes exactly the requested `newline`. The channel was in text
+  mode, which turned every line ending into CRLF on Windows.
 - **Breaking:** the samplers take their distribution parameters as tensors,
   elementwise, and the draw has the parameters' shape and dtype:
   `Nx.Rng.bernoulli k p`, `poisson k rate`, `gamma k concentration`,

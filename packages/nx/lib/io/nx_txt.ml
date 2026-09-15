@@ -286,8 +286,8 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
     | Some (module S : SPEC with type elt = a and type kind = b) -> (
         let perm = 0o666 in
         let flags =
-          if append then [ Open_wronly; Open_creat; Open_append; Open_text ]
-          else [ Open_wronly; Open_creat; Open_trunc; Open_text ]
+          if append then [ Open_wronly; Open_creat; Open_append; Open_binary ]
+          else [ Open_wronly; Open_creat; Open_trunc; Open_binary ]
         in
         try
           let oc = open_out_gen flags perm out in
