@@ -167,8 +167,9 @@ thread.
 ### Tolk (new)
 
 - The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor
-  libraries load through `LoadLibrary`, and the hcq and system layers report
-  themselves unsupported there instead of failing to compile.
+  libraries load through `LoadLibrary`; the hcq layer maps anonymous memory
+  through `VirtualAlloc`, so the queue builders run, while device files and
+  the system layer report themselves unsupported.
 - New `Tolk_frontend.Linalg`: `qr`, `solve_triangular`, and `cholesky` unroll
   at graph-construction time into ordinary Tolk compositions, so they compile
   for every Tolk device. Large systems solve block-by-block as GEMMs, with
