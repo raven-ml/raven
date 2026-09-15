@@ -512,8 +512,8 @@ static void passg(int64_t ido, int64_t ip, int64_t l1, const cx2 *restrict cc,
   }
 }
 
-/* ── Plan: native mixed-radix, Bluestein, or the packed real wrapper ───────*/
-typedef enum { FFT_NATIVE, FFT_BLUESTEIN, FFT_REAL } fft_kind;
+/* ── Plan: native mixed-radix or Bluestein ────────────────────────────────*/
+typedef enum { FFT_NATIVE, FFT_BLUESTEIN } fft_kind;
 
 typedef struct {
   int radix;   /* 8, 4, 2, 3, 5, 7, or a generic odd prime (11, 13) */
@@ -527,8 +527,7 @@ typedef struct fft_plan {
   int64_t n;
   int sign;
   fft_kind kind;
-  int64_t work_cx; /* scratch cx2 exec needs beyond the size-n line buffer
-                      (for FFT_REAL: beyond the packed N+1 line, N = n/2) */
+  int64_t work_cx; /* scratch cx2 exec needs beyond the size-n line buffer */
   /* NATIVE */
   int nstages;
   fft_stage *stages;
@@ -536,15 +535,11 @@ typedef struct fft_plan {
   int64_t m;                  /* padded 7-smooth length (>= 2n-1) */
   cx2 *chirp;                 /* chirp[j] = exp(sign·iπ j²/n), j in [0,n) */
   cx2 *bfilter;               /* native FFT of the b-sequence times 1/m */
-  /* BLUESTEIN: native size-m forward/inverse sub-plans (sign -1 / +1).
-     REAL: mplan_fwd is the length-n/2 complex sub-plan with the SAME sign as
-     this node (a real inverse packs onto a +sign half-size transform);
-     mplan_inv stays NULL. Sub-plans are private to their parent — built by
-     direct plan_build, never through the cache. */
+  /* BLUESTEIN: native size-m forward/inverse sub-plans (sign -1 / +1),
+     private to their parent — built by direct build_native, never through
+     the cache. */
   struct fft_plan *mplan_fwd;
   struct fft_plan *mplan_inv;
-  /* REAL */
-  cx2 *rtw; /* untangle/pre-twiddle table, n/4+1 entries (see build_real) */
   struct fft_plan *next;
 } fft_plan;
 
@@ -564,7 +559,6 @@ static void plan_free(fft_plan *p) {
   }
   free(p->chirp);
   free(p->bfilter);
-  free(p->rtw);
   plan_free(p->mplan_fwd);
   plan_free(p->mplan_inv);
   free(p);
@@ -813,7 +807,37 @@ static fft_plan *plan_build(int64_t n, int sign) {
   return build_bluestein(n, sign);
 }
 
-/* Packed real plan (even n): the length-N=n/2 complex sub-plan plus the
+/* Lock held by the caller's CAMLprim; the cache mutex serializes cache ops
+   across domains. Grow-only: a returned pointer is never freed (the
+   no-eviction/no-UAF argument in the header). NULL on OOM. */
+static const fft_plan *plan_get(int64_t n, int sign) {
+  pthread_mutex_lock(&g_plan_mtx);
+  for (fft_plan *p = g_plans; p; p = p->next)
+    if (p->n == n && p->sign == sign) {
+      pthread_mutex_unlock(&g_plan_mtx);
+      return p;
+    }
+  fft_plan *p = plan_build(n, sign);
+  if (p) {
+    p->next = g_plans;
+    g_plans = p;
+  }
+  pthread_mutex_unlock(&g_plan_mtx);
+  return p;
+}
+
+/* Transform the length-n line `x` in place; `work` is >= plan->work_cx cx2. */
+static void plan_exec(const fft_plan *p, cx2 *x, cx2 *work) {
+  if (p->n <= 1) return; /* identity: length-1 line already holds its transform */
+  if (p->kind == FFT_NATIVE)
+    native_exec(p, x, work);
+  else
+    bluestein_exec(p, x, work);
+}
+
+/* ── Packed real plan (even n) ────────────────────────────────────────────
+   The length-N=n/2 complex sub-plan of the SAME sign as the real transform
+   (a real inverse packs onto a +sign half-size transform) plus the
    untangle/pre-twiddle table rtw[k] = (−sin θ_k, sign·cos θ_k), θ_k = 2πk/n,
    k = 0..N/2. sign −1 stores T[k] = −i·ω_n^k (the forward untangle twiddle),
    sign +1 stores U[k] = conj(T[k]) (the inverse pre-twiddle), so both packed
@@ -822,21 +846,39 @@ static fft_plan *plan_build(int64_t n, int sign) {
    never a recurrence (which would reintroduce O(√n)·u twiddle drift; same
    doctrine as the stage tables above). rtw[0] is allocated but unused (the
    DC/Nyquist edges are handled separately); keeping it makes indexing
-   uniform. The sub-plan comes from a direct plan_build call, NEVER plan_get:
-   the caller already holds g_plan_mtx (non-recursive), and Bluestein set the
-   precedent of private, unshared sub-plans. */
-static fft_plan *build_real(int64_t n, int sign) {
-  /* precondition: n even, n >= 2 (plan_get_kind's callers gate) */
-  fft_plan *p = calloc(1, sizeof(fft_plan));
+   uniform. Its own type keeps it out of plan_exec: the packed drivers run
+   `half` around their own twiddle pass, and no complex driver can be handed
+   a real plan by mistake. Cached like the complex plans, in its own list. */
+typedef struct real_plan {
+  int64_t n;
+  int sign;
+  fft_plan *half; /* length-n/2 complex sub-plan (native or Bluestein), private
+                     to this plan: built by direct plan_build, never plan_get —
+                     the builder runs under the non-recursive g_plan_mtx */
+  cx2 *rtw;
+  struct real_plan *next;
+} real_plan;
+
+static real_plan *g_real_plans = NULL;
+
+static void real_plan_free(real_plan *p) {
+  if (!p) return;
+  plan_free(p->half);
+  free(p->rtw);
+  free(p);
+}
+
+static real_plan *build_real(int64_t n, int sign) {
+  /* precondition: n even, n >= 2 (real_plan_get's callers gate) */
+  real_plan *p = calloc(1, sizeof(real_plan));
   if (!p) return NULL;
   p->n = n;
   p->sign = sign;
-  p->kind = FFT_REAL;
   int64_t N = n / 2;
-  p->mplan_fwd = plan_build(N, sign); /* native or Bluestein — either works */
+  p->half = plan_build(N, sign);
   p->rtw = malloc((size_t)(N / 2 + 1) * sizeof(cx2));
-  if (!p->mplan_fwd || !p->rtw) {
-    plan_free(p);
+  if (!p->half || !p->rtw) {
+    real_plan_free(p);
     return NULL;
   }
   for (int64_t k = 0; k <= N / 2; k++) {
@@ -848,44 +890,25 @@ static fft_plan *build_real(int64_t n, int sign) {
      6.1e-17 residue; pin it so the self-pair iterations multiply by a real
      −1 bit-exactly, as the untangle/pre-twiddle comments promise. */
   if (N % 2 == 0) p->rtw[N / 2].i = 0.0;
-  p->work_cx = p->mplan_fwd->work_cx;
   return p;
 }
 
-/* Lock held by the caller's CAMLprim; the cache mutex serializes cache ops
-   across domains. Grow-only: a returned pointer is never freed — the
-   no-eviction/no-UAF argument in the header covers FFT_REAL nodes like every
-   other kind. NULL on OOM. `real` selects the packed real wrapper; a real and
-   a complex plan of the same (n, sign) are distinct cache entries. */
-static const fft_plan *plan_get_kind(int64_t n, int sign, int real) {
+/* Same contract as plan_get: caller holds the runtime lock, grow-only cache
+   under g_plan_mtx, NULL on OOM. */
+static const real_plan *real_plan_get(int64_t n, int sign) {
   pthread_mutex_lock(&g_plan_mtx);
-  for (fft_plan *p = g_plans; p; p = p->next)
-    if (p->n == n && p->sign == sign && ((p->kind == FFT_REAL) == (real != 0))) {
+  for (real_plan *p = g_real_plans; p; p = p->next)
+    if (p->n == n && p->sign == sign) {
       pthread_mutex_unlock(&g_plan_mtx);
       return p;
     }
-  fft_plan *p = real ? build_real(n, sign) : plan_build(n, sign);
+  real_plan *p = build_real(n, sign);
   if (p) {
-    p->next = g_plans;
-    g_plans = p;
+    p->next = g_real_plans;
+    g_real_plans = p;
   }
   pthread_mutex_unlock(&g_plan_mtx);
   return p;
-}
-
-static const fft_plan *plan_get(int64_t n, int sign) {
-  return plan_get_kind(n, sign, 0);
-}
-
-/* Transform the length-n line `x` in place; `work` is >= plan->work_cx cx2.
-   Never called on an FFT_REAL node: the packed drivers run its complex
-   sub-plan (plan_exec(p->mplan_fwd, ...)) around their own twiddle pass. */
-static void plan_exec(const fft_plan *p, cx2 *x, cx2 *work) {
-  if (p->n <= 1) return; /* identity: length-1 line already holds its transform */
-  if (p->kind == FFT_NATIVE)
-    native_exec(p, x, work);
-  else
-    bluestein_exec(p, x, work);
 }
 
 /* ── Packed real path (even n) ────────────────────────────────────────────
@@ -1173,7 +1196,7 @@ static nx_c_status nx_c_fft_run(const nx_c_ndarray *in, const nx_c_ndarray *out,
 }
 
 /* ── rfft last axis, packed (even n) ──────────────────────────────────────
-   Per line: pack N=n/2 pairs → length-N complex FFT (the FFT_REAL sub-plan)
+   Per line: pack N=n/2 pairs → length-N complex FFT (the real plan's `half`)
    → in-place untangle → scatter the N+1 half-spectrum bins. Per-worker
    scratch is [ z: N+1 cx2 ][ work: work_cx cx2 ] — the z|work junction
    carries exactly the one extra Nyquist slot the algorithm forces, NOT an
@@ -1188,7 +1211,8 @@ typedef struct {
   int axis;
   int64_t N; /* n/2 */
   int64_t src_esz, dst_esz;
-  const fft_plan *plan; /* FFT_REAL, sign -1 */
+  const fft_plan *plan; /* the real plan's length-N sub-plan, sign -1 */
+  const cx2 *rtw;       /* and its untangle table */
   char *scratch;
   int64_t slot;
 } rfft_packed_ctx;
@@ -1204,8 +1228,8 @@ static void rfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     const char *sb = (const char *)c->src->data + line_base(c->src, c->axis, L) * c->src_esz;
     char *db = (char *)c->dst->data + line_base(c->dst, c->axis, L) * c->dst_esz;
     gather_real_pairs(c->src_dt, sb, sstride, c->src_esz, c->N, z);
-    plan_exec(c->plan->mplan_fwd, z, work);
-    rfft_untangle(z, c->plan->rtw, c->N);
+    plan_exec(c->plan, z, work);
+    rfft_untangle(z, c->rtw, c->N);
     scatter_cx(c->dst_dt, db, dstride, c->dst_esz, c->N + 1, z);
   }
 }
@@ -1214,7 +1238,7 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
                                   const nx_c_ndarray *src,
                                   const nx_c_ndarray *dst, int axis,
                                   int64_t n) {
-  const fft_plan *plan = plan_get_kind(n, -1, 1);
+  const real_plan *plan = real_plan_get(n, -1);
   if (!plan) return NX_C_ERR_ALLOC;
   int64_t N = n / 2;
 
@@ -1223,7 +1247,7 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
     if (d != axis) lines *= dst->shape[d];
   if (lines == 0) return NX_C_OK;
 
-  int64_t slot = (N + 1) + plan->work_cx; /* cx2 per worker */
+  int64_t slot = (N + 1) + plan->half->work_cx; /* cx2 per worker */
   int64_t bytes = lines * n * (int64_t)sizeof(cx2);
   int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, n, bytes);
   if (nth > lines) nth = (int)lines;
@@ -1242,7 +1266,8 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
   c.N = N;
   c.src_esz = nx_c_elem_size(src_dt);
   c.dst_esz = nx_c_elem_size(dst_dt);
-  c.plan = plan;
+  c.plan = plan->half;
+  c.rtw = plan->rtw;
   c.scratch = scratch;
   c.slot = slot_bytes / (int64_t)sizeof(cx2);
   nx_c_parallel_for(nth, lines, bytes, rfft_packed_body, &c, scratch);
@@ -1295,7 +1320,9 @@ typedef struct {
   int axis;
   int64_t half, s;
   int64_t out_esz, src_esz;
-  const fft_plan *plan;
+  const fft_plan *plan; /* length-s (odd s) or the real plan's length-s/2
+                           sub-plan (even s), sign +1 */
+  const cx2 *rtw;       /* the real plan's pre-twiddle table; even s only */
   char *scratch;
   int64_t slot;
 } irfft_ctx;
@@ -1360,8 +1387,8 @@ static void irfft_packed_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       x[k].r = 0.0;
       x[k].i = 0.0;
     }
-    irfft_pretwiddle(x, c->plan->rtw, N);
-    plan_exec(c->plan->mplan_fwd, x, work);
+    irfft_pretwiddle(x, c->rtw, N);
+    plan_exec(c->plan, x, work);
     scatter_real_pairs(c->out_dt, ob, ostride, c->out_esz, N, x);
   }
 }
@@ -1443,18 +1470,30 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
      s = 2·(in_half − 1) always is) takes the packed half-size inverse; an
      explicit odd s keeps the full-length reconstruct+mirror path. */
   int packed = (s >= 2 && (s & 1) == 0);
-  const fft_plan *plan = packed ? plan_get_kind(s, 1, 1) : plan_get(s, 1);
-  if (!plan) {
-    free(tdata);
-    return NX_C_ERR_ALLOC;
+  const fft_plan *plan;
+  const cx2 *rtw = NULL;
+  int64_t slot; /* cx2 per worker */
+  if (packed) {
+    const real_plan *rp = real_plan_get(s, 1);
+    if (!rp) {
+      free(tdata);
+      return NX_C_ERR_ALLOC;
+    }
+    plan = rp->half;
+    rtw = rp->rtw;
+    slot = (s / 2 + 1) + plan->work_cx;
+  } else {
+    plan = plan_get(s, 1);
+    if (!plan) {
+      free(tdata);
+      return NX_C_ERR_ALLOC;
+    }
+    slot = (half + FFT_PAD) + (s + FFT_PAD) + plan->work_cx;
   }
   int64_t lines = 1;
   for (int d = 0; d < out->ndim; d++)
     if (d != last) lines *= out->shape[d];
   if (lines > 0 && s > 0) {
-    int64_t slot = packed
-                      ? (s / 2 + 1) + plan->work_cx
-                      : (half + FFT_PAD) + (s + FFT_PAD) + plan->work_cx; /* cx2 */
     int64_t slot_bytes = ((slot * cesz) + 63) & ~(int64_t)63;
     int nth = nx_c_threads_for(NX_C_COST_COMPUTE, lines, s, lines * s * cesz);
     if (nth > lines) nth = (int)lines;
@@ -1475,6 +1514,7 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
     c.out_esz = nx_c_elem_size(out_dt);
     c.src_esz = nx_c_elem_size(src_dt);
     c.plan = plan;
+    c.rtw = rtw;
     c.scratch = scratch;
     c.slot = slot_bytes / cesz;
     /* scratch handed to the primitive as free_on_exit — do NOT free it here. */
