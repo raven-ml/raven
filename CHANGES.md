@@ -11,14 +11,6 @@ All notable changes to this project will be documented in this file.
 
 - Add compatibility with OCaml 5.5.
 
-### Nx
-
-- Add `Nx_io.encode_png`, the PNG bytes of a `uint8` image tensor as a
-  string, for embedding images in documents or sending them over a socket
-  without going through a file.
-- Add `Nx_io.deflate` and `Nx_io.inflate`, zlib compression of strings,
-  the format PDF and PNG streams use.
-
 ### Hugin
 
 - Hugin no longer depends on cairo or SDL2. Plots render through
@@ -719,6 +711,11 @@ thread.
 
 ### Nx
 
+- Add `Nx_io.encode_png`, the PNG bytes of a `uint8` image tensor as a
+  string, for embedding images in documents or sending them over a socket
+  without going through a file.
+- Add `Nx_io.deflate` and `Nx_io.inflate`, zlib compression of strings,
+  the format PDF and PNG streams use.
 - The C backend compiles with mingw-w64 on Windows. It no longer relies on the
   C11 `CMPLX` constructors or `aligned_alloc`, which mingw's headers lack, and
   registers no fork handlers there.
