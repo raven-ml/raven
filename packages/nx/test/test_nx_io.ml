@@ -674,6 +674,20 @@ let test_png_encode () =
   expect_failure "PNG requires" (fun () ->
       Nx_io.encode_png (Nx.create Nx.uint8 [| 1; 1; 2 |] [| 0; 0 |]))
 
+let test_zlib_round_trip () =
+  let text = String.concat "" (List.init 200 (fun i -> Printf.sprintf "line %d\n" i)) in
+  let z = Nx_io.deflate text in
+  starts_with ~msg:"zlib header" ~affix:"\x78\x01" z;
+  satisfies ~msg:"smaller than the text" int (fun n -> n < String.length text) (String.length z);
+  equal ~msg:"round trip" string text (Nx_io.inflate z);
+  equal ~msg:"empty round trip" string "" (Nx_io.inflate (Nx_io.deflate ""));
+  let big = String.init 300_000 (fun i -> Char.chr (i * 7 mod 251)) in
+  equal ~msg:"large round trip" string big (Nx_io.inflate (Nx_io.deflate big));
+  expect_failure "not a zlib stream" (fun () -> Nx_io.inflate "hello");
+  let corrupt = Bytes.of_string z in
+  Bytes.set corrupt (Bytes.length corrupt - 1) '\000';
+  expect_failure "checksum" (fun () -> Nx_io.inflate (Bytes.to_string corrupt))
+
 let test_png_rejects_corruption () =
   let contents = string_of_hex png_filters_fixture |> Bytes.of_string in
   Bytes.set contents 48 (Char.chr (Char.code (Bytes.get contents 48) lxor 1));
@@ -1406,6 +1420,7 @@ let () =
           test "Checksum failure is atomic"
             test_gunzip_preserves_destination_on_error;
         ];
+      group "zlib" [ test "Round trip" test_zlib_round_trip ];
       group "png"
         [
           test "External filters" test_png_external_filters;

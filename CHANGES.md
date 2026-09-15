@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 - Add `Nx_io.encode_png`, the PNG bytes of a `uint8` image tensor as a
   string, for embedding images in documents or sending them over a socket
   without going through a file.
+- Add `Nx_io.deflate` and `Nx_io.inflate`, zlib compression of strings,
+  the format PDF and PNG streams use.
 
 ### Hugin
 
@@ -47,7 +49,7 @@ All notable changes to this project will be documented in this file.
   `[|height; width; 4|]` RGBA tensor with analytic antialiasing;
   `hugin.vg.svg` and `hugin.vg.pdf` write it as a self-contained SVG or
   single-page PDF document, with text kept as text, the fonts it uses
-  embedded, and images stored losslessly.
+  embedded, images stored losslessly and every PDF stream deflated.
 
 ### Vega
 

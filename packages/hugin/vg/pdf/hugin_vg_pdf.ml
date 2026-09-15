@@ -38,7 +38,12 @@ let set doc n body =
   let i = doc.count - n in
   doc.objects <- List.mapi (fun j b -> if j = i then body else b) doc.objects
 
-let stream dict data =
+(* Streams are deflated unless their data already is. *)
+let stream ?(compress = true) dict data =
+  let dict, data =
+    if compress then ("/Filter /FlateDecode " ^ dict, Nx_io.deflate data)
+    else (dict, data)
+  in
   Printf.sprintf "<< /Length %d %s>>\nstream\n%s\nendstream"
     (String.length data) dict data
 
@@ -180,7 +185,7 @@ let image_object st ?smask data ~rows ~cols ~channels =
       | Some n -> Printf.sprintf "/SMask %d 0 R " n
       | None -> "")
   in
-  add st.doc (stream dict (idat (Nx_io.encode_png data)))
+  add st.doc (stream ~compress:false dict (idat (Nx_io.encode_png data)))
 
 (* [split_alpha data] is the RGB and alpha planes of an RGBA image. *)
 let split_alpha data ~rows ~cols =

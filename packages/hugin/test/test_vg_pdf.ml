@@ -18,6 +18,21 @@ let count ~sub s =
   in
   go 0 0
 
+(* The data of every stream in [pdf], inflated, joined by newlines. *)
+let streams pdf =
+  let re = Str.regexp "/Length \\([0-9]+\\)[^>]*>>\nstream\n" in
+  let rec go pos acc =
+    match Str.search_forward re pdf pos with
+    | exception Not_found -> String.concat "\n" (List.rev acc)
+    | _ ->
+        let len = int_of_string (Str.matched_group 1 pdf) in
+        let start = Str.match_end () in
+        let data = String.sub pdf start len in
+        let data = try Nx_io.inflate data with Failure _ -> data in
+        go (start + len) (data :: acc)
+  in
+  go 0 []
+
 (* The cross-reference table must point every object at its header. *)
 let check_xref pdf =
   let startxref =
@@ -52,27 +67,29 @@ let test_document () =
   contains ~sub:"/Type /Catalog" pdf;
   contains ~sub:"/MediaBox [0 0 100 50]" pdf;
   contains ~msg:"canvas coordinates are flipped once" ~sub:"1 0 0 -1 0 50 cm"
-    pdf;
+    (streams pdf);
+  contains ~msg:"the content stream is deflated" ~sub:"/Filter /FlateDecode" pdf;
   check_xref pdf
 
 let test_fill_and_stroke () =
   let pdf = render (Picture.fill red (Path.rect 1. 2. 3. 4.)) in
-  contains ~sub:"1 0 0 rg\n1 2 m\n4 2 l\n4 6 l\n1 6 l\nh\nf\n" pdf;
+  contains ~sub:"1 0 0 rg\n1 2 m\n4 2 l\n4 6 l\n1 6 l\nh\nf\n" (streams pdf);
   let pdf = render (Picture.fill ~rule:`Evenodd red (Path.rect 0. 0. 1. 1.)) in
-  contains ~sub:"h\nf*\n" pdf;
+  contains ~sub:"h\nf*\n" (streams pdf);
   let s =
     Stroke.v ~cap:`Square ~join:`Bevel ~dash:[| 3.; 1. |] ~miter_limit:2. 1.5
   in
   let pdf =
     render (Picture.stroke s red (Path.polyline [| 0.; 10. |] [| 0.; 5. |]))
   in
-  contains ~sub:"1 0 0 RG\n1.5 w 2 J 2 j 2 M\n[3 1] 0 d\n0 0 m\n10 5 l\nS\n" pdf
+  contains ~sub:"1 0 0 RG\n1.5 w 2 J 2 j 2 M\n[3 1] 0 d\n0 0 m\n10 5 l\nS\n"
+    (streams pdf)
 
 let test_alpha_uses_ext_gstate () =
   let pdf =
     render (Picture.fill (Color.v ~a:0.25 1. 0. 0.) (Path.rect 0. 0. 1. 1.))
   in
-  contains ~sub:"q /GS1 gs\n1 0 0 rg\n" pdf;
+  contains ~sub:"q /GS1 gs\n1 0 0 rg\n" (streams pdf);
   contains ~sub:"/GS1 << /Type /ExtGState /ca 0.25 /CA 0.25 >>" pdf;
   let pdf =
     render
@@ -86,15 +103,15 @@ let test_alpha_uses_ext_gstate () =
 
 let test_text_embeds_font () =
   let pdf = render (Picture.text Font.bold ~size:12. red ~x:3. ~y:20. "AV") in
-  contains ~sub:"BT /F1 12 Tf 1 0 0 -1 3 20 Tm [ <" pdf;
-  contains ~msg:"kerning as a TJ adjustment" ~sub:"> " pdf;
+  let content = streams pdf in
+  contains ~sub:"BT /F1 12 Tf 1 0 0 -1 3 20 Tm [ <" content;
   contains ~sub:"/Subtype /Type0 /BaseFont /Inter-Bold /Encoding /Identity-H"
     pdf;
   contains ~sub:"/Subtype /CIDFontType2" pdf;
   contains ~sub:"/CIDToGIDMap /Identity" pdf;
   contains ~sub:"/FontFile2" pdf;
   contains ~sub:"/Length1 " pdf;
-  contains ~sub:"beginbfchar" pdf;
+  contains ~sub:"beginbfchar" content;
   equal ~msg:"one embedded font file" int 1 (count ~sub:"/Length1 " pdf);
   (* The glyph run for AV is two glyph ids with a negative kern between. *)
   let tj =
@@ -102,15 +119,15 @@ let test_text_embeds_font () =
   in
   is_true ~msg:"two glyphs with an adjustment"
     (try
-       ignore (Str.search_forward tj pdf 0);
-       float_of_string (Str.matched_group 2 pdf) > 0.
+       ignore (Str.search_forward tj content 0);
+       float_of_string (Str.matched_group 2 content) > 0.
      with Not_found -> false);
   check_xref pdf
 
 let test_image () =
   let data = Nx.create Nx.uint8 [| 1; 2; 3 |] [| 255; 0; 0; 0; 0; 255 |] in
   let pdf = render (Picture.image ~x:1. ~y:2. ~w:20. ~h:10. data) in
-  contains ~sub:"q 20 0 0 -10 1 12 cm /Im1 Do Q" pdf;
+  contains ~sub:"q 20 0 0 -10 1 12 cm /Im1 Do Q" (streams pdf);
   contains
     ~sub:
       "/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceRGB \
@@ -130,15 +147,18 @@ let test_image () =
 let test_clip_transform_stamp () =
   let inner = Picture.fill red (Path.rect 0. 0. 1. 1.) in
   let pdf = render (Picture.clip (Path.rect 0. 0. 10. 10.) inner) in
-  contains ~sub:"q\n0 0 m\n10 0 l\n10 10 l\n0 10 l\nh\nW n\n1 0 0 rg\n" pdf;
+  contains ~sub:"q\n0 0 m\n10 0 l\n10 10 l\n0 10 l\nh\nW n\n1 0 0 rg\n"
+    (streams pdf);
   let pdf =
     render (Picture.transform Affine.(translate 5. 6. * scale 2. 3.) inner)
   in
-  contains ~sub:"q\n2 0 0 3 5 6 cm\n" pdf;
+  contains ~sub:"q\n2 0 0 3 5 6 cm\n" (streams pdf);
   let pdf = render (Picture.stamp inner [| 1.; nan; 3. |] [| 2.; 2.; 4. |]) in
   contains ~sub:"/Subtype /Form" pdf;
-  contains ~sub:"q 1 0 0 1 1 2 cm /Fm1 Do Q\nq 1 0 0 1 3 4 cm /Fm1 Do Q\n" pdf;
-  equal ~msg:"non-finite positions are skipped" int 2 (count ~sub:"/Fm1 Do" pdf);
+  contains ~sub:"q 1 0 0 1 1 2 cm /Fm1 Do Q\nq 1 0 0 1 3 4 cm /Fm1 Do Q\n"
+    (streams pdf);
+  equal ~msg:"non-finite positions are skipped" int 2
+    (count ~sub:"/Fm1 Do" (streams pdf));
   check_xref pdf
 
 let () =

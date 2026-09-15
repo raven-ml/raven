@@ -117,6 +117,17 @@ val save_npz : ?overwrite:bool -> string -> (string * packed) list -> unit
       if a name is invalid or duplicated, a tensor dtype has no standard NPY
       representation, or [path] cannot be written. *)
 
+val deflate : string -> string
+(** [deflate s] is [s] compressed as a zlib stream, the format of PDF's
+    [FlateDecode] filter and of PNG image data. *)
+
+val inflate : string -> string
+(** [inflate s] is the data of the zlib stream [s], so that
+    [inflate (deflate s) = s].
+
+    @raise Failure if [s] is not a zlib stream or its checksum does not match.
+*)
+
 val gunzip : src:string -> dst:string -> unit
 (** [gunzip ~src ~dst] decompresses a gzip file to [dst]. Existing [dst] is
     replaced only after every member and checksum has been validated.
