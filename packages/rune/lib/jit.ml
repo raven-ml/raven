@@ -37,9 +37,9 @@
    them — have no single Tolk Uop, so the tracer builds them as ordinary Tolk
    compositions, which compile for every Tolk device. The factorizations unroll
    into a number of steps fixed by the input shapes alone (see
-   [Tolk_frontend.Linalg]). A linear solve inside jit is the same composition
-   written out by hand — [qr] plus [solve_triangular] — because [Nx.solve]'s
-   eager singularity check reads a traced value. Threefry (the RNG primitive)
+   [Tolk_frontend.Linalg]); [Nx.solve] and [Nx.inv] compile through them, a
+   singular system yielding infinities where the eager kernel raises. Threefry
+   (the RNG primitive)
    compiles, but only when its key depends on the traced inputs: a constant key
    would burn one draw into the program and silently replay it on every call, so
    it raises [Jit_error] pointing at [Nx.Rng] key threading. *)

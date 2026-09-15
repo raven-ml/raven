@@ -2382,8 +2382,9 @@ val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
 (** [matrix_power t n] raises square matrix [t] to integer power [n]. [n = 0]
     returns the identity; [n < 0] uses the inverse.
 
-    Raises [Invalid_argument] if [t] is not square, the dtype is not
-    floating-point or complex, or [n < 0] and [t] is singular. *)
+    Raises {!Linalg_error} with kind [`Singular] if [n < 0] and [t] is
+    singular. Raises [Invalid_argument] if [t] is not square or the dtype is
+    not floating-point or complex. *)
 
 val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [cross ?axis a b] is the cross product of 3-element vectors along [axis].
@@ -2577,8 +2578,9 @@ val solve_triangular :
 val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [solve a b] is [x] such that [a *@ x = b].
 
-    Raises [Invalid_argument] if [a] is singular or the dtype is not
-    floating-point or complex.
+    Raises {!Linalg_error} with kind [`Singular] if [a] is singular: a pivot of
+    its triangular factor lies below tolerance. Raises [Invalid_argument] if
+    [a] is not square or the dtype is not floating-point or complex.
 
     See also {!solve_triangular}, {!lstsq}, {!inv}. *)
 
@@ -2597,8 +2599,9 @@ val lstsq :
 val inv : ('a, 'b) t -> ('a, 'b) t
 (** [inv a] is the inverse of square matrix [a].
 
-    Raises [Invalid_argument] if [a] is singular, not square, or the dtype is
-    not floating-point or complex.
+    Raises {!Linalg_error} with kind [`Singular] if [a] is singular. Raises
+    [Invalid_argument] if [a] is not square or the dtype is not floating-point
+    or complex.
 
     See also {!pinv}, {!solve}. *)
 

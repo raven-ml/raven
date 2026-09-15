@@ -655,6 +655,11 @@ thread.
   triangular solver named after its scipy analog. It skips the factorization
   cost of `solve` for a pre-triangularized `a`; `b` is a vector or a stack of
   right-hand sides, batched like `a`.
+- `Nx.solve`, `Nx.inv`, and `Nx.matrix_power` raise `Linalg_error` with kind
+  `` `Singular `` for a singular matrix, as `solve_triangular` does, instead
+  of `Invalid_argument`. The check now lives in the graph rather than reading
+  the factor back to the host, which is what lets `solve` and `inv` compile
+  under `Rune.jit`.
 - **Breaking:** the backend operation `triangular_solve` and its effect
   `E_triangular_solve` are renamed `solve_triangular` and `E_solve_triangular`.
   Out-of-tree backends and effect handlers must follow.
@@ -1083,11 +1088,11 @@ thread.
   `Nx.cholesky`, `Nx.qr`, and `Nx.solve_triangular`: the rules reversed every
   axis and extracted, rather than built, their diagonal terms, so a stack of
   matrices gave wrong gradients or a shape error.
-- `Rune.jit` compiles `Nx.qr`, `Nx.solve_triangular`, and `Nx.cholesky`: they
-  unroll at trace time into the fixed number of steps their shapes imply (see
-  `Tolk_frontend.Linalg`), and `grad` through them compiles as well. A
-  singular or non-positive-definite input yields infinities or nans in the
-  compiled program rather than an error.
+- `Rune.jit` compiles `Nx.qr`, `Nx.solve_triangular`, `Nx.cholesky`,
+  `Nx.solve`, and `Nx.inv`: the factorizations unroll at trace time into the
+  fixed number of steps their shapes imply (see `Tolk_frontend.Linalg`), and
+  `grad` through them compiles as well. A singular or non-positive-definite
+  input yields infinities or nans in the compiled program rather than an error.
 
 - `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
   forward substitution unrolled at trace time into the fixed number of steps

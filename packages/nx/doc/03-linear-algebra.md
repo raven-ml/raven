@@ -116,6 +116,16 @@ Solve A·x = b for x:
 let x = Nx.solve a b
 ```
 
+### solve_triangular
+
+Solve a triangular system directly, skipping the factorization. Only the
+triangle named by `upper` is read:
+
+<!-- $MDX skip -->
+```ocaml
+let x = Nx.solve_triangular ~upper:true r b
+```
+
 ### lstsq
 
 Least-squares solution (for overdetermined systems):
