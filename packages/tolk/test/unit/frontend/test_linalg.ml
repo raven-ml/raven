@@ -205,6 +205,31 @@ let solve_tests =
           in
           check_zero ~tol:1e-3 ~msg:"blocked flags |e·x - b|"
             (El.sub (Op.matmul e x) b));
+      test "batched systems take the blocked path" (fun () ->
+          (* The diagonal blocks stack on a fresh axis behind the batch axis;
+             70 rows leave a partial trailing block. *)
+          let n = 70 and nrhs = 60 in
+          let a_data =
+            Array.init (2 * n * n) (fun k ->
+                let k = k mod (n * n) in
+                let i, j = (k / n, k mod n) in
+                if i > j then
+                  Float.of_int ((((i * 37) + (j * 11)) mod 13) - 6) /. 8.0
+                else if i = j then 2.0
+                else 0.0)
+          in
+          let b_data =
+            Array.init (2 * n * nrhs) (fun k ->
+                Float.of_int ((((k / nrhs) * 5) + (k mod nrhs)) mod 7) -. 3.)
+          in
+          let a = fa ~shape:[ 2; n; n ] a_data in
+          let b = fa ~shape:[ 2; n; nrhs ] b_data in
+          let x =
+            Linalg.solve_triangular ~upper:false ~transpose:false
+              ~unit_diag:false a b
+          in
+          check_zero ~tol:1e-3 ~msg:"batched blocked |a·x - b|"
+            (El.sub (Op.matmul a x) b));
     ]
 
 let cholesky_tests =
