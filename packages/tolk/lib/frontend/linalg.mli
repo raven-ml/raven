@@ -50,11 +50,11 @@ val solve_triangular :
     [batch @ [n]] or [nrhs] right-hand sides stacked as [batch @ [n; nrhs]];
     the result has the shape of [b].
 
-    Wide right-hand sides (at least {!block_threshold} columns on a matrix of
-    more than [2 * block_rows] rows) solve block-by-block — {!block_rows}-row
-    blocks, each diagonal block inverted once, one GEMM per block against the
-    rows solved so far — which runs the substitution as real GEMMs instead of
-    one thin matmul per row.
+    Large systems (at least 3500 right-hand-side elements on a matrix of more
+    than 64 rows) solve block-by-block — 32-row blocks, the diagonal blocks
+    inverted together up front, one GEMM per block against the rows solved so
+    far — which runs the substitution as real GEMMs instead of one thin
+    matmul per row.
 
     Raises [Invalid_argument] if [a] has a non-float dtype. A singular
     [a] (a zero diagonal entry with [unit_diag:false]) yields infinities

@@ -192,11 +192,12 @@ let qr ~reduced a =
      running solution is assembled by concatenation, copying O(n²·nrhs)
      elements over a full solve.
 
-   - Blocked, for wide right-hand sides: rows are partitioned into blocks of
+   - Blocked, for large systems: rows are partitioned into blocks of
      [block_rows]. Each block's off-diagonal contribution lands in one GEMM
-     against the rows solved so far, each diagonal block is inverted once
-     (its inverse does not depend on the right-hand side), and a second GEMM
-     solves the block, spliced in with a pad-and-add. The copying drops to
+     against the rows solved so far, the diagonal blocks are inverted up front
+     by one batched substitution (their inverses do not depend on the
+     right-hand side), and a second GEMM solves the block. The solved blocks
+     are stacked into the result, so the copying drops to
      O(n²·nrhs / block_rows) and the substitution arithmetic runs as real
      GEMMs. *)
 
@@ -224,10 +225,11 @@ let forward_solve_unblocked ~unit_diag ~dt ~batch low rhs =
 
 let block_rows = 32
 
-(* Right-hand sides at least this wide take the blocked path; below it the
-   unrolled substitution's smaller kernel count wins (its crossover on the
-   reference machine measured around [nrhs ≈ 3500 / n]). *)
-let block_threshold = 32
+(* Systems with at least this many right-hand-side elements ([n · nrhs]) take
+   the blocked path; below it the unrolled substitution's smaller kernel count
+   wins (the crossover on the reference machine measured around
+   [nrhs ≈ 3500 / n]). *)
+let block_crossover = 3500
 
 let solve_triangular ~upper ~transpose ~unit_diag a b =
   let module E = Elementwise in
@@ -251,44 +253,65 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
     let rhs = if flipped then Movement.flip bm [ -2 ] else bm in
     let nrhs = List.nth (Tensor.shape bm) (rank - 1) in
     let x =
-      if nrhs >= block_threshold && n > 2 * block_rows then begin
+      if n * nrhs >= block_crossover && n > 2 * block_rows then begin
         let nblocks = (n + block_rows - 1) / block_rows in
-        (* The inverse of each diagonal block — independent of the
-           right-hand side, so computed once up front. *)
+        let np = nblocks * block_rows in
+        let keep = List.map (fun _ -> (0, 0)) batch in
+        (* Pad the system to whole blocks: the extra rows carry the identity
+           and a zero right-hand side, so they solve to zero and never touch
+           the rows above. *)
+        let low, rhs =
+          if np = n then (low, rhs)
+          else
+            let extra = np - n in
+            ( E.add
+                (Movement.pad low (keep @ [ (0, extra); (0, extra) ]))
+                (Movement.pad
+                   (Movement.expand
+                      (Op.eye ~m:extra ~dtype:dt extra)
+                      (batch @ [ extra; extra ]))
+                   (keep @ [ (n, 0); (n, 0) ])),
+              Movement.pad rhs (keep @ [ (0, extra); (0, 0) ]) )
+        in
+        let w = block_rows in
+        (* The diagonal blocks, stacked on a new leading axis and inverted
+           together by one batched substitution against the identity — their
+           inverses do not depend on the right-hand side. *)
+        let block k =
+          slice2 low (Some (k * w, (k + 1) * w)) (Some (k * w, (k + 1) * w))
+        in
         let inverses =
-          Array.init nblocks (fun k ->
-              let lo = k * block_rows in
-              let w = Stdlib.min block_rows (n - lo) in
-              forward_solve_unblocked ~unit_diag ~dt ~batch
-                (slice2 low (Some (lo, lo + w)) (Some (lo, lo + w)))
-                (Movement.expand (Op.eye ~m:w ~dtype:dt w) (batch @ [ w; w ])))
+          forward_solve_unblocked ~unit_diag ~dt ~batch:(nblocks :: batch)
+            (Movement.stack (block 0)
+               (List.init (nblocks - 1) (fun k -> block (k + 1))))
+            (Movement.expand (Op.eye ~m:w ~dtype:dt w)
+               (nblocks :: batch @ [ w; w ]))
         in
-        let x =
-          ref
-            (Creation.full ~buffer:false ~dtype:dt (batch @ [ n; nrhs ])
-               (Tensor.Sfloat 0.0))
+        let inverse k =
+          Movement.squeeze ~dim:0
+            (Movement.shrink inverses
+               (((k, k + 1) :: List.map (fun d -> (0, d)) batch)
+               @ [ (0, w); (0, w) ]))
         in
+        (* The solved blocks, most recent first; the rows solved so far are
+           their concatenation, which stacks equal-height pieces as a view. *)
+        let solved = ref [] in
         for k = 0 to nblocks - 1 do
-          let lo = k * block_rows in
-          let w = Stdlib.min block_rows (n - lo) in
+          let lo = k * w in
           let hi = lo + w in
           let rhs_k =
             let base = slice2 rhs (Some (lo, hi)) None in
             if k = 0 then base
             else
               E.sub base
-                (Op.matmul (slice2 low (Some (lo, hi)) (Some (0, lo)))
-                   (slice2 !x (Some (0, lo)) None))
+                (Op.matmul
+                   (slice2 low (Some (lo, hi)) (Some (0, lo)))
+                   (cat2 (List.rev !solved)))
           in
-          let xk = Op.matmul inverses.(k) rhs_k in
-          (* Splice the solved rows into the running solution. *)
-          x :=
-            E.add !x
-              (Movement.pad xk
-                 (List.map (fun _ -> (0, 0)) batch
-                 @ [ (lo, n - hi); (0, 0) ]))
+          solved := Op.matmul (inverse k) rhs_k :: !solved
         done;
-        !x
+        let x = cat2 (List.rev !solved) in
+        if np = n then x else slice2 x (Some (0, n)) None
       end
       else forward_solve_unblocked ~unit_diag ~dt ~batch low rhs
     in

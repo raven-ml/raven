@@ -103,7 +103,8 @@ thread.
 ### Tolk (new)
 - New `Tolk_frontend.Linalg`: `qr`, `solve_triangular`, and `cholesky` unroll
   at graph-construction time into ordinary Tolk compositions, so they compile
-  for every Tolk device. Wide right-hand sides solve block-by-block as GEMMs.
+  for every Tolk device. Large systems solve block-by-block as GEMMs, with
+  the diagonal blocks inverted by one batched substitution.
 
 - Driver-less NVIDIA (`NV_IFACE=PCI`) hardening: opening now waits for the
   GPU's boot firmware to report ready before sizing VRAM (a device opened
