@@ -3825,18 +3825,24 @@ module Make (B : Backend_intf.S) = struct
       else b
     in
     let q, r = B.qr ~reduced:true a in
-    let r_diag = diagonal r |> cast Dtype.float64 in
-    let m = dim (-2) a in
-    let eps = if Dtype.equal (dtype a) Dtype.float32 then 1e-6 else 1e-12 in
-    let tol_t =
-      full (B.context r_diag) Dtype.float64 (shape r_diag)
-        (eps *. float_of_int m)
+    (* A pivot below tolerance makes the system singular. Zeroing its row keeps
+       the check in the graph: the triangular solve then reports [`Singular]
+       itself, and a compiled program yields infinities instead. *)
+    let r =
+      let r_diag = diagonal r |> cast Dtype.float64 in
+      let m = dim (-2) a in
+      let eps = if Dtype.equal (dtype a) Dtype.float32 then 1e-6 else 1e-12 in
+      let tol_t =
+        full (B.context r_diag) Dtype.float64 (shape r_diag)
+          (eps *. float_of_int m)
+      in
+      where (expand_dims [ -1 ] (less (abs r_diag) tol_t)) (zeros_like r) r
     in
-    if sum (cast Dtype.float64 (less (abs r_diag) tol_t)) |> unsafe_get [] > 0.
-    then invalid_arg "solve: matrix is singular";
     let y = matmul (matrix_transpose q) b_expanded in
     let result =
-      B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r y
+      try B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r y
+      with Backend_intf.Linalg_error { kind; _ } ->
+        raise (Backend_intf.Linalg_error { op = "solve"; kind })
     in
     if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
@@ -3962,9 +3968,11 @@ module Make (B : Backend_intf.S) = struct
         (Array.append batch [| n; n |])
         (eye (B.context a) (dtype a) n)
     in
-    try solve a i
-    with Invalid_argument msg when String.sub msg 0 5 = "solve" ->
-      invalid_arg ("inv" ^ String.sub msg 5 (String.length msg - 5))
+    try solve a i with
+    | Invalid_argument msg when String.sub msg 0 5 = "solve" ->
+        invalid_arg ("inv" ^ String.sub msg 5 (String.length msg - 5))
+    | Backend_intf.Linalg_error { kind; _ } ->
+        raise (Backend_intf.Linalg_error { op = "inv"; kind })
 
   let matrix_power a n =
     let sh = shape a in
@@ -3986,8 +3994,8 @@ module Make (B : Backend_intf.S) = struct
       try
         let ia = inv a in
         if -n = 1 then ia else power ia ia (-n - 1)
-      with Invalid_argument _ ->
-        invalid_arg "matrix_power: singular for negative exponent"
+      with Backend_intf.Linalg_error { kind; _ } ->
+        raise (Backend_intf.Linalg_error { op = "matrix_power"; kind })
 
   let cond ?p x =
     check_square ~op:"cond" x;
@@ -4071,7 +4079,7 @@ module Make (B : Backend_intf.S) = struct
     let b_vec = reshape [| rows |] b in
     let solution =
       try solve a_mat b_vec
-      with Invalid_argument _ ->
+      with Backend_intf.Linalg_error { kind = `Singular; _ } ->
         let x_col = matmul (pinv a_mat) (reshape [| rows; 1 |] b_vec) in
         reshape [| cols |] x_col
     in
@@ -4097,7 +4105,8 @@ module Make (B : Backend_intf.S) = struct
          product";
     let inv_mat =
       try inv (reshape [| ls; rs |] a)
-      with Invalid_argument _ -> pinv (reshape [| ls; rs |] a)
+      with Backend_intf.Linalg_error { kind = `Singular; _ } ->
+        pinv (reshape [| ls; rs |] a)
     in
     reshape (Array.append right left) inv_mat
 

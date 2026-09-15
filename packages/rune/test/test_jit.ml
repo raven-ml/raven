@@ -359,9 +359,9 @@ let test_cholesky_matches_eager () =
   let u = Rune.jit' (fun m -> Nx.cholesky ~upper:true m) a in
   check_arr ~msg:"upper" (to_arr (Nx.cholesky ~upper:true a)) u
 
-(* The Cholesky pullback is jit-safe (its diagonal terms come from the identity,
-   and its triangular solves compile), so differentiating a Cholesky-using loss
-   inside jit compiles the whole backward pass. *)
+(* The Cholesky pullback is jit-safe (its diagonal terms and triangular solves
+   are graph ops), so differentiating a Cholesky-using loss inside jit compiles
+   the whole backward pass. *)
 let test_cholesky_gradient_compiles () =
   let loss m = Nx.sum (Nx.mul (Nx.cholesky m) (Nx.cholesky m)) in
   let a = mat64 3 3 [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |] in
@@ -370,15 +370,10 @@ let test_cholesky_gradient_compiles () =
     (to_arr (Rune.grad' loss a))
     (to_arr compiled)
 
-(* A linear solve inside jit is the QR + triangular-solve composition written
-   out by hand: [Nx.solve] itself refuses to trace because its singularity check
-   reads a traced value. *)
-let test_linear_solve_composition () =
-  let solve (a, b) =
-    let q, r = Nx.qr ~mode:`Reduced a in
-    Nx.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r
-      (Nx.matmul (Nx.transpose q) b)
-  in
+(* [Nx.solve] compiles: its singularity check lives in the graph, so the QR and
+   the triangular solve trace as one program, and [Nx.inv] follows. *)
+let test_solve_matches_eager () =
+  let solve (a, b) = Nx.solve a b in
   let a =
     Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
   in
@@ -388,7 +383,8 @@ let test_linear_solve_composition () =
   (* Replay solves a different system with the same compiled program. *)
   let a2 = Nx.mul_s a 1.5 in
   let b2 = Nx.add_s b 2.0 in
-  check_arr ~msg:"replay" (to_arr (Nx.solve a2 b2)) (g (a2, b2))
+  check_arr ~msg:"replay" (to_arr (Nx.solve a2 b2)) (g (a2, b2));
+  check_arr ~msg:"inv" (to_arr (Nx.inv a)) (Rune.jit' (fun m -> Nx.inv m) a)
 
 (* Staged scans: under jit a [Rune.scan] compiles the fold step once and runs it
    as a loop in the compiled program, and [grad] through it compiles a reversed
@@ -1381,8 +1377,7 @@ let tests =
         test "triangular solve takes a vector right-hand side"
           test_solve_triangular_vector_rhs;
         test "triangular solve is batched" test_solve_triangular_batched;
-        test "a linear solve is the QR + triangular-solve composition"
-          test_linear_solve_composition;
+        test "solve and inv match eager" test_solve_matches_eager;
         test "the gradient of a QR-using loss compiles"
           test_qr_gradient_compiles;
       ];

@@ -310,8 +310,9 @@ let test_solve_batch () =
 let test_solve_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
   let b = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
-  check_invalid_arg "solve singular" "solve: matrix is singular" (fun () ->
-      ignore (Nx.solve a b))
+  raises ~msg:"solve singular"
+    (Nx.Linalg_error { op = "solve"; kind = `Singular })
+    (fun () -> ignore (Nx.solve a b))
 
 let test_solve_non_square () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -332,8 +333,9 @@ let test_inv_inverse () =
 
 let test_inv_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
-  check_invalid_arg "inv singular" "inv: matrix is singular" (fun () ->
-      ignore (Nx.inv a))
+  raises ~msg:"inv singular"
+    (Nx.Linalg_error { op = "inv"; kind = `Singular })
+    (fun () -> ignore (Nx.inv a))
 
 (* ───── Decomposition Tests ───── *)
 
@@ -1380,8 +1382,8 @@ let test_matrix_power () =
 let test_matrix_power_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
   raises ~msg:"matrix_power singular negative"
-    (Invalid_argument "matrix_power: singular for negative exponent") (fun () ->
-      ignore (Nx.matrix_power a (-1)))
+    (Nx.Linalg_error { op = "matrix_power"; kind = `Singular })
+    (fun () -> ignore (Nx.matrix_power a (-1)))
 
 let test_cross () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
