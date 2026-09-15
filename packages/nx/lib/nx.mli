@@ -148,7 +148,13 @@ val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
 
     The buffer is shared: mutations through the buffer are visible through [t]
     and vice-versa. The buffer may be larger than the tensor's logical extent
-    when [t] is a strided view. *)
+    when [t] is a strided view.
+
+    Element [[i0; ...; ik]] of [t] is at buffer index
+    [offset t + i0 * s0 + ... + ik * sk], where [sj] is [strides t.(j)] divided
+    by {!itemsize}. Reading the buffer this way walks a tensor of any layout
+    without allocating, unlike {!item}. See {!iter_item} and {!fold_item} for
+    whole-tensor traversal. *)
 
 val shape : ('a, 'b) t -> int array
 (** [shape t] is the dimensions of [t]. A scalar tensor has shape [|\||]. *)
@@ -1230,6 +1236,10 @@ val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
 val item : int list -> ('a, 'b) t -> 'a
 (** [item indices t] is the scalar value at [indices]. Indices must cover all
     dimensions.
+
+    Each call allocates its index list. To visit every element, use {!iter_item}
+    or {!fold_item}; for indexed reads in a hot loop, read {!data} at {!offset}
+    plus the element strides, as described there.
 
     Raises [Invalid_argument] if the number of indices is wrong or any index is
     out of bounds.
