@@ -660,7 +660,8 @@ thread.
 - `Nx.diag` no longer reads its operand back to the host, so it traces under
   `Rune.jit` and construction differentiates through `scatter`. It now raises
   for inputs of rank above 2, as documented; the undocumented reading of the
-  row-major flattening as a matrix is gone.
+  row-major flattening as a matrix is gone. The packed `int4` and `uint4`
+  dtypes, which the graph operations reject, are no longer accepted either.
 
 - Speed up batched `fft`, `rfft` and `irfft` in the default C backend: the
   worker count was picked as though a transform line cost one pass over its
