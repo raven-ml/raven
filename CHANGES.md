@@ -1072,6 +1072,9 @@ thread.
 
 ### Rune
 
+- `grad` through `Nx.solve_triangular ~unit_diag:true` no longer assigns a
+  gradient to the diagonal, which the solve never reads; it disagreed with
+  both the function and `jvp` there.
 - `grad` and `jvp` through a batch of matrices are now correct for
   `Nx.cholesky`, `Nx.qr`, and `Nx.solve_triangular`: the rules reversed every
   axis and extracted, rather than built, their diagonal terms, so a stack of
