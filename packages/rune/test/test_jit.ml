@@ -90,8 +90,8 @@ let test_jit_under_vmap_is_transparent () =
    the LAPACK conventions: the reflector sign, and a column with a zero tail
    taking no reflector at all. *)
 
-(* A single-tensor structure, for jit2's input or single-tensor output. *)
-module Single32 = struct
+(* A single-tensor structure: jit2's input or output, or a scan carry. *)
+module Csingle = struct
   type t = Nx.float32_t
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
@@ -141,7 +141,7 @@ let test_qr_reduced_matches_eager () =
   in
   let jq, jr =
     Rune.jit2
-      (module Single32)
+      (module Csingle)
       (module Pair32)
       (fun m -> Nx.qr ~mode:`Reduced m)
       a
@@ -158,7 +158,7 @@ let test_qr_zero_tail_matches_eager () =
   in
   let jq, jr =
     Rune.jit2
-      (module Single32)
+      (module Csingle)
       (module Pair32)
       (fun m -> Nx.qr ~mode:`Reduced m)
       a
@@ -181,7 +181,7 @@ let test_solve_triangular_flags_match_eager () =
       let x =
         Rune.jit2
           (module Pair32)
-          (module Single32)
+          (module Csingle)
           (fun (a, b) -> Nx.solve_triangular ~upper ~transpose ~unit_diag a b)
           (a, b)
       in
@@ -207,7 +207,7 @@ let test_solve_triangular_vector_rhs () =
   let x =
     Rune.jit2
       (module Pair32)
-      (module Single32)
+      (module Csingle)
       (fun (a, b) ->
         Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false a b)
       (a, b)
@@ -245,7 +245,7 @@ let test_solve_triangular_batched () =
   let x =
     Rune.jit2
       (module Pair32)
-      (module Single32)
+      (module Csingle)
       (fun (a, b) ->
         Nx.solve_triangular ~upper:true ~transpose:false ~unit_diag:false a b)
       (a, b)
@@ -383,7 +383,7 @@ let test_linear_solve_composition () =
     Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
   in
   let b = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let g = Rune.jit2 (module Pair32) (module Single32) solve in
+  let g = Rune.jit2 (module Pair32) (module Csingle) solve in
   check_arr ~msg:"first call" (to_arr (Nx.solve a b)) (g (a, b));
   (* Replay solves a different system with the same compiled program. *)
   let a2 = Nx.mul_s a 1.5 in
@@ -394,18 +394,6 @@ let test_linear_solve_composition () =
    as a loop in the compiled program, and [grad] through it compiles a reversed
    loop over the body's pullback. Every case compares against the eager
    (unrolled) scan and the eager gradient. *)
-
-(* A single-tensor carry. *)
-module Csingle = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
 
 let cumsum xs =
   Rune.scan

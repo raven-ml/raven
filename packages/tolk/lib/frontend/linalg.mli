@@ -74,6 +74,3 @@ val cholesky : upper:bool -> Tensor.t -> Tensor.t
     Raises [Invalid_argument] if [a] has fewer than 2 dimensions or a
     non-float dtype. A non-positive-definite [a] yields nans rather than an
     error — detecting it needs host control flow. *)
-
-val block_rows : int
-(** Row-block size of the blocked triangular solve. *)

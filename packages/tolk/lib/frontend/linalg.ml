@@ -45,13 +45,6 @@ let slice2 t rows cols =
          else (0, s))
        shape)
 
-(* Swap the last two axes. *)
-let swap2 t =
-  let rank = List.length (Tensor.shape t) in
-  Movement.permute t
-    (List.init rank (fun i ->
-         if i = rank - 2 then rank - 1 else if i = rank - 1 then rank - 2 else i))
-
 (* A constant of shape [batch @ [d1; d2]] with dtype [dt]. *)
 let scalar2 dt batch d1 d2 v =
   Creation.full ~buffer:false ~dtype:dt (batch @ [ d1; d2 ])
@@ -142,7 +135,7 @@ let qr ~reduced a =
             @ [ one1 dt batch ]
             @ if mtail > 0 then [ vtail ] else [])
         in
-        let proj = Op.matmul (swap2 v) trailing in
+        let proj = Op.matmul (Movement.transpose ~dim0:(-2) ~dim1:(-1) v) trailing in
         let trailing' = E.sub trailing (E.mul tau (Op.matmul v proj)) in
         match left @ [ new_col; trailing' ] with
         | hd :: tl -> Op.cat ~dim:(-1) hd tl
@@ -170,7 +163,7 @@ let qr ~reduced a =
           [ slice2 !work (Some (j + 1, m)) (Some (j, j + 1)) ]
         else [])
     in
-    let proj = E.mul taus.(j) (Op.matmul (swap2 v) !q) in
+    let proj = E.mul taus.(j) (Op.matmul (Movement.transpose ~dim0:(-2) ~dim1:(-1) v) !q) in
     q := E.sub !q (Op.matmul v proj)
   done;
   (!q, r)
@@ -246,7 +239,7 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
     (* Transposing swaps which triangle is which, so the whole system flips
        exactly when the effective triangle points up: [upper <> transpose]. *)
     let low =
-      let m0 = if transpose then swap2 a else a in
+      let m0 = if transpose then Movement.transpose ~dim0:(-2) ~dim1:(-1) a else a in
       if upper <> transpose then Movement.flip m0 [ -2; -1 ] else m0
     in
     let flipped = upper <> transpose in
@@ -355,7 +348,7 @@ let cholesky ~upper a =
          product. Empty at [j = 0]. *)
       let proj =
         if j = 0 then zero1 dt batch
-        else Op.matmul !l (swap2 (slice2 !l (Some (j, j + 1)) None))
+        else Op.matmul !l (Movement.transpose ~dim0:(-2) ~dim1:(-1) (slice2 !l (Some (j, j + 1)) None))
       in
       let col = E.sub (slice2 a None (Some (j, j + 1))) proj in
       let ljj = E.sqrt (slice2 col (Some (j, j + 1)) (Some (0, 1))) in
@@ -373,4 +366,4 @@ let cholesky ~upper a =
       in
       l := (if j = 0 then new_col else Op.cat ~dim:(-1) !l [ new_col ])
     done;
-    if upper then swap2 !l else !l
+    if upper then Movement.transpose ~dim0:(-2) ~dim1:(-1) !l else !l
