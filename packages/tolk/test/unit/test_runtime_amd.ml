@@ -239,6 +239,8 @@ let lds64 = [ ("lds_size_in_kb", 64) ]
 (* A sysfs tree holding just the PCI files the bus scan reads, so the
    device allowlist is checked through the real probe path. *)
 let with_fake_sysfs devices f =
+  if Sys.win32 then
+    skip ~reason:"sysfs device names contain ':', not a Windows file name" ();
   let root = Filename.temp_file "tolk_sysfs" "" in
   Sys.remove root;
   let devdir =
@@ -331,7 +333,7 @@ let () =
       group "File_io"
         [
           test "opens and closes a file" (fun () ->
-              let fd = File_io.openfile "/dev/null" ~flags:File_io.o_rdonly in
+              let fd = File_io.openfile Filename.null ~flags:File_io.o_rdonly in
               is_true (fd >= 0);
               File_io.close fd);
           test "open reports the system error" (fun () ->

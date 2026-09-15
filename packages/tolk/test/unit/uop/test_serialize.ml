@@ -175,6 +175,26 @@ let read_file path =
    the parent: the graph must land on this process's hash-cons universe. The
    child uses a kernel name no other test builds, so its nodes are genuinely
    foreign to the parent until imported. *)
+(* The exporting child is this executable again, told where to write by
+   TOLK_SERIALIZE_BLOB and TOLK_SERIALIZE_KEY. *)
+let blob_var = "TOLK_SERIALIZE_BLOB"
+let key_var = "TOLK_SERIALIZE_KEY"
+
+let export_child ~blob_file ~key_file =
+  let code =
+    try
+      let prog = compiled_program ~name:"kern_xp" () in
+      let oc = open_out_bin blob_file in
+      output_string oc (U.export prog);
+      close_out oc;
+      let oc = open_out_bin key_file in
+      output_string oc (U.semantic_key prog);
+      close_out oc;
+      0
+    with _ -> 1
+  in
+  exit code
+
 let cross_process_import () =
   let blob_file = Filename.temp_file "tolk-uop-export" ".blob" in
   let key_file = Filename.temp_file "tolk-uop-export" ".key" in
@@ -183,26 +203,18 @@ let cross_process_import () =
       Sys.remove blob_file;
       Sys.remove key_file)
     (fun () ->
-      (match Unix.fork () with
-       | 0 ->
-           let code =
-             try
-               let prog = compiled_program ~name:"kern_xp" () in
-               let oc = open_out_bin blob_file in
-               output_string oc (U.export prog);
-               close_out oc;
-               let oc = open_out_bin key_file in
-               output_string oc (U.semantic_key prog);
-               close_out oc;
-               0
-             with _ -> 1
-           in
-           Unix._exit code
-       | pid ->
-           let _, status = Unix.waitpid [] pid in
-           (match status with
-            | Unix.WEXITED 0 -> ()
-            | _ -> fail "exporting child failed"));
+      let env =
+        Array.append (Unix.environment ())
+          [| blob_var ^ "=" ^ blob_file; key_var ^ "=" ^ key_file |]
+      in
+      let pid =
+        Unix.create_process_env Sys.executable_name
+          [| Sys.executable_name |]
+          env Unix.stdin Unix.stdout Unix.stderr
+      in
+      (match snd (Unix.waitpid [] pid) with
+       | Unix.WEXITED 0 -> ()
+       | _ -> fail "exporting child failed");
       let imported = U.import (read_file blob_file) in
       (* Building the same graph now reuses the imported nodes. *)
       let fresh = compiled_program ~name:"kern_xp" () in
@@ -227,6 +239,9 @@ let cross_process_import () =
           | _ -> fail "expected symbolic estimate"))
 
 let () =
+  match (Sys.getenv_opt blob_var, Sys.getenv_opt key_var) with
+  | Some blob_file, Some key_file -> export_child ~blob_file ~key_file
+  | _ ->
   run "tolk.uop.serialize"
     [
       group "Serialization"

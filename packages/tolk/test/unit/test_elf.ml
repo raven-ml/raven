@@ -6,66 +6,9 @@
 open Windtrap
 open Tolk
 
-let uname flag =
-  try
-    let ic = Unix.open_process_in ("uname " ^ flag) in
-    let value = input_line ic in
-    let _ = Unix.close_process_in ic in
-    String.trim value
-  with _ -> ""
-
-let host_arch () = uname "-m"
-let cc () = match Sys.getenv_opt "CC" with Some cc -> cc | None -> "clang"
-
-let read_file path =
-  let ic = open_in_bin path in
-  Fun.protect
-    ~finally:(fun () -> close_in_noerr ic)
-    (fun () ->
-      let len = in_channel_length ic in
-      really_input_string ic len)
-
-let compile_c src =
-  let arch = host_arch () in
-  let arch_flag =
-    match arch with
-    | "x86_64" | "AMD64" -> "-march=native"
-    | "riscv64" -> "-march=rv64g"
-    | _ -> "-mcpu=native"
-  in
-  let src_path = Filename.temp_file "tolk_elf" ".c" in
-  let obj_path = Filename.temp_file "tolk_elf" ".o" in
-  let err_path = Filename.temp_file "tolk_elf" ".err" in
-  Fun.protect
-    ~finally:(fun () ->
-      List.iter
-        (fun path -> try Sys.remove path with Sys_error _ -> ())
-        [ src_path; obj_path; err_path ])
-    (fun () ->
-      let oc = open_out_bin src_path in
-      output_string oc src;
-      close_out oc;
-      let command =
-        String.concat " "
-          [
-            Filename.quote (cc ());
-            "-c"; "-x"; "c"; arch_flag;
-            Filename.quote (Printf.sprintf "--target=%s-none-unknown-elf" arch);
-            "-O2"; "-fPIC"; "-ffreestanding"; "-fno-math-errno";
-            "-nostdlib"; "-fno-ident";
-            Filename.quote src_path; "-o"; Filename.quote obj_path;
-            "2>"; Filename.quote err_path;
-          ]
-      in
-      match Sys.command command with
-      | 0 -> Bytes.of_string (read_file obj_path)
-      | _ ->
-          let err = read_file err_path in
-          failwith
-            (if String.equal err "" then "clang failed"
-             else "clang failed:\n" ^ err))
-
-let load_c src = Elf.load (compile_c src)
+(* The objects come from the runtime's own compiler, so the flags and the
+   host detection are the ones the loader is built for. *)
+let load_c src = Elf.load (Tolk_cpu__Compiler_cpu.compile_clang src)
 
 let require_section elf name =
   match Elf.find_section elf name with

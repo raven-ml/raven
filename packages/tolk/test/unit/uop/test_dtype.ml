@@ -456,23 +456,41 @@ let run_env_case = function
       exit_bool (raises_invalid (fun () -> Dtype.sum_acc_dtype Dtype.float16))
   | _ -> exit 2
 
-let env_assignment name value = name ^ "=" ^ Filename.quote value
-
+(* Runs this executable again as the case named by TOLK_DTYPE_ENV_CASE, with
+   the dtype variables set as asked and cleared otherwise, and returns its
+   exit code. *)
 let run_with_env ?default_float ?sum_dtype case =
   let assignments =
     [
-      Some (env_assignment "TOLK_DTYPE_ENV_CASE" case);
-      Option.map (env_assignment "DEFAULT_FLOAT") default_float;
-      Option.map (env_assignment "SUM_DTYPE") sum_dtype;
+      ("TOLK_DTYPE_ENV_CASE", Some case);
+      ("DEFAULT_FLOAT", default_float);
+      ("SUM_DTYPE", sum_dtype);
     ]
-    |> List.filter_map Fun.id
   in
-  let command =
-    String.concat " "
-      (assignments
-      @ [ Filename.quote Sys.executable_name; ">/dev/null"; "2>&1" ])
+  let assigned name = List.mem_assoc name assignments in
+  let inherited =
+    Unix.environment () |> Array.to_list
+    |> List.filter (fun entry ->
+        match String.index_opt entry '=' with
+        | Some i -> not (assigned (String.sub entry 0 i))
+        | None -> true)
   in
-  Sys.command command
+  let added =
+    List.filter_map
+      (fun (name, value) -> Option.map (fun v -> name ^ "=" ^ v) value)
+      assignments
+  in
+  let env = Array.of_list (inherited @ added) in
+  let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
+  let pid =
+    Unix.create_process_env Sys.executable_name
+      [| Sys.executable_name |]
+      env Unix.stdin null null
+  in
+  Unix.close null;
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED code -> code
+  | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> 1
 
 let expect_env_success ?default_float ?sum_dtype case =
   equal int 0 (run_with_env ?default_float ?sum_dtype case)
