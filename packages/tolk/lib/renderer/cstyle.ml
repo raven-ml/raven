@@ -109,21 +109,13 @@ let cgroup_cpu_quota () =
     | _ -> None
   with _ -> None
 
-let online_cpu_count () =
-  try
-    let ic = Unix.open_process_in "getconf _NPROCESSORS_ONLN" in
-    let line = input_line ic in
-    ignore (Unix.close_process_in ic);
-    max 1 (int_of_string (String.trim line))
-  with _ -> 1
-
 let host_cpu_count () =
   match Sys.getenv_opt "NUM_CPU_THREADS" with
   | Some s -> (try max 1 (int_of_string s) with Failure _ -> 1)
   | None -> (
       match cgroup_cpu_quota () with
       | Some n -> n
-      | None -> online_cpu_count ())
+      | None -> Domain.recommended_domain_count ())
 
 (* Subset of python str.format(): positional {0}/{1}, auto-numbered {}, {{ }} escapes. *)
 let render_custom_fmt fmt args =

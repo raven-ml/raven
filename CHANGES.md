@@ -166,6 +166,8 @@ thread.
 
 ### Tolk (new)
 
+- The CPU thread pool is sized from the runtime's recommended domain count
+  instead of a `getconf` subprocess, which does not exist on Windows.
 - The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor
   libraries load through `LoadLibrary`; the hcq layer maps anonymous memory
   through `VirtualAlloc`, so the queue builders run, while device files and

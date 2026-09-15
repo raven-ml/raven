@@ -46,7 +46,7 @@ val clang : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
     - [THREADS]: set to [0] to disable host-side threading (default: enabled).
     - [NUM_CPU_THREADS]: override the thread-pool size. Unset, the pool is
       sized by the cgroup CPU quota when one is in force, otherwise by the
-      online processor count.
+      processor count the runtime recommends for domains.
 
     See also {!clang_no_abi} for tests and runtimes that intentionally bypass
     the fixed ABI wrapper. *)
