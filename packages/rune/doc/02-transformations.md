@@ -427,7 +427,6 @@ Rune fails loudly rather than returning wrong gradients:
 
 - **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT family are supported.)
 - **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`, `svd`, `eig`, `eigh`) over batched inputs.
-- **In-place mutation** (`set_item`, `set_slice`, `blit`, `assign`) raises during differentiation; write the update functionally.
 - **`Rune.jit` rejects data-dependent `cond`/`while_loop` predicates**; a scalar the compiled program would need to branch on cannot be read at trace time.
 
 ## Summary

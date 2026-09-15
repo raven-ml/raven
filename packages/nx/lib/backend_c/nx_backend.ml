@@ -402,7 +402,6 @@ let copy x =
   out
 
 let contiguous x = if is_c_contiguous x then x else copy x
-let assign dst src = caml_copy dst src
 
 external caml_pad : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> int array -> unit
   = "caml_nx_c_pad"
@@ -461,8 +460,14 @@ let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
   out
 
 (* The window write is the strided copy the engine already runs for [copy]:
-   a fresh copy of [t], then [v] written through a shrunk view of it. *)
-let update t ~starts v =
+   a fresh copy of [t], then [v] written through a shrunk view of it. This is
+   the one call that copies into a destination that is not a fresh tensor,
+   which is why the packed copy kernel needs no read-modify-write of the
+   boundary nibbles: packed dtypes are refused here. *)
+let update (type a b) (t : (a, b) t) ~starts (v : (a, b) t) =
+  (match t.dtype with
+  | Dtype.Int4 | Dtype.UInt4 -> invalid_arg "update: packed dtypes unsupported"
+  | _ -> ());
   let out = copy t in
   let corner =
     Array.init (Array.length t.shape) (fun i ->

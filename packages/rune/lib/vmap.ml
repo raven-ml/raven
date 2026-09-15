@@ -120,15 +120,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_const_scalar _ -> None
     | E_from_host _ -> None
     | E_to_device _ -> None
-    (* Mutation is incompatible with identity-keyed tracking. *)
-    | E_assign { dst; src } ->
-        if batched st dst || batched st src then
-          Some
-            (fun _k ->
-              invalid_arg
-                "in-place mutation (set_item, set_slice, blit, assign) cannot \
-                 be used inside vmap — use scatter instead")
-        else None
     (* Elementwise binary *)
     | E_add { a; b } when batched st a || batched st b ->
         Some (fun k -> elt2 k add a b)

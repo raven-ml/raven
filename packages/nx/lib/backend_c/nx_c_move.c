@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* nx_c_move.c — the data-movement family: copy/assign/contiguous, pad, cat,
+/* nx_c_move.c — the data-movement family: copy/contiguous, pad, cat,
    gather/scatter, unfold/fold.
 
    Two shapes of op live here. The layout-preserving movers (copy, pad, cat)
@@ -135,13 +135,14 @@ static void nx_c_move_dispatch(nx_c_cost_class cls, int64_t total, int64_t run_l
   nx_c_parallel_for(nth, total, bytes, body, ctx, NULL);
 }
 
-/* ── copy / assign / contiguous ────────────────────────────────────────────
+/* ── copy / contiguous / update ────────────────────────────────────────────
 
-   One stub serves all three: the frontend/binding decides the destination
-   (fresh buffer for copy/contiguous, caller's buffer for assign) and passes it
-   as vout; the C job is identical — write vin's logical content into vout,
-   honoring both strides. Assign to a transposed dst is a strided-output map the
-   engine already handles. Dispatch is on the output dtype (== input dtype). */
+   One stub serves copy, contiguous and the window store of update: the binding
+   decides the destination (a fresh buffer, or a window view of one) and passes
+   it as vout; the C job is identical — write vin's logical content into vout,
+   honoring both strides. A transposed or windowed dst is a strided-output map
+   the engine already handles. Dispatch is on the output dtype (== input
+   dtype). */
 
 /* Packed contiguous copy: reinterpret the nibble stream as bytes and run it
    through the u8 identity kernel, so the byte memcpy still rides the engine's
@@ -160,19 +161,15 @@ static void nx_c_copy_packed(value vout, value vin, nx_c_dtype dt) {
     nx_c_raise("copy", NX_C_ERR_PACKED);
   (void)dt; /* packedness already established by the caller */
 
-  /* Copy the WHOLE bytes both operands own outright through the u8 kernel
-     (threaded + lock-handled for large buffers). An odd element count leaves a
-     final byte whose HIGH nibble is the neighbor of element `total` — outside
-     this tensor — while the last element sits in that byte's LOW nibble.
-     memcpy-ing the whole byte would clobber the neighbor: harmless for
-     copy/contiguous (fresh full-buffer dst, private padding) but a lost update
-     when this shared stub backs an assign into an odd-length contiguous prefix
-     sub-view. So merge only the low nibble, preserving the dst's high nibble. */
-  int64_t whole = total / 2;
-  if (whole > 0) {
+  /* Copy every byte the nibble stream occupies through the u8 kernel
+     (threaded + lock-handled for large buffers). The destination is always a
+     fresh full buffer, so an odd element count's trailing high nibble is
+     private padding and may be overwritten. */
+  int64_t bytes = (total + 1) / 2;
+  if (bytes > 0) {
     nx_c_ndarray bout = out, bin = in;
     bout.ndim = bin.ndim = 1;
-    bout.shape[0] = bin.shape[0] = whole;
+    bout.shape[0] = bin.shape[0] = bytes;
     bout.strides[0] = bin.strides[0] = 1;
     bout.offset = bin.offset = 0;
     int64_t e2[2] = {1, 1};
@@ -180,11 +177,6 @@ static void nx_c_copy_packed(value vout, value vin, nx_c_dtype dt) {
     s = nx_c_map_run(&nx_c_copy_table, NX_C_DTYPE_u8, 1, ops, e2,
                     NX_C_COST_BANDWIDTH, NULL);
     if (s != NX_C_OK) nx_c_raise("copy", s);
-  }
-  if (total & 1) {
-    uint8_t *d = (uint8_t *)out.data + whole;
-    const uint8_t *sp = (const uint8_t *)in.data + whole;
-    *d = (uint8_t)((*d & 0xF0) | (*sp & 0x0F));
   }
 }
 

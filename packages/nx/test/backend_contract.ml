@@ -1455,43 +1455,6 @@ struct
                 (array (ftest ~rel:0.0 ~abs:0.0))
                 [| 1.; 2.; 5.; 3.; 4.; 6. |]
                 (F.to_array c));
-          case classify path "assign-strided-src" (fun () ->
-              (* dst contiguous, src a transposed view; assign must respect both
-                 layouts and write src's logical content into dst. *)
-              let dst = mk [| 3; 4 |] (Array.make 12 0.0) in
-              let src = B.permute (mk [| 4; 3 |] d12) [| 1; 0 |] in
-              B.assign dst src;
-              equal ~msg:"values"
-                (array (ftest ~rel:0.0 ~abs:0.0))
-                (permute_arr [| 4; 3 |] [| 1; 0 |] d12)
-                (F.to_array dst));
-          case classify path "assign-strided-dst" (fun () ->
-              (* dst is a transposed view over a fresh buffer; assign must
-                 scatter src through dst's strides. Read back through the same
-                 buffer (contiguized) to confirm the underlying storage was
-                 written. *)
-              let base = mk [| 4; 3 |] (Array.make 12 0.0) in
-              let dst = B.permute base [| 1; 0 |] in
-              let src = mk [| 3; 4 |] d12 in
-              B.assign dst src;
-              equal ~msg:"logical values"
-                (array (ftest ~rel:0.0 ~abs:0.0))
-                d12 (F.to_array dst);
-              (* base holds the transpose of d12 in its own row-major order *)
-              equal ~msg:"buffer layout"
-                (array (ftest ~rel:0.0 ~abs:0.0))
-                (permute_arr [| 3; 4 |] [| 1; 0 |] d12)
-                (F.to_array base));
-          case classify path "assign-int4-preserves-tail-nibble" (fun () ->
-              (* A packed prefix ends halfway through the destination's last
-                 byte. Assign must update the low nibble without clobbering the
-                 live element stored in the high nibble. *)
-              let base = F.create ctx F.int4 [| 4 |] [| 1; 2; 3; 4 |] in
-              let prefix = B.shrink base [| (0, 3) |] in
-              let src = F.create ctx F.int4 [| 3 |] [| 5; 6; 7 |] in
-              B.assign prefix src;
-              equal ~msg:"packed neighbor preserved" (array int)
-                [| 5; 6; 7; 4 |] (F.to_array base));
           case classify path "reshape-split-merge" (fun () ->
               (* B.reshape is view-only: it splits/merges dims of a contiguous
                  tensor with no copy and preserves row-major order. (Reshaping a

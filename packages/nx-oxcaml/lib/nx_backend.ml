@@ -1486,26 +1486,6 @@ let copy (type a b) (t : (a, b) t) : (a, b) t =
   | _ -> invalid_arg "copy: unsupported dtype");
   out
 
-let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
-  let src_c = contiguous src in
-  let n = numel dst.view in
-  match (src_c.buffer, dst.buffer) with
-  | Float64 s, Float64 d ->
-    for i = 0 to n - 1 do Array.unsafe_set d i (Array.unsafe_get s i) done
-  | Float32 s, Float32 d ->
-    for i = 0 to n - 1 do Array.unsafe_set d i (Array.unsafe_get s i) done
-  | Int32 s, Int32 d ->
-    for i = 0 to n - 1 do Array.unsafe_set d i (Array.unsafe_get s i) done
-  | Int64 s, Int64 d ->
-    for i = 0 to n - 1 do Array.unsafe_set d i (Array.unsafe_get s i) done
-  | Int8 s, Int8 d ->
-    for i = 0 to n - 1 do Array.unsafe_set d i (Array.unsafe_get s i) done
-  | Int16 s, Int16 d ->
-    for i = 0 to n - 1 do Array.unsafe_set d i (Array.unsafe_get s i) done
-  | Bool s, Bool d ->
-    for i = 0 to n - 1 do d.(i) <- s.(i) done
-  | _ -> invalid_arg "assign: unsupported dtype"
-
 let threefry (key : (int32, Dtype.int32_elt) t)
     (counter : (int32, Dtype.int32_elt) t) : (int32, Dtype.int32_elt) t =
   let key_shape = shape key.view in

@@ -24,10 +24,7 @@
    inputs are re-copied on every call, captured tensors are uploaded once when
    the trace compiles and stay resident on the device. Captures are compile-time
    constants: mutating one between calls has unspecified visibility (the CPU
-   wrapping may observe it, device copies never do), and a whole-tensor [assign]
-   whose destination is a capture raises [Jit_error] at trace time. An [assign]
-   to an input leaf is replayed by writing the computed value back into the
-   destination on every call.
+   wrapping may observe it, device copies never do).
 
    Reading the value of a traced tensor (for example [Nx.item] on a value that
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
@@ -305,9 +302,7 @@ type state = {
   captures : unit Tbl.t; (* closure captures lifted into the trace *)
   input_index : int Tbl.t; (* input placeholder -> traversal position *)
   input_tags : (int, unit) Hashtbl.t; (* tags of input buffer nodes *)
-  wb_seen : unit Tbl.t;
   mutable consts : (U.t * packed) list; (* reverse order *)
-  mutable writebacks : packed list; (* reverse order *)
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
   scan_stacks : U.t list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
@@ -1037,38 +1032,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
-    (* In-place assignment: rebind the destination to the assigned value. Input
-       leaves are also written back on every call. Captures are compile-time
-       constants, so assigning to one cannot be replayed and fails at trace
-       time. Assigning into a view would require aliasing the destination's base
-       tensor, which a trace cannot see. *)
-    | E_assign { dst; src } ->
-        Some
-          (fun k ->
-            let v = Nx_effect.view dst in
-            let key = Obj.repr dst in
-            if not (NV.is_c_contiguous v && NV.offset v = 0) then
-              discontinue k
-                (Jit_error
-                   "Rune.jit: assigning into a view (set_item, set_slice, \
-                    blit) is not supported inside jit; use scatter instead")
-            else if Tbl.mem st.captures key || not (Tbl.mem st.table key) then
-              discontinue k
-                (Jit_error
-                   "Rune.jit: assigning to a captured tensor is not supported \
-                    inside jit (captures are compile-time constants); thread \
-                    the state through the function's inputs and return the \
-                    updated value instead")
-            else begin
-              let sv = tolk_of st src in
-              Tbl.replace st.table key sv;
-              if Tbl.mem st.input_index key && not (Tbl.mem st.wb_seen key) then begin
-                Tbl.replace st.wb_seen key ();
-                st.writebacks <-
-                  Packed (Nx_effect.dtype dst, dst) :: st.writebacks
-              end;
-              continue k ()
-            end)
     (* Staged scans. A multi-device (pmap) trace cannot stage a loop yet: it
        answers the probe with [false] — so reverse-mode below tapes the eager
        fold per step and never records an [E_scan_bwd] — and unrolls a directly
@@ -2302,15 +2265,6 @@ let make_handle : type a b.
     handle;
   handle
 
-let write_into : type a b.
-    scratch ->
-    Nx_effect.context ->
-    (a, b) Nx_effect.t ->
-    Tolk.Device.Buffer.t ->
-    unit =
- fun sc ctx x buf ->
-  Nx_effect.assign x (read_out sc ctx (Nx_effect.dtype x) (shape_of x) buf)
-
 (* Compiled traces *)
 
 type 'q compiled = {
@@ -2332,9 +2286,6 @@ type 'q compiled = {
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
   cp_skeleton : 'q; (* trace-time output structure *)
-  cp_writebacks : (int * U.t * leaf_place) array;
-      (* assigned input leaf's traversal position -> its computed buffer node
-         and the node's placement *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
 
@@ -2361,9 +2312,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       captures = Tbl.create 16;
       input_index = Tbl.create 16;
       input_tags = Hashtbl.create 16;
-      wb_seen = Tbl.create 4;
       consts = [];
-      writebacks = [];
       axis_index = None;
       scan_stacks = Tbl.create 4;
       scan_closed = Tbl.create 4;
@@ -2457,7 +2406,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
           :: !out_assoc)
     y;
   let outs = List.rev !out_assoc in
-  let wbs = List.rev st.writebacks in
   (* A result computed purely from trace-time constants (say, the zero gradient
      of an unused parameter) has no device anywhere in its graph, so the
      scheduler would materialize nothing for it. Anchor such results with a
@@ -2475,40 +2423,26 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       (fun (key, (Packed (dt, _) as pk), tt) -> (key, pk, anchor dt tt))
       outs
   in
-  let wb_anch =
-    List.map
-      (fun (Packed (dt, dst) as pk) -> (pk, anchor dt (tolk_of st dst)))
-      wbs
-  in
   (* Canonicalize sharding before allocation: rewrite the multi-device rules
      over the whole output graph now, so every sharded value reaching a sink is
      a syntactic MULTI and buffer allocation sizes its output per shard
      (replicated values allocate full-size on every device). Scheduling
      reapplies the same rules; the rewrite is idempotent. *)
-  let out_uops, wb_uops =
+  let out_uops =
     let outs_u = List.map (fun (_, _, tt) -> F.Tensor.uop tt) out_anch in
-    let wbs_u = List.map (fun (_, tt) -> F.Tensor.uop tt) wb_anch in
     match multi with
-    | None -> (outs_u, wbs_u)
+    | None -> outs_u
     | Some _ ->
         let shapes n =
           match U.max_shape n with
           | s -> Some s
           | exception Invalid_argument _ -> None
         in
-        let pre = U.sink (outs_u @ wbs_u) in
+        let pre = U.sink outs_u in
         let pre =
           U.graph_rewrite (Tolk.Multi.multi_pm ~shapes ~devices:U.device_of) pre
         in
-        let children = U.children pre in
-        let rec split n = function
-          | rest when n = 0 -> ([], rest)
-          | x :: rest ->
-              let l, r = split (n - 1) rest in
-              (x :: l, r)
-          | [] -> assert false
-        in
-        split (List.length outs_u) children
+        U.children pre
   in
   let place_of u =
     match U.device_of u with
@@ -2523,27 +2457,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       (fun (key, pk, _) u -> (key, pk, u, place_of u, U.contiguous ~src:u ()))
       out_anch out_uops
   in
-  let wb_conts =
-    List.map2
-      (fun (pk, _) u -> (pk, u, place_of u, U.contiguous ~src:u ()))
-      wb_anch wb_uops
-  in
-  (* Writing a sharded value back into an input leaf would need a gather on
-     every call; replicated values read one replica. Reject the former. *)
-  List.iter
-    (fun (_, _, place, _) ->
-      match place with
-      | P_sharded _ ->
-          err
-            "Rune.pmap: assigning a sharded value to an input leaf is not \
-             supported inside pmap; return the updated value instead"
-      | P_replicated | P_single -> ())
-    wb_conts;
-  let sink =
-    U.sink
-      (List.map (fun (_, _, _, _, c) -> c) out_conts
-      @ List.map (fun (_, _, _, c) -> c) wb_conts)
-  in
+  let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
   let call, buffer_map = Tolk.Callify.transform_to_call sink in
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
@@ -2722,15 +2636,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
         (key, pk, resolve "an output of the traced function" u c, place))
       out_conts
   in
-  let cp_writebacks =
-    List.map
-      (fun (Packed (_, dst), u, place, c) ->
-        let node = resolve "an assigned tensor" u c in
-        match Tbl.find_opt st.input_index (Obj.repr dst) with
-        | Some i -> (i, node, place)
-        | None -> assert false (* only input leaves are recorded *))
-      wb_conts
-  in
   {
     cp_device = dev;
     cp_multi = Option.map fst multi;
@@ -2744,7 +2649,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     cp_outputs;
     cp_reserved = reserved;
     cp_skeleton = y;
-    cp_writebacks = Array.of_list cp_writebacks;
     cp_scratch = scratch;
   }
 
@@ -2787,7 +2691,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
   (* Entries that seeded this call. With [donate] their buffers are released
      back to the allocator once the call completes — never during it: the
      schedule has no aliasing knowledge, so a donated buffer must stay intact
-     until every kernel and writeback has read it. A handle whose placement
+     until every kernel has read it. A handle whose placement
      mismatched is forced by the copy path instead and is never donated. *)
   let seeded = ref [] in
   let note e =
@@ -2990,34 +2894,11 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
         | None -> assert false)
       c.cp_skeleton
   in
-  Array.iter
-    (fun (idx, node, place) ->
-      (* A sharded writeback is rejected at compile time; a replicated one reads
-         its first replica. *)
-      let buf =
-        match
-          (place, Tolk.Realize.Buffers.buffer_of_node c.cp_binding node)
-        with
-        | (P_single | P_replicated), Tolk.Realize.Single buf -> buf
-        | (P_replicated | P_sharded _), Tolk.Realize.Multi m ->
-            List.hd (Tolk.Device.Multi_buffer.bufs m)
-        | P_single, Tolk.Realize.Multi _ | P_sharded _, Tolk.Realize.Single _ ->
-            assert false
-      in
-      let j = ref 0 in
-      P.iter
-        (fun leaf ->
-          if !j = idx then write_into c.cp_scratch c.cp_ctx leaf buf;
-          incr j)
-        params)
-    c.cp_writebacks;
-  (* Donation. The devices have synchronized and every writeback has read its
-     buffer, so the storage of each input that seeded from a resident entry can
-     be returned to the allocator: the next call's fresh outputs reuse it,
-     bounding a state-to-state loop at about two generations of device memory.
-     The handle becomes Donated — forcing it now raises. A donated leaf that was
-     also written back was already forced by the writeback (its entry released,
-     the handle holding the updated host value) and is skipped. *)
+  (* Donation. The devices have synchronized, so the storage of each input
+     that seeded from a resident entry can be returned to the allocator: the
+     next call's fresh outputs reuse it, bounding a state-to-state loop at
+     about two generations of device memory. The handle becomes Donated —
+     forcing it now raises. *)
   if donate then
     List.iter
       (fun e ->

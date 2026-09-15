@@ -217,7 +217,6 @@ type _ Effect.t +=
       -> ('c, 'd) t Effect.t
   | E_contiguous : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_copy : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_assign : { dst : ('a, 'b) t; src : ('a, 'b) t } -> unit Effect.t
   | E_threefry : {
       key : (int32, Dtype.int32_elt) t;
       ctr : (int32, Dtype.int32_elt) t;
@@ -422,10 +421,6 @@ let unary_op eff cpu_op t_in =
 let movement_op eff cpu_op t_in arg =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> T (cpu_op (unwrap t_in) arg)
-
-let assign dst src =
-  try Effect.perform (E_assign { dst; src })
-  with Effect.Unhandled _ -> Nx_backend.assign (unwrap dst) (unwrap src)
 
 (* Binary operations *)
 

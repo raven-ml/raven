@@ -17,13 +17,12 @@
    differentiates them: higher-order derivatives work.
 
    Every Nx effect constructor is matched explicitly. Operations without a
-   gradient fall into three deliberate categories: - zero derivative
+   gradient fall into two deliberate categories: - zero derivative
    (comparisons, bitwise and integer ops, rounding, argmax/argmin/argsort, RNG,
    tensor creation): fall through untracked, which yields the correct zero
    gradient; - no rule implemented (svd, eig, eigh, psum, mod): raise when an
    input is tracked instead of silently producing a zero gradient — detach the
-   input if differentiation should not flow through it; - in-place mutation
-   (assign): always raises during differentiation. *)
+   input if differentiation should not flow through it. *)
 
 open Nx_effect
 module T = Nx
@@ -148,13 +147,6 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_ceil _ -> None
       | E_floor _ -> None
       | E_round _ -> None
-      (* Mutation is incompatible with identity-keyed tracking. *)
-      | E_assign _ ->
-          Some
-            (fun _k ->
-              invalid_arg
-                "in-place mutation (set_item, set_slice, blit, assign) cannot \
-                 be used inside grad/value_and_grad — use scatter instead")
       (* Staged scan. The tape entry recorded for a staged scan performs
          [E_scan_bwd], which only a staging jit answers — so take the staged
          path only when the probe says the nearest [E_scan] claimer is one.

@@ -95,13 +95,6 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_ceil _ -> None
       | E_floor _ -> None
       | E_round _ -> None
-      (* Mutation is incompatible with identity-keyed tracking. *)
-      | E_assign _ ->
-          Some
-            (fun _k ->
-              invalid_arg
-                "in-place mutation (set_item, set_slice, blit, assign) cannot \
-                 be used inside jvp — use scatter instead")
       (* Scan: forward mode has no staged rule yet, so run the eager fold under
          a nested instance of this handler — every step's operations flow
          through it and acquire their tangents as they always did. Claiming

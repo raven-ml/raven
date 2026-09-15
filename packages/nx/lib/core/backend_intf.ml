@@ -488,14 +488,6 @@ module type S = sig
       {b Backend must:} always allocate a new buffer, even if [t] is already
       contiguous. *)
 
-  val assign : ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [assign dst src] copies elements from [src] into [dst] in-place.
-
-      {b Frontend guarantees:} [dst] and [src] have matching shapes and dtypes.
-
-      {b Backend must:} write [src]'s data into [dst]'s buffer, respecting both
-      tensors' strides. *)
-
   (** {1 Random Number Generation} *)
 
   val threefry :

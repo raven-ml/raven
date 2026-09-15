@@ -410,13 +410,12 @@ val check_grads :
 exception Jit_error of string
 (** Raised when a function cannot be compiled: it read the value of a traced
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
-    data-dependent branch), it assigned to a tensor it closes over (captures are
-    compile-time constants), it drew random values from a key that does not
+    data-dependent branch), it drew random values from a key that does not
     depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
     [Nx.Rng.with_key] on a constant key — the draw would be a compile-time
     constant replayed on every call; pass the key as an input instead), or it
     used an operation the compiler does not support (FFT, the SVD and
-    eigensolvers, complex, int4 and uint4 tensors, assigning into a view). QR,
+    eigensolvers, complex, int4 and uint4 tensors). QR,
     triangular solves, Cholesky, [solve], and [inv] do compile: they unroll at
     trace time into the fixed number of steps their shapes imply. *)
 
@@ -472,8 +471,7 @@ val jit :
     generations of state on the device instead of one per call awaiting
     collection. Only resident handles are consumed: host tensors and handles
     already read are unaffected. A handle appearing as several input leaves is
-    donated once, and a leaf the function updates in place is materialized on
-    the host by the writeback rather than donated.
+    donated once.
 
     [beam] enables beam-search autotuning of this function's kernels with the
     given width: instead of scheduling each kernel by fixed heuristics, the
@@ -528,14 +526,12 @@ val jit :
           Params.map2 (fun w g -> Nx.sub w (Nx.mul_s g lr)) p g)
     ]}
 
-    Whole-tensor in-place updates ([Nx.assign] or [Nx.blit] on an input leaf)
-    are replayed by writing the computed value back into the destination, so
-    in-place state threaded through [P] carries across calls on every device.
-    Assigning to a captured tensor raises {!Jit_error} at trace time — captures
-    are compile-time constants; thread mutable state through the input structure
-    instead. Structured values read during tracing must not depend on traced
-    tensors: a data-dependent {!cond} or {!while_loop} predicate raises
-    {!Jit_error}. Compiled functions are not thread-safe.
+    Tensors are values, so state threads through [P]: the function returns
+    its updated parameters, optimizer state or cache, and the caller feeds
+    them to the next call, as the example does. Structured values read during
+    tracing must not depend on traced tensors: a data-dependent {!cond} or
+    {!while_loop} predicate raises {!Jit_error}. Compiled functions are not
+    thread-safe.
 
     Randomness inside a jitted function comes from a {!Nx.Rng} key threaded
     through the inputs: samplers are pure functions of their key, so the
@@ -603,7 +599,7 @@ val pmap :
     [pmap] yields allreduced gradients, which makes data-parallel training a
     matter of sharding the batch and replicating the parameters.
 
-    Compilation, caching, capture, and writeback semantics are {!val-jit}'s.
+    Compilation, caching and capture semantics are {!val-jit}'s.
     Outputs stay resident, one buffer per device, and gather to the host the
     first time they are read (shards are reassembled along their axis;
     replicated outputs read one replica). An unread output fed back as an input
@@ -612,9 +608,7 @@ val pmap :
     calls (a data-parallel training step) move only the freshly sharded batch.
     [donate] consumes resident inputs as in {!val-jit}, releasing every
     per-device buffer of the donated handle; a handle whose placement mismatches
-    is forced to the host first and is not donated. Assigning a sharded value to
-    an input leaf raises {!Jit_error} at trace time (it would gather on every
-    call); replicated writebacks are honored.
+    is forced to the host first and is not donated.
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.

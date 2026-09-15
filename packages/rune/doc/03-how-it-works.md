@@ -38,7 +38,7 @@ Operations whose inputs are all untracked are constants with respect to the diff
 
 **Backward pass.** The output cotangent is seeded (with `1` for `grad`, or your explicit cotangent for `vjp`) and the pull thunks run in reverse order, accumulating cotangents keyed by tensor identity. Finally the accumulated cotangents of the parameter leaves are read back through the structure's `map`, producing a gradient with the parameters' own type.
 
-Tensors are keyed by physical identity: every Nx operation allocates a fresh tensor, so a tensor value identifies a node of the computation graph. This is also why in-place mutation (`set_slice`, `assign`, ...) raises during differentiation — mutating a tracked tensor would corrupt the correspondence.
+Tensors are keyed by physical identity: every Nx operation allocates a fresh tensor, so a tensor value identifies a node of the computation graph. Nx tensors are values (nothing writes into one after it exists), which is what keeps that correspondence sound.
 
 ### Higher-order derivatives
 
@@ -104,7 +104,6 @@ Every Nx effect constructor is matched explicitly by each engine. Operations wit
 
 - **Zero derivative** (comparisons, bitwise and integer ops, rounding, `argmax`/`argsort`, RNG, tensor creation): these fall through untracked, which yields the correct zero gradient.
 - **No rule implemented** (`svd`, `eig`, `eigh`, `psum`, `mod` in reverse mode; the decompositions under `vmap`): these raise when an input is tracked, instead of silently producing a zero gradient. `detach` the input if differentiation should not flow through it.
-- **In-place mutation** (`assign`, `set_slice`, `blit`): always raises during differentiation.
 
 The intent is that rune never returns a wrong gradient quietly.
 

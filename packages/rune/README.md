@@ -125,8 +125,6 @@ Current gaps:
 - **Implicit RNG under `vmap` draws identical values for every lane** —
   the RNG key is a constant of the map. Thread distinct randomness in as
   mapped inputs instead.
-- **In-place mutation** (`set_item`, `set_slice`, `blit`, `assign`)
-  raises during differentiation; write the update functionally.
 - **`jit` unrolls `scan`**, so a recurrence's compile time grows with
   its sequence length.
 
