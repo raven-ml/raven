@@ -11,7 +11,7 @@
    silently drops the thread split. This pins that the split survives an
    iteration space that does not fit in a machine word.
 
-   CPU only — threading is a host-renderer feature — and CPU_COUNT is
+   CPU only — threading is a host-renderer feature — and NUM_CPU_THREADS is
    pinned so the chosen thread count does not follow the machine.
 
    Paired with main.py. Run `uv run main.py` to regenerate *.expected. *)

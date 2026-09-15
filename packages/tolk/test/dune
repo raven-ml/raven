@@ -1,0 +1,7 @@
+; Every golden was rendered with an eight-thread host pool. The host-threading
+; heuristic caps its thread count at the core count, so an unpinned run would
+; render differently per machine.
+(env
+ (_
+  (env-vars
+   (NUM_CPU_THREADS 8))))

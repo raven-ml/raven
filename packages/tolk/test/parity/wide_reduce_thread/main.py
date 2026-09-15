@@ -12,7 +12,7 @@ the full shape, so a 63-bit reconstruction of that product wraps and
 silently drops the thread split. This pins that the split survives an
 iteration space that does not fit in a machine word.
 
-CPU only -- threading is a host-renderer feature -- and CPU_COUNT is
+CPU only -- threading is a host-renderer feature -- and NUM_CPU_THREADS is
 pinned so the chosen thread count does not follow the machine.
 
 Paired with main.ml. Run to regenerate *.expected files.
@@ -21,7 +21,7 @@ Paired with main.ml. Run to regenerate *.expected files.
 import os
 import sys
 
-os.environ["CPU_COUNT"] = "8"
+os.environ["NUM_CPU_THREADS"] = "8"
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
