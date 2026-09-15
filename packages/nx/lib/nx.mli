@@ -3127,8 +3127,8 @@ val erfinv : (float, 'b) t -> (float, 'b) t
     about seven digits.
 
     {@ocaml[
-      # erfinv (scalar float64 0.5) |> item []
-      - : float = 0.476936276204469933
+      # erfinv (create float64 [| 3 |] [| -0.5; 0.; 0.5 |])
+      - : (float, float64_elt) t = [-0.476936, 0, 0.476936]
     ]} *)
 
 (** {1:windows Sliding windows} *)
