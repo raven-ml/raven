@@ -283,6 +283,19 @@ let linalg_tests =
             let spd = Nx.add xxt (Nx.mul_s (Nx.eye f64 2) 3.0) in
             Nx.cholesky spd)
           (mat64 2 2 [| 0.9; -0.4; 0.3; 1.2 |]));
+    test "cholesky (batched)" (fun () ->
+        check_jvp ~msg:"cholesky batched" ~tol:5e-3
+          (fun x ->
+            let xxt = Nx.matmul x (Nx.matrix_transpose x) in
+            let spd = Nx.add xxt (Nx.mul_s (Nx.eye f64 2) 3.0) in
+            Nx.cholesky spd)
+          (Nx.create f64 [| 2; 2; 2 |]
+             [| 0.9; -0.4; 0.3; 1.2; 1.1; 0.2; -0.5; 0.8 |]));
+    test "solve_triangular (batched vector rhs)" (fun () ->
+        check_jvp2 ~msg:"solve_triangular batched"
+          (fun a b -> Nx.solve_triangular a b)
+          (Nx.create f64 [| 2; 2; 2 |] [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
+          (Nx.create f64 [| 2; 2 |] [| 1.0; -2.0; 0.5; 3.0 |]));
   ]
 
 let composite_tests =

@@ -498,25 +498,25 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   (* dL = L phi(L^-1 dA L^-T), phi = strict lower + half
                      diagonal. *)
                   let l_lower, da_lower =
-                    if upper then (T.transpose l, T.transpose da) else (l, da)
+                    if upper then (T.matrix_transpose l, T.matrix_transpose da) else (l, da)
                   in
                   let w =
                     solve_triangular ~upper:false ~transpose:false
                       ~unit_diag:false l_lower da_lower
                   in
                   let m =
-                    T.transpose
+                    T.matrix_transpose
                       (solve_triangular ~upper:false ~transpose:false
-                         ~unit_diag:false l_lower (T.transpose w))
+                         ~unit_diag:false l_lower (T.matrix_transpose w))
                   in
                   let phi =
                     (* Strict lower + half diagonal. *)
                     let diag_m = T.diagonal m in
                     let two = Nx_core.Dtype.of_float (T.dtype diag_m) 2.0 in
-                    T.sub (T.tril m) (T.diag (T.div_s diag_m two))
+                    T.sub (T.tril m) (Derivs.diag_matrix (T.div_s diag_m two))
                   in
                   let dl_lower = T.matmul l_lower phi in
-                  if upper then T.transpose dl_lower else dl_lower))
+                  if upper then T.matrix_transpose dl_lower else dl_lower))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
             (fun k ->
@@ -531,14 +531,14 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   | Some da ->
                       let da_used =
                         let tri = if upper then T.triu da else T.tril da in
-                        if unit_diag then T.sub tri (T.diag (T.diagonal tri))
+                        if unit_diag then T.sub tri (Derivs.diag_matrix (T.diagonal tri))
                         else tri
                       in
                       let da_op =
-                        if transpose then T.transpose da_used else da_used
+                        if transpose then T.matrix_transpose da_used else da_used
                       in
                       let out_2d, was_1d =
-                        if Array.length (T.shape out) = 1 then
+                        if T.ndim out = T.ndim a - 1 then
                           (T.unsqueeze ~axes:[ -1 ] out, true)
                         else (out, false)
                       in
