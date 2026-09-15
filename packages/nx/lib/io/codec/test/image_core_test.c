@@ -10,10 +10,23 @@
 #include "../nx_io_png.c"
 
 #include <stdio.h>
+#if defined(_WIN32)
+#include <io.h>
+#endif
 
 static void fail(const char *message) {
   fprintf(stderr, "image_core_test: %s\n", message);
   exit(1);
+}
+
+/* The encoders take an nx_io_fd: the CRT descriptor on POSIX, the OS handle
+   behind it on Windows. */
+static nx_io_fd fd_of(FILE *file) {
+#if defined(_WIN32)
+  return (nx_io_fd)_get_osfhandle(fileno(file));
+#else
+  return (nx_io_fd)fileno(file);
+#endif
 }
 
 static uint8_t *encoded_file(FILE *file, size_t *len) {
@@ -43,7 +56,7 @@ static uint8_t *encode_png_fixture(const uint8_t *pixels, size_t width,
   if (file == NULL)
     fail("tmpfile failed");
   png_status status =
-      encode_png(fileno(file), pixels, width * height * 3, width, height, 3);
+      encode_png(fd_of(file), pixels, width * height * 3, width, height, 3);
   if (status != PNG_OK)
     fail("PNG encoder rejected valid pixels");
   uint8_t *data = encoded_file(file, len);
@@ -57,7 +70,7 @@ static uint8_t *encode_jpeg_fixture(const uint8_t *pixels, size_t width,
   if (file == NULL)
     fail("tmpfile failed");
   jpeg_status status =
-      encode_jpeg(fileno(file), pixels, width * height * 3, width, height, 3);
+      encode_jpeg(fd_of(file), pixels, width * height * 3, width, height, 3);
   if (status != JPEG_OK)
     fail("JPEG encoder rejected valid pixels");
   uint8_t *data = encoded_file(file, len);
