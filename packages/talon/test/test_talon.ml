@@ -416,9 +416,29 @@ let test_to_nx () =
       [ ("a", Col.float32 [| 1.0; 2.0 |]); ("b", Col.float32 [| 3.0; 4.0 |]) ]
   in
 
-  let tensor = to_nx df in
-  let shape = Nx.shape tensor in
-  check_bool "to_nx shape" true (shape = [| 2; 2 |])
+  let tensor = to_nx Nx.float32 df in
+  check_bool "to_nx shape" true (Nx.shape tensor = [| 2; 2 |]);
+  let df =
+    create
+      [
+        ("id", Col.int64 [| 7L; 8L |]);
+        ("x", Col.float64_opt [| Some 1.0; None |]);
+        ("name", Col.string [| "a"; "b" |]);
+      ]
+  in
+  let tensor = to_nx Nx.float64 df in
+  check_bool "to_nx default columns" true
+    (Nx.to_array tensor |> Array.map Float.is_nan
+    = [| false; false; false; true |]);
+  check_bool "to_nx values" true (Nx.item [ 1; 0 ] tensor = 8.0);
+  let tensor = to_nx ~columns:[ "x"; "id" ] Nx.float64 df in
+  check_bool "to_nx column order" true (Nx.item [ 0; 1 ] tensor = 7.0);
+  check_bool "to_nx null as nan" true (Float.is_nan (Nx.item [ 1; 0 ] tensor));
+  let invalid_arg = function Invalid_argument _ -> true | _ -> false in
+  raises_match ~msg:"to_nx nulls need a float dtype" invalid_arg (fun () ->
+      to_nx ~columns:[ "x" ] Nx.int64 df);
+  raises_match ~msg:"to_nx non-numeric column" invalid_arg (fun () ->
+      to_nx ~columns:[ "name" ] Nx.float64 df)
 
 let test_of_nx () =
   (* Test basic of_nx functionality *)

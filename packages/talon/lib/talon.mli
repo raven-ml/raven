@@ -923,14 +923,18 @@ val melt :
 
 (** {1:converting Converting} *)
 
-val to_nx : t -> (float, Bigarray.float32_elt) Nx.t
-(** [to_nx df] is a 2D float32 tensor from the numeric columns of [df].
+val to_nx : ?columns:string list -> ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
+(** [to_nx ?columns dtype df] is a 2D tensor of [dtype] with one row per
+    dataframe row and one column per selected column, in selection order.
 
-    Rows correspond to dataframe rows, columns to numeric dataframe columns (in
-    order). All numeric types are cast to float32. Null values become [nan].
-    String and boolean columns are ignored.
+    [columns] defaults to the numeric columns of [df] in dataframe order. Each
+    column is cast to [dtype]. When [dtype] is a float dtype, null positions
+    become [nan].
 
-    Raises [Invalid_argument] if [df] contains no numeric columns. *)
+    Raises [Not_found] if a name in [columns] does not exist. Raises
+    [Invalid_argument] if no column is selected, if a selected column is not
+    numeric, or if a selected column contains nulls and [dtype] is not a float
+    dtype. *)
 
 (** {1:fmt Formatting and inspecting} *)
 

@@ -941,14 +941,12 @@ arr = df[["x", "y"]].to_numpy(dtype="float32")
 <!-- $MDX skip -->
 ```ocaml
 let tensor : (float, Bigarray.float32_elt) Nx.t =
-  to_nx df
+  to_nx ~columns:[ "x"; "y" ] Nx.float32 df
 ```
 
-* `to_nx` stacks **numeric** columns only (floats and ints).
-* All numeric columns are cast to `float32`.
-* Nulls become `NaN`.
-
-For more control, extract specific columns and use `Nx.stack` manually.
+* `to_nx` takes the target dtype; `columns` defaults to every numeric column.
+* Selected columns are cast to that dtype, in selection order.
+* Nulls become `NaN` for float dtypes and are an error for integer dtypes.
 
 ---
 
@@ -988,4 +986,4 @@ For more control, extract specific columns and use `Nx.stack` manually.
 | Describe numeric columns  | `df.describe()`                       | `describe df`                                                                  |
 | Head / tail               | `df.head(5)`, `df.tail(5)`            | `head ~n:5 df`, `tail ~n:5 df`                                                 |
 | Row sum (axis=1)          | `df[cols].sum(axis=1)`                | `let s = Agg.row_sum df ~names:cols in add_column df "row_sum" s`              |
-| Convert to numeric matrix | `df[cols].to_numpy(dtype="float32")`  | `to_nx df`                                                                     |
+| Convert to numeric matrix | `df[cols].to_numpy(dtype="float32")`  | `to_nx ~columns:cols Nx.float32 df`                                            |

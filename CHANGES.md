@@ -1929,6 +1929,11 @@ thread.
 
 ### Talon
 
+- `to_nx` now takes the target dtype and an optional `?columns` selection,
+  `to_nx ?columns dtype df`, instead of always producing a float32 tensor of
+  every numeric column. Nulls become `nan` for float dtypes and raise for
+  integer dtypes; before, an integer column's nulls silently came through as
+  the sentinel value `Int64.min_int` cast to float.
 - Add `to_html` and `pp_display` for rich table rendering in Quill notebooks.
   Tables display as styled HTML in the web UI and published books, and as inline
   HTML in markdown output files.

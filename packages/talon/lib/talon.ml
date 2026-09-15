@@ -1351,17 +1351,28 @@ let melt t ?(id_vars = []) ?(value_vars = []) ?(var_name = "variable")
 
 (* Conversion *)
 
-let to_nx t =
-  let numeric_tensors =
-    List.filter_map
-      (fun (_name, col) ->
-        match col with
-        | Col.P (_, tensor, _) -> Some (Nx.cast Nx.float32 tensor)
-        | _ -> None)
-      t.columns
+let to_nx ?columns dtype t =
+  let names =
+    match columns with Some names -> names | None -> select_columns t `Numeric
   in
-  if numeric_tensors = [] then invalid_arg "to_nx: no numeric columns"
-  else Nx.stack numeric_tensors ~axis:1
+  if names = [] then invalid_arg "to_nx: no numeric columns";
+  let column name =
+    match get_column_exn t name with
+    | Col.P (_, tensor, None) -> Nx.cast dtype tensor
+    | Col.P (_, tensor, Some mask) ->
+        if not (Nx_core.Dtype.is_float dtype) then
+          invalid_arg
+            (Printf.sprintf
+               "to_nx: column %S has nulls, which only a float dtype can hold"
+               name);
+        let nulls = Nx.create Nx.bool [| Array.length mask |] mask in
+        Nx.where nulls
+          (Nx.cast dtype (Nx.scalar Nx.float32 Float.nan))
+          (Nx.cast dtype tensor)
+    | Col.S _ | Col.B _ ->
+        invalid_arg (Printf.sprintf "to_nx: column %S is not numeric" name)
+  in
+  Nx.stack (List.map column names) ~axis:1
 
 (* Display *)
 
