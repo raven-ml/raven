@@ -51,7 +51,7 @@
 
 /* Helpers */
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 /* Allocate a 4-element int64 array for CPU time counters */
 static value alloc_cpu_row(int64_t user, int64_t nice, int64_t sys,
                            int64_t idle) {
@@ -113,6 +113,26 @@ CAMLprim value caml_sysstat_get_cpu_load(value unit) {
 
   vm_deallocate(mach_task_self(), (vm_address_t)cpuInfo,
                 (vm_size_t)(numCpuInfo * sizeof(integer_t)));
+#elif defined(_WIN32)
+  /* System-wide totals only; kernel time includes idle. The row is the same
+     shape as the per-core rows on macOS, in 100ns ticks. */
+  FILETIME idle_ft, kernel_ft, user_ft;
+  if (!GetSystemTimes(&idle_ft, &kernel_ft, &user_ft)) {
+    result = caml_alloc(0, 0);
+    CAMLreturn(result);
+  }
+  ULARGE_INTEGER idle_u, kernel_u, user_u;
+  idle_u.LowPart = idle_ft.dwLowDateTime;
+  idle_u.HighPart = idle_ft.dwHighDateTime;
+  kernel_u.LowPart = kernel_ft.dwLowDateTime;
+  kernel_u.HighPart = kernel_ft.dwHighDateTime;
+  user_u.LowPart = user_ft.dwLowDateTime;
+  user_u.HighPart = user_ft.dwHighDateTime;
+  int64_t idle = (int64_t)idle_u.QuadPart;
+  int64_t kernel = (int64_t)kernel_u.QuadPart;
+  int64_t user = (int64_t)user_u.QuadPart;
+  result = caml_alloc(1, 0);
+  Store_field(result, 0, alloc_cpu_row(user, 0, kernel - idle, idle));
 #else
   /* Linux: CPU stats read from /proc/stat in OCaml */
   result = caml_alloc(0, 0);
