@@ -145,6 +145,20 @@ let solve_tests =
           in
           check_zero ~tol:1e-5 ~msg:"|e·x - b| (vector rhs)"
             (El.sub (Op.matmul e x) b));
+      test "an empty system keeps the right-hand side's shape" (fun () ->
+          (* Shape only: an empty buffer cannot be allocated on every device,
+             so the operands are buffer-less constants. *)
+          let empty shape =
+            Tolk_frontend.Creation.full ~buffer:false
+              ~dtype:Tolk_uop.Dtype.float32 shape (T.Sfloat 0.0)
+          in
+          let a = empty [ 0; 0 ] and b = empty [ 0 ] in
+          let x =
+            Linalg.solve_triangular ~upper:false ~transpose:false
+              ~unit_diag:false a b
+          in
+          if T.shape x <> [ 0 ] then
+            failf "expected shape [0], got rank %d" (List.length (T.shape x)));
       test "batched" (fun () ->
           let a =
             fa ~shape:[ 2; 3; 3 ]
