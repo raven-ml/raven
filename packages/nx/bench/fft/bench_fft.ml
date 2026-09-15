@@ -1,6 +1,8 @@
 (* Public FFT performance regimes: native power-of-two, native mixed-radix,
-   prime-size Bluestein, and the real transforms (rfft/irfft) whose last axis
-   takes its own packed path. Setup and dtype conversion are outside timing. *)
+   prime-size Bluestein, the real transforms (rfft/irfft) whose last axis
+   takes its own packed path, and a stack of a few dozen mid-length lines
+   (the STFT / overlap-save shape) that the thread policy must split. Setup
+   and dtype conversion are outside timing. *)
 
 let case name n =
   let input = Nx.cast Nx.Complex64 (Nx.rand Nx.Float32 [| n |]) in
@@ -8,6 +10,10 @@ let case name n =
 
 let rcase name n =
   let input = Nx.rand Nx.Float64 [| n |] in
+  Thumper.bench name (fun () -> Nx.rfft Nx.complex128 input)
+
+let rcase_stacked name lines n =
+  let input = Nx.rand Nx.Float64 [| lines; n |] in
   Thumper.bench name (fun () -> Nx.rfft Nx.complex128 input)
 
 let icase name n =
@@ -40,10 +46,12 @@ let () =
           rcase "f64 44100 smooth" 44100;
           rcase "f64 65535 odd-control" 65535;
           rcase "f64 131042 half-prime" 131042;
+          rcase_stacked "f64 23x2048 stack" 23 2048;
         ];
       Thumper.group "irfft"
         [
           icase "c128 65536 power-of-two" 65536;
           icase_batched "c128 256x4097 batched" 256 8192;
+          icase_batched "c128 23x1025 stack" 23 2048;
         ];
     ]
