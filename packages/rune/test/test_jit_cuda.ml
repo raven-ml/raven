@@ -349,6 +349,9 @@ let test_donate_bounds_resident_memory_on_cuda () =
   let x = vec32 (Array.make n 0.0) in
   let hold = Array.make 10 x in
   let run g =
+    (* Retire the handles earlier tests dropped unread, so their release cannot
+       land inside the measured window. *)
+    Gc.full_major ();
     let base = (Rune.jit_stats ()).resident_bytes in
     let h = ref (g x) in
     for i = 0 to 9 do

@@ -288,6 +288,9 @@ let test_donate_replicated_releases_all_shards () =
       (module Single_f32)
       (fun w -> Nx.mul_s w 2.0)
   in
+  (* Retire the handles earlier tests dropped unread, so their release cannot
+     land inside the window measured below. *)
+  Gc.full_major ();
   let base = (Rune.jit_stats ()).resident_bytes in
   let w1 = g (vec32 (Array.make n 1.0)) in
   (* A replicated handle owns one full-size buffer per device. *)

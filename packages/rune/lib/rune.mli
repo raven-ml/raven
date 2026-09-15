@@ -587,14 +587,17 @@ val pmap2 :
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
-  resident_bytes : int;  (** Device bytes currently held by unread outputs. *)
+  resident_bytes : int;
+      (** Device bytes held by unread outputs that are still reachable. *)
 }
 (** Transfer accounting for compiled functions. The zero-copy CPU path moves no
     bytes and counts nothing. *)
 
 val jit_stats : unit -> jit_stats
 (** [jit_stats ()] is the current transfer counters, cumulative over the whole
-    program. Set the [RUNE_JIT_DEBUG] environment variable to [1] to also log a
+    program. An output dropped unread releases its device buffers once it is
+    collected, at the next compiled call or at this query, whichever comes
+    first. Set the [RUNE_JIT_DEBUG] environment variable to [1] to also log a
     per-call summary to stderr. *)
 
 val reset_jit_stats : unit -> unit

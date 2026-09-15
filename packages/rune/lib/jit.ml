@@ -169,13 +169,6 @@ let bytes_to_device = ref 0
 let bytes_from_device = ref 0
 let resident_bytes = ref 0
 
-let stats () =
-  {
-    bytes_to_device = !bytes_to_device;
-    bytes_from_device = !bytes_from_device;
-    resident_bytes = !resident_bytes;
-  }
-
 let reset_stats () =
   bytes_to_device := 0;
   bytes_from_device := 0
@@ -254,6 +247,17 @@ let drain_releases () =
   | entries ->
       pending_release := [];
       List.iter release_entry entries
+
+(* A query is a safe point too: retiring the collected handles first keeps
+   [resident_bytes] to the handles still reachable, instead of a figure that
+   depends on when the GC last ran. *)
+let stats () =
+  drain_releases ();
+  {
+    bytes_to_device = !bytes_to_device;
+    bytes_from_device = !bytes_from_device;
+    resident_bytes = !resident_bytes;
+  }
 
 let resident_budget () =
   env_int "RUNE_JIT_RESIDENT_BUDGET" (4 * 1024 * 1024 * 1024)

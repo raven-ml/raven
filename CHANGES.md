@@ -70,6 +70,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit_stats` retires the outputs that were dropped unread and collected
+  before it reports, so `resident_bytes` counts only reachable handles. Their
+  buffers used to wait for the next compiled call, which made the counter
+  depend on when the GC ran.
 - A parameter structure is a positional sequence of leaves: a tensor behind
   two leaves is two parameters. `jit` bound two such leaves to a single input
   at trace time, so a later call passing distinct tensors read one of them for

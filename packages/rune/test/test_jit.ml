@@ -1143,9 +1143,11 @@ let test_donate_bounds_resident_memory () =
       let n = 4096 in
       let step d = Rune.jit' ~donate:d (fun x -> Nx.add_s x 1.0) in
       let x = vec32 (Array.make n 0.0) in
-      (* Every handle stays reachable, so nothing here depends on the GC. *)
+      (* Every handle created here stays reachable; retiring the handles earlier
+         tests dropped unread keeps their release out of the measured window. *)
       let hold = Array.make 10 x in
       let run g =
+        Gc.full_major ();
         let base = (Rune.jit_stats ()).resident_bytes in
         let h = ref (g x) in
         for i = 0 to 9 do
