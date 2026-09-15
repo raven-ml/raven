@@ -292,15 +292,15 @@ let test_text () =
   let img = render ~w:40 ~h:40 pic in
   satisfies ~msg:"draws some ink" float_exact (fun t -> t > 20.) (total img);
   (* Ink stays within the font's bounds, which are y-down around the origin. *)
-  let bx0, by0, bx1, by1 = Font.bounds Font.regular ~size:20. "Hg" in
+  let b = Option.get (Font.bounds Font.regular ~size:20. "Hg") in
   for y = 0 to 39 do
     for x = 0 to 39 do
       if cov img y x > 0.01 then begin
         let fx = float_of_int x and fy = float_of_int y in
         is_true ~msg:"inside horizontally"
-          (fx +. 1. >= 5. +. bx0 && fx <= 5. +. bx1);
+          (fx +. 1. >= 5. +. b.x0 && fx <= 5. +. b.x1);
         is_true ~msg:"inside vertically"
-          (fy +. 1. >= 25. +. by0 && fy <= 25. +. by1)
+          (fy +. 1. >= 25. +. b.y0 && fy <= 25. +. b.y1)
       end
     done
   done;
@@ -309,6 +309,54 @@ let test_text () =
     render ~w:40 ~h:40 (Picture.text Font.bold ~size:20. red ~x:5. ~y:25. "Hg")
   in
   satisfies float_exact (fun t -> t > total img) (total bold)
+
+(* Picture bounds enclose exactly the pixels a picture touches. *)
+let test_picture_bounds () =
+  let check ?(slack = 0.) pic =
+    let img = render ~w:40 ~h:40 pic in
+    match Picture.bounds pic with
+    | None -> equal ~msg:"nothing drawn" (float 0.01) 0. (total img)
+    | Some b ->
+        for y = 0 to 39 do
+          for x = 0 to 39 do
+            if cov img y x > 0.01 then begin
+              let fx = float_of_int x and fy = float_of_int y in
+              is_true ~msg:"ink inside the box"
+                (fx +. 1. >= b.x0 -. slack
+                && fx <= b.x1 +. slack
+                && fy +. 1. >= b.y0 -. slack
+                && fy <= b.y1 +. slack)
+            end
+          done
+        done
+  in
+  is_none (Picture.bounds Picture.empty);
+  check (Picture.fill red (Path.circle 20. 20. 7.));
+  check
+    (Picture.stroke
+       (Stroke.v ~cap:`Square ~join:`Miter 4.)
+       red
+       (Path.polyline [| 5.; 20.; 30. |] [| 5.; 30.; 8. |]));
+  check (Picture.text Font.regular ~size:16. red ~x:4. ~y:20. "Hg");
+  check
+    (Picture.transform
+       Affine.(translate 20. 20. * rotate 0.5)
+       (Picture.image ~x:(-5.) ~y:(-5.) ~w:10. ~h:10.
+          (Nx.create Nx.uint8 [| 1; 1; 3 |] [| 255; 0; 0 |])));
+  (* Stamps snap to the pixel grid, so allow half a pixel. *)
+  check ~slack:0.5
+    (Picture.clip (Path.rect 0. 0. 40. 40.)
+       (Picture.stamp
+          (Picture.fill red (Path.circle 0. 0. 3.))
+          [| 10.; 30. |] [| 10.; 25. |]));
+  equal ~msg:"a tight fill box"
+    (option
+       (Testable.make
+          ~pp:(fun fmt (b : Box.t) ->
+            Format.fprintf fmt "[%g %g %g %g]" b.x0 b.y0 b.x1 b.y1)
+          ~equal:(fun (a : Box.t) b -> a = b)))
+    (Some (Box.v 2. 3. 6. 8.))
+    (Picture.bounds (Picture.fill red (Path.rect 2. 3. 4. 5.)))
 
 let test_image_nearest () =
   let data =
@@ -411,6 +459,7 @@ let () =
           test "clips and transforms" test_stamp_clips_and_transforms;
         ];
       group "text" [ test "ink within bounds" test_text ];
+      group "bounds" [ test "enclose the ink" test_picture_bounds ];
       group "image"
         [
           test "nearest" test_image_nearest;

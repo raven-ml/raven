@@ -61,23 +61,20 @@ val advance : t -> size:float -> string -> float
 (** [advance f ~size s] is the horizontal distance the pen moves when drawing
     [s]. *)
 
-val bounds : t -> size:float -> string -> float * float * float * float
-(** [bounds f ~size s] is [(x0, y0, x1, y1)], the box enclosing the ink of [s]
-    drawn with its origin at [(0, 0)] on the baseline, y down. Text without ink,
-    such as whitespace, gives [(0., 0., 0., 0.)]. *)
+val bounds : t -> size:float -> string -> Box.t option
+(** [bounds f ~size s] is the box enclosing the ink of [s] drawn with its origin
+    at [(0, 0)] on the baseline, y down, or [None] for text without ink such as
+    whitespace. *)
 
 (** {1:glyphs Glyphs} *)
 
-val glyphs : t -> size:float -> string -> (int * float) list
-(** [glyphs f ~size s] are the glyph ids of [s] in order, each with the pen x
-    offset at which it is drawn. *)
+type glyph = { id : int; x : float; advance : float }
+(** The type for laid out glyphs: a glyph id, the pen x offset at which it is
+    drawn and its own advance, so the gap to the next glyph is the kerning. *)
 
-val glyph_advance : t -> size:float -> int -> float
-(** [glyph_advance f ~size g] is the pen advance of glyph [g] at [size]. *)
+val glyphs : t -> size:float -> string -> glyph list
+(** [glyphs f ~size s] are the glyphs of [s] in order. *)
 
 val glyph_path : t -> size:float -> int -> Path.t
 (** [glyph_path f ~size g] is the outline of glyph [g] at [size], with its
     origin at [(0, 0)] on the baseline, y down. *)
-
-val outline : t -> size:float -> string -> Path.t
-(** [outline f ~size s] is [s] as a single path, laid out like {!glyphs}. *)

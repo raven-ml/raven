@@ -103,3 +103,77 @@ let fold ~move ~line ~curve ~close acc p =
           done;
           if closed then close !acc else !acc)
     acc (List.rev p)
+
+(* Flattening *)
+
+let default_tolerance = 0.1
+
+let flatten ?(tolerance = default_tolerance) m ~move ~line ~close acc p =
+  let tx x y = (m.Affine.xx *. x) +. (m.xy *. y) +. m.x0 in
+  let ty x y = (m.Affine.yx *. x) +. (m.yy *. y) +. m.y0 in
+  let finite x y = Float.is_finite x && Float.is_finite y in
+  (* The current point in device space, or none after a break. *)
+  let cur = ref None in
+  let acc = ref acc in
+  let start x y =
+    cur := Some (x, y);
+    acc := move !acc x y
+  in
+  let extend x y =
+    cur := Some (x, y);
+    acc := line !acc x y
+  in
+  let break () = cur := None in
+  fold
+    ~move:(fun () x y ->
+      if finite x y then start (tx x y) (ty x y) else break ())
+    ~line:(fun () x y ->
+      if not (finite x y) then break ()
+      else
+        let x' = tx x y and y' = ty x y in
+        match !cur with None -> start x' y' | Some _ -> extend x' y')
+    ~curve:(fun () c1x c1y c2x c2y x y ->
+      if not (finite c1x c1y && finite c2x c2y && finite x y) then break ()
+      else
+        let x3 = tx x y and y3 = ty x y in
+        match !cur with
+        | None -> start x3 y3
+        | Some (x0, y0) ->
+            let x1 = tx c1x c1y and y1 = ty c1x c1y in
+            let x2 = tx c2x c2y and y2 = ty c2x c2y in
+            (* Wang's bound: this many chords keep the curve within the
+               tolerance of its second differences. *)
+            let dd ax ay bx by cx cy =
+              Float.hypot (ax -. (2. *. bx) +. cx) (ay -. (2. *. by) +. cy)
+            in
+            let d = Float.max (dd x0 y0 x1 y1 x2 y2) (dd x1 y1 x2 y2 x3 y3) in
+            let n =
+              Int.max 1
+                (Int.min 256
+                   (int_of_float
+                      (Float.ceil (Float.sqrt (0.75 *. d /. tolerance)))))
+            in
+            for i = 1 to n do
+              let t = float i /. float n in
+              let u = 1. -. t in
+              let a = u *. u *. u and b = 3. *. u *. u *. t in
+              let c = 3. *. u *. t *. t and d = t *. t *. t in
+              extend
+                ((a *. x0) +. (b *. x1) +. (c *. x2) +. (d *. x3))
+                ((a *. y0) +. (b *. y1) +. (c *. y2) +. (d *. y3))
+            done)
+    ~close:(fun () ->
+      if !cur <> None then begin
+        acc := close !acc;
+        break ()
+      end)
+    () p;
+  !acc
+
+let bounds p =
+  let grow acc x y =
+    match acc with
+    | None -> Some (Box.v x y x y)
+    | Some b -> Some (Box.union b (Box.v x y x y))
+  in
+  flatten Affine.id ~move:grow ~line:grow ~close:Fun.id None p

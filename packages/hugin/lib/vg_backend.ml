@@ -13,8 +13,9 @@ let face (font : Theme.font) =
   match font.weight with `Bold -> V.Font.bold | `Normal -> V.Font.regular
 
 let text_measurer ~(font : Theme.font) s =
-  let x0, y0, x1, y1 = V.Font.bounds (face font) ~size:font.size s in
-  (x1 -. x0, y1 -. y0)
+  match V.Font.bounds (face font) ~size:font.size s with
+  | Some b -> (V.Box.width b, V.Box.height b)
+  | None -> (0., 0.)
 
 let split points = (Array.map fst points, Array.map snd points)
 
@@ -103,18 +104,22 @@ let rec primitive = function
               points))
   | Scene.Text { x; y; content; font; color = c; anchor; baseline; angle } ->
       let f = face font in
-      let x0, y0, x1, y1 = V.Font.bounds f ~size:font.size content in
+      let b =
+        Option.value
+          (V.Font.bounds f ~size:font.size content)
+          ~default:(V.Box.v 0. 0. 0. 0.)
+      in
       let dx =
         match anchor with
-        | `Start -> -.x0
-        | `Middle -> -.(x0 +. ((x1 -. x0) /. 2.))
-        | `End -> -.x1
+        | `Start -> -.b.x0
+        | `Middle -> -.(b.x0 +. (V.Box.width b /. 2.))
+        | `End -> -.b.x1
       in
       let dy =
         match baseline with
-        | `Top -> -.y0
-        | `Middle -> -.(y0 +. ((y1 -. y0) /. 2.))
-        | `Bottom -> -.y1
+        | `Top -> -.b.y0
+        | `Middle -> -.(b.y0 +. (V.Box.height b /. 2.))
+        | `Bottom -> -.b.y1
       in
       let m =
         if angle = 0. then V.Affine.translate x y

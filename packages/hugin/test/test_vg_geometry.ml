@@ -28,10 +28,6 @@ let test_invert_singular () =
   raises (Invalid_argument "Affine.invert: singular transform") (fun () ->
       Affine.invert (Affine.scale 0. 1.))
 
-let test_is_translation () =
-  is_true (Affine.is_translation (Affine.translate 1. 2.));
-  is_false (Affine.is_translation (Affine.scale 2. 2.))
-
 (* Paths *)
 
 type seg =
@@ -128,6 +124,69 @@ let test_circle_endpoints () =
   in
   equal (list point) [ (3., 6.); (1., 4.); (3., 2.); (5., 4.) ] ends
 
+let box =
+  Testable.make
+    ~pp:(fun fmt (b : Box.t) ->
+      Format.fprintf fmt "[%g %g %g %g]" b.x0 b.y0 b.x1 b.y1)
+    ~equal:(fun (a : Box.t) b ->
+      let close u v = Float.abs (u -. v) < 1e-6 in
+      close a.x0 b.x0 && close a.y0 b.y0 && close a.x1 b.x1 && close a.y1 b.y1)
+
+let test_box () =
+  equal ~msg:"corners in any order" box (Box.v 0. 0. 2. 3.) (Box.v 2. 3. 0. 0.);
+  equal box (Box.v 0. 0. 5. 3.)
+    (Box.union (Box.v 0. 0. 2. 3.) (Box.v 4. 1. 5. 2.));
+  equal ~msg:"transform encloses the rotated corners" box
+    (Box.v (-1.) (-1.) 1. 1.)
+    (Box.transform (Affine.rotate (Float.pi /. 2.)) (Box.v (-1.) (-1.) 1. 1.));
+  equal box (Box.v 10. 20. 12. 23.)
+    (Box.transform Affine.(translate 10. 20. * scale 2. 3.) (Box.v 0. 0. 1. 1.))
+
+let test_flatten () =
+  let p = Path.circle 0. 0. 10. in
+  let n, closes =
+    Path.flatten Affine.id
+      ~move:(fun (n, c) _ _ -> (n + 1, c))
+      ~line:(fun (n, c) _ _ -> (n + 1, c))
+      ~close:(fun (n, c) -> (n, c + 1))
+      (0, 0) p
+  in
+  satisfies ~msg:"a circle becomes many chords" int (fun n -> n > 16) n;
+  equal int 1 closes;
+  (* Every chord endpoint lies on the circle within the tolerance. *)
+  Path.flatten Affine.id
+    ~move:(fun () _ _ -> ())
+    ~line:(fun () x y ->
+      equal ~msg:"on the circle" (float 0.15) 10. (Float.hypot x y))
+    ~close:Fun.id () p;
+  let coarse =
+    Path.flatten ~tolerance:5. Affine.id
+      ~move:(fun n _ _ -> n + 1)
+      ~line:(fun n _ _ -> n + 1)
+      ~close:Fun.id 0 p
+  in
+  satisfies ~msg:"a loose tolerance gives fewer chords" int
+    (fun c -> c < n)
+    coarse;
+  (* A non-finite point ends the subpath. *)
+  let broken = Path.polyline [| 0.; 1.; nan; 3. |] [| 0.; 0.; 0.; 0. |] in
+  equal ~msg:"two subpaths" int 2
+    (Path.flatten Affine.id
+       ~move:(fun n _ _ -> n + 1)
+       ~line:(fun n _ _ -> n)
+       ~close:Fun.id 0 broken)
+
+let test_path_bounds () =
+  is_none (Path.bounds Path.empty);
+  equal (option box)
+    (Some (Box.v 1. 2. 4. 6.))
+    (Path.bounds (Path.rect 1. 2. 3. 4.));
+  let b = Option.get (Path.bounds (Path.circle 5. 5. 2.)) in
+  equal ~msg:"circle bounds" (float 0.02) 3. b.x0;
+  equal (float 0.02) 7. b.x1;
+  equal (float 0.02) 3. b.y0;
+  equal (float 0.02) 7. b.y1
+
 (* Stroke *)
 
 let test_stroke_defaults () =
@@ -160,7 +219,6 @@ let () =
           test "quarter turn" test_rotate_quarter_turn;
           test "invert round trip" test_invert_roundtrip;
           test "invert singular" test_invert_singular;
-          test "is_translation" test_is_translation;
         ];
       group "path"
         [
@@ -173,6 +231,9 @@ let () =
           test "transform" test_transform;
           test "circle endpoints" test_circle_endpoints;
         ];
+      group "box" [ test "operations" test_box ];
+      group "flatten"
+        [ test "chords" test_flatten; test "bounds" test_path_bounds ];
       group "stroke"
         [
           test "defaults" test_stroke_defaults;

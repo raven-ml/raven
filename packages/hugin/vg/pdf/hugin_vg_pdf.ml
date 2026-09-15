@@ -47,7 +47,8 @@ type font_use = {
   font : Font.t;
   name : string;
   number : int;
-  glyphs : (int, int) Hashtbl.t;  (** Used glyph ids to their code points. *)
+  glyphs : (int, int * float) Hashtbl.t;
+      (** Used glyph ids to their code point and advance per 1000 em. *)
 }
 
 type state = {
@@ -131,18 +132,19 @@ let text_ops st b ~font ~size ~x ~y text =
     go 0 []
   in
   List.iter2
-    (fun (g, _) u' -> Hashtbl.replace u.glyphs g (Uchar.to_int u'))
+    (fun (g : Font.glyph) u' ->
+      Hashtbl.replace u.glyphs g.id (Uchar.to_int u', g.advance *. 1000. /. size))
     glyphs codes;
   Printf.bprintf b "BT /%s %s Tf 1 0 0 -1 %s %s Tm [" u.name (num size) (num x)
     (num y);
   let pen = ref 0. in
   List.iter
-    (fun (g, gx) ->
-      let shift = gx -. !pen in
+    (fun (g : Font.glyph) ->
+      let shift = g.x -. !pen in
       if Float.abs shift > 1e-3 then
         Printf.bprintf b " %s" (num (-.shift *. 1000. /. size));
-      Printf.bprintf b " <%04x>" g;
-      pen := gx +. Font.glyph_advance font ~size g)
+      Printf.bprintf b " <%04x>" g.id;
+      pen := g.x +. g.advance)
     glyphs;
   Buffer.add_string b " ] TJ ET\n"
 
@@ -336,9 +338,7 @@ let font_objects st (u : font_use) =
   let widths =
     String.concat " "
       (List.map
-         (fun (g, _) ->
-           Printf.sprintf "%d [%s]" g
-             (num (Font.glyph_advance font ~size:1000. g)))
+         (fun (g, (_, advance)) -> Printf.sprintf "%d [%s]" g (num advance))
          gids)
   in
   let cid =
@@ -367,7 +367,7 @@ let font_objects st (u : font_use) =
           let n = Int.min 100 (List.length l) in
           Printf.bprintf b "%d beginbfchar\n" n;
           List.iteri
-            (fun i (g, u) ->
+            (fun i (g, (u, _)) ->
               if i < n then Printf.bprintf b "<%04x> <%s>\n" g (utf16be_hex u))
             l;
           Buffer.add_string b "endbfchar\n";

@@ -46,7 +46,8 @@ let test_bold_is_wider () =
     (Font.advance Font.bold ~size "Hello")
 
 let test_bounds () =
-  let x0, y0, x1, y1 = Font.bounds Font.regular ~size "H" in
+  let b = Option.get (Font.bounds Font.regular ~size "H") in
+  let x0 = b.x0 and y0 = b.y0 and x1 = b.x1 and y1 = b.y1 in
   (* Ink sits on the baseline and rises to the cap height, about 0.73 em. *)
   equal ~msg:"bottom at the baseline" approx 0. y1;
   satisfies ~msg:"top near the cap height" approx
@@ -58,28 +59,25 @@ let test_bounds () =
   satisfies ~msg:"narrower than its advance" approx
     (fun x -> x < Font.advance Font.regular ~size "H")
     x1;
-  equal ~msg:"whitespace has no ink"
-    (pair (pair approx approx) (pair approx approx))
-    ((0., 0.), (0., 0.))
-    (let a, b, c, d = Font.bounds Font.regular ~size "  " in
-     ((a, b), (c, d)))
+  is_none ~msg:"whitespace has no ink" (Font.bounds Font.regular ~size "  ")
 
 let test_bounds_descender () =
-  let _, _, _, y1 = Font.bounds Font.regular ~size "g" in
-  satisfies ~msg:"g descends below the baseline" approx (fun y -> y > 0.) y1
+  let b = Option.get (Font.bounds Font.regular ~size "g") in
+  satisfies ~msg:"g descends below the baseline" approx (fun y -> y > 0.) b.y1
 
 let test_glyphs_positions () =
   let gs = Font.glyphs Font.regular ~size "ab" in
   equal int 2 (List.length gs);
-  let (ga, xa), (gb, xb) = (List.nth gs 0, List.nth gs 1) in
-  not_equal int ga gb;
-  equal approx 0. xa;
-  equal approx (Font.advance Font.regular ~size "a") xb
+  let ga = List.nth gs 0 and gb = List.nth gs 1 in
+  not_equal int ga.id gb.id;
+  equal approx 0. ga.x;
+  equal ~msg:"the advance is the next pen position" approx ga.advance gb.x;
+  equal approx (Font.advance Font.regular ~size "a") gb.x
 
 let test_unmapped_uses_fallback () =
   (* U+1F600 is outside the bundled subset. *)
   let gs = Font.glyphs Font.regular ~size "\u{1F600}" in
-  equal (list int) [ 0 ] (List.map fst gs);
+  equal (list int) [ 0 ] (List.map (fun (g : Font.glyph) -> g.id) gs);
   satisfies ~msg:"the fallback glyph has an advance" approx
     (fun w -> w > 0.)
     (Font.advance Font.regular ~size "\u{1F600}")
@@ -92,9 +90,18 @@ let count_segments p =
     ~close:(fun n -> n + 1)
     0 p
 
-let test_outline () =
-  is_true (Path.is_empty (Font.outline Font.regular ~size " "));
-  let o = Font.outline Font.regular ~size "O" in
+let outline s =
+  List.fold_left
+    (fun acc (g : Font.glyph) ->
+      Path.append acc
+        (Path.transform (Affine.translate g.x 0.)
+           (Font.glyph_path Font.regular ~size g.id)))
+    Path.empty
+    (Font.glyphs Font.regular ~size s)
+
+let test_glyph_paths () =
+  is_true (Path.is_empty (outline " "));
+  let o = outline "O" in
   satisfies ~msg:"O has two contours worth of curves" int
     (fun n -> n > 8)
     (count_segments o);
@@ -108,10 +115,17 @@ let test_outline () =
   in
   satisfies approx (fun y -> y < 0.) top;
   (* Accented letters are composites of a base and a mark. *)
-  let e = count_segments (Font.outline Font.regular ~size "e") in
+  let e = count_segments (outline "e") in
   satisfies ~msg:"é has more segments than e" int
     (fun n -> n > e)
-    (count_segments (Font.outline Font.regular ~size "é"))
+    (count_segments (outline "é"));
+  (* The outline's box agrees with the font's metrics. *)
+  let b = Option.get (Font.bounds Font.regular ~size "Hg") in
+  let ob = Option.get (Path.bounds (outline "Hg")) in
+  equal (float 0.5) b.x0 ob.x0;
+  equal (float 0.5) b.y0 ob.y0;
+  equal (float 0.5) b.x1 ob.x1;
+  equal (float 0.5) b.y1 ob.y1
 
 let test_of_string_errors () =
   equal ~msg:"garbage is malformed" bool true
@@ -137,6 +151,6 @@ let () =
       test "bounds descender" test_bounds_descender;
       test "glyph positions" test_glyphs_positions;
       test "unmapped uses fallback" test_unmapped_uses_fallback;
-      test "outline" test_outline;
+      test "glyph paths" test_glyph_paths;
       test "of_string errors" test_of_string_errors;
     ]

@@ -71,15 +71,28 @@ let bounds f ~size s =
             ))
   in
   match box with
-  | None -> (0., 0., 0., 0.)
+  | None -> None
   | Some (x0, y0, x1, y1) ->
       let k = scale f ~size in
-      (float x0 *. k, -.float y1 *. k, float x1 *. k, -.float y0 *. k)
+      Some
+        (Box.v
+           (float x0 *. k)
+           (-.float y1 *. k)
+           (float x1 *. k)
+           (-.float y0 *. k))
+
+type glyph = { id : int; x : float; advance : float }
 
 let glyphs f ~size s =
   let k = scale f ~size in
   let acc, _ =
-    fold_glyphs f s [] (fun acc g pen -> (g, float pen *. k) :: acc)
+    fold_glyphs f s [] (fun acc g pen ->
+        {
+          id = g;
+          x = float pen *. k;
+          advance = float (Truetype.advance f.tt g) *. k;
+        }
+        :: acc)
   in
   List.rev acc
 
@@ -117,15 +130,3 @@ let glyph_advance f ~size g = float (Truetype.advance f.tt g) *. scale f ~size
 let glyph_path f ~size g =
   let k = scale f ~size in
   Path.transform (Affine.scale k (-.k)) (outline_units f g)
-
-let outline f ~size s =
-  let k = scale f ~size in
-  let acc, _ =
-    fold_glyphs f s Path.empty (fun acc g pen ->
-        let m =
-          Affine.
-            { xx = k; yx = 0.; xy = 0.; yy = -.k; x0 = float pen *. k; y0 = 0. }
-        in
-        Path.append acc (Path.transform m (outline_units f g)))
-  in
-  acc

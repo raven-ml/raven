@@ -39,7 +39,10 @@ All notable changes to this project will be documented in this file.
   every machine. `Picture` is the display list: fills with nonzero or
   even-odd rules, strokes with caps, joins and dashes, text, Nx images,
   groups, path clips, affine transforms, and `stamp` for drawing one
-  picture at many points. `hugin.vg.raster` draws a picture into an
+  picture at many points. `Picture.bounds`, `Path.bounds` and
+  `Font.bounds` give the `Box` a drawing occupies, so aligning any picture
+  is one `transform`, and `Path.flatten` folds over a path with its curves
+  replaced by chords. `hugin.vg.raster` draws a picture into an
   `[|height; width; 4|]` RGBA tensor with analytic antialiasing;
   `hugin.vg.svg` and `hugin.vg.pdf` write it as a self-contained SVG or
   single-page PDF document, with text kept as text, the fonts it uses

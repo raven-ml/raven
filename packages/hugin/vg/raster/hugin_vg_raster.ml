@@ -108,13 +108,13 @@ let draw_line acc aw h x0 y0 x1 y1 =
 
 (* [coverage rule ~x0 ~y0 ~w ~h polys] is the per-pixel coverage of the closed
    polygons [polys] over the pixel rectangle, row-major. *)
-let coverage rule ~x0 ~y0 ~w ~h (polys : Flatten.polyline list) =
+let coverage rule ~x0 ~y0 ~w ~h (polys : Polyline.t list) =
   let aw = w + 2 in
   let acc = Array.make (aw * h) 0. in
   let fw = float w in
   let clampx x = if x < 0. then 0. else if x > fw then fw else x in
   List.iter
-    (fun (p : Flatten.polyline) ->
+    (fun (p : Polyline.t) ->
       let n = Array.length p.xs in
       if n >= 2 then
         for i = 0 to n - 1 do
@@ -148,13 +148,13 @@ let coverage rule ~x0 ~y0 ~w ~h (polys : Flatten.polyline list) =
 (* [pixel_bounds clip polys] is the pixel rectangle of [polys] within [clip], or
    [None] when nothing is visible. *)
 let pixel_bounds clip polys =
-  match Flatten.bounds polys with
+  match Polyline.bounds polys with
   | None -> None
-  | Some (bx0, by0, bx1, by1) ->
-      let x0 = Int.max clip.x0 (int_of_float (Float.floor bx0)) in
-      let y0 = Int.max clip.y0 (int_of_float (Float.floor by0)) in
-      let x1 = Int.min clip.x1 (int_of_float (Float.ceil bx1)) in
-      let y1 = Int.min clip.y1 (int_of_float (Float.ceil by1)) in
+  | Some b ->
+      let x0 = Int.max clip.x0 (int_of_float (Float.floor b.x0)) in
+      let y0 = Int.max clip.y0 (int_of_float (Float.floor b.y0)) in
+      let x1 = Int.min clip.x1 (int_of_float (Float.ceil b.x1)) in
+      let y1 = Int.min clip.y1 (int_of_float (Float.ceil b.y1)) in
       if x1 <= x0 || y1 <= y0 then None else Some (x0, y0, x1, y1)
 
 let fill_polys canvas clip color rule polys =
@@ -180,7 +180,7 @@ let fill_polys canvas clip color rule polys =
 
 (* [as_pixel_rect polys] is the pixel rectangle [polys] draws when it is a
    single axis-aligned rectangle on pixel boundaries. *)
-let as_pixel_rect (polys : Flatten.polyline list) =
+let as_pixel_rect (polys : Polyline.t list) =
   match polys with
   | [ { xs; ys; _ } ] when Array.length xs = 4 || Array.length xs = 5 ->
       let n = Array.length xs in
@@ -249,7 +249,7 @@ let draw_image canvas clip m ~x ~y ~w ~h data =
   let channels = if Array.length shape = 3 then shape.(2) else 1 in
   let buf = Nx.data data and off = Nx.offset data in
   let corners =
-    Flatten.path m
+    Polyline.of_path m
       (Path.polygon [| x; x +. w; x +. w; x |] [| y; y; y +. h; y +. h |])
   in
   match
@@ -321,55 +321,16 @@ let draw_image canvas clip m ~x ~y ~w ~h data =
             done
           done)
 
-(* Bounds of a picture in device space, for stamping. *)
-
-let union a b =
-  match (a, b) with
-  | None, x | x, None -> x
-  | Some (ax0, ay0, ax1, ay1), Some (bx0, by0, bx1, by1) ->
-      Some
-        ( Float.min ax0 bx0,
-          Float.min ay0 by0,
-          Float.max ax1 bx1,
-          Float.max ay1 by1 )
-
-let corners_bounds m x0 y0 x1 y1 =
-  Flatten.bounds
-    (Flatten.path m (Path.polygon [| x0; x1; x1; x0 |] [| y0; y0; y1; y1 |]))
-
 let linear_scale (m : Affine.t) =
   Float.sqrt (Float.abs ((m.xx *. m.yy) -. (m.xy *. m.yx)))
-
-let rec bounds m (p : Picture.t) =
-  match p with
-  | Empty -> None
-  | Fill { path; _ } -> Flatten.bounds (Flatten.path m path)
-  | Stroke { stroke; path; _ } ->
-      Flatten.bounds
-        (Stroker.outline stroke ~scale:(linear_scale m) (Flatten.path m path))
-  | Text { font; size; x; y; text; _ } ->
-      let bx0, by0, bx1, by1 = Font.bounds font ~size text in
-      if bx0 = bx1 && by0 = by1 then None
-      else corners_bounds m (x +. bx0) (y +. by0) (x +. bx1) (y +. by1)
-  | Image { x; y; w; h; _ } -> corners_bounds m x y (x +. w) (y +. h)
-  | Group ps -> List.fold_left (fun acc p -> union acc (bounds m p)) None ps
-  | Clip { picture; _ } -> bounds m picture
-  | Transform { m = m'; picture } -> bounds Affine.(m * m') picture
-  | Stamp { picture; xs; ys } ->
-      let acc = ref None in
-      Array.iteri
-        (fun i x ->
-          acc := union !acc (bounds Affine.(m * translate x ys.(i)) picture))
-        xs;
-      !acc
 
 (* Drawing *)
 
 let draw_text canvas clip m ~font ~size ~color ~x ~y text =
   List.iter
-    (fun (g, gx) ->
-      let path = Font.glyph_path font ~size g in
-      let polys = Flatten.path Affine.(m * translate (x +. gx) y) path in
+    (fun (g : Font.glyph) ->
+      let path = Font.glyph_path font ~size g.id in
+      let polys = Polyline.of_path Affine.(m * translate (x +. g.x) y) path in
       fill_polys canvas clip color `Nonzero polys)
     (Font.glyphs font ~size text)
 
@@ -406,10 +367,11 @@ let rec draw canvas clip m (p : Picture.t) =
     match p with
     | Empty -> ()
     | Fill { rule; color; path } ->
-        fill_polys canvas clip color rule (Flatten.path m path)
+        fill_polys canvas clip color rule (Polyline.of_path m path)
     | Stroke { stroke; color; path } ->
         let polys =
-          Stroker.outline stroke ~scale:(linear_scale m) (Flatten.path m path)
+          Stroker.outline stroke ~scale:(linear_scale m)
+            (Polyline.of_path m path)
         in
         fill_polys canvas clip color `Nonzero polys
     | Text { font; size; color; x; y; text } ->
@@ -417,19 +379,19 @@ let rec draw canvas clip m (p : Picture.t) =
     | Image { x; y; w; h; data } -> draw_image canvas clip m ~x ~y ~w ~h data
     | Group ps -> List.iter (draw canvas clip m) ps
     | Clip { path; picture } ->
-        draw canvas (intersect_clip clip (Flatten.path m path)) m picture
+        draw canvas (intersect_clip clip (Polyline.of_path m path)) m picture
     | Transform { m = m'; picture } -> draw canvas clip Affine.(m * m') picture
     | Stamp { picture; xs; ys } -> (
         (* Draw the stamp once at the origin under the linear part of [m], then
            blit it at every position rounded to the pixel grid. *)
         let lin = { m with x0 = 0.; y0 = 0. } in
-        match bounds lin picture with
+        match Picture.bounds (Picture.transform lin picture) with
         | None -> ()
-        | Some (bx0, by0, bx1, by1) ->
-            let tx0 = int_of_float (Float.floor bx0) - 1
-            and ty0 = int_of_float (Float.floor by0) - 1 in
-            let tw = int_of_float (Float.ceil bx1) + 1 - tx0
-            and th = int_of_float (Float.ceil by1) + 1 - ty0 in
+        | Some b ->
+            let tx0 = int_of_float (Float.floor b.x0) - 1
+            and ty0 = int_of_float (Float.floor b.y0) - 1 in
+            let tw = int_of_float (Float.ceil b.x1) + 1 - tx0
+            and th = int_of_float (Float.ceil b.y1) + 1 - ty0 in
             let tile = create tw th in
             let tile_clip = { x0 = 0; y0 = 0; x1 = tw; y1 = th; mask = None } in
             draw tile tile_clip

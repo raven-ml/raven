@@ -46,5 +46,3 @@ let invert m =
     x0 = -.((xx *. m.x0) +. (xy *. m.y0));
     y0 = -.((yx *. m.x0) +. (yy *. m.y0));
   }
-
-let is_translation m = m.xx = 1. && m.yx = 0. && m.xy = 0. && m.yy = 1.

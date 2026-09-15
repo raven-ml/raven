@@ -68,3 +68,10 @@ val stamp : t -> float array -> float array -> t
     and reuse it.
 
     Raises [Invalid_argument] if the arrays differ in length. *)
+
+(** {1:bounds Bounds} *)
+
+val bounds : t -> Box.t option
+(** [bounds pic] is the box enclosing [pic], or [None] if it draws nothing. The
+    box is tight for fills, text and images; a stroke is enclosed by its pen
+    width, and by its miter limit at miter joins. *)

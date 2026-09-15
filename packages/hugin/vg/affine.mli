@@ -34,6 +34,3 @@ val invert : t -> t
 (** [invert m] is the inverse of [m].
 
     Raises [Invalid_argument] if [m] is singular. *)
-
-val is_translation : t -> bool
-(** [is_translation m] is [true] iff [m] only translates. *)

@@ -9,7 +9,7 @@ open Hugin_vg
    closed polygon with positive orientation, so the nonzero union of the pieces
    is the stroked outline and shared edges cancel exactly. *)
 
-open Flatten
+open Polyline
 
 (* [emit xs ys acc] adds the polygon, reversed if needed so that its signed area
    is positive. *)
@@ -31,13 +31,13 @@ let emit xs ys acc =
    disc's; the chord count keeps it within the flattening tolerance. *)
 let circle cx cy r acc =
   let n =
-    if r <= Flatten.tolerance then 8
+    if r <= Path.default_tolerance then 8
     else
       Int.max 8
         (Int.min 128
            (int_of_float
               (Float.ceil
-                 (Float.pi /. Float.acos (1. -. (Flatten.tolerance /. r))))))
+                 (Float.pi /. Float.acos (1. -. (Path.default_tolerance /. r))))))
   in
   let step = 2. *. Float.pi /. float n in
   let r = r *. Float.sqrt (step /. Float.sin step) in
@@ -53,7 +53,7 @@ let circle cx cy r acc =
 
 (* [dash pattern poly] splits [poly] into the polylines its drawn dashes cover,
    restarting the pattern at each subpath. *)
-let dash pattern (poly : polyline) =
+let dash pattern (poly : Polyline.t) =
   let pattern =
     if Array.length pattern mod 2 = 1 then Array.append pattern pattern
     else pattern
@@ -93,7 +93,7 @@ let dash pattern (poly : polyline) =
 let outline (s : Stroke.t) ~scale polys =
   let hw = s.width *. scale /. 2. in
   let acc = ref [] in
-  let stroke_one (poly : polyline) =
+  let stroke_one (poly : Polyline.t) =
     (* Drop points within a twentieth of a pixel of the previous one, so that
        every segment has a direction and dense data does not pay for a join per
        sub-pixel step. *)
@@ -152,7 +152,7 @@ let outline (s : Stroke.t) ~scale polys =
         let dot = (d1x *. d2x) +. (d1y *. d2y) in
         (* A join between nearly collinear segments leaves a notch narrower than
            the flattening tolerance, so it is not worth a polygon. *)
-        if dot > 0. && Float.abs cross *. hw < Flatten.tolerance then ()
+        if dot > 0. && Float.abs cross *. hw < Path.default_tolerance then ()
         else
           match s.join with
           | `Round -> acc := circle x y hw !acc

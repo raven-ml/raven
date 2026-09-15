@@ -71,3 +71,24 @@ val fold :
     drawing order. [move] starts a subpath, [line] and [curve] extend it and
     [close] closes it, with the same conventions as the building functions.
     Polylines and polygons are visited point by point. *)
+
+val default_tolerance : float
+(** [default_tolerance] is a tenth of a unit, the flattening tolerance
+    {!flatten} uses by default. *)
+
+val flatten :
+  ?tolerance:float ->
+  Affine.t ->
+  move:('a -> float -> float -> 'a) ->
+  line:('a -> float -> float -> 'a) ->
+  close:('a -> 'a) ->
+  'a ->
+  t ->
+  'a
+(** [flatten ~tolerance m ~move ~line ~close acc p] is like {!fold} over [p]
+    mapped through [m], with every curve replaced by line segments staying
+    within [tolerance] of it. [tolerance] defaults to {!default_tolerance}. A
+    segment with a non-finite endpoint ends its subpath. *)
+
+val bounds : t -> Box.t option
+(** [bounds p] is the box enclosing [p], or [None] if [p] has no points. *)
