@@ -241,7 +241,7 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
   let batch = List.filteri (fun i _ -> i < rank - 2) shape in
   let vector_rhs = List.length (Tensor.shape b) = rank - 1 in
   let bm = if vector_rhs then Movement.unsqueeze b (-1) else b in
-  if n = 0 then bm
+  if n = 0 then b
   else
     (* Transposing swaps which triangle is which, so the whole system flips
        exactly when the effective triangle points up: [upper <> transpose]. *)
