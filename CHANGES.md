@@ -720,6 +720,12 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.poisson` runs at its rate's compute dtype instead of always at
+  float64, so a float32 rate compiles on Metal and every other device without
+  double precision. The rejection test now evaluates the log pmf in a form
+  that does not cancel terms of size `rate log rate`, which is what had forced
+  float64. Draws for a float64 rate are unchanged; a float32 rate gives a
+  different stream than before.
 - Add `Nx.Rng.bits k shape`, the generator's raw uniformly random 32-bit
   words, so a distribution the module does not provide can be built on the
   same generator with the same purity and transform guarantees. `uniform` at

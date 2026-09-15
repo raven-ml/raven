@@ -611,10 +611,10 @@ let test_parameter_shapes_are_checked () =
    truncated round count would break at the tail. *)
 let test_poisson_matches_the_pmf () =
   let n = 200_000 in
-  let check rate =
+  let check (type b) (dtype : (float, b) dtype) rate =
     let v =
       Array.map Int32.to_int
-        (Nx.to_array (Rng.poisson (Rng.key 77) (param float64 [| n |] rate)))
+        (Nx.to_array (Rng.poisson (Rng.key 77) (param dtype [| n |] rate)))
     in
     let len = float_of_int n in
     let mean = Array.fold_left (fun a x -> a +. float_of_int x) 0.0 v /. len in
@@ -624,7 +624,9 @@ let test_poisson_matches_the_pmf () =
         0.0 v
       /. len
     in
-    let label = Printf.sprintf "poisson(%g)" rate in
+    let label =
+      Printf.sprintf "poisson(%g) at %s" rate (Nx_core.Dtype.to_string dtype)
+    in
     equal ~msg:(label ^ " mean") (float (0.03 *. Stdlib.sqrt rate)) rate mean;
     equal ~msg:(label ^ " variance") (float (0.1 *. rate)) rate var;
     equal ~msg:(label ^ " counts are non-negative") bool true
@@ -646,16 +648,16 @@ let test_poisson_matches_the_pmf () =
     done
   in
   (* Below 10 the draw is by inversion, from 10 up by transformed rejection;
-     12 sits just inside the second regime, where its acceptance is lowest,
-     and the large rates check the log-pmf test past where float32 would have
-     lost it. The pmf underflows on the host there, so only the moments are
-     checked. *)
-  check 0.7;
-  check 4.0;
-  check 12.0;
-  check 30.0;
-  check 200.0;
-  check 1e5
+     12 sits just inside the second regime, where its acceptance is lowest.
+     The large rates exercise the log-pmf test where its direct form would
+     have cancelled to noise, at float32 in particular; the pmf underflows on
+     the host there, so only the moments are checked. *)
+  List.iter
+    (fun rate ->
+      check float64 rate;
+      check float32 rate)
+    [ 0.7; 4.0; 12.0; 30.0; 200.0; 1e5 ];
+  check float64 1e7
 
 (* A tensor of rates spanning both regimes, drawn at once: each column keeps
    its own mean. Out-of-domain rates give a count of zero rather than

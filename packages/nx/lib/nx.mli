@@ -674,8 +674,11 @@ module Rng : sig
       run for a fixed sixteen rounds, so like {!gamma} it is not quite exact:
       about one element in [5e9] is accepted by no round and takes its last
       proposal, a draw from the envelope with mean near [rate]. The cost per
-      element is the same at every rate. Computed at float64 whatever the dtype
-      of [rate], which the rejection test's cancellation requires. *)
+      element is the same at every rate.
+
+      Computed at [rate]'s compute dtype, so a float32 rate compiles on every
+      device. Float32 places the proposals exactly up to a rate of about [1e5];
+      give a float64 rate beyond that. *)
 
   val categorical : key -> ?axis:int -> (float, 'a) t -> int32_t
   (** [categorical k logits] samples category indices from unnormalised
