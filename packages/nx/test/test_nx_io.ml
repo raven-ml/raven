@@ -912,7 +912,8 @@ let test_txt_float_precision () =
     ~finally:(fun () -> Sys.remove path)
     (fun () ->
       Nx_io.save_txt path data;
-      let expected = Printf.sprintf "%.18e" value in
+      (* numpy's [%.18e] of pi; a C runtime may round it differently. *)
+      let expected = "3.141592653589793116e+00" in
       let content = read_file path |> String.trim in
       equal ~msg:"formatted value" string expected content;
       let loaded = Nx_io.load_txt path Nx.float64 in
@@ -937,9 +938,10 @@ let test_txt_exact_formatting () =
       (-1.5, "-1.500000000000000000e+00");
     ]
   in
+  (* A column, so that each value is its own line. *)
   let data =
     Nx.create Nx.float64
-      [| List.length cases |]
+      [| List.length cases; 1 |]
       (Array.of_list (List.map fst cases))
   in
   let path = temp_file "test_txt_exact_" ".txt" in
