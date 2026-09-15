@@ -113,6 +113,7 @@ let test_engine () =
   check arg_raised "argreduce funnel raises on empty axis"
 
 let test_pool_after_fork () =
+  if Sys.win32 then skip ~reason:"no fork on Windows" ();
   check (parallel_probe () = 0) "worker pool before fork";
   let pid = Unix.fork () in
   let status =
