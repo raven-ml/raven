@@ -3,9 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** PDF rendering of {!Hugin_vg} pictures. *)
+(** PDF rendering of {!Hugin_vg} pictures.
+
+    The picture's unit is one point, a 72nd of an inch. Text stays text and
+    copies as text: each font the picture uses is embedded once, glyphs are
+    positioned with their kerning, and a Unicode map is attached. Images are
+    stored losslessly. Content streams are not compressed. *)
 
 val render : width:float -> height:float -> Hugin_vg.Picture.t -> string
-(** [render ~width ~height p] is [p] as a single-page PDF document; one canvas
-    unit is one point. Text stays text, with the fonts it uses embedded, and
-    images are stored losslessly. *)
+(** [render ~width ~height p] is [p] as a single-page PDF 1.7 document whose
+    page is [width] by [height] points. Alpha becomes graphics states, stamps
+    become form objects placed at every point, and RGBA images get a soft mask.
+*)
