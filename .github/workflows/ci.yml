@@ -14,11 +14,20 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-          # - windows-latest
+          - windows-2025
 
     runs-on: ${{ matrix.os }}
 
+    defaults:
+      run:
+        shell: bash
+
     steps:
+      # The doc and expect tests compare byte-for-byte; a CRLF checkout on
+      # Windows would diff every line.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
       - name: Checkout tree
         uses: actions/checkout@v4
 
@@ -26,6 +35,12 @@ jobs:
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5
+
+      # Strawberry Perl ships a pkg-config shim that shadows Cygwin's pkgconf
+      # and breaks the bytesrw build.
+      - name: Drop Strawberry Perl's pkg-config shim
+        if: runner.os == 'Windows'
+        run: rm -f "C:/Strawberry/perl/bin/pkg-config" "C:/Strawberry/perl/bin/pkg-config.bat"
 
       - name: Install dependencies
         run: |
@@ -41,11 +56,13 @@ jobs:
           opam exec -- dune build --release @packages/nx/lib/backend_c/test/backend-stress
 
       - name: Build and test brot
+        env:
+          BROT_REQUIRE_FIXTURES: 1
         run: |
           packages/brot/bench/download_data.sh
           python3 packages/brot/test/scripts/download_hf_tokenizers.py
           opam exec -- dune build --release packages/brot
-          BROT_REQUIRE_FIXTURES=1 opam exec -- dune build --release @packages/brot/runtest
+          opam exec -- dune build --release @packages/brot/runtest
 
       - name: Build and test talon
         run: |
@@ -57,10 +74,20 @@ jobs:
           opam exec -- dune build --release packages/rune
           opam exec -- dune build --release @packages/rune/runtest
 
+      - name: Build and test ppx_ptree
+        run: |
+          opam exec -- dune build --release packages/ppx_ptree
+          opam exec -- dune build --release @packages/ppx_ptree/runtest
+
       - name: Build and test kaun
         run: |
           opam exec -- dune build --release packages/kaun
           opam exec -- dune build --release @packages/kaun/runtest
+
+      - name: Build and test vega
+        run: |
+          opam exec -- dune build --release packages/vega
+          opam exec -- dune build --release @packages/vega/runtest
 
       - name: Build and test fehu
         run: |
@@ -71,6 +98,21 @@ jobs:
         run: |
           opam exec -- dune build --release packages/sowilo
           opam exec -- dune build --release @packages/sowilo/runtest
+
+      - name: Build and test munin
+        run: |
+          opam exec -- dune build --release packages/munin
+          opam exec -- dune build --release @packages/munin/runtest
+
+      - name: Build and test norn
+        run: |
+          opam exec -- dune build --release packages/norn
+          opam exec -- dune build --release @packages/norn/runtest
+
+      - name: Build and test tolk
+        run: |
+          opam exec -- dune build --release packages/tolk
+          opam exec -- dune build --release @packages/tolk/runtest
 
       - name: Build and test hugin
         run: |
