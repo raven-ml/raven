@@ -490,22 +490,22 @@ module Rng : sig
 
       Draws come from a Threefry generator whose state is a {e key}. Every
       sampler here is a pure function of the key it is given: the same key,
-      dtype and shape give the same values — eagerly, under {!Rune.val-jit},
-      and on every device. Fresh values come from fresh keys, by {!split}ting a
-      key into independent subkeys or {!fold_in}ning a counter.
+      dtype and shape give the same values — eagerly, under {!Rune.val-jit}, and
+      on every device. Fresh values come from fresh keys, by {!split}ting a key
+      into independent subkeys or {!fold_in}ning a counter.
 
-      Naming a key per draw site is precise but verbose, so a {{!section:scope}
-      scope} lets one key stand for a region: the keyless samplers
-      ([Nx.rand], [Nx.randn], …) draw successive subkeys of its root. The two
-      are the same generator — [Nx.rand] is {!uniform} on a subkey of the
-      scope — and both are as strong as the key involved.
+      Naming a key per draw site is precise but verbose, so a
+      {{!section:scope} scope} lets one key stand for a region: the keyless
+      samplers ([Nx.rand], [Nx.randn], …) draw successive subkeys of its root.
+      The two are the same generator — [Nx.rand] is {!uniform} on a subkey of
+      the scope — and both are as strong as the key involved.
 
-      Which to reach for is not "explicit under a transform, scope elsewhere".
-      A scope rooted at a traced or batched key traces and batches too (see
+      Which to reach for is not "explicit under a transform, scope elsewhere". A
+      scope rooted at a traced or batched key traces and batches too (see
       {{!section:scope}Scope}). Pass keys when you want a particular draw pinned
-      to a particular name, and results that survive inserting a draw
-      elsewhere; open a scope when you want the draws in a region decorrelated
-      and would rather not thread a subkey to each one. *)
+      to a particular name, and results that survive inserting a draw elsewhere;
+      open a scope when you want the draws in a region decorrelated and would
+      rather not thread a subkey to each one. *)
 
   type key = (int32, int32_elt) t
   (** The type for keys: a transparent [[|2|]] int32 tensor holding the
@@ -529,10 +529,10 @@ module Rng : sig
       key and a loop counter. *)
 
   val fold_in_tensor : key -> (int32, int32_elt) t -> key
-  (** [fold_in_tensor k data] is {!fold_in} for a [data] known only at run
-      time — a step counter carried through a compiled loop, a device index.
-      [data] is a scalar [int32] tensor, and the result agrees with
-      [fold_in k i] whenever [data] holds [i] and [i] fits in 32 bits.
+  (** [fold_in_tensor k data] is {!fold_in} for a [data] known only at run time
+      — a step counter carried through a compiled loop, a device index. [data]
+      is a scalar [int32] tensor, and the result agrees with [fold_in k i]
+      whenever [data] holds [i] and [i] fits in 32 bits.
 
       Unlike {!fold_in}, this keeps the derivation inside the computation, so
       the subkey tracks a traced counter instead of freezing whatever value it
@@ -544,22 +544,33 @@ module Rng : sig
       {!Rune.pmap}. Outside a transform there is a single lane and it is
       [fold_in k 0]. Decorrelates lanes without a manual split-and-stack. *)
 
-  (** {1:samplers Explicit samplers} *)
+  (** {1:samplers Explicit samplers}
 
-  val uniform :
-    key ->
-    ?low:float ->
-    ?high:float ->
-    (float, 'b) dtype ->
-    int array ->
-    (float, 'b) t
-  (** [uniform k dtype shape] samples uniformly from [\[low, high)] ([low]
-      defaults to [0], [high] to [1]). Pure: the same arguments always produce
-      the same values.
+      Every sampler is pure: the same key and arguments always produce the same
+      values. A sampler without parameters takes the dtype and shape of the
+      draw. A sampler with parameters takes them as tensors, elementwise, and
+      the draw has their shape and dtype: a tensor of rates gives one Poisson
+      count per rate, and a parameter that is a traced or batched tensor traces
+      or batches the draw with it. A scalar parameter is a broadcast scalar,
+      [broadcast_to shape (scalar dtype v)], a view that allocates nothing.
+      Location and scale are never parameters: [uniform] is on [\[0, 1)],
+      [normal] is standard, [exponential] has rate 1, and the caller's own [add]
+      and [mul] place them, the same line for a scalar and a tensor.
 
-      A draw is a multiple of [2 ** -p] scaled into the interval, where [p] is
-      the significand width of [dtype] and never more than [24]; [high] itself
-      is unreachable. *)
+      Parameters are data, so their values are not checked: an argument outside
+      the distribution's domain gives the result the arithmetic gives, NaN for a
+      float draw, as [log] of a negative does. Each sampler states its domain.
+      Shapes and dtypes are known when the program is built, so those are still
+      checked and raise [Invalid_argument].
+
+      Float draws are computed at float64 for float64 parameters and at float32
+      otherwise, then returned at the parameters' dtype. *)
+
+  val uniform : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  (** [uniform k dtype shape] samples uniformly from [\[0, 1)].
+
+      A draw is a multiple of [2 ** -p], where [p] is the significand width of
+      [dtype] and never more than [24]; [1] itself is unreachable. *)
 
   val normal : key -> (float, 'b) dtype -> int array -> (float, 'b) t
   (** [normal k dtype shape] samples the standard normal distribution (mean 0,
@@ -576,27 +587,21 @@ module Rng : sig
       Raises [Invalid_argument] if [low >= high], or if either bound falls
       outside [int32]. *)
 
-  val bernoulli : key -> p:float -> int array -> (bool, bool_elt) t
-  (** [bernoulli k ~p shape] samples booleans that are [true] with probability
-      [p].
+  val bernoulli : key -> (float, 'b) t -> (bool, bool_elt) t
+  (** [bernoulli k p] samples booleans that are [true] with probability [p],
+      elementwise. The comparison runs at 24 random bits unless [p] is float64.
+      A [p] above [1] is always [true]; below [0], or NaN, always [false]. *)
 
-      Raises [Invalid_argument] if [p] is outside [[0, 1]]. *)
-
-  val truncated_normal :
-    key ->
-    lower:float ->
-    upper:float ->
-    (float, 'b) dtype ->
-    int array ->
-    (float, 'b) t
-  (** [truncated_normal k ~lower ~upper dtype shape] samples the standard normal
-      distribution conditioned on landing in [[lower, upper]].
+  val truncated_normal : key -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+  (** [truncated_normal k lower upper] samples the standard normal distribution
+      conditioned on landing in [[lower, upper]], elementwise; the bounds
+      broadcast against each other and may be given in either order.
 
       Drawn by inverting the conditioned distribution rather than by rejecting
       out-of-range samples: one draw per element whatever the bounds, so the
-      cost does not grow as the interval narrows.
-
-      Raises [Invalid_argument] if [lower >= upper]. *)
+      cost does not grow as the interval narrows, and the draw is differentiable
+      in both bounds. The inverse carries about seven significant digits,
+      whatever the dtype. *)
 
   val gumbel : key -> (float, 'b) dtype -> int array -> (float, 'b) t
   (** [gumbel k dtype shape] samples the standard Gumbel distribution, the
@@ -610,76 +615,64 @@ module Rng : sig
   (** [exponential k dtype shape] samples the exponential distribution with rate
       1. Scale by [1 /. rate] for another rate. *)
 
-  val gamma :
-    key -> concentration:float -> (float, 'b) dtype -> int array -> (float, 'b) t
-  (** [gamma k ~concentration dtype shape] samples the gamma distribution with
-      the given concentration (the shape parameter, named to avoid colliding
-      with the tensor shape) and unit rate. Divide by a rate, or multiply by a
-      scale, for the two-parameter family.
+  val gamma : key -> (float, 'b) t -> (float, 'b) t
+  (** [gamma k concentration] samples the gamma distribution with the given
+      concentration (the shape parameter, named to avoid colliding with the
+      tensor shape) and unit rate, elementwise; [concentration] must be
+      positive. Divide by a rate, or multiply by a scale, for the two-parameter
+      family.
 
-      Other distributions follow from it: [beta] is [g1 /. (g1 +. g2)] for
-      concentrations [a] and [b], a Dirichlet is a vector of gammas divided by
-      its own sum, a chi-square with [k] degrees of freedom is [2] times a gamma
-      of concentration [k /. 2], and Student's t is a normal over the square
-      root of a chi-square over its degrees of freedom.
+      Other distributions follow from it: a chi-square with [k] degrees of
+      freedom is [2] times a gamma of concentration [k /. 2], and Student's t is
+      a normal over the square root of a chi-square over its degrees of freedom.
 
       {b This sampler is not exact.} Every algorithm for the gamma rejects, and
       a rejection loop cannot be traced, so a fixed eight attempts are drawn and
       the first acceptance taken. Roughly one element in [1e14] is accepted by
-      none and falls back to the distribution's mean.
+      none and falls back to the distribution's mean. Its derivative in
+      [concentration] flows through the accepted proposal alone, without the
+      acceptance correction, so it is a biased estimator. *)
 
-      Raises [Invalid_argument] if [concentration] is not positive. *)
+  val beta : key -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+  (** [beta k a b] samples the beta distribution on [[0, 1]] with concentrations
+      [a] and [b], in that order (Beta(a, b) is the mirror image of Beta(b, a)),
+      elementwise; the two broadcast against each other and must be positive.
+      Built from two {!gamma} draws, whose approximation and biased derivative
+      it inherits. *)
 
-  val beta :
-    key ->
-    alpha:float ->
-    beta:float ->
-    (float, 'b) dtype ->
-    int array ->
-    (float, 'b) t
-  (** [beta k ~alpha ~beta dtype shape] samples the beta distribution on
-      [\[0, 1\]]. Built from two {!gamma} draws, whose approximation it
+  val dirichlet : key -> (float, 'b) t -> (float, 'b) t
+  (** [dirichlet k concentration] samples the Dirichlet distribution whose
+      components are the last axis of [concentration], one draw per row; the
+      result has the shape of [concentration] and every row sums to one. The
+      concentrations must be positive.
+
+      Built from one {!gamma} draw, whose approximation and biased derivative it
       inherits.
 
-      Raises [Invalid_argument] unless both concentrations are positive. *)
+      Raises [Invalid_argument] if the last axis of [concentration] has fewer
+      than two components. *)
 
-  val dirichlet :
-    key ->
-    concentration:float array ->
-    (float, 'b) dtype ->
-    int array ->
-    (float, 'b) t
-  (** [dirichlet k ~concentration dtype shape] samples the Dirichlet
-      distribution over as many components as [concentration] has. The
-      components occupy a new trailing axis, so the result has shape
-      [shape @ [| n |]] and every row sums to one.
-
-      Built from one {!gamma} per component, whose approximation it inherits.
-
-      Raises [Invalid_argument] if [concentration] has fewer than two entries or
-      any of them is not positive. *)
-
-  val poisson : key -> rate:float -> int array -> int32_t
-  (** [poisson k ~rate shape] samples the Poisson distribution with the given
-      rate, at any rate.
+  val poisson : key -> (float, 'b) t -> int32_t
+  (** [poisson k rate] samples the Poisson distribution with the given rate,
+      elementwise, at any rate; [rate] must be positive and finite, and a rate
+      of zero, a negative rate or NaN gives a count of [0].
 
       Below 10 the count is read off the cumulative distribution with one
-      uniform, exactly. From 10 up it comes from a transformed rejection
-      sampler run for a fixed sixteen rounds, so like {!gamma} it is not quite
-      exact: about one element in [5e9] is accepted by no round and takes its
-      last proposal, a draw from the envelope with mean near [rate]. The cost
-      per element is the same at every rate.
+      uniform, exactly. From 10 up it comes from a transformed rejection sampler
+      run for a fixed sixteen rounds, so like {!gamma} it is not quite exact:
+      about one element in [5e9] is accepted by no round and takes its last
+      proposal, a draw from the envelope with mean near [rate]. The cost per
+      element is the same at every rate. Computed at float64 whatever the dtype
+      of [rate], which the rejection test's cancellation requires. *)
 
-      Raises [Invalid_argument] if [rate] is not positive. *)
-
-  val categorical :
-    key -> ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
+  val categorical : key -> ?axis:int -> (float, 'a) t -> int32_t
   (** [categorical k logits] samples category indices from unnormalised
-      log-probabilities. [axis] defaults to [-1] (the last axis); [shape]
-      prepends extra batch dimensions, giving that many independent draws.
+      log-probabilities: one index per row of [logits] along [axis], which
+      defaults to [-1] (the last axis). The result has the shape of [logits]
+      with [axis] removed; broadcast [logits] for more draws than rows.
 
-      Raises [Invalid_argument] if [logits] is not a float type, is a float8
-      type, or [axis] is out of bounds. *)
+      Raises [Invalid_argument] if [logits] is a float8 type or [axis] is out of
+      bounds. *)
 
   val permutation : key -> int -> int32_t
   (** [permutation k n] is a random permutation of \[[0], [n-1]\].
@@ -692,18 +685,18 @@ module Rng : sig
 
   (** {1:scope Scope}
 
-      The scope is where a key enters once instead of at every call: the
-      keyless samplers draw successive subkeys of its root, so draws inside it
-      are decorrelated without deriving a subkey by hand per site.
+      The scope is where a key enters once instead of at every call: the keyless
+      samplers draw successive subkeys of its root, so draws inside it are
+      decorrelated without deriving a subkey by hand per site.
 
-      A scope is exactly as strong as its root key. Every draw is
-      {!fold_in} of the root, a tensor computation, so a root that is a jitted
-      function's input leaf or a {!Rune.val-vmap} mapped axis makes the whole
-      scope traced or batched — the keyless samplers then compile and
-      decorrelate just as the keyed ones do. A root a transform closes over,
-      such as [with_key (key 42)] inside a jitted function, is a constant of
-      that transform, and under {!Rune.val-jit} raises rather than freeze one
-      draw into the compiled program.
+      A scope is exactly as strong as its root key. Every draw is {!fold_in} of
+      the root, a tensor computation, so a root that is a jitted function's
+      input leaf or a {!Rune.val-vmap} mapped axis makes the whole scope traced
+      or batched — the keyless samplers then compile and decorrelate just as the
+      keyed ones do. A root a transform closes over, such as [with_key (key 42)]
+      inside a jitted function, is a constant of that transform, and under
+      {!Rune.val-jit} raises rather than freeze one draw into the compiled
+      program.
 
       What a scope gives up against passing keys explicitly is
       order-independence: inserting a draw shifts every draw after it. *)
@@ -732,9 +725,9 @@ end
 
     A closed set: the draws reached for reflexively, taking their subkey from
     the ambient scope (see {!Rng.with_key}) instead of a key argument. [rand] is
-    {!Rng.uniform} on \[[0], [1]) and [randn] is {!Rng.normal}, keeping the names
-    the ecosystem gives them; the rest match their keyed twin's name and take
-    its arguments minus the key, and raise whatever it raises.
+    {!Rng.uniform} on \[[0], [1]) and [randn] is {!Rng.normal}, keeping the
+    names the ecosystem gives them; the rest match their keyed twin's name and
+    take its arguments minus the key, and raise whatever it raises.
 
     Every other distribution — {!Rng.gamma}, {!Rng.beta}, {!Rng.dirichlet},
     {!Rng.poisson}, {!Rng.gumbel}, {!Rng.exponential} — lives in {!module-Rng}
@@ -744,8 +737,7 @@ end
     the special functions of those names, which belong beside {!erf}. *)
 
 val rand : (float, 'b) dtype -> int array -> (float, 'b) t
-(** [rand dtype shape] samples uniformly from \[[0], [1]). For other bounds, see
-    {!Rng.uniform}.
+(** [rand dtype shape] samples uniformly from \[[0], [1]).
 
     Raises [Invalid_argument] if a shape dimension is negative. *)
 
@@ -763,24 +755,21 @@ val randint : ?low:int -> high:int -> int array -> (int32, int32_elt) t
     Raises [Invalid_argument] if [low >= high], or if either bound falls outside
     [int32]. *)
 
-val bernoulli : p:float -> int array -> bool_t
-(** [bernoulli ~p shape] samples booleans that are [true] with probability [p].
+val bernoulli : (float, 'b) t -> bool_t
+(** [bernoulli p] samples booleans that are [true] with probability [p],
+    elementwise. See {!Rng.bernoulli}. *)
 
-    Raises [Invalid_argument] if [p] is not in \[[0], [1]\]. *)
+val truncated_normal : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [truncated_normal lower upper] samples the standard normal conditioned on
+    landing in \[[lower], [upper]\], elementwise. See {!Rng.truncated_normal}.
+*)
 
-val truncated_normal :
-  lower:float -> upper:float -> (float, 'a) dtype -> int array -> (float, 'a) t
-(** [truncated_normal ~lower ~upper dtype shape] samples the standard normal
-    conditioned on landing in \[[lower], [upper]\].
+val categorical : ?axis:int -> (float, 'a) t -> int32_t
+(** [categorical logits] samples one category index per row of [logits] along
+    [axis]. See {!Rng.categorical}.
 
-    Raises [Invalid_argument] if [lower >= upper]. *)
-
-val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
-(** [categorical logits] samples category indices from unnormalised
-    log-probabilities. See {!Rng.categorical}.
-
-    Raises [Invalid_argument] if [logits] is not a float type or [axis] is out
-    of bounds. *)
+    Raises [Invalid_argument] if [logits] is a float8 type or [axis] is out of
+    bounds. *)
 
 val permutation : int -> int32_t
 (** [permutation n] is a random permutation of \[[0], [n-1]\].
@@ -2384,9 +2373,9 @@ val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
 (** [matrix_power t n] raises square matrix [t] to integer power [n]. [n = 0]
     returns the identity; [n < 0] uses the inverse.
 
-    Raises {!Linalg_error} with kind [`Singular] if [n < 0] and [t] is
-    singular. Raises [Invalid_argument] if [t] is not square or the dtype is
-    not floating-point or complex. *)
+    Raises {!Linalg_error} with kind [`Singular] if [n < 0] and [t] is singular.
+    Raises [Invalid_argument] if [t] is not square or the dtype is not
+    floating-point or complex. *)
 
 val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [cross ?axis a b] is the cross product of 3-element vectors along [axis].
@@ -2553,7 +2542,12 @@ val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
 (** {2:linalg_solve Solving} *)
 
 val solve_triangular :
-  ?upper:bool -> ?transpose:bool -> ?unit_diag:bool -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  ?upper:bool ->
+  ?transpose:bool ->
+  ?unit_diag:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t
 (** [solve_triangular ?upper ?transpose ?unit_diag a b] solves the triangular
     system [a *@ x = b] for [x], exploiting that [a] is triangular instead of
     factoring.
@@ -2570,10 +2564,10 @@ val solve_triangular :
     sides stacked as [·.., n, nrhs] (with [n] the size of [a]), sharing the
     batch dimensions of [a]; the result has the shape of [b].
 
-    Raises [Invalid_argument] if the dtype is not floating-point or complex,
-    [a] is not square, [a] and [b] differ in dtype, or [b]'s shape does not
-    match [a]'s. Raises {!Linalg_error} with kind [`Singular] if a diagonal
-    entry of [a] is zero and [unit_diag] is [false].
+    Raises [Invalid_argument] if the dtype is not floating-point or complex, [a]
+    is not square, [a] and [b] differ in dtype, or [b]'s shape does not match
+    [a]'s. Raises {!Linalg_error} with kind [`Singular] if a diagonal entry of
+    [a] is zero and [unit_diag] is [false].
 
     See also {!solve}. *)
 
@@ -2581,8 +2575,8 @@ val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [solve a b] is [x] such that [a *@ x = b].
 
     Raises {!Linalg_error} with kind [`Singular] if [a] is singular: a pivot of
-    its triangular factor lies below tolerance. Raises [Invalid_argument] if
-    [a] is not square or the dtype is not floating-point or complex.
+    its triangular factor lies below tolerance. Raises [Invalid_argument] if [a]
+    is not square or the dtype is not floating-point or complex.
 
     See also {!solve_triangular}, {!lstsq}, {!inv}. *)
 

@@ -2142,6 +2142,21 @@ module Make (B : Backend_intf.S) = struct
       | Float32 -> 24
       | Float64 -> 53
 
+    (* Parameters are tensors and the draw has their shape. The samplers work at
+       float64 for float64 parameters and at float32 for every other float
+       dtype, then return at the parameters' own dtype; [at] moves a tensor
+       between the two without the copy [cast] makes when nothing changes, and
+       [pair] broadcasts two parameters against each other. *)
+    let at (type a b) (target : (float, a) Dtype.t) (x : (float, b) t) :
+        (float, a) t =
+      match Dtype.equal_witness (dtype x) target with
+      | Some Equal -> x
+      | None -> cast target x
+
+    let pair a b =
+      let target = Shape.broadcast (shape a) (shape b) in
+      (broadcast_to target a, broadcast_to target b)
+
     (* Random bits -> [0, 1): keep the low [p] bits and scale them by 2^-p,
        where [p] is the destination's significand width. Both steps are exact,
        so a draw is one of the 2^p multiples of 2^-p in [0, 1 - 2^-p]: the
@@ -2154,20 +2169,12 @@ module Make (B : Backend_intf.S) = struct
        parts and their combination are exact in float64. Widening a float32 draw
        instead would have left a double with 24 random bits, which is what this
        used to do. *)
-    let uniform (type b) k ?(low = 0.0) ?(high = 1.0)
-        (dtype : (float, b) Dtype.t) shape : (float, b) t =
+    let uniform (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
       check_shape "uniform" shape;
       let ctx = B.context k in
       let n = array_prod shape in
       if n = 0 then zeros ctx dtype shape
       else
-        let scale (type c) (compute : (float, c) Dtype.t) u =
-          if low = 0.0 && high = 1.0 then u
-          else
-            add
-              (mul u (scalar ctx compute (high -. low)))
-              (scalar ctx compute low)
-        in
         match dtype with
         | Dtype.Float64 ->
             (* One row per draw: [(hi, lo)] contributes 21 + 32 bits. *)
@@ -2191,7 +2198,7 @@ module Make (B : Backend_intf.S) = struct
                 (add (mul top (scalar ctx Dtype.float64 4294967296.0)) bottom)
                 (scalar ctx Dtype.float64 (Float.ldexp 1.0 (-53)))
             in
-            reshape shape (scale Dtype.float64 u)
+            reshape shape u
         | _ ->
             (* A Threefry row is two words, so [n] draws cost ceil (n/2)
                rows. *)
@@ -2205,7 +2212,7 @@ module Make (B : Backend_intf.S) = struct
                 (cast Dtype.float32 (bitwise_and bits mask))
                 (scalar ctx Dtype.float32 (Float.ldexp 1.0 (-p)))
             in
-            reshape shape (cast dtype (scale Dtype.float32 u))
+            reshape shape (cast dtype u)
 
     (* Box-Muller: a radius from one uniform and an angle from another give two
        independent samples, r cos(2 pi u2) and r sin(2 pi u2). Both are kept, so
@@ -2289,36 +2296,30 @@ module Make (B : Backend_intf.S) = struct
        the price of a shape that does not depend on the draw. *)
     let gamma_rounds = 8
 
-    let gamma (type b) k ~concentration (dtype : (float, b) Dtype.t) shape :
-        (float, b) t =
-      if not (concentration > 0.0) then
-        invalid_arg
-          (Printf.sprintf "Nx.Rng.gamma: concentration must be positive, got %g"
-             concentration);
-      check_shape "gamma" shape;
+    let gamma (type b) k (concentration : (float, b) t) : (float, b) t =
       let ctx = B.context k in
+      let target = dtype concentration in
+      let shape = shape concentration in
       let draw (type c) (compute : (float, c) Dtype.t) =
         let lit v = scalar ctx compute v in
         let tiny = lit (Float.ldexp 1.0 (-significand_bits compute)) in
-        let boosted =
-          if concentration >= 1.0 then concentration else concentration +. 1.0
-        in
-        let d = boosted -. (1.0 /. 3.0) in
-        let squeeze = 1.0 /. Stdlib.sqrt (9.0 *. d) in
+        let a = at compute concentration in
+        let below_one = cmplt a (lit 1.0) in
+        let boosted = where below_one (add a (lit 1.0)) a in
+        let d = sub boosted (lit (1.0 /. 3.0)) in
+        let squeeze = recip (sqrt (mul (lit 9.0) d)) in
         let ks = split ~n:3 k in
         let attempts = Array.append [| gamma_rounds |] shape in
         let x = normal ks.(0) compute attempts in
         let u = uniform ks.(1) compute attempts in
-        (* The mean of Gamma(boosted, 1) is [boosted]: the least wrong constant
-           for an element no round accepted. *)
-        let acc = ref (full ctx compute shape boosted) in
-        let settled =
-          ref (cmpne (zeros ctx compute shape) (zeros ctx compute shape))
-        in
+        (* The mean of Gamma(boosted, 1) is [boosted]: the least wrong value for
+           an element no round accepted. *)
+        let acc = ref boosted in
+        let settled = ref (cmpne boosted boosted) in
         for j = 0 to gamma_rounds - 1 do
           let xj = contiguous (slice [ I j ] x) in
           let uj = contiguous (slice [ I j ] u) in
-          let t = add (lit 1.0) (mul (lit squeeze) xj) in
+          let t = add (lit 1.0) (mul squeeze xj) in
           let v = mul t (mul t t) in
           (* [v] can be non-positive, where the logarithm is undefined. Floor it
              so the arithmetic stays finite and let [positive] do the
@@ -2328,78 +2329,58 @@ module Make (B : Backend_intf.S) = struct
           let bound =
             add
               (mul (lit 0.5) (mul xj xj))
-              (add (lit d) (add (neg (mul (lit d) v)) (mul (lit d) log_v)))
+              (add d (add (neg (mul d v)) (mul d log_v)))
           in
           let accept =
             logical_and positive (cmplt (log (maximum uj tiny)) bound)
           in
           let take = logical_and accept (logical_not !settled) in
-          acc := where take (mul (lit d) v) !acc;
+          acc := where take (mul d v) !acc;
           settled := logical_or !settled accept
         done;
-        if concentration >= 1.0 then !acc
-        else
-          (* Gamma(a) = Gamma(a + 1) * U^(1/a); the floor keeps the power finite
-             when the uniform draws exactly zero. *)
-          let boost = uniform ks.(2) compute shape in
-          mul !acc (pow (maximum boost tiny) (lit (1.0 /. concentration)))
+        (* Gamma(a) = Gamma(a + 1) * U^(1/a) below 1; the floor keeps the power
+           finite when the uniform draws exactly zero. *)
+        let boost = uniform ks.(2) compute shape in
+        let shifted = mul !acc (pow (maximum boost tiny) (recip a)) in
+        where below_one shifted !acc
       in
-      match dtype with
-      | Dtype.Float64 -> cast dtype (draw Dtype.float64)
-      | _ -> cast dtype (draw Dtype.float32)
+      match target with
+      | Dtype.Float64 -> at target (draw Dtype.float64)
+      | _ -> at target (draw Dtype.float32)
 
     (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas of unit rate.
        Both draws inherit {!gamma}'s bounded-rejection approximation. The sum is
        floored before dividing: two gammas can both round to zero when their
        concentrations are tiny. *)
-    let beta (type b) k ~alpha ~beta (dtype : (float, b) Dtype.t) shape :
-        (float, b) t =
-      if not (alpha > 0.0 && beta > 0.0) then
-        invalid_arg
-          (Printf.sprintf
-             "Nx.Rng.beta: both concentrations must be positive, got alpha=%g \
-              beta=%g"
-             alpha beta);
-      check_shape "beta" shape;
+    let beta (type b) k (a : (float, b) t) (b : (float, b) t) : (float, b) t =
+      let a, b = pair a b in
       let ctx = B.context k in
+      let target = dtype a in
       let ks = split k in
-      let g1 = gamma ks.(0) ~concentration:alpha dtype shape in
-      let g2 = gamma ks.(1) ~concentration:beta dtype shape in
-      let tiny = scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype)) in
+      let g1 = gamma ks.(0) a in
+      let g2 = gamma ks.(1) b in
+      let tiny =
+        scalar ctx target (Float.ldexp 1.0 (-significand_bits target))
+      in
       div g1 (maximum (add g1 g2) tiny)
 
-    (* Dirichlet: one gamma per component, normalised across them. The
-       components go on a new trailing axis, so a draw of [shape] gives [shape @
-       [| n |]] and every row sums to one. *)
-    let dirichlet (type b) k ~concentration (dtype : (float, b) Dtype.t) shape :
-        (float, b) t =
-      let n = Array.length concentration in
-      if n < 2 then
+    (* Dirichlet: one gamma per component, normalised across the last axis, so
+       every row of the result sums to one. *)
+    let dirichlet (type b) k (concentration : (float, b) t) : (float, b) t =
+      let s = shape concentration in
+      let nd = Array.length s in
+      if nd = 0 || s.(nd - 1) < 2 then
         invalid_arg
-          "Nx.Rng.dirichlet: concentration needs at least two components";
-      Array.iter
-        (fun a ->
-          if not (a > 0.0) then
-            invalid_arg
-              (Printf.sprintf
-                 "Nx.Rng.dirichlet: every concentration must be positive, got \
-                  %g"
-                 a))
-        concentration;
-      check_shape "dirichlet" shape;
+          "Nx.Rng.dirichlet: concentration needs at least two components on \
+           its last axis";
       let ctx = B.context k in
-      let ks = split ~n k in
-      let axis = Array.length shape in
-      let components =
-        Array.to_list
-          (Array.mapi
-             (fun i a -> gamma ks.(i) ~concentration:a dtype shape)
-             concentration)
+      let target = dtype concentration in
+      let g = gamma k concentration in
+      let tiny =
+        scalar ctx target (Float.ldexp 1.0 (-significand_bits target))
       in
-      let stacked = stack ~axis components in
-      let tiny = scalar ctx dtype (Float.ldexp 1.0 (-significand_bits dtype)) in
-      let total = sum ~axes:[ axis ] ~keepdims:true stacked in
-      div stacked (maximum total tiny)
+      let total = sum ~axes:[ nd - 1 ] ~keepdims:true g in
+      div g (maximum total tiny)
 
     (* log (k!) for a non-negative float64 [k]: Stirling's series at [k + 9],
        where its next term is below 3e-10, with the eight factors of the shift
@@ -2449,8 +2430,9 @@ module Make (B : Backend_intf.S) = struct
     let poisson_inversion_rounds = 48
     let poisson_rejection_rounds = 16
 
-    let poisson_of_rate k (rate : (float, Dtype.float64_elt) t) =
+    let poisson (type b) k (rate : (float, b) t) =
       let ctx = B.context k in
+      let rate = at Dtype.float64 rate in
       let shape = shape rate in
       let lit v = scalar ctx Dtype.float64 v in
       let ks = split k in
@@ -2532,14 +2514,6 @@ module Make (B : Backend_intf.S) = struct
       in
       cast Dtype.int32 (where small inversion rejection)
 
-    let poisson k ~rate shape =
-      if not (rate > 0.0) then
-        invalid_arg
-          (Printf.sprintf "Nx.Rng.poisson: rate must be positive, got %g" rate);
-      check_shape "poisson" shape;
-      poisson_of_rate k
-        (broadcast_to shape (scalar (B.context k) Dtype.float64 rate))
-
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking
        narrow one. *)
@@ -2568,36 +2542,48 @@ module Make (B : Backend_intf.S) = struct
         (cast Dtype.int32 (mul u span))
         (scalar ctx Dtype.int32 (Int32.of_int low))
 
-    let bernoulli k ~p shape =
-      if p < 0.0 || p > 1.0 then
-        invalid_arg "Nx.Rng.bernoulli: p must be in [0, 1]";
-      let ctx = B.context k in
-      cmplt (uniform k Dtype.float32 shape) (scalar ctx Dtype.float32 p)
+    let bernoulli (type b) k (p : (float, b) t) =
+      let draw (type c) (compute : (float, c) Dtype.t) =
+        cmplt (uniform k compute (shape p)) (at compute p)
+      in
+      match dtype p with
+      | Dtype.Float64 -> draw Dtype.float64
+      | _ -> draw Dtype.float32
 
     (* Inverse-CDF truncation: a standard normal restricted to [lo, hi] is [sqrt
        2 * erfinv u] for [u] uniform over the images of the bounds under [erf].
-       The bounds are host floats, so their [erf] is exact and only the inverse
-       needs a kernel. One draw per sample, no acceptance test, so it compiles
-       and its cost does not depend on how much mass the interval holds. *)
-    let truncated_normal (type b) k ~lower ~upper (dtype : (float, b) Dtype.t)
-        shape : (float, b) t =
-      if not (lower < upper) then
-        invalid_arg
-          (Printf.sprintf
-             "Nx.Rng.truncated_normal: invalid bounds, lower=%g >= upper=%g"
-             lower upper);
+       One draw per sample, no acceptance test, so it compiles and its cost does
+       not depend on how much mass the interval holds. *)
+    let truncated_normal (type b) k (lower : (float, b) t)
+        (upper : (float, b) t) : (float, b) t =
+      let lower, upper = pair lower upper in
       let ctx = B.context k in
-      (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
-         the interval off by a hair so unbounded truncation is the untruncated
-         normal rather than an infinity. *)
-      let limit = 1.0 -. 1e-7 in
-      let edge x =
-        Float.max (-.limit) (Float.min limit (Float.erf (x /. Float.sqrt 2.0)))
+      let target = dtype lower in
+      let draw (type c) (compute : (float, c) Dtype.t) =
+        let lit v = scalar ctx compute v in
+        (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
+           the interval off by a hair so unbounded truncation is the untruncated
+           normal rather than an infinity. *)
+        let limit = 1.0 -. 1e-7 in
+        let edge x =
+          maximum (lit (-.limit))
+            (minimum (lit limit)
+               (unaryop B.erf
+                  (mul (at compute x) (lit (1.0 /. Float.sqrt 2.0)))))
+        in
+        let lo = edge lower and hi = edge upper in
+        let u = uniform k compute (shape lower) in
+        let x =
+          mul (lit (Float.sqrt 2.0)) (erfinv (add lo (mul u (sub hi lo))))
+        in
+        (* The inverse carries seven digits, so a draw next to a bound can land
+           an ulp or so past it; the clamp makes the support exact. *)
+        let lower = at compute lower and upper = at compute upper in
+        minimum (maximum x (minimum lower upper)) (maximum lower upper)
       in
-      let u =
-        uniform k ~low:(edge lower) ~high:(edge upper) Dtype.float32 shape
-      in
-      cast dtype (mul (scalar ctx Dtype.float32 (Float.sqrt 2.0)) (erfinv u))
+      match target with
+      | Dtype.Float64 -> at target (draw Dtype.float64)
+      | _ -> at target (draw Dtype.float32)
 
     (* Order [n] random sort keys. The keys are 64 bits wide, built from a
        Threefry row per element, rather than a [uniform] draw: a uniform carries
@@ -2634,8 +2620,7 @@ module Make (B : Backend_intf.S) = struct
        argmax samples from the distribution they describe. The noise is built at
        least in float32, then cast to the logits' dtype — a float16 Gumbel would
        quantise the comparison the argmax turns on. *)
-    let categorical (type a b) k ?(axis = -1) ?shape:(batch_shape = [||])
-        (logits : (a, b) t) =
+    let categorical (type a b) k ?(axis = -1) (logits : (a, b) t) =
       let logits_dtype = dtype logits in
       let logits_shape = shape logits in
       let nd = Array.length logits_shape in
@@ -2644,8 +2629,7 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg
           (Printf.sprintf
              "Nx.Rng.categorical: axis %d out of bounds for %dD tensor" axis nd);
-      let full_shape = Array.append batch_shape logits_shape in
-      let noise compute = astype logits_dtype (gumbel k compute full_shape) in
+      let noise compute = astype logits_dtype (gumbel k compute logits_shape) in
       let g =
         match logits_dtype with
         | Float64 -> noise Dtype.float64
@@ -2656,10 +2640,7 @@ module Make (B : Backend_intf.S) = struct
             invalid_arg
               "Nx.Rng.categorical: logits requires floating point dtype"
       in
-      astype Dtype.int32
-        (argmax (add logits g)
-           ~axis:(axis + Array.length batch_shape)
-           ~keepdims:false)
+      astype Dtype.int32 (argmax (add logits g) ~axis ~keepdims:false)
 
     (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by
        [fold_in root counter] with an incrementing counter — the same [fold_in]
@@ -2740,23 +2721,15 @@ module Make (B : Backend_intf.S) = struct
     Rng.check_range "randint" ~low ~high;
     Rng.randint (Rng.next_key ctx) ~low ~high shape
 
-  let bernoulli ctx ~p shape =
-    if p < 0.0 || p > 1.0 then invalid_arg "bernoulli: p must be in [0, 1]";
-    if Array.exists (fun x -> x < 0) shape then
-      err "bernoulli" "invalid shape %s, dimensions must be non-negative"
-        (Shape.to_string shape);
-    Rng.bernoulli (Rng.next_key ctx) ~p shape
-
+  let bernoulli ctx p = Rng.bernoulli (Rng.next_key ctx) p
   let permutation ctx n = Rng.permutation (Rng.next_key ctx) n
   let shuffle ctx x = Rng.shuffle (Rng.next_key ctx) x
 
-  let categorical ctx ?axis ?shape logits =
-    Rng.categorical (Rng.next_key ctx) ?axis ?shape logits
+  let categorical ctx ?axis logits =
+    Rng.categorical (Rng.next_key ctx) ?axis logits
 
-  let truncated_normal ctx (type b) ~lower ~upper (dtype : (float, b) Dtype.t)
-      shape =
-    validate_random_float_params "truncated_normal" dtype shape;
-    Rng.truncated_normal (Rng.next_key ctx) ~lower ~upper dtype shape
+  let truncated_normal ctx lower upper =
+    Rng.truncated_normal (Rng.next_key ctx) lower upper
 
   (* ───── Linear Algebra ───── *)
 

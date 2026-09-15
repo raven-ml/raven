@@ -57,9 +57,8 @@ let variance_scaling ~scale ~mode ~distribution =
     | `Truncated_normal ->
         (* Rescale so the truncated samples reach the target variance. *)
         let stddev = sqrt variance /. truncated_stddev in
-        Nx.mul_s
-          (Nx.truncated_normal dtype ~lower:(-2.0) ~upper:2.0 shape)
-          stddev
+        let bound v = Nx.broadcast_to shape (Nx.scalar dtype v) in
+        Nx.mul_s (Nx.truncated_normal (bound (-2.0)) (bound 2.0)) stddev
     | `Uniform ->
         let limit = sqrt (3.0 *. variance) in
         Nx.sub_s (Nx.mul_s (Nx.rand dtype shape) (2.0 *. limit)) limit

@@ -443,7 +443,10 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k) (Rune.jit ~device:"CUDA" (module Key) fr k);
-  let fb key = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.3 [| 64 |]) in
+  let fb key =
+    Nx.cast f32
+      (Nx.Rng.bernoulli key (Nx.broadcast_to [| 64 |] (Nx.scalar f32 0.3)))
+  in
   check_bits ~msg:"bernoulli" (fb k) (Rune.jit ~device:"CUDA" (module Key) fb k)
 
 (* The threefry bits agree exactly; Box-Muller's cos/log/sqrt land within

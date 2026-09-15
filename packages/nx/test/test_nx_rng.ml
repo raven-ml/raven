@@ -9,6 +9,9 @@ open Windtrap
 (* A key is a transparent [|2|] int32 tensor; compare keys by their words. *)
 let key_words k = Nx.to_array k
 
+(* A scalar distribution parameter, broadcast to the draw's shape. *)
+let param dtype shape v = broadcast_to shape (scalar dtype v)
+
 let test_key_creation () =
   let key1 = Rng.key 42 in
   let key2 = Rng.key 42 in
@@ -232,7 +235,7 @@ let test_randint_covers_range_uniformly () =
 let test_bernoulli_extremes () =
   let n = 100_000 in
   let count p =
-    let t = Nx.cast uint8 (Rng.bernoulli (Rng.key 17) ~p [| n |]) in
+    let t = Nx.cast uint8 (Rng.bernoulli (Rng.key 17) (param float32 [| n |] p)) in
     Array.fold_left
       (fun acc v -> acc + if v > 0 then 1 else 0)
       0 (Nx.to_array t)
@@ -243,7 +246,7 @@ let test_bernoulli_extremes () =
 let test_bernoulli () =
   let shape = [| 1000 |] in
   let p = 0.3 in
-  let t = Rng.with_key (Rng.key 42) (fun () -> bernoulli ~p shape) in
+  let t = Rng.with_key (Rng.key 42) (fun () -> bernoulli (param float32 shape p)) in
 
   equal ~msg:"bernoulli produces correct shape" (array int) shape (Nx.shape t);
   let t_int = cast uint8 t in
@@ -254,6 +257,18 @@ let test_bernoulli () =
   in
   let prop = float_of_int ones /. float_of_int (Array.length values) in
   equal ~msg:"bernoulli proportion ~p" (float 0.05) p prop
+
+(* The parameter is elementwise: two probabilities side by side give two
+   proportions from one draw. *)
+let test_bernoulli_is_elementwise () =
+  let n = 20_000 in
+  let p = broadcast_to [| n; 2 |] (create float32 [| 2 |] [| 0.1; 0.9 |]) in
+  let t = cast float32 (Rng.bernoulli (Rng.key 21) p) in
+  equal ~msg:"the draw has the parameter's shape" (array int) [| n; 2 |]
+    (Nx.shape t);
+  let column i = Nx.item [] (mean (slice [ R (0, n); I i ] t)) in
+  equal ~msg:"first column at 0.1" (float 0.01) 0.1 (column 0);
+  equal ~msg:"second column at 0.9" (float 0.01) 0.9 (column 1)
 
 let test_shuffle_preserves_shape () =
   let shape = [| 6; 4 |] in
@@ -292,7 +307,8 @@ let test_truncated_normal () =
   let lower = -1.5 in
   let upper = 2.0 in
   let t =
-    Rng.with_key (Rng.key 42) (fun () -> truncated_normal float32 ~lower ~upper shape)
+    Rng.with_key (Rng.key 42) (fun () ->
+        truncated_normal (param float32 shape lower) (param float32 shape upper))
   in
 
   equal ~msg:"truncated_normal produces correct shape" (array int) shape
@@ -315,7 +331,8 @@ let test_truncated_normal_distribution () =
   let lower = -0.75 in
   let upper = 1.25 in
   let samples =
-    Rng.with_key (Rng.key 123) (fun () -> truncated_normal float32 ~lower ~upper shape)
+    Rng.with_key (Rng.key 123) (fun () ->
+        truncated_normal (param float32 shape lower) (param float32 shape upper))
   in
 
   equal ~msg:"truncated_normal produces correct shape" (array int) shape
@@ -367,7 +384,9 @@ let test_truncated_normal_matches_the_conditional_moments () =
   in
   let values =
     Nx.to_array
-      (Rng.truncated_normal (Rng.key 4242) ~lower ~upper float64 [| n |])
+      (Rng.truncated_normal (Rng.key 4242)
+         (param float64 [| n |] lower)
+         (param float64 [| n |] upper))
   in
   let mean = Array.fold_left ( +. ) 0.0 values /. float_of_int n in
   let var =
@@ -391,7 +410,9 @@ let test_truncated_normal_handles_narrow_bounds () =
   let lower = 3.0 and upper = 3.01 in
   let values =
     Nx.to_array
-      (Rng.truncated_normal (Rng.key 7) ~lower ~upper float64 [| 512 |])
+      (Rng.truncated_normal (Rng.key 7)
+         (param float64 [| 512 |] lower)
+         (param float64 [| 512 |] upper))
   in
   equal ~msg:"a 0.06%-mass interval still fills" bool true
     (Array.for_all (fun v -> v >= lower && v <= upper) values);
@@ -414,12 +435,14 @@ let test_keyed_samplers_are_pure () =
   let logits = Nx.create float32 [| 6 |] [| 0.; 1.; 2.; 0.5; 1.5; 0.2 |] in
   check "truncated_normal" (fun k ->
       Nx.to_array
-        (Rng.truncated_normal k ~lower:(-2.) ~upper:2. float32 [| 32 |]));
+        (Rng.truncated_normal k
+           (param float32 [| 32 |] (-2.))
+           (param float32 [| 32 |] 2.)));
   check "permutation" (fun k -> Nx.to_array (Rng.permutation k 64));
   check "shuffle" (fun k ->
       Nx.to_array (Rng.shuffle k (Nx.arange float32 0 64 1)));
   check "categorical" (fun k ->
-      Nx.to_array (Rng.categorical k ~shape:[| 64 |] logits))
+      Nx.to_array (Rng.categorical k (broadcast_to [| 64; 6 |] logits)))
 
 (* [permutation] must be a permutation, not merely a tensor of indices. *)
 let test_permutation_is_a_permutation () =
@@ -512,7 +535,7 @@ let test_gamma_moments () =
   let n = 200_000 in
   let check concentration =
     let v =
-      Nx.to_array (Rng.gamma (Rng.key 31) ~concentration float64 [| n |])
+      Nx.to_array (Rng.gamma (Rng.key 31) (param float64 [| n |] concentration))
     in
     let len = float_of_int n in
     let mean = Array.fold_left ( +. ) 0.0 v /. len in
@@ -541,11 +564,27 @@ let test_gamma_moments () =
 let invalid_arg_raised ~msg f =
   raises_match ~msg (function Invalid_argument _ -> true | _ -> false) f
 
-let test_gamma_validates_concentration () =
-  invalid_arg_raised ~msg:"zero concentration" (fun () ->
-      ignore (Rng.gamma (Rng.key 0) ~concentration:0.0 float32 [| 4 |]));
-  invalid_arg_raised ~msg:"negative concentration" (fun () ->
-      ignore (Rng.gamma (Rng.key 0) ~concentration:(-1.0) float32 [| 4 |]))
+(* One draw, two concentrations on either side of the boost boundary: each
+   column has its own mean. *)
+let test_gamma_is_elementwise () =
+  let n = 100_000 in
+  let concentration =
+    broadcast_to [| n; 2 |] (create float64 [| 2 |] [| 0.5; 5.0 |])
+  in
+  let t = Rng.gamma (Rng.key 33) concentration in
+  let column i = Nx.item [] (mean (slice [ R (0, n); I i ] t)) in
+  equal ~msg:"first column has mean 0.5" (float 0.02) 0.5 (column 0);
+  equal ~msg:"second column has mean 5" (float 0.05) 5.0 (column 1)
+
+(* Parameters are data, so shapes are the only thing checked: two that do not
+   broadcast raise, and a Dirichlet needs a component axis. *)
+let test_parameter_shapes_are_checked () =
+  invalid_arg_raised ~msg:"beta parameters that do not broadcast" (fun () ->
+      ignore (Rng.beta (Rng.key 0) (ones float32 [| 3 |]) (ones float32 [| 4 |])));
+  invalid_arg_raised ~msg:"one component" (fun () ->
+      ignore (Rng.dirichlet (Rng.key 0) (ones float32 [| 4; 1 |])));
+  invalid_arg_raised ~msg:"a scalar concentration" (fun () ->
+      ignore (Rng.dirichlet (Rng.key 0) (scalar float32 1.0)))
 
 (* Poisson is exact here, so it can be held to its whole distribution rather
    than a couple of moments: compare the empirical frequency of each count
@@ -556,7 +595,7 @@ let test_poisson_matches_the_pmf () =
   let check rate =
     let v =
       Array.map Int32.to_int
-        (Nx.to_array (Rng.poisson (Rng.key 77) ~rate [| n |]))
+        (Nx.to_array (Rng.poisson (Rng.key 77) (param float64 [| n |] rate)))
     in
     let len = float_of_int n in
     let mean = Array.fold_left (fun a x -> a +. float_of_int x) 0.0 v /. len in
@@ -599,9 +638,25 @@ let test_poisson_matches_the_pmf () =
   check 200.0;
   check 1e5
 
-let test_poisson_validates_rate () =
-  invalid_arg_raised ~msg:"zero rate" (fun () ->
-      ignore (Rng.poisson (Rng.key 0) ~rate:0.0 [| 4 |]))
+(* A tensor of rates spanning both regimes, drawn at once: each column keeps
+   its own mean. Out-of-domain rates give a count of zero rather than
+   raising, since a rate is data. *)
+let test_poisson_is_elementwise () =
+  let n = 50_000 in
+  let rates = [| 0.5; 5.0; 50.0; 500.0 |] in
+  let rate = broadcast_to [| n; 4 |] (create float32 [| 4 |] rates) in
+  let t = cast float64 (Rng.poisson (Rng.key 78) rate) in
+  Array.iteri
+    (fun i r ->
+      equal
+        ~msg:(Printf.sprintf "column at rate %g" r)
+        (float (0.05 *. Stdlib.sqrt r))
+        r
+        (Nx.item [] (mean (slice [ R (0, n); I i ] t))))
+    rates;
+  let bad = create float64 [| 3 |] [| 0.0; -1.0; Float.nan |] in
+  equal ~msg:"zero, negative and NaN rates count zero" (array int32) [| 0l; 0l; 0l |]
+    (Nx.to_array (Rng.poisson (Rng.key 0) bad))
 
 (* Beta(a, b) has mean a/(a+b) and variance ab/((a+b)^2 (a+b+1)); the variance
    is what catches a wrong composition, since a ratio of the wrong two gammas
@@ -609,7 +664,12 @@ let test_poisson_validates_rate () =
 let test_beta_moments () =
   let n = 100_000 in
   let check alpha beta =
-    let v = Nx.to_array (Rng.beta (Rng.key 5) ~alpha ~beta float64 [| n |]) in
+    let v =
+      Nx.to_array
+        (Rng.beta (Rng.key 5)
+           (param float64 [| n |] alpha)
+           (param float64 [| n |] beta))
+    in
     let len = float_of_int n in
     let mean = Array.fold_left ( +. ) 0.0 v /. len in
     let var =
@@ -638,8 +698,11 @@ let test_dirichlet_is_on_the_simplex () =
   let n = 50_000 in
   let concentration = [| 1.0; 2.0; 7.0 |] in
   let k = Array.length concentration in
-  let t = Rng.dirichlet (Rng.key 13) ~concentration float64 [| n |] in
-  equal ~msg:"components go on a trailing axis" (array int) [| n; k |]
+  let t =
+    Rng.dirichlet (Rng.key 13)
+      (broadcast_to [| n; k |] (create float64 [| k |] concentration))
+  in
+  equal ~msg:"the draw has the concentration's shape" (array int) [| n; k |]
     (Nx.shape t);
   let v = Nx.to_array t in
   let sums = Array.make n 0.0 in
@@ -662,15 +725,6 @@ let test_dirichlet_is_on_the_simplex () =
         (concentration.(i) /. total)
         (sum /. float_of_int n))
     totals
-
-let test_beta_and_dirichlet_validate () =
-  invalid_arg_raised ~msg:"non-positive alpha" (fun () ->
-      ignore (Rng.beta (Rng.key 0) ~alpha:0.0 ~beta:1.0 float32 [| 4 |]));
-  invalid_arg_raised ~msg:"one component" (fun () ->
-      ignore (Rng.dirichlet (Rng.key 0) ~concentration:[| 1.0 |] float32 [| 4 |]));
-  invalid_arg_raised ~msg:"a non-positive component" (fun () ->
-      ignore
-        (Rng.dirichlet (Rng.key 0) ~concentration:[| 1.0; 0.0 |] float32 [| 4 |]))
 
 let test_categorical () =
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
@@ -784,7 +838,7 @@ let test_categorical_axis_handling () =
         (Int32.to_int i >= 0 && Int32.to_int i < 3))
     vals_axis_1
 
-let test_categorical_shape_prefix_axis () =
+let test_categorical_broadcast_logits_axis () =
   let logits =
     Nx.create float64 [| 2; 3; 4 |]
       [|
@@ -815,15 +869,14 @@ let test_categorical_shape_prefix_axis () =
       |]
   in
 
-  let prefix_shape = [| 5; 6 |] in
   let samples =
     Rng.with_key (Rng.key 314) (fun () ->
-        categorical ~shape:prefix_shape ~axis:(-2) logits)
+        categorical ~axis:(-2) (broadcast_to [| 5; 6; 2; 3; 4 |] logits))
   in
 
   let expected_shape = [| 5; 6; 2; 4 |] in
-  equal ~msg:"categorical shape prefix keeps axis semantics" (array int)
-    expected_shape (Nx.shape samples);
+  equal ~msg:"categorical removes the axis from the broadcast logits"
+    (array int) expected_shape (Nx.shape samples);
 
   let values = Nx.to_array samples |> Array.map Int32.to_int in
   Array.iter
@@ -837,7 +890,8 @@ let test_categorical_distribution () =
 
   let n_samples = 20000 in
   let inds =
-    Rng.with_key (Rng.key 123) (fun () -> categorical ~shape:[| n_samples |] logits)
+    Rng.with_key (Rng.key 123) (fun () ->
+        categorical (broadcast_to [| n_samples; 3 |] logits))
   in
 
   equal ~msg:"categorical produces correct shape" (array int) [| n_samples |]
@@ -893,6 +947,7 @@ let () =
             test_randint_covers_range_uniformly;
           test "bernoulli" test_bernoulli;
           test "bernoulli_extremes" test_bernoulli_extremes;
+          test "bernoulli is elementwise" test_bernoulli_is_elementwise;
           test "shuffle_preserves_shape" test_shuffle_preserves_shape;
           test "truncated_normal" test_truncated_normal;
           test "truncated_normal_distribution"
@@ -908,20 +963,18 @@ let () =
           test "gumbel and exponential moments"
             test_gumbel_and_exponential_moments;
           test "gamma moments" test_gamma_moments;
-          test "gamma validates concentration"
-            test_gamma_validates_concentration;
+          test "gamma is elementwise" test_gamma_is_elementwise;
+          test "parameter shapes are checked" test_parameter_shapes_are_checked;
           test "poisson matches the pmf" test_poisson_matches_the_pmf;
-          test "poisson validates rate" test_poisson_validates_rate;
+          test "poisson is elementwise" test_poisson_is_elementwise;
           test "beta moments" test_beta_moments;
           test "dirichlet is on the simplex"
             test_dirichlet_is_on_the_simplex;
-          test "beta and dirichlet validate their concentrations"
-            test_beta_and_dirichlet_validate;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;
-          test "categorical_shape_prefix_axis"
-            test_categorical_shape_prefix_axis;
+          test "categorical broadcast logits axis"
+            test_categorical_broadcast_logits_axis;
           test "categorical_distribution" test_categorical_distribution;
         ];
     ]

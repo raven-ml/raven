@@ -71,15 +71,13 @@ let to_buffer = F.to_buffer
 let rand dtype shape = F.rand (Lazy.force context) dtype shape
 let randn dtype shape = F.randn (Lazy.force context) dtype shape
 let randint ?low ~high shape = F.randint (Lazy.force context) ?low ~high shape
-let bernoulli ~p shape = F.bernoulli (Lazy.force context) ~p shape
+let bernoulli p = F.bernoulli (Lazy.force context) p
 let permutation n = F.permutation (Lazy.force context) n
 let shuffle x = F.shuffle (Lazy.force context) x
+let categorical ?axis logits = F.categorical (Lazy.force context) ?axis logits
 
-let categorical ?axis ?shape logits =
-  F.categorical (Lazy.force context) ?axis ?shape logits
-
-let truncated_normal ~lower ~upper dtype shape =
-  F.truncated_normal (Lazy.force context) ~lower ~upper dtype shape
+let truncated_normal lower upper =
+  F.truncated_normal (Lazy.force context) lower upper
 
 (* ───── FFT ───── *)
 

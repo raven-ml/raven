@@ -35,12 +35,12 @@ val apply :
     With [training = true], each element of [x] is zeroed independently with
     probability [rate] and the survivors are scaled by [1 / (1 - rate)]
     (inverted dropout), so the result's expectation is [x]. With [?key], the
-    mask is [Nx.Rng.bernoulli key ~p:(1. -. rate)] at [x]'s shape: the same key,
-    rate and shape give the same mask, so derive a fresh key per call
-    ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for a fresh mask. Without [?key], each
-    call draws a fresh mask from the implicit RNG scope. Either way the mask
-    selects at [x]'s dtype and is a constant of differentiation, so gradients
-    flow to [x] through the surviving elements only.
+    mask is [Nx.Rng.bernoulli key] at probability [1. -. rate] and [x]'s shape:
+    the same key, rate and shape give the same mask, so derive a fresh key per
+    call ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for a fresh mask. Without [?key],
+    each call draws a fresh mask from the implicit RNG scope. Either way the
+    mask selects at [x]'s dtype and is a constant of differentiation, so
+    gradients flow to [x] through the surviving elements only.
 
     With [training = false] (or [rate = 0.]), the result is [x], unchanged.
 
@@ -48,8 +48,8 @@ val apply :
     function's inputs: pass [?key] as a key leaf of the step's input structure,
     or one {!Nx.Rng.fold_in}-derived from such a leaf. Keyless dropout works
     too, if the step body runs inside {!Nx.Rng.with_key} on such a key — what
-    raises {!Rune.Jit_error} is a key the trace closes over, whichever form
-    drew from it, since the mask would be a constant replayed on every call.
+    raises {!Rune.Jit_error} is a key the trace closes over, whichever form drew
+    from it, since the mask would be a constant replayed on every call.
 
     {b Under vmap.} A key the mapped function closes over is a constant of the
     map, so every lane draws the identical mask. For independent lanes, fold the

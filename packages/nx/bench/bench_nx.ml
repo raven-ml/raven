@@ -110,18 +110,19 @@ let random_benchmarks () =
   let key = Nx.Rng.key 7 in
   let f32 = Nx.Float32 in
   let large = [| 1_000_000 |] in
+  let param shape v = Nx.broadcast_to shape (Nx.scalar f32 v) in
+  let p = param large 0.9 in
+  let concentration = param [| 100_000 |] 2.5 in
+  let rate r = param [| 10_000 |] r in
+  let rate_1 = rate 1.0 and rate_30 = rate 30.0 and rate_100 = rate 100.0 in
   [
     Thumper.bench "uniform 1M" (fun () -> Nx.Rng.uniform key f32 large);
     Thumper.bench "normal 1M" (fun () -> Nx.Rng.normal key f32 large);
-    Thumper.bench "bernoulli 1M" (fun () -> Nx.Rng.bernoulli key ~p:0.9 large);
-    Thumper.bench "gamma 100k" (fun () ->
-        Nx.Rng.gamma key ~concentration:2.5 f32 [| 100_000 |]);
-    Thumper.bench "poisson rate 1 10k" (fun () ->
-        Nx.Rng.poisson key ~rate:1.0 [| 10_000 |]);
-    Thumper.bench "poisson rate 30 10k" (fun () ->
-        Nx.Rng.poisson key ~rate:30.0 [| 10_000 |]);
-    Thumper.bench "poisson rate 100 10k" (fun () ->
-        Nx.Rng.poisson key ~rate:100.0 [| 10_000 |]);
+    Thumper.bench "bernoulli 1M" (fun () -> Nx.Rng.bernoulli key p);
+    Thumper.bench "gamma 100k" (fun () -> Nx.Rng.gamma key concentration);
+    Thumper.bench "poisson rate 1 10k" (fun () -> Nx.Rng.poisson key rate_1);
+    Thumper.bench "poisson rate 30 10k" (fun () -> Nx.Rng.poisson key rate_30);
+    Thumper.bench "poisson rate 100 10k" (fun () -> Nx.Rng.poisson key rate_100);
   ]
 
 let () =

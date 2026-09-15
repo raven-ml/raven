@@ -10,10 +10,13 @@ let apply ~rate ~training ?key x =
   if (not training) || rate = 0.0 then x
   else
     let keep = 1.0 -. rate in
+    (* At float32 whatever [x]'s dtype, so the mask for a key does not depend on
+       the input's precision. *)
+    let p = Nx.broadcast_to (Nx.shape x) (Nx.scalar Nx.float32 keep) in
     let bits =
       match key with
-      | Some key -> Nx.Rng.bernoulli key ~p:keep (Nx.shape x)
-      | None -> Nx.bernoulli ~p:keep (Nx.shape x)
+      | Some key -> Nx.Rng.bernoulli key p
+      | None -> Nx.bernoulli p
     in
     let mask = Nx.cast (Nx.dtype x) bits in
     (* Inverted dropout: scale the survivors by 1/keep at training time so the

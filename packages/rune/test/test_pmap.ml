@@ -480,7 +480,8 @@ let test_pmap_dropout_grad_decorrelates () =
          (fun x ->
            let m =
              Nx.cast f32
-               (Nx.Rng.bernoulli (Nx.Rng.fold_in_axis key) ~p:0.5 [| 2; 16 |])
+               (Nx.Rng.bernoulli (Nx.Rng.fold_in_axis key)
+                  (Nx.broadcast_to [| 2; 16 |] (Nx.scalar f32 0.5)))
            in
            Nx.mul_s (Nx.sum (Nx.mul (Nx.mul x x) m)) 0.5)
          x)
@@ -498,7 +499,8 @@ let test_pmap_dropout_grad_decorrelates () =
       (to_arr
          (Nx.slice [ Nx.I i ]
             (Nx.cast f32
-               (Nx.Rng.bernoulli (Nx.Rng.fold_in key i) ~p:0.5 [| 2; 16 |]))))
+               (Nx.Rng.bernoulli (Nx.Rng.fold_in key i)
+                  (Nx.broadcast_to [| 2; 16 |] (Nx.scalar f32 0.5))))))
       (Nx.slice [ Nx.I i ] masks)
   done;
   is_true ~msg:"per-device dropout masks are decorrelated"
@@ -628,11 +630,11 @@ let test_dp_training_matches_jit () =
     stats.bytes_to_device;
   ignore (Sys.opaque_identity s2)
 
-(* A multi-device trace declines to stage a scan (its probe answer is
-   [false]): the recurrence and its gradient unroll into each shard's trace as
-   they did before staging existed. The scan folds the columns, so sharding
-   the rows commutes with it and the concatenated shard gradients equal the
-   single-device gradient. *)
+(* A multi-device trace declines to stage a scan (its probe answer is [false]):
+   the recurrence and its gradient unroll into each shard's trace as they did
+   before staging existed. The scan folds the columns, so sharding the rows
+   commutes with it and the concatenated shard gradients equal the single-device
+   gradient. *)
 let test_grad_through_scan_inside_pmap () =
   let loss x =
     let rows = (Nx.shape x).(0) in
@@ -642,8 +644,7 @@ let test_grad_through_scan_inside_pmap () =
         ~f:(fun c col ->
           let c = Nx.tanh (Nx.add c col) in
           (c, Nx.mul c c))
-        ~init:(Nx.zeros f32 [| rows |])
-        (Nx.transpose x)
+        ~init:(Nx.zeros f32 [| rows |]) (Nx.transpose x)
     in
     Nx.sum ys
   in

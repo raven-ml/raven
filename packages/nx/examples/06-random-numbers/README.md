@@ -29,7 +29,7 @@ key, and `f ...` is the same draw taken from the ambient scope.
 | `randn dtype shape`               | Standard normal (mean 0, variance 1)           |
 | `randint ?low ~high shape`        | Uniform int32 values in [low, high)            |
 | `shuffle t`                       | Permute the first axis                         |
-| `Rng.uniform k ?low ?high dt sh`  | Uniform over an arbitrary interval             |
+| `Rng.poisson k rates`             | One Poisson count per element of `rates`       |
 
 ## Output Walkthrough
 

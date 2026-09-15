@@ -62,6 +62,8 @@ let check_bits ~msg expected actual =
        (fun x y -> Int32.bits_of_float x = Int32.bits_of_float y)
        e a)
 
+(* A scalar distribution parameter broadcast to the draw's shape. *)
+let param shape v = Nx.broadcast_to shape (Nx.scalar f32 v)
 let mean a = Array.fold_left ( +. ) 0.0 a /. float_of_int (Array.length a)
 
 let correlation x y =
@@ -105,15 +107,14 @@ let test_randint_range () =
 
 let test_bernoulli_probability () =
   let a =
-    to_arr (Nx.cast f32 (Nx.Rng.bernoulli (Nx.Rng.key 6) ~p:0.3 [| 10_000 |]))
+    to_arr
+      (Nx.cast f32 (Nx.Rng.bernoulli (Nx.Rng.key 6) (param [| 10_000 |] 0.3)))
   in
   equal ~msg:"fraction of ones near p" (float 0.02) 0.3 (mean a)
 
 let test_sampler_argument_errors () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Nx.Rng.randint (Nx.Rng.key 0) ~low:3 ~high:3 [| 4 |]));
-  raises_match Exn.invalid_arg (fun () ->
-      ignore (Nx.Rng.bernoulli (Nx.Rng.key 0) ~p:1.5 [| 4 |]));
   raises_match Exn.invalid_arg (fun () ->
       ignore (Nx.Rng.split ~n:0 (Nx.Rng.key 0)));
   raises_match Exn.invalid_arg (fun () ->
@@ -179,8 +180,23 @@ let test_jit_int_samplers_bit_parity () =
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k) (Rune.jit (module Key) fr k);
-  let fb key = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.3 [| 64 |]) in
+  let fb key = Nx.cast f32 (Nx.Rng.bernoulli key (param [| 64 |] 0.3)) in
   check_bits ~msg:"bernoulli" (fb k) (Rune.jit (module Key) fb k)
+
+(* A parameter is data, traced through jit like the key: a jitted step can take
+   its dropout probability or its rates as an input, and the compiled program
+   follows whatever it is given. The bernoulli comparison is exact, so eager and
+   compiled agree bit for bit. *)
+let test_jit_traced_parameter () =
+  let f (p, key) = Nx.cast f32 (Nx.Rng.bernoulli key p) in
+  let g = Rune.jit (module Pair) f in
+  let k = Nx.Rng.key 11 in
+  let p = Nx.Rng.uniform (Nx.Rng.key 3) f32 [| 64 |] in
+  check_bits ~msg:"bernoulli with a traced p" (f (p, k)) (g (p, k));
+  let p' = Nx.mul_s p 0.25 in
+  check_bits ~msg:"the compiled program follows a new p" (f (p', k)) (g (p', k));
+  is_true ~msg:"the new p changed the draw"
+    (to_arr (f (p, k)) <> to_arr (g (p', k)))
 
 (* The threefry bits agree exactly; cos/log/sqrt in Box-Muller land within
    float32 ulps of eager (the compiler decomposes transcendentals). *)
@@ -268,7 +284,7 @@ let test_jit_fold_in_tensor_tracks_a_traced_step () =
    inverse-CDF form is straight-line, so it compiles like any other sampler. *)
 let test_jit_truncated_normal_compiles () =
   let f key =
-    Nx.Rng.truncated_normal key ~lower:(-2.0) ~upper:2.0 f32 [| 256 |]
+    Nx.Rng.truncated_normal key (param [| 256 |] (-2.0)) (param [| 256 |] 2.0)
   in
   let k = Nx.Rng.key 31 in
   check_arr ~msg:"eager == jit" (to_arr (f k)) (Rune.jit (module Key) f k);
@@ -277,15 +293,13 @@ let test_jit_truncated_normal_compiles () =
        (fun v -> v >= -2.0 && v <= 2.0)
        (to_arr (Rune.jit (module Key) f k)))
 
-(* Both of these replace a rejection loop with something of fixed shape —
-   gamma with a fixed round count, poisson with a cumulative product — for the
-   sole reason that a trace cannot branch on the draw. If they did not compile
-   the design would have bought nothing. *)
+(* Both of these replace a rejection loop with something of fixed shape — gamma
+   with a fixed round count, poisson with a cumulative product — for the sole
+   reason that a trace cannot branch on the draw. If they did not compile the
+   design would have bought nothing. *)
 let test_jit_gamma_and_poisson_compile () =
   let g_gamma =
-    Rune.jit
-      (module Key)
-      (fun key -> Nx.Rng.gamma key ~concentration:2.5 f32 [| 256 |])
+    Rune.jit (module Key) (fun key -> Nx.Rng.gamma key (param [| 256 |] 2.5))
   in
   let a = to_arr (g_gamma (Nx.Rng.key 1)) in
   is_true ~msg:"compiled gamma draws are positive and finite"
@@ -295,7 +309,7 @@ let test_jit_gamma_and_poisson_compile () =
   let g_poisson =
     Rune.jit
       (module Key)
-      (fun key -> Nx.cast f32 (Nx.Rng.poisson key ~rate:4.0 [| 256 |]))
+      (fun key -> Nx.cast f32 (Nx.Rng.poisson key (param [| 256 |] 4.0)))
   in
   let b = to_arr (g_poisson (Nx.Rng.key 1)) in
   is_true ~msg:"compiled poisson counts are non-negative integers"
@@ -369,14 +383,36 @@ let test_jit_captured_key_raises () =
   let g = Rune.jit' (fun x -> Nx.add x (Nx.Rng.uniform k f32 [| 3 |])) in
   raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0 |]))
 
-(* Autodiff: samples are constants of the tape *)
+(* Autodiff: samples are constants of the tape, parameters are not *)
+
+(* [truncated_normal] is reparameterised: for a fixed key the draw is a smooth
+   function of its bounds, so the gradient with respect to a bound is the
+   pathwise derivative, checked here against a central difference on the same
+   key. *)
+let test_grad_truncated_normal_bounds () =
+  let key = Nx.Rng.key 5 in
+  let n = 256 in
+  let upper = Nx.broadcast_to [| n |] (Nx.scalar f64 1.5) in
+  let draw lower = Nx.Rng.truncated_normal key lower upper in
+  let lower = Nx.full f64 [| n |] (-0.5) in
+  let g = Rune.grad' (fun lower -> Nx.sum (draw lower)) lower in
+  let h = 1e-3 in
+  let fd =
+    Nx.div_s
+      (Nx.sub (draw (Nx.add_s lower h)) (draw (Nx.sub_s lower h)))
+      (2.0 *. h)
+  in
+  is_true ~msg:"the gradient is finite"
+    (Array.for_all Float.is_finite (to_arr g));
+  check_arr ~eps:1e-3 ~msg:"gradient matches the central difference" (to_arr fd)
+    g
 
 let test_grad_dropout_mask_is_constant () =
   let key = Nx.Rng.key 7 in
   let x = vec32 [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0 |] in
   let forward_mask = ref None in
   let f x =
-    let m = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.5 [| 8 |]) in
+    let m = Nx.cast f32 (Nx.Rng.bernoulli key (param [| 8 |] 0.5)) in
     forward_mask := Some m;
     Nx.sum (Nx.mul x m)
   in
@@ -514,6 +550,7 @@ let tests =
         test "uniform is bit-identical under jit" test_jit_uniform_bit_parity;
         test "randint and bernoulli are bit-identical under jit"
           test_jit_int_samplers_bit_parity;
+        test "a traced parameter compiles" test_jit_traced_parameter;
         test "normal matches eager" test_jit_normal_matches_eager;
         test "keys split inside the trace compile"
           test_jit_split_derived_key_traces;
@@ -525,8 +562,7 @@ let tests =
           test_fold_in_tensor_matches_the_host_form;
         test "fold_in_tensor tracks a traced step counter"
           test_jit_fold_in_tensor_tracks_a_traced_step;
-        test "gamma and poisson compile"
-          test_jit_gamma_and_poisson_compile;
+        test "gamma and poisson compile" test_jit_gamma_and_poisson_compile;
         test "truncated_normal compiles" test_jit_truncated_normal_compiles;
         test "a scope rooted at an input key compiles"
           test_jit_scope_rooted_at_input_key_traces;
@@ -541,6 +577,8 @@ let tests =
       [
         test "samples are constants of the tape"
           test_grad_dropout_mask_is_constant;
+        test "truncated_normal differentiates through its bounds"
+          test_grad_truncated_normal_bounds;
         test "vmap over per-lane keys decorrelates lanes"
           test_vmap_per_lane_keys;
         test "fold_in_axis is lane 0 outside a transform"

@@ -679,6 +679,24 @@ thread.
 
 ### Nx
 
+- **Breaking:** the samplers take their distribution parameters as tensors,
+  elementwise, and the draw has the parameters' shape and dtype:
+  `Nx.Rng.bernoulli k p`, `poisson k rate`, `gamma k concentration`,
+  `beta k a b`, `truncated_normal k lower upper` and `dirichlet k
+  concentration` (components on the last axis), with the keyless `bernoulli`
+  and `truncated_normal` following. A tensor of rates now gives one count per
+  rate in a single draw, and a parameter that is a jit input or a vmap axis
+  traces or batches the draw with it. A scalar parameter is spelled
+  `Nx.broadcast_to shape (Nx.scalar dtype v)`. Parameter values are no longer
+  checked, since under a transform they are not known when the program is
+  built; each docstring states its domain. `Nx.Rng.uniform` loses its unused
+  `?low`/`?high`, and `categorical` loses `?shape`: its result is the shape of
+  the logits with the axis removed, so broadcast the logits for more draws.
+  `randint` keeps its host-int bounds, as every size in Nx is a host int.
+  `truncated_normal` differentiates through both bounds; `gamma`, `beta` and
+  `dirichlet` differentiate through their concentrations with the bias of
+  the accepted proposal. Draws from `gamma`, `beta`, `dirichlet`,
+  `truncated_normal` and `categorical` differ from before for a given key.
 - `Nx.Rng.poisson` samples at any rate; the cap at 100 is gone. Below rate
   10 the count is read off the cumulative distribution with a single uniform,
   from 10 up it comes from a transformed rejection sampler with a fixed round
@@ -1359,6 +1377,10 @@ thread.
 
 ### Kaun
 
+- Seeded `glorot_normal`, `he_normal` and `lecun_normal` initialisers produce
+  different values for a given key: they draw through
+  `Nx.truncated_normal`, whose bounds are now tensors and whose draw changed
+  with them. `Dropout` masks are unchanged.
 - `Loss.huber`, `Loss.sigmoid_bce`, and `Fn.leaky_relu` compare against a
   scalar rather than a materialized constant tensor.
 - The MNIST CNN example now saves and restores model parameters with both
