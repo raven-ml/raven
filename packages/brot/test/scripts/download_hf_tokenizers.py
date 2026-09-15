@@ -39,7 +39,7 @@ def download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = dest.with_suffix(".tmp")
 
-    print(f"→ downloading {url}…")
+    print(f"downloading {url}...")
     with urllib.request.urlopen(url) as response, open(tmp_path, "wb") as out:
         while True:
             chunk = response.read(1024 * 64)
@@ -77,9 +77,9 @@ def main() -> int:
     for model, url in FIXTURES:
         target = fixtures_dir / model / "tokenizer.json"
         if target.exists():
-            print(f"✓ {model} already present at {target}")
+            print(f"{model} already present at {target}")
             continue
-        print(f"Downloading {model} tokenizer…")
+        print(f"Downloading {model} tokenizer...")
         try:
             download(url, target)
             summarize(target)
