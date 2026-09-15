@@ -58,11 +58,10 @@ CAMLprim value caml_nx_c_gemm2d_ct_ws_test(value vc, value va, value vb) {
   const char *b = (const char *)B.data + B.offset * esz;
   char *c = (char *)C.data + C.offset * esz;
   int64_t sz = nx_c_gemm2d_ct_scratch(dt, m, n, k);
-  /* _scratch returns a multiple of 64 (sum of 64-aligned slots), the exact size
-     aligned_alloc wants; NULL is the contract for a 0 query (direct path). */
-  char *scratch = sz > 0 ? aligned_alloc(64, (size_t)sz) : NULL;
+  /* NULL is the contract for a 0 query (direct path). */
+  char *scratch = sz > 0 ? nx_c_aligned_alloc((size_t)sz) : NULL;
   nx_c_gemm2d_ct_ws(dt, m, n, k, a, A.strides[0], A.strides[1], b, B.strides[0],
                    B.strides[1], c, C.strides[0], C.strides[1], scratch);
-  free(scratch);
+  nx_c_aligned_free(scratch);
   CAMLreturn(Val_unit);
 }
