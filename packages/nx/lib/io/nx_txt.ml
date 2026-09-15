@@ -73,7 +73,104 @@ module type SPEC = sig
   val parse : string -> (elt, error) result
 end
 
-let print_float oc v = Printf.fprintf oc "%.18e" v
+(* Exact float formatting
+
+   A C runtime only has to round [%e] correctly up to 17 significant digits;
+   numpy's default of 19 needs the exact binary value, so the digits come from
+   the significand and exponent here and the output is the same on every
+   platform. Little-endian base-1e9 limbs hold the exact integer. *)
+
+let limb_base = 1_000_000_000
+
+let mul_small limbs n =
+  let carry = ref 0 in
+  let limbs =
+    Array.map
+      (fun l ->
+        let v = (l * n) + !carry in
+        carry := v / limb_base;
+        v mod limb_base)
+      limbs
+  in
+  if !carry > 0 then Array.append limbs [| !carry |] else limbs
+
+let digits_of_limbs limbs =
+  let n = Array.length limbs in
+  let b = Buffer.create (9 * n) in
+  Buffer.add_string b (string_of_int limbs.(n - 1));
+  for i = n - 2 downto 0 do
+    Buffer.add_string b (Printf.sprintf "%09d" limbs.(i))
+  done;
+  Buffer.contents b
+
+(* [exact_decimal x] is the decimal digits [d] of the finite, nonzero [|x|] and
+   the count [k] of those digits after the decimal point: [|x| = d * 10^-k]. [x
+   = f * 2^e] for the 53-bit integer [f]; a negative [e] turns [2^e] into [5^-e
+   / 10^-e]. *)
+let exact_decimal x =
+  let m, e = Float.frexp x in
+  let f = Int64.of_float (Float.ldexp (Float.abs m) 53) in
+  let e = e - 53 in
+  let lo = Int64.to_int (Int64.rem f 1_000_000_000L) in
+  let hi = Int64.to_int (Int64.div f 1_000_000_000L) in
+  let limbs = ref (if hi = 0 then [| lo |] else [| lo; hi |]) in
+  if e >= 0 then begin
+    for _ = 1 to e do
+      limbs := mul_small !limbs 2
+    done;
+    (digits_of_limbs !limbs, 0)
+  end
+  else begin
+    for _ = 1 to -e do
+      limbs := mul_small !limbs 5
+    done;
+    (digits_of_limbs !limbs, -e)
+  end
+
+(* [%.<precision>e] of [x], rounded to nearest with ties to even, with at least
+   two exponent digits. NaN prints as [nan] whatever its sign. *)
+let format_e ~precision x =
+  let sign = if Float.sign_bit x then "-" else "" in
+  if Float.is_nan x then "nan"
+  else if Float.abs x = Float.infinity then sign ^ "inf"
+  else if x = 0. then sign ^ "0." ^ String.make precision '0' ^ "e+00"
+  else
+    let digits, point = exact_decimal x in
+    let len = String.length digits in
+    let keep = precision + 1 in
+    let kept, carried =
+      if len <= keep then (digits ^ String.make (keep - len) '0', false)
+      else
+        let head = Bytes.of_string (String.sub digits 0 keep) in
+        let next = digits.[keep] in
+        let rest_nonzero = ref false in
+        for i = keep + 1 to len - 1 do
+          if digits.[i] <> '0' then rest_nonzero := true
+        done;
+        let last_odd =
+          (Char.code (Bytes.get head (keep - 1)) - 48) land 1 = 1
+        in
+        if next < '5' || (next = '5' && not (!rest_nonzero || last_odd)) then
+          (Bytes.to_string head, false)
+        else
+          let i = ref (keep - 1) in
+          while !i >= 0 && Bytes.get head !i = '9' do
+            Bytes.set head !i '0';
+            decr i
+          done;
+          if !i < 0 then ("1" ^ Bytes.sub_string head 0 (keep - 1), true)
+          else begin
+            Bytes.set head !i (Char.chr (Char.code (Bytes.get head !i) + 1));
+            (Bytes.to_string head, false)
+          end
+    in
+    let exponent = len - point - 1 + if carried then 1 else 0 in
+    Printf.sprintf "%s%c.%se%c%02d" sign kept.[0]
+      (String.sub kept 1 precision)
+      (if exponent < 0 then '-' else '+')
+      (abs exponent)
+
+let print_float oc v = output_string oc (format_e ~precision:18 v)
 let print_int oc v = output_string oc (string_of_int v)
 let print_int32 oc v = output_string oc (Int32.to_string v)
 let print_int64 oc v = output_string oc (Int64.to_string v)

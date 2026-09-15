@@ -919,6 +919,37 @@ let test_txt_float_precision () =
       let loaded_value = Nx.item [ 0 ] loaded in
       equal ~msg:"round-trip" (float 1e-15) value loaded_value)
 
+(* numpy's default [%.18e], which needs 19 correctly rounded significant digits:
+   more than a C runtime has to provide. *)
+let test_txt_exact_formatting () =
+  let cases =
+    [
+      (0.1, "1.000000000000000056e-01");
+      (0.3, "2.999999999999999889e-01");
+      (2.5, "2.500000000000000000e+00");
+      (1e-5, "1.000000000000000082e-05");
+      (1e23, "9.999999999999999161e+22");
+      (1e300, "1.000000000000000053e+300");
+      (5e-324, "4.940656458412465442e-324");
+      (2.2250738585072014e-308, "2.225073858507201383e-308");
+      (1.7976931348623157e308, "1.797693134862315708e+308");
+      (-0.0, "-0.000000000000000000e+00");
+      (-1.5, "-1.500000000000000000e+00");
+    ]
+  in
+  let data =
+    Nx.create Nx.float64
+      [| List.length cases |]
+      (Array.of_list (List.map fst cases))
+  in
+  let path = temp_file "test_txt_exact_" ".txt" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Nx_io.save_txt path data;
+      equal ~msg:"correctly rounded digits" (list string) (List.map snd cases)
+        (String.split_on_char '\n' (String.trim (read_file path))))
+
 let test_txt_bool_roundtrip () =
   let data =
     Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |]
@@ -1006,6 +1037,7 @@ let txt_tests =
     test "Save/load txt float32" test_txt_save_load_float32;
     test "Save/load txt int64" test_txt_save_load_int64;
     test "Float precision formatting" test_txt_float_precision;
+    test "Exact formatting" test_txt_exact_formatting;
     test "Bool round-trip" test_txt_bool_roundtrip;
     test "Skip rows and max_rows" test_txt_skiprows_max_rows;
     test "Save numpy-compatible file" test_txt_save_numpy_compat;

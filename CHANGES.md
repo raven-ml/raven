@@ -751,6 +751,9 @@ thread.
   output work there.
 - `save_txt` writes exactly the requested `newline`. The channel was in text
   mode, which turned every line ending into CRLF on Windows.
+- `save_txt` formats floats itself, correctly rounded to numpy's 19
+  significant digits on every platform. A C runtime only has to round 17,
+  and Windows' stops there and prints three-digit exponents.
 - **Breaking:** the samplers take their distribution parameters as tensors,
   elementwise, and the draw has the parameters' shape and dtype:
   `Nx.Rng.bernoulli k p`, `poisson k rate`, `gamma k concentration`,
