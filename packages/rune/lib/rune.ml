@@ -500,6 +500,7 @@ type jit_stats = Jit.stats = {
   bytes_to_device : int;
   bytes_from_device : int;
   resident_bytes : int;
+  reused_bytes : int;
 }
 
 let jit_stats = Jit.stats

@@ -212,17 +212,18 @@ and the user's only promise is `~donate` at the boundary.
    capture binds is never aliased; a kernel inside a staged loop body never
    aliases. An input returned unchanged and donated moves its resident entry
    to the output with no copy and no kernel.
-3. Mechanism. At trace end the jit emits tolk's `Op.assign` of `O`'s node
-   into `I`'s buffer node (`tolk/lib/frontend/op.ml:26`, a store wrapped in
-   an `after` at buffer identity). Every later read then depends on the
-   store, and the implementation must confirm that tolk's scheduler orders
-   reads of the prior value before it, as tinygrad's does; with that, rune
-   carries no schedule analysis beyond the same-index test above. The
+3. Mechanism. The jit decides both tests once, at compile time, and binds
+   at replay: when the leaf seeding `I` is donated, `O`'s buffer node is
+   bound to that leaf's device buffer instead of a fresh one, and the
    resident entry moves from `I`'s handle to `O`'s; `I`'s handle becomes
-   donated exactly as today. Forcing a handle (any data read or eager
-   operation) ends its residency, as today, so a forced input is never
-   seeded resident, never donated, and reports `copied`. Otherwise `O` gets
-   a fresh buffer and `I` is released after the call, as today.
+   donated exactly as today. The ordering test reads the linear schedule
+   directly (no kernel mentioning `I` runs after the first kernel mentioning
+   `O`, batched graph calls descended, staged loops treated as opaque), so
+   no store is emitted into the graph and compiled programs and their cache
+   keys are unchanged. Forcing a handle (any data read or eager operation)
+   ends its residency, as today, so a forced input is never seeded resident,
+   never donated, and reports `copied`. Otherwise `O` gets a fresh buffer
+   and `I` is released after the call, as today.
 4. `RUNE_JIT_DEBUG=1` reports `reused` or `copied` per donated leaf,
    numbered in traversal order.
 
@@ -355,9 +356,10 @@ PR 210 rebases onto the sweep as `Nx.sliding_window` alone.
   per token instead of an O(`seq`) store, and a dynamic read a gather.
 - Seven in-place functions, two creation functions, two operators and one
   option disappear; external numpy-style code breaks.
-- Elision is compiler machinery rune does not have; as a lowering onto
-  tolk's `assign` plus the same-index test it is one to two hundred lines,
-  and it is the piece the full fine-tuning goal post depends on.
+- Elision is about two hundred lines of aliasing decisions in rune's jit,
+  and it is the piece the full fine-tuning goal post depends on; a wrong
+  decision would corrupt results silently, which is why every rule is
+  conservative and the refusals are tested.
 
 ## Rationale and alternatives
 
@@ -387,11 +389,10 @@ strided write, no index tensor) and is the node the symbolic-shrink store
 lowers from without pattern matching. An extended-tier effect instead of an
 `S` op would give one operation two lowerings.
 
-**Elision decided by a trace pattern plus a schedule last-reader count.**
-Unsound once tolk fuses a movement read of the input into the storing
-kernel, and unnecessary once tolk's `Op.assign` orders the store after the
-prior reads: only the same-index test remains, which is a path property of
-the trace.
+**Elision emitted as tolk's `Op.assign` into the input's buffer.** It
+would leave the ordering to the compiler, but it changes the compiled
+program and its cache key, and rune already holds the linear schedule, so
+the ordering test reads that schedule instead and the graph is untouched.
 
 **A single donated arena for the whole carry.** Positional aliasing needs no
 alignment test, but it is a new noun coupling ptree traversal order to
@@ -424,9 +425,6 @@ deletes.
 ## Unresolved questions
 
 Resolved during implementation:
-- That tolk's scheduler orders reads of a buffer's prior value before the
-  `Op.assign` store the elision emits; if it does not, the jit adds a
-  last-reader-in-schedule check on the linear schedule before seeding.
 - Whether `data` should be spelled `unsafe_data`, since a bigarray has no
   read-only view and the name is the only signal available.
 - Whether kaun's `apply_cached` keeps its `len`-slot causal mask (it does

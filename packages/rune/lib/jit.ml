@@ -160,15 +160,18 @@ type stats = {
   bytes_to_device : int;
   bytes_from_device : int;
   resident_bytes : int;
+  reused_bytes : int;
 }
 
 let bytes_to_device = ref 0
 let bytes_from_device = ref 0
 let resident_bytes = ref 0
+let reused_bytes = ref 0
 
 let reset_stats () =
   bytes_to_device := 0;
-  bytes_from_device := 0
+  bytes_from_device := 0;
+  reused_bytes := 0
 
 (* Placements
 
@@ -254,6 +257,7 @@ let stats () =
     bytes_to_device = !bytes_to_device;
     bytes_from_device = !bytes_from_device;
     resident_bytes = !resident_bytes;
+    reused_bytes = !reused_bytes;
   }
 
 let resident_budget () =
@@ -291,6 +295,8 @@ type input = {
   i_node : U.t;
   i_place : leaf_place;
   i_bufs : Tolk.Device.Buffer.t list; (* one per device of the placement *)
+  i_dtype : string;
+  i_numel : int;
 }
 
 type state = {
@@ -2282,12 +2288,144 @@ type 'q compiled = {
   cp_outputs : (Obj.t * packed * U.t * leaf_place) list;
       (* output leaf -> its placeholder (dtype and shape), buffer node, and
          placement *)
+  cp_aliases : (int * int list) list;
+      (* output buffer node tag -> traversal position of an input leaf whose
+         storage the output may take when that leaf is donated (see [elision]
+         below); an output tag equal to the input's own node tag is an input
+         returned unchanged, whose storage moves to the output *)
   cp_reserved : (int, unit) Hashtbl.t;
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
   cp_skeleton : 'q; (* trace-time output structure *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
+
+module Ops = Tolk_uop.Ops
+
+(* Elision: writing an output over a donated input's storage.
+
+   With tensors as values a jitted carry (parameters, optimizer state, a KV
+   cache) returns fresh outputs every call, and [~donate] releases the inputs
+   afterwards, so a step holds two generations of state on the device. When
+   an output may safely take a donated input's buffer, it is bound to that
+   buffer instead of a fresh one and the input's resident entry moves to the
+   output handle: one generation, no copy, and results identical.
+
+   Safe means two things, both decided once at compile time. First, in the
+   traced graph every path from the input's buffer node to the output's node
+   passes only through elementwise operations, casts of equal width, reshapes,
+   and contiguous markers, so the kernel storing the output reads the input
+   only at the index it writes, whatever the scheduler fuses into it. Second,
+   in the linear schedule no kernel reads the input after the one that first
+   writes the output, so the old value is never read through the new one.
+   An output that never reads an input meets the first condition vacuously
+   and may take that input's buffer under the second: a bf16 copy of f32
+   master weights takes the previous copy's storage this way. Every fitting
+   input is a candidate, the ones the output derives from first. Replay adds
+   what only it knows: the input must have seeded from a donated resident
+   entry that seeds no other leaf of the call, and nothing else may claim the
+   same buffer. Single-device programs only; a pmap carry keeps two
+   generations. *)
+
+(* Every path from [inode] to [u] stays at the same element index. *)
+let same_index_paths ~(inode : U.t) (u : U.t) =
+  let memo : (int, bool * bool) Hashtbl.t = Hashtbl.create 64 in
+  (* (reaches the input, reaches it through a disallowed op) *)
+  let rec go u =
+    match Hashtbl.find_opt memo (U.tag u) with
+    | Some r -> r
+    | None ->
+        let r =
+          if U.tag u = U.tag inode then (true, false)
+          else begin
+            let reaches = ref false and bad = ref false in
+            Array.iter
+              (fun s ->
+                let r, b = go s in
+                reaches := !reaches || r;
+                bad := !bad || b)
+              (U.src u);
+            let op = U.op u in
+            let allowed =
+              (Ops.Group.is_elementwise op
+              && (op <> Ops.Cast
+                 || Array.length (U.src u) = 0
+                 || TD.itemsize (U.dtype u) = TD.itemsize (U.dtype (U.src u).(0))
+                 ))
+              || op = Ops.Reshape || op = Ops.Contiguous
+              || op = Ops.Contiguous_backward || op = Ops.Detach
+            in
+            (!reaches, !bad || (!reaches && not allowed))
+          end
+        in
+        Hashtbl.replace memo (U.tag u) r;
+        r
+  in
+  let reaches, bad = go u in
+  (reaches, not bad)
+
+(* The schedule's calls in execution order, descending into batched graph
+   calls. [Opaque] marks a call whose inner order is unknown (a staged loop):
+   it may read and write its arguments in any order. *)
+type scheduled = Kernel of U.t | Opaque of U.t
+
+let rec schedule_calls linear =
+  List.concat_map
+    (fun call ->
+      match U.as_call call with
+      | Some { body; _ } when U.op body = Ops.Custom_function -> (
+          match (U.Arg.as_string (U.arg body), U.src body) with
+          | Some "graph", [| inner |] -> schedule_calls inner
+          | _ -> [ Opaque call ])
+      | _ -> [ Kernel call ])
+    (U.children linear)
+
+(* No kernel reads the buffer [itag] after the first kernel that writes
+   [otag], and neither buffer is touched by an opaque call. *)
+let schedule_allows ~linear ~itag ~otag =
+  let mentions call tag =
+    match U.as_call call with
+    | Some { args; _ } ->
+        List.exists
+          (fun a ->
+            match U.op a with
+            | Ops.Bind -> false
+            | _ -> U.tag (U.buf_uop a) = tag)
+          args
+    | None -> false
+  in
+  let calls = schedule_calls linear in
+  let opaque_touch =
+    List.exists
+      (function
+        | Opaque c -> mentions c itag || mentions c otag | Kernel _ -> false)
+      calls
+  in
+  if opaque_touch then false
+  else begin
+    let first_o = ref None and last_i = ref None in
+    List.iteri
+      (fun k -> function
+        | Opaque _ -> ()
+        | Kernel c ->
+            if !first_o = None && mentions c otag then first_o := Some k;
+            if mentions c itag then last_i := Some k)
+      calls;
+    match (!first_o, !last_i) with
+    | Some o, Some i -> i <= o
+    | Some _, None -> true
+    | None, _ -> false
+  end
+
+(* The input's resident entry hands its storage to the output: the buffers
+   now belong to the output handle built by [make_handle]. *)
+let transfer_entry e =
+  if e.r_bufs <> [] then begin
+    e.r_bufs <- [];
+    e.r_donated <- true;
+    Hashtbl.remove resident e.r_id;
+    resident_bytes := !resident_bytes - e.r_nbytes
+  end
 
 let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
     =
@@ -2387,7 +2525,15 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
       Tbl.replace st.traced ph ();
       Tbl.replace st.input_index ph !pos;
       Hashtbl.replace st.input_tags (U.tag node) ();
-      inputs := { i_node = node; i_place = place; i_bufs = bufs } :: !inputs;
+      inputs :=
+        {
+          i_node = node;
+          i_place = place;
+          i_bufs = bufs;
+          i_dtype = ND.to_string (Nx_effect.dtype leaf);
+          i_numel = n;
+        }
+        :: !inputs;
       incr pos)
     params;
   let y =
@@ -2636,6 +2782,54 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
         (key, pk, resolve "an output of the traced function" u c, place))
       out_conts
   in
+  let cp_inputs = Array.of_list (List.rev !inputs) in
+  let cp_aliases =
+    if multi <> None then []
+    else begin
+      let seen = Hashtbl.create 8 in
+      (* An input some output returns unchanged is read by that output's copy
+         after the kernels ran, so only the pass-through itself may take it. *)
+      let returned_unchanged itag =
+        List.exists (fun (_, _, n, _) -> U.tag n = itag) cp_outputs
+      in
+      List.concat_map
+        (fun ((_, Packed (odt, ph), node, place), (_, _, u, _, _)) ->
+          let otag = U.tag node in
+          if place <> P_single || Hashtbl.mem seen otag then []
+          else begin
+            Hashtbl.replace seen otag ();
+            let odtype = ND.to_string odt and onumel = numel (shape_of ph) in
+            (* [Some true] when the output derives from the input, [Some
+               false] when it never reads it; either may take its storage. *)
+            let fits inp =
+              let itag = U.tag inp.i_node in
+              if
+                inp.i_place <> P_single || inp.i_dtype <> odtype
+                || inp.i_numel <> onumel
+              then None
+              else if itag = otag then Some true
+              else if Hashtbl.mem reserved otag || returned_unchanged itag then
+                None
+              else
+                let reaches, ok = same_index_paths ~inode:inp.i_node u in
+                if ok && schedule_allows ~linear ~itag ~otag then Some reaches
+                else None
+            in
+            let derived = ref [] and unread = ref [] in
+            Array.iteri
+              (fun i inp ->
+                match fits inp with
+                | Some true -> derived := i :: !derived
+                | Some false -> unread := i :: !unread
+                | None -> ())
+              cp_inputs;
+            match List.rev !derived @ List.rev !unread with
+            | [] -> []
+            | candidates -> [ (otag, candidates) ]
+          end)
+        (List.combine cp_outputs out_conts)
+    end
+  in
   {
     cp_device = dev;
     cp_multi = Option.map fst multi;
@@ -2644,9 +2838,10 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     cp_linear = linear;
     cp_vars = var_vals;
     cp_binding = binding;
-    cp_inputs = Array.of_list (List.rev !inputs);
+    cp_inputs;
     cp_wrapped = Array.of_list !wrapped;
     cp_outputs;
+    cp_aliases;
     cp_reserved = reserved;
     cp_skeleton = y;
     cp_scratch = scratch;
@@ -2694,6 +2889,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
      until every kernel has read it. A handle whose placement
      mismatched is forced by the copy path instead and is never donated. *)
   let seeded = ref [] in
+  let seed_entry = Array.make (Array.length c.cp_inputs) None in
   let note e =
     if donate && not (List.memq e !seeded) then seeded := e :: !seeded
   in
@@ -2719,6 +2915,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
           | Some e ->
               keep := Obj.repr leaf :: !keep;
               note e;
+              seed_entry.(!i) <- Some e;
               Tolk.Realize.Buffers.seed c.cp_binding inp.i_node
                 (List.hd e.r_bufs)
           | None -> (
@@ -2747,6 +2944,34 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
   let out_bufs : (int, Tolk.Device.Buffer.t list) Hashtbl.t =
     Hashtbl.create 8
   in
+  (* Elision claims: an output takes a donated input's storage when that input
+     seeded from a resident entry seeding no other leaf of this call, and no
+     earlier output claimed the entry. *)
+  let claims : (int, resident_entry) Hashtbl.t = Hashtbl.create 4 in
+  if donate && not c.cp_zero_copy then begin
+    let uses e =
+      Array.fold_left
+        (fun n -> function Some e' when e' == e -> n + 1 | _ -> n)
+        0 seed_entry
+    in
+    let claimed = ref [] in
+    List.iter
+      (fun (otag, candidates) ->
+        if not (Hashtbl.mem claims otag) then
+          List.iter
+            (fun i ->
+              match seed_entry.(i) with
+              | Some e
+                when (not (Hashtbl.mem claims otag))
+                     && uses e = 1
+                     && not (List.memq e !claimed) ->
+                  claimed := e :: !claimed;
+                  reused_bytes := !reused_bytes + e.r_nbytes;
+                  Hashtbl.replace claims otag e
+              | _ -> ())
+            candidates)
+      c.cp_aliases
+  end;
   if c.cp_zero_copy then
     List.iter
       (fun (_, Packed (odt, ph), node, _) ->
@@ -2776,8 +3001,13 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
         then
           begin match (place, c.cp_multi) with
           | P_single, _ ->
-              let n = numel (shape_of ph) in
-              let buf = create_fresh_buffer c.cp_device (tolk_dtype odt) n in
+              let buf =
+                match Hashtbl.find_opt claims tag with
+                | Some e -> List.hd e.r_bufs
+                | None ->
+                    create_fresh_buffer c.cp_device (tolk_dtype odt)
+                      (numel (shape_of ph))
+              in
               Tolk.Realize.Buffers.seed c.cp_binding node buf;
               Hashtbl.add out_bufs tag [ buf ]
           | (P_replicated | P_sharded _), Some spec ->
@@ -2800,12 +3030,16 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
     ~jit:true c.cp_linear;
   (* An output that is an input or a capture returned unchanged keeps its
      reserved binding; copy it into a fresh buffer on the device, so its handle
-     never aliases an input and survives later calls. *)
+     never aliases an input and survives later calls. A donated input returned
+     unchanged instead hands its storage over: no copy. *)
   if not c.cp_zero_copy then
     List.iter
       (fun (_, Packed (odt, ph), node, _) ->
         let tag = U.tag node in
-        if Hashtbl.mem c.cp_reserved tag && not (Hashtbl.mem out_bufs tag) then begin
+        if Hashtbl.mem c.cp_reserved tag && not (Hashtbl.mem out_bufs tag) then
+        match Hashtbl.find_opt claims tag with
+        | Some e -> Hashtbl.add out_bufs tag e.r_bufs
+        | None -> begin
           let copy_to dev n src =
             let dst = create_fresh_buffer dev (tolk_dtype odt) n in
             if not (Tolk.Device.Buffer.transfer ~dst ~src) then
@@ -2895,10 +3129,11 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
       c.cp_skeleton
   in
   (* Donation. The devices have synchronized, so the storage of each input
-     that seeded from a resident entry can be returned to the allocator: the
-     next call's fresh outputs reuse it, bounding a state-to-state loop at
-     about two generations of device memory. The handle becomes Donated —
-     forcing it now raises. *)
+     that seeded from a resident entry is either owned by an output handle now
+     (a claimed entry: its storage moved) or returned to the allocator so the
+     next call's fresh outputs reuse it. The handle becomes Donated — forcing
+     it now raises. *)
+  Hashtbl.iter (fun _ e -> transfer_entry e) claims;
   if donate then
     List.iter
       (fun e ->
@@ -2907,7 +3142,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
           release_entry e
         end)
       !seeded;
-  if Lazy.force jit_debug >= 1 then
+  if Lazy.force jit_debug >= 1 then begin
     Printf.eprintf
       "rune.jit: replay on %s: %d bytes to device, %d bytes from device, %d \
        bytes resident\n\
@@ -2916,6 +3151,18 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
       (!bytes_to_device - in0)
       (!bytes_from_device - out0)
       !resident_bytes;
+    if donate then
+      Array.iteri
+        (fun i -> function
+          | None -> Printf.eprintf "rune.jit: input leaf %d: not resident\n%!" i
+          | Some e ->
+              let reused =
+                Hashtbl.fold (fun _ e' acc -> acc || e' == e) claims false
+              in
+              Printf.eprintf "rune.jit: input leaf %d: %s\n%!" i
+                (if reused then "storage reused" else "storage copied"))
+        seed_entry
+  end;
   y
 
 (* Public entry points *)

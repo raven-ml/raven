@@ -102,6 +102,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit ~donate:true` writes an output over the donated input it derives
+  from when every path between them stays at the same element and no later
+  kernel reads the input, so a jitted training step or decode step holds one
+  generation of state on the device instead of two. `jit_stats` counts the
+  bytes reused in `reused_bytes`, and `RUNE_JIT_DEBUG=1` reports per donated
+  leaf whether its storage was reused or copied.
 - `Nx.set` with a `D` window follows every transform: `grad` differentiates
   both operands, a mapped start under `vmap` writes each example at its own
   clamped position, and a window on `pmap`'s mapped axis is written shard by

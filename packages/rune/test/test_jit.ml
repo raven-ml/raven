@@ -1167,6 +1167,182 @@ let test_donate_bounds_resident_memory () =
         (grew' >= 10 * n * 4);
       check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h')
 
+(* Elision: a donated input whose output reads it at the same index hands its
+   storage to the output, so a carry loop holds one generation, not two. *)
+let test_donate_reuses_storage () =
+  with_force_copy (fun () ->
+      let n = 4096 in
+      let step = Rune.jit' ~donate:true (fun x -> Nx.add_s x 1.0) in
+      let x = vec32 (Array.make n 0.0) in
+      Gc.full_major ();
+      let base = (Rune.jit_stats ()).resident_bytes in
+      let h = ref (step x) in
+      let hold = Array.make 10 !h in
+      for i = 0 to 9 do
+        hold.(i) <- !h;
+        h := step !h
+      done;
+      let grew = (Rune.jit_stats ()).resident_bytes - base in
+      is_true ~msg:"one generation stays resident" (grew <= n * 4);
+      check_arr ~msg:"the chain computes the right value" (Array.make n 11.0)
+        !h)
+
+(* A path through a movement op reads the input at another index, so the
+   output must not take its storage; a chain stays correct. *)
+let test_donate_refuses_movement_path () =
+  with_force_copy (fun () ->
+      let f x = Nx.add x (Nx.transpose x) in
+      let step = Rune.jit' ~donate:true f in
+      let x = Nx.create f32 [| 3; 3 |] (Array.init 9 float_of_int) in
+      let e = ref x and h = ref x in
+      for _ = 1 to 3 do
+        e := f !e;
+        h := step !h
+      done;
+      check_arr ~msg:"transposed chain" (to_arr (f !e)) (step !h))
+
+(* An input read by a kernel that runs after the output's store keeps its own
+   storage: here the reduction over [u] must see the old value. *)
+let test_donate_refuses_later_reader () =
+  with_force_copy (fun () ->
+      let f (p : Pair.t) =
+        {
+          Pair.u = Nx.add_s p.u 1.0;
+          v = Nx.add p.v (Nx.broadcast_to (Nx.shape p.v) (Nx.sum p.u));
+        }
+      in
+      let step = Rune.jit2 ~donate:true (module Pair) (module Pair) f in
+      let p =
+        { Pair.u = vec32 [| 1.0; 2.0; 3.0 |]; v = vec32 [| 0.0; 0.0; 0.0 |] }
+      in
+      let e = ref p and h = ref p in
+      for _ = 1 to 3 do
+        e := f !e;
+        h := step !h
+      done;
+      let e = f !e and h = step !h in
+      check_arr ~msg:"u" (to_arr e.Pair.u) h.Pair.u;
+      check_arr ~msg:"v sums the pre-update values" (to_arr e.Pair.v) h.Pair.v)
+
+(* A donated input returned unchanged moves its storage to the output. *)
+let test_donate_moves_pass_through () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit2 ~donate:true
+          (module Pair)
+          (module Pair)
+          (fun (p : Pair.t) -> { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
+      in
+      let p =
+        { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] }
+        |> step |> step
+      in
+      let base = (Rune.jit_stats ()).resident_bytes in
+      let r, up, _ = delta (fun () -> step p) in
+      equal ~msg:"resident leaves upload nothing" int 0 up;
+      is_true ~msg:"no fresh buffer for the pass-through"
+        ((Rune.jit_stats ()).resident_bytes - base <= 0);
+      check_arr ~msg:"pass-through value" [| 1.0; 2.0 |] r.Pair.u;
+      check_arr ~msg:"updated value" [| 6.0; 7.0 |] r.Pair.v;
+      raises_donated (fun () -> to_arr p.Pair.u))
+
+(* An input both updated and returned unchanged keeps its storage for the
+   pass-through: the update must not write over the value the pass-through
+   copies out after the kernels ran. *)
+let test_donate_keeps_pass_through_readable () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit2 ~donate:true
+          (module Pair)
+          (module Pair)
+          (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+      in
+      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 0.0; 0.0 |] } in
+      let r = step (step p) in
+      check_arr ~msg:"updated" [| 3.0; 4.0 |] r.Pair.u;
+      check_arr ~msg:"pass-through holds the value before the update"
+        [| 2.0; 3.0 |] r.Pair.v)
+
+(* Every leaf an output derives from is reused, whatever its position among
+   the inputs. *)
+let test_donate_reuses_every_leaf () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit2 ~donate:true
+          (module Pair)
+          (module Pair)
+          (fun (p : Pair.t) ->
+            { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
+      in
+      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
+      let r1 = step p in
+      let before = (Rune.jit_stats ()).reused_bytes in
+      let r2 = step r1 in
+      equal ~msg:"both leaves reused" int 16
+        ((Rune.jit_stats ()).reused_bytes - before);
+      check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
+      check_arr ~msg:"v" [| 7.0; 8.0 |] r2.Pair.v)
+
+(* A staged loop refuses reuse only for the leaves it touches. *)
+let test_donate_reuses_beside_a_scan () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit2 ~donate:true
+          (module Pair)
+          (module Pair)
+          (fun (p : Pair.t) ->
+            { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
+      in
+      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 1.0; 2.0 |] } in
+      let r1 = step p in
+      let before = (Rune.jit_stats ()).reused_bytes in
+      let r2 = step r1 in
+      is_true ~msg:"the leaf beside the loop is reused"
+        ((Rune.jit_stats ()).reused_bytes - before >= 8);
+      check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
+      check_arr ~msg:"v" [| 1.0; 4.0 |] r2.Pair.v)
+
+(* A fresh output never takes an input's buffer node: a resident input fed to
+   a later call keeps its bytes whatever the outputs are. *)
+let test_outputs_never_write_into_inputs () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit2
+          (module Pair)
+          (module Pair)
+          (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+      in
+      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 5.0; 6.0 |] } in
+      let r1 = step p in
+      let r2 = step r1 in
+      check_arr ~msg:"second call's output" [| 3.0; 4.0 |] r2.Pair.u;
+      check_arr ~msg:"the first call's pass-through is intact" [| 1.0; 2.0 |]
+        r1.Pair.v;
+      check_arr ~msg:"the first call's output is intact" [| 2.0; 3.0 |]
+        r1.Pair.u)
+
+(* The decode shape: a window write at a run-time position reuses the cache's
+   storage across steps. *)
+let test_donate_reuses_window_write () =
+  with_force_copy (fun () ->
+      let v = vec32 [| 9.0; 8.0 |] in
+      let f { x; pos } =
+        { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
+      in
+      let step = Rune.jit2 ~donate:true (module Windowed) (module Windowed) f in
+      let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
+      let s = ref (step s0) in
+      Gc.full_major ();
+      let base = (Rune.jit_stats ()).resident_bytes in
+      for _ = 1 to 3 do
+        s := step !s
+      done;
+      let grew = (Rune.jit_stats ()).resident_bytes - base in
+      is_true ~msg:"the cache holds one generation" (grew <= 0);
+      check_arr ~msg:"every window written"
+        [| 9.0; 8.0; 9.0; 8.0; 9.0; 8.0; 9.0; 8.0 |]
+        !s.x)
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -1356,6 +1532,23 @@ let tests =
       [
         test "donate bounds resident memory at two generations"
           test_donate_bounds_resident_memory;
+        test "a donated input hands its storage to the output"
+          test_donate_reuses_storage;
+        test "a movement path refuses reuse and stays correct"
+          test_donate_refuses_movement_path;
+        test "a later reader refuses reuse and stays correct"
+          test_donate_refuses_later_reader;
+        test "a donated pass-through moves its storage"
+          test_donate_moves_pass_through;
+        test "a run-time window write reuses the cache"
+          test_donate_reuses_window_write;
+        test "an updated input returned unchanged stays readable"
+          test_donate_keeps_pass_through_readable;
+        test "outputs never write into an input's buffer"
+          test_outputs_never_write_into_inputs;
+        test "every derived leaf is reused" test_donate_reuses_every_leaf;
+        test "a staged loop refuses only the leaves it touches"
+          test_donate_reuses_beside_a_scan;
         test "a donated handle raises on read"
           test_donated_handle_raises_on_read;
         test "re-feeding a donated handle raises"

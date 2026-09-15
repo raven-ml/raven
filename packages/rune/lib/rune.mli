@@ -466,12 +466,21 @@ val jit :
     allocator, and the donated handle becomes unusable — reading it, or feeding
     it to a later call (which reads it), raises [Invalid_argument]; read or copy
     the value before the call if it is still needed. The next call's fresh
-    outputs reuse the released storage, so a state-to-state loop
-    ([state <- step state] with [step] jitted [~donate:true]) holds about two
-    generations of state on the device instead of one per call awaiting
-    collection. Only resident handles are consumed: host tensors and handles
-    already read are unaffected. A handle appearing as several input leaves is
-    donated once.
+    outputs reuse the released storage. An output that reads a donated leaf
+    only at the element it writes (an optimizer update, a window write into a
+    cache) is computed straight into that leaf's storage, and so is an output
+    that never reads a donated leaf of its own dtype and size once no kernel
+    reads that leaf (a bf16 copy of f32 master weights takes the previous
+    copy's storage); a state-to-state loop ([state <- step state] with [step]
+    jitted [~donate:true]) therefore holds one generation of state on the
+    device. An output that reads its leaf elsewhere (through a transpose or a
+    reduction) or whose leaf another kernel reads afterwards gets fresh
+    storage and the leaf is released after the call, about two generations.
+    [RUNE_JIT_DEBUG=1] reports, per input leaf, whether its storage was
+    reused, copied, or was not resident. Only
+    resident handles are consumed: host tensors and handles already read are
+    unaffected. A handle appearing as several input leaves is donated once
+    and never reused in place. Programs under {!pmap} keep two generations.
 
     [beam] enables beam-search autotuning of this function's kernels with the
     given width: instead of scheduling each kernel by fixed heuristics, the
@@ -637,6 +646,9 @@ type jit_stats = {
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
   resident_bytes : int;
       (** Device bytes held by unread outputs that are still reachable. *)
+  reused_bytes : int;
+      (** Cumulative bytes of donated inputs whose storage an output took
+          instead of a fresh buffer. *)
 }
 (** Transfer accounting for compiled functions. The zero-copy CPU path moves no
     bytes and counts nothing. *)
