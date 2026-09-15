@@ -33,11 +33,11 @@ random/gamma-100k	alloc_words	exact	27281719
 random/gamma-100k	wall_time	batch=1	n=20	1.184e-01	1.158e-01 1.165e-01 1.168e-01 1.168e-01 1.174e-01 1.176e-01 1.178e-01 1.180e-01 1.182e-01 1.182e-01 1.186e-01 1.193e-01 1.194e-01 1.200e-01 1.200e-01 1.201e-01 1.204e-01 1.205e-01 1.215e-01 1.216e-01
 random/normal-1M	alloc_words	exact	17005929
 random/normal-1M	wall_time	batch=1	n=20	6.859e-02	6.798e-02 6.801e-02 6.802e-02 6.803e-02 6.819e-02 6.822e-02 6.829e-02 6.836e-02 6.842e-02 6.843e-02 6.875e-02 6.888e-02 6.894e-02 6.895e-02 6.908e-02 6.914e-02 6.922e-02 6.954e-02 7.017e-02 7.022e-02
-random/poisson-rate-1-10k	alloc_words	exact	7144550
+random/poisson-rate-1-10k	alloc_words	exact	11586812
 random/poisson-rate-1-10k	wall_time	batch=1	n=20	2.967e-02	2.895e-02 2.914e-02 2.921e-02 2.921e-02 2.925e-02 2.939e-02 2.941e-02 2.947e-02 2.951e-02 2.966e-02 2.969e-02 2.970e-02 2.973e-02 2.998e-02 3.009e-02 3.013e-02 3.018e-02 3.055e-02 3.071e-02 3.138e-02
-random/poisson-rate-100-10k	alloc_words	exact	71404550
+random/poisson-rate-100-10k	alloc_words	exact	11586812
 random/poisson-rate-100-10k	wall_time	batch=1	n=20	2.865e-01	2.828e-01 2.840e-01 2.842e-01 2.843e-01 2.850e-01 2.853e-01 2.855e-01 2.859e-01 2.861e-01 2.863e-01 2.868e-01 2.875e-01 2.876e-01 2.879e-01 2.880e-01 2.881e-01 2.888e-01 2.896e-01 2.931e-01 3.002e-01
-random/poisson-rate-30-10k	alloc_words	exact	32304550
+random/poisson-rate-30-10k	alloc_words	exact	11586812
 random/poisson-rate-30-10k	wall_time	batch=1	n=20	1.296e-01	1.283e-01 1.283e-01 1.285e-01 1.286e-01 1.288e-01 1.289e-01 1.290e-01 1.292e-01 1.293e-01 1.295e-01 1.297e-01 1.298e-01 1.308e-01 1.313e-01 1.314e-01 1.327e-01 1.334e-01 1.337e-01 1.372e-01 1.432e-01
 random/uniform-1M	alloc_words	exact	17001976
 random/uniform-1M	wall_time	batch=1	n=20	6.603e-02	6.524e-02 6.524e-02 6.558e-02 6.567e-02 6.573e-02 6.575e-02 6.579e-02 6.587e-02 6.587e-02 6.601e-02 6.605e-02 6.605e-02 6.616e-02 6.634e-02 6.645e-02 6.656e-02 6.658e-02 6.670e-02 6.671e-02 6.698e-02

@@ -679,6 +679,11 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.poisson` samples at any rate; the cap at 100 is gone. Below rate
+  10 the count is read off the cumulative distribution with a single uniform,
+  from 10 up it comes from a transformed rejection sampler with a fixed round
+  count, so the work per element no longer grows with the rate. Draws for a
+  given key differ from before.
 - The inverse error function behind `Nx.Rng.truncated_normal` now has a finite
   derivative at zero. Its tail branch took `sqrt` of a quantity that is zero
   at that point, and although the branch is never selected there, its infinite

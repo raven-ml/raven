@@ -587,15 +587,21 @@ let test_poisson_matches_the_pmf () =
       pmf := !pmf *. rate /. float_of_int (c + 1)
     done
   in
+  (* Below 10 the draw is by inversion, from 10 up by transformed rejection;
+     12 sits just inside the second regime, where its acceptance is lowest,
+     and the large rates check the log-pmf test past where float32 would have
+     lost it. The pmf underflows on the host there, so only the moments are
+     checked. *)
   check 0.7;
   check 4.0;
-  check 30.0
+  check 12.0;
+  check 30.0;
+  check 200.0;
+  check 1e5
 
 let test_poisson_validates_rate () =
   invalid_arg_raised ~msg:"zero rate" (fun () ->
-      ignore (Rng.poisson (Rng.key 0) ~rate:0.0 [| 4 |]));
-  invalid_arg_raised ~msg:"rate beyond the ceiling" (fun () ->
-      ignore (Rng.poisson (Rng.key 0) ~rate:250.0 [| 4 |]))
+      ignore (Rng.poisson (Rng.key 0) ~rate:0.0 [| 4 |]))
 
 (* Beta(a, b) has mean a/(a+b) and variance ab/((a+b)^2 (a+b+1)); the variance
    is what catches a wrong composition, since a ratio of the wrong two gammas

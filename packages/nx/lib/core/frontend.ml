@@ -2401,44 +2401,144 @@ module Make (B : Backend_intf.S) = struct
       let total = sum ~axes:[ axis ] ~keepdims:true stacked in
       div stacked (maximum total tiny)
 
-    (* Knuth's method, made branchless. With L = e^-rate, Knuth multiplies
-       uniforms until the running product drops to L and returns one less than
-       the number of factors — that is, the count of prefixes whose product
-       still exceeds L. A cumulative product and a sum of comparisons say the
-       same thing without a trip count that depends on the draw, so this is
-       exact rather than a bounded approximation like {!gamma}.
+    (* log (k!) for a non-negative float64 [k]: Stirling's series at [k + 9],
+       where its next term is below 3e-10, with the eight factors of the shift
+       divided back out. *)
+    let log_factorial k =
+      let lit v = scalar_like k v in
+      let y = add k (lit 9.0) in
+      let shift = ref (add k (lit 1.0)) in
+      for i = 2 to 8 do
+        shift := mul !shift (add k (lit (float_of_int i)))
+      done;
+      let y2 = mul y y in
+      let series =
+        div
+          (sub
+             (lit (1.0 /. 12.0))
+             (div (sub (lit (1.0 /. 360.0)) (div (lit (1.0 /. 1260.0)) y2)) y2))
+          y
+      in
+      let stirling =
+        add
+          (sub (mul (sub y (lit 0.5)) (log y)) y)
+          (add (lit (0.5 *. Float.log (2.0 *. Float.pi))) series)
+      in
+      sub stirling (log !shift)
 
-       [rounds] must exceed any count the caller could plausibly see. It comes
-       from [rate], a host float, so it is fixed when the program is built: ten
-       standard deviations above the mean puts the truncation probability below
-       1e-20. The work is O(rounds) per element, which is what the ceiling on
-       [rate] is about — beyond it the transformed-rejection algorithms are the
-       right answer, and they are not implemented.
+    (* Two regimes with a fixed round count each, chosen per element, so the
+       shape of the computation does not depend on the rate and the rate can be
+       data. Both run for every element and [where] picks.
 
-       The running product falls to about e^-rate, so it is formed in float64:
-       float32 would flush it to zero around rate 88 and undercount. *)
-    let poisson_max_rate = 100.0
+       Below 10, inversion: one uniform against the cumulative pmf, whose terms
+       exp (-rate + k log rate - log k!) are formed directly over a leading axis
+       of 48 rounds. The mass beyond 48 at rate 10 is 4e-18. A rate of zero, a
+       negative rate or NaN makes every term NaN, every comparison false and the
+       count 0.
+
+       From 10 up, Hörmann's transformed rejection with squeeze (PTRS): a
+       proposal from a scaled logistic hat, accepted by a squeeze test or,
+       failing that, by comparing against the log pmf. Acceptance is 0.75 at
+       rate 10 and 0.89 in the limit, so 16 rounds leave 2e-10 of an element
+       unaccepted; that element takes its last proposal, a draw from the hat
+       with mean near the rate. The elements the inversion owns see a benign
+       rate of 1e5 here: the hat's constants have poles below rate 1 that would
+       otherwise put infinities into the integer cast, which is undefined in C.
+       The log pmf cancels three terms of size rate log rate to a margin of
+       order 1, which is why the whole sampler is float64. *)
+    let poisson_inversion_rounds = 48
+    let poisson_rejection_rounds = 16
+
+    let poisson_of_rate k (rate : (float, Dtype.float64_elt) t) =
+      let ctx = B.context k in
+      let shape = shape rate in
+      let lit v = scalar ctx Dtype.float64 v in
+      let ks = split k in
+      let small = logical_not (cmpge rate (lit 10.0)) in
+      let inversion =
+        let rounds = poisson_inversion_rounds in
+        let u = uniform ks.(0) Dtype.float64 shape in
+        let along_rounds v =
+          reshape
+            (Array.append [| rounds |] (Array.make (Array.length shape) 1))
+            v
+        in
+        let count =
+          along_rounds (cast Dtype.float64 (arange ctx Dtype.int32 0 rounds 1))
+        in
+        let log_fact =
+          let acc = ref 0.0 in
+          Array.init rounds (fun i ->
+              if i > 0 then acc := !acc +. Float.log (float_of_int i);
+              !acc)
+        in
+        let log_fact =
+          along_rounds (create ctx Dtype.float64 [| rounds |] log_fact)
+        in
+        let log_pmf = sub (sub (mul count (log rate)) rate) log_fact in
+        let cdf = cumsum ~axis:0 (exp log_pmf) in
+        sum ~axes:[ 0 ] (cast Dtype.float64 (cmplt cdf u))
+      in
+      let rejection =
+        let rounds = poisson_rejection_rounds in
+        let lam = where small (lit 1e5) rate in
+        let log_lam = log lam in
+        let b = add (lit 0.931) (mul (lit 2.53) (sqrt lam)) in
+        let a = add (lit (-0.059)) (mul (lit 0.02483) b) in
+        let log_inv_alpha =
+          log (add (lit 1.1239) (div (lit 1.1328) (sub b (lit 3.4))))
+        in
+        let vr = sub (lit 0.9277) (div (lit 3.6224) (sub b (lit 2.0))) in
+        let draws =
+          uniform ks.(1) Dtype.float64 (Array.append [| 2; rounds |] shape)
+        in
+        let acc = ref (zeros ctx Dtype.float64 shape) in
+        let last = ref !acc in
+        let settled = ref (cmpne !acc !acc) in
+        for j = 0 to rounds - 1 do
+          let u = sub (contiguous (slice [ I 0; I j ] draws)) (lit 0.5) in
+          let v = contiguous (slice [ I 1; I j ] draws) in
+          let us = sub (lit 0.5) (abs u) in
+          let proposal =
+            floor
+              (add
+                 (add (mul (add (div (mul (lit 2.0) a) us) b) u) lam)
+                 (lit 0.43))
+          in
+          (* Clamped into int32 before anything is done with it: a [us] of zero
+             sends the proposal to infinity, which the tests below reject but
+             the final cast must never see. *)
+          let count = minimum (maximum proposal (lit 0.0)) (lit 2147483647.0) in
+          let squeeze = logical_and (cmpge us (lit 0.07)) (cmple v vr) in
+          let reject =
+            logical_or
+              (cmplt proposal (lit 0.0))
+              (logical_and (cmplt us (lit 0.013)) (cmpgt v us))
+          in
+          let lhs =
+            sub (add (log v) log_inv_alpha) (log (add (div a (mul us us)) b))
+          in
+          let rhs = sub (sub (mul count log_lam) lam) (log_factorial count) in
+          let accept =
+            logical_or squeeze
+              (logical_and (logical_not reject) (cmple lhs rhs))
+          in
+          let take = logical_and accept (logical_not !settled) in
+          acc := where take count !acc;
+          settled := logical_or !settled accept;
+          last := count
+        done;
+        where !settled !acc !last
+      in
+      cast Dtype.int32 (where small inversion rejection)
 
     let poisson k ~rate shape =
       if not (rate > 0.0) then
         invalid_arg
           (Printf.sprintf "Nx.Rng.poisson: rate must be positive, got %g" rate);
-      if rate > poisson_max_rate then
-        invalid_arg
-          (Printf.sprintf
-             "Nx.Rng.poisson: rate %g exceeds %g, above which this sampler's \
-              cost grows without bound; it draws O(rate) uniforms per element"
-             rate poisson_max_rate);
       check_shape "poisson" shape;
-      let ctx = B.context k in
-      let rounds =
-        int_of_float (Float.ceil (rate +. (10.0 *. Stdlib.sqrt rate))) + 10
-      in
-      let attempts = Array.append [| rounds |] shape in
-      let running = cumprod ~axis:0 (uniform k Dtype.float64 attempts) in
-      let threshold = scalar ctx Dtype.float64 (Float.exp (-.rate)) in
-      cast Dtype.int32
-        (sum ~axes:[ 0 ] (cast Dtype.float64 (cmpgt running threshold)))
+      poisson_of_rate k
+        (broadcast_to shape (scalar (B.context k) Dtype.float64 rate))
 
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking

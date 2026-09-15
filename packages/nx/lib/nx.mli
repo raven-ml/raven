@@ -661,14 +661,16 @@ module Rng : sig
 
   val poisson : key -> rate:float -> int array -> int32_t
   (** [poisson k ~rate shape] samples the Poisson distribution with the given
-      rate. Exact, unlike {!gamma}: the count is expressed as a cumulative
-      product rather than a loop that stops when the draw says so.
+      rate, at any rate.
 
-      The cost is [O(rate)] uniforms per element, so [rate] is capped at 100.
-      Beyond that the transformed-rejection algorithms are the right answer and
-      are not implemented.
+      Below 10 the count is read off the cumulative distribution with one
+      uniform, exactly. From 10 up it comes from a transformed rejection
+      sampler run for a fixed sixteen rounds, so like {!gamma} it is not quite
+      exact: about one element in [5e9] is accepted by no round and takes its
+      last proposal, a draw from the envelope with mean near [rate]. The cost
+      per element is the same at every rate.
 
-      Raises [Invalid_argument] if [rate] is not positive or exceeds 100. *)
+      Raises [Invalid_argument] if [rate] is not positive. *)
 
   val categorical :
     key -> ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
