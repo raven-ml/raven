@@ -95,5 +95,9 @@ let put ~table ~key value =
      with exn ->
        (try Sys.remove tmp with Sys_error _ -> ());
        raise exn);
-    Unix.rename tmp path
+    (* A rename that loses (on Windows, to a reader or writer holding the
+       entry open) leaves the previous complete entry in place; the temporary
+       must not outlive it. *)
+    try Unix.rename tmp path
+    with Unix.Unix_error _ -> ( try Sys.remove tmp with Sys_error _ -> ())
   with _ -> ()

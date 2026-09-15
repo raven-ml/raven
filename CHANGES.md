@@ -173,6 +173,9 @@ thread.
   the kernel's arguments from the wrong registers and larger kernels crashed.
 - The CPU thread pool is sized from the runtime's recommended domain count
   instead of a `getconf` subprocess, which does not exist on Windows.
+- The disk cache removes its temporary file when the final rename loses, which
+  on Windows happens whenever another process holds the entry open; the
+  temporaries no longer accumulate next to the entries.
 - The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor
   libraries load through `LoadLibrary`; the hcq layer maps anonymous memory
   through `VirtualAlloc`, so the queue builders run; the system layer's file
