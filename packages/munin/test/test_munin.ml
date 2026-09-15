@@ -8,13 +8,18 @@ open Munin
 
 (* Helpers *)
 
+let rec rm_rf path =
+  if Sys.is_directory path then begin
+    Array.iter (fun e -> rm_rf (Filename.concat path e)) (Sys.readdir path);
+    Sys.rmdir path
+  end
+  else Sys.remove path
+
 let with_temp_dir f =
   let base = Filename.temp_file "munin" "test" in
   Sys.remove base;
   Unix.mkdir base 0o755;
-  Fun.protect
-    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote base)))
-    (fun () -> f base)
+  Fun.protect ~finally:(fun () -> rm_rf base) (fun () -> f base)
 
 let write_text path text =
   let oc = open_out path in
@@ -1050,7 +1055,7 @@ let test_store_gc () =
          "versions")
       "v1"
   in
-  ignore (Sys.command ("rm -rf " ^ Filename.quote version_dir));
+  rm_rf version_dir;
   let removed_after = Store.gc store in
   equal ~msg:"one blob removed" int 1 removed_after
 
@@ -1369,9 +1374,8 @@ let test_auto_summary_min () =
   Metric.log loss ~step:3 0.7;
   Session.finish session;
   let run = Session.run session in
-  equal ~msg:"min summary"
-    (option float_exact)
-    (Some 0.3) (summary_float run "loss")
+  equal ~msg:"min summary" (option float_exact) (Some 0.3)
+    (summary_float run "loss")
 
 let test_auto_summary_max () =
   with_temp_dir @@ fun root ->
@@ -1383,9 +1387,8 @@ let test_auto_summary_max () =
   Metric.log acc ~step:3 0.7;
   Session.finish session;
   let run = Session.run session in
-  equal ~msg:"max summary"
-    (option float_exact)
-    (Some 0.9) (summary_float run "acc")
+  equal ~msg:"max summary" (option float_exact) (Some 0.9)
+    (summary_float run "acc")
 
 let test_auto_summary_mean () =
   with_temp_dir @@ fun root ->
@@ -1397,9 +1400,8 @@ let test_auto_summary_mean () =
   Metric.log x ~step:3 3.0;
   Session.finish session;
   let run = Session.run session in
-  equal ~msg:"mean summary"
-    (option float_exact)
-    (Some 2.0) (summary_float run "x")
+  equal ~msg:"mean summary" (option float_exact) (Some 2.0)
+    (summary_float run "x")
 
 let test_auto_summary_last () =
   with_temp_dir @@ fun root ->
@@ -1411,9 +1413,8 @@ let test_auto_summary_last () =
   Metric.log x ~step:3 3.0;
   Session.finish session;
   let run = Session.run session in
-  equal ~msg:"last summary"
-    (option float_exact)
-    (Some 3.0) (summary_float run "x")
+  equal ~msg:"last summary" (option float_exact) (Some 3.0)
+    (summary_float run "x")
 
 let test_auto_summary_none () =
   with_temp_dir @@ fun root ->
@@ -1436,9 +1437,8 @@ let test_explicit_summary_wins () =
   Session.set_summary session [ ("loss", `Float 999.0) ];
   Session.finish session;
   let run = Session.run session in
-  equal ~msg:"explicit wins"
-    (option float_exact)
-    (Some 999.0) (summary_float run "loss")
+  equal ~msg:"explicit wins" (option float_exact) (Some 999.0)
+    (summary_float run "loss")
 
 let auto_summaries =
   [
@@ -1543,8 +1543,7 @@ let test_log_media_nested_key () =
   equal ~msg:"one entry" int 1 (List.length entries);
   let entry = List.hd entries in
   is_true ~msg:"file in subdir"
-    (let parts = String.split_on_char '/' entry.path in
-     List.exists (String.equal "train") parts)
+    (Filename.basename (Filename.dirname entry.path) = "train")
 
 let test_log_media_multiple_steps () =
   with_temp_dir @@ fun root ->
