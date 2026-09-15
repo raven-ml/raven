@@ -66,9 +66,10 @@ val cholesky : upper:bool -> Tensor.t -> Tensor.t
     [a ≍ l·lᵀ], or the upper triangular [u] with [a ≍ uᵀ·u] when [upper] is
     [true]. One column of the factor is unrolled per step.
 
-    [a] has shape [batch @ [n; n]]. The per-element arithmetic is the classic
-    unblocked algorithm's, so results agree with blocked implementations up
-    to floating-point association.
+    [a] has shape [batch @ [n; n]]. Only its lower triangle is read, so the
+    upper triangle may hold anything. The per-element arithmetic is the
+    classic unblocked algorithm's, so results agree with blocked
+    implementations up to floating-point association.
 
     Raises [Invalid_argument] if [a] has fewer than 2 dimensions or a
     non-float dtype. A non-positive-definite [a] yields nans rather than an

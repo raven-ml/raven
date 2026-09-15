@@ -347,9 +347,12 @@ let test_qr_gradient_compiles () =
     (to_arr (Rune.grad' loss a))
     (to_arr compiled)
 
+(* Only the lower triangle is read, in both triangles' factors: the upper
+   triangle holds garbage here, and the compiled program must ignore it as the
+   eager kernel does. *)
 let test_cholesky_matches_eager () =
   let a =
-    Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
+    Nx.create f32 [| 3; 3 |] [| 4.0; 9.0; 9.0; 1.0; 5.0; 9.0; 2.0; 3.0; 6.0 |]
   in
   let l = Rune.jit' (fun m -> Nx.cholesky m) a in
   check_arr ~msg:"lower" (to_arr (Nx.cholesky a)) l;
