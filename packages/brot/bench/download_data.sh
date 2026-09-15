@@ -2,6 +2,10 @@
 set -euo pipefail
 
 DATA_DIR="$(cd "$(dirname "$0")/data" && pwd)"
+# Under a Cygwin bash the native curl cannot open a /cygdrive path.
+if command -v cygpath >/dev/null 2>&1; then
+  DATA_DIR="$(cygpath -m "$DATA_DIR")"
+fi
 
 echo "Downloading real-world tokenizer models to $DATA_DIR..."
 
