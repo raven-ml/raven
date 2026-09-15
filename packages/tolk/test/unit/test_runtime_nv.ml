@@ -482,6 +482,8 @@ let contains ~needle haystack =
 (* A sysfs tree holding just the PCI files the bus scan reads, so the device
    allowlist is checked through the real probe path. *)
 let with_fake_sysfs devices f =
+  if Sys.win32 then
+    skip ~reason:"sysfs device names contain ':', not a Windows file name" ();
   let root = Filename.temp_file "tolk_sysfs" "" in
   Sys.remove root;
   let devdir =

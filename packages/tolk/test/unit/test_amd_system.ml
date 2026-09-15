@@ -41,6 +41,8 @@ let read_file path = In_channel.with_open_bin path In_channel.input_all
 (* A fake sysfs tree in a temp dir; [Pci_device] and [pci_scan_bus] take its
    root through their [?sysfs] parameter. *)
 let with_fake_root f =
+  if Sys.win32 then
+    skip ~reason:"sysfs device names contain ':', not a Windows file name" ();
   let root = Filename.get_temp_dir_name () // ("tolk_system_test_" ^ uid ()) in
   mkdir_p (root // "bus" // "pci" // "devices");
   Fun.protect ~finally:(fun () -> rm_rf root) (fun () -> f root)
