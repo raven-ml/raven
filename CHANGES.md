@@ -101,6 +101,10 @@ thread.
   Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
+- New `Tolk_frontend.Linalg`: `qr`, `solve_triangular`, and `cholesky` unroll
+  at graph-construction time into ordinary Tolk compositions, so they compile
+  for every Tolk device. Wide right-hand sides solve block-by-block as GEMMs.
+
 - Driver-less NVIDIA (`NV_IFACE=PCI`) hardening: opening now waits for the
   GPU's boot firmware to report ready before sizing VRAM (a device opened
   mid-boot, or straight after the armed-region recovery reset, could read
@@ -646,6 +650,16 @@ thread.
 
 ### Nx
 
+- Add `Nx.solve_triangular ?upper ?transpose ?unit_diag a b`, a first-class
+  triangular solver named after its scipy analog. It skips the factorization
+  cost of `solve` for a pre-triangularized `a`; `b` is a vector or a stack of
+  right-hand sides, batched like `a`.
+- **Breaking:** the backend operation `triangular_solve` and its effect
+  `E_triangular_solve` are renamed `solve_triangular` and `E_solve_triangular`.
+  Out-of-tree backends and effect handlers must follow.
+- `Nx.diag` no longer reads its operand back to the host, so it traces under
+  `Rune.jit` and construction differentiates through `scatter`.
+
 - Speed up batched `fft`, `rfft` and `irfft` in the default C backend: the
   worker count was picked as though a transform line cost one pass over its
   samples, so a stack of a few dozen medium-length lines ran on a single core.
@@ -1057,6 +1071,12 @@ thread.
   offset in the underlying buffer.
 
 ### Rune
+
+- `Rune.jit` compiles `Nx.qr`, `Nx.solve_triangular`, and `Nx.cholesky`: they
+  unroll at trace time into the fixed number of steps their shapes imply (see
+  `Tolk_frontend.Linalg`), and `grad` through them compiles as well. A
+  singular or non-positive-definite input yields infinities or nans in the
+  compiled program rather than an error.
 
 - `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
   forward substitution unrolled at trace time into the fixed number of steps
