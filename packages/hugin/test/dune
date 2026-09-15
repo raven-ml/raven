@@ -6,6 +6,7 @@
   test_ticks
   test_resolve
   test_svg_backend
-  test_image_util)
+  test_image_util
+  test_canvas_geometry)
  (package hugin)
- (libraries hugin nx windtrap))
+ (libraries hugin hugin.canvas nx windtrap))

@@ -11,6 +11,13 @@ All notable changes to this project will be documented in this file.
 
 - Add compatibility with OCaml 5.5.
 
+### Hugin
+
+- Add `hugin.canvas`, a 2D vector drawing library with no system
+  dependencies. `Hugin_canvas.Path` builds paths from lines, cubic Béziers
+  and bulk polylines, `Affine` composes transforms, and `Stroke` and `Color`
+  describe how paths are drawn.
+
 ### Vega
 
 - Add L-BFGS to the structural tier for deterministic objectives: full-batch

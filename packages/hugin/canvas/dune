@@ -1,0 +1,4 @@
+(library
+ (name hugin_canvas)
+ (public_name hugin.canvas)
+ (libraries nx))
