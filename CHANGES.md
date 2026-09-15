@@ -1448,6 +1448,13 @@ thread.
   integration (`kaun.hf`, `kaun.datasets`) are provided as plain functions
   over these records.
 
+### Fehu
+
+- `Space.Box.sample` and `Space.Multi_discrete.sample` draw every dimension
+  in one tensor operation instead of an OCaml loop reading each draw back to
+  the host. The fallback for an unbounded `Box` dimension is unchanged.
+  Samples for a given seed differ from before.
+
 ### Brot
 
 - **Breaking:** the stage modules' internal plumbing is no longer exported:

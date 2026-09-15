@@ -175,22 +175,17 @@ module Box = struct
       in
       loop 0
     in
+    (* One draw for every dimension. Where the range overflows, the draw is
+       taken on [-1e6, 1e6] and clamped to the bounds instead. *)
+    let low_t = Nx.create Nx.float32 [| arity |] low in
+    let high_t = Nx.create Nx.float32 [| arity |] high in
+    let span = Nx.sub high_t low_t in
+    let finite = Nx.isfinite span in
     let sample () =
-      let uniform = Nx.rand Nx.float32 [| arity |] in
-      let draws = Nx.to_array uniform in
-      let values =
-        Array.init arity (fun i ->
-            let lo = low.(i) in
-            let hi = high.(i) in
-            if Float.equal lo hi then lo
-            else
-              let range = hi -. lo in
-              if Float.is_finite range then lo +. (draws.(i) *. range)
-              else
-                let v = -1e6 +. (draws.(i) *. 2e6) in
-                Float.max lo (Float.min hi v))
-      in
-      Nx.create Nx.float32 [| arity |] values
+      let u = Nx.rand Nx.float32 [| arity |] in
+      let inside = Nx.add low_t (Nx.mul u span) in
+      let wide = Nx.add_s (Nx.mul_s u 2e6) (-1e6) in
+      Nx.where finite inside (Nx.minimum high_t (Nx.maximum low_t wide))
     in
     let pack tensor = Value.Float_array (Array.copy (Nx.to_array tensor)) in
     let unpack = function
@@ -321,14 +316,13 @@ module Multi_discrete = struct
       in
       loop 0
     in
+    (* One draw for every component, as [randint] scales a uniform by its span:
+       the uniform is below 1, so each value is below its bound. *)
+    let bounds =
+      Nx.create Nx.float32 [| arity |] (Array.map float_of_int nvec)
+    in
     let sample () =
-      let data =
-        Array.init arity (fun i ->
-            let tensor = Nx.randint ~high:nvec.(i) [| 1 |] in
-            let arr = Nx.to_array tensor in
-            arr.(0))
-      in
-      Nx.create Nx.int32 [| arity |] data
+      Nx.cast Nx.int32 (Nx.mul (Nx.rand Nx.float32 [| arity |]) bounds)
     in
     let pack tensor =
       let arr : Int32.t array = Nx.to_array tensor in
