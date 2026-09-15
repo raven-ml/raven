@@ -2006,29 +2006,43 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Random Number Generation ───── *)
 
-  (* Inverse of the error function, by Giles (2010): one logarithm, then a
-     degree-8 polynomial in a change of variable, chosen by how close |x| is to
-     1. Both branches are evaluated and selected with [where] — a data-dependent
-     branch would not trace — which is why the polynomials are kept short. The
-     approximation carries about seven significant digits, the accuracy
-     [truncated_normal] needs to place a bound.
+  (* Inverse of the error function. Giles (2010) gives about seven digits: one
+     logarithm, then a degree-8 polynomial in a change of variable, chosen by
+     how close |x| is to 1. Both branches are evaluated and selected with
+     [where] — a data-dependent branch would not trace — which is why the
+     polynomials are kept short.
+
+     At float64 the result is refined by Newton steps, each of which squares the
+     error, so it carries the precision of its residual. The residual is not
+     taken from the backend's [erf]: a compiled one may carry only single
+     precision, and a Newton step against a seven-digit erf would move a
+     seven-digit guess away from the answer in the tails. Two evaluations are
+     built here from primitives instead, a series for erf below 2 and a
+     continued fraction for erfc from 2 up, each double-accurate over its range.
+     At |x| = 1 the result is infinite and above it NaN, as the logarithm makes
+     it; the infinities are placed by [where] on constants so that none meets a
+     cotangent.
 
      Defined here rather than beside [erf] because [Rng.truncated_normal] below
-     is its consumer; it stays internal until it is accurate to double
-     precision. *)
+     is its consumer. *)
+  let erf_series_rounds = 80
+  let erfc_fraction_rounds = 64
+
   let erfinv (type b) (x : (float, b) t) : (float, b) t =
+    let lit v = scalar_like x v in
     let poly coeffs w =
       (* Horner from the leading coefficient down. *)
       match coeffs with
       | [] -> invalid_arg "erfinv: empty polynomial"
       | c0 :: rest ->
-          List.fold_left
-            (fun acc c -> add (mul acc w) (scalar_like x c))
-            (scalar_like x c0) rest
+          List.fold_left (fun acc c -> add (mul acc w) (lit c)) (lit c0) rest
     in
-    let w =
-      neg (log (mul (sub (scalar_like x 1.0) x) (add (scalar_like x 1.0) x)))
+    let at_one = cmpeq (abs x) (lit 1.0) in
+    let sign_infinity =
+      where (cmpgt x (lit 0.0)) (lit infinity) (lit neg_infinity)
     in
+    let x = where at_one (lit 0.0) x in
+    let w = neg (log (mul (sub (lit 1.0) x) (add (lit 1.0) x))) in
     let central =
       poly
         [
@@ -2061,9 +2075,76 @@ module Make (B : Backend_intf.S) = struct
           1.00167406;
           2.83297682;
         ]
-        (sub (sqrt (maximum w (scalar_like x 1.0))) (scalar_like x 3.0))
+        (sub (sqrt (maximum w (lit 1.0))) (lit 3.0))
     in
-    mul x (where (cmplt w (scalar_like x 5.0)) central tail)
+    let guess = mul x (where (cmplt w (lit 5.0)) central tail) in
+    let refined =
+      match dtype x with
+      | Dtype.Float64 ->
+          (* Below 2 in |y|, Newton on erf from the guess. The residual comes
+             from the series whose terms are all positive, so nothing cancels;
+             80 terms carry it to double precision there. *)
+          let erf y =
+            let twice_y2 = mul (lit 2.0) (mul y y) in
+            let term = ref y and acc = ref y in
+            for n = 1 to erf_series_rounds - 1 do
+              term :=
+                div (mul !term twice_y2) (lit (float_of_int ((2 * n) + 1)));
+              acc := add !acc !term
+            done;
+            mul
+              (lit (2.0 /. Float.sqrt Float.pi))
+              (mul (exp (neg (mul y y))) !acc)
+          in
+          let step y =
+            sub y
+              (mul
+                 (sub (erf y) x)
+                 (mul (lit (Float.sqrt Float.pi /. 2.0)) (exp (mul y y))))
+          in
+          let central = step (step guess) in
+          (* From 2 up, the residual must be [erfc y - (1 - |x|)]: the
+             complement is what [x] determines there, and [1 - |x|] is exact
+             where [1 - erf y] is not. [erfc y = exp (-y^2) / (sqrt pi k)] for
+             [k] the continued fraction [y + (1/2)/(y + 1/(y + (3/2)/(y +
+             ...)))], which 64 terms carry to double precision from 2 up. Newton
+             runs on [log erfc], nearly linear in [y^2], from the asymptotic
+             [y^2 = -log c - log (sqrt pi y)] iterated twice: three steps reach
+             machine precision from there for every [c]. Every quantity is of
+             order [y^2] or smaller, so nothing overflows, and the floors keep
+             the branch finite where it is not selected. *)
+          let c = sub (lit 1.0) (abs x) in
+          let fraction y =
+            let k = ref y in
+            for n = erfc_fraction_rounds downto 1 do
+              k := add y (div (lit (float_of_int n /. 2.0)) !k)
+            done;
+            !k
+          in
+          let asymptotic y =
+            sqrt
+              (maximum (lit 1.0)
+                 (sub w
+                    (log
+                       (mul
+                          (lit (Float.sqrt Float.pi /. 2.0))
+                          (maximum y (lit 1.0))))))
+          in
+          let log_step y =
+            let k = fraction y in
+            let residual =
+              sub
+                (neg (add (mul y y) (log (mul (lit (Float.sqrt Float.pi)) k))))
+                (log c)
+            in
+            add y (div residual (mul (lit 2.0) k))
+          in
+          let start = asymptotic (asymptotic (sqrt w)) in
+          let tail = mul (sign x) (log_step (log_step (log_step start))) in
+          where (cmplt (abs guess) (lit 2.0)) central tail
+      | _ -> guess
+    in
+    where at_one sign_infinity refined
 
   (* One splittable Threefry-2x32 generator with two front-ends over it: the
      explicit samplers below take a key and are pure functions of it

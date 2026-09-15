@@ -720,6 +720,11 @@ thread.
 
 ### Nx
 
+- Add `Nx.erfinv`, the inverse error function, beside `erf`. At float64 it
+  carries double precision, a seven-digit polynomial refined by Newton steps
+  against a series for `erf` that does not depend on the backend's own. It
+  was an internal helper of `Nx.Rng.truncated_normal`, whose float64 draws now
+  carry double precision as well instead of seven digits.
 - `Nx.Rng.poisson` runs at its rate's compute dtype instead of always at
   float64, so a float32 rate compiles on Metal and every other device without
   double precision. The rejection test now evaluates the log pmf in a form

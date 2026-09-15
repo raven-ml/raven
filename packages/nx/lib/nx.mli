@@ -612,8 +612,8 @@ module Rng : sig
       Drawn by inverting the conditioned distribution rather than by rejecting
       out-of-range samples: one draw per element whatever the bounds, so the
       cost does not grow as the interval narrows, and the draw is differentiable
-      in both bounds. The inverse carries about seven significant digits,
-      whatever the dtype. *)
+      in both bounds. At float64 the draw carries double precision; at narrower
+      dtypes about seven digits, the precision of {!erfinv} there. *)
 
   val gumbel : key -> (float, 'b) dtype -> int array -> (float, 'b) t
   (** [gumbel k dtype shape] samples the standard Gumbel distribution, the
@@ -3116,6 +3116,19 @@ val erf : ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # erf (scalar float32 0.) |> item []
       - : float = 0.
+    ]} *)
+
+val erfinv : (float, 'b) t -> (float, 'b) t
+(** [erfinv t] is the inverse of {!erf} on \[[-1], [1]\]: [erf (erfinv x) = x].
+    It is [±infinity] at [±1] and NaN outside the interval.
+
+    At float64 the result carries double precision over the whole interval, to
+    the last representable value before [±1]. At narrower dtypes it carries
+    about seven digits.
+
+    {@ocaml[
+      # erfinv (scalar float64 0.5) |> item []
+      - : float = 0.476936276204469933
     ]} *)
 
 (** {1:windows Sliding windows} *)

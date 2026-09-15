@@ -371,6 +371,49 @@ let standardize_tests =
     test "standardize axes with params" test_standardize_axes_with_params;
   ]
 
+(* [erfinv] at float64 is a seven-digit guess refined by Newton steps, so it is
+   held to reference values at double precision, and to [erf] round trip over
+   the interval; float32 keeps the guess's seven digits. *)
+let erfinv_tests =
+  [
+    test "reference values at float64" (fun () ->
+        List.iter
+          (fun (x, expected) ->
+            equal
+              ~msg:(Printf.sprintf "erfinv %g" x)
+              (float (1e-15 *. Float.abs expected))
+              expected
+              (Nx.item [] (Nx.erfinv (Nx.scalar Nx.float64 x))))
+          [
+            (0.5, 0.47693627620446987);
+            (-0.3, -0.27246271472675435);
+            (0.9, 1.1630871536766742);
+            (0.999999, 3.4589107372754988);
+            (0.99999999, 4.0522372432687634);
+            (1.0 -. 1e-13, 5.2614833313726763);
+            (-.(1.0 -. 1e-16), -5.8635847487551679);
+          ]);
+    test "erf round trip at float64" (fun () ->
+        let x = Nx.linspace Nx.float64 (-0.999) 0.999 1999 in
+        let back = Nx.erf (Nx.erfinv x) in
+        let worst = Nx.item [] (Nx.max (Nx.abs (Nx.sub back x))) in
+        equal ~msg:"max |erf (erfinv x) - x|" (float 1e-14) 0.0 worst);
+    test "float32 keeps seven digits" (fun () ->
+        let x = Nx.linspace Nx.float32 (-0.999) 0.999 999 in
+        let back = Nx.erf (Nx.erfinv x) in
+        let worst = Nx.item [] (Nx.max (Nx.abs (Nx.sub back x))) in
+        equal ~msg:"max |erf (erfinv x) - x|" (float 2e-6) 0.0 worst);
+    test "endpoints and outside" (fun () ->
+        let v =
+          Nx.to_array
+            (Nx.erfinv (Nx.create Nx.float64 [| 4 |] [| 1.0; -1.0; 1.5; 0.0 |]))
+        in
+        equal ~msg:"erfinv 1" float_exact Float.infinity v.(0);
+        equal ~msg:"erfinv -1" float_exact Float.neg_infinity v.(1);
+        equal ~msg:"erfinv 1.5" bool true (Float.is_nan v.(2));
+        equal ~msg:"erfinv 0" float_exact 0.0 v.(3));
+  ]
+
 (* Test Suite Organization *)
 
 let suite =
@@ -387,6 +430,7 @@ let suite =
     group "Bitwise Edge Cases" bitwise_edge_cases;
     group "Log" log_tests;
     group "Standardize" standardize_tests;
+    group "Erfinv" erfinv_tests;
   ]
 
 let () = run "Nx Ops" suite
