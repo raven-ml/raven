@@ -2487,10 +2487,17 @@ module Make (B : Backend_intf.S) = struct
                  (add (mul (add (div (mul (lit 2.0) a) us) b) u) lam)
                  (lit 0.43))
           in
-          (* Clamped into int32 before anything is done with it: a [us] of zero
-             sends the proposal to infinity, which the tests below reject but
-             the final cast must never see. *)
-          let count = minimum (maximum proposal (lit 0.0)) (lit 2147483647.0) in
+          (* Brought into int32 before anything is done with it: a [us] of zero
+             sends the proposal to infinity and an infinite rate makes it NaN.
+             The tests below reject both, but the final cast must never see
+             them, and [where] on a comparison sends NaN to zero without leaning
+             on how [maximum] treats it. *)
+          let count =
+            where
+              (cmpge proposal (lit 0.0))
+              (minimum proposal (lit 2147483647.0))
+              (lit 0.0)
+          in
           let squeeze = logical_and (cmpge us (lit 0.07)) (cmple v vr) in
           let reject =
             logical_or
@@ -2561,6 +2568,7 @@ module Make (B : Backend_intf.S) = struct
       let target = dtype lower in
       let draw (type c) (compute : (float, c) Dtype.t) =
         let lit v = scalar ctx compute v in
+        let lower = at compute lower and upper = at compute upper in
         (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
            the interval off by a hair so unbounded truncation is the untruncated
            normal rather than an infinity. *)
@@ -2568,8 +2576,7 @@ module Make (B : Backend_intf.S) = struct
         let edge x =
           maximum (lit (-.limit))
             (minimum (lit limit)
-               (unaryop B.erf
-                  (mul (at compute x) (lit (1.0 /. Float.sqrt 2.0)))))
+               (unaryop B.erf (mul x (lit (1.0 /. Float.sqrt 2.0)))))
         in
         let lo = edge lower and hi = edge upper in
         let u = uniform k compute (shape lower) in
@@ -2578,7 +2585,6 @@ module Make (B : Backend_intf.S) = struct
         in
         (* The inverse carries seven digits, so a draw next to a bound can land
            an ulp or so past it; the clamp makes the support exact. *)
-        let lower = at compute lower and upper = at compute upper in
         minimum (maximum x (minimum lower upper)) (maximum lower upper)
       in
       match target with
