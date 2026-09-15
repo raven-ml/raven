@@ -11,3 +11,4 @@ module Color = Color
 module Affine = Affine
 module Path = Path
 module Stroke = Stroke
+module Font = Font

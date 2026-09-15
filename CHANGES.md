@@ -16,7 +16,10 @@ All notable changes to this project will be documented in this file.
 - Add `hugin.canvas`, a 2D vector drawing library with no system
   dependencies. `Hugin_canvas.Path` builds paths from lines, cubic Béziers
   and bulk polylines, `Affine` composes transforms, and `Stroke` and `Color`
-  describe how paths are drawn.
+  describe how paths are drawn. `Font` bundles two faces of Inter and reads
+  any TrueType font with `Font.of_string`; it measures text with kerning
+  (`advance`, `bounds`, `ascent`, `descent`) and turns it into paths
+  (`outline`, `glyph_path`), so text looks the same on every machine.
 
 ### Vega
 

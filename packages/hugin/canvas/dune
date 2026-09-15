@@ -1,4 +1,18 @@
 (library
  (name hugin_canvas)
  (public_name hugin.canvas)
+ (private_modules truetype font_data)
  (libraries nx))
+
+(rule
+ (target font_data.ml)
+ (deps fonts/Inter-Regular.ttf fonts/Inter-Bold.ttf)
+ (action
+  (with-stdout-to
+   %{target}
+   (run
+    %{exe:embed/embed.exe}
+    inter_regular
+    fonts/Inter-Regular.ttf
+    inter_bold
+    fonts/Inter-Bold.ttf))))
