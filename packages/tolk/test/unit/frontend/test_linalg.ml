@@ -172,7 +172,7 @@ let solve_tests =
           in
           check_zero ~tol:1e-5 ~msg:"|a·x - b| (batched upper)"
             (El.sub (Op.matmul a x) b));
-      test "wide right-hand sides take the blocked path" (fun () ->
+      slow "wide right-hand sides take the blocked path" (fun () ->
           (* 80 rows span several 32-row blocks plus a partial trailing
              block; the residual is independent of the solver. *)
           let n = 80 in
@@ -219,7 +219,7 @@ let solve_tests =
           in
           check_zero ~tol:1e-3 ~msg:"blocked flags |e·x - b|"
             (El.sub (Op.matmul e x) b));
-      test "batched systems take the blocked path" (fun () ->
+      slow "batched systems take the blocked path" (fun () ->
           (* The diagonal blocks stack on a fresh axis behind the batch axis;
              70 rows leave a partial trailing block. *)
           let n = 70 and nrhs = 60 in
