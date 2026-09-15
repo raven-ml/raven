@@ -1904,6 +1904,11 @@ thread.
 
 ### Quill
 
+- Building quill no longer needs a node toolchain. The bundling rule for the
+  server frontend was a target, so a directory build such as
+  `dune build packages/quill` ran esbuild and failed without `node_modules`;
+  the rule now lives under the `assets` alias only, and
+  `dune build @assets --auto-promote` still refreshes the committed `dist/`.
 - Allow `quill file.md` without requiring `quill -- file.md` or `quill run file.md`.
   The CLI now detects file arguments and routes them to the default TUI command.
 - Fix image Display outputs showing raw base64 text in markdown files. Images now

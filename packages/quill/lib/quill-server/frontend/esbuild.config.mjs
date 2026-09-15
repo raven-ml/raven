@@ -7,7 +7,7 @@ const config = {
   bundle: true,
   minify: production,
   sourcemap: !production,
-  outdir: 'dist',
+  outdir: process.env.ESBUILD_OUTDIR ?? 'dist',
   format: 'esm',
   target: 'es2020',
   loader: { '.css': 'css', '.woff2': 'file' },
