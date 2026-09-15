@@ -2094,11 +2094,13 @@ module Make (B : Backend_intf.S) = struct
         [| Int32.of_int (seed asr 32); Int32.of_int seed |]
 
     (* One Threefry application over [n] independent blocks: the key broadcast
-       across the rows of an [n; 2] counter whose row [i] holds [(2i, 2i+1)]. *)
+       across the rows of an [n; 2] counter whose row [i] holds [(2i, 2i+1)].
+       The broadcast is a stride-0 view; the kernel reads the key through its
+       strides, so materialising it would cost as many bytes as the draw. *)
     let blocks name k n =
       check_key name k;
       let ctx = B.context k in
-      let kb = contiguous (broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k)) in
+      let kb = broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k) in
       let ctr = reshape [| n; 2 |] (arange ctx Dtype.int32 0 (2 * n) 1) in
       B.threefry kb ctr
 

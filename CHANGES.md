@@ -679,6 +679,10 @@ thread.
 
 ### Nx
 
+- Every keyed draw (`Nx.Rng.uniform`, `normal`, `permutation`, `split`, and
+  the samplers built on them) no longer copies its key once per Threefry
+  block before hashing. The copy was as large as the draw itself; the kernel
+  reads the key through a stride-0 view instead. Values are unchanged.
 - Add `Nx.solve_triangular ?upper ?transpose ?unit_diag a b`, a first-class
   triangular solver named after its scipy analog. It skips the factorization
   cost of `solve` for a pre-triangularized `a`; `b` is a vector or a stack of
