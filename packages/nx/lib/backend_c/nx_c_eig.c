@@ -1259,7 +1259,7 @@ static nx_c_status nx_c_eig_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
     x.off_cvec = x.off_ort + a_rvec;
     stride = x.off_cvec + a_cvec;
   }
-  char *scratch = aligned_alloc(64, (size_t)stride * nth);
+  char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
   nx_c_status werr[EIG_MAX_WORKERS];

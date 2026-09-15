@@ -2855,7 +2855,7 @@ static nx_c_status nx_c_svd_run(const nx_c_ndarray *in, const nx_c_ndarray *u,
           off_sdl = off_sdi + a_sdi, off_sdg = off_sdl + a_sdl;
   int64_t stride = off_sdg + a_sdg;
 #undef LA_ALN
-  char *scratch = aligned_alloc(64, (size_t)stride * nth);
+  char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
   nx_c_status werr[LA_MAX_WORKERS];

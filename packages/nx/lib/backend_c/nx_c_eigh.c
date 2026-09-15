@@ -1700,7 +1700,7 @@ static nx_c_status nx_c_eigh_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
           off_qp = off_qw + a_qw;
   int64_t stride = off_qp + a_qp;
 #undef LA_ALN
-  char *scratch = aligned_alloc(64, (size_t)stride * nth);
+  char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
   nx_c_status werr[LA_MAX_WORKERS];

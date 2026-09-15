@@ -104,11 +104,7 @@
    Packed panels are allocated ONCE per matmul call (per thread when threaded),
    never per microkernel call, and reused across every block and batch element.
    64-byte alignment keeps the streaming panel loads off cache-line splits. */
-static void *mm_alloc(size_t bytes) {
-  if (bytes == 0) bytes = 64;
-  bytes = (bytes + 63u) & ~(size_t)63u; /* aligned_alloc needs a multiple */
-  return aligned_alloc(64, bytes);
-}
+static void *mm_alloc(size_t bytes) { return nx_c_aligned_alloc(bytes); }
 
 static int64_t mm_ceil_div(int64_t a, int64_t b) { return (a + b - 1) / b; }
 
@@ -1140,9 +1136,9 @@ nx_c_status nx_c_gemm2d_ct(nx_c_dtype dt, int64_t m, int64_t n, int64_t k,
                              (int64_t)MR * NR) *
                     (size_t)d->csize);
   if (!Ap || !Bp || (k > MM_KC_FULLK_MAX && !Cacc)) {
-    free(Ap);
-    free(Bp);
-    free(Cacc);
+    nx_c_aligned_free(Ap);
+    nx_c_aligned_free(Bp);
+    nx_c_aligned_free(Cacc);
     return NX_C_ERR_ALLOC;
   }
   for (int64_t jc = 0; jc < n; jc += MM_NC) {
@@ -1151,9 +1147,9 @@ nx_c_status nx_c_gemm2d_ct(nx_c_dtype dt, int64_t m, int64_t n, int64_t k,
     nx_c_gemm_panel(d, A, a_rs, a_cs, B, b_rs, b_cs, C, c_rs, c_cs, m, k, jc, nc,
                    Ap, Bp, Cacc);
   }
-  free(Ap);
-  free(Bp);
-  free(Cacc);
+  nx_c_aligned_free(Ap);
+  nx_c_aligned_free(Bp);
+  nx_c_aligned_free(Cacc);
   return NX_C_OK;
 }
 

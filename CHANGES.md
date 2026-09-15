@@ -679,6 +679,9 @@ thread.
 
 ### Nx
 
+- The C backend compiles with mingw-w64 on Windows. It no longer relies on the
+  C11 `CMPLX` constructors or `aligned_alloc`, which mingw's headers lack, and
+  registers no fork handlers there.
 - **Breaking:** the samplers take their distribution parameters as tensors,
   elementwise, and the draw has the parameters' shape and dtype:
   `Nx.Rng.bernoulli k p`, `poisson k rate`, `gamma k concentration`,

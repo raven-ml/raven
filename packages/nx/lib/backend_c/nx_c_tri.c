@@ -354,7 +354,7 @@ static nx_c_status nx_c_cholesky_run(const nx_c_ndarray *in, const nx_c_ndarray 
   int64_t stride = work_slot + bscr_slot + pscr_slot + gslot;
   char *scratch = NULL;
   if (stride > 0) {
-    scratch = aligned_alloc(64, (size_t)stride * nth);
+    scratch = nx_c_aligned_alloc((size_t)stride * nth);
     if (!scratch) return NX_C_ERR_ALLOC;
   }
 
@@ -503,8 +503,8 @@ static nx_c_status nx_c_trsm_run(const nx_c_ndarray *a, const nx_c_ndarray *b,
   int64_t pw_slot = ((n * nrhs * cd->csize) + 63) & ~(int64_t)63;
   int64_t gm_slot = nx_c_gemm2d_ct_scratch(cd->gemm_dt, n, nrhs, LA_TRSM_NB);
   gm_slot = (gm_slot + 63) & ~(int64_t)63;
-  char *scratch = aligned_alloc(
-      64, (size_t)(aw_slot + xw_slot + gw_slot + pw_slot + gm_slot) * nth);
+  char *scratch = nx_c_aligned_alloc(
+      (size_t)(aw_slot + xw_slot + gw_slot + pw_slot + gm_slot) * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
   char *aw = scratch;
   char *xw = scratch + (size_t)aw_slot * nth;

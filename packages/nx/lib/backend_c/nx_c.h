@@ -28,6 +28,10 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 
 #include <caml/bigarray.h>
 #include <caml/mlvalues.h>
@@ -38,6 +42,38 @@
    should a translation unit ever pull in both backends' headers. */
 typedef float _Complex nx_c_complex32;
 typedef double _Complex nx_c_complex64;
+
+/* mingw-w64's <complex.h> lacks C11's CMPLX constructors. The builtin is exact
+   where `re + I * im` is not: an infinite or NaN imaginary part stays put. */
+#ifndef CMPLX
+#define CMPLX(re, im) __builtin_complex((double)(re), (double)(im))
+#endif
+#ifndef CMPLXF
+#define CMPLXF(re, im) __builtin_complex((float)(re), (float)(im))
+#endif
+
+/* 64-byte (cache-line) aligned heap blocks for packing panels and per-worker
+   scratch. Windows has no aligned allocation that free() accepts, so both ends
+   go through this pair; nx_c_parallel_for's free_on_exit is always one of
+   these. Zero rounds up to one line; the size is rounded to a multiple of the
+   alignment as C11 aligned_alloc requires. Either function accepts NULL. */
+static inline void *nx_c_aligned_alloc(size_t bytes) {
+  if (bytes == 0) bytes = 64;
+  bytes = (bytes + 63u) & ~(size_t)63u;
+#if defined(_WIN32)
+  return _aligned_malloc(bytes, 64);
+#else
+  return aligned_alloc(64, bytes);
+#endif
+}
+
+static inline void nx_c_aligned_free(void *p) {
+#if defined(_WIN32)
+  _aligned_free(p);
+#else
+  free(p);
+#endif
+}
 
 /* Highest tensor rank the backend accepts (test_nx_basics.ml exercises a
    rank-32 tensor). Enforced once, at extraction, into the caller-stack arrays

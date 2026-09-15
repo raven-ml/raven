@@ -1156,7 +1156,7 @@ static nx_c_status run_lines(line_ctx *c, int64_t n, int64_t slot_cx,
   if (nth < 1) nth = 1;
 
   int64_t slot_bytes = ((slot_cx * (int64_t)sizeof(cx2)) + 63) & ~(int64_t)63;
-  char *scratch = aligned_alloc(64, (size_t)slot_bytes * nth);
+  char *scratch = nx_c_aligned_alloc((size_t)slot_bytes * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
   c->src_esz = nx_c_elem_size(c->src_dt);

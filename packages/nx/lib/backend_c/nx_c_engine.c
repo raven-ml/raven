@@ -312,6 +312,10 @@ fail_pool:
   return NULL;
 }
 
+#if defined(_WIN32)
+/* No fork on Windows: persistent workers need no protection. */
+static void nx_c_pool_register_atfork(void) { g_pool_atfork_ok = 1; }
+#else
 static void nx_c_pool_atfork_prepare(void) {
   pthread_mutex_lock(&g_pool_init_mtx);
   nx_c_pool *pool = atomic_load_explicit(&g_pool, memory_order_acquire);
@@ -342,6 +346,7 @@ static void nx_c_pool_register_atfork(void) {
       pthread_atfork(nx_c_pool_atfork_prepare, nx_c_pool_atfork_parent,
                      nx_c_pool_atfork_child) == 0;
 }
+#endif
 
 static nx_c_pool *nx_c_pool_get(void) {
   pthread_once(&g_pool_atfork_once, nx_c_pool_register_atfork);
@@ -453,14 +458,14 @@ static void nx_c_pool_dispatch(int nthreads, int64_t total, int64_t bytes,
    past the caller's cleanup, so freeing the driver's scratch here — the last
    instruction before that raise can occur — closes the leak on every path.
    caml_enter_blocking_section only releases the lock (no action processing, no
-   raise), so the scratch is safe from allocation through the join. free(NULL) is
-   a no-op, so NULL (the generated drivers) costs nothing. */
+   raise), so the scratch is safe from allocation through the join. Releasing
+   NULL is a no-op, so NULL (the generated drivers) costs nothing. */
 void nx_c_parallel_for(int nthreads, int64_t total, int64_t bytes,
                       nx_c_range_body body, void *ctx, void *free_on_exit) {
   int release = (nthreads > 1) || (bytes >= NX_C_LOCK_RELEASE_BYTES);
   if (release) caml_enter_blocking_section();
   nx_c_pool_dispatch(nthreads, total, bytes, body, ctx);
-  free(free_on_exit);
+  nx_c_aligned_free(free_on_exit);
   if (release) caml_leave_blocking_section();
 }
 
@@ -689,7 +694,7 @@ int nx_c_selftest_worker_indices(int nth, int64_t total, int gate, int *out_max,
   p.mark = calloc((size_t)total, 1);
   p.gate = gate;
   atomic_store_explicit(&p.arrivals, 0, memory_order_relaxed);
-  p.scratch = malloc((size_t)(nth > 0 ? nth : 1) * sizeof(int));
+  p.scratch = nx_c_aligned_alloc((size_t)(nth > 0 ? nth : 1) * sizeof(int));
   /* Report the pool's REAL worker count, so callers gate fan-out assertions on
      a pool that actually has >= 2 threads — if allocation, atfork registration,
      or every spawn failed, dispatch legally degrades to serial and a
@@ -1052,7 +1057,7 @@ static nx_c_status nx_c_fold_stream_run(const nx_c_stream_table *stbl, nx_c_dtyp
   }
 
   e.slot_bytes = e.lane_len * (int64_t)sizeof(nx_c_acc);
-  void *scratch = malloc((size_t)nth * (size_t)e.slot_bytes);
+  void *scratch = nx_c_aligned_alloc((size_t)nth * (size_t)e.slot_bytes);
   if (scratch == NULL) return NX_C_ERR_ALLOC;
   e.scratch = scratch;
   /* scratch is freed by nx_c_parallel_for after the join, leak-safe across the

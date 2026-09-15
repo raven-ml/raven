@@ -92,8 +92,8 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status status);
    cutoff), runs the split, re-acquires, and returns with the lock held. `bytes`
    is the op's total traffic, the same figure fed to nx_c_threads_for.
 
-   `free_on_exit` (nullable) is a heap block the primitive free()s AFTER the
-   parallel join but BEFORE it re-acquires the runtime lock. The re-acquire is
+   `free_on_exit` (nullable) is an nx_c_aligned_alloc block the primitive
+   releases AFTER the parallel join but BEFORE it re-acquires the runtime lock. The re-acquire is
    the one point that can raise an async exception (a signal handler or memprof
    callback runs there) and longjmp past the driver's own cleanup; freeing the
    driver's scratch here, before that point, makes the leak impossible on every
@@ -103,8 +103,8 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status status);
      1. validate operands.
      2. nthreads = nx_c_threads_for(cls, ...)   — policy stays an explicit step,
         and it must come first: scratch is sized by nthreads.
-     3. Allocate nthreads * per_slot_bytes of scratch. A failed allocation is the
-        only place the driver reports a failure STATUS (NX_C_ERR_ALLOC; the funnel
+     3. Allocate nthreads * per_slot_bytes of scratch with nx_c_aligned_alloc. A
+        failed allocation is the only place the driver reports a failure STATUS (NX_C_ERR_ALLOC; the funnel
         raises it).
      4. nx_c_parallel_for(nthreads, total, bytes, body, &ctx, scratch) — hand the
         scratch to the primitive as free_on_exit. Do NOT free it yourself: the

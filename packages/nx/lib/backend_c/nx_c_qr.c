@@ -377,7 +377,7 @@ static nx_c_status nx_c_qr_run(const nx_c_ndarray *in, const nx_c_ndarray *q,
   int64_t off_P = off_W + a_W, off_g = off_P + a_P;
   int64_t stride = off_g + a_g;
 #undef LA_ALN
-  char *scratch = aligned_alloc(64, (size_t)stride * nth);
+  char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
   la_qr_ctx x;

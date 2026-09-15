@@ -62,6 +62,10 @@
 
 (rule
  (target deflate_core_sanitize.exe)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
  (deps
   deflate_core_test.c
   ../nx_io_codec.h
@@ -89,11 +93,19 @@
 
 (rule
  (alias codec-sanitize)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
  (action
   (run %{dep:deflate_core_sanitize.exe})))
 
 (rule
  (target image_core_sanitize.exe)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
  (deps
   image_core_test.c
   ../nx_io_codec.h
@@ -125,5 +137,9 @@
 
 (rule
  (alias codec-sanitize)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
  (action
   (run %{dep:image_core_sanitize.exe})))
