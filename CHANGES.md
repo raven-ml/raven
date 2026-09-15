@@ -647,8 +647,8 @@ thread.
 ### Nx
 
 - Speed up the C backend's real FFTs: even-length `rfft` and `irfft` pack into
-  a half-size complex transform, and a single-axis `irfft` reads its input
-  directly. Even-length `rfft` now returns exactly real DC and Nyquist bins.
+  a half-size complex transform, and `irfft` no longer stages a serial copy of
+  its input. Even-length `rfft` now returns exactly real DC and Nyquist bins.
 - Pad Bluestein lengths (a prime factor above 13) to the nearest 7-smooth size
   instead of the next power of two, so `fft` at 4099 runs on 8232 points, not
   16384. Results there change in the last bits (error within ~1.1x of before).

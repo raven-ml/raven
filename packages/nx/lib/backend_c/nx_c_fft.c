@@ -1381,11 +1381,9 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
   int64_t half = in_half < needed_half ? in_half : needed_half;
 
   /* Half-spectrum source for the last-axis pass. With a single transform axis
-     the pool body reads `in` directly: gather_cx already does the same
-     strided->contiguous+upcast conversion per line, in parallel, that the
-     serial temp fill below did up front for every irfft. Only the multi-axis
-     transform still needs the temp, to hold the intermediate inverse
-     transforms between axis passes. */
+     the pool body reads `in` directly: gather_cx does the strided->contiguous
+     upcast per line, in parallel. Only the multi-axis transform needs a temp,
+     to hold the intermediate inverse transforms between axis passes. */
   const nx_c_ndarray *src = in;
   nx_c_dtype src_dt = in_dt;
   int64_t cesz = (int64_t)sizeof(cx2);
@@ -1418,32 +1416,10 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
         st *= in->shape[d];
       }
     }
-    /* Fill tmp (contiguous) from in (strided), converting to double complex.
-       Serial under the runtime lock; acceptable because the multi-axis
-       transforms below dominate it. */
-    {
-      int64_t idx[NX_C_MAX_NDIM];
-      for (int d = 0; d < in->ndim; d++) idx[d] = 0;
-      for (int64_t f = 0; f < nelem; f++) {
-        int64_t ioff = in->offset;
-        for (int d = 0; d < in->ndim; d++) ioff += idx[d] * in->strides[d];
-        const char *ip = (const char *)in->data + ioff * nx_c_elem_size(in_dt);
-        if (in_dt == NX_C_DTYPE_c64) {
-          const double *w = (const double *)ip;
-          tdata[f].r = w[0];
-          tdata[f].i = w[1];
-        } else {
-          const float *w = (const float *)ip;
-          tdata[f].r = (double)w[0];
-          tdata[f].i = (double)w[1];
-        }
-        for (int d = in->ndim - 1; d >= 0; d--) {
-          if (++idx[d] < in->shape[d]) break;
-          idx[d] = 0;
-        }
-      }
-    }
-    /* ifft the non-last transformed axes in tmp (complex, unnormalized) */
+    /* ifft the non-last transformed axes (complex, unnormalized). The first
+       pass reads the strided `in` and writes tmp: its per-line gather is the
+       strided->contiguous upcast, done in parallel, so no serial fill of tmp
+       precedes it. Later passes transform tmp in place. */
     for (int ai = 0; ai < naxes - 1; ai++) {
       int axis = axes[ai];
       if (axis < 0 || axis >= in->ndim) {
@@ -1451,8 +1427,10 @@ static nx_c_status nx_c_irfft_run(const nx_c_ndarray *in, const nx_c_ndarray *ou
         return NX_C_ERR_AXIS;
       }
       int64_t m = tmp.shape[axis];
-      nx_c_status s2 = run_axis(NX_C_DTYPE_c64, NX_C_DTYPE_c64, &tmp, &tmp, axis,
-                               m, m, 1, 0, 0);
+      nx_c_status s2 = ai == 0 ? run_axis(in_dt, NX_C_DTYPE_c64, in, &tmp, axis,
+                                          m, m, 1, 0, 0)
+                               : run_axis(NX_C_DTYPE_c64, NX_C_DTYPE_c64, &tmp,
+                                          &tmp, axis, m, m, 1, 0, 0);
       if (s2 != NX_C_OK) {
         free(tdata);
         return s2;
