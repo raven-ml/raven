@@ -600,6 +600,70 @@ let test_lbfgs_stops () =
         ~max_linesearch_steps:0 rosenbrock
         (Vega.lbfgs_init (module Vec) rosenbrock start))
 
+let test_lbfgs_rejects_negative_curvature () =
+  (* A concave objective: along the descent direction the gradient difference
+     opposes the step, so every pair has [y . s < 0]. Such a pair must get no
+     weight, and the next direction must fall back to the scaled gradient. *)
+  let concave v = (Nx.neg (Nx.sum (Nx.square v)), Nx.mul_s v (-2.0)) in
+  let st = Vega.lbfgs_init (module Vec) ~history:2 concave (vec [| 1.0 |]) in
+  let st = Vega.lbfgs_step (module Vec) ~lr:(lr64 0.1) concave st in
+  check_vec ~msg:"first step is descent" [| 1.2 |] st.params;
+  is_true ~msg:"the pair has negative curvature"
+    (Nx.item []
+       (Vega.global_dot
+          (module Vec)
+          Nx.float64 (Nx.get [ 0 ] st.y) (Nx.get [ 0 ] st.s))
+    < 0.0);
+  equal ~msg:"and no weight" float_exact 0.0 (Nx.item [ 0 ] st.rho);
+  (* With no weighted pair the direction is [-g] with unit scaling: plain
+     descent again. *)
+  let st' = Vega.lbfgs_step (module Vec) ~lr:(lr64 0.1) concave st in
+  check_vec ~msg:"second step is plain descent" [| 1.44 |] st'.params;
+  is_true ~msg:"the value keeps decreasing"
+    (Nx.item [] st'.value < Nx.item [] st.value)
+
+let test_lbfgs_memory_evicts () =
+  (* Two slots, three steps: the newest pair sits on top, the second newest
+     below it, and the first pair is gone. *)
+  let start = Lazy.force bowl_start in
+  let st0 = Vega.lbfgs_init (module Pair) ~history:2 bowl start in
+  let advance st = Vega.lbfgs_step (module Pair) ~lr:(Vega.lr 0.1) bowl st in
+  let st1 = advance st0 in
+  let st2 = advance st1 in
+  let st3 = advance st2 in
+  let top (st : (Pair.t, _) Vega.lbfgs_state) =
+    Nx.to_array (Nx.get [ 0 ] st.s.a)
+  in
+  equal ~msg:"memory has two slots" (array int) [| 2; 2 |] (Nx.shape st3.s.a);
+  equal ~msg:"top is the latest step"
+    (array (float 1e-6))
+    (Nx.to_array (Nx.sub st3.params.a st2.params.a))
+    (top st3);
+  equal ~msg:"below it the previous step"
+    (array (float 1e-6))
+    (top st2)
+    (Nx.to_array (Nx.get [ 1 ] st3.s.a));
+  is_true ~msg:"the first pair is gone"
+    (top st1 <> top st3 && top st1 <> Nx.to_array (Nx.get [ 1 ] st3.s.a));
+  is_true ~msg:"both slots carry weight"
+    (Array.for_all (fun r -> r > 0.0) (Nx.to_array st3.rho))
+
+let test_lbfgs_stops_on_ftol () =
+  (* [x^4 + x] has its minimum at an irrational point, so the gradient never
+     reads exactly zero and [gtol = 0] cannot stop the run; a loose [ftol] stops
+     it as soon as a step gains less than a hundredth of the value. *)
+  let quartic v =
+    ( Nx.add (Nx.sum (Nx.pow_s v 4.0)) (Nx.sum v),
+      Nx.add_s (Nx.mul_s (Nx.pow_s v 3.0) 4.0) 1.0 )
+  in
+  let st, status =
+    Vega.minimize (module Vec) ~gtol:0.0 ~ftol:1e-2 quartic (vec [| 1.0 |])
+  in
+  is_true ~msg:"converged" (status = Vega.Converged);
+  is_true ~msg:"on the value, not the gradient" (Nx.item [ 0 ] st.grads <> 0.0);
+  is_true ~msg:"after a few steps" (iterations st > 0);
+  is_true ~msg:"having made progress" (Nx.item [] st.value < 0.0)
+
 let test_lbfgs_carries_a_non_parameter_leaf () =
   let params =
     Stepper.
@@ -775,6 +839,10 @@ let tests =
         test "minimize converges on a quadratic" test_lbfgs_bowl_converges;
         test "minimize converges on Rosenbrock" test_lbfgs_rosenbrock_converges;
         test "minimize reports why it stopped" test_lbfgs_stops;
+        test "a pair without positive curvature gets no weight"
+          test_lbfgs_rejects_negative_curvature;
+        test "the memory evicts its oldest pair" test_lbfgs_memory_evicts;
+        test "minimize stops on the value tolerance" test_lbfgs_stops_on_ftol;
         test "the step carries a non-parameter leaf"
           test_lbfgs_carries_a_non_parameter_leaf;
         test "the state functor is a Ptree.S that steps identically"

@@ -304,6 +304,23 @@ let test_lbfgs_jit_matches_eager () =
   is_true ~msg:"every slot holds a curvature pair"
     (Array.for_all (fun r -> r > 0.0) (Nx.to_array st.rho))
 
+(* Without a rate the step line-searches, reading objective values on the host
+   to pick its trials: jit must refuse it loudly at trace time rather than
+   compile a trace that replays the first search's decisions. *)
+let test_lbfgs_line_search_does_not_trace () =
+  let searching { Lbfgs_in.st; x; y } =
+    Vega.lbfgs_step
+      (module Model)
+      (Rune.value_and_grad (module Model) (loss_fn x y))
+      st
+  in
+  let jitted =
+    Rune.jit2 ~device:dev (module Lbfgs_in) (module Lopt) searching
+  in
+  raises_match
+    (function Rune.Jit_error _ -> true | _ -> false)
+    (fun () -> jitted (lbfgs_init ()))
+
 let tests =
   [
     group "jitted optimizer state"
@@ -314,6 +331,8 @@ let tests =
         test "pmap with replicated state matches jit" test_pmap_matches_jit;
         slow "jit lbfgs at a fixed rate matches the eager trajectory"
           test_lbfgs_jit_matches_eager;
+        test "jit refuses a line-searching lbfgs step"
+          test_lbfgs_line_search_does_not_trace;
       ];
   ]
 
