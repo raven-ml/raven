@@ -204,9 +204,6 @@ let test_dot_scalar_result () =
   check_shape "dot scalar shape" [||] result;
   equal ~msg:"dot scalar value" (float 1e-6) 32.0 (Nx.item [] result)
 
-(* ───── Solve Inverse Tests ───── *)
-
-
 (* ───── Triangular Solve Tests ───── *)
 
 let tri_l =
@@ -228,12 +225,12 @@ let test_triangular_upper () =
 let test_triangular_transpose () =
   (* transpose: Aᵀ·x = b for a lower A means x = (Aᵀ)⁻¹·b *)
   let x = Nx.solve_triangular ~transpose:true tri_l tri_b in
-  check_nx ~epsilon:1e-5 "triangular transpose"
-    tri_b (Nx.matmul (Nx.transpose tri_l) x)
+  check_nx ~epsilon:1e-5 "triangular transpose" tri_b
+    (Nx.matmul (Nx.transpose tri_l) x)
 
 let test_triangular_unit_diag () =
-  (* With the diagonal treated as ones, the stored 9. entries are not read:
-     x = [4; 10 - 3·4] = [4; -2]. *)
+  (* With the diagonal treated as ones, the stored 9. entries are not read: x =
+     [4; 10 - 3·4] = [4; -2]. *)
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 9.; 0.; 3.; 9. |] in
   let b = Nx.create Nx.float32 [| 2 |] [| 4.; 10. |] in
   let x = Nx.solve_triangular ~unit_diag:true a b in
@@ -278,11 +275,13 @@ let test_triangular_bad_rhs () =
       (Array.concat [ Array.init 9 float_of_int; Array.init 9 float_of_int ])
   in
   check_invalid_arg "triangular rhs batch mismatch"
-    "solve_triangular: matrix right-hand side batch dimension 0 does not match a"
-    (fun () ->
+    "solve_triangular: matrix right-hand side batch dimension 0 does not match \
+     a" (fun () ->
       ignore
         (Nx.solve_triangular a2
            (Nx.create Nx.float32 [| 1; 3; 2 |] (Array.init 6 float_of_int))))
+
+(* ───── Solve Inverse Tests ───── *)
 
 let test_solve_identity () =
   let identity = Nx.eye Nx.float32 3 in

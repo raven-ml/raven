@@ -100,7 +100,7 @@ val unsqueeze : Tensor.t -> int -> Tensor.t
 (** [unsqueeze t dim] inserts a new size-[1] axis at position [dim]. *)
 
 val transpose : ?dim0:int -> ?dim1:int -> Tensor.t -> Tensor.t
-(** [transpose t] swaps axes [dim0] and [dim1] (default the last two). *)
+(** [transpose t] swaps axes [dim0] and [dim1] (default the first two). *)
 
 val flatten : ?start_dim:int -> ?end_dim:int -> Tensor.t -> Tensor.t
 (** [flatten t] collapses the axes from [start_dim] to [end_dim] inclusive
