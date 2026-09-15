@@ -167,6 +167,11 @@ thread.
 
 ### Tolk (new)
 
+- Fix the symbolic division rules, which never fired: `x/x`, `(x*y)/y`,
+  `0/0`, `(x*0)/0` and `(x/y)/z` were matched on `Fdiv`, an operation that
+  only exists after the late decompositions, while a division in the graph
+  is `x * recip y`. Chained divisions now fold to one division, so a kernel
+  computing `(a/b)/c` renders `a/(b*c)`.
 - CPU kernels run on Windows. Their entry now carries the Microsoft calling
   convention there, as the reference does: the object is compiled for a
   generic ELF target whose x86-64 convention is System V, so the host read

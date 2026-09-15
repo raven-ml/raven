@@ -281,9 +281,10 @@ let build_llama_rmsnorm b =
     U.alu_binary ~op:Ops.Add ~lhs:mean
       ~rhs:(U.const (C.float D.float32 0.00001))
   in
+  (* The kernel boundary sits between the root and its reciprocal: the
+     buffer holds [sqrt(mean + eps)] and each consumer divides by it. *)
   let sqrt = U.alu_unary ~op:Ops.Sqrt ~src:eps in
-  let rsqrt = U.alu_unary ~op:Ops.Reciprocal ~src:sqrt in
-  let result = U.reshape ~src:rsqrt ~shape:(mk_shape b [ 2 ]) in
+  let result = U.reshape ~src:sqrt ~shape:(mk_shape b [ 2 ]) in
   wrap_sink b [ result ]
 
 let build_llama_ffn_gate b =
@@ -297,6 +298,7 @@ let build_llama_ffn_gate b =
   let matrix3 = U.reshape ~src:matrix ~shape:(mk_shape b [ 1; 8; 8 ]) in
   let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
   let norm3 = U.broadcast_to ~src:norm3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+  let norm3 = U.alu_unary ~op:Ops.Reciprocal ~src:norm3 in
   let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
   let matrix3 = U.broadcast_to ~src:matrix3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:norm3 in
@@ -313,6 +315,7 @@ let build_llama_vector_scale b =
   let scale2 = U.reshape ~src:scale ~shape:(mk_shape b [ 2; 1 ]) in
   let weight2 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 8 ]) in
   let scale2 = U.broadcast_to ~src:scale2 ~shape:(mk_shape b [ 2; 8 ]) in
+  let scale2 = U.alu_unary ~op:Ops.Reciprocal ~src:scale2 in
   let weight2 = U.broadcast_to ~src:weight2 ~shape:(mk_shape b [ 2; 8 ]) in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:scale2 in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:value ~rhs:weight2 in
@@ -342,9 +345,11 @@ let linear b ~x ~weight ~out_dim ~in_dim =
   let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
   U.reshape ~src:red ~shape:(mk_shape b [ 2; out_dim ])
 
-let rms_norm_from_inv b x inv weight =
-  let inv = U.reshape ~src:inv ~shape:(mk_shape b [ 2; 1 ]) in
-  let inv = U.broadcast_to ~src:inv ~shape:(mk_shape b [ 2; 8 ]) in
+(* [root] is the stored [sqrt(mean + eps)]; the normalisation divides by it. *)
+let rms_norm_from_root b x root weight =
+  let root = U.reshape ~src:root ~shape:(mk_shape b [ 2; 1 ]) in
+  let root = U.broadcast_to ~src:root ~shape:(mk_shape b [ 2; 8 ]) in
+  let inv = U.alu_unary ~op:Ops.Reciprocal ~src:root in
   let weight = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 8 ]) in
   let weight = U.broadcast_to ~src:weight ~shape:(mk_shape b [ 2; 8 ]) in
   U.alu_binary ~op:Ops.Mul
@@ -362,10 +367,10 @@ let silu b x =
 
 let build_llama_norm_linear ~out_dim b =
   let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let inv = mk_param b ~slot:1 [ 2 ] in
+  let root = mk_param b ~slot:1 [ 2 ] in
   let norm = mk_param b ~slot:2 [ 8 ] in
   let weight = mk_param b ~slot:3 [ out_dim; 8 ] in
-  rms_norm_from_inv b x inv norm
+  rms_norm_from_root b x root norm
   |> fun x -> linear b ~x ~weight ~out_dim ~in_dim:8
   |> fun u -> wrap_sink b [ u ]
 
@@ -438,19 +443,20 @@ let softmax_exp2 b ~score ~maxv =
   U.alu_binary ~op:Ops.Mul ~lhs:diff ~rhs:(f32 1.4426950408889634)
   |> fun u -> U.alu_unary ~op:Ops.Exp2 ~src:u
 
-let build_llama_attention_inv_sum b =
+(* The softmax denominator is stored as the sum; the context kernel divides
+   by it. *)
+let build_llama_attention_sum b =
   let score = mk_param b ~slot:0 [ 4; 2 ] in
   let maxv = mk_param b ~slot:1 [ 4 ] in
   softmax_exp2 b ~score ~maxv
   |> fun exp -> U.reduce_axis ~src:exp ~op:Ops.Add ~axes:[ 1 ]
-  |> fun sum -> U.alu_unary ~op:Ops.Reciprocal ~src:sum
   |> fun u -> wrap_sink b [ u ]
 
 let build_llama_attention_context b =
   let out = mk_ptr_param b ~slot:0 16 in
   let score = mk_ptr_param b ~slot:1 8 in
   let maxv = mk_ptr_param b ~slot:2 4 in
-  let inv = mk_ptr_param b ~slot:3 4 in
+  let sum = mk_ptr_param b ~slot:3 4 in
   let v = mk_ptr_param b ~slot:4 8 in
   let r1 = U.range ~size:(wi 4) ~axis:1 ~kind:Axis_type.Weak () in
   let r2 = U.range ~size:(wi 2) ~axis:2 ~kind:Axis_type.Reduce () in
@@ -458,7 +464,9 @@ let build_llama_attention_context b =
   let open U.O in
   let score_v = U.index ~ptr:score ~idxs:[ (r1 * wi 2) + r2 ] () in
   let max_v = U.index ~ptr:maxv ~idxs:[ r1 ] () in
-  let inv_v = U.index ~ptr:inv ~idxs:[ r1 ] () in
+  let inv_v =
+    U.alu_unary ~op:Ops.Reciprocal ~src:(U.index ~ptr:sum ~idxs:[ r1 ] ())
+  in
   let scaled = (score_v - max_v) * f32 1.4426950408889634 in
   let exp = U.alu_unary ~op:Ops.Exp2 ~src:scaled in
   let value =
@@ -471,7 +479,7 @@ let build_llama_attention_context b =
   in
   let dst = U.index ~ptr:out ~idxs:[ (r1 * wi 4) + r3 ] () in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r1; r2; r3 ]
-  |> scheduled_kernel [ out; score; maxv; inv; v ]
+  |> scheduled_kernel [ out; score; maxv; sum; v ]
 
 let build_llama_attention_output b =
   let out = mk_ptr_param b ~slot:0 16 in
@@ -503,17 +511,18 @@ let build_llama_attention_output b =
 
 let build_llama_ffn_hidden b =
   let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let inv = mk_param b ~slot:1 [ 2 ] in
+  let root = mk_param b ~slot:1 [ 2 ] in
   let norm = mk_param b ~slot:2 [ 8 ] in
   let w1 = mk_param b ~slot:3 [ 16; 8 ] in
   let w3 = mk_param b ~slot:4 [ 16; 8 ] in
   let norm_linear weight =
     let x = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; 8 ]) in
-    let inv = U.reshape ~src:inv ~shape:(mk_shape b [ 2; 1; 1 ]) in
+    let root = U.reshape ~src:root ~shape:(mk_shape b [ 2; 1; 1 ]) in
     let norm = U.reshape ~src:norm ~shape:(mk_shape b [ 1; 1; 8 ]) in
     let weight = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 16; 8 ]) in
     let x = U.broadcast_to ~src:x ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let inv = U.broadcast_to ~src:inv ~shape:(mk_shape b [ 2; 16; 8 ]) in
+    let root = U.broadcast_to ~src:root ~shape:(mk_shape b [ 2; 16; 8 ]) in
+    let inv = U.alu_unary ~op:Ops.Reciprocal ~src:root in
     let norm = U.broadcast_to ~src:norm ~shape:(mk_shape b [ 2; 16; 8 ]) in
     let weight = U.broadcast_to ~src:weight ~shape:(mk_shape b [ 2; 16; 8 ]) in
     let mul = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:inv in
@@ -551,7 +560,7 @@ let llama_forward_from_embedding_source renderer =
       build_llama_attention_scores
         ~kernel_name:(llama_attention_scores_name renderer) );
     ("attention_max", build_llama_attention_max);
-    ("attention_inv_sum", build_llama_attention_inv_sum);
+    ("attention_sum", build_llama_attention_sum);
     ("attention_context", build_llama_attention_context);
     ("attention_output", build_llama_attention_output);
     ("ffn_hidden", build_llama_ffn_hidden);

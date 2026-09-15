@@ -327,10 +327,11 @@ let make_llama_rmsnorm backend =
     U.alu_binary ~op:Ops.Add ~lhs:mean
       ~rhs:(U.const (Const.float Dtype.float32 0.00001))
   in
+  (* The kernel stores the root; every consumer takes its reciprocal, so the
+     buffer holds [sqrt(mean + eps)], not the inverse. *)
   let sqrt = U.alu_unary ~op:Ops.Sqrt ~src:eps in
-  let rsqrt = U.alu_unary ~op:Ops.Reciprocal ~src:sqrt in
   let st =
-    U.store ~dst:(U.index ~ptr:p0 ~idxs:[ ri ] ()) ~value:rsqrt ()
+    U.store ~dst:(U.index ~ptr:p0 ~idxs:[ ri ] ()) ~value:sqrt ()
   in
   let e = U.end_ ~value:st ~ranges:[ ri ] in
   let name, opts_to_apply =
@@ -455,7 +456,10 @@ let make_llama_ffn_gate backend =
   let lane = (r3 * int_ 2) + r4 + (r2 * int_ 4) in
   let out_idx = lane + (r1 * int_ 8) in
   let input = U.load ~src:(U.index ~ptr:p1 ~idxs:[ (r1 * int_ 8) + rr ] ()) () in
-  let norm = U.load ~src:(U.index ~ptr:p2 ~idxs:[ r1 ] ()) () in
+  let norm =
+    U.alu_unary ~op:Ops.Reciprocal
+      ~src:(U.load ~src:(U.index ~ptr:p2 ~idxs:[ r1 ] ()) ())
+  in
   let weight = U.load ~src:(U.index ~ptr:p3 ~idxs:[ rr ] ()) () in
   let matrix =
     U.load ~src:(U.index ~ptr:p4 ~idxs:[ (lane * int_ 8) + rr ] ()) ()
@@ -518,7 +522,10 @@ let make_llama_vector_scale backend =
   let open U.O in
   let flat = (ri * int_ 8) + rj in
   let lhs = U.load ~src:(U.index ~ptr:p1 ~idxs:[ flat ] ()) () in
-  let scale = U.load ~src:(U.index ~ptr:p2 ~idxs:[ ri ] ()) () in
+  let scale =
+    U.alu_unary ~op:Ops.Reciprocal
+      ~src:(U.load ~src:(U.index ~ptr:p2 ~idxs:[ ri ] ()) ())
+  in
   let weight = U.load ~src:(U.index ~ptr:p3 ~idxs:[ rj ] ()) () in
   let value =
     U.alu_binary ~op:Ops.Mul

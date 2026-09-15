@@ -1152,27 +1152,32 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (rewrite1 (fun x -> O.(x * zero)) fold_mul_zero);
     (rewrite1 (fun x -> O.(zero * x)) fold_mul_zero);
 
-    (* x / x -> 1 (float) *)
-    (rewrite1 (fun x -> alu [ x; x ] Ops.Fdiv)
-       (fun x -> Some (Uop.const_like x 1)));
+    (* Division rules. A true division is [x * recip y] at this stage;
+       [Fdiv] only appears in the late decompositions. *)
 
-    (* (x * x2) / x2 -> x (fdiv, can be wrong if x2 is 0). *)
-    (rewrite2
-       (fun x x2 -> alu [ alu [ x; x2 ] Ops.Mul; x2 ] Ops.Fdiv)
-       (fun x _ -> Some x));
-
-    (* 0 / 0 -> nan (fdiv). *)
+    (* 0 / 0 -> nan. *)
     (let z = cvar ~name:"z" () in
-     alu [ z; zero ] Ops.Fdiv => fun bs ->
+     alu [ z; op ~src:[ zero ] Ops.Reciprocal ] Ops.Mul => fun bs ->
        let z = bs $ "z" in
        match const_int_v z with
        | Some 0 -> const_nan_like z
        | _ -> None);
 
-    (* (x * 0) / 0 -> nan (fdiv). *)
+    (* (x * 0) / 0 -> nan. *)
     (rewrite1
-       (fun x -> alu [ alu [ x; zero ] Ops.Mul; zero ] Ops.Fdiv)
+       (fun x ->
+         alu [ alu [ x; zero ] Ops.Mul; op ~src:[ zero ] Ops.Reciprocal ] Ops.Mul)
        (fun x -> const_nan_like x));
+
+    (* x / x -> 1 (can be wrong if x is 0). *)
+    (rewrite1 (fun x -> alu [ x; op ~src:[ x ] Ops.Reciprocal ] Ops.Mul)
+       (fun x -> Some (Uop.const_like x 1)));
+
+    (* (x * x2) / x2 -> x (can be wrong if x2 is 0). *)
+    (rewrite2
+       (fun x x2 ->
+         alu [ alu [ x; x2 ] Ops.Mul; op ~src:[ x2 ] Ops.Reciprocal ] Ops.Mul)
+       (fun x _ -> Some x));
 
     (* a.where(b.where(c, d), d) -> (a & b).where(c, d). *)
     (rewrite4
@@ -1457,10 +1462,14 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* (x / x2) / x3 -> x / (x2 * x3)  when x2 and x3 differ. *)
     (let x = var "x" and x2 = var "x2" and x3 = var "x3" in
-     O.((x / x2) / x3) => fun bs ->
+     let recip p = op ~src:[ p ] Ops.Reciprocal in
+     alu [ alu [ x; recip x2 ] Ops.Mul; recip x3 ] Ops.Mul => fun bs ->
        let x2 = bs $ "x2" and x3 = bs $ "x3" in
        if Uop.equal x2 x3 then None
-       else Some Uop.O.((bs $ "x") / (x2 * x3)));
+       else
+         Some
+           (Uop.alu_binary ~op:Ops.Mul ~lhs:(bs $ "x")
+              ~rhs:(Uop.alu_unary ~op:Ops.Reciprocal ~src:Uop.O.(x2 * x3))));
     (let x = var "x"
      and c1 = cvar ~name:"c1" () and c2 = cvar ~name:"c2" () in
      alu [ alu [ x; c1 ] Ops.Floordiv; c2 ] Ops.Floordiv => fun bs ->

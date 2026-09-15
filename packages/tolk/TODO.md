@@ -354,32 +354,17 @@ Two invariants they created, which a later change could silently break:
 
 ## Residual divergences after the pin move
 
-The corpus was regenerated against `baa614806`. 565 of 631 files now agree with
-tolk; the 66 that do not fall into exactly four causes, none of them pin drift.
-Ordered by how much they matter.
+The corpus was regenerated against `baa614806`. The files that do not agree
+with tolk fall into the causes below, none of them pin drift. Ordered by how
+much they matter.
 
-- **The reciprocal of an `rsqrt` sits on the wrong side of a kernel boundary**
-  (28 files: every `llama_*` case in `golden/codegen` and `golden/rangeify`,
-  all four backends; plus 3 more since the AMD backend joined the corpus —
-  `amd_llama_rmsnorm`, `amd_llama_ffn_gate`, `amd_llama_vector_scale` in
-  `golden/codegen`, same cause, while `amd_llama_embedding` and
-  `amd_llama_output_projection` agree). The reference stores `sqrt(s)` and
-  divides at the consumer; tolk stores `1.0f/sqrt(s)` and multiplies:
-
-  | | reference | tolk |
-  |---|---|---|
-  | `llama_rmsnorm` | `__builtin_sqrtf(s)` | `(1.0f/__builtin_sqrtf(s))` |
-  | `llama_vector_scale` | `(val1[i]/val0)*val2[i]` | `val1[i]*val0*val2[i]` |
-  | `llama_ffn_gate` | `(...)/val2` | `(...)*val2` |
-
-  **Not a miscompile**: the two are consistent pairs and agree to float
-  rounding. But the intermediate buffer genuinely holds a different value —
-  the root on one side, its reciprocal on the other — so anything that reads
-  that buffer outside these kernels would disagree. `RMSNorm` itself is
-  identical at both pins and `rsqrt`'s definition did not change, so the owner
-  is downstream folding (`mixin/op.py` and `codegen/simplify.py` are the two
-  files that moved between the pins). Unported upstream change; find the rule
-  and port it.
+(Resolved: the `llama_*` goldens that stored `1/sqrt(s)` where the reference
+stores `sqrt(s)`. The scheduler was already cutting the kernel between the
+root and its reciprocal, as the reference does once a binary op broadcasts
+implicitly; the golden builders still encoded the pre-pin boundary, and the
+symbolic division rules — `x/x`, `(x*y)/y`, `(x/y)/z` — matched `Fdiv`
+where the reference's `/` is `x * recip y`, so the `(a/b)/c -> a/(b*c)` fold
+never fired.)
 
 - **`multi_*` emits about half the kernels the reference does** (9 files:
   `multi_allreduce_naive`, `multi_allreduce_ring`, `multi_replicate_elementwise`
@@ -645,8 +630,8 @@ pair a local fix rather than a scoped change.
 *Evidence.* `test/unit/{codegen,engine,frontend,nn,runtime}/runtest` green;
 `test_schedule_rangeify` 67/67; `engine/test_multi` 10/10. `golden/cstyle` 0/62;
 `golden/codegen` 12/82 and `golden/rangeify` 16/88 — the *identical file set* as
-the baseline measured with the change reverted, all of them the recorded
-rsqrt-reciprocal residual under "Residual divergences after the pin move", not
+the baseline measured with the change reverted, all of them the rsqrt-reciprocal
+residual since resolved under "Residual divergences after the pin move", not
 drift from this change.
 
 *What is not pinned.* No test and no changelog entry: `shape_of` is not in
