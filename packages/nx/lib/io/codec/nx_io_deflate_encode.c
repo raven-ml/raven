@@ -51,7 +51,7 @@ typedef struct {
 } token;
 
 typedef struct {
-  int fd;
+  nx_io_fd fd;
   int failed;
   uint8_t staging[NX_IO_SINK_BUFFER];
   size_t staged;
@@ -102,20 +102,11 @@ static uint8_t input_get(const input *in, size_t pos) {
 static nx_io_status sink_flush(sink *s) {
   if (s->failed)
     return NX_IO_SYSTEM;
-  if (s->fd < 0)
+  if (s->fd == NX_IO_NO_FD)
     return NX_IO_OK;
-  size_t off = 0;
-  while (off < s->staged) {
-    ssize_t written = write(s->fd, s->staging + off, s->staged - off);
-    if (written < 0 && errno == EINTR)
-      continue;
-    if (written <= 0) {
-      if (written == 0)
-        errno = EIO;
-      s->failed = 1;
-      return NX_IO_SYSTEM;
-    }
-    off += (size_t)written;
+  if (nx_io_write_all(s->fd, s->staging, s->staged) != 0) {
+    s->failed = 1;
+    return NX_IO_SYSTEM;
   }
   if (s->length > SIZE_MAX - s->staged)
     return NX_IO_OVERFLOW;
@@ -125,7 +116,7 @@ static nx_io_status sink_flush(sink *s) {
 }
 
 static nx_io_status sink_byte(sink *s, uint8_t byte) {
-  if (s->fd >= 0) {
+  if (s->fd != NX_IO_NO_FD) {
     s->staging[s->staged++] = byte;
     if (s->staged == sizeof(s->staging))
       return sink_flush(s);
@@ -723,7 +714,7 @@ static uint32_t input_crc32(const input *in) {
 }
 
 nx_io_result nx_io_deflate_raw(const uint8_t *prefix, size_t prefix_len,
-                               const uint8_t *src, size_t src_len, int fd,
+                               const uint8_t *src, size_t src_len, nx_io_fd fd,
                                uint8_t **buffer, uint32_t *crc) {
   nx_io_result result = {NX_IO_OK, 0, 0};
   if (prefix_len > SIZE_MAX - src_len) {
@@ -855,7 +846,7 @@ CAMLprim value caml_nx_io_deflate_raw(value vprefix, value vsrc, value voff,
   uint32_t crc;
   caml_release_runtime_system();
   nx_io_result result =
-      nx_io_deflate_raw(prefix, prefix_len, src, src_len, -1, &buffer, &crc);
+      nx_io_deflate_raw(prefix, prefix_len, src, src_len, NX_IO_NO_FD, &buffer, &crc);
   caml_acquire_runtime_system();
   free(prefix);
   if (result.status != NX_IO_OK) {
@@ -890,7 +881,7 @@ CAMLprim value caml_nx_io_deflate_raw_to_fd(value vfd, value vprefix,
     caml_raise_out_of_memory();
   if (prefix_len != 0)
     memcpy(prefix, String_val(vprefix), prefix_len);
-  int fd = Int_val(vfd);
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   uint32_t crc;
   caml_release_runtime_system();
   nx_io_result result =

@@ -730,7 +730,9 @@ thread.
   the format PDF and PNG streams use.
 - The C backend compiles with mingw-w64 on Windows. It no longer relies on the
   C11 `CMPLX` constructors or `aligned_alloc`, which mingw's headers lack, and
-  registers no fork handlers there.
+  registers no fork handlers there. The I/O layer writes through Windows file
+  handles, so `save_npy`, `save_npz`, `save_txt`, the image encoders, and gzip
+  output work there.
 - **Breaking:** the samplers take their distribution parameters as tensors,
   elementwise, and the draw has the parameters' shape and dtype:
   `Nx.Rng.bernoulli k p`, `poisson k rate`, `gamma k concentration`,

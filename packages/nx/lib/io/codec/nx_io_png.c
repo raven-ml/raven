@@ -586,17 +586,8 @@ static uint32_t crc_update(uint32_t crc, const uint8_t *data, size_t len) {
   return crc;
 }
 
-static png_status write_all(int fd, const uint8_t *data, size_t len) {
-  size_t off = 0;
-  while (off < len) {
-    ssize_t written = write(fd, data + off, len - off);
-    if (written < 0 && errno == EINTR)
-      continue;
-    if (written <= 0)
-      return PNG_SYSTEM;
-    off += (size_t)written;
-  }
-  return PNG_OK;
+static png_status write_all(nx_io_fd fd, const uint8_t *data, size_t len) {
+  return nx_io_write_all(fd, data, len) == 0 ? PNG_OK : PNG_SYSTEM;
 }
 
 static unsigned filter_byte(unsigned filter, unsigned raw, unsigned left,
@@ -702,7 +693,7 @@ static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
   uint8_t *raw = NULL;
   uint32_t crc;
   nx_io_result compressed =
-      nx_io_deflate_raw(NULL, 0, filtered, filtered_len, -1, &raw, &crc);
+      nx_io_deflate_raw(NULL, 0, filtered, filtered_len, NX_IO_NO_FD, &raw, &crc);
   if (compressed.status != NX_IO_OK) {
     free(filtered);
     return compressed.status == NX_IO_NOMEM ? PNG_NOMEM : PNG_SIZE;
@@ -762,7 +753,7 @@ static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
   return PNG_OK;
 }
 
-static png_status encode_png(int fd, const uint8_t *src, size_t src_len,
+static png_status encode_png(nx_io_fd fd, const uint8_t *src, size_t src_len,
                              size_t width, size_t height, unsigned channels) {
   uint8_t *file = NULL;
   size_t file_len = 0;
@@ -833,7 +824,7 @@ CAMLprim value caml_nx_io_png_encode(value vfd, value vsrc, value vwidth,
   intnat channels_i = Long_val(vchannels);
   if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
     caml_invalid_argument("Nx_io PNG: invalid image dimensions");
-  int fd = Int_val(vfd);
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   caml_release_runtime_system();
   png_status status = encode_png(fd, src, src_len, (size_t)width_i,
                                  (size_t)height_i, (unsigned)channels_i);

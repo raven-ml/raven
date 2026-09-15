@@ -1030,7 +1030,7 @@ typedef struct {
 } encoder_huffman;
 
 typedef struct {
-  int fd;
+  nx_io_fd fd;
   uint8_t staging[16384];
   size_t staged;
   uint64_t bits;
@@ -1093,19 +1093,8 @@ static const uint8_t ac_chrominance_values[162] = {
     0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa};
 
 static jpeg_status writer_flush(jpeg_writer *writer) {
-  size_t off = 0;
-  while (off < writer->staged) {
-    ssize_t written =
-        write(writer->fd, writer->staging + off, writer->staged - off);
-    if (written < 0 && errno == EINTR)
-      continue;
-    if (written <= 0) {
-      if (written == 0)
-        errno = EIO;
-      return JPEG_SYSTEM;
-    }
-    off += (size_t)written;
-  }
+  if (nx_io_write_all(writer->fd, writer->staging, writer->staged) != 0)
+    return JPEG_SYSTEM;
   writer->staged = 0;
   return JPEG_OK;
 }
@@ -1330,7 +1319,7 @@ static size_t append_huffman(uint8_t *dst, unsigned class_, unsigned index,
   return count + 17;
 }
 
-static jpeg_status encode_jpeg(int fd, const uint8_t *src, size_t src_len,
+static jpeg_status encode_jpeg(nx_io_fd fd, const uint8_t *src, size_t src_len,
                                size_t width, size_t height, unsigned channels) {
   if (width == 0 || height == 0 || width > 65535 || height > 65535 ||
       (channels != 1 && channels != 3) || width > SIZE_MAX / height ||
@@ -1540,7 +1529,7 @@ CAMLprim value caml_nx_io_jpeg_encode(value vfd, value vsrc, value vwidth,
   intnat channels_i = Long_val(vchannels);
   if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
     caml_invalid_argument("Nx_io JPEG: invalid image dimensions");
-  int fd = Int_val(vfd);
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   caml_release_runtime_system();
   jpeg_status status = encode_jpeg(fd, src, src_len, (size_t)width_i,
                                    (size_t)height_i, (unsigned)channels_i);

@@ -57,7 +57,7 @@ typedef struct {
   size_t dst_len;
   int stop_at_limit;
   int unbounded;
-  int fd;
+  nx_io_fd fd;
   nx_io_consume_fn consume;
   void *consume_context;
   uint8_t staging[NX_IO_WRITE_BUFFER];
@@ -91,22 +91,12 @@ static uint32_t crc_update(uint32_t table[8][256], uint32_t crc,
 }
 
 static nx_io_status output_flush(output *out) {
-  if (out->fd < 0)
+  if (out->fd == NX_IO_NO_FD)
     return NX_IO_OK;
   if (out->calculate_crc && out->batch_crc)
     out->crc = crc_update(out->crc_table, out->crc, out->staging, out->staged);
-  size_t off = 0;
-  while (off < out->staged) {
-    ssize_t written = write(out->fd, out->staging + off, out->staged - off);
-    if (written < 0 && errno == EINTR)
-      continue;
-    if (written <= 0) {
-      if (written == 0)
-        errno = EIO;
-      return NX_IO_SYSTEM;
-    }
-    off += (size_t)written;
-  }
+  if (nx_io_write_all(out->fd, out->staging, out->staged) != 0)
+    return NX_IO_SYSTEM;
   out->staged = 0;
   return NX_IO_OK;
 }
@@ -264,7 +254,7 @@ static nx_io_status output_byte(output *out, uint8_t byte) {
       return NX_IO_OUTPUT_SIZE;
     }
   }
-  if (out->consume == NULL && out->fd < 0 && out->dst != NULL &&
+  if (out->consume == NULL && out->fd == NX_IO_NO_FD && out->dst != NULL &&
       out->produced >= out->skip) {
     size_t index = out->produced - out->skip;
     if (out->stop_at_limit || index < NX_IO_WINDOW)
@@ -281,7 +271,7 @@ static nx_io_status output_byte(output *out, uint8_t byte) {
       nx_io_status status = out->consume(out->consume_context, byte);
       if (status != NX_IO_OK)
         return status;
-    } else if (out->fd >= 0) {
+    } else if (out->fd != NX_IO_NO_FD) {
       out->staging[out->staged++] = byte;
       if (out->staged == sizeof(out->staging)) {
         nx_io_status status = output_flush(out);
@@ -323,7 +313,7 @@ static nx_io_status output_span(output *out, const uint8_t *src, size_t len) {
     len--;
   }
   while (len != 0) {
-    if (out->fd >= 0) {
+    if (out->fd != NX_IO_NO_FD) {
       size_t chunk = sizeof(out->staging) - out->staged;
       if (chunk > len)
         chunk = len;
@@ -364,7 +354,7 @@ static nx_io_status output_match(output *out, unsigned distance,
                                  unsigned length) {
   if (distance == 0 || distance > NX_IO_WINDOW || distance > out->produced)
     return NX_IO_INVALID_DISTANCE;
-  if (!out->stop_at_limit && out->consume == NULL && out->fd < 0 &&
+  if (!out->stop_at_limit && out->consume == NULL && out->fd == NX_IO_NO_FD &&
       out->dst != NULL && out->produced >= out->skip &&
       distance <= out->produced - out->skip) {
     if (!out->unbounded) {
@@ -580,7 +570,7 @@ static nx_io_status stored_block(bit_reader *br, output *out) {
 
 static nx_io_result inflate_raw_impl(const uint8_t *src, size_t src_len,
                                      size_t skip, uint8_t *dst, size_t dst_len,
-                                     int stop_at_limit, int fd,
+                                     int stop_at_limit, nx_io_fd fd,
                                      nx_io_consume_fn consume,
                                      void *consume_context, int unbounded,
                                      int allow_trailing, uint32_t *crc) {
@@ -603,7 +593,7 @@ static nx_io_result inflate_raw_impl(const uint8_t *src, size_t src_len,
   out.crc = 0xffffffffu;
   out.calculate_crc = crc != NULL;
   out.batch_crc =
-      out.calculate_crc && consume == NULL && (dst != NULL || fd >= 0);
+      out.calculate_crc && consume == NULL && (dst != NULL || fd != NX_IO_NO_FD);
   if (out.calculate_crc)
     crc_table_init(out.crc_table);
 
@@ -675,7 +665,7 @@ static nx_io_result inflate_raw_impl(const uint8_t *src, size_t src_len,
 
 nx_io_result nx_io_inflate_raw(const uint8_t *src, size_t src_len, size_t skip,
                                uint8_t *dst, size_t dst_len, int stop_at_limit,
-                               int fd, uint32_t *crc) {
+                               nx_io_fd fd, uint32_t *crc) {
   return inflate_raw_impl(src, src_len, skip, dst, dst_len, stop_at_limit, fd,
                           NULL, NULL, 0, 0, crc);
 }
@@ -688,13 +678,13 @@ nx_io_result nx_io_inflate_raw_sink(const uint8_t *src, size_t src_len,
     nx_io_result result = {NX_IO_OUTPUT_SIZE, 0, 0};
     return result;
   }
-  return inflate_raw_impl(src, src_len, 0, NULL, output_size, 0, -1, consume,
+  return inflate_raw_impl(src, src_len, 0, NULL, output_size, 0, NX_IO_NO_FD, consume,
                           context, 0, 0, crc);
 }
 
 #ifndef NX_IO_CODEC_NO_OCAML
 static nx_io_result inflate_raw_member(const uint8_t *src, size_t src_len,
-                                       int fd, uint32_t *crc) {
+                                       nx_io_fd fd, uint32_t *crc) {
   return inflate_raw_impl(src, src_len, 0, NULL, 0, 0, fd, NULL, NULL, 1, 1,
                           crc);
 }
@@ -761,7 +751,7 @@ CAMLprim value caml_nx_io_inflate_raw_prefix(value vsrc, value voff, value vlen,
 
   caml_release_runtime_system();
   nx_io_result result =
-      nx_io_inflate_raw(src, src_len, 0, buffer, max, 1, -1, NULL);
+      nx_io_inflate_raw(src, src_len, 0, buffer, max, 1, NX_IO_NO_FD, NULL);
   caml_acquire_runtime_system();
   if (result.status != NX_IO_OK && result.status != NX_IO_STOPPED) {
     const char *message = nx_io_status_message(result.status);
@@ -801,7 +791,7 @@ CAMLprim value caml_nx_io_inflate_raw_into(value vsrc, value vsrc_off,
   uint32_t crc;
   caml_release_runtime_system();
   nx_io_result result =
-      nx_io_inflate_raw(src, src_len, skip, dst, dst_len, 0, -1, &crc);
+      nx_io_inflate_raw(src, src_len, skip, dst, dst_len, 0, NX_IO_NO_FD, &crc);
   caml_acquire_runtime_system();
   if (result.status != NX_IO_OK)
     caml_failwith(nx_io_status_message(result.status));
@@ -825,7 +815,7 @@ CAMLprim value caml_nx_io_inflate_raw_to_fd(value vfd, value vsrc,
   if (output_i < 0)
     caml_invalid_argument("Nx_io.inflate: negative output size");
   size_t output_size = (size_t)output_i;
-  int fd = Int_val(vfd);
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   uint32_t crc;
   caml_release_runtime_system();
   nx_io_result result =
@@ -847,7 +837,7 @@ CAMLprim value caml_nx_io_inflate_raw_member_to_fd(value vfd, value vsrc,
   const uint8_t *src;
   size_t src_len;
   checked_input(vsrc, vsrc_off, vsrc_len, &src, &src_len);
-  int fd = Int_val(vfd);
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   uint32_t crc;
   caml_release_runtime_system();
   nx_io_result result = inflate_raw_member(src, src_len, fd, &crc);

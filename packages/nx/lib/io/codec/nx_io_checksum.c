@@ -228,37 +228,17 @@ CAMLprim value caml_nx_io_write_all(value vfd, value vbuf, value voff,
   const uint8_t *src;
   size_t len;
   checked_span(vbuf, voff, vlen, &src, &len);
-  int fd = Int_val(vfd);
-  int error = 0;
-  size_t off = 0;
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   caml_release_runtime_system();
-  while (off < len) {
-    ssize_t written = write(fd, src + off, len - off);
-    if (written < 0 && errno == EINTR)
-      continue;
-    if (written <= 0) {
-      error = written < 0 ? errno : EIO;
-      break;
-    }
-    off += (size_t)written;
-  }
+  int error = nx_io_write_all(fd, src, len);
   caml_acquire_runtime_system();
   if (error != 0)
     unix_error(error, "write", Nothing);
   CAMLreturn(Val_unit);
 }
 
-static int write_exact(int fd, const uint8_t *src, size_t len) {
-  size_t off = 0;
-  while (off < len) {
-    ssize_t written = write(fd, src + off, len - off);
-    if (written < 0 && errno == EINTR)
-      continue;
-    if (written <= 0)
-      return written < 0 ? errno : EIO;
-    off += (size_t)written;
-  }
-  return 0;
+static int write_exact(nx_io_fd fd, const uint8_t *src, size_t len) {
+  return nx_io_write_all(fd, src, len);
 }
 
 CAMLprim value caml_nx_io_store_to_fd(value vfd, value vprefix, value vbuf,
@@ -277,7 +257,7 @@ CAMLprim value caml_nx_io_store_to_fd(value vfd, value vprefix, value vbuf,
   if (prefix_len != 0)
     memcpy(prefix, String_val(vprefix), prefix_len);
   size_t total = prefix_len + len;
-  int fd = Int_val(vfd);
+  nx_io_fd fd = Nx_io_fd_val(vfd);
   int error;
   uint32_t table[8][256];
   crc32_tables(table);
