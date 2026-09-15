@@ -13,6 +13,20 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- Add L-BFGS to the structural tier for deterministic objectives: full-batch
+  fits, MAP estimates, calibration, the second stage of training a PINN.
+  `Vega.minimize (module P) f params` runs it from `params` until a gradient
+  or value tolerance is met and returns the final state with a `status`;
+  `lbfgs_init` and `lbfgs_step` are the step it loops, `Vega.Lbfgs_state (P)
+  (V)` the state's `Nx.Ptree.S`. The objective returns its value and gradient
+  at once, the type `Rune.value_and_grad (module P) loss` has, so an analytic
+  gradient serves as well. Without `~lr` a step chooses its length by a
+  strong-Wolfe line search (eager); with `~lr` it preconditions a fixed rate
+  and traces under `Rune.jit`. Every scalar the method keeps is at the
+  objective's dtype, so a `float64` objective drives a `float64` search.
+- Add `Vega.global_dot (module P) dt a b`, the inner product of two parameter
+  trees over all their float leaves as a scalar tensor accumulated at `dt`,
+  in tensor arithmetic so it traces under `Rune.jit`.
 - Optimizer state now compiles. The structural states are parameter trees —
   `Vega.Sgd_state (P)` and `Vega.Adam_state (P)` are the `Nx.Ptree.S` for the
   state over a parameter tree `P` — so the state is one field of a

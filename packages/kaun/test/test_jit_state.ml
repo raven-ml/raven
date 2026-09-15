@@ -234,6 +234,76 @@ let test_pmap_matches_jit () =
   in
   check_trajectory ~msg:"pmap adam" 1e-5 jit pmapped
 
+(* L-BFGS at a fixed rate. Its state carries the point, so the step's input is
+   the state plus the batch and its output the state itself; the objective
+   evaluates inside the step, as [train_step]'s does. *)
+
+module Lopt =
+  Vega.Lbfgs_state
+    (Model)
+    (struct
+      type t = Nx.float32_elt
+    end)
+
+module Lbfgs_in = struct
+  type t = { st : Lopt.t; x : Nx.float32_t; y : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
+    { st = Lopt.map f s.st; x = f s.x; y = f s.y }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    { st = Lopt.map2 f a.st b.st; x = f a.x b.x; y = f a.y b.y }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
+    Lopt.iter f s.st;
+    f s.x;
+    f s.y
+end
+
+let lbfgs_step { Lbfgs_in.st; x; y } =
+  Vega.lbfgs_step
+    (module Model)
+    ~lr:(Vega.lr 0.1)
+    (Rune.value_and_grad (module Model) (loss_fn x y))
+    st
+
+let lbfgs_init () =
+  let x, y = data_init () in
+  let st =
+    Vega.lbfgs_init
+      (module Model)
+      ~history:4
+      (Rune.value_and_grad (module Model) (loss_fn x y))
+      (model_init ())
+  in
+  { Lbfgs_in.st; x; y }
+
+let run_lbfgs ~step0 n s0 =
+  let s = ref s0 in
+  let traj =
+    Array.init n (fun _ ->
+        let st = step0 !s in
+        s := { !s with Lbfgs_in.st };
+        (Nx.item [] st.value, st.params))
+  in
+  (traj, !s.Lbfgs_in.st)
+
+let test_lbfgs_jit_matches_eager () =
+  let eager, _ = run_lbfgs ~step0:lbfgs_step steps (lbfgs_init ()) in
+  let compiled, st =
+    run_lbfgs
+      ~step0:(Rune.jit2 ~device:dev (module Lbfgs_in) (module Lopt) lbfgs_step)
+      steps (lbfgs_init ())
+  in
+  check_trajectory ~msg:"jit lbfgs" 1e-5 eager compiled;
+  is_true ~msg:"the loss decreases" (fst eager.(steps - 1) < fst eager.(0));
+  (* The memory fills through the compiled program: after [steps] calls the
+     counter reads n and every slot holds a pair of positive curvature. *)
+  equal ~msg:"counter reads n after n calls" int steps
+    (Int32.to_int (Nx.item [] st.step));
+  is_true ~msg:"every slot holds a curvature pair"
+    (Array.for_all (fun r -> r > 0.0) (Nx.to_array st.rho))
+
 let tests =
   [
     group "jitted optimizer state"
@@ -242,6 +312,8 @@ let tests =
         test "counter and schedule advance across compiled calls"
           test_state_advances_across_compiled_calls;
         test "pmap with replicated state matches jit" test_pmap_matches_jit;
+        slow "jit lbfgs at a fixed rate matches the eager trajectory"
+          test_lbfgs_jit_matches_eager;
       ];
   ]
 

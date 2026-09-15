@@ -789,6 +789,19 @@ let clip_by_value (type p) (module P : Nx.Ptree.S with type t = p) ~max
       Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g)
     grads
 
+(* [Ptree.S] has no [iter2]; the leafwise walk is a [map2] whose result is
+   dropped, so the leaves of [a] are returned untouched. *)
+let global_dot (type p v) (module P : Nx.Ptree.S with type t = p)
+    (dt : (float, v) Nx.dtype) (a : P.t) (b : P.t) : (float, v) Nx.t =
+  let acc = ref (Nx.scalar dt 0.0) in
+  ignore
+    (P.map2
+       (fun x y ->
+         if updates x then acc := Nx.add !acc (Nx.cast dt (Nx.sum (Nx.mul x y)));
+         x)
+       a b);
+  !acc
+
 (* Loss scaling *)
 
 module Loss_scale = struct
@@ -1008,3 +1021,305 @@ let adamw_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr ?(b1 = 0.9)
       params direction
   in
   (params, st)
+
+(* L-BFGS *)
+
+type ('p, 'v) lbfgs_state = {
+  params : 'p;
+  value : (float, 'v) Nx.t;
+  grads : 'p;
+  s : 'p;
+  y : 'p;
+  rho : (float, 'v) Nx.t;
+  step : Nx.int32_t;
+}
+
+module Lbfgs_state
+    (P : Nx.Ptree.S)
+    (V : sig
+      type t
+    end) =
+struct
+  type t = (P.t, V.t) lbfgs_state
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (st : t) : t =
+    {
+      params = P.map f st.params;
+      value = f st.value;
+      grads = P.map f st.grads;
+      s = P.map f st.s;
+      y = P.map f st.y;
+      rho = f st.rho;
+      step = f st.step;
+    }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
+      (b : t) : t =
+    {
+      params = P.map2 f a.params b.params;
+      value = f a.value b.value;
+      grads = P.map2 f a.grads b.grads;
+      s = P.map2 f a.s b.s;
+      y = P.map2 f a.y b.y;
+      rho = f a.rho b.rho;
+      step = f a.step b.step;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (st : t) : unit =
+    P.iter f st.params;
+    f st.value;
+    P.iter f st.grads;
+    P.iter f st.s;
+    P.iter f st.y;
+    f st.rho;
+    f st.step
+end
+
+let lbfgs_init (type p v) (module P : Nx.Ptree.S with type t = p)
+    ?(history = 10) (f : P.t -> (float, v) Nx.t * P.t) (params : P.t) :
+    (P.t, v) lbfgs_state =
+  if history < 1 then
+    invalid_argf "Vega.lbfgs_init: expected history >= 1, got %d" history;
+  let value, grads = f params in
+  (* Distinct tensors for [s] and [y]: a compiled step binds its inputs by leaf
+     identity, and one tensor behind two leaves is read back as one input. *)
+  let memory () =
+    P.map
+      (fun leaf ->
+        Nx.zeros (Nx.dtype leaf) (Array.append [| history |] (Nx.shape leaf)))
+      params
+  in
+  {
+    params;
+    value;
+    grads;
+    s = memory ();
+    y = memory ();
+    rho = Nx.zeros (Nx.dtype value) [| history |];
+    step = Nx.scalar Nx.int32 0l;
+  }
+
+(* A leaf's memory is its pairs stacked along axis 0, newest first: [slot i]
+   views the [i]-th, [push] puts a new one on top and drops the oldest. *)
+let slot i memory = Nx.get [ i ] memory
+
+let push x memory =
+  let n = (Nx.shape memory).(0) in
+  let x = Nx.unsqueeze ~axes:[ 0 ] x in
+  if n = 1 then x
+  else Nx.concatenate ~axis:0 [ x; Nx.slice [ Nx.R (0, n - 1) ] memory ]
+
+(* [move params d a] is [params + a * d] on the float leaves, [a] a scalar
+   tensor cast to each leaf's dtype; [axpy a x y] is [y + a * x] likewise. *)
+let move (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
+    (d : P.t) a : P.t =
+  P.map2
+    (fun x d ->
+      if updates x then Nx.add x (Nx.mul d (Nx.cast (Nx.dtype x) a)) else x)
+    params d
+
+let axpy (type p) (module P : Nx.Ptree.S with type t = p) a (x : P.t) (y : P.t)
+    : P.t =
+  P.map2
+    (fun x y ->
+      if updates x then Nx.add y (Nx.mul x (Nx.cast (Nx.dtype x) a)) else y)
+    x y
+
+(* The two-loop recursion (Nocedal, 1980): [-H g] for the inverse Hessian the
+   stored pairs define, scaled initially by [(s . y) / (y . y)] of the newest
+   pair. Pairs of weight [0] — empty slots, rejected curvature — contribute
+   nothing to either loop, so no fill count is kept. Every scalar is a tensor at
+   the objective's dtype and every index is static, so the direction traces
+   under jit. *)
+let lbfgs_direction (type p v) (module P : Nx.Ptree.S with type t = p)
+    (st : (P.t, v) lbfgs_state) : P.t =
+  let dt = Nx.dtype st.value in
+  let m = (Nx.shape st.rho).(0) in
+  let dot = global_dot (module P) dt in
+  let pair i =
+    ( P.map (fun m -> slot i m) st.s,
+      P.map (fun m -> slot i m) st.y,
+      Nx.get [ i ] st.rho )
+  in
+  let alphas = Array.make m (Nx.scalar dt 0.0) in
+  let q = ref st.grads in
+  for i = 0 to m - 1 do
+    let s, y, rho = pair i in
+    let alpha = Nx.mul rho (dot s !q) in
+    alphas.(i) <- alpha;
+    q := axpy (module P) (Nx.neg alpha) y !q
+  done;
+  let y0 = P.map (fun m -> slot 0 m) st.y and rho0 = Nx.get [ 0 ] st.rho in
+  let gamma =
+    Nx.where (Nx.greater_s rho0 0.0)
+      (Nx.div (Nx.scalar dt 1.0) (Nx.mul rho0 (dot y0 y0)))
+      (Nx.scalar dt 1.0)
+  in
+  let r =
+    ref
+      (P.map
+         (fun q ->
+           if updates q then Nx.mul q (Nx.cast (Nx.dtype q) gamma) else q)
+         !q)
+  in
+  for i = m - 1 downto 0 do
+    let s, y, rho = pair i in
+    let beta = Nx.mul rho (dot y !r) in
+    r := axpy (module P) (Nx.sub alphas.(i) beta) s !r
+  done;
+  P.map (fun r -> if updates r then Nx.neg r else r) !r
+
+(* A point of the line search: [params + alpha * d], the objective and gradient
+   there, and [phi alpha], [phi' alpha] read to the host. *)
+type ('p, 'v) trial = {
+  point : 'p;
+  objective : (float, 'v) Nx.t;
+  gradient : 'p;
+  alpha : float;
+  phi : float;
+  dphi : float;
+}
+
+(* A strong-Wolfe line search along [d] from [st] (Nocedal and Wright, 2006,
+   algorithms 3.5 and 3.6): bracket from a unit step, doubling until the
+   sufficient-decrease condition fails or the slope turns, then zoom into the
+   bracket by safeguarded quadratic interpolation. Returns the accepted trial;
+   when [budget] evaluations are spent, the lowest trial that decreased the
+   value, or [None] if none did. A [nan] objective fails every acceptance test,
+   so a trial that overflowed only shrinks the bracket. *)
+let line_search (type p v) (module P : Nx.Ptree.S with type t = p) ~budget
+    (f : P.t -> (float, v) Nx.t * P.t) (st : (P.t, v) lbfgs_state) (d : P.t) :
+    (P.t, v) trial option =
+  let dt = Nx.dtype st.value in
+  let dot = global_dot (module P) dt in
+  let c1 = 1e-4 and c2 = 0.9 in
+  let origin =
+    {
+      point = st.params;
+      objective = st.value;
+      gradient = st.grads;
+      alpha = 0.0;
+      phi = Nx.item [] st.value;
+      dphi = Nx.item [] (dot st.grads d);
+    }
+  in
+  let armijo t = t.phi <= origin.phi +. (c1 *. t.alpha *. origin.dphi) in
+  let curvature t = Float.abs t.dphi <= -.c2 *. origin.dphi in
+  let probe alpha =
+    let point = move (module P) st.params d (Nx.scalar dt alpha) in
+    let objective, gradient = f point in
+    let phi = Nx.item [] objective and dphi = Nx.item [] (dot gradient d) in
+    { point; objective; gradient; alpha; phi; dphi }
+  in
+  let lower best t =
+    match best with
+    | Some b when not (t.phi < b.phi) -> best
+    | _ -> if t.phi < origin.phi then Some t else best
+  in
+  let rec zoom lo hi best budget =
+    if budget = 0 then best
+    else
+      let alpha =
+        (* The minimizer of the quadratic through [phi lo], [phi' lo] and [phi
+           hi], kept to the middle 80% of the bracket; bisection when the
+           interpolation lands outside it or is undefined. *)
+        let w = hi.alpha -. lo.alpha in
+        let denom = 2.0 *. (hi.phi -. lo.phi -. (lo.dphi *. w)) in
+        let a = lo.alpha -. (lo.dphi *. w *. w /. denom) in
+        let near = lo.alpha +. (0.1 *. w) and far = hi.alpha -. (0.1 *. w) in
+        let inside =
+          if w > 0.0 then near <= a && a <= far else far <= a && a <= near
+        in
+        if inside then a else lo.alpha +. (0.5 *. w)
+      in
+      let t = probe alpha in
+      let best = lower best t in
+      if (not (armijo t)) || t.phi >= lo.phi then zoom lo t best (budget - 1)
+      else if curvature t then Some t
+      else if t.dphi *. (hi.alpha -. lo.alpha) >= 0.0 then
+        zoom t lo best (budget - 1)
+      else zoom t hi best (budget - 1)
+  in
+  let rec bracket prev alpha best budget =
+    if budget = 0 then best
+    else
+      let t = probe alpha in
+      let best = lower best t in
+      if (not (armijo t)) || t.phi >= prev.phi then zoom prev t best (budget - 1)
+      else if curvature t then Some t
+      else if t.dphi >= 0.0 then zoom t prev best (budget - 1)
+      else bracket t (2.0 *. alpha) best (budget - 1)
+  in
+  if origin.dphi >= 0.0 then None else bracket origin 1.0 None budget
+
+let lbfgs_step (type p v) (module P : Nx.Ptree.S with type t = p) ?lr
+    ?(max_linesearch_steps = 20) (f : P.t -> (float, v) Nx.t * P.t)
+    (st : (P.t, v) lbfgs_state) : (P.t, v) lbfgs_state =
+  if max_linesearch_steps < 1 then
+    invalid_argf "Vega.lbfgs_step: expected max_linesearch_steps >= 1, got %d"
+      max_linesearch_steps;
+  let dt = Nx.dtype st.value in
+  let d = lbfgs_direction (module P) st in
+  let advance point objective gradient =
+    let difference = P.map2 (fun a b -> if updates a then Nx.sub a b else a) in
+    let s = difference point st.params and y = difference gradient st.grads in
+    let ys = global_dot (module P) dt y s in
+    let rho =
+      Nx.where (Nx.greater_s ys 0.0) (Nx.rdiv_s 1.0 ys) (Nx.scalar dt 0.0)
+    in
+    {
+      params = point;
+      value = objective;
+      grads = gradient;
+      s = P.map2 push s st.s;
+      y = P.map2 push y st.y;
+      rho = push rho st.rho;
+      step = Nx.add_s st.step 1l;
+    }
+  in
+  match lr with
+  | Some lr ->
+      let point = move (module P) st.params d lr in
+      let objective, gradient = f point in
+      advance point objective gradient
+  | None -> (
+      match line_search (module P) ~budget:max_linesearch_steps f st d with
+      | Some t -> advance t.point t.objective t.gradient
+      | None -> st)
+
+type status = Converged | Max_iter_reached | Line_search_failed
+
+let minimize (type p v) (module P : Nx.Ptree.S with type t = p) ?history
+    ?(max_iter = 1000) ?(gtol = 1e-5) ?(ftol = 1e-9) ?max_linesearch_steps
+    (f : P.t -> (float, v) Nx.t * P.t) (params : P.t) :
+    (P.t, v) lbfgs_state * status =
+  if max_iter < 0 then
+    invalid_argf "Vega.minimize: expected max_iter >= 0, got %d" max_iter;
+  validate_non_negative "Vega.minimize" "gtol" gtol;
+  validate_non_negative "Vega.minimize" "ftol" ftol;
+  let grad_max (st : (P.t, v) lbfgs_state) =
+    let acc = ref 0.0 in
+    P.iter
+      (fun g ->
+        if updates g then
+          let dt = Nx.dtype g in
+          acc :=
+            Float.max !acc (float_of_scalar dt (Nx.item [] (Nx.max (Nx.abs g)))))
+      st.grads;
+    !acc
+  in
+  let rec loop (st : (P.t, v) lbfgs_state) k =
+    if grad_max st <= gtol then (st, Converged)
+    else if k = max_iter then (st, Max_iter_reached)
+    else
+      let st' = lbfgs_step (module P) ?max_linesearch_steps f st in
+      if Nx.item [] st'.step = Nx.item [] st.step then (st, Line_search_failed)
+      else
+        let before = Nx.item [] st.value and after = Nx.item [] st'.value in
+        let scale =
+          Float.max 1.0 (Float.max (Float.abs before) (Float.abs after))
+        in
+        if before -. after <= ftol *. scale then (st', Converged)
+        else loop st' (k + 1)
+  in
+  loop (lbfgs_init (module P) ?history f params) 0
