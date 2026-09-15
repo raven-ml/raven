@@ -136,6 +136,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- The system statistics stubs build on Windows. Disk space and page size use
+  the Win32 calls; the load average, which Windows does not keep, reads as
+  zero.
 
 Local experiment tracking for Raven. Evolves `kaun-board` into a full
 experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.

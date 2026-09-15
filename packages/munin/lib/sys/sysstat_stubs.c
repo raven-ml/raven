@@ -14,10 +14,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/param.h>
-#include <sys/statvfs.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/statvfs.h>
+#endif
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -600,9 +605,14 @@ CAMLprim value caml_sysstat_get_loadavg(value unit) {
   CAMLlocal1(result);
 
   double loadavg[3];
+#if defined(_WIN32)
+  /* Windows keeps no load average. */
+  loadavg[0] = loadavg[1] = loadavg[2] = 0.0;
+#else
   if (getloadavg(loadavg, 3) != 3) {
     loadavg[0] = loadavg[1] = loadavg[2] = 0.0;
   }
+#endif
 
   result = caml_alloc_tuple(3);
   Store_field(result, 0, caml_copy_double(loadavg[0]));
@@ -650,7 +660,13 @@ CAMLprim value caml_sysstat_get_uptime(value unit) {
 /* Get system page size */
 CAMLprim value caml_sysstat_getpagesize(value unit) {
   CAMLparam1(unit);
+#if defined(_WIN32)
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  CAMLreturn(Val_long(info.dwPageSize));
+#else
   CAMLreturn(Val_long(sysconf(_SC_PAGESIZE)));
+#endif
 }
 
 /* Get disk filesystem statistics using statvfs */
@@ -659,6 +675,15 @@ CAMLprim value caml_sysstat_statvfs(value v_path) {
   CAMLlocal1(tup);
 
   const char* path = String_val(v_path);
+#if defined(_WIN32)
+  ULARGE_INTEGER avail_bytes, total_bytes, free_bytes;
+  if (!GetDiskFreeSpaceExA(path, &avail_bytes, &total_bytes, &free_bytes)) {
+    caml_failwith("statvfs failed");
+  }
+  uint64_t total = total_bytes.QuadPart;
+  uint64_t free = free_bytes.QuadPart;
+  uint64_t avail = avail_bytes.QuadPart;
+#else
   struct statvfs st;
   if (statvfs(path, &st) != 0) {
     caml_failwith("statvfs failed");
@@ -669,6 +694,7 @@ CAMLprim value caml_sysstat_statvfs(value v_path) {
   uint64_t total = fr * (uint64_t)st.f_blocks;
   uint64_t free = fr * (uint64_t)st.f_bfree;
   uint64_t avail = fr * (uint64_t)st.f_bavail;
+#endif
 
   tup = caml_alloc_tuple(3);
   Store_field(tup, 0, caml_copy_int64((int64_t)total));
@@ -709,7 +735,12 @@ CAMLprim value caml_sysstat_proc_self_mem(value unit) {
 /* Get clock ticks per second (for Linux jiffies conversion) */
 CAMLprim value caml_sysstat_clk_tck(value unit) {
   CAMLparam1(unit);
+#if defined(_WIN32)
+  /* No jiffies on Windows; the value only scales Linux /proc fields. */
+  CAMLreturn(Val_long(1));
+#else
   CAMLreturn(Val_long(sysconf(_SC_CLK_TCK)));
+#endif
 }
 
 /* Mount enumeration */
