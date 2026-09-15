@@ -48,7 +48,8 @@ module Ptree = Nx.Ptree
 
 (** {1:reverse Reverse-mode differentiation} *)
 
-val grad : (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
+val grad :
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
 (** [grad (module P) f params] is the gradient of [f] at [params], with the same
     structure and leaf types as [params]. Leaves of [params] that do not
     contribute to the result have all-zero gradients.
@@ -66,21 +67,29 @@ val grad : (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> '
     an explicit cotangent. *)
 
 val value_and_grad :
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * 'p
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t * 'p
 (** [value_and_grad (module P) f params] is
     [(f params, grad (module P) f params)], computed in a single forward and
     backward pass. *)
 
 val value_and_grad_aux :
   (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t * 'aux) -> 'p -> ('c, 'd) Nx.t * 'p * 'aux
+  ('p -> ('c, 'd) Nx.t * 'aux) ->
+  'p ->
+  ('c, 'd) Nx.t * 'p * 'aux
 (** [value_and_grad_aux (module P) f params] is like {!value_and_grad} for an
     objective returning auxiliary data alongside its result. The auxiliary value
     is returned as-is and does not contribute to the gradient. *)
 
 val vjp :
   (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t -> ('c, 'd) Nx.t * 'p
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t ->
+  ('c, 'd) Nx.t * 'p
 (** [vjp (module P) f params cotangent] is [(f params, grads)] where [grads] is
     the vector-Jacobian product of [f] at [params] against [cotangent], with the
     same structure and leaf types as [params]. [cotangent] must have
@@ -88,7 +97,11 @@ val vjp :
 
 val vjp2 :
   (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q -> 'q * 'p
+  (module Ptree.S with type t = 'q) ->
+  ('p -> 'q) ->
+  'p ->
+  'q ->
+  'q * 'p
 (** [vjp2 (module P) (module Q) f params cotangents] is like {!vjp} for an
     objective returning a structured output: [cotangents] provides one cotangent
     per output leaf, each with its output leaf's shape and dtype, and the
@@ -99,7 +112,9 @@ val vjp2 :
 
 val vjp_fun :
   (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * (('c, 'd) Nx.t -> 'p)
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> 'p)
 (** [vjp_fun (module P) f params] is [(f params, pullback)]. [pullback ct] is
     the vector-Jacobian product of [f] at [params] against [ct]; it may be
     called any number of times with different cotangents, each call running one
@@ -119,7 +134,10 @@ val vjp_fun' :
 
 val jvp :
   (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> ('c, 'd) Nx.t * ('c, 'd) Nx.t
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  'p ->
+  ('c, 'd) Nx.t * ('c, 'd) Nx.t
 (** [jvp (module P) f params tangents] is [(f params, df)] where [df] is the
     Jacobian-vector product of [f] at [params] against [tangents], computed in a
     single forward pass. [tangents] must be structurally equal to [params]; each
@@ -141,7 +159,11 @@ val jvp_aux :
 
 val jvp2 :
   (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
+  (module Ptree.S with type t = 'q) ->
+  ('p -> 'q) ->
+  'p ->
+  'p ->
+  'q * 'q
 (** [jvp2 (module P) (module Q) f params tangents] is like {!jvp} for an
     objective returning a structured output: the result tangent has the output's
     structure, one tangent per output leaf. *)
@@ -184,7 +206,10 @@ val jvp2 :
 val vmap :
   ?in_axes:int option list ->
   ?out_axis:int ->
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t
 (** [vmap ?in_axes ?out_axis (module P) f params] maps [f] over the tensor
     leaves of [params]. [f] is written for unbatched values: it observes each
     mapped leaf without its mapped axis, and its result gains a batch axis at
@@ -215,7 +240,11 @@ val vmap :
 val vmap2 :
   ?in_axes:int option list ->
   ?out_axis:int ->
-  (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
+  (module Ptree.S with type t = 'p) ->
+  (module Ptree.S with type t = 'q) ->
+  ('p -> 'q) ->
+  'p ->
+  'q
 (** [vmap2 ?in_axes ?out_axis (module P) (module Q) f params] is like
     {!val-vmap} for a mapped function returning a structured output: every
     output leaf gains a batch axis at [out_axis], and output leaves that do not
@@ -293,7 +322,10 @@ val jvp' :
 (** {1:remat Gradient checkpointing} *)
 
 val remat :
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t
 (** [remat (module P) f params] is [f params], recomputed during the backward
     pass instead of having its intermediate results retained by the tape:
     reverse-mode differentiation of a [remat]ed function trades compute for
@@ -321,7 +353,8 @@ val hessian' :
 (** [hessian' f x] is the Hessian of the scalar objective [f] at [x], with shape
     [shape x @ shape x] (forward over reverse). *)
 
-val hvp : (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> 'p
+val hvp :
+  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> 'p
 (** [hvp (module P) f params v] is the Hessian-vector product of the scalar
     objective [f] at [params] against [v], with [params]' structure, computed
     without materializing the Hessian (forward over reverse). *)
@@ -338,7 +371,10 @@ val hvp' :
 val check_grads :
   ?eps:float ->
   ?tol:float ->
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> (unit, string) result
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  (unit, string) result
 (** [check_grads (module P) f params] compares the reverse-mode gradient of the
     scalar objective [f] at [params] against central-difference directional
     derivatives along deterministic directions. [Ok ()] means they agree within
@@ -353,11 +389,15 @@ val check_grads :
 
     Random number generation lives entirely in {!Nx.Rng}: keys, the keyed
     samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the scope
-    ({!Nx.Rng.with_key}). A key is an ordinary [[|2|]] int32
-    tensor, so it traces, batches and shards like any tensor — thread it as an
-    input of a jitted function and derive per-call keys with {!Nx.Rng.split} or
+    ({!Nx.Rng.with_key}). A key is an ordinary [[|2|]] int32 tensor, so it
+    traces, batches and shards like any tensor — thread it as an input of a
+    jitted function and derive per-call keys with {!Nx.Rng.split} or
     {!Nx.Rng.fold_in}. The transforms answer the generator's effects but add no
-    RNG vocabulary of their own.
+    RNG vocabulary of their own. A sampler's distribution parameters are tensors
+    too ({!Nx.Rng.bernoulli}'s probability, {!Nx.Rng.poisson}'s rate), so a
+    parameter that is a jitted function's input or a mapped axis traces or
+    batches the draw with it, where a host float would have been frozen into the
+    program.
 
     Under a transform, what matters is where the key comes from, not which
     front-end draws from it. A traced or mapped key works either way: passed to
@@ -373,19 +413,22 @@ exception Jit_error of string
     data-dependent branch), it assigned to a tensor it closes over (captures are
     compile-time constants), it drew random values from a key that does not
     depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
-    [Nx.Rng.with_key] on a constant key — the draw would be a compile-time constant replayed on
-    every call; pass the key as an input instead), or it used an operation the
-    compiler does not support (FFT, the SVD and eigensolvers, complex, int4
-    and uint4 tensors, assigning into a view). QR, triangular solves,
-    Cholesky, [solve], and [inv] do compile: they unroll at trace time into
-    the fixed number of steps their shapes imply. *)
+    [Nx.Rng.with_key] on a constant key — the draw would be a compile-time
+    constant replayed on every call; pass the key as an input instead), or it
+    used an operation the compiler does not support (FFT, the SVD and
+    eigensolvers, complex, int4 and uint4 tensors, assigning into a view). QR,
+    triangular solves, Cholesky, [solve], and [inv] do compile: they unroll at
+    trace time into the fixed number of steps their shapes imply. *)
 
 val jit :
   ?device:string ->
   ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t
 (** [jit (module P) f] is [f] compiled. The first application traces [f],
     compiles the traced computation into fused kernels, and runs them; later
     applications with the same leaf signature — dtypes and shapes, in traversal
@@ -438,15 +481,15 @@ val jit :
     them on the device and keeping the [beam] best at each step. Compilation
     gets much slower and the compiled code usually faster; the tuned result
     lands in the persistent cache like any other compilation, so the cost is
-    paid once per trace rather than once per process. When omitted (or
-    [< 1]), the [BEAM] environment variable applies.
+    paid once per trace rather than once per process. When omitted (or [< 1]),
+    the [BEAM] environment variable applies.
 
     [beam_parallel] compiles a search round's candidates across that many
     domains, cutting beam-search compile time without changing its result —
     candidates are still timed one at a time. It only matters when beam search
-    runs ([beam] here or the environment) and does not affect the compiled
-    code, so it is not part of any cache key. When omitted, the
-    [BEAM_PARALLEL] environment variable applies (default sequential).
+    runs ([beam] here or the environment) and does not affect the compiled code,
+    so it is not part of any cache key. When omitted, the [BEAM_PARALLEL]
+    environment variable applies (default sequential).
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
@@ -504,8 +547,8 @@ val jit :
     writing the keyless [Nx.rand]: the scope derives every draw from its root,
     so a traced root makes the whole scope traced. What raises {!Jit_error} is a
     root that does not depend on the inputs — a captured key, or
-    [Nx.Rng.with_key] on a constant key — since the draw would be a compile-time constant
-    replayed on every call.
+    [Nx.Rng.with_key] on a constant key — since the draw would be a compile-time
+    constant replayed on every call.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
     [Invalid_argument] for an unknown or unavailable [device]. *)
@@ -515,7 +558,11 @@ val jit2 :
   ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
+  (module Ptree.S with type t = 'p) ->
+  (module Ptree.S with type t = 'q) ->
+  ('p -> 'q) ->
+  'p ->
+  'q
 (** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
     structured output. *)
 
@@ -535,7 +582,10 @@ val pmap :
   ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t
+  (module Ptree.S with type t = 'p) ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  ('c, 'd) Nx.t
 (** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
     [devices] — {!val-jit} whose inputs are placed on a device tuple instead of
     one device. Device names are as in {!val-jit}, with an instance suffix to
@@ -580,7 +630,11 @@ val pmap2 :
   ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) -> (module Ptree.S with type t = 'q) -> ('p -> 'q) -> 'p -> 'q
+  (module Ptree.S with type t = 'p) ->
+  (module Ptree.S with type t = 'q) ->
+  ('p -> 'q) ->
+  'p ->
+  'q
 (** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
     a structured output. *)
 
@@ -609,8 +663,8 @@ val reset_jit_stats : unit -> unit
     Eager combinators with staging-ready signatures: code written with them
     differentiates and vectorizes today, and a staging [jit] traces them as
     structured control flow instead of unrolled traces. Today, {!val-jit}
-    compiles {!scan} as a loop, forward and reverse, and rejects
-    data-dependent {!cond} and {!while_loop} predicates. *)
+    compiles {!scan} as a loop, forward and reverse, and rejects data-dependent
+    {!cond} and {!while_loop} predicates. *)
 
 val scan :
   (module Ptree.S with type t = 'p) ->
@@ -619,14 +673,14 @@ val scan :
   ('a, 'b) Nx.t ->
   'p * ('c, 'd) Nx.t
 (** [scan (module C) ~f ~init xs] folds [f] over slices of [xs] along axis 0:
-    [f carry x] returns the next carry and a per-step output. The result is
-    the final carry and the outputs stacked along a new axis 0. Under
-    {!val-jit} the fold step compiles once and runs as a loop in the compiled
-    program, and differentiating compiles a reversed loop over the step's
-    pullback. Staging needs the carry to keep its shapes across steps; a fold
-    that changes them — or one reached through {!val-vmap} or {!val-pmap} —
-    unrolls into the compiled program instead. Everywhere else the scan folds
-    eagerly, tracing every step.
+    [f carry x] returns the next carry and a per-step output. The result is the
+    final carry and the outputs stacked along a new axis 0. Under {!val-jit} the
+    fold step compiles once and runs as a loop in the compiled program, and
+    differentiating compiles a reversed loop over the step's pullback. Staging
+    needs the carry to keep its shapes across steps; a fold that changes them —
+    or one reached through {!val-vmap} or {!val-pmap} — unrolls into the
+    compiled program instead. Everywhere else the scan folds eagerly, tracing
+    every step.
 
     Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
 
@@ -638,7 +692,10 @@ val cond :
 
 val while_loop :
   (module Ptree.S with type t = 'p) ->
-  cond:('p -> (bool, Nx.bool_elt) Nx.t) -> body:('p -> 'p) -> 'p -> 'p
+  cond:('p -> (bool, Nx.bool_elt) Nx.t) ->
+  body:('p -> 'p) ->
+  'p ->
+  'p
 (** [while_loop (module C) ~cond ~body init] iterates [body] on the carry while
     [cond] holds. Reading the predicate concretizes it, with the same
     {!val-vmap} caveat as {!cond}. Differentiating traces every iteration
