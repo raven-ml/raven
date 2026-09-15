@@ -460,6 +460,19 @@ let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
   caml_scatter out indices updates axis mode_int;
   out
 
+(* The window write is the strided copy the engine already runs for [copy]:
+   a fresh copy of [t], then [v] written through a shrunk view of it. *)
+let update t ~starts v =
+  let out = copy t in
+  let corner =
+    Array.init (Array.length t.shape) (fun i ->
+        Int32.to_int
+          (Nx_buffer.get starts.buffer (starts.offset + (i * starts.strides.(0)))))
+  in
+  let bounds = Array.mapi (fun i c -> (c, c + v.shape.(i))) corner in
+  caml_copy (of_view out (View.shrink (view out) bounds)) v;
+  out
+
 external caml_unfold :
   ('a, 'b) t ->
   ('a, 'b) t ->

@@ -1105,6 +1105,81 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                     (go updates) ~reduce:`Sum ~include_self:true ()
             in
             ret k (dt data_template) r)
+    (* The window write. A constant corner is a padded [v] selected over [t]
+       in one pass; a traced corner reads each axis of [v] through a clamped
+       gather and masks the window, until symbolic shrink lets it become a
+       store into the shrunk buffer. *)
+    | E_update { t_in; starts; v } ->
+        Some
+          (fun k ->
+            let tshape = shape_of t_in and vshape = shape_of v in
+            let rank = Array.length tshape in
+            let tt = go t_in and tv = go v in
+            let zero = scalar_of (dt v) (ND.zero (dt v)) in
+            if rank = 0 then ret k (dt t_in) tv
+            else if not (Tbl.mem st.traced (Obj.repr starts)) then begin
+              let host = Nx_effect.to_host starts in
+              let sv = Nx_effect.view starts in
+              let s k =
+                Int32.to_int
+                  (Nx_buffer.get host (NV.offset sv + (k * (NV.strides sv).(0))))
+              in
+              let pads =
+                List.init rank (fun k ->
+                    Some (s k, tshape.(k) - s k - vshape.(k)))
+              in
+              let ones =
+                F.Creation.full ~buffer:false ~dtype:TD.bool (Array.to_list vshape)
+                  (F.Tensor.Sbool true)
+              in
+              let mask = F.Op.pad ~value:(F.Tensor.Sbool false) ones pads in
+              ret k (dt t_in)
+                (F.Elementwise.where mask (F.Op.pad ~value:zero tv pads) tt)
+            end
+            else begin
+              let st_t = go starts in
+              let win = ref tv in
+              let mask = ref None in
+              for ax = 0 to rank - 1 do
+                let n = tshape.(ax) and len = vshape.(ax) in
+                let start =
+                  F.Movement.reshape (F.Movement.shrink st_t [ (ax, ax + 1) ]) []
+                in
+                let ar = F.Op.arange ~dtype:TD.int32 n in
+                let rel = F.Elementwise.sub ar start in
+                let lo = F.Creation.full ~buffer:false ~dtype:TD.int32 [] (F.Tensor.Sint 0) in
+                let hi =
+                  F.Creation.full ~buffer:false ~dtype:TD.int32 []
+                    (F.Tensor.Sint (len - 1))
+                in
+                let idx = F.Elementwise.clamp ~min:lo ~max:hi rel in
+                let inside =
+                  F.Elementwise.bitwise_and
+                    (F.Elementwise.ge rel lo)
+                    (F.Elementwise.lt rel
+                       (F.Creation.full ~buffer:false ~dtype:TD.int32 []
+                          (F.Tensor.Sint len)))
+                in
+                let along = List.init rank (fun d -> if d = ax then -1 else 1) in
+                let shp =
+                  List.mapi
+                    (fun d s -> if d = ax then n else s)
+                    (F.Tensor.shape !win)
+                in
+                let idx =
+                  F.Movement.expand (F.Movement.reshape idx along) shp
+                in
+                win := F.Op.gather !win ~dim:ax idx;
+                let inside = F.Movement.reshape inside along in
+                mask :=
+                  Some
+                    (match !mask with
+                    | None -> inside
+                    | Some m -> F.Elementwise.bitwise_and m inside)
+              done;
+              let mask = Option.get !mask in
+              ret k (dt t_in) (F.Elementwise.where mask !win tt)
+            end)
     (* Matrix multiplication *)
     | E_matmul { a; b } ->
         Some (fun k -> ret k (dt a) (F.Op.matmul (go a) (go b)))

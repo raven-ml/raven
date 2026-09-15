@@ -553,6 +553,19 @@ module type S = sig
       {b Backend must:} allocate and return the result tensor, initialized from
       [template]'s data. *)
 
+  val update :
+    ('a, 'b) t -> starts:(int32, Dtype.int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [update t ~starts v] is [t] with [v] at the window whose corner is
+      [starts] and whose extent is [shape v]. [starts] is a rank-1 tensor of
+      length [rank t], read at execution time.
+
+      {b Frontend guarantees:} [rank v = rank t]; [shape v] fits within
+      [shape t]; [starts] is already clamped so the window fits; dtypes match.
+
+      {b Backend must:} allocate and return a tensor that never shares storage
+      with [t]. An output that reuses its input's storage under a compiler is
+      a binding decision above this contract. *)
+
   (** {1 Window Operations}
 
       Sliding-window extraction and its inverse. Used to implement convolution

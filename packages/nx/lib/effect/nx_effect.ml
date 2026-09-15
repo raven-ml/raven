@@ -238,6 +238,12 @@ type _ Effect.t +=
       unique_indices : bool;
     }
       -> ('a, 'b) t Effect.t
+  | E_update : {
+      t_in : ('a, 'b) t;
+      starts : (int32, Dtype.int32_elt) t;
+      v : ('a, 'b) t;
+    }
+      -> ('a, 'b) t Effect.t
   | E_to_device : {
       context : context;
       t_in : ('a, 'b) t;
@@ -622,6 +628,11 @@ let gather data indices ~axis =
   try Effect.perform (E_gather { data; indices; axis })
   with Effect.Unhandled _ ->
     T (Nx_backend.gather (unwrap data) (unwrap indices) ~axis)
+
+let update t_in ~starts v =
+  try Effect.perform (E_update { t_in; starts; v })
+  with Effect.Unhandled _ ->
+    T (Nx_backend.update (unwrap t_in) ~starts:(unwrap starts) (unwrap v))
 
 let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
   try

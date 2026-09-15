@@ -112,6 +112,8 @@ let handler ppf =
             obs k "scatter"
               (scatter ~mode ~unique_indices data_template ~indices ~updates
                  ~axis))
+    | E_update { t_in; starts; v } ->
+        Some (fun k -> obs k "update" (update t_in ~starts v))
     | E_matmul { a; b } -> Some (fun k -> obs k "matmul" (matmul a b))
     | _ -> None
   in

@@ -1628,6 +1628,84 @@ let scatter (type a b) ~(mode : [ `Set | `Add ]) ~(unique_indices : bool)
   | _ -> invalid_arg "scatter: unsupported dtype");
   out
 
+(* The window write: a fresh copy of [t], then [v] written element by element
+   through the strides of [out]'s window and [v]'s own. *)
+let update (type a b) (t : (a, b) t) ~(starts : (int32, Dtype.int32_elt) t)
+    (v : (a, b) t) : (a, b) t =
+  let out = copy t in
+  let rank = Stdlib.Array.length (shape t.view) in
+  let starts_arr = match starts.buffer with Int32 a -> a | _ -> assert false in
+  let s_off = View.offset starts.view and s_str = View.strides starts.view in
+  let corner =
+    Stdlib.Array.init rank (fun i ->
+        Int32.to_int (Array.unsafe_get starts_arr (s_off + (i * s_str.(0)))))
+  in
+  let vshape = shape v.view in
+  let n = numel v.view in
+  if n > 0 then begin
+    let window =
+      View.shrink out.view (Stdlib.Array.mapi (fun i c -> (c, c + vshape.(i))) corner)
+    in
+    let w_off = View.offset window and w_str = View.strides window in
+    let v_off = View.offset v.view and v_str = View.strides v.view in
+    let indices = Stdlib.Array.make rank 0 in
+    let flat off str =
+      let f = ref off in
+      for d = 0 to rank - 1 do
+        f := !f + (indices.(d) * str.(d))
+      done;
+      !f
+    in
+    let advance () =
+      let d = ref (rank - 1) in
+      while !d >= 0 do
+        indices.(!d) <- indices.(!d) + 1;
+        if indices.(!d) < vshape.(!d) then d := -1
+        else (
+          indices.(!d) <- 0;
+          d := !d - 1)
+      done
+    in
+    match (v.buffer, out.buffer) with
+    | Float64 src, Float64 dst ->
+        for _ = 0 to n - 1 do
+          Array.unsafe_set dst (flat w_off w_str) (Array.unsafe_get src (flat v_off v_str));
+          advance ()
+        done
+    | Float32 src, Float32 dst ->
+        for _ = 0 to n - 1 do
+          Array.unsafe_set dst (flat w_off w_str) (Array.unsafe_get src (flat v_off v_str));
+          advance ()
+        done
+    | Int32 src, Int32 dst ->
+        for _ = 0 to n - 1 do
+          Array.unsafe_set dst (flat w_off w_str) (Array.unsafe_get src (flat v_off v_str));
+          advance ()
+        done
+    | Int64 src, Int64 dst ->
+        for _ = 0 to n - 1 do
+          Array.unsafe_set dst (flat w_off w_str) (Array.unsafe_get src (flat v_off v_str));
+          advance ()
+        done
+    | Int8 src, Int8 dst ->
+        for _ = 0 to n - 1 do
+          Array.unsafe_set dst (flat w_off w_str) (Array.unsafe_get src (flat v_off v_str));
+          advance ()
+        done
+    | Int16 src, Int16 dst ->
+        for _ = 0 to n - 1 do
+          Array.unsafe_set dst (flat w_off w_str) (Array.unsafe_get src (flat v_off v_str));
+          advance ()
+        done
+    | Bool src, Bool dst ->
+        for _ = 0 to n - 1 do
+          dst.(flat w_off w_str) <- src.(flat v_off v_str);
+          advance ()
+        done
+    | _ -> invalid_arg "update: unsupported dtype"
+  end;
+  out
+
 let unfold :
   type a b.
   (a, b) t ->

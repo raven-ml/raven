@@ -724,6 +724,42 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         end)
               end;
               continue k out)
+      | E_update { t_in; starts; v } ->
+          Some
+            (fun k ->
+              let out = update t_in ~starts v in
+              let tt = tracked t_in and tv = tracked v in
+              if tt || tv then begin
+                track out;
+                Tape.record tape (fun () ->
+                    match Tape.find tape out with
+                    | None -> ()
+                    | Some g ->
+                        (* The window shadows [t_in]; [v] receives the window
+                           of the cotangent, read axis by axis with a gather so
+                           a traced [starts] stays traced. *)
+                        if tt then
+                          Tape.accumulate tape t_in
+                            (update g ~starts (T.zeros_like v));
+                        if tv then begin
+                          let vshape = T.shape v in
+                          let rank = Array.length vshape in
+                          let win = ref g in
+                          for ax = 0 to rank - 1 do
+                            let len = vshape.(ax) in
+                            let start = T.reshape [||] (T.slice [ I ax ] starts) in
+                            let idx = T.add (T.arange T.int32 0 len 1) start in
+                            let shp = Array.copy (T.shape !win) in
+                            shp.(ax) <- len;
+                            let rs = Array.make rank 1 in
+                            rs.(ax) <- len;
+                            let idx = T.broadcast_to shp (T.reshape rs idx) in
+                            win := gather !win idx ~axis:ax
+                          done;
+                          Tape.accumulate tape v !win
+                        end)
+              end;
+              continue k out)
       (* Windowing: unfold and fold are duals. *)
       | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
           Some

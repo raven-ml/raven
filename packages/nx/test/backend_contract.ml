@@ -1814,6 +1814,22 @@ struct
               in
               equal ~msg:"accumulate" (array ftst) [| 0.; 55.; 20.; 0. |]
                 (F.to_array got));
+          case classify (path ^ "/update") "window" (fun () ->
+              (* a 2x2 window at (1, 1) of a 3x4 template; the source is a
+                 transposed view so both operands' strides are exercised *)
+              let t = F.create ctx F.float64 [| 3; 4 |] (Array.make 12 0.0) in
+              let v =
+                B.permute (F.create ctx F.float64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
+                  [| 1; 0 |]
+              in
+              let starts = F.create ctx F.int32 [| 2 |] [| 1l; 1l |] in
+              let got = B.update t ~starts v in
+              equal ~msg:"shape" (array int) [| 3; 4 |] (F.shape got);
+              equal ~msg:"values" (array ftst)
+                [| 0.; 0.; 0.; 0.; 0.; 1.; 3.; 0.; 0.; 2.; 4.; 0. |]
+                (F.to_array got);
+              equal ~msg:"template untouched" (array ftst) (Array.make 12 0.0)
+                (F.to_array t));
           case classify (path ^ "/scatter") "set-duplicate-last-wins" (fun () ->
               (* two updates target column 1; `Set keeps the last in scan order,
                  and untouched template cells are preserved *)

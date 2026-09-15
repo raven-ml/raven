@@ -364,6 +364,63 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             in
             mark st out;
             continue k out)
+    | E_update { t_in; starts; v }
+      when batched st t_in || batched st starts || batched st v ->
+        Some
+          (fun k ->
+            let t = ensure_batched st t_in and v = ensure_batched st v in
+            let out =
+              if batched st starts then begin
+                (* A window per example: along each axis the rows are gathered
+                   from [v] at the example's offset, clamped, and kept where
+                   they fall inside the window. *)
+                let starts = ensure_batched st starts in
+                let b = st.batch_size in
+                let tshape = vshape st t_in and vs = vshape st v in
+                let rank = Array.length tshape in
+                let win = ref v and mask = ref None in
+                for ax = 0 to rank - 1 do
+                  let n = tshape.(ax) and len = vs.(ax) in
+                  let start =
+                    T.reshape [| b; 1 |] (T.slice [ T.A; T.I ax ] starts)
+                  in
+                  let rel =
+                    T.sub (T.reshape [| 1; n |] (T.arange T.int32 0 n 1)) start
+                  in
+                  let inside =
+                    T.logical_and (T.greater_equal_s rel 0l)
+                      (T.less_s rel (Int32.of_int len))
+                  in
+                  let idx = T.clamp ~min:0l ~max:(Int32.of_int (len - 1)) rel in
+                  let along =
+                    Array.init (rank + 1) (fun d ->
+                        if d = 0 then b else if d = ax + 1 then n else 1)
+                  in
+                  let shp =
+                    Array.mapi
+                      (fun d s -> if d = ax + 1 then n else s)
+                      (T.shape !win)
+                  in
+                  win :=
+                    T.take_along_axis ~axis:(ax + 1)
+                      ~indices:(T.broadcast_to shp (T.reshape along idx))
+                      !win;
+                  let inside = T.reshape along inside in
+                  mask :=
+                    Some
+                      (match !mask with
+                      | None -> inside
+                      | Some m -> T.logical_and m inside)
+                done;
+                match !mask with None -> v | Some mask -> T.where mask !win t
+              end
+              else
+                (* The batch axis is never written: its start is 0 and [v]'s
+                   batch extent is the whole axis. *)
+                update t ~starts:(pad starts [| (1, 0) |] 0l) v
+            in
+            mark st out;
+            continue k out)
     (* Matrix multiplication: the frontend promotes vectors to matrices against
        virtual shapes before this effect is performed, and the backend
        broadcasts leading batch dimensions positionally. Plain matrices need no

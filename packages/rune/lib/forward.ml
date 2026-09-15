@@ -436,6 +436,15 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 set_tangent out (T.add d_template d_updates)
               end;
               continue k out)
+      (* The window write is linear in [t_in] and [v] together. *)
+      | E_update { t_in; starts; v } ->
+          Some
+            (fun k ->
+              let out = update t_in ~starts v in
+              if active t_in || active v then
+                set_tangent out
+                  (update (tan_or_zeros t_in) ~starts (tan_or_zeros v));
+              continue k out)
       (* Windowing: unfold and fold are linear. *)
       | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
           Some
