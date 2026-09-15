@@ -364,13 +364,31 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             in
             mark st out;
             continue k out)
-    (* Matrix multiplication: the backend broadcasts leading batch dimensions,
-       and the frontend promotes vectors to matrices against virtual shapes
-       before this effect is performed. *)
+    (* Matrix multiplication: the frontend promotes vectors to matrices against
+       virtual shapes before this effect is performed, and the backend
+       broadcasts leading batch dimensions positionally. Plain matrices need no
+       translation, the batch axis being the only leading dimension. When an
+       operand carries leading dimensions of its own, both operands are lifted
+       to the batched form at a common leading rank first; otherwise the batch
+       axis of one would align against the other's first batch dimension. *)
     | E_matmul { a; b } when batched st a || batched st b ->
         Some
           (fun k ->
-            let out = matmul a b in
+            let sa = vshape st a and sb = vshape st b in
+            let lead s = Array.sub s 0 (Array.length s - 2) in
+            let l =
+              Stdlib.max (Array.length (lead sa)) (Array.length (lead sb))
+            in
+            let out =
+              if l = 0 then matmul a b
+              else
+                let padded s =
+                  Array.append (Array.make (l - Array.length (lead s)) 1) s
+                in
+                matmul
+                  (to_batched st a (padded sa))
+                  (to_batched st b (padded sb))
+            in
             mark st out;
             continue k out)
     (* Windowing: both address the last spatial dimensions and pass every

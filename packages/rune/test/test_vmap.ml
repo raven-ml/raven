@@ -50,6 +50,15 @@ let oracle_tests =
     test "matrix-matrix multiply" (fun () ->
         let w = w32 () in
         check_vmap ~msg:"m @ w" (fun m -> Nx.matmul m w) (ms ()));
+    test "matmul against a constant with its own batch dimensions" (fun () ->
+        (* The constant's leading dimension must not be taken for the map's:
+           each row meets both matrices of [ws]. *)
+        let ws =
+          Nx.create f64 [| 2; 3; 2 |]
+            [| 1.1; 0.3; -0.8; 0.6; 0.4; -1.5; 0.2; -0.9; 1.3; 0.5; -0.6; 0.7 |]
+        in
+        check_vmap ~msg:"r @ ws" (fun r -> Nx.matmul r ws) (xs ());
+        check_vmap ~msg:"m @ ws" (fun m -> Nx.matmul m ws) (ms ()));
     test "reshape and transpose" (fun () ->
         check_vmap ~msg:"transpose (reshape m)"
           (fun m -> Nx.transpose (Nx.reshape [| 3; 2 |] m))
@@ -148,6 +157,57 @@ let test_vmap_structure () =
            Nx.matmul (Nx.slice [ Nx.I i ] a) (Nx.slice [ Nx.I i ] b)))
   in
   check_arr ~msg:"pair matmul" (to_arr expected) y
+
+let test_vmap_structure_leading_dims () =
+  (* Two mapped leaves whose elements carry different leading ranks: a batch of
+     matrix stacks against a batch of single matrices. The sizes coincide with
+     the map's, so misaligning the batch axis would pair the wrong matrices
+     without any shape error. *)
+  let a =
+    Nx.create f64 [| 2; 2; 2; 3 |]
+      [|
+        0.5;
+        -1.2;
+        2.1;
+        1.7;
+        -0.4;
+        0.9;
+        0.2;
+        1.3;
+        -0.7;
+        0.8;
+        -1.6;
+        0.4;
+        -0.3;
+        0.6;
+        1.1;
+        0.9;
+        -0.5;
+        0.2;
+        1.4;
+        -0.8;
+        0.3;
+        -1.1;
+        0.7;
+        0.1;
+      |]
+  in
+  let b =
+    Nx.create f64 [| 2; 3; 2 |]
+      [| 1.1; 0.3; -0.8; 0.6; 0.4; -1.5; 0.9; -0.2; 0.7; 1.4; -0.3; 0.5 |]
+  in
+  let y =
+    Rune.vmap
+      (module Pair)
+      (fun p -> Nx.matmul p.fst p.snd)
+      { fst = a; snd = b }
+  in
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 2 (fun i ->
+           Nx.matmul (Nx.slice [ Nx.I i ] a) (Nx.slice [ Nx.I i ] b)))
+  in
+  check_arr ~msg:"pair matmul, leading dims" (to_arr expected) y
 
 let test_in_axes_constant_leaf () =
   (* Second leaf held constant: per-slice a_i @ b. *)
@@ -375,6 +435,8 @@ let tests =
         test "maps a non-leading axis" test_in_axis;
         test "places the batch axis on output" test_out_axis;
         test "maps all leaves of a structure" test_vmap_structure;
+        test "maps leaves of different leading ranks"
+          test_vmap_structure_leading_dims;
         test "in_axes holds a leaf constant" test_in_axes_constant_leaf;
         test "in_axes maps a non-leading axis" test_in_axes_non_leading;
         test "in_axes accepts a negative axis" test_in_axes_negative_axis;

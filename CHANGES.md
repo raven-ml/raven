@@ -1081,6 +1081,10 @@ thread.
 
 ### Rune
 
+- `Rune.vmap` now maps `Nx.matmul` correctly when the other operand carries
+  leading batch dimensions of its own: the map's axis was aligned against the
+  operand's first batch dimension, which raised a shape mismatch or silently
+  paired the wrong matrices.
 - `grad` through `Nx.solve_triangular ~unit_diag:true` no longer assigns a
   gradient to the diagonal, which the solve never reads; it disagreed with
   both the function and `jvp` there.
