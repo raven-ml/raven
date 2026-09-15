@@ -21,4 +21,4 @@ let () =
       Hugin.imshow ~data:dilated ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Dilated (5x5)";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "morphology.png"

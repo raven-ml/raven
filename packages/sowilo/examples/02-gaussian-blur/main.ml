@@ -16,4 +16,4 @@ let () =
       Hugin.imshow ~data:blurred ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Gaussian Blur (5x5, sigma=1.5)";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "gaussian_blur.png"

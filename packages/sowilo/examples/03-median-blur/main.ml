@@ -16,4 +16,4 @@ let () =
       Hugin.imshow ~data:median ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Median Blur (k=5)";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "median_blur.png"

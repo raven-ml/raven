@@ -206,7 +206,7 @@ let visualize_pipeline img =
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Canny Edges");
 
-  Hugin.show fig
+  Hugin.render_png "pipeline.png" fig
 ```
 
 ## Color Space Manipulation

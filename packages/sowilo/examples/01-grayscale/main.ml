@@ -15,4 +15,4 @@ let () =
       Hugin.imshow ~data:gray ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Grayscale";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "grayscale.png"

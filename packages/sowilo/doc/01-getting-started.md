@@ -224,7 +224,7 @@ let () =
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Canny Edges");
 
-  Hugin.show fig
+  Hugin.render_png "edges.png" fig
 ```
 
 ## Next Steps

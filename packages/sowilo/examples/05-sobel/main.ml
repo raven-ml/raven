@@ -29,4 +29,4 @@ let () =
       Hugin.imshow ~data:(normalize_gradient gy) ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Sobel Y";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "sobel.png"

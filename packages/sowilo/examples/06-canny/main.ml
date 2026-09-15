@@ -16,4 +16,4 @@ let () =
       Hugin.imshow ~data:edges ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Canny Edges (0.2, 0.6)";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "canny.png"

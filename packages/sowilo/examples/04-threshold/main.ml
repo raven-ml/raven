@@ -16,4 +16,4 @@ let () =
       Hugin.imshow ~data:thresh ~cmap:Hugin.Cmap.gray ()
       |> Hugin.title "Binary Threshold (128)";
     ]
-  |> Hugin.show
+  |> Hugin.render_png "threshold.png"
