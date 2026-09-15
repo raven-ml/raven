@@ -372,7 +372,7 @@ let test_fft_norm () =
 
 let test_fft_edge_cases () =
   (* Empty tensor *)
-  let empty = Nx.empty Nx.complex128 [| 0 |] in
+  let empty = Nx.zeros Nx.complex128 [| 0 |] in
   let fft_empty = Nx.fft empty in
   equal ~msg:"fft empty" (array int) [| 0 |] (Nx.shape fft_empty);
 
@@ -550,7 +550,7 @@ let test_rfft_norm () =
 
 let test_rfft_edge_cases () =
   (* Empty - NumPy raises an error for empty arrays, so we skip this test let
-     empty = Nx.empty Nx.float64 [| 0 |] in let rfft_empty = Nx.rfft
+     empty = Nx.zeros Nx.float64 [| 0 |] in let rfft_empty = Nx.rfft
      Nx.complex128 empty in Alcotest.(check (array int)) "rfft empty" [| 1 |]
      (Nx.shape rfft_empty); *)
 
@@ -923,7 +923,7 @@ let test_real_transform_errors () =
     (fun () -> Nx.dst ~axis:1 input);
   check_invalid_arg "dct empty axis"
     "dct: input size along axis 0 must be positive" (fun () ->
-      Nx.dct (Nx.empty Nx.float64 [| 0 |]));
+      Nx.dct (Nx.zeros Nx.float64 [| 0 |]));
   check_invalid_arg "dct type I singleton"
     "dct: type 1 requires an input size greater than 1" (fun () ->
       Nx.dct ~type_:1 (Nx.ones Nx.float64 [| 1 |]));

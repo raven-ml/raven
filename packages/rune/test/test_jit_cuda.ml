@@ -36,33 +36,7 @@ let test_matmul_grad_on_cuda () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through cuda jit" (to_arr (Rune.grad' f x)) (g x)
 
-(* Captured tensors are uploaded once per compilation and stay resident on the
-   device: a later mutation of the capture is not observed (unlike on the CPU
-   device, whose buffers alias the tensor's memory). *)
-let test_capture_is_uploaded_once () =
-  require_cuda ();
-  let c = vec32 [| 10.0; 20.0; 30.0 |] in
-  let g = Rune.jit' ~device:"CUDA" (fun x -> Nx.add x c) in
-  check_arr ~msg:"initial capture" [| 11.0; 21.0; 31.0 |]
-    (g (vec32 [| 1.0; 1.0; 1.0 |]));
-  Nx.blit (vec32 [| 0.0; 0.0; 0.0 |]) c;
-  check_arr ~msg:"capture stays at its compile-time value"
-    [| 11.0; 21.0; 31.0 |]
-    (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures are compile-time constants: a function that assigns to one fails at
-   trace time. Mutable state belongs in the input structure. *)
-let test_assign_to_capture_raises () =
-  require_cuda ();
-  let s = vec32 [| 1.0; 2.0 |] in
-  let g =
-    Rune.jit' ~device:"CUDA" (fun x ->
-        Nx.blit (Nx.add s x) s;
-        Nx.mul_s s 10.0)
-  in
-  raises_match
-    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> ignore (g (vec32 [| 1.0; 1.0 |])))
 
 (* Device residency: outputs stay on the GPU until read, and unread outputs fed
    back as inputs move no bytes. *)
@@ -96,10 +70,10 @@ let test_forced_handle_feeds_current_bytes () =
   let g = Rune.jit' ~device:"CUDA" (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
   check_arr ~msg:"reading forces the handle" [| 2.0; 4.0; 6.0 |] h;
-  Nx.set_item [ 0 ] 10.0 h;
+  let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
   let h2, up, _ = delta (fun () -> g h) in
   is_true ~msg:"a forced handle re-uploads" (up > 0);
-  check_arr ~msg:"the mutation is observed" [| 20.0; 8.0; 12.0 |] h2
+  check_arr ~msg:"the new value is observed" [| 20.0; 8.0; 12.0 |] h2
 
 let test_cuda_handle_into_cpu_jit () =
   require_cuda ();
@@ -110,18 +84,6 @@ let test_cuda_handle_into_cpu_jit () =
      copies. *)
   check_arr ~msg:"cuda handle read on the cpu device" [| 3.0; 5.0 |] (gp h)
 
-let test_assign_to_resident_leaf () =
-  require_cuda ();
-  let producer = Rune.jit' ~device:"CUDA" (fun x -> Nx.mul_s x 2.0) in
-  let h = producer (vec32 [| 1.0; 2.0 |]) in
-  let step =
-    Rune.jit' ~device:"CUDA" (fun x ->
-        Nx.blit (Nx.mul_s x 2.0) x;
-        Nx.sum x)
-  in
-  let s = step h in
-  check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
-  check_arr ~msg:"the writeback forced h and updated it" [| 4.0; 8.0 |] h
 
 (* Multi-kernel compiled traces replay as batched device execution graphs: the
    kernels are recorded into a CUDA graph on the first call and later calls
@@ -491,8 +453,6 @@ let tests =
       [
         test "element-wise chain matches eager" test_elementwise_on_cuda;
         test "grad inside jit matches eager" test_matmul_grad_on_cuda;
-        test "captures are uploaded once" test_capture_is_uploaded_once;
-        test "assigning to a capture raises" test_assign_to_capture_raises;
         test "multi-kernel traces replay as batched graphs"
           test_graph_batched_replay;
       ];
@@ -502,8 +462,6 @@ let tests =
         test "forced handles feed current bytes"
           test_forced_handle_feeds_current_bytes;
         test "cuda handles read on the cpu device" test_cuda_handle_into_cpu_jit;
-        test "assigning to a resident leaf forces then writes back"
-          test_assign_to_resident_leaf;
         test "pass-through outputs survive later calls"
           test_pass_through_output_survives;
         test "captures upload once across signatures"

@@ -321,31 +321,7 @@ let test_donate_mismatched_placement_not_consumed () =
     (to_arr (Nx.add x x))
     y
 
-(* Writebacks: replicated destinations are honored, sharded values are rejected
-   at trace time. *)
 
-let test_replicated_writeback () =
-  let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ None ]
-      (module Single_f32)
-      (fun w ->
-        Nx.blit (Nx.mul_s w 2.0) w;
-        Nx.sum w)
-  in
-  let w = vec32 [| 1.0; 2.0; 3.0 |] in
-  check_arr ~msg:"sum of updated value" [| 12.0 |] (g w);
-  check_arr ~eps:0.0 ~msg:"writeback reached the host leaf" [| 2.0; 4.0; 6.0 |]
-    w
-
-let test_sharded_writeback_raises () =
-  let g =
-    Rune.pmap ~devices:devs2
-      (module Single_f32)
-      (fun x ->
-        Nx.blit (Nx.mul x x) x;
-        Nx.sum x)
-  in
-  raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0; 4.0 |]))
 
 (* Errors *)
 
@@ -695,12 +671,6 @@ let tests =
           test_donate_replicated_releases_all_shards;
         test "mismatched placement forces instead of donating"
           test_donate_mismatched_placement_not_consumed;
-      ];
-    group "state"
-      [
-        test "replicated writeback reaches the host leaf"
-          test_replicated_writeback;
-        test "sharded writeback raises" test_sharded_writeback_raises;
       ];
     group "errors"
       [

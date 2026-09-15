@@ -42,7 +42,6 @@ let float8_e5m2 = Nx_core.Dtype.float8_e5m2
 
 let create dtype shape arr = F.create (Lazy.force context) dtype shape arr
 let init dtype shape f = F.init (Lazy.force context) dtype shape f
-let empty dtype shape = F.empty (Lazy.force context) dtype shape
 let full dtype shape value = F.full (Lazy.force context) dtype shape value
 let ones dtype shape = F.ones (Lazy.force context) dtype shape
 let zeros dtype shape = F.zeros (Lazy.force context) dtype shape

@@ -141,44 +141,72 @@ let test_set_slice_mask () =
   let t = Nx.zeros Nx.float32 [| 4 |] in
   let mask = Nx.create Nx.bool [| 4 |] [| true; false; true; true |] in
   let value = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
-  Nx.set_slice [ Nx.M mask ] t value;
-  check_t "set_slice mask" [| 4 |] [| 10.; 0.; 20.; 30. |] t
+  let t = Nx.set [ Nx.M mask ] value t in
+  check_t "set mask" [| 4 |] [| 10.; 0.; 20.; 30. |] t
 
 let test_set_slice_mask_broadcast () =
   let t = Nx.zeros Nx.float32 [| 4; 2 |] in
   let mask = Nx.create Nx.bool [| 4 |] [| true; false; true; false |] in
   let value = Nx.create Nx.float32 [| 2 |] [| 7.; 8. |] in
-  Nx.set_slice [ Nx.M mask ] t value;
-  check_t "set_slice mask broadcast" [| 4; 2 |]
+  let t = Nx.set [ Nx.M mask ] value t in
+  check_t "set mask broadcast" [| 4; 2 |]
     [| 7.; 8.; 0.; 0.; 7.; 8.; 0.; 0. |]
     t
 
-let test_set_slice_new_axis_unsupported () =
+let test_set_new_axis_with_gather () =
   let t = Nx.zeros Nx.float32 [| 3; 2 |] in
   let value = Nx.ones Nx.float32 [| 2 |] in
-  raises ~msg:"set_slice new axis with fancy indexing"
-    (Invalid_argument "set_slice: New_axis not supported") (fun () ->
-      Nx.set_slice [ Nx.L [ 0; 2 ]; Nx.N ] t value)
+  let t = Nx.set [ Nx.L [ 0; 2 ]; Nx.N ] value t in
+  check_t "set new axis beside a gather" [| 3; 2 |]
+    [| 1.; 1.; 0.; 0.; 1.; 1. |]
+    t
+
+let test_set_duplicate_list_raises () =
+  let t = Nx.zeros Nx.float32 [| 4 |] in
+  raises ~msg:"repeated position" (Invalid_argument "set: index 1 is listed twice")
+    (fun () -> ignore (Nx.set [ Nx.L [ 1; 1 ] ] (Nx.scalar Nx.float32 1.) t))
+
+let test_set_window_dynamic () =
+  let t = Nx.zeros Nx.float32 [| 2; 6 |] in
+  let v = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let at pos = Nx.set [ Nx.A; Nx.D (Nx.scalar Nx.int32 pos, 2) ] v t in
+  check_t "window at 1" [| 2; 6 |]
+    [| 0.; 1.; 2.; 0.; 0.; 0.; 0.; 3.; 4.; 0.; 0.; 0. |]
+    (at 1l);
+  (* the start is clamped so the window always fits *)
+  check_t "window clamped at the end" [| 2; 6 |]
+    [| 0.; 0.; 0.; 0.; 1.; 2.; 0.; 0.; 0.; 0.; 3.; 4. |]
+    (at 9l);
+  check_t "dynamic read" [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+    (Nx.slice [ Nx.A; Nx.D (Nx.scalar Nx.int32 1l, 2) ] (at 1l));
+  check_shape "empty window reads as empty" [| 2; 0 |]
+    (Nx.slice [ Nx.A; Nx.D (Nx.scalar Nx.int32 1l, 0) ] t)
+
+let test_set_reversed_range () =
+  let t = Nx.zeros Nx.float32 [| 5 |] in
+  let v = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  check_t "set through a step -1 range" [| 5 |] [| 0.; 3.; 2.; 1.; 0. |]
+    (Nx.set [ Nx.Rs (3, 0, -1) ] v t)
 
 (* ───── Set_slice Tests ───── *)
 
 let test_set_slice_at () =
   let t = Nx.zeros Nx.float32 [| 3; 4 |] in
   let value = Nx.ones Nx.float32 [| 4 |] in
-  Nx.set_slice [ Nx.I 1 ] t value;
-  equal ~msg:"set_slice at [1,2]" (float 1e-6) 1.0 (Nx.item [ 1; 2 ] t)
+  let t = Nx.set [ Nx.I 1 ] value t in
+  equal ~msg:"set at [1,2]" (float 1e-6) 1.0 (Nx.item [ 1; 2 ] t)
 
 let test_set_slice_rng () =
   let t = Nx.zeros Nx.float32 [| 5 |] in
   let value = Nx.create Nx.float32 [| 2 |] [| 10.; 20. |] in
-  Nx.set_slice [ Nx.R (1, 3) ] t value;
-  check_t "set_slice rng" [| 5 |] [| 0.; 10.; 20.; 0.; 0. |] t
+  let t = Nx.set [ Nx.R (1, 3) ] value t in
+  check_t "set rng" [| 5 |] [| 0.; 10.; 20.; 0.; 0. |] t
 
 let test_set_slice_idx () =
   let t = Nx.zeros Nx.float32 [| 5 |] in
   let value = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
-  Nx.set_slice [ Nx.L [ 0; 2; 4 ] ] t value;
-  check_t "set_slice idx" [| 5 |] [| 10.; 0.; 20.; 0.; 30. |] t
+  let t = Nx.set [ Nx.L [ 0; 2; 4 ] ] value t in
+  check_t "set idx" [| 5 |] [| 10.; 0.; 20.; 0.; 30. |] t
 
 (* ───── Item and Set_item Tests ───── *)
 
@@ -194,8 +222,8 @@ let test_item_negative_indices () =
 
 let test_set_item () =
   let t = Nx.zeros Nx.float32 [| 2; 3 |] in
-  Nx.set_item [ 1; 2 ] 99.0 t;
-  equal ~msg:"set_item" (float 1e-6) 99.0 (Nx.item [ 1; 2 ] t)
+  let t = Nx.set [ Nx.I 1; Nx.I 2 ] (Nx.scalar Nx.float32 99.0) t in
+  equal ~msg:"set element" (float 1e-6) 99.0 (Nx.item [ 1; 2 ] t)
 
 (* ───── Take Tests ───── *)
 
@@ -214,23 +242,18 @@ let test_take_with_axis () =
   let result = Nx.take ~axis:1 ~indices t in
   check_t "take with axis" [| 3; 2 |] [| 1.; 3.; 5.; 7.; 9.; 11. |] result
 
-let test_take_mode_wrap () =
+let test_take_out_of_range_raises () =
   let t = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
-  let indices = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
-  let result = Nx.take ~mode:`wrap ~indices t in
-  check_t "take mode wrap" [| 4 |] [| 10.; 20.; 30.; 10. |] result
-
-let test_take_mode_clip () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
-  let indices = Nx.create Nx.int32 [| 4 |] [| -1l; 0l; 2l; 5l |] in
-  let result = Nx.take ~mode:`clip ~indices t in
-  check_t "take mode clip" [| 4 |] [| 10.; 10.; 30.; 30. |] result
-
-let test_take_negative_indices () =
-  let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let indices = Nx.create Nx.int32 [| 2 |] [| -1l; -2l |] in
-  let result = Nx.take ~mode:`wrap ~indices t in
-  check_t "take negative indices" [| 2 |] [| 5.; 4. |] result
+  raises ~msg:"past the end"
+    (Invalid_argument
+       "gather: index out of bounds for the gathered/scattered axis")
+    (fun () ->
+      ignore (Nx.take ~indices:(Nx.create Nx.int32 [| 1 |] [| 3l |]) t));
+  raises ~msg:"negative"
+    (Invalid_argument
+       "gather: index out of bounds for the gathered/scattered axis")
+    (fun () ->
+      ignore (Nx.take ~indices:(Nx.create Nx.int32 [| 1 |] [| -1l |]) t))
 
 (* ───── Take_along_axis Tests ───── *)
 
@@ -246,64 +269,6 @@ let test_take_along_axis_2d () =
   let indices = Nx.argmax ~axis:1 ~keepdims:true t in
   let maxvals = Nx.take_along_axis ~axis:1 ~indices t in
   check_t "take_along_axis 2d" [| 2; 1 |] [| 4.; 6. |] maxvals
-
-(* ───── Put Tests ───── *)
-
-let test_put_basic () =
-  let t = Nx.zeros Nx.float32 [| 5 |] in
-  let indices = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 4l |] in
-  let values = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
-  Nx.put ~indices ~values t;
-  check_t "put basic" [| 5 |] [| 10.; 0.; 20.; 0.; 30. |] t
-
-let test_put_with_axis () =
-  let t = Nx.zeros Nx.float32 [| 3; 4 |] in
-  let indices = Nx.create Nx.int32 [| 3; 2 |] [| 0l; 2l; 0l; 2l; 0l; 2l |] in
-  let values = Nx.ones Nx.float32 [| 3; 2 |] in
-  Nx.put ~axis:1 ~indices ~values t;
-  let expected = [| 1.; 0.; 1.; 0.; 1.; 0.; 1.; 0.; 1.; 0.; 1.; 0. |] in
-  check_t "put with axis" [| 3; 4 |] expected t
-
-let test_put_mode_wrap () =
-  let t = Nx.zeros Nx.float32 [| 3 |] in
-  let indices = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
-  let values = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  Nx.put ~indices ~values ~mode:`wrap t;
-  check_t "put mode wrap" [| 3 |] [| 4.; 2.; 3. |] t
-
-let test_put_mode_clip () =
-  let t = Nx.zeros Nx.float32 [| 3 |] in
-  let indices = Nx.create Nx.int32 [| 4 |] [| -1l; 0l; 2l; 5l |] in
-  let values = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  Nx.put ~indices ~values ~mode:`clip t;
-  check_t "put mode clip" [| 3 |] [| 2.; 0.; 4. |] t
-
-let test_index_put_basic () =
-  let t = Nx.zeros Nx.float32 [| 3; 3 |] in
-  let rows = Nx.create Nx.int32 [| 4 |] [| 0l; 2l; 1l; 2l |] in
-  let cols = Nx.create Nx.int32 [| 4 |] [| 1l; 0l; 2l; 2l |] in
-  let values = Nx.arange_f Nx.float32 10. 14. 1. in
-  Nx.index_put ~indices:[| rows; cols |] ~values t;
-  check_t "index_put basic" [| 3; 3 |]
-    [| 0.; 10.; 0.; 0.; 0.; 12.; 11.; 0.; 13. |]
-    t
-
-let test_index_put_mode_wrap () =
-  let t = Nx.zeros Nx.float32 [| 2; 2 |] in
-  let rows = Nx.create Nx.int32 [| 3 |] [| -1l; 0l; 1l |] in
-  let cols = Nx.create Nx.int32 [| 3 |] [| 0l; -1l; 1l |] in
-  let values = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Nx.index_put ~indices:[| rows; cols |] ~values ~mode:`wrap t;
-  check_t "index_put mode wrap" [| 2; 2 |] [| 0.; 2.; 1.; 3. |] t
-
-(* ───── Put_along_axis Tests ───── *)
-
-let test_put_along_axis () =
-  let t = Nx.zeros Nx.float32 [| 2; 3 |] in
-  let indices = Nx.create Nx.int32 [| 2; 1 |] [| 1l; 0l |] in
-  let values = Nx.create Nx.float32 [| 2; 1 |] [| 10.; 20. |] in
-  Nx.put_along_axis ~axis:1 ~indices ~values t;
-  check_t "put_along_axis" [| 2; 3 |] [| 0.; 10.; 0.; 20.; 0.; 0. |] t
 
 (* ───── Scatter Tests ───── *)
 
@@ -420,6 +385,12 @@ let test_nonzero_2d () =
   check_t "nonzero 2d cols" [| 4 |] expected_cols
     (Nx.cast Nx.float32 indices.(1))
 
+let test_nonzero_scalar () =
+  let indices = Nx.nonzero (Nx.scalar Nx.int32 5l) in
+  equal ~msg:"a scalar has no axes" int 0 (Array.length indices);
+  check_shape "argwhere of a scalar" [| 0; 0 |]
+    (Nx.argwhere (Nx.scalar Nx.int32 5l))
+
 let test_nonzero_empty () =
   let t = Nx.zeros Nx.float32 [| 3; 3 |] in
   let indices = Nx.nonzero t in
@@ -460,9 +431,9 @@ let test_item_wrong_indices () =
 let test_set_slice_broadcast () =
   let t = Nx.zeros Nx.float32 [| 3; 4 |] in
   let value = Nx.ones Nx.float32 [| 1 |] in
-  Nx.set_slice [ Nx.R (1, 2) ] t value;
+  let t = Nx.set [ Nx.R (1, 2) ] value t in
   (* Value should be broadcast to shape [1, 4] *)
-  equal ~msg:"set_slice broadcast" (float 1e-6) 1.0 (Nx.item [ 1; 2 ] t)
+  equal ~msg:"set broadcast" (float 1e-6) 1.0 (Nx.item [ 1; 2 ] t)
 
 let test_index_chained () =
   let t = Nx.create Nx.float32 [| 4; 5; 6 |] (Array.init 120 float_of_int) in
@@ -514,16 +485,16 @@ let index_tests =
     test "index idx repeated" test_index_idx_repeated;
     test "index idx reorder" test_index_idx_reorder;
     test "index mixed" test_index_mixed;
-    test "set_slice at" test_set_slice_at;
-    test "set_slice rng" test_set_slice_rng;
-    test "set_slice idx" test_set_slice_idx;
+    test "set at" test_set_slice_at;
+    test "set rng" test_set_slice_rng;
+    test "set idx" test_set_slice_idx;
   ]
 
 let item_tests =
   [
     test "item" test_item;
     test "item negative indices" test_item_negative_indices;
-    test "set_item" test_set_item;
+    test "set element" test_set_item;
     test "item wrong indices" test_item_wrong_indices;
   ]
 
@@ -531,9 +502,7 @@ let take_tests =
   [
     test "take basic" test_take_basic;
     test "take with axis" test_take_with_axis;
-    test "take mode wrap" test_take_mode_wrap;
-    test "take mode clip" test_take_mode_clip;
-    test "take negative indices" test_take_negative_indices;
+    test "take out of range raises" test_take_out_of_range_raises;
     test "take_along_axis 1d" test_take_along_axis_1d;
     test "take_along_axis 2d" test_take_along_axis_2d;
     test "take empty indices" test_take_empty_indices;
@@ -541,13 +510,6 @@ let take_tests =
 
 let put_tests =
   [
-    test "put basic" test_put_basic;
-    test "put with axis" test_put_with_axis;
-    test "put mode wrap" test_put_mode_wrap;
-    test "put mode clip" test_put_mode_clip;
-    test "index_put basic" test_index_put_basic;
-    test "index_put mode wrap" test_index_put_mode_wrap;
-    test "put_along_axis" test_put_along_axis;
   ]
 
 let scatter_tests =
@@ -577,6 +539,7 @@ let nonzero_argwhere_tests =
     test "nonzero 1d" test_nonzero_1d;
     test "nonzero 2d" test_nonzero_2d;
     test "nonzero empty" test_nonzero_empty;
+    test "nonzero scalar" test_nonzero_scalar;
     test "argwhere basic" test_argwhere_basic;
     test "argwhere empty" test_argwhere_empty;
     test "argwhere 1d" test_argwhere_1d;
@@ -591,14 +554,17 @@ let mask_tests =
     test "index mask all false" test_index_mask_all_false;
     test "index mask length mismatch" test_index_mask_length_mismatch;
     test "index mask rank" test_index_mask_rank;
-    test "set_slice mask" test_set_slice_mask;
-    test "set_slice mask broadcast" test_set_slice_mask_broadcast;
-    test "set_slice new axis unsupported" test_set_slice_new_axis_unsupported;
+    test "set mask" test_set_slice_mask;
+    test "set mask broadcast" test_set_slice_mask_broadcast;
+    test "set new axis beside a gather" test_set_new_axis_with_gather;
+    test "set duplicate list raises" test_set_duplicate_list_raises;
+    test "set dynamic window" test_set_window_dynamic;
+    test "set reversed range" test_set_reversed_range;
   ]
 
 let edge_case_tests =
   [
-    test "set_slice broadcast" test_set_slice_broadcast;
+    test "set broadcast" test_set_slice_broadcast;
     test "index chained" test_index_chained;
   ]
 

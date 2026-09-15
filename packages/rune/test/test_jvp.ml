@@ -385,15 +385,6 @@ let test_unsupported_op_raises_when_active () =
              s)
            x (tangent_like x)))
 
-let test_mutation_raises () =
-  raises_match Exn.invalid_arg (fun () ->
-      ignore
-        (Rune.jvp'
-           (fun x ->
-             Nx.set_item [ 0 ] 1.0 x;
-             Nx.sum x)
-           (vec64 [| 1.0; 2.0 |])
-           (vec64 [| 1.0; 0.0 |])))
 
 let tests =
   [
@@ -432,7 +423,6 @@ let tests =
           test_jvp_structural_shape_mismatch;
         test "unsupported op raises when input is active"
           test_unsupported_op_raises_when_active;
-        test "in-place mutation raises" test_mutation_raises;
       ];
   ]
 

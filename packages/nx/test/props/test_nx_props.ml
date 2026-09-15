@@ -93,13 +93,8 @@ let shape_props =
         equal (approx ()) t (Nx.flip (Nx.flip t)));
     prop "copy preserves data (f32)" f32_any (fun t ->
         equal (approx ()) t (Nx.copy t));
-    prop "copy independence (f32)" f32_any (fun t ->
-        assume (Nx.numel t > 0);
-        let c = Nx.copy t in
-        let orig_first = Nx.item [ 0 ] (Nx.flatten t) in
-        Nx.set_item [ 0 ] 99999.0 (Nx.flatten c);
-        equal ~msg:"the source is untouched" float_exact orig_first
-          (Nx.item [ 0 ] (Nx.flatten t)));
+    prop "copy has its own storage (f32)" f32_any (fun t ->
+        is_true (Nx.data (Nx.copy t) != Nx.data t));
     prop "contiguous is contiguous (f32)" f32_any (fun t ->
         is_true (Nx.is_c_contiguous (Nx.contiguous t)));
     prop "contiguous preserves data (f32)" f32_any (fun t ->
@@ -388,18 +383,14 @@ let concat_props =
 
 let indexing_props =
   [
-    prop "item/set_item roundtrip (f32)" f32_with_index (fun (t, indices) ->
-        let c = Nx.copy t in
+    prop "set/item roundtrip (f32)" f32_with_index (fun (t, indices) ->
         let v = 42.0 in
-        Nx.set_item indices v c;
+        let c = Nx.set (List.map (fun i -> Nx.I i) indices) (Nx.scalar Nx.float32 v) t in
         equal float_exact v (Nx.item indices c));
-    prop "get/set roundtrip (f32)" f32_any (fun t ->
+    prop "set of a get is identity (f32)" f32_any (fun t ->
         assume (Nx.ndim t >= 1);
-        let c = Nx.copy t in
-        let idx = [ 0 ] in
-        let sub = Nx.get idx t in
-        Nx.set idx c sub;
-        equal (approx ()) sub (Nx.get idx c));
+        let sub = Nx.get [ 0 ] t in
+        equal (approx ()) t (Nx.set [ Nx.I 0 ] sub t));
     prop "slice A is identity (f32)" f32_any (fun t ->
         let spec = List.init (Nx.ndim t) (fun _ -> Nx.A) in
         equal (approx ()) t (Nx.slice spec t));
@@ -436,13 +427,10 @@ let indexing_props =
           !count
         in
         equal int n_true (Nx.numel extracted));
-    prop "set_slice/slice roundtrip (f32)" f32_any (fun t ->
+    prop "set of a slice is identity (f32)" f32_any (fun t ->
         assume (Nx.ndim t >= 1 && (Nx.shape t).(0) >= 1);
         let spec = [ Nx.R (0, 1) ] in
-        let sub = Nx.slice spec t in
-        let c = Nx.copy t in
-        Nx.set_slice spec c sub;
-        equal (approx ()) t c);
+        equal (approx ()) t (Nx.set spec (Nx.slice spec t) t));
     prop "nonzero indices are valid (i32 1d)" i32_1d (fun t ->
         let nz = Nx.nonzero t in
         let indices = nz.(0) in

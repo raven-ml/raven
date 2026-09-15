@@ -314,7 +314,8 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
 /* ── gather ──────────────────────────────────────────────────────────────────
 
    out[c] = data[c with axis -> indices[c]], over the output/index space (they
-   share a shape). Indices are int32, Python-wrapped then bounds-checked. Reads
+   share a shape). Indices are int32 in [0, axis_len); a negative or
+   out-of-range index is an error, never wrapped. Reads
    are all disjoint across outputs, so the copy parallelizes freely over output
    elements. The bounds check is folded into the copy body: a worker wraps and
    range-checks each index immediately before the read it guards, so a bad index
@@ -352,7 +353,6 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     int64_t idx_off = idx->offset + nx_c_dot(nd, coord, idx->strides);
     int64_t index = *(const int32_t *)((const char *)idx->data +
                                         idx_off * (int64_t)sizeof(int32_t));
-    if (index < 0) index += axis_len;
     if (index < 0 || index >= axis_len) {
       if (g->status[worker] == NX_C_OK) g->status[worker] = NX_C_ERR_INDEX_OOB;
       return;
@@ -391,7 +391,6 @@ static void nx_c_gather_rows_body(int64_t lo, int64_t hi, int worker,
     int64_t idx_off = idx->offset + i * idx->strides[0];
     int64_t index = *(const int32_t *)((const char *)idx->data +
                                        idx_off * (int64_t)sizeof(int32_t));
-    if (index < 0) index += axis_len;
     if (index < 0 || index >= axis_len) {
       if (g->status[worker] == NX_C_OK) g->status[worker] = NX_C_ERR_INDEX_OOB;
       return;
@@ -453,6 +452,8 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
   if (dt == NX_C_DTYPE_COUNT) nx_c_raise("gather", NX_C_ERR_BAD_KIND);
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("gather", NX_C_ERR_PACKED);
   s = nx_c_gather_run(&data, &indices, &out, Int_val(vaxis), nx_c_elem_size(dt));
+  if (s != NX_C_OK && strcmp(s, NX_C_ERR_INDEX_OOB) == 0)
+    nx_c_raise_invalid("gather", s);
   if (s != NX_C_OK) nx_c_raise_status("gather", s);
   CAMLreturn(Val_unit);
 }
@@ -525,7 +526,6 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     int64_t idx_off = indices->offset + nx_c_dot(nd, coord, indices->strides);
     int64_t index = *(const int32_t *)((const char *)indices->data +
                                         idx_off * (int64_t)sizeof(int32_t));
-    if (index < 0) index += axis_len;
     if (index < 0 || index >= axis_len) {
       *sc->status = NX_C_ERR_INDEX_OOB;
       return;
@@ -581,6 +581,8 @@ CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("scatter", NX_C_ERR_PACKED);
   s = nx_c_scatter_run(&out, &indices, &updates, Int_val(vaxis), Int_val(vmode),
                       dt, nx_c_elem_size(dt));
+  if (s != NX_C_OK && strcmp(s, NX_C_ERR_INDEX_OOB) == 0)
+    nx_c_raise_invalid("scatter", s);
   if (s != NX_C_OK) nx_c_raise_status("scatter", s);
   CAMLreturn(Val_unit);
 }

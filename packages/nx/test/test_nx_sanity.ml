@@ -24,7 +24,7 @@ let creation_tests =
         in
         check_t "init" [| 2; 2 |] [| 0.; 1.; 1.; 2. |] t);
     test "empty" (fun () ->
-        Nx.empty Nx.float32 shape_2x3 |> check_shape "empty shape" shape_2x3);
+        Nx.zeros Nx.float32 shape_2x3 |> check_shape "zeros shape" shape_2x3);
     test "full" (fun () ->
         Nx.full Nx.float32 shape_2x3 7.0
         |> check_t "full" shape_2x3 [| 7.; 7.; 7.; 7.; 7.; 7. |]);
@@ -42,9 +42,6 @@ let creation_tests =
         let ref_t = Nx.create Nx.float32 shape_2x3 test_array in
         Nx.zeros_like ref_t
         |> check_t "zeros_like" shape_2x3 [| 0.; 0.; 0.; 0.; 0.; 0. |]);
-    test "empty_like" (fun () ->
-        let ref_t = Nx.create Nx.float32 shape_2x3 test_array in
-        Nx.empty_like ref_t |> check_shape "empty_like shape" shape_2x3);
     test "full_like" (fun () ->
         let ref_t = Nx.create Nx.float32 shape_2x3 test_array in
         Nx.full_like ref_t 9.0
@@ -143,16 +140,11 @@ let property_access_tests =
 
 let data_manipulation_tests =
   [
-    test "blit" (fun () ->
-        let src = Nx.ones Nx.float32 shape_2x3 in
-        let dst = Nx.zeros Nx.float32 shape_2x3 in
-        Nx.blit src dst;
-        check_t "blit" shape_2x3 [| 1.; 1.; 1.; 1.; 1.; 1. |] dst);
-    test "fill copy" (fun () ->
+    test "full_like" (fun () ->
         let t = Nx.zeros Nx.float32 shape_2x3 in
-        let filled = Nx.fill 5.0 t in
-        check_t "fill copy" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] filled;
-        check_t "fill leaves source" shape_2x3 [| 0.; 0.; 0.; 0.; 0.; 0. |] t);
+        let filled = Nx.full_like t 5.0 in
+        check_t "full_like" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] filled;
+        check_t "source untouched" shape_2x3 [| 0.; 0.; 0.; 0.; 0.; 0. |] t);
   ]
 
 let non_contiguous_view () =
@@ -502,7 +494,7 @@ let reduction_tests =
         Nx.all a |> check_t "all with zero" [||] [| false |];
         let c = Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 1l |] in
         Nx.all c |> check_t "all without zero" [||] [| true |];
-        let empty = Nx.empty Nx.int32 [| 0; 3 |] in
+        let empty = Nx.zeros Nx.int32 [| 0; 3 |] in
         Nx.all empty |> check_t "all empty" [||] [| true |];
         Nx.all ~axes:[ 0 ] empty
         |> check_t "all empty axis" [| 3 |] [| true; true; true |]);
@@ -511,7 +503,7 @@ let reduction_tests =
         Nx.any a |> check_t "any with one" [||] [| true |];
         let c = Nx.create Nx.int32 [| 3 |] [| 0l; 0l; 0l |] in
         Nx.any c |> check_t "any all zeros" [||] [| false |];
-        let empty = Nx.empty Nx.int32 [| 0; 3 |] in
+        let empty = Nx.zeros Nx.int32 [| 0; 3 |] in
         Nx.any empty |> check_t "any empty" [||] [| false |];
         Nx.any ~axes:[ 0 ] empty
         |> check_t "any empty axis" [| 3 |] [| false; false; false |]);
@@ -767,26 +759,28 @@ let indexing_slicing_tests =
     test "set" (fun () ->
         let a = Nx.zeros Nx.float32 shape_2x3 in
         let value = Nx.create Nx.float32 [| 3 |] [| 7.; 8.; 9. |] in
-        Nx.set [ 1 ] a value;
+        let a = Nx.set [ I 1 ] value a in
         check_t "set" shape_2x3 [| 0.; 0.; 0.; 7.; 8.; 9. |] a);
     test "item" (fun () ->
         let a = Nx.create Nx.float32 shape_2x3 test_array in
         equal ~msg:"item [0,0]" (float 1e-6) 1.0 (Nx.item [ 0; 0 ] a);
         equal ~msg:"item [1,2]" (float 1e-6) 6.0 (Nx.item [ 1; 2 ] a));
-    test "set_item" (fun () ->
-        let a = Nx.zeros Nx.float32 shape_2x3 in
-        Nx.set_item [ 0; 1 ] 42.0 a;
-        Nx.set_item [ 1; 2 ] 99.0 a;
-        equal ~msg:"set_item [0,1]" (float 1e-6) 42.0 (Nx.item [ 0; 1 ] a);
-        equal ~msg:"set_item [1,2]" (float 1e-6) 99.0 (Nx.item [ 1; 2 ] a));
+    test "set element" (fun () ->
+        let a =
+          Nx.zeros Nx.float32 shape_2x3
+          |> Nx.set [ I 0; I 1 ] (Nx.scalar Nx.float32 42.0)
+          |> Nx.set [ I 1; I 2 ] (Nx.scalar Nx.float32 99.0)
+        in
+        equal ~msg:"set [0,1]" (float 1e-6) 42.0 (Nx.item [ 0; 1 ] a);
+        equal ~msg:"set [1,2]" (float 1e-6) 99.0 (Nx.item [ 1; 2 ] a));
     test "slice" (fun () ->
         let a = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
         Nx.slice [ Nx.R (1, 4) ] a |> check_t "slice" [| 3 |] [| 2.; 3.; 4. |]);
-    test "set_slice" (fun () ->
+    test "set range" (fun () ->
         let a = Nx.zeros Nx.float32 [| 5 |] in
         let value = Nx.create Nx.float32 [| 2 |] [| 10.; 20. |] in
-        Nx.set_slice [ Nx.R (2, 4) ] a value;
-        check_t "set_slice" [| 5 |] [| 0.; 0.; 10.; 20.; 0. |] a);
+        let a = Nx.set [ Nx.R (2, 4) ] value a in
+        check_t "set range" [| 5 |] [| 0.; 0.; 10.; 20.; 0. |] a);
   ]
 
 let linear_algebra_tests =
@@ -868,7 +862,7 @@ let display_formatting_tests =
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         equal ~msg:"compact tensor" text "float32 [2,2] \n[[1, 2],\n [3, 4]]"
           (Format.asprintf "%a" Nx.pp a);
-        let empty = Nx.empty Nx.float32 [| 0; 3 |] in
+        let empty = Nx.zeros Nx.float32 [| 0; 3 |] in
         equal ~msg:"empty matrix retains metadata" text "float32 [0,3] \n[]"
           (Format.asprintf "%a" Nx.pp empty));
     test "to_string follows pp" (fun () ->

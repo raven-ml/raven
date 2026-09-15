@@ -102,6 +102,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.set` with a `D` window follows every transform: `grad` differentiates
+  both operands, a mapped start under `vmap` writes each example at its own
+  clamped position, and a window on `pmap`'s mapped axis is written shard by
+  shard.
+- **Breaking**: with tensors as values (RFC 0001) there is no in-place
+  update to replay. `Rune.jit` no longer writes an assigned input leaf back
+  to the host on every call, and `grad`, `jvp` and `vmap` have nothing to
+  refuse; carry state by returning it, as the `jit2` example shows.
 - `jit_stats` retires the outputs that were dropped unread and collected
   before it reports, so `resident_bytes` counts only reachable handles. Their
   buffers used to wait for the next compiled call, which made the counter
@@ -750,6 +758,22 @@ thread.
 
 ### Nx
 
+- **Breaking**: tensors are values (RFC 0001, `doc/rfc/0001-tensors-as-values.md`).
+  The in-place writers `blit`, `set` (int-list form), `set_slice`, `set_item`,
+  `put`, `index_put`, `put_along_axis` and the `.%{}<-` / `.${}<-` operators
+  are gone, with `empty` and `empty_like` (a value has no uninitialized form
+  to fill in; use `zeros`) and the `?mode` of `take`. One
+  functional `set specs v t` returns `t` with `v` at the selected positions,
+  and a new index form `D (start, len)` selects a run from a run-time start,
+  so a KV-cache write traces once for every position. Views, broadcasts and
+  overlapping windows are ordinary tensors; `data` lends storage read-only and
+  `of_bigarray` and `of_buffer` take ownership. Tensor-valued indices
+  (`take`, `scatter`) must lie in range: the C backend no longer wraps
+  negatives and raises `Invalid_argument` instead of `Failure`. Build tensors
+  element by element with `create`, `init`, `stack` or a filled bigarray.
+- The backend contract gains `update`, the pure window write `set` lowers to
+  for single indices, unit-step ranges and run-time runs; a compiler can
+  perform it in place.
 - Add `Nx.erfinv`, the inverse error function, beside `erf`. At float64 it
   carries double precision, a seven-digit polynomial refined by Newton steps
   against a series for `erf` that does not depend on the backend's own. It

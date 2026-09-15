@@ -18,7 +18,7 @@ let off_diag n =
 let compute_p dist_sq ~perplexity =
   let n = (shape dist_sq).(0) in
   let target = Float.log perplexity in
-  let p = zeros Float64 [| n; n |] in
+  let rows = ref [] in
   for i = 0 to n - 1 do
     let di = get [ i ] dist_sq in
     let lo = ref 1e-10 in
@@ -28,15 +28,16 @@ let compute_p dist_sq ~perplexity =
       let sigma = (!lo +. !hi) /. 2.0 in
       let beta = 1.0 /. (2.0 *. sigma *. sigma) in
       let pi = exp (mul_s di (-.beta)) in
-      set_item [ i ] 0.0 pi;
+      let pi = set [ I i ] (scalar Float64 0.0) pi in
       let s = item [] (sum pi) in
       let pi = div_s pi (Float.max s 1e-30) in
       let h = -.item [] (sum (mul pi (log (clamp ~min:1e-30 pi)))) in
       row := pi;
       if h > target then hi := sigma else lo := sigma
     done;
-    set [ i ] p !row
+    rows := !row :: !rows
   done;
+  let p = stack ~axis:0 (List.rev !rows) in
   (* Symmetrise: P = (P + P^T) / (2n) *)
   let p = div_s (add p (matrix_transpose p)) (2.0 *. Float.of_int n) in
   clamp ~min:1e-12 p

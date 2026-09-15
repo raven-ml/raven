@@ -165,8 +165,8 @@ concat = np.concatenate([arr1, arr2], axis=0)
 (* Get a single element *)
 let element = Nx.item [0; 1] arr
 
-(* Set a single element *)
-let () = Nx.set_item [0; 1] 5.0 arr
+(* A tensor with one element replaced (tensors are values) *)
+let arr' = Nx.set [I 0; I 1] (Nx.scalar Nx.float32 5.0) arr
 
 (* Get a slice/subarray *)
 let row = Nx.get [0] arr

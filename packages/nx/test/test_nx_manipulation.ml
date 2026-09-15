@@ -56,11 +56,8 @@ let test_reshape_empty () =
 let test_reshape_view_when_contiguous () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let r = Nx.reshape [| 2; 2 |] t in
-  Nx.set_item [ 0 ] 77.0 t;
-  equal ~msg:"reshape view sees source mutations" (float 1e-6) 77.0
-    (Nx.item [ 0; 0 ] r);
-  Nx.set_item [ 0; 0 ] 42.0 r;
-  equal ~msg:"reshape view mutates source" (float 1e-6) 42.0 (Nx.item [ 0 ] t)
+  is_true ~msg:"reshape of a contiguous tensor shares storage"
+    (Nx.data r == Nx.data t)
 
 let test_reshape_copy_when_not_contiguous () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -106,8 +103,7 @@ let test_transpose_invalid_axes () =
 let test_transpose_view () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let tr = Nx.transpose t in
-  Nx.set_item [ 0; 1 ] 99.0 t;
-  equal ~msg:"transpose view modified" (float 1e-6) 99.0 (Nx.item [ 1; 0 ] tr)
+  is_true ~msg:"transpose shares storage" (Nx.data tr == Nx.data t)
 
 (* ───── Concatenate Tests ───── *)
 
@@ -152,8 +148,7 @@ let test_concat_new_array () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   let t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
   let c = Nx.concatenate ~axis:0 [ t1; t2 ] in
-  Nx.set_item [ 0 ] 99.0 t1;
-  equal ~msg:"concat is new array" (float 1e-6) 1.0 (Nx.item [ 0 ] c)
+  is_true ~msg:"concat is new array" (Nx.data c != Nx.data t1)
 
 (* ───── Stack Tests ───── *)
 
@@ -177,8 +172,7 @@ let test_stack_new_array () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   let t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
   let s = Nx.stack ~axis:0 [ t1; t2 ] in
-  Nx.set_item [ 0 ] 99.0 t1;
-  equal ~msg:"stack is new array" (float 1e-6) 1.0 (Nx.item [ 0; 0 ] s)
+  is_true ~msg:"stack is new array" (Nx.data s != Nx.data t1)
 
 (* ───── Split Tests ───── *)
 
@@ -215,8 +209,7 @@ let test_split_views () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let parts = Nx.split ~axis:0 2 t in
   let p1 = List.nth parts 0 in
-  Nx.set_item [ 0 ] 99.0 p1;
-  equal ~msg:"split view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] t)
+  is_true ~msg:"split shares storage" (Nx.data p1 == Nx.data t)
 
 (* ───── Array Split Tests ───── *)
 
@@ -238,8 +231,7 @@ let test_array_split_views () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
   let parts = Nx.array_split ~axis:0 (`Count 2) t in
   let p1 = List.nth parts 0 in
-  Nx.set_item [ 0 ] 99.0 p1;
-  equal ~msg:"array_split view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] t)
+  is_true ~msg:"array_split shares storage" (Nx.data p1 == Nx.data t)
 
 (* ───── Squeeze Expand Tests ───── *)
 
@@ -330,9 +322,7 @@ let test_broadcast_arrays_views () =
   let t2 = Nx.create Nx.float32 [| 1; 1 |] [| 10.0 |] in
   let broadcasted = Nx.broadcast_arrays [ t1; t2 ] in
   let b1 = List.nth broadcasted 0 in
-  Nx.set_item [ 0; 0 ] 99.0 t1;
-  equal ~msg:"broadcast array view modified" (float 1e-6) 99.0
-    (Nx.item [ 0; 0 ] b1)
+  is_true ~msg:"broadcast_arrays shares storage" (Nx.data b1 == Nx.data t1)
 
 let test_broadcast_arrays_invalid () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
@@ -402,14 +392,12 @@ let test_flatten_scalar () =
 let test_flatten_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let flat = Nx.flatten t in
-  Nx.set_item [ 0; 0 ] 99.0 t;
-  equal ~msg:"flatten view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] flat)
+  is_true ~msg:"flatten shares storage" (Nx.data flat == Nx.data t)
 
 let test_ravel_contiguous_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let r = Nx.ravel t in
-  Nx.set_item [ 0; 0 ] 99.0 t;
-  equal ~msg:"ravel view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] r)
+  is_true ~msg:"ravel shares storage" (Nx.data r == Nx.data t)
 
 let test_ravel_non_contiguous_copy () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -439,8 +427,7 @@ let test_flip_axis () =
 let test_flip_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let f = Nx.flip t in
-  Nx.set_item [ 0; 0 ] 99.0 t;
-  equal ~msg:"flip view modified" (float 1e-6) 99.0 (Nx.item [ 1; 1 ] f)
+  is_true ~msg:"flip shares storage" (Nx.data f == Nx.data t)
 
 let test_roll_no_axis () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -455,8 +442,7 @@ let test_roll_negative () =
 let test_moveaxis_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let m = Nx.moveaxis 0 1 t in
-  Nx.set_item [ 0; 0 ] 99.0 t;
-  equal ~msg:"moveaxis view modified" (float 1e-6) 99.0 (Nx.item [ 0; 0 ] m)
+  is_true ~msg:"moveaxis shares storage" (Nx.data m == Nx.data t)
 
 let test_moveaxis_invalid () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -467,8 +453,7 @@ let test_moveaxis_invalid () =
 let test_swapaxes_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let s = Nx.swapaxes 0 1 t in
-  Nx.set_item [ 0; 1 ] 99.0 t;
-  equal ~msg:"swapaxes view modified" (float 1e-6) 99.0 (Nx.item [ 1; 0 ] s)
+  is_true ~msg:"swapaxes shares storage" (Nx.data s == Nx.data t)
 
 let test_swapaxes_invalid () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in

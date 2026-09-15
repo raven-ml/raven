@@ -70,14 +70,6 @@ let test_grad_requires_scalar () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.grad' (fun x -> Nx.mul x x) (vec32 [| 1.0; 2.0 |])))
 
-let test_mutation_raises () =
-  raises_match Exn.invalid_arg (fun () ->
-      ignore
-        (Rune.grad'
-           (fun x ->
-             Nx.set_item [ 0 ] 1.0 x;
-             Nx.sum x)
-           (vec32 [| 1.0; 2.0 |])))
 
 (* Statefulness *)
 
@@ -162,7 +154,6 @@ let tests =
         test "unsupported op raises when its input is tracked"
           test_unsupported_op_raises_when_tracked;
         test "grad requires a scalar objective" test_grad_requires_scalar;
-        test "in-place mutation raises" test_mutation_raises;
       ];
     group "statefulness"
       [

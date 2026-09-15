@@ -25,18 +25,17 @@ let make_blobs ~samples_per_cluster centers =
 let kmeanspp data k =
   let n = (shape data).(0) in
   let d = (shape data).(1) in
-  let centroids = zeros Float64 [| k; d |] in
   let idx = Int32.to_int (item [] (randint ~high:n [||])) in
-  set [ 0 ] centroids (get [ idx ] data);
-  for c = 1 to k - 1 do
-    let current = slice [ R (0, c); A ] centroids in
-    let min_d = min ~axes:[ 1 ] (sq_distances data current) in
+  let centroids = ref (reshape [| 1; d |] (get [ idx ] data)) in
+  for _ = 1 to k - 1 do
+    let min_d = min ~axes:[ 1 ] (sq_distances data !centroids) in
     let chosen =
       Int32.to_int (item [] (categorical (log (clamp ~min:1e-30 min_d))))
     in
-    set [ c ] centroids (get [ chosen ] data)
+    centroids :=
+      concatenate ~axis:0 [ !centroids; reshape [| 1; d |] (get [ chosen ] data) ]
   done;
-  centroids
+  !centroids
 
 let () =
   let true_centers =
@@ -48,32 +47,32 @@ let () =
   let k = 3 in
   Printf.printf "Data: %d points, %d features, %d clusters\n\n" n d k;
 
-  let centroids = kmeanspp data k in
+  let centroids = ref (kmeanspp data k) in
   let labels = ref (zeros Int32 [| n |]) in
   let max_iter = 100 in
   let tol = 1e-6 in
   let converged = ref false in
   let iter = ref 0 in
   while !iter < max_iter && not !converged do
-    labels := argmin ~axis:1 (sq_distances data centroids);
+    labels := argmin ~axis:1 (sq_distances data !centroids);
 
-    let old = copy centroids in
+    let old = !centroids in
     for c = 0 to k - 1 do
       let mask = cast Float64 (equal !labels (scalar Int32 (Int32.of_int c))) in
       let count = item [] (sum mask) in
       if count > 0.0 then begin
         let total = sum ~axes:[ 0 ] (mul data (unsqueeze ~axes:[ 1 ] mask)) in
-        set [ c ] centroids (div_s total count)
+        centroids := set [ I c ] (div_s total count) !centroids
       end
     done;
 
-    let shift = item [] (max (abs (sub centroids old))) in
+    let shift = item [] (max (abs (sub !centroids old))) in
     converged := shift < tol;
     incr iter
   done;
 
   Printf.printf "Converged after %d iterations\n\n" !iter;
-  Printf.printf "Centroids:\n%s\n" (to_string centroids);
+  Printf.printf "Centroids:\n%s\n" (to_string !centroids);
 
   for c = 0 to k - 1 do
     let count =
@@ -83,5 +82,5 @@ let () =
     Printf.printf "  Cluster %d: %.0f points\n" c count
   done;
 
-  let inertia = item [] (sum (min ~axes:[ 1 ] (sq_distances data centroids))) in
+  let inertia = item [] (sum (min ~axes:[ 1 ] (sq_distances data !centroids))) in
   Printf.printf "\nInertia: %.2f\n" inertia

@@ -1458,11 +1458,9 @@ let test_eigh () =
   let vals, vecs = Nx.eigh a in
   check_t ~eps:1e-5 "eigh vals" [| 2 |] [| 1.; 3. |] vals;
   let diag_vals =
-    let zeros = Nx.zeros Nx.float32 [| 2; 2 |] in
-    let z_with_diag = Nx.copy zeros in
-    Nx.set_item [ 0; 0 ] (Nx.item [ 0 ] vals) z_with_diag;
-    Nx.set_item [ 1; 1 ] (Nx.item [ 1 ] vals) z_with_diag;
-    z_with_diag
+    Nx.zeros Nx.float32 [| 2; 2 |]
+    |> Nx.set [ I 0; I 0 ] (Nx.cast Nx.float32 (Nx.get [ 0 ] vals))
+    |> Nx.set [ I 1; I 1 ] (Nx.cast Nx.float32 (Nx.get [ 1 ] vals))
   in
   let recon = Nx.matmul vecs (Nx.matmul diag_vals (Nx.transpose vecs)) in
   check_nx "eigh recon" a recon

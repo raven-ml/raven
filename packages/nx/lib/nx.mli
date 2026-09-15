@@ -124,7 +124,7 @@ val bool : (bool, bool_elt) dtype
 
 (** {2:index Index specifications} *)
 
-(** The type for index specifications used by {!val-slice} and {!set_slice}. *)
+(** The type for index specifications used by {!val-slice} and {!set}. *)
 type index =
   | I of int  (** [I i] selects a single index, reducing the dimension. *)
   | L of int list  (** [L [i0; i1; …]] gathers the listed indices. *)
@@ -140,15 +140,21 @@ type index =
           rank-1 boolean tensor [mask] is [true]. [mask] must have length equal
           to that axis. Equivalent to an [L] gather of the true positions. *)
   | N  (** [N] inserts a new axis of size 1 (does not consume an input axis). *)
+  | D of (int32, int32_elt) t * int
+      (** [D (start, len)] selects the run of [len] positions beginning at the
+          run-time value of the scalar tensor [start], clamped into
+          \[[0], [size - len]\] so the run always fits. Keeps the axis, like [R].
+          [len] is static because traced shapes are: one compiled program
+          serves every position. *)
 
 (** {1:properties Properties} *)
 
 val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-(** [data t] is the underlying flat buffer of [t].
-
-    The buffer is shared: mutations through the buffer are visible through [t]
-    and vice-versa. The buffer may be larger than the tensor's logical extent
-    when [t] is a strided view.
+(** [data t] is the underlying flat buffer of [t], shared with [t] without a
+    copy on host backends and read-only by contract: a tensor is a value, so
+    writing the buffer after wrapping is outside the contract (the same
+    contract as [Bytes.unsafe_to_string]). The buffer may be larger than the
+    tensor's logical extent when [t] is a strided view.
 
     Element [[i0; ...; ik]] of [t] is at buffer index
     [offset t + i0 * s0 + ... + ik * sk], where [sj] is [strides t.(j)] divided
@@ -248,11 +254,6 @@ val init : ('a, 'b) dtype -> int array -> (int array -> 'a) -> ('a, 'b) t
                                               [1, 2, 3]]
     ]} *)
 
-val empty : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [empty dtype shape] is an uninitialized tensor.
-
-    {b Warning.} Elements contain arbitrary values until written. *)
-
 val full : ('a, 'b) dtype -> int array -> 'a -> ('a, 'b) t
 (** [full dtype shape v] is a tensor filled with [v].
 
@@ -272,9 +273,6 @@ val zeros : ('a, 'b) dtype -> int array -> ('a, 'b) t
 val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b) t
 (** [scalar dtype v] is a 0-dimensional tensor containing [v]. The result has
     shape [|\||]. *)
-
-val empty_like : ('a, 'b) t -> ('a, 'b) t
-(** [empty_like t] is {!empty} with the same dtype and shape as [t]. *)
 
 val full_like : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [full_like t v] is {!full} with the same dtype and shape as [t]. *)
@@ -447,15 +445,16 @@ val triu : ?k:int -> ('a, 'b) t -> ('a, 'b) t
     See also {!tril}. *)
 
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_bigarray ba] is a tensor sharing memory with [ba].
+(** [of_bigarray ba] is a tensor over [ba]'s memory, without a copy. The
+    tensor takes ownership: the caller must not write [ba] afterwards. Fill a
+    bigarray, then wrap it, to build a tensor element by element.
 
-    Zero-copy: mutations through either are visible to both.
-
-    See also {!to_bigarray}. *)
+    See also {!to_bigarray}, which always copies. *)
 
 val of_buffer : ('a, 'b) Nx_buffer.t -> shape:int array -> ('a, 'b) t
-(** [of_buffer buf ~shape] is a tensor viewing [buf] with the given [shape]. The
-    product of [shape] must equal the buffer length. *)
+(** [of_buffer buf ~shape] is a tensor viewing [buf] with the given [shape],
+    without a copy; the tensor takes ownership of [buf] as {!of_bigarray} does.
+    The product of [shape] must equal the buffer length. *)
 
 val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
 (** [one_hot ~num_classes indices] is a one-hot encoded tensor.
@@ -1159,23 +1158,16 @@ val copy : ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
         let y = copy x in
-        set_item [ 0 ] 999. y;
-        x, y
-      - : (float, float32_elt) t * (float, float32_elt) t =
-      ([1, 2, 3], [999, 2, 3])
+        data y == data x
+      - : bool = false
     ]}
 
     See also {!contiguous}. *)
 
-val blit : ('a, 'b) t -> ('a, 'b) t -> unit
-(** [blit src dst] copies the elements of [src] into [dst] in-place. Shapes must
-    match exactly.
-
-    Raises [Invalid_argument] if shapes differ. *)
-
 val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [fill v t] is a fresh copy of [t] with every element set to [v]. Does not
-    mutate [t]. *)
+(** [fill v t] is a tensor of [t]'s dtype and shape with every element set to
+    [v]; the same as {!full_like} [t v], with the value first so it pipes.
+    [t] is unchanged. *)
 
 (** {1:indexing Indexing and slicing} *)
 
@@ -1198,10 +1190,6 @@ val get : int list -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!item}, {!val-slice}. *)
 
-val set : int list -> ('a, 'b) t -> ('a, 'b) t -> unit
-(** [set indices t v] writes [v] at the position given by [indices].
-
-    Raises [Invalid_argument] if indices are out of bounds. *)
 
 val slice : index list -> ('a, 'b) t -> ('a, 'b) t
 (** [slice specs t] extracts a sub-tensor using advanced indexing.
@@ -1215,8 +1203,12 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
     - [M mask] — rank-1 boolean mask selecting the true positions along the
       axis; [mask]'s length must equal that axis.
     - [N] — insert a new axis of size 1.
+    - [D (start, len)] — the run of [len] positions from the run-time value of
+      the scalar tensor [start], clamped so the run fits.
 
-    Returns a view when possible.
+    Returns a view for [I], [R], [Rs] with step ±1, [A] and [N]; [L], [M] and
+    [D] gather. A traced [M] mask raises under [Rune.jit] (its result shape
+    depends on data); a traced [D] start is a gather.
 
     Raises [Invalid_argument] if specs are out of bounds, if step is zero, or if
     a mask is not rank 1 or its length does not match the axis.
@@ -1231,17 +1223,36 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
                                               [4, 6]]
     ]}
 
-    See also {!get}, {!set_slice}. *)
+    See also {!get}, {!set}. *)
 
-val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
-(** [set_slice specs t v] writes [v] into the region of [t] selected by [specs].
-    [specs] uses the same index forms as {!val-slice}; [v] is broadcast to the
-    selected shape. An [M mask] spec writes at the masked positions.
+val set : index list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [set specs v t] is [t] with [v], broadcast to the selection, at the
+    positions [specs] select. [t] is unchanged: a tensor is a value, and this
+    is the one way to obtain one that differs from another at chosen
+    positions. [specs] uses the index forms of {!val-slice}; every selection is
+    injective, so an [L] listing a position twice raises.
 
-    Raises [Invalid_argument] if an [N] (new-axis) spec is combined with a
-    gather ([L] or [M]) or a strided range of step other than ±1.
+    The cost is one copy of [t] plus the selection. A mask alone with a [v]
+    that has no extent along the mask (a scalar, or one row per masked row)
+    selects through {!where}; a window ([I], [R], [Rs] with step ±1, [A], [N],
+    [D]) is one backend window write, which a compiler can perform in place;
+    any other combination scatters. Both operands differentiate.
 
-    See also {!val-slice}. *)
+    {@ocaml[
+      # let x = zeros float32 [| 2; 3 |] in
+        set [ I 1; R (1, 3) ] (create float32 [| 2 |] [| 7.; 8. |]) x
+      - : (float, float32_elt) t = float32 [2,3] [[0, 0, 0],
+                                                  [0, 7, 8]]
+    ]}
+
+    Element-by-element construction is not a loop of [set] (each call copies):
+    build the values first with {!create}, {!init}, {!stack} or a filled
+    {!of_bigarray}.
+
+    Raises [Invalid_argument] if [specs] are out of bounds, [v] does not
+    broadcast to the selection, or an [L] repeats a position.
+
+    See also {!val-slice}, {!scatter}. *)
 
 val item : int list -> ('a, 'b) t -> 'a
 (** [item indices t] is the scalar value at [indices]. Indices must cover all
@@ -1254,30 +1265,18 @@ val item : int list -> ('a, 'b) t -> 'a
     Raises [Invalid_argument] if the number of indices is wrong or any index is
     out of bounds.
 
-    See also {!get}, {!set_item}. *)
-
-val set_item : int list -> 'a -> ('a, 'b) t -> unit
-(** [set_item indices v t] sets the element at [indices] to [v] in-place.
-    Indices must cover all dimensions.
-
-    Raises [Invalid_argument] if the number of indices is wrong or any index is
-    out of bounds.
-
-    See also {!item}. *)
+    See also {!get}. *)
 
 val take :
-  ?axis:int ->
-  ?mode:[ `raise | `wrap | `clip ] ->
-  indices:(int32, int32_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [take ?axis ?mode ~indices t] gathers elements from [t] at [indices] along
-    [axis]. When [axis] is omitted, [t] is flattened first. [mode] controls
-    out-of-bounds indices: [`raise] (default) raises, [`wrap] uses modular
-    indexing, [`clip] clamps to bounds.
+  ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [take ?axis ~indices t] gathers elements from [t] at [indices] along
+    [axis]. When [axis] is omitted, [t] is flattened first. Indices lie in
+    \[[0], [size]): wrap them with [mod_ (add_s i n) n] or clamp them with
+    {!clamp} yourself.
 
-    Raises [Invalid_argument] if [mode] is [`raise] and any index is out of
-    bounds.
+    Raises [Invalid_argument] if any index is out of bounds. Under [Rune.jit]
+    no check runs: an out-of-range position reads zero and never touches
+    memory outside [t].
 
     {@ocaml[
       # let x =
@@ -1290,7 +1289,7 @@ val take :
       - : (int32, int32_elt) t = [1, 3, 0]
     ]}
 
-    See also {!put}, {!take_along_axis}. *)
+    See also {!scatter}, {!take_along_axis}. *)
 
 val take_along_axis :
   axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
@@ -1313,73 +1312,7 @@ val take_along_axis :
                                                   [3]]
     ]}
 
-    See also {!take}, {!put_along_axis}. *)
-
-val put :
-  ?axis:int ->
-  indices:(int32, int32_elt) t ->
-  values:('a, 'b) t ->
-  ?mode:[ `raise | `wrap | `clip ] ->
-  ('a, 'b) t ->
-  unit
-(** [put ?axis ~indices ~values ?mode t] writes [values] into [t] at positions
-    given by [indices]. When [axis] is omitted, [t] is flattened first. [mode]
-    defaults to [`raise]. Modifies [t] in-place.
-
-    Raises [Invalid_argument] if [mode] is [`raise] and any index is out of
-    bounds.
-
-    See also {!take}, {!put_along_axis}, {!index_put}. *)
-
-val index_put :
-  indices:(int32, int32_elt) t array ->
-  values:('a, 'b) t ->
-  ?mode:[ `raise | `wrap | `clip ] ->
-  ('a, 'b) t ->
-  unit
-(** [index_put ~indices ~values ?mode t] writes [values] into [t] at the
-    coordinates given by [indices].
-
-    [indices] contains one index tensor per axis of [t]; they are broadcast to a
-    common shape that determines the number of updates. [values] is broadcast to
-    the same shape. Duplicate coordinates overwrite. [mode] defaults to
-    [`raise].
-
-    Raises [Invalid_argument] if the number of index tensors does not match
-    {!ndim} [t].
-
-    {@ocaml[
-      # let t = zeros float32 [| 3; 3 |] in
-        let rows =
-          create int32 [| 3 |] [| 0l; 2l; 1l |]
-        in
-        let cols =
-          create int32 [| 3 |] [| 1l; 0l; 2l |]
-        in
-        index_put ~indices:[| rows; cols |]
-          ~values:(create float32 [| 3 |]
-                     [| 10.; 20.; 30. |])
-          t;
-        t
-      - : (float, float32_elt) t = float32 [3,3] [[0, 10, 0],
-                                                  [0, 0, 30],
-                                                  [20, 0, 0]]
-    ]}
-
-    See also {!put}. *)
-
-val put_along_axis :
-  axis:int ->
-  indices:(int32, int32_elt) t ->
-  values:('a, 'b) t ->
-  ('a, 'b) t ->
-  unit
-(** [put_along_axis ~axis ~indices ~values t] writes [values] into [t] at
-    positions selected by [indices] along [axis]. Modifies [t] in-place.
-
-    Raises [Invalid_argument] if shapes are incompatible.
-
-    See also {!take_along_axis}, {!put}, {!scatter}. *)
+    See also {!take}, {!scatter}. *)
 
 val scatter :
   ?mode:[ `Set | `Add ] ->
@@ -1390,10 +1323,11 @@ val scatter :
   ('a, 'b) t ->
   ('a, 'b) t
 (** [scatter ?mode ?unique_indices ~axis ~indices ~values t] is [t] with
-    [values] placed at the positions selected by [indices] along [axis]: the
-    pure counterpart of {!put_along_axis}. [indices] must match [t]'s shape
-    except along [axis], and [values] is broadcast to [indices]' shape. Index
-    values must be in range for [t]'s size along [axis].
+    [values] placed at the positions selected by [indices] along [axis]; the
+    tensor-indexed form of {!set}. [indices] must match [t]'s shape except
+    along [axis], and [values] is broadcast to [indices]' shape. Index values
+    lie in \[[0], [size along axis]): out of range raises [Invalid_argument]
+    eagerly and writes nothing under [Rune.jit].
 
     [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
     the last update winning at duplicate positions; [`Add] accumulates every
@@ -1401,9 +1335,7 @@ val scatter :
     is selected twice, letting backends skip duplicate handling; the result is
     undefined if the promise is broken.
 
-    Unlike the in-place writes, [scatter] stays a pure tensor expression, so it
-    traces under {!Rune.jit} and differentiates with respect to both [t] and
-    [values].
+    [scatter] differentiates with respect to both [t] and [values].
 
     {@ocaml[
       # let x = zeros float32 [| 2; 3 |] in
@@ -1420,7 +1352,7 @@ val scatter :
 
     Raises [Invalid_argument] if shapes are incompatible.
 
-    See also {!put_along_axis}, {!take_along_axis}. *)
+    See also {!set}, {!take_along_axis}. *)
 
 val compress :
   ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
@@ -2037,14 +1969,8 @@ module Infix : sig
   val ( .%{} ) : ('a, 'b) t -> int list -> ('a, 'b) t
   (** [t.%\{i\}] is {!get} [i t]. *)
 
-  val ( .%{}<- ) : ('a, 'b) t -> int list -> ('a, 'b) t -> unit
-  (** [t.%\{i\} <- v] is {!set} [i t v]. *)
-
   val ( .${} ) : ('a, 'b) t -> index list -> ('a, 'b) t
   (** [t.$\{s\}] is {!val-slice} [s t]. *)
-
-  val ( .${}<- ) : ('a, 'b) t -> index list -> ('a, 'b) t -> unit
-  (** [t.$\{s\} <- v] is {!set_slice} [s t v]. *)
 end
 
 (** {1:reduction Reductions} *)

@@ -57,21 +57,6 @@ let child_twice () =
   print_result (Rune.jit' f (input ()));
   print_result (Rune.jit' f (input ()))
 
-(* An assign-carrying trace: the writeback into the input leaf and the returned
-   sum must survive the save/load round trip. *)
-let child_writeback () =
-  let step =
-    Rune.jit
-      (module Single_f32)
-      (fun w ->
-        Nx.blit (Nx.mul_s w 2.0) w;
-        Nx.sum w)
-  in
-  let w = input () in
-  print_result (step w);
-  print_result (step w);
-  print_result w
-
 let child_pmap () =
   let x = input () in
   let expect = Rune.jit' f x in
@@ -84,7 +69,6 @@ let child_pmap () =
 let run_role = function
   | "once" -> child_once ()
   | "twice" -> child_twice ()
-  | "writeback" -> child_writeback ()
   | "pmap" -> child_pmap ()
   | role -> failwith ("unknown role: " ^ role)
 
@@ -246,15 +230,6 @@ let jitcache_zero_disables () =
   let _, events = run_child ~extra:[ ("JITCACHE", "0") ] ~cache "once" in
   equal (list string) ~msg:"warm cache ignored" [] events
 
-let writeback_survives_the_hit_path () =
-  let cache = fresh_dir () in
-  let cold, cold_events = run_child ~cache "writeback" in
-  equal (list string) ~msg:"cold stores" [ "miss"; "store" ] cold_events;
-  let warm, warm_events = run_child ~cache "writeback" in
-  equal (list string) ~msg:"warm hits" [ "hit" ] warm_events;
-  equal string ~msg:"writeback and outputs identical" (String.trim cold)
-    (String.trim warm)
-
 let pmap_bails () =
   let cache = fresh_dir () in
   let _, events = run_child ~cache "pmap" in
@@ -280,8 +255,6 @@ let () =
                 different_exe_fingerprint_is_a_miss;
               test "JITCACHE=0 disables the cache and touches no disk"
                 jitcache_zero_disables;
-              test "writeback semantics survive the hit path"
-                writeback_survives_the_hit_path;
               test "pmap compilations bail and still work" pmap_bails;
             ];
         ]

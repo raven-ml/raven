@@ -69,9 +69,6 @@ let test_create_negative_shape () =
 
 (* ───── Special Creation Function Tests ───── *)
 
-let test_empty_float32 () =
-  let t = Nx.empty Nx.float32 [| 2; 2 |] in
-  check_shape "empty shape" [| 2; 2 |] t
 
 let test_full_float32 () =
   let t = Nx.full Nx.float32 [| 2; 3 |] 5.5 in
@@ -81,11 +78,6 @@ let test_full_like_int32 () =
   let ref_t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
   let t = Nx.full_like ref_t 10l in
   check_t "full_like" [| 2; 2 |] [| 10l; 10l; 10l; 10l |] t
-
-let test_empty_like_float32 () =
-  let ref_t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  let t = Nx.empty_like ref_t in
-  check_shape "empty_like shape" [| 2; 2 |] t
 
 let test_zeros_like_float32 () =
   let ref_t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -305,8 +297,9 @@ let test_get_item_2x2 () =
 
 let test_set_item_2x2 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  Nx.set_item [ 1; 0 ] 5.0 t;
-  equal ~msg:"set [1,0]" (float 1e-6) 5.0 (Nx.item [ 1; 0 ] t)
+  let t' = Nx.set [ I 1; I 0 ] (Nx.scalar Nx.float32 5.0) t in
+  equal ~msg:"set [1,0]" (float 1e-6) 5.0 (Nx.item [ 1; 0 ] t');
+  equal ~msg:"source untouched" (float 1e-6) 3.0 (Nx.item [ 1; 0 ] t)
 
 let test_get_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -317,12 +310,12 @@ let test_get_item_out_of_bounds () =
 let test_set_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   check_invalid_arg "out of bounds set"
-    "set: index 2 at dimension 1, out of bounds for shape [2,2], index 1 at \
-     dim 1: 2 not in [0, 2)" (fun () -> Nx.set_item [ 0; 2 ] 5.0 t)
+    "slice: index 2 out of bounds [0, 2)" (fun () ->
+      Nx.set [ I 0; I 2 ] (Nx.scalar Nx.float32 5.0) t)
 
 let test_set_item_type_safety () =
   let t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-  Nx.set_item [ 0; 0 ] 5l t;
+  let t = Nx.set [ I 0; I 0 ] (Nx.scalar Nx.int32 5l) t in
   equal ~msg:"set int32" int32 5l (Nx.item [ 0; 0 ] t)
 
 let test_get_scalar_from_0d () =
@@ -331,7 +324,7 @@ let test_get_scalar_from_0d () =
 
 let test_set_scalar_in_0d () =
   let t = Nx.scalar Nx.float32 42.0 in
-  Nx.set_item [] 99.0 t;
+  let t = Nx.set [] (Nx.scalar Nx.float32 99.0) t in
   equal ~msg:"set scalar" (float 1e-6) 99.0 (Nx.item [] t)
 
 let test_get_view_row () =
@@ -347,12 +340,12 @@ let test_get_scalar () =
 let test_set_view_row () =
   let t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
   let v = Nx.create Nx.int32 [| 2 |] [| 8l; 9l |] in
-  Nx.set_slice [ Nx.I 0 ] t v;
+  let t = Nx.set [ Nx.I 0 ] v t in
   check_t "set row 0" [| 2; 2 |] [| 8l; 9l; 3l; 4l |] t
 
 let test_set_scalar () =
   let t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-  Nx.set_item [ 1; 0 ] 99l t;
+  let t = Nx.set [ I 1; I 0 ] (Nx.scalar Nx.int32 99l) t in
   check_t "set scalar [1,0]" [| 2; 2 |] [| 1l; 2l; 99l; 4l |] t
 
 (* ───── Slicing Tests ───── *)
@@ -370,8 +363,7 @@ let test_slice_with_steps () =
 let test_slice_view () =
   let t = Nx.create Nx.float32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let s = Nx.slice [ Nx.R (1, 2); Nx.R (0, 2) ] t in
-  Nx.set_item [ 1; 0 ] 99.0 t;
-  equal ~msg:"slice view modified" (float 1e-6) 99.0 (Nx.item [ 0; 0 ] s)
+  is_true ~msg:"a unit-step slice shares storage" (Nx.data s == Nx.data t)
 
 let test_slice_negative_indices () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
@@ -457,11 +449,8 @@ let test_offset_after_multiple_slices () =
 let test_to_bigarray () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let ba = Nx.to_bigarray t in
-  equal ~msg:"initial [0,0]" (float 1e-6) 1.0
-    (Bigarray.Genarray.get ba [| 0; 0 |]);
-  Nx.set_item [ 0; 0 ] 55.0 t;
-  equal ~msg:"after set [0,0]" (float 1e-6) 55.0
-    (Bigarray.Genarray.get ba [| 0; 0 |])
+  equal ~msg:"[0,0]" (float 1e-6) 1.0 (Bigarray.Genarray.get ba [| 0; 0 |]);
+  equal ~msg:"[1,1]" (float 1e-6) 4.0 (Bigarray.Genarray.get ba [| 1; 1 |])
 
 let test_to_bigarray_partial_slice () =
   let base = Nx.arange Nx.float32 0 5 1 |> Nx.reshape [| 5; 1 |] in
@@ -480,39 +469,8 @@ let test_to_bigarray_partial_slice () =
 let test_copy () =
   let original = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let copy_arr = Nx.copy original in
-  Nx.set_item [ 0 ] 10.0 original;
-  equal ~msg:"original [0]" (float 1e-6) 10.0 (Nx.item [ 0 ] original);
-  equal ~msg:"copy [0]" (float 1e-6) 1.0 (Nx.item [ 0 ] copy_arr)
-
-let test_blit_incompatible () =
-  let src = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
-  let dst = Nx.zeros Nx.float32 [| 3 |] in
-  raises ~msg:"incompatible shapes"
-    (Invalid_argument
-       "blit: shape mismatch [2] vs [3], source and destination must have \
-        identical shapes") (fun () -> Nx.blit src dst)
-
-let test_fill_returns_copy () =
-  let t = Nx.zeros Nx.float32 [| 2; 2 |] in
-  let filled = Nx.fill 7.0 t in
-  equal ~msg:"fill copy result" (float 1e-6) 7.0 (Nx.item [ 0; 0 ] filled);
-  equal ~msg:"fill copy leaves source intact" (float 1e-6) 0.0
-    (Nx.item [ 0; 0 ] t)
-
-let test_blit_self () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Nx.blit t t;
-  check_t "blit self" [| 3 |] [| 1.; 2.; 3. |] t
-
-(* TODO: This test is currently failing due to overlapping memory regions in
-   blit. See nx/test/failing/bug_blit_overlapping.ml for details. Uncomment when
-   overlapping blit is properly handled (e.g., using
-   https://github.com/dinosaure/overlap).
-
-   let test_blit_overlapping_views () = let t = Nx.create Nx.float32 [| 5 |] [|
-   1.; 2.; 3.; 4.; 5. |] in let view1 = Nx.slice [ Nx.R (0, 3) ] t in let view2
-   = Nx.slice [ Nx.R (2, 5) ] t in Nx.blit view1 view2; check_t "blit
-   overlapping views" [| 5 |] [| 1.; 2.; 1.; 2.; 3. |] t *)
+  is_true ~msg:"copy has its own storage" (Nx.data copy_arr != Nx.data original);
+  check_t "copy values" [| 3 |] [| 1.0; 2.0; 3.0 |] copy_arr
 
 (* ───── Type Conversion Tests ───── *)
 
@@ -559,10 +517,8 @@ let creation_edge_cases =
 
 let special_creation =
   [
-    test "empty float32" test_empty_float32;
     test "full float32" test_full_float32;
     test "full_like int32" test_full_like_int32;
-    test "empty_like float32" test_empty_like_float32;
     test "zeros_like float32" test_zeros_like_float32;
     test "ones_like int32" test_ones_like_int32;
     test "zeros max size" test_zeros_max_size;
@@ -660,9 +616,6 @@ let utility_operations =
     test "to bigarray" test_to_bigarray;
     test "to bigarray partial slice" test_to_bigarray_partial_slice;
     test "copy" test_copy;
-    test "blit incompatible" test_blit_incompatible;
-    test "fill returns copy" test_fill_returns_copy;
-    test "blit self" test_blit_self;
     (* ("blit overlapping views", `Quick, test_blit_overlapping_views ); *)
   ]
 

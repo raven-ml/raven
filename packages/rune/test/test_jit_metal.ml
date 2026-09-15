@@ -23,31 +23,7 @@ let test_matmul_grad_on_metal () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through metal jit" (to_arr (Rune.grad' f x)) (g x)
 
-(* Captured tensors are uploaded once per compilation and stay resident on the
-   device: a later mutation of the capture is not observed (unlike on the CPU
-   device, whose buffers alias the tensor's memory). *)
-let test_capture_is_uploaded_once () =
-  let c = vec32 [| 10.0; 20.0; 30.0 |] in
-  let g = Rune.jit' ~device:"METAL" (fun x -> Nx.add x c) in
-  check_arr ~msg:"initial capture" [| 11.0; 21.0; 31.0 |]
-    (g (vec32 [| 1.0; 1.0; 1.0 |]));
-  Nx.blit (vec32 [| 0.0; 0.0; 0.0 |]) c;
-  check_arr ~msg:"capture stays at its compile-time value"
-    [| 11.0; 21.0; 31.0 |]
-    (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures are compile-time constants: a function that assigns to one fails at
-   trace time. Mutable state belongs in the input structure. *)
-let test_assign_to_capture_raises () =
-  let s = vec32 [| 1.0; 2.0 |] in
-  let g =
-    Rune.jit' ~device:"METAL" (fun x ->
-        Nx.blit (Nx.add s x) s;
-        Nx.mul_s s 10.0)
-  in
-  raises_match
-    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> ignore (g (vec32 [| 1.0; 1.0 |])))
 
 let tests =
   [
@@ -55,8 +31,6 @@ let tests =
       [
         test "element-wise chain matches eager" test_elementwise_on_metal;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
-        test "captures are uploaded once" test_capture_is_uploaded_once;
-        test "assigning to a capture raises" test_assign_to_capture_raises;
       ];
   ]
 

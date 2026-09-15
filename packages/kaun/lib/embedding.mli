@@ -49,7 +49,7 @@ val apply : (float, 'b) Nx.t t -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
     The gather is differentiable through Rune: the table's gradient accumulates
     each row's cotangent as many times as its id occurs.
 
-    Raises [Failure] if an id is negative or not below [vocab]. *)
+    Raises [Invalid_argument] if an id is negative or not below [vocab]. *)
 
 (** {1:traversals Traversals}
 

@@ -717,22 +717,6 @@ let test_grad_through_scan_matrix_carry () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
-(* In-place state *)
-
-let test_assign_writes_back_to_leaf () =
-  let step =
-    Rune.jit
-      (module Params)
-      (fun p ->
-        Nx.blit (Nx.mul_s p.w 2.0) p.w;
-        Nx.sum p.w)
-  in
-  let p = params () in
-  let s = step p in
-  check_arr ~msg:"sum of updated w" [| 4.0 |] s;
-  check_arr ~msg:"w updated in place" [| 2.0; -4.0; 6.0 |] p.w;
-  ignore (step p);
-  check_arr ~msg:"second step compounds" [| 4.0; -8.0; 12.0 |] p.w
 
 (* Buffer sharing: strided leaves must fall back to copies, views with an offset
    must read the right span, and each call must return tensors with their own
@@ -761,30 +745,7 @@ let test_outputs_have_their_own_storage () =
   check_arr ~msg:"first result unchanged by the second call" [| 2.0; 4.0; 6.0 |]
     y1
 
-(* Mutating a capture between calls has unspecified visibility. This pins the
-   CPU device's zero-copy binding, which happens to observe the mutation because
-   contiguous captures alias the tensor's memory; other devices keep the
-   compile-time value. Not a supported pattern — thread changing values as input
-   leaves. *)
-let test_cpu_aliasing_observes_closure_mutation () =
-  let c = vec32 [| 10.0; 20.0; 30.0 |] in
-  let g = Rune.jit' (fun x -> Nx.add x c) in
-  check_arr ~msg:"initial capture" [| 11.0; 21.0; 31.0 |]
-    (g (vec32 [| 1.0; 1.0; 1.0 |]));
-  Nx.blit (vec32 [| 0.0; 0.0; 0.0 |]) c;
-  check_arr ~msg:"mutated capture is read through the alias" [| 1.0; 1.0; 1.0 |]
-    (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures are compile-time constants: a function that assigns to one fails at
-   trace time, on every device. *)
-let test_assign_to_capture_raises () =
-  let s = vec32 [| 1.0; 2.0 |] in
-  let g =
-    Rune.jit' (fun x ->
-        Nx.blit (Nx.add s x) s;
-        Nx.mul_s s 10.0)
-  in
-  raises_jit_error (fun () -> g (vec32 [| 1.0; 1.0 |]))
 
 (* Sliding windows *)
 
@@ -972,12 +933,12 @@ let test_forced_handle_feeds_current_bytes () =
       let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
       let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
       check_arr ~msg:"reading forces the handle" [| 2.0; 4.0; 6.0 |] h;
-      (* Once forced it is a plain host tensor: mutations are honored and
-         feeding it back re-uploads the current bytes. *)
-      Nx.set_item [ 0 ] 10.0 h;
+      (* Once forced it is a plain host tensor: a value derived from it is fed
+         back through the host path and re-uploads. *)
+      let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
       let h2, up, _ = delta (fun () -> g h) in
       is_true ~msg:"a forced handle re-uploads" (up > 0);
-      check_arr ~msg:"the mutation is observed" [| 20.0; 8.0; 12.0 |] h2)
+      check_arr ~msg:"the new value is observed" [| 20.0; 8.0; 12.0 |] h2)
 
 let test_same_handle_as_two_leaves () =
   with_force_copy (fun () ->
@@ -1046,18 +1007,6 @@ let test_pass_through_output_survives () =
       check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
       check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v)
 
-let test_assign_to_resident_leaf () =
-  with_force_copy (fun () ->
-      let producer = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let h = producer (vec32 [| 1.0; 2.0 |]) in
-      let step =
-        Rune.jit' (fun x ->
-            Nx.blit (Nx.mul_s x 2.0) x;
-            Nx.sum x)
-      in
-      let s = step h in
-      check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
-      check_arr ~msg:"the writeback forced h and updated it" [| 4.0; 8.0 |] h)
 
 let test_grad_over_jit_with_deferred_arg () =
   with_force_copy (fun () ->
@@ -1225,21 +1174,6 @@ let test_donate_false_leaves_handle_readable () =
       ignore (g h1);
       check_arr ~msg:"default keeps the input handle alive" [| 2.0; 4.0 |] h1)
 
-let test_donated_writeback_leaf_survives () =
-  with_force_copy (fun () ->
-      let producer = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let h = producer (vec32 [| 1.0; 2.0 |]) in
-      let step =
-        Rune.jit' ~donate:true (fun x ->
-            Nx.blit (Nx.mul_s x 2.0) x;
-            Nx.sum x)
-      in
-      let s = step h in
-      (* The writeback forces the leaf before donation applies: the handle holds
-         the updated host value, and its device storage is released by the force
-         rather than the donation. *)
-      check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
-      check_arr ~msg:"the written-back leaf is not consumed" [| 4.0; 8.0 |] h)
 
 (* One tensor behind both leaves on the tracing call: two inputs that happen to
    be equal, each bound to its own position, so a later call may pass distinct
@@ -1335,10 +1269,6 @@ let tests =
       ];
     group "state"
       [
-        test "assign writes back to a leaf" test_assign_writes_back_to_leaf;
-        test "cpu aliasing observes closure mutation (unspecified)"
-          test_cpu_aliasing_observes_closure_mutation;
-        test "assigning to a capture raises" test_assign_to_capture_raises;
         test "non-contiguous inputs fall back to copies"
           test_non_contiguous_input_matches_eager;
         test "offset views read the right span"
@@ -1360,8 +1290,6 @@ let tests =
           test_cross_signature_feedback;
         test "pass-through outputs survive later calls"
           test_pass_through_output_survives;
-        test "assigning to a resident leaf forces then writes back"
-          test_assign_to_resident_leaf;
         test "grad over jit forces deferred arguments"
           test_grad_over_jit_with_deferred_arg;
         test "vmap over jit forces deferred arguments"
@@ -1386,8 +1314,6 @@ let tests =
         test "host inputs are unaffected" test_host_input_unaffected_by_donate;
         test "donate:false is the unchanged default"
           test_donate_false_leaves_handle_readable;
-        test "a written-back leaf survives donation"
-          test_donated_writeback_leaf_survives;
       ];
     group "linear algebra"
       [

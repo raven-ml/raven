@@ -181,7 +181,7 @@ let test_embedding_gradients () =
 let test_embedding_rejects_out_of_bounds () =
   let p = embedding_4x3 () in
   raises_match ~msg:"id 4 is out of bounds for vocab 4"
-    (function Failure _ -> true | _ -> false)
+    (function Invalid_argument _ -> true | _ -> false)
     (fun () -> Embedding.apply p (Nx.create Nx.int32 [| 1 |] [| 4l |]))
 
 let test_embedding_rejects_bad_geometry () =
