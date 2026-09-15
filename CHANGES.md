@@ -137,8 +137,9 @@ All notable changes to this project will be documented in this file.
 ### Munin (new)
 
 - The system statistics stubs build on Windows. CPU times come from
-  `GetSystemTimes`, disk space and page size from the Win32 calls; the load
-  average, which Windows does not keep, reads as zero.
+  `GetSystemTimes`, memory from `GlobalMemoryStatusEx`, disk space and page
+  size from the Win32 calls; the load average, which Windows does not keep,
+  reads as zero.
 
 Local experiment tracking for Raven. Evolves `kaun-board` into a full
 experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.

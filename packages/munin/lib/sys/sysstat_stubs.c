@@ -194,6 +194,32 @@ CAMLprim value caml_sysstat_get_memory(value unit) {
               caml_copy_int64(swap_ok ? (int64_t)swap_info.xsu_total : 0));
   Store_field(result, 11,
               caml_copy_int64(swap_ok ? (int64_t)swap_info.xsu_used : 0));
+#elif defined(_WIN32)
+  /* Physical memory is free plus used, in bytes (page size 1). The page file
+     beyond physical memory stands in for swap. */
+  MEMORYSTATUSEX status;
+  status.dwLength = sizeof status;
+  if (!GlobalMemoryStatusEx(&status)) {
+    caml_failwith("GlobalMemoryStatusEx failed");
+  }
+  int64_t total = (int64_t)status.ullTotalPhys;
+  int64_t avail = (int64_t)status.ullAvailPhys;
+  int64_t commit_total = (int64_t)status.ullTotalPageFile;
+  int64_t commit_used = commit_total - (int64_t)status.ullAvailPageFile;
+  int64_t swap_total = commit_total > total ? commit_total - total : 0;
+  int64_t swap_used = commit_used - (total - avail);
+  if (swap_used < 0) swap_used = 0;
+  if (swap_used > swap_total) swap_used = swap_total;
+  result = caml_alloc_tuple(12);
+  for (int i = 0; i < 12; i++) {
+    Store_field(result, i, caml_copy_int64(0));
+  }
+  Store_field(result, 0, caml_copy_int64(total));
+  Store_field(result, 1, caml_copy_int64(1));
+  Store_field(result, 5, caml_copy_int64(total - avail));
+  Store_field(result, 9, caml_copy_int64(avail));
+  Store_field(result, 10, caml_copy_int64(swap_total));
+  Store_field(result, 11, caml_copy_int64(swap_used));
 #else
   /* Linux: Memory stats read from /proc/meminfo in OCaml */
   result = caml_alloc_tuple(12);
