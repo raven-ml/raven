@@ -66,15 +66,18 @@ let ndev_of devices node =
   | Some (Multi ds) -> List.length ds
   | _ -> 1
 
-(* Partition [src] along [axis] using a symbolic device index. Each device
-   takes its slice: [dnum * sz .. dnum * sz + sz). *)
+(* The device axis: a range over the devices that is never looped over.
+   Codegen lowers it to the per-launch [_device_num] variable. *)
+let device_range ndev =
+  U.range ~size:(int_ ndev) ~axis:(-1) ~kind:Axis_type.Device ()
+
+(* Partition [src] along [axis] by the device range. Each device takes its
+   slice: [dnum * sz .. dnum * sz + sz). *)
 let shard shape ndev src axis =
   let dim = List.nth shape axis in
   let () = if dim mod ndev <> 0 then failwith "multi axis uneven" in
   let sz = dim / ndev in
-  let dnum =
-    U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
-  in
+  let dnum = device_range ndev in
   let off = U.alu_binary ~op:Ops.Mul ~lhs:dnum ~rhs:(int_ sz) in
   let before =
     List.mapi (fun i _ -> if i <> axis then int_ 0 else off) shape
@@ -89,9 +92,7 @@ let shard shape ndev src axis =
    full tensor. *)
 let unshard shape ndev src axis =
   let bsz = List.nth shape axis in
-  let dnum =
-    U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
-  in
+  let dnum = device_range ndev in
   let off = U.alu_binary ~op:Ops.Mul ~lhs:(int_ bsz) ~rhs:dnum in
   let before =
     List.mapi (fun i _ -> if i <> axis then int_ 0 else off) shape
@@ -114,27 +115,26 @@ let extract_int_shape node =
   in
   go [] elems
 
-(* Walk the DAG collecting every [_device_num] symbolic parameter. *)
-let device_num_vars node =
+(* Walk the DAG collecting every device range. *)
+let device_ranges node =
   U.find_nodes
     (fun u ->
-      match U.Arg.as_param_arg (U.arg u) with
-      | Some { name = Some "_device_num"; _ } -> U.op u = Ops.Param
-      | Some _ -> false
-      | None -> false)
+      match U.as_range u with
+      | Some { kind = Axis_type.Device; _ } -> true
+      | _ -> false)
     node
 
-(* Substitute every [_device_num] variable in [node] with constant [i]. *)
+(* Substitute every device range in [node] with constant [i]. *)
 let subst_device_num node i =
-  match device_num_vars node with
+  match device_ranges node with
   | [] -> node
-  | dvars ->
+  | drngs ->
       let mappings =
         List.map
-          (fun dv ->
-            let dt = U.dtype dv in
-            (dv, U.const (Const.int dt i)))
-          dvars
+          (fun r ->
+            let dt = U.dtype r in
+            (r, U.const (Const.int dt i)))
+          drngs
       in
       U.substitute mappings node
 

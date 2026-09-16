@@ -1,10 +1,10 @@
 (* Parity case: replicate (copy-to-tuple) + elementwise on replicated input.
 
    [a] is a single-device param sharded onto 2 devices (a copy to the
-   device tuple followed by a symbolic shrink wrapped in MULTI), [b] is
-   replicated by a copy to the device tuple. The broadcast copy becomes
-   per-device copies in an MSTACK, and the shard's shrink is moved before
-   the MSTACK with the [_device_num] variable substituted per device.
+   device tuple followed by a shrink along the device range, wrapped in
+   MULTI), [b] is replicated by a copy to the device tuple. The broadcast
+   copy becomes per-device copies in an MSTACK, and the shard's shrink is
+   moved before the MSTACK with the device range substituted per device.
 
    Backends are limited to cpu and cuda: kernel-name counters are shared
    across backends, so the reference must be generated with exactly the
@@ -23,13 +23,13 @@ let backends =
 let devices = [ "CPU:0"; "CPU:1" ]
 
 (* shard(devices, axis=0): copy to the device tuple, shrink each device's
-   slice with the symbolic [_device_num] offset, wrap in MULTI. *)
+   slice at an offset along the device range, wrap in MULTI. *)
 let shard_axis0 src ~rows ~cols =
   let ndev = List.length devices in
   let sz = rows / ndev in
   let copied = U.copy ~src ~device:(Multi devices) () in
   let dnum =
-    U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
+    U.range ~size:(U.const_int ndev) ~axis:(-1) ~kind:Axis_type.Device ()
   in
   (* Shrink bounds are shape descriptors: [index]-typed like tinygrad's
      [shard], not the [weakint] range-size literals [Helpers.idx] mints. *)

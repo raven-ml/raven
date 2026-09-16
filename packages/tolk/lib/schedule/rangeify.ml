@@ -1412,32 +1412,38 @@ let renumber_range ctx n =
            ~dtype:(U.dtype n) ~parents:v.parents ())
   | _ -> None
 
+(* Ranges are numbered in the order a depth-first walk first pops them,
+   where a node's sources are pushed in order and a node already waiting on
+   the stack is never pushed again. A range closed by an END or a REDUCE is
+   pushed next to the body it closes and so is numbered after every range
+   first met inside that body; a range nothing closes, such as the device
+   range, is numbered where it is first read. Call bodies are not entered. *)
 let renumber_kernel_ranges root =
-  let add_unique acc r =
-    if U.op r <> Ops.Range || List.exists (fun x -> x == r) acc then acc
-    else acc @ [ r ]
+  let on_stack = U.Ref_tbl.create 64 in
+  let stack = ref [ root ] in
+  U.Ref_tbl.replace on_stack root ();
+  let ranges = ref [] in
+  let rec run () =
+    match !stack with
+    | [] -> ()
+    | n :: rest ->
+        stack := rest;
+        if U.op n = Ops.Range then ranges := n :: !ranges;
+        let srcs = U.src n in
+        let first =
+          match U.op n with Ops.Call | Ops.Function -> 1 | _ -> 0
+        in
+        for i = Array.length srcs - 1 downto first do
+          let s = srcs.(i) in
+          if not (U.Ref_tbl.mem on_stack s) then begin
+            U.Ref_tbl.replace on_stack s ();
+            stack := s :: !stack
+          end
+        done;
+        run ()
   in
-  let topo = U.toposort root in
-  let reduce_ranges =
-    List.fold_left
-      (fun acc n ->
-        match U.as_reduce n with
-        | Some { ranges; _ } -> List.fold_left add_unique acc ranges
-        | None -> acc)
-      [] topo
-  in
-  let end_ranges =
-    List.fold_left
-      (fun acc n ->
-        match U.as_end n with
-        | Some { ranges; _ } -> List.fold_left add_unique acc ranges
-        | None -> acc)
-      reduce_ranges topo
-  in
-  let all_ranges =
-    List.fold_left add_unique end_ranges
-      (List.filter (fun n -> U.op n = Ops.Range) topo)
-  in
+  run ();
+  let all_ranges = List.rev !ranges in
   let mappings =
     List.mapi
       (fun axis r ->
@@ -1580,10 +1586,17 @@ let compact_kernel_params ctx body =
   in
   body, bufs @ List.rev ctx.vars
 
+let is_device_range r =
+  match U.as_range r with
+  | Some { kind = Axis_type.Device; _ } -> true
+  | _ -> false
+
 let split_store n =
   match U.op n with
   | Ops.Store | Ops.End ->
-      if U.ranges n <> [] then None
+      (* An open loop range means the store belongs to an enclosing kernel.
+         An open device range is fine: it is bound per device at launch. *)
+      if List.exists (fun r -> not (is_device_range r)) (U.ranges n) then None
       else
         let ctx = create_split_context () in
         let record ptr idxs =

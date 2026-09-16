@@ -62,29 +62,6 @@ named; do not pick one up before it lands.
 
   **Blocker**: a host pseudo-device. Converges to `copy_from` if one lands.
 
-- **`pm_device_to_var` is not in `codegen/gpudims.ml`** (`7d4892629`). The
-  reference lowers an `AxisType.DEVICE` range to the `_device_num` variable at
-  the end of `pm_add_gpudims`, and drops that range from the `END`s that closed
-  it. `Axis_type.Device` and `Ops.Unshard` both exist now, but nothing
-  constructs a DEVICE range, so there is nothing to lower.
-
-  **Blocker**: the MULTI → UNSHARD rework, which is what starts building DEVICE
-  ranges. Lands with it, together with the matching DEVICE guards in
-  `codegen/simplify.ml`'s `mark_range_mod` and `opt/postrange.ml`'s `rngs`.
-
-  *What catches a bad port*: `test/unit/engine/test_multi.ml` and the twelve
-  `test/parity/multi_*` cases, which dump both the scheduled graph (stage 5)
-  and the rendered source (stage 7) — a DEVICE range that reaches the opt axes
-  or fails to become `_device_num` shows up in both.
-
-  **Blocker corrected**: it is not `Axis_type.Device`, which exists. The
-  producer is `lib/schedule/multi.ml:84,101`, which still mints `_device_num`
-  via `U.variable` instead of a DEVICE range — scheduler work, not a codegen
-  gap. Porting it deletes tolk's `_device_num` special cases at
-  `rangeify.ml:632,2011` and `indexing.ml:604`, but touches four files across
-  three ownerships and moves twelve `multi_*` goldens, so it wants one commit
-  by one owner.
-
 - **Negative slice bounds against a symbolic size** (`mixin/movement.py`). The
   reference resolves `start`/`stop` against a possibly symbolic `size` before
   deciding whether the slice is fully concrete. `Movement.parsed` is built from
@@ -389,11 +366,11 @@ never fired.)
   `Uop.param` must keep defaulting to `None`, which is what the reference does
   for non-variable params.
 
-- **Sharded axis ids are off by one** (7 files, `multi_*` stage 5/7 CPU). The
-  reference numbers the sharded range axis 1 and renders `Lidx1`; tolk numbers
-  it axis 0 and renders `Lidx0`. Consistent with the reference reserving axis 0
-  for the `AxisType.DEVICE` range that tolk does not build yet — the blocked
-  `pm_device_to_var` item. Cosmetic today; it resolves with that work.
+(Resolved: the sharded axis ids that were off by one. `Multi.shard` and
+`Multi.unshard` now slice along an `Axis_type.Device` range, which the kernel
+split numbers first and `Gpudims.pm_add_gpudims` lowers to `_device_num`;
+`renumber_kernel_ranges` follows the reference's rewrite pop order so the
+device axis takes 0 and the loop axes follow.)
 
 ## Confirmed no-ops in the pin update
 

@@ -1433,7 +1433,14 @@ let opaque_call_body = function
   | _ -> false
 
 let call ~body ~args ~info =
-  if ranges body <> [] then
+  (* Calls are launched per device, so an open device range may cross the
+     call boundary. *)
+  let is_device_range r =
+    match as_range r with
+    | Some { kind = Axis_type.Device; _ } -> true
+    | _ -> false
+  in
+  if List.exists (fun r -> not (is_device_range r)) (ranges body) then
     invalid_arg "Uop.call: ranges are leaking out of the call body";
   let op, body =
     if opaque_call_body (op body) then Ops.Call, body

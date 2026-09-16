@@ -299,9 +299,12 @@ let simplify_ranges root =
 (* Split [range(N) floormod C] into [outer(N//C) * C + inner(C)] whenever
    [C] divides [range_size]. *)
 
+(* Ranges that are not looped over (warp lanes, the device axis) cannot be
+   split. *)
 let can_split_range r c =
   is_range r && is_const c
   && range_kind r <> Axis_type.Warp
+  && range_kind r <> Axis_type.Device
   && is_const (range_size r)
   &&
   match const_int_value c with

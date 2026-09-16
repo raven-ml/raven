@@ -167,6 +167,11 @@ thread.
 
 ### Tolk (new)
 
+- Multi-device sharding slices along a device range instead of a
+  `_device_num` variable. The range is not a program axis: codegen lowers
+  it to `_device_num` and keeps it out of range splitting and the
+  optimizer's axes, and kernels number it first, so a sharded kernel's loop
+  axes now start at 1 (`Lidx1`), as in the reference.
 - Fix the symbolic division rules, which never fired: `x/x`, `(x*y)/y`,
   `0/0`, `(x*0)/0` and `(x/y)/z` were matched on `Fdiv`, an operation that
   only exists after the late decompositions, while a division in the graph

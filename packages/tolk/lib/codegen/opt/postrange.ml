@@ -63,10 +63,13 @@ type shape = {
   shape_str : string list;
 }
 
+(* Always in order by axis type. The device axis is launched, not an opt
+   axis. *)
 let compute_shape ast =
   let rngs =
     U.toposort ast
-    |> List.filter (fun u -> is_range u && U.vmax u > 0)
+    |> List.filter (fun u ->
+           is_range u && U.vmax u > 0 && range_kind u <> Axis_type.Device)
     |> List.sort (fun a b ->
          compare
            (Axis_type.to_pos (range_kind a), range_axis a, range_sub a)

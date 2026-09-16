@@ -52,8 +52,8 @@ let f32_buffer_node device_name dims =
     ~shape:(shape_node dims) ~device:(U.Single device_name) ()
 
 (* Sharding: copy to the device tuple, then take each device's slice of the
-   shard axis through the symbolic [_device_num] variable. The frontend shard
-   API builds the same graph. *)
+   shard axis at an offset along the device range. The frontend shard API
+   builds the same graph. *)
 
 let int_ = U.const_int
 let emit = function [ d ] -> d | ds -> U.stack ds
@@ -62,7 +62,7 @@ let shard_shrink shape ndev src axis =
   let dim = List.nth shape axis in
   let sz = dim / ndev in
   let dnum =
-    U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
+    U.range ~size:(int_ ndev) ~axis:(-1) ~kind:Axis_type.Device ()
   in
   let off = U.alu_binary ~op:Ops.Mul ~lhs:dnum ~rhs:(int_ sz) in
   let before =

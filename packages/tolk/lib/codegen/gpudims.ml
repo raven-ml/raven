@@ -338,5 +338,30 @@ let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
             Some (if !range_subs = [] then s else U.substitute !range_subs s)
   | _ -> None
 
+(* The device axis is not a program axis: it is bound per device at launch.
+   Lower it to the [_device_num] variable, and drop it from the ENDs that
+   closed it. *)
+let device_to_var (node : U.t) : U.t option =
+  let is_device_num s =
+    match U.as_param s with
+    | Some { param = { name = Some "_device_num"; _ }; _ } -> true
+    | _ -> false
+  in
+  match U.as_range node, U.as_end node with
+  | Some { kind = Axis_type.Device; _ }, _ ->
+      Some
+        (U.variable ~name:"_device_num" ~min_val:0 ~max_val:(U.vmax node)
+           ~dtype:(U.dtype node) ())
+  | _, Some { value; ranges } when List.exists is_device_num ranges ->
+      Some
+        (U.replace node
+           ~src:
+             (Array.of_list
+                (value :: List.filter (fun s -> U.op s <> Ops.Param) ranges))
+           ())
+  | _ -> None
+
 let pm_add_gpudims (ctx : Renderer.t) (root : U.t) : U.t =
-  U.graph_rewrite ~name:"add gpudims" (fun node -> add_gpudims ctx node) root
+  U.graph_rewrite ~name:"add gpudims"
+    (U.first_match [ add_gpudims ctx; device_to_var ])
+    root

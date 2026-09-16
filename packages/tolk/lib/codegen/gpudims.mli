@@ -16,7 +16,9 @@
     adjusting for renderer grid size limits. Threaded backends require exactly
     one global range and no local ranges; that range is replaced by a
     [core_id] variable. Missing local ranges on global stores are gated with
-    validity masks. *)
+    validity masks. A Device range is not a program axis: it becomes the
+    [_device_num] variable, bound per device at launch, and is dropped from
+    the {!Tolk_uop.Ops.End} nodes that closed it. *)
 
 type dim_kind =
   | Group_id
