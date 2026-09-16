@@ -280,15 +280,6 @@ let create_fresh_buffer dev dtolk n =
      Tolk.Device.Buffer.ensure_allocated buf);
   buf
 
-(* Buffer slots are process-global so hash-consed buffer nodes from distinct
-   traces never collide. *)
-let next_slot = ref 0
-
-let fresh_slot () =
-  let s = !next_slot in
-  incr next_slot;
-  s
-
 (* Trace state *)
 
 type input = {
@@ -353,7 +344,7 @@ let make_node st dtolk n =
     | Some names -> U.Multi names (* pmap: constants replicate on the tuple *)
     | None -> U.Single (Tolk.Device.name st.st_device)
   in
-  U.buffer ~slot:(fresh_slot ()) ~dtype:dtolk ~shape:(F.Tensor.shape_uop [ n ])
+  U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:dtolk ~shape:(F.Tensor.shape_uop [ n ])
     ~device ()
 
 (* Bind a tensor whose bytes exist outside the traced computation (a closure
@@ -591,15 +582,15 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
 
 (* The scheduling pipeline allocates internal kernel buffers from a counter
    seeded at the scheduled graph's maximum slot. That counter is local to the
-   schedule: [make_node]'s global slots must never collide with a live scheduled
-   buffer (buffer identity is the slot), so advance [next_slot] past every
-   non-negative buffer slot the linear mentions. *)
+   schedule: a fresh buffer must never collide with a live scheduled buffer
+   (buffer identity is the slot), so advance the process-wide counter past
+   every non-negative buffer slot the linear mentions. *)
 let reserve_slots_of linear =
   U.toposort ~enter_calls:true linear
   |> List.iter (fun n ->
       match U.as_buffer n with
       | Some { buffer = { slot; _ }; _ } when slot >= 0 ->
-          if slot >= !next_slot then next_slot := slot + 1
+          U.reserve_buffer_slots (slot + 1)
       | _ -> ())
 
 (* Schedule the traced body sink as its own compiled linear. Captured unplanned,

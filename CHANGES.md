@@ -102,6 +102,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` no longer lets a fresh output share a buffer with an input the
+  program does not read: the two buffer-slot counters (rune's and tolk's)
+  could hand out the same slot, so a resident input fed to a later call had
+  its bytes overwritten by that call's output. Rune now draws every slot from
+  tolk's process-wide counter.
 - `Rune.jit ~donate:true` writes an output over the donated input it derives
   from when every path between them stays at the same element and no later
   kernel reads the input, so a jitted training step or decode step holds one
