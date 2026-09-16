@@ -653,36 +653,11 @@ let bitcast_passthrough_for_pointer_addrspace (ctx : ctx) (x : U.t) =
 
 (* Base rewrite rules *)
 
-(* Render a float literal with a guaranteed decimal point or exponent so that
-   C parses it as floating point, not integer. *)
-let float_lit f =
-  let bits = Int64.bits_of_float f in
-  let rec shortest p =
-    if p >= 17 then strf "%.17g" f
-    else
-      let s = strf "%.*g" p f in
-      match float_of_string_opt s with
-      | Some f' when Int64.equal (Int64.bits_of_float f') bits -> s
-      | _ -> shortest (p + 1)
-  in
-  let s = shortest 1 in
-  let s =
-    let a = Float.abs f in
-    if a >= 1e-4 && a < 1e16
-       && (String.contains s 'e' || String.contains s 'E')
-    then
-      let fixed = strf "%.17f" f in
-      let rec trim i =
-        if i > 0 && fixed.[i] = '0' then trim (i - 1) else i
-      in
-      let i = trim (String.length fixed - 1) in
-      if fixed.[i] = '.' then String.sub fixed 0 (i + 2)
-      else String.sub fixed 0 (i + 1)
-    else s
-  in
-  if String.contains s '.' || String.contains s 'e' || String.contains s 'E'
-  then s
-  else s ^ ".0"
+(* A float literal is Python's repr of the value, as the reference renders
+   it. It always carries a decimal point or an exponent, so C reads it as
+   floating point, and its layout is not the C runtime's: Windows would print
+   the exponent with three digits. *)
+let float_lit = Render.python_float_string
 
 let render_float (ctx : ctx) (dt : Dtype.t) f =
   if Float.is_nan f then strf "(%s)" (render_cast ctx dt ctx.lang.nan) else

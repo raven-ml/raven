@@ -186,6 +186,9 @@ thread.
 
 ### Tolk (new)
 
+- Float literals in rendered kernels are laid out by tolk rather than the C
+  runtime, so they are identical on every platform; Windows printed their
+  exponents with three digits.
 - A copy between devices is scheduled as a kernel storing the source's
   flat view into a buffer on the target device, then turned back into a
   transfer once the schedule is linear. Multi-device graphs therefore
