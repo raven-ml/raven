@@ -16,6 +16,7 @@ external cpu_copyout : bytes -> nativeint -> unit = "caml_tolk_cpu_copyout"
 external exec_alloc : int -> nativeint = "caml_tolk_cpu_jit_alloc"
 external exec_free : nativeint -> int -> unit = "caml_tolk_cpu_jit_free"
 external exec_write : nativeint -> bytes -> unit = "caml_tolk_cpu_jit_write"
+external monotonic_ns : unit -> int = "caml_tolk_cpu_monotonic_ns" [@@noalloc]
 
 external exec_call : nativeint -> nativeint array -> int64 array -> unit
   = "caml_tolk_cpu_jit_call"
@@ -327,12 +328,12 @@ let create name =
         | None -> 1
       in
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";
-      let st = if wait then Unix.gettimeofday () else 0. in
+      let st = if wait then monotonic_ns () else 0 in
       Cpu_queue.exec state ~entry:loaded.entry ~bufs ~vals ~threads
         ~core_id_index;
       if wait then begin
         Cpu_queue.synchronize state;
-        Some (Unix.gettimeofday () -. st)
+        Some (float_of_int (monotonic_ns () - st) *. 1e-9)
       end else
         None
     in

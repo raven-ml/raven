@@ -173,6 +173,9 @@ thread.
   the kernel's arguments from the wrong registers and larger kernels crashed.
 - The CPU thread pool is sized from the runtime's recommended domain count
   instead of a `getconf` subprocess, which does not exist on Windows.
+- CPU kernel timings come from a monotonic high-resolution clock. The wall
+  clock moves in millisecond steps on Windows, which tied every fast kernel at
+  zero and left beam search nothing to rank.
 - The disk cache removes its temporary file when the final rename loses, which
   on Windows happens whenever another process holds the entry open; the
   temporaries no longer accumulate next to the entries.

@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -108,13 +109,34 @@ CAMLprim value caml_tolk_cpu_jit_alloc(value v_size) {
 CAMLprim value caml_tolk_cpu_jit_free(value v_ptr, value v_size) {
   CAMLparam2(v_ptr, v_size);
   void *ptr = (void *)Nativeint_val(v_ptr);
-  size_t size = (size_t)Long_val(v_size);
 #if defined(_WIN32)
+  /* A whole reservation is released at once; the size was fixed at alloc. */
   VirtualFree(ptr, 0, MEM_RELEASE);
 #else
-  munmap(ptr, size);
+  munmap(ptr, (size_t)Long_val(v_size));
 #endif
   CAMLreturn(Val_unit);
+}
+
+/* Kernel timings rank BEAM candidates, so they need a monotonic clock finer
+   than the wall clock: on Windows gettimeofday moves in millisecond steps and
+   ties every fast kernel at zero. Nanoseconds since an arbitrary origin. */
+CAMLprim value caml_tolk_cpu_monotonic_ns(value unit) {
+  (void)unit;
+#if defined(_WIN32)
+  static LARGE_INTEGER freq;
+  LARGE_INTEGER now;
+  if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+  QueryPerformanceCounter(&now);
+  int64_t whole = now.QuadPart / freq.QuadPart;
+  int64_t rest = now.QuadPart % freq.QuadPart;
+  return Val_long(
+      (intnat)(whole * 1000000000LL + rest * 1000000000LL / freq.QuadPart));
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return Val_long((intnat)ts.tv_sec * 1000000000LL + ts.tv_nsec);
+#endif
 }
 
 CAMLprim value caml_tolk_cpu_jit_write(value v_ptr, value v_bytes) {
