@@ -39,13 +39,14 @@ named; do not pick one up before it lands.
 - **The reference's UNSHARD, COPY and CALL spec rules are not in
   `lib/uop/spec.ml` yet.** `Ops.Unshard` is named but `Uop.unshard` still
   builds a single-axis `Arg.Int`, so the reference's
-  `len(src) == 1+len(arg)` rule has nothing to check; COPY keeps
-  `allow_any_len` until copies leave rangeify (`dcad11941`); and the
-  address-valued `CALL` rule needs call-inside-C (`6e979b879`).
+  `len(src) == 1+len(arg)` rule has nothing to check; the COPY rule's
+  `allow_any_len` can go now that copies leave rangeify before it runs
+  (`dcad11941`, ported); and the address-valued `CALL` rule needs
+  call-inside-C (`6e979b879`).
 
-  **Blocker**: the sorted-axis-tuple rework for UNSHARD, the COPY move out of
-  rangeify, and call-inside-C respectively. A spec that admits a shape nothing
-  builds proves nothing — port each rule with its owning change.
+  **Blocker**: the sorted-axis-tuple rework for UNSHARD and call-inside-C
+  respectively; the COPY rule is unblocked. A spec that admits a shape
+  nothing builds proves nothing — port each rule with its owning change.
 
   (The 5-tuple WMMA arg check is **done**: `spec.ml`'s
   `op ~src:[any; any; any] Ops.Wmma =?> Option.is_some (Uop.as_wmma u)` is the
@@ -73,20 +74,6 @@ named; do not pick one up before it lands.
 ## Deferred parity divergences — not started
 
 Nothing external blocks these; each could be picked up today.
-
-- **COPY still takes part in rangeify** (`f65001e29`, `dcad11941`). Upstream
-  converts every COPY to a BUFFER+STORE before rangeify (`pm_copy_to_store`),
-  drops COPY from `ALWAYS_CONTIGUOUS`, from the realize map and from
-  `ALWAYS_RUN_OPS`, lets `split_store` emit a plain kernel for it, and rebuilds
-  the COPY afterwards in `schedule/__init__.py` (`pm_copy_from_store`,
-  `copy_kernel_to_copy_uop`, `simplify_copy_kernel`) with
-  `assert_all_same_devices` replacing the device check inside `split_store`.
-
-  The old blocker is gone: `Simplify.simplify_ranges` and
-  `Simplify.flatten_range` are both exported from `lib/codegen/simplify.mli`
-  now. What remains is sequencing — the second half lands in
-  `lib/engine/realize.ml` (copy detection) and it moves every rangeify golden,
-  so it wants one commit that includes the golden regeneration.
 
 - **Kernel formals keep their caller-side variable names** (`be25207a7`).
   Upstream renames a BIND'd scalar formal to `p{slot}` in `UOp.param_like` and
@@ -343,13 +330,13 @@ symbolic division rules — `x/x`, `(x*y)/y`, `(x/y)/z` — matched `Fdiv`
 where the reference's `/` is `x * recip y`, so the `(a/b)/c -> a/(b*c)` fold
 never fired.)
 
-- **`multi_*` emits about half the kernels the reference does** (9 files:
-  `multi_allreduce_naive`, `multi_allreduce_ring`, `multi_replicate_elementwise`
-  at stage 5 CUDA and stage 7 CPU/CUDA). Counts are reference-vs-tolk 6/2,
-  34/18 and 9/5 — the reference splits per-shard copies into their own kernels
-  where tolk fuses them. This is the MULTI -> UNSHARD sharding rework, still
-  listed as not started, now showing as a clean structural divergence instead
-  of pin noise. Same area as the three failing `test_pmap.ml` cases.
+(Resolved: the `multi_*` cases that emitted about half the reference's
+kernels. The reference converts every COPY into a store of the source's flat
+view into a fresh buffer on the target device before rangeify, so each
+per-shard copy is its own kernel in the kernel graph; the scheduler rebuilds
+the transfer from the kernel afterwards. `Rangeify.pm_copy_to_store` and
+`Schedule.copy_from_store` now do the same, and COPY is out of the
+always-contiguous set, the realize map and the always-run set.)
 
 - **`ParamArg` reprs omit `multiple_of`** (22 files, every stage-5 dump with an
   ALU-space parameter, plus both `golden/debug` files). The reference's

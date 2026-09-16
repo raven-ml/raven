@@ -1082,18 +1082,20 @@ let rec buf_uop u =
         in
         walk u
 
-let rec has_buffer_identity u =
+let rec has_buffer_identity ?(after_ok = false) u =
   let srcs = src u in
   match op u with
-  | Ops.Reshape | Ops.Unshard ->
-      Array.length srcs > 0 && has_buffer_identity srcs.(0)
+  | Ops.Reshape | Ops.Unshard | Ops.Mselect ->
+      Array.length srcs > 0 && has_buffer_identity ~after_ok srcs.(0)
+  | Ops.After when after_ok ->
+      Array.length srcs > 0 && has_buffer_identity ~after_ok srcs.(0)
   | Ops.Gettuple -> (
       match Arg.as_int (arg u), Array.to_list srcs with
       | Some i, [ tuple ] when op tuple = Ops.Tuple ->
           let tuple_srcs = src tuple in
           i >= 0
           && i < Array.length tuple_srcs
-          && has_buffer_identity tuple_srcs.(i)
+          && has_buffer_identity ~after_ok tuple_srcs.(i)
       | _ -> false)
   | Ops.Buffer | Ops.Slice | Ops.Param -> true
   | _ -> false

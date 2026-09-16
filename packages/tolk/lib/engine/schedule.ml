@@ -569,6 +569,114 @@ let lower_sink_to_linear ~get_kernel_graph (sink : U.t) : U.t option =
       Some linear
   | _ -> None
 
+(* Copy kernels *)
+
+let device_name = function
+  | U.Single d -> d
+  | U.Multi ds -> "(" ^ String.concat ", " ds ^ ")"
+  | U.Index i -> string_of_int i
+
+(* A kernel reads and writes buffers of one device; only a copy crosses
+   devices, and it is rebuilt as a transfer below. *)
+let assert_all_same_devices ast =
+  let devices =
+    U.toposort ast
+    |> List.filter_map (fun n ->
+           match U.as_param n with
+           | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> None
+           | Some _ -> U.device_of n
+           | None -> None)
+    |> List.sort_uniq compare
+  in
+  match devices with
+  | _ :: _ :: _ ->
+      invalid_arg
+        (Printf.sprintf "all buffers must be on the same device: %s"
+           (String.concat " " (List.map device_name devices)))
+  | _ -> ()
+
+(* Simplify a copy kernel's ranges so a transfer of a whole buffer reads as
+   one flat range. *)
+let simplify_copy_kernel ast =
+  let rules =
+    U.first_match
+      [
+        Upat.Pattern_matcher.rewrite Symbolic.sym;
+        Rangeify.movement_ops;
+        Simplify.flatten_range;
+      ]
+  in
+  let rec loop u =
+    let u' =
+      Simplify.simplify_ranges
+        (U.graph_rewrite ~name:"simplify ranges in copy" rules u)
+    in
+    if U.equal u u' then u else loop u'
+  in
+  loop ast
+
+(* [PARAM dst[i] <- PARAM src[i]] for one range [i] closed by the kernel's
+   only END, or for the constant index 0: the parameters of a transfer. *)
+let copy_kernel_params ast =
+  let flat_store value =
+    match U.as_store value with
+    | Some { dst; value; gate = None } -> (
+        match U.as_index dst, U.as_index value with
+        | Some { ptr = dst; idxs = [ i ] }, Some { ptr = src; idxs = [ j ] }
+          when is_op Ops.Param dst && is_op Ops.Param src && U.equal i j ->
+            Some (dst, src, i)
+        | _ -> None)
+    | _ -> None
+  in
+  match U.children ast with
+  | [ e ] -> (
+      match U.as_end e with
+      | Some { value; ranges = [ r ] } -> (
+          match flat_store value with
+          | Some (dst, src, i) when is_op Ops.Range r && U.equal i r ->
+              Some (dst, src)
+          | _ -> None)
+      | Some _ -> None
+      | None -> (
+          match flat_store e with
+          | Some (dst, src, i) when U.const_int_value i = Some 0 ->
+              Some (dst, src)
+          | _ -> None))
+  | _ -> None
+
+(* The kernel graph carries every COPY as a kernel storing one flat buffer
+   into another. A kernel whose two buffers live on different devices is
+   simplified and, when it is such a store, becomes a COPY call again; any
+   other kernel must keep to one device. *)
+let copy_from_store call =
+  match U.as_call call with
+  | Some { body; args; info } when is_op Ops.Sink body -> (
+      let cross_device =
+        match args with
+        | [ dst; src ] -> (
+            match U.device_of dst, U.device_of src with
+            | Some d, Some s -> d <> s
+            | _ -> false)
+        | _ -> false
+      in
+      let body' = if cross_device then simplify_copy_kernel body else body in
+      let transfer =
+        match copy_kernel_params body' with
+        | Some (dst, src) -> (
+            match U.device_of dst, U.device_of src with
+            | Some d, Some s when d <> s ->
+                Some (U.call ~body:(U.copy ~src ~device:d ()) ~args ~info)
+            | _ -> None)
+        | None -> None
+      in
+      match transfer with
+      | Some _ -> transfer
+      | None ->
+          assert_all_same_devices body';
+          if U.equal body body' then None
+          else Some (U.call ~body:body' ~args ~info))
+  | _ -> None
+
 (* Kernel-body symbolic variables are ALU params; their slots may have been
    renumbered by kernel-parameter compaction, so identify them by address
    space and name. *)
@@ -593,12 +701,16 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
   in
   (* Step 2: resolve CALL(LINEAR, ...) into the LINEAR result *)
   let linear = U.graph_rewrite resolve_linear_call_rule graph in
+  (* Step 3: rebuild the transfers the kernel graph carries as copy kernels *)
+  let linear =
+    U.graph_rewrite ~name:"create COPY kernels" copy_from_store linear
+  in
   let linear_srcs =
     match linear_srcs linear with
     | Some srcs -> srcs
     | None -> invalid_arg "create_linear_with_vars: expected Linear node"
   in
-  (* Step 3: extract var_vals from used BIND nodes. *)
+  (* Step 4: extract var_vals from used BIND nodes. *)
   let used_vars =
     List.concat_map
       (fun si ->
@@ -636,7 +748,7 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
    | _, Some { args; _ } -> extract_binds args
    | _ -> ());
   let var_vals = !var_vals in
-  (* Step 4: a capturer records this schedule instead of executing it, so hand
+  (* Step 5: a capturer records this schedule instead of executing it, so hand
      it over unplanned — the capturer memory-plans the combined schedule once,
      after capture completes. *)
   match !Realize.capturing with
@@ -644,7 +756,7 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
       add_linear linear var_vals;
       (U.linear [], var_vals)
   | _ ->
-      (* Step 5: plan intermediate buffer memory, keeping the graph's own
+      (* Step 6: plan intermediate buffer memory, keeping the graph's own
          buffer arguments intact. *)
       let held_bufs =
         match U.as_call graph with

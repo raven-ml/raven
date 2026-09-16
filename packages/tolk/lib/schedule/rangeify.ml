@@ -668,10 +668,17 @@ let earliest_rewrites =
       (fun n -> match U.op n with
          | Ops.Detach | Ops.Contiguous_backward -> Some (src0 n)
          | _ -> None);
+      (* COPY transfers a contiguous range, so materialise a source that is
+         resized (shrink/pad/expand) or reordered (permute/flip). *)
       (fun n -> match U.op n with
          | Ops.Copy when is_movement (src0 n) ->
              let s = src0 n in
-             if shape_of (base s) <> shape_of s then
+             let resized =
+               match shape_of (base s), shape_of s with
+               | Some a, Some b -> prod a <> prod b
+               | _ -> false
+             in
+             if resized || U.contiguous_view_offset s = None then
                let sr = Array.copy (U.src n) in
                sr.(0) <- U.contiguous ~src:s ();
                Some (U.replace n ~src:sr ())
@@ -693,6 +700,18 @@ let earliest_rewrites =
               | Some d1, Some d2 when d1 = d2 ->
                   Some (U.noop ~src:s ~dtype:(U.dtype s) ())
               | _ -> None)
+         | _ -> None);
+      (* Copy on reshape is reshape on copy. *)
+      (fun n -> match U.op n with
+         | Ops.Copy when U.op (src0 n) = Ops.Reshape ->
+             let shp = src0 n in
+             (match U.Arg.as_device (U.arg n) with
+              | Some device ->
+                  Some
+                    (U.reshape
+                       ~src:(U.copy ~src:(src0 shp) ~device ())
+                       ~shape:(U.src shp).(1))
+              | None -> None)
          | _ -> None);
       (fun n -> match U.op n with
          | Ops.Sink ->
@@ -769,9 +788,62 @@ let earliest_rewrites =
           | _ -> None);
     ]
 
+(* Copies to stores *)
+
+let dims_node = function [ d ] -> d | ds -> U.stack ds
+
+(* Reshapes as the tensor layer builds them: an identity reshape is the
+   value itself, so a view shared between consumers stays one node. *)
+let reshape_to u dims =
+  if List.equal U.equal (U.shape u) dims then u
+  else U.reshape ~src:u ~shape:(dims_node dims)
+
+let flatten u =
+  match U.shape u with
+  | [] -> reshape_to u [ int_ 1 ]
+  | [ _ ] -> u
+  | ds -> reshape_to u [ U.simplify (U.uprod ds) ]
+
+(* A COPY is a plain kernel: the source's flat view, made contiguous unless
+   it already names a buffer, stored into a flat buffer on the target device
+   and reshaped back. [existing] is the buffer an assignment stores the copy
+   into; it is written directly only when it is a whole buffer. The
+   scheduler turns the kernel back into a transfer. *)
+let convert_copy_to_store ?existing copy =
+  let input = src0 copy in
+  let input =
+    if U.has_buffer_identity ~after_ok:true input then input
+    else U.contiguous ~src:input ()
+  in
+  let input = flatten input in
+  match existing with
+  | Some buf ->
+      if not (U.has_buffer_identity ~after_ok:true buf) then None
+      else Some (U.store ~dst:(flatten buf) ~value:input ())
+  | None ->
+      let device = U.Arg.as_device (U.arg copy) in
+      let buf =
+        U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype copy)
+          ~shape:(shape_node (U.max_shape input)) ?device ()
+      in
+      let stored =
+        U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:input () ]
+      in
+      Some (reshape_to stored (U.shape copy))
+
+let pm_copy_to_store n =
+  match U.op n with
+  | Ops.Store -> (
+      match U.as_store n with
+      | Some { dst; value; gate = None } when U.op value = Ops.Copy ->
+          convert_copy_to_store ~existing:dst value
+      | _ -> None)
+  | Ops.Copy -> convert_copy_to_store n
+  | _ -> None
+
 (* Post-rangeify *)
 
-let is_always_run op = op = Ops.Contiguous || op = Ops.Copy || op = Ops.Noop
+let is_always_run op = op = Ops.Contiguous || op = Ops.Noop
 
 let remove_noop_stage n =
   match U.as_stage n with
@@ -1786,7 +1858,7 @@ let split_store n =
               | Some args, Some { body; _ } ->
                   Some (U.replace stored ~src:(Array.of_list (body :: args)) ())
               | _ -> Some stored)
-         | Some stored ->
+         | Some _ ->
              let info : U.call_info =
                {
                  grad_fxn = None;
@@ -1796,32 +1868,14 @@ let split_store n =
                  aux = None;
                }
              in
-             let body, args = match U.op stored with
-               | Ops.Copy ->
-                   let ended = match U.as_end ret with
-                     | Some { ranges; _ } -> ranges | None -> []
-                   in
-                   let body =
-                     U.replace stored
-                       ~src:(Array.of_list (U.children stored @ ended)) ()
-                   in
-                   (* The executor addresses COPY arguments by position —
-                      destination first, then sources — so keep every split
-                      buffer in slot order rather than compacting to the
-                      params the body still mentions (the destination lives
-                      in the dropped STORE). *)
-                   let formals =
-                     List.sort
-                       (fun (a, _) (b, _) -> Int.compare a b)
-                       ctx.formals
-                   in
-                   body, List.map snd formals @ List.rev ctx.vars
-             | _ ->
-                 compact_kernel_params ctx
-                   (U.sink ~kernel_info:{
-                      name = ""; axis_types = []; dont_use_locals = false;
-                      applied_opts = []; opts_to_apply = ctx.opts;
-                      estimates = None; beam = 0 } [ ret ])
+             (* Buffers can be on different devices here: the scheduler
+                turns a kernel that is a copy into a transfer. *)
+             let body, args =
+               compact_kernel_params ctx
+                 (U.sink ~kernel_info:{
+                    name = ""; axis_types = []; dont_use_locals = false;
+                    applied_opts = []; opts_to_apply = ctx.opts;
+                    estimates = None; beam = 0 } [ ret ])
              in
              Some (U.call ~body ~args ~info))
   | _ -> None
@@ -1906,13 +1960,6 @@ let post_rangeify_rules =
        | _ -> None);
     (fun n -> match U.as_index n with
        | Some { ptr; _ } when U.op ptr = Ops.Const -> Some ptr
-       | _ -> None);
-    (fun n -> match U.op n with
-       | Ops.Copy ->
-           let s = src0 n in
-           (match U.arg s with
-            | U.Arg.Value v when U.op s = Ops.Const -> Some (U.const v)
-            | _ -> None)
        | _ -> None);
     (fun n -> match U.op n with
        | Ops.Noop when Array.length (U.src n) > 0
@@ -2053,6 +2100,10 @@ let get_kernel_graph root =
   let root =
     U.graph_rewrite ~bottom_up:true ~name:"earliest rewrites"
       earliest_rewrites root
+  in
+  let root =
+    U.graph_rewrite ~bottom_up:true ~name:"convert copy to store"
+      pm_copy_to_store root
   in
   let rctx =
     Indexing.run_rangeify root ~shapes:shape_of ~shape_exprs:shape_expr_of

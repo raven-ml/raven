@@ -1241,11 +1241,12 @@ val buf_uop : t -> t
     {!Ops.Slice} resolves through its source; {!Ops.Stage} and {!Ops.Mstack}
     stop the walk. *)
 
-val has_buffer_identity : t -> bool
-(** [has_buffer_identity u] is [true] iff [u] is a concrete graph buffer
-    identity under tinygrad's shortcut rules: {!Ops.Param}, {!Ops.Buffer},
-    {!Ops.Slice}, or those identities through {!Ops.Reshape}, {!Ops.Unshard},
-    or direct {!Ops.Gettuple} from a {!Ops.Tuple}. *)
+val has_buffer_identity : ?after_ok:bool -> t -> bool
+(** [has_buffer_identity ?after_ok u] is [true] iff [u] is a concrete graph
+    buffer identity: {!Ops.Param}, {!Ops.Buffer}, {!Ops.Slice}, or those
+    identities through {!Ops.Reshape}, {!Ops.Unshard}, {!Ops.Mselect}, or
+    direct {!Ops.Gettuple} from a {!Ops.Tuple}. With [after_ok] (default
+    [false]) an {!Ops.After} over such an identity also qualifies. *)
 
 val as_shape : t -> t list
 (** [as_shape u] decodes [u] as a shape argument. Scalar constants and

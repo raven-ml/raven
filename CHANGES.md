@@ -167,6 +167,12 @@ thread.
 
 ### Tolk (new)
 
+- A copy between devices is scheduled as a kernel storing the source's
+  flat view into a buffer on the target device, then turned back into a
+  transfer once the schedule is linear. Multi-device graphs therefore
+  emit one kernel per per-shard copy, as the reference does, instead of
+  fusing copies into their consumers; a kernel that mixes devices without
+  being a copy is rejected with `all buffers must be on the same device`.
 - Multi-device sharding slices along a device range instead of a
   `_device_num` variable. The range is not a program axis: codegen lowers
   it to `_device_num` and keeps it out of range splitting and the

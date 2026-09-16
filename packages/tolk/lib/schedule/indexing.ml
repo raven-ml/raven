@@ -13,9 +13,9 @@ module U = Uop
 (* Ops that never need realization: they produce contiguous output, so
    their consumers can always index directly. *)
 let always_contiguous = function
-  | Ops.Contiguous | Ops.After | Ops.Copy | Ops.Buffer | Ops.Slice
-  | Ops.Const | Ops.Bind | Ops.Mselect | Ops.Mstack | Ops.Param | Ops.Load
-  | Ops.Call | Ops.Function ->
+  | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Slice | Ops.Const
+  | Ops.Bind | Ops.Mselect | Ops.Mstack | Ops.Param | Ops.Load | Ops.Call
+  | Ops.Function ->
       true
   | _ -> false
 
@@ -233,10 +233,10 @@ let mark_non_contiguous ctx s =
 let generate_realize_map ctx root =
   List.iter (fun n ->
     (match U.op n with
-     | Ops.Copy | Ops.Contiguous | Ops.Store -> realize_set ctx n Marked
+     | Ops.Contiguous | Ops.Store -> realize_set ctx n Marked
      | _ -> ());
     (match U.op n with
-     | Ops.Copy | Ops.Mselect | Ops.Mstack ->
+     | Ops.Mselect | Ops.Mstack ->
          Array.iter (mark_non_contiguous ctx) (U.src n)
      | _ -> ());
     (* Conditionally unrealize or force-realize the value in STORE(dst, value). *)
@@ -246,7 +246,7 @@ let generate_realize_map ctx root =
          if Array.length s = 2 then begin
            let dest = s.(0) and src = s.(1) in
            (match U.op src with
-            | Ops.Copy | Ops.Slice
+            | Ops.Slice
               when realize_mem ctx src && not (has_non_injective_view dest) ->
                 realize_del ctx src
             | _ -> ());
@@ -621,8 +621,7 @@ let remove_movement_op ctx x =
 (* Realized source: wrap in STAGE (or END for STORE) and INDEX. [src_rngs]
    are the parent's input ranges re-expressed in [s]'s axis frame, so the
    stage's closed ranges and the index sources select the same axes. *)
-let wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~src_rngs ~realized_axes
-    s =
+let wrap_realized_src ctx ~parent_rngs ~src_rngs ~realized_axes s =
   let _, out_rngs =
     match range_get ctx s with
     | Some entry -> entry
@@ -638,11 +637,7 @@ let wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~src_rngs ~realized_axes
       realize_del ctx s;
       U.end_ ~value:s ~ranges
   | _ ->
-      (* The stage before a COPY is not removable unless the source carries a
-         buffer identity. *)
-      let removable =
-        (not parent_is_copy || U.has_buffer_identity s)
-        && not (always_contiguous (U.op s)) in
+      let removable = not (always_contiguous (U.op s)) in
       let is_local =
         List.length out_rngs <> List.length realized_axes in
       let addrspace = if is_local then Dtype.Local else Dtype.Global in
@@ -656,7 +651,6 @@ let wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~src_rngs ~realized_axes
    STAGE/INDEX (or END for stores) for realized sources. Shape, bound and
    index arguments are left untouched. *)
 let create_stage_and_index_srcs ctx x =
-  let parent_is_copy = U.op x = Ops.Copy in
   let parent_rngs = range_get ctx x in
   let data_src_count = List.length (data_srcs (U.op x) (U.src x)) in
   let rewrite_child i s =
@@ -671,8 +665,7 @@ let create_stage_and_index_srcs ctx x =
       else s
     else match realize_get ctx s with
     | Some (Realized realized_axes) ->
-        wrap_realized_src ctx ~parent_is_copy ~parent_rngs ~src_rngs
-          ~realized_axes s
+        wrap_realized_src ctx ~parent_rngs ~src_rngs ~realized_axes s
     | _ -> s
   in
   List.mapi rewrite_child (Array.to_list (U.src x))

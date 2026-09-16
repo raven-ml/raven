@@ -220,9 +220,11 @@ let is_always_contiguous_tests =
           let dummy2 = U.const (C.int D.weakint 1) in
           (* AFTER is a buffer identity — always contiguous *)
           is_true (is_always_contiguous (U.after ~src:dummy ~deps:[ dummy2 ])));
+      (* A COPY is turned into a store before rangeify, so it is no buffer
+         identity of its own. *)
       test "copy" (fun () ->
           let dummy = U.const (C.int D.weakint 0) in
-          is_true
+          is_false
             (is_always_contiguous
                (U.copy ~src:dummy ~device:(U.Single "CPU") ())));
       test "buffer" (fun () ->
@@ -650,9 +652,8 @@ let run_rangeify_tests =
   group "run_rangeify"
     [
       test "realized node creates Realized" (fun () ->
-          
           let param = mk_param ~idx:0 [ 4 ] in
-          let contig = U.copy ~src:param ~device:(U.Single "GPU") () in
+          let contig = U.contiguous ~src:param ~force:true () in
           let _sink = U.sink [ contig ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify _sink ~shapes in
@@ -663,7 +664,7 @@ let run_rangeify_tests =
           | None -> fail "expected Realized, got None"));
       test "realized node has range_map entry" (fun () ->
           let param = mk_param ~idx:0 [ 4 ] in
-          let contig = U.copy ~src:param ~device:(U.Single "GPU") () in
+          let contig = U.contiguous ~src:param ~force:true () in
           let sink = U.sink [ contig ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify sink ~shapes in
@@ -736,9 +737,8 @@ let run_rangeify_tests =
               is_true (List.nth out_rngs 0 == List.nth in_rngs 1)
           | None -> fail "expected range_map entry for permute"));
       test "2D realized node has all axes" (fun () ->
-          
           let param = mk_param ~idx:0 [ 4; 8 ] in
-          let contig = U.copy ~src:param ~device:(U.Single "GPU") () in
+          let contig = U.contiguous ~src:param ~force:true () in
           let _sink = U.sink [ contig ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify _sink ~shapes in
@@ -752,7 +752,7 @@ let run_rangeify_tests =
             U.param ~slot:0 ~dtype:D.float32 ~shape:(U.stack [ n ])
               ~device:(U.Single "CPU") ()
           in
-          let contig = U.copy ~src:param ~device:(U.Single "GPU") () in
+          let contig = U.contiguous ~src:param ~force:true () in
           let sink = U.sink [ contig ] in
           let shape_exprs u =
             if u == param || u == contig then Some [ n ] else None
@@ -816,12 +816,18 @@ let apply_rangeify_pass_tests =
           (match U.as_index src with
           | Some { ptr; _ } -> is_true (ptr == param)
           | None -> fail "expected indexed pad source"));
+      (* Two consumers that disagree on their ranges stage the sum. *)
       test "staged elementwise indexes raw params" (fun () ->
           let a = mk_param ~idx:0 [ 2; 3 ] in
           let bp = mk_param ~idx:1 [ 2; 3 ] in
           let sum = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
-          let copied = U.copy ~src:sum ~device:(U.Single "GPU") () in
-          let root = U.sink [ copied ] in
+          let root =
+            U.sink
+              [
+                U.contiguous ~src:sum ();
+                U.contiguous ~src:(U.permute ~src:sum ~order:[ 1; 0 ]) ();
+              ]
+          in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
           let lowered = Indexing.apply_rangeify_pass ctx root in
           let stage =
