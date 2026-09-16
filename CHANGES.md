@@ -214,9 +214,11 @@ thread.
 - CPU kernel timings come from a monotonic high-resolution clock. The wall
   clock moves in millisecond steps on Windows, which tied every fast kernel at
   zero and left beam search nothing to rank.
-- The disk cache removes its temporary file when the final rename loses, which
-  on Windows happens whenever another process holds the entry open; the
-  temporaries no longer accumulate next to the entries.
+- The disk cache creates its temporary file exclusively under a random name
+  instead of one derived from the process id. On Windows `Unix.getpid` is a
+  handle value that sibling processes routinely share, so concurrent writers
+  wrote into one temporary and tore the entry. A temporary whose final rename
+  loses is also removed, so none accumulate next to the entries.
 - The CUDA, NVRTC, comgr, and driver runtimes build on Windows. The vendor
   libraries load through `LoadLibrary`; the hcq layer maps anonymous memory
   through `VirtualAlloc`, so the queue builders run; the system layer's file
