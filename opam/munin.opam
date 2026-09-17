@@ -18,7 +18,6 @@ depends: [
   "bytesrw"
   "cmdliner"
   "mosaic"
-  "dune-configurator" {build}
   "matrix"
   "windtrap" {with-test}
   "odoc" {with-doc}

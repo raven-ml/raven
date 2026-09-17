@@ -242,7 +242,6 @@
   bytesrw
   cmdliner
   mosaic
-  (dune-configurator :build)
   matrix
   (windtrap :with-test))
  (tags
