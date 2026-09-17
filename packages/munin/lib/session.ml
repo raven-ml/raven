@@ -285,9 +285,9 @@ let log_artifact t ~name ~kind ~path ?(metadata = []) ?(aliases = []) () =
   with_lock t (fun () ->
       if t.closed then failwith err_closed_session;
       if not (Sys.file_exists path) then invalid_arg (err_path_missing ^ path);
-      let digest = Fs.sha256_path path in
+      let digest = Fs.digest_path path in
       let blob_rel_path =
-        Filename.concat (Filename.concat "blobs" "sha256") digest
+        Filename.concat (Filename.concat "blobs" "blake2b") digest
       in
       let blob_abs_path = Filename.concat t.root blob_rel_path in
       if not (Sys.file_exists blob_abs_path) then

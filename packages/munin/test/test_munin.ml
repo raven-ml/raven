@@ -753,7 +753,7 @@ let test_file_artifact () =
   is_true ~msg:"payload file" (Artifact.payload artifact = `File);
   is_true ~msg:"size positive" (Artifact.size_bytes artifact > 0);
   is_true ~msg:"path exists" (Sys.file_exists (Artifact.path artifact));
-  is_true ~msg:"digest is sha256 hex"
+  is_true ~msg:"digest is 64 hex characters"
     (String.length (Artifact.digest artifact) = 64)
 
 let test_dir_artifact () =

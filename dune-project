@@ -240,7 +240,6 @@
   dune
   jsont
   bytesrw
-  sha
   cmdliner
   mosaic
   (dune-configurator :build)

@@ -155,6 +155,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- Artifact digests are BLAKE2b-256 from the standard library instead of
+  SHA-256, so `munin` no longer depends on the `sha` package. Blobs live
+  under `blobs/blake2b` in the store.
 - The system statistics stubs build on Windows. CPU times come from
   `GetSystemTimes`, memory from `GlobalMemoryStatusEx`, disk space and page
   size from the Win32 calls; the load average, which Windows does not keep,

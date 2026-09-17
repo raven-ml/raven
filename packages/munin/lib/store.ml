@@ -16,7 +16,7 @@ let open_ ?root () =
   let root = Option.value root ~default:(Env.root ()) in
   Fs.ensure_dir (Filename.concat root "experiments");
   Fs.ensure_dir (Filename.concat root "artifacts");
-  Fs.ensure_dir (Filename.concat (Filename.concat root "blobs") "sha256");
+  Fs.ensure_dir (Filename.concat (Filename.concat root "blobs") "blake2b");
   { root }
 
 let list_experiments t = Fs.list_dirs (Filename.concat t.root "experiments")
@@ -91,7 +91,7 @@ let delete_run t run =
   Index.remove t.root ~id:(Run.id run)
 
 let gc t =
-  let blobs_dir = Filename.concat (Filename.concat t.root "blobs") "sha256" in
+  let blobs_dir = Filename.concat (Filename.concat t.root "blobs") "blake2b" in
   let referenced = Hashtbl.create 64 in
   List.iter
     (fun artifact -> Hashtbl.replace referenced (Artifact.digest artifact) ())

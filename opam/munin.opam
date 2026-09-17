@@ -16,7 +16,6 @@ depends: [
   "dune" {>= "3.21"}
   "jsont"
   "bytesrw"
-  "sha"
   "cmdliner"
   "mosaic"
   "dune-configurator" {build}

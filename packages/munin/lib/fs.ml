@@ -95,26 +95,22 @@ let rec iter_tree ?(rel = "") root f =
       (list_entries path))
   else f rel `File
 
-let sha256_file path = Sha256.to_hex (Sha256.file_fast path)
+let digest_file path = Digest.BLAKE256.to_hex (Digest.BLAKE256.file path)
 
-let sha256_path path =
+(* A directory digests as the digest of its manifest: one line per entry in
+   tree order, naming files by their own digest. *)
+let digest_path path =
   if is_directory path then (
-    let ctx = Sha256.init () in
+    let manifest = Buffer.create 1024 in
     iter_tree path (fun rel kind ->
         if rel <> "" then
           match kind with
-          | `Dir ->
-              Sha256.update_string ctx "dir:";
-              Sha256.update_string ctx rel;
-              Sha256.update_string ctx "\n"
+          | `Dir -> Printf.bprintf manifest "dir:%s\n" rel
           | `File ->
-              Sha256.update_string ctx "file:";
-              Sha256.update_string ctx rel;
-              Sha256.update_string ctx ":";
-              Sha256.update_string ctx (sha256_file (Filename.concat path rel));
-              Sha256.update_string ctx "\n");
-    Sha256.to_hex (Sha256.finalize ctx))
-  else sha256_file path
+              Printf.bprintf manifest "file:%s:%s\n" rel
+                (digest_file (Filename.concat path rel)));
+    Digest.BLAKE256.to_hex (Digest.BLAKE256.string (Buffer.contents manifest)))
+  else digest_file path
 
 let file_size path =
   try (Unix.stat path).Unix.st_size with Unix.Unix_error _ -> 0

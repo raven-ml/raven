@@ -102,7 +102,7 @@ aliases (`"latest"`).
 ## Content-Addressed Deduplication
 
 Artifact payloads are stored in a blob directory keyed by their
-SHA-256 digest. If two versions have identical content, only one copy
+BLAKE2b-256 digest. If two versions have identical content, only one copy
 is stored on disk.
 
 <!-- $MDX skip -->

@@ -2,4 +2,4 @@
  (name munin)
  (public_name munin)
  (private_modules env fs json_utils event_log index)
- (libraries unix jsont jsont.bytesrw sha))
+ (libraries unix jsont jsont.bytesrw))

@@ -44,7 +44,9 @@ val version : t -> string
 (** {1:content Content} *)
 
 val digest : t -> string
-(** [digest t] is the content-addressed SHA-256 digest of the payload. *)
+(** [digest t] is the content-addressed digest of the payload: BLAKE2b-256
+    as 64 hexadecimal characters. A directory digests its manifest, which
+    names each file by its own digest. *)
 
 val path : t -> string
 (** [path t] is the absolute path to the materialized payload in the blob store.
