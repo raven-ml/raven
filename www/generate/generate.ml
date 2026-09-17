@@ -225,11 +225,34 @@ let dest_path path =
 
 (* -- Processing -- *)
 
+let highlighted_code_block c = function
+  | Cmarkit.Block.Code_block (cb, _) -> (
+      let lang =
+        Option.bind (Cmarkit.Block.Code_block.info_string cb) (fun (info, _) ->
+            Cmarkit.Block.Code_block.language_of_info_string info)
+      in
+      let code () =
+        Cmarkit.Block.Code_block.code cb
+        |> List.map Cmarkit.Block_line.to_string
+        |> String.concat "\n"
+      in
+      match Option.bind lang (fun (lang, _) -> Highlight.to_html ~lang (code ())) with
+      | Some html ->
+          Cmarkit_renderer.Context.string c html;
+          Cmarkit_renderer.Context.byte c '\n';
+          true
+      | None -> false)
+  | _ -> false
+
+let markdown_renderer =
+  Cmarkit_renderer.compose
+    (Cmarkit_html.renderer ~safe:false ())
+    (Cmarkit_renderer.make ~block:highlighted_code_block ())
+
 let render_markdown content =
   content
   |> Cmarkit.Doc.of_string ~heading_auto_ids:true ~strict:false
-  |> Hilite_markdown.transform ~skip_unknown_languages:true
-  |> Cmarkit_html.of_doc ~safe:false
+  |> Cmarkit_renderer.doc_to_string markdown_renderer
 
 let process_markdown path content =
   let html = render_markdown content |> Site.rewrite_doc_hrefs in
@@ -298,11 +321,11 @@ let highlight_html_code_blocks html =
                       raw |> Site.replace "&amp;" "&" |> Site.replace "&lt;" "<"
                       |> Site.replace "&gt;" ">"
                     in
-                    match Hilite.src_code_to_html ~lang code with
-                    | Ok highlighted ->
+                    match Highlight.to_html ~lang code with
+                    | Some highlighted ->
                         Buffer.add_string buf highlighted;
                         i := content_end + code_close_len
-                    | Error _ ->
+                    | None ->
                         Buffer.add_string buf
                           (String.sub html pre_start
                              (content_end + code_close_len - pre_start));
@@ -357,13 +380,7 @@ let process_example ~lib example_dir =
         let header =
           if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f) else ""
         in
-        let highlighted =
-          match Hilite.src_code_to_html ~lang:"ocaml" code with
-          | Ok html -> html
-          | Error _ ->
-              Printf.sprintf "<pre><code>%s</code></pre>" (escape_html code)
-        in
-        header ^ highlighted)
+        header ^ Highlight.ocaml code)
     |> String.concat "\n"
   in
   let html = prose_html ^ "\n" ^ code_html in
