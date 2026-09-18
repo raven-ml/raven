@@ -1,0 +1,7 @@
+; The model is the Llama example's.
+
+(copy_files ../../examples/05-llama/llama.{ml,mli})
+
+(executable
+ (name bench_load)
+ (libraries kaun kaun.hf jsont jsont.bytesrw nx rune unix))

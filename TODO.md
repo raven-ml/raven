@@ -11,8 +11,7 @@ perf follow-ups:
   adds ~750 ms/step (compute itself is ~95 ms with TC engaged) — needs a
   fused/tree-level formulation
 - rune warm start is now trace-dominated (~3.6 s effect replay +
-  transform_to_call); weight loading (safetensors, 2.8-9.4 s) dominates
-  example warm starts
+  transform_to_call)
 
 rune/jit follow-ups:
 - symbolic shapes through rune (inherit tolk's symbolic shrink/assign): one
@@ -60,8 +59,21 @@ decode contract follow-ups (rfc 0002):
   token-to-token mask), packed sequences with position reset: when a model
   needs them
 - storage reuse under `pmap` per shard: inside the placement rfc
-- llama 3.1 8b load: template-based checkpoint extraction allocates a full
-  f32 model first; that is the weight-streaming item
+
+loading weights follow-ups (rfc 0003):
+- rune stages an upload in a `Bytes` it keeps per distinct leaf size for the
+  life of the compiled function (`jit.ml` `scratch_bytes`): bound it to one
+  chunk, which is stage 3's chunked path
+- the chunked path must synchronize once the bytes copied since the last
+  synchronize pass a bound, or cuda parks a pinned staging buffer per copy
+  until the next one
+- tolk's allocator cache is unbounded and keyed by size: a process that drops
+  one model and loads another holds both until an allocation fails
+- `Kaun_hf.load_checkpoint` probes `model.safetensors.index.json` over the
+  network on every call for an unsharded repository (~0.25 s, and it needs the
+  network); remember the miss in the cache
+- `Kaun_hf` detects curl with `command -v` through `Unix.system`, which is
+  `cmd.exe` on windows, so downloads cannot work there
 
 next model targets:
 - llama3 in kaun-models + tolk parity (rope, rmsnorm, gqa, sharded
