@@ -729,6 +729,16 @@ let aliasing_tests =
           equal int ~msg:"view starts at the slice offset" (3 * 4)
             (Device.Buffer.offset ybuf);
           check_floats [| 3.; 4.; 5.; 6. |] y);
+      test "a shrunk trailing axis is not a contiguous range" (fun () ->
+          let x = fa ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+          check_floats [| 1.; 2.; 4.; 5. |]
+            (El.contiguous (Mv.shrink x [ (0, 2); (0, 2) ]));
+          check_floats [| 2.; 3.; 5.; 6. |]
+            (El.contiguous (Mv.shrink x [ (0, 2); (1, 3) ])));
+      test "a shrunk leading axis is a contiguous range" (fun () ->
+          let x = fa ~shape:[ 3; 2 ] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+          check_floats [| 3.; 4.; 5.; 6. |]
+            (El.contiguous (Mv.shrink x [ (1, 3); (0, 2) ])));
     ]
 
 (* An expression whose graph folds to a pure constant owns no storage and is

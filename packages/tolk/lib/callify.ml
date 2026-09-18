@@ -230,27 +230,26 @@ let contiguous_view_offset shapes src =
         if inner = [] then None
         else
           let pairs = match shrink_pairs node with Some p -> p | None -> [] in
-          if pairs = [] then None
+          if pairs = [] || List.length pairs <> List.length inner then None
           else
-            let n = List.length pairs in
-            (* All leading dimensions must be kept in full. *)
-            let all_full = List.for_all2 (fun (offset, size) dim ->
-              offset = 0 && size = dim)
-              (List.filteri (fun i _ -> i < n - 1) pairs)
-              (List.filteri (fun i _ -> i < n - 1) inner) in
-            if not all_full then None
-            else
-              let last_b = fst (List.nth pairs (n - 1)) in
-              if last_b = 0 then walk src
-              else
-                (* Contiguous slice starting at last_b. *)
-                let strides = List.rev (List.fold_left (fun acc d ->
-                  (List.hd acc * d) :: acc) [1]
-                  (List.rev (List.tl (List.rev inner)))) in
-                let offset = last_b * List.nth strides (n - 1) in
-                (match walk src with
-                 | Some base_off -> Some (base_off + offset)
-                 | None -> None)
+            (* A window is one range of the flat buffer when every axis
+               before the first one it narrows has extent one, and every
+               axis after it is kept whole. *)
+            let rec window offset leading = function
+              | [] -> Some offset
+              | ((before, size), dim) :: rest ->
+                  if before = 0 && size = dim then
+                    window offset (leading && dim <= 1) rest
+                  else if leading then
+                    let stride =
+                      List.fold_left (fun acc (_, d) -> acc * d) 1 rest
+                    in
+                    window (offset + (before * stride)) (size <= 1) rest
+                  else None
+            in
+            (match window 0 true (List.combine pairs inner), walk src with
+             | Some offset, Some base_off -> Some (base_off + offset)
+             | _ -> None)
     | _ -> None
   in
   let base = base src in

@@ -195,6 +195,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix `contiguous` over a window that narrows a trailing axis, such as the
+  first two columns of a 2x3 buffer. The view was taken for one range of the
+  flat buffer and read the wrong elements; only a window whose earlier axes
+  all have extent one is such a range.
 - Add `Uop.custom_kernel` and `Tensor.custom_kernel`: a kernel written in uops
   runs from the tensor graph over realized sources, and each source is read
   back after the kernel. `Uop.placeholder` and `Uop.placeholder_like` build
