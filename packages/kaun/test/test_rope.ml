@@ -41,6 +41,95 @@ let test_llama3_frequencies () =
   is_true ~msg:"the blend lies between the two bands"
     (f.(2) > base.(2) /. 8.0 && f.(2) < base.(2))
 
+let test_of_frequencies () =
+  let f = [| 1.0; 0.25; 0.001 |] in
+  equal ~msg:"the frequencies given" (array float_exact) f
+    (Rope.frequencies (Rope.of_frequencies f));
+  equal ~msg:"make is of_frequencies of the standard ones" (array float_exact)
+    (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ()))
+    (Rope.frequencies
+       (Rope.of_frequencies
+          (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ()))));
+  raises (Invalid_argument "Rope.of_frequencies: no frequency") (fun () ->
+      Rope.of_frequencies [||]);
+  raises (Invalid_argument "Rope.of_frequencies: a frequency is not finite")
+    (fun () -> Rope.of_frequencies [| 1.0; Float.nan |])
+
+(* The gpt-oss schedule on a head of 8: the ramp runs from pair 1.01 to pair
+   2.17, so pairs 0 and 1 are kept, pair 2 is blended and pair 3 is divided by
+   the factor. The reference values are those of transformers 5.17.0
+   ([GptOssRotaryEmbedding], formed in float32). *)
+let gpt_oss_yarn () =
+  Rope.yarn ~theta:150000.0 ~head_dim:8 ~factor:32.0 ~beta_fast:32.0
+    ~beta_slow:1.0 ~original_context:4096
+
+let test_yarn_frequencies () =
+  let f = Rope.frequencies (gpt_oss_yarn ()) in
+  let base = Rope.frequencies (Rope.make ~theta:150000.0 ~head_dim:8 ()) in
+  equal ~msg:"pair 0 kept" float_exact base.(0) f.(0);
+  equal ~msg:"pair 1 kept" float_exact base.(1) f.(1);
+  equal ~msg:"pair 3 divided by the factor" (float 1e-18)
+    (base.(3) /. 32.0)
+    f.(3);
+  let reference =
+    [| 1.0; 0.05081327259540558; 0.0004564839182421565; 4.099978468730114e-06 |]
+  in
+  Array.iteri
+    (fun i r ->
+      is_true
+        ~msg:(Printf.sprintf "pair %d agrees with the float32 reference" i)
+        (Float.abs (f.(i) -. r) <= 1e-6 *. r))
+    reference;
+  raises (Invalid_argument "Rope.yarn: beta_fast must exceed beta_slow")
+    (fun () ->
+      Rope.yarn ~theta:150000.0 ~head_dim:8 ~factor:32.0 ~beta_fast:1.0
+        ~beta_slow:1.0 ~original_context:4096)
+
+(* The reference scales its cosines and sines by 0.1 ln 32 + 1; divided by that,
+   its rotated values are ours. It forms its frequencies in float32, a unit in
+   the last place from ours: at position 3000 that moves pair 1's angle of 152
+   radians by 1e-5. *)
+let test_yarn_rotation () =
+  let x =
+    Nx.create Nx.float32 [| 1; 1; 3; 8 |]
+      (Array.init 24 (fun i -> (float_of_int i -. 10.0) /. 4.0))
+  in
+  let concentration = (0.1 *. log 32.0) +. 1.0 in
+  let reference =
+    [|
+      -3.366434097290039;
+      -3.0297906398773193;
+      -2.6931471824645996;
+      -2.35650372505188;
+      -2.01986026763916;
+      -1.6832170486450195;
+      -1.3465735912322998;
+      -1.00993013381958;
+      0.4546450674533844;
+      -0.5796743035316467;
+      -0.003073443192988634;
+      0.33660888671875;
+      0.836617112159729;
+      0.8928972482681274;
+      1.3465700149536133;
+      1.6832239627838135;
+      -2.708630323410034;
+      -3.864203691482544;
+      -3.41951847076416;
+      2.975733995437622;
+      -2.841836452484131;
+      2.0817830562591553;
+      3.4466328620910645;
+      4.413298606872559;
+    |]
+  in
+  let y = Rope.apply (gpt_oss_yarn ()) ~pos:(pos_of [| [| 0; 5; 3000 |] |]) x in
+  values_are ~msg:"the reference's rotation without its concentration" ~tol:2e-4
+    (Array.map (fun v -> v /. concentration) reference)
+    (Nx.reshape [| 24 |] y);
+  let norms t = Nx.to_array (Nx.sqrt (Nx.sum ~axes:[ 3 ] (Nx.mul t t))) in
+  equal ~msg:"rotation keeps norms" (array (float 1e-5)) (norms x) (norms y)
+
 let test_position_zero_is_identity () =
   let x = Nx.create Nx.float32 [| 1; 1; 2; 4 |] (Array.init 8 float_of_int) in
   values_are ~msg:"unrotated" ~tol:0.0
@@ -150,11 +239,15 @@ let () =
         [
           test "standard frequencies" test_standard_frequencies;
           test "llama 3 bands" test_llama3_frequencies;
+          test "a schedule from its frequencies" test_of_frequencies;
+          test "yarn ramp" test_yarn_frequencies;
         ];
       group "rotation"
         [
           test "position zero is the identity" test_position_zero_is_identity;
           test "a pair turns by position times frequency" test_rotation;
+          test "yarn rotation matches the reference and keeps norms"
+            test_yarn_rotation;
           test "feature i pairs with i + head_dim / 2"
             test_pairs_first_half_with_second;
           test "products depend on the position difference" test_relative;

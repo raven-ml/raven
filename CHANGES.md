@@ -1614,6 +1614,11 @@ thread.
 
 ### Kaun
 
+- Add `Rope.of_frequencies`, a schedule from one head's inverse frequencies,
+  for schedules the module does not name, and `Rope.yarn`, the YaRN
+  long-context frequencies with an untruncated correction range, as gpt-oss
+  uses them. `Rope.apply` keeps norms: YaRN's attention temperature is a
+  number the model passes to the attention core, not part of the schedule.
 - **Breaking**: the sampling masks `Fn.top_k` and `Fn.top_p` are now
   `Fn.keep_top_k` and `Fn.keep_top_p`. They return the logits with everything
   outside the kept set at negative infinity, where `Nx.top_k` returns the `k`
