@@ -846,6 +846,11 @@ thread.
 
 ### Nx
 
+- `Nx_io.save_safetensors` no longer truncates its destination in place: it
+  writes a temporary file beside it, syncs it and renames it, so a crash or a
+  failed save leaves the previous file whole. If the rename is refused the
+  written file is kept and the error names it. Saved files now have mode
+  `0o640`, as the other `Nx_io` writers give theirs.
 - `Nx.cast` at the tensor's own dtype is the tensor itself and no longer a
   copy: only a change of dtype allocates. Use `Nx.copy` for fresh storage.
 - Fix `einsum` with a repeated index that does not sit at the end of its

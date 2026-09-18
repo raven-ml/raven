@@ -38,6 +38,7 @@ let write_i32_le bytes off v =
 let wrap_exn f =
   try f () with
   | Sys_error msg -> Error (Io_error msg)
+  | Failure msg -> Error (Other msg)
   | ex -> Error (Other (Printexc.to_string ex))
 
 let check_overwrite overwrite path =
@@ -258,6 +259,16 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       fail_msg "unsupported dtype for safetensors: %s"
         (Nx_buffer.kind_name (Nx_buffer.kind buf))
 
+let replace_or_keep temp path =
+  Unix.chmod temp Temp_file.mode;
+  try Unix.rename temp path
+  with Unix.Unix_error _ -> (
+    Gc.full_major ();
+    try Unix.rename temp path
+    with Unix.Unix_error (e, _, _) ->
+      fail_msg "cannot replace %s (%s): the tensors were written to %s" path
+        (Unix.error_message e) temp)
+
 let save_safetensors ?(overwrite = true) path items =
   wrap_exn @@ fun () ->
   check_overwrite overwrite path;
@@ -273,6 +284,11 @@ let save_safetensors ?(overwrite = true) path items =
               (Safetensors.string_of_error err))
       items
   in
-  match Safetensors.serialize_to_file tensor_views None path with
-  | Ok () -> Ok ()
-  | Error err -> Error (Format_error (Safetensors.string_of_error err))
+  let temp = Temp_file.sibling path in
+  match Safetensors.serialize_to_file tensor_views None temp with
+  | Ok () ->
+      replace_or_keep temp path;
+      Ok ()
+  | Error err ->
+      Temp_file.remove_if_exists temp;
+      Error (Format_error (Safetensors.string_of_error err))

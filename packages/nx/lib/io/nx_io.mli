@@ -150,11 +150,20 @@ val save_safetensors :
 (** [save_safetensors ?overwrite path entries] writes named tensors to a
     SafeTensors file.
 
-    [overwrite] defaults to [true].
+    The tensors are written to a temporary file in [path]'s directory, which is
+    synced to disk and then renamed to [path]: a reader sees the previous file
+    or the new one, never a partial one, and a failed save leaves the previous
+    file as it was. If the rename is refused, which happens on platforms that
+    lock a file while tensors loaded from it are alive, a major collection runs
+    and the rename is retried once.
+
+    [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
+    exist.
 
     @raise Failure
       if [path] cannot be written or a tensor's dtype has no SafeTensors
-      equivalent (complex and int4 dtypes). *)
+      equivalent (complex and int4 dtypes). If the rename is refused twice, the
+      message names the temporary file, which is kept and holds [entries]. *)
 
 (** {1:text Text format} *)
 

@@ -707,6 +707,11 @@ let serialize_to_file data data_info filename =
     tensors;
   try
     let oc = open_out_bin filename in
-    Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_bytes oc b);
+    Fun.protect
+      ~finally:(fun () -> close_out oc)
+      (fun () ->
+        output_bytes oc b;
+        flush oc;
+        Unix.fsync (Unix.descr_of_out_channel oc));
     Ok ()
   with e -> Error (Io_error (Printexc.to_string e))
