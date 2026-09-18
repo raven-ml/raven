@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.scatter` under `Rune.jit` costs the number of updates plus one copy of
+  the destination, instead of destination size times update count. The
+  gradient of `Nx.take` and `Nx.take_along_axis` is such a scatter: an
+  embedding gradient for 1024 tokens over a 131072x256 table went from 2.1 s
+  to 20 ms on CPU. `unique_indices` now reaches the compiled kernel, and an
+  index outside the axis still writes nothing.
 - `Rune.grad` through `Nx.matmul` now sums the cotangent of an operand over
   its batch axes of extent one that broadcast against the other operand. The
   gradient used to come back at the broadcast shape and a later pullback

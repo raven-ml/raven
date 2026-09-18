@@ -868,6 +868,114 @@ let test_scatter_matches_eager () =
   check_arr ~msg:"set replay" (to_arr (f `Set x)) (g_set x);
   check_arr ~msg:"add" (to_arr (f `Add x)) (g_add x)
 
+(* The compiled scatter ranges over the updates, not over the destination.
+   Each case is held to the eager result. *)
+
+let i32 shape xs = Nx.create Nx.int32 shape (Array.map Int32.of_int xs)
+let iota shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape (Array.init n (fun i -> float_of_int (i + 1)))
+
+let check_scatter ~msg ?unique_indices ~axis ~indices ~values t =
+  List.iter
+    (fun (name, mode) ->
+      let f t = Nx.scatter ~mode ?unique_indices ~axis ~indices ~values t in
+      let g = Rune.jit' f in
+      check_arr ~msg:(msg ^ ", " ^ name) (to_arr (f t)) (g t);
+      check_arr ~msg:(msg ^ ", " ^ name ^ ", replay") (to_arr (f t)) (g t))
+    [ ("set", `Set); ("add", `Add) ]
+
+let test_scatter_duplicates () =
+  check_scatter ~msg:"rows aimed at one row twice" ~axis:0
+    ~indices:(i32 [| 3; 3 |] [| 2; 0; 1; 2; 3; 1; 0; 0; 1 |])
+    ~values:(iota [| 3; 3 |])
+    (iota [| 4; 3 |]);
+  check_scatter ~msg:"every update of a lane aims at one cell" ~axis:1
+    ~indices:(i32 [| 2; 3 |] [| 1; 1; 1; 3; 3; 3 |])
+    ~values:(iota [| 2; 3 |])
+    (iota [| 2; 4 |])
+
+let test_scatter_middle_axis () =
+  check_scatter ~msg:"middle axis" ~axis:1
+    ~indices:(i32 [| 2; 2; 3 |] [| 3; 0; 1; 3; 2; 1; 0; 0; 0; 1; 2; 3 |])
+    ~values:(iota [| 2; 2; 3 |])
+    (iota [| 2; 4; 3 |])
+
+let test_scatter_unique_indices () =
+  check_scatter ~msg:"unique" ~unique_indices:true ~axis:0
+    ~indices:(i32 [| 2; 2 |] [| 3; 0; 1; 2 |])
+    ~values:(iota [| 2; 2 |])
+    (iota [| 4; 2 |])
+
+(* Eager raises on an index outside the axis; compiled, the update is dropped.
+   -1 is the address a slot map gives a token that is not written. *)
+let test_scatter_out_of_range_writes_nothing () =
+  let indices = i32 [| 4; 2 |] [| -1; 4; 1; -7; 2; 1; 5; -1 |] in
+  let values = iota [| 4; 2 |] in
+  let f mode t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
+  check_arr ~msg:"set"
+    [| 0.0; 0.0; 3.0; 6.0; 5.0; 0.0; 0.0; 0.0 |]
+    (Rune.jit' (f `Set) (Nx.zeros f32 [| 4; 2 |]));
+  check_arr ~msg:"add"
+    [| 1.0; 2.0; 6.0; 10.0; 10.0; 6.0; 7.0; 8.0 |]
+    (Rune.jit' (f `Add) (iota [| 4; 2 |]))
+
+let test_scatter_payload_dtypes () =
+  let indices = i32 [| 4 |] [| 2; 0; 2; 1 |] in
+  List.iter
+    (fun mode ->
+      let values = i32 [| 4 |] [| 5; 7; 9; 11 |] in
+      let ints t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
+      let t = i32 [| 3 |] [| 100; 200; 300 |] in
+      check_arr ~msg:"int32"
+        (to_arr (Nx.cast f32 (ints t)))
+        (Nx.cast f32 (Rune.jit' ints t));
+      let halves t =
+        Nx.scatter ~mode ~axis:0 ~indices
+          ~values:(Nx.cast Nx.bfloat16 (vec32 [| 0.5; 1.5; 2.5; 4.0 |]))
+          t
+      in
+      let t = Nx.cast Nx.bfloat16 (vec32 [| 8.0; 16.0; 32.0 |]) in
+      check_arr ~msg:"bfloat16"
+        (to_arr (Nx.cast f32 (halves t)))
+        (Nx.cast f32 (Rune.jit' halves t)))
+    [ `Set; `Add ]
+
+let test_scatter_under_vmap () =
+  let indices = i32 [| 3; 2 |] [| 1; 0; 1; 2; 0; 0 |] in
+  let values = iota [| 3; 2 |] and t = iota [| 3; 2 |] in
+  let batch x = Nx.stack ~axis:0 [ x; Nx.add x x ] in
+  let check ~msg f x =
+    check_arr ~msg (to_arr (Rune.vmap' f x)) (Rune.jit' (Rune.vmap' f) x)
+  in
+  List.iter
+    (fun (name, mode) ->
+      check ~msg:("over the destination, " ^ name)
+        (fun t -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
+        (batch t);
+      check ~msg:("over the values, " ^ name)
+        (fun values -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
+        (batch values))
+    [ ("set", `Set); ("add", `Add) ];
+  let rows = i32 [| 2; 3; 2 |] [| 1; 0; 1; 2; 0; 0; 2; 2; 2; 1; 0; 1 |] in
+  let f indices = Nx.scatter ~mode:`Add ~axis:0 ~indices ~values t in
+  check_arr ~msg:"over the indices"
+    (to_arr (Rune.vmap' f rows))
+    (Rune.jit' (Rune.vmap' f) rows)
+
+(* The pullback of [take] accumulates a row's cotangent once per occurrence of
+   its token. *)
+let test_grad_of_take_with_repeated_tokens () =
+  let indices = i32 [| 6 |] [| 3; 1; 3; 3; 0; 1 |] in
+  let weights = iota [| 6; 2 |] in
+  let loss table =
+    Nx.sum (Nx.mul weights (Nx.take ~axis:0 ~indices table))
+  in
+  let table = iota [| 5; 2 |] in
+  check_arr ~msg:"embedding gradient"
+    (to_arr (Rune.grad' loss table))
+    (Rune.jit' (Rune.grad' loss) table)
+
 (* A table past the reduce-split threshold: the row count is where a split
    one-hot reduce used to cost a pass over the table. *)
 let test_take_large_table_matches_eager () =
@@ -1555,6 +1663,16 @@ let tests =
     group "indexed access"
       [
         test "scatter matches eager" test_scatter_matches_eager;
+        test "scatter orders duplicate updates" test_scatter_duplicates;
+        test "scatter along a middle axis" test_scatter_middle_axis;
+        test "scatter with unique indices" test_scatter_unique_indices;
+        test "scatter drops an update outside the axis"
+          test_scatter_out_of_range_writes_nothing;
+        test "scatter carries int and bfloat16 payloads"
+          test_scatter_payload_dtypes;
+        test "scatter under vmap" test_scatter_under_vmap;
+        test "gradient of take with repeated tokens"
+          test_grad_of_take_with_repeated_tokens;
         test "take over a large table matches eager"
           test_take_large_table_matches_eager;
         test "diag matches eager" test_diag_matches_eager;

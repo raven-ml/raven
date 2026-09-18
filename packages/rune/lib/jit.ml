@@ -1052,17 +1052,24 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             ret k (dt data) (F.Op.gather (go data) ~dim:axis (go indices)))
-    | E_scatter { data_template; indices; updates; axis; mode; _ } ->
+    | E_scatter
+        { data_template; indices; updates; axis; mode; unique_indices } ->
         Some
           (fun k ->
+            let t = go data_template and index = go indices in
+            let src = go updates in
             let r =
-              match mode with
-              | `Set ->
-                  F.Op.scatter (go data_template) ~dim:axis (go indices)
-                    (go updates)
-              | `Add ->
-                  F.Op.scatter_reduce (go data_template) ~dim:axis (go indices)
-                    (go updates) ~reduce:`Sum ~include_self:true ()
+              match (st.st_multi, mode) with
+              | None, _ ->
+                  (* The write is in place, and a tensor is a value. *)
+                  let device = List.find_map F.Tensor.device [ t; index; src ] in
+                  F.Op.scatter_indexed
+                    (F.Creation.clone ?device t)
+                    ~dim:axis index src ~mode ~unique:unique_indices
+              | Some _, `Set -> F.Op.scatter t ~dim:axis index src
+              | Some _, `Add ->
+                  F.Op.scatter_reduce t ~dim:axis index src ~reduce:`Sum
+                    ~include_self:true ()
             in
             ret k (dt data_template) r)
     (* The window write. A constant corner is a padded [v] selected over [t]
