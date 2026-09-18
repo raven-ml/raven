@@ -67,18 +67,6 @@ let load_image ~grayscale path =
   in
   Nx.of_buffer buffer ~shape
 
-let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
-
-let replace_with_temp temp path =
-  match
-    Unix.chmod temp 0o640;
-    Unix.rename temp path
-  with
-  | () -> ()
-  | exception exn ->
-      remove_if_exists temp;
-      raise exn
-
 let encode_to_path ~encode ~exclusive path data ~width ~height ~channels =
   let flags =
     if exclusive then [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL ]
@@ -92,7 +80,7 @@ let encode_to_path ~encode ~exclusive path data ~width ~height ~channels =
   with
   | () -> ()
   | exception exn ->
-      remove_if_exists path;
+      Temp_file.remove_if_exists path;
       raise exn
 
 let save_png ~overwrite path data ~width ~height ~channels =
@@ -101,18 +89,14 @@ let save_png ~overwrite path data ~width ~height ~channels =
     encode_to_path ~encode:png_encode ~exclusive:true path data ~width ~height
       ~channels
   else
-    let temp =
-      Filename.temp_file ~temp_dir:(Filename.dirname path)
-        (Filename.basename path ^ ".")
-        ".tmp"
-    in
+    let temp = Temp_file.sibling path in
     match
       encode_to_path ~encode:png_encode ~exclusive:false temp data ~width
         ~height ~channels
     with
-    | () -> replace_with_temp temp path
+    | () -> Temp_file.replace temp path
     | exception exn ->
-        remove_if_exists temp;
+        Temp_file.remove_if_exists temp;
         raise exn
 
 let encode_png data ~width ~height ~channels =
@@ -127,16 +111,12 @@ let save_jpeg ~overwrite path data ~width ~height ~channels =
     encode_to_path ~encode:jpeg_encode ~exclusive:true path data ~width ~height
       ~channels
   else
-    let temp =
-      Filename.temp_file ~temp_dir:(Filename.dirname path)
-        (Filename.basename path ^ ".")
-        ".tmp"
-    in
+    let temp = Temp_file.sibling path in
     match
       encode_to_path ~encode:jpeg_encode ~exclusive:false temp data ~width
         ~height ~channels
     with
-    | () -> replace_with_temp temp path
+    | () -> Temp_file.replace temp path
     | exception exn ->
-        remove_if_exists temp;
+        Temp_file.remove_if_exists temp;
         raise exn

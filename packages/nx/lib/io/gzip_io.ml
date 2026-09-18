@@ -106,11 +106,7 @@ let gunzip ~src ~dst =
       (fun () -> map_file input_fd (Unix.fstat input_fd).st_size)
   in
   if Array1.dim data = 0 then error "empty gzip stream";
-  let temp =
-    Filename.temp_file ~temp_dir:(Filename.dirname dst)
-      (Filename.basename dst ^ ".")
-      ".tmp"
-  in
+  let temp = Temp_file.sibling dst in
   match
     let output_fd = Unix.openfile temp [ Unix.O_WRONLY; Unix.O_TRUNC ] 0 in
     Fun.protect
@@ -123,15 +119,7 @@ let gunzip ~src ~dst =
         in
         members 0)
   with
-  | () -> (
-      match
-        Unix.chmod temp 0o640;
-        Unix.rename temp dst
-      with
-      | () -> ()
-      | exception exn ->
-          (try Sys.remove temp with Sys_error _ -> ());
-          raise exn)
+  | () -> Temp_file.replace temp dst
   | exception exn ->
-      (try Sys.remove temp with Sys_error _ -> ());
+      Temp_file.remove_if_exists temp;
       raise exn
