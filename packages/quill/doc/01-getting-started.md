@@ -240,7 +240,7 @@ automatically.
 
 ## Next Steps
 
-- [Notebook Format](02-notebook-format/) — how markdown maps to cells,
+- [Notebook Format](02-notebook-format.md) — how markdown maps to cells,
   how outputs are serialized
-- [Execution Modes](03-execution-modes/) — TUI, web frontend, live
+- [Execution Modes](03-execution-modes.md) — TUI, web frontend, live
   editing workflow, batch execution

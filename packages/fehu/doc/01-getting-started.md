@@ -211,5 +211,5 @@ Supported render modes vary by environment: `Ansi` for text output,
 
 ## Next Steps
 
-- [Environments and Wrappers](../02-environments/) -- custom environments, wrappers, rendering, vectorized environments
-- [Collection and Evaluation](../03-collection-and-evaluation/) -- trajectory collection, replay buffers, GAE, evaluation
+- [Environments and Wrappers](02-environments.md) -- custom environments, wrappers, rendering, vectorized environments
+- [Collection and Evaluation](03-collection-and-evaluation.md) -- trajectory collection, replay buffers, GAE, evaluation

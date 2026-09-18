@@ -177,6 +177,6 @@ let check_convergence (results : Norn.result array) =
 
 ## Next Steps
 
-- [Advanced Usage](../03-advanced-usage/) -- custom integrators, metrics, and monitoring
-- [Getting Started](../01-getting-started/) -- basic usage and the kernel API
-- [PyMC Comparison](../04-pymc-comparison/) -- mapping from Python's PyMC/BlackJAX to Norn
+- [Advanced Usage](03-advanced-usage.md) -- custom integrators, metrics, and monitoring
+- [Getting Started](01-getting-started.md) -- basic usage and the kernel API
+- [PyMC Comparison](04-pymc-comparison.md) -- mapping from Python's PyMC/BlackJAX to Norn

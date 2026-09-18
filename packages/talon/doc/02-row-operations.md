@@ -207,5 +207,5 @@ let row_count = Agg.count df "name"
 
 ## Next Steps
 
-- [Getting Started](/docs/talon/getting-started/) — basic DataFrame creation and manipulation
-- [pandas Comparison](/docs/talon/pandas-comparison/) — side-by-side reference
+- [Getting Started](01-getting-started.md) — basic DataFrame creation and manipulation
+- [pandas Comparison](03-pandas-comparison.md) — side-by-side reference

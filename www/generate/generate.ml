@@ -13,6 +13,18 @@ let lib_examples_dir lib_name =
     (Filename.concat (Filename.concat ".." "packages") lib_name)
     "examples"
 
+(* A source file and the site path it publishes to. *)
+type entry = { src : string; path : string }
+
+(* An example publishes one page built from its README and sources, plus the
+   data files it ships alongside them. *)
+type example = {
+  lib : Site.library;
+  dir : string;
+  path : string;
+  assets : entry list;
+}
+
 (* -- Library navigation -- *)
 
 let lib_doc_entries lib_name =
@@ -218,10 +230,8 @@ let apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
     ~page_title ~path ~tab_nav ~prev_next ()
 
 let dest_path path =
-  let stem = Filename.chop_extension path in
-  if Filename.basename stem = "index" then
-    Filename.concat build_dir (stem ^ ".html")
-  else Filename.concat build_dir (Filename.concat stem "index.html")
+  Filename.concat build_dir
+    (String.concat "/" (Site.url_segments path @ [ "index.html" ]))
 
 (* -- Processing -- *)
 
@@ -249,13 +259,15 @@ let markdown_renderer =
     (Cmarkit_html.renderer ~safe:false ())
     (Cmarkit_renderer.make ~block:highlighted_code_block ())
 
-let render_markdown content =
+let render_markdown ~links ~src content =
   content
-  |> Cmarkit.Doc.of_string ~heading_auto_ids:true ~strict:false
+  |> Cmarkit.Doc.of_string ~heading_auto_ids:true ~locs:true ~file:src
+       ~strict:false
+  |> Links.rewrite links ~src
   |> Cmarkit_renderer.doc_to_string markdown_renderer
 
-let process_markdown path content =
-  let html = render_markdown content |> Site.rewrite_doc_hrefs in
+let process_markdown ~links ~src path content =
+  let html = render_markdown ~links ~src content in
   let h1 = Site.extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
   let page_title =
@@ -333,17 +345,31 @@ let highlight_html_code_blocks html =
   done;
   Buffer.contents buf
 
-let process_file ~path full_path =
-  let ext = Filename.extension path in
-  let out, content =
-    match ext with
-    | ".md" -> (dest_path path, process_markdown path (Site.read_file full_path))
-    | ".html" | ".htm" ->
-        (dest_path path, highlight_html_code_blocks (Site.read_file full_path))
-    | _ -> (Filename.concat build_dir path, Site.read_file full_path)
+(* A page is rendered into a directory index; every other file is copied to the
+   path it is referenced by. *)
+let is_page path =
+  match Filename.extension path with
+  | ".md" | ".html" | ".htm" -> true
+  | _ -> false
+
+let publish ~path content =
+  let out =
+    if is_page path then dest_path path else Filename.concat build_dir path
   in
   Site.ensure_dir (Filename.dirname out);
   Site.write_file out content
+
+let process_file ~links { src; path } =
+  let content = Site.read_file src in
+  let content =
+    match Filename.extension path with
+    | ".md" -> process_markdown ~links ~src path content
+    | ".html" | ".htm" -> highlight_html_code_blocks content
+    | _ -> content
+  in
+  publish ~path content
+
+let copy_file { src; path } = publish ~path (Site.read_file src)
 
 let escape_html s =
   let buf = Buffer.create (String.length s) in
@@ -357,18 +383,16 @@ let escape_html s =
     s;
   Buffer.contents buf
 
-let process_example ~lib example_dir =
-  let entry = Filename.basename example_dir in
-  let slug = Site.strip_order_prefix entry in
-  let path = Printf.sprintf "docs/%s/examples/%s.md" lib.Site.name slug in
-  let readme_path = Filename.concat example_dir "README.md" in
+let process_example ~links { lib; dir; path; assets } =
+  let slug = Filename.chop_extension (Filename.basename path) in
+  let readme = Filename.concat dir "README.md" in
   let prose_html =
-    if Sys.file_exists readme_path then
-      render_markdown (Site.read_file readme_path)
+    if Sys.file_exists readme then
+      render_markdown ~links ~src:readme (Site.read_file readme)
     else Printf.sprintf "<h1>%s</h1>" (escape_html (Site.title_case slug))
   in
   let ml_files =
-    Sys.readdir example_dir |> Array.to_list
+    Sys.readdir dir |> Array.to_list
     |> List.filter (fun f -> Filename.extension f = ".ml")
     |> List.sort String.compare
   in
@@ -376,71 +400,118 @@ let process_example ~lib example_dir =
   let code_html =
     ml_files
     |> List.map (fun f ->
-        let code = Site.read_file (Filename.concat example_dir f) in
+        let code = Site.read_file (Filename.concat dir f) in
         let header =
           if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f) else ""
         in
         header ^ Highlight.ocaml code)
     |> String.concat "\n"
   in
+  List.iter copy_file assets;
   let html = prose_html ^ "\n" ^ code_html in
   let h1 = Site.extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
   let page_title = match h1 with Some t -> t | None -> Site.title_case slug in
   let breadcrumbs = Site.make_breadcrumbs (Site.url_segments path) page_title in
   let template = Site.read_file (select_template path) in
-  let content =
-    apply_template ~template ~title ~breadcrumbs ~content:html ~lib:(Some lib)
-      ~is_lib_index:false ~page_title ~path
-  in
-  let out = dest_path path in
-  Site.ensure_dir (Filename.dirname out);
-  Site.write_file out content
+  publish ~path
+    (apply_template ~template ~title ~breadcrumbs ~content:html ~lib:(Some lib)
+       ~is_lib_index:false ~page_title ~path)
+
+(* -- Source discovery -- *)
+
+let site_entries () =
+  Site.walk site_dir
+  |> List.map (fun src ->
+      { src; path = Site.strip_prefix ~prefix:site_dir src })
+
+let doc_entries () =
+  Site.walk docs_dir
+  |> List.map (fun src ->
+      let rel = Site.strip_prefix ~prefix:docs_dir src in
+      { src; path = Filename.concat "docs" rel })
+
+let lib_doc_sources lib =
+  let dir = lib_doc_dir lib.Site.name in
+  if not (Sys.file_exists dir && Sys.is_directory dir) then []
+  else
+    Site.walk dir
+    |> List.filter_map (fun src ->
+        if Filename.basename src = "dune" || Filename.extension src = ".mld"
+        then None
+        else
+          let rel = Site.strip_prefix ~prefix:dir src in
+          let base = Filename.basename rel in
+          let clean_base =
+            if Filename.extension base = ".md" then
+              Site.strip_order_prefix (Filename.chop_extension base) ^ ".md"
+            else base
+          in
+          let rel_dir = Filename.dirname rel in
+          let clean_rel =
+            if rel_dir = "." then clean_base
+            else Filename.concat rel_dir clean_base
+          in
+          let path =
+            Filename.concat (Filename.concat "docs" lib.Site.name) clean_rel
+          in
+          Some { src; path })
+
+(* Example directories hold sources and build outputs next to the data files the
+   example ships, so publishing is by extension rather than by exclusion. *)
+let publishable_asset name =
+  match Filename.extension name with
+  | ".png" | ".jpg" | ".jpeg" | ".gif" | ".svg" | ".webp" | ".csv" | ".json"
+  | ".txt" ->
+      true
+  | _ -> false
+
+let lib_examples lib =
+  let dir = lib_examples_dir lib.Site.name in
+  if not (Sys.file_exists dir && Sys.is_directory dir) then []
+  else
+    Sys.readdir dir |> Array.to_list |> List.sort String.compare
+    |> List.filter_map (fun name ->
+        let example_dir = Filename.concat dir name in
+        if not (Sys.is_directory example_dir) then None
+        else
+          let page =
+            Printf.sprintf "docs/%s/examples/%s" lib.Site.name
+              (Site.strip_order_prefix name)
+          in
+          let assets =
+            Sys.readdir example_dir |> Array.to_list |> List.sort String.compare
+            |> List.filter_map (fun f ->
+                if not (publishable_asset f) then None
+                else
+                  Some
+                    {
+                      src = Filename.concat example_dir f;
+                      path = Filename.concat page f;
+                    })
+          in
+          Some { lib; dir = example_dir; path = page ^ ".md"; assets })
 
 let () =
-  Site.walk site_dir
-  |> List.iter (fun p ->
-      process_file ~path:(Site.strip_prefix ~prefix:site_dir p) p);
-  Site.walk docs_dir
-  |> List.iter (fun p ->
-      let rel = Site.strip_prefix ~prefix:docs_dir p in
-      let path = Filename.concat "docs" rel in
-      process_file ~path p);
-  Site.libraries
-  |> List.iter (fun lib ->
-      let dir = lib_doc_dir lib.Site.name in
-      if Sys.file_exists dir && Sys.is_directory dir then
-        Site.walk dir
-        |> List.iter (fun full_path ->
-            let ext = Filename.extension full_path in
-            let base = Filename.basename full_path in
-            if base = "dune" || ext = ".mld" then ()
-            else
-              let rel = Site.strip_prefix ~prefix:dir full_path in
-              let rel_base = Filename.basename rel in
-              let rel_dir = Filename.dirname rel in
-              let clean_base =
-                if Filename.extension rel_base = ".md" then
-                  Site.strip_order_prefix (Filename.chop_extension rel_base)
-                  ^ ".md"
-                else rel_base
-              in
-              let clean_rel =
-                if rel_dir = "." then clean_base
-                else Filename.concat rel_dir clean_base
-              in
-              let path =
-                Filename.concat (Filename.concat "docs" lib.name) clean_rel
-              in
-              process_file ~path full_path));
-  Site.libraries
-  |> List.iter (fun lib ->
-      let dir = lib_examples_dir lib.Site.name in
-      if Sys.file_exists dir && Sys.is_directory dir then
-        Sys.readdir dir |> Array.to_list |> List.sort String.compare
-        |> List.iter (fun entry ->
-            let full = Filename.concat dir entry in
-            if Sys.is_directory full then process_example ~lib full));
+  let entries =
+    site_entries () @ doc_entries ()
+    @ List.concat_map lib_doc_sources Site.libraries
+  in
+  let examples = List.concat_map lib_examples Site.libraries in
+  let links = Links.create () in
+  let register { src; path } =
+    let url = if is_page path then Site.url_of_path path else "/" ^ path in
+    Links.register links ~src ~url
+  in
+  List.iter register entries;
+  List.iter
+    (fun { dir; path; assets; lib = _ } ->
+      register { src = Filename.concat dir "README.md"; path };
+      List.iter register assets)
+    examples;
+  List.iter (process_file ~links) entries;
+  List.iter (process_example ~links) examples;
+  Links.report links;
   let tab_nav lib_name =
    fun current_url -> generate_tab_nav ~current_url lib_name
   in

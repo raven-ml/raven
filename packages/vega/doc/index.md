@@ -81,7 +81,7 @@ Schedules are tensor arithmetic over the counter, so the same schedule drives an
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) — installation, first optimizer, the step/update API
-- [Composing Transforms](02-composing-transforms/) — building custom optimizers from primitives
-- [Learning Rate Schedules](03-schedules/) — decay, warmup, restarts, and composition
-- [Optax Comparison](04-optax-comparison/) — mapping from Python's Optax to Vega
+- [Getting Started](01-getting-started.md) — installation, first optimizer, the step/update API
+- [Composing Transforms](02-composing-transforms.md) — building custom optimizers from primitives
+- [Learning Rate Schedules](03-schedules.md) — decay, warmup, restarts, and composition
+- [Optax Comparison](04-optax-comparison.md) — mapping from Python's Optax to Vega

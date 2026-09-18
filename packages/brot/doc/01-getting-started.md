@@ -107,7 +107,7 @@ let offsets = Encoding.offsets enc
 let word_ids = Encoding.word_ids enc
 ```
 
-See [Batch Processing](04-batch-processing/) for a deeper look at encoding
+See [Batch Processing](04-batch-processing.md) for a deeper look at encoding
 metadata, sentence pairs, padding, and truncation.
 
 ## The Pipeline
@@ -148,7 +148,7 @@ let text = decode tokenizer ~skip_special_tokens:true (Encoding.ids enc)
 (* "the cat sat" *)
 ```
 
-See [The Tokenization Pipeline](02-pipeline/) for a detailed guide to each
+See [The Tokenization Pipeline](02-pipeline.md) for a detailed guide to each
 stage.
 
 ## Training
@@ -172,7 +172,7 @@ let size = vocab_size tokenizer
 let enc = encode tokenizer "The quick fox"
 ```
 
-See [Choosing an Algorithm](05-algorithms/) for guidance on which algorithm
+See [Choosing an Algorithm](05-algorithms.md) for guidance on which algorithm
 to use and how to configure training.
 
 ## Loading Pretrained Tokenizers
@@ -200,7 +200,7 @@ let tokenizer =
     ()
 ```
 
-See [Pretrained Tokenizers](03-pretrained/) for complete pipeline
+See [Pretrained Tokenizers](03-pretrained.md) for complete pipeline
 configurations for BERT, GPT-2, and SentencePiece-style models.
 
 ## Batch Processing
@@ -229,12 +229,12 @@ let encodings =
 let lengths = List.map Encoding.length encodings
 ```
 
-See [Batch Processing](04-batch-processing/) for padding strategies,
+See [Batch Processing](04-batch-processing.md) for padding strategies,
 truncation, sentence pairs, and offset alignment.
 
 ## Next Steps
 
-- [The Tokenization Pipeline](02-pipeline/) — how the 5 pipeline stages work
-- [Pretrained Tokenizers](03-pretrained/) — loading, saving, and building known model pipelines
-- [Batch Processing](04-batch-processing/) — padding, truncation, encoding metadata
-- [Choosing an Algorithm](05-algorithms/) — BPE vs WordPiece vs Unigram and when to use each
+- [The Tokenization Pipeline](02-pipeline.md) — how the 5 pipeline stages work
+- [Pretrained Tokenizers](03-pretrained.md) — loading, saving, and building known model pipelines
+- [Batch Processing](04-batch-processing.md) — padding, truncation, encoding metadata
+- [Choosing an Algorithm](05-algorithms.md) — BPE vs WordPiece vs Unigram and when to use each

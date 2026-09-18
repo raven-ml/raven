@@ -198,6 +198,6 @@ let size = vocab_size tokenizer
 let enc = encode tokenizer "The quick fox"
 ```
 
-See [Choosing an Algorithm](05-algorithms/) for guidance on which algorithm
+See [Choosing an Algorithm](05-algorithms.md) for guidance on which algorithm
 to train and how to tune parameters like `vocab_size`, `min_frequency`,
 and algorithm-specific options.

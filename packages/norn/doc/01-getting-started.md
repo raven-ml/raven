@@ -144,6 +144,6 @@ length or need predictable cost per step.
 
 ## Next Steps
 
-- [Adaptation and Diagnostics](../02-adaptation-and-diagnostics/) -- warmup windows, ESS, R-hat
-- [Advanced Usage](../03-advanced-usage/) -- custom integrators, metrics, and monitoring
-- [PyMC Comparison](../04-pymc-comparison/) -- mapping from Python's PyMC/BlackJAX to Norn
+- [Adaptation and Diagnostics](02-adaptation-and-diagnostics.md) -- warmup windows, ESS, R-hat
+- [Advanced Usage](03-advanced-usage.md) -- custom integrators, metrics, and monitoring
+- [PyMC Comparison](04-pymc-comparison.md) -- mapping from Python's PyMC/BlackJAX to Norn

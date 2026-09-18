@@ -153,5 +153,5 @@ When you omit `~color`, marks are colored automatically from the theme's categor
 
 ## Next Steps
 
-- [Layout and Decorations](/docs/hugin/layout-and-decorations/) — axes, scales, themes, multi-panel layouts
-- [Colors and Colormaps](/docs/hugin/colors-and-colormaps/) — OKLCH color space, palettes, and colormap reference
+- [Layout and Decorations](03-layout-and-decorations.md) — axes, scales, themes, multi-panel layouts
+- [Colors and Colormaps](04-colors-and-colormaps.md) — OKLCH color space, palettes, and colormap reference

@@ -149,7 +149,7 @@ let () =
 
 ## Next Steps
 
-- **[Nx](/docs/nx/getting-started/)** — full guide to arrays, slicing, broadcasting, linear algebra
-- **[Rune](/docs/rune/getting-started/)** — all transformations: grad, jvp, vmap, and more
-- **[Kaun](/docs/kaun/getting-started/)** — layers, losses, data, metrics, pretrained models
-- **[Ecosystem Overview](/docs/ecosystem-overview/)** — how all 9 libraries fit together
+- **[Nx](../packages/nx/doc/01-getting-started.md)** — full guide to arrays, slicing, broadcasting, linear algebra
+- **[Rune](../packages/rune/doc/01-getting-started.md)** — all transformations: grad, jvp, vmap, and more
+- **[Kaun](../packages/kaun/doc/01-getting-started.md)** — layers, losses, data, metrics, pretrained models
+- **[Ecosystem Overview](ecosystem-overview.md)** — how all 9 libraries fit together

@@ -229,5 +229,5 @@ let () =
 
 ## Next Steps
 
-- [Operations Reference](02-operations/) -- every operation with detailed examples
-- [Pipelines and Integration](03-pipelines/) -- composing pipelines, batch processing, deep learning
+- [Operations Reference](02-operations.md) -- every operation with detailed examples
+- [Pipelines and Integration](03-pipelines.md) -- composing pipelines, batch processing, deep learning

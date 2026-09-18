@@ -213,6 +213,6 @@ let () =
 
 ## Next Steps
 
-- [Array Operations](/docs/nx/array-operations/) — reshaping, views, joining, transposing
-- [Linear Algebra](/docs/nx/linear-algebra/) — decompositions, solvers, FFT
-- [NumPy Comparison](/docs/nx/numpy-comparison/) — side-by-side reference if you're coming from Python
+- [Array Operations](02-array-operations.md) — reshaping, views, joining, transposing
+- [Linear Algebra](03-linear-algebra.md) — decompositions, solvers, FFT
+- [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference if you're coming from Python

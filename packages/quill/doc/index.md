@@ -48,6 +48,6 @@ quill run notebook.md
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) — REPL, notebooks, execution modes
-- [Notebook Format](02-notebook-format/) — how markdown becomes cells, how outputs are stored
-- [Execution Modes](03-execution-modes/) — REPL, TUI, web, run, and clean
+- [Getting Started](01-getting-started.md) — REPL, notebooks, execution modes
+- [Notebook Format](02-notebook-format.md) — how markdown becomes cells, how outputs are stored
+- [Execution Modes](03-execution-modes.md) — REPL, TUI, web, run, and clean

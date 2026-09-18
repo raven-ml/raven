@@ -277,5 +277,5 @@ observation is stored in the step info under `"final_observation"` as a packed
 
 ## Next Steps
 
-- [Getting Started](../01-getting-started/) -- installation, environments, spaces, step loop
-- [Collection and Evaluation](../03-collection-and-evaluation/) -- trajectory collection, replay buffers, GAE, evaluation
+- [Getting Started](01-getting-started.md) -- installation, environments, spaces, step loop
+- [Collection and Evaluation](03-collection-and-evaluation.md) -- trajectory collection, replay buffers, GAE, evaluation

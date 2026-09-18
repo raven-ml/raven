@@ -245,6 +245,6 @@ let rebuilt =
 
 ## Next Steps
 
-- [Array Operations](/docs/nx/array-operations/) — reshaping, broadcasting, slicing
-- [Input/Output](/docs/nx/io/) — reading and writing files
-- [NumPy Comparison](/docs/nx/numpy-comparison/) — side-by-side reference
+- [Array Operations](02-array-operations.md) — reshaping, broadcasting, slicing
+- [Input/Output](04-io.md) — reading and writing files
+- [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference

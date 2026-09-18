@@ -8,13 +8,13 @@ Python's monopoly on scientific computing forces an impossible choice: ship ever
 
 **Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, then deploy as a MirageOS unikernel or a static binary — no Python, no CUDA dependency hell, no 5 GB Docker images. We built Raven for teams that want both development speed and reliable systems.
 
-_Learn more: [Introduction](/docs/introduction)_
+_Learn more: [Introduction](introduction.md)_
 
 _We're in alpha with the full stack working end-to-end (we've trained GPT-2 on CPU). Next milestone: JIT compilation via tolk with performance close to PyTorch._
 
 ## Roadmap & Funding Goals
 
-_See the [full roadmap](/docs/roadmap) for our complete vision and timeline._
+_See the [full roadmap](roadmap.md) for our complete vision and timeline._
 
 ### Beta — JIT Compilation & Performance
 - Integrate tolk (tinygrad-based compiler) as a JIT transformation in Rune

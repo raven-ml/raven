@@ -26,7 +26,7 @@ Add to your `dune` file:
  (libraries kaun rune vega nx))
 ```
 
-Note the layering: kaun's library depends only on nx and rune. Optimizers come from [vega](/docs/vega/), which you depend on directly and compose in your own code — there is no trainer in between.
+Note the layering: kaun's library depends only on nx and rune. Optimizers come from [vega](../../vega/doc/index.md), which you depend on directly and compose in your own code — there is no trainer in between.
 
 ## A Model Is a Record
 
@@ -148,6 +148,6 @@ let step (params, ostate) (x, y) =
 
 ## Next Steps
 
-- [Layers and Models](02-layers-and-models/) — the full layer catalog, nesting records, stateful layers
-- [Training](03-training/) — losses, data, metrics, clipping, schedules
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained/) — saving, resuming, loading GPT-2 from the Hub
+- [Layers and Models](02-layers-and-models.md) — the full layer catalog, nesting records, stateful layers
+- [Training](03-training.md) — losses, data, metrics, clipping, schedules
+- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — saving, resuming, loading GPT-2 from the Hub

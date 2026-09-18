@@ -79,7 +79,7 @@ The library table keeps growing. Alongside the compiler work, Raven gained three
 - **Munin** — local experiment tracking, the equivalent of Weights & Biases or MLflow without a server. The Outreachy dashboard evolved into a full tracking library: log metrics and artifacts from your training script, watch runs live in the terminal with `munin watch`, compare them with `munin compare`. Data is plain JSON on disk, so `jq` and shell scripts work out of the box. Useful for AI experiments, but equally for any kind of scientific experiment.
 
 <figure>
-<img src="/docs/assets/munin.png" alt="munin watch dashboard">
+<img src="../assets/munin.png" alt="munin watch dashboard">
 <figcaption><code>munin watch</code> monitoring a live training run — a CNN compiled with <code>Rune.jit</code> on Metal (~25 ms/step, ~5,100 images/s), with loss curves, hyperparameters, and system panels.</figcaption>
 </figure>
 

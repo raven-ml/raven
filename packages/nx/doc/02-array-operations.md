@@ -286,6 +286,6 @@ Nx.pad [|(1, 2); (0, 1)|] 0. x
 
 ## Next Steps
 
-- [Linear Algebra](/docs/nx/linear-algebra/) — matrix operations, decompositions, FFT
-- [Input/Output](/docs/nx/io/) — reading and writing images, npy, npz files
-- [NumPy Comparison](/docs/nx/numpy-comparison/) — side-by-side reference
+- [Linear Algebra](03-linear-algebra.md) — matrix operations, decompositions, FFT
+- [Input/Output](04-io.md) — reading and writing images, npy, npz files
+- [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference

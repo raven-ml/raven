@@ -32,6 +32,6 @@ Charlie	35	95.1
 
 ## Next Steps
 
-- [Getting Started](/docs/talon/getting-started/) — installation, creating and inspecting DataFrames
-- [Row Operations](/docs/talon/row-operations/) — the applicative Row system, computed columns, filtering
-- [pandas Comparison](/docs/talon/pandas-comparison/) — side-by-side reference
+- [Getting Started](01-getting-started.md) — installation, creating and inspecting DataFrames
+- [Row Operations](02-row-operations.md) — the applicative Row system, computed columns, filtering
+- [pandas Comparison](03-pandas-comparison.md) — side-by-side reference

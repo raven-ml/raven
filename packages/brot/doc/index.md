@@ -70,8 +70,8 @@ let ids = encode_ids tokenizer "The quick fox"
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) — encode, decode, pipeline basics, training
-- [The Tokenization Pipeline](02-pipeline/) — how the 5 pipeline stages work
-- [Pretrained Tokenizers](03-pretrained/) — loading, saving, and building known model pipelines
-- [Batch Processing](04-batch-processing/) — padding, truncation, encoding metadata
-- [Choosing an Algorithm](05-algorithms/) — BPE vs WordPiece vs Unigram and when to use each
+- [Getting Started](01-getting-started.md) — encode, decode, pipeline basics, training
+- [The Tokenization Pipeline](02-pipeline.md) — how the 5 pipeline stages work
+- [Pretrained Tokenizers](03-pretrained.md) — loading, saving, and building known model pipelines
+- [Batch Processing](04-batch-processing.md) — padding, truncation, encoding metadata
+- [Choosing an Algorithm](05-algorithms.md) — BPE vs WordPiece vs Unigram and when to use each

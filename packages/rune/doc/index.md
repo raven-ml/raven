@@ -48,11 +48,11 @@ let () =
     Nx.pp_shape (Nx.shape g.w) Nx.pp_shape (Nx.shape g.b)
 ```
 
-Leaves may mix dtypes freely: a single forward and backward pass produces gradients for all of them, each with its leaf's dtype. Records nest into records, so models compose structurally — see [kaun](/docs/kaun/) for neural-network layers built this way, and [vega](/docs/vega/) for optimizers that consume the same structures.
+Leaves may mix dtypes freely: a single forward and backward pass produces gradients for all of them, each with its leaf's dtype. Records nest into records, so models compose structurally — see [kaun](../../kaun/doc/index.md) for neural-network layers built this way, and [vega](../../vega/doc/index.md) for optimizers that consume the same structures.
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) — installation, first gradients, gradient descent on a record
-- [Transformations](02-transformations/) — complete guide to grad, vjp, jvp, vmap, remat, custom rules, and control flow
-- [How It Works](03-how-it-works/) — effects, handlers, and the tape
-- [JAX Comparison](04-jax-comparison/) — mapping JAX vocabulary to rune
+- [Getting Started](01-getting-started.md) — installation, first gradients, gradient descent on a record
+- [Transformations](02-transformations.md) — complete guide to grad, vjp, jvp, vmap, remat, custom rules, and control flow
+- [How It Works](03-how-it-works.md) — effects, handlers, and the tape
+- [JAX Comparison](04-jax-comparison.md) — mapping JAX vocabulary to rune

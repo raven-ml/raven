@@ -51,6 +51,6 @@ let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) -- installation, environments, spaces, step loop
-- [Environments and Wrappers](02-environments/) -- custom environments, wrappers, rendering, vectorized environments
-- [Collection and Evaluation](03-collection-and-evaluation/) -- trajectory collection, replay buffers, GAE, evaluation
+- [Getting Started](01-getting-started.md) -- installation, environments, spaces, step loop
+- [Environments and Wrappers](02-environments.md) -- custom environments, wrappers, rendering, vectorized environments
+- [Collection and Evaluation](03-collection-and-evaluation.md) -- trajectory collection, replay buffers, GAE, evaluation

@@ -173,6 +173,6 @@ errorbar ~x ~y ~yerr:(`Asymmetric (lo, hi)) ~xerr:(`Symmetric xerr) ()
 
 ## Next Steps
 
-- [Marks and Styling](/docs/hugin/marks-and-styling/) — full mark catalog and visual properties
-- [Layout and Decorations](/docs/hugin/layout-and-decorations/) — axes, scales, themes, multi-panel
-- [Colors and Colormaps](/docs/hugin/colors-and-colormaps/) — OKLCH colors and colormap reference
+- [Marks and Styling](02-marks-and-styling.md) — full mark catalog and visual properties
+- [Layout and Decorations](03-layout-and-decorations.md) — axes, scales, themes, multi-panel
+- [Colors and Colormaps](04-colors-and-colormaps.md) — OKLCH colors and colormap reference

@@ -1,8 +1,8 @@
 # kaun
 
-Kaun is a neural network library for OCaml built on [rune](/docs/rune/) autodiff. It provides the building blocks for training networks — layers, activations, initializers, losses, data batching, metrics, checkpoints — as plain records and pure functions. There is no layer object and no trainer: a model is a typed record you write, and a training step is a few lines you own end to end.
+Kaun is a neural network library for OCaml built on [rune](../../rune/doc/index.md) autodiff. It provides the building blocks for training networks — layers, activations, initializers, losses, data batching, metrics, checkpoints — as plain records and pure functions. There is no layer object and no trainer: a model is a typed record you write, and a training step is a few lines you own end to end.
 
-The glue is `Nx.Ptree`, the traversal interface from [nx](/docs/nx/): [rune](/docs/rune/) (transformations) and [vega](/docs/vega/) (optimizers) each sit on nx independently, kaun's library depends only on nx and rune, and the three compose in your code through the one record type you define.
+The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md): [rune](../../rune/doc/index.md) (transformations) and [vega](../../vega/doc/index.md) (optimizers) each sit on nx independently, kaun's library depends only on nx and rune, and the three compose in your code through the one record type you define.
 
 ## Features
 
@@ -83,8 +83,8 @@ let () =
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) — installation and the model/step/loop pattern
-- [Layers and Models](02-layers-and-models/) — the layer catalog and models as records
-- [Training](03-training/) — the composable training step, data, and metrics
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained/) — safetensors, the HuggingFace Hub, GPT-2
-- [PyTorch Comparison](05-pytorch-comparison/) — mapping `nn.Module` vocabulary to kaun
+- [Getting Started](01-getting-started.md) — installation and the model/step/loop pattern
+- [Layers and Models](02-layers-and-models.md) — the layer catalog and models as records
+- [Training](03-training.md) — the composable training step, data, and metrics
+- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — safetensors, the HuggingFace Hub, GPT-2
+- [PyTorch Comparison](05-pytorch-comparison.md) — mapping `nn.Module` vocabulary to kaun

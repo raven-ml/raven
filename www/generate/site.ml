@@ -180,52 +180,6 @@ let strip_order_prefix s =
   then String.sub s 3 (len - 3)
   else s
 
-(* Strip order prefixes from each segment of a relative href path.
-   "../02-pipeline/" → "../pipeline/", "05-algorithms/" → "algorithms/" *)
-let strip_href_order_prefixes href =
-  if String.length href = 0 || href.[0] = '/' || String.contains href ':' then
-    href
-  else
-    let anchor, path =
-      match String.index_opt href '#' with
-      | Some i ->
-          (String.sub href i (String.length href - i), String.sub href 0 i)
-      | None -> ("", href)
-    in
-    let parts = String.split_on_char '/' path in
-    let cleaned =
-      List.map
-        (fun seg -> if seg = ".." then seg else strip_order_prefix seg)
-        parts
-    in
-    String.concat "/" cleaned ^ anchor
-
-(* Rewrite all href="..." in [html] to strip order prefixes from relative
-   paths. *)
-let rewrite_doc_hrefs html =
-  let buf = Buffer.create (String.length html) in
-  let attr = {|href="|} in
-  let attr_len = String.length attr in
-  let len = String.length html in
-  let i = ref 0 in
-  while !i < len do
-    match find_sub ~start:!i html attr with
-    | None ->
-        Buffer.add_string buf (String.sub html !i (len - !i));
-        i := len
-    | Some pos -> (
-        Buffer.add_string buf (String.sub html !i (pos + attr_len - !i));
-        let href_start = pos + attr_len in
-        match String.index_from_opt html href_start '"' with
-        | None -> i := href_start
-        | Some href_end ->
-            let href = String.sub html href_start (href_end - href_start) in
-            Buffer.add_string buf (strip_href_order_prefixes href);
-            Buffer.add_char buf '"';
-            i := href_end + 1)
-  done;
-  Buffer.contents buf
-
 let title_case s =
   s |> String.split_on_char '-'
   |> List.map (fun w ->
@@ -298,14 +252,18 @@ let strip_prefix ~prefix path =
   let plen = String.length prefix + 1 in
   String.sub path plen (String.length path - plen)
 
+(* A directory's landing page is named "index" or, so that repository hosts show
+   it when browsing the directory, "README". *)
 let url_segments path =
-  let stem = Filename.chop_extension path in
-  let parts = String.split_on_char '/' stem in
-  match List.rev parts with "index" :: rest -> List.rev rest | _ -> parts
+  let parts = String.split_on_char '/' (Filename.chop_extension path) in
+  match List.rev parts with
+  | ("index" | "README") :: rest -> List.rev rest
+  | _ -> parts
 
 let url_of_path path =
-  let segments = url_segments path in
-  "/" ^ String.concat "/" segments ^ "/"
+  match url_segments path with
+  | [] -> "/"
+  | segments -> "/" ^ String.concat "/" segments ^ "/"
 
 (*---------------------------------------------------------------------------
   Breadcrumbs

@@ -130,7 +130,7 @@ let () =
     (Nx.to_string !p.w)
 ```
 
-This is the whole pattern — the full program is [`examples/01-gradient-descent`](https://github.com/raven-ml/raven/tree/main/packages/rune/examples/01-gradient-descent). For neural networks, [kaun](/docs/kaun/) provides layers whose parameter records compose exactly this way.
+This is the whole pattern — the full program is [`examples/01-gradient-descent`](https://github.com/raven-ml/raven/tree/main/packages/rune/examples/01-gradient-descent). For neural networks, [kaun](../../kaun/doc/index.md) provides layers whose parameter records compose exactly this way.
 
 ## Auxiliary Outputs
 
@@ -197,10 +197,10 @@ let () =
   ignore (Rune.grad' g x)
 ```
 
-`detach` also serves as the escape hatch for operations whose gradient is not implemented (see [Transformations](02-transformations/)): detach their inputs if differentiation should not flow through them.
+`detach` also serves as the escape hatch for operations whose gradient is not implemented (see [Transformations](02-transformations.md)): detach their inputs if differentiation should not flow through them.
 
 ## Next Steps
 
-- [Transformations](02-transformations/) — vjp, jvp, vmap, Hessians, remat, custom rules, control flow
-- [How It Works](03-how-it-works/) — effects, handlers, and the tape
-- [Kaun Getting Started](/docs/kaun/getting-started/) — neural networks on top of rune
+- [Transformations](02-transformations.md) — vjp, jvp, vmap, Hessians, remat, custom rules, control flow
+- [How It Works](03-how-it-works.md) — effects, handlers, and the tape
+- [Kaun Getting Started](../../kaun/doc/01-getting-started.md) — neural networks on top of rune

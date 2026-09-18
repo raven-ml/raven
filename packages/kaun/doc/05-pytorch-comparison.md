@@ -153,7 +153,7 @@ let pred, stats' = Net.forward params stats ~training:true x in
 let pred, _ = Net.forward params stats ~training:false x in
 ```
 
-`Dropout.apply ~rate ~training` and `Batch_norm.apply p stats ~training` take the flag explicitly. What PyTorch calls a *buffer* (batch-norm running mean/var) is an explicit `Batch_norm.Stats.t` record: training forwards return the updated statistics, and `Rune.value_and_grad_aux` threads them out of the differentiated objective — see [Layers and Models](02-layers-and-models/). There is no `torch.no_grad()` context needed for evaluation: nothing is recorded unless you call a differentiation transformation (though `Rune.no_grad` exists to hold sub-computations constant *inside* one).
+`Dropout.apply ~rate ~training` and `Batch_norm.apply p stats ~training` take the flag explicitly. What PyTorch calls a *buffer* (batch-norm running mean/var) is an explicit `Batch_norm.Stats.t` record: training forwards return the updated statistics, and `Rune.value_and_grad_aux` threads them out of the differentiated objective — see [Layers and Models](02-layers-and-models.md). There is no `torch.no_grad()` context needed for evaluation: nothing is recorded unless you call a differentiation transformation (though `Rune.no_grad` exists to hold sub-computations constant *inside* one).
 
 ---
 
@@ -209,7 +209,7 @@ let params =
   |> Checkpoint.to_params (module Mlp) ~prefix:"model" ~like:template
 ```
 
-`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. The optimizer state checkpoints with the model's own module because it has the model's shape. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained/).
+`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. The optimizer state checkpoints with the model's own module because it has the model's shape. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md).
 
 ---
 

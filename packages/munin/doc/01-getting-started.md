@@ -180,5 +180,5 @@ let session = Session.start ~store ~experiment:"demo" () in
 
 ## Next Steps
 
-- [Tracking Metrics](../02-tracking/) -- scalars, metric definitions, media, Kaun integration
-- [Artifacts](../03-artifacts/) -- versioned files, aliases, lineage, deduplication
+- [Tracking Metrics](02-tracking.md) -- scalars, metric definitions, media, Kaun integration
+- [Artifacts](03-artifacts.md) -- versioned files, aliases, lineage, deduplication

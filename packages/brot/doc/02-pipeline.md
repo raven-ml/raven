@@ -158,7 +158,7 @@ Brot supports 5 algorithms:
 | Word-level      | Whole words, no subword splitting           | Simple models, prototyping     |
 | Character-level | Each byte is a token                        | Byte-level fallback            |
 
-See [Choosing an Algorithm](05-algorithms/) for details on each algorithm,
+See [Choosing an Algorithm](05-algorithms.md) for details on each algorithm,
 when to use it, and how to configure training.
 
 ## Post-processing

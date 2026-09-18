@@ -34,8 +34,8 @@ let () =
 
 ## Next Steps
 
-- [Getting Started](/docs/nx/getting-started/) — installation, dtypes, slicing, broadcasting
-- [Array Operations](/docs/nx/array-operations/) — reshaping, views, joining, splitting
-- [Linear Algebra](/docs/nx/linear-algebra/) — decompositions, solvers, FFT
-- [Input/Output](/docs/nx/io/) — images, npy, npz files
-- [NumPy Comparison](/docs/nx/numpy-comparison/) — side-by-side reference
+- [Getting Started](01-getting-started.md) — installation, dtypes, slicing, broadcasting
+- [Array Operations](02-array-operations.md) — reshaping, views, joining, splitting
+- [Linear Algebra](03-linear-algebra.md) — decompositions, solvers, FFT
+- [Input/Output](04-io.md) — images, npy, npz files
+- [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference

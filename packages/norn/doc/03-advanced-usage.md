@@ -194,6 +194,6 @@ Step size is still adapted during warmup.
 
 ## Next Steps
 
-- [Getting Started](../01-getting-started/) -- basic usage and the kernel API
-- [Adaptation and Diagnostics](../02-adaptation-and-diagnostics/) -- warmup windows, ESS, R-hat
-- [PyMC Comparison](../04-pymc-comparison/) -- mapping from Python's PyMC/BlackJAX to Norn
+- [Getting Started](01-getting-started.md) -- basic usage and the kernel API
+- [Adaptation and Diagnostics](02-adaptation-and-diagnostics.md) -- warmup windows, ESS, R-hat
+- [PyMC Comparison](04-pymc-comparison.md) -- mapping from Python's PyMC/BlackJAX to Norn

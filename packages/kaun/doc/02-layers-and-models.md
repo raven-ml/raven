@@ -230,7 +230,7 @@ let () =
   Format.printf "eval predictions: %a@." Nx.pp_shape (Nx.shape pred)
 ```
 
-The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own traversals and `names` (`Batch_norm.Stats` satisfies `Nx.Ptree.Uniform` itself), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained/).
+The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own traversals and `names` (`Batch_norm.Stats` satisfies `Nx.Ptree.Uniform` itself), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained.md).
 
 `Batch_norm.init` builds float32 parameters (cast with `map (Nx.cast dt)` for other precisions); `apply` is generic over float dtypes, like the other layers' `make`, computing half- and quarter-precision statistics in a float32 island.
 
@@ -253,5 +253,5 @@ The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.var
 
 ## Next Steps
 
-- [Training](03-training/) — the composable training step, data, and metrics
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained/) — `names`, safetensors, the Hub
+- [Training](03-training.md) — the composable training step, data, and metrics
+- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — `names`, safetensors, the Hub

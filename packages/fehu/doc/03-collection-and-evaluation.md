@@ -315,5 +315,5 @@ let stats = Eval.run env
 
 ## Next Steps
 
-- [Getting Started](../01-getting-started/) -- installation, environments, spaces, step loop
-- [Environments and Wrappers](../02-environments/) -- custom environments, wrappers, rendering, vectorized environments
+- [Getting Started](01-getting-started.md) -- installation, environments, spaces, step loop
+- [Environments and Wrappers](02-environments.md) -- custom environments, wrappers, rendering, vectorized environments

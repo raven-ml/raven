@@ -42,6 +42,6 @@ munin metrics <RUN_ID> --key loss
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) -- installation, key concepts, first example
-- [Tracking Metrics](02-tracking/) -- scalars, metric definitions, media, Kaun integration
-- [Artifacts](03-artifacts/) -- versioned files, aliases, lineage, deduplication
+- [Getting Started](01-getting-started.md) -- installation, key concepts, first example
+- [Tracking Metrics](02-tracking.md) -- scalars, metric definitions, media, Kaun integration
+- [Artifacts](03-artifacts.md) -- versioned files, aliases, lineage, deduplication

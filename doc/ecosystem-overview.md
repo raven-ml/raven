@@ -46,15 +46,15 @@ operations under the hood.
 
 | I want to... | Use |
 |---|---|
-| Work with numerical arrays | [Nx](/docs/nx/) |
-| Compute gradients | [Rune](/docs/rune/) |
-| Train neural networks | [Kaun](/docs/kaun/) |
-| Tokenize text for language models | [Brot](/docs/brot/) |
-| Manipulate tabular data | [Talon](/docs/talon/) |
-| Process and transform images | [Sowilo](/docs/sowilo/) |
-| Build RL environments and agents | [Fehu](/docs/fehu/) |
-| Create plots and visualizations | [Hugin](/docs/hugin/) |
-| Run code interactively (REPL or notebooks) | [Quill](/docs/quill/) |
+| Work with numerical arrays | [Nx](../packages/nx/doc/index.md) |
+| Compute gradients | [Rune](../packages/rune/doc/index.md) |
+| Train neural networks | [Kaun](../packages/kaun/doc/index.md) |
+| Tokenize text for language models | [Brot](../packages/brot/doc/index.md) |
+| Manipulate tabular data | [Talon](../packages/talon/doc/index.md) |
+| Process and transform images | [Sowilo](../packages/sowilo/doc/index.md) |
+| Build RL environments and agents | [Fehu](../packages/fehu/doc/index.md) |
+| Create plots and visualizations | [Hugin](../packages/hugin/doc/index.md) |
+| Run code interactively (REPL or notebooks) | [Quill](../packages/quill/doc/index.md) |
 
 ---
 
@@ -73,7 +73,7 @@ let y = sin x
 let mean_y = mean y
 ```
 
-[Nx documentation →](/docs/nx/)
+[Nx documentation →](../packages/nx/doc/index.md)
 
 ## Rune: Automatic Differentiation
 
@@ -94,7 +94,7 @@ let f' = grad' f
 let f'' = grad' f'
 ```
 
-[Rune documentation →](/docs/rune/)
+[Rune documentation →](../packages/rune/doc/index.md)
 
 ## Kaun: Neural Networks
 
@@ -117,7 +117,7 @@ let params =
     l2 = Linear.init ~inputs:128 ~outputs:10 }
 ```
 
-[Kaun documentation →](/docs/kaun/)
+[Kaun documentation →](../packages/kaun/doc/index.md)
 
 ## Brot: Tokenization
 
@@ -134,7 +134,7 @@ let encoding = encode tokenizer "Hello, world!"
 let ids = Encoding.ids encoding
 ```
 
-[Brot documentation →](/docs/brot/)
+[Brot documentation →](../packages/brot/doc/index.md)
 
 ## Talon: DataFrames
 
@@ -153,7 +153,7 @@ let df = create [
 let () = print df
 ```
 
-[Talon documentation →](/docs/talon/)
+[Talon documentation →](../packages/talon/doc/index.md)
 
 ## Sowilo: Computer Vision
 
@@ -173,7 +173,7 @@ let processed =
   |> normalize ~mean:[|0.485; 0.456; 0.406|] ~std:[|0.229; 0.224; 0.225|]
 ```
 
-[Sowilo documentation →](/docs/sowilo/)
+[Sowilo documentation →](../packages/sowilo/doc/index.md)
 
 ## Fehu: Reinforcement Learning
 
@@ -191,7 +191,7 @@ let obs, reward, terminated, truncated, _info =
   Env.step env (Space.sample (Env.action_space env))
 ```
 
-[Fehu documentation →](/docs/fehu/)
+[Fehu documentation →](../packages/fehu/doc/index.md)
 
 ## Hugin: Visualization
 
@@ -210,7 +210,7 @@ let _ = Plotting.plot ax ~x ~y ~label:"sin(x)" in
 show fig
 ```
 
-[Hugin documentation →](/docs/hugin/)
+[Hugin documentation →](../packages/hugin/doc/index.md)
 
 ## Quill: Interactive Computing
 
@@ -227,10 +227,10 @@ quill serve notebook.md  # web frontend
 quill run notebook.md    # batch evaluation
 ```
 
-[Quill documentation →](/docs/quill/)
+[Quill documentation →](../packages/quill/doc/index.md)
 
 ## Getting Started
 
-1. **New to Raven?** Start with the [Quickstart](/docs/quickstart/)
-2. **Coming from Python?** Read [Coming from Python](/docs/coming-from-python/)
+1. **New to Raven?** Start with the [Quickstart](quickstart.md)
+2. **Coming from Python?** Read [Coming from Python](coming-from-python.md)
 3. **Want a specific library?** Use the table above to find the right docs

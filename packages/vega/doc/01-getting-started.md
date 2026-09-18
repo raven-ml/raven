@@ -120,6 +120,6 @@ internally.
 
 ## Next Steps
 
-- [Composing Transforms](../02-composing-transforms/) — build custom optimizers from primitives
-- [Learning Rate Schedules](../03-schedules/) — decay, warmup, restarts, and composition
-- [Optax Comparison](../04-optax-comparison/) — mapping from Python's Optax to Vega
+- [Composing Transforms](02-composing-transforms.md) — build custom optimizers from primitives
+- [Learning Rate Schedules](03-schedules.md) — decay, warmup, restarts, and composition
+- [Optax Comparison](04-optax-comparison.md) — mapping from Python's Optax to Vega

@@ -6,15 +6,15 @@ This page maps Python scientific computing concepts to their Raven equivalents. 
 
 | Python | Raven | Notes |
 |--------|-------|-------|
-| NumPy | [Nx](/docs/nx/) | N-dimensional arrays, broadcasting, linear algebra, FFT |
-| JAX | [Rune](/docs/rune/) | Functional transformations: `grad`, `jvp`, `vmap` |
-| PyTorch / Flax | [Kaun](/docs/kaun/) | Layers, optimizers, training loops |
-| HuggingFace Tokenizers | [Brot](/docs/brot/) | BPE, WordPiece, Unigram; HF-compatible |
-| pandas / Polars | [Talon](/docs/talon/) | Type-safe DataFrames |
-| Matplotlib | [Hugin](/docs/hugin/) | 2D/3D plotting with Cairo |
-| Gymnasium | [Fehu](/docs/fehu/) | RL environments and training utilities |
-| OpenCV | [Sowilo](/docs/sowilo/) | Differentiable image processing |
-| Jupyter + IPython | [Quill](/docs/quill/) | Interactive REPL and markdown notebooks |
+| NumPy | [Nx](../packages/nx/doc/index.md) | N-dimensional arrays, broadcasting, linear algebra, FFT |
+| JAX | [Rune](../packages/rune/doc/index.md) | Functional transformations: `grad`, `jvp`, `vmap` |
+| PyTorch / Flax | [Kaun](../packages/kaun/doc/index.md) | Layers, optimizers, training loops |
+| HuggingFace Tokenizers | [Brot](../packages/brot/doc/index.md) | BPE, WordPiece, Unigram; HF-compatible |
+| pandas / Polars | [Talon](../packages/talon/doc/index.md) | Type-safe DataFrames |
+| Matplotlib | [Hugin](../packages/hugin/doc/index.md) | 2D/3D plotting with Cairo |
+| Gymnasium | [Fehu](../packages/fehu/doc/index.md) | RL environments and training utilities |
+| OpenCV | [Sowilo](../packages/sowilo/doc/index.md) | Differentiable image processing |
+| Jupyter + IPython | [Quill](../packages/quill/doc/index.md) | Interactive REPL and markdown notebooks |
 
 ## Key Differences
 
@@ -159,11 +159,11 @@ let df = Talon.with_column df "bmi" Nx.Float64
 
 Each library has a dedicated comparison page with side-by-side code examples:
 
-- [Nx vs NumPy](/docs/nx/numpy-comparison/)
-- [Rune vs JAX](/docs/rune/jax-comparison/)
-- [Kaun vs PyTorch/Flax](/docs/kaun/pytorch-comparison/)
-- [Brot vs HuggingFace Tokenizers](/docs/brot/hf-tokenizers-comparison/)
-- [Talon vs pandas](/docs/talon/pandas-comparison/)
-- [Hugin vs Matplotlib](/docs/hugin/matplotlib-comparison/)
-- [Sowilo vs OpenCV](/docs/sowilo/opencv-comparison/)
-- [Fehu vs Gymnasium](/docs/fehu/gymnasium-comparison/)
+- [Nx vs NumPy](../packages/nx/doc/05-numpy-comparison.md)
+- [Rune vs JAX](../packages/rune/doc/04-jax-comparison.md)
+- [Kaun vs PyTorch/Flax](../packages/kaun/doc/05-pytorch-comparison.md)
+- [Brot vs HuggingFace Tokenizers](../packages/brot/doc/06-hf-tokenizers-comparison.md)
+- [Talon vs pandas](../packages/talon/doc/03-pandas-comparison.md)
+- [Hugin vs Matplotlib](../packages/hugin/doc/05-matplotlib-comparison.md)
+- [Sowilo vs OpenCV](../packages/sowilo/doc/04-opencv-comparison.md)
+- [Fehu vs Gymnasium](../packages/fehu/doc/04-gymnasium-comparison.md)

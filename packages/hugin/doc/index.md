@@ -37,8 +37,8 @@ let () =
 
 ## Next Steps
 
-- [Getting Started](/docs/hugin/getting-started/) — installation, first plot, key concepts
-- [Marks and Styling](/docs/hugin/marks-and-styling/) — mark catalog, visual properties
-- [Layout and Decorations](/docs/hugin/layout-and-decorations/) — axes, scales, themes, multi-panel
-- [Colors and Colormaps](/docs/hugin/colors-and-colormaps/) — OKLCH colors, palettes, colormaps
-- [Matplotlib Comparison](/docs/hugin/matplotlib-comparison/) — side-by-side with Python
+- [Getting Started](01-getting-started.md) — installation, first plot, key concepts
+- [Marks and Styling](02-marks-and-styling.md) — mark catalog, visual properties
+- [Layout and Decorations](03-layout-and-decorations.md) — axes, scales, themes, multi-panel
+- [Colors and Colormaps](04-colors-and-colormaps.md) — OKLCH colors, palettes, colormaps
+- [Matplotlib Comparison](05-matplotlib-comparison.md) — side-by-side with Python

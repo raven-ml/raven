@@ -198,4 +198,4 @@ let () = Talon_csv.write "clean.csv" df
 ```
 
 ## Next Steps
-Check out the [Comparison with Pandas](/docs/talon/pandas-comparison/) to see how Talon's functional approach differs from Pandas.
+Check out the [Comparison with Pandas](03-pandas-comparison.md) to see how Talon's functional approach differs from Pandas.

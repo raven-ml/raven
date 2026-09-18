@@ -51,7 +51,7 @@ let () =
 
 ## Learn More
 
-- [Getting Started](01-getting-started/) -- installation, image conventions, first pipeline
-- [Operations Reference](02-operations/) -- every operation with examples
-- [Pipelines and Integration](03-pipelines/) -- composing pipelines, batch processing, deep learning integration
+- [Getting Started](01-getting-started.md) -- installation, image conventions, first pipeline
+- [Operations Reference](02-operations.md) -- every operation with examples
+- [Pipelines and Integration](03-pipelines.md) -- composing pipelines, batch processing, deep learning integration
 - [Examples](https://github.com/raven-ml/raven/tree/main/sowilo/examples) -- complete image processing examples

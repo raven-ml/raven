@@ -171,6 +171,6 @@ pre-allocating storage.
 
 ## Next Steps
 
-- [Learning Rate Schedules](../03-schedules/) — decay, warmup, restarts, and composition
-- [Getting Started](../01-getting-started/) — basic usage and optimizer aliases
-- [Optax Comparison](../04-optax-comparison/) — mapping from Python's Optax to Vega
+- [Learning Rate Schedules](03-schedules.md) — decay, warmup, restarts, and composition
+- [Getting Started](01-getting-started.md) — basic usage and optimizer aliases
+- [Optax Comparison](04-optax-comparison.md) — mapping from Python's Optax to Vega

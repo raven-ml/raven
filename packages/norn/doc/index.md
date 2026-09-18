@@ -40,7 +40,7 @@ let () =
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) -- installation, first sampler, the kernel API
-- [Adaptation and Diagnostics](02-adaptation-and-diagnostics/) -- warmup windows, ESS, R-hat
-- [Advanced Usage](03-advanced-usage/) -- custom integrators, metrics, and monitoring
-- [PyMC Comparison](04-pymc-comparison/) -- mapping from Python's PyMC/BlackJAX to Norn
+- [Getting Started](01-getting-started.md) -- installation, first sampler, the kernel API
+- [Adaptation and Diagnostics](02-adaptation-and-diagnostics.md) -- warmup windows, ESS, R-hat
+- [Advanced Usage](03-advanced-usage.md) -- custom integrators, metrics, and monitoring
+- [PyMC Comparison](04-pymc-comparison.md) -- mapping from Python's PyMC/BlackJAX to Norn

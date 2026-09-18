@@ -263,4 +263,4 @@ Logged metrics: `sys/cpu_user`, `sys/cpu_system`, `sys/mem_used_pct`,
 
 ## Next Steps
 
-- [Artifacts](../03-artifacts/) -- versioned files, aliases, lineage, deduplication
+- [Artifacts](03-artifacts.md) -- versioned files, aliases, lineage, deduplication

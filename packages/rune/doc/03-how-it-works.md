@@ -86,7 +86,7 @@ The mapped function is written for unbatched values. Under the `vmap` handler, e
 
 Operations whose operands are all constants fall through unintercepted, and a result that does not depend on the mapped inputs is broadcast along the batch axis. Nested `vmap`s stack: each handler owns its batched set and batch size, and the translations one level emits are re-translated by the level above.
 
-Two consequences documented in [Transformations](02-transformations/) follow directly from this design. Reading a batched tensor's *value* inside the mapped function raises — there is one physical tensor for all lanes, not one value per lane — which is why a `cond` predicate cannot depend on mapped inputs. And implicit RNG draws identical values in every lane, because the RNG key is a constant of the map.
+Two consequences documented in [Transformations](02-transformations.md) follow directly from this design. Reading a batched tensor's *value* inside the mapped function raises — there is one physical tensor for all lanes, not one value per lane — which is why a `cond` predicate cannot depend on mapped inputs. And implicit RNG draws identical values in every lane, because the RNG key is a constant of the map.
 
 ## Custom Rules and remat
 

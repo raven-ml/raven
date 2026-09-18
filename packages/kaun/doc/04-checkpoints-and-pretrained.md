@@ -179,5 +179,5 @@ The `~like` template is a zero-initialized model built from the downloaded `conf
 
 ## Next Steps
 
-- [PyTorch Comparison](05-pytorch-comparison/) — `state_dict`, `torch.save`, and `from_pretrained` in kaun terms
-- [Layers and Models](02-layers-and-models/) — where `names` comes from
+- [PyTorch Comparison](05-pytorch-comparison.md) — `state_dict`, `torch.save`, and `from_pretrained` in kaun terms
+- [Layers and Models](02-layers-and-models.md) — where `names` comes from

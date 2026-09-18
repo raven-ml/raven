@@ -165,5 +165,5 @@ contour ~data ~x0 ~x1 ~y0 ~y1 ~filled:true ~cmap:Cmap.plasma ()
 
 ## Next Steps
 
-- [Matplotlib Comparison](/docs/hugin/matplotlib-comparison/) — side-by-side with Python
-- [Marks and Styling](/docs/hugin/marks-and-styling/) — full mark catalog
+- [Matplotlib Comparison](05-matplotlib-comparison.md) — side-by-side with Python
+- [Marks and Styling](02-marks-and-styling.md) — full mark catalog

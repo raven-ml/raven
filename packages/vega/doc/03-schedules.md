@@ -243,6 +243,6 @@ Vega.add_decayed_weights
 
 ## Next Steps
 
-- [Composing Transforms](../02-composing-transforms/) — building custom optimizers from primitives
-- [Getting Started](../01-getting-started/) — basic usage and optimizer aliases
-- [Optax Comparison](../04-optax-comparison/) — mapping from Python's Optax to Vega
+- [Composing Transforms](02-composing-transforms.md) — building custom optimizers from primitives
+- [Getting Started](01-getting-started.md) — basic usage and optimizer aliases
+- [Optax Comparison](04-optax-comparison.md) — mapping from Python's Optax to Vega

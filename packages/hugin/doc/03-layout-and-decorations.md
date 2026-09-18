@@ -185,5 +185,5 @@ The `Theme.t` record is fully public. You can create custom themes by modifying 
 
 ## Next Steps
 
-- [Colors and Colormaps](/docs/hugin/colors-and-colormaps/) — OKLCH color space, operations, and colormap reference
-- [Matplotlib Comparison](/docs/hugin/matplotlib-comparison/) — side-by-side with Python
+- [Colors and Colormaps](04-colors-and-colormaps.md) — OKLCH color space, operations, and colormap reference
+- [Matplotlib Comparison](05-matplotlib-comparison.md) — side-by-side with Python

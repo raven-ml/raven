@@ -1,4 +1,4 @@
 (executable
  (name generate)
- (modules generate api site highlight)
+ (modules generate api site highlight links)
  (libraries cmarkit unix))
