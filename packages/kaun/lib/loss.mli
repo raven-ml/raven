@@ -95,6 +95,16 @@ val softmax_cross_entropy :
     log-sum-exp trick, so it is stable at extreme logits. Use
     {!softmax_cross_entropy_sparse} when targets are class indices.
 
+    For half and quarter precision logits (float16, bfloat16, float8) the
+    log-probabilities and the reduction are computed in a float32 island and the
+    result is cast back: a half precision log-sum-exp over a large vocabulary
+    biases the gradient. Pass the logits at their own dtype; the cast inside the
+    loss fuses into the reduction, where a cast at the call site would
+    materialize float32 logits. The result comes back at the logits' dtype: a
+    [`Sum] over many tokens can exceed float16's range, and a bfloat16 mean is
+    quantized to about [1/64] near [3], so cast the scalar up before logging or
+    accumulating it.
+
     Raises [Invalid_argument] if [logits] has rank [0], if its class dimension
     is empty, or if [targets]' shape differs from [logits]'. *)
 
@@ -107,7 +117,7 @@ val softmax_cross_entropy_sparse :
     with integer class labels: [labels] has [logits]' shape without the last
     axis, and each label is the index of the true class, in
     \[[0];[classes - 1]\]. Equivalent to one-hot targets without materializing
-    them.
+    them. It has the float32 island of {!softmax_cross_entropy}.
 
     Raises [Invalid_argument] if [logits] has rank [0], if its class dimension
     is empty, or if [labels]' shape is not [logits]' shape without the last

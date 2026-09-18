@@ -51,6 +51,14 @@ let check_logits ~fn logits =
       shape.(rank - 1);
   shape
 
+(* Half and quarter precision floats cannot hold a log-sum-exp over a large
+   vocabulary: the log-probabilities and their reduction run in a float32 island
+   and only the result comes back down. The cast sits inside the loss so a
+   compiler fuses it into the reduction instead of holding float32 logits. *)
+let low_precision : type b. (float, b) Nx.dtype -> bool = function
+  | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
+  | Nx.Float32 | Nx.Float64 -> false
+
 let softmax_cross_entropy ?(reduction = `Mean) logits targets =
   let fn = "softmax_cross_entropy" in
   let logits_shape = check_logits ~fn logits in
@@ -58,8 +66,15 @@ let softmax_cross_entropy ?(reduction = `Mean) logits targets =
   if targets_shape <> logits_shape then
     invalid_argf fn "targets shape %s does not match logits shape %s"
       (shape_str targets_shape) (shape_str logits_shape);
-  let log_probs = Nx.log_softmax logits in
-  reduce reduction (Nx.neg (Nx.sum ~axes:[ -1 ] (Nx.mul targets log_probs)))
+  let loss : type c. (float, c) Nx.t -> (float, c) Nx.t -> (float, c) Nx.t =
+   fun logits targets ->
+    let log_probs = Nx.log_softmax logits in
+    reduce reduction (Nx.neg (Nx.sum ~axes:[ -1 ] (Nx.mul targets log_probs)))
+  in
+  let dt = Nx.dtype logits in
+  if low_precision dt then
+    Nx.cast dt (loss (Nx.cast Nx.float32 logits) (Nx.cast Nx.float32 targets))
+  else loss logits targets
 
 let softmax_cross_entropy_sparse ?(reduction = `Mean) logits labels =
   let fn = "softmax_cross_entropy_sparse" in
@@ -69,10 +84,16 @@ let softmax_cross_entropy_sparse ?(reduction = `Mean) logits labels =
   if labels_shape <> batch_shape then
     invalid_argf fn "labels shape %s does not match logits batch shape %s"
       (shape_str labels_shape) (shape_str batch_shape);
-  let log_probs = Nx.log_softmax logits in
-  let picked =
-    Nx.take_along_axis ~axis:(-1)
-      ~indices:(Nx.unsqueeze ~axes:[ -1 ] labels)
-      log_probs
+  let loss : type c. (float, c) Nx.t -> (float, c) Nx.t =
+   fun logits ->
+    let log_probs = Nx.log_softmax logits in
+    let picked =
+      Nx.take_along_axis ~axis:(-1)
+        ~indices:(Nx.unsqueeze ~axes:[ -1 ] labels)
+        log_probs
+    in
+    reduce reduction (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))
   in
-  reduce reduction (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))
+  let dt = Nx.dtype logits in
+  if low_precision dt then Nx.cast dt (loss (Nx.cast Nx.float32 logits))
+  else loss logits

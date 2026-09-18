@@ -150,7 +150,8 @@ let loss_fn_half compute inputs targets ?dropout params =
   let logits =
     Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
   in
-  Loss.softmax_cross_entropy_sparse (Nx.cast Nx.float32 logits) targets
+  (* The loss upcasts inside itself; only the scalar is cast for the record. *)
+  Nx.cast Nx.float32 (Loss.softmax_cross_entropy_sparse logits targets)
 
 (* The jitted step returns the updated parameters and the pre-update loss. *)
 module Step_out = struct

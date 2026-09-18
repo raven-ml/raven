@@ -1546,6 +1546,15 @@ thread.
 
 ### Kaun
 
+- `Kaun.Fn.top_k` and `Kaun.Fn.top_p` mask next-token logits for sampling:
+  entries outside the kept set become negative infinity and the shape is
+  unchanged, so they compose with a temperature division and
+  `Nx.Rng.categorical` in any order and compile. `k` and `p` are tensors, a
+  scalar or one entry per row, so a batch can mix requests.
+- `Loss.softmax_cross_entropy` and `softmax_cross_entropy_sparse` compute
+  their log-probabilities and reduction in a float32 island for half and
+  quarter precision logits and cast the result back: a bfloat16 log-sum-exp
+  over a large vocabulary biases the gradient.
 - **Breaking**: cached decoding is addressed by positions and slots.
   `Attention.cached ~head_dim ?rope p cache route x` replaces `apply_cached`
   and its single scalar position. A cache is a flat pool of slots with no

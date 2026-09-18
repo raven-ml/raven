@@ -47,3 +47,63 @@ let softplus x =
 
 let softmax ?(axis = -1) x = Nx.softmax ~axes:[ axis ] x
 let log_softmax ?(axis = -1) x = Nx.log_softmax ~axes:[ axis ] x
+
+(* Sampling masks *)
+
+let last_axis ~fn logits =
+  let shape = Nx.shape logits in
+  let rank = Array.length shape in
+  if rank = 0 then
+    Printf.ksprintf invalid_arg "Fn.%s: logits must not be a scalar" fn;
+  (Array.sub shape 0 (rank - 1), shape.(rank - 1))
+
+(* A per-row parameter, of shape [||] or the logits' leading shape, as a column
+   over the vocabulary axis. *)
+let column ~fn ~lead param =
+  let ps = Nx.shape param in
+  if ps <> [||] && ps <> lead then
+    Printf.ksprintf invalid_arg
+      "Fn.%s: the parameter must be a scalar or have the logits' leading shape"
+      fn;
+  let one = Array.append lead [| 1 |] in
+  if ps = [||] then
+    Nx.broadcast_to one (Nx.reshape (Array.map (fun _ -> 1) one) param)
+  else Nx.reshape one (Nx.contiguous param)
+
+(* Entries below the threshold leave the distribution; ties at it stay. *)
+let keep_from ~threshold logits =
+  Nx.where
+    (Nx.greater_equal logits threshold)
+    logits
+    (Nx.scalar_like logits Float.neg_infinity)
+
+(* Both masks compare against a threshold read from the sorted values. The
+   sorting permutation is never demanded: compiled, it is quadratic in the
+   vocabulary. *)
+let sorted_desc logits = fst (Nx.sort ~descending:true ~axis:(-1) logits)
+
+let top_k ~k logits =
+  let lead, vocab = last_axis ~fn:"top_k" logits in
+  let k = column ~fn:"top_k" ~lead k in
+  let at = Nx.clamp ~min:0l ~max:(Int32.of_int (vocab - 1)) (Nx.sub_s k 1l) in
+  let sorted = sorted_desc logits in
+  keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits
+
+let top_p ~p logits =
+  let lead, vocab = last_axis ~fn:"top_p" logits in
+  let p = column ~fn:"top_p" ~lead p in
+  let sorted = sorted_desc logits in
+  let probs = Nx.softmax ~axes:[ -1 ] sorted in
+  (* The mass strictly before each entry: an entry stays while that mass is
+     below [p], so the fewest entries reaching [p] survive, and the first always
+     does. *)
+  let before = Nx.sub (Nx.cumsum ~axis:(-1) probs) probs in
+  (* [p >= 1] keeps everything: a confident row's cumulative sum rounds to one
+     before its tail, which the mass test alone would drop. *)
+  let all = Nx.greater_equal p (Nx.ones_like p) in
+  let kept = Nx.cast Nx.int32 (Nx.logical_or (Nx.less before p) all) in
+  let count = Nx.sum ~axes:[ -1 ] ~keepdims:true kept in
+  let at =
+    Nx.clamp ~min:0l ~max:(Int32.of_int (vocab - 1)) (Nx.sub_s count 1l)
+  in
+  keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits

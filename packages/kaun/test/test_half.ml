@@ -205,6 +205,58 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
   close ~msg:"agrees with float32" ~tol reference whole;
   close ~msg:"chunking is invariant" ~tol whole chunked
 
+(* A log-sum-exp over many classes: at half precision the sum of 4096 small
+   exponentials loses most of its bits; the island keeps the float32 value. *)
+let test_cross_entropy_island (type b) name (dt : (float, b) Nx.dtype) ~tol ()
+    =
+  ignore name;
+  let classes = 4096 in
+  let logits =
+    Nx.create f32 [| 2; classes |]
+      (Array.init (2 * classes) (fun i -> float_of_int (i mod 17) /. 8.0))
+  in
+  let labels = Nx.create Nx.int32 [| 2 |] [| 5l; 4000l |] in
+  let half = Nx.cast dt logits in
+  let expected = Loss.softmax_cross_entropy_sparse (Nx.cast f32 half) labels in
+  let actual = Loss.softmax_cross_entropy_sparse half labels in
+  is_true ~msg:"dtype preserved" (Nx.dtype actual = dt);
+  close ~tol expected actual;
+  let one_hot = Nx.cast f32 (Nx.one_hot ~num_classes:classes labels) in
+  close ~tol
+    (Loss.softmax_cross_entropy (Nx.cast f32 half) one_hot)
+    (Loss.softmax_cross_entropy half (Nx.cast dt one_hot));
+  (* The gradient flows through both casts and comes back at the half dtype. *)
+  let module One = struct
+    type 'a t = 'a
+
+    let map f x = f x
+    let map2 f x y = f x y
+    let iter f x = f x
+  end in
+  let grad l =
+    Rune.grad
+      (Kaun.ptree (module One))
+      (fun l -> Loss.softmax_cross_entropy_sparse l labels)
+      l
+  in
+  let g = grad half in
+  is_true ~msg:"gradient dtype preserved" (Nx.dtype g = dt);
+  close ~tol:1e-3 (grad (Nx.cast f32 half)) g
+
+(* More classes than float16 can count: without the island the sum of
+   exponentials, 70000 ones, is infinite and so is the loss. No eager input
+   discriminates at bfloat16, whose range is float32's, and the C backend
+   accumulates reductions wide, so there the tests pin the contract only. *)
+let test_cross_entropy_island_overflow () =
+  let classes = 70000 in
+  let logits = Nx.zeros f16 [| 1; classes |] in
+  let labels = Nx.create Nx.int32 [| 1 |] [| 3l |] in
+  let loss = Loss.softmax_cross_entropy_sparse logits labels in
+  is_true ~msg:"finite" (Nx.item [] (Nx.all (Nx.isfinite loss)));
+  equal ~msg:"log classes" (float 0.01)
+    (log (float_of_int classes))
+    (Nx.item [] (Nx.cast f32 loss))
+
 let test_batch_norm_island () =
   let x =
     mat f32 4 3
@@ -401,6 +453,12 @@ let tests =
           (test_cached_attention_half "float16" f16 ~tol:0.01);
         test "cached attention bfloat16"
           (test_cached_attention_half "bfloat16" bf16 ~tol:0.05);
+        test "cross-entropy island float16"
+          (test_cross_entropy_island "float16" f16 ~tol:0.01);
+        test "cross-entropy island survives more classes than float16 counts"
+          test_cross_entropy_island_overflow;
+        test "cross-entropy island bfloat16"
+          (test_cross_entropy_island "bfloat16" bf16 ~tol:0.05);
         test "attention scores float16"
           (test_attention_score_island "float16" f16 ~tol:0.01);
         test "attention scores bfloat16"
