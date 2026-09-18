@@ -22,6 +22,14 @@ let broadcast_scalar dt fill shape =
   let v = T.of_uop (U.const (T.scalar_const dt fill)) in
   Movement.expand (Movement.reshape v (List.map (fun _ -> 1) shape)) shape
 
+let empty ?(dtype = D.default_float) ?device shape =
+  let n = List.fold_left ( * ) 1 shape in
+  let buf =
+    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
+      ?device ()
+  in
+  Movement.reshape (T.of_uop buf) shape
+
 (* Clone [t] into a fresh buffer: an unallocated flat buffer viewed at [t]'s
    shape, written by a store effect. Realization allocates the storage and
    runs the fill, and in-place assignment then writes into it. *)

@@ -1072,6 +1072,36 @@ val set : target:t -> value:t -> ?extras:t list -> unit -> t
     {!store} followed by an {!after} that sequences the store and any
     [extras] before [target]. Tensor. *)
 
+val placeholder :
+  shape:int list -> dtype:Dtype.t -> slot:int -> ?addrspace:Dtype.addr_space ->
+  ?device:device -> unit -> t
+(** [placeholder ~shape ~dtype ~slot ?addrspace ?device ()] is storage for
+    [shape] elements of [dtype] that a kernel body addresses before any buffer
+    is bound to it. The storage is flat, holding the product of [shape], and a
+    {!reshape} restores a [shape] of rank above one. A weak [dtype] commits to
+    its default width. [addrspace] defaults to {!Dtype.Global}, which gives a
+    {!Ops.Param}; {!Dtype.Local} and {!Dtype.Reg} give an {!Ops.Buffer}.
+
+    @raise Invalid_argument
+      if [addrspace] is {!Dtype.Alu}, or if [device] is given for a local or
+      register placeholder. *)
+
+val placeholder_like : t -> slot:int -> ?addrspace:Dtype.addr_space -> unit -> t
+(** [placeholder_like u ~slot ?addrspace ()] is a {!placeholder} with [u]'s
+    dtype and per-device shape.
+
+    @raise Invalid_argument if [u]'s shape is symbolic. *)
+
+val custom_kernel : ?grad_fxn:grad_fxn -> fxn:(t list -> t) -> t list -> t list
+(** [custom_kernel ?grad_fxn ~fxn srcs] runs a kernel written in uops over
+    [srcs]. [fxn] receives one {!placeholder_like} per source, slot [i] for the
+    [i]-th source, and returns the kernel's {!sink}. The result lists every
+    source {!after} the {!call} of that kernel, in order: read a source the
+    kernel writes through its entry here. Sources are realized before the
+    kernel runs. Tensor.
+
+    @raise Invalid_argument if a source has a symbolic shape. *)
+
 (** {2:ctors_tc Tensor-core} *)
 
 val wmma :

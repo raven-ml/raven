@@ -140,6 +140,7 @@ type realize_state = Marked | Realized of int list
 
 type indexing_context = {
   realize_map : (int, realize_state) Hashtbl.t;
+  non_removable : (int, unit) Hashtbl.t;
   range_map : (int, U.t list * U.t list) Hashtbl.t;
   buf_cache : (int, U.t list) Hashtbl.t;
   shape_exprs : U.t -> U.t list option;
@@ -151,6 +152,7 @@ let default_shape_exprs u =
 
 let create_context ?(shape_exprs = default_shape_exprs) () = {
   realize_map = Hashtbl.create 256;
+  non_removable = Hashtbl.create 16;
   range_map = Hashtbl.create 256;
   buf_cache = Hashtbl.create 256;
   shape_exprs;
@@ -230,8 +232,28 @@ let data_srcs op (srcs : U.t array) =
 let mark_non_contiguous ctx s =
   if not (always_contiguous (U.op (U.base s))) then realize_set ctx s Marked
 
+(* Realize the inputs of custom kernel calls. *)
+let realize_custom_kernel_srcs ctx c =
+  let rec strip s = if U.op s = Ops.Reshape then strip (U.src s).(0) else s in
+  Array.iteri (fun i s ->
+      if i > 0 then begin
+        let s = strip s in
+        if not (always_contiguous (U.op s)) then begin
+          realize_set ctx s Marked;
+          Hashtbl.replace ctx.non_removable (U.tag s) ()
+        end
+      end)
+    (U.src c)
+
 let generate_realize_map ctx root =
   List.iter (fun n ->
+    (match U.op n with
+     | Ops.Call
+       when (match U.op (U.src n).(0) with
+             | Ops.Sink | Ops.Program -> true
+             | _ -> false) ->
+         realize_custom_kernel_srcs ctx n
+     | _ -> ());
     (match U.op n with
      | Ops.Contiguous | Ops.Store -> realize_set ctx n Marked
      | _ -> ());
@@ -635,7 +657,10 @@ let wrap_realized_src ctx ~parent_rngs ~src_rngs ~realized_axes s =
       realize_del ctx s;
       U.end_ ~value:s ~ranges
   | _ ->
-      let removable = not (always_contiguous (U.op s)) in
+      let removable =
+        not (always_contiguous (U.op s))
+        && not (Hashtbl.mem ctx.non_removable (U.tag s))
+      in
       let is_local =
         List.length out_rngs <> List.length realized_axes in
       let addrspace = if is_local then Dtype.Local else Dtype.Global in

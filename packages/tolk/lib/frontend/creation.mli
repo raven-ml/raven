@@ -15,6 +15,14 @@
     into its consumers. When [dtype] is omitted, it follows the fill value's
     variant (see {!Tensor.scalar}). *)
 
+val empty :
+  ?dtype:Tolk_uop.Dtype.t -> ?device:Tolk_uop.Uop.device -> int list ->
+  Tensor.t
+(** [empty shape] is a tensor of shape [shape] over fresh storage whose
+    contents are unspecified until something writes them. [dtype] defaults to
+    the default float dtype. The storage is placed on [device]; without one it
+    is placed by whatever consumes it. *)
+
 val full :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> int list -> Tensor.scalar ->
   Tensor.t

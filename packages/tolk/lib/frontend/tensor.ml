@@ -130,6 +130,9 @@ let int_ n = U.const_int n
 let symbolic_shape_uop dims = match dims with [ d ] -> d | ds -> U.stack ds
 let shape_uop dims = symbolic_shape_uop (List.map int_ dims)
 
+let custom_kernel ?grad_fxn ~fxn ts =
+  List.map of_uop (U.custom_kernel ?grad_fxn ~fxn (List.map uop ts))
+
 let alu_unary op t = of_uop (U.alu_unary ~op ~src:t.uop)
 let alu_binary op a b = of_uop (U.alu_binary ~op ~lhs:a.uop ~rhs:b.uop)
 let alu_ternary op a b c = of_uop (U.alu_ternary ~op ~a:a.uop ~b:b.uop ~c:c.uop)

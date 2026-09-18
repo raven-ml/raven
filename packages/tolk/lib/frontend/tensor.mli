@@ -114,6 +114,13 @@ val symbolic_shape_uop : Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
 (** [symbolic_shape_uop dims] encodes a shape of (possibly symbolic) dimension
     nodes as a shape argument node. *)
 
+val custom_kernel :
+  ?grad_fxn:Tolk_uop.Uop.grad_fxn ->
+  fxn:(Tolk_uop.Uop.t list -> Tolk_uop.Uop.t) -> t list -> t list
+(** [custom_kernel ?grad_fxn ~fxn ts] is [ts] after a kernel written in uops
+    has run over them: {!Tolk_uop.Uop.custom_kernel} on the tensors' nodes.
+    Read a tensor the kernel writes through its entry in the result. *)
+
 val alu_unary : Tolk_uop.Ops.t -> t -> t
 (** [alu_unary op t] applies unary arithmetic [op] to [t]. *)
 

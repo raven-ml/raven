@@ -2504,6 +2504,42 @@ let shard_shape u =
 
 let max_shard_shape u = List.map vmax (shard_shape u)
 
+(* Placeholders and custom kernels *)
+
+let placeholder ~shape:dims ~dtype ~slot ?(addrspace = Dtype.Global) ?device
+    () =
+  let dtype = Dtype.strong_dtype dtype in
+  let flat = const_int (List.fold_left ( * ) 1 dims) in
+  let base =
+    match addrspace with
+    | Dtype.Global -> param ~slot ~dtype ~shape:flat ~addrspace ?device ()
+    | Dtype.Local | Dtype.Reg ->
+        if Option.is_some device then
+          invalid_arg
+            "Uop.placeholder: local and reg placeholders cannot have a device";
+        buffer ~slot ~dtype ~shape:flat ~addrspace ()
+    | Dtype.Alu -> invalid_arg "Uop.placeholder: alu address space"
+  in
+  if List.length dims > 1 then
+    reshape ~src:base ~shape:(shape_arg (List.map const_int dims))
+  else base
+
+let placeholder_like u ~slot ?(addrspace = Dtype.Global) () =
+  if List.exists (fun d -> Option.is_none (const_int_value d)) (shape u) then
+    invalid_arg "Uop.placeholder_like: symbolic shape";
+  placeholder ~shape:(max_shard_shape u) ~dtype:(dtype u) ~slot ~addrspace ()
+
+let custom_kernel ?grad_fxn ~fxn srcs =
+  let placeholders =
+    List.mapi (fun slot s -> placeholder_like s ~slot ()) srcs
+  in
+  let info =
+    { grad_fxn; name = None; precompile = false; precompile_backward = false;
+      aux = None }
+  in
+  let kernel = call ~body:(fxn placeholders) ~args:srcs ~info in
+  List.map (fun s -> after ~src:s ~deps:[ kernel ]) srcs
+
 let bounds u =
   match axis u, device_of u with
   | None, _ -> invalid_arg "Uop.bounds: axis is None"

@@ -431,23 +431,6 @@ let reduce_fold op = function
   | first :: rest ->
       List.fold_left (fun a x -> U.alu_binary ~op ~lhs:a ~rhs:x) first rest
 
-(* A storage placeholder. GLOBAL uses a PARAM, LOCAL and REG use a BUFFER; the
-   flat storage carries [prod shape] elements and a multi-dim view is
-   reintroduced by reshape. *)
-let placeholder ~shape ~dtype ~slot ?(addrspace = Dtype.Global) () =
-  let flat = shape_arg_of_ints [ prod shape ] in
-  let base =
-    match addrspace with
-    | Dtype.Global -> U.param ~slot ~dtype ~shape:flat ~addrspace ()
-    | Dtype.Local | Dtype.Reg -> U.buffer ~slot ~dtype ~shape:flat ~addrspace ()
-    | Dtype.Alu -> invalid_arg "placeholder: alu address space"
-  in
-  if List.length shape > 1 then U.reshape ~src:base ~shape:(shape_arg_of_ints shape)
-  else base
-
-let placeholder_like node ~slot ~addrspace =
-  placeholder ~shape:(U.max_shard_shape node) ~dtype:(U.dtype node) ~slot ~addrspace ()
-
 (* fix group for reduce: split grouped reduces into a local buffer written by the
    non-grouped reduces, then a final reduce over the group loops. *)
 let range_kind_is kind r =
@@ -545,7 +528,7 @@ let reduce_ranges_to_acc ctx node =
       let dtype = U.dtype node in
       let slot = ctx.acc_num in
       ctx.acc_num <- ctx.acc_num + 1;
-      let acc = placeholder_like node ~slot ~addrspace:Dtype.Reg in
+      let acc = U.placeholder_like node ~slot ~addrspace:Dtype.Reg () in
       let input_ranges = reduce_input_ranges src reduce_range in
       let acc_init =
         U.store ~dst:(U.after ~src:acc ~deps:input_ranges)
@@ -777,7 +760,7 @@ let add_local_buffer_rule counter node =
       let slot = !counter in
       incr counter;
       let buf =
-        placeholder ~shape:(U.max_shape node) ~dtype:(U.dtype node) ~slot
+        U.placeholder ~shape:(U.max_shape node) ~dtype:(U.dtype node) ~slot
           ~addrspace:opts.addrspace ()
       in
       let store = U.store ~dst:(U.index ~ptr:buf ~idxs:ranges ()) ~value:src () in

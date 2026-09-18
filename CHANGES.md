@@ -195,6 +195,11 @@ thread.
 
 ### Tolk (new)
 
+- Add `Uop.custom_kernel` and `Tensor.custom_kernel`: a kernel written in uops
+  runs from the tensor graph over realized sources, and each source is read
+  back after the kernel. `Uop.placeholder` and `Uop.placeholder_like` build
+  the storage a kernel body addresses, and `Creation.empty` allocates storage
+  for a kernel to fill, on `?device` when given.
 - A gather over 32768 rows or more compiles to one kernel with one gated load
   per output element. The reduce split used to fire before the gather collapse
   and the kernel read the whole table into an intermediate buffer, so

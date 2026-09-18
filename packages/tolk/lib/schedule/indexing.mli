@@ -47,6 +47,9 @@ type realize_state =
 
 type indexing_context = {
   realize_map : (int, realize_state) Hashtbl.t;
+  non_removable : (int, unit) Hashtbl.t;
+      (** Sources of a custom kernel call: their stage must stay a buffer,
+          since the kernel addresses it by slot. *)
   range_map : (int, Tolk_uop.Uop.t list * Tolk_uop.Uop.t list) Hashtbl.t;
       (** Maps {!Tolk_uop.Uop.tag} to [(input_ranges, output_ranges)].
           Only nodes of the graph {!run_rangeify} walked are present; a node

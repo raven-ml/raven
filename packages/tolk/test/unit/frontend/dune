@@ -1,8 +1,16 @@
 (tests
- (names test_frontend test_run test_linalg test_jit test_rand test_rand_cuda)
+ (names
+  test_frontend
+  test_run
+  test_custom_kernel
+  test_linalg
+  test_jit
+  test_rand
+  test_rand_cuda)
  (modules
   test_frontend
   test_run
+  test_custom_kernel
   test_linalg
   test_jit
   test_rand

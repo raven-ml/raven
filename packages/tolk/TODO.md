@@ -685,7 +685,7 @@ because you can measure that the strict path no longer fires.
 
 ## Missing tests
 
-Both remaining entries need a clone-generated `.expected`, and neither can
+The first two entries need a clone-generated `.expected`, and neither can
 produce a correct one today — see the two blockers named below.
 
 - **`multi_stack` parity case** (the STACK sharding rule has no coverage).
@@ -702,6 +702,17 @@ produce a correct one today — see the two blockers named below.
   the reference emits two-axis `INDEX(buf, y, x)`, so a golden generated from
   the clone today lands red on that known divergence rather than on anything
   it pins. Generate it in the same commit that converges the producer.
+
+- **The rest of `test_custom_kernel.py`.** `test/unit/frontend/
+  test_custom_kernel.ml` ports ten of the reference's cases: empty, simple,
+  multioutput, arange, eye, noncontig, sum, sum_outside, sum_int and gemm. Not
+  ported: the sharded cases (`simple_sharded`, `sharded_add_one`,
+  `gemm_multi`, the `multi_*` invalid cases), the backward cases
+  (`gemm_backward*`, the `qkv` pair: tolk has no autodiff to drive `grad_fxn`),
+  `flip_contract`, `slice_sum`, the `from_source` pair, `duplicate_call_arg`,
+  `simple_reshape`, `multi_after_schedule_order`, the invalid-store group,
+  `anonymous_buffers_in_function`, `custom_kernel_sched*`,
+  `sliced_buffer_function`, `inplace_transpose` and the `_test_mop` group.
 
 - **Trap to remember for `simplify_valid`-style rules** (the coverage gap
   itself is closed by the `simplify_valid` group in
