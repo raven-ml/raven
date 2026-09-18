@@ -1343,6 +1343,59 @@ let test_donate_reuses_window_write () =
         [| 9.0; 8.0; 9.0; 8.0; 9.0; 8.0; 9.0; 8.0 |]
         !s.x)
 
+(* The slot-pool write of a key-value cache: every slot takes a new row or
+   keeps its old one, and the same program reads the written pool back through
+   an index. The read follows the store, so the pool still reuses its
+   storage. *)
+type pool = { slots : Nx.float32_t; writer : Nx.int32_t; read : Nx.float32_t }
+
+module Pool = struct
+  type t = pool
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { slots; writer; read } =
+    { slots = f slots; writer = f writer; read = f read }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    {
+      slots = f p.slots q.slots;
+      writer = f p.writer q.writer;
+      read = f p.read q.read;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { slots; writer; read } =
+    f slots;
+    f writer;
+    f read
+end
+
+let test_donate_reuses_pool_read_after_write () =
+  with_force_copy (fun () ->
+      let n = 1024 in
+      let rows = vec32 [| 10.0; 20.0; 30.0 |] in
+      let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
+      let f { slots; writer; read = _ } =
+        let fresh = Nx.take ~axis:0 ~indices:(Nx.maximum_s writer 0l) rows in
+        let slots = Nx.where (Nx.greater_equal_s writer 0l) fresh slots in
+        { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
+      in
+      let step = Rune.jit2 ~donate:true (module Pool) (module Pool) f in
+      let writer =
+        Nx.create Nx.int32 [| n |]
+          (Array.init n (fun i ->
+               match i with 2 -> 0l | 5 -> 1l | 7 -> 2l | _ -> -1l))
+      in
+      let s =
+        ref
+          (step
+             { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] })
+      in
+      let before = (Rune.jit_stats ()).reused_bytes in
+      s := step !s;
+      is_true ~msg:"the pool is written over its donated input"
+        ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
+      check_arr ~msg:"the read sees the written pool" [| 20.0; 10.0; 30.0; 1.0 |]
+        !s.read)
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -1542,6 +1595,8 @@ let tests =
           test_donate_moves_pass_through;
         test "a run-time window write reuses the cache"
           test_donate_reuses_window_write;
+        test "a pool read after its write still reuses storage"
+          test_donate_reuses_pool_read_after_write;
         test "an updated input returned unchanged stays readable"
           test_donate_keeps_pass_through_readable;
         test "outputs never write into an input's buffer"
