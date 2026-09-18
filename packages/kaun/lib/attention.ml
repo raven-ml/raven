@@ -76,7 +76,17 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
   | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
   | Nx.Float32 | Nx.Float64 -> false
 
-let scaled_dot_product_attention ?mask q k v =
+let shape_to_string s =
+  "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
+
+(* Whether [shape] broadcasts to [onto], aligned on the right. *)
+let broadcasts ~onto shape =
+  let n = Array.length onto and r = Array.length shape in
+  r <= n
+  && Array.for_all Fun.id
+       (Array.mapi (fun i d -> d = 1 || d = onto.(n - r + i)) shape)
+
+let scaled_dot_product_attention ?mask ?scale ?sinks q k v =
   let qs = Nx.shape q and ks = Nx.shape k and vs = Nx.shape v in
   let qr = Array.length qs and kr = Array.length ks and vr = Array.length vs in
   if qr < 2 || kr < 2 || vr < 2 then
@@ -93,16 +103,42 @@ let scaled_dot_product_attention ?mask q k v =
       "Attention.scaled_dot_product_attention: k has %d positions but v has %d"
       ks.(kr - 2)
       vs.(vr - 2);
-  let scale = 1.0 /. sqrt (float_of_int qs.(qr - 1)) in
+  let scale =
+    Option.value scale ~default:(1.0 /. sqrt (float_of_int qs.(qr - 1)))
+  in
   (* Scores, masking and softmax, generically in the dtype of [q] and [k]. *)
-  let weights q k =
+  let weights q k sinks =
     let scores =
       Nx.mul_s (Nx.matmul q (Nx.swapaxes (kr - 2) (kr - 1) k)) scale
     in
-    match mask with
-    | None -> Fn.softmax scores
-    | Some m ->
-        let neg_inf t = Nx.scalar_like t Float.neg_infinity in
+    let neg_inf t = Nx.scalar_like t Float.neg_infinity in
+    match (mask, sinks) with
+    | None, None -> Fn.softmax scores
+    | _, Some sinks ->
+        let queries = Array.sub (Nx.shape scores) 0 (Nx.ndim scores - 1) in
+        if not (broadcasts ~onto:queries (Nx.shape sinks)) then
+          Printf.ksprintf invalid_arg
+            "Attention.scaled_dot_product_attention: sinks of shape %s do not \
+             broadcast to %s, the scores without their last axis"
+            (shape_to_string (Nx.shape sinks))
+            (shape_to_string queries);
+        (* A sink is one more key of value zero: it enters the normaliser and
+           has no column. It is finite, so no query is empty. *)
+        let sink = Nx.unsqueeze ~axes:[ -1 ] sinks in
+        let scores =
+          match mask with
+          | None -> scores
+          | Some m -> Nx.where m scores (neg_inf scores)
+        in
+        let top = Nx.maximum (Nx.max ~axes:[ -1 ] ~keepdims:true scores) sink in
+        let e = Nx.exp (Nx.sub scores top) in
+        let total =
+          Nx.add
+            (Nx.sum ~axes:[ -1 ] ~keepdims:true e)
+            (Nx.exp (Nx.sub sink top))
+        in
+        Nx.div e total
+    | Some m, None ->
         let scores = Nx.where m scores (neg_inf scores) in
         let top = Nx.max ~axes:[ -1 ] ~keepdims:true scores in
         (* A query that sees no key: its weights are zero, not 0 / 0. *)
@@ -121,8 +157,10 @@ let scaled_dot_product_attention ?mask q k v =
      exactly the pre-island ones. *)
   let probs =
     if low_precision dt then
-      Nx.cast dt (weights (Nx.cast Nx.float32 q) (Nx.cast Nx.float32 k))
-    else weights q k
+      Nx.cast dt
+        (weights (Nx.cast Nx.float32 q) (Nx.cast Nx.float32 k)
+           (Option.map (Nx.cast Nx.float32) sinks))
+    else weights q k sinks
   in
   Nx.matmul probs v
 

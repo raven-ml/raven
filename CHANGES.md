@@ -1614,6 +1614,11 @@ thread.
 
 ### Kaun
 
+- `Attention.scaled_dot_product_attention` takes `?scale`, which replaces
+  `1 / sqrt d`, and `?sinks`, attention-sink logits that join each query's
+  softmax as one more key of value zero, as gpt-oss needs. With sinks a query
+  that sees no key yields zero. Without the options the computation is
+  unchanged.
 - Add `Rope.of_frequencies`, a schedule from one head's inverse frequencies,
   for schedules the module does not name, and `Rope.yarn`, the YaRN
   long-context frequencies with an untruncated correction range, as gpt-oss

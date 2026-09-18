@@ -215,13 +215,17 @@ val cached :
 
 val scaled_dot_product_attention :
   ?mask:(bool, Nx.bool_elt) Nx.t ->
+  ?scale:float ->
+  ?sinks:(float, 'b) Nx.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t
-(** [scaled_dot_product_attention q k v] is [softmax (q @ kᵀ / sqrt d) @ v]:
-    each of the [n] query rows takes a weighted average of the [m] value rows,
+(** [scaled_dot_product_attention q k v] is [softmax (q @ kᵀ * scale) @ v]: each
+    of the [n] query rows takes a weighted average of the [m] value rows,
     weighted by the softmax of its scaled dot products with the key rows.
+    [scale] defaults to [1 / sqrt d]; a model whose scores have another
+    temperature passes its own (see {!Rope.yarn}).
 
     [q] has shape [[| ...; n; d |]], [k] shape [[| ...; m; d |]] and [v] shape
     [[| ...; m; dv |]]; the result has shape [[| ...; n; dv |]]. Leading axes
@@ -234,16 +238,31 @@ val scaled_dot_product_attention :
     function is total: a query row whose mask hides every key has zero weights,
     so its output is zero over finite values, and its gradients are zero.
 
+    [sinks], when given, are attention sinks (Xiao et al., 2023, as gpt-oss uses
+    them): learned logits that take part of a query's weight and carry no value.
+    [sinks] must broadcast to [[| ...; n |]], the scores without their last
+    axis, so each query row has one: for [q] of shape
+    [[| batch; heads; n; d |]], one sink per head is a tensor of shape
+    [[| heads; 1 |]]. A query's sink joins its softmax as one more key whose
+    value is zero: the scores and the sink are normalised together, the sink is
+    a raw logit that [scale] does not multiply, and it has no column in the
+    weights, which then sum to less than [1]. A query whose mask hides every key
+    puts all its weight on its sink: its output and its gradients are zero.
+    Differentiable through Rune in [sinks].
+
+    Without [scale] and [sinks] the computation is exactly the one above.
+
     For half and quarter precision inputs (float16, bfloat16, float8) the
-    scores, masking and softmax are computed in a float32 island: [q] and [k]
-    are upcast, the probabilities are cast back to the input dtype, and the
-    value matmul runs at the input dtype. Float32 and float64 inputs use their
-    own dtype throughout, exactly as if the island were absent. {!apply} and
-    {!cached} inherit this contract.
+    scores, masking, sinks and softmax are computed in a float32 island: [q],
+    [k] and [sinks] are upcast, the probabilities are cast back to the input
+    dtype, and the value matmul runs at the input dtype. Float32 and float64
+    inputs use their own dtype throughout, exactly as if the island were absent.
+    {!apply} and {!cached} inherit this contract.
 
     Raises [Invalid_argument] if [q], [k] or [v] has fewer than 2 axes, [q] and
-    [k] differ in their last axis, or [k] and [v] differ in their second-to-last
-    axis. *)
+    [k] differ in their last axis, [k] and [v] differ in their second-to-last
+    axis, or [sinks] does not broadcast to the scores without their last axis.
+*)
 
 (** {1:traversals Traversals}
 
