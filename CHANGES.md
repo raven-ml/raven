@@ -1614,13 +1614,19 @@ thread.
 
 ### Kaun
 
+- **Breaking**: a sliding window is part of the cache index.
+  `Cache_index.window w index` is `index` seeing the last `w` positions, and
+  `Cache_index.extend` and `Cache_index.mask` lose `?window` and read the
+  index's, so a layer can no longer zero with one window and mask with
+  another. `Attention.cached` loses `?window` too: a layer with a window is
+  `cached p cache (Cache_index.window w index) x`.
 - `Attention.apply` and `Attention.cached` no longer copy the keys and values
   to group them under their query heads. The decode step of
   `kaun/bench/decode` runs 24 fewer kernels and allocates 9% fewer host words;
   on Metal it takes 8.0 ms against 8.5 ms at a cache of 256, and the same 8.9
   ms at 1024.
 - **Breaking**: a decoder has one forward pass. `Attention.cached` takes a
-  `Kaun.Cache_index.t` and gains `?window`; over `Cache_index.whole`, which
+  `Kaun.Cache_index.t`; over `Cache_index.whole`, which
   reads and keeps nothing, it is plain causal attention and returns its cache
   untouched. A model's `hidden` is
   `fst (cached ... (Cache_index.whole ~batch ~seq ()) ids)`, the second fold

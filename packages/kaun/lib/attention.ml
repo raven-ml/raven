@@ -330,7 +330,7 @@ end
 
 (* Cached attention *)
 
-let cached ~head_dim ?rope ?window p cache index x =
+let cached ~head_dim ?rope p cache index x =
   let batch = Cache_index.batch index and seq = Cache_index.seq index in
   let embed = (Nx.shape p.q.Linear.w).(0) in
   if Nx.shape x <> [| batch; seq; embed |] then
@@ -360,10 +360,10 @@ let cached ~head_dim ?rope ?window p cache index x =
         (Rope.apply t ~pos q, Nx.swapaxes 1 2 (Rope.apply t ~pos k))
   in
   let extend values leaf =
-    let seen, leaf = Cache_index.extend ?window index values leaf in
+    let seen, leaf = Cache_index.extend index values leaf in
     (Nx.swapaxes 1 2 seen, leaf)
   in
   let k, keys = extend k cache.Cache.keys in
   let v, values = extend (tokens (Linear.apply p.v x)) cache.Cache.values in
-  let out = attend ~kv_heads ~mask:(Cache_index.mask ?window index) q k v in
+  let out = attend ~kv_heads ~mask:(Cache_index.mask index) q k v in
   (Linear.apply p.out out, { Cache.keys; values })

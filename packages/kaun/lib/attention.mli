@@ -181,7 +181,6 @@ end
 val cached :
   head_dim:int ->
   ?rope:Rope.t ->
-  ?window:int ->
   (float, 'b) Nx.t t ->
   (float, 'b) Nx.t Cache.t ->
   Cache_index.t ->
@@ -192,11 +191,11 @@ val cached :
     [cache] with their keys and values written. The result has [x]'s shape.
 
     A token sees the positions of its sequence at or before its own, those of
-    this call included, and with [window] only the last [window] of them: a
-    prompt fed whole, in chunks, or token by token gives the same outputs up to
-    floating-point reassociation. With [rope], queries and keys are rotated at
-    the index's positions before the keys are stored. A padded token's output is
-    the output projection of zero.
+    this call included, and under the index's {!Cache_index.window} only the
+    last of them: a prompt fed whole, in chunks, or token by token gives the
+    same outputs up to floating-point reassociation. With [rope], queries and
+    keys are rotated at the index's positions before the keys are stored. A
+    padded token's output is the output projection of zero.
 
     The layer extends each leaf with {!Cache_index.extend} and attends once over
     what that returns, under {!Cache_index.mask}. On a whole index the tokens

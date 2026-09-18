@@ -3,9 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t =
+type tokens =
   | Whole of Nx.int32_t
   | Tabled of { row : Nx.int32_t option; pos : Nx.int32_t; table : Nx.int32_t }
+
+type t = { tokens : tokens; window : int option }
 
 let invalid fmt = Printf.ksprintf invalid_arg fmt
 
@@ -34,7 +36,7 @@ let whole ?lens ~batch ~seq () =
           "Cache_index.whole: a lane of %d tokens does not fit %d positions" n
           seq)
     lens;
-  Whole (left_padded ~seq lens)
+  { tokens = Whole (left_padded ~seq lens); window = None }
 
 let rows ~context lens =
   let batch = Array.length lens in
@@ -53,7 +55,10 @@ let rows ~context lens =
     Nx.create Nx.int32 [| batch; context |]
       (Array.init (batch * context) Int32.of_int)
   in
-  Tabled { row = None; pos = left_padded ~seq lens; table }
+  {
+    tokens = Tabled { row = None; pos = left_padded ~seq lens; table };
+    window = None;
+  }
 
 let make ?row ~pos ~table () =
   (match (Nx.shape pos, Nx.shape table) with
@@ -69,13 +74,18 @@ let make ?row ~pos ~table () =
       invalid_arg
         "Cache_index.make: pos must have shape [batch; seq] and table [rows; \
          context], neither of them empty");
-  Tabled { row; pos; table }
+  { tokens = Tabled { row; pos; table }; window = None }
 
-let raw = function Whole pos | Tabled { pos; _ } -> pos
+let window w index =
+  if w <= 0 then invalid "Cache_index.window: window must be positive, got %d" w;
+  { index with window = Some w }
+
+let raw index = match index.tokens with Whole pos | Tabled { pos; _ } -> pos
 let batch index = Nx.dim 0 (raw index)
 let seq index = Nx.dim 1 (raw index)
 
-let context = function
+let context index =
+  match index.tokens with
   | Whole pos -> Nx.dim 1 pos
   | Tabled { table; _ } -> Nx.dim 1 table
 
@@ -84,7 +94,8 @@ let inside ~below t =
 
 (* Positions, with every token of a lane whose row is outside the table as
    padding. *)
-let pos = function
+let pos index =
+  match index.tokens with
   | Whole pos | Tabled { row = None; pos; _ } -> pos
   | Tabled { row = Some row; pos; table } ->
       let named = inside ~below:(Nx.dim 0 table) row in
@@ -95,14 +106,15 @@ let pos = function
 let positions index =
   Nx.clamp ~min:0l ~max:(Int32.of_int (context index - 1)) (raw index)
 
-let advance = function
+let advance index =
+  match index.tokens with
   | Whole _ -> invalid_arg "Cache_index.advance: a whole index keeps nothing"
-  | Tabled { row; table; _ } as index ->
+  | Tabled { row; table; _ } ->
       (* Any negative position is padding: a lane of it advances to 0. *)
       let last =
         Nx.maximum_s (Nx.max ~axes:[ 1 ] ~keepdims:true (pos index)) (-1l)
       in
-      Tabled { row; pos = Nx.add_s last 1l; table }
+      { index with tokens = Tabled { row; pos = Nx.add_s last 1l; table } }
 
 (* The table of each lane. *)
 let lanes ~row table =
@@ -121,16 +133,14 @@ let sees ?window ~keys pos =
   match window with
   | None -> causal
   | Some w ->
-      if w <= 0 then
-        invalid "Cache_index.mask: window must be positive, got %d" w;
       Nx.logical_and causal (Nx.greater keys (Nx.sub_s query (Int32.of_int w)))
 
 let column ~context =
   Nx.reshape [| 1; context |] (Nx.arange Nx.int32 0 context 1)
 
-let mask ?window index =
-  let pos = pos index in
-  match index with
+let mask index =
+  let pos = pos index and window = index.window in
+  match index.tokens with
   | Whole _ ->
       let keys = Nx.reshape [| Nx.dim 0 pos; 1; Nx.dim 1 pos |] pos in
       Nx.logical_and (Nx.greater_equal_s keys 0l) (sees ?window ~keys pos)
@@ -214,49 +224,55 @@ let read ?window ~pos ~table pool =
     (Array.append [| batch; context |] tail)
     (Nx.where live win (Nx.zeros (Nx.dtype pool) [| 1 |]))
 
-let extend ?window index values pool =
-  Option.iter
-    (fun w ->
-      if w <= 0 then
-        invalid "Cache_index.extend: window must be positive, got %d" w)
-    window;
+let extend index values pool =
   let tail = tail pool in
   if Nx.shape values <> Array.append [| batch index; seq index |] tail then
     invalid
       "Cache_index.extend: values must have shape [%d; %d] then the pool's"
       (batch index) (seq index);
-  match index with
+  match index.tokens with
   | Whole _ -> (values, pool)
   | Tabled { row; table; _ } ->
       let pos = pos index and table = lanes ~row table in
       let pool = write ~pos ~table values pool in
-      (read ?window ~pos ~table pool, pool)
+      (read ?window:index.window ~pos ~table pool, pool)
 
 (* Traversals *)
 
-let map f = function
-  | Whole pos -> Whole (f pos)
-  | Tabled { row; pos; table } ->
-      let row = Option.map f row in
-      let pos = f pos in
-      let table = f table in
-      Tabled { row; pos; table }
+let map f index =
+  let tokens =
+    match index.tokens with
+    | Whole pos -> Whole (f pos)
+    | Tabled { row; pos; table } ->
+        let row = Option.map f row in
+        let pos = f pos in
+        let table = f table in
+        Tabled { row; pos; table }
+  in
+  { index with tokens }
 
 let map2 f a b =
-  match (a, b) with
-  | Whole pos, Whole pos' -> Whole (f pos pos')
-  | Tabled a, Tabled b when Option.is_some a.row = Option.is_some b.row ->
-      let row =
-        match (a.row, b.row) with
-        | Some row, Some row' -> Some (f row row')
-        | _ -> None
-      in
-      let pos = f a.pos b.pos in
-      let table = f a.table b.table in
-      Tabled { row; pos; table }
-  | _ -> invalid_arg "Cache_index.map2: the indices were not built the same way"
+  if a.window <> b.window then
+    invalid_arg "Cache_index.map2: the indices differ in their window";
+  let tokens =
+    match (a.tokens, b.tokens) with
+    | Whole pos, Whole pos' -> Whole (f pos pos')
+    | Tabled a, Tabled b when Option.is_some a.row = Option.is_some b.row ->
+        let row =
+          match (a.row, b.row) with
+          | Some row, Some row' -> Some (f row row')
+          | _ -> None
+        in
+        let pos = f a.pos b.pos in
+        let table = f a.table b.table in
+        Tabled { row; pos; table }
+    | _ ->
+        invalid_arg "Cache_index.map2: the indices were not built the same way"
+  in
+  { a with tokens }
 
-let iter f = function
+let iter f index =
+  match index.tokens with
   | Whole pos -> f pos
   | Tabled { row; pos; table } ->
       Option.iter f row;

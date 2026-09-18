@@ -449,7 +449,7 @@ let test_cached_window () =
   in
   let expected = Attention.apply ~head_dim ~mask:band ~rope p x in
   let windowed c index x =
-    Attention.cached ~head_dim ~rope ~window:3 p c index x
+    Attention.cached ~head_dim ~rope p c (Cache_index.window 3 index) x
   in
   let y, _ = windowed (cache 0) (Cache_index.whole ~batch:1 ~seq:6 ()) x in
   close ~msg:"whole" expected y;
@@ -467,6 +467,40 @@ let test_cached_window () =
   close ~msg:"in two chunks" expected (Nx.concatenate ~axis:1 [ y1; y2 ])
 
 (* A prompt fed whole, in chunks, or token by token gives the same outputs. *)
+let test_index_window () =
+  let index = index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |] in
+  let windowed = Cache_index.window 2 index in
+  let mask i = Array.to_list (Nx.to_array (Cache_index.mask i)) in
+  equal ~msg:"a window hides what is below it" (list bool)
+    [
+      true;
+      false;
+      false;
+      false;
+      true;
+      true;
+      false;
+      false;
+      false;
+      true;
+      true;
+      false;
+    ]
+    (mask windowed);
+  equal ~msg:"a later window replaces an earlier one" (list bool)
+    (mask windowed)
+    (mask (Cache_index.window 2 (Cache_index.window 1 index)));
+  equal ~msg:"advance keeps the window" (list bool)
+    [ false; false; true; true ]
+    (mask (Cache_index.advance windowed));
+  equal ~msg:"map keeps the window" (list bool) (mask windowed)
+    (mask (Cache_index.map Fun.id windowed));
+  raises
+    (Invalid_argument "Cache_index.map2: the indices differ in their window")
+    (fun () -> Cache_index.map2 (fun a _ -> a) windowed index);
+  raises (Invalid_argument "Cache_index.window: window must be positive, got 0")
+    (fun () -> Cache_index.window 0 index)
+
 let test_cached_chunking_is_invariant () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = layer Nx.float32 in
@@ -730,7 +764,7 @@ let test_cached_windowed_columns_are_zero () =
   let p = layer Nx.float32 in
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let windowed c index x =
-    Attention.cached ~head_dim ~rope ~window:2 p c index x
+    Attention.cached ~head_dim ~rope p c (Cache_index.window 2 index) x
   in
   let slots = [| [| 4; 2; 0; 3; 1 |] |] in
   let _, c =
@@ -991,6 +1025,7 @@ let () =
           test "a whole index is causal apply and keeps nothing"
             test_cached_whole;
           test "a window bounds what a token sees" test_cached_window;
+          test "a window is part of the index" test_index_window;
           test "chunking is invariant" test_cached_chunking_is_invariant;
           test "rows of different lengths share a batch"
             test_cached_ragged_batch;
