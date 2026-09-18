@@ -67,6 +67,9 @@ module Attention = Attention
 module Layer_norm = Layer_norm
 (** Layer normalization over the feature axis. *)
 
+module Rms_norm = Rms_norm
+(** Root mean square normalization over the feature axis. *)
+
 module Batch_norm = Batch_norm
 (** Batch normalization, with running statistics as explicit state. *)
 
@@ -79,6 +82,9 @@ module Fn = Fn
 
 module Pool = Pool
 (** 2-D max and average pooling. *)
+
+module Rope = Rope
+(** Rotary position embeddings: a frequency schedule and its rotation. *)
 
 module Dropout = Dropout
 (** Dropout with an explicit [~training] flag and optional {!Nx.Rng} key. *)

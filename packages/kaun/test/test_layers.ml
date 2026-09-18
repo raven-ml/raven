@@ -12,6 +12,7 @@ module _ : Nx.Ptree.Uniform with type 'a t = 'a Linear.t = Linear
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Conv.t = Conv
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Embedding.t = Embedding
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Layer_norm.t = Layer_norm
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Rms_norm.t = Rms_norm
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.t = Batch_norm
 
 module _ :
@@ -30,6 +31,7 @@ module _ :
 let linear64 = Kaun.ptree (module Linear)
 let embedding64 = Kaun.ptree (module Embedding)
 let layer_norm64 = Kaun.ptree (module Layer_norm)
+let rms_norm64 = Kaun.ptree (module Rms_norm)
 
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
@@ -270,6 +272,66 @@ let test_layer_norm_rejects_bad_input () =
   raises (Invalid_argument "Layer_norm.make: dim must be positive, got 0")
     (fun () -> Layer_norm.make ~dim:0 Nx.float32)
 
+(* RMS norm *)
+
+let test_rms_norm_analytic () =
+  (* [3; 4] has mean square 12.5; with eps = 0 it normalizes by sqrt 12.5. *)
+  let p = { Rms_norm.gamma = Nx.create Nx.float32 [| 2 |] [| 2.; 0.5 |] } in
+  let x = Nx.create Nx.float32 [| 1; 2 |] [| 3.; 4. |] in
+  let r = sqrt 12.5 in
+  values_are ~msg:"x / rms x * gamma" ~tol:1e-6
+    [| 3. /. r *. 2.; 4. /. r *. 0.5 |]
+    (Rms_norm.apply ~eps:0.0 p x)
+
+let test_rms_norm_eps () =
+  (* [0; 2] has mean square 2; with eps = 2 it normalizes by sqrt (2 + 2). *)
+  let x = Nx.create Nx.float32 [| 1; 2 |] [| 0.; 2. |] in
+  values_are ~msg:"eps enters under the square root" ~tol:1e-6 [| 0.; 1. |]
+    (Rms_norm.apply ~eps:2.0 (Rms_norm.init ~dim:2) x)
+
+let test_rms_norm_unit_rms () =
+  Nx.Rng.with_key (Nx.Rng.key 12) @@ fun () ->
+  let x = Nx.add_s (Nx.mul_s (Nx.randn Nx.float32 [| 3; 16 |]) 3.0) 7.0 in
+  let y = Rms_norm.apply (Rms_norm.init ~dim:16) x in
+  shape_is ~msg:"shape preserved" [| 3; 16 |] y;
+  Array.iteri
+    (fun i v ->
+      equal ~msg:(Printf.sprintf "row %d mean square" i) (float 1e-3) 1.0 v)
+    (Nx.to_array (Nx.mean ~axes:[ 1 ] (Nx.mul y y)))
+
+let test_rms_norm_does_not_center () =
+  let y = Rms_norm.apply (Rms_norm.init ~dim:4) (Nx.full Nx.float32 [| 2; 4 |] 5.0) in
+  values_are ~msg:"a constant vector keeps its sign and unit size" ~tol:1e-5
+    (Array.make 8 1.0) y
+
+let test_rms_norm_gradients () =
+  Nx.Rng.with_key (Nx.Rng.key 13) @@ fun () ->
+  let p = Rms_norm.map (Nx.cast Nx.float64) (Rms_norm.init ~dim:5) in
+  let p = { Rms_norm.gamma = Nx.add p.gamma (Nx.mul_s (Nx.randn Nx.float64 [| 5 |]) 0.3) } in
+  let x = Nx.randn Nx.float64 [| 3; 5 |] in
+  let w = Nx.randn Nx.float64 [| 3; 5 |] in
+  grads_ok
+    (Rune.check_grads rms_norm64 (fun p -> Nx.sum (Nx.mul w (Rms_norm.apply p x))) p);
+  let module X = struct
+    type 'a t = 'a
+    let map f x = f x
+    let map2 f x y = f x y
+    let iter f x = f x
+  end in
+  grads_ok
+    (Rune.check_grads (Kaun.ptree (module X))
+       (fun x -> Nx.sum (Nx.mul w (Rms_norm.apply p x)))
+       x)
+
+let test_rms_norm_rejects_bad_input () =
+  let p = Rms_norm.init ~dim:4 in
+  raises (Invalid_argument "Rms_norm.make: dim must be positive, got 0")
+    (fun () -> Rms_norm.make ~dim:0 Nx.float32);
+  raises
+    (Invalid_argument
+       "Rms_norm.apply: last axis has size 3 but the layer normalizes 4 \
+        features") (fun () -> Rms_norm.apply p (Nx.zeros Nx.float32 [| 2; 3 |]))
+
 let () =
   run "kaun layers"
     [
@@ -313,5 +375,17 @@ let () =
           test "gradients agree with finite differences"
             test_layer_norm_gradients;
           test "invalid inputs are rejected" test_layer_norm_rejects_bad_input;
+        ];
+      group "rms norm"
+        [
+          test "matches the analytic normalization" test_rms_norm_analytic;
+          test "eps enters under the square root" test_rms_norm_eps;
+          test "scales each vector to unit root mean square"
+            test_rms_norm_unit_rms;
+          test "a constant vector is not centered away"
+            test_rms_norm_does_not_center;
+          test "gradients agree with finite differences"
+            test_rms_norm_gradients;
+          test "invalid inputs are rejected" test_rms_norm_rejects_bad_input;
         ];
     ]

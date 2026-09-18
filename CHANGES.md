@@ -1546,6 +1546,13 @@ thread.
 
 ### Kaun
 
+- `Kaun.Rope` adds rotary position embeddings: a schedule is the inverse
+  frequencies of one head (`Rope.make`, and `Rope.llama3` for the Llama 3.1
+  long-context bands) and `Rope.apply` rotates queries or keys at per-token
+  positions, forming the angles at float32 whatever the activation dtype.
+- `Kaun.Rms_norm` adds root mean square normalization, the norm of
+  Llama-class models, with the float32 island `Layer_norm` has for half and
+  quarter precision inputs.
 - Seeded `glorot_normal`, `he_normal` and `lecun_normal` initialisers produce
   different values for a given key: they draw through
   `Nx.truncated_normal`, whose bounds are now tensors and whose draw changed
