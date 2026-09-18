@@ -19,6 +19,18 @@ type 'a t = {
 
 type form = Gather | Dense
 
+let map_weight f = function
+  | Float w -> Float (f w)
+  | Mxfp4 { blocks; scales } -> Mxfp4 { blocks; scales }
+
+let map f p =
+  let router = Linear.map f p.router in
+  let gate_up = map_weight f p.gate_up in
+  let gate_up_bias = f p.gate_up_bias in
+  let down = map_weight f p.down in
+  let down_bias = f p.down_bias in
+  { router; gate_up; gate_up_bias; down; down_bias }
+
 let route ~k p x =
   let logits, experts = Nx.top_k ~k (Linear.apply p.router x) in
   (experts, Nx.softmax logits)

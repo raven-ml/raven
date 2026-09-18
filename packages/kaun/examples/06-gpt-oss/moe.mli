@@ -33,6 +33,11 @@ type 'a t = {
 }
 (** The type for the block's parameters over payload ['a]. *)
 
+val map : ('a -> 'b) -> 'a t -> 'b t
+(** [map f p] is [p] with [f] applied to every float leaf, in the order
+    [router], [gate_up], [gate_up_bias], [down], [down_bias]; packed weights are
+    kept. [map (Nx.cast dt) p] converts precision. *)
+
 (** {1:forward Forward} *)
 
 val route :
