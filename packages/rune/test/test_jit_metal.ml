@@ -23,7 +23,40 @@ let test_matmul_grad_on_metal () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through metal jit" (to_arr (Rune.grad' f x)) (g x)
 
-
+(* Multi-kernel compiled traces replay as batched device graphs: the kernels are
+   recorded into an indirect command buffer on the first call and later calls
+   patch the rebound buffers (fresh outputs, resident inputs) into it instead of
+   launching each kernel individually. *)
+let test_graph_batched_replay () =
+  let w1 =
+    Nx.create f32 [| 4; 4 |]
+      (Array.init 16 (fun i -> (float_of_int (i mod 5) /. 4.0) -. 0.5))
+  in
+  let w2 =
+    Nx.create f32 [| 4; 4 |]
+      (Array.init 16 (fun i -> float_of_int (i mod 3) -. 1.0))
+  in
+  let f x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
+  let g = Rune.jit' ~device:"METAL" f in
+  let launches0 = !Tolk.Realize.graph_launches in
+  List.iteri
+    (fun i data ->
+      let x = Nx.create f32 [| 2; 4 |] data in
+      check_arr
+        ~msg:(Printf.sprintf "call %d matches eager" (i + 1))
+        (to_arr (f x))
+        (g x))
+    [
+      Array.init 8 (fun i -> float_of_int i /. 8.0);
+      Array.init 8 (fun i -> float_of_int (7 - i));
+      Array.make 8 (-0.25);
+    ];
+  is_true ~msg:"every call dispatched a device graph"
+    (!Tolk.Realize.graph_launches - launches0 >= 3);
+  let x = Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i)) in
+  check_arr ~msg:"a resident output feeds the next call"
+    (to_arr (f (f x)))
+    (g (g x))
 
 let tests =
   [
@@ -31,6 +64,8 @@ let tests =
       [
         test "element-wise chain matches eager" test_elementwise_on_metal;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
+        test "multi-kernel traces replay as device graphs"
+          test_graph_batched_replay;
       ];
   ]
 

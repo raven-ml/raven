@@ -2805,8 +2805,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
         (linear, var_vals)
   in
   (* Batch consecutive graph-compatible kernels into device execution graphs
-     (CUDA graphs), so replay dispatches each batch as one launch instead of one
-     launch per kernel. Buffers rebound between replays (inputs, fresh per-call
+     (CUDA graphs, Metal indirect command buffers), so replay dispatches each
+     batch as one launch instead of one launch per kernel. Buffers rebound between replays (inputs, fresh per-call
      outputs) are diff-patched into the recorded graph by [Realize.run_linear]'s
      graph runner. Honors JIT (>= 2 disables) and JIT_BATCH_SIZE. *)
   let linear = Tolk.Jit.batch_graphs ~device:dev linear in
