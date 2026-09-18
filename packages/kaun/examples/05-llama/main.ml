@@ -8,18 +8,10 @@
    Downloads the checkpoint and tokenizer from an ungated HuggingFace mirror
    (about 2.5 GB, cached afterwards) and samples a continuation of a prompt
    through key-value caches. [--jit DEVICE] compiles the decode step with
-   [Rune.jit]; [--temperature 0] decodes greedily.
-
-   The prompt is given as token ids. Llama 3's tokenizer splits text with a
-   regular expression that uses lookahead, which brot does not load yet, so this
-   example cannot encode text; it decodes the generated ids itself from the
-   tokenizer file's vocabulary. The default ids spell "The capital of France
-   is". *)
+   [Rune.jit]; [--temperature 0] decodes greedily. *)
 
 open Kaun
 module Span = Attention.Span
-
-let default_ids = "128000,791,6864,315,9822,374"
 
 (* One step function serves the whole generation: it consumes the tokens its
    span places, fills the caches, and returns the next token, the advanced span,
@@ -133,56 +125,20 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
       (float_of_int (max_tokens - 2) /. (Unix.gettimeofday () -. !t0));
   out
 
-(* The byte-level vocabulary of the tokenizer file, by id, with the special
-   tokens it adds, so an end-of-text marker shows in the output. *)
-let vocabulary path =
-  let ic = open_in_bin path in
-  let text =
-    Fun.protect
-      ~finally:(fun () -> close_in ic)
-      (fun () -> In_channel.input_all ic)
-  in
-  let mem name = function
-    | Jsont.Object (mems, _) -> Option.map snd (Jsont.Json.find_mem name mems)
-    | _ -> None
-  in
-  match Jsont_bytesrw.decode_string Jsont.json text with
-  | Error e -> failwith ("tokenizer.json: " ^ e)
-  | Ok json -> (
-      match Option.bind (mem "model" json) (mem "vocab") with
-      | Some (Jsont.Object (mems, _)) ->
-          let table = Hashtbl.create (List.length mems) in
-          List.iter
-            (function
-              | (token, _), Jsont.Number (id, _) ->
-                  Hashtbl.replace table (int_of_float id) token
-              | _ -> ())
-            mems;
-          (match mem "added_tokens" json with
-          | Some (Jsont.Array (added, _)) ->
-              List.iter
-                (fun t ->
-                  match (mem "id" t, mem "content" t) with
-                  | Some (Jsont.Number (id, _)), Some (Jsont.String (c, _)) ->
-                      Hashtbl.replace table (int_of_float id) c
-                  | _ -> ())
-                added
-          | _ -> ());
-          table
-      | _ -> failwith "tokenizer.json: no model.vocab")
-
-let decode vocab ids =
-  Array.to_list ids
-  |> List.filter_map (fun id -> Hashtbl.find_opt vocab (Int32.to_int id))
-  |> String.concat "" |> Brot.Pre_tokenizer.byte_level_decode
+let load_tokenizer () =
+  let path = Kaun_hf.download_file ~file:"tokenizer.json" Llama.default_repo in
+  match Brot.from_file path with
+  | Ok t -> t
+  | Error e -> failwith ("tokenizer: " ^ e)
 
 let () =
-  let ids = ref default_ids and count = ref 24 and jit = ref "" in
+  let prompt = ref "The capital of France is" in
+  let count = ref 24 and jit = ref "" in
   let dtype = ref "float32" and temperature = ref 0.7 and seed = ref 0 in
   let top_k = ref 50 and top_p = ref 0.9 in
   Arg.parse
     [
-      ("--ids", Arg.Set_string ids, "Prompt as comma-separated token ids");
+      ("--prompt", Arg.Set_string prompt, "Text to continue");
       ("--count", Arg.Set_int count, "Number of tokens to generate");
       ("--jit", Arg.Set_string jit, "Compile the decode step for this device");
       ("--dtype", Arg.Set_string dtype, "float32 (default), float16 or bfloat16");
@@ -192,16 +148,12 @@ let () =
       ("--seed", Arg.Set_int seed, "Sampling seed");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "llama [--ids I,J,...] [--count N] [--jit DEVICE] [--dtype DT]";
+    "llama [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
   let cfg, params = Llama.from_pretrained () in
-  let vocab =
-    vocabulary (Kaun_hf.download_file ~file:"tokenizer.json" Llama.default_repo)
-  in
-  let ids =
-    String.split_on_char ',' !ids
-    |> List.map (fun s -> Int32.of_string (String.trim s))
-    |> Array.of_list
-  in
+  let tokenizer = load_tokenizer () in
+  (* The tokenizer opens the ids with the begin-of-text token the model was
+     trained to start from. *)
+  let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   let device = if !jit = "" then None else Some !jit in
   let run : type b.
       (float, b) Nx.dtype -> (float, b) Nx.t Llama.params -> int32 array =
@@ -217,5 +169,5 @@ let () =
         run Nx.bfloat16 (Llama.Params.map (Nx.cast Nx.bfloat16) params)
     | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
   in
-  print_string (decode vocab ids);
-  print_endline (decode vocab toks)
+  print_string !prompt;
+  print_endline (Brot.decode tokenizer (Array.map Int32.to_int toks))
