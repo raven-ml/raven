@@ -1,4 +1,4 @@
 (executables
- (names validate)
- (modules mxfp4 moe validate)
+ (names validate bench)
+ (modules mxfp4 moe validate bench)
  (libraries kaun kaun.hf jsont jsont.bytesrw nx rune unix))
