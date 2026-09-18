@@ -66,6 +66,18 @@ let make_suite ~label ~tokenizer =
   in
   Thumper.group label benches
 
+(* Llama 3's pre-tokenizer: a split on the cl100k regular expression, then the
+   byte-level encoding of its pieces. *)
+let split_cl100k =
+  Pre_tokenizer.sequence
+    [
+      Pre_tokenizer.split_regex
+        ~pattern:
+          {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+        ~behavior:`Isolated ();
+      Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+    ]
+
 (* Pre-tokenization on its own: the span walkers, plus the pieces and offsets
    [pre_tokenize] builds from them. *)
 let pre_tokenizer_suite =
@@ -79,6 +91,7 @@ let pre_tokenizer_suite =
       case "bert" Pre_tokenizer.bert;
       case "whitespace" Pre_tokenizer.whitespace;
       case "metaspace" (Pre_tokenizer.metaspace ());
+      case "split_cl100k" split_cl100k;
       Thumper.bench "byte_level/short" (fun () ->
           Pre_tokenizer.pre_tokenize (Pre_tokenizer.byte_level ()) short_text);
     ]
@@ -94,6 +107,9 @@ let all_benchmarks =
   let llama =
     make_suite ~label:"LLaMA" ~tokenizer:(load_tokenizer "llama.json")
   in
-  [ pre_tokenizer_suite; gpt2; bert; llama ]
+  let llama3 =
+    make_suite ~label:"Llama-3" ~tokenizer:(load_tokenizer "llama3.json")
+  in
+  [ pre_tokenizer_suite; gpt2; bert; llama; llama3 ]
 
 let () = Thumper.run "brot" all_benchmarks

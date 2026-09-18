@@ -19,6 +19,11 @@ Benchmark inputs live in `./data/`:
   dropped, which brot does not implement (Unigram, 32K vocab, Metaspace)
 - `mistral.json` — Mistral-7B-v0.1 (BPE with byte fallback, 32K vocab,
   non-splitting Metaspace pre-tokenizer)
+- `llama3.json` — Llama 3.2 (byte-level BPE, 128K vocab, `ignore_merges`,
+  regular-expression `Split` on the cl100k pattern)
+- `qwen2_5.json`, `deepseek_v3.json`, `gpt_oss.json` — the other
+  regular-expression `Split` tokenizers the parity suite reads: Qwen2.5,
+  DeepSeek-V3 and gpt-oss (the o200k pattern)
 
 The last three are read by the HuggingFace parity test rather than by the
 benchmarks; `test/scripts/gen_parity_expected.py` documents the whole set.
