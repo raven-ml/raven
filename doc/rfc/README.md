@@ -46,3 +46,8 @@ a document outside the repository.
   reason to accept this or a later RFC.
 
 [0001](0001-tensors-as-values.md) is the reference example.
+
+## Index
+
+- [0001](0001-tensors-as-values.md) Tensors as values (committed)
+- [0002](0002-decode-contract.md) The decode contract (published)
