@@ -12,8 +12,6 @@ This page maps Python scientific computing concepts to their Raven equivalents. 
 | HuggingFace Tokenizers | [Brot](../packages/brot/doc/index.md) | BPE, WordPiece, Unigram; HF-compatible |
 | pandas / Polars | [Talon](../packages/talon/doc/index.md) | Type-safe DataFrames |
 | Matplotlib | [Hugin](../packages/hugin/doc/index.md) | 2D/3D plotting with Cairo |
-| Gymnasium | [Fehu](../packages/fehu/doc/index.md) | RL environments and training utilities |
-| OpenCV | [Sowilo](../packages/sowilo/doc/index.md) | Differentiable image processing |
 | Jupyter + IPython | [Quill](../packages/quill/doc/index.md) | Interactive REPL and markdown notebooks |
 
 ## Key Differences
@@ -165,5 +163,5 @@ Each library has a dedicated comparison page with side-by-side code examples:
 - [Brot vs HuggingFace Tokenizers](../packages/brot/doc/06-hf-tokenizers-comparison.md)
 - [Talon vs pandas](../packages/talon/doc/03-pandas-comparison.md)
 - [Hugin vs Matplotlib](../packages/hugin/doc/05-matplotlib-comparison.md)
-- [Sowilo vs OpenCV](../packages/sowilo/doc/04-opencv-comparison.md)
-- [Fehu vs Gymnasium](../packages/fehu/doc/04-gymnasium-comparison.md)
+- [Sowilo vs OpenCV](https://github.com/raven-ml/raven/blob/main/contrib/sowilo/doc/04-opencv-comparison.md) (contrib)
+- [Fehu vs Gymnasium](https://github.com/raven-ml/raven/blob/main/contrib/fehu/doc/04-gymnasium-comparison.md) (contrib)

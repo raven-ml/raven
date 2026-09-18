@@ -193,25 +193,6 @@
   (compiler gpu tensor-computation)))
 
 (package
- (name norn)
- (dir packages/norn)
- (synopsis "MCMC sampling for OCaml")
- (description
-  "Markov chain Monte Carlo samplers with automatic gradients via Rune. Hamiltonian Monte Carlo with dual-averaging step-size adaptation.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (nx
-   (= :version))
-  (rune
-   (= :version))
-  (windtrap :with-test)
-  (thumper :with-test))
- (tags
-  (mcmc sampling bayesian machine-learning)))
-
-(package
  (name vega)
  (dir packages/vega)
  (synopsis "Gradient-based optimizers for OCaml")
@@ -246,42 +227,6 @@
   (windtrap :with-test))
  (tags
   (experiment-tracking machine-learning monitoring)))
-
-(package
- (name sowilo)
- (dir packages/sowilo)
- (synopsis "Differentiable computer vision for OCaml")
- (description
-  "Image processing operations expressed as Nx tensor computations. Geometric transforms, spatial filters, edge detection, morphological operations, and color space conversions, all compatible with Rune.grad and Rune.vmap.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (nx
-   (= :version))
-  (windtrap :with-test)
-  (mdx :with-test)
-  (thumper :with-test))
- (tags
-  (computer-vision image-processing feature-detection machine-learning)))
-
-(package
- (name fehu)
- (dir packages/fehu)
- (synopsis "Reinforcement learning for OCaml")
- (description
-  "Type-safe RL environments, observation/action spaces, vectorized environments, trajectory collection, replay buffers, and generalized advantage estimation. Built on Nx.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (nx
-   (= :version))
-  (windtrap :with-test)
-  (mdx :with-test)
-  (thumper :with-test))
- (tags
-  (reinforcement-learning machine-learning environments)))
 
 (package
  (name hugin)
@@ -342,10 +287,6 @@
   (kaun
    (= :version))
   (munin
-   (= :version))
-  (sowilo
-   (= :version))
-  (fehu
    (= :version))
   (hugin
    (= :version))

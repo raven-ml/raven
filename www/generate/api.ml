@@ -38,7 +38,6 @@ let libraries =
         ("kaun.hf", "Kaun_hf");
       ] );
     ("vega", [ ("vega", "Vega") ]);
-    ("norn", [ ("norn", "Norn") ]);
     ( "munin",
       [
         ("munin", "Munin");
@@ -49,8 +48,6 @@ let libraries =
     ("talon", [ ("talon", "Talon"); ("talon.csv", "Talon_csv") ]);
     ("hugin", [ ("hugin", "Hugin") ]);
     ("quill", [ ("quill", "Quill") ]);
-    ("fehu", [ ("fehu", "Fehu"); ("fehu.envs", "Fehu_envs") ]);
-    ("sowilo", [ ("sowilo", "Sowilo") ]);
   ]
 
 (*---------------------------------------------------------------------------

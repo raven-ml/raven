@@ -1,6 +1,6 @@
 # Norn
 
-MCMC sampling with automatic gradients for OCaml, powered by [Rune](../rune/)
+MCMC sampling with automatic gradients for OCaml, powered by [Rune](../../packages/rune/)
 
 Norn provides Hamiltonian Monte Carlo and NUTS samplers that leverage Rune's
 automatic differentiation. You supply an unnormalized log-density function and
@@ -56,8 +56,8 @@ let () =
 
 ## Contributing
 
-See the [Raven monorepo README](../README.md) for guidelines.
+See the [Raven monorepo README](../../README.md) for guidelines.
 
 ## License
 
-ISC License. See [LICENSE](../LICENSE) for details.
+ISC License. See [LICENSE](../../LICENSE) for details.

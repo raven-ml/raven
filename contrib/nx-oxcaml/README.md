@@ -22,7 +22,7 @@ viable workaround.
 With a compatible OxCaml compiler, build from this directory:
 
 ```bash
-cd packages/nx-oxcaml
+cd contrib/nx-oxcaml
 dune build --root .
 ```
 

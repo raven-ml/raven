@@ -20,8 +20,8 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 | ᛃ | [**talon**](../packages/talon/doc/index.md) | Pandas / Polars | DataFrames with type-safe columns |
 | ᛞ | [**hugin**](../packages/hugin/doc/index.md) | Matplotlib | Data visualization and plotting |
 | ᛈ | [**quill**](../packages/quill/doc/index.md) | Jupyter + IPython | Interactive REPL and markdown notebooks |
-| ᚠ | [**fehu**](../packages/fehu/doc/index.md) | Gymnasium | Reinforcement learning environments |
-| ᛋ | [**sowilo**](../packages/sowilo/doc/index.md) | OpenCV | Differentiable computer vision |
+
+Packages that release on their own schedule, such as Norn, Fehu, and Sowilo, live in the repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory.
 
 ## Project
 

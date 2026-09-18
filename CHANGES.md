@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- `fehu`, `sowilo`, `norn`, and `nx-oxcaml` move to `contrib/`. Each is its own
+  dune project with its own version, builds against `main`, and sits outside
+  the 1.0 API commitment. Changes to `fehu`, `sowilo`, and `norn` are now
+  recorded in `contrib/<package>/CHANGES.md`. The `raven` package no longer
+  installs `fehu` and `sowilo`; install them by name.
 - Add compatibility with OCaml 5.5.
 
 ### Hugin
@@ -187,15 +192,6 @@ thread.
 - Add `x-kaun-mnist-jit`, an example tracking a `Rune.jit2`-compiled CNN
   training run (forward, backward, and SGD update in one compiled program,
   Metal by default) with live `munin watch` monitoring.
-
-### Norn (new)
-
-- New package: Markov chain Monte Carlo sampling with automatic gradients via
-  Rune. Provides HMC and NUTS samplers with Stan-style window adaptation (dual
-  averaging for step size, Welford estimation for mass matrix). Includes
-  symplectic integrators (leapfrog, mclachlan, yoshida), mass matrix metrics
-  (unit, diagonal, dense), and convergence diagnostics (ESS, split R-hat).
-  Equivalent to BlackJAX/PyMC in Python.
 
 ### Tolk (new)
 
@@ -1664,13 +1660,6 @@ thread.
   integration (`kaun.hf`, `kaun.datasets`) are provided as plain functions
   over these records.
 
-### Fehu
-
-- `Space.Box.sample` and `Space.Multi_discrete.sample` draw every dimension
-  in one tensor operation instead of an OCaml loop reading each draw back to
-  the host. The fallback for an unbounded `Box` dimension is unchanged.
-  Samples for a given seed differ from before.
-
 ### Brot
 
 - OLMo 2 and Phi-4 take the cl100k scanner too: they ask for the pattern's
@@ -2157,11 +2146,6 @@ thread.
   `end_of_word_suffix` as no affix, which is how tokenizer files spell it: the
   accessors return `None` for those models, and GPT-2 no longer takes the
   allocating affix path when encoding.
-
-### Sowilo
-
-- `resize`, `canny`, `threshold`, `invert`, and the HSV conversions combine
-  with scalars instead of materializing full-size constant tensors.
 
 ### Talon
 

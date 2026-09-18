@@ -48,7 +48,7 @@
    %{test}
    %{dep:../lib/core/backend_intf.ml}
    %{dep:../lib/backend/nx_backend.mli}
-   %{dep:../../nx-oxcaml/lib/nx_backend.ml})))
+   %{dep:../../../contrib/nx-oxcaml/lib/nx_backend.ml})))
 
 (test
  (name test_nx_io)

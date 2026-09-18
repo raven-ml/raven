@@ -4,7 +4,7 @@ This suite runs the same workloads against the Nx C and OxCaml backends. Inputs
 are allocated before each measured closure, so the reported time covers the
 operation and its output allocation rather than benchmark setup.
 
-Run the release-profile suite from `packages/nx-oxcaml`:
+Run the release-profile suite from `contrib/nx-oxcaml`:
 
 ```bash
 dune build --root . --profile release @bench

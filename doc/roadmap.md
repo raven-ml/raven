@@ -10,7 +10,7 @@ A year ago we scoped our beta around JIT compilation, with training GPT-2 on GPU
 
 We're also pretty happy with where we landed on our design: in particular on an effect-based Nx with modular backends and Rune on top providing effect handlers for automatic differentiation, JIT compilation, and vectorization. The APIs will keep changing until v1, but we like how well they compose and make difficult things simple without unnecessary abstractions.
 
-Raven's ambition is bigger than LLM workflows: a complete numerical computing ecosystem for OCaml. That broader goal has progressed too, with Hugin for plotting, Talon for dataframes, Quill for notebooks, Fehu for reinforcement learning, Norn for probabilistic programming, and Sowilo for image processing.
+Raven's ambition is bigger than LLM workflows: a complete numerical computing ecosystem for OCaml. That broader goal has progressed too, with Hugin for plotting, Talon for dataframes, and Quill for notebooks. Fehu for reinforcement learning, Norn for probabilistic programming, and Sowilo for image processing are contrib packages, which live in the same repository and release on their own schedule.
 
 ## The road ahead: 1.0
 
@@ -21,7 +21,7 @@ Our next milestone from here is to release 1.0. Our broad acceptance bar for 1.0
 
 For these two workflows, the acceptance bar is performance on par with, or exceeding, the equivalent Python stack (PyTorch with FSDP or PEFT for training, vLLM for serving), meaning that beyond the change of language, there should be no friction to migrate from Python to Raven.
 
-Llama 3.1 70B is the reference model because at that scale every hard problem must actually be solved (fine-tuning forces sharding and multi-node training; serving forces tensor parallelism and quantization) and because it's a scale real teams run in production. The mixture-of-experts model is there because that's the shape the open-weight frontier now ships in. When both workflows hold this bar, and every package in the ecosystem clears its readiness bar, we ship 1.0.
+Llama 3.1 70B is the reference model because at that scale every hard problem must actually be solved (fine-tuning forces sharding and multi-node training; serving forces tensor parallelism and quantization) and because it's a scale real teams run in production. The mixture-of-experts model is there because that's the shape the open-weight frontier now ships in. When both workflows hold this bar, and every core package clears its readiness bar, we ship 1.0.
 
 ## Training
 

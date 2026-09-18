@@ -51,14 +51,22 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 | ᚱ   | [**rune**](packages/rune/)     | JAX               | Automatic differentiation and functional transformations |
 | ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
 | ᚹ   | [**vega**](packages/vega/)     | Optax             | Composable gradient-based optimizers                     |
-| ᚾ   | [**norn**](packages/norn/)     | BlackJAX          | MCMC sampling with automatic gradients                   |
 | ᚨ   | [**brot**](packages/brot/)     | HF Tokenizers     | Fast, HuggingFace-compatible tokenization                |
 | ᛃ   | [**talon**](packages/talon/)   | Polars            | Fast and elegant dataframes with type-safe operations    |
 | ᛞ   | [**hugin**](packages/hugin/)   | Matplotlib        | Publication-quality plotting                             |
 | ᛈ   | [**quill**](packages/quill/)   | Jupyter + IPython | Interactive REPL and markdown notebooks                  |
-| ᚠ   | [**fehu**](packages/fehu/)     | Gymnasium         | Reinforcement learning environments                      |
-| ᛋ   | [**sowilo**](packages/sowilo/) | OpenCV            | Differentiable computer vision                           |
 | ᛗ   | [**munin**](packages/munin/)  | W&B / MLFlow      | Local experiment tracking with live TUI dashboard        |
+
+### Contrib
+
+Packages in [`contrib/`](contrib/) build against every change to the core and release on their own schedule.
+
+|     | Package                               | Like      | What it does                                   |
+| --- | ------------------------------------- | --------- | ---------------------------------------------- |
+| ᚾ   | [**norn**](contrib/norn/)             | BlackJAX  | MCMC sampling with automatic gradients         |
+| ᚠ   | [**fehu**](contrib/fehu/)             | Gymnasium | Reinforcement learning environments            |
+| ᛋ   | [**sowilo**](contrib/sowilo/)         | OpenCV    | Differentiable computer vision                 |
+|     | [**nx-oxcaml**](contrib/nx-oxcaml/)   |           | Experimental Nx backend on OxCaml unboxed types |
 
 ## Getting started
 
@@ -66,7 +74,7 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 opam install raven
 ```
 
-This installs the full ecosystem. You can also install only what you need — e.g. `opam install kaun` for neural networks, or `opam install nx` for just arrays.
+This installs the core ecosystem. You can also install only what you need — e.g. `opam install kaun` for neural networks, or `opam install nx` for just arrays.
 
 Add to your `dune` file:
 

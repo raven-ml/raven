@@ -16,13 +16,13 @@ and work through the numbered examples in order.
 All examples can be run with:
 
 ```bash
-dune exec packages/norn/examples/<name>/main.exe
+dune exec contrib/norn/examples/<name>/main.exe
 ```
 
 For example:
 
 ```bash
-dune exec packages/norn/examples/01-sampling-basics/main.exe
+dune exec contrib/norn/examples/01-sampling-basics/main.exe
 ```
 
 ## Quick Reference

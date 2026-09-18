@@ -52,14 +52,6 @@ let libraries =
       symbol = {|ᚹ|};
     };
     {
-      name = "norn";
-      display = {|<span class="rune-symbol">ᚾ</span> norn|};
-      color = "color-teal";
-      description = "MCMC sampling with automatic gradients";
-      tagline = "MCMC sampling for OCaml";
-      symbol = {|ᚾ|};
-    };
-    {
       name = "hugin";
       display = {|<span class="rune-symbol">ᛞ</span> hugin|};
       color = "color-purple";
@@ -91,22 +83,6 @@ let libraries =
       description = "Interactive REPL and markdown notebooks";
       tagline = "Interactive REPL and markdown notebooks";
       symbol = {|ᛈ|};
-    };
-    {
-      name = "fehu";
-      display = {|<span class="rune-symbol">ᚠ</span> fehu|};
-      color = "color-lime";
-      description = "Reinforcement learning for OCaml";
-      tagline = "Reinforcement learning for OCaml";
-      symbol = {|ᚠ|};
-    };
-    {
-      name = "sowilo";
-      display = {|<span class="rune-symbol">ᛋ</span> sowilo|};
-      color = "color-indigo";
-      description = "Differentiable computer vision";
-      tagline = "Differentiable computer vision for OCaml";
-      symbol = {|ᛋ|};
     };
     {
       name = "munin";

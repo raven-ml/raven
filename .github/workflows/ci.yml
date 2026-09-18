@@ -91,13 +91,13 @@ jobs:
 
       - name: Build and test fehu
         run: |
-          opam exec -- dune build --release packages/fehu
-          opam exec -- dune build --release @packages/fehu/runtest
+          opam exec -- dune build --release contrib/fehu
+          opam exec -- dune build --release @contrib/fehu/runtest
 
       - name: Build and test sowilo
         run: |
-          opam exec -- dune build --release packages/sowilo
-          opam exec -- dune build --release @packages/sowilo/runtest
+          opam exec -- dune build --release contrib/sowilo
+          opam exec -- dune build --release @contrib/sowilo/runtest
 
       - name: Build and test munin
         run: |
@@ -106,8 +106,8 @@ jobs:
 
       - name: Build and test norn
         run: |
-          opam exec -- dune build --release packages/norn
-          opam exec -- dune build --release @packages/norn/runtest
+          opam exec -- dune build --release contrib/norn
+          opam exec -- dune build --release @contrib/norn/runtest
 
       - name: Build and test tolk
         run: |

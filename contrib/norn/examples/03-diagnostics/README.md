@@ -5,7 +5,7 @@ Gaussian target, then computes ESS and split R-hat to verify that the chains
 have converged and mixed.
 
 ```bash
-dune exec packages/norn/examples/03-diagnostics/main.exe
+dune exec contrib/norn/examples/03-diagnostics/main.exe
 ```
 
 ## What You'll Learn

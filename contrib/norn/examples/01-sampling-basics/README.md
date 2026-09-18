@@ -5,7 +5,7 @@ Gaussian using NUTS and prints summary statistics to verify the chain recovered
 the true distribution.
 
 ```bash
-dune exec packages/norn/examples/01-sampling-basics/main.exe
+dune exec contrib/norn/examples/01-sampling-basics/main.exe
 ```
 
 ## What You'll Learn

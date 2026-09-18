@@ -1,6 +1,6 @@
 # The Raven Ecosystem
 
-Raven is nine libraries that share one data type: `Nx.t`, the
+Raven's libraries share one data type: `Nx.t`, the
 n-dimensional array. Each library does one thing, and they compose
 through tensors.
 
@@ -12,12 +12,12 @@ through tensors.
                          │  (Flax)   │
                          └─────┬─────┘
                                │
-  ┌───────────┐          ┌─────┴─────┐          ┌───────────┐
-  │  Sowilo   │          │   Rune    │          │   Fehu    │
-  │ (OpenCV)  ├──────────┤  (JAX)    ├──────────┤(Gymnasium)│
-  └─────┬─────┘          └─────┬─────┘          └─────┬─────┘
-        │                      │                      │
-  ┌─────┴──────────────────────┴──────────────────────┴─────┐
+                         ┌─────┴─────┐
+                         │   Rune    │  autodiff, vmap
+                         │  (JAX)    │
+                         └─────┬─────┘
+                               │
+  ┌────────────────────────────┴────────────────────────────┐
   │                          Nx                              │
   │                       (NumPy)                            │
   └──┬──────────────┬──────────────┬──────────────┬─────────┘
@@ -37,10 +37,8 @@ through tensors.
 batching, metrics, checkpoints, and HuggingFace Hub integration. Models
 are typed records you define; optimizers come from **Vega**.
 
-**Sowilo**, **Fehu**, **Talon**, **Brot**, **Hugin**, and **Quill** each
-use Nx directly for their domain. Sowilo and Fehu operations are
-compatible with Rune's `grad` and `vmap` since they are plain Nx
-operations under the hood.
+**Talon**, **Brot**, **Hugin**, and **Quill** each use Nx directly for
+their domain.
 
 ## Which Library Do I Need?
 
@@ -51,8 +49,6 @@ operations under the hood.
 | Train neural networks | [Kaun](../packages/kaun/doc/index.md) |
 | Tokenize text for language models | [Brot](../packages/brot/doc/index.md) |
 | Manipulate tabular data | [Talon](../packages/talon/doc/index.md) |
-| Process and transform images | [Sowilo](../packages/sowilo/doc/index.md) |
-| Build RL environments and agents | [Fehu](../packages/fehu/doc/index.md) |
 | Create plots and visualizations | [Hugin](../packages/hugin/doc/index.md) |
 | Run code interactively (REPL or notebooks) | [Quill](../packages/quill/doc/index.md) |
 
@@ -155,44 +151,6 @@ let () = print df
 
 [Talon documentation →](../packages/talon/doc/index.md)
 
-## Sowilo: Computer Vision
-
-Differentiable image processing: geometric transforms (resize, crop,
-flip), spatial filters (Gaussian blur, Sobel, Canny), color space
-conversions, and morphological operations. All operations are plain Nx
-computations, so they compose with `Rune.grad` and `Rune.vmap`.
-
-<!-- $MDX skip -->
-```ocaml
-open Sowilo
-
-let processed =
-  img
-  |> to_float
-  |> resize ~height:224 ~width:224 ~mode:Bilinear
-  |> normalize ~mean:[|0.485; 0.456; 0.406|] ~std:[|0.229; 0.224; 0.225|]
-```
-
-[Sowilo documentation →](../packages/sowilo/doc/index.md)
-
-## Fehu: Reinforcement Learning
-
-RL environments (CartPole, MountainCar, GridWorld), type-safe
-observation/action spaces, vectorized environments, trajectory
-collection, replay buffers, and generalized advantage estimation.
-
-<!-- $MDX skip -->
-```ocaml
-open Fehu
-
-let env = Fehu_envs.cartpole () in
-let obs, _info = Env.reset env in
-let obs, reward, terminated, truncated, _info =
-  Env.step env (Space.sample (Env.action_space env))
-```
-
-[Fehu documentation →](../packages/fehu/doc/index.md)
-
 ## Hugin: Visualization
 
 Publication-quality 2D and 3D plots using Cairo rendering. Takes Nx
@@ -228,6 +186,16 @@ quill run notebook.md    # batch evaluation
 ```
 
 [Quill documentation →](../packages/quill/doc/index.md)
+
+## Contrib Packages
+
+The repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory holds packages built on the
+core libraries that release on their own schedule and install separately
+from `opam install raven`:
+
+- [Norn](https://github.com/raven-ml/raven/tree/main/contrib/norn): MCMC sampling with automatic gradients
+- [Fehu](https://github.com/raven-ml/raven/tree/main/contrib/fehu): reinforcement learning environments
+- [Sowilo](https://github.com/raven-ml/raven/tree/main/contrib/sowilo): differentiable computer vision
 
 ## Getting Started
 

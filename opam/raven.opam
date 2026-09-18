@@ -21,8 +21,6 @@ depends: [
   "vega" {= version}
   "kaun" {= version}
   "munin" {= version}
-  "sowilo" {= version}
-  "fehu" {= version}
   "hugin" {= version}
   "quill" {= version}
   "litany" {with-test}

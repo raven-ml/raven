@@ -1,6 +1,6 @@
 # Fehu
 
-Reinforcement learning environment toolkit for OCaml, built on [Rune](../rune/)
+Reinforcement learning environment toolkit for OCaml, built on [Rune](../../packages/rune/)
 
 Fehu provides type-safe environments, composable wrappers, trajectory
 collection, replay buffers, GAE computation, policy evaluation, and
@@ -71,8 +71,8 @@ let () =
 
 ## Contributing
 
-See the [Raven monorepo README](../README.md) for guidelines.
+See the [Raven monorepo README](../../README.md) for guidelines.
 
 ## License
 
-ISC License. See [LICENSE](../LICENSE) for details.
+ISC License. See [LICENSE](../../LICENSE) for details.

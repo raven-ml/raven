@@ -1,0 +1,42 @@
+(lang dune 3.21)
+
+(name sowilo)
+
+(source
+ (github raven-ml/raven))
+
+(authors "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(maintainers "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(license ISC)
+
+(documentation
+ "https://github.com/raven-ml/raven/tree/main/contrib/sowilo")
+
+(bug_reports "https://github.com/raven-ml/raven/issues")
+
+(using mdx 0.4)
+
+(version 1.0.0~alpha3)
+
+(implicit_transitive_deps false)
+
+(generate_opam_files true)
+
+(package
+ (name sowilo)
+ (synopsis "Differentiable computer vision for OCaml")
+ (description
+  "Image processing operations expressed as Nx tensor computations. Geometric transforms, spatial filters, edge detection, morphological operations, and color space conversions, all compatible with Rune.grad and Rune.vmap.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (>= 1.0.0~alpha3))
+  (windtrap :with-test)
+  (mdx :with-test)
+  (thumper :with-test))
+ (tags
+  (computer-vision image-processing feature-detection machine-learning)))

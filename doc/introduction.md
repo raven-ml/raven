@@ -66,14 +66,12 @@ Raven is a comprehensive ecosystem that spans the entire scientific computing st
 
 **Domain Frameworks**
 - **Kaun**: Neural networks and training (PyTorch/Flax equivalent)
-- **Sowilo**: Differentiable computer vision (OpenCV equivalent)
-- **Fehu**: Reinforcement learning environments and algorithms (Gymnasium equivalent)
 
 **Tooling**
 - **Hugin**: Publication-quality plotting (Matplotlib equivalent)
 - **Quill**: Interactive notebooks as markdown files (Jupyter equivalent)
 
-Nine libraries spanning the full scientific computing stack, all designed to work together seamlessly.
+Libraries spanning the full scientific computing stack, all designed to work together seamlessly.
 
 **Key Innovations**
 While we aim to feel familiar to Python users, Raven brings genuine innovations to scientific computing:

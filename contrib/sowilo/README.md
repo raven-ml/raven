@@ -1,6 +1,6 @@
 # Sowilo
 
-Differentiable computer vision for OCaml, built on [Rune](../rune/)
+Differentiable computer vision for OCaml, built on [Rune](../../packages/rune/)
 
 Sowilo provides image processing operations expressed purely through Nx
 tensor operations. All operations are compatible with `Rune.grad'` and `Rune.vmap'`.
@@ -51,8 +51,8 @@ values in [0, 1].
 
 ## Contributing
 
-See the [Raven monorepo README](../README.md) for guidelines.
+See the [Raven monorepo README](../../README.md) for guidelines.
 
 ## License
 
-ISC License. See [LICENSE](../LICENSE) for details.
+ISC License. See [LICENSE](../../LICENSE) for details.

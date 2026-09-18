@@ -5,7 +5,7 @@ Bayesian linear regression on synthetic data. Generates noisy observations from
 to infer the posterior over slope and intercept.
 
 ```bash
-dune exec packages/norn/examples/02-bayesian-regression/main.exe
+dune exec contrib/norn/examples/02-bayesian-regression/main.exe
 ```
 
 ## What You'll Learn

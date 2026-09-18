@@ -17,11 +17,8 @@
   --color-quill: #10b981;     /* emerald */
   --color-rune: #f59e0b;      /* amber */
   --color-kaun: #ef4444;      /* red */
-  --color-sowilo: #6366f1;    /* indigo */
   --color-talon: #ec4899;     /* pink */
-  --color-fehu: #84cc16;      /* lime */
   --color-vega: #eab308;      /* yellow */
-  --color-norn: #14b8a6;      /* teal */
   --color-munin: #f97316;     /* orange-warm */
   --color-tolk: #64748b;      /* slate */
   
@@ -32,7 +29,7 @@
   --syntax-number: var(--color-nx);
   --syntax-function: var(--color-hugin);
   --syntax-operator: var(--color-text);
-  --syntax-type: var(--color-sowilo);
+  --syntax-type: #6366f1;
 }
 
 /* Base styles */
@@ -144,11 +141,8 @@ hr {
 .color-green { color: var(--color-quill); }  /* quill */
 .color-orange { color: var(--color-rune); }  /* rune */
 .color-red { color: var(--color-kaun); }     /* kaun */
-.color-indigo { color: var(--color-sowilo); } /* sowilo */
 .color-pink { color: var(--color-talon); }   /* talon */
-.color-lime { color: var(--color-fehu); }    /* fehu */
 .color-yellow { color: var(--color-vega); }  /* vega */
-.color-teal { color: var(--color-norn); }   /* norn */
 .color-munin { color: var(--color-munin); } /* munin */
 .color-slate { color: var(--color-tolk); }  /* tolk */
 
@@ -158,12 +152,9 @@ a.color-cyan,
 a.color-purple,
 a.color-orange,
 a.color-red,
-a.color-indigo,
 a.color-green,
 a.color-pink,
-a.color-lime,
 a.color-yellow,
-a.color-teal,
 a.color-munin,
 a.color-slate {
   text-decoration: none;

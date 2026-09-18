@@ -21,7 +21,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --depth=1 origin "$BASE_SHA"
-          changed=$(git diff --name-only "$BASE_SHA"...HEAD | grep '^CHANGES\.md$' || true)
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD | grep -E '^(contrib/[^/]+/)?CHANGES\.md$' || true)
           if [ -z "$changed" ]; then
             echo "::error::Missing changelog entry. Update CHANGES.md to describe your changes."
             exit 1

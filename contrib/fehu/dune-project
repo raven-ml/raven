@@ -1,0 +1,42 @@
+(lang dune 3.21)
+
+(name fehu)
+
+(source
+ (github raven-ml/raven))
+
+(authors "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(maintainers "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(license ISC)
+
+(documentation
+ "https://github.com/raven-ml/raven/tree/main/contrib/fehu")
+
+(bug_reports "https://github.com/raven-ml/raven/issues")
+
+(using mdx 0.4)
+
+(version 1.0.0~alpha3)
+
+(implicit_transitive_deps false)
+
+(generate_opam_files true)
+
+(package
+ (name fehu)
+ (synopsis "Reinforcement learning for OCaml")
+ (description
+  "Type-safe RL environments, observation/action spaces, vectorized environments, trajectory collection, replay buffers, and generalized advantage estimation. Built on Nx.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (>= 1.0.0~alpha3))
+  (windtrap :with-test)
+  (mdx :with-test)
+  (thumper :with-test))
+ (tags
+  (reinforcement-learning machine-learning environments)))
