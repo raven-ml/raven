@@ -40,6 +40,8 @@ given one tokenizer:
   groups, CJK runs, then a pattern over `\\p{P}`, `\\p{S}` and `\\p{M}`.
 - `gpt_oss` — the o200k pattern, whose words are runs of letters and marks
   structured by case, with an optional contraction.
+- `phi4` — Llama 3's pattern asked for the other way round, as OLMo 2 does too:
+  `Removed` with `invert`, the matches being the text that is kept.
 
 `t5_base_nonorm` is not stock T5: T5's only normalizer is a `Precompiled`
 SentencePiece charsmap, which brot does not implement and refuses to load, so
@@ -151,6 +153,7 @@ TOKENIZERS = {
     "qwen2_5": REGEX_SPLIT_CORPORA,
     "deepseek_v3": REGEX_SPLIT_CORPORA,
     "gpt_oss": REGEX_SPLIT_CORPORA,
+    "phi4": REGEX_SPLIT_CORPORA,
 }
 
 

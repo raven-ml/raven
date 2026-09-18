@@ -54,4 +54,8 @@ curl -sL -o "$DATA_DIR/gpt_oss.json" \
   "https://huggingface.co/openai/gpt-oss-20b/resolve/main/tokenizer.json"
 echo "  gpt-oss (byte-level BPE, 200K vocab, the o200k regular-expression Split)"
 
+curl -sL -o "$DATA_DIR/phi4.json" \
+  "https://huggingface.co/microsoft/phi-4/resolve/main/tokenizer.json"
+echo "  Phi-4 (byte-level BPE, 100K vocab, the cl100k Split with its matches kept)"
+
 echo "Done."

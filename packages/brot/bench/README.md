@@ -21,9 +21,9 @@ Benchmark inputs live in `./data/`:
   non-splitting Metaspace pre-tokenizer)
 - `llama3.json` — Llama 3.2 (byte-level BPE, 128K vocab, `ignore_merges`,
   regular-expression `Split` on the cl100k pattern)
-- `qwen2_5.json`, `deepseek_v3.json`, `gpt_oss.json` — the other
+- `qwen2_5.json`, `deepseek_v3.json`, `gpt_oss.json`, `phi4.json` — the other
   regular-expression `Split` tokenizers the parity suite reads: Qwen2.5,
-  DeepSeek-V3 and gpt-oss (the o200k pattern)
+  DeepSeek-V3, gpt-oss (the o200k pattern) and Phi-4
 
 The last three are read by the HuggingFace parity test rather than by the
 benchmarks; `test/scripts/gen_parity_expected.py` documents the whole set.

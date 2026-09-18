@@ -1160,6 +1160,12 @@ let walked =
 
 let isolated pattern = Pre.split_regex ~pattern ~behavior:`Isolated ()
 
+(* OLMo 2 and Phi-4 ask for the same pieces this way round: the matches are the
+   text, and what lies between them, which is nothing in valid UTF-8, is
+   removed. *)
+let kept_matches pattern =
+  Pre.split_regex ~pattern ~behavior:`Removed ~invert:true ()
+
 let contains ~sub s =
   let n = String.length sub in
   let rec from i =
@@ -1188,16 +1194,26 @@ let test_split_regex_walkers () =
       equal
         ~msg:(name ^ " is not walked inverted")
         bool false
-        (walks (Pre.split_regex ~pattern ~behavior:`Isolated ~invert:true ())))
+        (walks (Pre.split_regex ~pattern ~behavior:`Isolated ~invert:true ()));
+      equal
+        ~msg:(name ^ " is walked when its matches are all that is kept")
+        bool true
+        (walks (kept_matches pattern)))
     walked;
   equal ~msg:"o200k is not walked" bool false (walks (isolated o200k))
 
-(* Each pattern as the walker runs it and as the regular expression does. *)
+(* Each pattern as the walker runs it and as the regular expression does, its
+   matches isolated and its matches kept. *)
 let both_ways =
   lazy
-    (List.map
+    (List.concat_map
        (fun (name, pattern) ->
-         (name, isolated pattern, isolated (unrecognised pattern)))
+         [
+           (name, isolated pattern, isolated (unrecognised pattern));
+           ( name ^ ", matches kept",
+             kept_matches pattern,
+             kept_matches (unrecognised pattern) );
+         ])
        walked)
 
 (* One representative of everything the patterns tell apart, and bytes that
@@ -1221,18 +1237,21 @@ let cl100k_text =
     (Gen.list ~size:(Gen.int_range 0 24) (Gen.of_list cl100k_alphabet))
 
 let split_regex_walker_props =
-  List.map
+  List.concat_map
     (fun (name, _) ->
-      prop ~count:2000
-        (Printf.sprintf "regex: the %s walker is its pattern" name) cl100k_text
-        (fun text ->
-          let _, walker, regex =
-            List.find (fun (n, _, _) -> n = name) (Lazy.force both_ways)
-          in
-          check_tokenization
-            (Printf.sprintf "%s walker on %S" name text)
-            (Pre.pre_tokenize walker text)
-            (Pre.pre_tokenize regex text)))
+      List.map
+        (fun name ->
+          prop ~count:2000
+            (Printf.sprintf "regex: the %s walker is its pattern" name)
+            cl100k_text (fun text ->
+              let _, walker, regex =
+                List.find (fun (n, _, _) -> n = name) (Lazy.force both_ways)
+              in
+              check_tokenization
+                (Printf.sprintf "%s walker on %S" name text)
+                (Pre.pre_tokenize walker text)
+                (Pre.pre_tokenize regex text)))
+        [ name; name ^ ", matches kept" ])
     walked
 
 (* The same over the parity corpora, as whole files: their document separators

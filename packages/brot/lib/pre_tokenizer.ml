@@ -489,7 +489,8 @@ let cl100k_contraction s i stop =
       then i + 3
       else i
 
-let fill_cl100k { digits; marks } s ~pos ~stop spans =
+(* [gaps] is whether the bytes no alternative matches are spans. *)
+let fill_cl100k { digits; marks } ~gaps s ~pos ~stop spans =
   let capacity = Spans.capacity spans in
   let n = ref (Spans.count spans) in
   let p = ref pos in
@@ -525,12 +526,24 @@ let fill_cl100k { digits; marks } s ~pos ~stop spans =
         !j
       end
     in
-    Spans.write spans !n i e;
-    incr n;
+    if gaps || category <> k_stray then begin
+      Spans.write spans !n i e;
+      incr n
+    end;
     p := e
   done;
   Spans.set_count spans !n;
   !p
+
+(* The walker of a split and its [gaps], when the pattern is a recognised one
+   whose matches are the pieces: under [`Isolated], and under [`Removed]
+   inverted, which drops the text between the matches where [`Isolated] keeps
+   it. *)
+let split_walker pattern behavior ~invert =
+  match (pattern, behavior, invert) with
+  | Regex { walker = Some walker; _ }, `Isolated, false -> Some (walker, true)
+  | Regex { walker = Some walker; _ }, `Removed, true -> Some (walker, false)
+  | _ -> None
 
 (* The other walkers *)
 
@@ -1037,12 +1050,8 @@ let rec plan t =
   | Bert | Whitespace | Whitespace_split -> walk_split_free
   (* A cut at a space between an alphanumeric and a letter falls where the
      pattern ends a match, the space opening the word after it. *)
-  | Split
-      {
-        pattern = Regex { walker = Some _; _ };
-        behavior = `Isolated;
-        invert = false;
-      } ->
+  | Split { pattern; behavior; invert }
+    when Option.is_some (split_walker pattern behavior ~invert) ->
       walk_split_free
   | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts | Split _ ->
       walk_verbatim
@@ -1121,15 +1130,11 @@ let rec fill_walk t s ~pos ~stop spans =
   | Split { pattern = Literal ""; _ } -> fill_characters s ~pos ~stop spans
   | Split { pattern = Literal pattern; behavior; invert } ->
       fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
-  | Split
-      {
-        pattern = Regex { walker = Some walker; _ };
-        behavior = `Isolated;
-        invert = false;
-      } ->
-      fill_cl100k walker s ~pos ~stop spans
-  | Split { pattern = Regex { compiled; _ }; behavior; invert } ->
-      fill_split_regex ~regex:compiled ~behavior ~invert s ~pos ~stop spans
+  | Split { pattern = Regex { compiled; _ } as pattern; behavior; invert } -> (
+      match split_walker pattern behavior ~invert with
+      | Some (walker, gaps) -> fill_cl100k walker ~gaps s ~pos ~stop spans
+      | None ->
+          fill_split_regex ~regex:compiled ~behavior ~invert s ~pos ~stop spans)
   | Char_delimiter delimiter ->
       fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
         ~stop spans
@@ -1209,15 +1214,11 @@ let byte_level_walker t =
   | Sequence ts -> (
       match flatten ts with
       | [
-       Split
-         {
-           pattern = Regex { walker = Some walker; _ };
-           behavior = `Isolated;
-           invert = false;
-         };
-       Byte_level { use_regex = false; _ };
-      ] ->
-          Some (Cl100k walker)
+       Split { pattern; behavior; invert }; Byte_level { use_regex = false; _ };
+      ] -> (
+          match split_walker pattern behavior ~invert with
+          | Some (walker, true) -> Some (Cl100k walker)
+          | Some (_, false) | None -> None)
       | _ -> None)
   | _ -> None
 
@@ -1487,14 +1488,14 @@ let rec pp ppf = function
       Format.fprintf ppf "@[<1>Split(%S,@ %s,@ invert=%b)@]" pattern
         (behavior_to_string behavior)
         invert
-  | Split { pattern = Regex { source; walker; _ }; behavior; invert } ->
+  | Split { pattern = Regex { source; _ } as pattern; behavior; invert } ->
       Format.fprintf ppf "@[<1>Split(Regex(%S),@ %s,@ invert=%b%t)@]" source
         (behavior_to_string behavior) invert (fun ppf ->
-          match walker with
-          | Some { digits; marks } when behavior = `Isolated && not invert ->
+          match split_walker pattern behavior ~invert with
+          | Some ({ digits; marks }, _) ->
               Format.fprintf ppf ",@ walker=cl100k(digits=%d,@ marks=%b)" digits
                 marks
-          | _ -> ())
+          | None -> ())
   | Char_delimiter delimiter -> Format.fprintf ppf "CharDelimiter(%S)" delimiter
   | Digits { individual } ->
       Format.fprintf ppf "Digits(individual=%b)" individual

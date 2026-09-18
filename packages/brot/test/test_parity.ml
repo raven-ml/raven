@@ -27,6 +27,7 @@ let models =
     ("qwen2_5", regex_split_corpora);
     ("deepseek_v3", regex_split_corpora);
     ("gpt_oss", regex_split_corpora);
+    ("phi4", regex_split_corpora);
   ]
 
 let corpus_path corpus = Filename.concat "fixtures/parity" (corpus ^ ".txt")
@@ -607,7 +608,7 @@ let with_tokenizer model check () =
 (* Whether the pattern of a file is one brot has a walker for shows in how its
    pre-tokenizer prints and nowhere else, the encodings being the same: a
    spelling that stopped being recognised would only get slower. *)
-let walked = [ "llama3"; "qwen2_5" ]
+let walked = [ "llama3"; "qwen2_5"; "phi4" ]
 
 let check_walker model tokenizer =
   let printed =
