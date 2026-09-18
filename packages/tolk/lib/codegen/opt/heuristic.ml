@@ -13,15 +13,11 @@ module P = Postrange
 
 (* Environment *)
 
-let nolocals_var = Helpers.Context_var.int ~key:"NOLOCALS" ~default:0
-
 let getenv key default = Helpers.getenv key default
-
-let use_tc () = getenv "TC" 1
-
-let tc_select () = getenv "TC_SELECT" (-1)
-let tc_opt () = getenv "TC_OPT" 0
-let image () = getenv "IMAGE" 0 <> 0
+let use_tc () = Helpers.Context_var.get Helpers.use_tc
+let tc_select () = Helpers.Context_var.get Helpers.tc_select
+let tc_opt () = Helpers.Context_var.get Helpers.tc_opt
+let image () = Helpers.Context_var.get Helpers.image <> 0
 let occupancy_floor () = getenv "OCCUPANCY_FLOOR" 4096
 let mv_blocksize () = getenv "MV_BLOCKSIZE" 4
 let mv_threads_per_row () = getenv "MV_THREADS_PER_ROW" 8
@@ -247,7 +243,7 @@ let try_matvec k =
 (* Try GROUPTOP if output shape is small. *)
 let try_grouping k =
   let threshold =
-    if Helpers.Context_var.get nolocals_var <> 0 then 240 else 2048
+    if Helpers.Context_var.get Helpers.nolocals <> 0 then 240 else 2048
   in
   if prod_at (P.output_shape k) (P.upcastable_dims k) <= threshold then
     (try List.iter (fun axis ->
@@ -407,7 +403,7 @@ let local_size_for k taken axis =
 (* Choose local sizes for global/loop axes, prioritising expand axes. *)
 let apply_locals k =
   if not (Renderer.has_local (P.ren k)) then ()
-  else if Helpers.Context_var.get nolocals_var <> 0 then
+  else if Helpers.Context_var.get Helpers.nolocals <> 0 then
     ignore (P.apply_opt k U.Opt.Nolocals)
   else
     (* Rank axes: expand axes (broadcast in some buffer) sort first. *)

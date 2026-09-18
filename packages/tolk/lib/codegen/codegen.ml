@@ -16,7 +16,7 @@ module U = Uop
 let debug () = Helpers.getenv "DEBUG" 0
 let beam () = Helpers.getenv "BEAM" 0
 let beam_estimate () = Helpers.getenv "BEAM_ESTIMATE" 1
-let noopt () = Helpers.getenv "NOOPT" 0
+let noopt () = Helpers.Context_var.get Helpers.noopt
 
 let prod = List.fold_left ( * ) 1
 

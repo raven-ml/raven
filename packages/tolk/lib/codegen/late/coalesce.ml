@@ -209,7 +209,8 @@ let image_target ren =
   List.mem (Renderer.device ren) [ "QCOM"; "CL"; "PYTHON"; "NULL" ]
 
 let transform_to_image shapes ren buf offset =
-  if (not (Helpers.getenv "IMAGE" 0 <> 0)) || not (image_target ren) then None
+  if Helpers.Context_var.get Helpers.image = 0 || not (image_target ren)
+  then None
   else
     let valid, offset =
       match invalid_where_index offset with

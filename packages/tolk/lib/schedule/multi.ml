@@ -32,8 +32,6 @@ let dedup l =
    else in the graph. *)
 let int_ = U.const_int
 
-let allreduce_cast = Helpers.Context_var.int ~key:"ALLREDUCE_CAST" ~default:1
-
 (* Default 1: ALLREDUCE nodes survive the multi rewrite and are turned into
    precompiled functions during scheduling. Set LATE_ALLREDUCE=0 to expand
    allreduce inline while resolving MULTI. *)
@@ -397,7 +395,8 @@ let reduce_multi ~devices op num_axes src axis multi =
       && Array.length (U.src src) = 1
       && is_bf16_or_half (U.dtype (U.src src).(0))
     in
-    if Helpers.Context_var.get allreduce_cast <> 0 && cast_from_narrow then
+    if Helpers.Context_var.get Helpers.allreduce_cast <> 0 && cast_from_narrow
+    then
       let cast_src = (U.src src).(0) in
       let reduced_in_narrow = U.cast ~src:reduced ~dtype:(U.dtype cast_src) in
       U.cast

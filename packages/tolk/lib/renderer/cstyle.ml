@@ -2666,7 +2666,8 @@ let supports_opencl_dtype (arch : Gpu_target.opencl) dt =
 let supports_qcom_dtype dt =
   match dt with
   | Dtype.Float16 ->
-      Helpers.getenv "IMAGE" 0 <> 0 && Helpers.getenv "FLOAT16" 0 <> 0
+      Helpers.Context_var.get Helpers.image <> 0
+      && Helpers.Context_var.get Helpers.float16 <> 0
   | Dtype.Bfloat16 | Dtype.Float64 | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
   | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz ->
       false

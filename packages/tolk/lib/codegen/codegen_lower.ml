@@ -38,10 +38,7 @@ let broadcast_to src shape = U.broadcast_to ~src ~shape:(shape_arg shape)
 (* Value-lane INDEX selecting lane [i] of a stacked value. *)
 let lane src i = U.index ~ptr:src ~idxs:[ int_ i ] ()
 
-(* Env-derived decomposition toggles, read once at module init. *)
 let debug = Helpers.getenv "DEBUG" 0
-let disable_fast_idiv = Helpers.getenv "DISABLE_FAST_IDIV" 1 <> 0
-let transcendental_env = Helpers.getenv "TRANSCENDENTAL" 1
 let spec_enabled () = Helpers.getenv "SPEC" 0 <> 0
 
 (* Matcher aliases. [sym]/[symbolic]/[symbolic_simple] each already append
@@ -912,15 +909,15 @@ let number_params sink =
   in
   U.graph_rewrite ~name:"number params with -1" ~walk:true rewrite_param sink
 
-(* Stamp renderer capabilities with env-derived decomposition toggles. *)
+(* Stamp renderer capabilities with the decomposition toggles. *)
 let supported_ops_of (ren : Renderer.t) : Decomp_op.supported_ops =
   let ir = Renderer.supported_ops ren in
   {
     ir with
     is_metal = Renderer.name ren = "metal";
     supports_dtype = Renderer.supports_dtype ren;
-    disable_fast_idiv;
-    force_transcendental = transcendental_env >= 2;
+    disable_fast_idiv = Helpers.Context_var.get Helpers.disable_fast_idiv <> 0;
+    force_transcendental = Helpers.Context_var.get Helpers.transcendental >= 2;
   }
 
 (* Lower an optimized kernel AST to a form ready for linearization. Mirrors

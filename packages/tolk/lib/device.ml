@@ -48,8 +48,6 @@ module Allocator = struct
 end
 
 module Lru_allocator = struct
-  let lru_var = Helpers.Context_var.int ~key:"LRU" ~default:1
-
   let wrap (inner : 'buf Allocator.t) : 'buf Allocator.t =
     let cache : (int * Buffer_spec.t * 'buf) list ref = ref [] in
     let free_cache () =
@@ -74,7 +72,7 @@ module Lru_allocator = struct
           find [] !cache);
       free =
         (fun buf size spec ->
-          if Helpers.Context_var.get lru_var <> 0
+          if Helpers.Context_var.get Helpers.lru <> 0
              && (not spec.Buffer_spec.nolru)
              && Option.is_none spec.external_ptr
           then cache := (size, spec, buf) :: !cache

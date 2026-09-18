@@ -39,11 +39,19 @@ let canonicalize_device_name device =
 module Context_var = struct
   type 'a t = { key : string; value : 'a ref }
 
+  let declared : (string, unit) Hashtbl.t = Hashtbl.create 64
+
+  let declare key =
+    if Hashtbl.mem declared key then
+      invalid_arg (Printf.sprintf "Context_var: %s is already declared" key);
+    Hashtbl.replace declared key ()
+
   let int ~key ~default =
-    let value = getenv key default in
-    { key; value = ref value }
+    declare key;
+    { key; value = ref (getenv key default) }
 
   let string ~key ~default =
+    declare key;
     let value =
       match Sys.getenv_opt key with
       | Some s ->
@@ -53,6 +61,7 @@ module Context_var = struct
     in
     { key; value = ref value }
 
+  let key v = v.key
   let get v = !(v.value)
 
   type binding = B : 'a t * 'a -> binding
@@ -65,8 +74,43 @@ module Context_var = struct
       f
 end
 
+(* Each variable is declared once, here, so every reader shares one value and
+   a [with_context] override reaches all of them. *)
+
+let noopt = Context_var.int ~key:"NOOPT" ~default:0
+let image = Context_var.int ~key:"IMAGE" ~default:0
+let float16 = Context_var.int ~key:"FLOAT16" ~default:0
+let openpilot_hacks = Context_var.int ~key:"OPENPILOT_HACKS" ~default:0
+
 (* Whether training-mode behaviour (e.g. dropout) is active. *)
 let training = Context_var.int ~key:"TRAINING" ~default:0
+let use_tc = Context_var.int ~key:"TC" ~default:1
+let tc_select = Context_var.int ~key:"TC_SELECT" ~default:(-1)
+let tc_opt = Context_var.int ~key:"TC_OPT" ~default:0
+let transcendental = Context_var.int ~key:"TRANSCENDENTAL" ~default:1
+let nolocals = Context_var.int ~key:"NOLOCALS" ~default:0
+let split_reduceop = Context_var.int ~key:"SPLIT_REDUCEOP" ~default:1
+
+let reduceop_split_threshold =
+  Context_var.int ~key:"REDUCEOP_SPLIT_THRESHOLD" ~default:32768
+
+let reduceop_split_size = Context_var.int ~key:"REDUCEOP_SPLIT_SIZE" ~default:22
+let lru = Context_var.int ~key:"LRU" ~default:1
+let ring = Context_var.int ~key:"RING" ~default:1
+let all2all = Context_var.int ~key:"ALL2ALL" ~default:0
+
+let ring_allreduce_threshold =
+  Context_var.int ~key:"RING_ALLREDUCE_THRESHOLD" ~default:256_000
+
+let allreduce_cast = Context_var.int ~key:"ALLREDUCE_CAST" ~default:1
+let disable_fast_idiv = Context_var.int ~key:"DISABLE_FAST_IDIV" ~default:1
+let max_kernel_buffers = Context_var.int ~key:"MAX_KERNEL_BUFFERS" ~default:0
+
+(* Partial contiguous in rangeify. *)
+let pcontig = Context_var.int ~key:"PCONTIG" ~default:0
+
+(* Allow TF32 on NVIDIA GPUs. *)
+let allow_tf32 = Context_var.int ~key:"ALLOW_TF32" ~default:0
 
 (* Hashing *)
 

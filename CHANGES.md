@@ -193,6 +193,12 @@ thread.
 
 ### Tolk (new)
 
+- Every context variable is declared once in `Helpers`, and a second
+  declaration of a key raises. `PCONTIG` had two independent copies, so an
+  override reached only one reader. `IMAGE`, `FLOAT16`, `TC`, `TC_SELECT`,
+  `TC_OPT`, `NOOPT`, `TRANSCENDENTAL`, `DISABLE_FAST_IDIV` and `ALLOW_TF32` are
+  now context variables read once at startup; override them with
+  `Context_var.with_context`. `Heuristic.nolocals_var` is `Helpers.nolocals`.
 - Float literals in rendered kernels are laid out by tolk rather than the C
   runtime, so they are identical on every platform; Windows printed their
   exponents with three digits.

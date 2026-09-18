@@ -36,15 +36,7 @@ let render_kernel r kernel = Renderer.render r (Linearizer.linearize kernel)
 let int32_c n = Const.int Dtype.int32 n
 let float_c dt v = Const.float dt v
 
-let with_env name value f =
-  let old = Sys.getenv_opt name in
-  Unix.putenv name value;
-  Fun.protect
-    ~finally:(fun () ->
-      match old with
-      | Some value -> Unix.putenv name value
-      | None -> Unix.putenv name "")
-    f
+let with_var v x f = Helpers.Context_var.(with_context [ B (v, x) ] f)
 
 let contains haystack needle =
   let hl = String.length haystack and nl = String.length needle in
@@ -1004,14 +996,14 @@ let () =
               failwith "qcom should not advertise float64";
             if Renderer.supports_dtype Cstyle.qcom Dtype.float16 then
               failwith "qcom should not advertise float16";
-            with_env "IMAGE" "1" (fun () ->
+            with_var Helpers.image 1 (fun () ->
                 if Renderer.supports_dtype Cstyle.qcom Dtype.float16 then
                   failwith "qcom should require FLOAT16 for float16");
-            with_env "FLOAT16" "1" (fun () ->
+            with_var Helpers.float16 1 (fun () ->
                 if Renderer.supports_dtype Cstyle.qcom Dtype.float16 then
                   failwith "qcom should require IMAGE for float16");
-            with_env "IMAGE" "1" (fun () ->
-                with_env "FLOAT16" "1" (fun () ->
+            with_var Helpers.image 1 (fun () ->
+                with_var Helpers.float16 1 (fun () ->
                     if not (Renderer.supports_dtype Cstyle.qcom Dtype.float16) then
                       failwith "qcom should advertise float16 with IMAGE and FLOAT16"));
             if Renderer.supports_dtype Cstyle.qcom fp8 then

@@ -111,6 +111,8 @@ let with_env name value f =
           Unix.putenv name "")
     f
 
+let with_var v x f = Helpers.Context_var.(with_context [ B (v, x) ] f)
+
 (* AST Fixtures *)
 
 (* Elementwise: out[i,j] = exp2(in[i,j]) — Global ranges for GPU tests *)
@@ -556,7 +558,7 @@ let image_tests =
           let ast = image_global_ast ~s0:16 ~s1:3 in
           let ren = qcom_renderer () in
           let opts =
-            with_env "IMAGE" "1" (fun () -> run_heuristic ast ren)
+            with_var Helpers.image 1 (fun () -> run_heuristic ast ren)
           in
           match opts with
           | U.Opt.Upcast { axis = 0; amount = 4 } :: _ -> ()
@@ -565,7 +567,7 @@ let image_tests =
           let ast = image_reduce_invalid_dims_ast ~s0:4096 ~sr:16 in
           let ren = qcom_renderer () in
           let opts =
-            with_env "IMAGE" "1" (fun () -> run_heuristic ast ren)
+            with_var Helpers.image 1 (fun () -> run_heuristic ast ren)
           in
           is_true
             (not
@@ -578,7 +580,7 @@ let image_tests =
           let ast = image_global_ast ~s0:16 ~s1:3 in
           let ren = cpu_renderer () in
           let opts =
-            with_env "IMAGE" "1" (fun () -> run_heuristic ast ren)
+            with_var Helpers.image 1 (fun () -> run_heuristic ast ren)
           in
           equal (list (pair int int)) []
             (List.filter_map upcast_axis_amount opts));
@@ -586,7 +588,7 @@ let image_tests =
           let ast = image_reduce_ast ~s0:4096 ~sr:16 in
           let ren = qcom_renderer () in
           let opts =
-            with_env "IMAGE" "1" (fun () -> run_heuristic ast ren)
+            with_var Helpers.image 1 (fun () -> run_heuristic ast ren)
           in
           match opts with
           | U.Opt.Unroll { axis = 0; amount = 4 } :: _ -> ()
@@ -610,7 +612,7 @@ let masked_upcast_tests =
           let ast = masked_ewise_global_ast ~s0:3000 ~s1:2 in
           let ren = cpu_renderer () in
           let opts =
-            with_env "IMAGE" "1" (fun () ->
+            with_var Helpers.image 1 (fun () ->
                 with_env "OCCUPANCY_FLOOR" "" (fun () ->
                     run_heuristic ast ren))
           in
@@ -620,7 +622,7 @@ let masked_upcast_tests =
           let ast = masked_ewise_3d_global_ast ~s0:3000 ~s1:2 ~s2:2 in
           let ren = cpu_renderer () in
           let opts =
-            with_env "IMAGE" "1" (fun () ->
+            with_var Helpers.image 1 (fun () ->
                 with_env "OCCUPANCY_FLOOR" "" (fun () ->
                     run_heuristic ast ren))
           in
@@ -688,7 +690,7 @@ let local_groups_tests =
           let ren = gpu_renderer () in
           let opts =
             Helpers.Context_var.with_context
-              [ B (Heuristic.nolocals_var, 1) ]
+              [ B (Helpers.nolocals, 1) ]
               (fun () -> run_heuristic ast ren)
           in
           is_true (has is_nolocals opts);
@@ -703,7 +705,7 @@ let local_groups_tests =
           let ast2 = reduce_global_ast ~s0:8 ~s1:32 ~sr:128 in
           let opts_nolocals =
             Helpers.Context_var.with_context
-              [ B (Heuristic.nolocals_var, 1) ]
+              [ B (Helpers.nolocals, 1) ]
               (fun () -> run_heuristic ast2 ren)
           in
           is_true (not (has is_grouptop opts_nolocals)));

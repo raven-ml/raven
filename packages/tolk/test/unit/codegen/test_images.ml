@@ -49,13 +49,7 @@ let run_matcher pm root =
     (fun n -> Upat.Pattern_matcher.rewrite pm n)
     root
 
-let with_env name value f =
-  let old = try Some (Sys.getenv name) with Not_found -> None in
-  Unix.putenv name value;
-  Fun.protect f ~finally:(fun () ->
-      match old with
-      | Some old -> Unix.putenv name old
-      | None -> Unix.putenv name "")
+let with_var v x f = Helpers.Context_var.(with_context [ B (v, x) ] f)
 
 let test_renderer ?extra_matcher () =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
@@ -114,7 +108,7 @@ let () =
                 ~size:(U.const_int 4)
             in
             let root =
-              with_env "IMAGE" "1" (fun () ->
+              with_var Helpers.image 1 (fun () ->
                   U.graph_rewrite ~name:"add images" ~bottom_up:true
                     (fun n ->
                       Upat.Pattern_matcher.rewrite
@@ -136,7 +130,7 @@ let () =
                 ~size:(U.const_int 4)
             in
             let root =
-              with_env "IMAGE" "1" (fun () ->
+              with_var Helpers.image 1 (fun () ->
                   U.graph_rewrite ~name:"add images" ~bottom_up:true
                     (fun n ->
                       Upat.Pattern_matcher.rewrite

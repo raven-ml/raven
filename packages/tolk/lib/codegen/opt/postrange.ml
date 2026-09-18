@@ -457,8 +457,6 @@ let real_axis t op axis =
       check (a >= 0 && a < shape_len t) "invalid axis";
       a
 
-let allow_tf32 = match Sys.getenv_opt "ALLOW_TF32" with Some "1" -> true | _ -> false
-
 let argsort perm =
   let n = List.length perm in
   let inv = Array.make n 0 in
@@ -894,7 +892,7 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
               if
                 (Renderer.device t.ren = "CUDA" || Renderer.device t.ren = "NV")
                 && scalar_is_float32 tc.dtype_in
-                && not allow_tf32
+                && Helpers.Context_var.get Helpers.allow_tf32 = 0
               then None
               else if
                 (not (scalar_eq in0_sc tc.dtype_in))

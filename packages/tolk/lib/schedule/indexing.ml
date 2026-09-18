@@ -387,8 +387,6 @@ let rec transpose lists =
 let range_axis r = match U.as_range r with
   | Some v -> v.axis | None -> assert false
 
-let pcontig_var = Helpers.Context_var.int ~key:"PCONTIG" ~default:0
-
 (* After choosing out_rngs, force additional axes to be realized when a
    reduce closes ranges earlier than the surrounding elementwise would. *)
 let check_ending_ranges ctx ~pcontig ~ending_get ~ending_set ~out_shape x out_rngs =
@@ -495,7 +493,7 @@ let run_rangeify ?shape_exprs root ~shapes =
   let ending_get x =
     Option.value ~default:[] (Hashtbl.find_opt ending (U.tag x)) in
   let ending_set x v = Hashtbl.replace ending (U.tag x) v in
-  let pcontig = Helpers.Context_var.get pcontig_var in
+  let pcontig = Helpers.Context_var.get Helpers.pcontig in
 
   let step x =
     if skip_for_rangeify x then () else begin

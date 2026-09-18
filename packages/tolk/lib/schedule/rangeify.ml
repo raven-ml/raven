@@ -23,16 +23,6 @@ module U = Uop
 let symbolic =
   Upat.Pattern_matcher.(Symbolic.symbolic ++ Symbolic.index_pushing)
 
-(* Context vars *)
-
-let v_openpilot = Helpers.Context_var.int ~key:"OPENPILOT_HACKS" ~default:0
-let v_float16 = Helpers.Context_var.int ~key:"FLOAT16" ~default:0
-let v_split_red = Helpers.Context_var.int ~key:"SPLIT_REDUCEOP" ~default:1
-let v_split_thr =
-  Helpers.Context_var.int ~key:"REDUCEOP_SPLIT_THRESHOLD" ~default:32768
-let v_split_sz = Helpers.Context_var.int ~key:"REDUCEOP_SPLIT_SIZE" ~default:22
-let v_max_bufs = Helpers.Context_var.int ~key:"MAX_KERNEL_BUFFERS" ~default:0
-let v_pcontig = Helpers.Context_var.int ~key:"PCONTIG" ~default:0
 let getv = Helpers.Context_var.get
 
 (* Helpers *)
@@ -425,7 +415,7 @@ let is_invalid u =
 
 let found_after ctx ~after ~value =
   let x = ref value and a = ref after in
-  if getv v_float16 <> 0 && U.op !x = Ops.Cast
+  if getv Helpers.float16 <> 0 && U.op !x = Ops.Cast
      && Dtype.equal (U.dtype !x) Dtype.float16
   then begin
     a := U.cast ~src:!a ~dtype:Dtype.float32;
@@ -570,10 +560,15 @@ let split_reduceop_rule n =
       (match shape_of src, shape_of n with
        | Some in_shape, Some out_shape
          when prod out_shape <> 0
-              && getv v_split_red <> 0
-              && prod in_shape / max 1 (prod out_shape) >= getv v_split_thr ->
+              && getv Helpers.split_reduceop <> 0
+              && prod in_shape / max 1 (prod out_shape)
+                 >= getv Helpers.reduceop_split_threshold ->
            let expanded = detect_expanded src in
-           let cap = min 256 (pow2 (getv v_split_sz) / max 1 (prod out_shape)) in
+           let cap =
+             min 256
+               (pow2 (getv Helpers.reduceop_split_size)
+                / max 1 (prod out_shape))
+           in
            (* Reduced axes are permuted to the front, so they are exactly the
               first [num_axes] axes of [src]. *)
            let candidates =
@@ -983,7 +978,7 @@ let remove_stage src (buf : U.stage_view) idx =
            | Ops.Index -> indexes := x :: !indexes; true
            | Ops.Reduce -> reduces := x :: !reduces; true
            | _ -> true));
-    let pc = getv v_pcontig in
+    let pc = getv Helpers.pcontig in
     if U.Ref_tbl.length accessed > 3 && pc <= 2 then None
     else
       let buffer_in_reduce =
@@ -1109,7 +1104,7 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
         | _ -> None
       in
       Option.bind dname (fun d ->
-          let max_bufs = match getv v_max_bufs with
+          let max_bufs = match getv Helpers.max_kernel_buffers with
             | 0 -> device_max_bufs d | n -> n
           in
           if max_bufs = 0 then None
@@ -2092,7 +2087,7 @@ let get_kernel_graph root =
       root
   in
   let root =
-    if getv v_openpilot = 0 then root
+    if getv Helpers.openpilot_hacks = 0 then root
     else
       let ctx = U.Ref_tbl.create 16 in
       U.graph_rewrite ~name:"fold moved afters" (pm_fold_moved_after ctx) root

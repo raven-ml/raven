@@ -13,14 +13,6 @@
 open Tolk_uop
 module U = Uop
 
-(* Environment *)
-
-let ring_var = Helpers.Context_var.int ~key:"RING" ~default:1
-let all2all_var = Helpers.Context_var.int ~key:"ALL2ALL" ~default:0
-
-let ring_allreduce_threshold =
-  Helpers.Context_var.int ~key:"RING_ALLREDUCE_THRESHOLD" ~default:256_000
-
 (* Shape encoding
 
    Shapes and bounds are Uop nodes: a single dim is a scalar const,
@@ -74,9 +66,11 @@ let handle_allreduce buf ~op ~device ~shape =
       let devs = Array.of_list devs in
       let ndev = Array.length devs in
       let numel = List.fold_left ( * ) 1 shape in
-      let threshold = Helpers.Context_var.get ring_allreduce_threshold in
-      let all2all = Helpers.Context_var.get all2all_var in
-      let ring = Helpers.Context_var.get ring_var in
+      let threshold =
+        Helpers.Context_var.get Helpers.ring_allreduce_threshold
+      in
+      let all2all = Helpers.Context_var.get Helpers.all2all in
+      let ring = Helpers.Context_var.get Helpers.ring in
       (* Ring allreduce doesn't benefit with <=2 nodes or <256k elements —
          fall back to naive to save on dispatch and chunking. *)
       let use_all2all =
