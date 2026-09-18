@@ -323,7 +323,7 @@ module Make (B : Backend_intf.S) = struct
 
   let cast (type a b c d) (dt : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
     match Dtype.equal_witness (dtype x) dt with
-    | Some Equal -> B.copy x
+    | Some Equal -> x
     | None -> B.cast ~dtype:dt x
 
   let astype dt x = cast dt x

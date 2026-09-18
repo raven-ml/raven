@@ -846,6 +846,8 @@ thread.
 
 ### Nx
 
+- `Nx.cast` at the tensor's own dtype is the tensor itself and no longer a
+  copy: only a change of dtype allocates. Use `Nx.copy` for fresh storage.
 - Fix `einsum` with a repeated index that does not sit at the end of its
   operand (for example `abnb->an`): the surviving label stayed where the index
   first appeared instead of moving with the diagonal to the end of the

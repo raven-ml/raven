@@ -489,6 +489,11 @@ let test_astype_int32_to_float32 () =
   let u = Nx.cast Nx.float32 t in
   check_t "astype to float32" [| 3 |] [| 1.0; 2.0; 3.0 |] u
 
+let test_cast_same_dtype_is_the_tensor () =
+  let t = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  is_true ~msg:"no copy at the tensor's own dtype" (Nx.cast Nx.float32 t == t);
+  is_true ~msg:"copy allocates" (Nx.data (Nx.copy t) != Nx.data t)
+
 let test_astype_float32_to_int16 () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.5; 3.9; 255.0 |] in
   let u = Nx.cast Nx.int16 t in
@@ -624,6 +629,8 @@ let type_conversion =
     test "to array" test_to_array;
     test "astype float32 to int32" test_astype_float32_to_int32;
     test "astype int32 to float32" test_astype_int32_to_float32;
+    test "cast at the same dtype is the tensor"
+      test_cast_same_dtype_is_the_tensor;
     test "astype float32 to int16" test_astype_float32_to_int16;
     test "astype int64 to float32" test_astype_int64_to_float32;
   ]
