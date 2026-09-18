@@ -840,6 +840,10 @@ thread.
 
 ### Nx
 
+- Fix `einsum` with a repeated index that does not sit at the end of its
+  operand (for example `abnb->an`): the surviving label stayed where the index
+  first appeared instead of moving with the diagonal to the end of the
+  operand, so the result took the wrong shape and values.
 - Add `Nx.top_k ~k ?axis`, the `k` greatest entries along an axis and their
   positions, as `(values, indices)`: the first `k` of a descending `sort`, ties
   lowest position first, NaN last. Up to 16 entries it costs `k` passes and no
