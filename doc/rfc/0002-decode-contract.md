@@ -157,7 +157,8 @@ engine's own tests can port them without model code.
 ### The cache
 
 A cache is an ordinary value of a type the model defines, whose leaves are
-pools: tensors of shape `[slots + 1; ...]` of any width and dtype. There is no
+pools: tensors of shape `[slots + 1; ...]` of any width and dtype, built with
+`Cache_index.pool ~slots dtype shape`. There is no
 batch axis; who owns a slot is the table's business. Kaun ships the record
 most models use, `Attention.Cache.t = { keys; values }` with payloads `[slots
 + 1; kv_heads; head_dim]`, and `Cache.List`, the `Uniform` traversal of a list
@@ -184,6 +185,7 @@ module Cache_index : sig
   val rows : context:int -> int array -> t
   val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
   val window : int -> t -> t                (* the last w positions; static *)
+  val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
   val advance : t -> t
 
   val batch : t -> int                      (* seq, context likewise: static sizes *)
@@ -392,8 +394,9 @@ engine or any caller of `Cache_index.make`.
    every window of its lane contributes exactly zero to that lane, whatever
    its slot holds (K).** Prevents one request's overflow becoming another's
    `nan`.
-6. **Every cache leaf is one tensor of `slots + 1` rows whose axis 0 is the
-   slot axis, leaves in a fixed order (M).** No two leaves hold one tensor: a
+6. **Every cache leaf is one pool, built with `Cache_index.pool`: a tensor of
+   `slots + 1` rows whose axis 0 is the slot axis, leaves in a fixed order
+   (M).** No two leaves hold one tensor: a
    donated tensor seeds one leaf. Prevents an engine needing model code to
    move state, lost storage reuse, and a compiled program keyed by another
    traversal.

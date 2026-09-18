@@ -467,6 +467,17 @@ let test_cached_window () =
   close ~msg:"in two chunks" expected (Nx.concatenate ~axis:1 [ y1; y2 ])
 
 (* A prompt fed whole, in chunks, or token by token gives the same outputs. *)
+let test_index_pool () =
+  let pool = Cache_index.pool ~slots:3 Nx.int32 [| 2; 5 |] in
+  shape_is ~msg:"slots and the scratch row, then the slot's shape" [| 4; 2; 5 |]
+    pool;
+  is_true ~msg:"zeros" (Array.for_all (fun v -> v = 0l) (flat pool));
+  shape_is ~msg:"no slot" [| 1 |] (Cache_index.pool ~slots:0 Nx.float32 [||]);
+  shape_is ~msg:"an attention cache is two pools" [| 4; 2; 2 |] (cache 3).keys;
+  raises
+    (Invalid_argument "Cache_index.pool: slots must not be negative, got -1")
+    (fun () -> Cache_index.pool ~slots:(-1) Nx.float32 [| 2 |])
+
 let test_index_window () =
   let index = index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |] in
   let windowed = Cache_index.window 2 index in
@@ -1025,6 +1036,7 @@ let () =
           test "a whole index is causal apply and keeps nothing"
             test_cached_whole;
           test "a window bounds what a token sees" test_cached_window;
+          test "a pool is its slots and a scratch row" test_index_pool;
           test "a window is part of the index" test_index_window;
           test "chunking is invariant" test_cached_chunking_is_invariant;
           test "rows of different lengths share a batch"

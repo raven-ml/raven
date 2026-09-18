@@ -7,13 +7,13 @@
 
     A cache is any record of {e pools}. A pool of [slots] slots is one tensor of
     [slots + 1] rows whose axis 0 is the slot axis, with no batch axis: slot [s]
-    is row [s] of every pool, and the last row is scratch. A cache index says,
-    for one call, which position each token holds and which slots hold the
-    positions of its sequence. One contiguous run of slots per sequence
-    ({!rows}), paged allocation, a prefix shared by two sequences and a forked
-    beam are all values of an index, and a layer is the same for each. A model
-    passes the index it was given to every layer and never looks inside; a layer
-    calls {!extend} on each of its pools and attends under {!mask}.
+    is row [s] of every pool, and the last row is scratch: {!pool} builds one. A
+    cache index says, for one call, which position each token holds and which
+    slots hold the positions of its sequence. One contiguous run of slots per
+    sequence ({!rows}), paged allocation, a prefix shared by two sequences and a
+    forked beam are all values of an index, and a layer is the same for each. A
+    model passes the index it was given to every layer and never looks inside; a
+    layer calls {!extend} on each of its pools and attends under {!mask}.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -140,7 +140,15 @@ val positions : t -> Nx.int32_t
     clamped to [0] and [context index - 1], for rotating and for indexing a
     table of position embeddings: padding is [0]. *)
 
-(** {1:pools Extending pools} *)
+(** {1:pools Pools} *)
+
+val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
+(** [pool ~slots dtype shape] is an empty pool of [slots] slots, each of shape
+    [shape]: zeros of shape [slots + 1] followed by [shape], the last row being
+    the scratch row. Every pool is built here, so nothing else knows about that
+    row. [slots] may be [0]: the pool a {!whole} call is given.
+
+    Raises [Invalid_argument] if [slots] is negative. *)
 
 val extend :
   t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
