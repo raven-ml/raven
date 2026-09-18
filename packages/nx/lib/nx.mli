@@ -2141,7 +2141,7 @@ val sort :
     [descending] defaults to [false]. [axis] defaults to [-1] (last).
 
     The sort is stable (equal elements preserve their relative order). NaN sorts
-    to the end in ascending order and to the beginning in descending order.
+    to the end in either direction.
 
     Raises [Invalid_argument] if [axis] is out of bounds.
 
@@ -2159,6 +2159,34 @@ val argsort :
 (** [argsort ?descending ?axis t] is [snd (sort ?descending ?axis t)].
 
     See also {!sort}. *)
+
+val top_k :
+  k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * (int32, int32_elt) t
+(** [top_k ~k ?axis t] is [(values, indices)]: the [k] greatest entries along
+    [axis], greatest first, and their positions. Both have [t]'s shape with
+    [axis] of extent [k]. [axis] defaults to [-1] (last).
+
+    It is the first [k] entries of [sort ~descending:true ?axis t]: equal
+    entries come lowest position first, and NaN comes after every number.
+    [values] is [take_along_axis ~axis ~indices t], so it differentiates with
+    respect to [t].
+
+    Up to [k = 16] the cost is [k] passes over [axis], each after the one
+    before it, which suits a router choosing a few of many. A greater [k]
+    costs a whole sort of [axis].
+
+    Raises [Invalid_argument] if [t] has no dimension, [axis] is out of
+    bounds, [k] is outside \[[1], extent of [axis]\], or [t] is complex.
+
+    {@ocaml[
+      # let values, indices =
+          create float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] |> top_k ~k:2
+        in
+        (to_array values, to_array indices)
+      - : float array * int32 array = ([|5.; 4.|], [|4l; 2l|])
+    ]}
+
+    See also {!sort}, {!argmax}. *)
 
 (** {1:linalg Linear algebra} *)
 

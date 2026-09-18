@@ -50,7 +50,11 @@ decode contract follow-ups (rfc 0002):
   propose the `split_reduceop` one-hot guard upstream with a 65536-row
   `test_index` case
 - `Rune.remat` is an identity under jit: when a training run needs the memory
-- `Nx.top_k` by partial selection: when sampling batches hundreds of rows
+- `argsort` under jit recovers indices by matching every entry against every
+  sorted entry, quadratic in the axis: carry the indices through the sort's
+  swaps, comparing (value, position) pairs to stay stable; propose upstream
+- `Nx.top_k` above 16 entries is a whole sort: a partial-selection kernel when
+  a layer picks thousands of columns from a long axis
 - `Kaun.Cache_index`: slots that hold a block of positions, windowed layers
   that free old columns, tree speculation (a caller-given write target and a
   token-to-token mask), packed sequences with position reset: when a model

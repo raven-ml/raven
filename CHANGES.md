@@ -840,6 +840,13 @@ thread.
 
 ### Nx
 
+- Add `Nx.top_k ~k ?axis`, the `k` greatest entries along an axis and their
+  positions, as `(values, indices)`: the first `k` of a descending `sort`, ties
+  lowest position first, NaN last. Up to 16 entries it costs `k` passes and no
+  sort, which is what a mixture-of-experts router needs under `Rune.jit`, where
+  `argsort` is quadratic in the axis. `values` differentiates.
+- `sort`'s documentation said NaN sorts first in descending order. It sorts
+  last in either direction, as the backend contract states.
 - `scatter` states what a broken `unique_indices` promise leaves: a position
   selected more than once holds an unspecified one of its updates under
   `` `Set `` and an unspecified value under `` `Add ``, and every other position

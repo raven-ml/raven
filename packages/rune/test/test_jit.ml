@@ -1047,6 +1047,44 @@ let test_take_large_table_matches_eager () =
   let f table = Nx.take ~axis:0 ~indices table in
   check_arr ~msg:"take" (to_arr (f table)) (Rune.jit' f table)
 
+(* Either side of [Nx.top_k]'s switch from selection rounds to a sort, with
+   repeated scores in every row. *)
+let test_top_k_matches_eager () =
+  let scores =
+    Nx.create f32 [| 3; 24 |]
+      (Array.init 72 (fun i -> float_of_int (i * 7 mod 11)))
+  in
+  List.iter
+    (fun k ->
+      let values x = fst (Nx.top_k ~k x) in
+      let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
+      check_arr
+        ~msg:(Printf.sprintf "top %d values" k)
+        (to_arr (values scores))
+        (Rune.jit' values scores);
+      check_arr
+        ~msg:(Printf.sprintf "top %d indices" k)
+        (to_arr (indices scores))
+        (Rune.jit' indices scores))
+    [ 2; 17 ];
+  let along_rows x = Nx.cast f32 (snd (Nx.top_k ~k:2 ~axis:0 x)) in
+  check_arr ~msg:"top 2 along axis 0"
+    (to_arr (along_rows scores))
+    (Rune.jit' along_rows scores)
+
+let test_grad_of_top_k () =
+  let scores =
+    Nx.create f32 [| 2; 5 |] [| 3.; 9.; 1.; 7.; 5.; 4.; 2.; 8.; 6.; 0. |]
+  in
+  let weights = Nx.create f32 [| 1; 2 |] [| 1.; 2. |] in
+  let loss x = Nx.sum (Nx.mul weights (fst (Nx.top_k ~k:2 x))) in
+  check_arr ~msg:"the gradient lands on the chosen entries"
+    [| 0.; 1.; 0.; 2.; 0.; 0.; 0.; 1.; 2.; 0. |]
+    (Rune.grad' loss scores);
+  check_arr ~msg:"compiled gradient"
+    (to_arr (Rune.grad' loss scores))
+    (Rune.jit' (Rune.grad' loss) scores)
+
 (* [Nx.diag] is traceable in both directions: extraction gathers, construction
    scatters into a zero template. *)
 let test_diag_matches_eager () =
@@ -1859,6 +1897,8 @@ let tests =
           test_grad_of_take_with_repeated_tokens;
         test "take over a large table matches eager"
           test_take_large_table_matches_eager;
+        test "top_k matches eager" test_top_k_matches_eager;
+        test "gradient of top_k" test_grad_of_top_k;
         test "diag matches eager" test_diag_matches_eager;
       ];
     group "training"

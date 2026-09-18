@@ -161,6 +161,92 @@ let test_argmin_ties () =
   (* Should return first occurrence *)
   check_t "argmin ties" [||] [| 1l |] result
 
+(* ───── Top-k Tests ───── *)
+
+let test_top_k_1d () =
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
+  let values, indices = Nx.top_k ~k:2 t in
+  check_t "top_k 1D values" [| 2 |] [| 5.; 4. |] values;
+  check_t "top_k 1D indices" [| 2 |] [| 4l; 2l |] indices
+
+let test_top_k_axes () =
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 3.; 2.; 5.; 6. |] in
+  let values, indices = Nx.top_k ~k:2 t in
+  check_t "top_k last axis values" [| 2; 2 |] [| 4.; 3.; 6.; 5. |] values;
+  check_t "top_k last axis indices" [| 2; 2 |] [| 0l; 2l; 2l; 1l |] indices;
+  let values, indices = Nx.top_k ~k:1 ~axis:0 t in
+  check_t "top_k axis 0 values" [| 1; 3 |] [| 4.; 5.; 6. |] values;
+  check_t "top_k axis 0 indices" [| 1; 3 |] [| 0l; 1l; 1l |] indices
+
+let test_top_k_ties () =
+  let t = Nx.create Nx.float32 [| 6 |] [| 2.; 7.; 7.; 2.; 7.; 1. |] in
+  let values, indices = Nx.top_k ~k:4 t in
+  check_t "top_k ties values" [| 4 |] [| 7.; 7.; 7.; 2. |] values;
+  check_t "top_k ties take the lowest position first" [| 4 |]
+    [| 1l; 2l; 4l; 0l |] indices
+
+(* An entry equal to the least value of its dtype is still an entry: it must not
+   be confused with one already taken. *)
+let test_top_k_least_values () =
+  let ninf = Float.neg_infinity in
+  let t = Nx.create Nx.float32 [| 4 |] [| ninf; 1.; ninf; ninf |] in
+  let values, indices = Nx.top_k ~k:4 t in
+  check_t "top_k -inf values" [| 4 |] [| 1.; ninf; ninf; ninf |] values;
+  check_t "top_k -inf indices" [| 4 |] [| 1l; 0l; 2l; 3l |] indices;
+  let t = Nx.create Nx.int32 [| 3 |] [| Int32.min_int; 5l; Int32.min_int |] in
+  let values, indices = Nx.top_k ~k:3 t in
+  check_t "top_k min_int values" [| 3 |]
+    [| 5l; Int32.min_int; Int32.min_int |]
+    values;
+  check_t "top_k min_int indices" [| 3 |] [| 1l; 0l; 2l |] indices;
+  let t = Nx.create Nx.uint8 [| 4 |] [| 0; 0; 9; 0 |] in
+  let _, indices = Nx.top_k ~k:3 t in
+  check_t "top_k uint8 zeros" [| 3 |] [| 2l; 0l; 1l |] indices
+
+let test_top_k_nan () =
+  let t = Nx.create Nx.float32 [| 5 |] [| 1.; Float.nan; 9.; Float.nan; 3. |] in
+  let values, indices = Nx.top_k ~k:4 t in
+  check_t "top_k NaN comes after every number" [| 4 |] [| 2l; 4l; 0l; 1l |]
+    indices;
+  let v = Nx.to_array values in
+  equal ~msg:"top_k NaN values" bool true
+    (v.(0) = 9. && v.(1) = 3. && v.(2) = 1. && Float.is_nan v.(3))
+
+(* Both algorithms, either side of the switch between them, are the first [k]
+   entries of a descending sort: duplicates, NaN and infinities included. *)
+let test_top_k_is_a_sorted_prefix () =
+  let n = 40 in
+  let data =
+    Array.init (3 * n) (fun i ->
+        match i mod 11 with
+        | 0 -> Float.nan
+        | 1 -> Float.neg_infinity
+        | 2 -> Float.infinity
+        | _ -> float_of_int (i * 7919 mod 13))
+  in
+  let t = Nx.create Nx.float32 [| 3; n |] data in
+  let sorted_indices = Nx.argsort ~descending:true t in
+  List.iter
+    (fun k ->
+      let _, indices = Nx.top_k ~k t in
+      let expected = Nx.slice [ Nx.A; Nx.R (0, k) ] sorted_indices in
+      equal
+        ~msg:(Printf.sprintf "top_k %d indices are argsort's first" k)
+        bool true
+        (Nx.to_array indices = Nx.to_array expected))
+    [ 1; 5; 16; 17; n ]
+
+let test_top_k_invalid () =
+  let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  check_invalid_arg "top_k k = 0" "top_k: k = 0 is outside [1, 3]" (fun () ->
+      Nx.top_k ~k:0 t);
+  check_invalid_arg "top_k k > n" "top_k: k = 4 is outside [1, 3]" (fun () ->
+      Nx.top_k ~k:4 t);
+  check_invalid_arg "top_k axis" "top_k: axis 1 out of bounds for 1D tensor"
+    (fun () -> Nx.top_k ~k:1 ~axis:1 t);
+  check_invalid_arg "top_k scalar" "top_k: requires at least one dimension"
+    (fun () -> Nx.top_k ~k:1 (Nx.scalar Nx.float32 1.))
+
 (* ───── Sort Regression Tests ───── *)
 
 let test_sort_large_1d () =
@@ -230,6 +316,17 @@ let argsort_tests =
     test "argsort empty" test_argsort_empty;
   ]
 
+let top_k_tests =
+  [
+    test "top_k 1D" test_top_k_1d;
+    test "top_k along each axis" test_top_k_axes;
+    test "top_k ties" test_top_k_ties;
+    test "top_k entries at the least value" test_top_k_least_values;
+    test "top_k NaN" test_top_k_nan;
+    test "top_k is a sorted prefix" test_top_k_is_a_sorted_prefix;
+    test "top_k invalid arguments" test_top_k_invalid;
+  ]
+
 let argmax_tests =
   [
     test "argmax 1D" test_argmax_1d;
@@ -255,6 +352,7 @@ let suite =
     group "Argsort" argsort_tests;
     group "Argmax" argmax_tests;
     group "Argmin" argmin_tests;
+    group "Top-k" top_k_tests;
   ]
 
 let () = run "Nx Sorting" suite

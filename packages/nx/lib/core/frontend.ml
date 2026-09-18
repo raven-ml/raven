@@ -1958,6 +1958,65 @@ module Make (B : Backend_intf.S) = struct
     in
     B.argmin ~axis ~keepdims x'
 
+  (* Above this many entries the selection rounds of [top_k] give way to a
+     full sort: each round is a pass over the axis that waits on the one
+     before it. *)
+  let top_k_rounds = 16
+
+  let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
+    let r = ndim x in
+    if r = 0 then err "top_k" "requires at least one dimension";
+    let axis = if axis < 0 then axis + r else axis in
+    if axis < 0 || axis >= r then
+      err "top_k" "axis %d out of bounds for %dD tensor" axis r;
+    let n = dim axis x in
+    if k < 1 || k > n then err "top_k" "k = %d is outside [1, %d]" k n;
+    let dt = dtype x in
+    if Dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
+    let indices =
+      if k > top_k_rounds then
+        let bounds = Array.map (fun d -> (0, d)) (shape x) in
+        bounds.(axis) <- (0, k);
+        shrink bounds (argsort ~descending:true ~axis x)
+      else begin
+        let ctx = B.context x in
+        let along = Array.make r 1 in
+        along.(axis) <- n;
+        let position = reshape along (arange ctx Dtype.int32 0 n 1) in
+        let low = full_like x (Dtype.min_value dt) in
+        let real =
+          if Dtype.is_float dt then Some (logical_not (isnan x)) else None
+        in
+        (* One round picks the first free entry that a descending sort would
+           place next: the greatest number, and a NaN once no number is free.
+           Comparing against the maximum, under the free mask, keeps an entry
+           equal to [low] distinct from one already taken. *)
+        let pick free =
+          let live =
+            match real with None -> free | Some real -> logical_and free real
+          in
+          let greatest = max ~axes:[ axis ] ~keepdims:true (where live x low) in
+          let best = logical_and live (equal x greatest) in
+          let chosen =
+            match real with
+            | None -> best
+            | Some _ -> where (any ~axes:[ axis ] ~keepdims:true live) best free
+          in
+          argmax ~axis ~keepdims:true (cast Dtype.int32 chosen)
+        in
+        let rec rounds i free acc =
+          if i = k then concatenate ~axis (List.rev acc)
+          else
+            let index = pick free in
+            rounds (i + 1)
+              (logical_and free (not_equal position index))
+              (index :: acc)
+        in
+        rounds 0 (ones ctx Dtype.bool (shape x)) []
+      end
+    in
+    (take_along_axis ~axis ~indices x, indices)
+
   (* ───── Random Number Generation ───── *)
 
   (* Inverse of the error function. Giles (2010) gives about seven digits: one
