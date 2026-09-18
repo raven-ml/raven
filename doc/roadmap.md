@@ -31,7 +31,7 @@ Training in Raven follows the architecture JAX proved out: a training step -- fo
 
 **Milestones:**
 
-- **Llama-class models in Kaun.** A modern decoder block (RoPE, grouped-query attention, RMSNorm, SwiGLU) with validated checkpoint import: load the open weights from safetensors and match the reference implementation's logits, layer by layer.
+- ✓ **Llama-class models on Kaun.** Kaun provides the modern decoder block (RoPE, grouped-query attention, RMSNorm, SwiGLU) and a Llama written as user code with validated checkpoint import: load the open weights from safetensors and match the reference implementation's logits, layer by layer. Done for Llama 3.2 1B and TinyLlama 1.1B in [`kaun/examples/05-llama`](../packages/kaun/examples/05-llama): every block, float32 and half precision, eager and compiled, whole sequences and ragged batches through the key-value caches.
 - **Mixed-precision training.** bf16 compute with fp32 master weights in Vega's optimizers, and making `Rune.remat`'s memory savings hold through the compiled path. A 70B fine-tune doesn't fit in memory without both.
 - **Memory-efficient attention.** A flash-attention-class fused kernel generated through Tolk, with O(n) memory at real context lengths.
 - **GEMM throughput at parity.** Most of a training step is plain bf16 matmuls, so Tolk's generated GEMMs must approach cuBLAS/optimized CUDA throughput at Llama shapes.

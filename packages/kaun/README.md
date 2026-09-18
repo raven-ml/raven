@@ -184,8 +184,9 @@ weights, and generates text through a key-value cache.
   loaded from the HuggingFace Hub
 - [`05-llama`](examples/05-llama) — Llama 3.2 1B: grouped-query attention,
   rotary positions, sampled generation through key-value caches, and
-  `validate.exe`, which checks the imported weights against the reference
-  implementation's logits
+  `validate.exe`, which checks imported weights (Llama 3.2 1B, TinyLlama
+  1.1B) against the reference implementation block by block, at float32 or
+  half precision, eagerly or compiled
 
 ## Scope and Limitations
 

@@ -1546,6 +1546,11 @@ thread.
 
 ### Kaun
 
+- The `05-llama` example's `validate` checks the residual stream after every
+  block, a ragged batch through the key-value caches, half precision
+  (`--dtype`) and compiled runs (`--jit`), and ships a second fixture,
+  TinyLlama 1.1B, which covers an untied head and the standard rotary
+  schedule on real weights.
 - New example `05-llama`: Llama 3.2 1B written on the decode contract
   (grouped-query attention, rotary positions with the Llama 3 schedule,
   RMS norm, SwiGLU), loaded from an ungated mirror whose weights are
