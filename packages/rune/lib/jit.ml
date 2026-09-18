@@ -1119,9 +1119,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             in
             ret k (dt data_template) r)
     (* The window write. A constant corner is a padded [v] selected over [t]
-       in one pass; a traced corner reads each axis of [v] through a clamped
-       gather and masks the window, until symbolic shrink lets it become a
-       store into the shrunk buffer. *)
+       in one pass. A traced corner is a scatter of [v]'s elements at their
+       flat positions in [t], which are distinct and, the corner being clamped
+       by the frontend, inside [t]: its cost is [v]. Flat positions are int32,
+       and a sharded trace keeps the one-hot scatter, so beyond either the
+       window is read through a clamped gather per axis and masked. *)
     | E_update { t_in; starts; v } ->
         Some
           (fun k ->
@@ -1148,6 +1150,53 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               let mask = F.Op.pad ~value:(F.Tensor.Sbool false) ones pads in
               ret k (dt t_in)
                 (F.Elementwise.where mask (F.Op.pad ~value:zero tv pads) tt)
+            end
+            else if
+              st.st_multi = None
+              && Array.fold_left ( * ) 1 tshape <= Int32.to_int Int32.max_int
+            then begin
+              let st_t = go starts in
+              let i32 n =
+                F.Creation.full ~buffer:false ~dtype:TD.int32 []
+                  (F.Tensor.Sint n)
+              in
+              let flat = ref (i32 0) and stride = ref 1 in
+              for ax = rank - 1 downto 0 do
+                let start =
+                  F.Movement.reshape
+                    (F.Movement.shrink st_t [ (ax, ax + 1) ])
+                    []
+                in
+                let along =
+                  List.init rank (fun d -> if d = ax then -1 else 1)
+                in
+                let coord =
+                  F.Elementwise.add start
+                    (F.Movement.reshape
+                       (F.Op.arange ~dtype:TD.int32 vshape.(ax))
+                       along)
+                in
+                flat :=
+                  F.Elementwise.add !flat
+                    (F.Elementwise.mul coord (i32 !stride));
+                stride := !stride * tshape.(ax)
+              done;
+              let count = Array.fold_left ( * ) 1 vshape in
+              let index =
+                F.Movement.reshape
+                  (F.Movement.expand !flat (Array.to_list vshape))
+                  [ count ]
+              in
+              let src = F.Movement.reshape tv [ count ] in
+              let written =
+                F.Op.scatter_indexed
+                  (F.Movement.reshape
+                     (write_destination st tt ~operands:[ index; src ])
+                     [ Array.fold_left ( * ) 1 tshape ])
+                  ~dim:0 index src ~mode:`Set ~unique:true
+              in
+              ret k (dt t_in)
+                (F.Movement.reshape written (Array.to_list tshape))
             end
             else begin
               let st_t = go starts in

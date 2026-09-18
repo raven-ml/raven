@@ -107,6 +107,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.set` with a run-time window start (`Nx.D`) under `Rune.jit` costs the
+  window instead of the destination: it compiles to a store at the window's
+  flat positions, in place on a donated tensor. A one-row write into a
+  1048576x64 cache takes 0.26 ms on Metal, the same as into 4096 rows, where
+  it took 3.4 ms.
 - Fix `Rune.grad` through `Nx.scatter` in `` `Set `` mode with repeated indices:
   every update aimed at a position received the cotangent, where only the
   last one reaches the output. Shadowed updates now get zero.

@@ -678,6 +678,20 @@ let test_set_traced_window_replays_position () =
   check_arr ~msg:"clamped start" (to_arr (f (at 9))) (g (at 9));
   check_arr ~msg:"the input is a value" [| 0.0; 1.0; 2.0; 3.0; 4.0 |] x
 
+(* A window over two axes: the compiled write addresses the window's elements
+   at their flat positions in [x]. *)
+let test_set_traced_window_over_two_axes () =
+  let v = Nx.create f32 [| 2; 3 |] [| 9.0; 8.0; 7.0; 6.0; 5.0; 4.0 |] in
+  let f { x; pos } = Nx.set [ Nx.D (pos, 2); Nx.D (pos, 3) ] v x in
+  let g = Rune.jit2 (module Windowed) (module Csingle) f in
+  let x = Nx.create f32 [| 4; 6 |] (Array.init 24 float_of_int) in
+  let at i = { x; pos = pos_at i } in
+  List.iter
+    (fun i ->
+      let msg = Printf.sprintf "corner %d" i in
+      check_arr ~msg (to_arr (f (at i))) (g (at i)))
+    [ 0; 1; 2; 7 ]
+
 let test_set_static_window_matches_eager () =
   let v = vec32 [| 9.0; 8.0 |] in
   let f x = Nx.set [ Nx.R (1, 3) ] v x in
@@ -1935,6 +1949,8 @@ let tests =
       [
         test "set with a traced window start replays the position"
           test_set_traced_window_replays_position;
+        test "set at a traced corner over two axes"
+          test_set_traced_window_over_two_axes;
         test "set with static specs matches eager"
           test_set_static_window_matches_eager;
         test "slice with a traced window start replays the position"
