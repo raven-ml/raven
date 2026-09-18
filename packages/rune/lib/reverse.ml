@@ -694,8 +694,35 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                     match Tape.find tape out with
                     | None -> ()
                     | Some g ->
-                        if tu then
-                          Tape.accumulate tape updates (gather g indices ~axis);
+                        if tu then begin
+                          let gu = gather g indices ~axis in
+                          (* Under [`Set] an update shadowed by a later one at
+                             the same position reaches no output. Scattering
+                             each update's rank along [axis] the same way
+                             leaves the winner's rank at every position. *)
+                          let gu =
+                            match mode with
+                            | `Set when not unique_indices ->
+                                let shp = T.shape indices in
+                                let along = Array.make (Array.length shp) 1 in
+                                along.(axis) <- shp.(axis);
+                                let rank =
+                                  T.broadcast_to shp
+                                    (T.reshape along
+                                       (T.arange T.int32 0 shp.(axis) 1))
+                                in
+                                let winner =
+                                  scatter ~mode:`Set ~unique_indices:false
+                                    (T.zeros T.int32 (T.shape data_template))
+                                    ~indices ~updates:rank ~axis
+                                in
+                                T.where
+                                  (T.equal (gather winner indices ~axis) rank)
+                                  gu (T.zeros_like gu)
+                            | `Set | `Add -> gu
+                          in
+                          Tape.accumulate tape updates gu
+                        end;
                         if tt then begin
                           (* Under [`Set] the written positions shadow the
                              template; under [`Add] the template passes through

@@ -182,6 +182,14 @@ let selection_tests =
           (fun t v -> Nx.scatter ~axis:1 ~indices:idx ~values:v t)
           (m23 ())
           (mat64 2 2 [| 0.3; 0.9; -1.1; 0.2 |]));
+    test "scatter (set) with a repeated index" (fun () ->
+        (* Row 1 repeats an index: the last update wins, and the one it
+           shadows takes no cotangent. *)
+        let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 1l |] in
+        check_grad2 ~msg:"scatter set, repeated"
+          (fun t v -> Nx.scatter ~axis:1 ~indices:idx ~values:v t)
+          (m23 ())
+          (mat64 2 2 [| 0.3; 0.9; -1.1; 0.2 |]));
     test "scatter (add)" (fun () ->
         (* Row 1 repeats an index: both updates take the full cotangent. *)
         let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 1l |] in

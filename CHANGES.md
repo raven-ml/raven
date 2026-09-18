@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix `Rune.grad` through `Nx.scatter` in `` `Set `` mode with repeated indices:
+  every update aimed at a position received the cotangent, where only the
+  last one reaches the output. Shadowed updates now get zero.
 - `Rune.jit ~donate:true` writes a scatter over the donated destination's
   storage, so `Nx.scatter` into a donated tensor costs its updates alone: a
   64-row write into a 131072x8x64 pool takes 0.35 ms on Metal, the same as
