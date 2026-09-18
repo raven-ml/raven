@@ -352,6 +352,7 @@ module Graph = struct
 
   type t = {
     supports_copy : bool;
+    max_buffer_offset : int option;
     build : node array -> exec;
   }
 end

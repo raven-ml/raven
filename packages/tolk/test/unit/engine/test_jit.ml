@@ -141,6 +141,32 @@ let make_kernel_jit ?(body = U.sink ~kernel_info:(kernel_info "jit_k") [])
   in
   (state, run)
 
+(* Graph batching over a device whose graph capability bounds view offsets. *)
+
+let graph_device ~max_buffer_offset =
+  Device.make ~name:"TEST:0" ~allocator
+    ~renderer_set:(Device.Renderer_set.make [ renderer, None ])
+    ~runtime:(fun _ _ ~runtimevars:_ -> failwith "unused")
+    ~synchronize:(fun () -> ())
+    ~graph:
+      {
+        Device.Graph.supports_copy = false;
+        max_buffer_offset;
+        build = (fun _ -> failwith "unused");
+      }
+    ()
+
+let program_call args =
+  let program = to_program (U.sink ~kernel_info:(kernel_info "k") []) in
+  U.call ~body:program ~args ~info:(call_info (Some "k"))
+
+let is_graph_call call =
+  match U.as_call call with
+  | Some { body; _ } ->
+      U.op body = Ops.Custom_function
+      && U.Arg.as_string (U.arg body) = Some "graph"
+  | None -> false
+
 let raises_jit_error fn =
   raises_match (function Jit.Jit_error _ -> true | _ -> false) fn
 
@@ -149,6 +175,36 @@ let no_buffers _ = None
 let () =
   run "Engine_jit"
     [
+      group "Graph batching"
+        [
+          test "view offsets past the capability's bound stay out of graphs"
+            (fun () ->
+              let plain () = program_call [ buffer_node (); buffer_node () ] in
+              let far =
+                (* An int32 view 2^30 elements in: a 4 GiB byte offset. *)
+                let base = buffer_node ~size:((1 lsl 30) + 4) () in
+                program_call
+                  [
+                    buffer_node ();
+                    U.slice ~src:base
+                      ~offset:(U.const_int (1 lsl 30))
+                      ~size:4 ~dtype:Dtype.int32;
+                  ]
+              in
+              let linear =
+                U.linear [ plain (); plain (); far; plain (); plain () ]
+              in
+              let batched max_buffer_offset =
+                List.map is_graph_call
+                  (U.children
+                     (Jit.batch_graphs
+                        ~device:(graph_device ~max_buffer_offset)
+                        linear))
+              in
+              equal (list bool) [ true ] (batched None);
+              equal (list bool) [ true; false; true ]
+                (batched (Some 0xFFFFFFFF)));
+        ];
       group "TinyJit"
         [
           test "create requires a function or a captured schedule" (fun () ->

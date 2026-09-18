@@ -499,6 +499,8 @@ CAMLprim value caml_tolk_metal_icb_execute(value v_queue, value v_icb,
     NSRange range = NSMakeRange(0, count);
     [encoder executeCommandsInBuffer:icb withRange:range];
     [encoder endEncoding];
+    [cmd setLabel:[NSString stringWithFormat:@"batched %lu",
+                                             (unsigned long)count]];
     [cmd commit];
     [cmd retain];
     CAMLreturn(caml_copy_nativeint((intnat)cmd));

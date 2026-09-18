@@ -107,6 +107,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled programs on Metal replay as batched GPU submissions: the kernels of
+  a `Rune.jit` trace are recorded once and each call submits them in a few
+  command buffers instead of one per kernel. The per-kernel launch cost drops
+  from about 27 to 3 microseconds, level with the CPU device: a trace of 256
+  small kernels takes 0.9 ms per call where it took 7.7 ms, and a GPT-2 124M
+  decode step 6.6 ms where it took 9.2 ms. `JIT=2` restores one submission
+  per kernel.
 - Reverse mode no longer copies every cotangent. A cotangent is held as the
   lazy view its pull produced (a transpose, a broadcast) and materialized where
   a reshape needs it and where a gradient leaves `Rune.grad`. Compiled
@@ -222,6 +229,12 @@ thread.
 
 ### Tolk (new)
 
+- The Metal device carries a `Device.Graph` capability: a batched call sequence
+  is encoded once into an indirect command buffer and replayed as a single
+  command buffer, with rebound buffers, variable values and launch dimensions
+  patched in between. `Device.Graph.t` gains `max_buffer_offset`, which keeps
+  a call whose buffer view starts past 4 GiB out of Metal graphs, and
+  `FIX_METAL_ICB` overrides the pre-M3 pipeline workaround.
 - `Creation.clone` takes `?device` and copies a source that lives on another
   device across. `Op.scatter_indexed` places its buffers on the device of its
   operands.

@@ -106,6 +106,36 @@ let call_spec device spec bufs var_vals =
 
 let run_spec device spec bufs = ignore (call_spec device spec bufs [])
 
+let device_graph device =
+  match Device.graph device with
+  | Some g -> g
+  | None -> fail "Metal device has no graph capability"
+
+let prog_of_spec device spec =
+  let lib =
+    match Program_spec.lib spec with
+    | Some lib -> lib
+    | None ->
+        let comp = Option.get (Renderer.compiler (Device.renderer device)) in
+        Compiler.compile_cached comp (Program_spec.src spec)
+  in
+  Device.runtime device
+    (U.sanitize_function_name (Program_spec.name spec))
+    lib ~runtimevars:[]
+
+let ones3 = [| 1; 1; 1 |]
+
+let kernel_node handle bufs ?(vals = [||]) () =
+  Device.Graph.Kernel
+    {
+      handle;
+      global = ones3;
+      local = ones3;
+      bufs = Array.map Device.Buffer.addr bufs;
+      vals;
+      deps = [||];
+    }
+
 let () =
   run "Metal_runtime"
     [
@@ -181,5 +211,132 @@ let () =
             let src = i32_view src_base ~offset:8 ~size:2 in
             is_true (Device.Buffer.transfer ~dst ~src);
             equal (list int) [ 0; 3; 4; 0 ] (read_i32 dst_base));
+        ];
+      group "Graph"
+        [
+          test "replays a multi-kernel chain in order" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_incr device "metal_graph_chain")
+            in
+            let a = i32_buf device [ 41 ] in
+            let b = i32_buf device [ 0 ] in
+            let c = i32_buf device [ 0 ] in
+            let exec =
+              (device_graph device).Device.Graph.build
+                [|
+                  kernel_node prog.Device.handle [| b; a |] ();
+                  kernel_node prog.Device.handle [| c; b |] ();
+                  kernel_node prog.Device.handle [| a; c |] ();
+                |]
+            in
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            Device.synchronize device;
+            equal (list int) [ 44 ] (read_i32 a);
+            equal (list int) [ 42 ] (read_i32 b);
+            equal (list int) [ 43 ] (read_i32 c));
+          test "relaunches without an intervening synchronize" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_incr device "metal_graph_relaunch")
+            in
+            let a = i32_buf device [ 0 ] in
+            let b = i32_buf device [ 0 ] in
+            let exec =
+              (device_graph device).Device.Graph.build
+                [|
+                  kernel_node prog.Device.handle [| b; a |] ();
+                  kernel_node prog.Device.handle [| a; b |] ();
+                |]
+            in
+            for _ = 1 to 10 do
+              ignore (exec.Device.Graph.launch ~wait:false : float option)
+            done;
+            Device.synchronize device;
+            equal (list int) [ 20 ] (read_i32 a);
+            equal (list int) [ 19 ] (read_i32 b));
+          test "patches scalar values between launches" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_var device "metal_graph_var")
+            in
+            let dst = i32_buf device [ 0 ] in
+            let exec =
+              (device_graph device).Device.Graph.build
+                [| kernel_node prog.Device.handle [| dst |] ~vals:[| 5 |] () |]
+            in
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            Device.synchronize device;
+            equal (list int) [ 5 ] (read_i32 dst);
+            exec.Device.Graph.set_val 0 0 9;
+            exec.Device.Graph.set_params 0;
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            Device.synchronize device;
+            equal (list int) [ 9 ] (read_i32 dst));
+          test "patches a launch still in flight" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_var device "metal_graph_inflight")
+            in
+            let first = i32_buf device [ 0 ] in
+            let second = i32_buf device [ 0 ] in
+            let exec =
+              (device_graph device).Device.Graph.build
+                [|
+                  kernel_node prog.Device.handle [| first |] ~vals:[| 5 |] ();
+                |]
+            in
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            exec.Device.Graph.set_val 0 0 9;
+            exec.Device.Graph.set_buf 0 0 (Device.Buffer.addr second);
+            exec.Device.Graph.set_params 0;
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            Device.synchronize device;
+            equal (list int) [ 5 ] (read_i32 first);
+            equal (list int) [ 9 ] (read_i32 second));
+          test "rebinds buffer views between launches" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_incr device "metal_graph_rebind")
+            in
+            let dst1 = i32_buf device [ 0 ] in
+            let src1 = i32_buf device [ 41 ] in
+            let dst_base = i32_buf device [ 0; 0; 0; 0 ] in
+            let src_base = i32_buf device [ 1; 2; 10; 4 ] in
+            let dst2 = i32_view dst_base ~offset:4 ~size:1 in
+            let src2 = i32_view src_base ~offset:8 ~size:1 in
+            let exec =
+              (device_graph device).Device.Graph.build
+                [| kernel_node prog.Device.handle [| dst1; src1 |] () |]
+            in
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            Device.synchronize device;
+            equal (list int) [ 42 ] (read_i32 dst1);
+            exec.Device.Graph.set_buf 0 0 (Device.Buffer.addr dst2);
+            exec.Device.Graph.set_buf 0 1 (Device.Buffer.addr src2);
+            exec.Device.Graph.set_params 0;
+            ignore (exec.Device.Graph.launch ~wait:false : float option);
+            Device.synchronize device;
+            equal (list int) [ 42 ] (read_i32 dst1);
+            equal (list int) [ 0; 11; 0; 0 ] (read_i32 dst_base));
+          test "wait returns gpu time" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_incr device "metal_graph_timed")
+            in
+            let dst = i32_buf device [ 0 ] in
+            let src = i32_buf device [ 1 ] in
+            let exec =
+              (device_graph device).Device.Graph.build
+                [| kernel_node prog.Device.handle [| dst; src |] () |]
+            in
+            (match exec.Device.Graph.launch ~wait:true with
+            | Some tm -> is_true (tm >= 0.0)
+            | None -> fail "expected Metal graph wait timing");
+            Device.synchronize device;
+            equal (list int) [ 2 ] (read_i32 dst));
+          test "copies stay out of graphs" (fun () ->
+            let device = metal_device () in
+            is_false (device_graph device).Device.Graph.supports_copy);
         ];
     ]

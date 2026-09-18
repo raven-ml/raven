@@ -188,6 +188,7 @@ module State = struct
     shared_event : nativeint;
     mutable timeline_value : int;
     mutable in_flight : nativeint list;
+    mutable synchronizations : int;
     mutable closed : bool;
     needs_icb_fix : bool;
     device_name : string;
@@ -214,6 +215,7 @@ module State = struct
             shared_event;
             timeline_value = 0;
             in_flight = [];
+            synchronizations = 0;
             closed = false;
             needs_icb_fix;
             device_name;
@@ -237,6 +239,7 @@ module State = struct
           Ffi.command_buffer_wait cmd;
           drain rest
     in
+    t.synchronizations <- t.synchronizations + 1;
     drain t.in_flight
 
   let shutdown t =
@@ -379,6 +382,156 @@ module Icb = struct
   let release t = Ffi.icb_release t.handle
 end
 
+module Graph = struct
+  (* Batched replay through an indirect command buffer: every kernel launch is
+     encoded once as an indirect compute command, and a replay submits the
+     whole sequence in a single command buffer. Commands are separated by
+     barriers, so they run in recording order and node dependencies need no
+     encoding. Scalar arguments live in one shared int32 buffer bound at
+     per-argument offsets. *)
+  let build state (nodes : Device.Graph.node array) =
+    let count = Array.length nodes in
+    let kernels =
+      Array.map
+        (function
+          | Device.Graph.Kernel { handle; global; local; bufs; vals; _ } ->
+              (handle, global, local, bufs, vals)
+          | Device.Graph.Copy _ ->
+              invalid_arg "Metal graph: unsupported COPY node")
+        nodes
+    in
+    let val_offsets = Array.make (count + 1) 0 in
+    Array.iteri
+      (fun j (_, _, _, _, vals) ->
+        val_offsets.(j + 1) <- val_offsets.(j) + (4 * Array.length vals))
+      kernels;
+    let var_buf =
+      if val_offsets.(count) = 0 then Nativeint.zero
+      else Ffi.buffer_alloc state.State.device val_offsets.(count)
+    in
+    let scratch = Bytes.create 4 in
+    let write_val j i v =
+      Bytes.set_int32_le scratch 0 (Int32.of_int v);
+      Ffi.buffer_copyin var_buf (val_offsets.(j) + (4 * i)) scratch
+    in
+    let icb = Icb.create state ~count in
+    (* Metal buffer handle bound at each (node, position): the resources a
+       replay declares to the encoder. *)
+    let bound =
+      Array.mapi
+        (fun j (program, global, local, buffers, vals) ->
+          Array.iteri (write_val j) vals;
+          Icb.encode icb ~index:j ~program ~buffers ~arg_buf:var_buf
+            ~arg_offsets:
+              (Array.init (Array.length vals) (fun i ->
+                   val_offsets.(j) + (4 * i)))
+            ~global ~local;
+          fst (Buffer_token.resolve_array buffers))
+        kernels
+    in
+    let dedup handles =
+      let seen = Hashtbl.create 64 in
+      List.filter
+        (fun h ->
+          (not (Hashtbl.mem seen h))
+          && (Hashtbl.replace seen h ();
+              true))
+        handles
+      |> Array.of_list
+    in
+    let fix_icb =
+      Helpers.getenv "FIX_METAL_ICB" (Bool.to_int state.State.needs_icb_fix)
+      <> 0
+    in
+    let pipelines =
+      if fix_icb then
+        dedup
+          (Array.to_list
+             (Array.map (fun (program, _, _, _, _) -> program) kernels))
+      else [||]
+    in
+    let resources () =
+      dedup
+        ((if var_buf = Nativeint.zero then [] else [ var_buf ])
+        @ List.concat_map Array.to_list (Array.to_list bound))
+    in
+    let all_resources = ref (resources ()) in
+    let rebound = ref false in
+    let last = ref None in
+    (* The recorded commands and the scalar buffer are read by the GPU until
+       the previous replay completes, so it is awaited before either is
+       patched or resubmitted. A synchronize since that replay has already
+       awaited and released its command buffer, whose address a later command
+       buffer may reuse. *)
+    let settle () =
+      match !last with
+      | Some (cmd, at)
+        when at = state.State.synchronizations
+             && List.mem cmd state.State.in_flight ->
+          state.State.in_flight <-
+            List.filter (fun c -> c <> cmd) state.State.in_flight;
+          last := None;
+          Ffi.command_buffer_wait cmd
+      | _ -> last := None
+    in
+    let launch ~wait =
+      settle ();
+      if !rebound then begin
+        all_resources := resources ();
+        rebound := false
+      end;
+      let cmd =
+        Ffi.icb_execute state.State.queue icb.Icb.handle count !all_resources
+          pipelines
+      in
+      if wait then Some (Ffi.command_buffer_wait_time cmd)
+      else begin
+        state.State.in_flight <- cmd :: state.State.in_flight;
+        last := Some (cmd, state.State.synchronizations);
+        None
+      end
+    in
+    let exec =
+      {
+        Device.Graph.set_buf =
+          (fun node pos addr ->
+            settle ();
+            let buffer = Buffer_token.resolve addr in
+            Ffi.icb_update_buffer icb.Icb.handle node pos buffer.handle
+              buffer.offset;
+            bound.(node).(pos) <- buffer.handle;
+            rebound := true);
+        set_val =
+          (fun node idx v ->
+            settle ();
+            write_val node idx v);
+        set_launch_dims =
+          (fun node ~global ~local ->
+            settle ();
+            Icb.update_dispatch icb ~index:node ~global ~local);
+        set_params = (fun _ -> ());
+        launch;
+      }
+    in
+    Gc.finalise
+      (fun (_ : Device.Graph.exec) ->
+        if not state.State.closed then begin
+          settle ();
+          Icb.release icb;
+          if var_buf <> Nativeint.zero then Ffi.buffer_free var_buf
+        end)
+      exec;
+    exec
+
+  (* Indirect compute commands encode buffer offsets as 32-bit values. *)
+  let create state =
+    {
+      Device.Graph.supports_copy = false;
+      max_buffer_offset = Some 0xFFFFFFFF;
+      build = build state;
+    }
+end
+
 let create name =
   let state = State.create () in
   at_exit (fun () -> State.shutdown state);
@@ -389,4 +542,7 @@ let create name =
   let renderer_set = Device.Renderer_set.make [renderer, None] in
   let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()
+  let graph =
+    if State.is_virtual state then None else Some (Graph.create state)
+  in
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ?graph ()

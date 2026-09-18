@@ -377,6 +377,10 @@ module Graph : sig
     supports_copy : bool;
         (** [true] iff {!constructor-Copy} nodes are supported, allowing the
             engine to batch buffer copies alongside kernels. *)
+    max_buffer_offset : int option;
+        (** Largest byte offset a buffer view argument may carry, if the
+            backend bounds it. The engine keeps calls with a larger view
+            offset out of graphs. *)
     build : node array -> exec;
         (** [build nodes] records and instantiates a graph over [nodes]. *)
   }

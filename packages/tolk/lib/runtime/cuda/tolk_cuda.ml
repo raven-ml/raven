@@ -284,7 +284,11 @@ module Graph = struct
     exec
 
   let create state =
-    { Device.Graph.supports_copy = true; build = build state }
+    {
+      Device.Graph.supports_copy = true;
+      max_buffer_offset = None;
+      build = build state;
+    }
 end
 
 let create name =
