@@ -1614,6 +1614,13 @@ thread.
 
 ### Kaun
 
+- The pieces `Attention.apply` and `Attention.cached` are made of are public:
+  `Attention.split` projects and splits into heads, `Attention.attend` is
+  grouped-query attention with `?mask`, `?scale` and `?sinks`,
+  `Attention.merge` concatenates heads through the output projection, and
+  `Attention.Cache.extend` stores a call's keys and values and returns what its
+  tokens attend over. A model with its own attention variant composes a layer
+  in a dozen lines. `apply` and `cached` compute what they did, bit for bit.
 - `Attention.scaled_dot_product_attention` takes `?scale`, which replaces
   `1 / sqrt d`, and `?sinks`, attention-sink logits that join each query's
   softmax as one more key of value zero, as gpt-oss needs. With sinks a query

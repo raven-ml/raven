@@ -172,6 +172,23 @@ module Cache : sig
   val names : 'a t -> string t
   (** [names c] is [{ keys = "keys"; values = "values" }]. *)
 
+  val extend :
+    Cache_index.t ->
+    (float, 'b) Nx.t t ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t * (float, 'b) Nx.t * (float, 'b) Nx.t t
+  (** [extend index cache k v] is [(k', v', cache')]: [cache] with the call's
+      keys [k] and values [v] stored, both of shape
+      [[| batch; kv_heads; seq; head_dim |]], and what the call's tokens attend
+      over, of shape [[| batch; kv_heads; context; head_dim |]]. It is
+      {!Cache_index.extend} on each pool, which holds tokens before heads, with
+      the two axes exchanged on the way in and out. On a whole index [k'] is
+      [k], [v'] is [v] and [cache'] is [cache].
+
+      Raises [Invalid_argument] if [k] or [v] does not have that shape for
+      [index] and [cache]. *)
+
   module List : Nx.Ptree.Uniform with type 'a t = 'a t list
   (** One cache per block, in block order: the carried state of a decoder whose
       only state is its attention caches. Leaf paths are ["0.keys"],
@@ -210,6 +227,77 @@ val cached :
     [[| batch; seq; embed_dim |]] with the index's batch and seq, [head_dim]
     does not divide the projection widths, [kv_heads] does not divide [heads],
     or the cache does not have shape [[| _; kv_heads; head_dim |]]. *)
+
+(** {1:pieces The pieces of a layer}
+
+    {!apply} and {!cached} are compositions of three functions with
+    {!Rope.apply}, {!Cache.extend} and {!Cache_index.mask}. A model whose
+    attention differs (sinks, another score scale, a normalisation of queries
+    and keys, its own cache record) composes them itself. This is {!cached}:
+
+    {[
+    let cached ~head_dim ~rope p cache index x =
+      let pos = Cache_index.positions index in
+      let q = Rope.apply rope ~pos (Attention.split ~head_dim p.q x) in
+      let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
+      let v = Attention.split ~head_dim p.v x in
+      let k, v, cache = Attention.Cache.extend index cache k v in
+      let mask = Cache_index.mask index in
+      (Attention.merge p.out (Attention.attend ~mask q k v), cache)
+    ]}
+
+    Between the pieces a tensor has shape [[| batch; heads; seq; head_dim |]],
+    which is what {!Rope.apply} takes. *)
+
+val split :
+  head_dim:int ->
+  (float, 'b) Nx.t Linear.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
+(** [split ~head_dim l x] projects [x], of shape [[| batch; seq; embed |]],
+    through [l] and splits the result into heads: shape
+    [[| batch; heads; seq; head_dim |]], where [heads] is [l]'s output width
+    divided by [head_dim]. A query projection and a key-value projection of
+    different widths give different head counts, which {!attend} pairs.
+
+    Raises [Invalid_argument] if [x] does not have three axes or [head_dim] is
+    not positive or does not divide [l]'s output width. *)
+
+val attend :
+  ?mask:(bool, Nx.bool_elt) Nx.t ->
+  ?scale:float ->
+  ?sinks:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
+(** [attend q k v] is grouped-query attention of [q], of shape
+    [[| batch; heads; n; d |]], over [k] and [v], of shape
+    [[| batch; kv_heads; m; d |]] and [[| batch; kv_heads; m; dv |]]: the result
+    has shape [[| batch; heads; n; dv |]]. [kv_heads] divides [heads], and
+    key-value head [h] serves query heads [h * groups] to
+    [h * groups + groups - 1], where [groups] is [heads / kv_heads]. No key is
+    repeated: the queries gain a group axis the keys broadcast over. With:
+
+    - [mask], of shape [[| n; m |]] or [[| batch; n; m |]], shared by the heads.
+    - [scale], as for {!scaled_dot_product_attention}.
+    - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
+      as for {!scaled_dot_product_attention}, which is given them reshaped to
+      [[| kv_heads; groups; 1 |]].
+
+    It is {!scaled_dot_product_attention} over the grouped shapes and inherits
+    its totality and its float32 island.
+
+    Raises [Invalid_argument] if a shape is not as above or [kv_heads] does not
+    divide [heads]. *)
+
+val merge : (float, 'b) Nx.t Linear.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [merge l y] concatenates the heads of [y], of shape
+    [[| batch; heads; seq; d |]], and projects them through [l]: shape
+    [[| batch; seq; embed |]]. It undoes {!split}.
+
+    Raises [Invalid_argument] if [y] does not have four axes or [heads * d] is
+    not [l]'s input width. *)
 
 (** {1:core The attention core} *)
 

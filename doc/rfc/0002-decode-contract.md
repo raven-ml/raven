@@ -267,7 +267,10 @@ attends once over what they return under `Cache_index.mask`. Queries reshape
 to `[batch; kv_heads; groups; seq; head_dim]` against keys at `[batch;
 kv_heads; 1; context; head_dim]`; both head counts are read from the
 projection widths. A layer with a sliding window is given
-`Cache_index.window w index`; no model in the tree does yet.
+`Cache_index.window w index`; no model in the tree does yet. The layer is a
+composition of public pieces, `Attention.split`, `Attention.Cache.extend`,
+`Attention.attend` and `Attention.merge`, which a model with its own attention
+variant (sinks, another score scale) composes itself.
 
 `Attention.apply ~head_dim ?mask ?rope p x` stays for attention that is not
 causal self-attention. `Span`, `route` and `Attention.route` are removed.

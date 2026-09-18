@@ -1075,6 +1075,130 @@ let test_cached_gradients () =
   in
   grads_ok (Rune.check_grads attention64 loss p)
 
+(* The pieces of a layer *)
+
+let composed ?scale ?sinks p c index x =
+  let pos = Cache_index.positions index in
+  let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
+  let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
+  let v = Attention.split ~head_dim p.v x in
+  let k, v, c = Attention.Cache.extend index c k v in
+  let mask = Cache_index.mask index in
+  (Attention.merge p.out (Attention.attend ~mask ?scale ?sinks q k v), c)
+
+let test_pieces_compose_cached () =
+  Nx.Rng.with_key (Nx.Rng.key 47) @@ fun () ->
+  let p = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 2; 3; 8 |] in
+  let exact ~msg (y, (c : _ Attention.Cache.t)) (y', (c' : _ Attention.Cache.t))
+      =
+    equal ~msg (array float_exact) (flat y) (flat y');
+    equal ~msg:(msg ^ ", keys") (array float_exact) (flat c.keys) (flat c'.keys);
+    equal ~msg:(msg ^ ", values") (array float_exact) (flat c.values)
+      (flat c'.values)
+  in
+  let index = Cache_index.window 2 (Cache_index.rows ~context:4 [| 3; 2 |]) in
+  exact ~msg:"through a cache"
+    (call p (cache 8) index x)
+    (composed p (cache 8) index x);
+  let whole = Cache_index.whole ~batch:2 ~seq:3 () in
+  exact ~msg:"over a whole index"
+    (call p (cache 0) whole x)
+    (composed p (cache 0) whole x);
+  shape_is ~msg:"heads come before positions" [| 2; 4; 3; 2 |]
+    (Attention.split ~head_dim p.q x);
+  shape_is ~msg:"a narrower projection has fewer heads" [| 2; 2; 3; 2 |]
+    (Attention.split ~head_dim p.k x)
+
+let test_attend_sinks_per_query_head () =
+  Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
+  let q = Nx.randn Nx.float32 [| 2; 4; 5; 2 |] in
+  let k = Nx.randn Nx.float32 [| 2; 2; 5; 2 |] in
+  let v = Nx.randn Nx.float32 [| 2; 2; 5; 2 |] in
+  let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
+  let mask = causal 5 in
+  (* Key-value head [h] repeated for query heads [2 h] and [2 h + 1]. *)
+  let repeat t =
+    Nx.take ~axis:1 ~indices:(Nx.create Nx.int32 [| 4 |] [| 0l; 0l; 1l; 1l |]) t
+  in
+  let direct =
+    sink_reference ~mask ~scale:0.8
+      ~sinks:(Nx.reshape [| 4; 1 |] sinks)
+      q (repeat k) (repeat v)
+  in
+  same ~msg:"2 key-value heads serving 4 query heads" direct
+    (Attention.attend ~mask ~scale:0.8 ~sinks q k v);
+  same ~msg:"one key-value head per query head" direct
+    (Attention.attend ~mask ~scale:0.8 ~sinks q (repeat k) (repeat v))
+
+let test_composed_sinks_chunking () =
+  Nx.Rng.with_key (Nx.Rng.key 45) @@ fun () ->
+  let p = layer Nx.float32 in
+  let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
+  let x = Nx.randn Nx.float32 [| 1; 7; 8 |] in
+  let slots = [| Array.init 8 Fun.id |] in
+  let feed chunks =
+    let _, ys, _ =
+      List.fold_left
+        (fun (at, ys, c) n ->
+          let index =
+            Cache_index.window 3
+              (index_at ~pos:[| Array.init n (fun i -> at + i) |] ~slots)
+          in
+          let y, c =
+            composed ~scale:0.9 ~sinks p c index
+              (Nx.slice [ A; R (at, at + n) ] x)
+          in
+          (at + n, y :: ys, c))
+        (0, [], cache 8)
+        chunks
+    in
+    Nx.concatenate ~axis:1 (List.rev ys)
+  in
+  let whole sinks =
+    fst
+      (composed ~scale:0.9 ?sinks p (cache 0)
+         (Cache_index.window 3 (Cache_index.whole ~batch:1 ~seq:7 ()))
+         x)
+  in
+  close ~msg:"token by token" (whole (Some sinks))
+    (feed [ 1; 1; 1; 1; 1; 1; 1 ]);
+  close ~msg:"uneven chunks" (whole (Some sinks)) (feed [ 3; 1; 2; 1 ]);
+  is_true ~msg:"and the sinks change the outputs"
+    (Array.exists2
+       (fun a b -> Float.abs (a -. b) > 1e-3)
+       (flat (whole (Some sinks)))
+       (flat (whole None)))
+
+let test_pieces_reject_bad_shapes () =
+  let t shape = Nx.zeros Nx.float32 shape in
+  let p = layer Nx.float32 in
+  raises
+    (Invalid_argument
+       "Attention.split: head_dim 3 does not divide the projection width 8")
+    (fun () -> Attention.split ~head_dim:3 p.q (t [| 1; 2; 8 |]));
+  raises
+    (Invalid_argument "Attention.split: x must have shape [batch; seq; embed]")
+    (fun () -> Attention.split ~head_dim:2 p.q (t [| 2; 8 |]));
+  raises
+    (Invalid_argument
+       "Attention.attend: 3 key-value heads do not divide 4 query heads")
+    (fun () ->
+      Attention.attend
+        (t [| 1; 4; 2; 2 |])
+        (t [| 1; 3; 2; 2 |])
+        (t [| 1; 3; 2; 2 |]));
+  raises (Invalid_argument "Attention.attend: sinks must have shape [4]")
+    (fun () ->
+      Attention.attend ~sinks:(t [| 2 |])
+        (t [| 1; 4; 2; 2 |])
+        (t [| 1; 2; 2; 2 |])
+        (t [| 1; 2; 2; 2 |]));
+  raises
+    (Invalid_argument
+       "Attention.merge: y must have shape [batch; heads; seq; d]") (fun () ->
+      Attention.merge p.out (t [| 2; 8 |]))
+
 let test_cache_list_paths () =
   let caches = [ cache 2; cache 2 ] in
   let paths =
@@ -1246,6 +1370,13 @@ let () =
           test "eager and compiled runs agree on what addresses nothing"
             test_cached_out_of_range_under_jit;
           test "gradients flow through the cache" test_cached_gradients;
+          test "heads, extend, attend and merge compose cached"
+            test_pieces_compose_cached;
+          test "attend takes sinks per query head, grouped or not"
+            test_attend_sinks_per_query_head;
+          test "a composed layer with sinks is invariant under chunking"
+            test_composed_sinks_chunking;
+          test "the pieces reject other shapes" test_pieces_reject_bad_shapes;
           test "a list of caches names its leaves by index"
             test_cache_list_paths;
           test "invalid geometry is rejected" test_cached_rejects_bad_geometry;
