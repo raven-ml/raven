@@ -1,8 +1,9 @@
 # RFC 0002: The decode contract
 
-- Status: published
+- Status: committed
 - Date: 2026-09-18
 - Packages: kaun, rune (one pullback fix)
+- Implementation: branch `decode-contract`
 
 ## Summary
 
@@ -200,23 +201,23 @@ For `x : [batch; seq; embed]` the layer projects, rotates queries and keys
 at the positions, writes, reads, and attends.
 
 - **Write.** Token `(b, i)` targets `slots.(b).(pos.(b).(i))` when its
-  position is in range and nothing otherwise:
-  `where (0 <= pos < context) (take_along_axis slots p) (-1)`. `route`
-  inverts that into a `[slots]` int32 vector, the last token in row-major
-  order that targets each slot or -1, by one compare-and-max over the
-  call's tokens. The new leaf is `where (inv >= 0) (take new (max inv 0)) old`. Two tokens aimed
-  at one slot: the later wins, `Nx.scatter`'s rule.
-- **Read.** `take` along the slot axis with `slots` clamped, giving
-  `[batch; context; kv_heads; head_dim]`, then zero wherever the column is
-  unallocated or beyond every position of the row. Columns no query of the
-  row may see therefore contribute exactly zero, not `0 * v`.
-- **Mask.** Column `j` is visible to token `(b, i)` when `j <= p.(b).(i)`,
-  so every query sees column 0.
+  position is in range and nothing otherwise: `where (0 <= pos < context)
+  (take_along_axis slots p) (-1)`. `route` inverts that into a `[slots]`
+  int32 vector, the last token in row-major order that targets each slot or
+  -1, by one compare-and-max over the call's tokens. The new leaf is `where
+  (inv >= 0) (take new (max inv 0)) old`. Two tokens aimed at one slot: the
+  later wins, `Nx.scatter`'s rule.
+- **Read.** `take` along the slot axis with `slots` clamped, giving `[batch;
+  context; kv_heads; head_dim]`, then zero wherever the column is unallocated
+  or beyond every position of the row. Columns no query of the row may see
+  therefore contribute exactly zero, not `0 * v`.
+- **Mask.** Column `j` is visible to token `(b, i)` when `j <= p.(b).(i)`, so
+  every query sees column 0.
 - **Grouping.** Queries reshape to `[batch; kv_heads; groups; seq; head_dim]`
   against keys at `[batch; kv_heads; 1; context; head_dim]`. `head_dim` is
   the one integer shared by queries, keys, the cache and RoPE; both head
-  counts are read from the projection widths.
-  `Attention.make ?q_dim ?kv_dim ~embed_dim` sizes the projections.
+  counts are read from the projection widths. `Attention.make ?q_dim ?kv_dim
+  ~embed_dim` sizes the projections.
 
 `Attention.apply ~head_dim ?mask ?rope p x` is attention of tokens over
 themselves. `?mask` replaces `?causal:bool` and broadcasts to `[batch; seq;
@@ -234,37 +235,40 @@ hidden cfg p ids = fst (cached cfg p (cache cfg ~slots:(batch * seq) dt)
 ```
 
 up to reassociation. That equation is the definition of `hidden`, so there
-is one model. A model implements `hidden` as a second fold over the
-same block body with `Attention.apply`, because under jit reverse mode
-through the read is a scatter-add into the cache, which tolk lowers as a
-reduce over the `batch x context` indices for every cache element
-(`rune/lib/reverse.ml:676-681`, `tolk/lib/frontend/op.ml:453-462`; read from
-the lowering, unmeasured), and the
-write is a pool pass training discards. The block body takes the attention
-as an argument; the two folds are five lines each. The second fold is
-deleted when the compiled gradient of the right-hand side matches it.
-`cached` stays differentiable and is tested eagerly at small shapes, as
-`apply_cached` is today; it is not a training path under jit.
+is one model. A model implements `hidden` as a second fold over the same
+block body with `Attention.apply`, because under jit reverse mode through
+the read is a scatter-add into the cache, which tolk lowers as a reduce over
+the `batch x context` indices for every cache element
+(`rune/lib/reverse.ml:676-681`, `tolk/lib/frontend/op.ml:453-462`), and the
+write is a pass training discards. Measured on one attention layer on CPU,
+the compiled gradient of the right-hand side returns the same values and
+costs 1.2 to 1.5 times the second fold's at batch 1 and 3.1 times at batch
+8, the ratio growing with the batch as the lowering predicts. The block
+body takes the attention as an argument; the two folds are five lines each.
+The second fold is deleted when that ratio reaches one, which takes a
+scatter-add that visits the indices and not the destination. `cached` stays
+differentiable and is tested for it, eagerly and compiled; it is not a
+training path.
 
 ### Cost
 
-Every figure here is read from lowering code and unmeasured.
+The kernel shapes below were read from rendered kernels; the measurements
+are under Unresolved questions.
 
-A read costs the context: the gather collapses to one gated load per element
-for a directly loaded index (`tolk/test/parity/token_gather_collapse`; that
-it survives the clamp and the zeroing select is a gate below) and, for
-`groups > 1` or `seq > 1`, lands in a context-sized buffer per leaf per layer
-before attention, because tolk realizes a value before broadcasting it; under
-the half-precision island that buffer is float32. Whether single-token
-multi-head decode fuses the load into the score kernel is unmeasured.
+A read costs the context: the gather collapses to one gated load per
+element, through the clamp and the zeroing select. For one query token
+against ungrouped keys the load fuses into the score kernel; for
+`groups > 1` or `seq > 1` it lands in a context-sized buffer per leaf per
+layer before attention, because tolk realizes a value before broadcasting
+it, and under the half-precision island that buffer is float32.
 
 A write costs one pass over the pool per leaf, because rune lowers every
-functional write to a select over the destination; main's window write
-costs the same against its cache length plus a gather per axis. The inverse
-map is `slots x tokens` int32 compares once per call. `jit ~donate:true`
-writes the new cache over the old on a device, provided no kernel reads the
-old leaf after the store, which is the first gate below: the path between
-them is one `where`. On CPU there is no storage reuse, as today.
+functional write to a select over the destination; main's window write costs
+the same against its cache length plus a gather per axis. The inverse map is
+`slots x tokens` int32 compares once per call. `jit ~donate:true` writes the
+new cache over the old on a device: the path between them is one `where`, and
+the read that follows uses the written leaf. On CPU there is no storage
+reuse, as today.
 
 One piece of compiler work takes the pool out of the write: an indexed
 store, a kernel ranged over the call's tokens that stores at a loaded
@@ -316,23 +320,6 @@ module type: kaun has no layer abstraction and gains none. Kaun tests the
 model-level law itself, on a small decoder defined in its test suite, and
 its decode bench builds a GPT-2 shaped stack from layers.
 
-### Order of work
-
-1. rune: the matmul pullback sums each operand's cotangent over its
-   broadcast batch axes (`reverse.ml:811-841`), with a `check_grads` case at
-   `[2; 2; 3; 4; 5] x [2; 2; 1; 5; 4]`; read from the code, grouped attention
-   raises under `grad` without it.
-2. `Span`, the cache shape, `route` and `cached`, `apply ?mask`.
-3. The reuse test and the two parity cases under Unresolved questions. If
-   they fail the cost section is wrong and the RFC is rewritten before
-   anything depends on it.
-4. GPT-2 on the contract, in the example, and its decode step measured
-   against main before step 6. Steps 1 to 4 are the minimum slice; they
-   replace `apply_cached`.
-5. `Rms_norm`, `Rope`, the sampling masks, the loss island, in any order.
-6. Llama as a second example, with its import validated against the
-   reference implementation's logits.
-
 ## Laws
 
 1. **Column is position.** `slots.(b).(j)` holds position `j` of row `b`,
@@ -371,8 +358,8 @@ its decode bench builds a GPT-2 shaped stack from layers.
 - The write costs the pool until the indexed store exists. Llama 3.1 8B at
   bf16 holds 131 KB per slot across its 64 leaves: a 32768-slot pool is 4.3
   GB read and written every step beside 16 GB of weights, and a 40 GB pool is
-  five times the weights. A single-sequence loop is expected to pay what it
-  pays today (a gate below). A two-call tick pays the pass twice.
+  five times the weights. A single-sequence loop pays 4% more than the
+  scalar position did at a cache of 1024. A two-call tick pays the pass twice.
 - Read from the scheduler's rules, the read is a context-sized buffer per
   leaf per layer for every grouped model and every prefill, which main does
   not have.
@@ -452,27 +439,32 @@ and neither is changed here.
 
 ## Unresolved questions
 
-Three gates were run as a spike on 2026-09-18 (branch `decode-prep`), on the
-CPU renderer with pools of 4096 to 131072 slots.
+None blocks the contract. What was measured while implementing it, on the
+CPU renderer with pools of 4096 to 131072 slots and on a Metal device:
 
-- Storage reuse with a read after the write in one program: holds, and
+- Storage reuse holds with a read after the write in one program, and
   `rune/test/test_jit.ml` pins it.
 - The write renders as one pass over the pool with a gated load of the new
   row and no loop over tokens, through the clamp, at 64 and at 2048 tokens.
   The inverse map is a separate `slots x tokens` int32 reduce.
 - The read renders with no loop over slots. One query token against
   ungrouped keys fuses the gated load into the score kernel; `groups > 1` or
-  `seq > 1` lands in one context-sized buffer first, as the Cost section
-  says. At 32768 slots and above tolk splits the reduce before collapsing
-  it, and the buffer is sixteen times the context; that is a tolk ordering
-  fix, not a contract matter.
+  `seq > 1` lands in one context-sized buffer first. At 32768 slots and
+  above tolk splits the reduce before collapsing it, and the buffer is
+  sixteen times the context; that is a tolk ordering fix, not a contract
+  matter.
+- The decode step of a GPT-2 124M shaped decoder costs 8.89 ms and 10.03 ms
+  at cache lengths 256 and 1024, against 8.87 ms and 9.66 ms for the scalar
+  position it replaces: the slot indirection costs 4% at the longer cache,
+  inside the 5% budget of `kaun/bench/decode`.
+- Llama 3.2 1B, written on the contract in `kaun/examples/05-llama`,
+  reproduces the reference implementation's float32 logits to a few parts
+  in a million, and its cached path fed in chunks equals its whole-sequence
+  path exactly.
 
-Remaining. Gate before anything else moves onto the contract: a GPT-2 decode
-step costs no more than main's, against the baseline in
-`kaun/bench/decode`. Before the second fold is written for a second model:
-the kernel extents of the key cotangent in the compiled backward of `cached`
-over `Span.rows`, GPT-2 at seq 1024, which decides whether the second fold
-exists. Out of scope: who builds the indexed store.
+Open, and out of scope: who builds the indexed store and the scatter-add
+that visits indices, the two pieces of compiler work that remove the pool
+from the decode write and the second fold from models.
 
 ## Future possibilities
 
