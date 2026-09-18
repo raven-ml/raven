@@ -1,0 +1,11 @@
+void indexed_store_set(float* restrict data0_-1, int* restrict data1_-1, float* restrict data2_-1) {
+  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+    for (int Ridx1 = 0; Ridx1 < 5; Ridx1++) {
+      int val0 = (*(data1_-1+Ridx1));
+      float val1 = (*(data2_-1+((Ridx1<<3)+Lidx0)));
+      if (((-1<val0)&(val0<16))) {
+        *(data0_-1+((val0<<3)+Lidx0)) = val1;
+      }
+    }
+  }
+}

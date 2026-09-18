@@ -33,15 +33,22 @@ let empty ?(dtype = D.default_float) ?device shape =
 (* Clone [t] into a fresh buffer: an unallocated flat buffer viewed at [t]'s
    shape, written by a store effect. Realization allocates the storage and
    runs the fill, and in-place assignment then writes into it. *)
-let clone t =
+let clone ?device t =
   let shape = T.shape t in
   let n = List.fold_left ( * ) 1 shape in
+  let device = match device with Some _ -> device | None -> T.device t in
   let buf =
     U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:(T.dtype t)
-      ~shape:(T.shape_uop [ n ]) ()
+      ~shape:(T.shape_uop [ n ]) ?device ()
   in
   let dst = U.reshape ~src:buf ~shape:(T.shape_uop shape) in
-  T.of_uop (U.after ~src:dst ~deps:[ U.store ~dst ~value:(T.uop t) () ])
+  let value =
+    match (T.device t, device) with
+    | Some from, Some device when from <> device ->
+        U.copy ~src:(T.uop t) ~device ()
+    | _ -> T.uop t
+  in
+  T.of_uop (U.after ~src:dst ~deps:[ U.store ~dst ~value () ])
 
 let full ?dtype ?(buffer = true) shape fill =
   let dt = match dtype with Some d -> d | None -> dtype_of_fill fill in

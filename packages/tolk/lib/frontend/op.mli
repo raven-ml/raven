@@ -181,6 +181,40 @@ val scatter_reduce :
     with [reduce] (sum, product, mean, maximum, or minimum). The original [t]
     value participates in the reduction unless [include_self] is [false]. *)
 
+val scatter_indexed :
+  Tensor.t -> dim:int -> Tensor.t -> Tensor.t -> mode:[ `Set | `Add ] ->
+  unique:bool -> Tensor.t
+(** [scatter_indexed t ~dim index src ~mode ~unique] is [t] after each element
+    of [src] has been written into it at the position given by the matching
+    element of [index] along [dim], at a cost in the number of updates instead
+    of the size of [t]. The write lands in [t]'s own storage, as {!assign}
+    does: [t] is a buffer, or a buffer after the effects that wrote it, and
+    every later read of that storage sees the write. To keep [t], scatter into
+    a {!Creation.clone} of it.
+
+    [index] and [src] have the rank of [t]; [src] has the extent of [t] on
+    every axis but [dim], where it has the extent of [index]; off [dim],
+    [index] has the extent of [t] or one, and an index broadcast along an axis
+    is read once for that axis.
+
+    Under [`Set] the last of the updates aimed at one position wins, in the
+    order of [index] along [dim]; under [`Add] they all accumulate onto [t]'s
+    value, in that order. An index outside \[[0];[n-1]\], with [n] the extent
+    of [t] along [dim], writes nothing. [unique] promises that no two updates
+    share a position, which lets them run in any order. Where the promise is
+    broken, a position aimed at more than once holds an unspecified one of its
+    updates under [`Set] and an unspecified value under [`Add]; every other
+    position is exact.
+
+    {!scatter} and {!scatter_reduce} compute the same values for in-range
+    indices, as a new tensor, at a cost in the size of [t] times the number of
+    updates.
+
+    @raise Invalid_argument
+      if [t] is not storage, if ranks or extents disagree as above, if [src]
+      does not have the dtype of [t], or if [index] is not an integer
+      tensor. *)
+
 val masked_select : ?fill_value:Tensor.scalar -> Tensor.t -> Tensor.t -> size:int -> Tensor.t
 (** [masked_select t mask ~size] is the 1-D tensor of the elements of [t] where
     [mask] is true, in row-major order, packed into a fixed length [size].

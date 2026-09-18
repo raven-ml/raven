@@ -492,6 +492,144 @@ let scatter t ~dim index src =
   let src, mask = pre_scatter t ~dim index src in
   masked_merge t src mask [ -1 ]
 
+(* Indexed scatter
+
+   No tinygrad counterpart. [scatter] and [scatter_reduce] range over the
+   destination with a trailing axis over the indices, so a write of [k] rows
+   into [n] costs [n * k]. [scatter_indexed] ranges over the indices: a custom
+   kernel whose store lands in [t]'s storage at the loaded index, the way the
+   reference's embedding gradient writes its buffer. Two updates collide only
+   when they agree on every coordinate off [dim], so those coordinates are
+   parallel lanes and the index range is serial within a lane: updates land in
+   index order, the last [`Set] wins and [`Add] accumulates exactly, on every
+   device. [unique] frees the index range too. An index outside the axis gates
+   the store off. *)
+
+let scatter_indexed t ~dim index src ~mode ~unique =
+  let dim = T.resolve_dim t dim in
+  let tsh = T.shape t and ish = T.shape index and ssh = T.shape src in
+  let rank = List.length tsh in
+  if List.length ish <> rank || List.length ssh <> rank then
+    invalid_arg "Op.scatter_indexed: self, index, and src must have equal rank";
+  if not (D.equal (T.dtype t) (T.dtype src)) then
+    invalid_arg "Op.scatter_indexed: self and src must have the same dtype";
+  if not (D.is_int (T.dtype index)) then
+    invalid_arg "Op.scatter_indexed: integer index required";
+  if not (Uop.has_buffer_identity ~after_ok:true (T.uop t)) then
+    invalid_arg "Op.scatter_indexed: self must be storage";
+  List.iteri
+    (fun d extent ->
+      let i = List.nth ish d and s = List.nth ssh d in
+      let fits =
+        if d = dim then i = s else s = extent && (i = extent || i = 1)
+      in
+      if not fits then
+        invalid_arg
+          (Printf.sprintf "Op.scatter_indexed: shape mismatch on axis %d" d))
+    tsh;
+  let count = List.nth ish dim and extent = List.nth tsh dim in
+  if count = 0 || prod tsh = 0 then t
+  else begin
+    let expanded = Tolk.Rangeify.detect_expanded (T.uop index) in
+    let index =
+      if List.length expanded <> rank then index
+      else
+        Movement.shrink_to index
+          (List.mapi (fun d e -> if d <> dim && e then Some 1 else None)
+             expanded)
+    in
+    let ish = T.shape index in
+    let fxn = function
+      | [ out; index; src ] ->
+          let open Uop.O in
+          let flat u sh = Uop.reshape ~src:u ~shape:(Uop.const_int (prod sh)) in
+          let out = flat out tsh in
+          let index = flat index ish and src = flat src ssh in
+          let range d size kind =
+            if size = 1 then Uop.const_int 0
+            else Uop.range ~size:(Uop.const_int size) ~axis:d ~kind ()
+          in
+          let serial = if unique then Axis_type.Weak else Axis_type.Reduce in
+          let k = range dim count serial in
+          let coords =
+            List.mapi
+              (fun d s -> if d = dim then k else range d s Axis_type.Weak)
+              tsh
+          in
+          let address sh coords =
+            let _, terms =
+              List.fold_right2
+                (fun s c (stride, terms) ->
+                  ( Stdlib.( * ) stride s,
+                    if s = 1 then terms
+                    else (c * Uop.const_int stride) :: terms ))
+                sh coords (1, [])
+            in
+            match terms with
+            | [] -> Uop.const_int 0
+            | first :: rest -> List.fold_left ( + ) first rest
+          in
+          let read ptr sh =
+            Uop.load ~src:(Uop.index ~ptr ~idxs:[ address sh coords ] ()) ()
+          in
+          let row = read index ish in
+          let bound n = Uop.const (Const.int (Uop.dtype row) n) in
+          let in_bounds =
+            Uop.alu_binary ~op:Ops.And
+              ~lhs:(not_ (row < bound 0))
+              ~rhs:(row < bound extent)
+          in
+          let target =
+            let row = Uop.cast ~src:row ~dtype:D.weakint in
+            Uop.valid
+              ~src:
+                (address tsh
+                   (List.mapi (fun d c -> if d = dim then row else c) coords))
+              ~cond:in_bounds
+          in
+          let cell = Uop.index ~ptr:out ~idxs:[ target ] () in
+          let update = read src ssh in
+          let value =
+            match mode with
+            | `Set -> update
+            | `Add -> Uop.load ~src:cell () + update
+          in
+          let store = Uop.store ~dst:cell ~value () in
+          let is_range u = Uop.op u = Ops.Range in
+          let body =
+            Uop.end_ ~value:store ~ranges:(List.filter is_range coords)
+          in
+          let name =
+            Printf.sprintf "scatter_%s%s_%d_%d_%s"
+              (match mode with `Set -> "set" | `Add -> "add")
+              (if unique then "_unique" else "")
+              dim count
+              (String.concat "_" (List.map string_of_int tsh))
+          in
+          Uop.sink
+            ~kernel_info:
+              {
+                Uop.name;
+                axis_types = [];
+                dont_use_locals = false;
+                applied_opts = [];
+                opts_to_apply = Some [];
+                estimates = None;
+                beam = 0;
+              }
+            [ body ]
+      | _ -> assert false
+    in
+    (* A kernel argument is storage. The scheduler realizes a computed operand,
+       but a constant owns no storage to realize, so it is computed into a
+       fresh buffer. *)
+    let device = List.find_map T.device [ t; index; src ] in
+    let stored x =
+      if Option.is_some (T.device x) then x else Creation.clone ?device x
+    in
+    List.hd (T.custom_kernel ~fxn [ t; stored index; stored src ])
+  end
+
 (* Indexing *)
 
 let rec getitem t indices =

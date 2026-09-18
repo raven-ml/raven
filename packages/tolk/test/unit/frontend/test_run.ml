@@ -35,6 +35,13 @@ let check_floats expected t =
 let check_ints expected t =
   equal (array int) expected (Run.to_int_array t)
 
+let count_kernels t =
+  let sink = U.sink [ U.contiguous ~src:(T.uop t) () ] in
+  List.length
+    (List.filter
+       (fun u -> U.op u = Tolk_uop.Ops.Call)
+       (U.toposort (Tolk.Rangeify.get_kernel_graph sink)))
+
 let elementwise_tests =
   group "elementwise"
     [
@@ -120,13 +127,6 @@ let getitem_tests =
           check_floats [| 8.; 9.; 10.; 11.; 0.; 1.; 2.; 3. |]
             (Op.getitem (base ()) [ Mv.T (Run.of_int_array ~shape:[ 2 ] [| 2; 0 |]) ]));
     ]
-
-let count_kernels t =
-  let sink = U.sink [ U.contiguous ~src:(T.uop t) () ] in
-  List.length
-    (List.filter
-       (fun u -> U.op u = Tolk_uop.Ops.Call)
-       (U.toposort (Tolk.Rangeify.get_kernel_graph sink)))
 
 let large_gather_tests =
   let rows = 65_536 in
@@ -260,6 +260,175 @@ let scatter_tests =
           check_floats [| 3.5; 4.5; 5.5; 6.5; 7.5 |]
             (Op.scatter_reduce (fa ~shape:[ 1; 5 ] (Array.make 5 1.)) ~dim:0
                (idx0 ()) src10 ~reduce:`Mean ~include_self:false ()));
+    ]
+
+let scatter_indexed_tests =
+  let fi ~shape data = Run.of_int_array ~shape data in
+  let iota shape =
+    let n = List.fold_left ( * ) 1 shape in
+    fa ~shape (Array.init n (fun i -> float_of_int (i + 1)))
+  in
+  let zeros shape = fa ~shape (Array.make (List.fold_left ( * ) 1 shape) 0.) in
+  let indexed ?(unique = false) mode t ~dim index src =
+    let device = List.find_map T.device [ t; index; src ] in
+    Op.scatter_indexed (Creation.clone ?device t) ~dim index src ~mode ~unique
+  in
+  let same_as_reference name ~dim t index src =
+    [
+      test (name ^ ", set") (fun () ->
+          check_floats
+            (Run.to_float_array (Op.scatter (t ()) ~dim (index ()) (src ())))
+            (indexed `Set (t ()) ~dim (index ()) (src ())));
+      test (name ^ ", add") (fun () ->
+          check_floats
+            (Run.to_float_array
+               (Op.scatter_reduce (t ()) ~dim (index ()) (src ()) ~reduce:`Sum
+                  ()))
+            (indexed `Add (t ()) ~dim (index ()) (src ())));
+    ]
+  in
+  group "scatter_indexed"
+    (same_as_reference "rows with a repeated index" ~dim:0
+       (fun () -> iota [ 4; 3 ])
+       (fun () -> fi ~shape:[ 3; 3 ] [| 2; 0; 1; 2; 3; 1; 0; 0; 1 |])
+       (fun () -> iota [ 3; 3 ])
+    @ same_as_reference "every update in one lane aims at one cell" ~dim:1
+        (fun () -> iota [ 2; 4 ])
+        (fun () -> fi ~shape:[ 2; 3 ] [| 1; 1; 1; 3; 3; 3 |])
+        (fun () -> iota [ 2; 3 ])
+    @ same_as_reference "middle axis" ~dim:1
+        (fun () -> iota [ 2; 4; 3 ])
+        (fun () ->
+          fi ~shape:[ 2; 2; 3 ] [| 3; 0; 1; 3; 2; 1; 0; 0; 0; 1; 2; 3 |])
+        (fun () -> iota [ 2; 2; 3 ])
+    @ [
+        test "an index outside the axis writes nothing" (fun () ->
+            let index () = fi ~shape:[ 4; 1 ] [| -1; 4; 1; -7 |] in
+            check_floats [| 0.; 0.; 5.; 6.; 0.; 0.; 0.; 0. |]
+              (indexed `Set (zeros [ 4; 2 ]) ~dim:0 (index ()) (iota [ 4; 2 ]));
+            check_floats [| 1.; 2.; 8.; 10.; 5.; 6.; 7.; 8. |]
+              (indexed `Add (iota [ 4; 2 ]) ~dim:0 (index ()) (iota [ 4; 2 ])));
+        test "an index broadcast off the axis is read once per row" (fun () ->
+            let index = fi ~shape:[ 3; 1 ] [| 2; 0; 2 |] in
+            let broadcast = Mv.expand index [ 3; 2 ] in
+            check_floats [| 3.; 4.; 0.; 0.; 5.; 6.; 0.; 0. |]
+              (indexed `Set (zeros [ 4; 2 ]) ~dim:0 broadcast (iota [ 3; 2 ]));
+            check_floats [| 3.; 4.; 0.; 0.; 6.; 8.; 0.; 0. |]
+              (indexed `Add (zeros [ 4; 2 ]) ~dim:0 broadcast (iota [ 3; 2 ])));
+        test "unique indices" (fun () ->
+            check_floats [| 0.; 0.; 1.; 2.; 0.; 0.; 3.; 4. |]
+              (indexed ~unique:true `Set (zeros [ 4; 2 ]) ~dim:0
+                 (fi ~shape:[ 2; 1 ] [| 1; 3 |])
+                 (iota [ 2; 2 ])));
+        test "unique indices broken at one row leave every other row exact"
+          (fun () ->
+            let got =
+              Run.to_float_array
+                (indexed ~unique:true `Set (zeros [ 4; 3 ]) ~dim:0
+                   (fi ~shape:[ 4; 1 ] [| 1; 3; 0; 3 |])
+                   (iota [ 4; 3 ]))
+            in
+            let expected = [| 7.; 8.; 9.; 1.; 2.; 3.; 0.; 0.; 0. |] in
+            Array.iteri
+              (fun i e ->
+                is_true ~msg:(Printf.sprintf "element %d" i) (close e got.(i)))
+              expected;
+            for j = 0 to 2 do
+              let v = got.(9 + j) in
+              is_true
+                ~msg:(Printf.sprintf "the repeated row holds one update at %d" j)
+                (close v (float_of_int (4 + j)) || close v (float_of_int (10 + j)))
+            done);
+        test "a cloned destination keeps its value" (fun () ->
+            let t = iota [ 3 ] in
+            check_floats [| 1.; 9.; 3. |]
+              (indexed `Set t ~dim:0 (fi ~shape:[ 1 ] [| 1 |])
+                 (fa ~shape:[ 1 ] [| 9. |]));
+            check_floats [| 1.; 2.; 3. |] t);
+        test "the write lands in the destination's storage" (fun () ->
+            let t = iota [ 3 ] in
+            let written =
+              Run.realize
+                (Op.scatter_indexed t ~dim:0 (fi ~shape:[ 1 ] [| 1 |])
+                   (fa ~shape:[ 1 ] [| 9. |])
+                   ~mode:`Set ~unique:false)
+            in
+            check_floats [| 1.; 9.; 3. |] written;
+            check_floats [| 1.; 9.; 3. |] t);
+        test "a destination that is not storage is refused" (fun () ->
+            raises (Invalid_argument "Op.scatter_indexed: self must be storage")
+              (fun () ->
+                Op.scatter_indexed
+                  (El.add (iota [ 3 ]) (iota [ 3 ]))
+                  ~dim:0 (fi ~shape:[ 1 ] [| 1 |])
+                  (fa ~shape:[ 1 ] [| 9. |])
+                  ~mode:`Set ~unique:false));
+        test "constant destination and source" (fun () ->
+            check_floats [| 0.; 0.; 2.5; 2.5; 0.; 0. |]
+              (indexed `Add
+                 (Creation.full ~buffer:false [ 3; 2 ] (T.Sfloat 0.0))
+                 ~dim:0
+                 (fi ~shape:[ 1; 2 ] [| 1; 1 |])
+                 (Creation.full ~buffer:false [ 1; 2 ] (T.Sfloat 2.5))));
+        test "a source that is a view of the destination" (fun () ->
+            let x = iota [ 2; 3 ] in
+            check_floats [| 2.; 2.; 1.; 4.; 5.; 6. |]
+              (indexed `Set x ~dim:1
+                 (fi ~shape:[ 2; 2 ] [| 2; 0; 1; 1 |])
+                 (Mv.shrink x [ (0, 2); (0, 2) ])));
+        test "int payload" (fun () ->
+            check_ints [| 7; 0; 12 |]
+              (indexed `Add
+                 (Run.of_int_array ~shape:[ 3 ] [| 0; 0; 0 |])
+                 ~dim:0
+                 (fi ~shape:[ 3 ] [| 2; 0; 2 |])
+                 (Run.of_int_array ~shape:[ 3 ] [| 5; 7; 7 |])));
+        test "2048 updates schedule to a fill and a write" (fun () ->
+            let param slot dtype dims =
+              T.of_uop
+                (U.param ~slot ~dtype ~shape:(T.shape_uop dims)
+                   ~device:(U.Single "CPU") ())
+            in
+            let t = param 0 Tolk_uop.Dtype.float32 [ 4096; 8 ] in
+            let index = param 1 Tolk_uop.Dtype.int32 [ 2048; 8 ] in
+            let src = param 2 Tolk_uop.Dtype.float32 [ 2048; 8 ] in
+            let written = T.uop (indexed `Set t ~dim:0 index src) in
+            let graph = Tolk.Rangeify.get_kernel_graph (U.sink [ written ]) in
+            let calls =
+              List.filter
+                (fun u -> U.op u = Tolk_uop.Ops.Call)
+                (U.toposort graph)
+            in
+            equal int 2 (List.length calls));
+      ])
+
+let clone_tests =
+  let param device =
+    T.of_uop
+      (U.param ~slot:0 ~dtype:Tolk_uop.Dtype.float32 ~shape:(T.shape_uop [ 4 ])
+         ~device:(U.Single device) ())
+  in
+  let copies t =
+    List.length
+      (List.filter
+         (fun u -> U.op u = Tolk_uop.Ops.Copy)
+         (U.toposort (T.uop t)))
+  in
+  group "clone"
+    [
+      test "a clone on another device copies its source across" (fun () ->
+          let t = Creation.clone ~device:(U.Single "METAL") (param "CPU") in
+          equal int 1 (copies t);
+          is_true ~msg:"placed on the device asked for"
+            (T.device t = Some (U.Single "METAL")));
+      test "a clone on its source's device copies nothing across" (fun () ->
+          equal int 0 (copies (Creation.clone (param "CPU")));
+          equal int 0
+            (copies (Creation.clone ~device:(U.Single "CPU") (param "CPU"))));
+      test "empty storage is placed on the device asked for" (fun () ->
+          is_true ~msg:"device"
+            (T.device (Creation.empty ~device:(U.Single "CPU") [ 2; 2 ])
+            = Some (U.Single "CPU")));
     ]
 
 let sort_tests =
@@ -770,6 +939,8 @@ let () =
       select_tests;
       dynamic_select_tests;
       scatter_tests;
+      scatter_indexed_tests;
+      clone_tests;
       sort_tests;
       reduce_tests;
       matmul_tests;

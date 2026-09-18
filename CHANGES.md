@@ -195,6 +195,18 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.clone` takes `?device` and copies a source that lives on another
+  device across. `Op.scatter_indexed` places its buffers on the device of its
+  operands.
+- Add `Op.scatter_indexed`: a scatter along one axis whose kernel ranges over
+  the updates instead of the destination, and writes the destination's
+  storage in place, as `Op.assign` does. Duplicate updates land in index
+  order (the last `` `Set `` wins, `` `Add `` accumulates), an index outside the
+  axis writes nothing, and `~unique:true` lets the updates run in parallel:
+  a position aimed at twice then holds an unspecified one of its updates, and
+  every other position stays exact.
+  `Op.scatter` and `Op.scatter_reduce` keep the reference lowering.
+  `Creation.clone` is now exposed.
 - Fix `contiguous` over a window that narrows a trailing axis, such as the
   first two columns of a 2x3 buffer. The view was taken for one range of the
   flat buffer and read the wrong elements; only a window whose earlier axes

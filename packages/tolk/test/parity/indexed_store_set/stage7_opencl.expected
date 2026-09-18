@@ -1,0 +1,10 @@
+__kernel void indexed_store_set(__global float* data0_-1, __global int* data1_-1, __global float* data2_-1) {
+  int gidx0 = get_group_id(0); /* 8 */
+  for (int Ridx1 = 0; Ridx1 < 5; Ridx1++) {
+    int val0 = (*(data1_-1+Ridx1));
+    float val1 = (*(data2_-1+(gidx0+(Ridx1<<3))));
+    if (((-1<val0)&(val0<16))) {
+      *(data0_-1+(gidx0+(val0<<3))) = val1;
+    }
+  }
+}

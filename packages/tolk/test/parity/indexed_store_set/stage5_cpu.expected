@@ -1,0 +1,26 @@
+   0 Ops.CONST           :            dtypes.int                               []                               -1
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0, dtypes.float)
+   2 Ops.PARAM           :            dtypes.int                               ['-1']                           ParamArg(1, dtypes.int)
+   3 Ops.CONST           :            dtypes.int                               []                               5
+   4 Ops.CONST           :            dtypes.int                               []                               8
+   5 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.WEAK)
+   6 Ops.RANGE           : 0,1        dtypes.int                               ['5', 5]                         (1, AxisType.REDUCE)
+   7 Ops.INDEX           : 0,1        dtypes.int                               [2, 6]                           None
+   8 Ops.LOAD            : 0,1        dtypes.int                               [7]                              None
+   9 Ops.CONST           :            dtypes.int                               []                               3
+  10 Ops.SHL             : 0,1        dtypes.int                               [8, '3']                         None
+  11 Ops.ADD             : 0,1        dtypes.int                               [10, 5]                          None
+  12 Ops.INDEX           : 0,1        dtypes.float                             [1, 11]                          None
+  13 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2, dtypes.float)
+  14 Ops.SHL             : 0,1        dtypes.int                               [6, '3']                         None
+  15 Ops.ADD             : 0,1        dtypes.int                               [14, 5]                          None
+  16 Ops.INDEX           : 0,1        dtypes.float                             [13, 15]                         None
+  17 Ops.LOAD            : 0,1        dtypes.float                             [16]                             None
+  18 Ops.CMPLT           : 0,1        dtypes.bool                              ['-1', 8]                        None
+  19 Ops.CONST           :            dtypes.int                               []                               16
+  20 Ops.CMPLT           : 0,1        dtypes.bool                              [8, '16']                        None
+  21 Ops.AND             : 0,1        dtypes.bool                              [18, 20]                         None
+  22 Ops.STORE           : 0,1        dtypes.void                              [12, 17, 21]                     None
+  23 Ops.END             : 0          dtypes.void                              [22, 6]                          None
+  24 Ops.END             :            dtypes.void                              [23, 5]                          None
+  25 Ops.SINK            :            dtypes.void                              [24]                             KernelInfo(name='indexed_store_set', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

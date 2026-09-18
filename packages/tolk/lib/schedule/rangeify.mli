@@ -33,6 +33,12 @@ val get_kernel_graph : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     AFTER nodes whose deps are CALL nodes wrapping kernel ASTs,
     connected by WAR dependency edges. *)
 
+val detect_expanded : Tolk_uop.Uop.t -> bool list
+(** [detect_expanded u] tells, for each axis of [u], whether [u] holds one
+    value along it: the axis has extent one, or the movement ops above [u]'s
+    first non-movement node broadcast it. Empty when [u] has no concrete
+    shape. *)
+
 val early_movement_pass : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [early_movement_pass sink] runs the cleanup rewrites that the reference
     applies at the very top of codegen on a just-split kernel body: strip

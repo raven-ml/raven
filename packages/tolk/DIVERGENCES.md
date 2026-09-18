@@ -139,3 +139,21 @@ delete it rather than registering it.
   vocabulary of 10). Consumer: every `Op.gather` and tensor-index `getitem`
   over a large axis, so rune's `take` over a vocabulary. Drop the guard if
   the reference orders the two rewrites itself.
+
+- **Index-ranged scatter** (`frontend/op.ml` `scatter_indexed`). The
+  reference lowers every scatter through a one-hot mask over the destination
+  with a trailing axis over the indices, so writing `k` rows into `n` costs
+  `n * k`; its one kernel that stores at a loaded index is the embedding
+  gradient behind `USE_ATOMICS`, on CPU and AMD only. tolk generalises that
+  kernel to the along-axis scatter through the ported `custom_kernel`, and like
+  it writes the storage it is given in place: the coordinates off the
+  scattered axis are parallel lanes, the index range is a serial `Reduce`
+  range inside each lane, so duplicates land in index order on every device
+  without atomics (the reference clips a bad index onto an edge row; tolk
+  gates the store off, which is what `Nx.scatter` documents). The reference
+  `scatter` and `scatter_reduce` stay as ported and are
+  what the reference's own tests cover; parity cases `indexed_store_set`,
+  `indexed_store_add` and `indexed_store_unique` hold the kernel shapes to the
+  reference's codegen. Consumers: rune's `E_scatter`, hence `Nx.scatter`, the
+  gradient of `Nx.take` and kaun's embedding gradient; and rune's `E_update`
+  at a traced corner, over the flattened destination.

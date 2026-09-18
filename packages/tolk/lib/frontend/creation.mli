@@ -23,6 +23,14 @@ val empty :
     the default float dtype. The storage is placed on [device]; without one it
     is placed by whatever consumes it. *)
 
+val clone : ?device:Tolk_uop.Uop.device -> Tensor.t -> Tensor.t
+(** [clone t] is [t]'s value in fresh storage: a new buffer written by one
+    kernel that computes [t] into it. Writes into the clone leave [t]'s own
+    storage alone. The buffer is placed on [device], which defaults to [t]'s
+    device, and [t] is copied across when it lives on another one. A constant
+    [t] has no device, and without [device] its clone is placed by whatever
+    consumes it. *)
+
 val full :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> int list -> Tensor.scalar ->
   Tensor.t
