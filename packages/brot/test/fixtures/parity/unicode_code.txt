@@ -1,0 +1,82 @@
+今日は東京で2024年の会議があります。トークナイザーのAPIを試します。
+中文文本：这是一个测试，包含数字 12345 和标点。
+한국어 문장도 포함합니다. 숫자 42개!
+====
+مرحبا بالعالم، هذا نَصٌّ عَرَبِيٌّ فيه أرقام ١٢٣٤٥٦٧ وعلامات؟
+שלום עולם, זה מבחן 123.
+====
+नमस्ते दुनिया। यह एक परीक्षण है १२३।
+สวัสดีชาวโลก นี่คือการทดสอบ ๑๒๓
+வணக்கம் உலகம்
+====
+Café naïve résumé vs Café naïve résumé. Ελληνικά κείμενο, русский текст, Tiếng Việt có dấu. ǅungla İstanbul ÜBER straße
+====
+Family 👨‍👩‍👧‍👦 and ❤️ and 👍🏽, flags 🇫🇷🇯🇵, keycap 1️⃣ #️⃣, text☺︎text 😀😀  🚀 go!
+====
+import os
+
+def walk(path, depth=0):
+	for name in os.listdir(path):
+		full = os.path.join(path, name)
+		if os.path.isdir(full):
+			walk(full, depth + 1)
+		else:
+			print('\t' * depth + name)  # don't recurse
+
+
+if __name__ == '__main__':
+	walk('.')
+
+====
+#include <stdio.h>
+
+/* sum of 1..n */
+static int sum(int n) {
+    int s = 0;  // accumulator
+    for (int i = 1; i <= n; ++i) s += i;
+    return s / 1 % 1000000;
+}
+
+int main(void) { printf("%d\n", sum(100)); return 0; } //// end
+
+====
+all: build test
+
+build:
+	dune build @install 2>&1 | tee build.log
+
+test:
+	dune test --force	# slow
+
+{"name": "brot", "version": "1.0.0", "tags": ["a", "b"], "n": 1234567890, "pi": 3.14159, "url": "https://example.com/a/b?c=d&e=f#g"}
+====
+lead  nbsp  twice 　ideographic　　space line sep para sep em  space 	 tab		mix  lone crtwo  
+ 
+  
+	trail   
+====
+   
+
+
+   
+ 
+	
+  x  
+
+====
+XMLHttpRequest getElementById camelCaseWord snake_case_word SCREAMING_CASE kebab-case-word iOS macOS McDonald's O'Reilly
+I'M HE'LL WE'VE THEY'RE DON'T it'S It'ſ 'tis y'all'd've rock'n'roll 5'll 'D' ''ll 4K
+====
+0 1 12 123 1234 12345 123456 1234567 3.14159 1,234,567.89 1e10 0x1F 1_000_000 １２３４５ ١٢٣٤ x²+y³ ½ ⅓ Ⅷ ⅠⅡⅢⅣ ①②③ १२३४ 2024-01-15T10:30:00Z 192.168.0.1 +1 (555) 010-9999
+====
+Wait... what?!
+
+--- ***
+===
+!!!
+
+???  ...
+/// //
+/*
+*/ a/b/c/ \n \\ <<>> ->=> :: ;;
+« quoted » “curly” — dash … ellipsis §¶ €100 £5 $5.00 100% #tag @user

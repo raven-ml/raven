@@ -38,4 +38,20 @@ curl -sL -o "$DATA_DIR/mistral.json" \
   "https://huggingface.co/mistralai/Mistral-7B-v0.1/resolve/main/tokenizer.json"
 echo "  Mistral-7B-v0.1 (BPE with byte fallback, 32K vocab, Metaspace)"
 
+curl -sL -o "$DATA_DIR/llama3.json" \
+  "https://huggingface.co/NousResearch/Llama-3.2-1B/resolve/main/tokenizer.json"
+echo "  Llama 3.2 (byte-level BPE, 128K vocab, regular-expression Split)"
+
+curl -sL -o "$DATA_DIR/qwen2_5.json" \
+  "https://huggingface.co/Qwen/Qwen2.5-0.5B/resolve/main/tokenizer.json"
+echo "  Qwen2.5 (byte-level BPE, 151K vocab, regular-expression Split, NFC)"
+
+curl -sL -o "$DATA_DIR/deepseek_v3.json" \
+  "https://huggingface.co/deepseek-ai/DeepSeek-V3/resolve/main/tokenizer.json"
+echo "  DeepSeek-V3 (byte-level BPE, 128K vocab, three regular-expression Splits)"
+
+curl -sL -o "$DATA_DIR/gpt_oss.json" \
+  "https://huggingface.co/openai/gpt-oss-20b/resolve/main/tokenizer.json"
+echo "  gpt-oss (byte-level BPE, 200K vocab, the o200k regular-expression Split)"
+
 echo "Done."

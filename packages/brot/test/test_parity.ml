@@ -12,8 +12,22 @@ open Windtrap
 
 let corpora = [ "sample"; "edge_cases" ]
 
+(* What the tokenizers that split on a regular expression are also run on. *)
+let regex_split_corpora = corpora @ [ "unicode_code" ]
+
 let models =
-  [ "gpt2"; "llama"; "bert_base"; "roberta_base"; "t5_base_nonorm"; "mistral" ]
+  [
+    ("gpt2", corpora);
+    ("llama", corpora);
+    ("bert_base", corpora);
+    ("roberta_base", corpora);
+    ("t5_base_nonorm", corpora);
+    ("mistral", corpora);
+    ("llama3", regex_split_corpora);
+    ("qwen2_5", regex_split_corpora);
+    ("deepseek_v3", regex_split_corpora);
+    ("gpt_oss", regex_split_corpora);
+  ]
 
 let corpus_path corpus = Filename.concat "fixtures/parity" (corpus ^ ".txt")
 
@@ -570,10 +584,23 @@ let check_attention model corpus tokenizer =
   check_constant ~kind:"attention flag" ~select:Encoding.attention_mask ~value:1
     model corpus tokenizer
 
+(* A tokenizer is loaded once for all its tests: the larger files take longer to
+   load than to check, and bytecode runs this suite too. The [load] test that
+   opens each group is where that time is spent when the whole suite runs. *)
+let loaded = Hashtbl.create 16
+
 let with_tokenizer model check () =
   Fixture.with_download (model_path model)
     ~from:"packages/brot/bench/download_data.sh" (fun path ->
-      match from_file path with
+      let tokenizer =
+        match Hashtbl.find_opt loaded model with
+        | Some tokenizer -> tokenizer
+        | None ->
+            let tokenizer = from_file path in
+            Hashtbl.add loaded model tokenizer;
+            tokenizer
+      in
+      match tokenizer with
       | Error msg -> failf "failed to load %s: %s" path msg
       | Ok tokenizer -> check tokenizer)
 
@@ -582,22 +609,23 @@ let with_tokenizer model check () =
 let () =
   run "HF parity"
     (List.map
-       (fun model ->
+       (fun (model, corpora) ->
          group model
-           (List.map
-              (fun corpus ->
-                group corpus
-                  (List.map
-                     (fun (kind, check) ->
-                       test kind (with_tokenizer model (check model corpus)))
-                     [
-                       ("ids", check_ids);
-                       ("offsets", check_offsets);
-                       ("decode", check_decode);
-                       ("special ids", check_special);
-                       ("special tokens mask", check_mask);
-                       ("type ids", check_types);
-                       ("attention mask", check_attention);
-                     ]))
-              corpora))
+           (slow "load" (with_tokenizer model ignore)
+           :: List.map
+                (fun corpus ->
+                  group corpus
+                    (List.map
+                       (fun (kind, check) ->
+                         test kind (with_tokenizer model (check model corpus)))
+                       [
+                         ("ids", check_ids);
+                         ("offsets", check_offsets);
+                         ("decode", check_decode);
+                         ("special ids", check_special);
+                         ("special tokens mask", check_mask);
+                         ("type ids", check_types);
+                         ("attention mask", check_attention);
+                       ]))
+                corpora))
        models)

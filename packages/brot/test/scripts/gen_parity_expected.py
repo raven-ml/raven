@@ -32,6 +32,14 @@ given one tokenizer:
 - `mistral` — BPE with byte fallback, no normalizer, and a Metaspace
   pre-tokenizer with `split: false`, so the whole text reaches BPE as one
   span with a `▁` prepended to the first word.
+- `llama3` — byte-level BPE with `ignore_merges`, behind a `Split` on a regular
+  expression: contractions under `(?i:...)`, digit groups of at most three,
+  and `\\s+(?!\\S)`.
+- `qwen2_5` — the same pattern with single digits, behind an NFC normalizer.
+- `deepseek_v3` — a sequence of three regular-expression `Split`s: digit
+  groups, CJK runs, then a pattern over `\\p{P}`, `\\p{S}` and `\\p{M}`.
+- `gpt_oss` — the o200k pattern, whose words are runs of letters and marks
+  structured by case, with an optional contraction.
 
 `t5_base_nonorm` is not stock T5: T5's only normalizer is a `Precompiled`
 SentencePiece charsmap, which brot does not implement and refuses to load, so
@@ -60,6 +68,12 @@ documentation pages, which add code identifiers, URLs and punctuation.
 `fixtures/parity/edge_cases.txt` is hand-written and covers whitespace runs,
 contractions, digits, scripts, combining marks, emoji, over-long words, special
 tokens, and spans whose byte and character extents differ.
+`fixtures/parity/unicode_code.txt` is for the tokenizers that split on a
+regular expression, and only they are run on it: text in scripts with and
+without spaces and combining marks, emoji sequences, source code with tabs and
+CRLF line ends, every kind of whitespace and number, and punctuation runs
+around newlines. It is written with escapes by a script rather than by hand, so
+edit it with a tool that keeps its carriage returns.
 
 Fixture format
 --------------
@@ -125,14 +139,19 @@ import tokenizers
 from tokenizers import Tokenizer, models
 
 CORPORA = ("sample", "edge_cases")
-TOKENIZERS = (
-    "gpt2",
-    "llama",
-    "bert_base",
-    "roberta_base",
-    "t5_base_nonorm",
-    "mistral",
-)
+REGEX_SPLIT_CORPORA = (*CORPORA, "unicode_code")
+TOKENIZERS = {
+    "gpt2": CORPORA,
+    "llama": CORPORA,
+    "bert_base": CORPORA,
+    "roberta_base": CORPORA,
+    "t5_base_nonorm": CORPORA,
+    "mistral": CORPORA,
+    "llama3": REGEX_SPLIT_CORPORA,
+    "qwen2_5": REGEX_SPLIT_CORPORA,
+    "deepseek_v3": REGEX_SPLIT_CORPORA,
+    "gpt_oss": REGEX_SPLIT_CORPORA,
+}
 
 
 def documents(text: str) -> list[str]:
@@ -188,7 +207,7 @@ def main() -> int:
     parity_dir = test_root / "fixtures" / "parity"
     models_dir = test_root.parent / "bench" / "data"
 
-    for name in TOKENIZERS:
+    for name, corpora in TOKENIZERS.items():
         model = models_dir / f"{name}.json"
         if not model.exists():
             print(
@@ -198,7 +217,7 @@ def main() -> int:
             return 1
         tokenizer = load_tokenizer(model)
 
-        for corpus in CORPORA:
+        for corpus in corpora:
             text = (parity_dir / f"{corpus}.txt").read_bytes().decode("utf-8")
             lines = [
                 (
