@@ -1,6 +1,7 @@
 # Reference values for kaun's gpt-oss example, from the transformers
-# implementation at float32 on CPU. Writes fixtures/<name>.json next to this
-# script. Only the tiny random checkpoints are read, a few MB each.
+# implementation at float32 on CPU. Writes fixtures/<name>.json, the MoE block
+# and the dequantiser, and fixtures/<name>-model.json, the whole model, next to
+# this script. Only the tiny random checkpoints are read, a few MB each.
 #
 #   uv run --with torch==2.14.0 --with transformers==5.17.0 \
 #          --with safetensors==0.8.0 --with huggingface_hub==1.32.0 \
@@ -27,6 +28,13 @@ SCALE_OFFSET = 118
 # Natural activations never reach the limit of the clamped activation. The
 # "clamped" case feeds the block its recorded input times this factor.
 CLAMP_FACTOR = 200.0
+# The checkpoints' window of 128 never binds on a 12-token prompt. The whole
+# model is recorded with this window instead, so that the sliding layer hides
+# tokens and a chunk boundary falls inside a window.
+WINDOW = 4
+# Positions of the recorded rotary tables. Frequencies formed in float32 and in
+# float64 differ by a unit in the last place, which the position multiplies.
+TABLE_POSITIONS = [0, 1, 11, 127, 4095]
 
 MODELS = {
     "gpt-oss-bf16": {"repo": "tiny-random/gpt-oss-bf16", "packed": False},
@@ -142,6 +150,115 @@ def ties():
     }
 
 
+def top(logits, k=8):
+    t = torch.topk(logits, k)
+    return t.indices.tolist(), flat(t.values)
+
+
+def record_model(model):
+    """The whole model on the long prompt, as 05-llama records it, the two
+    attention layers' inputs and outputs, and the short prompt alone."""
+    layers = model.model.layers
+    seen = {}
+    hooks = [
+        layer.self_attn.register_forward_hook(
+            lambda m, args, kwargs, out, i=i: seen.update(
+                {i: (kwargs["hidden_states"], out[0])}
+            ),
+            with_kwargs=True,
+        )
+        for i, layer in enumerate(layers)
+    ]
+    with torch.no_grad():
+        out = model(torch.tensor([IDS]), output_hidden_states=True)
+    for h in hooks:
+        h.remove()
+    with torch.no_grad():
+        short = model(torch.tensor([SHORT])).logits[0, -1]
+    logits = out.logits[0]
+    top_ids, top_values = top(logits[-1])
+    short_ids, short_values = top(short)
+    n = len(out.hidden_states) - 1
+    return {
+        "argmax_per_position": logits.argmax(-1).tolist(),
+        "last_top_ids": top_ids,
+        "last_top_values": top_values,
+        "last_first_values": flat(logits[-1][:8]),
+        # The residual stream after every block, last position, first 8
+        # features. The last entry is after the final norm.
+        "hidden": {str(k): flat(out.hidden_states[k][0, -1, :8]) for k in range(1, n + 1)},
+        "attention": {
+            str(i): {
+                "kind": model.config.layer_types[i],
+                "input": flat(seen[i][0]),
+                "output": flat(seen[i][1]),
+            }
+            for i in range(len(layers))
+        },
+        "short_top_ids": short_ids,
+        "short_top_values": short_values,
+    }
+
+
+def rotary(model):
+    rot = model.model.rotary_emb
+    pos = torch.tensor([TABLE_POSITIONS])
+    cos, sin = rot(torch.zeros(1, dtype=torch.float32), pos)
+    return {
+        "inv_freq": flat(rot.inv_freq),
+        "attention_scaling": float(rot.attention_scaling),
+        "positions": TABLE_POSITIONS,
+        "cos": flat(cos),
+        "sin": flat(sin),
+    }
+
+
+def set_scales(model, weights, offset):
+    for i, layer in enumerate(model.model.layers):
+        with safe_open(weights, "pt") as f:
+            for param in ("gate_up_proj", "down_proj"):
+                prefix = f"model.layers.{i}.mlp.experts.{param}"
+                blocks, scales = f.get_tensor(prefix + "_blocks"), f.get_tensor(prefix + "_scales")
+                w = convert_moe_packed_tensors(blocks, scales + offset, dtype=torch.float32)
+                getattr(layer.mlp.experts, param).data = w
+
+
+def model_fixture(spec, weights, provenance):
+    model = AutoModelForCausalLM.from_pretrained(
+        spec["repo"], dtype=torch.float32, experts_implementation="eager", sliding_window=WINDOW
+    )
+    model = model.float().eval()
+    assert model.config._experts_implementation == "eager"
+    assert model.config._attn_implementation == "eager"
+    assert model.config.sliding_window == WINDOW
+    fixture = dict(provenance)
+    fixture.update(
+        {
+            "sliding_window": WINDOW,
+            "ids": IDS,
+            "short_ids": SHORT,
+            "rotary": rotary(model),
+            "sinks": {str(i): flat(l.self_attn.sinks) for i, l in enumerate(model.model.layers)},
+        }
+    )
+    if not spec["packed"]:
+        fixture["cases"] = {"0": record_model(model)}
+    else:
+        fixture["cases"] = {}
+        for offset in (0, SCALE_OFFSET):
+            set_scales(model, weights, offset)
+            fixture["cases"][str(offset)] = record_model(model)
+    return fixture
+
+
+def write(name, fixture):
+    path = os.path.join(here, "fixtures", name + ".json")
+    with open(path, "w") as f:
+        json.dump(fixture, f)
+        f.write("\n")
+    print("wrote", path, os.path.getsize(path), "bytes")
+
+
 here = os.path.dirname(os.path.abspath(__file__))
 for name, spec in MODELS.items():
     weights = hf_hub_download(spec["repo"], "model.safetensors")
@@ -154,7 +271,7 @@ for name, spec in MODELS.items():
     model = model.float().eval()
     assert model.config._experts_implementation == "eager"
     cfg = model.config
-    fixture = {
+    provenance = {
         "repo": spec["repo"],
         "weights_sha256": sha256(weights),
         "config_sha256": sha256(config),
@@ -165,6 +282,9 @@ for name, spec in MODELS.items():
             "safetensors": safetensors.__version__,
             "huggingface_hub": huggingface_hub.__version__,
         },
+    }
+    fixture = dict(provenance)
+    fixture.update({
         "config": {
             "hidden_size": cfg.hidden_size,
             "intermediate_size": cfg.intermediate_size,
@@ -177,7 +297,7 @@ for name, spec in MODELS.items():
         "short_ids": SHORT,
         "pad_id": PAD,
         "ties": ties(),
-    }
+    })
     if not spec["packed"]:
         fixture["cases"] = {"0": cases(model)}
     else:
@@ -199,8 +319,5 @@ for name, spec in MODELS.items():
                 sweep, torch.arange(253, dtype=torch.uint8).reshape(1, 23, 11)
             ),
         }
-    path = os.path.join(here, "fixtures", name + ".json")
-    with open(path, "w") as f:
-        json.dump(fixture, f)
-        f.write("\n")
-    print("wrote", path, os.path.getsize(path), "bytes")
+    write(name, fixture)
+    write(name + "-model", model_fixture(spec, weights, provenance))
