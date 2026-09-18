@@ -84,6 +84,7 @@ let handler ppf =
     | E_contiguous { t_in } ->
         Some (fun k -> obs k "contiguous" (contiguous t_in))
     | E_copy { t_in } -> Some (fun k -> obs k "copy" (copy t_in))
+    | E_to_device { t_in; _ } -> Some (fun k -> obs k "to_device" t_in)
     | E_reduce_sum { t_in; axes } ->
         Some (fun k -> obs k "reduce_sum" (reduce ~op:`Sum ~axes t_in))
     | E_reduce_max { t_in; axes } ->

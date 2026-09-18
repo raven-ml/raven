@@ -119,7 +119,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_buffer _ -> None
     | E_const_scalar _ -> None
     | E_from_host _ -> None
-    | E_to_device _ -> None
+    (* Placement is the identity under the map: a placed copy would lose its
+       batch axis. *)
+    | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
     (* Elementwise binary *)
     | E_add { a; b } when batched st a || batched st b ->
         Some (fun k -> elt2 k add a b)

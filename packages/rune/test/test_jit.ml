@@ -1178,6 +1178,101 @@ let delta f =
     s1.bytes_to_device - s0.bytes_to_device,
     s1.bytes_from_device - s0.bytes_from_device )
 
+(* Placement. [Rune.to_device] makes a value resident without a compiled call;
+   under RUNE_JIT_FORCE_COPY=1 the CPU device holds it in a buffer of its own. *)
+
+let resident () = (Rune.jit_stats ()).resident_bytes
+
+let test_place_equals_its_argument () =
+  with_force_copy (fun () ->
+      let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+      let base = resident () in
+      let p, up, down = delta (fun () -> Rune.to_device x) in
+      equal ~msg:"placing uploads the value once" int 24 up;
+      equal ~msg:"placing reads nothing back" int 0 down;
+      equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape p);
+      is_true ~msg:"dtype" (Nx.dtype p = f32);
+      equal ~msg:"the placed value is resident" int 24 (resident () - base);
+      let (), up, down =
+        delta (fun () -> check_arr ~msg:"value" (to_arr x) p)
+      in
+      equal ~msg:"the first read copies it back" int 24 down;
+      equal ~msg:"and uploads nothing" int 0 up;
+      equal ~msg:"an unbound value read is released" int 0 (resident () - base);
+      check_arr ~msg:"the argument is untouched" [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] x)
+
+let test_place_strided_and_offset () =
+  with_force_copy (fun () ->
+      let m = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+      let t = Nx.matrix_transpose m in
+      check_arr ~msg:"strided" (to_arr t) (Rune.to_device t);
+      let s = Nx.slice [ Nx.R (1, 2) ] m in
+      check_arr ~msg:"offset" [| 4.0; 5.0; 6.0 |] (Rune.to_device s))
+
+let test_place_feeds_inputs_without_transfer () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      ignore (g (vec32 [| 0.0; 0.0 |]));
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let y, up, down = delta (fun () -> g p) in
+      equal ~msg:"no upload" int 0 up;
+      equal ~msg:"no read-back" int 0 down;
+      check_arr ~msg:"result" [| 2.0; 4.0 |] y;
+      check_arr ~msg:"the input is still readable" [| 1.0; 2.0 |] p)
+
+let test_place_resident_value_is_returned () =
+  with_force_copy (fun () ->
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let q, up, _ = delta (fun () -> Rune.to_device p) in
+      is_true ~msg:"the same value" (p == q);
+      equal ~msg:"no upload" int 0 up;
+      let h = Rune.jit' (fun x -> Nx.mul_s x 2.0) p in
+      is_true ~msg:"an unread output too" (Rune.to_device h == h))
+
+let test_place_on_the_host_device () =
+  let x = vec32 [| 1.0; 2.0; 3.0 |] in
+  is_true ~msg:"a contiguous value keeps its storage"
+    (Nx.to_buffer (Rune.to_device ~device:"CPU" x) == Nx.to_buffer x);
+  let t =
+    Nx.matrix_transpose (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |])
+  in
+  let p = Rune.to_device ~device:"CPU" t in
+  is_true ~msg:"a strided value is made contiguous" (Nx.is_c_contiguous p);
+  check_arr ~msg:"value" [| 1.0; 3.0; 2.0; 4.0 |] p
+
+let test_place_is_the_identity_under_transformations () =
+  with_force_copy (fun () ->
+      let x = vec32 [| 1.0; -2.0; 0.5 |] in
+      let loss place x =
+        let x = place x in
+        Nx.sum (Nx.mul x (Nx.mul x x))
+      in
+      let plain = loss Fun.id and placed = loss (fun x -> Rune.to_device x) in
+      Gc.full_major ();
+      let base = resident () in
+      check_arr ~msg:"grad, eagerly"
+        (to_arr (Rune.grad' plain x))
+        (Rune.grad' placed x);
+      check_arr ~msg:"grad, compiled"
+        (to_arr (Rune.grad' plain x))
+        (Rune.jit' (Rune.grad' placed) x);
+      let tangent = vec32 [| 1.0; 1.0; 1.0 |] in
+      check_arr ~msg:"jvp"
+        (to_arr (snd (Rune.jvp' plain x tangent)))
+        (snd (Rune.jvp' placed x tangent));
+      let rows = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+      let double place x = Nx.mul_s (place x) 2.0 in
+      check_arr ~msg:"vmap"
+        (to_arr (Rune.vmap' (double Fun.id) rows))
+        (Rune.vmap' (double (fun x -> Rune.to_device x)) rows);
+      let (_ : Nx.float32_t), up, _ =
+        delta (fun () ->
+            Rune.jit' (fun x -> Nx.mul_s (Rune.to_device x) 2.0) x)
+      in
+      equal ~msg:"inside jit only the input is uploaded" int 12 up;
+      Gc.full_major ();
+      equal ~msg:"nothing was placed" int 0 (resident () - base))
+
 (* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
    these values are larger than that, with a last chunk shorter than the
    others. *)
@@ -1799,6 +1894,14 @@ let test_scatter_beside_a_reader_of_the_old_value () =
       check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
       check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v)
 
+let test_place_then_donate_consumes () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      ignore (g (vec32 [| 0.0; 0.0 |]));
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
+      raises_donated (fun () -> to_arr p))
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -1975,6 +2078,20 @@ let tests =
           test_offset_view_input_matches_eager;
         test "outputs have their own storage"
           test_outputs_have_their_own_storage;
+      ];
+    group "placement"
+      [
+        test "a placed value equals its argument" test_place_equals_its_argument;
+        test "strided and offset values" test_place_strided_and_offset;
+        test "a placed value feeds an input with no transfer"
+          test_place_feeds_inputs_without_transfer;
+        test "a resident value is returned as it is"
+          test_place_resident_value_is_returned;
+        test "on the host device" test_place_on_the_host_device;
+        test "the identity under grad, jvp, vmap and jit"
+          test_place_is_the_identity_under_transformations;
+        test "an unbound placed value is consumed by donation"
+          test_place_then_donate_consumes;
       ];
     group "chunked transfers"
       [

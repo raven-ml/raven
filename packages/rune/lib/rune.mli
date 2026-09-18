@@ -641,11 +641,52 @@ val pmap2 :
 (** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
     a structured output. *)
 
+val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [to_device x] is [x] with its bytes held by [device], which is resolved as
+    in {!val-jit}. Where a tensor lives is a run-time attribute: the result has
+    [x]'s type and equals [x] in shape, dtype and value. Use it to put a model's
+    weights on the device once, as they are imported, instead of once per
+    compiled function at its first call.
+
+    The bytes are copied 64 MiB at a time into one device buffer, and the result
+    is resident like an unread output of a compiled call (see {!val-jit}):
+    metadata reads are free, a compiled function on [device] that takes it as an
+    input leaf uses the buffer with no transfer, and [~donate:true] consumes it
+    when it is an input leaf. The first host read of its data copies it back and
+    releases the buffer, and every nx operation outside a compiled function is a
+    host read, views included. [x] is untouched and may be dropped. A value
+    already resident on [device] is returned as it is, and one resident on
+    another device goes through the host. The buffer is returned to the system
+    when the value is released, not kept for reuse.
+
+    {b Captures bind.} A compiled function that captures a resident value on
+    its own device, and is not a {!pmap}, uses that value's buffer as its
+    constant from its first compilation on: no bytes move, and every compiled
+    function that captures the value shares the one buffer. A value that is read
+    or donated before that first compilation is not bound: read, it is captured
+    as the host tensor it became; donated, it can no longer be used. Binding is
+    permanent. A bound value keeps its buffer for as long as it is reachable,
+    and a compiled function keeps the values it binds reachable. A host read of
+    a bound value copies it out, keeps the copy on the value as for any tensor
+    that was read, and leaves the buffer in place. Passed as an input leaf of a
+    [~donate:true] call, a bound value is used with no transfer and is not
+    consumed, and an output that returns it unchanged is a copy on the device.
+    [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A capture resident on
+    another device, and any resident capture of a {!pmap}, is read to the host
+    and uploaded, as a host capture is.
+
+    On the CPU device, which computes in host memory, the result is
+    [Nx.contiguous x]. Inside {!val-jit}, {!val-grad}, {!val-jvp} and
+    {!val-vmap}, [to_device x] is [x]: placing a value there would detach it
+    from the transformation. Differentiate inside {!val-jit} to use placed
+    weights without reading them back. *)
+
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
   resident_bytes : int;
-      (** Device bytes held by unread outputs that are still reachable. *)
+      (** Device bytes held by unread outputs and placed values that are still
+          reachable. *)
   reused_bytes : int;
       (** Cumulative bytes of donated inputs whose storage an output took
           instead of a fresh buffer. *)

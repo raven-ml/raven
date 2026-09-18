@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.to_device ?device x`, `x` with its bytes held by a device. The
+  result has `x`'s type and value and is resident like an unread output of a
+  compiled call: feeding it to a compiled function on that device moves no
+  bytes, `~donate:true` consumes it, and a host read brings it back. Its buffer
+  bypasses the allocator's cache. On the CPU device it is `Nx.contiguous x`,
+  and inside `jit`, `grad`, `jvp` and `vmap` it is `x`.
 - Copies between host and device move 64 MiB at a time. `Rune.jit` staged each
   upload and read-back in a host buffer the size of the tensor and kept one per
   distinct size for the life of the compiled function, 1.1 GB for a 1B

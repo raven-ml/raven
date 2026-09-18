@@ -128,7 +128,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_const_scalar _ -> None
       | E_from_host _ -> None
       | E_threefry _ -> None
-      | E_to_device _ -> None
+      (* Placement is the identity under differentiation: a placed copy would
+         be a fresh, untracked value. *)
+      | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
       | E_cmpne _ -> None

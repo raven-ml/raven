@@ -2354,12 +2354,12 @@ let make_handle : type a b.
     names:string list ->
     axis:int option ->
     ctx:Nx_effect.context ->
-    scratch:scratch ->
+    ?scratch:scratch ->
     (a, b) ND.t ->
     int array ->
     Tolk.Device.Buffer.t list ->
     (a, b) Nx_effect.t =
- fun ~devices ~names ~axis ~ctx ~scratch dtv shape bufs ->
+ fun ~devices ~names ~axis ~ctx ?scratch dtv shape bufs ->
   let nbytes =
     List.fold_left (fun a b -> a + Tolk.Device.Buffer.nbytes b) 0 bufs
   in
@@ -2384,6 +2384,11 @@ let make_handle : type a b.
       | bufs -> bufs
     in
     List.iter Tolk.Device.synchronize entry.r_devices;
+    (* A handle no compiled function made stages its one read in bytes that die
+       with the read. *)
+    let scratch =
+      match scratch with Some sc -> sc | None -> Hashtbl.create 1
+    in
     let host =
       match (axis, bufs) with
       (* Single or replicated: the first device holds the whole value. *)
@@ -2456,6 +2461,60 @@ let make_handle : type a b.
       if entry.r_bufs <> [] then pending_release := entry :: !pending_release)
     handle;
   handle
+
+(* Placement
+
+   [to_device] copies a tensor into one device buffer that no compiled function
+   owns and hands it back as a resident handle, exactly like an unread output
+   of a compiled call. The buffer bypasses the allocator's cache: a dropped
+   model is returned to the system, not parked in a pool keyed by its sizes. *)
+
+let resident_of x =
+  match Nx_effect.deferred_id x with
+  | None -> None
+  | Some id -> Hashtbl.find_opt resident id
+
+let place (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
+  let device = match device with Some d -> d | None -> F.Run.device_name () in
+  if is_cpu device && not (force_copy ()) then Nx_effect.contiguous x
+  else
+    let dev = get_device device in
+    match resident_of x with
+    | Some { r_bufs = [ _ ]; r_axis = None; r_device; _ } when r_device == dev
+      ->
+        x
+    | _ ->
+        let shape = shape_of x in
+        let n = numel shape in
+        if n = 0 then x
+        else begin
+          drain_releases ();
+          let dt = Nx_effect.dtype x in
+          let buf =
+            Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype dt)
+              ~spec:{ Tolk.Device.Buffer_spec.default with nolru = true }
+              dev
+          in
+          (try Tolk.Device.Buffer.ensure_allocated buf
+           with _ ->
+             Gc.major ();
+             drain_releases ();
+             Tolk.Device.Buffer.ensure_allocated buf);
+          (* A value resident elsewhere is read to the host by this copy. *)
+          copyin_tensor (Hashtbl.create 1) dev buf x;
+          make_handle ~devices:[ dev ]
+            ~names:[ Tolk.Device.name dev ]
+            ~axis:None ~ctx:(Nx_effect.context x) dt shape [ buf ]
+        end
+
+(* Inside a transformation placement is the identity: every rune handler
+   continues the effect with its argument, so only a call no handler answers
+   places. *)
+let to_device ?device x =
+  try
+    Effect.perform
+      (Nx_effect.E_to_device { context = Nx_effect.context x; t_in = x })
+  with Effect.Unhandled _ -> place ?device x
 
 (* Compiled traces *)
 
@@ -3124,11 +3183,6 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
      leaf is contiguous, and copy its bytes if not. Seeded leaves and wrapped
      hosts are kept reachable until the run completes, so no finalizer can
      release a buffer the kernels still read. *)
-  let resident_of leaf =
-    match Nx_effect.deferred_id leaf with
-    | None -> None
-    | Some id -> Hashtbl.find_opt resident id
-  in
   (* A resident handle seeds the compiled input only when its placement matches
      the input's: the same single device, or the same device tuple with the same
      shard axis. Any other handle is forced by the copy path (reading it
