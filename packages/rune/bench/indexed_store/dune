@@ -1,0 +1,5 @@
+(executable
+ (name bench_indexed_store)
+ (libraries nx rune unix))
+
+; Not attached to any alias: build it and run the exe, with DEV set.

@@ -41,10 +41,15 @@ nx follow-ups:
 decode contract follow-ups (rfc 0002):
 - brot: load llama 3's tokenizer (cl100k-family split regex, one negative
   lookahead); then the llama example takes text
-- tolk/rune: indexed store + scatter-add over indices, not the destination
-  (decode write costs the pool; gather/embedding grads under jit; lets models
-  drop their second `hidden` fold); fix reduce-split-before-collapse at
-  >= 32768 rows in the same pass
+- the indexed store and the scatter-add over indices landed
+  (`Op.scatter_indexed`, `packages/rune/bench/indexed_store`); what it leaves:
+  kaun's cache write still goes through the inverse map and does not use it
+  yet; models can drop their second `hidden` fold; the cpu zero-copy path
+  reuses no storage, so a cpu step still copies a written pool once per leaf;
+  sharded traces keep the one-hot scatter until the custom kernel is exercised
+  under multi; a chain of writes into one input copies once per write;
+  propose the `split_reduceop` one-hot guard upstream with a 65536-row
+  `test_index` case
 - `Rune.remat` is an identity under jit: when a training run needs the memory
 - `Nx.top_k` by partial selection: when sampling batches hundreds of rows
 - `Span.t` `col` field (sliding window, tree speculation), packed sequences
