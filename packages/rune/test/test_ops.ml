@@ -226,6 +226,25 @@ let matmul_tests =
         check_grad2 ~msg:"matmul 2x3d" Nx.matmul (a2 ()) (b3t ()));
     test "batched x 2d" (fun () ->
         check_grad2 ~msg:"matmul 3x2d" Nx.matmul (a3 ()) (b2 ()));
+    test "a batch axis of extent one broadcasts" (fun () ->
+        (* Grouped-query attention: several query groups against one key. *)
+        let ramp shape =
+          let n = Array.fold_left ( * ) 1 shape in
+          Nx.create f64 shape
+            (Array.init n (fun i -> Float.sin (float_of_int (i + 1))))
+        in
+        check_grad2 ~msg:"right operand broadcasts" Nx.matmul
+          (ramp [| 2; 3; 2; 3 |])
+          (ramp [| 2; 1; 3; 2 |]);
+        check_grad2 ~msg:"left operand broadcasts" Nx.matmul
+          (ramp [| 1; 2; 3 |])
+          (ramp [| 2; 3; 2 |]);
+        check_grad2 ~msg:"both broadcast, on different axes" Nx.matmul
+          (ramp [| 2; 1; 3; 4 |])
+          (ramp [| 1; 3; 4; 2 |]);
+        check_grad2 ~msg:"batched operands of different rank" Nx.matmul
+          (ramp [| 2; 3; 2; 3 |])
+          (ramp [| 3; 3; 2 |]));
   ]
 
 (* Linear algebra. Inputs are conditioned so the operations are smooth: cholesky

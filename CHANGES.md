@@ -102,6 +102,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.grad` through `Nx.matmul` now sums the cotangent of an operand over
+  its batch axes of extent one that broadcast against the other operand. The
+  gradient used to come back at the broadcast shape and a later pullback
+  raised on the element count, so grouped-query attention (several query
+  groups against one key head) could not be differentiated.
 - `Rune.jit`'s compile cache now keys on every setting that changes a compiled
   trace: tolk's program configuration (`NOLOCALS`, `TC`, `IMAGE`,
   `TRANSCENDENTAL`, ...) and the scheduling variables (`SPLIT_REDUCEOP`,

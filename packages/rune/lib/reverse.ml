@@ -809,7 +809,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                               if batch_dims = [] then g_bt
                               else T.sum g_bt ~axes:batch_dims ~keepdims:false
                             else if a_ndim >= 3 && b_ndim >= 3 then
-                              T.matmul g (transpose_last2 b)
+                              (* [a]'s batch axes of extent one broadcast
+                                 against [b]'s: their cotangent is the sum. *)
+                              unbroadcast
+                                (T.matmul g (transpose_last2 b))
+                                a_shape
                             else T.matmul g (T.transpose b)
                           in
                           Tape.accumulate tape a grad_a
@@ -838,7 +842,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                               in
                               T.matmul a_t_expanded g
                             else if a_ndim >= 3 && b_ndim >= 3 then
-                              T.matmul (transpose_last2 a) g
+                              unbroadcast
+                                (T.matmul (transpose_last2 a) g)
+                                b_shape
                             else T.matmul (T.transpose a) g
                           in
                           Tape.accumulate tape b grad_b
