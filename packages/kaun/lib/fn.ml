@@ -82,16 +82,16 @@ let keep_from ~threshold logits =
    vocabulary. *)
 let sorted_desc logits = fst (Nx.sort ~descending:true ~axis:(-1) logits)
 
-let top_k ~k logits =
-  let lead, vocab = last_axis ~fn:"top_k" logits in
-  let k = column ~fn:"top_k" ~lead k in
+let keep_top_k ~k logits =
+  let lead, vocab = last_axis ~fn:"keep_top_k" logits in
+  let k = column ~fn:"keep_top_k" ~lead k in
   let at = Nx.clamp ~min:0l ~max:(Int32.of_int (vocab - 1)) (Nx.sub_s k 1l) in
   let sorted = sorted_desc logits in
   keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits
 
-let top_p ~p logits =
-  let lead, vocab = last_axis ~fn:"top_p" logits in
-  let p = column ~fn:"top_p" ~lead p in
+let keep_top_p ~p logits =
+  let lead, vocab = last_axis ~fn:"keep_top_p" logits in
+  let p = column ~fn:"keep_top_p" ~lead p in
   let sorted = sorted_desc logits in
   let probs = Nx.softmax ~axes:[ -1 ] sorted in
   (* The mass strictly before each entry: an entry stays while that mass is

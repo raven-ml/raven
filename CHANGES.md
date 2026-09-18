@@ -1614,6 +1614,10 @@ thread.
 
 ### Kaun
 
+- **Breaking**: the sampling masks `Fn.top_k` and `Fn.top_p` are now
+  `Fn.keep_top_k` and `Fn.keep_top_p`. They return the logits with everything
+  outside the kept set at negative infinity, where `Nx.top_k` returns the `k`
+  greatest entries: one name, one meaning.
 - Add `Cache_index.pool ~slots dtype shape`, an empty pool of `slots` slots of
   shape `shape`: the one place that knows the scratch row. A layer with its
   own cache record builds its leaves with it, as `Attention.Cache.make` does.
@@ -1670,9 +1674,9 @@ thread.
   byte-identical to Meta's, with sampled generation through key-value caches
   and a `validate` program that checks the import against the reference
   implementation's float32 logits, block by block.
-- `Kaun.Fn.top_k` and `Kaun.Fn.top_p` mask next-token logits for sampling:
-  entries outside the kept set become negative infinity and the shape is
-  unchanged, so they compose with a temperature division and
+- `Kaun.Fn.keep_top_k` and `Kaun.Fn.keep_top_p` mask next-token logits for
+  sampling: entries outside the kept set become negative infinity and the
+  shape is unchanged, so they compose with a temperature division and
   `Nx.Rng.categorical` in any order and compile. `k` and `p` are tensors, a
   scalar or one entry per row, so a batch can mix requests.
 - `Loss.softmax_cross_entropy` and `softmax_cross_entropy_sparse` compute

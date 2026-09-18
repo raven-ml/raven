@@ -77,8 +77,8 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
       if greedy then Nx.argmax ~axis:1 logits
       else
         Nx.Rng.categorical keys.(1)
-          (Fn.top_p ~p:s.p
-             (Fn.top_k ~k:s.k
+          (Fn.keep_top_p ~p:s.p
+             (Fn.keep_top_k ~k:s.k
                 (Nx.div logits (Nx.reshape [| 1; 1 |] s.temperature))))
     in
     {

@@ -107,7 +107,7 @@ let step ({ Step.tokens; index; key; temperature; k; p; cache } as s) =
   let h, cache = Llama.cached cfg params cache index tokens in
   let logits = Nx.cast Nx.float32 (Llama.logits cfg params (Nx.slice [ A; I (-1) ] h)) in
   let ks = Nx.Rng.split key in
-  let next = Nx.Rng.categorical ks.(1) Nx.(Fn.top_p ~p (Fn.top_k ~k (div logits temperature))) in
+  let next = Nx.Rng.categorical ks.(1) Nx.(Fn.keep_top_p ~p (Fn.keep_top_k ~k (div logits temperature))) in
   { s with tokens = Nx.reshape [| batch; 1 |] next; index = Cache_index.advance index; key = ks.(0); cache }
 
 let step = Rune.jit2 ~donate:true (module Step) (module Step) step
@@ -350,10 +350,10 @@ first four and builds every index of a bucket the same way.
   ~low_freq_factor ~high_freq_factor ~original_context` build one. `apply t
   ~pos x` rotates `[batch; heads; seq; head_dim]` at float32, feature `i`
   paired with `i + head_dim / 2`.
-- `Fn.top_k ~k` and `Fn.top_p ~p` replace entries outside the kept set with
+- `Fn.keep_top_k ~k` and `Fn.keep_top_p ~p` replace entries outside the kept set with
   negative infinity. `k` is an int32 tensor and `p` a float tensor, because a
   captured number is frozen at the first trace. Both threshold on `Nx.sort`'s
-  values, take float32 logits and keep ties, and `top_p` always keeps the most
+  values, take float32 logits and keep ties, and `keep_top_p` always keeps the most
   probable token.
 - `Loss.softmax_cross_entropy_sparse` computes its log-sum-exp at float32.
 - SwiGLU is three `Linear`s and `Fn.silu`.

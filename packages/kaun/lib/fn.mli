@@ -72,10 +72,10 @@ val log_softmax : ?axis:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** {1:sampling Sampling masks}
 
     A sampling policy is a pipeline over next-token logits: divide by a
-    temperature ({!Nx.div}), mask with {!top_k} and {!top_p}, and draw with
-    {!Nx.Rng.categorical}, or take {!Nx.argmax} for greedy decoding. The masks
-    set the entries they remove to negative infinity and keep the shape, so they
-    compose in any order and trace under {!Rune.jit}.
+    temperature ({!Nx.div}), mask with {!keep_top_k} and {!keep_top_p}, and draw
+    with {!Nx.Rng.categorical}, or take {!Nx.argmax} for greedy decoding. The
+    masks set the entries they remove to negative infinity and keep the shape,
+    so they compose in any order and trace under {!Rune.jit}.
 
     Their parameters are tensors, a scalar or one entry per row, so a batch can
     mix requests with different settings. Under {!Rune.jit} pass them as inputs
@@ -83,25 +83,26 @@ val log_softmax : ?axis:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     the compiled program.
 
     Pass float32 logits. Casting the selected position's logits up costs nothing
-    and keeps the cumulative sum of {!top_p} and the noise of the draw out of
-    half precision, where neither has the resolution a vocabulary needs. *)
+    and keeps the cumulative sum of {!keep_top_p} and the noise of the draw out
+    of half precision, where neither has the resolution a vocabulary needs. *)
 
-val top_k : k:(int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
-(** [top_k ~k logits] is [logits] with every entry below the [k]-th largest of
-    its row set to negative infinity; the last axis is the vocabulary. Entries
-    equal to the [k]-th largest are all kept, so ties can leave more than [k].
-    [k] is clamped to the vocabulary: [k <= 1] keeps the maximum, [k >= vocab]
-    keeps everything.
+val keep_top_k :
+  k:(int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [keep_top_k ~k logits] is [logits] with every entry below the [k]-th largest
+    of its row set to negative infinity; the last axis is the vocabulary.
+    Entries equal to the [k]-th largest are all kept, so ties can leave more
+    than [k]. [k] is clamped to the vocabulary: [k <= 1] keeps the maximum,
+    [k >= vocab] keeps everything.
 
     Raises [Invalid_argument] if [logits] is a scalar or [k] is neither a scalar
     nor of [logits]'s leading shape. *)
 
-val top_p : p:(float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
-(** [top_p ~p logits] is [logits] with the least likely entries of each row set
-    to negative infinity, keeping the fewest entries whose softmax probabilities
-    sum to at least [p] (nucleus sampling). The most likely entry always stays,
-    so [p <= 0] is greedy; [p >= 1] keeps everything. Ties at the threshold are
-    kept.
+val keep_top_p : p:(float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [keep_top_p ~p logits] is [logits] with the least likely entries of each row
+    set to negative infinity, keeping the fewest entries whose softmax
+    probabilities sum to at least [p] (nucleus sampling). The most likely entry
+    always stays, so [p <= 0] is greedy; [p >= 1] keeps everything. Ties at the
+    threshold are kept.
 
     Raises [Invalid_argument] if [logits] is a scalar or [p] is neither a scalar
     nor of [logits]'s leading shape. *)
