@@ -402,8 +402,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_reshape { t_in; new_shape } ->
           Some
             (fun k ->
+              (* A cotangent can be a lazy view (a transpose, a broadcast),
+                 which a reshape may not take as it is. *)
               pull1 k (reshape t_in new_shape) t_in (fun g ->
-                  T.reshape (T.shape t_in) g))
+                  T.reshape (T.shape t_in) (T.contiguous g)))
       | E_permute { t_in; axes } ->
           Some
             (fun k ->

@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Reverse mode no longer copies every cotangent. A cotangent is held as the
+  lazy view its pull produced (a transpose, a broadcast) and materialized where
+  a reshape needs it and where a gradient leaves `Rune.grad`. Compiled
+  gradients run far fewer kernels, 95 against 210 for a two-block decoder, and
+  transposes that cancel are free in the backward pass as they were in the
+  forward one.
 - `Nx.set` with a run-time window start (`Nx.D`) under `Rune.jit` costs the
   window instead of the destination: it compiles to a store at the window's
   flat positions, in place on a donated tensor. A one-row write into a

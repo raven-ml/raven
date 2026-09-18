@@ -70,7 +70,6 @@ let test_grad_requires_scalar () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.grad' (fun x -> Nx.mul x x) (vec32 [| 1.0; 2.0 |])))
 
-
 (* Statefulness *)
 
 let test_reads_are_transparent_to_grad () =
@@ -135,6 +134,53 @@ let test_with_debug_logs_and_preserves () =
   is_true ~msg:"logs mul" (contains "mul ->");
   is_true ~msg:"logs reduce_sum" (contains "reduce_sum ->")
 
+(* The backward pass holds cotangents as the lazy views its pulls produce and
+   materializes where a reshape needs it and where a gradient leaves the tape. A
+   pair of transposes that cancel must then cost the gradient four permutes and
+   nothing else: no copy, so nothing a compiler has to run. The graph is the one
+   a grouped attention layer differentiates. *)
+let test_lazy_cotangents () =
+  let q = Nx.ones Nx.float32 [| 2; 2; 2; 3; 4 |] in
+  let attention_like k =
+    let scores = Nx.matmul q (Nx.swapaxes 3 4 (Nx.unsqueeze ~axes:[ 2 ] k)) in
+    Nx.sum (Nx.mul scores scores)
+  in
+  let heads x = Nx.swapaxes 1 2 (Nx.reshape [| 2; 3; 2; 4 |] x) in
+  let pair t = Nx.swapaxes 1 2 (Nx.swapaxes 1 2 t) in
+  let x =
+    Nx.create Nx.float32 [| 2; 3; 8 |]
+      (Array.init 48 (fun i -> float_of_int (i mod 7)))
+  in
+  let ops f =
+    let buf = Buffer.create 256 in
+    let ppf = Format.formatter_of_buffer buf in
+    let g = Rune.with_debug ~ppf (fun () -> Rune.grad' f x) in
+    Format.pp_print_flush ppf ();
+    let names =
+      List.filter_map
+        (fun line ->
+          match String.index_opt line ' ' with
+          | Some i -> Some (String.sub line 0 i)
+          | None -> None)
+        (String.split_on_char '\n' (Buffer.contents buf))
+    in
+    (g, List.sort compare names)
+  in
+  let g, plain = ops (fun x -> attention_like (heads x)) in
+  let g', paired = ops (fun x -> attention_like (pair (heads x))) in
+  check_arr ~msg:"same gradient"
+    (Nx.to_array (Nx.reshape [| 48 |] g))
+    (Nx.reshape [| 48 |] g');
+  let without name = List.filter (fun n -> n <> name) in
+  equal ~msg:"the pair adds permutes only" (list string)
+    (without "permute" plain) (without "permute" paired);
+  let count name l = List.length (List.filter (fun n -> n = name) l) in
+  equal ~msg:"two forward, two backward" int
+    (count "permute" plain + 4)
+    (count "permute" paired);
+  equal ~msg:"copies: the two reshape pulls and the gradient leaving" int 3
+    (count "contiguous" paired)
+
 let tests =
   [
     group "higher order"
@@ -161,6 +207,11 @@ let tests =
         test "value reads are transparent" test_reads_are_transparent_to_grad;
       ];
     group "regressions" test_engine_fixes;
+    group "backward pass"
+      [
+        test "cotangents stay lazy views until a reshape or the result"
+          test_lazy_cotangents;
+      ];
     group "debugging"
       [
         test "with_debug logs ops and preserves results"
