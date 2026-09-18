@@ -102,10 +102,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
-- `Rune.jit`'s compile cache now keys on the scheduling environment knobs
-  (`SPLIT_REDUCEOP`, `REDUCEOP_SPLIT_THRESHOLD`, `PCONTIG`, `RING`, and the
-  other rangeify and allreduce variables). Changing one after a first compile
-  kept serving the schedule built under the old value.
+- `Rune.jit`'s compile cache now keys on every setting that changes a compiled
+  trace: tolk's program configuration (`NOLOCALS`, `TC`, `IMAGE`,
+  `TRANSCENDENTAL`, ...) and the scheduling variables (`SPLIT_REDUCEOP`,
+  `REDUCEOP_SPLIT_THRESHOLD`, `PCONTIG`, `RING`, ...). Changing one after a
+  first compile kept serving the entry built under the old value.
 - `Rune.jit` no longer lets a fresh output share a buffer with an input the
   program does not read: the two buffer-slot counters (rune's and tolk's)
   could hand out the same slot, so a resident input fed to a later call had

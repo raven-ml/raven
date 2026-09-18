@@ -8,8 +8,8 @@
    A compiled trace is a deterministic function of the traced computation — the
    PARAM-normalized CALL body produced by [Callify.transform_to_call] — and of
    the compilation environment: this executable (scheduling and codegen live in
-   the binary), the device and its kernel compiler, and the codegen knobs that
-   change lowering output. [key] digests exactly those; [store] saves the
+   the binary), the device and its kernel compiler, and the settings that change
+   scheduling or lowering output. [key] digests exactly those; [store] saves the
    compiled LINEAR (kernels scheduled, lowered, and compiled to binaries)
    normalized back onto dense PARAM slots; [load] imports it and rebinds it to
    the fresh trace's buffer nodes. A warm process thus skips scheduling,
@@ -110,32 +110,32 @@ let key ~device ~beam call =
               ^ Option.value ~default:"" (Tolk.Compiler.cachekey c)
           | None -> ""
         in
-        (* Exactly the knobs that change the stored linear for a fixed binary:
-           the optimization toggles read by [Tolk.Codegen], the rangeify and
-           allreduce context vars that shape the schedule itself, and [beam],
-           the effective beam width (per-call override or the BEAM env var). A
-           knob missing here silently keeps serving the schedule compiled under
-           the old value. *)
+        (* What decides the stored linear for a fixed binary and trace: the
+           program configuration each kernel compiles under, the variables that
+           shape the schedule, and the beam search settings, with [beam] the
+           effective width (per-call override or the BEAM env var). A setting
+           missing here keeps serving the entry compiled under its old value. *)
         let knobs =
-          let env name default =
-            Printf.sprintf "%s=%d" name (env_int name default)
+          let module H = Tolk.Helpers in
+          let var v =
+            Printf.sprintf "%s=%d" (H.Context_var.key v) (H.Context_var.get v)
           in
           String.concat ","
             [
-              env "NOOPT" 0;
+              Tolk.Realize.program_config ();
               Printf.sprintf "BEAM=%d" beam;
-              env "BEAM_ESTIMATE" 1;
-              env "OPENPILOT_HACKS" 0;
-              env "FLOAT16" 0;
-              env "SPLIT_REDUCEOP" 1;
-              env "REDUCEOP_SPLIT_THRESHOLD" 32768;
-              env "REDUCEOP_SPLIT_SIZE" 22;
-              env "MAX_KERNEL_BUFFERS" 0;
-              env "PCONTIG" 0;
-              env "RING" 1;
-              env "ALL2ALL" 0;
-              env "RING_ALLREDUCE_THRESHOLD" 256_000;
-              env "ALLREDUCE_CAST" 1;
+              Printf.sprintf "BEAM_ESTIMATE=%d" (env_int "BEAM_ESTIMATE" 1);
+              var H.openpilot_hacks;
+              var H.float16;
+              var H.split_reduceop;
+              var H.reduceop_split_threshold;
+              var H.reduceop_split_size;
+              var H.max_kernel_buffers;
+              var H.pcontig;
+              var H.ring;
+              var H.all2all;
+              var H.ring_allreduce_threshold;
+              var H.allreduce_cast;
             ]
         in
         Some
