@@ -366,12 +366,12 @@ let deferred (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
       d_forced = None;
     }
 
-(* [None] once forced: the handle is then a plain host tensor and its creator's
-   side state (for example a resident device buffer) is gone. *)
+(* The id outlives a read: forcing memoizes the host tensor on the handle, and
+   whether the creator's side state (for example a resident device buffer)
+   survives the read is the creator's to say. *)
 let deferred_id : type a b. (a, b) t -> int option = function
   | T _ -> None
-  | Deferred d -> (
-      match d.d_forced with Some _ -> None | None -> Some d.d_id)
+  | Deferred d -> Some d.d_id
 
 (* Lenses. Metadata reads on a deferred tensor answer from its record without
    running the fill thunk. The [E_view] effect is still performed first: a

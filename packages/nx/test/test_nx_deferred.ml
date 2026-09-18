@@ -37,12 +37,13 @@ let test_metadata_never_fills () =
 
 let test_item_fills_once () =
   let t, fills = make_deferred values in
+  let id = Nx_effect.deferred_id t in
   equal ~msg:"item [1;2]" float_exact 6.0 (Nx.item [ 1; 2 ] t);
   equal ~msg:"first data access fills" int 1 !fills;
   equal ~msg:"item [0;0]" float_exact 1.0 (Nx.item [ 0; 0 ] t);
   equal ~msg:"the fill is memoized" int 1 !fills;
-  equal ~msg:"forced handle has no id" (option int) None
-    (Nx_effect.deferred_id t)
+  is_true ~msg:"a forced handle keeps its id"
+    (id <> None && Nx_effect.deferred_id t = id)
 
 let test_to_array_fills_once () =
   let t, fills = make_deferred values in

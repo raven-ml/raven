@@ -36,7 +36,10 @@ for dtype in "" float32; do
     [ -n "$device" ] && args="$args --device $device"
     out=$(mktemp)
     # shellcheck disable=SC2086
-    mem=$(peak "$out" "$exe" "$@" $args)
+    mem=$(peak "$out" "$exe" "$@" $args) || {
+      cat "$log" >&2
+      exit 1
+    }
     echo "| ${dtype:-as stored} | ${device:-none} | $(cat "$out") | $mem |"
     rm -f "$out"
   done
