@@ -53,7 +53,7 @@ let test_cast_dtypes () =
     (Batch_norm.Stats.map (Nx.cast f16) stats).mean;
   let conv = Conv.init ~in_channels:1 ~out_channels:2 ~kernel_size:(2, 2) in
   dtype_is ~msg:"conv w" f16 (Conv.map (Nx.cast f16) conv).Conv.w;
-  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:3 Nx.float32 in
+  let cache = Attention.Cache.make ~slots:3 ~kv_heads:2 ~head_dim:2 Nx.float32 in
   dtype_is ~msg:"cache keys" f16 (Attention.Cache.map (Nx.cast f16) cache).keys
 
 let test_cast_round_trip () =
@@ -146,12 +146,64 @@ let test_attention_apply_half () =
     }
   in
   let x = mat f32 3 dim (grid 12) in
-  let expected = Attention.apply ~num_heads:2 ~causal:true p x in
+  let mask = Attention.causal_mask ~seq:3 () in
+  let expected = Attention.apply ~head_dim:2 ~mask p x in
   let actual =
-    Attention.apply ~num_heads:2 ~causal:true (Attention.map (Nx.cast f16) p)
+    Attention.apply ~head_dim:2 ~mask
+      (Attention.map (Nx.cast f16) p)
       (Nx.cast f16 x)
   in
   close ~msg:"multi-head causal at float16" ~tol:0.01 expected actual
+
+let test_rms_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
+  ignore name;
+  (* Large entries: their squares overflow float16 and starve bfloat16, so the
+     mean square must be taken at float32. *)
+  let x = mat f32 2 4 [| 300.0; -200.0; 100.0; 250.0; 0.5; -0.25; 1.0; 0.75 |] in
+  let p = { Rms_norm.gamma = vec f32 [| 1.0; 2.0; 0.5; 1.0 |] } in
+  let xh = Nx.cast dt x in
+  let expected = Rms_norm.apply p (Nx.cast f32 xh) in
+  let actual = Rms_norm.apply (Rms_norm.map (Nx.cast dt) p) xh in
+  is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
+  close ~tol expected actual
+
+(* Cached attention with grouped keys and rotary positions at half precision:
+   the float32 path is the reference, and a prompt fed in chunks still agrees
+   with the prompt fed whole, to the dtype's resolution. *)
+let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
+    =
+  ignore name;
+  Nx.Rng.with_key (Nx.Rng.key 50) @@ fun () ->
+  let head_dim = 2 in
+  let rope = Rope.make ~head_dim () in
+  let p32 = Attention.make ~bias:false ~kv_dim:4 ~embed_dim:8 f32 in
+  let x32 = Nx.mul_s (Nx.randn f32 [| 1; 6; 8 |]) 0.5 in
+  let slots = Nx.create Nx.int32 [| 1; 6 |] (Array.init 6 Int32.of_int) in
+  let run (type c) (dt : (float, c) Nx.dtype) chunks =
+    let p = Attention.map (Nx.cast dt) p32 and x = Nx.cast dt x32 in
+    let _, ys, _ =
+      List.fold_left
+        (fun (at, ys, c) n ->
+          let pos =
+            Nx.create Nx.int32 [| 1; n |]
+              (Array.init n (fun i -> Int32.of_int (at + i)))
+          in
+          let y, c =
+            Attention.cached ~head_dim ~rope p c
+              (Attention.route ~slots:6 (Attention.Span.make ~pos ~slots))
+              (Nx.slice [ A; R (at, at + n) ] x)
+          in
+          (at + n, y :: ys, c))
+        (0, [], Attention.Cache.make ~slots:6 ~kv_heads:2 ~head_dim dt)
+        chunks
+    in
+    Nx.cast f32 (Nx.concatenate ~axis:1 (List.rev ys))
+  in
+  let reference = run f32 [ 6 ] in
+  let whole = run dt [ 6 ] and chunked = run dt [ 2; 1; 3 ] in
+  is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite whole)));
+  close ~msg:"agrees with float32" ~tol reference whole;
+  close ~msg:"chunking is invariant" ~tol whole chunked
 
 let test_batch_norm_island () =
   let x =
@@ -343,6 +395,12 @@ let tests =
           (test_layer_norm_island "float16" f16 ~tol:0.02);
         test "layer norm bfloat16"
           (test_layer_norm_island "bfloat16" bf16 ~tol:0.1);
+        test "rms norm float16" (test_rms_norm_island "float16" f16 ~tol:0.02);
+        test "rms norm bfloat16" (test_rms_norm_island "bfloat16" bf16 ~tol:0.1);
+        test "cached attention float16"
+          (test_cached_attention_half "float16" f16 ~tol:0.01);
+        test "cached attention bfloat16"
+          (test_cached_attention_half "bfloat16" bf16 ~tol:0.05);
         test "attention scores float16"
           (test_attention_score_island "float16" f16 ~tol:0.01);
         test "attention scores bfloat16"

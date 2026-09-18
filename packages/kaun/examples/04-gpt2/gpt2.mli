@@ -5,11 +5,11 @@
 
 (** GPT-2 (Radford et al., 2019) from kaun layers.
 
-    The model is a plain record of {!Kaun} layers; {!logits} is its forward pass
-    and {!Params} its checkpoint plumbing. {!of_hf} adapts the HuggingFace
-    checkpoint — [h.{i}.attn.c_attn] fused qkv projections, [Conv1D] naming —
-    onto {!Params}' names, and {!from_pretrained} runs the whole pipeline:
-    download, adapt, extract typed parameters. *)
+    The model is a plain record of {!Kaun} layers; {!hidden}, {!cached} and
+    {!logits} are its forward passes and {!Params} its checkpoint plumbing.
+    {!of_hf} adapts the HuggingFace checkpoint — [h.{i}.attn.c_attn] fused qkv
+    projections, [Conv1D] naming — onto {!Params}' names, and {!from_pretrained}
+    runs the whole pipeline: download, adapt, extract typed parameters. *)
 
 type config = {
   vocab_size : int;
@@ -58,15 +58,25 @@ val make : config -> t
 (** [make cfg] is a zero-initialized model, the [~like] template for
     {!Kaun.Checkpoint.to_params}. *)
 
-val logits :
+(** {1:forward Forward passes}
+
+    One model, three functions: {!hidden} is the residual stream of whole
+    sequences, {!cached} the same for tokens that attend through key-value
+    caches, and {!logits} the head applied to either. [hidden cfg p ids] equals
+    [fst (cached cfg p caches span ids)] over empty caches and
+    [Attention.Span.rows] (up to floating-point reassociation); it is
+    implemented as a second fold over the same block body so that training never
+    writes or reads a cache. *)
+
+val hidden :
   config ->
   ?dropout:float * Nx.Rng.key ->
   (float, 'b) Nx.t params ->
   (int32, Nx.int32_elt) Nx.t ->
   (float, 'b) Nx.t
-(** [logits cfg ?dropout p ids] is the next-token logits for the
-    [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; vocab_size |]],
-    at the parameters' dtype. The LM head is tied to [p.wte].
+(** [hidden cfg ?dropout p ids] is the residual stream after the last block for
+    the [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; n_embd |]],
+    at the parameters' dtype. Every token attends to the tokens before it.
 
     [?dropout:(rate, key)] enables training-time dropout at the canonical GPT-2
     sites — the embedding sum and each block's post-attention and post-MLP
@@ -79,49 +89,39 @@ val logits :
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
 
-type 'a cache = 'a Kaun.Attention.Cache.t list
-(** The type for decoding state over payload ['a]: one key-value cache per
-    block, in block order. *)
+module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
+(** Decoding state: one key-value cache per block, in block order. *)
 
-val cache : config -> len:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t cache
-(** [cache cfg ~len dtype] is an empty decoding state whose caches hold [len]
-    positions: the total sequence length (prompt plus generated tokens) must not
-    exceed [len]. [dtype] is the parameters' dtype. *)
+val cache :
+  config -> slots:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t Cache.t
+(** [cache cfg ~slots dtype] is an empty decoding state whose caches hold
+    [slots] slots each. [Attention.Span.rows ~context lens] needs
+    [Array.length lens * context] of them. [dtype] is the parameters' dtype. *)
 
-val logits_cached :
+val cached :
   config ->
   (float, 'b) Nx.t params ->
-  pos:(int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t cache ->
+  (float, 'b) Nx.t Cache.t ->
+  Kaun.Attention.Span.t ->
   (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t cache
-(** [logits_cached cfg p ~pos caches ids] is the next-token logits at the last
-    position of [ids] — shape [[| batch; vocab_size |]] — and the updated
-    caches, where [ids] holds the positions [pos] to [pos + seq - 1] of the
-    sequence and [pos] is a one-element int32 tensor. A whole-prompt call at
-    [pos = 0] prefills the caches; a single-token call advances decoding by one
-    step. Since [pos] is a tensor, both trace under {!Rune.jit} — one compiled
-    single-token step serves the whole decode loop.
+  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
+(** [cached cfg p caches span ids] is the residual stream of the tokens [ids] —
+    shape [[| batch; seq; n_embd |]] — which sit where [span] says and attend
+    through [caches], and the caches with their keys and values written. A
+    whole-prompt call prefills the caches; a single-token call advances decoding
+    by one step. The span's positions and slots are tensors, so both trace under
+    {!Rune.jit} and one compiled single-token step serves the whole decode loop.
+    See {!Kaun.Attention.cached} for the addressing rules.
 
-    The caller steps [pos] and must keep [pos + seq] at most the cache length
-    (see {!Kaun.Attention.apply_cached}) and [cfg.n_positions].
+    Raises [Invalid_argument] if the span's context exceeds [cfg.n_positions],
+    or on the geometry errors of {!Kaun.Attention.cached}. *)
 
-    Raises [Invalid_argument] on the geometry errors of
-    {!Kaun.Attention.apply_cached}. *)
-
-val generate :
-  config ->
-  (float, 'b) Nx.t params ->
-  max_tokens:int ->
-  int32 array ->
-  int32 array
-(** [generate cfg p ~max_tokens prompt] is [prompt] extended with [max_tokens]
-    greedily decoded token ids: each step re-runs {!logits} on the whole
-    sequence (the model keeps no key-value cache) and appends the argmax of the
-    last position.
-
-    Raises [Invalid_argument] if [prompt] is empty or the sequence outgrows
-    [cfg.n_positions]. *)
+val logits :
+  config -> (float, 'b) Nx.t params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [logits cfg p h] is the final layer norm and the language-model head applied
+    to a residual stream: [[| ...; n_embd |]] to [[| ...; vocab_size |]]. The
+    head is tied to [p.wte]. Both act per position, so select the positions of
+    interest first: decoding wants the last one only. *)
 
 val of_hf : n_layer:int -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
 (** [of_hf ~n_layer ckpt] adapts the HuggingFace GPT-2 checkpoint [ckpt] to

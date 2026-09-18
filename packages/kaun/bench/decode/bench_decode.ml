@@ -62,21 +62,19 @@ let model () =
     ln_f = Layer_norm.init ~dim:embd;
   }
 
-let cached m caches ~pos ids =
-  let seq = Nx.dim 1 ids in
-  let positions =
-    Nx.add
-      (Nx.reshape [| 1; 1 |] pos)
-      (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
-  in
+let cached m caches span ids =
+  let slots = Nx.dim 0 (List.hd caches).Attention.Cache.keys in
+  let route = Attention.route ~slots span in
   let x =
-    Nx.add (Embedding.apply m.wte ids) (Embedding.apply m.wpe positions)
+    Nx.add
+      (Embedding.apply m.wte ids)
+      (Embedding.apply m.wpe (Attention.Span.positions span))
   in
   let x, rev =
     List.fold_left2
       (fun (x, cs) b c ->
         let a, c =
-          Attention.apply_cached ~num_heads:heads ~pos ~cache:c b.attn
+          Attention.cached ~head_dim b.attn c route
             (Layer_norm.apply ~eps b.ln1 x)
         in
         let x = Nx.add x a in
@@ -94,52 +92,56 @@ let logits m h =
     (Layer_norm.apply ~eps m.ln_f h)
     (Nx.transpose m.wte.Embedding.table)
 
-let cache ~len =
+let cache ~slots =
   List.init layers (fun _ ->
-      Attention.Cache.make ~num_heads:heads ~head_dim ~len Nx.float32)
+      Attention.Cache.make ~slots ~kv_heads:heads ~head_dim Nx.float32)
+
+module Span = Kaun.Attention.Span
 
 module Step = struct
   type t = {
     token : Nx.int32_t;
-    pos : Nx.int32_t;
-    caches : Nx.float32_t Attention.Cache.t list;
+    span : Span.t;
+    caches : Nx.float32_t Attention.Cache.List.t;
   }
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; pos; caches } =
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; span; caches } =
     {
       token = f token;
-      pos = f pos;
-      caches = List.map (Attention.Cache.map f) caches;
+      span = Span.map f span;
+      caches = Attention.Cache.List.map f caches;
     }
 
   let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
     {
       token = f a.token b.token;
-      pos = f a.pos b.pos;
-      caches = List.map2 (Attention.Cache.map2 f) a.caches b.caches;
+      span = Span.map2 f a.span b.span;
+      caches = Attention.Cache.List.map2 f a.caches b.caches;
     }
 
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; pos; caches } =
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; span; caches } =
     f token;
-    f pos;
-    List.iter (Attention.Cache.iter f) caches
+    Span.iter f span;
+    Attention.Cache.List.iter f caches
 end
 
-(* A decode loop warmed past its two compilations: the returned thunk advances
-   it by one token. *)
+(* A decode loop warmed past its two compilations. The returned thunk decodes
+   one token at a fixed position in the middle of the cache, from the previous
+   call's token and caches: every measured step is in range, whatever the number
+   of samples. *)
 let decoder params ~len =
   let step =
     Rune.jit2 ~donate:true
       (module Step)
       (module Step)
-      (fun { Step.token; pos; caches } ->
+      (fun { Step.token; span; caches } ->
         let seq = (Nx.shape token).(1) in
-        let h, caches = cached params caches ~pos token in
+        let h, caches = cached params caches span token in
         let last = Nx.slice [ A; I (seq - 1) ] h in
         {
           Step.token =
             Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (logits params last));
-          pos = Nx.add_s pos (Int32.of_int seq);
+          span = Span.advance span;
           caches;
         })
   in
@@ -148,12 +150,17 @@ let decoder params ~len =
       (step
          {
            Step.token = Nx.zeros Nx.int32 [| 1; 8 |];
-           pos = Nx.zeros Nx.int32 [| 1 |];
-           caches = cache ~len;
+           span = Span.rows ~context:len [| 8 |];
+           caches = cache ~slots:len;
          })
   in
+  let middle =
+    Span.make
+      ~pos:(Nx.full Nx.int32 [| 1; 1 |] (Int32.of_int (len / 2)))
+      ~slots:(Span.rows ~context:len [| 1 |]).Span.slots
+  in
   let advance () =
-    state := step !state;
+    state := step { !state with Step.span = middle };
     ignore (Nx.item [ 0; 0 ] !state.Step.token : int32)
   in
   advance ();
@@ -186,7 +193,12 @@ let () =
   match Array.to_list Sys.argv with
   | [ _; "--warm" ] -> List.iter (fun len -> (decoder (model ()) ~len) ()) lens
   | argv ->
-      if not (List.mem "list" argv) then warm ();
+      let measures =
+        match argv with
+        | _ :: ("list" | "-h" | "--help" | "-V" | "--version") :: _ -> false
+        | _ -> true
+      in
+      if measures then warm ();
       let budgets =
         [ Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05 ]
       in

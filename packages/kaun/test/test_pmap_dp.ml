@@ -83,8 +83,9 @@ let tgt_init () =
 let loss_fn x tgt m =
   let h =
     Nx.add x
-      (Attention.apply ~num_heads:2 ~causal:true m.attn
-         (Layer_norm.apply m.ln x))
+      (Attention.apply ~head_dim:(dim / 2)
+         ~mask:(Attention.causal_mask ~seq ())
+         m.attn (Layer_norm.apply m.ln x))
   in
   Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
 

@@ -88,7 +88,7 @@ let () =
 
 Where `nn.Module` registers parameters by reflection on attribute assignment, kaun asks you to write the traversal by hand (or derive it with `[@@deriving ptree]`) — mechanical one-liners per record, instantiated once by `Kaun.ptree`. That is the entire cost, and it buys full typing: `model.l1.w` is a tensor field you can read directly, gradients of a model value have the model's own record type, and there is no string-keyed parameter store to drift out of sync.
 
-One deliberate difference: layer *hyper*-parameters that do not change the parameter shapes are arguments of `apply`, not stored configuration — `Attention.apply ~num_heads:12 ~causal:true`, `Layer_norm.apply ~eps:1e-5`.
+One deliberate difference: layer *hyper*-parameters that do not change the parameter shapes are arguments of `apply`, not stored configuration — `Attention.apply ~head_dim:64 ~mask`, `Layer_norm.apply ~eps:1e-5`.
 
 ---
 
@@ -241,7 +241,7 @@ let params =
 | --- | --- |
 | GPU / `model.to("cuda")` | Eager execution is CPU-only; compile a step with `Rune.jit` and pass `~device:"CUDA"` or `~device:"METAL"`. |
 | `torch.compile` / JIT | `Rune.jit` compiles a step (note it unrolls `Rune.scan`). |
-| Layer coverage | Deliberately small: no recurrent layers; `Attention` has no rotary embeddings (write them from `scaled_dot_product_attention`; decoding uses `Attention.apply_cached`'s KV cache); `Conv` is im2col-based and not tuned for large inputs. |
+| Layer coverage | Deliberately small: no recurrent layers; `Attention` covers grouped queries, rotary embeddings (`Rope`) and cached decoding (`Attention.cached`) and nothing beyond, no sliding windows or cross-attention layer; `Conv` is im2col-based and not tuned for large inputs. |
 | Mixed precision / AMP | Manual: cast with `map (Nx.cast dt)` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |
 | `DataLoader` workers | No; data is in-memory tensors and a `Seq.t`. |
 | Distributed (`DDP`) | Not available. |

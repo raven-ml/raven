@@ -128,7 +128,7 @@ Note the `~training` flag threaded to `Dropout.apply`: mode is an argument, not 
 
 ## Attention
 
-`Attention.t` is four `Linear` projections (query, key, value, output). The head count is not a parameter — the projections are `embed_dim × embed_dim` whatever the head count — so `num_heads` is an argument of `apply`, like `eps` of `Layer_norm.apply`:
+`Attention.t` is four `Linear` projections (query, key, value, output). Head counts are not parameters: `head_dim` is an argument of `apply`, like `eps` of `Layer_norm.apply`, and the layer reads the number of query heads and of key-value heads from the projection widths. `Attention.make ~kv_dim` makes the key and value projections narrower, which is grouped-query attention.
 
 ```ocaml
 let () =
@@ -136,9 +136,10 @@ let () =
   let attn = Attention.init ~embed_dim:16 in
   let x = Nx.randn Nx.float32 [| 2; 5; 16 |] in
   (* batch 2, sequence 5 *)
-  let y = Attention.apply ~num_heads:4 ~causal:true attn x in
+  let mask = Attention.causal_mask ~seq:5 () in
+  let y = Attention.apply ~head_dim:4 ~mask attn x in
   Format.printf "y: %a@." Nx.pp_shape (Nx.shape y)
-  (* [2; 5; 16] — same shape; causal masks future positions *)
+  (* [2; 5; 16] — same shape; the mask hides future positions *)
 ```
 
 `scaled_dot_product_attention` is the pure core — `softmax (q @ kᵀ / sqrt d) @ v`, no parameters, no head bookkeeping. Leading axes broadcast, so stacked heads are just a batch axis. Use it directly for cross-attention, externally projected queries and keys, or custom masking via `?mask`:
@@ -154,7 +155,9 @@ let () =
   (* [3; 4] — one weighted average of value rows per query row *)
 ```
 
-There are no rotary embeddings; write them from this core when needed. For autoregressive decoding, `apply_cached` runs causal self-attention over a functional key-value cache (`Attention.Cache`), so a generation step keeps fixed shapes and compiles once.
+`?mask` says which keys each query may see; `causal_mask ~seq ?valid ()` builds the causal triangle, optionally hiding padded keys, and always keeps the diagonal so a padded query never yields `nan`. `?rope` takes a `Rope.t` schedule and rotates queries and keys by position.
+
+For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Span.t` says where the call's tokens sit: each token's position, and the slot holding each position of each row's sequence. One contiguous run per row (`Span.rows`), paged allocation and a prefix shared by two rows are all values of that map, and the layer is the same for each. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; with `Rune.jit ~donate:true` the cache is written in its own storage. A prompt fed whole, in chunks or token by token gives the same outputs.
 
 ## Stateful Layers: Batch_norm
 

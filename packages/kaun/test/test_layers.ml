@@ -25,6 +25,10 @@ module _ :
   Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t =
   Attention.Cache
 
+module _ :
+  Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t list =
+  Attention.Cache.List
+
 (* Float64 instances for gradient checking; the layer traversals are
    dtype-generic, so each instance is just a type pin. *)
 

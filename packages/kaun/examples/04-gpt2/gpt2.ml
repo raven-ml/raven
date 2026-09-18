@@ -180,23 +180,27 @@ let drop dropout i x =
   | Some (rate, key) ->
       Dropout.apply ~rate ~training:true ~key:(Nx.Rng.fold_in key i) x
 
-let block_apply cfg ?dropout b x =
+(* One block body, for both forward passes: [attend] is the attention to run on
+   the normalized stream and returns whatever state it carries. *)
+let block cfg ?dropout ~attend b x =
   let eps = cfg.layer_norm_eps in
-  let x =
-    Nx.add x
-      (drop dropout 0
-         (Attention.apply ~num_heads:cfg.n_head ~causal:true b.attn
-            (Layer_norm.apply ~eps b.ln1 x)))
-  in
-  Nx.add x
-    (drop dropout 1
-       (Linear.apply b.proj
-          (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x)))))
+  let a, carried = attend b.attn (Layer_norm.apply ~eps b.ln1 x) in
+  let x = Nx.add x (drop dropout 0 a) in
+  ( Nx.add x
+      (drop dropout 1
+         (Linear.apply b.proj
+            (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x))))),
+    carried )
 
-let logits cfg ?dropout p ids =
+let head_dim cfg = cfg.n_embd / cfg.n_head
+
+let embed p ids pos =
+  Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos)
+
+let hidden cfg ?dropout p ids =
   let seq = (Nx.shape ids).(1) in
   if seq > cfg.n_positions then
-    invalid_argf "Gpt2.logits: seq %d exceeds n_positions %d" seq
+    invalid_argf "Gpt2.hidden: seq %d exceeds n_positions %d" seq
       cfg.n_positions;
   (* Per-consumer subkeys: index 0 feeds the embedding dropout, index i + 1
      block i (which folds again per site). *)
@@ -204,83 +208,55 @@ let logits cfg ?dropout p ids =
     Option.map (fun (rate, key) -> (rate, Nx.Rng.fold_in key i)) dropout
   in
   let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
-  let x =
-    drop dropout 0
-      (Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos))
-  in
+  let mask = Attention.causal_mask ~seq () in
+  let attend a x = (Attention.apply ~head_dim:(head_dim cfg) ~mask a x, ()) in
   let _, x =
     List.fold_left
-      (fun (i, x) b -> (i + 1, block_apply cfg ?dropout:(sub i) b x))
-      (1, x) p.blocks
+      (fun (i, x) b -> (i + 1, fst (block cfg ?dropout:(sub i) ~attend b x)))
+      (1, drop dropout 0 (embed p ids pos))
+      p.blocks
   in
-  let h = Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f x in
-  (* Tied LM head: logits = h @ wteᵀ. *)
-  Nx.matmul h (Nx.transpose p.wte.table)
+  x
 
-(* Cached forward pass: the per-layer key-value caches make one decode step cost
-   a single-position forward instead of a whole-sequence one. Shapes depend only
-   on the input length and the cache length — the position is a tensor — so a
-   single-token step traces once under [Rune.jit]. *)
+(* The same stream for tokens that attend through the caches. The span is
+   resolved once and every block reads the same route. *)
 
-type 'b cache = 'b Attention.Cache.t list
+module Cache = Attention.Cache.List
 
-let cache cfg ~len dtype =
+let cache cfg ~slots dtype =
   List.init cfg.n_layer (fun _ ->
-      Attention.Cache.make ~num_heads:cfg.n_head
-        ~head_dim:(cfg.n_embd / cfg.n_head) ~len dtype)
+      Attention.Cache.make ~slots ~kv_heads:cfg.n_head ~head_dim:(head_dim cfg)
+        dtype)
 
-let block_apply_cached cfg b c ~pos x =
-  let eps = cfg.layer_norm_eps in
-  let attn, c =
-    Attention.apply_cached ~num_heads:cfg.n_head ~pos ~cache:c b.attn
-      (Layer_norm.apply ~eps b.ln1 x)
+let cached cfg p caches span ids =
+  let context = Nx.dim 1 span.Attention.Span.slots in
+  if context > cfg.n_positions then
+    invalid_argf "Gpt2.cached: context %d exceeds n_positions %d" context
+      cfg.n_positions;
+  let slots =
+    match caches with
+    | [] -> invalid_arg "Gpt2.cached: no caches"
+    | c :: _ -> Nx.dim 0 c.Attention.Cache.keys
   in
-  let x = Nx.add x attn in
-  ( Nx.add x
-      (Linear.apply b.proj
-         (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x)))),
-    c )
-
-let logits_cached cfg p ~pos caches ids =
-  let seq = (Nx.shape ids).(1) in
-  let positions =
-    Nx.add
-      (Nx.reshape [| 1; 1 |] pos)
-      (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
-  in
-  let x =
-    Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe positions)
-  in
+  let route = Attention.route ~slots span in
   let x, rev_caches =
     List.fold_left2
       (fun (x, cs) b c ->
-        let x, c = block_apply_cached cfg b c ~pos x in
+        let attend a x =
+          Attention.cached ~head_dim:(head_dim cfg) a c route x
+        in
+        let x, c = block cfg ~attend b x in
         (x, c :: cs))
-      (x, []) p.blocks caches
+      (embed p ids (Attention.Span.positions span), [])
+      p.blocks caches
   in
-  (* Only the last position's logits matter for decoding. *)
-  let x = Nx.slice [ A; R (seq - 1, seq) ] x in
-  let h = Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f x in
-  let vocab = (Nx.shape p.wte.table).(0) in
-  ( Nx.reshape
-      [| (Nx.shape ids).(0); vocab |]
-      (Nx.matmul h (Nx.transpose p.wte.table)),
-    List.rev rev_caches )
+  (x, List.rev rev_caches)
 
-(* Greedy decoding: append the argmax of the last position's logits, re-running
-   the model on the grown sequence each step (no key-value cache). *)
-
-let generate cfg p ~max_tokens prompt =
-  let n0 = Array.length prompt in
-  if n0 = 0 then invalid_arg "Gpt2.generate: prompt must not be empty";
-  let tokens = Array.make (n0 + max_tokens) 0l in
-  Array.blit prompt 0 tokens 0 n0;
-  for n = n0 to n0 + max_tokens - 1 do
-    let input = Nx.create Nx.int32 [| 1; n |] (Array.sub tokens 0 n) in
-    let last = Nx.slice [ I 0; I (n - 1) ] (logits cfg p input) in
-    tokens.(n) <- Nx.item [] (Nx.argmax ~axis:0 last)
-  done;
-  tokens
+let logits cfg p h =
+  (* Tied LM head: logits = h @ wteᵀ. *)
+  Nx.matmul
+    (Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f h)
+    (Nx.transpose p.wte.table)
 
 (* HuggingFace checkpoint adaptation.
 

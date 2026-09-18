@@ -161,7 +161,7 @@ let params =
 
 [`examples/04-gpt2`](examples/04-gpt2) runs this end to end: it defines
 GPT-2 as a record of kaun layers (~150 lines), loads the real
-weights, and generates text.
+weights, and generates text through a key-value cache.
 
 ## Libraries
 
@@ -190,9 +190,10 @@ weights, and generates text.
   `~device:"CUDA"`; the `04-gpt2` example does this behind a `--device`
   flag. `jit` compiles `Rune.scan` as a loop, so a recurrence's compile
   time is independent of its sequence length.
-- Layer coverage is deliberately small: no recurrent layers, and
-  `Attention` has no rotary embeddings (write them from the
-  `scaled_dot_product_attention` core when needed). `Conv` is
+- Layer coverage is deliberately small: no recurrent layers; `Attention`
+  covers grouped queries, rotary positions and cached decoding, and no
+  sliding windows or cross-attention layer (write those from the
+  `scaled_dot_product_attention` core). `Conv` is
   im2col-based and not tuned for large inputs.
 - `Batch_norm.init` builds float32 parameters (cast with
   `map (Nx.cast dt)` for other precisions); `apply` is generic over

@@ -1546,6 +1546,26 @@ thread.
 
 ### Kaun
 
+- **Breaking**: cached decoding is addressed by positions and slots.
+  `Attention.cached ~head_dim ?rope p cache route x` replaces `apply_cached`
+  and its single scalar position. A cache is a flat pool of slots with no
+  batch axis, so `Attention.Cache.make ~slots ~kv_heads ~head_dim` replaces
+  `?batch ~num_heads ~head_dim ~len`, and `Attention.Cache.List` traverses a
+  model's per-block caches. An `Attention.Span.t` (`make`, `rows`, `advance`,
+  `positions`) carries each token's position and the slot holding each
+  position of each row's sequence, and `Attention.route ~slots span` resolves
+  it once per call for every block. Rows at different positions share a
+  batch; paging, shared prefixes and beams are values of the slot map rather
+  than cache types; an address outside its range addresses nothing (`-1` is
+  padding); a prompt fed whole or in chunks gives the same outputs; and
+  admitting a sequence changes values, never the compiled program. See RFC
+  0002.
+- **Breaking**: `Attention.apply` requires `~head_dim` and takes `?mask` in
+  place of `?num_heads` and `?causal:bool`, so causality and padding
+  intersect; `Attention.causal_mask ~seq ?valid ()` builds the mask and keeps
+  the diagonal, so a padded query never yields `nan`. `?rope` rotates queries
+  and keys, and `Attention.make ?q_dim ?kv_dim` sizes the projections for
+  grouped-query attention, where the keys broadcast over their group.
 - `Kaun.Rope` adds rotary position embeddings: a schedule is the inverse
   frequencies of one head (`Rope.make`, and `Rope.llama3` for the Llama 3.1
   long-context bands) and `Rope.apply` rotates queries or keys at per-token

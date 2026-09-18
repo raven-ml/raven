@@ -20,7 +20,7 @@
    every device, the batch sharded on axis 0, gradients allreduced by
    construction — same numbers as the single-device step up to fp32 reduction
    order - [--dropout RATE] (default 0, the reference protocol's dropout-free
-   graph) enables the GPT-2 dropout sites in [Gpt2.logits]; the per-step mask
+   graph) enables the GPT-2 dropout sites in [Gpt2.hidden]; the per-step mask
    key is one more int32 leaf of the jitted step's inputs — keys must be
    inputs, never captures — derived as [Nx.Rng.fold_in root step] from
    [--seed], so a run is reproducible from its seed alone
@@ -116,10 +116,12 @@ let batch_of_ids ids =
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
    axis, NLL of the target id, mean. [?dropout] threads the rate and the
-   step's mask key to [Gpt2.logits]; absent, the graph is exactly the
+   step's mask key to [Gpt2.hidden]; absent, the graph is exactly the
    reference's. *)
 let loss_fn inputs targets ?dropout params =
-  let logits = Gpt2.logits gpt2_124m ?dropout params inputs in
+  let logits =
+    Gpt2.logits gpt2_124m params (Gpt2.hidden gpt2_124m ?dropout params inputs)
+  in
   let logits =
     Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
   in
@@ -142,7 +144,9 @@ let loss_fn inputs targets ?dropout params =
    tree. *)
 let loss_fn_half compute inputs targets ?dropout params =
   let params = Gpt2.Params.map (Nx.cast compute) params in
-  let logits = Gpt2.logits gpt2_124m ?dropout params inputs in
+  let logits =
+    Gpt2.logits gpt2_124m params (Gpt2.hidden gpt2_124m ?dropout params inputs)
+  in
   let logits =
     Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
   in
