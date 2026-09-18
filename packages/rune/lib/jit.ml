@@ -293,12 +293,18 @@ type input = {
 type state = {
   st_device : Tolk.Device.t;
   st_multi : string list option; (* pmap device tuple, [None] = single *)
+  st_takes_storage : bool;
+      (* replay may hand an output a donated input's storage: single device,
+         donation asked for, outputs not in host memory *)
   st_ctx : Nx_effect.context;
   table : F.Tensor.t Tbl.t; (* nx tensor -> tolk tensor *)
   traced : unit Tbl.t; (* placeholders whose bytes are not meaningful *)
   captures : unit Tbl.t; (* closure captures lifted into the trace *)
   input_index : int Tbl.t; (* input placeholder -> traversal position *)
   input_tags : (int, unit) Hashtbl.t; (* tags of input buffer nodes *)
+  mutable prefills : (U.t * U.t) list;
+      (* a fresh buffer an indexed write lands in, and the input buffer node
+         whose value it starts from (see [write_destination]) *)
   mutable consts : (U.t * packed) list; (* reverse order *)
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
   scan_stacks : U.t list Tbl.t;
@@ -404,12 +410,38 @@ let depends_on_input st u =
     else begin
       Hashtbl.add seen tag ();
       (match U.op u with
-        | Tolk_uop.Ops.Buffer -> Hashtbl.mem st.input_tags tag
+        | Tolk_uop.Ops.Buffer ->
+            Hashtbl.mem st.input_tags tag
+            || List.exists (fun (b, _) -> b == u) st.prefills
         | _ -> false)
       || Array.exists go (U.src u)
     end
   in
   go u
+
+(* The storage an indexed write of [t] lands in: tolk's write is in place, and
+   a tensor is a value, so the write never lands in [t] itself. A computed [t]
+   is computed into fresh storage. A [t] that is an input is not copied by the
+   program at all: the write lands in an empty buffer, recorded in
+   [st.prefills], and replay gives that buffer [t]'s value before the program
+   runs, by handing it the input's donated storage or by copying. A program
+   whose replays never take storage copies [t] itself: a kernel does it faster
+   than replay. [operands] place the storage when [t] is a constant. *)
+let write_destination st t ~operands =
+  let device = List.find_map F.Tensor.device (t :: operands) in
+  let u = F.Tensor.uop t in
+  if
+    st.st_takes_storage
+    && U.has_buffer_identity u
+    && Hashtbl.mem st.input_tags (U.tag (U.buf_uop u))
+  then begin
+    let out =
+      F.Creation.empty ~dtype:(F.Tensor.dtype t) ?device (F.Tensor.shape t)
+    in
+    st.prefills <- (U.buf_uop (F.Tensor.uop out), U.buf_uop u) :: st.prefills;
+    out
+  end
+  else F.Creation.clone ?device t
 
 (* Threefry lowering. The trace-level operation hashes int32 (key, counter)
    pairs laid out as consecutive elements; Tolk's primitive mixes uint64
@@ -1077,10 +1109,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let r =
               match (st.st_multi, mode) with
               | None, _ ->
-                  (* The write is in place, and a tensor is a value. *)
-                  let device = List.find_map F.Tensor.device [ t; index; src ] in
                   F.Op.scatter_indexed
-                    (F.Creation.clone ?device t)
+                    (write_destination st t ~operands:[ index; src ])
                     ~dim:axis index src ~mode ~unique:unique_indices
               | Some _, `Set -> F.Op.scatter t ~dim:axis index src
               | Some _, `Add ->
@@ -2307,6 +2337,10 @@ type 'q compiled = {
          storage the output may take when that leaf is donated (see [elision]
          below); an output tag equal to the input's own node tag is an input
          returned unchanged, whose storage moves to the output *)
+  cp_prefills : (U.t * int) list;
+      (* output buffer node -> traversal position of the input leaf whose
+         value the output starts from: an indexed write lands in it, and the
+         program never copies the input into it *)
   cp_reserved : (int, unit) Hashtbl.t;
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
@@ -2335,7 +2369,13 @@ module Ops = Tolk_uop.Ops
    An output that never reads an input meets the first condition vacuously
    and may take that input's buffer under the second: a bf16 copy of f32
    master weights takes the previous copy's storage this way. Every fitting
-   input is a candidate, the ones the output derives from first. Replay adds
+   input is a candidate, the ones the output derives from first.
+   An indexed write into an input is the third case. Its output is a buffer
+   the program writes at loaded indices and never fills: replay gives it the
+   input's value (see [write_destination]). Taking the input's storage is how
+   it gets that value for free, so that input is its only candidate, and the
+   kernel that writes it reads at indices of its own, so under the second
+   condition it must not read the input either. Replay adds
    what only it knows: the input must have seeded from a donated resident
    entry that seeds no other leaf of the call, and nothing else may claim the
    same buffer. Single-device programs only; a pmap carry keeps two
@@ -2395,8 +2435,10 @@ let rec schedule_calls linear =
     (U.children linear)
 
 (* No kernel reads the buffer [itag] after the first kernel that writes
-   [otag], and neither buffer is touched by an opaque call. *)
-let schedule_allows ~linear ~itag ~otag =
+   [otag], and neither buffer is touched by an opaque call. That first kernel
+   may read [itag] itself when it writes each element where it read it. An
+   indexed write does not, so under [indexed] it must not read [itag] either. *)
+let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
   let mentions call tag =
     match U.as_call call with
     | Some { args; _ } ->
@@ -2426,7 +2468,7 @@ let schedule_allows ~linear ~itag ~otag =
             if mentions c itag then last_i := Some k)
       calls;
     match (!first_o, !last_i) with
-    | Some o, Some i -> i <= o
+    | Some o, Some i -> if indexed then i < o else i <= o
     | Some _, None -> true
     | None, _ -> false
   end
@@ -2450,7 +2492,8 @@ let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
     params;
   List.rev !acc
 
-let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
+let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
+    ?beam
     ?beam_parallel (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t) :
     Q.t compiled =
@@ -2458,12 +2501,14 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     {
       st_device = dev;
       st_multi = Option.map (fun (spec, _) -> spec.md_names) multi;
+      st_takes_storage = donate && (not zero_copy) && multi = None;
       st_ctx = Nx_effect.create_context ();
       table = Tbl.create 64;
       traced = Tbl.create 64;
       captures = Tbl.create 16;
       input_index = Tbl.create 16;
       input_tags = Hashtbl.create 16;
+      prefills = [];
       consts = [];
       axis_index = None;
       scan_stacks = Tbl.create 4;
@@ -2591,7 +2636,29 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
   let out_uops =
     let outs_u = List.map (fun (_, _, tt) -> F.Tensor.uop tt) out_anch in
     match multi with
-    | None -> outs_u
+    | None ->
+        (* Only an output can be given its starting value by replay. An indexed
+           write into any other buffer starts from its input by a copy in the
+           program, as a computed destination does. *)
+        let is_output b =
+          List.exists
+            (fun u ->
+              match written_buffer u with
+              | Some v -> U.buf_uop v == b
+              | None -> false)
+            outs_u
+        in
+        let kept, copied =
+          List.partition (fun (b, _) -> is_output b) st.prefills
+        in
+        st.prefills <- kept;
+        if copied = [] then outs_u
+        else
+          let filled (b, input) =
+            (b, U.after ~src:b ~deps:[ U.store ~dst:b ~value:input () ])
+          in
+          U.children
+            (U.substitute ~walk:true (List.map filled copied) (U.sink outs_u))
     | Some _ ->
         let shapes n =
           match U.max_shape n with
@@ -2822,6 +2889,15 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
           else begin
             Hashtbl.replace seen otag ();
             let odtype = ND.to_string odt and onumel = numel (shape_of ph) in
+            (* The input an indexed write into this output starts from: replay
+               gives the output that input's value, so it takes that input's
+               storage or none. *)
+            let starts_from =
+              List.find_map
+                (fun (b, input) ->
+                  if U.tag b = otag then Some (U.tag input) else None)
+                st.prefills
+            in
             (* [Some true] when the output derives from the input, [Some
                false] when it never reads it; either may take its storage. *)
             let fits inp =
@@ -2834,9 +2910,18 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
               else if Hashtbl.mem reserved otag || returned_unchanged itag then
                 None
               else
-                let reaches, ok = same_index_paths ~inode:inp.i_node u in
-                if ok && schedule_allows ~linear ~itag ~otag then Some reaches
-                else None
+                match starts_from with
+                | Some from ->
+                    if
+                      from = itag
+                      && schedule_allows ~indexed:true ~linear ~itag ~otag ()
+                    then Some true
+                    else None
+                | None ->
+                    let reaches, ok = same_index_paths ~inode:inp.i_node u in
+                    if ok && schedule_allows ~linear ~itag ~otag () then
+                      Some reaches
+                    else None
             in
             let derived = ref [] and unread = ref [] in
             Array.iteri
@@ -2853,6 +2938,19 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
         (List.combine cp_outputs out_conts)
     end
   in
+  let cp_prefills =
+    List.map
+      (fun (b, input) ->
+        if not (List.exists (fun (_, _, n, _) -> U.tag n = U.tag b) cp_outputs)
+        then err "Rune.jit: an indexed write's buffer is not an output";
+        let position = ref None in
+        Array.iteri
+          (fun i inp ->
+            if !position = None && inp.i_node == input then position := Some i)
+          cp_inputs;
+        (b, Option.get !position))
+      st.prefills
+  in
   {
     cp_device = dev;
     cp_multi = Option.map fst multi;
@@ -2865,6 +2963,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     cp_wrapped = Array.of_list !wrapped;
     cp_outputs;
     cp_aliases;
+    cp_prefills;
     cp_reserved = reserved;
     cp_skeleton = y;
     cp_scratch = scratch;
@@ -3048,6 +3147,26 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
           | (P_replicated | P_sharded _), None -> assert false
           end)
       c.cp_outputs;
+  (* An output an indexed write lands in starts from its input. One that
+     claimed that input's storage already holds the value; any other is given
+     it by a copy. *)
+  List.iter
+    (fun (node, i) ->
+      let claimed =
+        match (Hashtbl.find_opt claims (U.tag node), seed_entry.(i)) with
+        | Some e, Some e' -> e == e'
+        | _ -> false
+      in
+      if not claimed then begin
+        let dst = Tolk.Realize.Buffers.of_buffer_node c.cp_binding node in
+        let src =
+          Tolk.Realize.Buffers.of_buffer_node c.cp_binding
+            c.cp_inputs.(i).i_node
+        in
+        if not (Tolk.Device.Buffer.transfer ~dst ~src) then
+          Tolk.Device.Buffer.copy_between ~dst ~src
+      end)
+    c.cp_prefills;
   Tolk.Realize.run_linear ~device:c.cp_device
     ~to_program:(to_program c.cp_device) c.cp_binding ~var_vals:c.cp_vars
     ~jit:true c.cp_linear;
@@ -3211,7 +3330,7 @@ let jit2 (type p q) ?device ?(donate = false) ?beam ?beam_parallel
         | Some c -> c
         | None ->
             let c =
-              trace_compile ~device:dev ~zero_copy ~const_cache ?beam
+              trace_compile ~device:dev ~zero_copy ~donate ~const_cache ?beam
                 ?beam_parallel
                 (module P)
                 (module Q)
@@ -3336,7 +3455,8 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
         | Some c -> c
         | None ->
             let c =
-              trace_compile ~device:dev ~zero_copy:false ~const_cache ?beam
+              trace_compile ~device:dev ~zero_copy:false ~donate ~const_cache
+                ?beam
                 ?beam_parallel ~multi:(spec, places)
                 (module P)
                 (module Q)

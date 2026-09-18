@@ -1518,6 +1518,131 @@ let test_donate_reuses_pool_read_after_write () =
       check_arr ~msg:"the read sees the written pool" [| 20.0; 10.0; 30.0; 1.0 |]
         !s.read)
 
+(* The same pool written through the token-to-slot map: a scatter over the
+   tokens. The output is a copy of the pool plus a store at loaded indices, and
+   it takes the donated pool's storage, so the copy has nothing to move. *)
+let scatter_pool ~donate =
+  let n = 1024 in
+  let rows = Nx.create f32 [| 4; 1 |] [| 10.0; 20.0; 30.0; 40.0 |] in
+  let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
+  let f { slots; writer; read = _ } =
+    let slots =
+      Nx.scatter ~axis:0 ~indices:(Nx.reshape [| 4; 1 |] writer) ~values:rows
+        (Nx.reshape [| n; 1 |] slots)
+    in
+    let slots = Nx.reshape [| n |] slots in
+    { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
+  in
+  let step = Rune.jit2 ~donate (module Pool) (module Pool) f in
+  (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
+  let writer = Nx.create Nx.int32 [| 4 |] [| 2l; 5l; -1l; 5l |] in
+  let first =
+    { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] }
+  in
+  (n, step, first)
+
+let test_donate_reuses_pool_scatter () =
+  with_force_copy (fun () ->
+      let n, step, first = scatter_pool ~donate:true in
+      let s = ref (step first) in
+      let before = (Rune.jit_stats ()).reused_bytes in
+      s := step !s;
+      is_true ~msg:"the pool is written over its donated input"
+        ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
+      check_arr ~msg:"the read sees the written pool" [| 40.0; 10.0; 1.0; 1.0 |]
+        !s.read;
+      let slots = to_arr !s.slots in
+      equal ~msg:"an unwritten slot keeps its row" float_exact 1.0 slots.(9))
+
+let test_scatter_without_donation_keeps_the_input () =
+  with_force_copy (fun () ->
+      let _, step, first = scatter_pool ~donate:false in
+      let s1 = step first in
+      let s2 = step s1 in
+      check_arr ~msg:"second call" [| 40.0; 10.0; 1.0; 1.0 |] s2.read;
+      equal ~msg:"the first call's pool is intact" float_exact 40.0
+        (to_arr s1.slots).(5))
+
+(* Bytes of donated storage the second of two donated steps reuses. *)
+let reused_by_second_step step x =
+  let y = step x in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let z = step y in
+  (z, (Rune.jit_stats ()).reused_bytes - before)
+
+(* The values written are read from the donated pool by a kernel that runs
+   before the write: a reader of the old value in time, so the output still
+   takes the pool's storage. *)
+let test_scatter_of_values_read_from_the_pool () =
+  with_force_copy (fun () ->
+      let n = 8 in
+      let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
+      let f x =
+        let values = Nx.mul_s (Nx.slice [ Nx.R (6, 8) ] (Nx.flip x)) 10.0 in
+        Nx.scatter ~axis:0 ~indices ~values x
+      in
+      let step = Rune.jit' ~donate:true f in
+      let x = vec32 (Array.init n float_of_int) in
+      let expected = to_arr (f (f x)) in
+      let z, reused = reused_by_second_step step x in
+      check_arr ~msg:"two donated steps" expected z;
+      equal ~msg:"the pool's storage is reused" int (n * 4) reused)
+
+(* The donated pool is itself the values: the kernel would read through the
+   storage it writes, so the output must not take it. *)
+let test_scatter_of_the_pool_into_itself () =
+  with_force_copy (fun () ->
+      let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
+      let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
+      let step = Rune.jit' ~donate:true f in
+      let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+      check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step x)));
+      let _, reused = reused_by_second_step step x in
+      equal ~msg:"the pool's storage is not reused" int 0 reused)
+
+(* A kernel reads the old pool and the written one together, so it runs after
+   the write: the output must not take the pool's storage, and the reader still
+   sees the old value. *)
+let test_scatter_refuses_a_later_reader_of_the_pool () =
+  with_force_copy (fun () ->
+      let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+      let values = vec32 [| 50.0; 70.0 |] in
+      let f x =
+        let u = Nx.scatter ~axis:0 ~indices ~values x in
+        { Pair.u; v = Nx.add (Nx.flip x) u }
+      in
+      let step = Rune.jit2 ~donate:true (module Csingle) (module Pair) f in
+      let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+      let e = f (f x).Pair.u in
+      let r1 = step x in
+      let before = (Rune.jit_stats ()).reused_bytes in
+      let r2 = step r1.Pair.u in
+      equal ~msg:"the pool's storage is not reused" int 0
+        ((Rune.jit_stats ()).reused_bytes - before);
+      check_arr ~msg:"written" (to_arr e.Pair.u) r2.Pair.u;
+      check_arr ~msg:"old value read" (to_arr e.Pair.v) r2.Pair.v)
+
+(* A reader of the old pool scheduled with the write: the output keeps the new
+   value and the reader the old one, whether or not storage was reused. *)
+let test_scatter_beside_a_reader_of_the_old_value () =
+  with_force_copy (fun () ->
+      let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+      let values = vec32 [| 50.0; 70.0 |] in
+      let f (p : Pair.t) =
+        {
+          Pair.u = Nx.scatter ~axis:0 ~indices ~values p.u;
+          v = Nx.add (Nx.flip p.u) p.v;
+        }
+      in
+      let step = Rune.jit2 ~donate:true (module Pair) (module Pair) f in
+      let p () =
+        { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
+      in
+      let e = f (f (p ())) in
+      let r = step (step (p ())) in
+      check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
+      check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v)
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -1731,6 +1856,18 @@ let tests =
           test_donate_reuses_window_write;
         test "a pool read after its write still reuses storage"
           test_donate_reuses_pool_read_after_write;
+        test "donation reuses a pool written by scatter"
+          test_donate_reuses_pool_scatter;
+        test "scatter without donation keeps its input"
+          test_scatter_without_donation_keeps_the_input;
+        test "scatter of values read from the donated pool"
+          test_scatter_of_values_read_from_the_pool;
+        test "scatter of the donated pool into itself"
+          test_scatter_of_the_pool_into_itself;
+        test "scatter refuses a later reader of the donated pool"
+          test_scatter_refuses_a_later_reader_of_the_pool;
+        test "scatter beside a reader of the old value"
+          test_scatter_beside_a_reader_of_the_old_value;
         test "an updated input returned unchanged stays readable"
           test_donate_keeps_pass_through_readable;
         test "outputs never write into an input's buffer"

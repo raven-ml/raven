@@ -107,6 +107,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit ~donate:true` writes a scatter over the donated destination's
+  storage, so `Nx.scatter` into a donated tensor costs its updates alone: a
+  64-row write into a 131072x8x64 pool takes 0.35 ms on Metal, the same as
+  into 4096 rows. Compiled with donation, the program never copies a
+  destination that is an input: the write lands in the output's buffer, which
+  takes the donated storage or, on a call that cannot donate, is given the
+  input's value by one device copy. `reused_bytes` counts the pool.
 - `Nx.scatter` under `Rune.jit` costs the number of updates plus one copy of
   the destination, instead of destination size times update count. The
   gradient of `Nx.take` and `Nx.take_along_axis` is such a scatter: an
