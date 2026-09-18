@@ -239,6 +239,69 @@ let test_replace_regex () =
     "|| | | | || || |||  | | |||";
   case clip_split "|" "it's 3.5% -- ok\xE2\x80\xA6" "|| |||| | ||"
 
+(* Expectations from HuggingFace, as above. Under [(?i)] a character and a
+   bracket class stand for everything that folds as they do; a class written
+   outside brackets is left as it is. *)
+let test_replace_regex_case_insensitive () =
+  let case pattern text expected =
+    equal
+      ~msg:(Printf.sprintf "replace regex %S in %S" pattern text)
+      string expected
+      (Normalizer.apply
+         (Normalizer.replace_regex ~pattern ~replacement:"_")
+         text)
+  in
+  case "(?i)a" "aAbB" "__bB";
+  case "(?i:a)b" "abAbaB" "__aB";
+  case "(?-i:a)" "aA" "_A";
+  case "(?i)a(?-i)b" "abAbaBAB" "__aBAB";
+  (* [(?i)] reaches the alternatives that follow it in its group. *)
+  case "a(?i)b|c" "aBAbCc" "_AbCc";
+  case "(?i:a|b)c" "acBcbC" "__bC";
+  case "(?i:'s)" "'s'S'\xC5\xBF" "___";
+  case "(?i)k" "kK\xE2\x84\xAA" "___";
+  case "(?i)[k]" "\xE2\x84\xAA" "_";
+  case "(?i)\\x{17F}" "sS\xC5\xBF" "___";
+  case "(?i)[a-c]+" "aBcD" "_D";
+  case "(?i)[A-Z]" "a\xC3\xA9\xC5\xBF\xE2\x84\xAA" "_\xC3\xA9__";
+  case "(?i)[^a]" "aAbB" "aA__";
+  case "(?i)\xC3\xA9" "\xC3\xA9\xC3\x89e" "__e";
+  case "(?i)\xCF\x83" "\xCF\x83\xCE\xA3\xCF\x82" "___";
+  case "(?i)\xC7\x85" "\xC7\x84\xC7\x85\xC7\x86" "___";
+  case "(?i)\\p{Lu}" "aA1" "a_1";
+  case "(?i)\\P{Lu}" "aA1" "_A_";
+  case "(?i)[\\p{Lu}]" "aA1" "__1";
+  case "(?i)[\\p{Lu}x]" "aA1X" "__1_";
+  case "(?i)[^\\p{Lu}]" "aA1" "aA_";
+  case "(?i)[^\\P{Lu}]" "aA1" "aA1";
+  case "(?i)\\d" "1a" "_a"
+
+(* Expectations from HuggingFace, as above: a lookahead that ends the pattern,
+   one of its alternatives, or a group standing there. *)
+let test_replace_regex_lookahead () =
+  let case ?(replacement = "_") pattern text expected =
+    equal
+      ~msg:(Printf.sprintf "replace regex %S in %S" pattern text)
+      string expected
+      (Normalizer.apply (Normalizer.replace_regex ~pattern ~replacement) text)
+  in
+  case "a(?!b)" "abaca" "ab_c_";
+  case "a(?=b)" "abaca" "_baca";
+  case "\\s+(?!\\S)" "a  b   c " "a_ b_ c_";
+  case "\\s+(?!\\S)|\\s+" "a  b   c d" "a__b__c_d";
+  case "a(?=bc|d)" "abcadab" "_bc_dab";
+  case "(a(?=b)|c)" "abcac" "_b_a_";
+  case "(?:x|a(?!b))" "xabac" "_ab_c";
+  case "a(?![bc])" "abacada" "abac_d_";
+  case "a(?!.)" "ab\x0Aa\x0A" "ab\x0A_\x0A";
+  case "a(?!\\n)" "a\x0Aab" "a\x0A_b";
+  case "a(?!\xC3\xA9)" "a\xC3\xA9aea" "a\xC3\xA9_e_";
+  case "(?i)a(?!b)" "aBAbac" "aBAb_c";
+  case "(?=b)" "abab" "a_ba_b";
+  case "a*(?=b)" "aabab" "_b_b";
+  case "a+?(?=b)" "aaab" "_b";
+  case ~replacement:"," "\\d{1,3}(?=(?:\\d{3})+)" "1234567" ",,567"
+
 (* What the translation refuses, with a message that says why. *)
 let test_replace_regex_rejected () =
   let case pattern reason =
@@ -251,11 +314,18 @@ let test_replace_regex_rejected () =
           msg
     | _ -> failf "%S was accepted" pattern
   in
-  case "(?i)a" "group options are not supported";
-  case "(?i:a)" "group options are not supported";
-  case "(?m)." "group options are not supported";
-  case "a(?=b)" "lookaround is not supported";
-  case "(?<=a)b" "lookaround is not supported";
+  case "(?m)." "group options other than i are not supported";
+  case "(?im)." "group options other than i are not supported";
+  case "(?<=a)b" "lookbehind is not supported";
+  case "(?<!a)b" "lookbehind is not supported";
+  case "a(?=b)c" "lookahead is supported only where it ends the pattern";
+  case "(?!a)b" "lookahead is supported only where it ends the pattern";
+  case "(a(?=b))+" "lookahead is supported only where it ends the pattern";
+  case "(a(?!b)|c)d" "lookahead is supported only where it ends the pattern";
+  case "a(?=b(?=c))" "lookahead is supported only where it ends the pattern";
+  case "a(?!bc)" "a negative lookahead is supported over one character only";
+  case "a(?!b|c)" "a negative lookahead is supported over one character only";
+  case "a(?!(b))" "a negative lookahead is supported over one character only";
   case "(?>a)" "atomic groups are not supported";
   case "(a)\\1" "backreferences are not supported";
   case "\\ba" "word boundaries are not supported";
@@ -1041,6 +1111,8 @@ let unicode_tests =
     test "normalization sequence" test_normalization_sequence;
     test "replace" test_replace;
     test "replace regex" test_replace_regex;
+    test "replace regex case insensitive" test_replace_regex_case_insensitive;
+    test "replace regex lookahead" test_replace_regex_lookahead;
     test "replace regex rejected" test_replace_regex_rejected;
     test "nmt" test_nmt;
     test "byte level" test_byte_level;

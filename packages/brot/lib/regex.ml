@@ -166,6 +166,40 @@ let word =
   once (fun () ->
       union (word_class ()) [ (0xB2, 0xB3); (0xB9, 0xB9); (0xBC, 0xBE) ])
 
+(* Case folding *)
+
+let mem set cp = List.exists (fun (lo, hi) -> lo <= cp && cp <= hi) set
+
+(* The pairs [(cp, f)] where [cp] folds to the single other character [f]. A
+   fold to several characters, as that of U+00DF to "ss", has no place in a set
+   and is left out. *)
+let folds =
+  once (fun () ->
+      let pairs = ref [] in
+      for cp = max_scalar downto 0 do
+        if cp < 0xD800 || cp > 0xDFFF then
+          match Uucp.Case.Fold.fold (Uchar.unsafe_of_int cp) with
+          | `Uchars [ f ] -> pairs := (cp, Uchar.to_int f) :: !pairs
+          | `Self | `Uchars _ -> ()
+      done;
+      !pairs)
+
+(* [set] with every character that folds as one of its own does. *)
+let fold_closure set =
+  let pairs = folds () in
+  let folded =
+    normalize
+      (List.filter_map
+         (fun (cp, f) -> if mem set cp || mem set f then Some (f, f) else None)
+         pairs)
+  in
+  let sources =
+    List.filter_map
+      (fun (cp, f) -> if mem folded f then Some (cp, cp) else None)
+      pairs
+  in
+  union set (union folded sources)
+
 (* UTF-8 *)
 
 let encode cp =
@@ -218,11 +252,25 @@ let re_of_set set =
    last thing a match goes through: [^] matches after a newline except at the
    very end of the text, which {!Re.bol} cannot express, so such a [^] is
    refused. *)
-type node = { re : Re.t; nullable : bool; open_bol : bool }
+type node = { re : Re.t; nullable : bool; open_bol : bool; context : bool }
 
-let atom re = { re; nullable = false; open_bol = false }
-let assertion re = { re; nullable = true; open_bol = false }
+let atom re = { re; nullable = false; open_bol = false; context = false }
+let assertion re = { re; nullable = true; open_bol = false; context = false }
 let epsilon = assertion Re.epsilon
+let err_lookahead = "lookahead is supported only where it ends the pattern"
+
+(* A lookahead is a trailing context: a marker, which is an empty group, then an
+   expression consuming what the lookahead inspects. The match ends at the
+   marker. Nothing of the match can follow the context, which has consumed text
+   the match does not own. *)
+let context re =
+  let marker = Re.group Re.epsilon in
+  {
+    re = Re.seq [ marker; re ];
+    nullable = true;
+    open_bol = false;
+    context = true;
+  }
 
 let seq nodes =
   let rec open_bol = function
@@ -230,10 +278,16 @@ let seq nodes =
     | n :: rest ->
         (n.open_bol && List.for_all (fun m -> m.nullable) rest) || open_bol rest
   in
+  let rec context = function
+    | [] -> false
+    | [ n ] -> n.context
+    | n :: rest -> if n.context then fail "%s" err_lookahead else context rest
+  in
   {
     re = Re.seq (List.map (fun n -> n.re) nodes);
     nullable = List.for_all (fun n -> n.nullable) nodes;
     open_bol = open_bol nodes;
+    context = context nodes;
   }
 
 let alt nodes =
@@ -241,9 +295,16 @@ let alt nodes =
     re = Re.alt (List.map (fun n -> n.re) nodes);
     nullable = List.exists (fun n -> n.nullable) nodes;
     open_bol = List.exists (fun n -> n.open_bol) nodes;
+    context = List.exists (fun n -> n.context) nodes;
   }
 
-type parser = { s : string; mutable i : int }
+(* [fold] is whether the text being parsed is under [(?i)]. *)
+type parser = {
+  s : string;
+  mutable i : int;
+  mutable fold : bool;
+  anchors : bool;
+}
 
 let eos p = p.i >= String.length p.s
 let peek p = p.s.[p.i]
@@ -366,7 +427,7 @@ let class_item p =
 
 (* A leading []] is a literal, and so is a [-] that does not sit between two
    characters. *)
-let bracket_class p =
+let bracket_set p =
   let negate = accept p '^' in
   let range_follows p =
     (not (eos p))
@@ -391,9 +452,20 @@ let bracket_class p =
       | `Char c -> items ((c, c) :: acc) ~first:false
   in
   let set = normalize (items [] ~first:true) in
-  atom (re_of_set (if negate then complement set else set))
+  let set = if p.fold then fold_closure set else set in
+  if negate then complement set else set
 
-let dot = once (fun () -> re_of_set (complement [ (0x0A, 0x0A) ]))
+let dot = [ (0x00, 0x09); (0x0B, max_scalar) ]
+
+(* A class written outside brackets, as [\p{Lu}], is not folded where a
+   character and a bracket class are. *)
+let char_atom p cp =
+  if p.fold then atom (re_of_set (fold_closure [ (cp, cp) ]))
+  else atom (Re.str (encode cp))
+
+let anchor p re =
+  if not p.anchors then fail "anchors are not supported in this pattern";
+  assertion re
 
 let rec regexp p =
   let rec branches acc =
@@ -417,6 +489,7 @@ and quantifiers p node =
   match quantifier p with
   | None -> node
   | Some (min, max) ->
+      if node.context then fail "%s" err_lookahead;
       let re = Re.repn node.re min max in
       let re, min =
         if accept p '?' then
@@ -427,7 +500,12 @@ and quantifiers p node =
         else (Re.greedy re, min)
       in
       quantifiers p
-        { re; nullable = min = 0 || node.nullable; open_bol = node.open_bol }
+        {
+          re;
+          nullable = min = 0 || node.nullable;
+          open_bol = node.open_bol;
+          context = false;
+        }
 
 and quantifier p =
   if eos p then None
@@ -477,16 +555,16 @@ and atom_ p =
       group p
   | '[' ->
       skip p;
-      bracket_class p
+      atom (re_of_set (bracket_set p))
   | '.' ->
       skip p;
-      atom (dot ())
+      atom (re_of_set dot)
   | '^' ->
       skip p;
-      { re = Re.bol; nullable = true; open_bol = true }
+      { (anchor p Re.bol) with open_bol = true }
   | '$' ->
       skip p;
-      assertion Re.eol
+      anchor p Re.eol
   | '*' | '+' | '?' -> fail "nothing to repeat"
   | '{' -> (
       match interval p with
@@ -500,22 +578,22 @@ and atom_ p =
       match peek p with
       | 'A' ->
           skip p;
-          assertion Re.bos
+          anchor p Re.bos
       | 'z' ->
           skip p;
-          assertion Re.eos
+          anchor p Re.eos
       | 'Z' ->
           skip p;
-          assertion Re.leol
+          anchor p Re.leol
       | 'G' ->
           skip p;
-          assertion Re.start
+          anchor p Re.start
       | 'b' | 'B' -> fail "word boundaries are not supported"
       | _ -> (
           match escape p ~in_class:false with
           | `Set s -> atom (re_of_set s)
-          | `Char cp -> atom (Re.str (encode cp))))
-  | _ -> atom (Re.str (encode (scalar p)))
+          | `Char cp -> char_atom p cp))
+  | _ -> char_atom p (scalar p)
 
 (* Groups do not capture: nothing reads the captures. *)
 and group p =
@@ -539,7 +617,7 @@ and group p =
       (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
     in
     if eos p then fail "unterminated group";
-    if peek p = '=' || peek p = '!' then fail "lookaround is not supported";
+    if peek p = '=' || peek p = '!' then fail "lookbehind is not supported";
     if not (name_char (peek p)) then fail "invalid group name";
     while
       (not (eos p)) && (name_char (peek p) || decimal_digit (peek p) >= 0)
@@ -552,16 +630,75 @@ and group p =
   else if eos p then fail "unterminated group"
   else
     match peek p with
-    | '=' | '!' -> fail "lookaround is not supported"
+    | '=' ->
+        skip p;
+        let n = body () in
+        if n.context then fail "%s" err_lookahead;
+        context n.re
+    | '!' ->
+        skip p;
+        let set = single_set p in
+        if not (accept p ')') then
+          fail "a negative lookahead is supported over one character only";
+        context (Re.alt [ re_of_set (complement set); Re.stop ])
     | '>' -> fail "atomic groups are not supported"
-    | _ -> fail "group options are not supported"
+    | _ -> options p ~body
 
-let compile pattern =
-  let p = { s = pattern; i = 0 } in
+(* [(?i)] holds to the end of the enclosing group, alternatives included;
+   [(?i:..)] holds inside its own. *)
+and options p ~body =
+  let on = not (accept p '-') in
+  if not (accept p 'i') then fail "group options other than i are not supported";
+  let enclosing = p.fold in
+  p.fold <- on;
+  let n =
+    if accept p ')' then regexp p
+    else if accept p ':' then body ()
+    else fail "group options other than i are not supported"
+  in
+  p.fold <- enclosing;
+  n
+
+(* The one character a negative lookahead refuses, as a set. *)
+and single_set p =
+  if eos p then fail "unterminated group";
+  let char c = if p.fold then fold_closure [ (c, c) ] else [ (c, c) ] in
+  match peek p with
+  | '[' ->
+      skip p;
+      bracket_set p
+  | '.' ->
+      skip p;
+      dot
+  | '\\' -> (
+      skip p;
+      if eos p then fail "pattern ends with a backslash";
+      match escape p ~in_class:false with `Set s -> s | `Char c -> char c)
+  | '(' | ')' | '|' | '*' | '+' | '?' | '^' | '$' ->
+      fail "a negative lookahead is supported over one character only"
+  | _ -> char (scalar p)
+
+type t = { re : Re.re; markers : int }
+
+let compile ?(anchors = true) pattern =
+  let p = { s = pattern; i = 0; fold = false; anchors } in
   match regexp p with
   | exception Rejected msg -> Error msg
   | node ->
       if not (eos p) then Error "unmatched )"
       else if node.open_bol then
         Error "a ^ that can end a match is not supported"
-      else Ok (Re.compile node.re)
+      else
+        let re = Re.compile node.re in
+        Ok { re; markers = Re.group_count re - 1 }
+
+let find t s ~pos ~stop =
+  match Re.exec_opt ~pos ~len:(stop - pos) t.re s with
+  | None -> None
+  | Some g ->
+      let rec finish i =
+        if i > t.markers then Re.Group.stop g 0
+        else if Re.Group.test g i then Re.Group.stop g i
+        else finish (i + 1)
+      in
+      Some (Re.Group.start g 0, finish 1)

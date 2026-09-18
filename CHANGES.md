@@ -1673,6 +1673,10 @@ thread.
 
 ### Brot
 
+- Regular expressions from tokenizer files now accept the case-insensitive
+  option (`(?i)`, `(?i:..)`) and a lookahead (`(?=..)`, `(?!..)`) that ends the
+  pattern or one of its alternatives, so `Normalizer.replace_regex` and
+  `Replace` normalizers using them load instead of being rejected.
 - **Breaking:** the stage modules' internal plumbing is no longer exported:
   `Brot` is now published from a single signature, so
   `Pre_tokenizer.plan`/`fill`/`lead_class`,

@@ -108,12 +108,12 @@ let test_normalizer_regex_json () =
   match
     Normalizer.of_json
       (json_of_text
-         {|{"type":"Replace","pattern":{"Regex":"(?i)a"},"content":"b"}|})
+         {|{"type":"Replace","pattern":{"Regex":"(?>a)"},"content":"b"}|})
   with
   | Ok _ -> failf "an unsupported regular expression was accepted"
   | Error msg ->
       equal ~msg:"says why" string
-        {|invalid regular expression "(?i)a": group options are not supported|}
+        {|invalid regular expression "(?>a)": atomic groups are not supported|}
         msg
 
 (* Every decoder, with JSON HuggingFace reads back as the same decoder. The

@@ -38,7 +38,7 @@ type t =
 
 and pattern =
   | Literal of string
-  | Regex of { source : string; compiled : Re.re }
+  | Regex of { source : string; compiled : Regex.t }
 
 (* UTF-8 helpers *)
 
@@ -1100,10 +1100,9 @@ let replace_matches compiled ~replacement s o =
   let rec search pos last last_match matched =
     if pos > len then finish last matched
     else
-      match Re.exec_opt ~pos compiled s with
+      match Regex.find compiled s ~pos ~stop:len with
       | None -> finish last matched
-      | Some group ->
-          let start = Re.Group.start group 0 and stop = Re.Group.stop group 0 in
+      | Some (start, stop) ->
           if start < stop then begin
             copy o s last (start - last);
             add_string o (stop - 1) replacement;
