@@ -122,12 +122,6 @@ let rec base_through_after x =
 
 let base x = base_through_after (multibase x)
 
-(* Is the base of [x] a buffer or buffer-view? *)
-let has_buffer_identity x =
-  match U.op (base x) with
-  | Ops.Buffer | Ops.Slice | Ops.Param -> true
-  | _ -> false
-
 (* Ops that do not need buffer realization. *)
 let dont_realize = function
   | Ops.Const | Ops.Buffer | Ops.Param | Ops.Bind | Ops.After -> true
@@ -475,7 +469,7 @@ let merge_contiguous_after ctx node =
   match U.op node, first_src node with
   | Ops.Contiguous, Some a ->
       (match after_parts a with
-       | Some (a_src, _) when has_buffer_identity a_src ->
+       | Some (a_src, _) when U.has_buffer_identity a_src ->
            let merged = get_tags_or_empty ctx a @ get_tags_or_empty ctx node in
            remove_tags ctx node;
            set_tags ctx a merged;
