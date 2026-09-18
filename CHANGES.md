@@ -1595,6 +1595,11 @@ thread.
 
 ### Kaun
 
+- `Attention.apply` and `Attention.cached` no longer copy the keys and values
+  to group them under their query heads. The decode step of
+  `kaun/bench/decode` runs 24 fewer kernels and allocates 9% fewer host words;
+  on Metal it takes 8.0 ms against 8.5 ms at a cache of 256, and the same 8.9
+  ms at 1024.
 - **Breaking**: a decoder has one forward pass. `Attention.cached` takes a
   `Kaun.Cache_index.t` and gains `?window`; over `Cache_index.whole`, which
   reads and keeps nothing, it is plain causal attention and returns its cache

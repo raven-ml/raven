@@ -166,7 +166,7 @@ let attend ~kv_heads ?mask q k v =
   let m = (Nx.shape k).(2) in
   let groups = heads / kv_heads in
   let q = Nx.reshape [| batch; kv_heads; groups; n; d |] (Nx.contiguous q) in
-  let grouped t = Nx.reshape [| batch; kv_heads; 1; m; d |] (Nx.contiguous t) in
+  let grouped t = Nx.unsqueeze ~axes:[ 2 ] t in
   let mask =
     Option.map
       (fun mk ->
