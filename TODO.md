@@ -38,6 +38,21 @@ nx follow-ups:
   conjugate-sensitive reverse rules are reachable on complex, only `abs` has
   ever met a finite-difference oracle, and it was wrong
 
+decode contract follow-ups (rfc 0002):
+- brot: load llama 3's tokenizer (cl100k-family split regex, one negative
+  lookahead); then the llama example takes text
+- tolk/rune: indexed store + scatter-add over indices, not the destination
+  (decode write costs the pool; gather/embedding grads under jit; lets models
+  drop their second `hidden` fold); fix reduce-split-before-collapse at
+  >= 32768 rows in the same pass
+- `Rune.remat` is an identity under jit: when a training run needs the memory
+- `Nx.top_k` by partial selection: when sampling batches hundreds of rows
+- `Span.t` `col` field (sliding window, tree speculation), packed sequences
+  with position reset: when a model needs them
+- storage reuse under `pmap` per shard: inside the placement rfc
+- llama 3.1 8b load: template-based checkpoint extraction allocates a full
+  f32 model first; that is the weight-streaming item
+
 next model targets:
 - llama3 in kaun-models + tolk parity (rope, rmsnorm, gqa, sharded
   safetensors; llama.py-style per-weight model-parallel axis choices become
