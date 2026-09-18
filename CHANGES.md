@@ -846,6 +846,10 @@ thread.
 
 ### Nx
 
+- Add `Nx_buffer.reinterpret kind buf`, `buf`'s memory read as elements of
+  `kind` without a copy. It is the only way to view existing memory, such as a
+  mapped file, as `bfloat16`, `float8`, `bool`, `uint32` or `uint64`, whose
+  kinds only allocation could set before.
 - `Nx_io.save_safetensors` no longer truncates its destination in place: it
   writes a temporary file beside it, syncs it and renames it, so a crash or a
   failed save leaves the previous file whole. If the rename is refused the

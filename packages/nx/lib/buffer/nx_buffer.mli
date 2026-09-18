@@ -165,6 +165,26 @@ val unsafe_data_ptr : ('a, 'b) t -> nativeint
     alive while the pointer is in use, and do not use it afterwards. Not
     available on JavaScript. *)
 
+(** {2:reinterpret Reinterpretation} *)
+
+val reinterpret : ('a, 'b) kind -> ('c, 'd) t -> ('a, 'b) t
+(** [reinterpret kind buf] is [buf]'s memory read as elements of [kind], without
+    a copy. Its length is [buf]'s size in bytes divided by
+    [kind_size_in_bytes kind]. Elements are read in the machine's byte order.
+
+    The result and [buf] share their storage, as the results of
+    {!Bigarray.Array1.sub} do: a write through either is seen through the other,
+    and storage that the runtime manages, allocated or mapped from a file, lives
+    until both are unreachable. Over memory some other owner manages, the owner
+    stays the caller's concern.
+
+    This is the only way to view existing memory at an extended kind, such as
+    the bytes of a mapped file as [bfloat16].
+
+    Raises [Invalid_argument] if [buf]'s size in bytes is not a multiple of
+    [kind_size_in_bytes kind], if [buf]'s address is not a multiple of it, or if
+    [kind] or [buf]'s kind is [Int4] or [UInt4]. *)
+
 (** {2:bulk Bulk operations} *)
 
 val fill : ('a, 'b) t -> 'a -> unit

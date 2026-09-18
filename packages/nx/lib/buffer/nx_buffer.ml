@@ -266,6 +266,25 @@ let elts_to_bytes k n =
 let elt_off_to_bytes k off =
   if is_int4 k then off / 2 else off * kind_size_in_bytes k
 
+(* Reinterpretation *)
+
+external unsafe_reinterpret :
+  ('a, 'b) kind -> ('c, 'd) t -> int -> int -> ('a, 'b) t
+  = "caml_nx_buffer_reinterpret"
+
+let reinterpret k buf =
+  if is_int4 k || is_int4 (kind buf) then
+    invalid_arg "Nx_buffer.reinterpret: int4 and uint4 pack two elements a byte";
+  let bytes = length buf * kind_size_in_bytes (kind buf) in
+  let size = kind_size_in_bytes k in
+  if bytes mod size <> 0 then
+    invalid_arg
+      (Printf.sprintf
+         "Nx_buffer.reinterpret: %d bytes is not a multiple of the %d-byte %s \
+          element"
+         bytes size (kind_name k));
+  unsafe_reinterpret k buf (bytes / size) size
+
 (* Bulk operations *)
 
 let fill buf v = genarray_fill_ext (Bigarray.genarray_of_array1 buf) v

@@ -14,6 +14,7 @@ extern value caml_ba_get_N(value vb, value *vind, int nind);
 extern value caml_ba_set_N(value vb, value *vind, int nargs);
 extern value caml_ba_blit(value vsrc, value vdst);
 extern CAMLprim value caml_ba_fill(value vb, value vinit);
+extern CAMLprim value caml_ba_sub(value vb, value vofs, value vlen);
 
 /*---------------------------------------------------------------------------
    Helpers
@@ -474,6 +475,46 @@ CAMLprim value caml_nx_buffer_kind(value vb) {
     default:
       caml_failwith("Unknown bigarray kind");
   }
+}
+
+/*---------------------------------------------------------------------------
+   Reinterpretation
+  ---------------------------------------------------------------------------*/
+
+/* Runtime kind of each [Nx_buffer.kind] constructor, in declaration order:
+   the inverse of [caml_nx_buffer_kind]. */
+static const int nx_buffer_kind_of_constructor[] = {
+    CAML_BA_FLOAT16, CAML_BA_FLOAT32,   CAML_BA_FLOAT64,   NX_BA_BFLOAT16,
+    NX_BA_FP8_E4M3,  NX_BA_FP8_E5M2,    NX_BA_INT4,        NX_BA_UINT4,
+    CAML_BA_SINT8,   CAML_BA_UINT8,     CAML_BA_SINT16,    CAML_BA_UINT16,
+    CAML_BA_INT32,   NX_BA_UINT32,      CAML_BA_INT64,     NX_BA_UINT64,
+    CAML_BA_COMPLEX32, CAML_BA_COMPLEX64, NX_BA_BOOL};
+
+/* [vlen] is the length of the result in elements of [vkind] and [vsize] the
+   size of one in bytes; the caller has checked that they cover [vb]'s bytes
+   exactly and that neither kind is int4.
+
+   The header comes from [caml_ba_sub] over the whole of [vb]: it copies [vb]'s
+   custom operations, so a view of a mapped file is finalised by unmapping, and
+   joins [vb]'s proxy under the runtime's atomic count, so the storage lives as
+   long as any view of it. Only the kind bits and the length are rewritten. */
+CAMLprim value caml_nx_buffer_reinterpret(value vkind, value vb, value vlen,
+                                          value vsize) {
+  CAMLparam2(vkind, vb);
+  CAMLlocal1(res);
+  int kind = nx_buffer_kind_of_constructor[Int_val(vkind)];
+  int base_kind = nx_buffer_is_extended_kind(kind) ? nx_buffer_base_kind(kind)
+                                                   : kind;
+  if ((uintnat)Caml_ba_data_val(vb) % (uintnat)Long_val(vsize) != 0)
+    caml_invalid_argument(
+        "Nx_buffer.reinterpret: address not aligned to the element size");
+
+  res = caml_ba_sub(vb, Val_long(0), Val_long(Caml_ba_array_val(vb)->dim[0]));
+  struct caml_ba_array *b = Caml_ba_array_val(res);
+  b->flags = nx_buffer_store_extended_kind(
+      (b->flags & ~CAML_BA_KIND_MASK) | base_kind, kind);
+  b->dim[0] = Long_val(vlen);
+  CAMLreturn(res);
 }
 
 /*---------------------------------------------------------------------------
