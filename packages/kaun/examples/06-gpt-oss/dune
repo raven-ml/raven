@@ -1,4 +1,4 @@
 (executables
- (names validate bench)
- (modules mxfp4 moe gpt_oss validate bench)
+ (names main validate bench)
+ (modules mxfp4 moe gpt_oss main validate bench)
  (libraries kaun kaun.hf jsont jsont.bytesrw nx rune unix))
