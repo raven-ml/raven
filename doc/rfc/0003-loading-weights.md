@@ -3,7 +3,8 @@
 - Status: published
 - Date: 2026-09-18
 - Packages: nx (buffer, io, `cast`, effect), kaun (`Checkpoint`, `Kaun_hf`,
-  examples), rune (`to_device`, capture binding, one alignment guard)
+  examples), rune (`to_device`, capture binding, unaligned vector types on the
+  CPU device)
 
 ## Summary
 
@@ -25,11 +26,11 @@ checkpoint functions and one rune function.
 
 ## Motivation
 
-By the sizes of what the code allocates, importing Llama 3.2 1B peaks at 12.4
-GB of host memory for a 2.47 GB file. The shard is read into one OCaml string,
-its data section is copied into a second, each tensor is copied out of that
-(uint8 element by element through a closure), and `Checkpoint.to_params` then
-needs a fully allocated template of the target dtype whose values it discards
+Measured, loading and importing Llama 3.2 1B peaks at 15.8 GB of host memory
+for a 2.47 GB file. The shard is read into one OCaml string, its data section
+is copied into a second, each tensor is copied out of that (uint8 element by
+element through a closure), and `Checkpoint.to_params` then needs a fully
+allocated template of the target dtype whose values it discards
 (`nx_safetensors.ml:154-161`, `safetensors.ml:619-622`,
 `checkpoint.ml:102-109`). `Kaun_hf.load_checkpoint` keeps every shard's
 tensors until extraction ends. Llama 3.1 8B needs 48 GB before extraction
@@ -163,8 +164,9 @@ at each leaf's path, shape and dtype.
 A file must not change while a tensor read from it is reachable. Replace a
 checkpoint by writing a new file and renaming it over the old one, which is
 what `Checkpoint.save` does. `Nx.copy` gives a tensor that is independent of
-its file. A mapping lasts until the garbage collector finalises the last
-tensor over it, which can be later than the last use.
+its file, and the file becomes replaceable on every platform once the tensors
+over it have been collected. A mapping lasts until the garbage collector
+finalises the last tensor over it, which can be later than the last use.
 
 ## Reference
 
@@ -191,13 +193,16 @@ The stub never builds a header. It calls the runtime's exported `caml_ba_sub`
 over the whole of `b`, which allocates the header, copies `b`'s custom
 operations (a mapped file's finaliser unmaps, the stock one frees) and joins
 `b`'s proxy under the runtime's atomic count, then rewrites the result's kind
-bits and length. The runtime's proxy function and its mapped operations table
-are private, so this is the only correct route; nx's own header builder marks
-its result managed, and a finaliser would then free an address inside the
-mapping. A test maps a file, keeps only a reinterpreted sub-array, collects,
-reads it, drops it, collects, and checks that the file was unmapped once. The
-JavaScript stubs gain the same function, a typed array of the new kind over
-the same `ArrayBuffer`. It is storage-level: no backend operation is added.
+bits and length. `caml_ba_sub` is exported by the runtime and absent from its
+header, so the stub declares it, and the OCaml side passes the element size,
+which the runtime keeps internal. The runtime's proxy function and its mapped
+operations table are private, so this is the only correct route; nx's own
+header builder marks its result managed, and a finaliser would then free an
+address inside the mapping. A test maps a file, keeps only a reinterpreted
+sub-array, collects, reads it, drops it, collects, and checks that the file
+was unmapped once. The JavaScript stubs gain the same function, a typed array
+of the new kind over the same `ArrayBuffer`. It is storage-level: no backend
+operation is added.
 
 ### `Nx_io.load_safetensors`
 
@@ -260,10 +265,12 @@ raises `Failure` naming the destination and the temporary file, which it
 keeps, so a finished run is not lost. `Kaun_hf.clear_cache` collects and
 retries the same way. `Kaun_hf.download_file` downloads to a uniquely named
 temporary sibling of its destination and renames it; the loser of a race
-renames an identical file over the winner's. `Checkpoint.save` of a loaded
-checkpoint reads every entry and, until a streaming writer exists, holds twice
-the checkpoint's size. An entry whose dtype nx lacks is written back as `U8`
-with the shape it was handed out at.
+renames an identical file over the winner's, or serves the winner's file where
+the rename is refused. Saves are created with mode `0o640`, as the other
+writers', and downloads with `0o644`. `Checkpoint.save` of a loaded checkpoint
+reads every entry and, until a streaming writer exists, holds twice the
+checkpoint's size. An entry whose dtype nx lacks is written back as `U8` with
+the shape it was handed out at.
 
 ### `Checkpoint.to_tensor` and `Checkpoint.to_float`
 
@@ -349,19 +356,26 @@ the chunked path synchronises when the bytes copied since the last synchronize
 pass a bound, which bounds CUDA's pending pinned buffers with tolk's runtime
 left as ported.
 
-### One guard in rune
+### Unaligned vector types on the CPU device
 
-Rune wraps a host pointer in place only when it is aligned for the device,
-which means 64 bytes, the widest alignment tolk's C renderer declares and what
-tolk gives its own CPU buffers. A mapped tensor is aligned to its element size
-at best: in the cached Llama 3.2 1B file all 146 tensors sit at addresses
-congruent to 8 modulo 16. On x86-64 an aligned vector load of such an address
-is a fault no handler catches, and after this RFC a mapped capture is the
-common case on the Linux CPU device. A capture that fails the test takes the
-existing copy path, so on x86-64 the guard copies most mapped leaves and the
-CPU-device figures below hold on arm64 only. The alternative that keeps the
-views is to render unaligned vector types for buffers bound to external
-pointers. The guard ships with the mapped loader.
+Rune's CPU programs read and write host memory in place, and tolk's C renderer
+declares each vector type aligned to its size: 16 bytes for four floats, 32
+for four doubles. A mapped tensor is aligned to its element size at best (in
+the cached Llama 3.2 1B file all 146 tensors sit at addresses congruent to 8
+modulo 16), and on x86-64 an aligned vector load of such an address is a fault
+no handler catches. The hazard predates mapping: glibc aligns an allocation to
+16 bytes, so four-wide float64 kernels already break their declaration about
+half the time.
+
+Rune compiles its CPU programs with unaligned vector types, which tolk already
+renders under its `ALIGNED=0` setting, so every host pointer is read in place
+whatever its address. On arm64 it costs nothing: Llama 3.2 1B decodes at the
+same rate either way. A guard that copies a misaligned pointer was the first
+design and was measured out. At 64 bytes, the widest alignment the renderer
+declares, it copies every weight and every cache fed back on every call on
+Linux, where glibc places each allocation of 128 KB or more at 16 modulo 4096,
+and no entry of any cached checkpoint passes it. At 16 bytes it leaves the
+float64 hazard in place.
 
 ### Peak memory
 
@@ -387,16 +401,18 @@ On a 32 GB M1 Max, in GB, peak and steady:
 | Model | Configuration | Captured host leaves | Placed leaves | Today |
 | --- | --- | --- | --- | --- |
 | GPT-2 124M, 0.55, misaligned | Metal, float32 | 1.2, 1.2 | 1.1, 0.5 | 1.8 |
-| Llama 3.2 1B, 2.47 | Metal, bfloat16 | 3.1, 3.0 | 2.6, 2.5 | 12.4 |
-| Llama 3.2 1B | Metal, float32 by host cast | 11.1, 11.0 | 6.1, 4.9 | 12.4 |
+| Llama 3.2 1B, 2.47 | Metal, bfloat16 | 3.1, 3.0 | 2.6, 2.5 | 15.8 measured |
+| Llama 3.2 1B | Metal, float32 by host cast | 11.1, 11.0 | 6.1, 4.9 | 15.8 measured |
 | Llama 3.1 8B, 16.06 | Metal, bfloat16 | 18.3, 17.3 | 17.2, 16.1 | 48: does not load |
 | Llama 3.1 8B | Metal, float16 by host cast | 34.4: does not fit | 18.2, 16.1 | does not load |
 | gpt-oss-20b, 13.76 | Metal, uint8 and bfloat16 | 16.5, 15.4 | 15.0, 13.8 | does not load |
-| gpt-oss-20b | CPU device, arm64 | 3.6 committed, 11.3 file cache | same | does not load |
+| gpt-oss-20b | CPU device | 3.6 committed, 11.3 file cache | same | does not load |
 
-Every figure is derived from sizes and code paths and none is measured. The
-device reports a working set of 26.8 GB and a maximum buffer of 20.1 GB; the
-largest leaf is 1.16 GB.
+Every figure but today's is derived from sizes and code paths. Measured after
+stages 0 and 1, which keep the template: loading and importing Llama 3.2 1B at
+float32 peaks at 9.9 GB in 3.0 s, against 15.8 GB in 4.0 s before; the rest is
+the template and the cast result. The device reports a working set of 26.8 GB
+and a maximum buffer of 20.1 GB; the largest leaf is 1.16 GB.
 
 ### Order of work
 
@@ -406,13 +422,14 @@ largest leaf is 1.16 GB.
    time to the end of the first compiled call and peak memory footprint, on a
    synthetic checkpoint with Llama 3.2 1B's header, aligned and misaligned,
    CPU device and Metal), run by hand since CI has neither the memory nor
-   Metal, and first on today's loader so the 12.4 GB figure is measured.
+   Metal, and first on today's loader.
 1. `reinterpret`, the mapped loader with the old one compared tensor by tensor
-   on the cached real files before it is deleted, and rune's alignment guard.
-   New tests: a truncated file, a hand-written misaligned file equal to its
-   aligned twin, `F8_E8M0` as bytes, `reinterpret` per kind and across a major
-   collection. Test helpers that delete a file after loading it detach with
-   `Nx.copy` first.
+   on the cached real files before it is deleted, and unaligned vector types
+   for rune's CPU programs. New tests: a truncated file, a hand-written
+   misaligned file equal to its aligned twin, `F8_E8M0` as bytes,
+   `reinterpret` per kind and across a major collection. Test helpers that
+   delete a file after loading it copy what they return and run a major
+   collection first.
 2. `to_tensor`, `to_float`, `Nx.cast`, the importers of `04-gpt2` and
    `05-llama`, the removals, the docs. `backend_intf.ml:108-110` is corrected
    to RFC 0001's wording.
@@ -444,8 +461,8 @@ written from the real shards' headers.
    read when first used. Prevents a peak proportional to the file before
    extraction starts.
 4. **An entry is viewed in place only when its address is a multiple of its
-   element size, rune wraps a host pointer in place only when it is aligned
-   for the device, and no function reports or depends on either.** Prevents
+   element size, rune's CPU programs read host pointers through unaligned
+   vector types, and no function reports or depends on either.** Prevents
    unaligned typed loads, which fault in vector code on x86-64, and code that
    breaks on the copy path.
 5. **Bytes are never reinterpreted silently.** Only `to_float` casts, and only
@@ -608,10 +625,8 @@ Before stage 1:
   buffers fill, at full size on the 32 GB M1 Max. If the hinted mapping stays
   under half of `pread`, an upload reads a file-backed leaf with `pread` into
   its chunk, which needs a query from a tensor to its file range.
-- Whether x86-64 needs the copy at all, and if it does, whether rune copies or
-  tolk renders unaligned vector types for external pointers: a rune test with
-  a capture offset by one element under a vectorisable kernel, on CI's x86-64
-  runner. It needs no weights.
+- What unaligned vector types cost on x86-64. It is unmeasured; current CPUs
+  execute an unaligned load of an aligned address at the same speed.
 - Whether Windows lets a file with a live view be deleted or renamed over (the
   stage 0 test); raven assumes it does not.
 
