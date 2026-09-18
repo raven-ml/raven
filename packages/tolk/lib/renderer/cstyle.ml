@@ -1707,10 +1707,15 @@ let used_alu_dtypes uops =
 let used_vector_dtypes uops =
   List.filter (fun (_, count) -> count > 1) (used_alu_dtypes uops)
 
-let clang_vector_prefix lang (scalar, count) =
+(* [aligned] has no tinygrad counterpart: the reference reads [ALIGNED] from the
+   environment only. *)
+let clang_vector_prefix ?aligned lang (scalar, count) =
   let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
+  let aligned =
+    match aligned with Some a -> a | None -> getenv "ALIGNED" 1 <> 0
+  in
   let alignment =
-    if getenv "ALIGNED" 1 = 0 || Dtype.equal scalar Dtype.bool then 1
+    if (not aligned) || Dtype.equal scalar Dtype.bool then 1
     else floor_power_of_two (Dtype.itemsize scalar * count)
   in
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"
@@ -1718,8 +1723,8 @@ let clang_vector_prefix lang (scalar, count) =
     (render_dtype_c lang ~sz:count scalar)
     alignment count
 
-let clang_preamble lang uops =
-  List.map (clang_vector_prefix lang) (used_vector_dtypes uops)
+let clang_preamble ?aligned lang uops =
+  List.map (clang_vector_prefix ?aligned lang) (used_vector_dtypes uops)
 
 let clang_language : language =
   make_language
@@ -1732,7 +1737,7 @@ let clang_language : language =
     ~nan:"__builtin_nanf(\"\")"
     ~code_for_op:clang_code_for_op
     ~extra_matcher:clang_extra_matcher
-    ~preamble:clang_preamble
+    ~preamble:(fun lang uops -> clang_preamble lang uops)
     ()
 
 let fixed_abi_arg ctx buf_idx val_idx (u, _nm, (dt, _mut)) =
@@ -1785,8 +1790,12 @@ let clang_fixed_abi_render_kernel ~arch ctx ~function_name ~kernel ~bufs ~uops
     inner (entry_abi arch) function_name inner_name
     (String.concat ", " (List.rev args))
 
-let clang_fixed_abi_language arch : language =
-  { clang_language with render_kernel = clang_fixed_abi_render_kernel ~arch }
+let clang_fixed_abi_language ?aligned arch : language =
+  {
+    clang_language with
+    render_kernel = clang_fixed_abi_render_kernel ~arch;
+    preamble = clang_preamble ?aligned;
+  }
 
 (* OpenCLRenderer *)
 
@@ -2731,16 +2740,17 @@ let clang_no_abi ?(native_bf16 = true) arch =
     ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
     ~render:(render clang_language) ()
 
-let clang ?(native_bf16 = true) arch =
+let clang ?(native_bf16 = true) ?aligned arch =
+  let language = clang_fixed_abi_language ?aligned arch in
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
     ~has_threads:(getenv "THREADS" 1 <> 0) ~has_shared:false
     ~shared_max:0 ~global_max:[ host_cpu_count (); 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang
-    ~extra_matcher:(clang_fixed_abi_language arch).extra_matcher
+    ~extra_matcher:language.extra_matcher
     ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
     ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
-    ~render:(render (clang_fixed_abi_language arch)) ()
+    ~render:(render language) ()
 
 let opencl arch =
   Renderer.make ~name:"opencl" ~device:"CL" ~has_local:true

@@ -157,3 +157,12 @@ delete it rather than registering it.
   reference's codegen. Consumers: rune's `E_scatter`, hence `Nx.scatter`, the
   gradient of `Nx.take` and kaun's embedding gradient; and rune's `E_update`
   at a traced corner, over the flattened destination.
+
+- **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
+  `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
+  selects unaligned vector types through the `ALIGNED` environment variable
+  alone. tolk also takes the choice as an argument, so a caller can select it
+  for one device without touching the process environment; absent, the
+  variable decides as in the reference, and the rendered source is the
+  reference's either way. Consumer: rune's CPU device, which binds host memory
+  it did not allocate (slices, mapped files) and passes `~aligned:false`.

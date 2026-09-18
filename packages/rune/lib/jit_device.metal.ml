@@ -6,7 +6,8 @@
 (* Jit device factory with Metal support. *)
 
 let create name =
-  if String.starts_with ~prefix:"CPU" name then Tolk_cpu.create name
+  if String.starts_with ~prefix:"CPU" name then
+    Tolk_cpu.create ~aligned:false name
   else if String.starts_with ~prefix:"AMD" name then
     try Tolk_amd.create name
     with Failure msg ->

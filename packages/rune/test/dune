@@ -50,6 +50,12 @@
  (libraries rune nx nx.core unix))
 
 (tests
+ (names test_jit_alignment)
+ (modules test_jit_alignment)
+ (package rune)
+ (libraries rune nx nx.buffer tolk tolk.uop windtrap rune_test_support))
+
+(tests
  (names test_jit_cache)
  (modules test_jit_cache)
  (package rune)

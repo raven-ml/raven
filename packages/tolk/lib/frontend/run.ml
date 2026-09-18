@@ -29,7 +29,7 @@ let all_backends : (string * (string -> Tolk.Device.t)) list =
       ("AMD", Tolk_amd.create);
       ("NV", Tolk_nv.create);
       ("CUDA", Tolk_cuda.create);
-      ("CPU", Tolk_cpu.create);
+      ("CPU", fun name -> Tolk_cpu.create name);
     ]
 
 let () =

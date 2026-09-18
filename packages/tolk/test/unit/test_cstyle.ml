@@ -797,6 +797,19 @@ let () =
                 let out = render r (make_vector_access ()) in
                 assert_contains (name ^ " vector access cast") out "*((";
                 assert_contains (name ^ " vector access dtype") out "float4*"));
+          test "clang vector types are aligned unless asked otherwise"
+            (fun () ->
+              let render_with ?aligned () =
+                render
+                  (Cstyle.clang ?aligned Gpu_target.X86_64)
+                  (make_vector_access ())
+              in
+              assert_contains "default" (render_with ()) "aligned(16)";
+              assert_contains "aligned" (render_with ~aligned:true ())
+                "aligned(16)";
+              assert_contains "unaligned"
+                (render_with ~aligned:false ())
+                "aligned(1)");
           test "dtype-changing load casts access pointer" (fun () ->
             let out = render clang_renderer (make_dtype_changing_load ()) in
             assert_contains "dtype-changing load casts" out "*((float*)";

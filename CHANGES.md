@@ -107,6 +107,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` on the CPU device compiles kernels that read host memory at any
+  address. The kernels declared their vector types aligned to their size while
+  tensors were read in place wherever their data sat, so on x86-64 a slice
+  starting inside a buffer, a tensor over a mapped file, or a four-wide float64
+  kernel over ordinary allocated memory could kill the process.
 - Compiled programs on Metal replay as batched GPU submissions: the kernels of
   a `Rune.jit` trace are recorded once and each call submits them in a few
   command buffers instead of one per kernel. The per-kernel launch cost drops
@@ -229,6 +234,10 @@ thread.
 
 ### Tolk (new)
 
+- `Cstyle.clang` and `Tolk_cpu.create` take `?aligned`. `~aligned:false`
+  declares vector types aligned to one byte, for a device that binds memory it
+  did not allocate. Absent, the `ALIGNED` environment variable decides, as
+  before.
 - The Metal device carries a `Device.Graph` capability: a batched call sequence
   is encoded once into an indirect command buffer and replayed as a single
   command buffer, with rebound buffers, variable values and launch dimensions
