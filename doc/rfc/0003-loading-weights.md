@@ -143,10 +143,13 @@ kernel drops under pressure without writing anything.
 Before stage 3, and after it without `~device`, the program is still correct:
 captures are uploaded at the first call, one copy per compiled function, and a
 leaf cast on the host stays alive beside its device copy (see Peak memory).
-The examples' `--dtype` defaults to the file's dtype. Placing after the
-import, `Params.map (Rune.to_device ~device) params`, is correct too and holds
-every cast leaf until the map ends. Training places its state the same way,
-before the first step, which removes the first call's double copy.
+The examples' `--dtype` defaults to the file's dtype: a program that takes its
+default from the file loads the configuration and the checkpoint, reads the
+stored dtype of one entry, and calls `of_hf`, where `from_pretrained dt`
+serves a caller that knows its dtype. Placing after the import, `Params.map
+(Rune.to_device ~device) params`, is correct too and holds every cast leaf
+until the map ends. Training places its state the same way, before the first
+step, which removes the first call's double copy.
 
 ### Restarting training
 
@@ -284,11 +287,11 @@ val to_float : shape:int array -> (float, 'b) Nx.dtype -> string -> t -> (float,
 of the file. `to_float ~shape dtype name t` is a float16, bfloat16, float32 or
 float64 entry at `dtype`: as stored when it already has `dtype`, and otherwise
 cast with `Nx.cast`, which allocates the leaf. A float8 entry is refused,
-since its scales live in other entries; `to_tensor` reads it. Both raise
-`Invalid_argument`, naming the entry, if `name` has no entry or `shape`
-differs; `to_tensor` on any dtype mismatch, `to_float` on an entry that is not
-floating-point. An importer that ties weights binds the tensor once and uses
-it twice.
+since its scales live in other entries; `to_tensor` reads it. A float8 `dtype`
+is refused for the same reason. Both raise `Invalid_argument`, naming the
+entry, if `name` has no entry or `shape` differs; `to_tensor` on any dtype
+mismatch, `to_float` on an entry that is not floating-point. An importer that
+ties weights binds the tensor once and uses it twice.
 
 `?cast` disappears from `to_params` and `to_packed`, and they raise on any
 dtype mismatch: a template states the dtype it expects, and a cast is asked
@@ -368,14 +371,15 @@ no handler catches. The hazard predates mapping: glibc aligns an allocation to
 half the time.
 
 Rune compiles its CPU programs with unaligned vector types, which tolk already
-renders under its `ALIGNED=0` setting, so every host pointer is read in place
-whatever its address. On arm64 it costs nothing: Llama 3.2 1B decodes at the
-same rate either way. A guard that copies a misaligned pointer was the first
-design and was measured out. At 64 bytes, the widest alignment the renderer
-declares, it copies every weight and every cache fed back on every call on
-Linux, where glibc places each allocation of 128 KB or more at 16 modulo 4096,
-and no entry of any cached checkpoint passes it. At 16 bytes it leaves the
-float64 hazard in place.
+renders under its `ALIGNED=0` setting and now also takes as an argument of its
+CPU device, a small extension recorded among tolk's divergences, so every host
+pointer is read in place whatever its address. On arm64 it costs nothing:
+Llama 3.2 1B decodes at the same rate either way. A guard that copies a
+misaligned pointer was the first design and was measured out. At 64 bytes, the
+widest alignment the renderer declares, it copies every weight and every cache
+fed back on every call on Linux, where glibc places each allocation of 128 KB
+or more at 16 modulo 4096, and no entry of any cached checkpoint passes it. At
+16 bytes it leaves the float64 hazard in place.
 
 ### Peak memory
 
@@ -408,11 +412,17 @@ On a 32 GB M1 Max, in GB, peak and steady:
 | gpt-oss-20b, 13.76 | Metal, uint8 and bfloat16 | 16.5, 15.4 | 15.0, 13.8 | does not load |
 | gpt-oss-20b | CPU device | 3.6 committed, 11.3 file cache | same | does not load |
 
-Every figure but today's is derived from sizes and code paths. Measured after
-stages 0 and 1, which keep the template: loading and importing Llama 3.2 1B at
-float32 peaks at 9.9 GB in 3.0 s, against 15.8 GB in 4.0 s before; the rest is
-the template and the cast result. The device reports a working set of 26.8 GB
-and a maximum buffer of 20.1 GB; the largest leaf is 1.16 GB.
+Every figure but today's is derived from sizes and code paths. Measured on
+Llama 3.2 1B after stage 2: loading and importing at the file's bfloat16
+commits 0.01 GB in 0.35 s, and 4.96 GB in 0.73 s at float32, against 15.8 GB
+in 4.0 s before. With a first compiled call at bfloat16 the peak is 3.26 GB on
+Metal and 2.40 GB on the CPU device. A synthetic checkpoint with Llama 3.1
+8B's headers loads, imports and runs its first compiled call on the CPU device
+at a peak of 18.85 GB, above the derived figure: every projection is a strided
+view of the file, and a strided capture passes through a contiguous host copy
+and a staging `Bytes` kept per distinct size before it reaches its buffer. The
+device reports a working set of 26.8 GB and a maximum buffer of 20.1 GB; the
+largest leaf is 1.16 GB.
 
 ### Order of work
 
@@ -427,9 +437,9 @@ and a maximum buffer of 20.1 GB; the largest leaf is 1.16 GB.
    on the cached real files before it is deleted, and unaligned vector types
    for rune's CPU programs. New tests: a truncated file, a hand-written
    misaligned file equal to its aligned twin, `F8_E8M0` as bytes,
-   `reinterpret` per kind and across a major collection. Test helpers that
-   delete a file after loading it copy what they return and run a major
-   collection first.
+   `reinterpret` per kind and across a major collection. Test helpers and
+   documentation examples that delete a file after loading it copy what they
+   return and run a major collection first.
 2. `to_tensor`, `to_float`, `Nx.cast`, the importers of `04-gpt2` and
    `05-llama`, the removals, the docs. `backend_intf.ml:108-110` is corrected
    to RFC 0001's wording.
