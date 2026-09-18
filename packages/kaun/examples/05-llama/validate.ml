@@ -31,7 +31,6 @@
    download. *)
 
 open Kaun
-module Span = Attention.Span
 
 let json_of_file path =
   let ic = open_in_bin path in
@@ -187,7 +186,8 @@ let validate (type b) ~device ~tol ~exact fx cfg
               (Array.init len (fun i -> Int32.of_int (at + i)))
           in
           let h, caches =
-            Llama.cached cfg p caches (Span.make ~pos ~slots)
+            Llama.cached cfg p caches
+              (Cache_index.make ~pos ~table:slots ())
               (Nx.slice [ A; R (at, at + len) ] ids)
           in
           (at + len, h :: hs, caches))
@@ -208,10 +208,10 @@ let validate (type b) ~device ~tol ~exact fx cfg
   let m = Array.length short in
   let padded = Array.append (Array.make (n - m) 0) short in
   let context = n in
-  let span = Span.rows ~context [| n; m |] in
+  let index = Cache_index.rows ~context [| n; m |] in
   let batch ids =
     let h, _ =
-      Llama.cached cfg p (Llama.cache cfg ~slots:(2 * context) dt) span ids
+      Llama.cached cfg p (Llama.cache cfg ~slots:(2 * context) dt) index ids
     in
     to32 (Llama.logits cfg p (Nx.slice [ A; I (n - 1) ] h))
   in

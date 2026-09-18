@@ -62,19 +62,17 @@ let model () =
     ln_f = Layer_norm.init ~dim:embd;
   }
 
-let cached m caches span ids =
-  let slots = Nx.dim 0 (List.hd caches).Attention.Cache.keys in
-  let route = Attention.route ~slots span in
+let cached m caches index ids =
   let x =
     Nx.add
       (Embedding.apply m.wte ids)
-      (Embedding.apply m.wpe (Attention.Span.positions span))
+      (Embedding.apply m.wpe (Cache_index.positions index))
   in
   let x, rev =
     List.fold_left2
       (fun (x, cs) b c ->
         let a, c =
-          Attention.cached ~head_dim b.attn c route
+          Attention.cached ~head_dim b.attn c index
             (Layer_norm.apply ~eps b.ln1 x)
         in
         let x = Nx.add x a in
@@ -96,32 +94,30 @@ let cache ~slots =
   List.init layers (fun _ ->
       Attention.Cache.make ~slots ~kv_heads:heads ~head_dim Nx.float32)
 
-module Span = Kaun.Attention.Span
-
 module Step = struct
   type t = {
     token : Nx.int32_t;
-    span : Span.t;
+    index : Cache_index.t;
     caches : Nx.float32_t Attention.Cache.List.t;
   }
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; span; caches } =
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; index; caches } =
     {
       token = f token;
-      span = Span.map f span;
+      index = Cache_index.map f index;
       caches = Attention.Cache.List.map f caches;
     }
 
   let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
     {
       token = f a.token b.token;
-      span = Span.map2 f a.span b.span;
+      index = Cache_index.map2 f a.index b.index;
       caches = Attention.Cache.List.map2 f a.caches b.caches;
     }
 
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; span; caches } =
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; index; caches } =
     f token;
-    Span.iter f span;
+    Cache_index.iter f index;
     Attention.Cache.List.iter f caches
 end
 
@@ -134,14 +130,14 @@ let decoder params ~len =
     Rune.jit2 ~donate:true
       (module Step)
       (module Step)
-      (fun { Step.token; span; caches } ->
+      (fun { Step.token; index; caches } ->
         let seq = (Nx.shape token).(1) in
-        let h, caches = cached params caches span token in
+        let h, caches = cached params caches index token in
         let last = Nx.slice [ A; I (seq - 1) ] h in
         {
           Step.token =
             Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (logits params last));
-          span = Span.advance span;
+          index = Cache_index.advance index;
           caches;
         })
   in
@@ -150,17 +146,18 @@ let decoder params ~len =
       (step
          {
            Step.token = Nx.zeros Nx.int32 [| 1; 8 |];
-           span = Span.rows ~context:len [| 8 |];
+           index = Cache_index.rows ~context:len [| 8 |];
            caches = cache ~slots:len;
          })
   in
+  let at = Nx.full Nx.int32 [| 1; 1 |] (Int32.of_int (len / 2)) in
   let middle =
-    Span.make
-      ~pos:(Nx.full Nx.int32 [| 1; 1 |] (Int32.of_int (len / 2)))
-      ~slots:(Span.rows ~context:len [| 1 |]).Span.slots
+    Cache_index.make ~pos:at
+      ~table:(Nx.reshape [| 1; len |] (Nx.arange Nx.int32 0 len 1))
+      ()
   in
   let advance () =
-    state := step { !state with Step.span = middle };
+    state := step { !state with Step.index = middle };
     ignore (Nx.item [ 0; 0 ] !state.Step.token : int32)
   in
   advance ();

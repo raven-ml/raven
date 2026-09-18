@@ -50,8 +50,8 @@ let load_tokenizer () =
   | Error e -> failwith ("tokenizer: " ^ e)
 
 (* Greedy decoding with a key-value cache. One step function serves the whole
-   generation: it consumes the tokens its span places, fills the caches, and
-   returns the next token, the advanced span and the updated caches — its output
+   generation: it consumes the tokens its index places, fills the caches, and
+   returns the next token, the advanced index and the updated caches — its output
    feeds the next call directly. Positions and slots enter as tensors, so under
    [--jit] [Rune.jit2] compiles exactly two variants: a prefill over the whole
    prompt, and a single-token step replayed for every generated token, writing
@@ -61,50 +61,48 @@ let load_tokenizer () =
    caches carry the same dtype as the weights, so [--dtype float16] decodes with
    half precision weights, activations and caches alike. *)
 
-module Span = Kaun.Attention.Span
-
 let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
     (dt : (float, b) Nx.dtype) ~max_tokens prompt =
   let module Step = struct
     type t = {
       token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token *)
-      span : Span.t; (* where [token]'s entries sit *)
+      index : Kaun.Cache_index.t; (* where [token]'s entries sit *)
       caches : (float, b) Nx.t Gpt2.Cache.t;
     }
 
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; span; caches }
+    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; index; caches }
         =
       {
         token = f token;
-        span = Span.map f span;
+        index = Kaun.Cache_index.map f index;
         caches = Gpt2.Cache.map f caches;
       }
 
     let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
       {
         token = f a.token b.token;
-        span = Span.map2 f a.span b.span;
+        index = Kaun.Cache_index.map2 f a.index b.index;
         caches = Gpt2.Cache.map2 f a.caches b.caches;
       }
 
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; span; caches } =
+    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; index; caches } =
       f token;
-      Span.iter f span;
+      Kaun.Cache_index.iter f index;
       Gpt2.Cache.iter f caches
   end in
   let n0 = Array.length prompt in
   let len = n0 + max_tokens in
   let tokens = Array.make len 0l in
   Array.blit prompt 0 tokens 0 n0;
-  let step { Step.token; span; caches } =
+  let step { Step.token; index; caches } =
     let seq = (Nx.shape token).(1) in
-    let h, caches = Gpt2.cached cfg params caches span token in
+    let h, caches = Gpt2.cached cfg params caches index token in
     (* Only the last position's logits matter for decoding. *)
     let last = Nx.slice [ A; I (seq - 1) ] h in
     {
       Step.token =
         Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (Gpt2.logits cfg params last));
-      span = Span.advance span;
+      index = Kaun.Cache_index.advance index;
       caches;
     }
   in
@@ -120,7 +118,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
       (step_fn
          {
            Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
-           span = Span.rows ~context:len [| n0 |];
+           index = Kaun.Cache_index.rows ~context:len [| n0 |];
            caches = Gpt2.cache cfg ~slots:len dt;
          })
   in
@@ -163,7 +161,8 @@ let check cfg params ids =
               (Array.init len (fun i -> Int32.of_int (at + i)))
           in
           let h, caches =
-            Gpt2.cached cfg params caches (Span.make ~pos ~slots)
+            Gpt2.cached cfg params caches
+              (Kaun.Cache_index.make ~pos ~table:slots ())
               (Nx.slice [ A; R (at, at + len) ] tokens)
           in
           (at + len, h :: hs, caches))

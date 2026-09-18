@@ -245,87 +245,19 @@ let apply ~head_dim ?mask ?rope p x =
   let out = Linear.apply p.out (attend ~kv_heads ?mask q k v) in
   Nx.reshape shape out
 
-(* Addressing *)
-
-module Span = struct
-  type t = { pos : Nx.int32_t; slots : Nx.int32_t }
-
-  let make ~pos ~slots =
-    (match (Nx.shape pos, Nx.shape slots) with
-    | [| b; s |], [| b'; c |] when b = b' && b > 0 && s > 0 && c > 0 -> ()
-    | _ ->
-        invalid_arg
-          "Attention.Span.make: pos must have shape [batch; seq] and slots \
-           [batch; context], none of them empty");
-    { pos; slots }
-
-  let rows ~context lens =
-    let batch = Array.length lens in
-    if batch = 0 then invalid_arg "Attention.Span.rows: no rows";
-    if context <= 0 then
-      Printf.ksprintf invalid_arg
-        "Attention.Span.rows: context must be positive, got %d" context;
-    Array.iter
-      (fun n ->
-        if n < 0 || n > context then
-          Printf.ksprintf invalid_arg
-            "Attention.Span.rows: a row of %d tokens does not fit a context of \
-             %d"
-            n context)
-      lens;
-    let seq = Array.fold_left max 1 lens in
-    (* Rows are padded on the left, so the last column is every row's last
-       token. *)
-    let pos =
-      Array.init (batch * seq) (fun t ->
-          let b = t / seq and i = t mod seq in
-          Int32.of_int (max (-1) (i - (seq - lens.(b)))))
-    in
-    let slots = Array.init (batch * context) Int32.of_int in
-    {
-      pos = Nx.create Nx.int32 [| batch; seq |] pos;
-      slots = Nx.create Nx.int32 [| batch; context |] slots;
-    }
-
-  let positions t =
-    let context = Int32.of_int (Nx.dim 1 t.slots) in
-    let inside =
-      Nx.logical_and (Nx.greater_equal_s t.pos 0l) (Nx.less_s t.pos context)
-    in
-    Nx.where inside t.pos (Nx.zeros_like t.pos)
-
-  let advance t =
-    (* Any negative position is padding: a row of it advances to 0. *)
-    let last = Nx.maximum_s (Nx.max ~axes:[ 1 ] ~keepdims:true t.pos) (-1l) in
-    { t with pos = Nx.add_s last 1l }
-
-  let map f { pos; slots } =
-    let pos = f pos in
-    let slots = f slots in
-    { pos; slots }
-
-  let map2 f a b =
-    let pos = f a.pos b.pos in
-    let slots = f a.slots b.slots in
-    { pos; slots }
-
-  let iter f { pos; slots } =
-    f pos;
-    f slots
-end
-
 (* Key-value cache *)
 
 module Cache = struct
   type 'a t = { keys : 'a; values : 'a }
 
   let make ~slots ~kv_heads ~head_dim dtype =
-    if slots <= 0 || kv_heads <= 0 || head_dim <= 0 then
+    if slots < 0 || kv_heads <= 0 || head_dim <= 0 then
       Printf.ksprintf invalid_arg
-        "Attention.Cache.make: slots, kv_heads and head_dim must be positive, \
-         got slots=%d kv_heads=%d head_dim=%d"
+        "Attention.Cache.make: slots must not be negative and kv_heads and \
+         head_dim must be positive, got slots=%d kv_heads=%d head_dim=%d"
         slots kv_heads head_dim;
-    let shape = [| slots; kv_heads; head_dim |] in
+    (* The last row is scratch: what addresses nothing is written there. *)
+    let shape = [| slots + 1; kv_heads; head_dim |] in
     { keys = Nx.zeros dtype shape; values = Nx.zeros dtype shape }
 
   let map f { keys; values } =
@@ -396,131 +328,42 @@ module Cache = struct
   end
 end
 
-(* Routes *)
+(* Cached attention *)
 
-type route = {
-  batch : int;
-  seq : int;
-  context : int;
-  slots : int;
-  positions : Nx.int32_t; (* [batch; seq], effective *)
-  source : Nx.int32_t; (* [slots]: the token written to each slot, clamped *)
-  written : (bool, Nx.bool_elt) Nx.t; (* [slots; 1; 1] *)
-  read : Nx.int32_t; (* [batch * context]: the slot of each column, clamped *)
-  live : (bool, Nx.bool_elt) Nx.t; (* [batch * context; 1; 1] *)
-  mask : (bool, Nx.bool_elt) Nx.t; (* [batch; seq; context] *)
-}
-
-let route ~slots (span : Span.t) =
-  if slots <= 0 then
-    Printf.ksprintf invalid_arg
-      "Attention.route: slots must be positive, got %d" slots;
-  let batch = Nx.dim 0 span.pos and seq = Nx.dim 1 span.pos in
-  let context = Nx.dim 1 span.slots in
-  let tokens = batch * seq in
-  let positions = Span.positions span in
-  let inside =
-    Nx.logical_and
-      (Nx.greater_equal_s span.pos 0l)
-      (Nx.less_s span.pos (Int32.of_int context))
-  in
-  let none = Nx.full Nx.int32 [| 1; 1 |] (-1l) in
-  (* The slot each token writes, or none: an address outside its range addresses
-     nothing, so no index below leaves its range. *)
-  let target =
-    Nx.where inside
-      (Nx.take_along_axis ~axis:1 ~indices:positions span.slots)
-      none
-  in
-  (* Inverted once per call: the last token, in row-major order, aimed at each
-     slot. Every layer's write is then one select over the pool. *)
-  let hit =
-    Nx.equal
-      (Nx.reshape [| 1; tokens |] target)
-      (Nx.reshape [| slots; 1 |] (Nx.arange Nx.int32 0 slots 1))
-  in
-  let token = Nx.reshape [| 1; tokens |] (Nx.arange Nx.int32 0 tokens 1) in
-  let writer = Nx.max ~axes:[ 1 ] (Nx.where hit token none) in
-  let flat = Nx.reshape [| batch * context |] (Nx.contiguous span.slots) in
-  let allocated =
-    Nx.logical_and
-      (Nx.greater_equal_s flat 0l)
-      (Nx.less_s flat (Int32.of_int slots))
-  in
-  let column = Nx.arange Nx.int32 0 context 1 in
-  (* A column past every position of its row is seen by no query of the row. *)
-  let horizon = Nx.max ~axes:[ 1 ] ~keepdims:true positions in
-  let within = Nx.less_equal (Nx.reshape [| 1; context |] column) horizon in
-  {
-    batch;
-    seq;
-    context;
-    slots;
-    positions;
-    source = Nx.maximum_s writer 0l;
-    written = Nx.reshape [| slots; 1; 1 |] (Nx.greater_equal_s writer 0l);
-    read = Nx.clamp ~min:0l ~max:(Int32.of_int (slots - 1)) flat;
-    live =
-      Nx.reshape
-        [| batch * context; 1; 1 |]
-        (Nx.logical_and allocated (Nx.reshape [| batch * context |] within));
-    mask =
-      Nx.less_equal
-        (Nx.reshape [| 1; 1; context |] column)
-        (Nx.reshape [| batch; seq; 1 |] positions);
-  }
-
-let cached ~head_dim ?rope p cache r x =
-  let shape = Nx.shape x in
+let cached ~head_dim ?rope ?window p cache index x =
+  let batch = Cache_index.batch index and seq = Cache_index.seq index in
   let embed = (Nx.shape p.q.Linear.w).(0) in
-  (match shape with
-  | [| b; s; e |] when b = r.batch && s = r.seq && e = embed -> ()
+  if Nx.shape x <> [| batch; seq; embed |] then
+    Printf.ksprintf invalid_arg
+      "Attention.cached: input must have shape [%d; %d; %d]" batch seq embed;
+  let heads, kv_heads = geometry ~fn:"cached" ~head_dim p in
+  (match (Nx.shape cache.Cache.keys, Nx.shape cache.Cache.values) with
+  | [| n; h; d |], [| n'; h'; d' |]
+    when n = n' && n > 0 && h = kv_heads && h' = kv_heads && d = head_dim
+         && d' = head_dim ->
+      ()
   | _ ->
       Printf.ksprintf invalid_arg
-        "Attention.cached: input must have shape [%d; %d; %d]" r.batch r.seq
-        embed);
-  let heads, kv_heads = geometry ~fn:"cached" ~head_dim p in
-  let pool = [| r.slots; kv_heads; head_dim |] in
-  if Nx.shape cache.Cache.keys <> pool || Nx.shape cache.Cache.values <> pool
-  then
-    Printf.ksprintf invalid_arg
-      "Attention.cached: the cache must have shape [%d; %d; %d]" r.slots
-      kv_heads head_dim;
-  let tokens = r.batch * r.seq in
+        "Attention.cached: the cache must have shape [slots + 1; %d; %d]"
+        kv_heads head_dim);
   let q = split ~heads ~head_dim (Linear.apply p.q x) in
-  let k = split ~heads:kv_heads ~head_dim (Linear.apply p.k x) in
+  (* Keys and values as the index takes them, [batch; seq; kv_heads; head_dim].
+     Keys are stored rotated: a slot is valid at the position it was written
+     for. *)
+  let tokens y = Nx.reshape [| batch; seq; kv_heads; head_dim |] y in
   let q, k =
     match rope with
-    | None -> (q, k)
+    | None -> (q, tokens (Linear.apply p.k x))
     | Some t ->
-        (Rope.apply t ~pos:r.positions q, Rope.apply t ~pos:r.positions k)
+        let pos = Cache_index.positions index in
+        let k = split ~heads:kv_heads ~head_dim (Linear.apply p.k x) in
+        (Rope.apply t ~pos q, Nx.swapaxes 1 2 (Rope.apply t ~pos k))
   in
-  (* Keys are stored rotated: a slot is valid at the position it was written
-     for. *)
-  let k_rows =
-    Nx.reshape
-      [| tokens; kv_heads; head_dim |]
-      (Nx.contiguous (Nx.swapaxes 1 2 k))
+  let extend values leaf =
+    let seen, leaf = Cache_index.extend ?window index values leaf in
+    (Nx.swapaxes 1 2 seen, leaf)
   in
-  let v_rows =
-    Nx.reshape
-      [| tokens; kv_heads; head_dim |]
-      (Nx.contiguous (Linear.apply p.v x))
-  in
-  (* Every slot takes its writer's row or keeps its own: one select over the
-     pool, which a compiler performs in place on a donated cache. *)
-  let write old rows =
-    Nx.where r.written (Nx.take ~axis:0 ~indices:r.source rows) old
-  in
-  let keys = write cache.Cache.keys k_rows in
-  let values = write cache.Cache.values v_rows in
-  (* Columns no query of the row may see read as zero, so they contribute
-     exactly zero and not [0 * v]. *)
-  let read leaf =
-    let win = Nx.take ~axis:0 ~indices:r.read leaf in
-    let win = Nx.where r.live win (Nx.scalar_like win 0.0) in
-    Nx.swapaxes 1 2
-      (Nx.reshape [| r.batch; r.context; kv_heads; head_dim |] win)
-  in
-  let out = attend ~kv_heads ~mask:r.mask q (read keys) (read values) in
+  let k, keys = extend k cache.Cache.keys in
+  let v, values = extend (tokens (Linear.apply p.v x)) cache.Cache.values in
+  let out = attend ~kv_heads ~mask:(Cache_index.mask ?window index) q k v in
   (Linear.apply p.out out, { Cache.keys; values })

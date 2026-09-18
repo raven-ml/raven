@@ -200,29 +200,22 @@ let make cfg =
        else Some (linear ~inputs:cfg.dim ~outputs:cfg.vocab_size));
   }
 
-(* Forward passes. The block body is written once; [attend] is the attention to
-   run on the normalized stream and returns whatever state it carries. *)
+(* Forward passes: one fold over the blocks, which threads the caches along the
+   index. *)
 
-let block cfg ~attend b x =
+let block cfg b cache index x =
   let eps = cfg.norm_eps in
-  let a, carried = attend b.attn (Rms_norm.apply ~eps b.attn_norm x) in
+  let a, cache =
+    Attention.cached ~head_dim:cfg.head_dim ~rope:cfg.rope b.attn cache index
+      (Rms_norm.apply ~eps b.attn_norm x)
+  in
   let x = Nx.add x a in
   let h = Rms_norm.apply ~eps b.ffn_norm x in
   let mlp =
     Linear.apply b.down
       (Nx.mul (Fn.silu (Linear.apply b.gate h)) (Linear.apply b.up h))
   in
-  (Nx.add x mlp, carried)
-
-let hidden cfg p ids =
-  let mask = Attention.causal_mask ~seq:(Nx.dim 1 ids) () in
-  let attend a x =
-    (Attention.apply ~head_dim:cfg.head_dim ~mask ~rope:cfg.rope a x, ())
-  in
-  List.fold_left
-    (fun x b -> fst (block cfg ~attend b x))
-    (Embedding.apply p.tok ids)
-    p.blocks
+  (Nx.add x mlp, cache)
 
 module Cache = Attention.Cache.List
 
@@ -231,26 +224,21 @@ let cache cfg ~slots dtype =
       Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
         ~head_dim:cfg.head_dim dtype)
 
-let cached cfg p caches span ids =
-  let slots =
-    match caches with
-    | [] -> invalid_arg "Llama.cached: no caches"
-    | c :: _ -> Nx.dim 0 c.Attention.Cache.keys
-  in
-  (* Resolved once: every block reads the same route. *)
-  let route = Attention.route ~slots span in
+let cached cfg p caches index ids =
   let x, rev =
     List.fold_left2
       (fun (x, cs) b c ->
-        let attend a x =
-          Attention.cached ~head_dim:cfg.head_dim ~rope:cfg.rope a c route x
-        in
-        let x, c = block cfg ~attend b x in
+        let x, c = block cfg b c index x in
         (x, c :: cs))
       (Embedding.apply p.tok ids, [])
       p.blocks caches
   in
   (x, List.rev rev)
+
+let hidden cfg p ids =
+  let batch = Nx.dim 0 ids and seq = Nx.dim 1 ids in
+  let nothing = cache cfg ~slots:0 (Nx.dtype p.norm.Rms_norm.gamma) in
+  fst (cached cfg p nothing (Cache_index.whole ~batch ~seq ()) ids)
 
 let logits cfg p h =
   let h = Rms_norm.apply ~eps:cfg.norm_eps p.norm h in

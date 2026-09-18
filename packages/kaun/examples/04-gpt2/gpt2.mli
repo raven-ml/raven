@@ -60,13 +60,46 @@ val make : config -> t
 
 (** {1:forward Forward passes}
 
-    One model, three functions: {!hidden} is the residual stream of whole
-    sequences, {!cached} the same for tokens that attend through key-value
-    caches, and {!logits} the head applied to either. [hidden cfg p ids] equals
-    [fst (cached cfg p caches span ids)] over empty caches and
-    [Attention.Span.rows] (up to floating-point reassociation); it is
-    implemented as a second fold over the same block body so that training never
-    writes or reads a cache. *)
+    One model, one fold over the blocks: {!cached} is the residual stream of
+    tokens that sit where a cache index says and attend through key-value
+    caches, {!hidden} is [cached] over {!Kaun.Cache_index.whole}, which reads
+    and keeps nothing, and {!logits} is the head applied to either. *)
+
+module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
+(** Decoding state: one key-value cache per block, in block order. *)
+
+val cache :
+  config -> slots:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t Cache.t
+(** [cache cfg ~slots dtype] is an empty decoding state whose caches hold
+    [slots] slots each. [Kaun.Cache_index.rows ~context lens] needs
+    [Array.length lens * context] of them. [dtype] is the parameters' dtype. *)
+
+val cached :
+  config ->
+  ?dropout:float * Nx.Rng.key ->
+  (float, 'b) Nx.t params ->
+  (float, 'b) Nx.t Cache.t ->
+  Kaun.Cache_index.t ->
+  (int32, Nx.int32_elt) Nx.t ->
+  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
+(** [cached cfg p caches index ids] is the residual stream of the tokens [ids] —
+    shape [[| batch; seq; n_embd |]] — which sit where [index] says and attend
+    through [caches], and the caches with their keys and values written. A
+    whole-prompt call prefills the caches; a single-token call advances decoding
+    by one step. The index's positions and slots are tensors, so both trace
+    under {!Rune.jit} and one compiled single-token step serves the whole decode
+    loop. See {!Kaun.Attention.cached} and {!Kaun.Cache_index}.
+
+    [?dropout:(rate, key)] enables training-time dropout at the canonical GPT-2
+    sites — the embedding sum and each block's post-attention and post-MLP
+    projections — with masks applied at the activations' dtype and derived from
+    [key] by {!Nx.Rng.fold_in}, one subkey per site. The same key gives the same
+    masks; derive a fresh key per training step ({!Nx.Rng.fold_in} a step
+    counter into a root key), and under {!Rune.jit} pass it as an input leaf of
+    the step. Inference (the default) applies no dropout.
+
+    Raises [Invalid_argument] if the index's context exceeds [cfg.n_positions],
+    or on the geometry errors of {!Kaun.Attention.cached}. *)
 
 val hidden :
   config ->
@@ -78,43 +111,8 @@ val hidden :
     the [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; n_embd |]],
     at the parameters' dtype. Every token attends to the tokens before it.
 
-    [?dropout:(rate, key)] enables training-time dropout at the canonical GPT-2
-    sites — the embedding sum and each block's post-attention and post-MLP
-    projections — with masks applied at the activations' dtype and derived from
-    [key] by {!Nx.Rng.fold_in}, one subkey per site. The same key gives the same
-    masks; derive a fresh key per training step ({!Nx.Rng.fold_in} a step
-    counter into a root key), and under {!Rune.jit} pass it as an input leaf of
-    the step. Inference (the default) applies no dropout.
-
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
-
-module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
-(** Decoding state: one key-value cache per block, in block order. *)
-
-val cache :
-  config -> slots:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t Cache.t
-(** [cache cfg ~slots dtype] is an empty decoding state whose caches hold
-    [slots] slots each. [Attention.Span.rows ~context lens] needs
-    [Array.length lens * context] of them. [dtype] is the parameters' dtype. *)
-
-val cached :
-  config ->
-  (float, 'b) Nx.t params ->
-  (float, 'b) Nx.t Cache.t ->
-  Kaun.Attention.Span.t ->
-  (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
-(** [cached cfg p caches span ids] is the residual stream of the tokens [ids] —
-    shape [[| batch; seq; n_embd |]] — which sit where [span] says and attend
-    through [caches], and the caches with their keys and values written. A
-    whole-prompt call prefills the caches; a single-token call advances decoding
-    by one step. The span's positions and slots are tensors, so both trace under
-    {!Rune.jit} and one compiled single-token step serves the whole decode loop.
-    See {!Kaun.Attention.cached} for the addressing rules.
-
-    Raises [Invalid_argument] if the span's context exceeds [cfg.n_positions],
-    or on the geometry errors of {!Kaun.Attention.cached}. *)
 
 val logits :
   config -> (float, 'b) Nx.t params -> (float, 'b) Nx.t -> (float, 'b) Nx.t

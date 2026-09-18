@@ -180,46 +180,25 @@ let drop dropout i x =
   | Some (rate, key) ->
       Dropout.apply ~rate ~training:true ~key:(Nx.Rng.fold_in key i) x
 
-(* One block body, for both forward passes: [attend] is the attention to run on
-   the normalized stream and returns whatever state it carries. *)
-let block cfg ?dropout ~attend b x =
+let head_dim cfg = cfg.n_embd / cfg.n_head
+
+let block cfg ?dropout b cache index x =
   let eps = cfg.layer_norm_eps in
-  let a, carried = attend b.attn (Layer_norm.apply ~eps b.ln1 x) in
+  let a, cache =
+    Attention.cached ~head_dim:(head_dim cfg) b.attn cache index
+      (Layer_norm.apply ~eps b.ln1 x)
+  in
   let x = Nx.add x (drop dropout 0 a) in
   ( Nx.add x
       (drop dropout 1
          (Linear.apply b.proj
             (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x))))),
-    carried )
-
-let head_dim cfg = cfg.n_embd / cfg.n_head
+    cache )
 
 let embed p ids pos =
   Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos)
 
-let hidden cfg ?dropout p ids =
-  let seq = (Nx.shape ids).(1) in
-  if seq > cfg.n_positions then
-    invalid_argf "Gpt2.hidden: seq %d exceeds n_positions %d" seq
-      cfg.n_positions;
-  (* Per-consumer subkeys: index 0 feeds the embedding dropout, index i + 1
-     block i (which folds again per site). *)
-  let sub i =
-    Option.map (fun (rate, key) -> (rate, Nx.Rng.fold_in key i)) dropout
-  in
-  let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
-  let mask = Attention.causal_mask ~seq () in
-  let attend a x = (Attention.apply ~head_dim:(head_dim cfg) ~mask a x, ()) in
-  let _, x =
-    List.fold_left
-      (fun (i, x) b -> (i + 1, fst (block cfg ?dropout:(sub i) ~attend b x)))
-      (1, drop dropout 0 (embed p ids pos))
-      p.blocks
-  in
-  x
-
-(* The same stream for tokens that attend through the caches. The span is
-   resolved once and every block reads the same route. *)
+(* One fold over the blocks, which threads the caches along the index. *)
 
 module Cache = Attention.Cache.List
 
@@ -228,29 +207,30 @@ let cache cfg ~slots dtype =
       Attention.Cache.make ~slots ~kv_heads:cfg.n_head ~head_dim:(head_dim cfg)
         dtype)
 
-let cached cfg p caches span ids =
-  let context = Nx.dim 1 span.Attention.Span.slots in
-  if context > cfg.n_positions then
-    invalid_argf "Gpt2.cached: context %d exceeds n_positions %d" context
+let cached cfg ?dropout p caches index ids =
+  if Cache_index.context index > cfg.n_positions then
+    invalid_argf "Gpt2.cached: %d positions exceed n_positions %d"
+      (Cache_index.context index)
       cfg.n_positions;
-  let slots =
-    match caches with
-    | [] -> invalid_arg "Gpt2.cached: no caches"
-    | c :: _ -> Nx.dim 0 c.Attention.Cache.keys
+  (* Per-consumer subkeys: index 0 feeds the embedding dropout, index i + 1
+     block i (which folds again per site). *)
+  let sub i =
+    Option.map (fun (rate, key) -> (rate, Nx.Rng.fold_in key i)) dropout
   in
-  let route = Attention.route ~slots span in
-  let x, rev_caches =
+  let _, x, rev_caches =
     List.fold_left2
-      (fun (x, cs) b c ->
-        let attend a x =
-          Attention.cached ~head_dim:(head_dim cfg) a c route x
-        in
-        let x, c = block cfg ~attend b x in
-        (x, c :: cs))
-      (embed p ids (Attention.Span.positions span), [])
+      (fun (i, x, cs) b c ->
+        let x, c = block cfg ?dropout:(sub i) b c index x in
+        (i + 1, x, c :: cs))
+      (1, drop dropout 0 (embed p ids (Cache_index.positions index)), [])
       p.blocks caches
   in
   (x, List.rev rev_caches)
+
+let hidden cfg ?dropout p ids =
+  let batch = Nx.dim 0 ids and seq = Nx.dim 1 ids in
+  let nothing = cache cfg ~slots:0 (Nx.dtype p.ln_f.Layer_norm.gamma) in
+  fst (cached cfg ?dropout p nothing (Cache_index.whole ~batch ~seq ()) ids)
 
 let logits cfg p h =
   (* Tied LM head: logits = h @ wteᵀ. *)

@@ -375,16 +375,17 @@ let test_gradients () =
 
 (* Key-value cache decoding *)
 
-module Span = Attention.Span
-
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 let int32s shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
 
-let span ~pos ~slots =
-  let rows a = [| Array.length a; Array.length a.(0) |] in
-  Span.make
-    ~pos:(int32s (rows pos) (Array.concat (Array.to_list pos)))
-    ~slots:(int32s (rows slots) (Array.concat (Array.to_list slots)))
+(* The index of tokens at [pos] in sequences held at [slots]. *)
+let index_at ~pos ~slots =
+  let tensor a =
+    int32s
+      [| Array.length a; Array.length a.(0) |]
+      (Array.concat (Array.to_list a))
+  in
+  Cache_index.make ~pos:(tensor pos) ~table:(tensor slots) ()
 
 (* A small grouped layer with rotary positions: 4 query heads, 2 key-value
    heads, head_dim 2. *)
@@ -396,25 +397,76 @@ let cache_at dtype slots =
   Attention.Cache.make ~slots ~kv_heads:2 ~head_dim dtype
 
 let cache slots = cache_at Nx.float32 slots
-
-let call p c s x =
-  Attention.cached ~head_dim ~rope p c
-    (Attention.route ~slots:(Nx.dim 0 c.Attention.Cache.keys) s)
-    x
-
+let call p c index x = Attention.cached ~head_dim ~rope p c index x
 let close ~msg a b = equal ~msg (array (float 1e-5)) (flat a) (flat b)
+
+(* The slots of a cache, without its scratch row. *)
+let slots_of leaf = Nx.slice [ R (0, Nx.dim 0 leaf - 1) ] leaf
 
 let test_cached_prefill_matches_apply () =
   Nx.Rng.with_key (Nx.Rng.key 20) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.randn Nx.float32 [| 2; 5; 8 |] in
-  let y, _ = call p (cache 12) (Span.rows ~context:6 [| 5; 5 |]) x in
+  let y, _ = call p (cache 12) (Cache_index.rows ~context:6 [| 5; 5 |]) x in
   close ~msg:"a whole prompt through the cache = causal apply"
     (Attention.apply ~head_dim ~mask:(causal 5) ~rope p x)
     y
 
-(* Law 8: a prompt fed whole, in chunks, or token by token gives the same
-   outputs. *)
+(* A whole index reads and keeps nothing: the layer is causal [apply] and the
+   cache comes back as it was given. *)
+let test_cached_whole () =
+  Nx.Rng.with_key (Nx.Rng.key 34) @@ fun () ->
+  let p = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 2; 5; 8 |] in
+  let c = cache 0 in
+  let y, c' = call p c (Cache_index.whole ~batch:2 ~seq:5 ()) x in
+  close ~msg:"causal apply"
+    (Attention.apply ~head_dim ~mask:(causal 5) ~rope p x)
+    y;
+  is_true ~msg:"the cache holds the tensors it was given"
+    (c.Attention.Cache.keys == c'.Attention.Cache.keys
+    && c.Attention.Cache.values == c'.Attention.Cache.values);
+  let y, _ =
+    call p c (Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 ()) x
+  in
+  is_true ~msg:"padding produces no nan"
+    (Array.for_all Float.is_finite (flat y));
+  close ~msg:"a padded row attends as it does alone"
+    (Attention.apply ~head_dim ~mask:(causal 3) ~rope p
+       (Nx.slice [ R (0, 1); R (2, 5) ] x))
+    (Nx.slice [ R (0, 1); R (2, 5) ] y)
+
+(* A window bounds what a token sees, whole or through the cache. *)
+let test_cached_window () =
+  Nx.Rng.with_key (Nx.Rng.key 35) @@ fun () ->
+  let p = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 1; 6; 8 |] in
+  let band =
+    Nx.create Nx.bool [| 6; 6 |]
+      (Array.init 36 (fun t ->
+           let i = t / 6 and j = t mod 6 in
+           j <= i && j > i - 3))
+  in
+  let expected = Attention.apply ~head_dim ~mask:band ~rope p x in
+  let windowed c index x =
+    Attention.cached ~head_dim ~rope ~window:3 p c index x
+  in
+  let y, _ = windowed (cache 0) (Cache_index.whole ~batch:1 ~seq:6 ()) x in
+  close ~msg:"whole" expected y;
+  let slots = [| Array.init 6 Fun.id |] in
+  let y1, c =
+    windowed (cache 6)
+      (index_at ~pos:[| [| 0; 1; 2; 3 |] |] ~slots)
+      (Nx.slice [ A; R (0, 4) ] x)
+  in
+  let y2, _ =
+    windowed c
+      (index_at ~pos:[| [| 4; 5 |] |] ~slots)
+      (Nx.slice [ A; R (4, 6) ] x)
+  in
+  close ~msg:"in two chunks" expected (Nx.concatenate ~axis:1 [ y1; y2 ])
+
+(* A prompt fed whole, in chunks, or token by token gives the same outputs. *)
 let test_cached_chunking_is_invariant () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = layer Nx.float32 in
@@ -425,8 +477,10 @@ let test_cached_chunking_is_invariant () =
     let _, ys, _ =
       List.fold_left
         (fun (at, ys, c) n ->
-          let s = span ~pos:[| Array.init n (fun i -> at + i) |] ~slots in
-          let y, c = call p c s (Nx.slice [ A; R (at, at + n) ] x) in
+          let index =
+            index_at ~pos:[| Array.init n (fun i -> at + i) |] ~slots
+          in
+          let y, c = call p c index (Nx.slice [ A; R (at, at + n) ] x) in
           (at + n, y :: ys, c))
         (0, [], cache 8)
         chunks
@@ -446,28 +500,40 @@ let test_cached_ragged_batch () =
   let next = Nx.randn Nx.float32 [| 2; 1; 8 |] in
   let alone row len =
     let xs = Nx.slice [ R (row, row + 1); R (5 - len, 5) ] x in
-    let y, c = call p (cache 6) (Span.rows ~context:6 [| len |]) xs in
-    let s = Span.advance (Span.rows ~context:6 [| len |]) in
-    let y', _ = call p c s (Nx.slice [ R (row, row + 1) ] next) in
+    let index = Cache_index.rows ~context:6 [| len |] in
+    let y, c = call p (cache 6) index xs in
+    let y', _ =
+      call p c (Cache_index.advance index) (Nx.slice [ R (row, row + 1) ] next)
+    in
     (y, y')
   in
-  let s = Span.rows ~context:6 [| 3; 5 |] in
-  equal ~msg:"left padding" (array int32)
-    [| -1l; -1l; 0l; 1l; 2l; 0l; 1l; 2l; 3l; 4l |]
-    (Nx.to_array s.Span.pos);
-  let y, c = call p (cache 12) s x in
-  let s = Span.advance s in
+  let index = Cache_index.rows ~context:6 [| 3; 5 |] in
+  equal ~msg:"left padding: a padded token sees nothing" (array bool)
+    [| false; false; true; true; true; true; true; true; true; true |]
+    (Nx.to_array (Nx.slice [ A; A; I 0 ] (Cache_index.mask index)));
+  equal ~msg:"positions, padding as 0" (array int32)
+    [| 0l; 0l; 0l; 1l; 2l; 0l; 1l; 2l; 3l; 4l |]
+    (Nx.to_array (Cache_index.positions index));
+  let y, c = call p (cache 12) index x in
+  let index = Cache_index.advance index in
   equal ~msg:"each row advances from its own length" (array int32) [| 3l; 5l |]
-    (Nx.to_array s.Span.pos);
-  equal ~msg:"a row of padding advances to 0, whatever its value" (array int32)
-    [| 0l; 0l |]
+    (Nx.to_array (Cache_index.positions index));
+  let padding =
+    Cache_index.advance
+      (index_at
+         ~pos:[| [| -1; -1 |]; [| -7; -7 |] |]
+         ~slots:[| [| 0; 1 |]; [| 2; 3 |] |])
+  in
+  equal ~msg:"a lane of padding advances to a real token" (array bool)
+    [| true; false; true; false |]
+    (Nx.to_array (Cache_index.mask padding));
+  equal ~msg:"at position 0" (array int32) [| 0l; 0l |]
+    (Nx.to_array (Cache_index.positions padding));
+  equal ~msg:"positions stay below the context" (array int32) [| 0l; 1l; 1l |]
     (Nx.to_array
-       (Span.advance
-          (span
-             ~pos:[| [| -1; -1 |]; [| -7; -7 |] |]
-             ~slots:[| [| 0; 1 |]; [| 2; 3 |] |]))
-         .Span.pos);
-  let y', _ = call p c s next in
+       (Cache_index.positions
+          (index_at ~pos:[| [| -1; 1; 7 |] |] ~slots:[| [| 0; 1 |] |])));
+  let y', _ = call p c index next in
   let short, short' = alone 0 3 and long, long' = alone 1 5 in
   close ~msg:"short row, prompt" short (Nx.slice [ R (0, 1); R (2, 5) ] y);
   close ~msg:"long row, prompt" long (Nx.slice [ R (1, 2) ] y);
@@ -476,7 +542,7 @@ let test_cached_ragged_batch () =
   is_true ~msg:"padding produces no nan"
     (Array.for_all Float.is_finite (flat y))
 
-(* Paging is a value of [slots]: rows whose slots interleave in any order give
+(* Paging is a value of the table: rows whose slots interleave in any order give
    the same outputs as contiguous runs. *)
 let test_cached_slots_are_free () =
   Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
@@ -485,17 +551,18 @@ let test_cached_slots_are_free () =
   let pos = [| [| 0; 1; 2; 3 |]; [| 0; 1; 2; 3 |] |] in
   let contiguous, _ =
     call p (cache 8)
-      (span ~pos ~slots:[| [| 0; 1; 2; 3 |]; [| 4; 5; 6; 7 |] |])
+      (index_at ~pos ~slots:[| [| 0; 1; 2; 3 |]; [| 4; 5; 6; 7 |] |])
       x
   in
   let paged, _ =
     call p (cache 16)
-      (span ~pos ~slots:[| [| 9; 2; 14; 5 |]; [| 3; 12; 0; 7 |] |])
+      (index_at ~pos ~slots:[| [| 9; 2; 14; 5 |]; [| 3; 12; 0; 7 |] |])
       x
   in
   close ~msg:"interleaved slots" contiguous paged
 
-(* Two rows sharing the slots of a common prefix read the same keys. *)
+(* Two rows sharing the slots of a common prefix read the same keys, and lanes
+   name their sequences through [row]. *)
 let test_cached_shared_prefix () =
   Nx.Rng.with_key (Nx.Rng.key 29) @@ fun () ->
   let p = layer Nx.float32 in
@@ -503,14 +570,12 @@ let test_cached_shared_prefix () =
   let tails = Nx.randn Nx.float32 [| 2; 1; 8 |] in
   let _, c =
     call p (cache 8)
-      (span ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |])
+      (index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |])
       prefix
   in
+  let slots = [| [| 0; 1; 2; 3 |]; [| 0; 1; 2; 4 |] |] in
   let shared, _ =
-    call p c
-      (span ~pos:[| [| 3 |]; [| 3 |] |]
-         ~slots:[| [| 0; 1; 2; 3 |]; [| 0; 1; 2; 4 |] |])
-      tails
+    call p c (index_at ~pos:[| [| 3 |]; [| 3 |] |] ~slots) tails
   in
   let alone row =
     let x =
@@ -521,116 +586,190 @@ let test_cached_shared_prefix () =
       (Attention.apply ~head_dim ~mask:(causal 4) ~rope p x)
   in
   close ~msg:"row 0" (alone 0) (Nx.slice [ R (0, 1) ] shared);
-  close ~msg:"row 1" (alone 1) (Nx.slice [ R (1, 2) ] shared)
+  close ~msg:"row 1" (alone 1) (Nx.slice [ R (1, 2) ] shared);
+  (* The same call with the lanes swapped and a table of three sequences. *)
+  let swapped, _ =
+    call p c
+      (Cache_index.make
+         ~row:(int32s [| 2 |] [| 2; 0 |])
+         ~pos:(int32s [| 2; 1 |] [| 3; 3 |])
+         ~table:(int32s [| 3; 4 |] [| 0; 1; 2; 3; -1; -1; -1; -1; 0; 1; 2; 4 |])
+         ())
+      (Nx.concatenate ~axis:0
+         [ Nx.slice [ R (1, 2) ] tails; Nx.slice [ R (0, 1) ] tails ])
+  in
+  close ~msg:"lane 0 is sequence 2" (alone 1) (Nx.slice [ R (0, 1) ] swapped);
+  close ~msg:"lane 1 is sequence 0" (alone 0) (Nx.slice [ R (1, 2) ] swapped)
 
 let test_cached_update_is_functional () =
   Nx.Rng.with_key (Nx.Rng.key 30) @@ fun () ->
   let p = layer Nx.float32 in
   let c = cache 4 in
   let _, c' =
-    call p c (Span.rows ~context:4 [| 2 |]) (Nx.randn Nx.float32 [| 1; 2; 8 |])
+    call p c
+      (Cache_index.rows ~context:4 [| 2 |])
+      (Nx.randn Nx.float32 [| 1; 2; 8 |])
   in
-  values_are ~msg:"the argument is untouched" ~tol:0.0 (Array.make 16 0.0)
+  values_are ~msg:"the argument is untouched" ~tol:0.0 (Array.make 20 0.0)
     c.Attention.Cache.keys;
   is_true ~msg:"the result holds the new keys"
     (Array.exists (fun v -> v <> 0.0) (flat c'.Attention.Cache.keys));
   values_are ~msg:"slots past the prompt stay empty" ~tol:0.0 (Array.make 8 0.0)
     (Nx.slice [ R (2, 4) ] c'.Attention.Cache.keys)
 
-(* Law 4: an address outside its range addresses nothing, and a repeated slot
-   takes the later token. *)
+(* What addresses nothing writes no slot. *)
 let test_cached_addresses () =
   Nx.Rng.with_key (Nx.Rng.key 31) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.randn Nx.float32 [| 1; 2; 8 |] in
   let slots = [| [| 0; 1; 2; 3 |] |] in
-  let keys_after pos slots =
-    let _, c = call p (cache 4) (span ~pos ~slots) x in
-    c.Attention.Cache.keys
+  let keys_after index =
+    let _, c = call p (cache 4) index x in
+    slots_of c.Attention.Cache.keys
   in
   values_are ~msg:"padding writes nothing" ~tol:0.0 (Array.make 16 0.0)
-    (keys_after [| [| -1; -1 |] |] slots);
-  values_are ~msg:"a position past the context writes nothing" ~tol:0.0
+    (keys_after (index_at ~pos:[| [| -1; -1 |] |] ~slots));
+  values_are ~msg:"a target of -1 or outside the pool writes nothing" ~tol:0.0
     (Array.make 16 0.0)
-    (keys_after [| [| 4; 9 |] |] slots);
-  values_are ~msg:"an unallocated column is not written" ~tol:0.0
-    (Array.make 16 0.0)
-    (keys_after [| [| 0; 1 |] |] [| [| -1; 99; 2; 3 |] |]);
-  (* Both tokens aim at slot 2: the later one's key is stored. *)
-  let twice = keys_after [| [| 0; 0 |] |] [| [| 2; 1; 0; 3 |] |] in
-  let _, later =
-    call p (cache 4)
-      (span ~pos:[| [| 0 |] |] ~slots:[| [| 2; 1; 0; 3 |] |])
-      (Nx.slice [ A; R (1, 2) ] x)
+    (keys_after
+       (index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| -1; 99; 2; 3 |] |]));
+  (* A lane whose row is outside the table is padding, whatever its positions:
+     it stores nothing and its outputs are finite. *)
+  let lost row =
+    Cache_index.make ~row:(int32s [| 1 |] [| row |])
+      ~pos:(int32s [| 1; 2 |] [| 0; 1 |])
+      ~table:(int32s [| 2; 4 |] [| 0; 1; 2; 3; 0; 1; 2; 3 |])
+      ()
   in
-  close ~msg:"the later token wins" later.Attention.Cache.keys twice;
-  (* Across rows the order is row-major: row 1 is later than row 0. *)
-  let pair =
-    Nx.concatenate ~axis:0
-      [ Nx.slice [ A; R (0, 1) ] x; Nx.slice [ A; R (1, 2) ] x ]
+  List.iter
+    (fun row ->
+      let y, c = call p (cache 4) (lost row) x in
+      values_are
+        ~msg:(Printf.sprintf "a lane of row %d writes nothing" row)
+        ~tol:0.0 (Array.make 16 0.0)
+        (slots_of c.Attention.Cache.keys);
+      is_true ~msg:"and its outputs are finite"
+        (Array.for_all Float.is_finite (flat y)))
+    [ -1; 2 ];
+  is_true ~msg:"a lane of row 1 writes"
+    (Array.exists (fun v -> v <> 0.0) (flat (keys_after (lost 1))));
+  (* Past the last column a lane advances to a token that stores nothing. *)
+  let full = Cache_index.rows ~context:2 [| 2 |] in
+  let _, c = call p (cache 2) full x in
+  let _, c' =
+    call p c (Cache_index.advance full) (Nx.slice [ A; R (0, 1) ] x)
   in
-  let _, shared =
-    call p (cache 4)
-      (span ~pos:[| [| 0 |]; [| 0 |] |]
-         ~slots:[| [| 2; 1; 0; 3 |]; [| 2; 1; 0; 3 |] |])
-      pair
-  in
-  close ~msg:"the later row wins" later.Attention.Cache.keys
-    shared.Attention.Cache.keys
+  close ~msg:"a full context is not overwritten"
+    (slots_of c.Attention.Cache.keys)
+    (slots_of c'.Attention.Cache.keys)
 
-(* Law 5: a column no query of the row may see contributes exactly zero,
-   whatever its slot holds. *)
+(* A column no query of the row may see contributes exactly zero, whatever its
+   slot holds, the scratch row included. *)
 let test_cached_masked_columns_are_zero () =
   Nx.Rng.with_key (Nx.Rng.key 32) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.randn Nx.float32 [| 1; 2; 8 |] in
+  let nan rows = Nx.full Nx.float32 [| rows; 2; 2 |] Float.nan in
   let poisoned =
     Attention.Cache.map
       (fun t ->
-        Nx.set [ Nx.R (0, 2) ] (Nx.full Nx.float32 [| 2; 2; 2 |] Float.nan) t)
+        Nx.set [ Nx.R (6, 7) ] (nan 1) (Nx.set [ Nx.R (0, 2) ] (nan 2) t))
       (cache 6)
   in
   (* Column 2 is allocated on a poisoned slot but past the row's positions;
-     column 3 is unallocated and clamps onto poisoned slot 0. *)
-  let s = span ~pos:[| [| 0; 1 |] |] ~slots:[| [| 4; 5; 1; -1 |] |] in
-  let y, _ = call p poisoned s x in
+     column 3 is unallocated and reads the poisoned scratch row. *)
+  let index = index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| 4; 5; 1; -1 |] |] in
+  let y, _ = call p poisoned index x in
   is_true ~msg:"no nan reaches the outputs"
     (Array.for_all Float.is_finite (flat y));
-  let clean, _ = call p (cache 6) s x in
+  let clean, _ = call p (cache 6) index x in
   close ~msg:"the outputs ignore what masked slots hold" clean y;
-  (* Unallocated columns inside the row's horizon: column 1 clamps onto poisoned
-     slot 0 and column 2 onto poisoned slot 1, and the token at position 3 may
-     see both. They read as zero, not as what the clamp found. *)
-  let s = span ~pos:[| [| 0; 3 |] |] ~slots:[| [| 4; -1; 99; 5 |] |] in
-  let y, _ = call p poisoned s x in
+  (* Unallocated columns inside the row's horizon: columns 1 and 2 read the
+     poisoned scratch row and the token at position 3 may see both. They read as
+     zero. *)
+  let index = index_at ~pos:[| [| 0; 3 |] |] ~slots:[| [| 4; -1; 99; 5 |] |] in
+  let y, _ = call p poisoned index x in
   is_true ~msg:"an unallocated column within the horizon reads as zero"
     (Array.for_all Float.is_finite (flat y));
-  let clean, _ = call p (cache 6) s x in
+  let clean, _ = call p (cache 6) index x in
   close ~msg:"and the outputs are those of an empty cache" clean y
 
-(* The decode step as a jittable function: the span and the cache enter as
-   tensors, so one compilation serves every position and every slot map. *)
+(* The decode step as a jittable function: the index and the cache enter as
+   tensors, so one compilation serves every position and every table. *)
 
-type step = { x : Nx.float32_t; s : Span.t; c : Nx.float32_t Attention.Cache.t }
+type step = {
+  x : Nx.float32_t;
+  index : Cache_index.t;
+  c : Nx.float32_t Attention.Cache.t;
+}
 
 module Step = struct
   type t = step
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { x; s; c } =
-    { x = f x; s = Span.map f s; c = Attention.Cache.map f c }
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { x; index; c } =
+    { x = f x; index = Cache_index.map f index; c = Attention.Cache.map f c }
 
   let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
     {
       x = f a.x b.x;
-      s = Span.map2 f a.s b.s;
+      index = Cache_index.map2 f a.index b.index;
       c = Attention.Cache.map2 f a.c b.c;
     }
 
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { x; s; c } =
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { x; index; c } =
     f x;
-    Span.iter f s;
+    Cache_index.iter f index;
     Attention.Cache.iter f c
 end
+
+(* Under a window, a column below the window of every token of the lane is
+   allocated and at or before their positions, and still contributes exactly
+   zero whatever its slot holds. *)
+let test_cached_windowed_columns_are_zero () =
+  Nx.Rng.with_key (Nx.Rng.key 36) @@ fun () ->
+  let p = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
+  let windowed c index x =
+    Attention.cached ~head_dim ~rope ~window:2 p c index x
+  in
+  let slots = [| [| 4; 2; 0; 3; 1 |] |] in
+  let _, c =
+    windowed (cache 5)
+      (index_at ~pos:[| [| 0; 1; 2 |] |] ~slots)
+      (Nx.slice [ A; R (0, 3) ] x)
+  in
+  (* Positions 3 and 4 see columns 2 to 4: the slots of columns 0 and 1 are out
+     of every window. *)
+  let poisoned =
+    Attention.Cache.map
+      (fun t ->
+        let nan = Nx.full Nx.float32 [| 1; 2; 2 |] Float.nan in
+        Nx.set [ Nx.R (2, 3) ] nan (Nx.set [ Nx.R (4, 5) ] nan t))
+      c
+  in
+  let tail = index_at ~pos:[| [| 3; 4 |] |] ~slots in
+  let rest = Nx.slice [ A; R (3, 5) ] x in
+  let clean, _ = windowed c tail rest in
+  let check ~msg y =
+    is_true
+      ~msg:(msg ^ ": no nan reaches the outputs")
+      (Array.for_all Float.is_finite (flat y));
+    close
+      ~msg:(msg ^ ": the outputs ignore what windowed-out slots hold")
+      clean y
+  in
+  check ~msg:"eager" (fst (windowed poisoned tail rest));
+  let step { x; index; c } =
+    let y, c = windowed c index x in
+    { x = y; index; c }
+  in
+  check ~msg:"compiled"
+    (Rune.jit2
+       (module Step)
+       (module Step)
+       step
+       { x = rest; index = tail; c = poisoned })
+      .x
 
 let test_cached_step_jits_once () =
   Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
@@ -639,11 +778,11 @@ let test_cached_step_jits_once () =
   let decode step_fn =
     let ys, _, _ =
       List.fold_left
-        (fun (ys, s, c) i ->
+        (fun (ys, index, c) i ->
           let xi = Nx.slice [ A; R (i, i + 1) ] x in
-          let { x = y; s; c } = step_fn { x = xi; s; c } in
-          (y :: ys, s, c))
-        ([], span ~pos:[| [| 0 |] |] ~slots:[| [| 3; 0; 2; 1 |] |], cache 4)
+          let { x = y; index; c } = step_fn { x = xi; index; c } in
+          (y :: ys, index, c))
+        ([], index_at ~pos:[| [| 0 |] |] ~slots:[| [| 3; 0; 2; 1 |] |], cache 4)
         [ 0; 1; 2; 3 ]
     in
     Nx.concatenate ~axis:1 (List.rev ys)
@@ -652,10 +791,10 @@ let test_cached_step_jits_once () =
      counter observes compilations: every step has the same signature and must
      replay the single trace. *)
   let traces = ref 0 in
-  let step { x; s; c } =
+  let step { x; index; c } =
     incr traces;
-    let y, c = call p c s x in
-    { x = y; s = Span.advance s; c }
+    let y, c = call p c index x in
+    { x = y; index = Cache_index.advance index; c }
   in
   let eager = decode step in
   traces := 0;
@@ -668,23 +807,30 @@ let test_cached_step_jits_once () =
     (Attention.apply ~head_dim ~mask:(causal 4) ~rope p x)
     jitted
 
-(* Eager and compiled runs agree on addresses out of range: neither raises and
-   both write nothing. *)
+(* Eager and compiled runs agree on what addresses nothing: neither raises and
+   both write no slot. *)
 let test_cached_out_of_range_under_jit () =
   Nx.Rng.with_key (Nx.Rng.key 33) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 2; 8 |] in
-  let step { x; s; c } =
-    let y, c = call p c s x in
-    { x = y; s; c }
+  let x = Nx.randn Nx.float32 [| 1; 3; 8 |] in
+  let step { x; index; c } =
+    let y, c = call p c index x in
+    { x = y; index; c }
   in
-  let s = span ~pos:[| [| -1; 7 |] |] ~slots:[| [| 0; -1; 99; 3 |] |] in
-  let eager = step { x; s; c = cache 4 } in
+  let index =
+    Cache_index.make
+      ~pos:(int32s [| 1; 3 |] [| -1; 1; 2 |])
+      ~table:(int32s [| 1; 4 |] [| 0; -1; 99; 3 |])
+      ()
+  in
+  let eager = step { x; index; c = cache 4 } in
   let jitted =
-    Rune.jit2 (module Step) (module Step) step { x; s; c = cache 4 }
+    Rune.jit2 (module Step) (module Step) step { x; index; c = cache 4 }
   in
+  values_are ~msg:"nothing written, eager" ~tol:0.0 (Array.make 16 0.0)
+    (slots_of eager.c.Attention.Cache.keys);
   values_are ~msg:"nothing written, compiled" ~tol:0.0 (Array.make 16 0.0)
-    jitted.c.Attention.Cache.keys;
+    (slots_of jitted.c.Attention.Cache.keys);
   close ~msg:"same outputs" eager.x jitted.x
 
 let test_cached_gradients () =
@@ -696,11 +842,11 @@ let test_cached_gradients () =
     let slots = [| [| 2; 0; 1 |] |] in
     let y1, c =
       call p (cache_at Nx.float64 3)
-        (span ~pos:[| [| 0; 1 |] |] ~slots)
+        (index_at ~pos:[| [| 0; 1 |] |] ~slots)
         (Nx.slice [ A; R (0, 2) ] x)
     in
     let y2, _ =
-      call p c (span ~pos:[| [| 2 |] |] ~slots) (Nx.slice [ A; R (2, 3) ] x)
+      call p c (index_at ~pos:[| [| 2 |] |] ~slots) (Nx.slice [ A; R (2, 3) ] x)
     in
     Nx.add (Nx.sum (Nx.mul y1 y1)) (Nx.sum (Nx.mul y2 y2))
   in
@@ -725,27 +871,40 @@ let test_cached_rejects_bad_geometry () =
   let p = layer Nx.float32 in
   raises
     (Invalid_argument
-       "Attention.Cache.make: slots, kv_heads and head_dim must be positive, \
-        got slots=0 kv_heads=2 head_dim=2") (fun () -> cache 0);
+       "Attention.Cache.make: slots must not be negative and kv_heads and \
+        head_dim must be positive, got slots=-1 kv_heads=2 head_dim=2")
+    (fun () -> cache (-1));
   raises
     (Invalid_argument
-       "Attention.Span.make: pos must have shape [batch; seq] and slots \
-        [batch; context], none of them empty") (fun () ->
-      Span.make
+       "Cache_index.make: pos must have shape [batch; seq] and table [rows; \
+        context], neither of them empty") (fun () ->
+      Cache_index.make
+        ~pos:(int32s [| 2 |] [| 0; 0 |])
+        ~table:(int32s [| 2; 4 |] [| 0; 1; 2; 3; 4; 5; 6; 7 |])
+        ());
+  raises
+    (Invalid_argument
+       "Cache_index.make: a table of 1 rows for 2 lanes needs ~row") (fun () ->
+      Cache_index.make
         ~pos:(int32s [| 2; 1 |] [| 0; 0 |])
-        ~slots:(int32s [| 1; 4 |] [| 0; 1; 2; 3 |]));
+        ~table:(int32s [| 1; 4 |] [| 0; 1; 2; 3 |])
+        ());
   raises
     (Invalid_argument
-       "Attention.Span.rows: a row of 5 tokens does not fit a context of 4")
-    (fun () -> Span.rows ~context:4 [| 5 |]);
-  let s = Span.rows ~context:4 [| 2 |] in
+       "Cache_index.rows: a lane of 5 tokens does not fit a context of 4")
+    (fun () -> Cache_index.rows ~context:4 [| 5 |]);
+  raises (Invalid_argument "Cache_index.advance: a whole index keeps nothing")
+    (fun () -> Cache_index.advance (Cache_index.whole ~batch:1 ~seq:2 ()));
+  let index = Cache_index.rows ~context:4 [| 2 |] in
   raises (Invalid_argument "Attention.cached: input must have shape [1; 2; 8]")
-    (fun () -> call p (cache 4) s (Nx.zeros Nx.float32 [| 1; 3; 8 |]));
+    (fun () -> call p (cache 4) index (Nx.zeros Nx.float32 [| 1; 3; 8 |]));
   raises
-    (Invalid_argument "Attention.cached: the cache must have shape [4; 2; 2]")
+    (Invalid_argument
+       "Attention.cached: the cache must have shape [slots + 1; 2; 2]")
     (fun () ->
-      Attention.cached ~head_dim p (cache 6)
-        (Attention.route ~slots:4 s)
+      Attention.cached ~head_dim p
+        (Attention.Cache.make ~slots:4 ~kv_heads:1 ~head_dim Nx.float32)
+        index
         (Nx.zeros Nx.float32 [| 1; 2; 8 |]))
 
 let test_rejects_bad_geometry () =
@@ -829,19 +988,23 @@ let () =
         [
           test "a whole prompt matches causal apply"
             test_cached_prefill_matches_apply;
+          test "a whole index is causal apply and keeps nothing"
+            test_cached_whole;
+          test "a window bounds what a token sees" test_cached_window;
           test "chunking is invariant" test_cached_chunking_is_invariant;
           test "rows of different lengths share a batch"
             test_cached_ragged_batch;
           test "any slot map gives the same outputs" test_cached_slots_are_free;
           test "rows can share the slots of a prefix" test_cached_shared_prefix;
           test "the update is functional" test_cached_update_is_functional;
-          test "an address outside its range addresses nothing"
-            test_cached_addresses;
+          test "what addresses nothing writes no slot" test_cached_addresses;
           test "masked columns contribute exactly zero"
             test_cached_masked_columns_are_zero;
+          test "windowed-out columns contribute exactly zero"
+            test_cached_windowed_columns_are_zero;
           test "one jitted step serves every position and slot map"
             test_cached_step_jits_once;
-          test "eager and compiled runs agree out of range"
+          test "eager and compiled runs agree on what addresses nothing"
             test_cached_out_of_range_under_jit;
           test "gradients flow through the cache" test_cached_gradients;
           test "a list of caches names its leaves by index"

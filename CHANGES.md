@@ -1595,6 +1595,31 @@ thread.
 
 ### Kaun
 
+- **Breaking**: a decoder has one forward pass. `Attention.cached` takes a
+  `Kaun.Cache_index.t` and gains `?window`; over `Cache_index.whole`, which
+  reads and keeps nothing, it is plain causal attention and returns its cache
+  untouched. A model's `hidden` is
+  `fst (cached ... (Cache_index.whole ~batch ~seq ()) ids)`, the second fold
+  over `Attention.apply` is gone from the `04-gpt2` and `05-llama` examples,
+  and its compiled gradient costs what that fold did.
+- **Breaking**: `Kaun.Cache_index` replaces `Attention.Span`, the `route` type
+  and `Attention.route ~slots`; a model resolves nothing. A cache index is
+  opaque: `Cache_index.make ?row ~pos ~table ()` takes the tokens' positions
+  and the slots holding each sequence, and `?row` names the sequence of each
+  lane. A token stores at the slot its table names at its position.
+  `Cache_index.rows`, `advance` and `positions` keep the meaning they had on
+  `Span`. A layer calls `Cache_index.extend index values pool`, which stores
+  the call's values and returns what its tokens attend over, and attends under
+  `Cache_index.mask`.
+- **Breaking**: `Attention.Cache.make ~slots` allocates `slots + 1` rows. `-1`
+  addresses nothing everywhere, and the last row is a scratch row that
+  receives such writes and is never observed, so the cache write is one
+  `Nx.scatter ~unique_indices:true` over the call's tokens with no pass over
+  the pool. Under `Rune.jit ~donate:true` on Metal a two-layer decode step at
+  a context of 256 takes 3.6 ms over 4096 slots and 3.8 ms over 131072, where
+  it took 3.8 ms and 24.6 ms; the GPT-2 124M shaped step of
+  `kaun/bench/decode` takes 8.4 ms and 8.7 ms at caches of 256 and 1024
+  against 9.1 ms and 10.3 ms.
 - Attention is total. A query whose mask hides every key yields zero from
   `Attention.scaled_dot_product_attention`, `Attention.apply` and
   `Attention.cached`, with zero gradients, where it yielded `nan`.

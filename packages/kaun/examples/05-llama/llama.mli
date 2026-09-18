@@ -57,10 +57,9 @@ val make : config -> t
 
 (** {1:forward Forward passes}
 
-    [hidden cfg p ids] equals [fst (cached cfg p caches span ids)] over empty
-    caches and [Attention.Span.rows], up to floating-point reassociation; it is
-    a second fold over the same block body so that training never writes or
-    reads a cache. *)
+    One fold over the blocks: [hidden cfg p ids] is
+    [fst (cached cfg p caches index ids)] over {!Kaun.Cache_index.whole}, which
+    reads and keeps nothing, so training never writes or reads a cache. *)
 
 val hidden :
   config ->
@@ -83,12 +82,12 @@ val cached :
   config ->
   (float, 'b) Nx.t params ->
   (float, 'b) Nx.t Cache.t ->
-  Kaun.Attention.Span.t ->
+  Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
-(** [cached cfg p caches span ids] is the residual stream of the tokens [ids],
-    which sit where [span] says and attend through [caches], and the caches with
-    their keys and values written. See {!Kaun.Attention.cached}. *)
+(** [cached cfg p caches index ids] is the residual stream of the tokens [ids],
+    which sit where [index] says and attend through [caches], and the caches
+    with their keys and values written. See {!Kaun.Attention.cached}. *)
 
 val logits :
   config -> (float, 'b) Nx.t params -> (float, 'b) Nx.t -> (float, 'b) Nx.t

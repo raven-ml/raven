@@ -190,7 +190,7 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
           in
           let y, c =
             Attention.cached ~head_dim ~rope p c
-              (Attention.route ~slots:6 (Attention.Span.make ~pos ~slots))
+              (Cache_index.make ~pos ~table:slots ())
               (Nx.slice [ A; R (at, at + n) ] x)
           in
           (at + n, y :: ys, c))

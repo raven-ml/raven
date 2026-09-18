@@ -42,9 +42,8 @@ decode contract follow-ups (rfc 0002):
 - brot: load llama 3's tokenizer (cl100k-family split regex, one negative
   lookahead); then the llama example takes text
 - the indexed store and the scatter-add over indices landed
-  (`Op.scatter_indexed`, `packages/rune/bench/indexed_store`); what it leaves:
-  kaun's cache write still goes through the inverse map and does not use it
-  yet; models can drop their second `hidden` fold; the cpu zero-copy path
+  (`Op.scatter_indexed`, `packages/rune/bench/indexed_store`), kaun's cache
+  write uses it and models have one fold; what it leaves: the cpu zero-copy path
   reuses no storage, so a cpu step still copies a written pool once per leaf;
   sharded traces keep the one-hot scatter until the custom kernel is exercised
   under multi; a chain of writes into one input copies once per write;
@@ -52,8 +51,10 @@ decode contract follow-ups (rfc 0002):
   `test_index` case
 - `Rune.remat` is an identity under jit: when a training run needs the memory
 - `Nx.top_k` by partial selection: when sampling batches hundreds of rows
-- `Span.t` `col` field (sliding window, tree speculation), packed sequences
-  with position reset: when a model needs them
+- `Kaun.Cache_index`: slots that hold a block of positions, windowed layers
+  that free old columns, tree speculation (a caller-given write target and a
+  token-to-token mask), packed sequences with position reset: when a model
+  needs them
 - storage reuse under `pmap` per shard: inside the placement rfc
 - llama 3.1 8b load: template-based checkpoint extraction allocates a full
   f32 model first; that is the weight-streaming item

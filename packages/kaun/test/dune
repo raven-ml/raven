@@ -25,4 +25,4 @@
   test_rope
   test_decoder)
  (package kaun)
- (libraries kaun rune vega nx nx.core windtrap))
+ (libraries kaun rune vega nx nx.core windtrap unix))

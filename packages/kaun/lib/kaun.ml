@@ -11,6 +11,7 @@ module Embedding = Embedding
 module Layer_norm = Layer_norm
 module Rms_norm = Rms_norm
 module Rope = Rope
+module Cache_index = Cache_index
 module Batch_norm = Batch_norm
 module Dropout = Dropout
 module Data = Data

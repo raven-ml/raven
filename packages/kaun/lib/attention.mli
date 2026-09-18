@@ -22,8 +22,8 @@
     serves [heads / kv_heads] query heads (grouped-query attention); the keys
     broadcast over the group, so none is repeated.
 
-    {!scaled_dot_product_attention} is the pure core — no parameters, no head
-    bookkeeping. Use it directly for cross-attention, externally projected
+    {!scaled_dot_product_attention} is the pure core, with no parameters and no
+    head bookkeeping. Use it directly for cross-attention, externally projected
     queries and keys, or custom masking. *)
 
 (** {1:types Types} *)
@@ -105,91 +105,38 @@ val causal_mask :
 
     Autoregressive decoding runs the same causal self-attention on a few new
     tokens at a time: the keys and values of earlier positions never change, so
-    they are computed once and cached. Three values describe a call.
-
-    A {!Cache.t} is a pool of {e slots}, each holding one token's key and value.
-    It has no batch axis: which sequence owns a slot is not the cache's
-    business.
-
-    A {!Span.t} says where the call's tokens sit: [pos], the position of each
-    token in its sequence, and [slots], the slot holding each position of each
-    row's sequence. One contiguous run per row is what {!Span.rows} builds;
-    paged allocation, a prefix shared by two rows, and a forked beam are other
-    values of [slots], and the layer is the same for all of them.
-
-    A {!type-route} is a span resolved against a cache size: a model computes it
-    once per call with {!val-route} and hands it to every block.
+    they are computed once and cached. A {!Cache.t} is a pool of {e slots}, each
+    holding one token's key and value, with no batch axis; a {!Cache_index.t}
+    says where the call's tokens sit in it.
 
     Everything is functional: {!cached} returns the written cache and never
     mutates its argument. Thread the cache through the decode loop like any
     other state; under {!Rune.jit} with [~donate:true] the write happens in the
     cache's own storage.
 
-    {b An address outside its range addresses nothing.} A token whose position
-    is below [0] or not below [context] is padding: it writes nothing, it is
-    rotated and masked as position [0], and its output is unspecified. A column
-    whose slot is outside the cache is unallocated: nothing is written to it and
-    it reads as zero. [-1] is the conventional value for both. Positions and
-    slots are addresses with a no-address value, so unlike tensor indices (see
-    {!Nx.take}) they are never out of range, and an eager run and a compiled run
-    agree on every input. *)
+    The addressing laws are {!Cache_index}'s. The layer adds three:
 
-(** Where a call's tokens sit. *)
-module Span : sig
-  type t = private { pos : Nx.int32_t; slots : Nx.int32_t }
-  (** The type for spans. [pos] has shape [[| batch; seq |]]: [pos.(b).(i)] is
-      the position of token [i] of row [b] in its sequence, or [-1] for padding.
-      [slots] has shape [[| batch; context |]]: [slots.(b).(j)] is the cache
-      slot holding position [j] of row [b]'s sequence, or [-1] when none is
-      allocated. Column [j] is position [j]: the key a row stores at a slot was
-      rotated for that position, so two rows may share a slot only at the same
-      position. *)
-
-  val make : pos:Nx.int32_t -> slots:Nx.int32_t -> t
-  (** [make ~pos ~slots] is the span of those tensors.
-
-      Raises [Invalid_argument] unless both have rank 2, the same batch, and no
-      empty axis. *)
-
-  val rows : context:int -> int array -> t
-  (** [rows ~context lens] gives each row its own run of [context] slots — row
-      [b] owns slots [b * context] to [b * context + context - 1] — and places
-      its [lens.(b)] tokens at positions [0] to [lens.(b) - 1]. Rows are padded
-      on the left to the longest, so [seq] is the largest length and the last
-      column is every row's last token; pad the token ids the same way. The
-      matching cache has [Array.length lens * context] slots.
-
-      Raises [Invalid_argument] if there is no row, [context] is not positive,
-      or a length is negative or exceeds [context]. *)
-
-  val advance : t -> t
-  (** [advance s] is [s] with [pos] replaced by one past each row's greatest
-      position, of shape [[| batch; 1 |]]: the span of the next token of every
-      row. A row of padding advances to position [0]. *)
-
-  val positions : t -> Nx.int32_t
-  (** [positions s] is [s.pos] with padding replaced by [0]: every entry is at
-      least [0] and below [context]. A model that indexes a table by position
-      (learned position embeddings) indexes it with this. *)
-
-  val map : (Nx.int32_t -> Nx.int32_t) -> t -> t
-  (** [map f s] applies [f] to [pos] then [slots], for the traversals of a
-      jitted step's state. *)
-
-  val map2 : (Nx.int32_t -> Nx.int32_t -> Nx.int32_t) -> t -> t -> t
-  (** [map2 f s s'] combines [s] and [s'] leafwise with [f]. *)
-
-  val iter : (Nx.int32_t -> unit) -> t -> unit
-  (** [iter f s] applies [f] to [pos] then [slots]. *)
-end
+    + {b Chunking is invariant.} A prompt fed whole, in chunks, token by token,
+      or as one-token lanes of one sequence gives the same outputs and the same
+      written slots, up to floating-point reassociation.
+    + {b The whole-sequence pass is the cached pass.} Over {!Cache_index.whole},
+      {!cached} is causal attention of the tokens over themselves and returns
+      its cache as given, at the cost of {!apply}; over {!Cache_index.rows} and
+      a fresh cache it gives the same outputs. Kaun owes that agreement for this
+      layer. A model defines its training forward pass as {!cached} over
+      {!Cache_index.whole}, so it has one implementation and none to keep equal.
+    + {b One tensor per cache leaf.} Two sequences share a prefix by naming the
+      same slots in an index's table, never by two leaves holding one tensor:
+      storage reuse under [~donate:true] needs each donated tensor to seed one
+      leaf. *)
 
 (** Key-value caches. *)
 module Cache : sig
   type 'a t = { keys : 'a; values : 'a }
   (** The type for key-value caches over payload ['a]. At tensor payloads,
-      [keys] and [values] each have shape [[| slots; kv_heads; head_dim |]].
-      Slot [s] holds the projected key and value of whatever token a span
-      assigned to it; unwritten slots hold zeros. *)
+      [keys] and [values] each have shape [[| slots + 1; kv_heads; head_dim |]]:
+      slot [s] holds the key and value of whatever token a cache index stored
+      there, and the last row is the scratch row (see {!Cache_index}). *)
 
   val make :
     slots:int ->
@@ -197,10 +144,12 @@ module Cache : sig
     head_dim:int ->
     (float, 'b) Nx.dtype ->
     (float, 'b) Nx.t t
-  (** [make ~slots ~kv_heads ~head_dim dtype] is an empty cache of [slots]
-      slots. Use the parameters' dtype.
+  (** [make ~slots ~kv_heads ~head_dim dtype] is a cache of [slots] slots
+      holding zeros. Use the parameters' dtype. [slots] may be [0]: the state a
+      {!Cache_index.whole} call is given.
 
-      Raises [Invalid_argument] if any dimension is not positive. *)
+      Raises [Invalid_argument] if [slots] is negative or another dimension is
+      not positive. *)
 
   val map : ('a -> 'b) -> 'a t -> 'b t
   (** [map f c] is [c] with [f] applied to [c.keys] and [c.values], in that
@@ -229,48 +178,39 @@ module Cache : sig
       ["0.values"], ["1.keys"], ... *)
 end
 
-type route
-(** The type for a span resolved against a cache of a given size: which token
-    writes each slot, which slot each column reads, which columns are live, and
-    the causal mask. It is derived inside the step from the span and is the same
-    for every block of a model. *)
-
-val route : slots:int -> Span.t -> route
-(** [route ~slots span] resolves [span] against caches of [slots] slots. Token
-    [(b, i)] writes slot [span.slots.(b).(span.pos.(b).(i))]; when several
-    tokens of the call aim at one slot, the last in row-major order wins, as in
-    {!Nx.scatter}. The cost is [slots * batch * seq] int32 comparisons, once per
-    call.
-
-    Raises [Invalid_argument] if [slots] is not positive. *)
-
 val cached :
   head_dim:int ->
   ?rope:Rope.t ->
+  ?window:int ->
   (float, 'b) Nx.t t ->
   (float, 'b) Nx.t Cache.t ->
-  route ->
+  Cache_index.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
-(** [cached ~head_dim p cache route x] is causal self-attention of the tokens
-    [x], of shape [[| batch; seq; embed_dim |]], over the cached sequences, and
+(** [cached ~head_dim p cache index x] is causal self-attention of the tokens
+    [x], of shape [[| batch; seq; embed_dim |]], over their sequences, and
     [cache] with their keys and values written. The result has [x]'s shape.
 
-    Query [(b, i)] sees the columns [j <= pos.(b).(i)] of its row, which include
-    the tokens of this call at or before it: a prompt fed whole, in chunks, or
-    token by token gives the same outputs up to floating-point reassociation.
-    With [rope], queries and keys are rotated at the span's positions before the
-    keys are stored. Columns no query of a row may see are read as zero, so they
-    contribute exactly zero to the row's outputs, whatever the slot holds.
+    A token sees the positions of its sequence at or before its own, those of
+    this call included, and with [window] only the last [window] of them: a
+    prompt fed whole, in chunks, or token by token gives the same outputs up to
+    floating-point reassociation. With [rope], queries and keys are rotated at
+    the index's positions before the keys are stored. A padded token's output is
+    the output projection of zero.
 
-    The write is one select over the cache and the read one gather of
-    [batch * context] slots; both trace once under {!Rune.jit} whatever the
-    positions and slots, which enter as tensors. Differentiable through Rune.
+    The layer extends each leaf with {!Cache_index.extend} and attends once over
+    what that returns, under {!Cache_index.mask}. On a whole index the tokens
+    attend over themselves and [cache] is returned as it is, at the cost of
+    {!apply}: a model's whole-sequence forward pass is this function over
+    {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
+    tokens and one gather of its context; both trace once under {!Rune.jit}
+    whatever the index holds. With [~donate:true] on a device the step's cost
+    does not depend on the size of the cache. Differentiable through Rune.
 
     Raises [Invalid_argument] if [x] does not have shape
-    [[| batch; seq; embed_dim |]] with the route's batch and seq, [head_dim]
+    [[| batch; seq; embed_dim |]] with the index's batch and seq, [head_dim]
     does not divide the projection widths, [kv_heads] does not divide [heads],
-    or the cache does not have shape [[| slots; kv_heads; head_dim |]]. *)
+    or the cache does not have shape [[| _; kv_heads; head_dim |]]. *)
 
 (** {1:core The attention core} *)
 

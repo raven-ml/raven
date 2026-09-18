@@ -64,6 +64,10 @@ module Attention = Attention
 (** Multi-head self-attention, and the pure
     {!Attention.scaled_dot_product_attention} core. *)
 
+module Cache_index = Cache_index
+(** Where a call's tokens sit in a cache: each token's position and the slots of
+    each sequence. *)
+
 module Layer_norm = Layer_norm
 (** Layer normalization over the feature axis. *)
 

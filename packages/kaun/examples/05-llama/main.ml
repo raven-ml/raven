@@ -11,12 +11,11 @@
    [Rune.jit]; [--temperature 0] decodes greedily. *)
 
 open Kaun
-module Span = Attention.Span
 
 (* One step function serves the whole generation: it consumes the tokens its
-   span places, fills the caches, and returns the next token, the advanced span,
-   the next key and the written caches, so its output feeds the next call.
-   Positions, slots, the key and the sampling parameters enter as tensors:
+   index places, fills the caches, and returns the next token, the advanced
+   index, the next key and the written caches, so its output feeds the next
+   call. Positions, slots, the key and the sampling parameters enter as tensors:
    [Rune.jit2] compiles a prefill and one single-token step, and a captured
    temperature would be frozen into them. *)
 let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
@@ -25,7 +24,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
   let module Step = struct
     type t = {
       token : Nx.int32_t;
-      span : Span.t;
+      index : Cache_index.t;
       key : Nx.Rng.key;
       temperature : Nx.float32_t;
       k : Nx.int32_t;
@@ -36,7 +35,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
     let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
       {
         token = f s.token;
-        span = Span.map f s.span;
+        index = Cache_index.map f s.index;
         key = f s.key;
         temperature = f s.temperature;
         k = f s.k;
@@ -47,7 +46,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
     let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
       {
         token = f a.token b.token;
-        span = Span.map2 f a.span b.span;
+        index = Cache_index.map2 f a.index b.index;
         key = f a.key b.key;
         temperature = f a.temperature b.temperature;
         k = f a.k b.k;
@@ -57,7 +56,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
 
     let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
       f s.token;
-      Span.iter f s.span;
+      Cache_index.iter f s.index;
       f s.key;
       f s.temperature;
       f s.k;
@@ -67,7 +66,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
   let greedy = temperature <= 0.0 in
   let step (s : Step.t) =
     let seq = Nx.dim 1 s.token in
-    let h, caches = Llama.cached cfg params s.caches s.span s.token in
+    let h, caches = Llama.cached cfg params s.caches s.index s.token in
     (* The last position's logits, at float32 for the masks and the draw. *)
     let logits =
       Nx.cast Nx.float32
@@ -85,7 +84,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
     {
       s with
       token = Nx.reshape [| 1; 1 |] next;
-      span = Span.advance s.span;
+      index = Cache_index.advance s.index;
       key = keys.(0);
       caches;
     }
@@ -103,7 +102,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
       (step
          {
            Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
-           span = Span.rows ~context [| n0 |];
+           index = Cache_index.rows ~context [| n0 |];
            key = Nx.Rng.key seed;
            temperature = Nx.scalar Nx.float32 (Float.max temperature 1e-6);
            k = Nx.scalar Nx.int32 (Int32.of_int top_k);
