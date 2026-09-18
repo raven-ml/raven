@@ -14,7 +14,9 @@ one-page proposal in a pull request is enough for most things.
 accepted; nothing is implied about priority or who implements it),
 `committed` (the document describes how the system works, not an
 intention), `abandoned`. Once published, prefer a new RFC over rewriting an
-old one; amendments are for corrections.
+old one; amendments are for corrections. An RFC whose design has not shipped
+in a release may be replaced in place: the header gains a `Revision` item,
+and the Rationale records what the earlier revision chose and why it lost.
 
 ## Structure
 
@@ -24,8 +26,9 @@ but did not watch the design finishes it in one sitting, and make it
 self-contained: state a constraint where it is used rather than pointing at
 a document outside the repository.
 
-- **Header**: number and title, then `Status`, `Date`, `Packages` and, once
-  it lands, `Implementation` (the pull request).
+- **Header**: number and title, then `Status`, `Date`, `Packages`, once it
+  lands `Implementation` (the pull request), and `Revision` when the text
+  replaces an earlier one.
 - **Summary**: one paragraph.
 - **Motivation**: the problem, with evidence from the tree, and what happens
   if nothing is done.
