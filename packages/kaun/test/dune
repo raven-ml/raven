@@ -22,6 +22,7 @@
   test_pmap_dp
   test_jit_state
   test_half
-  test_rope)
+  test_rope
+  test_decoder)
  (package kaun)
  (libraries kaun rune vega nx nx.core windtrap))
