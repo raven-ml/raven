@@ -6,17 +6,16 @@
 (** HuggingFace Hub integration.
 
     Fetches files from {{:https://huggingface.co}HuggingFace Hub} repositories
-    into a local cache and loads safetensors checkpoints — single-file or
-    sharded — as {!Kaun.Checkpoint.t} values. Since Hub checkpoints name and lay
-    out tensors by the exporting framework's conventions, {!rename},
-    {!transpose} and {!split} adapt them to a model's own scheme; typed
-    parameters then come out through {!Kaun.Checkpoint.to_params}:
+    into a local cache and loads safetensors checkpoints, single-file or
+    sharded, as {!Kaun.Checkpoint.t} values. A Hub checkpoint names and lays out
+    its tensors by the conventions of the framework that exported it, so a
+    model's importer asks for each entry by that name and reshapes it with nx
+    (see {!Kaun.Checkpoint.to_float}):
 
     {[
-    let params =
-      Kaun_hf.load_checkpoint "gpt2"
-      |> remap_gpt2 (* rename entries, split fused projections, ... *)
-      |> Checkpoint.to_params (module Model) ~like:template ~cast:true
+    let ckpt = Kaun_hf.load_checkpoint "gpt2" in
+    let table =
+      Checkpoint.to_float ~shape:[| 50257; 768 |] Nx.float32 "wte.weight" ckpt
     ]}
 
     Downloading requires [curl] on the [PATH]. Fetched files are cached under
@@ -78,51 +77,13 @@ val load_checkpoint :
     repository has a [model.safetensors.index.json] index, all shards it
     references are fetched and their entries merged; otherwise the single
     [model.safetensors] file is fetched. Entry names are the raw safetensors
-    keys (e.g. ["h.0.attn.c_attn.weight"]); adapt them with {!rename},
-    {!transpose} and {!split}. Optional arguments are those of {!download_file}.
+    keys (e.g. ["h.0.attn.c_attn.weight"]). Loading reads headers only; the
+    entries are views of the cached files (see {!Kaun.Checkpoint.load}).
+    Optional arguments are those of {!download_file}.
 
     Raises [Failure] if the repository has neither an index nor a
     [model.safetensors] file, if an indexed tensor is missing from its shard, or
     on download or parse errors. *)
-
-(** {1:adapting Adapting foreign checkpoints}
-
-    Checkpoint-to-checkpoint transformations for mapping a foreign checkpoint
-    onto a model's own entry names and tensor layouts. Compose them with [(|>)];
-    entries left over after adaptation are harmless, since
-    {!Kaun.Checkpoint.to_params} ignores entries its template does not name. *)
-
-val rename : (string -> string) -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
-(** [rename f t] is [t] with every entry name [n] replaced by [f n]. Names the
-    model does not care about can be left alone by returning them unchanged.
-
-    Raises [Invalid_argument] if the new names are not distinct and non-empty.
-*)
-
-val transpose : string -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
-(** [transpose name t] is [t] with the last two axes of entry [name] swapped.
-    Use it on weights stored with the opposite orientation, such as
-    [torch.nn.Linear]'s [outputs × inputs] weights when the model expects
-    [inputs × outputs].
-
-    Raises [Invalid_argument] if [name] has no entry or its entry has fewer than
-    2 axes. *)
-
-val split :
-  ?axis:int ->
-  string ->
-  into:string list ->
-  Kaun.Checkpoint.t ->
-  Kaun.Checkpoint.t
-(** [split name ~into t] is [t] with entry [name] replaced by [List.length into]
-    entries, the equal sections of the original tensor along [axis], in order.
-    Use it on fused projections, such as GPT-2's [c_attn] weight whose columns
-    are the concatenated query, key and value projections. [axis] defaults to
-    [-1], the last axis; negative values count from the last axis.
-
-    Raises [Invalid_argument] if [name] has no entry, [into] is empty, [axis] is
-    out of bounds, the size of [axis] is not a multiple of [List.length into],
-    or the resulting names are not distinct and non-empty. *)
 
 (** {1:cache The cache} *)
 

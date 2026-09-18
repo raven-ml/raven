@@ -158,25 +158,6 @@ let load_config ?token ?cache_dir ?offline ?revision repo_id =
 
 (* Loading checkpoints *)
 
-(* [of_entries ~op entries] is the checkpoint holding [entries], validating name
-   distinctness and non-emptiness with [op]-labelled errors before
-   [Checkpoint.concat] can produce its own, less specific ones. *)
-let of_entries ~op entries =
-  let seen = Hashtbl.create (List.length entries) in
-  List.iter
-    (fun (name, _) ->
-      if name = "" then invalid_argf "Kaun_hf.%s: empty entry name" op;
-      if Hashtbl.mem seen name then
-        invalid_argf "Kaun_hf.%s: duplicate name %S" op name;
-      Hashtbl.add seen name ())
-    entries;
-  Checkpoint.concat
-    (List.map
-       (fun (name, Rune.Ptree.P x) -> Checkpoint.of_tensor name x)
-       entries)
-
-let entries t = List.map (fun n -> (n, Checkpoint.get n t)) (Checkpoint.names t)
-
 let load_sharded ~download index_path =
   let json = read_json_file index_path in
   let weight_map =
@@ -224,43 +205,3 @@ let load_checkpoint ?token ?cache_dir ?offline ?revision repo_id =
       match try_download "model.safetensors" with
       | Some path -> Checkpoint.load path
       | None -> failwith (err_no_safetensors repo_id))
-
-(* Adapting foreign checkpoints *)
-
-let rename f t =
-  of_entries ~op:"rename" (List.map (fun (n, x) -> (f n, x)) (entries t))
-
-let transpose name t =
-  match Checkpoint.find name t with
-  | None -> invalid_argf "Kaun_hf.transpose: no entry named %S" name
-  | Some (Rune.Ptree.P x) ->
-      let nd = Array.length (Nx.shape x) in
-      if nd < 2 then
-        invalid_argf "Kaun_hf.transpose: entry %S has %d axes, needs at least 2"
-          name nd;
-      let x = Nx.swapaxes (nd - 2) (nd - 1) x in
-      of_entries ~op:"transpose"
-        (List.map
-           (fun (n, e) -> if n = name then (n, Rune.Ptree.P x) else (n, e))
-           (entries t))
-
-let split ?(axis = -1) name ~into t =
-  match Checkpoint.find name t with
-  | None -> invalid_argf "Kaun_hf.split: no entry named %S" name
-  | Some (Rune.Ptree.P x) ->
-      let parts = List.length into in
-      if parts = 0 then invalid_arg "Kaun_hf.split: empty name list";
-      let shape = Nx.shape x in
-      let nd = Array.length shape in
-      let axis = if axis < 0 then axis + nd else axis in
-      if axis < 0 || axis >= nd then
-        invalid_argf "Kaun_hf.split: axis out of bounds for entry %S" name;
-      if shape.(axis) mod parts <> 0 then
-        invalid_argf
-          "Kaun_hf.split: axis %d of entry %S has size %d, not a multiple of %d"
-          axis name shape.(axis) parts;
-      let sections =
-        List.map2 (fun n x -> (n, Rune.Ptree.P x)) into (Nx.split ~axis parts x)
-      in
-      let rest = List.filter (fun (n, _) -> n <> name) (entries t) in
-      of_entries ~op:"split" (rest @ sections)

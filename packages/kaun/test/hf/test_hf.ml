@@ -250,123 +250,55 @@ let test_load_missing_raises () =
   raises (Failure "No safetensors found for acme/empty") (fun () ->
       Hf.load_checkpoint ~cache_dir ~offline:true "acme/empty")
 
-(* Adapting foreign checkpoints *)
+(* Importing a foreign checkpoint *)
 
-let two_entries () =
-  Checkpoint.concat
-    [
-      Checkpoint.of_tensor "a" (vec [| 1.0; 2.0 |]);
-      Checkpoint.of_tensor "b" (vec [| 3.0 |]);
-    ]
-
-let test_rename () =
-  let ckpt = Hf.rename (function "a" -> "x.w" | n -> n) (two_entries ()) in
-  equal ~msg:"names" (list string) [ "b"; "x.w" ] (Checkpoint.names ckpt);
-  check_entry ~msg:"renamed entry keeps its tensor" [| 1.0; 2.0 |] "x.w" ckpt
-
-let test_rename_collision () =
-  raises (Invalid_argument "Kaun_hf.rename: duplicate name \"b\"") (fun () ->
-      Hf.rename (fun _ -> "b") (two_entries ()))
-
-let test_rename_empty () =
-  raises (Invalid_argument "Kaun_hf.rename: empty entry name") (fun () ->
-      Hf.rename (fun _ -> "") (Checkpoint.of_tensor "a" (vec [| 1.0 |])))
-
-let test_transpose () =
-  let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let ckpt = Hf.transpose "w" (Checkpoint.of_tensor "w" x) in
-  equal ~msg:"shape" (array int) [| 3; 2 |] (Nx.shape (entry "w" ckpt));
-  check_entry ~msg:"values" [| 1.0; 4.0; 2.0; 5.0; 3.0; 6.0 |] "w" ckpt
-
-let test_transpose_errors () =
-  raises (Invalid_argument "Kaun_hf.transpose: no entry named \"w\"") (fun () ->
-      Hf.transpose "w" Checkpoint.empty);
-  raises
-    (Invalid_argument
-       "Kaun_hf.transpose: entry \"v\" has 1 axes, needs at least 2") (fun () ->
-      Hf.transpose "v" (Checkpoint.of_tensor "v" (vec [| 1.0 |])))
-
-let test_split () =
-  let fused =
-    Nx.create f32 [| 2; 6 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0; 10.0; 11.0; 12.0 |]
-  in
-  let ckpt =
-    Hf.split "qkv" ~into:[ "q"; "k"; "v" ] (Checkpoint.of_tensor "qkv" fused)
-  in
-  equal ~msg:"names" (list string) [ "k"; "q"; "v" ] (Checkpoint.names ckpt);
-  equal ~msg:"shape" (array int) [| 2; 2 |] (Nx.shape (entry "q" ckpt));
-  check_entry ~msg:"q" [| 1.0; 2.0; 7.0; 8.0 |] "q" ckpt;
-  check_entry ~msg:"k" [| 3.0; 4.0; 9.0; 10.0 |] "k" ckpt;
-  check_entry ~msg:"v" [| 5.0; 6.0; 11.0; 12.0 |] "v" ckpt
-
-let test_split_axis () =
-  let x = Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  let ckpt =
-    Hf.split ~axis:0 "x" ~into:[ "top"; "bottom" ] (Checkpoint.of_tensor "x" x)
-  in
-  check_entry ~msg:"top" [| 1.0; 2.0 |] "top" ckpt;
-  check_entry ~msg:"bottom" [| 3.0; 4.0 |] "bottom" ckpt
-
-let test_split_errors () =
-  raises (Invalid_argument "Kaun_hf.split: no entry named \"x\"") (fun () ->
-      Hf.split "x" ~into:[ "a" ] Checkpoint.empty);
-  let ckpt = Checkpoint.of_tensor "x" (vec [| 1.0; 2.0; 3.0 |]) in
-  raises (Invalid_argument "Kaun_hf.split: empty name list") (fun () ->
-      Hf.split "x" ~into:[] ckpt);
-  raises
-    (Invalid_argument
-       "Kaun_hf.split: axis 0 of entry \"x\" has size 3, not a multiple of 2")
-    (fun () -> Hf.split "x" ~into:[ "a"; "b" ] ckpt);
-  raises (Invalid_argument "Kaun_hf.split: axis out of bounds for entry \"x\"")
-    (fun () -> Hf.split ~axis:1 "x" ~into:[ "a" ] ckpt);
-  let two = two_entries () in
-  raises (Invalid_argument "Kaun_hf.split: duplicate name \"b\"") (fun () ->
-      Hf.split "a" ~into:[ "b"; "c" ] two)
-
-(* End to end: a GPT-2-style fused attention block, remapped into a typed
-   [Attention.params] record through [Checkpoint.to_params]. *)
-
-let test_remap_into_attention () =
+(* A GPT-2-style attention block built directly from the file's entries: the
+   fused query, key and value projection is stored [d; 3d], and the output
+   projection [outputs; inputs]. *)
+let test_import_attention () =
   let module Attention = Kaun.Attention in
-  (* Conv1D layout: fused qkv weight is [d; 3d], no transpose needed. The out
-     projection is stored [out; in] (nn.Linear layout) to exercise
-     [transpose]. *)
-  let fused_w =
-    Nx.create f32 [| 2; 6 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0; 10.0; 11.0; 12.0 |]
-  in
-  let fused_b = vec [| 0.5; 0.25; 0.125; 1.5; 2.5; 3.5 |] in
-  let out_w = Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  let out_b = vec [| 0.75; 1.25 |] in
-  let hf =
+  let d = 2 in
+  let ckpt =
     Checkpoint.concat
       [
-        Checkpoint.of_tensor "attn.c_attn.weight" fused_w;
-        Checkpoint.of_tensor "attn.c_attn.bias" fused_b;
-        Checkpoint.of_tensor "attn.c_proj.weight" out_w;
-        Checkpoint.of_tensor "attn.c_proj.bias" out_b;
+        Checkpoint.of_tensor "attn.c_attn.weight"
+          (Nx.create f32
+             [| d; 3 * d |]
+             [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0; 10.0; 11.0; 12.0 |]);
+        Checkpoint.of_tensor "attn.c_attn.bias"
+          (vec [| 0.5; 0.25; 0.125; 1.5; 2.5; 3.5 |]);
+        Checkpoint.of_tensor "attn.c_proj.weight"
+          (Nx.create f32 [| d; d |] [| 1.0; 2.0; 3.0; 4.0 |]);
+        Checkpoint.of_tensor "attn.c_proj.bias" (vec [| 0.75; 1.25 |]);
       ]
   in
-  let ours =
-    hf
-    |> Hf.split "attn.c_attn.weight" ~into:[ "q.w"; "k.w"; "v.w" ]
-    |> Hf.split "attn.c_attn.bias" ~into:[ "q.b"; "k.b"; "v.b" ]
-    |> Hf.transpose "attn.c_proj.weight"
-    |> Hf.rename (function
-      | "attn.c_proj.weight" -> "out.w"
-      | "attn.c_proj.bias" -> "out.b"
-      | n -> n)
+  let float ~shape name = Checkpoint.to_float ~shape f32 name ckpt in
+  let fused =
+    List.combine
+      (Nx.split ~axis:1 3 (float ~shape:[| d; 3 * d |] "attn.c_attn.weight"))
+      (Nx.split ~axis:0 3 (float ~shape:[| 3 * d |] "attn.c_attn.bias"))
   in
-  let like =
-    Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Attention.init ~embed_dim:2
+  let linear (w, b) = { Kaun.Linear.w; b = Some b } in
+  let p : Nx.float32_t Attention.t =
+    match List.map linear fused with
+    | [ q; k; v ] ->
+        let out =
+          linear
+            ( Nx.matrix_transpose (float ~shape:[| d; d |] "attn.c_proj.weight"),
+              float ~shape:[| d |] "attn.c_proj.bias" )
+        in
+        { q; k; v; out }
+    | _ -> assert false
   in
-  let p = Checkpoint.to_params (module Attention) ~like ours in
   equal ~msg:"q.w" (array float_exact) [| 1.0; 2.0; 7.0; 8.0 |] (to_arr p.q.w);
   equal ~msg:"v.b" (array float_exact) [| 2.5; 3.5 |]
     (to_arr (Option.get p.v.b));
   equal ~msg:"out.w transposed" (array float_exact) [| 1.0; 3.0; 2.0; 4.0 |]
-    (to_arr p.out.w)
+    (to_arr p.out.w);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_float: shape mismatch for \"attn.c_proj.bias\": expected \
+        [3], got [2]") (fun () -> float ~shape:[| 3 |] "attn.c_proj.bias")
 
 let () =
   run "kaun hf"
@@ -393,17 +325,9 @@ let () =
           test "sharded checkpoints merge their shards" test_load_sharded;
           test "repositories without safetensors raise" test_load_missing_raises;
         ];
-      group "adapting"
+      group "importing"
         [
-          test "rename rewrites entry names" test_rename;
-          test "rename rejects colliding names" test_rename_collision;
-          test "rename rejects empty names" test_rename_empty;
-          test "transpose swaps the last two axes" test_transpose;
-          test "transpose rejects missing and 1-D entries" test_transpose_errors;
-          test "split cuts an entry along its last axis" test_split;
-          test "split honours the axis argument" test_split_axis;
-          test "split rejects bad axes, sizes and names" test_split_errors;
-          test "a fused, transposed block loads into Attention.params"
-            test_remap_into_attention;
+          test "a fused, transposed block is built from its entries"
+            test_import_attention;
         ];
     ]

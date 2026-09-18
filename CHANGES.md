@@ -1657,6 +1657,10 @@ thread.
 
 ### Kaun
 
+- Remove `Kaun_hf.rename`, `transpose` and `split`. They existed because a
+  template found entries by its own paths; an importer now asks for each entry
+  by the file's name, so a rename is the name at the field, a transpose is
+  `Nx.matrix_transpose` and a fused tensor is `Nx.split ~axis n`, all views.
 - Add `Checkpoint.to_tensor ~shape dtype name` and `Checkpoint.to_float ~shape
   dtype name`, which read one entry by name and check its shape. A model's
   importer is now an ordinary function that builds the parameter record from
