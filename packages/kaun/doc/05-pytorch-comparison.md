@@ -26,7 +26,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Buffers (running stats) | hidden module state | explicit `Stats.t` you thread through the loop |
 | Data loading | `DataLoader` | `Data.batches2` returning a `Seq.t` |
 | Checkpointing | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Checkpoint` |
-| Pretrained models | `from_pretrained` per architecture | `kaun.hf` + generic `rename`/`transpose`/`split` |
+| Pretrained models | `from_pretrained` per architecture | `kaun.hf` + an importer you write with `Checkpoint.to_float` |
 | RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
 | Device | `model.to("cuda")` | eager on CPU; GPU via `Rune.jit ~device` |
 
@@ -209,7 +209,7 @@ let params =
   |> Checkpoint.to_params (module Mlp) ~prefix:"model" ~like:template
 ```
 
-`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. The optimizer state checkpoints with the model's own module because it has the model's shape. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md).
+`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. Nothing is converted on the way: a dtype mismatch raises. The optimizer state checkpoints with the model's own module because it has the model's shape. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md).
 
 ---
 
@@ -221,17 +221,15 @@ let params =
 model = AutoModel.from_pretrained("gpt2")
 ```
 
-**kaun** — there is no per-architecture loader. `kaun.hf` downloads the checkpoint, and generic combinators adapt it onto your record's names:
+**kaun**: there is no per-architecture loader. `kaun.hf` downloads the checkpoint, and an importer you write builds your record from its entries, each read by the file's name with the shape and dtype it must have:
 
 <!-- $MDX skip -->
 ```ocaml
-let params =
-  Kaun_hf.load_checkpoint "gpt2"
-  |> Gpt2.of_hf ~n_layer:cfg.n_layer (* split fused c_attn, rename *)
-  |> Checkpoint.to_params (module Gpt2.Params) ~like:(Gpt2.make cfg) ~cast:true
+let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
+let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_checkpoint "gpt2")
 ```
 
-`rename` maps foreign names to yours, `transpose` fixes `nn.Linear`'s `outputs × inputs` orientation, `split` cuts fused projections like GPT-2's `c_attn`. The GPT-2 adaptation is ~40 lines of user code; [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) generates text with the result.
+Inside the importer a rename is the file's name at the field it fills, `Nx.matrix_transpose` fixes `nn.Linear`'s `outputs × inputs` orientation, and `Nx.split` cuts fused projections like GPT-2's `c_attn`; both are views. The file is mapped, so at its own dtype the parameters are views of it and nothing is copied. The GPT-2 importer is about fifty lines of user code; [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) generates text with the result.
 
 ---
 
@@ -265,6 +263,6 @@ let params =
 | Batches | `DataLoader` | `Data.batches2` |
 | Save | `torch.save(model.state_dict())` | `Checkpoint.save` + `of_params` |
 | Load | `load_state_dict` | `Checkpoint.to_params ~like` |
-| Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_checkpoint` + `rename`/`transpose`/`split` |
+| Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_checkpoint` + `Checkpoint.to_float` per entry |
 | Seed | `torch.manual_seed(42)` | `Nx.Rng.with_key (Nx.Rng.key 42)` |
 | Per-sample grads | `torch.func.vmap(grad(...))` | `Rune.vmap2` of `Rune.grad` |
