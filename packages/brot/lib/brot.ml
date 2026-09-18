@@ -82,10 +82,10 @@ type t = {
   normalizer : Normalizer.t option;
   pre_tokenizer : Pre_tokenizer.t option;
   cut : cut;
-  (* Whether documents walk and encode through the fused C kernel: a walked
-     byte-level pre-tokenizer over a BPE model the kernel covers, decided once
-     here and dispatched with a plain [if]. *)
-  fused : bool;
+  (* The walker documents walk and encode with through the fused C kernel, if
+     they do: a walked byte-level pre-tokenizer the kernel has a walker for,
+     over a BPE model it covers, decided once here. *)
+  fused : Pre_tokenizer.walker option;
   post_processor : Post_processor.t option;
   decoder : Decoder.t option;
   added : Added_tokens.t;
@@ -194,11 +194,14 @@ let with_span_encoder t ?ids32 f =
           | Some sink ->
               f
                 (Bpe.encode_into_ids32 m st sink)
-                (if t.fused then Some (Bpe.encode_walk_ids32 m st sink)
-                 else None)
+                (Option.map
+                   (fun walker -> Bpe.encode_walk_ids32 m st ~walker sink)
+                   t.fused)
           | None ->
               f (Bpe.encode_into m st)
-                (if t.fused then Some (Bpe.encode_walk m st) else None))
+                (Option.map
+                   (fun walker -> Bpe.encode_walk m st ~walker)
+                   t.fused))
   | Alg_wordpiece m -> f (Wordpiece.encode_into m) None
   | Alg_wordlevel m -> f (Word_level.encode_into m) None
   | Alg_unigram m ->
@@ -392,8 +395,9 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
   let cut = cut_of ~algorithm pre in
   let fused =
     match (cut, algorithm) with
-    | Walk pre, Alg_bpe m -> Pre_tokenizer.walks_byte_level pre && Bpe.fused m
-    | _ -> false
+    | Walk pre, Alg_bpe m when Bpe.fused m ->
+        Pre_tokenizer.byte_level_walker pre
+    | _ -> None
   in
   {
     algorithm;

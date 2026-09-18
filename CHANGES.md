@@ -1673,6 +1673,10 @@ thread.
 
 ### Brot
 
+- Llama 3, OLMo, GPT-4 (cl100k), Qwen2 and Qwen3.5 tokenizers encode through
+  the fused C kernel that GPT-2 uses, with a walker for their pattern: Llama 3
+  43 → 79 MB/s and Qwen2.5 40 → 90 MB/s single-threaded on OpenWebText
+  (GPT-2 is unchanged at 155 MB/s).
 - Llama 3, OLMo, GPT-4 (cl100k), Qwen2 and Qwen3.5 tokenizers pre-tokenize
   about twice as fast: their `Split` patterns are recognised and run by a
   scanner checked against the regular expression (Llama 3 27 → 43 MB/s

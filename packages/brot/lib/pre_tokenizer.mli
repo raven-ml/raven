@@ -285,7 +285,20 @@ val lead_class : Bytes.t
     classes of their own, and the two shapes of non-ASCII byte. Built once and
     only ever read, by the C kernels on every byte-level encode. *)
 
-val walks_byte_level : t -> bool
-(** [walks_byte_level t] is [true] iff {!fill} walks [t] with the byte-level
-    pattern: [t] is a byte-level pre-tokenizer using the GPT-2 regex, and not
-    one wrapped in a sequence. *)
+type cl100k = { digits : int; marks : bool }
+(** The type for the variants of the cl100k pattern that {!fill} walks by hand:
+    [digits] is the longest group of numbers, and [marks] is whether combining
+    marks count as letters. *)
+
+(** The type for the walkers the fused byte-level kernel has a twin of. *)
+type walker =
+  | Gpt2  (** The GPT-2 pattern of a byte-level pre-tokenizer. *)
+  | Cl100k of cl100k
+      (** A recognised cl100k pattern, split with [`Isolated]. *)
+
+val byte_level_walker : t -> walker option
+(** [byte_level_walker t] is the walker {!fill} walks [t] with when its spans
+    are those of one pattern over the raw bytes of the text, to be byte-level
+    encoded as they are: [t] is a byte-level pre-tokenizer using the GPT-2
+    regex, or a recognised cl100k split followed by a byte-level pre-tokenizer
+    that does not split. *)

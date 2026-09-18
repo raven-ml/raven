@@ -94,6 +94,34 @@ external byte_level_encode_ids32 :
   reason = "brot_byte_level_encode_ids32_byte" "brot_byte_level_encode_ids32"
 [@@noalloc]
 
+external cl100k_encode :
+  string ->
+  int ->
+  int ->
+  Bytes.t ->
+  int array ->
+  int array ->
+  Bytes.t ->
+  Bytes.t ->
+  byte_level ->
+  int ->
+  reason = "brot_cl100k_encode_byte" "brot_cl100k_encode"
+[@@noalloc]
+
+external cl100k_encode_ids32 :
+  string ->
+  int ->
+  int ->
+  Bytes.t ->
+  ids32 ->
+  int array ->
+  Bytes.t ->
+  Bytes.t ->
+  byte_level ->
+  int ->
+  reason = "brot_cl100k_encode_ids32_byte" "brot_cl100k_encode_ids32"
+[@@noalloc]
+
 external sp_encode_ids32 :
   string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
   = "brot_sp_encode_ids32_byte" "brot_sp_encode_ids32"

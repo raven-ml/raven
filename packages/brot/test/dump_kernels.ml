@@ -10,7 +10,11 @@
    malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
    huge spans, more pretokens than a span chunk, every exit at the staged
    chunk's seams, bytes without an id, [ignore_merges], caching off, and a merge
-   whose result stands for other bytes than its entry's.
+   whose result stands for other bytes than its entry's. The byte-level models
+   run behind the GPT-2 walker and behind the cl100k one, which has its own
+   inputs: contractions in every case, digit groups, newlines inside whitespace,
+   the one-character prefix of a word, combining marks, and the sequences a
+   strict decoder refuses.
 
    An optional corpus path argument appends [encode_batch_ids] digests over that
    file split on <|endoftext|>, for dev-time runs over a large corpus. *)
@@ -136,6 +140,22 @@ let adversarial =
       ("emoji", "a \240\159\152\128\240\159\154\128 b");
       ("mixed_soup", "a\194\160\128\237\160\128\244\144\128\128\192 b\206");
       ("disagree_mid_span", "a\196\138\196\138a \196\138a");
+      ( "cl_contractions",
+        "I'M HE'LL we'Ve it'\xC5\xBF 'Sx ''s ' a' 'r 'l x'R 'D' 'LL'll '\xC5" );
+      ( "cl_digits",
+        "1 12 123 1234 1234567 \xD9\xA3\xD9\xA4\xD9\xA5\xD9\xA6 1\xC2\xB22 \
+         \xE2\x85\xA7\xE2\x85\xA7\xE2\x85\xA7\xE2\x85\xA7 12ab34" );
+      ( "cl_newlines",
+        "a\r\nb \n c\n\n  d\r\r\n  x \n\n\n   \r\n \r\n\t\n  y  \n" );
+      ("cl_prefix", "\ta \xC2\xA0b !c .d\n e\re \xE3\x80\x80f \x00g 1h");
+      ("cl_punct", "!!!\n\nfoo  !!! a!?\r\n\r\nb ...\n /*\n*/ a//b $100 !\n ");
+      ( "cl_marks",
+        "e\xCC\x81te\xCC\x81 \xCC\x81a a\xCC\x81 \xCC\x81\xCC\x81 !\xCC\x81 \
+         \xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87 \
+         1\xCC\x81" );
+      ( "cl_refused",
+        "a\xE0\x81\x81b \xF0\x80\x80\x80 \xED\xA0\x80! \xF4\x90\x80\x80 \
+         \xF5\x80\x80\x80x  \xC3" );
     ]
   in
   let random_ascii n = String.init n (fun _ -> Char.chr (32 + rand_int 95)) in
@@ -338,8 +358,23 @@ let byte_alphabet =
 
 let pre () = Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ()
 
+(* A recognised cl100k pattern, then the byte-level encoding of its pieces: the
+   pipeline the cl100k walker of the kernel serves. *)
+let pre_cl100k pattern =
+  Brot.Pre_tokenizer.sequence
+    [
+      Brot.Pre_tokenizer.split_regex ~pattern ~behavior:`Isolated ();
+      Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+    ]
+
+let cl100k =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+let qwen35 =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
 (* Every byte, plus merges growing common English fragments. *)
-let synth_full ?cache_capacity ?ignore_merges () =
+let synth_full ?(pre = pre ()) ?cache_capacity ?ignore_merges () =
   let merges =
     [
       ("t", "h");
@@ -365,7 +400,7 @@ let synth_full ?cache_capacity ?ignore_merges () =
     |> List.sort_uniq compare
   in
   let vocab = List.mapi (fun i s -> (s, i)) (base @ derived) in
-  Brot.bpe ~vocab ~merges ~pre:(pre ()) ?cache_capacity ?ignore_merges ()
+  Brot.bpe ~vocab ~merges ~pre ?cache_capacity ?ignore_merges ()
 
 (* Bytes q, z and Q have no entry: spans holding them go back to OCaml. *)
 let synth_missing () =
@@ -480,6 +515,9 @@ let () =
             :: List.mapi
                  (fun i d -> (Printf.sprintf "edge_cases.%d" i, d))
                  (documents text));
+        (match fixture "unicode_code.txt" with
+        | None -> []
+        | Some text -> [ ("unicode_code", text) ]);
         (match data "wiki_64k.txt" with
         | None -> []
         | Some text -> [ ("wiki_64k", text) ]);
@@ -505,6 +543,9 @@ let () =
   (match file_tok "roberta_base" with
   | Some tok -> run "roberta_base" tok
   | None -> pf "roberta_base: skipped\n");
+  (match file_tok "llama3" with
+  | Some tok -> run "llama3" tok
+  | None -> pf "llama3: skipped\n");
   (match file_tok "llama" with
   | Some tok -> run "llama" tok
   | None -> pf "llama: skipped\n");
@@ -514,6 +555,10 @@ let () =
   run "synth_full" (synth_full ());
   run "synth_nocache" (synth_full ~cache_capacity:0 ());
   run "synth_ignore" (synth_full ~ignore_merges:true ());
+  run "synth_cl100k" (synth_full ~pre:(pre_cl100k cl100k) ());
+  run "synth_cl100k_ignore"
+    (synth_full ~pre:(pre_cl100k cl100k) ~ignore_merges:true ());
+  run "synth_qwen35" (synth_full ~pre:(pre_cl100k qwen35) ());
   run "synth_missing" (synth_missing ());
   run "synth_disagree" (synth_disagree ());
   run "synth_sp" (synth_sp ());

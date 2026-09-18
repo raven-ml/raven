@@ -1201,9 +1201,25 @@ let fill t s ~pos ~stop spans =
   if pos < 0 || stop < pos || stop > String.length s then invalid_arg err_range;
   fill_walk t s ~pos ~stop spans
 
-let walks_byte_level = function
-  | Byte_level { use_regex = true; _ } -> true
-  | _ -> false
+type walker = Gpt2 | Cl100k of cl100k
+
+let byte_level_walker t =
+  match t with
+  | Byte_level { use_regex = true; _ } -> Some Gpt2
+  | Sequence ts -> (
+      match flatten ts with
+      | [
+       Split
+         {
+           pattern = Regex { walker = Some walker; _ };
+           behavior = `Isolated;
+           invert = false;
+         };
+       Byte_level { use_regex = false; _ };
+      ] ->
+          Some (Cl100k walker)
+      | _ -> None)
+  | _ -> None
 
 (* Pre-tokenize *)
 

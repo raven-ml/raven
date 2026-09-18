@@ -142,6 +142,7 @@ val fused : t -> bool
 val encode_walk :
   t ->
   state ->
+  walker:Pre_tokenizer.walker ->
   Ints.t ->
   opaque:Ints.t ->
   marks:Ints.t ->
@@ -150,15 +151,15 @@ val encode_walk :
   pos:int ->
   stop:int ->
   int
-(** [encode_walk t st ids ~opaque ~marks spans text ~pos ~stop] walks
-    [text.\[pos..stop)] with the byte-level pattern and encodes each pretoken as
-    it is cut: the spans go to [spans], their ids to [ids], the id count after
-    each span to [marks], and opaque runs to [opaque] as {!encode_into} records
-    them. Returns as {!Pre_tokenizer.fill} does: [stop] once the range is
-    exhausted, otherwise the start of the first span that did not fit, and a
-    call that appends nothing and returns [pos] means [spans] is too small.
-    Spans are never cut. Only meaningful when {!fused} — the walker is the
-    byte-level one whatever the tokenizer's pre-tokenizer says.
+(** [encode_walk t st ~walker ids ~opaque ~marks spans text ~pos ~stop] walks
+    [text.\[pos..stop)] with [walker]'s pattern and encodes each pretoken as it
+    is cut: the spans go to [spans], their ids to [ids], the id count after each
+    span to [marks], and opaque runs to [opaque] as {!encode_into} records them.
+    Returns as {!Pre_tokenizer.fill} does: [stop] once the range is exhausted,
+    otherwise the start of the first span that did not fit, and a call that
+    appends nothing and returns [pos] means [spans] is too small. Spans are
+    never cut. Only meaningful when {!fused} — the walker is [walker] whatever
+    the tokenizer's pre-tokenizer says.
 
     Raises [Invalid_argument] if [pos] and [stop] are not within [0] and
     [String.length text], or if [stop] does not fit in 32 bits. *)
@@ -194,6 +195,7 @@ val encode_into_ids32 :
 val encode_walk_ids32 :
   t ->
   state ->
+  walker:Pre_tokenizer.walker ->
   sink ->
   Ints.t ->
   opaque:Ints.t ->
@@ -203,10 +205,10 @@ val encode_walk_ids32 :
   pos:int ->
   stop:int ->
   int
-(** [encode_walk_ids32 t st sink spill ~opaque ~marks spans text ~pos ~stop] is
-    {!encode_walk} with the kernel's ids written to [sink] and every hand-back's
-    to [spill], under {!sink}'s flush rule. Only meaningful when {!fused}, like
-    {!encode_walk}. *)
+(** [encode_walk_ids32 t st ~walker sink spill ~opaque ~marks spans text ~pos
+     ~stop] is {!encode_walk} with the kernel's ids written to [sink] and every
+    hand-back's to [spill], under {!sink}'s flush rule. Only meaningful when
+    {!fused}, like {!encode_walk}. *)
 
 val token_table : t -> string array
 (** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.

@@ -32,10 +32,11 @@ type byte_level = {
   len_table : int array;  (** The bytes each id accounts for. *)
   merge : bool;  (** Whether a miss may be merged in C. *)
 }
-(** Tables of the fused byte-level kernel: the GPT-2 walker over raw bytes, the
-    pretoken cache and the byte-level BPE merge, built once per [Bpe.state].
-    Field order is the C ABI — [brot_kernels.c] reads the record as its
-    [BROT_BL_*] slots; change neither without the other. *)
+(** Tables of the fused byte-level kernel: a walker over raw bytes — the GPT-2
+    one or the cl100k one, by the entry called — the pretoken cache and the
+    byte-level BPE merge, built once per [Bpe.state]. Field order is the C ABI —
+    [brot_kernels.c] reads the record as its [BROT_BL_*] slots; change neither
+    without the other. *)
 
 (** {1:sp The fused SentencePiece kernel} *)
 
@@ -170,6 +171,40 @@ val byte_level_encode_ids32 :
     stores and exits, the ids stored as [int32]. Ids room is checked per span
     against the buffer's length; every other contract is {!byte_level_encode}'s.
 *)
+
+val cl100k_encode :
+  string ->
+  int ->
+  int ->
+  Bytes.t ->
+  int array ->
+  int array ->
+  Bytes.t ->
+  Bytes.t ->
+  byte_level ->
+  int ->
+  reason
+(** [cl100k_encode text pos stop spans ids marks cursor unicode t walker] is
+    {!byte_level_encode} walking with {!Pre_tokenizer.fill_cl100k} in place of
+    the GPT-2 pattern: the same probes, merges, table stores, exits and
+    contract. [walker] is [(digits lsl 1) lor marks], the longest group of
+    numbers and whether combining marks are letters, which [unicode] tells by
+    {!Char_class}'s mark bit. *)
+
+val cl100k_encode_ids32 :
+  string ->
+  int ->
+  int ->
+  Bytes.t ->
+  ids32 ->
+  int array ->
+  Bytes.t ->
+  Bytes.t ->
+  byte_level ->
+  int ->
+  reason
+(** [cl100k_encode_ids32] is {!cl100k_encode} with the ids sink an {!ids32}
+    buffer, as {!byte_level_encode_ids32} is {!byte_level_encode}. *)
 
 val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
 (** [sp_encode text pos stop ids cursor t] cuts [text.\[pos..stop)] at

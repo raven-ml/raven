@@ -1462,7 +1462,7 @@ let err_range = "range is not within the text"
    {!Pre_tokenizer.fill}'s: [stop] once the range is exhausted, otherwise the
    start of the first span that did not fit, and a call that appends nothing and
    returns [pos] means the span buffer is too small. *)
-let encode_walk model st ids ~opaque ~marks spans text ~pos ~stop =
+let encode_walk model st ~walker ids ~opaque ~marks spans text ~pos ~stop =
   if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
   then invalid_arg err_range;
   let cur = st.st_cursor and t = st.st_kernel in
@@ -1473,11 +1473,16 @@ let encode_walk model st ids ~opaque ~marks spans text ~pos ~stop =
       Ints.reserve marks (Spans.capacity spans - Spans.count spans);
       Kernel.set cur ~spans:(Spans.count spans) ~ids:(Ints.length ids)
         ~marks:(Ints.length marks);
+      let unicode = Char_class.unicode_table () in
       let r =
-        Kernel.byte_level_encode text p stop (Spans.buffer spans)
-          (Ints.buffer ids) (Ints.buffer marks) cur
-          (Char_class.unicode_table ())
-          t
+        match (walker : Pre_tokenizer.walker) with
+        | Gpt2 ->
+            Kernel.byte_level_encode text p stop (Spans.buffer spans)
+              (Ints.buffer ids) (Ints.buffer marks) cur unicode t
+        | Cl100k { digits; marks = letters } ->
+            Kernel.cl100k_encode text p stop (Spans.buffer spans)
+              (Ints.buffer ids) (Ints.buffer marks) cur unicode t
+              ((digits lsl 1) lor Bool.to_int letters)
       in
       Spans.set_count spans (Kernel.spans cur);
       Ints.set_length ids (Kernel.ids cur);
@@ -1506,7 +1511,8 @@ let encode_walk model st ids ~opaque ~marks spans text ~pos ~stop =
    where the flush at the top of the next call will put its ids. Only the batch
    driver walks this way, with [record:false], so the marks are written and
    never read — the protocol stays the one the kernel pins. *)
-let encode_walk_ids32 model st sink spill ~opaque ~marks spans text ~pos ~stop =
+let encode_walk_ids32 model st ~walker sink spill ~opaque ~marks spans text ~pos
+    ~stop =
   if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
   then invalid_arg err_range;
   let cur = st.st_cursor and t = st.st_kernel in
@@ -1518,11 +1524,16 @@ let encode_walk_ids32 model st sink spill ~opaque ~marks spans text ~pos ~stop =
       Ints.reserve marks (Spans.capacity spans - Spans.count spans);
       Kernel.set cur ~spans:(Spans.count spans) ~ids:sink.used
         ~marks:(Ints.length marks);
+      let unicode = Char_class.unicode_table () in
       let r =
-        Kernel.byte_level_encode_ids32 text p stop (Spans.buffer spans) sink.ba
-          (Ints.buffer marks) cur
-          (Char_class.unicode_table ())
-          t
+        match (walker : Pre_tokenizer.walker) with
+        | Gpt2 ->
+            Kernel.byte_level_encode_ids32 text p stop (Spans.buffer spans)
+              sink.ba (Ints.buffer marks) cur unicode t
+        | Cl100k { digits; marks = letters } ->
+            Kernel.cl100k_encode_ids32 text p stop (Spans.buffer spans) sink.ba
+              (Ints.buffer marks) cur unicode t
+              ((digits lsl 1) lor Bool.to_int letters)
       in
       Spans.set_count spans (Kernel.spans cur);
       sink.used <- Kernel.ids cur;
