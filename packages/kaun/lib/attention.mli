@@ -78,9 +78,8 @@ val apply :
       widths.
     - [mask], which keys each query may see, of shape [[| seq; seq |]] or
       [[| batch; seq; seq |]]: weights are computed only where it is [true]. The
-      layer inserts the head axes. Every query must keep one key (see
-      {!scaled_dot_product_attention}); {!causal_mask} builds masks that do.
-      Without a mask every token sees every token.
+      layer inserts the head axes. A query that sees no key yields the output
+      projection of zero. Without a mask every token sees every token.
     - [rope], a rotary schedule: the query and key heads are rotated at
       positions [0] to [seq - 1] before the scores.
 
@@ -97,8 +96,7 @@ val causal_mask :
 (** [causal_mask ~seq ()] is the mask of shape [[| seq; seq |]] under which
     query [i] sees keys [j <= i]. With [valid], of shape [[| batch; seq |]] and
     [true] at real tokens, the result has shape [[| batch; seq; seq |]] and
-    hides padded keys as well. The diagonal is kept whatever [valid] says, so a
-    padded query still admits one key and its weights are finite.
+    hides padded keys as well.
 
     Raises [Invalid_argument] if [seq] is not positive or [valid] has another
     shape. *)
@@ -293,8 +291,9 @@ val scaled_dot_product_attention :
 
     [mask], when given, must broadcast to [[| ...; n; m |]]: weights are
     computed only where it is [true], and are exactly [0] where it is [false]
-    (masked scores are set to negative infinity before the softmax). Every query
-    row must keep at least one unmasked key, otherwise its output is [nan].
+    (masked scores are set to negative infinity before the softmax). The
+    function is total: a query row whose mask hides every key has zero weights,
+    so its output is zero over finite values, and its gradients are zero.
 
     For half and quarter precision inputs (float16, bfloat16, float8) the
     scores, masking and softmax are computed in a float32 island: [q] and [k]

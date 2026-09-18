@@ -99,12 +99,19 @@ let scaled_dot_product_attention ?mask q k v =
     let scores =
       Nx.mul_s (Nx.matmul q (Nx.swapaxes (kr - 2) (kr - 1) k)) scale
     in
-    let scores =
-      match mask with
-      | None -> scores
-      | Some m -> Nx.where m scores (Nx.scalar_like scores Float.neg_infinity)
-    in
-    Fn.softmax scores
+    match mask with
+    | None -> Fn.softmax scores
+    | Some m ->
+        let neg_inf t = Nx.scalar_like t Float.neg_infinity in
+        let scores = Nx.where m scores (neg_inf scores) in
+        let top = Nx.max ~axes:[ -1 ] ~keepdims:true scores in
+        (* A query that sees no key: its weights are zero, not 0 / 0. *)
+        let empty = Nx.equal top (neg_inf top) in
+        let e =
+          Nx.exp (Nx.sub scores (Nx.where empty (Nx.zeros_like top) top))
+        in
+        let total = Nx.sum ~axes:[ -1 ] ~keepdims:true e in
+        Nx.div e (Nx.where empty (Nx.ones_like total) total)
   in
   let dt = Nx.dtype q in
   (* Half and quarter precision floats overflow the scores and starve the
@@ -199,13 +206,9 @@ let causal_mask ~seq ?valid () =
           Printf.ksprintf invalid_arg
             "Attention.causal_mask: valid must have shape [batch; %d]" seq);
       let batch = Nx.dim 0 valid in
-      (* The diagonal stays whatever [valid] says, so a padded query still
-         admits one key and its row of the softmax is finite. *)
-      Nx.logical_or
-        (Nx.logical_and
-           (Nx.reshape [| 1; seq; seq |] tri)
-           (Nx.reshape [| batch; 1; seq |] valid))
-        (Nx.reshape [| 1; seq; seq |] (Nx.equal row col))
+      Nx.logical_and
+        (Nx.reshape [| 1; seq; seq |] tri)
+        (Nx.reshape [| batch; 1; seq |] valid)
 
 let apply ~head_dim ?mask ?rope p x =
   let shape = Nx.shape x in

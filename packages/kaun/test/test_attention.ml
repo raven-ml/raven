@@ -138,6 +138,50 @@ let test_core_rejects_bad_shapes () =
         (t [| 2; 2 |])
         (t [| 3; 2 |]))
 
+(* Attention is total: a query that sees no key yields zero. *)
+
+let test_core_is_total () =
+  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
+  let q = Nx.randn Nx.float32 [| 2; 3 |] in
+  let k = Nx.randn Nx.float32 [| 4; 3 |]
+  and v = Nx.randn Nx.float32 [| 4; 5 |] in
+  let mask =
+    Nx.create Nx.bool [| 2; 4 |]
+      [| false; false; false; false; true; false; true; true |]
+  in
+  let out = Attention.scaled_dot_product_attention ~mask q k v in
+  values_are ~msg:"a query that sees no key yields zero" ~tol:0.0
+    (Array.make 5 0.0) (Nx.slice [ I 0 ] out);
+  is_true ~msg:"its neighbour is finite and not zero"
+    (Array.for_all
+       (fun x -> Float.is_finite x && x <> 0.0)
+       (Nx.to_array (Nx.slice [ I 1 ] out)))
+
+let test_core_empty_row_gradients () =
+  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
+  let p =
+    {
+      Qkv64.q = Nx.randn Nx.float64 [| 2; 2 |];
+      k = Nx.randn Nx.float64 [| 3; 2 |];
+      v = Nx.randn Nx.float64 [| 3; 2 |];
+    }
+  in
+  let mask =
+    Nx.create Nx.bool [| 2; 3 |] [| false; false; false; true; false; true |]
+  in
+  let loss { Qkv64.q; k; v } =
+    let y = Attention.scaled_dot_product_attention ~mask q k v in
+    Nx.sum (Nx.mul y y)
+  in
+  let g = Rune.grad (module Qkv64) loss p in
+  Qkv64.iter
+    (fun t ->
+      is_true ~msg:"a gradient is finite"
+        (Array.for_all Float.is_finite
+           (Nx.to_array (Nx.cast Nx.float64 (Nx.reshape [| -1 |] t)))))
+    g;
+  grads_ok (Rune.check_grads (module Qkv64) loss p)
+
 (* Multi-head self-attention layer *)
 
 let test_init_shapes () =
@@ -261,9 +305,9 @@ let test_permutation_equivariance () =
     (array (float 1e-4))
     (permute perm y) yp
 
-(* A padded query keeps its own key, so its weights are finite and nothing
-   poisons a masked loss. *)
-let test_padding_mask_keeps_the_diagonal () =
+(* A padded query sees no key: its weights are zero, so nothing poisons a masked
+   loss. *)
+let test_padding_mask_hides_padded_keys () =
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 2; 3; 4 |] in
@@ -272,8 +316,8 @@ let test_padding_mask_keeps_the_diagonal () =
   in
   let mask = Attention.causal_mask ~seq:3 ~valid () in
   shape_is ~msg:"one mask per row" [| 2; 3; 3 |] mask;
-  equal ~msg:"padded keys hidden, the diagonal kept" (array bool)
-    [| true; false; false; false; true; false; false; true; true |]
+  equal ~msg:"padded keys hidden" (array bool)
+    [| false; false; false; false; true; false; false; true; true |]
     (Array.sub (Nx.to_array mask) 0 9);
   let y = Nx.to_array (Attention.apply ~head_dim:2 ~mask p x) in
   is_true ~msg:"every output is finite" (Array.for_all Float.is_finite y);
@@ -756,6 +800,9 @@ let () =
           test "masked gradients agree with finite differences"
             test_core_masked_gradients;
           test "mismatched shapes are rejected" test_core_rejects_bad_shapes;
+          test "a query that sees no key yields zero" test_core_is_total;
+          test "a query that sees no key has zero gradients"
+            test_core_empty_row_gradients;
         ];
       group "multi-head self-attention"
         [
@@ -772,8 +819,8 @@ let () =
             test_causal_ignores_the_future;
           test "self-attention is permutation-equivariant"
             test_permutation_equivariance;
-          test "a padding mask keeps the diagonal"
-            test_padding_mask_keeps_the_diagonal;
+          test "a padding mask hides padded keys"
+            test_padding_mask_hides_padded_keys;
           test "grouped keys equal repeated keys" test_grouped_equals_repeated;
           test "gradients agree with finite differences" test_gradients;
           test "invalid geometry is rejected" test_rejects_bad_geometry;

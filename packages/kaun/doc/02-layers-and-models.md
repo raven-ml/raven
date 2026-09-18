@@ -155,7 +155,7 @@ let () =
   (* [3; 4] — one weighted average of value rows per query row *)
 ```
 
-`?mask` says which keys each query may see; `causal_mask ~seq ?valid ()` builds the causal triangle, optionally hiding padded keys, and always keeps the diagonal so a padded query never yields `nan`. `?rope` takes a `Rope.t` schedule and rotates queries and keys by position.
+`?mask` says which keys each query may see; `causal_mask ~seq ?valid ()` builds the causal triangle, optionally hiding padded keys. A query that sees no key, a padded one for instance, yields zero and never `nan`. `?rope` takes a `Rope.t` schedule and rotates queries and keys by position.
 
 For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Span.t` says where the call's tokens sit: each token's position, and the slot holding each position of each row's sequence. One contiguous run per row (`Span.rows`), paged allocation and a prefix shared by two rows are all values of that map, and the layer is the same for each. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; with `Rune.jit ~donate:true` the cache is written in its own storage. A prompt fed whole, in chunks or token by token gives the same outputs.
 

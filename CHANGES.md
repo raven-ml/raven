@@ -1595,6 +1595,12 @@ thread.
 
 ### Kaun
 
+- Attention is total. A query whose mask hides every key yields zero from
+  `Attention.scaled_dot_product_attention`, `Attention.apply` and
+  `Attention.cached`, with zero gradients, where it yielded `nan`.
+- **Breaking**: `Attention.causal_mask ~valid` no longer keeps the diagonal of
+  a padded query. The kept key existed to avoid that `nan`; a padded query's
+  output is now the projection of zero.
 - The `05-llama` example's `validate` checks the residual stream after every
   block, a ragged batch through the key-value caches, half precision
   (`--dtype`) and compiled runs (`--jit`), and ships a second fixture,
