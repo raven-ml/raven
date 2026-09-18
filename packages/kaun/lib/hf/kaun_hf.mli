@@ -36,7 +36,10 @@ val download_file :
 (** [download_file ~file repo_id] is the local path to [file] from the Hub
     repository [repo_id] (e.g. ["gpt2"] or ["openai-community/gpt2"]), that is
     [cache_path ~file repo_id]. The file is downloaded on first access and
-    served from the cache afterwards, with:
+    served from the cache afterwards. A download is written to a temporary file
+    beside the cache path and renamed once complete, so the cache path never
+    holds a partial file, and two processes that fetch the same file each write
+    their own. Optional arguments:
 
     - [token], a HuggingFace API token sent as a bearer token, for private
       repositories. Defaults to the value of [HF_TOKEN], if set.
@@ -136,4 +139,9 @@ val cache_path :
 val clear_cache : ?cache_dir:string -> ?repo_id:string -> unit -> unit
 (** [clear_cache ()] removes every cached file under [cache_dir] (defaulting as
     in {!cache_path}). When [repo_id] is given, only that repository's files are
-    removed. *)
+    removed. If a file cannot be removed, which happens on platforms that lock a
+    file while tensors loaded from it are alive, a major collection runs and the
+    removal is retried once.
+
+    Raises [Sys_error] or [Unix.Unix_error] if a file still cannot be removed.
+*)

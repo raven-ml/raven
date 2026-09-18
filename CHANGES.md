@@ -1619,6 +1619,12 @@ thread.
 
 ### Kaun
 
+- `Kaun_hf.download_file` downloads to a uniquely named temporary file beside
+  the cache path and renames it once complete. An interrupted download used to
+  leave a partial file at the cache path, which later runs served as cached,
+  and two processes fetching one file wrote over each other.
+  `Kaun_hf.clear_cache` runs a major collection and retries once when a file
+  cannot be removed.
 - The pieces `Attention.apply` and `Attention.cached` are made of are public:
   `Attention.split` projects and splits into heads, `Attention.attend` is
   grouped-query attention with `?mask`, `?scale` and `?sinks`,

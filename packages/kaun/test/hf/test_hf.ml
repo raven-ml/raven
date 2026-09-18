@@ -106,6 +106,67 @@ let test_offline_miss_raises () =
   raises (Failure "Not cached (offline): acme/tiny/vocab.json") (fun () ->
       Hf.download_file ~cache_dir ~offline:true ~file:"vocab.json" "acme/tiny")
 
+(* Puts a [curl] on PATH that writes its [-o] argument to [log], writes a
+   partial file there, and then either completes it or, for a URL that contains
+   "missing", fails as curl does on a 404. *)
+let with_curl_stand_in ~log f =
+  let bin = Filename.temp_dir "kaun_hf_bin" "" in
+  let curl = Filename.concat bin "curl" in
+  write_string curl
+    (String.concat "\n"
+       [
+         "#!/bin/sh";
+         "while [ $# -gt 0 ]; do";
+         "  case \"$1\" in";
+         "    -o) dest=\"$2\"; shift 2 ;;";
+         "    *) url=\"$1\"; shift ;;";
+         "  esac";
+         "done";
+         Printf.sprintf "printf '%%s' \"$dest\" > %s" (Filename.quote log);
+         "printf 'part' > \"$dest\"";
+         "case \"$url\" in *missing*) exit 22 ;; esac";
+         "printf 'payload' > \"$dest\"";
+         "";
+       ]);
+  Unix.chmod curl 0o755;
+  let path = Sys.getenv "PATH" in
+  Unix.putenv "PATH" (bin ^ ":" ^ path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" path;
+      rm_rf bin)
+    f
+
+let read_string path =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
+let test_download_is_atomic () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  with_cache_dir @@ fun cache_dir ->
+  let log = Filename.concat cache_dir "curl-dest" in
+  with_curl_stand_in ~log @@ fun () ->
+  let local = Hf.download_file ~cache_dir ~file:"vocab.json" "acme/tiny" in
+  let dir = Filename.dirname local in
+  equal ~msg:"path" string
+    (Hf.cache_path ~cache_dir ~file:"vocab.json" "acme/tiny")
+    local;
+  equal ~msg:"contents" string "payload" (read_string local);
+  let written = read_string log in
+  is_true ~msg:"curl wrote a sibling of the cache path"
+    (written <> local && Filename.dirname written = dir);
+  equal ~msg:"only the file remains" (array string) [| "vocab.json" |]
+    (Sys.readdir dir);
+  raises
+    (Failure
+       "Failed to download \
+        https://huggingface.co/acme/tiny/resolve/main/missing.json") (fun () ->
+      Hf.download_file ~cache_dir ~file:"missing.json" "acme/tiny");
+  equal ~msg:"a failed download leaves nothing" (array string)
+    [| "vocab.json" |] (Sys.readdir dir)
+
 let test_clear_cache () =
   with_cache_dir @@ fun cache_dir ->
   let a =
@@ -317,6 +378,7 @@ let () =
           test "cached files are served without the network"
             test_cached_file_served;
           test "offline misses raise" test_offline_miss_raises;
+          test "a download is renamed into place" test_download_is_atomic;
           test "clear_cache removes one repository or all" test_clear_cache;
         ];
       group "loading"

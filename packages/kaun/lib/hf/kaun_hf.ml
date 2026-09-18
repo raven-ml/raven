@@ -73,7 +73,11 @@ let clear_cache ?cache_dir ?repo_id () =
     | Some id -> Filename.concat cache_dir (sanitize_repo_id id)
     | None -> cache_dir
   in
-  if Sys.file_exists path then rm_rf path
+  if Sys.file_exists path then (
+    try rm_rf path
+    with Sys_error _ | Unix.Unix_error _ ->
+      Gc.full_major ();
+      if Sys.file_exists path then rm_rf path)
 
 (* HTTP via curl *)
 
@@ -91,14 +95,23 @@ let curl_download ~headers ~url ~dest () =
       headers
     |> String.concat " "
   in
+  let temp =
+    Filename.temp_file ~temp_dir:(Filename.dirname dest)
+      (Filename.basename dest ^ ".")
+      ".part"
+  in
   let cmd =
-    Printf.sprintf "curl -L --fail -s %s -o %s %s" hdr (Filename.quote dest)
+    Printf.sprintf "curl -L --fail -s %s -o %s %s" hdr (Filename.quote temp)
       (Filename.quote url)
   in
+  let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
   match Unix.system cmd with
-  | Unix.WEXITED 0 -> ()
+  | Unix.WEXITED 0 -> (
+      Unix.chmod temp 0o644;
+      try Unix.rename temp dest
+      with Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ())
   | _ ->
-      (try Sys.remove dest with Sys_error _ -> ());
+      remove_temp ();
       failwith (err_download url)
 
 (* Downloading *)
