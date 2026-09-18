@@ -1,0 +1,390 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Kaun
+module Hf = Kaun_hf
+
+(* Configuration *)
+
+type config = {
+  vocab_size : int;
+  dim : int;
+  n_layers : int;
+  n_heads : int;
+  n_kv_heads : int;
+  head_dim : int;
+  hidden_dim : int;
+  norm_eps : float;
+  rope : Rope.t;
+  tied : bool;
+}
+
+(* Model: plain records of kaun layers, generic over the float dtype *)
+
+type 'a block = {
+  attn_norm : 'a Rms_norm.t;
+  attn : 'a Attention.t;
+  ffn_norm : 'a Rms_norm.t;
+  gate : 'a Linear.t;
+  up : 'a Linear.t;
+  down : 'a Linear.t;
+}
+
+type 'a params = {
+  tok : 'a Embedding.t;
+  blocks : 'a block list;
+  norm : 'a Rms_norm.t;
+  head : 'a Linear.t option;
+}
+
+type t = Nx.float32_t params
+
+module Params = struct
+  type nonrec 'a t = 'a params
+
+  let map_block f b =
+    let attn_norm = Rms_norm.map f b.attn_norm in
+    let attn = Attention.map f b.attn in
+    let ffn_norm = Rms_norm.map f b.ffn_norm in
+    let gate = Linear.map f b.gate in
+    let up = Linear.map f b.up in
+    let down = Linear.map f b.down in
+    { attn_norm; attn; ffn_norm; gate; up; down }
+
+  let map f p =
+    let tok = Embedding.map f p.tok in
+    let blocks = List.map (map_block f) p.blocks in
+    let norm = Rms_norm.map f p.norm in
+    let head = Option.map (Linear.map f) p.head in
+    { tok; blocks; norm; head }
+
+  let map2_block f b b' =
+    let attn_norm = Rms_norm.map2 f b.attn_norm b'.attn_norm in
+    let attn = Attention.map2 f b.attn b'.attn in
+    let ffn_norm = Rms_norm.map2 f b.ffn_norm b'.ffn_norm in
+    let gate = Linear.map2 f b.gate b'.gate in
+    let up = Linear.map2 f b.up b'.up in
+    let down = Linear.map2 f b.down b'.down in
+    { attn_norm; attn; ffn_norm; gate; up; down }
+
+  let map2_head f h h' =
+    match (h, h') with
+    | None, None -> None
+    | Some l, Some l' -> Some (Linear.map2 f l l')
+    | _ ->
+        invalid_arg "Llama.Params.map2: one model ties its head, one does not"
+
+  let map2 f p p' =
+    let tok = Embedding.map2 f p.tok p'.tok in
+    let blocks = List.map2 (map2_block f) p.blocks p'.blocks in
+    let norm = Rms_norm.map2 f p.norm p'.norm in
+    let head = map2_head f p.head p'.head in
+    { tok; blocks; norm; head }
+
+  let iter_block f b =
+    Rms_norm.iter f b.attn_norm;
+    Attention.iter f b.attn;
+    Rms_norm.iter f b.ffn_norm;
+    Linear.iter f b.gate;
+    Linear.iter f b.up;
+    Linear.iter f b.down
+
+  let iter f p =
+    Embedding.iter f p.tok;
+    List.iter (iter_block f) p.blocks;
+    Rms_norm.iter f p.norm;
+    Option.iter (Linear.iter f) p.head
+
+  let fold_block f acc b =
+    let acc = Rms_norm.fold (fun s -> f ("attn_norm." ^ s)) acc b.attn_norm in
+    let acc = Attention.fold (fun s -> f ("attn." ^ s)) acc b.attn in
+    let acc = Rms_norm.fold (fun s -> f ("ffn_norm." ^ s)) acc b.ffn_norm in
+    let acc = Linear.fold (fun s -> f ("gate." ^ s)) acc b.gate in
+    let acc = Linear.fold (fun s -> f ("up." ^ s)) acc b.up in
+    Linear.fold (fun s -> f ("down." ^ s)) acc b.down
+
+  let fold f acc p =
+    let acc = Embedding.fold (fun s -> f ("tok." ^ s)) acc p.tok in
+    let _, acc =
+      List.fold_left
+        (fun (i, acc) b ->
+          let pre = Printf.sprintf "blocks.%d." i in
+          (i + 1, fold_block (fun s -> f (pre ^ s)) acc b))
+        (0, acc) p.blocks
+    in
+    let acc = Rms_norm.fold (fun s -> f ("norm." ^ s)) acc p.norm in
+    match p.head with
+    | None -> acc
+    | Some l -> Linear.fold (fun s -> f ("head." ^ s)) acc l
+
+  let fold2_block f acc b b' =
+    let acc =
+      Rms_norm.fold2
+        (fun s -> f ("attn_norm." ^ s))
+        acc b.attn_norm b'.attn_norm
+    in
+    let acc = Attention.fold2 (fun s -> f ("attn." ^ s)) acc b.attn b'.attn in
+    let acc =
+      Rms_norm.fold2 (fun s -> f ("ffn_norm." ^ s)) acc b.ffn_norm b'.ffn_norm
+    in
+    let acc = Linear.fold2 (fun s -> f ("gate." ^ s)) acc b.gate b'.gate in
+    let acc = Linear.fold2 (fun s -> f ("up." ^ s)) acc b.up b'.up in
+    Linear.fold2 (fun s -> f ("down." ^ s)) acc b.down b'.down
+
+  let fold2 f acc p p' =
+    let acc = Embedding.fold2 (fun s -> f ("tok." ^ s)) acc p.tok p'.tok in
+    let _, acc =
+      List.fold_left2
+        (fun (i, acc) b b' ->
+          let pre = Printf.sprintf "blocks.%d." i in
+          (i + 1, fold2_block (fun s -> f (pre ^ s)) acc b b'))
+        (0, acc) p.blocks p'.blocks
+    in
+    let acc = Rms_norm.fold2 (fun s -> f ("norm." ^ s)) acc p.norm p'.norm in
+    match (p.head, p'.head) with
+    | None, None -> acc
+    | Some l, Some l' -> Linear.fold2 (fun s -> f ("head." ^ s)) acc l l'
+    | _ ->
+        invalid_arg "Llama.Params.fold2: one model ties its head, one does not"
+
+  let names_block i b =
+    let pre field s = Printf.sprintf "blocks.%d.%s.%s" i field s in
+    {
+      attn_norm = Rms_norm.map (pre "attn_norm") (Rms_norm.names b.attn_norm);
+      attn = Attention.map (pre "attn") (Attention.names b.attn);
+      ffn_norm = Rms_norm.map (pre "ffn_norm") (Rms_norm.names b.ffn_norm);
+      gate = Linear.map (pre "gate") (Linear.names b.gate);
+      up = Linear.map (pre "up") (Linear.names b.up);
+      down = Linear.map (pre "down") (Linear.names b.down);
+    }
+
+  let names p =
+    let pre field s = field ^ "." ^ s in
+    {
+      tok = Embedding.map (pre "tok") (Embedding.names p.tok);
+      blocks = List.mapi names_block p.blocks;
+      norm = Rms_norm.map (pre "norm") (Rms_norm.names p.norm);
+      head =
+        Option.map (fun l -> Linear.map (pre "head") (Linear.names l)) p.head;
+    }
+end
+
+let make cfg =
+  let zeros = Init.zeros in
+  let linear ~inputs ~outputs =
+    Linear.make ~bias:false ~w_init:zeros ~inputs ~outputs Nx.float32
+  in
+  let block () =
+    {
+      attn_norm = Rms_norm.init ~dim:cfg.dim;
+      attn =
+        Attention.make ~bias:false ~w_init:zeros
+          ~q_dim:(cfg.n_heads * cfg.head_dim)
+          ~kv_dim:(cfg.n_kv_heads * cfg.head_dim)
+          ~embed_dim:cfg.dim Nx.float32;
+      ffn_norm = Rms_norm.init ~dim:cfg.dim;
+      gate = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim;
+      up = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim;
+      down = linear ~inputs:cfg.hidden_dim ~outputs:cfg.dim;
+    }
+  in
+  {
+    tok =
+      Embedding.make ~init:zeros ~vocab:cfg.vocab_size ~dim:cfg.dim Nx.float32;
+    blocks = List.init cfg.n_layers (fun _ -> block ());
+    norm = Rms_norm.init ~dim:cfg.dim;
+    head =
+      (if cfg.tied then None
+       else Some (linear ~inputs:cfg.dim ~outputs:cfg.vocab_size));
+  }
+
+(* Forward passes. The block body is written once; [attend] is the attention to
+   run on the normalized stream and returns whatever state it carries. *)
+
+let block cfg ~attend b x =
+  let eps = cfg.norm_eps in
+  let a, carried = attend b.attn (Rms_norm.apply ~eps b.attn_norm x) in
+  let x = Nx.add x a in
+  let h = Rms_norm.apply ~eps b.ffn_norm x in
+  let mlp =
+    Linear.apply b.down
+      (Nx.mul (Fn.silu (Linear.apply b.gate h)) (Linear.apply b.up h))
+  in
+  (Nx.add x mlp, carried)
+
+let hidden cfg p ids =
+  let mask = Attention.causal_mask ~seq:(Nx.dim 1 ids) () in
+  let attend a x =
+    (Attention.apply ~head_dim:cfg.head_dim ~mask ~rope:cfg.rope a x, ())
+  in
+  List.fold_left
+    (fun x b -> fst (block cfg ~attend b x))
+    (Embedding.apply p.tok ids)
+    p.blocks
+
+module Cache = Attention.Cache.List
+
+let cache cfg ~slots dtype =
+  List.init cfg.n_layers (fun _ ->
+      Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
+        ~head_dim:cfg.head_dim dtype)
+
+let cached cfg p caches span ids =
+  let slots =
+    match caches with
+    | [] -> invalid_arg "Llama.cached: no caches"
+    | c :: _ -> Nx.dim 0 c.Attention.Cache.keys
+  in
+  (* Resolved once: every block reads the same route. *)
+  let route = Attention.route ~slots span in
+  let x, rev =
+    List.fold_left2
+      (fun (x, cs) b c ->
+        let attend a x =
+          Attention.cached ~head_dim:cfg.head_dim ~rope:cfg.rope a c route x
+        in
+        let x, c = block cfg ~attend b x in
+        (x, c :: cs))
+      (Embedding.apply p.tok ids, [])
+      p.blocks caches
+  in
+  (x, List.rev rev)
+
+let logits cfg p h =
+  let h = Rms_norm.apply ~eps:cfg.norm_eps p.norm h in
+  match p.head with
+  | Some l -> Linear.apply l h
+  | None -> Nx.matmul h (Nx.transpose p.tok.Embedding.table)
+
+(* HuggingFace checkpoint adaptation.
+
+   HF names tensors model.layers.{i}.self_attn.q_proj.weight, ... and stores
+   every projection as torch.nn.Linear does, [outputs; inputs]: each one is
+   transposed. The q and k weights of HF checkpoints are laid out for the
+   rotation that pairs feature i with i + head_dim / 2, which is [Rope]'s. A
+   tied model has no lm_head entry. *)
+
+let hf_name name =
+  match name with
+  | "model.embed_tokens.weight" -> "tok.table"
+  | "model.norm.weight" -> "norm.gamma"
+  | "lm_head.weight" -> "head.w"
+  | _ -> (
+      match String.split_on_char '.' name with
+      | "model" :: "layers" :: i :: rest -> (
+          let ours leaf = Printf.sprintf "blocks.%s.%s" i leaf in
+          match rest with
+          | [ "input_layernorm"; "weight" ] -> ours "attn_norm.gamma"
+          | [ "post_attention_layernorm"; "weight" ] -> ours "ffn_norm.gamma"
+          | [ "self_attn"; "q_proj"; "weight" ] -> ours "attn.q.w"
+          | [ "self_attn"; "k_proj"; "weight" ] -> ours "attn.k.w"
+          | [ "self_attn"; "v_proj"; "weight" ] -> ours "attn.v.w"
+          | [ "self_attn"; "o_proj"; "weight" ] -> ours "attn.out.w"
+          | [ "mlp"; "gate_proj"; "weight" ] -> ours "gate.w"
+          | [ "mlp"; "up_proj"; "weight" ] -> ours "up.w"
+          | [ "mlp"; "down_proj"; "weight" ] -> ours "down.w"
+          | _ -> name)
+      | _ -> name)
+
+let of_hf cfg ckpt =
+  let projections i =
+    List.map
+      (Printf.sprintf "model.layers.%d.%s.weight" i)
+      [
+        "self_attn.q_proj";
+        "self_attn.k_proj";
+        "self_attn.v_proj";
+        "self_attn.o_proj";
+        "mlp.gate_proj";
+        "mlp.up_proj";
+        "mlp.down_proj";
+      ]
+  in
+  let linears =
+    List.concat_map projections (List.init cfg.n_layers Fun.id)
+    @ if cfg.tied then [] else [ "lm_head.weight" ]
+  in
+  List.fold_left (fun ckpt name -> Hf.transpose name ckpt) ckpt linears
+  |> Hf.rename hf_name
+
+(* Configuration from HuggingFace's config.json *)
+
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
+
+let config_of_json json =
+  let missing name = failwith ("llama config.json: missing " ^ name) in
+  let number ?default name =
+    match (json_mem name json, default) with
+    | Jsont.Number (f, _), _ -> f
+    | _, Some d -> d
+    | _, None -> missing name
+  in
+  let int ?default name =
+    int_of_float (number ?default:(Option.map float_of_int default) name)
+  in
+  let dim = int "hidden_size" and n_heads = int "num_attention_heads" in
+  let head_dim = int ~default:(dim / n_heads) "head_dim" in
+  let theta = number ~default:10000.0 "rope_theta" in
+  let rope =
+    match json_mem "rope_scaling" json with
+    | Jsont.Null _ -> Rope.make ~theta ~head_dim ()
+    | scaling -> (
+        let field name =
+          match json_mem name scaling with
+          | Jsont.Number (f, _) -> f
+          | _ -> missing ("rope_scaling." ^ name)
+        in
+        (* [rope_type], or [type] in files written by older tools. *)
+        let kind =
+          match (json_mem "rope_type" scaling, json_mem "type" scaling) with
+          | Jsont.String (k, _), _ | _, Jsont.String (k, _) -> k
+          | _ -> missing "rope_scaling.rope_type"
+        in
+        match kind with
+        | "default" -> Rope.make ~theta ~head_dim ()
+        | "llama3" ->
+            Rope.llama3 ~theta ~head_dim ~factor:(field "factor")
+              ~low_freq_factor:(field "low_freq_factor")
+              ~high_freq_factor:(field "high_freq_factor")
+              ~original_context:
+                (int_of_float (field "original_max_position_embeddings"))
+        | other -> failwith ("llama config.json: unsupported rope_type " ^ other)
+        )
+  in
+  {
+    vocab_size = int "vocab_size";
+    dim;
+    n_layers = int "num_hidden_layers";
+    n_heads;
+    n_kv_heads = int ~default:n_heads "num_key_value_heads";
+    head_dim;
+    hidden_dim = int "intermediate_size";
+    norm_eps = number "rms_norm_eps";
+    rope;
+    tied =
+      (match json_mem "tie_word_embeddings" json with
+      | Jsont.Bool (b, _) -> b
+      | _ -> false);
+  }
+
+(* Pretrained loading *)
+
+let of_checkpoint cfg ckpt =
+  of_hf cfg ckpt
+  |> Checkpoint.to_params (module Params) ~like:(make cfg) ~cast:true
+
+let from_file cfg path = of_checkpoint cfg (Checkpoint.load path)
+
+(* An ungated mirror whose weight files are byte-identical to Meta's. *)
+let default_repo = "NousResearch/Llama-3.2-1B"
+
+let from_pretrained ?(repo_id = default_repo) () =
+  let cfg = config_of_json (Hf.load_config repo_id) in
+  (cfg, of_checkpoint cfg (Hf.load_checkpoint repo_id))

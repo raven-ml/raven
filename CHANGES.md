@@ -1546,6 +1546,12 @@ thread.
 
 ### Kaun
 
+- New example `05-llama`: Llama 3.2 1B written on the decode contract
+  (grouped-query attention, rotary positions with the Llama 3 schedule,
+  RMS norm, SwiGLU), loaded from an ungated mirror whose weights are
+  byte-identical to Meta's, with sampled generation through key-value caches
+  and a `validate` program that checks the import against the reference
+  implementation's float32 logits, block by block.
 - `Kaun.Fn.top_k` and `Kaun.Fn.top_p` mask next-token logits for sampling:
   entries outside the kept set become negative infinity and the shape is
   unchanged, so they compose with a temperature division and

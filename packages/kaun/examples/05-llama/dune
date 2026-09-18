@@ -1,0 +1,4 @@
+(executables
+ (names main validate)
+ (modules llama main validate)
+ (libraries kaun kaun.hf jsont jsont.bytesrw brot nx rune unix))
