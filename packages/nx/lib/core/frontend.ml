@@ -3264,13 +3264,22 @@ module Make (B : Backend_intf.S) = struct
                    "einsum: index var '%c' must have consistent dimensions (%d \
                     vs %d)"
                    c s.(ax1) s.(ax2));
+            let diag_tok =
+              match List.nth_opt toks ax1 with
+              | Some tok -> tok
+              | None -> assert false
+            in
             let t' = diagonal ~axis1:ax1 ~axis2:ax2 t in
             let rec remove_at i = function
               | [] -> []
               | _ :: xs when i = 0 -> xs
               | x :: xs -> x :: remove_at (i - 1) xs
             in
-            process t' (remove_at ax2 toks)
+            (* [diagonal] keeps the other axes in their relative order and
+               appends the diagonal axis last, so the surviving token must move
+               to the end as well to stay aligned with [t']'s axes. *)
+            let toks' = remove_at ax1 (remove_at ax2 toks) @ [ diag_tok ] in
+            process t' toks'
       in
       process tensor tokens
 

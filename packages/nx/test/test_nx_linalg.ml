@@ -900,6 +900,50 @@ let einsum_batched_diag () =
   in
   check_nx "einsum_batched_diag ...ii->...i" expected got
 
+let einsum_repeated_nonadjacent () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 2; 3 |]
+      (Array.init 36 (fun i -> float_of_int (i + 1)))
+  in
+  let got = Nx.einsum "abnb->an" [| a0 |] in
+  let expected = Nx.create Nx.float32 [| 2; 2 |] [| 24.; 33.; 78.; 87. |] in
+  check_nx "einsum_repeated_nonadjacent abnb->an" expected got
+
+let einsum_repeated_triple () =
+  let a0 =
+    Nx.create Nx.float32 [| 3; 3; 3; 2 |]
+      (Array.init 54 (fun i -> float_of_int (i + 1)))
+  in
+  let got = Nx.einsum "aaab->ab" [| a0 |] in
+  let expected =
+    Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 27.; 28.; 53.; 54. |]
+  in
+  check_nx "einsum_repeated_triple aaab->ab" expected got
+
+let einsum_repeated_two_diags () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 2; 2; 3 |]
+      (Array.init 72 (fun i -> float_of_int (i + 1)))
+  in
+  let got = Nx.einsum "abiib->ab" [| a0 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 3 |] [| 11.; 37.; 63.; 83.; 109.; 135. |]
+  in
+  check_nx "einsum_repeated_two_diags abiib->ab" expected got
+
+let einsum_repeated_multi_operand () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 2; 3 |]
+      (Array.init 36 (fun i -> float_of_int (i + 1)))
+  in
+  let a1 =
+    Nx.create Nx.float32 [| 3; 2 |]
+      (Array.init 6 (fun i -> float_of_int (i + 1)))
+  in
+  let got = Nx.einsum "abnb,bn->an" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [| 2; 2 |] [| 100.; 160.; 262.; 376. |] in
+  check_nx "einsum_repeated_multi_operand abnb,bn->an" expected got
+
 let einsum_batched_matmul () =
   let a0 =
     Nx.create Nx.float32 [| 2; 3; 4 |]
@@ -1721,6 +1765,10 @@ let einsum_tests =
     test "total sum ij->" einsum_total_sum;
     test "diag extract ii->i" einsum_diag_extract;
     test "batched diag ...ii->...i" einsum_batched_diag;
+    test "repeated nonadjacent abnb->an" einsum_repeated_nonadjacent;
+    test "repeated triple aaab->ab" einsum_repeated_triple;
+    test "repeated two diags abiib->ab" einsum_repeated_two_diags;
+    test "repeated multi-operand abnb,bn->an" einsum_repeated_multi_operand;
     test "batched matmul ...ij,...jk->...ik" einsum_batched_matmul;
     test "free order1 i,jk->jki" einsum_free_order1;
     test "free order2 ij,klj->kli" einsum_free_order2;
