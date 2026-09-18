@@ -246,56 +246,75 @@ let logits cfg p h =
   | Some l -> Linear.apply l h
   | None -> Nx.matmul h (Nx.transpose p.tok.Embedding.table)
 
-(* HuggingFace checkpoint adaptation.
+(* Importing a HuggingFace checkpoint.
 
-   HF names tensors model.layers.{i}.self_attn.q_proj.weight, ... and stores
-   every projection as torch.nn.Linear does, [outputs; inputs]: each one is
-   transposed. The q and k weights of HF checkpoints are laid out for the
-   rotation that pairs feature i with i + head_dim / 2, which is [Rope]'s. A
-   tied model has no lm_head entry. *)
+   The file names its tensors model.layers.{i}.self_attn.q_proj.weight, ... and
+   stores every projection as [outputs; inputs], the transpose of [Linear]'s
+   layout. Its q and k weights are laid out for the rotation that pairs feature
+   i with i + head_dim / 2, which is [Rope]'s. A tied model has no lm_head
+   entry. *)
 
-let hf_name name =
-  match name with
-  | "model.embed_tokens.weight" -> "tok.table"
-  | "model.norm.weight" -> "norm.gamma"
-  | "lm_head.weight" -> "head.w"
-  | _ -> (
-      match String.split_on_char '.' name with
-      | "model" :: "layers" :: i :: rest -> (
-          let ours leaf = Printf.sprintf "blocks.%s.%s" i leaf in
-          match rest with
-          | [ "input_layernorm"; "weight" ] -> ours "attn_norm.gamma"
-          | [ "post_attention_layernorm"; "weight" ] -> ours "ffn_norm.gamma"
-          | [ "self_attn"; "q_proj"; "weight" ] -> ours "attn.q.w"
-          | [ "self_attn"; "k_proj"; "weight" ] -> ours "attn.k.w"
-          | [ "self_attn"; "v_proj"; "weight" ] -> ours "attn.v.w"
-          | [ "self_attn"; "o_proj"; "weight" ] -> ours "attn.out.w"
-          | [ "mlp"; "gate_proj"; "weight" ] -> ours "gate.w"
-          | [ "mlp"; "up_proj"; "weight" ] -> ours "up.w"
-          | [ "mlp"; "down_proj"; "weight" ] -> ours "down.w"
-          | _ -> name)
-      | _ -> name)
-
-let of_hf cfg ckpt =
-  let projections i =
-    List.map
-      (Printf.sprintf "model.layers.%d.%s.weight" i)
-      [
-        "self_attn.q_proj";
-        "self_attn.k_proj";
-        "self_attn.v_proj";
-        "self_attn.o_proj";
-        "mlp.gate_proj";
-        "mlp.up_proj";
-        "mlp.down_proj";
-      ]
+let of_hf cfg dt ckpt =
+  let weight ~shape name =
+    Checkpoint.to_float ~shape dt (name ^ ".weight") ckpt
   in
-  let linears =
-    List.concat_map projections (List.init cfg.n_layers Fun.id)
-    @ if cfg.tied then [] else [ "lm_head.weight" ]
+  let norm name = { Rms_norm.gamma = weight ~shape:[| cfg.dim |] name } in
+  let linear ~inputs ~outputs name =
+    {
+      Linear.w = Nx.matrix_transpose (weight ~shape:[| outputs; inputs |] name);
+      b = None;
+    }
   in
-  List.fold_left (fun ckpt name -> Hf.transpose name ckpt) ckpt linears
-  |> Hf.rename hf_name
+  let q_dim = cfg.n_heads * cfg.head_dim in
+  let kv_dim = cfg.n_kv_heads * cfg.head_dim in
+  let block i =
+    let at leaf = Printf.sprintf "model.layers.%d.%s" i leaf in
+    {
+      attn_norm = norm (at "input_layernorm");
+      attn =
+        {
+          q = linear ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
+          k = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
+          v = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
+          out = linear ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
+        };
+      ffn_norm = norm (at "post_attention_layernorm");
+      gate = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "mlp.gate_proj");
+      up = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "mlp.up_proj");
+      down = linear ~inputs:cfg.hidden_dim ~outputs:cfg.dim (at "mlp.down_proj");
+    }
+  in
+  {
+    tok =
+      {
+        Embedding.table =
+          weight ~shape:[| cfg.vocab_size; cfg.dim |] "model.embed_tokens";
+      };
+    blocks = List.init cfg.n_layers block;
+    norm = norm "model.norm";
+    head =
+      (if cfg.tied then None
+       else Some (linear ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
+  }
+
+type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
+
+let dtype_of_string = function
+  | "float32" -> Dtype Nx.float32
+  | "float16" -> Dtype Nx.float16
+  | "bfloat16" -> Dtype Nx.bfloat16
+  | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
+
+let stored_dtype ckpt =
+  let (Rune.Ptree.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
+  match Nx.dtype table with
+  | Nx.Float16 -> Dtype Nx.float16
+  | Nx.BFloat16 -> Dtype Nx.bfloat16
+  | Nx.Float32 -> Dtype Nx.float32
+  | _ ->
+      failwith
+        "the checkpoint's embedding table is not a float16, bfloat16 or \
+         float32 entry"
 
 (* Configuration from HuggingFace's config.json *)
 
@@ -364,15 +383,11 @@ let config_of_json json =
 
 (* Pretrained loading *)
 
-let of_checkpoint cfg ckpt =
-  of_hf cfg ckpt
-  |> Checkpoint.to_params (module Params) ~like:(make cfg) ~cast:true
-
-let from_file cfg path = of_checkpoint cfg (Checkpoint.load path)
+let from_file cfg dt path = of_hf cfg dt (Checkpoint.load path)
 
 (* An ungated mirror whose weight files are byte-identical to Meta's. *)
 let default_repo = "NousResearch/Llama-3.2-1B"
 
-let from_pretrained ?(repo_id = default_repo) () =
+let from_pretrained ?(repo_id = default_repo) dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_checkpoint cfg (Hf.load_checkpoint repo_id))
+  (cfg, of_hf cfg dt (Hf.load_checkpoint repo_id))

@@ -1657,6 +1657,17 @@ thread.
 
 ### Kaun
 
+- Add `Checkpoint.to_tensor ~shape dtype name` and `Checkpoint.to_float ~shape
+  dtype name`, which read one entry by name and check its shape. A model's
+  importer is now an ordinary function that builds the parameter record from
+  them, so no template is allocated, leaves may have different dtypes, and a
+  wrong configuration fails at import with the entry's name. `to_tensor` is
+  strict and returns the entry as stored, a view of the file; `to_float` casts
+  between `float16`, `bfloat16`, `float32` and `float64` and refuses anything
+  else.
+- `Checkpoint.to_params` and `to_packed` lose `?cast` and raise on any dtype
+  mismatch, so a restart that names the wrong dtype fails instead of narrowing
+  its state. To convert, read the entry with `Checkpoint.to_float`.
 - `Checkpoint.load` and `Kaun_hf.load_checkpoint` map their files, as
   `Nx_io.load_safetensors` now does: loading reads headers only, entries are
   views of the file, and entries whose dtype nx lacks arrive as `uint8` bytes

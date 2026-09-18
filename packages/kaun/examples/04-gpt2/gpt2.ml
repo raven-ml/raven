@@ -238,48 +238,76 @@ let logits cfg p h =
     (Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f h)
     (Nx.transpose p.wte.table)
 
-(* HuggingFace checkpoint adaptation.
+(* Importing a HuggingFace checkpoint.
 
-   HF names tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ... and fuses
-   the q, k and v projections into c_attn ([n_embd; 3 * n_embd]). Its Conv1D
-   weights are already [inputs; outputs], so only splits and renames are
-   needed. *)
+   The file names its tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ...
+   and fuses the q, k and v projections into c_attn, [n_embd; 3 * n_embd]. Its
+   weights are already [inputs; outputs], so only the fused projection is cut,
+   with [Nx.split], into three views. *)
 
-let hf_name name =
-  match name with
-  | "wte.weight" -> "wte.table"
-  | "wpe.weight" -> "wpe.table"
-  | "ln_f.weight" -> "ln_f.gamma"
-  | "ln_f.bias" -> "ln_f.beta"
-  | _ -> (
-      match String.split_on_char '.' name with
-      | "h" :: i :: rest -> (
-          let ours leaf = Printf.sprintf "blocks.%s.%s" i leaf in
-          match rest with
-          | [ "ln_1"; "weight" ] -> ours "ln1.gamma"
-          | [ "ln_1"; "bias" ] -> ours "ln1.beta"
-          | [ "ln_2"; "weight" ] -> ours "ln2.gamma"
-          | [ "ln_2"; "bias" ] -> ours "ln2.beta"
-          | [ "attn"; "c_proj"; "weight" ] -> ours "attn.out.w"
-          | [ "attn"; "c_proj"; "bias" ] -> ours "attn.out.b"
-          | [ "mlp"; "c_fc"; "weight" ] -> ours "fc.w"
-          | [ "mlp"; "c_fc"; "bias" ] -> ours "fc.b"
-          | [ "mlp"; "c_proj"; "weight" ] -> ours "proj.w"
-          | [ "mlp"; "c_proj"; "bias" ] -> ours "proj.b"
-          | _ -> name (* attention mask buffers; unused *))
-      | _ -> name)
-
-let of_hf ~n_layer ckpt =
-  let split_qkv ckpt i =
-    let fused leaf = Printf.sprintf "h.%d.attn.c_attn.%s" i leaf in
-    let ours p leaf = Printf.sprintf "blocks.%d.attn.%s.%s" i p leaf in
-    ckpt
-    |> Hf.split (fused "weight")
-         ~into:[ ours "q" "w"; ours "k" "w"; ours "v" "w" ]
-    |> Hf.split (fused "bias")
-         ~into:[ ours "q" "b"; ours "k" "b"; ours "v" "b" ]
+let of_hf cfg dt ckpt =
+  let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
+  let d = cfg.n_embd in
+  let layer_norm name =
+    {
+      Layer_norm.gamma = float ~shape:[| d |] (name ^ ".weight");
+      beta = float ~shape:[| d |] (name ^ ".bias");
+    }
   in
-  List.fold_left split_qkv ckpt (List.init n_layer Fun.id) |> Hf.rename hf_name
+  let linear ~inputs ~outputs name =
+    {
+      Linear.w = float ~shape:[| inputs; outputs |] (name ^ ".weight");
+      b = Some (float ~shape:[| outputs |] (name ^ ".bias"));
+    }
+  in
+  let block i =
+    let at leaf = Printf.sprintf "h.%d.%s" i leaf in
+    let fused = linear ~inputs:d ~outputs:(3 * d) (at "attn.c_attn") in
+    let q, k, v =
+      match
+        List.map2
+          (fun w b -> { Linear.w; b = Some b })
+          (Nx.split ~axis:1 3 fused.w)
+          (Nx.split ~axis:0 3 (Option.get fused.b))
+      with
+      | [ q; k; v ] -> (q, k, v)
+      | _ -> assert false
+    in
+    {
+      ln1 = layer_norm (at "ln_1");
+      attn = { q; k; v; out = linear ~inputs:d ~outputs:d (at "attn.c_proj") };
+      ln2 = layer_norm (at "ln_2");
+      fc = linear ~inputs:d ~outputs:cfg.n_inner (at "mlp.c_fc");
+      proj = linear ~inputs:cfg.n_inner ~outputs:d (at "mlp.c_proj");
+    }
+  in
+  {
+    wte =
+      { Embedding.table = float ~shape:[| cfg.vocab_size; d |] "wte.weight" };
+    wpe =
+      { Embedding.table = float ~shape:[| cfg.n_positions; d |] "wpe.weight" };
+    blocks = List.init cfg.n_layer block;
+    ln_f = layer_norm "ln_f";
+  }
+
+type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
+
+let dtype_of_string = function
+  | "float32" -> Dtype Nx.float32
+  | "float16" -> Dtype Nx.float16
+  | "bfloat16" -> Dtype Nx.bfloat16
+  | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
+
+let stored_dtype ckpt =
+  let (Rune.Ptree.P table) = Checkpoint.get "wte.weight" ckpt in
+  match Nx.dtype table with
+  | Nx.Float16 -> Dtype Nx.float16
+  | Nx.BFloat16 -> Dtype Nx.bfloat16
+  | Nx.Float32 -> Dtype Nx.float32
+  | _ ->
+      failwith
+        "the checkpoint's embedding table is not a float16, bfloat16 or \
+         float32 entry"
 
 (* Pretrained loading *)
 
@@ -315,12 +343,8 @@ let config_of_json json =
       | _ -> 1e-5);
   }
 
-let of_checkpoint cfg ckpt =
-  of_hf ~n_layer:cfg.n_layer ckpt
-  |> Checkpoint.to_params (module Params) ~like:(make cfg) ~cast:true
+let from_file cfg dt path = of_hf cfg dt (Checkpoint.load path)
 
-let from_file cfg path = of_checkpoint cfg (Checkpoint.load path)
-
-let from_pretrained ?(repo_id = "gpt2") () =
+let from_pretrained ?(repo_id = "gpt2") dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_checkpoint cfg (Hf.load_checkpoint repo_id))
+  (cfg, of_hf cfg dt (Hf.load_checkpoint repo_id))

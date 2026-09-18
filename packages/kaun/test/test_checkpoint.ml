@@ -358,7 +358,7 @@ let test_shape_mismatch () =
     (fun () ->
       Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
 
-let test_dtype_mismatch_and_cast () =
+let test_dtype_mismatch () =
   let ckpt =
     Checkpoint.concat
       [
@@ -370,12 +370,71 @@ let test_dtype_mismatch_and_cast () =
   raises
     (Invalid_argument
        "Checkpoint.to_packed: dtype mismatch for \"scale\": expected float64, \
-        got float32 (pass ~cast:true to convert)") (fun () ->
-      Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt);
-  let p =
-    Checkpoint.to_packed (module Params) ~cast:true ~like:(fresh_params ()) ckpt
-  in
-  check_arr ~msg:"scale cast to float64" [| 4.0 |] (unpack64 p.Params.scale)
+        got float32") (fun () ->
+      Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
+
+(* Extraction by name *)
+
+let accessor_ckpt () =
+  Checkpoint.concat
+    [
+      Checkpoint.of_tensor "w"
+        (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]);
+      Checkpoint.of_tensor "half" (Nx.cast Nx.bfloat16 (vec32 [| 0.5; -2.0 |]));
+      Checkpoint.of_tensor "blocks" (Nx.create Nx.uint8 [| 3 |] [| 1; 2; 255 |]);
+      Checkpoint.of_tensor "tiny" (Nx.cast Nx.float8_e4m3 (vec32 [| 1.0 |]));
+    ]
+
+let test_to_tensor () =
+  let ckpt = accessor_ckpt () in
+  let blocks = Checkpoint.to_tensor ~shape:[| 3 |] Nx.uint8 "blocks" ckpt in
+  equal ~msg:"uint8 values" (array int) [| 1; 2; 255 |] (Nx.to_array blocks);
+  let w = Checkpoint.to_tensor ~shape:[| 2; 2 |] f32 "w" ckpt in
+  is_true ~msg:"the entry is returned as stored"
+    (w == unpack32 (Checkpoint.get "w" ckpt));
+  check_arr ~msg:"float8 is read as stored" [| 1.0 |]
+    (Nx.cast f32
+       (Checkpoint.to_tensor ~shape:[| 1 |] Nx.float8_e4m3 "tiny" ckpt));
+  raises (Invalid_argument "Checkpoint.to_tensor: missing entry \"nope\"")
+    (fun () -> Checkpoint.to_tensor ~shape:[| 1 |] f32 "nope" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_tensor: shape mismatch for \"w\": expected [4], got [2; \
+        2]") (fun () -> Checkpoint.to_tensor ~shape:[| 4 |] f32 "w" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_tensor: dtype mismatch for \"half\": expected float32, \
+        got bfloat16") (fun () ->
+      Checkpoint.to_tensor ~shape:[| 2 |] f32 "half" ckpt)
+
+let test_to_float () =
+  let ckpt = accessor_ckpt () in
+  check_arr ~msg:"cast from bfloat16" [| 0.5; -2.0 |]
+    (Checkpoint.to_float ~shape:[| 2 |] f32 "half" ckpt);
+  let half = Checkpoint.to_float ~shape:[| 2 |] Nx.bfloat16 "half" ckpt in
+  is_true ~msg:"the entry's own dtype casts nothing"
+    (half == Rune.Ptree.unpack Nx.bfloat16 (Checkpoint.get "half" ckpt));
+  raises (Invalid_argument "Checkpoint.to_float: missing entry \"nope\"")
+    (fun () -> Checkpoint.to_float ~shape:[| 1 |] f32 "nope" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_float: shape mismatch for \"half\": expected [3], got [2]")
+    (fun () -> Checkpoint.to_float ~shape:[| 3 |] f32 "half" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_float: \"blocks\" is not a floating-point entry (dtype \
+        uint8)") (fun () ->
+      Checkpoint.to_float ~shape:[| 3 |] f32 "blocks" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_float: \"tiny\" is a float8_e4m3 entry, whose scales \
+        live in other entries: read it with to_tensor") (fun () ->
+      Checkpoint.to_float ~shape:[| 1 |] f32 "tiny" ckpt);
+  raises
+    (Invalid_argument
+       "Checkpoint.to_float: \"w\" cannot be cast to float8_e4m3, which needs \
+        scales") (fun () ->
+      Checkpoint.to_float ~shape:[| 2; 2 |] Nx.float8_e4m3 "w" ckpt)
 
 let test_concat_duplicate () =
   raises (Invalid_argument "Checkpoint.concat: duplicate name \"w\"") (fun () ->
@@ -455,7 +514,10 @@ let () =
           test "missing entry raises with its name" test_missing_entry;
           test "unrelated entries are ignored" test_extra_entries_ignored;
           test "shape mismatch raises" test_shape_mismatch;
-          test "dtype mismatch raises unless cast" test_dtype_mismatch_and_cast;
+          test "dtype mismatch raises" test_dtype_mismatch;
+          test "to_tensor is strict and returns the entry as stored"
+            test_to_tensor;
+          test "to_float casts floating-point entries only" test_to_float;
           test "concat rejects duplicate names" test_concat_duplicate;
           test "duplicate leaf paths are rejected" test_duplicate_names;
           test "empty tensor names are rejected" test_empty_name;

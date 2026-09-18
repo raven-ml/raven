@@ -553,7 +553,8 @@ let models ~device ~dtype ~label fx path =
   let cfg =
     { cfg with window = int_of_float (number (mem "sliding_window" fx)) }
   in
-  let p = Gpt_oss.from_file cfg path in
+  let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string dtype in
+  let p = Gpt_oss.from_file cfg dt path in
   rotary fx cfg;
   List.iteri
     (fun i (b : _ Gpt_oss.block) ->
@@ -572,14 +573,10 @@ let models ~device ~dtype ~label fx path =
       (* Float32 against float32 agrees to a few parts in a million. Half
          precision keeps about three digits: the reference's softmax also ran at
          float32 here, so the gap is that of the weights and activations. *)
-      match dtype with
-      | "float32" ->
-          model ~device ~tol:1e-5 ~exact:true ~label fx case cfg p Nx.float32
-      | "bfloat16" ->
-          model ~device ~tol:5e-2 ~exact:false ~label fx case cfg
-            (Gpt_oss.map (Nx.cast Nx.bfloat16) p)
-            Nx.bfloat16
-      | d -> failwith ("--dtype must be float32 or bfloat16, got " ^ d))
+      let exact = dtype = "float32" in
+      model ~device
+        ~tol:(if exact then 1e-5 else 5e-2)
+        ~exact ~label fx case cfg p dt)
     (members (mem "cases" fx))
 
 let () =

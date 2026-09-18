@@ -52,8 +52,10 @@ module Params : Nx.Ptree.Uniform with type 'a t = 'a params
     the layers keep their float32 islands whatever [dt]. *)
 
 val make : config -> t
-(** [make cfg] is a zero-initialized model, the [~like] template for
-    {!Kaun.Checkpoint.to_params}. *)
+(** [make cfg] is a zero-initialized float32 model: the starting point of
+    training from scratch, and the [~like] template that
+    {!Kaun.Checkpoint.to_params} needs to read back a checkpoint this library
+    saved. *)
 
 (** {1:forward Forward passes}
 
@@ -102,21 +104,38 @@ val config_of_json : Jsont.json -> config
 
     Raises [Failure] on a missing field or another rotary scaling type. *)
 
-val of_hf : config -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
-(** [of_hf cfg ckpt] adapts a HuggingFace Llama checkpoint to {!Params}' names
-    and transposes every projection to [inputs × outputs]. *)
+val of_hf :
+  config -> (float, 'b) Nx.dtype -> Kaun.Checkpoint.t -> (float, 'b) Nx.t params
+(** [of_hf cfg dt ckpt] is the model of the HuggingFace Llama checkpoint [ckpt],
+    at [dt]. Each entry is read by its name in the file with the shape [cfg]
+    gives it, and every projection is transposed to [inputs × outputs], a view.
+    At the file's own dtype nothing is copied; at another one each leaf is cast.
 
-val of_checkpoint : config -> Kaun.Checkpoint.t -> t
-(** [of_checkpoint cfg ckpt] is {!of_hf} followed by typed extraction against
-    [make cfg], cast to float32. *)
+    Raises [Invalid_argument], naming the entry, if one is missing, has another
+    shape than [cfg] says, or is not a floating-point entry. *)
 
-val from_file : config -> string -> t
-(** [from_file cfg path] is {!of_checkpoint} on the safetensors file [path]. *)
+val from_file :
+  config -> (float, 'b) Nx.dtype -> string -> (float, 'b) Nx.t params
+(** [from_file cfg dt path] is {!of_hf} on the safetensors file [path]. *)
+
+type dtype =
+  | Dtype : (float, 'b) Nx.dtype -> dtype
+      (** A floating-point dtype chosen at run time. *)
+
+val dtype_of_string : string -> dtype
+(** [dtype_of_string s] is the dtype named ["float32"], ["float16"] or
+    ["bfloat16"]. Raises [Failure] on another name. *)
+
+val stored_dtype : Kaun.Checkpoint.t -> dtype
+(** [stored_dtype ckpt] is the dtype [ckpt] stores its embedding table at, the
+    dtype at which {!of_hf} casts nothing. *)
 
 val default_repo : string
 (** An ungated HuggingFace repository of Llama 3.2 1B whose weight file is
     byte-identical to Meta's gated one. *)
 
-val from_pretrained : ?repo_id:string -> unit -> config * t
-(** [from_pretrained ()] downloads {!default_repo} (about 2.5 GB, cached
-    afterwards), or [repo_id], and is its configuration and parameters. *)
+val from_pretrained :
+  ?repo_id:string -> (float, 'b) Nx.dtype -> config * (float, 'b) Nx.t params
+(** [from_pretrained dt] downloads {!default_repo} (about 2.5 GB, cached
+    afterwards), or [repo_id], and is its configuration and its parameters at
+    [dt]. *)

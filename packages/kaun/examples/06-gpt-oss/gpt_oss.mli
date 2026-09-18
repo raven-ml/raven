@@ -26,6 +26,8 @@ type config = {
   n_heads : int;
   n_kv_heads : int;  (** Key-value heads; divides [n_heads]. *)
   head_dim : int;
+  hidden_dim : int;  (** The width inside an expert. *)
+  experts : int;
   experts_per_token : int;
   swiglu_limit : float;
   norm_eps : float;
@@ -137,18 +139,36 @@ val config_of_json : Jsont.json -> config
     Raises [Failure] on a missing field or a rotary scaling other than YaRN
     without truncation. *)
 
-val of_checkpoint : config -> Kaun.Checkpoint.t -> t
-(** [of_checkpoint cfg ckpt] reads a HuggingFace gpt-oss checkpoint by its
-    tensor names: projections are transposed to [inputs × outputs], float
-    tensors are cast to float32, and experts stored as [_blocks] and [_scales]
-    stay packed.
+val of_hf :
+  config -> (float, 'b) Nx.dtype -> Kaun.Checkpoint.t -> (float, 'b) Nx.t params
+(** [of_hf cfg dt ckpt] is the model of the HuggingFace gpt-oss checkpoint
+    [ckpt], with its float leaves at [dt]. Each entry is read by its name in the
+    file with the shape [cfg] gives it. Projections are transposed to
+    [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] stay
+    packed uint8 tensors, whatever [dt]. At the file's own dtype nothing is
+    copied; at another one each float leaf is cast.
 
-    Raises [Invalid_argument] if a tensor is missing. *)
+    Raises [Invalid_argument], naming the entry, if one is missing, has another
+    shape than [cfg] says, or has a dtype the leaf cannot take. *)
 
-val from_file : config -> string -> t
-(** [from_file cfg path] is {!of_checkpoint} on the safetensors file [path]. *)
+val from_file :
+  config -> (float, 'b) Nx.dtype -> string -> (float, 'b) Nx.t params
+(** [from_file cfg dt path] is {!of_hf} on the safetensors file [path]. *)
 
-val from_pretrained : string -> config * t
-(** [from_pretrained repo_id] downloads the repository's configuration and
-    single-file checkpoint (cached afterwards). Meant for the tiny test
-    checkpoints: the whole file is read in memory. *)
+type dtype =
+  | Dtype : (float, 'b) Nx.dtype -> dtype
+      (** A floating-point dtype chosen at run time. *)
+
+val dtype_of_string : string -> dtype
+(** [dtype_of_string s] is the dtype named ["float32"] or ["bfloat16"]. Raises
+    [Failure] on another name. *)
+
+val stored_dtype : Kaun.Checkpoint.t -> dtype
+(** [stored_dtype ckpt] is the dtype [ckpt] stores its embedding table at, the
+    dtype at which {!of_hf} casts nothing. *)
+
+val from_pretrained :
+  string -> (float, 'b) Nx.dtype -> config * (float, 'b) Nx.t params
+(** [from_pretrained repo_id dt] downloads the repository's configuration and
+    checkpoint, single-file or sharded (cached afterwards), and is the model at
+    [dt]. *)

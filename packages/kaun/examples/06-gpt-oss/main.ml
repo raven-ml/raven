@@ -9,7 +9,7 @@
    and every single-token step, and under [--jit DEVICE] compiles once for each
    of the two shapes.
 
-   Usage: main.exe [--repo REPO] [--jit DEVICE] [--count N]. *)
+   Usage: main.exe [--repo REPO] [--jit DEVICE] [--count N] [--dtype DT]. *)
 
 open Kaun
 
@@ -29,12 +29,13 @@ let prompt =
     2359l;
   |]
 
-let generate ?device cfg (params : Gpt_oss.t) ~count =
+let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt_oss.params)
+    (dt : (float, b) Nx.dtype) ~count =
   let module Step = struct
     type t = {
       token : Nx.int32_t;
       index : Cache_index.t;
-      caches : Nx.float32_t Gpt_oss.Cache.t;
+      caches : (float, b) Nx.t Gpt_oss.Cache.t;
     }
 
     let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
@@ -83,7 +84,7 @@ let generate ?device cfg (params : Gpt_oss.t) ~count =
       {
         Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
         index = Cache_index.rows ~context [| n0 |];
-        caches = Gpt_oss.cache cfg ~slots:context Nx.float32;
+        caches = Gpt_oss.cache cfg ~slots:context dt;
       }
   in
   Printf.printf "prefill of %d tokens: %.3f s\n%!" n0 prefill;
@@ -108,17 +109,26 @@ let generate ?device cfg (params : Gpt_oss.t) ~count =
 
 let () =
   let repo = ref "tiny-random/gpt-oss-mxfp4" in
-  let jit = ref "" and count = ref 16 in
+  let jit = ref "" and count = ref 16 and dtype = ref "" in
   Arg.parse
     [
       ("--repo", Arg.Set_string repo, "A single-file gpt-oss checkpoint");
       ("--jit", Arg.Set_string jit, "Compile the step for this device");
       ("--count", Arg.Set_int count, "Number of tokens to generate");
+      ( "--dtype",
+        Arg.Set_string dtype,
+        "float32 or bfloat16 (default: the checkpoint's own)" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "main.exe [--repo REPO] [--jit DEVICE] [--count N]";
-  let cfg, params = Gpt_oss.from_pretrained !repo in
+    "main.exe [--repo REPO] [--jit DEVICE] [--count N] [--dtype DT]";
+  let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
+  let ckpt = Kaun_hf.load_checkpoint !repo in
+  (* At the checkpoint's own dtype the import casts nothing. *)
+  let (Gpt_oss.Dtype dt) =
+    if !dtype = "" then Gpt_oss.stored_dtype ckpt
+    else Gpt_oss.dtype_of_string !dtype
+  in
   let device = if !jit = "" then None else Some !jit in
-  let out = generate ?device cfg params ~count:!count in
+  let out = generate ?device cfg (Gpt_oss.of_hf cfg dt ckpt) dt ~count:!count in
   print_endline
     (String.concat " " (Array.to_list (Array.map Int32.to_string out)))

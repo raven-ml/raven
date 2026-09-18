@@ -16,6 +16,8 @@ type config = {
   n_heads : int;
   n_kv_heads : int;
   head_dim : int;
+  hidden_dim : int;
+  experts : int;
   experts_per_token : int;
   swiglu_limit : float;
   norm_eps : float;
@@ -274,6 +276,8 @@ let config_of_json json =
     n_heads = int "num_attention_heads";
     n_kv_heads = int "num_key_value_heads";
     head_dim;
+    hidden_dim = int "intermediate_size";
+    experts = int "num_local_experts";
     experts_per_token = int "num_experts_per_tok";
     swiglu_limit = number "swiglu_limit";
     norm_eps = number "rms_norm_eps";
@@ -285,71 +289,114 @@ let config_of_json json =
       | _ -> false);
   }
 
-(* HuggingFace checkpoint
+(* Importing a HuggingFace checkpoint.
 
-   Tensors are named model.layers.{i}.self_attn.q_proj.weight, ... and every
-   projection is stored as torch.nn.Linear does, [outputs; inputs]. The q and k
-   weights are laid out for the rotation that pairs feature i with i + head_dim
-   / 2, which is [Rope]'s. Expert weights are either float, [experts; inputs;
-   outputs] as [Moe] takes them, or packed under the [_blocks] and [_scales]
-   suffixes. A tied model has no lm_head entry. *)
+   The file names its tensors model.layers.{i}.self_attn.q_proj.weight, ... and
+   stores every projection as [outputs; inputs], the transpose of [Linear]'s
+   layout. Its q and k weights are laid out for the rotation that pairs feature
+   i with i + head_dim / 2, which is [Rope]'s. Expert weights are either float,
+   [experts; inputs; outputs] as [Moe] takes them, or packed as uint8 codes and
+   exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
+   [Checkpoint.to_float] refuses them. A tied model has no lm_head entry. *)
 
-let of_checkpoint cfg ckpt =
-  let float name =
-    match Checkpoint.get name ckpt with Nx.Ptree.P t -> Nx.cast Nx.float32 t
-  in
-  let bytes name =
-    Nx.Ptree.unpack ~at:name Nx.uint8 (Checkpoint.get name ckpt)
-  in
-  let linear ?(bias = true) prefix =
+let of_hf cfg dt ckpt =
+  let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
+  let bytes ~shape name = Checkpoint.to_tensor ~shape Nx.uint8 name ckpt in
+  let norm name = { Rms_norm.gamma = float ~shape:[| cfg.dim |] name } in
+  let linear ?(bias = true) ~inputs ~outputs name =
     {
-      Linear.w = Nx.contiguous (Nx.transpose (float (prefix ^ ".weight")));
-      b = (if bias then Some (float (prefix ^ ".bias")) else None);
+      Linear.w =
+        Nx.matrix_transpose
+          (float ~shape:[| outputs; inputs |] (name ^ ".weight"));
+      b =
+        (if bias then Some (float ~shape:[| outputs |] (name ^ ".bias"))
+         else None);
     }
   in
-  let weight name =
+  let experts ~inputs ~outputs name =
     match Checkpoint.find (name ^ "_blocks") ckpt with
-    | None -> Moe.Float (float name)
+    | None -> Moe.Float (float ~shape:[| cfg.experts; inputs; outputs |] name)
     | Some _ ->
+        let groups = inputs / 32 in
         Moe.Mxfp4
           {
-            blocks = bytes (name ^ "_blocks");
-            scales = bytes (name ^ "_scales");
+            blocks =
+              bytes
+                ~shape:[| cfg.experts; outputs; groups; 16 |]
+                (name ^ "_blocks");
+            scales =
+              bytes ~shape:[| cfg.experts; outputs; groups |] (name ^ "_scales");
           }
   in
+  let q_dim = cfg.n_heads * cfg.head_dim in
+  let kv_dim = cfg.n_kv_heads * cfg.head_dim in
   let block i =
-    let name leaf = Printf.sprintf "model.layers.%d.%s" i leaf in
+    let at leaf = Printf.sprintf "model.layers.%d.%s" i leaf in
     {
-      attn_norm = { Rms_norm.gamma = float (name "input_layernorm.weight") };
+      attn_norm = norm (at "input_layernorm.weight");
       attn =
         {
-          Attention.q = linear (name "self_attn.q_proj");
-          k = linear (name "self_attn.k_proj");
-          v = linear (name "self_attn.v_proj");
-          out = linear (name "self_attn.o_proj");
+          Attention.q =
+            linear ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
+          k = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
+          v = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
+          out = linear ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
         };
-      sinks = float (name "self_attn.sinks");
-      ffn_norm =
-        { Rms_norm.gamma = float (name "post_attention_layernorm.weight") };
+      sinks = float ~shape:[| cfg.n_heads |] (at "self_attn.sinks");
+      ffn_norm = norm (at "post_attention_layernorm.weight");
       moe =
         {
-          Moe.router = linear (name "mlp.router");
-          gate_up = weight (name "mlp.experts.gate_up_proj");
-          gate_up_bias = float (name "mlp.experts.gate_up_proj_bias");
-          down = weight (name "mlp.experts.down_proj");
-          down_bias = float (name "mlp.experts.down_proj_bias");
+          Moe.router =
+            linear ~inputs:cfg.dim ~outputs:cfg.experts (at "mlp.router");
+          gate_up =
+            experts ~inputs:cfg.dim ~outputs:(2 * cfg.hidden_dim)
+              (at "mlp.experts.gate_up_proj");
+          gate_up_bias =
+            float
+              ~shape:[| cfg.experts; 2 * cfg.hidden_dim |]
+              (at "mlp.experts.gate_up_proj_bias");
+          down =
+            experts ~inputs:cfg.hidden_dim ~outputs:cfg.dim
+              (at "mlp.experts.down_proj");
+          down_bias =
+            float ~shape:[| cfg.experts; cfg.dim |]
+              (at "mlp.experts.down_proj_bias");
         };
     }
   in
   {
-    tok = { Embedding.table = float "model.embed_tokens.weight" };
+    tok =
+      {
+        Embedding.table =
+          float ~shape:[| cfg.vocab_size; cfg.dim |] "model.embed_tokens.weight";
+      };
     blocks = List.mapi (fun i _ -> block i) cfg.layers;
-    norm = { Rms_norm.gamma = float "model.norm.weight" };
-    head = (if cfg.tied then None else Some (linear ~bias:false "lm_head"));
+    norm = norm "model.norm.weight";
+    head =
+      (if cfg.tied then None
+       else
+         Some
+           (linear ~bias:false ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
   }
 
-let from_file cfg path = of_checkpoint cfg (Checkpoint.load path)
+type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
 
-let from_pretrained repo_id =
+let dtype_of_string = function
+  | "float32" -> Dtype Nx.float32
+  | "bfloat16" -> Dtype Nx.bfloat16
+  | d -> failwith ("--dtype must be float32 or bfloat16, got " ^ d)
+
+let stored_dtype ckpt =
+  let (Rune.Ptree.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
+  match Nx.dtype table with
+  | Nx.BFloat16 -> Dtype Nx.bfloat16
+  | Nx.Float32 -> Dtype Nx.float32
+  | _ ->
+      failwith
+        "the checkpoint's embedding table is not a bfloat16 or float32 entry"
+
+let from_file cfg dt path = of_hf cfg dt (Checkpoint.load path)
+
+let from_pretrained repo_id dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, from_file cfg (Hf.download_file ~file:"model.safetensors" repo_id))
+  (cfg, of_hf cfg dt (Hf.load_checkpoint repo_id))
