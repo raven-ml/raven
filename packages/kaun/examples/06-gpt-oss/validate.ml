@@ -286,12 +286,19 @@ let block ~device ~tol ~k ~limit label p case =
   close ~tol (name "expert weights")
     (floats (mem "expert_weights" case))
     (flat (compiled device (fun x -> snd (Moe.route ~k p x)) tokens));
+  let last = Nx.dim 0 tokens - 1 in
   List.iter
     (fun (form, form_name) ->
+      let apply x = compiled device (fun x -> Moe.apply form ~k ~limit p x) x in
+      let whole = apply tokens in
       close ~tol
         (name ("output, " ^ form_name))
         (floats (mem "output" case))
-        (flat (compiled device (fun x -> Moe.apply form ~k ~limit p x) x)))
+        (flat whole);
+      close ~tol
+        (name ("output, " ^ form_name ^ ", the last token alone"))
+        (flat (Nx.slice [ I last ] whole))
+        (flat (apply (Nx.slice [ R (last, last + 1) ] tokens))))
     [ (Moe.Gather, "gather"); (Moe.Dense, "dense") ]
 
 let blocks ~device ~tol fx ~label ~weight ckpt =
