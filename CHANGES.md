@@ -1673,6 +1673,10 @@ thread.
 
 ### Brot
 
+- Tokenizer files whose `Split` pre-tokenizer carries a regular expression now
+  load and tokenize as HuggingFace does: Llama 3, Qwen2.5, DeepSeek-V3 and
+  gpt-oss (o200k) where `Brot.from_file` used to fail with "regular expression
+  'pattern' is not supported". `Pre_tokenizer.split_regex` builds one directly.
 - Regular expressions from tokenizer files now accept the case-insensitive
   option (`(?i)`, `(?i:..)`) and a lookahead (`(?=..)`, `(?!..)`) that ends the
   pattern or one of its alternatives, so `Normalizer.replace_regex` and

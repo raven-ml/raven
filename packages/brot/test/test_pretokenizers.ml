@@ -622,6 +622,509 @@ let test_split_patterns () =
     [ ("a", (0, 1)); ("é", (1, 3)) ];
   case ~pattern:"" `Removed ~invert:true "aé" []
 
+(* Regular expression patterns. The expected pieces are those of HuggingFace
+   [pre_tokenizers.Split(Regex(pattern), behavior, invert)]; regenerate them
+   with [scripts/gen_split_regex_expected.py]. *)
+
+let split_regex_case ~pattern behavior ~invert text expected =
+  check_tokenization
+    (Printf.sprintf "Split regex %S %s ~invert:%b on %S" pattern
+       (behavior_name behavior) invert text)
+    (Pre.pre_tokenize (Pre.split_regex ~pattern ~behavior ~invert ()) text)
+    expected
+
+(* The pattern of Llama 3's tokenizer file. *)
+let cl100k =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+(* The pattern of the o200k family. *)
+let o200k =
+  String.concat "|"
+    [
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|\p{N}{1,3}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
+
+let test_split_regex_cl100k () =
+  let case = split_regex_case in
+  case ~pattern:cl100k `Isolated ~invert:false "a  b"
+    [ ("a", (0, 1)); (" ", (1, 2)); (" b", (2, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "x\x0A\x0A  y"
+    [ ("x", (0, 1)); ("\x0A\x0A", (1, 3)); (" ", (3, 4)); (" y", (4, 6)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "I'M 123  "
+    [
+      ("I", (0, 1));
+      ("'M", (1, 3));
+      (" ", (3, 4));
+      ("123", (4, 7));
+      ("  ", (7, 9));
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false " a" [ (" a", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "  a"
+    [ (" ", (0, 1)); (" a", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "   a"
+    [ ("  ", (0, 2)); (" a", (2, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " 1"
+    [ (" ", (0, 1)); ("1", (1, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "  1"
+    [ (" ", (0, 1)); (" ", (1, 2)); ("1", (2, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "   1"
+    [ ("  ", (0, 2)); (" ", (2, 3)); ("1", (3, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " !" [ (" !", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "  !"
+    [ (" ", (0, 1)); (" !", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "   !"
+    [ ("  ", (0, 2)); (" !", (2, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " " [ (" ", (0, 1)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "  " [ ("  ", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "   " [ ("   ", (0, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\x09a" [ ("\x09a", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xC2\xA0a"
+    [ ("\xC2\xA0a", (0, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xE3\x80\x80a"
+    [ ("\xE3\x80\x80a", (0, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\x09\x09a"
+    [ ("\x09", (0, 1)); ("\x09a", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xC2\xA0\xC2\xA0a"
+    [ ("\xC2\xA0", (0, 2)); ("\xC2\xA0a", (2, 5)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a\xE3\x80\x80\xE3\x80\x80"
+    [ ("a", (0, 1)); ("\xE3\x80\x80\xE3\x80\x80", (1, 7)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a\x0D\x0Ab"
+    [ ("a", (0, 1)); ("\x0D\x0A", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a\x0A\x0Db"
+    [ ("a", (0, 1)); ("\x0A\x0D", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\x0D\x0D\x0A  x"
+    [ ("\x0D\x0D\x0A", (0, 3)); (" ", (3, 4)); (" x", (4, 6)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a \x0A b"
+    [ ("a", (0, 1)); (" \x0A", (1, 3)); (" b", (3, 5)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a  \x0A  b"
+    [ ("a", (0, 1)); ("  \x0A", (1, 4)); (" ", (4, 5)); (" b", (5, 7)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a\x0A"
+    [ ("a", (0, 1)); ("\x0A", (1, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\x0A  "
+    [ ("\x0A", (0, 1)); ("  ", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "I'M"
+    [ ("I", (0, 1)); ("'M", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "HE'LL"
+    [ ("HE", (0, 2)); ("'LL", (2, 5)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "it'\xC5\xBF"
+    [ ("it", (0, 2)); ("'\xC5\xBF", (2, 5)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "'Sx"
+    [ ("'S", (0, 2)); ("x", (2, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "''s"
+    [ ("''", (0, 2)); ("s", (2, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "'" [ ("'", (0, 1)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a'"
+    [ ("a", (0, 1)); ("'", (1, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "'re're"
+    [ ("'re", (0, 3)); ("'re", (3, 6)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "x'Ve"
+    [ ("x", (0, 1)); ("'Ve", (1, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "'\xE2\x84\xAA"
+    [ ("'\xE2\x84\xAA", (0, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "1" [ ("1", (0, 1)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "12" [ ("12", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "123" [ ("123", (0, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "1234"
+    [ ("123", (0, 3)); ("4", (3, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "1234567"
+    [ ("123", (0, 3)); ("456", (3, 6)); ("7", (6, 7)) ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "\xD9\xA1\xD9\xA2\xD9\xA3\xD9\xA4"
+    [ ("\xD9\xA1\xD9\xA2\xD9\xA3", (0, 6)); ("\xD9\xA4", (6, 8)) ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "\xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93\xEF\xBC\x94"
+    [
+      ("\xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93", (0, 9)); ("\xEF\xBC\x94", (9, 12));
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false "1\xC2\xB22"
+    [ ("1\xC2\xB22", (0, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "12ab34"
+    [ ("12", (0, 2)); ("ab", (2, 4)); ("34", (4, 6)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "!!!\x0A\x0Afoo"
+    [ ("!!!\x0A\x0A", (0, 5)); ("foo", (5, 8)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " !!!" [ (" !!!", (0, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a!?\x0D\x0A\x0D\x0Ab"
+    [ ("a", (0, 1)); ("!?\x0D\x0A\x0D\x0A", (1, 7)); ("b", (7, 8)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "!\x0A "
+    [ ("!\x0A", (0, 2)); (" ", (2, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "!a" [ ("!a", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "$100"
+    [ ("$", (0, 1)); ("100", (1, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a.b"
+    [ ("a", (0, 1)); (".b", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "...a"
+    [ ("...", (0, 3)); ("a", (3, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " ...\x0A\x0A\x0Aa"
+    [ (" ...\x0A\x0A\x0A", (0, 7)); ("a", (7, 8)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a_b-c"
+    [ ("a", (0, 1)); ("_b", (1, 3)); ("-c", (3, 5)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "_a" [ ("_a", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "-a" [ ("-a", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\x00a" [ ("\x00a", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\x7Fa" [ ("\x7Fa", (0, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xC3\xA9t\xC3\xA9"
+    [ ("\xC3\xA9t\xC3\xA9", (0, 5)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "e\xCC\x81te\xCC\x81"
+    [ ("e", (0, 1)); ("\xCC\x81te", (1, 5)); ("\xCC\x81", (5, 7)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xCC\x81a"
+    [ ("\xCC\x81a", (0, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a\xCC\x81"
+    [ ("a", (0, 1)); ("\xCC\x81", (1, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " \xCC\x81"
+    [ (" \xCC\x81", (0, 3)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xF0\x9F\x98\x80"
+    [ ("\xF0\x9F\x98\x80", (0, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "a\xF0\x9F\x98\x80b"
+    [ ("a", (0, 1)); ("\xF0\x9F\x98\x80b", (1, 6)) ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
+    [
+      ( "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7",
+        (0, 18) );
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false "\xE2\x9D\xA4\xEF\xB8\x8F ok"
+    [ ("\xE2\x9D\xA4\xEF\xB8\x8F", (0, 6)); (" ok", (6, 9)) ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E 123"
+    [
+      ("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", (0, 9));
+      (" ", (9, 10));
+      ("123", (10, 13));
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7 \xD8\xA8\xD9\x83"
+    [
+      ("\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7", (0, 10));
+      (" \xD8\xA8\xD9\x83", (10, 15));
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87"
+    [
+      ("\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8", (0, 9));
+      ("\xE0\xA5\x8D\xE0\xA4\xA4", (9, 15));
+      ("\xE0\xA5\x87", (15, 18));
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false
+    "def f(x):\x0D\x0A\x09return x+1\x0D\x0A"
+    [
+      ("def", (0, 3));
+      (" f", (3, 5));
+      ("(x", (5, 7));
+      ("):\x0D\x0A", (7, 11));
+      ("\x09return", (11, 18));
+      (" x", (18, 20));
+      ("+", (20, 21));
+      ("1", (21, 22));
+      ("\x0D\x0A", (22, 24));
+    ];
+  case ~pattern:cl100k `Isolated ~invert:false "https://a.b/c?d=1&e=2"
+    [
+      ("https", (0, 5));
+      ("://", (5, 8));
+      ("a", (8, 9));
+      (".b", (9, 11));
+      ("/c", (11, 13));
+      ("?d", (13, 15));
+      ("=", (15, 16));
+      ("1", (16, 17));
+      ("&e", (17, 19));
+      ("=", (19, 20));
+      ("2", (20, 21));
+    ]
+
+let test_split_regex_o200k () =
+  let case = split_regex_case in
+  case ~pattern:o200k `Isolated ~invert:false "Hello World"
+    [ ("Hello", (0, 5)); (" World", (5, 11)) ];
+  case ~pattern:o200k `Isolated ~invert:false "helloWorld"
+    [ ("hello", (0, 5)); ("World", (5, 10)) ];
+  case ~pattern:o200k `Isolated ~invert:false "HelloWORLDfoo"
+    [ ("Hello", (0, 5)); ("WORLDfoo", (5, 13)) ];
+  case ~pattern:o200k `Isolated ~invert:false "XMLHttpRequest"
+    [ ("XMLHttp", (0, 7)); ("Request", (7, 14)) ];
+  case ~pattern:o200k `Isolated ~invert:false "I'M he'll DON'T"
+    [ ("I'M", (0, 3)); (" he'll", (3, 9)); (" DON'T", (9, 15)) ];
+  case ~pattern:o200k `Isolated ~invert:false "a's'T"
+    [ ("a's", (0, 3)); ("'T", (3, 5)) ];
+  case ~pattern:o200k `Isolated ~invert:false "a//b"
+    [ ("a", (0, 1)); ("//", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:o200k `Isolated ~invert:false "!!/\x0A/x"
+    [ ("!!/\x0A/", (0, 5)); ("x", (5, 6)) ];
+  case ~pattern:o200k `Isolated ~invert:false "x =/ y"
+    [ ("x", (0, 1)); (" =/", (1, 4)); (" y", (4, 6)) ];
+  case ~pattern:o200k `Isolated ~invert:false " /" [ (" /", (0, 2)) ];
+  case ~pattern:o200k `Isolated ~invert:false "12345"
+    [ ("123", (0, 3)); ("45", (3, 5)) ];
+  case ~pattern:o200k `Isolated ~invert:false "e\xCC\x81A\xCC\x81b"
+    [ ("e\xCC\x81", (0, 3)); ("A\xCC\x81b", (3, 7)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\xC7\x85a"
+    [ ("\xC7\x85a", (0, 3)) ]
+
+let test_split_regex_behaviors () =
+  let case = split_regex_case in
+  case ~pattern:"\\d+" `Isolated ~invert:false "a1b22c"
+    [
+      ("a", (0, 1)); ("1", (1, 2)); ("b", (2, 3)); ("22", (3, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"\\d+" `Isolated ~invert:false "1a2"
+    [ ("1", (0, 1)); ("a", (1, 2)); ("2", (2, 3)) ];
+  case ~pattern:"\\d+" `Isolated ~invert:true "a1b22c"
+    [
+      ("a", (0, 1)); ("1", (1, 2)); ("b", (2, 3)); ("22", (3, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"\\d+" `Isolated ~invert:true "1a2"
+    [ ("1", (0, 1)); ("a", (1, 2)); ("2", (2, 3)) ];
+  case ~pattern:"\\d+" `Removed ~invert:false "a1b22c"
+    [ ("a", (0, 1)); ("b", (2, 3)); ("c", (5, 6)) ];
+  case ~pattern:"\\d+" `Removed ~invert:false "1a2" [ ("a", (1, 2)) ];
+  case ~pattern:"\\d+" `Removed ~invert:true "a1b22c"
+    [ ("1", (1, 2)); ("22", (3, 5)) ];
+  case ~pattern:"\\d+" `Removed ~invert:true "1a2"
+    [ ("1", (0, 1)); ("2", (2, 3)) ];
+  case ~pattern:"\\d+" `Merged_with_previous ~invert:false "a1b22c"
+    [ ("a1", (0, 2)); ("b22", (2, 5)); ("c", (5, 6)) ];
+  case ~pattern:"\\d+" `Merged_with_previous ~invert:false "1a2"
+    [ ("1", (0, 1)); ("a2", (1, 3)) ];
+  case ~pattern:"\\d+" `Merged_with_previous ~invert:true "a1b22c"
+    [ ("a", (0, 1)); ("1b", (1, 3)); ("22c", (3, 6)) ];
+  case ~pattern:"\\d+" `Merged_with_previous ~invert:true "1a2"
+    [ ("1a", (0, 2)); ("2", (2, 3)) ];
+  case ~pattern:"\\d+" `Merged_with_next ~invert:false "a1b22c"
+    [ ("a", (0, 1)); ("1b", (1, 3)); ("22c", (3, 6)) ];
+  case ~pattern:"\\d+" `Merged_with_next ~invert:false "1a2"
+    [ ("1a", (0, 2)); ("2", (2, 3)) ];
+  case ~pattern:"\\d+" `Merged_with_next ~invert:true "a1b22c"
+    [ ("a1", (0, 2)); ("b22", (2, 5)); ("c", (5, 6)) ];
+  case ~pattern:"\\d+" `Merged_with_next ~invert:true "1a2"
+    [ ("1", (0, 1)); ("a2", (1, 3)) ];
+  case ~pattern:"\\d+" `Contiguous ~invert:false "a1b22c"
+    [
+      ("a", (0, 1)); ("1", (1, 2)); ("b", (2, 3)); ("22", (3, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"\\d+" `Contiguous ~invert:false "1a2"
+    [ ("1", (0, 1)); ("a", (1, 2)); ("2", (2, 3)) ];
+  case ~pattern:"\\d+" `Contiguous ~invert:true "a1b22c"
+    [
+      ("a", (0, 1)); ("1", (1, 2)); ("b", (2, 3)); ("22", (3, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"\\d+" `Contiguous ~invert:true "1a2"
+    [ ("1", (0, 1)); ("a", (1, 2)); ("2", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Isolated ~invert:false "a, b;c"
+    [
+      ("a", (0, 1)); (", ", (1, 3)); ("b", (3, 4)); (";", (4, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"[,;]\\s*" `Isolated ~invert:false ",,a"
+    [ (",", (0, 1)); (",", (1, 2)); ("a", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Isolated ~invert:true "a, b;c"
+    [
+      ("a", (0, 1)); (", ", (1, 3)); ("b", (3, 4)); (";", (4, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"[,;]\\s*" `Isolated ~invert:true ",,a"
+    [ (",", (0, 1)); (",", (1, 2)); ("a", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Removed ~invert:false "a, b;c"
+    [ ("a", (0, 1)); ("b", (3, 4)); ("c", (5, 6)) ];
+  case ~pattern:"[,;]\\s*" `Removed ~invert:false ",,a" [ ("a", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Removed ~invert:true "a, b;c"
+    [ (", ", (1, 3)); (";", (4, 5)) ];
+  case ~pattern:"[,;]\\s*" `Removed ~invert:true ",,a"
+    [ (",", (0, 1)); (",", (1, 2)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_previous ~invert:false "a, b;c"
+    [ ("a, ", (0, 3)); ("b;", (3, 5)); ("c", (5, 6)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_previous ~invert:false ",,a"
+    [ (",", (0, 1)); (",", (1, 2)); ("a", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_previous ~invert:true "a, b;c"
+    [ ("a", (0, 1)); (", b", (1, 4)); (";c", (4, 6)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_previous ~invert:true ",,a"
+    [ (",", (0, 1)); (",a", (1, 3)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_next ~invert:false "a, b;c"
+    [ ("a", (0, 1)); (", b", (1, 4)); (";c", (4, 6)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_next ~invert:false ",,a"
+    [ (",", (0, 1)); (",a", (1, 3)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_next ~invert:true "a, b;c"
+    [ ("a, ", (0, 3)); ("b;", (3, 5)); ("c", (5, 6)) ];
+  case ~pattern:"[,;]\\s*" `Merged_with_next ~invert:true ",,a"
+    [ (",", (0, 1)); (",", (1, 2)); ("a", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Contiguous ~invert:false "a, b;c"
+    [
+      ("a", (0, 1)); (", ", (1, 3)); ("b", (3, 4)); (";", (4, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"[,;]\\s*" `Contiguous ~invert:false ",,a"
+    [ (",,", (0, 2)); ("a", (2, 3)) ];
+  case ~pattern:"[,;]\\s*" `Contiguous ~invert:true "a, b;c"
+    [
+      ("a", (0, 1)); (", ", (1, 3)); ("b", (3, 4)); (";", (4, 5)); ("c", (5, 6));
+    ];
+  case ~pattern:"[,;]\\s*" `Contiguous ~invert:true ",,a"
+    [ (",,", (0, 2)); ("a", (2, 3)) ];
+  case ~pattern:"x*" `Isolated ~invert:false "axxb"
+    [ ("a", (0, 1)); ("xx", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Isolated ~invert:false "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Isolated ~invert:false "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("x", (2, 3)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"x*" `Isolated ~invert:true "axxb"
+    [ ("a", (0, 1)); ("xx", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Isolated ~invert:true "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Isolated ~invert:true "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("x", (2, 3)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"x*" `Removed ~invert:false "axxb"
+    [ ("a", (0, 1)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Removed ~invert:false "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Removed ~invert:false "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"x*" `Removed ~invert:true "axxb" [ ("xx", (1, 3)) ];
+  case ~pattern:"x*" `Removed ~invert:true "ab" [];
+  case ~pattern:"x*" `Removed ~invert:true "\xC3\xA9x\xC3\xA9" [ ("x", (2, 3)) ];
+  case ~pattern:"x*" `Merged_with_previous ~invert:false "axxb"
+    [ ("axx", (0, 3)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Merged_with_previous ~invert:false "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Merged_with_previous ~invert:false "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9x", (0, 3)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"x*" `Merged_with_previous ~invert:true "axxb"
+    [ ("a", (0, 1)); ("xxb", (1, 4)) ];
+  case ~pattern:"x*" `Merged_with_previous ~invert:true "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Merged_with_previous ~invert:true "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("x\xC3\xA9", (2, 5)) ];
+  case ~pattern:"x*" `Merged_with_next ~invert:false "axxb"
+    [ ("a", (0, 1)); ("xxb", (1, 4)) ];
+  case ~pattern:"x*" `Merged_with_next ~invert:false "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Merged_with_next ~invert:false "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("x\xC3\xA9", (2, 5)) ];
+  case ~pattern:"x*" `Merged_with_next ~invert:true "axxb"
+    [ ("axx", (0, 3)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Merged_with_next ~invert:true "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Merged_with_next ~invert:true "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9x", (0, 3)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"x*" `Contiguous ~invert:false "axxb"
+    [ ("a", (0, 1)); ("xx", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Contiguous ~invert:false "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Contiguous ~invert:false "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("x", (2, 3)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"x*" `Contiguous ~invert:true "axxb"
+    [ ("a", (0, 1)); ("xx", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"x*" `Contiguous ~invert:true "ab"
+    [ ("a", (0, 1)); ("b", (1, 2)) ];
+  case ~pattern:"x*" `Contiguous ~invert:true "\xC3\xA9x\xC3\xA9"
+    [ ("\xC3\xA9", (0, 2)); ("x", (2, 3)); ("\xC3\xA9", (3, 5)) ];
+  case ~pattern:"(?=b)" `Isolated ~invert:false "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Isolated ~invert:true "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Removed ~invert:false "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Removed ~invert:true "abab" [];
+  case ~pattern:"(?=b)" `Merged_with_previous ~invert:false "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Merged_with_previous ~invert:true "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Merged_with_next ~invert:false "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Merged_with_next ~invert:true "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Contiguous ~invert:false "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"(?=b)" `Contiguous ~invert:true "abab"
+    [ ("a", (0, 1)); ("ba", (1, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Isolated ~invert:false "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Isolated ~invert:true "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Removed ~invert:false "abab" [];
+  case ~pattern:"a(?=b)|b" `Removed ~invert:true "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Merged_with_previous ~invert:false "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Merged_with_previous ~invert:true "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Merged_with_next ~invert:false "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Merged_with_next ~invert:true "abab"
+    [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
+  case ~pattern:"a(?=b)|b" `Contiguous ~invert:false "abab" [ ("abab", (0, 4)) ];
+  case ~pattern:"a(?=b)|b" `Contiguous ~invert:true "abab" [ ("abab", (0, 4)) ]
+
+(* HuggingFace takes no text that is not valid UTF-8. A byte that belongs to no
+   character matches no class, so it is text between the matches, and [(?!\S)]
+   does not hold before it, as before a character that is not whitespace. *)
+let test_split_regex_invalid_utf8 () =
+  let case = split_regex_case ~pattern:cl100k `Isolated ~invert:false in
+  case "a\xFFb" [ ("a", (0, 1)); ("\xFF", (1, 2)); ("b", (2, 3)) ];
+  case "a \xFF\xFE!"
+    [ ("a", (0, 1)); (" ", (1, 2)); ("\xFF\xFE", (2, 4)); ("!", (4, 5)) ];
+  case "a\xE2\x82" [ ("a", (0, 1)); ("\xE2\x82", (1, 3)) ];
+  case "  \xC3" [ (" ", (0, 1)); (" ", (1, 2)); ("\xC3", (2, 3)) ]
+
+(* The members of a sequence that follow a regular expression split walk its
+   pieces, each standing for a whole text: the lookahead holds at the end of a
+   piece whatever follows it in the text. *)
+let test_split_regex_in_sequence () =
+  let pre =
+    Pre.sequence
+      [
+        Pre.split ~pattern:"|" ~behavior:`Removed ();
+        Pre.split_regex ~pattern:{re|\s+(?!\S)|\s+|\S+|re} ~behavior:`Isolated
+          ();
+      ]
+  in
+  check_tokenization "lookahead at the end of a piece"
+    (Pre.pre_tokenize pre "a  |b  c")
+    [
+      ("a", (0, 1));
+      ("  ", (1, 3));
+      ("b", (4, 5));
+      (" ", (5, 6));
+      (" ", (6, 7));
+      ("c", (7, 8));
+    ];
+  let llama3 =
+    Pre.sequence
+      [
+        Pre.split_regex ~pattern:cl100k ~behavior:`Isolated ();
+        Pre.byte_level ~add_prefix_space:false ~use_regex:false ();
+      ]
+  in
+  check_tokenization "byte-level encoded pieces"
+    (Pre.pre_tokenize llama3 "Hi  there\n")
+    [
+      ("Hi", (0, 2));
+      ("\xC4\xA0", (2, 3));
+      ("\xC4\xA0there", (3, 9));
+      ("\xC4\x8A", (9, 10));
+    ]
+
+let test_split_regex_rejected () =
+  let case pattern reason =
+    match Pre.split_regex ~pattern () with
+    | exception Invalid_argument msg ->
+        equal
+          ~msg:(Printf.sprintf "rejecting %S" pattern)
+          string
+          (Printf.sprintf "invalid regular expression %S: %s" pattern reason)
+          msg
+    | _ -> failf "%S was accepted" pattern
+  in
+  case "^a" "anchors are not supported in this pattern";
+  case "a$" "anchors are not supported in this pattern";
+  case "\\Aa" "anchors are not supported in this pattern";
+  case "a\\z" "anchors are not supported in this pattern";
+  case "\\Ga" "anchors are not supported in this pattern";
+  case "\\s+(?!\\S)a" "lookahead is supported only where it ends the pattern";
+  case "(?<=a)b" "lookbehind is not supported";
+  case "a++" "possessive quantifiers are not supported"
+
 let test_char_delimiter_split () =
   let test_case delim text expected =
     let result = Pre.pre_tokenize (Pre.char_delimiter delim) text in
@@ -1498,6 +2001,8 @@ let test_json_round_trip () =
   round_trip "whitespace_split" Pre.whitespace_split;
   round_trip "punctuation" (Pre.punctuation ~behavior:`Merged_with_previous ());
   round_trip "split" (Pre.split ~pattern:"::" ~behavior:`Isolated ());
+  round_trip "split_regex"
+    (Pre.split_regex ~pattern:cl100k ~behavior:`Isolated ());
   round_trip "char_delimiter" (Pre.char_delimiter ",");
   round_trip "char_delimiter ▁" (Pre.char_delimiter "▁");
   round_trip "digits" (Pre.digits ~individual_digits:true ());
@@ -1534,8 +2039,14 @@ let test_json_of_hf () =
     {|{"type":"Split","pattern":{"String":"-"},"behavior":"Isolated","invert":false}|};
   rejects "split with a bare pattern"
     {|{"type":"Split","pattern":",","behavior":"Removed","invert":false}|};
-  rejects "split with a regex pattern"
+  accepts "split with a regex pattern"
+    {|{"type":"Split","pattern":{"Regex":"\\d+"},"behavior":"Removed","invert":false}|}
     {|{"type":"Split","pattern":{"Regex":"\\d+"},"behavior":"Removed","invert":false}|};
+  accepts "split with the cl100k pattern"
+    {|{"type":"Split","pattern":{"Regex":"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"},"behavior":"Isolated","invert":false}|}
+    {|{"type":"Split","pattern":{"Regex":"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"},"behavior":"Isolated","invert":false}|};
+  rejects "split with a regex that is not supported"
+    {|{"type":"Split","pattern":{"Regex":"(?<=a)b"},"behavior":"Removed","invert":false}|};
   rejects "metaspace with a capitalised scheme"
     {|{"type":"Metaspace","replacement":"_","prepend_scheme":"Always"}|};
   rejects "metaspace without a replacement" {|{"type":"Metaspace"}|};
@@ -1583,6 +2094,12 @@ let () =
         [
           test "every behavior and invert" test_split_behaviors;
           test "patterns of several characters and bytes" test_split_patterns;
+          test "regex: the cl100k pattern" test_split_regex_cl100k;
+          test "regex: the o200k pattern" test_split_regex_o200k;
+          test "regex: every behavior and invert" test_split_regex_behaviors;
+          test "regex: invalid UTF-8" test_split_regex_invalid_utf8;
+          test "regex: in a sequence" test_split_regex_in_sequence;
+          test "regex: rejected patterns" test_split_regex_rejected;
           test "CharDelimiterSplit" test_char_delimiter_split;
         ];
       group "sequence"

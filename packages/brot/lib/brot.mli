@@ -271,8 +271,12 @@ module Normalizer : sig
       stand for characters rather than bytes, and [\p{..}] selects a general
       category ([L], [Lu], [Nd], ...). [^] and [$] are line anchors, [\A], [\z]
       and [\Z] text anchors. Groups, alternation, greedy and lazy quantifiers
-      and bracket classes are supported; case-insensitive matching, lookaround,
-      backreferences, word boundaries and possessive quantifiers are not.
+      and bracket classes are supported, as are the case-insensitive option
+      ([(?i)], [(?i:..)]), under which a character or a bracket class stands for
+      every character with the same simple case folding, and a lookahead
+      ([(?=..)], or [(?!..)] over one character) that ends the pattern or one of
+      its alternatives. A lookahead anywhere else, lookbehind, backreferences,
+      atomic groups, word boundaries and possessive quantifiers are not.
 
       Raises [Invalid_argument] if [pattern] is invalid or uses an unsupported
       construct; the message says which. *)
@@ -439,8 +443,8 @@ module Pre_tokenizer : sig
       [behavior] defaults to [`Isolated]. *)
 
   val split : pattern:string -> ?behavior:behavior -> ?invert:bool -> unit -> t
-  (** [split ~pattern ()] splits on a literal string [pattern]. HuggingFace's
-      regular expression patterns have no equivalent here.
+  (** [split ~pattern ()] splits on a literal string [pattern]. See
+      {!split_regex} to split on a regular expression.
 
       [behavior] defaults to [`Removed]. When [invert] is [true] the delimiters
       are the runs of text between the occurrences of [pattern], and those
@@ -449,6 +453,25 @@ module Pre_tokenizer : sig
       An empty [pattern] matches at every position, so the pretokens are the
       characters — and none of them when [invert] is [true] and [behavior] is
       [`Removed]. *)
+
+  val split_regex :
+    pattern:string -> ?behavior:behavior -> ?invert:bool -> unit -> t
+  (** [split_regex ~pattern ()] is {!split} on the matches of the regular
+      expression [pattern] rather than on the occurrences of a string. Matches
+      are taken leftmost first without overlap, each the one a backtracking
+      engine would find: the first alternative that matches, with greedy
+      repetition.
+
+      [pattern] is written in the dialect of tokenizer files, as for
+      {!Normalizer.replace_regex}, except that anchors are not supported. A
+      lookahead that ends the pattern or one of its alternatives is how
+      [\s+(?!\S)] leaves the last space of a run to the word after it.
+
+      An empty match cuts the text where it stands, so a [pattern] that matches
+      the empty string everywhere gives the characters.
+
+      Raises [Invalid_argument] if [pattern] is not valid or uses a construct
+      that is not supported; the message says which. *)
 
   val char_delimiter : string -> t
   (** [char_delimiter c] splits on the character [c], removing it from the
@@ -557,9 +580,8 @@ module Pre_tokenizer : sig
   val of_json : Jsont.json -> (t, string) result
   (** [of_json json] is a pre-tokenizer from HuggingFace JSON format. Errors if
       [json] is not an object, has a missing or unknown ["type"] field, has
-      invalid parameters, or is a ["Split"] whose pattern is a regular
-      expression ([{"Regex": ...}]) rather than a literal ([{"String": ...}]).
-  *)
+      invalid parameters, or is a ["Split"] whose regular expression
+      ([{"Regex": ...}]) uses a construct {!split_regex} does not support. *)
 end
 
 module Post_processor : sig

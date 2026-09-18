@@ -516,6 +516,7 @@ Common pre-tokenizers:
 | `pre_tokenizers.UnicodeScripts()`      | `Pre_tokenizer.unicode_scripts`  |
 | `pre_tokenizers.CharDelimiterSplit(c)` | `Pre_tokenizer.char_delimiter c`    |
 | `pre_tokenizers.Split(pattern, ...)`   | `Pre_tokenizer.split ~pattern ()`   |
+| `pre_tokenizers.Split(Regex(pattern), ...)` | `Pre_tokenizer.split_regex ~pattern ()` |
 | `pre_tokenizers.Sequence([...])`       | `Pre_tokenizer.sequence [...]`      |
 
 `unicode_scripts` reads the script of a character from the current Unicode
@@ -531,6 +532,17 @@ tables: `\p{L}` and `\p{N}`, which `byte_level` splits on, disagree on about
 HuggingFace's tables were generated, which brot classifies as letters, numbers
 or punctuation and HuggingFace does not; two go the other way (U+166D and
 U+111C9 are punctuation to HuggingFace and not to Unicode 17).
+
+`split_regex` reads the pattern of a `Split` whose `pattern` is a `Regex`, which
+is how the tokenizer files of Llama 3, Qwen, DeepSeek-V3 and gpt-oss describe
+their pre-tokenization, and gives the pieces HuggingFace gives. A lookahead is
+accepted where it ends the pattern or one of its alternatives, as in
+`\s+(?!\S)`; a negative one looks at a single character. Under `(?i:...)` a
+character matches the characters with the same simple case folding, so `'s`
+matches `'S` and `'ſ`, but a folding to several characters is not followed:
+`(?i:ss)` does not match "ß". Lookbehind, a lookahead followed by more of the
+pattern, anchors, backreferences, atomic groups and possessive quantifiers are
+rejected when the file is loaded, with a message naming the construct.
 
 ### 9.3 Post-processor
 

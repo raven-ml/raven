@@ -106,6 +106,7 @@ Available pre-tokenizers:
 | `byte_level ()`       | GPT-2 style byte-level encoding with regex splitting            |
 | `punctuation ()`      | Separate punctuation from alphanumeric content                  |
 | `split ~pattern ()`   | Split on a literal string pattern                               |
+| `split_regex ~pattern ()` | Split on the matches of a regular expression                |
 | `char_delimiter c`    | Split on a single character                                     |
 | `digits ()`           | Split on digit boundaries                                       |
 | `metaspace ()`        | Replace whitespace with a visible marker (SentencePiece)        |
@@ -144,6 +145,42 @@ let pre =
 let pieces = Pre_tokenizer.pre_tokenize pre "order 42 shipped"
 (* [("order", _); ("4", _); ("2", _); ("shipped", _)] *)
 ```
+
+### Splitting on a regular expression
+
+`split_regex` takes the pattern a tokenizer file carries, in the same dialect:
+Unicode classes such as `\p{L}` and `\p{N}`, alternation that prefers its first
+branch, greedy quantifiers, the case-insensitive group `(?i:...)`, and a
+lookahead that ends the pattern or one of its alternatives. Each match is a
+piece under `` `Isolated ``; the other behaviors treat a match as the delimiter,
+as `split` does.
+
+```ocaml
+open Brot
+
+(* Words with their leading space, digits one to three at a time, and
+   whitespace that leaves its last character to the word after it. *)
+let pre =
+  Pre_tokenizer.split_regex
+    ~pattern:{|\p{L}+| \p{L}+|\p{N}{1,3}|\s+(?!\S)|\s+|[^\s\p{L}\p{N}]+|}
+    ~behavior:`Isolated ()
+
+let pieces = Pre_tokenizer.pre_tokenize pre "pay  12345 now"
+(* [("pay", _); (" ", _); (" ", _); ("123", _); ("45", _); (" now", _)] *)
+```
+
+`\s+(?!\S)` matches a run of whitespace only as far as the next character is
+still whitespace, or the text ends. Before a word it stops one character short,
+and that character goes to the alternative that can use it: here it joins
+`now`, and before `12345`, which takes no leading space, it is a piece of its
+own.
+
+The pattern is compiled once into an automaton that reads the text in a single
+pass without backtracking, so matching time is linear in the text whatever the
+pattern. That is also what bounds the dialect: a lookahead is supported where
+nothing of the match follows it, and lookbehind, backreferences, anchors,
+atomic groups and possessive quantifiers are rejected when the pre-tokenizer
+is built, with a message naming the construct.
 
 ## Tokenization Algorithms
 

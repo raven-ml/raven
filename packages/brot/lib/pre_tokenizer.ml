@@ -14,6 +14,10 @@ type behavior =
 
 type prepend_scheme = [ `First | `Never | `Always ]
 
+type pattern =
+  | Literal of string
+  | Regex of { source : string; compiled : Regex.t }
+
 type t =
   | Byte_level of {
       add_prefix_space : bool;
@@ -24,7 +28,7 @@ type t =
   | Whitespace
   | Whitespace_split
   | Punctuation of { behavior : behavior }
-  | Split of { pattern : string; behavior : behavior; invert : bool }
+  | Split of { pattern : pattern; behavior : behavior; invert : bool }
   | Char_delimiter of string
   | Digits of { individual : bool }
   | Metaspace of {
@@ -57,8 +61,11 @@ let err_expected_object = "expected JSON object"
 let err_missing_behavior = "missing 'behavior' field"
 let err_split_missing = "requires 'pattern' and 'behavior'"
 let err_char_delim_missing = "requires 'delimiter' as one character"
-let err_split_pattern = "expected 'pattern' as {\"String\": ...}"
-let err_split_regex = "regular expression 'pattern' is not supported"
+
+let err_split_pattern =
+  "expected 'pattern' as {\"String\": ...} or {\"Regex\": ...}"
+
+let err_regex source msg = strf "invalid regular expression %S: %s" source msg
 let err_metaspace_missing = "requires a non-empty 'replacement'"
 let err_metaspace_scheme = "expected a string for 'prepend_scheme'"
 let err_sequence_missing = "requires 'pretokenizers' list"
@@ -612,6 +619,73 @@ let fill_split ~pattern ~behavior ~invert s ~pos ~stop spans =
   Spans.set_count spans !n;
   !p
 
+(* The occurrences are the matches of a regular expression, found by searching
+   rather than by testing each position, so the last match found is kept until
+   the walk has passed it: the text before a match and the match itself are two
+   segments from one search. A segment is read as [(stop lsl 1) lor is_match].
+
+   An empty match cuts the text where it stands and is no segment of its own;
+   the search then resumes one character further, as it does in the [Replace]
+   normalizer. Text segments are maximal, so [`Contiguous] only ever joins
+   matches. *)
+let fill_split_regex ~regex ~behavior ~invert s ~pos ~stop spans =
+  let keep = behavior <> `Removed in
+  let group = behavior = `Contiguous in
+  let merge_previous = behavior = `Merged_with_previous in
+  let merge_next = behavior = `Merged_with_next in
+  let m_start = ref (-1) in
+  let m_stop = ref (-1) in
+  let search i =
+    if !m_start < i then
+      match Regex.find regex s ~pos:i ~stop with
+      | Some (start, finish) ->
+          m_start := start;
+          m_stop := finish
+      | None ->
+          m_start := stop;
+          m_stop := stop
+  in
+  let segment i =
+    search i;
+    if !m_start = i && !m_stop = i then begin
+      m_start := -1;
+      search (i + Char_class.at_len (Char_class.at s i ~stop))
+    end;
+    if !m_start > i then !m_start lsl 1 else (!m_stop lsl 1) lor 1
+  in
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let g = segment i in
+    let is_match = segment_is_delimiter g in
+    let delimiter = is_match <> invert in
+    let merge = if delimiter then merge_next else merge_previous in
+    let e = ref (segment_stop g) in
+    if group then
+      begin if is_match then begin
+        let joining = ref true in
+        while !joining && !e < stop do
+          search !e;
+          if !m_start = !e && !m_stop > !e then e := !m_stop
+          else joining := false
+        done
+      end
+      end
+    else if merge && !e < stop then begin
+      let g = segment !e in
+      if segment_is_delimiter g <> is_match then e := segment_stop g
+    end;
+    if keep || not delimiter then begin
+      Spans.write spans !n i !e;
+      incr n
+    end;
+    p := !e
+  done;
+  Spans.set_count spans !n;
+  !p
+
 let fill_characters s ~pos ~stop spans =
   let capacity = Spans.capacity spans in
   let n = ref (Spans.count spans) in
@@ -845,10 +919,12 @@ let rec fill_walk t s ~pos ~stop spans =
      and the pieces are the characters — unless [invert] makes those occurrences
      the text, and [`Removed] then leaves nothing, the range being consumed
      without a span. *)
-  | Split { pattern = ""; behavior = `Removed; invert = true } -> stop
-  | Split { pattern = ""; _ } -> fill_characters s ~pos ~stop spans
-  | Split { pattern; behavior; invert } ->
+  | Split { pattern = Literal ""; behavior = `Removed; invert = true } -> stop
+  | Split { pattern = Literal ""; _ } -> fill_characters s ~pos ~stop spans
+  | Split { pattern = Literal pattern; behavior; invert } ->
       fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
+  | Split { pattern = Regex { compiled; _ }; behavior; invert } ->
+      fill_split_regex ~regex:compiled ~behavior ~invert s ~pos ~stop spans
   | Char_delimiter delimiter ->
       fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
         ~stop spans
@@ -1112,7 +1188,19 @@ let byte_level ?(add_prefix_space = true) ?(use_regex = true)
 let punctuation ?(behavior = `Isolated) () = Punctuation { behavior }
 
 let split ~pattern ?(behavior = `Removed) ?(invert = false) () =
-  Split { pattern; behavior; invert }
+  Split { pattern = Literal pattern; behavior; invert }
+
+(* A piece stands for a whole text to the members of a sequence that follow it,
+   where an anchor would still look at the text around it. *)
+let regex source =
+  Result.map
+    (fun compiled -> Regex { source; compiled })
+    (Regex.compile ~anchors:false source)
+
+let split_regex ~pattern ?(behavior = `Removed) ?(invert = false) () =
+  match regex pattern with
+  | Ok pattern -> Split { pattern; behavior; invert }
+  | Error msg -> invalid_arg (err_regex pattern msg)
 
 let char_delimiter delimiter =
   if not (is_one_character delimiter) then invalid_arg err_delimiter;
@@ -1173,8 +1261,12 @@ let rec pp ppf = function
   | Whitespace_split -> Format.pp_print_string ppf "WhitespaceSplit"
   | Punctuation { behavior } ->
       Format.fprintf ppf "@[<1>Punctuation(%s)@]" (behavior_to_string behavior)
-  | Split { pattern; behavior; invert } ->
+  | Split { pattern = Literal pattern; behavior; invert } ->
       Format.fprintf ppf "@[<1>Split(%S,@ %s,@ invert=%b)@]" pattern
+        (behavior_to_string behavior)
+        invert
+  | Split { pattern = Regex { source; _ }; behavior; invert } ->
+      Format.fprintf ppf "@[<1>Split(Regex(%S),@ %s,@ invert=%b)@]" source
         (behavior_to_string behavior)
         invert
   | Char_delimiter delimiter -> Format.fprintf ppf "CharDelimiter(%S)" delimiter
@@ -1213,10 +1305,15 @@ let rec to_json = function
           ("behavior", Jsont.Json.string (behavior_to_string behavior));
         ]
   | Split { pattern; behavior; invert } ->
+      let tag, pattern =
+        match pattern with
+        | Literal pattern -> ("String", pattern)
+        | Regex { source; _ } -> ("Regex", source)
+      in
       json_obj
         [
           ("type", Jsont.Json.string "Split");
-          ("pattern", json_obj [ ("String", Jsont.Json.string pattern) ]);
+          ("pattern", json_obj [ (tag, Jsont.Json.string pattern) ]);
           ("behavior", Jsont.Json.string (behavior_to_string behavior));
           ("invert", Jsont.Json.bool invert);
         ]
@@ -1278,8 +1375,9 @@ let int_field name default fields =
 let split_pattern_of_json = function
   | Jsont.Object (fields, _) -> (
       match (find_field "String" fields, find_field "Regex" fields) with
-      | Some (Jsont.String (pattern, _)), _ -> Ok pattern
-      | _, Some _ -> Error err_split_regex
+      | Some (Jsont.String (pattern, _)), _ -> Ok (Literal pattern)
+      | _, Some (Jsont.String (source, _)) ->
+          Result.map_error (err_regex source) (regex source)
       | _ -> Error err_split_pattern)
   | _ -> Error err_split_pattern
 
