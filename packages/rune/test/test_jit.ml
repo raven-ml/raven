@@ -907,6 +907,49 @@ let test_scatter_unique_indices () =
     ~values:(iota [| 2; 2 |])
     (iota [| 4; 2 |])
 
+(* The promise of unique indices broken at one row, the way a cache write aims
+   every token it does not store at a scratch row: eager and compiled, every
+   other row is exact and each element of the repeated row is one of the
+   updates aimed at it. *)
+let test_scatter_unique_indices_broken_at_one_row () =
+  let rows = 6 and width = 8 and scratch = 5 in
+  let targets = [| 2; scratch; 0; scratch; scratch; 3 |] in
+  let indices =
+    Nx.broadcast_to [| rows; width |]
+      (i32 [| rows; 1 |] targets)
+  in
+  let values = iota [| rows; width |] in
+  let f t = Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values t in
+  let t = Nx.zeros f32 [| rows; width |] in
+  let check name got =
+    Array.iteri
+      (fun k target ->
+        if target <> scratch then
+          for j = 0 to width - 1 do
+            equal
+              ~msg:(Printf.sprintf "%s, row %d, element %d" name target j)
+              float_exact
+              (float_of_int ((k * width) + j + 1))
+              got.((target * width) + j)
+          done)
+      targets;
+    for j = 0 to width - 1 do
+      let v = got.((scratch * width) + j) in
+      let aimed k = v = float_of_int ((k * width) + j + 1) in
+      is_true
+        ~msg:(Printf.sprintf "%s, the repeated row holds an update at %d" name j)
+        (aimed 1 || aimed 3 || aimed 4)
+    done;
+    for j = 0 to width - 1 do
+      equal ~msg:(name ^ ", an untouched row") float_exact 0.0
+        got.((1 * width) + j)
+    done
+  in
+  check "eager" (to_arr (f t));
+  let g = Rune.jit' f in
+  check "compiled" (to_arr (g t));
+  check "replay" (to_arr (g t))
+
 (* Eager raises on an index outside the axis; compiled, the update is dropped.
    -1 is the address a slot map gives a token that is not written. *)
 let test_scatter_out_of_range_writes_nothing () =
@@ -1791,6 +1834,8 @@ let tests =
         test "scatter orders duplicate updates" test_scatter_duplicates;
         test "scatter along a middle axis" test_scatter_middle_axis;
         test "scatter with unique indices" test_scatter_unique_indices;
+        test "scatter with unique indices broken at one row"
+          test_scatter_unique_indices_broken_at_one_row;
         test "scatter drops an update outside the axis"
           test_scatter_out_of_range_writes_nothing;
         test "scatter carries int and bfloat16 payloads"

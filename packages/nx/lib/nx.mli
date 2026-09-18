@@ -1332,8 +1332,10 @@ val scatter :
     [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
     the last update winning at duplicate positions; [`Add] accumulates every
     update into [t]'s value. [unique_indices = true] promises that no position
-    is selected twice, letting backends skip duplicate handling; the result is
-    undefined if the promise is broken.
+    is selected twice, letting backends write the updates in any order. Where
+    the promise is broken, a position selected more than once holds an
+    unspecified one of its updates under [`Set] and an unspecified value under
+    [`Add]; every other position is exact.
 
     [scatter] differentiates with respect to both [t] and [values].
 

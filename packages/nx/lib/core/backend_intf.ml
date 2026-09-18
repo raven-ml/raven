@@ -533,7 +533,10 @@ module type S = sig
 
       [`Set] uses the last update for duplicate indices; [`Add] accumulates
       every update into the template's value. [unique_indices = true] hints that
-      indices are unique.
+      indices are unique, so updates may be written in any order: a position
+      selected more than once then holds an unspecified one of its updates under
+      [`Set] and an unspecified value under [`Add], and every other position
+      must still be exact.
 
       Backend-contract operations take no optional arguments: user-facing
       defaults (here [`Set] and [false]) live on the frontend, which passes both

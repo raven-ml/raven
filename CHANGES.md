@@ -835,6 +835,12 @@ thread.
 
 ### Nx
 
+- `scatter` states what a broken `unique_indices` promise leaves: a position
+  selected more than once holds an unspecified one of its updates under
+  `` `Set `` and an unspecified value under `` `Add ``, and every other position
+  is exact. The whole result used to be undefined, which ruled out aiming the
+  updates one does not want at a scratch row. Eager and `Rune.jit` both keep
+  the narrower promise.
 - Add `sliding_window`, a zero-copy view framing a tensor into windows of a
   given length along an axis. Framing without a copy was reachable only through
   `stft`, which bundles a taper and a transform with it; a reduction, a filter
