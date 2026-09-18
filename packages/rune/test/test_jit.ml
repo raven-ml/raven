@@ -1178,6 +1178,67 @@ let delta f =
     s1.bytes_to_device - s0.bytes_to_device,
     s1.bytes_from_device - s0.bytes_from_device )
 
+(* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
+   these values are larger than that, with a last chunk shorter than the
+   others. *)
+
+let chunk = 64 * 1024 * 1024
+
+(* [f] on the forced-copy device against [f] eagerly: every element uploaded,
+   computed and read back in its place. *)
+let check_transfers ~msg f x =
+  with_force_copy (fun () ->
+      let (y : Nx.int32_t), up, _ = delta (fun () -> Rune.jit' f x) in
+      let worst, _, down =
+        delta (fun () -> Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
+      in
+      equal ~msg:(msg ^ ": difference from eager") int32 0l worst;
+      is_true ~msg:(msg ^ ": larger than a chunk") (Nx.nbytes x > chunk);
+      equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
+      equal ~msg:(msg ^ ": bytes read back") int (Nx.nbytes x) down)
+
+let test_chunked_contiguous () =
+  let n = (chunk / 4) + 4099 in
+  check_transfers ~msg:"contiguous" (fun x -> Nx.add_s x 1l)
+    (Nx.arange Nx.int32 0 n 1)
+
+let test_chunked_offset () =
+  let n = (chunk / 4) + 4099 in
+  let x = Nx.slice [ Nx.R (3, n + 3) ] (Nx.arange Nx.int32 0 (n + 5) 1) in
+  is_true ~msg:"contiguous at an offset"
+    (Nx.is_c_contiguous x && Nx.offset x = 3);
+  check_transfers ~msg:"offset" (fun x -> Nx.add_s x 1l) x
+
+let test_chunked_strided () =
+  let rows = 4100 and cols = 4099 in
+  let x =
+    Nx.matrix_transpose
+      (Nx.reshape [| rows; cols |] (Nx.arange Nx.int32 0 (rows * cols) 1))
+  in
+  is_true ~msg:"strided" (not (Nx.is_c_contiguous x));
+  check_transfers ~msg:"strided" (fun x -> Nx.add_s x 1l) x
+
+(* A strided value whose rows are themselves larger than a chunk. *)
+let test_chunked_strided_rows () =
+  let cols = (chunk / 4) + 4099 in
+  let x =
+    Nx.flip ~axes:[ 1 ]
+      (Nx.reshape [| 2; cols |] (Nx.arange Nx.int32 0 (2 * cols) 1))
+  in
+  is_true ~msg:"strided" (not (Nx.is_c_contiguous x));
+  check_transfers ~msg:"strided rows" (fun x -> Nx.add_s x 1l) x
+
+let test_chunked_capture () =
+  let n = (chunk / 4) + 4099 in
+  let w =
+    Nx.matrix_transpose (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1))
+  in
+  with_force_copy (fun () ->
+      let f s = Nx.add (Nx.reshape [| n |] w) s in
+      let s = Nx.create Nx.int32 [| 1 |] [| 5l |] in
+      let worst = Nx.max (Nx.abs (Nx.sub (Rune.jit' f s) (f s))) in
+      equal ~msg:"capture: difference from eager" int32 0l (Nx.item [] worst))
+
 let test_feedback_chain_moves_no_bytes () =
   with_force_copy (fun () ->
       let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
@@ -1914,6 +1975,15 @@ let tests =
           test_offset_view_input_matches_eager;
         test "outputs have their own storage"
           test_outputs_have_their_own_storage;
+      ];
+    group "chunked transfers"
+      [
+        slow "a contiguous value larger than a chunk" test_chunked_contiguous;
+        slow "a contiguous value at an offset" test_chunked_offset;
+        slow "a strided value" test_chunked_strided;
+        slow "a strided value with rows larger than a chunk"
+          test_chunked_strided_rows;
+        slow "a capture larger than a chunk" test_chunked_capture;
       ];
     group "residency"
       [

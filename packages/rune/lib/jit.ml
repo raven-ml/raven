@@ -2168,98 +2168,168 @@ let wrap_tensor : type a b.
    directly. *)
 type host_out = Host : ('a, 'b) ND.t * ('a, 'b) Nx_buffer.t -> host_out
 
-(* Byte staging for device transfers, reused across calls and keyed by size so a
-   compiled program does not repopulate the page tables with fresh
-   multi-megabyte [Bytes] on every replay. Compiled functions are not
-   thread-safe, and each scratch use completes before the next lookup. *)
+(* Chunked transfers
+
+   Every copy between host and device moves at most [chunk_bytes] at a time,
+   through a window of the device buffer, so no transfer stages a whole leaf on
+   the host. *)
+
+let chunk_bytes = 64 * 1024 * 1024
+
+(* A device may park host staging per pending copy until it next synchronizes
+   (CUDA pins one buffer per copy), so a long run of copies synchronizes every
+   [sync_bytes]. *)
+let sync_bytes = 256 * 1024 * 1024
+let unsynced_bytes = ref 0
+
+let note_copied dev n =
+  unsynced_bytes := !unsynced_bytes + n;
+  if !unsynced_bytes >= sync_bytes then begin
+    Tolk.Device.synchronize dev;
+    unsynced_bytes := 0
+  end
+
+(* Byte staging, keyed by size and reused across calls, so that a compiled
+   program does not repopulate the page tables with a fresh [Bytes] per leaf on
+   every replay. A transfer primitive wants bytes of exactly its length; every
+   full chunk shares one [Bytes], and the table holds the shorter lengths.
+   Compiled functions are not thread-safe, and each use completes before the
+   next lookup. *)
 type scratch = (int, Bytes.t) Hashtbl.t
 
+let full_chunk = lazy (Bytes.create chunk_bytes)
+
 let scratch_bytes tbl size =
-  match Hashtbl.find_opt tbl size with
-  | Some b -> b
-  | None ->
-      let b = Bytes.create size in
-      Hashtbl.add tbl size b;
-      b
+  if size = chunk_bytes then Lazy.force full_chunk
+  else
+    match Hashtbl.find_opt tbl size with
+    | Some b -> b
+    | None ->
+        let b = Bytes.create size in
+        Hashtbl.add tbl size b;
+        b
+
+(* The window of [buf] that starts at byte [off] and spans [len] bytes; [buf]
+   itself when the window covers it. A window is released before its base
+   can be. *)
+let with_window buf ~off ~len f =
+  if off = 0 && len = Tolk.Device.Buffer.nbytes buf then f buf
+  else begin
+    let w =
+      Tolk.Device.Buffer.view buf ~size:len ~dtype:Tolk_uop.Dtype.uint8
+        ~offset:off
+    in
+    Tolk.Device.Buffer.ensure_allocated w;
+    Fun.protect
+      ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
+      (fun () -> f w)
+  end
+
+(* Copy a tensor's logical contents into [buf] from byte [off] on. A contiguous
+   source, offset or not, is read in place chunk by chunk. A strided one is cut
+   along its leading axis into pieces of at most a chunk, each made contiguous
+   on its own. *)
+let rec copyin_at : type a b.
+    scratch ->
+    Tolk.Device.t ->
+    Tolk.Device.Buffer.t ->
+    off:int ->
+    (a, b) Nx_effect.t ->
+    unit =
+ fun sc dev buf ~off x ->
+  let v = Nx_effect.view x in
+  let shape = NV.shape v in
+  let item = itemsize (Nx_effect.dtype x) in
+  let nbytes = numel shape * item in
+  if nbytes = 0 then ()
+  else if NV.is_c_contiguous v then begin
+    let host = Nx_effect.to_host x in
+    let chunk = chunk_bytes / item in
+    let n = numel shape in
+    let pos = ref 0 in
+    while !pos < n do
+      let len = Int.min chunk (n - !pos) in
+      let bytes = scratch_bytes sc (len * item) in
+      Nx_buffer.blit_to_bytes ~src_off:(NV.offset v + !pos) ~len host bytes;
+      with_window buf ~off:(off + (!pos * item)) ~len:(len * item) (fun w ->
+          Tolk.Device.Buffer.copyin w bytes);
+      bytes_to_device := !bytes_to_device + (len * item);
+      note_copied dev (len * item);
+      pos := !pos + len
+    done
+  end
+  else if nbytes <= chunk_bytes then
+    copyin_at sc dev buf ~off (Nx_effect.contiguous x)
+  else begin
+    (* Axes of size one before [axis] do not change the row-major order. *)
+    let axis = ref 0 in
+    while shape.(!axis) = 1 do
+      incr axis
+    done;
+    let axis = !axis in
+    let row = nbytes / shape.(axis) in
+    let rows = Int.max 1 (chunk_bytes / row) in
+    let r = ref 0 in
+    while !r < shape.(axis) do
+      let stop = Int.min shape.(axis) (!r + rows) in
+      let ranges =
+        Array.mapi (fun d n -> if d = axis then (!r, stop) else (0, n)) shape
+      in
+      copyin_at sc dev buf ~off:(off + (!r * row)) (Nx_effect.shrink x ranges);
+      r := stop
+    done
+  end
 
 (* Copy a tensor's logical contents into a device buffer. *)
-let copyin_tensor : type a b.
-    scratch -> Tolk.Device.Buffer.t -> (a, b) Nx_effect.t -> unit =
- fun sc buf x ->
-  let xc = Nx_effect.contiguous x in
-  let host = Nx_effect.to_host xc in
-  let v = Nx_effect.view xc in
-  let n = numel (NV.shape v) in
-  let bytes = scratch_bytes sc (n * itemsize (Nx_effect.dtype x)) in
-  Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
+let copyin_tensor sc dev buf x =
   Tolk.Device.Buffer.ensure_allocated buf;
-  bytes_to_device := !bytes_to_device + Bytes.length bytes;
-  Tolk.Device.Buffer.copyin buf bytes
+  copyin_at sc dev buf ~off:0 x
 
-(* Byte geometry of an even split of [shape] along [axis] into [parts]: [outer]
-   host rows, [shard_row] bytes of each row per shard, [full_row] bytes per row
-   in total. Axis 0 degenerates to one contiguous block per shard ([outer] =
-   1). *)
-let shard_rows shape axis parts elt =
-  let outer = ref 1 in
-  for d = 0 to axis - 1 do
-    outer := !outer * shape.(d)
-  done;
-  let inner = ref elt in
-  for d = axis + 1 to Array.length shape - 1 do
-    inner := !inner * shape.(d)
-  done;
-  let full_row = shape.(axis) * !inner in
-  (!outer, full_row / parts, full_row)
+(* Copy a device buffer's contents into [host] from element [dst_off] on. *)
+let copyout_into : type a b.
+    scratch -> Tolk.Device.Buffer.t -> dst_off:int -> (a, b) Nx_buffer.t -> unit
+    =
+ fun sc buf ~dst_off host ->
+  let item = itemsize (Nx_buffer.kind host) in
+  let n = Tolk.Device.Buffer.nbytes buf / item in
+  let chunk = chunk_bytes / item in
+  let pos = ref 0 in
+  while !pos < n do
+    let len = Int.min chunk (n - !pos) in
+    let bytes = scratch_bytes sc (len * item) in
+    with_window buf ~off:(!pos * item) ~len:(len * item) (fun w ->
+        Tolk.Device.Buffer.copyout w bytes);
+    Nx_buffer.blit_from_bytes ~dst_off:(dst_off + !pos) ~len bytes host;
+    bytes_from_device := !bytes_from_device + (len * item);
+    pos := !pos + len
+  done
 
-(* A tensor's logical contents as contiguous bytes, staged in [sc]. *)
-let tensor_bytes : type a b. scratch -> (a, b) Nx_effect.t -> Bytes.t =
- fun sc x ->
-  let xc = Nx_effect.contiguous x in
-  let host = Nx_effect.to_host xc in
-  let v = Nx_effect.view xc in
-  let n = numel (NV.shape v) in
-  let bytes = scratch_bytes sc (n * itemsize (Nx_effect.dtype x)) in
-  Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
-  bytes
-
-(* Upload a host tensor to a device tuple: copy the full bytes to every device
-   (replication), or cut the per-device slices of the shard axis. *)
+(* Upload a host tensor to a device tuple: the whole value to every device
+   (replication), or to each device its slice of the shard axis. *)
 let upload_multi : type a b.
     scratch ->
     leaf_place ->
+    Tolk.Device.t list ->
     Tolk.Device.Buffer.t list ->
     (a, b) Nx_effect.t ->
     unit =
- fun sc place bufs x ->
-  let bytes = tensor_bytes sc x in
-  let copyin buf b =
-    Tolk.Device.Buffer.ensure_allocated buf;
-    bytes_to_device := !bytes_to_device + Bytes.length b;
-    Tolk.Device.Buffer.copyin buf b
-  in
+ fun sc place devs bufs x ->
   match place with
-  | P_replicated | P_single -> List.iter (fun buf -> copyin buf bytes) bufs
+  | P_replicated | P_single ->
+      List.iter2 (fun dev buf -> copyin_tensor sc dev buf x) devs bufs
   | P_sharded axis ->
       let shape = shape_of x in
-      let parts = List.length bufs in
-      let outer, shard_row, full_row =
-        shard_rows shape axis parts (itemsize (Nx_effect.dtype x))
-      in
-      let shard_bytes = outer * shard_row in
+      let part = shape.(axis) / List.length bufs in
       List.iteri
-        (fun k buf ->
-          if shard_bytes = Bytes.length bytes then copyin buf bytes
-          else begin
-            let sb = scratch_bytes sc shard_bytes in
-            for o = 0 to outer - 1 do
-              Bytes.blit bytes
-                ((o * full_row) + (k * shard_row))
-                sb (o * shard_row) shard_row
-            done;
-            copyin buf sb
-          end)
-        bufs
+        (fun k (dev, buf) ->
+          let ranges =
+            Array.mapi
+              (fun d n ->
+                if d = axis then (k * part, (k + 1) * part) else (0, n))
+              shape
+          in
+          copyin_tensor sc dev buf (Nx_effect.shrink x ranges))
+        (List.combine devs bufs)
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
 let read_out : type a b.
@@ -2270,12 +2340,8 @@ let read_out : type a b.
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
  fun sc ctx dtv shape buf ->
-  let n = numel shape in
-  let bytes = scratch_bytes sc (Tolk.Device.Buffer.nbytes buf) in
-  bytes_from_device := !bytes_from_device + Bytes.length bytes;
-  Tolk.Device.Buffer.copyout buf bytes;
-  let host = Nx_buffer.create dtv n in
-  Nx_buffer.blit_from_bytes ~len:n bytes host;
+  let host = Nx_buffer.create dtv (numel shape) in
+  copyout_into sc buf ~dst_off:0 host;
   Nx_effect.reshape (Nx_effect.from_host ctx host) shape
 
 (* Wrap the device buffers of one placement as a deferred host tensor owning
@@ -2318,34 +2384,61 @@ let make_handle : type a b.
       | bufs -> bufs
     in
     List.iter Tolk.Device.synchronize entry.r_devices;
-    let copyout buf =
-      let nb = Tolk.Device.Buffer.nbytes buf in
-      let bytes = scratch_bytes scratch nb in
-      Tolk.Device.Buffer.copyout buf bytes;
-      bytes_from_device := !bytes_from_device + nb;
-      bytes
+    let host =
+      match (axis, bufs) with
+      (* Single or replicated: the first device holds the whole value. *)
+      | None, buf :: _ ->
+          let host = Nx_buffer.create dtv n in
+          copyout_into scratch buf ~dst_off:0 host;
+          host
+      | Some ax, bufs ->
+          let parts = List.length bufs in
+          let shard_shape =
+            Array.mapi (fun d n -> if d = ax then n / parts else n) shape
+          in
+          let shard_n = numel shard_shape in
+          let leading = ref true in
+          for d = 0 to ax - 1 do
+            if shape.(d) <> 1 then leading := false
+          done;
+          if !leading then begin
+            (* The shards are consecutive blocks of the value. *)
+            let host = Nx_buffer.create dtv n in
+            List.iteri
+              (fun k buf ->
+                copyout_into scratch buf ~dst_off:(k * shard_n) host)
+              bufs;
+            host
+          end
+          else begin
+            (* Rows of the shards interleave in the value: gather them through
+               transient bytes of the value's size. *)
+            let item = itemsize dtv in
+            let outer = ref 1 in
+            for d = 0 to ax - 1 do
+              outer := !outer * shape.(d)
+            done;
+            let shard_row = shard_n / !outer * item in
+            let full_row = parts * shard_row in
+            let full = Bytes.create (n * item) in
+            let shard = Nx_buffer.create dtv shard_n in
+            let sb = Bytes.create (shard_n * item) in
+            List.iteri
+              (fun k buf ->
+                copyout_into scratch buf ~dst_off:0 shard;
+                Nx_buffer.blit_to_bytes ~len:shard_n shard sb;
+                for o = 0 to !outer - 1 do
+                  Bytes.blit sb (o * shard_row) full
+                    ((o * full_row) + (k * shard_row))
+                    shard_row
+                done)
+              bufs;
+            let host = Nx_buffer.create dtv n in
+            Nx_buffer.blit_from_bytes ~len:n full host;
+            host
+          end
+      | None, [] -> assert false
     in
-    let host = Nx_buffer.create dtv n in
-    (match (axis, bufs) with
-    (* Single or replicated: the first device holds the whole value. *)
-    | None, buf :: _ -> Nx_buffer.blit_from_bytes ~len:n (copyout buf) host
-    | Some ax, bufs ->
-        let parts = List.length bufs in
-        let outer, shard_row, full_row =
-          shard_rows shape ax parts (itemsize dtv)
-        in
-        let full = Bytes.create (n * itemsize dtv) in
-        List.iteri
-          (fun k buf ->
-            let sb = copyout buf in
-            for o = 0 to outer - 1 do
-              Bytes.blit sb (o * shard_row) full
-                ((o * full_row) + (k * shard_row))
-                shard_row
-            done)
-          bufs;
-        Nx_buffer.blit_from_bytes ~len:n full host
-    | None, [] -> assert false);
     release_entry entry;
     host
   in
@@ -2824,7 +2917,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
     !inputs;
   (* Bind each constant once, at compile time: alias its memory when the device
      shares host memory and the tensor is contiguous, copy its bytes to the
-     device otherwise (to every device of a pmap tuple). *)
+     device otherwise (to every device of a pmap tuple). The staging of these
+     one-time uploads is dropped with this table. *)
   let scratch = Hashtbl.create 8 in
   let wrapped = ref [] in
   List.iter
@@ -2850,7 +2944,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
                       let buf =
                         Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev
                       in
-                      copyin_tensor scratch buf src;
+                      copyin_tensor scratch dev buf src;
                       Tolk.Realize.Single buf
                   | Some (spec, _) ->
                       let bufs =
@@ -2859,7 +2953,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
                             let buf =
                               Tolk.Device.create_buffer ~size:n ~dtype:dtolk d
                             in
-                            copyin_tensor scratch buf src;
+                            copyin_tensor scratch d buf src;
                             buf)
                           spec.md_devs
                       in
@@ -2885,7 +2979,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
             let buf = Tolk.Device.create_buffer ~size:1 ~dtype:TD.int32 d in
             let idx = Nx_buffer.create Nx_buffer.int32 1 in
             Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
-            copyin_tensor scratch buf (Nx_effect.from_host st.st_ctx idx);
+            copyin_tensor scratch d buf (Nx_effect.from_host st.st_ctx idx);
             buf)
           spec.md_devs
       in
@@ -3015,7 +3109,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
     cp_prefills;
     cp_reserved = reserved;
     cp_skeleton = y;
-    cp_scratch = scratch;
+    cp_scratch = Hashtbl.create 8;
   }
 
 let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
@@ -3080,7 +3174,8 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
           | None ->
               Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
                 (Tolk.Device.Multi_buffer.of_bufs inp.i_bufs);
-              upload_multi c.cp_scratch inp.i_place inp.i_bufs leaf)
+              upload_multi c.cp_scratch inp.i_place spec.md_devs inp.i_bufs
+                leaf)
       | None -> (
           match resident_single leaf with
           | Some e ->
@@ -3100,7 +3195,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
                   match inp.i_bufs with
                   | [ buf ] ->
                       Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf;
-                      copyin_tensor c.cp_scratch buf leaf
+                      copyin_tensor c.cp_scratch c.cp_device buf leaf
                   | _ -> assert false))));
       incr i)
     params;

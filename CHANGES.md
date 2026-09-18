@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Copies between host and device move 64 MiB at a time. `Rune.jit` staged each
+  upload and read-back in a host buffer the size of the tensor and kept one per
+  distinct size for the life of the compiled function, 1.1 GB for a 1B
+  parameter model, and made a strided tensor contiguous whole before staging
+  it. A strided tensor is now copied piece by piece, and a long run of copies
+  synchronizes the device every 256 MiB.
 - `Rune.jit` on the CPU device compiles kernels that read host memory at any
   address. The kernels declared their vector types aligned to their size while
   tensors were read in place wherever their data sat, so on x86-64 a slice
