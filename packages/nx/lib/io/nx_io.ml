@@ -133,10 +133,8 @@ let inflate s =
 
 (* SafeTensors *)
 
-let load_safetensors path = Nx_safetensors.load_safetensors path |> unwrap
-
-let save_safetensors ?overwrite path items =
-  Nx_safetensors.save_safetensors ?overwrite path items |> unwrap
+let load_safetensors = Nx_safetensors.load_safetensors
+let save_safetensors = Nx_safetensors.save_safetensors
 
 (* Text *)
 

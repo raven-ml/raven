@@ -200,33 +200,27 @@ end
 type error =
   | Invalid_header of string
   | Invalid_header_deserialization of string
-  | Header_too_large
-  | Header_too_small
-  | Invalid_header_length
   | Tensor_not_found of string
   | Tensor_invalid_info
   | Invalid_offset of string
+  | Duplicate_tensor of string
   | Io_error of string
   | Invalid_tensor_view of string * int list * int
-  | Metadata_incomplete_buffer
   | Validation_overflow
   | Misaligned_slice
 
 let string_of_error = function
   | Invalid_header e -> "invalid UTF-8 in header: " ^ e
   | Invalid_header_deserialization e -> "invalid JSON in header: " ^ e
-  | Header_too_large -> "header too large"
-  | Header_too_small -> "header too small"
-  | Invalid_header_length -> "invalid header length"
   | Tensor_not_found n -> strf "tensor '%s' not found" n
   | Tensor_invalid_info -> "invalid shape, dtype, or offset for tensor"
   | Invalid_offset n -> strf "invalid offset for tensor '%s'" n
+  | Duplicate_tensor n -> strf "tensor '%s' appears twice in the header" n
   | Io_error e -> "I/O error: " ^ e
   | Invalid_tensor_view (dt, shape, n) ->
       let dims = List.map string_of_int shape |> String.concat ", " in
       strf "tensor of type %s and shape (%s) can't be created from %d bytes" dt
         dims n
-  | Metadata_incomplete_buffer -> "incomplete metadata, file not fully covered"
   | Validation_overflow -> "overflow computing buffer size"
   | Misaligned_slice -> "slice does not end at a byte boundary"
 
@@ -421,22 +415,6 @@ let validate m =
 
 (* Little-endian I/O *)
 
-let read_u64_le s off =
-  let get i = Int64.of_int (Char.code s.[off + i]) in
-  Int64.(
-    logor (get 0)
-      (logor
-         (shift_left (get 1) 8)
-         (logor
-            (shift_left (get 2) 16)
-            (logor
-               (shift_left (get 3) 24)
-               (logor
-                  (shift_left (get 4) 32)
-                  (logor
-                     (shift_left (get 5) 40)
-                     (logor (shift_left (get 6) 48) (shift_left (get 7) 56))))))))
-
 let write_u64_le b off v =
   for i = 0 to 7 do
     Bytes.set b (off + i)
@@ -523,6 +501,8 @@ let json_to_metadata j : (metadata, error) result =
       Array.of_list
         (List.mapi
            (fun i (name, t) ->
+             if Hashtbl.mem index_map name then
+               raise_notrace (Validate_error (Duplicate_tensor name));
              Hashtbl.add index_map name i;
              t)
            ts)
@@ -530,10 +510,9 @@ let json_to_metadata j : (metadata, error) result =
     Ok { metadata_kv = md; tensors; index_map }
   in
   match parse () with
+  | exception Validate_error e -> Error e
   | Error e -> Error (Invalid_header_deserialization e)
-  | Ok m ->
-      let* _ = validate m in
-      Ok m
+  | Ok _ as ok -> ok
 
 (* Tensor views *)
 
@@ -579,9 +558,7 @@ let tensor_view_new ~dtype ~shape ~data =
                (dtype_to_string dtype, shape, String.length data))
         else Ok { dtype; shape; data; offset = 0; length = size }
 
-(* Container *)
-
-type t = { metadata : metadata; data : string }
+(* Header *)
 
 let max_header_size = 100_000_000
 let header_len_bytes = 8
@@ -589,57 +566,14 @@ let header_len_bytes = 8
 let next_multiple_of x k =
   if k <= 0 || x mod k = 0 then x else x + (k - (x mod k))
 
-(* Deserialization *)
-
-let deserialize buffer =
-  let len = String.length buffer in
-  if len < header_len_bytes then Error Header_too_small
+let parse_header header =
+  if not (is_valid_utf8 header) then Error (Invalid_header "bad utf8")
   else
-    let n = read_u64_le buffer 0 in
-    if n > Int64.of_int max_header_size then Error Header_too_large
-    else
-      let n_int = Int64.to_int n in
-      let stop =
-        match Int64.to_int (Int64.add n (Int64.of_int header_len_bytes)) with
-        | exception _ -> -1
-        | v -> v
-      in
-      if stop < 0 || stop > len then Error Invalid_header_length
-      else
-        let header = String.sub buffer header_len_bytes n_int in
-        if not (is_valid_utf8 header) then Error (Invalid_header "bad utf8")
-        else
-          try
-            let j = Json.from_string header in
-            let* m = json_to_metadata j in
-            let* buffer_end = validate m in
-            if buffer_end + header_len_bytes + n_int <> len then
-              Error Metadata_incomplete_buffer
-            else
-              let data =
-                String.sub buffer (header_len_bytes + n_int)
-                  (len - (header_len_bytes + n_int))
-              in
-              Ok { metadata = m; data }
-          with Json.Parse_error e -> Error (Invalid_header_deserialization e)
-
-let tensors st =
-  let names = ref [] in
-  Hashtbl.iter (fun name _ -> names := name :: !names) st.metadata.index_map;
-  List.map
-    (fun name ->
-      let idx = Hashtbl.find st.metadata.index_map name in
-      let info = st.metadata.tensors.(idx) in
-      let s, e = info.data_offsets in
-      ( name,
-        {
-          dtype = info.dtype;
-          shape = info.shape;
-          data = st.data;
-          offset = s;
-          length = e - s;
-        } ))
-    !names
+    try
+      let* m = json_to_metadata (Json.from_string header) in
+      let* data_len = validate m in
+      Ok (m, data_len)
+    with Json.Parse_error e -> Error (Invalid_header_deserialization e)
 
 (* Serialization *)
 

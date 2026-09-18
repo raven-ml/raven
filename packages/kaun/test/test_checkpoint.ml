@@ -17,15 +17,19 @@ let check_arr ~msg expected actual =
   equal ~msg (array float_exact) expected (to_arr actual)
 
 (* Runs [f] with a fresh checkpoint file path in a temporary directory, removed
-   afterwards even on failure. *)
+   afterwards even on failure. A loaded checkpoint stays mapped until its
+   tensors are collected, and Windows may refuse to delete a mapped file. *)
 let with_ckpt_file f =
   let dir = Filename.temp_dir "kaun_checkpoint" "" in
   Fun.protect
     ~finally:(fun () ->
-      Array.iter
-        (fun entry -> Sys.remove (Filename.concat dir entry))
-        (Sys.readdir dir);
-      Sys.rmdir dir)
+      Gc.full_major ();
+      try
+        Array.iter
+          (fun entry -> Sys.remove (Filename.concat dir entry))
+          (Sys.readdir dir);
+        Sys.rmdir dir
+      with Sys_error _ when Sys.win32 -> ())
     (fun () -> f (Filename.concat dir "ckpt.safetensors"))
 
 (* A parameter record with mixed leaf dtypes, held at packed payloads. *)

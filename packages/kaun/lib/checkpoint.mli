@@ -148,14 +148,19 @@ val to_int : string -> t -> int
 
 val save : string -> t -> unit
 (** [save path t] writes [t] to a safetensors file at [path], replacing any
-    existing file.
+    existing file atomically: the entries are written to a temporary file that
+    is then renamed to [path], so saving over a checkpoint whose tensors are
+    still in use is safe.
 
     Raises [Failure] on I/O errors, or if an entry's dtype is not supported by
     safetensors (see {!Nx_io.save_safetensors}). *)
 
 val load : string -> t
 (** [load path] is the checkpoint stored in the safetensors file at [path],
-    whether written by {!save} or produced elsewhere. Entries whose dtype
-    {!Nx_io} cannot represent are skipped with a warning on stderr.
+    whether written by {!save} or produced elsewhere. The file is mapped and
+    its entries are views of it, read when first used: the file must not be
+    modified in place while an entry is alive, and [Nx.copy] gives a tensor
+    that no longer depends on it. An entry whose dtype nx lacks is loaded as
+    its bytes, at [uint8]. See {!Nx_io.load_safetensors}.
 
     Raises [Failure] on I/O or format errors. *)

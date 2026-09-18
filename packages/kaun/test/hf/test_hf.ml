@@ -36,11 +36,16 @@ let rec rm_rf path =
   end
   else Sys.remove path
 
-(* Runs [f] with a fresh cache directory, removed afterwards even on failure. *)
+(* Runs [f] with a fresh cache directory, removed afterwards even on failure. A
+   loaded checkpoint stays mapped until its tensors are collected, and Windows
+   may refuse to delete a mapped file. *)
 let with_cache_dir f =
   let dir = Filename.temp_dir "kaun_hf" "" in
   Fun.protect
-    ~finally:(fun () -> if Sys.file_exists dir then rm_rf dir)
+    ~finally:(fun () ->
+      Gc.full_major ();
+      try if Sys.file_exists dir then rm_rf dir
+      with Sys_error _ when Sys.win32 -> ())
     (fun () -> f dir)
 
 (* Seeds [file] of [repo_id] into [cache_dir] by calling [write] on its cache

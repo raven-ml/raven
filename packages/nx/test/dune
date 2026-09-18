@@ -54,6 +54,6 @@
  (name test_nx_io)
  (package nx)
  (modules test_nx_io)
- (libraries nx nx.io unix windtrap)
+ (libraries nx nx.buffer nx.core nx.io unix windtrap)
  (deps
   (glob_files fixtures/*)))

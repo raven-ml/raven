@@ -846,6 +846,18 @@ thread.
 
 ### Nx
 
+- `Nx_io.load_safetensors` maps the file instead of reading it: loading reads
+  the header only, and each tensor is a view of the file whose pages are read
+  when first used. It used to hold the file twice in memory and copy every
+  tensor out element by element; a 2.5 GB checkpoint that took 3 s to load
+  takes 0.05 s. Entries at an address their dtype cannot be read from are
+  copied. A loaded file must not be modified in place while its tensors are
+  alive; `Nx.copy` detaches a tensor from its file.
+- `Nx_io.load_safetensors` loads `F8_E8M0`, `F4`, `F6_E2M3` and `F6_E3M2`
+  entries as their `uint8` bytes instead of dropping them with a warning,
+  loads 16-bit entries at odd offsets instead of raising, and rejects a file
+  whose length disagrees with its header, a header that names a tensor twice,
+  and anything that is not a regular file. Its errors name the file.
 - Add `Nx_buffer.reinterpret kind buf`, `buf`'s memory read as elements of
   `kind` without a copy. It is the only way to view existing memory, such as a
   mapped file, as `bfloat16`, `float8`, `bool`, `uint32` or `uint64`, whose
@@ -1623,6 +1635,11 @@ thread.
 
 ### Kaun
 
+- `Checkpoint.load` and `Kaun_hf.load_checkpoint` map their files, as
+  `Nx_io.load_safetensors` now does: loading reads headers only, entries are
+  views of the file, and entries whose dtype nx lacks arrive as `uint8` bytes
+  instead of being skipped. A loaded file must not be modified in place while
+  its entries are alive; `Checkpoint.save` replaces its destination atomically.
 - `Kaun_hf.download_file` downloads to a uniquely named temporary file beside
   the cache path and renames it once complete. An interrupted download used to
   leave a partial file at the cache path, which later runs served as cached,
