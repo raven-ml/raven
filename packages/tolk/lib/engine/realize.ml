@@ -252,15 +252,35 @@ let () =
 (* Program and runtime caches
 
    [program_cache] memoizes the CALL(SINK) -> CALL(PROGRAM) compilation, keyed
-   on the kernel's semantic key and device (so tag-only differences share a
-   compiled program). [runtime_cache] memoizes the device dispatch handle built
-   from a PROGRAM's compiled binary. [local_size_cache] memoizes the tuned
-   workgroup shape per PROGRAM. *)
+   on the kernel's semantic key, the device, and [program_config] (so tag-only
+   differences share a compiled program, and a kernel compiled under one
+   configuration is never served under another). [runtime_cache] memoizes the
+   device dispatch handle built from a PROGRAM's compiled binary.
+   [local_size_cache] memoizes the tuned workgroup shape per PROGRAM. *)
+
+let program_config () =
+  let module D = Tolk_uop.Dtype in
+  let var v =
+    strf "%s=%d" (Helpers.Context_var.key v) (Helpers.Context_var.get v)
+  in
+  String.concat ","
+    [
+      var Helpers.noopt;
+      var Helpers.nolocals;
+      var Helpers.use_tc;
+      var Helpers.image;
+      var Helpers.disable_fast_idiv;
+      var Helpers.transcendental;
+      var Helpers.allow_tf32;
+      "DEFAULT_FLOAT=" ^ D.to_string D.default_float;
+      "DEFAULT_INT=" ^ D.to_string D.default_int;
+    ]
 
 let cache_key ~device ~ast_key =
   let compiler_name = match Renderer.compiler (Device.renderer device) with
     | Some c -> Compiler.name c | None -> "" in
-  strf "%s:%s:%s" (Device.name device) compiler_name ast_key
+  strf "%s:%s:%s:%s" (Device.name device) compiler_name (program_config ())
+    ast_key
 
 let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64

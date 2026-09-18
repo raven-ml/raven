@@ -193,6 +193,10 @@ thread.
 
 ### Tolk (new)
 
+- The in-memory program cache keys on `Realize.program_config`: `NOOPT`,
+  `NOLOCALS`, `TC`, `IMAGE`, `DISABLE_FAST_IDIV`, `TRANSCENDENTAL`,
+  `ALLOW_TF32` and the default dtypes. A kernel compiled under one setting was
+  served under another when the setting changed through `with_context`.
 - Every context variable is declared once in `Helpers`, and a second
   declaration of a key raises. `PCONTIG` had two independent copies, so an
   override reached only one reader. `IMAGE`, `FLOAT16`, `TC`, `TC_SELECT`,

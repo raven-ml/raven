@@ -154,6 +154,14 @@ val buffer_copy :
 
 (** {1:compile Kernel compilation} *)
 
+val program_config : unit -> string
+(** [program_config ()] renders the current values of the settings that change
+    the program compiled from a fixed kernel: [NOOPT], [NOLOCALS], [TC],
+    [IMAGE], [DISABLE_FAST_IDIV], [TRANSCENDENTAL], [ALLOW_TF32], and the
+    default float and int dtypes. Two compilations of one kernel on one device
+    are interchangeable exactly when their configurations are equal, so any
+    cache of compiled programs must key on it. *)
+
 val pm_compile :
   device:Device.t ->
   ?beam:int ->
@@ -172,9 +180,9 @@ val pm_compile :
     the [BEAM] environment variable. When omitted or [< 1], kernels compile
     under the ambient environment settings.
 
-    Compiled programs are cached by the kernel's semantic key and the device,
-    so kernels that differ only by diagnostic tags share one compilation; the
-    stamped beam width is part of the key. *)
+    Compiled programs are cached by the kernel's semantic key, the device, and
+    {!program_config}, so kernels that differ only by diagnostic tags share one
+    compilation; the stamped beam width is part of the key. *)
 
 (** {1:capture Capture registry} *)
 
