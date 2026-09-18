@@ -704,6 +704,14 @@ let build_loop_call ~body_linear ~reversed ~n ~in_slots ~out_slots ~copies
         ~src:(Array.of_list (payload :: args))
         ()
 
+(* The buffer [u] is, when it is a whole buffer after the effects that wrote
+   it, under any reshape. *)
+let rec written_buffer u =
+  match U.op u with
+  | Tolk_uop.Ops.Reshape -> written_buffer (U.src u).(0)
+  | Tolk_uop.Ops.After when U.has_buffer_identity ~after_ok:true u -> Some u
+  | _ -> None
+
 (* A loop-call argument must resolve to a buffer. Buffer-identity nodes pass
    through; a computed value is realized; a device-less constant (e.g. a scalar
    carry init) is stored into a fresh buffer once, before the loop. *)
@@ -1025,8 +1033,16 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           (fun k ->
             ret k target_dtype
               (F.Dtype_ops.cast (go t_in) (tolk_dtype target_dtype)))
+    (* A written buffer is contiguous storage already, and a [contiguous] over
+       it would copy it out. *)
     | E_contiguous { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
+        Some
+          (fun k ->
+            let tt = go t_in in
+            ret k (dt t_in)
+              (match written_buffer (F.Tensor.uop tt) with
+              | Some _ -> tt
+              | None -> F.Elementwise.contiguous tt))
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
     (* Staged scans. A multi-device (pmap) trace cannot stage a loop yet: it
@@ -2596,9 +2612,18 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
         | _ -> P_replicated)
     | Some (U.Single _) | Some (U.Index _) | None -> P_single
   in
+  (* A buffer after the effects that wrote it is already the result: it is sunk
+     as it stands, under no reshape, since a [contiguous] over it would copy it
+     out. *)
   let out_conts =
     List.map2
-      (fun (key, pk, _) u -> (key, pk, u, place_of u, U.contiguous ~src:u ()))
+      (fun (key, pk, _) u ->
+        let c =
+          match written_buffer u with
+          | Some v -> v
+          | None -> U.contiguous ~src:u ()
+        in
+        (key, pk, u, place_of u, c))
       out_anch out_uops
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
@@ -2766,7 +2791,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~const_cache ?multi ?beam
     | _ -> None
   in
   let resolve what u c =
-    let unwrap node = if multi = None then node else U.buf_uop node in
+    let unwrap node = U.buf_uop node in
     match Hashtbl.find_opt buffer_map (U.tag c) with
     | Some node -> unwrap node
     | None -> (
