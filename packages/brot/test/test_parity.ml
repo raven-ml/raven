@@ -604,6 +604,27 @@ let with_tokenizer model check () =
       | Error msg -> failf "failed to load %s: %s" path msg
       | Ok tokenizer -> check tokenizer)
 
+(* Whether the pattern of a file is one brot has a walker for shows in how its
+   pre-tokenizer prints and nowhere else, the encodings being the same: a
+   spelling that stopped being recognised would only get slower. *)
+let walked = [ "llama3"; "qwen2_5" ]
+
+let check_walker model tokenizer =
+  let printed =
+    match pre_tokenizer tokenizer with
+    | Some pre -> Format.asprintf "%a" Pre_tokenizer.pp pre
+    | None -> ""
+  in
+  let sub = "walker=cl100k" in
+  let n = String.length sub in
+  let rec from i =
+    i + n <= String.length printed
+    && (String.sub printed i n = sub || from (i + 1))
+  in
+  equal
+    ~msg:(Printf.sprintf "%s is split by a walker" model)
+    bool (List.mem model walked) (from 0)
+
 (* One test per (tokenizer, corpus, kind), so that a kind that brot does not yet
    match shows up on its own instead of hiding the kinds after it. *)
 let () =
@@ -612,6 +633,7 @@ let () =
        (fun (model, corpora) ->
          group model
            (slow "load" (with_tokenizer model ignore)
+           :: test "walker" (with_tokenizer model (check_walker model))
            :: List.map
                 (fun corpus ->
                   group corpus

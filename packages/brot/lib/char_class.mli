@@ -67,6 +67,11 @@ val at_is_word : int -> bool
     characters, the marks, the decimal digits, connector punctuation and the
     joiners. *)
 
+val at_is_mark : int -> bool
+(** [at_is_mark d] is [true] iff the character in the result [d] of {!at} is a
+    combining mark, that is of the regular expression class [\p{M}]: the general
+    categories [Mc], [Me] and [Mn]. *)
+
 (** {1:internals Internals} *)
 
 val unicode_table : unit -> Bytes.t

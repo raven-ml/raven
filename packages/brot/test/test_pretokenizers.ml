@@ -626,11 +626,23 @@ let test_split_patterns () =
    [pre_tokenizers.Split(Regex(pattern), behavior, invert)]; regenerate them
    with [scripts/gen_split_regex_expected.py]. *)
 
+(* Compiling a pattern costs more than running it on these texts. *)
+let split_regexes = Hashtbl.create 64
+
 let split_regex_case ~pattern behavior ~invert text expected =
+  let pre =
+    let key = (pattern, behavior, invert) in
+    match Hashtbl.find_opt split_regexes key with
+    | Some pre -> pre
+    | None ->
+        let pre = Pre.split_regex ~pattern ~behavior ~invert () in
+        Hashtbl.add split_regexes key pre;
+        pre
+  in
   check_tokenization
     (Printf.sprintf "Split regex %S %s ~invert:%b on %S" pattern
        (behavior_name behavior) invert text)
-    (Pre.pre_tokenize (Pre.split_regex ~pattern ~behavior ~invert ()) text)
+    (Pre.pre_tokenize pre text)
     expected
 
 (* The pattern of Llama 3's tokenizer file. *)
@@ -650,8 +662,17 @@ let o200k =
       {re|\s+|re};
     ]
 
+(* A pattern brot knows is run by a walker written for it, and the same pattern
+   in a group is not recognised and goes through the regular expression. Both
+   are held to the same expectations. *)
+let unrecognised pattern = "(?:" ^ pattern ^ ")"
+
 let test_split_regex_cl100k () =
-  let case = split_regex_case in
+  let case ~pattern behavior ~invert text expected =
+    split_regex_case ~pattern behavior ~invert text expected;
+    split_regex_case ~pattern:(unrecognised pattern) behavior ~invert text
+      expected
+  in
   case ~pattern:cl100k `Isolated ~invert:false "a  b"
     [ ("a", (0, 1)); (" ", (1, 2)); (" b", (2, 4)) ];
   case ~pattern:cl100k `Isolated ~invert:false "x\x0A\x0A  y"
@@ -1060,12 +1081,23 @@ let test_split_regex_behaviors () =
    character matches no class, so it is text between the matches, and [(?!\S)]
    does not hold before it, as before a character that is not whitespace. *)
 let test_split_regex_invalid_utf8 () =
-  let case = split_regex_case ~pattern:cl100k `Isolated ~invert:false in
+  let case text expected =
+    split_regex_case ~pattern:cl100k `Isolated ~invert:false text expected;
+    split_regex_case ~pattern:(unrecognised cl100k) `Isolated ~invert:false text
+      expected
+  in
   case "a\xFFb" [ ("a", (0, 1)); ("\xFF", (1, 2)); ("b", (2, 3)) ];
   case "a \xFF\xFE!"
     [ ("a", (0, 1)); (" ", (1, 2)); ("\xFF\xFE", (2, 4)); ("!", (4, 5)) ];
   case "a\xE2\x82" [ ("a", (0, 1)); ("\xE2\x82", (1, 3)) ];
-  case "  \xC3" [ (" ", (0, 1)); (" ", (1, 2)); ("\xC3", (2, 3)) ]
+  case "  \xC3" [ (" ", (0, 1)); (" ", (1, 2)); ("\xC3", (2, 3)) ];
+  (* An overlong sequence, a surrogate and a value above U+10FFFF. *)
+  case "a\xE0\x81\x81b"
+    [ ("a", (0, 1)); ("\xE0\x81\x81", (1, 4)); ("b", (4, 5)) ];
+  case "!\xED\xA0\x80!"
+    [ ("!", (0, 1)); ("\xED\xA0\x80", (1, 4)); ("!", (4, 5)) ];
+  case " \xF4\x90\x80\x80 "
+    [ (" ", (0, 1)); ("\xF4\x90\x80\x80", (1, 5)); (" ", (5, 6)) ]
 
 (* The members of a sequence that follow a regular expression split walk its
    pieces, each standing for a whole text: the lookahead holds at the end of a
@@ -1104,6 +1136,119 @@ let test_split_regex_in_sequence () =
       ("\xC4\xA0there", (3, 9));
       ("\xC4\x8A", (9, 10));
     ]
+
+(* The walkers against the regular expressions they stand for. *)
+
+let qwen2 =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+let qwen35 =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+(* cl100k as HuggingFace files spell it, its newline alternative without the
+   [+], which matches the same text. *)
+let cl100k_hf =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+|re}
+
+let walked =
+  [
+    ("cl100k", cl100k);
+    ("cl100k, HuggingFace spelling", cl100k_hf);
+    ("qwen2", qwen2);
+    ("qwen3.5", qwen35);
+  ]
+
+let isolated pattern = Pre.split_regex ~pattern ~behavior:`Isolated ()
+
+let contains ~sub s =
+  let n = String.length sub in
+  let rec from i =
+    i + n <= String.length s && (String.sub s i n = sub || from (i + 1))
+  in
+  from 0
+
+(* Which patterns a walker runs shows in [pp] and nowhere else, the pieces being
+   the same: without this a pattern that stopped being recognised would only get
+   slower. *)
+let test_split_regex_walkers () =
+  let walks pre =
+    contains ~sub:"walker=cl100k" (Format.asprintf "%a" Pre.pp pre)
+  in
+  List.iter
+    (fun (name, pattern) ->
+      equal ~msg:(name ^ " is walked") bool true (walks (isolated pattern));
+      equal
+        ~msg:(name ^ " in a group is not")
+        bool false
+        (walks (isolated (unrecognised pattern)));
+      equal
+        ~msg:(name ^ " is not walked under another behavior")
+        bool false
+        (walks (Pre.split_regex ~pattern ~behavior:`Removed ()));
+      equal
+        ~msg:(name ^ " is not walked inverted")
+        bool false
+        (walks (Pre.split_regex ~pattern ~behavior:`Isolated ~invert:true ())))
+    walked;
+  equal ~msg:"o200k is not walked" bool false (walks (isolated o200k))
+
+(* Each pattern as the walker runs it and as the regular expression does. *)
+let both_ways =
+  lazy
+    (List.map
+       (fun (name, pattern) ->
+         (name, isolated pattern, isolated (unrecognised pattern)))
+       walked)
+
+(* One representative of everything the patterns tell apart, and bytes that
+   belong to no character. *)
+let cl100k_alphabet =
+  [
+    "a"; "Z"; "s"; "S"; "t"; "l"; "L"; "r"; "v"; "e"; "E"; "m"; "d";
+    "\xC5\xBF"; "\xC3\xA9"; "\xE6\x97\xA5"; "\xCC\x81"; "\xE0\xA4\xBF";
+    "1"; "\xD9\xA3"; "\xC2\xB2"; "\xE2\x85\xA7";
+    " "; " "; "\t"; "\n"; "\r"; "\x0C"; "\xC2\xA0"; "\xE3\x80\x80";
+    "\xE2\x80\xA8"; "\xC2\x85";
+    "'"; "'"; "!"; "."; "/"; "_"; "\x00"; "\xE2\x80\x9C"; "\xF0\x9F\x98\x80";
+    "\xE2\x80\x8D"; "\xEF\xB8\x8F";
+    "\xFF"; "\x80"; "\xC3"; "\xE2\x82"; "\xE0\x81\x81"; "\xED\xA0\x80";
+    "\xF4\x90\x80\x80";
+  ]
+[@@ocamlformat "disable"]
+
+let cl100k_text =
+  Gen.map (String.concat "")
+    (Gen.list ~size:(Gen.int_range 0 24) (Gen.of_list cl100k_alphabet))
+
+let split_regex_walker_props =
+  List.map
+    (fun (name, _) ->
+      prop ~count:2000
+        (Printf.sprintf "regex: the %s walker is its pattern" name) cl100k_text
+        (fun text ->
+          let _, walker, regex =
+            List.find (fun (n, _, _) -> n = name) (Lazy.force both_ways)
+          in
+          check_tokenization
+            (Printf.sprintf "%s walker on %S" name text)
+            (Pre.pre_tokenize walker text)
+            (Pre.pre_tokenize regex text)))
+    walked
+
+(* The same over the parity corpora, as whole files: their document separators
+   are text like any other here. *)
+let test_split_regex_walkers_on_corpora () =
+  List.iter
+    (fun corpus ->
+      let text = Fixture.read ("fixtures/parity/" ^ corpus ^ ".txt") in
+      List.iter
+        (fun (name, walker, regex) ->
+          equal
+            ~msg:(Printf.sprintf "%s walker on %s.txt" name corpus)
+            bool true
+            (Pre.pre_tokenize walker text = Pre.pre_tokenize regex text))
+        (Lazy.force both_ways))
+    [ "sample"; "edge_cases"; "unicode_code" ]
 
 let test_split_regex_rejected () =
   let case pattern reason =
@@ -2091,17 +2236,21 @@ let () =
         ];
       group "digits" [ test "Digits tokenization" test_digits_pretokenizer ];
       group "split"
-        [
-          test "every behavior and invert" test_split_behaviors;
-          test "patterns of several characters and bytes" test_split_patterns;
-          test "regex: the cl100k pattern" test_split_regex_cl100k;
-          test "regex: the o200k pattern" test_split_regex_o200k;
-          test "regex: every behavior and invert" test_split_regex_behaviors;
-          test "regex: invalid UTF-8" test_split_regex_invalid_utf8;
-          test "regex: in a sequence" test_split_regex_in_sequence;
-          test "regex: rejected patterns" test_split_regex_rejected;
-          test "CharDelimiterSplit" test_char_delimiter_split;
-        ];
+        ([
+           test "every behavior and invert" test_split_behaviors;
+           test "patterns of several characters and bytes" test_split_patterns;
+           test "regex: the cl100k pattern" test_split_regex_cl100k;
+           test "regex: the o200k pattern" test_split_regex_o200k;
+           test "regex: every behavior and invert" test_split_regex_behaviors;
+           test "regex: invalid UTF-8" test_split_regex_invalid_utf8;
+           test "regex: in a sequence" test_split_regex_in_sequence;
+           test "regex: rejected patterns" test_split_regex_rejected;
+           test "regex: which patterns are walked" test_split_regex_walkers;
+           test "regex: the walkers on the parity corpora"
+             test_split_regex_walkers_on_corpora;
+           test "CharDelimiterSplit" test_char_delimiter_split;
+         ]
+        @ split_regex_walker_props);
       group "sequence"
         [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
       group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];

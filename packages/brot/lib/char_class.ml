@@ -9,6 +9,7 @@ let letter = 2
 let numeric = 3
 let punct = 4
 let word = 8
+let mark = 16
 let known = 128
 
 let ascii =
@@ -62,7 +63,8 @@ let classify t cp =
         then word
         else 0
       in
-      category lor punct lor word lor known
+      let mark = match gc with `Mc | `Me | `Mn -> mark | _ -> 0 in
+      category lor punct lor word lor mark lor known
   in
   Bytes.unsafe_set t (cp - 128) (Char.unsafe_chr v);
   v
@@ -95,6 +97,7 @@ let[@inline] at_len d = d land 7
 let[@inline] at_category d = (d lsr 3) land 3
 let[@inline] at_is_punctuation d = (d lsr 3) land punct <> 0
 let[@inline] at_is_word d = (d lsr 3) land word <> 0
+let[@inline] at_is_mark d = (d lsr 3) land mark <> 0
 let[@inline] pack cp len = (props cp lsl 3) lor len
 let stray = ((other lor known) lsl 3) lor 1
 

@@ -182,6 +182,16 @@ nothing of the match follows it, and lookbehind, backreferences, anchors,
 atomic groups and possessive quantifiers are rejected when the pre-tokenizer
 is built, with a message naming the construct.
 
+Some patterns are common enough that brot runs them with a hand-written scanner
+in place of the automaton: the cl100k pattern as Llama 3 and OLMo spell it and
+as GPT-4's HuggingFace files do, and its Qwen2 and Qwen3.5 variants, when the
+behavior is `` `Isolated `` and `invert` is off. The pieces are the same either
+way, and the automaton is what the scanner is tested against; the difference is
+speed, about twice on pre-tokenization alone. `Pre_tokenizer.pp` shows
+`walker=cl100k(...)` on a pre-tokenizer that takes this path. Recognition is by
+the exact text of the pattern, so an equivalent pattern written differently
+runs on the automaton.
+
 ## Tokenization Algorithms
 
 The algorithm maps pre-tokenized pieces to token IDs using the vocabulary.

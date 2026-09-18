@@ -13,10 +13,11 @@ type behavior =
   | `Contiguous ]
 
 type prepend_scheme = [ `First | `Never | `Always ]
+type cl100k = { digits : int; marks : bool }
 
 type pattern =
   | Literal of string
-  | Regex of { source : string; compiled : Regex.t }
+  | Regex of { source : string; compiled : Regex.t; walker : cl100k option }
 
 type t =
   | Byte_level of {
@@ -335,6 +336,194 @@ let fill_byte_level s ~pos ~stop spans =
         if category = c_whitespace then whitespace_span s i stop
         else category_run s (i + Char_class.at_len d) stop category
       else category_run s (i + 1) stop c_other
+    in
+    Spans.write spans !n i e;
+    incr n;
+    p := e
+  done;
+  Spans.set_count spans !n;
+  !p
+
+(* The cl100k walker
+
+   The pattern [(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|
+   \p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+] and its
+   variants, matched like the byte-level one by taking the first alternative
+   that applies at each position. [digits] is the longest group of numbers, and
+   [marks] makes the combining marks letters, which takes them out of the
+   punctuation.
+
+   This is the regular expression path run by hand, and that path is its
+   reference on any text: a byte that belongs to no character matches no
+   alternative there, so a run of such bytes is a span of its own here. *)
+
+let cl100k_patterns =
+  [
+    ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
+      { digits = 3; marks = false } );
+    ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+|re},
+      { digits = 3; marks = false } );
+    ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
+      { digits = 1; marks = false } );
+    ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
+      { digits = 1; marks = true } );
+  ]
+
+let k_stray = 4
+
+(* {!Char_class.at} accepts the sequences a decoder is to refuse — overlong
+   ones, surrogates, values above U+10FFFF — and a regular expression matches
+   none of their bytes. *)
+let[@inline never] kind_beyond_ascii ~marks s i stop =
+  let d = Char_class.at s i ~stop in
+  let len = Char_class.at_len d in
+  let valid =
+    len = 2
+    || len > 2
+       &&
+       let b0 = Char.code (String.unsafe_get s i) in
+       let b1 = Char.code (String.unsafe_get s (i + 1)) in
+       if len = 3 then
+         not ((b0 = 0xE0 && b1 < 0xA0) || (b0 = 0xED && b1 >= 0xA0))
+       else
+         not ((b0 = 0xF0 && b1 < 0x90) || (b0 = 0xF4 && b1 >= 0x90) || b0 > 0xF4)
+  in
+  if not valid then (k_stray lsl 3) lor 1
+  else if marks && Char_class.at_is_mark d then (c_letter lsl 3) lor len
+  else d land 31
+
+(* The character at [i] as [(kind lsl 3) lor length], the kind being one of the
+   four categories or [k_stray]. *)
+let[@inline] kind ~marks s i stop =
+  if Char.code (String.unsafe_get s i) < 0x80 then
+    Char_class.at s i ~stop land 31
+  else kind_beyond_ascii ~marks s i stop
+
+let[@inline] opens_word ~marks s i stop =
+  i < stop && kind ~marks s i stop lsr 3 = c_letter
+
+let letter_run ~marks s i stop =
+  let j = ref (letters_swar s i stop) in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let k = kind ~marks s !j stop in
+    if k lsr 3 = c_letter then j := !j + (k land 7) else scanning := false
+  done;
+  !j
+
+(* [[^\s\p{L}\p{N}]+[\r\n]*] from [i], where the first character of the run has
+   been seen. *)
+let punctuation_run ~marks s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let k = kind ~marks s !j stop in
+    if k lsr 3 = c_other then j := !j + (k land 7) else scanning := false
+  done;
+  while
+    !j < stop
+    &&
+    let c = String.unsafe_get s !j in
+    c = '\n' || c = '\r'
+  do
+    incr j
+  done;
+  !j
+
+(* [\s*[\r\n]+|\s+(?!\S)|\s+] at the whitespace at [i]: through the last newline
+   of the run if it has one, and otherwise as {!whitespace_span}. *)
+let cl100k_whitespace s i stop =
+  let j = ref i in
+  let last = ref i in
+  let newline = ref (-1) in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let c = String.unsafe_get s !j in
+    if c = '\n' || c = '\r' then begin
+      last := !j;
+      incr j;
+      newline := !j
+    end
+    else
+      let k = kind ~marks:false s !j stop in
+      if k lsr 3 = c_whitespace then begin
+        last := !j;
+        j := !j + (k land 7)
+      end
+      else scanning := false
+  done;
+  if !newline >= 0 then !newline
+  else if !j = stop then !j
+  else if !last > i then !last
+  else !j
+
+(* [\p{N}{1,digits}] from [i], where the first number has been seen. *)
+let number_run ~marks ~digits s i stop =
+  let j = ref i in
+  let left = ref (digits - 1) in
+  while !left > 0 && !j < stop do
+    let k = kind ~marks s !j stop in
+    if k lsr 3 = c_numeric then begin
+      j := !j + (k land 7);
+      decr left
+    end
+    else left := 0
+  done;
+  !j
+
+(* The end of the contraction the apostrophe at [i] opens, or [i]. Of the
+   letters involved only [s] has a case variant outside ASCII, U+017F. *)
+let cl100k_contraction s i stop =
+  if i + 1 >= stop then i
+  else
+    let c1 = Char.lowercase_ascii (String.unsafe_get s (i + 1)) in
+    if c1 = 's' || c1 = 't' || c1 = 'm' || c1 = 'd' then i + 2
+    else if i + 2 >= stop then i
+    else
+      let c2 = Char.lowercase_ascii (String.unsafe_get s (i + 2)) in
+      if
+        (c1 = 'r' && c2 = 'e')
+        || (c1 = 'v' && c2 = 'e')
+        || (c1 = 'l' && c2 = 'l')
+        || (c1 = '\xC5' && c2 = '\xBF')
+      then i + 3
+      else i
+
+let fill_cl100k { digits; marks } s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let k = kind ~marks s i stop in
+    let next = i + (k land 7) in
+    let category = k lsr 3 in
+    let e =
+      if category = c_letter then letter_run ~marks s next stop
+      else if category = c_whitespace then
+        let c = String.unsafe_get s i in
+        if c <> '\n' && c <> '\r' && opens_word ~marks s next stop then
+          letter_run ~marks s next stop
+        else if
+          c = ' ' && next < stop && kind ~marks s next stop lsr 3 = c_other
+        then punctuation_run ~marks s next stop
+        else cl100k_whitespace s i stop
+      else if category = c_other then
+        let contraction =
+          if String.unsafe_get s i = '\'' then cl100k_contraction s i stop
+          else i
+        in
+        if contraction > i then contraction
+        else if opens_word ~marks s next stop then letter_run ~marks s next stop
+        else punctuation_run ~marks s next stop
+      else if category = c_numeric then number_run ~marks ~digits s next stop
+      else begin
+        let j = ref next in
+        while !j < stop && kind ~marks s !j stop lsr 3 = k_stray do
+          incr j
+        done;
+        !j
+      end
     in
     Spans.write spans !n i e;
     incr n;
@@ -846,6 +1035,15 @@ let rec plan t =
       | true, false -> walk_prefix
       | true, true -> walk_prefix_split_free)
   | Bert | Whitespace | Whitespace_split -> walk_split_free
+  (* A cut at a space between an alphanumeric and a letter falls where the
+     pattern ends a match, the space opening the word after it. *)
+  | Split
+      {
+        pattern = Regex { walker = Some _; _ };
+        behavior = `Isolated;
+        invert = false;
+      } ->
+      walk_split_free
   | Punctuation _ | Digits _ | Char_delimiter _ | Unicode_scripts | Split _ ->
       walk_verbatim
   | Metaspace { replacement; prepend_scheme; _ } ->
@@ -923,6 +1121,13 @@ let rec fill_walk t s ~pos ~stop spans =
   | Split { pattern = Literal ""; _ } -> fill_characters s ~pos ~stop spans
   | Split { pattern = Literal pattern; behavior; invert } ->
       fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
+  | Split
+      {
+        pattern = Regex { walker = Some walker; _ };
+        behavior = `Isolated;
+        invert = false;
+      } ->
+      fill_cl100k walker s ~pos ~stop spans
   | Split { pattern = Regex { compiled; _ }; behavior; invert } ->
       fill_split_regex ~regex:compiled ~behavior ~invert s ~pos ~stop spans
   | Char_delimiter delimiter ->
@@ -1194,7 +1399,8 @@ let split ~pattern ?(behavior = `Removed) ?(invert = false) () =
    where an anchor would still look at the text around it. *)
 let regex source =
   Result.map
-    (fun compiled -> Regex { source; compiled })
+    (fun compiled ->
+      Regex { source; compiled; walker = List.assoc_opt source cl100k_patterns })
     (Regex.compile ~anchors:false source)
 
 let split_regex ~pattern ?(behavior = `Removed) ?(invert = false) () =
@@ -1265,10 +1471,14 @@ let rec pp ppf = function
       Format.fprintf ppf "@[<1>Split(%S,@ %s,@ invert=%b)@]" pattern
         (behavior_to_string behavior)
         invert
-  | Split { pattern = Regex { source; _ }; behavior; invert } ->
-      Format.fprintf ppf "@[<1>Split(Regex(%S),@ %s,@ invert=%b)@]" source
-        (behavior_to_string behavior)
-        invert
+  | Split { pattern = Regex { source; walker; _ }; behavior; invert } ->
+      Format.fprintf ppf "@[<1>Split(Regex(%S),@ %s,@ invert=%b%t)@]" source
+        (behavior_to_string behavior) invert (fun ppf ->
+          match walker with
+          | Some { digits; marks } when behavior = `Isolated && not invert ->
+              Format.fprintf ppf ",@ walker=cl100k(digits=%d,@ marks=%b)" digits
+                marks
+          | _ -> ())
   | Char_delimiter delimiter -> Format.fprintf ppf "CharDelimiter(%S)" delimiter
   | Digits { individual } ->
       Format.fprintf ppf "Digits(individual=%b)" individual

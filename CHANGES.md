@@ -1673,6 +1673,11 @@ thread.
 
 ### Brot
 
+- Llama 3, OLMo, GPT-4 (cl100k), Qwen2 and Qwen3.5 tokenizers pre-tokenize
+  about twice as fast: their `Split` patterns are recognised and run by a
+  scanner checked against the regular expression (Llama 3 27 → 43 MB/s
+  single-threaded). Such a pipeline can also be cut across domains by
+  `encode_batch_ids`. `Pre_tokenizer.pp` shows `walker=cl100k(...)` for them.
 - Tokenizer files whose `Split` pre-tokenizer carries a regular expression now
   load and tokenize as HuggingFace does: Llama 3, Qwen2.5, DeepSeek-V3 and
   gpt-oss (o200k) where `Brot.from_file` used to fail with "regular expression

@@ -1066,6 +1066,8 @@ let batch_tests =
       (test_batch_ids_matches_encode_ids "llama");
     test "batch ids agree with encode_ids (roberta)"
       (test_batch_ids_matches_encode_ids "roberta_base");
+    test "batch ids agree with encode_ids (llama3)"
+      (test_batch_ids_matches_encode_ids "llama3");
     test "batch ids pad to the longest of the batch"
       test_batch_ids_pads_to_the_longest;
     test "batch ids do not depend on the domain count" test_batch_ids_one_domain;
@@ -1076,6 +1078,8 @@ let batch_tests =
       (test_batch_ids_cut_document "gpt2");
     test "a cut document keeps its ids (roberta)"
       (test_batch_ids_cut_document "roberta_base");
+    slow "a cut document keeps its ids (llama3)"
+      (test_batch_ids_cut_document "llama3");
     test "a cut avoids the added tokens" test_batch_ids_cut_avoids_added_tokens;
     test "a pipeline with a normalizer is not cut"
       test_batch_ids_uncut_under_normalizer;
