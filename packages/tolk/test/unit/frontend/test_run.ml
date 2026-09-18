@@ -16,6 +16,7 @@ module Op = Tolk_frontend.Op
 module Dt = Tolk_frontend.Dtype_ops
 module Creation = Tolk_frontend.Creation
 module Run = Tolk_frontend.Run
+module U = Tolk_uop.Uop
 
 let fa ~shape data = Run.of_float_array ~shape data
 let vec data = Run.of_float_array ~shape:[ Array.length data ] data
@@ -118,6 +119,39 @@ let getitem_tests =
       test "tensor index" (fun () ->
           check_floats [| 8.; 9.; 10.; 11.; 0.; 1.; 2.; 3. |]
             (Op.getitem (base ()) [ Mv.T (Run.of_int_array ~shape:[ 2 ] [| 2; 0 |]) ]));
+    ]
+
+let count_kernels t =
+  let sink = U.sink [ U.contiguous ~src:(T.uop t) () ] in
+  List.length
+    (List.filter
+       (fun u -> U.op u = Tolk_uop.Ops.Call)
+       (U.toposort (Tolk.Rangeify.get_kernel_graph sink)))
+
+let large_gather_tests =
+  let rows = 65_536 in
+  group "large gather"
+    [
+      test "gather over 65536 rows schedules to one kernel" (fun () ->
+          let param slot dtype dims =
+            T.of_uop
+              (U.param ~slot ~dtype ~shape:(T.shape_uop dims)
+                 ~device:(U.Single "CPU") ())
+          in
+          let table = param 0 Tolk_uop.Dtype.float32 [ rows; 4 ] in
+          let index = param 1 Tolk_uop.Dtype.int32 [ 8; 4 ] in
+          equal int 1 (count_kernels (Op.gather table ~dim:0 index)));
+      test "gather over 65536 rows reads the indexed rows" (fun () ->
+          let table =
+            fa ~shape:[ rows; 2 ]
+              (Array.init (rows * 2) (fun i -> float_of_int (i mod 1000)))
+          in
+          let index =
+            Run.of_int_array ~shape:[ 3; 2 ]
+              [| 0; 65_535; 40_000; 1; 123; 32_768 |]
+          in
+          check_floats [| 0.; 71.; 0.; 3.; 246.; 537. |]
+            (Op.gather table ~dim:0 index));
     ]
 
 let conv_tests =
@@ -538,7 +572,6 @@ let gpt2_getitem_tests =
    variable. One traced graph then serves every bound value; the value is
    passed to the kernel at launch. *)
 
-module U = Tolk_uop.Uop
 
 let bound_var name ~max_val value =
   let var = U.variable ~name ~min_val:0 ~max_val () in
@@ -734,6 +767,7 @@ let () =
       logspace_tests;
       getitem_tests;
       gpt2_getitem_tests;
+      large_gather_tests;
       conv_tests;
       stack_tests;
       cat_tests;

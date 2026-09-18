@@ -868,6 +868,20 @@ let test_scatter_matches_eager () =
   check_arr ~msg:"set replay" (to_arr (f `Set x)) (g_set x);
   check_arr ~msg:"add" (to_arr (f `Add x)) (g_add x)
 
+(* A table past the reduce-split threshold: the row count is where a split
+   one-hot reduce used to cost a pass over the table. *)
+let test_take_large_table_matches_eager () =
+  let rows = 65_536 in
+  let table =
+    Nx.create f32 [| rows; 2 |]
+      (Array.init (rows * 2) (fun i -> float_of_int (i mod 1000)))
+  in
+  let indices =
+    Nx.create Nx.int32 [| 4 |] [| 0l; 65_535l; 40_000l; 32_768l |]
+  in
+  let f table = Nx.take ~axis:0 ~indices table in
+  check_arr ~msg:"take" (to_arr (f table)) (Rune.jit' f table)
+
 (* [Nx.diag] is traceable in both directions: extraction gathers, construction
    scatters into a zero template. *)
 let test_diag_matches_eager () =
@@ -1541,6 +1555,8 @@ let tests =
     group "indexed access"
       [
         test "scatter matches eager" test_scatter_matches_eager;
+        test "take over a large table matches eager"
+          test_take_large_table_matches_eager;
         test "diag matches eager" test_diag_matches_eager;
       ];
     group "training"

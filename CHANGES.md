@@ -195,6 +195,11 @@ thread.
 
 ### Tolk (new)
 
+- A gather over 32768 rows or more compiles to one kernel with one gated load
+  per output element. The reduce split used to fire before the gather collapse
+  and the kernel read the whole table into an intermediate buffer, so
+  `Op.gather`, tensor-index `Op.getitem` and rune's compiled `Nx.take` cost a
+  pass over the table.
 - The in-memory program cache keys on `Realize.program_config`: `NOOPT`,
   `NOLOCALS`, `TC`, `IMAGE`, `DISABLE_FAST_IDIV`, `TRANSCENDENTAL`,
   `ALLOW_TF32` and the default dtypes. A kernel compiled under one setting was

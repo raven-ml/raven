@@ -518,32 +518,108 @@ let resolve_function n =
       Some (U.substitute mappings body)
   | _ -> None
 
+let rec push_movement node rngs =
+  match U.op node with
+  | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute | Ops.Flip ->
+      push_movement (src0 node)
+        (Indexing.apply_movement_op ~shapes:shape_of node rngs)
+  | _ -> (node, rngs)
+
+let live_axes rngs =
+  List.concat_map (fun r ->
+      List.filter_map (fun x ->
+          Option.map (fun (v : U.range_view) -> v.axis) (U.as_range x))
+        (r :: U.backward_slice r))
+    rngs
+
+let axis_ranges sh =
+  List.mapi (fun i s ->
+      if s > 1 then U.range ~size:(int_ s) ~axis:i ~kind:Axis_type.Weak ()
+      else int_ 0) sh
+
 let detect_expanded src =
   let sh = Option.value (shape_of src) ~default:[] in
   let n = List.length sh in
   if n = 0 then []
   else
-    let rngs =
-      List.mapi (fun i s ->
-          if s > 1 then U.range ~size:(int_ s) ~axis:i ~kind:Axis_type.Weak ()
-          else int_ 0) sh
-    in
-    let rec push node rngs =
-      match U.op node with
-      | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute | Ops.Flip ->
-          push (src0 node) (Indexing.apply_movement_op
-                              ~shapes:shape_of node rngs)
-      | _ -> rngs
-    in
-    let final = push src rngs in
-    let live =
-      List.concat_map (fun r ->
-          List.filter_map (fun x ->
-              Option.map (fun (v : U.range_view) -> v.axis) (U.as_range x))
-            (r :: U.backward_slice r))
-        final
-    in
+    let live = live_axes (snd (push_movement src (axis_ranges sh))) in
     List.init n (fun i -> not (List.mem i live))
+
+(* One-hot sum
+
+   No tinygrad counterpart. A gather is a sum over
+   [where (index = arange) x 0], and the reduce that sums it collapses to one
+   gated load once the kernel is lowered. Splitting that reduce first puts a
+   buffer between the two halves, and neither half collapses: the gather then
+   costs a pass over the table. [is_one_hot_sum] recognises the shape so the
+   split leaves it whole. *)
+
+let const_view u =
+  match U.op u with
+  | Ops.Const -> Option.map Const.view (U.Arg.as_value (U.arg u))
+  | _ -> None
+
+let is_not c =
+  U.op c = Ops.Cmpne && const_view (U.src c).(1) = Some (Const.Bool true)
+
+let is_zero_const u =
+  match const_view u with
+  | Some (Const.Int n) -> Int64.equal n 0L
+  | Some (Const.Float f) -> Float.equal f 0.0
+  | _ -> false
+
+(* [rngs] indexes [parent]; the result indexes [child], an operand that
+   [parent] broadcasts. *)
+let operand_rngs ~parent ~child rngs =
+  match shape_of parent, shape_of child with
+  | Some psh, Some csh ->
+      let nleft = List.length psh - List.length csh in
+      if nleft < 0 then None
+      else
+        Some
+          (List.filteri (fun j _ -> j >= nleft) rngs
+           |> List.mapi (fun j r ->
+                if List.nth csh j = 1 && List.nth psh (j + nleft) <> 1
+                then U.const_like r 0
+                else r))
+  | _ -> None
+
+let is_one_hot_sum ~src ~op ~num_axes =
+  op = Ops.Add
+  &&
+  match shape_of src with
+  | None -> false
+  | Some sh ->
+      let where, rngs = push_movement src (axis_ranges sh) in
+      U.op where = Ops.Where
+      &&
+      let srcs = U.src where in
+      (is_zero_const (U.base srcs.(1)) || is_zero_const (U.base srcs.(2)))
+      &&
+      let rec condition parent rngs child =
+        match operand_rngs ~parent ~child rngs with
+        | Some rngs when is_not child -> condition child rngs (src0 child)
+        | Some rngs -> Some (child, rngs)
+        | None -> None
+      in
+      match condition where rngs srcs.(0) with
+      | Some (cond, cond_rngs)
+        when (U.op cond = Ops.Cmpne || U.op cond = Ops.Cmpeq)
+             && Dtype.is_int (U.dtype (src0 cond)) ->
+          let live operand =
+            match operand_rngs ~parent:cond ~child:operand cond_rngs with
+            | Some rngs -> Some (live_axes (snd (push_movement operand rngs)))
+            | None -> None
+          in
+          let reduced a = a < num_axes in
+          let one_hot a b =
+            a <> [] && List.for_all reduced a
+            && not (List.exists reduced b)
+          in
+          (match live (U.src cond).(0), live (U.src cond).(1) with
+           | Some a, Some b -> one_hot a b || one_hot b a
+           | _ -> false)
+      | _ -> false
 
 let pow2 n =
   if n < 0 then 1 else
@@ -562,7 +638,8 @@ let split_reduceop_rule n =
          when prod out_shape <> 0
               && getv Helpers.split_reduceop <> 0
               && prod in_shape / max 1 (prod out_shape)
-                 >= getv Helpers.reduceop_split_threshold ->
+                 >= getv Helpers.reduceop_split_threshold
+              && not (is_one_hot_sum ~src ~op ~num_axes) ->
            let expanded = detect_expanded src in
            let cap =
              min 256

@@ -125,3 +125,17 @@ delete it rather than registering it.
   `rangeify.py` will not find them upstream. The tolk corpus cannot build a
   loop call; rune's `test_jit.ml` scan groups are this extension's parity
   suite.
+
+- **`split_reduceop` leaves a one-hot sum whole** (`schedule/rangeify.ml`
+  `is_one_hot_sum`). The reference splits any reduce whose input is 32768
+  times its output, in the tensor graph, and collapses a gather's one-hot
+  reduce to a gated load later, per kernel. At 32768 rows and up the split
+  wins: its `contiguous` separates the halves, neither matches the collapse,
+  and a gather reads the whole table into an intermediate buffer. tolk
+  declines the split for a sum over `where(c, x, 0)` when `c` compares
+  integers and one side varies only along reduced axes while the other varies
+  along none of them. The reference has the same behaviour and no test above
+  the threshold (`test_arange.py` indexes 2048 rows, `test_llama_embedding` a
+  vocabulary of 10). Consumer: every `Op.gather` and tensor-index `getitem`
+  over a large axis, so rune's `take` over a vocabulary. Drop the guard if
+  the reference orders the two rewrites itself.
