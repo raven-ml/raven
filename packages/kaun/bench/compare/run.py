@@ -8,7 +8,8 @@ Discovers every model directory under models/, runs every side of each on the
 same weights and the same batches, checks that they compute the same thing,
 and only then reports timings.
 
-    uv run bench/migrate/run.py [model ...] [--steps N] [--device D] [--json F]
+    uv run packages/kaun/bench/compare/run.py [model ...] [--steps N]
+        [--device D] [--json F]
 
 The harness knows nothing about any particular model. A model is a directory
 under models/ holding
@@ -75,7 +76,7 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(os.path.dirname(HERE))
+ROOT = os.path.abspath(os.path.join(HERE, *[os.pardir] * 4))
 MODELS = os.path.join(HERE, "models")
 
 REFERENCE = ("pytorch", "eager", "cpu")
@@ -171,12 +172,12 @@ def sides(model_dir):
     """
     name = os.path.basename(model_dir)
     exe = os.path.join(
-        ROOT, "_build", "default", "bench", "migrate", "models", name, "model.exe"
+        ROOT, "_build", "default", os.path.relpath(MODELS, ROOT), name, "model.exe"
     )
     if not os.path.exists(exe):
         raise SystemExit(
             f"{exe} is missing. Build it with\n"
-            f"    dune build bench/migrate/models/{name}/model.exe"
+            f"    dune build packages/kaun/bench/compare/models/{name}/model.exe"
         )
 
     def script(f):

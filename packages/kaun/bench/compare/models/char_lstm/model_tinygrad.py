@@ -17,7 +17,7 @@ Raven's compiler is a port of tinygrad, which is why this side exists. It is
 the control that separates a cost inherited from the design tinygrad and Raven
 share from a cost that is Raven's own.
 
-Implements the runner protocol in bench/migrate/README.md:
+Implements the runner protocol in packages/kaun/bench/compare/README.md:
 
     model_tinygrad.py variants
     model_tinygrad.py run --spec S --fixture F --variant V --device D
@@ -34,7 +34,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(HERE, *[os.pardir] * 4))
+ROOT = os.path.abspath(os.path.join(HERE, *[os.pardir] * 6))
 TINYGRAD = os.path.join(ROOT, "_tinygrad")
 
 # tinygrad is read out of the pinned clone rather than installed from PyPI: the

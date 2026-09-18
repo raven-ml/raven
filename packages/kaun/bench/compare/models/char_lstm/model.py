@@ -10,7 +10,7 @@ the Raven side. The fixture this file generates is a plain PyTorch state dict
 plus the training data, so the Raven side starts from exactly these weights
 and sees exactly these batches.
 
-Implements the runner protocol described in bench/migrate/README.md:
+Implements the runner protocol described in packages/kaun/bench/compare/README.md:
 
     model.py fixture --spec S --out F
     model.py variants

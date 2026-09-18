@@ -11,8 +11,8 @@ the control that says whether a Raven number comes from the design the two
 share or from Raven.
 
 ```
-dune build bench/migrate/models/char_lstm/model.exe
-uv run bench/migrate/run.py
+dune build packages/kaun/bench/compare/models/char_lstm/model.exe
+uv run packages/kaun/bench/compare/run.py
 ```
 
 `run.py --help` for restricting to one model, one device, or fewer steps.

@@ -16,7 +16,7 @@
    costs relative to PyTorch's fused [nn.LSTM] kernel is one of the things this
    comparison measures.
 
-   Implements the runner protocol in bench/migrate/README.md:
+   Implements the runner protocol in packages/kaun/bench/compare/README.md:
 
      model.exe variants
      model.exe run --spec S --fixture F --variant V --device D --steps N
