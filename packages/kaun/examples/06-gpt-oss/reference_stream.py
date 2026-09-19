@@ -7,7 +7,8 @@
 # own GptOssDecoderLayer, runs the block on the residual stream of every
 # prompt, records and frees it. The rotary tables, the two masks, the final
 # norm and the head are transformers' too. Peak memory is one block's float32
-# experts and the dequantiser's temporaries, about 6 GB for gpt-oss-20b.
+# experts, the dequantiser's temporaries and at the end the float32 head: 9.6 GB
+# for gpt-oss-20b.
 #
 #   uv run --with torch==2.14.0 --with transformers==5.17.0 \
 #          --with safetensors==0.8.0 --with huggingface_hub==1.32.0 \
@@ -106,10 +107,12 @@ def raven_cache(repo):
 
 
 class Checkpoint:
-    """Tensors by name over one safetensors file or an index of shards. Files
-    are memory-mapped and a tensor is read when asked for."""
+    """Tensors by name over one safetensors file or an index of shards. A file
+    is mapped for the time of one read: pages of a mapping kept open stay in
+    the resident set, 13.8 GB of them by the last block of gpt-oss-20b."""
 
     def __init__(self, directory):
+        self.directory = directory
         index = os.path.join(directory, "model.safetensors.index.json")
         if os.path.exists(index):
             with open(index) as f:
@@ -117,19 +120,23 @@ class Checkpoint:
             self.files = sorted(set(self.file_of.values()))
         else:
             self.files = ["model.safetensors"]
-            with safe_open(os.path.join(directory, self.files[0]), "pt") as f:
+            with self.open(self.files[0]) as f:
                 self.file_of = {name: self.files[0] for name in f.keys()}
-        self.handles = {f: safe_open(os.path.join(directory, f), "pt") for f in self.files}
+
+    def open(self, file):
+        return safe_open(os.path.join(self.directory, file), "pt")
 
     def __contains__(self, name):
         return name in self.file_of
 
     def get(self, name):
-        return self.handles[self.file_of[name]].get_tensor(name)
+        with self.open(self.file_of[name]) as f:
+            return f.get_tensor(name).clone()
 
     def rows(self, name, ids):
-        table = self.handles[self.file_of[name]].get_slice(name)
-        return torch.stack([table[i] for i in ids])
+        with self.open(self.file_of[name]) as f:
+            table = f.get_slice(name)
+            return torch.stack([table[i] for i in ids])
 
 
 def experts(ckpt, name, offset, dtype):
