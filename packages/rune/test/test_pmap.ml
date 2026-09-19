@@ -272,6 +272,25 @@ let test_set_traced_window_on_mapped_axis () =
   check_arr ~eps:0.0 ~msg:"traced window spanning both shards" (to_arr (f w))
     (g w)
 
+(* A placed capture is on one device: a pmap reads it back and replicates it,
+   as it does a host capture, and a function that bound it keeps its buffer. *)
+let test_placed_capture_is_replicated () =
+  Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
+  Fun.protect
+    ~finally:(fun () -> Unix.putenv "RUNE_JIT_FORCE_COPY" "0")
+    (fun () ->
+      let w = Nx.create f32 [| 6 |] (arange 6) in
+      let p = Rune.to_device ~device:"CPU" w in
+      let bound = Rune.jit' ~device:"CPU" (fun x -> Nx.mul x p) in
+      let x = m46 () in
+      check_arr ~msg:"bound" (to_arr (Nx.mul x w)) (bound x);
+      let g =
+        Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul x p)
+      in
+      check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
+      check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w))
+        (bound x))
+
 let test_pass_through_output () =
   let g =
     Rune.pmap2 ~devices:devs2
@@ -705,6 +724,8 @@ let tests =
         test "mismatched placement forces and re-splits"
           test_mismatched_placement_forces;
         test "pass-through outputs gather on read" test_pass_through_output;
+        test "a placed capture is read back and replicated"
+          test_placed_capture_is_replicated;
       ];
     group "donation"
       [
