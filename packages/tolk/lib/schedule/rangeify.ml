@@ -1689,6 +1689,15 @@ let compact_kernel_params ctx body =
          | _ -> acc)
       [] topo
   in
+  (* [debuf] hands out slots in the order the kernel rewrite meets the
+     buffers, and that order is the numbering: the rewrite reaches an operand
+     shared by two consumers at the later of them, a toposort at the earlier. *)
+  let slot_of n =
+    match U.as_param n with Some { param; _ } -> param.slot | None -> -1
+  in
+  let params =
+    List.stable_sort (fun a b -> Int.compare (slot_of a) (slot_of b)) params
+  in
   let buffer_slot_map = List.mapi (fun slot param -> param, slot) params in
   let find_buffer_slot old =
     List.find_map
