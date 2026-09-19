@@ -1690,6 +1690,11 @@ thread.
 
 ### Kaun
 
+- The gpt-oss example takes text: `--prompt` (with `--system`, `--reasoning`
+  and `--show-analysis`) renders a harmony conversation with the checkpoint's
+  tokenizer, streams the model's final answer as it decodes and stops when the
+  model closes its turn. Its `Harmony` module renders and parses the format,
+  checked against `openai-harmony` by `validate_text.exe`.
 - The GPT-2, Llama and gpt-oss examples' importers take `?device` and place
   each leaf on it with `Rune.to_device` as they build it, and their programs
   pass the device they compile for: the model is held once, on the device, and
