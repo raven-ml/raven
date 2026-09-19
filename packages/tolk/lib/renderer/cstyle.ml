@@ -1093,9 +1093,9 @@ let cast_float_to_bf16 (x : U.t) : U.t =
       ~rhs:(c_u32 1)
   in
   let rounded =
-    U.alu_binary ~op:Ops.Add ~lhs:bits
-      ~rhs:
-        (U.alu_binary ~op:Ops.Add ~lhs:bit16 ~rhs:(c_u32 0x7fff))
+    U.alu_binary ~op:Ops.Add
+      ~lhs:(U.alu_binary ~op:Ops.Add ~lhs:bits ~rhs:bit16)
+      ~rhs:(c_u32 0x7fff)
   in
   let mantissa_nz =
     U.alu_binary ~op:Ops.Cmpne
