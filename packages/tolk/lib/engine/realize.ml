@@ -1070,23 +1070,34 @@ module Graph_runner = struct
 end
 
 (* Graph runners are recorded on first execution of their graph call node and
-   replayed on every subsequent execution of the captured linear. *)
-let graph_cache : (int, Graph_runner.t) Hashtbl.t = Hashtbl.create 8
+   replayed on every subsequent execution of the captured linear. The table
+   holds its keys weakly: a runner keeps the buffers it recorded alive, so it
+   must go when the last linear that mentions its graph does. *)
+module Graph_cache = Ephemeron.K1.Make (struct
+  type t = Tolk_uop.Uop.t
+
+  let equal = ( == )
+  let hash = Tolk_uop.Uop.tag
+end)
+
+let graph_cache : Graph_runner.t Graph_cache.t = Graph_cache.create 8
 
 (* Cumulative count of batched graph launches, including recording launches.
    Observability hook for tests and debugging. *)
 let graph_launches = ref 0
+
+let graph_runners () = (Graph_cache.stats_alive graph_cache).num_bindings
 
 let exec_graph binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body = ast; _ } ->
       let rt =
-        match Hashtbl.find_opt graph_cache (U.tag ast) with
+        match Graph_cache.find_opt graph_cache ast with
         | Some rt -> rt
         | None ->
             let rt = Graph_runner.create ~device binding ctx ast in
-            Hashtbl.replace graph_cache (U.tag ast) rt;
+            Graph_cache.replace graph_cache ast rt;
             rt
       in
       incr graph_launches;

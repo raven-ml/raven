@@ -58,6 +58,30 @@ let test_graph_batched_replay () =
     (to_arr (f (f x)))
     (g (g x))
 
+(* A recorded graph keeps its intermediates' buffers alive, so it must not
+   outlive the compiled function it belongs to. *)
+let test_graph_released_with_its_function () =
+  let run c =
+    let g =
+      Rune.jit' ~device:"METAL" (fun x ->
+          Nx.add_s (Nx.matmul (Nx.tanh (Nx.matmul x x)) x) c)
+    in
+    let x = Nx.create f32 [| 4; 4 |] (Array.init 16 float_of_int) in
+    ignore (to_arr (g x));
+    ignore (to_arr (g x))
+  in
+  Gc.full_major ();
+  let base = Tolk.Realize.graph_runners () in
+  let launches0 = !Tolk.Realize.graph_launches in
+  for i = 1 to 4 do
+    run (float_of_int i)
+  done;
+  is_true ~msg:"the calls recorded device graphs"
+    (!Tolk.Realize.graph_launches - launches0 >= 8);
+  Gc.full_major ();
+  equal ~msg:"no recorded graph outlives its function" int base
+    (Tolk.Realize.graph_runners ())
+
 (* Placed weights. The compiled trace binds their buffers as its constants, and
    the batched replay reads them on every call with nothing uploaded. *)
 
@@ -180,6 +204,8 @@ let tests =
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
           test_graph_batched_replay;
+        test "a recorded graph is released with its function"
+          test_graph_released_with_its_function;
       ];
     group "placed weights"
       [

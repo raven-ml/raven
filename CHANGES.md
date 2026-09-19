@@ -268,6 +268,12 @@ thread.
 
 ### Tolk (new)
 
+- A compiled function that is dropped now releases the device memory of its
+  batched graphs. Recorded graphs were kept in a table that was never emptied,
+  and each one holds the buffers of its intermediates: a process that compiled
+  many functions, or one function at many shapes, grew without bound on Metal
+  and CUDA (108 MB per dropped function in a three-matmul probe at 3072x3072).
+  `Tolk.Realize.graph_runners` reports how many recorded graphs are live.
 - `Cstyle.clang` and `Tolk_cpu.create` take `?aligned`. `~aligned:false`
   declares vector types aligned to one byte, for a device that binds memory it
   did not allocate. Absent, the `ALIGNED` environment variable decides, as

@@ -342,3 +342,9 @@ val graph_launches : int ref
 (** [graph_launches] counts batched graph launches dispatched through
     {!Device.Graph} execs, including each graph's recording launch. A
     cumulative observability counter for tests and debugging. *)
+
+val graph_runners : unit -> int
+(** [graph_runners ()] is the number of recorded graphs whose graph call is
+    still reachable. A recorded graph keeps the buffers it addresses alive, and
+    is dropped with the last linear that mentions it. An observability hook for
+    tests and debugging. *)
