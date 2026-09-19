@@ -30,12 +30,12 @@ GB stored at bfloat16. Times are cumulative from process start.
 
 | dtype | device | load | import | first compiled call | peak memory footprint |
 | --- | --- | --- | --- | --- | --- |
-| as stored | none | 0.28 s | 0.28 s | | 0.01 GB |
-| as stored | CPU | 0.22 s | 2.18 s | 3.91 s | 2.04 GB |
-| as stored | METAL | 0.29 s | 2.56 s | 2.99 s | 2.79 GB |
-| float32 | none | 0.24 s | 0.71 s | | 4.96 GB |
-| float32 | CPU | 0.30 s | 2.38 s | 3.49 s | 5.17 GB |
-| float32 | METAL | 0.22 s | 2.66 s | 3.16 s | 6.49 GB |
+| as stored | none | 0.24 s | 0.24 s | | 0.01 GB |
+| as stored | CPU | 0.25 s | 2.64 s | 5.12 s | 2.13 GB |
+| as stored | METAL | 0.27 s | 2.94 s | 3.38 s | 2.87 GB |
+| float32 | none | 0.23 s | 0.78 s | | 4.96 GB |
+| float32 | CPU | 0.23 s | 2.65 s | 3.90 s | 5.17 GB |
+| float32 | METAL | 0.28 s | 2.94 s | 3.46 s | 6.49 GB |
 
 Reading the table:
 
