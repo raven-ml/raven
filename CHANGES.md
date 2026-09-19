@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function plans the memory of its intermediates: buffers whose
+  lifetimes do not overlap share one arena per device instead of each owning an
+  allocation for the life of the function. A single-token step of gpt-oss-20b
+  on Metal held 11 GB of intermediates beside its 13.8 GB of weights and now
+  holds 0.2 GB; no longer under memory pressure, it drops from 6.7 s to 0.42 s.
+  `NO_MEMORY_PLANNER=1` turns it off.
 - An upload reads a tensor over a mapped file from the file, not through the
   mapping. Copying mapped pages into device buffers is bound by the page-fault
   path once the file no longer fits in the cache beside the buffers: placing a

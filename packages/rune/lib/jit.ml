@@ -2834,6 +2834,20 @@ let rec schedule_calls linear =
       | _ -> [ Kernel call ])
     (U.children linear)
 
+(* The buffers the memory planner must leave alone: those under the nodes replay
+   binds (inputs, constants, outputs), and every buffer a staged loop mentions,
+   since its compiled body addresses them by node. *)
+let held_buffers bound linear =
+  let buffers n =
+    List.filter (fun n -> U.op n = Ops.Buffer) (U.toposort ~enter_calls:true n)
+  in
+  let opaque =
+    List.concat_map
+      (function Kernel _ -> [] | Opaque c -> buffers c)
+      (schedule_calls linear)
+  in
+  List.concat_map buffers bound @ opaque
+
 (* No kernel reads the buffer [itag] after the first kernel that writes
    [otag], and neither buffer is touched by an opaque call. That first kernel
    may read [itag] itself when it writes each element where it read it. An
@@ -3097,6 +3111,35 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
   let call, buffer_map = Tolk.Callify.transform_to_call sink in
+  (* Resolve each output to the buffer node realization assigned it. An output
+     whose node is a graph buffer under identity wrappers (an input or constant
+     returned unchanged: [U.contiguous] elides itself on buffer-identity
+     sources, so such outputs are never scheduled) reads that buffer directly.
+     In multi mode the mapped node may wrap the buffer in MULTI; follow it
+     down. *)
+  let rec strip_identity u =
+    match U.op u with
+    | Tolk_uop.Ops.Buffer -> Some u
+    | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Unshard ->
+        if Array.length (U.src u) > 0 then strip_identity (U.src u).(0)
+        else None
+    | _ -> None
+  in
+  let resolve what u c =
+    let unwrap node = U.buf_uop node in
+    match Hashtbl.find_opt buffer_map (U.tag c) with
+    | Some node -> unwrap node
+    | None -> (
+        match strip_identity u with
+        | Some b -> b
+        | None -> err "Rune.jit: %s was not scheduled to a buffer" what)
+  in
+  let cp_outputs =
+    List.map
+      (fun (key, pk, u, place, c) ->
+        (key, pk, resolve "an output of the traced function" u c, place))
+      out_conts
+  in
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
      buffer nodes. Multi-device placements are not cached. *)
@@ -3120,9 +3163,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
         reserve_slots_of linear;
         hit
     | None ->
-        (* Schedule under a capture hook: the captured linear is unplanned,
-           which keeps buffer nodes stable so the seeded input and constant
-           bindings survive across replays. *)
+        (* Schedule under a capture hook, which hands the linear over
+           unplanned. *)
         let linear, var_vals =
           let captured = ref None in
           Tolk.Realize.capturing :=
@@ -3136,6 +3178,16 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
           match !captured with
           | Some lv -> lv
           | None -> err "Rune.jit: scheduling captured no computation"
+        in
+        let linear =
+          let bound =
+            List.map (fun inp -> inp.i_node) !inputs
+            @ List.map fst st.consts
+            @ List.map (fun (node, _, _) -> node) st.bound_consts
+            @ Option.to_list st.axis_index
+            @ List.map (fun (_, _, node, _) -> node) cp_outputs
+          in
+          Tolk.Schedule.memory_plan_rewrite linear (held_buffers bound linear)
         in
         let linear =
           let compile () =
@@ -3259,35 +3311,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
       Tolk.Realize.Buffers.seed_multi binding node
         (Tolk.Device.Multi_buffer.of_bufs bufs)
   | _ -> ());
-  (* Resolve each output to the buffer node realization assigned it. An output
-     whose node is a graph buffer under identity wrappers (an input or constant
-     returned unchanged: [U.contiguous] elides itself on buffer-identity
-     sources, so such outputs are never scheduled) reads that buffer directly.
-     In multi mode the mapped node may wrap the buffer in MULTI; follow it
-     down. *)
-  let rec strip_identity u =
-    match U.op u with
-    | Tolk_uop.Ops.Buffer -> Some u
-    | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Unshard ->
-        if Array.length (U.src u) > 0 then strip_identity (U.src u).(0)
-        else None
-    | _ -> None
-  in
-  let resolve what u c =
-    let unwrap node = U.buf_uop node in
-    match Hashtbl.find_opt buffer_map (U.tag c) with
-    | Some node -> unwrap node
-    | None -> (
-        match strip_identity u with
-        | Some b -> b
-        | None -> err "Rune.jit: %s was not scheduled to a buffer" what)
-  in
-  let cp_outputs =
-    List.map
-      (fun (key, pk, u, place, c) ->
-        (key, pk, resolve "an output of the traced function" u c, place))
-      out_conts
-  in
   let cp_inputs = Array.of_list (List.rev !inputs) in
   let cp_aliases =
     if multi <> None then []
