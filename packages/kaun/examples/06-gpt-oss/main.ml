@@ -236,13 +236,17 @@ let () =
   in
   let device = if !jit = "" then None else Some !jit in
   let count default = if !count > 0 then !count else default in
+  let log = if !prompt = "" then stdout else stderr in
+  let t0 = Unix.gettimeofday () in
   let params = Gpt_oss.of_hf ?device cfg dt ckpt in
+  Printf.fprintf log "weights imported in %.1f s\n%!"
+    (Unix.gettimeofday () -. t0);
   let stepwise =
     !stepwise || prefill_expert_bytes ?device cfg params > prefill_budget
   in
   if !prompt = "" then
     let out =
-      generate ?device ~stepwise cfg params dt ~log:stdout ~count:(count 16)
+      generate ?device ~stepwise cfg params dt ~log ~count:(count 16)
         ~on_token:(fun _ -> false)
         fixed_prompt
     in
@@ -259,8 +263,7 @@ let () =
     in
     let on_token = printer harmony ~show_analysis:!show_analysis in
     let out =
-      generate ?device ~stepwise cfg params dt ~log:stderr ~count:(count 256)
-        ~on_token
+      generate ?device ~stepwise cfg params dt ~log ~count:(count 256) ~on_token
         (Array.map Int32.of_int ids)
     in
     print_newline ();
