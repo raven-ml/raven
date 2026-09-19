@@ -457,6 +457,94 @@ let test_reinterpret_mapped_lifetime () =
         (fun mapped -> is_true ~msg:"unmapped once unreachable" (not mapped))
         (is_mapped path))
 
+(* Mapped files *)
+
+let with_mapped_file n f =
+  let path = Filename.temp_file "nx_buffer_file_" ".bin" in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with Sys_error _ -> ())
+    (fun () ->
+      let oc = open_out_bin path in
+      for i = 0 to n - 1 do
+        output_char oc (Char.chr (i land 0xff))
+      done;
+      close_out oc;
+      let stat = Unix.stat path in
+      let file =
+        { path; size = n; mtime = stat.st_mtime; inode = stat.st_ino }
+      in
+      f file)
+
+(* The mapping itself, as [Unix.map_file] returns it: not a view of it. *)
+let map_root path =
+  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () ->
+      of_bigarray1
+        (Bigarray.array1_of_genarray
+           (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
+              [| -1 |])))
+
+let offset_in file buf =
+  match file_range buf with
+  | Some (f, offset) when f = file -> Some offset
+  | Some _ -> fail "file_range answered another file"
+  | None -> None
+
+let[@inline never] check_mapped_ranges file =
+  let mapped = map_root file.path in
+  register_file file mapped;
+  equal ~msg:"the mapping" (option int) (Some 0) (offset_in file mapped);
+  let sub = sub_bytes mapped 24 64 in
+  equal ~msg:"a sub-array" (option int) (Some 24) (offset_in file sub);
+  let halves = reinterpret BFloat16 (sub_bytes sub 8 32) in
+  equal ~msg:"a reinterpreted sub-array" (option int) (Some 32)
+    (offset_in file halves);
+  equal ~msg:"an ordinary buffer" (option int) None
+    (offset_in file (create UInt8 64));
+  raises_match ~msg:"a mapping that already has views" invalid_argument
+    (fun () -> register_file file mapped);
+  halves
+
+let test_file_range () =
+  with_mapped_file 4096 @@ fun file ->
+  let halves = check_mapped_ranges file in
+  Gc.full_major ();
+  equal ~msg:"a view alone keeps the record" (option int) (Some 32)
+    (offset_in file halves);
+  let stored = Bytes.create 32 in
+  blit_to_bytes halves stored;
+  equal ~msg:"whose bytes are the file's at that offset" bytes
+    (Bytes.init 32 (fun i -> Char.chr (32 + i)))
+    stored;
+  raises_match ~msg:"an ordinary buffer is not a mapped file" invalid_argument
+    (fun () -> register_file file (create UInt8 16))
+
+(* A record dies with its mapping: memory mapped later at the same address,
+   which the system tends to hand out again, is not taken for the old file. *)
+let test_file_range_after_unmap () =
+  with_mapped_file 4096 @@ fun first ->
+  with_mapped_file 4096 @@ fun second ->
+  let[@inline never] map_and_drop file =
+    let mapped = map_root file.path in
+    register_file file mapped;
+    equal ~msg:"mapped" (option int) (Some 0) (offset_in file mapped);
+    unsafe_data_ptr mapped
+  in
+  let[@inline never] unrecorded_at address =
+    let mapped = map_root second.path in
+    if unsafe_data_ptr mapped = address then
+      equal ~msg:"an unrecorded mapping at a recorded address" (option int) None
+        (offset_in first mapped)
+  in
+  for _ = 1 to 8 do
+    let address = map_and_drop first in
+    Gc.full_major ();
+    unrecorded_at address;
+    Gc.full_major ()
+  done
+
 (* Test suite *)
 let () =
   run "Nx_buffer tests"
@@ -509,5 +597,10 @@ let () =
           test "aliases its source" test_reinterpret_aliases;
           test "raises" test_reinterpret_raises;
           test "keeps a mapped file alive" test_reinterpret_mapped_lifetime;
+        ];
+      group "mapped files"
+        [
+          test "file_range follows views by address" test_file_range;
+          test "a record dies with its mapping" test_file_range_after_unmap;
         ];
     ]

@@ -890,6 +890,11 @@ thread.
 
 ### Nx
 
+- Add `Nx_buffer.register_file` and `Nx_buffer.file_range`. A buffer whose
+  memory lies inside a recorded file mapping, views and reinterpretations
+  included, answers with the file and the byte offset of its first element, so
+  that an upload can read the bytes from the file instead of faulting them in
+  through the mapping. `Nx_io.load_safetensors` records its mappings.
 - `Nx_io.load_safetensors` maps the file instead of reading it: loading reads
   the header only, and each tensor is a view of the file whose pages are read
   when first used. It used to hold the file twice in memory and copy every

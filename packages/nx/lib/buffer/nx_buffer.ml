@@ -285,6 +285,29 @@ let reinterpret k buf =
          bytes size (kind_name k));
   unsafe_reinterpret k buf (bytes / size) size
 
+(* Mapped files *)
+
+type file = { path : string; size : int; mtime : float; inode : int }
+
+external unsafe_register_file :
+  ('a, 'b, 'c) Bigarray.Genarray.t -> string -> int -> float -> int -> unit
+  = "caml_nx_buffer_register_file"
+
+external unsafe_file_range :
+  ('a, 'b, 'c) Bigarray.Genarray.t -> (string * int * float * int * int) option
+  = "caml_nx_buffer_file_range"
+
+let register_file file buf =
+  unsafe_register_file
+    (Bigarray.genarray_of_array1 buf)
+    file.path file.size file.mtime file.inode
+
+let file_range buf =
+  match unsafe_file_range (Bigarray.genarray_of_array1 buf) with
+  | None -> None
+  | Some (path, size, mtime, inode, offset) ->
+      Some ({ path; size; mtime; inode }, offset)
+
 (* Bulk operations *)
 
 let fill buf v = genarray_fill_ext (Bigarray.genarray_of_array1 buf) v

@@ -92,7 +92,7 @@ let read_exactly fd n =
 
 (* The file is validated before it is mapped: a page of a mapping that lies past
    the end of its file faults when touched, and no handler catches that. *)
-let map_validated fd =
+let map_validated path fd =
   let stat = Unix.LargeFile.fstat fd in
   if stat.st_kind <> Unix.S_REG then failwith "not a regular file";
   let file_len = Int64.to_int stat.st_size in
@@ -124,6 +124,14 @@ let map_validated fd =
         fail_msg "file changed size while loading: mapped %d bytes of %d"
           (Bigarray.Array1.dim mapping)
           expected;
+      (* The path is recorded as opened from any directory. *)
+      let path =
+        if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+        else path
+      in
+      Nx_buffer.register_file
+        { path; size = file_len; mtime = stat.st_mtime; inode = stat.st_ino }
+        (Nx_buffer.of_bigarray1 mapping);
       (metadata, prefix + header_len, mapping)
 
 let load_safetensors path =
@@ -134,7 +142,7 @@ let load_safetensors path =
     let (metadata : Safetensors.metadata), data_start, mapping =
       Fun.protect
         ~finally:(fun () -> Unix.close fd)
-        (fun () -> map_validated fd)
+        (fun () -> map_validated path fd)
     in
     let archive = Hashtbl.create (Array.length metadata.tensors) in
     Hashtbl.iter

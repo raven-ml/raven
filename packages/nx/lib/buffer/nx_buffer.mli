@@ -185,6 +185,41 @@ val reinterpret : ('a, 'b) kind -> ('c, 'd) t -> ('a, 'b) t
     [kind_size_in_bytes kind], if [buf]'s address is not a multiple of it, or if
     [kind] or [buf]'s kind is [Int4] or [UInt4]. *)
 
+(** {2:files Mapped files}
+
+    A buffer over a mapped file can say where in the file its bytes are, so that
+    code that needs the bytes elsewhere, such as an upload to a device, can read
+    them from the file with ordinary reads instead of faulting them in through
+    the mapping page by page. *)
+
+type file = {
+  path : string;  (** The path the file was opened by. *)
+  size : int;  (** Its size in bytes when it was mapped. *)
+  mtime : float;  (** Its modification time when it was mapped. *)
+  inode : int;  (** Its inode number when it was mapped, [0] where none. *)
+}
+(** The type for the identity of a mapped file. A path may name another file
+    later: before reading through [path], check that the file opened has this
+    size, modification time and inode. *)
+
+val register_file : file -> (int, uint8_elt) t -> unit
+(** [register_file file buf] records that [buf] is a mapping of the whole of
+    [file], from its first byte: [buf] is the result of [Unix.map_file] at
+    position [0], before any sub-array or other view of it was made. From then
+    on {!file_range} answers for [buf] and for every buffer derived from it. The
+    record is dropped when the file is unmapped, which the runtime does once the
+    last buffer over the mapping has been collected.
+
+    Raises [Invalid_argument] if [buf] is not a mapped file or already has
+    views. *)
+
+val file_range : ('a, 'b) t -> (file * int) option
+(** [file_range buf] is the file [buf]'s memory is a mapping of and the byte
+    offset in that file of [buf]'s first element, if [buf]'s memory lies inside
+    a mapping recorded with {!register_file}. Results of {!Bigarray.Array1.sub},
+    {!reinterpret} and the other views answer by their address. It is [None] for
+    any other buffer, and always on JavaScript. *)
+
 (** {2:bulk Bulk operations} *)
 
 val fill : ('a, 'b) t -> 'a -> unit

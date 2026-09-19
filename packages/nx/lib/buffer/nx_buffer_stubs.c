@@ -6,6 +6,7 @@
 #include "nx_buffer_stubs.h"
 
 #include <caml/fail.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -661,4 +662,146 @@ CAMLprim value caml_nx_buffer_blit_to_bytes(value vsrc, value vsrc_off,
 
 CAMLprim value caml_nx_buffer_data_ptr(value vb) {
   return caml_copy_nativeint((intnat)Caml_ba_data_val(vb));
+}
+
+/*---------------------------------------------------------------------------
+   Mapped files
+
+   A registry of the address ranges that are mapped files, so that any buffer
+   whose memory lies inside one can be traced back to its file. An entry must
+   disappear exactly when its mapping does: a stale entry would describe
+   whatever memory is mapped at that address next.
+
+   The runtime unmaps a file in the finaliser of the last bigarray over it, and
+   every bigarray derived from a mapped one ([sub], [reshape], [reinterpret])
+   inherits its custom operations. Registration replaces the root's operations
+   with a copy whose finaliser removes the entry when it is about to run the
+   runtime's finaliser for the last time. Finalisers of different views may run
+   on different domains, so that decision and the runtime's own count are taken
+   under one lock.
+  ---------------------------------------------------------------------------*/
+
+struct nx_mapping {
+  struct nx_mapping *next;
+  char *start;
+  uintnat len;
+  char *path;
+  intnat size;
+  double mtime;
+  intnat inode;
+};
+
+static struct nx_mapping *nx_mappings = NULL;
+static atomic_flag nx_mappings_lock = ATOMIC_FLAG_INIT;
+static const struct custom_operations *nx_mapped_base_ops = NULL;
+static struct custom_operations nx_mapped_ops;
+
+static void nx_mappings_acquire(void) {
+  while (atomic_flag_test_and_set(&nx_mappings_lock)) {
+  }
+}
+
+static void nx_mappings_release(void) { atomic_flag_clear(&nx_mappings_lock); }
+
+/* With the lock held. */
+static void nx_mapping_remove(char *start) {
+  for (struct nx_mapping **p = &nx_mappings; *p != NULL; p = &(*p)->next) {
+    if ((*p)->start == start) {
+      struct nx_mapping *m = *p;
+      *p = m->next;
+      free(m->path);
+      free(m);
+      return;
+    }
+  }
+}
+
+static void nx_mapped_finalize(value v) {
+  struct caml_ba_array *b = Caml_ba_array_val(v);
+  nx_mappings_acquire();
+  if (b->proxy == NULL)
+    nx_mapping_remove((char *)b->data);
+  else if (atomic_load(&b->proxy->refcount) == 1)
+    nx_mapping_remove((char *)b->proxy->data);
+  nx_mapped_base_ops->finalize(v);
+  nx_mappings_release();
+}
+
+CAMLprim value caml_nx_buffer_register_file(value vb, value vpath, value vsize,
+                                            value vmtime, value vinode) {
+  CAMLparam5(vb, vpath, vsize, vmtime, vinode);
+  struct caml_ba_array *b = Caml_ba_array_val(vb);
+  if ((b->flags & CAML_BA_MANAGED_MASK) != CAML_BA_MAPPED_FILE ||
+      b->proxy != NULL)
+    caml_invalid_argument(
+        "Nx_buffer.register_file: not a freshly mapped file");
+  const struct custom_operations *ops = Custom_ops_val(vb);
+  struct nx_mapping *m = malloc(sizeof *m);
+  char *path = strdup(String_val(vpath));
+  if (m == NULL || path == NULL) {
+    free(m);
+    free(path);
+    caml_raise_out_of_memory();
+  }
+  m->start = (char *)b->data;
+  m->len = caml_ba_byte_size(b);
+  m->path = path;
+  m->size = Long_val(vsize);
+  m->mtime = Double_val(vmtime);
+  m->inode = Long_val(vinode);
+  nx_mappings_acquire();
+  if (nx_mapped_base_ops == NULL) {
+    nx_mapped_base_ops = ops;
+    nx_mapped_ops = *ops;
+    nx_mapped_ops.finalize = nx_mapped_finalize;
+  }
+  int known = ops == nx_mapped_base_ops;
+  if (known) {
+    nx_mapping_remove(m->start);
+    m->next = nx_mappings;
+    nx_mappings = m;
+    Custom_ops_val(vb) = &nx_mapped_ops;
+  }
+  nx_mappings_release();
+  if (!known) {
+    free(path);
+    free(m);
+    caml_invalid_argument(
+        "Nx_buffer.register_file: not a freshly mapped file");
+  }
+  CAMLreturn(Val_unit);
+}
+
+/* [None], or [Some (path, size, mtime, inode, offset)]. */
+CAMLprim value caml_nx_buffer_file_range(value vb) {
+  CAMLparam1(vb);
+  CAMLlocal3(vpath, vmtime, res);
+  char *p = (char *)Caml_ba_data_val(vb);
+  char *path = NULL;
+  intnat size = 0, inode = 0, offset = 0;
+  double mtime = 0.;
+  nx_mappings_acquire();
+  for (struct nx_mapping *m = nx_mappings; m != NULL; m = m->next) {
+    if (p >= m->start && p < m->start + m->len) {
+      path = strdup(m->path);
+      size = m->size;
+      mtime = m->mtime;
+      inode = m->inode;
+      offset = p - m->start;
+      break;
+    }
+  }
+  int found = path != NULL;
+  nx_mappings_release();
+  if (!found) CAMLreturn(Val_none);
+  vpath = caml_copy_string(path);
+  free(path);
+  vmtime = caml_copy_double(mtime);
+  res = caml_alloc_tuple(5);
+  Store_field(res, 0, vpath);
+  Store_field(res, 1, Val_long(size));
+  Store_field(res, 2, vmtime);
+  Store_field(res, 3, Val_long(inode));
+  Store_field(res, 4, Val_long(offset));
+  CAMLreturn(caml_alloc_some(res));
 }

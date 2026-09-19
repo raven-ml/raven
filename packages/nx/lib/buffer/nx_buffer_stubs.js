@@ -575,6 +575,16 @@ function caml_nx_buffer_reinterpret(kind_index, ba, len, size) {
   return caml_nx_buffer_create_unsafe(kind, ba.layout, [len], data);
 }
 
+//Provides: caml_nx_buffer_register_file
+function caml_nx_buffer_register_file(ba, path, size, mtime, inode) {
+  return 0;
+}
+
+//Provides: caml_nx_buffer_file_range
+function caml_nx_buffer_file_range(ba) {
+  return 0; /* None: no buffer is a mapped file */
+}
+
 //Provides: caml_nx_buffer_blit
 //Requires: caml_ba_blit, caml_invalid_argument
 function caml_nx_buffer_blit(src, dst) {

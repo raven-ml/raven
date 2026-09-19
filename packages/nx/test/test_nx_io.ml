@@ -1617,6 +1617,37 @@ let test_safetensors_misaligned_twin () =
   with_safetensors (raw_safetensors ~pad:1 typed_entries) @@ fun path ->
   check_typed_entries (Nx_io.load_safetensors path)
 
+(* An entry that is a view knows where in the file its bytes are; one the load
+   copied does not. *)
+let test_safetensors_file_range () =
+  let range archive name =
+    let (Nx_io.P t) = Hashtbl.find archive name in
+    Option.map
+      (fun ((file : Nx_buffer.file), offset) -> (file.path, file.size, offset))
+      (Nx_buffer.file_range (Nx.to_buffer t))
+  in
+  let contents = raw_safetensors typed_entries in
+  let data_len =
+    List.fold_left
+      (fun n (_, _, _, data) -> n + String.length data)
+      0 typed_entries
+  in
+  let data_start = String.length contents - data_len in
+  with_safetensors contents (fun path ->
+      let archive = Nx_io.load_safetensors path in
+      let expected offset = Some (path, String.length contents, offset) in
+      let ranges = option (triple string int int) in
+      equal ~msg:"first entry" ranges (expected data_start)
+        (range archive "u64");
+      equal ~msg:"an entry further on" ranges
+        (expected (data_start + 32))
+        (range archive "bf16"));
+  with_safetensors (raw_safetensors ~pad:1 typed_entries) (fun path ->
+      let archive = Nx_io.load_safetensors path in
+      equal ~msg:"a copied entry"
+        (option (triple string int int))
+        None (range archive "u64"))
+
 let test_safetensors_foreign_dtypes () =
   let entries =
     [
@@ -1785,6 +1816,7 @@ let () =
           test "Views are bit exact" test_safetensors_views_bit_exact;
           test "A misaligned file equals its aligned twin"
             test_safetensors_misaligned_twin;
+          test "Views know their file range" test_safetensors_file_range;
           test "Dtypes nx lacks load as bytes" test_safetensors_foreign_dtypes;
           test "Invalid files raise" test_safetensors_invalid_files;
           test "Not a regular file raises" test_safetensors_not_a_regular_file;
