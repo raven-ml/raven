@@ -51,6 +51,21 @@ Reading the table:
 - At float32 each leaf is cast, placed and dropped before the next is read, so
   the casts never add up to a second model on the host.
 
+With a cold file cache (the checkpoint copied by `cold_copy.py`, which leaves
+none of its pages cached), wall time to the end of the import and of the first
+compiled call, as stored:
+
+| device | mapped upload, cold | reading the file, cold | reading the file, warm |
+| --- | --- | --- | --- |
+| METAL | 5.82 s, 8.14 s | 3.25 s, 3.70 s | 3.07 s, 3.53 s |
+| CPU | 4.81 s, 10.76 s | 2.76 s, 4.99 s | 2.56 s, 4.50 s |
+
+An upload reads a tensor over a mapped file from the file itself, since
+walking the mapping is bound by page faults at a fraction of the disk's speed.
+Warm, at this size, the mapping was 0.1 to 0.3 s faster. At 13.76 GB it never
+is: placing a synthetic gpt-oss-20b on Metal took 28.6 s cold and 26.0 s warm
+through the mapping, and 7.3 s either way reading the file.
+
 A synthetic Llama 3.1 8B (the real headers, random payloads, 16.06 GB in four
 shards) through the same program:
 
