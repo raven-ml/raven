@@ -1,6 +1,6 @@
 # RFC 0003: Loading weights
 
-- Status: published
+- Status: committed
 - Date: 2026-09-18
 - Packages: nx (buffer, io, `cast`, effect), kaun (`Checkpoint`, `Kaun_hf`,
   examples), rune (`to_device`, capture binding, unaligned vector types on the
@@ -317,27 +317,30 @@ takes it as an input leaf uses the buffer with no transfer, `~donate:true`
 consumes it when it is an input leaf, and the first host read of its data
 copies it back and releases the buffer. Every nx operation outside a compiled
 function is a host read, views included. `x` is untouched and may be dropped.
-A strided source is made contiguous whole before it is chunked; a contiguous
-slice with an offset is chunked in place. A value already resident on `device`
-is returned as it is, and one resident elsewhere goes through the host. On the
-CPU device the result is `Nx.contiguous x`, unless `RUNE_JIT_FORCE_COPY` is
-set. Inside `jit`, `grad`, `jvp` and `vmap` it is `x`: it performs nx's
-existing `to_device` effect, which every rune handler continues with its
-argument, and places only when no handler answers.
+A contiguous source, offset or not, is read in place chunk by chunk. A strided
+source is cut along its leading axis into pieces of at most a chunk, each made
+contiguous on its own, so it never costs a whole host copy. A value already
+resident on `device` is returned as it is, and one resident elsewhere goes
+through the host. On the CPU device the result is `Nx.contiguous x`, unless
+`RUNE_JIT_FORCE_COPY` is set. Inside `jit`, `grad`, `jvp` and `vmap` it is
+`x`: it performs nx's existing `to_device` effect, which every rune handler
+continues with its argument, and places only when no handler answers.
 
 **Captures bind.** A compiled function that captures an unforced resident
-value on its own single device binds that value's buffer as the constant, at
-its first compile. No bytes move, and every signature and every compiled
-function that captures it shares the one buffer. The trace table keys such a
-capture by its resident id; captures are forced today because the table hashes
-keys structurally (`jit.ml`, `lift_const`). nx's deferred tensors keep their
-id after a read, which they drop today (`nx_effect.ml:371-374`). A capture
-that is a host tensor is uploaded once per compiled function, as today. A
-capture resident on another device is read to the host and uploaded, and under
-`pmap` a placed capture is read back and replicated, as today. Under `grad`,
-`vmap` or `with_debug` outside a compiled function the function runs eagerly,
-so its placed captures are read back like any eager use: differentiate inside
-`jit`.
+value on its own single device binds that value's buffer as the constant, when
+its first trace meets the capture. Compiled outputs bind like placed values:
+an unread output that another function captures stays on the device for the
+life of that function, where it used to be read to the host. No bytes move,
+and every signature and every compiled function that captures it shares the
+one buffer. The trace table keys such a capture by its resident id; captures
+are forced today because the table hashes keys structurally (`jit.ml`,
+`lift_const`). nx's deferred tensors keep their id after a read, which they
+drop today (`nx_effect.ml:371-374`). A capture that is a host tensor is
+uploaded once per compiled function, as today. A capture resident on another
+device is read to the host and uploaded, and under `pmap` a placed capture is
+read back and replicated, as today. Under `grad`, `vmap` or `with_debug`
+outside a compiled function the function runs eagerly, so its placed captures
+are read back like any eager use: differentiate inside `jit`.
 
 **Reads and donation of a bound value.** Binding is permanent: a bound value
 keeps its buffer until the value is unreachable, and a compiled function keeps
@@ -354,10 +357,11 @@ compiled outputs only: with 13.76 GB of weights resident it would otherwise
 run a major collection before every output allocation of every decode step
 (`jit.ml`, `create_fresh_buffer`). `jit_stats().resident_bytes` still counts
 placed values. Every upload and every read-back in rune takes the chunked
-path, which removes the whole-leaf staging `Bytes` kept per distinct size, and
-the chunked path synchronises when the bytes copied since the last synchronize
-pass a bound, which bounds CUDA's pending pinned buffers with tolk's runtime
-left as ported.
+path, which replaces the whole-leaf staging `Bytes` kept per distinct size
+with one shared chunk and, per compiled function, the shorter lengths it
+transfers on replay, and the chunked path synchronises after 256 MiB copied
+since the last synchronize, which bounds CUDA's pending pinned buffers with
+tolk's runtime left as ported.
 
 ### Unaligned vector types on the CPU device
 
@@ -416,13 +420,16 @@ Every figure but today's is derived from sizes and code paths. Measured on
 Llama 3.2 1B after stage 2: loading and importing at the file's bfloat16
 commits 0.01 GB in 0.35 s, and 4.96 GB in 0.73 s at float32, against 15.8 GB
 in 4.0 s before. With a first compiled call at bfloat16 the peak is 3.26 GB on
-Metal and 2.40 GB on the CPU device. A synthetic checkpoint with Llama 3.1
-8B's headers loads, imports and runs its first compiled call on the CPU device
-at a peak of 18.85 GB, above the derived figure: every projection is a strided
-view of the file, and a strided capture passes through a contiguous host copy
-and a staging `Bytes` kept per distinct size before it reaches its buffer. The
-device reports a working set of 26.8 GB and a maximum buffer of 20.1 GB; the
-largest leaf is 1.16 GB.
+Metal and 2.40 GB on the CPU device. After stage 3, with placed leaves: 2.79
+GB at bfloat16 and 6.49 GB at float32 on Metal. A synthetic checkpoint with
+Llama 3.1 8B's headers peaks at 16.80 GB at bfloat16 and 18.16 GB at float16
+on Metal, and at 15.27 GB on the CPU device, where it peaked at 18.85 GB
+before the chunked path. The weights of a synthetic gpt-oss-20b place at 13.76
+GB. That model's program is another matter: its twelve-token prefill does not
+fit in 32 GB, because the all-experts form dequantises every expert of a layer
+and a compiled program gives each intermediate its own buffer for the whole
+call. It is outside this RFC. The device reports a working set of 26.8 GB and
+a maximum buffer of 20.1 GB; the largest leaf is 1.16 GB.
 
 ### Order of work
 
