@@ -24,29 +24,27 @@ let add_entry ~op ?prefix path packed acc =
     invalid_argf "Checkpoint.%s: duplicate name %S" op name;
   String_map.add name packed acc
 
-(* Typed recovery: the template leaf carries its dtype and shape, so the packed
-   file tensor is witness-checked (or cast) against it. *)
-let fetch (type a b) ~op ~cast name (leaf : (a, b) Nx.t) (t : t) : (a, b) Nx.t
-    =
+let entry ~op name t =
   match String_map.find_opt name t with
+  | Some entry -> entry
   | None -> invalid_argf "Checkpoint.%s: missing entry %S" op name
-  | Some (Rune.Ptree.P x) -> (
-      if Nx.shape x <> Nx.shape leaf then
-        invalid_argf
-          "Checkpoint.%s: shape mismatch for %S: expected %s, got %s" op name
-          (shape_to_string (Nx.shape leaf))
-          (shape_to_string (Nx.shape x));
-      match Nx_core.Dtype.equal_witness (Nx.dtype x) (Nx.dtype leaf) with
-      | Some Type.Equal -> x
-      | None ->
-          if cast then Nx.cast (Nx.dtype leaf) x
-          else
-            invalid_argf
-              "Checkpoint.%s: dtype mismatch for %S: expected %s, got %s \
-               (pass ~cast:true to convert)"
-              op name
-              (Nx_core.Dtype.to_string (Nx.dtype leaf))
-              (Nx_core.Dtype.to_string (Nx.dtype x)))
+
+let check_shape ~op name ~shape x =
+  if Nx.shape x <> shape then
+    invalid_argf "Checkpoint.%s: shape mismatch for %S: expected %s, got %s" op
+      name (shape_to_string shape)
+      (shape_to_string (Nx.shape x))
+
+let typed (type a b) ~op ~shape (dtype : (a, b) Nx.dtype) name t : (a, b) Nx.t =
+  let (Rune.Ptree.P x) = entry ~op name t in
+  check_shape ~op name ~shape x;
+  match Nx_core.Dtype.equal_witness (Nx.dtype x) dtype with
+  | Some Type.Equal -> x
+  | None ->
+      invalid_argf "Checkpoint.%s: dtype mismatch for %S: expected %s, got %s"
+        op name
+        (Nx_core.Dtype.to_string dtype)
+        (Nx_core.Dtype.to_string (Nx.dtype x))
 
 let empty = String_map.empty
 
@@ -99,23 +97,53 @@ let check_names ~op fold_names ?prefix like =
        (fun path acc () -> add_entry ~op ?prefix path () acc)
        String_map.empty like)
 
-let to_params (module U : Nx.Ptree.Uniform) ?prefix ?(cast = false)
+let to_tensor ~shape dtype name t = typed ~op:"to_tensor" ~shape dtype name t
+
+let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
+    (float, b) Nx.t =
+  let op = "to_float" in
+  (match dtype with
+  | Float8_e4m3 | Float8_e5m2 ->
+      invalid_argf "Checkpoint.%s: %S cannot be cast to %s, which needs scales"
+        op name
+        (Nx_core.Dtype.to_string dtype)
+  | Float16 | BFloat16 | Float32 | Float64 -> ());
+  let (Rune.Ptree.P x) = entry ~op name t in
+  check_shape ~op name ~shape x;
+  match Nx.dtype x with
+  | Float16 | BFloat16 | Float32 | Float64 -> Nx.cast dtype x
+  | Float8_e4m3 | Float8_e5m2 ->
+      invalid_argf
+        "Checkpoint.%s: %S is a %s entry, whose scales live in other entries: \
+         read it with to_tensor"
+        op name
+        (Nx_core.Dtype.to_string (Nx.dtype x))
+  | source ->
+      invalid_argf "Checkpoint.%s: %S is not a floating-point entry (dtype %s)"
+        op name
+        (Nx_core.Dtype.to_string source)
+
+let to_params (module U : Nx.Ptree.Uniform) ?prefix
     ~(like : ('a, 'b) Nx.t U.t) (t : t) : ('a, 'b) Nx.t U.t =
   check_names ~op:"to_params"
     (fun f acc like -> U.fold (fun path acc _ -> f path acc ()) acc like)
     ?prefix like;
   U.map2
-    (fun path leaf -> fetch ~op:"to_params" ~cast (full_name ?prefix path) leaf t)
+    (fun path leaf ->
+      typed ~op:"to_params" ~shape:(Nx.shape leaf) (Nx.dtype leaf)
+        (full_name ?prefix path) t)
     (U.names like) like
 
-let to_packed (module U : Nx.Ptree.Uniform) ?prefix ?(cast = false)
+let to_packed (module U : Nx.Ptree.Uniform) ?prefix
     ~(like : Rune.Ptree.tensor U.t) (t : t) : Rune.Ptree.tensor U.t =
   check_names ~op:"to_packed"
     (fun f acc like -> U.fold (fun path acc _ -> f path acc ()) acc like)
     ?prefix like;
   U.map2
     (fun path (Rune.Ptree.P leaf) ->
-      Rune.Ptree.P (fetch ~op:"to_packed" ~cast (full_name ?prefix path) leaf t))
+      Rune.Ptree.P
+        (typed ~op:"to_packed" ~shape:(Nx.shape leaf) (Nx.dtype leaf)
+           (full_name ?prefix path) t))
     (U.names like) like
 
 let to_int name t =

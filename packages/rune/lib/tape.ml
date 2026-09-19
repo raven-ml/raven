@@ -28,14 +28,14 @@ let backward tape =
 let find tape x = Tensor_map.find tape.cotangents x
 
 let accumulate tape x g =
-  (* Materialize the stored cotangent: contributions can be lazy views
-     (broadcasts, transposes), and later pulls may reshape them. *)
-  let g =
-    match find tape x with None -> Nx.contiguous g | Some acc -> Nx.add acc g
-  in
+  let g = match find tape x with None -> g | Some acc -> Nx.add acc g in
   Tensor_map.set tape.cotangents x g
 
+(* A cotangent is accumulated as the lazy view its pulls produced (a transpose,
+   a broadcast) and materialized once, here, where it leaves the tape. *)
 let cotangent tape x =
-  match find tape x with Some g -> g | None -> Nx.zeros_like x
+  match find tape x with
+  | Some g -> Nx.contiguous g
+  | None -> Nx.zeros_like x
 
 let reset_cotangents tape = tape.cotangents <- Tensor_map.create ()

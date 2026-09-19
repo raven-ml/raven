@@ -207,30 +207,30 @@ let masked ~msg expected t =
 let test_top_k () =
   let logits = vec [| 1.0; 4.0; 2.0; 3.0 |] in
   masked ~msg:"the two largest stay in place" [| ninf; 4.0; ninf; 3.0 |]
-    (Fn.top_k ~k:(k_of 2) logits);
+    (Fn.keep_top_k ~k:(k_of 2) logits);
   masked ~msg:"k = 1 is the maximum"
     [| ninf; 4.0; ninf; ninf |]
-    (Fn.top_k ~k:(k_of 1) logits);
+    (Fn.keep_top_k ~k:(k_of 1) logits);
   masked ~msg:"k below 1 clamps"
     [| ninf; 4.0; ninf; ninf |]
-    (Fn.top_k ~k:(k_of 0) logits);
+    (Fn.keep_top_k ~k:(k_of 0) logits);
   masked ~msg:"k past the vocabulary keeps everything" [| 1.0; 4.0; 2.0; 3.0 |]
-    (Fn.top_k ~k:(k_of 9) logits);
+    (Fn.keep_top_k ~k:(k_of 9) logits);
   masked ~msg:"ties at the threshold are kept" [| 2.0; 2.0; ninf; 5.0 |]
-    (Fn.top_k ~k:(k_of 2) (vec [| 2.0; 2.0; 1.0; 5.0 |]))
+    (Fn.keep_top_k ~k:(k_of 2) (vec [| 2.0; 2.0; 1.0; 5.0 |]))
 
 let test_top_k_per_row () =
   let logits = Nx.create f64 [| 2; 3 |] [| 1.0; 3.0; 2.0; 6.0; 4.0; 5.0 |] in
   let k = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
   masked ~msg:"each row has its own k"
     [| ninf; 3.0; ninf; 6.0; ninf; 5.0 |]
-    (Fn.top_k ~k logits)
+    (Fn.keep_top_k ~k logits)
 
 let test_top_p () =
   (* Probabilities 0.5, 0.3, 0.15, 0.05, given out of order. *)
   let logits = Nx.log (vec [| 0.15; 0.5; 0.05; 0.3 |]) in
   let kept p =
-    Array.map (fun v -> v > ninf) (Nx.to_array (Fn.top_p ~p:(p_of p) logits))
+    Array.map (fun v -> v > ninf) (Nx.to_array (Fn.keep_top_p ~p:(p_of p) logits))
   in
   equal ~msg:"0.5 is reached by the first entry" (array bool)
     [| false; true; false; false |]
@@ -251,12 +251,12 @@ let test_top_p () =
   let peaked = Nx.create Nx.float32 [| 1; 4 |] [| 20.0; 0.0; 0.0; 0.0 |] in
   masked ~msg:"p = 1 keeps the tail of a confident row"
     [| 20.0; 0.0; 0.0; 0.0 |]
-    (Fn.top_p ~p:(Nx.scalar Nx.float32 1.0) peaked);
+    (Fn.keep_top_p ~p:(Nx.scalar Nx.float32 1.0) peaked);
   masked ~msg:"an all-equal row keeps everything by the tie rule"
     [| 1.0; 1.0; 1.0 |]
-    (Fn.top_p ~p:(p_of 0.1) (vec [| 1.0; 1.0; 1.0 |]));
+    (Fn.keep_top_p ~p:(p_of 0.1) (vec [| 1.0; 1.0; 1.0 |]));
   masked ~msg:"entries already removed stay removed" [| ninf; 2.0; ninf |]
-    (Fn.top_p ~p:(p_of 0.5) (vec [| ninf; 2.0; 1.0 |]))
+    (Fn.keep_top_p ~p:(p_of 0.5) (vec [| ninf; 2.0; 1.0 |]))
 
 let test_top_p_per_row () =
   (* Rank 3, one p per leading position, over rows of probabilities 0.5, 0.3 and
@@ -266,12 +266,12 @@ let test_top_p_per_row () =
   let p = Nx.create f64 [| 2; 1 |] [| 0.6; 0.95 |] in
   equal ~msg:"each row has its own p" (array bool)
     [| true; true; false; true; true; true |]
-    (Array.map (fun v -> v > ninf) (Nx.to_array (Fn.top_p ~p logits)))
+    (Array.map (fun v -> v > ninf) (Nx.to_array (Fn.keep_top_p ~p logits)))
 
 let test_masks_compose_and_sample () =
   let logits = Nx.log (vec [| 0.15; 0.5; 0.05; 0.3 |]) in
   let policy logits =
-    Fn.top_p ~p:(p_of 0.7) (Fn.top_k ~k:(k_of 3) (Nx.div_s logits 0.8))
+    Fn.keep_top_p ~p:(p_of 0.7) (Fn.keep_top_k ~k:(k_of 3) (Nx.div_s logits 0.8))
   in
   let draws =
     List.init 40 (fun i ->
@@ -289,7 +289,7 @@ let test_masks_jit () =
     Nx.create Nx.float32 [| 2; 4 |] [| 1.0; 4.0; 2.0; 3.0; 0.5; 0.1; 0.9; 0.3 |]
   in
   let p = Nx.scalar Nx.float32 0.8 in
-  let policy l = Fn.top_p ~p (Fn.top_k ~k:(k_of 3) l) in
+  let policy l = Fn.keep_top_p ~p (Fn.keep_top_k ~k:(k_of 3) l) in
   masked ~msg:"compiled masks equal eager masks"
     (Nx.to_array (policy logits))
     (Rune.jit' policy logits)
@@ -297,13 +297,13 @@ let test_masks_jit () =
 let test_masks_reject_bad_shapes () =
   raises
     (Invalid_argument
-       "Fn.top_k: the parameter must be a scalar or have the logits' leading \
+       "Fn.keep_top_k: the parameter must be a scalar or have the logits' leading \
         shape") (fun () ->
-      Fn.top_k
+      Fn.keep_top_k
         ~k:(Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 1l |])
         (Nx.zeros f64 [| 2; 4 |]));
-  raises (Invalid_argument "Fn.top_p: logits must not be a scalar") (fun () ->
-      Fn.top_p ~p:(p_of 0.5) (Nx.scalar f64 1.0))
+  raises (Invalid_argument "Fn.keep_top_p: logits must not be a scalar") (fun () ->
+      Fn.keep_top_p ~p:(p_of 0.5) (Nx.scalar f64 1.0))
 
 let tests =
   [
@@ -333,10 +333,10 @@ let tests =
       ];
     group "sampling masks"
       [
-        test "top_k keeps the k largest of a row" test_top_k;
-        test "top_k takes one k per row" test_top_k_per_row;
-        test "top_p keeps the fewest entries reaching p" test_top_p;
-        test "top_p takes one p per row" test_top_p_per_row;
+        test "keep_top_k keeps the k largest of a row" test_top_k;
+        test "keep_top_k takes one k per row" test_top_k_per_row;
+        test "keep_top_p keeps the fewest entries reaching p" test_top_p;
+        test "keep_top_p takes one p per row" test_top_p_per_row;
         test "masks compose into a sampling policy"
           test_masks_compose_and_sample;
         test "masks compile" test_masks_jit;

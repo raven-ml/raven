@@ -18,23 +18,6 @@ let wrap_exn f =
   | Failure msg -> Error (Format_error msg)
   | ex -> Error (Other (Printexc.to_string ex))
 
-let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
-
-let temporary_sibling path =
-  Filename.temp_file ~temp_dir:(Filename.dirname path)
-    (Filename.basename path ^ ".")
-    ".tmp"
-
-let replace_with_temp temp path =
-  match
-    Unix.chmod temp 0o640;
-    Unix.rename temp path
-  with
-  | () -> ()
-  | exception exn ->
-      remove_if_exists temp;
-      raise exn
-
 (* Npy *)
 
 let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
@@ -46,11 +29,11 @@ let save_npy ?(overwrite = true) path arr =
   let packed = Npy.P (buf, shape) in
   (if not overwrite then Npy.write ~exclusive:true packed path
    else
-     let temp = temporary_sibling path in
+     let temp = Temp_file.sibling path in
      match Npy.write packed temp with
-     | () -> replace_with_temp temp path
+     | () -> Temp_file.replace temp path
      | exception exn ->
-         remove_if_exists temp;
+         Temp_file.remove_if_exists temp;
          raise exn);
   Ok ()
 
@@ -90,15 +73,15 @@ let save_npz ?(overwrite = true) path items =
       Zip_archive.close_out zo
     with exn ->
       Zip_archive.abort_out zo;
-      remove_if_exists output;
+      Temp_file.remove_if_exists output;
       raise exn
   in
   (if not overwrite then write ~exclusive:true path
    else
-     let temp = temporary_sibling path in
+     let temp = Temp_file.sibling path in
      match write ~exclusive:false temp with
-     | () -> replace_with_temp temp path
+     | () -> Temp_file.replace temp path
      | exception exn ->
-         remove_if_exists temp;
+         Temp_file.remove_if_exists temp;
          raise exn);
   Ok ()

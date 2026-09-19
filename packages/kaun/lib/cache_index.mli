@@ -7,13 +7,13 @@
 
     A cache is any record of {e pools}. A pool of [slots] slots is one tensor of
     [slots + 1] rows whose axis 0 is the slot axis, with no batch axis: slot [s]
-    is row [s] of every pool, and the last row is scratch. A cache index says,
-    for one call, which position each token holds and which slots hold the
-    positions of its sequence. One contiguous run of slots per sequence
-    ({!rows}), paged allocation, a prefix shared by two sequences and a forked
-    beam are all values of an index, and a layer is the same for each. A model
-    passes the index it was given to every layer and never looks inside; a layer
-    calls {!extend} on each of its pools and attends under {!mask}.
+    is row [s] of every pool, and the last row is scratch: {!pool} builds one. A
+    cache index says, for one call, which position each token holds and which
+    slots hold the positions of its sequence. One contiguous run of slots per
+    sequence ({!rows}), paged allocation, a prefix shared by two sequences and a
+    forked beam are all values of an index, and a layer is the same for each. A
+    model passes the index it was given to every layer and never looks inside; a
+    layer calls {!extend} on each of its pools and attends under {!mask}.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -53,8 +53,9 @@
     + {b A column no token of its lane sees contributes exactly zero,} whatever
       its slot holds: {!extend} replaces it by zero before any weight multiplies
       it. That covers an unallocated column, a column past every position of the
-      lane, and with [window] a column below the window of every token of the
-      lane.
+      lane, and a column below the index's {!window} for every token of the
+      lane. The zeroing and the {!mask} read one window, the index's, so a layer
+      cannot zero with one and mask with another.
     + {b Values vary, shapes do not.} Positions and tables are tensors: under
       {!Rune.jit} they are inputs of the step, and one compiled program serves
       every position and every allocation. *)
@@ -103,11 +104,21 @@ val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
     Raises [Invalid_argument] if [batch] or [seq] is not positive or a length
     does not fit. *)
 
+val window : int -> t -> t
+(** [window w index] is [index] whose tokens see only the last [w] positions at
+    or before their own, themselves included. It replaces the window [index]
+    had. An index is built without a window; a model whose layers differ passes
+    [window w index] to the sliding ones and [index] to the others, over the
+    same pools' slots.
+
+    Raises [Invalid_argument] if [w] is not positive. *)
+
 val advance : t -> t
-(** [advance index] is the index of the next token of every lane: [seq] is [1]
-    and the position is one past the lane's greatest. A lane of padding advances
-    to position [0]. It is per lane: where two lanes name one sequence it is not
-    the sequence's next position, and the caller sets positions itself.
+(** [advance index] is the index of the next token of every lane, with [index]'s
+    window: [seq] is [1] and the position is one past the lane's greatest. A
+    lane of padding advances to position [0]. It is per lane: where two lanes
+    name one sequence it is not the sequence's next position, and the caller
+    sets positions itself.
 
     Raises [Invalid_argument] on a whole index. *)
 
@@ -129,14 +140,18 @@ val positions : t -> Nx.int32_t
     clamped to [0] and [context index - 1], for rotating and for indexing a
     table of position embeddings: padding is [0]. *)
 
-(** {1:pools Extending pools} *)
+(** {1:pools Pools} *)
+
+val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
+(** [pool ~slots dtype shape] is an empty pool of [slots] slots, each of shape
+    [shape]: zeros of shape [slots + 1] followed by [shape], the last row being
+    the scratch row. Every pool is built here, so nothing else knows about that
+    row. [slots] may be [0]: the pool a {!whole} call is given.
+
+    Raises [Invalid_argument] if [slots] is negative. *)
 
 val extend :
-  ?window:int ->
-  t ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t
+  t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
 (** [extend index values pool] is [(seen, pool')], with [pool] of shape
     [[| slots + 1; ... |]], of any dtype and width:
 
@@ -147,7 +162,7 @@ val extend :
     - [seen], of shape [[| batch; context; ... |]], is what those tokens attend
       over, read from [pool']: column [j] is the slot holding position [j], so
       the call's own tokens are in it. A column that is unallocated, past every
-      position of its lane, or with [window] below the window of every token of
+      position of its lane, or below the index's {!window} for every token of
       its lane, is zero.
 
     On a whole index [seen] is [values] and [pool'] is [pool]. Which case
@@ -160,21 +175,19 @@ val extend :
     expression of the index's tensors; forcing them into storage, as
     {!Nx.contiguous} does, costs a buffer and a kernel per pool per layer.
 
-    Raises [Invalid_argument] if [values] does not have that shape or [window]
-    is not positive. *)
+    Raises [Invalid_argument] if [values] does not have that shape. *)
 
-val mask : ?window:int -> t -> Nx.bool_t
+val mask : t -> Nx.bool_t
 (** [mask index], of shape [[| batch; seq; context |]], is which columns of
     {!extend}'s [seen] each token sees: those at or before its position, and
-    with [window] only the last [window] of them. On a whole index the columns
-    are the call's tokens, and padded ones are hidden. A padded token sees none.
-
-    Raises [Invalid_argument] if [window] is not positive. *)
+    under the index's {!window} only the last of them. On a whole index the
+    columns are the call's tokens, and padded ones are hidden. A padded token
+    sees none. *)
 
 (** {1:traversals Traversals}
 
     Over the index's int32 tensors, for the state of a jitted step. They compute
-    nothing. *)
+    nothing and keep the window, which is no tensor. *)
 
 val map : (Nx.int32_t -> Nx.int32_t) -> t -> t
 (** [map f index] is [index] with [f] applied to every tensor. *)
@@ -182,7 +195,8 @@ val map : (Nx.int32_t -> Nx.int32_t) -> t -> t
 val map2 : (Nx.int32_t -> Nx.int32_t -> Nx.int32_t) -> t -> t -> t
 (** [map2 f index index'] combines [index] and [index'] tensor by tensor.
 
-    Raises [Invalid_argument] if they were not built the same way. *)
+    Raises [Invalid_argument] if they were not built the same way or differ in
+    their window. *)
 
 val iter : (Nx.int32_t -> unit) -> t -> unit
 (** [iter f index] applies [f] to every tensor of [index]. *)

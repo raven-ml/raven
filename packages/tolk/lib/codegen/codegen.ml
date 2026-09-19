@@ -134,5 +134,16 @@ let to_program ?(optimize = true) ?beam_device dev ren sink =
   if debug () >= 4 then Printf.eprintf "%s\n%!" src;
   let lib = Compiler.compile_cached comp src in
   let info = U.program_info_from_sink full_sink in
+  let full_sink =
+    match ki.estimates with
+    | Some _ -> full_sink
+    | None ->
+        let estimates =
+          Program_spec.Estimates.(to_uop (of_program program))
+        in
+        U.replace full_sink
+          ~arg:(U.Arg.Kernel_info { ki with estimates = Some estimates })
+          ()
+  in
   U.program ~sink:full_sink ~linear:(U.linear program) ~source:(U.source src)
     ~binary:(U.binary (Bytes.to_string lib)) ~info ()

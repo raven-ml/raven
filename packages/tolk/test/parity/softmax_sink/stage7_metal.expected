@@ -1,0 +1,145 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_2_3_4n6(device float* data0_6, device bool* data1_12, device float* data2_24, device float* data3_2, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  bool val0 = (*(data1_12+0));
+  bool val1 = (*(data1_12+1));
+  bool val2 = (*(data1_12+2));
+  bool val3 = (*(data1_12+3));
+  bool val4 = (*(data1_12+4));
+  bool val5 = (*(data1_12+5));
+  bool val6 = (*(data1_12+6));
+  bool val7 = (*(data1_12+7));
+  bool val8 = (*(data1_12+8));
+  bool val9 = (*(data1_12+9));
+  bool val10 = (*(data1_12+10));
+  bool val11 = (*(data1_12+11));
+  int lidx0 = lid.x; /* 2 */
+  float val12 = (*(data3_2+lidx0));
+  int alu0 = (lidx0*12);
+  float4 val13 = (*((device float4*)((data2_24+(alu0+4)))));
+  float4 val14 = (*((device float4*)((data2_24+(alu0+8)))));
+  float4 val15 = (*((device float4*)((data2_24+alu0))));
+  int alu1 = (lidx0*3);
+  float alu2 = (val0?val15.x:((float)(-INFINITY)));
+  float alu3 = (val1?val15.y:((float)(-INFINITY)));
+  float alu4 = (val4?val13.x:((float)(-INFINITY)));
+  float alu5 = (val5?val13.y:((float)(-INFINITY)));
+  float alu6 = (val8?val14.x:((float)(-INFINITY)));
+  float alu7 = (val9?val14.y:((float)(-INFINITY)));
+  float alu8 = (val2?val15.z:((float)(-INFINITY)));
+  float alu9 = ((alu2<alu3)?alu3:alu2);
+  float alu10 = (val6?val13.z:((float)(-INFINITY)));
+  float alu11 = ((alu4<alu5)?alu5:alu4);
+  float alu12 = (val10?val14.z:((float)(-INFINITY)));
+  float alu13 = ((alu6<alu7)?alu7:alu6);
+  float alu14 = (val3?val15.w:((float)(-INFINITY)));
+  float alu15 = ((alu9<alu8)?alu8:alu9);
+  float alu16 = (val7?val13.w:((float)(-INFINITY)));
+  float alu17 = ((alu11<alu10)?alu10:alu11);
+  float alu18 = (val11?val14.w:((float)(-INFINITY)));
+  float alu19 = ((alu13<alu12)?alu12:alu13);
+  float alu20 = ((alu15<alu14)?alu14:alu15);
+  float alu21 = ((alu17<alu16)?alu16:alu17);
+  float alu22 = ((alu19<alu18)?alu18:alu19);
+  float alu23 = ((alu20<val12)?val12:alu20);
+  float alu24 = ((alu21<val12)?val12:alu21);
+  float alu25 = ((alu22<val12)?val12:alu22);
+  *(data0_6+(alu1+1)) = alu24;
+  *(data0_6+(alu1+2)) = alu25;
+  *(data0_6+alu1) = alu23;
+}
+---
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_2_3_4n7(device float* data0_6, device bool* data1_12, device float* data2_24, device float* data3_6, device float* data4_2, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  bool val0 = (*(data1_12+0));
+  bool val1 = (*(data1_12+1));
+  bool val2 = (*(data1_12+2));
+  bool val3 = (*(data1_12+3));
+  bool val4 = (*(data1_12+4));
+  bool val5 = (*(data1_12+5));
+  bool val6 = (*(data1_12+6));
+  bool val7 = (*(data1_12+7));
+  bool val8 = (*(data1_12+8));
+  bool val9 = (*(data1_12+9));
+  bool val10 = (*(data1_12+10));
+  bool val11 = (*(data1_12+11));
+  int lidx0 = lid.x; /* 2 */
+  int alu0 = (lidx0*3);
+  int alu1 = (alu0+1);
+  float val12 = (*(data3_6+alu1));
+  int alu2 = (alu0+2);
+  float val13 = (*(data3_6+alu2));
+  float val14 = (*(data3_6+alu0));
+  float val15 = (*(data4_2+lidx0));
+  int alu3 = (lidx0*12);
+  float4 val16 = (*((device float4*)((data2_24+(alu3+4)))));
+  float4 val17 = (*((device float4*)((data2_24+(alu3+8)))));
+  float4 val18 = (*((device float4*)((data2_24+alu3))));
+  float alu4 = (val0?val18.x:((float)(-INFINITY)));
+  float alu5 = (val1?val18.y:((float)(-INFINITY)));
+  float alu6 = (val2?val18.z:((float)(-INFINITY)));
+  float alu7 = (val3?val18.w:((float)(-INFINITY)));
+  float alu8 = (val4?val16.x:((float)(-INFINITY)));
+  float alu9 = (val5?val16.y:((float)(-INFINITY)));
+  float alu10 = (val6?val16.z:((float)(-INFINITY)));
+  float alu11 = (val7?val16.w:((float)(-INFINITY)));
+  float alu12 = (val8?val17.x:((float)(-INFINITY)));
+  float alu13 = (val9?val17.y:((float)(-INFINITY)));
+  float alu14 = (val10?val17.z:((float)(-INFINITY)));
+  float alu15 = (val11?val17.w:((float)(-INFINITY)));
+  *(data0_6+alu1) = (exp2(((alu8-val12)*1.4426950216293335f))+exp2(((alu9-val12)*1.4426950216293335f))+exp2(((alu10-val12)*1.4426950216293335f))+exp2(((alu11-val12)*1.4426950216293335f))+exp2(((val15-val12)*1.4426950216293335f)));
+  *(data0_6+alu2) = (exp2(((alu12-val13)*1.4426950216293335f))+exp2(((alu13-val13)*1.4426950216293335f))+exp2(((alu14-val13)*1.4426950216293335f))+exp2(((alu15-val13)*1.4426950216293335f))+exp2(((val15-val13)*1.4426950216293335f)));
+  *(data0_6+alu0) = (exp2(((alu4-val14)*1.4426950216293335f))+exp2(((alu5-val14)*1.4426950216293335f))+exp2(((alu6-val14)*1.4426950216293335f))+exp2(((alu7-val14)*1.4426950216293335f))+exp2(((val15-val14)*1.4426950216293335f)));
+}
+---
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_2_4_3n3(device float* data0_24, device bool* data1_12, device float* data2_24, device float* data3_6, device float* data4_6, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  bool val0 = (*(data1_12+0));
+  bool val1 = (*(data1_12+1));
+  bool val2 = (*(data1_12+2));
+  bool val3 = (*(data1_12+3));
+  bool val4 = (*(data1_12+4));
+  bool val5 = (*(data1_12+5));
+  bool val6 = (*(data1_12+6));
+  bool val7 = (*(data1_12+7));
+  bool val8 = (*(data1_12+8));
+  bool val9 = (*(data1_12+9));
+  bool val10 = (*(data1_12+10));
+  bool val11 = (*(data1_12+11));
+  int lidx0 = lid.x; /* 2 */
+  int alu0 = (lidx0*3);
+  int alu1 = (alu0+1);
+  float val12 = (*(data3_6+alu1));
+  int alu2 = (alu0+2);
+  float val13 = (*(data3_6+alu2));
+  float val14 = (*(data3_6+alu0));
+  float val15 = (*(data4_6+alu1));
+  float val16 = (*(data4_6+alu2));
+  float val17 = (*(data4_6+alu0));
+  int alu3 = (lidx0*12);
+  int alu4 = (alu3+4);
+  float4 val18 = (*((device float4*)((data2_24+alu4))));
+  int alu5 = (alu3+8);
+  float4 val19 = (*((device float4*)((data2_24+alu5))));
+  float4 val20 = (*((device float4*)((data2_24+alu3))));
+  float alu6 = (val0?val20.x:((float)(-INFINITY)));
+  float alu7 = (val1?val20.y:((float)(-INFINITY)));
+  float alu8 = (val2?val20.z:((float)(-INFINITY)));
+  float alu9 = (val3?val20.w:((float)(-INFINITY)));
+  float alu10 = (1/val17);
+  float alu11 = (val4?val18.x:((float)(-INFINITY)));
+  float alu12 = (val5?val18.y:((float)(-INFINITY)));
+  float alu13 = (val6?val18.z:((float)(-INFINITY)));
+  float alu14 = (val7?val18.w:((float)(-INFINITY)));
+  float alu15 = (1/val15);
+  float alu16 = (val8?val19.x:((float)(-INFINITY)));
+  float alu17 = (val9?val19.y:((float)(-INFINITY)));
+  float alu18 = (val10?val19.z:((float)(-INFINITY)));
+  float alu19 = (val11?val19.w:((float)(-INFINITY)));
+  float alu20 = (1/val16);
+  *((device float4*)((data0_24+alu4))) = float4((exp2(((alu11-val12)*1.4426950216293335f))*alu15),(exp2(((alu12-val12)*1.4426950216293335f))*alu15),(exp2(((alu13-val12)*1.4426950216293335f))*alu15),(exp2(((alu14-val12)*1.4426950216293335f))*alu15));
+  *((device float4*)((data0_24+alu5))) = float4((exp2(((alu16-val13)*1.4426950216293335f))*alu20),(exp2(((alu17-val13)*1.4426950216293335f))*alu20),(exp2(((alu18-val13)*1.4426950216293335f))*alu20),(exp2(((alu19-val13)*1.4426950216293335f))*alu20));
+  *((device float4*)((data0_24+alu3))) = float4((exp2(((alu6-val14)*1.4426950216293335f))*alu10),(exp2(((alu7-val14)*1.4426950216293335f))*alu10),(exp2(((alu8-val14)*1.4426950216293335f))*alu10),(exp2(((alu9-val14)*1.4426950216293335f))*alu10));
+}

@@ -7,9 +7,9 @@
 
     The model is a plain record of {!Kaun} layers; {!hidden}, {!cached} and
     {!logits} are its forward passes and {!Params} its checkpoint plumbing.
-    {!of_hf} adapts the HuggingFace checkpoint — [h.{i}.attn.c_attn] fused qkv
-    projections, [Conv1D] naming — onto {!Params}' names, and {!from_pretrained}
-    runs the whole pipeline: download, adapt, extract typed parameters. *)
+    {!of_hf} builds the parameters from the entries of the HuggingFace
+    checkpoint, whose [h.{i}.attn.c_attn] fuses the query, key and value
+    projections, and {!from_pretrained} downloads the checkpoint first. *)
 
 type config = {
   vocab_size : int;
@@ -121,33 +121,62 @@ val logits :
     head is tied to [p.wte]. Both act per position, so select the positions of
     interest first: decoding wants the last one only. *)
 
-val of_hf : n_layer:int -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
-(** [of_hf ~n_layer ckpt] adapts the HuggingFace GPT-2 checkpoint [ckpt] to
-    {!Params}' names: splits each block's fused [c_attn] weight and bias into
-    the [q], [k] and [v] projections and renames everything else. HF's [Conv1D]
-    weights are already [inputs × outputs], so no transposes are needed. Entries
-    the model does not use (attention mask buffers) are left in place and
-    ignored by extraction. *)
+val config_of_json : Jsont.json -> config
+(** [config_of_json json] reads HuggingFace's [config.json].
 
-val of_checkpoint : config -> Kaun.Checkpoint.t -> t
-(** [of_checkpoint cfg ckpt] extracts pretrained parameters from the
-    HuggingFace-layout checkpoint [ckpt]: {!of_hf} adaptation followed by typed
-    extraction against [make cfg].
+    Raises [Failure] on a missing field. *)
 
-    Raises [Invalid_argument] if [ckpt] does not match [cfg] (see
-    {!Kaun.Checkpoint.to_params}). *)
+val of_hf :
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  Kaun.Checkpoint.t ->
+  (float, 'b) Nx.t params
+(** [of_hf cfg dt ckpt] is the model of the HuggingFace GPT-2 checkpoint [ckpt],
+    at [dt]. Each entry is read by its name in the file with the shape [cfg]
+    gives it. The file's weights are already [inputs × outputs]; each block's
+    fused [c_attn] weight and bias are cut into the [q], [k] and [v] projections
+    with [Nx.split], which copies nothing. At the file's own dtype the leaves
+    are the file's entries; at another one each leaf is cast. Entries the model
+    does not use (attention mask buffers) are never read.
 
-val from_file : config -> string -> t
-(** [from_file cfg path] is [of_checkpoint cfg (Checkpoint.load path)]: the
-    parameters of a local HuggingFace-layout safetensors file, for checkpoints
-    already on disk.
+    With [device], each leaf is placed on it with {!Rune.to_device} as it is
+    built, so a function compiled for [device] that captures the model uploads
+    nothing.
 
-    Raises [Failure] on I/O or format errors, [Invalid_argument] as
-    {!of_checkpoint}. *)
+    Raises [Invalid_argument], naming the entry, if one is missing, has another
+    shape than [cfg] says, or is not a floating-point entry. *)
 
-val from_pretrained : ?repo_id:string -> unit -> config * t
-(** [from_pretrained ()] downloads [repo_id] (defaults to ["gpt2"]) from the
-    HuggingFace Hub — config and weights — and is the parsed configuration with
-    the pretrained parameters.
+val from_file :
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  string ->
+  (float, 'b) Nx.t params
+(** [from_file cfg dt path] is [of_hf cfg dt (Checkpoint.load path)]: the
+    parameters of a local HuggingFace-layout safetensors file.
+
+    Raises [Failure] on I/O or format errors, [Invalid_argument] as {!of_hf}. *)
+
+type dtype =
+  | Dtype : (float, 'b) Nx.dtype -> dtype
+      (** A floating-point dtype chosen at run time. *)
+
+val dtype_of_string : string -> dtype
+(** [dtype_of_string s] is the dtype named ["float32"], ["float16"] or
+    ["bfloat16"]. Raises [Failure] on another name. *)
+
+val stored_dtype : Kaun.Checkpoint.t -> dtype
+(** [stored_dtype ckpt] is the dtype [ckpt] stores its token table at, the dtype
+    at which {!of_hf} casts nothing. *)
+
+val from_pretrained :
+  ?device:string ->
+  ?repo_id:string ->
+  (float, 'b) Nx.dtype ->
+  config * (float, 'b) Nx.t params
+(** [from_pretrained dt] downloads [repo_id] (defaults to ["gpt2"]) from the
+    HuggingFace Hub, config and weights, and is the parsed configuration with
+    the pretrained parameters at [dt].
 
     Raises [Failure] on download or parse errors. *)

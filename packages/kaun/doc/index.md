@@ -13,7 +13,7 @@ The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md)
 - **Data** — `Data.batches`/`batches2` cut in-memory tensors into a standard `Seq.t` of minibatches, with reproducible per-epoch shuffling
 - **Metrics** — `Metric`: accuracy, top-k accuracy, confusion matrix, precision/recall/F1, AUC-ROC
 - **Checkpoints** — `Checkpoint` saves named parameter structures as [safetensors](https://huggingface.co/docs/safetensors/)
-- **Pretrained models** — `kaun.hf` downloads HuggingFace Hub checkpoints and adapts them (`rename`, `transpose`, `split`) onto your own records
+- **Pretrained models** — `kaun.hf` downloads HuggingFace Hub checkpoints, and `Checkpoint.to_float` and `to_tensor` read their entries by name into your own records
 - **Datasets** — `kaun.datasets`: MNIST, Fashion-MNIST, CIFAR-10 loaders returning plain tensors
 
 ## Quick Start
@@ -78,7 +78,7 @@ let () =
 | Library | opam package | Description |
 |---------|--------------|-------------|
 | `Kaun` | `kaun` | Layers, losses, data, metrics, checkpoints |
-| `Kaun_hf` | `kaun.hf` | HuggingFace Hub download and checkpoint adaptation |
+| `Kaun_hf` | `kaun.hf` | HuggingFace Hub download and checkpoint loading |
 | `Kaun_datasets` | `kaun.datasets` | MNIST, Fashion-MNIST, CIFAR-10 loaders |
 
 ## Next Steps

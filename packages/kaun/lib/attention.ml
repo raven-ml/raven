@@ -76,7 +76,17 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
   | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
   | Nx.Float32 | Nx.Float64 -> false
 
-let scaled_dot_product_attention ?mask q k v =
+let shape_to_string s =
+  "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
+
+(* Whether [shape] broadcasts to [onto], aligned on the right. *)
+let broadcasts ~onto shape =
+  let n = Array.length onto and r = Array.length shape in
+  r <= n
+  && Array.for_all Fun.id
+       (Array.mapi (fun i d -> d = 1 || d = onto.(n - r + i)) shape)
+
+let scaled_dot_product_attention ?mask ?scale ?sinks q k v =
   let qs = Nx.shape q and ks = Nx.shape k and vs = Nx.shape v in
   let qr = Array.length qs and kr = Array.length ks and vr = Array.length vs in
   if qr < 2 || kr < 2 || vr < 2 then
@@ -93,16 +103,42 @@ let scaled_dot_product_attention ?mask q k v =
       "Attention.scaled_dot_product_attention: k has %d positions but v has %d"
       ks.(kr - 2)
       vs.(vr - 2);
-  let scale = 1.0 /. sqrt (float_of_int qs.(qr - 1)) in
+  let scale =
+    Option.value scale ~default:(1.0 /. sqrt (float_of_int qs.(qr - 1)))
+  in
   (* Scores, masking and softmax, generically in the dtype of [q] and [k]. *)
-  let weights q k =
+  let weights q k sinks =
     let scores =
       Nx.mul_s (Nx.matmul q (Nx.swapaxes (kr - 2) (kr - 1) k)) scale
     in
-    match mask with
-    | None -> Fn.softmax scores
-    | Some m ->
-        let neg_inf t = Nx.scalar_like t Float.neg_infinity in
+    let neg_inf t = Nx.scalar_like t Float.neg_infinity in
+    match (mask, sinks) with
+    | None, None -> Fn.softmax scores
+    | _, Some sinks ->
+        let queries = Array.sub (Nx.shape scores) 0 (Nx.ndim scores - 1) in
+        if not (broadcasts ~onto:queries (Nx.shape sinks)) then
+          Printf.ksprintf invalid_arg
+            "Attention.scaled_dot_product_attention: sinks of shape %s do not \
+             broadcast to %s, the scores without their last axis"
+            (shape_to_string (Nx.shape sinks))
+            (shape_to_string queries);
+        (* A sink is one more key of value zero: it enters the normaliser and
+           has no column. It is finite, so no query is empty. *)
+        let sink = Nx.unsqueeze ~axes:[ -1 ] sinks in
+        let scores =
+          match mask with
+          | None -> scores
+          | Some m -> Nx.where m scores (neg_inf scores)
+        in
+        let top = Nx.maximum (Nx.max ~axes:[ -1 ] ~keepdims:true scores) sink in
+        let e = Nx.exp (Nx.sub scores top) in
+        let total =
+          Nx.add
+            (Nx.sum ~axes:[ -1 ] ~keepdims:true e)
+            (Nx.exp (Nx.sub sink top))
+        in
+        Nx.div e total
+    | Some m, None ->
         let scores = Nx.where m scores (neg_inf scores) in
         let top = Nx.max ~axes:[ -1 ] ~keepdims:true scores in
         (* A query that sees no key: its weights are zero, not 0 / 0. *)
@@ -121,14 +157,16 @@ let scaled_dot_product_attention ?mask q k v =
      exactly the pre-island ones. *)
   let probs =
     if low_precision dt then
-      Nx.cast dt (weights (Nx.cast Nx.float32 q) (Nx.cast Nx.float32 k))
-    else weights q k
+      Nx.cast dt
+        (weights (Nx.cast Nx.float32 q) (Nx.cast Nx.float32 k)
+           (Option.map (Nx.cast Nx.float32) sinks))
+    else weights q k sinks
   in
   Nx.matmul probs v
 
 (* Head geometry, read from the projection widths. *)
 
-let geometry ~fn ~head_dim p =
+let check_geometry ~fn ~head_dim p =
   if head_dim <= 0 then
     Printf.ksprintf invalid_arg
       "Attention.%s: head_dim must be positive, got %d" fn head_dim;
@@ -147,38 +185,25 @@ let geometry ~fn ~head_dim p =
   if heads mod kv_heads <> 0 then
     Printf.ksprintf invalid_arg
       "Attention.%s: %d key-value heads do not divide %d query heads" fn
-      kv_heads heads;
-  (heads, kv_heads)
+      kv_heads heads
 
-(* [batch; n; heads * head_dim] -> [batch; heads; n; head_dim]: heads become a
-   batch axis so the core runs each head independently. *)
-let split ~heads ~head_dim t =
-  let s = Nx.shape t in
-  Nx.swapaxes 1 2 (Nx.reshape [| s.(0); s.(1); heads; head_dim |] t)
+(* The pieces of a layer *)
 
-(* Attention of [q : [batch; heads; n; d]] over [k], [v : [batch; kv_heads; m;
-   d]], merged to [batch; n; heads * d]. Each key-value head serves [heads /
-   kv_heads] query heads: the queries gain a group axis the keys broadcast over,
-   so no key is repeated. [mask] is [n; m] or [batch; n; m]. *)
-let attend ~kv_heads ?mask q k v =
-  let qs = Nx.shape q in
-  let batch = qs.(0) and heads = qs.(1) and n = qs.(2) and d = qs.(3) in
-  let m = (Nx.shape k).(2) in
-  let groups = heads / kv_heads in
-  let q = Nx.reshape [| batch; kv_heads; groups; n; d |] (Nx.contiguous q) in
-  let grouped t = Nx.unsqueeze ~axes:[ 2 ] t in
-  let mask =
-    Option.map
-      (fun mk ->
-        match Nx.shape mk with
-        | [| _; _ |] -> Nx.reshape [| 1; 1; 1; n; m |] mk
-        | [| b; _; _ |] -> Nx.reshape [| b; 1; 1; n; m |] mk
-        | _ -> assert false)
-      mask
-  in
-  let out = scaled_dot_product_attention ?mask q (grouped k) (grouped v) in
-  let out = Nx.reshape [| batch; heads; n; d |] out in
-  Nx.reshape [| batch; n; heads * d |] (Nx.contiguous (Nx.swapaxes 1 2 out))
+let split ~head_dim l x =
+  if head_dim <= 0 then
+    Printf.ksprintf invalid_arg
+      "Attention.split: head_dim must be positive, got %d" head_dim;
+  let width = (Nx.shape l.Linear.w).(1) in
+  if width mod head_dim <> 0 then
+    Printf.ksprintf invalid_arg
+      "Attention.split: head_dim %d does not divide the projection width %d"
+      head_dim width;
+  (match Nx.shape x with
+  | [| _; _; _ |] -> ()
+  | _ -> invalid_arg "Attention.split: x must have shape [batch; seq; embed]");
+  let y = Linear.apply l x in
+  let batch = Nx.dim 0 y and seq = Nx.dim 1 y in
+  Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; width / head_dim; head_dim |] y)
 
 let check_mask ~fn ~batch ~n ~m mask =
   match Nx.shape mask with
@@ -188,6 +213,65 @@ let check_mask ~fn ~batch ~n ~m mask =
       Printf.ksprintf invalid_arg
         "Attention.%s: mask must have shape [%d; %d] or [%d; %d; %d]" fn n m
         batch n m
+
+(* Each key-value head serves [heads / kv_heads] query heads: the queries gain a
+   group axis the keys broadcast over, so no key is repeated. *)
+let attend ?mask ?scale ?sinks q k v =
+  let batch, heads, n, d =
+    match Nx.shape q with
+    | [| batch; heads; n; d |] -> (batch, heads, n, d)
+    | _ ->
+        invalid_arg "Attention.attend: q must have shape [batch; heads; n; d]"
+  in
+  let kv_heads, m =
+    match (Nx.shape k, Nx.shape v) with
+    | [| b; h; m; d' |], [| b'; h'; m'; _ |]
+      when b = batch && b' = batch && h = h' && m = m' && d' = d ->
+        (h, m)
+    | _ ->
+        Printf.ksprintf invalid_arg
+          "Attention.attend: k must have shape [%d; kv_heads; m; %d] and v \
+           [%d; kv_heads; m; dv]"
+          batch d batch
+  in
+  if heads mod kv_heads <> 0 then
+    Printf.ksprintf invalid_arg
+      "Attention.attend: %d key-value heads do not divide %d query heads"
+      kv_heads heads;
+  let groups = heads / kv_heads in
+  Option.iter (check_mask ~fn:"attend" ~batch ~n ~m) mask;
+  let sinks =
+    Option.map
+      (fun sinks ->
+        if Nx.shape sinks <> [| heads |] then
+          Printf.ksprintf invalid_arg
+            "Attention.attend: sinks must have shape [%d]" heads;
+        Nx.reshape [| kv_heads; groups; 1 |] sinks)
+      sinks
+  in
+  let q = Nx.reshape [| batch; kv_heads; groups; n; d |] (Nx.contiguous q) in
+  let grouped t = Nx.unsqueeze ~axes:[ 2 ] t in
+  let mask =
+    Option.map
+      (fun mk ->
+        match Nx.shape mk with
+        | [| _; _ |] -> Nx.reshape [| 1; 1; 1; n; m |] mk
+        | _ -> Nx.reshape [| batch; 1; 1; n; m |] mk)
+      mask
+  in
+  let out =
+    scaled_dot_product_attention ?mask ?scale ?sinks q (grouped k) (grouped v)
+  in
+  Nx.reshape [| batch; heads; n; Nx.dim 3 v |] out
+
+let merge l y =
+  match Nx.shape y with
+  | [| batch; heads; seq; d |] ->
+      Linear.apply l
+        (Nx.reshape
+           [| batch; seq; heads * d |]
+           (Nx.contiguous (Nx.swapaxes 1 2 y)))
+  | _ -> invalid_arg "Attention.merge: y must have shape [batch; heads; seq; d]"
 
 let causal_mask ~seq ?valid () =
   if seq <= 0 then
@@ -223,18 +307,14 @@ let apply ~head_dim ?mask ?rope p x =
        features"
       shape.(rank - 1)
       embed;
-  let heads, kv_heads = geometry ~fn:"apply" ~head_dim p in
+  check_geometry ~fn:"apply" ~head_dim p;
   let seq = shape.(rank - 2) in
   let batch = Array.fold_left ( * ) 1 (Array.sub shape 0 (rank - 2)) in
   Option.iter (check_mask ~fn:"apply" ~batch ~n:seq ~m:seq) mask;
-  (* Leading axes fold into one batch axis for the core and unfold after. *)
-  let project l ~heads =
-    let y = Linear.apply l x in
-    split ~heads ~head_dim
-      (Nx.reshape [| batch; seq; heads * head_dim |] (Nx.contiguous y))
-  in
-  let q = project p.q ~heads and k = project p.k ~heads:kv_heads in
-  let v = project p.v ~heads:kv_heads in
+  (* Leading axes fold into one batch axis for the pieces and unfold after. *)
+  let x = Nx.reshape [| batch; seq; embed |] (Nx.contiguous x) in
+  let q = split ~head_dim p.q x and k = split ~head_dim p.k x in
+  let v = split ~head_dim p.v x in
   let q, k =
     match rope with
     | None -> (q, k)
@@ -242,8 +322,7 @@ let apply ~head_dim ?mask ?rope p x =
         let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
-  let out = Linear.apply p.out (attend ~kv_heads ?mask q k v) in
-  Nx.reshape shape out
+  Nx.reshape shape (merge p.out (attend ?mask q k v))
 
 (* Key-value cache *)
 
@@ -256,9 +335,19 @@ module Cache = struct
         "Attention.Cache.make: slots must not be negative and kv_heads and \
          head_dim must be positive, got slots=%d kv_heads=%d head_dim=%d"
         slots kv_heads head_dim;
-    (* The last row is scratch: what addresses nothing is written there. *)
-    let shape = [| slots + 1; kv_heads; head_dim |] in
-    { keys = Nx.zeros dtype shape; values = Nx.zeros dtype shape }
+    let pool () = Cache_index.pool ~slots dtype [| kv_heads; head_dim |] in
+    { keys = pool (); values = pool () }
+
+  (* Pools hold tokens first, [batch; seq; kv_heads; head_dim]; heads come first
+     everywhere else. *)
+  let extend index cache k v =
+    let through pool t =
+      let seen, pool = Cache_index.extend index (Nx.swapaxes 1 2 t) pool in
+      (Nx.swapaxes 1 2 seen, pool)
+    in
+    let k, keys = through cache.keys k in
+    let v, values = through cache.values v in
+    (k, v, { keys; values })
 
   let map f { keys; values } =
     let keys = f keys in
@@ -330,13 +419,14 @@ end
 
 (* Cached attention *)
 
-let cached ~head_dim ?rope ?window p cache index x =
+let cached ~head_dim ?rope p cache index x =
   let batch = Cache_index.batch index and seq = Cache_index.seq index in
   let embed = (Nx.shape p.q.Linear.w).(0) in
   if Nx.shape x <> [| batch; seq; embed |] then
     Printf.ksprintf invalid_arg
       "Attention.cached: input must have shape [%d; %d; %d]" batch seq embed;
-  let heads, kv_heads = geometry ~fn:"cached" ~head_dim p in
+  check_geometry ~fn:"cached" ~head_dim p;
+  let kv_heads = (Nx.shape p.k.Linear.w).(1) / head_dim in
   (match (Nx.shape cache.Cache.keys, Nx.shape cache.Cache.values) with
   | [| n; h; d |], [| n'; h'; d' |]
     when n = n' && n > 0 && h = kv_heads && h' = kv_heads && d = head_dim
@@ -346,24 +436,14 @@ let cached ~head_dim ?rope ?window p cache index x =
       Printf.ksprintf invalid_arg
         "Attention.cached: the cache must have shape [slots + 1; %d; %d]"
         kv_heads head_dim);
-  let q = split ~heads ~head_dim (Linear.apply p.q x) in
-  (* Keys and values as the index takes them, [batch; seq; kv_heads; head_dim].
-     Keys are stored rotated: a slot is valid at the position it was written
-     for. *)
-  let tokens y = Nx.reshape [| batch; seq; kv_heads; head_dim |] y in
+  let q = split ~head_dim p.q x and k = split ~head_dim p.k x in
+  let v = split ~head_dim p.v x in
   let q, k =
     match rope with
-    | None -> (q, tokens (Linear.apply p.k x))
+    | None -> (q, k)
     | Some t ->
         let pos = Cache_index.positions index in
-        let k = split ~heads:kv_heads ~head_dim (Linear.apply p.k x) in
-        (Rope.apply t ~pos q, Nx.swapaxes 1 2 (Rope.apply t ~pos k))
+        (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
-  let extend values leaf =
-    let seen, leaf = Cache_index.extend ?window index values leaf in
-    (Nx.swapaxes 1 2 seen, leaf)
-  in
-  let k, keys = extend k cache.Cache.keys in
-  let v, values = extend (tokens (Linear.apply p.v x)) cache.Cache.values in
-  let out = attend ~kv_heads ~mask:(Cache_index.mask ?window index) q k v in
-  (Linear.apply p.out out, { Cache.keys; values })
+  let k, v, cache = Cache.extend index cache k v in
+  (merge p.out (attend ~mask:(Cache_index.mask index) q k v), cache)

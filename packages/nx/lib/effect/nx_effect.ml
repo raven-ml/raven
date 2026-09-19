@@ -24,10 +24,16 @@ type context = Nx_backend.context
    resident on non-host-sharing devices (CUDA, Metal): metadata reads answer
    from the record, and only a data access runs the thunk — which copies the
    device buffer out — memoizing the resulting backend tensor. A deferred tensor
-   is never a trace placeholder, so its metadata never needs an effect. *)
+   is never a trace placeholder, so its metadata never needs an effect.
+
+   [Symbolic] is a tensor that has no bytes and never will: its metadata alone.
+   A handler that records operations instead of running them (Rune's jit)
+   answers each one with a symbolic tensor of the result's dtype and shape.
+   Asking for its bytes is an error. *)
 type ('a, 'b) t =
   | T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
   | Deferred : ('a, 'b) deferred -> ('a, 'b) t
+  | Symbolic : ('a, 'b) symbolic -> ('a, 'b) t
 
 and ('a, 'b) deferred = {
   d_id : int; (* fresh; lets creators key side tables by handle *)
@@ -36,6 +42,13 @@ and ('a, 'b) deferred = {
   d_view : View.t; (* C-contiguous over the tensor's shape *)
   d_fill : unit -> ('a, 'b) Nx_buffer.t; (* runs at most once *)
   mutable d_forced : ('a, 'b) Nx_backend.t option;
+}
+
+and ('a, 'b) symbolic = {
+  s_id : int; (* fresh; tells apart tensors of one dtype and shape *)
+  s_context : Nx_backend.context;
+  s_dtype : ('a, 'b) Dtype.t;
+  s_view : View.t; (* C-contiguous over the tensor's shape *)
 }
 
 (* [Nx_buffer.t] is not injective in its parameters either (it abbreviates a
@@ -348,6 +361,7 @@ let force (type a b) (d : (a, b) deferred) : (a, b) Nx_backend.t =
 let unwrap : type a b. (a, b) t -> (a, b) Nx_backend.t = function
   | T t -> t
   | Deferred d -> force d
+  | Symbolic _ -> invalid_arg "Nx_effect.unwrap: a symbolic tensor has no bytes"
 
 (* Deferred constructors *)
 
@@ -366,12 +380,27 @@ let deferred (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
       d_forced = None;
     }
 
-(* [None] once forced: the handle is then a plain host tensor and its creator's
-   side state (for example a resident device buffer) is gone. *)
+(* The id outlives a read: forcing memoizes the host tensor on the handle, and
+   whether the creator's side state (for example a resident device buffer)
+   survives the read is the creator's to say. *)
 let deferred_id : type a b. (a, b) t -> int option = function
-  | T _ -> None
-  | Deferred d -> (
-      match d.d_forced with Some _ -> None | None -> Some d.d_id)
+  | T _ | Symbolic _ -> None
+  | Deferred d -> Some d.d_id
+
+(* Symbolic constructor *)
+
+let symbolic_id_counter = ref 0
+
+let symbolic (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
+    (shape : int array) : (a, b) t =
+  incr symbolic_id_counter;
+  Symbolic
+    {
+      s_id = !symbolic_id_counter;
+      s_context = ctx;
+      s_dtype = dtype;
+      s_view = View.create shape;
+    }
 
 (* Lenses. Metadata reads on a deferred tensor answer from its record without
    running the fill thunk. The [E_view] effect is still performed first: a
@@ -383,6 +412,7 @@ let create_context () : context = Nx_backend.create_context ()
 let context : type a b. (a, b) t -> context = function
   | T t -> Nx_backend.context t
   | Deferred d -> d.d_context
+  | Symbolic s -> s.s_context
 
 let to_device (_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t = t
 
@@ -392,11 +422,13 @@ let view (type a b) (x : (a, b) t) : View.t =
     match x with
     | T t -> Nx_backend.view t
     | Deferred d -> (
-        match d.d_forced with Some t -> Nx_backend.view t | None -> d.d_view))
+        match d.d_forced with Some t -> Nx_backend.view t | None -> d.d_view)
+    | Symbolic s -> s.s_view)
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | T t -> Nx_backend.dtype t
   | Deferred d -> d.d_dtype
+  | Symbolic s -> s.s_dtype
 
 let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
   try

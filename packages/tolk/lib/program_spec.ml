@@ -89,6 +89,14 @@ module Estimates = struct
       mem = of_estimate estimates.mem;
     }
 
+  let to_uop t =
+    let to_estimate = function Int n -> U.Int n | Symbolic s -> U.Sym s in
+    {
+      U.ops = to_estimate t.ops;
+      lds = to_estimate t.lds;
+      mem = to_estimate t.mem;
+    }
+
   let mul_estimate a b =
     match (a, b) with
     | Int 0, _ | _, Int 0 -> Int 0

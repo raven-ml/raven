@@ -5,6 +5,13 @@
 
 type t = float array
 
+let of_frequencies frequencies =
+  if Array.length frequencies = 0 then
+    invalid_arg "Rope.of_frequencies: no frequency";
+  if not (Array.for_all Float.is_finite frequencies) then
+    invalid_arg "Rope.of_frequencies: a frequency is not finite";
+  Array.copy frequencies
+
 let base ~fn ~theta ~head_dim =
   if head_dim <= 0 || head_dim mod 2 <> 0 then
     Printf.ksprintf invalid_arg
@@ -15,7 +22,8 @@ let base ~fn ~theta ~head_dim =
   Array.init (head_dim / 2) (fun i ->
       theta ** (-2.0 *. float_of_int i /. float_of_int head_dim))
 
-let make ?(theta = 10000.0) ~head_dim () = base ~fn:"make" ~theta ~head_dim
+let make ?(theta = 10000.0) ~head_dim () =
+  of_frequencies (base ~fn:"make" ~theta ~head_dim)
 
 let llama3 ~theta ~head_dim ~factor ~low_freq_factor ~high_freq_factor
     ~original_context =
@@ -40,6 +48,32 @@ let llama3 ~theta ~head_dim ~factor ~low_freq_factor ~high_freq_factor
         in
         ((1.0 -. smooth) *. f /. factor) +. (smooth *. f))
     (base ~fn:"llama3" ~theta ~head_dim)
+  |> of_frequencies
+
+let yarn ~theta ~head_dim ~factor ~beta_fast ~beta_slow ~original_context =
+  if factor < 1.0 || beta_slow <= 0.0 || original_context <= 0 then
+    invalid_arg
+      "Rope.yarn: factor must be at least 1 and beta_slow and original_context \
+       positive";
+  if beta_fast <= beta_slow then
+    invalid_arg "Rope.yarn: beta_fast must exceed beta_slow";
+  let dim = float_of_int head_dim in
+  (* The pair that makes [turns] full turns over the original context. *)
+  let pair turns =
+    dim
+    *. log (float_of_int original_context /. (turns *. 2.0 *. Float.pi))
+    /. (2.0 *. log theta)
+  in
+  let low = Float.max (pair beta_fast) 0.0 in
+  let high = Float.min (pair beta_slow) (dim -. 1.0) in
+  let high = if high = low then high +. 0.001 else high in
+  Array.mapi
+    (fun i f ->
+      let ramp = (float_of_int i -. low) /. (high -. low) in
+      let ramp = Float.min 1.0 (Float.max 0.0 ramp) in
+      (ramp *. f /. factor) +. ((1.0 -. ramp) *. f))
+    (base ~fn:"yarn" ~theta ~head_dim)
+  |> of_frequencies
 
 let frequencies t = Array.copy t
 

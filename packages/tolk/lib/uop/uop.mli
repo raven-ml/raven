@@ -1524,6 +1524,17 @@ val simplify_ref : (t -> t) ref
     module initialisation to break the dependency cycle between [Uop]
     and the symbolic rewriter. *)
 
+
+val symbolic_vars : t -> (t * string * int * int) list
+(** [symbolic_vars u] is the named, bounded variables [u] reaches, each as
+    [(node, name, vmin, vmax)]. *)
+
+val sym_infer : t -> (string * int) list -> int
+(** [sym_infer u var_vals] is the integer [u] evaluates to once its variables
+    take their values in [var_vals].
+
+    Raises [Invalid_argument] if [u] does not reduce to a constant. *)
+
 val exec_alu : ?truncate_output:bool -> Ops.t -> Dtype.t -> Const.t list -> Const.t option
 (** [exec_alu ?truncate_output op target args] folds ALU op [op] applied to
     constant [args], producing a constant of [target] dtype, or [None] when the

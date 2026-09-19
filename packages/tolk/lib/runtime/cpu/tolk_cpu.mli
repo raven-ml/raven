@@ -18,7 +18,7 @@
 
 (** {1:device Device creation} *)
 
-val create : string -> Tolk.Device.t
+val create : ?aligned:bool -> string -> Tolk.Device.t
 (** [create name] is a CPU device named [name].
 
     The device uses clang (or the compiler specified by the [CC] environment
@@ -31,5 +31,9 @@ val create : string -> Tolk.Device.t
     Memory allocation uses [calloc]/[free]. The allocator supports byte-offset
     views, synchronizes queued work before host copies, and is wrapped in an LRU
     cache to reuse recently freed buffers.
+
+    [aligned] is passed to {!Tolk.Cstyle.clang}: [false] compiles kernels that
+    accept buffers at any address, which a caller that binds memory the device
+    did not allocate needs.
 
     [CC] defaults to ["clang"] when unset. *)

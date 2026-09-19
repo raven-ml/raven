@@ -34,10 +34,12 @@ let gpt2_124m : Gpt2.config =
     layer_norm_eps = 1e-5;
   }
 
-let load_model () =
+let load_checkpoint () =
   match local_file "model.safetensors" with
-  | Some path -> (gpt2_124m, Gpt2.from_file gpt2_124m path)
-  | None -> Gpt2.from_pretrained ()
+  | Some path -> (gpt2_124m, Kaun.Checkpoint.load path)
+  | None ->
+      ( Gpt2.config_of_json (Kaun_hf.load_config "gpt2"),
+        Kaun_hf.load_checkpoint "gpt2" )
 
 let load_tokenizer () =
   let path =
@@ -145,7 +147,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
 
 (* The decode contract's law on this model and these weights: the prompt fed
    through the caches in chunks gives the logits it gives whole. *)
-let check cfg params ids =
+let check cfg params dt ids =
   let n = Array.length ids in
   let tokens = Nx.create Nx.int32 [| 1; n |] ids in
   let whole = Gpt2.logits cfg params (Gpt2.hidden cfg params tokens) in
@@ -166,7 +168,7 @@ let check cfg params ids =
               (Nx.slice [ A; R (at, at + len) ] tokens)
           in
           (at + len, h :: hs, caches))
-      (0, [], Gpt2.cache cfg ~slots:n Nx.float32)
+      (0, [], Gpt2.cache cfg ~slots:n dt)
       [ 1; 7; n ]
   in
   let chunked =
@@ -186,7 +188,7 @@ let () =
   let count = ref 10 in
   let check_only = ref false in
   let jit = ref "" in
-  let dtype = ref "float32" in
+  let dtype = ref "" in
   Arg.parse
     [
       ("--prompt", Arg.Set_string prompt, "Phrase to start with");
@@ -201,52 +203,33 @@ let () =
          omitted" );
       ( "--dtype",
         Arg.Set_string dtype,
-        "Model dtype: float32 (default), float16 or bfloat16. Half dtypes cast \
-         the float32 checkpoint once and run weights, activations and caches \
-         at half precision" );
+        "Model dtype: float32, float16 or bfloat16 (default: the \
+         checkpoint's own, which casts nothing). Weights, activations and \
+         caches run at this dtype" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "gpt2 [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
   let tokenizer = load_tokenizer () in
   let t0 = Unix.gettimeofday () in
-  let cfg, params = load_model () in
+  let cfg, ckpt = load_checkpoint () in
+  let (Gpt2.Dtype dt) =
+    if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
+  in
+  let device = if !jit = "" then None else Some !jit in
+  let params = Gpt2.of_hf ?device cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin
-    check cfg params ids;
+    check cfg params dt ids;
     exit 0
   end;
-  let run : type b.
-      (float, b) Nx.dtype -> (float, b) Nx.t Gpt2.params -> int32 array =
-   fun dt params ->
-    let bytes = ref 0 in
-    let count_t t = bytes := !bytes + Nx.nbytes t in
-    Kaun.Embedding.iter count_t params.wte;
-    Kaun.Embedding.iter count_t params.wpe;
-    List.iter
-      (fun (b : (float, b) Nx.t Gpt2.block) ->
-        Kaun.Layer_norm.iter count_t b.ln1;
-        Kaun.Attention.iter count_t b.attn;
-        Kaun.Layer_norm.iter count_t b.ln2;
-        Kaun.Linear.iter count_t b.fc;
-        Kaun.Linear.iter count_t b.proj)
-      params.blocks;
-    Kaun.Layer_norm.iter count_t params.ln_f;
-    Printf.printf "weights: %.0f MB at %s\n%!"
-      (float_of_int !bytes /. 1e6)
-      !dtype;
-    let device = if !jit = "" then None else Some !jit in
-    generate ?device cfg params dt ~max_tokens:!count ids
-  in
+  let bytes = ref 0 in
+  Gpt2.Params.iter (fun t -> bytes := !bytes + Nx.nbytes t) params;
+  Printf.printf "weights: %.0f MB at %s\n%!"
+    (float_of_int !bytes /. 1e6)
+    (Nx_core.Dtype.to_string dt);
   let t0 = Unix.gettimeofday () in
-  let toks =
-    match !dtype with
-    | "float32" -> run Nx.float32 params
-    | "float16" -> run Nx.float16 (Gpt2.Params.map (Nx.cast Nx.float16) params)
-    | "bfloat16" ->
-        run Nx.bfloat16 (Gpt2.Params.map (Nx.cast Nx.bfloat16) params)
-    | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
-  in
+  let toks = generate ?device cfg params dt ~max_tokens:!count ids in
   let dt = Unix.gettimeofday () -. t0 in
   Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt
     (float_of_int !count /. dt);

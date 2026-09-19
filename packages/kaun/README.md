@@ -147,16 +147,15 @@ dune exec packages/kaun/examples/01-xor/main.exe
 ## Pretrained Models: the GPT-2 Story
 
 Hub checkpoints name and lay out tensors by the exporting framework's
-conventions. `kaun.hf` loads them as `Checkpoint.t` values and
-adapts them checkpoint-to-checkpoint — rename entries, transpose
-weights, split fused projections — until they match your model's own
-`names`; typed parameters then come out through `Checkpoint.to_params`:
+conventions. `kaun.hf` loads them as `Checkpoint.t` values, and a
+model's importer is an ordinary function that builds the parameter
+record, reading each entry by the file's name with
+`Checkpoint.to_float`. The file is mapped: at its own dtype the
+parameters are views of it and nothing is copied.
 
 ```ocaml
-let params =
-  Kaun_hf.load_checkpoint "gpt2"
-  |> Gpt2.of_hf ~n_layer:cfg.n_layer (* split fused c_attn into q/k/v, rename *)
-  |> Checkpoint.to_params (module Gpt2.Params) ~like:(Gpt2.make cfg)
+let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
+let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_checkpoint "gpt2")
 ```
 
 [`examples/04-gpt2`](examples/04-gpt2) runs this end to end: it defines

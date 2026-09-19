@@ -141,20 +141,55 @@ val gunzip : src:string -> dst:string -> unit
 (** {1:safetensors SafeTensors} *)
 
 val load_safetensors : string -> archive
-(** [load_safetensors path] loads all tensors from a SafeTensors file.
+(** [load_safetensors path] is the tensors of the SafeTensors file [path], by
+    name.
 
-    @raise Failure if [path] cannot be read or the stream is malformed. *)
+    Loading reads the header and maps the file; it reads no tensor data. An
+    entry whose data sits in the file at an address that suits its dtype is a
+    view of the mapping, whose pages the system reads when they are first used
+    and may drop again under memory pressure. Any other entry is copied by the
+    load: one whose address is not a multiple of its element size, which a
+    header of odd length causes, and every entry on a big-endian host.
+
+    {b The file must not change while a tensor loaded from it is alive.}
+    Truncating or rewriting it in place changes the tensors' values or kills the
+    process with a bus error, which no handler catches. Replace a file by
+    writing a new one and renaming it over the old one, as {!save_safetensors}
+    does; [Nx.copy] gives a tensor that no longer depends on its file. The file
+    stays mapped until the last tensor over it is garbage collected, and on
+    Windows it may not be deleted or replaced until then.
+
+    An entry whose dtype nx lacks is loaded as its bytes, at [uint8]: [F8_E8M0]
+    keeps the entry's shape, and [F4], [F6_E2M3] and [F6_E3M2], whose elements
+    are narrower than a byte, have shape [[| n |]] with [n] the entry's size in
+    bytes. A [BOOL] byte other than 0 or 1 is handed out as stored. An entry
+    with no elements is an empty tensor of its shape.
+
+    @raise Failure
+      naming [path], if it is not a regular file that can be read, if its header
+      is malformed, longer than 100 MB or names a tensor twice, or if the file's
+      length differs from the one its header describes, as a partial download's
+      does. *)
 
 val save_safetensors :
   ?overwrite:bool -> string -> (string * packed) list -> unit
 (** [save_safetensors ?overwrite path entries] writes named tensors to a
     SafeTensors file.
 
-    [overwrite] defaults to [true].
+    The tensors are written to a temporary file in [path]'s directory, which is
+    synced to disk and then renamed to [path]: a reader sees the previous file
+    or the new one, never a partial one, and a failed save leaves the previous
+    file as it was. If the rename is refused, which happens on platforms that
+    lock a file while tensors loaded from it are alive, a major collection runs
+    and the rename is retried once.
+
+    [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
+    exist.
 
     @raise Failure
       if [path] cannot be written or a tensor's dtype has no SafeTensors
-      equivalent (complex and int4 dtypes). *)
+      equivalent (complex and int4 dtypes). If the rename is refused twice, the
+      message names the temporary file, which is kept and holds [entries]. *)
 
 (** {1:text Text format} *)
 

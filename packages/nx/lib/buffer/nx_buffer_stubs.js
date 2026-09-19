@@ -552,6 +552,39 @@ function caml_nx_buffer_kind(ba) {
   }
 }
 
+//Provides: caml_nx_buffer_reinterpret
+//Requires: caml_nx_buffer_create_data, caml_nx_buffer_create_unsafe
+//Requires: caml_nx_buffer_size_per_element, caml_invalid_argument
+function caml_nx_buffer_reinterpret(kind_index, ba, len, size) {
+  /* Runtime kind of each [Nx_buffer.kind] constructor, in declaration order:
+     the inverse of caml_nx_buffer_kind. */
+  var kinds = [13, 0, 1, 14, 18, 19, 16, 17, 2, 3, 4, 5, 6, 20, 7, 21, 10, 11,
+               15];
+  var kind = kinds[kind_index];
+  var Typed_array = caml_nx_buffer_create_data(kind, 0).constructor;
+  var data;
+  try {
+    /* The constructor refuses a byte offset that is not a multiple of its
+       element size. */
+    data = new Typed_array(ba.data.buffer, ba.data.byteOffset,
+                           len * caml_nx_buffer_size_per_element(kind));
+  } catch (e) {
+    caml_invalid_argument(
+      "Nx_buffer.reinterpret: address not aligned to the element size");
+  }
+  return caml_nx_buffer_create_unsafe(kind, ba.layout, [len], data);
+}
+
+//Provides: caml_nx_buffer_register_file
+function caml_nx_buffer_register_file(ba, path, size, mtime, inode) {
+  return 0;
+}
+
+//Provides: caml_nx_buffer_file_range
+function caml_nx_buffer_file_range(ba) {
+  return 0; /* None: no buffer is a mapped file */
+}
+
 //Provides: caml_nx_buffer_blit
 //Requires: caml_ba_blit, caml_invalid_argument
 function caml_nx_buffer_blit(src, dst) {

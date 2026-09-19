@@ -315,6 +315,236 @@ let test_of_bigarray1_unsupported_raises () =
   raises_match ~msg:"of_bigarray1 on nativeint" invalid_argument (fun () ->
       of_bigarray1 ba_nat)
 
+(* Reinterpretation *)
+
+type any_kind = K : ('a, 'b) kind -> any_kind
+
+let byte_kinds =
+  [
+    K Float16;
+    K Float32;
+    K Float64;
+    K BFloat16;
+    K Float8_e4m3;
+    K Float8_e5m2;
+    K Int8;
+    K UInt8;
+    K Int16;
+    K UInt16;
+    K Int32;
+    K UInt32;
+    K Int64;
+    K UInt64;
+    K Complex64;
+    K Complex128;
+    K Bool;
+  ]
+
+let pattern = Bytes.init 32 (fun i -> Char.chr (((i * 37) + 129) land 0xff))
+
+let pattern_buffer () =
+  let buf = create uint8 (Bytes.length pattern) in
+  blit_from_bytes pattern buf;
+  buf
+
+let test_reinterpret_bit_exact () =
+  List.iter
+    (fun (K k) ->
+      let name = kind_name k in
+      let n = Bytes.length pattern / kind_size_in_bytes k in
+      let view = reinterpret k (pattern_buffer ()) in
+      equal ~msg:(name ^ " kind") string name (kind_name (kind view));
+      equal ~msg:(name ^ " length") int n (length view);
+      let stored = Bytes.create (Bytes.length pattern) in
+      blit_to_bytes view stored;
+      equal ~msg:(name ^ " bytes") bytes pattern stored;
+      let owned = create k n in
+      blit_from_bytes pattern owned;
+      for i = 0 to n - 1 do
+        is_true
+          ~msg:(Printf.sprintf "%s element %d" name i)
+          (compare (get view i) (get owned i) = 0)
+      done;
+      let back = Bytes.create (Bytes.length pattern) in
+      blit_to_bytes (reinterpret UInt8 view) back;
+      equal ~msg:(name ^ " back to bytes") bytes pattern back)
+    byte_kinds
+
+let test_reinterpret_aliases () =
+  let source = pattern_buffer () in
+  let view = reinterpret UInt32 source in
+  set view 1 0x04030201l;
+  equal ~msg:"a write through the view reaches the source" (list int)
+    (if Sys.big_endian then [ 4; 3; 2; 1 ] else [ 1; 2; 3; 4 ])
+    (List.init 4 (fun i -> get source (4 + i)))
+
+let sub_bytes buf off len =
+  of_bigarray1 (Bigarray.Array1.sub (to_bigarray1 buf) off len)
+
+let test_reinterpret_raises () =
+  let source = pattern_buffer () in
+  raises_match ~msg:"size not a multiple" invalid_argument (fun () ->
+      reinterpret Int16 (sub_bytes source 0 3));
+  raises_match ~msg:"misaligned address" invalid_argument (fun () ->
+      reinterpret BFloat16 (sub_bytes source 1 8));
+  raises_match ~msg:"to int4" invalid_argument (fun () ->
+      reinterpret Int4 source);
+  raises_match ~msg:"to uint4" invalid_argument (fun () ->
+      reinterpret UInt4 source);
+  raises_match ~msg:"from int4" invalid_argument (fun () ->
+      reinterpret UInt8 (create int4 8));
+  raises_match ~msg:"from uint4" invalid_argument (fun () ->
+      reinterpret UInt8 (create uint4 8))
+
+(* Whether the file [path] is mapped in this process, where the system can
+   tell. *)
+let is_mapped path =
+  match open_in "/proc/self/maps" with
+  | exception Sys_error _ -> None
+  | ic ->
+      Fun.protect
+        ~finally:(fun () -> close_in ic)
+        (fun () ->
+          let rec scan () =
+            match input_line ic with
+            | exception End_of_file -> false
+            | line -> String.ends_with ~suffix:path line || scan ()
+          in
+          Some (scan ()))
+
+let map_bytes path =
+  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () ->
+      of_genarray
+        (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
+           [| -1 |]))
+
+(* The functions below are not inlined, so that once they return no slot of the
+   caller's frame holds the arrays they built. *)
+
+let[@inline never] mapped_view path n =
+  reinterpret BFloat16 (sub_bytes (map_bytes path) 2 (2 * n))
+
+let[@inline never] read_mapped_view path n =
+  let view = mapped_view path n in
+  Gc.full_major ();
+  Option.iter (is_true ~msg:"mapped while viewed") (is_mapped path);
+  let stored = Bytes.create (2 * n) in
+  blit_to_bytes view stored;
+  for i = 0 to (2 * n) - 1 do
+    if Bytes.get_uint8 stored i <> (i + 2) land 0xff then
+      failf "byte %d of the view is %d" i (Bytes.get_uint8 stored i)
+  done
+
+(* A reinterpreted sub-array alone keeps a mapped file mapped, and the file is
+   unmapped once it is unreachable. *)
+let test_reinterpret_mapped_lifetime () =
+  let n = 1 lsl 16 in
+  let path = Filename.temp_file "nx_buffer_mapped_" ".bin" in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with Sys_error _ -> ())
+    (fun () ->
+      let oc = open_out_bin path in
+      for i = 0 to (2 * n) + 1 do
+        output_char oc (Char.chr (i land 0xff))
+      done;
+      close_out oc;
+      read_mapped_view path n;
+      Gc.full_major ();
+      Option.iter
+        (fun mapped -> is_true ~msg:"unmapped once unreachable" (not mapped))
+        (is_mapped path))
+
+(* Mapped files *)
+
+let with_mapped_file n f =
+  let path = Filename.temp_file "nx_buffer_file_" ".bin" in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with Sys_error _ -> ())
+    (fun () ->
+      let oc = open_out_bin path in
+      for i = 0 to n - 1 do
+        output_char oc (Char.chr (i land 0xff))
+      done;
+      close_out oc;
+      let stat = Unix.stat path in
+      let file =
+        { path; size = n; mtime = stat.st_mtime; inode = stat.st_ino }
+      in
+      f file)
+
+(* The mapping itself, as [Unix.map_file] returns it: not a view of it. *)
+let map_root path =
+  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () ->
+      of_bigarray1
+        (Bigarray.array1_of_genarray
+           (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
+              [| -1 |])))
+
+let offset_in file buf =
+  match file_range buf with
+  | Some (f, offset) when f = file -> Some offset
+  | Some _ -> fail "file_range answered another file"
+  | None -> None
+
+let[@inline never] check_mapped_ranges file =
+  let mapped = map_root file.path in
+  register_file file mapped;
+  equal ~msg:"the mapping" (option int) (Some 0) (offset_in file mapped);
+  let sub = sub_bytes mapped 24 64 in
+  equal ~msg:"a sub-array" (option int) (Some 24) (offset_in file sub);
+  let halves = reinterpret BFloat16 (sub_bytes sub 8 32) in
+  equal ~msg:"a reinterpreted sub-array" (option int) (Some 32)
+    (offset_in file halves);
+  equal ~msg:"an ordinary buffer" (option int) None
+    (offset_in file (create UInt8 64));
+  raises_match ~msg:"a mapping that already has views" invalid_argument
+    (fun () -> register_file file mapped);
+  halves
+
+let test_file_range () =
+  with_mapped_file 4096 @@ fun file ->
+  let halves = check_mapped_ranges file in
+  Gc.full_major ();
+  equal ~msg:"a view alone keeps the record" (option int) (Some 32)
+    (offset_in file halves);
+  let stored = Bytes.create 32 in
+  blit_to_bytes halves stored;
+  equal ~msg:"whose bytes are the file's at that offset" bytes
+    (Bytes.init 32 (fun i -> Char.chr (32 + i)))
+    stored;
+  raises_match ~msg:"an ordinary buffer is not a mapped file" invalid_argument
+    (fun () -> register_file file (create UInt8 16))
+
+(* A record dies with its mapping: memory mapped later at the same address,
+   which the system tends to hand out again, is not taken for the old file. *)
+let test_file_range_after_unmap () =
+  with_mapped_file 4096 @@ fun first ->
+  with_mapped_file 4096 @@ fun second ->
+  let[@inline never] map_and_drop file =
+    let mapped = map_root file.path in
+    register_file file mapped;
+    equal ~msg:"mapped" (option int) (Some 0) (offset_in file mapped);
+    unsafe_data_ptr mapped
+  in
+  let[@inline never] unrecorded_at address =
+    let mapped = map_root second.path in
+    if unsafe_data_ptr mapped = address then
+      equal ~msg:"an unrecorded mapping at a recorded address" (option int) None
+        (offset_in first mapped)
+  in
+  for _ = 1 to 8 do
+    let address = map_and_drop first in
+    Gc.full_major ();
+    unrecorded_at address;
+    Gc.full_major ()
+  done
+
 (* Test suite *)
 let () =
   run "Nx_buffer tests"
@@ -360,5 +590,17 @@ let () =
           test "extended genarray bridge" test_genarray_extended_roundtrip;
           test "of_bigarray1 rejects unsupported kinds"
             test_of_bigarray1_unsupported_raises;
+        ];
+      group "reinterpret"
+        [
+          test "bit exact at every kind" test_reinterpret_bit_exact;
+          test "aliases its source" test_reinterpret_aliases;
+          test "raises" test_reinterpret_raises;
+          test "keeps a mapped file alive" test_reinterpret_mapped_lifetime;
+        ];
+      group "mapped files"
+        [
+          test "file_range follows views by address" test_file_range;
+          test "a record dies with its mapping" test_file_range_after_unmap;
         ];
     ]

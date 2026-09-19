@@ -106,14 +106,16 @@ module type S = sig
   (** [context t] returns the execution context that owns [t]. *)
 
   val to_host : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-  (** [to_host t] returns [t]'s underlying storage buffer, shared with [t]:
-      mutations through the buffer are visible through [t] and vice versa.
+  (** [to_host t] returns [t]'s storage as a host buffer. A backend that holds
+      host memory shares it without a copy, and any other backend copies it out.
+      The buffer is read-only by contract: a tensor is a value, the frontend
+      never writes through the buffer, and neither may a caller. It may be
+      memory the process does not own, such as the pages of a mapped file.
 
       The buffer is {e not} necessarily contiguous nor sized to the logical
       element count. Interpret it through {!view} (offset and strides): for a
       strided view it may exceed the tensor's logical extent and be laid out
-      non-contiguously. CPU backends return the storage directly (zero-copy);
-      device backends copy it out to host memory. *)
+      non-contiguously. *)
 
   (** {1 Tensor Creation} *)
 

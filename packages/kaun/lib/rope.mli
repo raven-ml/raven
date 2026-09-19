@@ -20,6 +20,14 @@ type t
 (** The type for rotary schedules: the inverse frequencies of one attention
     head, [head_dim / 2] of them. *)
 
+val of_frequencies : float array -> t
+(** [of_frequencies f] is the schedule whose pair [i] has inverse frequency
+    [f.(i)], for a head of [2 * Array.length f] features. Every other
+    constructor is defined with it; use it for a schedule this module does not
+    name.
+
+    Raises [Invalid_argument] if [f] is empty or holds a non-finite number. *)
+
 val make : ?theta:float -> head_dim:int -> unit -> t
 (** [make ~head_dim ()] is the standard schedule: pair [i] has frequency
     [theta ** (-2 i / head_dim)]. [theta] defaults to [10000.].
@@ -46,6 +54,37 @@ val llama3 :
     Raises [Invalid_argument] on a non-positive argument, or if
     [high_freq_factor <= low_freq_factor]. *)
 
+val yarn :
+  theta:float ->
+  head_dim:int ->
+  factor:float ->
+  beta_fast:float ->
+  beta_slow:float ->
+  original_context:int ->
+  t
+(** [yarn ...] is the YaRN long-context schedule (Peng et al., 2023), with the
+    correction range left untruncated, as gpt-oss uses it. Pair [i] blends the
+    standard frequency [f] and the interpolated one [f / factor]:
+    [ramp * f / factor + (1 - ramp) * f], where [ramp] rises linearly from [0]
+    to [1] between the fractional pair indices that make [beta_fast] and
+    [beta_slow] full turns over [original_context] positions, clamped to \[[0],
+    [head_dim - 1]\]. Fast pairs keep their frequency and slow ones are
+    interpolated.
+
+    The schedule is its frequencies only. YaRN also prescribes an attention
+    temperature: scores are scaled by
+    [(0.1 * ln factor + 1) ^ 2 / sqrt head_dim] in place of [1 / sqrt head_dim].
+    {!apply} keeps norms, so a model passes that number as [?scale] to
+    {!Attention.scaled_dot_product_attention}. Implementations that instead
+    scale the cosines and sines by [0.1 * ln factor + 1] compute the same
+    attention. gpt-oss uses
+    [~theta:150000. ~factor:32. ~beta_fast:32. ~beta_slow:1.
+     ~original_context:4096].
+
+    Raises [Invalid_argument] if [head_dim] is not positive and even, [theta],
+    [beta_slow] or [original_context] is not positive, [factor] is below [1], or
+    [beta_fast <= beta_slow]. *)
+
 val frequencies : t -> float array
 (** [frequencies t] is a copy of [t]'s inverse frequencies, in pair order. *)
 
@@ -62,10 +101,11 @@ val apply :
 
     where [h] is [head_dim / 2] and [a] is [pos * frequency.(i)].
 
-    Position [0] is the identity. The angles and their sines and cosines are
-    computed at float32 whatever [x]'s dtype and cast to it for the rotation, so
-    a float64 [x] is rotated to float32 accuracy. Differentiable through Rune in
-    [x].
+    Position [0] is the identity. A rotation keeps norms: [apply] never rescales
+    [x], and a schedule is a choice of angles and nothing else. The angles and
+    their sines and cosines are computed at float32 whatever [x]'s dtype and
+    cast to it for the rotation, so a float64 [x] is rotated to float32
+    accuracy. Differentiable through Rune in [x].
 
     Raises [Invalid_argument] if [x] is not of rank 4, its last axis is not
     twice [t]'s pair count, or [pos] has another shape. *)

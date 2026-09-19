@@ -130,15 +130,18 @@ delete it rather than registering it.
   `is_one_hot_sum`). The reference splits any reduce whose input is 32768
   times its output, in the tensor graph, and collapses a gather's one-hot
   reduce to a gated load later, per kernel. At 32768 rows and up the split
-  wins: its `contiguous` separates the halves, neither matches the collapse,
-  and a gather reads the whole table into an intermediate buffer. tolk
+  wins: the sum becomes 256 chunk sums behind a `contiguous`, each collapsing
+  to a load gated on its chunk, and a second kernel adds the 256 slots, so an
+  element costs 256 gated loads, an intermediate 256 times the output and two
+  kernels where one load would do. tolk
   declines the split for a sum over `where(c, x, 0)` when `c` compares
   integers and one side varies only along reduced axes while the other varies
   along none of them. The reference has the same behaviour and no test above
   the threshold (`test_arange.py` indexes 2048 rows, `test_llama_embedding` a
-  vocabulary of 10). Consumer: every `Op.gather` and tensor-index `getitem`
-  over a large axis, so rune's `take` over a vocabulary. Drop the guard if
-  the reference orders the two rewrites itself.
+  vocabulary of 10). Parity case `gather_split_threshold` holds tolk's kernel
+  to the reference's with `SPLIT_REDUCEOP=0`. Consumer: every `Op.gather` and
+  tensor-index `getitem` over a large axis, so rune's `take` over a
+  vocabulary. Drop the guard if the reference orders the two rewrites itself.
 
 - **Index-ranged scatter** (`frontend/op.ml` `scatter_indexed`). The
   reference lowers every scatter through a one-hot mask over the destination
@@ -157,3 +160,12 @@ delete it rather than registering it.
   reference's codegen. Consumers: rune's `E_scatter`, hence `Nx.scatter`, the
   gradient of `Nx.take` and kaun's embedding gradient; and rune's `E_update`
   at a traced corner, over the flattened destination.
+
+- **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
+  `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
+  selects unaligned vector types through the `ALIGNED` environment variable
+  alone. tolk also takes the choice as an argument, so a caller can select it
+  for one device without touching the process environment; absent, the
+  variable decides as in the reference, and the rendered source is the
+  reference's either way. Consumer: rune's CPU device, which binds host memory
+  it did not allocate (slices, mapped files) and passes `~aligned:false`.

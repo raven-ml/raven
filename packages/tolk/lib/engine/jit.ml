@@ -82,8 +82,9 @@ let input_info_of_uop u =
    CUSTOM_FUNCTION "graph" calls so replay dispatches each group as one
    batched launch through the device's {!Device.Graph} capability. A call is
    compatible when its body is a PROGRAM (or a COPY, if the capability
-   supports copies) and every buffer argument lives on the batch's device;
-   any other call breaks the batch. SLICE calls are dropped: they only bind
+   supports copies), every buffer argument lives on the batch's device, and
+   no buffer view starts past the capability's offset bound; any other call
+   breaks the batch. SLICE calls are dropped: they only bind
    offset views, which argument resolution derives structurally. The batch
    size limit doubles after each emitted graph. *)
 
@@ -149,6 +150,18 @@ let call_device_prefixes si =
   in
   loop [] (call_args si)
 
+(* Whether every SLICE argument of a call stays within [max_offset] bytes. *)
+let view_offsets_within max_offset si =
+  List.for_all
+    (fun b ->
+      match U.as_slice b with
+      | Some { src; offset; _ } -> (
+          match U.const_int_value offset with
+          | Some o -> o * Dtype.itemsize (U.dtype src) <= max_offset
+          | None -> true)
+      | None -> true)
+    (call_args si)
+
 let graph_split_rewrite ~device linear ~max_batch_size =
   let graph = Device.graph device in
   let graph_prefix = device_prefix (Device.name device) in
@@ -175,8 +188,11 @@ let graph_split_rewrite ~device linear ~max_batch_size =
           let can_graph =
             (match graph with
             | Some g ->
-                is_op Ops.Program body
-                || (is_op Ops.Copy body && g.Device.Graph.supports_copy)
+                (is_op Ops.Program body
+                || (is_op Ops.Copy body && g.Device.Graph.supports_copy))
+                && (match g.Device.Graph.max_buffer_offset with
+                   | Some max_offset -> view_offsets_within max_offset si
+                   | None -> true)
             | None -> false)
             &&
             match call_device_prefixes si with

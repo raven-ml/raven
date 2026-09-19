@@ -128,7 +128,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_const_scalar _ -> None
       | E_from_host _ -> None
       | E_threefry _ -> None
-      | E_to_device _ -> None
+      (* Placement is the identity under differentiation: a placed copy would
+         be a fresh, untracked value. *)
+      | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
       | E_cmpne _ -> None
@@ -402,8 +404,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_reshape { t_in; new_shape } ->
           Some
             (fun k ->
+              (* A cotangent can be a lazy view (a transpose, a broadcast),
+                 which a reshape may not take as it is. *)
               pull1 k (reshape t_in new_shape) t_in (fun g ->
-                  T.reshape (T.shape t_in) g))
+                  T.reshape (T.shape t_in) (T.contiguous g)))
       | E_permute { t_in; axes } ->
           Some
             (fun k ->

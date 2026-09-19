@@ -77,8 +77,8 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
       if greedy then Nx.argmax ~axis:1 logits
       else
         Nx.Rng.categorical keys.(1)
-          (Fn.top_p ~p:s.p
-             (Fn.top_k ~k:s.k
+          (Fn.keep_top_p ~p:s.p
+             (Fn.keep_top_k ~k:s.k
                 (Nx.div logits (Nx.reshape [| 1; 1 |] s.temperature))))
     in
     {
@@ -133,14 +133,16 @@ let load_tokenizer () =
 let () =
   let prompt = ref "The capital of France is" in
   let count = ref 24 and jit = ref "" in
-  let dtype = ref "float32" and temperature = ref 0.7 and seed = ref 0 in
+  let dtype = ref "" and temperature = ref 0.7 and seed = ref 0 in
   let top_k = ref 50 and top_p = ref 0.9 in
   Arg.parse
     [
       ("--prompt", Arg.Set_string prompt, "Text to continue");
       ("--count", Arg.Set_int count, "Number of tokens to generate");
       ("--jit", Arg.Set_string jit, "Compile the decode step for this device");
-      ("--dtype", Arg.Set_string dtype, "float32 (default), float16 or bfloat16");
+      ( "--dtype",
+        Arg.Set_string dtype,
+        "float32, float16 or bfloat16 (default: the checkpoint's own)" );
       ("--temperature", Arg.Set_float temperature, "0 decodes greedily");
       ("--top-k", Arg.Set_int top_k, "Keep the k most likely tokens");
       ("--top-p", Arg.Set_float top_p, "Keep the smallest set reaching mass p");
@@ -148,25 +150,23 @@ let () =
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "llama [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
-  let cfg, params = Llama.from_pretrained () in
+  let cfg = Llama.config_of_json (Kaun_hf.load_config Llama.default_repo) in
+  let ckpt = Kaun_hf.load_checkpoint Llama.default_repo in
   let tokenizer = load_tokenizer () in
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   let device = if !jit = "" then None else Some !jit in
-  let run : type b.
-      (float, b) Nx.dtype -> (float, b) Nx.t Llama.params -> int32 array =
-   fun dt params ->
-    generate ?device cfg params dt ~temperature:!temperature ~top_k:!top_k
-      ~top_p:!top_p ~seed:!seed ~max_tokens:!count ids
+  (* At the checkpoint's own dtype the import casts nothing. *)
+  let (Llama.Dtype dt) =
+    if !dtype = "" then Llama.stored_dtype ckpt
+    else Llama.dtype_of_string !dtype
   in
   let toks =
-    match !dtype with
-    | "float32" -> run Nx.float32 params
-    | "float16" -> run Nx.float16 (Llama.Params.map (Nx.cast Nx.float16) params)
-    | "bfloat16" ->
-        run Nx.bfloat16 (Llama.Params.map (Nx.cast Nx.bfloat16) params)
-    | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
+    generate ?device cfg
+      (Llama.of_hf ?device cfg dt ckpt)
+      dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
+      ~max_tokens:!count ids
   in
   print_string !prompt;
   print_endline (Brot.decode tokenizer (Array.map Int32.to_int toks))

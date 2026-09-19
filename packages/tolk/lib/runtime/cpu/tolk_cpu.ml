@@ -309,7 +309,7 @@ end
 
 (* Device Registration *)
 
-let create name =
+let create ?aligned name =
   let clang =
     Compiler.make ~name:"CLANG" ~cachekey:"compile_clang_jit"
       ~compile:Compiler_cpu.compile_clang ()
@@ -348,6 +348,7 @@ let create name =
     Renderer.with_compiler clang
       (Cstyle.clang
          ~native_bf16:(Compiler_cpu.supports_bf16 ())
+         ?aligned
          (Gpu_target.host_cpu ()))
   in
   let renderer_set = Device.Renderer_set.make [renderer, None] in

@@ -131,6 +131,22 @@ let test_attention_score_island (type b) name (dt : (float, b) Nx.dtype) ~tol ()
     (Nx.item [] (Nx.all (Nx.isfinite actual)));
   close ~tol expected actual
 
+(* Sinks enter the float32 island with the scores. *)
+let test_attention_sinks_half (type b) name (dt : (float, b) Nx.dtype) ~tol () =
+  ignore name;
+  let q = Nx.reshape [| 2; 1; 8 |] (mat f32 2 8 (grid 16)) in
+  let k = Nx.reshape [| 2; 3; 8 |] (mat f32 6 8 (grid 48)) in
+  let v = Nx.reshape [| 2; 3; 4 |] (mat f32 6 4 (grid 24)) in
+  let sinks = mat f32 2 1 [| 0.5; -0.25 |] in
+  let expected = Attention.scaled_dot_product_attention ~sinks q k v in
+  let actual =
+    Attention.scaled_dot_product_attention ~sinks:(Nx.cast dt sinks)
+      (Nx.cast dt q) (Nx.cast dt k) (Nx.cast dt v)
+  in
+  is_true ~msg:"the sinks took weight"
+    (to_arr expected <> to_arr (Attention.scaled_dot_product_attention q k v));
+  close ~tol expected actual
+
 let test_attention_apply_half () =
   let dim = 4 in
   let p =
@@ -463,6 +479,10 @@ let tests =
           (test_attention_score_island "float16" f16 ~tol:0.01);
         test "attention scores bfloat16"
           (test_attention_score_island "bfloat16" bf16 ~tol:0.05);
+        test "attention sinks float16"
+          (test_attention_sinks_half "float16" f16 ~tol:0.01);
+        test "attention sinks bfloat16"
+          (test_attention_sinks_half "bfloat16" bf16 ~tol:0.05);
         test "attention apply float16" test_attention_apply_half;
         test "batch norm float16" test_batch_norm_island;
       ];

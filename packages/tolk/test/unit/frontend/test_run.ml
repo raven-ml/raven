@@ -73,6 +73,9 @@ let reduce_tests =
       test "mean" (fun () ->
           check_floats [| 2.5 |] (Op.mean (vec [| 1.; 2.; 3.; 4. |])));
       test "max" (fun () -> check_floats [| 5. |] (Rd.max (vec [| 1.; 5.; 3. |])));
+      test "argmax and argmin take the first of equal extremes" (fun () ->
+          check_ints [| 1 |] (Op.argmax (vec [| 1.; 3.; 3.; 0. |]));
+          check_ints [| 0 |] (Op.argmin (vec [| 0.; 3.; 3.; 0. |])));
     ]
 
 let matmul_tests =
@@ -108,6 +111,24 @@ let logspace_tests =
             (Op.softmax (vec [| 1.; 2.; 3. |])));
       test "logsumexp" (fun () ->
           check_floats [| 3.4076059 |] (Op.logsumexp (vec [| 1.; 2.; 3. |])));
+      (* A sink is a key of value zero with no column: its logit joins the
+         shift and the normaliser. It is finite, so a row with every key masked
+         divides 0 by 1. *)
+      test "a sink keeps a fully masked softmax row at zero" (fun () ->
+          let scores = fa ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 1.; 2.; 3. |] in
+          let seen =
+            El.gt (fa ~shape:[ 2; 3 ] [| 1.; 1.; 1.; 0.; 0.; 0. |]) (T.f 0.5)
+          in
+          let sink = fa ~shape:[ 1; 1 ] [| 0. |] in
+          let scores = El.where seen scores (T.f Float.neg_infinity) in
+          let top = El.maximum (Rd.max ~axis:[ 1 ] ~keepdim:true scores) sink in
+          let e = El.exp (El.sub scores top) in
+          let total =
+            El.add (Rd.sum ~axis:[ 1 ] ~keepdim:true e) (El.exp (El.sub sink top))
+          in
+          check_floats
+            [| 0.087144; 0.236883; 0.643914; 0.; 0.; 0. |]
+            (El.div e total));
     ]
 
 let getitem_tests =

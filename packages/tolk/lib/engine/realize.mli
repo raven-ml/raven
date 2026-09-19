@@ -260,22 +260,25 @@ end
 type exec_context = {
   var_vals : (string * int) list;
   input_uops : Tolk_uop.Uop.t array;
+  update_stats : bool;
   jit : bool;
   wait : bool;
 }
 (** Execution context threaded through a LINEAR run: symbolic variable values,
-    the input buffer nodes that {!Tolk_uop.Ops.Param} slots index into, and the
-    JIT and wait flags. *)
+    the input buffer nodes that {!Tolk_uop.Ops.Param} slots index into, whether
+    calls are counted and reported, and the JIT and wait flags. *)
 
 val exec_context :
   ?var_vals:(string * int) list ->
   ?input_uops:Tolk_uop.Uop.t array ->
+  ?update_stats:bool ->
   ?jit:bool ->
   ?wait:bool ->
   unit ->
   exec_context
-(** [exec_context ?var_vals ?input_uops ?jit ?wait ()] builds a context. All
-    fields default to empty or [false]. *)
+(** [exec_context ?var_vals ?input_uops ?update_stats ?jit ?wait ()] builds a
+    context. [update_stats] defaults to [true]; the other fields default to
+    empty or [false]. *)
 
 val resolve_buffer : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> buffer
 (** [resolve_buffer binding ctx node] is the concrete buffer named by call
@@ -305,12 +308,13 @@ val run_linear :
   Buffers.t ->
   ?var_vals:(string * int) list ->
   ?input_uops:Tolk_uop.Uop.t array ->
+  ?update_stats:bool ->
   ?jit:bool ->
   ?wait:bool ->
   Tolk_uop.Uop.t ->
   unit
-(** [run_linear ~device ~to_program binding ?var_vals ?input_uops ?jit ?wait
-    linear] executes each {!Tolk_uop.Ops.Call} in the {!Tolk_uop.Ops.Linear}
+(** [run_linear ~device ~to_program binding ?var_vals ?input_uops ?update_stats
+    ?jit ?wait linear] executes each {!Tolk_uop.Ops.Call} in the {!Tolk_uop.Ops.Linear}
     [linear] in order.
 
     When [jit] is [false] (default), [linear] is first compiled with
@@ -336,9 +340,24 @@ val run_linear :
     copy transfers each per-device pair (natively when the devices share a
     backend, through a host bounce otherwise).
 
+    Unless [update_stats] is [false], every dispatched kernel, view, copy and
+    batched graph is counted in {!Helpers.Global_counters} with its estimated
+    operations and memory traffic. When [DEBUG >= 2] each also prints one line
+    on standard error: device, running call count, name, argument count, device
+    memory in use, and its time over the running total with the rates the
+    estimates give. A call that measured no time of its own is timed by
+    synchronizing the device after it. The header is magenta under [jit] and
+    green the first time a program runs.
+
     [wait] is forced to [true] when [DEBUG >= 2]. *)
 
 val graph_launches : int ref
 (** [graph_launches] counts batched graph launches dispatched through
     {!Device.Graph} execs, including each graph's recording launch. A
     cumulative observability counter for tests and debugging. *)
+
+val graph_runners : unit -> int
+(** [graph_runners ()] is the number of recorded graphs whose graph call is
+    still reachable. A recorded graph keeps the buffers it addresses alive, and
+    is dropped with the last linear that mentions it. An observability hook for
+    tests and debugging. *)

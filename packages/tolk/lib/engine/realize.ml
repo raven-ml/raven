@@ -455,13 +455,14 @@ end
 type exec_context = {
   var_vals : (string * int) list;
   input_uops : Tolk_uop.Uop.t array;
+  update_stats : bool;
   jit : bool;
   wait : bool;
 }
 
-let exec_context ?(var_vals = []) ?(input_uops = [||]) ?(jit = false)
-    ?(wait = false) () =
-  { var_vals; input_uops; jit; wait }
+let exec_context ?(var_vals = []) ?(input_uops = [||]) ?(update_stats = true)
+    ?(jit = false) ?(wait = false) () =
+  { var_vals; input_uops; update_stats; jit; wait }
 
 (* Resolve a call argument UOp to the concrete buffer it names. A seeded node
    resolves to its bound buffer directly; otherwise resolution is structural.
@@ -619,6 +620,185 @@ let launch_geometry ~device program (info : Tolk_uop.Uop.program_info) ~var_vals
       Array.mapi (fun i g -> g / best.(i)) global, Some best
   | None -> global, None
 
+(* Stats *)
+
+let get_call_name call bufs var_vals =
+  let module U = Tolk_uop.Uop in
+  let size_str u =
+    let numel =
+      List.fold_left (fun n d -> n * U.sym_infer d var_vals) 1 (U.shape u)
+    in
+    Helpers.size_to_str (numel * Tolk_uop.Dtype.itemsize (U.dtype u))
+  in
+  let dev_str buf =
+    let name = Device.Buffer.device buf in
+    String.sub name 0 (min 7 (String.length name))
+  in
+  match U.as_call call with
+  | None -> invalid_arg "get_call_name: expected CALL"
+  | Some { body = ast; args; _ } -> (
+      let arg_uops = call_arg_uops args in
+      match (U.op ast, arg_uops, bufs) with
+      | Tolk_uop.Ops.Program, _, _ -> (
+          match U.as_program_info ast with
+          | Some info -> info.name
+          | None -> invalid_arg "get_call_name: PROGRAM without info")
+      | Tolk_uop.Ops.Slice, out :: src :: _, _ ->
+          let offset =
+            match U.as_slice ast with
+            | Some { offset; _ } ->
+                U.sym_infer offset var_vals
+                * Tolk_uop.Dtype.itemsize (U.dtype src)
+            | None -> invalid_arg "get_call_name: malformed SLICE"
+          in
+          Helpers.colored
+            (strf "view %10s @ %-10d" (size_str out) offset)
+            (Some "yellow")
+      | Tolk_uop.Ops.Copy, out :: _, dest :: src :: _ ->
+          Helpers.colored
+            (strf "copy %10s, %7s <- %-7s" (size_str out) (dev_str dest)
+               (dev_str src))
+            (Some "yellow")
+      | Tolk_uop.Ops.Custom_function, _, _
+        when U.Arg.as_string (U.arg ast) = Some "graph" -> (
+          match U.children ast with
+          | [ linear ] ->
+              Helpers.colored
+                (strf "batched %d" (List.length (U.children linear)))
+                (Some "cyan")
+          | _ -> invalid_arg "get_call_name: malformed graph call")
+      | _ -> invalid_arg "get_call_name is not implemented")
+
+(* What is recorded about a graph call is keyed by its body and held weakly:
+   it goes when the last linear that mentions the graph does. *)
+module Graph_cache = Ephemeron.K1.Make (struct
+  type t = Tolk_uop.Uop.t
+
+  let equal = ( == )
+  let hash = Tolk_uop.Uop.tag
+end)
+
+(* Estimates of a batched graph: the sum over its calls, recorded when the
+   graph runner is created. *)
+let graph_estimates : Program_spec.Estimates.t Graph_cache.t =
+  Graph_cache.create 8
+
+let estimate_uop call =
+  let module U = Tolk_uop.Uop in
+  let module E = Program_spec.Estimates in
+  match U.as_call call with
+  | None -> E.zero
+  | Some { body = ast; args; _ } -> (
+      match U.op ast with
+      | Tolk_uop.Ops.Program -> (
+          match U.children ast with
+          | sink :: _ -> (
+              match U.as_kernel_info sink with
+              | Some { estimates = Some e; _ } -> E.of_uop e
+              | Some _ | None -> E.zero)
+          | [] -> E.zero)
+      | Tolk_uop.Ops.Copy -> (
+          match args with
+          | dest :: _ ->
+              let nbytes =
+                U.max_numel dest * Tolk_uop.Dtype.itemsize (U.dtype dest)
+              in
+              { E.zero with lds = E.Int nbytes; mem = E.Int nbytes }
+          | [] -> E.zero)
+      | Tolk_uop.Ops.Custom_function
+        when U.Arg.as_string (U.arg ast) = Some "graph" ->
+          Option.value
+            (Graph_cache.find_opt graph_estimates ast)
+            ~default:E.zero
+      | _ -> E.zero)
+
+let first_run_cache : (int, unit) Hashtbl.t = Hashtbl.create 64
+
+(* Runs [run], which launches [call] over [bufs] on [device] and returns its
+   time if it measured one, then counts the call and, under DEBUG >= 2, prints
+   its line. *)
+let track_stats ctx call ~device bufs var_vals run =
+  let module U = Tolk_uop.Uop in
+  let module G = Helpers.Global_counters in
+  let st = if debug >= 2 then Unix.gettimeofday () else 0.0 in
+  let et = run () in
+  if ctx.update_stats then begin
+    let et =
+      match et with
+      | None when debug >= 2 ->
+          Device.synchronize device;
+          Some (Unix.gettimeofday () -. st)
+      | et -> et
+    in
+    let infer = function
+      | Program_spec.Estimates.Int n -> n
+      | Symbolic u -> U.sym_infer u var_vals
+    in
+    let estimates = estimate_uop call in
+    let op_est = infer estimates.ops and mem_est = infer estimates.mem in
+    incr G.kernel_count;
+    G.global_ops := !G.global_ops + op_est;
+    G.global_mem := !G.global_mem + mem_est;
+    Option.iter (fun t -> G.time_sum_s := !G.time_sum_s +. t) et;
+    if debug >= 2 then begin
+      let key =
+        match U.as_call call with Some { body; _ } -> U.tag body | None -> -1
+      in
+      let display_name = get_call_name call bufs var_vals in
+      let lds_est = infer estimates.lds in
+      let header_color =
+        if ctx.jit then Some "magenta"
+        else if Hashtbl.mem first_run_cache key then None
+        else Some "green"
+      in
+      let name = Device.name device in
+      let header =
+        Helpers.colored
+          (strf "*** %-7s %4d"
+             (String.sub name 0 (min 7 (String.length name)))
+             !G.kernel_count)
+          header_color
+      in
+      let timing =
+        match et with
+        | None -> ""
+        | Some t ->
+            let ptm =
+              Helpers.colored
+                (Helpers.time_to_str ~w:9 t)
+                (if t > 0.01 then Some "yellow" else None)
+            in
+            let per x = float_of_int x /. if t = 0.0 then 1e-20 else t in
+            let flops = per op_est and membw = per mem_est in
+            let ldsbw = per lds_est in
+            let flops_str =
+              if flops < 1e14 then strf "%7.0f GFLOPS" (flops *. 1e-9)
+              else
+                Helpers.colored
+                  (strf "%7.0f TFLOPS" (flops *. 1e-12))
+                  (Some "green")
+            in
+            let mem_str =
+              if membw < 1e13 && ldsbw < 1e15 then
+                strf "%4.0f|%-6.0f GB/s" (membw *. 1e-9) (ldsbw *. 1e-9)
+              else
+                Helpers.colored
+                  (strf "%4.0f|%-6.0f TB/s" (membw *. 1e-12) (ldsbw *. 1e-12))
+                  (Some "green")
+            in
+            strf " tm %s/%9.2fms (%s %s)" ptm (!G.time_sum_s *. 1e3) flops_str
+              mem_str
+      in
+      Printf.eprintf "%s %s%s arg %2d mem %6.2f GB%s\n%!" header display_name
+        (String.make (max 0 (46 - Helpers.ansilen display_name)) ' ')
+        (List.length bufs)
+        (float_of_int !G.mem_used /. 1e9)
+        timing;
+      Hashtbl.replace first_run_cache key ()
+    end
+  end;
+  et
+
 let exec_kernel binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
@@ -646,13 +826,14 @@ let exec_kernel binding ctx ~device call =
                (U.program_vals info ~var_vals))
         in
         let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
-        let ret =
+        let run () =
           try prg.call buf_addrs ~global ~local ~vals ~wait:ctx.wait
                 ~timeout:None
           with exn ->
             List.iter keep_alive bufs;
             raise exn
         in
+        let ret = track_stats ctx call ~device bufs var_vals run in
         List.iter keep_alive bufs;
         ignore (ret : float option)
       in
@@ -681,7 +862,7 @@ let exec_kernel binding ctx ~device call =
             groups)
   | None -> invalid_arg "exec_kernel: expected CALL"
 
-let exec_view binding ctx call =
+let exec_view binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body; args; _ } -> (
@@ -700,7 +881,15 @@ let exec_view binding ctx call =
             Device.Buffer.view src ~size:(Buffers.numel out_node)
               ~dtype:(U.dtype body) ~offset:byte_offset
           in
-          Buffers.seed binding out_node view
+          let bind () =
+            Buffers.seed binding out_node view;
+            None
+          in
+          ignore
+            (track_stats ctx call
+               ~device:(device_for ~device view)
+               [ view; src ] ctx.var_vals bind
+              : float option)
       | _ -> invalid_arg "exec_view: malformed SLICE call")
   | None -> invalid_arg "exec_view: expected CALL"
 
@@ -719,9 +908,16 @@ let exec_copy binding ctx ~device call =
                 ~dest_device:(Device.Buffer.device dest)
                 ~src_device:(Device.Buffer.device src)
             in
+            let run () =
+              ignore
+                (Runner.call runner [ dest; src ] ctx.var_vals ~wait:ctx.wait
+                   ~timeout:None
+                  : float option);
+              None
+            in
             ignore
-              (Runner.call runner [ dest; src ] ctx.var_vals ~wait:ctx.wait
-                 ~timeout:None)
+              (track_stats ctx call ~device [ dest; src ] ctx.var_vals run
+                : float option)
           in
           (match
              ( resolve_buffer binding ctx dest_node,
@@ -1070,27 +1266,38 @@ module Graph_runner = struct
 end
 
 (* Graph runners are recorded on first execution of their graph call node and
-   replayed on every subsequent execution of the captured linear. *)
-let graph_cache : (int, Graph_runner.t) Hashtbl.t = Hashtbl.create 8
+   replayed on every subsequent execution of the captured linear. A runner
+   keeps the buffers it recorded alive, which is why the table is weak. *)
+let graph_cache : Graph_runner.t Graph_cache.t = Graph_cache.create 8
 
 (* Cumulative count of batched graph launches, including recording launches.
    Observability hook for tests and debugging. *)
 let graph_launches = ref 0
+
+let graph_runners () = (Graph_cache.stats_alive graph_cache).num_bindings
 
 let exec_graph binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body = ast; _ } ->
       let rt =
-        match Hashtbl.find_opt graph_cache (U.tag ast) with
+        match Graph_cache.find_opt graph_cache ast with
         | Some rt -> rt
         | None ->
             let rt = Graph_runner.create ~device binding ctx ast in
-            Hashtbl.replace graph_cache (U.tag ast) rt;
+            Graph_cache.replace graph_cache ast rt;
+            let calls = List.concat_map U.children (U.children ast) in
+            Graph_cache.replace graph_estimates ast
+              (List.fold_left
+                 (fun acc c -> Program_spec.Estimates.(acc + estimate_uop c))
+                 Program_spec.Estimates.zero calls);
             rt
       in
       incr graph_launches;
-      ignore (Graph_runner.call rt binding ctx : float option)
+      ignore
+        (track_stats ctx call ~device [] ctx.var_vals (fun () ->
+             Graph_runner.call rt binding ctx)
+          : float option)
   | None -> invalid_arg "exec_graph: expected CALL"
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
@@ -1100,7 +1307,7 @@ let rec dispatch_call binding ctx ~device call =
   match U.as_call call with
   | Some { body; _ } -> (
       match U.op body with
-      | Tolk_uop.Ops.Slice -> exec_view binding ctx call
+      | Tolk_uop.Ops.Slice -> exec_view binding ctx ~device call
       | Tolk_uop.Ops.Copy -> exec_copy binding ctx ~device call
       | Tolk_uop.Ops.Program -> exec_kernel binding ctx ~device call
       | Tolk_uop.Ops.Custom_function
@@ -1409,12 +1616,13 @@ and exec_loop binding ctx ~device call =
   | None -> invalid_arg "exec_loop: expected CALL"
 
 let rec run_linear ~device ~to_program binding ?(var_vals = [])
-    ?(input_uops = [||]) ?(jit = false) ?(wait = false)
+    ?(input_uops = [||]) ?(update_stats = true) ?(jit = false) ?(wait = false)
     (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in
   let linear = if jit then linear else pm_compile ~device ~to_program linear in
   let ctx =
-    exec_context ~var_vals ~input_uops ~jit ~wait:(wait || debug >= 2) ()
+    exec_context ~var_vals ~input_uops ~update_stats ~jit
+      ~wait:(wait || debug >= 2) ()
   in
   if debug >= 2 then begin
     let names =

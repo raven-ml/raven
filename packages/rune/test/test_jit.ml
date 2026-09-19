@@ -664,9 +664,9 @@ end
 
 let pos_at i = Nx.scalar Nx.int32 (Int32.of_int i)
 
-(* One compiled program serves every window position: the start is read on
-   every call, so the second call must write where its own [pos] says, not
-   where the trace was taken. *)
+(* One compiled program serves every window position: the start is read on every
+   call, so the second call must write where its own [pos] says, not where the
+   trace was taken. *)
 let test_set_traced_window_replays_position () =
   let v = vec32 [| 9.0; 8.0 |] in
   let f { x; pos } = Nx.set [ Nx.D (pos, 2) ] v x in
@@ -678,8 +678,8 @@ let test_set_traced_window_replays_position () =
   check_arr ~msg:"clamped start" (to_arr (f (at 9))) (g (at 9));
   check_arr ~msg:"the input is a value" [| 0.0; 1.0; 2.0; 3.0; 4.0 |] x
 
-(* A window over two axes: the compiled write addresses the window's elements
-   at their flat positions in [x]. *)
+(* A window over two axes: the compiled write addresses the window's elements at
+   their flat positions in [x]. *)
 let test_set_traced_window_over_two_axes () =
   let v = Nx.create f32 [| 2; 3 |] [| 9.0; 8.0; 7.0; 6.0; 5.0; 4.0 |] in
   let f { x; pos } = Nx.set [ Nx.D (pos, 2); Nx.D (pos, 3) ] v x in
@@ -783,7 +783,6 @@ let test_grad_through_scan_matrix_carry () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
-
 (* Buffer sharing: strided leaves must fall back to copies, views with an offset
    must read the right span, and each call must return tensors with their own
    storage. *)
@@ -810,8 +809,6 @@ let test_outputs_have_their_own_storage () =
   let _y2 = g (vec32 [| 10.0; 20.0; 30.0 |]) in
   check_arr ~msg:"first result unchanged by the second call" [| 2.0; 4.0; 6.0 |]
     y1
-
-
 
 (* Sliding windows *)
 
@@ -882,10 +879,11 @@ let test_scatter_matches_eager () =
   check_arr ~msg:"set replay" (to_arr (f `Set x)) (g_set x);
   check_arr ~msg:"add" (to_arr (f `Add x)) (g_add x)
 
-(* The compiled scatter ranges over the updates, not over the destination.
-   Each case is held to the eager result. *)
+(* The compiled scatter ranges over the updates, not over the destination. Each
+   case is held to the eager result. *)
 
 let i32 shape xs = Nx.create Nx.int32 shape (Array.map Int32.of_int xs)
+
 let iota shape =
   let n = Array.fold_left ( * ) 1 shape in
   Nx.create f32 shape (Array.init n (fun i -> float_of_int (i + 1)))
@@ -923,15 +921,12 @@ let test_scatter_unique_indices () =
 
 (* The promise of unique indices broken at one row, the way a cache write aims
    every token it does not store at a scratch row: eager and compiled, every
-   other row is exact and each element of the repeated row is one of the
-   updates aimed at it. *)
+   other row is exact and each element of the repeated row is one of the updates
+   aimed at it. *)
 let test_scatter_unique_indices_broken_at_one_row () =
   let rows = 6 and width = 8 and scratch = 5 in
   let targets = [| 2; scratch; 0; scratch; scratch; 3 |] in
-  let indices =
-    Nx.broadcast_to [| rows; width |]
-      (i32 [| rows; 1 |] targets)
-  in
+  let indices = Nx.broadcast_to [| rows; width |] (i32 [| rows; 1 |] targets) in
   let values = iota [| rows; width |] in
   let f t = Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values t in
   let t = Nx.zeros f32 [| rows; width |] in
@@ -951,11 +946,14 @@ let test_scatter_unique_indices_broken_at_one_row () =
       let v = got.((scratch * width) + j) in
       let aimed k = v = float_of_int ((k * width) + j + 1) in
       is_true
-        ~msg:(Printf.sprintf "%s, the repeated row holds an update at %d" name j)
+        ~msg:
+          (Printf.sprintf "%s, the repeated row holds an update at %d" name j)
         (aimed 1 || aimed 3 || aimed 4)
     done;
     for j = 0 to width - 1 do
-      equal ~msg:(name ^ ", an untouched row") float_exact 0.0
+      equal
+        ~msg:(name ^ ", an untouched row")
+        float_exact 0.0
         got.((1 * width) + j)
     done
   in
@@ -1007,10 +1005,12 @@ let test_scatter_under_vmap () =
   in
   List.iter
     (fun (name, mode) ->
-      check ~msg:("over the destination, " ^ name)
+      check
+        ~msg:("over the destination, " ^ name)
         (fun t -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
         (batch t);
-      check ~msg:("over the values, " ^ name)
+      check
+        ~msg:("over the values, " ^ name)
         (fun values -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
         (batch values))
     [ ("set", `Set); ("add", `Add) ];
@@ -1025,9 +1025,7 @@ let test_scatter_under_vmap () =
 let test_grad_of_take_with_repeated_tokens () =
   let indices = i32 [| 6 |] [| 3; 1; 3; 3; 0; 1 |] in
   let weights = iota [| 6; 2 |] in
-  let loss table =
-    Nx.sum (Nx.mul weights (Nx.take ~axis:0 ~indices table))
-  in
+  let loss table = Nx.sum (Nx.mul weights (Nx.take ~axis:0 ~indices table)) in
   let table = iota [| 5; 2 |] in
   check_arr ~msg:"embedding gradient"
     (to_arr (Rune.grad' loss table))
@@ -1178,6 +1176,165 @@ let delta f =
     s1.bytes_to_device - s0.bytes_to_device,
     s1.bytes_from_device - s0.bytes_from_device )
 
+(* Placement. [Rune.to_device] makes a value resident without a compiled call;
+   under RUNE_JIT_FORCE_COPY=1 the CPU device holds it in a buffer of its
+   own. *)
+
+let resident () = (Rune.jit_stats ()).resident_bytes
+
+let test_place_equals_its_argument () =
+  with_force_copy (fun () ->
+      let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+      let base = resident () in
+      let p, up, down = delta (fun () -> Rune.to_device x) in
+      equal ~msg:"placing uploads the value once" int 24 up;
+      equal ~msg:"placing reads nothing back" int 0 down;
+      equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape p);
+      is_true ~msg:"dtype" (Nx.dtype p = f32);
+      equal ~msg:"the placed value is resident" int 24 (resident () - base);
+      let (), up, down =
+        delta (fun () -> check_arr ~msg:"value" (to_arr x) p)
+      in
+      equal ~msg:"the first read copies it back" int 24 down;
+      equal ~msg:"and uploads nothing" int 0 up;
+      equal ~msg:"an unbound value read is released" int 0 (resident () - base);
+      check_arr ~msg:"the argument is untouched"
+        [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
+        x)
+
+let test_place_strided_and_offset () =
+  with_force_copy (fun () ->
+      let m = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+      let t = Nx.matrix_transpose m in
+      check_arr ~msg:"strided" (to_arr t) (Rune.to_device t);
+      let s = Nx.slice [ Nx.R (1, 2) ] m in
+      check_arr ~msg:"offset" [| 4.0; 5.0; 6.0 |] (Rune.to_device s))
+
+let test_place_feeds_inputs_without_transfer () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      ignore (g (vec32 [| 0.0; 0.0 |]));
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let y, up, down = delta (fun () -> g p) in
+      equal ~msg:"no upload" int 0 up;
+      equal ~msg:"no read-back" int 0 down;
+      check_arr ~msg:"result" [| 2.0; 4.0 |] y;
+      check_arr ~msg:"the input is still readable" [| 1.0; 2.0 |] p)
+
+let test_place_resident_value_is_returned () =
+  with_force_copy (fun () ->
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let q, up, _ = delta (fun () -> Rune.to_device p) in
+      is_true ~msg:"the same value" (p == q);
+      equal ~msg:"no upload" int 0 up;
+      let h = Rune.jit' (fun x -> Nx.mul_s x 2.0) p in
+      is_true ~msg:"an unread output too" (Rune.to_device h == h))
+
+let test_place_on_the_host_device () =
+  let x = vec32 [| 1.0; 2.0; 3.0 |] in
+  is_true ~msg:"a contiguous value keeps its storage"
+    (Nx.to_buffer (Rune.to_device ~device:"CPU" x) == Nx.to_buffer x);
+  let t =
+    Nx.matrix_transpose (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |])
+  in
+  let p = Rune.to_device ~device:"CPU" t in
+  is_true ~msg:"a strided value is made contiguous" (Nx.is_c_contiguous p);
+  check_arr ~msg:"value" [| 1.0; 3.0; 2.0; 4.0 |] p
+
+let test_place_is_the_identity_under_transformations () =
+  with_force_copy (fun () ->
+      let x = vec32 [| 1.0; -2.0; 0.5 |] in
+      let loss place x =
+        let x = place x in
+        Nx.sum (Nx.mul x (Nx.mul x x))
+      in
+      let plain = loss Fun.id and placed = loss (fun x -> Rune.to_device x) in
+      Gc.full_major ();
+      let base = resident () in
+      check_arr ~msg:"grad, eagerly"
+        (to_arr (Rune.grad' plain x))
+        (Rune.grad' placed x);
+      check_arr ~msg:"grad, compiled"
+        (to_arr (Rune.grad' plain x))
+        (Rune.jit' (Rune.grad' placed) x);
+      let tangent = vec32 [| 1.0; 1.0; 1.0 |] in
+      check_arr ~msg:"jvp"
+        (to_arr (snd (Rune.jvp' plain x tangent)))
+        (snd (Rune.jvp' placed x tangent));
+      let rows = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+      let double place x = Nx.mul_s (place x) 2.0 in
+      check_arr ~msg:"vmap"
+        (to_arr (Rune.vmap' (double Fun.id) rows))
+        (Rune.vmap' (double (fun x -> Rune.to_device x)) rows);
+      let (_ : Nx.float32_t), up, _ =
+        delta (fun () -> Rune.jit' (fun x -> Nx.mul_s (Rune.to_device x) 2.0) x)
+      in
+      equal ~msg:"inside jit only the input is uploaded" int 12 up;
+      Gc.full_major ();
+      equal ~msg:"nothing was placed" int 0 (resident () - base))
+
+(* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
+   these values are larger than that, with a last chunk shorter than the
+   others. *)
+
+let chunk = 64 * 1024 * 1024
+
+(* [f] on the forced-copy device against [f] eagerly: every element uploaded,
+   computed and read back in its place. *)
+let check_transfers ~msg f x =
+  with_force_copy (fun () ->
+      let (y : Nx.int32_t), up, _ = delta (fun () -> Rune.jit' f x) in
+      let worst, _, down =
+        delta (fun () -> Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
+      in
+      equal ~msg:(msg ^ ": difference from eager") int32 0l worst;
+      is_true ~msg:(msg ^ ": larger than a chunk") (Nx.nbytes x > chunk);
+      equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
+      equal ~msg:(msg ^ ": bytes read back") int (Nx.nbytes x) down)
+
+let test_chunked_contiguous () =
+  let n = (chunk / 4) + 4099 in
+  check_transfers ~msg:"contiguous"
+    (fun x -> Nx.add_s x 1l)
+    (Nx.arange Nx.int32 0 n 1)
+
+let test_chunked_offset () =
+  let n = (chunk / 4) + 4099 in
+  let x = Nx.slice [ Nx.R (3, n + 3) ] (Nx.arange Nx.int32 0 (n + 5) 1) in
+  is_true ~msg:"contiguous at an offset"
+    (Nx.is_c_contiguous x && Nx.offset x = 3);
+  check_transfers ~msg:"offset" (fun x -> Nx.add_s x 1l) x
+
+let test_chunked_strided () =
+  let rows = 4100 and cols = 4099 in
+  let x =
+    Nx.matrix_transpose
+      (Nx.reshape [| rows; cols |] (Nx.arange Nx.int32 0 (rows * cols) 1))
+  in
+  is_true ~msg:"strided" (not (Nx.is_c_contiguous x));
+  check_transfers ~msg:"strided" (fun x -> Nx.add_s x 1l) x
+
+(* A strided value whose rows are themselves larger than a chunk. *)
+let test_chunked_strided_rows () =
+  let cols = (chunk / 4) + 4099 in
+  let x =
+    Nx.flip ~axes:[ 1 ]
+      (Nx.reshape [| 2; cols |] (Nx.arange Nx.int32 0 (2 * cols) 1))
+  in
+  is_true ~msg:"strided" (not (Nx.is_c_contiguous x));
+  check_transfers ~msg:"strided rows" (fun x -> Nx.add_s x 1l) x
+
+let test_chunked_capture () =
+  let n = (chunk / 4) + 4099 in
+  let w =
+    Nx.matrix_transpose (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1))
+  in
+  with_force_copy (fun () ->
+      let f s = Nx.add (Nx.reshape [| n |] w) s in
+      let s = Nx.create Nx.int32 [| 1 |] [| 5l |] in
+      let worst = Nx.max (Nx.abs (Nx.sub (Rune.jit' f s) (f s))) in
+      equal ~msg:"capture: difference from eager" int32 0l (Nx.item [] worst))
+
 let test_feedback_chain_moves_no_bytes () =
   with_force_copy (fun () ->
       let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
@@ -1276,7 +1433,6 @@ let test_pass_through_output_survives () =
       check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
       check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v)
 
-
 let test_grad_over_jit_with_deferred_arg () =
   with_force_copy (fun () ->
       let g = Rune.jit' (fun x -> Nx.mul x x) in
@@ -1338,6 +1494,29 @@ let test_dropped_handles_are_reclaimed () =
       let s = Rune.jit_stats () in
       is_true ~msg:"resident bytes are bounded after gc"
         (s.resident_bytes - base <= 3 * n * 4))
+
+(* Traced values carry no storage. OCaml counts a bigarray's bytes towards the
+   major collector's pace even when its pages are never touched, so a
+   placeholder with a buffer costs a slice of major collection per traced
+   operation: the first call of a 20b-parameter decoder step spent 35 s of its
+   47 s there. *)
+let test_traced_values_have_no_storage () =
+  let is_symbolic (type a b) (x : (a, b) Nx.t) =
+    match x with Nx_effect.Symbolic _ -> true | T _ | Deferred _ -> false
+  in
+  let seen = ref [] in
+  let f x =
+    let y = Nx.add_s (Nx.reshape [| 2; 2 |] x) 1.0 in
+    let q, r = Nx.qr y in
+    seen := List.map is_symbolic [ x; y; q; r ];
+    Nx.matmul q r
+  in
+  let x = vec32 [| 1.0; 2.0; 3.0; 5.0 |] in
+  let compiled = Rune.jit' f x in
+  let traced = !seen in
+  check_arr ~eps:1e-4 ~msg:"value" (to_arr (f x)) compiled;
+  equal ~msg:"input, result, and both results of a two-result operation"
+    (list bool) [ true; true; true; true ] traced
 
 (* Donation. [donate:true] consumes resident input handles: their device buffers
    return to the allocator once the call completes, so a state-to-state loop
@@ -1401,11 +1580,10 @@ let test_donate_reuses_storage () =
       done;
       let grew = (Rune.jit_stats ()).resident_bytes - base in
       is_true ~msg:"one generation stays resident" (grew <= n * 4);
-      check_arr ~msg:"the chain computes the right value" (Array.make n 11.0)
-        !h)
+      check_arr ~msg:"the chain computes the right value" (Array.make n 11.0) !h)
 
-(* A path through a movement op reads the input at another index, so the
-   output must not take its storage; a chain stays correct. *)
+(* A path through a movement op reads the input at another index, so the output
+   must not take its storage; a chain stays correct. *)
 let test_donate_refuses_movement_path () =
   with_force_copy (fun () ->
       let f x = Nx.add x (Nx.transpose x) in
@@ -1480,8 +1658,8 @@ let test_donate_keeps_pass_through_readable () =
       check_arr ~msg:"pass-through holds the value before the update"
         [| 2.0; 3.0 |] r.Pair.v)
 
-(* Every leaf an output derives from is reused, whatever its position among
-   the inputs. *)
+(* Every leaf an output derives from is reused, whatever its position among the
+   inputs. *)
 let test_donate_reuses_every_leaf () =
   with_force_copy (fun () ->
       let step =
@@ -1519,8 +1697,8 @@ let test_donate_reuses_beside_a_scan () =
       check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
       check_arr ~msg:"v" [| 1.0; 4.0 |] r2.Pair.v)
 
-(* A fresh output never takes an input's buffer node: a resident input fed to
-   a later call keeps its bytes whatever the outputs are. *)
+(* A fresh output never takes an input's buffer node: a resident input fed to a
+   later call keeps its bytes whatever the outputs are. *)
 let test_outputs_never_write_into_inputs () =
   with_force_copy (fun () ->
       let step =
@@ -1560,10 +1738,9 @@ let test_donate_reuses_window_write () =
         [| 9.0; 8.0; 9.0; 8.0; 9.0; 8.0; 9.0; 8.0 |]
         !s.x)
 
-(* The slot-pool write of a key-value cache: every slot takes a new row or
-   keeps its old one, and the same program reads the written pool back through
-   an index. The read follows the store, so the pool still reuses its
-   storage. *)
+(* The slot-pool write of a key-value cache: every slot takes a new row or keeps
+   its old one, and the same program reads the written pool back through an
+   index. The read follows the store, so the pool still reuses its storage. *)
 type pool = { slots : Nx.float32_t; writer : Nx.int32_t; read : Nx.float32_t }
 
 module Pool = struct
@@ -1610,8 +1787,46 @@ let test_donate_reuses_pool_read_after_write () =
       s := step !s;
       is_true ~msg:"the pool is written over its donated input"
         ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
-      check_arr ~msg:"the read sees the written pool" [| 20.0; 10.0; 30.0; 1.0 |]
+      check_arr ~msg:"the read sees the written pool"
+        [| 20.0; 10.0; 30.0; 1.0 |]
         !s.read)
+
+(* Two compiled programs take turns on one donated state. Each keeps its own
+   planned intermediates, so a program that parked an intermediate in storage
+   the other still owns would corrupt the state here. *)
+let test_donate_alternates_two_programs () =
+  with_force_copy (fun () ->
+      let n = 8 in
+      let mix (p : Pair.t) =
+        let a = Nx.tanh (Nx.matmul p.u p.v) in
+        let scale =
+          Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0
+        in
+        {
+          Pair.u = Nx.add p.u (Nx.div a scale);
+          v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
+        }
+      in
+      let fold (p : Pair.t) =
+        let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
+        let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
+        { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
+      in
+      let mix' = Rune.jit2 ~donate:true (module Pair) (module Pair) mix in
+      let fold' = Rune.jit2 ~donate:true (module Pair) (module Pair) fold in
+      let init k =
+        Nx.create f32 [| n; n |]
+          (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1))))
+      in
+      let p = { Pair.u = init 3; v = init 7 } in
+      let e = ref p and h = ref p in
+      for i = 1 to 8 do
+        let f, f' = if i mod 2 = 0 then (fold, fold') else (mix, mix') in
+        e := f !e;
+        h := f' !h
+      done;
+      check_arr ~eps:1e-4 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
+      check_arr ~eps:1e-4 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v)
 
 (* The same pool written through the token-to-slot map: a scatter over the
    tokens. The output is a copy of the pool plus a store at loaded indices, and
@@ -1622,7 +1837,9 @@ let scatter_pool ~donate =
   let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
   let f { slots; writer; read = _ } =
     let slots =
-      Nx.scatter ~axis:0 ~indices:(Nx.reshape [| 4; 1 |] writer) ~values:rows
+      Nx.scatter ~axis:0
+        ~indices:(Nx.reshape [| 4; 1 |] writer)
+        ~values:rows
         (Nx.reshape [| n; 1 |] slots)
     in
     let slots = Nx.reshape [| n |] slots in
@@ -1738,6 +1955,248 @@ let test_scatter_beside_a_reader_of_the_old_value () =
       check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
       check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v)
 
+let test_place_then_donate_consumes () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      ignore (g (vec32 [| 0.0; 0.0 |]));
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
+      raises_donated (fun () -> to_arr p))
+
+(* File-backed sources. An upload reads a tensor over a mapped file from the
+   file itself. *)
+
+(* An int32 tensor of [n] elements over a fresh mapping of a file whose bytes
+   are [byte i] at offset [i], with the file's path. *)
+let mapped_int32 ~byte n =
+  let path = Filename.temp_file "rune_mapped_" ".bin" in
+  let oc = open_out_bin path in
+  let piece = 1 lsl 20 in
+  let bytes = Bytes.create piece in
+  let written = ref 0 in
+  while !written < 4 * n do
+    let len = Int.min piece ((4 * n) - !written) in
+    for i = 0 to len - 1 do
+      Bytes.unsafe_set bytes i (byte (!written + i))
+    done;
+    Stdlib.output oc bytes 0 len;
+    written := !written + len
+  done;
+  close_out oc;
+  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+  let stat = Unix.fstat fd in
+  let mapping =
+    Nx_buffer.of_bigarray1
+      (Bigarray.array1_of_genarray
+         (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
+            [| -1 |]))
+  in
+  Unix.close fd;
+  Nx_buffer.register_file
+    { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
+    mapping;
+  ( Nx.of_buffer (Nx_buffer.reinterpret Nx_buffer.Int32 mapping) ~shape:[| n |],
+    path )
+
+let first_byte i = Char.chr (i * 7 land 0xff)
+let other_byte i = Char.chr (i * 13 land 0xff)
+
+let remove_mapped path =
+  Gc.full_major ();
+  try Sys.remove path with Sys_error _ when Sys.win32 -> ()
+
+(* [x] placed from its file equals [x] placed from memory. *)
+let check_placed_from_file ~msg x =
+  is_true
+    ~msg:(msg ^ ": over a mapped file")
+    (Nx_buffer.file_range (Nx.data x) <> None);
+  let from_memory = Rune.to_device (Nx.copy x) in
+  let from_file, up, _ = delta (fun () -> Rune.to_device x) in
+  equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
+  let differing =
+    Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal from_file from_memory)))
+  in
+  equal ~msg:(msg ^ ": elements differing") int32 0l differing
+
+let test_file_backed_upload () =
+  with_force_copy (fun () ->
+      let n = (chunk / 4) + 4099 in
+      let x, path = mapped_int32 ~byte:first_byte n in
+      Fun.protect
+        ~finally:(fun () -> remove_mapped path)
+        (fun () ->
+          check_placed_from_file ~msg:"contiguous" x;
+          check_placed_from_file ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
+          let rows = 4100 in
+          let cols = n / rows in
+          let m =
+            Nx.reshape [| rows; cols |] (Nx.slice [ Nx.R (0, rows * cols) ] x)
+          in
+          check_placed_from_file ~msg:"transposed" (Nx.matrix_transpose m)))
+
+(* The path names another file by now: the upload must not read it. *)
+let test_file_backed_upload_after_replace () =
+  with_force_copy (fun () ->
+      let n = 1 lsl 16 in
+      let x, path = mapped_int32 ~byte:first_byte n in
+      Fun.protect
+        ~finally:(fun () -> remove_mapped path)
+        (fun () ->
+          let expected = Nx.copy x in
+          let _, replacement = mapped_int32 ~byte:other_byte n in
+          Unix.rename replacement path;
+          let differing placed =
+            Nx.item []
+              (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal placed expected)))
+          in
+          equal ~msg:"contiguous: the mapped bytes" int32 0l
+            (differing (Rune.to_device x));
+          let m = Nx.matrix_transpose (Nx.reshape [| 256; 256 |] x) in
+          equal ~msg:"transposed: the mapped bytes" int32 0l
+            (Nx.item []
+               (Nx.sum
+                  (Nx.cast Nx.int32
+                     (Nx.not_equal (Rune.to_device m)
+                        (Nx.matrix_transpose
+                           (Nx.reshape [| 256; 256 |] expected))))))))
+
+(* Bound captures. A compiled function that captures a resident value on its own
+   device reads that value's buffer as its constant. *)
+
+let test_bound_capture_moves_no_bytes () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
+      let y, up, down = delta (fun () -> g x) in
+      equal ~msg:"compiling and calling uploads nothing" int 0 up;
+      equal ~msg:"and reads nothing back" int 0 down;
+      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
+      (* A second signature of the same closure binds the same buffer. *)
+      let m = Rune.to_device (Nx.create f32 [| 2; 3 |] (Array.make 6 3.0)) in
+      let y2, up, _ = delta (fun () -> g m) in
+      equal ~msg:"a second signature uploads nothing" int 0 up;
+      check_arr ~msg:"second signature" [| 3.0; 6.0; 9.0; 3.0; 6.0; 9.0 |] y2)
+
+let test_bound_capture_is_shared () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g1 = Rune.jit' (fun x -> Nx.mul x w) in
+      let g2 = Rune.jit' (fun x -> Nx.add x w) in
+      let x = vec32 [| 2.0; 2.0; 2.0 |] in
+      check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
+      check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x);
+      Gc.full_major ();
+      equal ~msg:"one buffer serves both functions" int 12 (resident () - base);
+      ignore (Sys.opaque_identity (g1, g2, w)))
+
+let test_bound_value_survives_a_read () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      let x = vec32 [| 2.0; 2.0; 2.0 |] in
+      check_arr ~msg:"before the read" [| 2.0; 4.0; 6.0 |] (g x);
+      let (), _, down =
+        delta (fun () -> check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w)
+      in
+      equal ~msg:"the read copies the value out" int 12 down;
+      equal ~msg:"and leaves the buffer in place" int 12 (resident () - base);
+      let (), _, down =
+        delta (fun () -> check_arr ~msg:"value again" [| 1.0; 2.0; 3.0 |] w)
+      in
+      equal ~msg:"the host copy is kept on the value" int 0 down;
+      check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
+      (* As an input leaf it still seeds from its buffer. *)
+      let double = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      ignore (double x);
+      let y, up, _ = delta (fun () -> double w) in
+      equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
+      check_arr ~msg:"as an input" [| 2.0; 4.0; 6.0 |] y)
+
+let test_unbound_value_is_evicted_by_a_read () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
+      equal ~msg:"the read released the buffer" int 0 (resident () - base);
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
+      let y, up, _ = delta (fun () -> g x) in
+      equal ~msg:"captured afterwards it is uploaded as a host tensor" int 12 up;
+      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y)
+
+let test_bound_input_is_not_donated () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
+      let step = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let y, up, _ = delta (fun () -> step w) in
+      equal ~msg:"the bound input seeds with no transfer" int 0 up;
+      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
+      check_arr ~msg:"the bound value is still readable" [| 1.0; 2.0; 3.0 |] w;
+      check_arr ~msg:"and still the constant" [| 2.0; 4.0; 6.0 |]
+        (g (vec32 [| 2.0; 2.0; 2.0 |]));
+      (* Returned unchanged, it comes back as a copy on the device. *)
+      let pass = Rune.jit' ~donate:true (fun x -> x) in
+      let z, up, _ = delta (fun () -> pass w) in
+      equal ~msg:"the pass-through uploads nothing" int 0 up;
+      is_true ~msg:"the pass-through is another value" (z != w);
+      Gc.full_major ();
+      is_true ~msg:"with storage of its own" (resident () - base >= 24);
+      check_arr ~msg:"pass-through value" [| 1.0; 2.0; 3.0 |] z;
+      check_arr ~msg:"the constant after the pass-through" [| 2.0; 4.0; 6.0 |]
+        (g (vec32 [| 2.0; 2.0; 2.0 |])))
+
+let test_bound_capture_returned_is_a_copy () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' ~donate:true (fun (_ : Nx.float32_t) -> w) in
+      let y = g (vec32 [| 0.0 |]) in
+      is_true ~msg:"another value" (y != w);
+      check_arr ~msg:"the copy" [| 1.0; 2.0; 3.0 |] y;
+      check_arr ~msg:"a second call" [| 1.0; 2.0; 3.0 |] (g (vec32 [| 0.0 |])))
+
+(* Not inlined: once it returns, nothing but the collector's own bookkeeping
+   refers to the placed value or to the function that bound it. *)
+let[@inline never] bind_and_drop () =
+  let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' (fun x -> Nx.mul x w) in
+  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]))
+
+let test_bound_buffer_is_released_with_its_owners () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      bind_and_drop ();
+      Gc.full_major ();
+      equal ~msg:"released once unreachable" int 0 (resident () - base))
+
+let test_budget_ignores_placed_values () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (Nx.create f32 [| 4096 |] (Array.make 4096 1.0)) in
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      ignore (g (vec32 [| 1.0 |]));
+      Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "1024";
+      Fun.protect
+        ~finally:(fun () -> Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "")
+        (fun () ->
+          let before = (Gc.quick_stat ()).major_collections in
+          for _ = 1 to 100 do
+            ignore (to_arr (g (vec32 [| 1.0 |])))
+          done;
+          let collections = (Gc.quick_stat ()).major_collections - before in
+          is_true ~msg:"no collection per output while weights are resident"
+            (collections < 50));
+      ignore (Sys.opaque_identity w))
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -1796,7 +2255,6 @@ let test_donate_false_leaves_handle_readable () =
       let h1 = g (vec32 [| 1.0; 2.0 |]) in
       ignore (g h1);
       check_arr ~msg:"default keeps the input handle alive" [| 2.0; 4.0 |] h1)
-
 
 (* One tensor behind both leaves on the tracing call: two inputs that happen to
    be equal, each bound to its own position, so a later call may pass distinct
@@ -1915,6 +2373,54 @@ let tests =
         test "outputs have their own storage"
           test_outputs_have_their_own_storage;
       ];
+    group "placement"
+      [
+        test "a placed value equals its argument" test_place_equals_its_argument;
+        test "strided and offset values" test_place_strided_and_offset;
+        test "a placed value feeds an input with no transfer"
+          test_place_feeds_inputs_without_transfer;
+        test "a resident value is returned as it is"
+          test_place_resident_value_is_returned;
+        test "on the host device" test_place_on_the_host_device;
+        test "the identity under grad, jvp, vmap and jit"
+          test_place_is_the_identity_under_transformations;
+        test "an unbound placed value is consumed by donation"
+          test_place_then_donate_consumes;
+      ];
+    group "file-backed sources"
+      [
+        slow "a mapped leaf larger than a chunk uploads from its file"
+          test_file_backed_upload;
+        test "a replaced file is not read" test_file_backed_upload_after_replace;
+      ];
+    group "bound captures"
+      [
+        test "binding a placed capture moves no bytes"
+          test_bound_capture_moves_no_bytes;
+        test "two compiled functions share one buffer"
+          test_bound_capture_is_shared;
+        test "a bound value keeps its buffer across a read"
+          test_bound_value_survives_a_read;
+        test "an unbound value is evicted by a read"
+          test_unbound_value_is_evicted_by_a_read;
+        test "a bound input is not consumed by donation"
+          test_bound_input_is_not_donated;
+        test "a bound capture returned unchanged is a copy"
+          test_bound_capture_returned_is_a_copy;
+        test "a bound buffer is released with its owners"
+          test_bound_buffer_is_released_with_its_owners;
+        test "the resident budget ignores placed values"
+          test_budget_ignores_placed_values;
+      ];
+    group "chunked transfers"
+      [
+        slow "a contiguous value larger than a chunk" test_chunked_contiguous;
+        slow "a contiguous value at an offset" test_chunked_offset;
+        slow "a strided value" test_chunked_strided;
+        slow "a strided value with rows larger than a chunk"
+          test_chunked_strided_rows;
+        slow "a capture larger than a chunk" test_chunked_capture;
+      ];
     group "residency"
       [
         test "feedback chain moves no bytes" test_feedback_chain_moves_no_bytes;
@@ -1955,6 +2461,8 @@ let tests =
           test_donate_reuses_window_write;
         test "a pool read after its write still reuses storage"
           test_donate_reuses_pool_read_after_write;
+        test "two programs alternate on one donated state"
+          test_donate_alternates_two_programs;
         test "donation reuses a pool written by scatter"
           test_donate_reuses_pool_scatter;
         test "scatter without donation keeps its input"
@@ -2017,6 +2525,7 @@ let tests =
     group "errors"
       [
         test "reading a traced value raises" test_data_dependent_read_raises;
+        test "traced values have no storage" test_traced_values_have_no_storage;
         test "unsupported operations raise" test_unsupported_op_raises;
       ];
   ]

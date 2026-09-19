@@ -1,0 +1,13 @@
+typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
+void E_16_3n1(unsigned char* restrict data0_48, int* restrict data1_3, unsigned char* restrict data2_1048576) {
+  int val0 = (*(data1_3+2));
+  int2 val1 = (*((int2*)((data1_3+0))));
+  for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
+    unsigned char val2 = (((-1<val1[0])&(val1[0]<65536))?*(data2_1048576+((val1[0]<<4)+Lidx2)):((unsigned char)(0u)));
+    unsigned char val3 = (((-1<val1[1])&(val1[1]<65536))?*(data2_1048576+((val1[1]<<4)+Lidx2)):((unsigned char)(0u)));
+    unsigned char val4 = (((-1<val0)&(val0<65536))?*(data2_1048576+((val0<<4)+Lidx2)):((unsigned char)(0u)));
+    *(data0_48+(Lidx2+16)) = val3;
+    *(data0_48+(Lidx2+32)) = val4;
+    *(data0_48+Lidx2) = val2;
+  }
+}

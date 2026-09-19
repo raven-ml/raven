@@ -125,6 +125,8 @@ let key ~device ~beam call =
               Tolk.Realize.program_config ();
               Printf.sprintf "BEAM=%d" beam;
               Printf.sprintf "BEAM_ESTIMATE=%d" (env_int "BEAM_ESTIMATE" 1);
+              Printf.sprintf "NO_MEMORY_PLANNER=%d"
+                (env_int "NO_MEMORY_PLANNER" 0);
               var H.openpilot_hacks;
               var H.float16;
               var H.split_reduceop;

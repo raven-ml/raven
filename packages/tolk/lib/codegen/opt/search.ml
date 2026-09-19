@@ -83,42 +83,12 @@ let actions =
 
 let is_tc = function U.Opt.Tc _ -> true | _ -> false
 
-(* Symbolic evaluation and variable scraping *)
-
-let symbolic_vars u =
-  U.find_nodes
-    (fun n ->
-      match U.as_param n with
-      | Some { param = { addrspace = Dtype.Alu; name = Some _;
-                         vmin_vmax = Some _; _ }; _ } -> true
-      | _ -> false)
-    u
-  |> List.filter_map (fun n ->
-       match U.as_param n with
-       | Some { param = { addrspace = Dtype.Alu; name = Some name;
-                          vmin_vmax = Some (lo, hi); _ }; _ } ->
-           Some (n, name, lo, hi)
-       | _ -> None)
-
-(* Substitute symbolic Param nodes by their var_vals entries and fold the result
-   to an integer constant. *)
-let sym_infer (u : U.t) (var_vals : (string * int) list) : int =
-  let mappings =
-    symbolic_vars u
-    |> List.filter_map (fun (n, name, _, _) ->
-         match List.assoc_opt name var_vals with
-         | Some value -> Some (n, U.const_int value)
-         | None -> None)
-  in
-  let folded = U.simplify (U.substitute mappings u) in
-  match U.const_int_value folded with
-  | Some n -> n
-  | None -> invalid_arg "sym_infer: expression did not reduce to a constant"
+(* Variable scraping *)
 
 (* Build name-keyed var_vals from symbolic Param nodes in the AST, using the
    midpoint of each variable's range. *)
 let build_var_vals ast =
-  symbolic_vars ast |> List.map (fun (_, name, lo, hi) -> (name, (lo + hi) / 2))
+  U.symbolic_vars ast |> List.map (fun (_, name, lo, hi) -> (name, (lo + hi) / 2))
 
 (* Action filtering *)
 
@@ -147,7 +117,7 @@ let get_kernel_actions ?(include_0 = true) ?max_up s =
     match U.const_int_value x with
     | Some sz -> sz
     | None ->
-        (try sym_infer x var_vals with Invalid_argument _ -> U.vmax x)
+        (try U.sym_infer x var_vals with Invalid_argument _ -> U.vmax x)
   in
   let upcast_and_local s2 =
     let up = ref 1 and lcl = ref 1 in
@@ -188,7 +158,7 @@ let get_kernel_actions ?(include_0 = true) ?max_up s =
 (* Resolve symbolic global dims and shrink until they fit max_global_size by
    halving dims > 16 from the end. Returns (scaled_size, factor). *)
 let get_test_global_size global_size var_vals max_global_size =
-  let test = Array.map (fun sz -> sym_infer sz var_vals) global_size in
+  let test = Array.map (fun sz -> U.sym_infer sz var_vals) global_size in
   let input_size = Array.fold_left ( * ) 1 test in
   let cont = ref true in
   while !cont && Array.fold_left ( * ) 1 test > max_global_size do
@@ -514,7 +484,7 @@ let apply_cached_opts s cached_opts =
 let program_ops program var_vals =
   match (Program_spec.estimates program).ops with
   | Program_spec.Estimates.Int n -> Float.of_int n
-  | Symbolic node -> Float.of_int (sym_infer node var_vals)
+  | Symbolic node -> Float.of_int (U.sym_infer node var_vals)
 
 let beam_search ?(allow_test_size = true) ?disable_cache
     (s : P.t) (rawbufs : Device.Buffer.t list) (amt : int)

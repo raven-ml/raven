@@ -247,24 +247,16 @@ let () =
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
     (string (mem "weights_sha256" fx));
+  let device = if !jit = "" then None else Some !jit in
+  let (Llama.Dtype dt) = Llama.dtype_of_string !dtype in
   let cfg, p =
-    if !weights = "" then Llama.from_pretrained ~repo_id:repo ()
+    if !weights = "" then Llama.from_pretrained ?device ~repo_id:repo dt
     else
       let cfg = Llama.config_of_json (json_of_file !config) in
-      (cfg, Llama.from_file cfg !weights)
+      (cfg, Llama.from_file ?device cfg dt !weights)
   in
-  let device = if !jit = "" then None else Some !jit in
   (* Float32 against float32 with different kernels agrees to a few parts in a
      million eagerly; half precision keeps about three digits. *)
-  (match !dtype with
-  | "float32" -> validate ~device ~tol:1e-4 ~exact:true fx cfg p Nx.float32
-  | "bfloat16" ->
-      validate ~device ~tol:5e-2 ~exact:false fx cfg
-        (Llama.Params.map (Nx.cast Nx.bfloat16) p)
-        Nx.bfloat16
-  | "float16" ->
-      validate ~device ~tol:5e-2 ~exact:false fx cfg
-        (Llama.Params.map (Nx.cast Nx.float16) p)
-        Nx.float16
-  | d -> failwith ("--dtype must be float32, bfloat16 or float16, got " ^ d));
+  let exact = !dtype = "float32" in
+  validate ~device ~tol:(if exact then 1e-4 else 5e-2) ~exact fx cfg p dt;
   if !failures > 0 then exit 1

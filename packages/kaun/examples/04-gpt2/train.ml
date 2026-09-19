@@ -515,7 +515,7 @@ let () =
 
   let inputs, targets = batch_of_ids (load_ids !tokens) in
   let original = Checkpoint.load !model in
-  let params = ref (Gpt2.of_checkpoint gpt2_124m original) in
+  let params = ref (Gpt2.of_hf gpt2_124m Nx.float32 original) in
   let n_params =
     let n = ref 0 in
     Gpt2.Params.iter (fun _ -> incr n) !params;

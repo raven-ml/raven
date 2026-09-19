@@ -1135,7 +1135,9 @@ val split : axis:int -> int -> ('a, 'b) t -> ('a, 'b) t list
 (** {1:conversion Type conversion and copying} *)
 
 val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
-(** [cast dtype t] is a copy of [t] with elements converted to [dtype].
+(** [cast dtype t] is [t] with elements converted to [dtype]. It is [t] itself
+    when [t] already has that dtype: a tensor is a value, so only a change of
+    dtype allocates. Use {!copy} for fresh storage.
 
     {@ocaml[
       # create float32 [| 3 |] [| 1.5; 2.7; 3.1 |]

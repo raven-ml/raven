@@ -107,7 +107,7 @@ let step ({ Step.tokens; index; key; temperature; k; p; cache } as s) =
   let h, cache = Llama.cached cfg params cache index tokens in
   let logits = Nx.cast Nx.float32 (Llama.logits cfg params (Nx.slice [ A; I (-1) ] h)) in
   let ks = Nx.Rng.split key in
-  let next = Nx.Rng.categorical ks.(1) Nx.(Fn.top_p ~p (Fn.top_k ~k (div logits temperature))) in
+  let next = Nx.Rng.categorical ks.(1) Nx.(Fn.keep_top_p ~p (Fn.keep_top_k ~k (div logits temperature))) in
   { s with tokens = Nx.reshape [| batch; 1 |] next; index = Cache_index.advance index; key = ks.(0); cache }
 
 let step = Rune.jit2 ~donate:true (module Step) (module Step) step
@@ -157,7 +157,8 @@ engine's own tests can port them without model code.
 ### The cache
 
 A cache is an ordinary value of a type the model defines, whose leaves are
-pools: tensors of shape `[slots + 1; ...]` of any width and dtype. There is no
+pools: tensors of shape `[slots + 1; ...]` of any width and dtype, built with
+`Cache_index.pool ~slots dtype shape`. There is no
 batch axis; who owns a slot is the table's business. Kaun ships the record
 most models use, `Attention.Cache.t = { keys; values }` with payloads `[slots
 + 1; kv_heads; head_dim]`, and `Cache.List`, the `Uniform` traversal of a list
@@ -183,14 +184,16 @@ module Cache_index : sig
   val make : ?row:Nx.int32_t -> pos:Nx.int32_t -> table:Nx.int32_t -> unit -> t
   val rows : context:int -> int array -> t
   val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
+  val window : int -> t -> t                (* the last w positions; static *)
+  val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
   val advance : t -> t
 
   val batch : t -> int                      (* seq, context likewise: static sizes *)
   val positions : t -> Nx.int32_t           (* [batch; seq], in range *)
 
   val extend :
-    ?window:int -> t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
-  val mask : ?window:int -> t -> Nx.bool_t  (* [batch; seq; context] *)
+    t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
+  val mask : t -> Nx.bool_t                 (* [batch; seq; context] *)
 
   val map : (Nx.int32_t -> Nx.int32_t) -> t -> t     (* map2, iter likewise *)
 end
@@ -224,14 +227,16 @@ sequence an engine sets positions itself. `whole` reads and keeps nothing.
 ~unique_indices:true` over the call's tokens, in place on a pool donated to
 `Rune.jit`. `seen : [batch; context; ...]` is what those tokens attend over:
 each lane's sequence read from `pool'`, with every column that is unallocated,
-past the lane's positions or below every query's `window` as zero. It writes
+past the lane's positions or below every query's window as zero. It writes
 and then reads the written pool, so a token below the last column sees itself
 through the table, and RFC 0001's order for storage reuse holds by dataflow.
 On a whole index `seen` is `values` and `pool'` is `pool`; that case is fixed
 when the index is built, before any tensor has a value, so it holds under
 `Rune.jit`. `mask` says which columns of `seen` each token sees: those at or
-before its position, and with `window` only the last `window` of them. A
-padded token sees nothing.
+before its position, and under the index's window only the last of them. A
+padded token sees nothing. The window is part of the index,
+`Cache_index.window w index`, and both functions read it there, so a layer
+cannot zero with one window and mask with another.
 
 A cache index holds nothing resolved: the scratch row's number is the pool's
 size, which an index does not know, and a value cached during a trace would
@@ -252,7 +257,7 @@ precision the scores and the softmax run in the float32 island, as before.
 
 ```ocaml
 val cached :
-  head_dim:int -> ?rope:Rope.t -> ?window:int ->
+  head_dim:int -> ?rope:Rope.t ->
   'x t -> 'x Cache.t -> Cache_index.t -> 'x -> 'x * 'x Cache.t
 ```
 
@@ -261,7 +266,11 @@ at `Cache_index.positions`, extends both pools with `Cache_index.extend`, and
 attends once over what they return under `Cache_index.mask`. Queries reshape
 to `[batch; kv_heads; groups; seq; head_dim]` against keys at `[batch;
 kv_heads; 1; context; head_dim]`; both head counts are read from the
-projection widths. No model in the tree uses `?window` yet.
+projection widths. A layer with a sliding window is given
+`Cache_index.window w index`; no model in the tree does yet. The layer is a
+composition of public pieces, `Attention.split`, `Attention.Cache.extend`,
+`Attention.attend` and `Attention.merge`, which a model with its own attention
+variant (sinks, another score scale) composes itself.
 
 `Attention.apply ~head_dim ?mask ?rope p x` stays for attention that is not
 causal self-attention. `Span`, `route` and `Attention.route` are removed.
@@ -328,8 +337,8 @@ Measured on an M1 Max with Metal, GPT-2 124M shape unless noted.
   leaf per layer before attention, float32 under the half-precision island.
   `T` one-token lanes of one sequence gather `T x context` rows where one lane
   of `T` tokens gathers `context`, so the flattened layout suits decode lanes
-  and short chunks. `?window` bounds what is seen; a read bounded by the
-  window is future work behind the same signature.
+  and short chunks. The index's window bounds what is seen; a read bounded by
+  the window is future work behind the same signature.
 
 Compiled programs are keyed by `(batch, seq, rows, context)`, by whether the
 index carries `row`, by the slot count and by the dtype. An engine buckets the
@@ -344,10 +353,10 @@ first four and builds every index of a bucket the same way.
   ~low_freq_factor ~high_freq_factor ~original_context` build one. `apply t
   ~pos x` rotates `[batch; heads; seq; head_dim]` at float32, feature `i`
   paired with `i + head_dim / 2`.
-- `Fn.top_k ~k` and `Fn.top_p ~p` replace entries outside the kept set with
+- `Fn.keep_top_k ~k` and `Fn.keep_top_p ~p` replace entries outside the kept set with
   negative infinity. `k` is an int32 tensor and `p` a float tensor, because a
   captured number is frozen at the first trace. Both threshold on `Nx.sort`'s
-  values, take float32 logits and keep ties, and `top_p` always keeps the most
+  values, take float32 logits and keep ties, and `keep_top_p` always keeps the most
   probable token.
 - `Loss.softmax_cross_entropy_sparse` computes its log-sum-exp at float32.
 - SwiGLU is three `Linear`s and `Fn.silu`.
@@ -388,8 +397,9 @@ engine or any caller of `Cache_index.make`.
    every window of its lane contributes exactly zero to that lane, whatever
    its slot holds (K).** Prevents one request's overflow becoming another's
    `nan`.
-6. **Every cache leaf is one tensor of `slots + 1` rows whose axis 0 is the
-   slot axis, leaves in a fixed order (M).** No two leaves hold one tensor: a
+6. **Every cache leaf is one pool, built with `Cache_index.pool`: a tensor of
+   `slots + 1` rows whose axis 0 is the slot axis, leaves in a fixed order
+   (M).** No two leaves hold one tensor: a
    donated tensor seeds one leaf. Prevents an engine needing model code to
    move state, lost storage reuse, and a compiled program keyed by another
    traversal.

@@ -134,7 +134,7 @@ val one_hot : Tensor.t -> int -> Tensor.t
 
 val argmax : ?axis:int -> ?keepdim:bool -> Tensor.t -> Tensor.t
 (** [argmax t] is the integer index of the maximum along [axis]. With no [axis]
-    the whole tensor is flattened first. On ties the last occurrence wins. *)
+    the whole tensor is flattened first. On ties the first occurrence wins. *)
 
 val argmin : ?axis:int -> ?keepdim:bool -> Tensor.t -> Tensor.t
 (** [argmin t] is the index of the minimum, as {!argmax} on the reflected

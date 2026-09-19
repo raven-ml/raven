@@ -493,6 +493,7 @@ exception Jit_error = Jit.Jit_error
 let jit = Jit.jit
 let jit2 = Jit.jit2
 let jit' = Jit.jit'
+let to_device = Jit.to_device
 let pmap = Jit.pmap
 let pmap2 = Jit.pmap2
 

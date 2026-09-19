@@ -266,6 +266,48 @@ let elts_to_bytes k n =
 let elt_off_to_bytes k off =
   if is_int4 k then off / 2 else off * kind_size_in_bytes k
 
+(* Reinterpretation *)
+
+external unsafe_reinterpret :
+  ('a, 'b) kind -> ('c, 'd) t -> int -> int -> ('a, 'b) t
+  = "caml_nx_buffer_reinterpret"
+
+let reinterpret k buf =
+  if is_int4 k || is_int4 (kind buf) then
+    invalid_arg "Nx_buffer.reinterpret: int4 and uint4 pack two elements a byte";
+  let bytes = length buf * kind_size_in_bytes (kind buf) in
+  let size = kind_size_in_bytes k in
+  if bytes mod size <> 0 then
+    invalid_arg
+      (Printf.sprintf
+         "Nx_buffer.reinterpret: %d bytes is not a multiple of the %d-byte %s \
+          element"
+         bytes size (kind_name k));
+  unsafe_reinterpret k buf (bytes / size) size
+
+(* Mapped files *)
+
+type file = { path : string; size : int; mtime : float; inode : int }
+
+external unsafe_register_file :
+  ('a, 'b, 'c) Bigarray.Genarray.t -> string -> int -> float -> int -> unit
+  = "caml_nx_buffer_register_file"
+
+external unsafe_file_range :
+  ('a, 'b, 'c) Bigarray.Genarray.t -> (string * int * float * int * int) option
+  = "caml_nx_buffer_file_range"
+
+let register_file file buf =
+  unsafe_register_file
+    (Bigarray.genarray_of_array1 buf)
+    file.path file.size file.mtime file.inode
+
+let file_range buf =
+  match unsafe_file_range (Bigarray.genarray_of_array1 buf) with
+  | None -> None
+  | Some (path, size, mtime, inode, offset) ->
+      Some ({ path; size; mtime; inode }, offset)
+
 (* Bulk operations *)
 
 let fill buf v = genarray_fill_ext (Bigarray.genarray_of_array1 buf) v

@@ -8,7 +8,8 @@
   test_engine_schedule
   test_elf
   test_runtime_cpu
-  test_runtime_search)
+  test_runtime_search
+  test_helpers)
  (modules
   test_program_spec
   test_cstyle
@@ -18,7 +19,8 @@
   test_engine_schedule
   test_elf
   test_runtime_cpu
-  test_runtime_search)
+  test_runtime_search
+  test_helpers)
  (package tolk)
  (libraries unix tolk tolk.uop tolk.cpu windtrap))
 

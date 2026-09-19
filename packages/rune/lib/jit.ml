@@ -6,7 +6,7 @@
 (* Just-in-time compilation as an effect handler over Nx operations.
 
    Tracing: the handler answers every intercepted operation with a fresh
-   uninitialized placeholder tensor of the result's shape and dtype, and records
+   symbolic placeholder tensor of the result's shape and dtype, and records
    the corresponding node of a Tolk tensor graph in a side table keyed by tensor
    identity. Running the function once under the handler therefore turns its
    whole computation into a single graph.
@@ -210,6 +210,10 @@ type resident_entry = {
   r_nbytes : int; (* summed across shards *)
   mutable r_bufs : Tolk.Device.Buffer.t list; (* [[]] once released *)
   mutable r_donated : bool; (* released by a [~donate:true] call *)
+  r_placed : bool; (* made by [to_device], not by a compiled call *)
+  mutable r_bound : bool;
+      (* a compiled program reads the buffer as a constant: only the handle's
+         finalizer may release it, never a read or a donation *)
 }
 
 (* Forcing a handle whose storage a donated call released cannot produce the
@@ -221,6 +225,21 @@ let donated_error () =
 
 let resident : (int, resident_entry) Hashtbl.t = Hashtbl.create 64
 
+(* The part of [resident_bytes] held by outputs of compiled calls, which is what
+   the resident budget bounds. Placed values are excluded: a model's weights
+   stay resident by design, and counting them would run a major collection
+   before every output allocation. *)
+let output_bytes = ref 0
+
+let account e sign =
+  resident_bytes := !resident_bytes + (sign * e.r_nbytes);
+  if not e.r_placed then output_bytes := !output_bytes + (sign * e.r_nbytes)
+
+let resident_of x =
+  match Nx_effect.deferred_id x with
+  | None -> None
+  | Some id -> Hashtbl.find_opt resident id
+
 (* Finalizers only record the entry; buffers are released at the next safe point
    (a force or a replay), not mid-GC inside arbitrary device code. *)
 let pending_release : resident_entry list ref = ref []
@@ -231,7 +250,7 @@ let release_entry e =
   | bufs ->
       e.r_bufs <- [];
       Hashtbl.remove resident e.r_id;
-      resident_bytes := !resident_bytes - e.r_nbytes;
+      account e (-1);
       (* Deallocation returns each buffer to its device's LRU pool. A base
          buffer with a still-allocated transient view (a kernel-argument slice
          not yet collected) cannot be deallocated; those are reclaimed by the
@@ -268,7 +287,7 @@ let resident_budget () =
    allocator has flushed its own cache by then). *)
 let create_fresh_buffer dev dtolk n =
   drain_releases ();
-  if !resident_bytes > resident_budget () then begin
+  if !output_bytes > resident_budget () then begin
     Gc.major ();
     drain_releases ()
   end;
@@ -306,6 +325,11 @@ type state = {
       (* a fresh buffer an indexed write lands in, and the input buffer node
          whose value it starts from (see [write_destination]) *)
   mutable consts : (U.t * packed) list; (* reverse order *)
+  bound : (int, F.Tensor.t) Hashtbl.t;
+      (* resident captures bound in place, by resident id. The table above
+         hashes its keys structurally and an unforced handle changes when it is
+         read, so such a capture is never one of its keys. *)
+  mutable bound_consts : (U.t * resident_entry * packed) list;
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
   scan_stacks : U.t list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
@@ -371,17 +395,45 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   Tbl.replace st.table (Obj.repr x) tt;
   tt
 
+(* A capture that is resident on the trace's own single device keeps its
+   buffer: the program reads it as the constant and no bytes move. From here on
+   the buffer outlives reads and donations of the value (it is marked before
+   the traced function can read the capture), and the compiled record keeps the
+   value reachable. *)
+let bindable st x =
+  match (st.st_multi, resident_of x) with
+  | None, Some ({ r_bufs = [ _ ]; r_axis = None; _ } as e)
+    when e.r_device == st.st_device ->
+      Some e
+  | _ -> None
+
+let bind_const (type a b) st e (x : (a, b) Nx_effect.t) : F.Tensor.t =
+  e.r_bound <- true;
+  let dt = Nx_effect.dtype x in
+  let shape = shape_of x in
+  let node = make_node st (tolk_dtype dt) (numel shape) in
+  st.bound_consts <- (node, e, Packed (dt, x)) :: st.bound_consts;
+  let tt = buffer_tensor node shape in
+  Hashtbl.replace st.bound e.r_id tt;
+  tt
+
 (* A tensor entering the trace without a table entry is a closure capture. *)
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
   (match st.scan_collectors with
   | [] -> ()
   | fs -> List.iter (fun h -> h.hook x) fs);
-  match Tbl.find_opt st.table (Obj.repr x) with
-  | Some t -> t
-  | None ->
-      Tbl.replace st.captures (Obj.repr x) ();
-      lift_const st x
+  match bindable st x with
+  | Some e -> (
+      match Hashtbl.find_opt st.bound e.r_id with
+      | Some t -> t
+      | None -> bind_const st e x)
+  | None -> (
+      match Tbl.find_opt st.table (Obj.repr x) with
+      | Some t -> t
+      | None ->
+          Tbl.replace st.captures (Obj.repr x) ();
+          lift_const st x)
 
 (* Composed operations Tolk has no primitive for. *)
 
@@ -768,7 +820,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       ((a, b) Nx_effect.t, r) continuation -> (a, b) ND.t -> F.Tensor.t -> r =
    fun k dt tt ->
     let shape = Array.of_list (F.Tensor.shape tt) in
-    let ph : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt shape in
+    let ph : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt shape in
     Tbl.replace st.table (Obj.repr ph) tt;
     Tbl.replace st.traced (Obj.repr ph) ();
     continue k ph
@@ -785,8 +837,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       r =
    fun k dt tq tr ->
     let shape tt = Array.of_list (F.Tensor.shape tt) in
-    let phq : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tq) in
-    let phr : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tr) in
+    let phq : (a, b) Nx_effect.t =
+      Nx_effect.symbolic st.st_ctx dt (shape tq)
+    in
+    let phr : (a, b) Nx_effect.t =
+      Nx_effect.symbolic st.st_ctx dt (shape tr)
+    in
     Tbl.replace st.table (Obj.repr phq) tq;
     Tbl.replace st.traced (Obj.repr phq) ();
     Tbl.replace st.table (Obj.repr phr) tr;
@@ -1414,7 +1470,7 @@ and stage_scan : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let cdt = Nx_effect.dtype leaf in
         let c_shape = shape_of leaf in
-        let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
+        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
         let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
@@ -1430,7 +1486,7 @@ and stage_scan : type r.
       slot_infos := (tdt, c_shape, c_in, c_out) :: !slot_infos)
     slot_c;
   let slot_infos = List.rev !slot_infos in
-  let slot_x = Nx_effect.buffer st.st_ctx xdt x_shape in
+  let slot_x = Nx_effect.symbolic st.st_ctx xdt x_shape in
   let x_in = make_node st (tolk_dtype xdt) numel_x in
   Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
   Tbl.replace st.traced (Obj.repr slot_x) ();
@@ -1648,7 +1704,7 @@ and stage_scan : type r.
         (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
           let after = Tbl.find final_afters (Obj.repr leaf) in
           let ph =
-            Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
+            Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
           in
           Tbl.replace st.table (Obj.repr ph)
             (buffer_tensor after (shape_of leaf));
@@ -1656,7 +1712,7 @@ and stage_scan : type r.
           ph)
         slot_c
     in
-    let ys_ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype y) ys_shape in
+    let ys_ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype y) ys_shape in
     Tbl.replace st.table (Obj.repr ys_ph) (buffer_tensor after_ys ys_shape);
     Tbl.replace st.traced (Obj.repr ys_ph) ();
     Effect.Deep.continue k
@@ -1720,7 +1776,7 @@ and stage_scan_bwd : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let cdt = Nx_effect.dtype leaf in
         let c_shape = shape_of leaf in
-        let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
+        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
         let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
@@ -1740,7 +1796,7 @@ and stage_scan_bwd : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let cdt = Nx_effect.dtype leaf in
         let c_shape = shape_of leaf in
-        let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
+        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
         let dc_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor dc_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
@@ -1754,11 +1810,11 @@ and stage_scan_bwd : type r.
       dc_infos := Tbl.find dc_ins (Obj.repr leaf) :: !dc_infos)
     slot_dc;
   let dc_infos = List.rev !dc_infos in
-  let slot_x = Nx_effect.buffer st.st_ctx xdt x_shape in
+  let slot_x = Nx_effect.symbolic st.st_ctx xdt x_shape in
   let x_in = make_node st (tolk_dtype xdt) numel_x in
   Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
   Tbl.replace st.traced (Obj.repr slot_x) ();
-  let slot_dy = Nx_effect.buffer st.st_ctx (Nx_effect.dtype dy) y_shape in
+  let slot_dy = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype dy) y_shape in
   let dy_in = make_node st (tolk_dtype (Nx_effect.dtype dy)) numel_y in
   Tbl.replace st.table (Obj.repr slot_dy) (buffer_tensor dy_in y_shape);
   Tbl.replace st.traced (Obj.repr slot_dy) ();
@@ -2101,14 +2157,14 @@ and stage_scan_bwd : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let after = Tbl.find dc_afters (Obj.repr leaf) in
         let ph =
-          Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
+          Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
         in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
         Tbl.replace st.traced (Obj.repr ph) ();
         ph)
       slot_c
   in
-  let dxs_ph = Nx_effect.buffer st.st_ctx xdt dxs_shape in
+  let dxs_ph = Nx_effect.symbolic st.st_ctx xdt dxs_shape in
   Tbl.replace st.table (Obj.repr dxs_ph) (buffer_tensor after_dxs dxs_shape);
   Tbl.replace st.traced (Obj.repr dxs_ph) ();
   (* Each external input's total cotangent, as outputs of the loop. *)
@@ -2118,7 +2174,7 @@ and stage_scan_bwd : type r.
         let after =
           U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ]
         in
-        let ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype g) g_shape in
+        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype g) g_shape in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after g_shape);
         Tbl.replace st.traced (Obj.repr ph) ();
         Scan.Closed_ctan (g, ph))
@@ -2168,98 +2224,307 @@ let wrap_tensor : type a b.
    directly. *)
 type host_out = Host : ('a, 'b) ND.t * ('a, 'b) Nx_buffer.t -> host_out
 
-(* Byte staging for device transfers, reused across calls and keyed by size so a
-   compiled program does not repopulate the page tables with fresh
-   multi-megabyte [Bytes] on every replay. Compiled functions are not
-   thread-safe, and each scratch use completes before the next lookup. *)
+(* Chunked transfers
+
+   Every copy between host and device moves at most [chunk_bytes] at a time,
+   through a window of the device buffer, so no transfer stages a whole leaf on
+   the host. *)
+
+let chunk_bytes = 64 * 1024 * 1024
+
+(* A device may park host staging per pending copy until it next synchronizes
+   (CUDA pins one buffer per copy), so a long run of copies synchronizes every
+   [sync_bytes]. *)
+let sync_bytes = 256 * 1024 * 1024
+let unsynced_bytes = ref 0
+
+let note_copied dev n =
+  unsynced_bytes := !unsynced_bytes + n;
+  if !unsynced_bytes >= sync_bytes then begin
+    Tolk.Device.synchronize dev;
+    unsynced_bytes := 0
+  end
+
+(* Byte staging, keyed by size and reused across calls, so that a compiled
+   program does not repopulate the page tables with a fresh [Bytes] per leaf on
+   every replay. A transfer primitive wants bytes of exactly its length; every
+   full chunk shares one [Bytes], and the table holds the shorter lengths.
+   Compiled functions are not thread-safe, and each use completes before the
+   next lookup. *)
 type scratch = (int, Bytes.t) Hashtbl.t
 
+let full_chunk = lazy (Bytes.create chunk_bytes)
+
 let scratch_bytes tbl size =
-  match Hashtbl.find_opt tbl size with
-  | Some b -> b
-  | None ->
-      let b = Bytes.create size in
-      Hashtbl.add tbl size b;
-      b
+  if size = chunk_bytes then Lazy.force full_chunk
+  else
+    match Hashtbl.find_opt tbl size with
+    | Some b -> b
+    | None ->
+        let b = Bytes.create size in
+        Hashtbl.add tbl size b;
+        b
+
+(* The window of [buf] that starts at byte [off] and spans [len] bytes; [buf]
+   itself when the window covers it. A window is released before its base
+   can be. *)
+let with_window buf ~off ~len f =
+  if off = 0 && len = Tolk.Device.Buffer.nbytes buf then f buf
+  else begin
+    let w =
+      Tolk.Device.Buffer.view buf ~size:len ~dtype:Tolk_uop.Dtype.uint8
+        ~offset:off
+    in
+    Tolk.Device.Buffer.ensure_allocated w;
+    Fun.protect
+      ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
+      (fun () -> f w)
+  end
+
+(* File-backed sources
+
+   A host buffer over a mapped file is copied fastest by reading the file: a
+   read is bound by the disk, a walk of the mapping by the page-fault path,
+   several times slower once the file no longer fits in the cache beside the
+   device buffers it is copied into. The path may name another file by now, so
+   the file opened must be the one that was mapped. *)
+
+let open_file (file : Nx_buffer.file) =
+  match Unix.openfile file.path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error _ -> None
+  | fd -> (
+      match Unix.LargeFile.fstat fd with
+      | st
+        when st.st_size = Int64.of_int file.size
+             && st.st_mtime = file.mtime && st.st_ino = file.inode ->
+          Some fd
+      | _ | (exception Unix.Unix_error _) ->
+          Unix.close fd;
+          None)
+
+(* [read_at fd ~pos bytes len] fills [bytes] with the [len] bytes of [fd] at
+   [pos], or is [false] if the file is shorter or cannot be read. *)
+let read_at fd ~pos bytes len =
+  match Unix.LargeFile.lseek fd (Int64.of_int pos) Unix.SEEK_SET with
+  | exception Unix.Unix_error _ -> false
+  | _ ->
+      let rec fill off =
+        off = len
+        ||
+        match Unix.read fd bytes off (len - off) with
+        | 0 -> false
+        | n -> fill (off + n)
+        | exception Unix.Unix_error _ -> false
+      in
+      fill 0
+
+(* [with_file_source host f] runs [f] with a reader of [host]'s bytes from its
+   file, [None] when [host] is not a mapped file that can still be read. *)
+let with_file_source host f =
+  match Nx_buffer.file_range host with
+  | None -> f None
+  | Some (file, base) -> (
+      match open_file file with
+      | None -> f None
+      | Some fd ->
+          Fun.protect
+            ~finally:(fun () -> Unix.close fd)
+            (fun () ->
+              f
+                (Some
+                   (fun ~pos bytes len ->
+                     read_at fd ~pos:(base + pos) bytes len))))
+
+(* [base_layout v] is [Some (shape, axes)] when the elements of the view [v]
+   are exactly a contiguous run of its buffer seen through a permutation of
+   axes: [shape] is the run's own shape and permuting it by [axes] gives
+   [v]. *)
+let base_layout v =
+  let shape = NV.shape v and strides = NV.strides v in
+  let rank = Array.length shape in
+  let order = Array.init rank Fun.id in
+  Array.stable_sort
+    (fun a b ->
+      match (shape.(a) = 1, shape.(b) = 1) with
+      | true, true -> 0
+      | true, false -> -1
+      | false, true -> 1
+      | false, false -> compare strides.(b) strides.(a))
+    order;
+  let expected = ref 1 and ok = ref true in
+  for i = rank - 1 downto 0 do
+    let a = order.(i) in
+    if shape.(a) <> 1 && strides.(a) <> !expected then ok := false;
+    expected := !expected * shape.(a)
+  done;
+  if not !ok then None
+  else begin
+    let axes = Array.make rank 0 in
+    Array.iteri (fun i a -> axes.(a) <- i) order;
+    Some (Array.map (fun a -> shape.(a)) order, axes)
+  end
+
+(* A strided view of a mapped file whose elements are a contiguous run of the
+   file seen through a permutation of axes (a transposed weight): the run, read
+   from the file into host memory, under the same permutation. It costs a host
+   copy of the run for the length of the upload; walking the mapping in the
+   view's order instead faults its pages in at a fraction of the disk's
+   speed. *)
+let read_base : type a b.
+    scratch -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
+ fun sc x ->
+  let v = Nx_effect.view x in
+  let host = Nx_effect.to_host x in
+  match (Nx_buffer.file_range host, base_layout v) with
+  | None, _ | _, None -> None
+  | Some _, Some (shape, axes) ->
+      with_file_source host @@ fun read ->
+      Option.bind read @@ fun read ->
+      let dt = Nx_effect.dtype x in
+      let item = itemsize dt in
+      let n = numel shape in
+      let run = Nx_buffer.create dt n in
+      let chunk = chunk_bytes / item in
+      let pos = ref 0 and ok = ref true in
+      while !ok && !pos < n do
+        let len = Int.min chunk (n - !pos) in
+        let bytes = scratch_bytes sc (len * item) in
+        ok := read ~pos:((NV.offset v + !pos) * item) bytes (len * item);
+        if !ok then Nx_buffer.blit_from_bytes ~dst_off:!pos ~len bytes run;
+        pos := !pos + len
+      done;
+      if not !ok then None
+      else
+        Some
+          (Nx_effect.permute
+             (Nx_effect.reshape
+                (Nx_effect.from_host (Nx_effect.context x) run)
+                shape)
+             axes)
+
+(* Copy a tensor's logical contents into [buf] from byte [off] on. A contiguous
+   source, offset or not, is read in place chunk by chunk, from its file when it
+   is a mapped one. A strided one is cut along its leading axis into pieces of
+   at most a chunk, each made contiguous on its own. *)
+let rec copyin_at : type a b.
+    scratch ->
+    Tolk.Device.t ->
+    Tolk.Device.Buffer.t ->
+    off:int ->
+    (a, b) Nx_effect.t ->
+    unit =
+ fun sc dev buf ~off x ->
+  let v = Nx_effect.view x in
+  let shape = NV.shape v in
+  let item = itemsize (Nx_effect.dtype x) in
+  let nbytes = numel shape * item in
+  if nbytes = 0 then ()
+  else if NV.is_c_contiguous v then begin
+    let host = Nx_effect.to_host x in
+    with_file_source host @@ fun read ->
+    let read = ref read in
+    let chunk = chunk_bytes / item in
+    let n = numel shape in
+    let pos = ref 0 in
+    while !pos < n do
+      let len = Int.min chunk (n - !pos) in
+      let bytes = scratch_bytes sc (len * item) in
+      let src_off = NV.offset v + !pos in
+      let from_file =
+        match !read with
+        | Some read -> read ~pos:(src_off * item) bytes (len * item)
+        | None -> false
+      in
+      (* A file that can no longer be read is left for the mapping. *)
+      if not from_file then begin
+        read := None;
+        Nx_buffer.blit_to_bytes ~src_off ~len host bytes
+      end;
+      with_window buf ~off:(off + (!pos * item)) ~len:(len * item) (fun w ->
+          Tolk.Device.Buffer.copyin w bytes);
+      bytes_to_device := !bytes_to_device + (len * item);
+      note_copied dev (len * item);
+      pos := !pos + len
+    done
+  end
+  else
+    match read_base sc x with
+    | Some base -> copyin_at sc dev buf ~off base
+    | None when nbytes <= chunk_bytes ->
+        copyin_at sc dev buf ~off (Nx_effect.contiguous x)
+    | None ->
+        (* Axes of size one before [axis] do not change the row-major order. *)
+        let axis = ref 0 in
+        while shape.(!axis) = 1 do
+          incr axis
+        done;
+        let axis = !axis in
+        let row = nbytes / shape.(axis) in
+        let rows = Int.max 1 (chunk_bytes / row) in
+        let r = ref 0 in
+        while !r < shape.(axis) do
+          let stop = Int.min shape.(axis) (!r + rows) in
+          let ranges =
+            Array.mapi
+              (fun d n -> if d = axis then (!r, stop) else (0, n))
+              shape
+          in
+          copyin_at sc dev buf
+            ~off:(off + (!r * row))
+            (Nx_effect.shrink x ranges);
+          r := stop
+        done
 
 (* Copy a tensor's logical contents into a device buffer. *)
-let copyin_tensor : type a b.
-    scratch -> Tolk.Device.Buffer.t -> (a, b) Nx_effect.t -> unit =
- fun sc buf x ->
-  let xc = Nx_effect.contiguous x in
-  let host = Nx_effect.to_host xc in
-  let v = Nx_effect.view xc in
-  let n = numel (NV.shape v) in
-  let bytes = scratch_bytes sc (n * itemsize (Nx_effect.dtype x)) in
-  Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
+let copyin_tensor sc dev buf x =
   Tolk.Device.Buffer.ensure_allocated buf;
-  bytes_to_device := !bytes_to_device + Bytes.length bytes;
-  Tolk.Device.Buffer.copyin buf bytes
+  copyin_at sc dev buf ~off:0 x
 
-(* Byte geometry of an even split of [shape] along [axis] into [parts]: [outer]
-   host rows, [shard_row] bytes of each row per shard, [full_row] bytes per row
-   in total. Axis 0 degenerates to one contiguous block per shard ([outer] =
-   1). *)
-let shard_rows shape axis parts elt =
-  let outer = ref 1 in
-  for d = 0 to axis - 1 do
-    outer := !outer * shape.(d)
-  done;
-  let inner = ref elt in
-  for d = axis + 1 to Array.length shape - 1 do
-    inner := !inner * shape.(d)
-  done;
-  let full_row = shape.(axis) * !inner in
-  (!outer, full_row / parts, full_row)
+(* Copy a device buffer's contents into [host] from element [dst_off] on. *)
+let copyout_into : type a b.
+    scratch -> Tolk.Device.Buffer.t -> dst_off:int -> (a, b) Nx_buffer.t -> unit
+    =
+ fun sc buf ~dst_off host ->
+  let item = itemsize (Nx_buffer.kind host) in
+  let n = Tolk.Device.Buffer.nbytes buf / item in
+  let chunk = chunk_bytes / item in
+  let pos = ref 0 in
+  while !pos < n do
+    let len = Int.min chunk (n - !pos) in
+    let bytes = scratch_bytes sc (len * item) in
+    with_window buf ~off:(!pos * item) ~len:(len * item) (fun w ->
+        Tolk.Device.Buffer.copyout w bytes);
+    Nx_buffer.blit_from_bytes ~dst_off:(dst_off + !pos) ~len bytes host;
+    bytes_from_device := !bytes_from_device + (len * item);
+    pos := !pos + len
+  done
 
-(* A tensor's logical contents as contiguous bytes, staged in [sc]. *)
-let tensor_bytes : type a b. scratch -> (a, b) Nx_effect.t -> Bytes.t =
- fun sc x ->
-  let xc = Nx_effect.contiguous x in
-  let host = Nx_effect.to_host xc in
-  let v = Nx_effect.view xc in
-  let n = numel (NV.shape v) in
-  let bytes = scratch_bytes sc (n * itemsize (Nx_effect.dtype x)) in
-  Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
-  bytes
-
-(* Upload a host tensor to a device tuple: copy the full bytes to every device
-   (replication), or cut the per-device slices of the shard axis. *)
+(* Upload a host tensor to a device tuple: the whole value to every device
+   (replication), or to each device its slice of the shard axis. *)
 let upload_multi : type a b.
     scratch ->
     leaf_place ->
+    Tolk.Device.t list ->
     Tolk.Device.Buffer.t list ->
     (a, b) Nx_effect.t ->
     unit =
- fun sc place bufs x ->
-  let bytes = tensor_bytes sc x in
-  let copyin buf b =
-    Tolk.Device.Buffer.ensure_allocated buf;
-    bytes_to_device := !bytes_to_device + Bytes.length b;
-    Tolk.Device.Buffer.copyin buf b
-  in
+ fun sc place devs bufs x ->
   match place with
-  | P_replicated | P_single -> List.iter (fun buf -> copyin buf bytes) bufs
+  | P_replicated | P_single ->
+      List.iter2 (fun dev buf -> copyin_tensor sc dev buf x) devs bufs
   | P_sharded axis ->
       let shape = shape_of x in
-      let parts = List.length bufs in
-      let outer, shard_row, full_row =
-        shard_rows shape axis parts (itemsize (Nx_effect.dtype x))
-      in
-      let shard_bytes = outer * shard_row in
+      let part = shape.(axis) / List.length bufs in
       List.iteri
-        (fun k buf ->
-          if shard_bytes = Bytes.length bytes then copyin buf bytes
-          else begin
-            let sb = scratch_bytes sc shard_bytes in
-            for o = 0 to outer - 1 do
-              Bytes.blit bytes
-                ((o * full_row) + (k * shard_row))
-                sb (o * shard_row) shard_row
-            done;
-            copyin buf sb
-          end)
-        bufs
+        (fun k (dev, buf) ->
+          let ranges =
+            Array.mapi
+              (fun d n ->
+                if d = axis then (k * part, (k + 1) * part) else (0, n))
+              shape
+          in
+          copyin_tensor sc dev buf (Nx_effect.shrink x ranges))
+        (List.combine devs bufs)
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
 let read_out : type a b.
@@ -2270,12 +2535,8 @@ let read_out : type a b.
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
  fun sc ctx dtv shape buf ->
-  let n = numel shape in
-  let bytes = scratch_bytes sc (Tolk.Device.Buffer.nbytes buf) in
-  bytes_from_device := !bytes_from_device + Bytes.length bytes;
-  Tolk.Device.Buffer.copyout buf bytes;
-  let host = Nx_buffer.create dtv n in
-  Nx_buffer.blit_from_bytes ~len:n bytes host;
+  let host = Nx_buffer.create dtv (numel shape) in
+  copyout_into sc buf ~dst_off:0 host;
   Nx_effect.reshape (Nx_effect.from_host ctx host) shape
 
 (* Wrap the device buffers of one placement as a deferred host tensor owning
@@ -2288,12 +2549,13 @@ let make_handle : type a b.
     names:string list ->
     axis:int option ->
     ctx:Nx_effect.context ->
-    scratch:scratch ->
+    ?scratch:scratch ->
+    ?placed:bool ->
     (a, b) ND.t ->
     int array ->
     Tolk.Device.Buffer.t list ->
     (a, b) Nx_effect.t =
- fun ~devices ~names ~axis ~ctx ~scratch dtv shape bufs ->
+ fun ~devices ~names ~axis ~ctx ?scratch ?(placed = false) dtv shape bufs ->
   let nbytes =
     List.fold_left (fun a b -> a + Tolk.Device.Buffer.nbytes b) 0 bufs
   in
@@ -2307,6 +2569,8 @@ let make_handle : type a b.
       r_nbytes = nbytes;
       r_bufs = bufs;
       r_donated = false;
+      r_placed = placed;
+      r_bound = false;
     }
   in
   let n = numel shape in
@@ -2318,35 +2582,69 @@ let make_handle : type a b.
       | bufs -> bufs
     in
     List.iter Tolk.Device.synchronize entry.r_devices;
-    let copyout buf =
-      let nb = Tolk.Device.Buffer.nbytes buf in
-      let bytes = scratch_bytes scratch nb in
-      Tolk.Device.Buffer.copyout buf bytes;
-      bytes_from_device := !bytes_from_device + nb;
-      bytes
+    (* A handle no compiled function made stages its one read in bytes that die
+       with the read. *)
+    let scratch =
+      match scratch with Some sc -> sc | None -> Hashtbl.create 1
     in
-    let host = Nx_buffer.create dtv n in
-    (match (axis, bufs) with
-    (* Single or replicated: the first device holds the whole value. *)
-    | None, buf :: _ -> Nx_buffer.blit_from_bytes ~len:n (copyout buf) host
-    | Some ax, bufs ->
-        let parts = List.length bufs in
-        let outer, shard_row, full_row =
-          shard_rows shape ax parts (itemsize dtv)
-        in
-        let full = Bytes.create (n * itemsize dtv) in
-        List.iteri
-          (fun k buf ->
-            let sb = copyout buf in
-            for o = 0 to outer - 1 do
-              Bytes.blit sb (o * shard_row) full
-                ((o * full_row) + (k * shard_row))
-                shard_row
-            done)
-          bufs;
-        Nx_buffer.blit_from_bytes ~len:n full host
-    | None, [] -> assert false);
-    release_entry entry;
+    let host =
+      match (axis, bufs) with
+      (* Single or replicated: the first device holds the whole value. *)
+      | None, buf :: _ ->
+          let host = Nx_buffer.create dtv n in
+          copyout_into scratch buf ~dst_off:0 host;
+          host
+      | Some ax, bufs ->
+          let parts = List.length bufs in
+          let shard_shape =
+            Array.mapi (fun d n -> if d = ax then n / parts else n) shape
+          in
+          let shard_n = numel shard_shape in
+          let leading = ref true in
+          for d = 0 to ax - 1 do
+            if shape.(d) <> 1 then leading := false
+          done;
+          if !leading then begin
+            (* The shards are consecutive blocks of the value. *)
+            let host = Nx_buffer.create dtv n in
+            List.iteri
+              (fun k buf ->
+                copyout_into scratch buf ~dst_off:(k * shard_n) host)
+              bufs;
+            host
+          end
+          else begin
+            (* Rows of the shards interleave in the value: gather them through
+               transient bytes of the value's size. *)
+            let item = itemsize dtv in
+            let outer = ref 1 in
+            for d = 0 to ax - 1 do
+              outer := !outer * shape.(d)
+            done;
+            let shard_row = shard_n / !outer * item in
+            let full_row = parts * shard_row in
+            let full = Bytes.create (n * item) in
+            let shard = Nx_buffer.create dtv shard_n in
+            let sb = Bytes.create (shard_n * item) in
+            List.iteri
+              (fun k buf ->
+                copyout_into scratch buf ~dst_off:0 shard;
+                Nx_buffer.blit_to_bytes ~len:shard_n shard sb;
+                for o = 0 to !outer - 1 do
+                  Bytes.blit sb (o * shard_row) full
+                    ((o * full_row) + (k * shard_row))
+                    shard_row
+                done)
+              bufs;
+            let host = Nx_buffer.create dtv n in
+            Nx_buffer.blit_from_bytes ~len:n full host;
+            host
+          end
+      | None, [] -> assert false
+    in
+    (* A program that binds the buffer reads it for as long as the handle is
+       reachable. *)
+    if not entry.r_bound then release_entry entry;
     host
   in
   let handle = Nx_effect.deferred ctx dtv shape fill in
@@ -2354,7 +2652,7 @@ let make_handle : type a b.
   | Some id ->
       entry.r_id <- id;
       Hashtbl.replace resident id entry;
-      resident_bytes := !resident_bytes + nbytes
+      account entry 1
   | None -> assert false);
   (* The finalizer must not capture the handle (it would never die); the entry
      alone decides whether the buffers are still owed a release. *)
@@ -2363,6 +2661,59 @@ let make_handle : type a b.
       if entry.r_bufs <> [] then pending_release := entry :: !pending_release)
     handle;
   handle
+
+(* Placement
+
+   [to_device] copies a tensor into one device buffer that no compiled function
+   owns and hands it back as a resident handle, exactly like an unread output
+   of a compiled call. The buffer bypasses the allocator's cache: a dropped
+   model is returned to the system, not parked in a pool keyed by its sizes. *)
+
+let place (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
+  let device = match device with Some d -> d | None -> F.Run.device_name () in
+  if is_cpu device && not (force_copy ()) then
+    let strided = not (NV.is_c_contiguous (Nx_effect.view x)) in
+    match if strided then read_base (Hashtbl.create 1) x else None with
+    | Some base -> Nx_effect.contiguous base
+    | None -> Nx_effect.contiguous x
+  else
+    let dev = get_device device in
+    match resident_of x with
+    | Some { r_bufs = [ _ ]; r_axis = None; r_device; _ } when r_device == dev
+      ->
+        x
+    | _ ->
+        let shape = shape_of x in
+        let n = numel shape in
+        if n = 0 then x
+        else begin
+          drain_releases ();
+          let dt = Nx_effect.dtype x in
+          let buf =
+            Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype dt)
+              ~spec:{ Tolk.Device.Buffer_spec.default with nolru = true }
+              dev
+          in
+          (try Tolk.Device.Buffer.ensure_allocated buf
+           with _ ->
+             Gc.major ();
+             drain_releases ();
+             Tolk.Device.Buffer.ensure_allocated buf);
+          (* A value resident elsewhere is read to the host by this copy. *)
+          copyin_tensor (Hashtbl.create 1) dev buf x;
+          make_handle ~devices:[ dev ]
+            ~names:[ Tolk.Device.name dev ]
+            ~axis:None ~ctx:(Nx_effect.context x) ~placed:true dt shape [ buf ]
+        end
+
+(* Inside a transformation placement is the identity: every rune handler
+   continues the effect with its argument, so only a call no handler answers
+   places. *)
+let to_device ?device x =
+  try
+    Effect.perform
+      (Nx_effect.E_to_device { context = Nx_effect.context x; t_in = x })
+  with Effect.Unhandled _ -> place ?device x
 
 (* Compiled traces *)
 
@@ -2378,6 +2729,10 @@ type 'q compiled = {
   cp_wrapped : (packed * Obj.t) array;
       (* captures bound by aliasing host memory: kernels read that memory on
          every call, so it must stay reachable while the trace can run *)
+  cp_bound : packed array;
+      (* resident captures whose device buffers are this program's constants:
+         a buffer is released by its handle's finalizer alone, so the handles
+         must stay reachable while the trace can run *)
   cp_outputs : (Obj.t * packed * U.t * leaf_place) list;
       (* output leaf -> its placeholder (dtype and shape), buffer node, and
          placement *)
@@ -2483,6 +2838,20 @@ let rec schedule_calls linear =
       | _ -> [ Kernel call ])
     (U.children linear)
 
+(* The buffers the memory planner must leave alone: those under the nodes replay
+   binds (inputs, constants, outputs), and every buffer a staged loop mentions,
+   since its compiled body addresses them by node. *)
+let held_buffers bound linear =
+  let buffers n =
+    List.filter (fun n -> U.op n = Ops.Buffer) (U.toposort ~enter_calls:true n)
+  in
+  let opaque =
+    List.concat_map
+      (function Kernel _ -> [] | Opaque c -> buffers c)
+      (schedule_calls linear)
+  in
+  List.concat_map buffers bound @ opaque
+
 (* No kernel reads the buffer [itag] after the first kernel that writes
    [otag], and neither buffer is touched by an opaque call. That first kernel
    may read [itag] itself when it writes each element where it read it. An
@@ -2529,7 +2898,7 @@ let transfer_entry e =
     e.r_bufs <- [];
     e.r_donated <- true;
     Hashtbl.remove resident e.r_id;
-    resident_bytes := !resident_bytes - e.r_nbytes
+    account e (-1)
   end
 
 let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
@@ -2559,6 +2928,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
       input_tags = Hashtbl.create 16;
       prefills = [];
       consts = [];
+      bound = Hashtbl.create 16;
+      bound_consts = [];
       axis_index = None;
       scan_stacks = Tbl.create 4;
       scan_closed = Tbl.create 4;
@@ -2574,7 +2945,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
   let ph_params =
     P.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
-        Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf))
+        Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf))
       params
   in
   let placeholders =
@@ -2744,154 +3115,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
   let call, buffer_map = Tolk.Callify.transform_to_call sink in
-  (* Persistent compile cache: a hit replaces scheduling and kernel compilation
-     with an import of the stored compiled linear, rebound to this trace's fresh
-     buffer nodes. Multi-device placements are not cached. *)
-  (* The effective beam width: the per-call override when it enables search,
-     otherwise the BEAM environment variable. Part of the persistent cache key
-     because it changes the compiled kernels. *)
-  let effective_beam =
-    match beam with
-    | Some b when b >= 1 -> b
-    | Some _ | None -> env_int "BEAM" 0
-  in
-  let cache_key =
-    match multi with
-    | Some _ -> None
-    | None -> Jit_cache.key ~device:dev ~beam:effective_beam call
-  in
-  let cached = Option.bind cache_key (fun key -> Jit_cache.load ~key call) in
-  let linear, var_vals =
-    match cached with
-    | Some ((linear, _) as hit) ->
-        reserve_slots_of linear;
-        hit
-    | None ->
-        (* Schedule under a capture hook: the captured linear is unplanned,
-           which keeps buffer nodes stable so the seeded input and constant
-           bindings survive across replays. *)
-        let linear, var_vals =
-          let captured = ref None in
-          Tolk.Realize.capturing :=
-            [ (fun linear var_vals -> captured := Some (linear, var_vals)) ];
-          Fun.protect
-            ~finally:(fun () -> Tolk.Realize.capturing := [])
-            (fun () ->
-              ignore
-                (Tolk.Schedule.create_linear_with_vars
-                   ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call));
-          match !captured with
-          | Some lv -> lv
-          | None -> err "Rune.jit: scheduling captured no computation"
-        in
-        let linear =
-          let compile () =
-            Tolk.Realize.pm_compile ~device:dev ?beam
-              ~to_program:(to_program dev) linear
-          in
-          match beam_parallel with
-          | None -> compile ()
-          | Some n ->
-              Tolk.Helpers.Context_var.(
-                with_context [ B (Tolk.Search.beam_parallel, n) ] compile)
-        in
-        (* The scheduler's internal buffer slots come from a counter local to
-           this schedule; reserve them globally so later traces (and scan
-           bodies) never hand out a colliding buffer slot. *)
-        reserve_slots_of linear;
-        Option.iter
-          (fun key -> Jit_cache.store ~key call linear var_vals)
-          cache_key;
-        (linear, var_vals)
-  in
-  (* Batch consecutive graph-compatible kernels into device execution graphs
-     (CUDA graphs), so replay dispatches each batch as one launch instead of one
-     launch per kernel. Buffers rebound between replays (inputs, fresh per-call
-     outputs) are diff-patched into the recorded graph by [Realize.run_linear]'s
-     graph runner. Honors JIT (>= 2 disables) and JIT_BATCH_SIZE. *)
-  let linear = Tolk.Jit.batch_graphs ~device:dev linear in
-  let binding = Tolk.Realize.Buffers.create ~device:dev in
-  let reserved = Hashtbl.create 16 in
-  List.iter
-    (fun inp ->
-      Hashtbl.replace reserved (U.tag inp.i_node) ();
-      match inp.i_bufs with
-      | [ buf ] when inp.i_place = P_single ->
-          Tolk.Realize.Buffers.seed binding inp.i_node buf
-      | bufs ->
-          Tolk.Realize.Buffers.seed_multi binding inp.i_node
-            (Tolk.Device.Multi_buffer.of_bufs bufs))
-    !inputs;
-  (* Bind each constant once, at compile time: alias its memory when the device
-     shares host memory and the tensor is contiguous, copy its bytes to the
-     device otherwise (to every device of a pmap tuple). *)
-  let scratch = Hashtbl.create 8 in
-  let wrapped = ref [] in
-  List.iter
-    (fun (node, (Packed (cdt, src) as pk)) ->
-      Hashtbl.replace reserved (U.tag node) ();
-      match if zero_copy then wrap_tensor dev src else None with
-      | Some (buf, keep) ->
-          Tolk.Realize.Buffers.seed binding node buf;
-          wrapped := (pk, keep) :: !wrapped
-      | None -> (
-          (* One device copy of a capture serves every signature of the closure:
-             the bytes are uploaded when the capture is first compiled and later
-             compilations reuse the buffer. *)
-          let buf =
-            match Tbl.find_opt const_cache (Obj.repr src) with
-            | Some buf -> buf
-            | None ->
-                let n = numel (shape_of src) in
-                let dtolk = tolk_dtype cdt in
-                let buf =
-                  match multi with
-                  | None ->
-                      let buf =
-                        Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev
-                      in
-                      copyin_tensor scratch buf src;
-                      Tolk.Realize.Single buf
-                  | Some (spec, _) ->
-                      let bufs =
-                        List.map
-                          (fun d ->
-                            let buf =
-                              Tolk.Device.create_buffer ~size:n ~dtype:dtolk d
-                            in
-                            copyin_tensor scratch buf src;
-                            buf)
-                          spec.md_devs
-                      in
-                      Tolk.Realize.Multi (Tolk.Device.Multi_buffer.of_bufs bufs)
-                in
-                Tbl.replace const_cache (Obj.repr src) buf;
-                buf
-          in
-          match buf with
-          | Tolk.Realize.Single buf ->
-              Tolk.Realize.Buffers.seed binding node buf
-          | Tolk.Realize.Multi mbuf ->
-              Tolk.Realize.Buffers.seed_multi binding node mbuf))
-    st.consts;
-  (* The per-device axis index ([Nx.Rng.fold_in_axis] under pmap): one scalar
-     buffer per device holding that device's own index. *)
-  (match (st.axis_index, multi) with
-  | Some node, Some (spec, _) ->
-      Hashtbl.replace reserved (U.tag node) ();
-      let bufs =
-        List.mapi
-          (fun i d ->
-            let buf = Tolk.Device.create_buffer ~size:1 ~dtype:TD.int32 d in
-            let idx = Nx_buffer.create Nx_buffer.int32 1 in
-            Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
-            copyin_tensor scratch buf (Nx_effect.from_host st.st_ctx idx);
-            buf)
-          spec.md_devs
-      in
-      Tolk.Realize.Buffers.seed_multi binding node
-        (Tolk.Device.Multi_buffer.of_bufs bufs)
-  | _ -> ());
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is a graph buffer under identity wrappers (an input or constant
      returned unchanged: [U.contiguous] elides itself on buffer-identity
@@ -2921,6 +3144,177 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
         (key, pk, resolve "an output of the traced function" u c, place))
       out_conts
   in
+  (* Persistent compile cache: a hit replaces scheduling and kernel compilation
+     with an import of the stored compiled linear, rebound to this trace's fresh
+     buffer nodes. Multi-device placements are not cached. *)
+  (* The effective beam width: the per-call override when it enables search,
+     otherwise the BEAM environment variable. Part of the persistent cache key
+     because it changes the compiled kernels. *)
+  let effective_beam =
+    match beam with
+    | Some b when b >= 1 -> b
+    | Some _ | None -> env_int "BEAM" 0
+  in
+  let cache_key =
+    match multi with
+    | Some _ -> None
+    | None -> Jit_cache.key ~device:dev ~beam:effective_beam call
+  in
+  let cached = Option.bind cache_key (fun key -> Jit_cache.load ~key call) in
+  let linear, var_vals =
+    match cached with
+    | Some ((linear, _) as hit) ->
+        reserve_slots_of linear;
+        hit
+    | None ->
+        (* Schedule under a capture hook, which hands the linear over
+           unplanned. *)
+        let linear, var_vals =
+          let captured = ref None in
+          Tolk.Realize.capturing :=
+            [ (fun linear var_vals -> captured := Some (linear, var_vals)) ];
+          Fun.protect
+            ~finally:(fun () -> Tolk.Realize.capturing := [])
+            (fun () ->
+              ignore
+                (Tolk.Schedule.create_linear_with_vars
+                   ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call));
+          match !captured with
+          | Some lv -> lv
+          | None -> err "Rune.jit: scheduling captured no computation"
+        in
+        let linear =
+          let bound =
+            List.map (fun inp -> inp.i_node) !inputs
+            @ List.map fst st.consts
+            @ List.map (fun (node, _, _) -> node) st.bound_consts
+            @ Option.to_list st.axis_index
+            @ List.map (fun (_, _, node, _) -> node) cp_outputs
+          in
+          Tolk.Schedule.memory_plan_rewrite linear (held_buffers bound linear)
+        in
+        let linear =
+          let compile () =
+            Tolk.Realize.pm_compile ~device:dev ?beam
+              ~to_program:(to_program dev) linear
+          in
+          match beam_parallel with
+          | None -> compile ()
+          | Some n ->
+              Tolk.Helpers.Context_var.(
+                with_context [ B (Tolk.Search.beam_parallel, n) ] compile)
+        in
+        (* The scheduler's internal buffer slots come from a counter local to
+           this schedule; reserve them globally so later traces (and scan
+           bodies) never hand out a colliding buffer slot. *)
+        reserve_slots_of linear;
+        Option.iter
+          (fun key -> Jit_cache.store ~key call linear var_vals)
+          cache_key;
+        (linear, var_vals)
+  in
+  (* Batch consecutive graph-compatible kernels into device execution graphs
+     (CUDA graphs, Metal indirect command buffers), so replay dispatches each
+     batch as one launch instead of one launch per kernel. Buffers rebound between replays (inputs, fresh per-call
+     outputs) are diff-patched into the recorded graph by [Realize.run_linear]'s
+     graph runner. Honors JIT (>= 2 disables) and JIT_BATCH_SIZE. *)
+  let linear = Tolk.Jit.batch_graphs ~device:dev linear in
+  let binding = Tolk.Realize.Buffers.create ~device:dev in
+  let reserved = Hashtbl.create 16 in
+  List.iter
+    (fun inp ->
+      Hashtbl.replace reserved (U.tag inp.i_node) ();
+      match inp.i_bufs with
+      | [ buf ] when inp.i_place = P_single ->
+          Tolk.Realize.Buffers.seed binding inp.i_node buf
+      | bufs ->
+          Tolk.Realize.Buffers.seed_multi binding inp.i_node
+            (Tolk.Device.Multi_buffer.of_bufs bufs))
+    !inputs;
+  (* Bind each constant once, at compile time: alias its memory when the device
+     shares host memory and the tensor is contiguous, copy its bytes to the
+     device otherwise (to every device of a pmap tuple). The staging of these
+     one-time uploads is dropped with this table. *)
+  let scratch = Hashtbl.create 8 in
+  let wrapped = ref [] in
+  List.iter
+    (fun (node, (Packed (cdt, src) as pk)) ->
+      Hashtbl.replace reserved (U.tag node) ();
+      match if zero_copy then wrap_tensor dev src else None with
+      | Some (buf, keep) ->
+          Tolk.Realize.Buffers.seed binding node buf;
+          wrapped := (pk, keep) :: !wrapped
+      | None -> (
+          (* One device copy of a capture serves every signature of the closure:
+             the bytes are uploaded when the capture is first compiled and later
+             compilations reuse the buffer. *)
+          let buf =
+            match Tbl.find_opt const_cache (Obj.repr src) with
+            | Some buf -> buf
+            | None ->
+                let n = numel (shape_of src) in
+                let dtolk = tolk_dtype cdt in
+                let buf =
+                  match multi with
+                  | None ->
+                      let buf =
+                        Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev
+                      in
+                      copyin_tensor scratch dev buf src;
+                      Tolk.Realize.Single buf
+                  | Some (spec, _) ->
+                      let bufs =
+                        List.map
+                          (fun d ->
+                            let buf =
+                              Tolk.Device.create_buffer ~size:n ~dtype:dtolk d
+                            in
+                            copyin_tensor scratch d buf src;
+                            buf)
+                          spec.md_devs
+                      in
+                      Tolk.Realize.Multi (Tolk.Device.Multi_buffer.of_bufs bufs)
+                in
+                Tbl.replace const_cache (Obj.repr src) buf;
+                buf
+          in
+          match buf with
+          | Tolk.Realize.Single buf ->
+              Tolk.Realize.Buffers.seed binding node buf
+          | Tolk.Realize.Multi mbuf ->
+              Tolk.Realize.Buffers.seed_multi binding node mbuf))
+    st.consts;
+  (* A bound capture seeds its constant with the resident buffer itself. Its
+     entry was marked bound when the trace met it, so no read since then can
+     have released the buffer. *)
+  let bound =
+    List.map
+      (fun (node, e, pk) ->
+        Hashtbl.replace reserved (U.tag node) ();
+        (match e.r_bufs with
+        | [ buf ] -> Tolk.Realize.Buffers.seed binding node buf
+        | _ -> assert false);
+        pk)
+      st.bound_consts
+  in
+  (* The per-device axis index ([Nx.Rng.fold_in_axis] under pmap): one scalar
+     buffer per device holding that device's own index. *)
+  (match (st.axis_index, multi) with
+  | Some node, Some (spec, _) ->
+      Hashtbl.replace reserved (U.tag node) ();
+      let bufs =
+        List.mapi
+          (fun i d ->
+            let buf = Tolk.Device.create_buffer ~size:1 ~dtype:TD.int32 d in
+            let idx = Nx_buffer.create Nx_buffer.int32 1 in
+            Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
+            copyin_tensor scratch d buf (Nx_effect.from_host st.st_ctx idx);
+            buf)
+          spec.md_devs
+      in
+      Tolk.Realize.Buffers.seed_multi binding node
+        (Tolk.Device.Multi_buffer.of_bufs bufs)
+  | _ -> ());
   let cp_inputs = Array.of_list (List.rev !inputs) in
   let cp_aliases =
     if multi <> None then []
@@ -3010,12 +3404,13 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
     cp_binding = binding;
     cp_inputs;
     cp_wrapped = Array.of_list !wrapped;
+    cp_bound = Array.of_list bound;
     cp_outputs;
     cp_aliases;
     cp_prefills;
     cp_reserved = reserved;
     cp_skeleton = y;
-    cp_scratch = scratch;
+    cp_scratch = Hashtbl.create 8;
   }
 
 let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
@@ -3030,11 +3425,6 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
      leaf is contiguous, and copy its bytes if not. Seeded leaves and wrapped
      hosts are kept reachable until the run completes, so no finalizer can
      release a buffer the kernels still read. *)
-  let resident_of leaf =
-    match Nx_effect.deferred_id leaf with
-    | None -> None
-    | Some id -> Hashtbl.find_opt resident id
-  in
   (* A resident handle seeds the compiled input only when its placement matches
      the input's: the same single device, or the same device tuple with the same
      shard axis. Any other handle is forced by the copy path (reading it
@@ -3061,8 +3451,10 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
      mismatched is forced by the copy path instead and is never donated. *)
   let seeded = ref [] in
   let seed_entry = Array.make (Array.length c.cp_inputs) None in
+  (* A bound entry is some program's constant: it is never consumed. *)
   let note e =
-    if donate && not (List.memq e !seeded) then seeded := e :: !seeded
+    if donate && (not e.r_bound) && not (List.memq e !seeded) then
+      seeded := e :: !seeded
   in
   let keep = ref [] in
   let i = ref 0 in
@@ -3080,7 +3472,8 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
           | None ->
               Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
                 (Tolk.Device.Multi_buffer.of_bufs inp.i_bufs);
-              upload_multi c.cp_scratch inp.i_place inp.i_bufs leaf)
+              upload_multi c.cp_scratch inp.i_place spec.md_devs inp.i_bufs
+                leaf)
       | None -> (
           match resident_single leaf with
           | Some e ->
@@ -3100,7 +3493,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
                   match inp.i_bufs with
                   | [ buf ] ->
                       Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf;
-                      copyin_tensor c.cp_scratch buf leaf
+                      copyin_tensor c.cp_scratch c.cp_device buf leaf
                   | _ -> assert false))));
       incr i)
     params;
@@ -3134,6 +3527,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
               match seed_entry.(i) with
               | Some e
                 when (not (Hashtbl.mem claims otag))
+                     && (not e.r_bound)
                      && uses e = 1
                      && not (List.memq e !claimed) ->
                   claimed := e :: !claimed;
@@ -3264,6 +3658,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
   | None -> Tolk.Device.synchronize c.cp_device);
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_wrapped);
+  ignore (Sys.opaque_identity c.cp_bound);
   (* Output leaves resolving to the same buffer node share one handle, so each
      device buffer has a single owner. *)
   let handles : (int, packed) Hashtbl.t = Hashtbl.create 8 in
@@ -3351,7 +3746,9 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
                 Hashtbl.fold (fun _ e' acc -> acc || e' == e) claims false
               in
               Printf.eprintf "rune.jit: input leaf %d: %s\n%!" i
-                (if reused then "storage reused" else "storage copied"))
+                (if e.r_bound then "bound"
+                 else if reused then "storage reused"
+                 else "storage copied"))
         seed_entry
   end;
   y

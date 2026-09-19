@@ -20,7 +20,7 @@
 
 (** {1:cpu CPU} *)
 
-val clang : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
+val clang : ?native_bf16:bool -> ?aligned:bool -> Gpu_target.cpu -> Renderer.t
 (** [clang arch] is a Clang/CPU renderer with SIMD support.
 
     Generates C code for host CPU execution using Clang extensions:
@@ -41,6 +41,13 @@ val clang : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
     [false], bfloat16 is storage-emulated through float32 on every target,
     like riscv64. Runtimes should pass the result of a compiler probe such as
     [Compiler_cpu.supports_bf16].
+
+    [aligned] states whether vector types are declared aligned to their size
+    ([true]) or to one byte ([false]). A kernel whose vector types are aligned
+    may only be given buffers at addresses that are multiples of the widest
+    one; pass [false] for a device that binds memory it did not allocate. When
+    absent, the [ALIGNED] environment variable decides at each render: [0]
+    selects unaligned types, anything else aligned ones (the default).
 
     {b Note.} Reads environment variables at module initialization:
     - [THREADS]: set to [0] to disable host-side threading (default: enabled).

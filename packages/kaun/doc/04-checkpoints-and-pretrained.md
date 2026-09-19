@@ -1,6 +1,6 @@
 # Checkpoints and Pretrained Models
 
-A checkpoint is an immutable collection of tensors keyed by distinct, non-empty names, stored as a [safetensors](https://huggingface.co/docs/safetensors/) file. Typed parameter structures enter and leave checkpoints through names you declare; foreign checkpoints — HuggingFace Hub exports, say — are adapted checkpoint-to-checkpoint until they match your names. This guide covers both directions.
+A checkpoint is an immutable collection of tensors keyed by distinct, non-empty names, stored as a [safetensors](https://huggingface.co/docs/safetensors/) file. A file this library wrote names its entries after the paths of your parameter structure, and is read back against a value of that structure. A file produced elsewhere has its own names and layouts, and its importer is an ordinary function that reads each entry by name and builds the parameter record. This guide covers both.
 
 ## Named Structures
 
@@ -44,7 +44,7 @@ Each layer module ships its own traversals (`Linear.names p` is `{ w = "w"; b = 
 
 ## Saving and Loading
 
-`of_params` turns a structure into named entries; `save` writes them. Loading is template-based: construct the model first, then `to_params ~like` replaces its values with the file's entries of the same names — the template supplies structure, names, dtypes, and shapes, and its values are discarded:
+`of_params` turns a structure into named entries; `save` writes them. Reading them back takes a value of the structure, which a restart already holds: `to_params ~like` replaces its values with the file's entries of the same names. The template supplies structure, names, dtypes and shapes, and its values are discarded:
 
 ```ocaml
 let () =
@@ -68,7 +68,6 @@ let () =
   let restored =
     Checkpoint.to_params (module Mlp) ~prefix:"model" ~like:(init ()) ckpt
   in
-  Sys.remove path;
 
   (* The restored parameters equal the saved ones. *)
   let x = Nx.randn Nx.float32 [| 2; 4 |] in
@@ -76,7 +75,13 @@ let () =
   Printf.printf "max difference: %g\n" (Nx.item [] d)
 ```
 
-A missing entry, shape mismatch, or dtype mismatch raises (`~cast:true` casts mismatched dtypes instead). Entries the template does not name are ignored — the basis for both multi-section files and partial loading.
+A missing entry, a shape mismatch or a dtype mismatch raises. The template states the dtype it expects and nothing is converted, so a restart that names the wrong dtype fails instead of narrowing its state. Entries the template does not name are ignored, which is what makes multi-section files and partial loading work.
+
+## The Rule About Files
+
+Loading reads the file's header and maps the file. Each entry is a view of it, and the system reads an entry's pages when they are first used. Loading a 2.5 GB checkpoint takes milliseconds and allocates nothing.
+
+**A file must not change while a tensor read from it is alive.** Truncating or rewriting it in place changes the tensors' values or kills the process. Replace a checkpoint by writing a new file and renaming it over the old one, which is what `Checkpoint.save` does: saving over the path you loaded from is safe. `Nx.copy` gives a tensor that no longer depends on its file. The file stays mapped until the garbage collector has collected the last tensor over it, which can be later than the last use; on Windows it cannot be deleted until then. Keep checkpoints on a local disk.
 
 ## One File, Several Sections
 
@@ -117,7 +122,6 @@ let () =
       step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
     }
   in
-  Sys.remove path;
   ignore params;
   Printf.printf "resumed at step %d\n" (Int32.to_int (Nx.item [] ostate.step))
 ```
@@ -126,9 +130,80 @@ The optimizer moments checkpoint with the *model's* module because they have the
 
 To load a file into a partially different model — a new head on a pretrained backbone, say — extract each sub-structure with its own module and prefix; entries for the parts you replace are simply never asked for.
 
-## Foreign Checkpoints: kaun.hf
+## Pretrained Checkpoints
 
-The `kaun.hf` library fetches files from [HuggingFace Hub](https://huggingface.co) repositories into a local cache and loads safetensors checkpoints — single-file or sharded — as `Checkpoint.t` values. Downloading shells out to `curl` (it must be on `PATH`); fetched files are cached, so only the first access touches the network.
+A checkpoint produced elsewhere names and lays out its tensors by its exporter's conventions. Two accessors read one entry by name:
+
+- `Checkpoint.to_tensor ~shape dtype name ckpt` is the entry, which must have that shape and dtype. It is returned as stored, a view of the file.
+- `Checkpoint.to_float ~shape dtype name ckpt` is a `float16`, `bfloat16`, `float32` or `float64` entry at `dtype`: the entry itself when it already has `dtype`, and its cast otherwise, which allocates that leaf. Any other entry is refused.
+
+Both raise `Invalid_argument` with the entry's name when it is missing or has another shape, so a configuration that disagrees with the file fails at import, before any computation. Bytes are never reinterpreted silently: only `to_float` converts, and only between floating-point dtypes. Packed integer weights are read with `to_tensor Nx.uint8` and can sit in the same record as float leaves, since each field's type is the dtype passed to its accessor.
+
+An importer has the outline of the function that initializes the model, with a name in the file where that one has an initializer. Here is a two-layer network whose file stores each weight as `[outputs; inputs]`, the transpose of `Linear`'s layout:
+
+```ocaml
+let mlp_of_file dt ckpt =
+  let linear ~inputs ~outputs name =
+    {
+      Linear.w =
+        Nx.matrix_transpose
+          (Checkpoint.to_float ~shape:[| outputs; inputs |] dt
+             (name ^ ".weight") ckpt);
+      b = Some (Checkpoint.to_float ~shape:[| outputs |] dt (name ^ ".bias") ckpt);
+    }
+  in
+  {
+    Mlp.l1 = linear ~inputs:4 ~outputs:8 "encoder.fc1";
+    l2 = linear ~inputs:8 ~outputs:2 "encoder.fc2";
+  }
+
+let () =
+  let ckpt =
+    Checkpoint.concat
+      [
+        Checkpoint.of_tensor "encoder.fc1.weight" (Nx.ones Nx.float32 [| 8; 4 |]);
+        Checkpoint.of_tensor "encoder.fc1.bias" (Nx.zeros Nx.float32 [| 8 |]);
+        Checkpoint.of_tensor "encoder.fc2.weight" (Nx.ones Nx.float32 [| 2; 8 |]);
+        Checkpoint.of_tensor "encoder.fc2.bias" (Nx.zeros Nx.float32 [| 2 |]);
+      ]
+  in
+  let params = mlp_of_file Nx.float32 ckpt in
+  let y = Mlp.apply params (Nx.ones Nx.float32 [| 1; 4 |]) in
+  Printf.printf "%g\n" (Nx.item [ 0; 0 ] y)
+```
+
+Each name is written at the field it fills. A rename is a different string at the field, a transpose is `Nx.matrix_transpose`, and a fused tensor is cut with `Nx.split`; both are views. Structure comes from the configuration and the dtype is an argument: at the file's own dtype every leaf is a view of the file and nothing is copied, and at another one each leaf is cast as it is read. An importer that ties two weights binds the tensor once and uses it twice.
+
+## Placing Weights on a Device
+
+A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Rune.to_device` moves a tensor into a device buffer and returns it as the same value, and a compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
+
+```ocaml
+let mlp_of_file ?device dt ckpt =
+  let place x =
+    match device with None -> x | Some device -> Rune.to_device ~device x
+  in
+  let linear ~inputs ~outputs name =
+    let float ~shape leaf =
+      Checkpoint.to_float ~shape dt (name ^ leaf) ckpt
+    in
+    {
+      Linear.w =
+        place (Nx.matrix_transpose (float ~shape:[| outputs; inputs |] ".weight"));
+      b = Some (place (float ~shape:[| outputs |] ".bias"));
+    }
+  in
+  {
+    Mlp.l1 = linear ~inputs:4 ~outputs:8 "encoder.fc1";
+    l2 = linear ~inputs:8 ~outputs:2 "encoder.fc2";
+  }
+```
+
+Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. The examples' importers take `?device` this way, and their programs pass the device they compile for. Outside a compiled function every nx operation on a placed value reads it back to the host, so place the final form of each leaf, after the transpose.
+
+## Fetching From the Hub: kaun.hf
+
+The `kaun.hf` library fetches files from [HuggingFace Hub](https://huggingface.co) repositories into a local cache and loads safetensors checkpoints, single-file or sharded, as `Checkpoint.t` values. Downloading shells out to `curl` (it must be on `PATH`). A download is written beside its cache path and renamed once complete, and cached files are served without touching the network.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -137,47 +212,38 @@ List.iter print_endline (Kaun.Checkpoint.names ckpt)
 (* h.0.attn.c_attn.bias, h.0.attn.c_attn.weight, ..., wte.weight *)
 ```
 
-Hub checkpoints name and lay out tensors by the exporting framework's conventions, which will not match your records. Three checkpoint-to-checkpoint combinators adapt them, composed with `(|>)`:
-
-- `rename f t` — replace every entry name `n` by `f n`; return names you do not care about unchanged.
-- `transpose name t` — swap the last two axes of one entry. Use it on weights stored with the opposite orientation, such as `torch.nn.Linear`'s `outputs × inputs` weights when your model expects `inputs × outputs`.
-- `split name ~into t` — replace one entry by equal sections along an axis. Use it on fused projections.
-
-Leftover entries after adaptation are harmless: `to_params` ignores entries its template does not name.
+`Kaun_hf.load_config` fetches and parses the repository's `config.json`, from which an example builds its configuration record.
 
 ## The GPT-2 Story
 
-[`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) runs the whole pipeline: it defines GPT-2 as a record of kaun layers (~150 lines), loads the real weights, and generates text. The adaptation is instructive because the HF checkpoint differs from the natural kaun model in two ways:
-
-1. **Fused attention projections.** HF stores each block's query, key, and value projections as one `c_attn` tensor of shape `[n_embd; 3 * n_embd]`; the model has three separate `Linear` layers. `split` cuts the fused weight and bias into thirds:
+[`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) runs the whole pipeline: it defines GPT-2 as a record of kaun layers, loads the real weights, and generates text. Its importer is about fifty lines and differs from the two-layer one above in one way: the file stores each block's query, key and value projections as one `c_attn` tensor of shape `[n_embd; 3 * n_embd]`, where the model has three `Linear` layers. `Nx.split` cuts the fused weight and bias into three views:
 
 <!-- $MDX skip -->
 ```ocaml
-let split_qkv ckpt i =
-  let fused leaf = Printf.sprintf "h.%d.attn.c_attn.%s" i leaf in
-  let ours p leaf = Printf.sprintf "blocks.%d.attn.%s.%s" i p leaf in
-  ckpt
-  |> Hf.split (fused "weight")
-       ~into:[ ours "q" "w"; ours "k" "w"; ours "v" "w" ]
-  |> Hf.split (fused "bias")
-       ~into:[ ours "q" "b"; ours "k" "b"; ours "v" "b" ]
+let fused = linear ~inputs:d ~outputs:(3 * d) (at "attn.c_attn") in
+let q, k, v =
+  match
+    List.map2
+      (fun w b -> { Linear.w; b = Some b })
+      (Nx.split ~axis:1 3 fused.w)
+      (Nx.split ~axis:0 3 (Option.get fused.b))
+  with
+  | [ q; k; v ] -> (q, k, v)
+  | _ -> assert false
+in
 ```
 
-2. **Foreign names.** Everything else is a pure renaming — `wte.weight` to `wte.table`, `h.0.ln_1.weight` to `blocks.0.ln1.gamma`, and so on — one total function passed to `rename`. (GPT-2's `Conv1D` weights are already `inputs × outputs`, so no transposes are needed; a PyTorch `nn.Linear` export would need them.) Entries the model does not use, like attention mask buffers, are left in place and ignored by extraction.
-
-Adapted, the checkpoint matches the model's own `names`, and typed parameters come out through the ordinary template-based extraction:
+This file's weights are already `inputs × outputs`, so nothing is transposed. Entries the model does not use, such as attention mask buffers, are never read. The whole load is:
 
 <!-- $MDX skip -->
 ```ocaml
-let params =
-  Kaun_hf.load_checkpoint "gpt2"
-  |> Gpt2.of_hf ~n_layer:cfg.n_layer
-  |> Checkpoint.to_params (module Gpt2.Params) ~like:(Gpt2.make cfg) ~cast:true
+let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
+let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_checkpoint "gpt2")
 ```
 
-The `~like` template is a zero-initialized model built from the downloaded `config.json` (`Kaun_hf.load_config` fetches and parses it). There is no per-architecture loader in the library: the adaptation is ~40 lines of user code, and the same three combinators cover other exports.
+There is no per-architecture loader in the library. [`examples/05-llama`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/05-llama) imports Llama 3.2 the same way, transposing every projection, and its `--dtype` defaults to the file's `bfloat16`, so the default run casts nothing.
 
 ## Next Steps
 
-- [PyTorch Comparison](05-pytorch-comparison.md) — `state_dict`, `torch.save`, and `from_pretrained` in kaun terms
+- [PyTorch Comparison](05-pytorch-comparison.md): `state_dict`, `torch.save`, and `from_pretrained` in kaun terms
 - [Layers and Models](02-layers-and-models.md) — where `names` comes from

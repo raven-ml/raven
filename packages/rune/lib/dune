@@ -20,6 +20,7 @@
   nx
   nx.effect
   nx.buffer
+  unix
   tolk.uop
   tolk
   tolk.frontend

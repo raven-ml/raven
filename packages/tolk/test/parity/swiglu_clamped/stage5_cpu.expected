@@ -1,0 +1,300 @@
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, dtypes.float, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.WEAK)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, dtypes.float, device='CPU')
+  10 Ops.CONST           :            dtypes.int                               []                               3
+  11 Ops.SHL             : 0          dtypes.int                               [3, '3']                         None
+  12 Ops.SHRINK          : 0          dtypes.float                             [9, 11, '4']                     None
+  13 Ops.LOAD            : 0          dtypes.float                             [12]                             None
+  14 Ops.CONST           :            dtypes.int                               []                               0
+  15 Ops.INDEX           : 0          dtypes.float                             [13, '0']                        None
+  16 Ops.NEG             : 0          dtypes.float                             [15]                             None
+  17 Ops.CONST           :            dtypes.float                             []                               -7.0
+  18 Ops.CMPLT           : 0          dtypes.bool                              [16, '-7.0']                     None
+  19 Ops.WHERE           : 0          dtypes.float                             [18, '-7.0', 16]                 None
+  20 Ops.CONST           :            dtypes.float                             []                               2.4554669857025146
+  21 Ops.MUL             : 0          dtypes.float                             [19, '2.4554669857025146']       None
+  22 Ops.CMPNE           : 0          dtypes.bool                              [21, 21]                         None
+  23 Ops.CONST           :            dtypes.float                             []                               nan
+  24 Ops.CONST           :            dtypes.float                             []                               -150.0
+  25 Ops.CMPLT           : 0          dtypes.bool                              [21, '-150.0']                   None
+  26 Ops.CONST           :            dtypes.float                             []                               0.0
+  27 Ops.CONST           :            dtypes.float                             []                               128.0
+  28 Ops.CMPLT           : 0          dtypes.bool                              [21, '128.0']                    None
+  29 Ops.CONST           :            dtypes.bool                              []                               True
+  30 Ops.CMPNE           : 0          dtypes.bool                              [28, 'True']                     None
+  31 Ops.CONST           :            dtypes.float                             []                               inf
+  32 Ops.CONST           :            dtypes.float                             []                               0.00015359208919107914
+  33 Ops.CMPNE           : 0          dtypes.bool                              [21, 'inf']                      None
+  34 Ops.CONST           :            dtypes.float                             []                               -inf
+  35 Ops.CMPNE           : 0          dtypes.bool                              [21, '-inf']                     None
+  36 Ops.WHERE           : 0          dtypes.float                             [35, 21, '0.0']                  None
+  37 Ops.WHERE           : 0          dtypes.float                             [22, '0.0', 36]                  None
+  38 Ops.WHERE           : 0          dtypes.float                             [33, 37, '0.0']                  None
+  39 Ops.CMPLT           : 0          dtypes.bool                              [38, '0.0']                      None
+  40 Ops.CONST           :            dtypes.float                             []                               -0.5
+  41 Ops.CONST           :            dtypes.float                             []                               0.5
+  42 Ops.WHERE           : 0          dtypes.float                             [39, '-0.5', '0.5']              None
+  43 Ops.ADD             : 0          dtypes.float                             [38, 42]                         None
+  44 Ops.CAST            : 0          dtypes.int                               [43]                             dtypes.int
+  45 Ops.CAST            : 0          dtypes.float                             [44]                             dtypes.float
+  46 Ops.SUB             : 0          dtypes.float                             [38, 45]                         None
+  47 Ops.MUL             : 0          dtypes.float                             ['0.00015359208919107914', 46]   None
+  48 Ops.CONST           :            dtypes.float                             []                               0.0013392627006396651
+  49 Ops.ADD             : 0          dtypes.float                             [47, '0.0013392627006396651']    None
+  50 Ops.MUL             : 0          dtypes.float                             [49, 46]                         None
+  51 Ops.CONST           :            dtypes.float                             []                               0.009618384763598442
+  52 Ops.ADD             : 0          dtypes.float                             [50, '0.009618384763598442']     None
+  53 Ops.MUL             : 0          dtypes.float                             [52, 46]                         None
+  54 Ops.CONST           :            dtypes.float                             []                               0.055503472685813904
+  55 Ops.ADD             : 0          dtypes.float                             [53, '0.055503472685813904']     None
+  56 Ops.MUL             : 0          dtypes.float                             [55, 46]                         None
+  57 Ops.CONST           :            dtypes.float                             []                               0.24022644758224487
+  58 Ops.ADD             : 0          dtypes.float                             [56, '0.24022644758224487']      None
+  59 Ops.MUL             : 0          dtypes.float                             [58, 46]                         None
+  60 Ops.CONST           :            dtypes.float                             []                               0.6931471824645996
+  61 Ops.ADD             : 0          dtypes.float                             [59, '0.6931471824645996']       None
+  62 Ops.MUL             : 0          dtypes.float                             [61, 46]                         None
+  63 Ops.CONST           :            dtypes.float                             []                               1.0
+  64 Ops.ADD             : 0          dtypes.float                             [62, '1.0']                      None
+  65 Ops.CMPLT           : 0          dtypes.bool                              [44, '0']                        None
+  66 Ops.CONST           :            dtypes.int                               []                               1
+  67 Ops.WHERE           : 0          dtypes.int                               [65, '1', '0']                   None
+  68 Ops.ADD             : 0          dtypes.int                               [44, 67]                         None
+  69 Ops.SHR             : 0          dtypes.int                               [68, '1']                        None
+  70 Ops.CMOD            : 0          dtypes.int                               [44, '2']                        None
+  71 Ops.CMPNE           : 0          dtypes.bool                              [70, '0']                        None
+  72 Ops.AND             : 0          dtypes.bool                              [71, 65]                         None
+  73 Ops.CAST            : 0          dtypes.int                               [72]                             dtypes.int
+  74 Ops.SUB             : 0          dtypes.int                               [69, 73]                         None
+  75 Ops.CONST           :            dtypes.int                               []                               127
+  76 Ops.ADD             : 0          dtypes.int                               [74, '127']                      None
+  77 Ops.CONST           :            dtypes.int                               []                               23
+  78 Ops.SHL             : 0          dtypes.int                               [76, '23']                       None
+  79 Ops.BITCAST         : 0          dtypes.float                             [78]                             dtypes.float
+  80 Ops.MUL             : 0          dtypes.float                             [64, 79]                         None
+  81 Ops.SUB             : 0          dtypes.int                               [44, 74]                         None
+  82 Ops.ADD             : 0          dtypes.int                               [81, '127']                      None
+  83 Ops.SHL             : 0          dtypes.int                               [82, '23']                       None
+  84 Ops.BITCAST         : 0          dtypes.float                             [83]                             dtypes.float
+  85 Ops.MUL             : 0          dtypes.float                             [80, 84]                         None
+  86 Ops.WHERE           : 0          dtypes.float                             [30, 'inf', 85]                  None
+  87 Ops.WHERE           : 0          dtypes.float                             [25, '0.0', 86]                  None
+  88 Ops.WHERE           : 0          dtypes.float                             [22, 'nan', 87]                  None
+  89 Ops.ADD             : 0          dtypes.float                             [88, '1.0']                      None
+  90 Ops.FDIV            : 0          dtypes.float                             [19, 89]                         None
+  91 Ops.INDEX           : 0          dtypes.float                             [13, '1']                        None
+  92 Ops.CMPLT           : 0          dtypes.bool                              [91, '-7.0']                     None
+  93 Ops.WHERE           : 0          dtypes.float                             [92, '-7.0', 91]                 None
+  94 Ops.NEG             : 0          dtypes.float                             [93]                             None
+  95 Ops.CMPLT           : 0          dtypes.bool                              [94, '-7.0']                     None
+  96 Ops.WHERE           : 0          dtypes.float                             [95, '-7.0', 94]                 None
+  97 Ops.SUB             : 0          dtypes.float                             ['1.0', 96]                      None
+  98 Ops.MUL             : 0          dtypes.float                             [90, 97]                         None
+  99 Ops.NEG             : 0          dtypes.float                             [98]                             None
+ 100 Ops.INDEX           : 0          dtypes.float                             [13, '2']                        None
+ 101 Ops.NEG             : 0          dtypes.float                             [100]                            None
+ 102 Ops.CMPLT           : 0          dtypes.bool                              [101, '-7.0']                    None
+ 103 Ops.WHERE           : 0          dtypes.float                             [102, '-7.0', 101]               None
+ 104 Ops.MUL             : 0          dtypes.float                             [103, '2.4554669857025146']      None
+ 105 Ops.CMPNE           : 0          dtypes.bool                              [104, 104]                       None
+ 106 Ops.CMPLT           : 0          dtypes.bool                              [104, '-150.0']                  None
+ 107 Ops.CMPLT           : 0          dtypes.bool                              [104, '128.0']                   None
+ 108 Ops.CMPNE           : 0          dtypes.bool                              [107, 'True']                    None
+ 109 Ops.CMPNE           : 0          dtypes.bool                              [104, 'inf']                     None
+ 110 Ops.CMPNE           : 0          dtypes.bool                              [104, '-inf']                    None
+ 111 Ops.WHERE           : 0          dtypes.float                             [110, 104, '0.0']                None
+ 112 Ops.WHERE           : 0          dtypes.float                             [105, '0.0', 111]                None
+ 113 Ops.WHERE           : 0          dtypes.float                             [109, 112, '0.0']                None
+ 114 Ops.CMPLT           : 0          dtypes.bool                              [113, '0.0']                     None
+ 115 Ops.WHERE           : 0          dtypes.float                             [114, '-0.5', '0.5']             None
+ 116 Ops.ADD             : 0          dtypes.float                             [113, 115]                       None
+ 117 Ops.CAST            : 0          dtypes.int                               [116]                            dtypes.int
+ 118 Ops.CAST            : 0          dtypes.float                             [117]                            dtypes.float
+ 119 Ops.SUB             : 0          dtypes.float                             [113, 118]                       None
+ 120 Ops.MUL             : 0          dtypes.float                             ['0.00015359208919107914', 119]  None
+ 121 Ops.ADD             : 0          dtypes.float                             [120, '0.0013392627006396651']   None
+ 122 Ops.MUL             : 0          dtypes.float                             [121, 119]                       None
+ 123 Ops.ADD             : 0          dtypes.float                             [122, '0.009618384763598442']    None
+ 124 Ops.MUL             : 0          dtypes.float                             [123, 119]                       None
+ 125 Ops.ADD             : 0          dtypes.float                             [124, '0.055503472685813904']    None
+ 126 Ops.MUL             : 0          dtypes.float                             [125, 119]                       None
+ 127 Ops.ADD             : 0          dtypes.float                             [126, '0.24022644758224487']     None
+ 128 Ops.MUL             : 0          dtypes.float                             [127, 119]                       None
+ 129 Ops.ADD             : 0          dtypes.float                             [128, '0.6931471824645996']      None
+ 130 Ops.MUL             : 0          dtypes.float                             [129, 119]                       None
+ 131 Ops.ADD             : 0          dtypes.float                             [130, '1.0']                     None
+ 132 Ops.CMPLT           : 0          dtypes.bool                              [117, '0']                       None
+ 133 Ops.WHERE           : 0          dtypes.int                               [132, '1', '0']                  None
+ 134 Ops.ADD             : 0          dtypes.int                               [117, 133]                       None
+ 135 Ops.SHR             : 0          dtypes.int                               [134, '1']                       None
+ 136 Ops.CMOD            : 0          dtypes.int                               [117, '2']                       None
+ 137 Ops.CMPNE           : 0          dtypes.bool                              [136, '0']                       None
+ 138 Ops.AND             : 0          dtypes.bool                              [137, 132]                       None
+ 139 Ops.CAST            : 0          dtypes.int                               [138]                            dtypes.int
+ 140 Ops.SUB             : 0          dtypes.int                               [135, 139]                       None
+ 141 Ops.ADD             : 0          dtypes.int                               [140, '127']                     None
+ 142 Ops.SHL             : 0          dtypes.int                               [141, '23']                      None
+ 143 Ops.BITCAST         : 0          dtypes.float                             [142]                            dtypes.float
+ 144 Ops.MUL             : 0          dtypes.float                             [131, 143]                       None
+ 145 Ops.SUB             : 0          dtypes.int                               [117, 140]                       None
+ 146 Ops.ADD             : 0          dtypes.int                               [145, '127']                     None
+ 147 Ops.SHL             : 0          dtypes.int                               [146, '23']                      None
+ 148 Ops.BITCAST         : 0          dtypes.float                             [147]                            dtypes.float
+ 149 Ops.MUL             : 0          dtypes.float                             [144, 148]                       None
+ 150 Ops.WHERE           : 0          dtypes.float                             [108, 'inf', 149]                None
+ 151 Ops.WHERE           : 0          dtypes.float                             [106, '0.0', 150]                None
+ 152 Ops.WHERE           : 0          dtypes.float                             [105, 'nan', 151]                None
+ 153 Ops.ADD             : 0          dtypes.float                             [152, '1.0']                     None
+ 154 Ops.FDIV            : 0          dtypes.float                             [103, 153]                       None
+ 155 Ops.INDEX           : 0          dtypes.float                             [13, '3']                        None
+ 156 Ops.CMPLT           : 0          dtypes.bool                              [155, '-7.0']                    None
+ 157 Ops.WHERE           : 0          dtypes.float                             [156, '-7.0', 155]               None
+ 158 Ops.NEG             : 0          dtypes.float                             [157]                            None
+ 159 Ops.CMPLT           : 0          dtypes.bool                              [158, '-7.0']                    None
+ 160 Ops.WHERE           : 0          dtypes.float                             [159, '-7.0', 158]               None
+ 161 Ops.SUB             : 0          dtypes.float                             ['1.0', 160]                     None
+ 162 Ops.MUL             : 0          dtypes.float                             [154, 161]                       None
+ 163 Ops.NEG             : 0          dtypes.float                             [162]                            None
+ 164 Ops.ADD             : 0          dtypes.int                               [11, '4']                        None
+ 165 Ops.SHRINK          : 0          dtypes.float                             [9, 164, '4']                    None
+ 166 Ops.LOAD            : 0          dtypes.float                             [165]                            None
+ 167 Ops.INDEX           : 0          dtypes.float                             [166, '0']                       None
+ 168 Ops.NEG             : 0          dtypes.float                             [167]                            None
+ 169 Ops.CMPLT           : 0          dtypes.bool                              [168, '-7.0']                    None
+ 170 Ops.WHERE           : 0          dtypes.float                             [169, '-7.0', 168]               None
+ 171 Ops.MUL             : 0          dtypes.float                             [170, '2.4554669857025146']      None
+ 172 Ops.CMPNE           : 0          dtypes.bool                              [171, 171]                       None
+ 173 Ops.CMPLT           : 0          dtypes.bool                              [171, '-150.0']                  None
+ 174 Ops.CMPLT           : 0          dtypes.bool                              [171, '128.0']                   None
+ 175 Ops.CMPNE           : 0          dtypes.bool                              [174, 'True']                    None
+ 176 Ops.CMPNE           : 0          dtypes.bool                              [171, 'inf']                     None
+ 177 Ops.CMPNE           : 0          dtypes.bool                              [171, '-inf']                    None
+ 178 Ops.WHERE           : 0          dtypes.float                             [177, 171, '0.0']                None
+ 179 Ops.WHERE           : 0          dtypes.float                             [172, '0.0', 178]                None
+ 180 Ops.WHERE           : 0          dtypes.float                             [176, 179, '0.0']                None
+ 181 Ops.CMPLT           : 0          dtypes.bool                              [180, '0.0']                     None
+ 182 Ops.WHERE           : 0          dtypes.float                             [181, '-0.5', '0.5']             None
+ 183 Ops.ADD             : 0          dtypes.float                             [180, 182]                       None
+ 184 Ops.CAST            : 0          dtypes.int                               [183]                            dtypes.int
+ 185 Ops.CAST            : 0          dtypes.float                             [184]                            dtypes.float
+ 186 Ops.SUB             : 0          dtypes.float                             [180, 185]                       None
+ 187 Ops.MUL             : 0          dtypes.float                             ['0.00015359208919107914', 186]  None
+ 188 Ops.ADD             : 0          dtypes.float                             [187, '0.0013392627006396651']   None
+ 189 Ops.MUL             : 0          dtypes.float                             [188, 186]                       None
+ 190 Ops.ADD             : 0          dtypes.float                             [189, '0.009618384763598442']    None
+ 191 Ops.MUL             : 0          dtypes.float                             [190, 186]                       None
+ 192 Ops.ADD             : 0          dtypes.float                             [191, '0.055503472685813904']    None
+ 193 Ops.MUL             : 0          dtypes.float                             [192, 186]                       None
+ 194 Ops.ADD             : 0          dtypes.float                             [193, '0.24022644758224487']     None
+ 195 Ops.MUL             : 0          dtypes.float                             [194, 186]                       None
+ 196 Ops.ADD             : 0          dtypes.float                             [195, '0.6931471824645996']      None
+ 197 Ops.MUL             : 0          dtypes.float                             [196, 186]                       None
+ 198 Ops.ADD             : 0          dtypes.float                             [197, '1.0']                     None
+ 199 Ops.CMPLT           : 0          dtypes.bool                              [184, '0']                       None
+ 200 Ops.WHERE           : 0          dtypes.int                               [199, '1', '0']                  None
+ 201 Ops.ADD             : 0          dtypes.int                               [184, 200]                       None
+ 202 Ops.SHR             : 0          dtypes.int                               [201, '1']                       None
+ 203 Ops.CMOD            : 0          dtypes.int                               [184, '2']                       None
+ 204 Ops.CMPNE           : 0          dtypes.bool                              [203, '0']                       None
+ 205 Ops.AND             : 0          dtypes.bool                              [204, 199]                       None
+ 206 Ops.CAST            : 0          dtypes.int                               [205]                            dtypes.int
+ 207 Ops.SUB             : 0          dtypes.int                               [202, 206]                       None
+ 208 Ops.ADD             : 0          dtypes.int                               [207, '127']                     None
+ 209 Ops.SHL             : 0          dtypes.int                               [208, '23']                      None
+ 210 Ops.BITCAST         : 0          dtypes.float                             [209]                            dtypes.float
+ 211 Ops.MUL             : 0          dtypes.float                             [198, 210]                       None
+ 212 Ops.SUB             : 0          dtypes.int                               [184, 207]                       None
+ 213 Ops.ADD             : 0          dtypes.int                               [212, '127']                     None
+ 214 Ops.SHL             : 0          dtypes.int                               [213, '23']                      None
+ 215 Ops.BITCAST         : 0          dtypes.float                             [214]                            dtypes.float
+ 216 Ops.MUL             : 0          dtypes.float                             [211, 215]                       None
+ 217 Ops.WHERE           : 0          dtypes.float                             [175, 'inf', 216]                None
+ 218 Ops.WHERE           : 0          dtypes.float                             [173, '0.0', 217]                None
+ 219 Ops.WHERE           : 0          dtypes.float                             [172, 'nan', 218]                None
+ 220 Ops.ADD             : 0          dtypes.float                             [219, '1.0']                     None
+ 221 Ops.FDIV            : 0          dtypes.float                             [170, 220]                       None
+ 222 Ops.INDEX           : 0          dtypes.float                             [166, '1']                       None
+ 223 Ops.CMPLT           : 0          dtypes.bool                              [222, '-7.0']                    None
+ 224 Ops.WHERE           : 0          dtypes.float                             [223, '-7.0', 222]               None
+ 225 Ops.NEG             : 0          dtypes.float                             [224]                            None
+ 226 Ops.CMPLT           : 0          dtypes.bool                              [225, '-7.0']                    None
+ 227 Ops.WHERE           : 0          dtypes.float                             [226, '-7.0', 225]               None
+ 228 Ops.SUB             : 0          dtypes.float                             ['1.0', 227]                     None
+ 229 Ops.MUL             : 0          dtypes.float                             [221, 228]                       None
+ 230 Ops.NEG             : 0          dtypes.float                             [229]                            None
+ 231 Ops.INDEX           : 0          dtypes.float                             [166, '2']                       None
+ 232 Ops.NEG             : 0          dtypes.float                             [231]                            None
+ 233 Ops.CMPLT           : 0          dtypes.bool                              [232, '-7.0']                    None
+ 234 Ops.WHERE           : 0          dtypes.float                             [233, '-7.0', 232]               None
+ 235 Ops.MUL             : 0          dtypes.float                             [234, '2.4554669857025146']      None
+ 236 Ops.CMPNE           : 0          dtypes.bool                              [235, 235]                       None
+ 237 Ops.CMPLT           : 0          dtypes.bool                              [235, '-150.0']                  None
+ 238 Ops.CMPLT           : 0          dtypes.bool                              [235, '128.0']                   None
+ 239 Ops.CMPNE           : 0          dtypes.bool                              [238, 'True']                    None
+ 240 Ops.CMPNE           : 0          dtypes.bool                              [235, 'inf']                     None
+ 241 Ops.CMPNE           : 0          dtypes.bool                              [235, '-inf']                    None
+ 242 Ops.WHERE           : 0          dtypes.float                             [241, 235, '0.0']                None
+ 243 Ops.WHERE           : 0          dtypes.float                             [236, '0.0', 242]                None
+ 244 Ops.WHERE           : 0          dtypes.float                             [240, 243, '0.0']                None
+ 245 Ops.CMPLT           : 0          dtypes.bool                              [244, '0.0']                     None
+ 246 Ops.WHERE           : 0          dtypes.float                             [245, '-0.5', '0.5']             None
+ 247 Ops.ADD             : 0          dtypes.float                             [244, 246]                       None
+ 248 Ops.CAST            : 0          dtypes.int                               [247]                            dtypes.int
+ 249 Ops.CAST            : 0          dtypes.float                             [248]                            dtypes.float
+ 250 Ops.SUB             : 0          dtypes.float                             [244, 249]                       None
+ 251 Ops.MUL             : 0          dtypes.float                             ['0.00015359208919107914', 250]  None
+ 252 Ops.ADD             : 0          dtypes.float                             [251, '0.0013392627006396651']   None
+ 253 Ops.MUL             : 0          dtypes.float                             [252, 250]                       None
+ 254 Ops.ADD             : 0          dtypes.float                             [253, '0.009618384763598442']    None
+ 255 Ops.MUL             : 0          dtypes.float                             [254, 250]                       None
+ 256 Ops.ADD             : 0          dtypes.float                             [255, '0.055503472685813904']    None
+ 257 Ops.MUL             : 0          dtypes.float                             [256, 250]                       None
+ 258 Ops.ADD             : 0          dtypes.float                             [257, '0.24022644758224487']     None
+ 259 Ops.MUL             : 0          dtypes.float                             [258, 250]                       None
+ 260 Ops.ADD             : 0          dtypes.float                             [259, '0.6931471824645996']      None
+ 261 Ops.MUL             : 0          dtypes.float                             [260, 250]                       None
+ 262 Ops.ADD             : 0          dtypes.float                             [261, '1.0']                     None
+ 263 Ops.CMPLT           : 0          dtypes.bool                              [248, '0']                       None
+ 264 Ops.WHERE           : 0          dtypes.int                               [263, '1', '0']                  None
+ 265 Ops.ADD             : 0          dtypes.int                               [248, 264]                       None
+ 266 Ops.SHR             : 0          dtypes.int                               [265, '1']                       None
+ 267 Ops.CMOD            : 0          dtypes.int                               [248, '2']                       None
+ 268 Ops.CMPNE           : 0          dtypes.bool                              [267, '0']                       None
+ 269 Ops.AND             : 0          dtypes.bool                              [268, 263]                       None
+ 270 Ops.CAST            : 0          dtypes.int                               [269]                            dtypes.int
+ 271 Ops.SUB             : 0          dtypes.int                               [266, 270]                       None
+ 272 Ops.ADD             : 0          dtypes.int                               [271, '127']                     None
+ 273 Ops.SHL             : 0          dtypes.int                               [272, '23']                      None
+ 274 Ops.BITCAST         : 0          dtypes.float                             [273]                            dtypes.float
+ 275 Ops.MUL             : 0          dtypes.float                             [262, 274]                       None
+ 276 Ops.SUB             : 0          dtypes.int                               [248, 271]                       None
+ 277 Ops.ADD             : 0          dtypes.int                               [276, '127']                     None
+ 278 Ops.SHL             : 0          dtypes.int                               [277, '23']                      None
+ 279 Ops.BITCAST         : 0          dtypes.float                             [278]                            dtypes.float
+ 280 Ops.MUL             : 0          dtypes.float                             [275, 279]                       None
+ 281 Ops.WHERE           : 0          dtypes.float                             [239, 'inf', 280]                None
+ 282 Ops.WHERE           : 0          dtypes.float                             [237, '0.0', 281]                None
+ 283 Ops.WHERE           : 0          dtypes.float                             [236, 'nan', 282]                None
+ 284 Ops.ADD             : 0          dtypes.float                             [283, '1.0']                     None
+ 285 Ops.FDIV            : 0          dtypes.float                             [234, 284]                       None
+ 286 Ops.INDEX           : 0          dtypes.float                             [166, '3']                       None
+ 287 Ops.CMPLT           : 0          dtypes.bool                              [286, '-7.0']                    None
+ 288 Ops.WHERE           : 0          dtypes.float                             [287, '-7.0', 286]               None
+ 289 Ops.NEG             : 0          dtypes.float                             [288]                            None
+ 290 Ops.CMPLT           : 0          dtypes.bool                              [289, '-7.0']                    None
+ 291 Ops.WHERE           : 0          dtypes.float                             [290, '-7.0', 289]               None
+ 292 Ops.SUB             : 0          dtypes.float                             ['1.0', 291]                     None
+ 293 Ops.MUL             : 0          dtypes.float                             [285, 292]                       None
+ 294 Ops.NEG             : 0          dtypes.float                             [293]                            None
+ 295 Ops.STACK           : 0          dtypes.float                             [99, 163, 230, 294]              None
+ 296 Ops.STORE           : 0          dtypes.void                              [7, 295]                         None
+ 297 Ops.GROUP           : 0          dtypes.void                              [296, 296, 296, 296]             None
+ 298 Ops.END             :            dtypes.void                              [297, 3]                         None
+ 299 Ops.SINK            :            dtypes.void                              [298]                            KernelInfo(name='E_8_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)

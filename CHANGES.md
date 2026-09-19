@@ -107,6 +107,64 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Tracing a function under `Rune.jit` no longer allocates a buffer for every
+  traced value. Each placeholder was an uninitialised tensor of the result's
+  full size; the pages were never touched, but OCaml counted the bytes and ran
+  major collections throughout the trace. The first call of a gpt-oss-20b step
+  goes from 47 s to 11 s. Placeholders are now `Nx_effect.Symbolic` tensors:
+  dtype and shape, no bytes.
+- A compiled function plans the memory of its intermediates: buffers whose
+  lifetimes do not overlap share one arena per device instead of each owning an
+  allocation for the life of the function. A single-token step of gpt-oss-20b
+  on Metal held 11 GB of intermediates beside its 13.8 GB of weights and now
+  holds 0.2 GB; no longer under memory pressure, it drops from 6.7 s to 0.42 s.
+  `NO_MEMORY_PLANNER=1` turns it off.
+- An upload reads a tensor over a mapped file from the file, not through the
+  mapping. Copying mapped pages into device buffers is bound by the page-fault
+  path once the file no longer fits in the cache beside the buffers: placing a
+  13.76 GB checkpoint on Metal took 28.6 s and now takes 7.3 s. A transposed
+  weight is read as the run of the file it permutes. If the path no longer
+  names the file that was mapped, the mapping is read as before.
+- `RUNE_JIT_RESIDENT_BUDGET` counts the outputs of compiled calls only. Placed
+  weights stay resident by design, and counting them ran a major collection
+  before every output allocation once a model larger than the budget was
+  placed. `jit_stats ().resident_bytes` still counts them.
+- A compiled function that captures a value placed with `Rune.to_device` on
+  its own device binds the value's buffer as its constant: nothing is uploaded,
+  and every compiled function over the same weights shares one device copy,
+  where each used to upload its own. A bound value keeps its buffer for as long
+  as it is reachable: a host read copies it out and leaves the buffer in place,
+  and a `~donate:true` call that takes it as an input does not consume it.
+- Add `Rune.to_device ?device x`, `x` with its bytes held by a device. The
+  result has `x`'s type and value and is resident like an unread output of a
+  compiled call: feeding it to a compiled function on that device moves no
+  bytes, `~donate:true` consumes it, and a host read brings it back. Its buffer
+  bypasses the allocator's cache. On the CPU device it is `Nx.contiguous x`,
+  and inside `jit`, `grad`, `jvp` and `vmap` it is `x`.
+- Copies between host and device move 64 MiB at a time. `Rune.jit` staged each
+  upload and read-back in a host buffer the size of the tensor and kept one per
+  distinct size for the life of the compiled function, 1.1 GB for a 1B
+  parameter model, and made a strided tensor contiguous whole before staging
+  it. A strided tensor is now copied piece by piece, and a long run of copies
+  synchronizes the device every 256 MiB.
+- `Rune.jit` on the CPU device compiles kernels that read host memory at any
+  address. The kernels declared their vector types aligned to their size while
+  tensors were read in place wherever their data sat, so on x86-64 a slice
+  starting inside a buffer, a tensor over a mapped file, or a four-wide float64
+  kernel over ordinary allocated memory could kill the process.
+- Compiled programs on Metal replay as batched GPU submissions: the kernels of
+  a `Rune.jit` trace are recorded once and each call submits them in a few
+  command buffers instead of one per kernel. The per-kernel launch cost drops
+  from about 27 to 3 microseconds, level with the CPU device: a trace of 256
+  small kernels takes 0.9 ms per call where it took 7.7 ms, and a GPT-2 124M
+  decode step 6.6 ms where it took 9.2 ms. `JIT=2` restores one submission
+  per kernel.
+- Reverse mode no longer copies every cotangent. A cotangent is held as the
+  lazy view its pull produced (a transpose, a broadcast) and materialized where
+  a reshape needs it and where a gradient leaves `Rune.grad`. Compiled
+  gradients run far fewer kernels, 95 against 210 for a two-block decoder, and
+  transposes that cancel are free in the backward pass as they were in the
+  forward one.
 - `Nx.set` with a run-time window start (`Nx.D`) under `Rune.jit` costs the
   window instead of the destination: it compiles to a store at the window's
   flat positions, in place on a donated tensor. A one-row write into a
@@ -216,6 +274,31 @@ thread.
 
 ### Tolk (new)
 
+- Metal kernels cast between `bfloat16` and `float32` by bit manipulation, as
+  the reference does to avoid a Metal compiler bug with
+  `as_type<half>((bfloat)(const))`. tolk rendered native casts. Values are
+  unchanged: both round half to even.
+- `DEBUG=2` prints one line for every executed kernel, view, copy and batched
+  graph: device, call count, name, memory in use, time, and GFLOPS and GB/s
+  from the kernel's estimates. `Helpers.Global_counters` holds the running
+  totals. Batching hides kernels inside a graph call, so `JIT=2` gives the
+  per-kernel profile of a compiled function.
+- A compiled function that is dropped now releases the device memory of its
+  batched graphs. Recorded graphs were kept in a table that was never emptied,
+  and each one holds the buffers of its intermediates: a process that compiled
+  many functions, or one function at many shapes, grew without bound on Metal
+  and CUDA (108 MB per dropped function in a three-matmul probe at 3072x3072).
+  `Tolk.Realize.graph_runners` reports how many recorded graphs are live.
+- `Cstyle.clang` and `Tolk_cpu.create` take `?aligned`. `~aligned:false`
+  declares vector types aligned to one byte, for a device that binds memory it
+  did not allocate. Absent, the `ALIGNED` environment variable decides, as
+  before.
+- The Metal device carries a `Device.Graph` capability: a batched call sequence
+  is encoded once into an indirect command buffer and replayed as a single
+  command buffer, with rebound buffers, variable values and launch dimensions
+  patched in between. `Device.Graph.t` gains `max_buffer_offset`, which keeps
+  a call whose buffer view starts past 4 GiB out of Metal graphs, and
+  `FIX_METAL_ICB` overrides the pre-M3 pipeline workaround.
 - `Creation.clone` takes `?device` and copies a source that lives on another
   device across. `Op.scatter_indexed` places its buffers on the device of its
   operands.
@@ -840,6 +923,34 @@ thread.
 
 ### Nx
 
+- Add `Nx_buffer.register_file` and `Nx_buffer.file_range`. A buffer whose
+  memory lies inside a recorded file mapping, views and reinterpretations
+  included, answers with the file and the byte offset of its first element, so
+  that an upload can read the bytes from the file instead of faulting them in
+  through the mapping. `Nx_io.load_safetensors` records its mappings.
+- `Nx_io.load_safetensors` maps the file instead of reading it: loading reads
+  the header only, and each tensor is a view of the file whose pages are read
+  when first used. It used to hold the file twice in memory and copy every
+  tensor out element by element; a 2.5 GB checkpoint that took 3 s to load
+  takes 0.05 s. Entries at an address their dtype cannot be read from are
+  copied. A loaded file must not be modified in place while its tensors are
+  alive; `Nx.copy` detaches a tensor from its file.
+- `Nx_io.load_safetensors` loads `F8_E8M0`, `F4`, `F6_E2M3` and `F6_E3M2`
+  entries as their `uint8` bytes instead of dropping them with a warning,
+  loads 16-bit entries at odd offsets instead of raising, and rejects a file
+  whose length disagrees with its header, a header that names a tensor twice,
+  and anything that is not a regular file. Its errors name the file.
+- Add `Nx_buffer.reinterpret kind buf`, `buf`'s memory read as elements of
+  `kind` without a copy. It is the only way to view existing memory, such as a
+  mapped file, as `bfloat16`, `float8`, `bool`, `uint32` or `uint64`, whose
+  kinds only allocation could set before.
+- `Nx_io.save_safetensors` no longer truncates its destination in place: it
+  writes a temporary file beside it, syncs it and renames it, so a crash or a
+  failed save leaves the previous file whole. If the rename is refused the
+  written file is kept and the error names it. Saved files now have mode
+  `0o640`, as the other `Nx_io` writers give theirs.
+- `Nx.cast` at the tensor's own dtype is the tensor itself and no longer a
+  copy: only a change of dtype allocates. Use `Nx.copy` for fresh storage.
 - Fix `einsum` with a repeated index that does not sit at the end of its
   operand (for example `abnb->an`): the surviving label stayed where the index
   first appeared instead of moving with the diagonal to the end of the
@@ -1606,13 +1717,84 @@ thread.
 
 ### Kaun
 
+- `Kaun_hf.load_checkpoint` no longer asks the Hub for a shard index when the
+  repository is already cached as a single `model.safetensors`: a cached model
+  used to make one network request on every start, and to stall without a
+  connection. `Kaun_hf.download_file` now runs `curl` directly instead of
+  through a shell: the previous detection was a POSIX shell command, which
+  `cmd.exe` cannot run, so downloads failed on Windows with "curl not found".
+- The gpt-oss example takes text: `--prompt` (with `--system`, `--reasoning`
+  and `--show-analysis`) renders a harmony conversation with the checkpoint's
+  tokenizer, streams the model's final answer as it decodes and stops when the
+  model closes its turn. Its `Harmony` module renders and parses the format,
+  checked against `openai-harmony` by `validate_text.exe`.
+- The GPT-2, Llama and gpt-oss examples' importers take `?device` and place
+  each leaf on it with `Rune.to_device` as they build it, and their programs
+  pass the device they compile for: the model is held once, on the device, and
+  the first compiled call uploads nothing.
+- Remove `Kaun_hf.rename`, `transpose` and `split`. They existed because a
+  template found entries by its own paths; an importer now asks for each entry
+  by the file's name, so a rename is the name at the field, a transpose is
+  `Nx.matrix_transpose` and a fused tensor is `Nx.split ~axis n`, all views.
+- Add `Checkpoint.to_tensor ~shape dtype name` and `Checkpoint.to_float ~shape
+  dtype name`, which read one entry by name and check its shape. A model's
+  importer is now an ordinary function that builds the parameter record from
+  them, so no template is allocated, leaves may have different dtypes, and a
+  wrong configuration fails at import with the entry's name. `to_tensor` is
+  strict and returns the entry as stored, a view of the file; `to_float` casts
+  between `float16`, `bfloat16`, `float32` and `float64` and refuses anything
+  else.
+- `Checkpoint.to_params` and `to_packed` lose `?cast` and raise on any dtype
+  mismatch, so a restart that names the wrong dtype fails instead of narrowing
+  its state. To convert, read the entry with `Checkpoint.to_float`.
+- `Checkpoint.load` and `Kaun_hf.load_checkpoint` map their files, as
+  `Nx_io.load_safetensors` now does: loading reads headers only, entries are
+  views of the file, and entries whose dtype nx lacks arrive as `uint8` bytes
+  instead of being skipped. A loaded file must not be modified in place while
+  its entries are alive; `Checkpoint.save` replaces its destination atomically.
+- `Kaun_hf.download_file` downloads to a uniquely named temporary file beside
+  the cache path and renames it once complete. An interrupted download used to
+  leave a partial file at the cache path, which later runs served as cached,
+  and two processes fetching one file wrote over each other.
+  `Kaun_hf.clear_cache` runs a major collection and retries once when a file
+  cannot be removed.
+- The pieces `Attention.apply` and `Attention.cached` are made of are public:
+  `Attention.split` projects and splits into heads, `Attention.attend` is
+  grouped-query attention with `?mask`, `?scale` and `?sinks`,
+  `Attention.merge` concatenates heads through the output projection, and
+  `Attention.Cache.extend` stores a call's keys and values and returns what its
+  tokens attend over. A model with its own attention variant composes a layer
+  in a dozen lines. `apply` and `cached` compute what they did, bit for bit.
+- `Attention.scaled_dot_product_attention` takes `?scale`, which replaces
+  `1 / sqrt d`, and `?sinks`, attention-sink logits that join each query's
+  softmax as one more key of value zero, as gpt-oss needs. With sinks a query
+  that sees no key yields zero. Without the options the computation is
+  unchanged.
+- Add `Rope.of_frequencies`, a schedule from one head's inverse frequencies,
+  for schedules the module does not name, and `Rope.yarn`, the YaRN
+  long-context frequencies with an untruncated correction range, as gpt-oss
+  uses them. `Rope.apply` keeps norms: YaRN's attention temperature is a
+  number the model passes to the attention core, not part of the schedule.
+- **Breaking**: the sampling masks `Fn.top_k` and `Fn.top_p` are now
+  `Fn.keep_top_k` and `Fn.keep_top_p`. They return the logits with everything
+  outside the kept set at negative infinity, where `Nx.top_k` returns the `k`
+  greatest entries: one name, one meaning.
+- Add `Cache_index.pool ~slots dtype shape`, an empty pool of `slots` slots of
+  shape `shape`: the one place that knows the scratch row. A layer with its
+  own cache record builds its leaves with it, as `Attention.Cache.make` does.
+- **Breaking**: a sliding window is part of the cache index.
+  `Cache_index.window w index` is `index` seeing the last `w` positions, and
+  `Cache_index.extend` and `Cache_index.mask` lose `?window` and read the
+  index's, so a layer can no longer zero with one window and mask with
+  another. `Attention.cached` loses `?window` too: a layer with a window is
+  `cached p cache (Cache_index.window w index) x`.
 - `Attention.apply` and `Attention.cached` no longer copy the keys and values
   to group them under their query heads. The decode step of
   `kaun/bench/decode` runs 24 fewer kernels and allocates 9% fewer host words;
   on Metal it takes 8.0 ms against 8.5 ms at a cache of 256, and the same 8.9
   ms at 1024.
 - **Breaking**: a decoder has one forward pass. `Attention.cached` takes a
-  `Kaun.Cache_index.t` and gains `?window`; over `Cache_index.whole`, which
+  `Kaun.Cache_index.t`; over `Cache_index.whole`, which
   reads and keeps nothing, it is plain causal attention and returns its cache
   untouched. A model's `hidden` is
   `fst (cached ... (Cache_index.whole ~batch ~seq ()) ids)`, the second fold
@@ -1653,9 +1835,9 @@ thread.
   byte-identical to Meta's, with sampled generation through key-value caches
   and a `validate` program that checks the import against the reference
   implementation's float32 logits, block by block.
-- `Kaun.Fn.top_k` and `Kaun.Fn.top_p` mask next-token logits for sampling:
-  entries outside the kept set become negative infinity and the shape is
-  unchanged, so they compose with a temperature division and
+- `Kaun.Fn.keep_top_k` and `Kaun.Fn.keep_top_p` mask next-token logits for
+  sampling: entries outside the kept set become negative infinity and the
+  shape is unchanged, so they compose with a temperature division and
   `Nx.Rng.categorical` in any order and compile. `k` and `p` are tensors, a
   scalar or one entry per row, so a batch can mix requests.
 - `Loss.softmax_cross_entropy` and `softmax_cross_entropy_sparse` compute

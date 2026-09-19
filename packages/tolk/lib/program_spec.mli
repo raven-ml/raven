@@ -64,6 +64,9 @@ module Estimates : sig
   val of_uop : Tolk_uop.Uop.estimates -> t
   (** [of_uop e] converts a uop estimates record. *)
 
+  val to_uop : t -> Tolk_uop.Uop.estimates
+  (** [to_uop t] is the inverse of {!of_uop}. *)
+
   val of_program : program -> t
   (** [of_program p] computes estimates by walking [p]. *)
 end

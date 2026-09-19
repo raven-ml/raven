@@ -73,33 +73,55 @@ let clear_cache ?cache_dir ?repo_id () =
     | Some id -> Filename.concat cache_dir (sanitize_repo_id id)
     | None -> cache_dir
   in
-  if Sys.file_exists path then rm_rf path
+  if Sys.file_exists path then (
+    try rm_rf path
+    with Sys_error _ | Unix.Unix_error _ ->
+      Gc.full_major ();
+      if Sys.file_exists path then rm_rf path)
 
 (* HTTP via curl *)
 
-let curl_available =
-  lazy (Unix.system "command -v curl >/dev/null 2>&1" = Unix.WEXITED 0)
-
-let check_curl () = if not (Lazy.force curl_available) then failwith err_no_curl
+(* [curl] runs without a shell, so no argument needs quoting and the lookup on
+   [PATH] is the same on every system. A missing program is exit code 127 from
+   the forked child on Unix and [ENOENT] from process creation on Windows. *)
+let curl args =
+  let rec wait pid =
+    try snd (Unix.waitpid [] pid)
+    with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
+  in
+  match
+    wait
+      (Unix.create_process "curl"
+         (Array.of_list ("curl" :: args))
+         Unix.stdin Unix.stdout Unix.stderr)
+  with
+  | Unix.WEXITED 0 -> true
+  | Unix.WEXITED 127 -> failwith err_no_curl
+  | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
 
 let curl_download ~headers ~url ~dest () =
-  check_curl ();
   mkdir_p (Filename.dirname dest);
-  let hdr =
-    List.map
-      (fun (k, v) -> Printf.sprintf "-H %s" (Filename.quote (k ^ ": " ^ v)))
-      headers
-    |> String.concat " "
+  let headers =
+    List.concat_map (fun (k, v) -> [ "-H"; k ^ ": " ^ v ]) headers
   in
-  let cmd =
-    Printf.sprintf "curl -L --fail -s %s -o %s %s" hdr (Filename.quote dest)
-      (Filename.quote url)
+  let temp =
+    Filename.temp_file ~temp_dir:(Filename.dirname dest)
+      (Filename.basename dest ^ ".")
+      ".part"
   in
-  match Unix.system cmd with
-  | Unix.WEXITED 0 -> ()
-  | _ ->
-      (try Sys.remove dest with Sys_error _ -> ());
+  let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
+  match curl ([ "-L"; "--fail"; "-s" ] @ headers @ [ "-o"; temp; url ]) with
+  | true -> (
+      Unix.chmod temp 0o644;
+      try Unix.rename temp dest
+      with Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ())
+  | false ->
+      remove_temp ();
       failwith (err_download url)
+  | exception e ->
+      remove_temp ();
+      raise e
 
 (* Downloading *)
 
@@ -145,25 +167,6 @@ let load_config ?token ?cache_dir ?offline ?revision repo_id =
 
 (* Loading checkpoints *)
 
-(* [of_entries ~op entries] is the checkpoint holding [entries], validating name
-   distinctness and non-emptiness with [op]-labelled errors before
-   [Checkpoint.concat] can produce its own, less specific ones. *)
-let of_entries ~op entries =
-  let seen = Hashtbl.create (List.length entries) in
-  List.iter
-    (fun (name, _) ->
-      if name = "" then invalid_argf "Kaun_hf.%s: empty entry name" op;
-      if Hashtbl.mem seen name then
-        invalid_argf "Kaun_hf.%s: duplicate name %S" op name;
-      Hashtbl.add seen name ())
-    entries;
-  Checkpoint.concat
-    (List.map
-       (fun (name, Rune.Ptree.P x) -> Checkpoint.of_tensor name x)
-       entries)
-
-let entries t = List.map (fun n -> (n, Checkpoint.get n t)) (Checkpoint.names t)
-
 let load_sharded ~download index_path =
   let json = read_json_file index_path in
   let weight_map =
@@ -205,49 +208,18 @@ let load_checkpoint ?token ?cache_dir ?offline ?revision repo_id =
   let try_download file =
     try Some (download file) with Failure _ | Sys_error _ -> None
   in
-  match try_download "model.safetensors.index.json" with
+  let index = "model.safetensors.index.json" and single = "model.safetensors" in
+  let cached file =
+    Sys.file_exists (cache_path ?cache_dir ?revision ~file repo_id)
+  in
+  (* A cached single file means an earlier call found no index: asking the Hub
+     for one again would put a request on every start. *)
+  let index_path =
+    if cached single && not (cached index) then None else try_download index
+  in
+  match index_path with
   | Some index_path -> load_sharded ~download index_path
   | None -> (
-      match try_download "model.safetensors" with
+      match try_download single with
       | Some path -> Checkpoint.load path
       | None -> failwith (err_no_safetensors repo_id))
-
-(* Adapting foreign checkpoints *)
-
-let rename f t =
-  of_entries ~op:"rename" (List.map (fun (n, x) -> (f n, x)) (entries t))
-
-let transpose name t =
-  match Checkpoint.find name t with
-  | None -> invalid_argf "Kaun_hf.transpose: no entry named %S" name
-  | Some (Rune.Ptree.P x) ->
-      let nd = Array.length (Nx.shape x) in
-      if nd < 2 then
-        invalid_argf "Kaun_hf.transpose: entry %S has %d axes, needs at least 2"
-          name nd;
-      let x = Nx.swapaxes (nd - 2) (nd - 1) x in
-      of_entries ~op:"transpose"
-        (List.map
-           (fun (n, e) -> if n = name then (n, Rune.Ptree.P x) else (n, e))
-           (entries t))
-
-let split ?(axis = -1) name ~into t =
-  match Checkpoint.find name t with
-  | None -> invalid_argf "Kaun_hf.split: no entry named %S" name
-  | Some (Rune.Ptree.P x) ->
-      let parts = List.length into in
-      if parts = 0 then invalid_arg "Kaun_hf.split: empty name list";
-      let shape = Nx.shape x in
-      let nd = Array.length shape in
-      let axis = if axis < 0 then axis + nd else axis in
-      if axis < 0 || axis >= nd then
-        invalid_argf "Kaun_hf.split: axis out of bounds for entry %S" name;
-      if shape.(axis) mod parts <> 0 then
-        invalid_argf
-          "Kaun_hf.split: axis %d of entry %S has size %d, not a multiple of %d"
-          axis name shape.(axis) parts;
-      let sections =
-        List.map2 (fun n x -> (n, Rune.Ptree.P x)) into (Nx.split ~axis parts x)
-      in
-      let rest = List.filter (fun (n, _) -> n <> name) (entries t) in
-      of_entries ~op:"split" (rest @ sections)
