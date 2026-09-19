@@ -458,8 +458,8 @@ val jit :
     past a budget (the [RUNE_JIT_RESIDENT_BUDGET] environment variable, in
     bytes, a few GiB by default) a collection is triggered before allocating
     more. The budget counts outputs only, not values placed with
-    {!val-to_device}. A transfer failure surfaces as an exception at the first read of the
-    affected output.
+    {!val-to_device}. A transfer failure surfaces as an exception at the first
+    read of the affected output.
 
     [donate] (default [false]) consumes the resident inputs: once a call
     completes — never during it — the device buffers of every input leaf that
