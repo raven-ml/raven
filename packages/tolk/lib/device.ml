@@ -120,10 +120,17 @@ module Buffer = struct
   let is_initialized (Pack buf) = Option.is_some buf.buf
   let nbytes (Pack buf) = buf.size * Dtype.itemsize buf.dtype
 
+  let counts_as_used buf =
+    (not (String.starts_with ~prefix:"DISK" buf.device))
+    && Option.is_none buf.spec.external_ptr
+
   let rec allocate (Pack buf as t) =
     if Option.is_some buf.buf then invalid_arg "buffer already allocated";
     match buf.base with
-    | None -> buf.buf <- Some (buf.allocator.alloc (nbytes t) buf.spec)
+    | None ->
+        buf.buf <- Some (buf.allocator.alloc (nbytes t) buf.spec);
+        if counts_as_used buf then
+          Helpers.Global_counters.add_mem_used buf.device (nbytes t)
     | Some base ->
         ensure_allocated (Pack base);
         base.allocated_views <- base.allocated_views + 1;
@@ -147,6 +154,8 @@ module Buffer = struct
            reference it would leave dangling pointers. *)
         if buf.allocated_views <> 0 then
           invalid_arg "base buffer still has allocated views";
+        if counts_as_used buf then
+          Helpers.Global_counters.add_mem_used buf.device (-nbytes t);
         buf.allocator.free raw (nbytes t) buf.spec;
         buf.buf <- None
     | Some base, Some _ ->

@@ -112,6 +112,94 @@ let pcontig = Context_var.int ~key:"PCONTIG" ~default:0
 (* Allow TF32 on NVIDIA GPUs. *)
 let allow_tf32 = Context_var.int ~key:"ALLOW_TF32" ~default:0
 
+(* Terminal output *)
+
+let no_color = Context_var.int ~key:"NO_COLOR" ~default:0
+
+let colors =
+  [ "black"; "red"; "green"; "yellow"; "blue"; "magenta"; "cyan"; "white" ]
+
+(* An uppercase [color] is the bright variant. *)
+let colored ?(background = false) st color =
+  match color with
+  | None -> st
+  | Some _ when Context_var.get no_color <> 0 -> st
+  | Some color ->
+      let index =
+        let lower = String.lowercase_ascii color in
+        let rec find i = function
+          | [] -> invalid_arg ("colored: unknown color " ^ color)
+          | c :: rest -> if String.equal c lower then i else find (i + 1) rest
+        in
+        find 0 colors
+      in
+      let bright = String.equal (String.uppercase_ascii color) color in
+      Printf.sprintf "\027[%dm%s\027[0m"
+        ((if background then 10 else 0) + (if bright then 60 else 0) + 30 + index)
+        st
+
+(* Drops the escape sequences ESC [ K and ESC [ ... m. *)
+let ansistrip s =
+  let n = String.length s in
+  let b = Buffer.create n in
+  let rec go i =
+    if i < n then
+      if s.[i] = '\027' && i + 1 < n && s.[i + 1] = '[' then
+        if i + 2 < n && s.[i + 2] = 'K' then go (i + 3)
+        else
+          match String.index_from_opt s (i + 2) 'm' with
+          | Some m -> go (m + 1)
+          | None ->
+              Buffer.add_char b s.[i];
+              go (i + 1)
+      else begin
+        Buffer.add_char b s.[i];
+        go (i + 1)
+      end
+  in
+  go 0;
+  Buffer.contents b
+
+let ansilen s = String.length (ansistrip s)
+
+let time_to_str ?(w = 8) t =
+  if t > 10.0 then Printf.sprintf "%*.2fs " w t
+  else if t > 10.0 /. 1e3 then Printf.sprintf "%*.2fms" w (t *. 1e3)
+  else Printf.sprintf "%*.2fus" w (t *. 1e6)
+
+let size_to_str s =
+  let f = float_of_int s in
+  if s >= 1 lsl 30 then Printf.sprintf "%.2f GB" (f /. float_of_int (1 lsl 30))
+  else if s >= 1 lsl 20 then
+    Printf.sprintf "%.2f MB" (f /. float_of_int (1 lsl 20))
+  else if s >= 1 lsl 10 then
+    Printf.sprintf "%.2f KB" (f /. float_of_int (1 lsl 10))
+  else Printf.sprintf "%d B" s
+
+(* [mem_used] and [mem_used_per_device] follow live allocations and are not
+   reset. *)
+module Global_counters = struct
+  let global_ops = ref 0
+  let global_mem = ref 0
+  let time_sum_s = ref 0.0
+  let kernel_count = ref 0
+  let mem_used = ref 0
+  let mem_used_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
+
+  let add_mem_used device nbytes =
+    mem_used := !mem_used + nbytes;
+    let prev =
+      Option.value (Hashtbl.find_opt mem_used_per_device device) ~default:0
+    in
+    Hashtbl.replace mem_used_per_device device (prev + nbytes)
+
+  let reset () =
+    global_ops := 0;
+    global_mem := 0;
+    time_sum_s := 0.0;
+    kernel_count := 0
+end
+
 (* Hashing *)
 
 let sha256_k =

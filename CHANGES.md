@@ -268,6 +268,11 @@ thread.
 
 ### Tolk (new)
 
+- `DEBUG=2` prints one line for every executed kernel, view, copy and batched
+  graph: device, call count, name, memory in use, time, and GFLOPS and GB/s
+  from the kernel's estimates. `Helpers.Global_counters` holds the running
+  totals. Batching hides kernels inside a graph call, so `JIT=2` gives the
+  per-kernel profile of a compiled function.
 - A compiled function that is dropped now releases the device memory of its
   batched graphs. Recorded graphs were kept in a table that was never emptied,
   and each one holds the buffers of its intermediates: a process that compiled

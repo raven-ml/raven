@@ -3012,6 +3012,48 @@ let gcd = function
 let simplify_ref : (t -> t) ref = ref (fun u -> u)
 let simplify u = !simplify_ref u
 
+(* Symbolic variables of [u], as (node, name, vmin, vmax). *)
+let symbolic_vars u =
+  find_nodes
+    (fun n ->
+      match as_param n with
+      | Some
+          {
+            param =
+              { addrspace = Dtype.Alu; name = Some _; vmin_vmax = Some _; _ };
+            _;
+          } ->
+          true
+      | _ -> false)
+    u
+  |> List.filter_map (fun n ->
+      match as_param n with
+      | Some
+          {
+            param =
+              {
+                addrspace = Dtype.Alu;
+                name = Some name;
+                vmin_vmax = Some (lo, hi);
+                _;
+              };
+            _;
+          } ->
+          Some (n, name, lo, hi)
+      | _ -> None)
+
+let sym_infer u var_vals =
+  let mappings =
+    symbolic_vars u
+    |> List.filter_map (fun (n, name, _, _) ->
+        match List.assoc_opt name var_vals with
+        | Some value -> Some (n, const_int value)
+        | None -> None)
+  in
+  match const_int_value (simplify (substitute mappings u)) with
+  | Some n -> n
+  | None -> invalid_arg "sym_infer: expression did not reduce to a constant"
+
 (* Symbolic integer ("sint") helpers. A dimension or size is a plain node: a
    concrete integer is a [Const] and a symbolic value is any other
    integer-valued expression. *)
