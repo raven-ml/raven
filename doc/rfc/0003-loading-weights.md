@@ -207,6 +207,42 @@ was unmapped once. The JavaScript stubs gain the same function, a typed array
 of the new kind over the same `ArrayBuffer`. It is storage-level: no backend
 operation is added.
 
+### `Nx_buffer.file_range`
+
+```ocaml
+type file = { path : string; size : int; mtime : float; inode : int }
+val register_file : file -> (int, uint8_elt) t -> unit
+val file_range : ('a, 'b) t -> (file * int) option
+```
+
+`file_range buf` is the file `buf`'s memory is a mapping of and the byte
+offset in it of `buf`'s first element, for any buffer whose memory lies inside
+a recorded mapping. The answer is address arithmetic, so the results of
+`Array1.sub` and `reinterpret` answer without carrying anything. It is `None`
+for every other buffer, which includes the entries a load copied, and always
+on JavaScript. `register_file file buf` records a mapping that `Unix.map_file`
+just returned, before any view of it exists, with the file's identity as the
+mapping descriptor's `fstat` gave it. The loader records its mappings. nx's
+buffer library does not link unix, so the mapping call stays in nx io and the
+buffer module only records it.
+
+A record must die exactly when its mapping does, since a stale one would
+describe whatever is mapped at that address next. The runtime unmaps a file in
+the finaliser of the last bigarray over it, and every bigarray derived from a
+mapped one inherits its custom operations. Registration replaces the root's
+operations with a copy whose finaliser removes the record when it is about to
+run the runtime's finaliser for the last time, that is when the array has no
+proxy or the proxy's count is one. Finalisers of different views may run on
+different domains, so that decision and the runtime's decrement are taken
+under one lock. A test maps, records, drops and collects, then maps another
+file, which the system places at the same address, and checks that it is not
+taken for the first.
+
+The consumer is rune's upload. A path may name another file by the time it is
+read, so the file opened must have the recorded size, modification time and
+inode, and an upload that finds another file, or a short read, copies from the
+mapping instead.
+
 ### `Nx_io.load_safetensors`
 
 ```ocaml
@@ -319,7 +355,12 @@ copies it back and releases the buffer. Every nx operation outside a compiled
 function is a host read, views included. `x` is untouched and may be dropped.
 A contiguous source, offset or not, is read in place chunk by chunk. A strided
 source is cut along its leading axis into pieces of at most a chunk, each made
-contiguous on its own, so it never costs a whole host copy. A value already
+contiguous on its own, so it never costs a whole host copy. A source over a
+mapped file (`Nx_buffer.file_range`) is read from the file: each chunk of a
+contiguous one with `pread` into the staging chunk, and a strided one that
+permutes a contiguous run of the file, a transposed weight, as that run read
+into a host copy which is then cut into pieces. The file opened must be the
+one that was mapped, and otherwise the mapping is read. A value already
 resident on `device` is returned as it is, and one resident elsewhere goes
 through the host. On the CPU device the result is `Nx.contiguous x`, unless
 `RUNE_JIT_FORCE_COPY` is set. Inside `jit`, `grad`, `jvp` and `vmap` it is
@@ -510,11 +551,16 @@ written from the real shards' headers.
   host replaces (even by rename) or an unplugged disk is `Bus error` under a
   mapping, with no exception and no backtrace, where a read raises. The docs
   say to keep checkpoints on local disk and that `Nx.copy` detaches.
-- A cold load through the mapping runs at page-fault speed. A 2 GB trial on
-  the M1 Max gave about 0.8 GB/s mapped against 4 to 6 GB/s with `pread`,
-  cold, and 5.4 against 7.1 warm: about 17 s for gpt-oss-20b where the disk
-  allows 3. The warm starts that dominate example runs today are fixed; the
-  roadmap's "disk bandwidth" is not reached. See Unresolved questions.
+- Reading through the mapping runs at page-fault speed, 0.5 to 0.9 GB/s at
+  full size, cold or warm. Uploads avoid it by reading the file (see
+  Unresolved questions, first entry). What still walks the mapping is every
+  eager use of a mapped tensor, a host cast among them, the leaves the CPU
+  device reads in place at their first touch, and a strided view that is not a
+  permutation of a contiguous run. An upload of a transposed leaf reads its run
+  into a host copy of the leaf for the length of the upload, 1.16 GB at most
+  for gpt-oss-20b, which is the `T` of the peak-memory bound. After the read
+  the placement of a transposed leaf is bound by the strided copy that makes
+  its pieces contiguous, about 1 GB/s.
 - On Windows, and on Linux under strict overcommit, a private writable mapping
   is charged in full against the commit limit: 13.76 GB of page file for this
   checkpoint, 141 GB for a 70B model. A read-only mapping stub removes the
@@ -611,10 +657,14 @@ the forward pass catches a wrong shape after the upload and without the
 entry's name.
 
 **Tensors that own their bytes, read with `pread`, or a knob to choose.** A
-read raises where a mapping faults, and it is several times faster cold on
-macOS. It turns the model into anonymous memory in every eager run, and the
-CPU device loses its in-place leaves, 11.3 GB of gpt-oss. `Nx.copy` serves the
-caller who must overwrite a file it loaded. See Unresolved questions.
+read raises where a mapping faults, and it is several times faster than a walk
+of the mapping. Owning the bytes turns the model into anonymous memory in
+every eager run, and the CPU device loses its in-place leaves, 11.3 GB of
+gpt-oss. The mapping stays the reading surface: header-only opens, views at no
+committed memory, in-place reads on the CPU device, lazy slices. `pread` is
+how an upload fills its chunk, which is where the throughput matters, and it
+needs only a way from a buffer to its file range. `Nx.copy` serves the caller
+who must overwrite a file it loaded.
 
 **Wrapping the mapping as a Metal buffer with no copy.** It saves one pass
 over the model, needs a Metal-only stub and a buffer per file with tensors as
@@ -636,12 +686,21 @@ offsets, and cannot serve a cast or transposed leaf.
 
 ## Unresolved questions
 
-Before stage 1:
-- Cold throughput of the mapped upload against `pread` into the same Metal
-  buffers, with a read-ahead hint on the mapping, and memory while 13.76 GB of
-  buffers fill, at full size on the 32 GB M1 Max. If the hinted mapping stays
-  under half of `pread`, an upload reads a file-backed leaf with `pread` into
-  its chunk, which needs a query from a tensor to its file range.
+Resolved by measurement, 2026-09-19, 32 GB M1 Max under memory pressure:
+- The mapped upload is bound by the page-fault path. Copying a 13.76 GB file
+  into Metal buffers ran at 0.49 GB/s cold and 0.93 GB/s warm through the
+  mapping, since the cache cannot hold the file beside the buffers, against
+  2.4 to 4.8 GB/s with `pread`. A read-ahead hint bought 1.5 times and doubled
+  the footprint to 27.4 GB; copying straight into the buffer without the
+  staging chunk did not help. So an upload reads a file-backed leaf with
+  `pread` into its chunk, through `Nx_buffer.file_range`. Placing the synthetic
+  gpt-oss-20b on Metal went from 28.6 s to 7.3 s, cold or warm, and its peak
+  footprint from 14.28 to 15.50 GB, the difference being the host copy of the
+  largest transposed leaf. Llama 3.2 1B cold, to the end of the import: 5.8 to
+  3.2 s on Metal and 4.8 to 2.8 s on the CPU device. Warm, where the file fits
+  in the cache, the read costs 0.1 to 0.3 s more than the mapping.
+
+Open:
 - What unaligned vector types cost on x86-64. It is unmeasured; current CPUs
   execute an unaligned load of an aligned address at the same speed.
 - Whether Windows lets a file with a live view be deleted or renamed over (the
@@ -655,7 +714,8 @@ During stage 1:
 ## Future possibilities
 
 A reader value with a row-range read, for a process that reads its slice of a
-misaligned entry; a query from a tensor to its file range, for direct reads
-into pinned staging through tolk's unimplemented `copy_from_disk` hook; a
-streaming writer; a read-only mapping stub. Nothing listed here is a reason to
+misaligned entry; direct reads into pinned staging or into a device's
+host-visible buffer through tolk's unimplemented `copy_from_disk` hook, which
+`Nx_buffer.file_range` now makes possible and which would remove the staging
+copy from the 7.3 s above; a streaming writer; a read-only mapping stub. Nothing listed here is a reason to
 accept this or a later RFC.
