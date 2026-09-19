@@ -31,7 +31,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
 | Randomness | Explicit splittable keys (`jax.random`) | Implicit scoped RNG (`Nx.Rng.with_key`) |
 | JIT compilation | `jax.jit` | `jit` — traces once per leaf signature; CPU, CUDA, or Metal |
-| Devices | `jax.device_put`, GPU/TPU | CPU only |
+| Devices | `jax.device_put`, GPU/TPU | `Rune.to_device`; compiled functions run on CPU, CUDA, Metal |
 
 ---
 
@@ -352,7 +352,7 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 | JAX feature | Status in rune |
 | --- | --- |
 | `jax.jit` | `jit (module P) f` compiles to fused kernels, cached per leaf signature. It unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates. |
-| GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. |
+| GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. `Rune.to_device` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
 | `jax.pmap` / distributed | Not implemented. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
 | Full op coverage under `vmap` | The decompositions raise on batched inputs. |
