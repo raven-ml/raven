@@ -1696,6 +1696,12 @@ thread.
 
 ### Kaun
 
+- `Kaun_hf.load_checkpoint` no longer asks the Hub for a shard index when the
+  repository is already cached as a single `model.safetensors`: a cached model
+  used to make one network request on every start, and to stall without a
+  connection. `Kaun_hf.download_file` now runs `curl` directly instead of
+  through a shell: the previous detection was a POSIX shell command, which
+  `cmd.exe` cannot run, so downloads failed on Windows with "curl not found".
 - The gpt-oss example takes text: `--prompt` (with `--system`, `--reasoning`
   and `--show-analysis`) renders a harmony conversation with the checkpoint's
   tokenizer, streams the model's final answer as it decodes and stops when the

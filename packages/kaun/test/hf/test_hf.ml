@@ -218,6 +218,21 @@ let test_load_single_file () =
   check_entry ~msg:"w" [| 1.0; 2.0 |] "w" ckpt;
   check_entry ~msg:"b" [| 3.0 |] "b" ckpt
 
+(* A repository cached as one file is loaded without asking the Hub whether it
+   has a shard index. *)
+let test_load_single_file_stays_local () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  with_cache_dir @@ fun cache_dir ->
+  let _ =
+    seed ~cache_dir ~repo_id:"acme/tiny" ~file:"model.safetensors" (fun path ->
+        Checkpoint.save path (Checkpoint.of_tensor "w" (vec [| 1.0; 2.0 |])))
+  in
+  let log = Filename.concat cache_dir "curl-dest" in
+  with_curl_stand_in ~log @@ fun () ->
+  let ckpt = Hf.load_checkpoint ~cache_dir "acme/tiny" in
+  check_entry ~msg:"w" [| 1.0; 2.0 |] "w" ckpt;
+  is_true ~msg:"curl never ran" (not (Sys.file_exists log))
+
 let test_load_sharded () =
   with_cache_dir @@ fun cache_dir ->
   let repo_id = "acme/sharded" in
@@ -322,6 +337,8 @@ let () =
         [
           test "load_config parses a cached config.json" test_load_config;
           test "single-file checkpoints load" test_load_single_file;
+          test "a cached single file loads without the network"
+            test_load_single_file_stays_local;
           test "sharded checkpoints merge their shards" test_load_sharded;
           test "repositories without safetensors raise" test_load_missing_raises;
         ];
