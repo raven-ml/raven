@@ -1,5 +1,5 @@
 (executables
- (names main validate validate_text bench bench_step)
- (modules mxfp4 moe gpt_oss harmony main validate validate_text bench
-  bench_step)
+ (names main validate validate_text validate_stream bench bench_step)
+ (modules mxfp4 moe gpt_oss harmony main validate validate_text
+  validate_stream bench bench_step)
  (libraries kaun kaun.hf jsont jsont.bytesrw brot nx rune unix))
