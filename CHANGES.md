@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- An upload reads a tensor over a mapped file from the file, not through the
+  mapping. Copying mapped pages into device buffers is bound by the page-fault
+  path once the file no longer fits in the cache beside the buffers: placing a
+  13.76 GB checkpoint on Metal took 28.6 s and now takes 7.3 s. A transposed
+  weight is read as the run of the file it permutes. If the path no longer
+  names the file that was mapped, the mapping is read as before.
 - `RUNE_JIT_RESIDENT_BUDGET` counts the outputs of compiled calls only. Placed
   weights stay resident by design, and counting them ran a major collection
   before every output allocation once a model larger than the budget was

@@ -42,7 +42,7 @@
   test_half
   test_uniform)
  (package rune)
- (libraries rune nx nx.core unix windtrap rune_test_support))
+ (libraries rune nx nx.core nx.buffer unix windtrap rune_test_support))
 
 (executable
  (name repro_jit_beam)
@@ -67,7 +67,7 @@
  (package rune)
  (enabled_if
   (= %{system} macosx))
- (libraries rune nx nx.core tolk unix windtrap rune_test_support))
+ (libraries rune nx nx.core nx.buffer tolk unix windtrap rune_test_support))
 
 (tests
  (names test_jit_cuda)

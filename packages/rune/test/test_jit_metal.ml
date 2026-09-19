@@ -131,6 +131,47 @@ let test_capture_resident_elsewhere () =
         up;
       check_arr ~msg:"result" (to_arr (Nx.matmul x w1)) y)
 
+(* A weight over a mapped file is placed by reading the file. *)
+let test_place_from_a_mapped_file () =
+  let n = 4096 in
+  let path = Filename.temp_file "rune_metal_mapped_" ".bin" in
+  Fun.protect
+    ~finally:(fun () ->
+      Gc.full_major ();
+      try Sys.remove path with Sys_error _ -> ())
+    (fun () ->
+      let values = Array.init n (fun i -> float_of_int (i mod 97) /. 8.0) in
+      let oc = open_out_bin path in
+      let bytes = Bytes.create (4 * n) in
+      Array.iteri
+        (fun i v -> Bytes.set_int32_le bytes (4 * i) (Int32.bits_of_float v))
+        values;
+      output_bytes oc bytes;
+      close_out oc;
+      let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+      let stat = Unix.fstat fd in
+      let mapping =
+        Nx_buffer.of_bigarray1
+          (Bigarray.array1_of_genarray
+             (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
+                [| -1 |]))
+      in
+      Unix.close fd;
+      Nx_buffer.register_file
+        { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
+        mapping;
+      let w =
+        Nx.of_buffer
+          (Nx_buffer.reinterpret Nx_buffer.Float32 mapping)
+          ~shape:[| 64; 64 |]
+      in
+      let placed = Rune.to_device ~device:"METAL" (Nx.matrix_transpose w) in
+      let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x placed) in
+      let x = Nx.create f32 [| 2; 64 |] (Array.make 128 0.5) in
+      check_arr ~msg:"matches eager"
+        (to_arr (Nx.matmul x (Nx.matrix_transpose w)))
+        (g x))
+
 let tests =
   [
     group "metal device"
@@ -148,6 +189,8 @@ let tests =
           test_bound_input_is_not_donated;
         test "a capture resident on another device is uploaded"
           test_capture_resident_elsewhere;
+        test "a weight over a mapped file is placed from the file"
+          test_place_from_a_mapped_file;
       ];
   ]
 

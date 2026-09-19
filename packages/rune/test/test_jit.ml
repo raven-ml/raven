@@ -1905,6 +1905,102 @@ let test_place_then_donate_consumes () =
       check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
       raises_donated (fun () -> to_arr p))
 
+(* File-backed sources. An upload reads a tensor over a mapped file from the
+   file itself. *)
+
+(* An int32 tensor of [n] elements over a fresh mapping of a file whose bytes
+   are [byte i] at offset [i], with the file's path. *)
+let mapped_int32 ~byte n =
+  let path = Filename.temp_file "rune_mapped_" ".bin" in
+  let oc = open_out_bin path in
+  let piece = 1 lsl 20 in
+  let bytes = Bytes.create piece in
+  let written = ref 0 in
+  while !written < 4 * n do
+    let len = Int.min piece ((4 * n) - !written) in
+    for i = 0 to len - 1 do
+      Bytes.unsafe_set bytes i (byte (!written + i))
+    done;
+    Stdlib.output oc bytes 0 len;
+    written := !written + len
+  done;
+  close_out oc;
+  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+  let stat = Unix.fstat fd in
+  let mapping =
+    Nx_buffer.of_bigarray1
+      (Bigarray.array1_of_genarray
+         (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
+            [| -1 |]))
+  in
+  Unix.close fd;
+  Nx_buffer.register_file
+    { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
+    mapping;
+  ( Nx.of_buffer (Nx_buffer.reinterpret Nx_buffer.Int32 mapping) ~shape:[| n |],
+    path )
+
+let first_byte i = Char.chr ((i * 7) land 0xff)
+let other_byte i = Char.chr ((i * 13) land 0xff)
+
+let remove_mapped path =
+  Gc.full_major ();
+  try Sys.remove path with Sys_error _ when Sys.win32 -> ()
+
+(* [x] placed from its file equals [x] placed from memory. *)
+let check_placed_from_file ~msg x =
+  is_true ~msg:(msg ^ ": over a mapped file")
+    (Nx_buffer.file_range (Nx.data x) <> None);
+  let from_memory = Rune.to_device (Nx.copy x) in
+  let from_file, up, _ = delta (fun () -> Rune.to_device x) in
+  equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
+  let differing =
+    Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal from_file from_memory)))
+  in
+  equal ~msg:(msg ^ ": elements differing") int32 0l differing
+
+let test_file_backed_upload () =
+  with_force_copy (fun () ->
+      let n = (chunk / 4) + 4099 in
+      let x, path = mapped_int32 ~byte:first_byte n in
+      Fun.protect
+        ~finally:(fun () -> remove_mapped path)
+        (fun () ->
+          check_placed_from_file ~msg:"contiguous" x;
+          check_placed_from_file ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
+          let rows = 4100 in
+          let cols = n / rows in
+          let m =
+            Nx.reshape [| rows; cols |] (Nx.slice [ Nx.R (0, rows * cols) ] x)
+          in
+          check_placed_from_file ~msg:"transposed" (Nx.matrix_transpose m)))
+
+(* The path names another file by now: the upload must not read it. *)
+let test_file_backed_upload_after_replace () =
+  with_force_copy (fun () ->
+      let n = 1 lsl 16 in
+      let x, path = mapped_int32 ~byte:first_byte n in
+      Fun.protect
+        ~finally:(fun () -> remove_mapped path)
+        (fun () ->
+          let expected = Nx.copy x in
+          let _, replacement = mapped_int32 ~byte:other_byte n in
+          Unix.rename replacement path;
+          let differing placed =
+            Nx.item []
+              (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal placed expected)))
+          in
+          equal ~msg:"contiguous: the mapped bytes" int32 0l
+            (differing (Rune.to_device x));
+          let m = Nx.matrix_transpose (Nx.reshape [| 256; 256 |] x) in
+          equal ~msg:"transposed: the mapped bytes" int32 0l
+            (Nx.item []
+               (Nx.sum
+                  (Nx.cast Nx.int32
+                     (Nx.not_equal (Rune.to_device m)
+                        (Nx.matrix_transpose
+                           (Nx.reshape [| 256; 256 |] expected))))))))
+
 (* Bound captures. A compiled function that captures a resident value on its
    own device reads that value's buffer as its constant. *)
 
@@ -2234,6 +2330,13 @@ let tests =
           test_place_is_the_identity_under_transformations;
         test "an unbound placed value is consumed by donation"
           test_place_then_donate_consumes;
+      ];
+    group "file-backed sources"
+      [
+        slow "a mapped leaf larger than a chunk uploads from its file"
+          test_file_backed_upload;
+        test "a replaced file is not read"
+          test_file_backed_upload_after_replace;
       ];
     group "bound captures"
       [

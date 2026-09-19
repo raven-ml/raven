@@ -2277,10 +2277,131 @@ let with_window buf ~off ~len f =
       (fun () -> f w)
   end
 
+(* File-backed sources
+
+   A host buffer over a mapped file is copied fastest by reading the file: a
+   read is bound by the disk, a walk of the mapping by the page-fault path,
+   several times slower once the file no longer fits in the cache beside the
+   device buffers it is copied into. The path may name another file by now, so
+   the file opened must be the one that was mapped. *)
+
+let open_file (file : Nx_buffer.file) =
+  match Unix.openfile file.path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error _ -> None
+  | fd -> (
+      match Unix.LargeFile.fstat fd with
+      | st
+        when st.st_size = Int64.of_int file.size
+             && st.st_mtime = file.mtime && st.st_ino = file.inode ->
+          Some fd
+      | _ | (exception Unix.Unix_error _) ->
+          Unix.close fd;
+          None)
+
+(* [read_at fd ~pos bytes len] fills [bytes] with the [len] bytes of [fd] at
+   [pos], or is [false] if the file is shorter or cannot be read. *)
+let read_at fd ~pos bytes len =
+  match Unix.LargeFile.lseek fd (Int64.of_int pos) Unix.SEEK_SET with
+  | exception Unix.Unix_error _ -> false
+  | _ ->
+      let rec fill off =
+        off = len
+        ||
+        match Unix.read fd bytes off (len - off) with
+        | 0 -> false
+        | n -> fill (off + n)
+        | exception Unix.Unix_error _ -> false
+      in
+      fill 0
+
+(* [with_file_source host f] runs [f] with a reader of [host]'s bytes from its
+   file, [None] when [host] is not a mapped file that can still be read. *)
+let with_file_source host f =
+  match Nx_buffer.file_range host with
+  | None -> f None
+  | Some (file, base) -> (
+      match open_file file with
+      | None -> f None
+      | Some fd ->
+          Fun.protect
+            ~finally:(fun () -> Unix.close fd)
+            (fun () ->
+              f
+                (Some
+                   (fun ~pos bytes len ->
+                     read_at fd ~pos:(base + pos) bytes len))))
+
+(* [base_layout v] is [Some (shape, axes)] when the elements of the view [v]
+   are exactly a contiguous run of its buffer seen through a permutation of
+   axes: [shape] is the run's own shape and permuting it by [axes] gives
+   [v]. *)
+let base_layout v =
+  let shape = NV.shape v and strides = NV.strides v in
+  let rank = Array.length shape in
+  let order = Array.init rank Fun.id in
+  Array.stable_sort
+    (fun a b ->
+      match (shape.(a) = 1, shape.(b) = 1) with
+      | true, true -> 0
+      | true, false -> -1
+      | false, true -> 1
+      | false, false -> compare strides.(b) strides.(a))
+    order;
+  let expected = ref 1 and ok = ref true in
+  for i = rank - 1 downto 0 do
+    let a = order.(i) in
+    if shape.(a) <> 1 && strides.(a) <> !expected then ok := false;
+    expected := !expected * shape.(a)
+  done;
+  if not !ok then None
+  else begin
+    let axes = Array.make rank 0 in
+    Array.iteri (fun i a -> axes.(a) <- i) order;
+    Some (Array.map (fun a -> shape.(a)) order, axes)
+  end
+
+(* A strided view of a mapped file whose elements are a contiguous run of the
+   file seen through a permutation of axes (a transposed weight): the run, read
+   from the file into host memory, under the same permutation. It costs a host
+   copy of the run for the length of the upload; walking the mapping in the
+   view's order instead faults its pages in at a fraction of the disk's
+   speed. *)
+let read_base : type a b.
+    scratch -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
+ fun sc x ->
+  let v = Nx_effect.view x in
+  let host = Nx_effect.to_host x in
+  match (Nx_buffer.file_range host, base_layout v) with
+  | None, _ | _, None -> None
+  | Some _, Some (shape, axes) ->
+      with_file_source host @@ fun read ->
+      Option.bind read @@ fun read ->
+      let dt = Nx_effect.dtype x in
+      let item = itemsize dt in
+      let n = numel shape in
+      let run = Nx_buffer.create dt n in
+      let chunk = chunk_bytes / item in
+      let pos = ref 0 and ok = ref true in
+      while !ok && !pos < n do
+        let len = Int.min chunk (n - !pos) in
+        let bytes = scratch_bytes sc (len * item) in
+        ok := read ~pos:((NV.offset v + !pos) * item) bytes (len * item);
+        if !ok then Nx_buffer.blit_from_bytes ~dst_off:!pos ~len bytes run;
+        pos := !pos + len
+      done;
+      if not !ok then None
+      else
+        Some
+          (Nx_effect.permute
+             (Nx_effect.reshape
+                (Nx_effect.from_host (Nx_effect.context x) run)
+                shape)
+             axes)
+
 (* Copy a tensor's logical contents into [buf] from byte [off] on. A contiguous
-   source, offset or not, is read in place chunk by chunk. A strided one is cut
-   along its leading axis into pieces of at most a chunk, each made contiguous
-   on its own. *)
+   source, offset or not, is read in place chunk by chunk, from its file when it
+   is a mapped one. A strided one is cut along its leading axis into pieces of
+   at most a chunk, each made contiguous on its own. *)
 let rec copyin_at : type a b.
     scratch ->
     Tolk.Device.t ->
@@ -2296,13 +2417,25 @@ let rec copyin_at : type a b.
   if nbytes = 0 then ()
   else if NV.is_c_contiguous v then begin
     let host = Nx_effect.to_host x in
+    with_file_source host @@ fun read ->
+    let read = ref read in
     let chunk = chunk_bytes / item in
     let n = numel shape in
     let pos = ref 0 in
     while !pos < n do
       let len = Int.min chunk (n - !pos) in
       let bytes = scratch_bytes sc (len * item) in
-      Nx_buffer.blit_to_bytes ~src_off:(NV.offset v + !pos) ~len host bytes;
+      let src_off = NV.offset v + !pos in
+      let from_file =
+        match !read with
+        | Some read -> read ~pos:(src_off * item) bytes (len * item)
+        | None -> false
+      in
+      (* A file that can no longer be read is left for the mapping. *)
+      if not from_file then begin
+        read := None;
+        Nx_buffer.blit_to_bytes ~src_off ~len host bytes
+      end;
       with_window buf ~off:(off + (!pos * item)) ~len:(len * item) (fun w ->
           Tolk.Device.Buffer.copyin w bytes);
       bytes_to_device := !bytes_to_device + (len * item);
@@ -2310,27 +2443,33 @@ let rec copyin_at : type a b.
       pos := !pos + len
     done
   end
-  else if nbytes <= chunk_bytes then
-    copyin_at sc dev buf ~off (Nx_effect.contiguous x)
-  else begin
-    (* Axes of size one before [axis] do not change the row-major order. *)
-    let axis = ref 0 in
-    while shape.(!axis) = 1 do
-      incr axis
-    done;
-    let axis = !axis in
-    let row = nbytes / shape.(axis) in
-    let rows = Int.max 1 (chunk_bytes / row) in
-    let r = ref 0 in
-    while !r < shape.(axis) do
-      let stop = Int.min shape.(axis) (!r + rows) in
-      let ranges =
-        Array.mapi (fun d n -> if d = axis then (!r, stop) else (0, n)) shape
-      in
-      copyin_at sc dev buf ~off:(off + (!r * row)) (Nx_effect.shrink x ranges);
-      r := stop
-    done
-  end
+  else
+    match read_base sc x with
+    | Some base -> copyin_at sc dev buf ~off base
+    | None when nbytes <= chunk_bytes ->
+        copyin_at sc dev buf ~off (Nx_effect.contiguous x)
+    | None ->
+        (* Axes of size one before [axis] do not change the row-major order. *)
+        let axis = ref 0 in
+        while shape.(!axis) = 1 do
+          incr axis
+        done;
+        let axis = !axis in
+        let row = nbytes / shape.(axis) in
+        let rows = Int.max 1 (chunk_bytes / row) in
+        let r = ref 0 in
+        while !r < shape.(axis) do
+          let stop = Int.min shape.(axis) (!r + rows) in
+          let ranges =
+            Array.mapi
+              (fun d n -> if d = axis then (!r, stop) else (0, n))
+              shape
+          in
+          copyin_at sc dev buf
+            ~off:(off + (!r * row))
+            (Nx_effect.shrink x ranges);
+          r := stop
+        done
 
 (* Copy a tensor's logical contents into a device buffer. *)
 let copyin_tensor sc dev buf x =
@@ -2528,7 +2667,11 @@ let make_handle : type a b.
 
 let place (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
   let device = match device with Some d -> d | None -> F.Run.device_name () in
-  if is_cpu device && not (force_copy ()) then Nx_effect.contiguous x
+  if is_cpu device && not (force_copy ()) then
+    let strided = not (NV.is_c_contiguous (Nx_effect.view x)) in
+    match if strided then read_base (Hashtbl.create 1) x else None with
+    | Some base -> Nx_effect.contiguous base
+    | None -> Nx_effect.contiguous x
   else
     let dev = get_device device in
     match resident_of x with
