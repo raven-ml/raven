@@ -22,6 +22,12 @@
 # streamed ones. It is the check of this recorder, for checkpoints that fit:
 #
 #   ... reference_stream.py tiny-random/gpt-oss-mxfp4 --whole --window 4 --scale-offset 118
+#
+# --dtype bfloat16 runs transformers at the precision the model is served at,
+# experts dequantised to bfloat16 as its loader does. float32 over the same
+# dequantised weights is the reference of a float32 implementation; the gap
+# between the two recordings is what a bfloat16 implementation may differ by.
+# On CPU it is slow: 8 minutes of processor time for gpt-oss-20b.
 import argparse, hashlib, json, os, resource, sys, time
 import torch, transformers, safetensors, huggingface_hub
 from safetensors import safe_open
@@ -126,33 +132,33 @@ class Checkpoint:
         return torch.stack([table[i] for i in ids])
 
 
-def experts(ckpt, name, offset):
-    """One projection of every expert at float32, in the module's layout
+def experts(ckpt, name, offset, dtype):
+    """One projection of every expert at [dtype], in the module's layout
     [experts, inputs, outputs]. Float checkpoints store that layout; packed
     ones are dequantised by transformers, which also transposes them."""
     if name in ckpt:
-        return ckpt.get(name).float()
+        return ckpt.get(name).to(dtype)
     blocks, scales = ckpt.get(name + "_blocks"), ckpt.get(name + "_scales")
     return convert_moe_packed_tensors(
-        blocks, scales + offset, dtype=torch.float32, rows_per_chunk=1 << 20
+        blocks, scales + offset, dtype=dtype, rows_per_chunk=1 << 20
     )
 
 
-def block(config, ckpt, i, offset):
+def block(config, ckpt, i, offset, dtype):
     prefix = f"model.layers.{i}."
     with torch.device("meta"):
         layer = GptOssDecoderLayer(config, i)
     state = {}
     for name in layer.state_dict():
         if name in ("mlp.experts.gate_up_proj", "mlp.experts.down_proj"):
-            state[name] = experts(ckpt, prefix + name, offset)
+            state[name] = experts(ckpt, prefix + name, offset, dtype)
         else:
-            state[name] = ckpt.get(prefix + name).float()
+            state[name] = ckpt.get(prefix + name).to(dtype)
     layer.load_state_dict(state, strict=True, assign=True)
     return layer.eval()
 
 
-def stream(config, ckpt, offset, log=lambda s: None):
+def stream(config, ckpt, offset, dtype, log=lambda s: None):
     """The forward pass of every prompt, a block at a time. Per prompt: the
     residual stream entering block 0 and leaving every block, the stream
     between a block's attention and its experts, the router's logits and
@@ -164,7 +170,7 @@ def stream(config, ckpt, offset, log=lambda s: None):
     rotary = GptOssRotaryEmbedding(config)
     state = {}
     for p, ids in PROMPTS.items():
-        x = ckpt.rows("model.embed_tokens.weight", ids).float().unsqueeze(0)
+        x = ckpt.rows("model.embed_tokens.weight", ids).to(dtype).unsqueeze(0)
         position_ids = torch.arange(len(ids)).unsqueeze(0)
         kwargs = dict(config=config, inputs_embeds=x, attention_mask=None, past_key_values=None)
         state[p] = {
@@ -179,7 +185,7 @@ def stream(config, ckpt, offset, log=lambda s: None):
         out[p]["residual"].append(x[0])
     for i in range(config.num_hidden_layers):
         t0 = time.time()
-        layer = block(config, ckpt, i, offset)
+        layer = block(config, ckpt, i, offset, dtype)
         seen = {}
         hooks = [
             layer.self_attn.register_forward_hook(lambda m, a, o: seen.update(attention=o[0])),
@@ -207,9 +213,9 @@ def stream(config, ckpt, offset, log=lambda s: None):
         del layer, seen
         log(f"block {i} ({config.layer_types[i]}): {time.time() - t0:.1f} s")
     norm = GptOssRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-    norm.weight.data = ckpt.get("model.norm.weight").float()
+    norm.weight.data = ckpt.get("model.norm.weight").to(dtype)
     tied = "lm_head.weight" not in ckpt
-    head = ckpt.get("model.embed_tokens.weight" if tied else "lm_head.weight").float()
+    head = ckpt.get("model.embed_tokens.weight" if tied else "lm_head.weight").to(dtype)
     for p, s in state.items():
         with torch.no_grad():
             out[p]["normed"] = norm(s["x"])[0]
@@ -217,17 +223,21 @@ def stream(config, ckpt, offset, log=lambda s: None):
     return out, tied
 
 
-def whole(repo, directory, config, offset):
+def whole(repo, directory, config, offset, dtype):
     """transformers' whole model on the same prompts, as reference.py runs it."""
     model = AutoModelForCausalLM.from_pretrained(
         directory,
-        dtype=torch.float32,
+        dtype=dtype,
         experts_implementation="eager",
         sliding_window=config.sliding_window,
     )
     # Without triton the MXFP4 loader dequantises the experts to bfloat16
-    # whatever dtype is asked for.
-    model = model.float().eval()
+    # whatever dtype is asked for. At bfloat16 the model is left as loaded:
+    # a conversion would also round the rotary frequencies, which the loader
+    # keeps at float32.
+    if dtype == torch.float32:
+        model = model.float()
+    model = model.eval()
     assert model.config._experts_implementation == "eager"
     assert model.config._attn_implementation == "eager"
     ckpt = Checkpoint(directory)
@@ -235,7 +245,7 @@ def whole(repo, directory, config, offset):
         for param in ("gate_up_proj", "down_proj"):
             name = f"model.layers.{i}.mlp.experts.{param}"
             if name not in ckpt:
-                getattr(layer.mlp.experts, param).data = experts(ckpt, name, offset)
+                getattr(layer.mlp.experts, param).data = experts(ckpt, name, offset, dtype)
     out = {}
     for p, ids in PROMPTS.items():
         seen = {"logits": [], "experts": []}
@@ -359,8 +369,11 @@ def main():
     ap.add_argument("--window", type=int, help="override the configuration's sliding window")
     ap.add_argument("--scale-offset", type=int, default=0, help="added to every MXFP4 scale byte")
     ap.add_argument("--whole", action="store_true", help="compare with the whole model; writes nothing")
+    ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
+    ap.add_argument("--out", help="the fixture's path; fixtures/<name>-stream.json by default")
     args = ap.parse_args()
     torch.set_num_threads(THREADS)
+    dtype = getattr(torch, args.dtype)
     started = time.time()
 
     directory = args.dir or raven_cache(args.repo)
@@ -375,9 +388,11 @@ def main():
         config.sliding_window = args.window
     ckpt = Checkpoint(directory)
 
-    streamed, tied = stream(config, ckpt, args.scale_offset, log=lambda s: print(s, flush=True))
+    streamed, tied = stream(
+        config, ckpt, args.scale_offset, dtype, log=lambda s: print(s, flush=True)
+    )
     if args.whole:
-        worst = compare(streamed, whole(args.repo, directory, config, args.scale_offset))
+        worst = compare(streamed, whole(args.repo, directory, config, args.scale_offset, dtype))
         sys.exit(0 if worst < 1e-6 else 1)
 
     out = {
@@ -390,7 +405,7 @@ def main():
             "safetensors": safetensors.__version__,
             "huggingface_hub": huggingface_hub.__version__,
         },
-        "dtype": "float32",
+        "dtype": args.dtype,
         "threads": THREADS,
         "sliding_window": config.sliding_window,
         "scale_offset": args.scale_offset,
@@ -398,7 +413,7 @@ def main():
     }
     out.update(fixture(config, streamed))
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, "fixtures", args.repo.split("/")[-1] + "-stream.json")
+    path = args.out or os.path.join(here, "fixtures", args.repo.split("/")[-1] + "-stream.json")
     with open(path, "w") as f:
         json.dump(out, f)
         f.write("\n")
