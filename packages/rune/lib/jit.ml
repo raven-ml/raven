@@ -210,6 +210,7 @@ type resident_entry = {
   r_nbytes : int; (* summed across shards *)
   mutable r_bufs : Tolk.Device.Buffer.t list; (* [[]] once released *)
   mutable r_donated : bool; (* released by a [~donate:true] call *)
+  r_placed : bool; (* made by [to_device], not by a compiled call *)
   mutable r_bound : bool;
       (* a compiled program reads the buffer as a constant: only the handle's
          finalizer may release it, never a read or a donation *)
@@ -223,6 +224,16 @@ let donated_error () =
      before the call"
 
 let resident : (int, resident_entry) Hashtbl.t = Hashtbl.create 64
+
+(* The part of [resident_bytes] held by outputs of compiled calls, which is what
+   the resident budget bounds. Placed values are excluded: a model's weights
+   stay resident by design, and counting them would run a major collection
+   before every output allocation. *)
+let output_bytes = ref 0
+
+let account e sign =
+  resident_bytes := !resident_bytes + (sign * e.r_nbytes);
+  if not e.r_placed then output_bytes := !output_bytes + (sign * e.r_nbytes)
 
 let resident_of x =
   match Nx_effect.deferred_id x with
@@ -239,7 +250,7 @@ let release_entry e =
   | bufs ->
       e.r_bufs <- [];
       Hashtbl.remove resident e.r_id;
-      resident_bytes := !resident_bytes - e.r_nbytes;
+      account e (-1);
       (* Deallocation returns each buffer to its device's LRU pool. A base
          buffer with a still-allocated transient view (a kernel-argument slice
          not yet collected) cannot be deallocated; those are reclaimed by the
@@ -276,7 +287,7 @@ let resident_budget () =
    allocator has flushed its own cache by then). *)
 let create_fresh_buffer dev dtolk n =
   drain_releases ();
-  if !resident_bytes > resident_budget () then begin
+  if !output_bytes > resident_budget () then begin
     Gc.major ();
     drain_releases ()
   end;
@@ -2396,11 +2407,12 @@ let make_handle : type a b.
     axis:int option ->
     ctx:Nx_effect.context ->
     ?scratch:scratch ->
+    ?placed:bool ->
     (a, b) ND.t ->
     int array ->
     Tolk.Device.Buffer.t list ->
     (a, b) Nx_effect.t =
- fun ~devices ~names ~axis ~ctx ?scratch dtv shape bufs ->
+ fun ~devices ~names ~axis ~ctx ?scratch ?(placed = false) dtv shape bufs ->
   let nbytes =
     List.fold_left (fun a b -> a + Tolk.Device.Buffer.nbytes b) 0 bufs
   in
@@ -2414,6 +2426,7 @@ let make_handle : type a b.
       r_nbytes = nbytes;
       r_bufs = bufs;
       r_donated = false;
+      r_placed = placed;
       r_bound = false;
     }
   in
@@ -2496,7 +2509,7 @@ let make_handle : type a b.
   | Some id ->
       entry.r_id <- id;
       Hashtbl.replace resident id entry;
-      resident_bytes := !resident_bytes + nbytes
+      account entry 1
   | None -> assert false);
   (* The finalizer must not capture the handle (it would never die); the entry
      alone decides whether the buffers are still owed a release. *)
@@ -2543,7 +2556,7 @@ let place (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
           copyin_tensor (Hashtbl.create 1) dev buf x;
           make_handle ~devices:[ dev ]
             ~names:[ Tolk.Device.name dev ]
-            ~axis:None ~ctx:(Nx_effect.context x) dt shape [ buf ]
+            ~axis:None ~ctx:(Nx_effect.context x) ~placed:true dt shape [ buf ]
         end
 
 (* Inside a transformation placement is the identity: every rune handler
@@ -2724,7 +2737,7 @@ let transfer_entry e =
     e.r_bufs <- [];
     e.r_donated <- true;
     Hashtbl.remove resident e.r_id;
-    resident_bytes := !resident_bytes - e.r_nbytes
+    account e (-1)
   end
 
 let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)

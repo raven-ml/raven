@@ -2025,6 +2025,24 @@ let test_bound_buffer_is_released_with_its_owners () =
       Gc.full_major ();
       equal ~msg:"released once unreachable" int 0 (resident () - base))
 
+let test_budget_ignores_placed_values () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (Nx.create f32 [| 4096 |] (Array.make 4096 1.0)) in
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      ignore (g (vec32 [| 1.0 |]));
+      Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "1024";
+      Fun.protect
+        ~finally:(fun () -> Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "")
+        (fun () ->
+          let before = (Gc.quick_stat ()).major_collections in
+          for _ = 1 to 100 do
+            ignore (to_arr (g (vec32 [| 1.0 |])))
+          done;
+          let collections = (Gc.quick_stat ()).major_collections - before in
+          is_true ~msg:"no collection per output while weights are resident"
+            (collections < 50));
+      ignore (Sys.opaque_identity w))
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -2233,6 +2251,8 @@ let tests =
           test_bound_capture_returned_is_a_copy;
         test "a bound buffer is released with its owners"
           test_bound_buffer_is_released_with_its_owners;
+        test "the resident budget ignores placed values"
+          test_budget_ignores_placed_values;
       ];
     group "chunked transfers"
       [

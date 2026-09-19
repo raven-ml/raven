@@ -107,6 +107,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `RUNE_JIT_RESIDENT_BUDGET` counts the outputs of compiled calls only. Placed
+  weights stay resident by design, and counting them ran a major collection
+  before every output allocation once a model larger than the budget was
+  placed. `jit_stats ().resident_bytes` still counts them.
 - A compiled function that captures a value placed with `Rune.to_device` on
   its own device binds the value's buffer as its constant: nothing is uploaded,
   and every compiled function over the same weights shares one device copy,

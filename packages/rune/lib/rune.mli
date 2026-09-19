@@ -457,7 +457,8 @@ val jit :
     backing an output is held until the output is read or garbage-collected;
     past a budget (the [RUNE_JIT_RESIDENT_BUDGET] environment variable, in
     bytes, a few GiB by default) a collection is triggered before allocating
-    more. A transfer failure surfaces as an exception at the first read of the
+    more. The budget counts outputs only, not values placed with
+    {!val-to_device}. A transfer failure surfaces as an exception at the first read of the
     affected output.
 
     [donate] (default [false]) consumes the resident inputs: once a call
