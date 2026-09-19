@@ -203,7 +203,9 @@ let () =
   let show_analysis = ref false and stepwise = ref false in
   Arg.parse
     [
-      ("--repo", Arg.Set_string repo, "A single-file gpt-oss checkpoint");
+      ( "--repo",
+        Arg.Set_string repo,
+        "A gpt-oss repository (default tiny-random/gpt-oss-mxfp4)" );
       ("--jit", Arg.Set_string jit, "Compile the step for this device");
       ( "--dtype",
         Arg.Set_string dtype,
