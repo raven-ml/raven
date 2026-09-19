@@ -58,16 +58,23 @@ let take_rows ids t =
 let all_rows dt = function
   | Float w -> w
   | Mxfp4 { blocks; scales } ->
-      Nx.matrix_transpose (Mxfp4.dequant blocks scales dt)
+      Nx.matrix_transpose (Nx.contiguous (Mxfp4.dequant blocks scales dt))
+
+(* Dequantised rows, the activation and the dense form's expert outputs are
+   materialised. A product of two buffers is what the kernel heuristics take for
+   a matrix product and spread over a threadgroup; with the rows computed inside
+   the product a single token's step is four times slower on Metal, and with the
+   dense form's product fused into its sum over experts, fifteen times. *)
 
 let selected_rows dt ids = function
-  | Float w -> take_rows ids w
+  | Float w -> Nx.contiguous (take_rows ids w)
   | Mxfp4 { blocks; scales } ->
-      Nx.matrix_transpose (Mxfp4.dequant_rows blocks scales ids dt)
+      Nx.matrix_transpose
+        (Nx.contiguous (Mxfp4.dequant_rows blocks scales ids dt))
 
 let experts ~limit ~gate_up ~gate_up_bias ~down ~down_bias x =
   let h = Nx.add (Nx.matmul x gate_up) gate_up_bias in
-  Nx.add (Nx.matmul (activation ~limit h) down) down_bias
+  Nx.add (Nx.matmul (Nx.contiguous (activation ~limit h)) down) down_bias
 
 let gather ~limit p dt ids weights x =
   let tokens = Nx.dim 0 x and width = Nx.dim 1 x in
@@ -96,7 +103,8 @@ let dense ~limit p dt ids weights x =
     Nx.sum ~axes:[ 1 ] (Nx.mul selected (Nx.unsqueeze ~axes:[ 2 ] weights))
   in
   Nx.sum ~axes:[ 0 ]
-    (Nx.mul y (Nx.unsqueeze ~axes:[ 2 ] (Nx.transpose per_expert)))
+    (Nx.mul (Nx.contiguous y)
+       (Nx.unsqueeze ~axes:[ 2 ] (Nx.transpose per_expert)))
 
 let apply form ~k ~limit p x =
   let shape = Nx.shape x in
