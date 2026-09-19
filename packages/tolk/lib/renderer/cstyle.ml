@@ -1931,7 +1931,10 @@ let metal_extra_matcher (node : U.t) : U.t option =
         U.replace node ~src:(Array.of_list new_children) ~dtype:f32 ()
       in
       Some (U.cast ~src:promoted ~dtype:(U.dtype node))
-  | _ -> extra_pm node
+  | _ -> (
+      match pm_manual_bf16_cast node with
+      | Some _ as r -> r
+      | None -> extra_pm node)
 
 (* The lanes one thread holds of a WMMA operand: the tail of that operand's
    own shape. The upcast axes that produced the width are cleared once the

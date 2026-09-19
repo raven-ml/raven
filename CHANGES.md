@@ -274,6 +274,10 @@ thread.
 
 ### Tolk (new)
 
+- Metal kernels cast between `bfloat16` and `float32` by bit manipulation, as
+  the reference does to avoid a Metal compiler bug with
+  `as_type<half>((bfloat)(const))`. tolk rendered native casts. Values are
+  unchanged: both round half to even.
 - `DEBUG=2` prints one line for every executed kernel, view, copy and batched
   graph: device, call count, name, memory in use, time, and GFLOPS and GB/s
   from the kernel's estimates. `Helpers.Global_counters` holds the running
