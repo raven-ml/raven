@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Tracing a function under `Rune.jit` no longer allocates a buffer for every
+  traced value. Each placeholder was an uninitialised tensor of the result's
+  full size; the pages were never touched, but OCaml counted the bytes and ran
+  major collections throughout the trace. The first call of a gpt-oss-20b step
+  goes from 47 s to 11 s. Placeholders are now `Nx_effect.Symbolic` tensors:
+  dtype and shape, no bytes.
 - A compiled function plans the memory of its intermediates: buffers whose
   lifetimes do not overlap share one arena per device instead of each owning an
   allocation for the life of the function. A single-token step of gpt-oss-20b

@@ -1495,6 +1495,29 @@ let test_dropped_handles_are_reclaimed () =
       is_true ~msg:"resident bytes are bounded after gc"
         (s.resident_bytes - base <= 3 * n * 4))
 
+(* Traced values carry no storage. OCaml counts a bigarray's bytes towards the
+   major collector's pace even when its pages are never touched, so a
+   placeholder with a buffer costs a slice of major collection per traced
+   operation: the first call of a 20b-parameter decoder step spent 35 s of its
+   47 s there. *)
+let test_traced_values_have_no_storage () =
+  let is_symbolic (type a b) (x : (a, b) Nx.t) =
+    match x with Nx_effect.Symbolic _ -> true | T _ | Deferred _ -> false
+  in
+  let seen = ref [] in
+  let f x =
+    let y = Nx.add_s (Nx.reshape [| 2; 2 |] x) 1.0 in
+    let q, r = Nx.qr y in
+    seen := List.map is_symbolic [ x; y; q; r ];
+    Nx.matmul q r
+  in
+  let x = vec32 [| 1.0; 2.0; 3.0; 5.0 |] in
+  let compiled = Rune.jit' f x in
+  let traced = !seen in
+  check_arr ~eps:1e-4 ~msg:"value" (to_arr (f x)) compiled;
+  equal ~msg:"input, result, and both results of a two-result operation"
+    (list bool) [ true; true; true; true ] traced
+
 (* Donation. [donate:true] consumes resident input handles: their device buffers
    return to the allocator once the call completes, so a state-to-state loop
    holds ~2 generations of device memory instead of one per call, without any
@@ -2502,6 +2525,7 @@ let tests =
     group "errors"
       [
         test "reading a traced value raises" test_data_dependent_read_raises;
+        test "traced values have no storage" test_traced_values_have_no_storage;
         test "unsupported operations raise" test_unsupported_op_raises;
       ];
   ]

@@ -6,7 +6,7 @@
 (* Just-in-time compilation as an effect handler over Nx operations.
 
    Tracing: the handler answers every intercepted operation with a fresh
-   uninitialized placeholder tensor of the result's shape and dtype, and records
+   symbolic placeholder tensor of the result's shape and dtype, and records
    the corresponding node of a Tolk tensor graph in a side table keyed by tensor
    identity. Running the function once under the handler therefore turns its
    whole computation into a single graph.
@@ -820,7 +820,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       ((a, b) Nx_effect.t, r) continuation -> (a, b) ND.t -> F.Tensor.t -> r =
    fun k dt tt ->
     let shape = Array.of_list (F.Tensor.shape tt) in
-    let ph : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt shape in
+    let ph : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt shape in
     Tbl.replace st.table (Obj.repr ph) tt;
     Tbl.replace st.traced (Obj.repr ph) ();
     continue k ph
@@ -837,8 +837,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       r =
    fun k dt tq tr ->
     let shape tt = Array.of_list (F.Tensor.shape tt) in
-    let phq : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tq) in
-    let phr : (a, b) Nx_effect.t = Nx_effect.buffer st.st_ctx dt (shape tr) in
+    let phq : (a, b) Nx_effect.t =
+      Nx_effect.symbolic st.st_ctx dt (shape tq)
+    in
+    let phr : (a, b) Nx_effect.t =
+      Nx_effect.symbolic st.st_ctx dt (shape tr)
+    in
     Tbl.replace st.table (Obj.repr phq) tq;
     Tbl.replace st.traced (Obj.repr phq) ();
     Tbl.replace st.table (Obj.repr phr) tr;
@@ -1466,7 +1470,7 @@ and stage_scan : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let cdt = Nx_effect.dtype leaf in
         let c_shape = shape_of leaf in
-        let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
+        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
         let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
@@ -1482,7 +1486,7 @@ and stage_scan : type r.
       slot_infos := (tdt, c_shape, c_in, c_out) :: !slot_infos)
     slot_c;
   let slot_infos = List.rev !slot_infos in
-  let slot_x = Nx_effect.buffer st.st_ctx xdt x_shape in
+  let slot_x = Nx_effect.symbolic st.st_ctx xdt x_shape in
   let x_in = make_node st (tolk_dtype xdt) numel_x in
   Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
   Tbl.replace st.traced (Obj.repr slot_x) ();
@@ -1700,7 +1704,7 @@ and stage_scan : type r.
         (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
           let after = Tbl.find final_afters (Obj.repr leaf) in
           let ph =
-            Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
+            Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
           in
           Tbl.replace st.table (Obj.repr ph)
             (buffer_tensor after (shape_of leaf));
@@ -1708,7 +1712,7 @@ and stage_scan : type r.
           ph)
         slot_c
     in
-    let ys_ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype y) ys_shape in
+    let ys_ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype y) ys_shape in
     Tbl.replace st.table (Obj.repr ys_ph) (buffer_tensor after_ys ys_shape);
     Tbl.replace st.traced (Obj.repr ys_ph) ();
     Effect.Deep.continue k
@@ -1772,7 +1776,7 @@ and stage_scan_bwd : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let cdt = Nx_effect.dtype leaf in
         let c_shape = shape_of leaf in
-        let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
+        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
         let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
@@ -1792,7 +1796,7 @@ and stage_scan_bwd : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let cdt = Nx_effect.dtype leaf in
         let c_shape = shape_of leaf in
-        let slot = Nx_effect.buffer st.st_ctx cdt c_shape in
+        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
         let dc_in = make_node st (tolk_dtype cdt) (numel c_shape) in
         Tbl.replace st.table (Obj.repr slot) (buffer_tensor dc_in c_shape);
         Tbl.replace st.traced (Obj.repr slot) ();
@@ -1806,11 +1810,11 @@ and stage_scan_bwd : type r.
       dc_infos := Tbl.find dc_ins (Obj.repr leaf) :: !dc_infos)
     slot_dc;
   let dc_infos = List.rev !dc_infos in
-  let slot_x = Nx_effect.buffer st.st_ctx xdt x_shape in
+  let slot_x = Nx_effect.symbolic st.st_ctx xdt x_shape in
   let x_in = make_node st (tolk_dtype xdt) numel_x in
   Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
   Tbl.replace st.traced (Obj.repr slot_x) ();
-  let slot_dy = Nx_effect.buffer st.st_ctx (Nx_effect.dtype dy) y_shape in
+  let slot_dy = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype dy) y_shape in
   let dy_in = make_node st (tolk_dtype (Nx_effect.dtype dy)) numel_y in
   Tbl.replace st.table (Obj.repr slot_dy) (buffer_tensor dy_in y_shape);
   Tbl.replace st.traced (Obj.repr slot_dy) ();
@@ -2153,14 +2157,14 @@ and stage_scan_bwd : type r.
       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
         let after = Tbl.find dc_afters (Obj.repr leaf) in
         let ph =
-          Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
+          Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
         in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
         Tbl.replace st.traced (Obj.repr ph) ();
         ph)
       slot_c
   in
-  let dxs_ph = Nx_effect.buffer st.st_ctx xdt dxs_shape in
+  let dxs_ph = Nx_effect.symbolic st.st_ctx xdt dxs_shape in
   Tbl.replace st.table (Obj.repr dxs_ph) (buffer_tensor after_dxs dxs_shape);
   Tbl.replace st.traced (Obj.repr dxs_ph) ();
   (* Each external input's total cotangent, as outputs of the loop. *)
@@ -2170,7 +2174,7 @@ and stage_scan_bwd : type r.
         let after =
           U.after ~src:final ~deps:[ U.store ~dst:final ~value:loop_call () ]
         in
-        let ph = Nx_effect.buffer st.st_ctx (Nx_effect.dtype g) g_shape in
+        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype g) g_shape in
         Tbl.replace st.table (Obj.repr ph) (buffer_tensor after g_shape);
         Tbl.replace st.traced (Obj.repr ph) ();
         Scan.Closed_ctan (g, ph))
@@ -2941,7 +2945,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
   let ph_params =
     P.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
-        Nx_effect.buffer st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf))
+        Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf))
       params
   in
   let placeholders =

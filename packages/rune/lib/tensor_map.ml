@@ -31,8 +31,11 @@ let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
 (* A deferred tensor (an unread jit output) mutates when its bytes arrive, which
    would change its structural hash. Forcing it before keying makes the key
    stable — and a keyed tensor is being differentiated or mapped, so its bytes
-   are needed anyway. *)
-let stable x = ignore (Nx_effect.unwrap x)
+   are needed anyway. The other tensors never mutate. *)
+let stable (type a b) (x : (a, b) Nx_effect.t) =
+  match x with
+  | Nx_effect.Deferred _ -> ignore (Nx_effect.unwrap x)
+  | Nx_effect.T _ | Nx_effect.Symbolic _ -> ()
 
 let set m x v =
   stable x;
