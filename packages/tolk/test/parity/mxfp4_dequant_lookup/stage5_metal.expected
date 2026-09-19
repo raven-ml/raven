@@ -1,0 +1,214 @@
+=== kernel 0 ===
+   0 Ops.CONST           :            dtypes.int                               []                               384
+   1 Ops.PARAM           :            dtypes.int                               ['384']                          ParamArg(0, dtypes.int, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               3
+   3 Ops.SPECIAL         :            dtypes.int                               ['3']                            gidx0
+   4 Ops.CONST           :            dtypes.int                               []                               6
+   5 Ops.SHL             :            dtypes.int                               [3, '6']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               32
+   7 Ops.SPECIAL         :            dtypes.int                               ['32']                           lidx0
+   8 Ops.CONST           :            dtypes.int                               []                               1
+   9 Ops.SHL             :            dtypes.int                               [7, '1']                         None
+  10 Ops.ADD             :            dtypes.int                               [5, 9]                           None
+  11 Ops.CONST           :            dtypes.int                               []                               2
+  12 Ops.SHRINK          :            dtypes.int                               [1, 10, '2']                     None
+  13 Ops.PARAM           :            dtypes.uchar                             ['384']                          ParamArg(2, dtypes.uchar, device='CPU')
+  14 Ops.CONST           :            dtypes.int                               []                               5
+  15 Ops.SHL             :            dtypes.int                               [3, '5']                         None
+  16 Ops.ADD             :            dtypes.int                               [7, 15]                          None
+  17 Ops.PARAM           :            dtypes.int                               ['2']                            ParamArg(1, dtypes.int, device='CPU')
+  18 Ops.CONST           :            dtypes.int                               []                               0
+  19 Ops.SHRINK          :            dtypes.int                               [17, '0', '2']                   None
+  20 Ops.LOAD            :            dtypes.int                               [19]                             None
+  21 Ops.INDEX           :            dtypes.int                               [20, '0']                        None
+  22 Ops.CONST           :            dtypes.int                               []                               96
+  23 Ops.MUL             :            dtypes.int                               [21, '96']                       None
+  24 Ops.ADD             :            dtypes.int                               [16, 23]                         None
+  25 Ops.INDEX           :            dtypes.uchar                             [13, 24]                         None
+  26 Ops.CONST           :            dtypes.uchar                             []                               0
+  27 Ops.CONST           :            dtypes.int                               []                               -1
+  28 Ops.CMPLT           :            dtypes.bool                              ['-1', 21]                       None
+  29 Ops.CONST           :            dtypes.int                               []                               4
+  30 Ops.CMPLT           :            dtypes.bool                              [21, '4']                        None
+  31 Ops.AND             :            dtypes.bool                              [28, 30]                         None
+  32 Ops.LOAD            :            dtypes.uchar                             [25, '0', 31]                    None
+  33 Ops.CONST           :            dtypes.uchar                             []                               15
+  34 Ops.AND             :            dtypes.uchar                             [32, '15']                       None
+  35 Ops.CAST            :            dtypes.int                               [34]                             dtypes.int
+  36 Ops.CONST           :            dtypes.uchar                             []                               4
+  37 Ops.SHR             :            dtypes.uchar                             [32, '4']                        None
+  38 Ops.CAST            :            dtypes.int                               [37]                             dtypes.int
+  39 Ops.STACK           :            dtypes.int                               [35, 38]                         None
+  40 Ops.STORE           :            dtypes.void                              [12, 39]                         None
+  41 Ops.CONST           :            dtypes.int                               []                               192
+  42 Ops.ADD             :            dtypes.int                               [10, '192']                      None
+  43 Ops.SHRINK          :            dtypes.int                               [1, 42, '2']                     None
+  44 Ops.INDEX           :            dtypes.int                               [20, '1']                        None
+  45 Ops.MUL             :            dtypes.int                               [44, '96']                       None
+  46 Ops.ADD             :            dtypes.int                               [16, 45]                         None
+  47 Ops.INDEX           :            dtypes.uchar                             [13, 46]                         None
+  48 Ops.CMPLT           :            dtypes.bool                              ['-1', 44]                       None
+  49 Ops.CMPLT           :            dtypes.bool                              [44, '4']                        None
+  50 Ops.AND             :            dtypes.bool                              [48, 49]                         None
+  51 Ops.LOAD            :            dtypes.uchar                             [47, '0', 50]                    None
+  52 Ops.AND             :            dtypes.uchar                             [51, '15']                       None
+  53 Ops.CAST            :            dtypes.int                               [52]                             dtypes.int
+  54 Ops.SHR             :            dtypes.uchar                             [51, '4']                        None
+  55 Ops.CAST            :            dtypes.int                               [54]                             dtypes.int
+  56 Ops.STACK           :            dtypes.int                               [53, 55]                         None
+  57 Ops.STORE           :            dtypes.void                              [43, 56]                         None
+  58 Ops.GROUP           :            dtypes.void                              [40, 57, 40, 57]                 None
+  59 Ops.SINK            :            dtypes.void                              [58]                             KernelInfo(name='E_3_32_2_2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=2, arg=0), Opt(op=OptOps.UPCAST, axis=0, arg=0), Opt(op=OptOps.LOCAL, axis=0, arg=32)), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 1 ===
+   0 Ops.CONST           :            dtypes.int                               []                               12
+   1 Ops.PARAM           :            dtypes.int                               ['12']                           ParamArg(0, dtypes.int, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               3
+   3 Ops.SPECIAL         :            dtypes.int                               ['3']                            lidx0
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SPECIAL         :            dtypes.int                               ['2']                            gidx0
+   6 Ops.MUL             :            dtypes.int                               [5, '3']                         None
+   7 Ops.ADD             :            dtypes.int                               [3, 6]                           None
+   8 Ops.INDEX           :            dtypes.int                               [1, 7]                           None
+   9 Ops.CONST           :            dtypes.int                               []                               24
+  10 Ops.PARAM           :            dtypes.uchar                             ['24']                           ParamArg(2, dtypes.uchar, device='CPU')
+  11 Ops.PARAM           :            dtypes.int                               ['2']                            ParamArg(1, dtypes.int, device='CPU')
+  12 Ops.CONST           :            dtypes.int                               []                               0
+  13 Ops.SHRINK          :            dtypes.int                               [11, '0', '2']                   None
+  14 Ops.LOAD            :            dtypes.int                               [13]                             None
+  15 Ops.INDEX           :            dtypes.int                               [14, '0']                        None
+  16 Ops.CONST           :            dtypes.int                               []                               6
+  17 Ops.MUL             :            dtypes.int                               [15, '6']                        None
+  18 Ops.ADD             :            dtypes.int                               [7, 17]                          None
+  19 Ops.INDEX           :            dtypes.uchar                             [10, 18]                         None
+  20 Ops.CONST           :            dtypes.uchar                             []                               0
+  21 Ops.CONST           :            dtypes.int                               []                               -1
+  22 Ops.CMPLT           :            dtypes.bool                              ['-1', 15]                       None
+  23 Ops.CONST           :            dtypes.int                               []                               4
+  24 Ops.CMPLT           :            dtypes.bool                              [15, '4']                        None
+  25 Ops.AND             :            dtypes.bool                              [22, 24]                         None
+  26 Ops.LOAD            :            dtypes.uchar                             [19, '0', 25]                    None
+  27 Ops.CAST            :            dtypes.int                               [26]                             dtypes.int
+  28 Ops.STORE           :            dtypes.void                              [8, 27]                          None
+  29 Ops.ADD             :            dtypes.int                               [7, '6']                         None
+  30 Ops.INDEX           :            dtypes.int                               [1, 29]                          None
+  31 Ops.CONST           :            dtypes.int                               []                               1
+  32 Ops.INDEX           :            dtypes.int                               [14, '1']                        None
+  33 Ops.MUL             :            dtypes.int                               [32, '6']                        None
+  34 Ops.ADD             :            dtypes.int                               [7, 33]                          None
+  35 Ops.INDEX           :            dtypes.uchar                             [10, 34]                         None
+  36 Ops.CMPLT           :            dtypes.bool                              ['-1', 32]                       None
+  37 Ops.CMPLT           :            dtypes.bool                              [32, '4']                        None
+  38 Ops.AND             :            dtypes.bool                              [36, 37]                         None
+  39 Ops.LOAD            :            dtypes.uchar                             [35, '0', 38]                    None
+  40 Ops.CAST            :            dtypes.int                               [39]                             dtypes.int
+  41 Ops.STORE           :            dtypes.void                              [30, 40]                         None
+  42 Ops.GROUP           :            dtypes.void                              [28, 41]                         None
+  43 Ops.SINK            :            dtypes.void                              [42]                             KernelInfo(name='E_2_3_2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=0), Opt(op=OptOps.LOCAL, axis=0, arg=3)), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 2 ===
+   0 Ops.CONST           :            dtypes.int                               []                               12
+   1 Ops.PARAM           :            dtypes.float                             ['12']                           ParamArg(0, dtypes.float, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               3
+   3 Ops.SPECIAL         :            dtypes.int                               ['3']                            lidx0
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             :            dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          :            dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               256
+   9 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2, dtypes.float, device='CPU')
+  10 Ops.PARAM           :            dtypes.int                               ['12']                           ParamArg(1, dtypes.int, device='CPU')
+  11 Ops.SHRINK          :            dtypes.int                               [10, 5, '4']                     None
+  12 Ops.LOAD            :            dtypes.int                               [11]                             None
+  13 Ops.CONST           :            dtypes.int                               []                               0
+  14 Ops.INDEX           :            dtypes.int                               [12, '0']                        None
+  15 Ops.INDEX           :            dtypes.float                             [9, 14]                          None
+  16 Ops.CONST           :            dtypes.float                             []                               0.0
+  17 Ops.CONST           :            dtypes.int                               []                               -1
+  18 Ops.CMPLT           :            dtypes.bool                              ['-1', 14]                       None
+  19 Ops.CMPLT           :            dtypes.bool                              [14, '256']                      None
+  20 Ops.AND             :            dtypes.bool                              [18, 19]                         None
+  21 Ops.LOAD            :            dtypes.float                             [15, '0.0', 20]                  None
+  22 Ops.CONST           :            dtypes.int                               []                               1
+  23 Ops.INDEX           :            dtypes.int                               [12, '1']                        None
+  24 Ops.INDEX           :            dtypes.float                             [9, 23]                          None
+  25 Ops.CMPLT           :            dtypes.bool                              ['-1', 23]                       None
+  26 Ops.CMPLT           :            dtypes.bool                              [23, '256']                      None
+  27 Ops.AND             :            dtypes.bool                              [25, 26]                         None
+  28 Ops.LOAD            :            dtypes.float                             [24, '0.0', 27]                  None
+  29 Ops.INDEX           :            dtypes.int                               [12, '2']                        None
+  30 Ops.INDEX           :            dtypes.float                             [9, 29]                          None
+  31 Ops.CMPLT           :            dtypes.bool                              ['-1', 29]                       None
+  32 Ops.CMPLT           :            dtypes.bool                              [29, '256']                      None
+  33 Ops.AND             :            dtypes.bool                              [31, 32]                         None
+  34 Ops.LOAD            :            dtypes.float                             [30, '0.0', 33]                  None
+  35 Ops.INDEX           :            dtypes.int                               [12, '3']                        None
+  36 Ops.INDEX           :            dtypes.float                             [9, 35]                          None
+  37 Ops.CMPLT           :            dtypes.bool                              ['-1', 35]                       None
+  38 Ops.CMPLT           :            dtypes.bool                              [35, '256']                      None
+  39 Ops.AND             :            dtypes.bool                              [37, 38]                         None
+  40 Ops.LOAD            :            dtypes.float                             [36, '0.0', 39]                  None
+  41 Ops.STACK           :            dtypes.float                             [21, 28, 34, 40]                 None
+  42 Ops.STORE           :            dtypes.void                              [7, 41]                          None
+  43 Ops.GROUP           :            dtypes.void                              [42, 42, 42, 42]                 None
+  44 Ops.SINK            :            dtypes.void                              [43]                             KernelInfo(name='E_3_4n2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4), Opt(op=OptOps.LOCAL, axis=0, arg=3)), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 3 ===
+   0 Ops.CONST           :            dtypes.int                               []                               384
+   1 Ops.PARAM           :            dtypes.float                             ['384']                          ParamArg(0, dtypes.float, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               3
+   3 Ops.SPECIAL         :            dtypes.int                               ['3']                            gidx0
+   4 Ops.CONST           :            dtypes.int                               []                               7
+   5 Ops.SHL             :            dtypes.int                               [3, '7']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               32
+   7 Ops.SPECIAL         :            dtypes.int                               ['32']                           lidx0
+   8 Ops.CONST           :            dtypes.int                               []                               2
+   9 Ops.SHL             :            dtypes.int                               [7, '2']                         None
+  10 Ops.ADD             :            dtypes.int                               [5, 9]                           None
+  11 Ops.CONST           :            dtypes.int                               []                               4
+  12 Ops.SHRINK          :            dtypes.float                             [1, 10, '4']                     None
+  13 Ops.CONST           :            dtypes.int                               []                               16
+  14 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(2, dtypes.float, device='CPU')
+  15 Ops.PARAM           :            dtypes.int                               ['384']                          ParamArg(1, dtypes.int, device='CPU')
+  16 Ops.SHRINK          :            dtypes.int                               [15, 10, '4']                    None
+  17 Ops.LOAD            :            dtypes.int                               [16]                             None
+  18 Ops.CONST           :            dtypes.int                               []                               0
+  19 Ops.INDEX           :            dtypes.int                               [17, '0']                        None
+  20 Ops.INDEX           :            dtypes.float                             [14, 19]                         None
+  21 Ops.CONST           :            dtypes.float                             []                               0.0
+  22 Ops.CONST           :            dtypes.int                               []                               -1
+  23 Ops.CMPLT           :            dtypes.bool                              ['-1', 19]                       None
+  24 Ops.CMPLT           :            dtypes.bool                              [19, '16']                       None
+  25 Ops.AND             :            dtypes.bool                              [23, 24]                         None
+  26 Ops.LOAD            :            dtypes.float                             [20, '0.0', 25]                  None
+  27 Ops.CONST           :            dtypes.int                               []                               12
+  28 Ops.PARAM           :            dtypes.float                             ['12']                           ParamArg(3, dtypes.float, device='CPU')
+  29 Ops.SHL             :            dtypes.int                               [3, '2']                         None
+  30 Ops.SHR             :            dtypes.int                               [7, '3']                         None
+  31 Ops.ADD             :            dtypes.int                               [29, 30]                         None
+  32 Ops.INDEX           :            dtypes.float                             [28, 31]                         None
+  33 Ops.LOAD            :            dtypes.float                             [32]                             None
+  34 Ops.MUL             :            dtypes.float                             [26, 33]                         None
+  35 Ops.CONST           :            dtypes.int                               []                               1
+  36 Ops.INDEX           :            dtypes.int                               [17, '1']                        None
+  37 Ops.INDEX           :            dtypes.float                             [14, 36]                         None
+  38 Ops.CMPLT           :            dtypes.bool                              ['-1', 36]                       None
+  39 Ops.CMPLT           :            dtypes.bool                              [36, '16']                       None
+  40 Ops.AND             :            dtypes.bool                              [38, 39]                         None
+  41 Ops.LOAD            :            dtypes.float                             [37, '0.0', 40]                  None
+  42 Ops.MUL             :            dtypes.float                             [41, 33]                         None
+  43 Ops.INDEX           :            dtypes.int                               [17, '2']                        None
+  44 Ops.INDEX           :            dtypes.float                             [14, 43]                         None
+  45 Ops.CMPLT           :            dtypes.bool                              ['-1', 43]                       None
+  46 Ops.CMPLT           :            dtypes.bool                              [43, '16']                       None
+  47 Ops.AND             :            dtypes.bool                              [45, 46]                         None
+  48 Ops.LOAD            :            dtypes.float                             [44, '0.0', 47]                  None
+  49 Ops.MUL             :            dtypes.float                             [48, 33]                         None
+  50 Ops.INDEX           :            dtypes.int                               [17, '3']                        None
+  51 Ops.INDEX           :            dtypes.float                             [14, 50]                         None
+  52 Ops.CMPLT           :            dtypes.bool                              ['-1', 50]                       None
+  53 Ops.CMPLT           :            dtypes.bool                              [50, '16']                       None
+  54 Ops.AND             :            dtypes.bool                              [52, 53]                         None
+  55 Ops.LOAD            :            dtypes.float                             [51, '0.0', 54]                  None
+  56 Ops.MUL             :            dtypes.float                             [55, 33]                         None
+  57 Ops.STACK           :            dtypes.float                             [34, 42, 49, 56]                 None
+  58 Ops.STORE           :            dtypes.void                              [12, 57]                         None
+  59 Ops.GROUP           :            dtypes.void                              [58, 58, 58, 58]                 None
+  60 Ops.SINK            :            dtypes.void                              [59]                             KernelInfo(name='E_3_32_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4), Opt(op=OptOps.LOCAL, axis=0, arg=32)), opts_to_apply=None, estimates=None, beam=0)
