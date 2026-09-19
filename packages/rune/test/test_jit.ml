@@ -1179,7 +1179,8 @@ let delta f =
     s1.bytes_from_device - s0.bytes_from_device )
 
 (* Placement. [Rune.to_device] makes a value resident without a compiled call;
-   under RUNE_JIT_FORCE_COPY=1 the CPU device holds it in a buffer of its own. *)
+   under RUNE_JIT_FORCE_COPY=1 the CPU device holds it in a buffer of its
+   own. *)
 
 let resident () = (Rune.jit_stats ()).resident_bytes
 
@@ -1199,7 +1200,9 @@ let test_place_equals_its_argument () =
       equal ~msg:"the first read copies it back" int 24 down;
       equal ~msg:"and uploads nothing" int 0 up;
       equal ~msg:"an unbound value read is released" int 0 (resident () - base);
-      check_arr ~msg:"the argument is untouched" [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] x)
+      check_arr ~msg:"the argument is untouched"
+        [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
+        x)
 
 let test_place_strided_and_offset () =
   with_force_copy (fun () ->
@@ -1902,6 +1905,126 @@ let test_place_then_donate_consumes () =
       check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
       raises_donated (fun () -> to_arr p))
 
+(* Bound captures. A compiled function that captures a resident value on its
+   own device reads that value's buffer as its constant. *)
+
+let test_bound_capture_moves_no_bytes () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
+      let y, up, down = delta (fun () -> g x) in
+      equal ~msg:"compiling and calling uploads nothing" int 0 up;
+      equal ~msg:"and reads nothing back" int 0 down;
+      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
+      (* A second signature of the same closure binds the same buffer. *)
+      let m = Rune.to_device (Nx.create f32 [| 2; 3 |] (Array.make 6 3.0)) in
+      let y2, up, _ = delta (fun () -> g m) in
+      equal ~msg:"a second signature uploads nothing" int 0 up;
+      check_arr ~msg:"second signature" [| 3.0; 6.0; 9.0; 3.0; 6.0; 9.0 |] y2)
+
+let test_bound_capture_is_shared () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g1 = Rune.jit' (fun x -> Nx.mul x w) in
+      let g2 = Rune.jit' (fun x -> Nx.add x w) in
+      let x = vec32 [| 2.0; 2.0; 2.0 |] in
+      check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
+      check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x);
+      Gc.full_major ();
+      equal ~msg:"one buffer serves both functions" int 12 (resident () - base);
+      ignore (Sys.opaque_identity (g1, g2, w)))
+
+let test_bound_value_survives_a_read () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      let x = vec32 [| 2.0; 2.0; 2.0 |] in
+      check_arr ~msg:"before the read" [| 2.0; 4.0; 6.0 |] (g x);
+      let (), _, down =
+        delta (fun () -> check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w)
+      in
+      equal ~msg:"the read copies the value out" int 12 down;
+      equal ~msg:"and leaves the buffer in place" int 12 (resident () - base);
+      let (), _, down =
+        delta (fun () -> check_arr ~msg:"value again" [| 1.0; 2.0; 3.0 |] w)
+      in
+      equal ~msg:"the host copy is kept on the value" int 0 down;
+      check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
+      (* As an input leaf it still seeds from its buffer. *)
+      let double = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      ignore (double x);
+      let y, up, _ = delta (fun () -> double w) in
+      equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
+      check_arr ~msg:"as an input" [| 2.0; 4.0; 6.0 |] y)
+
+let test_unbound_value_is_evicted_by_a_read () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
+      equal ~msg:"the read released the buffer" int 0 (resident () - base);
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
+      let y, up, _ = delta (fun () -> g x) in
+      equal ~msg:"captured afterwards it is uploaded as a host tensor" int 12
+        up;
+      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y)
+
+let test_bound_input_is_not_donated () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' (fun x -> Nx.mul x w) in
+      ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
+      let step = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let y, up, _ = delta (fun () -> step w) in
+      equal ~msg:"the bound input seeds with no transfer" int 0 up;
+      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
+      check_arr ~msg:"the bound value is still readable" [| 1.0; 2.0; 3.0 |] w;
+      check_arr ~msg:"and still the constant" [| 2.0; 4.0; 6.0 |]
+        (g (vec32 [| 2.0; 2.0; 2.0 |]));
+      (* Returned unchanged, it comes back as a copy on the device. *)
+      let pass = Rune.jit' ~donate:true (fun x -> x) in
+      let z, up, _ = delta (fun () -> pass w) in
+      equal ~msg:"the pass-through uploads nothing" int 0 up;
+      is_true ~msg:"the pass-through is another value" (z != w);
+      Gc.full_major ();
+      is_true ~msg:"with storage of its own" (resident () - base >= 24);
+      check_arr ~msg:"pass-through value" [| 1.0; 2.0; 3.0 |] z;
+      check_arr ~msg:"the constant after the pass-through" [| 2.0; 4.0; 6.0 |]
+        (g (vec32 [| 2.0; 2.0; 2.0 |])))
+
+let test_bound_capture_returned_is_a_copy () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let g = Rune.jit' ~donate:true (fun (_ : Nx.float32_t) -> w) in
+      let y = g (vec32 [| 0.0 |]) in
+      is_true ~msg:"another value" (y != w);
+      check_arr ~msg:"the copy" [| 1.0; 2.0; 3.0 |] y;
+      check_arr ~msg:"a second call" [| 1.0; 2.0; 3.0 |] (g (vec32 [| 0.0 |])))
+
+(* Not inlined: once it returns, nothing but the collector's own bookkeeping
+   refers to the placed value or to the function that bound it. *)
+let[@inline never] bind_and_drop () =
+  let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' (fun x -> Nx.mul x w) in
+  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]))
+
+let test_bound_buffer_is_released_with_its_owners () =
+  with_force_copy (fun () ->
+      Gc.full_major ();
+      let base = resident () in
+      bind_and_drop ();
+      Gc.full_major ();
+      equal ~msg:"released once unreachable" int 0 (resident () - base))
+
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
       let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
@@ -2081,7 +2204,8 @@ let tests =
       ];
     group "placement"
       [
-        test "a placed value equals its argument" test_place_equals_its_argument;
+        test "a placed value equals its argument"
+          test_place_equals_its_argument;
         test "strided and offset values" test_place_strided_and_offset;
         test "a placed value feeds an input with no transfer"
           test_place_feeds_inputs_without_transfer;
@@ -2092,6 +2216,23 @@ let tests =
           test_place_is_the_identity_under_transformations;
         test "an unbound placed value is consumed by donation"
           test_place_then_donate_consumes;
+      ];
+    group "bound captures"
+      [
+        test "binding a placed capture moves no bytes"
+          test_bound_capture_moves_no_bytes;
+        test "two compiled functions share one buffer"
+          test_bound_capture_is_shared;
+        test "a bound value keeps its buffer across a read"
+          test_bound_value_survives_a_read;
+        test "an unbound value is evicted by a read"
+          test_unbound_value_is_evicted_by_a_read;
+        test "a bound input is not consumed by donation"
+          test_bound_input_is_not_donated;
+        test "a bound capture returned unchanged is a copy"
+          test_bound_capture_returned_is_a_copy;
+        test "a bound buffer is released with its owners"
+          test_bound_buffer_is_released_with_its_owners;
       ];
     group "chunked transfers"
       [

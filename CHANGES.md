@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function that captures a value placed with `Rune.to_device` on
+  its own device binds the value's buffer as its constant: nothing is uploaded,
+  and every compiled function over the same weights shares one device copy,
+  where each used to upload its own. A bound value keeps its buffer for as long
+  as it is reachable: a host read copies it out and leaves the buffer in place,
+  and a `~donate:true` call that takes it as an input does not consume it.
 - Add `Rune.to_device ?device x`, `x` with its bytes held by a device. The
   result has `x`'s type and value and is resident like an unread output of a
   compiled call: feeding it to a compiled function on that device moves no

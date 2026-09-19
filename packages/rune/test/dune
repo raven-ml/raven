@@ -67,7 +67,7 @@
  (package rune)
  (enabled_if
   (= %{system} macosx))
- (libraries rune nx nx.core tolk windtrap rune_test_support))
+ (libraries rune nx nx.core tolk unix windtrap rune_test_support))
 
 (tests
  (names test_jit_cuda)

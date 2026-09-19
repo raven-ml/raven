@@ -210,6 +210,9 @@ type resident_entry = {
   r_nbytes : int; (* summed across shards *)
   mutable r_bufs : Tolk.Device.Buffer.t list; (* [[]] once released *)
   mutable r_donated : bool; (* released by a [~donate:true] call *)
+  mutable r_bound : bool;
+      (* a compiled program reads the buffer as a constant: only the handle's
+         finalizer may release it, never a read or a donation *)
 }
 
 (* Forcing a handle whose storage a donated call released cannot produce the
@@ -220,6 +223,11 @@ let donated_error () =
      before the call"
 
 let resident : (int, resident_entry) Hashtbl.t = Hashtbl.create 64
+
+let resident_of x =
+  match Nx_effect.deferred_id x with
+  | None -> None
+  | Some id -> Hashtbl.find_opt resident id
 
 (* Finalizers only record the entry; buffers are released at the next safe point
    (a force or a replay), not mid-GC inside arbitrary device code. *)
@@ -306,6 +314,11 @@ type state = {
       (* a fresh buffer an indexed write lands in, and the input buffer node
          whose value it starts from (see [write_destination]) *)
   mutable consts : (U.t * packed) list; (* reverse order *)
+  bound : (int, F.Tensor.t) Hashtbl.t;
+      (* resident captures bound in place, by resident id. The table above
+         hashes its keys structurally and an unforced handle changes when it is
+         read, so such a capture is never one of its keys. *)
+  mutable bound_consts : (U.t * resident_entry * packed) list;
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
   scan_stacks : U.t list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
@@ -371,17 +384,45 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   Tbl.replace st.table (Obj.repr x) tt;
   tt
 
+(* A capture that is resident on the trace's own single device keeps its
+   buffer: the program reads it as the constant and no bytes move. From here on
+   the buffer outlives reads and donations of the value (it is marked before
+   the traced function can read the capture), and the compiled record keeps the
+   value reachable. *)
+let bindable st x =
+  match (st.st_multi, resident_of x) with
+  | None, Some ({ r_bufs = [ _ ]; r_axis = None; _ } as e)
+    when e.r_device == st.st_device ->
+      Some e
+  | _ -> None
+
+let bind_const (type a b) st e (x : (a, b) Nx_effect.t) : F.Tensor.t =
+  e.r_bound <- true;
+  let dt = Nx_effect.dtype x in
+  let shape = shape_of x in
+  let node = make_node st (tolk_dtype dt) (numel shape) in
+  st.bound_consts <- (node, e, Packed (dt, x)) :: st.bound_consts;
+  let tt = buffer_tensor node shape in
+  Hashtbl.replace st.bound e.r_id tt;
+  tt
+
 (* A tensor entering the trace without a table entry is a closure capture. *)
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
   (match st.scan_collectors with
   | [] -> ()
   | fs -> List.iter (fun h -> h.hook x) fs);
-  match Tbl.find_opt st.table (Obj.repr x) with
-  | Some t -> t
-  | None ->
-      Tbl.replace st.captures (Obj.repr x) ();
-      lift_const st x
+  match bindable st x with
+  | Some e -> (
+      match Hashtbl.find_opt st.bound e.r_id with
+      | Some t -> t
+      | None -> bind_const st e x)
+  | None -> (
+      match Tbl.find_opt st.table (Obj.repr x) with
+      | Some t -> t
+      | None ->
+          Tbl.replace st.captures (Obj.repr x) ();
+          lift_const st x)
 
 (* Composed operations Tolk has no primitive for. *)
 
@@ -2373,6 +2414,7 @@ let make_handle : type a b.
       r_nbytes = nbytes;
       r_bufs = bufs;
       r_donated = false;
+      r_bound = false;
     }
   in
   let n = numel shape in
@@ -2444,7 +2486,9 @@ let make_handle : type a b.
           end
       | None, [] -> assert false
     in
-    release_entry entry;
+    (* A program that binds the buffer reads it for as long as the handle is
+       reachable. *)
+    if not entry.r_bound then release_entry entry;
     host
   in
   let handle = Nx_effect.deferred ctx dtv shape fill in
@@ -2468,11 +2512,6 @@ let make_handle : type a b.
    owns and hands it back as a resident handle, exactly like an unread output
    of a compiled call. The buffer bypasses the allocator's cache: a dropped
    model is returned to the system, not parked in a pool keyed by its sizes. *)
-
-let resident_of x =
-  match Nx_effect.deferred_id x with
-  | None -> None
-  | Some id -> Hashtbl.find_opt resident id
 
 let place (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
   let device = match device with Some d -> d | None -> F.Run.device_name () in
@@ -2530,6 +2569,10 @@ type 'q compiled = {
   cp_wrapped : (packed * Obj.t) array;
       (* captures bound by aliasing host memory: kernels read that memory on
          every call, so it must stay reachable while the trace can run *)
+  cp_bound : packed array;
+      (* resident captures whose device buffers are this program's constants:
+         a buffer is released by its handle's finalizer alone, so the handles
+         must stay reachable while the trace can run *)
   cp_outputs : (Obj.t * packed * U.t * leaf_place) list;
       (* output leaf -> its placeholder (dtype and shape), buffer node, and
          placement *)
@@ -2711,6 +2754,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
       input_tags = Hashtbl.create 16;
       prefills = [];
       consts = [];
+      bound = Hashtbl.create 16;
+      bound_consts = [];
       axis_index = None;
       scan_stacks = Tbl.create 4;
       scan_closed = Tbl.create 4;
@@ -3027,6 +3072,19 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
           | Tolk.Realize.Multi mbuf ->
               Tolk.Realize.Buffers.seed_multi binding node mbuf))
     st.consts;
+  (* A bound capture seeds its constant with the resident buffer itself. Its
+     entry was marked bound when the trace met it, so no read since then can
+     have released the buffer. *)
+  let bound =
+    List.map
+      (fun (node, e, pk) ->
+        Hashtbl.replace reserved (U.tag node) ();
+        (match e.r_bufs with
+        | [ buf ] -> Tolk.Realize.Buffers.seed binding node buf
+        | _ -> assert false);
+        pk)
+      st.bound_consts
+  in
   (* The per-device axis index ([Nx.Rng.fold_in_axis] under pmap): one scalar
      buffer per device holding that device's own index. *)
   (match (st.axis_index, multi) with
@@ -3163,6 +3221,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~donate ~const_cache ?multi
     cp_binding = binding;
     cp_inputs;
     cp_wrapped = Array.of_list !wrapped;
+    cp_bound = Array.of_list bound;
     cp_outputs;
     cp_aliases;
     cp_prefills;
@@ -3209,8 +3268,10 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
      mismatched is forced by the copy path instead and is never donated. *)
   let seeded = ref [] in
   let seed_entry = Array.make (Array.length c.cp_inputs) None in
+  (* A bound entry is some program's constant: it is never consumed. *)
   let note e =
-    if donate && not (List.memq e !seeded) then seeded := e :: !seeded
+    if donate && (not e.r_bound) && not (List.memq e !seeded) then
+      seeded := e :: !seeded
   in
   let keep = ref [] in
   let i = ref 0 in
@@ -3283,6 +3344,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
               match seed_entry.(i) with
               | Some e
                 when (not (Hashtbl.mem claims otag))
+                     && (not e.r_bound)
                      && uses e = 1
                      && not (List.memq e !claimed) ->
                   claimed := e :: !claimed;
@@ -3413,6 +3475,7 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
   | None -> Tolk.Device.synchronize c.cp_device);
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_wrapped);
+  ignore (Sys.opaque_identity c.cp_bound);
   (* Output leaves resolving to the same buffer node share one handle, so each
      device buffer has a single owner. *)
   let handles : (int, packed) Hashtbl.t = Hashtbl.create 8 in
@@ -3500,7 +3563,9 @@ let replay (type p q) ~donate (module P : Nx.Ptree.S with type t = p)
                 Hashtbl.fold (fun _ e' acc -> acc || e' == e) claims false
               in
               Printf.eprintf "rune.jit: input leaf %d: %s\n%!" i
-                (if reused then "storage reused" else "storage copied"))
+                (if e.r_bound then "bound"
+                 else if reused then "storage reused"
+                 else "storage copied"))
         seed_entry
   end;
   y
