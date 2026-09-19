@@ -554,7 +554,7 @@ let models ~device ~dtype ~label fx path =
     { cfg with window = int_of_float (number (mem "sliding_window" fx)) }
   in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string dtype in
-  let p = Gpt_oss.from_file cfg dt path in
+  let p = Gpt_oss.from_file ?device cfg dt path in
   rotary fx cfg;
   List.iteri
     (fun i (b : _ Gpt_oss.block) ->

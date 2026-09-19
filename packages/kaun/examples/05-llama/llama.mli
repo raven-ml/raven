@@ -105,17 +105,30 @@ val config_of_json : Jsont.json -> config
     Raises [Failure] on a missing field or another rotary scaling type. *)
 
 val of_hf :
-  config -> (float, 'b) Nx.dtype -> Kaun.Checkpoint.t -> (float, 'b) Nx.t params
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  Kaun.Checkpoint.t ->
+  (float, 'b) Nx.t params
 (** [of_hf cfg dt ckpt] is the model of the HuggingFace Llama checkpoint [ckpt],
     at [dt]. Each entry is read by its name in the file with the shape [cfg]
     gives it, and every projection is transposed to [inputs × outputs], a view.
     At the file's own dtype nothing is copied; at another one each leaf is cast.
 
+    With [device], each leaf is placed on it with {!Rune.to_device} as it is
+    built, before the next is read, so at most one leaf's cast is alive on the
+    host and a function compiled for [device] that captures the model uploads
+    nothing.
+
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or is not a floating-point entry. *)
 
 val from_file :
-  config -> (float, 'b) Nx.dtype -> string -> (float, 'b) Nx.t params
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  string ->
+  (float, 'b) Nx.t params
 (** [from_file cfg dt path] is {!of_hf} on the safetensors file [path]. *)
 
 type dtype =
@@ -135,7 +148,10 @@ val default_repo : string
     byte-identical to Meta's gated one. *)
 
 val from_pretrained :
-  ?repo_id:string -> (float, 'b) Nx.dtype -> config * (float, 'b) Nx.t params
+  ?device:string ->
+  ?repo_id:string ->
+  (float, 'b) Nx.dtype ->
+  config * (float, 'b) Nx.t params
 (** [from_pretrained dt] downloads {!default_repo} (about 2.5 GB, cached
     afterwards), or [repo_id], and is its configuration and its parameters at
     [dt]. *)

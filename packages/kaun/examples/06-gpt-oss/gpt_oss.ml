@@ -299,15 +299,22 @@ let config_of_json json =
    exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
    [Checkpoint.to_float] refuses them. A tied model has no lm_head entry. *)
 
-let of_hf cfg dt ckpt =
-  let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
-  let bytes ~shape name = Checkpoint.to_tensor ~shape Nx.uint8 name ckpt in
+let of_hf ?device cfg dt ckpt =
+  let place x =
+    match device with None -> x | Some device -> Rune.to_device ~device x
+  in
+  let float ~shape name = place (Checkpoint.to_float ~shape dt name ckpt) in
+  let bytes ~shape name =
+    place (Checkpoint.to_tensor ~shape Nx.uint8 name ckpt)
+  in
+  let stored ~shape name = Checkpoint.to_float ~shape dt name ckpt in
   let norm name = { Rms_norm.gamma = float ~shape:[| cfg.dim |] name } in
   let linear ?(bias = true) ~inputs ~outputs name =
     {
       Linear.w =
-        Nx.matrix_transpose
-          (float ~shape:[| outputs; inputs |] (name ^ ".weight"));
+        place
+          (Nx.matrix_transpose
+             (stored ~shape:[| outputs; inputs |] (name ^ ".weight")));
       b =
         (if bias then Some (float ~shape:[| outputs |] (name ^ ".bias"))
          else None);
@@ -395,8 +402,8 @@ let stored_dtype ckpt =
       failwith
         "the checkpoint's embedding table is not a bfloat16 or float32 entry"
 
-let from_file cfg dt path = of_hf cfg dt (Checkpoint.load path)
+let from_file ?device cfg dt path = of_hf ?device cfg dt (Checkpoint.load path)
 
-let from_pretrained repo_id dt =
+let from_pretrained ?device repo_id dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?device cfg dt (Hf.load_checkpoint repo_id))

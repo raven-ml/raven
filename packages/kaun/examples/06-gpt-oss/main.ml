@@ -129,6 +129,8 @@ let () =
     else Gpt_oss.dtype_of_string !dtype
   in
   let device = if !jit = "" then None else Some !jit in
-  let out = generate ?device cfg (Gpt_oss.of_hf cfg dt ckpt) dt ~count:!count in
+  let out =
+    generate ?device cfg (Gpt_oss.of_hf ?device cfg dt ckpt) dt ~count:!count
+  in
   print_endline
     (String.concat " " (Array.to_list (Array.map Int32.to_string out)))

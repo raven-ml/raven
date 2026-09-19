@@ -127,7 +127,11 @@ val config_of_json : Jsont.json -> config
     Raises [Failure] on a missing field. *)
 
 val of_hf :
-  config -> (float, 'b) Nx.dtype -> Kaun.Checkpoint.t -> (float, 'b) Nx.t params
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  Kaun.Checkpoint.t ->
+  (float, 'b) Nx.t params
 (** [of_hf cfg dt ckpt] is the model of the HuggingFace GPT-2 checkpoint [ckpt],
     at [dt]. Each entry is read by its name in the file with the shape [cfg]
     gives it. The file's weights are already [inputs × outputs]; each block's
@@ -136,11 +140,19 @@ val of_hf :
     are the file's entries; at another one each leaf is cast. Entries the model
     does not use (attention mask buffers) are never read.
 
+    With [device], each leaf is placed on it with {!Rune.to_device} as it is
+    built, so a function compiled for [device] that captures the model uploads
+    nothing.
+
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or is not a floating-point entry. *)
 
 val from_file :
-  config -> (float, 'b) Nx.dtype -> string -> (float, 'b) Nx.t params
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  string ->
+  (float, 'b) Nx.t params
 (** [from_file cfg dt path] is [of_hf cfg dt (Checkpoint.load path)]: the
     parameters of a local HuggingFace-layout safetensors file.
 
@@ -159,7 +171,10 @@ val stored_dtype : Kaun.Checkpoint.t -> dtype
     at which {!of_hf} casts nothing. *)
 
 val from_pretrained :
-  ?repo_id:string -> (float, 'b) Nx.dtype -> config * (float, 'b) Nx.t params
+  ?device:string ->
+  ?repo_id:string ->
+  (float, 'b) Nx.dtype ->
+  config * (float, 'b) Nx.t params
 (** [from_pretrained dt] downloads [repo_id] (defaults to ["gpt2"]) from the
     HuggingFace Hub, config and weights, and is the parsed configuration with
     the pretrained parameters at [dt].

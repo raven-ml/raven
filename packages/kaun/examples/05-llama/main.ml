@@ -163,8 +163,10 @@ let () =
     else Llama.dtype_of_string !dtype
   in
   let toks =
-    generate ?device cfg (Llama.of_hf cfg dt ckpt) dt ~temperature:!temperature
-      ~top_k:!top_k ~top_p:!top_p ~seed:!seed ~max_tokens:!count ids
+    generate ?device cfg
+      (Llama.of_hf ?device cfg dt ckpt)
+      dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
+      ~max_tokens:!count ids
   in
   print_string !prompt;
   print_endline (Brot.decode tokenizer (Array.map Int32.to_int toks))

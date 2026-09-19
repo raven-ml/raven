@@ -215,7 +215,8 @@ let () =
   let (Gpt2.Dtype dt) =
     if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
   in
-  let params = Gpt2.of_hf cfg dt ckpt in
+  let device = if !jit = "" then None else Some !jit in
+  let params = Gpt2.of_hf ?device cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin
@@ -227,7 +228,6 @@ let () =
   Printf.printf "weights: %.0f MB at %s\n%!"
     (float_of_int !bytes /. 1e6)
     (Nx_core.Dtype.to_string dt);
-  let device = if !jit = "" then None else Some !jit in
   let t0 = Unix.gettimeofday () in
   let toks = generate ?device cfg params dt ~max_tokens:!count ids in
   let dt = Unix.gettimeofday () -. t0 in

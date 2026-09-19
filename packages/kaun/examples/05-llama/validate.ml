@@ -250,10 +250,10 @@ let () =
   let device = if !jit = "" then None else Some !jit in
   let (Llama.Dtype dt) = Llama.dtype_of_string !dtype in
   let cfg, p =
-    if !weights = "" then Llama.from_pretrained ~repo_id:repo dt
+    if !weights = "" then Llama.from_pretrained ?device ~repo_id:repo dt
     else
       let cfg = Llama.config_of_json (json_of_file !config) in
-      (cfg, Llama.from_file cfg dt !weights)
+      (cfg, Llama.from_file ?device cfg dt !weights)
   in
   (* Float32 against float32 with different kernels agrees to a few parts in a
      million eagerly; half precision keeps about three digits. *)

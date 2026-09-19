@@ -140,7 +140,11 @@ val config_of_json : Jsont.json -> config
     without truncation. *)
 
 val of_hf :
-  config -> (float, 'b) Nx.dtype -> Kaun.Checkpoint.t -> (float, 'b) Nx.t params
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  Kaun.Checkpoint.t ->
+  (float, 'b) Nx.t params
 (** [of_hf cfg dt ckpt] is the model of the HuggingFace gpt-oss checkpoint
     [ckpt], with its float leaves at [dt]. Each entry is read by its name in the
     file with the shape [cfg] gives it. Projections are transposed to
@@ -148,11 +152,19 @@ val of_hf :
     packed uint8 tensors, whatever [dt]. At the file's own dtype nothing is
     copied; at another one each float leaf is cast.
 
+    With [device], each leaf, float or uint8, is placed on it with
+    {!Rune.to_device} as it is built, so a function compiled for [device] that
+    captures the model uploads nothing and the host holds one leaf at a time.
+
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or has a dtype the leaf cannot take. *)
 
 val from_file :
-  config -> (float, 'b) Nx.dtype -> string -> (float, 'b) Nx.t params
+  ?device:string ->
+  config ->
+  (float, 'b) Nx.dtype ->
+  string ->
+  (float, 'b) Nx.t params
 (** [from_file cfg dt path] is {!of_hf} on the safetensors file [path]. *)
 
 type dtype =
@@ -168,7 +180,10 @@ val stored_dtype : Kaun.Checkpoint.t -> dtype
     dtype at which {!of_hf} casts nothing. *)
 
 val from_pretrained :
-  string -> (float, 'b) Nx.dtype -> config * (float, 'b) Nx.t params
+  ?device:string ->
+  string ->
+  (float, 'b) Nx.dtype ->
+  config * (float, 'b) Nx.t params
 (** [from_pretrained repo_id dt] downloads the repository's configuration and
     checkpoint, single-file or sharded (cached afterwards), and is the model at
     [dt]. *)

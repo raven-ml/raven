@@ -174,6 +174,33 @@ let () =
 
 Each name is written at the field it fills. A rename is a different string at the field, a transpose is `Nx.matrix_transpose`, and a fused tensor is cut with `Nx.split`; both are views. Structure comes from the configuration and the dtype is an argument: at the file's own dtype every leaf is a view of the file and nothing is copied, and at another one each leaf is cast as it is read. An importer that ties two weights binds the tensor once and uses it twice.
 
+## Placing Weights on a Device
+
+A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Rune.to_device` moves a tensor into a device buffer and returns it as the same value, and a compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
+
+```ocaml
+let mlp_of_file ?device dt ckpt =
+  let place x =
+    match device with None -> x | Some device -> Rune.to_device ~device x
+  in
+  let linear ~inputs ~outputs name =
+    let float ~shape leaf =
+      Checkpoint.to_float ~shape dt (name ^ leaf) ckpt
+    in
+    {
+      Linear.w =
+        place (Nx.matrix_transpose (float ~shape:[| outputs; inputs |] ".weight"));
+      b = Some (place (float ~shape:[| outputs |] ".bias"));
+    }
+  in
+  {
+    Mlp.l1 = linear ~inputs:4 ~outputs:8 "encoder.fc1";
+    l2 = linear ~inputs:8 ~outputs:2 "encoder.fc2";
+  }
+```
+
+Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. The examples' importers take `?device` this way, and their programs pass the device they compile for. Outside a compiled function every nx operation on a placed value reads it back to the host, so place the final form of each leaf, after the transpose.
+
 ## Fetching From the Hub: kaun.hf
 
 The `kaun.hf` library fetches files from [HuggingFace Hub](https://huggingface.co) repositories into a local cache and loads safetensors checkpoints, single-file or sharded, as `Checkpoint.t` values. Downloading shells out to `curl` (it must be on `PATH`). A download is written beside its cache path and renamed once complete, and cached files are served without touching the network.

@@ -254,14 +254,20 @@ let logits cfg p h =
    i with i + head_dim / 2, which is [Rope]'s. A tied model has no lm_head
    entry. *)
 
-let of_hf cfg dt ckpt =
+let of_hf ?device cfg dt ckpt =
+  let place x =
+    match device with None -> x | Some device -> Rune.to_device ~device x
+  in
   let weight ~shape name =
     Checkpoint.to_float ~shape dt (name ^ ".weight") ckpt
   in
-  let norm name = { Rms_norm.gamma = weight ~shape:[| cfg.dim |] name } in
+  let norm name =
+    { Rms_norm.gamma = place (weight ~shape:[| cfg.dim |] name) }
+  in
   let linear ~inputs ~outputs name =
     {
-      Linear.w = Nx.matrix_transpose (weight ~shape:[| outputs; inputs |] name);
+      Linear.w =
+        place (Nx.matrix_transpose (weight ~shape:[| outputs; inputs |] name));
       b = None;
     }
   in
@@ -288,7 +294,8 @@ let of_hf cfg dt ckpt =
     tok =
       {
         Embedding.table =
-          weight ~shape:[| cfg.vocab_size; cfg.dim |] "model.embed_tokens";
+          place
+            (weight ~shape:[| cfg.vocab_size; cfg.dim |] "model.embed_tokens");
       };
     blocks = List.init cfg.n_layers block;
     norm = norm "model.norm";
@@ -383,11 +390,11 @@ let config_of_json json =
 
 (* Pretrained loading *)
 
-let from_file cfg dt path = of_hf cfg dt (Checkpoint.load path)
+let from_file ?device cfg dt path = of_hf ?device cfg dt (Checkpoint.load path)
 
 (* An ungated mirror whose weight files are byte-identical to Meta's. *)
 let default_repo = "NousResearch/Llama-3.2-1B"
 
-let from_pretrained ?(repo_id = default_repo) dt =
+let from_pretrained ?device ?(repo_id = default_repo) dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?device cfg dt (Hf.load_checkpoint repo_id))

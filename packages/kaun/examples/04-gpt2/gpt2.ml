@@ -245,28 +245,35 @@ let logits cfg p h =
    weights are already [inputs; outputs], so only the fused projection is cut,
    with [Nx.split], into three views. *)
 
-let of_hf cfg dt ckpt =
+let of_hf ?device cfg dt ckpt =
+  let place x =
+    match device with None -> x | Some device -> Rune.to_device ~device x
+  in
   let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
   let d = cfg.n_embd in
   let layer_norm name =
-    {
-      Layer_norm.gamma = float ~shape:[| d |] (name ^ ".weight");
-      beta = float ~shape:[| d |] (name ^ ".bias");
-    }
+    Layer_norm.map place
+      {
+        Layer_norm.gamma = float ~shape:[| d |] (name ^ ".weight");
+        beta = float ~shape:[| d |] (name ^ ".bias");
+      }
   in
-  let linear ~inputs ~outputs name =
+  let stored ~inputs ~outputs name =
     {
       Linear.w = float ~shape:[| inputs; outputs |] (name ^ ".weight");
       b = Some (float ~shape:[| outputs |] (name ^ ".bias"));
     }
   in
+  let linear ~inputs ~outputs name =
+    Linear.map place (stored ~inputs ~outputs name)
+  in
   let block i =
     let at leaf = Printf.sprintf "h.%d.%s" i leaf in
-    let fused = linear ~inputs:d ~outputs:(3 * d) (at "attn.c_attn") in
+    let fused = stored ~inputs:d ~outputs:(3 * d) (at "attn.c_attn") in
     let q, k, v =
       match
         List.map2
-          (fun w b -> { Linear.w; b = Some b })
+          (fun w b -> Linear.map place { Linear.w; b = Some b })
           (Nx.split ~axis:1 3 fused.w)
           (Nx.split ~axis:0 3 (Option.get fused.b))
       with
@@ -283,9 +290,15 @@ let of_hf cfg dt ckpt =
   in
   {
     wte =
-      { Embedding.table = float ~shape:[| cfg.vocab_size; d |] "wte.weight" };
+      {
+        Embedding.table =
+          place (float ~shape:[| cfg.vocab_size; d |] "wte.weight");
+      };
     wpe =
-      { Embedding.table = float ~shape:[| cfg.n_positions; d |] "wpe.weight" };
+      {
+        Embedding.table =
+          place (float ~shape:[| cfg.n_positions; d |] "wpe.weight");
+      };
     blocks = List.init cfg.n_layer block;
     ln_f = layer_norm "ln_f";
   }
@@ -343,8 +356,8 @@ let config_of_json json =
       | _ -> 1e-5);
   }
 
-let from_file cfg dt path = of_hf cfg dt (Checkpoint.load path)
+let from_file ?device cfg dt path = of_hf ?device cfg dt (Checkpoint.load path)
 
-let from_pretrained ?(repo_id = "gpt2") dt =
+let from_pretrained ?device ?(repo_id = "gpt2") dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?device cfg dt (Hf.load_checkpoint repo_id))
