@@ -5,7 +5,7 @@
 
 (tests
  (names
-  test_nx_deferred
+  test_nx_placement
   test_nx_indexing
   test_nx_sanity
   test_nx_linalg

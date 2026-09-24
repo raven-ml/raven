@@ -3,14 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Keys are tensors compared by physical identity. Structural hashing is
-   consistent with physical equality as long as keyed tensors are not mutated
-   while the map is live, which the differentiation handlers enforce. *)
-module Tbl = Hashtbl.Make (struct
-  type t = Obj.t
+type key = Key : ('a, 'b) Nx_effect.t -> key
 
-  let equal = ( == )
-  let hash = Hashtbl.hash
+(* Keys are tensors compared by physical identity and hashed by
+   [Nx_effect.identity_hash], which a value keeps for its whole life. *)
+module Tbl = Hashtbl.Make (struct
+  type t = key
+
+  let equal (Key a) (Key b) = Obj.repr a == Obj.repr b
+  let hash (Key x) = Nx_effect.identity_hash x
 end)
 
 type entry = Entry : ('a, 'b) Nx_core.Dtype.t * ('a, 'b) Nx.t -> entry
@@ -19,7 +20,7 @@ type t = entry Tbl.t
 let create () = Tbl.create 64
 
 let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
-  match Tbl.find_opt m (Obj.repr x) with
+  match Tbl.find_opt m (Key x) with
   | None -> None
   | Some (Entry (dt, v)) -> (
       (* Entries are stored under the key of the tensor whose dtype they record,
@@ -28,27 +29,12 @@ let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
       | Some Type.Equal -> Some v
       | None -> assert false)
 
-(* A deferred tensor (an unread jit output) mutates when its bytes arrive, which
-   would change its structural hash. Forcing it before keying makes the key
-   stable — and a keyed tensor is being differentiated or mapped, so its bytes
-   are needed anyway. The other tensors never mutate. *)
-let stable (type a b) (x : (a, b) Nx_effect.t) =
-  match x with
-  | Nx_effect.Deferred _ -> ignore (Nx_effect.unwrap x)
-  | Nx_effect.T _ | Nx_effect.Traced _ -> ()
-
-let set m x v =
-  stable x;
-  Tbl.replace m (Obj.repr x) (Entry (Nx.dtype x, v))
+let set m x v = Tbl.replace m (Key x) (Entry (Nx.dtype x, v))
 
 module Ids = struct
   type t = unit Tbl.t
 
   let create () = Tbl.create 64
-
-  let add ids x =
-    stable x;
-    Tbl.replace ids (Obj.repr x) ()
-
-  let mem ids x = Tbl.mem ids (Obj.repr x)
+  let add ids x = Tbl.replace ids (Key x) ()
+  let mem ids x = Tbl.mem ids (Key x)
 end

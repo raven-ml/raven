@@ -1477,7 +1477,7 @@ let test_place_equals_its_argument () =
       in
       equal ~msg:"the first read copies it back" int 24 down;
       equal ~msg:"and uploads nothing" int 0 up;
-      equal ~msg:"an unbound value read is released" int 0 (resident () - base);
+      equal ~msg:"a read leaves the value placed" int 24 (resident () - base);
       check_arr ~msg:"the argument is untouched"
         [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
         x)
@@ -1529,11 +1529,10 @@ let test_place_is_the_identity_under_transformations () =
         Nx.sum (Nx.mul x (Nx.mul x x))
       in
       let plain = loss Fun.id and placed = loss (fun x -> Rune.to_device x) in
-      Gc.full_major ();
-      let base = resident () in
-      check_arr ~msg:"grad, eagerly"
-        (to_arr (Rune.grad' plain x))
-        (Rune.grad' placed x);
+      let g = Rune.grad' placed x in
+      check_arr ~msg:"grad, eagerly" (to_arr (Rune.grad' plain x)) g;
+      is_true ~msg:"the cotangent comes back to its primal's placement"
+        (Nx.Placement.equal Nx.Placement.host (Nx.placement g));
       check_arr ~msg:"grad, compiled"
         (to_arr (Rune.grad' plain x))
         (Rune.jit' (Rune.grad' placed) x);
@@ -1549,9 +1548,56 @@ let test_place_is_the_identity_under_transformations () =
       let (_ : Nx.float32_t), up, _ =
         delta (fun () -> Rune.jit' (fun x -> Nx.mul_s (Rune.to_device x) 2.0) x)
       in
-      equal ~msg:"inside jit only the input is uploaded" int 12 up;
-      Gc.full_major ();
-      equal ~msg:"nothing was placed" int 0 (resident () - base))
+      equal ~msg:"inside jit, placing where the program runs moves nothing" int
+        12 up)
+
+(* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
+let test_item_reads_one_element () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let y = g (Nx.create f32 [| 64; 64 |] (Array.init 4096 float_of_int)) in
+      let v, up, down = delta (fun () -> Nx.item [ 1; 2 ] y) in
+      equal ~msg:"the element" float_exact 132.0 v;
+      equal ~msg:"one element moves" int 4 down;
+      equal ~msg:"nothing is uploaded" int 0 up;
+      is_true ~msg:"the value stays resident" (bound_by 0 y);
+      let (_ : Nx.float32_t), up, _ = delta (fun () -> g y) in
+      equal ~msg:"and feeds a call with no upload" int 0 up)
+
+let test_move_to_host_keeps_its_source () =
+  with_force_copy (fun () ->
+      let p = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let h = Nx.place Nx.Placement.host p in
+      is_true ~msg:"a host copy"
+        (Nx.Placement.equal Nx.Placement.host (Nx.placement h));
+      check_arr ~msg:"its elements" [| 1.0; 2.0; 3.0 |] h;
+      check_arr ~msg:"the source is still readable" [| 1.0; 2.0; 3.0 |] p;
+      is_true ~msg:"and resident" (bound_by 0 p))
+
+let test_mixed_placements_raise () =
+  with_force_copy (fun () ->
+      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let q =
+        Rune.jit' ~device:"CPU:1"
+          (fun x -> Nx.mul_s x 1.0)
+          (vec32 [| 3.0; 4.0 |])
+      in
+      raises_match
+        (function
+          | Invalid_argument msg ->
+              String.ends_with ~suffix:"place one of them" msg
+          | _ -> false)
+        (fun () -> Nx.add p q);
+      check_arr ~msg:"a host operand joins" [| 2.0; 3.0 |]
+        (Nx.add p (vec32 [| 1.0; 1.0 |])))
+
+let test_placing_elsewhere_inside_jit_raises () =
+  with_force_copy (fun () ->
+      let other =
+        Nx.placement (Rune.to_device ~device:"CPU:1" (vec32 [| 0.0 |]))
+      in
+      raises_jit_error (fun () ->
+          Rune.jit' (fun x -> Nx.place other x) (vec32 [| 1.0 |])))
 
 (* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
    these values are larger than that, with a last chunk shorter than the
@@ -1565,7 +1611,9 @@ let check_transfers ~msg f x =
   with_force_copy (fun () ->
       let (y : Nx.int32_t), up, _ = delta (fun () -> Rune.jit' f x) in
       let worst, _, down =
-        delta (fun () -> Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
+        delta (fun () ->
+            let y = Nx.place Nx.Placement.host y in
+            Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
       in
       equal ~msg:(msg ^ ": difference from eager") int32 0l worst;
       is_true ~msg:(msg ^ ": larger than a chunk") (Nx.nbytes x > chunk);
@@ -1638,12 +1686,12 @@ let test_forced_handle_feeds_current_bytes () =
   with_force_copy (fun () ->
       let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
       let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
-      check_arr ~msg:"reading forces the handle" [| 2.0; 4.0; 6.0 |] h;
-      (* Once forced it is a plain host tensor: a value derived from it is fed
-         back through the host path and re-uploads. *)
+      check_arr ~msg:"a read leaves the value placed" [| 2.0; 4.0; 6.0 |] h;
+      (* A value an eager operation derives from it lives with it, and feeds a
+         call with no upload. *)
       let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
       let h2, up, _ = delta (fun () -> g h) in
-      is_true ~msg:"a forced handle re-uploads" (up > 0);
+      equal ~msg:"a derived value feeds with no upload" int 0 up;
       check_arr ~msg:"the new value is observed" [| 20.0; 8.0; 12.0 |] h2)
 
 let test_same_handle_as_two_leaves () =
@@ -1767,9 +1815,9 @@ let test_dropped_handles_are_reclaimed () =
       in
       equal ~msg:"unread outputs download nothing" int 0 down;
       (* Collect the dropped handles; the next calls drain their buffers. *)
-      Gc.full_major ();
+      full_major ();
       ignore (g x);
-      Gc.full_major ();
+      full_major ();
       ignore (g x);
       let s = Rune.jit_stats () in
       is_true ~msg:"resident bytes are bounded after gc"
@@ -1845,7 +1893,7 @@ let test_a_grown_arena_frees_the_old () =
       let n = 1024 in
       let g, g', y = arena_program ~n Nx.sin in
       (* Collect the views earlier tests' programs left of the old buffer. *)
-      Gc.full_major ();
+      full_major ();
       let before = device_bytes "CPU" in
       check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
       is_true ~msg:"the outgrown buffer is freed"
@@ -1874,7 +1922,7 @@ let test_buffer_freed_under_a_running_kernel () =
       let noise = Nx.create f32 [| n; n |] (Array.make (n * n) 1e9) in
       for _ = 1 to 4 do
         let y = run_on_a_dropped_input g data n in
-        Gc.full_major ();
+        full_major ();
         let z = Rune.to_device noise in
         check_arr ~eps:1e-2 ~msg:"the first result" expected y;
         ignore (to_arr z)
@@ -1887,7 +1935,7 @@ let test_buffer_freed_under_a_running_kernel () =
    47 s there. *)
 let test_traced_values_have_no_storage () =
   let is_traced (type a b) (x : (a, b) Nx.t) =
-    match x with Nx_effect.Traced _ -> true | T _ | Deferred _ -> false
+    match x with Nx_effect.Traced _ -> true | Host _ | Placed _ -> false
   in
   let seen = ref [] in
   let f x =
@@ -1932,8 +1980,8 @@ let raises_donated f =
       match exn with
       | Invalid_argument msg ->
           msg
-          = "Rune.jit: this tensor was donated to a jitted call; read or copy \
-             it before the call"
+          = "this value was donated to a compiled call and no longer exists; \
+             read or copy it before the call"
       | _ -> false)
     (fun () -> ignore (f ()))
 
@@ -1968,7 +2016,7 @@ let test_donate_bounds_resident_memory () =
          tests dropped unread keeps their release out of the measured window. *)
       let hold = Array.make 10 x in
       let run g =
-        Gc.full_major ();
+        full_major ();
         let base = (Rune.jit_stats ()).resident_bytes in
         let h = ref (g x) in
         for i = 0 to 9 do
@@ -1994,7 +2042,7 @@ let test_donate_reuses_storage () =
       let n = 4096 in
       let step = consume' (fun x -> Nx.add_s x 1.0) in
       let x = vec32 (Array.make n 0.0) in
-      Gc.full_major ();
+      full_major ();
       let base = (Rune.jit_stats ()).resident_bytes in
       let h = ref (step x) in
       let hold = Array.make 10 !h in
@@ -2147,7 +2195,7 @@ let test_donate_reuses_window_write () =
       let step = consume (module Windowed) f in
       let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
       let s = ref (step s0) in
-      Gc.full_major ();
+      full_major ();
       let base = (Rune.jit_stats ()).resident_bytes in
       for _ = 1 to 3 do
         s := step !s
@@ -2427,7 +2475,7 @@ let first_byte i = Char.chr (i * 7 land 0xff)
 let other_byte i = Char.chr (i * 13 land 0xff)
 
 let remove_mapped path =
-  Gc.full_major ();
+  full_major ();
   try Sys.remove path with Sys_error _ when Sys.win32 -> ()
 
 (* [x] placed from its file equals [x] placed from memory. *)
@@ -2505,22 +2553,21 @@ let test_bound_capture_moves_no_bytes () =
 
 let test_bound_capture_is_shared () =
   with_force_copy (fun () ->
-      Gc.full_major ();
-      let base = resident () in
       let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
       let g1 = Rune.jit' (fun x -> Nx.mul x w) in
       let g2 = Rune.jit' (fun x -> Nx.add x w) in
       let x = vec32 [| 2.0; 2.0; 2.0 |] in
-      check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
-      check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x);
-      Gc.full_major ();
-      equal ~msg:"one buffer serves both functions" int 12 (resident () - base);
+      let (), up, _ =
+        delta (fun () ->
+            check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
+            check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x))
+      in
+      equal ~msg:"only the inputs are uploaded" int 24 up;
+      equal ~msg:"one storage, bound by both functions" int 2 (cell_of w).bound;
       ignore (Sys.opaque_identity (g1, g2, w)))
 
 let test_bound_value_survives_a_read () =
   with_force_copy (fun () ->
-      Gc.full_major ();
-      let base = resident () in
       let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
       let g = Rune.jit' (fun x -> Nx.mul x w) in
       let x = vec32 [| 2.0; 2.0; 2.0 |] in
@@ -2529,11 +2576,11 @@ let test_bound_value_survives_a_read () =
         delta (fun () -> check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w)
       in
       equal ~msg:"the read copies the value out" int 12 down;
-      equal ~msg:"and leaves the buffer in place" int 12 (resident () - base);
+      is_true ~msg:"and leaves the storage bound" (bound_by 1 w);
       let (), _, down =
         delta (fun () -> check_arr ~msg:"value again" [| 1.0; 2.0; 3.0 |] w)
       in
-      equal ~msg:"the host copy is kept on the value" int 0 down;
+      equal ~msg:"a second read copies again: nothing is memoised" int 12 down;
       check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
       (* As an input leaf it still seeds from its buffer. *)
       let double = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
@@ -2542,23 +2589,21 @@ let test_bound_value_survives_a_read () =
       equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
       check_arr ~msg:"as an input" [| 2.0; 4.0; 6.0 |] y)
 
-let test_unbound_value_is_evicted_by_a_read () =
+let test_unbound_value_stays_after_a_read () =
   with_force_copy (fun () ->
-      Gc.full_major ();
+      full_major ();
       let base = resident () in
       let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
       check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
-      equal ~msg:"the read released the buffer" int 0 (resident () - base);
+      equal ~msg:"the read left the buffer" int 12 (resident () - base);
       let g = Rune.jit' (fun x -> Nx.mul x w) in
       let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
       let y, up, _ = delta (fun () -> g x) in
-      equal ~msg:"captured afterwards it is uploaded as a host tensor" int 12 up;
+      equal ~msg:"captured afterwards it is bound" int 0 up;
       check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y)
 
 let test_bound_input_is_not_donated () =
   with_force_copy (fun () ->
-      Gc.full_major ();
-      let base = resident () in
       let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
       let g = Rune.jit' (fun x -> Nx.mul x w) in
       ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
@@ -2574,8 +2619,7 @@ let test_bound_input_is_not_donated () =
       let z, up, _ = delta (fun () -> pass w) in
       equal ~msg:"the pass-through uploads nothing" int 0 up;
       is_true ~msg:"the pass-through is another value" (z != w);
-      Gc.full_major ();
-      is_true ~msg:"with storage of its own" (resident () - base >= 24);
+      is_true ~msg:"with storage of its own" (cell_of z != cell_of w);
       check_arr ~msg:"pass-through value" [| 1.0; 2.0; 3.0 |] z;
       check_arr ~msg:"the constant after the pass-through" [| 2.0; 4.0; 6.0 |]
         (g (vec32 [| 2.0; 2.0; 2.0 |])))
@@ -2590,19 +2634,24 @@ let test_bound_capture_returned_is_a_copy () =
       check_arr ~msg:"a second call" [| 1.0; 2.0; 3.0 |] (g (vec32 [| 0.0 |])))
 
 (* Not inlined: once it returns, nothing but the collector's own bookkeeping
-   refers to the placed value or to the function that bound it. *)
+   refers to the placed value or to the function that bound it. It returns a
+   weak pointer to the value's cell, whose finaliser releases the storage. *)
 let[@inline never] bind_and_drop () =
   let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
   let g = Rune.jit' (fun x -> Nx.mul x w) in
-  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]))
+  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]));
+  let cell = Weak.create 1 in
+  Weak.set cell 0 (Some (cell_of w));
+  cell
 
 let test_bound_buffer_is_released_with_its_owners () =
   with_force_copy (fun () ->
-      Gc.full_major ();
-      let base = resident () in
-      bind_and_drop ();
-      Gc.full_major ();
-      equal ~msg:"released once unreachable" int 0 (resident () - base))
+      let cell = bind_and_drop () in
+      let before = resident () in
+      full_major ();
+      is_true ~msg:"the cell is collected once its owners are"
+        (Option.is_none (Weak.get cell 0));
+      is_true ~msg:"and its storage released" (resident () <= before - 12))
 
 let test_budget_ignores_placed_values () =
   with_force_copy (fun () ->
@@ -2657,14 +2706,15 @@ let test_donate_duplicate_leaves_once () =
       check_arr ~msg:"v" [| 9.0; 36.0 |] r.v;
       raises_donated (fun () -> to_arr h))
 
-let test_forced_handle_unaffected_by_donate () =
+let test_read_value_is_still_donated () =
   with_force_copy (fun () ->
       let g = consume' (fun x -> Nx.mul_s x 2.0) in
       let h = g (vec32 [| 1.0; 2.0 |]) in
-      check_arr ~msg:"read before the call forces to host" [| 2.0; 4.0 |] h;
-      ignore (g h);
-      (* Already on the host: donation does not touch its bytes. *)
-      check_arr ~msg:"host bytes survive the donating call" [| 2.0; 4.0 |] h)
+      check_arr ~msg:"a read before the call" [| 2.0; 4.0 |] h;
+      let y = g h in
+      (* A read moved nothing, so the value is still resident and donated. *)
+      raises_donated (fun () -> to_arr h);
+      check_arr ~msg:"the result" [| 4.0; 8.0 |] y)
 
 let test_host_input_unaffected_by_donate () =
   with_force_copy (fun () ->
@@ -2742,6 +2792,23 @@ let test_step_reads_a_handle_in_both_arguments () =
       check_arr ~msg:"first" [| 2.0; 4.0 |] y;
       check_arr ~msg:"second" [| 2.0; 4.0 |] y';
       check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h)
+
+(* A storage both arguments reach is read, even when the read argument reaches
+   it through a view of part of it. *)
+let test_step_reads_a_storage_both_arguments_reach () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit_step
+          (module Csingle)
+          (module Csingle)
+          (fun r s -> Nx.add s (Nx.sum r))
+      in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
+      let view = Nx.slice [ Nx.R (0, 2) ] w in
+      let y = step view w in
+      check_arr ~msg:"result" [| 4.0; 5.0; 6.0; 7.0 |] y;
+      check_arr ~msg:"the read view is readable" [| 1.0; 2.0 |] view;
+      check_arr ~msg:"and so is the state" [| 1.0; 2.0; 3.0; 4.0 |] w)
 
 (* An indexed write into a read leaf lands in fresh storage: the leaf keeps its
    value. *)
@@ -2900,10 +2967,16 @@ let tests =
         test "a resident value is returned as it is"
           test_place_resident_value_is_returned;
         test "on the host device" test_place_on_the_host_device;
-        test "the identity under grad, jvp, vmap and jit"
+        test "placement under grad, jvp, vmap and jit"
           test_place_is_the_identity_under_transformations;
         test "an unbound placed value is consumed by donation"
           test_place_then_donate_consumes;
+        test "item reads one element" test_item_reads_one_element;
+        test "a move to the host keeps its source"
+          test_move_to_host_keeps_its_source;
+        test "mixed placements raise" test_mixed_placements_raise;
+        test "placing elsewhere inside jit raises"
+          test_placing_elsewhere_inside_jit_raises;
       ];
     group "file-backed sources"
       [
@@ -2919,8 +2992,8 @@ let tests =
           test_bound_capture_is_shared;
         test "a bound value keeps its buffer across a read"
           test_bound_value_survives_a_read;
-        test "an unbound value is evicted by a read"
-          test_unbound_value_is_evicted_by_a_read;
+        test "a read leaves an unbound value placed"
+          test_unbound_value_stays_after_a_read;
         test "a bound input is not consumed by donation"
           test_bound_input_is_not_donated;
         test "a bound capture returned unchanged is a copy"
@@ -2988,6 +3061,8 @@ let tests =
           test_donate_alternates_two_programs;
         test "donation reuses a pool written by scatter"
           test_donate_reuses_pool_scatter;
+        test "a storage both arguments reach is read"
+          test_step_reads_a_storage_both_arguments_reach;
         test "scatter without donation keeps its input"
           test_scatter_without_donation_keeps_the_input;
         test "scatter of values read from the donated pool"
@@ -3010,8 +3085,8 @@ let tests =
         test "re-feeding a donated handle raises"
           test_donated_handle_refeed_raises;
         test "duplicate leaves donate once" test_donate_duplicate_leaves_once;
-        test "a handle read before the call is unaffected"
-          test_forced_handle_unaffected_by_donate;
+        test "a value read before the call is still donated"
+          test_read_value_is_still_donated;
         test "host inputs are unaffected" test_host_input_unaffected_by_donate;
         test "jit never consumes its inputs" test_jit_leaves_handle_readable;
         test "a step reads its first argument"

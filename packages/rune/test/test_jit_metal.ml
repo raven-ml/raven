@@ -110,7 +110,7 @@ let test_graph_released_with_its_function () =
     ignore (to_arr (g x));
     ignore (to_arr (g x))
   in
-  Gc.full_major ();
+  full_major ();
   let base = Tolk.Realize.graph_runners () in
   let launches0 = !Tolk.Realize.graph_launches in
   for i = 1 to 4 do
@@ -118,7 +118,7 @@ let test_graph_released_with_its_function () =
   done;
   graphs_used ~msg:"the calls recorded device graphs"
     (!Tolk.Realize.graph_launches - launches0 >= 8);
-  Gc.full_major ();
+  full_major ();
   equal ~msg:"no recorded graph outlives its function" int base
     (Tolk.Realize.graph_runners ())
 
@@ -142,8 +142,6 @@ let test_placed_weights_bind () =
   let f w1 w2 x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
   let p1 = Rune.to_device ~device:"METAL" w1 in
   let p2 = Rune.to_device ~device:"METAL" w2 in
-  Gc.full_major ();
-  let base = (Rune.jit_stats ()).resident_bytes in
   let g = Rune.jit' ~device:"METAL" (f p1 p2) in
   let launches0 = !Tolk.Realize.graph_launches in
   List.iter
@@ -156,9 +154,7 @@ let test_placed_weights_bind () =
   graphs_used ~msg:"the calls replayed as device graphs"
     (!Tolk.Realize.graph_launches - launches0 >= 3);
   check_arr ~msg:"a bound weight reads back" (to_arr w1) p1;
-  Gc.full_major ();
-  equal ~msg:"and keeps its buffer" int 0
-    ((Rune.jit_stats ()).resident_bytes - base);
+  is_true ~msg:"and keeps its buffer" (bound_by 1 p1);
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 0.25) in
   check_arr ~msg:"after the read" (to_arr (f w1 w2 x)) (g x);
   (* A second compiled function shares the buffers. *)
@@ -183,9 +179,26 @@ let raises_donated f =
   raises_match
     (function
       | Invalid_argument msg ->
-          String.starts_with ~prefix:"Rune.jit: this tensor was donated" msg
+          String.starts_with ~prefix:"this value was donated" msg
       | _ -> false)
     (fun () -> ignore (f ()))
+
+(* A dtype Metal cannot hold raises where it would be placed: at the upload, and
+   at an eager operation whose result has it. *)
+let test_unsupported_dtype_raises_at_placement () =
+  let cannot_hold f =
+    raises_match
+      (function
+        | Invalid_argument msg ->
+            String.ends_with ~suffix:"cannot hold float64" msg
+        | _ -> false)
+      f
+  in
+  cannot_hold (fun () ->
+      Rune.to_device ~device:"METAL" (Nx.create f64 [| 3 |] [| 1.; 2.; 3. |]));
+  let p = Rune.to_device ~device:"METAL" (vec32 [| 1.0; 2.0; 3.0 |]) in
+  cannot_hold (fun () -> Nx.cast Nx.float64 p);
+  cannot_hold (fun () -> Nx.cast Nx.float64 (Nx.sum p))
 
 let test_bound_input_is_not_donated () =
   let w1, _ = weights () in
@@ -368,7 +381,7 @@ let test_place_from_a_mapped_file () =
   let path = Filename.temp_file "rune_metal_mapped_" ".bin" in
   Fun.protect
     ~finally:(fun () ->
-      Gc.full_major ();
+      full_major ();
       try Sys.remove path with Sys_error _ -> ())
     (fun () ->
       let values = Array.init n (fun i -> float_of_int (i mod 97) /. 8.0) in
@@ -422,6 +435,8 @@ let tests =
       ];
     group "placed weights"
       [
+        test "a dtype Metal cannot hold raises at placement"
+          test_unsupported_dtype_raises_at_placement;
         test "placed weights bind and replay as device graphs"
           test_placed_weights_bind;
         test "a bound input is not consumed by donation"

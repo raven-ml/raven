@@ -11,12 +11,15 @@
     dtype witness — an entry is only ever stored under the key of the tensor
     whose dtype it records, so the witness check cannot fail.
 
-    This module is the single home of that pattern; the reverse tape and the
-    forward tangent store both build on it. Maintainers must preserve the
-    invariant that keyed tensors are never mutated in place while a map is live
-    — the differentiation handlers reject mutation, and insertion forces
-    deferred tensors (unread jit outputs) so a later read cannot change a key's
-    hash. *)
+    This module is the single home of that pattern; the reverse tape, the
+    forward tangent store and jit's constant tables build on it. A key hashes by
+    [Nx_effect.identity_hash]: a placed or traced value by its id, so keying one
+    never reads it. *)
+
+type key = Key : ('a, 'b) Nx_effect.t -> key
+
+module Tbl : Hashtbl.S with type key = key
+(** Tables keyed by tensor identity. *)
 
 type t
 (** A map from tensors to same-typed tensors. *)

@@ -13,6 +13,38 @@ let vec32 xs = Nx.create f32 [| Array.length xs |] xs
 let vec64 xs = Nx.create f64 [| Array.length xs |] xs
 let mat64 r c xs = Nx.create f64 [| r; c |] xs
 let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+
+(* Collections that release every value no longer reachable. With backtraces
+   recorded, the runtime keeps the last exception raised alive, and an
+   operation's fallback catches [Effect.Unhandled] carrying its operands:
+   raising one more exception first lets that value go. Each finaliser on the
+   way to a storage (a compiled function's, then its bound values') takes a
+   collection, so collect until the resident bytes stay put twice. *)
+(* The cell a placed value's storage belongs to. *)
+let cell_of (type a b) (x : (a, b) Nx.t) =
+  match x with
+  | Nx_effect.Placed r -> r.r_cell
+  | Host _ | Traced _ -> fail "expected a placed value"
+
+(* Whether the storage behind a placed value is bound by [n] programs and
+   live. *)
+let bound_by n x =
+  let c = cell_of x in
+  c.bound = n && match c.state with Live _ -> true | Donated -> false
+
+let[@inline never] raise_exit () = raise Exit
+
+let full_major () =
+  (try raise_exit () with Exit -> ());
+  let resident () = (Rune.jit_stats ()).resident_bytes in
+  let rec settle before unchanged =
+    Gc.full_major ();
+    let now = resident () in
+    let unchanged = if now = before then unchanged + 1 else 0 in
+    if unchanged < 2 then settle now unchanged
+  in
+  settle (resident ()) 0
+
 let scalar t = (to_arr t).(0)
 
 (* The transformation rules for the sliding-window movement are written against

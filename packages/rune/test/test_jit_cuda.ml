@@ -297,8 +297,8 @@ let raises_donated f =
       match exn with
       | Invalid_argument msg ->
           msg
-          = "Rune.jit: this tensor was donated to a jitted call; read or copy \
-             it before the call"
+          = "this value was donated to a compiled call and no longer exists; \
+             read or copy it before the call"
       | _ -> false)
     (fun () -> ignore (f ()))
 

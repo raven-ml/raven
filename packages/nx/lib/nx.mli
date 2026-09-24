@@ -151,16 +151,19 @@ type index =
 
 val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
 (** [data t] is the underlying flat buffer of [t], shared with [t] without a
-    copy on host backends and read-only by contract: a tensor is a value, so
-    writing the buffer after wrapping is outside the contract (the same contract
-    as [Bytes.unsafe_to_string]). The buffer may be larger than the tensor's
+    copy and read-only by contract: a tensor is a value, so writing the buffer
+    after wrapping is outside the contract (the same contract as
+    [Bytes.unsafe_to_string]). The buffer may be larger than the tensor's
     logical extent when [t] is a strided view.
 
     Element [[i0; ...; ik]] of [t] is at buffer index
     [offset t + i0 * s0 + ... + ik * sk], where [sj] is [strides t.(j)] divided
     by {!itemsize}. Reading the buffer this way walks a tensor of any layout
     without allocating, unlike {!item}. See {!iter_item} and {!fold_item} for
-    whole-tensor traversal. *)
+    whole-tensor traversal.
+
+    Raises [Invalid_argument] if [t] is placed on a device: it has no host
+    storage. Read it with {!to_buffer}, or {!place} it on the host. *)
 
 val shape : ('a, 'b) t -> int array
 (** [shape t] is the dimensions of [t]. A scalar tensor has shape [|\||]. *)
@@ -226,6 +229,95 @@ val to_array : ('a, 'b) t -> 'a array
         to_array t
       - : int32 array = [|1l; 2l; 3l; 4l|]
     ]} *)
+
+(** {1:placement Devices and placement}
+
+    Where a value lives is a value too. A device is a run-time value carrying
+    the engine that holds memory on it; the library that owns a device's runtime
+    opens it (for example [Rune.device "METAL"]), and {!Device.host} is the
+    host. A placement is one device, a list of devices each holding a full copy,
+    or a list of devices each holding an equal slice along one axis.
+
+    The result of an operation lives where its placed operands live: operands on
+    the host join them, and operands on two different placements raise. A read
+    ({!item}, {!to_array}, {!to_buffer}, {!pp}, a save) copies the elements it
+    reads and leaves the value where it is. A value's storage is released when
+    no value reaches it. *)
+
+(** Devices. *)
+module Device : sig
+  type t = Nx_effect.device
+  (** The type for devices. *)
+
+  val host : t
+  (** [host] is the host, named ["CPU"]. *)
+
+  val name : t -> string
+  (** [name d] is [d]'s name, for example ["METAL"] or ["CUDA:3"]. *)
+
+  val equal : t -> t -> bool
+  (** [equal d d'] is [true] iff [d] and [d'] are the same device. Libraries
+      that open devices return one value per device. *)
+
+  val compare : t -> t -> int
+  (** [compare] is a total order on devices, compatible with {!equal}. *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp] formats a device's name. *)
+
+  exception Out_of_memory of t * int
+  (** Raised by an operation, a {!place} or a compiled call when a device cannot
+      allocate the given number of bytes. *)
+end
+
+(** Placements. *)
+module Placement : sig
+  (** The type for placements. Only the functions below build one, so a
+      placement is in normal form: a list of one device is that device, and a
+      list never repeats a device. *)
+  type t = Nx_effect.placement = private
+    | Device of Device.t
+    | Replicated of Device.t list  (** Two or more devices, a copy on each. *)
+    | Sharded of { axis : int; devices : Device.t list }
+        (** Two or more devices, each holding an equal slice of [axis], in
+            order. *)
+
+  val host : t
+  (** [host] is [device Device.host]. *)
+
+  val device : Device.t -> t
+  (** [device d] is placement on [d] alone. *)
+
+  val replicated : Device.t list -> t
+  (** [replicated ds] is a full copy on each device of [ds].
+
+      Raises [Invalid_argument] if [ds] is empty, repeats a device, or mixes
+      devices of different engines. *)
+
+  val sharded : axis:int -> Device.t list -> t
+  (** [sharded ~axis ds] is equal slices of [axis] on the devices of [ds], in
+      order.
+
+      Raises [Invalid_argument] if [axis] is negative, or as {!replicated}. *)
+
+  val equal : t -> t -> bool
+  (** [equal p p'] is [true] iff [p] and [p'] place values alike. *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp] formats a placement. *)
+end
+
+val place : Placement.t -> ('a, 'b) t -> ('a, 'b) t
+(** [place p x] is [x] held at [p]. It equals [x] in shape, dtype and elements,
+    and [x] is unchanged and stays where it was. It is [x] itself when [x] is
+    already at [p].
+
+    Raises [Invalid_argument] if [p] splits an axis [x] does not have or does
+    not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. *)
+
+val placement : ('a, 'b) t -> Placement.t
+(** [placement x] is where [x] lives: {!Placement.host} for a value on the host.
+*)
 
 (** {1:creation Creation} *)
 

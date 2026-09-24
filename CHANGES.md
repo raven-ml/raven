@@ -107,6 +107,21 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Reading a compiled function's output no longer moves it to the host:
+  `Nx.item` on resident logits copies one element and the logits stay
+  resident, and eager operations and `grad` over resident values keep their
+  results on the device. `Nx.place Nx.Placement.host` makes a host copy.
+- `Rune.to_device` is no longer the identity inside transformations: under
+  `grad` and `jvp` it is linear and a gradient returns to its input's
+  placement, under `vmap` it places the batched value, and inside `jit` it
+  raises `Jit_error` unless the device is the program's.
+- A `Rune.pmap` output stays on its devices when read, and an nx operation on
+  it reads it and returns a host value, as before.
+- Placing a value on a device that cannot hold its dtype raises
+  `Invalid_argument`, at `Rune.to_device` and at an eager operation whose
+  result has that dtype: `float64` on Metal, and complex and 4-bit integers on
+  every rune device, so `Nx.rfft` of a placed value raises; place it on the
+  host first.
 - A compiled function whose output has no elements returns an empty tensor of
   that output's dtype and shape instead of raising "an output of the traced
   function was not scheduled to a buffer".
@@ -1107,6 +1122,13 @@ thread.
 
 ### Nx
 
+- Add `Nx.Device`, `Nx.Placement`, `Nx.place` and `Nx.placement`: a value
+  can live on a device a runtime opens, and where it lives is a value. An
+  operation on placed operands returns a placed result, host operands join
+  them, and operands on two devices raise `Invalid_argument`.
+- A read of a placed value (`item`, `to_array`, `to_buffer`, `pp`) copies the
+  elements it reads and leaves the value where it is. `Nx.data` of a placed
+  value raises: it has no host storage.
 - Fix `Nx_io.load_safetensors` and `save_safetensors` corrupting Unicode and
   control characters in tensor names. Decode JSON Unicode escapes and surrogate
   pairs, emit valid JSON escapes, and reject malformed string escapes.

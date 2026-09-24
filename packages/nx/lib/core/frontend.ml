@@ -1578,11 +1578,10 @@ module Make (B : Backend_intf.S) = struct
     slice_internal (List.map (fun i -> I i) checked) x
 
   let unsafe_get indices x =
-    let t = get indices x in
-    let ba = data t in
+    let t = contiguous (get indices x) in
     if numel t <> 1 then
       err "unsafe_get" "expected scalar result, got %d elements" (numel t);
-    Nx_buffer.get ba (offset t)
+    Nx_buffer.get (data t) 0
 
   let slice specs t = slice_internal specs t
 
@@ -5247,12 +5246,12 @@ module Make (B : Backend_intf.S) = struct
 
   let pp (type a b) fmt (x : (a, b) t) =
     let open Format in
-    let view = B.view x in
-    let buffer = B.to_host x in
+    (* The elements in C order, indexed from 0. *)
+    let buffer = to_buffer x in
     let dtype = dtype x in
-    let shape = View.shape view in
+    let shape = shape x in
     let ndim = Array.length shape in
-    let sz = View.numel view in
+    let sz = numel x in
     let pp_element fmt (elt : a) =
       match dtype with
       | Float16 -> fprintf fmt "%g" elt
@@ -5276,11 +5275,9 @@ module Make (B : Backend_intf.S) = struct
       | Complex128 -> fprintf fmt "(%g+%gi)" elt.re elt.im
     in
     let edge = 2 in
-    if ndim = 0 then
-      pp_element fmt (Nx_buffer.unsafe_get buffer (View.offset view))
+    if ndim = 0 then pp_element fmt (Nx_buffer.unsafe_get buffer 0)
     else
-      let strides = View.strides view in
-      let base_offset = View.offset view in
+      let strides = Shape.c_contiguous_strides shape in
       let sep fmt axis first =
         if not first then (
           fprintf fmt ",";
@@ -5290,10 +5287,8 @@ module Make (B : Backend_intf.S) = struct
         let depth = List.length indices in
         if depth = ndim then
           let md_index = Array.of_list indices in
-          let offset = Shape.ravel_index md_index strides + base_offset in
-          if offset < 0 || offset >= Nx_buffer.length buffer then
-            fprintf fmt "<OOB:%d/%d>" offset (Nx_buffer.length buffer)
-          else pp_element fmt (Nx_buffer.unsafe_get buffer offset)
+          pp_element fmt
+            (Nx_buffer.unsafe_get buffer (Shape.ravel_index md_index strides))
         else
           let axis = depth in
           let dim_size = shape.(axis) in

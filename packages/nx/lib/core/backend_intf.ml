@@ -71,9 +71,8 @@ let () =
     The mandatory contract is exactly the operations declared below. The effect
     layer ([nx.effect]) implements all of them and adds an extended tier that
     Rune relies on but a conforming backend need not provide: [const_scalar]
-    (materialize a scalar without a host round-trip), [to_device], [psum], and
-    the [Deferred] tensor handle (a device-resident result forced to host on
-    first data access). Those live outside this module type. *)
+    (materialize a scalar without a host round-trip), placement ([place],
+    [placement]) and [psum]. Those live outside this module type. *)
 module type S = sig
   (** {1 Types} *)
 
@@ -90,8 +89,7 @@ module type S = sig
       Construction is absent from this module type: [S] describes operations
       over an existing context, and the frontend never builds one. Engines that
       implement the [nx.backend] virtual library additionally provide
-      [create_context : unit -> context] (see [backend/nx_backend.mli], and the
-      open question its TODO records). *)
+      [create_context : unit -> context] (see [backend/nx_backend.mli]). *)
 
   (** {1 Tensor Properties} *)
 

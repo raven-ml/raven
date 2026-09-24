@@ -10,6 +10,20 @@ exception Linalg_error = Nx_core.Backend_intf.Linalg_error
 
 let context = Lazy.from_fun Nx_effect.create_context
 
+module Device = Nx_effect.Device
+module Placement = Nx_effect.Placement
+
+let place = Nx_effect.place
+let placement = Nx_effect.placement
+
+let data x =
+  match x with
+  | Nx_effect.Placed _ ->
+      invalid_arg
+        "Nx.data: a placed value has no host storage; read it with to_buffer, \
+         or place it on the host"
+  | Nx_effect.Host _ | Nx_effect.Traced _ -> F.data x
+
 module Ptree = Ptree
 
 module Rng = struct

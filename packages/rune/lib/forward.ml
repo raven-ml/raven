@@ -76,9 +76,14 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_const_scalar _ -> None
       | E_from_host _ -> None
       | E_threefry _ -> None
-      (* Placement is the identity under differentiation: a placed copy would be
-         a fresh, inactive value. *)
-      | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
+      (* Placement is linear: the tangent moves with its primal. *)
+      | E_place { placement; t_in } ->
+          Some
+            (fun k ->
+              let out = place placement t_in in
+              if out == t_in then continue k out
+              else lift1 k out t_in (place placement))
+      | E_placement _ -> None
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
       | E_cmpne _ -> None

@@ -119,9 +119,28 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_buffer _ -> None
     | E_const_scalar _ -> None
     | E_from_host _ -> None
-    (* Placement is the identity under the map: a placed copy would lose its
-       batch axis. *)
-    | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
+    (* Placement: the batch axis sits in front of a split axis. A lane of a map
+       over the split axis has no placement of its own. *)
+    | E_place { placement = p; t_in } when batched st t_in ->
+        let p =
+          match p with
+          | Nx.Placement.Sharded { axis; devices } ->
+              Nx.Placement.sharded ~axis:(axis + 1) devices
+          | p -> p
+        in
+        Some (fun k -> elt1 k (place p) t_in)
+    | E_place _ -> None
+    | E_placement x when batched st x ->
+        Some
+          (fun k ->
+            match placement x with
+            | Nx.Placement.Sharded { axis = 0; _ } ->
+                invalid_arg
+                  "Rune: a lane of vmap over a split axis has no placement"
+            | Nx.Placement.Sharded { axis; devices } ->
+                continue k (Nx.Placement.sharded ~axis:(axis - 1) devices)
+            | p -> continue k p)
+    | E_placement _ -> None
     (* Elementwise binary *)
     | E_add { a; b } when batched st a || batched st b ->
         Some (fun k -> elt2 k add a b)

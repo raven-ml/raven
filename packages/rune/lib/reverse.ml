@@ -128,9 +128,17 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_const_scalar _ -> None
       | E_from_host _ -> None
       | E_threefry _ -> None
-      (* Placement is the identity under differentiation: a placed copy would be
-         a fresh, untracked value. *)
-      | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
+      (* Placement is linear: a cotangent moves back to its primal's placement,
+         taken now, while the primal is in reach of the handlers above. *)
+      | E_place { placement = p; t_in } ->
+          Some
+            (fun k ->
+              let out = place p t_in in
+              if out == t_in then continue k out
+              else
+                let back = placement t_in in
+                pull1 k out t_in (place back))
+      | E_placement _ -> None
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
       | E_cmpne _ -> None

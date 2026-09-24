@@ -220,6 +220,22 @@ let test_replicated_feedback () =
   equal ~msg:"replicated feedback moves no bytes" int 0 s.bytes_to_device;
   check_arr ~eps:0.0 ~msg:"replicated read" [| 4.0; 8.0; 12.0 |] w2
 
+(* An output split on axis 1 reads, prints and takes part in operations that
+   create constants beside it, which run on the host. *)
+let test_split_output_in_eager_code () =
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
+      (module Single_f32)
+      (fun x -> Nx.add x x)
+  in
+  let y = g (Nx.create f32 [| 2; 4 |] (Array.init 8 float_of_int)) in
+  let h = Nx.place Nx.Placement.host y in
+  equal ~msg:"printed in C order" string (Nx.to_string h) (Nx.to_string y);
+  check_arr ~eps:0.0 ~msg:"tril" (to_arr (Nx.tril h)) (Nx.tril y);
+  check_arr ~eps:0.0 ~msg:"gathered rows"
+    (to_arr (Nx.slice [ Nx.L [ 1; 0 ] ] h))
+    (Nx.slice [ Nx.L [ 1; 0 ] ] y)
+
 let test_mismatched_placement_forces () =
   (* An output sharded on axis 0 fed into an axis-1 placement is forced to the
      host and re-split, not seeded. *)
@@ -322,8 +338,8 @@ let raises_donated f =
       match exn with
       | Invalid_argument msg ->
           msg
-          = "Rune.jit: this tensor was donated to a jitted call; read or copy \
-             it before the call"
+          = "this value was donated to a compiled call and no longer exists; \
+             read or copy it before the call"
       | _ -> false)
     (fun () -> ignore (f ()))
 
@@ -357,7 +373,7 @@ let test_donate_replicated_releases_all_shards () =
   in
   (* Retire the handles earlier tests dropped unread, so their release cannot
      land inside the window measured below. *)
-  Gc.full_major ();
+  full_major ();
   let base = (Rune.jit_stats ()).resident_bytes in
   let w1 = g (vec32 (Array.make n 1.0)) in
   (* A replicated handle owns one full-size buffer per device. *)
@@ -723,6 +739,7 @@ let tests =
       ];
     group "residency"
       [
+        test "a split output in eager code" test_split_output_in_eager_code;
         test "feedback call moves no bytes" test_feedback_moves_no_bytes;
         test "replicated outputs feed back without transfer"
           test_replicated_feedback;

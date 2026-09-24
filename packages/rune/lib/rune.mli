@@ -448,23 +448,23 @@ val jit :
     storage; non-contiguous tensors are copied.
 
     On other devices, results are bit-identical but data moves lazily. Inputs
-    are copied to the device on every call; outputs stay resident on the device
-    and materialize on the host the first time their data is read (metadata such
-    as shape and dtype never transfers). An unread output fed back as an input
-    leaf of any jit call on the same device seeds the compiled program's input
-    directly — no transfer — which makes iterated calls (training steps, decode
-    loops with a cache) run without per-call traffic. Reading an output moves it
-    to the host for good: it becomes an ordinary tensor, later mutations are
-    honored, and feeding it back uploads its current bytes. Device memory
-    backing an output is held until the output is read or garbage-collected;
-    past a budget (the [RUNE_JIT_RESIDENT_BUDGET] environment variable, in
-    bytes, a few GiB by default) a collection is triggered before allocating
-    more. The budget counts outputs only, not values placed with
-    {!val-to_device}. A transfer failure surfaces as an exception at the first
-    read of the affected output. The intermediate values of a call live in
-    scratch memory that every compiled function on the device shares, sized to
-    the largest any of them needs, so functions called in turn (the blocks of a
-    deep model) do not each hold their own. A {!pmap} keeps its own.
+    are copied to the device on every call; outputs are values placed on the
+    device ({!Nx.placement}): metadata such as shape and dtype never transfers,
+    a read copies the elements it reads and leaves the output where it is, and
+    an nx operation on it outside a compiled function returns a value on the
+    device. An output fed back as an input leaf of any jit call on the same
+    device seeds the compiled program's input directly — no transfer — which
+    makes iterated calls (training steps, decode loops with a cache) run without
+    per-call traffic. Device memory backing an output is held until the output
+    is garbage-collected; past a budget of outputs still held (the
+    [RUNE_JIT_RESIDENT_BUDGET] environment variable, in bytes, 4 GiB by
+    default), a collection runs before the next output is allocated. The budget
+    counts outputs only, not values placed with {!val-to_device}. A transfer
+    failure surfaces as an exception at the first read of the affected output.
+    The intermediate values of a call live in scratch memory that every compiled
+    function on the device shares, sized to the largest any of them needs, so
+    functions called in turn (the blocks of a deep model) do not each hold their
+    own. A {!pmap} keeps its own.
 
     Inputs are read, never consumed: a resident input leaf is still resident and
     readable after the call. {!jit_step} compiles a function that consumes part
@@ -596,17 +596,16 @@ val jit_step :
     A step that reads nothing takes [(module Nx.Ptree)] and passes
     [Nx.Ptree.list []].
 
-    Once a call has run — never during it — every leaf of the state that was
-    resident (an unread output of an earlier call, or a value placed with
+    Once a call has run — never during it — every leaf of the state that is
+    resident (an output of an earlier call, or a value placed with
     {!val-to_device}) is consumed: its device buffer is released to the
-    allocator or taken by an output, and the handle becomes unusable. Reading
-    it, or feeding it to a later call (which reads it), raises
-    [Invalid_argument]; read or copy the value before the call if it is still
-    needed. A host leaf of the state is uploaded and stays usable, and so does a
-    handle already read. The first argument's leaves are read as by {!val-jit}
-    and are never consumed, and a handle that is a leaf of both arguments, or
-    that a compiled function binds as a capture, is read: it lends nothing and
-    stays usable.
+    allocator or taken by an output, and every view of it becomes unusable.
+    Reading it, or feeding it to a later call, raises [Invalid_argument]; copy
+    the value to the host before the call if it is still needed. A host leaf of
+    the state is uploaded and stays usable. The first argument's leaves are read
+    as by {!val-jit} and are never consumed, and a storage that both arguments
+    reach, through any view, or that a compiled function binds as a capture, is
+    read: it lends nothing and stays usable.
 
     An output leaf takes the storage of the state's leaf at the same position
     when their dtypes and sizes match, no other leaf of the call reaches that
@@ -661,17 +660,18 @@ val pmap :
     matter of sharding the batch and replicating the parameters.
 
     Compilation, caching and capture semantics are {!val-jit}'s. Outputs stay
-    resident, one buffer per device, and gather to the host the first time they
-    are read (shards are reassembled along their axis; replicated outputs read
-    one replica). An unread output fed back as an input leaf whose placement
-    matches — same devices, same axis or replication — seeds the compiled
-    program's buffers directly with no transfer, so iterated calls (a
-    data-parallel training step) move only the freshly sharded batch. [donate]
-    (default [false]) consumes every resident input as {!jit_step} consumes its
-    state, releasing every per-device buffer of the donated handle; a handle
-    whose placement mismatches is forced to the host first and is not donated. A
-    donated carry keeps two generations. [pmap] keeps this whole-argument form
-    until {!val-jit} over device lists replaces [pmap].
+    resident, one buffer per device, placed split or replicated over the devices
+    ({!Nx.placement}). A read gathers the shards in global order (a replicated
+    output reads one replica) and leaves them, and an nx operation on such an
+    output reads it and returns a host value. An output fed back as an input
+    leaf whose placement matches — same devices, same axis or replication —
+    seeds the compiled program's buffers directly with no transfer, so iterated
+    calls (a data-parallel training step) move only the freshly sharded batch.
+    [donate] (default [false]) consumes every resident input as {!jit_step}
+    consumes its state, releasing every per-device buffer of the donated value;
+    a value whose placement mismatches is read through the host and is not
+    donated. A donated carry keeps two generations. [pmap] keeps this
+    whole-argument form until {!val-jit} over device lists replaces [pmap].
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
@@ -703,43 +703,39 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     compiled function at its first call.
 
     The bytes are copied 64 MiB at a time into one device buffer, and the result
-    is resident like an unread output of a compiled call (see {!val-jit}):
-    metadata reads are free, a compiled function on [device] that takes it as an
-    input leaf uses the buffer with no transfer, and {!jit_step} consumes it
-    when it is a leaf of the state. The first host read of its data copies it
-    back and releases the buffer, and every nx operation outside a compiled
-    function is a host read, views included. [x] is untouched and may be
-    dropped. A value already resident on [device] is returned as it is, and one
-    resident on another device goes through the host. The buffer is returned to
-    the system when the value is released, not kept for reuse.
+    is resident like an output of a compiled call (see {!val-jit}): metadata
+    reads are free, a read copies the elements it reads and leaves the buffer, a
+    compiled function on [device] that takes it as an input leaf uses the buffer
+    with no transfer, and {!jit_step} consumes it when it is a leaf of the
+    state. [x] is untouched and may be dropped. A value already resident on
+    [device] is returned as it is, and one resident on another device goes
+    through the host. A buffer uploaded from a mapped file is returned to the
+    system when the value is released, not kept for reuse.
 
     {b Captures bind.} A compiled function that captures a resident value on its
     own device, and is not a {!pmap}, uses that value's buffer as its constant
     from its first compilation on: no bytes move, and every compiled function
-    that captures the value shares the one buffer. A value that is read or
-    donated before that first compilation is not bound: read, it is captured as
-    the host tensor it became; donated, it can no longer be used. Binding is
-    permanent. A bound value keeps its buffer for as long as it is reachable,
-    and a compiled function keeps the values it binds reachable. A host read of
-    a bound value copies it out, keeps the copy on the value as for any tensor
-    that was read, and leaves the buffer in place. Passed as a leaf of the state
-    of {!jit_step}, a bound value is used with no transfer and is not consumed,
-    and an output that returns it unchanged is a copy on the device.
-    [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A capture resident on
-    another device, and any resident capture of a {!pmap}, is read to the host
-    and uploaded, as a host capture is.
+    that captures the value shares the one buffer. A value donated before that
+    first compilation can no longer be used. A compiled function keeps the
+    values it binds reachable, and while it is reachable their storage is never
+    donated: passed as a leaf of the state of {!jit_step}, a bound value is used
+    with no transfer and is not consumed, and an output that returns it
+    unchanged is a copy on the device. [RUNE_JIT_DEBUG=1] reports such a leaf as
+    [bound]. A capture resident on another device, and any resident capture of a
+    {!pmap}, is read to the host and uploaded, as a host capture is.
 
     On the CPU device, which computes in host memory, the result is
-    [Nx.contiguous x]. Inside {!val-jit}, {!val-grad}, {!val-jvp} and
-    {!val-vmap}, [to_device x] is [x]: placing a value there would detach it
-    from the transformation. Differentiate inside {!val-jit} to use placed
-    weights without reading them back. *)
+    [Nx.contiguous x]. Elsewhere it is {!Nx.place} on [device]: under
+    {!val-grad} and {!val-jvp} placement is linear and a cotangent returns to
+    its primal's placement, under {!val-vmap} it places the batched value, and
+    inside {!val-jit} it is [x] when [device] is the program's and raises
+    {!Jit_error} otherwise. *)
 
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
   resident_bytes : int;
-      (** Device bytes held by unread outputs and placed values that are still
+      (** Device bytes held by outputs and placed values that are still
           reachable. *)
   reused_bytes : int;
       (** Cumulative bytes of donated inputs whose storage an output took
@@ -750,10 +746,10 @@ type jit_stats = {
 
 val jit_stats : unit -> jit_stats
 (** [jit_stats ()] is the current transfer counters, cumulative over the whole
-    program. An output dropped unread releases its device buffers once it is
-    collected, at the next compiled call or at this query, whichever comes
-    first. Set the [RUNE_JIT_DEBUG] environment variable to [1] to also log a
-    per-call summary to stderr. *)
+    program. An output dropped releases its device buffers once it is collected,
+    at the next read, placement or compiled call, or at this query, whichever
+    comes first. Set the [RUNE_JIT_DEBUG] environment variable to [1] to also
+    log a per-call summary to stderr. *)
 
 val reset_jit_stats : unit -> unit
 (** [reset_jit_stats ()] zeroes the cumulative transfer counters.
