@@ -151,7 +151,7 @@ let rand_from key counter shape dt ~contiguous =
     random_bits key counter (ceildiv (prod shape * D.itemsize dt) 4)
   in
   let out = bits_to_rand bits shape dt in
-  if contiguous then Elementwise.contiguous out else out
+  if contiguous then Creation.clone out else out
 
 let check_shape name shape =
   if List.exists (fun s -> s < 0) shape then
@@ -295,7 +295,7 @@ let dropout ?(p = 0.5) t =
   else
     Elementwise.div
       (Elementwise.where
-         (Elementwise.contiguous
+         (Creation.clone
             (Elementwise.ge
                (rand_like ~dtype:D.default_float ~contiguous:false t)
                (T.f p)))

@@ -74,6 +74,19 @@ let sha256_tests =
 let golden_tests =
   group "goldens"
     [
+      test "rand owns storage before its first indexed update" (fun () ->
+          Rand.manual_seed 42;
+          let draw = Rand.rand [ 4 ] in
+          let index = Run.of_int_array ~shape:[ 1 ] [| 1 |] in
+          let value = Run.of_float_array ~shape:[ 1 ] [| 7. |] in
+          let updated =
+            Tolk_frontend.Op.scatter_indexed draw ~dim:0 index value
+              ~mode:`Set ~unique:true
+          in
+          check_floats_exact
+            [| 0.5334206819534302; 7.; 0.7630789279937744;
+               0.4320552349090576 |]
+            updated);
       test "rand 4" (fun () ->
           Rand.manual_seed 42;
           check_floats_exact

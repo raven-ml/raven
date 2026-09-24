@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- `Rand.rand` draws and dropout masks own fresh storage, matching tinygrad.
+  Random draws can receive indexed updates before their first realization.
+
 - Reading an assigned tensor or view now executes its pending write before
   returning bytes. `Run.data` no longer returns stale values through the
   contiguous-view shortcut, and repeated reads do not repeat the assignment.

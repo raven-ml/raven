@@ -97,7 +97,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   additional JSON dependencies.
 
 - Complete symbolic getitem/negative slices, shape-changing bitcasts, half
-  random generation and fresh-storage clone/random/dropout behavior.
+  random generation.
 - Revalidate scan, scatter and external-buffer contracts under the new call
   and storage protocol.
 - Review the audited Rune residency, uploads, memory planning and symbolic
