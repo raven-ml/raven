@@ -20,7 +20,7 @@ let queues_used ~msg dispatched =
 
 let test_elementwise_on_metal () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
-  let g = Rune.jit' ~device:"METAL" f in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
   let x = vec32 [| 1.0; -2.0; 0.5 |] in
   check_arr ~msg:"first call" (to_arr (f x)) (g x);
   check_arr ~msg:"replay" (to_arr (f x)) (g x)
@@ -38,7 +38,9 @@ let test_one_metal_device () =
 let test_matmul_grad_on_metal () =
   let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let f x = Nx.sum (Nx.matmul x w) in
-  let g = Rune.jit' ~device:"METAL" (fun x -> Rune.grad' f x) in
+  let g =
+    Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Rune.grad' f x)
+  in
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through metal jit" (to_arr (Rune.grad' f x)) (g x)
 
@@ -56,7 +58,7 @@ let test_queue_batched_replay () =
       (Array.init 16 (fun i -> float_of_int (i mod 3) -. 1.0))
   in
   let f x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
-  let g = Rune.jit' ~device:"METAL" f in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
   let launches0 = !Tolk.Realize.queue_submissions in
   List.iteri
     (fun i data ->
@@ -98,7 +100,7 @@ let test_scan_body_replays_as_a_queue () =
       ~init:(Nx.zeros f32 [| 4 |]) xs
   in
   let f xs = snd (fold xs) in
-  let g = Rune.jit' ~device:"METAL" f in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
   let xs =
     Nx.create f32 [| 6; 4 |] (Array.init 24 (fun i -> float_of_int i /. 24.0))
   in
@@ -113,8 +115,9 @@ let test_scan_body_replays_as_a_queue () =
 let test_command_storage_released_with_its_function () =
   let run c =
     let g =
-      Rune.jit' ~device:"METAL" (fun x ->
-          Nx.add_s (Nx.matmul (Nx.tanh (Nx.matmul x x)) x) c)
+      Rune.jit'
+        ~devices:[ Rune.device "METAL" ]
+        (fun x -> Nx.add_s (Nx.matmul (Nx.tanh (Nx.matmul x x)) x) c)
     in
     let x = Nx.create f32 [| 4; 4 |] (Array.init 16 float_of_int) in
     ignore (to_arr (g x));
@@ -155,7 +158,7 @@ let test_placed_weights_bind () =
   let f w1 w2 x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
   let p1 = on_metal w1 in
   let p2 = on_metal w2 in
-  let g = Rune.jit' ~device:"METAL" (f p1 p2) in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] (f p1 p2) in
   let launches0 = !Tolk.Realize.queue_submissions in
   List.iter
     (fun v ->
@@ -171,16 +174,20 @@ let test_placed_weights_bind () =
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 0.25) in
   check_arr ~msg:"after the read" (to_arr (f w1 w2 x)) (g x);
   (* A second compiled function shares the buffers. *)
-  let h = Rune.jit' ~device:"METAL" (fun x -> Nx.add (Nx.matmul x p1) x) in
+  let h =
+    Rune.jit'
+      ~devices:[ Rune.device "METAL" ]
+      (fun x -> Nx.add (Nx.matmul x p1) x)
+  in
   let y, up = delta (fun () -> h x) in
   equal ~msg:"a second function uploads its input only" int (Nx.nbytes x) up;
   check_arr ~msg:"second function" (to_arr (Nx.add (Nx.matmul x w1) x)) y
 
-let raises_donated f =
+let raises_consumed f =
   raises_match
     (function
       | Invalid_argument msg ->
-          String.starts_with ~prefix:"this value was donated" msg
+          String.starts_with ~prefix:"this value was consumed at " msg
       | _ -> false)
     (fun () -> ignore (f ()))
 
@@ -214,7 +221,9 @@ let test_placed_views_bind () =
     let p = Nx.place metal x in
     let f v = Nx.add v v in
     let view = Nx.slice [ Nx.R (1, n) ] p in
-    let y, up = delta (fun () -> Rune.jit' ~device:"METAL" f view) in
+    let y, up =
+      delta (fun () -> Rune.jit' ~devices:[ Rune.device "METAL" ] f view)
+    in
     equal ~msg:(msg ^ ": nothing is uploaded") int 0 up;
     let expected = f (Nx.slice [ Nx.R (1, n) ] x) in
     is_true ~msg:(msg ^ ": value")
@@ -226,7 +235,7 @@ let test_placed_views_bind () =
   let w1, _ = weights () in
   let p = Nx.place metal w1 in
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
-  let g = Rune.jit' ~device:"METAL" (fun w -> Nx.matmul x w) in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] (fun w -> Nx.matmul x w) in
   let y, up = delta (fun () -> g (Nx.matrix_transpose p)) in
   equal ~msg:"a transpose: only the capture is uploaded" int (Nx.nbytes x) up;
   check_arr ~msg:"a transpose" (to_arr (Nx.matmul x (Nx.matrix_transpose w1))) y
@@ -241,9 +250,14 @@ let test_unsupported_dtype_raises_before_a_call () =
           (function
             | Invalid_argument msg ->
                 msg
-                = "Rune.jit: input leaf 0 is float64, which METAL cannot hold"
+                = "Rune.jit: the argument at 0 is float64, which METAL cannot \
+                   hold"
             | _ -> false)
-          (fun () -> Rune.jit' ~device:"METAL" (fun x -> Nx.mul_s x 2.0) x))
+          (fun () ->
+            Rune.jit'
+              ~devices:[ Rune.device "METAL" ]
+              (fun x -> Nx.mul_s x 2.0)
+              x))
   in
   equal ~msg:"an input: nothing is uploaded" int 0 up;
   let cannot_hold f =
@@ -255,11 +269,13 @@ let test_unsupported_dtype_raises_before_a_call () =
       f
   in
   cannot_hold (fun () ->
-      Rune.jit' ~device:"METAL"
+      Rune.jit'
+        ~devices:[ Rune.device "METAL" ]
         (fun x -> Nx.cast Nx.float32 (Nx.mul_s (Nx.cast Nx.float64 x) 2.0))
         (vec32 [| 1.0; 2.0 |]));
   cannot_hold (fun () ->
-      Rune.jit' ~device:"METAL"
+      Rune.jit'
+        ~devices:[ Rune.device "METAL" ]
         (fun y -> Nx.add y (Nx.cast Nx.float32 x))
         (vec32 [| 1.0; 2.0; 3.0 |]))
 
@@ -300,22 +316,27 @@ let test_capture_moves_past_a_dtype () =
     (function Rune.Jit_error _ -> true | _ -> false)
     (fun () -> Rune.jit' (fun x -> Nx.cast f32 (Nx.cast Nx.float64 x)) x)
 
-let test_bound_input_is_not_donated () =
+(* A call that consumes a bound storage ends it for its values; the program that
+   binds it replays with its buffer. *)
+let test_consuming_a_bound_storage () =
   let w1, _ = weights () in
   let p = on_metal w1 in
-  let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.matmul x p) in
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
   ignore (g x);
   let step =
-    Rune.jit_step ~device:"METAL" Nx.Ptree.unit Nx.Ptree.tensor
-      (fun () m -> Nx.mul_s m 2.0)
-      ()
+    Rune.jit
+      ~devices:[ Rune.device "METAL" ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun m -> Nx.mul_s m 2.0)
   in
   let y, up = delta (fun () -> step p) in
   equal ~msg:"the bound input seeds with no transfer" int 0 up;
   check_arr ~msg:"result" (to_arr (Nx.mul_s w1 2.0)) y;
-  check_arr ~msg:"the bound value is still readable" (to_arr w1) p;
-  check_arr ~msg:"and still the constant" (to_arr (Nx.matmul x w1)) (g x)
+  raises_consumed (fun () -> to_arr p);
+  check_arr ~msg:"the program that binds it replays with it"
+    (to_arr (Nx.matmul x w1))
+    (g x)
 
 (* A step reads placed weights and consumes its state: the weights stay resident
    and readable, the state is written over its own storage. *)
@@ -324,8 +345,10 @@ let test_step_reads_weights_consumes_state () =
   let w = on_metal w1 in
   let f w x = Nx.add_s (Nx.mul x x) (Nx.item [] (Nx.mean w)) in
   let step =
-    Rune.jit_step ~device:"METAL" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
-        Nx.add (Nx.mul x x) (Nx.mean w))
+    Rune.jit
+      ~devices:[ Rune.device "METAL" ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun w x -> Nx.add (Nx.mul x x) (Nx.mean w))
   in
   let x0 =
     Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i /. 16.0))
@@ -337,21 +360,23 @@ let test_step_reads_weights_consumes_state () =
   equal ~msg:"the state is written over its own storage" int (Nx.nbytes x0)
     ((Rune.jit_stats ()).reused_bytes - before);
   check_arr ~eps:1e-5 ~msg:"two steps" (to_arr (f w1 (f w1 x0))) x2;
-  raises_donated (fun () -> to_arr x1);
+  raises_consumed (fun () -> to_arr x1);
   check_arr ~msg:"the weights are readable" (to_arr w1) w
 
 (* A call returns while its kernels may still run; a read waits for them. *)
 let test_read_after_call_waits () =
   let n = 512 in
   let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
-  let g = Rune.jit' ~device:"METAL" f in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
   let x =
     Nx.create f32 [| n; n |]
       (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
   in
   check_arr ~eps:1e-2 ~msg:"right after one call" (to_arr (f x)) (g x);
   let step =
-    Rune.jit' ~device:"METAL" (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
+    Rune.jit'
+      ~devices:[ Rune.device "METAL" ]
+      (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
   in
   let h = ref (on_metal (vec32 (Array.make 4096 0.0))) in
   for _ = 1 to 50 do
@@ -393,7 +418,10 @@ let test_two_programs_alternate () =
     { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
   in
   let compile f =
-    Rune.jit_step ~device:"METAL" Nx.Ptree.unit pair_ptree (fun () p -> f p) ()
+    Rune.jit
+      ~devices:[ Rune.device "METAL" ]
+      Nx.Ptree.(consumes pair_ptree @@ returns pair_ptree)
+      f
   in
   let mix' = compile mix and fold' = compile fold in
   let init k =
@@ -423,7 +451,7 @@ let test_programs_share_an_arena () =
       Nx.create f32 [| n; 8 |]
         (Array.init (n * 8) (fun i -> sin (float_of_int ((k * i) + 1)) /. 4.0))
     in
-    (f, Rune.jit' ~device:"METAL" f, x)
+    (f, Rune.jit' ~devices:[ Rune.device "METAL" ] f, x)
   in
   let device_bytes () =
     Option.value ~default:0
@@ -454,7 +482,7 @@ let test_programs_share_an_arena () =
 let test_capture_resident_elsewhere () =
   let w1, _ = weights () in
   let p = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w1 in
-  let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.matmul x p) in
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
   let (), up =
     delta (fun () ->
@@ -503,7 +531,9 @@ let test_place_from_a_mapped_file () =
           ~shape:[| 64; 64 |]
       in
       let placed = on_metal (Nx.matrix_transpose w) in
-      let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x placed) in
+      let g =
+        Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.matmul x placed)
+      in
       let x = Nx.create f32 [| 2; 64 |] (Array.make 128 0.5) in
       check_arr ~msg:"matches eager"
         (to_arr (Nx.matmul x (Nx.matrix_transpose w)))
@@ -524,7 +554,7 @@ let test_sort_keeps_subnormals () =
   let unsigned_zero t = Array.map (fun v -> v +. 0.) (to_arr t) in
   equal ~msg:"sorted values over their positions" (array float_exact)
     (unsigned_zero (sort x))
-    (unsigned_zero (Rune.jit' ~device:"METAL" sort x))
+    (unsigned_zero (Rune.jit' ~devices:[ Rune.device "METAL" ] sort x))
 
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4), and
    a loop whose state starts on the host compiles once. *)
@@ -541,14 +571,18 @@ let test_item_on_resident_logits () =
       (Array.init (8 * vocab) (fun i -> float_of_int (i mod 17) /. 17.0))
   in
   let placed = on_metal w in
-  let head = Rune.jit' ~device:"METAL" (fun h -> Nx.matmul h placed) in
+  let head =
+    Rune.jit' ~devices:[ Rune.device "METAL" ] (fun h -> Nx.matmul h placed)
+  in
   let h = Nx.create f32 [| 1; 8 |] (Array.init 8 float_of_int) in
   let logits = head h in
   let v, down = read_bytes (fun () -> Nx.item [ 0; 5 ] logits) in
   equal ~msg:"the element" (float 1e-5) (Nx.item [ 0; 5 ] (Nx.matmul h w)) v;
   equal ~msg:"four bytes move" int 4 down;
   is_true ~msg:"the logits stay resident" (bound_by 0 logits);
-  let step = Rune.jit' ~device:"METAL" (fun l -> Nx.mul_s l 2.0) in
+  let step =
+    Rune.jit' ~devices:[ Rune.device "METAL" ] (fun l -> Nx.mul_s l 2.0)
+  in
   let (_ : Nx.float32_t), up = delta (fun () -> step logits) in
   equal ~msg:"and feed a call with no upload" int 0 up
 
@@ -561,7 +595,9 @@ let test_move_to_host_keeps_its_source () =
   check_arr ~msg:"its elements" (to_arr w1) h;
   check_arr ~msg:"the source is still readable" (to_arr w1) p;
   is_true ~msg:"and resident" (bound_by 0 p);
-  let g = Rune.jit' ~device:"METAL" (fun x -> Nx.mul_s x 2.0) in
+  let g =
+    Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.mul_s x 2.0)
+  in
   let (_ : Nx.float32_t), up = delta (fun () -> g p) in
   equal ~msg:"and feeds a call with no upload" int 0 up
 
@@ -588,11 +624,11 @@ let test_mixed_placements_raise () =
 let test_host_started_loop_compiles_once () =
   let traces = ref 0 in
   let step =
-    Rune.jit_step Nx.Ptree.unit Nx.Ptree.tensor
-      (fun () x ->
+    Rune.jit
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x ->
         incr traces;
         Nx.add_s (Nx.mul_s x 0.5) 1.0)
-      ()
   in
   let x = ref (vec32 (Array.make 64 0.0)) in
   for _ = 1 to 4 do
@@ -621,7 +657,9 @@ let test_scatter_duplicates_on_metal () =
   List.iter
     (fun (name, mode) ->
       let f t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
-      check_arr ~msg:name (to_arr (f t)) (Rune.jit' ~device:"METAL" f t))
+      check_arr ~msg:name
+        (to_arr (f t))
+        (Rune.jit' ~devices:[ Rune.device "METAL" ] f t))
     [ ("set", `Set); ("add", `Add) ]
 
 (* Radix selection on the GPU picks the positions eager does, NaN, both zeros
@@ -643,7 +681,7 @@ let test_top_k_on_metal () =
         check_arr
           ~msg:(Printf.sprintf "%s top %d" name k)
           (to_arr (indices x))
-          (Rune.jit' ~device:"METAL" indices x))
+          (Rune.jit' ~devices:[ Rune.device "METAL" ] indices x))
       [ 17; 512; 2000 ]
   in
   check "float32" (Nx.cast f32 data);
@@ -688,7 +726,7 @@ let test_scans_keep_subnormals () =
     (fun (name, f) ->
       equal ~msg:name (array float_exact)
         (to_arr (f x))
-        (to_arr (Rune.jit' ~device:"METAL" f x)))
+        (to_arr (Rune.jit' ~devices:[ Rune.device "METAL" ] f x)))
     [ ("cummax", Nx.cummax ~axis:0); ("cummin", Nx.cummin ~axis:0) ]
 
 (* Sixteen queued sorts feed one concatenation of 17 arguments, which feeds a
@@ -707,7 +745,7 @@ let test_many_argument_kernel () =
                       [| len k |]
                       (Nx.shrink [| (k, k + 1); (0, len k) |] x))))))
   in
-  let g = Rune.jit' ~device:"METAL" f in
+  let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
   for call = 1 to 3 do
     let x =
       Nx.create Nx.int32 [| 16; 79 |]
@@ -722,12 +760,14 @@ let test_many_argument_kernel () =
   done
 
 (* A value with no elements has no storage: an empty input, output or capture
-   compiles and replays on Metal, next to values that do have elements. *)
+   compiles and replays on Metal, next to values that do have elements. An empty
+   consumed argument is consumed, and an empty result at two leaves is two
+   values. *)
 let test_empty_values () =
   let v = vec32 [| 1.0; 2.0; 3.0 |] in
   let empty = Nx.zeros f32 [| 0 |] in
   let check name f x =
-    let g = Rune.jit' ~device:"METAL" f in
+    let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
     for call = 1 to 2 do
       let msg = Printf.sprintf "%s, call %d" name call in
       check_arr ~msg (to_arr (f x)) (g x)
@@ -739,7 +779,33 @@ let test_empty_values () =
   check "an empty capture returned" (fun _ -> empty) v;
   check "a sum over an empty slice"
     (fun x -> Nx.add (Nx.sum (Nx.slice [ Nx.R (1, 1) ] x)) x)
-    v
+    v;
+  let metal = Rune.device "METAL" in
+  let consume =
+    Rune.jit ~devices:[ metal ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.mul_s x 2.0)
+  in
+  let twice =
+    Rune.jit ~devices:[ metal ]
+      Nx.Ptree.(tensor @-> returns pair_ptree)
+      (fun x ->
+        let y = Nx.mul_s x 2.0 in
+        { Pair.u = y; v = y })
+  in
+  for call = 1 to 2 do
+    let x = on_metal empty in
+    check_arr
+      ~msg:(Printf.sprintf "an empty consumed argument, call %d" call)
+      [||] (consume x);
+    raises_consumed (fun () -> to_arr x);
+    let r = twice (on_metal empty) in
+    is_true
+      ~msg:(Printf.sprintf "an empty result twice is two values, call %d" call)
+      (r.u != r.v);
+    check_arr ~msg:"its first value" [||] r.u;
+    check_arr ~msg:"its second value" [||] r.v
+  done
 
 let test_custom_backward_on_metal () =
   let indices = Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 2l |] in
@@ -754,7 +820,7 @@ let test_custom_backward_on_metal () =
     let y = take x in
     Nx.sum (Nx.mul y y)
   in
-  let compiled = Rune.jit' ~device:"METAL" (Rune.grad' loss) in
+  let compiled = Rune.jit' ~devices:[ Rune.device "METAL" ] (Rune.grad' loss) in
   let before = !Tolk.Realize.queue_submissions in
   check_arr ~msg:"custom backward scatter accumulates duplicates"
     [| 14.; 0.; 84.; 0. |]
@@ -775,9 +841,9 @@ let tests =
         test "duplicate scatter updates land in order"
           test_scatter_duplicates_on_metal;
         test "bitcast reads on the GPU the bits eager reads"
-          (check_bitcast_matches_eager ~device:"METAL");
+          (check_bitcast_matches_eager ~devices:[ Rune.device "METAL" ]);
         slow "top_k over a row of 2^20 entries on the GPU"
-          (check_top_k_long_row ~device:"METAL");
+          (check_top_k_long_row ~devices:[ Rune.device "METAL" ]);
         slow "top_k selects on the GPU what it selects eagerly"
           test_top_k_on_metal;
         slow "sort matches eager" test_sort_matches_eager;
@@ -807,8 +873,7 @@ let tests =
           test_unsupported_dtype_raises_at_placement;
         test "placed weights bind and replay as compiled queues"
           test_placed_weights_bind;
-        test "a bound input is not consumed by donation"
-          test_bound_input_is_not_donated;
+        test "consuming a bound storage" test_consuming_a_bound_storage;
         test "a step reads its weights and consumes its state"
           test_step_reads_weights_consumes_state;
         test "a capture resident on another device raises"

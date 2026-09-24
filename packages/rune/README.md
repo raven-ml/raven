@@ -61,8 +61,10 @@ nest into records, so models compose structurally — see
   finite differences
 - **Control flow** — `scan`, `cond`, `while_loop` combinators with
   staging-ready signatures
-- **Compilation** — `jit` traces a function once and replays it as
-  fused kernels, on CPU (the default), CUDA, or Metal via `~device`
+- **Compilation** — `jit` traces a function once per key and replays it
+  as fused kernels, on the host, CUDA, or Metal via `~devices`; an argument
+  marked `consumes` in its signature is given up by each call, and its
+  storage is reused for the results
 - **Debugging** — `with_debug` logs every tensor operation; `detach`
   and `no_grad` stop gradient flow
 - **Structures** — every transformation takes the structures it walks,

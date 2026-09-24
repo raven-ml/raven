@@ -242,27 +242,22 @@ let test_rejects_no_leaf () =
 let test_rejects_consumes () =
   raises
     (Invalid_argument
-       "Rune.vmap: argument 1 is consumed; only a compiled call consumes its \
-        arguments") (fun () ->
+       "Rune.vmap: the argument at 0 is consumed; only a compiled call \
+        consumes its arguments") (fun () ->
       let (_ : Nx.float64_t -> Nx.float64_t) =
         Rune.vmap Nx.Ptree.(consumes tensor @@ returns tensor) Fun.id
       in
       ())
 
 let test_batch_size_mismatch () =
-  raises
-    (Invalid_argument
-       "Rune.vmap: argument 1, leaf snd has 3 rows along axis 0, argument 1, \
-        leaf fst has 2") (fun () ->
+  raises (Invalid_argument "Rune.vmap: 0.snd: 3 rows along axis 0, 0.fst: 2")
+    (fun () ->
       ignore
         (Rune.vmap
            Nx.Ptree.(pair_ptree @-> returns tensor)
            (fun p -> Nx.add p.fst p.snd)
            { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 1.0; 2.0; 3.0 |] }));
-  raises
-    (Invalid_argument
-       "Rune.vmap: argument 2 has 3 rows along axis 0, argument 1 has 2")
-    (fun () ->
+  raises (Invalid_argument "Rune.vmap: 1: 3 rows along axis 0, 0: 2") (fun () ->
       ignore
         (Rune.vmap
            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
@@ -274,9 +269,8 @@ let test_scalar_leaf_rejected () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.vmap' (fun x -> x) (Nx.scalar f64 1.0)));
   raises
-    (Invalid_argument
-       "Rune.vmap: argument 1, leaf 1 is a scalar; vmap maps axis 0 of every \
-        leaf") (fun () ->
+    (Invalid_argument "Rune.vmap: 0.1: a scalar; vmap maps axis 0 of every leaf")
+    (fun () ->
       ignore
         (Rune.vmap
            Nx.Ptree.(pair tensor tensor @-> returns tensor)

@@ -194,7 +194,7 @@ let test_views_share_the_cell () =
   is_true ~msg:"a whole value is contiguous" (Nx.contiguous p == p);
   let c = Nx.contiguous v in
   is_true ~msg:"a window is copied" (cell_of c != cell_of p);
-  (cell_of p).state <- Donated;
+  (cell_of p).state <- Consumed { path = "0" };
   raises_invalid (fun () -> Nx.to_array v);
   raises_invalid (fun () -> Nx.add v v);
   equal ~msg:"the copy survives" (array float_exact) [| 1.; 2.; 3. |]
@@ -258,10 +258,19 @@ let test_pp_split_on_axis_one () =
   equal ~msg:"pp reads the elements in C order" string (Nx.to_string x)
     (Nx.to_string s)
 
-let test_donated_value_does_not_move () =
+let test_consumed_value_does_not_move () =
   let p = Nx.place on1 (m23 ()) in
-  (match p with Nx_effect.Placed r -> r.r_cell.state <- Donated | _ -> ());
-  raises_invalid (fun () -> Nx.place on1 p)
+  (cell_of p).state <- Consumed { path = "2.keys" };
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          msg
+          = "this value was consumed at 2.keys in a compiled call's arguments; \
+             use the value the call returned"
+      | _ -> false)
+    (fun () -> Nx.place on1 p);
+  raises_invalid (fun () -> Nx.to_array p);
+  equal ~msg:"its shape stays readable" (array int) [| 2; 3 |] (Nx.shape p)
 
 let tests =
   [
@@ -278,7 +287,7 @@ let tests =
         test "views share their cell" test_views_share_the_cell;
         test "several devices" test_several_devices;
         test "pp of a value split on axis 1" test_pp_split_on_axis_one;
-        test "a donated value is not placed" test_donated_value_does_not_move;
+        test "a consumed value is not placed" test_consumed_value_does_not_move;
       ];
   ]
 

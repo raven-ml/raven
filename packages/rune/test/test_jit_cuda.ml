@@ -23,7 +23,7 @@ let require_cuda () =
 let test_elementwise_on_cuda () =
   require_cuda ();
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
-  let g = Rune.jit' ~device:"CUDA" f in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] f in
   let x = vec32 [| 1.0; -2.0; 0.5 |] in
   check_arr ~msg:"first call" (to_arr (f x)) (g x);
   check_arr ~msg:"replay" (to_arr (f x)) (g x)
@@ -32,7 +32,7 @@ let test_matmul_grad_on_cuda () =
   require_cuda ();
   let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let f x = Nx.sum (Nx.matmul x w) in
-  let g = Rune.jit' ~device:"CUDA" (fun x -> Rune.grad' f x) in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] (fun x -> Rune.grad' f x) in
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through cuda jit" (to_arr (Rune.grad' f x)) (g x)
 
@@ -50,7 +50,7 @@ let delta f =
 let test_feedback_moves_no_bytes () =
   require_cuda ();
   let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
-  let g = Rune.jit' ~device:"CUDA" f in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] f in
   let x = vec32 [| 1.0; 2.0; 3.0 |] in
   let h1 = g x in
   let h2, up2, down2 = delta (fun () -> g h1) in
@@ -65,7 +65,7 @@ let test_feedback_moves_no_bytes () =
 
 let test_forced_handle_feeds_current_bytes () =
   require_cuda ();
-  let g = Rune.jit' ~device:"CUDA" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
   check_arr ~msg:"reading forces the handle" [| 2.0; 4.0; 6.0 |] h;
   let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
@@ -75,7 +75,9 @@ let test_forced_handle_feeds_current_bytes () =
 
 let test_cuda_handle_into_cpu_jit () =
   require_cuda ();
-  let gc = Rune.jit' ~device:"CUDA" (fun x -> Nx.mul_s x 2.0) in
+  let gc =
+    Rune.jit' ~devices:[ Rune.device "CUDA" ] (fun x -> Nx.mul_s x 2.0)
+  in
   let gp = Rune.jit' (fun x -> Nx.add_s x 1.0) in
   let h = gc (vec32 [| 1.0; 2.0 |]) in
   (* A handle from another device takes the ordinary host path: it forces and
@@ -97,7 +99,7 @@ let test_queue_replay () =
   (* Two chained matmuls: at least two kernels, so the batch rewrite emits a
      queue submission. *)
   let f x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
-  let g = Rune.jit' ~device:"CUDA" f in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] f in
   let launches0 = !Tolk.Realize.queue_submissions in
   List.iteri
     (fun i data ->
@@ -118,7 +120,7 @@ let test_capture_uploaded_once_across_signatures () =
   require_cuda ();
   let n = 256 in
   let c = vec32 (Array.init n float_of_int) in
-  let g = Rune.jit' ~device:"CUDA" (fun x -> Nx.add x c) in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] (fun x -> Nx.add x c) in
   let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
   let _, up2, _ =
     delta (fun () -> g (Nx.create f32 [| 1; n |] (Array.make n 1.0)))
@@ -143,8 +145,10 @@ let pair_ptree = Nx.Ptree.instantiate (module Pair)
 let test_pass_through_output_survives () =
   require_cuda ();
   let g =
-    Rune.jit2 ~device:"CUDA" pair_ptree pair_ptree (fun p ->
-        { u = p.u; v = Nx.mul_s p.v 2.0 })
+    Rune.jit
+      ~devices:[ Rune.device "CUDA" ]
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
   in
   let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
   let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
@@ -160,7 +164,7 @@ let cos_data n = Array.init n (fun i -> 0.5 *. cos (float_of_int (i + 1)))
 let half_mat dt r c f = Nx.cast dt (Nx.create f32 [| r; c |] (f (r * c)))
 
 let check_half_on_cuda name ~eps f x =
-  let g = Rune.jit' ~device:"CUDA" f in
+  let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] f in
   check_arr ~eps ~msg:(name ^ " first call") (to_arr (f x)) (g x);
   check_arr ~eps ~msg:(name ^ " replay") (to_arr (f x)) (g x)
 
@@ -191,7 +195,9 @@ let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
     let xh = Nx.cast dt x and wh = Nx.cast dt w in
     Nx.cast f32 (Nx.mean (Nx.tanh (Nx.matmul xh wh)))
   in
-  let jitted = Rune.jit' ~device:"CUDA" (fun w -> Rune.grad' sandwich w) in
+  let jitted =
+    Rune.jit' ~devices:[ Rune.device "CUDA" ] (fun w -> Rune.grad' sandwich w)
+  in
   check_arr ~eps:(tol /. 4.0)
     ~msg:(name ^ " cuda grad vs eager sandwich grad")
     (to_arr (Rune.grad' sandwich w))
@@ -207,7 +213,9 @@ let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
    [_device_num] bound, allreduce, gather on read) is exercised without a second
    device. *)
 
-let cuda2 = [ "CUDA:0"; "CUDA:0" ]
+let cuda2 () =
+  let d = Rune.device "CUDA" in
+  [ d; d ]
 
 let test_pmap_matches_jit_on_cuda () =
   require_cuda ();
@@ -219,8 +227,10 @@ let test_pmap_matches_jit_on_cuda () =
   let x =
     Nx.create f32 [| 4; 6 |] (Array.init 24 (fun i -> float_of_int i /. 7.0))
   in
-  let expect = Rune.jit' ~device:"CUDA" chain x in
-  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor chain in
+  let expect = Rune.jit' ~devices:[ Rune.device "CUDA" ] chain x in
+  let g =
+    Rune.pmap ~devices:(cuda2 ()) Nx.Ptree.(tensor @-> returns tensor) chain
+  in
   check_arr ~msg:"first call" (to_arr expect) (g x);
   check_arr ~msg:"replay" (to_arr expect) (g x)
 
@@ -230,8 +240,10 @@ let test_pmap_grad_allreduce_on_cuda () =
   let loss x = Nx.mean (Nx.matmul x w) in
   let grads x = Rune.grad' loss x in
   let x = Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> float_of_int i)) in
-  let expect = Rune.jit' ~device:"CUDA" grads x in
-  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor grads in
+  let expect = Rune.jit' ~devices:[ Rune.device "CUDA" ] grads x in
+  let g =
+    Rune.pmap ~devices:(cuda2 ()) Nx.Ptree.(tensor @-> returns tensor) grads
+  in
   check_arr ~msg:"grad inside pmap on cuda" (to_arr expect) (g x)
 
 (* Reducing over the sharded axis allreduces at bfloat16: each shard's partial
@@ -241,15 +253,21 @@ let test_pmap_bf16_allreduce_on_cuda () =
   require_cuda ();
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat Nx.bfloat16 4 6 sin_data in
-  let expect = Rune.jit' ~device:"CUDA" f x in
-  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor f in
+  let expect = Rune.jit' ~devices:[ Rune.device "CUDA" ] f x in
+  let g =
+    Rune.pmap ~devices:(cuda2 ()) Nx.Ptree.(tensor @-> returns tensor) f
+  in
   check_arr ~eps:0.0625 ~msg:"bf16 allreduce vs single device" (to_arr expect)
     (g x);
   check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g x)
 
 let test_pmap_feedback_on_cuda () =
   require_cuda ();
-  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor (fun x -> Nx.add x x) in
+  let g =
+    Rune.pmap ~devices:(cuda2 ())
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.add x x)
+  in
   let x = vec32 (Array.init 8 float_of_int) in
   let y1 = g x in
   let y2, up, _ = delta (fun () -> g y1) in
@@ -258,29 +276,30 @@ let test_pmap_feedback_on_cuda () =
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
 
-(* Donation on the GPU: a state-to-state loop through [jit_step] releases each
-   consumed generation's device buffer once its call completes, so resident
-   bytes stay bounded at two generations with every handle still reachable and
-   no GC; the donated handles raise on read. *)
+(* Consumption on the GPU: a state-to-state loop whose argument is consumed
+   releases each consumed generation's device buffer once its call completes, so
+   resident bytes stay bounded at two generations with every handle still
+   reachable and no GC; the consumed handles raise on read. *)
 
-let raises_donated f =
+let raises_consumed f =
   raises_match
     (fun exn ->
       match exn with
       | Invalid_argument msg ->
           msg
-          = "this value was donated to a compiled call and no longer exists; \
-             read or copy it before the call"
+          = "this value was consumed at 0 in a compiled call's arguments; use \
+             the value the call returned"
       | _ -> false)
     (fun () -> ignore (f ()))
 
 (* [f] compiled for CUDA with its argument consumed. *)
 let consuming f =
-  Rune.jit_step ~device:"CUDA" Nx.Ptree.unit Nx.Ptree.tensor
-    (fun () x -> f x)
-    ()
+  Rune.jit
+    ~devices:[ Rune.device "CUDA" ]
+    Nx.Ptree.(consumes tensor @@ returns tensor)
+    f
 
-let test_donate_bounds_resident_memory_on_cuda () =
+let test_consume_bounds_resident_memory_on_cuda () =
   require_cuda ();
   let n = 4096 in
   let x = vec32 (Array.make n 0.0) in
@@ -299,43 +318,45 @@ let test_donate_bounds_resident_memory_on_cuda () =
   in
   let step d =
     let f x = Nx.add_s x 1.0 in
-    if d then consuming f else Rune.jit' ~device:"CUDA" f
+    if d then consuming f else Rune.jit' ~devices:[ Rune.device "CUDA" ] f
   in
   let grew, h = run (step true) in
-  is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
-  check_arr ~msg:"donated chain computes the right value" (Array.make n 11.0) h;
+  is_true ~msg:"consumption holds at most two generations" (grew <= 2 * n * 4);
+  check_arr ~msg:"consumed chain computes the right value" (Array.make n 11.0) h;
   let grew', h' = run (step false) in
-  is_true ~msg:"without donate every generation stays resident"
+  is_true ~msg:"without consumption every generation stays resident"
     (grew' >= 10 * n * 4);
-  check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h'
+  check_arr ~msg:"unconsumed chain still correct" (Array.make n 11.0) h'
 
-let test_donated_handle_raises_on_cuda () =
+let test_consumed_handle_raises_on_cuda () =
   require_cuda ();
   let g = consuming (fun x -> Nx.mul_s x 2.0) in
   let h1 = g (vec32 [| 1.0; 2.0 |]) in
   let h2 = g h1 in
-  raises_donated (fun () -> to_arr h1);
-  raises_donated (fun () -> g h1);
+  raises_consumed (fun () -> to_arr h1);
+  raises_consumed (fun () -> g h1);
   check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2
 
-let test_forced_handle_unaffected_by_donate_on_cuda () =
+let test_read_before_consumption_on_cuda () =
   require_cuda ();
   let g = consuming (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0 |]) in
-  check_arr ~msg:"read before the call forces to host" [| 2.0; 4.0 |] h;
+  check_arr ~msg:"a read before the call" [| 2.0; 4.0 |] h;
   ignore (g h);
-  check_arr ~msg:"host bytes survive the donating call" [| 2.0; 4.0 |] h
+  raises_consumed (fun () -> to_arr h)
 
-let test_pmap_donate_on_cuda () =
+let test_pmap_consume_on_cuda () =
   require_cuda ();
   let g =
-    Rune.pmap ~devices:cuda2 ~donate:true Nx.Ptree.tensor (fun x -> Nx.add x x)
+    Rune.pmap ~devices:(cuda2 ())
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.add x x)
   in
   let x = vec32 (Array.init 8 float_of_int) in
   let y1 = g x in
   let y2, up, _ = delta (fun () -> g y1) in
-  equal ~msg:"donated feedback still moves no bytes to device" int 0 up;
-  raises_donated (fun () -> to_arr y1);
+  equal ~msg:"consumed feedback still moves no bytes to device" int 0 up;
+  raises_consumed (fun () -> to_arr y1);
   check_arr ~msg:"gathered result"
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
@@ -361,7 +382,12 @@ let test_rng_uniform_bit_parity_on_cuda () =
   require_cuda ();
   let f key = Nx.Rng.uniform key Nx.float32 [| 1000 |] in
   let k = Nx.Rng.key 42 in
-  let g = Rune.jit ~device:"CUDA" Nx.Ptree.tensor f in
+  let g =
+    Rune.jit
+      ~devices:[ Rune.device "CUDA" ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+  in
   check_bits ~msg:"eager == cuda jit, bitwise" (f k) (g k);
   check_bits ~msg:"replay" (f k) (g k)
 
@@ -370,13 +396,19 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k)
-    (Rune.jit ~device:"CUDA" Nx.Ptree.tensor fr k);
+    (Rune.jit
+       ~devices:[ Rune.device "CUDA" ]
+       Nx.Ptree.(tensor @-> returns tensor)
+       fr k);
   let fb key =
     Nx.cast f32
       (Nx.Rng.bernoulli key (Nx.broadcast_to [| 64 |] (Nx.scalar f32 0.3)))
   in
   check_bits ~msg:"bernoulli" (fb k)
-    (Rune.jit ~device:"CUDA" Nx.Ptree.tensor fb k)
+    (Rune.jit
+       ~devices:[ Rune.device "CUDA" ]
+       Nx.Ptree.(tensor @-> returns tensor)
+       fb k)
 
 (* The threefry bits agree exactly; Box-Muller's cos/log/sqrt land within
    float32 ulps of eager (GPU transcendental codegen). *)
@@ -386,14 +418,19 @@ let test_rng_normal_matches_eager_on_cuda () =
   let k = Nx.Rng.key 42 in
   check_arr ~msg:"normal"
     (to_arr (f k))
-    (Rune.jit ~device:"CUDA" Nx.Ptree.tensor f k)
+    (Rune.jit
+       ~devices:[ Rune.device "CUDA" ]
+       Nx.Ptree.(tensor @-> returns tensor)
+       f k)
 
 let test_rng_fold_in_driven_steps_on_cuda () =
   require_cuda ();
   let root = Nx.Rng.key 3 in
   let g =
-    Rune.jit ~device:"CUDA" Nx.Ptree.tensor (fun key ->
-        Nx.Rng.uniform key Nx.float32 [| 8 |])
+    Rune.jit
+      ~devices:[ Rune.device "CUDA" ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |])
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
@@ -409,7 +446,9 @@ let test_rng_fold_in_driven_steps_on_cuda () =
 let test_rng_constant_key_raises_on_cuda () =
   require_cuda ();
   let g =
-    Rune.jit' ~device:"CUDA" (fun x -> Nx.add x (Nx.rand Nx.float32 [| 3 |]))
+    Rune.jit'
+      ~devices:[ Rune.device "CUDA" ]
+      (fun x -> Nx.add x (Nx.rand Nx.float32 [| 3 |]))
   in
   raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0; 3.0 |]))
 
@@ -468,15 +507,15 @@ let tests =
           test_rng_fold_in_driven_steps_on_cuda;
         test "a constant key raises" test_rng_constant_key_raises_on_cuda;
       ];
-    group "cuda donation"
+    group "cuda consumption"
       [
-        test "donate bounds resident memory at two generations"
-          test_donate_bounds_resident_memory_on_cuda;
-        test "a donated handle raises on read and re-feed"
-          test_donated_handle_raises_on_cuda;
-        test "a handle read before the call is unaffected"
-          test_forced_handle_unaffected_by_donate_on_cuda;
-        test "pmap donation consumes the sharded state" test_pmap_donate_on_cuda;
+        test "consumption bounds resident memory at two generations"
+          test_consume_bounds_resident_memory_on_cuda;
+        test "a consumed handle raises on read and re-feed"
+          test_consumed_handle_raises_on_cuda;
+        test "a handle read before the call is consumed by it"
+          test_read_before_consumption_on_cuda;
+        test "pmap consumes the sharded state" test_pmap_consume_on_cuda;
       ];
   ]
 

@@ -110,7 +110,9 @@ let windowed_input = Nx.Ptree.instantiate (module Windowed_input)
 let test_reports_key_programs () =
   let traces = ref 0 in
   let g =
-    Rune.jit windowed_input (fun { Windowed_input.x; window; bias } ->
+    Rune.jit
+      Nx.Ptree.(windowed_input @-> returns tensor)
+      (fun { Windowed_input.x; window; bias } ->
         incr traces;
         let y = Nx.slice [ Nx.R (0, window) ] x in
         match bias with Some b -> Nx.sum (Nx.add y b) | None -> Nx.sum y)
@@ -131,7 +133,9 @@ let test_a_leafless_element_keys_programs () =
   let traces = ref 0 in
   let s = Nx.Ptree.(pair tensor (list (option tensor))) in
   let g =
-    Rune.jit s (fun (x, extras) ->
+    Rune.jit
+      Nx.Ptree.(s @-> returns tensor)
+      (fun (x, extras) ->
         incr traces;
         Nx.mul_s x (float_of_int (List.length extras)))
   in
@@ -162,7 +166,7 @@ let test_cases_key_programs () =
   let traces = ref 0 in
   let g =
     Rune.jit
-      (Nx.Ptree.instantiate (module Shaped))
+      Nx.Ptree.(Nx.Ptree.instantiate (module Shaped) @-> returns tensor)
       (fun s ->
         incr traces;
         match s with
@@ -176,11 +180,11 @@ let test_cases_key_programs () =
   check_arr ~msg:"square again" [| 4.0 |] (g (Square x));
   equal ~msg:"and replays" int 2 !traces
 
-let test_jit2_structured_output () =
+let test_structured_output () =
   let f p =
     { w = Nx.mul p.w p.w; b = Nx.add p.b p.b; scale = Nx.mul_s p.scale 2.0 }
   in
-  let g = Rune.jit2 params_ptree params_ptree f in
+  let g = Rune.jit Nx.Ptree.(params_ptree @-> returns params_ptree) f in
   let p = params () in
   let r = g p in
   let e = f p in
@@ -192,8 +196,9 @@ let test_jit2_structured_output () =
 
 let test_grad_inside_jit () =
   let step =
-    Rune.jit2 params_ptree params_ptree (fun p ->
-        Rune.grad params_ptree quadratic p)
+    Rune.jit
+      Nx.Ptree.(params_ptree @-> returns params_ptree)
+      (fun p -> Rune.grad params_ptree quadratic p)
   in
   let g = step (params ()) in
   check_arr ~msg:"dw" [| 2.0; -4.0; 6.0 |] g.w;
@@ -246,8 +251,8 @@ let test_qr_reduced_matches_eager () =
       |]
   in
   let jq, jr =
-    Rune.jit2 Nx.Ptree.tensor
-      Nx.Ptree.(pair tensor tensor)
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
       (fun m -> Nx.qr ~mode:`Reduced m)
       a
   in
@@ -262,8 +267,8 @@ let test_qr_zero_tail_matches_eager () =
     Nx.create f32 [| 3; 3 |] [| 1.0; 0.0; 2.0; 0.0; 2.0; 3.0; 0.0; 0.0; 4.0 |]
   in
   let jq, jr =
-    Rune.jit2 Nx.Ptree.tensor
-      Nx.Ptree.(pair tensor tensor)
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
       (fun m -> Nx.qr ~mode:`Reduced m)
       a
   in
@@ -283,9 +288,8 @@ let test_solve_triangular_flags_match_eager () =
           unit_diag
       in
       let x =
-        Rune.jit2
-          Nx.Ptree.(pair tensor tensor)
-          Nx.Ptree.tensor
+        Rune.jit
+          Nx.Ptree.(pair tensor tensor @-> returns tensor)
           (fun (a, b) -> Nx.solve_triangular ~upper ~transpose ~unit_diag a b)
           (a, b)
       in
@@ -309,9 +313,8 @@ let test_solve_triangular_vector_rhs () =
   in
   let b = Nx.create f32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let x =
-    Rune.jit2
-      Nx.Ptree.(pair tensor tensor)
-      Nx.Ptree.tensor
+    Rune.jit
+      Nx.Ptree.(pair tensor tensor @-> returns tensor)
       (fun (a, b) ->
         Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false a b)
       (a, b)
@@ -347,9 +350,8 @@ let test_solve_triangular_batched () =
   in
   let b = Nx.create f32 [| 2; 3; 1 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let x =
-    Rune.jit2
-      Nx.Ptree.(pair tensor tensor)
-      Nx.Ptree.tensor
+    Rune.jit
+      Nx.Ptree.(pair tensor tensor @-> returns tensor)
       (fun (a, b) ->
         Nx.solve_triangular ~upper:true ~transpose:false ~unit_diag:false a b)
       (a, b)
@@ -482,7 +484,7 @@ let test_solve_matches_eager () =
     Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
   in
   let b = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let g = Rune.jit2 Nx.Ptree.(pair tensor tensor) Nx.Ptree.tensor solve in
+  let g = Rune.jit Nx.Ptree.(pair tensor tensor @-> returns tensor) solve in
   check_arr ~msg:"first call" (to_arr (Nx.solve a b)) (g (a, b));
   (* Replay solves a different system with the same compiled program. *)
   let a2 = Nx.mul_s a 1.5 in
@@ -745,19 +747,29 @@ let rows () =
 let test_scan_over_structured_rows () =
   let xs = rows () in
   let h, ys = layers xs in
-  let g = Rune.jit2 rows_ptree pair_ptree (fun xs -> snd (layers xs)) in
+  let g =
+    Rune.jit
+      Nx.Ptree.(rows_ptree @-> returns pair_ptree)
+      (fun xs -> snd (layers xs))
+  in
   let ys' = g xs in
   check_arr ~msg:"first output" (to_arr ys.Pair.u) ys'.Pair.u;
   check_arr ~msg:"second output" (to_arr ys.Pair.v) ys'.Pair.v;
   check_arr ~msg:"final carry" (to_arr h)
-    (Rune.jit2 rows_ptree Nx.Ptree.tensor (fun xs -> fst (layers xs)) xs);
+    (Rune.jit
+       Nx.Ptree.(rows_ptree @-> returns tensor)
+       (fun xs -> fst (layers xs))
+       xs);
   let loss xs =
     let h, ys = layers xs in
     Nx.add (Nx.sum h) (Nx.sum (Nx.mul ys.Pair.u ys.Pair.u))
   in
   let expected = Rune.grad rows_ptree loss xs in
   let actual =
-    Rune.jit2 rows_ptree rows_ptree (fun xs -> Rune.grad rows_ptree loss xs) xs
+    Rune.jit
+      Nx.Ptree.(rows_ptree @-> returns rows_ptree)
+      (fun xs -> Rune.grad rows_ptree loss xs)
+      xs
   in
   check_arr ~msg:"stacked weights' cotangent" (to_arr expected.Rows.w)
     actual.Rows.w;
@@ -825,8 +837,9 @@ let test_scan_carry_written_in_place () =
     (fun read_old ->
       let expected_c, expected_ys = fold ~read_old c0 in
       let g =
-        Rune.jit2 cache_carry_ptree
-          Nx.Ptree.(pair cache_carry_ptree tensor)
+        Rune.jit
+          Nx.Ptree.(
+            cache_carry_ptree @-> returns (pair cache_carry_ptree tensor))
           (fold ~read_old)
       in
       ignore (g c0);
@@ -930,7 +943,9 @@ let test_grad_through_scan_external_input () =
   let p = { Pair.u = Nx.scalar f32 0.5; v = vec32 [| 1.0; 2.0; 3.0; 0.5 |] } in
   let expected = Rune.grad pair_ptree loss p in
   let g =
-    Rune.jit2 pair_ptree pair_ptree (fun p -> Rune.grad pair_ptree loss p)
+    Rune.jit
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun p -> Rune.grad pair_ptree loss p)
   in
   let actual = g p in
   check_arr ~msg:"external weight" (to_arr expected.Pair.u) actual.Pair.u;
@@ -969,7 +984,7 @@ let pos_at i = Nx.scalar Nx.int32 (Int32.of_int i)
 let test_set_traced_window_replays_position () =
   let v = vec32 [| 9.0; 8.0 |] in
   let f { x; pos } = Nx.set [ Nx.D (pos, 2) ] v x in
-  let g = Rune.jit2 windowed_ptree Nx.Ptree.tensor f in
+  let g = Rune.jit Nx.Ptree.(windowed_ptree @-> returns tensor) f in
   let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
   let at i = { x; pos = pos_at i } in
   check_arr ~msg:"first position" (to_arr (f (at 1))) (g (at 1));
@@ -982,7 +997,7 @@ let test_set_traced_window_replays_position () =
 let test_set_traced_window_over_two_axes () =
   let v = Nx.create f32 [| 2; 3 |] [| 9.0; 8.0; 7.0; 6.0; 5.0; 4.0 |] in
   let f { x; pos } = Nx.set [ Nx.D (pos, 2); Nx.D (pos, 3) ] v x in
-  let g = Rune.jit2 windowed_ptree Nx.Ptree.tensor f in
+  let g = Rune.jit Nx.Ptree.(windowed_ptree @-> returns tensor) f in
   let x = Nx.create f32 [| 4; 6 |] (Array.init 24 float_of_int) in
   let at i = { x; pos = pos_at i } in
   List.iter
@@ -1004,7 +1019,7 @@ let test_set_static_window_matches_eager () =
 
 let test_slice_traced_window_replays_position () =
   let f { x; pos } = Nx.slice [ Nx.D (pos, 2) ] x in
-  let g = Rune.jit2 windowed_ptree Nx.Ptree.tensor f in
+  let g = Rune.jit Nx.Ptree.(windowed_ptree @-> returns tensor) f in
   let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
   let at i = { x; pos = pos_at i } in
   check_arr ~msg:"first position" [| 1.0; 2.0 |] (g (at 1));
@@ -1045,7 +1060,9 @@ let test_grad_through_scan_external_matrices () =
   in
   let expected = Rune.grad trio_ptree loss p in
   let g =
-    Rune.jit2 trio_ptree trio_ptree (fun p -> Rune.grad trio_ptree loss p)
+    Rune.jit
+      Nx.Ptree.(trio_ptree @-> returns trio_ptree)
+      (fun p -> Rune.grad trio_ptree loss p)
   in
   let actual = g p in
   check_arr ~msg:"recurrence matrix" (to_arr expected.Trio.a) actual.Trio.a;
@@ -1186,7 +1203,7 @@ let test_half_sums_accumulate_wide () =
                   ~msg:(Printf.sprintf "%s %s of %s, %s" name what input device)
                   float_exact
                   (value (f x))
-                  (value (Rune.jit' ~device f x)))
+                  (value (Rune.jit' ~devices:[ Rune.device device ] f x)))
               [ ("sum", fun x -> Nx.sum x); ("mean", fun x -> Nx.mean x) ])
           [ ("ones", ones); ("values near 1.05", near) ])
       devices
@@ -1211,7 +1228,8 @@ let test_half_products_multiply_wide () =
           ~msg:(Printf.sprintf "%s prod, %s" name device)
           float_exact
           (value (Nx.prod x))
-          (value (Rune.jit' ~device (fun x -> Nx.prod x) x)))
+          (value
+             (Rune.jit' ~devices:[ Rune.device device ] (fun x -> Nx.prod x) x)))
       devices
   in
   check "bfloat16" Nx.bfloat16;
@@ -1290,7 +1308,9 @@ let test_extremes () =
   let check (type b) name (dtype : (float, b) Nx.dtype) devices =
     List.iter
       (fun device ->
-        let compiled f x = values (Rune.jit' ~device f x) in
+        let compiled f x =
+          values (Rune.jit' ~devices:[ Rune.device device ] f x)
+        in
         let msg what = Printf.sprintf "%s %s, %s" name what device in
         List.iter
           (fun (input, x) ->
@@ -1384,7 +1404,7 @@ let test_scans_keep_the_first_zero () =
             ~msg:(Printf.sprintf "%s, %s" name device)
             (array float_exact)
             (to_arr (f x))
-            (to_arr (Rune.jit' ~device f x)))
+            (to_arr (Rune.jit' ~devices:[ Rune.device device ] f x)))
         [
           ("cummax [-0; 0]", Nx.cummax ~axis:0, [| -0.0; 0.0 |]);
           ("cummax [0; -0]", Nx.cummax ~axis:0, [| 0.0; -0.0 |]);
@@ -1429,7 +1449,8 @@ let test_fp8_long_scans () =
               ~msg:(Printf.sprintf "%s %s, %s" name op device)
               (array float_exact)
               (to_arr (Nx.cast f32 (f x)))
-              (to_arr (Nx.cast f32 (Rune.jit' ~device f x))))
+              (to_arr
+                 (Nx.cast f32 (Rune.jit' ~devices:[ Rune.device device ] f x))))
           [
             ("cumprod", Nx.cumprod ~axis:0, signs);
             ("cumsum", Nx.cumsum ~axis:0, steps);
@@ -1458,7 +1479,7 @@ let test_gather_of_narrowed_comparison () =
     (fun device ->
       equal ~msg:device (array float_exact)
         (to_arr (f x))
-        (to_arr (Rune.jit' ~device f x)))
+        (to_arr (Rune.jit' ~devices:[ Rune.device device ] f x)))
     devices
 
 (* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
@@ -1946,7 +1967,7 @@ let test_jitted_training_matches_eager () =
       (fun _ w dw -> Nx.sub w (Nx.mul (scalar_like dw 0.1) dw))
       p g
   in
-  let step = Rune.jit2 mlp_ptree mlp_ptree update in
+  let step = Rune.jit Nx.Ptree.(mlp_ptree @-> returns mlp_ptree) update in
   let rec train f p n = if n = 0 then p else train f (f p) (n - 1) in
   let jitted = train step (init ()) 5 in
   let eager = train update (init ()) 5 in
@@ -2004,7 +2025,7 @@ let test_place_strided_and_offset () =
   check_arr ~msg:"offset" [| 4.0; 5.0; 6.0 |] (place s)
 
 let test_place_feeds_inputs_without_transfer () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   ignore (g (vec32 [| 0.0; 0.0 |]));
   let p = place (vec32 [| 1.0; 2.0 |]) in
   let y, up, down = delta (fun () -> g p) in
@@ -2018,7 +2039,7 @@ let test_place_resident_value_is_returned () =
   let q, up, _ = delta (fun () -> place p) in
   is_true ~msg:"the same value" (p == q);
   equal ~msg:"no upload" int 0 up;
-  let h = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) p in
+  let h = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) p in
   is_true ~msg:"an unread output too" (place h == h)
 
 let test_place_on_the_host_device () =
@@ -2043,7 +2064,7 @@ let test_place_is_the_identity_under_transformations () =
     (Nx.Placement.equal Nx.Placement.host (Nx.placement g));
   check_arr ~msg:"grad, compiled"
     (to_arr (Rune.grad' plain x))
-    (Rune.jit' ~device:"CPU:1" (Rune.grad' placed) x);
+    (Rune.jit' ~devices:[ cpu1 ] (Rune.grad' placed) x);
   let tangent = vec32 [| 1.0; 1.0; 1.0 |] in
   check_arr ~msg:"jvp"
     (to_arr (snd (Rune.jvp' plain x tangent)))
@@ -2055,7 +2076,7 @@ let test_place_is_the_identity_under_transformations () =
     (Rune.vmap' (double (fun x -> place x)) rows);
   let (_ : Nx.float32_t), up, _ =
     delta (fun () ->
-        Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s (place x) 2.0) x)
+        Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s (place x) 2.0) x)
   in
   equal ~msg:"inside jit, placing where the program runs moves nothing" int 12
     up
@@ -2085,12 +2106,15 @@ let test_one_device_per_name () =
 let test_host_program_is_on_the_host () =
   let x = vec32 [| 1.0; 2.0 |] in
   let f x = Nx.mul_s (Nx.place Nx.Placement.host x) 2.0 in
-  let y = Rune.jit' ~device:"CPU" f x in
+  let y = Rune.jit' ~devices:[ Rune.device "CPU" ] f x in
   check_arr ~msg:"placing on the host is the identity" [| 2.0; 4.0 |] y;
   is_true ~msg:"the output is on the host"
     (Nx.Placement.equal Nx.Placement.host (Nx.placement y));
   check_arr ~msg:"and so is its gradient's" [| 2.0; 2.0 |]
-    (Rune.jit' ~device:"CPU" (Rune.grad' (fun x -> Nx.sum (f x))) x)
+    (Rune.jit'
+       ~devices:[ Rune.device "CPU" ]
+       (Rune.grad' (fun x -> Nx.sum (f x)))
+       x)
 
 (* A compiled function runs where its placed inputs and captures live, and
    refuses a value placed elsewhere before it runs. *)
@@ -2118,14 +2142,21 @@ let test_leaves_elsewhere_raise () =
   let (), up, _ =
     delta (fun () ->
         invalid_starting
-          "Rune.jit: input leaf 0 is on CPU:1 and ~device names CPU:2"
-          (fun () -> Rune.jit' ~device:"CPU:2" (fun x -> Nx.mul_s x 2.0) x);
-        invalid_starting
-          "Rune.jit: input leaf 0 is on CPU:1 and ~device names CPU" (fun () ->
-            Rune.jit' ~device:"CPU" (fun x -> Nx.mul_s x 2.0) x);
-        invalid_starting "Rune.jit: input leaves 0 and 1 are on CPU:1 and CPU:2"
+          "Rune.jit: the argument at 0 is on CPU:1 and ~devices names CPU:2"
           (fun () ->
-            Rune.jit pair_ptree
+            Rune.jit'
+              ~devices:[ Rune.device "CPU:2" ]
+              (fun x -> Nx.mul_s x 2.0)
+              x);
+        invalid_starting
+          "Rune.jit: the argument at 0 is on CPU:1 and ~devices names CPU"
+          (fun () ->
+            Rune.jit' ~devices:[ Rune.device "CPU" ] (fun x -> Nx.mul_s x 2.0) x);
+        invalid_starting
+          "Rune.jit: the arguments at 0.u and 0.v are on CPU:1 and CPU:2"
+          (fun () ->
+            Rune.jit
+              Nx.Ptree.(pair_ptree @-> returns tensor)
               (fun p -> Nx.add p.Pair.u p.v)
               { Pair.u = x; v = y }))
   in
@@ -2153,7 +2184,10 @@ let test_capture_decides_the_device () =
   invalid_starting
     "Rune.jit: a captured value is on CPU:1 and the program runs on CPU:2"
     (fun () ->
-      Rune.jit' ~device:"CPU:2" (fun x -> Nx.mul x w) (vec32 [| 1.0; 1.0 |]))
+      Rune.jit'
+        ~devices:[ Rune.device "CPU:2" ]
+        (fun x -> Nx.mul x w)
+        (vec32 [| 1.0; 1.0 |]))
 
 (* A program that binds a capture makes its device the closure's: a later call
    from the host runs there with no new trace. *)
@@ -2254,9 +2288,10 @@ let test_views_of_inputs_as_outputs () =
   check_arr ~msg:"a slice of a host input" [| 1.; 2. |]
     (Rune.jit' slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
   check_arr ~msg:"on the host" [| 1.; 2. |]
-    (Rune.jit' ~device:"CPU" slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
-  let step = Rune.jit_step Nx.Ptree.tensor Nx.Ptree.tensor (fun _ v -> v) in
-  check_arr ~msg:"a window of the state, read" [| 1.; 2.; 3.; 4. |] (step x w)
+    (Rune.jit'
+       ~devices:[ Rune.device "CPU" ]
+       slice
+       (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]))
 
 (* Views of one shape with other strides are other programs. *)
 let test_strides_key_programs () =
@@ -2306,7 +2341,7 @@ let test_captured_views_bind () =
 
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
 let test_item_reads_one_element () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   let y = g (Nx.create f32 [| 64; 64 |] (Array.init 4096 float_of_int)) in
   let v, up, down = delta (fun () -> Nx.item [ 1; 2 ] y) in
   equal ~msg:"the element" float_exact 132.0 v;
@@ -2328,7 +2363,10 @@ let test_move_to_host_keeps_its_source () =
 let test_mixed_placements_raise () =
   let p = place (vec32 [| 1.0; 2.0 |]) in
   let q =
-    Rune.jit' ~device:"CPU:2" (fun x -> Nx.mul_s x 1.0) (vec32 [| 3.0; 4.0 |])
+    Rune.jit'
+      ~devices:[ Rune.device "CPU:2" ]
+      (fun x -> Nx.mul_s x 1.0)
+      (vec32 [| 3.0; 4.0 |])
   in
   raises_match
     (function
@@ -2342,11 +2380,11 @@ let test_mixed_placements_raise () =
 let test_host_started_loop_compiles_once () =
   let traces = ref 0 in
   let step =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.unit Nx.Ptree.tensor
-      (fun () x ->
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x ->
         incr traces;
         Nx.add_s (Nx.mul_s x 0.5) 1.0)
-      ()
   in
   let x = ref (vec32 (Array.make 8 0.0)) in
   for _ = 1 to 4 do
@@ -2360,7 +2398,7 @@ let test_host_started_loop_compiles_once () =
 let test_placing_elsewhere_inside_jit_raises () =
   let other = Nx.Placement.device (Rune.device "CPU:2") in
   raises_jit_error (fun () ->
-      Rune.jit' ~device:"CPU:1" (fun x -> Nx.place other x) (vec32 [| 1.0 |]))
+      Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.place other x) (vec32 [| 1.0 |]))
 
 (* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
    these values are larger than that, with a last chunk shorter than the
@@ -2372,7 +2410,7 @@ let chunk = 64 * 1024 * 1024
    back in its place. *)
 let check_transfers ~msg f x =
   let (y : Nx.int32_t), up, _ =
-    delta (fun () -> Rune.jit' ~device:"CPU:1" f x)
+    delta (fun () -> Rune.jit' ~devices:[ cpu1 ] f x)
   in
   let worst, _, down =
     delta (fun () ->
@@ -2423,12 +2461,14 @@ let test_chunked_capture () =
   in
   let f s = Nx.add (Nx.reshape [| n |] w) s in
   let s = Nx.create Nx.int32 [| 1 |] [| 5l |] in
-  let worst = Nx.max (Nx.abs (Nx.sub (Rune.jit' ~device:"CPU:1" f s) (f s))) in
+  let worst =
+    Nx.max (Nx.abs (Nx.sub (Rune.jit' ~devices:[ cpu1 ] f s) (f s)))
+  in
   equal ~msg:"capture: difference from eager" int32 0l (Nx.item [] worst)
 
 let test_feedback_chain_moves_no_bytes () =
   let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
-  let g = Rune.jit' ~device:"CPU:1" f in
+  let g = Rune.jit' ~devices:[ cpu1 ] f in
   let x = vec32 [| 1.0; 2.0; 3.0 |] in
   let h1 = g x in
   let h2, up2, down2 = delta (fun () -> g h1) in
@@ -2443,7 +2483,7 @@ let test_feedback_chain_moves_no_bytes () =
   check_arr ~msg:"h2 still readable" (to_arr (f (f x))) h2
 
 let test_forced_handle_feeds_current_bytes () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
   check_arr ~msg:"a read leaves the value placed" [| 2.0; 4.0; 6.0 |] h;
   (* A value an eager operation derives from it lives with it, and feeds a call
@@ -2455,11 +2495,12 @@ let test_forced_handle_feeds_current_bytes () =
 
 let test_same_handle_as_two_leaves () =
   let g =
-    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
-        { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
   in
   let h =
-    Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
+    Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
   in
   let r, up, _ = delta (fun () -> g { u = h; v = h }) in
   equal ~msg:"resident duplicate leaves upload nothing" int 0 up;
@@ -2470,7 +2511,9 @@ let test_same_handle_as_two_leaves () =
    the first takes the output's storage and the second is a copy. *)
 let test_duplicate_outputs_are_two_values () =
   let g =
-    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun p ->
         let y = Nx.add p.u p.v in
         { u = y; v = y })
   in
@@ -2481,8 +2524,9 @@ let test_duplicate_outputs_are_two_values () =
   check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v;
   let x = place (vec32 [| 4.0; 5.0 |]) in
   let twice =
-    Rune.jit2 ~device:"CPU:1" Nx.Ptree.tensor pair_ptree (fun x ->
-        { u = x; v = x })
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> returns pair_ptree)
+      (fun x -> { u = x; v = x })
   in
   let r = twice x in
   is_true ~msg:"a read input returned twice is two copies"
@@ -2492,7 +2536,9 @@ let test_duplicate_outputs_are_two_values () =
   check_arr ~msg:"first copy" [| 4.0; 5.0 |] r.u;
   check_arr ~msg:"second copy" [| 4.0; 5.0 |] r.v;
   let host =
-    Rune.jit2 pair_ptree pair_ptree (fun p ->
+    Rune.jit
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun p ->
         let y = Nx.mul p.u p.v in
         { u = y; v = y })
   in
@@ -2502,15 +2548,15 @@ let test_duplicate_outputs_are_two_values () =
   check_arr ~msg:"host copy" [| 6.0 |] r.v
 
 let test_cross_jit_feedback () =
-  let g1 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
-  let g2 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.add_s x 1.0) in
+  let g1 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
+  let g2 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add_s x 1.0) in
   let h = g1 (vec32 [| 1.0; 2.0 |]) in
   let r, up, _ = delta (fun () -> g2 h) in
   equal ~msg:"a distinct jitted closure seeds the handle too" int 0 up;
   check_arr ~msg:"value" [| 3.0; 5.0 |] r
 
 let test_cross_signature_feedback () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.sum ~axes:[ 0 ] x) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.sum ~axes:[ 0 ] x) in
   let h1 = g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]) in
   (* h1 has a new shape: feeding it back compiles a second signature, still
      without forcing the handle. *)
@@ -2522,8 +2568,9 @@ let test_cross_signature_feedback () =
 
 let test_pass_through_output_survives () =
   let g =
-    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
-        { u = p.u; v = Nx.mul_s p.v 2.0 })
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
   in
   let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
   let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
@@ -2533,7 +2580,7 @@ let test_pass_through_output_survives () =
   check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v
 
 let test_grad_over_jit_with_deferred_arg () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x x) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x x) in
   let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
   (* Under grad the jitted function runs eagerly; the handle forces on its first
      operation. *)
@@ -2541,14 +2588,14 @@ let test_grad_over_jit_with_deferred_arg () =
   check_arr ~msg:"gradient at the deferred point" [| 2.0; 8.0; 18.0 |] dx
 
 let test_vmap_over_jit_with_deferred_arg () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   let h = g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
   let y = Rune.vmap' g h in
   check_arr ~msg:"vmap over jit at a deferred point" [| 4.0; 8.0; 12.0; 16.0 |]
     y
 
 let test_dispatch_on_handle_reads_no_bytes () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0 |]) in
   (* Signature dispatch uses only metadata: replaying on a handle must not force
      it. *)
@@ -2558,7 +2605,7 @@ let test_dispatch_on_handle_reads_no_bytes () =
 let test_capture_uploaded_once_across_signatures () =
   let n = 256 in
   let c = vec32 (Array.init n float_of_int) in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.add x c) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x c) in
   let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
   (* A new input shape compiles a second signature; the capture's device copy is
      shared, so only the input is uploaded. *)
@@ -2570,7 +2617,7 @@ let test_capture_uploaded_once_across_signatures () =
 
 let test_dropped_handles_are_reclaimed () =
   let n = 1024 in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   let x = vec32 (Array.make n 1.0) in
   let base = (Rune.jit_stats ()).resident_bytes in
   let _, _, down =
@@ -2594,14 +2641,14 @@ let test_dropped_handles_are_reclaimed () =
 let test_read_after_call_waits () =
   let n = 256 in
   let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
-  let g = Rune.jit' ~device:"CPU:1" f in
+  let g = Rune.jit' ~devices:[ cpu1 ] f in
   let x =
     Nx.create f32 [| n; n |]
       (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
   in
   check_arr ~eps:1e-3 ~msg:"right after one call" (to_arr (f x)) (g x);
   let step =
-    Rune.jit' ~device:"CPU:1" (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
+    Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
   in
   let h = ref (place (vec32 (Array.make 4096 0.0))) in
   for _ = 1 to 50 do
@@ -2650,7 +2697,7 @@ let arena_program ~n act =
     Nx.create f32 [| n; 8 |]
       (Array.init (n * 8) (fun i -> sin (float_of_int ((k * i) + 1)) /. 4.0))
   in
-  (f, Rune.jit' ~device:"CPU:1" f, x)
+  (f, Rune.jit' ~devices:[ cpu1 ] f, x)
 
 let test_programs_share_an_arena () =
   let n = 512 in
@@ -2702,7 +2749,7 @@ let test_buffer_freed_under_a_running_kernel () =
   let data = Array.init (n * n) (fun i -> float_of_int (i mod 7) /. 7.0) in
   let f x = Nx.matmul (Nx.tanh (Nx.matmul x x)) x in
   let expected = to_arr (f (Nx.create f32 [| n; n |] data)) in
-  let g = Rune.jit' ~device:"CPU:1" f in
+  let g = Rune.jit' ~devices:[ cpu1 ] f in
   ignore (to_arr (g (Nx.create f32 [| n; n |] data)));
   let noise = Nx.create f32 [| n; n |] (Array.make (n * n) 1e9) in
   for _ = 1 to 4 do
@@ -2753,34 +2800,77 @@ let test_leaked_traced_value_raises () =
   raises_jit_error (fun () ->
       Rune.jit' (fun x -> Nx.add x y) (vec32 [| 1.0; 2.0 |]))
 
-(* Donation. [jit_step] consumes the resident leaves of its state: their device
-   buffers return to the allocator once the call completes, so a state-to-state
-   loop holds ~2 generations of device memory instead of one per call, without
-   any GC. A donated handle raises on read; the first argument's leaves, host
-   tensors, already-read handles, and written-back leaves are unaffected. *)
+(* Consumption. A compiled call consumes the resident leaves of the arguments
+   its signature marks with [consumes]: their device buffers return to the
+   allocator once the call completes, or back a result, so a state-to-state loop
+   holds at most two generations of device memory, without any GC. A consumed
+   handle raises on read; read arguments and host tensors are unaffected. *)
 
-let raises_donated f =
+let raises_consumed f =
   raises_match
     (fun exn ->
       match exn with
       | Invalid_argument msg ->
-          msg
-          = "this value was donated to a compiled call and no longer exists; \
-             read or copy it before the call"
+          String.starts_with ~prefix:"this value was consumed at " msg
+          && String.ends_with
+               ~suffix:
+                 " in a compiled call's arguments; use the value the call \
+                  returned"
+               msg
       | _ -> false)
     (fun () -> ignore (f ()))
 
-(* [f] compiled as a step that reads nothing and consumes its state. *)
+(* [f] compiled as a step that consumes its state. *)
 let consume state f =
-  Rune.jit_step ~device:"CPU:1" Nx.Ptree.unit state (fun () x -> f x) ()
+  Rune.jit ~devices:[ cpu1 ] Nx.Ptree.(consumes state @@ returns state) f
 
 let consume' f = consume Nx.Ptree.tensor f
 
-let test_donate_bounds_resident_memory () =
+(* A value with no elements has no device storage. Consuming one, returning one
+   at two leaves and returning an empty argument unchanged allocate nothing and
+   keep the rules for results and consumption. *)
+let test_empty_values_are_consumed_and_fresh () =
+  let empty () = place (Nx.zeros f32 [| 0 |]) in
+  let x = empty () in
+  let y = consume' (fun x -> Nx.mul_s x 2.0) x in
+  equal ~msg:"an empty consumed argument gives an empty result" (array int)
+    [| 0 |] (Nx.shape y);
+  check_arr ~msg:"the result reads as empty" [||] y;
+  equal ~msg:"the consumed argument's shape stays readable" (array int) [| 0 |]
+    (Nx.shape x);
+  raises_consumed (fun () -> Nx.to_array x);
+  raises_consumed (fun () -> consume' (fun x -> Nx.mul_s x 2.0) x);
+  let twice =
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> returns pair_ptree)
+      (fun x ->
+        let y = Nx.mul_s x 2.0 in
+        { u = y; v = y })
+  in
+  List.iter
+    (fun (msg, x) ->
+      let r = twice x in
+      is_true ~msg:(msg ^ ": two values") (r.u != r.v);
+      check_arr ~msg:(msg ^ ": first") [||] r.u;
+      check_arr ~msg:(msg ^ ": second") [||] r.v)
+    [ ("placed", empty ()); ("host", Nx.zeros f32 [| 0 |]) ];
+  let pass =
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> returns pair_ptree)
+      (fun x -> { u = x; v = x })
+  in
+  let x = empty () in
+  let r = pass x in
+  is_true ~msg:"an empty read argument returned twice is two copies"
+    (r.u != r.v && r.u != x && r.v != x);
+  check_arr ~msg:"the argument stays readable" [||] x;
+  check_arr ~msg:"its copies read as empty" [||] r.v
+
+let test_consume_bounds_resident_memory () =
   let n = 4096 in
   let step d =
     let f x = Nx.add_s x 1.0 in
-    if d then consume' f else Rune.jit' ~device:"CPU:1" f
+    if d then consume' f else Rune.jit' ~devices:[ cpu1 ] f
   in
   let x = vec32 (Array.make n 0.0) in
   (* Every handle created here stays reachable; retiring the handles earlier
@@ -2798,16 +2888,16 @@ let test_donate_bounds_resident_memory () =
     (!h, r)
   in
   let h, grew = run (step true) in
-  is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
-  check_arr ~msg:"donated chain computes the right value" (Array.make n 11.0) h;
+  is_true ~msg:"consumption holds at most two generations" (grew <= 2 * n * 4);
+  check_arr ~msg:"consumed chain computes the right value" (Array.make n 11.0) h;
   let h', grew' = run (step false) in
-  is_true ~msg:"without donate every generation stays resident"
+  is_true ~msg:"without consumption every generation stays resident"
     (grew' >= 10 * n * 4);
-  check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h'
+  check_arr ~msg:"unconsumed chain still correct" (Array.make n 11.0) h'
 
-(* Elision: a donated input whose output reads it at the same index hands its
+(* Elision: a consumed input whose output reads it at the same index hands its
    storage to the output, so a carry loop holds one generation, not two. *)
-let test_donate_reuses_storage () =
+let test_consume_reuses_storage () =
   let n = 4096 in
   let step = consume' (fun x -> Nx.add_s x 1.0) in
   let x = vec32 (Array.make n 0.0) in
@@ -2825,7 +2915,7 @@ let test_donate_reuses_storage () =
 
 (* A path through a movement op reads the input at another index, so the output
    must not take its storage; a chain stays correct. *)
-let test_donate_refuses_movement_path () =
+let test_consume_refuses_movement_path () =
   let f x = Nx.add x (Nx.transpose x) in
   let step = consume' f in
   let x = Nx.create f32 [| 3; 3 |] (Array.init 9 float_of_int) in
@@ -2838,7 +2928,7 @@ let test_donate_refuses_movement_path () =
 
 (* An input read by a kernel that runs after the output's store keeps its own
    storage: here the reduction over [u] must see the old value. *)
-let test_donate_refuses_later_reader () =
+let test_consume_refuses_later_reader () =
   let f (p : Pair.pair) =
     {
       Pair.u = Nx.add_s p.u 1.0;
@@ -2858,8 +2948,8 @@ let test_donate_refuses_later_reader () =
   check_arr ~msg:"u" (to_arr e.Pair.u) h.Pair.u;
   check_arr ~msg:"v sums the pre-update values" (to_arr e.Pair.v) h.Pair.v
 
-(* A donated input returned unchanged moves its storage to the output. *)
-let test_donate_moves_pass_through () =
+(* A consumed input returned unchanged moves its storage to the output. *)
+let test_consume_moves_pass_through () =
   let step =
     consume pair_ptree (fun (p : Pair.pair) ->
         { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
@@ -2874,12 +2964,12 @@ let test_donate_moves_pass_through () =
     ((Rune.jit_stats ()).resident_bytes - base <= 0);
   check_arr ~msg:"pass-through value" [| 1.0; 2.0 |] r.Pair.u;
   check_arr ~msg:"updated value" [| 6.0; 7.0 |] r.Pair.v;
-  raises_donated (fun () -> to_arr p.Pair.u)
+  raises_consumed (fun () -> to_arr p.Pair.u)
 
 (* An input both updated and returned unchanged keeps its storage for the
    pass-through: the update must not write over the value the pass-through
    copies out after the kernels ran. *)
-let test_donate_keeps_pass_through_readable () =
+let test_consume_keeps_pass_through_readable () =
   let step =
     consume pair_ptree (fun (p : Pair.pair) ->
         { Pair.u = Nx.add_s p.u 1.0; v = p.u })
@@ -2892,7 +2982,7 @@ let test_donate_keeps_pass_through_readable () =
 
 (* Every leaf an output derives from is reused, whatever its position among the
    inputs. *)
-let test_donate_reuses_every_leaf () =
+let test_consume_reuses_every_leaf () =
   let step =
     consume pair_ptree (fun (p : Pair.pair) ->
         { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
@@ -2907,7 +2997,7 @@ let test_donate_reuses_every_leaf () =
   check_arr ~msg:"v" [| 7.0; 8.0 |] r2.Pair.v
 
 (* A staged loop refuses reuse only for the leaves it touches. *)
-let test_donate_reuses_beside_a_scan () =
+let test_consume_reuses_beside_a_scan () =
   let step =
     consume pair_ptree (fun (p : Pair.pair) ->
         { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
@@ -2925,8 +3015,9 @@ let test_donate_reuses_beside_a_scan () =
    later call keeps its bytes whatever the outputs are. *)
 let test_outputs_never_write_into_inputs () =
   let step =
-    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun (p : Pair.pair) ->
-        { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (fun (p : Pair.pair) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
   in
   let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 5.0; 6.0 |] } in
   let r1 = step p in
@@ -2938,7 +3029,7 @@ let test_outputs_never_write_into_inputs () =
 
 (* The decode shape: a window write at a run-time position reuses the cache's
    storage across steps. *)
-let test_donate_reuses_window_write () =
+let test_consume_reuses_window_write () =
   let v = vec32 [| 9.0; 8.0 |] in
   let f { x; pos } =
     { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
@@ -2975,7 +3066,7 @@ end
 
 let pool_ptree = Nx.Ptree.instantiate (module Pool)
 
-let test_donate_reuses_pool_read_after_write () =
+let test_consume_reuses_pool_read_after_write () =
   let n = 1024 in
   let rows = vec32 [| 10.0; 20.0; 30.0 |] in
   let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
@@ -2996,16 +3087,16 @@ let test_donate_reuses_pool_read_after_write () =
   in
   let before = (Rune.jit_stats ()).reused_bytes in
   s := step !s;
-  is_true ~msg:"the pool is written over its donated input"
+  is_true ~msg:"the pool is written over its consumed input"
     ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
   check_arr ~msg:"the read sees the written pool"
     [| 20.0; 10.0; 30.0; 1.0 |]
     !s.read
 
-(* Two compiled programs take turns on one donated state. Each keeps its own
+(* Two compiled programs take turns on one consumed state. Each keeps its own
    planned intermediates, so a program that parked an intermediate in storage
    the other still owns would corrupt the state here. *)
-let test_donate_alternates_two_programs () =
+let test_consume_alternates_two_programs () =
   let n = 8 in
   let mix (p : Pair.pair) =
     let a = Nx.tanh (Nx.matmul p.u p.v) in
@@ -3038,8 +3129,8 @@ let test_donate_alternates_two_programs () =
 
 (* The same pool written through the token-to-slot map: a scatter over the
    tokens. The output is a copy of the pool plus a store at loaded indices, and
-   it takes the donated pool's storage, so the copy has nothing to move. *)
-let scatter_pool ~donate =
+   it takes the consumed pool's storage, so the copy has nothing to move. *)
+let scatter_pool ~consumes =
   let n = 1024 in
   let rows = Nx.create f32 [| 4; 1 |] [| 10.0; 20.0; 30.0; 40.0 |] in
   let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
@@ -3054,8 +3145,9 @@ let scatter_pool ~donate =
     { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
   in
   let step =
-    if donate then consume pool_ptree f
-    else Rune.jit2 ~device:"CPU:1" pool_ptree pool_ptree f
+    if consumes then consume pool_ptree f
+    else
+      Rune.jit ~devices:[ cpu1 ] Nx.Ptree.(pool_ptree @-> returns pool_ptree) f
   in
   (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
   let writer = Nx.create Nx.int32 [| 4 |] [| 2l; 5l; -1l; 5l |] in
@@ -3064,34 +3156,100 @@ let scatter_pool ~donate =
   in
   (n, step, first)
 
-let test_donate_reuses_pool_scatter () =
-  let n, step, first = scatter_pool ~donate:true in
+let test_consume_reuses_pool_scatter () =
+  let n, step, first = scatter_pool ~consumes:true in
   let s = ref (step first) in
   let before = (Rune.jit_stats ()).reused_bytes in
   s := step !s;
-  is_true ~msg:"the pool is written over its donated input"
+  is_true ~msg:"the pool is written over its consumed input"
     ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
   check_arr ~msg:"the read sees the written pool" [| 40.0; 10.0; 1.0; 1.0 |]
     !s.read;
   let slots = to_arr !s.slots in
   equal ~msg:"an unwritten slot keeps its row" float_exact 1.0 slots.(9)
 
-let test_scatter_without_donation_keeps_the_input () =
-  let _, step, first = scatter_pool ~donate:false in
+let test_scatter_without_consumption_keeps_the_input () =
+  let _, step, first = scatter_pool ~consumes:false in
   let s1 = step first in
   let s2 = step s1 in
   check_arr ~msg:"second call" [| 40.0; 10.0; 1.0; 1.0 |] s2.read;
   equal ~msg:"the first call's pool is intact" float_exact 40.0
     (to_arr s1.slots).(5)
 
-(* Bytes of donated storage the second of two donated steps reuses. *)
+(* Bytes of consumed storage the second of two consumed steps reuses. *)
 let reused_by_second_step step x =
   let y = step x in
   let before = (Rune.jit_stats ()).reused_bytes in
   let z = step y in
   (z, (Rune.jit_stats ()).reused_bytes - before)
 
-(* The values written are read from the donated pool by a kernel that runs
+(* Lending pairs a result with a consumed leaf by what the program computes, not
+   by position: a state returned in another order takes the storage it derives
+   from, and a result that reads no consumed leaf takes one that no kernel reads
+   after it is written. *)
+let test_lending_follows_derivation () =
+  let swap =
+    consume pair_ptree (fun (p : Pair.pair) ->
+        { Pair.u = Nx.add_s p.v 1.0; v = Nx.mul_s p.u 2.0 })
+  in
+  let r, reused =
+    reused_by_second_step swap
+      {
+        Pair.u = place (vec32 [| 1.0; 2.0 |]);
+        v = place (vec32 [| 3.0; 4.0 |]);
+      }
+  in
+  equal ~msg:"a swapped state reuses both storages" int 16 reused;
+  check_arr ~msg:"u" [| 3.0; 5.0 |] r.Pair.u;
+  check_arr ~msg:"v" [| 8.0; 10.0 |] r.Pair.v;
+  let fresh =
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
+      (fun _ y -> Nx.mul_s y 2.0)
+  in
+  let y = place (vec32 [| 5.0; 6.0 |]) in
+  let x = place (vec32 [| 1.0; 2.0 |]) in
+  ignore (fresh (place (vec32 [| 0.0; 0.0 |])) y);
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let z = fresh x y in
+  equal ~msg:"a result that reads no consumed leaf takes one" int 8
+    ((Rune.jit_stats ()).reused_bytes - before);
+  check_arr ~msg:"its value" [| 10.0; 12.0 |] z;
+  raises_consumed (fun () -> to_arr x);
+  check_arr ~msg:"the read argument stays" [| 5.0; 6.0 |] y
+
+(* A signature of several arguments, the consumed one between two read ones:
+   errors and consumption name the argument. *)
+let test_a_consumed_argument_between_read_ones () =
+  let step =
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes pair_ptree @@ tensor @-> returns tensor)
+      (fun a (p : Pair.pair) b -> Nx.add (Nx.mul a p.u) (Nx.mul b p.v))
+  in
+  let p =
+    { Pair.u = place (vec32 [| 1.0; 2.0 |]); v = place (vec32 [| 3.0 |]) }
+  in
+  let r = step (vec32 [| 2.0; 2.0 |]) p (vec32 [| 1.0; 1.0 |]) in
+  check_arr ~msg:"result" [| 5.0; 7.0 |] r;
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          msg
+          = "this value was consumed at 1.u in a compiled call's arguments; \
+             use the value the call returned"
+      | _ -> false)
+    (fun () -> to_arr p.Pair.u);
+  equal ~msg:"its shape stays readable" (array int) [| 2 |] (Nx.shape p.Pair.u);
+  invalid_starting "Rune.jit: ~devices names several devices" (fun () ->
+      ignore
+        (Rune.jit'
+           ~devices:[ cpu1; Rune.device "CPU:2" ]
+           (fun x -> x)
+           (vec32 [| 1.0 |])));
+  invalid_starting "Rune.jit: ~devices names no device" (fun () ->
+      ignore (Rune.jit' ~devices:[] (fun x -> x) (vec32 [| 1.0 |])))
+
+(* The values written are read from the consumed pool by a kernel that runs
    before the write: a reader of the old value in time, so the output still
    takes the pool's storage. *)
 let test_scatter_of_values_read_from_the_pool () =
@@ -3105,10 +3263,10 @@ let test_scatter_of_values_read_from_the_pool () =
   let x = vec32 (Array.init n float_of_int) in
   let expected = to_arr (f (f x)) in
   let z, reused = reused_by_second_step step x in
-  check_arr ~msg:"two donated steps" expected z;
+  check_arr ~msg:"two consumed steps" expected z;
   equal ~msg:"the pool's storage is reused" int (n * 4) reused
 
-(* The donated pool is itself the values: the kernel would read through the
+(* The consumed pool is itself the values: the kernel would read through the
    storage it writes, so the output must not take it. *)
 let test_scatter_of_the_pool_into_itself () =
   let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
@@ -3162,12 +3320,12 @@ let test_scatter_beside_a_reader_of_the_old_value () =
   check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
   check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v
 
-let test_place_then_donate_consumes () =
+let test_place_then_consume () =
   let g = consume' (fun x -> Nx.mul_s x 2.0) in
   ignore (g (vec32 [| 0.0; 0.0 |]));
   let p = place (vec32 [| 1.0; 2.0 |]) in
   check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
-  raises_donated (fun () -> to_arr p)
+  raises_consumed (fun () -> to_arr p)
 
 (* File-backed sources. An upload reads a tensor over a mapped file from the
    file itself. *)
@@ -3266,7 +3424,7 @@ let test_file_backed_upload_after_replace () =
 
 let test_bound_capture_moves_no_bytes () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
   let x = place (vec32 [| 2.0; 2.0; 2.0 |]) in
   let y, up, down = delta (fun () -> g x) in
   equal ~msg:"compiling and calling uploads nothing" int 0 up;
@@ -3280,8 +3438,8 @@ let test_bound_capture_moves_no_bytes () =
 
 let test_bound_capture_is_shared () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g1 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
-  let g2 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.add x w) in
+  let g1 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
+  let g2 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x w) in
   let x = vec32 [| 2.0; 2.0; 2.0 |] in
   let (), up, _ =
     delta (fun () ->
@@ -3294,7 +3452,7 @@ let test_bound_capture_is_shared () =
 
 let test_bound_value_survives_a_read () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
   let x = vec32 [| 2.0; 2.0; 2.0 |] in
   check_arr ~msg:"before the read" [| 2.0; 4.0; 6.0 |] (g x);
   let (), _, down =
@@ -3308,7 +3466,7 @@ let test_bound_value_survives_a_read () =
   equal ~msg:"a second read copies again: nothing is memoised" int 12 down;
   check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
   (* As an input leaf it still seeds from its buffer. *)
-  let double = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let double = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   ignore (double x);
   let y, up, _ = delta (fun () -> double w) in
   equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
@@ -3320,32 +3478,46 @@ let test_unbound_value_stays_after_a_read () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
   check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
   equal ~msg:"the read left the buffer" int 12 (resident () - base);
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
   let x = place (vec32 [| 2.0; 2.0; 2.0 |]) in
   let y, up, _ = delta (fun () -> g x) in
   equal ~msg:"captured afterwards it is bound" int 0 up;
   check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y
 
-let test_bound_input_is_not_donated () =
+(* A call that consumes a bound storage ends it for its values; the program that
+   binds it keeps its buffer and replays with it, and the storage lends
+   nothing. *)
+let test_consuming_a_bound_storage () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
   ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
-  let step = consume' (fun x -> Nx.mul_s x 2.0) in
-  let y, up, _ = delta (fun () -> step w) in
-  equal ~msg:"the bound input seeds with no transfer" int 0 up;
-  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
-  check_arr ~msg:"the bound value is still readable" [| 1.0; 2.0; 3.0 |] w;
-  check_arr ~msg:"and still the constant" [| 2.0; 4.0; 6.0 |]
-    (g (vec32 [| 2.0; 2.0; 2.0 |]));
-  (* Returned unchanged, it comes back as a copy on the device. *)
   let pass = consume' (fun x -> x) in
+  let before = (Rune.jit_stats ()).reused_bytes in
   let z, up, _ = delta (fun () -> pass w) in
-  equal ~msg:"the pass-through uploads nothing" int 0 up;
-  is_true ~msg:"the pass-through is another value" (z != w);
-  is_true ~msg:"with storage of its own" (cell_of z != cell_of w);
-  check_arr ~msg:"pass-through value" [| 1.0; 2.0; 3.0 |] z;
-  check_arr ~msg:"the constant after the pass-through" [| 2.0; 4.0; 6.0 |]
+  equal ~msg:"the bound input seeds with no transfer" int 0 up;
+  equal ~msg:"and lends nothing" int 0
+    ((Rune.jit_stats ()).reused_bytes - before);
+  is_true ~msg:"the result has storage of its own" (cell_of z != cell_of w);
+  check_arr ~msg:"the result" [| 1.0; 2.0; 3.0 |] z;
+  raises_consumed (fun () -> to_arr w);
+  check_arr ~msg:"the program that binds it replays with it" [| 2.0; 4.0; 6.0 |]
     (g (vec32 [| 2.0; 2.0; 2.0 |]))
+
+(* Not inlined: once it returns, only the collector refers to the program that
+   bound the consumed storage. *)
+let[@inline never] bind_and_consume () =
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
+  ignore (to_arr (g (vec32 [| 1.0; 1.0; 1.0 |])));
+  ignore (to_arr (consume' (fun x -> Nx.mul_s x 2.0) w))
+
+let test_consumed_bound_storage_goes_with_its_owners () =
+  full_major ();
+  let before = resident () in
+  bind_and_consume ();
+  full_major ();
+  is_true ~msg:"the consumed storage goes with the program that bound it"
+    (resident () <= before)
 
 let test_bound_capture_returned_is_a_copy () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
@@ -3360,7 +3532,7 @@ let test_bound_capture_returned_is_a_copy () =
    weak pointer to the value's cell, whose finaliser releases the storage. *)
 let[@inline never] bind_and_drop () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
   check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]));
   let cell = Weak.create 1 in
   Weak.set cell 0 (Some (cell_of w));
@@ -3385,7 +3557,7 @@ let majors () = (Gc.quick_stat ()).major_collections
    collection weigh on none after it. *)
 let test_budget_counts_every_allocation () =
   let w = place (Nx.create f32 [| 1024 |] (Array.make 1024 1.0)) in
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   ignore (g (vec32 [| 1.0 |]));
   with_budget 1024 (fun () ->
       let before = majors () in
@@ -3408,55 +3580,88 @@ let test_out_of_memory () =
     (function Nx.Device.Out_of_memory (_, n) -> n = 4 lsl 48 | _ -> false)
     (fun () -> place huge)
 
-let test_donated_handle_raises_on_read () =
+let test_consumed_handle_raises_on_read () =
   let g = consume' (fun x -> Nx.mul_s x 2.0) in
   let h1 = g (vec32 [| 1.0; 2.0 |]) in
   let h2 = g h1 in
-  (* h1 was donated to the second call: its storage is gone. *)
-  raises_donated (fun () -> to_arr h1);
+  (* The second call consumed h1: its storage is gone. *)
+  raises_consumed (fun () -> to_arr h1);
   check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2
 
-let test_donated_handle_refeed_raises () =
+let test_consumed_handle_refeed_raises () =
   let g = consume' (fun x -> Nx.mul_s x 2.0) in
   let h1 = g (vec32 [| 1.0; 2.0 |]) in
   ignore (g h1);
-  (* Seeding a donated handle forces it, which raises the same error. *)
-  raises_donated (fun () -> g h1)
+  (* Seeding a consumed handle forces it, which raises the same error. *)
+  raises_consumed (fun () -> g h1)
 
-let test_donate_duplicate_leaves_once () =
+(* A storage that two leaves of a consumed argument reach raises before the
+   call, naming both, and nothing is consumed. *)
+let test_consumed_storage_reached_twice_raises () =
   let g =
     consume pair_ptree (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
   in
-  let h =
-    Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
+  let h = place (vec32 [| 3.0; 6.0 |]) in
+  let (), up, _ =
+    delta (fun () ->
+        invalid_starting
+          "Rune.jit: the arguments at 0.u and 0.v reach one storage, which a \
+           consumed argument must hold alone" (fun () -> g { u = h; v = h }))
   in
-  let base = (Rune.jit_stats ()).resident_bytes in
-  let r = g { u = h; v = h } in
-  (* One handle behind two leaves donates once; only the two fresh outputs
-     remain resident. *)
-  is_true ~msg:"the duplicate handle was released once"
-    ((Rune.jit_stats ()).resident_bytes - base <= 2 * 2 * 4);
-  check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
-  check_arr ~msg:"v" [| 9.0; 36.0 |] r.v;
-  raises_donated (fun () -> to_arr h)
+  equal ~msg:"nothing moves" int 0 up;
+  check_arr ~msg:"the value is not consumed" [| 3.0; 6.0 |] h;
+  let r = g { u = h; v = Nx.copy h } in
+  check_arr ~msg:"a copy holds its own storage" [| 6.0; 12.0 |] r.u
 
-let test_read_value_is_still_donated () =
+(* A capture of the function that reaches a consumed leaf's storage raises
+   before the call; a capture consumed by another call raises at the next trace
+   of the function that captures it. *)
+let test_consumed_captures_raise () =
+  let w = place (vec32 [| 1.0; 2.0 |]) in
+  let step =
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.add x w)
+  in
+  invalid_starting
+    "Rune.jit: the argument at 0 and a capture of the function reach one \
+     storage" (fun () -> step w);
+  check_arr ~msg:"the value is not consumed" [| 1.0; 2.0 |] w;
+  let h = place (vec32 [| 1.0; 2.0 |]) in
+  let later = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x h) in
+  ignore (to_arr (consume' (fun x -> Nx.mul_s x 2.0) h));
+  invalid_starting
+    "Rune.jit: a captured value was consumed at 0 in a compiled call's \
+     arguments" (fun () -> later (vec32 [| 0.0; 0.0 |]))
+
+(* A capture the program copies (an overlapping window) reaches the consumed
+   storage as a bound one does. *)
+let test_a_copied_capture_of_consumed_storage_raises () =
+  let w = place (vec32 (Array.init 8 float_of_int)) in
+  let windows = Nx.sliding_window ~window:3 w in
+  let step = consume' (fun x -> Nx.add x (Nx.sum windows)) in
+  invalid_starting
+    "Rune.jit: the argument at 0 and a capture of the function reach one \
+     storage" (fun () -> step w);
+  check_arr ~msg:"the value is not consumed" (Array.init 8 float_of_int) w
+
+let test_read_value_is_still_consumed () =
   let g = consume' (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0 |]) in
   check_arr ~msg:"a read before the call" [| 2.0; 4.0 |] h;
   let y = g h in
-  (* A read moved nothing, so the value is still resident and donated. *)
-  raises_donated (fun () -> to_arr h);
+  (* A read moved nothing, so the value is still resident and consumed. *)
+  raises_consumed (fun () -> to_arr h);
   check_arr ~msg:"the result" [| 4.0; 8.0 |] y
 
-let test_host_input_unaffected_by_donate () =
+let test_host_input_unaffected_by_consume () =
   let g = consume' (fun x -> Nx.mul_s x 2.0) in
   let x = vec32 [| 1.0; 2.0 |] in
   ignore (g x);
   check_arr ~msg:"a host tensor is never consumed" [| 1.0; 2.0 |] x
 
 let test_jit_leaves_handle_readable () =
-  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
   let h1 = g (vec32 [| 1.0; 2.0 |]) in
   ignore (g h1);
   check_arr ~msg:"jit keeps the input handle alive" [| 2.0; 4.0 |] h1
@@ -3465,8 +3670,9 @@ let test_jit_leaves_handle_readable () =
    after call, and stays readable. *)
 let test_step_reads_its_first_argument () =
   let step =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
-        Nx.add (Nx.mul w x) w)
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun w x -> Nx.add (Nx.mul w x) w)
   in
   let w = place (vec32 [| 1.0; 2.0 |]) in
   let x = place (vec32 [| 3.0; 4.0 |]) in
@@ -3474,8 +3680,8 @@ let test_step_reads_its_first_argument () =
   let z, up, _ = delta (fun () -> step w y) in
   equal ~msg:"resident leaves upload nothing" int 0 up;
   check_arr ~msg:"two steps" [| 5.0; 22.0 |] z;
-  raises_donated (fun () -> to_arr x);
-  raises_donated (fun () -> to_arr y);
+  raises_consumed (fun () -> to_arr x);
+  raises_consumed (fun () -> to_arr y);
   check_arr ~msg:"the read leaf is readable" [| 1.0; 2.0 |] w
 
 (* The next state takes the storage of the state leaf at its own position; a
@@ -3483,8 +3689,9 @@ let test_step_reads_its_first_argument () =
 let test_step_reuses_only_the_state () =
   let w = place (vec32 [| 1.0; 2.0 |]) in
   let add =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
-        Nx.add x w)
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun w x -> Nx.add x w)
   in
   let x, reused =
     reused_by_second_step (add w) (place (vec32 [| 0.0; 0.0 |]))
@@ -3492,8 +3699,9 @@ let test_step_reuses_only_the_state () =
   equal ~msg:"the state's storage is reused" int 8 reused;
   check_arr ~msg:"value" [| 2.0; 4.0 |] x;
   let double =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w _ ->
-        Nx.mul_s w 2.0)
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun w _ -> Nx.mul_s w 2.0)
   in
   let y, reused =
     reused_by_second_step (double w) (place (vec32 [| 0.0; 0.0 |]))
@@ -3502,24 +3710,23 @@ let test_step_reuses_only_the_state () =
   check_arr ~msg:"value" [| 2.0; 4.0 |] y;
   check_arr ~msg:"the read leaf is intact" [| 1.0; 2.0 |] w
 
-(* A handle passed as both arguments is read: the call consumes nothing, lends
-   nothing, and the handle stays usable. *)
-let test_step_reads_a_handle_in_both_arguments () =
+(* A handle passed as both a read and a consumed argument raises before the
+   call, and stays usable. *)
+let test_step_refuses_a_handle_in_both_arguments () =
   let step =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
-        Nx.add w x)
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun w x -> Nx.add w x)
   in
   let h = place (vec32 [| 1.0; 2.0 |]) in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let y = step h h in
-  let y' = step h h in
-  equal ~msg:"it lends nothing" int 0 ((Rune.jit_stats ()).reused_bytes - before);
-  check_arr ~msg:"first" [| 2.0; 4.0 |] y;
-  check_arr ~msg:"second" [| 2.0; 4.0 |] y';
-  check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h
+  invalid_starting
+    "Rune.jit: the arguments at 0 and 1 reach one storage, which a consumed \
+     argument must hold alone; pass Nx.copy of one of them" (fun () -> step h h);
+  check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h;
+  check_arr ~msg:"a copy runs" [| 2.0; 4.0 |] (step h (Nx.copy h))
 
-(* Only a value whose view covers its storage can be donated: a state leaf that
-   is a view of part of one raises before the call, and the value stays. *)
+(* Only a value whose view covers its storage can be consumed: a consumed leaf
+   that is a view of part of one raises before the call, and the value stays. *)
 let test_step_refuses_a_partial_view () =
   let step = consume' (fun x -> Nx.mul_s x 2.0) in
   let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
@@ -3527,23 +3734,27 @@ let test_step_refuses_a_partial_view () =
   raises_match
     (function
       | Invalid_argument msg ->
-          String.starts_with ~prefix:"Rune.jit_step: state leaf 0" msg
+          msg
+          = "Rune.jit: the argument at 0 views part of its storage (a slice, a \
+             transpose or a broadcast), so it cannot be consumed; pass Nx.copy \
+             of it"
       | _ -> false)
     (fun () -> step part);
   check_arr ~msg:"the value stays" [| 1.0; 2.0 |] part;
   check_arr ~msg:"and so does its storage" [| 1.0; 2.0; 3.0; 4.0 |] w
 
-(* A storage both arguments reach is read, even when the read argument reaches
-   it through a view of part of it. *)
-let test_step_reads_a_storage_both_arguments_reach () =
+(* A storage a read argument reaches through a view of part of it cannot be
+   consumed by another argument: the call raises before it runs. *)
+let test_step_refuses_a_storage_both_arguments_reach () =
   let step =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun r s ->
-        Nx.add s (Nx.sum r))
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun r s -> Nx.add s (Nx.sum r))
   in
   let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
   let view = Nx.slice [ Nx.R (0, 2) ] w in
-  let y = step view w in
-  check_arr ~msg:"result" [| 4.0; 5.0; 6.0; 7.0 |] y;
+  invalid_starting "Rune.jit: the arguments at 0 and 1 reach one storage"
+    (fun () -> step view w);
   check_arr ~msg:"the read view is readable" [| 1.0; 2.0 |] view;
   check_arr ~msg:"and so is the state" [| 1.0; 2.0; 3.0; 4.0 |] w
 
@@ -3552,8 +3763,9 @@ let test_step_reads_a_storage_both_arguments_reach () =
 let test_step_write_into_a_read_leaf () =
   let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
   let step =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun pool x ->
-        Nx.scatter ~axis:0 ~indices ~values:x pool)
+    Rune.jit ~devices:[ cpu1 ]
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun pool x -> Nx.scatter ~axis:0 ~indices ~values:x pool)
   in
   let pool = place (vec32 [| 1.0; 2.0; 3.0 |]) in
   let a = step pool (vec32 [| 10.0; 30.0 |]) in
@@ -3567,7 +3779,7 @@ let test_step_write_into_a_read_leaf () =
    tensors to them. *)
 let test_aliased_input_leaves () =
   let f (p : pair) = Nx.sub p.u (Nx.mul_s p.v 2.0) in
-  let g = Rune.jit pair_ptree f in
+  let g = Rune.jit Nx.Ptree.(pair_ptree @-> returns tensor) f in
   let x = vec32 [| 1.0; 2.0; 3.0 |] in
   check_arr ~msg:"aliased call" [| -1.0; -2.0; -3.0 |] (g { u = x; v = x });
   check_arr ~msg:"distinct call" [| -7.0; -8.0; -9.0 |]
@@ -3575,7 +3787,8 @@ let test_aliased_input_leaves () =
   (* Under grad inside jit the two leaves are separate parameters, as
      eagerly. *)
   let dg =
-    Rune.jit2 pair_ptree pair_ptree
+    Rune.jit
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
       (fun p -> Rune.grad pair_ptree (fun p -> Nx.sum (f p)) p)
       { u = x; v = x }
   in
@@ -3606,7 +3819,7 @@ let tests =
         test "a new shape retraces" test_retrace_on_new_shape;
         test "zero-size outputs are empty tensors" test_zero_size_outputs;
         test "closure-captured weights (matmul)" test_closure_matmul;
-        test "jit2 returns structured outputs" test_jit2_structured_output;
+        test "a structured result" test_structured_output;
         test "aliased input leaves are separate inputs"
           test_aliased_input_leaves;
       ];
@@ -3702,7 +3915,7 @@ let tests =
         slow "top_k matches eager" test_top_k_matches_eager;
         slow "top_k radix select matches eager" test_top_k_radix_matches_eager;
         slow "top_k over a row of 2^20 entries"
-          (check_top_k_long_row ?device:None);
+          (check_top_k_long_row ?devices:None);
         slow "sort of every dtype matches eager" test_sort_dtypes_match_eager;
         slow "compiled argsort is not quadratic" test_argsort_is_not_quadratic;
         test "gradient of top_k" test_grad_of_top_k;
@@ -3733,8 +3946,7 @@ let tests =
         test "on the host device" test_place_on_the_host_device;
         test "placement under grad, jvp, vmap and jit"
           test_place_is_the_identity_under_transformations;
-        test "an unbound placed value is consumed by donation"
-          test_place_then_donate_consumes;
+        test "an unbound placed value is consumed" test_place_then_consume;
         test "item reads one element" test_item_reads_one_element;
         test "a move to the host keeps its source"
           test_move_to_host_keeps_its_source;
@@ -3778,8 +3990,9 @@ let tests =
           test_bound_value_survives_a_read;
         test "a read leaves an unbound value placed"
           test_unbound_value_stays_after_a_read;
-        test "a bound input is not consumed by donation"
-          test_bound_input_is_not_donated;
+        test "consuming a bound storage" test_consuming_a_bound_storage;
+        test "a consumed bound storage goes with its owners"
+          test_consumed_bound_storage_goes_with_its_owners;
         test "a bound capture returned unchanged is a copy"
           test_bound_capture_returned_is_a_copy;
         test "a bound buffer is released with its owners"
@@ -3807,6 +4020,8 @@ let tests =
           test_same_handle_as_two_leaves;
         test "duplicate output leaves are two values"
           test_duplicate_outputs_are_two_values;
+        test "empty values are consumed and returned fresh"
+          test_empty_values_are_consumed_and_fresh;
         test "handles feed other jitted closures" test_cross_jit_feedback;
         test "handles feed new signatures without forcing"
           test_cross_signature_feedback;
@@ -3827,62 +4042,70 @@ let tests =
         test "a buffer freed under a running kernel is not reused"
           test_buffer_freed_under_a_running_kernel;
       ];
-    group "donation"
+    group "consumption"
       [
-        test "donate bounds resident memory at two generations"
-          test_donate_bounds_resident_memory;
-        test "a donated input hands its storage to the output"
-          test_donate_reuses_storage;
+        test "lending follows derivation" test_lending_follows_derivation;
+        test "a consumed argument between read ones"
+          test_a_consumed_argument_between_read_ones;
+        test "consumption bounds resident memory at two generations"
+          test_consume_bounds_resident_memory;
+        test "a consumed input hands its storage to the output"
+          test_consume_reuses_storage;
         test "a movement path refuses reuse and stays correct"
-          test_donate_refuses_movement_path;
+          test_consume_refuses_movement_path;
         test "a later reader refuses reuse and stays correct"
-          test_donate_refuses_later_reader;
-        test "a donated pass-through moves its storage"
-          test_donate_moves_pass_through;
+          test_consume_refuses_later_reader;
+        test "a consumed pass-through moves its storage"
+          test_consume_moves_pass_through;
         test "a run-time window write reuses the cache"
-          test_donate_reuses_window_write;
+          test_consume_reuses_window_write;
         test "a pool read after its write still reuses storage"
-          test_donate_reuses_pool_read_after_write;
-        test "two programs alternate on one donated state"
-          test_donate_alternates_two_programs;
-        test "donation reuses a pool written by scatter"
-          test_donate_reuses_pool_scatter;
-        test "a partial view of a storage is not donated"
+          test_consume_reuses_pool_read_after_write;
+        test "two programs alternate on one consumed state"
+          test_consume_alternates_two_programs;
+        test "consumption reuses a pool written by scatter"
+          test_consume_reuses_pool_scatter;
+        test "a partial view of a storage is not consumed"
           test_step_refuses_a_partial_view;
-        test "a storage both arguments reach is read"
-          test_step_reads_a_storage_both_arguments_reach;
-        test "scatter without donation keeps its input"
-          test_scatter_without_donation_keeps_the_input;
-        test "scatter of values read from the donated pool"
+        test "a storage both arguments reach raises"
+          test_step_refuses_a_storage_both_arguments_reach;
+        test "scatter without consumption keeps its input"
+          test_scatter_without_consumption_keeps_the_input;
+        test "scatter of values read from the consumed pool"
           test_scatter_of_values_read_from_the_pool;
-        test "scatter of the donated pool into itself"
+        test "scatter of the consumed pool into itself"
           test_scatter_of_the_pool_into_itself;
-        test "scatter refuses a later reader of the donated pool"
+        test "scatter refuses a later reader of the consumed pool"
           test_scatter_refuses_a_later_reader_of_the_pool;
         test "scatter beside a reader of the old value"
           test_scatter_beside_a_reader_of_the_old_value;
         test "an updated input returned unchanged stays readable"
-          test_donate_keeps_pass_through_readable;
+          test_consume_keeps_pass_through_readable;
         test "outputs never write into an input's buffer"
           test_outputs_never_write_into_inputs;
-        test "every derived leaf is reused" test_donate_reuses_every_leaf;
+        test "every derived leaf is reused" test_consume_reuses_every_leaf;
         test "a staged loop refuses only the leaves it touches"
-          test_donate_reuses_beside_a_scan;
-        test "a donated handle raises on read"
-          test_donated_handle_raises_on_read;
-        test "re-feeding a donated handle raises"
-          test_donated_handle_refeed_raises;
-        test "duplicate leaves donate once" test_donate_duplicate_leaves_once;
-        test "a value read before the call is still donated"
-          test_read_value_is_still_donated;
-        test "host inputs are unaffected" test_host_input_unaffected_by_donate;
+          test_consume_reuses_beside_a_scan;
+        test "a consumed handle raises on read"
+          test_consumed_handle_raises_on_read;
+        test "re-feeding a consumed handle raises"
+          test_consumed_handle_refeed_raises;
+        test "a storage two leaves reach raises"
+          test_consumed_storage_reached_twice_raises;
+        test "captures that reach consumed storage raise"
+          test_consumed_captures_raise;
+        test "a copied capture of consumed storage raises"
+          test_a_copied_capture_of_consumed_storage_raises;
+        test "a value read before the call is still consumed"
+          test_read_value_is_still_consumed;
+        test "host inputs are unaffected" test_host_input_unaffected_by_consume;
         test "jit never consumes its inputs" test_jit_leaves_handle_readable;
         test "a step reads its first argument"
           test_step_reads_its_first_argument;
         test "a step reuses only its state's storage"
           test_step_reuses_only_the_state;
-        test "a handle in both arguments is read"
-          test_step_reads_a_handle_in_both_arguments;
+        test "a handle in both arguments raises"
+          test_step_refuses_a_handle_in_both_arguments;
         test "an indexed write into a read leaf keeps it"
           test_step_write_into_a_read_leaf;
       ];

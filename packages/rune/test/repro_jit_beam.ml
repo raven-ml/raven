@@ -79,7 +79,12 @@ let () =
   Printf.printf "device=%s horizon=%d BEAM=%s\n%!" device horizon
     (try Sys.getenv "BEAM" with Not_found -> "0");
   let eager = time "eager" (fun () -> item (grad_norm p)) in
-  let jitted = Rune.jit ~device rnn_ptree grad_norm in
+  let jitted =
+    Rune.jit
+      ~devices:[ Rune.device device ]
+      Nx.Ptree.(rnn_ptree @-> returns tensor)
+      grad_norm
+  in
   let first = time "jit (compile+run)" (fun () -> item (jitted p)) in
   let replay = time "jit (replay)" (fun () -> item (jitted p)) in
   let ok v =

@@ -197,9 +197,11 @@ let inputs () = Nx.Ptree.(pair tensor tensor)
    product an unrounded [x]. *)
 let compiled (type b) ~device c (x : (float, b) Nx.t) : (float, b) Nx.t =
   match c.ids with
-  | None -> Rune.jit' ~device (product c) x
+  | None -> Rune.jit' ~devices:[ Rune.device device ] (product c) x
   | Some ids ->
-      Rune.jit ~device (inputs ())
+      Rune.jit
+        ~devices:[ Rune.device device ]
+        Nx.Ptree.(inputs () @-> returns tensor)
         (fun (ids, x) -> product { c with ids = Some ids } x)
         (ids, x)
 
@@ -535,7 +537,10 @@ let test_dequant () =
           let actual =
             Nx.to_array
               (Nx.cast Nx.float32
-                 (Rune.jit ~device Nx_quant.ptree (Nx_quant.dequant dt) w))
+                 (Rune.jit
+                    ~devices:[ Rune.device device ]
+                    Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+                    (Nx_quant.dequant dt) w))
           in
           Array.iteri
             (fun i e ->
@@ -566,8 +571,10 @@ let test_one_token_gathers () =
     let w = weight ~scale:(fun _ -> 127) [| e; 64; 256 |] in
     let ids = ints [| 1; 4 |] [| 3; 0; 2; 1 |] in
     let f =
-      Rune.jit ~device:"CPU" (inputs ()) (fun (ids, x) ->
-          Nx_quant.apply ~ids w x)
+      Rune.jit
+        ~devices:[ Rune.device "CPU" ]
+        Nx.Ptree.(inputs () @-> returns tensor)
+        (fun (ids, x) -> Nx_quant.apply ~ids w x)
     in
     ignore (Nx.to_array (f (ids, x)));
     let before = !Tolk.Helpers.Global_counters.global_ops in
@@ -585,7 +592,7 @@ let test_rule () =
   let n = 256 and k = 256 in
   let w = weight [| n; k |] in
   let bytes device rows =
-    let f = Rune.jit' ~device (Nx_quant.apply w) in
+    let f = Rune.jit' ~devices:[ Rune.device device ] (Nx_quant.apply w) in
     let x = Nx.cast Nx.bfloat16 (floats [| rows; k |]) in
     ignore (Nx.to_array (f x));
     let before = !Tolk.Helpers.Global_counters.global_mem in
@@ -719,7 +726,7 @@ let test_grad () =
           close
             ~msg:(name ^ ", " ^ device)
             expected
-            (Rune.jit' ~device (Rune.grad' f) c.x))
+            (Rune.jit' ~devices:[ Rune.device device ] (Rune.grad' f) c.x))
         devices)
     (rule_cases ())
 
@@ -735,7 +742,10 @@ let test_grad_through_a_sum () =
       let expected = Rune.grad' (mixed (dense c)) x in
       close ~msg:"eager" expected (Rune.grad' (mixed (product c)) x);
       close ~msg:"compiled" expected
-        (Rune.jit' ~device:"CPU" (Rune.grad' (mixed (product c))) x))
+        (Rune.jit'
+           ~devices:[ Rune.device "CPU" ]
+           (Rune.grad' (mixed (product c)))
+           x))
     [
       ints [| 3; 1 |] [| 3; -1; 1 |];
       ints [| 3; 4 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |];
@@ -754,7 +764,8 @@ let test_jvp () =
           close
             ~msg:(name ^ ", tangent, " ^ device)
             dy'
-            (Rune.jit' ~device
+            (Rune.jit'
+               ~devices:[ Rune.device device ]
                (fun x -> snd (Rune.jvp' (product c) x tangent))
                c.x))
         devices)
@@ -823,7 +834,8 @@ let test_vmap () =
     (Rune.vmap Nx.Ptree.(inputs () @-> returns tensor) routed (ids, xs));
   close ~msg:"over ids and x, compiled"
     (per_lane (fun i -> routed (row i ids, row i xs)) 3)
-    (Rune.jit (inputs ())
+    (Rune.jit
+       Nx.Ptree.(inputs () @-> returns tensor)
        (Rune.vmap Nx.Ptree.(inputs () @-> returns tensor) routed)
        (ids, xs));
   let ws = weight [| 3; 4; 8; 64 |] in
@@ -855,7 +867,8 @@ let test_vmap () =
        ws);
   close ~msg:"over the weight, compiled"
     (per_lane (fun i -> Nx_quant.apply ~ids:one (lane i) x) 3)
-    (Rune.jit Nx_quant.ptree
+    (Rune.jit
+       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
        (Rune.vmap
           Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
           (fun w -> Nx_quant.apply ~ids:one w x))
@@ -870,7 +883,10 @@ let test_pmap () =
     (fun (msg, ids, x) ->
       close ~msg
         (routed (ids, x))
-        (Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] (inputs ()) routed (ids, x)))
+        (Rune.pmap
+           ~devices:[ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+           Nx.Ptree.(inputs () @-> returns tensor)
+           routed (ids, x)))
     [
       ("gathered", ints [| 2; 1 |] [| 3; -1 |], floats [| 2; 1; 1; 64 |]);
       ( "several rows per position",
@@ -895,7 +911,8 @@ let form_cases () =
   let wide = weight ~scale:moderate [| 40; 8; 64 |] in
   let distinct = ints [| 40 |] (Array.init 40 Fun.id) in
   let apply ?(transpose = false) w ids x =
-    Rune.jit' ~device
+    Rune.jit'
+      ~devices:[ Rune.device device ]
       (fun x ->
         Nx_quant.Effect.perform w (Apply { ids = Some ids; x; transpose }))
       x
@@ -908,7 +925,9 @@ let form_cases () =
       fun () -> apply wide distinct (floats [| 40; 1; 64 |]) );
     ( "sixteen routes under pmap",
       fun () ->
-        Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] (inputs ())
+        Rune.pmap
+          ~devices:[ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+          Nx.Ptree.(inputs () @-> returns tensor)
           (fun (ids, x) -> Nx_quant.apply ~ids w x)
           (ids, floats [| 8; 2; 1; 64 |]) );
   ]

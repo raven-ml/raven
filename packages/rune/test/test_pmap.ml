@@ -11,8 +11,8 @@
 open Windtrap
 open Rune_test_support.Support
 
-let devs2 = [ "CPU:1"; "CPU:2" ]
-let devs4 = [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
+let devs2 = [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+let devs4 = List.map Rune.device [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
 let arange n = Array.init n (fun i -> float_of_int (i + 1) /. 7.0)
 let m46 () = Nx.create f32 [| 4; 6 |] (arange 24)
 let m86 () = Nx.create f32 [| 8; 6 |] (arange 48)
@@ -31,14 +31,14 @@ let chain x =
 let test_matches_jit_2dev () =
   let x = m46 () in
   let expect = Rune.jit' chain x in
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor chain in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) chain in
   check_arr ~msg:"first call" (to_arr expect) (g x);
   check_arr ~msg:"replay" (to_arr expect) (g x)
 
 let test_matches_jit_4dev () =
   let x = m86 () in
   let expect = Rune.jit' chain x in
-  let g = Rune.pmap ~devices:devs4 Nx.Ptree.tensor chain in
+  let g = Rune.pmap ~devices:devs4 Nx.Ptree.(tensor @-> returns tensor) chain in
   check_arr ~msg:"4 devices" (to_arr expect) (g x)
 
 (* No cross-device reduce: each device computes its shard independently, so the
@@ -47,18 +47,26 @@ let test_elementwise_byte_equal () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let x = m46 () in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor f in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) f in
   check_arr ~eps:0.0 ~msg:"byte-equal" (to_arr expect) (g x)
 
 let test_shard_axis_1 () =
   let f x = Nx.add (Nx.mul x x) x in
   let x = m46 () in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] Nx.Ptree.tensor f in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+  in
   check_arr ~eps:0.0 ~msg:"axis 1 shards" (to_arr expect) (g x)
 
 let test_retrace_on_new_shape () =
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.sum x) in
+  let g =
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.sum x)
+  in
   check_arr ~msg:"first shape" [| 36.0 |]
     (g (vec32 (Array.init 8 (fun i -> float_of_int (i + 1)))));
   check_arr ~msg:"retraced shape" [| 10.0 |]
@@ -87,7 +95,12 @@ let dp_loss p =
   let d = Nx.sub (Nx.matmul p.x p.w) p.t in
   Nx.mean (Nx.mul d d)
 
+(* The parameters replicated, the batch and targets split on axis 0: one
+   argument each. *)
 let dp_axes = [ None; Some 0; Some 0 ]
+let dp_signature r = Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns r)
+let dp_args f w x t = f { w; x; t }
+let dp_call g p = g p.w p.x p.t
 
 let dp_input () =
   {
@@ -98,9 +111,13 @@ let dp_input () =
 
 let test_dp_loss_matches_jit () =
   let p = dp_input () in
-  let expect = Rune.jit dp_ptree dp_loss p in
-  let g = Rune.pmap ~devices:devs2 ~in_axes:dp_axes dp_ptree dp_loss in
-  check_arr ~msg:"mean loss over sharded batch" (to_arr expect) (g p)
+  let expect = Rune.jit Nx.Ptree.(dp_ptree @-> returns tensor) dp_loss p in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:dp_axes
+      (dp_signature Nx.Ptree.tensor)
+      (dp_args dp_loss)
+  in
+  check_arr ~msg:"mean loss over sharded batch" (to_arr expect) (dp_call g p)
 
 (* Gradients: value_and_grad inside the pmapped function. Differentiating a mean
    over the sharded batch makes every parameter gradient a cross-device
@@ -109,9 +126,12 @@ let test_dp_loss_matches_jit () =
 let test_grad_inside_pmap () =
   let grads p = snd (Rune.value_and_grad dp_ptree dp_loss p) in
   let p = dp_input () in
-  let expect = Rune.jit2 dp_ptree dp_ptree grads p in
-  let g = Rune.pmap2 ~devices:devs2 ~in_axes:dp_axes dp_ptree dp_ptree grads in
-  let got = g p in
+  let expect = Rune.jit Nx.Ptree.(dp_ptree @-> returns dp_ptree) grads p in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:dp_axes (dp_signature dp_ptree)
+      (dp_args grads)
+  in
+  let got = dp_call g p in
   check_arr ~msg:"dw (allreduced)" (to_arr expect.w) got.w;
   check_arr ~msg:"dx (sharded)" (to_arr expect.x) got.x;
   check_arr ~msg:"dt (sharded)" (to_arr expect.t) got.t
@@ -131,10 +151,12 @@ let keepdims_input () =
 let check_keepdims_grad loss =
   let grads p = snd (Rune.value_and_grad dp_ptree loss p) in
   let p = keepdims_input () in
-  let expect = Rune.jit2 dp_ptree dp_ptree grads p in
-  let axes = [ None; Some 0; Some 0 ] in
-  let g = Rune.pmap2 ~devices:devs2 ~in_axes:axes dp_ptree dp_ptree grads in
-  let got = g p in
+  let expect = Rune.jit Nx.Ptree.(dp_ptree @-> returns dp_ptree) grads p in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:dp_axes (dp_signature dp_ptree)
+      (dp_args grads)
+  in
+  let got = dp_call g p in
   check_arr ~msg:"dw" (to_arr expect.w) got.w;
   check_arr ~msg:"dx" (to_arr expect.x) got.x
 
@@ -158,7 +180,11 @@ let test_grad_mean_keepdims () =
    matching placement moves no bytes; reading gathers shards correctly. *)
 
 let test_feedback_moves_no_bytes () =
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.add x x) in
+  let g =
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.add x x)
+  in
   let x = vec32 (Array.init 8 (fun i -> float_of_int i)) in
   let y1 = g x in
   Rune.reset_jit_stats ();
@@ -174,8 +200,9 @@ let test_replicated_feedback () =
   (* w -> w * 2 with w replicated: the replicated output seeds the replicated
      input directly on the next call. *)
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ None ] Nx.Ptree.tensor (fun w ->
-        Nx.mul_s w 2.0)
+    Rune.pmap ~devices:devs2 ~in_axes:[ None ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun w -> Nx.mul_s w 2.0)
   in
   let w = vec32 [| 1.0; 2.0; 3.0 |] in
   let w1 = g w in
@@ -189,8 +216,9 @@ let test_replicated_feedback () =
    create constants beside it, which run on the host. *)
 let test_split_output_in_eager_code () =
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] Nx.Ptree.tensor (fun x ->
-        Nx.add x x)
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.add x x)
   in
   let y = g (Nx.create f32 [| 2; 4 |] (Array.init 8 float_of_int)) in
   let h = Nx.place Nx.Placement.host y in
@@ -204,8 +232,16 @@ let test_mismatched_placement_forces () =
   (* An output sharded on axis 0 fed into an axis-1 placement is forced to the
      host and re-split, not seeded. *)
   let f x = Nx.add x x in
-  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] Nx.Ptree.tensor f in
-  let g1 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] Nx.Ptree.tensor f in
+  let g0 =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+  in
+  let g1 =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+  in
   let x = m46 () in
   let y = g0 x in
   check_arr ~eps:0.0 ~msg:"re-split result matches"
@@ -231,7 +267,9 @@ let win_ptree = Nx.Ptree.instantiate (module Win)
 let test_set_window_on_mapped_axis () =
   let f (w : Win.win) = Nx.set [ Nx.R (1, 3); Nx.A ] w.v w.x in
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] win_ptree f
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ]
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x v pos -> f { Win.x; v; pos })
   in
   let w =
     {
@@ -240,12 +278,16 @@ let test_set_window_on_mapped_axis () =
       pos = Nx.scalar Nx.int32 1l;
     }
   in
-  check_arr ~eps:0.0 ~msg:"window spanning both shards" (to_arr (f w)) (g w)
+  check_arr ~eps:0.0 ~msg:"window spanning both shards"
+    (to_arr (f w))
+    (g w.x w.v w.pos)
 
 let test_set_traced_window_on_mapped_axis () =
   let f (w : Win.win) = Nx.set [ Nx.D (w.pos, 2); Nx.A ] w.v w.x in
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] win_ptree f
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ]
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x v pos -> f { Win.x; v; pos })
   in
   let w =
     {
@@ -256,86 +298,105 @@ let test_set_traced_window_on_mapped_axis () =
   in
   check_arr ~eps:0.0 ~msg:"traced window spanning both shards"
     (to_arr (f w))
-    (g w)
+    (g w.x w.v w.pos)
 
 (* A placed capture is on one device: a pmap reads it back and replicates it, as
    it does a host capture, and a function that bound it keeps its buffer. *)
 let test_host_is_not_a_device () =
   raises_match
     (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> Rune.pmap ~devices:[ "CPU"; "CPU:1" ] Nx.Ptree.tensor Fun.id)
+    (fun () ->
+      Rune.pmap
+        ~devices:[ Rune.device "CPU"; Rune.device "CPU:1" ]
+        Nx.Ptree.(tensor @-> returns tensor)
+        Fun.id)
 
 let test_placed_capture_is_replicated () =
   let w = Nx.create f32 [| 6 |] (arange 6) in
   let p = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w in
-  let bound = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x p) in
+  let bound =
+    Rune.jit' ~devices:[ Rune.device "CPU:1" ] (fun x -> Nx.mul x p)
+  in
   let x = m46 () in
   check_arr ~msg:"bound" (to_arr (Nx.mul x w)) (bound x);
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.mul x p) in
+  let g =
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.mul x p)
+  in
   check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
   check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w)) (bound x)
 
 (* A compiled function runs on one device: an output of a pmap, on several,
    raises as its input instead of being read through the host. *)
 let test_split_output_into_jit_raises () =
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.mul_s x 2.0) in
+  let g =
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.mul_s x 2.0)
+  in
   let y = g (m46 ()) in
   raises_match
     (function
       | Invalid_argument msg ->
-          String.starts_with ~prefix:"Rune.jit: input leaf 0 is on sharded" msg
+          String.starts_with ~prefix:"Rune.jit: the argument at 0 is on sharded"
+            msg
       | _ -> false)
     (fun () -> Rune.jit' (fun x -> Nx.add_s x 1.0) y)
 
 let test_pass_through_output () =
   let g =
-    Rune.pmap2 ~devices:devs2 Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x ->
         ignore (Nx.sum x);
         x)
   in
   let x = m46 () in
   check_arr ~eps:0.0 ~msg:"pass-through gathers the input" (to_arr x) (g x)
 
-(* Donation: [donate:true] consumes a resident multi-device handle — every
-   per-device shard buffer is released once the call completes — and the donated
-   handle raises on read. A handle whose placement mismatches is forced to the
-   host first, so donation does not apply to it. *)
+(* Consumption: a consumed argument's resident multi-device handle has every
+   per-device shard buffer released once the call completes, and the consumed
+   handle raises on read. A handle whose placement mismatches is read through
+   the host and consumed all the same. *)
 
-let raises_donated f =
+let raises_consumed f =
   raises_match
     (fun exn ->
       match exn with
       | Invalid_argument msg ->
           msg
-          = "this value was donated to a compiled call and no longer exists; \
-             read or copy it before the call"
+          = "this value was consumed at 0 in a compiled call's arguments; use \
+             the value the call returned"
       | _ -> false)
     (fun () -> ignore (f ()))
 
-let test_donate_sharded_state () =
+let test_consume_sharded_state () =
   let n = 1024 in
   let g =
-    Rune.pmap ~devices:devs2 ~donate:true Nx.Ptree.tensor (fun x ->
-        Nx.add_s x 1.0)
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.add_s x 1.0)
   in
   let x = vec32 (Array.make n 0.0) in
   let base = (Rune.jit_stats ()).resident_bytes in
   let h1 = g x in
   let h2 = g h1 in
   let h3 = g h2 in
-  (* Donation bounds the loop at two generations even though h1 and h2 stay
+  (* Consumption bounds the loop at two generations even though h1 and h2 stay
      reachable; only h3's shards remain resident. *)
   is_true ~msg:"sharded state loop holds at most two generations"
     ((Rune.jit_stats ()).resident_bytes - base <= 2 * n * 4);
-  raises_donated (fun () -> to_arr h1);
-  raises_donated (fun () -> to_arr h2);
+  raises_consumed (fun () -> to_arr h1);
+  raises_consumed (fun () -> to_arr h2);
   check_arr ~eps:0.0 ~msg:"the live generation reads correctly"
     (Array.make n 3.0) h3
 
-let test_donate_replicated_releases_all_shards () =
+let test_consume_replicated_releases_all_shards () =
   let n = 512 in
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ None ] ~donate:true Nx.Ptree.tensor
+    Rune.pmap ~devices:devs2 ~in_axes:[ None ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
       (fun w -> Nx.mul_s w 2.0)
   in
   (* Retire the handles earlier tests dropped unread, so their release cannot
@@ -347,53 +408,100 @@ let test_donate_replicated_releases_all_shards () =
   is_true ~msg:"one replicated generation is resident"
     ((Rune.jit_stats ()).resident_bytes - base >= 2 * n * 4);
   let w2 = g w1 in
-  is_true ~msg:"donating releases every replica"
+  is_true ~msg:"consuming releases every replica"
     ((Rune.jit_stats ()).resident_bytes - base <= 2 * n * 4);
-  raises_donated (fun () -> to_arr w1);
+  raises_consumed (fun () -> to_arr w1);
   check_arr ~eps:0.0 ~msg:"value" (Array.make n 4.0) w2
 
-let test_donate_mismatched_placement_not_consumed () =
+let test_mismatched_placement_is_consumed () =
   let f x = Nx.add x x in
-  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] Nx.Ptree.tensor f in
+  let g0 =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+  in
   let g1 =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] ~donate:true Nx.Ptree.tensor f
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      f
   in
   let x = m46 () in
   let y = g0 x in
-  (* The axis-1 call forces y to the host to re-split it: y is a plain host
-     tensor afterwards, not donated. *)
+  (* The axis-1 call reads y through the host to re-split it, and consumes
+     it. *)
   check_arr ~eps:0.0 ~msg:"re-split result matches"
     (to_arr (Nx.add (Nx.add x x) (Nx.add x x)))
     (g1 y);
-  check_arr ~eps:0.0 ~msg:"the mismatched handle survives as a host tensor"
-    (to_arr (Nx.add x x))
-    y
+  raises_consumed (fun () -> to_arr y)
+
+(* A pmap copies every capture: one over the storage its consumed argument
+   reaches raises before the call, and nothing is consumed. *)
+let test_a_capture_of_consumed_storage_raises () =
+  let w = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) (m46 ()) in
+  let g =
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.add x w)
+  in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with
+            ~prefix:
+              "Rune.jit: the argument at 0 and a capture of the function reach \
+               one storage"
+            msg
+      | _ -> false)
+    (fun () -> g w);
+  check_arr ~eps:0.0 ~msg:"the value is not consumed" (to_arr (m46 ())) w
 
 (* Errors *)
 
 let test_empty_devices () =
   raises_match Exn.invalid_arg (fun () ->
-      let g = Rune.pmap ~devices:[] Nx.Ptree.tensor Fun.id in
+      let g =
+        Rune.pmap ~devices:[] Nx.Ptree.(tensor @-> returns tensor) Fun.id
+      in
       ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_mixed_backends () =
   raises_match Exn.invalid_arg (fun () ->
-      let g = Rune.pmap ~devices:[ "CPU:1"; "CUDA:0" ] Nx.Ptree.tensor Fun.id in
+      let g =
+        Rune.pmap
+          ~devices:[ Rune.device "CPU:1"; Rune.device "CUDA" ]
+          Nx.Ptree.(tensor @-> returns tensor)
+          Fun.id
+      in
       ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_non_divisible_axis () =
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor Fun.id in
+  let g =
+    Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) Fun.id
+  in
   raises_match Exn.invalid_arg (fun () ->
       ignore (g (vec32 [| 1.0; 2.0; 3.0 |])))
 
 let test_in_axes_arity () =
-  let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ] Nx.Ptree.tensor Fun.id
-  in
-  raises_match Exn.invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          msg
+          = "Rune.pmap: in_axes has 2 entries but the signature has 1 arguments"
+      | _ -> false)
+    (fun () ->
+      let g =
+        Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ]
+          Nx.Ptree.(tensor @-> returns tensor)
+          Fun.id
+      in
+      ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_axis_out_of_range () =
-  let g = Rune.pmap ~devices:devs2 ~in_axes:[ Some 3 ] Nx.Ptree.tensor Fun.id in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 3 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      Fun.id
+  in
   raises_match Exn.invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
 
 (* Under an enclosing transformation the pmapped function runs eagerly, so grad
@@ -401,7 +509,9 @@ let test_axis_out_of_range () =
 
 let test_grad_over_pmap_runs_eagerly () =
   let g =
-    Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.sum (Nx.mul x x))
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.sum (Nx.mul x x))
   in
   let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
   let dx = Rune.grad Nx.Ptree.tensor (fun x -> g x) x in
@@ -471,10 +581,11 @@ let test_two_collective_outputs () =
     { Grad_and_loss.g; loss }
   in
   let f =
-    Rune.pmap2 ~devices:devs2 ~in_axes:[ None; None; Some 0 ]
-      weights_mask_ids_ptree grad_and_loss_ptree step
+    Rune.pmap ~devices:devs2 ~in_axes:[ None; None; Some 0 ]
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns grad_and_loss_ptree)
+      (fun w m ids -> step { Weights_mask_ids.w; m; ids })
   in
-  let out = f { Weights_mask_ids.w; m; ids } in
+  let out = f w m ids in
   check_arr ~msg:"gradient of the replicated parameter"
     (Array.make (vocab * dim) 0.5)
     out.Grad_and_loss.g;
@@ -489,7 +600,7 @@ let test_two_collective_outputs () =
 
 let test_pmap_dropout_grad_decorrelates () =
   let key = Nx.Rng.key 7 in
-  let mask_grad (x, key) =
+  let mask_grad x key =
     snd
       (Rune.value_and_grad Nx.Ptree.tensor
          (fun x ->
@@ -502,11 +613,11 @@ let test_pmap_dropout_grad_decorrelates () =
          x)
   in
   let g =
-    Rune.pmap2 ~devices:devs2 ~in_axes:[ Some 0; None ]
-      Nx.Ptree.(pair tensor tensor)
-      Nx.Ptree.tensor mask_grad
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ]
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      mask_grad
   in
-  let masks = g (Nx.ones f32 [| 2; 16 |], key) in
+  let masks = g (Nx.ones f32 [| 2; 16 |]) key in
   for i = 0 to 1 do
     check_arr ~eps:0.0
       ~msg:(Printf.sprintf "device %d mask is fold_in key %d" i i)
@@ -521,7 +632,7 @@ let test_pmap_dropout_grad_decorrelates () =
     (to_arr (Nx.slice [ Nx.I 0 ] masks) <> to_arr (Nx.slice [ Nx.I 1 ] masks))
 
 (* The DP microbench: a 2-layer MLP train step (value_and_grad + SGD inside
-   pmap2), params replicated, batch sharded over 2 devices. The 10-step loss
+   pmap), params replicated, batch sharded over 2 devices. The 10-step loss
    trajectory matches single-device jit at the same effective batch. *)
 
 type mlp = {
@@ -589,15 +700,24 @@ let trajectory step0 =
 
 let test_dp_training_matches_jit () =
   let jit_losses =
-    trajectory (Rune.jit2 mlp_ptree Nx.Ptree.(pair mlp_ptree tensor) mlp_step)
-  in
-  let in_axes = [ None; None; None; None; Some 0; Some 0 ] in
-  let pmap_losses =
     trajectory
-      (Rune.pmap2 ~devices:devs2 ~in_axes mlp_ptree
-         Nx.Ptree.(pair mlp_ptree tensor)
+      (Rune.jit
+         Nx.Ptree.(mlp_ptree @-> returns (pair mlp_ptree tensor))
          mlp_step)
   in
+  (* The parameters replicated, the batch split: one argument per tensor. *)
+  let in_axes = [ None; None; None; None; Some 0; Some 0 ] in
+  let pmap_step () =
+    let g =
+      Rune.pmap ~devices:devs2 ~in_axes
+        Nx.Ptree.(
+          tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> tensor
+          @-> returns (pair mlp_ptree tensor))
+        (fun w1 b1 w2 b2 xb yb -> mlp_step { w1; b1; w2; b2; xb; yb })
+    in
+    fun s -> g s.w1 s.b1 s.w2 s.b2 s.xb s.yb
+  in
+  let pmap_losses = trajectory (pmap_step ()) in
   Array.iteri
     (fun i l ->
       equal
@@ -606,11 +726,7 @@ let test_dp_training_matches_jit () =
     jit_losses;
   (* Late steps run entirely on resident state: nothing moves to the devices. *)
   Rune.reset_jit_stats ();
-  let pstep =
-    Rune.pmap2 ~devices:devs2 ~in_axes mlp_ptree
-      Nx.Ptree.(pair mlp_ptree tensor)
-      mlp_step
-  in
+  let pstep = pmap_step () in
   let s0 = mlp_init () in
   let s1, _ = pstep s0 in
   Rune.reset_jit_stats ();
@@ -639,8 +755,8 @@ let test_grad_through_scan_inside_pmap () =
   in
   let grads x = Rune.grad Nx.Ptree.tensor loss x in
   let x = m46 () in
-  let expect = Rune.jit2 Nx.Ptree.tensor Nx.Ptree.tensor grads x in
-  let g = Rune.pmap2 ~devices:devs2 Nx.Ptree.tensor Nx.Ptree.tensor grads in
+  let expect = Rune.jit Nx.Ptree.(tensor @-> returns tensor) grads x in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) grads in
   check_arr ~msg:"sharded grads" (to_arr expect) (g x)
 
 let tests =
@@ -681,14 +797,16 @@ let tests =
           test_placed_capture_is_replicated;
         test "a split output into jit raises" test_split_output_into_jit_raises;
       ];
-    group "donation"
+    group "consumption"
       [
         test "sharded state loop is bounded at two generations"
-          test_donate_sharded_state;
-        test "replicated donation releases every replica"
-          test_donate_replicated_releases_all_shards;
-        test "mismatched placement forces instead of donating"
-          test_donate_mismatched_placement_not_consumed;
+          test_consume_sharded_state;
+        test "replicated consumption releases every replica"
+          test_consume_replicated_releases_all_shards;
+        test "a mismatched placement is read and consumed"
+          test_mismatched_placement_is_consumed;
+        test "a capture of consumed storage raises"
+          test_a_capture_of_consumed_storage_raises;
       ];
     group "errors"
       [

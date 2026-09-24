@@ -39,7 +39,7 @@ let test_offset_capture () =
   let f x = Nx.add (Nx.mul x w) w in
   check_arr ~eps:0. ~msg:"offset capture"
     (to_arr (f x))
-    (Rune.jit' ~device:"CPU" f x)
+    (Rune.jit' ~devices:[ Rune.device "CPU" ] f x)
 
 let test_offset_input () =
   let w = Nx.create f32 [| n |] (Array.init n float_of_int) in
@@ -47,7 +47,7 @@ let test_offset_input () =
   let f x = Nx.add (Nx.mul x w) w in
   check_arr ~eps:0. ~msg:"offset input"
     (to_arr (f x))
-    (Rune.jit' ~device:"CPU" f x)
+    (Rune.jit' ~devices:[ Rune.device "CPU" ] f x)
 
 (* A load and a store of four float32 lanes. *)
 let vector_access () =
@@ -80,7 +80,11 @@ let declared_alignments source =
   scan 0 []
 
 let test_vector_types_unaligned () =
-  ignore (Rune.jit' ~device:"CPU" (fun x -> Nx.neg x) (vec32 [| 1.0 |]));
+  ignore
+    (Rune.jit'
+       ~devices:[ Rune.device "CPU" ]
+       (fun x -> Nx.neg x)
+       (vec32 [| 1.0 |]));
   let renderer = Tolk.Device.renderer (Tolk.Device.get "CPU") in
   let source = Tolk.Renderer.render renderer (vector_access ()) in
   equal ~msg:"declared alignments" (list int) [ 1 ] (declared_alignments source)
