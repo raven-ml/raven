@@ -57,12 +57,10 @@ let test_scale_unscale_round_trip () =
   let scaled = { Pair.a = Ls.scale ls grads.Pair.a; b = Ls.scale ls grads.b } in
   let back = Ls.unscale (module Pair) ls scaled in
   (* Powers of two scale exactly. *)
-  equal ~msg:"round-trip leaf a"
-    (array float_exact)
-    [| 1.0; -0.5 |] (Nx.to_array back.Pair.a);
-  equal ~msg:"round-trip leaf b"
-    (array float_exact)
-    [| 0.25 |] (Nx.to_array back.Pair.b)
+  equal ~msg:"round-trip leaf a" (array float_exact) [| 1.0; -0.5 |]
+    (Nx.to_array back.Pair.a);
+  equal ~msg:"round-trip leaf b" (array float_exact) [| 0.25 |]
+    (Nx.to_array back.Pair.b)
 
 let test_scale_half_dtype () =
   let ls = Ls.static 8.0 in

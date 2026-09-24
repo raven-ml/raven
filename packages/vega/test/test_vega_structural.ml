@@ -45,8 +45,8 @@ let check_vec ?(eps = 1e-9) ?msg expected actual =
   equal ?msg (array t) expected (Nx.to_array actual)
 
 (* The float64 analytic tests need the rate exact at float64; [Vega.lr] is
-   float32 (cast up, it would perturb the last digits). The [~lr] argument
-   takes any float dtype. *)
+   float32 (cast up, it would perturb the last digits). The [~lr] argument takes
+   any float dtype. *)
 let lr64 v = Nx.scalar Nx.float64 v
 
 (* Quadratic bowl over [Pair]: f p = ||p - target||^2, with analytic gradients,
@@ -114,7 +114,8 @@ let test_schedule_validation () =
           : S.t));
   raises
     (Invalid_argument "Schedule.cosine_decay: decay_steps must be positive")
-    (fun () -> ignore (S.cosine_decay ~init_value:1.0 ~decay_steps:(-1) () : S.t));
+    (fun () ->
+      ignore (S.cosine_decay ~init_value:1.0 ~decay_steps:(-1) () : S.t));
   raises
     (Invalid_argument
        "Schedule.warmup_cosine_decay: warmup_steps must be positive") (fun () ->
@@ -303,8 +304,7 @@ let test_adam_with_schedule_converges () =
   for _k = 1 to 300 do
     let params, st = !state in
     let grads = bowl_grads params in
-    state :=
-      Vega.adam_step (module Pair) ~lr:(sched st.step) st ~params ~grads
+    state := Vega.adam_step (module Pair) ~lr:(sched st.step) st ~params ~grads
   done;
   is_true ~msg:"decayed steps settle at the bottom"
     (bowl_distance (fst !state) < 0.02)
@@ -711,10 +711,10 @@ let test_adam_counter_advances () =
   let grads = vec [| 1.0 |] in
   let st = ref (Vega.adam_init (module Vec) params) in
   let lr = Vega.lr 0.1 in
-  (* The counter is a tensor leaf, so it advances through the state alone —
-     the shape a compiled loop relies on. The bias corrections derive from it
-     inside each step (checked against the closed form by the reference
-     trajectory above). *)
+  (* The counter is a tensor leaf, so it advances through the state alone — the
+     shape a compiled loop relies on. The bias corrections derive from it inside
+     each step (checked against the closed form by the reference trajectory
+     above). *)
   for _ = 1 to 5 do
     let _, st' = Vega.adam_step (module Vec) ~lr !st ~params ~grads in
     st := st'

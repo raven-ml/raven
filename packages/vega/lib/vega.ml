@@ -928,11 +928,7 @@ module Adam_state (P : Nx.Ptree.S) = struct
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
       (b : t) : t =
-    {
-      mu = P.map2 f a.mu b.mu;
-      nu = P.map2 f a.nu b.nu;
-      step = f a.step b.step;
-    }
+    { mu = P.map2 f a.mu b.mu; nu = P.map2 f a.nu b.nu; step = f a.step b.step }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (st : t) : unit =
     P.iter f st.mu;
@@ -947,9 +943,9 @@ let adam_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) :
 
 (* Advances the moments and computes the bias-corrected update direction shared
    by [adam_step] and [adamw_step]. The bias corrections [1 - b^t] are derived
-   from the counter per leaf, at the leaf's dtype like every other scalar in
-   the step — tensor arithmetic with a constant base, which compiles to [exp2]
-   on every device — so the whole step traces under jit and the state carries
+   from the counter per leaf, at the leaf's dtype like every other scalar in the
+   step — tensor arithmetic with a constant base, which compiles to [exp2] on
+   every device — so the whole step traces under jit and the state carries
    nothing the counter does not already determine. *)
 let adam_direction (type p) (module P : Nx.Ptree.S with type t = p) ~b1 ~b2 ~eps
     (st : P.t adam_state) ~(grads : P.t) : P.t * P.t adam_state =

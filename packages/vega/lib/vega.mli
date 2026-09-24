@@ -51,8 +51,7 @@
        generation's device buffers back to the allocator once the call
        completes; the loop never reads the pre-step state, so they are safe to
        release. *)
-    let step =
-      Rune.jit_step (module Batch) (module State) train_step
+    let step = Rune.jit_step (module Batch) (module State) train_step
     ]}
 
     Hyperparameters that do not change across steps ([b1], [b2], [eps],
@@ -108,8 +107,7 @@ val clip_by_global_norm :
     The scale factor is computed in float32 tensor arithmetic and selected with
     {!Nx.where} — no host read — so the transform traces under {!Rune.val-jit}
     on any device and can sit between a jitted backward pass and a jitted
-    optimizer step. {!global_norm} remains the float64 host read for
-    reporting.
+    optimizer step. {!global_norm} remains the float64 host read for reporting.
 
     Raises [Invalid_argument] if [max_norm <= 0.]. *)
 
@@ -254,31 +252,31 @@ val lr : float -> Nx.float32_t
 type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
 (** The state for {!sgd_step}: the momentum velocity, with the shape of the
     parameters, and the number of completed steps as a scalar tensor. Every
-    structural state carries its counter, so a {!Schedule} applies to
-    [st.step] whichever optimizer is stepping. *)
+    structural state carries its counter, so a {!Schedule} applies to [st.step]
+    whichever optimizer is stepping. *)
 
-(** [Sgd_state (P)] is the state over the parameter tree [P] as a parameter
-    tree itself: its [t] is [P.t sgd_state] and its traversals walk the state's
+(** [Sgd_state (P)] is the state over the parameter tree [P] as a parameter tree
+    itself: its [t] is [P.t sgd_state] and its traversals walk the state's
     leaves through [P]. Bind it once per model and embed it in a jitted step's
-    input/output records, whose traversals delegate to it field by field
-    (by hand, or with [ppx_ptree]'s [@@deriving ptree]):
+    input/output records, whose traversals delegate to it field by field (by
+    hand, or with [ppx_ptree]'s [@@deriving ptree]):
 
     {[
-      module Opt = Vega.Sgd_state (Model)
+    module Opt = Vega.Sgd_state (Model)
 
-      module Step_in = struct
-        type t = { params : Model.t; opt : Opt.t; x : Nx.float32_t }
+    module Step_in = struct
+      type t = { params : Model.t; opt : Opt.t; x : Nx.float32_t }
 
-        let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-          { params = Model.map f s.params; opt = Opt.map f s.opt; x = f s.x }
+      let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
+        { params = Model.map f s.params; opt = Opt.map f s.opt; x = f s.x }
 
-        (* map2 and iter: the same one-liners. *)
-      end
+      (* map2 and iter: the same one-liners. *)
+    end
     ]}
 
     The resulting leaf order — every leaf of [velocity], in [P]'s order, then
-    [step] — is part of a compiled step's leaf signature and is fixed for
-    good. *)
+    [step] — is part of a compiled step's leaf signature and is fixed for good.
+*)
 module Sgd_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t sgd_state
 
 val sgd_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p sgd_state
@@ -323,9 +321,9 @@ type 'p adam_state = {
 }
 
 (** [Adam_state (P)] is the state over the parameter tree [P] as a parameter
-    tree itself — see {!Sgd_state}. The leaf order — every leaf of [mu] in
-    [P]'s order, every leaf of [nu], then [step] — is part of a compiled step's
-    leaf signature and is fixed for good. *)
+    tree itself — see {!Sgd_state}. The leaf order — every leaf of [mu] in [P]'s
+    order, every leaf of [nu], then [step] — is part of a compiled step's leaf
+    signature and is fixed for good. *)
 module Adam_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t adam_state
 
 val adam_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
