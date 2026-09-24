@@ -372,8 +372,8 @@ let () =
           test "amd_cdna names match tinygrad" (fun () ->
             equal (list string)
               [
-                "WMMA_16_16_32_float8_e5m2_float";
-                "WMMA_16_16_32_float8_e4m3_float";
+                "WMMA_16_16_32_float8_e5m2fnuz_float";
+                "WMMA_16_16_32_float8_e4m3fnuz_float";
                 "WMMA_16_16_16_half_float";
                 "WMMA_16_16_16___bf16_float";
               ]

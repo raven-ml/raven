@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Use FNUZ FP8 formats on AMD CDNA3 for casts and matrix multiplication,
+  including its 240-value E4M3 saturation limit. CDNA4 keeps OCP formats.
+
 - `Tc.create` derives tensor-core tile geometry from operand fragment layouts
   instead of separate scheduling and swizzle tables. Tensor-core padding now
   preserves contraction masks, and contracted output axes are rejected.

@@ -126,7 +126,8 @@ let amd_cdna_161616 = List.map (fun di -> mfma 16 di Dtype.float32) Dtype.[ Floa
 let amd_cdna_161632 = List.map (fun di -> mfma 32 di Dtype.float32)
     Dtype.[ Fp8e5m2; Fp8e4m3; Float16; Bfloat16 ]
 let amd_cdna_1616128 = List.map (fun di -> mfma 128 di Dtype.float32) Dtype.[ Fp8e5m2; Fp8e4m3 ]
-let amd_cdna3 = take 2 amd_cdna_161632 @ amd_cdna_161616
+let amd_cdna3 = List.map (fun di -> mfma 32 di Dtype.float32)
+    Dtype.[ Fp8e5m2fnuz; Fp8e4m3fnuz ] @ amd_cdna_161616
 let amd_cdna4 = amd_cdna_1616128 @ amd_cdna_161632 @ amd_cdna_161616
 
 let metal = mk

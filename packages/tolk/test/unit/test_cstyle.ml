@@ -1262,7 +1262,7 @@ let () =
             let c = float_vec Dtype.Float32 4 0.0 in
             let info : U.wmma_info =
               {
-                dims = (16, 16, 128);
+                dims = (16, 16, 32);
                 dtype_in = Dtype.Fp8e4m3;
                 device = "AMD";
                 threads = 64;
@@ -1459,6 +1459,51 @@ let () =
               "typedef __bf16 hip_bfloat16;";
             assert_not_contains "amd cdna4 does not typedef ushort hip_bfloat16"
               cdna4_out "typedef unsigned short hip_bfloat16;");
+          test "CDNA FP8 formats follow the hardware encoding" (fun () ->
+            List.iter (fun arch ->
+              let renderer = Cstyle.amd arch in
+              List.iter (fun dtype ->
+                let fnuz = dtype = Dtype.Fp8e4m3fnuz || dtype = Dtype.Fp8e5m2fnuz in
+                let supported = match arch with
+                  | Gpu_target.CDNA3 -> fnuz
+                  | Gpu_target.CDNA4 -> not fnuz
+                  | Gpu_target.RDNA3 | Gpu_target.RDNA4 -> false in
+                equal bool supported (Renderer.supports_dtype renderer dtype))
+                Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz ])
+              [ Gpu_target.RDNA3; Gpu_target.RDNA4; Gpu_target.CDNA3; Gpu_target.CDNA4 ]);
+          test "CDNA3 FNUZ conversion uses its exponent bias and range" (fun () ->
+            List.iter (fun (dtype, name, index) ->
+              let renderer = Cstyle.amd Gpu_target.CDNA3 in
+              let out = render renderer (make_cast ~from_dt:Dtype.float32 ~to_dt:dtype) in
+              assert_contains "FNUZ storage" out ("typedef unsigned char " ^ name ^ ";");
+              assert_contains "FNUZ saturation" out "57344.0f:240.0f";
+              assert_contains "FNUZ cast" out (Printf.sprintf "f32_to_fp8(val0, %d)" index);
+              let out = render renderer (make_cast ~from_dt:dtype ~to_dt:Dtype.float32) in
+              assert_contains "FNUZ decode" out (Printf.sprintf "__builtin_amdgcn_cvt_f32_%s"
+                (if index = 0 then "fp8" else "bf8"));
+              let out = render renderer (make_store_const dtype (Const.float dtype 1.)) in
+              assert_contains "FNUZ constant" out (Printf.sprintf "f32_to_fp8(1.0f, %d)" index))
+              [ Dtype.Fp8e4m3fnuz, "hip_fp8", 0; Dtype.Fp8e5m2fnuz, "hip_bf8", 1 ]);
+          test "CDNA3 FNUZ MFMA uses packed operands" (fun () ->
+            List.iter (fun (dtype, suffix) ->
+              let a = float_vec dtype 8 1. and b = float_vec dtype 8 2. in
+              let c = float_vec Dtype.Float32 4 0. in
+              let info : U.wmma_info = { dims = (16, 16, 32); dtype_in = dtype;
+                device = "AMD"; threads = 64; tc_upcast_axes = Some ([], [], []) } in
+              let renderer = Cstyle.amd Gpu_target.CDNA3 in
+              let wmma = U.wmma ~a ~b ~c ~info ~dtype:Dtype.float32 in
+              (match apply_extra_matcher renderer wmma with
+               | Some node -> (match U.as_wmma node with
+                   | Some v ->
+                       is_true (U.op v.a = Ops.Bitcast && U.op v.b = Ops.Bitcast);
+                       is_true (U.dtype v.a = Dtype.uint64 && U.dtype v.b = Dtype.uint64)
+                   | None -> fail "expected a packed WMMA")
+               | None -> fail "FNUZ operands were not packed");
+              let out = render renderer (make_wmma ~dims:(16, 16, 32)
+                  ~dtype_in:dtype ~dtype_out:Dtype.Float32 ~a_count:8 ~b_count:8 ~c_count:4 ()) in
+              assert_contains "FNUZ MFMA builtin" out
+                ("__builtin_amdgcn_mfma_f32_16x16x32_" ^ suffix ^ "_" ^ suffix))
+              [ Dtype.Fp8e4m3fnuz, "fp8"; Dtype.Fp8e5m2fnuz, "bf8" ]);
           test "cdna fp8 constants use f32_to_fp8 helper" (fun () ->
             let prog =
               make_store_const Dtype.fp8e4m3
@@ -1478,7 +1523,7 @@ let () =
             let prog =
               make_wmma ~dims:(16, 16, 128)
                 ~dtype_in:Dtype.Fp8e4m3 ~dtype_out:Dtype.Float32
-                ~a_count:8 ~b_count:8 ~c_count:4 ()
+                ~a_count:32 ~b_count:32 ~c_count:4 ()
             in
             let out = render (Cstyle.amd Gpu_target.CDNA4) prog in
             assert_contains "amd cdna mfma scale macro" out

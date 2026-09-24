@@ -2247,8 +2247,8 @@ let cuda_language : language =
 
 let amd_type_map : Dtype.t -> string option = function
   | Dtype.Bfloat16 -> Some "hip_bfloat16"
-  | Dtype.Fp8e4m3 -> Some "hip_fp8"
-  | Dtype.Fp8e5m2 -> Some "hip_bf8"
+  | Dtype.Fp8e4m3 | Dtype.Fp8e4m3fnuz -> Some "hip_fp8"
+  | Dtype.Fp8e5m2 | Dtype.Fp8e5m2fnuz -> Some "hip_bf8"
   | _ -> None
 
 let amd_is_cdna = function
@@ -2257,8 +2257,8 @@ let amd_is_cdna = function
 
 let amd_fp8_index dt =
   match dt with
-  | Dtype.Fp8e4m3 -> Some 0
-  | Dtype.Fp8e5m2 -> Some 1
+  | Dtype.Fp8e4m3 | Dtype.Fp8e4m3fnuz -> Some 0
+  | Dtype.Fp8e5m2 | Dtype.Fp8e5m2fnuz -> Some 1
   | _ -> None
 
 let ocml_call name (dt : Dtype.t) x =
@@ -2453,8 +2453,7 @@ let amd_fp8_wmma_bitcast node =
   | Some v
     when Dtype.equal (U.dtype node) Dtype.float32
          && max_numel v.a = 8
-         && (Dtype.equal (U.dtype v.a) Dtype.fp8e4m3
-             || Dtype.equal (U.dtype v.a) Dtype.fp8e5m2) ->
+         && Dtype.is_fp8 (U.dtype v.a) ->
       Some
         (U.wmma
            ~a:(U.bitcast ~src:v.a ~dtype:Dtype.uint64)
@@ -2483,8 +2482,8 @@ let amd_type_map_name = function
   | Dtype.Bfloat16 -> "bf16"
   | Dtype.Float32 -> "f32"
   | Dtype.Float16 -> "f16"
-  | Dtype.Fp8e4m3 -> "_fp8_fp8"
-  | Dtype.Fp8e5m2 -> "_bf8_bf8"
+  | Dtype.Fp8e4m3 | Dtype.Fp8e4m3fnuz -> "_fp8_fp8"
+  | Dtype.Fp8e5m2 | Dtype.Fp8e5m2fnuz -> "_bf8_bf8"
   | scalar -> Dtype.to_string scalar
 
 let amd_cdna_type_map_name dims scalar =
@@ -2575,7 +2574,7 @@ let amd_preamble arch _lang uops =
     if has_used_scalar Dtype.Float16 then [ "#define half _Float16" ] else []
   in
   let fp8_typedefs =
-    if has_used_scalar Dtype.Fp8e4m3 || has_used_scalar Dtype.Fp8e5m2 then
+    if List.exists (fun (dt, _) -> Dtype.is_fp8 dt) used_dtypes then
       [ "typedef unsigned char hip_bf8;"; "typedef unsigned char hip_fp8;" ]
     else []
   in
@@ -2591,11 +2590,12 @@ let amd_preamble arch _lang uops =
           | _ -> false)
         uops
     then
+      let fp8_max = if arch = Gpu_target.CDNA3 then "240.0" else "448.0" in
       [
-        "static inline __attribute__((device)) unsigned char f32_to_fp8(float v, int is_bf8) {\n\
-        \  v = (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:448.0f,is_bf8?-57344.0f:-448.0f) : v;\n\
+        strf "static inline __attribute__((device)) unsigned char f32_to_fp8(float v, int is_bf8) {\n\
+        \  v = (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:%sf,is_bf8?-57344.0f:-%sf) : v;\n\
         \  return (unsigned char)(is_bf8?__builtin_amdgcn_cvt_pk_bf8_f32(v,v,0,false):__builtin_amdgcn_cvt_pk_fp8_f32(v,v,0,false));\n\
-         }";
+         }" fp8_max fp8_max;
       ]
     else []
   in
@@ -2744,7 +2744,7 @@ let supports_amd_dtype arch dt =
       match arch with
       | Gpu_target.CDNA4 -> true
       | Gpu_target.RDNA3 | Gpu_target.RDNA4 | Gpu_target.CDNA3 -> false)
-  | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> false
+  | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> arch = Gpu_target.CDNA3
   | _ -> true
 
 let clang_no_abi ?(native_bf16 = true) arch =
