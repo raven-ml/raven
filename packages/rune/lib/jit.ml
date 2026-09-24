@@ -251,10 +251,14 @@ let release_entry e =
       e.r_bufs <- [];
       Hashtbl.remove resident e.r_id;
       account e (-1);
-      (* Deallocation returns each buffer to its device's LRU pool. A base
-         buffer with a still-allocated transient view (a kernel-argument slice
-         not yet collected) cannot be deallocated; those are reclaimed by the
-         buffer's own GC finalizer instead. *)
+      (* Deallocation returns each buffer to its device's LRU pool, where only
+         work queued after the kernels that use it can take it. A placed
+         value's buffer bypasses the pool and returns to the system, so the
+         work that may still read it is awaited first. A base buffer with a
+         still-allocated transient view (a kernel-argument slice not yet
+         collected) cannot be deallocated; those are reclaimed by the buffer's
+         own GC finalizer instead. *)
+      if e.r_placed then List.iter Tolk.Device.synchronize e.r_devices;
       List.iter
         (fun buf ->
           try Tolk.Device.Buffer.deallocate buf with Invalid_argument _ -> ())
@@ -3674,13 +3678,16 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
                    (Tolk.Device.Multi_buffer.bufs m))
         end)
       c.cp_outputs;
-  (* Wrapped buffers alias caller memory (seeded inputs and wrapped captures):
-     wait for in-flight kernels before reading results or letting the caller
-     touch the inputs again, and keep the aliased memory reachable until
-     then. *)
+  (* The call returns while its kernels may still run. An output is a handle
+     whose first read waits for the device, and a buffer released below goes
+     back to the device's pool, where only work queued after these kernels
+     can take it. Two programs still wait here. On the zero-copy device the
+     outputs are host tensors the kernels write in place, and wrapped buffers
+     alias caller memory (seeded inputs and wrapped captures) that the caller
+     may touch as soon as the call returns. A pmap waits too. *)
   (match c.cp_multi with
   | Some spec -> List.iter Tolk.Device.synchronize spec.md_devs
-  | None -> Tolk.Device.synchronize c.cp_device);
+  | None -> if c.cp_zero_copy then Tolk.Device.synchronize c.cp_device);
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_wrapped);
   ignore (Sys.opaque_identity c.cp_bound);
@@ -3739,11 +3746,11 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
         | None -> assert false)
       c.cp_skeleton
   in
-  (* Consumption. The devices have synchronized, so the storage of each
-     consumed input that seeded from a resident entry is either owned by an
-     output handle now (a claimed entry: its storage moved) or returned to the
-     allocator so the next call's fresh outputs reuse it. The handle becomes
-     Donated — forcing it now raises. *)
+  (* Consumption. The storage of each consumed input that seeded from a
+     resident entry is either owned by an output handle now (a claimed entry:
+     its storage moved) or returned to the allocator, where the next call's
+     fresh outputs reuse it in queue order, after the kernels of this call.
+     The handle becomes Donated — forcing it now raises. *)
   Hashtbl.iter (fun _ e -> transfer_entry e) claims;
   List.iter
     (fun e ->

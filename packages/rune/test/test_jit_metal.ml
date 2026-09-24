@@ -200,6 +200,81 @@ let test_step_reads_weights_consumes_state () =
   raises_donated (fun () -> to_arr x1);
   check_arr ~msg:"the weights are readable" (to_arr w1) w
 
+(* A call returns while its kernels may still run; a read waits for them. *)
+let test_read_after_call_waits () =
+  let n = 512 in
+  let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
+  let g = Rune.jit' ~device:"METAL" f in
+  let x =
+    Nx.create f32 [| n; n |]
+      (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
+  in
+  check_arr ~eps:1e-2 ~msg:"right after one call" (to_arr (f x)) (g x);
+  let step =
+    Rune.jit' ~device:"METAL" (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
+  in
+  let h = ref (Rune.to_device ~device:"METAL" (vec32 (Array.make 4096 0.0))) in
+  for _ = 1 to 50 do
+    h := step !h
+  done;
+  let expected = 2.0 -. (2.0 *. (0.5 ** 50.0)) in
+  check_arr ~eps:1e-6 ~msg:"after fifty unread calls" (Array.make 4096 expected)
+    !h
+
+module Pair = struct
+  type t = { u : Nx.float32_t; v : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
+    { u = f p.u; v = f p.v }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { u = f p.u q.u; v = f p.v q.v }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
+    f p.u;
+    f p.v
+end
+
+(* Two programs take turns on one consumed state, with no wait between their
+   calls: each consumed buffer is reused only by work queued after the kernels
+   that read it. *)
+let test_two_programs_alternate () =
+  let n = 64 in
+  let mix (p : Pair.t) =
+    let a = Nx.tanh (Nx.matmul p.u p.v) in
+    let scale = Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0 in
+    {
+      Pair.u = Nx.add p.u (Nx.div a scale);
+      v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
+    }
+  in
+  let fold (p : Pair.t) =
+    let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
+    let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
+    { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
+  in
+  let compile f =
+    Rune.jit_step ~device:"METAL"
+      (module Nx.Ptree)
+      (module Pair)
+      (fun _ p -> f p)
+      (Nx.Ptree.list [])
+  in
+  let mix' = compile mix and fold' = compile fold in
+  let init k =
+    Nx.create f32 [| n; n |]
+      (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1)) /. 8.0))
+  in
+  let p = { Pair.u = init 3; v = init 7 } in
+  let e = ref p and h = ref p in
+  for i = 1 to 12 do
+    let f, f' = if i mod 2 = 0 then (fold, fold') else (mix, mix') in
+    e := f !e;
+    h := f' !h
+  done;
+  check_arr ~eps:1e-3 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
+  check_arr ~eps:1e-3 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v
+
 let test_capture_resident_elsewhere () =
   Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
   Fun.protect
@@ -266,6 +341,9 @@ let tests =
           test_graph_batched_replay;
         test "a recorded graph is released with its function"
           test_graph_released_with_its_function;
+        test "a read after a call waits for it" test_read_after_call_waits;
+        test "two programs alternate on one consumed state"
+          test_two_programs_alternate;
       ];
     group "placed weights"
       [

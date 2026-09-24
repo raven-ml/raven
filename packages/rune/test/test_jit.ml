@@ -1495,6 +1495,52 @@ let test_dropped_handles_are_reclaimed () =
       is_true ~msg:"resident bytes are bounded after gc"
         (s.resident_bytes - base <= 3 * n * 4))
 
+(* A call returns while its kernels may still run. A read waits for them: right
+   after one call, and after a chain of unread calls. *)
+let test_read_after_call_waits () =
+  with_force_copy (fun () ->
+      let n = 256 in
+      let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
+      let g = Rune.jit' f in
+      let x =
+        Nx.create f32 [| n; n |]
+          (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
+      in
+      check_arr ~eps:1e-3 ~msg:"right after one call" (to_arr (f x)) (g x);
+      let step = Rune.jit' (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0) in
+      let h = ref (Rune.to_device (vec32 (Array.make 4096 0.0))) in
+      for _ = 1 to 50 do
+        h := step !h
+      done;
+      let expected = 2.0 -. (2.0 *. (0.5 ** 50.0)) in
+      check_arr ~eps:1e-6 ~msg:"after fifty unread calls"
+        (Array.make 4096 expected) !h)
+
+(* Not inlined: once it returns, only the queued kernels use the placed
+   input. *)
+let[@inline never] run_on_a_dropped_input g data n =
+  g (Rune.to_device (Nx.create f32 [| n; n |] data))
+
+(* A placed input dropped while the kernels that read it are queued returns to
+   the system only once they have run: the first result is intact after a value
+   of the same size is placed, which may take the dropped input's memory. *)
+let test_buffer_freed_under_a_running_kernel () =
+  with_force_copy (fun () ->
+      let n = 384 in
+      let data = Array.init (n * n) (fun i -> float_of_int (i mod 7) /. 7.0) in
+      let f x = Nx.matmul (Nx.tanh (Nx.matmul x x)) x in
+      let expected = to_arr (f (Nx.create f32 [| n; n |] data)) in
+      let g = Rune.jit' f in
+      ignore (to_arr (g (Nx.create f32 [| n; n |] data)));
+      let noise = Nx.create f32 [| n; n |] (Array.make (n * n) 1e9) in
+      for _ = 1 to 4 do
+        let y = run_on_a_dropped_input g data n in
+        Gc.full_major ();
+        let z = Rune.to_device noise in
+        check_arr ~eps:1e-2 ~msg:"the first result" expected y;
+        ignore (to_arr z)
+      done)
+
 (* Traced values carry no storage. OCaml counts a bigarray's bytes towards the
    major collector's pace even when its pages are never touched, so a
    placeholder with a buffer costs a slice of major collection per traced
@@ -2547,6 +2593,9 @@ let tests =
         test "captures upload once across signatures"
           test_capture_uploaded_once_across_signatures;
         test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
+        test "a read after a call waits for it" test_read_after_call_waits;
+        test "a buffer freed under a running kernel is not reused"
+          test_buffer_freed_under_a_running_kernel;
       ];
     group "donation"
       [

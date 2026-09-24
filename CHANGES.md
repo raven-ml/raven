@@ -107,6 +107,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled call on a GPU returns without waiting for its kernels; reads wait.
+  Twenty-six chained small calls on Metal take 2.9 ms instead of 10.8 ms.
 - Add `Rune.jit_step`: it reads its first argument and consumes and returns its
   state. `?donate` leaves `jit`, `jit2` and `jit'`: `jit2 ~donate:true` becomes
   `jit_step (module Nx.Ptree) (module S) f` applied to `Nx.Ptree.list []`.
