@@ -8,7 +8,8 @@
    fold over the blocks, [cached], that threads key-value caches along a cache
    index, [hidden], which is [cached] over a cache index that keeps nothing, and
    [logits] applied to either. The tests are the laws a model written this way
-   must satisfy, each run eagerly and through a compiled, donated step. *)
+   must satisfy, each run eagerly and through a compiled step that consumes its
+   caches. *)
 
 open Windtrap
 open Kaun
@@ -150,44 +151,19 @@ let close ~msg expected actual =
 let finite ~msg t = is_true ~msg (Array.for_all Float.is_finite (flat t))
 
 (* One call, eagerly or through a compiled step that reads the tokens and the
-   index and consumes the caches. The step's state carries the stream it returns
-   beside them; the stream it is given is a placeholder. *)
-
-type query = { tokens : Nx.int32_t; index : Cache_index.t }
-
-type result = {
-  stream : Nx.float32_t;
-  written : Nx.float32_t Attention.Cache.t list;
-}
-
-let query =
-  Nx.Ptree.(
-    iso
-      (fun (tokens, index) -> { tokens; index })
-      (fun { tokens; index } -> (tokens, index))
-      (pair tensor Cache_index.ptree))
-
-let result =
-  Nx.Ptree.(
-    iso
-      (fun (stream, written) -> { stream; written })
-      (fun { stream; written } -> (stream, written))
-      (pair tensor caches))
+   index, consumes the caches, and returns the stream beside them. *)
 
 let eager m caches index tokens = cached m caches index tokens
 
 let compiled m =
   let step =
-    Rune.jit_step query result (fun { tokens; index } { written; stream = _ } ->
-        let stream, written = cached m written index tokens in
-        { stream; written })
+    Rune.jit
+      Nx.Ptree.(
+        tensor @-> Cache_index.ptree @-> consumes caches
+        @@ returns (pair tensor caches))
+      (fun tokens index caches -> cached m caches index tokens)
   in
-  fun caches index tokens ->
-    let placeholder = Nx.zeros Nx.float32 [| 1 |] in
-    let { stream; written } =
-      step { tokens; index } { stream = placeholder; written = caches }
-    in
-    (stream, written)
+  fun caches index tokens -> step tokens index caches
 
 (* Every law below holds for both. *)
 let both name f =
@@ -195,7 +171,7 @@ let both name f =
     test (name ^ ", eager") (fun () ->
         let m = model () in
         f m (eager m));
-    test (name ^ ", compiled and donated") (fun () ->
+    test (name ^ ", compiled and consuming its caches") (fun () ->
         let m = model () in
         f m (compiled m));
   ]
@@ -397,23 +373,10 @@ let test_empty_lane m call =
   in
   finite ~msg:"a call of padding alone is finite" h'
 
-(* Greedy generation through a compiled step that consumes its state equals
+(* Greedy generation through a compiled step that consumes its caches equals
    re-running the whole sequence for every token, and every cache leaf is
-   written in its own storage. *)
-
-type state = {
-  token : Nx.int32_t;
-  scores : Nx.float32_t; (* the logits [token] was taken from *)
-  index : Cache_index.t;
-  kv : Nx.float32_t Attention.Cache.t list;
-}
-
-let state =
-  Nx.Ptree.(
-    iso
-      (fun ((token, scores), (index, kv)) -> { token; scores; index; kv })
-      (fun { token; scores; index; kv } -> ((token, scores), (index, kv)))
-      (pair (pair tensor tensor) (pair Cache_index.ptree caches)))
+   written in its own storage. The sampled token and the logits it was taken
+   from are results beside the caches. *)
 
 (* On CPU:1, a device with storage of its own, the cache stays on the device and
    each step writes it in place. *)
@@ -435,41 +398,33 @@ let test_generation_matches_recomputation () =
         seq := !seq @ [ next ];
         (next, scores))
   in
-  let step { token; index; kv; scores = _ } =
-    let seq = Nx.dim 1 token in
-    let h, kv = cached m kv index token in
-    let scores = logits m (Nx.slice [ A; I (seq - 1) ] h) in
-    {
-      token = Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 scores);
-      scores;
-      index = Cache_index.advance index;
-      kv;
-    }
-  in
   let step =
-    Rune.jit_step ~device:"CPU:1" Nx.Ptree.unit state (fun () s -> step s) ()
+    Rune.jit
+      ~devices:[ Rune.device "CPU:1" ]
+      Nx.Ptree.(
+        tensor @-> Cache_index.ptree @-> consumes caches
+        @@ returns (pair (pair tensor tensor) caches))
+      (fun token index kv ->
+        let seq = Nx.dim 1 token in
+        let h, kv = cached m kv index token in
+        let scores = logits m (Nx.slice [ A; I (seq - 1) ] h) in
+        ((Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 scores), scores), kv))
   in
   let context = Array.length start + steps in
-  let s =
-    ref
-      (step
-         {
-           token = ids [| start |];
-           scores = Nx.zeros Nx.float32 [| 1; vocab |];
-           index = Cache_index.rows ~context [| Array.length start |];
-           kv = cache ~slots:context;
-         })
-  in
+  let index = ref (Cache_index.rows ~context [| Array.length start |]) in
+  let s = ref (step (ids [| start |]) !index (cache ~slots:context)) in
+  let sampled () = fst (fst !s) and sampled_from () = snd (fst !s) in
   let leaves = 2 * layers * (context + 1) * kv_dim * 4 in
   List.iteri
     (fun i (next, scores) ->
       let msg = Printf.sprintf "step %d" i in
-      close ~msg:(msg ^ ", logits") scores !s.scores;
+      close ~msg:(msg ^ ", logits") scores (sampled_from ());
       equal ~msg:(msg ^ ", token") int next
-        (Int32.to_int (Nx.item [ 0; 0 ] !s.token));
+        (Int32.to_int (Nx.item [ 0; 0 ] (sampled ())));
       if i < steps - 1 then begin
         let before = (Rune.jit_stats ()).reused_bytes in
-        s := step !s;
+        index := Cache_index.advance !index;
+        s := step (sampled ()) !index (snd !s);
         is_true
           ~msg:(msg ^ ", every cache leaf is written in its own storage")
           ((Rune.jit_stats ()).reused_bytes - before >= leaves)
@@ -538,6 +493,8 @@ let () =
                  Rune.grad model_ptree loss));
           test "a fully padded row, compiled"
             (test_gradient_with_a_padded_row (fun loss ->
-                 Rune.jit2 model_ptree model_ptree (Rune.grad model_ptree loss)));
+                 Rune.jit
+                   Nx.Ptree.(model_ptree @-> returns model_ptree)
+                   (Rune.grad model_ptree loss)));
         ];
     ]

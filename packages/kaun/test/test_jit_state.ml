@@ -8,22 +8,21 @@
 
    This is the regression suite for Vega's jit ergonomics: the optimizer state
    is a structure over the model's ([Vega.adam_ptree model]) sitting as one
-   field of the step's input and output records, and the learning rate derives
-   inside the step from the schedule applied to the state's own counter. The
-   step records are adapted from pairs of the fields' structures with
-   [Nx.Ptree.iso]. The counter is a tensor leaf advanced inside the compiled
-   program, so the jitted trajectory matches the eager one and the counter reads
-   [n] after [n] compiled calls — a host-int counter would burn the step into
-   the trace and replay it stale. A [pmap2] run with the state replicated
-   matches the single-device one.
+   field of the step's state, a record walked with [Nx.Ptree.Walk.structure],
+   and the learning rate derives inside the step from the schedule applied to
+   the state's own counter. The counter is a tensor leaf advanced inside the
+   compiled program, so the jitted trajectory matches the eager one and the
+   counter reads [n] after [n] compiled calls — a host-int counter would burn
+   the step into the trace and replay it stale. A [pmap] run with the state
+   replicated and the batch split matches the single-device one.
 
    Deterministic init (no RNG) so every run sees identical weights and data. *)
 
 open Windtrap
 open Kaun
 
-let dev = "CPU"
-let devs2 = [ "CPU:1"; "CPU:2" ]
+let dev = Rune.device "CPU"
+let devs2 = [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
 let batch = 8
 let inputs = 8
 let hidden = 16
@@ -46,34 +45,26 @@ type model = Nx.float32_t Mlp.t
 
 let model : model Nx.Ptree.t = Nx.Ptree.instantiate (module Mlp)
 
-(* The step records: parameters, the optimizer state, the batch. *)
+(* The step's state: the parameters and the optimizer state, at paths
+   [params.l1.w] and [opt.mu.l1.w]. *)
 
-module Step_in = struct
-  type t = {
-    params : model;
-    opt : model Vega.adam_state;
-    x : Nx.float32_t;
-    y : Nx.float32_t;
-  }
+module State = struct
+  type state = { params : model; opt : model Vega.adam_state }
+  type _ t = state
 
-  let ptree =
-    Nx.Ptree.(
-      iso
-        (fun ((params, opt), (x, y)) -> { params; opt; x; y })
-        (fun { params; opt; x; y } -> ((params, opt), (x, y)))
-        (pair (pair model (Vega.adam_ptree model)) (pair tensor tensor)))
+  let walk c { params; opt } =
+    let open Nx.Ptree.Walk in
+    let params = field c "params" (structure model) params in
+    let opt = field c "opt" (structure (Vega.adam_ptree model)) opt in
+    { params; opt }
 end
 
-module Step_out = struct
-  type t = { params : model; opt : model Vega.adam_state; loss : Nx.float32_t }
+let state = Nx.Ptree.instantiate (module State)
 
-  let ptree =
-    Nx.Ptree.(
-      iso
-        (fun ((params, opt), loss) -> { params; opt; loss })
-        (fun { params; opt; loss } -> ((params, opt), loss))
-        (pair (pair model (Vega.adam_ptree model)) tensor))
-end
+(* A step reads the state and the batch, and returns the next state and the
+   loss. *)
+let step_signature =
+  Nx.Ptree.(state @-> tensor @-> tensor @-> returns (pair state tensor))
 
 let fill i n =
   Array.init n (fun j -> sin (float_of_int ((i * 7919) + j)) *. 0.3)
@@ -96,25 +87,24 @@ let sched = Vega.Schedule.cosine_decay ~init_value:0.05 ~decay_steps:64 ()
 
 (* One training step: value_and_grad, gradient clipping, a scheduled learning
    rate derived from the state's counter, one Adam update. Run eagerly and,
-   through [Rune.jit2], compiled. *)
-let train_step { Step_in.params; opt; x; y } =
+   through [Rune.jit], compiled. *)
+let train_step { State.params; opt } x y =
   let loss, grads = Rune.value_and_grad model (loss_fn x y) params in
   let grads = Vega.clip_by_global_norm model ~max_norm:2.0 grads in
   let params, opt =
     Vega.adam_step model ~lr:(sched opt.step) opt ~params ~grads
   in
-  { Step_out.params; opt; loss }
+  ({ State.params; opt }, loss)
 
 let init () =
   let params = model_init () in
-  let opt = Vega.adam_init model params in
-  let x, y = data_init () in
-  { Step_in.params; opt; x; y }
+  { State.params; opt = Vega.adam_init model params }
 
 let advance step0 s =
-  let out = step0 !s in
-  s := { !s with Step_in.params = out.Step_out.params; opt = out.Step_out.opt };
-  (Nx.item [] out.Step_out.loss, out.Step_out.params)
+  let x, y = data_init () in
+  let next, loss = step0 !s x y in
+  s := next;
+  (Nx.item [] loss, next.State.params)
 
 let run_traj ~step0 n s0 =
   let s = ref s0 in
@@ -151,18 +141,18 @@ let test_jit_matches_eager () =
   let eager = run_traj ~step0:train_step steps (init ()) in
   let compiled =
     run_traj
-      ~step0:(Rune.jit2 ~device:dev Step_in.ptree Step_out.ptree train_step)
+      ~step0:(Rune.jit ~devices:[ dev ] step_signature train_step)
       steps (init ())
   in
   check_trajectory ~msg:"jit adam" 1e-6 eager compiled
 
 let test_state_advances_across_compiled_calls () =
-  let jitted = Rune.jit2 ~device:dev Step_in.ptree Step_out.ptree train_step in
+  let jitted = Rune.jit ~devices:[ dev ] step_signature train_step in
   let s = ref (init ()) in
   for _ = 1 to steps do
     ignore (advance jitted s)
   done;
-  let opt = !s.Step_in.opt in
+  let opt = !s.State.opt in
   equal ~msg:"counter reads n after n calls" int steps
     (Int32.to_int (Nx.item [] opt.step));
   (* The moments are not zero: the state genuinely updates. *)
@@ -182,75 +172,55 @@ let test_state_advances_across_compiled_calls () =
 let test_pmap_matches_jit () =
   let jit =
     run_traj
-      ~step0:(Rune.jit2 ~device:dev Step_in.ptree Step_out.ptree train_step)
+      ~step0:(Rune.jit ~devices:[ dev ] step_signature train_step)
       steps (init ())
   in
-  (* Everything replicated except the batch, sharded on axis 0. *)
-  let in_axes s =
-    let n = Nx.Ptree.fold Step_in.ptree (fun _ _ n -> n + 1) s 0 in
-    List.init (n - 2) (fun _ -> None) @ [ Some 0; Some 0 ]
-  in
+  (* The state replicated, the batch split on axis 0. *)
   let pmapped =
     run_traj
       ~step0:
-        (Rune.pmap2 ~devices:devs2
-           ~in_axes:(in_axes (init ()))
-           Step_in.ptree Step_out.ptree train_step)
+        (Rune.pmap ~devices:devs2 ~in_axes:[ None; Some 0; Some 0 ]
+           step_signature train_step)
       steps (init ())
   in
   check_trajectory ~msg:"pmap adam" 1e-5 jit pmapped
 
-(* L-BFGS at a fixed rate. Its state carries the point, so the step's input is
-   the state plus the batch and its output the state itself; the objective
-   evaluates inside the step, as [train_step]'s does. *)
+(* L-BFGS at a fixed rate. Its state carries the point, so the step reads the
+   state and the batch and returns the state itself; the objective evaluates
+   inside the step, as [train_step]'s does. *)
 
 let lopt : (model, Nx.float32_elt) Vega.lbfgs_state Nx.Ptree.t =
   Vega.lbfgs_ptree model
 
-module Lbfgs_in = struct
-  type t = {
-    st : (model, Nx.float32_elt) Vega.lbfgs_state;
-    x : Nx.float32_t;
-    y : Nx.float32_t;
-  }
+let lbfgs_signature = Nx.Ptree.(lopt @-> tensor @-> tensor @-> returns lopt)
 
-  let ptree =
-    Nx.Ptree.(
-      iso
-        (fun (st, (x, y)) -> { st; x; y })
-        (fun { st; x; y } -> (st, (x, y)))
-        (pair lopt (pair tensor tensor)))
-end
-
-let lbfgs_step { Lbfgs_in.st; x; y } =
+let lbfgs_step st x y =
   Vega.lbfgs_step model ~lr:(Vega.lr 0.1)
     (Rune.value_and_grad model (loss_fn x y))
     st
 
 let lbfgs_init () =
   let x, y = data_init () in
-  let st =
-    Vega.lbfgs_init model ~history:4
-      (Rune.value_and_grad model (loss_fn x y))
-      (model_init ())
-  in
-  { Lbfgs_in.st; x; y }
+  Vega.lbfgs_init model ~history:4
+    (Rune.value_and_grad model (loss_fn x y))
+    (model_init ())
 
 let run_lbfgs ~step0 n s0 =
+  let x, y = data_init () in
   let s = ref s0 in
   let traj =
     Array.init n (fun _ ->
-        let st = step0 !s in
-        s := { !s with Lbfgs_in.st };
+        let (st : (model, Nx.float32_elt) Vega.lbfgs_state) = step0 !s x y in
+        s := st;
         (Nx.item [] st.value, st.params))
   in
-  (traj, !s.Lbfgs_in.st)
+  (traj, !s)
 
 let test_lbfgs_jit_matches_eager () =
   let eager, _ = run_lbfgs ~step0:lbfgs_step steps (lbfgs_init ()) in
   let compiled, st =
     run_lbfgs
-      ~step0:(Rune.jit2 ~device:dev Lbfgs_in.ptree lopt lbfgs_step)
+      ~step0:(Rune.jit ~devices:[ dev ] lbfgs_signature lbfgs_step)
       steps (lbfgs_init ())
   in
   check_trajectory ~msg:"jit lbfgs" 1e-5 eager compiled;
@@ -266,13 +236,14 @@ let test_lbfgs_jit_matches_eager () =
    to pick its trials: jit must refuse it loudly at trace time rather than
    compile a trace that replays the first search's decisions. *)
 let test_lbfgs_line_search_does_not_trace () =
-  let searching { Lbfgs_in.st; x; y } =
+  let searching st x y =
     Vega.lbfgs_step model (Rune.value_and_grad model (loss_fn x y)) st
   in
-  let jitted = Rune.jit2 ~device:dev Lbfgs_in.ptree lopt searching in
+  let jitted = Rune.jit ~devices:[ dev ] lbfgs_signature searching in
+  let x, y = data_init () in
   raises_match
     (function Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> jitted (lbfgs_init ()))
+    (fun () -> jitted (lbfgs_init ()) x y)
 
 let tests =
   [

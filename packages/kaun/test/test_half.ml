@@ -347,7 +347,7 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
 (* ───── Jitted float16 training with loss scaling ─────
 
    A least-squares fit at float16 compute with float32 master weights, compiled
-   once with [Rune.jit2]. The loss-scale state and the batch ride the step's
+   once with [Rune.jit]. The loss-scale state and the batch ride the step's
    input structure, so the dynamic scale must really change across compiled
    calls (a captured scale would be a trace-time constant) and a poisoned batch
    must be skippable without recompiling. *)
@@ -373,7 +373,10 @@ let test_f16_train_loss_scaled () =
   let x = mat f32 4 2 [| 1.0; 0.5; -0.5; 1.0; 0.25; -1.0; -1.0; -0.25 |] in
   let y = Nx.matmul x (mat f32 2 1 [| 1.5; -0.5 |]) in
   let step =
-    Rune.jit2 ~device:"CPU" fit_in fit_out (fun ({ w; x; ls } : fit_in) ->
+    Rune.jit
+      ~devices:[ Rune.device "CPU" ]
+      Nx.Ptree.(fit_in @-> returns fit_out)
+      (fun ({ w; x; ls } : fit_in) ->
         let objective w =
           let pred = Nx.matmul (Nx.cast f16 x) (Nx.cast f16 w) in
           let loss = Nx.cast f32 (Loss.mse pred (Nx.cast f16 y)) in
