@@ -6,9 +6,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 ## Reference and coverage
 
-- Reconcile the main implementation base with the audited `gpt-oss` branch:
-  review its correctness fixes, twelve additional parity cases and external
-  host-buffer alignment control. Port applicable fixes and coverage explicitly.
 - Migrate every Python reference driver to the target API and generate the
   complete corpus separately. Attribute every changed expectation to its owner;
   require exact source parity for supported renderers.
@@ -106,6 +103,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   random generation and fresh-storage clone/random/dropout behavior.
 - Revalidate scan, scatter and external-buffer contracts under the new call
   and storage protocol.
+- Review the audited Rune residency, uploads, memory planning and symbolic
+  placeholders against the final storage/call protocol. Carry applicable
+  correctness and lifetime regressions into consumer validation.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and AMD
   custom-kernel changes against actual Rune/Kaun consumers. Port applicable
   correctness fixes and measure accelerator candidates on supported hardware.

@@ -73,8 +73,8 @@ delete it rather than registering it.
 - **`split_reduceop` leaves a one-hot sum whole** (`schedule/rangeify.ml`
   `is_one_hot_sum`). The reference splits any reduce whose input is 32768
   times its output, in the tensor graph, and collapses a gather's one-hot
-  reduce to a gated load later, per kernel. At 32768 rows and up the split
-  wins: the sum becomes 256 chunk sums behind a `contiguous`, each collapsing
+  reduce to a gated load later, per kernel. For the 65536-row regression, the
+  sum becomes 256 chunk sums behind a `contiguous`, each collapsing
   to a load gated on its chunk, and a second kernel adds the 256 slots, so an
   element costs 256 gated loads, an intermediate 256 times the output and two
   kernels where one load would do. tolk
