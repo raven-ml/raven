@@ -695,6 +695,13 @@ let test_placed_view_keeps_nan_bits () =
     (Nx.to_array (Nx.transpose bits))
     (Nx.to_array (Nx.bitcast Nx.int32 (Nx.transpose placed)))
 
+(* Metal sorts key and position packed in one int64, as the CPU does. *)
+let test_sort_matches_eager () =
+  let pieces = [ ([| 2; 513; 3 |], 1); ([| 32_768 |], 0) ] in
+  check_sort_pieces f32 pieces Nx.float32;
+  check_sort_pieces f32 pieces Nx.bfloat16;
+  check_sort_pieces f32 pieces Nx.int32
+
 let tests =
   [
     group "metal device"
@@ -709,6 +716,7 @@ let tests =
           (check_top_k_long_row ~device:"METAL");
         slow "top_k selects on the GPU what it selects eagerly"
           test_top_k_on_metal;
+        slow "sort matches eager" test_sort_matches_eager;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
           test_graph_batched_replay;

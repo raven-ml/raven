@@ -500,3 +500,93 @@ let check_top_k_long_row ?device () =
   equal ~msg:"eager" (array int32) expected (Nx.to_array (f x));
   equal ~msg:"compiled" (array int32) expected
     (Nx.to_array (Rune.jit' ?device f x))
+
+(* Sorting *)
+
+(* [n] entries of [dtype] in runs of equal values, with NaN, both zeros and,
+   when [infinities], both infinities for a float dtype, and the extremes for an
+   integer one. *)
+let sort_input (type a b) ?(infinities = true) (dtype : (a, b) Nx.dtype) n :
+    (a, b) Nx.t =
+  let is_float = Nx_core.Dtype.is_float dtype in
+  let x =
+    Nx.cast dtype
+      (Nx.create f64 [| n |]
+         (Array.init n (fun i ->
+              match i mod 17 with
+              | 3 when is_float -> Float.nan
+              | 5 when is_float && infinities -> Float.infinity
+              | 8 when is_float && infinities -> Float.neg_infinity
+              | 11 when is_float -> -0.
+              | 13 when is_float -> 0.
+              | _ when is_float -> float_of_int ((i * 7 mod 13) - 6) /. 4.
+              | _ -> float_of_int (i * 7 mod 13))))
+  in
+  if is_float then x
+  else
+    let at r =
+      Nx.create Nx.bool [| n |] (Array.init n (fun i -> i mod 17 = r))
+    in
+    let full v = Nx.full dtype [| n |] v in
+    Nx.where (at 3)
+      (full (Nx_core.Dtype.max_value dtype))
+      (Nx.where (at 8) (full (Nx_core.Dtype.min_value dtype)) x)
+
+(* One vector cut into [pieces], each a shape sorted along an axis in both
+   directions, so that one compiled program covers every case of a dtype. The
+   result concatenates, for each piece and direction, the sorted values and then
+   the indices, as [out]. *)
+let sort_pieces out pieces x =
+  let offset = ref 0 in
+  Nx.concatenate ~axis:0
+    (List.concat_map
+       (fun (shape, axis) ->
+         let size = Array.fold_left ( * ) 1 shape in
+         let piece =
+           Nx.reshape shape (Nx.shrink [| (!offset, !offset + size) |] x)
+         in
+         offset := !offset + size;
+         List.concat_map
+           (fun descending ->
+             let values, indices = Nx.sort ~descending ~axis piece in
+             [
+               Nx.flatten (Nx.cast out values); Nx.flatten (Nx.cast out indices);
+             ])
+           [ false; true ])
+       pieces)
+
+(* Compiled [sort_pieces] of a [sort_input] against eager, segment by segment. A
+   zero compares without its sign: compiled sorted values give +0 where eager
+   may give -0, and eager's sorted values are not stable across signed zeros. *)
+let check_sort_pieces (type a b) ?infinities out pieces
+    (dtype : (a, b) Nx.dtype) =
+  let size shape = Array.fold_left ( * ) 1 shape in
+  let total = List.fold_left (fun acc (s, _) -> acc + size s) 0 pieces in
+  let x = sort_input ?infinities dtype total in
+  let unsigned_zero v = if v = 0. then 0. else v in
+  let expected = Array.map unsigned_zero (to_arr (sort_pieces out pieces x)) in
+  let actual =
+    Array.map unsigned_zero (to_arr (Rune.jit' (sort_pieces out pieces) x))
+  in
+  let at = ref 0 in
+  List.iter
+    (fun (shape, axis) ->
+      List.iter
+        (fun segment ->
+          let msg =
+            Format.asprintf "%a, [%s] along %d, %s" Nx.pp_dtype dtype
+              (String.concat "; "
+                 (Array.to_list (Array.map string_of_int shape)))
+              axis segment
+          in
+          check_arr ~eps:0. ~msg
+            (Array.sub expected !at (size shape))
+            (vec64 (Array.sub actual !at (size shape)));
+          at := !at + size shape)
+        [
+          "ascending values";
+          "ascending indices";
+          "descending values";
+          "descending indices";
+        ])
+    pieces

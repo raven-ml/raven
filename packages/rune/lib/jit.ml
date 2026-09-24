@@ -736,21 +736,21 @@ let nan_from_first ~axis t scanned =
     (F.Creation.const_like scanned (F.Tensor.Sfloat Float.nan))
     scanned
 
-(* [x] sorted along [dim], and the stable positions that sort it. Tolk's sort
-   network keeps the smaller or larger operand by comparison, which a NaN never
-   wins, and it recovers positions by matching values for equality, which a NaN
-   never satisfies. A float axis sorts integers of its width in the same order
-   instead: its bits, with a negative value's magnitude bits flipped so that the
-   larger float is the larger integer, -0 read as +0, and NaN past every number
-   in either direction. The -0 test compares bits: a float comparison may flush
-   subnormals to zero. An 8-bit float sorts as its float16 widening: where it is
-   emulated, its bits are re-encoded from a wider value, which saturates
-   infinities. The widening is exact except that an emulated 8-bit float reads
-   its subnormals as zero, as every compiled 8-bit float operation does. The
-   sorted integers map back to the values. *)
-let sort_graph ~dim ~descending x =
+(* Integers that order like [x], and the map from sorted integers back to
+   values. Tolk's sort network keeps the smaller or larger operand by
+   comparison, which a NaN never wins, and it recovers positions by matching
+   values for equality, which a NaN never satisfies. A float axis sorts integers
+   of its width in the same order instead: its bits, with a negative value's
+   magnitude bits flipped so that the larger float is the larger integer, -0
+   read as +0, and NaN past every number in either direction. The -0 test
+   compares bits: a float comparison may flush subnormals to zero. An 8-bit
+   float sorts as its float16 widening: where it is emulated, its bits are
+   re-encoded from a wider value, which saturates infinities. The widening is
+   exact except that an emulated 8-bit float reads its subnormals as zero, as
+   every compiled 8-bit float operation does. *)
+let order_keys ~descending x =
   let dtype = F.Tensor.dtype x in
-  if not (TD.is_float dtype) then F.Op.sort ~dim ~descending x
+  if not (TD.is_float dtype) then (x, Fun.id)
   else
     let open F.Elementwise in
     let x =
@@ -780,15 +780,73 @@ let sort_graph ~dim ~descending x =
            (F.Creation.const_like bits (F.Tensor.Sint 0))
            bits)
     in
-    let sorted, positions =
-      F.Op.sort ~dim ~descending (where (isnan x) nan_key keys)
+    let values sorted =
+      F.Dtype_ops.cast
+        (where (eq sorted nan_key)
+           (F.Creation.const_like x (F.Tensor.Sfloat Float.nan))
+           (F.Dtype_ops.bitcast (flip sorted) (F.Tensor.dtype x)))
+        dtype
     in
-    let values =
-      where (eq sorted nan_key)
-        (F.Creation.const_like x (F.Tensor.Sfloat Float.nan))
-        (F.Dtype_ops.bitcast (flip sorted) (F.Tensor.dtype x))
+    (where (isnan x) nan_key keys, values)
+
+(* Whether [st]'s device computes int64 natively, which the packed sort
+   needs. *)
+let packs st =
+  Tolk.Renderer.supports_dtype (Tolk.Device.renderer st.st_device) TD.int64
+
+let bit_length n =
+  let rec go n acc = if n = 0 then acc else go (n lsr 1) (acc + 1) in
+  go n 0
+
+(* [x] sorted along [dim]. Only the values are demanded, so Tolk's recovery of
+   positions is never computed. *)
+let sort_graph ~dim ~descending x =
+  let keys, values = order_keys ~descending x in
+  values (fst (F.Op.sort ~dim ~descending keys))
+
+(* The stable positions that sort [x] along [dim]. Tolk's network sorts values
+   and recovers each position by an n×n match of sorted values to inputs. When a
+   key and its position fit together in a non-negative int64, the network sorts
+   that integer instead: the key in the high bits, offset to be non-negative
+   since C and Metal leave a shift of a negative integer undefined, and the
+   position in the low bits, complemented for a descending sort so that equal
+   keys keep index order. Packed integers are distinct, so the network alone
+   gives the stable order and the positions are its low bits. 32-bit keys fit at
+   every length an int32 position reaches; 64-bit keys never fit and, like a
+   device without native int64 ([packs] is false), keep the match. The packed
+   integers get a kernel of their own: fused into the padding of an axis that is
+   not a power of two, the positions' arange no longer folds to an index and
+   costs n^2 work. *)
+let argsort_graph ~packs ~dim ~descending x =
+  let keys, _ = order_keys ~descending x in
+  let key_dtype = F.Tensor.dtype keys in
+  let shape = F.Tensor.shape x in
+  let dim = if dim < 0 then dim + List.length shape else dim in
+  let n = List.nth shape dim in
+  let low_bits = bit_length (n - 1) in
+  if not (packs && TD.bitsize key_dtype + low_bits <= 63) then
+    snd (F.Op.sort ~dim ~descending keys)
+  else
+    let open F.Elementwise in
+    let int t v = F.Creation.const_like t (F.Tensor.Sint v) in
+    let offset =
+      if TD.is_unsigned key_dtype || TD.is_bool key_dtype then 0
+      else 1 lsl (TD.bitsize key_dtype - 1)
     in
-    (F.Dtype_ops.cast values dtype, positions)
+    let low = (1 lsl low_bits) - 1 in
+    let complement r = if descending then sub (int r low) r else r in
+    let ranks =
+      F.Movement.reshape
+        (F.Op.arange ~dtype:TD.int64 n)
+        (List.mapi (fun i _ -> if i = dim then n else 1) shape)
+    in
+    let wide = F.Dtype_ops.cast keys TD.int64 in
+    let high = add wide (int wide offset) in
+    let packed =
+      bitwise_or (lshift high (int high low_bits)) (complement ranks)
+    in
+    let sorted = fst (F.Op.sort ~dim ~descending (contiguous packed)) in
+    complement (bitwise_and sorted (int sorted low))
 
 (* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
    trace (captures, host arrays) are buffers too, but only input nodes are in
@@ -1632,13 +1690,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_sort { t_in; axis; descending } ->
         Some
           (fun k ->
-            ret k (dt t_in) (fst (sort_graph ~dim:axis ~descending (go t_in))))
+            ret k (dt t_in) (sort_graph ~dim:axis ~descending (go t_in)))
     | E_argsort { t_in; axis; descending } ->
         Some
           (fun k ->
             ret k ND.int32
               (F.Dtype_ops.cast
-                 (snd (sort_graph ~dim:axis ~descending (go t_in)))
+                 (argsort_graph ~packs:(packs st) ~dim:axis ~descending
+                    (go t_in))
                  TD.int32))
     | E_associative_scan { t_in; axis; op } ->
         Some

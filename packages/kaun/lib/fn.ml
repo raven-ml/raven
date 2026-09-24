@@ -78,8 +78,8 @@ let keep_from ~threshold logits =
     (Nx.scalar_like logits Float.neg_infinity)
 
 (* Both masks compare against a threshold read from the sorted values. The
-   sorting permutation is never demanded: compiled, it is quadratic in the
-   vocabulary. *)
+   sorting permutation is never demanded: compiled, it takes a second sort over
+   keys twice or four times as wide. *)
 let sorted_desc logits = fst (Nx.sort ~descending:true ~axis:(-1) logits)
 
 let keep_top_k ~k logits =

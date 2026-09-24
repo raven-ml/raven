@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.argsort` and the indices of `Nx.sort` no longer cost n² work for
+  dtypes of up to 32 bits: a float32 argsort of 131072 entries on Metal drops
+  from 61 ms to 12 ms. 64-bit dtypes keep the quadratic path.
 - Compiled `Nx_quant.apply` runs tolk's kernel, which decodes MXFP4 weights in
   registers, when a matrix meets few rows (32 on Metal and 64 on the CPU, at
   bfloat16). On an M1 Max, gpt-oss-20b decodes a token in 48-54 ms against

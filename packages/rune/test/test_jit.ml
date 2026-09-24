@@ -1459,6 +1459,49 @@ let test_float8_bitcast_is_refused () =
   check "float8_e4m3" Nx.float8_e4m3;
   check "float8_e5m2" Nx.float8_e5m2
 
+(* Every sortable dtype in both directions, over axes of 1, 2 and 33, the last
+   batched around it; float32 and bfloat16 also over axes of 513 and 32768.
+   Dtypes of up to 32 bits sort key and position packed in one int64; 64-bit
+   dtypes keep Tolk's match of values. A compiled fp8 store saturates an
+   infinity, so fp8 inputs have none here; [test_sort_matches_eager] checks the
+   positions of float8_e5m2 infinities. *)
+let test_sort_dtypes_match_eager () =
+  let pieces = [ ([| 1 |], 0); ([| 2 |], 0); ([| 2; 33; 3 |], 1) ] in
+  let long = pieces @ [ ([| 2; 513; 3 |], 1); ([| 32_768 |], 0) ] in
+  check_sort_pieces f64 long Nx.float32;
+  check_sort_pieces f64 long Nx.bfloat16;
+  check_sort_pieces f64 pieces Nx.float16;
+  check_sort_pieces ~infinities:false f64 pieces Nx.float8_e4m3;
+  check_sort_pieces ~infinities:false f64 pieces Nx.float8_e5m2;
+  check_sort_pieces f64 pieces Nx.int8;
+  check_sort_pieces f64 pieces Nx.uint8;
+  check_sort_pieces f64 pieces Nx.int16;
+  check_sort_pieces f64 pieces Nx.uint16;
+  check_sort_pieces f64 pieces Nx.int32;
+  check_sort_pieces f64 pieces Nx.uint32;
+  check_sort_pieces f64 pieces Nx.bool;
+  check_sort_pieces f64 pieces Nx.float64;
+  check_sort_pieces f64 pieces Nx.int64;
+  check_sort_pieces f64 pieces Nx.uint64
+
+(* A compiled argsort sorts key and position together: matching each sorted
+   value back to its position would cost n^2 operations. The axis is padded to a
+   power of two, where positions computed behind the padding would cost n^2
+   too. *)
+let test_argsort_is_not_quadratic () =
+  let n = 3000 in
+  let g = Rune.jit' (Nx.argsort ~axis:0) in
+  let x = sort_input f32 n in
+  ignore (g x);
+  let before = !Tolk.Helpers.Global_counters.global_ops in
+  ignore (g x);
+  let ops = !Tolk.Helpers.Global_counters.global_ops - before in
+  satisfies
+    ~msg:(Printf.sprintf "%d operations for %d entries" ops n)
+    ~claim:"fewer than n^2" int
+    (fun ops -> ops < n * n)
+    ops
+
 (* Either side of [Nx.top_k]'s switch from selection rounds to a sort, with
    repeated scores in every row. *)
 let test_top_k_matches_eager () =
@@ -3404,6 +3447,8 @@ let tests =
         slow "top_k radix select matches eager" test_top_k_radix_matches_eager;
         slow "top_k over a row of 2^20 entries"
           (check_top_k_long_row ?device:None);
+        slow "sort of every dtype matches eager" test_sort_dtypes_match_eager;
+        slow "compiled argsort is not quadratic" test_argsort_is_not_quadratic;
         test "gradient of top_k" test_grad_of_top_k;
         test "diag matches eager" test_diag_matches_eager;
       ];
