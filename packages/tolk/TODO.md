@@ -11,7 +11,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   require exact source parity for supported renderers. Reconcile FP8 `sm_80`
   and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
   `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including
-  kernel naming and remaining ordering differences.
+  kernel naming, intermediate GROUP cleanup and remaining ordering differences.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -28,8 +28,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   `Nx.bitcast`.
 
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
-  metadata, ALLOC, effectful CALL, scalar binding effects and
-  effect-preserving END. Remove deleted operations and stale enum/cache formats.
+  metadata, ALLOC, effectful CALL and scalar binding effects. Remove deleted
+  operations and stale enum/cache formats.
 - Adopt the final axis kinds. Port sorted-axis
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.

@@ -1476,10 +1476,10 @@ let symbolic : Upat.Pattern_matcher.t =
        bounded may still be zero, so the loop may not run at all. *)
     (op_src ~name:"x" ~src:(repeat (op Ops.Const)) Ops.Range => fun bs ->
        let x = bs $ "x" in
-       let lo = Uop.vmin x and hi = Uop.vmax x in
-       if Bound.equal lo hi
-       then Some (const_bound_like x lo)
-       else None);
+       if not (Dtype.is_int (Uop.dtype x)) then None
+       else
+         let lo = Uop.vmin x and hi = Uop.vmax x in
+         if Bound.equal lo hi then Some (const_bound_like x lo) else None);
 
     (* max(x, y) -> x if x.vmin >= y.vmax; -> y if x.vmax <= y.vmin. *)
     (rewrite2 (fun x y -> alu [ x; y ] Ops.Max) (fun x y ->
@@ -1750,10 +1750,21 @@ let symbolic : Upat.Pattern_matcher.t =
            let new_src = Array.of_list (s.(0) :: List.rev !new_deps) in
            Some (Uop.replace after ~src:new_src ()));
 
-    (* AFTER with a single src is just the src. *)
-    (op ~name:"after" Ops.After => fun bs ->
-       let s = Uop.src (bs $ "after") in
+    (* A boundary without ranges or dependencies preserves its body. *)
+    (ops ~name:"boundary" [ Ops.After; Ops.End ] => fun bs ->
+       let s = Uop.src (bs $ "boundary") in
        if Array.length s = 1 then Some s.(0) else None);
+
+    (* Substituted ranges are no longer loop boundaries. BACKEDGE's trailing
+       condition is never a range selector, even when it is constant. *)
+    (op ~name:"end" Ops.End => fun bs ->
+       let node = bs $ "end" in
+       match Uop.children node with
+       | [] -> None
+       | body :: ranges ->
+           let live = List.filter (fun r -> Uop.op r <> Ops.Const) ranges in
+           if List.length live = List.length ranges then None
+           else Some (Uop.replace node ~src:(Array.of_list (body :: live)) ()));
 
     (* STACK(const, const, ...) is already the current vector constant form. *)
     (op ~name:"vec" Ops.Stack => fun bs ->

@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `END` validation requires a void effect and bounded integer ranges.
+  Simplifying folded loop ranges preserves the enclosed effect and removes
+  redundant loop boundaries.
+
 - Scheduling uses `Uop.shape_opt` for shape inference, preserving symbolic
   extents and bitcast sizes. Incompatible broadcast dimensions raise an error
   instead of silently selecting an operand’s dimension.

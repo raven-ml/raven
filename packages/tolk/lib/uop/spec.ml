@@ -118,7 +118,13 @@ let stack_ok u =
 let movement_shape_ok u =
   try ignore (Uop.shape u); true with Invalid_argument _ -> false
 
-let end_ok u = tail_srcs (fun s -> Uop.op s = Ops.Range) u
+let end_effect_ok u =
+  is_void u && arg_empty u
+  && Array.length (Uop.src u) > 0 && is_void (Uop.src u).(0)
+
+let end_ok u =
+  end_effect_ok u
+  && tail_srcs (fun s -> Uop.op s = Ops.Range && is_int s) u
 
 let valid_full_slice u =
   match Uop.as_slice u, Uop.src u with
@@ -554,7 +560,7 @@ let full_only_spec : t =
     =?> (fun _ _ -> true);
 
     op ~allow_any_len:true ~src:[ any; any ] Ops.End
-    =?> (fun u _ -> arg_empty u && tail_srcs is_int u);
+    =?> (fun u _ -> end_effect_ok u && tail_srcs is_int u);
 
     op ~allow_any_len:true ~src:[ any ] Ops.After
     =?> (fun _ _ -> true);

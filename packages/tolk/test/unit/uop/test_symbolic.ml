@@ -1403,12 +1403,30 @@ let remove_invalid_tests =
           | None -> fail "expected invalid lane to be zeroed");
     ]
 
+let end_preserves_effects () =
+  let range = Uop.range ~size:(Uop.const_int 4) ~axis:0
+      ~kind:Axis_type.Loop () in
+  let ptr = Uop.param ~slot:0 ~dtype:Dtype.int32
+      ~shape:(Uop.const_int 1) () in
+  let dst = Uop.index ~ptr ~idxs:[ Uop.const_int 0 ] () in
+  let store = Uop.store ~dst ~value:(Uop.const (Const.int Dtype.int32 7)) () in
+  let folded = Uop.end_ ~value:store ~ranges:[ Uop.const_int 0 ] in
+  equal ~msg:"removing a folded loop retains its store" uop store (rewrite folded);
+  let partial = Uop.end_ ~value:store ~ranges:[ range; Uop.const_int 0 ] in
+  equal ~msg:"live loop boundaries remain" uop
+    (Uop.end_ ~value:store ~ranges:[ range ]) (rewrite partial);
+  let loop = Uop.loop ~axis:1 in
+  let edge = Uop.backedge ~body:store ~loop ~cond:(Uop.const_bool false) in
+  equal ~msg:"a constant BACKEDGE condition remains a condition" uop edge
+    (rewrite edge)
+
 (* Entry point *)
 
 let () =
   run "tolk.uop.symbolic"
     (simplify_driver_groups
      @ [
+         test "END preserves effects" end_preserves_effects;
          const_fold_tests;
          identity_fold_tests;
          self_fold_tests;

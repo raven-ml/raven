@@ -669,13 +669,14 @@ let () =
               let add = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:(f32 0.0) in
               U.store ~dst:(ri n) ~value:add ()
             in
-            let e = U.end_ ~value:ld ~ranges:[ r0 ] in
+            let e = U.end_
+                ~value:(U.group [ st_loop 0; st_loop 1; st_loop 2; st_loop 3 ])
+                ~ranges:[ r0 ] in
             let program =
               linearize
                 (U.sink
                    [
                      st_init 0; st_init 1; st_init 2; st_init 3;
-                     st_loop 0; st_loop 1; st_loop 2; st_loop 3;
                      e;
                    ])
             in

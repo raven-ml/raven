@@ -1211,10 +1211,11 @@ let program_end_range_boundaries () =
   let weak_range =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Global ()
   in
-  let closed = Uop.end_ ~value:(i32 1) ~ranges:[ int_range ] in
-  let weak_closed = Uop.end_ ~value:(Uop.const_int 1) ~ranges:[ weak_range ] in
+  let body = Uop.noop ~dtype:Dtype.void () in
+  let closed = Uop.end_ ~value:body ~ranges:[ int_range ] in
+  let weak_closed = Uop.end_ ~value:body ~ranges:[ weak_range ] in
   let bad_tail =
-    Uop.replace closed ~src:[| i32 1; i32 2 |] ()
+    Uop.replace closed ~src:[| body; i32 2 |] ()
   in
   is_true ~msg:"End with int32 range accepted in program_spec"
     (accepts Spec.program_spec closed);
@@ -1273,6 +1274,22 @@ let typed_host_call_contract () =
   is_true ~msg:"serialized calls retain the declared return type"
     (Uop.equal changed (Uop.import (Uop.export changed)))
 
+let end_requires_an_effect () =
+  let range = Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Loop
+      ~dtype:Dtype.int32 () in
+  let body = Uop.noop ~dtype:Dtype.void () in
+  let closed = Uop.end_ ~value:body ~ranges:[ range ] in
+  List.iter (fun spec ->
+      is_true ~msg:"END accepts a void effect" (accepts spec closed);
+      List.iter (fun node ->
+          is_true ~msg:"END rejects discarded values and unbounded ranges"
+            (rejected spec node))
+        [ Uop.end_ ~value:(i32 1) ~ranges:[ range ];
+          Uop.end_ ~value:body ~ranges:[ Uop.loop ~axis:1 ];
+          Uop.replace closed ~arg:(Uop.Arg.Int 1) ();
+          Uop.replace closed ~dtype:Dtype.int32 () ])
+    [ Spec.shared_spec; Spec.program_spec; Spec.full_spec ]
+
 let conditional_loop_contract () =
   let outer = Uop.range ~size:(i32 4) ~axis:1 ~kind:Axis_type.Loop
       ~dtype:Dtype.int32 () in
@@ -1308,6 +1325,7 @@ let () =
         [
           test "Typed host call contract" typed_host_call_contract;
           test "Conditional loop contract" conditional_loop_contract;
+          test "END requires an effect" end_requires_an_effect;
           test "Sink void accepted" sink_void;
           test "Const matching dtype" const_matching_dtype;
           test "Param with Param_arg" param_with_param_arg;

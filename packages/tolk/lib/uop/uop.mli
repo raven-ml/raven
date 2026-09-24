@@ -916,8 +916,9 @@ val backedge : body:t -> loop:t -> cond:t -> t
     and closes only [loop]; enclosing ranges used by [cond] remain live. *)
 
 val end_ : value:t -> ranges:t list -> t
-(** [end_ ~value ~ranges] closes loop [ranges] around [value]. Void dtype;
-    the value flows through [value] ([src.(0)]), whose shape it keeps.
+(** [end_ ~value ~ranges] closes bounded loop [ranges] around the void
+    effect [value], preserving its shape. [value] must have void dtype and
+    each range must have integer dtype. Use {!backedge} for unbounded loops.
     Returns [value] unchanged when [ranges] is empty. Kernel. *)
 
 val if_ : cond:t -> idx_for_dedup:t -> t
