@@ -108,7 +108,7 @@ let test_bn_grads_flow_to_params () =
     let y, _ = Batch_norm.apply p stats ~training:true x in
     Nx.sum (Nx.mul y y)
   in
-  let bn = Kaun.ptree (module Batch_norm) in
+  let bn = Nx.Ptree.instantiate (module Batch_norm) in
   (match Rune.check_grads ~tol:0.05 bn f params with
   | Ok () -> ()
   | Error msg -> failf "gradient check failed: %s" msg);
@@ -140,20 +140,20 @@ let test_bn_stats_checkpoint () =
   let stats =
     { Batch_norm.Stats.mean = vec [| 1.0; 2.0 |]; var = vec [| 3.0; 4.0 |] }
   in
+  let bn = Nx.Ptree.instantiate (module Batch_norm) in
+  let bn_stats = Nx.Ptree.instantiate (module Batch_norm.Stats) in
   let ckpt =
     Checkpoint.concat
       [
-        Checkpoint.of_params (module Batch_norm) ~prefix:"bn" params;
-        Checkpoint.of_params (module Batch_norm.Stats) ~prefix:"bn.stats" stats;
+        Checkpoint.of_value ~prefix:"bn" bn params;
+        Checkpoint.of_value ~prefix:"bn.stats" bn_stats stats;
       ]
   in
   equal ~msg:"dot-joined names" (list string)
     [ "bn.beta"; "bn.gamma"; "bn.stats.mean"; "bn.stats.var" ]
     (Checkpoint.names ckpt);
   let _, like = Batch_norm.init ~features:2 in
-  let stats' =
-    Checkpoint.to_params (module Batch_norm.Stats) ~prefix:"bn.stats" ~like ckpt
-  in
+  let stats' = Checkpoint.to_value ~prefix:"bn.stats" bn_stats ~like ckpt in
   check_arr ~msg:"mean round trips" [| 1.0; 2.0 |] stats'.Batch_norm.Stats.mean;
   check_arr ~msg:"var round trips" [| 3.0; 4.0 |] stats'.Batch_norm.Stats.var
 
@@ -167,22 +167,12 @@ let test_bn_init_validates () =
 module Model = struct
   type 'a t = { lin : 'a Linear.t; bn : 'a Batch_norm.t; out : 'a Linear.t }
 
-  let map f { lin; bn; out } =
-    let lin = Linear.map f lin in
-    let bn = Batch_norm.map f bn in
-    let out = Linear.map f out in
+  let walk c { lin; bn; out } =
+    let open Nx.Ptree.Walk in
+    let lin = field c "lin" Linear.walk lin in
+    let bn = field c "bn" Batch_norm.walk bn in
+    let out = field c "out" Linear.walk out in
     { lin; bn; out }
-
-  let map2 f p q =
-    let lin = Linear.map2 f p.lin q.lin in
-    let bn = Batch_norm.map2 f p.bn q.bn in
-    let out = Linear.map2 f p.out q.out in
-    { lin; bn; out }
-
-  let iter f { lin; bn; out } =
-    Linear.iter f lin;
-    Batch_norm.iter f bn;
-    Linear.iter f out
 
   let forward p stats ~training x =
     let h = Linear.apply p.lin x in
@@ -191,7 +181,7 @@ module Model = struct
     (Linear.apply p.out h, stats)
 end
 
-let model = Kaun.ptree (module Model)
+let model = Nx.Ptree.instantiate (module Model)
 
 let test_bn_train_step_roundtrip () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -346,22 +336,9 @@ let test_dropout_keyless_jit_raises () =
 
 (* ...but the same keyless call compiles when the caller roots a scope at the
    step's own key, which is what lets a model keep its draw sites key-free. *)
-module Scope_key = struct
-  type t = Nx.Rng.key
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 let test_dropout_keyless_scope_jit_compiles () =
   let f =
-    Rune.jit
-      (module Scope_key)
-      (fun key ->
+    Rune.jit Nx.Ptree.tensor (fun key ->
         Nx.Rng.with_key key @@ fun () ->
         Dropout.apply ~rate:0.5 ~training:true (Nx.ones Nx.float32 [| 64 |]))
   in
@@ -370,17 +347,14 @@ let test_dropout_keyless_scope_jit_compiles () =
   equal ~msg:"and replays for the same key" (array float_exact) (at 1) (at 1)
 
 module Keyed_x = struct
-  type t = { x : Nx.float32_t; key : Nx.Rng.key }
+  type keyed_x = { x : Nx.float32_t; key : Nx.Rng.key }
+  type _ t = keyed_x
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { x = f t.x; key = f t.key }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { x = f a.x b.x; key = f a.key b.key }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    f t.x;
-    f t.key
+  let walk c { x; key } =
+    let open Nx.Ptree.Walk in
+    let x = field c "x" tensor x in
+    let key = field c "key" tensor key in
+    { x; key }
 end
 
 let test_dropout_keyed_jit_matches_eager () =
@@ -388,7 +362,7 @@ let test_dropout_keyed_jit_matches_eager () =
   let apply { Keyed_x.x; key } =
     Dropout.apply ~rate:0.5 ~training:true ~key x
   in
-  let f = Rune.jit (module Keyed_x) apply in
+  let f = Rune.jit (Nx.Ptree.instantiate (module Keyed_x)) apply in
   let k = Nx.Rng.key 21 and k' = Nx.Rng.key 22 in
   check_arr ~eps:0.0 ~msg:"jit == eager, same key"
     (Nx.to_array (apply { Keyed_x.x; key = k }))
@@ -401,47 +375,38 @@ let test_dropout_keyed_jit_matches_eager () =
    per-step key an input leaf derived by [fold_in] from a root seed. *)
 
 module Mlp = struct
-  type t = { w1 : Nx.float32_t; w2 : Nx.float32_t }
+  type 'a t = { w1 : 'a; w2 : 'a }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { w1 = f t.w1; w2 = f t.w2 }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { w1 = f a.w1 b.w1; w2 = f a.w2 b.w2 }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    f t.w1;
-    f t.w2
+  let walk c { w1; w2 } =
+    let open Nx.Ptree.Walk in
+    let w1 = field c "w1" leaf w1 in
+    let w2 = field c "w2" leaf w2 in
+    { w1; w2 }
 end
 
 module Mlp_in = struct
-  type t = { p : Mlp.t; key : Nx.Rng.key }
+  type 'a t = { p : 'a Mlp.t; key : Nx.Rng.key }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { p = Mlp.map f t.p; key = f t.key }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { p = Mlp.map2 f a.p b.p; key = f a.key b.key }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Mlp.iter f t.p;
-    f t.key
+  let walk c { p; key } =
+    let open Nx.Ptree.Walk in
+    let p = field c "p" Mlp.walk p in
+    let key = field c "key" tensor key in
+    { p; key }
 end
 
 module Mlp_out = struct
-  type t = { p : Mlp.t; loss : Nx.float32_t }
+  type 'a t = { p : 'a Mlp.t; loss : Nx.float32_t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { p = Mlp.map f t.p; loss = f t.loss }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { p = Mlp.map2 f a.p b.p; loss = f a.loss b.loss }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Mlp.iter f t.p;
-    f t.loss
+  let walk c { p; loss } =
+    let open Nx.Ptree.Walk in
+    let p = field c "p" Mlp.walk p in
+    let loss = field c "loss" tensor loss in
+    { p; loss }
 end
 
+let mlp = Nx.Ptree.instantiate (module Mlp)
+let mlp_in = Nx.Ptree.instantiate (module Mlp_in)
+let mlp_out = Nx.Ptree.instantiate (module Mlp_out)
 let grid n = Array.init n (fun i -> 0.25 *. float_of_int ((i mod 13) - 6))
 let mlp_x = t32 [| 8; 16 |] (grid 128)
 let mlp_y = t32 [| 8; 4 |] (grid 32)
@@ -463,12 +428,9 @@ let test_dropout_jitted_training_steps () =
   let trajectory seed =
     let root = Nx.Rng.key seed in
     let f =
-      Rune.jit2
-        (module Mlp_in)
-        (module Mlp_out)
-        (fun { Mlp_in.p; key } ->
+      Rune.jit2 mlp_in mlp_out (fun { Mlp_in.p; key } ->
           let loss, grads =
-            Rune.value_and_grad (module Mlp) (mlp_objective ~key 0.5) p
+            Rune.value_and_grad mlp (mlp_objective ~key 0.5) p
           in
           { Mlp_out.p = mlp_update p grads; loss })
     in
@@ -480,13 +442,8 @@ let test_dropout_jitted_training_steps () =
   in
   let dropout_free () =
     let f =
-      Rune.jit2
-        (module Mlp)
-        (module Mlp_out)
-        (fun p ->
-          let loss, grads =
-            Rune.value_and_grad (module Mlp) (mlp_objective 0.0) p
-          in
+      Rune.jit2 mlp mlp_out (fun p ->
+          let loss, grads = Rune.value_and_grad mlp (mlp_objective 0.0) p in
           { Mlp_out.p = mlp_update p grads; loss })
     in
     let p = ref (mlp_init ()) in
@@ -506,17 +463,6 @@ let test_dropout_jitted_training_steps () =
 (* Mixed precision: keyed dropout inside the astype sandwich, masks selected at
    the bfloat16 compute dtype, gradients back at float32. *)
 
-module W = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 let test_dropout_bf16_sandwich () =
   let x = t32 [| 8; 4 |] (grid 32) in
   let w = t32 [| 4; 4 |] (grid 16) in
@@ -525,7 +471,7 @@ let test_dropout_bf16_sandwich () =
     let h = Dropout.apply ~rate:0.5 ~training:true ~key:(Nx.Rng.key 3) h in
     Nx.mean (Nx.cast Nx.float32 h)
   in
-  let loss, grads = Rune.value_and_grad (module W) objective w in
+  let loss, grads = Rune.value_and_grad Nx.Ptree.tensor objective w in
   is_true ~msg:"loss is finite" (Float.is_finite (Nx.item [] loss));
   is_true ~msg:"float32 gradients are finite"
     (Array.for_all Float.is_finite (Nx.to_array grads))

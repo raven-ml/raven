@@ -196,8 +196,7 @@ let load_sharded ~download index_path =
   List.fold_left
     (fun acc (name, file) ->
       match Checkpoint.find name (shard file) with
-      | Some (Rune.Ptree.P x) ->
-          Checkpoint.concat [ acc; Checkpoint.of_tensor name x ]
+      | Some (Nx.P x) -> Checkpoint.concat [ acc; Checkpoint.of_tensor name x ]
       | None -> failwith (err_missing_tensor "" name file))
     Checkpoint.empty weight_map
 

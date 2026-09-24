@@ -23,7 +23,8 @@
   test_jit_state
   test_half
   test_rope
-  test_decoder)
+  test_decoder
+  test_structures)
  (modules
   (:standard \ test_cache_index_metal))
  (package kaun)

@@ -185,22 +185,13 @@ let test_half_precision_angles () =
     [| cos 100003.; sin 100003. |]
     (Nx.cast Nx.float32 y)
 
-module One = struct
-  type 'a t = 'a
-
-  let map f x = f x
-  let map2 f x y = f x y
-  let iter f x = f x
-end
-
 let test_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
   let t = Rope.make ~head_dim:4 () in
   let pos = pos_of [| [| 2; 5; 9 |] |] in
   let w = Nx.randn Nx.float64 [| 1; 2; 3; 4 |] in
   match
-    Rune.check_grads
-      (Kaun.ptree (module One))
+    Rune.check_grads Nx.Ptree.tensor
       (fun x -> Nx.sum (Nx.mul w (Rope.apply t ~pos x)))
       (Nx.randn Nx.float64 [| 1; 2; 3; 4 |])
   with

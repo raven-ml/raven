@@ -7,44 +7,20 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type 'a t = { gamma : 'a; beta : 'a }
 
-let map f { gamma; beta } =
-  let gamma = f gamma in
-  let beta = f beta in
+let walk c { gamma; beta } =
+  let open Nx.Ptree.Walk in
+  let gamma = field c "gamma" leaf gamma in
+  let beta = field c "beta" leaf beta in
   { gamma; beta }
-
-let map2 f p q =
-  let gamma = f p.gamma q.gamma in
-  let beta = f p.beta q.beta in
-  { gamma; beta }
-
-let iter f { gamma; beta } =
-  f gamma;
-  f beta
-
-let fold f acc { gamma; beta } = f "beta" (f "gamma" acc gamma) beta
-let fold2 f acc p q = f "beta" (f "gamma" acc p.gamma q.gamma) p.beta q.beta
-let names _ = { gamma = "gamma"; beta = "beta" }
 
 module Stats = struct
   type 'a t = { mean : 'a; var : 'a }
 
-  let map f { mean; var } =
-    let mean = f mean in
-    let var = f var in
+  let walk c { mean; var } =
+    let open Nx.Ptree.Walk in
+    let mean = field c "mean" leaf mean in
+    let var = field c "var" leaf var in
     { mean; var }
-
-  let map2 f s s' =
-    let mean = f s.mean s'.mean in
-    let var = f s.var s'.var in
-    { mean; var }
-
-  let iter f { mean; var } =
-    f mean;
-    f var
-
-  let fold f acc { mean; var } = f "var" (f "mean" acc mean) var
-  let fold2 f acc s s' = f "var" (f "mean" acc s.mean s'.mean) s.var s'.var
-  let names _ = { mean = "mean"; var = "var" }
 end
 
 let init ~features =

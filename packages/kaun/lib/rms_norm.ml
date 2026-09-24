@@ -5,12 +5,7 @@
 
 type 'a t = { gamma : 'a }
 
-let map f { gamma } = { gamma = f gamma }
-let map2 f p q = { gamma = f p.gamma q.gamma }
-let iter f { gamma } = f gamma
-let fold f acc { gamma } = f "gamma" acc gamma
-let fold2 f acc p q = f "gamma" acc p.gamma q.gamma
-let names _ = { gamma = "gamma" }
+let walk c { gamma } = { gamma = Nx.Ptree.Walk.(field c "gamma" leaf gamma) }
 
 let make ~dim dtype =
   if dim <= 0 then

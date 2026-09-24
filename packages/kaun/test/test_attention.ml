@@ -6,27 +6,32 @@
 open Windtrap
 open Kaun
 
-(* Float64 instances for gradient checking; the traversals are dtype-generic, so
-   each instance is just a type pin. *)
+(* Float64 instances for gradient checking; the maps are dtype-generic, so each
+   instance is just a type pin. *)
 
-let attention64 = Kaun.ptree (module Attention)
+let attention64 = Nx.Ptree.instantiate (module Attention)
 
-(* Raw q/k/v inputs as a parameter structure, to gradient-check the attention
-   core with respect to its inputs. *)
+(* Raw q/k/v inputs as a structure, to gradient-check the attention core with
+   respect to its inputs. *)
 module Qkv64 = struct
-  type t = { q : Nx.float64_t; k : Nx.float64_t; v : Nx.float64_t }
+  type qkv = { q : Nx.float64_t; k : Nx.float64_t; v : Nx.float64_t }
+  type _ t = qkv
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { q; k; v } =
-    { q = f q; k = f k; v = f v }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    { q = f a.q b.q; k = f a.k b.k; v = f a.v b.v }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { q; k; v } =
-    f q;
-    f k;
-    f v
+  let walk c { q; k; v } =
+    let open Nx.Ptree.Walk in
+    let q = field c "q" tensor q in
+    let k = field c "k" tensor k in
+    let v = field c "v" tensor v in
+    { q; k; v }
 end
+
+let qkv64 = Nx.Ptree.instantiate (module Qkv64)
+
+let paths s x =
+  List.rev
+    (Nx.Ptree.fold s
+       (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
+       x [])
 
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
@@ -94,7 +99,7 @@ let test_core_gradients () =
     let y = Attention.scaled_dot_product_attention q k v in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Qkv64) loss p)
+  grads_ok (Rune.check_grads qkv64 loss p)
 
 let test_core_masked_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
@@ -110,7 +115,7 @@ let test_core_masked_gradients () =
     let y = Attention.scaled_dot_product_attention ~mask q k v in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Qkv64) loss p)
+  grads_ok (Rune.check_grads qkv64 loss p)
 
 let test_core_rejects_bad_shapes () =
   let t shape = Nx.zeros Nx.float32 shape in
@@ -173,37 +178,37 @@ let test_core_empty_row_gradients () =
     let y = Attention.scaled_dot_product_attention ~mask q k v in
     Nx.sum (Nx.mul y y)
   in
-  let g = Rune.grad (module Qkv64) loss p in
-  Qkv64.iter
-    (fun t ->
+  let g = Rune.grad qkv64 loss p in
+  Nx.Ptree.fold qkv64
+    (fun _ t () ->
       is_true ~msg:"a gradient is finite"
         (Array.for_all Float.is_finite
            (Nx.to_array (Nx.cast Nx.float64 (Nx.reshape [| -1 |] t)))))
-    g;
-  grads_ok (Rune.check_grads (module Qkv64) loss p)
+    g ();
+  grads_ok (Rune.check_grads qkv64 loss p)
 
 (* Attention sinks and the score scale *)
 
 module Qkvs64 = struct
-  type t = {
+  type qkvs = {
     q : Nx.float64_t;
     k : Nx.float64_t;
     v : Nx.float64_t;
     sinks : Nx.float64_t;
   }
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { q; k; v; sinks } =
-    { q = f q; k = f k; v = f v; sinks = f sinks }
+  type _ t = qkvs
 
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    { q = f a.q b.q; k = f a.k b.k; v = f a.v b.v; sinks = f a.sinks b.sinks }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { q; k; v; sinks } =
-    f q;
-    f k;
-    f v;
-    f sinks
+  let walk c { q; k; v; sinks } =
+    let open Nx.Ptree.Walk in
+    let q = field c "q" tensor q in
+    let k = field c "k" tensor k in
+    let v = field c "v" tensor v in
+    let sinks = field c "sinks" tensor sinks in
+    { q; k; v; sinks }
 end
+
+let qkvs64 = Nx.Ptree.instantiate (module Qkvs64)
 
 (* The definition, computed directly: a softmax over the scores with the sinks
    appended as a last column, that column dropped. [q], [k] and [v] are [batch;
@@ -304,16 +309,16 @@ let test_sinks_keep_attention_total () =
     let y = attend p in
     Nx.sum (Nx.mul y y)
   in
-  let g = Rune.grad (module Qkvs64) loss p in
+  let g = Rune.grad qkvs64 loss p in
   equal ~msg:"and has zero gradients" (array float_exact) (Array.make 4 0.0)
     (first_query g.q);
-  Qkvs64.iter
-    (fun t ->
+  Nx.Ptree.fold qkvs64
+    (fun _ t () ->
       is_true ~msg:"a gradient is finite"
         (Array.for_all Float.is_finite
            (Nx.to_array (Nx.cast Nx.float64 (Nx.reshape [| -1 |] t)))))
-    g;
-  grads_ok (Rune.check_grads (module Qkvs64) loss p)
+    g ();
+  grads_ok (Rune.check_grads qkvs64 loss p)
 
 let test_sink_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
@@ -329,10 +334,10 @@ let test_sink_gradients () =
     let y = Attention.scaled_dot_product_attention ~scale:0.9 ~sinks q k v in
     Nx.sum (Nx.mul y y)
   in
-  let g = Rune.grad (module Qkvs64) loss p in
+  let g = Rune.grad qkvs64 loss p in
   is_true ~msg:"the sinks have a gradient"
     (Array.for_all (fun x -> x <> 0.0) (Nx.to_array g.sinks));
-  grads_ok (Rune.check_grads (module Qkvs64) loss p)
+  grads_ok (Rune.check_grads qkvs64 loss p)
 
 let test_sinks_compiled () =
   Nx.Rng.with_key (Nx.Rng.key 44) @@ fun () ->
@@ -380,15 +385,11 @@ let test_init_shapes () =
 
 let test_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
-  let paths p =
-    List.rev (Attention.fold (fun path acc _ -> path :: acc) [] p)
-  in
+  let paths = paths (Nx.Ptree.instantiate (module Attention)) in
   let p = Attention.init ~embed_dim:4 in
   equal ~msg:"with biases" (list string)
     [ "q.w"; "q.b"; "k.w"; "k.b"; "v.w"; "v.b"; "out.w"; "out.b" ]
     (paths p);
-  equal ~msg:"names agree with fold" (option string) (Some "q.b")
-    (Attention.names p).Attention.q.Linear.b;
   let no_bias = Attention.make ~bias:false ~embed_dim:4 Nx.float32 in
   equal ~msg:"without biases" (list string)
     [ "q.w"; "k.w"; "v.w"; "out.w" ]
@@ -683,10 +684,11 @@ let test_index_window () =
     [ false; false; true; true ]
     (mask (Cache_index.advance windowed));
   equal ~msg:"map keeps the window" (list bool) (mask windowed)
-    (mask (Cache_index.map Fun.id windowed));
+    (mask (Nx.Ptree.map Cache_index.ptree (fun _ t -> t) windowed));
   raises
-    (Invalid_argument "Cache_index.map2: the indices differ in their window")
-    (fun () -> Cache_index.map2 (fun a _ -> a) windowed index);
+    (Invalid_argument
+       "Nx.Ptree.map2: window: Some in the first value, None in the second")
+    (fun () -> Nx.Ptree.map2 Cache_index.ptree (fun _ a _ -> a) windowed index);
   raises (Invalid_argument "Cache_index.window: window must be positive, got 0")
     (fun () -> Cache_index.window 0 index)
 
@@ -823,49 +825,39 @@ let test_index_select_whole () =
     (bools (Cache_index.mask selected));
   is_true ~msg:"and nothing is kept" (pool == pool')
 
-(* The selection is a tensor of the index: the traversals carry it, [advance]
+(* The selection is a tensor of the index: its structure walks it, [advance]
    drops it. *)
-let test_index_select_traversals () =
+let test_index_select_structure () =
   let index, _ = selection_fixture () in
   let columns = int32s [| 1; 2; 1 |] [| 3; 5 |] in
   let selected = Cache_index.select columns index in
   let count index =
-    let n = ref 0 in
-    Cache_index.iter (fun _ -> incr n) index;
-    !n
+    Nx.Ptree.fold Cache_index.ptree (fun _ _ n -> n + 1) index 0
   in
-  equal ~msg:"iter visits the selection" int (count index + 1) (count selected);
+  equal ~msg:"fold visits the selection" int (count index + 1) (count selected);
   equal ~msg:"map reaches the selection" (list bool) [ true; true ]
     (bools
        (Cache_index.mask
-          (Cache_index.map
-             (fun t ->
+          (Nx.Ptree.map Cache_index.ptree
+             (fun _ t ->
                if Nx.shape t = [| 1; 2; 1 |] then Nx.zeros_like t else t)
              selected)));
   shape_is ~msg:"advance drops the selection" [| 1; 1; 6 |]
     (Cache_index.mask (Cache_index.advance selected));
   raises
     (Invalid_argument
-       "Cache_index.map2: one index selects columns, one does not") (fun () ->
-      Cache_index.map2 (fun a _ -> a) selected index)
+       "Nx.Ptree.map2: columns: Some in the first value, None in the second")
+    (fun () -> Nx.Ptree.map2 Cache_index.ptree (fun _ a _ -> a) selected index)
 
 module Selected = struct
   type t = { index : Cache_index.t; pool : Nx.float32_t; seen : Nx.float32_t }
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { index; pool; seen } =
-    { index = Cache_index.map f index; pool = f pool; seen = f seen }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      index = Cache_index.map2 f a.index b.index;
-      pool = f a.pool b.pool;
-      seen = f a.seen b.seen;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { index; pool; seen } =
-    Cache_index.iter f index;
-    f pool;
-    f seen
+  let ptree =
+    Nx.Ptree.(
+      iso
+        (fun (index, (pool, seen)) -> { index; pool; seen })
+        (fun { index; pool; seen } -> (index, (pool, seen)))
+        (pair Cache_index.ptree (pair tensor tensor)))
 end
 
 (* Compiled, the columns are an input: what is read and stored is eager's. *)
@@ -883,7 +875,7 @@ let test_index_select_compiled () =
         seen = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |];
       }
     in
-    (step s, Rune.jit2 (module Selected) (module Selected) step s)
+    (step s, Rune.jit2 Selected.ptree Selected.ptree step s)
   in
   List.iter
     (fun columns ->
@@ -1138,14 +1130,13 @@ let test_index_every_rejects () =
         [1; context], context positive") (fun () ->
       make [ (4, int32s [| 2; 3 |] (Array.make 6 0)) ]);
   let count index =
-    let n = ref 0 in
-    Cache_index.iter (fun _ -> incr n) index;
-    !n
+    Nx.Ptree.fold Cache_index.ptree (fun _ _ n -> n + 1) index 0
   in
-  equal ~msg:"the traversals visit every table" int 4 (count rows);
+  equal ~msg:"the structure visits every table" int 4 (count rows);
   let unallocated =
-    Cache_index.map
-      (fun t -> if Nx.shape t = [| 1; 3 |] then Nx.full_like t (-1l) else t)
+    Nx.Ptree.map Cache_index.ptree
+      (fun _ t ->
+        if Nx.shape t = [| 1; 3 |] then Nx.neg (Nx.ones_like t) else t)
       four
   in
   let _, pool =
@@ -1155,13 +1146,14 @@ let test_index_every_rejects () =
     (slots_of pool);
   raises
     (Invalid_argument
-       "Cache_index.map2: the indices read blocks of different sizes")
-    (fun () -> Cache_index.map2 (fun a _ -> a) four rows);
+       "Nx.Ptree.map2: every: int 4 in the first value, int 1 in the second")
+    (fun () -> Nx.Ptree.map2 Cache_index.ptree (fun _ a _ -> a) four rows);
   raises
     (Invalid_argument
-       "Cache_index.map2: the indices were not built the same way") (fun () ->
-      Cache_index.map2
-        (fun a _ -> a)
+       "Nx.Ptree.map2: tokens.blocks: length 2 in the first value, length 1 in \
+        the second") (fun () ->
+      Nx.Ptree.map2 Cache_index.ptree
+        (fun _ a _ -> a)
         rows
         (Cache_index.rows ~every:[ 4 ] ~context:12 [| 2 |]))
 
@@ -1178,34 +1170,14 @@ type stream = {
   entries : Nx.float32_t;
 }
 
-module Stream = struct
-  type t = stream
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
-    {
-      index = Cache_index.map f s.index;
-      x = f s.x;
-      y = f s.y;
-      sources = f s.sources;
-      entries = f s.entries;
-    }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      index = Cache_index.map2 f a.index b.index;
-      x = f a.x b.x;
-      y = f a.y b.y;
-      sources = f a.sources b.sources;
-      entries = f a.entries b.entries;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
-    Cache_index.iter f s.index;
-    f s.x;
-    f s.y;
-    f s.sources;
-    f s.entries
-end
+let stream_ptree =
+  Nx.Ptree.(
+    iso
+      (fun (index, ((x, y), (sources, entries))) ->
+        { index; x; y; sources; entries })
+      (fun { index; x; y; sources; entries } ->
+        (index, ((x, y), (sources, entries))))
+      (pair Cache_index.ptree (pair (pair tensor tensor) (pair tensor tensor))))
 
 let stream s =
   let batch = Cache_index.batch s.index and seq = Cache_index.seq s.index in
@@ -1304,7 +1276,7 @@ let test_index_every_stream () =
     (Array.to_list (flat s.y))
 
 let test_index_every_compiled () =
-  let step = Rune.jit2 (module Stream) (module Stream) stream in
+  let step = Rune.jit2 stream_ptree stream_ptree stream in
   let expected = stream_expected (List.init 12 Fun.id) in
   let ys, stored =
     feed_stream ~step
@@ -1517,8 +1489,9 @@ let test_cached_masked_columns_are_zero () =
   let x = Nx.randn Nx.float32 [| 1; 2; 8 |] in
   let nan rows = Nx.full Nx.float32 [| rows; 2; 2 |] Float.nan in
   let poisoned =
-    Attention.Cache.map
-      (fun t ->
+    Nx.Ptree.Payload.map
+      (module Attention.Cache)
+      (fun _ t ->
         Nx.set [ Nx.R (6, 7) ] (nan 1) (Nx.set [ Nx.R (0, 2) ] (nan 2) t))
       (cache 6)
   in
@@ -1549,24 +1522,13 @@ type step = {
   c : Nx.float32_t Attention.Cache.t;
 }
 
-module Step = struct
-  type t = step
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { x; index; c } =
-    { x = f x; index = Cache_index.map f index; c = Attention.Cache.map f c }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      x = f a.x b.x;
-      index = Cache_index.map2 f a.index b.index;
-      c = Attention.Cache.map2 f a.c b.c;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { x; index; c } =
-    f x;
-    Cache_index.iter f index;
-    Attention.Cache.iter f c
-end
+let step_ptree =
+  Nx.Ptree.(
+    iso
+      (fun (x, (index, c)) -> { x; index; c })
+      (fun { x; index; c } -> (x, (index, c)))
+      (pair tensor
+         (pair Cache_index.ptree (instantiate (module Attention.Cache)))))
 
 (* Under a window, a column below the window of every token of the lane is
    allocated and at or before their positions, and still contributes exactly
@@ -1587,8 +1549,9 @@ let test_cached_windowed_columns_are_zero () =
   (* Positions 3 and 4 see columns 2 to 4: the slots of columns 0 and 1 are out
      of every window. *)
   let poisoned =
-    Attention.Cache.map
-      (fun t ->
+    Nx.Ptree.Payload.map
+      (module Attention.Cache)
+      (fun _ t ->
         let nan = Nx.full Nx.float32 [| 1; 2; 2 |] Float.nan in
         Nx.set [ Nx.R (2, 3) ] nan (Nx.set [ Nx.R (4, 5) ] nan t))
       c
@@ -1610,10 +1573,7 @@ let test_cached_windowed_columns_are_zero () =
     { x = y; index; c }
   in
   check ~msg:"compiled"
-    (Rune.jit2
-       (module Step)
-       (module Step)
-       step
+    (Rune.jit2 step_ptree step_ptree step
        { x = rest; index = tail; c = poisoned })
       .x
 
@@ -1644,7 +1604,7 @@ let test_cached_step_jits_once () =
   in
   let eager = decode step in
   traces := 0;
-  let jitted = decode (Rune.jit2 (module Step) (module Step) step) in
+  let jitted = decode (Rune.jit2 step_ptree step_ptree step) in
   equal ~msg:"jitted decode = eager decode"
     (array (float 1e-5))
     (flat eager) (flat jitted);
@@ -1670,9 +1630,7 @@ let test_cached_out_of_range_under_jit () =
       ()
   in
   let eager = step { x; index; c = cache 4 } in
-  let jitted =
-    Rune.jit2 (module Step) (module Step) step { x; index; c = cache 4 }
-  in
+  let jitted = Rune.jit2 step_ptree step_ptree step { x; index; c = cache 4 } in
   values_are ~msg:"nothing written, eager" ~tol:0.0 (Array.make 16 0.0)
     (slots_of eager.c.Attention.Cache.keys);
   values_are ~msg:"nothing written, compiled" ~tol:0.0 (Array.make 16 0.0)
@@ -1824,17 +1782,11 @@ let test_pieces_reject_bad_shapes () =
 
 let test_cache_list_paths () =
   let caches = [ cache 2; cache 2 ] in
-  let paths =
-    List.rev
-      (Attention.Cache.List.fold (fun path acc _ -> path :: acc) [] caches)
-  in
   equal ~msg:"index then leaf" (list string)
     [ "0.keys"; "0.values"; "1.keys"; "1.values" ]
-    paths;
-  equal ~msg:"names agree with fold" (list string) paths
-    (List.concat_map
-       (fun c -> [ c.Attention.Cache.keys; c.Attention.Cache.values ])
-       (Attention.Cache.List.names caches))
+    (paths
+       (Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)))
+       caches)
 
 let test_cached_rejects_bad_geometry () =
   Nx.Rng.with_key (Nx.Rng.key 26) @@ fun () ->
@@ -1984,7 +1936,7 @@ let () =
           test "on a whole index a chosen column is a token"
             test_index_select_whole;
           test "a selection is a tensor of the index"
-            test_index_select_traversals;
+            test_index_select_structure;
           test "a compiled selection reads and stores as eager"
             test_index_select_compiled;
           test "a block stands at its last position" test_index_every;

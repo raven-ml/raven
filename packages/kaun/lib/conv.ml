@@ -5,38 +5,11 @@
 
 type 'a t = { w : 'a; b : 'a option }
 
-let map f { w; b } =
-  let w = f w in
-  let b = match b with None -> None | Some b -> Some (f b) in
+let walk c { w; b } =
+  let open Nx.Ptree.Walk in
+  let w = field c "w" leaf w in
+  let b = field c "b" (option leaf) b in
   { w; b }
-
-let map2 f p q =
-  let w = f p.w q.w in
-  let b =
-    match (p.b, q.b) with
-    | Some pb, Some qb -> Some (f pb qb)
-    | None, None -> None
-    | Some _, None | None, Some _ -> invalid_arg "Conv.map2: bias mismatch"
-  in
-  { w; b }
-
-let iter f { w; b } =
-  f w;
-  match b with None -> () | Some b -> f b
-
-let fold f acc { w; b } =
-  let acc = f "w" acc w in
-  match b with None -> acc | Some b -> f "b" acc b
-
-let fold2 f acc p q =
-  let acc = f "w" acc p.w q.w in
-  match (p.b, q.b) with
-  | Some pb, Some qb -> f "b" acc pb qb
-  | None, None -> acc
-  | Some _, None | None, Some _ -> invalid_arg "Conv.fold2: bias mismatch"
-
-let names p =
-  { w = "w"; b = (match p.b with None -> None | Some _ -> Some "b") }
 
 let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
     ?(bias = true) ~in_channels ~out_channels ~kernel_size dtype =

@@ -16,7 +16,8 @@
     layer calls {!extend} on each of its pools and attends under {!mask}. A
     layer that keeps one entry per block of positions reads its pools through
     {!val-every}, and one that attends to a few columns per token through
-    {!select}.
+    {!select}. {!ptree} is an index's structure, which a compiled step's
+    signature names.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -241,9 +242,8 @@ val extend :
     - [pool'] is [pool] with [values], of shape [[| batch; seq; ... |]], stored
       where the call's tokens sit, at the column that stands at each one's
       position (under {!val-every}, only a block's last token has one): one
-      {!Nx.scatter}[ ~unique_indices:true] over the tokens, in place on a pool
-      consumed by {!Rune.jit_step}. Every slot the call does not target is as it
-      was.
+      {!Nx.scatter}[ ~unique_indices:true] over the tokens, in place on a pool a
+      compiled step consumes. Every slot the call does not target is as it was.
     - [seen], of shape [[| batch; context; ... |]], is what those tokens attend
       over, read from [pool']: column [j] is the slot holding position [j], or
       block [j] under {!val-every}, so the call's own stores are in it. A column
@@ -273,21 +273,23 @@ val mask : t -> Nx.bool_t
     padded token sees none. Under a selection it has shape [[| batch; seq; k |]]
     and says which of its chosen columns each token sees. *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Over the index's int32 tensors, its tables of blocks and its selection
-    included, for the state of a jitted step. They compute nothing and keep the
-    window and {!val-every}, which are no tensors. *)
+val ptree : t Nx.Ptree.t
+(** [ptree] is the structure of an index, for the signature of a compiled step
+    and for {!Nx.Ptree.map} over its tensors. Its leaves are the index's int32
+    tensors, its tables of blocks and its selection included, and it reports
+    what a compiled program depends on beyond them. In walk order:
+    - [tokens] reports case ["whole"] for an index built by {!whole}, then walks
+      its positions at [tokens.pos]; or case ["tabled"], then whether [row] is
+      present and, if it is, [row] itself at [tokens.row], the positions at
+      [tokens.pos], the table at [tokens.table], and at [tokens.blocks] the
+      number of tables of blocks, each reporting its block size before its table
+      at [tokens.blocks.]{e i};
+    - [every] reports the block size the index reads in ({!val-every}), [1] when
+      it reads positions;
+    - [window] reports whether a {!window} is set and its size;
+    - [columns] reports whether a selection ({!select}) is present and walks it.
 
-val map : (Nx.int32_t -> Nx.int32_t) -> t -> t
-(** [map f index] is [index] with [f] applied to every tensor. *)
-
-val map2 : (Nx.int32_t -> Nx.int32_t -> Nx.int32_t) -> t -> t -> t
-(** [map2 f index index'] combines [index] and [index'] tensor by tensor.
-
-    Raises [Invalid_argument] if they were not built the same way, differ in
-    their window or in the blocks they read, or one selects columns and the
-    other does not. *)
-
-val iter : (Nx.int32_t -> unit) -> t -> unit
-(** [iter f index] applies [f] to every tensor of [index]. *)
+    Two indices share a compiled program only if they agree on all of these
+    reports; one that differs, such as another window, compiles its own. *)

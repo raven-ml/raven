@@ -38,32 +38,41 @@ let linear_params () =
   { Linear.w = mat f32 3 2 (grid 6); b = Some (vec f32 [| 0.5; -0.25 |]) }
 
 let test_cast_dtypes () =
-  let lin = Linear.map (Nx.cast f16) (linear_params ()) in
+  let lin = Nx.Ptree.cast (module Linear) f16 (linear_params ()) in
   dtype_is ~msg:"linear w" f16 lin.Linear.w;
   dtype_is ~msg:"linear b" f16 (Option.get lin.Linear.b);
   let emb =
-    Embedding.map (Nx.cast f16) { Embedding.table = mat f32 4 3 (grid 12) }
+    Nx.Ptree.cast
+      (module Embedding)
+      f16
+      { Embedding.table = mat f32 4 3 (grid 12) }
   in
   dtype_is ~msg:"embedding table" f16 emb.Embedding.table;
-  let ln = Layer_norm.map (Nx.cast f16) (Layer_norm.init ~dim:4) in
+  let ln = Nx.Ptree.cast (module Layer_norm) f16 (Layer_norm.init ~dim:4) in
   dtype_is ~msg:"layer norm gamma" f16 ln.Layer_norm.gamma;
-  let attn = Attention.map (Nx.cast f16) (Attention.init ~embed_dim:4) in
+  let attn =
+    Nx.Ptree.cast (module Attention) f16 (Attention.init ~embed_dim:4)
+  in
   dtype_is ~msg:"attention q.w" f16 attn.Attention.q.Linear.w;
   let bn, stats = Batch_norm.init ~features:3 in
-  dtype_is ~msg:"batch norm gamma" f16 (Batch_norm.map (Nx.cast f16) bn).gamma;
+  dtype_is ~msg:"batch norm gamma" f16
+    (Nx.Ptree.cast (module Batch_norm) f16 bn).gamma;
   dtype_is ~msg:"batch norm stats mean" f16
-    (Batch_norm.Stats.map (Nx.cast f16) stats).mean;
+    (Nx.Ptree.cast (module Batch_norm.Stats) f16 stats).mean;
   let conv = Conv.init ~in_channels:1 ~out_channels:2 ~kernel_size:(2, 2) in
-  dtype_is ~msg:"conv w" f16 (Conv.map (Nx.cast f16) conv).Conv.w;
+  dtype_is ~msg:"conv w" f16 (Nx.Ptree.cast (module Conv) f16 conv).Conv.w;
   let cache =
     Attention.Cache.make ~slots:3 ~kv_heads:2 ~head_dim:2 Nx.float32
   in
-  dtype_is ~msg:"cache keys" f16 (Attention.Cache.map (Nx.cast f16) cache).keys
+  dtype_is ~msg:"cache keys" f16
+    (Nx.Ptree.cast (module Attention.Cache) f16 cache).keys
 
 let test_cast_round_trip () =
   (* Grid values are exact at both halves: cast down and back is lossless. *)
   let p = linear_params () in
-  let back dt = Linear.map (Nx.cast f32) (Linear.map (Nx.cast dt) p) in
+  let back dt =
+    Nx.Ptree.cast (module Linear) f32 (Nx.Ptree.cast (module Linear) dt p)
+  in
   close ~msg:"float16 w" ~tol:0.0 p.Linear.w (back f16).Linear.w;
   close ~msg:"bfloat16 w" ~tol:0.0 p.Linear.w (back bf16).Linear.w
 
@@ -73,7 +82,9 @@ let test_linear_apply (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   let p = linear_params () in
   let x = mat f32 4 3 (grid 12) in
   let expected = Linear.apply p x in
-  let actual = Linear.apply (Linear.map (Nx.cast dt) p) (Nx.cast dt x) in
+  let actual =
+    Linear.apply (Nx.Ptree.cast (module Linear) dt p) (Nx.cast dt x)
+  in
   dtype_is ~msg:"output dtype" dt actual;
   close ~tol expected actual
 
@@ -82,7 +93,7 @@ let test_embedding_apply () =
   let ids = vec Nx.int32 [| 0l; 3l; 4l |] in
   (* A gather rounds nothing: exact at float16. *)
   close ~msg:"float16 gather is exact" ~tol:0.0 (Embedding.apply p ids)
-    (Embedding.apply (Embedding.map (Nx.cast f16) p) ids)
+    (Embedding.apply (Nx.Ptree.cast (module Embedding) f16 p) ids)
 
 let test_conv_apply () =
   let p =
@@ -93,7 +104,7 @@ let test_conv_apply () =
   in
   let x = Nx.create f32 [| 1; 1; 4; 4 |] (grid 16) in
   close ~msg:"float16 conv" ~tol:0.02 (Conv.apply p x)
-    (Conv.apply (Conv.map (Nx.cast f16) p) (Nx.cast f16 x))
+    (Conv.apply (Nx.Ptree.cast (module Conv) f16 p) (Nx.cast f16 x))
 
 (* ───── float32 islands ───── *)
 
@@ -114,7 +125,7 @@ let test_layer_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
      reference is the float32 computation on the same rounded values. *)
   let xh = Nx.cast dt x in
   let expected = Layer_norm.apply p (Nx.cast f32 xh) in
-  let actual = Layer_norm.apply (Layer_norm.map (Nx.cast dt) p) xh in
+  let actual = Layer_norm.apply (Nx.Ptree.cast (module Layer_norm) dt p) xh in
   is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
   close ~tol expected actual
 
@@ -170,7 +181,7 @@ let test_attention_apply_half () =
   let expected = Attention.apply ~head_dim:2 ~mask p x in
   let actual =
     Attention.apply ~head_dim:2 ~mask
-      (Attention.map (Nx.cast f16) p)
+      (Nx.Ptree.cast (module Attention) f16 p)
       (Nx.cast f16 x)
   in
   close ~msg:"multi-head causal at float16" ~tol:0.01 expected actual
@@ -185,7 +196,7 @@ let test_rms_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   let p = { Rms_norm.gamma = vec f32 [| 1.0; 2.0; 0.5; 1.0 |] } in
   let xh = Nx.cast dt x in
   let expected = Rms_norm.apply p (Nx.cast f32 xh) in
-  let actual = Rms_norm.apply (Rms_norm.map (Nx.cast dt) p) xh in
+  let actual = Rms_norm.apply (Nx.Ptree.cast (module Rms_norm) dt p) xh in
   is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
   close ~tol expected actual
 
@@ -202,7 +213,7 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
   let x32 = Nx.mul_s (Nx.randn f32 [| 1; 6; 8 |]) 0.5 in
   let slots = Nx.create Nx.int32 [| 1; 6 |] (Array.init 6 Int32.of_int) in
   let run (type c) (dt : (float, c) Nx.dtype) chunks =
-    let p = Attention.map (Nx.cast dt) p32 and x = Nx.cast dt x32 in
+    let p = Nx.Ptree.cast (module Attention) dt p32 and x = Nx.cast dt x32 in
     let _, ys, _ =
       List.fold_left
         (fun (at, ys, c) n ->
@@ -247,16 +258,8 @@ let test_cross_entropy_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
     (Loss.softmax_cross_entropy (Nx.cast f32 half) one_hot)
     (Loss.softmax_cross_entropy half (Nx.cast dt one_hot));
   (* The gradient flows through both casts and comes back at the half dtype. *)
-  let module One = struct
-    type 'a t = 'a
-
-    let map f x = f x
-    let map2 f x y = f x y
-    let iter f x = f x
-  end in
   let grad l =
-    Rune.grad
-      (Kaun.ptree (module One))
+    Rune.grad Nx.Ptree.tensor
       (fun l -> Loss.softmax_cross_entropy_sparse l labels)
       l
   in
@@ -300,8 +303,8 @@ let test_batch_norm_island () =
   let expected, estats = Batch_norm.apply p stats ~training:true x in
   let actual, astats =
     Batch_norm.apply
-      (Batch_norm.map (Nx.cast f16) p)
-      (Batch_norm.Stats.map (Nx.cast f16) stats)
+      (Nx.Ptree.cast (module Batch_norm) f16 p)
+      (Nx.Ptree.cast (module Batch_norm.Stats) f16 stats)
       ~training:true (Nx.cast f16 x)
   in
   is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
@@ -311,15 +314,15 @@ let test_batch_norm_island () =
   let expected_eval, _ = Batch_norm.apply p estats ~training:false x in
   let actual_eval, _ =
     Batch_norm.apply
-      (Batch_norm.map (Nx.cast f16) p)
-      (Batch_norm.Stats.map (Nx.cast f16) estats)
+      (Nx.Ptree.cast (module Batch_norm) f16 p)
+      (Nx.Ptree.cast (module Batch_norm.Stats) f16 estats)
       ~training:false (Nx.cast f16 x)
   in
   close ~msg:"eval normalization" ~tol:0.05 expected_eval actual_eval
 
 (* ───── The astype-sandwich gradient ───── *)
 
-let linear32 = Kaun.ptree (module Linear)
+let linear32 = Nx.Ptree.instantiate (module Linear)
 
 let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   ignore name;
@@ -329,7 +332,9 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
     Nx.cast f32
       (Nx.mean
          (Nx.tanh
-            (Linear.apply (Linear.map (Nx.cast compute) p) (Nx.cast compute x))))
+            (Linear.apply
+               (Nx.Ptree.cast (module Linear) compute p)
+               (Nx.cast compute x))))
   in
   let v, grads = Rune.value_and_grad linear32 (loss dt) p in
   (* [grads : Linear.t]: float32 by type; the cast VJP makes it so at run time,
@@ -347,70 +352,39 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
    calls (a captured scale would be a trace-time constant) and a poisoned batch
    must be skippable without recompiling. *)
 
-module W32 = struct
-  type t = Nx.float32_t
+type fit_in = { w : Nx.float32_t; x : Nx.float32_t; ls : Vega.Loss_scale.t }
+type fit_out = { w : Nx.float32_t; loss : Nx.float32_t; ls : Vega.Loss_scale.t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
+let fit_in =
+  Nx.Ptree.(
+    iso
+      (fun ((w, x), ls) -> { w; x; ls })
+      (fun ({ w; x; ls } : fit_in) -> ((w, x), ls))
+      (pair (pair tensor tensor) Vega.Loss_scale.ptree))
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
-module Fit_in = struct
-  type t = { w : Nx.float32_t; x : Nx.float32_t; ls : Vega.Loss_scale.t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; x; ls } =
-    { w = f w; x = f x; ls = Vega.Loss_scale.map f ls }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { w = f a.w b.w; x = f a.x b.x; ls = Vega.Loss_scale.map2 f a.ls b.ls }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; x; ls } =
-    f w;
-    f x;
-    Vega.Loss_scale.iter f ls
-end
-
-module Fit_out = struct
-  type t = { w : Nx.float32_t; loss : Nx.float32_t; ls : Vega.Loss_scale.t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; loss; ls } =
-    { w = f w; loss = f loss; ls = Vega.Loss_scale.map f ls }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      w = f a.w b.w;
-      loss = f a.loss b.loss;
-      ls = Vega.Loss_scale.map2 f a.ls b.ls;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; loss; ls } =
-    f w;
-    f loss;
-    Vega.Loss_scale.iter f ls
-end
+let fit_out =
+  Nx.Ptree.(
+    iso
+      (fun ((w, loss), ls) -> { w; loss; ls })
+      (fun ({ w; loss; ls } : fit_out) -> ((w, loss), ls))
+      (pair (pair tensor tensor) Vega.Loss_scale.ptree))
 
 let test_f16_train_loss_scaled () =
   let x = mat f32 4 2 [| 1.0; 0.5; -0.5; 1.0; 0.25; -1.0; -1.0; -0.25 |] in
   let y = Nx.matmul x (mat f32 2 1 [| 1.5; -0.5 |]) in
   let step =
-    Rune.jit2 ~device:"CPU"
-      (module Fit_in)
-      (module Fit_out)
-      (fun { Fit_in.w; x; ls } ->
+    Rune.jit2 ~device:"CPU" fit_in fit_out (fun ({ w; x; ls } : fit_in) ->
         let objective w =
           let pred = Nx.matmul (Nx.cast f16 x) (Nx.cast f16 w) in
           let loss = Nx.cast f32 (Loss.mse pred (Nx.cast f16 y)) in
           Vega.Loss_scale.scale ls loss
         in
-        let sloss, grads = Rune.value_and_grad (module W32) objective w in
-        let grads = Vega.Loss_scale.unscale (module W32) ls grads in
-        let finite = Vega.Loss_scale.grads_finite (module W32) grads in
+        let sloss, grads = Rune.value_and_grad Nx.Ptree.tensor objective w in
+        let grads = Vega.Loss_scale.unscale Nx.Ptree.tensor ls grads in
+        let finite = Vega.Loss_scale.grads_finite Nx.Ptree.tensor grads in
         let w' = Nx.sub w (Nx.mul_s grads 0.2) in
         {
-          Fit_out.w = Nx.where finite w' w;
+          w = Nx.where finite w' w;
           loss = Nx.div sloss ls.Vega.Loss_scale.scale;
           ls = Vega.Loss_scale.adjust ~growth_interval:3 ls ~finite;
         })
@@ -419,10 +393,10 @@ let test_f16_train_loss_scaled () =
   let ls = ref (Vega.Loss_scale.dynamic ~init:1024.0 ()) in
   let losses = ref [] in
   let run_step x =
-    let out = step { Fit_in.w = !w; x; ls = !ls } in
-    w := out.Fit_out.w;
-    ls := out.Fit_out.ls;
-    Nx.item [] out.Fit_out.loss
+    let out = step ({ w = !w; x; ls = !ls } : fit_in) in
+    w := out.w;
+    ls := out.ls;
+    Nx.item [] out.loss
   in
   for _ = 1 to 3 do
     losses := run_step x :: !losses

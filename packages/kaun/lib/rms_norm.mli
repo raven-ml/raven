@@ -49,25 +49,10 @@ val apply :
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
     have size [dim], or if [eps] is negative. *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Payload traversals over the single leaf, satisfying the {!Nx.Ptree.Uniform}
-    contract. The leaf path is ["gamma"]. *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to its payload leaf. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p q] combines [p] and [q] leafwise with [f]. *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to the payload leaf of [p]. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise, threading the leaf's path. *)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p q] is like {!fold} across two layers. *)
-
-val names : 'a t -> string t
-(** [names p] is [{ gamma = "gamma" }]. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parameters, [gamma], at that path: the layer's
+    {!Nx.Ptree.S} instance. [Nx.Ptree.instantiate (module Rms_norm)] is the
+    layer at one dtype, and [Nx.Ptree.cast (module Rms_norm) dtype p] converts
+    its precision. *)

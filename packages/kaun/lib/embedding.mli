@@ -8,8 +8,8 @@
     An embedding is a lookup table mapping integer token ids to learned dense
     vectors: a record with one [vocab × dim] payload hole. Construct one with
     {!init} or {!make} and turn id tensors into vector tensors with {!apply}.
-    Like the other layers, it composes into models through record nesting; the
-    traversals supply the {!Nx.Ptree.Uniform} and checkpoint plumbing. *)
+    Like the other layers, it composes into models through record nesting, and
+    {!walk} makes it a structure. *)
 
 (** {1:types Types} *)
 
@@ -51,26 +51,10 @@ val apply : (float, 'b) Nx.t t -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
 
     Raises [Invalid_argument] if an id is negative or not below [vocab]. *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Payload traversals over the single leaf, satisfying the {!Nx.Ptree.Uniform}
-    contract. The leaf path is ["table"]. *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to the table. [map (Nx.cast dt) p]
-    converts the table's precision; the cast is differentiable through Rune. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p q] combines the tables of [p] and [q] with [f]. *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to the table. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] is [f "table" acc p.table]. *)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p q] is [f "table" acc p.table q.table]. *)
-
-val names : 'a t -> string t
-(** [names p] is [{ table = "table" }]. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parameters, [table], at that path: the layer's
+    {!Nx.Ptree.S} instance. [Nx.Ptree.instantiate (module Embedding)] is the
+    layer at one dtype, and [Nx.Ptree.cast (module Embedding) dtype p] converts
+    its precision. *)

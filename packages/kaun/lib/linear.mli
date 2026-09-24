@@ -7,26 +7,29 @@
 
     A linear layer is a record of parameters with a payload hole. Filled with
     tensors it is the layer itself; filled with floats, a per-leaf learning
-    rate; filled with strings, the checkpoint names. Construct one with {!init}
-    or {!make}, transform inputs with {!apply}, and compose layers into models
-    by nesting records — the traversals give any such model a one-line
-    {!Nx.Ptree.Uniform} instance, and [Kaun.ptree] turns that into the
-    {!Nx.Ptree.S} the transformations take:
+    rate. Construct one with {!init} or {!make}, transform inputs with {!apply},
+    and compose layers into models by nesting records. A model is a structure
+    with one {!walk}, one line per field, and [Nx.Ptree.instantiate] turns it
+    into the {!Nx.Ptree.t} the transformations take:
 
     {[
     module Mlp = struct
       type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-      let map f { l1; l2 } =
-        let l1 = Linear.map f l1 in
-        let l2 = Linear.map f l2 in
+      let walk c { l1; l2 } =
+        let open Nx.Ptree.Walk in
+        let l1 = field c "l1" Linear.walk l1 in
+        let l2 = field c "l2" Linear.walk l2 in
         { l1; l2 }
-      (* map2, iter, fold, fold2, names: same one-liners over the fields, or
-         [@@deriving ptree]. *)
 
       let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
     end
-    ]} *)
+
+    let mlp = Nx.Ptree.instantiate (module Mlp)
+    ]}
+
+    The paths [walk] gives each leaf, here [l1.w], [l1.b], [l2.w] and [l2.b],
+    are the leaf's checkpoint names. *)
 
 (** {1:types Types} *)
 
@@ -36,8 +39,8 @@ type 'a t = { w : 'a; b : 'a option }
     At tensor payloads — [(float, 'b) Nx.t t] — [w] has shape
     [[| inputs; outputs |]] and [b], when present, shape [[| outputs |]]. [b] is
     [None] for layers built without a bias ({!make}[ ~bias:false]); such layers
-    have no bias parameter at all, so traversals skip it and {!apply} performs
-    no shift. *)
+    have no bias parameter at all, so {!walk} skips it and {!apply} performs no
+    shift. *)
 
 (** {1:constructors Constructors} *)
 
@@ -77,33 +80,11 @@ val apply : (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 
     Raises [Invalid_argument] if [x]'s last axis does not have size [inputs]. *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Payload traversals in the order [w] then [b], satisfying the
-    {!Nx.Ptree.Uniform} contract. Leaf paths are ["w"] and ["b"]. *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to every payload leaf.
-    [map (Nx.cast dt) p] converts a layer's precision; the cast is
-    differentiable through Rune. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p q] combines [p] and [q] leafwise with [f].
-
-    Raises [Invalid_argument] if one of [p] and [q] has a bias and the other
-    does not. *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to every payload leaf of [p]. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise, threading each leaf's path. *)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p q] is like {!fold} across two structurally equal layers.
-
-    Raises [Invalid_argument] if one of [p] and [q] has a bias and the other
-    does not. *)
-
-val names : 'a t -> string t
-(** [names p] is [p] with every payload replaced by its path. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parameters: [w] at ["w"], then [b] at ["b"],
+    reporting whether [b] is present, so a layer with a bias and one without are
+    distinct structures. It is the layer's {!Nx.Ptree.S} instance.
+    [Nx.Ptree.instantiate (module Linear)] is the layer at one dtype, and
+    [Nx.Ptree.cast (module Linear) dtype p] converts its precision. *)

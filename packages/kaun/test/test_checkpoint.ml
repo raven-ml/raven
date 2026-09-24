@@ -32,52 +32,34 @@ let with_ckpt_file f =
       with Sys_error _ when Sys.win32 -> ())
     (fun () -> f (Filename.concat dir "ckpt.safetensors"))
 
-(* A parameter record with mixed leaf dtypes, held at packed payloads. *)
+(* A parameter record with mixed leaf dtypes. *)
 
 module Params = struct
-  type 'a t = { w : 'a; b : 'a; scale : 'a }
+  type t = { w : Nx.float32_t; b : Nx.float32_t; scale : Nx.float64_t }
 
-  let map f { w; b; scale } =
-    let w = f w in
-    let b = f b in
-    let scale = f scale in
-    { w; b; scale }
+  module Walked = struct
+    type nonrec _ t = t
 
-  let map2 f p q =
-    let w = f p.w q.w in
-    let b = f p.b q.b in
-    let scale = f p.scale q.scale in
-    { w; b; scale }
+    let walk c { w; b; scale } =
+      let open Nx.Ptree.Walk in
+      let w = field c "w" tensor w in
+      let b = field c "b" tensor b in
+      let scale = field c "scale" tensor scale in
+      { w; b; scale }
+  end
 
-  let iter f { w; b; scale } =
-    f w;
-    f b;
-    f scale
-
-  let fold f acc { w; b; scale } = f "scale" (f "b" (f "w" acc w) b) scale
-
-  let fold2 f acc p q =
-    f "scale" (f "b" (f "w" acc p.w q.w) p.b q.b) p.scale q.scale
-
-  let names _ = { w = "w"; b = "b"; scale = "scale" }
+  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
 end
-
-let pack x = Rune.Ptree.P x
 
 let params () =
   {
-    Params.w = pack (vec32 [| 1.5; -2.0; 3.25 |]);
-    b = pack (vec32 [| 0.5 |]);
-    scale = pack (vec64 [| 2.0 |]);
+    Params.w = vec32 [| 1.5; -2.0; 3.25 |];
+    b = vec32 [| 0.5 |];
+    scale = vec64 [| 2.0 |];
   }
 
 let fresh_params () =
-  Params.map
-    (fun (Rune.Ptree.P leaf) -> Rune.Ptree.P (Nx.zeros_like leaf))
-    (params ())
-
-let unpack32 p = Rune.Ptree.unpack f32 p
-let unpack64 p = Rune.Ptree.unpack f64 p
+  Nx.Ptree.map Params.ptree (fun _ leaf -> Nx.zeros_like leaf) (params ())
 
 (* A float32 linear model, for the training stories. Its leaf paths keep the
    file names [w] and [b] whatever the record's field names. *)
@@ -85,50 +67,38 @@ let unpack64 p = Rune.Ptree.unpack f64 p
 module Lin = struct
   type 'a t = { lw : 'a; lb : 'a }
 
-  let map f { lw; lb } =
-    let lw = f lw in
-    let lb = f lb in
+  let walk c { lw; lb } =
+    let open Nx.Ptree.Walk in
+    let lw = field c "w" leaf lw in
+    let lb = field c "b" leaf lb in
     { lw; lb }
-
-  let map2 f p q =
-    let lw = f p.lw q.lw in
-    let lb = f p.lb q.lb in
-    { lw; lb }
-
-  let iter f { lw; lb } =
-    f lw;
-    f lb
-
-  let fold f acc { lw; lb } = f "b" (f "w" acc lw) lb
-  let fold2 f acc p q = f "b" (f "w" acc p.lw q.lw) p.lb q.lb
-  let names _ = { lw = "w"; lb = "b" }
 end
 
-let lin = Kaun.ptree (module Lin)
+let lin : Nx.float32_t Lin.t Nx.Ptree.t = Nx.Ptree.instantiate (module Lin)
 
 (* Round-trip *)
 
 let test_round_trip () =
   with_ckpt_file @@ fun path ->
-  Checkpoint.save path (Checkpoint.of_packed (module Params) (params ()));
+  Checkpoint.save path (Checkpoint.of_value Params.ptree (params ()));
   let ckpt = Checkpoint.load path in
-  let p = Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt in
-  check_arr ~msg:"w" [| 1.5; -2.0; 3.25 |] (unpack32 p.Params.w);
-  check_arr ~msg:"b" [| 0.5 |] (unpack32 p.Params.b);
-  check_arr ~msg:"scale" [| 2.0 |] (unpack64 p.Params.scale)
+  let p = Checkpoint.to_value Params.ptree ~like:(fresh_params ()) ckpt in
+  check_arr ~msg:"w" [| 1.5; -2.0; 3.25 |] p.Params.w;
+  check_arr ~msg:"b" [| 0.5 |] p.Params.b;
+  check_arr ~msg:"scale" [| 2.0 |] p.Params.scale
 
 let test_round_trip_dtypes () =
   with_ckpt_file @@ fun path ->
-  Checkpoint.save path (Checkpoint.of_packed (module Params) (params ()));
+  Checkpoint.save path (Checkpoint.of_value Params.ptree (params ()));
   let ckpt = Checkpoint.load path in
   let dtype_of name =
     match Checkpoint.get name ckpt with
-    | Rune.Ptree.P x -> Nx_core.Dtype.to_string (Nx.dtype x)
+    | Nx.P x -> Nx_core.Dtype.to_string (Nx.dtype x)
   in
   equal ~msg:"w" string "float32" (dtype_of "w");
   equal ~msg:"scale" string "float64" (dtype_of "scale");
   (* Strict (no-cast) extraction succeeds, so dtypes survived the file. *)
-  let _ = Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt in
+  let _ = Checkpoint.to_value Params.ptree ~like:(fresh_params ()) ckpt in
   ()
 
 let test_int_round_trip () =
@@ -158,31 +128,32 @@ let test_resume_training () =
     { Lin.lw = Nx.create f32 [| 2; 1 |] [| 0.2; -0.1 |]; lb = vec32 [| 0.0 |] }
   in
   let p3, st3 = train_adam_steps 3 (p0, Vega.adam_init lin p0) in
-  Checkpoint.save path
-    (Checkpoint.concat
-       [
-         Checkpoint.of_params (module Lin) ~prefix:"model" p3;
-         Checkpoint.of_params (module Lin) ~prefix:"optim.mu" st3.Vega.mu;
-         Checkpoint.of_params (module Lin) ~prefix:"optim.nu" st3.Vega.nu;
-         Checkpoint.of_tensor "optim.step" st3.Vega.step;
-       ]);
+  let opt = Vega.adam_ptree lin in
+  let ckpt =
+    Checkpoint.concat
+      [
+        Checkpoint.of_value ~prefix:"model" lin p3;
+        Checkpoint.of_value ~prefix:"optim" opt st3;
+      ]
+  in
+  equal ~msg:"today's names" (list string)
+    [
+      "model.b";
+      "model.w";
+      "optim.mu.b";
+      "optim.mu.w";
+      "optim.nu.b";
+      "optim.nu.w";
+      "optim.step";
+    ]
+    (Checkpoint.names ckpt);
+  Checkpoint.save path ckpt;
   let expected, _ = train_adam_steps 2 (p3, st3) in
   (* Restore into freshly initialized values and continue training. *)
   let ckpt = Checkpoint.load path in
-  let like = Vega.adam_init lin p0 in
-  let p3' = Checkpoint.to_params (module Lin) ~prefix:"model" ~like:p0 ckpt in
+  let p3' = Checkpoint.to_value ~prefix:"model" lin ~like:p0 ckpt in
   let st3' =
-    {
-      Vega.mu =
-        Checkpoint.to_params
-          (module Lin)
-          ~prefix:"optim.mu" ~like:like.Vega.mu ckpt;
-      nu =
-        Checkpoint.to_params
-          (module Lin)
-          ~prefix:"optim.nu" ~like:like.Vega.nu ckpt;
-      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
-    }
+    Checkpoint.to_value ~prefix:"optim" opt ~like:(Vega.adam_init lin p0) ckpt
   in
   let resumed, _ = train_adam_steps 2 (p3', st3') in
   check_arr ~msg:"w" (to_arr expected.Lin.lw) resumed.Lin.lw;
@@ -206,27 +177,18 @@ let test_resume_sgd_momentum () =
     { Lin.lw = Nx.create f32 [| 2; 1 |] [| 0.2; -0.1 |]; lb = vec32 [| 0.0 |] }
   in
   let p3, st3 = train_sgd_steps 3 (p0, Vega.sgd_init lin p0) in
+  let opt = Vega.sgd_ptree lin in
   Checkpoint.save path
     (Checkpoint.concat
        [
-         Checkpoint.of_params (module Lin) ~prefix:"model" p3;
-         Checkpoint.of_params
-           (module Lin)
-           ~prefix:"optim.velocity" st3.Vega.velocity;
-         Checkpoint.of_tensor "optim.step" st3.Vega.step;
+         Checkpoint.of_value ~prefix:"model" lin p3;
+         Checkpoint.of_value ~prefix:"optim" opt st3;
        ]);
   let expected, _ = train_sgd_steps 2 (p3, st3) in
   let ckpt = Checkpoint.load path in
-  let p3' = Checkpoint.to_params (module Lin) ~prefix:"model" ~like:p0 ckpt in
-  let like = Vega.sgd_init lin p0 in
+  let p3' = Checkpoint.to_value ~prefix:"model" lin ~like:p0 ckpt in
   let st3' =
-    {
-      Vega.velocity =
-        Checkpoint.to_params
-          (module Lin)
-          ~prefix:"optim.velocity" ~like:like.Vega.velocity ckpt;
-      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
-    }
+    Checkpoint.to_value ~prefix:"optim" opt ~like:(Vega.sgd_init lin p0) ckpt
   in
   let resumed, _ = train_sgd_steps 2 (p3', st3') in
   check_arr ~msg:"w" (to_arr expected.Lin.lw) resumed.Lin.lw;
@@ -245,71 +207,77 @@ let test_load_pretrained () =
          Checkpoint.of_tensor "b" (vec32 [| 0.125 |]);
        ]);
   let fresh = { Lin.lw = Nx.zeros f32 [| 2; 1 |]; lb = Nx.zeros f32 [| 1 |] } in
-  let m =
-    Checkpoint.to_params (module Lin) ~like:fresh (Checkpoint.load path)
-  in
+  let m = Checkpoint.to_value lin ~like:fresh (Checkpoint.load path) in
   check_arr ~msg:"w" [| 0.25; -0.75 |] m.Lin.lw;
   check_arr ~msg:"b" [| 0.125 |] m.Lin.lb
 
 (* Naming *)
 
 let test_prefix_names () =
-  let ckpt = Checkpoint.of_packed (module Params) ~prefix:"model" (params ()) in
+  let ckpt = Checkpoint.of_value ~prefix:"model" Params.ptree (params ()) in
   equal (list string)
     [ "model.b"; "model.scale"; "model.w" ]
     (Checkpoint.names ckpt)
 
-let test_ptree_paths () =
-  let module T = Rune.Ptree in
-  let tree =
-    T.dict
-      [
-        ( "layers",
-          T.list
-            [
-              T.dict [ ("w", T.tensor (vec32 [| 1.0 |])) ];
-              T.dict [ ("w", T.tensor (vec32 [| 2.0 |])) ];
-            ] );
-        ("head", T.tensor (vec64 [| 3.0 |]));
-      ]
+(* A model with a list of layers and an optional head. *)
+module Stack = struct
+  type 'a t = { layers : 'a Kaun.Linear.t list; head : 'a option }
+
+  let walk c { layers; head } =
+    let open Nx.Ptree.Walk in
+    let layers = field c "layers" (list Kaun.Linear.walk) layers in
+    let head = field c "head" (option leaf) head in
+    { layers; head }
+end
+
+let test_nested_paths () =
+  let stack = Nx.Ptree.instantiate (module Stack) in
+  let layer w = { Kaun.Linear.w = vec32 [| w |]; b = None } in
+  let x =
+    { Stack.layers = [ layer 1.0; layer 2.0 ]; head = Some (vec32 [| 3.0 |]) }
   in
-  let ckpt = Checkpoint.of_packed (module T.Tree) tree in
+  let ckpt = Checkpoint.of_value stack x in
   equal ~msg:"paths" (list string)
     [ "head"; "layers.0.w"; "layers.1.w" ]
     (Checkpoint.names ckpt);
   with_ckpt_file @@ fun path ->
   Checkpoint.save path ckpt;
-  let like = T.map (fun leaf -> Nx.zeros_like leaf) tree in
-  let tree' =
-    Checkpoint.to_packed (module T.Tree) ~like (Checkpoint.load path)
-  in
-  let leaf name =
-    match Checkpoint.get name (Checkpoint.of_packed (module T.Tree) tree') with
-    | T.P x -> to_arr (Nx.cast f64 x)
-  in
-  equal ~msg:"layers.1.w" (array float_exact) [| 2.0 |] (leaf "layers.1.w");
-  equal ~msg:"head" (array float_exact) [| 3.0 |] (leaf "head")
-
-(* A one-leaf structure whose payload sits at its own root: without a prefix its
-   name is empty. *)
-module Root = struct
-  type 'a t = 'a
-
-  let map f x = f x
-  let map2 f a b = f a b
-  let iter f x = f x
-  let fold f acc x = f "" acc x
-  let fold2 f acc a b = f "" acc a b
-  let names _ = ""
-end
+  let like = Nx.Ptree.map stack (fun _ leaf -> Nx.zeros_like leaf) x in
+  let x' = Checkpoint.to_value stack ~like (Checkpoint.load path) in
+  check_arr ~msg:"layers.1.w" [| 2.0 |] (List.nth x'.Stack.layers 1).w;
+  check_arr ~msg:"head" [| 3.0 |] (Option.get x'.Stack.head)
 
 let test_root_leaf_prefix () =
-  let x = pack (vec32 [| 1.0 |]) in
-  let ckpt = Checkpoint.of_packed (module Root) ~prefix:"w" x in
+  let x = vec32 [| 1.0 |] in
+  let ckpt = Checkpoint.of_value ~prefix:"w" Nx.Ptree.tensor x in
   equal ~msg:"prefix names the root" (list string) [ "w" ]
     (Checkpoint.names ckpt);
-  raises (Invalid_argument "Checkpoint.of_packed: empty tensor name") (fun () ->
-      Checkpoint.of_packed (module Root) x)
+  raises
+    (Invalid_argument "Checkpoint.of_value: a leaf at the root needs ~prefix")
+    (fun () -> Checkpoint.of_value Nx.Ptree.tensor x);
+  raises
+    (Invalid_argument "Checkpoint.to_value: a leaf at the root needs ~prefix")
+    (fun () -> Checkpoint.to_value Nx.Ptree.tensor ~like:x ckpt)
+
+(* A fixed tensor has an entry of its own. *)
+module Counted = struct
+  type 'a t = { w : 'a; count : Nx.int32_t }
+
+  let walk c { w; count } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let count = field c "count" tensor count in
+    { w; count }
+end
+
+let test_fixed_tensor_entry () =
+  let counted = Nx.Ptree.instantiate (module Counted) in
+  let x = { Counted.w = vec32 [| 1.0 |]; count = Nx.scalar Nx.int32 7l } in
+  let ckpt = Checkpoint.of_value counted x in
+  equal ~msg:"names" (list string) [ "count"; "w" ] (Checkpoint.names ckpt);
+  let like = { Counted.w = vec32 [| 0.0 |]; count = Nx.scalar Nx.int32 0l } in
+  equal ~msg:"the fixed tensor loads" int32 7l
+    (Nx.item [] (Checkpoint.to_value counted ~like ckpt).count)
 
 let test_find_get () =
   let ckpt = Checkpoint.of_tensor "w" (vec32 [| 1.0 |]) in
@@ -328,20 +296,22 @@ let test_missing_entry () =
         Checkpoint.of_tensor "scale" (vec64 [| 1.0 |]);
       ]
   in
-  raises (Invalid_argument "Checkpoint.to_packed: missing entry \"b\"")
-    (fun () ->
-      Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
+  raises
+    (Invalid_argument
+       "Checkpoint.to_value: b: no entry in the checkpoint, a leaf in the \
+        template") (fun () ->
+      Checkpoint.to_value Params.ptree ~like:(fresh_params ()) ckpt)
 
 let test_extra_entries_ignored () =
   let ckpt =
     Checkpoint.concat
       [
-        Checkpoint.of_packed (module Params) (params ());
+        Checkpoint.of_value Params.ptree (params ());
         Checkpoint.of_tensor "unrelated" (vec32 [| 9.0 |]);
       ]
   in
-  let p = Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt in
-  check_arr ~msg:"w" [| 1.5; -2.0; 3.25 |] (unpack32 p.Params.w)
+  let p = Checkpoint.to_value Params.ptree ~like:(fresh_params ()) ckpt in
+  check_arr ~msg:"w" [| 1.5; -2.0; 3.25 |] p.Params.w
 
 let test_shape_mismatch () =
   let ckpt =
@@ -354,9 +324,9 @@ let test_shape_mismatch () =
   in
   raises
     (Invalid_argument
-       "Checkpoint.to_packed: shape mismatch for \"b\": expected [1], got [2]")
-    (fun () ->
-      Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
+       "Checkpoint.to_value: b: shape [2] in the checkpoint, [1] in the \
+        template") (fun () ->
+      Checkpoint.to_value Params.ptree ~like:(fresh_params ()) ckpt)
 
 let test_dtype_mismatch () =
   let ckpt =
@@ -369,9 +339,9 @@ let test_dtype_mismatch () =
   in
   raises
     (Invalid_argument
-       "Checkpoint.to_packed: dtype mismatch for \"scale\": expected float64, \
-        got float32") (fun () ->
-      Checkpoint.to_packed (module Params) ~like:(fresh_params ()) ckpt)
+       "Checkpoint.to_value: scale: float32 in the checkpoint, float64 in the \
+        template") (fun () ->
+      Checkpoint.to_value Params.ptree ~like:(fresh_params ()) ckpt)
 
 (* Extraction by name *)
 
@@ -391,7 +361,7 @@ let test_to_tensor () =
   equal ~msg:"uint8 values" (array int) [| 1; 2; 255 |] (Nx.to_array blocks);
   let w = Checkpoint.to_tensor ~shape:[| 2; 2 |] f32 "w" ckpt in
   is_true ~msg:"the entry is returned as stored"
-    (w == unpack32 (Checkpoint.get "w" ckpt));
+    (w == Nx.unpack f32 (Checkpoint.get "w" ckpt));
   check_arr ~msg:"float8 is read as stored" [| 1.0 |]
     (Nx.cast f32
        (Checkpoint.to_tensor ~shape:[| 1 |] Nx.float8_e4m3 "tiny" ckpt));
@@ -413,7 +383,7 @@ let test_to_float () =
     (Checkpoint.to_float ~shape:[| 2 |] f32 "half" ckpt);
   let half = Checkpoint.to_float ~shape:[| 2 |] Nx.bfloat16 "half" ckpt in
   is_true ~msg:"the entry's own dtype casts nothing"
-    (half == Rune.Ptree.unpack Nx.bfloat16 (Checkpoint.get "half" ckpt));
+    (half == Nx.unpack Nx.bfloat16 (Checkpoint.get "half" ckpt));
   raises (Invalid_argument "Checkpoint.to_float: missing entry \"nope\"")
     (fun () -> Checkpoint.to_float ~shape:[| 1 |] f32 "nope" ckpt);
   raises
@@ -444,22 +414,26 @@ let test_concat_duplicate () =
           Checkpoint.of_tensor "w" (vec32 [| 2.0 |]);
         ])
 
-(* A structure whose paths collide: the traversals are Params's, the paths are
-   not distinct. *)
+(* A structure whose paths collide. *)
 module Duplicated = struct
-  include Params
+  type 'a t = { a : 'a; b : 'a }
 
-  let fold f acc { w; b; scale } = f "scale" (f "w" (f "w" acc w) b) scale
+  let walk c { a; b } =
+    let open Nx.Ptree.Walk in
+    let a = field c "w" leaf a in
+    let b = field c "w" leaf b in
+    { a; b }
 end
 
 let test_duplicate_names () =
-  raises (Invalid_argument "Checkpoint.of_packed: duplicate name \"w\"")
-    (fun () -> Checkpoint.of_packed (module Duplicated) (params ()));
-  raises (Invalid_argument "Checkpoint.to_packed: duplicate name \"w\"")
+  let duplicated = Nx.Ptree.instantiate (module Duplicated) in
+  let x = { Duplicated.a = vec32 [| 1.0 |]; b = vec32 [| 2.0 |] } in
+  raises (Invalid_argument "Checkpoint.of_value: w: two leaves have this name")
+    (fun () -> Checkpoint.of_value duplicated x);
+  raises (Invalid_argument "Checkpoint.to_value: w: two leaves have this name")
     (fun () ->
-      Checkpoint.to_packed
-        (module Duplicated)
-        ~like:(params ()) Checkpoint.empty)
+      Checkpoint.to_value duplicated ~like:x
+        (Checkpoint.of_tensor "w" (vec32 [| 3.0 |])))
 
 let test_empty_name () =
   raises (Invalid_argument "Checkpoint.of_tensor: empty tensor name") (fun () ->
@@ -504,9 +478,9 @@ let () =
       group "naming"
         [
           test "prefix prepends dotted names" test_prefix_names;
-          test "ptree leaves are named by their path" test_ptree_paths;
-          test "a root payload is named by the prefix alone"
-            test_root_leaf_prefix;
+          test "leaves are named by their path" test_nested_paths;
+          test "a root leaf is named by the prefix alone" test_root_leaf_prefix;
+          test "a fixed tensor has an entry" test_fixed_tensor_entry;
           test "find and get look entries up by name" test_find_get;
         ];
       group "errors"

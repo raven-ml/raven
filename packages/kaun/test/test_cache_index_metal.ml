@@ -24,36 +24,18 @@ type state = {
 }
 
 module State = struct
-  type t = state
+  type _ t = state
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
-    { x = f s.x; y = f s.y; sources = f s.sources; entries = f s.entries }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      x = f a.x b.x;
-      y = f a.y b.y;
-      sources = f a.sources b.sources;
-      entries = f a.entries b.entries;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
-    f s.x;
-    f s.y;
-    f s.sources;
-    f s.entries
+  let walk c s =
+    let open Nx.Ptree.Walk in
+    let x = field c "x" tensor s.x in
+    let y = field c "y" tensor s.y in
+    let sources = field c "sources" tensor s.sources in
+    let entries = field c "entries" tensor s.entries in
+    { x; y; sources; entries }
 end
 
-module Index = struct
-  type t = Cache_index.t
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) = Cache_index.map f
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) =
-    Cache_index.map2 f
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) = Cache_index.iter f
-end
+let state = Nx.Ptree.instantiate (module State)
 
 let stream index s =
   let batch = Cache_index.batch index and seq = Cache_index.seq index in
@@ -81,9 +63,7 @@ let stream index s =
 (* A prompt of 6 positions, which splits block 1, then 6 one-token steps that
    close blocks 1 and 2, over shuffled tables. Block j holds 16 j + 10. *)
 let test_stream_on_metal () =
-  let step =
-    Rune.jit_step ~device:"METAL" (module Index) (module State) stream
-  in
+  let step = Rune.jit_step ~device:"METAL" Cache_index.ptree state stream in
   let table = int32s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
   let blocks = int32s [| 1; 3 |] [| 1; 2; 0 |] in
   let call s positions =

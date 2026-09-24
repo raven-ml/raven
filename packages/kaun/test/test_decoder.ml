@@ -31,6 +31,37 @@ type 'a model = {
   norm : 'a Rms_norm.t;
 }
 
+module Block = struct
+  type 'a t = 'a block
+
+  let walk c b =
+    let open Nx.Ptree.Walk in
+    let attn_norm = field c "attn_norm" Rms_norm.walk b.attn_norm in
+    let attn = field c "attn" Attention.walk b.attn in
+    let ffn_norm = field c "ffn_norm" Rms_norm.walk b.ffn_norm in
+    let gate = field c "gate" Linear.walk b.gate in
+    let up = field c "up" Linear.walk b.up in
+    let down = field c "down" Linear.walk b.down in
+    { attn_norm; attn; ffn_norm; gate; up; down }
+end
+
+module Model = struct
+  type 'a t = 'a model
+
+  let walk c m =
+    let open Nx.Ptree.Walk in
+    let tok = field c "tok" Embedding.walk m.tok in
+    let blocks = field c "blocks" (list Block.walk) m.blocks in
+    let norm = field c "norm" Rms_norm.walk m.norm in
+    { tok; blocks; norm }
+end
+
+let model_ptree : Nx.float32_t model Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Model)
+
+let caches : Nx.float32_t Attention.Cache.t list Nx.Ptree.t =
+  Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
+
 let vocab = 17
 and dim = 8
 and head_dim = 2
@@ -126,48 +157,28 @@ type query = { tokens : Nx.int32_t; index : Cache_index.t }
 
 type result = {
   stream : Nx.float32_t;
-  written : Nx.float32_t Attention.Cache.List.t;
+  written : Nx.float32_t Attention.Cache.t list;
 }
 
-module Query = struct
-  type t = query
+let query =
+  Nx.Ptree.(
+    iso
+      (fun (tokens, index) -> { tokens; index })
+      (fun { tokens; index } -> (tokens, index))
+      (pair tensor Cache_index.ptree))
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { tokens; index } =
-    { tokens = f tokens; index = Cache_index.map f index }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    { tokens = f a.tokens b.tokens; index = Cache_index.map2 f a.index b.index }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { tokens; index } =
-    f tokens;
-    Cache_index.iter f index
-end
-
-module Result = struct
-  type t = result
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { stream; written } =
-    { stream = f stream; written = Attention.Cache.List.map f written }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      stream = f a.stream b.stream;
-      written = Attention.Cache.List.map2 f a.written b.written;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { stream; written } =
-    f stream;
-    Attention.Cache.List.iter f written
-end
+let result =
+  Nx.Ptree.(
+    iso
+      (fun (stream, written) -> { stream; written })
+      (fun { stream; written } -> (stream, written))
+      (pair tensor caches))
 
 let eager m caches index tokens = cached m caches index tokens
 
 let compiled m =
   let step =
-    Rune.jit_step
-      (module Query)
-      (module Result)
-      (fun { tokens; index } { written; stream = _ } ->
+    Rune.jit_step query result (fun { tokens; index } { written; stream = _ } ->
         let stream, written = cached m written index tokens in
         { stream; written })
   in
@@ -240,12 +251,12 @@ let test_chunks m call =
   close ~msg:"chunks of 7 then 2" expected (fst (feed [ 7; 2 ]));
   close ~msg:"the whole prompt" expected whole;
   (* The scratch row, the last, is left out: its content is unspecified. *)
-  let written caches =
-    let leaves = ref [] in
-    Attention.Cache.List.iter
-      (fun leaf -> leaves := Nx.slice [ R (0, n) ] leaf :: !leaves)
-      caches;
-    Nx.concatenate ~axis:0 !leaves
+  let written written =
+    Nx.concatenate ~axis:0
+      (Nx.Ptree.fold caches
+         (fun _ leaf acc ->
+           Nx.cast Nx.float32 (Nx.slice [ R (0, n) ] leaf) :: acc)
+         written [])
   in
   close ~msg:"the written slots" (written at_once) (written by_one)
 
@@ -350,8 +361,10 @@ let test_poisoning m call =
       (Array.init (pool + 1) (fun s -> Array.mem s slots))
   in
   let poison =
-    Attention.Cache.List.map (fun leaf ->
-        Nx.where named leaf (Nx.scalar_like leaf Float.nan))
+    List.map
+      (Nx.Ptree.Payload.map
+         (module Attention.Cache)
+         (fun _ leaf -> Nx.where named leaf (Nx.scalar_like leaf Float.nan)))
   in
   let clean = feed m call ~slots ~pool [ 4; 1; 4 ] in
   let poisoned = feed ~before:poison m call ~slots ~pool [ 4; 1; 4 ] in
@@ -392,35 +405,15 @@ type state = {
   token : Nx.int32_t;
   scores : Nx.float32_t; (* the logits [token] was taken from *)
   index : Cache_index.t;
-  kv : Nx.float32_t Attention.Cache.List.t;
+  kv : Nx.float32_t Attention.Cache.t list;
 }
 
-module State = struct
-  type t = state
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
-      { token; scores; index; kv } =
-    {
-      token = f token;
-      scores = f scores;
-      index = Cache_index.map f index;
-      kv = Attention.Cache.List.map f kv;
-    }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      token = f a.token b.token;
-      scores = f a.scores b.scores;
-      index = Cache_index.map2 f a.index b.index;
-      kv = Attention.Cache.List.map2 f a.kv b.kv;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; scores; index; kv } =
-    f token;
-    f scores;
-    Cache_index.iter f index;
-    Attention.Cache.List.iter f kv
-end
+let state =
+  Nx.Ptree.(
+    iso
+      (fun ((token, scores), (index, kv)) -> { token; scores; index; kv })
+      (fun { token; scores; index; kv } -> ((token, scores), (index, kv)))
+      (pair (pair tensor tensor) (pair Cache_index.ptree caches)))
 
 (* On CPU:1, a device with storage of its own, the cache stays on the device and
    each step writes it in place. *)
@@ -454,11 +447,7 @@ let test_generation_matches_recomputation () =
     }
   in
   let step =
-    Rune.jit_step ~device:"CPU:1"
-      (module Nx.Ptree)
-      (module State)
-      (fun _ s -> step s)
-      (Nx.Ptree.list [])
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.unit state (fun () s -> step s) ()
   in
   let context = Array.length start + steps in
   let s =
@@ -490,58 +479,6 @@ let test_generation_matches_recomputation () =
 (* A fully padded row beside a real one: a query that sees no key has zero
    weights and zero gradients, so nothing poisons the parameters'. *)
 
-module Model = struct
-  type t = Nx.float32_t model
-
-  let block_map f b =
-    {
-      attn_norm = Rms_norm.map f b.attn_norm;
-      attn = Attention.map f b.attn;
-      ffn_norm = Rms_norm.map f b.ffn_norm;
-      gate = Linear.map f b.gate;
-      up = Linear.map f b.up;
-      down = Linear.map f b.down;
-    }
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) m =
-    {
-      tok = Embedding.map f m.tok;
-      blocks = List.map (block_map f) m.blocks;
-      norm = Rms_norm.map f m.norm;
-    }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) m m' =
-    {
-      tok = Embedding.map2 f m.tok m'.tok;
-      blocks =
-        List.map2
-          (fun b b' ->
-            {
-              attn_norm = Rms_norm.map2 f b.attn_norm b'.attn_norm;
-              attn = Attention.map2 f b.attn b'.attn;
-              ffn_norm = Rms_norm.map2 f b.ffn_norm b'.ffn_norm;
-              gate = Linear.map2 f b.gate b'.gate;
-              up = Linear.map2 f b.up b'.up;
-              down = Linear.map2 f b.down b'.down;
-            })
-          m.blocks m'.blocks;
-      norm = Rms_norm.map2 f m.norm m'.norm;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) m =
-    Embedding.iter f m.tok;
-    List.iter
-      (fun b ->
-        Rms_norm.iter f b.attn_norm;
-        Attention.iter f b.attn;
-        Rms_norm.iter f b.ffn_norm;
-        Linear.iter f b.gate;
-        Linear.iter f b.up;
-        Linear.iter f b.down)
-      m.blocks;
-    Rms_norm.iter f m.norm
-end
-
 let test_gradient_with_a_padded_row grad () =
   let m = model () in
   let n = Array.length prompt in
@@ -552,9 +489,9 @@ let test_gradient_with_a_padded_row grad () =
     Nx.mean (Nx.mul real real)
   in
   let leaves g =
-    let acc = ref [] in
-    Model.iter (fun t -> acc := flat (Nx.cast Nx.float32 t) :: !acc) g;
-    !acc
+    Nx.Ptree.fold model_ptree
+      (fun _ t acc -> flat (Nx.cast Nx.float32 t) :: acc)
+      g []
   in
   let padded = leaves (grad (loss [| 0; n |]) m) in
   List.iter
@@ -562,8 +499,7 @@ let test_gradient_with_a_padded_row grad () =
       is_true ~msg:"a gradient leaf is finite" (Array.for_all Float.is_finite g))
     padded;
   let alone =
-    Rune.grad
-      (module Model)
+    Rune.grad model_ptree
       (fun m ->
         let h = hidden m (ids [| prompt |]) in
         Nx.mean (Nx.mul h h))
@@ -599,12 +535,9 @@ let () =
         [
           test "a fully padded row, eager"
             (test_gradient_with_a_padded_row (fun loss ->
-                 Rune.grad (module Model) loss));
+                 Rune.grad model_ptree loss));
           test "a fully padded row, compiled"
             (test_gradient_with_a_padded_row (fun loss ->
-                 Rune.jit2
-                   (module Model)
-                   (module Model)
-                   (Rune.grad (module Model) loss)));
+                 Rune.jit2 model_ptree model_ptree (Rune.grad model_ptree loss)));
         ];
     ]
