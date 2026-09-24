@@ -76,7 +76,6 @@ let ops_tinygrad_order () =
       "NOOP";
       "REWRITE_ERROR";
       "PARAM";
-      "FUNCTION";
       "CALL";
       "PROGRAM";
       "LINEAR";
@@ -86,8 +85,6 @@ let ops_tinygrad_order () =
       "AFTER";
       "GROUP";
       "STACK";
-      "TUPLE";
-      "GETTUPLE";
       "GETADDR";
       "INDEX";
       "SHRINK";
@@ -612,18 +609,21 @@ let call_constructor_parity () =
     }
   in
   let arg = Uop.const_int 2 in
-  let value_call = Uop.call ~body:(Uop.const_int 1) ~args:[ arg ] ~info in
-  is_true ~msg:"value body call becomes Function"
-    (Ops.equal (Uop.op value_call) Ops.Function);
-  (match Array.to_list (Uop.src value_call) with
-   | body :: arg' :: rest ->
-       is_true ~msg:"function body is wrapped in Tuple"
-         (Ops.equal (Uop.op body) Ops.Tuple);
-       is_true ~msg:"function arg is preserved" (arg' == arg);
-       is_true ~msg:"function has one arg" (rest = [])
-   | srcs ->
-       ignore srcs;
-       is_true ~msg:"function layout" false);
+  raises (Invalid_argument "Uop.call: value-producing bodies require call_with_outputs")
+    (fun () -> ignore (Uop.call ~body:(Uop.const_int 1) ~args:[arg] ~info));
+  let outputs = Uop.call_with_outputs ~values:[Uop.const (Const.int Dtype.int32 1)]
+      ~args:[arg] ~info () in
+  (match outputs with
+   | [output] ->
+       is_true ~msg:"returned value sequences an explicit allocation"
+         (Uop.op output = Ops.After && Uop.op (Uop.storage_base output) = Ops.Alloc);
+       (match Uop.as_call (Uop.src output).(1) with
+        | Some {body; args = [input; out]; _} ->
+            is_true ~msg:"body stores its result" (Uop.op body = Ops.Sink);
+            is_true ~msg:"input stays in its slot" (input == arg);
+            is_true ~msg:"output is an explicit argument" (Uop.storage_base out == Uop.storage_base output)
+        | _ -> fail "expected input and output call arguments")
+   | _ -> fail "expected one output");
   let sink = Uop.sink [] in
   let opaque_call = Uop.call ~body:sink ~args:[ arg ] ~info in
   is_true ~msg:"sink body call stays Call"
@@ -910,17 +910,17 @@ let property_helpers_parity () =
       ~name:"n" ~addrspace:Dtype.Alu ()
   in
   let body_value =
-    Uop.param ~slot:1 ~dtype:Dtype.float32 ~shape:formal_dim ()
+    Uop.expand ~src:(Uop.const (Const.float Dtype.float32 1.)) ~dims:formal_dim
   in
   let actual_dim = Uop.const_int 5 in
-  let fn = Uop.call ~body:body_value ~args:[ actual_dim ] ~info in
-  let projected = Uop.gettuple ~src:fn ~index:0 in
+  let projected = List.hd (Uop.call_with_outputs ~values:[body_value]
+      ~args:[actual_dim] ~info ()) in
   (match Uop.shape projected with
    | [ dim ] ->
        is_true
-         ~msg:"Gettuple(Function) shape substitutes formal Param by call arg"
+         ~msg:"call output shape substitutes formal Param by call arg"
          (dim == actual_dim)
-   | _ -> fail "expected one substituted function result dimension");
+   | _ -> fail "expected one substituted call output dimension");
   let shaped_const =
     Uop.const_of_dtype ~shape:shape2 Dtype.float32
       (Const_scalar (`Int 1L))

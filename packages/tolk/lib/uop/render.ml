@@ -142,6 +142,7 @@ let param_arg_debug_string (p : param_arg) =
   add "axis" string_of_int p.axis;
   add "device" device_repr_string p.device;
   if p.volatile then fields := !fields @ [ "volatile=True" ];
+  if p.bind_on_realize then fields := !fields @ [ "bind_on_realize=True" ];
   "ParamArg(" ^ String.concat ", " !fields ^ ")"
 
 let reduce_arg_debug_string (r : reduce_arg) =

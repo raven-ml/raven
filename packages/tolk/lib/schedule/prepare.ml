@@ -210,27 +210,100 @@ let fix_store_hazard ~target ~value =
     Some (U.store ~dst:target ~value:(U.contiguous ~src:value ()) ())
   else None
 
-let resolve_function n =
+let flat_storage a =
+  let dims = U.max_shard_shape a in
+  let max_dims = List.map U.const_int dims in
+  let shape_arg = function [d] -> d | ds -> U.stack ds in
+  let a = match U.op a, U.src a with
+    | Ops.Shrink, [|src; offset; _|]
+      when List.equal U.equal (U.shape src) max_dims
+           && List.for_all (fun d -> U.const_int_value d = Some 0) (U.as_shape offset) -> src
+    | _ -> a in
+  let size = List.fold_left (fun n dim -> Bound.mul n (Bound.int dim)) Bound.one dims |> Bound.to_int in
+  let a = if List.equal U.equal (U.shape a) max_dims then a
+    else U.pad ~src:a ~offset:(shape_arg (List.map (fun _ -> int_ 0) dims))
+        ~size:(shape_arg max_dims) in
+  size, U.reshape ~src:a ~shape:(int_ size)
+
+let inline_call n =
   match U.as_call n with
-  | Some { body; args; info } when U.op n = Ops.Function && not info.precompile ->
-      let params =
-        List.filter (fun u -> U.op u = Ops.Param) (U.toposort body)
-      in
-      let idx_of p =
-        match U.as_param p with
-        | Some { param = { slot; _ }; _ } -> slot
-        | None -> -1
-      in
-      let params = List.sort (fun a b -> compare (idx_of a) (idx_of b)) params in
-      let n_args = List.length args in
-      let mappings =
-        List.filter_map (fun p ->
-            let i = idx_of p in
-            if i >= 0 && i < n_args then Some (p, List.nth args i) else None)
-          params
-      in
-      Some (U.substitute mappings body)
+  | Some {body; args; info} when not info.precompile && U.op body = Ops.Sink
+      && Option.is_none (U.as_kernel_info body) ->
+      let nodes = U.toposort ~enter_calls:false body in
+      let mappings = List.filter_map (fun p ->
+          match U.as_param p with
+          | Some {param; _} when param.slot >= 0 ->
+              if param.slot >= List.length args then
+                invalid_arg "Prepare.inline_call: missing argument";
+              let a = List.nth args param.slot in
+              if not (Dtype.equal (U.dtype p) (U.dtype a)) then
+                invalid_arg "Prepare.inline_call: argument dtype mismatch";
+              let a = match param.size with
+                | Some expected ->
+                    let size, flat = flat_storage a in
+                    if size <> expected then invalid_arg "Prepare.inline_call: argument capacity mismatch";
+                    flat
+                | None ->
+                    if U.shape a <> [] then invalid_arg "Prepare.inline_call: expected scalar argument";
+                    a in
+              Some (p, a)
+          | _ when U.op p = Ops.Alloc ->
+              let arg = Option.get (U.Arg.as_param_arg (U.arg p)) in
+              Some (p, U.replace p ~arg:(U.Arg.Param_arg {arg with slot = U.fresh_buffer_slot ()}) ())
+          | _ -> None) nodes in
+      Some (U.substitute ~walk:true mappings body)
   | _ -> None
+
+let returned_after n =
+  match U.op n, U.src n with
+  | Ops.After, [|result; effects|] when U.op effects = Ops.Sink ->
+      let stores = List.filter (fun st -> match U.as_store st with
+          | Some {dst; _} -> U.base dst == U.base result
+          | None -> false) (U.children effects) in
+      (match stores with
+       | [store] ->
+           if U.op (U.base result) = Ops.Param then Some (U.after ~src:result ~deps:[store])
+           else Some (Option.get (U.as_store store)).value
+       | _ -> None)
+  | _ -> None
+
+let forward_call_outputs sink =
+  let placed = U.Ref_tbl.create 16 in
+  let rec peel u = if U.op u = Ops.After then peel (U.src u).(0) else u in
+  let items = List.map (fun item ->
+      let store = match U.op item, U.src item with
+        | Ops.After, [|target; st|] when U.op st = Ops.Store && (U.src st).(0) == target -> st
+        | _ -> item in
+      match U.as_store store with
+      | Some {dst = target; value; gate = None} ->
+          let src = peel value in
+          let base = U.storage_base src in
+          let key = if U.op base = Ops.Alloc then base else src in
+          if (item != store && U.op base <> Ops.Alloc)
+             || U.Ref_tbl.mem placed key
+             || List.exists (( == ) (U.storage_base target)) (U.toposort ~enter_calls:false value)
+          then item
+          else begin
+            let replacement =
+              if U.op base = Ops.Alloc && U.has_buffer_identity src
+                 && U.has_buffer_identity target
+                 && U.max_numel base = U.max_numel (U.storage_base target)
+              then Some (U.storage_base target)
+              else if U.op src = Ops.Contiguous then
+                Some (U.after ~src:target ~deps:[U.store ~dst:target ~value:(U.src src).(0) ()])
+              else if (U.op src = Ops.Buffer || U.op src = Ops.Unshard)
+                      && U.has_buffer_identity src && U.has_buffer_identity target then Some target
+              else None in
+            match replacement with
+            | Some replacement ->
+                U.Ref_tbl.add placed key replacement;
+                if item != store then U.Ref_tbl.add placed item value;
+                value
+            | None -> U.after ~src:target ~deps:[store]
+          end
+      | _ -> item) (U.children sink) in
+  let mappings = U.Ref_tbl.fold (fun key value mappings -> (key, value) :: mappings) placed [] in
+  U.substitute ~walk:true mappings (U.sink items)
 
 let rec push_movement node rngs =
   match U.op node with
@@ -473,18 +546,7 @@ let earliest_rewrites =
   U.first_match
     [ pm_mop_through_index;
       pm_mop_past_after; pm_mop_past_end;
-      Upat.Pattern_matcher.rewrite Movement.mop_cleanup; resolve_function;
-      (* Resolve TUPLE + GETTUPLE. *)
-      (fun n -> match U.op n with
-         | Ops.Gettuple ->
-             let t = src0 n in
-             if U.op t <> Ops.Tuple then None
-             else
-               (match U.Arg.as_int (U.arg n) with
-                | Some i when i >= 0 && i < Array.length (U.src t) ->
-                    Some (U.src t).(i)
-                | _ -> None)
-         | _ -> None);
+      Upat.Pattern_matcher.rewrite Movement.mop_cleanup;
       (fun n -> match U.as_allreduce n with
          | Some { src; device; op } ->
              (* [shape_of] is concrete and stays undefined on a symbolic
@@ -681,6 +743,7 @@ let pm_copy_to_store n =
   | _ -> None
 
 let prepare_rangeify root =
+  let root = forward_call_outputs root in
   (* Sharding rewrites see the graph's own shapes with every symbolic
      dimension maxed to its bound, so a shard sized by a variable still
      reports the size it is allocated at. *)
@@ -694,6 +757,8 @@ let prepare_rangeify root =
       (Multi.multi_pm ~shapes:multi_shapes ~devices:U.device_of)
       root
   in
+  let root = U.graph_rewrite ~name:"inline calls"
+      (U.first_match [movement_ops; inline_call; returned_after]) root in
   let root =
     if getv Helpers.openpilot_hacks = 0 then root
     else

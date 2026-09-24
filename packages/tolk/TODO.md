@@ -14,14 +14,10 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 1. Complete the CPU path through the new protocol
 
-- Move empty tensors and call outputs to ALLOC; adopt effectful CALL. Remove
-  remaining explicit dtype overrides with the legacy IR. Eliminate
+- Remove remaining explicit dtype overrides with the legacy IR. Eliminate
   unplaced BUFFER placeholders and their execution-time allocation fallback.
-  Remove FUNCTION/TUPLE/GETTUPLE and obsolete enum/cache layouts as their producers
-  move to the new protocol.
-- Move remaining materialization rewrites out of callify into preparation.
-  Port inline calls, output forwarding and the separate becomes map. Handle
-  precompiled calls without preallocation.
+- Replace CONTIGUOUS with bare STAGE materialization in preparation and
+  normalize COPY/STAGE storage views through the same call interface.
 - Port CPU scheduling and realization onto that graph: explicit allocation and
   call arguments, RAW/WAR dependencies for overlapping assignments, self-copy,
   nested calls and shared aliases, and cycle rejection. Replace SLICE memory

@@ -17,7 +17,6 @@ type t =
   | Noop
   | Rewrite_error
   | Param
-  | Function
   | Call
   | Program
   | Linear
@@ -27,8 +26,6 @@ type t =
   | After
   | Group
   | Stack
-  | Tuple
-  | Gettuple
   | Getaddr
   (* 3 -- load/store *)
   | Index
@@ -110,7 +107,6 @@ let name = function
   | Noop -> "NOOP"
   | Rewrite_error -> "REWRITE_ERROR"
   | Param -> "PARAM"
-  | Function -> "FUNCTION"
   | Call -> "CALL"
   | Program -> "PROGRAM"
   | Linear -> "LINEAR"
@@ -120,8 +116,6 @@ let name = function
   | After -> "AFTER"
   | Group -> "GROUP"
   | Stack -> "STACK"
-  | Tuple -> "TUPLE"
-  | Gettuple -> "GETTUPLE"
   | Getaddr -> "GETADDR"
   | Index -> "INDEX"
   | Shrink -> "SHRINK"
@@ -248,7 +242,6 @@ module Group = struct
       Noop;
       Rewrite_error;
       Param;
-      Function;
       Call;
       Program;
       Linear;
@@ -258,8 +251,6 @@ module Group = struct
       After;
       Group;
       Stack;
-      Tuple;
-      Gettuple;
       Getaddr;
       Index;
       Shrink;

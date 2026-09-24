@@ -26,7 +26,6 @@ type t =
   | Noop  (** Pass-through scheduling marker. *)
   | Rewrite_error  (** Rewrite failure marker. *)
   | Param  (** Function, symbolic, or buffer parameter. *)
-  | Function  (** Gradient-able function body. *)
   | Call  (** Opaque kernel invocation. *)
   | Program  (** Program root. *)
   | Linear  (** Linearized uop sequence. *)
@@ -36,8 +35,6 @@ type t =
   | After  (** Passes [src.(0)] through after [src.(1..)]. *)
   | Group  (** Merges dependencies without producing a value. *)
   | Stack  (** Constructs value vectors and shape tuples. *)
-  | Tuple  (** Multi-result function body. *)
-  | Gettuple  (** Projects one element from a {!Tuple} or {!Function}. *)
   | Getaddr  (** HCQ address extraction op. *)
 
   (** {2 Load and store} *)

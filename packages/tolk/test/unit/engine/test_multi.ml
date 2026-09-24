@@ -3,6 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let bufferized_call sink =
+  let sink, map = Tolk.Bufferize.run sink in
+  Tolk.Callify.transform_to_call sink, map
+
+
 (* Multi-device execution: sharded and replicated schedules running on
    several CPU device instances (and, when available, a duplicated CUDA
    device tuple), exercising the engine's multi-buffer resolution, per-device
@@ -81,7 +86,7 @@ let sharded x shape devices axis =
 
 let realize ~device ~binding sink =
   let to_program = Codegen.to_program device (Device.renderer device) in
-  let call, buffer_map = Callify.transform_to_call sink in
+  let call, buffer_map = bufferized_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call

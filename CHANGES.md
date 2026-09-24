@@ -379,6 +379,12 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.call_with_outputs` passes tensor results through explicit storage
+  arguments, replacing `FUNCTION`/`TUPLE`/`GETTUPLE`. Inline and precompiled
+  calls share allocation ownership and symbolic output shapes.
+- `Bufferize.run` separates persistent tensor storage and post-realization
+  identities from `Callify.transform_to_call`, which now returns only a call.
+
 - Tensor preparation helpers move from `Rangeify` to `Prepare`:
   `movement_ops` and `detect_expanded` share the preparation pass used by scheduling.
 - `Uop.alloc` declares temporary storage. Cached schedules bind it separately

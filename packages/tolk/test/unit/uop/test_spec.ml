@@ -106,7 +106,7 @@ let buffer_rejects_alu_addrspace () =
         (Uop.Arg.Param_arg
            { slot = 0; dtype = Dtype.int32; size = None; image = None; vmin_vmax = None;
              multiple_of = None; name = None; addrspace = Dtype.Alu;
-             axis = None; device = None; volatile = false; buffer = None })
+             axis = None; device = None; volatile = false; bind_on_realize = false; buffer = None })
       ()
   in
   is_true ~msg:"Buffer with ALU addrspace rejected"
@@ -391,7 +391,7 @@ let slice_is_full_spec_only () =
   is_true ~msg:"Slice source must be a buffer/view intermediate"
     (rejected Spec.full_spec bad_source)
 
-let call_function_reject_bad_layouts () =
+let call_reject_bad_layouts () =
   let info = call_info "f" in
   let arg = Uop.const_int 2 in
   let call = Uop.call ~body:(Uop.sink []) ~args:[ arg ] ~info in
@@ -403,65 +403,28 @@ let call_function_reject_bad_layouts () =
   in
   is_true ~msg:"Call rejects value-producing bodies"
     (rejected Spec.tensor_spec raw_value_body);
-  let fn = Uop.call ~body:(i32 1) ~args:[ arg ] ~info in
-  let raw_function_body = Uop.replace fn ~src:[| i32 1; arg |] () in
-  is_true ~msg:"Function requires Tuple body"
-    (rejected Spec.tensor_spec raw_function_body);
-  let bad_function_info = Uop.replace fn ~arg:Uop.Arg.Empty () in
-  is_true ~msg:"Function requires Call_info"
-    (rejected Spec.tensor_spec bad_function_info)
+  raises (Invalid_argument "Uop.call: value-producing bodies require call_with_outputs")
+    (fun () -> ignore (Uop.call ~body:(i32 1) ~args:[arg] ~info))
 
-let call_function_source_contracts () =
+let call_source_contracts () =
   let info = call_info "f" in
-  let call =
-    Uop.call ~body:(Uop.custom_function ~name:"extern" ~srcs:[])
-      ~args:[ Uop.const_int 2 ] ~info
-  in
-  let fn =
-    Uop.call ~body:(Uop.tuple [ i32 1; Uop.const_float 2.0 ])
-      ~args:[ Uop.const_int 2 ] ~info
-  in
-  let projected = Uop.gettuple ~src:fn ~index:1 in
-  let bad_call_body =
-    Uop.replace call ~src:[| Uop.tuple [ i32 1 ]; Uop.const_int 2 |] ()
-  in
-  let bad_function_source =
-    Uop.replace fn ~src:[| Uop.sink []; Uop.const_int 2 |] ()
-  in
-  is_true ~msg:"Call accepts opaque Custom_function bodies"
-    (accepts Spec.tensor_spec call);
-  is_true ~msg:"Function accepts Tuple bodies"
-    (accepts Spec.tensor_spec fn);
-  is_true ~msg:"Gettuple accepts Function(Tuple) sources"
-    (accepts Spec.tensor_spec projected);
-  is_true ~msg:"Call rejects Tuple bodies"
-    (rejected Spec.tensor_spec bad_call_body);
-  is_true ~msg:"Function rejects opaque bodies"
-    (rejected Spec.tensor_spec bad_function_source)
+  let call = Uop.call ~body:(Uop.custom_function ~name:"extern" ~srcs:[])
+      ~args:[Uop.const_int 2] ~info in
+  let outputs = Uop.call_with_outputs
+      ~values:[i32 1; Uop.const (Const.float Dtype.float32 2.0)]
+      ~args:[Uop.const_int 2] ~info () in
+  is_true ~msg:"Call accepts opaque Custom_function bodies" (accepts Spec.tensor_spec call);
+  List.iter (fun output -> Spec.type_verify Spec.tensor_spec output) outputs;
+  let owners = List.map Uop.storage_base outputs in
+  is_true ~msg:"each output has a separate allocation" (List.hd owners != List.nth owners 1)
 
-let gettuple_rejects_bad_sources () =
-  let tuple = Uop.tuple [ i32 1 ] in
-  let gt = Uop.gettuple ~src:tuple ~index:0 in
-  let out_of_range = Uop.replace gt ~arg:(Uop.Arg.Int 1) () in
-  let missing_int = Uop.replace gt ~arg:Uop.Arg.Empty () in
-  let dtype_mismatch = Uop.replace gt ~dtype:Dtype.float32 () in
-  let fn_without_body =
-    Uop.replace tuple ~op:Ops.Function ~src:[||] ()
-  in
-  let empty_function =
-    Uop.replace gt ~src:[| fn_without_body |] ()
-  in
-  is_true ~msg:"Gettuple rejects out-of-range tuple index"
-    (rejected Spec.tensor_spec out_of_range);
-  is_true ~msg:"Gettuple requires Int arg"
-    (rejected Spec.tensor_spec missing_int);
-  is_true ~msg:"Gettuple result dtype must match projected source"
-    (rejected Spec.tensor_spec dtype_mismatch);
-  is_true ~msg:"Gettuple rejects Function without Tuple body"
-    (rejected Spec.tensor_spec empty_function);
-  let bad_source = Uop.replace gt ~src:[| i32 1 |] () in
-  is_true ~msg:"Gettuple requires Tuple or Function source"
-    (rejected Spec.tensor_spec bad_source)
+let call_outputs_reject_invalid_positions () =
+  let info = call_info "f" in
+  List.iter (fun output_pos ->
+      raises (Invalid_argument "Uop.call_with_outputs: invalid output positions")
+        (fun () -> ignore (Uop.call_with_outputs ~output_pos ~values:[i32 1; i32 2]
+          ~args:[i32 3] ~info ())))
+    [[]; [1; 1]; [2; 1]; [-1; 2]; [1; 3]]
 
 let reduce_arg_required () =
   let src =
@@ -1338,11 +1301,11 @@ let () =
           test "Copy bad device or dtype rejected"
             copy_rejects_bad_device_or_dtype;
           test "Slice is full_spec only" slice_is_full_spec_only;
-          test "Call/Function bad layouts rejected"
-            call_function_reject_bad_layouts;
-          test "Call/Function source contracts"
-            call_function_source_contracts;
-          test "Gettuple bad sources rejected" gettuple_rejects_bad_sources;
+          test "Call bad layouts rejected"
+            call_reject_bad_layouts;
+          test "Call source contracts"
+            call_source_contracts;
+          test "call outputs reject invalid positions" call_outputs_reject_invalid_positions;
           test "Reduce op arg required" reduce_arg_required;
           test "Tensor reduce accepts lowered integer tail"
             tensor_reduce_accepts_lowered_integer_tail;

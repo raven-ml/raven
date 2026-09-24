@@ -661,8 +661,8 @@ let rec multi_pm ~shapes ~devices node =
         | None -> None
       else None
 
-  (* CALL/FUNCTION: resolve body recursively, then passthrough or void strip. *)
-  | Ops.Call | Ops.Function ->
+  (* CALL: resolve body recursively, then passthrough or void strip. *)
+  | Ops.Call ->
       call_multi ~shapes ~devices node
 
   (* Passthrough: CAST, BITCAST, CONTIGUOUS, DETACH, CONTIGUOUS_BACKWARD. *)
@@ -683,43 +683,7 @@ let rec multi_pm ~shapes ~devices node =
       | Some _ as r -> r
       | None -> mselect_before_movement node)
 
-  (* GETTUPLE(TUPLE) -> direct indexing. *)
-  | Ops.Gettuple when U.op (U.src node).(0) = Ops.Tuple ->
-      let t = (U.src node).(0) in
-      let index = match U.arg node with U.Arg.Int i -> i | _ -> assert false in
-      Some (U.src t).(index)
-
-  (* GETTUPLE(MULTI(TUPLE|FUNCTION)): pass MULTI through the projection. *)
-  | Ops.Gettuple when is_multi (U.src node).(0) ->
-      let m = (U.src node).(0) in
-      let inner = unwrap_multi m in
-      let index = match U.arg node with U.Arg.Int i -> i | _ -> assert false in
-      (match U.op inner with
-      | Ops.Tuple | Ops.Function ->
-          Some (U.multi ~src:(U.gettuple ~src:inner ~index) ~axis:(multi_axis m))
-      | _ -> Some m)
-
   | _ -> None
-
-and rewrite_into_function ~shapes ~devices ~info body args =
-  let new_body = U.graph_rewrite (multi_pm ~shapes ~devices) body in
-  let new_args = List.map unwrap_multi args in
-  match U.op new_body with
-  | Ops.Tuple when List.exists is_multi (U.children new_body) ->
-      let elems = U.children new_body in
-      let stripped =
-        U.tuple (List.map unwrap_multi elems)
-      in
-      let shard_call = U.call ~body:stripped ~args:new_args ~info in
-      let wrapped =
-        List.mapi
-          (fun i s ->
-            let g = U.gettuple ~src:shard_call ~index:i in
-            if is_multi s then U.multi ~src:g ~axis:(multi_axis s) else g)
-          elems
-      in
-      U.tuple wrapped
-  | _ -> U.call ~body:new_body ~args:new_args ~info
 
 and call_multi ~shapes ~devices node =
   let info =
@@ -727,16 +691,11 @@ and call_multi ~shapes ~devices node =
   in
   let body = (U.src node).(0) in
   let args = Array.to_list (U.src node) |> List.tl in
-  let is_function = U.op node = Ops.Function in
-  if is_function && not info.precompile then
-    Some (rewrite_into_function ~shapes ~devices ~info body args)
+  if not info.precompile && U.op body = Ops.Sink && Option.is_none (U.as_kernel_info body) then
+    let body = U.graph_rewrite (multi_pm ~shapes ~devices) body in
+    Some (U.call ~body ~args:(List.map unwrap_multi args) ~info)
   else if is_multi body then
     passthrough_multi node (unwrap_multi body) (multi_axis body)
-  else if
-    (not is_function)
-    && Dtype.equal (U.dtype node) Dtype.void
-    && List.exists is_multi args
-  then
-    (* Non-value-producing CALLs (custom kernels, etc.) just strip MULTI. *)
+  else if Dtype.equal (U.dtype node) Dtype.void && List.exists is_multi args then
     Some (U.replace node ~src:(Array.map unwrap_multi (U.src node)) ())
   else None

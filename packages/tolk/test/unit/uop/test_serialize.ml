@@ -128,7 +128,7 @@ let export_rejects_grad_fxn () =
   let info =
     { call_info with U.grad_fxn = Some (fun ~grad_output:_ ~call:_ -> []) }
   in
-  let call = U.call ~body:(U.const_int 1) ~args:[] ~info in
+  let call = U.call ~body:(U.sink []) ~args:[] ~info in
   raises_match
     (function Invalid_argument _ -> true | _ -> false)
     (fun () -> U.export call)
@@ -152,7 +152,7 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
   (* Older layouts and future formats are rejected before reading the graph. *)
-  let current_version = Marshal.to_string 21 [] in
+  let current_version = Marshal.to_string 22 [] in
   let p = find_sub blob current_version in
   List.iter (fun version ->
       let replacement = Marshal.to_string version [] in
@@ -162,7 +162,7 @@ let import_rejects_malformed () =
             (p + String.length current_version)
             (String.length blob - p - String.length current_version)
       in
-      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19; 20; 22 ]
+      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19; 20; 21; 23 ]
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the

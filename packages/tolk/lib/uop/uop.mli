@@ -158,6 +158,8 @@ type param_arg = {
   volatile : bool;
       (** Preserve individual memory accesses and emit volatile parameters.
           Defaults to [false]; does not provide atomicity or synchronization. *)
+  bind_on_realize : bool;
+      (** Bind this ALLOC to persistent tensor storage during bufferization. *)
   buffer : Storage.t list option;
       (** Storage owned by a global BUFFER, one buffer per device. Parameters
           and kernel-local buffers do not own runtime storage. *)
@@ -237,8 +239,7 @@ type call_info = {
   aux : string option;  (** Auxiliary call payload for cache/runtime users. *)
   dtype : Dtype.t;  (** Scalar return dtype, or {!Dtype.void} for effects. *)
 }
-(** Result type and scheduling attributes of a {!Ops.Call} or
-    {!Ops.Function} node. *)
+(** Result type and scheduling attributes of a {!Ops.Call} node. *)
 
 type launch_dim =
   | Launch_int of int  (** Concrete integer launch dimension. *)
@@ -525,7 +526,7 @@ type wmma_view = { a : t; b : t; c : t; info : wmma_info }
 (** View of an {!Ops.Wmma} node: operands and hardware configuration. *)
 
 type call_view = { body : t; args : t list; info : call_info }
-(** View of an {!Ops.Call} or {!Ops.Function} node: callee body,
+(** View of an {!Ops.Call} node: callee body,
     positional arguments, and call annotations. *)
 
 type special_view = { name : string; size : t }
@@ -593,7 +594,7 @@ val as_wmma : t -> wmma_view option
 (** [as_wmma u] matches {!Ops.Wmma}. *)
 
 val as_call : t -> call_view option
-(** [as_call u] matches both {!Ops.Call} and {!Ops.Function}. *)
+(** [as_call u] matches {!Ops.Call}. *)
 
 val as_special : t -> special_view option
 (** [as_special u] matches {!Ops.Special}. *)
@@ -616,8 +617,8 @@ val as_kernel_info : t -> kernel_info option
     kernel metadata, and [None] otherwise. *)
 
 val as_call_info : t -> call_info option
-(** [as_call_info u] is [Some info] when [u] is an {!Ops.Call} or
-    {!Ops.Function}, and [None] otherwise. *)
+(** [as_call_info u] is [Some info] when [u] is an {!Ops.Call},
+    and [None] otherwise. *)
 
 val as_program_info : t -> program_info option
 (** [as_program_info u] is [Some info] when [u] is an {!Ops.Program}
@@ -692,9 +693,11 @@ val buffer :
     {!param_arg}; placed global buffers own their storage directly. Tensor. *)
 
 val alloc :
-  slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device -> unit -> t
-(** [alloc ~slot ~dtype ?shape ?device ()] declares unbound global storage.
-    Scheduling gives each invocation a fresh owner.
+  slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
+  ?bind_on_realize:bool -> unit -> t
+(** [alloc ~slot ~dtype ?shape ?device ?bind_on_realize ()] declares unbound
+    global storage. Scheduling gives each invocation a fresh owner unless
+    [bind_on_realize] (default [false]) requests persistent tensor storage.
 
     @raise Invalid_argument if [dtype] is weak. *)
 
@@ -1076,28 +1079,28 @@ val contiguous_backward : src:t -> t
     Dtype is inherited from [src]. Tensor. *)
 
 val call : body:t -> args:t list -> info:call_info -> t
-(** [call ~body ~args ~info] is tinygrad's call constructor. Opaque
-    bodies ({!Ops.Sink}, {!Ops.Program}, {!Ops.Linear}, {!Ops.Copy},
-    {!Ops.Slice}, and {!Ops.Custom_function}) produce {!Ops.Call}.
-    Value-producing bodies produce {!Ops.Function}; non-tuple bodies are
-    wrapped in {!Ops.Tuple}. A {!Ops.Call} derives its dtype from
-    [info.dtype]; {!Ops.Function} has void dtype. [src] is
-    [(body, arg0, arg1, ...)].
+(** [call ~body ~args ~info] invokes an opaque effect body with explicit
+    arguments. Its return dtype is [info.dtype]. Use {!call_with_outputs} for
+    bodies that produce tensor values.
 
-    Raises [Invalid_argument] if [body] has in-scope ranges other than
-    device ranges. *)
+    @raise Invalid_argument if [body] is not an opaque effect body or has
+    in-scope ranges other than device ranges. *)
 
-val tuple : t list -> t
-(** [tuple srcs] is an {!Ops.Tuple} with void dtype and
-    [src = srcs]. Used as the body of a value-producing {!call}. Tensor. *)
+val param_like : t -> slot:int -> t
+(** [param_like u ~slot] is a call formal with [u]'s shape and placement.
+    Variables become scalar ALU formals with positional names. *)
 
-val gettuple : src:t -> index:int -> t
-(** [gettuple ~src ~index] projects element [index] out of a
-    {!Ops.Tuple} or {!Ops.Function} body. Dtype is inherited from the
-    [index]-th element. Tensor.
+val call_with_outputs :
+  ?output_pos:int list -> values:t list -> args:t list -> info:call_info ->
+  unit -> t list
+(** [call_with_outputs ?output_pos ~values ~args ~info ()] calls a body that
+    stores [values] into explicit output arguments. Returns fresh allocation
+    views sequenced after the call. Output positions default to the slots
+    following the inputs; explicit positions must be distinct and ascending.
+    Symbolic result shapes substitute input arguments by their final slots.
 
-    @raise Invalid_argument if [src] is not a {!Ops.Tuple} or
-    {!Ops.Function}, or if [index] is out of range. *)
+    @raise Invalid_argument if output positions are invalid or outputs have
+    weak dtypes. *)
 
 val program :
   sink:t -> ?linear:t -> ?source:t -> ?binary:t -> info:program_info ->
@@ -1226,8 +1229,7 @@ val toposort : ?gate:(t -> bool) -> ?enter_calls:bool -> t -> t list
     returns [false] are not entered, though the node itself is still
     emitted.
 
-    [enter_calls] defaults to [true]; when [false], {!Ops.Call} and
-    {!Ops.Function} bodies (i.e. [src.(0)]) are not entered, but their
+    [enter_calls] defaults to [true]; when [false], {!Ops.Call} bodies (i.e. [src.(0)]) are not entered, but their
     argument children are. *)
 
 val topovisit : (t -> 'a) -> (int, 'a) Hashtbl.t -> t -> 'a
@@ -1272,7 +1274,7 @@ val ranges : t -> t list
 (** [ranges u] is the set of {!Ops.Range} nodes that [u] is nested
     within. A [Range] is included in its own [ranges]. Ops that close
     a range (e.g. {!Ops.Reduce}, {!Ops.Stage}, {!Ops.End}, {!Ops.Backedge},
-    {!Ops.Wmma}, {!Ops.Call}, {!Ops.Function}, {!Ops.Copy},
+    {!Ops.Wmma}, {!Ops.Call}, {!Ops.Copy},
     {!Ops.Slice}) drop ended ranges from the
     propagated set. *)
 
@@ -1327,7 +1329,7 @@ val has_buffer_identity : ?after_ok:bool -> t -> bool
 (** [has_buffer_identity ?after_ok u] is [true] iff [u] is a concrete graph
     buffer identity: {!Ops.Param}, {!Ops.Buffer}, {!Ops.Alloc}, {!Ops.Slice}, or those
     identities through {!Ops.Reshape}, {!Ops.Unshard}, {!Ops.Mselect}, or
-    direct {!Ops.Gettuple} from a {!Ops.Tuple}. With [after_ok] (default
+    their movement views. With [after_ok] (default
     [false]) an {!Ops.After} over such an identity also qualifies. *)
 
 val as_shape : t -> t list
@@ -1345,10 +1347,6 @@ val marg : t -> marg
 
 val shape : t -> t list
 (** [shape u] is [u]'s symbolic shape.
-
-    For {!Ops.Gettuple} through a {!Ops.Function}, shape expressions from
-    the function body have internal {!Ops.Param} nodes substituted by the
-    corresponding function call arguments by parameter slot.
 
     Raises [Invalid_argument] if [u] has no tensor shape. *)
 
@@ -1381,8 +1379,8 @@ val max_shard_shape : t -> int list
 
 val axis : t -> int option
 (** [axis u] is [u]'s sharding axis. {!Ops.Param} reads [param_arg.axis],
-    {!Ops.Unshard} reads its integer arg, {!Ops.Copy} clears the axis, direct
-    tuple projections read the projected element, ALU ops use the last
+    {!Ops.Unshard} reads its integer arg, {!Ops.Copy} clears the axis,
+    ALU ops use the last
     non-[None] source axis, and movement/reduction ops remap or clear the
     axis using tinygrad's shape rules. *)
 
@@ -1416,8 +1414,7 @@ val graph_rewrite :
     {ul
     {- [loc] is optional source-position context for cycle diagnostics.}
     {- [name] defaults to [""]. It is included in cycle diagnostics.}
-    {- [enter_calls] defaults to [false]; when [false], {!Ops.Call} and
-       {!Ops.Function} bodies ([src.(0)]) are not rewritten.}
+    {- [enter_calls] defaults to [false]; when [false], {!Ops.Call} bodies ([src.(0)]) are not rewritten.}
     {- [bottom_up] defaults to [false]. When [false], [f] is applied to
        each rewritten node after its children have been rewritten and
        [bpm] is an optional pre-matcher. When [true], [f] is used as a

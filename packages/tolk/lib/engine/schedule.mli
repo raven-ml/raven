@@ -47,12 +47,12 @@ val lower_sink_to_linear :
   get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t option
-(** [lower_sink_to_linear ~get_kernel_graph sink] lowers a tensor-level
-    [Sink] into a [Linear] node via [get_kernel_graph] and
-    {!create_schedule}.
+(** [lower_sink_to_linear ~get_kernel_graph call] lowers a precompiled call
+    whose body is an unannotated tensor [Sink]. Its replacement calls the
+    [Linear] schedule produced by [get_kernel_graph] and {!create_schedule}
+    with the same arguments.
 
-    Returns [None] if [sink] is not a tensor-level sink (e.g. it
-    already carries [kernel_info]). Results are cached by
+    Returns [None] for other nodes. Body schedules are cached by
     {!Tolk_uop.Uop.semantic_key} when [SCACHE] is enabled. *)
 
 val memory_plan_rewrite :
@@ -74,8 +74,7 @@ val create_linear_with_vars :
     schedule creation pipeline on [big_sink] and returns the
     linearized schedule plus the values bound to runtime variables.
 
-    [big_sink] is a raw {!Tolk_uop.Ops.Sink} or a {!Tolk_uop.Ops.Call}
-    from allocations. Nested calls whose body is a {!Tolk_uop.Ops.Linear}
+    [big_sink] is a {!Tolk_uop.Ops.Call} produced by call normalization. Nested calls whose body is a {!Tolk_uop.Ops.Linear}
     are resolved by substituting parameter slots with call arguments
     and flattening the resulting linear schedule. Only binds for variables
     referenced by scheduled kernel bodies are returned.

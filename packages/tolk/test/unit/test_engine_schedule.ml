@@ -1,5 +1,10 @@
 (* Engine.Schedule parity tests. *)
 
+let bufferized_call sink =
+  let sink, map = Tolk.Bufferize.run sink in
+  Tolk.Callify.transform_to_call sink, map
+
+
 open Windtrap
 open Tolk
 open Tolk_uop
@@ -121,8 +126,10 @@ let schedule_cache_uses_semantic_key_not_hashcons_tag () =
     incr calls;
     graph
   in
-  ignore (Schedule.lower_sink_to_linear ~get_kernel_graph sink);
-  ignore (Schedule.lower_sink_to_linear ~get_kernel_graph tagged_sink);
+  let invoke body = U.call ~body ~args:[]
+      ~info:{ call_info with precompile = true } in
+  ignore (Schedule.lower_sink_to_linear ~get_kernel_graph (invoke sink));
+  ignore (Schedule.lower_sink_to_linear ~get_kernel_graph (invoke tagged_sink));
   equal int 1 !calls
 
 (* Symbolic tensor graph: SUM(SHRINK(buf, (0, start_pos+1))) with
@@ -141,7 +148,7 @@ let val_buffer () =
 
 let transform_to_call_of_bound_variable ~value =
   let sink, bound = symbolic_shrink_sink ~buf_node:(val_buffer ()) ~value in
-  let call, _ = Callify.transform_to_call sink in
+  let call, _ = bufferized_call sink in
   match U.as_call call with
   | Some { body; args; _ } -> (body, args, bound)
   | None -> fail "expected transform_to_call to produce a CALL"
@@ -152,7 +159,7 @@ let transform_to_call_keeps_variable_identity () =
     List.find_opt
       (fun u ->
         match U.as_param u with
-        | Some { param = { name = Some "start_pos"; _ }; _ } -> true
+        | Some { param = { name = Some name; _ }; _ } -> String.starts_with ~prefix:"p" name
         | _ -> false)
       (U.toposort ~enter_calls:true body)
   in
@@ -173,7 +180,7 @@ let schedule_cache_key_strips_bind_value () =
 
 let create_linear_with_vars_extracts_bind_through_call () =
   let sink, _ = symbolic_shrink_sink ~buf_node:(val_buffer ()) ~value:5 in
-  let call, _ = Callify.transform_to_call sink in
+  let call, _ = bufferized_call sink in
   let _linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
@@ -197,7 +204,9 @@ let create_linear_with_vars_keeps_only_used_binds () =
   in
   let get_kernel_graph _ = graph in
   let _linear, var_vals =
-    Schedule.create_linear_with_vars ~get_kernel_graph big_sink
+    Schedule.create_linear_with_vars ~get_kernel_graph
+      (U.call ~body:(U.sink [graph]) ~args:(List.tl (U.children big_sink))
+         ~info:{call_info with precompile = true})
   in
   equal (list (pair string int)) [ "used", 7 ] var_vals
 
@@ -208,7 +217,7 @@ let volatile_inputs_survive_scheduling () =
     let view = U.slice ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
     let value = U.alu_binary ~op:Ops.Add ~lhs:(if sliced then view else input)
         ~rhs:(U.const_float 1.) in
-    let call, _ = Callify.transform_to_call (U.sink [ U.contiguous ~src:value () ]) in
+    let call, _ = bufferized_call (U.sink [ U.contiguous ~src:value () ]) in
     call
   in
   let call_body call = match U.as_call call with
@@ -232,7 +241,7 @@ let slice_inputs_are_normalized_before_their_bases () =
           ~shape:(shape [ 16 ]) ~device:(U.Single "CPU") ~volatile () in
       let view = U.slice ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
       let value = U.alu_binary ~op:Ops.Add ~lhs:view ~rhs:(U.const_float 1.) in
-      let call, _ = Callify.transform_to_call (U.sink [ U.contiguous ~src:value () ]) in
+      let call, _ = bufferized_call (U.sink [ U.contiguous ~src:value () ]) in
       let body, args = match U.as_call call with
         | Some { body; args; _ } -> body, args
         | None -> fail "expected call" in

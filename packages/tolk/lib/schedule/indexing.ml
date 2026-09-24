@@ -15,7 +15,7 @@ module U = Uop
 let always_contiguous = function
   | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Const
   | Ops.Mselect | Ops.Mstack | Ops.Param | Ops.Load | Ops.Call
-  | Ops.Function ->
+  ->
       true
   | _ -> false
 
@@ -445,7 +445,7 @@ let check_ending_ranges ctx ~pcontig ~ending_get ~ending_set ~out_shape x out_rn
    and MSTACK/MSELECT are treated like a SINK. *)
 let skip_for_rangeify x =
   match U.op x with
-  | Ops.Call | Ops.Function | Ops.Linear | Ops.After | Ops.Mselect | Ops.Mstack
+  | Ops.Call | Ops.Linear | Ops.After | Ops.Mselect | Ops.Mstack
     ->
       true
   | _ -> false

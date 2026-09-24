@@ -749,7 +749,7 @@ let renumber_kernel_ranges root =
         if U.op n = Ops.Range then ranges := n :: !ranges;
         let srcs = U.src n in
         let first =
-          match U.op n with Ops.Call | Ops.Function -> 1 | _ -> 0
+          match U.op n with Ops.Call -> 1 | _ -> 0
         in
         for i = Array.length srcs - 1 downto first do
           let s = srcs.(i) in

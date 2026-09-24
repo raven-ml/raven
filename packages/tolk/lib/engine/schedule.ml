@@ -530,10 +530,10 @@ let schedule_cache : (string, U.t) Hashtbl.t = Hashtbl.create 64
 let schedule_cache_key function_ = U.semantic_key function_
 
 (* Convert a tensor-level SINK into a LINEAR node. *)
-let lower_sink_to_linear ~get_kernel_graph (sink : U.t) : U.t option =
-  match U.op sink with
-  | Ops.Sink when Option.is_some (U.as_kernel_info sink) -> None
-  | Ops.Sink ->
+let lower_sink_to_linear ~get_kernel_graph call : U.t option =
+  match U.as_call call with
+  | Some {body = sink; args; info} when info.precompile && U.op sink = Ops.Sink
+      && Option.is_none (U.as_kernel_info sink) ->
       let st = Unix.gettimeofday () in
       let cache_key = schedule_cache_key sink in
       let cache_hit = ref false in
@@ -570,7 +570,7 @@ let lower_sink_to_linear ~get_kernel_graph (sink : U.t) : U.t option =
            else "CACHE MISS")
           (String.sub cache_key 0 (min 8 (String.length cache_key)))
       end;
-      Some linear
+      Some (U.call ~body:linear ~args ~info)
   | _ -> None
 
 (* Copy kernels *)

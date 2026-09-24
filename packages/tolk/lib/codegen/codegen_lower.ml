@@ -494,7 +494,7 @@ let reduce_input_ranges src reduce_range =
     | _ ->
         let start =
           match U.op u with
-          | Ops.Stage | Ops.Reduce | Ops.End | Ops.Call | Ops.Function | Ops.Copy ->
+          | Ops.Stage | Ops.Reduce | Ops.End | Ops.Call | Ops.Copy ->
               Some 1
           | Ops.Slice -> Some 2
           | Ops.Wmma -> Some 3

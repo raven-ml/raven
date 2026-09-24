@@ -27,7 +27,7 @@ let empty ?(dtype = D.default_float) ?device shape =
   let device = Option.value device ~default:(U.Single (Backend.device_name ())) in
   let n = List.fold_left ( * ) 1 shape in
   let buf =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
+    U.alloc ~bind_on_realize:true ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
       ~device ()
   in
   Movement.reshape (T.of_uop buf) shape
@@ -45,7 +45,7 @@ let clone ?device t =
   in
   let dtype = U.commit_dtype (T.uop t) in
   let buf =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype
+    U.alloc ~bind_on_realize:true ~slot:(U.fresh_buffer_slot ()) ~dtype
       ~shape:(T.shape_uop [ n ]) ~device ()
   in
   let dst = U.reshape ~src:buf ~shape:(T.shape_uop max_shape) in

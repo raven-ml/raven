@@ -136,26 +136,8 @@ let call_info_arg u =
   | Uop.Arg.Call_info info -> Dtype.equal (Uop.dtype u) info.dtype
   | _ -> false
 
-let valid_gettuple g t =
-  match Uop.arg g with
-  | Uop.Arg.Int i ->
-      let tuple =
-        match Uop.op t, Uop.src t with
-        | Ops.Tuple, _ -> Some t
-        | Ops.Function, srcs
-          when Array.length srcs > 0 && Uop.op srcs.(0) = Ops.Tuple ->
-            Some srcs.(0)
-        | _ -> None
-      in
-      (match tuple with
-       | None -> false
-       | Some tuple ->
-           let srcs = Uop.src tuple in
-           i >= 0 && i < Array.length srcs && same_dtype g srcs.(i))
-  | _ -> false
-
 let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Copy | Ops.Slice
+  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy | Ops.Slice
   | Ops.Custom_function -> true
   | _ -> false
 
@@ -167,9 +149,6 @@ let call_ok u body =
         | Some { kind = Axis_type.Device; _ } -> true
         | _ -> false)
        (Uop.ranges body)
-
-let function_ok u body =
-  call_info_arg u && Uop.op body = Ops.Tuple && Uop.ranges body = []
 
 let stage_ok u = Option.is_some (Uop.as_stage u) && tail_srcs is_int u
 
@@ -408,23 +387,12 @@ let tensor_spec : t =
       if valid_global_buffer u || Uop.is_variable u then Some true else None);
 
     op ~allow_any_len:true
-      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Copy;
+      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Store; Ops.Copy;
                    Ops.Custom_function ] ]
       Ops.Call
     =?> (fun u _ ->
       let srcs = Uop.src u in
       Array.length srcs > 0 && call_ok u srcs.(0));
-
-    op ~allow_any_len:true ~dtype:Dtype.void ~src:[ op Ops.Tuple ]
-      Ops.Function
-    =?> (fun u _ ->
-      let srcs = Uop.src u in
-      Array.length srcs > 0 && function_ok u srcs.(0));
-
-    op ~dtype:Dtype.void Ops.Tuple =?> (fun _ _ -> true);
-
-    op ~src:[ var "t" ] Ops.Gettuple
-    =?> (fun u bs -> valid_gettuple u (bs $ "t"));
 
     op ~src:[ var "x" ] Ops.Special
     =?> (fun u bs ->

@@ -1692,7 +1692,7 @@ let symbolic : Upat.Pattern_matcher.t =
        if Array.length s < 2 then None
        else
          let side_effectful y = match Uop.op y with
-           | Ops.Range | Ops.Store | Ops.Call | Ops.Function
+           | Ops.Range | Ops.Store | Ops.Call
            | Ops.Barrier | Ops.End | Ops.Backedge | Ops.Linear
            | Ops.Stage -> true
            | _ -> false

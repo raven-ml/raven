@@ -108,8 +108,9 @@ let realize_buffers ts =
   (* Force each output into a materialised buffer: an unrealized ALU/movement
      expression has no store target for the scheduler to write. *)
   let outs = List.map (fun t -> U.contiguous ~src:(T.uop t) ()) ts in
-  let sink = U.sink outs in
-  let call, buffer_map = Tolk.Callify.transform_to_call sink in
+  let tensor_sink = U.sink outs in
+  let sink, buffer_map = Tolk.Bufferize.run tensor_sink in
+  let call = Tolk.Callify.transform_to_call sink in
   (* Rebind every scheduled node still referenced by a live tensor onto its
      final storage before executing, as the reference frontend does. *)
   let mappings =
@@ -118,7 +119,7 @@ let realize_buffers ts =
         match Hashtbl.find_opt buffer_map (U.tag n) with
         | Some v when v != n -> Some (n, v)
         | _ -> None)
-      (U.toposort sink)
+      (U.toposort tensor_sink @ U.toposort sink)
   in
   T.apply_map mappings;
   let linear, var_vals =
@@ -127,24 +128,17 @@ let realize_buffers ts =
   in
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
-  List.map2
-    (fun t out ->
-      match Hashtbl.find_opt buffer_map (U.tag out) with
-      | Some node ->
-          let buf =
-            Tolk.Realize.Buffers.of_buffer_node binding (U.buf_uop node)
-          in
-          T.set_uop t node;
-          Some buf
+  List.map2 (fun t out ->
+      (match Hashtbl.find_opt buffer_map (U.tag out) with
+       | Some node -> T.set_uop t node
+       | None -> ());
+      match view_buffer (T.uop t) with
+      | Some buffer -> Some buffer
       | None ->
-          (* Nothing was scheduled: the tensor is a contiguous view of a
-             realized buffer (the callify fold leaves it a bare view, aliasing
-             its source), is already materialised, or folded to a constant. A
-             view aliases its source buffer at the element offset. *)
-          (match view_buffer (T.uop t) with
-           | Some buf -> Some buf
-           | None -> buffer_of_node (U.buf_uop out)))
-    ts outs
+          let node = U.buf_uop (T.uop t) in
+          if U.op node = Ops.Buffer then
+            Some (Tolk.Realize.Buffers.of_buffer_node binding node)
+          else None) ts outs
 
 let has_empty_shape t =
   List.exists (fun dim -> U.const_int_value dim = Some 0) (T.symbolic_shape t)

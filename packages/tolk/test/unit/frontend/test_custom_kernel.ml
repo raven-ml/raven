@@ -246,4 +246,57 @@ let tests =
           Array.iteri (fun p w -> equal (float 1e-3) w got.(p)) want);
     ]
 
-let () = run "Tolk_frontend_custom_kernel" [ tests ]
+let call_info precompile : U.call_info =
+  {grad_fxn = None; name = Some "outputs"; precompile;
+   precompile_backward = false; dtype = D.void; aux = None}
+
+let explicit_call_outputs precompile () =
+  List.iter (fun values ->
+      let input = Run.of_float_array ~shape:[4] values in
+      let formal = U.param_like (T.uop input) ~slot:1 in
+      let outputs = U.call_with_outputs ~output_pos:[0; 2]
+          ~values:[add formal (const_like formal 1.0); mul formal (const_like formal 2.0)]
+          ~args:[T.uop input] ~info:(call_info precompile) () |> List.map T.of_uop in
+      Run.realize_many outputs;
+      equal (array (float 1e-6)) (Array.map (fun x -> x +. 1.0) values)
+        (Run.to_float_array (List.nth outputs 0));
+      equal (array (float 1e-6)) (Array.map (fun x -> x *. 2.0) values)
+        (Run.to_float_array (List.nth outputs 1)))
+    [[|1.; 2.; 3.; 4.|]; [|5.; 6.; 7.; 8.|]]
+
+let nested_call_internal_allocation () =
+  let input = Run.of_float_array ~shape:[4] [|1.; 2.; 3.; 4.|] in
+  let formal = U.param_like (T.uop input) ~slot:0 in
+  let temporary = U.alloc ~slot:(U.fresh_buffer_slot ()) ~dtype:D.float32
+      ~shape:(U.const_int 4) () in
+  let stored = U.after ~src:temporary ~deps:[store temporary (mul formal formal)] in
+  let inner = U.call_with_outputs ~values:[add stored (const_like formal 1.0)]
+      ~args:[formal] ~info:(call_info false) () in
+  let output = List.hd (U.call_with_outputs ~values:inner ~args:[T.uop input]
+      ~info:(call_info true) ()) |> T.of_uop in
+  equal (array (float 1e-6)) [|2.; 5.; 10.; 17.|] (Run.to_float_array output)
+
+let symbolic_call_outputs precompile () =
+  List.iter (fun size ->
+      let input = Run.of_float_array ~shape:[4] [|1.; 2.; 3.; 4.|] in
+      let formal = U.param_like (T.uop input) ~slot:0 in
+      let variable = U.variable ~name:"output_size" ~min_val:1 ~max_val:4 () in
+      let bound = U.bind ~var:variable ~value:(U.const_int size) in
+      let extent = U.param_like bound ~slot:1 in
+      let value = U.shrink ~src:formal ~offset:(U.const_int 0) ~size:extent in
+      let outputs = U.call_with_outputs ~values:[add value (const_like value 1.0)]
+          ~args:[T.uop input; bound] ~info:(call_info precompile) () in
+      let output = T.of_uop (List.hd outputs) in
+      ignore (Run.realize output);
+      let view = U.shrink ~src:(T.uop output) ~offset:(U.const_int 0)
+          ~size:(U.const_int size) |> T.of_uop in
+      equal (array (float 1e-6)) (Array.init size (fun i -> float_of_int (i + 2)))
+        (Run.to_float_array view)) [2; 4]
+
+let () = run "Tolk_frontend_custom_kernel"
+    [tests; group "explicit call outputs"
+      [test "inline calls write outputs at explicit positions" (explicit_call_outputs false);
+       test "precompiled calls write outputs at explicit positions" (explicit_call_outputs true);
+       test "nested calls resolve anonymous internal storage" nested_call_internal_allocation;
+       test "inline outputs keep symbolic extents" (symbolic_call_outputs false);
+       test "precompiled outputs keep symbolic extents" (symbolic_call_outputs true)]]

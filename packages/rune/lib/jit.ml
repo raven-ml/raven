@@ -1174,7 +1174,8 @@ let reserve_slots_of linear =
    into arenas); body PARAMs are substituted with the body call's argument
    nodes, which the loop executor rebinds per iteration. *)
 let schedule_body_linear st body_sink =
-  let body_call = fst (Tolk.Callify.transform_to_call body_sink) in
+  let body_sink, _ = Tolk.Bufferize.run body_sink in
+  let body_call = Tolk.Callify.transform_to_call body_sink in
   let captured = ref None in
   Tolk.Realize.capturing :=
     (fun l v -> captured := Some (l, v)) :: !Tolk.Realize.capturing;
@@ -3810,7 +3811,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
       out_anch out_uops
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
-  let call, buffer_map = Tolk.Callify.transform_to_call sink in
+  let sink, buffer_map = Tolk.Bufferize.run sink in
+  let call = Tolk.Callify.transform_to_call sink in
   let resolve what u c =
     let unwrap node = U.buf_uop node in
     match Hashtbl.find_opt buffer_map (U.tag c) with

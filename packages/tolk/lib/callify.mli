@@ -5,46 +5,17 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Buffer allocation for tensor graphs.
+(** Storage interface normalization for schedule caching. *)
 
-    Decides which tensor computations need explicit buffer allocations
-    and transforms a lazy tensor-level {!Tolk_uop.Ops.Sink}
-    into a {!Tolk_uop.Ops.Call} with allocated buffers.
+val transform_to_call : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [transform_to_call sink] collects effects from a bufferized tensor graph,
+    replaces bound inputs with positional formals, and canonicalizes anonymous
+    allocation identities within each call scope. *)
 
-    The transformation runs in three phases:
-    {ol
-    {- {e Tag.}  Identify nodes that need realization
-       ({!Tolk_uop.Ops.Contiguous},
-       {!Tolk_uop.Ops.After}+{!Tolk_uop.Ops.Store},
-       and non-trivial bases of the sink's children).}
-    {- {e Allocate.}  Replace tagged nodes with explicit
-       {!Tolk_uop.Ops.Buffer} +
-       {!Tolk_uop.Ops.Store} +
-       {!Tolk_uop.Ops.After} sequences.  When movement ops
-       on a buffer collapse to a contiguous range, a
-       {!Tolk_uop.Ops.Slice} is used instead.}
-    {- {e Finalize.}  Strip internal bookkeeping, collect the
-       resulting stores, replace input buffers with
-       {!Tolk_uop.Ops.Param} nodes for cache-key
-       normalisation, and wrap everything in a
-       {!Tolk_uop.Ops.Call}.}}
+val is_store_after : Tolk_uop.Uop.t -> bool
+(** [is_store_after u] identifies a materialized tensor effect, excluding
+    scalar bindings and anonymous call results. *)
 
-    The returned [buffer_map] tracks which original tensor nodes map
-    to which allocated buffers, keyed by {!Tolk_uop.Uop.tag}. *)
-
-val transform_to_call :
-  Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t * (int, Tolk_uop.Uop.t) Hashtbl.t
-(** [transform_to_call big_sink] is [(call, buffer_map)].
-
-    [big_sink] must be a {!Tolk_uop.Ops.Sink} node
-    representing the lazy tensor graph to be realized.
-
-    [call] is a {!Tolk_uop.Ops.Call} whose callee is a
-    parameterised sink (input buffers replaced by
-    {!Tolk_uop.Ops.Param} nodes) and whose arguments are
-    the original buffer and bind nodes.
-
-    [buffer_map] maps original tensor nodes to their allocated
-    buffers, keyed by {!Tolk_uop.Uop.tag}.  Downstream scheduling
-    uses this to resolve tensor references to concrete buffers. *)
+val contiguous_view : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+(** [contiguous_view u] folds a contiguous movement view of bound storage
+    without discarding pending effects. *)

@@ -3,6 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let bufferized_call sink =
+  let sink, map = Tolk.Bufferize.run sink in
+  Tolk.Callify.transform_to_call sink, map
+
+
 (* Numeric end-to-end tests on the process-wide default device (DEV selects
    the backend), with expectations derived from tinygrad. *)
 
@@ -1284,7 +1289,7 @@ let symbolic_tests =
             let sink =
               U.sink [ U.contiguous ~src:(T.uop out) () ]
             in
-            let call, _ = Tolk.Callify.transform_to_call sink in
+            let call, _ = bufferized_call sink in
             ignore
               (U.graph_rewrite ~enter_calls:true
                  (fun node ->

@@ -63,6 +63,7 @@ type param_arg = {
   axis : int option;
   device : device option;
   volatile : bool;
+  bind_on_realize : bool;
   buffer : Storage.t list option;
 }
 
@@ -322,8 +323,8 @@ let derived_dtype (node : node) =
   match node.op with
   | Ops.Store | Ops.Linear | Ops.Sink | Ops.Program | Ops.Source
   | Ops.Backedge | Ops.Barrier | Ops.Group | Ops.If | Ops.Endif | Ops.Noop
-  | Ops.Custom_function | Ops.Rewrite_error | Ops.Pyliteral | Ops.Tuple | Ops.Wait -> Dtype.void
-  | Ops.Call | Ops.Function ->
+  | Ops.Custom_function | Ops.Rewrite_error | Ops.Pyliteral | Ops.Wait -> Dtype.void
+  | Ops.Call ->
       (match node.arg with Arg.Call_info info -> info.dtype | _ -> Dtype.void)
   | Ops.Custom | Ops.Customi | Ops.Ins ->
       (match node.arg with
@@ -367,7 +368,7 @@ let derived_dtype (node : node) =
   | Ops.Load | Ops.Unshard | Ops.Reduce | Ops.After | Ops.Range | Ops.Copy
   | Ops.Stage | Ops.Detach | Ops.Mstack | Ops.Mselect | Ops.Allreduce | Ops.Special
   | Ops.End | Ops.Contiguous | Ops.Contiguous_backward -> first ()
-  | Ops.Gettuple | Ops.Slice -> node.dtype
+  | Ops.Slice -> node.dtype
   | op when Ops.Group.is_unary op || Ops.Group.is_movement op -> first ()
   | op when Ops.Group.is_broadcastable op -> promote (Array.to_list node.src)
   | op -> invalid_arg ("Uop: no dtype rule for " ^ Ops.name op)
@@ -381,7 +382,7 @@ let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 let default_param_arg ~dtype ?size ?image ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Dtype.Global) ?axis ?device ?(volatile = false) slot =
   { slot; dtype; size; image; vmin_vmax; multiple_of; name; addrspace; axis;
-    device; volatile; buffer = None }
+    device; volatile; bind_on_realize = false; buffer = None }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -599,7 +600,7 @@ let as_wmma u =
 
 let as_call u =
   match op u, arg u, Array.to_list (src u) with
-  | (Ops.Call | Ops.Function), Arg.Call_info info, body :: args ->
+  | Ops.Call, Arg.Call_info info, body :: args ->
       Option.Some { body; args; info }
   | _ -> Option.None
 
@@ -707,7 +708,7 @@ let as_kernel_info u =
 
 let as_call_info u =
   match op u, arg u with
-  | (Ops.Call | Ops.Function), Arg.Call_info info -> Option.Some info
+  | Ops.Call, Arg.Call_info info -> Option.Some info
   | _ -> Option.None
 
 let as_program_info u =
@@ -1164,14 +1165,6 @@ let rec has_buffer_identity ?(after_ok = false) u =
       Array.length srcs > 0 && has_buffer_identity ~after_ok srcs.(0)
   | Ops.After when after_ok ->
       Array.length srcs > 0 && has_buffer_identity ~after_ok srcs.(0)
-  | Ops.Gettuple -> (
-      match Arg.as_int (arg u), Array.to_list srcs with
-      | Some i, [ tuple ] when op tuple = Ops.Tuple ->
-          let tuple_srcs = src tuple in
-          i >= 0
-          && i < Array.length tuple_srcs
-          && has_buffer_identity ~after_ok tuple_srcs.(i)
-      | _ -> false)
   | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Param -> true
   | _ -> false
 
@@ -1214,27 +1207,6 @@ let contiguous ~src ?(ranges = []) ?(force = false) () =
 let contiguous_backward ~src =
   mk ~op:Ops.Contiguous_backward ~dtype:(dtype src) ~src:[| src |]
     ~arg:Arg.Empty
-
-let tuple srcs =
-  mk ~op:Ops.Tuple ~dtype:void_dtype
-    ~src:(Array.of_list srcs) ~arg:Arg.Empty
-
-let gettuple ~src ~index =
-  let dt = match op src with
-    | Ops.Tuple ->
-        let arr = Array.of_list (children src) in
-        if index < 0 || index >= Array.length arr then
-          invalid_arg "Uop.gettuple: index out of range";
-        dtype arr.(index)
-    | Ops.Function ->
-        let body = (Array.of_list (children src)).(0) in
-        let arr = Array.of_list (children body) in
-        if index < 0 || index >= Array.length arr then
-          invalid_arg "Uop.gettuple: index out of range";
-        dtype arr.(index)
-    | _ -> invalid_arg "Uop.gettuple: src must be Tuple or Function"
-  in
-  mk ~op:Ops.Gettuple ~dtype:dt ~src:[| src |] ~arg:(Arg.Int index)
 
 let program ~sink ?linear ?source ?binary ~info () =
   let srcs =
@@ -1325,7 +1297,7 @@ let toposort ?(gate = fun _ -> true) ?(enter_calls = true) root =
         let enter =
           enter_calls
           || (match op node with
-              | Ops.Call | Ops.Function -> false
+              | Ops.Call -> false
               | _ -> true)
         in
         if enter then
@@ -1396,7 +1368,7 @@ let runtime_realization_state u =
    propagate into this node's in-scope range set. *)
 let range_start_idx = function
   | Ops.Linear -> Option.Some 0
-  | Ops.Stage | Ops.Reduce | Ops.End | Ops.Call | Ops.Function
+  | Ops.Stage | Ops.Reduce | Ops.End | Ops.Call
   | Ops.Copy -> Option.Some 1
   | Ops.Slice -> Option.Some 2
   | Ops.Wmma -> Option.Some 3
@@ -1517,7 +1489,7 @@ let ranges_subset sub sup =
   List.for_all (fun r -> Ref_set.mem r sup_set) (ranges sub)
 
 let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Copy | Ops.Slice
+  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy | Ops.Slice
   | Ops.Custom_function -> true
   | _ -> false
 
@@ -1531,13 +1503,9 @@ let call ~body ~args ~info =
   in
   if List.exists (fun r -> not (is_device_range r)) (ranges body) then
     invalid_arg "Uop.call: ranges are leaking out of the call body";
-  let op, body =
-    if opaque_call_body (op body) then Ops.Call, body
-    else
-      let body = if op body = Ops.Tuple then body else tuple [ body ] in
-      Ops.Function, body
-  in
-  mk ~op ~dtype:void_dtype
+  if not (opaque_call_body (op body)) then
+    invalid_arg "Uop.call: value-producing bodies require call_with_outputs";
+  mk ~op:Ops.Call ~dtype:void_dtype
     ~src:(Array.of_list (body :: args))
     ~arg:(Arg.Call_info info)
 
@@ -1636,7 +1604,7 @@ let graph_rewrite ?loc ?(name = "") ?(enter_calls = false) ?(bottom_up = false)
   let pin_body u =
     if
       (not enter_calls)
-      && match op u with Ops.Call | Ops.Function -> true | _ -> false
+      && match op u with Ops.Call -> true | _ -> false
     then
       let body = (src u).(0) in
       Ref_tbl.replace results body body
@@ -2097,18 +2065,6 @@ let marg u =
        | None -> invalid_arg "Uop.marg: Flip arg is not a bool list")
   | _ -> invalid_arg "Uop.marg: op is not a movement op"
 
-let substitute_function_shape_args fn dims =
-  let fn_srcs = src fn in
-  let n_args = max 0 (Array.length fn_srcs - 1) in
-  let args = Array.init n_args (fun i -> fn_srcs.(i + 1)) in
-  let resolve_param u =
-    match op u, arg u with
-    | Ops.Param, Arg.Param_arg { slot; _ } when slot >= 0 && slot < n_args ->
-        Some args.(slot)
-    | _ -> None
-  in
-  List.map (graph_rewrite ~walk:true resolve_param) dims
-
 (* Per-node shape memo. Nodes are hash-consed and immutable, so a shape is a
    pure function of the node; caching it by node identity (as [device_of] and
    [min_max] already do) avoids recomputing shared subgraphs, which would
@@ -2140,8 +2096,8 @@ and compute_shape_opt u =
   in
   match op u with
   | Ops.If | Ops.Barrier | Ops.Sink | Ops.Rewrite_error | Ops.Endif | Ops.Backedge
-  | Ops.Group | Ops.Linear | Ops.Program | Ops.Source | Ops.Tuple
-  | Ops.Function | Ops.Custom_function ->
+  | Ops.Group | Ops.Linear | Ops.Program | Ops.Source
+  | Ops.Custom_function ->
       None
   | Ops.Call ->
       if Dtype.equal (dtype u) Dtype.void then None else Some []
@@ -2156,25 +2112,6 @@ and compute_shape_opt u =
         if shapes = [] then None else Some (broadcast_shape shapes)
   | Ops.Noop ->
       if Array.length srcs = 0 then None else shape_opt srcs.(0)
-  | Ops.Gettuple ->
-      (match Arg.as_int (arg u), Array.to_list srcs with
-       | Some i, [ tuple ] when op tuple = Ops.Tuple ->
-           let tuple_srcs = src tuple in
-           if i >= 0 && i < Array.length tuple_srcs then
-             shape_opt tuple_srcs.(i)
-           else None
-       | Some i, [ fn ] when op fn = Ops.Function ->
-           let fn_srcs = src fn in
-           if Array.length fn_srcs = 0 then None
-           else
-             let tuple = fn_srcs.(0) in
-             let tuple_srcs = src tuple in
-             if op tuple = Ops.Tuple && i >= 0 && i < Array.length tuple_srcs
-             then
-               Option.map (substitute_function_shape_args fn)
-                 (shape_opt tuple_srcs.(i))
-             else None
-       | _ -> None)
   | Ops.Index ->
       if Array.length srcs = 0 then None
       else
@@ -2394,12 +2331,12 @@ let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatil
       devices in
   view_as (mk ~op:Ops.Buffer ~dtype ~src:[||] ~arg:(Arg.Param_arg { p with buffer })) dims
 
-let alloc ~slot ~dtype ?shape:shape_arg ?device () =
+let alloc ~slot ~dtype ?shape:shape_arg ?device ?(bind_on_realize = false) () =
   if Dtype.is_weak dtype then invalid_arg "Uop.alloc: dtype must be concrete";
   let dims = match shape_arg with None -> [] | Some s -> as_shape s in
   let p = default_param_arg ~dtype ?size:(storage_size dims) ?device slot in
   view_as (mk ~op:Ops.Alloc ~dtype ~src:[||]
-    ~arg:(Arg.Param_arg p)) dims
+    ~arg:(Arg.Param_arg { p with bind_on_realize })) dims
 
 let from_buffer buf =
   let dtype = Storage.dtype buf in
@@ -2427,22 +2364,6 @@ and compute_axis u =
   match op u with
   | Ops.Copy -> None
   | Ops.Unshard -> Arg.as_int (arg u)
-  | Ops.Gettuple ->
-      (match Arg.as_int (arg u), Array.to_list srcs with
-       | Some i, [ tuple ] when op tuple = Ops.Tuple ->
-           let tuple_srcs = src tuple in
-           if i >= 0 && i < Array.length tuple_srcs then axis tuple_srcs.(i)
-           else None
-       | Some i, [ fn ] when op fn = Ops.Function ->
-           let fn_srcs = src fn in
-           if Array.length fn_srcs = 0 then None
-           else
-             let tuple = fn_srcs.(0) in
-             let tuple_srcs = src tuple in
-             if op tuple = Ops.Tuple && i >= 0 && i < Array.length tuple_srcs
-             then axis tuple_srcs.(i)
-             else None
-       | _ -> None)
   | Ops.Param ->
       (match Arg.as_param_arg (arg u) with
        | Some param -> param.axis
@@ -2539,6 +2460,69 @@ let shard_shape u =
   | _ -> shape u
 
 let max_shard_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shard_shape u)
+
+(* Calls pass storage explicitly; outputs are allocations in the caller. *)
+
+let param_like u ~slot =
+  let variable = match as_bind u with
+    | Some {var; _} -> Some var
+    | None when is_variable u -> Some u
+    | None -> None in
+  match variable with
+  | Some var ->
+      let p = Option.get (Arg.as_param_arg (arg var)) in
+      replace var ~op:Ops.Param
+        ~arg:(Arg.Param_arg {p with slot; name = Some ("p" ^ string_of_int slot)}) ()
+  | None ->
+      let device = device_of u in
+      let dims = shard_shape u in
+      let volatile = match Arg.as_param_arg (arg (buf_uop u)) with
+        | Some p -> p.volatile | None -> false in
+      let p = param ~slot ~dtype:(dtype u) ~shape:(shape_arg dims) ?device ~volatile () in
+      match device, axis u with
+      | Some (Multi _), Some axis -> multi ~src:p ~axis
+      | _ -> p
+
+let call_with_outputs ?output_pos ~values ~args ~info () =
+  let count = List.length values + List.length args in
+  let positions = match output_pos with
+    | Some positions -> positions
+    | None -> List.mapi (fun i _ -> List.length args + i) values in
+  if List.length positions <> List.length values
+     || positions <> List.sort_uniq Int.compare positions
+     || List.exists (fun p -> p < 0 || p >= count) positions then
+    invalid_arg "Uop.call_with_outputs: invalid output positions";
+  let actuals = Array.make count None in
+  let inputs = ref args in
+  for slot = 0 to count - 1 do
+    if not (List.mem slot positions) then
+      match !inputs with
+      | x :: xs -> actuals.(slot) <- Some x; inputs := xs
+      | [] -> assert false
+  done;
+  let resolve_dim dim = graph_rewrite ~walk:true (fun n ->
+      match as_param n with
+      | Some {param = {slot; _}; _} when slot >= 0 && slot < count -> actuals.(slot)
+      | _ -> None) dim in
+  let default_device = List.find_map device_of (values @ args) in
+  let outputs = List.map (fun value ->
+      let device = match device_of value with Some _ as d -> d | None -> default_device in
+      let dims = List.map resolve_dim (shard_shape value) in
+      let size = if dims = [] then 1 else Option.get (storage_size dims) in
+      let storage = alloc ~slot:(fresh_buffer_slot ()) ~dtype:(dtype value)
+          ~shape:(const_int size) ?device () in
+      let view = if dims = [] then reshape ~src:storage ~shape:(shape_arg []) else view_as storage dims in
+      match device, axis value with
+      | Some (Multi _), Some axis -> multi ~src:view ~axis
+      | _ -> view) values in
+  List.iter2 (fun slot output -> actuals.(slot) <- Some output) positions outputs;
+  let body = sink (List.map2 (fun value slot ->
+      store ~dst:(param_like value ~slot) ~value ()) values positions) in
+  let args = Array.to_list (Array.mapi (fun slot arg ->
+      let arg = Option.get arg in
+      if info.precompile && not (List.mem slot positions) then contiguous ~src:arg () else arg) actuals) in
+  let invoked = call ~body ~args ~info in
+  List.map (fun output -> after ~src:output ~deps:[invoked]) outputs
 
 (* Placeholders and custom kernels *)
 
@@ -3628,7 +3612,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 21
+let export_version = 22
 
 type serialized_node = {
   serialized_op : Ops.t;
