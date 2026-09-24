@@ -1504,15 +1504,13 @@ let test_place_resident_value_is_returned () =
   is_true ~msg:"an unread output too" (place h == h)
 
 let test_place_on_the_host_device () =
+  let host = Nx.Placement.device (Rune.device "CPU") in
   let x = vec32 [| 1.0; 2.0; 3.0 |] in
-  is_true ~msg:"a contiguous value keeps its storage"
-    (Nx.to_buffer (Rune.to_device ~device:"CPU" x) == Nx.to_buffer x);
+  is_true ~msg:"a host value placed on the host is itself" (Nx.place host x == x);
   let t =
     Nx.matrix_transpose (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |])
   in
-  let p = Rune.to_device ~device:"CPU" t in
-  is_true ~msg:"a strided value is made contiguous" (Nx.is_c_contiguous p);
-  check_arr ~msg:"value" [| 1.0; 3.0; 2.0; 4.0 |] p
+  is_true ~msg:"a strided one too" (Nx.place host t == t)
 
 let test_place_is_the_identity_under_transformations () =
   let x = vec32 [| 1.0; -2.0; 0.5 |] in

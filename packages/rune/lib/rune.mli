@@ -414,7 +414,17 @@ val check_grads :
     engine that holds values on it ({!Nx.place}). A device has one name:
     ["METAL"], ["CUDA:3"], never an index [0] (["CUDA:0"] is ["CUDA"]). ["CPU"]
     is the host, {!Nx.Device.host}; ["CPU:1"], ["CPU:2"], ... are devices with
-    storage of their own, for testing placement without a GPU. *)
+    storage of their own, for testing placement without a GPU.
+
+    {!Nx.place} on a device copies the value's bytes 64 MiB at a time into one
+    device buffer, and the result is resident like an output of a compiled call
+    (see {!val-jit}): metadata reads are free, a read copies the elements it
+    reads and leaves the buffer, a compiled function that takes it as an input
+    leaf uses the buffer with no transfer, and {!jit_step} consumes it when it
+    is a leaf of the state. Use it to put a model's weights on the device once,
+    as they are imported, instead of once per compiled function at its first
+    call. A buffer uploaded from a mapped file is returned to the system when
+    the value is released, not kept for reuse. *)
 
 val device : string -> Nx.Device.t
 (** [device name] is the device [name] names, opened at the first call. Every
@@ -532,11 +542,22 @@ val jit :
     apply [jit] once and reuse the returned function. Tensors [f] closes over
     are compile-time constants, bound once when the trace first compiles: on the
     host contiguous captures are read in place, and every other capture is
-    copied to the device once per closure — signatures share the copy. Mutating
-    a captured tensor between calls is not supported and has unspecified
-    visibility (the host may observe the mutation through its in-place binding;
-    other devices never do): pass values that change between calls as leaves of
-    [P] rather than capturing them.
+    copied to the device once per closure — signatures share the copy.
+
+    A capture placed on the device, a view of it included, is bound instead,
+    except by a {!pmap}: the program uses its buffer as the constant from its
+    first compilation on, no bytes move, and every compiled function that
+    captures the value shares the one buffer. A value donated before that first
+    compilation can no longer be used. A compiled function keeps the values it
+    binds reachable, and while it is reachable their storage is never donated:
+    passed as a leaf of the state of {!jit_step}, a bound value is used with no
+    transfer and is not consumed, and an output that returns it unchanged is a
+    copy on the device. [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A
+    {!pmap} reads a placed capture to the host and uploads it, as it does a host
+    capture. Mutating a captured tensor between calls is not supported and has
+    unspecified visibility (the host may observe the mutation through its
+    in-place binding; other devices never do): pass values that change between
+    calls as leaves of [P] rather than capturing them.
 
     Compiled programs also persist across processes: the first compilation of a
     trace writes the scheduled and compiled kernels to a disk cache under the
@@ -640,17 +661,16 @@ val jit_step :
     [Nx.Ptree.list []].
 
     Once a call has run — never during it — every leaf of the state that is
-    resident (an output of an earlier call, or a value placed with
-    {!val-to_device}) is consumed: its device buffer is released to the
-    allocator or taken by an output, and every view of it becomes unusable.
-    Reading it, or feeding it to a later call, raises [Invalid_argument]; copy
-    the value to the host before the call if it is still needed. A resident leaf
-    whose view covers only part of its storage cannot be consumed and raises
-    [Invalid_argument] before the call. A host leaf of the state is uploaded and
-    stays usable. The first argument's leaves are read as by {!val-jit} and are
-    never consumed, and a storage that both arguments reach, through any view,
-    or that a compiled function binds as a capture, is read: it lends nothing
-    and stays usable.
+    resident (an output of an earlier call, or a value placed with {!Nx.place})
+    is consumed: its device buffer is released to the allocator or taken by an
+    output, and every view of it becomes unusable. Reading it, or feeding it to
+    a later call, raises [Invalid_argument]; copy the value to the host before
+    the call if it is still needed. A resident leaf whose view covers only part
+    of its storage cannot be consumed and raises [Invalid_argument] before the
+    call. A host leaf of the state is uploaded and stays usable. The first
+    argument's leaves are read as by {!val-jit} and are never consumed, and a
+    storage that both arguments reach, through any view, or that a compiled
+    function binds as a capture, is read: it lends nothing and stays usable.
 
     An output leaf takes the storage of the state's leaf at the same position
     when their dtypes and sizes match, no other leaf of the call reaches that
@@ -741,42 +761,6 @@ val pmap2 :
   'q
 (** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
     a structured output. *)
-
-val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [to_device x] is [x] with its bytes held by [device], which is resolved as
-    in {!val-jit}. Where a tensor lives is a run-time attribute: the result has
-    [x]'s type and equals [x] in shape, dtype and value. Use it to put a model's
-    weights on the device once, as they are imported, instead of once per
-    compiled function at its first call.
-
-    The bytes are copied 64 MiB at a time into one device buffer, and the result
-    is resident like an output of a compiled call (see {!val-jit}): metadata
-    reads are free, a read copies the elements it reads and leaves the buffer, a
-    compiled function on [device] that takes it as an input leaf uses the buffer
-    with no transfer, and {!jit_step} consumes it when it is a leaf of the
-    state. [x] is untouched and may be dropped. A value already resident on
-    [device] is returned as it is, and one resident on another device goes
-    through the host. A buffer uploaded from a mapped file is returned to the
-    system when the value is released, not kept for reuse.
-
-    {b Captures bind.} A compiled function that captures a resident value on its
-    own device, a view of it included, and is not a {!pmap}, uses that value's
-    buffer as its constant from its first compilation on: no bytes move, and
-    every compiled function that captures the value shares the one buffer. A
-    value donated before that first compilation can no longer be used. A
-    compiled function keeps the values it binds reachable, and while it is
-    reachable their storage is never donated: passed as a leaf of the state of
-    {!jit_step}, a bound value is used with no transfer and is not consumed, and
-    an output that returns it unchanged is a copy on the device.
-    [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A capture resident on
-    another device raises (see {!val-jit}), and a {!pmap} reads a resident
-    capture to the host and uploads it, as it does a host capture.
-
-    On the host, the result is [Nx.contiguous x]. Elsewhere it is {!Nx.place} on
-    [device]: under {!val-grad} and {!val-jvp} placement is linear and a
-    cotangent returns to its primal's placement, under {!val-vmap} it places the
-    batched value, and inside {!val-jit} it is [x] when [device] is the
-    program's and raises {!Jit_error} otherwise. *)
 
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)

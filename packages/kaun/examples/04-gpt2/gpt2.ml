@@ -246,9 +246,10 @@ let logits cfg p h =
    with [Nx.split], into three views. *)
 
 let of_hf ?device cfg dt ckpt =
-  let place x =
-    match device with None -> x | Some device -> Rune.to_device ~device x
+  let placement =
+    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
   in
+  let place x = match placement with None -> x | Some p -> Nx.place p x in
   let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
   let d = cfg.n_embd in
   let layer_norm name =

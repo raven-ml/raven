@@ -115,10 +115,9 @@ val of_hf :
     gives it, and every projection is transposed to [inputs × outputs], a view.
     At the file's own dtype nothing is copied; at another one each leaf is cast.
 
-    With [device], each leaf is placed on it with {!Rune.to_device} as it is
-    built, before the next is read, so at most one leaf's cast is alive on the
-    host and a function compiled for [device] that captures the model uploads
-    nothing.
+    With [device], each leaf is placed on it with [Nx.place] as it is built,
+    before the next is read, so at most one leaf's cast is alive on the host and
+    a function compiled for [device] that captures the model uploads nothing.
 
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or is not a floating-point entry. *)

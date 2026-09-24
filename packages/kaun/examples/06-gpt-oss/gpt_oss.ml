@@ -310,9 +310,10 @@ let config_of_json json =
    [Checkpoint.to_float] refuses them. A tied model has no lm_head entry. *)
 
 let of_hf ?device cfg dt ckpt =
-  let place x =
-    match device with None -> x | Some device -> Rune.to_device ~device x
+  let placement =
+    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
   in
+  let place x = match placement with None -> x | Some p -> Nx.place p x in
   let float ~shape name = place (Checkpoint.to_float ~shape dt name ckpt) in
   let bytes ~shape name =
     place (Checkpoint.to_tensor ~shape Nx.uint8 name ckpt)

@@ -172,9 +172,9 @@ val of_hf :
     packed uint8 tensors, whatever [dt]. At the file's own dtype nothing is
     copied; at another one each float leaf is cast.
 
-    With [device], each leaf, float or uint8, is placed on it with
-    {!Rune.to_device} as it is built, so a function compiled for [device] that
-    captures the model uploads nothing and the host holds one leaf at a time.
+    With [device], each leaf, float or uint8, is placed on it with [Nx.place] as
+    it is built, so a function compiled for [device] that captures the model
+    uploads nothing and the host holds one leaf at a time.
 
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or has a dtype the leaf cannot take. *)

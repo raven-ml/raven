@@ -69,9 +69,10 @@ let floats dt ~scale shape =
     Nx.contiguous (Nx.slice [ R (0, rows) ] tiled)
 
 let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
-  let place x =
-    match device with None -> x | Some device -> Rune.to_device ~device x
+  let placement =
+    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
   in
+  let place x = match placement with None -> x | Some p -> Nx.place p x in
   let f ~scale shape = place (floats dt ~scale shape) in
   let linear ?(bias = true) i o =
     {

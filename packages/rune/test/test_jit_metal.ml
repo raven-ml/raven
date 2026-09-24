@@ -141,6 +141,8 @@ let delta f =
   let s1 = Rune.jit_stats () in
   (r, s1.bytes_to_device - s0.bytes_to_device)
 
+let on_metal x = Nx.place (Nx.Placement.device (Rune.device "METAL")) x
+
 let weights () =
   ( Nx.create f32 [| 4; 4 |]
       (Array.init 16 (fun i -> (float_of_int (i mod 5) /. 4.0) -. 0.5)),
@@ -150,8 +152,8 @@ let weights () =
 let test_placed_weights_bind () =
   let w1, w2 = weights () in
   let f w1 w2 x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
-  let p1 = Rune.to_device ~device:"METAL" w1 in
-  let p2 = Rune.to_device ~device:"METAL" w2 in
+  let p1 = on_metal w1 in
+  let p2 = on_metal w2 in
   let g = Rune.jit' ~device:"METAL" (f p1 p2) in
   let launches0 = !Tolk.Realize.graph_launches in
   List.iter
@@ -204,9 +206,8 @@ let test_unsupported_dtype_raises_at_placement () =
         | _ -> false)
       f
   in
-  cannot_hold (fun () ->
-      Rune.to_device ~device:"METAL" (Nx.create f64 [| 3 |] [| 1.; 2.; 3. |]));
-  let p = Rune.to_device ~device:"METAL" (vec32 [| 1.0; 2.0; 3.0 |]) in
+  cannot_hold (fun () -> on_metal (Nx.create f64 [| 3 |] [| 1.; 2.; 3. |]));
+  let p = on_metal (vec32 [| 1.0; 2.0; 3.0 |]) in
   cannot_hold (fun () -> Nx.cast Nx.float64 p);
   cannot_hold (fun () -> Nx.cast Nx.float64 (Nx.sum p))
 
@@ -312,7 +313,7 @@ let test_capture_moves_past_a_dtype () =
 
 let test_bound_input_is_not_donated () =
   let w1, _ = weights () in
-  let p = Rune.to_device ~device:"METAL" w1 in
+  let p = on_metal w1 in
   let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
   ignore (g x);
@@ -333,7 +334,7 @@ let test_bound_input_is_not_donated () =
    and readable, the state is written over its own storage. *)
 let test_step_reads_weights_consumes_state () =
   let w1, _ = weights () in
-  let w = Rune.to_device ~device:"METAL" w1 in
+  let w = on_metal w1 in
   let f w x = Nx.add_s (Nx.mul x x) (Nx.item [] (Nx.mean w)) in
   let step =
     Rune.jit_step ~device:"METAL"
@@ -367,7 +368,7 @@ let test_read_after_call_waits () =
   let step =
     Rune.jit' ~device:"METAL" (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
   in
-  let h = ref (Rune.to_device ~device:"METAL" (vec32 (Array.make 4096 0.0))) in
+  let h = ref (on_metal (vec32 (Array.make 4096 0.0))) in
   for _ = 1 to 50 do
     h := step !h
   done;
@@ -521,7 +522,7 @@ let test_place_from_a_mapped_file () =
           (Nx_buffer.reinterpret Nx_buffer.Float32 mapping)
           ~shape:[| 64; 64 |]
       in
-      let placed = Rune.to_device ~device:"METAL" (Nx.matrix_transpose w) in
+      let placed = on_metal (Nx.matrix_transpose w) in
       let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x placed) in
       let x = Nx.create f32 [| 2; 64 |] (Array.make 128 0.5) in
       check_arr ~msg:"matches eager"

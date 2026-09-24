@@ -52,8 +52,9 @@ let cached (type b) ~device cfg (p : (float, b) Nx.t Gpt_oss.params) =
   in
   let sliding = compile Gpt_oss.Sliding and full = compile Gpt_oss.Full in
   let embed = Rune.jit' ~device (Embedding.apply p.tok) in
+  let placement = Nx.Placement.device (Rune.device device) in
   fun caches index ids ->
-    let index = Cache_index.map (Rune.to_device ~device) index in
+    let index = Cache_index.map (fun x -> Nx.place placement x) index in
     let rec go x rev layers blocks caches =
       match (layers, blocks, caches) with
       | [], [], [] -> (x, List.rev rev)

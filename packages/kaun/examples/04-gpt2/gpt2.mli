@@ -140,9 +140,8 @@ val of_hf :
     are the file's entries; at another one each leaf is cast. Entries the model
     does not use (attention mask buffers) are never read.
 
-    With [device], each leaf is placed on it with {!Rune.to_device} as it is
-    built, so a function compiled for [device] that captures the model uploads
-    nothing.
+    With [device], each leaf is placed on it with [Nx.place] as it is built, so
+    a function compiled for [device] that captures the model uploads nothing.
 
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or is not a floating-point entry. *)

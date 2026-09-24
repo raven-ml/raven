@@ -3134,23 +3134,6 @@ let create_fresh_buffer dev dtolk n =
   allocate (nx_device dev) buf;
   buf
 
-(* Placement
-
-   [to_device] places a tensor on one device and hands back the placed value,
-   exactly like an unread output of a compiled call. On the host it stays a host
-   tensor, made contiguous. *)
-
-let to_device (type a b) ?device:name (x : (a, b) Nx_effect.t) :
-    (a, b) Nx_effect.t =
-  let d = match name with Some n -> device n | None -> default_device () in
-  if d == Nx.Device.host then
-    let x = on_host x in
-    let strided = not (NV.is_c_contiguous (Nx_effect.view x)) in
-    match if strided then read_base (Hashtbl.create 1) x else None with
-    | Some base -> Nx_effect.contiguous base
-    | None -> Nx_effect.contiguous x
-  else Nx_effect.place (Nx.Placement.device d) x
-
 (* Compiled traces *)
 
 type 'q compiled = {

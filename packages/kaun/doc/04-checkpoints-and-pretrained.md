@@ -176,13 +176,14 @@ Each name is written at the field it fills. A rename is a different string at th
 
 ## Placing Weights on a Device
 
-A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Rune.to_device` moves a tensor into a device buffer and returns it as the same value, and a compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
+A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Nx.place` copies a tensor into a device buffer and returns it as the same value, on a device that `Rune.device` names, and a compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
 
 ```ocaml
 let mlp_of_file ?device dt ckpt =
-  let place x =
-    match device with None -> x | Some device -> Rune.to_device ~device x
+  let placement =
+    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
   in
+  let place x = match placement with None -> x | Some p -> Nx.place p x in
   let linear ~inputs ~outputs name =
     let float ~shape leaf =
       Checkpoint.to_float ~shape dt (name ^ leaf) ckpt
@@ -199,7 +200,7 @@ let mlp_of_file ?device dt ckpt =
   }
 ```
 
-Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. The examples' importers take `?device` this way, and their programs pass the device they compile for. Outside a compiled function every nx operation on a placed value reads it back to the host, so place the final form of each leaf, after the transpose.
+Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. The examples' importers take `?device` this way, and their programs pass the device they compile for. A view of a placed value, such as a transpose or a slice, stays placed and a compiled function reads it in place; any other nx operation on a placed value outside a compiled function computes on the host and places its result, so place the final form of each leaf.
 
 ## Fetching From the Hub: kaun.hf
 

@@ -255,9 +255,10 @@ let logits cfg p h =
    entry. *)
 
 let of_hf ?device cfg dt ckpt =
-  let place x =
-    match device with None -> x | Some device -> Rune.to_device ~device x
+  let placement =
+    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
   in
+  let place x = match placement with None -> x | Some p -> Nx.place p x in
   let weight ~shape name =
     Checkpoint.to_float ~shape dt (name ^ ".weight") ckpt
   in

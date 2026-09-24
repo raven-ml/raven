@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** Remove `Rune.to_device`. Place values with
+  `Nx.place (Nx.Placement.device (Rune.device "METAL")) x`; on the host,
+  `Nx.place` returns its argument where `to_device` made it contiguous.
 - A placed leaf or capture that views part of its storage (a slice, a
   transpose, a flip, a broadcast) is read in place by a compiled function on its
   device, where it was copied through the host on every call.
