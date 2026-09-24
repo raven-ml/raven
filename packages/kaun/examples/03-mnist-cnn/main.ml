@@ -79,7 +79,8 @@ let cnn = Kaun.ptree (module Cnn)
 let accuracy params (x, y) =
   Metric.accuracy (Cnn.apply params ~training:false x) y
 
-let save_training_state path (params, (ostate : Nx.float32_t Cnn.t Vega.adam_state)) =
+let save_training_state path
+    (params, (ostate : Nx.float32_t Cnn.t Vega.adam_state)) =
   Checkpoint.save path
     (Checkpoint.concat
        [

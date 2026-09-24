@@ -21,8 +21,8 @@
         let l1 = Linear.map f l1 in
         let l2 = Linear.map f l2 in
         { l1; l2 }
-      (* map2, iter, fold, fold2, names: same one-liners over the fields,
-         or [@@deriving ptree]. *)
+      (* map2, iter, fold, fold2, names: same one-liners over the fields, or
+         [@@deriving ptree]. *)
 
       let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
     end
@@ -34,10 +34,10 @@ type 'a t = { w : 'a; b : 'a option }
 (** The type for linear-layer parameters over payload ['a].
 
     At tensor payloads — [(float, 'b) Nx.t t] — [w] has shape
-    [[| inputs; outputs |]] and [b], when present, shape [[| outputs |]]. [b]
-    is [None] for layers built without a bias ({!make}[ ~bias:false]); such
-    layers have no bias parameter at all, so traversals skip it and {!apply}
-    performs no shift. *)
+    [[| inputs; outputs |]] and [b], when present, shape [[| outputs |]]. [b] is
+    [None] for layers built without a bias ({!make}[ ~bias:false]); such layers
+    have no bias parameter at all, so traversals skip it and {!apply} performs
+    no shift. *)
 
 (** {1:constructors Constructors} *)
 

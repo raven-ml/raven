@@ -13,9 +13,9 @@
 
     Traversing a sequence built with [~shuffle:true] draws a fresh permutation
     from the ambient RNG scope (see {!Nx.Rng}): iterating the same sequence once
-    per epoch reshuffles every epoch, and running the loop under {!Nx.Rng.with_key}
-    makes the whole schedule of permutations — hence the whole run —
-    reproducible.
+    per epoch reshuffles every epoch, and running the loop under
+    {!Nx.Rng.with_key} makes the whole schedule of permutations — hence the
+    whole run — reproducible.
 
     {[
     Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

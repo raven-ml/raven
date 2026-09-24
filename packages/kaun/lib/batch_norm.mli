@@ -48,8 +48,8 @@
 
 type 'a t = { gamma : 'a; beta : 'a }
 (** The type for batch-norm parameters over payload ['a]: per-feature scale
-    [gamma] and shift [beta], at tensor payloads each of shape
-    [[| features |]]. *)
+    [gamma] and shift [beta], at tensor payloads each of shape [[| features |]].
+*)
 
 val map : ('a -> 'b) -> 'a t -> 'b t
 (** [map f p] is [p] with [f] applied to [gamma] and [beta]. [map (Nx.cast dt)]
@@ -62,8 +62,8 @@ val iter : ('a -> unit) -> 'a t -> unit
 (** [iter f p] applies [f] to [gamma] and [beta], in that order. *)
 
 val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise; leaf paths are ["gamma"] and
-    ["beta"]. *)
+(** [fold f acc p] reduces [p] leafwise; leaf paths are ["gamma"] and ["beta"].
+*)
 
 val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
 (** [fold2 f acc p q] is like {!fold} across two layers. *)
@@ -79,10 +79,10 @@ val names : 'a t -> string t
     optimize them; thread them through the training loop as auxiliary state. *)
 module Stats : sig
   type 'a t = { mean : 'a; var : 'a }
-  (** The type for running statistics over payload ['a], at tensor payloads
-      each of shape [[| features |]]. The exponential moving average
-      accumulates small increments, so keep statistics at float32 even when
-      the parameters are half precision. *)
+  (** The type for running statistics over payload ['a], at tensor payloads each
+      of shape [[| features |]]. The exponential moving average accumulates
+      small increments, so keep statistics at float32 even when the parameters
+      are half precision. *)
 
   val map : ('a -> 'b) -> 'a t -> 'b t
   (** [map f s] is [s] with [f] applied to [mean] and [var]. *)
@@ -94,8 +94,8 @@ module Stats : sig
   (** [iter f s] applies [f] to [mean] and [var], in that order. *)
 
   val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-  (** [fold f acc s] reduces [s] leafwise; leaf paths are ["mean"] and
-      ["var"]. *)
+  (** [fold f acc s] reduces [s] leafwise; leaf paths are ["mean"] and ["var"].
+  *)
 
   val fold2 :
     (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc

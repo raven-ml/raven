@@ -9,9 +9,9 @@
     an optional per-filter bias. It slides its filters over inputs in NCHW
     layout — [[| batch; channels; height; width |]] — computing the
     cross-correlation used by deep-learning frameworks (no kernel flip).
-    Construct parameters with {!init} or {!make} and convolve with {!apply};
-    the traversals supply the {!Nx.Ptree.Uniform} and checkpoint plumbing,
-    exactly as in {!Linear}.
+    Construct parameters with {!init} or {!make} and convolve with {!apply}; the
+    traversals supply the {!Nx.Ptree.Uniform} and checkpoint plumbing, exactly
+    as in {!Linear}.
 
     Pooling has no parameters and lives in {!Pool}. *)
 

@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Mixed precision through the kaun layers: per-layer [map (Nx.cast dt)], the
-   float32
-   islands (attention scores and normalization statistics), the astype-sandwich
-   gradient, and a jitted float16 training loop with Vega's loss scaling.
+   float32 islands (attention scores and normalization statistics), the
+   astype-sandwich gradient, and a jitted float16 training loop with Vega's loss
+   scaling.
 
    All inputs are exactly representable in float16 and bfloat16 (short binary
    fractions), so a half-precision forward differs from the float32 reference
@@ -41,7 +41,9 @@ let test_cast_dtypes () =
   let lin = Linear.map (Nx.cast f16) (linear_params ()) in
   dtype_is ~msg:"linear w" f16 lin.Linear.w;
   dtype_is ~msg:"linear b" f16 (Option.get lin.Linear.b);
-  let emb = Embedding.map (Nx.cast f16) { Embedding.table = mat f32 4 3 (grid 12) } in
+  let emb =
+    Embedding.map (Nx.cast f16) { Embedding.table = mat f32 4 3 (grid 12) }
+  in
   dtype_is ~msg:"embedding table" f16 emb.Embedding.table;
   let ln = Layer_norm.map (Nx.cast f16) (Layer_norm.init ~dim:4) in
   dtype_is ~msg:"layer norm gamma" f16 ln.Layer_norm.gamma;
@@ -53,7 +55,9 @@ let test_cast_dtypes () =
     (Batch_norm.Stats.map (Nx.cast f16) stats).mean;
   let conv = Conv.init ~in_channels:1 ~out_channels:2 ~kernel_size:(2, 2) in
   dtype_is ~msg:"conv w" f16 (Conv.map (Nx.cast f16) conv).Conv.w;
-  let cache = Attention.Cache.make ~slots:3 ~kv_heads:2 ~head_dim:2 Nx.float32 in
+  let cache =
+    Attention.Cache.make ~slots:3 ~kv_heads:2 ~head_dim:2 Nx.float32
+  in
   dtype_is ~msg:"cache keys" f16 (Attention.Cache.map (Nx.cast f16) cache).keys
 
 let test_cast_round_trip () =
@@ -175,7 +179,9 @@ let test_rms_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   ignore name;
   (* Large entries: their squares overflow float16 and starve bfloat16, so the
      mean square must be taken at float32. *)
-  let x = mat f32 2 4 [| 300.0; -200.0; 100.0; 250.0; 0.5; -0.25; 1.0; 0.75 |] in
+  let x =
+    mat f32 2 4 [| 300.0; -200.0; 100.0; 250.0; 0.5; -0.25; 1.0; 0.75 |]
+  in
   let p = { Rms_norm.gamma = vec f32 [| 1.0; 2.0; 0.5; 1.0 |] } in
   let xh = Nx.cast dt x in
   let expected = Rms_norm.apply p (Nx.cast f32 xh) in
@@ -223,8 +229,7 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
 
 (* A log-sum-exp over many classes: at half precision the sum of 4096 small
    exponentials loses most of its bits; the island keeps the float32 value. *)
-let test_cross_entropy_island (type b) name (dt : (float, b) Nx.dtype) ~tol ()
-    =
+let test_cross_entropy_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   ignore name;
   let classes = 4096 in
   let logits =
@@ -294,7 +299,8 @@ let test_batch_norm_island () =
   let p, stats = Batch_norm.init ~features:3 in
   let expected, estats = Batch_norm.apply p stats ~training:true x in
   let actual, astats =
-    Batch_norm.apply (Batch_norm.map (Nx.cast f16) p)
+    Batch_norm.apply
+      (Batch_norm.map (Nx.cast f16) p)
       (Batch_norm.Stats.map (Nx.cast f16) stats)
       ~training:true (Nx.cast f16 x)
   in
@@ -304,7 +310,8 @@ let test_batch_norm_island () =
     astats.Batch_norm.Stats.mean;
   let expected_eval, _ = Batch_norm.apply p estats ~training:false x in
   let actual_eval, _ =
-    Batch_norm.apply (Batch_norm.map (Nx.cast f16) p)
+    Batch_norm.apply
+      (Batch_norm.map (Nx.cast f16) p)
       (Batch_norm.Stats.map (Nx.cast f16) estats)
       ~training:false (Nx.cast f16 x)
   in
@@ -321,7 +328,8 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   let loss compute p =
     Nx.cast f32
       (Nx.mean
-         (Nx.tanh (Linear.apply (Linear.map (Nx.cast compute) p) (Nx.cast compute x))))
+         (Nx.tanh
+            (Linear.apply (Linear.map (Nx.cast compute) p) (Nx.cast compute x))))
   in
   let v, grads = Rune.value_and_grad linear32 (loss dt) p in
   (* [grads : Linear.t]: float32 by type; the cast VJP makes it so at run time,
@@ -433,8 +441,7 @@ let test_f16_train_loss_scaled () =
   let w_before = to_arr !w in
   let poisoned = Nx.full f32 [| 4; 2 |] 1.0e5 in
   ignore (run_step poisoned);
-  equal ~msg:"overflowed step leaves the weights untouched"
-    (array float_exact)
+  equal ~msg:"overflowed step leaves the weights untouched" (array float_exact)
     w_before (to_arr !w);
   equal ~msg:"overflow halves the scale" float_exact 1024.0
     (Nx.item [] !ls.Vega.Loss_scale.scale);

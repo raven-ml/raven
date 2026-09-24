@@ -10,8 +10,8 @@
     with one-line traversals (the {!Nx.Ptree.Uniform} contract, hand-written or
     derived with [ppx_ptree]; see {!Linear} for the pattern). {!ptree}
     instantiates the model at its tensor type, a training step composes
-    {!Rune.value_and_grad} with a [Vega] optimizer update, and the training
-    loop is ordinary [Seq] iteration over {!Data} minibatches.
+    {!Rune.value_and_grad} with a [Vega] optimizer update, and the training loop
+    is ordinary [Seq] iteration over {!Data} minibatches.
 
     {[
     let model = Kaun.ptree (module Model)

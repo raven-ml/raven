@@ -15,16 +15,15 @@
    program, which reads the dropout key and consumes the parameters, so each
    step releases the previous generation's unread buffers (the metrics read a
    few leaves per step; a step consumes only unread resident inputs); the loss
-   recorded at step i is computed before
-   update i - [--devices]
-   switches the step to data-parallel [Rune.pmap2]: parameters replicated on
-   every device, the batch sharded on axis 0, gradients allreduced by
-   construction — same numbers as the single-device step up to fp32 reduction
-   order - [--dropout RATE] (default 0, the reference protocol's dropout-free
-   graph) enables the GPT-2 dropout sites in [Gpt2.hidden]; the per-step mask
-   key is one more int32 leaf of the jitted step's inputs — keys must be
-   inputs, never captures — derived as [Nx.Rng.fold_in root step] from
-   [--seed], so a run is reproducible from its seed alone
+   recorded at step i is computed before update i - [--devices] switches the
+   step to data-parallel [Rune.pmap2]: parameters replicated on every device,
+   the batch sharded on axis 0, gradients allreduced by construction — same
+   numbers as the single-device step up to fp32 reduction order - [--dropout
+   RATE] (default 0, the reference protocol's dropout-free graph) enables the
+   GPT-2 dropout sites in [Gpt2.hidden]; the per-step mask key is one more int32
+   leaf of the jitted step's inputs — keys must be inputs, never captures —
+   derived as [Nx.Rng.fold_in root step] from [--seed], so a run is reproducible
+   from its seed alone
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
@@ -116,9 +115,8 @@ let batch_of_ids ids =
     Nx.create Nx.int32 [| batch_size * seq_len |] (take 1) )
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
-   axis, NLL of the target id, mean. [?dropout] threads the rate and the
-   step's mask key to [Gpt2.hidden]; absent, the graph is exactly the
-   reference's. *)
+   axis, NLL of the target id, mean. [?dropout] threads the rate and the step's
+   mask key to [Gpt2.hidden]; absent, the graph is exactly the reference's. *)
 let loss_fn inputs targets ?dropout params =
   let logits =
     Gpt2.logits gpt2_124m params (Gpt2.hidden gpt2_124m ?dropout params inputs)
@@ -130,11 +128,10 @@ let loss_fn inputs targets ?dropout params =
 
 (* Mixed-precision loss ([--compute-dtype bfloat16] or [float16]): the cast
    sandwich. [Params.map (Nx.cast dt)] casts the float32 master weights to the
-   compute dtype
-   at the top of the objective and the logits come back up to float32 for the
-   loss, so the objective's reductions run at full precision. The cast VJP
-   returns cotangents at the pre-cast dtype, so the gradients — and the
-   parameters, the optimizer step and [Step_out] — stay float32 whatever the
+   compute dtype at the top of the objective and the logits come back up to
+   float32 for the loss, so the objective's reductions run at full precision.
+   The cast VJP returns cotangents at the pre-cast dtype, so the gradients — and
+   the parameters, the optimizer step and [Step_out] — stay float32 whatever the
    compute dtype. The float32 path uses the cast-free [loss_fn] above and its
    exact original graph.
 
@@ -244,8 +241,7 @@ let train_step_scaled objective key { Scaled.params; ls; loss = _ } =
      of this model renders a whole-vocab-axis vectorized store,
      [make_float50257], which NVRTC rejects.) *)
   let loss, grads =
-    Rune.vjp gpt2_tree (objective key) params
-      ls.Vega.Loss_scale.scale
+    Rune.vjp gpt2_tree (objective key) params ls.Vega.Loss_scale.scale
   in
   let grads = Vega.Loss_scale.unscale gpt2_tree ls grads in
   let finite = Vega.Loss_scale.grads_finite gpt2_tree grads in
@@ -509,8 +505,8 @@ let () =
         failwith
           ("--compute-dtype must be float32, bfloat16 or float16, got " ^ d)
   in
-  (* [obj key inputs targets] is the shard objective for one step's dropout
-     key; [None] (the default rate 0) is the dropout-free reference graph. *)
+  (* [obj key inputs targets] is the shard objective for one step's dropout key;
+     [None] (the default rate 0) is the dropout-free reference graph. *)
   let rate = !dropout in
   if rate < 0.0 || rate >= 1.0 then failwith "--dropout must be in [0, 1)";
   let obj key inputs targets params =
@@ -523,9 +519,9 @@ let () =
      capture. *)
   let root = Nx.Rng.key !seed in
   let key_at i = if rate = 0.0 then None else Some (Nx.Rng.fold_in root i) in
-  (* [step i] maps parameters to updated parameters and the pre-update loss;
-     the float16 variant additionally threads its loss-scale state, hidden in
-     the closure. *)
+  (* [step i] maps parameters to updated parameters and the pre-update loss; the
+     float16 variant additionally threads its loss-scale state, hidden in the
+     closure. *)
   let step : int -> Gpt2.t -> Gpt2.t * float =
     if !devices = "" then (
       if !compute_dtype = "float16" then begin
@@ -567,7 +563,7 @@ let () =
       let in_axes =
         List.init n_params (fun _ -> None)
         @ [ Some 0; Some 0 ]
-        @ (if rate = 0.0 then [] else [ None ])
+        @ if rate = 0.0 then [] else [ None ]
       in
       let f =
         Rune.pmap2 ~devices:devs ~in_axes ~donate:true

@@ -53,8 +53,8 @@ val apply : (float, 'b) Nx.t t -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
 
 (** {1:traversals Traversals}
 
-    Payload traversals over the single leaf, satisfying the
-    {!Nx.Ptree.Uniform} contract. The leaf path is ["table"]. *)
+    Payload traversals over the single leaf, satisfying the {!Nx.Ptree.Uniform}
+    contract. The leaf path is ["table"]. *)
 
 val map : ('a -> 'b) -> 'a t -> 'b t
 (** [map f p] is [p] with [f] applied to the table. [map (Nx.cast dt) p]

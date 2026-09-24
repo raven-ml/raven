@@ -18,9 +18,8 @@
 
    Implements the runner protocol in packages/kaun/bench/compare/README.md:
 
-     model.exe variants
-     model.exe run --spec S --fixture F --variant V --device D --steps N
-                   --cache {cold,warm} *)
+   model.exe variants model.exe run --spec S --fixture F --variant V --device D
+   --steps N --cache {cold,warm} *)
 
 (* Spec *)
 
@@ -142,10 +141,9 @@ let loss spec p inputs targets =
 (* Training step
 
    Parameters, the optimizer state and the step's batch all ride the input
-   structure: they change every step, and a jitted function's inputs are
-   exactly what may change between calls. The loss leaves with the updated
-   state so a compiled step reports the value it trained on without a second
-   traversal. *)
+   structure: they change every step, and a jitted function's inputs are exactly
+   what may change between calls. The loss leaves with the updated state so a
+   compiled step reports the value it trained on without a second traversal. *)
 
 module Step_in = struct
   type t = {
@@ -380,8 +378,8 @@ let emit ~variant ~device ~losses ~step_ms =
 |}
     variant device (json_floats losses) (json_floats step_ms) Sys.ocaml_version
 
-(* Is a jit device usable in this build? Probed by compiling a trivial kernel
-   on it: build-time device availability is not observable any other way, and a
+(* Is a jit device usable in this build? Probed by compiling a trivial kernel on
+   it: build-time device availability is not observable any other way, and a
    variant this process cannot run must not be reported as one it can. *)
 let device_works name =
   match
@@ -428,7 +426,7 @@ let required flags name =
 
 let () =
   match Array.to_list Sys.argv with
-  | _ :: "variants" :: [] -> emit_variants ()
+  | [ _; "variants" ] -> emit_variants ()
   | _ :: "run" :: rest ->
       let flags = flags rest in
       (* Cold means no compiled program is served from an earlier process. Read

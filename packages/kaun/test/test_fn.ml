@@ -230,7 +230,9 @@ let test_top_p () =
   (* Probabilities 0.5, 0.3, 0.15, 0.05, given out of order. *)
   let logits = Nx.log (vec [| 0.15; 0.5; 0.05; 0.3 |]) in
   let kept p =
-    Array.map (fun v -> v > ninf) (Nx.to_array (Fn.keep_top_p ~p:(p_of p) logits))
+    Array.map
+      (fun v -> v > ninf)
+      (Nx.to_array (Fn.keep_top_p ~p:(p_of p) logits))
   in
   equal ~msg:"0.5 is reached by the first entry" (array bool)
     [| false; true; false; false |]
@@ -271,7 +273,8 @@ let test_top_p_per_row () =
 let test_masks_compose_and_sample () =
   let logits = Nx.log (vec [| 0.15; 0.5; 0.05; 0.3 |]) in
   let policy logits =
-    Fn.keep_top_p ~p:(p_of 0.7) (Fn.keep_top_k ~k:(k_of 3) (Nx.div_s logits 0.8))
+    Fn.keep_top_p ~p:(p_of 0.7)
+      (Fn.keep_top_k ~k:(k_of 3) (Nx.div_s logits 0.8))
   in
   let draws =
     List.init 40 (fun i ->
@@ -297,13 +300,13 @@ let test_masks_jit () =
 let test_masks_reject_bad_shapes () =
   raises
     (Invalid_argument
-       "Fn.keep_top_k: the parameter must be a scalar or have the logits' leading \
-        shape") (fun () ->
+       "Fn.keep_top_k: the parameter must be a scalar or have the logits' \
+        leading shape") (fun () ->
       Fn.keep_top_k
         ~k:(Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 1l |])
         (Nx.zeros f64 [| 2; 4 |]));
-  raises (Invalid_argument "Fn.keep_top_p: logits must not be a scalar") (fun () ->
-      Fn.keep_top_p ~p:(p_of 0.5) (Nx.scalar f64 1.0))
+  raises (Invalid_argument "Fn.keep_top_p: logits must not be a scalar")
+    (fun () -> Fn.keep_top_p ~p:(p_of 0.5) (Nx.scalar f64 1.0))
 
 let tests =
   [

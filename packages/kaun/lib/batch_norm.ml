@@ -67,8 +67,8 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
   | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
   | Nx.Float32 | Nx.Float64 -> false
 
-let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p
-    (stats : _ Stats.t) ~training x =
+let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
+    ~training x =
   if momentum < 0.0 || momentum > 1.0 then
     invalid_argf "Batch_norm.apply: momentum must be in [0, 1], got %g" momentum;
   if eps <= 0.0 then

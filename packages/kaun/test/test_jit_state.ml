@@ -13,9 +13,9 @@
    traversals are one-line delegations to the field modules (ppx_ptree derives
    the same shape for users who prefer). The counter is a tensor leaf advanced
    inside the compiled program, so the jitted trajectory matches the eager one
-   and the counter reads [n] after [n] compiled calls — a host-int counter
-   would burn the step into the trace and replay it stale. A [pmap2] run with
-   the state replicated matches the single-device one.
+   and the counter reads [n] after [n] compiled calls — a host-int counter would
+   burn the step into the trace and replay it stale. A [pmap2] run with the
+   state replicated matches the single-device one.
 
    Deterministic init (no RNG) so every run sees identical weights and data. *)
 
@@ -50,16 +50,11 @@ module Model =
 
 module Opt = Vega.Adam_state (Model)
 
-(* The step records: parameters, the optimizer state, the batch. Each field
-   is walked by its own module's traversals. *)
+(* The step records: parameters, the optimizer state, the batch. Each field is
+   walked by its own module's traversals. *)
 
 module Step_in = struct
-  type t = {
-    params : Model.t;
-    opt : Opt.t;
-    x : Nx.float32_t;
-    y : Nx.float32_t;
-  }
+  type t = { params : Model.t; opt : Opt.t; x : Nx.float32_t; y : Nx.float32_t }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
     {

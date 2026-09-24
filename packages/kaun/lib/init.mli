@@ -17,10 +17,10 @@
       { w; b = Nx.zeros Nx.float32 [| outputs |] }
     ]}
 
-    Random initializers draw from the ambient {!Nx.Rng} scope rather than
-    taking a key: open one with {!Nx.Rng.with_key} for reproducibility. Rooting
-    that scope at a traced key is enough to compile an initialisation, so a
-    key parameter here would buy nothing the caller cannot already arrange. The
+    Random initializers draw from the ambient {!Nx.Rng} scope rather than taking
+    a key: open one with {!Nx.Rng.with_key} for reproducibility. Rooting that
+    scope at a traced key is enough to compile an initialisation, so a key
+    parameter here would buy nothing the caller cannot already arrange. The
     named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of
     {!variance_scaling}. *)
 
