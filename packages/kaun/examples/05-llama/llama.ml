@@ -45,131 +45,23 @@ type role = Whole | Column | Row | Kv_heads
 module Params = struct
   type nonrec 'a t = 'a params
 
-  let map_block f b =
-    let attn_norm = Rms_norm.map f b.attn_norm in
-    let attn = Attention.map f b.attn in
-    let ffn_norm = Rms_norm.map f b.ffn_norm in
-    let gate = Linear.map f b.gate in
-    let up = Linear.map f b.up in
-    let down = Linear.map f b.down in
+  let walk_block c b =
+    let open Nx.Ptree.Walk in
+    let attn_norm = field c "attn_norm" Rms_norm.walk b.attn_norm in
+    let attn = field c "attn" Attention.walk b.attn in
+    let ffn_norm = field c "ffn_norm" Rms_norm.walk b.ffn_norm in
+    let gate = field c "gate" Linear.walk b.gate in
+    let up = field c "up" Linear.walk b.up in
+    let down = field c "down" Linear.walk b.down in
     { attn_norm; attn; ffn_norm; gate; up; down }
 
-  let map f p =
-    let tok = Embedding.map f p.tok in
-    let blocks = List.map (map_block f) p.blocks in
-    let norm = Rms_norm.map f p.norm in
-    let head = Option.map (Linear.map f) p.head in
+  let walk c p =
+    let open Nx.Ptree.Walk in
+    let tok = field c "tok" Embedding.walk p.tok in
+    let blocks = field c "blocks" (list walk_block) p.blocks in
+    let norm = field c "norm" Rms_norm.walk p.norm in
+    let head = field c "head" (option Linear.walk) p.head in
     { tok; blocks; norm; head }
-
-  let map2_block f b b' =
-    let attn_norm = Rms_norm.map2 f b.attn_norm b'.attn_norm in
-    let attn = Attention.map2 f b.attn b'.attn in
-    let ffn_norm = Rms_norm.map2 f b.ffn_norm b'.ffn_norm in
-    let gate = Linear.map2 f b.gate b'.gate in
-    let up = Linear.map2 f b.up b'.up in
-    let down = Linear.map2 f b.down b'.down in
-    { attn_norm; attn; ffn_norm; gate; up; down }
-
-  let map2_head f h h' =
-    match (h, h') with
-    | None, None -> None
-    | Some l, Some l' -> Some (Linear.map2 f l l')
-    | _ ->
-        invalid_arg "Llama.Params.map2: one model ties its head, one does not"
-
-  let map2 f p p' =
-    let tok = Embedding.map2 f p.tok p'.tok in
-    let blocks = List.map2 (map2_block f) p.blocks p'.blocks in
-    let norm = Rms_norm.map2 f p.norm p'.norm in
-    let head = map2_head f p.head p'.head in
-    { tok; blocks; norm; head }
-
-  let iter_block f b =
-    Rms_norm.iter f b.attn_norm;
-    Attention.iter f b.attn;
-    Rms_norm.iter f b.ffn_norm;
-    Linear.iter f b.gate;
-    Linear.iter f b.up;
-    Linear.iter f b.down
-
-  let iter f p =
-    Embedding.iter f p.tok;
-    List.iter (iter_block f) p.blocks;
-    Rms_norm.iter f p.norm;
-    Option.iter (Linear.iter f) p.head
-
-  let fold_block f acc b =
-    let acc = Rms_norm.fold (fun s -> f ("attn_norm." ^ s)) acc b.attn_norm in
-    let acc = Attention.fold (fun s -> f ("attn." ^ s)) acc b.attn in
-    let acc = Rms_norm.fold (fun s -> f ("ffn_norm." ^ s)) acc b.ffn_norm in
-    let acc = Linear.fold (fun s -> f ("gate." ^ s)) acc b.gate in
-    let acc = Linear.fold (fun s -> f ("up." ^ s)) acc b.up in
-    Linear.fold (fun s -> f ("down." ^ s)) acc b.down
-
-  let fold f acc p =
-    let acc = Embedding.fold (fun s -> f ("tok." ^ s)) acc p.tok in
-    let _, acc =
-      List.fold_left
-        (fun (i, acc) b ->
-          let pre = Printf.sprintf "blocks.%d." i in
-          (i + 1, fold_block (fun s -> f (pre ^ s)) acc b))
-        (0, acc) p.blocks
-    in
-    let acc = Rms_norm.fold (fun s -> f ("norm." ^ s)) acc p.norm in
-    match p.head with
-    | None -> acc
-    | Some l -> Linear.fold (fun s -> f ("head." ^ s)) acc l
-
-  let fold2_block f acc b b' =
-    let acc =
-      Rms_norm.fold2
-        (fun s -> f ("attn_norm." ^ s))
-        acc b.attn_norm b'.attn_norm
-    in
-    let acc = Attention.fold2 (fun s -> f ("attn." ^ s)) acc b.attn b'.attn in
-    let acc =
-      Rms_norm.fold2 (fun s -> f ("ffn_norm." ^ s)) acc b.ffn_norm b'.ffn_norm
-    in
-    let acc = Linear.fold2 (fun s -> f ("gate." ^ s)) acc b.gate b'.gate in
-    let acc = Linear.fold2 (fun s -> f ("up." ^ s)) acc b.up b'.up in
-    Linear.fold2 (fun s -> f ("down." ^ s)) acc b.down b'.down
-
-  let fold2 f acc p p' =
-    let acc = Embedding.fold2 (fun s -> f ("tok." ^ s)) acc p.tok p'.tok in
-    let _, acc =
-      List.fold_left2
-        (fun (i, acc) b b' ->
-          let pre = Printf.sprintf "blocks.%d." i in
-          (i + 1, fold2_block (fun s -> f (pre ^ s)) acc b b'))
-        (0, acc) p.blocks p'.blocks
-    in
-    let acc = Rms_norm.fold2 (fun s -> f ("norm." ^ s)) acc p.norm p'.norm in
-    match (p.head, p'.head) with
-    | None, None -> acc
-    | Some l, Some l' -> Linear.fold2 (fun s -> f ("head." ^ s)) acc l l'
-    | _ ->
-        invalid_arg "Llama.Params.fold2: one model ties its head, one does not"
-
-  let names_block i b =
-    let pre field s = Printf.sprintf "blocks.%d.%s.%s" i field s in
-    {
-      attn_norm = Rms_norm.map (pre "attn_norm") (Rms_norm.names b.attn_norm);
-      attn = Attention.map (pre "attn") (Attention.names b.attn);
-      ffn_norm = Rms_norm.map (pre "ffn_norm") (Rms_norm.names b.ffn_norm);
-      gate = Linear.map (pre "gate") (Linear.names b.gate);
-      up = Linear.map (pre "up") (Linear.names b.up);
-      down = Linear.map (pre "down") (Linear.names b.down);
-    }
-
-  let names p =
-    let pre field s = field ^ "." ^ s in
-    {
-      tok = Embedding.map (pre "tok") (Embedding.names p.tok);
-      blocks = List.mapi names_block p.blocks;
-      norm = Rms_norm.map (pre "norm") (Rms_norm.names p.norm);
-      head =
-        Option.map (fun l -> Linear.map (pre "head") (Linear.names l)) p.head;
-    }
 end
 
 let make cfg =
@@ -218,14 +110,14 @@ let block cfg b cache index x =
   in
   (Nx.add x mlp, cache)
 
-module Cache = Attention.Cache.List
-
 let cache ?placement cfg ~slots dtype =
-  let place x =
+  let place _ x =
     match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
   in
   List.init cfg.n_layers (fun _ ->
-      Attention.Cache.map place
+      Nx.Ptree.Payload.map
+        (module Attention.Cache)
+        place
         (Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
            ~head_dim:cfg.head_dim dtype))
 
@@ -318,7 +210,7 @@ let dtype_of_string = function
   | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
 
 let stored_dtype ckpt =
-  let (Rune.Ptree.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
+  let (Nx.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
   match Nx.dtype table with
   | Nx.Float16 -> Dtype Nx.float16
   | Nx.BFloat16 -> Dtype Nx.bfloat16

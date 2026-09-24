@@ -51,92 +51,68 @@ let load_tokenizer () =
   | Ok t -> t
   | Error e -> failwith ("tokenizer: " ^ e)
 
+(* The placement that holds every leaf and cache pool whole on [device]. *)
+let whole_on device =
+  Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+
 (* Greedy decoding with a key-value cache. One step function serves the whole
-   generation: it consumes the tokens its index places, fills the caches, and
-   returns the next token, the advanced index and the updated caches — its
-   output feeds the next call directly. Positions and slots enter as tensors, so
-   under [--jit] [Rune.jit_step] compiles exactly two variants: a prefill over
-   the whole prompt, and a single-token step replayed for every generated token,
-   writing the consumed caches in place.
+   generation: it reads the tokens its index places, consumes the caches, fills
+   them, and returns the next token and the updated caches, and the host
+   advances the index between calls. Positions and slots enter as tensors, so
+   under [--jit] [Rune.jit] compiles exactly two variants: a prefill over the
+   whole prompt, and a single-token step replayed for every generated token,
+   writing the consumed caches in place. With [device], the step compiles for it
+   and the caches are placed on it.
 
    The step is generic over the parameters' float dtype [b]: the key-value
    caches carry the same dtype as the weights, so [--dtype float16] decodes with
    half precision weights, activations and caches alike. *)
 
-let generate (type b) ?device ?placement cfg
-    (params : (float, b) Nx.t Gpt2.params) (dt : (float, b) Nx.dtype)
-    ~max_tokens prompt =
-  let module Step = struct
-    type t = {
-      token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token *)
-      index : Kaun.Cache_index.t; (* where [token]'s entries sit *)
-      caches : (float, b) Nx.t Gpt2.Cache.t;
-    }
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; index; caches }
-        =
-      {
-        token = f token;
-        index = Kaun.Cache_index.map f index;
-        caches = Gpt2.Cache.map f caches;
-      }
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-      {
-        token = f a.token b.token;
-        index = Kaun.Cache_index.map2 f a.index b.index;
-        caches = Gpt2.Cache.map2 f a.caches b.caches;
-      }
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; index; caches } =
-      f token;
-      Kaun.Cache_index.iter f index;
-      Gpt2.Cache.iter f caches
-  end in
+let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
+    (dt : (float, b) Nx.dtype) ~max_tokens prompt =
   let n0 = Array.length prompt in
   let len = n0 + max_tokens in
   let tokens = Array.make len 0l in
   Array.blit prompt 0 tokens 0 n0;
-  let step { Step.token; index; caches } =
+  let step token index caches =
     let seq = (Nx.shape token).(1) in
     let h, caches = Gpt2.cached cfg params caches index token in
     (* Only the last position's logits matter for decoding. *)
     let last = Nx.slice [ A; I (seq - 1) ] h in
-    {
-      Step.token =
-        Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (Gpt2.logits cfg params last));
-      index = Kaun.Cache_index.advance index;
-      caches;
-    }
+    ( Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (Gpt2.logits cfg params last)),
+      caches )
   in
-  let step_fn =
+  let step =
     match device with
     | None -> step
     | Some device ->
-        Rune.jit_step ~device
-          (module Nx.Ptree)
-          (module Step)
-          (fun _ s -> step s)
-          (Nx.Ptree.list [])
+        let caches =
+          Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))
+        in
+        Rune.jit ~devices:[ device ]
+          Nx.Ptree.(
+            tensor @-> Kaun.Cache_index.ptree @-> consumes caches
+            @@ returns (pair tensor caches))
+          step
   in
   let t0 = Unix.gettimeofday () in
+  let index = ref (Kaun.Cache_index.rows ~context:len [| n0 |]) in
   let state =
     ref
-      (step_fn
-         {
-           Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
-           index = Kaun.Cache_index.rows ~context:len [| n0 |];
-           caches = Gpt2.cache ?placement cfg ~slots:len dt;
-         })
+      (step
+         (Nx.create Nx.int32 [| 1; n0 |] prompt)
+         !index
+         (Gpt2.cache ?placement:(whole_on device) cfg ~slots:len dt))
   in
-  tokens.(n0) <- Nx.item [ 0; 0 ] !state.Step.token;
+  tokens.(n0) <- Nx.item [ 0; 0 ] (fst !state);
   let prefill = Unix.gettimeofday () -. t0 in
   let times = Array.make (max 1 (max_tokens - 1)) 0. in
   for n = n0 + 1 to len - 1 do
     let t0 = Unix.gettimeofday () in
-    let s = step_fn !state in
-    tokens.(n) <- Nx.item [ 0; 0 ] s.Step.token;
-    state := s;
+    let token, caches = !state in
+    index := Kaun.Cache_index.advance !index;
+    state := step token !index caches;
+    tokens.(n) <- Nx.item [ 0; 0 ] (fst !state);
     times.(n - n0 - 1) <- Unix.gettimeofday () -. t0
   done;
   if max_tokens > 2 then begin
@@ -218,25 +194,25 @@ let () =
   let (Gpt2.Dtype dt) =
     if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some !jit in
-  (* One device holds every leaf and cache pool whole. *)
-  let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
-  in
-  let params = Gpt2.of_hf ?placement cfg dt ckpt in
+  let device = if !jit = "" then None else Some (Rune.device !jit) in
+  let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin
     check cfg params dt ids;
     exit 0
   end;
-  let bytes = ref 0 in
-  Gpt2.Params.iter (fun t -> bytes := !bytes + Nx.nbytes t) params;
+  let bytes =
+    Nx.Ptree.fold
+      (Nx.Ptree.instantiate (module Gpt2.Params))
+      (fun _ t n -> n + Nx.nbytes t)
+      params 0
+  in
   Printf.printf "weights: %.0f MB at %s\n%!"
-    (float_of_int !bytes /. 1e6)
+    (float_of_int bytes /. 1e6)
     (Nx_core.Dtype.to_string dt);
   let t0 = Unix.gettimeofday () in
-  let toks = generate ?device ?placement cfg params dt ~max_tokens:!count ids in
+  let toks = generate ?device cfg params dt ~max_tokens:!count ids in
   let dt = Unix.gettimeofday () -. t0 in
   Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt
     (float_of_int !count /. dt);

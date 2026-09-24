@@ -1,0 +1,8 @@
+; The model's module is the example's.
+
+(copy_files ../gpt2.{ml,mli})
+
+(test
+ (name test_gpt2)
+ (package kaun)
+ (libraries kaun kaun.hf jsont nx rune windtrap))

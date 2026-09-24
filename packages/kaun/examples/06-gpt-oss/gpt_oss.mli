@@ -63,21 +63,18 @@ type 'a params = {
 
 type t = Nx.float32_t params
 
-val map : ('a -> 'b) -> 'a params -> 'b params
-(** [map f p] is [p] with [f] applied to every float leaf; packed expert weights
-    are kept. [map (Nx.cast dt) p] converts precision. *)
+module Block : Nx.Ptree.S with type 'a t = 'a block
+(** A block's structure. It walks [attn_norm], [attn], [sinks], [ffn_norm],
+    [router] and [moe], whose weights report their case (see {!Moe.walk}):
+    [Nx.Ptree.instantiate (module Block)] is what a compiled block program takes
+    its weights as. *)
 
-val ptree : unit -> (module Nx.Ptree.S with type t = (float, 'b) Nx.t params)
-(** [ptree ()] is the parameter tree the transformations take: every tensor of
-    the model, the packed uint8 ones included, in the order [tok], the blocks
-    ([attn_norm], [attn], [sinks], [ffn_norm], then the router, [gate_up], its
-    bias, [down], its bias, a packed weight being its codes then its scales),
-    [norm], [head]. *)
-
-val block_ptree :
-  unit -> (module Nx.Ptree.S with type t = (float, 'b) Nx.t block)
-(** [block_ptree ()] is the parameter tree of one block, in {!ptree}'s order:
-    the tree a compiled block takes its weights as. *)
+module Params : Nx.Ptree.S with type 'a t = 'a params
+(** The parameters' structure: [tok], each block at [blocks.i] as {!Block} walks
+    it, [norm], then [head] when it is present. The packed expert weights are
+    fixed tensors, so [Nx.Ptree.instantiate (module Params)] walks every tensor
+    of the model, and [Nx.Ptree.cast (module Params) dt p] converts precision
+    and keeps the packed weights. *)
 
 (** {1:placement Placement}
 
@@ -147,17 +144,16 @@ val hidden :
     [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; dim |]]. Every
     token attends to the tokens before it. *)
 
-module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
-(** Decoding state: one key-value cache per block, in block order. *)
-
 val cache :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   slots:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t Cache.t
-(** [cache cfg ~slots dtype] is an empty decoding state of [slots] slots per
-    block, at the parameters' dtype.
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list
+(** [cache cfg ~slots dtype] is an empty decoding state: one key-value cache per
+    block, in block order, each of [slots] slots, at the parameters' dtype. Its
+    structure is
+    [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))].
 
     With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
     a compiled step finds the caches where the model is from its first call. *)
@@ -165,10 +161,10 @@ val cache :
 val cached :
   config ->
   (float, 'b) Nx.t params ->
-  (float, 'b) Nx.t Cache.t ->
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
+  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids],
     which sit where [index] says and attend through [caches], and the caches
     with their keys and values written. See {!Kaun.Attention.cached}. *)

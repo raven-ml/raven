@@ -196,11 +196,13 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
   let depth = match blocks with None -> layers | Some n -> min n layers in
   let signs = signs ~rows:(int_of_float (number (mem "projections" fx))) ~dim in
   let cast t = Nx.cast dt t in
-  (* [Gpt_oss.map] needs a table at the stored dtype; the stream replaces it. *)
+  (* The cast needs a table at the stored dtype; the stream replaces it. *)
   let nothing = { Embedding.table = Nx.zeros stored [| 1; 1 |] } in
   let one_block b x =
     let m =
-      Gpt_oss.map cast
+      Nx.Ptree.cast
+        (module Gpt_oss.Params)
+        dt
         { Gpt_oss.tok = nothing; blocks = [ b ]; norm = p.norm; head = None }
     in
     { m with tok = { Embedding.table = x } }
@@ -284,7 +286,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
          (List.combine p.blocks (list (mem "blocks" recorded))));
     if depth = layers then begin
       let m =
-        Gpt_oss.map cast
+        Nx.Ptree.cast
+          (module Gpt_oss.Params)
+          dt
           {
             Gpt_oss.tok = (if cfg.tied then p.tok else nothing);
             blocks = [];

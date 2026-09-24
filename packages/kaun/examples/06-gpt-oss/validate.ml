@@ -128,7 +128,9 @@ let identical ?(flushed = fun _ -> false) name expected actual =
        (Array.length expected) !first zeroed)
 
 let compiled device f x =
-  match device with None -> f x | Some device -> Rune.jit' ~device f x
+  match device with
+  | None -> f x
+  | Some device -> Rune.jit' ~devices:[ Rune.device device ] f x
 
 let number j =
   match j with
@@ -141,10 +143,11 @@ let float32 shape values = Nx.create Nx.float32 shape values
 (* Checkpoint tensors *)
 
 let tensor ckpt name =
-  match Checkpoint.get name ckpt with Nx.Ptree.P t -> Nx.cast Nx.float32 t
+  match Checkpoint.get name ckpt with Nx.P t -> Nx.cast Nx.float32 t
 
 let bytes ckpt name =
-  Nx.Ptree.unpack ~at:name Nx.uint8 (Checkpoint.get name ckpt)
+  try Nx.unpack Nx.uint8 (Checkpoint.get name ckpt)
+  with Invalid_argument msg -> invalid_arg (name ^ ": " ^ msg)
 
 let moe_params ckpt ~layer ~weight =
   let name leaf = Printf.sprintf "model.layers.%d.mlp.%s" layer leaf in
@@ -377,47 +380,13 @@ let rotary fx (cfg : Gpt_oss.config) =
     (part half)
 
 (* [Gpt_oss.cached cfg p] compiled as one program for the whole model. *)
-let compiled_cached (type b) ~device cfg (p : (float, b) Nx.t Gpt_oss.params) =
-  let module Caches =
-    (val Nx.Ptree.instantiate (module Gpt_oss.Cache)
-        : Nx.Ptree.S with type t = (float, b) Nx.t Gpt_oss.Cache.t)
-  in
-  let module In = struct
-    type t = Caches.t * Cache_index.t * Nx.int32_t
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) (caches, index, ids) =
-      (Caches.map f caches, Cache_index.map f index, f ids)
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
-        (caches, index, ids) (caches', index', ids') =
-      (Caches.map2 f caches caches', Cache_index.map2 f index index', f ids ids')
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) (caches, index, ids) =
-      Caches.iter f caches;
-      Cache_index.iter f index;
-      f ids
-  end in
-  let module Out = struct
-    type t = (float, b) Nx.t * Caches.t
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) (h, caches) =
-      (f h, Caches.map f caches)
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
-        (h, caches) (h', caches') =
-      (f h h', Caches.map2 f caches caches')
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) (h, caches) =
-      f h;
-      Caches.iter f caches
-  end in
-  let run =
-    Rune.jit2 ~device
-      (module In)
-      (module Out)
-      (fun (caches, index, ids) -> Gpt_oss.cached cfg p caches index ids)
-  in
-  fun caches index ids -> run (caches, index, ids)
+let compiled_cached ~device cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
+  let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
+  Rune.jit
+    ~devices:[ Rune.device device ]
+    Nx.Ptree.(
+      caches @-> Cache_index.ptree @-> tensor @-> returns (pair tensor caches))
+    (Gpt_oss.cached cfg p)
 
 let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (p : (float, b) Nx.t Gpt_oss.params) (dt : (float, b) Nx.dtype) =
@@ -499,7 +468,9 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
   Option.iter
     (fun device ->
       let as_inputs =
-        Rune.jit ~device (Gpt_oss.ptree ())
+        Rune.jit
+          ~devices:[ Rune.device device ]
+          Nx.Ptree.(instantiate (module Gpt_oss.Params) @-> returns tensor)
           (fun p -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
           p
       in
@@ -565,7 +536,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       close ~tol:1e-6
         (name "one program per layer kind is the whole-model program")
         (flat (chunked whole))
-        (flat (chunked (Layer_loop.cached ~device cfg p))))
+        (flat (chunked (Layer_loop.cached ~device:(Rune.device device) cfg p))))
     device;
   let short = ints (mem "short_ids" fx) in
   let m = Array.length short in

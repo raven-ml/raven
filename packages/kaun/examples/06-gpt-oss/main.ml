@@ -45,9 +45,13 @@ let fixed_prompt =
     2359l;
   |]
 
-(* [on_token] sees every generated token as it arrives and says whether to
-   stop. *)
-let generate ?device ?placement cfg params dt ~log ~count ~on_token prompt =
+(* The placement that holds every leaf and cache pool whole on [device]. *)
+let whole_on device =
+  Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+
+(* [on_token] sees every generated token as it arrives and says whether to stop.
+   With [device], the step compiles for it and the caches are placed on it. *)
+let generate ?device cfg params dt ~log ~count ~on_token prompt =
   let step = Layer_loop.greedy ?device cfg params in
   let timed caches index ids =
     let t0 = Unix.gettimeofday () in
@@ -60,7 +64,7 @@ let generate ?device ?placement cfg params dt ~log ~count ~on_token prompt =
   let index = Cache_index.rows ~context [| n0 |] in
   let first, caches, prefill =
     timed
-      (Gpt_oss.cache ?placement cfg ~slots:context dt)
+      (Gpt_oss.cache ?placement:(whole_on device) cfg ~slots:context dt)
       index
       (Nx.create Nx.int32 [| 1; n0 |] prompt)
   in
@@ -154,20 +158,16 @@ let () =
     if !dtype = "" then Gpt_oss.stored_dtype ckpt
     else Gpt_oss.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some !jit in
-  (* One device holds every leaf and cache pool whole. *)
-  let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
-  in
+  let device = if !jit = "" then None else Some (Rune.device !jit) in
   let count default = if !count > 0 then !count else default in
   let log = if !prompt = "" then stdout else stderr in
   let t0 = Unix.gettimeofday () in
-  let params = Gpt_oss.of_hf ?placement cfg dt ckpt in
+  let params = Gpt_oss.of_hf ?placement:(whole_on device) cfg dt ckpt in
   Printf.fprintf log "weights imported in %.1f s\n%!"
     (Unix.gettimeofday () -. t0);
   if !prompt = "" then
     let out =
-      generate ?device ?placement cfg params dt ~log ~count:(count 16)
+      generate ?device cfg params dt ~log ~count:(count 16)
         ~on_token:(fun _ -> false)
         fixed_prompt
     in
@@ -184,8 +184,7 @@ let () =
     in
     let on_token = printer harmony ~show_analysis:!show_analysis in
     let out =
-      generate ?device ?placement cfg params dt ~log ~count:(count 256)
-        ~on_token
+      generate ?device cfg params dt ~log ~count:(count 256) ~on_token
         (Array.map Int32.of_int ids)
     in
     print_newline ();

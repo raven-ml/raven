@@ -6,10 +6,10 @@
 (** GPT-2 (Radford et al., 2019) from kaun layers.
 
     The model is a plain record of {!Kaun} layers; {!hidden}, {!cached} and
-    {!logits} are its forward passes and {!Params} its checkpoint plumbing.
-    {!of_hf} builds the parameters from the entries of the HuggingFace
-    checkpoint, whose [h.{i}.attn.c_attn] fuses the query, key and value
-    projections, and {!from_pretrained} downloads the checkpoint first. *)
+    {!logits} are its forward passes and {!Params} its structure. {!of_hf}
+    builds the parameters from the entries of the HuggingFace checkpoint, whose
+    [h.{i}.attn.c_attn] fuses the query, key and value projections, and
+    {!from_pretrained} downloads the checkpoint first. *)
 
 type config = {
   vocab_size : int;
@@ -42,13 +42,13 @@ type 'a params = {
 type t = Nx.float32_t params
 (** The type for single-precision GPT-2 parameters, the checkpoint dtype. *)
 
-module Params : Nx.Ptree.Uniform with type 'a t = 'a params
-(** The parameter traversals: hand [Kaun.ptree (module Params)] to the
-    transformations, and [(module Params)] to {!Kaun.Checkpoint.of_params} and
-    {!Kaun.Checkpoint.to_params}. Leaves are named [wte.table],
-    [blocks.0.attn.q.w], [ln_f.gamma], ...
+module Params : Nx.Ptree.S with type 'a t = 'a params
+(** The parameters' structure: [Nx.Ptree.instantiate (module Params)] is what
+    the transformations, the optimisers and {!Kaun.Checkpoint.of_value} take.
+    Leaves are at [wte.table], [wpe.table], [blocks.0.ln1.gamma],
+    [blocks.0.attn.q.w], ..., [ln_f.beta], the names a checkpoint gives them.
 
-    [Params.map (Nx.cast dt) p] converts precision — for half precision
+    [Nx.Ptree.cast (module Params) dt p] converts precision: for half precision
     inference, cast a float32 checkpoint once; for mixed-precision training,
     cast inside the loss function so the float32 parameters receive float32
     gradients. The kaun layers keep their attention-score and layer-norm
@@ -56,7 +56,7 @@ module Params : Nx.Ptree.Uniform with type 'a t = 'a params
 
 val make : config -> t
 (** [make cfg] is a zero-initialized model, the [~like] template for
-    {!Kaun.Checkpoint.to_params}. *)
+    {!Kaun.Checkpoint.to_value}. *)
 
 (** {1:placement Placement}
 
@@ -84,18 +84,17 @@ type role =
     caches, {!hidden} is [cached] over {!Kaun.Cache_index.whole}, which reads
     and keeps nothing, and {!logits} is the head applied to either. *)
 
-module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
-(** Decoding state: one key-value cache per block, in block order. *)
-
 val cache :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   slots:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t Cache.t
-(** [cache cfg ~slots dtype] is an empty decoding state whose caches hold
-    [slots] slots each. [Kaun.Cache_index.rows ~context lens] needs
-    [Array.length lens * context] of them. [dtype] is the parameters' dtype.
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list
+(** [cache cfg ~slots dtype] is an empty decoding state: one key-value cache per
+    block, in block order, each of [slots] slots. Its structure is
+    [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))].
+    [Kaun.Cache_index.rows ~context lens] needs [Array.length lens * context] of
+    them. [dtype] is the parameters' dtype.
 
     With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
     a compiled step finds the caches where the model is from its first call. *)
@@ -104,10 +103,10 @@ val cached :
   config ->
   ?dropout:float * Nx.Rng.key ->
   (float, 'b) Nx.t params ->
-  (float, 'b) Nx.t Cache.t ->
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
+  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids] —
     shape [[| batch; seq; n_embd |]] — which sit where [index] says and attend
     through [caches], and the caches with their keys and values written. A

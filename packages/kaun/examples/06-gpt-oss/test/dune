@@ -1,9 +1,9 @@
 ; The model's modules are the example's.
 
-(copy_files ../{mxfp4,moe,gpt_oss,layer_loop}.{ml,mli})
+(copy_files ../{moe,gpt_oss,layer_loop}.{ml,mli})
 
-(test
- (name test_layer_loop)
+(tests
+ (names test_layer_loop test_structures)
  (package kaun)
  (libraries kaun kaun.hf jsont rune nx nx.quant unix windtrap)
  (action

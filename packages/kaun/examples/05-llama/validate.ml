@@ -103,7 +103,9 @@ let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 let validate (type b) ~device ~tol ~exact fx cfg
     (p : (float, b) Nx.t Llama.params) (dt : (float, b) Nx.dtype) =
   let compiled f x =
-    match device with None -> f x | Some device -> Rune.jit' ~device f x
+    match device with
+    | None -> f x
+    | Some device -> Rune.jit' ~devices:[ device ] f x
   in
   let to32 t = Nx.cast Nx.float32 t in
   let tokens = ints (mem "ids" fx) in
@@ -247,9 +249,9 @@ let () =
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
     (string (mem "weights_sha256" fx));
-  let device = if !jit = "" then None else Some !jit in
+  let device = if !jit = "" then None else Some (Rune.device !jit) in
   let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
   in
   let (Llama.Dtype dt) = Llama.dtype_of_string !dtype in
   let cfg, p =
