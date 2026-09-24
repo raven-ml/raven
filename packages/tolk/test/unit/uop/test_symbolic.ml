@@ -59,6 +59,16 @@ let lt_self_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
   equal ~msg:"x < x is false" bool false (const_bool (rewrite Uop.O.(x < x)))
 
+(* Negation is spelled [x <> true], the form the boolean identities match. *)
+let or_not_self_folds () =
+  let x = var ~name:"flag" ~lo:0 ~hi:1 ~dtype:Dtype.bool () in
+  let either = Uop.alu_binary ~op:Ops.Or ~lhs:(Uop.O.not_ x) ~rhs:x in
+  equal ~msg:"!x | x is true" bool true (const_bool (rewrite either))
+
+let not_not_folds () =
+  let x = var ~name:"flag" ~lo:0 ~hi:1 ~dtype:Dtype.bool () in
+  equal ~msg:"!!x is x" uop x (rewrite (Uop.O.not_ (Uop.O.not_ x)))
+
 (* Two-stage associative: x + 3 + 4 -> x + 7. *)
 let two_stage_associative () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
@@ -293,6 +303,8 @@ let simplify_driver_groups =
         test "x % x -> 0" mod_self_folds;
         test "cast const -> const" cast_const_folds;
         test "x < x -> false" lt_self_folds;
+        test "x | !x -> true" or_not_self_folds;
+        test "!!x -> x" not_not_folds;
       ];
     group "two-stage folding"
       [

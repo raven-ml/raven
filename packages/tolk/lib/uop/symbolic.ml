@@ -967,8 +967,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* !!x -> x *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
-     let inner = op ~src:[ x; false_ ] Ops.Cmpeq in
-     op ~src:[ inner; false_ ] Ops.Cmpeq
+     alu [ alu [ x; true_ ] Ops.Cmpne; true_ ] Ops.Cmpne
      => fun bs -> Some (bs $ "x"));
 
     (* where(cond, true, false) -> cond *)
@@ -1381,8 +1380,8 @@ let symbolic : Upat.Pattern_matcher.t =
   let phase_2_rules = [
     (* x | !x -> True *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
-     let neg_x = op ~src:[ x; false_ ] Ops.Cmpeq in
-     alu [ x; neg_x ] Ops.Or => fun _ -> Some (Uop.const_bool true));
+     alu [ x; alu [ x; true_ ] Ops.Cmpne ] Ops.Or
+     => fun _ -> Some (Uop.const_bool true));
 
     (* Canonical operand order for index-mode commutative ops. *)
     (ops ~dtype:Dtype.weakint ~name:"x" Ops.Group.commutative => fun bs ->
