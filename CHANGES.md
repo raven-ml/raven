@@ -1147,6 +1147,9 @@ thread.
 
 ### Nx
 
+- `Nx_buffer.create` documents what it does: the contents of a new buffer are
+  unspecified. It claimed a zero fill, which only some element kinds got, so a
+  new `float32` buffer could hold NaN; call `Nx_buffer.fill` for zeros.
 - Add `Nx.Device`, `Nx.Placement`, `Nx.place` and `Nx.placement`: a value
   can live on a device a runtime opens, and where it lives is a value. An
   operation on placed operands returns a placed result, host operands join

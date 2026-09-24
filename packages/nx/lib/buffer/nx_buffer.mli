@@ -130,7 +130,8 @@ type ('a, 'b) t
 (** {2:create Creation} *)
 
 val create : ('a, 'b) kind -> int -> ('a, 'b) t
-(** [create kind n] allocates a zero-initialized buffer of [n] elements. *)
+(** [create kind n] allocates a buffer of [n] elements. Its contents are
+    unspecified: write every element, or {!fill} it, before reading. *)
 
 (** {2:props Properties} *)
 
