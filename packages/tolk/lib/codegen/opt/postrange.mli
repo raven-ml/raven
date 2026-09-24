@@ -88,12 +88,6 @@ val full_shape : t -> Tolk_uop.Uop.t list
 val axis_types : t -> Tolk_uop.Axis_type.t list
 (** Axis kind of each active range. *)
 
-val shape_str : t -> string list
-(** Labelled axis names (["g0"; "l0"; "r0"; …]). *)
-
-val shape_str_to_axis : t -> string list -> int list
-(** Map axis label names to indices.  Raises {!Opt_error} if not found. *)
-
 val axes_of : t -> Tolk_uop.Axis_type.t list -> int list
 (** Indices of ranges whose kind is in the given list. *)
 
@@ -112,9 +106,6 @@ val unrollable_dims : t -> int list
 
 val upcast_size : t -> int
 (** Product of Upcast and Unroll shape sizes. *)
-
-val output_shape : t -> Tolk_uop.Uop.t list
-(** [output_shape t] is {!full_shape} with contracted axes replaced by [1]. *)
 
 val upcasted : t -> int
 (** Number of Upcast and Unroll axes. *)

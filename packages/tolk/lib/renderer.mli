@@ -121,7 +121,7 @@ val shared_max : t -> int
       for CUDA). Actual limits may vary by device. *)
 
 val tensor_cores : t -> Tc.t list
-(** [tensor_cores r] is the list of {!type-tensor_core} configurations supported
+(** [tensor_cores r] is the list of {!Tc.t} configurations supported
     by [r]. Empty when the backend has no hardware matrix-multiply support. *)
 
 (** {1:capabilities Capabilities} *)

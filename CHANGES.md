@@ -379,6 +379,13 @@ thread.
 
 ### Tolk (new)
 
+- `Tc.create` derives tensor-core tile geometry from operand fragment layouts
+  instead of separate scheduling and swizzle tables. Tensor-core padding now
+  preserves contraction masks, and contracted output axes are rejected.
+
+- Remove unused `Postrange.shape_str`, `shape_str_to_axis` and `output_shape`
+  queries; optimizer axes are identified directly by their ranges and owners.
+
 - Keep tensor-core warp dimensions separate when folding logical local axes
   into GPU launch dimensions, so hardware lane indices retain their meaning.
 

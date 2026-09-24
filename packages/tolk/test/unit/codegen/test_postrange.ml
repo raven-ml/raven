@@ -459,10 +459,8 @@ let shift_opt_tests =
               | _ -> None) in
           let t = P.create (U.substitute subs ast) (gpu_renderer ()) in
           equal int 1 (P.group_for_reduces t);
-          List.iter2 (fun r output ->
-              let expected = if U.axis_id r = [ 2 ] then 1 else range_size_int r in
-              equal int expected (Option.get (U.const_int_value output)))
-            (P.rngs t) (P.output_shape t);
+          equal (list (list int)) [ [ 2 ] ]
+            (List.map (fun i -> U.axis_id (List.nth (P.rngs t) i)) (P.reduce_axes t));
           let axes = List.map (fun i -> U.axis_id (List.nth (P.rngs t) i))
               (P.unrollable_dims t) in
           equal (list (list int)) (if kind = Ak.Local then [ [ 2 ] ] else []) axes)
@@ -711,24 +709,6 @@ let state_query_tests =
         match P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 2 }) with
         | Some (_, added) -> equal (list int) [ 43 ] (U.axis_id added)
         | None -> fail "expected a split range");
-      (* shape_str produces correct labels *)
-      test "shape_str produces correct labels" (fun () ->
-        let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        let ss = P.shape_str t in
-        equal int 3 (List.length ss);
-        equal string "g0" (List.nth ss 0);
-        equal string "g1" (List.nth ss 1);
-        equal string "R0" (List.nth ss 2));
-      (* shape_str_to_axis resolves labels *)
-      test "shape_str_to_axis resolves labels" (fun () ->
-        let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        let axes = P.shape_str_to_axis t [ "g1"; "R0" ] in
-        equal int 1 (List.nth axes 0);
-        equal int 2 (List.nth axes 1));
       (* copy preserves state *)
       test "copy preserves independent optimization state" (fun () ->
         let t = P.create (elementwise_global_ast ~s0:8 ~s1:8) (gpu_renderer ()) in
@@ -749,16 +729,6 @@ let state_query_tests =
         equal int 2 (List.length up);
         (* 1 reduce axis with size > 1 → 1 unrollable dim *)
         equal int 1 (List.length un));
-      (* output_shape replaces contracted ranges with 1 *)
-      test "output_shape replaces non-output axes with 1" (fun () ->
-        let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        let os = P.output_shape t in
-        equal int 3 (List.length os);
-        equal int 4 (const_to_int (List.nth os 0));
-        equal int 4 (const_to_int (List.nth os 1));
-        equal int 1 (const_to_int (List.nth os 2)));
       test "loop-to-global ignores ranges closed by nested END tails" (fun () ->
         let r_outer = loop_range ~axis:0 8 in
         let r_inner = loop_range ~axis:1 4 in

@@ -229,11 +229,10 @@ let test_thread_reduction kind width expected () =
   run_spec device spec [ output; input ];
   equal (list int) expected (read_i32 output)
 
-let test_tensor_core_warp_grouping () =
+let test_tensor_core_matmul ~m ~n ~k ~locals () =
   let device = metal_device () in
   let ren = Device.renderer device in
   if Renderer.tensor_cores ren = [] then skip ~reason:"Metal tensor cores unavailable" ();
-  let m, n, k = 32, 64, 8 in
   let param slot size = U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int size) () in
   let output = param 0 (m * n) and a = param 1 (m * k) and b = param 2 (k * n) in
   let range axis size kind = U.range ~size:(U.const_int size) ~axis ~kind () in
@@ -252,8 +251,8 @@ let test_tensor_core_warp_grouping () =
   let sink = U.sink ~kernel_info [ U.end_ ~value:store ~ranges:[ row; col ] ] in
   let scheduler = Postrange.create sink ren in
   ignore (Postrange.apply_opt scheduler
-    (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }));
-  for step = 0 to 2 do
+    (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 2; use_tc = 1 }));
+  for step = 0 to locals - 1 do
     let axis = List.hd (Postrange.axes_of scheduler [ Axis_type.Global ]) in
     ignore (Postrange.apply_opt scheduler
       (U.Opt.Split { axis; amount = 2; kind = Axis_type.Local; top = false }));
@@ -290,7 +289,9 @@ let () =
       group "Execution"
         [
           test "tensor cores retain warp lanes across four local dimensions"
-            test_tensor_core_warp_grouping;
+            (test_tensor_core_matmul ~m:32 ~n:64 ~k:8 ~locals:3);
+          test "tensor cores preserve padded output and contraction lanes"
+            (test_tensor_core_matmul ~m:9 ~n:11 ~k:13 ~locals:0);
           test "local reductions preserve independent output threads"
             (test_thread_reduction Axis_type.Local 4 [ 496; 1520 ]);
           test "warp reductions preserve independent output threads"

@@ -58,7 +58,6 @@ type shape = {
   rngs : U.t list;
   axis_types : Axis_type.t list;
   full_shape : U.t list;
-  shape_str : string list;
 }
 
 (* Always in order by axis type. Device axes are launched, while void
@@ -76,16 +75,7 @@ let compute_shape ast =
   in
   let axis_types = List.map range_kind rngs in
   let full_shape = List.map (fun r -> U.simplify (range_size r)) rngs in
-  let cnt = Hashtbl.create 8 in
-  let shape_str =
-    List.map
-      (fun at ->
-        let n = match Hashtbl.find_opt cnt at with Some n -> n | None -> 0 in
-        Hashtbl.replace cnt at (n + 1);
-        strf "%s%d" (Axis_type.letter at) n)
-      axis_types
-  in
-  { rngs; axis_types; full_shape; shape_str }
+  { rngs; axis_types; full_shape }
 
 (* Scheduler state: wraps a kernel AST and tracks applied optimisations. *)
 type t = {
@@ -121,16 +111,6 @@ let rngs t = t.shape.rngs
 let shape_len t = List.length t.shape.rngs
 let full_shape t = t.shape.full_shape
 let axis_types t = t.shape.axis_types
-let shape_str t = t.shape.shape_str
-
-let shape_str_to_axis t nms =
-  List.map
-    (fun nm ->
-      match List.find_index (fun s -> s = nm) t.shape.shape_str with
-      | Some i -> i
-      | None -> raise (Opt_error (strf "shape_str_to_axis: %S not found" nm)))
-    nms
-
 let ast t = t.ast
 let ren t = t.ren
 let applied_opts t = t.applied_opts
@@ -414,11 +394,6 @@ let bufs t =
   List.rev
     (List.filter (fun x -> U.op x = Ops.Index) (U.toposort t.ast))
 
-let output_shape t =
-  let reduced = reduce_axes t in
-  List.mapi (fun i size -> if List.mem i reduced then U.const_int 1 else size)
-    (full_shape t)
-
 let upcasted t = List.length (axes_of t [ Axis_type.Upcast; Axis_type.Unroll ])
 
 let group_for_reduces t =
@@ -427,158 +402,73 @@ let group_for_reduces t =
       match List.nth kinds i with Axis_type.Warp | Axis_type.Local -> n + 1 | _ -> n)
     0 (reduce_axes t)
 
-let argsort perm =
-  let n = List.length perm in
-  let inv = Array.make n 0 in
-  List.iteri (fun i x -> if x >= 0 && x < n then inv.(x) <- i) perm;
-  Array.to_list inv
-
-(* Apply TC opt/reduce splits, return the new ranges in apply order. *)
+(* Split tile-coordinate bits, sharing one explicit hardware warp. *)
 let apply_tc_shifts t axes (tc : Tc.t) =
-  let warp =
-    ref (U.range ~size:(U.const_int tc.threads) ~axis:(-1)
-           ~kind:Axis_type.Warp ())
-  in
-  let ne = ref [] in
-  let split dim amt kind ?input_new_rng () =
-    let replaced, new_rng = shift_to t axes.(dim) amt kind ?input_new_rng in
-    axes.(dim) <- replaced;
-    ne := new_rng :: !ne
-  in
-  let apply_opt opt_str =
-    let dim = Char.code opt_str.[1] - Char.code '0' in
-    match opt_str.[0] with
-    | 'l' ->
-        let lane =
-          U.alu_binary ~op:Ops.Floormod ~lhs:!warp ~rhs:(U.const_int 2)
-        in
-        split dim 2 Axis_type.Local ~input_new_rng:lane ();
-        warp :=
-          U.alu_binary ~op:Ops.Floordiv ~lhs:!warp ~rhs:(U.const_int 2)
-    | 'u' -> split dim 2 Axis_type.Upcast ()
-    | c -> raise (Opt_error (strf "unsupported tc opt: %c" c))
-  in
-  List.iter apply_opt tc.opts;
-  List.iter (fun (_, amt) -> split 2 amt Axis_type.Unroll ()) (Tc.get_reduce_axes tc);
-  List.rev !ne
+  let warp = U.range ~size:(U.const_int tc.threads) ~axis:(-1) ~kind:Axis_type.Warp () in
+  List.map (fun coordinate ->
+      let dim = match coordinate.[0] with 'n' -> 0 | 'm' -> 1 | _ -> 2 in
+      let replaced, lane =
+        match List.find_index (( = ) coordinate) (fst tc.frag_c) with
+        | Some bit ->
+            let divisor = U.const_int (1 lsl bit) in
+            let quotient = U.alu_binary ~op:Ops.Floordiv ~lhs:warp ~rhs:divisor in
+            let lane = U.alu_binary ~op:Ops.Floormod ~lhs:quotient ~rhs:(U.const_int 2) in
+            shift_to ~input_new_rng:lane t axes.(dim) 2 Axis_type.Local
+        | None ->
+            shift_to t axes.(dim) 2
+              (if dim = 2 then Axis_type.Unroll else Axis_type.Upcast)
+      in
+      axes.(dim) <- replaced;
+      coordinate, lane) (Tc.axis_coords tc)
 
-(* Build the WMMA node and substitute it for the tagged reduce. *)
-let build_wmma_node t (tc : Tc.t) ne =
-  let tagged_red =
-    match List.find_opt
-      (fun x -> is_reduce x && U.node_tag x = Some "TC")
-      (U.toposort t.ast) with
-    | Some red -> red
-    | None -> raise (Opt_error "tagged tensor-core reduce not found")
-  in
-  let tne = List.map (U.with_tag "1") ne in
-  let ret = U.substitute (List.combine ne tne) tagged_red in
-  let ret_src =
-    match U.as_reduce ret with
-    | Some rv -> rv.src
-    | None -> raise (Opt_error "tensor-core node is not a reduce")
-  in
-  let mul_src =
-    if U.op ret_src = Ops.Cast then (U.src ret_src).(0) else ret_src
-  in
-  let srcs = U.children mul_src in
-  let perm0, perm1 =
-    try Tc.permutes_for_shape_str tc (Tc.base_shape_str tc)
-    with Failure msg -> raise (Opt_error msg)
-  in
-  let srcs =
-    List.mapi
-      (fun i src ->
-        let p = if i = 0 then perm0 else perm1 in
-        U.substitute
-          (List.combine tne (List.map (fun j -> List.nth ne j) (argsort p)))
-          src)
-      srcs
-  in
-  (* Compute upcast/reduce axes *)
-  let n_reduce = List.length (Tc.get_reduce_axes tc) in
-  let tc_reduce_axes =
-    shape_str_to_axis t (List.init n_reduce (fun i -> strf "r%d" i))
-  in
-  let base_ua =
-    List.map (fun s -> (s, 2)) (shape_str_to_axis t (Tc.base_upcast_axes tc))
-  in
-  let log2 n = int_of_float (log (float_of_int n) /. log 2.0) in
-  let a_ept, b_ept, c_ept = tc.elements_per_thread in
-  let tc_upcast_axes =
-    List.init 3 (fun i ->
-        let n = log2 [| a_ept; b_ept; c_ept |].(i) in
-        List.filteri (fun j _ -> j < n) base_ua)
-  in
-  (* Convert axes to range numbers *)
-  let rngs_now = rngs t in
-  let tc_upcast_axes =
-    List.map
-      (fun v ->
-        List.map (fun (a, sz) -> (U.axis_id (List.nth rngs_now a), sz)) v)
-      tc_upcast_axes
-  in
-  let tc_reduce_axes =
-    List.map (fun a -> U.axis_id (List.nth rngs_now a)) tc_reduce_axes
-  in
-  (* Build the WMMA node *)
-  let src0, src1 =
-    match srcs with
-    | a :: b :: _ -> a, b
-    | _ -> raise (Opt_error "tensor-core multiply must have two operands")
-  in
-  let ua, ub, uc =
-    match tc_upcast_axes with
-    | a :: b :: c :: _ -> a, b, c
-    | _ -> raise (Opt_error "tensor-core upcast axes missing")
-  in
-  let with_missing_tc_axes axes =
-    List.fold_left
-      (fun acc (rn, _) ->
-        if List.mem_assoc rn acc then acc else acc @ [ (rn, 1) ])
-      axes (ua @ ub)
-  in
-  let ua, ub, uc =
-    (with_missing_tc_axes ua, with_missing_tc_axes ub, with_missing_tc_axes uc)
-  in
-  let wmma_info : U.wmma_info =
-    {
-      dims = tc.dims;
-      dtype_in = tc.dtype_in;
-      device = Renderer.device t.ren;
-      threads = tc.threads;
-      tc_upcast_axes = Some (ua, ub, uc);
-    }
-  in
-  let wmma =
-    U.wmma
-      ~a:src0 ~b:src1
-      ~c:
-        (U.const_of_dtype tc.dtype_out
-           (U.Const_tuple
-              (List.init c_ept (fun _ -> U.Const_scalar (`Float 0.0)))))
-      ~info:wmma_info
-      ~dtype:tc.dtype_out
-  in
-  (* Preserve extra reduces *)
-  let red_ranges =
-    match U.as_reduce tagged_red with
-    | Some rv -> rv.ranges
-    | None -> raise (Opt_error "tagged tensor-core node is not a reduce")
-  in
-  let red_range_nodes = U.find_nodes is_range (U.sink red_ranges) in
-  let extra_reduces =
-    List.filter
-      (fun x -> not (List.mem (U.axis_id x) tc_reduce_axes))
-      red_range_nodes
-  in
-  let tc_uop =
-    if extra_reduces <> [] then
-      U.reduce ~op:Ops.Add ~src:wmma ~ranges:extra_reduces
-        ~dtype:(U.dtype wmma)
-    else wmma
-  in
-  t.ast <- U.substitute [ (tagged_red, tc_uop) ] t.ast;
+let build_wmma_node t (tc : Tc.t) axes coordinates =
+  let reduce =
+    match List.filter (fun u -> match U.as_reduce u with
+        | Some r -> List.exists (fun x -> List.memq axes.(2) (U.ranges x)) r.ranges
+        | None -> false) (U.backward_slice t.ast) with
+    | [ reduce ] -> reduce
+    | _ -> raise (Opt_error "tensor-core contraction must belong to one reduce") in
+  let red = Option.get (U.as_reduce reduce) in
+  let gate, mul = match U.op red.src, U.src red.src with
+    | Ops.Where, [| gate; value; _ |] -> Some gate, value
+    | _ -> None, red.src in
+  let mul = if U.op mul = Ops.Cast then (U.src mul).(0) else mul in
+  let inputs = match U.op mul, U.src mul with
+    | Ops.Mul, [| a; b |] -> [ a; b ]
+    | _ -> raise (Opt_error "tensor-core reduction must multiply two operands") in
+  let inputs = List.map (fun input -> match gate with
+      | None -> input
+      | Some gate -> U.alu_ternary ~op:Ops.Where ~a:gate ~b:input
+          ~c:(U.const (Const.zero (U.dtype input)))) inputs in
+  let inputs = List.map2 (fun input relabel ->
+      let mappings = List.map (fun (a, b) -> List.assoc a coordinates, List.assoc b coordinates) relabel in
+      U.substitute ~walk:true mappings input) inputs (Tc.relabel tc) in
+  let base_axes = List.map (fun c -> U.axis_id (List.assoc c coordinates)) (Tc.base_upcast_axes tc) in
+  let counts = List.map (fun f -> List.length (snd f)) [ tc.frag_a; tc.frag_b; tc.frag_c ] in
+  let a_count, b_count, c_count = match counts with
+    | [ a; b; c ] -> a, b, c
+    | _ -> assert false in
+  let upcast_axes = List.map (fun count ->
+      base_axes |> List.filteri (fun i _ -> i < max count (max a_count b_count))
+      |> List.mapi (fun i axis -> axis, if i < count then 2 else 1)) counts in
+  let ua, ub, uc = match upcast_axes with
+    | [ a; b; c ] -> a, b, c
+    | _ -> assert false in
+  let info : U.wmma_info =
+    { dims = tc.dims; dtype_in = tc.dtype_in; device = Renderer.device t.ren;
+      threads = tc.threads; tc_upcast_axes = Some (ua, ub, uc) } in
+  let a, b = match inputs with [ a; b ] -> a, b | _ -> assert false in
+  let wmma = U.wmma ~a ~b
+      ~c:(U.const_of_dtype tc.dtype_out (U.Const_tuple
+          (List.init (1 lsl c_count) (fun _ -> U.Const_scalar (`Float 0.0)))))
+      ~info ~dtype:tc.dtype_out in
+  let contracted = List.filter_map (fun (coordinate, range) ->
+      if coordinate.[0] = 'k' then Some range else None) coordinates in
+  let extra = U.find_nodes is_range (U.sink red.ranges)
+      |> List.filter (fun r -> not (List.memq r contracted)) in
+  let value = if extra = [] then wmma
+    else U.reduce ~op:Ops.Add ~src:wmma ~ranges:extra ~dtype:(U.dtype wmma) in
+  t.ast <- U.substitute [ reduce, value ] t.ast;
   refresh t
 
 (* Workgroup reductions reserve shared storage for every local and vector lane. *)
@@ -749,7 +639,7 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
         let red_sc = U.dtype red in
         let in0_ranges = U.ranges in0 in
         let in1_ranges = U.ranges in1 in
-        let red_ranges = red_view.ranges in
+        let red_ranges = U.ranges (U.sink red_view.ranges) in
         let sort_desc =
           List.sort (fun a b -> compare (U.axis_id b) (U.axis_id a))
         in
@@ -800,16 +690,14 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
                        over them would have to accumulate across the tile the
                        WMMA writes as a whole. *)
                     check
-                      (range_kind axes.(0) <> Axis_type.Reduce
-                      && range_kind axes.(1) <> Axis_type.Reduce)
-                      "tensor core X/Y axes can't be REDUCE";
-                    t.ast <-
-                      U.substitute [ (red, U.with_tag "TC" red) ] t.ast;
-                    refresh t;
+                      (not (List.exists (fun i ->
+                          let r = List.nth (rngs t) i in r == axes.(0) || r == axes.(1))
+                          (reduce_axes t)))
+                      "tensor core X/Y axes cannot be contracted";
                     if not (pad_tc_axes t axes tc tc_opt) then None
                     else begin
                       let ne = apply_tc_shifts t axes tc in
-                      if use_tc <> 2 then build_wmma_node t tc ne;
+                      if use_tc <> 2 then build_wmma_node t tc axes ne;
                       t.tensor_core <- Some tc;
                       Some (Array.to_list axes)
                     end

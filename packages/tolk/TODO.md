@@ -67,10 +67,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 ## Optimizer and rendering
 
-- Move tensor-core descriptions to the renderer and adopt fragment-derived
-  layouts and check contracted axes from REDUCE ownership. Converge large WMMA
-  accumulator ordering at the optimizer/expander; port CUDA MMA, AMD MFMA/FP8
-  variants and Metal BF16 support.
+- Converge large WMMA accumulator ordering at the optimizer/expander; port
+  CUDA MMA, AMD MFMA/FP8 variants (including CDNA3 FNUZ), and Metal BF16 support.
+  Reconcile CDNA4 K128 FP8 load ordering with the target HIP renderer.
 - Port final gpudims, slot allocation, range merge, gating and WAR barriers.
   Preserve symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
