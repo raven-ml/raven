@@ -31,6 +31,12 @@ val pm_float_decomp : float_decomp_ctx -> Upat.Pattern_matcher.t
     operations from [ctx.from_dtype] storage through [ctx.to_dtype]
     arithmetic. *)
 
+val is_dtype_supported : Renderer.t -> Tolk_uop.Dtype.t -> bool
+(** [is_dtype_supported renderer dt] is [true] iff programs rendered by
+    [renderer] can load, store and compute the scalar dtype [dt]: the renderer
+    supports it natively, or {!do_dtype_decomps} emulates it (compact floats and
+    64-bit integers). [float64] on Metal is neither. *)
+
 val do_dtype_decomps : Renderer.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [do_dtype_decomps renderer sink] detects unsupported long and compact
     float dtypes reachable from [sink], then applies the minimal matching

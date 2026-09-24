@@ -300,6 +300,9 @@ thread.
 
 ### Tolk (new)
 
+- Add `Decomp_dtype.is_dtype_supported`: whether a renderer's programs can use
+  a dtype, natively or by emulation. `float64` on Metal is neither.
+
 - Add `Device.Buffer.as_buffer`, a buffer's bytes as host memory without a
   copy on devices the host addresses (Metal, the CPU device), as tinygrad's
   `_as_buffer`.

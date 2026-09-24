@@ -1207,6 +1207,15 @@ let detect_decomp_dtype ctx node =
 
 let pm_dtype_decomps = detect_decomp_dtype
 
+(* tinygrad keeps no single predicate for this at the pin: a program for a
+   renderer can use a dtype the renderer supports (Renderer.supported_dtypes,
+   renderer/__init__.py:82, narrowed by each renderer, e.g.
+   renderer/cstyle.py:388-390 for Metal) or one that do_dtype_decomps emulates
+   (codegen/decomp/dtype.py:196-213, whose detection set is
+   [decomposable_scalar]). *)
+let is_dtype_supported renderer scalar =
+  Renderer.supports_dtype renderer scalar || decomposable_scalar scalar
+
 let should_emulate renderer scalar =
   (not (Renderer.supports_dtype renderer scalar))
   || List.exists

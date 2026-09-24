@@ -1003,6 +1003,16 @@ let () =
             for_each_renderer
               (all_renderers @ [ ("qcom", Cstyle.qcom); ("amd", Cstyle.amd Gpu_target.CDNA3) ])
               check_ops);
+          test "a dtype is supported natively or by emulation" (fun () ->
+            let metal = Cstyle.metal (Gpu_target.Mac 2) in
+            let supported dt = Decomp_dtype.is_dtype_supported metal dt in
+            is_false ~msg:"metal float64" (supported Dtype.float64);
+            is_true ~msg:"metal float32" (supported Dtype.float32);
+            is_true ~msg:"metal emulates bfloat16" (supported Dtype.bfloat16);
+            is_true ~msg:"metal emulates fp8" (supported Dtype.fp8e4m3);
+            is_true ~msg:"clang float64"
+              (Decomp_dtype.is_dtype_supported
+                 (Cstyle.clang Gpu_target.Arm64) Dtype.float64));
           test "renderer dtype capabilities are backend-specific" (fun () ->
             let fp8 = Dtype.fp8e4m3 in
             if Renderer.supports_dtype Cstyle.qcom Dtype.float64 then
