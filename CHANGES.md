@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.sort` and `Nx.argsort` put NaN after every number in either
+  direction, as eager ones do. A NaN dropped out of the sorted values, with
+  another value repeated in its place, and the positions around it were wrong.
 - Compiled `Nx.cummax` and `Nx.cummin` are NaN from the first NaN on, as
   eager ones are. They kept the running maximum or minimum past a NaN.
 - **Breaking:** Remove `Rune.to_device`. Place values with

@@ -736,6 +736,60 @@ let nan_from_first ~axis t scanned =
     (F.Creation.const_like scanned (F.Tensor.Sfloat Float.nan))
     scanned
 
+(* [x] sorted along [dim], and the stable positions that sort it. Tolk's sort
+   network keeps the smaller or larger operand by comparison, which a NaN never
+   wins, and it recovers positions by matching values for equality, which a NaN
+   never satisfies. A float axis sorts integers of its width in the same order
+   instead: its bits, with a negative value's magnitude bits flipped so that the
+   larger float is the larger integer, -0 read as +0, and NaN past every number
+   in either direction. The -0 test compares bits: a float comparison may flush
+   subnormals to zero. An 8-bit float sorts as its float16 widening: where it is
+   emulated, its bits are re-encoded from a wider value, which saturates
+   infinities. The widening is exact except that an emulated 8-bit float reads
+   its subnormals as zero, as every compiled 8-bit float operation does. The
+   sorted integers map back to the values. *)
+let sort_graph ~dim ~descending x =
+  let dtype = F.Tensor.dtype x in
+  if not (TD.is_float dtype) then F.Op.sort ~dim ~descending x
+  else
+    let open F.Elementwise in
+    let x =
+      if TD.itemsize dtype = 1 then F.Dtype_ops.cast x TD.float16 else x
+    in
+    let int =
+      match TD.itemsize (F.Tensor.dtype x) with
+      | 2 -> TD.int16
+      | 4 -> TD.int32
+      | _ -> TD.int64
+    in
+    let bound v = F.Tensor.of_uop (U.const v) in
+    let max = bound (Tolk_uop.Const.max_value int) in
+    let nan_key =
+      if descending then bound (Tolk_uop.Const.min_value int) else max
+    in
+    let flip bits =
+      where
+        (lt bits (F.Creation.const_like bits (F.Tensor.Sint 0)))
+        (bitwise_xor bits max) bits
+    in
+    let bits = F.Dtype_ops.bitcast x int in
+    let negative_zero = bound (Tolk_uop.Const.min_value int) in
+    let keys =
+      flip
+        (where (eq bits negative_zero)
+           (F.Creation.const_like bits (F.Tensor.Sint 0))
+           bits)
+    in
+    let sorted, positions =
+      F.Op.sort ~dim ~descending (where (isnan x) nan_key keys)
+    in
+    let values =
+      where (eq sorted nan_key)
+        (F.Creation.const_like x (F.Tensor.Sfloat Float.nan))
+        (F.Dtype_ops.bitcast (flip sorted) (F.Tensor.dtype x))
+    in
+    (F.Dtype_ops.cast values dtype, positions)
+
 (* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
    trace (captures, host arrays) are buffers too, but only input nodes are in
    [st.input_tags]; a value that never touches one is a compile-time constant of
@@ -1568,13 +1622,13 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_sort { t_in; axis; descending } ->
         Some
           (fun k ->
-            ret k (dt t_in) (fst (F.Op.sort ~dim:axis ~descending (go t_in))))
+            ret k (dt t_in) (fst (sort_graph ~dim:axis ~descending (go t_in))))
     | E_argsort { t_in; axis; descending } ->
         Some
           (fun k ->
             ret k ND.int32
               (F.Dtype_ops.cast
-                 (F.Op.argsort ~dim:axis ~descending (go t_in))
+                 (snd (sort_graph ~dim:axis ~descending (go t_in)))
                  TD.int32))
     | E_associative_scan { t_in; axis; op } ->
         Some

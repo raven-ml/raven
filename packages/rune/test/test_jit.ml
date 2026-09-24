@@ -1345,6 +1345,52 @@ let test_take_large_table_matches_eager () =
   let f table = Nx.take ~axis:0 ~indices table in
   check_arr ~msg:"take" (to_arr (f table)) (Rune.jit' f table)
 
+(* NaN sorts after every number in either direction and equal values keep their
+   order, infinities included. The long axis runs through ten network stages.
+   Each result stacks the sorted values over the indices. *)
+let test_sort_matches_eager () =
+  let nan = Float.nan and inf = Float.infinity in
+  let short = vec32 [| 2.; nan; -.inf; 1.; inf; nan; 1.; -0.5; inf; 2. |] in
+  let columns =
+    Nx.create f32 [| 4; 3 |]
+      [| 3.; nan; 1.; nan; 2.; 1.; 3.; nan; -.inf; 0.; 2.; 1. |]
+  in
+  let long =
+    Nx.create f32 [| 2; 600 |]
+      (Array.init 1200 (fun i ->
+           if i mod 97 = 5 then nan
+           else if i mod 131 = 0 then inf
+           else float_of_int (i * 7 mod 13)))
+  in
+  List.iter
+    (fun descending ->
+      List.iter
+        (fun (name, axis, x) ->
+          let msg =
+            Printf.sprintf "%s, %s" name
+              (if descending then "descending" else "ascending")
+          in
+          let sort x =
+            let values, indices = Nx.sort ~descending ~axis x in
+            Nx.stack [ values; Nx.cast f32 indices ]
+          in
+          check_arr ~eps:0. ~msg (to_arr (sort x)) (Rune.jit' sort x))
+        [ ("short", 0, short); ("columns", 0, columns); ("long", 1, long) ])
+    [ false; true ];
+  (* Positions only: a compiled 8-bit float store saturates infinities. *)
+  let e5m2 =
+    Nx.create Nx.float8_e5m2 [| 8 |]
+      [| inf; 2.; -.inf; 57344.; -3.; -57344.; 0.; nan |]
+  in
+  List.iter
+    (fun descending ->
+      let positions x = Nx.cast f32 (Nx.argsort ~descending x) in
+      check_arr ~eps:0.
+        ~msg:(Printf.sprintf "float8_e5m2 positions, descending %b" descending)
+        (to_arr (positions e5m2))
+        (Rune.jit' positions e5m2))
+    [ false; true ]
+
 (* Either side of [Nx.top_k]'s switch from selection rounds to a sort, with
    repeated scores in every row. *)
 let test_top_k_matches_eager () =
@@ -3181,6 +3227,7 @@ let tests =
           test_grad_of_take_with_repeated_tokens;
         test "take over a large table matches eager"
           test_take_large_table_matches_eager;
+        slow "sort matches eager" test_sort_matches_eager;
         test "top_k matches eager" test_top_k_matches_eager;
         test "gradient of top_k" test_grad_of_top_k;
         test "diag matches eager" test_diag_matches_eager;

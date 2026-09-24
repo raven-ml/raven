@@ -529,6 +529,23 @@ let test_place_from_a_mapped_file () =
         (to_arr (Nx.matmul x (Nx.matrix_transpose w)))
         (g x))
 
+(* Metal flushes float32 subnormals to zero when it compares floats. A compiled
+   sort keeps them, in order, as eager does, and -0 ties with 0. Adding 0 on the
+   host clears the sign of zero, which the compiled values do not keep. *)
+let test_sort_keeps_subnormals () =
+  let x =
+    vec32
+      [| 1e-45; -1e-45; 0.; -0.; 1e-40; -1e-40; 3.4028235e38; -3.4028235e38 |]
+  in
+  let sort x =
+    let values, indices = Nx.sort ~axis:0 x in
+    Nx.stack [ values; Nx.cast f32 indices ]
+  in
+  let unsigned_zero t = Array.map (fun v -> v +. 0.) (to_arr t) in
+  equal ~msg:"sorted values over their positions" (array float_exact)
+    (unsigned_zero (sort x))
+    (unsigned_zero (Rune.jit' ~device:"METAL" sort x))
+
 let tests =
   [
     group "metal device"
@@ -546,6 +563,7 @@ let tests =
         test "programs run in turn share an arena" test_programs_share_an_arena;
         test "two programs alternate on one consumed state"
           test_two_programs_alternate;
+        test "sort keeps subnormals" test_sort_keeps_subnormals;
       ];
     group "placed weights"
       [
