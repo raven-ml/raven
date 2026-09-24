@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function whose output has no elements returns an empty tensor of
+  that output's dtype and shape instead of raising "an output of the traced
+  function was not scheduled to a buffer".
 - `Nx.cumsum` under `Rune.jit` keeps int8 and int16 results in their dtype. The
   compiled scan left them in int32, so values came back wrong (int8
   `[100; 100; 100; 1]` gave `[100; 0; 0; 0]`) and the process could crash.

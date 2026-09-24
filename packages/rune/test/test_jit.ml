@@ -34,6 +34,23 @@ let test_retrace_on_new_shape () =
   check_arr ~msg:"matrix" [| 10.0 |]
     (g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]))
 
+(* An output with no elements has no buffer to schedule; every call returns an
+   empty tensor of its dtype and shape. *)
+let test_zero_size_outputs () =
+  let check name f x =
+    let g = Rune.jit' f in
+    for call = 1 to 2 do
+      let msg = Printf.sprintf "%s, call %d" name call in
+      let y = g x in
+      equal ~msg (array int) (Nx.shape (f x)) (Nx.shape y);
+      let dtype t = Format.asprintf "%a" Nx.pp_dtype (Nx.dtype t) in
+      equal ~msg string (dtype (f x)) (dtype y)
+    done
+  in
+  check "int8 cumsum" (Nx.cumsum ~axis:1) (Nx.zeros Nx.int8 [| 2; 0 |]);
+  check "float32 add of a cumsum" (fun x -> Nx.add (Nx.cumsum x) x)
+    (Nx.zeros f32 [| 0 |])
+
 let test_closure_matmul () =
   let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let f x = Nx.matmul x w in
@@ -2754,6 +2771,7 @@ let tests =
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "replay reads fresh input data" test_replay_reads_fresh_inputs;
         test "a new shape retraces" test_retrace_on_new_shape;
+        test "zero-size outputs are empty tensors" test_zero_size_outputs;
         test "closure-captured weights (matmul)" test_closure_matmul;
         test "jit2 returns structured outputs" test_jit2_structured_output;
         test "aliased input leaves are separate inputs"

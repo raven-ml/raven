@@ -2776,6 +2776,9 @@ type 'q compiled = {
   cp_outputs : (Obj.t * packed * U.t * leaf_place) list;
       (* output leaf -> its placeholder (dtype and shape), buffer node, and
          placement *)
+  cp_empty : Obj.t list;
+      (* output leaves with no elements: no buffer holds them, and every call
+         returns a fresh empty tensor of the leaf's dtype and shape *)
   cp_aliases : (int * int) list;
       (* output buffer node tag -> traversal position of the consumed input leaf
          whose storage the output may take, the one at the output's own position
@@ -2988,7 +2991,11 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
           (key, Packed (Nx_effect.dtype leaf, leaf), tolk_of st leaf)
           :: !out_assoc)
     y;
-  let outs = List.rev !out_assoc in
+  let empty, outs =
+    List.partition
+      (fun (_, Packed (_, ph), _) -> numel (shape_of ph) = 0)
+      (List.rev !out_assoc)
+  in
   (* A result computed purely from trace-time constants (say, the zero gradient
      of an unused parameter) has no device anywhere in its graph, so the
      scheduler would materialize nothing for it. Anchor such results with a
@@ -3402,6 +3409,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
     cp_wrapped = Array.of_list !wrapped;
     cp_bound = Array.of_list bound;
     cp_outputs;
+    cp_empty = List.map (fun (key, _, _) -> key) empty;
     cp_aliases;
     cp_prefills;
     cp_reserved = reserved;
@@ -3719,7 +3727,12 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
                       in
                       Hashtbl.add handles tag (Packed (dt, h));
                       h))
-        | None -> assert false)
+        | None ->
+            assert (List.memq (Obj.repr leaf) c.cp_empty);
+            Nx_effect.reshape
+              (Nx_effect.from_host c.cp_ctx
+                 (Nx_buffer.create (Nx_effect.dtype leaf) 0))
+              (shape_of leaf))
       c.cp_skeleton
   in
   (* Consumption. The storage of each consumed input that seeded from a resident
