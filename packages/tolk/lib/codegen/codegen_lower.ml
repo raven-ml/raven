@@ -898,7 +898,6 @@ let supported_ops_of (ren : Renderer.t) : Decomp_op.supported_ops =
   let ir = Renderer.supported_ops ren in
   {
     ir with
-    is_metal = Renderer.name ren = "metal";
     supports_dtype = Renderer.supports_dtype ren;
     disable_fast_idiv = Helpers.Context_var.get Helpers.disable_fast_idiv <> 0;
     force_transcendental = Helpers.Context_var.get Helpers.transcendental >= 2;

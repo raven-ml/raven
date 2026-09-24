@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Constant integer division computes multiplier bounds exactly, avoiding host
+  integer overflow. Metal uses the same proven multiply-shift rewrites; modulo
+  stays native when no supported replacement exists.
+
 - Software `sin` uses integer shifts during large-angle reduction, avoiding
   floating-point powers and conversions when selecting bits from the
   reduction table.

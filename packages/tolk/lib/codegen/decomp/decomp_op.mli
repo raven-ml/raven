@@ -41,7 +41,6 @@ type supported_ops = {
   has_fdiv : bool;
   has_threefry : bool;
   has_mulacc : bool;
-  is_metal : bool;
   supports_dtype : Dtype.t -> bool;
   disable_fast_idiv : bool;
   force_transcendental : bool;

@@ -1550,6 +1550,23 @@ let lifetime_tests =
           check_floats [| 2.; 3. |] view);
     ]
 
+let constant_integer_division () =
+  let module D = Tolk_uop.Dtype in
+  Tolk.Helpers.Context_var.with_context
+    [ B (Tolk.Helpers.disable_fast_idiv, 0) ] (fun () ->
+      List.iter (fun (dtype, values) ->
+          let bytes = Bytes.create (4 * Array.length values) in
+          Array.iteri (fun i value -> Bytes.set_int32_le bytes (4 * i) (Int32.of_int value)) values;
+          let input = Run.of_bytes ~dtype ~shape:[ Array.length values ] bytes in
+          List.iter (fun divisor ->
+              let d = T.i divisor in
+              check_ints (Array.map (fun x -> x / divisor) values) (El.cdiv input d);
+              check_ints (Array.map (fun x -> x mod divisor) values) (El.fmod input d))
+            [ 3; 6; 7; 19; 65537; 2147483647 ])
+        [ D.uint32, [| 0; 1; 2; 3; 6; 7; 18; 19; 20; 65536; 65537;
+                       2147483647; 2147483648; 4294967294; 4294967295 |];
+          D.int32, [| -2147483648; -65537; -20; -19; -7; -1; 0; 1; 7; 2147483647 |] ])
+
 let () =
   run "Tolk_frontend_run"
     [
@@ -1563,6 +1580,8 @@ let () =
                 equal (array (float 1e-6)) [| 4.; 6. |]
                   (Run.to_float_array (El.add (vec [| 1.; 2. |]) (vec [| 3.; 4. |]))));
           equal string original (Run.device_name ()));
+      test "constant integer division and modulo preserve boundary values"
+        constant_integer_division;
       aliasing_tests;
       lifetime_tests;
       numerical_edge_tests;

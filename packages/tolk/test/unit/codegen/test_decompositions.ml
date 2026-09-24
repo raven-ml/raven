@@ -14,6 +14,16 @@ let magicgu_correct () =
   in
   is_true ~msg:"magicgu divides" ok
 
+let magicgu_wide_bounds () =
+  let vmax = max_int in
+  List.iter (fun d ->
+      let m, shift = Decomp_op.magicgu vmax d in
+      List.iter (fun x ->
+          let actual = Z.shift_right (Z.mul (Z.of_int x) (Z.of_int m)) shift in
+          equal ~msg:(Printf.sprintf "%d / %d" x d) string
+            (Z.to_string (Z.div (Z.of_int x) (Z.of_int d))) (Z.to_string actual))
+        [ 0; d - 1; d; d + 1; vmax / 2; vmax - 1; vmax ]) [ 3; 19 ]
+
 (* threefry2x32: at least terminates and produces a uint64 uop. *)
 let threefry_produces_uint64 () =
   let x = Uop.const (Const.int64 Dtype.uint64 42L) in
@@ -49,14 +59,14 @@ let const_float_value node =
 
 let supported_ops ?(has_and = true) ?(has_max = true) ?(has_cmplt = true)
     ?(has_threefry = true) ?(disable_fast_idiv = true)
-    ?(has_shr = true) ?(has_sqrt = true) ?(is_metal = false)
+    ?(has_shr = true) ?(has_sqrt = true)
     ?(supports_dtype = fun _ -> true) () :
     Decomp_op.supported_ops =
   { has_shl = true; has_shr; has_and; has_or = true;
     has_max; has_cmplt; has_cmpeq = true;
     has_neg = true; has_sub = true; has_mulacc = false;
     has_fdiv = false; has_threefry; disable_fast_idiv;
-    is_metal; supports_dtype;
+    supports_dtype;
     has_exp2 = true; has_log2 = true; has_sin = true; has_sqrt;
     force_transcendental = false }
 
@@ -411,7 +421,7 @@ let fast_idiv_small_range_folds_to_zero () =
         (Uop.const_int_value r = Some 0)
   | None -> is_true ~msg:"small range fast idiv rule fired" false
 
-let fast_idiv_rejects_non_native_divisor () =
+let fast_idiv_accepts_wide_divisor () =
   let x =
     Uop.variable ~name:"x" ~min_val:0 ~max_val:100 ~dtype:Dtype.int64 ()
   in
@@ -421,9 +431,10 @@ let fast_idiv_rejects_non_native_divisor () =
     Decomp_op.get_late_rewrite_patterns
       (supported_ops ~disable_fast_idiv:false ()) q
   in
-  is_true ~msg:"fast idiv rejects divisors outside native int" (got = None)
+  is_true ~msg:"a divisor above the host integer range still folds a small dividend"
+    (match got with Some value -> Uop.const_int_value value = Some 0 | None -> false)
 
-let fast_idiv_recursion_uses_cdiv () =
+let fast_idiv_recursion_uses_shifts () =
   let x =
     Uop.variable ~name:"x" ~min_val:0 ~max_val:90_000 ~dtype:Dtype.int32
       ()
@@ -438,11 +449,12 @@ let fast_idiv_recursion_uses_cdiv () =
       q
   with
   | Some r ->
-      is_true ~msg:"fast idiv recursion keeps truncating CDIV"
-        (contains_op Ops.Cdiv r && not (contains_op Ops.Fdiv r))
+      is_true ~msg:"factoring powers of two leaves only multiply-shift division"
+        (contains_op Ops.Shr r && not (contains_op Ops.Cdiv r)
+         && not (contains_op Ops.Fdiv r))
   | None -> is_true ~msg:"recursive fast idiv rule fired" false
 
-let fast_idiv_disabled_for_metal () =
+let fast_idiv_enabled_for_metal () =
   let x =
     Uop.variable ~name:"x" ~min_val:0 ~max_val:2_000_000_000
       ~dtype:Dtype.int32 ()
@@ -451,9 +463,9 @@ let fast_idiv_disabled_for_metal () =
   let q = Uop.alu_binary ~op:Ops.Cdiv ~lhs:x ~rhs:d in
   let got =
     Decomp_op.get_late_rewrite_patterns
-      (supported_ops ~disable_fast_idiv:false ~is_metal:true ()) q
+      { (Renderer.supported_ops (Cstyle.metal (Gpu_target.Apple 7))) with disable_fast_idiv = false } q
   in
-  is_true ~msg:"fast idiv is disabled for Metal" (got = None)
+  is_true ~msg:"Metal supports proven multiply-shift division" (got <> None)
 
 let fast_idiv_promotion_requires_supported_dtype () =
   let x =
@@ -479,6 +491,19 @@ let fast_idiv_promotion_requires_supported_dtype () =
      match accept with
      | Some r -> contains_op Ops.Cast r
      | None -> false)
+
+let late_cmod_preserves_unoptimizable_division () =
+  let x = Uop.variable ~name:"x" ~min_val:0 ~max_val:2_000_000_000
+      ~dtype:Dtype.int32 () in
+  let variable = Uop.variable ~name:"d" ~min_val:3 ~max_val:7
+      ~dtype:Dtype.int32 () in
+  let ops = supported_ops ~disable_fast_idiv:false
+      ~supports_dtype:(fun dt -> dt <> Dtype.int64) () in
+  List.iter (fun divisor ->
+      let r = Uop.alu_binary ~op:Ops.Cmod ~lhs:x ~rhs:divisor in
+      is_true ~msg:"native modulo remains when multiply-shift division is unavailable"
+        (Decomp_op.get_late_rewrite_patterns ops r = None))
+    [ variable; Uop.const (Const.int Dtype.int32 7) ]
 
 let late_cmod_power_of_two_without_and_uses_generic_rule () =
   let x =
@@ -876,7 +901,8 @@ let () =
           test "sin f16 Cody-Waite casts quadrant to f32"
             sin_f16_cody_waite_casts_quadrant_to_f32 ];
       group "integer division"
-        [ test "magicgu is correct" magicgu_correct ];
+        [ test "magicgu is correct" magicgu_correct;
+          test "magicgu supports wide bounds" magicgu_wide_bounds ];
       group "prng"
         [ test "threefry2x32 is uint64" threefry_produces_uint64 ];
       group "long decomposition"
@@ -920,14 +946,16 @@ let () =
             late_cmod_power_of_two_rejects_negative_signed_input;
           test "fast idiv small range folds to zero"
             fast_idiv_small_range_folds_to_zero;
-          test "fast idiv rejects non-native divisor"
-            fast_idiv_rejects_non_native_divisor;
-          test "fast idiv recursion uses Cdiv"
-            fast_idiv_recursion_uses_cdiv;
-          test "fast idiv is disabled for Metal"
-            fast_idiv_disabled_for_metal;
+          test "fast idiv accepts wide divisor"
+            fast_idiv_accepts_wide_divisor;
+          test "fast idiv recursion uses shifts"
+            fast_idiv_recursion_uses_shifts;
+          test "fast idiv is enabled for Metal"
+            fast_idiv_enabled_for_metal;
           test "fast idiv promotion checks dtype support"
             fast_idiv_promotion_requires_supported_dtype;
+          test "late Cmod preserves unoptimizable division"
+            late_cmod_preserves_unoptimizable_division;
           test "late Cmod power of two uses generic rule without And"
             late_cmod_power_of_two_without_and_uses_generic_rule;
           test "signed Cdiv pow2 uses constant condition"

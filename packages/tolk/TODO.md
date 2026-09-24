@@ -64,8 +64,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   Preserve WARP dimensions and symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
   Preserve access flags and volatile metadata during coalescing.
-- Port the remaining integer splitting and division/modulo fixes under live
-  spec verification; remove superseded casts at the owning pass.
+- Finish recursive integer word splitting under live spec verification and
+  remove superseded casts at the owning pass. Preserve `MAX` bounds until late
+  lowering; port early power-of-two floor division and final sign-bound rules.
 - Render host-call ABI, volatile parameters, void loops and final constants.
   Coordinate Metal's argument-struct ABI with its runtime binding.
 

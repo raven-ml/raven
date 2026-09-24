@@ -72,40 +72,32 @@ let threefry2x32 x key =
 
 (* Hacker's Delight 10-1: find [(m, s)] with [x // d = (x * m) >> s]
    for [0 <= x <= vmax] and [d > 0]. *)
-let magicgu vmax d =
-  if d <= 0 then invalid_arg "Decomp_op.magicgu: d must be positive";
-  let nc = ((vmax + 1) / d) * d - 1 in
-  let rec bits_of n acc = if n = 0 then acc else bits_of (n asr 1) (acc + 1) in
-  let nbits = bits_of vmax 0 in
-  let rec find s =
-    if s > 2 * nbits then
-      invalid_arg "Decomp_op.magicgu: no solution"
-    else
-      let pow2s = 1 lsl s in
-      if pow2s > nc * (d - 1 - (pow2s - 1) mod d) then
-        (pow2s + d - 1 - (pow2s - 1) mod d) / d, s
-      else find (s + 1)
+let magicgu_exact vmax d =
+  if Z.sign d <= 0 || Z.sign vmax < 0 then
+    invalid_arg "Decomp_op.magicgu: expected a nonnegative bound and positive divisor";
+  let nc = Z.pred (Z.mul (Z.div (Z.succ vmax) d) d) in
+  let rec find shift =
+    if shift > 2 * Z.numbits vmax then
+      invalid_arg "Decomp_op.magicgu: no solution";
+    let pow2 = Z.shift_left Z.one shift in
+    let correction = Z.sub (Z.pred d) (Z.rem (Z.pred pow2) d) in
+    if Z.compare pow2 (Z.mul nc correction) > 0 then
+      Z.div (Z.add pow2 correction) d, shift
+    else find (shift + 1)
   in
   find 0
+
+let magicgu vmax d =
+  let multiplier, shift = magicgu_exact (Z.of_int vmax) (Z.of_int d) in
+  if not (Z.fits_int multiplier) then
+    invalid_arg "Decomp_op.magicgu: multiplier exceeds the host integer range";
+  Z.to_int multiplier, shift
 
 let int64_to_int_checked n =
   if Int64.compare n (Int64.of_int min_int) < 0
      || Int64.compare n (Int64.of_int max_int) > 0
   then None
   else Some (Int64.to_int n)
-
-let dtype_int_bounds (dt : Dtype.t) =
-  match Dtype.min dt, Dtype.max dt with
-  | `Int lo, `Int hi when Z.fits_int64 lo && Z.fits_int64 hi ->
-      Some (Z.to_int64 lo, Z.to_int64 hi)
-  | _ -> None
-
-let safe_mul_int64 a b =
-  let p = Int64.mul a b in
-  if Int64.equal a 0L || Int64.equal (Int64.div p a) b then Some p else None
-
-let abs_int64_checked n =
-  if Int64.equal n Int64.min_int then None else Some (Int64.abs n)
 
 (* The next integer width that holds [x * m]. A weak integer has no
    committed width to widen from, so it has no next. *)
@@ -130,107 +122,47 @@ let next_integer_dtype (dt : Dtype.t) =
   | Some next -> if Dtype.is_int next then Some next else None
   | None -> None
 
-let shifted_div ~is_unsigned x x_for_mul m s =
-  let m_c = Uop.const_like x_for_mul m in
-  let s_c = Uop.const_like x_for_mul s in
-  let xm = Uop.alu_binary ~op:Ops.Mul ~lhs:x_for_mul ~rhs:m_c in
-  let shr_op = Uop.alu_binary ~op:Ops.Shr ~lhs:xm ~rhs:s_c in
-  let q =
-    if is_unsigned then shr_op
-    else
-      let one_c = Uop.const_like shr_op 1 in
-      let zero_c = Uop.const_like shr_op 0 in
-      let cond = Uop.O.(x < Uop.const_like x 0) in
-      let adj = Uop.O.where cond one_c zero_c in
-      Uop.alu_binary ~op:Ops.Add ~lhs:shr_op ~rhs:adj
-  in
-  if Dtype.equal (Uop.dtype q) (Uop.dtype x) then q
-  else Uop.cast ~src:q ~dtype:(Uop.dtype x)
+let shifted_div x x_for_mul multiplier shift =
+  let dt = Uop.dtype x_for_mul in
+  let product = Uop.alu_binary ~op:Ops.Mul ~lhs:x_for_mul
+      ~rhs:(Uop.const (Const.integer dt multiplier)) in
+  let quotient = Uop.alu_binary ~op:Ops.Shr ~lhs:product
+      ~rhs:(Uop.const (Const.int dt shift)) in
+  Uop.cast ~src:quotient ~dtype:(Uop.dtype x)
 
-(* Magic-multiplication division by a positive integer constant. *)
-let rec fast_idiv ?(dont_cast = false) ~is_metal ~supports_dtype x d =
-  if d <= 0 || is_metal then None
+(* Multiply-shift division is valid only for a positive divisor and a
+   nonnegative dividend. Prove product bounds before choosing its width. *)
+let rec fast_idiv ?(dont_cast = false) ~supports_dtype x d =
+  if Dtype.is_weak (Uop.dtype x) || Z.sign d <= 0
+     || Bound.lt (Uop.vmin x) Bound.zero then None
   else
-    let dt = Some (Uop.dtype x) in
-    match dt with
-    | None -> None
-    | Some v ->
-        let is_int = Dtype.is_int v in
-        if not is_int then None
-        else
-          let is_unsigned =
-            Bound.le Bound.zero (Uop.vmin x) || Dtype.is_unsigned v
-          in
-          let vmin = Uop.vmin x and vmax = Uop.vmax x in
-          if Bound.lt (Bound.int (-d)) vmin && Bound.lt vmax (Bound.int d)
-          then Some (Uop.const_like x 0)
+    let dtype = Uop.dtype x in
+    let dtype_max = Bound.integer (Dtype.max dtype) in
+    let vmax = Z.min (Bound.integer (Uop.vmax x)) dtype_max in
+    if Z.compare vmax d < 0 then Some (Uop.const_like x 0)
+    else
+      let multiplier, shift = magicgu_exact vmax d in
+      let product_max = Z.mul multiplier vmax in
+      if Z.compare product_max dtype_max <= 0 then
+        Some (shifted_div x x multiplier shift)
+      else
+        let try_widen () =
+          if dont_cast then None
           else
-            match dtype_int_bounds v with
-            | None -> None
-            | Some (dtype_lo, dtype_hi) ->
-                let lo = Z.max (Bound.integer vmin) (Z.of_int64 dtype_lo) in
-                let hi = Z.min (Bound.integer vmax) (Z.of_int64 dtype_hi) in
-                if Z.compare lo hi > 0 then None else
-                let vmin64 = Z.to_int64 lo and vmax64 = Z.to_int64 hi in
-                let abs_vmin = abs_int64_checked vmin64 in
-                let vmax_for_magic =
-                  match abs_vmin with
-                  | None -> None
-                  | Some a -> int64_to_int_checked (max vmax64 a)
-                in
-                match vmax_for_magic with
-                | None -> None
-                | Some vmax_for_magic ->
-                    let m, s = magicgu vmax_for_magic d in
-                    let m64 = Int64.of_int m in
-                    (match
-                       ( safe_mul_int64 m64 vmin64,
-                         safe_mul_int64 m64 vmax64 )
-                     with
-                     | Some lo, Some hi
-                       when Int64.compare lo dtype_lo >= 0
-                            && Int64.compare hi dtype_hi <= 0 ->
-                         Some (shifted_div ~is_unsigned x x m s)
-                     | _ ->
-                         let pow2_factor = d land (-d) in
-                         let try_cast () =
-                           if dont_cast then None
-                           else
-                             match next_integer_dtype v with
-                             | Some next_dt
-                               when supports_dtype next_dt ->
-                                 let next_lo, next_hi =
-                                   match dtype_int_bounds next_dt with
-                                   | Some bounds -> bounds
-                                   | None -> dtype_lo, dtype_hi
-                                 in
-                                 (match
-                                    ( safe_mul_int64 m64 vmin64,
-                                      safe_mul_int64 m64 vmax64 )
-                                  with
-                                  | Some lo, Some hi
-                                    when Int64.compare lo next_lo >= 0
-                                         && Int64.compare hi next_hi <= 0 ->
-                                      let x' =
-                                        Uop.cast ~src:x
-                                          ~dtype:next_dt
-                                      in
-                                      Some (shifted_div ~is_unsigned x x' m s)
-                                  | _ -> None)
-                             | _ -> None
-                         in
-                         if pow2_factor > 1 then
-                           let x' =
-                             Uop.alu_binary ~op:Ops.Cdiv ~lhs:x
-                               ~rhs:(Uop.const_like x pow2_factor)
-                           in
-                           match
-                             fast_idiv ~dont_cast:true ~is_metal
-                               ~supports_dtype x' (d / pow2_factor)
-                           with
-                           | Some _ as ret -> ret
-                           | None -> try_cast ()
-                         else try_cast ())
+            match next_integer_dtype dtype with
+            | Some next when supports_dtype next
+              && Z.compare product_max (Bound.integer (Dtype.max next)) <= 0 ->
+                Some (shifted_div x (Uop.cast ~src:x ~dtype:next) multiplier shift)
+            | _ -> None in
+        let factor_shift = Z.trailing_zeros d in
+        if factor_shift = 0 then try_widen ()
+        else
+          let reduced = Uop.alu_binary ~op:Ops.Shr ~lhs:x
+              ~rhs:(Uop.const (Const.int dtype factor_shift)) in
+          match fast_idiv ~dont_cast:true ~supports_dtype reduced
+                  (Z.shift_right d factor_shift) with
+          | Some _ as result -> result
+          | None -> try_widen ()
 
 (* Backend capability flags threaded through late-rewrite pattern
    construction. Each [has_*] is [true] iff the backend natively supports
@@ -252,7 +184,6 @@ type supported_ops = {
   has_fdiv : bool;
   has_threefry : bool;
   has_mulacc : bool;
-  is_metal : bool;
   supports_dtype : Dtype.t -> bool;
   disable_fast_idiv : bool;
   force_transcendental : bool;
@@ -533,47 +464,31 @@ let rule_sdiv_to_shr (ops : supported_ops) node =
          | _ -> None)
     | _ -> None
 
-(* x / d (constant d > 0, non-power-of-two) -> magic multiply-shift. *)
+let fast_idiv_const ops x d =
+  match Uop.op d, Uop.arg d with
+  | Ops.Const, Uop.Arg.Value value ->
+      (match Const.view value with
+       | Const.Int divisor -> fast_idiv ~supports_dtype:ops.supports_dtype x divisor
+       | _ -> None)
+  | _ -> None
+
+(* Constant division only rewrites when a supported width can hold the product. *)
 let rule_fast_idiv_late (ops : supported_ops) node =
   if not ops.has_shr || ops.disable_fast_idiv then None
-  else match Uop.op node with
-    | Ops.Cdiv ->
-        let s = Uop.src node in
-        (match Uop.dtype node, s with
-         | dt, [| x; d |]
-           when Dtype.is_int dt
-                && (Bound.le Bound.zero (Uop.vmin x) || Dtype.is_unsigned dt) ->
-             (match const_int64_value d with
-              | Some dv when Int64.compare dv 0L > 0 ->
-                  (match log2_of_power dv with
-                   | Some _ -> None
-                   | None ->
-                       (match int64_to_int_checked dv with
-                        | Some d ->
-                            fast_idiv ~is_metal:ops.is_metal
-                              ~supports_dtype:ops.supports_dtype x d
-                        | None -> None))
-              | _ -> None)
-         | _ -> None)
+  else match Uop.op node, Uop.src node with
+    | Ops.Cdiv, [| x; d |] when Dtype.is_int (Uop.dtype x) ->
+        fast_idiv_const ops x d
     | _ -> None
 
-(* x % d -> x - d * (x // d). *)
+(* Keep native modulo unless its quotient actually becomes multiply-shift. *)
 let rule_mod_from_idiv (ops : supported_ops) node =
   if not ops.has_shr || ops.disable_fast_idiv then None
-  else match Uop.op node with
-    | Ops.Cmod ->
-        let s = Uop.src node in
-        (match Uop.dtype node, s with
-         | dt, [| x; d |]
-           when Dtype.is_int dt
-                && (Bound.le Bound.zero (Uop.vmin x) || Dtype.is_unsigned dt) ->
-             (match const_int64_value d with
-              | Some dv when ops.has_and && is_power_of_two dv -> None
-              | _ ->
-                  let q = Uop.alu_binary ~op:Ops.Cdiv ~lhs:x ~rhs:d in
-                  let dq = Uop.alu_binary ~op:Ops.Mul ~lhs:d ~rhs:q in
-                  Some (Uop.alu_binary ~op:Ops.Sub ~lhs:x ~rhs:dq))
-         | _ -> None)
+  else match Uop.op node, Uop.src node with
+    | Ops.Cmod, [| x; d |] when Dtype.is_int (Uop.dtype x) ->
+        Option.map (fun quotient ->
+            let product = Uop.alu_binary ~op:Ops.Mul ~lhs:d ~rhs:quotient in
+            Uop.alu_binary ~op:Ops.Sub ~lhs:x ~rhs:product)
+          (fast_idiv_const ops x d)
     | _ -> None
 
 (* x * -1 -> neg x. *)

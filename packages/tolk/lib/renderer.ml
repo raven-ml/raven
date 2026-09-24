@@ -43,7 +43,7 @@ let all_supported_ops : Decomp_op.supported_ops =
     has_shr = true; has_and = true; has_or = true; has_cmplt = true;
     has_cmpeq = true; has_fdiv = true;
     has_threefry = true; has_mulacc = true;
-    is_metal = false; supports_dtype = (fun _ -> true);
+    supports_dtype = (fun _ -> true);
     disable_fast_idiv = false; force_transcendental = false;
   }
 
@@ -57,7 +57,6 @@ let supported_ops_of_code_for_op (ops : code_op list) : Decomp_op.supported_ops 
     has_cmplt = has Cmplt; has_cmpeq = has Cmpeq; has_fdiv = has Fdiv;
     has_threefry = has Threefry;
     has_mulacc = has Mulacc;
-    is_metal = false;
     supports_dtype = (fun _ -> true);
     disable_fast_idiv = false;
     force_transcendental = false;
@@ -135,7 +134,7 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
         if code_for_op = [] then all_supported_ops
         else supported_ops_of_code_for_op code_for_op
   in
-  let supported_ops = { supported_ops with is_metal = name = "metal"; supports_dtype } in
+  let supported_ops = { supported_ops with supports_dtype } in
   {
     name;
     device;
