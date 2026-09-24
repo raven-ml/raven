@@ -398,6 +398,19 @@ let integer_bounds_parity () =
   is_true ~msg:"bind rejects int64 values outside native bounds"
     overflow_rejected
 
+let max_numel_checks_host_range () =
+  let dim = Uop.const_int (1 lsl 32) in
+  let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.stack [ dim; dim ]) () in
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Uop.max_numel buffer)
+
+let max_numel_handles_zero_after_large_dimensions () =
+  let huge = Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100)) in
+  let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.stack [ huge; Uop.const_int 0 ]) () in
+  equal int 0 (Uop.max_numel buffer)
+
 let exact_symbolic_bounds () =
   let huge = Z.shift_left Z.one 200 in
   let value n = Uop.const (Const.integer Dtype.weakint n) in
@@ -2313,6 +2326,9 @@ let () =
           test "BIND requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "tinygrad CAST bounds parity" cast_bounds_parity;
+          test "max_numel checks host range" max_numel_checks_host_range;
+          test "max_numel handles zero after large dimensions"
+            max_numel_handles_zero_after_large_dimensions;
           test "exact symbolic bounds" exact_symbolic_bounds;
           test "Stack/Stage/Slice constructors"
             stack_stage_slice_constructors;

@@ -1315,7 +1315,12 @@ val max_numel : t -> int
 (** [max_numel u] is the number of scalar lanes [u] holds: the product of
     {!max_shape}.
 
-    Raises [Invalid_argument] if [u] has no tensor shape. *)
+    Multiplication is exact before converting the result to a host integer,
+    so a zero dimension yields zero even when another dimension is larger
+    than the host integer range.
+
+    Raises [Invalid_argument] if [u] has no tensor shape or the product does
+    not fit in a host integer. *)
 
 val shard_shape : t -> t list
 (** [shard_shape u] is [shape u], except that a multi-device tensor with a

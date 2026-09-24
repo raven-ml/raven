@@ -259,7 +259,10 @@ let narrow_gated_long_index u =
       when Dtype.equal (U.dtype idx) Dtype.int64
            && U.is_invalid_const inv
            && Option.is_some (U.shape_opt buf)
-           && List.fold_left ( * ) 1 (U.max_shape buf) - 1 <= 0x7fff_ffff ->
+           && Bound.le
+                (List.fold_left (fun n dim -> Bound.mul n (U.vmax dim))
+                   Bound.one (U.shape buf))
+                (Bound.succ (Dtype.max Dtype.int32)) ->
         let src = Array.copy src in
         src.(1) <-
           U.valid ~src:(U.cast ~src:idx ~dtype:Dtype.int32) ~cond:gate;

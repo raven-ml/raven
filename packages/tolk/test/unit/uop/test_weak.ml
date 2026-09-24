@@ -158,6 +158,15 @@ let gated_long_index_narrows_for_small_buffers () =
   equal dtype ~msg:"an index into an 8-element buffer fits int32" D.int32
     (U.dtype (src (src r 1) 1))
 
+let gated_long_index_does_not_narrow_when_shape_product_overflows () =
+  let dim = U.const_int (1 lsl 32) in
+  let buf = U.param ~slot:0 ~dtype:D.float32 ~shape:(U.stack [ dim; dim ]) () in
+  let index = U.variable ~name:"index" ~min_val:0 ~max_val:(1 lsl 32)
+      ~dtype:D.int64 () in
+  let gate = U.variable ~name:"g" ~min_val:0 ~max_val:1 ~dtype:D.bool () in
+  let r = lower (U.index ~ptr:buf ~idxs:[ U.valid ~src:index ~cond:gate ] ()) in
+  equal dtype D.int64 (U.dtype (src (src r 1) 1))
+
 let uint64_width_and_unrepresentable_const () =
   let maximum = Z.pred (Z.shift_left Z.one 64) in
   let value n = U.const (C.integer D.weakint n) in
@@ -210,5 +219,7 @@ let () =
           test "comparison" comparison_unifies_operand_widths;
           test "gated long index narrows"
             gated_long_index_narrows_for_small_buffers;
+          test "gated long index keeps its width for huge buffers"
+            gated_long_index_does_not_narrow_when_shape_product_overflows;
         ];
     ]

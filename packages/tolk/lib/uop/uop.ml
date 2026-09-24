@@ -2235,7 +2235,9 @@ and compute_shape_opt u =
   | _ -> None
 
 let max_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shape u)
-let max_numel u = List.fold_left ( * ) 1 (max_shape u)
+let max_numel u =
+  List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one (shape u)
+  |> Bound.to_int
 
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
    exponential in residual depth. *)

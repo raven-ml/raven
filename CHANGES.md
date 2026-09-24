@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.max_numel` rejects overflowing element counts and handles zero-sized
+  shapes with large dimensions exactly. Large shape products no longer cause
+  gated buffer indices to narrow incorrectly to `int32`.
+
 - Weak integer conversions preserve truncation through nested casts and
   arithmetic. A narrow result cast no longer narrows wide division operands
   before the computation.
