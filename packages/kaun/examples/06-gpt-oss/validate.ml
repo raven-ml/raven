@@ -12,11 +12,10 @@
    scales are tiny, so its cases are also recorded with a constant added to
    every scale byte.
 
-   The building blocks, at float32: [Mxfp4.dequant], and eagerly
-   [Nx_quant.dequant], against the reference dequantiser, bit for bit; the
-   router's logits, experts and weights, and what it selects among equal logits;
-   the MoE block in both formulations on a batch, on a ragged pair and on an
-   input scaled until the activation clamps.
+   The building blocks, at float32: [Nx_quant.dequant] against the reference
+   dequantiser, bit for bit; the router's logits, experts and weights, and what
+   it selects among equal logits; the MoE block on a batch, on a ragged pair and
+   on an input scaled until the activation clamps.
 
    The whole model, recorded with a sliding window of 4 so that the window binds
    on the 12-token prompt: the rotary tables and the sinks; each attention layer
@@ -211,7 +210,7 @@ let dequant ~device fx =
         expected
         (flat
            (compiled device
-              (fun b -> Mxfp4.dequant (weight b) Nx.float32)
+              (fun b -> Nx_quant.dequant Nx.float32 (weight b))
               blocks));
       identical ~flushed
         (Printf.sprintf "dequant %s, bfloat16" name)
@@ -219,34 +218,14 @@ let dequant ~device fx =
         (flat
            (compiled device
               (fun b ->
-                Nx.cast Nx.float32 (Mxfp4.dequant (weight b) Nx.bfloat16))
-              blocks));
-      (* Rune does not lower [Nx_quant.dequant] yet: it runs eagerly only. *)
-      if device = None then
-        identical
-          (Printf.sprintf "dequant %s, Nx_quant, float32" name)
-          expected
-          (flat (Nx_quant.dequant Nx.float32 (weight blocks)));
-      let rows = Nx.dim 0 blocks in
-      let per_row = Array.length expected / rows in
-      let picks = Array.init (rows + 1) (fun i -> (rows - i) mod rows) in
-      let ids =
-        Nx.create Nx.int32 [| rows + 1 |] (Array.map Int32.of_int picks)
-      in
-      let source i = (picks.(i / per_row) * per_row) + (i mod per_row) in
-      identical
-        ~flushed:(fun i -> flushed (source i))
-        (Printf.sprintf "dequant %s, selected rows" name)
-        (Array.init ((rows + 1) * per_row) (fun i -> expected.(source i)))
-        (flat
-           (compiled device
-              (fun b -> Mxfp4.dequant_rows (weight b) ids Nx.float32)
+                Nx.cast Nx.float32 (Nx_quant.dequant Nx.bfloat16 (weight b)))
               blocks)))
     (members (mem "dequant" fx));
   let nan_scale = uint8 [| 1; 1 |] [| 255 |] in
   let group =
     compiled device
-      (fun b -> Mxfp4.dequant (Nx_quant.mxfp4 ~scales:nan_scale b) Nx.float32)
+      (fun b ->
+        Nx_quant.dequant Nx.float32 (Nx_quant.mxfp4 ~scales:nan_scale b))
       (uint8 [| 1; 16 |] (Array.make 16 0x21))
   in
   check "dequant, the scale byte 255 is NaN"
@@ -310,21 +289,13 @@ let block ~device ~tol ~k ~limit label (router, p) case =
     (floats (mem "expert_weights" case))
     (flat (compiled device (fun x -> snd (route x)) tokens));
   let last = Nx.dim 0 tokens - 1 in
-  List.iter
-    (fun (form, form_name) ->
-      let apply x =
-        compiled device (fun x -> Moe.apply form ~limit p (route x) x) x
-      in
-      let whole = apply tokens in
-      close ~tol
-        (name ("output, " ^ form_name))
-        (floats (mem "output" case))
-        (flat whole);
-      close ~tol
-        (name ("output, " ^ form_name ^ ", the last token alone"))
-        (flat (Nx.slice [ I last ] whole))
-        (flat (apply (Nx.slice [ R (last, last + 1) ] tokens))))
-    [ (Moe.Gather, "gather"); (Moe.Dense, "dense") ]
+  let apply x = compiled device (fun x -> Moe.apply ~limit p (route x) x) x in
+  let whole = apply tokens in
+  close ~tol (name "output") (floats (mem "output" case)) (flat whole);
+  close ~tol
+    (name "output, the last token alone")
+    (flat (Nx.slice [ I last ] whole))
+    (flat (apply (Nx.slice [ R (last, last + 1) ] tokens)))
 
 let blocks ~device ~tol fx ~label ~weight ckpt =
   let config = mem "config" fx in

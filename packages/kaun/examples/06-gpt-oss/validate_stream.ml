@@ -29,19 +29,14 @@
    difference over the projections divided by the square root of the width, and
    the differences of the three statistics.
 
-   Run eagerly, the block's dense form dequantises the 32 experts of a
-   projection in one expression whose float32 temporaries are all alive at once:
-   19 GB at the 20b widths, whatever the number of tokens. [--experts-by-one]
-   dequantises a block's experts with [Nx_quant.dequant], whose peak does not
-   grow with the weight, and gives the block the same values as float weights,
-   in the layout the packed path gives its product. Every check prints the same
-   error either way, and the peak of a whole run is 6.6 GB on an M1 Max, the
-   float32 head included.
+   The experts' products run eagerly through [Nx_quant.apply], which decodes a
+   bounded chunk of an expert at a time, so the peak does not grow with the
+   weights: 3.0 GB for a whole run on an M1 Max, the float32 head included.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
-   [--tol X] [--experts-by-one]. With [--blocks] only the first [N] blocks run
-   and the head is skipped. Not part of the test suite: it needs the download,
-   13.8 GB for gpt-oss-20b. *)
+   [--tol X]. With [--blocks] only the first [N] blocks run and the head is
+   skipped. Not part of the test suite: it needs the download, 13.8 GB for
+   gpt-oss-20b. *)
 
 open Kaun
 
@@ -184,13 +179,7 @@ let routing ~k ~margin recorded experts =
       "experts: %d of %d tokens differ as sets, %d in order, margin %.1e" !sets
       tokens (!orders - !sets) margin )
 
-(* A packed projection as float weights: the values and the transposed layout of
-   [Moe]'s dense form. *)
-let by_one dt = function
-  | Moe.Float w -> Moe.Float w
-  | Moe.Quant w -> Moe.Float (Nx.matrix_transpose (Nx_quant.dequant dt w))
-
-let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
+let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
     (dt : (float, c) Nx.dtype) =
   let repo = string (mem "repo" fx) in
   List.iter
@@ -214,16 +203,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
       Gpt_oss.map cast
         { Gpt_oss.tok = nothing; blocks = [ b ]; norm = p.norm; head = None }
     in
-    let unpack (b : _ Gpt_oss.block) =
-      let moe = b.moe in
-      let gate_up = by_one dt moe.gate_up in
-      Gc.full_major ();
-      { b with moe = { moe with gate_up; down = by_one dt moe.down } }
-    in
-    let blocks =
-      if experts_by_one then List.map unpack m.blocks else m.blocks
-    in
-    { m with tok = { Embedding.table = x }; blocks }
+    { m with tok = { Embedding.table = x } }
   in
   let prompt (name, recorded) =
     let ids = ints (mem "ids" recorded) in
@@ -374,7 +354,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
 
 let () =
   let fixture = ref "" and blocks = ref 0 and only = ref [] in
-  let dtype = ref "float32" and tol = ref 0.0 and experts_by_one = ref false in
+  let dtype = ref "float32" and tol = ref 0.0 in
   Arg.parse
     [
       ("--blocks", Arg.Set_int blocks, "Run the first N blocks only");
@@ -383,9 +363,6 @@ let () =
         "Run this prompt only; may be repeated" );
       ("--dtype", Arg.Set_string dtype, "float32 (default) or bfloat16");
       ("--tol", Arg.Set_float tol, "Tolerance, in units of a stream's rms");
-      ( "--experts-by-one",
-        Arg.Set experts_by_one,
-        "Dequantise a block's experts one at a time" );
     ]
     (fun a -> fixture := a)
     "validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT] \
@@ -409,7 +386,7 @@ let () =
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
   run ~tol ~logits_tol ~exact
     ~blocks:(if !blocks > 0 then Some !blocks else None)
-    ~only:!only ~experts_by_one:!experts_by_one fx dt;
+    ~only:!only fx dt;
   match !first_failure with
   | None -> Printf.printf "all checks passed (tolerance %.0e)\n" tol
   | Some name ->

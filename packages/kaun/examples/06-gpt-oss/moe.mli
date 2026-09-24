@@ -56,27 +56,19 @@ val activation : limit:float -> (float, 'b) Nx.t -> (float, 'b) Nx.t
     clamped above at [limit] and [linear'] the linear part clamped to
     \[[-limit], [limit]\]. The last axis halves. *)
 
-(** The type for formulations of the block. Both compute the same function;
-    packed weights are dequantised for the rows each form reads. *)
-type form =
-  | Gather
-      (** Gathers the [k] selected experts' weights for each token and applies
-          them as a batched product: arithmetic proportional to [k], and
-          [tokens * k] expert rows read. The decode form. *)
-  | Dense
-      (** Applies every expert to every token and keeps the selected ones by
-          their weights, zero elsewhere: arithmetic proportional to [experts],
-          each weight read once. The prefill form. *)
-
 val apply :
-  form ->
   limit:float ->
   (float, 'b) Nx.t t ->
   (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t
-(** [apply form ~limit p (experts, weights) x] is the experts applied to [x],
-    whose last axis is the model width, and mixed by the routing
-    [(experts, weights)]: for each token of [x], the experts to use and their
-    weights, with shape [x]'s leading axes followed by the number of experts per
-    token. The result has [x]'s shape. *)
+(** [apply ~limit p (experts, weights) x] is the experts applied to [x], whose
+    last axis is the model width, and mixed by the routing [(experts, weights)]:
+    for each token of [x], the experts to use and their weights, with shape
+    [x]'s leading axes followed by the number of experts per token. The result
+    has [x]'s shape.
+
+    Packed weights are multiplied with {!Nx_quant.apply}, which decodes a
+    bounded chunk at a time eagerly and chooses its form under [Rune.jit]. Float
+    weights are gathered for each token's experts, a copy of every selected
+    expert: they suit small checkpoints. *)

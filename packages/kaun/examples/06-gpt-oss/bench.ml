@@ -6,9 +6,9 @@
 (* Time of one compiled MoE block at the shapes of gpt-oss-20b, on random packed
    weights: no checkpoint is read.
 
-   Usage: bench.exe [--jit DEVICE] [--form gather|dense] [--tokens N] [--steps
-   N]. Every step feeds fresh random tokens, so routing varies, and reads the
-   output back, so the device has finished. *)
+   Usage: bench.exe [--jit DEVICE] [--tokens N] [--steps N]. Every step feeds
+   fresh random tokens, so routing varies, and reads the output back, so the
+   device has finished. *)
 
 let experts = 32
 let k = 4
@@ -46,23 +46,16 @@ let seconds f =
   (v, Unix.gettimeofday () -. t0)
 
 let () =
-  let jit = ref "METAL" and form = ref "gather" in
+  let jit = ref "METAL" in
   let tokens = ref 1 and steps = ref 20 in
   Arg.parse
     [
       ("--jit", Arg.Set_string jit, "Device (default METAL)");
-      ("--form", Arg.Set_string form, "gather (default) or dense");
       ("--tokens", Arg.Set_int tokens, "Tokens per call (default 1)");
       ("--steps", Arg.Set_int steps, "Timed calls (default 20)");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "bench.exe [--jit DEVICE] [--form gather|dense] [--tokens N] [--steps N]";
-  let form =
-    match !form with
-    | "gather" -> Moe.Gather
-    | "dense" -> Moe.Dense
-    | f -> failwith ("--form must be gather or dense, got " ^ f)
-  in
+    "bench.exe [--jit DEVICE] [--tokens N] [--steps N]";
   Random.init 0;
   let router =
     {
@@ -83,7 +76,7 @@ let () =
   Printf.printf "random weights built in %.1f s\n%!" building;
   let f =
     Rune.jit' ~device:!jit (fun x ->
-        Moe.apply form ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
+        Moe.apply ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
   in
   let run () =
     let x = random_floats ~scale:1.0 [| !tokens; width |] in

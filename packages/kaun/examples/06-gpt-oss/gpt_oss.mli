@@ -10,8 +10,8 @@
     YaRN rotary positions; layers alternate between a sliding window and full
     attention, the first one sliding, over one {!Kaun.Cache_index}. {!attention}
     composes kaun's attention pieces with the sinks and YaRN's score scale.
-    Expert weights stay packed as the checkpoint stores them ({!Nx_quant.t}) and
-    are dequantised inside the forward pass ({!Mxfp4}).
+    Expert weights stay packed as the checkpoint stores them ({!Nx_quant.t}),
+    and {!Nx_quant.apply} multiplies by them.
 
     The model is written on the decode contract: {!hidden}, {!cached} and
     {!logits} are its forward passes. *)
@@ -122,9 +122,7 @@ val attention :
 
     One fold over the blocks: [hidden cfg p ids] is
     [fst (cached cfg p caches index ids)] over {!Kaun.Cache_index.whole}, which
-    reads and keeps nothing. A call of one token per sequence runs the experts
-    in their {!Moe.Gather} form and any other call in their {!Moe.Dense} form.
-*)
+    reads and keeps nothing. *)
 
 val block :
   config ->

@@ -186,10 +186,9 @@ let block cfg layer b cache index x =
     attention cfg layer b cache index (Rms_norm.apply ~eps b.attn_norm x)
   in
   let x = Nx.add x a in
-  let form = if Cache_index.seq index = 1 then Moe.Gather else Moe.Dense in
   let h = Rms_norm.apply ~eps b.ffn_norm x in
   let routing = Moe.route ~k:cfg.experts_per_token (Linear.apply b.router h) in
-  let experts = Moe.apply form ~limit:cfg.swiglu_limit b.moe routing h in
+  let experts = Moe.apply ~limit:cfg.swiglu_limit b.moe routing h in
   (Nx.add x experts, cache)
 
 module Cache = Attention.Cache.List
