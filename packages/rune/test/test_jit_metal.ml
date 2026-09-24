@@ -9,6 +9,15 @@
 open Windtrap
 open Rune_test_support.Support
 
+(* A virtual GPU, such as a CI runner's paravirtual device, runs every kernel
+   but offers no graph capability, so compiled calls replay kernel by kernel
+   there. Graph dispatch is checked only where the device has it. *)
+let metal_graphs =
+  lazy (Option.is_some (Tolk.Device.graph (Tolk.Device.get "METAL")))
+
+let graphs_used ~msg dispatched =
+  if Lazy.force metal_graphs then is_true ~msg dispatched
+
 let test_elementwise_on_metal () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let g = Rune.jit' ~device:"METAL" f in
@@ -51,7 +60,7 @@ let test_graph_batched_replay () =
       Array.init 8 (fun i -> float_of_int (7 - i));
       Array.make 8 (-0.25);
     ];
-  is_true ~msg:"every call dispatched a device graph"
+  graphs_used ~msg:"every call dispatched a device graph"
     (!Tolk.Realize.graph_launches - launches0 >= 3);
   let x = Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i)) in
   check_arr ~msg:"a resident output feeds the next call"
@@ -76,7 +85,7 @@ let test_graph_released_with_its_function () =
   for i = 1 to 4 do
     run (float_of_int i)
   done;
-  is_true ~msg:"the calls recorded device graphs"
+  graphs_used ~msg:"the calls recorded device graphs"
     (!Tolk.Realize.graph_launches - launches0 >= 8);
   Gc.full_major ();
   equal ~msg:"no recorded graph outlives its function" int base
@@ -113,7 +122,7 @@ let test_placed_weights_bind () =
       equal ~msg:"only the input is uploaded" int (Nx.nbytes x) up;
       check_arr ~msg:"matches eager" (to_arr (f w1 w2 x)) y)
     [ 0.5; -1.0; 2.0 ];
-  is_true ~msg:"the calls replayed as device graphs"
+  graphs_used ~msg:"the calls replayed as device graphs"
     (!Tolk.Realize.graph_launches - launches0 >= 3);
   check_arr ~msg:"a bound weight reads back" (to_arr w1) p1;
   Gc.full_major ();
