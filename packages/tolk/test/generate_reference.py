@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Generate a complete reference corpus without overwriting expectations.
+
+Each driver runs in a fresh workspace against an archived Git revision. The
+output manifest records that revision, the environment, and every output hash.
+Missing or unexpected files fail generation, even if a driver exits zero.
+
+Example:
+    python packages/tolk/test/generate_reference.py --revision HEAD \
+        --output _reference/baseline
+"""
+
+import argparse
+import hashlib
+import importlib.metadata
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[2]
+
+
+def git(reference, *args):
+    return subprocess.check_output(["git", "-C", str(reference), *args])
+
+
+def generate(reference, revision, output, suite):
+    revision = git(reference, "rev-parse", f"{revision}^{{commit}}").decode().strip()
+    drivers = []
+    if suite in ("all", "golden"):
+        drivers.extend(sorted(HERE.glob("golden/*/generate_expected.py")))
+    if suite in ("all", "parity"):
+        drivers.extend(sorted(HERE.glob("parity/*/main.py")))
+    if not drivers:
+        raise RuntimeError("no reference drivers found")
+    output.mkdir(parents=True, exist_ok=False)
+    # Do not inherit BEAM, DEV, renderer flags, or Python import overrides.
+    # Keep only OS paths/locales needed by the interpreter and native compilers.
+    env = {key: os.environ[key] for key in
+           ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SYSTEMROOT")
+           if key in os.environ}
+    env.update(NO_COLOR="1", NUM_CPU_THREADS="8", PYTHONHASHSEED="0",
+               PYTHONNOUSERSITE="1")
+    manifest = {
+        "revision": revision,
+        "python": sys.version,
+        "python_executable": sys.executable,
+        "python_packages": dict(sorted(
+            (dist.metadata["Name"], dist.version)
+            for dist in importlib.metadata.distributions()
+            if dist.metadata["Name"])),
+        "environment": {key: env[key] for key in
+                        ("NO_COLOR", "NUM_CPU_THREADS", "PYTHONHASHSEED",
+                         "PYTHONNOUSERSITE")},
+        "driver_sources": {},
+        "drivers": [],
+    }
+    failures = []
+    with tempfile.TemporaryDirectory(prefix="tolk-reference-") as tmp:
+        workspace = Path(tmp)
+        with tarfile.open(fileobj=io.BytesIO(git(reference, "archive", revision))) as archive:
+            archive.extractall(workspace / "_tinygrad", filter="data")
+        # Preserve driver-relative imports and clone paths, but never copy old
+        # expectations: a skipped case must not look like generated output.
+        for source in HERE.rglob("*.py"):
+            manifest["driver_sources"][source.relative_to(HERE).as_posix()] = (
+                hashlib.sha256(source.read_bytes()).hexdigest())
+            destination = workspace / source.relative_to(ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+        for driver in drivers:
+            name = driver.parent.relative_to(HERE).as_posix()
+            print(f"Generating {name}", flush=True)
+            staged = workspace / driver.relative_to(ROOT)
+            destination = output / name
+            destination.mkdir(parents=True)
+            expected = {p.name for p in driver.parent.glob("*.expected")}
+            if not expected:
+                failures.append(f"{name}: no expected-file inventory")
+            result = subprocess.run(
+                [sys.executable, str(staged)], cwd=workspace, env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
+            (destination / "generation.log").write_text(result.stdout)
+            actual = {p.name for p in staged.parent.glob("*.expected")}
+            missing, extra = sorted(expected - actual), sorted(actual - expected)
+            files = {}
+            for filename in sorted(actual):
+                source = staged.parent / filename
+                files[filename] = hashlib.sha256(source.read_bytes()).hexdigest()
+                shutil.copyfile(source, destination / filename)
+            manifest["drivers"].append({
+                "name": name, "exit_code": result.returncode,
+                "missing": missing, "unexpected": extra, "files": files,
+            })
+            if result.returncode or missing or extra:
+                failures.append(
+                    f"{name}: exit={result.returncode}, missing={missing}, unexpected={extra}"
+                )
+    manifest["complete"] = not failures
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if failures:
+        raise RuntimeError("incomplete reference corpus:\n" + "\n".join(failures))
+    count = sum(len(driver["files"]) for driver in manifest["drivers"])
+    print(f"Generated {count} files from {len(drivers)} drivers at {revision}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reference", type=Path, default=ROOT / "_tinygrad")
+    parser.add_argument("--revision", default="HEAD")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--suite", choices=("all", "golden", "parity"), default="all")
+    args = parser.parse_args()
+    generate(args.reference.resolve(), args.revision, args.output.resolve(), args.suite)
+
+
+if __name__ == "__main__":
+    main()

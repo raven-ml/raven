@@ -94,8 +94,8 @@ for _name, _ctor in [
 ]:
     try:
         ALL_BACKENDS[_name] = _ctor()
-    except Exception as e:  # noqa: BLE001 - platform-dependent runtime deps
-        print(f"WARNING: skipping {_name} renderer: {e}", file=sys.stderr)
+    except Exception as e:
+        raise RuntimeError(f"required {_name} renderer failed to initialize") from e
 
 GPU_BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k != "cpu"}
 

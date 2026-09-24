@@ -72,7 +72,7 @@ for _name, _ctor in [
     try:
         RENDERERS[_name] = _ctor()
     except Exception as e:
-        print(f"WARNING: skipping {_name} renderer: {e}")
+        raise RuntimeError(f"required {_name} renderer failed to initialize") from e
 
 
 def write_expected(name, content):
@@ -432,8 +432,7 @@ def main():
         targets = backends if backends else list(RENDERERS.keys())
         for backend_name in targets:
             if backend_name not in RENDERERS:
-                print(f"  SKIP {backend_name}_{case_name}: renderer not available")
-                continue
+                raise RuntimeError(f"required renderer {backend_name} is unavailable")
             renderer = RENDERERS[backend_name]
             snap_name = f"{backend_name}_{case_name}"
             try:
@@ -449,11 +448,10 @@ def main():
                 write_expected(snap_name, src)
                 total += 1
             except Exception as e:
-                print(f"  FAIL {snap_name}: {e}")
-                import traceback
+                raise RuntimeError(f"failed to generate {snap_name}") from e
 
-                traceback.print_exc()
-
+    if total == 0:
+        raise RuntimeError("no reference cases were generated")
     print(f"\nDone. Generated {total} .expected files in {OUT_DIR}")
 
 
