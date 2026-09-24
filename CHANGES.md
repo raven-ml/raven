@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Software `sin` uses integer shifts during large-angle reduction, avoiding
+  floating-point powers and conversions when selecting bits from the
+  reduction table.
+
 - Emulated `int64` and `uint64` comparisons split both operands before
   constructing word arithmetic, correctly distinguishing values with equal
   low words and different high words.

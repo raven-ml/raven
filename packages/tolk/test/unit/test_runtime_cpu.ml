@@ -430,11 +430,50 @@ let test_emulated_compact_float_storage () =
       equal ~msg:(Dtype.to_string dtype ^ " raw bitcast") string
         (Bytes.to_string (encode (bits @ [ 0 ]))) (Bytes.to_string (Device.Buffer.as_bytes bitcast))) cases
 
+let test_software_sin_large_arguments () =
+  let device = cpu "software-sin-large" in
+  let values = [| 0.0; 1.0; Float.pi; 39800.0; 1.0e6; 1.0e10; 2.0 ** 31.0;
+                  2.0 ** 32.0; 1.0e20; 1.0e30; 3.4028234663852886e38 |] in
+  let values = Array.append values (Array.map Float.neg values)
+      |> Array.map (fun x -> Int32.float_of_bits (Int32.bits_of_float x)) in
+  let count = Array.length values in
+  let param slot = U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int count)
+      ~addrspace:Dtype.Global () in
+  let dst = param 0 and src = param 1 in
+  let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Weak () in
+  let index ptr = U.index ~ptr ~idxs:[ range ] () in
+  let value = U.alu_unary ~op:Ops.Sin ~src:(U.load ~src:(index src) ()) in
+  let sink = U.sink [ U.end_ ~value:(U.store ~dst:(index dst) ~value ())
+                          ~ranges:[ range ] ] in
+  let lowered = Helpers.Context_var.with_context
+      [ Helpers.Context_var.B (Helpers.transcendental, 2) ]
+      (fun () -> Codegen_lower.lower (Device.renderer device) sink) in
+  is_false ~msg:"software sine has no native sine operation"
+    (List.exists (fun n -> U.op n = Ops.Sin) (U.toposort lowered));
+  let spec = Device.compile_program device ~name:"software_sin_large"
+      (Linearizer.linearize lowered) in
+  let input = Device.create_buffer ~size:count ~dtype:Dtype.float32 device in
+  let output = Device.create_buffer ~size:count ~dtype:Dtype.float32 device in
+  Device.Buffer.ensure_allocated input;
+  Device.Buffer.ensure_allocated output;
+  let bytes = Bytes.create (count * 4) in
+  Array.iteri (fun i x -> Bytes.set_int32_le bytes (i * 4) (Int32.bits_of_float x)) values;
+  Device.Buffer.copyin input bytes;
+  run_spec device spec [ output; input ];
+  let result = Device.Buffer.as_bytes output in
+  Array.iteri (fun i x ->
+      let expected = Float.sin x in
+      let actual = Int32.float_of_bits (Bytes.get_int32_le result (i * 4)) in
+      is_true ~msg:(Printf.sprintf "sin(%g): expected %.9g, got %.9g" x expected actual)
+        (Float.abs (expected -. actual) < 2.0e-6)) values
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "software sine handles large arguments and word boundaries"
+            test_software_sin_large_arguments;
           test "emulated compact-float storage preserves masks and bitcasts"
             test_emulated_compact_float_storage;
           test "emulated FP8 loads preserve all normal values" test_emulated_fp8_loads;

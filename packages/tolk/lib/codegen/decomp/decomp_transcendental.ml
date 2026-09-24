@@ -256,15 +256,15 @@ let payne_hanek_reduction d =
   let a = Array.init 4 (fun off -> take zero_u32 off 0) in
   let shl_lazy x y =
     Uop.cast ~dtype:uint32_dt
-      ~src:(Uop.alu_binary ~op:Ops.Mul
+      ~src:(Uop.alu_binary ~op:Ops.Shl
               ~lhs:(Uop.cast ~src:x ~dtype:uint64_dt)
-              ~rhs:(Uop.cast ~src:(pow2if y fdt) ~dtype:uint64_dt))
+              ~rhs:(Uop.cast ~src:y ~dtype:uint64_dt))
   in
   let shr_lazy x y =
     Uop.cast ~dtype:uint32_dt
-      ~src:(Uop.alu_binary ~op:Ops.Floordiv
+      ~src:(Uop.alu_binary ~op:Ops.Shr
               ~lhs:(Uop.cast ~src:x ~dtype:uint64_dt)
-              ~rhs:(Uop.cast ~src:(pow2if y fdt) ~dtype:uint64_dt))
+              ~rhs:(Uop.cast ~src:y ~dtype:uint64_dt))
   in
   let hi = Uop.alu_binary ~op:Ops.Or
     ~lhs:(shl_lazy a.(0) e) ~rhs:(shr_lazy a.(1) offset) in
