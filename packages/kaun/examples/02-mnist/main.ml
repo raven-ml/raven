@@ -14,24 +14,16 @@ let lr = 1e-3
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    let l1 = Linear.map f l1 in
-    let l2 = Linear.map f l2 in
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
     { l1; l2 }
-
-  let map2 f p q =
-    let l1 = Linear.map2 f p.l1 q.l1 in
-    let l2 = Linear.map2 f p.l2 q.l2 in
-    { l1; l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let mlp = Kaun.ptree (module Mlp)
+let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->

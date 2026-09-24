@@ -43,105 +43,22 @@ type role = Whole | Column | Row | Kv_heads
 module Params = struct
   type nonrec 'a t = 'a params
 
-  let map_block f b =
-    let ln1 = Layer_norm.map f b.ln1 in
-    let attn = Attention.map f b.attn in
-    let ln2 = Layer_norm.map f b.ln2 in
-    let fc = Linear.map f b.fc in
-    let proj = Linear.map f b.proj in
+  let walk_block c b =
+    let open Nx.Ptree.Walk in
+    let ln1 = field c "ln1" Layer_norm.walk b.ln1 in
+    let attn = field c "attn" Attention.walk b.attn in
+    let ln2 = field c "ln2" Layer_norm.walk b.ln2 in
+    let fc = field c "fc" Linear.walk b.fc in
+    let proj = field c "proj" Linear.walk b.proj in
     { ln1; attn; ln2; fc; proj }
 
-  let map f p =
-    let wte = Embedding.map f p.wte in
-    let wpe = Embedding.map f p.wpe in
-    let blocks = List.map (map_block f) p.blocks in
-    let ln_f = Layer_norm.map f p.ln_f in
+  let walk c p =
+    let open Nx.Ptree.Walk in
+    let wte = field c "wte" Embedding.walk p.wte in
+    let wpe = field c "wpe" Embedding.walk p.wpe in
+    let blocks = field c "blocks" (list walk_block) p.blocks in
+    let ln_f = field c "ln_f" Layer_norm.walk p.ln_f in
     { wte; wpe; blocks; ln_f }
-
-  let map2_block f b b' =
-    let ln1 = Layer_norm.map2 f b.ln1 b'.ln1 in
-    let attn = Attention.map2 f b.attn b'.attn in
-    let ln2 = Layer_norm.map2 f b.ln2 b'.ln2 in
-    let fc = Linear.map2 f b.fc b'.fc in
-    let proj = Linear.map2 f b.proj b'.proj in
-    { ln1; attn; ln2; fc; proj }
-
-  let map2 f p p' =
-    let wte = Embedding.map2 f p.wte p'.wte in
-    let wpe = Embedding.map2 f p.wpe p'.wpe in
-    let blocks = List.map2 (map2_block f) p.blocks p'.blocks in
-    let ln_f = Layer_norm.map2 f p.ln_f p'.ln_f in
-    { wte; wpe; blocks; ln_f }
-
-  let iter_block f b =
-    Layer_norm.iter f b.ln1;
-    Attention.iter f b.attn;
-    Layer_norm.iter f b.ln2;
-    Linear.iter f b.fc;
-    Linear.iter f b.proj
-
-  let iter f p =
-    Embedding.iter f p.wte;
-    Embedding.iter f p.wpe;
-    List.iter (iter_block f) p.blocks;
-    Layer_norm.iter f p.ln_f
-
-  let fold_block f acc b =
-    let acc = Layer_norm.fold (fun s -> f ("ln1." ^ s)) acc b.ln1 in
-    let acc = Attention.fold (fun s -> f ("attn." ^ s)) acc b.attn in
-    let acc = Layer_norm.fold (fun s -> f ("ln2." ^ s)) acc b.ln2 in
-    let acc = Linear.fold (fun s -> f ("fc." ^ s)) acc b.fc in
-    Linear.fold (fun s -> f ("proj." ^ s)) acc b.proj
-
-  let fold f acc p =
-    let acc = Embedding.fold (fun s -> f ("wte." ^ s)) acc p.wte in
-    let acc = Embedding.fold (fun s -> f ("wpe." ^ s)) acc p.wpe in
-    let _, acc =
-      List.fold_left
-        (fun (i, acc) b ->
-          let pre = Printf.sprintf "blocks.%d." i in
-          (i + 1, fold_block (fun s -> f (pre ^ s)) acc b))
-        (0, acc) p.blocks
-    in
-    Layer_norm.fold (fun s -> f ("ln_f." ^ s)) acc p.ln_f
-
-  let fold2_block f acc b b' =
-    let acc = Layer_norm.fold2 (fun s -> f ("ln1." ^ s)) acc b.ln1 b'.ln1 in
-    let acc = Attention.fold2 (fun s -> f ("attn." ^ s)) acc b.attn b'.attn in
-    let acc = Layer_norm.fold2 (fun s -> f ("ln2." ^ s)) acc b.ln2 b'.ln2 in
-    let acc = Linear.fold2 (fun s -> f ("fc." ^ s)) acc b.fc b'.fc in
-    Linear.fold2 (fun s -> f ("proj." ^ s)) acc b.proj b'.proj
-
-  let fold2 f acc p p' =
-    let acc = Embedding.fold2 (fun s -> f ("wte." ^ s)) acc p.wte p'.wte in
-    let acc = Embedding.fold2 (fun s -> f ("wpe." ^ s)) acc p.wpe p'.wpe in
-    let _, acc =
-      List.fold_left2
-        (fun (i, acc) b b' ->
-          let pre = Printf.sprintf "blocks.%d." i in
-          (i + 1, fold2_block (fun s -> f (pre ^ s)) acc b b'))
-        (0, acc) p.blocks p'.blocks
-    in
-    Layer_norm.fold2 (fun s -> f ("ln_f." ^ s)) acc p.ln_f p'.ln_f
-
-  let names_block i b =
-    let pre field s = Printf.sprintf "blocks.%d.%s.%s" i field s in
-    {
-      ln1 = Layer_norm.map (pre "ln1") (Layer_norm.names b.ln1);
-      attn = Attention.map (pre "attn") (Attention.names b.attn);
-      ln2 = Layer_norm.map (pre "ln2") (Layer_norm.names b.ln2);
-      fc = Linear.map (pre "fc") (Linear.names b.fc);
-      proj = Linear.map (pre "proj") (Linear.names b.proj);
-    }
-
-  let names p =
-    let pre field s = field ^ "." ^ s in
-    {
-      wte = Embedding.map (pre "wte") (Embedding.names p.wte);
-      wpe = Embedding.map (pre "wpe") (Embedding.names p.wpe);
-      blocks = List.mapi names_block p.blocks;
-      ln_f = Layer_norm.map (pre "ln_f") (Layer_norm.names p.ln_f);
-    }
 end
 
 let make cfg =
@@ -201,14 +118,14 @@ let embed p ids pos =
 
 (* One fold over the blocks, which threads the caches along the index. *)
 
-module Cache = Attention.Cache.List
-
 let cache ?placement cfg ~slots dtype =
-  let place x =
+  let place _ x =
     match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
   in
   List.init cfg.n_layer (fun _ ->
-      Attention.Cache.map place
+      Nx.Ptree.Payload.map
+        (module Attention.Cache)
+        place
         (Attention.Cache.make ~slots ~kv_heads:cfg.n_head
            ~head_dim:(head_dim cfg) dtype))
 
@@ -258,11 +175,10 @@ let of_hf ?placement cfg dt ckpt =
   let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
   let d = cfg.n_embd in
   let layer_norm name =
-    Layer_norm.map whole
-      {
-        Layer_norm.gamma = float ~shape:[| d |] (name ^ ".weight");
-        beta = float ~shape:[| d |] (name ^ ".bias");
-      }
+    {
+      Layer_norm.gamma = whole (float ~shape:[| d |] (name ^ ".weight"));
+      beta = whole (float ~shape:[| d |] (name ^ ".bias"));
+    }
   in
   let stored ~inputs ~outputs name =
     {
@@ -327,7 +243,7 @@ let dtype_of_string = function
   | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
 
 let stored_dtype ckpt =
-  let (Rune.Ptree.P table) = Checkpoint.get "wte.weight" ckpt in
+  let (Nx.P table) = Checkpoint.get "wte.weight" ckpt in
   match Nx.dtype table with
   | Nx.Float16 -> Dtype Nx.float16
   | Nx.BFloat16 -> Dtype Nx.bfloat16

@@ -22,39 +22,12 @@ let lr = 3e-3
 module Cnn = struct
   type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; fc : 'a Linear.t }
 
-  let map f { c1; c2; fc } =
-    let c1 = Conv.map f c1 in
-    let c2 = Conv.map f c2 in
-    let fc = Linear.map f fc in
+  let walk c { c1; c2; fc } =
+    let open Nx.Ptree.Walk in
+    let c1 = field c "c1" Conv.walk c1 in
+    let c2 = field c "c2" Conv.walk c2 in
+    let fc = field c "fc" Linear.walk fc in
     { c1; c2; fc }
-
-  let map2 f p q =
-    let c1 = Conv.map2 f p.c1 q.c1 in
-    let c2 = Conv.map2 f p.c2 q.c2 in
-    let fc = Linear.map2 f p.fc q.fc in
-    { c1; c2; fc }
-
-  let iter f { c1; c2; fc } =
-    Conv.iter f c1;
-    Conv.iter f c2;
-    Linear.iter f fc
-
-  let fold f acc { c1; c2; fc } =
-    let acc = Conv.fold (fun p -> f ("c1." ^ p)) acc c1 in
-    let acc = Conv.fold (fun p -> f ("c2." ^ p)) acc c2 in
-    Linear.fold (fun p -> f ("fc." ^ p)) acc fc
-
-  let fold2 f acc p q =
-    let acc = Conv.fold2 (fun s -> f ("c1." ^ s)) acc p.c1 q.c1 in
-    let acc = Conv.fold2 (fun s -> f ("c2." ^ s)) acc p.c2 q.c2 in
-    Linear.fold2 (fun s -> f ("fc." ^ s)) acc p.fc q.fc
-
-  let names p =
-    {
-      c1 = Conv.map (( ^ ) "c1.") (Conv.names p.c1);
-      c2 = Conv.map (( ^ ) "c2.") (Conv.names p.c2);
-      fc = Linear.map (( ^ ) "fc.") (Linear.names p.fc);
-    }
 
   let init () =
     {
@@ -74,39 +47,26 @@ module Cnn = struct
     |> Linear.apply p.fc
 end
 
-let cnn = Kaun.ptree (module Cnn)
+let cnn = Nx.Ptree.instantiate (module Cnn)
 
 let accuracy params (x, y) =
   Metric.accuracy (Cnn.apply params ~training:false x) y
 
-let save_training_state path
-    (params, (ostate : Nx.float32_t Cnn.t Vega.adam_state)) =
+let save_training_state path (params, ostate) =
   Checkpoint.save path
     (Checkpoint.concat
        [
-         Checkpoint.of_params (module Cnn) ~prefix:"model" params;
-         Checkpoint.of_params (module Cnn) ~prefix:"optim.mu" ostate.mu;
-         Checkpoint.of_params (module Cnn) ~prefix:"optim.nu" ostate.nu;
-         Checkpoint.of_tensor "optim.step" ostate.step;
+         Checkpoint.of_value ~prefix:"model" cnn params;
+         Checkpoint.of_value ~prefix:"optim" (Vega.adam_ptree cnn) ostate;
        ])
 
 let load_training_state path =
   let ckpt = Checkpoint.load path in
   let like = Cnn.init () in
-  let like_ostate = Vega.adamw_init cnn like in
-  let params = Checkpoint.to_params (module Cnn) ~prefix:"model" ~like ckpt in
+  let params = Checkpoint.to_value ~prefix:"model" cnn ~like ckpt in
   let ostate =
-    {
-      Vega.mu =
-        Checkpoint.to_params
-          (module Cnn)
-          ~prefix:"optim.mu" ~like:like_ostate.mu ckpt;
-      nu =
-        Checkpoint.to_params
-          (module Cnn)
-          ~prefix:"optim.nu" ~like:like_ostate.nu ckpt;
-      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
-    }
+    Checkpoint.to_value ~prefix:"optim" (Vega.adam_ptree cnn)
+      ~like:(Vega.adamw_init cnn like) ckpt
   in
   (params, ostate)
 

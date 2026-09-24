@@ -2595,6 +2595,10 @@ thread.
 
 ### Kaun
 
+- The GPT-2, Llama and gpt-oss examples' structures (`Params`, and gpt-oss's
+  `Block` and `Moe`) are one `walk` each; their `Cache` modules and
+  `Gpt_oss.map`, `ptree` and `block_ptree` go. `generate` takes one `?device`,
+  for which the step compiles and on which the caches are placed.
 - **Breaking:** a layer's structure, and `Attention.Cache`'s, is its one `walk`,
   which walks an `Nx.Ptree.Walk` cursor. `Kaun.ptree` is `Nx.Ptree.instantiate`
   and `Attention.Cache.List` is `Nx.Ptree.list`.

@@ -69,9 +69,7 @@ let floats dt ~scale shape =
     Nx.contiguous (Nx.slice [ R (0, rows) ] tiled)
 
 let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
-  let placement =
-    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
-  in
+  let placement = Option.map Nx.Placement.device device in
   let place x = match placement with None -> x | Some p -> Nx.place p x in
   let f ~scale shape = place (floats dt ~scale shape) in
   let linear ?(bias = true) i o =
@@ -127,7 +125,7 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
 
 let run ?device c params dt ~tokens ~steps ~context =
   let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
   in
   let step = Layer_loop.greedy ?device c params in
   let timed (caches, index, ids) =
@@ -190,7 +188,7 @@ let () =
      [--context N] [--dtype DT] [--small-vocab]";
   let c = cfg !layers in
   let c = if !skip_tables then { c with Gpt_oss.vocab_size = 1024 } else c in
-  let device = if !jit = "" then None else Some !jit in
+  let device = if !jit = "" then None else Some (Rune.device !jit) in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
   let t0 = Unix.gettimeofday () in
   let p = params ?device c dt ~skip_tables:!skip_tables in

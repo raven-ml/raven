@@ -45,119 +45,33 @@ type 'a params = {
 type t = Nx.float32_t params
 type role = Whole | Column | Row | Experts | Kv_heads
 
-(* Traversals *)
+(* Structures *)
 
-let map_block f b =
-  let attn_norm = Rms_norm.map f b.attn_norm in
-  let attn = Attention.map f b.attn in
-  let sinks = f b.sinks in
-  let ffn_norm = Rms_norm.map f b.ffn_norm in
-  let router = Linear.map f b.router in
-  let moe = Moe.map f b.moe in
-  { attn_norm; attn; sinks; ffn_norm; router; moe }
+module Block = struct
+  type nonrec 'a t = 'a block
 
-let map f p =
-  let tok = Embedding.map f p.tok in
-  let blocks = List.map (map_block f) p.blocks in
-  let norm = Rms_norm.map f p.norm in
-  let head = Option.map (Linear.map f) p.head in
-  { tok; blocks; norm; head }
+  let walk c b =
+    let open Nx.Ptree.Walk in
+    let attn_norm = field c "attn_norm" Rms_norm.walk b.attn_norm in
+    let attn = field c "attn" Attention.walk b.attn in
+    let sinks = field c "sinks" leaf b.sinks in
+    let ffn_norm = field c "ffn_norm" Rms_norm.walk b.ffn_norm in
+    let router = field c "router" Linear.walk b.router in
+    let moe = field c "moe" Moe.walk b.moe in
+    { attn_norm; attn; sinks; ffn_norm; router; moe }
+end
 
-let block_ptree (type b) () :
-    (module Nx.Ptree.S with type t = (float, b) Nx.t block) =
-  (module struct
-    type t = (float, b) Nx.t block
+module Params = struct
+  type nonrec 'a t = 'a params
 
-    let map_weight (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) = function
-      | Moe.Float w -> Moe.Float (f w)
-      | Moe.Quant w -> Moe.Quant (Nx_quant.map f w)
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) b =
-      let attn_norm = Rms_norm.map f b.attn_norm in
-      let attn = Attention.map f b.attn in
-      let sinks = f b.sinks in
-      let ffn_norm = Rms_norm.map f b.ffn_norm in
-      let router = Linear.map f b.router in
-      let gate_up = map_weight f b.moe.Moe.gate_up in
-      let gate_up_bias = f b.moe.gate_up_bias in
-      let down = map_weight f b.moe.down in
-      let down_bias = f b.moe.down_bias in
-      let moe = { Moe.gate_up; gate_up_bias; down; down_bias } in
-      { attn_norm; attn; sinks; ffn_norm; router; moe }
-
-    let map2_weight (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
-        w w' =
-      match (w, w') with
-      | Moe.Float w, Moe.Float w' -> Moe.Float (f w w')
-      | Moe.Quant w, Moe.Quant w' -> Moe.Quant (Nx_quant.map2 f w w')
-      | _ ->
-          invalid_arg
-            "Gpt_oss.block_ptree: one block packs its experts, one does not"
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) b b' =
-      let attn_norm = Rms_norm.map2 f b.attn_norm b'.attn_norm in
-      let attn = Attention.map2 f b.attn b'.attn in
-      let sinks = f b.sinks b'.sinks in
-      let ffn_norm = Rms_norm.map2 f b.ffn_norm b'.ffn_norm in
-      let router = Linear.map2 f b.router b'.router in
-      let m = b.moe and m' = b'.moe in
-      let gate_up = map2_weight f m.Moe.gate_up m'.Moe.gate_up in
-      let gate_up_bias = f m.gate_up_bias m'.gate_up_bias in
-      let down = map2_weight f m.down m'.down in
-      let down_bias = f m.down_bias m'.down_bias in
-      let moe = { Moe.gate_up; gate_up_bias; down; down_bias } in
-      { attn_norm; attn; sinks; ffn_norm; router; moe }
-
-    let iter_weight (f : 'a 'c. ('a, 'c) Nx.t -> unit) = function
-      | Moe.Float w -> f w
-      | Moe.Quant w -> Nx_quant.iter f w
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) b =
-      Rms_norm.iter f b.attn_norm;
-      Attention.iter f b.attn;
-      f b.sinks;
-      Rms_norm.iter f b.ffn_norm;
-      Linear.iter f b.router;
-      iter_weight f b.moe.Moe.gate_up;
-      f b.moe.gate_up_bias;
-      iter_weight f b.moe.down;
-      f b.moe.down_bias
-  end)
-
-let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
-    =
-  let module B =
-    (val block_ptree () : Nx.Ptree.S with type t = (float, b) Nx.t block)
-  in
-  (module struct
-    type t = (float, b) Nx.t params
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p =
-      let tok = Embedding.map f p.tok in
-      let blocks = List.map (B.map f) p.blocks in
-      let norm = Rms_norm.map f p.norm in
-      let head = Option.map (Linear.map f) p.head in
-      { tok; blocks; norm; head }
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p p' =
-      let tok = Embedding.map2 f p.tok p'.tok in
-      let blocks = List.map2 (B.map2 f) p.blocks p'.blocks in
-      let norm = Rms_norm.map2 f p.norm p'.norm in
-      let head =
-        match (p.head, p'.head) with
-        | None, None -> None
-        | Some l, Some l' -> Some (Linear.map2 f l l')
-        | _ ->
-            invalid_arg "Gpt_oss.ptree: one model ties its head, one does not"
-      in
-      { tok; blocks; norm; head }
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) p =
-      Embedding.iter f p.tok;
-      List.iter (B.iter f) p.blocks;
-      Rms_norm.iter f p.norm;
-      Option.iter (Linear.iter f) p.head
-  end)
+  let walk c p =
+    let open Nx.Ptree.Walk in
+    let tok = field c "tok" Embedding.walk p.tok in
+    let blocks = field c "blocks" (list Block.walk) p.blocks in
+    let norm = field c "norm" Rms_norm.walk p.norm in
+    let head = field c "head" (option Linear.walk) p.head in
+    { tok; blocks; norm; head }
+end
 
 (* Attention: kaun's cached layer with sinks and YaRN's score scale. *)
 
@@ -191,15 +105,15 @@ let block cfg layer b cache index x =
   let experts = Moe.apply ~limit:cfg.swiglu_limit b.moe routing h in
   (Nx.add x experts, cache)
 
-module Cache = Attention.Cache.List
-
 let cache ?placement cfg ~slots dtype =
-  let place x =
+  let place _ x =
     match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
   in
   List.map
     (fun _ ->
-      Attention.Cache.map place
+      Nx.Ptree.Payload.map
+        (module Attention.Cache)
+        place
         (Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
            ~head_dim:cfg.head_dim dtype))
     cfg.layers
@@ -426,7 +340,7 @@ let dtype_of_string = function
   | d -> failwith ("--dtype must be float32 or bfloat16, got " ^ d)
 
 let stored_dtype ckpt =
-  let (Rune.Ptree.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
+  let (Nx.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
   match Nx.dtype table with
   | Nx.BFloat16 -> Dtype Nx.bfloat16
   | Nx.Float32 -> Dtype Nx.float32

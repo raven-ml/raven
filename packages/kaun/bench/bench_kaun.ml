@@ -27,33 +27,19 @@ let d_h2 = 128
 let d_out = 10
 let lr = 1e-3
 
-type mlp = {
-  l1 : Nx.float32_t Kaun.Linear.t;
-  l2 : Nx.float32_t Kaun.Linear.t;
-  l3 : Nx.float32_t Kaun.Linear.t;
-}
-
 module Mlp = struct
-  type t = mlp
+  type 'a t = {
+    l1 : 'a Kaun.Linear.t;
+    l2 : 'a Kaun.Linear.t;
+    l3 : 'a Kaun.Linear.t;
+  }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2; l3 } =
-    {
-      l1 = Kaun.Linear.map f l1;
-      l2 = Kaun.Linear.map f l2;
-      l3 = Kaun.Linear.map f l3;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      l1 = Kaun.Linear.map2 f p.l1 q.l1;
-      l2 = Kaun.Linear.map2 f p.l2 q.l2;
-      l3 = Kaun.Linear.map2 f p.l3 q.l3;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2; l3 } =
-    Kaun.Linear.iter f l1;
-    Kaun.Linear.iter f l2;
-    Kaun.Linear.iter f l3
+  let walk c { l1; l2; l3 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Kaun.Linear.walk l1 in
+    let l2 = field c "l2" Kaun.Linear.walk l2 in
+    let l3 = field c "l3" Kaun.Linear.walk l3 in
+    { l1; l2; l3 }
 
   let apply p x =
     let open Kaun in
@@ -69,33 +55,19 @@ let cnn_batch = 32
 let cnn_img = 28
 let cnn_feats = 16 * 5 * 5
 
-type cnn = {
-  c1 : Nx.float32_t Kaun.Conv.t;
-  c2 : Nx.float32_t Kaun.Conv.t;
-  head : Nx.float32_t Kaun.Linear.t;
-}
-
 module Cnn = struct
-  type t = cnn
+  type 'a t = {
+    c1 : 'a Kaun.Conv.t;
+    c2 : 'a Kaun.Conv.t;
+    head : 'a Kaun.Linear.t;
+  }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { c1; c2; head } =
-    {
-      c1 = Kaun.Conv.map f c1;
-      c2 = Kaun.Conv.map f c2;
-      head = Kaun.Linear.map f head;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      c1 = Kaun.Conv.map2 f p.c1 q.c1;
-      c2 = Kaun.Conv.map2 f p.c2 q.c2;
-      head = Kaun.Linear.map2 f p.head q.head;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { c1; c2; head } =
-    Kaun.Conv.iter f c1;
-    Kaun.Conv.iter f c2;
-    Kaun.Linear.iter f head
+  let walk c { c1; c2; head } =
+    let open Nx.Ptree.Walk in
+    let c1 = field c "c1" Kaun.Conv.walk c1 in
+    let c2 = field c "c2" Kaun.Conv.walk c2 in
+    let head = field c "head" Kaun.Linear.walk head in
+    { c1; c2; head }
 
   let apply p x =
     let open Kaun in
@@ -111,6 +83,9 @@ let one_hot n =
   in
   Nx.cast Nx.float32 (Nx.one_hot ~num_classes:d_out labels)
 
+let mlp = Nx.Ptree.instantiate (module Mlp)
+let cnn = Nx.Ptree.instantiate (module Cnn)
+
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* MLP: inputs, parameters, and both optimizer states. *)
@@ -118,25 +93,25 @@ let () =
   let y = one_hot batch in
   let params =
     {
-      l1 = Kaun.Linear.init ~inputs:d_in ~outputs:d_h1;
+      Mlp.l1 = Kaun.Linear.init ~inputs:d_in ~outputs:d_h1;
       l2 = Kaun.Linear.init ~inputs:d_h1 ~outputs:d_h2;
       l3 = Kaun.Linear.init ~inputs:d_h2 ~outputs:d_out;
     }
   in
   let loss p = Kaun.Loss.softmax_cross_entropy (Mlp.apply p x) y in
-  let adam_state = Vega.adam_init (module Mlp) params in
-  let sgd_state = Vega.sgd_init (module Mlp) params in
+  let adam_state = Vega.adam_init mlp params in
+  let sgd_state = Vega.sgd_init mlp params in
   let adam_step () =
-    let l, grads = Rune.value_and_grad (module Mlp) loss params in
+    let l, grads = Rune.value_and_grad mlp loss params in
     let params', state' =
-      Vega.adam_step (module Mlp) ~lr:(Vega.lr lr) adam_state ~params ~grads
+      Vega.adam_step mlp ~lr:(Vega.lr lr) adam_state ~params ~grads
     in
     (l, params', state')
   in
   let sgd_step () =
-    let l, grads = Rune.value_and_grad (module Mlp) loss params in
+    let l, grads = Rune.value_and_grad mlp loss params in
     let params', state' =
-      Vega.sgd_step (module Mlp) ~lr:(Vega.lr lr) sgd_state ~params ~grads
+      Vega.sgd_step mlp ~lr:(Vega.lr lr) sgd_state ~params ~grads
     in
     (l, params', state')
   in
@@ -146,19 +121,17 @@ let () =
   let cy = one_hot cnn_batch in
   let cnn_params =
     {
-      c1 = Kaun.Conv.init ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
+      Cnn.c1 = Kaun.Conv.init ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
       c2 = Kaun.Conv.init ~in_channels:8 ~out_channels:16 ~kernel_size:(3, 3);
       head = Kaun.Linear.init ~inputs:cnn_feats ~outputs:d_out;
     }
   in
   let cnn_loss p = Kaun.Loss.softmax_cross_entropy (Cnn.apply p cx) cy in
-  let cnn_state = Vega.adam_init (module Cnn) cnn_params in
+  let cnn_state = Vega.adam_init cnn cnn_params in
   let cnn_step () =
-    let l, grads = Rune.value_and_grad (module Cnn) cnn_loss cnn_params in
+    let l, grads = Rune.value_and_grad cnn cnn_loss cnn_params in
     let params', state' =
-      Vega.adam_step
-        (module Cnn)
-        ~lr:(Vega.lr lr) cnn_state ~params:cnn_params ~grads
+      Vega.adam_step cnn ~lr:(Vega.lr lr) cnn_state ~params:cnn_params ~grads
     in
     (l, params', state')
   in
@@ -194,6 +167,8 @@ let () =
         [
           Thumper.bench "linear fwd" (fun () -> Kaun.Linear.apply lin lx);
           Thumper.bench "linear fwd+bwd" (fun () ->
-              Rune.value_and_grad (Kaun.ptree (module Kaun.Linear)) lin_loss lin);
+              Rune.value_and_grad
+                (Nx.Ptree.instantiate (module Kaun.Linear))
+                lin_loss lin);
         ];
     ]

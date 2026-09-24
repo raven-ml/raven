@@ -33,9 +33,9 @@ let () =
     if !dtype = "" then Llama.stored_dtype ckpt
     else Llama.dtype_of_string !dtype
   in
-  let device = if !device = "" then None else Some !device in
+  let device = if !device = "" then None else Some (Rune.device !device) in
   let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
   in
   let params = Llama.of_hf ?placement cfg dt ckpt in
   let imported = since () in
@@ -47,7 +47,7 @@ let () =
         Llama.logits cfg params
           (Nx.slice [ A; I 7 ] (Llama.hidden cfg params ids))
       in
-      let logits = Rune.jit' ~device forward ids in
+      let logits = Rune.jit' ~devices:[ device ] forward ids in
       ignore (Nx.item [ 0; 0 ] (Nx.cast Nx.float32 logits));
       Printf.printf ", first compiled call %.3f s" (since ()))
     device;

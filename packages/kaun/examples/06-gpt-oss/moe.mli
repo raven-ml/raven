@@ -34,10 +34,13 @@ type 'a t = {
 }
 (** The type for the experts' parameters over payload ['a]. *)
 
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to every float leaf, in the order
-    [gate_up], [gate_up_bias], [down], [down_bias]; packed weights are kept.
-    [map (Nx.cast dt) p] converts precision. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parts at [gate_up], [gate_up_bias], [down] and
+    [down_bias], in that order. A weight reports its case at its path, ["float"]
+    or ["quant"]: a float weight is a position of the parameter, and a packed
+    one is walked by {!Nx_quant.walk}, its codes and scales fixed tensors. So
+    [Nx.Ptree.cast (module Moe) dt p] converts precision and keeps the packed
+    weights. *)
 
 (** {1:forward Forward} *)
 

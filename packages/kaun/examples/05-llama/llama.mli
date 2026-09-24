@@ -8,9 +8,9 @@
     A pre-norm decoder: RMS normalization, grouped-query attention with rotary
     positions, a SwiGLU feed-forward. The model is a plain record of {!Kaun}
     layers written on the decode contract: {!hidden}, {!cached} and {!logits}
-    are its forward passes and {!Params} its checkpoint plumbing. {!of_hf}
-    adapts the HuggingFace checkpoint — [torch.nn.Linear] orientation and naming
-    — onto {!Params}' names, and {!from_pretrained} runs the whole pipeline. *)
+    are its forward passes and {!Params} its structure. {!of_hf} adapts the
+    HuggingFace checkpoint — [torch.nn.Linear] orientation and naming — onto
+    {!Params}' names, and {!from_pretrained} runs the whole pipeline. *)
 
 type config = {
   vocab_size : int;
@@ -46,15 +46,17 @@ type 'a params = {
 
 type t = Nx.float32_t params
 
-module Params : Nx.Ptree.Uniform with type 'a t = 'a params
-(** The parameter traversals. Leaves are named [tok.table], [blocks.0.attn.q.w],
-    [norm.gamma], [head.w], ... [Params.map (Nx.cast dt) p] converts precision;
-    the layers keep their float32 islands whatever [dt]. *)
+module Params : Nx.Ptree.S with type 'a t = 'a params
+(** The parameters' structure: [Nx.Ptree.instantiate (module Params)] is what
+    the transformations, the optimisers and {!Kaun.Checkpoint.of_value} take.
+    Leaves are at [tok.table], [blocks.0.attn.q.w], [norm.gamma], [head.w], ...,
+    the names a checkpoint gives them. [Nx.Ptree.cast (module Params) dt p]
+    converts precision; the layers keep their float32 islands whatever [dt]. *)
 
 val make : config -> t
 (** [make cfg] is a zero-initialized float32 model: the starting point of
     training from scratch, and the [~like] template that
-    {!Kaun.Checkpoint.to_params} needs to read back a checkpoint this library
+    {!Kaun.Checkpoint.to_value} needs to read back a checkpoint this library
     saved. *)
 
 (** {1:placement Placement}
@@ -90,17 +92,16 @@ val hidden :
     [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; dim |]]. Every
     token attends to the tokens before it. *)
 
-module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
-(** Decoding state: one key-value cache per block, in block order. *)
-
 val cache :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   slots:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t Cache.t
-(** [cache cfg ~slots dtype] is an empty decoding state of [slots] slots per
-    block, at the parameters' dtype.
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list
+(** [cache cfg ~slots dtype] is an empty decoding state: one key-value cache per
+    block, in block order, each of [slots] slots, at the parameters' dtype. Its
+    structure is
+    [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))].
 
     With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
     a compiled step finds the caches where the model is from its first call. *)
@@ -108,10 +109,10 @@ val cache :
 val cached :
   config ->
   (float, 'b) Nx.t params ->
-  (float, 'b) Nx.t Cache.t ->
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
+  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids],
     which sit where [index] says and attend through [caches], and the caches
     with their keys and values written. See {!Kaun.Attention.cached}. *)

@@ -6,9 +6,9 @@
 (* Character-level LSTM language model: the Raven side of the comparison.
 
    Written with the user-facing stack only — [Kaun.Embedding], [Kaun.Linear],
-   [Kaun.Loss], [Vega.sgd_step], [Rune.value_and_grad], [Rune.jit2] — and
-   loading the weights the PyTorch side generated, so both programs train the
-   same model from the same numbers on the same batches.
+   [Kaun.Loss], [Vega.sgd_step], [Rune.value_and_grad], [Rune.jit] — and loading
+   the weights the PyTorch side generated, so both programs train the same model
+   from the same numbers on the same batches.
 
    Kaun has no recurrent layer, so the cell is written out: one linear map of
    the whole input sequence, then a loop over time applying the recurrent map
@@ -74,36 +74,19 @@ module Lstm = struct
     head : 'a Kaun.Linear.t;  (** [hidden; vocab] *)
   }
 
-  let map f p =
-    {
-      emb = Kaun.Embedding.map f p.emb;
-      ih = Kaun.Linear.map f p.ih;
-      hh = Kaun.Linear.map f p.hh;
-      head = Kaun.Linear.map f p.head;
-    }
-
-  let map2 f p q =
-    {
-      emb = Kaun.Embedding.map2 f p.emb q.emb;
-      ih = Kaun.Linear.map2 f p.ih q.ih;
-      hh = Kaun.Linear.map2 f p.hh q.hh;
-      head = Kaun.Linear.map2 f p.head q.head;
-    }
-
-  let iter f p =
-    Kaun.Embedding.iter f p.emb;
-    Kaun.Linear.iter f p.ih;
-    Kaun.Linear.iter f p.hh;
-    Kaun.Linear.iter f p.head
+  let walk c p =
+    let open Nx.Ptree.Walk in
+    let emb = field c "emb" Kaun.Embedding.walk p.emb in
+    let ih = field c "ih" Kaun.Linear.walk p.ih in
+    let hh = field c "hh" Kaun.Linear.walk p.hh in
+    let head = field c "head" Kaun.Linear.walk p.head in
+    { emb; ih; hh; head }
 end
 
-(* The parameter tree the transformations walk, and the momentum state over it,
-   itself a parameter tree so it rides the compiled step's records. *)
+(* The structure the transformations walk, and the momentum state over it. *)
 
-module Model =
-  (val Kaun.ptree (module Lstm) : Nx.Ptree.S with type t = Nx.float32_t Lstm.t)
-
-module Opt = Vega.Sgd_state (Model)
+let model = Nx.Ptree.instantiate (module Lstm)
+let state = Nx.Ptree.pair model (Vega.sgd_ptree model)
 
 (* Logits for a whole [batch; seq_len] id grid, as [batch; seq_len; vocab].
 
@@ -140,71 +123,18 @@ let loss spec p inputs targets =
 
 (* Training step
 
-   Parameters, the optimizer state and the step's batch all ride the input
-   structure: they change every step, and a jitted function's inputs are exactly
-   what may change between calls. The loss leaves with the updated state so a
-   compiled step reports the value it trained on without a second traversal. *)
+   The step's batch is read and the parameters and the optimizer state are
+   consumed: a compiled step writes the updated state over the storage of the
+   one it was given. The loss comes back beside the updated state. *)
 
-module Step_in = struct
-  type t = {
-    params : Model.t;
-    opt : Opt.t;
-    inputs : Nx.int32_t;
-    targets : Nx.int32_t;
-  }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    {
-      params = Model.map f s.params;
-      opt = Opt.map f s.opt;
-      inputs = f s.inputs;
-      targets = f s.targets;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      params = Model.map2 f a.params b.params;
-      opt = Opt.map2 f a.opt b.opt;
-      inputs = f a.inputs b.inputs;
-      targets = f a.targets b.targets;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
-    Model.iter f s.params;
-    Opt.iter f s.opt;
-    f s.inputs;
-    f s.targets
-end
-
-module Step_out = struct
-  type t = { params : Model.t; opt : Opt.t; loss : Nx.float32_t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    { params = Model.map f s.params; opt = Opt.map f s.opt; loss = f s.loss }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      params = Model.map2 f a.params b.params;
-      opt = Opt.map2 f a.opt b.opt;
-      loss = f a.loss b.loss;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
-    Model.iter f s.params;
-    Opt.iter f s.opt;
-    f s.loss
-end
-
-let train_step spec (s : Step_in.t) =
-  let objective p = loss spec p s.inputs s.targets in
-  let l, grads = Rune.value_and_grad (module Model) objective s.params in
-  let params, opt =
-    Vega.sgd_step
-      (module Model)
-      ~lr:(Vega.lr spec.lr) ~momentum:spec.momentum s.opt ~params:s.params
-      ~grads
+let train_step spec inputs targets (params, opt) =
+  let objective p = loss spec p inputs targets in
+  let l, grads = Rune.value_and_grad model objective params in
+  let state =
+    Vega.sgd_step model ~lr:(Vega.lr spec.lr) ~momentum:spec.momentum opt
+      ~params ~grads
   in
-  { Step_out.params; opt; loss = l }
+  (l, state)
 
 (* Fixture
 
@@ -226,68 +156,25 @@ module Weights = struct
     weight_ih : 'a;  (** [4 * hidden; embed] *)
   }
 
-  let map f x =
-    {
-      emb_weight = f x.emb_weight;
-      head_bias = f x.head_bias;
-      head_weight = f x.head_weight;
-      bias_hh = f x.bias_hh;
-      bias_ih = f x.bias_ih;
-      weight_hh = f x.weight_hh;
-      weight_ih = f x.weight_ih;
-    }
-
-  let map2 f x y =
-    {
-      emb_weight = f x.emb_weight y.emb_weight;
-      head_bias = f x.head_bias y.head_bias;
-      head_weight = f x.head_weight y.head_weight;
-      bias_hh = f x.bias_hh y.bias_hh;
-      bias_ih = f x.bias_ih y.bias_ih;
-      weight_hh = f x.weight_hh y.weight_hh;
-      weight_ih = f x.weight_ih y.weight_ih;
-    }
-
-  let iter f x =
-    f x.emb_weight;
-    f x.head_bias;
-    f x.head_weight;
-    f x.bias_hh;
-    f x.bias_ih;
-    f x.weight_hh;
-    f x.weight_ih
-
   (* Leaf paths are the state dict's own names. *)
-  let names _ =
+  let walk c x =
+    let open Nx.Ptree.Walk in
+    let emb_weight = field c "emb.weight" leaf x.emb_weight in
+    let head_bias = field c "head.bias" leaf x.head_bias in
+    let head_weight = field c "head.weight" leaf x.head_weight in
+    let bias_hh = field c "lstm.bias_hh_l0" leaf x.bias_hh in
+    let bias_ih = field c "lstm.bias_ih_l0" leaf x.bias_ih in
+    let weight_hh = field c "lstm.weight_hh_l0" leaf x.weight_hh in
+    let weight_ih = field c "lstm.weight_ih_l0" leaf x.weight_ih in
     {
-      emb_weight = "emb.weight";
-      head_bias = "head.bias";
-      head_weight = "head.weight";
-      bias_hh = "lstm.bias_hh_l0";
-      bias_ih = "lstm.bias_ih_l0";
-      weight_hh = "lstm.weight_hh_l0";
-      weight_ih = "lstm.weight_ih_l0";
+      emb_weight;
+      head_bias;
+      head_weight;
+      bias_hh;
+      bias_ih;
+      weight_hh;
+      weight_ih;
     }
-
-  let fold f acc x =
-    let n = names x in
-    let acc = f n.emb_weight acc x.emb_weight in
-    let acc = f n.head_bias acc x.head_bias in
-    let acc = f n.head_weight acc x.head_weight in
-    let acc = f n.bias_hh acc x.bias_hh in
-    let acc = f n.bias_ih acc x.bias_ih in
-    let acc = f n.weight_hh acc x.weight_hh in
-    f n.weight_ih acc x.weight_ih
-
-  let fold2 f acc x y =
-    let n = names x in
-    let acc = f n.emb_weight acc x.emb_weight y.emb_weight in
-    let acc = f n.head_bias acc x.head_bias y.head_bias in
-    let acc = f n.head_weight acc x.head_weight y.head_weight in
-    let acc = f n.bias_hh acc x.bias_hh y.bias_hh in
-    let acc = f n.bias_ih acc x.bias_ih y.bias_ih in
-    let acc = f n.weight_hh acc x.weight_hh y.weight_hh in
-    f n.weight_ih acc x.weight_ih y.weight_ih
 end
 
 let load_fixture spec path =
@@ -304,8 +191,12 @@ let load_fixture spec path =
     }
   in
   let ckpt = Kaun.Checkpoint.load path in
-  let f = Kaun.Checkpoint.to_params (module Weights) ~like:template ckpt in
-  let tokens = Nx.Ptree.unpack Nx.int32 (Kaun.Checkpoint.get "tokens" ckpt) in
+  let f =
+    Kaun.Checkpoint.to_value
+      (Nx.Ptree.instantiate (module Weights))
+      ~like:template ckpt
+  in
+  let tokens = Nx.unpack Nx.int32 (Kaun.Checkpoint.get "tokens" ckpt) in
   if Nx.shape tokens <> [| spec.batches; spec.batch; spec.seq_len + 1 |] then
     failwith (path ^ ": the token grid does not have the spec's shape");
   let linear w b =
@@ -332,19 +223,15 @@ let run spec ~fixture ~variant ~device ~steps =
     | "eager" -> train_step spec
     | "jit" ->
         let device = match device with "metal" -> "METAL" | _ -> "CPU" in
-        Rune.jit2 ~device (module Step_in) (module Step_out) (train_step spec)
+        Rune.jit
+          ~devices:[ Rune.device device ]
+          Nx.Ptree.(
+            tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+          (train_step spec)
     | v -> failwith ("unknown variant " ^ v)
   in
   let n_batches = (Nx.shape tokens).(0) in
-  let state =
-    ref
-      {
-        Step_in.params;
-        opt = Vega.sgd_init (module Model) params;
-        inputs = Nx.zeros Nx.int32 [| spec.batch; spec.seq_len |];
-        targets = Nx.zeros Nx.int32 [| spec.batch; spec.seq_len |];
-      }
-  in
+  let state = ref (params, Vega.sgd_init model params) in
   let losses = Array.make steps 0. and step_ms = Array.make steps 0. in
   for i = 0 to steps - 1 do
     let batch = Nx.slice [ I (i mod n_batches) ] tokens in
@@ -352,17 +239,16 @@ let run spec ~fixture ~variant ~device ~steps =
     let targets =
       Nx.contiguous (Nx.slice [ A; R (1, spec.seq_len + 1) ] batch)
     in
-    let input = { !state with Step_in.inputs; targets } in
     let t0 = now_ms () in
-    let out = step input in
+    let loss, next = step inputs targets !state in
     (* Reading the loss forces the step to complete: on a device the value is
-       resident until read. The parameters stay unread and resident, which is
-       what makes the next call transfer-free. *)
-    let l = Nx.item [] out.Step_out.loss in
+       resident until read. The state stays unread and resident, which is what
+       makes the next call transfer-free. *)
+    let l = Nx.item [] loss in
     let t1 = now_ms () in
     losses.(i) <- l;
     step_ms.(i) <- t1 -. t0;
-    state := { !state with Step_in.params = out.params; opt = out.opt }
+    state := next
   done;
   (losses, step_ms)
 
@@ -383,7 +269,10 @@ let emit ~variant ~device ~losses ~step_ms =
    variant this process cannot run must not be reported as one it can. *)
 let device_works name =
   match
-    Rune.jit' ~device:name (fun x -> Nx.add x x) (Nx.ones Nx.float32 [| 4 |])
+    Rune.jit'
+      ~devices:[ Rune.device name ]
+      (fun x -> Nx.add x x)
+      (Nx.ones Nx.float32 [| 4 |])
   with
   | (_ : Nx.float32_t) -> true
   | exception _ -> false

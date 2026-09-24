@@ -94,62 +94,29 @@ let cache ~slots =
   List.init layers (fun _ ->
       Attention.Cache.make ~slots ~kv_heads:heads ~head_dim Nx.float32)
 
-module Step = struct
-  type t = {
-    token : Nx.int32_t;
-    index : Cache_index.t;
-    caches : Nx.float32_t Attention.Cache.List.t;
-  }
-
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; index; caches } =
-    {
-      token = f token;
-      index = Cache_index.map f index;
-      caches = Attention.Cache.List.map f caches;
-    }
-
-  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      token = f a.token b.token;
-      index = Cache_index.map2 f a.index b.index;
-      caches = Attention.Cache.List.map2 f a.caches b.caches;
-    }
-
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; index; caches } =
-    f token;
-    Cache_index.iter f index;
-    Attention.Cache.List.iter f caches
-end
-
 (* A decode loop warmed past its two compilations. The returned thunk decodes
    one token at a fixed position in the middle of the cache, from the previous
    call's token and caches: every measured step is in range, whatever the number
    of samples. *)
 let decoder params ~len =
+  let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
   let step =
-    Rune.jit_step
-      (module Nx.Ptree)
-      (module Step)
-      (fun _ { Step.token; index; caches } ->
+    Rune.jit
+      Nx.Ptree.(
+        tensor @-> Cache_index.ptree @-> consumes caches
+        @@ returns (pair tensor caches))
+      (fun token index caches ->
         let seq = (Nx.shape token).(1) in
         let h, caches = cached params caches index token in
         let last = Nx.slice [ A; I (seq - 1) ] h in
-        {
-          Step.token =
-            Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (logits params last));
-          index = Cache_index.advance index;
-          caches;
-        })
-      (Nx.Ptree.list [])
+        (Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (logits params last)), caches))
   in
   let state =
     ref
       (step
-         {
-           Step.token = Nx.zeros Nx.int32 [| 1; 8 |];
-           index = Cache_index.rows ~context:len [| 8 |];
-           caches = cache ~slots:len;
-         })
+         (Nx.zeros Nx.int32 [| 1; 8 |])
+         (Cache_index.rows ~context:len [| 8 |])
+         (cache ~slots:len))
   in
   let at = Nx.full Nx.int32 [| 1; 1 |] (Int32.of_int (len / 2)) in
   let middle =
@@ -158,8 +125,9 @@ let decoder params ~len =
       ()
   in
   let advance () =
-    state := step { !state with Step.index = middle };
-    ignore (Nx.item [ 0; 0 ] !state.Step.token : int32)
+    let token, caches = !state in
+    state := step token middle caches;
+    ignore (Nx.item [ 0; 0 ] (fst !state) : int32)
   in
   advance ();
   advance

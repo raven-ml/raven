@@ -75,7 +75,9 @@ let () =
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
   let f =
-    Rune.jit' ~device:!jit (fun x ->
+    Rune.jit'
+      ~devices:[ Rune.device !jit ]
+      (fun x ->
         Moe.apply ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
   in
   let run () =

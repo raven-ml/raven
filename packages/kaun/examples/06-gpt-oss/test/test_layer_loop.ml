@@ -6,8 +6,8 @@
 (* The layer loop at gpt-oss's depth, on small random weights placed on CPU:1, a
    device with storage of its own: each block program reads its layer's weights
    and the cache index and writes the layer's cache in the cache's own storage.
-   The programs report what each call did to its leaves under RUNE_JIT_DEBUG=1,
-   which the dune rule sets. *)
+   The programs report what each call did to its consumed leaves under
+   RUNE_JIT_DEBUG=1, which the dune rule sets. *)
 
 open Windtrap
 open Kaun
@@ -96,28 +96,35 @@ let stderr_of f =
   Sys.remove path;
   (r, lines)
 
-(* What each call in [lines] reported per input leaf, in leaf order. *)
-let leaf_reports lines =
-  let status line =
-    Scanf.sscanf_opt line "rune.jit: input leaf %_d: %[^\n]" Fun.id
+(* What each call in [lines] reported about its consumed leaves: the lines that
+   follow each replay line, in order. *)
+let consumed_reports lines =
+  let prefix = "rune.jit: " in
+  let report line =
+    if String.starts_with ~prefix line then
+      Some
+        (String.sub line (String.length prefix)
+           (String.length line - String.length prefix))
+    else None
   in
-  let close calls = function [] -> calls | call -> List.rev call :: calls in
+  let close calls = function
+    | None -> calls
+    | Some call -> List.rev call :: calls
+  in
   let calls, last =
     List.fold_left
       (fun (calls, call) line ->
-        match status line with
-        | Some s -> (calls, s :: call)
-        | None -> (close calls call, []))
-      ([], []) lines
+        match (report line, call) with
+        | Some r, _ when String.starts_with ~prefix:"replay on " r ->
+            (close calls call, Some [])
+        | Some r, Some call -> (calls, Some (r :: call))
+        | _ -> (calls, call))
+      ([], None) lines
   in
   List.rev (close calls last)
 
 let test_blocks_read_weights_and_reuse_caches () =
   let p = params () in
-  let module Block =
-    (val Gpt_oss.block_ptree ()
-        : Nx.Ptree.S with type t = Nx.float32_t Gpt_oss.block)
-  in
   let n0 = 5 and steps = 3 in
   let context = n0 + steps + 1 in
   let caches =
@@ -130,13 +137,8 @@ let test_blocks_read_weights_and_reuse_caches () =
       is_true ~msg:"the builder places each pool"
         (Nx.Placement.equal cpu1 (Nx.placement c.Attention.Cache.keys)))
     caches;
-  let cached = Layer_loop.cached ~device:"CPU:1" cfg p in
+  let cached = Layer_loop.cached ~device:(Rune.device "CPU:1") cfg p in
   let index = Cache_index.rows ~context [| n0 |] in
-  (* The leaves a block program reads: a block's weights, then the index. *)
-  let reads = ref 0 in
-  Block.iter (fun _ -> incr reads) (List.hd p.blocks);
-  Cache_index.iter (fun _ -> incr reads) index;
-  let reads = !reads in
   let ids = Nx.create Nx.int32 [| 1; n0 |] (Array.init n0 Int32.of_int) in
   let x, caches = cached caches index ids in
   let x = ref x and caches = ref caches and index = ref index in
@@ -146,9 +148,7 @@ let test_blocks_read_weights_and_reuse_caches () =
     let token = Nx.create Nx.int32 [| 1; 1 |] [| Int32.of_int step |] in
     index := Cache_index.advance !index;
     let index_bytes =
-      let n = ref 0 in
-      Cache_index.iter (fun t -> n := !n + Nx.nbytes t) !index;
-      !n
+      Nx.Ptree.fold Cache_index.ptree (fun _ t n -> n + Nx.nbytes t) !index 0
     in
     let s0 = Rune.jit_stats () in
     let (x', caches'), lines =
@@ -156,24 +156,30 @@ let test_blocks_read_weights_and_reuse_caches () =
     in
     let s1 = Rune.jit_stats () in
     let blocks =
-      List.filter (fun r -> List.length r = reads + 3) (leaf_reports lines)
+      List.filter
+        (List.exists (String.starts_with ~prefix:"1.keys"))
+        (consumed_reports lines)
     in
     equal ~msg:(msg ^ ": one report per layer") int 24 (List.length blocks);
     List.iteri
       (fun layer report ->
         let msg = Printf.sprintf "%s, layer %d" msg layer in
-        let read = List.filteri (fun i _ -> i < reads) report in
-        let cache =
-          List.filteri (fun i _ -> i >= reads && i < reads + 2) report
-        in
         is_true
           ~msg:(msg ^ ": the weights and the index are read")
-          (List.for_all (String.equal "read") read);
+          (List.for_all
+             (fun r ->
+               not
+                 (String.starts_with ~prefix:"0" r
+                 || String.starts_with ~prefix:"2" r))
+             report);
         equal
           ~msg:(msg ^ ": the keys and values take their storage")
           (list string)
-          [ "storage reused"; "storage reused" ]
-          cache)
+          [
+            "1.keys -> result 1.keys reused";
+            "1.values -> result 1.values reused";
+          ]
+          (List.filter (String.starts_with ~prefix:"1.") report))
       blocks;
     is_true
       ~msg:(msg ^ ": every pool's bytes are reused")

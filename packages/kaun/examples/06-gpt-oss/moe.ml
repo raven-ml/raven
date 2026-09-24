@@ -14,13 +14,22 @@ type 'a t = {
   down_bias : 'a;
 }
 
-let map_weight f = function Float w -> Float (f w) | Quant w -> Quant w
+let walk_weight c =
+  let open Nx.Ptree.Walk in
+  function
+  | Float w ->
+      case c "float";
+      Float (leaf c w)
+  | Quant w ->
+      case c "quant";
+      Quant (Nx_quant.walk c w)
 
-let map f p =
-  let gate_up = map_weight f p.gate_up in
-  let gate_up_bias = f p.gate_up_bias in
-  let down = map_weight f p.down in
-  let down_bias = f p.down_bias in
+let walk c p =
+  let open Nx.Ptree.Walk in
+  let gate_up = field c "gate_up" walk_weight p.gate_up in
+  let gate_up_bias = field c "gate_up_bias" leaf p.gate_up_bias in
+  let down = field c "down" walk_weight p.down in
+  let down_bias = field c "down_bias" leaf p.down_bias in
   { gate_up; gate_up_bias; down; down_bias }
 
 let route ~k logits =

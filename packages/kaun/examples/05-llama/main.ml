@@ -12,116 +12,98 @@
 
 open Kaun
 
-(* One step function serves the whole generation: it consumes the tokens its
-   index places, fills the caches, and returns the next token, the advanced
-   index, the next key and the written caches, so its output feeds the next
-   call. Positions, slots, the key and the sampling parameters enter as tensors:
-   [Rune.jit2] compiles a prefill and one single-token step, and a captured
-   temperature would be frozen into them. *)
-let generate (type b) ?device ?placement cfg
-    (params : (float, b) Nx.t Llama.params) (dt : (float, b) Nx.dtype)
-    ~temperature ~top_k ~top_p ~seed ~max_tokens prompt =
-  let module Step = struct
-    type t = {
-      token : Nx.int32_t;
-      index : Cache_index.t;
-      key : Nx.Rng.key;
-      temperature : Nx.float32_t;
-      k : Nx.int32_t;
-      p : Nx.float32_t;
-      caches : (float, b) Nx.t Llama.Cache.t;
-    }
+(* The placement that holds every leaf and cache pool whole on [device]. *)
+let whole_on device =
+  Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
 
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
-      {
-        token = f s.token;
-        index = Cache_index.map f s.index;
-        key = f s.key;
-        temperature = f s.temperature;
-        k = f s.k;
-        p = f s.p;
-        caches = Llama.Cache.map f s.caches;
-      }
+(* The sampling parameters are tensors, so a compiled step reads them as
+   arguments: a captured temperature would be frozen into its program. *)
+type sampling = { temperature : Nx.float32_t; k : Nx.int32_t; p : Nx.float32_t }
 
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-      {
-        token = f a.token b.token;
-        index = Cache_index.map2 f a.index b.index;
-        key = f a.key b.key;
-        temperature = f a.temperature b.temperature;
-        k = f a.k b.k;
-        p = f a.p b.p;
-        caches = Llama.Cache.map2 f a.caches b.caches;
-      }
+module Sampling = struct
+  type _ t = sampling
 
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
-      f s.token;
-      Cache_index.iter f s.index;
-      f s.key;
-      f s.temperature;
-      f s.k;
-      f s.p;
-      Llama.Cache.iter f s.caches
-  end in
+  let walk c s =
+    let open Nx.Ptree.Walk in
+    let temperature = field c "temperature" tensor s.temperature in
+    let k = field c "k" tensor s.k in
+    let p = field c "p" tensor s.p in
+    { temperature; k; p }
+end
+
+(* One step function serves the whole generation: it reads the tokens its index
+   places, the key and the sampling parameters, consumes the caches, fills them,
+   and returns the next token, the next key and the written caches. The host
+   advances the index between calls. Positions and slots enter as tensors, so
+   [Rune.jit] compiles a prefill and one single-token step. With [device], the
+   step compiles for it and the caches are placed on it. *)
+let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
+    (dt : (float, b) Nx.dtype) ~temperature ~top_k ~top_p ~seed ~max_tokens
+    prompt =
   let greedy = temperature <= 0.0 in
-  let step (s : Step.t) =
-    let seq = Nx.dim 1 s.token in
-    let h, caches = Llama.cached cfg params s.caches s.index s.token in
+  let step token index key sampling caches =
+    let seq = Nx.dim 1 token in
+    let h, caches = Llama.cached cfg params caches index token in
     (* The last position's logits, at float32 for the masks and the draw. *)
     let logits =
       Nx.cast Nx.float32
         (Llama.logits cfg params (Nx.slice [ A; I (seq - 1) ] h))
     in
-    let keys = Nx.Rng.split s.key in
+    let keys = Nx.Rng.split key in
     let next =
       if greedy then Nx.argmax ~axis:1 logits
       else
         Nx.Rng.categorical keys.(1)
-          (Fn.keep_top_p ~p:s.p
-             (Fn.keep_top_k ~k:s.k
-                (Nx.div logits (Nx.reshape [| 1; 1 |] s.temperature))))
+          (Fn.keep_top_p ~p:sampling.p
+             (Fn.keep_top_k ~k:sampling.k
+                (Nx.div logits (Nx.reshape [| 1; 1 |] sampling.temperature))))
     in
-    {
-      s with
-      token = Nx.reshape [| 1; 1 |] next;
-      index = Cache_index.advance s.index;
-      key = keys.(0);
-      caches;
-    }
+    ((Nx.reshape [| 1; 1 |] next, keys.(0)), caches)
   in
   let step =
     match device with
     | None -> step
     | Some device ->
-        Rune.jit_step ~device
-          (module Nx.Ptree)
-          (module Step)
-          (fun _ s -> step s)
-          (Nx.Ptree.list [])
+        let sampling = Nx.Ptree.instantiate (module Sampling)
+        and caches =
+          Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
+        in
+        Rune.jit ~devices:[ device ]
+          Nx.Ptree.(
+            tensor @-> Cache_index.ptree @-> tensor @-> sampling
+            @-> consumes caches
+            @@ returns (pair (pair tensor tensor) caches))
+          step
   in
   let n0 = Array.length prompt in
   let context = n0 + max_tokens in
+  let sampling =
+    {
+      temperature = Nx.scalar Nx.float32 (Float.max temperature 1e-6);
+      k = Nx.scalar Nx.int32 (Int32.of_int top_k);
+      p = Nx.scalar Nx.float32 top_p;
+    }
+  in
+  let index = ref (Cache_index.rows ~context [| n0 |]) in
   let state =
     ref
       (step
-         {
-           Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
-           index = Cache_index.rows ~context [| n0 |];
-           key = Nx.Rng.key seed;
-           temperature = Nx.scalar Nx.float32 (Float.max temperature 1e-6);
-           k = Nx.scalar Nx.int32 (Int32.of_int top_k);
-           p = Nx.scalar Nx.float32 top_p;
-           caches = Llama.cache ?placement cfg ~slots:context dt;
-         })
+         (Nx.create Nx.int32 [| 1; n0 |] prompt)
+         !index (Nx.Rng.key seed) sampling
+         (Llama.cache ?placement:(whole_on device) cfg ~slots:context dt))
   in
   let out = Array.make max_tokens 0l in
   (* The first single-token step compiles under [--jit]: time from the
      second. *)
   let t0 = ref (Unix.gettimeofday ()) in
   for n = 0 to max_tokens - 1 do
-    out.(n) <- Nx.item [ 0; 0 ] !state.Step.token;
+    let (token, key), caches = !state in
+    out.(n) <- Nx.item [ 0; 0 ] token;
     if n = 1 then t0 := Unix.gettimeofday ();
-    if n < max_tokens - 1 then state := step !state
+    if n < max_tokens - 1 then begin
+      index := Cache_index.advance !index;
+      state := step token !index key sampling caches
+    end
   done;
   if max_tokens > 2 then
     Printf.printf "%.2f tok/s\n%!"
@@ -160,19 +142,15 @@ let () =
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
-  let device = if !jit = "" then None else Some !jit in
-  (* One device holds every leaf and cache pool whole. *)
-  let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
-  in
+  let device = if !jit = "" then None else Some (Rune.device !jit) in
   (* At the checkpoint's own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
     if !dtype = "" then Llama.stored_dtype ckpt
     else Llama.dtype_of_string !dtype
   in
   let toks =
-    generate ?device ?placement cfg
-      (Llama.of_hf ?placement cfg dt ckpt)
+    generate ?device cfg
+      (Llama.of_hf ?placement:(whole_on device) cfg dt ckpt)
       dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
       ~max_tokens:!count ids
   in

@@ -14,29 +14,40 @@
     placed. *)
 
 val cached :
-  device:string ->
+  device:Nx.Device.t ->
   Gpt_oss.config ->
   (float, 'b) Nx.t Gpt_oss.params ->
-  (float, 'b) Nx.t Gpt_oss.Cache.t ->
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Gpt_oss.Cache.t
+  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached ~device cfg p] is {!Gpt_oss.cached}[ cfg p] run on [device] by an
     embedding program and one block program per layer kind, each compiled once
     per call shape. Apply it once and reuse the result: the partial application
-    holds the programs. A call places the index on [device] once for all the
-    layers and consumes the caches it is given, as {!Rune.jit_step} does. [p] is
-    best placed on [device] ({!Gpt_oss.of_hf}[ ~device]): its leaves are read
-    where they are. *)
+    holds the programs. A block program is {!Gpt_oss.block} compiled on the
+    signature
+
+    {[
+    Nx.Ptree.(
+      block @-> consumes cache @@ Cache_index.ptree @-> consumes tensor
+      @@ returns (pair tensor cache))
+    ]}
+
+    where [block] and [cache] instantiate {!Gpt_oss.Block} and
+    {!Kaun.Attention.Cache}: it reads its layer's weights and the index, and
+    consumes its layer's cache and the residual stream, whose storage its
+    results take. A call places the index on [device] once for all the layers
+    and consumes the caches it is given. [p] is best placed on [device]
+    ({!Gpt_oss.of_hf}[ ~placement]): its leaves are read where they are. *)
 
 val greedy :
-  ?device:string ->
+  ?device:Nx.Device.t ->
   Gpt_oss.config ->
   (float, 'b) Nx.t Gpt_oss.params ->
-  (float, 'b) Nx.t Gpt_oss.Cache.t ->
+  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
-  (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t Gpt_oss.Cache.t
+  (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [greedy ?device cfg p caches index ids] is the most likely next token of
     each sequence, of shape [[| batch |]], after the tokens [ids], and the
     caches with their keys and values written. With [device] it is {!cached} and

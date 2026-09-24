@@ -5,56 +5,23 @@
 
 open Kaun
 
-let cached (type b) ~device cfg (p : (float, b) Nx.t Gpt_oss.params) =
-  let module Block =
-    (val Gpt_oss.block_ptree ()
-        : Nx.Ptree.S with type t = (float, b) Nx.t Gpt_oss.block)
-  in
-  (* What a block program reads. *)
-  let module Layer = struct
-    type t = { b : Block.t; index : Cache_index.t }
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) l =
-      let b = Block.map f l.b in
-      { b; index = Cache_index.map f l.index }
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) l l' =
-      let b = Block.map2 f l.b l'.b in
-      { b; index = Cache_index.map2 f l.index l'.index }
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) l =
-      Block.iter f l.b;
-      Cache_index.iter f l.index
-  end in
-  (* What a block program consumes and returns. *)
-  let module Stream = struct
-    type t = { cache : (float, b) Nx.t Attention.Cache.t; x : (float, b) Nx.t }
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
-      let cache = Attention.Cache.map f s.cache in
-      { cache; x = f s.x }
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s s' =
-      let cache = Attention.Cache.map2 f s.cache s'.cache in
-      { cache; x = f s.x s'.x }
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
-      Attention.Cache.iter f s.cache;
-      f s.x
-  end in
+let cached ~device cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
+  let block = Nx.Ptree.instantiate (module Gpt_oss.Block)
+  and cache = Nx.Ptree.instantiate (module Attention.Cache) in
   let compile kind =
-    Rune.jit_step ~device
-      (module Layer)
-      (module Stream)
-      (fun { Layer.b; index } { Stream.cache; x } ->
-        let x, cache = Gpt_oss.block cfg kind b cache index x in
-        { Stream.cache; x })
+    Rune.jit ~devices:[ device ]
+      Nx.Ptree.(
+        block @-> consumes cache @@ Cache_index.ptree @-> consumes tensor
+        @@ returns (pair tensor cache))
+      (Gpt_oss.block cfg kind)
   in
   let sliding = compile Gpt_oss.Sliding and full = compile Gpt_oss.Full in
-  let embed = Rune.jit' ~device (Embedding.apply p.tok) in
-  let placement = Nx.Placement.device (Rune.device device) in
+  let embed = Rune.jit' ~devices:[ device ] (Embedding.apply p.tok) in
+  let placement = Nx.Placement.device device in
   fun caches index ids ->
-    let index = Cache_index.map (fun x -> Nx.place placement x) index in
+    let index =
+      Nx.Ptree.map Cache_index.ptree (fun _ x -> Nx.place placement x) index
+    in
     let rec go x rev layers blocks caches =
       match (layers, blocks, caches) with
       | [], [], [] -> (x, List.rev rev)
@@ -62,9 +29,7 @@ let cached (type b) ~device cfg (p : (float, b) Nx.t Gpt_oss.params) =
           let block =
             match kind with Gpt_oss.Sliding -> sliding | Full -> full
           in
-          let { Stream.cache; x } =
-            block { Layer.b; index } { Stream.cache; x }
-          in
+          let x, cache = block b cache index x in
           go x (cache :: rev) layers blocks caches
       | _ ->
           invalid_arg
@@ -84,7 +49,8 @@ let greedy ?device cfg p =
         let h, caches = Gpt_oss.cached cfg p caches index ids in
         (head h, caches)
   | Some device ->
-      let cached = cached ~device cfg p and head = Rune.jit' ~device head in
+      let cached = cached ~device cfg p
+      and head = Rune.jit' ~devices:[ device ] head in
       fun caches index ids ->
         let h, caches = cached caches index ids in
         (head h, caches)
