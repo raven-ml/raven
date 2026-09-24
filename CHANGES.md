@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- Dropping a Metal graph no longer risks a crash at a later synchronize. Its
+  finaliser pruned the in-flight command list and could run while another
+  graph was pruning it, leaving a released command buffer to be awaited.
+
 - Long Metal runs no longer exit silently with status 2. Releasing a buffer
   view from a GC finaliser could relock the buffer table inside an allocation
   that already held it, which killed decode loops after a few dozen steps.

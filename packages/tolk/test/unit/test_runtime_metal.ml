@@ -350,6 +350,53 @@ let () =
             | None -> fail "expected Metal graph wait timing");
             Device.synchronize device;
             equal (list int) [ 2 ] (read_i32 dst));
+          test "collects a dropped graph while another settles" (fun () ->
+            let device = metal_device () in
+            let prog =
+              prog_of_spec device (compile_incr device "metal_graph_dropped")
+            in
+            let a = i32_buf device [ 0 ] in
+            let build () =
+              (device_graph device).Device.Graph.build
+                [| kernel_node prog.Device.handle [| a; a |] () |]
+            in
+            let launch exec =
+              ignore (exec.Device.Graph.launch ~wait:false : float option)
+            in
+            (* Collect a dropped graph at the [n]th allocation that patching a
+               live one makes, for each [n], so that one collection lands while
+               the patch prunes the in-flight list. *)
+            let countdown = ref 0 in
+            let tracker =
+              {
+                Gc.Memprof.null_tracker with
+                alloc_minor =
+                  (fun _ ->
+                    if !countdown > 0 then begin
+                      decr countdown;
+                      if !countdown = 0 then Gc.full_major ()
+                    end;
+                    None);
+              }
+            in
+            (match
+               Gc.Memprof.start ~sampling_rate:1.0 ~callstack_size:0 tracker
+             with
+            | exception Failure reason -> skip ~reason ()
+            | _ -> ());
+            Fun.protect ~finally:Gc.Memprof.stop (fun () ->
+                for n = 1 to 8 do
+                  launch (build ());
+                  let exec = build () in
+                  launch exec;
+                  countdown := n;
+                  exec.Device.Graph.set_launch_dims 0 ~global:ones3
+                    ~local:ones3;
+                  countdown := 0;
+                  launch exec;
+                  Device.synchronize device
+                done);
+            equal (list int) [ 24 ] (read_i32 a));
           test "copies stay out of graphs" (fun () ->
             let device = metal_device () in
             is_false (device_graph device).Device.Graph.supports_copy);

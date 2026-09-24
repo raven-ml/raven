@@ -500,10 +500,14 @@ module Graph = struct
         launch;
       }
     in
+    (* A finaliser can run inside any allocation, including one that [settle]
+       or [launch] makes while updating the in-flight list, so it leaves that
+       list alone. It need not await the last replay: command buffers retain
+       what they reference, so a replay in flight holds the ICB and the
+       resources it declared. *)
     Gc.finalise
       (fun (_ : Device.Graph.exec) ->
         if not state.State.closed then begin
-          settle ();
           Icb.release icb;
           if var_buf <> Nativeint.zero then Ffi.buffer_free var_buf
         end)
