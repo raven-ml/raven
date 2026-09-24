@@ -88,6 +88,7 @@ type t =
   | If  (** Predicated control-flow gate. *)
   | End  (** Closes one or more loops around a value. *)
   | Endif  (** Closes an {!If} region. *)
+  | Backedge  (** Repeats an unbounded loop while its condition is true. *)
   | Wait  (** Wait/synchronisation point. *)
   | Const  (** Compile-time constant. *)
   | Custom  (** Backend-specific statement. *)

@@ -129,6 +129,7 @@ let ops_tinygrad_order () =
       "IF";
       "END";
       "ENDIF";
+      "BACKEDGE";
       "WAIT";
       "CONST";
       "CUSTOM";

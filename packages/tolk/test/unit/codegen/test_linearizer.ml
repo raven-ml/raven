@@ -302,9 +302,31 @@ let test_unlowered_rejected name build_node =
   raises_linearize (name ^ " must be lowered before linearize") (fun () ->
       ignore (linearize (U.sink [ build_node () ])))
 
+let conditional_loop_nesting () =
+  let outer = U.range ~size:(i32 3) ~axis:0 ~kind:Axis_type.Loop
+      ~dtype:Dtype.int32 () in
+  let inner = U.loop ~axis:1 in
+  let body = U.noop ~src:inner ~dtype:Dtype.void () in
+  let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:outer ~rhs:(i32 2) in
+  let edge = U.backedge ~body ~loop:inner ~cond in
+  let sink = U.sink [ U.end_ ~value:edge ~ranges:[ outer ] ] in
+  let program = linearize sink in
+  Spec.verify_list Spec.program_spec program;
+  let position op axis =
+    List.find_index (fun u -> U.op u = op &&
+      (op <> Ops.Range || U.axis_id u = [ axis ])) program
+    |> Option.get
+  in
+  let outer_pos = position Ops.Range 0 and inner_pos = position Ops.Range 1 in
+  let edge_pos = position Ops.Backedge 0 and end_pos = position Ops.End 0 in
+  is_true ~msg:"outer header precedes conditional loop" (outer_pos < inner_pos);
+  is_true ~msg:"conditional loop closes before the outer loop"
+    (inner_pos < edge_pos && edge_pos < end_pos)
+
 let () =
   run "Linearizer"
     [
+      test "Conditional loops retain nesting" conditional_loop_nesting;
       group "Late kernel to program"
         [
           test "multi-range End lowers to nested End_range pairs" (fun () ->

@@ -1726,7 +1726,7 @@ let symbolic : Upat.Pattern_matcher.t =
        else
          let side_effectful y = match Uop.op y with
            | Ops.Range | Ops.Store | Ops.Call | Ops.Function
-           | Ops.Barrier | Ops.End | Ops.Linear
+           | Ops.Barrier | Ops.End | Ops.Backedge | Ops.Linear
            | Ops.Stage -> true
            | _ -> false
          in

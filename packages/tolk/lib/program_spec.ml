@@ -217,12 +217,15 @@ module Estimates = struct
       match U.op u with
       | Ops.Range ->
           Stack.push !mults mult_stack;
-          (* A void range is an unbounded loop closed by a conditional END: its
+          (* A void range is an unbounded loop closed by a BACKEDGE: its
              trip count is unknown, so the body contributes at multiplicity 1. *)
           if not (Dtype.equal (U.dtype u) Dtype.void) then
             (match U.as_range u with
              | Some rv -> mults := mul_estimate !mults (estimate_of_size rv.size)
              | None -> ())
+      | Ops.Backedge ->
+          if not (Stack.is_empty mult_stack) then
+            mults := Stack.pop mult_stack
       | Ops.End ->
           (match U.as_end u with
            | Some ev ->

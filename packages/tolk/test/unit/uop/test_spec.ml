@@ -812,8 +812,12 @@ let full_spec_accepts_intermediate_forms () =
     (rejected Spec.full_spec call_non_void);
   is_true ~msg:"full_spec accepts loose After intermediate"
     (accepts Spec.full_spec loose_after);
-  is_true ~msg:"full_spec accepts loose End intermediate"
-    (accepts Spec.full_spec loose_end);
+  is_true ~msg:"full_spec rejects malformed End payloads"
+    (rejected Spec.full_spec loose_end);
+  let special = Uop.special ~name:"gidx0" ~size:(i32 4) ~dtype:Dtype.int32 () in
+  is_true ~msg:"full_spec accepts ranges replaced by hardware indices"
+    (accepts Spec.full_spec
+       (Uop.end_ ~value:(Uop.noop ~dtype:Dtype.void ()) ~ranges:[ special ]));
   is_true ~msg:"full_spec accepts transitional Bind intermediate"
     (accepts Spec.full_spec loose_bind);
   is_true ~msg:"full_spec accepts transitional Load intermediate"
@@ -1239,11 +1243,40 @@ let full_spec_has_no_catch_all () =
   is_true ~msg:"full_spec rejects unrecognised node"
     (rejected Spec.full_spec unknown)
 
+let conditional_loop_contract () =
+  let outer = Uop.range ~size:(i32 4) ~axis:1 ~kind:Axis_type.Loop
+      ~dtype:Dtype.int32 () in
+  let loop = Uop.loop ~axis:2 in
+  let cond = Uop.alu_binary ~op:Ops.Cmplt ~lhs:outer ~rhs:(i32 3) in
+  let edge = Uop.backedge ~body:(Uop.noop ~src:loop ~dtype:Dtype.void ())
+      ~loop ~cond in
+  List.iter (fun spec -> Spec.type_verify spec edge)
+    [ Spec.tensor_spec; Spec.program_spec; Spec.full_spec ];
+  equal int 1 (List.length (Uop.ranges edge));
+  is_true ~msg:"condition retains the enclosing range"
+    (Uop.equal outer (List.hd (Uop.ranges edge)));
+  is_true ~msg:"BACKEDGE has no value shape" (Uop.shape_opt edge = None);
+  is_true ~msg:"barrier propagates the loop closure"
+    (not (List.exists (Uop.equal loop)
+       (Uop.ranges (Uop.after ~src:loop
+          ~deps:[ Uop.barrier ~srcs:[ edge ] () ]))));
+  List.iter (fun bad -> is_true (rejected Spec.full_spec bad))
+    [ Uop.backedge ~body:(i32 0) ~loop:outer ~cond;
+      Uop.backedge ~body:(i32 0) ~loop ~cond:(i32 1);
+      Uop.backedge ~body:(i32 0) ~loop
+        ~cond:(Uop.stack [ Uop.const_bool true; Uop.const_bool false ]);
+      Uop.replace edge ~dtype:Dtype.int32 () ];
+  is_true ~msg:"conditional END is rejected"
+    (rejected Spec.full_spec
+       (Uop.replace (Uop.end_ ~value:(i32 0) ~ranges:[ loop ])
+          ~src:[| i32 0; loop; cond |] ()))
+
 let () =
   run "tolk.uop.spec"
     [
       group "shared_spec"
         [
+          test "Conditional loop contract" conditional_loop_contract;
           test "Sink void accepted" sink_void;
           test "Const matching dtype" const_matching_dtype;
           test "Param with Param_arg" param_with_param_arg;

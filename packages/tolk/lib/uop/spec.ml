@@ -334,8 +334,15 @@ let shared_spec : t =
     op ~allow_any_len:true ~src:[ any ] Ops.End
     =?> (fun u _ -> end_ok u);
 
+    op ~dtype:Dtype.void
+      ~src:[ any; op ~dtype:Dtype.void Ops.Range;
+             var_dtype "cond" (exact_dtype Dtype.bool) ] Ops.Backedge
+    =?> (fun u bs ->
+      let cond = bs $ "cond" in
+      arg_empty u && Uop.shape cond = [] && not (is_invalid cond));
+
     op_src ~dtype:(exact_dtype Dtype.void)
-      ~src:(repeat (ops [ Ops.Group; Ops.Store; Ops.Noop; Ops.Ins; Ops.End ]))
+      ~src:(repeat (ops [ Ops.Group; Ops.Store; Ops.Noop; Ops.Ins; Ops.End; Ops.Backedge ]))
       Ops.Group
     =?> (fun _ _ -> true);
 
@@ -539,7 +546,7 @@ let full_only_spec : t =
     =?> (fun _ _ -> true);
 
     op ~allow_any_len:true ~src:[ any; any ] Ops.End
-    =?> (fun _ _ -> true);
+    =?> (fun u _ -> arg_empty u && tail_srcs is_int u);
 
     op ~allow_any_len:true ~src:[ any ] Ops.After
     =?> (fun _ _ -> true);

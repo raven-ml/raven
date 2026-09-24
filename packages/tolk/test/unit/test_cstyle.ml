@@ -188,20 +188,18 @@ let make_loop () =
   [ p0; c10; r; idx0; ld; idx1; st; U.end_ ~value:ld ~ranges:[ r ] ]
 
 (* An unbounded loop: a void-dtyped RANGE has no induction variable, and the
-   END that closes it carries the exit condition as its third source. *)
+   BACKEDGE that closes it carries the exit condition as its third source. *)
 let make_unbounded_loop () =
   let ptr = global_ptr dt in
   let p0 = param 0 ptr in
   let c10 = const (int32_c 10) in
-  let r =
-    U.range ~size:c10 ~axis:0 ~sub:[] ~kind:Axis_type.Weak ~dtype:Dtype.void ()
-  in
+  let r = U.loop ~axis:0 in
   let c0 = c0_i32 () in
   let idx = ptr_index p0 c0 () in
   let ld = load idx in
   let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:ld ~rhs:(const (float_c dt 1.0)) in
   let end_ =
-    U.replace (U.end_ ~value:ld ~ranges:[ r ]) ~src:[| ld; r; cond |] ()
+    U.backedge ~body:ld ~loop:r ~cond
   in
   [ p0; c10; r; c0; idx; ld; cond; end_ ]
 
@@ -1335,7 +1333,7 @@ let () =
           test "void range renders an unbounded for" (fun () ->
             let out = render clang_renderer (make_unbounded_loop ()) in
             assert_contains "unbounded for" out "for (;;) {");
-          test "conditional end renders a bottom exit test" (fun () ->
+          test "backedge renders a bottom exit test" (fun () ->
             let out = render clang_renderer (make_unbounded_loop ()) in
             assert_contains "exit test" out "{ break; }");
           test "the exit test is indented inside the loop body" (fun () ->

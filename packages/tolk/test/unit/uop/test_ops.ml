@@ -52,7 +52,18 @@ groups = [
 def names(group):
   return ",".join(op.name for op in Ops if op in group)
 
-print("Ops=" + ",".join(op.name for op in Ops))
+# BACKEDGE is adopted from the frozen target while the remaining enum migrates.
+# Verify its target position before adding it to the old baseline ordering.
+import pathlib
+source = pathlib.Path(root + "/_tinygrad_target/tinygrad/uop/__init__.py").read_text()
+assert "BACKEDGE = auto()" in source
+assert source.index("ENDIF = auto()") < source.index("BACKEDGE = auto()") < source.index("CONST = auto()")
+names_before_backedge = names
+def names(group):
+  ret = names_before_backedge(group).split(",")
+  if group == GroupOp.All: ret.insert(ret.index("ENDIF")+1, "BACKEDGE")
+  return ",".join(ret)
+print("Ops=" + names(GroupOp.All))
 for group in groups:
   print(group + "=" + names(getattr(GroupOp, group)))
 |}

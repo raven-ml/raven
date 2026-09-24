@@ -142,7 +142,7 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
   (* Older layouts and future formats are rejected before reading the graph. *)
-  let current_version = Marshal.to_string 5 [] in
+  let current_version = Marshal.to_string 6 [] in
   let p = find_sub blob current_version in
   List.iter (fun version ->
       let replacement = Marshal.to_string version [] in
@@ -152,7 +152,7 @@ let import_rejects_malformed () =
             (p + String.length current_version)
             (String.length blob - p - String.length current_version)
       in
-      failure (fun () -> U.import changed)) [ 4; 6 ]
+      failure (fun () -> U.import changed)) [ 4; 5; 7 ]
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the

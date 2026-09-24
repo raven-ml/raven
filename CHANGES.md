@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.loop` and `Uop.backedge` represent conditional loops explicitly,
+  preserving enclosing range dependencies through validation, scheduling,
+  and C rendering.
+
 - 64-bit integer emulation shares fully lowered word splits within each pass,
   avoiding repeated arithmetic expansion and redundant casts.
   `Decomp_dtype.pm_long_decomp ()` creates a matcher for one pass.

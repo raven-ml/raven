@@ -192,6 +192,28 @@ let test_split_axis_identity () =
   run_spec device spec [ output ];
   equal (list int) [ 0; 1; 2; 10; 11; 12 ] (read_i32_buffer output)
 
+let test_conditional_loop () =
+  let device = cpu "conditional-loop" in
+  let dst = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const (Const.int Dtype.int32 1))
+      ~addrspace:Dtype.Global () in
+  let loop = U.loop ~axis:0 in
+  let ptr = U.after ~src:dst ~deps:[ loop ] in
+  let idx = U.index ~ptr ~idxs:[ U.const (Const.int Dtype.int32 0) ] () in
+  let value = U.load ~src:idx () in
+  let next = U.alu_binary ~op:Ops.Add ~lhs:value
+      ~rhs:(U.const (Const.int Dtype.int32 1)) in
+  let store = U.store ~dst:idx ~value:next () in
+  let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:next
+      ~rhs:(U.const (Const.int Dtype.int32 5)) in
+  let edge = U.backedge ~body:store ~loop ~cond in
+  let sink = U.sink [ edge ] |> Linearizer.pm_add_control_flow in
+  let program = Linearizer.linearize sink in
+  Spec.verify_list Spec.program_spec program;
+  let spec = Device.compile_program device ~name:"conditional_loop" program in
+  let output = create_i32_buffer device [ 0 ] in
+  run_spec device spec [ output ];
+  equal (list int) [ 5 ] (read_i32_buffer output)
+
 let test_emulated_long_to_float64 () =
   let device = cpu "emulated-long-cast" in
   let cases =
@@ -540,6 +562,7 @@ let main () =
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
           test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
+          test "execute a conditional loop" test_conditional_loop;
           test "compile and run one kernel" (fun () ->
             let device = cpu "run-one" in
             let spec =

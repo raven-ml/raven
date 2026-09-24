@@ -73,6 +73,7 @@ type t =
   | If
   | End
   | Endif
+  | Backedge
   | Wait
   | Const
   | Custom
@@ -162,6 +163,7 @@ let name = function
   | If -> "IF"
   | End -> "END"
   | Endif -> "ENDIF"
+  | Backedge -> "BACKEDGE"
   | Wait -> "WAIT"
   | Const -> "CONST"
   | Custom -> "CUSTOM"
@@ -299,6 +301,7 @@ module Group = struct
       If;
       End;
       Endif;
+      Backedge;
       Wait;
       Const;
       Custom;

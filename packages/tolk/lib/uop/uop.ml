@@ -930,6 +930,14 @@ let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.weakint)
     ~src:(Array.of_list (size :: parents))
     ~arg:(Arg.Range_info { axis; sub; kind })
 
+let loop ~axis =
+  range ~size:(noop ~dtype:Dtype.void ()) ~axis ~kind:Axis_type.Weak
+    ~dtype:Dtype.void ()
+
+let backedge ~body ~loop ~cond =
+  mk ~op:Ops.Backedge ~dtype:Dtype.void ~src:[| body; loop; cond |]
+    ~arg:Arg.Empty
+
 let end_ ~value ~ranges =
   if ranges = [] then value
   else
@@ -1342,6 +1350,11 @@ and compute_ranges u =
 and ended_ranges u =
   let children = src u in
   match op u with
+  | Ops.Backedge -> [ children.(1) ]
+  | Ops.End ->
+      Array.to_list children |> List.tl
+      |> List.filter (fun r -> op r = Ops.Range)
+  | Ops.Barrier -> Array.to_list children |> List.concat_map ended_ranges
   | Ops.After ->
       let ret = ref [] in
       for i = 1 to Array.length children - 1 do
@@ -2058,7 +2071,7 @@ and compute_shape_opt u =
     if Array.length srcs = 0 then None else shape_opt srcs.(0)
   in
   match op u with
-  | Ops.If | Ops.Barrier | Ops.Sink | Ops.Rewrite_error | Ops.Endif
+  | Ops.If | Ops.Barrier | Ops.Sink | Ops.Rewrite_error | Ops.Endif | Ops.Backedge
   | Ops.Group | Ops.Linear | Ops.Program | Ops.Source | Ops.Tuple
   | Ops.Call | Ops.Function | Ops.Custom_function ->
       None
@@ -3504,7 +3517,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 5
+let export_version = 6
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

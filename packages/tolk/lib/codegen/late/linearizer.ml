@@ -19,7 +19,10 @@ module U = Uop
 type extra = No_extra | Idx of int
 
 let range_size r =
-  match U.as_range r with Some _ -> Bound.to_int (Bound.succ (U.vmax r)) | None -> 1
+  match U.as_range r with
+  | Some _ when not (Dtype.equal (U.dtype r) Dtype.void) ->
+      Bound.to_int (Bound.succ (U.vmax r))
+  | Some _ | None -> 1
 
 let run_count u = List.fold_left (fun acc r -> acc * range_size r) 1 (U.ranges u)
 
@@ -42,7 +45,7 @@ let priority_of u =
   | Ops.Load         ->  -1, No_extra
   | Ops.Store        ->   1, No_extra
   | Ops.Range        ->   5, No_extra
-  | Ops.End          ->  -5, No_extra
+  | Ops.End | Ops.Backedge ->  -5, No_extra
   | _                ->   0, No_extra
   in
   run_count u, op_pri, extra
@@ -181,7 +184,8 @@ type cfg_context = { edges : U.t U.Ref_tbl.t }
 (* [end_range e] is the single range closed by [e].  After [pm_split_ends],
    every END has exactly one range. *)
 let end_range e =
-  match U.as_end e with
+  if U.op e = Ops.Backedge then Some (U.src e).(1)
+  else match U.as_end e with
   | Some { ranges = [ r ]; _ } when U.op r = Ops.Range -> Some r
   | _ -> None
 
@@ -197,7 +201,7 @@ let build_cfg_context (sink : U.t) : cfg_context =
   let record_nesting u d =
     U.Ref_tbl.iter (fun x () ->
       match U.op x with
-      | Ops.End when not (U.Ref_tbl.mem nesting x) ->
+      | Ops.End | Ops.Backedge when not (U.Ref_tbl.mem nesting x) ->
           let is_nested = match U.op u with
           | Ops.Sink -> true
           | _ ->
@@ -216,9 +220,9 @@ let build_cfg_context (sink : U.t) : cfg_context =
       | Some sd -> U.Ref_tbl.iter (fun k () -> U.Ref_tbl.replace d k ()) sd
       | None -> ())
       (U.src u);
-    (match U.op u with Ops.End | Ops.Sink -> record_nesting u d | _ -> ());
+    (match U.op u with Ops.End | Ops.Backedge | Ops.Sink -> record_nesting u d | _ -> ());
     (match U.op u with
-     | Ops.Range | Ops.End -> U.Ref_tbl.replace d u ()
+     | Ops.Range | Ops.End | Ops.Backedge -> U.Ref_tbl.replace d u ()
      | _ -> ());
     U.Ref_tbl.replace deps u d)
     topo;

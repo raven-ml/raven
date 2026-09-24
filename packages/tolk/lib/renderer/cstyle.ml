@@ -702,12 +702,12 @@ let base_rewrite : ctx rule list =
         match U.as_if (bs $ "x") with
         | Some v -> Some (strf "if (%s) {" (lookup ctx v.cond))
         | None -> None );
-    (* END closing an unbounded loop: exit test at the bottom of the body. *)
+    (* BACKEDGE: exit test at the bottom of an unbounded loop. *)
     ( op
         ~src:
           [ any; op ~dtype:Dtype.void Ops.Range;
             var_dtype "c" (exact_dtype Dtype.bool) ]
-        Ops.End,
+        Ops.Backedge,
       fun ctx bs _ ->
         Some (strf "  if (!(%s)) { break; }\n}" (lookup ctx (bs $ "c"))) );
     (* ENDIF / END: "}" *)
@@ -724,7 +724,7 @@ let base_rewrite : ctx rule list =
                  (lookup ctx v.a) (lookup ctx v.b) (lookup ctx v.c))
         | None -> None );
     (* RANGE with no induction variable: an unbounded loop whose exit test the
-       closing END renders. *)
+       closing BACKEDGE renders. *)
     (op ~dtype:Dtype.void Ops.Range, fun _ _ _ -> Some "for (;;) {");
     (* RANGE: "for (dtype n = 0; n < size; n++) {" *)
     ( op ~name:"x" Ops.Range,
@@ -1167,7 +1167,7 @@ let writable_params (uops : U.t list) : unit U.Ref_tbl.t =
       uops
   in
   let slice =
-    U.toposort ~gate:(fun u -> U.op u <> Ops.End)
+    U.toposort ~gate:(fun u -> U.op u <> Ops.End && U.op u <> Ops.Backedge)
       (U.sink (store_dsts @ image_store_dsts))
   in
   List.iter
@@ -1425,7 +1425,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
                                   (Dtype.to_string (U.dtype s)))
                          |> String.concat ","))
                in
-               (match U.op u with Ops.Endif | Ops.End -> decr depth | _ -> ());
+               (match U.op u with Ops.Endif | Ops.End | Ops.Backedge -> decr depth | _ -> ());
                if should_inline ~expand_ssa ~child_count:cc u then
                  U.Tbl.replace r u rendered
                else begin

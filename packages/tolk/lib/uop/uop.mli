@@ -903,6 +903,14 @@ val range :
     {!range} nodes this loop must be emitted under, used as
     control-flow ordering dependencies. Shared. *)
 
+val loop : axis:int -> t
+(** [loop ~axis] is an unbounded, void loop header with identifier [axis]. *)
+
+val backedge : body:t -> loop:t -> cond:t -> t
+(** [backedge ~body ~loop ~cond] executes [body] and repeats the unbounded
+    [loop] while the scalar boolean [cond] is true. It produces no value
+    and closes only [loop]; enclosing ranges used by [cond] remain live. *)
+
 val end_ : value:t -> ranges:t list -> t
 (** [end_ ~value ~ranges] closes loop [ranges] around [value]. Void dtype;
     the value flows through [value] ([src.(0)]), whose shape it keeps.
@@ -1233,7 +1241,7 @@ val runtime_realization_state : t -> realization_state
 val ranges : t -> t list
 (** [ranges u] is the set of {!Ops.Range} nodes that [u] is nested
     within. A [Range] is included in its own [ranges]. Ops that close
-    a range (e.g. {!Ops.Reduce}, {!Ops.Stage}, {!Ops.End},
+    a range (e.g. {!Ops.Reduce}, {!Ops.Stage}, {!Ops.End}, {!Ops.Backedge},
     {!Ops.Wmma}, {!Ops.Call}, {!Ops.Function}, {!Ops.Copy},
     {!Ops.Slice}) drop ended ranges from the
     propagated set. *)

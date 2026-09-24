@@ -293,13 +293,10 @@ let () =
             (* A void range has no trip count, so its body is counted once
                rather than at the size sitting in its source. *)
             let c10 = i32 10 in
-            let r =
-              U.range ~size:c10 ~axis:0 ~kind:Axis_type.Weak
-                ~dtype:Dtype.void ()
-            in
+            let r = U.loop ~axis:0 in
             let a = f32 1.0 in
             let body = add a a in
-            let end_ = U.end_ ~value:body ~ranges:[ r ] in
+            let end_ = U.backedge ~body ~loop:r ~cond:(U.const_bool false) in
             let est = E.of_program [ c10; r; a; body; end_ ] in
             expect_int_estimate "ops" 1 est.ops);
           test "a loop bounded by a loaded value counts at its bound"
