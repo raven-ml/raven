@@ -361,9 +361,10 @@ let reads_memory u =
 (* On a GPU, one loop's bound reads the position's id, and every float multiply
    lies inside it: at gpt-oss's rows of 2880 inputs, one row or a tile of 8.
    With a single group per row (32 inputs) the kernel gates its loads instead,
-   and no loop's bound reads memory, as on the CPU: this row fails once a
-   reduce over a possibly empty loop stops being rewritten to its body times
-   the loop's size, and the kernel's two-iteration cap can go. *)
+   and no loop's bound reads memory, as on the CPU: this row fails when the
+   kernel's two-iteration cap is removed, which is right once a reduce over a
+   possibly empty loop stops being rewritten to its body times the loop's
+   size. *)
 let codegen ~m ~k (name, ren, gpu) =
   test (Printf.sprintf "%s, %d rows of %d" name m k) (fun () ->
       let prog = program name ren ~m ~k in

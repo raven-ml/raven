@@ -855,9 +855,10 @@ let quant_matmul ?ids x ~codes ~scales =
        iterations or more. In a loop of at most one, every use of the index
        folds to 0, and the reduce over it, left unparented, is rewritten to
        its body times the loop's size (reduce_unparented, as in tinygrad): the
-       body's loads then run for an invalid id too, Metal returns garbage
-       there and, under an upcast or a group, fails to compile. Before
-       8b26ea10a the range rule also folded the loop itself. A single group
+       body's loads then run for an invalid id too, and Metal returns garbage
+       there. Under an upcast or a group such a kernel also fails to compile,
+       likely from the same rewrite (not traced). Before 8b26ea10a the range
+       rule also folded the loop itself. A single group
        is gated at its loads instead, so it runs its multiply-adds. *)
     let group =
       if not gpu then 1
