@@ -432,9 +432,19 @@ val jit :
   ('c, 'd) Nx.t
 (** [jit p f] is [f] compiled, for an argument of structure [p]. The first
     application traces [f], compiles the traced computation into fused kernels,
-    and runs them; later applications whose tensors have the same dtypes and
-    shapes, in walk order, replay the compiled program on the new tensors. Other
-    dtypes or shapes trigger a fresh trace and compilation.
+    and runs them; later applications replay the compiled program on the new
+    tensors when their key equals a program's. The key is the device, every
+    tensor's path, dtype, shape and layout, and every report of [p]'s walk (an
+    integer, a case, an option's presence, a list's length), compared by path
+    segments: an argument with another window, or a list that gained an element
+    with no tensor, traces and compiles its own program. An integer that changes
+    on every call compiles a program per value; a value that varies belongs in a
+    tensor. [RUNE_JIT_DEBUG=1] reports each retrace with the first difference
+    from the previous call's key, such as
+    ["rune.jit: retrace: window: int 3 here, int 2 in the previous key"].
+
+    Every result leaf is a value of its own: a value [f] returns at two leaves
+    comes back as two values, the second a copy of the first.
 
     A call runs where its placed input leaves and captures live
     ({!Nx.placement}), and on {!default_device} when none is placed. Captures

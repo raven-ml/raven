@@ -107,6 +107,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** a compiled function that returns one value at two leaves of
+  its result returns two values, each with storage of its own; they were one
+  value, which a call consuming one of them ended for the other.
+- A compiled function's programs are keyed on each leaf's path and on what its
+  argument's structure reports (a window, a list's length, an option's
+  presence, a case), besides dtypes and shapes: an argument with another window
+  compiles its own program, where it replayed the old one. `RUNE_JIT_DEBUG=1`
+  reports each retrace with the first difference from the previous call.
 - **Breaking:** transformations take structures as `'s Nx.Ptree.t` values in
   place of modules. `vjp`, `vjp_fun`, `jvp`, `jvp_aux`, `custom_vjp` and
   `custom_jvp` also take the result's structure, so `vjp2` and `jvp2` go; so
