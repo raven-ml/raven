@@ -547,6 +547,50 @@ let scatter_indexed_tests =
                 (U.toposort graph)
             in
             equal int 2 (List.length calls));
+        test "only a unique scatter reaches the optimizer" (fun () ->
+            let param slot dtype dims =
+              T.of_uop
+                (U.param ~slot ~dtype ~shape:(T.shape_uop dims)
+                   ~device:(U.Single "CPU") ())
+            in
+            let applied ~unique =
+              let t = param 0 Tolk_uop.Dtype.float32 [ 4096; 8 ] in
+              let index = param 1 Tolk_uop.Dtype.int32 [ 2048; 8 ] in
+              let src = param 2 Tolk_uop.Dtype.float32 [ 2048; 8 ] in
+              let written = T.uop (indexed ~unique `Set t ~dim:0 index src) in
+              let graph = Tolk.Rangeify.get_kernel_graph (U.sink [ written ]) in
+              let scatter =
+                List.find_map
+                  (fun u ->
+                    match U.as_call u with
+                    | Some { body; _ } -> (
+                        match U.as_kernel_info body with
+                        | Some ki
+                          when String.starts_with ~prefix:"scatter_" ki.name ->
+                            Some body
+                        | _ -> None)
+                    | None -> None)
+                  (U.toposort graph)
+                |> Option.get
+              in
+              let gpu =
+                Tolk.Renderer.make ~name:"test" ~device:"TEST" ~has_local:true
+                  ~has_shared:true ~shared_max:32768
+                  ~render:(fun ?name:_ _ -> "")
+                  ()
+              in
+              let optimized =
+                Tolk.Postrange.apply_opts
+                  ~hand_coded_optimizations:Tolk.Heuristic.hand_coded_optimizations
+                  scatter gpu
+              in
+              (Option.get (U.as_kernel_info optimized)).applied_opts
+            in
+            is_true ~msg:"a unique scatter is laid out"
+              (applied ~unique:true <> []);
+            equal int 0
+              ~msg:"a scatter without the promise keeps its kernel as built"
+              (List.length (applied ~unique:false)));
       ])
 
 let clone_tests =

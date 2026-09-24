@@ -1207,6 +1207,16 @@ let test_scatter_duplicates () =
     ~values:(iota [| 2; 3 |])
     (iota [| 2; 4 |])
 
+(* Without the promise of unique indices, thousands of updates aimed at one row
+   land in index order, as eagerly: the last [`Set] wins, and [`Add] sums in the
+   order that fixes its rounding. *)
+let test_scatter_many_duplicates_in_order () =
+  let updates = 4096 and width = 8 in
+  check_scatter ~msg:"4096 updates aimed at one row" ~axis:0
+    ~indices:(i32 [| updates; width |] (Array.make (updates * width) 1))
+    ~values:(iota [| updates; width |])
+    (Nx.zeros f32 [| 2; width |])
+
 let test_scatter_middle_axis () =
   check_scatter ~msg:"middle axis" ~axis:1
     ~indices:(i32 [| 2; 2; 3 |] [| 3; 0; 1; 3; 2; 1; 0; 0; 0; 1; 2; 3 |])
@@ -3235,6 +3245,8 @@ let tests =
       [
         test "scatter matches eager" test_scatter_matches_eager;
         test "scatter orders duplicate updates" test_scatter_duplicates;
+        test "scatter orders thousands of duplicate updates"
+          test_scatter_many_duplicates_in_order;
         test "scatter along a middle axis" test_scatter_middle_axis;
         test "scatter with unique indices" test_scatter_unique_indices;
         test "scatter with unique indices broken at one row"

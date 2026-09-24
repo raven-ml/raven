@@ -627,12 +627,33 @@ let test_host_started_loop_compiles_once () =
        (Nx.placement !x));
   check_arr ~msg:"four steps" (Array.make 64 (2.0 -. (2.0 *. (0.5 ** 4.0)))) !x
 
+(* Without the promise of unique indices, thousands of updates aimed at one row
+   land in index order on the GPU too: the last [`Set] wins, and [`Add] sums in
+   the order that fixes its rounding. *)
+let test_scatter_duplicates_on_metal () =
+  let updates = 4096 and width = 8 in
+  let indices =
+    Nx.create Nx.int32 [| updates; width |] (Array.make (updates * width) 1l)
+  in
+  let values =
+    Nx.create f32 [| updates; width |]
+      (Array.init (updates * width) (fun i -> float_of_int (i + 1)))
+  in
+  let t = Nx.zeros f32 [| 2; width |] in
+  List.iter
+    (fun (name, mode) ->
+      let f t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
+      check_arr ~msg:name (to_arr (f t)) (Rune.jit' ~device:"METAL" f t))
+    [ ("set", `Set); ("add", `Add) ]
+
 let tests =
   [
     group "metal device"
       [
         test "Metal has one device" test_one_metal_device;
         test "element-wise chain matches eager" test_elementwise_on_metal;
+        test "duplicate scatter updates land in order"
+          test_scatter_duplicates_on_metal;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
           test_graph_batched_replay;

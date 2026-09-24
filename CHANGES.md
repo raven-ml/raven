@@ -342,6 +342,10 @@ thread.
 
 ### Tolk (new)
 
+- `Op.scatter_indexed ~unique:true`, and so `Nx.scatter ~unique_indices:true`
+  under `Rune.jit`, gets launch sizes from the optimizer instead of one thread
+  per workgroup: 64 rows of 32768 on Metal take 0.17 ms instead of 2.9 ms. A
+  scatter without the promise keeps its duplicates in index order.
 - A store whose length is a variable of at most 1 writes nothing when the
   length is 0. It wrote one element, which in a decode step overwrote row 0.
 

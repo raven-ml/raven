@@ -562,8 +562,10 @@ let scatter t ~dim index src =
    when they agree on every coordinate off [dim], so those coordinates are
    parallel lanes and the index range is serial within a lane: updates land in
    index order, the last [`Set] wins and [`Add] accumulates exactly, on every
-   device. [unique] frees the index range too. An index outside the axis gates
-   the store off. *)
+   device. [unique] is the caller's promise that no two updates of a lane
+   share an index, never inferred: it frees the index range too, and leaves
+   the kernel's layout to the optimizer; built as is, it would run one thread
+   per workgroup. An index outside the axis gates the store off. *)
 
 let scatter_indexed t ~dim index src ~mode ~unique =
   let src =
@@ -678,7 +680,7 @@ let scatter_indexed t ~dim index src ~mode ~unique =
                 axis_types = [];
                 dont_use_locals = false;
                 applied_opts = [];
-                opts_to_apply = Some [];
+                opts_to_apply = (if unique then None else Some []);
                 estimates = None;
                 beam = 0;
               }

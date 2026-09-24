@@ -114,6 +114,20 @@ delete it rather than registering it.
   gradient of `Nx.take` and kaun's embedding gradient; and rune's `E_update`
   at a traced corner, over the flattened destination.
 
+  When the caller states that no two updates of a lane share an index
+  (`~unique:true`, `Nx.scatter ~unique_indices:true`), the index range is a
+  parallel range and the kernel goes through the hand-coded optimizations,
+  where the reference builds its embedding gradient with
+  `opts_to_apply=()` (`tinygrad/nn/__init__.py:363` at baa614806) and lays
+  out its own local axis and atomics by hand. tolk's kernel has neither:
+  built as is, it runs one thread per workgroup, and a 64 x 32768 scatter
+  took 2.9 ms on Metal instead of 0.17 ms. tolk never infers uniqueness. A
+  scatter without the flag keeps the serial range and its kernel as built,
+  so duplicates still land in index order. A caller that breaks the promise
+  gets, at a repeated position, an unspecified one of its updates under
+  `Set` and an unspecified value under `Add`; every other position stays
+  exact. Consumer: `Nx.top_k`, whose compaction is a permutation.
+
 - **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
   `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
   selects unaligned vector types through the `ALIGNED` environment variable
