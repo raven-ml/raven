@@ -176,18 +176,6 @@ let test_placed_weights_bind () =
   equal ~msg:"a second function uploads its input only" int (Nx.nbytes x) up;
   check_arr ~msg:"second function" (to_arr (Nx.add (Nx.matmul x w1) x)) y
 
-(* One float32 tensor as a tree. *)
-module Single = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
-end
-
 let raises_donated f =
   raises_match
     (function
@@ -319,11 +307,9 @@ let test_bound_input_is_not_donated () =
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
   ignore (g x);
   let step =
-    Rune.jit_step ~device:"METAL"
-      (module Nx.Ptree)
-      (module Single)
-      (fun _ m -> Nx.mul_s m 2.0)
-      (Nx.Ptree.list [])
+    Rune.jit_step ~device:"METAL" Nx.Ptree.unit Nx.Ptree.tensor
+      (fun () m -> Nx.mul_s m 2.0)
+      ()
   in
   let y, up = delta (fun () -> step p) in
   equal ~msg:"the bound input seeds with no transfer" int 0 up;
@@ -338,10 +324,8 @@ let test_step_reads_weights_consumes_state () =
   let w = on_metal w1 in
   let f w x = Nx.add_s (Nx.mul x x) (Nx.item [] (Nx.mean w)) in
   let step =
-    Rune.jit_step ~device:"METAL"
-      (module Single)
-      (module Single)
-      (fun w x -> Nx.add (Nx.mul x x) (Nx.mean w))
+    Rune.jit_step ~device:"METAL" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
+        Nx.add (Nx.mul x x) (Nx.mean w))
   in
   let x0 =
     Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i /. 16.0))
@@ -378,25 +362,24 @@ let test_read_after_call_waits () =
     !h
 
 module Pair = struct
-  type t = { u : Nx.float32_t; v : Nx.float32_t }
+  type pair = { u : Nx.float32_t; v : Nx.float32_t }
+  type _ t = pair
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
-    { u = f p.u; v = f p.v }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { u = f p.u q.u; v = f p.v q.v }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
-    f p.u;
-    f p.v
+  let walk c { u; v } =
+    let open Nx.Ptree.Walk in
+    let u = field c "u" tensor u in
+    let v = field c "v" tensor v in
+    { u; v }
 end
+
+let pair_ptree = Nx.Ptree.instantiate (module Pair)
 
 (* Two programs take turns on one consumed state, with no wait between their
    calls: each consumed buffer is reused only by work queued after the kernels
    that read it. *)
 let test_two_programs_alternate () =
   let n = 64 in
-  let mix (p : Pair.t) =
+  let mix (p : Pair.pair) =
     let a = Nx.tanh (Nx.matmul p.u p.v) in
     let scale = Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0 in
     {
@@ -404,17 +387,13 @@ let test_two_programs_alternate () =
       v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
     }
   in
-  let fold (p : Pair.t) =
+  let fold (p : Pair.pair) =
     let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
     let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
     { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
   in
   let compile f =
-    Rune.jit_step ~device:"METAL"
-      (module Nx.Ptree)
-      (module Pair)
-      (fun _ p -> f p)
-      (Nx.Ptree.list [])
+    Rune.jit_step ~device:"METAL" Nx.Ptree.unit pair_ptree (fun () p -> f p) ()
   in
   let mix' = compile mix and fold' = compile fold in
   let init k =
@@ -609,13 +588,11 @@ let test_mixed_placements_raise () =
 let test_host_started_loop_compiles_once () =
   let traces = ref 0 in
   let step =
-    Rune.jit_step
-      (module Nx.Ptree)
-      (module Single)
-      (fun _ x ->
+    Rune.jit_step Nx.Ptree.unit Nx.Ptree.tensor
+      (fun () x ->
         incr traces;
         Nx.add_s (Nx.mul_s x 0.5) 1.0)
-      (Nx.Ptree.list [])
+      ()
   in
   let x = ref (vec32 (Array.make 64 0.0)) in
   for _ = 1 to 4 do
@@ -767,8 +744,7 @@ let test_empty_values () =
 let test_custom_backward_on_metal () =
   let indices = Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 2l |] in
   let take x =
-    Rune.custom_vjp
-      (module Single)
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
       ~fwd:(fun x -> (Nx.take ~axis:0 ~indices x, Nx.mul_s x 0.))
       ~bwd:(fun zeros ct ->
         Nx.scatter ~mode:`Add ~axis:0 ~indices ~values:(Nx.mul_s ct 7.) zeros)

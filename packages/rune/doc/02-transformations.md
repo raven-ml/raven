@@ -4,19 +4,11 @@ Rune provides functional transformations over ordinary OCaml functions of Nx ten
 
 ## Parameter Structures
 
-Every structured transformation takes a first-class module implementing `Nx.Ptree.S` — three one-line traversals over the structure's tensor leaves. A single tensor is itself a one-leaf structure:
+A transformation takes the structure of each value whose tensors it enumerates, an `'s Nx.Ptree.t`, and captures everything else. `grad`, `vjp`, `jvp` and their kin take the structure of the value they differentiate and, where they rebuild one, of the result; `vmap` and `remat` take the signature of the function they transform. `Nx.Ptree.tensor` is the structure of one tensor, and `Nx.Ptree.instantiate` makes one from a record's `walk` (see [Getting Started](01-getting-started.md)).
 
-```ocaml
-module Vec = struct
-  type t = Nx.float32_t
+For functions of a single tensor, the primed variants (`grad'`, `vjp'`, `jvp'`, `vmap'`, `hvp'`) take no structure; they are used below wherever the structure does not matter.
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v = f v
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) v = f v
-end
-```
-
-For functions of a single tensor, the primed variants (`grad'`, `vjp'`, `jvp'`, `vmap'`, `hvp'`) skip the module argument entirely; they are used below wherever the structure does not matter. The `2`-suffixed variants (`vjp2`, `jvp2`, `vmap2`) take a second module for functions returning a *structure* rather than one tensor.
+Every transformation replaces each tensor of its arguments by a fresh alias, a new value over the same storage, before it differentiates or maps it. A tensor the function captures is then a constant even when it is also the argument: `Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) w` is `w`.
 
 ## Reverse-Mode AD
 
@@ -24,17 +16,17 @@ Reverse mode (backpropagation) computes gradients for all inputs in one backward
 
 ### grad
 
-`grad (module P) f params` is the gradient of the scalar-valued `f` at `params`, with the same structure and leaf dtypes as `params`:
+`grad p f params` is the gradient of the scalar-valued `f` at `params`, with the same structure and leaf dtypes as `params`:
 
 ```ocaml
 let () =
   let f v = Nx.sum (Nx.mul v v) in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Printf.printf "%s\n" (Nx.to_string (Rune.grad (module Vec) f x))
+  Printf.printf "%s\n" (Nx.to_string (Rune.grad Nx.Ptree.tensor f x))
   (* gradient: [2. 4. 6.] *)
 ```
 
-`f params` must be a scalar (a tensor with exactly one element); use `vjp` for non-scalar outputs. Integer or boolean leaves raise — hold non-differentiable data in the closure or the auxiliary output.
+`f params` must be a scalar (a tensor with exactly one element); use `vjp` for non-scalar outputs. A structure may hold integer or boolean tensors, such as an RNG key or a step counter: they are carried with a zero gradient. `grad'` of an integer tensor raises.
 
 ### value_and_grad
 
@@ -44,7 +36,7 @@ Computes the value and the gradient in a single forward and backward pass:
 let () =
   let f v = Nx.mean (Nx.mul v v) in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let value, gradient = Rune.value_and_grad (module Vec) f x in
+  let value, gradient = Rune.value_and_grad Nx.Ptree.tensor f x in
   Printf.printf "f(x) = %.4f\n" (Nx.item [] value);
   Printf.printf "%s\n" (Nx.to_string gradient)
 ```
@@ -60,7 +52,7 @@ let () =
     (Nx.mean pred, pred) (* pred is auxiliary *)
   in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let loss, gradient, pred = Rune.value_and_grad_aux (module Vec) f x in
+  let loss, gradient, pred = Rune.value_and_grad_aux Nx.Ptree.tensor f x in
   ignore (loss, gradient, pred)
 ```
 
@@ -78,7 +70,20 @@ let () =
   Printf.printf "%s\n" (Nx.to_string g) (* [2. 4. 6.] *)
 ```
 
-The cotangent must have the output's shape and dtype. For a function returning a whole structure, `vjp2 (module P) (module Q) f params cotangents` takes one cotangent per output leaf.
+The cotangent must have the output's shape and dtype. `vjp p q f params cotangents` takes the structures of the parameters and of the result, so a function returning a structure takes one cotangent per tensor of its result:
+
+```ocaml
+let () =
+  let f v = (Nx.mul v v, Nx.sum v) in
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let _, g =
+    Rune.vjp Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor tensor)
+      f x
+      (Nx.ones Nx.float32 [| 3 |], Nx.scalar Nx.float32 1.0)
+  in
+  Printf.printf "%s\n" (Nx.to_string g) (* [3. 5. 7.] *)
+```
 
 ### vjp_fun
 
@@ -115,7 +120,7 @@ let () =
   (* [2. 4. 6.] — directional derivative *)
 ```
 
-`jvp_aux` carries auxiliary outputs; `jvp2` handles functions returning a structure (one tangent per output leaf).
+`jvp p q f params tangents` takes the structures of the parameters and of the result, and returns one tangent per tensor of the result; `jvp_aux` carries auxiliary outputs.
 
 ### Choosing Between Forward and Reverse Mode
 
@@ -126,7 +131,7 @@ let () =
 
 ### vmap
 
-`vmap` lifts a function written for one example to batched inputs. The mapped function observes each leaf without its mapped axis; its result gains a batch axis at `out_axis` (default `0`):
+`vmap` lifts a function written for one example to batched inputs. It maps axis 0 of every tensor of the function's arguments; the mapped function sees each without that axis, and every tensor of its result gains a batch axis 0. `vmap'` is the form for a function of one tensor:
 
 ```ocaml
 let () =
@@ -138,43 +143,27 @@ let () =
   (* [10] — one scalar per example *)
 ```
 
-Values the function closes over are constants of the map. For structures, `in_axes` pairs one entry per leaf in traversal order: `Some i` maps axis `i` (negative counts from the end), `None` passes the leaf whole as a constant:
+`vmap` takes the signature of the function it maps: one structure per argument, built with `@->`, and the structure of the result, with `returns`. A value the function captures is a constant of the map, passed whole to every lane, and another axis is mapped by moving it to the front with `Nx.moveaxis`, a view:
 
 ```ocaml
-type pair = { x : Nx.float32_t; y : Nx.float32_t }
-
-module Pair = struct
-  type t = pair
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { x; y } =
-    { x = f x; y = f y }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { x = f a.x b.x; y = f a.y b.y }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { x; y } =
-    f x;
-    f y
-end
-
 let () =
-  let pairs =
-    {
-      x = Nx.create Nx.float32 [| 4; 3 |] (Array.init 12 float_of_int);
-      y = Nx.create Nx.float32 [| 3 |] [| 1.; 0.; -1. |];
-    }
-  in
-  (* Map over rows of x; y is passed whole to every lane. *)
+  let x = Nx.create Nx.float32 [| 4; 3 |] (Array.init 12 float_of_int) in
+  let y = Nx.create Nx.float32 [| 3 |] [| 1.; 0.; -1. |] in
+  (* Map over rows of x; y is captured, whole in every lane. *)
   let dots =
-    Rune.vmap ~in_axes:[ Some 0; None ]
-      (module Pair)
-      (fun p -> Nx.dot p.x p.y)
-      pairs
+    Rune.vmap Nx.Ptree.(tensor @-> returns tensor) (fun x -> Nx.dot x y) x
   in
-  Printf.printf "%s\n" (Nx.to_string dots)
+  Printf.printf "%s\n" (Nx.to_string dots);
+  (* Map over the columns of x and over y together. *)
+  let scaled =
+    Rune.vmap
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun column k -> Nx.mul column k)
+      (Nx.moveaxis 1 0 x) y
+  in
+  Format.printf "scaled has shape %a@." Nx.pp_shape (Nx.shape scaled)
+  (* [3; 4] — one column per lane *)
 ```
-
-`vmap2` is the variant for mapped functions returning a structure: every output leaf gains the batch axis.
 
 **Note.** Implicit random number generation (`Nx.rand` and friends) inside the mapped function draws *identical* values for every lane — the RNG key is a constant of the map. Thread distinct randomness in as mapped inputs instead. Reading a batched tensor's value inside the mapped function raises.
 
@@ -183,21 +172,19 @@ let () =
 Transformations nest freely, and `vmap` of `grad` is the canonical composition: write the loss for one example, differentiate it, map the differentiated function over the batch. Each gradient leaf gains a leading batch axis:
 
 ```ocaml
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+type 'a params = { w : 'a; b : 'a }
 
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
+
+let params_ptree = Nx.Ptree.instantiate (module Params)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -205,18 +192,15 @@ let () =
   let params =
     { w = Nx.randn Nx.float32 [| d |]; b = Nx.randn Nx.float32 [||] }
   in
-  let batch =
-    { x = Nx.randn Nx.float32 [| n; d |]; y = Nx.randn Nx.float32 [| n |] }
-  in
+  let xs = Nx.randn Nx.float32 [| n; d |] and ys = Nx.randn Nx.float32 [| n |] in
   (* Squared error of a linear model on a single example. *)
-  let loss ex p = Nx.square (Nx.sub (Nx.add (Nx.dot ex.x p.w) p.b) ex.y) in
-  (* grad gives the per-example gradient; vmap2 maps it over the batch. *)
+  let loss x y p = Nx.square (Nx.sub (Nx.add (Nx.dot x p.w) p.b) y) in
+  (* grad gives the per-example gradient; vmap maps it over the batch. *)
   let per_sample =
-    Rune.vmap2
-      (module Pair)
-      (module Params)
-      (fun ex -> Rune.grad (module Params) (loss ex) params)
-      batch
+    Rune.vmap
+      Nx.Ptree.(tensor @-> tensor @-> returns params_ptree)
+      (fun x y -> Rune.grad params_ptree (loss x y) params)
+      xs ys
   in
   Format.printf "per-sample dw: %a@." Nx.pp_shape (Nx.shape per_sample.w);
   Format.printf "per-sample db: %a@." Nx.pp_shape (Nx.shape per_sample.b)
@@ -265,7 +249,7 @@ let () =
 
 ## Gradient Checkpointing
 
-`remat (module P) f params` is `f params` recomputed during the backward pass instead of having its intermediates retained by the tape. Gradients are unchanged; memory is traded for compute:
+`remat s f` is `f` recomputed during the backward pass instead of having its intermediates retained by the tape. `s` is `f`'s signature, as for `vmap`, so a curried layer function is rematerialized as it is. Gradients are unchanged; memory is traded for compute:
 
 ```ocaml
 let () =
@@ -273,7 +257,7 @@ let () =
   let expensive v = Nx.mean (Nx.square (Nx.sin v)) in
   let g_plain = Rune.grad' expensive x in
   let g_remat =
-    Rune.grad' (fun v -> Rune.remat (module Vec) expensive v) x
+    Rune.grad' (Rune.remat Nx.Ptree.(tensor @-> returns tensor) expensive) x
   in
   Printf.printf "%s\n" (Nx.to_string g_plain);
   Printf.printf "%s\n" (Nx.to_string g_remat) (* identical *)
@@ -287,14 +271,13 @@ When you know a better rule than the composition of primitive rules — cheaper,
 
 ### custom_vjp
 
-`custom_vjp (module P) ~fwd ~bwd params` computes `fst (fwd params)`; under the innermost reverse-mode transformation, `bwd residual cotangent` supplies the parameter gradients instead of differentiating `fwd`'s interior. The residual is whatever `fwd` returned alongside its result:
+`custom_vjp p ~fwd ~bwd params` computes `fst (fwd params)`; under the innermost reverse-mode transformation, `bwd residual cotangent` supplies the parameter gradients instead of differentiating `fwd`'s interior. The residual is whatever `fwd` returned alongside its result:
 
 ```ocaml
 let () =
   (* f(x) = x², with a hand-written backward rule. *)
   let f x =
-    Rune.custom_vjp
-      (module Vec)
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
       ~fwd:(fun x -> (Nx.square x, x)) (* save x as the residual *)
       ~bwd:(fun x ct -> Nx.mul ct (Nx.mul_s x 2.0)) (* ct · 2x *)
       x
@@ -314,9 +297,7 @@ The forward-mode counterpart: `jvp params tangents` provides both the result and
 ```ocaml
 let () =
   let f x =
-    Rune.custom_jvp
-      (module Vec)
-      ~f:Nx.square
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor ~f:Nx.square
       ~jvp:(fun x dx -> (Nx.square x, Nx.mul_s (Nx.mul x dx) 2.0))
       x
   in
@@ -334,17 +315,9 @@ With no transformation in scope, both constructs just run the plain forward func
 `check_grads` compares the reverse-mode gradient of a scalar objective against central-difference directional derivatives along deterministic directions:
 
 ```ocaml
-module Vec64 = struct
-  type t = Nx.float64_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v = f v
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) v = f v
-end
-
 let () =
   let x = Nx.create Nx.float64 [| 2 |] [| -1.2; 1.0 |] in
-  match Rune.check_grads (module Vec64) rosenbrock x with
+  match Rune.check_grads Nx.Ptree.tensor rosenbrock x with
   | Ok () -> print_endline "reverse mode agrees with finite differences"
   | Error msg -> print_endline msg
 ```
@@ -374,38 +347,25 @@ let () =
   (* the running sums [1. 3. 6. 10.] *)
 ```
 
-`scan (module C) (module X) (module Y) ~f ~init xs` is the same fold over structures: one module each for the carry, the rows and the outputs, in the order of `f`'s type. Every leaf of `xs` has the same leading length, step `i` receives row `i` of every leaf, and every leaf of the outputs is stacked. `Nx.Ptree.leaf` stands for a role that is a single tensor:
+`scan c x y ~f ~init xs` is the same fold over structures: one structure each for the carry, the rows and the outputs, in the order of `f`'s type. Every tensor of `xs` has the same leading length, step `i` receives row `i` of every tensor, and every tensor of the outputs is stacked. A fold with nothing to emit passes `Nx.Ptree.unit` for the outputs:
 
 ```ocaml
-module Moments = struct
-  type t = { sum : Nx.float32_t; squares : Nx.float32_t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) m =
-    { sum = f m.sum; squares = f m.squares }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) m m' =
-    { sum = f m.sum m'.sum; squares = f m.squares m'.squares }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) m =
-    f m.sum;
-    f m.squares
-end
-
 let () =
   let xs = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let m, _ =
-    Rune.scan (module Moments) Nx.Ptree.leaf Nx.Ptree.leaf
-      ~f:(fun m x ->
-        ( { Moments.sum = Nx.add m.Moments.sum x;
-            squares = Nx.add m.squares (Nx.mul x x) },
-          x ))
-      ~init:{ Moments.sum = Nx.scalar Nx.float32 0.0;
-              squares = Nx.scalar Nx.float32 0.0 }
+  let (sum, squares), () =
+    Rune.scan
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.tensor Nx.Ptree.unit
+      ~f:(fun (sum, squares) x ->
+        ((Nx.add sum x, Nx.add squares (Nx.mul x x)), ()))
+      ~init:(Nx.scalar Nx.float32 0.0, Nx.scalar Nx.float32 0.0)
       xs
   in
-  Printf.printf "sum %s, squares %s\n" (Nx.to_string m.sum)
-    (Nx.to_string m.squares)
+  Printf.printf "sum %s, squares %s\n" (Nx.to_string sum)
+    (Nx.to_string squares)
 ```
+
+The carry the body returns must have the visits of the one it received, and each step's outputs those of the first step's: a list keeps its length and an option its presence. `scan` raises otherwise, naming the first path where they differ.
 
 Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop over the step's pullback — the compiled program's size does not depend on the number of steps. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
 
@@ -413,7 +373,7 @@ Staging needs the carry to keep its shapes across steps; a fold that changes the
 
 ### cond and while_loop
 
-`cond pred ~then_ ~else_` runs one branch according to the scalar boolean `pred`; `while_loop (module C) ~cond ~body init` iterates `body` on the carry while `cond` holds:
+`cond pred ~then_ ~else_` runs one branch according to the scalar boolean `pred`; `while_loop ~cond ~body init` iterates `body` on the carry while `cond` holds:
 
 ```ocaml
 let () =
@@ -429,7 +389,6 @@ let () =
   (* Double the carry until its sum exceeds 10. *)
   let y =
     Rune.while_loop
-      (module Vec)
       ~cond:(fun c -> Nx.less (Nx.sum c) (Nx.scalar Nx.float32 10.0))
       ~body:(fun c -> Nx.mul_s c 2.0)
       (Nx.create Nx.float32 [| 2 |] [| 1.0; 0.5 |])
@@ -472,7 +431,7 @@ Rune fails loudly rather than returning wrong gradients:
 | `value_and_grad_aux` | ... plus auxiliary data | Thread state/metrics out of the objective |
 | `vjp` / `vjp_fun` | Vector-Jacobian product | Non-scalar outputs, reusable pullbacks |
 | `jvp` | Jacobian-vector product | Few inputs, many outputs |
-| `vmap` / `vmap2` | Vectorize over a batch axis | Per-example computation |
+| `vmap` / `vmap'` | Vectorize over axis 0 | Per-example computation |
 | `jacfwd'` / `jacrev'` / `hessian'` | Whole derivative matrices | Small problems, second-order methods |
 | `hvp` | Matrix-free Hessian-vector product | Large second-order computations |
 | `remat` | Recompute in the backward pass | Memory-bound backward passes |

@@ -13,66 +13,29 @@
    reverse) fall back to the eager fold, as does plain execution when no handler
    is present ([Effect.Unhandled] is catchable since OCaml 5.2).
 
-   The carry, the rows and the outputs are structures whose types are
-   existential through the effect, so they travel packed with their traversal;
-   packing and unpacking sites are the only places that erase and recover the
-   types, and both are construction sites of the same module, so the coercion is
-   sound by construction. *)
+   The carry, the rows and the outputs are structures whose types the effect
+   cannot carry, so they travel as their tensors in walk order
+   ([Nx.Ptree.flatten]): the typed [scan] rebuilds values from tensors inside
+   the fold step and for the result, and every handler works on lists of
+   tensors. *)
 
-type packed_t = Packed_t : ('a, 'b) Nx_effect.t -> packed_t
-type tree = Tree : (module Nx.Ptree.S with type t = 'a) * 'a -> tree
+(* A structure's tensors, in walk order. *)
+type leaves = Nx.packed list
 
-(* The leaves of a structure, in its traversal order. *)
-let leaves (Tree ((module T), t)) =
-  let acc = ref [] in
-  T.iter (fun leaf -> acc := Packed_t leaf :: !acc) t;
-  List.rev !acc
-
-(* [unflatten tree ls] is [tree] with its leaves replaced, position for position
-   in traversal order, by [ls], each of its position's dtype. A [T.map]
-   callback's order is instance-defined, so positions are recovered through
-   fresh markers: [T.map] replaces every leaf with its own marker, [T.iter]
-   numbers the markers, and a second [T.map] looks each one up. *)
-type Nx_effect.node += Marker
-
-let unflatten (type a) (module T : Nx.Ptree.S with type t = a) (t : a)
-    (ls : packed_t list) : a =
-  let marked =
-    T.map
-      (fun leaf ->
-        Nx_effect.traced (Nx_effect.context leaf) (Nx_effect.dtype leaf)
-          (Nx.shape leaf) Marker)
-      t
-  in
-  let positions = ref [] and i = ref 0 in
-  T.iter
-    (fun m ->
-      positions := (Obj.repr m, !i) :: !positions;
-      incr i)
-    marked;
-  let ls = Array.of_list ls in
-  if Array.length ls <> !i then
-    invalid_arg "Scan.unflatten: leaf count mismatch";
-  T.map
-    (fun (type b c) (m : (b, c) Nx_effect.t) : (b, c) Nx_effect.t ->
-      let (Packed_t l) = ls.(List.assq (Obj.repr m) !positions) in
-      (Obj.magic l : (b, c) Nx_effect.t))
-    marked
-
-(* One fold step, type-erased: [run] applies the scan body to a packed carry and
-   a packed row, returning the packed next carry and outputs. *)
-type step = { run : tree -> tree -> tree * tree }
+(* One fold step, type-erased: [run] applies the scan body to the tensors of a
+   carry and of a row, returning those of the next carry and of the outputs. *)
+type step = { run : leaves -> leaves -> leaves * leaves }
 
 (* [req_record] asks the stager to keep the carry entering every step, which a
    staged transpose reads: reverse-mode sets it when it records one. *)
 type scan_req = {
-  req_carry : tree;
-  req_xs : tree;
+  req_carry : leaves;
+  req_xs : leaves;
   req_step : step;
   req_record : bool;
 }
 
-type scan_res = { r_carry : tree; r_ys : tree }
+type scan_res = { r_carry : leaves; r_ys : leaves }
 
 (* A backward scan, performed by the tape entry reverse-mode records for a
    staged [E_scan]. Carries everything jit needs to capture the body's pullback
@@ -81,10 +44,10 @@ type scan_res = { r_carry : tree; r_ys : tree }
    outputs. *)
 type scan_bwd = {
   bwd_step : step;
-  bwd_carry : tree; (* the scan's init carry, accumulated into *)
-  bwd_xs : tree; (* the scan's rows, accumulated into *)
-  bwd_dc : tree; (* cotangent of the final carry *)
-  bwd_dys : tree; (* cotangents of the stacked outputs *)
+  bwd_carry : leaves; (* the scan's init carry, accumulated into *)
+  bwd_xs : leaves; (* the scan's rows, accumulated into *)
+  bwd_dc : leaves; (* cotangent of the final carry *)
+  bwd_dys : leaves; (* cotangents of the stacked outputs *)
 }
 
 (* A tensor the scan body closes over (an external input of the loop) and the
@@ -97,8 +60,8 @@ type closed_ctan =
 (* Result of a staged backward scan: the cotangents of the init carry, of the
    rows (stacked like them), and of the tensors the body closes over. *)
 type scan_bwd_res = {
-  br_carry : tree;
-  br_xs : tree;
+  br_carry : leaves;
+  br_xs : leaves;
   br_closed : closed_ctan list;
 }
 
@@ -124,86 +87,84 @@ exception Not_staged
 
 (* The number of steps: the common leading length of the rows. *)
 let length xs =
-  match leaves xs with
+  match xs with
   | [] -> invalid_arg "Rune.scan: xs has no leaf"
-  | ls ->
-      let lead (Packed_t l) =
+  | x :: _ ->
+      let lead (Nx.P l) =
         match Nx.shape l with
         | [||] -> invalid_arg "Rune.scan: an xs leaf is a scalar"
         | shape -> shape.(0)
       in
-      let n = lead (List.hd ls) in
-      if List.exists (fun l -> lead l <> n) ls then
+      let n = lead x in
+      if List.exists (fun l -> lead l <> n) xs then
         invalid_arg "Rune.scan: the xs leaves differ in their leading length";
       if n = 0 then invalid_arg "Rune.scan: xs is empty along the scan axis";
       n
 
-(* The eager fold, over the packed representation. Runs the body with ordinary
-   Nx operations, so an enclosing handler (or a nested one installed by a
-   handler's own [E_scan] case) observes every step. *)
+(* The eager fold. Runs the body with ordinary Nx operations, so an enclosing
+   handler (or a nested one installed by a handler's own [E_scan] case) observes
+   every step. *)
 let eager (req : scan_req) : scan_res =
-  let (Tree (xmod, xs)) = req.req_xs in
-  let module X = (val xmod) in
   let n = length req.req_xs in
   let carry = ref req.req_carry in
   let ys = ref [] in
   for i = 0 to n - 1 do
-    let row = Tree (xmod, X.map (fun l -> Nx.slice [ Nx.I i ] l) xs) in
+    let row =
+      List.map (fun (Nx.P l) -> Nx.P (Nx.slice [ Nx.I i ] l)) req.req_xs
+    in
     let c', y = req.req_step.run !carry row in
     carry := c';
     ys := y :: !ys
   done;
-  let ys = List.rev !ys in
-  (* Every step returns outputs of the same structure and element types, so the
-     first step's leaves type the stacks the others are coerced into. *)
-  let steps = List.map leaves ys in
-  let stack_at k (Packed_t y0) =
-    let rest =
-      List.map
-        (fun ls ->
-          let (Packed_t y) = List.nth ls k in
-          Obj.magic y)
-        (List.tl steps)
-    in
-    Packed_t (Nx.stack ~axis:0 (y0 :: rest))
+  (* The body checks that every step's outputs have the first step's skeleton,
+     so the steps' tensors at one position share a dtype. *)
+  let rec stack = function
+    | [] :: _ | [] -> []
+    | steps ->
+        let (Nx.P y0) = List.hd (List.hd steps) in
+        let dtype = Nx.dtype y0 in
+        let column = List.map (fun y -> Nx.unpack dtype (List.hd y)) steps in
+        Nx.P (Nx.stack ~axis:0 column) :: stack (List.map List.tl steps)
   in
-  match ys with
-  | Tree (ymod, y0) :: _ ->
-      let stacked = List.mapi stack_at (List.hd steps) in
-      { r_carry = !carry; r_ys = Tree (ymod, unflatten ymod y0 stacked) }
-  | [] -> assert false
+  { r_carry = !carry; r_ys = stack (List.rev !ys) }
 
-(* [scan] itself. The typed body is packed into [step] with locally abstract
-   type witnesses; the effect result is unpacked back. *)
-let scan (type c x y) (module C : Nx.Ptree.S with type t = c)
-    (module X : Nx.Ptree.S with type t = x)
-    (module Y : Nx.Ptree.S with type t = y) ~(f : c -> x -> c * y) ~(init : c)
-    (xs : x) : c * y =
-  let req_xs = Tree ((module X), xs) in
+(* [scan] itself. The body is wrapped in a step over tensors: it rebuilds the
+   carry and the row from the tensors it receives, checks the skeletons of what
+   the body returns, and flattens them. *)
+let scan (type c x y) (cs : c Nx.Ptree.t) (xs_s : x Nx.Ptree.t)
+    (ys_s : y Nx.Ptree.t) ~(f : c -> x -> c * y) ~(init : c) (xs : x) : c * y =
+  let req_carry, _ = Nx.Ptree.flatten cs init in
+  let req_xs, _ = Nx.Ptree.flatten xs_s xs in
   ignore (length req_xs : int);
-  let step : step =
-    {
-      run =
-        (fun (Tree (_, c)) (Tree (_, x)) ->
-          let c', y = f (Obj.magic c : c) (Obj.magic x : x) in
-          (Tree ((module C), c'), Tree ((module Y), y)));
-    }
+  let first = ref None in
+  let same ~this ~that s x y =
+    ignore (Structure.map2 "Rune.scan" s ~this ~that (fun _ t _ -> t) x y)
   in
-  let req =
-    {
-      req_carry = Tree ((module C), init);
-      req_xs;
-      req_step = step;
-      req_record = false;
-    }
+  let run c_leaves x_leaves =
+    let c = Nx.Ptree.rebuild cs ~like:init c_leaves in
+    let c', y = f c (Nx.Ptree.rebuild xs_s ~like:xs x_leaves) in
+    same cs ~this:"the carry the body returned" ~that:"the carry it received" c'
+      c;
+    (match !first with
+    | None -> first := Some y
+    | Some y0 ->
+        same ys_s ~this:"a step's outputs" ~that:"the first step's outputs" y y0);
+    (fst (Nx.Ptree.flatten cs c'), fst (Nx.Ptree.flatten ys_s y))
   in
-  let unpack { r_carry = Tree (_, c'); r_ys = Tree (_, ys) } =
-    ((Obj.magic c' : c), (Obj.magic ys : y))
+  let req = { req_carry; req_xs; req_step = { run }; req_record = false } in
+  let res =
+    match Effect.perform (E_scan req) with
+    | res -> res
+    | exception (Effect.Unhandled _ | Not_staged) ->
+        (* No staging handler (none claims the effect, or the claimer declined):
+           the eager fold, observed by whatever transformation handlers are
+           installed. *)
+        eager req
   in
-  match Effect.perform (E_scan req) with
-  | res -> unpack res
-  | exception (Effect.Unhandled _ | Not_staged) ->
-      (* No staging handler (none claims the effect, or the claimer declined):
-         the eager fold, observed by whatever transformation handlers are
-         installed. *)
-      unpack (eager req)
+  let y0 =
+    match !first with
+    | Some y0 -> y0
+    | None -> assert false (* Every performer runs the body at least once. *)
+  in
+  ( Nx.Ptree.rebuild cs ~like:init res.r_carry,
+    Nx.Ptree.rebuild ys_s ~like:y0 res.r_ys )

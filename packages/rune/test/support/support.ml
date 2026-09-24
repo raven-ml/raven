@@ -70,25 +70,23 @@ let as_f32 (type a b) (x : (a, b) Nx.t) : Nx.float32_t =
   | Some Type.Equal -> x
   | None -> failwith "expected a float32 leaf"
 
-(* A statically-typed parameter record with mixed dtypes: the canonical Ptree.S
-   instance used across suites. *)
+(* A statically-typed parameter record with mixed dtypes: the canonical
+   structure used across suites. *)
 
 type params = { w : Nx.float32_t; b : Nx.float32_t; scale : Nx.float64_t }
 
 module Params = struct
-  type t = params
+  type _ t = params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b; scale } =
-    { w = f w; b = f b; scale = f scale }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b; scale = f p.scale q.scale }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b; scale } =
-    f w;
-    f b;
-    f scale
+  let walk c { w; b; scale } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let b = field c "b" tensor b in
+    let scale = field c "scale" tensor scale in
+    { w; b; scale }
 end
+
+let params_ptree : params Nx.Ptree.t = Nx.Ptree.instantiate (module Params)
 
 let params () =
   {
@@ -102,18 +100,16 @@ let params () =
 type pair = { fst : Nx.float64_t; snd : Nx.float64_t }
 
 module Pair = struct
-  type t = pair
+  type _ t = pair
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { fst; snd } =
-    { fst = f fst; snd = f snd }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { fst = f p.fst q.fst; snd = f p.snd q.snd }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { fst; snd } =
-    f fst;
-    f snd
+  let walk c { fst; snd } =
+    let open Nx.Ptree.Walk in
+    let fst = field c "fst" tensor fst in
+    let snd = field c "snd" tensor snd in
+    { fst; snd }
 end
+
+let pair_ptree : pair Nx.Ptree.t = Nx.Ptree.instantiate (module Pair)
 
 (* Finite-difference oracle.
 
@@ -167,7 +163,7 @@ let check_grad2 ?(h = 1e-5) ?(tol = 1e-3) ~msg
     (f : Nx.float64_t -> Nx.float64_t -> Nx.float64_t) (a : Nx.float64_t)
     (b : Nx.float64_t) =
   let loss p = weighted (f p.fst p.snd) in
-  let g = Rune.grad (module Pair) loss { fst = a; snd = b } in
+  let g = Rune.grad pair_ptree loss { fst = a; snd = b } in
   let shape_a = Nx.shape a and shape_b = Nx.shape b in
   let arr_a = to_arr a and arr_b = to_arr b in
   let num_a =
@@ -217,8 +213,7 @@ let check_jvp2 ?(h = 1e-5) ?(tol = 1e-3) ~msg
     (b : Nx.float64_t) =
   let va = tangent_like a and vb = tangent_like b in
   let _, dy =
-    Rune.jvp
-      (module Pair)
+    Rune.jvp pair_ptree Nx.Ptree.tensor
       (fun p -> f p.fst p.snd)
       { fst = a; snd = b } { fst = va; snd = vb }
   in
@@ -388,18 +383,16 @@ let check_cjvp ?(h = 1e-5) ?(tol = 1e-5) ~msg
 type cpair = { cfst : Nx.complex128_t; csnd : Nx.complex128_t }
 
 module Cpair = struct
-  type t = cpair
+  type _ t = cpair
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { cfst; csnd } =
-    { cfst = f cfst; csnd = f csnd }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { cfst = f p.cfst q.cfst; csnd = f p.csnd q.csnd }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { cfst; csnd } =
-    f cfst;
-    f csnd
+  let walk c { cfst; csnd } =
+    let open Nx.Ptree.Walk in
+    let cfst = field c "cfst" tensor cfst in
+    let csnd = field c "csnd" tensor csnd in
+    { cfst; csnd }
 end
+
+let cpair_ptree : cpair Nx.Ptree.t = Nx.Ptree.instantiate (module Cpair)
 
 (* [check_cgrad2 ~msg f a b] is {!check_cgrad} for a binary operation. Each
    argument is checked against the Jacobian taken with the other one held fixed,
@@ -409,7 +402,9 @@ let check_cgrad2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
     (a : Nx.complex128_t) (b : Nx.complex128_t) =
   let w = cotangent_like (f a b) in
   let _, g =
-    Rune.vjp (module Cpair) (fun p -> f p.cfst p.csnd) { cfst = a; csnd = b } w
+    Rune.vjp cpair_ptree Nx.Ptree.tensor
+      (fun p -> f p.cfst p.csnd)
+      { cfst = a; csnd = b } w
   in
   let warr = to_carr w in
   check_cclose ~tol ~msg:(msg ^ ".fst")
@@ -427,8 +422,7 @@ let check_cjvp2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
     (a : Nx.complex128_t) (b : Nx.complex128_t) =
   let va = ctangent_like a and vb = cotangent_like b in
   let _, dy =
-    Rune.jvp
-      (module Cpair)
+    Rune.jvp cpair_ptree Nx.Ptree.tensor
       (fun p -> f p.cfst p.csnd)
       { cfst = a; csnd = b } { cfst = va; csnd = vb }
   in

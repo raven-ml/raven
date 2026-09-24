@@ -15,7 +15,8 @@
   jit_cache
   jit_device
   scan
-  quant)
+  quant
+  structure)
  (libraries
   nx.core
   nx

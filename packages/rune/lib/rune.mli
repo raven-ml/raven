@@ -3,173 +3,130 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Functional transformations over structured tensor collections.
+(** Functional transformations of tensor functions: differentiation,
+    vectorization and compilation.
 
-    Rune differentiates functions over any user-defined parameter structure. A
-    structure declares how to traverse its tensor leaves by implementing
-    {!Nx.Ptree.S}; every transformation then works on it directly, preserving
-    its type. Leaves may have different dtypes: a single forward and backward
+    A transformation enumerates the tensors of some of the values it handles,
+    and takes the structure of each such value, an {!Nx.Ptree.t}; everything
+    else the function uses is captured and is a constant of the transformation.
+    - {!grad}, {!vjp}, {!jvp} and the forms they extend take the structure of
+      the value they differentiate and, where they rebuild one, of the result.
+    - {!val-vmap} and {!remat} take the signature ({!Nx.Ptree.type-fn}) of the
+      function they transform and return a function of the same type.
+    - {!scan} takes the structures of its carry, rows and outputs.
+    - {!val-jit}, {!jit2}, {!jit_step} and {!val-pmap} take the structures of
+      their argument and result.
+    - A function of one tensor has its own form of most of them: {!grad'},
+      {!vmap'}, {!jit'}, {!scan'}, ...
+
+    Tensors of a structure may have different dtypes: one forward and backward
     pass produces gradients for all of them.
 
     {[
-    type params = { w : Nx.float32_t; b : Nx.float32_t }
+    type 'a linear = { w : 'a; b : 'a }
 
-    module Params = struct
-      type t = params
+    module Linear = struct
+      type 'a t = 'a linear
 
-      let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-        { w = f w; b = f b }
-
-      let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q
-          =
-        { w = f p.w q.w; b = f p.b q.b }
-
-      let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-        f w;
-        f b
+      let walk c { w; b } =
+        let open Nx.Ptree.Walk in
+        let w = field c "w" leaf w in
+        let b = field c "b" leaf b in
+        { w; b }
     end
 
-    let grads = Rune.grad (module Params) loss params
+    let linear = Nx.Ptree.instantiate (module Linear)
+    let grads = Rune.grad linear loss params
     ]}
 
-    A transformation that takes several structures takes their modules in the
-    order their types appear in the type of its function argument.
-
-    A structure is a positional sequence of leaves. A tensor that sits behind
-    two leaves is two parameters that happen to be equal: each gets its own
-    gradient, and each is its own input of a compiled function, free to differ
-    on a later call. Tie weights by structure — one leaf, used twice by the
-    function — not by aliasing.
-
-    Use {!Ptree} when the parameter structure is only known at runtime. *)
-
-(** {1:differentiable Ptree.S structures} *)
-
-module Ptree = Nx.Ptree
-(** Parameter trees: {!Nx.Ptree.S} is the traversal interface every
-    transformation takes, and {!Nx.Ptree.t} the stock dynamic instance. *)
+    {b Arguments are positions.} A transformation replaces each tensor of its
+    arguments by a fresh alias, a new value over the same storage with no copy,
+    before it differentiates, maps or compiles it. A tensor behind two positions
+    is two arguments, each with its own gradient, and a tensor the function
+    captures is a constant even when it is also an argument:
+    [grad' (fun x -> Nx.mul x w) w] is [w]. Tie weights by structure, one
+    position used twice by the function. *)
 
 (** {1:reverse Reverse-mode differentiation} *)
 
-val grad :
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
-(** [grad (module P) f params] is the gradient of [f] at [params], with the same
-    structure and leaf types as [params]. Leaves of [params] that do not
-    contribute to the result have all-zero gradients.
+val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
+(** [grad p f params] is the gradient of [f] at [params], a value of structure
+    [p] with [params]' dtypes. Tensors of [params] that do not contribute to the
+    result have all-zero gradients.
 
-    Gradients are defined for real and complex leaves. A structure may hold
-    others — an {!Nx.Rng.key} threaded through a compiled step, a counter, a
-    batch of indices — and they are {e carried}, not differentiated: nothing
-    accumulates into them and their slot in the result is zero. This is what
-    lets one structure serve both [grad] and {!val-jit}, which needs such values
-    as inputs. Vega's optimizers leave them alone in turn, so a step over the
-    combined structure updates the parameters and passes the rest through.
+    To differentiate with respect to several values, pass them as one:
+    [grad Nx.Ptree.(pair p q) (fun (a, b) -> loss a b x) (a0, b0)] is the pair
+    of their gradients.
+
+    Gradients are defined for real and complex tensors. A structure may hold
+    others (an {!Nx.Rng.key} threaded through a compiled step, a counter, a
+    batch of indices), and they are {e carried}: nothing accumulates into them
+    and their gradient is zero. One structure then serves both [grad] and
+    {!val-jit}, which needs such values as inputs, and Vega's optimizers leave
+    them alone in turn.
 
     Raises [Invalid_argument] if [f params] is not a scalar (a tensor with
-    exactly one element); use {!vjp} to differentiate non-scalar outputs against
+    exactly one element); use {!vjp} to differentiate non-scalar results against
     an explicit cotangent. *)
 
 val value_and_grad :
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t * 'p
-(** [value_and_grad (module P) f params] is
-    [(f params, grad (module P) f params)], computed in a single forward and
-    backward pass. *)
+  'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * 'p
+(** [value_and_grad p f params] is [(f params, grad p f params)], computed in
+    one forward and one backward pass. *)
 
 val value_and_grad_aux :
-  (module Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ('p -> ('c, 'd) Nx.t * 'aux) ->
   'p ->
   ('c, 'd) Nx.t * 'p * 'aux
-(** [value_and_grad_aux (module P) f params] is like {!value_and_grad} for an
-    objective returning auxiliary data alongside its result. The auxiliary value
-    is returned as-is and does not contribute to the gradient. *)
+(** [value_and_grad_aux p f params] is like {!value_and_grad} for an objective
+    that returns auxiliary data beside its result. The auxiliary value is
+    returned as it is and does not contribute to the gradient. *)
 
-val vjp :
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t ->
-  ('c, 'd) Nx.t * 'p
-(** [vjp (module P) f params cotangent] is [(f params, grads)] where [grads] is
-    the vector-Jacobian product of [f] at [params] against [cotangent], with the
-    same structure and leaf types as [params]. [cotangent] must have
-    [f params]'s shape and dtype. *)
+val vjp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q -> 'q * 'p
+(** [vjp p q f params cts] is [(f params, g)], where [g], of structure [p], is
+    the vector-Jacobian product of [f] at [params] against [cts]. [cts] has the
+    result's structure [q]: one cotangent per tensor of the result, of that
+    tensor's dtype and shape.
 
-val vjp2 :
-  (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) ->
-  ('p -> 'q) ->
-  'p ->
-  'q ->
-  'q * 'p
-(** [vjp2 (module P) (module Q) f params cotangents] is like {!vjp} for an
-    objective returning a structured output: [cotangents] provides one cotangent
-    per output leaf, each with its output leaf's shape and dtype, and the
-    pulled-back cotangents have [params]' structure.
-
-    Raises [Invalid_argument] if a cotangent leaf's shape does not match its
-    output leaf's shape. *)
+    Raises [Invalid_argument] if [cts] and the result differ in their visits
+    ({!Nx.Ptree.visits}), naming the first path where they differ and what each
+    holds there, as in
+    ["Rune.vjp: the root: length 2 in the result, length 1 in the cotangents"];
+    or if a cotangent differs from its result tensor in dtype or shape. *)
 
 val vjp_fun :
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> 'p)
-(** [vjp_fun (module P) f params] is [(f params, pullback)]. [pullback ct] is
-    the vector-Jacobian product of [f] at [params] against [ct]; it may be
-    called any number of times with different cotangents, each call running one
-    backward pass over the recorded computation without re-running [f]. Calling
-    the pullback under another transformation (for example {!val-vmap})
-    transforms the backward pass. Pullbacks are not thread-safe.
+  'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q * ('q -> 'p)
+(** [vjp_fun p q f params] is [(f params, pullback)]. [pullback cts] is
+    [snd (vjp p q f params cts)], and may be called any number of times: each
+    call runs one backward pass over the recorded computation without running
+    [f] again. Calling the pullback under another transformation (for example
+    {!val-vmap}) transforms the backward pass. Pullbacks are not thread-safe.
 
-    Raises [Invalid_argument] if [ct]'s shape does not match the output's. *)
-
-val vjp_fun' :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> ('a, 'b) Nx.t)
-(** [vjp_fun' f x] is like {!vjp_fun} for a function of a single tensor. *)
+    [pullback] raises [Invalid_argument] as {!vjp} does for its cotangents. *)
 
 (** {1:forward Forward-mode differentiation} *)
 
-val jvp :
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  'p ->
-  ('c, 'd) Nx.t * ('c, 'd) Nx.t
-(** [jvp (module P) f params tangents] is [(f params, df)] where [df] is the
-    Jacobian-vector product of [f] at [params] against [tangents], computed in a
-    single forward pass. [tangents] must be structurally equal to [params]; each
-    tangent leaf must have its parameter leaf's shape. The output may have any
-    shape.
+val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
+(** [jvp p q f params tangents] is [(f params, dy)], where [dy] is the
+    Jacobian-vector product of [f] at [params] against [tangents], computed in
+    one forward pass. [tangents] has [params]' structure, dtypes and shapes;
+    [dy] has the result's structure [q], one tangent per tensor of the result.
 
-    Raises [Invalid_argument] if a tangent leaf's shape does not match its
-    parameter leaf's shape. *)
+    Raises [Invalid_argument] if [tangents] and [params] differ in their visits
+    (["Rune.jvp: b: None in the parameters, Some in the tangents"]), or if a
+    tangent differs from its parameter in dtype or shape. *)
 
 val jvp_aux :
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t * 'aux) ->
+  'p Nx.Ptree.t ->
+  'q Nx.Ptree.t ->
+  ('p -> 'q * 'aux) ->
   'p ->
   'p ->
-  ('c, 'd) Nx.t * ('c, 'd) Nx.t * 'aux
-(** [jvp_aux (module P) f params tangents] is like {!jvp} for an objective
-    returning auxiliary data alongside its result. The auxiliary value is
-    returned as-is and does not contribute to the tangent. *)
-
-val jvp2 :
-  (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) ->
-  ('p -> 'q) ->
-  'p ->
-  'p ->
-  'q * 'q
-(** [jvp2 (module P) (module Q) f params tangents] is like {!jvp} for an
-    objective returning a structured output: the result tangent has the output's
-    structure, one tangent per output leaf. *)
+  'q * 'q * 'aux
+(** [jvp_aux p q f params tangents] is like {!jvp} for a function that returns
+    auxiliary data beside its result. The auxiliary value is returned as it is
+    and has no tangent. *)
 
 (** {1:complex Complex tensors}
 
@@ -206,136 +163,137 @@ val jvp2 :
 
 (** {1:vmap Vectorizing maps} *)
 
-val vmap :
-  ?in_axes:int option list ->
-  ?out_axis:int ->
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t
-(** [vmap ?in_axes ?out_axis (module P) f params] maps [f] over the tensor
-    leaves of [params]. [f] is written for unbatched values: it observes each
-    mapped leaf without its mapped axis, and its result gains a batch axis at
-    [out_axis] (default [0]). Values [f] closes over are constants of the map,
-    and a result that does not depend on the mapped inputs is broadcast along
-    the batch axis.
+val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [vmap s f] is [f] mapped over axis 0 of every tensor of its arguments. [s]
+    is [f]'s signature, one structure per argument and one for the result:
 
-    [in_axes] gives the mapped axis of each leaf, paired with leaves in the
-    structure's traversal order: [Some i] maps axis [i] (negative from the end),
-    [None] passes the leaf whole as a constant. It defaults to mapping axis [0]
-    of every leaf. Mapped axes must agree on their size.
+    {[
+    let per_example =
+      Rune.vmap
+        Nx.Ptree.(tensor @-> tensor @-> returns linear)
+        (fun x y -> Rune.grad linear (loss x y) params)
+    ]}
+
+    [f] is written for unbatched values: it sees each argument tensor without
+    its axis 0, and each tensor of its result gains a batch axis 0. A value [f]
+    captures is a constant of the map, and a result tensor that does not depend
+    on the arguments is broadcast along the batch axis. To map another axis,
+    move it to the front with {!Nx.moveaxis}, a view; to keep a value whole,
+    capture it.
 
     Composes with the other transformations: [vmap] of {!grad} computes
     per-example gradients, and {!grad} of [vmap] differentiates through the map.
 
-    {b Note.} Randomness a lane closes over (a captured {!Nx.Rng.key}, or
-    [Nx.rand] under a scope the map closes over) draws {e identical} values for
-    every lane: it is a constant of the map. Decorrelate them either by folding
-    the lane index into one key with {!Nx.Rng.fold_in_axis}, or by mapping over
-    a key axis — {!Nx.Rng.split} one key into per-lane keys, stack them into an
-    [[n; 2]] tensor, and map over it. Reading a batched tensor's value inside
-    the mapped function raises.
+    {b Note.} Randomness a lane captures (an {!Nx.Rng.key}, or [Nx.rand] under a
+    scope the map captures) draws {e identical} values for every lane: it is a
+    constant of the map. Decorrelate them either by folding the lane index into
+    one key with {!Nx.Rng.fold_in_axis}, or by mapping over a key axis:
+    {!Nx.Rng.split} one key into per-lane keys, stack them into an [[n; 2]]
+    tensor, and map over it. Reading a batched tensor's value inside the mapped
+    function raises.
 
-    Raises [Invalid_argument] if [in_axes] does not have one entry per leaf,
-    maps no leaf, names an axis out of bounds, or if the mapped axis sizes
-    disagree. *)
+    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
+    ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
+    tensor, if a tensor is a scalar, or if two tensors differ in the length of
+    their axis 0, naming the argument and the tensor's path. *)
 
-val vmap2 :
-  ?in_axes:int option list ->
-  ?out_axis:int ->
-  (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) ->
-  ('p -> 'q) ->
-  'p ->
-  'q
-(** [vmap2 ?in_axes ?out_axis (module P) (module Q) f params] is like
-    {!val-vmap} for a mapped function returning a structured output: every
-    output leaf gains a batch axis at [out_axis], and output leaves that do not
-    depend on the mapped inputs are broadcast. *)
+val vmap' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+(** [vmap' f x] is [vmap Nx.Ptree.(tensor @-> returns tensor) f x]: [f] mapped
+    over axis 0 of [x], its result stacked along a new axis 0.
 
-val vmap' :
-  ?in_axis:int ->
-  ?out_axis:int ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [vmap' ?in_axis ?out_axis f x] is like {!val-vmap} for a function of a
-    single tensor, mapping over [x]'s axis [in_axis] and placing the batch axis
-    of the result at [out_axis]. Both default to [0]. *)
+    Raises [Invalid_argument] if [x] is a scalar. *)
 
 (** {1:custom Custom differentiation rules} *)
 
 val custom_vjp :
-  (module Ptree.S with type t = 'p) ->
-  fwd:('p -> ('c, 'd) Nx.t * 'res) ->
-  bwd:('res -> ('c, 'd) Nx.t -> 'p) ->
+  'p Nx.Ptree.t ->
+  'q Nx.Ptree.t ->
+  fwd:('p -> 'q * 'res) ->
+  bwd:('res -> 'q -> 'p) ->
   'p ->
-  ('c, 'd) Nx.t
-(** [custom_vjp (module P) ~fwd ~bwd params] is [fst (fwd params)], with a
-    user-defined reverse rule. Under the innermost reverse-mode transformation,
-    [fwd]'s internal operations are not differentiated; instead
-    [bwd residual cotangent] provides the parameter gradients, with each leaf
-    matching its parameter leaf's shape and dtype. [residual] is whatever [fwd]
-    returned alongside its result. Enclosing transformations (an outer {!grad},
-    {!val-vmap}) see the forward computation itself.
+  'q
+(** [custom_vjp p q ~fwd ~bwd params] is [fst (fwd params)], a value of
+    structure [q], with a user-defined reverse rule. Under the innermost
+    reverse-mode transformation, [fwd]'s operations are not differentiated;
+    [bwd residual cts] gives the gradients instead. [cts] holds the result's
+    cotangents, of structure [q], zero for a tensor of the result that nothing
+    used; the gradients have structure [p], and each tensor its parameter's
+    dtype and shape. [residual] is what [fwd] returned beside its result.
+    Enclosing transformations (an outer {!grad}, {!val-vmap}) see the forward
+    computation itself.
 
-    Raises [Invalid_argument] if the call is differentiated in forward mode;
-    define a {!custom_jvp} rule for that. *)
+    A tensor of the result that is one of [params] is a new value there: its
+    cotangent is the result's alone.
+
+    Raises [Invalid_argument] if the call is differentiated in forward mode
+    (define a {!custom_jvp} rule for that), or if [bwd]'s gradients differ from
+    [params] in their visits or in a tensor's dtype. *)
 
 val custom_jvp :
-  (module Ptree.S with type t = 'p) ->
-  f:('p -> ('c, 'd) Nx.t) ->
-  jvp:('p -> 'p -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
+  'p Nx.Ptree.t ->
+  'q Nx.Ptree.t ->
+  f:('p -> 'q) ->
+  jvp:('p -> 'p -> 'q * 'q) ->
   'p ->
-  ('c, 'd) Nx.t
-(** [custom_jvp (module P) ~f ~jvp params] is [f params], with a user-defined
-    forward rule. Under the innermost forward-mode transformation,
-    [jvp params tangents] provides both the result and its tangent, replacing
-    [f]'s internal operations.
+  'q
+(** [custom_jvp p q ~f ~jvp params] is [f params], a value of structure [q],
+    with a user-defined forward rule. Under the innermost forward-mode
+    transformation, [jvp params tangents] gives both the result and its
+    tangents, of structure [q], in place of [f]'s operations. A tensor of the
+    result that is one of [params] is a new value there: the parameter keeps its
+    own tangent.
 
-    Raises [Invalid_argument] if the call is differentiated in reverse mode;
-    define a {!custom_vjp} rule for that. *)
+    Raises [Invalid_argument] if the call is differentiated in reverse mode
+    (define a {!custom_vjp} rule for that), or if [jvp]'s tangents differ from
+    its result in their visits, or a tangent from its result tensor in dtype or
+    shape. *)
 
 (** {1:tensor Single-tensor variants} *)
 
 val grad' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [grad' f x] is like {!grad} for a function of a single tensor. *)
+(** [grad' f x] is [grad Nx.Ptree.tensor f x].
+
+    Raises [Invalid_argument] if [x] is neither real nor complex, or if [f x] is
+    not a scalar. *)
 
 val value_and_grad' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t * ('a, 'b) Nx.t
-(** [value_and_grad' f x] is like {!value_and_grad} for a function of a single
-    tensor. *)
+(** [value_and_grad' f x] is [value_and_grad Nx.Ptree.tensor f x]. It raises as
+    {!grad'} does. *)
 
 val vjp' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t ->
   ('c, 'd) Nx.t * ('a, 'b) Nx.t
-(** [vjp' f x cotangent] is like {!vjp} for a function of a single tensor. *)
+(** [vjp' f x ct] is [vjp Nx.Ptree.tensor Nx.Ptree.tensor f x ct]. *)
+
+val vjp_fun' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> ('a, 'b) Nx.t)
+(** [vjp_fun' f x] is [vjp_fun Nx.Ptree.tensor Nx.Ptree.tensor f x]. *)
 
 val jvp' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t * ('c, 'd) Nx.t
-(** [jvp' f x tangent] is like {!jvp} for a function of a single tensor. *)
+(** [jvp' f x tangent] is [jvp Nx.Ptree.tensor Nx.Ptree.tensor f x tangent]. *)
 
 (** {1:remat Gradient checkpointing} *)
 
-val remat :
-  (module Ptree.S with type t = 'p) ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t
-(** [remat (module P) f params] is [f params], recomputed during the backward
-    pass instead of having its intermediate results retained by the tape:
-    reverse-mode differentiation of a [remat]ed function trades compute for
-    memory. Gradients are unchanged.
+val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [remat s f] is [f], recomputed during the backward pass instead of having
+    its intermediate results retained by the tape: reverse-mode differentiation
+    of [remat s f] trades compute for memory. [s] is [f]'s signature, as for
+    {!val-vmap}. Differentiating [remat s f] gives the gradients of [f].
 
-    Raises [Invalid_argument] if differentiated in forward mode (it is a
-    {!custom_vjp} rule underneath). *)
+    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument,
+    and when differentiated in forward mode (it is a {!custom_vjp} rule
+    underneath). *)
 
 (** {1:jacobians Jacobians} *)
 
@@ -356,33 +314,35 @@ val hessian' :
 (** [hessian' f x] is the Hessian of the scalar objective [f] at [x], with shape
     [shape x @ shape x] (forward over reverse). *)
 
-val hvp :
-  (module Ptree.S with type t = 'p) -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> 'p
-(** [hvp (module P) f params v] is the Hessian-vector product of the scalar
-    objective [f] at [params] against [v], with [params]' structure, computed
-    without materializing the Hessian (forward over reverse). *)
+val hvp : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> 'p
+(** [hvp p f params v] is the Hessian-vector product of the scalar objective [f]
+    at [params] against [v], a value of structure [p], computed without
+    materializing the Hessian (forward over reverse).
+
+    Raises [Invalid_argument] as {!jvp} does for its tangents, naming
+    [Rune.hvp]. *)
 
 val hvp' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('a, 'b) Nx.t ->
   ('a, 'b) Nx.t
-(** [hvp' f x v] is like {!hvp} for a function of a single tensor. *)
+(** [hvp' f x v] is [hvp Nx.Ptree.tensor f x v]. *)
 
 (** {1:checks Gradient checking} *)
 
 val check_grads :
   ?eps:float ->
   ?tol:float ->
-  (module Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ('p -> ('c, 'd) Nx.t) ->
   'p ->
   (unit, string) result
-(** [check_grads (module P) f params] compares the reverse-mode gradient of the
-    scalar objective [f] at [params] against central-difference directional
-    derivatives along deterministic directions. [Ok ()] means they agree within
-    [tol] (relative, default [1e-2]); [Error msg] describes the disagreement.
-    [eps] is the finite-difference step (default [1e-4]).
+(** [check_grads p f params] compares the reverse-mode gradient of the scalar
+    objective [f] at [params] against central-difference directional derivatives
+    along deterministic directions. [Ok ()] means they agree within [tol]
+    (relative, default [1e-2]); [Error msg] describes the disagreement. [eps] is
+    the finite-difference step (default [1e-4]).
 
     The check is directional, not per-element: it validates gradients cheaply
     rather than exhaustively. Use float64 parameters for reliable results;
@@ -466,15 +426,15 @@ val jit :
   ?device:string ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ('p -> ('c, 'd) Nx.t) ->
   'p ->
   ('c, 'd) Nx.t
-(** [jit (module P) f] is [f] compiled. The first application traces [f],
-    compiles the traced computation into fused kernels, and runs them; later
-    applications with the same leaf signature — dtypes and shapes, in traversal
-    order — replay the compiled program on the new leaf values. A new signature
-    triggers a fresh trace and compilation.
+(** [jit p f] is [f] compiled, for an argument of structure [p]. The first
+    application traces [f], compiles the traced computation into fused kernels,
+    and runs them; later applications whose tensors have the same dtypes and
+    shapes, in walk order, replay the compiled program on the new tensors. Other
+    dtypes or shapes trigger a fresh trace and compilation.
 
     A call runs where its placed input leaves and captures live
     ({!Nx.placement}), and on {!default_device} when none is placed. Captures
@@ -538,9 +498,9 @@ val jit :
     so it is not part of any cache key. When omitted, the [BEAM_PARALLEL]
     environment variable applies (default sequential).
 
-    The compilation cache lives in the partial application [jit (module P) f]:
-    apply [jit] once and reuse the returned function. Tensors [f] closes over
-    are compile-time constants, bound once when the trace first compiles: on the
+    The compilation cache lives in the partial application [jit p f]: apply
+    [jit] once and reuse the returned function. Tensors [f] closes over are
+    compile-time constants, bound once when the trace first compiles: on the
     host contiguous captures are read in place, and every other capture is
     copied to the device once per closure — signatures share the copy.
 
@@ -557,7 +517,7 @@ val jit :
     capture. Mutating a captured tensor between calls is not supported and has
     unspecified visibility (the host may observe the mutation through its
     in-place binding; other devices never do): pass values that change between
-    calls as leaves of [P] rather than capturing them.
+    calls as tensors of the argument rather than capturing them.
 
     Compiled programs also persist across processes: the first compilation of a
     trace writes the scheduled and compiled kernels to a disk cache under the
@@ -578,19 +538,17 @@ val jit :
 
     {[
     let train_step =
-      Rune.jit2
-        (module Params)
-        (module Params)
-        (fun p ->
-          let g = Rune.grad (module Params) loss p in
-          Params.map2 (fun w g -> Nx.sub w (Nx.mul_s g lr)) p g)
+      Rune.jit2 linear linear (fun p ->
+          let g = Rune.grad linear loss p in
+          Nx.Ptree.map2 linear (fun _ w g -> Nx.sub w (Nx.mul_s g lr)) p g)
     ]}
 
-    Tensors are values, so state threads through [P]: the function returns its
-    updated parameters, optimizer state or cache, and the caller feeds them to
-    the next call, as the example does. Structured values read during tracing
-    must not depend on traced tensors: a data-dependent {!cond} or {!while_loop}
-    predicate raises {!Jit_error}. Compiled functions are not thread-safe.
+    Tensors are values, so state threads through the argument: the function
+    returns its updated parameters, optimizer state or cache, and the caller
+    feeds them to the next call, as the example does. Structured values read
+    during tracing must not depend on traced tensors: a data-dependent {!cond}
+    or {!while_loop} predicate raises {!Jit_error}. Compiled functions are not
+    thread-safe.
 
     Randomness inside a jitted function comes from a {!Nx.Rng} key threaded
     through the inputs: samplers are pure functions of their key, so the
@@ -613,52 +571,48 @@ val jit2 :
   ?device:string ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) ->
+  'p Nx.Ptree.t ->
+  'q Nx.Ptree.t ->
   ('p -> 'q) ->
   'p ->
   'q
-(** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
-    structured output. *)
+(** [jit2 p q f] is like {!val-jit} for a function whose result has structure
+    [q]. *)
 
 val jit_step :
   ?device:string ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'r) ->
-  (module Ptree.S with type t = 's) ->
+  'r Nx.Ptree.t ->
+  's Nx.Ptree.t ->
   ('r -> 's -> 's) ->
   'r ->
   's ->
   's
-(** [jit_step (module R) (module S) f] is [f] compiled as {!jit2} compiles it,
-    for a step from a state to the next one: the call reads its first argument
-    and consumes its second, the state, whose storage the next state takes. A
-    deep model's block reads its layer's weights and consumes the residual
-    stream and its cache; a training step reads its batch and consumes the
-    parameters and the optimizer state. What a step returns besides its state,
-    such as a loss or the sampled ids, is a field of the state:
+(** [jit_step r s f] is [f] compiled as {!jit2} compiles it, for a step from a
+    state to the next one: the call reads its first argument and consumes its
+    second, the state, whose storage the next state takes. A deep model's block
+    reads its layer's weights and consumes the residual stream and its cache; a
+    training step reads its batch and consumes the parameters and the optimizer
+    state. What a step returns besides its state, such as a loss or the sampled
+    ids, is part of the state:
 
     {[
+    let state = Nx.Ptree.(pair (pair linear (Vega.adam_ptree linear)) tensor)
+
     let step =
       Rune.jit_step
-        (module Batch)
-        (module State)
-        (fun { Batch.inputs; targets } { State.params; opt; loss = _ } ->
+        Nx.Ptree.(pair tensor tensor)
+        state
+        (fun (inputs, targets) ((params, opt), _) ->
           let loss, grads =
-            Rune.value_and_grad
-              (module Params)
-              (objective inputs targets)
-              params
+            Rune.value_and_grad linear (objective inputs targets) params
           in
-          let params, opt =
-            Vega.adamw_step (module Params) ~lr opt ~params ~grads
-          in
-          { State.params; opt; loss })
+          let params, opt = Vega.adamw_step linear ~lr opt ~params ~grads in
+          ((params, opt), loss))
     ]}
 
-    A step that reads nothing takes [(module Nx.Ptree)] and passes
-    [Nx.Ptree.list []].
+    A step that reads nothing takes [Nx.Ptree.unit] and passes [()].
 
     Once a call has run — never during it — every leaf of the state that is
     resident (an output of an earlier call, or a value placed with {!Nx.place})
@@ -680,7 +634,7 @@ val jit_step :
     reads the leaf after the output is written. A state-to-state loop therefore
     holds one generation of state on the device. Any other output gets fresh
     storage and the leaf is released after the call, about two generations.
-    [RUNE_JIT_DEBUG=1] reports, per input leaf in traversal order (the first
+    [RUNE_JIT_DEBUG=1] reports, per input leaf in walk order (the first
     argument's first), whether it was [read], its storage [reused] or [copied],
     or was [not resident]. On the host outputs are host tensors and consuming
     changes nothing.
@@ -703,24 +657,24 @@ val pmap :
   ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ('p -> ('c, 'd) Nx.t) ->
   'p ->
   ('c, 'd) Nx.t
-(** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
-    [devices] — {!val-jit} whose inputs are placed on a device tuple instead of
-    one device. Device names are as in {!val-device}, with an index to address
-    several devices of one backend (["CUDA"], ["CUDA:1"], or ["CPU:1"],
-    ["CPU:2"], ...); all devices must share one backend, and the host (["CPU"])
-    is not one of them.
+(** [pmap ~devices p f] is [f] compiled to run in parallel across [devices] —
+    {!val-jit} whose inputs are placed on a device tuple instead of one device.
+    Device names are as in {!val-device}, with an index to address several
+    devices of one backend (["CUDA"], ["CUDA:1"], or ["CPU:1"], ["CPU:2"], ...);
+    all devices must share one backend, and the host (["CPU"]) is not one of
+    them.
 
-    [in_axes] gives one entry per leaf of [P], in traversal order: [Some a]
-    splits the leaf along axis [a] into [List.length devices] equal shards, one
-    per device; [None] replicates the leaf, a full copy on every device. It
-    defaults to [Some 0] for every leaf. [f] observes full (global) shapes and
-    needs no collective operations: an operation combining sharded and
-    replicated values runs on every device over its shard, and a reduction over
-    a sharded axis (say the mean loss over a sharded batch) becomes a
+    [in_axes] gives one entry per tensor of the argument, in walk order:
+    [Some a] splits the leaf along axis [a] into [List.length devices] equal
+    shards, one per device; [None] replicates the leaf, a full copy on every
+    device. It defaults to [Some 0] for every leaf. [f] observes full (global)
+    shapes and needs no collective operations: an operation combining sharded
+    and replicated values runs on every device over its shard, and a reduction
+    over a sharded axis (say the mean loss over a sharded batch) becomes a
     cross-device allreduce automatically — differentiating such a loss inside
     [pmap] yields allreduced gradients, which makes data-parallel training a
     matter of sharding the batch and replicating the parameters.
@@ -754,13 +708,13 @@ val pmap2 :
   ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  (module Ptree.S with type t = 'p) ->
-  (module Ptree.S with type t = 'q) ->
+  'p Nx.Ptree.t ->
+  'q Nx.Ptree.t ->
   ('p -> 'q) ->
   'p ->
   'q
-(** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function returning
-    a structured output. *)
+(** [pmap2 ~devices p q f] is like {!val-pmap} for a function whose result has
+    structure [q]. *)
 
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
@@ -795,40 +749,48 @@ val reset_jit_stats : unit -> unit
     {!cond} and {!while_loop} predicates. *)
 
 val scan :
-  (module Ptree.S with type t = 'c) ->
-  (module Ptree.S with type t = 'x) ->
-  (module Ptree.S with type t = 'y) ->
+  'c Nx.Ptree.t ->
+  'x Nx.Ptree.t ->
+  'y Nx.Ptree.t ->
   f:('c -> 'x -> 'c * 'y) ->
   init:'c ->
   'x ->
   'c * 'y
-(** [scan (module C) (module X) (module Y) ~f ~init xs] folds [f] over the rows
-    of [xs]: every leaf of [xs] has the same leading length [n], and step [i]
-    passes [f] the structure of row [i] of every leaf. [f carry x] returns the
-    next carry and the step's outputs; the result is the final carry and the
-    outputs, every leaf stacked along a new axis 0. A fold with nothing to emit
-    passes [(module Nx.Ptree)] for the outputs and returns [Nx.Ptree.list []].
+(** [scan c x y ~f ~init xs] folds [f] over the rows of [xs], a value of
+    structure [x]: every tensor of [xs] has the same leading length [n], and
+    step [i] passes [f] the value of row [i] of every tensor. [f carry row]
+    returns the next carry, of structure [c], and the step's outputs, of
+    structure [y]; the result is the final carry and the outputs, every tensor
+    stacked along a new axis 0. A fold with nothing to emit passes
+    {!Nx.Ptree.unit} for [y] and returns [()].
+
+    Every carry the body returns has the visits ({!Nx.Ptree.visits}) of the one
+    it received, and every step's outputs have the first step's: a list keeps
+    its length, an option its presence, a case and an integer their value.
 
     Under {!val-jit} the fold step compiles once and runs as a loop in the
     compiled program, and differentiating compiles a reversed loop over the
-    step's pullback. The loop reads row [i] of each leaf of [xs] in place, so
+    step's pullback. The loop reads row [i] of each tensor of [xs] in place, so
     data that differs per step, such as the weights of stacked layers, belongs
     in [xs]: reading it from a tensor [f] captures, for instance with
     {!Nx.index.D} at a step counter, is a gather. The cotangent of [xs] is
     stacked like the outputs, row [i] coming from step [i], while a captured
     tensor's cotangent is the sum over the steps, accumulated on every one. A
-    carry leaf the step updates with {!Nx.set}, or reads only at the index it
+    carry tensor the step updates with {!Nx.set}, or reads only at the index it
     writes, is updated in place: a step that writes one row of a cache in the
     carry moves that row, not the cache. Staging needs the carry to keep its
-    shapes across steps; a fold that changes them — or one reached through
-    {!val-vmap} or {!val-pmap} — unrolls into the compiled program instead.
+    shapes across steps; a fold that changes them, or one reached through
+    {!val-vmap} or {!val-pmap}, unrolls into the compiled program instead.
     Everywhere else the scan folds eagerly, tracing every step.
 
-    {!scan'} is the form for single tensors, and {!Nx.Ptree.leaf} stands for a
-    role that is one.
-
-    Raises [Invalid_argument] if [xs] has no leaf, a scalar leaf or leaves of
-    different leading lengths, or if [n] is [0]. *)
+    Raises [Invalid_argument] if [xs] has no tensor, a scalar tensor or tensors
+    of different leading lengths, or if [n] is [0]; and, eagerly and under
+    {!val-jit}, if the body returns a carry whose visits or dtypes differ from
+    the carry it received, or outputs whose visits or dtypes differ from the
+    first step's, naming the first path where they differ and what each holds
+    there, as in
+    ["Rune.scan: 1: length 3 in the carry the body returned, length 2 in the
+     carry it received"]. *)
 
 val scan' :
   f:(('a, 'b) Nx.t -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t * ('e, 'f) Nx.t) ->
@@ -846,15 +808,10 @@ val cond :
     on the mapped inputs raises, since the lanes could diverge. *)
 
 val while_loop :
-  (module Ptree.S with type t = 'p) ->
-  cond:('p -> (bool, Nx.bool_elt) Nx.t) ->
-  body:('p -> 'p) ->
-  'p ->
-  'p
-(** [while_loop (module C) ~cond ~body init] iterates [body] on the carry while
-    [cond] holds. Reading the predicate concretizes it, with the same
-    {!val-vmap} caveat as {!cond}. Differentiating traces every iteration
-    actually taken. *)
+  cond:('p -> (bool, Nx.bool_elt) Nx.t) -> body:('p -> 'p) -> 'p -> 'p
+(** [while_loop ~cond ~body init] iterates [body] on the carry while [cond]
+    holds. Reading the predicate concretizes it, with the same {!val-vmap}
+    caveat as {!cond}. Differentiating traces every iteration actually taken. *)
 
 (** {1:debug Debugging} *)
 

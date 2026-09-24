@@ -1,12 +1,12 @@
 # rune
 
-Rune provides functional transformations — automatic differentiation, vectorizing maps, and friends — for ordinary OCaml functions over ordinary OCaml values. There is no special tensor type (functions compute with plain `Nx.t` tensors) and no runtime tree encoding: parameters are your own typed records. Declare once how to traverse a record's tensor leaves — the `Nx.Ptree.S` interface, three one-liners — and every transformation works on it directly, preserving its type.
+Rune provides functional transformations — automatic differentiation, vectorizing maps, and friends — for ordinary OCaml functions over ordinary OCaml values. There is no special tensor type (functions compute with plain `Nx.t` tensors) and no runtime tree encoding: parameters are your own typed records. Write once how to walk a record's parts — an `Nx.Ptree.S` module with one `walk`, a line per field — and every transformation works on it directly, preserving its type.
 
 ## Features
 
 - **Reverse mode** — `grad`, `value_and_grad`, `vjp` for backpropagation; `vjp_fun` returns a reusable pullback; `_aux` variants thread auxiliary data out of the objective
 - **Forward mode** — `jvp` for Jacobian-vector products in a single forward pass
-- **Vectorizing map** — `vmap` lifts a per-example function to batched inputs, with `in_axes`/`out_axis` control
+- **Vectorizing map** — `vmap` lifts a per-example function to batched inputs, mapping axis 0 of every argument
 - **Composable** — transformations nest freely: `vmap` of `grad` is per-sample gradients, `jvp` of `grad` powers `hvp`, `grad` of `grad` is second order
 - **Jacobians and Hessians** — `jacfwd'`, `jacrev'`, `hessian'`, and matrix-free `hvp`
 - **Gradient checkpointing** — `remat` trades compute for memory in the backward pass
@@ -15,24 +15,22 @@ Rune provides functional transformations — automatic differentiation, vectoriz
 
 ## Quick Start
 
-A parameter structure is a record plus three one-line traversals. The gradient of a function of the record is a value of the same record type:
+A parameter structure is a record plus a `walk` over its fields. The gradient of a function of the record is a value of the same record type:
 
 ```ocaml
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+type 'a params = { w : 'a; b : 'a }
 
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
+
+let params_ptree = Nx.Ptree.instantiate (module Params)
 
 let () =
   let x = Nx.create Nx.float32 [| 4; 3 |] (Array.init 12 float_of_int) in
@@ -43,7 +41,7 @@ let () =
   let params =
     { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
   in
-  let g = Rune.grad (module Params) loss params in
+  let g = Rune.grad params_ptree loss params in
   Format.printf "dw has shape %a, db has shape %a@."
     Nx.pp_shape (Nx.shape g.w) Nx.pp_shape (Nx.shape g.b)
 ```

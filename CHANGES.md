@@ -107,6 +107,22 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** transformations take structures as `'s Nx.Ptree.t` values in
+  place of modules. `vjp`, `vjp_fun`, `jvp`, `jvp_aux`, `custom_vjp` and
+  `custom_jvp` also take the result's structure, so `vjp2` and `jvp2` go; so
+  do `Rune.Ptree` and `while_loop`'s module.
+- **Breaking:** `Rune.vmap` and `Rune.remat` take the signature of the function
+  they transform, such as `Nx.Ptree.(tensor @-> tensor @-> returns tensor)`,
+  and `vmap` maps axis 0 of every argument. Capture a value to hold it fixed
+  and move another axis with `Nx.moveaxis`; `vmap2`, `?in_axes`, `?out_axis`
+  and `vmap'`'s `?in_axis` and `?out_axis` go.
+- **Breaking:** a transformation replaces each argument tensor by a fresh alias
+  before it differentiates or maps it, so a captured tensor is a constant even
+  when it is also the argument: `Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) w`
+  is `w`, where it was `2 w`.
+- `Rune.scan` raises when its body returns a carry whose structure differs from
+  the one it received, or outputs that differ from the first step's, naming the
+  first path where they differ. It checks eagerly and under `Rune.jit`.
 - Fix `Rune.custom_vjp` and `Rune.custom_jvp` when the rule returns one of its
   parameters: its cotangent was added to the parameter's twice, and its tangent
   replaced the parameter's for every later use. `Rune.remat` of a function
@@ -214,8 +230,7 @@ All notable changes to this project will be documented in this file.
 - A `Rune.scan` staged under `Rune.jit` updates a carry in place when its step
   writes it with `Nx.set` or reads it only where it writes: a step writing one
   row of a stacked cache no longer copies the whole cache.
-- `Rune.scan (module C) (module X) (module Y)` folds over structures, `scan'`
-  over single tensors, and `Nx.Ptree.leaf` fills a single-tensor role. Put
+- `Rune.scan c x y` folds over structures and `scan'` over single tensors. Put
   per-step data such as stacked layer weights in `xs`: `jit` reads it in place.
 - A `Rune.scan` staged under `Rune.jit` replays its body as batched device
   graphs instead of launching each kernel: a 64-step scan on Metal goes from
@@ -227,7 +242,7 @@ All notable changes to this project will be documented in this file.
   Twenty-six chained small calls on Metal take 2.9 ms instead of 10.8 ms.
 - Add `Rune.jit_step`: it reads its first argument and consumes and returns its
   state. `?donate` leaves `jit`, `jit2` and `jit'`: `jit2 ~donate:true` becomes
-  `jit_step (module Nx.Ptree) (module S) f` applied to `Nx.Ptree.list []`.
+  `jit_step Nx.Ptree.unit s f` applied to `()`.
 - Tracing a function under `Rune.jit` no longer allocates a buffer for every
   traced value. Each placeholder was an uninitialised tensor of the result's
   full size; the pages were never touched, but OCaml counted the bytes and ran
@@ -2413,10 +2428,6 @@ thread.
 - Fix the derivative of `abs` on complex tensors for cotangents that are not
   real: the modulus is real-valued, so the rule now keeps only the real part of
   the cotangent and pushes forward to a real tangent.
-- The transformations take their parameter-tree module as
-  `(module Ptree.S with type t = 'p)` instead of a dependent module argument,
-  so a first-class module value — e.g. the result of `Nx.Ptree.instantiate` —
-  can be bound once and passed to `grad`, `jit`, `vjp`, and friends.
 - Fix the derivative of `abs` on complex tensors, in both forward and reverse
   mode: it pulled back through `sign z` instead of its conjugate, which negated
   the imaginary part's contribution. Gradients of a real-valued function that
@@ -2535,20 +2546,19 @@ thread.
   `Jit_error` at trace time instead of compiling a wrong program.
 - **Breaking.** Ground-up rewrite. Transformations now operate over typed
   parameter structures: `grad`, `value_and_grad`, `vjp`, `jvp`, `vmap`,
-  `hvp`, and friends take a first-class module implementing `Nx.Ptree.S`
+  `hvp`, and friends take the structure of their arguments
   and return gradients with the same structure and leaf dtypes as the
   parameters — mixed-dtype parameters differentiate in a single forward
   and backward pass. Functions of a single tensor use the primed variants
   (`grad'`, `value_and_grad'`, `vjp'`, `jvp'`, `vmap'`, `jacfwd'`,
   `jacrev'`, `hessian'`, `hvp'`).
-- New transformation surface: structured-output `vjp2`/`jvp2`/`vmap2`,
-  reusable pullbacks (`vjp_fun`), gradient checkpointing (`remat`),
-  Hessian-vector products (`hvp`), custom differentiation rules
-  (`custom_vjp`, `custom_jvp`), directional gradient checking
-  (`check_grads`), staging-ready control flow (`scan`, `cond`,
+- New transformation surface: reusable pullbacks (`vjp_fun`), gradient
+  checkpointing (`remat`), Hessian-vector products (`hvp`), custom
+  differentiation rules (`custom_vjp`, `custom_jvp`), directional gradient
+  checking (`check_grads`), staging-ready control flow (`scan`, `cond`,
   `while_loop`), and operation logging (`with_debug`, replacing `debug`).
 - Removed: the list-based variants (`grads`, `value_and_grads`, `vjps`,
-  `jvps`, ...) — use a `Ptree.S` structure instead; the finite-difference
+  `jvps`, ...) — use a structure instead; the finite-difference
   `check_gradient` API — use `check_grads`; and `jit`/`trace_graph` —
   JIT compilation via Tolk will return as a transformation in a later
   release.

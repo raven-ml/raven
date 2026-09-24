@@ -26,9 +26,9 @@ The key property: **user code does not change**. You write functions with `Nx.ad
 
 ## Reverse Mode: the Tape
 
-`grad (module P) f params` proceeds in two passes.
+`grad p f params` proceeds in two passes.
 
-**Forward pass.** The handler marks the tensor leaves of `params` as *tracked* and runs `f params`. Every intercepted operation computes its primal result by re-performing the operation in the enclosing context; if any input is tracked, the output is marked tracked too and a *pull thunk* is recorded on the tape. A pull thunk knows how to map the operation's output cotangent to contributions on its inputs — the standard VJP rules:
+**Forward pass.** The handler replaces each tensor of `params` by a fresh alias, marks the aliases as *tracked* and runs `f` on them. The alias makes a tensor that `f` captures a constant even when it is also a tensor of `params`. Every intercepted operation computes its primal result by re-performing the operation in the enclosing context; if any input is tracked, the output is marked tracked too and a *pull thunk* is recorded on the tape. A pull thunk knows how to map the operation's output cotangent to contributions on its inputs — the standard VJP rules:
 
 - `add`: the cotangent flows to both inputs unchanged (reduced over broadcast axes);
 - `mul`: the cotangent of `a * b` with respect to `a` is `cotangent * b`;
@@ -36,7 +36,7 @@ The key property: **user code does not change**. You write functions with `Nx.ad
 
 Operations whose inputs are all untracked are constants with respect to the differentiated inputs and are recorded nowhere — which is why closures over data cost nothing.
 
-**Backward pass.** The output cotangent is seeded (with `1` for `grad`, or your explicit cotangent for `vjp`) and the pull thunks run in reverse order, accumulating cotangents keyed by tensor identity. Finally the accumulated cotangents of the parameter leaves are read back through the structure's `map`, producing a gradient with the parameters' own type.
+**Backward pass.** The output cotangent is seeded (with `1` for `grad`, or your explicit cotangent for `vjp`) and the pull thunks run in reverse order, accumulating cotangents keyed by tensor identity. Finally the accumulated cotangents of the parameters are read back through the structure's walk, producing a gradient with the parameters' own type.
 
 Tensors are keyed by physical identity: every Nx operation allocates a fresh tensor, so a tensor value identifies a node of the computation graph. Nx tensors are values (nothing writes into one after it exists), which is what keeps that correspondence sound.
 

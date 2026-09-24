@@ -249,7 +249,7 @@ let test_vmap_non_leading_batch_axis () =
   let x = rsig [| 5; 3 |] in
   let looped = loop_map (fun r -> Nx.rfft c128 r) (Nx.transpose x) in
   check_carr ~msg:"rfft over axis-1 lanes" (to_carr looped)
-    (Rune.vmap' ~in_axis:1 (fun r -> Nx.rfft c128 r) x)
+    (Rune.vmap' (fun r -> Nx.rfft c128 r) (Nx.moveaxis 1 0 x))
 
 let test_vmap_of_grad () =
   (* Per-sample gradients of the spectral round-trip energy, odd length. *)

@@ -18,40 +18,38 @@
    applies the rule. When no handler intercepts — no transformation in scope —
    the plain forward function runs at the call site. *)
 
-type ('c, 'd) vjp_call =
+type 'q vjp_call =
   | Vjp_call : {
-      tree : (module Nx.Ptree.S with type t = 'p);
+      params_s : 'p Nx.Ptree.t;
+      result_s : 'q Nx.Ptree.t;
       params : 'p;
-      fwd : 'p -> ('c, 'd) Nx.t * 'res;
-      bwd : 'res -> ('c, 'd) Nx.t -> 'p;
+      fwd : 'p -> 'q * 'res;
+      bwd : 'res -> 'q -> 'p;
     }
-      -> ('c, 'd) vjp_call
+      -> 'q vjp_call
 
-type ('c, 'd) jvp_call =
+type 'q jvp_call =
   | Jvp_call : {
-      tree : (module Nx.Ptree.S with type t = 'p);
+      params_s : 'p Nx.Ptree.t;
+      result_s : 'q Nx.Ptree.t;
       params : 'p;
-      f : 'p -> ('c, 'd) Nx.t;
-      jvp : 'p -> 'p -> ('c, 'd) Nx.t * ('c, 'd) Nx.t;
+      f : 'p -> 'q;
+      jvp : 'p -> 'p -> 'q * 'q;
     }
-      -> ('c, 'd) jvp_call
+      -> 'q jvp_call
 
 type _ Effect.t +=
-  | E_custom_vjp : ('c, 'd) vjp_call -> ('c, 'd) Nx.t Effect.t
-  | E_custom_jvp : ('c, 'd) jvp_call -> ('c, 'd) Nx.t Effect.t
+  | E_custom_vjp : 'q vjp_call -> 'q Effect.t
+  | E_custom_jvp : 'q jvp_call -> 'q Effect.t
 
-let custom_vjp (type p c d) (module P : Nx.Ptree.S with type t = p)
-    ~(fwd : P.t -> (c, d) Nx.t * 'res) ~(bwd : 'res -> (c, d) Nx.t -> P.t)
-    (params : P.t) : (c, d) Nx.t =
+let custom_vjp params_s result_s ~fwd ~bwd params =
   try
     Effect.perform
-      (E_custom_vjp (Vjp_call { tree = (module P); params; fwd; bwd }))
+      (E_custom_vjp (Vjp_call { params_s; result_s; params; fwd; bwd }))
   with Effect.Unhandled _ -> fst (fwd params)
 
-let custom_jvp (type p c d) (module P : Nx.Ptree.S with type t = p)
-    ~(f : P.t -> (c, d) Nx.t) ~(jvp : P.t -> P.t -> (c, d) Nx.t * (c, d) Nx.t)
-    (params : P.t) : (c, d) Nx.t =
+let custom_jvp params_s result_s ~f ~jvp params =
   try
     Effect.perform
-      (E_custom_jvp (Jvp_call { tree = (module P); params; f; jvp }))
+      (E_custom_jvp (Jvp_call { params_s; result_s; params; f; jvp }))
   with Effect.Unhandled _ -> f params

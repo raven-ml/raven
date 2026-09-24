@@ -12,7 +12,6 @@
   test_ops
   test_complex
   test_engine
-  test_ptree
   test_jvp
   test_vmap
   test_custom
@@ -22,14 +21,12 @@
   test_jit
   test_pmap
   test_rng
-  test_half
-  test_uniform)
+  test_half)
  (modules
   test_grad
   test_ops
   test_complex
   test_engine
-  test_ptree
   test_jvp
   test_vmap
   test_custom
@@ -39,8 +36,7 @@
   test_jit
   test_pmap
   test_rng
-  test_half
-  test_uniform)
+  test_half)
  (package rune)
  (libraries
   rune

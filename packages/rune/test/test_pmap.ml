@@ -13,34 +13,6 @@ open Rune_test_support.Support
 
 let devs2 = [ "CPU:1"; "CPU:2" ]
 let devs4 = [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
-
-(* A single-tensor Ptree.S instance. *)
-module Single_f32 = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
-(* A (batch, key) pair: the batch is sharded, the key replicated. *)
-module Batch_key = struct
-  type t = Nx.float32_t * Nx.Rng.key
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (x, k) = (f x, f k)
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (x1, k1)
-      (x2, k2) =
-    (f x1 x2, f k1 k2)
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (x, k) =
-    f x;
-    f k
-end
-
 let arange n = Array.init n (fun i -> float_of_int (i + 1) /. 7.0)
 let m46 () = Nx.create f32 [| 4; 6 |] (arange 24)
 let m86 () = Nx.create f32 [| 8; 6 |] (arange 48)
@@ -59,14 +31,14 @@ let chain x =
 let test_matches_jit_2dev () =
   let x = m46 () in
   let expect = Rune.jit' chain x in
-  let g = Rune.pmap ~devices:devs2 (module Single_f32) chain in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor chain in
   check_arr ~msg:"first call" (to_arr expect) (g x);
   check_arr ~msg:"replay" (to_arr expect) (g x)
 
 let test_matches_jit_4dev () =
   let x = m86 () in
   let expect = Rune.jit' chain x in
-  let g = Rune.pmap ~devices:devs4 (module Single_f32) chain in
+  let g = Rune.pmap ~devices:devs4 Nx.Ptree.tensor chain in
   check_arr ~msg:"4 devices" (to_arr expect) (g x)
 
 (* No cross-device reduce: each device computes its shard independently, so the
@@ -75,18 +47,18 @@ let test_elementwise_byte_equal () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let x = m46 () in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 (module Single_f32) f in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor f in
   check_arr ~eps:0.0 ~msg:"byte-equal" (to_arr expect) (g x)
 
 let test_shard_axis_1 () =
   let f x = Nx.add (Nx.mul x x) x in
   let x = m46 () in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] (module Single_f32) f in
+  let g = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] Nx.Ptree.tensor f in
   check_arr ~eps:0.0 ~msg:"axis 1 shards" (to_arr expect) (g x)
 
 let test_retrace_on_new_shape () =
-  let g = Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.sum x) in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.sum x) in
   check_arr ~msg:"first shape" [| 36.0 |]
     (g (vec32 (Array.init 8 (fun i -> float_of_int (i + 1)))));
   check_arr ~msg:"retraced shape" [| 10.0 |]
@@ -99,19 +71,17 @@ let test_retrace_on_new_shape () =
 type dp = { w : Nx.float32_t; x : Nx.float32_t; t : Nx.float32_t }
 
 module Dp = struct
-  type t = dp
+  type _ t = dp
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; x; t } =
-    { w = f w; x = f x; t = f t }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; x = f p.x q.x; t = f p.t q.t }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; x; t } =
-    f w;
-    f x;
-    f t
+  let walk c { w; x; t } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let x = field c "x" tensor x in
+    let t = field c "t" tensor t in
+    { w; x; t }
 end
+
+let dp_ptree = Nx.Ptree.instantiate (module Dp)
 
 let dp_loss p =
   let d = Nx.sub (Nx.matmul p.x p.w) p.t in
@@ -128,8 +98,8 @@ let dp_input () =
 
 let test_dp_loss_matches_jit () =
   let p = dp_input () in
-  let expect = Rune.jit (module Dp) dp_loss p in
-  let g = Rune.pmap ~devices:devs2 ~in_axes:dp_axes (module Dp) dp_loss in
+  let expect = Rune.jit dp_ptree dp_loss p in
+  let g = Rune.pmap ~devices:devs2 ~in_axes:dp_axes dp_ptree dp_loss in
   check_arr ~msg:"mean loss over sharded batch" (to_arr expect) (g p)
 
 (* Gradients: value_and_grad inside the pmapped function. Differentiating a mean
@@ -137,12 +107,10 @@ let test_dp_loss_matches_jit () =
    allreduce, which multi_pm inserts automatically — the DDP path. *)
 
 let test_grad_inside_pmap () =
-  let grads p = snd (Rune.value_and_grad (module Dp) dp_loss p) in
+  let grads p = snd (Rune.value_and_grad dp_ptree dp_loss p) in
   let p = dp_input () in
-  let expect = Rune.jit2 (module Dp) (module Dp) grads p in
-  let g =
-    Rune.pmap2 ~devices:devs2 ~in_axes:dp_axes (module Dp) (module Dp) grads
-  in
+  let expect = Rune.jit2 dp_ptree dp_ptree grads p in
+  let g = Rune.pmap2 ~devices:devs2 ~in_axes:dp_axes dp_ptree dp_ptree grads in
   let got = g p in
   check_arr ~msg:"dw (allreduced)" (to_arr expect.w) got.w;
   check_arr ~msg:"dx (sharded)" (to_arr expect.x) got.x;
@@ -161,13 +129,11 @@ let keepdims_input () =
   }
 
 let check_keepdims_grad loss =
-  let grads p = snd (Rune.value_and_grad (module Dp) loss p) in
+  let grads p = snd (Rune.value_and_grad dp_ptree loss p) in
   let p = keepdims_input () in
-  let expect = Rune.jit2 (module Dp) (module Dp) grads p in
+  let expect = Rune.jit2 dp_ptree dp_ptree grads p in
   let axes = [ None; Some 0; Some 0 ] in
-  let g =
-    Rune.pmap2 ~devices:devs2 ~in_axes:axes (module Dp) (module Dp) grads
-  in
+  let g = Rune.pmap2 ~devices:devs2 ~in_axes:axes dp_ptree dp_ptree grads in
   let got = g p in
   check_arr ~msg:"dw" (to_arr expect.w) got.w;
   check_arr ~msg:"dx" (to_arr expect.x) got.x
@@ -192,7 +158,7 @@ let test_grad_mean_keepdims () =
    matching placement moves no bytes; reading gathers shards correctly. *)
 
 let test_feedback_moves_no_bytes () =
-  let g = Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.add x x) in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.add x x) in
   let x = vec32 (Array.init 8 (fun i -> float_of_int i)) in
   let y1 = g x in
   Rune.reset_jit_stats ();
@@ -208,9 +174,8 @@ let test_replicated_feedback () =
   (* w -> w * 2 with w replicated: the replicated output seeds the replicated
      input directly on the next call. *)
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ None ]
-      (module Single_f32)
-      (fun w -> Nx.mul_s w 2.0)
+    Rune.pmap ~devices:devs2 ~in_axes:[ None ] Nx.Ptree.tensor (fun w ->
+        Nx.mul_s w 2.0)
   in
   let w = vec32 [| 1.0; 2.0; 3.0 |] in
   let w1 = g w in
@@ -224,9 +189,8 @@ let test_replicated_feedback () =
    create constants beside it, which run on the host. *)
 let test_split_output_in_eager_code () =
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
-      (module Single_f32)
-      (fun x -> Nx.add x x)
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] Nx.Ptree.tensor (fun x ->
+        Nx.add x x)
   in
   let y = g (Nx.create f32 [| 2; 4 |] (Array.init 8 float_of_int)) in
   let h = Nx.place Nx.Placement.host y in
@@ -240,8 +204,8 @@ let test_mismatched_placement_forces () =
   (* An output sharded on axis 0 fed into an axis-1 placement is forced to the
      host and re-split, not seeded. *)
   let f x = Nx.add x x in
-  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] (module Single_f32) f in
-  let g1 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] (module Single_f32) f in
+  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] Nx.Ptree.tensor f in
+  let g1 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] Nx.Ptree.tensor f in
   let x = m46 () in
   let y = g0 x in
   check_arr ~eps:0.0 ~msg:"re-split result matches"
@@ -251,24 +215,23 @@ let test_mismatched_placement_forces () =
 (* A window write on the sharded axis: each device writes the part of the window
    that falls in its shard, for a static and for a traced start. *)
 module Win = struct
-  type t = { x : Nx.float32_t; v : Nx.float32_t; pos : Nx.int32_t }
+  type win = { x : Nx.float32_t; v : Nx.float32_t; pos : Nx.int32_t }
+  type _ t = win
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { x; v; pos } =
-    { x = f x; v = f v; pos = f pos }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { x = f a.x b.x; v = f a.v b.v; pos = f a.pos b.pos }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { x; v; pos } =
-    f x;
-    f v;
-    f pos
+  let walk c { x; v; pos } =
+    let open Nx.Ptree.Walk in
+    let x = field c "x" tensor x in
+    let v = field c "v" tensor v in
+    let pos = field c "pos" tensor pos in
+    { x; v; pos }
 end
 
+let win_ptree = Nx.Ptree.instantiate (module Win)
+
 let test_set_window_on_mapped_axis () =
-  let f (w : Win.t) = Nx.set [ Nx.R (1, 3); Nx.A ] w.v w.x in
+  let f (w : Win.win) = Nx.set [ Nx.R (1, 3); Nx.A ] w.v w.x in
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] (module Win) f
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] win_ptree f
   in
   let w =
     {
@@ -280,9 +243,9 @@ let test_set_window_on_mapped_axis () =
   check_arr ~eps:0.0 ~msg:"window spanning both shards" (to_arr (f w)) (g w)
 
 let test_set_traced_window_on_mapped_axis () =
-  let f (w : Win.t) = Nx.set [ Nx.D (w.pos, 2); Nx.A ] w.v w.x in
+  let f (w : Win.win) = Nx.set [ Nx.D (w.pos, 2); Nx.A ] w.v w.x in
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] (module Win) f
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] win_ptree f
   in
   let w =
     {
@@ -300,7 +263,7 @@ let test_set_traced_window_on_mapped_axis () =
 let test_host_is_not_a_device () =
   raises_match
     (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> Rune.pmap ~devices:[ "CPU"; "CPU:1" ] (module Single_f32) Fun.id)
+    (fun () -> Rune.pmap ~devices:[ "CPU"; "CPU:1" ] Nx.Ptree.tensor Fun.id)
 
 let test_placed_capture_is_replicated () =
   let w = Nx.create f32 [| 6 |] (arange 6) in
@@ -308,16 +271,14 @@ let test_placed_capture_is_replicated () =
   let bound = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x p) in
   let x = m46 () in
   check_arr ~msg:"bound" (to_arr (Nx.mul x w)) (bound x);
-  let g = Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul x p) in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.mul x p) in
   check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
   check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w)) (bound x)
 
 (* A compiled function runs on one device: an output of a pmap, on several,
    raises as its input instead of being read through the host. *)
 let test_split_output_into_jit_raises () =
-  let g =
-    Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul_s x 2.0)
-  in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.mul_s x 2.0) in
   let y = g (m46 ()) in
   raises_match
     (function
@@ -328,10 +289,7 @@ let test_split_output_into_jit_raises () =
 
 let test_pass_through_output () =
   let g =
-    Rune.pmap2 ~devices:devs2
-      (module Single_f32)
-      (module Single_f32)
-      (fun x ->
+    Rune.pmap2 ~devices:devs2 Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
         ignore (Nx.sum x);
         x)
   in
@@ -357,9 +315,8 @@ let raises_donated f =
 let test_donate_sharded_state () =
   let n = 1024 in
   let g =
-    Rune.pmap ~devices:devs2 ~donate:true
-      (module Single_f32)
-      (fun x -> Nx.add_s x 1.0)
+    Rune.pmap ~devices:devs2 ~donate:true Nx.Ptree.tensor (fun x ->
+        Nx.add_s x 1.0)
   in
   let x = vec32 (Array.make n 0.0) in
   let base = (Rune.jit_stats ()).resident_bytes in
@@ -378,8 +335,7 @@ let test_donate_sharded_state () =
 let test_donate_replicated_releases_all_shards () =
   let n = 512 in
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ None ] ~donate:true
-      (module Single_f32)
+    Rune.pmap ~devices:devs2 ~in_axes:[ None ] ~donate:true Nx.Ptree.tensor
       (fun w -> Nx.mul_s w 2.0)
   in
   (* Retire the handles earlier tests dropped unread, so their release cannot
@@ -398,11 +354,9 @@ let test_donate_replicated_releases_all_shards () =
 
 let test_donate_mismatched_placement_not_consumed () =
   let f x = Nx.add x x in
-  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] (module Single_f32) f in
+  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] Nx.Ptree.tensor f in
   let g1 =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] ~donate:true
-      (module Single_f32)
-      f
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] ~donate:true Nx.Ptree.tensor f
   in
   let x = m46 () in
   let y = g0 x in
@@ -419,33 +373,27 @@ let test_donate_mismatched_placement_not_consumed () =
 
 let test_empty_devices () =
   raises_match Exn.invalid_arg (fun () ->
-      let g = Rune.pmap ~devices:[] (module Single_f32) Fun.id in
+      let g = Rune.pmap ~devices:[] Nx.Ptree.tensor Fun.id in
       ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_mixed_backends () =
   raises_match Exn.invalid_arg (fun () ->
-      let g =
-        Rune.pmap ~devices:[ "CPU:1"; "CUDA:0" ] (module Single_f32) Fun.id
-      in
+      let g = Rune.pmap ~devices:[ "CPU:1"; "CUDA:0" ] Nx.Ptree.tensor Fun.id in
       ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_non_divisible_axis () =
-  let g = Rune.pmap ~devices:devs2 (module Single_f32) Fun.id in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor Fun.id in
   raises_match Exn.invalid_arg (fun () ->
       ignore (g (vec32 [| 1.0; 2.0; 3.0 |])))
 
 let test_in_axes_arity () =
   let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ]
-      (module Single_f32)
-      Fun.id
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ] Nx.Ptree.tensor Fun.id
   in
   raises_match Exn.invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
 
 let test_axis_out_of_range () =
-  let g =
-    Rune.pmap ~devices:devs2 ~in_axes:[ Some 3 ] (module Single_f32) Fun.id
-  in
+  let g = Rune.pmap ~devices:devs2 ~in_axes:[ Some 3 ] Nx.Ptree.tensor Fun.id in
   raises_match Exn.invalid_arg (fun () -> ignore (g (vec32 [| 1.0; 2.0 |])))
 
 (* Under an enclosing transformation the pmapped function runs eagerly, so grad
@@ -453,10 +401,10 @@ let test_axis_out_of_range () =
 
 let test_grad_over_pmap_runs_eagerly () =
   let g =
-    Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.sum (Nx.mul x x))
+    Rune.pmap ~devices:devs2 Nx.Ptree.tensor (fun x -> Nx.sum (Nx.mul x x))
   in
   let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-  let dx = Rune.grad (module Single_f32) (fun x -> g x) x in
+  let dx = Rune.grad Nx.Ptree.tensor (fun x -> g x) x in
   check_arr ~msg:"grad over pmap" [| 2.0; 4.0; 6.0; 8.0 |] dx
 
 (* Two outputs that both need a cross-device reduction: the gradient of a
@@ -471,33 +419,36 @@ let test_grad_over_pmap_runs_eagerly () =
    [m]'s value at every entry. *)
 
 module Grad_and_loss = struct
-  type t = { g : Nx.float32_t; loss : Nx.float32_t }
+  type grad_and_loss = { g : Nx.float32_t; loss : Nx.float32_t }
+  type _ t = grad_and_loss
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { g = f t.g; loss = f t.loss }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { g = f a.g b.g; loss = f a.loss b.loss }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    f t.g;
-    f t.loss
+  let walk c { g; loss } =
+    let open Nx.Ptree.Walk in
+    let g = field c "g" tensor g in
+    let loss = field c "loss" tensor loss in
+    { g; loss }
 end
+
+let grad_and_loss_ptree = Nx.Ptree.instantiate (module Grad_and_loss)
 
 module Weights_mask_ids = struct
-  type t = { w : Nx.float32_t; m : Nx.float32_t; ids : Nx.int32_t }
+  type weights_mask_ids = {
+    w : Nx.float32_t;
+    m : Nx.float32_t;
+    ids : Nx.int32_t;
+  }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { w = f t.w; m = f t.m; ids = f t.ids }
+  type _ t = weights_mask_ids
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { w = f a.w b.w; m = f a.m b.m; ids = f a.ids b.ids }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    f t.w;
-    f t.m;
-    f t.ids
+  let walk c { w; m; ids } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let m = field c "m" tensor m in
+    let ids = field c "ids" tensor ids in
+    { w; m; ids }
 end
+
+let weights_mask_ids_ptree = Nx.Ptree.instantiate (module Weights_mask_ids)
 
 let test_two_collective_outputs () =
   let vocab, dim, rows, cols = (8, 4, 4, 2) in
@@ -508,8 +459,7 @@ let test_two_collective_outputs () =
   in
   let step { Weights_mask_ids.w; m; ids } =
     let loss, g =
-      Rune.value_and_grad
-        (module Single_f32)
+      Rune.value_and_grad Nx.Ptree.tensor
         (fun w ->
           let e =
             Nx.reshape [| rows; cols; dim |]
@@ -522,9 +472,7 @@ let test_two_collective_outputs () =
   in
   let f =
     Rune.pmap2 ~devices:devs2 ~in_axes:[ None; None; Some 0 ]
-      (module Weights_mask_ids)
-      (module Grad_and_loss)
-      step
+      weights_mask_ids_ptree grad_and_loss_ptree step
   in
   let out = f { Weights_mask_ids.w; m; ids } in
   check_arr ~msg:"gradient of the replicated parameter"
@@ -543,8 +491,7 @@ let test_pmap_dropout_grad_decorrelates () =
   let key = Nx.Rng.key 7 in
   let mask_grad (x, key) =
     snd
-      (Rune.value_and_grad
-         (module Single_f32)
+      (Rune.value_and_grad Nx.Ptree.tensor
          (fun x ->
            let m =
              Nx.cast f32
@@ -556,9 +503,8 @@ let test_pmap_dropout_grad_decorrelates () =
   in
   let g =
     Rune.pmap2 ~devices:devs2 ~in_axes:[ Some 0; None ]
-      (module Batch_key)
-      (module Single_f32)
-      mask_grad
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.tensor mask_grad
   in
   let masks = g (Nx.ones f32 [| 2; 16 |], key) in
   for i = 0 to 1 do
@@ -588,50 +534,20 @@ type mlp = {
 }
 
 module Mlp = struct
-  type t = mlp
+  type _ t = mlp
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    {
-      w1 = f s.w1;
-      b1 = f s.b1;
-      w2 = f s.w2;
-      b2 = f s.b2;
-      xb = f s.xb;
-      yb = f s.yb;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s t =
-    {
-      w1 = f s.w1 t.w1;
-      b1 = f s.b1 t.b1;
-      w2 = f s.w2 t.w2;
-      b2 = f s.b2 t.b2;
-      xb = f s.xb t.xb;
-      yb = f s.yb t.yb;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
-    f s.w1;
-    f s.b1;
-    f s.w2;
-    f s.b2;
-    f s.xb;
-    f s.yb
+  let walk c { w1; b1; w2; b2; xb; yb } =
+    let open Nx.Ptree.Walk in
+    let w1 = field c "w1" tensor w1 in
+    let b1 = field c "b1" tensor b1 in
+    let w2 = field c "w2" tensor w2 in
+    let b2 = field c "b2" tensor b2 in
+    let xb = field c "xb" tensor xb in
+    let yb = field c "yb" tensor yb in
+    { w1; b1; w2; b2; xb; yb }
 end
 
-module Mlp_out = struct
-  type t = mlp * Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (s, l) = (Mlp.map f s, f l)
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (s, l)
-      (t, m) =
-    (Mlp.map2 f s t, f l m)
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (s, l) =
-    Mlp.iter f s;
-    f l
-end
+let mlp_ptree = Nx.Ptree.instantiate (module Mlp)
 
 let mlp_loss s =
   let h = Nx.relu (Nx.add (Nx.matmul s.xb s.w1) s.b1) in
@@ -643,8 +559,13 @@ let sgd (type a b) (w : (a, b) Nx.t) (g : (a, b) Nx.t) : (a, b) Nx.t =
   Nx.sub w (Nx.mul g (scalar_like w 0.05))
 
 let mlp_step s =
-  let l, g = Rune.value_and_grad (module Mlp) mlp_loss s in
-  ({ (Mlp.map2 sgd s g) with xb = s.xb; yb = s.yb }, l)
+  let l, g = Rune.value_and_grad mlp_ptree mlp_loss s in
+  ( {
+      (Nx.Ptree.map2 mlp_ptree (fun _ w g -> sgd w g) s g) with
+      xb = s.xb;
+      yb = s.yb;
+    },
+    l )
 
 let mlp_init () =
   let rng i n =
@@ -668,14 +589,13 @@ let trajectory step0 =
 
 let test_dp_training_matches_jit () =
   let jit_losses =
-    trajectory (Rune.jit2 (module Mlp) (module Mlp_out) mlp_step)
+    trajectory (Rune.jit2 mlp_ptree Nx.Ptree.(pair mlp_ptree tensor) mlp_step)
   in
   let in_axes = [ None; None; None; None; Some 0; Some 0 ] in
   let pmap_losses =
     trajectory
-      (Rune.pmap2 ~devices:devs2 ~in_axes
-         (module Mlp)
-         (module Mlp_out)
+      (Rune.pmap2 ~devices:devs2 ~in_axes mlp_ptree
+         Nx.Ptree.(pair mlp_ptree tensor)
          mlp_step)
   in
   Array.iteri
@@ -687,7 +607,9 @@ let test_dp_training_matches_jit () =
   (* Late steps run entirely on resident state: nothing moves to the devices. *)
   Rune.reset_jit_stats ();
   let pstep =
-    Rune.pmap2 ~devices:devs2 ~in_axes (module Mlp) (module Mlp_out) mlp_step
+    Rune.pmap2 ~devices:devs2 ~in_axes mlp_ptree
+      Nx.Ptree.(pair mlp_ptree tensor)
+      mlp_step
   in
   let s0 = mlp_init () in
   let s1, _ = pstep s0 in
@@ -715,12 +637,10 @@ let test_grad_through_scan_inside_pmap () =
     in
     Nx.sum ys
   in
-  let grads x = Rune.grad (module Single_f32) loss x in
+  let grads x = Rune.grad Nx.Ptree.tensor loss x in
   let x = m46 () in
-  let expect = Rune.jit2 (module Single_f32) (module Single_f32) grads x in
-  let g =
-    Rune.pmap2 ~devices:devs2 (module Single_f32) (module Single_f32) grads
-  in
+  let expect = Rune.jit2 Nx.Ptree.tensor Nx.Ptree.tensor grads x in
+  let g = Rune.pmap2 ~devices:devs2 Nx.Ptree.tensor Nx.Ptree.tensor grads in
   check_arr ~msg:"sharded grads" (to_arr expect) (g x)
 
 let tests =

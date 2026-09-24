@@ -6,21 +6,20 @@
 (* Gradient descent on a typed parameter record: fit y = x @ w + b by
    differentiating an ordinary OCaml function of an ordinary OCaml record. *)
 
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+type 'a params = { w : 'a; b : 'a }
 
+(* The record's structure: one [field] per field, which names it. *)
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
+
+let params = Nx.Ptree.instantiate (module Params)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -40,7 +39,7 @@ let () =
   (* One step: gradients have the same record type as the parameters. *)
   let lr = 0.1 in
   let step p =
-    let l, g = Rune.value_and_grad (module Params) loss p in
+    let l, g = Rune.value_and_grad params loss p in
     let p =
       { w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }
     in

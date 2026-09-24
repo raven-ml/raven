@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune (tape-based autodiff over Ptree structures) on representative Nx
-   workloads. Eager Nx cases (no autodiff) are included as baselines to quantify
-   the cost of gradient tracking itself. *)
+(* Rune (tape-based autodiff over structures) on representative Nx workloads.
+   Eager Nx cases (no autodiff) are included as baselines to quantify the cost
+   of gradient tracking itself. *)
 
 (* MLP: 3 layers, 784 -> 256 -> 128 -> 10, batch 128, float32. *)
 
@@ -19,37 +19,20 @@ type mlp = {
 }
 
 module Mlp = struct
-  type t = mlp
+  type _ t = mlp
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
-    {
-      w1 = f p.w1;
-      b1 = f p.b1;
-      w2 = f p.w2;
-      b2 = f p.b2;
-      w3 = f p.w3;
-      b3 = f p.b3;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      w1 = f p.w1 q.w1;
-      b1 = f p.b1 q.b1;
-      w2 = f p.w2 q.w2;
-      b2 = f p.b2 q.b2;
-      w3 = f p.w3 q.w3;
-      b3 = f p.b3 q.b3;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
-    f p.w1;
-    f p.b1;
-    f p.w2;
-    f p.b2;
-    f p.w3;
-    f p.b3
+  let walk c { w1; b1; w2; b2; w3; b3 } =
+    let open Nx.Ptree.Walk in
+    let w1 = field c "w1" tensor w1 in
+    let b1 = field c "b1" tensor b1 in
+    let w2 = field c "w2" tensor w2 in
+    let b2 = field c "b2" tensor b2 in
+    let w3 = field c "w3" tensor w3 in
+    let b3 = field c "b3" tensor b3 in
+    { w1; b1; w2; b2; w3; b3 }
 end
 
+let mlp_ptree = Nx.Ptree.instantiate (module Mlp)
 let batch = 128
 let d_in = 784
 let d_h1 = 256
@@ -79,15 +62,16 @@ let mlp_grad_benchmarks params x y =
   [
     Thumper.bench "mlp forward (nx eager)" (fun () -> loss params x y);
     Thumper.bench ~tags:[ "lab" ] "mlp value_and_grad" (fun () ->
-        Rune.value_and_grad (module Mlp) f params);
+        Rune.value_and_grad mlp_ptree f params);
   ]
 
 (* MLP jvp: forward-mode directional derivative of the loss. *)
 let mlp_jvp_benchmarks params x y =
-  let tangents = Mlp.map (fun t -> Nx.ones_like t) params in
+  let tangents = Nx.Ptree.map mlp_ptree (fun _ t -> Nx.ones_like t) params in
   let f p = loss p x y in
   [
-    Thumper.bench "mlp jvp" (fun () -> Rune.jvp (module Mlp) f params tangents);
+    Thumper.bench "mlp jvp" (fun () ->
+        Rune.jvp mlp_ptree Nx.Ptree.tensor f params tangents);
   ]
 
 (* vmap of per-sample grads, stacked along a new batch axis. *)
@@ -133,7 +117,7 @@ let jit_benchmarks params x x0 =
   [
     Thumper.bench_with_setup ~tags:[ "lab" ]
       ~setup:(fun () ->
-        let f = Rune.jit (module Mlp) (fun p -> forward p x) in
+        let f = Rune.jit mlp_ptree (fun p -> forward p x) in
         ignore (Sys.opaque_identity (f params));
         f)
       "jit run mlp"
@@ -171,36 +155,32 @@ let jit_benchmarks params x x0 =
 type ew = { a : Nx.float32_t; b : Nx.float32_t; c : Nx.float32_t }
 
 module Ew = struct
-  type t = ew
+  type _ t = ew
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
-    { a = f p.a; b = f p.b; c = f p.c }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x y =
-    { a = f x.a y.a; b = f x.b y.b; c = f x.c y.c }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
-    f p.a;
-    f p.b;
-    f p.c
+  let walk cursor { a; b; c } =
+    let open Nx.Ptree.Walk in
+    let a = field cursor "a" tensor a in
+    let b = field cursor "b" tensor b in
+    let c = field cursor "c" tensor c in
+    { a; b; c }
 end
+
+let ew_ptree = Nx.Ptree.instantiate (module Ew)
 
 type lorenz_state = { x : Nx.float32_t; y : Nx.float32_t; z : Nx.float32_t }
 
 module Lorenz = struct
-  type t = lorenz_state
+  type _ t = lorenz_state
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
-    { x = f p.x; y = f p.y; z = f p.z }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { x = f a.x b.x; y = f a.y b.y; z = f a.z b.z }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
-    f p.x;
-    f p.y;
-    f p.z
+  let walk c { x; y; z } =
+    let open Nx.Ptree.Walk in
+    let x = field c "x" tensor x in
+    let y = field c "y" tensor y in
+    let z = field c "z" tensor z in
+    { x; y; z }
 end
+
+let lorenz_ptree = Nx.Ptree.instantiate (module Lorenz)
 
 type rnn_params = {
   w : Nx.float32_t;
@@ -210,26 +190,18 @@ type rnn_params = {
 }
 
 module Rnn = struct
-  type t = rnn_params
+  type _ t = rnn_params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
-    { w = f p.w; u = f p.u; h0 = f p.h0; xs = List.map f p.xs }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      w = f a.w b.w;
-      u = f a.u b.u;
-      h0 = f a.h0 b.h0;
-      xs = List.map2 f a.xs b.xs;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
-    f p.w;
-    f p.u;
-    f p.h0;
-    List.iter f p.xs
+  let walk c { w; u; h0; xs } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let u = field c "u" tensor u in
+    let h0 = field c "h0" tensor h0 in
+    let xs = field c "xs" (list tensor) xs in
+    { w; u; h0; xs }
 end
 
+let rnn_ptree = Nx.Ptree.instantiate (module Rnn)
 let ew_dim = 256
 let lorenz_sigma = 10.0
 let lorenz_rho = 28.0
@@ -263,7 +235,7 @@ let rnn_forward p =
   let _, loss = List.fold_left step (p.h0, Nx.scalar Nx.float32 0.0) p.xs in
   loss
 
-let rnn_grad p = Rune.grad (module Rnn) rnn_forward p
+let rnn_grad p = Rune.grad rnn_ptree rnn_forward p
 
 let init_ew () =
   {
@@ -302,33 +274,33 @@ let fresh_scale () =
 
 let jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20 =
   let replay_ew () =
-    let f = Rune.jit (module Ew) ew_forward in
+    let f = Rune.jit ew_ptree ew_forward in
     ignore (Sys.opaque_identity (f ew_params));
     f
   in
   let replay_lorenz n () =
-    let f = Rune.jit (module Lorenz) (fun p -> lorenz n p) in
+    let f = Rune.jit lorenz_ptree (fun p -> lorenz n p) in
     ignore (Sys.opaque_identity (f lorenz_params));
     f
   in
   let replay_rnn_fwd params () =
-    let f = Rune.jit (module Rnn) rnn_forward in
+    let f = Rune.jit rnn_ptree rnn_forward in
     ignore (Sys.opaque_identity (f params));
     f
   in
   let replay_rnn_grad params () =
-    let f = Rune.jit2 (module Rnn) (module Rnn) rnn_grad in
+    let f = Rune.jit2 rnn_ptree rnn_ptree rnn_grad in
     ignore (Sys.opaque_identity (f params));
     f
   in
   [
     Thumper.bench ~tags:[ "lab" ] "elementwise first-call" (fun () ->
         let s = fresh_scale () in
-        let f = Rune.jit (module Ew) (fun p -> Nx.mul_s (ew_forward p) s) in
+        let f = Rune.jit ew_ptree (fun p -> Nx.mul_s (ew_forward p) s) in
         Sys.opaque_identity (f ew_params));
     Thumper.bench ~tags:[ "lab" ] "lorenz n10 first-call" (fun () ->
         let s = fresh_scale () in
-        let f = Rune.jit (module Lorenz) (fun p -> Nx.mul_s (lorenz 10 p) s) in
+        let f = Rune.jit lorenz_ptree (fun p -> Nx.mul_s (lorenz 10 p) s) in
         Sys.opaque_identity (f lorenz_params));
     Thumper.bench_with_setup ~setup:replay_ew "elementwise replay" (fun f ->
         f ew_params);
@@ -366,23 +338,23 @@ let cold_compile spec =
     | [ "ew" ] ->
         let p = init_ew () in
         wall (fun () ->
-            let f = Rune.jit (module Ew) ew_forward in
+            let f = Rune.jit ew_ptree ew_forward in
             ignore (Sys.opaque_identity (f p)))
     | [ "lorenz"; n ] ->
         let n = int_of_string n in
         let p = init_lorenz () in
         wall (fun () ->
-            let f = Rune.jit (module Lorenz) (fun q -> lorenz n q) in
+            let f = Rune.jit lorenz_ptree (fun q -> lorenz n q) in
             ignore (Sys.opaque_identity (f p)))
     | [ "rnnfwd"; h ] ->
         let p = init_rnn (int_of_string h) in
         wall (fun () ->
-            let f = Rune.jit (module Rnn) rnn_forward in
+            let f = Rune.jit rnn_ptree rnn_forward in
             ignore (Sys.opaque_identity (f p)))
     | [ "rnngrad"; h ] ->
         let p = init_rnn (int_of_string h) in
         wall (fun () ->
-            let f = Rune.jit2 (module Rnn) (module Rnn) rnn_grad in
+            let f = Rune.jit2 rnn_ptree rnn_ptree rnn_grad in
             ignore (Sys.opaque_identity (f p)))
     | _ ->
         prerr_endline "usage: --cold (ew | lorenz N | rnnfwd H | rnngrad H)";

@@ -9,17 +9,6 @@
 open Windtrap
 open Rune_test_support.Support
 
-module Single = struct
-  type t = Nx.float64_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 let v4 () = vec64 [| 0.5; -1.2; 2.1; 0.8 |]
 
 (* scan with a running-sum carry is a cumulative sum. *)
@@ -58,6 +47,100 @@ let test_vmap_of_scan () =
 let test_scan_rejects_scalar () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (cumsum_scan (Nx.scalar f64 1.0)))
+
+(* Structured scans: a carry of two tensors, rows of a pair, outputs that are a
+   list, and a fold that emits nothing. *)
+let test_scan_structures () =
+  let xs = (v4 (), Nx.mul_s (v4 ()) 2.0) in
+  let (sum, count), ys =
+    Rune.scan
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.(list tensor)
+      ~f:(fun (sum, count) (a, b) ->
+        let sum = Nx.add sum (Nx.add a b) in
+        ((sum, Nx.add_s count 1.0), [ sum; a ]))
+      ~init:(Nx.scalar f64 0.0, Nx.scalar f64 0.0)
+      xs
+  in
+  check_arr ~msg:"sum" [| 3.0 *. (0.5 -. 1.2 +. 2.1 +. 0.8) |] sum;
+  check_arr ~msg:"count" [| 4.0 |] count;
+  (match ys with
+  | [ sums; rows ] ->
+      check_arr ~msg:"sums" (to_arr (Nx.cumsum (Nx.mul_s (v4 ()) 3.0))) sums;
+      check_arr ~msg:"rows" (to_arr (v4 ())) rows
+  | _ -> fail "the outputs are a list of two tensors");
+  let total, () =
+    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
+      ~f:(fun c x -> (Nx.add c x, ()))
+      ~init:(Nx.scalar f64 0.0) (v4 ())
+  in
+  check_arr ~msg:"nothing to emit" [| 0.5 -. 1.2 +. 2.1 +. 0.8 |] total
+
+(* A body that returns a carry of another structure than it received raises,
+   naming the path where they differ. *)
+let grow c x = (c @ [ x ], ())
+let carry = Nx.Ptree.(list tensor)
+
+let test_scan_rejects_a_changed_carry () =
+  raises
+    (Invalid_argument
+       "Rune.scan: the root: length 2 in the carry the body returned, length 1 \
+        in the carry it received") (fun () ->
+      ignore
+        (Rune.scan carry Nx.Ptree.tensor Nx.Ptree.unit ~f:grow
+           ~init:[ Nx.scalar f64 0.0 ]
+           (v4 ())))
+
+let test_staged_scan_rejects_a_changed_carry () =
+  let f xs =
+    let c, () =
+      Rune.scan carry Nx.Ptree.tensor Nx.Ptree.unit ~f:grow
+        ~init:[ Nx.scalar f64 0.0 ]
+        xs
+    in
+    List.hd c
+  in
+  raises
+    (Invalid_argument
+       "Rune.scan: the root: length 2 in the carry the body returned, length 1 \
+        in the carry it received") (fun () -> ignore (Rune.jit' f (v4 ())))
+
+(* Every step's outputs have the first step's visits. *)
+(* A carry that changes dtype is named by the scan. The carry is a tensor of
+   any dtype, so that the body can change it. *)
+module Packed = struct
+  type _ t = Nx.packed
+
+  let walk c (Nx.P x) = Nx.P (Nx.Ptree.Walk.tensor c x)
+end
+
+let test_scan_rejects_a_changed_dtype () =
+  raises
+    (Invalid_argument
+       "Rune.scan: the root: float32 in the carry the body returned, float64 \
+        in the carry it received") (fun () ->
+      ignore
+        (Rune.scan
+           (Nx.Ptree.instantiate (module Packed))
+           Nx.Ptree.tensor Nx.Ptree.unit
+           ~f:(fun (Nx.P c) _ -> (Nx.P (Nx.cast Nx.float32 c), ()))
+           ~init:(Nx.P (Nx.scalar f64 0.0))
+           (v4 ())))
+
+let test_scan_rejects_changed_outputs () =
+  let f c x =
+    let c = Nx.add_s c 1.0 in
+    (c, if Nx.item [] c > 1.5 then Some x else None)
+  in
+  raises
+    (Invalid_argument
+       "Rune.scan: the root: Some in a step's outputs, None in the first \
+        step's outputs") (fun () ->
+      ignore
+        (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor
+           Nx.Ptree.(option tensor)
+           ~f ~init:(Nx.scalar f64 0.0) (v4 ())))
 
 (* Compositions where another transformation claims the scan below any stager:
    reverse-mode must fold eagerly so every step lands on its tape. Each case
@@ -114,7 +197,6 @@ let test_while_loop () =
   (* Double until the sum exceeds 10: 1.5 -> 3 -> 6 -> 12. *)
   let y =
     Rune.while_loop
-      (module Single)
       ~cond:(fun c -> Nx.less (Nx.sum c) (Nx.scalar f64 10.0))
       ~body:(fun c -> Nx.mul_s c 2.0)
       (vec64 [| 1.0; 0.5 |])
@@ -126,7 +208,6 @@ let test_grad_through_while_loop () =
   let f x =
     Nx.sum
       (Rune.while_loop
-         (module Single)
          ~cond:(fun c -> Nx.less (Nx.sum c) (Nx.scalar f64 10.0))
          ~body:(fun c -> Nx.mul_s c 2.0)
          x)
@@ -142,6 +223,13 @@ let tests =
         test "differentiates like the primitive" test_grad_through_scan;
         test "vectorizes over the batch" test_vmap_of_scan;
         test "rejects a scalar input" test_scan_rejects_scalar;
+        test "folds structures" test_scan_structures;
+        test "rejects a changed carry" test_scan_rejects_a_changed_carry;
+        test "rejects a changed carry under jit"
+          test_staged_scan_rejects_a_changed_carry;
+        test "rejects changed outputs" test_scan_rejects_changed_outputs;
+        test "rejects a carry of another dtype"
+          test_scan_rejects_a_changed_dtype;
         test "per-sample gradients (vmap of grad)"
           test_vmap_of_grad_through_scan;
         test "second-order gradients (grad of grad)"

@@ -21,18 +21,16 @@ let n = 32
 type rnn = { w : Nx.float32_t; b : Nx.float32_t }
 
 module Rnn = struct
-  type t = rnn
+  type _ t = rnn
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let b = field c "b" tensor b in
+    { w; b }
 end
+
+let rnn_ptree = Nx.Ptree.instantiate (module Rnn)
 
 (* Deterministic fill, so eager and jitted runs see identical data and repeated
    process runs are comparable. *)
@@ -63,7 +61,7 @@ let loss (p : rnn) =
 (* Gradient norm: a scalar summarising every entry of both gradients, so a
    miscompile anywhere in the backward graph shows up in one number. *)
 let grad_norm p =
-  let g = Rune.grad (module Rnn) loss p in
+  let g = Rune.grad rnn_ptree loss p in
   Nx.add (Nx.mean (Nx.mul g.b g.b)) (Nx.mean (Nx.mul g.w g.w))
 
 let time label f =
@@ -81,7 +79,7 @@ let () =
   Printf.printf "device=%s horizon=%d BEAM=%s\n%!" device horizon
     (try Sys.getenv "BEAM" with Not_found -> "0");
   let eager = time "eager" (fun () -> item (grad_norm p)) in
-  let jitted = Rune.jit ~device (module Rnn) grad_norm in
+  let jitted = Rune.jit ~device rnn_ptree grad_norm in
   let first = time "jit (compile+run)" (fun () -> item (jitted p)) in
   let replay = time "jit (replay)" (fun () -> item (jitted p)) in
   let ok v =

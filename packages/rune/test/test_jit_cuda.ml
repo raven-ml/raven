@@ -129,26 +129,22 @@ let test_capture_uploaded_once_across_signatures () =
 type pair = { u : Nx.float32_t; v : Nx.float32_t }
 
 module Pair = struct
-  type t = pair
+  type _ t = pair
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { u; v } =
-    { u = f u; v = f v }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { u = f p.u q.u; v = f p.v q.v }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { u; v } =
-    f u;
-    f v
+  let walk c { u; v } =
+    let open Nx.Ptree.Walk in
+    let u = field c "u" tensor u in
+    let v = field c "v" tensor v in
+    { u; v }
 end
+
+let pair_ptree = Nx.Ptree.instantiate (module Pair)
 
 let test_pass_through_output_survives () =
   require_cuda ();
   let g =
-    Rune.jit2 ~device:"CUDA"
-      (module Pair)
-      (module Pair)
-      (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
+    Rune.jit2 ~device:"CUDA" pair_ptree pair_ptree (fun p ->
+        { u = p.u; v = Nx.mul_s p.v 2.0 })
   in
   let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
   let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
@@ -211,17 +207,6 @@ let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
    [_device_num] bound, allreduce, gather on read) is exercised without a second
    device. *)
 
-module Single_f32 = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 let cuda2 = [ "CUDA:0"; "CUDA:0" ]
 
 let test_pmap_matches_jit_on_cuda () =
@@ -235,7 +220,7 @@ let test_pmap_matches_jit_on_cuda () =
     Nx.create f32 [| 4; 6 |] (Array.init 24 (fun i -> float_of_int i /. 7.0))
   in
   let expect = Rune.jit' ~device:"CUDA" chain x in
-  let g = Rune.pmap ~devices:cuda2 (module Single_f32) chain in
+  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor chain in
   check_arr ~msg:"first call" (to_arr expect) (g x);
   check_arr ~msg:"replay" (to_arr expect) (g x)
 
@@ -246,19 +231,8 @@ let test_pmap_grad_allreduce_on_cuda () =
   let grads x = Rune.grad' loss x in
   let x = Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> float_of_int i)) in
   let expect = Rune.jit' ~device:"CUDA" grads x in
-  let g = Rune.pmap ~devices:cuda2 (module Single_f32) grads in
+  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor grads in
   check_arr ~msg:"grad inside pmap on cuda" (to_arr expect) (g x)
-
-module Single_bf16 = struct
-  type t = Nx.bfloat16_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
 
 (* Reducing over the sharded axis allreduces at bfloat16: each shard's partial
    sum is rounded to bfloat16 before the combine, so allow a couple of ulps
@@ -268,14 +242,14 @@ let test_pmap_bf16_allreduce_on_cuda () =
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat Nx.bfloat16 4 6 sin_data in
   let expect = Rune.jit' ~device:"CUDA" f x in
-  let g = Rune.pmap ~devices:cuda2 (module Single_bf16) f in
+  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor f in
   check_arr ~eps:0.0625 ~msg:"bf16 allreduce vs single device" (to_arr expect)
     (g x);
   check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g x)
 
 let test_pmap_feedback_on_cuda () =
   require_cuda ();
-  let g = Rune.pmap ~devices:cuda2 (module Single_f32) (fun x -> Nx.add x x) in
+  let g = Rune.pmap ~devices:cuda2 Nx.Ptree.tensor (fun x -> Nx.add x x) in
   let x = vec32 (Array.init 8 float_of_int) in
   let y1 = g x in
   let y2, up, _ = delta (fun () -> g y1) in
@@ -302,11 +276,9 @@ let raises_donated f =
 
 (* [f] compiled for CUDA with its argument consumed. *)
 let consuming f =
-  Rune.jit_step ~device:"CUDA"
-    (module Nx.Ptree)
-    (module Single_f32)
-    (fun _ x -> f x)
-    (Nx.Ptree.list [])
+  Rune.jit_step ~device:"CUDA" Nx.Ptree.unit Nx.Ptree.tensor
+    (fun () x -> f x)
+    ()
 
 let test_donate_bounds_resident_memory_on_cuda () =
   require_cuda ();
@@ -357,9 +329,7 @@ let test_forced_handle_unaffected_by_donate_on_cuda () =
 let test_pmap_donate_on_cuda () =
   require_cuda ();
   let g =
-    Rune.pmap ~devices:cuda2 ~donate:true
-      (module Single_f32)
-      (fun x -> Nx.add x x)
+    Rune.pmap ~devices:cuda2 ~donate:true Nx.Ptree.tensor (fun x -> Nx.add x x)
   in
   let x = vec32 (Array.init 8 float_of_int) in
   let y1 = g x in
@@ -373,17 +343,6 @@ let test_pmap_donate_on_cuda () =
 (* Rng on CUDA. The threefry samplers must be bit-identical to eager execution:
    the Tolk decomposition the GPU kernels compile from is the same Random123
    function as the eager C kernel. *)
-
-module Key = struct
-  type t = Nx.Rng.key
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
 
 let check_bits ~msg expected actual =
   let e = to_arr expected and a = to_arr actual in
@@ -402,7 +361,7 @@ let test_rng_uniform_bit_parity_on_cuda () =
   require_cuda ();
   let f key = Nx.Rng.uniform key Nx.float32 [| 1000 |] in
   let k = Nx.Rng.key 42 in
-  let g = Rune.jit ~device:"CUDA" (module Key) f in
+  let g = Rune.jit ~device:"CUDA" Nx.Ptree.tensor f in
   check_bits ~msg:"eager == cuda jit, bitwise" (f k) (g k);
   check_bits ~msg:"replay" (f k) (g k)
 
@@ -410,12 +369,14 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
   require_cuda ();
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
-  check_bits ~msg:"randint" (fr k) (Rune.jit ~device:"CUDA" (module Key) fr k);
+  check_bits ~msg:"randint" (fr k)
+    (Rune.jit ~device:"CUDA" Nx.Ptree.tensor fr k);
   let fb key =
     Nx.cast f32
       (Nx.Rng.bernoulli key (Nx.broadcast_to [| 64 |] (Nx.scalar f32 0.3)))
   in
-  check_bits ~msg:"bernoulli" (fb k) (Rune.jit ~device:"CUDA" (module Key) fb k)
+  check_bits ~msg:"bernoulli" (fb k)
+    (Rune.jit ~device:"CUDA" Nx.Ptree.tensor fb k)
 
 (* The threefry bits agree exactly; Box-Muller's cos/log/sqrt land within
    float32 ulps of eager (GPU transcendental codegen). *)
@@ -425,15 +386,14 @@ let test_rng_normal_matches_eager_on_cuda () =
   let k = Nx.Rng.key 42 in
   check_arr ~msg:"normal"
     (to_arr (f k))
-    (Rune.jit ~device:"CUDA" (module Key) f k)
+    (Rune.jit ~device:"CUDA" Nx.Ptree.tensor f k)
 
 let test_rng_fold_in_driven_steps_on_cuda () =
   require_cuda ();
   let root = Nx.Rng.key 3 in
   let g =
-    Rune.jit ~device:"CUDA"
-      (module Key)
-      (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |])
+    Rune.jit ~device:"CUDA" Nx.Ptree.tensor (fun key ->
+        Nx.Rng.uniform key Nx.float32 [| 8 |])
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do

@@ -13,70 +13,46 @@
 type state = { pool : Nx.float32_t; rows : Nx.int32_t; values : Nx.float32_t }
 
 module State = struct
-  type t = state
+  type _ t = state
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    { pool = f s.pool; rows = f s.rows; values = f s.values }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s t =
-    {
-      pool = f s.pool t.pool;
-      rows = f s.rows t.rows;
-      values = f s.values t.values;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
-    f s.pool;
-    f s.rows;
-    f s.values
+  let walk c { pool; rows; values } =
+    let open Nx.Ptree.Walk in
+    let pool = field c "pool" tensor pool in
+    let rows = field c "rows" tensor rows in
+    let values = field c "values" tensor values in
+    { pool; rows; values }
 end
+
+let state_ptree = Nx.Ptree.instantiate (module State)
 
 type batch = { rows : Nx.int32_t; values : Nx.float32_t }
 
 module Batch = struct
-  type t = batch
+  type _ t = batch
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b =
-    { rows = f b.rows; values = f b.values }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b c =
-    { rows = f b.rows c.rows; values = f b.values c.values }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) b =
-    f b.rows;
-    f b.values
+  let walk c { rows; values } =
+    let open Nx.Ptree.Walk in
+    let rows = field c "rows" tensor rows in
+    let values = field c "values" tensor values in
+    { rows; values }
 end
 
-(* One tensor as a tree. *)
-let leaf (type a b) () : (module Nx.Ptree.S with type t = (a, b) Nx.t) =
-  (module struct
-    type t = (a, b) Nx.t
-
-    let map (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t) x = f x
-
-    let map2 (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t -> ('p, 'q) Nx.t) a b =
-      f a b
-
-    let iter (f : 'p 'q. ('p, 'q) Nx.t -> unit) x = f x
-  end)
+let batch_ptree = Nx.Ptree.instantiate (module Batch)
 
 (* A step's state: the pool, and a scalar read from it after the write. *)
 type written = { pool : Nx.float32_t; probe : Nx.float32_t }
 
 module Written = struct
-  type t = written
+  type _ t = written
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) w =
-    { pool = f w.pool; probe = f w.probe }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v w =
-    { pool = f v.pool w.pool; probe = f v.probe w.probe }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) w =
-    f w.pool;
-    f w.probe
+  let walk c { pool; probe } =
+    let open Nx.Ptree.Walk in
+    let pool = field c "pool" tensor pool in
+    let probe = field c "probe" tensor probe in
+    { pool; probe }
 end
 
+let written_ptree = Nx.Ptree.instantiate (module Written)
 let written pool = { pool; probe = Nx.sum (Nx.slice [ Nx.R (0, 1) ] pool) }
 let heads = 8
 let width = 64
@@ -111,15 +87,11 @@ let scatter_case ~runs ~n ~k =
   (* DONATE=0 reads the pool instead of consuming it. *)
   let step =
     if Sys.getenv_opt "DONATE" <> Some "0" then
-      Rune.jit_step
-        (module Batch)
-        (module Written)
-        (fun batch w -> write batch w.pool)
+      Rune.jit_step batch_ptree written_ptree (fun batch w ->
+          write batch w.pool)
     else
       let g =
-        Rune.jit2
-          (module State)
-          (module Written)
+        Rune.jit2 state_ptree written_ptree
           (fun ({ pool; rows; values } : state) -> write { rows; values } pool)
       in
       fun ({ rows; values } : batch) (w : written) ->
@@ -148,9 +120,8 @@ let scatter_case ~runs ~n ~k =
 let window_case ~runs ~n =
   let row = Nx.ones Nx.float32 [| 1; width |] in
   let step =
-    Rune.jit_step (leaf ())
-      (module Written)
-      (fun pos w -> written (Nx.set [ Nx.D (pos, 1) ] row w.pool))
+    Rune.jit_step Nx.Ptree.tensor written_ptree (fun pos w ->
+        written (Nx.set [ Nx.D (pos, 1) ] row w.pool))
   in
   let state = ref (written (Nx.zeros Nx.float32 [| n; width |])) in
   let at = ref 0 in

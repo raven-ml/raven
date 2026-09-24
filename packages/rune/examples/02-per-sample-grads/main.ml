@@ -5,47 +5,27 @@
 
 (* Per-sample gradients by composing vmap with grad: write the loss for one
    example, differentiate it, and map the differentiated function over the
-   batch. Each parameter leaf gains a leading batch axis. *)
+   batch. Each tensor of the gradient gains a leading batch axis. *)
 
-(* Model parameters: closed over by the mapped function, so they are constants
-   of the map and gradients are taken with respect to them. *)
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+(* Model parameters: captured by the mapped function, so they are constants of
+   the map and gradients are taken with respect to them. *)
+type 'a params = { w : 'a; b : 'a }
 
 let shape_to_string s =
   Printf.sprintf "[%s]"
     (String.concat "x" (List.map string_of_int (Array.to_list s)))
 
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
 
-(* One example: an input row and its target. vmap maps over axis 0 of both
-   leaves, so the mapped function sees a single row and a scalar target. *)
-type example = { x : Nx.float32_t; y : Nx.float32_t }
-
-module Example = struct
-  type t = example
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { x; y } =
-    { x = f x; y = f y }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { x = f a.x b.x; y = f a.y b.y }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { x; y } =
-    f x;
-    f y
-end
+let params_ptree = Nx.Ptree.instantiate (module Params)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -53,25 +33,25 @@ let () =
   let params =
     { w = Nx.randn Nx.float32 [| d |]; b = Nx.randn Nx.float32 [||] }
   in
-  let batch =
-    { x = Nx.randn Nx.float32 [| n; d |]; y = Nx.randn Nx.float32 [| n |] }
-  in
+  let xs = Nx.randn Nx.float32 [| n; d |]
+  and ys = Nx.randn Nx.float32 [| n |] in
 
   (* Squared error of a linear model on a single example. *)
-  let loss ex p =
-    let pred = Nx.add (Nx.dot ex.x p.w) p.b in
-    Nx.square (Nx.sub pred ex.y)
+  let loss x y p =
+    let pred = Nx.add (Nx.dot x p.w) p.b in
+    Nx.square (Nx.sub pred y)
   in
 
-  (* grad gives the per-example gradient function; vmap2 maps it over the batch.
-     The result has the parameters' structure with a leading batch axis on every
-     leaf: w is [n; d] and b is [n]. *)
+  (* grad gives the per-example gradient function; vmap maps it over axis 0 of
+     both arguments, one example per lane. The signature says that the mapped
+     function takes two tensors and returns the parameters' structure, and every
+     tensor of the result gains a leading batch axis: w is [n; d] and b is
+     [n]. *)
   let per_sample =
-    Rune.vmap2
-      (module Example)
-      (module Params)
-      (fun ex -> Rune.grad (module Params) (loss ex) params)
-      batch
+    Rune.vmap
+      Nx.Ptree.(tensor @-> tensor @-> returns params_ptree)
+      (fun x y -> Rune.grad params_ptree (loss x y) params)
+      xs ys
   in
   Printf.printf "per-sample dw: %s\n" (shape_to_string (Nx.shape per_sample.w));
   Printf.printf "per-sample db: %s\n\n"
@@ -79,12 +59,7 @@ let () =
 
   (* The same thing, one example at a time. *)
   let row i t = Nx.slice [ Nx.I i ] t in
-  let looped i =
-    Rune.grad
-      (module Params)
-      (loss { x = row i batch.x; y = row i batch.y })
-      params
-  in
+  let looped i = Rune.grad params_ptree (loss (row i xs) (row i ys)) params in
   let max_diff = ref 0.0 in
   for i = 0 to n - 1 do
     let g = looped i in
