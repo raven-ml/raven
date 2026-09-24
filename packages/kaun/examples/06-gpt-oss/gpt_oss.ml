@@ -62,10 +62,10 @@ let map f p =
   let head = Option.map (Linear.map f) p.head in
   { tok; blocks; norm; head }
 
-let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
-    =
+let block_ptree (type b) () :
+    (module Nx.Ptree.S with type t = (float, b) Nx.t block) =
   (module struct
-    type t = (float, b) Nx.t params
+    type t = (float, b) Nx.t block
 
     let map_weight (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) = function
       | Moe.Float w -> Moe.Float (f w)
@@ -74,7 +74,7 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
           let scales = f scales in
           Moe.Mxfp4 { blocks; scales }
 
-    let map_block (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) b =
+    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) b =
       let attn_norm = Rms_norm.map f b.attn_norm in
       let attn = Attention.map f b.attn in
       let sinks = f b.sinks in
@@ -87,13 +87,6 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
       let moe = { Moe.gate_up; gate_up_bias; down; down_bias } in
       { attn_norm; attn; sinks; ffn_norm; router; moe }
 
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p =
-      let tok = Embedding.map f p.tok in
-      let blocks = List.map (map_block f) p.blocks in
-      let norm = Rms_norm.map f p.norm in
-      let head = Option.map (Linear.map f) p.head in
-      { tok; blocks; norm; head }
-
     let map2_weight (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
         w w' =
       match (w, w') with
@@ -103,10 +96,10 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
           let scales = f w.scales w'.scales in
           Moe.Mxfp4 { blocks; scales }
       | _ ->
-          invalid_arg "Gpt_oss.ptree: one model packs its experts, one does not"
+          invalid_arg
+            "Gpt_oss.block_ptree: one block packs its experts, one does not"
 
-    let map2_block (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
-        b b' =
+    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) b b' =
       let attn_norm = Rms_norm.map2 f b.attn_norm b'.attn_norm in
       let attn = Attention.map2 f b.attn b'.attn in
       let sinks = f b.sinks b'.sinks in
@@ -120,9 +113,42 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
       let moe = { Moe.gate_up; gate_up_bias; down; down_bias } in
       { attn_norm; attn; sinks; ffn_norm; router; moe }
 
+    let iter_weight (f : 'a 'c. ('a, 'c) Nx.t -> unit) = function
+      | Moe.Float w -> f w
+      | Moe.Mxfp4 { blocks; scales } ->
+          f blocks;
+          f scales
+
+    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) b =
+      Rms_norm.iter f b.attn_norm;
+      Attention.iter f b.attn;
+      f b.sinks;
+      Rms_norm.iter f b.ffn_norm;
+      Linear.iter f b.router;
+      iter_weight f b.moe.Moe.gate_up;
+      f b.moe.gate_up_bias;
+      iter_weight f b.moe.down;
+      f b.moe.down_bias
+  end)
+
+let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
+    =
+  let module B =
+    (val block_ptree () : Nx.Ptree.S with type t = (float, b) Nx.t block)
+  in
+  (module struct
+    type t = (float, b) Nx.t params
+
+    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p =
+      let tok = Embedding.map f p.tok in
+      let blocks = List.map (B.map f) p.blocks in
+      let norm = Rms_norm.map f p.norm in
+      let head = Option.map (Linear.map f) p.head in
+      { tok; blocks; norm; head }
+
     let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p p' =
       let tok = Embedding.map2 f p.tok p'.tok in
-      let blocks = List.map2 (map2_block f) p.blocks p'.blocks in
+      let blocks = List.map2 (B.map2 f) p.blocks p'.blocks in
       let norm = Rms_norm.map2 f p.norm p'.norm in
       let head =
         match (p.head, p'.head) with
@@ -133,26 +159,9 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
       in
       { tok; blocks; norm; head }
 
-    let iter_weight (f : 'a 'c. ('a, 'c) Nx.t -> unit) = function
-      | Moe.Float w -> f w
-      | Moe.Mxfp4 { blocks; scales } ->
-          f blocks;
-          f scales
-
-    let iter_block (f : 'a 'c. ('a, 'c) Nx.t -> unit) b =
-      Rms_norm.iter f b.attn_norm;
-      Attention.iter f b.attn;
-      f b.sinks;
-      Rms_norm.iter f b.ffn_norm;
-      Linear.iter f b.router;
-      iter_weight f b.moe.Moe.gate_up;
-      f b.moe.gate_up_bias;
-      iter_weight f b.moe.down;
-      f b.moe.down_bias
-
     let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) p =
       Embedding.iter f p.tok;
-      List.iter (iter_block f) p.blocks;
+      List.iter (B.iter f) p.blocks;
       Rms_norm.iter f p.norm;
       Option.iter (Linear.iter f) p.head
   end)

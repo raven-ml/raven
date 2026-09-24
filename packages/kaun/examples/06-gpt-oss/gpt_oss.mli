@@ -74,6 +74,11 @@ val ptree : unit -> (module Nx.Ptree.S with type t = (float, 'b) Nx.t params)
     bias, [down], its bias, a packed weight being [blocks] then [scales]),
     [norm], [head]. *)
 
+val block_ptree :
+  unit -> (module Nx.Ptree.S with type t = (float, 'b) Nx.t block)
+(** [block_ptree ()] is the parameter tree of one block, in {!ptree}'s order:
+    the tree a compiled block takes its weights as. *)
+
 (** {1:attention Attention} *)
 
 val attention :
@@ -98,6 +103,20 @@ val attention :
     reads and keeps nothing. A call of one token per sequence runs the experts
     in their {!Moe.Gather} form and any other call in their {!Moe.Dense} form.
 *)
+
+val block :
+  config ->
+  layer ->
+  (float, 'b) Nx.t block ->
+  (float, 'b) Nx.t Kaun.Attention.Cache.t ->
+  Kaun.Cache_index.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t
+(** [block cfg layer b cache index x] is one pre-norm block of kind [layer]
+    applied to the residual stream [x], of shape [[| batch; seq; dim |]],
+    through [cache], and the cache with the tokens' keys and values written.
+    {!cached} folds it over the blocks; a driver that runs each block as its own
+    compiled program calls it directly. *)
 
 val hidden :
   config ->
