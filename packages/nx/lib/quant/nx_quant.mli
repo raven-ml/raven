@@ -137,11 +137,25 @@ module Effect : sig
       shapes of an [Apply] do not agree. *)
 end
 
-(** {1:traversals Traversals}
+(** {1:structure Structure}
 
-    Traversals visit [codes] before [scales] and preserve each part's dtype.
-    {!map} and {!map2} check their results' shapes as {!mxfp4} does, and read
-    neither bytes nor placement. {!map2} raises [Invalid_argument] if its
-    weights differ in shape. *)
+    A weight is a structure without a parameter ({!Nx.Ptree.S} with
+    [type _ t = t]): its parts are tensors of a fixed type, so casts and
+    {!Nx.Ptree.Payload} operations keep them. *)
 
-include Nx.Ptree.S with type t := t
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> t -> t
+(** [walk c w] walks [w] at [c]'s path: it reports the case ["mxfp4"], then
+    walks [codes] at [codes] and [scales] at [scales], each with
+    {!Nx.Ptree.Walk.tensor}. It checks the parts it rebuilds as {!mxfp4} does,
+    and reads neither bytes nor placement, so it runs under every transformation
+    and compiled trace. A model's own [walk] walks a quantised field with it:
+    [field c "gate_up" Nx_quant.walk w].
+
+    Raises [Invalid_argument] as {!mxfp4} does, naming [Nx_quant.walk], if a
+    walk returns parts of other shapes. *)
+
+val ptree : t Nx.Ptree.t
+(** [ptree] is a weight as a structure at one type, walked by {!walk}: its
+    visits are [the root: case "mxfp4"], [codes: a leaf] and [scales: a leaf].
+    Compiled programs therefore key on the format, and [Nx.Ptree.map ptree f w]
+    maps its parts. *)

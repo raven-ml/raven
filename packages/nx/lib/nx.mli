@@ -149,15 +149,17 @@ type index =
 
 (** {2:packed Packed tensors} *)
 
+(** The type for tensors of any dtype, such as a file's named tensors, a
+    checkpoint's entries or the tensors of {!Ptree.flatten}. Match on [P] for
+    the tensor; {!unpack} also fixes its dtype. *)
 type packed = Nx_effect.packed =
-  | P : ('a, 'b) t -> packed
-      (** The type for tensors of any dtype, such as a file's named tensors or a
-          checkpoint's entries. *)
+  | P : ('a, 'b) t -> packed  (** A tensor whose dtype is hidden. *)
 
 val unpack : ('a, 'b) dtype -> packed -> ('a, 'b) t
-(** [unpack dtype p] is the tensor in [p], which has [dtype].
+(** [unpack dtype p] is the tensor in [p] if its dtype is [dtype].
 
-    Raises [Invalid_argument] if [p]'s tensor has another dtype. *)
+    Raises [Invalid_argument] naming both dtypes otherwise, such as
+    ["unpack: expected dtype float32, got uint8"]. *)
 
 (** {1:properties Properties} *)
 
@@ -581,9 +583,8 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
     ]} *)
 
 module Ptree = Ptree
-(** Parameter trees: structures with tensor leaves. {!Ptree.S} is the traversal
-    interface shared across the Raven ecosystem; {!Ptree.t} is the stock dynamic
-    instance. *)
+(** Structures of tensors: types with one [walk] that walks their parts, which
+    Rune's transformations, Vega's optimisers and checkpoints take. *)
 
 (** {1:rng Random number generation}
 
