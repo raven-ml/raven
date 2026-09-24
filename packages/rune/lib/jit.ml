@@ -3901,8 +3901,19 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
                         | (P_replicated | P_sharded _), None -> assert false
                       in
                       let dt = Nx_effect.dtype leaf in
+                      (* Storage lent by a donated input keeps its way back:
+                         past the allocator's cache for an upload from a mapped
+                         file. *)
+                      let nolru =
+                        match Hashtbl.find_opt claims tag with
+                        | Some e -> (
+                            match store_of e with
+                            | Some s -> s.s_nolru
+                            | None -> false)
+                        | None -> false
+                      in
                       let h =
-                        make_placed placement devices ~nolru:false dt view bufs
+                        make_placed placement devices ~nolru dt view bufs
                       in
                       Hashtbl.add handles tag (Packed (dt, h));
                       h))
