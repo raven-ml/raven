@@ -20,7 +20,6 @@ let kernel_info ?(axis_types = []) name =
   {
     U.name;
     axis_types;
-    dont_use_locals = false;
     applied_opts = [];
     opts_to_apply = Some [];
     estimates = None;
@@ -347,30 +346,30 @@ let make_llama_rmsnorm backend =
   let e = U.end_ ~value:st ~ranges:[ ri ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("r_2_8n1", [ U.Opt.Unroll { axis = 0; amount = 0 } ])
+    | "clang" -> ("r_2_8n1", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 } ])
     | "cuda" ->
         ( "r_2_8n2",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "metal" ->
         ( "r_2_8n3",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "opencl" ->
         ( "r_2_8n4",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "amd" ->
         ( "r_2_8n5",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
@@ -379,7 +378,6 @@ let make_llama_rmsnorm backend =
       {
         U.name = name;
         axis_types = [];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some opts_to_apply;
         estimates = None;
@@ -391,7 +389,6 @@ let model_kernel_info name opts_to_apply =
   {
     U.name;
     axis_types = [];
-    dont_use_locals = false;
     applied_opts = [];
     opts_to_apply = Some opts_to_apply;
     estimates = None;
@@ -423,30 +420,30 @@ let make_llama_embedding backend =
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("E_8_2n1", [ U.Opt.Upcast { axis = 0; amount = 0 } ])
+    | "clang" -> ("E_8_2n1", [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 } ])
     | "cuda" ->
         ( "E_8_2n2",
           [
-            U.Opt.Upcast { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "metal" ->
         ( "E_8_2n3",
           [
-            U.Opt.Upcast { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "opencl" ->
         ( "E_8_2n4",
           [
-            U.Opt.Upcast { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "amd" ->
         ( "E_8_2n5",
           [
-            U.Opt.Upcast { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
@@ -490,34 +487,34 @@ let make_llama_ffn_gate backend =
   let e = U.end_ ~value:st ~ranges:[ r1; r2; r3; r4 ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("r_2_8_8n1", [ U.Opt.Unroll { axis = 0; amount = 0 } ])
+    | "clang" -> ("r_2_8_8n1", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 } ])
     | "cuda" ->
         ( "r_2_8_8n2",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "metal" ->
         ( "r_2_8_8n3",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "opencl" ->
         ( "r_2_8_8n4",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "amd" ->
         ( "r_2_8_8n5",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 8 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
@@ -549,34 +546,34 @@ let make_llama_vector_scale backend =
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("E_2_2_4n1", [ U.Opt.Upcast { axis = 1; amount = 4 } ])
+    | "clang" -> ("E_2_2_4n1", [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 } ])
     | "cuda" ->
         ( "E_2_2_4n2",
           [
-            U.Opt.Upcast { axis = 1; amount = 4 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "metal" ->
         ( "E_2_2_4n3",
           [
-            U.Opt.Upcast { axis = 1; amount = 4 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "opencl" ->
         ( "E_2_2_4n4",
           [
-            U.Opt.Upcast { axis = 1; amount = 4 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "amd" ->
         ( "E_2_2_4n5",
           [
-            U.Opt.Upcast { axis = 1; amount = 4 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in
@@ -602,34 +599,34 @@ let make_llama_output_projection backend =
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("r_2_32_8n1", [ U.Opt.Unroll { axis = 0; amount = 0 } ])
+    | "clang" -> ("r_2_32_8n1", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 } ])
     | "cuda" ->
         ( "r_2_2_16_8",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 16 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | "metal" ->
         ( "r_2_2_16_8n1",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 16 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | "opencl" ->
         ( "r_2_2_16_8n2",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 16 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | "amd" ->
         ( "r_2_2_16_8n3",
           [
-            U.Opt.Unroll { axis = 0; amount = 0 };
-            U.Opt.Local { axis = 0; amount = 2 };
-            U.Opt.Local { axis = 0; amount = 16 };
+            U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | backend -> invalid_arg (Printf.sprintf "unknown backend %S" backend)
   in

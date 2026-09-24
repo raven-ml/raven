@@ -36,7 +36,6 @@ let global_f16ptr = D.float16
 let kernel_info ?(opts_to_apply = None) () =
   { U.name = "test";
     axis_types = [];
-    dont_use_locals = false;
     applied_opts = [];
     opts_to_apply;
     estimates = None;
@@ -567,7 +566,7 @@ let () =
             let ast = matmul_f32_global_ast ~m:8 ~n:8 ~k:8 in
             let ren = tc_renderer Tc.metal in
             let t = P.create ast ren in
-            ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 2 }));
+            ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 2 }));
             raises_opt_error (fun () ->
               ignore (P.apply_opt t
                 (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }))));
@@ -631,17 +630,15 @@ let () =
               ignore (P.apply_opt t
                 (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }))));
 
-          (* No grouping after TC — use use_tc=2 to avoid the WMMA tne bug
-             in apply_tc_opt (postrange.ml:914-921 calls U.range_kind on
-             non-range nodes from local shift_to results). *)
-          test "GROUP after TC rejected" (fun () ->
-            let ast = matmul_f32_global_ast ~m:8 ~n:8 ~k:8 in
-            let ren = tc_renderer Tc.metal in
-            let t = P.create ast ren in
+          test "reduction can be split into locals after TC" (fun () ->
+            let ast = matmul_f32_global_ast ~m:16 ~n:16 ~k:32 in
+            let t = P.create ast (tc_renderer Tc.metal) in
             ignore (P.apply_opt t
               (U.Opt.Tc { axis = 0; tc_select = 0; tc_opt = 0; use_tc = 2 }));
-            raises_opt_error (fun () ->
-              ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 2 }))));
+            let axis = List.hd (P.axes_of t [ Axis_type.Reduce ]) in
+            ignore (P.apply_opt t (U.Opt.Split
+              { kind = Axis_type.Local; top = true; axis; amount = 2 })));
+
         ];
 
       (* Apply_tc_opt triggering *)
@@ -797,7 +794,7 @@ let () =
             let fs = P.full_shape t in
             let sz = const_to_int (List.nth fs axis) in
             if sz >= 2 then
-              ignore (P.apply_opt t (U.Opt.Upcast { axis; amount = 2 })));
+              ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = 2 })));
 
           (* TC + UNROLL *)
           test "UNROLL after TC" (fun () ->
@@ -812,7 +809,7 @@ let () =
               let axis_idx = List.hd unroll_dims in
               let sz = const_to_int (List.nth fs axis_idx) in
               if sz >= 2 then
-                ignore (P.apply_opt t (U.Opt.Unroll { axis = 0; amount = min sz 2 }))
+                ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = axis_idx; amount = min sz 2 }))
             end);
 
           (* TC + LOCAL *)
@@ -828,7 +825,7 @@ let () =
               let fs = P.full_shape t in
               let sz = const_to_int (List.nth fs axis) in
               if sz >= 2 then
-                ignore (P.apply_opt t (U.Opt.Local { axis; amount = 2 }))
+                ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount = 2 }))
             end);
         ];
     ]

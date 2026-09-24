@@ -24,7 +24,6 @@ let nth_or_error lst i msg =
 
 (* Error strings *)
 
-let err_no_locals = "can't use locals"
 let err_locals_needed = "locals needed for opt"
 let err_no_reduce_tc = "no reduce ops for TensorCore"
 let err_invalid_tc_choice = "invalid tensor core choice"
@@ -92,7 +91,6 @@ let compute_shape ast =
 type t = {
   mutable ast : U.t;
   ren : Renderer.t;
-  mutable dont_use_locals : bool;
   mutable applied_opts : U.Opt.t list;
   mutable tensor_core : Tc.t option;
   mutable opt_range : int;
@@ -102,10 +100,10 @@ type t = {
 let refresh t = t.shape <- compute_shape t.ast
 
 let create ast ren =
-  let dont_use_locals, applied_opts =
+  let applied_opts =
     match U.as_kernel_info ast with
-    | Some ki -> ki.dont_use_locals, ki.applied_opts
-    | None -> false, []
+    | Some ki -> ki.applied_opts
+    | None -> []
   in
   let shape = compute_shape ast in
   let max_axis =
@@ -114,7 +112,7 @@ let create ast ren =
       0 (U.backward_slice ast)
   in
   {
-    ast; ren; dont_use_locals; applied_opts;
+    ast; ren; applied_opts;
     tensor_core = None; opt_range = max_axis + 1; shape;
   }
 
@@ -142,7 +140,6 @@ let copy t = { t with ast = t.ast }
 
 type snapshot = {
   snap_ast : U.t;
-  snap_dont_use_locals : bool;
   snap_applied_opts : U.Opt.t list;
   snap_tensor_core : Tc.t option;
   snap_opt_range : int;
@@ -152,7 +149,6 @@ type snapshot = {
 let snapshot t =
   {
     snap_ast = t.ast;
-    snap_dont_use_locals = t.dont_use_locals;
     snap_applied_opts = t.applied_opts;
     snap_tensor_core = t.tensor_core;
     snap_opt_range = t.opt_range;
@@ -161,7 +157,6 @@ let snapshot t =
 
 let restore t s =
   t.ast <- s.snap_ast;
-  t.dont_use_locals <- s.snap_dont_use_locals;
   t.applied_opts <- s.snap_applied_opts;
   t.tensor_core <- s.snap_tensor_core;
   t.opt_range <- s.snap_opt_range;
@@ -241,8 +236,7 @@ let colors t =
   let glob = globalizable_rngs t in
   List.map2
     (fun at r ->
-      if t.dont_use_locals && at = Axis_type.Global then "BLUE"
-      else if at = Axis_type.Weak && not (List.memq r out) then "BLACK"
+      if at = Axis_type.Weak && not (List.memq r out) then "BLACK"
       else if at = Axis_type.Weak && not (List.memq r glob) then "white"
       else axis_color at)
     (axis_types t) (rngs t)
@@ -332,7 +326,6 @@ let get_optimized_ast ?name_override t =
     {
       name;
       axis_types = [];
-      dont_use_locals = t.dont_use_locals;
       applied_opts = t.applied_opts;
       opts_to_apply = None;
       estimates = None;
@@ -348,6 +341,12 @@ let get_optimized_ast ?name_override t =
    new range of [amount] is created with [new_kind].  When [top] is true
    the new range is the high part; otherwise it is the low part. *)
 let shift_to ?(top = false) ?input_new_rng t rng amount new_kind =
+  let allowed = match new_kind with
+    | Axis_type.Upcast -> [ Axis_type.Global; Axis_type.Local; Axis_type.Weak ]
+    | Axis_type.Unroll -> [ Axis_type.Reduce; Axis_type.Local ]
+    | Axis_type.Local -> [ Axis_type.Global; Axis_type.Weak; Axis_type.Reduce ]
+    | _ -> [] in
+  check (List.mem (range_kind rng) allowed) "invalid split source and target kinds";
   check (amount > 0) "invalid optimization amount";
   let size = range_size rng in
   let old_sz =
@@ -361,7 +360,7 @@ let shift_to ?(top = false) ?input_new_rng t rng amount new_kind =
     | None ->
         let axis = t.opt_range in
         t.opt_range <- t.opt_range + 1;
-        U.range ~size:(U.const_int amount) ~axis ~kind:new_kind ()
+        U.range ~size:(U.const_int amount) ~axis ~kind:new_kind ~dtype:(U.dtype rng) ()
   in
   let replaced_rng = U.replace rng ~src:[| old_sz |] () in
   let open U.O in
@@ -427,20 +426,6 @@ let group_for_reduces t =
   List.fold_left (fun n i ->
       match List.nth kinds i with Axis_type.Warp | Axis_type.Local -> n + 1 | _ -> n)
     0 (reduce_axes t)
-
-(* Resolve an opt's axis to a real range index. *)
-let real_axis t op axis =
-  match op, axis with
-  | _, None | U.Opt.Tc _, _ -> -1
-  | U.Opt.Unroll _, Some a ->
-      check (a >= 0) "invalid unroll axis";
-      nth_or_error (unrollable_dims t) a "invalid unroll axis"
-  | (U.Opt.Group _ | U.Opt.Grouptop _), Some a ->
-      check (a >= 0) "invalid group axis";
-      nth_or_error (axes_of t [ Axis_type.Reduce ]) a "invalid group axis"
-  | _, Some a ->
-      check (a >= 0 && a < shape_len t) "invalid axis";
-      a
 
 let argsort perm =
   let n = List.length perm in
@@ -596,97 +581,31 @@ let build_wmma_node t (tc : Tc.t) ne =
   t.ast <- U.substitute [ (tagged_red, tc_uop) ] t.ast;
   refresh t
 
-(* Shared memory size check for group/reduce opts. *)
-let check_shared_memory t opt amt red_opt =
-  let is_group =
-    match opt with U.Opt.Group _ | U.Opt.Grouptop _ -> true | _ -> false
-  in
-  let is_padding_skippable =
-    match opt with U.Opt.Nolocals | U.Opt.Padto _ -> true | _ -> false
-  in
-  if red_opt <> None
-     && (is_group
-         || (group_for_reduces t > 0 && not is_padding_skippable))
-  then begin
-    let fs = full_shape t in
-    let upcast_local_sz =
-      prod
-        (List.map
-           (fun a -> const_int_or 1 (List.nth fs a))
-           (axes_of t
-              [
-                Axis_type.Upcast;
-                Axis_type.Warp;
-                Axis_type.Local;
-              ]))
-    in
-    let red = Option.get red_opt in
-    let smem_sz = amt * upcast_local_sz * Dtype.itemsize (U.dtype red) in
-    check
-      (smem_sz <= Renderer.shared_max t.ren)
-      (strf "exceeds shared memory: needs %d, max %d" smem_sz
-         (Renderer.shared_max t.ren))
-  end
-
-(* Workgroup reductions cannot be nested inside sequential reductions. *)
-let check_no_nested_group t r red_opt =
-  if red_opt <> None then begin
-    let reduce_node =
-      List.find_opt
-        (fun u ->
-          match U.as_reduce u with
-          | Some v ->
-              let range_nodes = U.find_nodes is_range (U.sink v.ranges) in
-              List.memq r range_nodes
-          | None -> false)
-        (U.toposort t.ast)
-    in
-    match reduce_node with
-    | Some red_node ->
-        let enclosing = U.ranges red_node in
-        check
-          (not
-             (List.exists
-                (fun u ->
-                  let k = range_kind u in
-                  k = Axis_type.Reduce
-                  || k = Axis_type.Unroll)
-                enclosing))
-          "cannot have a workgroup reduction inside another reduce"
-    | None -> ()
-  end
-
-(* Per-opt validation for shift_to opts. *)
-let validate_shift_opt t opt amt rng_kind =
-  match opt with
-  | U.Opt.Unroll _ ->
-      check (amt <= 32) "don't unroll more than 32";
-      check
-        (rng_kind = Axis_type.Local || rng_kind = Axis_type.Reduce)
-        "unroll is for LOCAL/REDUCE"
-  | U.Opt.Upcast _ ->
-      check
-        (Renderer.device t.ren = "DSP" || amt <= 16)
-        "don't upcast more than 16";
-      check
-        (rng_kind = Axis_type.Global
-        || rng_kind = Axis_type.Local
-        || rng_kind = Axis_type.Weak)
-        "upcast is for GLOBAL/LOCAL/LOOP"
-  | U.Opt.Local _ ->
-      check (not t.dont_use_locals) err_no_locals;
-      check
-        (rng_kind = Axis_type.Global || rng_kind = Axis_type.Weak)
-        "local is for globals"
-  | U.Opt.Group _ | U.Opt.Grouptop _ ->
-      check
-        (List.for_all
-           (fun o -> match o with U.Opt.Tc _ -> false | _ -> true)
-           t.applied_opts)
-        "no grouping with tensor cores";
-      check (not t.dont_use_locals) err_no_locals;
-      check (rng_kind = Axis_type.Reduce) "group is for reduce"
+(* Workgroup reductions reserve shared storage for every local and vector lane. *)
+let check_shared_memory t axis kind amount =
+  match reduceop t with
+  | Some red when (kind = Axis_type.Local && List.mem axis (reduce_axes t))
+                  || group_for_reduces t > 0 ->
+      let fs = full_shape t in
+      let lanes = prod (List.map (fun a -> const_int_or 1 (List.nth fs a))
+          (axes_of t [ Axis_type.Upcast; Axis_type.Warp; Axis_type.Local ])) in
+      let needed = amount * lanes * Dtype.itemsize (U.dtype red) in
+      check (needed <= Renderer.shared_max t.ren)
+        (strf "exceeds shared memory: needs %d, max %d" needed (Renderer.shared_max t.ren))
   | _ -> ()
+
+let check_reduction_split t r kind =
+  if kind = Axis_type.Unroll || range_kind r = Axis_type.Reduce then begin
+    let owner = List.find_opt (fun u -> match U.as_reduce u with
+        | Some red -> List.exists (fun axis -> List.memq r (U.ranges axis)) red.ranges
+        | None -> false) (U.backward_slice t.ast) in
+    check (Option.is_some owner) "cannot split a reduction axis outside a REDUCE";
+    if kind = Axis_type.Local then
+      check (not (List.exists (fun u ->
+          let k = range_kind u in k = Axis_type.Reduce || k = Axis_type.Unroll)
+          (U.ranges (Option.get owner))))
+        "cannot have a workgroup reduction inside another reduce"
+  end
 
 let round_up x n = (x + n - 1) / n * n
 
@@ -762,28 +681,11 @@ let apply_swap t r with_axis =
     (range_kind r = Axis_type.Global && range_kind altrng = Axis_type.Global)
     "swap only for globals";
   let rv = range_view r and av = range_view altrng in
-  let r' =
-    U.with_tag "1"
-      (U.range ~size:rv.size ~sub:av.sub ~axis:av.axis ~kind:rv.kind
-         ~dtype:(U.dtype r)
-         ~parents:rv.parents
-         ())
-  in
-  let alt' =
-    U.with_tag "1"
-      (U.range ~size:av.size ~sub:rv.sub ~axis:rv.axis ~kind:av.kind
-         ~dtype:(U.dtype altrng)
-         ~parents:av.parents
-         ())
-  in
-  t.ast <- U.substitute [ (r, r'); (altrng, alt') ] t.ast;
-  t.ast <-
-    U.graph_rewrite
-      (fun node ->
-        match U.node_tag node with
-        | Some _ -> Some (U.replace node ~node_tag:None ())
-        | None -> None)
-      t.ast;
+  let r' = U.replace r ~arg:(U.Arg.Range_info
+      { axis = av.axis; sub = av.sub; kind = rv.kind }) () in
+  let alt' = U.replace altrng ~arg:(U.Arg.Range_info
+      { axis = rv.axis; sub = rv.sub; kind = av.kind }) () in
+  t.ast <- U.substitute ~walk:true [ r, r'; altrng, alt' ] t.ast;
   refresh t
 
 (* Mutual recursion: apply_opt <-> apply_tc_opt <-> pad_tc_axes *)
@@ -926,17 +828,8 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
 and apply_opt ?(append_opt = true) t opt =
   let ret =
     match opt with
-    | U.Opt.Nolocals ->
-        check
-          (List.for_all
-             (fun at ->
-               at <> Axis_type.Warp
-               && at <> Axis_type.Local)
-             (axis_types t))
-          "no locals can't have locals";
-        t.dont_use_locals <- true;
-        None
-    | Tc { axis; tc_select; tc_opt; use_tc } ->
+    | U.Opt.Tc { axis; tc_select; tc_opt; use_tc } ->
+        check (axis >= 0) "invalid tensor core axis";
         check (t.applied_opts = []) err_tc_first;
         check
           (tc_select >= -1
@@ -949,48 +842,31 @@ and apply_opt ?(append_opt = true) t opt =
         (match axes with
          | Some (a :: b :: _) -> Some (a, b)
          | _ -> None)
-    | Padto { axis = _; amount } ->
-        let ra = real_axis t opt (U.Opt.axis opt) in
-        let r = List.nth (rngs t) ra in
+    | Padto { axis; amount } ->
+        check (axis >= 0 && axis < shape_len t) "invalid axis";
+        let r = List.nth (rngs t) axis in
         apply_padto t r amount;
         None
-    | Swap { axis = _; with_axis } ->
-        let ra = real_axis t opt (U.Opt.axis opt) in
-        let r = List.nth (rngs t) ra in
+    | Swap { axis; with_axis } ->
+        check (axis >= 0 && axis < shape_len t) "invalid axis";
+        check (with_axis >= 0 && with_axis < shape_len t) "invalid swap axis";
+        let r = List.nth (rngs t) axis in
         apply_swap t r with_axis;
         None
-    | _ ->
-        let ra = real_axis t opt (U.Opt.axis opt) in
-        let r = List.nth (rngs t) ra in
-        let red_opt = reduceop t in
-        (match opt with
-         | Local _ | Group _ | Grouptop _ ->
-             check (Renderer.has_local t.ren) err_locals_needed
-         | _ -> ());
-        let new_kind =
-          match opt with
-          | Local _ -> Axis_type.Local
-          | Upcast _ -> Axis_type.Upcast
-          | Unroll _ -> Axis_type.Unroll
-          | Group _ | Grouptop _ -> Axis_type.Local
-          | _ -> assert false
-        in
-        let amt =
-          match U.Opt.amount opt with
-          | Some 0 -> range_max_extent r
-          | Some a -> a
-          | None -> range_max_extent r
-        in
-        check (amt > 0) "invalid optimization amount";
-        check_shared_memory t opt amt red_opt;
-        (match opt with
-         | Group _ | Grouptop _ -> check_no_nested_group t r red_opt
-         | _ -> ());
-        validate_shift_opt t opt amt (range_kind r);
-        let top =
-          match opt with Grouptop _ -> true | _ -> false
-        in
-        Some (shift_to ~top t r amt new_kind)
+    | Split { axis; amount; kind; top } ->
+        check (axis >= 0 && axis < shape_len t) "invalid axis";
+        check (amount = 0 || amount > 1) "split amount must be zero or greater than one";
+        let r = List.nth (rngs t) axis in
+        let amount = if amount = 0 then range_max_extent r else amount in
+        (match kind with
+         | Axis_type.Local -> check (Renderer.has_local t.ren) err_locals_needed
+         | Axis_type.Unroll -> check (amount <= 32) "don't unroll more than 32"
+         | Axis_type.Upcast -> check (Renderer.device t.ren = "DSP" || amount <= 16)
+             "don't upcast more than 16"
+         | _ -> raise (Opt_error "split target must be Upcast, Unroll or Local"));
+        check_shared_memory t axis kind amount;
+        check_reduction_split t r kind;
+        Some (shift_to ~top t r amount kind)
   in
   if append_opt then t.applied_opts <- t.applied_opts @ [ opt ];
   ret

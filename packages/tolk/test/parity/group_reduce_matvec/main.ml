@@ -41,14 +41,13 @@ let kernel () =
       {
         U.name = "group_reduce_matvec";
         axis_types = [ Axis_type.Global; Axis_type.Reduce ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply =
           Some
             [
-              U.Opt.Group { axis = 0; amount = 8 };
-              U.Opt.Local { axis = 0; amount = 4 };
-              U.Opt.Upcast { axis = 0; amount = 4 };
+              U.Opt.Split { kind = Axis_type.Local; top = false; axis = 1; amount = 8 };
+              U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 4 };
+              U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 };
             ];
         estimates = None;
         beam = 0;

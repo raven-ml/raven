@@ -24,7 +24,6 @@ let kernel_info ?opts_to_apply name =
   {
     U.name;
     axis_types = [];
-    dont_use_locals = false;
     applied_opts = [];
     opts_to_apply;
     estimates = None;

@@ -167,44 +167,15 @@ and opt_debug_string = function
             tuple_string (List.map string_of_int [ tc_select; tc_opt; use_tc ])
           );
         ]
-  | Upcast { axis; amount } ->
+  | Split { axis; amount; kind; top } ->
       dataclass_string "Opt"
         [
-          "op", opt_op_string "UPCAST";
+          "op", opt_op_string "SPLIT";
           "axis", string_of_int axis;
-          "arg", string_of_int amount;
+          "arg", tuple_string
+            ([ string_of_int amount; axis_type_repr kind ]
+             @ if top then [ "True" ] else []);
         ]
-  | Unroll { axis; amount } ->
-      dataclass_string "Opt"
-        [
-          "op", opt_op_string "UNROLL";
-          "axis", string_of_int axis;
-          "arg", string_of_int amount;
-        ]
-  | Local { axis; amount } ->
-      dataclass_string "Opt"
-        [
-          "op", opt_op_string "LOCAL";
-          "axis", string_of_int axis;
-          "arg", string_of_int amount;
-        ]
-  | Group { axis; amount } ->
-      dataclass_string "Opt"
-        [
-          "op", opt_op_string "GROUP";
-          "axis", string_of_int axis;
-          "arg", string_of_int amount;
-        ]
-  | Grouptop { axis; amount } ->
-      dataclass_string "Opt"
-        [
-          "op", opt_op_string "GROUPTOP";
-          "axis", string_of_int axis;
-          "arg", string_of_int amount;
-        ]
-  | Nolocals ->
-      dataclass_string "Opt"
-        [ "op", opt_op_string "NOLOCALS"; "axis", "None"; "arg", "None" ]
   | Padto { axis; amount } ->
       dataclass_string "Opt"
         [
@@ -233,7 +204,6 @@ and kernel_info_debug_string (k : kernel_info) =
     [
       "name", python_quote k.name;
       "axis_types", tuple_string (List.map axis_type_repr k.axis_types);
-      "dont_use_locals", python_bool k.dont_use_locals;
       "applied_opts", tuple_string (List.map opt_debug_string k.applied_opts);
       "opts_to_apply",
       option_string (fun opts -> tuple_string (List.map opt_debug_string opts))

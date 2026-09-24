@@ -259,7 +259,6 @@ let program_config () =
   String.concat ","
     [
       var Helpers.noopt;
-      var Helpers.nolocals;
       var Helpers.use_tc;
       var Helpers.image;
       var Helpers.disable_fast_idiv;

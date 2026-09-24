@@ -27,7 +27,6 @@ let kernel () =
       {
         U.name = "multi_output";
         axis_types = [ Axis_type.Global ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

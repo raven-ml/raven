@@ -57,7 +57,6 @@ let kernel () =
       {
         U.name = "token_gather_collapse";
         axis_types = [];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

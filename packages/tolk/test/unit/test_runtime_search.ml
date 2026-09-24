@@ -73,7 +73,6 @@ let elementwise_1d_ast ~n =
     {
       U.name = "test";
       axis_types = [];
-      dont_use_locals = false;
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -97,7 +96,6 @@ let elementwise_1d_ast_with_params ~n ~ptr_n ~out_slot ~in_slot ?shape () =
     {
       U.name = "test";
       axis_types = [];
-      dont_use_locals = false;
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -125,7 +123,6 @@ let elementwise_2d_ast ~s0 ~s1 =
     {
       U.name = "test";
       axis_types = [];
-      dont_use_locals = false;
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -270,7 +267,6 @@ let beam_search_tests =
             {
               U.name = "test";
               axis_types = [];
-              dont_use_locals = false;
               applied_opts = [];
               opts_to_apply = None;
               estimates = None;

@@ -50,7 +50,6 @@ let kernel () =
       {
         U.name = "indexed_store_add";
         axis_types = [ Axis_type.Weak; Axis_type.Reduce ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

@@ -24,7 +24,7 @@ let make_kernel ~name ~opts_to_apply ~ptr_size =
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   U.sink
     ~kernel_info:{ U.name = name;
-      axis_types = [ Axis_type.Weak ]; dont_use_locals = false;
+      axis_types = [ Axis_type.Weak ];
       applied_opts = []; opts_to_apply; estimates = None; beam = 0 }
     [ e ]
 

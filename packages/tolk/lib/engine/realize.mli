@@ -157,7 +157,7 @@ val buffer_copy :
 
 val program_config : unit -> string
 (** [program_config ()] renders the current values of the settings that change
-    the program compiled from a fixed kernel: [NOOPT], [NOLOCALS], [TC],
+    the program compiled from a fixed kernel: [NOOPT], [TC],
     [IMAGE], [DISABLE_FAST_IDIV], [TRANSCENDENTAL], [ALLOW_TF32], and the
     default float and int dtypes. Two compilations of one kernel on one device
     are interchangeable exactly when their configurations are equal, so any

@@ -219,7 +219,7 @@ let test_thread_reduction kind width expected () =
   let value = U.reduce ~src:loaded ~ranges:[ seq; col ] ~op:Ops.Add ~dtype:Dtype.int32 in
   let store = U.store ~dst:(U.index ~ptr:output ~idxs:[ row ] ()) ~value () in
   let kernel_info : U.kernel_info =
-    { name = "metal_thread_reduce"; axis_types = []; dont_use_locals = false;
+    { name = "metal_thread_reduce"; axis_types = [];
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.end_ ~value:store ~ranges:[ row ] ] in
   let linear = Codegen.full_rewrite_to_sink ~optimize:false (Device.renderer device) sink

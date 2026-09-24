@@ -11,7 +11,7 @@
     actions and compares against the unoptimised kernel.
 
     Which actions survive depends on the renderer — a target without local
-    memory drops every LOCAL, GROUP and tensor-core action — so the device is
+    memory drops local splits and tensor-core actions — so the device is
     a parameter. *)
 
 type workload
@@ -48,4 +48,4 @@ val check : Tolk.Device.t -> workload -> result
 
     Sequence length defaults to 2 and is set by [OPT_FUZZ_DEPTH]; cost grows
     exponentially in it. Float comparison is relative to [1e-4], which admits
-    the reassociation that GROUP and UNROLL introduce into reductions. *)
+    the reassociation that local and unroll splits introduce into reductions. *)

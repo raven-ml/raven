@@ -14,10 +14,10 @@
    optimised outputs to match the baseline.
 
    The action set that survives [apply_opt] depends on the renderer — a target
-   without local memory drops every LOCAL, GROUP and tensor-core action — so
+   without local memory drops local splits and tensor-core actions — so
    the device is a parameter and each backend gets its own executable.
 
-   Reductions may reassociate under GROUP/UNROLL, so float comparison is
+   Reductions may reassociate under local/unroll splits, so float comparison is
    relative with a tolerance far below the magnitude of a real miscompile. *)
 open Tolk
 open Tolk_uop
@@ -306,10 +306,12 @@ let run_kernel dev ast bufs =
             invalid_arg (Printf.sprintf "run_kernel: no buffer for slot %d" slot))
       (Program_spec.globals program)
   in
-  let runner = Realize.Compiled_runner.create ~device:dev program in
-  ignore (Realize.Compiled_runner.call runner args [] ~wait:true ~timeout:None);
-  Device.synchronize dev;
-  List.map (fun (slot, buf, _) -> (slot, read_f32 buf)) bufs
+  let prg = Device.runtime dev (Program_spec.to_elf program) in
+  Fun.protect ~finally:(fun () -> Device.synchronize dev; prg.free ()) (fun () ->
+      let runner = Realize.Compiled_runner.create ~device:dev ~prg program in
+      ignore (Realize.Compiled_runner.call runner args [] ~wait:true ~timeout:None);
+      Device.synchronize dev;
+      List.map (fun (slot, buf, _) -> (slot, read_f32 buf)) bufs)
 
 (* Comparison *)
 

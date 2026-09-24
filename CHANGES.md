@@ -379,6 +379,12 @@ thread.
 
 ### Tolk (new)
 
+- Replace `Opt.Upcast`, `Unroll`, `Local`, `Group` and `Grouptop` with
+  `Opt.Split` using absolute range indices. Match tinygrad's split validation
+  and beam choices; remove `Nolocals` and `kernel_info.dont_use_locals`.
+- `Opt.Swap` preserves unrelated node tags when exchanging axes. Existing
+  compiled caches and exported graphs are invalidated by the optimizer update.
+
 - Fix `Opt.Padto` reductions: padded lanes now contribute the reduction identity,
   including products and negative maxima, and padded loads remain valid inputs
   to memory coalescing. Reject padding warp axes and multiples below two.

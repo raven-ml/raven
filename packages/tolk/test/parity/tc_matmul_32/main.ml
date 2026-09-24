@@ -1,5 +1,5 @@
 (* Parity case: C = A @ B, float16 inputs, float32 accumulate, M=N=K=32,
-   scheduled by the explicit opts [TC:0:-1:0:1] and [UNROLL:0:0].
+   scheduled by TC followed by a full UNROLL split of its remaining reduce axis.
 
    Metal (Apple7) and CUDA (SM80) both carry tensor cores, and the shape is
    large enough that the accumulator holds several WMMAs — so this case
@@ -15,7 +15,7 @@ let backends =
     ("metal", Tolk.Cstyle.metal (Tolk.Gpu_target.Apple 7));
   ]
 
-let kernel () =
+let kernel renderer =
   let m, n, k = (32, 32, 32) in
   let pa =
     U.param ~slot:0 ~dtype:Dtype.float16 ~shape:(U.const_int (m * k)) ()
@@ -39,25 +39,31 @@ let kernel () =
     U.store ~dst:(U.index ~ptr:pc ~idxs:[ (ri * int_ n) + rj ] ()) ~value:red ()
   in
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
-  U.sink
+  let ast = U.sink
     ~kernel_info:
       {
         U.name = "tc_matmul_32";
         axis_types = [ Axis_type.Global; Axis_type.Global; Axis_type.Reduce ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply =
           Some
             [
               U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 };
-              U.Opt.Unroll { axis = 0; amount = 0 };
             ];
         estimates = None;
         beam = 0;
       }
-    [ e ]
+    [ e ] in
+  let scheduler = Tolk.Postrange.create ast renderer in
+  let tc = U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 } in
+  ignore (Tolk.Postrange.apply_opt scheduler tc);
+  let axis = List.hd (Tolk.Postrange.unrollable_dims scheduler) in
+  let info = Option.get (U.as_kernel_info ast) in
+  U.replace ast ~arg:(U.Arg.Kernel_info { info with opts_to_apply = Some
+      [ tc; U.Opt.Split { kind = Axis_type.Unroll; top = false; axis; amount = 0 } ] }) ()
 
 let () =
-  Helpers.dump ~backends
-    ~stages:[ Helpers.Stage5; Helpers.Stage7 ]
-    ~out_dir:Sys.argv.(1) (kernel ())
+  List.iter (fun (name, renderer) ->
+      Helpers.dump ~backends:[ name, renderer ]
+        ~stages:[ Helpers.Stage5; Helpers.Stage7 ]
+        ~out_dir:Sys.argv.(1) (kernel renderer)) backends

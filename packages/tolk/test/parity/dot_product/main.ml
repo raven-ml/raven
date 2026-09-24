@@ -22,7 +22,6 @@ let kernel () =
       {
         U.name = "dot_product";
         axis_types = [ Axis_type.Reduce ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

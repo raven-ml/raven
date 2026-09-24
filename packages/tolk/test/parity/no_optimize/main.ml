@@ -20,7 +20,6 @@ let kernel () =
       {
         U.name = "no_optimize";
         axis_types = [ Axis_type.Global ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

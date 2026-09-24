@@ -141,7 +141,6 @@ let use_tc = Context_var.int ~key:"TC" ~default:1
 let tc_select = Context_var.int ~key:"TC_SELECT" ~default:(-1)
 let tc_opt = Context_var.int ~key:"TC_OPT" ~default:0
 let transcendental = Context_var.int ~key:"TRANSCENDENTAL" ~default:1
-let nolocals = Context_var.int ~key:"NOLOCALS" ~default:0
 let split_reduceop = Context_var.int ~key:"SPLIT_REDUCEOP" ~default:1
 
 let reduceop_split_threshold =

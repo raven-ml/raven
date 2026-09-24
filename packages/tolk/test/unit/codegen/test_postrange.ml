@@ -21,19 +21,18 @@ module P = Postrange
 let idx n = U.const_int n
 let global_fptr = D.float32
 
-let kernel_info ?(opts_to_apply = None) ?(dont_use_locals = false) () =
+let kernel_info ?(opts_to_apply = None) () =
   {
     U.name = "test";
     axis_types = [];
-    dont_use_locals;
     applied_opts = [];
     opts_to_apply;
     estimates = None;
     beam = 0;
   }
 
-let wrap_sink ?opts_to_apply ?dont_use_locals srcs =
-  U.sink ~kernel_info:(kernel_info ?opts_to_apply ?dont_use_locals ()) srcs
+let wrap_sink ?opts_to_apply srcs =
+  U.sink ~kernel_info:(kernel_info ?opts_to_apply ()) srcs
 
 let loop_range ~axis size =
   U.range ~size:(idx size) ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
@@ -306,7 +305,7 @@ let shift_to_tests =
           U.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.weakint ()
         in
         let _replaced, new_rng =
-          P.shift_to ~input_new_rng:custom_rng t rng 4 Ak.Warp
+          P.shift_to ~input_new_rng:custom_rng t rng 4 Ak.Local
         in
         is_true (new_rng == custom_rng));
       test "replaced range drops old parents like tinygrad replace" (fun () ->
@@ -326,18 +325,49 @@ let shift_to_tests =
 let validation_tests =
   group "validation guards"
     [
+      test "SPLIT uses absolute reduction axis indices" (fun () ->
+        let t = P.create (reduce_global_ast ~s0:4 ~s1:8 ~sr:16) (gpu_renderer ()) in
+        ignore (P.apply_opt t (U.Opt.Split
+          { axis = 2; amount = 4; kind = Ak.Unroll; top = false }));
+        equal (list int) [ 4; 8; 4; 4 ] (List.map range_size_int (P.rngs t));
+        equal int 1 (List.length (P.axes_of t [ Ak.Unroll ])));
+      test "SPLIT rejects reduction kinds without a REDUCE owner" (fun () ->
+        List.iter (fun (source, target) ->
+            let r = U.range ~size:(idx 8) ~axis:0 ~kind:source () in
+            let ast = wrap_sink [ r ] in
+            let t = P.create ast (gpu_renderer ()) in
+            raises_opt_error (fun () -> ignore (P.apply_opt t (U.Opt.Split
+              { axis = 0; amount = 2; kind = target; top = false })));
+            is_true (P.ast t == ast);
+            equal int 0 (List.length (P.applied_opts t)))
+          [ Ak.Local, Ak.Unroll; Ak.Reduce, Ak.Local; Ak.Reduce, Ak.Unroll ]);
+      test "SPLIT validates amount and target before changing state" (fun () ->
+        List.iter (fun (amount, kind) ->
+            let ast = elementwise_global_ast ~s0:8 ~s1:4 in
+            let t = P.create ast (gpu_renderer ()) in
+            raises_opt_error (fun () -> ignore (P.apply_opt t (U.Opt.Split
+              { axis = 0; amount; kind; top = false })));
+            is_true (P.ast t == ast);
+            equal int 0 (List.length (P.applied_opts t)))
+          [ 1, Ak.Upcast; -2, Ak.Local; 2, Ak.Reduce; 2, Ak.Warp; 2, Ak.Global ]);
+      test "shift_to validates source kinds and preserves index dtype" (fun () ->
+        let r = U.range ~size:(idx 8) ~axis:0 ~kind:Ak.Global ~dtype:D.int32 () in
+        let t = P.create (wrap_sink [ r ]) (gpu_renderer ()) in
+        raises_opt_error (fun () -> ignore (P.shift_to t r 2 Ak.Unroll));
+        let _, lane = P.shift_to t r 2 Ak.Local in
+        is_true (D.equal (U.dtype lane) D.int32));
       test "UPCAST rejects amount > 16" (fun () ->
         let ast = elementwise_global_ast ~s0:32 ~s1:4 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 17 }))));
+          ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 17 }))));
       test "UNROLL rejects amount > 32" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:64 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Unroll { axis = 0; amount = 33 }))));
+          ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = List.hd (P.unrollable_dims t); amount = 33 }))));
       test "UPCAST rejects reduce axis" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
         let ren = gpu_renderer () in
@@ -345,27 +375,21 @@ let validation_tests =
         (* The reduce axis is the last one in sorted rngs (pos=4).
            With 2 globals + 1 reduce, the reduce is at index 2. *)
         raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Upcast { axis = 2; amount = 2 }))));
+          ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 2; amount = 2 }))));
       (* No unrollable dims in elementwise kernel → IndexError equivalent *)
       test "UNROLL rejects non-reduce axis" (fun () ->
         let ast = elementwise_global_ast ~s0:8 ~s1:8 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Unroll { axis = 0; amount = 2 }))));
-      test "LOCAL after NOLOCALS rejected" (fun () ->
-        let ast = elementwise_global_ast ~s0:8 ~s1:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        ignore (P.apply_opt t U.Opt.Nolocals);
-        raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 }))));
+          ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 0; amount = 2 }))));
+
       test "LOCAL without renderer locals rejected" (fun () ->
         let ast = elementwise_ast ~s0:8 ~s1:8 in
         let ren = cpu_renderer () in
         let t = P.create ast ren in
         raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 }))));
+          ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 }))));
       test "shared memory budget exceeded" (fun () ->
         (* small_smem_renderer has shared_max=64 bytes.
            reduce f32 with GROUP amt=32: smem = 32 * 1 * 4 = 128 > 64 *)
@@ -373,20 +397,15 @@ let validation_tests =
         let ren = small_smem_renderer () in
         let t = P.create ast ren in
         raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 32 }))));
-      test "NOLOCALS rejects existing locals" (fun () ->
-        let ast = elementwise_global_ast ~s0:8 ~s1:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 }));
-        raises_opt_error (fun () -> ignore (P.apply_opt t U.Opt.Nolocals)));
-      test "LOCAL rejects non-global axis" (fun () ->
+          ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = true; axis = List.hd (P.axes_of t [ Ak.Reduce ]); amount = 32 }))));
+
+      test "LOCAL accepts a contracted reduction axis" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         (* axis 2 is the reduce range *)
-        raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Local { axis = 2; amount = 2 }))));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 2; amount = 2 }));
+        equal int 1 (P.group_for_reduces t));
     ]
 
 (* Group 3: Apply_opt shift-based optimizations *)
@@ -401,7 +420,7 @@ let shift_opt_tests =
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         let initial_len = P.shape_len t in
-        ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 4 }));
         equal int (initial_len + 1) (P.shape_len t);
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Local) ats));
@@ -410,7 +429,7 @@ let shift_opt_tests =
         let ast = elementwise_global_ast ~s0:16 ~s1:16 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 }));
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Upcast) ats);
         equal int 4 (P.upcast_size t));
@@ -419,14 +438,14 @@ let shift_opt_tests =
         let ast = elementwise_global_ast ~s0:4 ~s1:4 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 0 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 }));
         equal int 4 (P.upcast_size t);
         equal int 1 (P.upcasted t));
       test "UPCAST with amount=0 uses vmax extent" (fun () ->
         let ast = symbolic_extent_global_ast () in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 0 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 }));
         is_true (List.mem 8 (List.map range_size_int (P.rngs t))));
       (* Port of test_local_and_grouped_reduce: GROUPTOP on reduce *)
       test "local and warp reductions retain independent output threads" (fun () ->
@@ -452,7 +471,7 @@ let shift_opt_tests =
         let ast = reduce_global_ast ~s0:32 ~s1:32 ~sr:128 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 32 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = true; axis = List.hd (P.axes_of t [ Ak.Reduce ]); amount = 32 }));
         equal int 1 (P.group_for_reduces t);
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Local) ats));
@@ -461,8 +480,8 @@ let shift_opt_tests =
         let ast = reduce_global_ast ~s0:32 ~s1:32 ~sr:128 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 32 }));
-        ignore (P.apply_opt t (U.Opt.Unroll { axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = true; axis = List.hd (P.axes_of t [ Ak.Reduce ]); amount = 32 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = List.hd (P.unrollable_dims t); amount = 4 }));
         equal int 1 (P.upcasted t);
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Unroll) ats);
@@ -472,12 +491,12 @@ let shift_opt_tests =
         let ast = reduce_global_ast ~s0:128 ~s1:128 ~sr:128 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 4 }));
-        ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 4 }));
-        ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 8 }));
-        ignore (P.apply_opt t (U.Opt.Unroll { axis = 0; amount = 4 }));
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 4 }));
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 1; amount = 2 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = true; axis = List.hd (P.axes_of t [ Ak.Reduce ]); amount = 8 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = List.hd (P.unrollable_dims t); amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 2 }));
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Local) ats);
         is_true (List.exists (fun at -> at = Ak.Upcast) ats);
@@ -488,7 +507,7 @@ let shift_opt_tests =
         let ast = reduce_global_ast ~s0:8 ~s1:8 ~sr:128 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 4 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = true; axis = List.hd (P.axes_of t [ Ak.Reduce ]); amount = 4 }));
         equal int 1 (P.group_for_reduces t));
     ]
 
@@ -543,7 +562,7 @@ let padto_tests =
         let ast = elementwise_global_ast ~s0:4 ~s1:4 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 0 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 }));
         (* axis 0 is now Global size-1, the upcast is at the end.
            Find the upcast axis index *)
         raises_opt_error (fun () ->
@@ -586,14 +605,22 @@ let padto_tests =
         is_true (List.mem 64 (List.map range_size_int (P.rngs t))));
     ]
 
-(* Group 5: SWAP and NOLOCALS *)
+(* Group 5: SWAP *)
 
-let swap_nolocals_tests =
-  group "apply_opt SWAP and NOLOCALS"
+let swap_tests =
+  group "apply_opt SWAP"
     [
       (* SWAP exchanges two global axes: sizes swap positions.
          Before: axis 0 → size 8, axis 1 → size 16
          After:  axis 0 → size 16, axis 1 → size 8  (axis numbers swapped) *)
+      test "SWAP exchanges equal-sized axes without erasing unrelated tags" (fun () ->
+        let r0 = global_range ~axis:0 8 and r1 = global_range ~axis:1 8 in
+        let value = U.with_tag "keep" U.O.(r0 * int_ 8 + r1) in
+        let t = P.create (wrap_sink [ value ]) (gpu_renderer ()) in
+        ignore (P.apply_opt t (U.Opt.Swap { axis = 0; with_axis = 1 }));
+        let actual = List.hd (U.children (P.ast t)) in
+        let expected = U.with_tag "keep" U.O.(r1 * int_ 8 + r0) in
+        is_true (actual == expected));
       test "SWAP exchanges two global axes" (fun () ->
         let ast = elementwise_global_ast ~s0:8 ~s1:16 in
         let ren = gpu_renderer () in
@@ -632,29 +659,13 @@ let swap_nolocals_tests =
         let ast = elementwise_global_ast ~s0:8 ~s1:8 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
-        ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 }));
         (* Now axis 0 is Global(4), axis 1 is Global(8), axis 2 is Local(2).
            Swapping axis 0 with axis 2 (Local) should fail. *)
         raises_opt_error (fun () ->
           ignore (P.apply_opt t (U.Opt.Swap { axis = 0; with_axis = 2 }))));
-      (* NOLOCALS sets dont_use_locals *)
-      test "NOLOCALS disables locals" (fun () ->
-        let ast = elementwise_global_ast ~s0:8 ~s1:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        ignore (P.apply_opt t U.Opt.Nolocals);
-        is_true (P.applied_opts t = [ U.Opt.Nolocals ]);
-        (* Subsequent LOCAL should fail *)
-        raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 }))));
-      test "NOLOCALS failed LOCAL does not append opt" (fun () ->
-        let ast = elementwise_global_ast ~s0:8 ~s1:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        ignore (P.apply_opt t U.Opt.Nolocals);
-        raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 })));
-        is_true (P.applied_opts t = [ U.Opt.Nolocals ]));
+
+
     ]
 
 (* Group 6: State queries *)
@@ -679,7 +690,7 @@ let state_query_tests =
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         (* Full upcast of axis 0: replaced range becomes size 1 *)
-        ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 0 }));
+        ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 }));
         (* Size-1 replaced range should be filtered from rngs *)
         let rngs = P.rngs t in
         List.iter
@@ -697,7 +708,7 @@ let state_query_tests =
         let k = P.create (wrap_sink [ edge ]) (cpu_renderer ()) in
         equal int 1 (P.shape_len k);
         equal (list int) [ 8 ] (List.map const_to_int (P.full_shape k));
-        match P.apply_opt k (U.Opt.Upcast { axis = 0; amount = 2 }) with
+        match P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 2 }) with
         | Some (_, added) -> equal (list int) [ 43 ] (U.axis_id added)
         | None -> fail "expected a split range");
       (* shape_str produces correct labels *)
@@ -719,14 +730,14 @@ let state_query_tests =
         equal int 1 (List.nth axes 0);
         equal int 2 (List.nth axes 1));
       (* copy preserves state *)
-      test "copy preserves mutable state" (fun () ->
-        let ast = elementwise_global_ast ~s0:8 ~s1:8 in
-        let ren = gpu_renderer () in
-        let t = P.create ast ren in
-        ignore (P.apply_opt t U.Opt.Nolocals);
+      test "copy preserves independent optimization state" (fun () ->
+        let t = P.create (elementwise_global_ast ~s0:8 ~s1:8) (gpu_renderer ()) in
+        let opt = U.Opt.Split { axis = 0; amount = 2; kind = Ak.Upcast; top = false } in
+        ignore (P.apply_opt t opt);
         let t2 = P.copy t in
-        raises_opt_error (fun () ->
-          ignore (P.apply_opt t2 (U.Opt.Local { axis = 0; amount = 2 }))));
+        ignore (P.apply_opt t2 opt);
+        equal int 1 (List.length (P.applied_opts t));
+        equal int 2 (List.length (P.applied_opts t2)));
       (* Helper queries *)
       test "upcastable_dims and unrollable_dims" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
@@ -814,7 +825,7 @@ let integration_tests =
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         ignore
-          (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 4 }));
+          (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 }));
         let result = P.get_optimized_ast t in
         let ki = sink_kernel_info result in
         equal int 1 (List.length ki.applied_opts);
@@ -861,7 +872,7 @@ let integration_tests =
         in
         let st = U.store ~dst:out_idx ~value () in
         let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
-        let opts = [ U.Opt.Upcast { axis = 0; amount = 4 } ] in
+        let opts = [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 } ] in
         let ast =
           U.sink
             ~kernel_info:(kernel_info ~opts_to_apply:(Some opts) ())
@@ -872,7 +883,7 @@ let integration_tests =
            operations directly instead *)
         let k = P.create ast ren in
         P.convert_loop_to_global k;
-        let opts = [ U.Opt.Upcast { axis = 0; amount = 4 } ] in
+        let opts = [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 } ] in
         List.iter (fun opt -> ignore (P.apply_opt k opt)) opts;
         let result = P.get_optimized_ast k in
         let ki = sink_kernel_info result in
@@ -921,8 +932,8 @@ let dispatch_tests =
       test "opts_to_apply applied in order" (fun () ->
         let opts =
           [
-            U.Opt.Upcast { axis = 0; amount = 4 };
-            U.Opt.Upcast { axis = 1; amount = 2 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 };
+            U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 2 };
           ]
         in
         let ast = elementwise_global_ast ~s0:16 ~s1:16 in
@@ -1062,7 +1073,7 @@ let tc_tests =
         let ren = tc_renderer () in
         let t = P.create ast ren in
         ignore
-          (P.apply_opt t (U.Opt.Local { axis = 0; amount = 2 }));
+          (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 }));
         raises_opt_error (fun () ->
           ignore
             (P.apply_opt t
@@ -1088,7 +1099,7 @@ let () =
       validation_tests;
       shift_opt_tests;
       padto_tests;
-      swap_nolocals_tests;
+      swap_tests;
       state_query_tests;
       bufs_from_ast_tests;
       integration_tests;

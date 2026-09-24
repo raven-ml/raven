@@ -28,7 +28,6 @@ let kernel () =
       {
         U.name = "matmul_small";
         axis_types = [ Axis_type.Global; Axis_type.Global; Axis_type.Reduce ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

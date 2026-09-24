@@ -122,11 +122,11 @@ let try_tensor_cores k =
         | Some (n_rng, m_rng) ->
             let rngs = [| n_rng; m_rng |] in
             List.iter (fun d ->
-              let upcast axis amount = U.Opt.Upcast { axis; amount } in
+              let upcast axis amount = U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount } in
               match try_opt_on_rng tk rngs.(d) [ 5; 4; 3; 2 ] upcast with
               | Some (replaced, _) -> rngs.(d) <- replaced
               | None -> ()) [ 1; 0 ];
-            let local axis amount = U.Opt.Local { axis; amount } in
+            let local axis amount = U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount } in
             ignore (try_opt_on_rng tk rngs.(0) [ 4; 2 ] local);
             Some tk
     in
@@ -164,11 +164,10 @@ let upcast_image_buf k buf =
       match axes with
       | [] -> ()
       | axis :: _ when List.mem axis (P.upcastable_dims k) ->
-          ignore (P.apply_opt k (U.Opt.Upcast { axis; amount = 4 }))
+          ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = 4 }))
       | axis :: _ ->
-          match List.find_index (( = ) axis) (P.unrollable_dims k) with
-          | Some ui -> ignore (P.apply_opt k (U.Opt.Unroll { axis = ui; amount = 4 }))
-          | None -> ()
+          if List.mem axis (P.unrollable_dims k) then
+            ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis; amount = 4 }))
 
 let upcast_images k =
   if image () then
@@ -209,7 +208,7 @@ let detect_matvec k =
            else None)
   | _ -> None
 
-(* Apply matvec opts (GROUP + LOCAL + UPCAST) if the pattern matches. *)
+(* Split matvec reduction, workgroup and vector lanes if the pattern matches. *)
 let try_matvec k =
   let mv = mv () in
   let mv_blocksize = mv_blocksize () in
@@ -232,25 +231,26 @@ let try_matvec k =
       && U.divides (nth_size k gi) tile <> None)
       (P.axes_of k [ Axis_type.Global ]) in
     if mv_threads_per_row > 1 then
-      try_apply k (U.Opt.Group { axis = 0; amount = mv_threads_per_row });
+      try_apply k (U.Opt.Split { kind = Axis_type.Local; top = false; axis = index_of_rng (P.rngs k) first_red; amount = mv_threads_per_row });
     if mv_blocksize > 1 then
-      ignore (P.apply_opt k (U.Opt.Local { axis = gi; amount = mv_blocksize }));
+      ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = false; axis = gi; amount = mv_blocksize }));
     if mv_rows_per_thread > 1 then
       ignore
-        (P.apply_opt k (U.Opt.Upcast { axis = gi; amount = mv_rows_per_thread }));
+        (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = gi; amount = mv_rows_per_thread }));
     Some k
 
-(* Try GROUPTOP if output shape is small. *)
+(* Split outer reduction lanes into locals for small output shapes. *)
 let try_grouping k =
   let threshold =
-    if Helpers.Context_var.get Helpers.nolocals <> 0 then 240 else 2048
+    if Renderer.device (P.ren k) = "QCOM" then 240 else 2048
   in
-  if prod_at (P.output_shape k) (P.upcastable_dims k) <= threshold then
+  if prod_at (P.full_shape k) (P.upcastable_dims k) <= threshold then
     (try List.iter (fun axis ->
       try
-        ignore (P.apply_opt k (U.Opt.Grouptop { axis; amount = 16 }));
+        ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = true; axis; amount = 16 }));
         raise_notrace Exit
-      with P.Opt_error _ -> ()) [ 0; 1; 2 ]
+      with P.Opt_error _ -> ())
+        (List.filteri (fun i _ -> i < 3) (P.axes_of k [ Axis_type.Reduce ]))
      with Exit -> ());
   P.group_for_reduces k > 0
 
@@ -294,7 +294,7 @@ let upcast_masked k =
       else acc) [] (P.upcastable_dims k)
   in
   List.iter (fun axis ->
-    ignore (P.apply_opt k (U.Opt.Upcast { axis; amount = 0 })))
+    ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = 0 })))
     to_upcast
 
 (* Sum of stride-like contributions of [rng] to [idx]: [rng] itself counts as
@@ -342,7 +342,7 @@ let upcast_heuristic k =
   let continue_ = ref true in
   while
     !continue_
-    && prod_at (P.output_shape k) (P.upcastable_dims k) >= 1024
+    && prod_at (P.full_shape k) (P.upcastable_dims k) >= 1024
     && P.upcast_size k < 32
   do
     let upcast_amounts =
@@ -358,7 +358,7 @@ let upcast_heuristic k =
     match choices with
     | [] -> continue_ := false
     | (_, _, axis, amt) :: _ ->
-        ignore (P.apply_opt k (U.Opt.Upcast { axis; amount = amt }));
+        ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = amt }));
         Hashtbl.replace upcasted axis ()
   done
 
@@ -373,16 +373,16 @@ let unroll_reduce k =
       let s = const_int_or 0 (nth_size k (last ud)) in
       if s <= 32 then begin
         ignore (P.apply_opt k
-          (U.Opt.Unroll { axis = List.length ud - 1; amount = 0 }));
+          (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = last ud; amount = 0 }));
         let ud2 = P.unrollable_dims k in
         if ud2 <> [] && s <= 3 && const_int_or 0 (nth_size k (last ud2)) <= 3
         then
           ignore (P.apply_opt k
-            (U.Opt.Unroll { axis = List.length ud2 - 1; amount = 0 }))
+            (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = last ud2; amount = 0 }))
       end
       else if const_int_or 0 (nth_size k (last ud)) mod 4 = 0 then
         ignore (P.apply_opt k
-          (U.Opt.Unroll { axis = List.length ud - 1; amount = 4 }))
+          (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = last ud; amount = 4 }))
     end
   with P.Opt_error _ -> ()
 
@@ -391,7 +391,7 @@ let upcast_default k =
   let ud = P.upcastable_dims k in
   if P.upcasted k = 0 && ud <> []
      && const_int_or 0 (nth_size k (last ud)) mod 4 = 0
-  then ignore (P.apply_opt k (U.Opt.Upcast { axis = last ud; amount = 4 }))
+  then ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = last ud; amount = 4 }))
 
 (* Pick a local size for [axis] given the budget already used by [taken]. *)
 let local_size_for k taken axis =
@@ -403,8 +403,6 @@ let local_size_for k taken axis =
 (* Choose local sizes for global/loop axes, prioritising expand axes. *)
 let apply_locals k =
   if not (Renderer.has_local (P.ren k)) then ()
-  else if Helpers.Context_var.get Helpers.nolocals <> 0 then
-    ignore (P.apply_opt k U.Opt.Nolocals)
   else
     (* Rank axes: expand axes (broadcast in some buffer) sort first. *)
     let ranking = List.filter_map (fun axis ->
@@ -435,7 +433,7 @@ let apply_locals k =
     List.iter (fun (axis, local_sz) ->
       let axis = axis - !deleted in
       let will_delete = const_int_or 0 (nth_size k axis) = local_sz in
-      ignore (P.apply_opt k (U.Opt.Local { axis; amount = local_sz }));
+      ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount = local_sz }));
       if will_delete then incr deleted) to_apply
 
 let hand_coded_optimizations k =

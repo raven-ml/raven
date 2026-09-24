@@ -17,7 +17,6 @@ module P = Postrange
 let beam_padto = Helpers.getenv "BEAM_PADTO" 0 <> 0
 let tc = Helpers.getenv "TC" 1
 let tc_opt = Helpers.getenv "TC_OPT" 2
-let nolocals = Helpers.getenv "NOLOCALS" 0 <> 0
 let debug = Helpers.getenv "DEBUG" 0
 let beam_debug = Helpers.getenv "BEAM_DEBUG" 0
 
@@ -53,16 +52,16 @@ let actions =
     List.iter (fun amount ->
       for axis = 0 to max_axis do add (mk axis amount) done) amounts
   in
-  gen (fun axis amount -> Upcast { axis; amount }) 7 [0; 2; 3; 4; 5; 7];
-  gen (fun axis amount -> Unroll { axis; amount }) 4 [0; 4; 7];
-  gen (fun axis amount -> Local { axis; amount }) 5 [2; 3; 4; 8; 13; 16; 29];
-  gen (fun axis amount -> Grouptop { axis; amount }) 2
-    [13; 16; 28; 29; 32; 49; 64; 256];
-  gen (fun axis amount -> Group { axis; amount }) 2 [0; 4; 8; 16];
+  List.iter (fun kind ->
+      gen (fun axis amount -> Split { axis; amount; kind; top = false })
+        9 [0; 2; 3; 4; 5; 7]) [ Axis_type.Upcast; Axis_type.Unroll ];
+  gen (fun axis amount -> Split { axis; amount; kind = Axis_type.Local; top = false })
+    7 [0; 2; 3; 4; 8; 13; 16; 29];
+  gen (fun axis amount -> Split { axis; amount; kind = Axis_type.Local; top = true })
+    7 [13; 16; 28; 29; 32; 49; 64; 256];
   if beam_padto then
     gen (fun axis amount -> Padto { axis; amount }) 6 [32];
-  add (Local { axis = 0; amount = 32 });
-  add (Local { axis = 6; amount = 2 });
+  add (Split { axis = 0; amount = 32; kind = Axis_type.Local; top = false });
   add (Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = tc });
   for axis = 0 to 8 do
     add (Tc { axis; tc_select = -1; tc_opt; use_tc = tc })
@@ -72,7 +71,6 @@ let actions =
       add (Swap { axis = axis_0; with_axis = axis_1 })
     done
   done;
-  if nolocals then add Nolocals;
   List.rev !acc
 
 let is_tc = function U.Opt.Tc _ -> true | _ -> false
@@ -92,12 +90,8 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
   let max_up = Option.value max_up ~default:(beam_upcast_max ()) in
   let max_lcl = beam_local_max () in
   let dominated a =
-    match U.Opt.axis a with
-    | Some _ when not (is_tc a) ->
-        (match P.real_axis s a (U.Opt.axis a) with
-         | ax -> ax >= P.shape_len s || is_noop a ax (P.full_shape s)
-         | exception P.Opt_error _ -> true)
-    | _ -> false
+    let axis = U.Opt.axis a in
+    not (is_tc a) && (axis >= P.shape_len s || is_noop a axis (P.full_shape s))
   in
   let factor x =
     match U.const_int_value x with

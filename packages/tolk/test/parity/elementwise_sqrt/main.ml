@@ -18,7 +18,6 @@ let kernel () =
       {
         U.name = "elementwise_sqrt";
         axis_types = [ Axis_type.Global ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

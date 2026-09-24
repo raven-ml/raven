@@ -36,7 +36,7 @@ val apply_opt :
   ?append_opt:bool -> t -> Tolk_uop.Uop.Opt.t ->
   (Tolk_uop.Uop.t * Tolk_uop.Uop.t) option
 (** [apply_opt t opt] applies [opt] to [t] and returns
-    [Some (replaced_rng, new_rng)] for shift_to opts, the first two
+    [Some (replaced_rng, new_rng)] for {!Tolk_uop.Uop.Opt.Split} opts, the first two
     TC axes as a pair for TC opts, or [None] otherwise.
     [append_opt] defaults to [true].
 
@@ -136,13 +136,6 @@ val colored_shape : t -> string
 val range_int_size : Tolk_uop.Uop.t -> int
 (** Constant integer size of a range node, or [0]. *)
 
-val real_axis :
-  t -> Tolk_uop.Uop.Opt.t -> int option -> int
-(** [real_axis t op axis] resolves [axis] for [op] to a range index.
-    Returns [-1] when [axis] is [None] or [op] is TC.
-
-    Raises {!Opt_error} on invalid axis. *)
-
 (** {1:transforms Transforms} *)
 
 val convert_loop_to_global : t -> unit
@@ -154,4 +147,5 @@ val shift_to :
   Tolk_uop.Uop.t * Tolk_uop.Uop.t
 (** [shift_to t rng amount kind] splits [rng] by [amount].  Returns
     [(replaced_rng, new_rng)].  [top] defaults to [false].
-    Raises {!Opt_error} if [amount] does not divide the range. *)
+    Raises {!Opt_error} if [amount] does not divide the range or the
+    source and target kinds cannot be split. *)

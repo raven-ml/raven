@@ -133,7 +133,6 @@ let kernel_info name : U.kernel_info =
   {
     name;
     axis_types = [];
-    dont_use_locals = false;
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;
@@ -210,7 +209,7 @@ let renderer_selection_tests =
           let first = test_device ~name:"TEST:cache-first" ~renderer_set:renderers (runtime_state ()) in
           let second = test_device ~name:"TEST:cache-second" ~renderer_set:renderers (runtime_state ()) in
           ignore (Device.compile_program first ~name:"metadata_cache" []);
-          let opts = [ U.Opt.Upcast { axis = 0; amount = 4 } ] in
+          let opts = [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 } ] in
           let spec = Device.compile_program second ~name:"metadata_cache" ~applied_opts:opts [] in
           equal string "TEST:cache-second" (Program_spec.device spec);
           equal (list string) (List.map U.Opt.to_string opts)

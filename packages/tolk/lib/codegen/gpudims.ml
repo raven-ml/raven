@@ -196,42 +196,35 @@ let gate_missing_locals (idx : U.t) (idx_view : U.index_view)
     ()
 
 (* Per-device compute grid for a kernel. *)
-let compute_idxs (ctx : Renderer.t) ki ~global_shape ~local_shape ~local_dims =
-  if ki.U.dont_use_locals then begin
-    assert (local_dims = []);
-    get_grouped_dims Global_idx global_shape (Renderer.global_max ctx)
-      ~reverse:true
-  end
-  else begin
-    let local_idxs =
-      get_grouped_dims Local_id local_shape (Renderer.local_max ctx)
-        ~reverse:false
-    in
-    let hw_local =
-      List.filter_map
-        (fun u -> Option.map (fun v -> dim_max v.U.size) (U.as_special u))
-        local_idxs
-    in
-    let global_max =
-      match Renderer.global_prod_max ctx with
-      | None -> Renderer.global_max ctx
-      | Some pm ->
-          let gm = Option.value (Renderer.global_max ctx) ~default:pm in
-          let rec zip3 gs ps ls = match gs, ps, ls with
-            | g :: gs, p :: ps, l :: ls -> min g (p / l) :: zip3 gs ps ls
-            | g :: gs, p :: ps, [] -> min g p :: zip3 gs ps []
-            | _ -> []
-          in
-          Some (zip3 gm pm (hw_local @ [ 1; 1; 1 ]))
-    in
-    get_grouped_dims Group_id global_shape global_max ~reverse:true
-    @ local_idxs
-  end
+let compute_idxs (ctx : Renderer.t) ~global_shape ~local_shape =
+  let local_idxs =
+    get_grouped_dims Local_id local_shape (Renderer.local_max ctx)
+      ~reverse:false
+  in
+  let hw_local =
+    List.filter_map
+      (fun u -> Option.map (fun v -> dim_max v.U.size) (U.as_special u))
+      local_idxs
+  in
+  let global_max =
+    match Renderer.global_prod_max ctx with
+    | None -> Renderer.global_max ctx
+    | Some pm ->
+        let gm = Option.value (Renderer.global_max ctx) ~default:pm in
+        let rec zip3 gs ps ls = match gs, ps, ls with
+          | g :: gs, p :: ps, l :: ls -> min g (p / l) :: zip3 gs ps ls
+          | g :: gs, p :: ps, [] -> min g p :: zip3 gs ps []
+          | _ -> []
+        in
+        Some (zip3 gm pm (hw_local @ [ 1; 1; 1 ]))
+  in
+  get_grouped_dims Group_id global_shape global_max ~reverse:true
+  @ local_idxs
 
 (* Substitute ranges with SPECIAL-based GPU dimension indices. *)
 let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
   match U.op s, U.as_kernel_info s with
-  | Ops.Sink, Some ki ->
+  | Ops.Sink, Some _ ->
       let s_topo = U.toposort s in
       if List.exists (fun x -> U.op x = Ops.Special) s_topo then None
       else
@@ -270,7 +263,7 @@ let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
           let global_shape = shape_of global_dims in
           let local_shape = shape_of local_dims in
           let idxs =
-            compute_idxs ctx ki ~global_shape ~local_shape ~local_dims
+            compute_idxs ctx ~global_shape ~local_shape
           in
           let all_dim_keys = global_dims @ local_dims in
           let dim_idx, _ =

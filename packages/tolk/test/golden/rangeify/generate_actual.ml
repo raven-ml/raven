@@ -47,7 +47,6 @@ let scheduled_kernel ?(name = "") ?(optimize = true) args body =
     {
       name;
       axis_types = [];
-      dont_use_locals = false;
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;

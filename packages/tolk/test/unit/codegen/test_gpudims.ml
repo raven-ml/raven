@@ -20,11 +20,10 @@ module Ak = Axis_type
 
 let idx n = U.const (C.int D.weakint n)
 
-let kernel_info ?(dont_use_locals = false) () =
+let kernel_info () =
   {
     U.name = "";
     axis_types = [];
-    dont_use_locals;
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;
@@ -344,7 +343,6 @@ let contraction_tests =
 (* Group 7: error cases *)
 
 let is_failure = function Failure _ -> true | _ -> false
-let is_assertion = function Assert_failure _ -> true | _ -> false
 
 let error_tests =
   group "errors"
@@ -654,63 +652,6 @@ let missing_locals_tests =
             (fun () -> ignore (Gpudims.pm_add_gpudims (gpu_renderer ()) sink)));
     ]
 
-(* Group 12: dont_use_locals *)
-
-let dont_use_locals_tests =
-  group "dont_use_locals"
-    [
-      test "uses idx prefix with no local SPECIALs" (fun () ->
-          let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()
-          in
-          let g1 =
-            U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global ~dtype:D.weakint ()
-          in
-          let ki = kernel_info ~dont_use_locals:true () in
-          let sink = make_global_kernel ~ki [ g0; g1 ] in
-          let ren = gpu_renderer () in
-          let result = Gpudims.pm_add_gpudims ren sink in
-          let specials = find_specials result in
-          is_true (List.length specials > 0) ~msg:"has SPECIAL nodes";
-          (* All specials should be Global_idx, not Group_id or Local_id *)
-          let all_global_idx =
-            List.for_all
-              (fun n ->
-                match U.as_special n with
-                | Some { name; _ } -> (
-                    match Gpu_dim.of_special_name name with
-                    | Some (Gpu_dim.Global_idx _) -> true
-                    | Some (Gpu_dim.Group_id _ | Gpu_dim.Local_id _) | None -> false)
-                | _ -> false)
-              specials
-          in
-          is_true all_global_idx ~msg:"all SPECIAL nodes are Global_idx";
-          (* No local SPECIALs *)
-          let has_local =
-            List.exists
-              (fun n ->
-                match U.as_special n with
-                | Some { name; _ } -> (
-                    match Gpu_dim.of_special_name name with
-                    | Some (Gpu_dim.Local_id _) -> true
-                    | Some (Gpu_dim.Group_id _ | Gpu_dim.Global_idx _) | None -> false)
-                | _ -> false)
-              specials
-          in
-          is_true (not has_local) ~msg:"no Local_id SPECIALs");
-      test "rejects local ranges" (fun () ->
-          let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()
-          in
-          let l0 =
-            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.weakint ()
-          in
-          let ki = kernel_info ~dont_use_locals:true () in
-          let sink = make_global_kernel ~ki [ g0; l0 ] in
-          raises_match is_assertion (fun () ->
-              ignore (Gpudims.pm_add_gpudims (gpu_renderer ()) sink)));
-    ]
-
 (* Entry point *)
 
 let () =
@@ -727,5 +668,4 @@ let () =
       none_passthrough_tests;
       integration_tests;
       missing_locals_tests;
-      dont_use_locals_tests;
     ]

@@ -26,7 +26,6 @@ let global_fptr = D.float32
 let kernel_info () =
   { U.name = "test";
     axis_types = [];
-    dont_use_locals = false;
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;
@@ -70,16 +69,14 @@ let run_heuristic_scheduler ast ren =
   let t = P.create ast ren in
   Heuristic.hand_coded_optimizations t
 
-let is_grouptop = function U.Opt.Grouptop _ -> true | _ -> false
-let is_upcast = function U.Opt.Upcast _ -> true | _ -> false
-let is_unroll = function U.Opt.Unroll _ -> true | _ -> false
-let is_local = function U.Opt.Local _ -> true | _ -> false
-let is_group = function U.Opt.Group _ -> true | _ -> false
-let is_nolocals = function U.Opt.Nolocals -> true | _ -> false
+let is_grouptop = function U.Opt.Split { kind = Axis_type.Local; top = true; _ } -> true | _ -> false
+let is_upcast = function U.Opt.Split { kind = Axis_type.Upcast; _ } -> true | _ -> false
+let is_unroll = function U.Opt.Split { kind = Axis_type.Unroll; _ } -> true | _ -> false
+let is_local = function U.Opt.Split { kind = Axis_type.Local; top = false; _ } -> true | _ -> false
 
-let local_axis = function U.Opt.Local { axis; _ } -> Some axis | _ -> None
+let local_axis = function U.Opt.Split { kind = Axis_type.Local; top = false; axis; _ } -> Some axis | _ -> None
 let upcast_axis_amount = function
-  | U.Opt.Upcast { axis; amount } -> Some (axis, amount)
+  | U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount } -> Some (axis, amount)
   | _ -> None
 
 let count pred opts = List.length (List.filter pred opts)
@@ -451,7 +448,7 @@ let reduce_unroll_tests =
           let unrolls = List.filter is_unroll opts in
           is_true (unrolls <> []);
           (match unrolls with
-          | U.Opt.Unroll { amount; _ } :: _ -> equal int 4 amount
+          | U.Opt.Split { kind = Axis_type.Unroll; top = false; amount; _ } :: _ -> equal int 4 amount
           | _ -> failwith "expected Unroll"));
       (* Double unroll when both reduce dims ≤ 3.
          Two reduce axes of size 3 each. Both get fully unrolled. *)
@@ -479,7 +476,7 @@ let default_upcast_tests =
           is_true (has is_upcast opts);
           let upcasts = List.filter is_upcast opts in
           (match upcasts with
-          | [ U.Opt.Upcast { amount; _ } ] -> equal int 4 amount
+          | [ U.Opt.Split { kind = Axis_type.Upcast; top = false; amount; _ } ] -> equal int 4 amount
           | _ -> failwith "expected exactly one Upcast with amount=4"));
     ]
 
@@ -498,8 +495,8 @@ let heuristic_upcast_tests =
           let upcasts = List.filter is_upcast opts in
           is_true (List.length upcasts >= 1);
           (match upcasts with
-          | U.Opt.Upcast { axis = 1; _ } :: _ -> ()
-          | U.Opt.Upcast { axis; _ } :: _ ->
+          | U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; _ } :: _ -> ()
+          | U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; _ } :: _ ->
               failwith (Printf.sprintf "expected first upcast axis=1, got %d" axis)
           | _ -> failwith "no upcast found"));
       (* Upcast size stays under 32. *)
@@ -520,14 +517,16 @@ let matvec_tests =
           let ast = matvec_global_ast ~rows:128 ~cols:128 in
           let ren = gpu_renderer () in
           let opts = run_heuristic ast ren in
-          is_true (has is_group opts);
-          is_true (has is_local opts);
-          is_true (has is_upcast opts));
+          match opts with
+          | [ U.Opt.Split { kind = Axis_type.Local; top = false; axis = 1; amount = 8 };
+              U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 4 };
+              U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 } ] -> ()
+          | _ -> fail "expected reduction, workgroup and vector splits");
       test "rejects LOAD(INDEX) matvec shape" (fun () ->
           let ast = matvec_load_global_ast ~rows:128 ~cols:128 in
           let ren = gpu_renderer () in
           let opts = run_heuristic ast ren in
-          is_true (not (has is_group opts)));
+          is_true (not (has is_local opts)));
       (* Matvec early return: no further opts after matvec. *)
       test "matvec early return prevents further opts" (fun () ->
           let ast = matvec_global_ast ~rows:128 ~cols:128 in
@@ -540,7 +539,7 @@ let matvec_tests =
           let ast = matvec_global_ast ~rows:128 ~cols:128 in
           let ren = cpu_renderer () in
           let opts = run_heuristic ast ren in
-          is_true (not (has is_group opts)));
+          is_true (not (has is_local opts)));
     ]
 
 let image_tests =
@@ -553,7 +552,7 @@ let image_tests =
             with_var Helpers.image 1 (fun () -> run_heuristic ast ren)
           in
           match opts with
-          | U.Opt.Upcast { axis = 0; amount = 4 } :: _ -> ()
+          | U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 } :: _ -> ()
           | _ -> failwith "expected leading image Upcast(axis=0, amount=4)");
       test "IMAGE skips image axis without valid dimensions" (fun () ->
           let ast = image_reduce_invalid_dims_ast ~s0:4096 ~sr:16 in
@@ -565,7 +564,7 @@ let image_tests =
             (not
                (List.exists
                   (function
-                    | U.Opt.Unroll { axis = 0; amount = 4 } -> true
+                    | U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 4 } -> true
                     | _ -> false)
                   opts)));
       test "IMAGE skips image axis without pitch alignment" (fun () ->
@@ -583,8 +582,8 @@ let image_tests =
             with_var Helpers.image 1 (fun () -> run_heuristic ast ren)
           in
           match opts with
-          | U.Opt.Unroll { axis = 0; amount = 4 } :: _ -> ()
-          | _ -> failwith "expected leading image Unroll(axis=0, amount=4)");
+          | U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 4 } :: _ -> ()
+          | _ -> failwith "expected leading image Unroll(axis=1, amount=4)");
     ]
 
 (* Group 6: Masked upcast *)
@@ -676,31 +675,10 @@ let local_groups_tests =
               1 local_ranges
           in
           is_true (local_prod <= 128));
-      (* NOLOCALS=1 applies Nolocals opt instead of LOCAL. *)
-      test "NOLOCALS env applies Nolocals" (fun () ->
-          let ast = elementwise_global_ast ~s0:128 ~s1:128 in
-          let ren = gpu_renderer () in
-          let opts =
-            Helpers.Context_var.with_context
-              [ B (Helpers.nolocals, 1) ]
-              (fun () -> run_heuristic ast ren)
-          in
-          is_true (has is_nolocals opts);
-          is_true (not (has is_local opts)));
-      (* NOLOCALS=1 changes grouping threshold from 2048 to 240.
-         prod(upcastable)=256: ≤2048 (groups) but >240 (no group). *)
-      test "NOLOCALS adjusts grouping threshold" (fun () ->
-          let ren = gpu_renderer () in
-          let ast1 = reduce_global_ast ~s0:8 ~s1:32 ~sr:128 in
-          let opts_default = run_heuristic ast1 ren in
-          is_true (has is_grouptop opts_default);
-          let ast2 = reduce_global_ast ~s0:8 ~s1:32 ~sr:128 in
-          let opts_nolocals =
-            Helpers.Context_var.with_context
-              [ B (Helpers.nolocals, 1) ]
-              (fun () -> run_heuristic ast2 ren)
-          in
-          is_true (not (has is_grouptop opts_nolocals)));
+      test "QCOM uses a smaller grouping threshold" (fun () ->
+          let ast = reduce_global_ast ~s0:8 ~s1:32 ~sr:128 in
+          is_true (has is_grouptop (run_heuristic ast (gpu_renderer ())));
+          is_true (not (has is_grouptop (run_heuristic ast (qcom_renderer ())))));
       (* Expand axes are prioritized for LOCAL.
          out[i,j] = a[i,j] + b[i]: axis 1 is expand for buffer b.
          Expand axis is ranked first, getting larger local_sz from the
@@ -714,7 +692,7 @@ let local_groups_tests =
           let locals =
             List.filter_map
               (function
-                | U.Opt.Local { axis; amount } -> Some (axis, amount)
+                | U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount } -> Some (axis, amount)
                 | _ -> None)
               opts
           in

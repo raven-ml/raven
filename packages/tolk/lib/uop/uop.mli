@@ -79,54 +79,39 @@ type device =
   | Multi of string list
   | Index of int
 
-(** Schedule options attached to kernel metadata.
-
-    Each variant except {!Nolocals} carries an [axis] — the schedule
-    axis it applies to — and most carry an [amount] interpreted by the
-    scheduler (tile width, unroll factor, lane count, padding target).
-
-    {b Note.} The variant declaration order is load-bearing: total
-    ordering over {!t} uses {!Stdlib.compare}, which reads the
-    constructor ordinal first. *)
+(** Schedule options attached to kernel metadata. Axes are absolute indices
+    in the scheduler's current, ordered range list. Tensor-core [axis] selects
+    an eligible matrix-axis triple instead. Constructor order determines the
+    total ordering used by beam search. *)
 module Opt : sig
   type t =
     | Tc of { axis : int; tc_select : int; tc_opt : int; use_tc : int }
-        (** Tensor-core configuration on [axis]. *)
-    | Upcast of { axis : int; amount : int }
-        (** Vectorize [axis] by [amount] lanes. *)
-    | Unroll of { axis : int; amount : int }
-        (** Unroll [axis] by [amount] iterations. *)
-    | Local of { axis : int; amount : int }
-        (** Split [axis] into workgroup-shared tiles of [amount]. *)
-    | Group of { axis : int; amount : int }
-        (** Split [axis] into workgroups of [amount]. *)
-    | Grouptop of { axis : int; amount : int }
-        (** Like {!Group} but takes the top portion of [axis]. *)
-    | Nolocals  (** Disable local memory for this kernel. *)
+        (** Tensor-core configuration. *)
+    | Split of { axis : int; amount : int; kind : Axis_type.t; top : bool }
+        (** Split [axis] into [amount] lanes of [kind]: Upcast, Unroll or Local.
+            [amount = 0] takes the whole axis; otherwise it must exceed one.
+            [top] takes the outer portion instead of the inner portion. *)
     | Padto of { axis : int; amount : int }
-        (** Pad [axis] to a multiple of [amount]. *)
+        (** Pad [axis] to a multiple of [amount], which must exceed one. *)
     | Swap of { axis : int; with_axis : int }
-        (** Swap [axis] and [with_axis] in the schedule. *)
+        (** Swap two global axes in the schedule. *)
   (** The type for schedule options. *)
 
   val to_string : t -> string
-  (** [to_string opt] is a compact textual form of [opt]
-      (e.g. ["UPCAST:0:4"]). *)
+  (** [to_string opt] is a compact textual form of [opt]. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats options with {!to_string}. *)
 
-  val axis : t -> int option
-  (** [axis opt] is the axis carried by [opt], or [None] for
-      {!Nolocals}. *)
+  val axis : t -> int
+  (** [axis opt] is the axis carried by [opt]. *)
 
   val amount : t -> int option
-  (** [amount opt] is the amount carried by [opt], or [None] for
-      {!Tc}, {!Swap}, and {!Nolocals}. *)
+  (** [amount opt] is the split or padding amount, or [None] for {!Tc} and {!Swap}. *)
 
   val with_amount : t -> int -> t
-  (** [with_amount opt n] is [opt] with its amount replaced by [n].
-      Returns [opt] unchanged for {!Tc}, {!Swap}, and {!Nolocals}. *)
+  (** [with_amount opt n] replaces the split or padding amount by [n].
+      Returns [opt] unchanged for {!Tc} and {!Swap}. *)
 end
 
 type stage_opts = {
@@ -221,9 +206,6 @@ type estimates = {
 type kernel_info = {
   name : string;  (** Kernel name, used for debugging and codegen. *)
   axis_types : Axis_type.t list;  (** Kind assignment per schedule axis. *)
-  dont_use_locals : bool;
-      (** [true] if local memory was disabled (e.g. via
-          {!Opt.Nolocals}). *)
   applied_opts : Opt.t list;  (** Schedule options already applied. *)
   opts_to_apply : Opt.t list option;
       (** Remaining options to apply, or [None] for auto-tuning. *)

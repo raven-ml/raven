@@ -14,49 +14,33 @@ module Opt = struct
      Stdlib.compare on the constructor ordinal first. *)
   type t =
     | Tc of { axis : int; tc_select : int; tc_opt : int; use_tc : int }
-    | Upcast of { axis : int; amount : int }
-    | Unroll of { axis : int; amount : int }
-    | Local of { axis : int; amount : int }
-    | Group of { axis : int; amount : int }
-    | Grouptop of { axis : int; amount : int }
-    | Nolocals
+    | Split of { axis : int; amount : int; kind : Axis_type.t; top : bool }
     | Padto of { axis : int; amount : int }
     | Swap of { axis : int; with_axis : int }
 
   let to_string = function
     | Tc { axis; tc_select; tc_opt; use_tc } ->
         Printf.sprintf "TC:%d:%d:%d:%d" axis tc_select tc_opt use_tc
-    | Upcast { axis; amount } -> Printf.sprintf "UPCAST:%d:%d" axis amount
-    | Unroll { axis; amount } -> Printf.sprintf "UNROLL:%d:%d" axis amount
-    | Local { axis; amount } -> Printf.sprintf "LOCAL:%d:%d" axis amount
-    | Group { axis; amount } -> Printf.sprintf "GROUP:%d:%d" axis amount
-    | Grouptop { axis; amount } -> Printf.sprintf "GROUPTOP:%d:%d" axis amount
-    | Nolocals -> "NOLOCALS"
+    | Split { axis; amount; kind; top } ->
+        Printf.sprintf "SPLIT:%d:%d:%s:%b" axis amount (Axis_type.to_string kind) top
     | Padto { axis; amount } -> Printf.sprintf "PADTO:%d:%d" axis amount
     | Swap { axis; with_axis } -> Printf.sprintf "SWAP:%d:%d" axis with_axis
 
   let pp fmt t = Format.pp_print_string fmt (to_string t)
 
   let axis = function
-    | Tc { axis; _ } | Upcast { axis; _ } | Unroll { axis; _ }
-    | Local { axis; _ } | Group { axis; _ }
-    | Grouptop { axis; _ } | Padto { axis; _ } | Swap { axis; _ } -> Some axis
-    | Nolocals -> None
+    | Tc { axis; _ } | Split { axis; _ }
+    | Padto { axis; _ } | Swap { axis; _ } -> axis
 
   let amount = function
-    | Upcast { amount; _ } | Unroll { amount; _ } | Local { amount; _ }
-    | Group { amount; _ } | Grouptop { amount; _ }
-    | Padto { amount; _ } -> Some amount
-    | Tc _ | Swap _ | Nolocals -> None
+    | Split { amount; _ } | Padto { amount; _ } -> Some amount
+    | Tc _ | Swap _ -> None
 
-  let with_amount t a = match t with
-    | Upcast r -> Upcast { r with amount = a }
-    | Unroll r -> Unroll { r with amount = a }
-    | Local r -> Local { r with amount = a }
-    | Group r -> Group { r with amount = a }
-    | Grouptop r -> Grouptop { r with amount = a }
-    | Padto r -> Padto { r with amount = a }
-    | (Tc _ | Swap _ | Nolocals) as t -> t
+  let with_amount t amount = match t with
+    | Split r -> Split { r with amount }
+    | Padto r -> Padto { r with amount }
+    | (Tc _ | Swap _) as t -> t
+
 end
 
 type stage_opts = {
@@ -88,7 +72,6 @@ and estimates = { ops : estimate; lds : estimate; mem : estimate }
 and kernel_info = {
   name : string;
   axis_types : Axis_type.t list;
-  dont_use_locals : bool;
   applied_opts : Opt.t list;
   opts_to_apply : Opt.t list option;
   estimates : estimates option;
@@ -3504,7 +3487,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 12
+let export_version = 13
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

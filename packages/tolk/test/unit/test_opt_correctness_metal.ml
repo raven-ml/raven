@@ -5,7 +5,7 @@
 
 (* Every optimisation beam search can select must preserve kernel semantics,
    on the Metal renderer. Metal admits the actions a CPU target rejects —
-   LOCAL, GROUP, GROUPTOP and the tensor cores — so this covers the part of
+   local splits and tensor cores — so this covers the part of
    the action space the CPU sweep cannot reach. See {!Tolk_opt_fuzz}. *)
 
 open Windtrap

@@ -600,7 +600,7 @@ let test_padded_reduction op transform values expected () =
   let reduced = U.reduce ~op ~src:value ~ranges:[ range ] ~dtype in
   let dst = U.index ~ptr:output ~idxs:[ U.const_int 0 ] () in
   let kernel_info : U.kernel_info =
-    { name = "padded_reduction"; axis_types = []; dont_use_locals = false;
+    { name = "padded_reduction"; axis_types = [];
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.store ~dst ~value:reduced () ] in
   let scheduler = Postrange.create sink (Device.renderer device) in
@@ -631,7 +631,7 @@ let test_sparse_program_arguments () =
   let index ptr = U.index ~ptr ~idxs:[ U.const_int 0 ] () in
   let sum = U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(index input) ()) ~rhs:value in
   let kernel_info : U.kernel_info =
-    { name = "sparse_arguments"; axis_types = []; dont_use_locals = false;
+    { name = "sparse_arguments"; axis_types = [];
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.store ~dst:(index output) ~value:sum () ] in
   let program = Codegen.to_program ~optimize:false device (Device.renderer device) sink in

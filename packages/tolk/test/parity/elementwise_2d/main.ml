@@ -24,7 +24,6 @@ let kernel () =
       {
         U.name = "elementwise_2d";
         axis_types = [ Axis_type.Global; Axis_type.Global ];
-        dont_use_locals = false;
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;
