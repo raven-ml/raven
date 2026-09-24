@@ -131,3 +131,22 @@
  (modules test_nv_ip)
  (package tolk)
  (libraries tolk tolk.hcq tolk.nv windtrap))
+
+; Exercise the real marshalling stubs through a fake CUDA driver boundary.
+; The test links this private copy alone, never together with tolk.cuda.
+(library
+ (name test_cuda_abi_driver)
+ (modules)
+ (foreign_stubs
+  (language c)
+  (names test_cuda_abi_stubs)
+  (extra_deps ../../lib/runtime/cuda/tolk_cuda_stubs.c)
+  (include_dirs ../../lib/runtime/cuda ../../lib/runtime/support))
+ (c_library_flags
+  (:include ../../lib/runtime/cuda/dl_flags.sexp)))
+
+(test
+ (name test_cuda_abi)
+ (modules test_cuda_abi)
+ (package tolk)
+ (libraries test_cuda_abi_driver windtrap))

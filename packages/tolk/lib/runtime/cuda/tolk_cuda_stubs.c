@@ -312,13 +312,73 @@ CAMLprim value caml_tolk_cuda_module_load(value v_lib) {
   CAMLreturn(caml_copy_nativeint((intnat)module));
 }
 
-CAMLprim value caml_tolk_cuda_module_get_function(value v_module,
-                                                  value v_name) {
-  CAMLparam2(v_module, v_name);
-  CUfunction func = NULL;
-  cuda_check(p_cuModuleGetFunction(&func, (CUmodule)Nativeint_val(v_module),
-                                   String_val(v_name)));
-  CAMLreturn(caml_copy_nativeint((intnat)func));
+typedef struct { size_t offset, width; } tolk_cuda_arg;
+
+typedef struct {
+  CUfunction func;
+  size_t nbufs, nvals, args_size;
+  tolk_cuda_arg args[];  /* Indexed by compact dispatch slot. */
+} tolk_cuda_program;
+
+static tolk_cuda_program *program_val(value v) {
+  return (tolk_cuda_program *)Nativeint_val(v);
+}
+
+CAMLprim value caml_tolk_cuda_program_create(value v_module, value v_name,
+                                             value v_nbufs, value v_layout) {
+  CAMLparam4(v_module, v_name, v_nbufs, v_layout);
+  CAMLlocal1(v_program);
+  size_t nargs = Wosize_val(v_layout) / 3;
+  intnat nbufs = Long_val(v_nbufs);
+  if (Wosize_val(v_layout) % 3 || nbufs < 0 || (size_t)nbufs > nargs)
+    caml_invalid_argument("CUDA program argument layout is invalid");
+  v_program = caml_copy_nativeint(0);
+  tolk_cuda_program *prg = calloc(1, sizeof(*prg) + nargs * sizeof(*prg->args));
+  if (prg == NULL) caml_raise_out_of_memory();
+  prg->nbufs = nbufs;
+  prg->nvals = nargs - nbufs;
+  for (size_t i = 0; i < nargs; ++i) {
+    intnat slot = Long_val(Field(v_layout, i * 3));
+    intnat off = Long_val(Field(v_layout, i * 3 + 1));
+    intnat width = Long_val(Field(v_layout, i * 3 + 2));
+    if (slot < 0 || (size_t)slot >= nargs || off < 0 ||
+        !(width == 1 || width == 2 || width == 4 || width == 8) ||
+        (slot < nbufs && width != 8) || prg->args[slot].width != 0) {
+      free(prg);
+      caml_invalid_argument("CUDA program argument field is invalid");
+    }
+    prg->args[slot] = (tolk_cuda_arg){(size_t)off, (size_t)width};
+    if ((size_t)off + width > prg->args_size) prg->args_size = off + width;
+  }
+  CUresult status = p_cuModuleGetFunction(&prg->func,
+      (CUmodule)Nativeint_val(v_module), String_val(v_name));
+  if (status != 0) { free(prg); cuda_check(status); }
+  Nativeint_val(v_program) = (intnat)prg;
+  CAMLreturn(v_program);
+}
+
+CAMLprim value caml_tolk_cuda_program_free(value v_program) {
+  CAMLparam1(v_program);
+  free(program_val(v_program));
+  CAMLreturn(Val_unit);
+}
+
+static void write_arg(char *args, tolk_cuda_arg field, uint64_t bits) {
+  for (size_t i = 0; i < field.width; ++i)
+    args[field.offset + i] = (char)(bits >> (8 * i));
+}
+
+static void check_args(const tolk_cuda_program *prg, value bufs, value vals) {
+  if (Wosize_val(bufs) != prg->nbufs || Wosize_val(vals) != prg->nvals)
+    caml_invalid_argument("CUDA argument counts do not match the signature");
+}
+
+static void pack_args(const tolk_cuda_program *prg, char *args,
+                      value bufs, value vals) {
+  for (size_t i = 0; i < prg->nbufs; ++i)
+    write_arg(args, prg->args[i], (uint64_t)Nativeint_val(Field(bufs, i)));
+  for (size_t i = 0; i < prg->nvals; ++i)
+    write_arg(args, prg->args[prg->nbufs + i], (uint64_t)Int64_val(Field(vals, i)));
 }
 
 CAMLprim value caml_tolk_cuda_module_unload(value v_module) {
@@ -327,9 +387,9 @@ CAMLprim value caml_tolk_cuda_module_unload(value v_module) {
   CAMLreturn(Val_unit);
 }
 
-/* Launch a kernel. Arguments are encoded as a single parameter buffer of
-   packed 8-byte device pointers followed by 4-byte int32 values, passed via
-   CU_LAUNCH_PARAM_BUFFER_POINTER. When [wait] is true, the launch is timed
+/* Launch a kernel. The binary signature determines argument slots, widths
+   and alignment in the CU_LAUNCH_PARAM_BUFFER_POINTER structure.
+   When [wait] is true, the launch is timed
    with a pair of events and the elapsed GPU time in seconds is returned. */
 CAMLprim value caml_tolk_cuda_launch_kernel(value v_func, value v_bufs,
                                             value v_vals, value v_global,
@@ -337,9 +397,9 @@ CAMLprim value caml_tolk_cuda_launch_kernel(value v_func, value v_bufs,
   CAMLparam5(v_func, v_bufs, v_vals, v_global, v_local);
   CAMLxparam1(v_wait);
   CAMLlocal2(v_time, v_some);
-  CUfunction func = (CUfunction)Nativeint_val(v_func);
-  mlsize_t nbufs = Wosize_val(v_bufs);
-  mlsize_t nvals = Wosize_val(v_vals);
+  tolk_cuda_program *prg = program_val(v_func);
+  CUfunction func = prg->func;
+  check_args(prg, v_bufs, v_vals);
   if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3)
     caml_failwith("CUDA launch expects 3D sizes");
   unsigned int gx = (unsigned int)Long_val(Field(v_global, 0));
@@ -350,17 +410,10 @@ CAMLprim value caml_tolk_cuda_launch_kernel(value v_func, value v_bufs,
   unsigned int lz = (unsigned int)Long_val(Field(v_local, 2));
   int wait = Bool_val(v_wait);
 
-  size_t args_size = nbufs * 8 + nvals * 4;
-  char *c_args = (char *)malloc(args_size > 0 ? args_size : 1);
-  if (c_args == NULL) caml_failwith("CUDA kernel argument allocation failed");
-  for (mlsize_t i = 0; i < nbufs; ++i) {
-    CUdeviceptr ptr = (CUdeviceptr)Nativeint_val(Field(v_bufs, i));
-    memcpy(c_args + i * 8, &ptr, 8);
-  }
-  for (mlsize_t i = 0; i < nvals; ++i) {
-    int32_t val = (int32_t)Long_val(Field(v_vals, i));
-    memcpy(c_args + nbufs * 8 + i * 4, &val, 4);
-  }
+  size_t args_size = prg->args_size;
+  char *c_args = calloc(args_size > 0 ? args_size : 1, 1);
+  if (c_args == NULL) caml_raise_out_of_memory();
+  pack_args(prg, c_args, v_bufs, v_vals);
   void *config[5] = {CU_LAUNCH_PARAM_BUFFER_POINTER, c_args,
                      CU_LAUNCH_PARAM_BUFFER_SIZE, &args_size,
                      CU_LAUNCH_PARAM_END};
@@ -416,6 +469,7 @@ typedef struct {
   CUDA_MEMCPY3D_v2 cparams;
   CUcontext copy_ctx;
   char *args;
+  tolk_cuda_arg *fields;  /* Owns one allocation containing fields and args. */
   size_t args_size;
   size_t nbufs;
   size_t nvals;
@@ -483,27 +537,27 @@ CAMLprim value caml_tolk_cuda_graph_add_kernel(value v_graph, value v_func,
   if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3)
     caml_failwith("CUDA graph kernel expects 3D sizes");
   tolk_graph_node *node = &g->nodes[g->n];
+  tolk_cuda_program *prg = program_val(v_func);
+  check_args(prg, v_bufs, v_vals);
+  CUgraphNode deps[Wosize_val(v_deps) + 1];
+  size_t ndeps = graph_deps(g, v_deps, deps);
   node->is_copy = 0;
-  node->nbufs = Wosize_val(v_bufs);
-  node->nvals = Wosize_val(v_vals);
-  node->args_size = node->nbufs * 8 + node->nvals * 4;
-  node->args = (char *)malloc(node->args_size > 0 ? node->args_size : 1);
-  if (node->args == NULL)
-    caml_failwith("CUDA graph kernel argument allocation failed");
-  for (mlsize_t i = 0; i < node->nbufs; ++i) {
-    CUdeviceptr ptr = (CUdeviceptr)Nativeint_val(Field(v_bufs, i));
-    memcpy(node->args + i * 8, &ptr, 8);
-  }
-  for (mlsize_t i = 0; i < node->nvals; ++i) {
-    int32_t val = (int32_t)Long_val(Field(v_vals, i));
-    memcpy(node->args + node->nbufs * 8 + i * 4, &val, 4);
-  }
+  node->nbufs = prg->nbufs;
+  node->nvals = prg->nvals;
+  node->args_size = prg->args_size;
+  size_t fields_size = (prg->nbufs + prg->nvals) * sizeof(*prg->args);
+  size_t alloc_size = fields_size + node->args_size;
+  node->fields = calloc(alloc_size > 0 ? alloc_size : 1, 1);
+  if (node->fields == NULL) caml_raise_out_of_memory();
+  memcpy(node->fields, prg->args, fields_size);
+  node->args = (char *)node->fields + fields_size;
+  pack_args(prg, node->args, v_bufs, v_vals);
   node->config[0] = CU_LAUNCH_PARAM_BUFFER_POINTER;
   node->config[1] = node->args;
   node->config[2] = CU_LAUNCH_PARAM_BUFFER_SIZE;
   node->config[3] = &node->args_size;
   node->config[4] = CU_LAUNCH_PARAM_END;
-  node->kparams.func = (CUfunction)Nativeint_val(v_func);
+  node->kparams.func = prg->func;
   node->kparams.gridDimX = (unsigned int)Long_val(Field(v_global, 0));
   node->kparams.gridDimY = (unsigned int)Long_val(Field(v_global, 1));
   node->kparams.gridDimZ = (unsigned int)Long_val(Field(v_global, 2));
@@ -513,13 +567,12 @@ CAMLprim value caml_tolk_cuda_graph_add_kernel(value v_graph, value v_func,
   node->kparams.sharedMemBytes = 0;
   node->kparams.kernelParams = NULL;
   node->kparams.extra = node->config;
-  CUgraphNode deps[Wosize_val(v_deps) + 1];
-  size_t ndeps = graph_deps(g, v_deps, deps);
   CUresult status = p_cuGraphAddKernelNode(&node->node, g->graph,
                                            ndeps > 0 ? deps : NULL, ndeps,
                                            &node->kparams);
   if (status != 0) {
-    free(node->args);
+    free(node->fields);
+    node->fields = NULL;
     node->args = NULL;
     cuda_check(status);
   }
@@ -595,7 +648,7 @@ CAMLprim value caml_tolk_cuda_graph_set_buf(value v_graph, value v_node,
   } else {
     if (pos < 0 || (size_t)pos >= node->nbufs)
       caml_failwith("CUDA graph buffer position out of range");
-    memcpy(node->args + pos * 8, &addr, 8);
+    write_arg(node->args, node->fields[pos], addr);
   }
   CAMLreturn(Val_unit);
 }
@@ -607,8 +660,7 @@ CAMLprim value caml_tolk_cuda_graph_set_val(value v_graph, value v_node,
   long idx = Long_val(v_idx);
   if (node->is_copy || idx < 0 || (size_t)idx >= node->nvals)
     caml_failwith("CUDA graph value index out of range");
-  int32_t val = (int32_t)Long_val(v_val);
-  memcpy(node->args + node->nbufs * 8 + idx * 4, &val, 4);
+  write_arg(node->args, node->fields[node->nbufs + idx], (uint64_t)Int64_val(v_val));
   CAMLreturn(Val_unit);
 }
 
@@ -685,7 +737,7 @@ CAMLprim value caml_tolk_cuda_graph_destroy(value v_graph) {
   tolk_graph *g = graph_val(v_graph);
   if (g->exec != NULL) p_cuGraphExecDestroy(g->exec);
   if (g->graph != NULL) p_cuGraphDestroy(g->graph);
-  for (int i = 0; i < g->n; ++i) free(g->nodes[i].args);
+  for (int i = 0; i < g->n; ++i) free(g->nodes[i].fields);
   free(g->nodes);
   free(g);
   CAMLreturn(Val_unit);

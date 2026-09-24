@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- CUDA dispatch and graph replay pack arguments using the binary signature,
+  preserving mixed-width alignment, compact slot order and 64-bit scalar
+  values when launching kernels or rebinding replay arguments.
+
 - CPU dispatch honors compact slots in compiled binary signatures, including
   reordered buffer and mixed-width scalar bindings. Ordinary generated
   signatures retain the allocation-free argument path.

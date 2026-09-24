@@ -43,6 +43,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Adopt the final axis kinds. Port sorted-axis
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.
+- Enforce the final linear formal ordering before rendering hand-built GPU
+  programs: interleaved scalar/storage PARAMs currently disagree with the
+  buffer-first binary signature on CUDA/AMD.
 - Centralize shape, numel, range and backward-slice properties. Remove parallel
   reconstruction and silent guesses in view offsets, stage
   buffer sizes, renderer widths and range metadata.
@@ -82,15 +85,13 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Adopt BufferStorage, HostAllocator, per-device mappings and typed dispatch/
   transfer identities. Remove the nativeint-only transfer seam and Metal token
   workaround; preserve view lifetimes and 64-bit offsets.
-- Bind CUDA arguments from signature slots and dtypes, including mixed-width
-  scalars in direct dispatch and replay.
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
 - Finish CPU host-call integration with HCQ2. Compare CPU
   matmul performance with the final target after optimizer migration and
   resolve avoidable regressions.
-- Migrate Metal/CUDA queues and CUDA argument bindings; implement CUDA peer enablement
+- Migrate Metal/CUDA queues; implement CUDA peer enablement
   and synchronized cross-device transfer with unsupported-peer fallback.
 - Migrate AMD queue descriptors, AQL/multi-XCC, race/recovery fixes and consumed
   firmware/register tables. Port NV channel/descriptor, semaphore, GSP and

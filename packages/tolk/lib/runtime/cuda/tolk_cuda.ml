@@ -42,15 +42,17 @@ module Ffi = struct
 
   external module_load : bytes -> nativeint = "caml_tolk_cuda_module_load"
 
-  external module_get_function : nativeint -> string -> nativeint
-    = "caml_tolk_cuda_module_get_function"
+  external program_create : nativeint -> string -> int -> int array -> nativeint
+    = "caml_tolk_cuda_program_create"
+
+  external program_free : nativeint -> unit = "caml_tolk_cuda_program_free"
 
   external module_unload : nativeint -> unit = "caml_tolk_cuda_module_unload"
 
   external launch_kernel :
     nativeint ->
     nativeint array ->
-    int array ->
+    int64 array ->
     int array ->
     int array ->
     bool ->
@@ -64,7 +66,7 @@ module Ffi = struct
     int array ->
     int array ->
     nativeint array ->
-    int array ->
+    int64 array ->
     int array ->
     int = "caml_tolk_cuda_graph_add_kernel_bc" "caml_tolk_cuda_graph_add_kernel"
 
@@ -83,7 +85,7 @@ module Ffi = struct
   external graph_set_buf : nativeint -> int -> int -> nativeint -> unit
     = "caml_tolk_cuda_graph_set_buf"
 
-  external graph_set_val : nativeint -> int -> int -> int -> unit
+  external graph_set_val : nativeint -> int -> int -> int64 -> unit
     = "caml_tolk_cuda_graph_set_val"
 
   external graph_set_launch : nativeint -> int -> int array -> int array -> unit
@@ -219,17 +221,31 @@ end
 module Program = struct
   let runtime state (obj : Tolk_uop.Tiny_elf.t) =
     let entry_name = obj.name and lib = obj.lib in
+    let fields = Tolk_uop.Tiny_elf.layout obj.signature in
+    let nbufs = List.fold_left (fun n (arg : Tolk_uop.Tiny_elf.argument) ->
+        n + if arg.addrspace = Tolk_uop.Dtype.Alu then 0 else 1) 0 obj.signature in
+    let layout = Array.of_list (List.concat_map (fun (field : Tolk_uop.Tiny_elf.field) ->
+        [ field.argument.slot; field.offset; field.size ]) fields) in
     Ffi.ctx_set_current state.State.context;
     let module_ = Ffi.module_load lib in
-    let func = Ffi.module_get_function module_ entry_name in
+    let func = try Ffi.program_create module_ entry_name nbufs layout
+      with exn -> Ffi.module_unload module_; raise exn in
     let default_local = [| 1; 1; 1 |] in
+    let unloaded = ref false in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      if !unloaded then invalid_arg "CUDA program has been unloaded";
       let local = Option.value local ~default:default_local in
       Ffi.ctx_set_current state.State.context;
-      Ffi.launch_kernel func bufs (Array.map Int64.to_int vals) global local
+      Ffi.launch_kernel func bufs vals global local
         wait
     in
-    let free () = Ffi.module_unload module_ in
+    let free () =
+      if not !unloaded then begin
+        Ffi.ctx_set_current state.State.context;
+        unloaded := true;
+        Fun.protect ~finally:(fun () -> Ffi.program_free func)
+          (fun () -> Ffi.module_unload module_)
+      end in
     Device.{ call; free; handle = func }
 end
 
@@ -240,22 +256,23 @@ module Graph = struct
   let build state (nodes : Device.Graph.node array) =
     Ffi.ctx_set_current state.State.context;
     let g = Ffi.graph_create (Array.length nodes) in
-    Array.iter
-      (function
-        | Device.Graph.Kernel { handle; global; local; bufs; vals; deps } ->
-            ignore (Ffi.graph_add_kernel g handle global local bufs vals deps
-                    : int)
-        | Device.Graph.Copy { dest; src; nbytes; deps } ->
-            ignore
-              (Ffi.graph_add_copy g state.State.context dest src nbytes deps
-                : int))
-      nodes;
-    Ffi.graph_instantiate g;
+    (try
+       Array.iter
+         (function
+           | Device.Graph.Kernel { handle; global; local; bufs; vals; deps } ->
+               ignore (Ffi.graph_add_kernel g handle global local bufs
+                         (Array.map Int64.of_int vals) deps : int)
+           | Device.Graph.Copy { dest; src; nbytes; deps } ->
+               ignore (Ffi.graph_add_copy g state.State.context dest src nbytes
+                         deps : int))
+         nodes;
+       Ffi.graph_instantiate g
+     with exn -> Ffi.graph_destroy g; raise exn);
     let exec =
       {
         Device.Graph.set_buf = (fun node pos addr ->
           Ffi.graph_set_buf g node pos addr);
-        set_val = (fun node idx v -> Ffi.graph_set_val g node idx v);
+        set_val = (fun node idx v -> Ffi.graph_set_val g node idx (Int64.of_int v));
         set_launch_dims = (fun node ~global ~local ->
           Ffi.graph_set_launch g node global local);
         set_params = (fun node -> Ffi.graph_set_params g node);
