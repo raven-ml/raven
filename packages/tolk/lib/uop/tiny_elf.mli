@@ -43,3 +43,12 @@ val layout : argument list -> field list
 
     Raises [Invalid_argument] for void or weak scalar dtypes, or if offsets
     exceed the host size range. *)
+
+val pack : field list -> bufs:nativeint array -> vals:int64 array -> bytes
+(** [pack fields ~bufs ~vals] encodes a {!layout} in little-endian order,
+    selecting addresses and scalar bit patterns by each argument's compact
+    slot. Scalar values are narrowed to the declared width; padding is zero.
+    [bufs] and [vals] must have the signature's buffer and scalar counts.
+
+    Raises [Invalid_argument] if argument counts differ, a slot is outside
+    the supplied arrays, or a field has an unsupported width. *)

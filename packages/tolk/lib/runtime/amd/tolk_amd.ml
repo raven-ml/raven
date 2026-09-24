@@ -909,12 +909,12 @@ module Program = struct
 
   let free ~free:release t = release t.lib_gpu
 
-  let call t ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms
+  let call t ~layout ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms
       ~bufs ~vals ~global_size ~local_size () =
     if t.params.enable_dispatch_ptr then
       invalid_arg "Program.call: dispatch-pointer programs are not supported";
     let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size in
-    Hcq.Kernargs.write_args slot ~bufs ~vals;
+    Hcq.Kernargs.write_args layout slot ~bufs ~vals;
     let cq = Compute_queue.create t.params.dev in
     Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
     Compute_queue.memory_barrier cq;
@@ -1712,6 +1712,7 @@ module Runtime = struct
 
   let runtime state (obj : Tolk_uop.Tiny_elf.t) =
     let name = obj.name and lib = obj.lib in
+    let layout = Tolk_uop.Tiny_elf.layout obj.signature in
     let prg =
       Program.load state.State.hw
         ~alloc:(fun size ->
@@ -1721,11 +1722,10 @@ module Runtime = struct
     ensure_scratch state prg.Program.private_segment_size;
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let local = Option.value local ~default:default_local in
-      let vals = Array.map Int64.to_int vals in
       let tl = state.State.tl in
       let timeline_value = Timeline.next_timeline tl in
       let launch ?timing () =
-        Program.call prg ~kernargs:state.State.kernargs
+        Program.call prg ~layout ~kernargs:state.State.kernargs
           ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
           ~timeline_value ?wait:timing ~bufs ~vals
           ~global_size:(global.(0), global.(1), global.(2))

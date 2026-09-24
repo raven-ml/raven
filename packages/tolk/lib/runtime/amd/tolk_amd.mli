@@ -518,6 +518,7 @@ module Program : sig
 
   val call :
     'meta t ->
+    layout:Tolk_uop.Tiny_elf.field list ->
     kernargs:'a Hcq.Kernargs.t ->
     queue:Queue_desc.t ->
     timeline:('b, 'meta device) Hcq.Signal.t ->
@@ -525,15 +526,15 @@ module Program : sig
     ?wait:('c, 'meta device) Hcq.Signal.t * ('d, 'meta device) Hcq.Signal.t ->
     ?timeout_ms:int ->
     bufs:nativeint array ->
-    vals:int array ->
+    vals:int64 array ->
     global_size:int * int * int ->
     local_size:int * int * int ->
     unit ->
     float option
-  (** [call t ~kernargs ~queue ~timeline ~timeline_value ~bufs ~vals
+  (** [call t ~layout ~kernargs ~queue ~timeline ~timeline_value ~bufs ~vals
       ~global_size ~local_size ()] enqueues one launch of [t]: it stages
-      [bufs] and [vals] into a fresh slot of [kernargs], then submits to
-      [queue] a stream that waits for the device's previous work
+      [bufs] and [vals] according to [layout] into a fresh slot of [kernargs],
+      then submits to [queue] a stream that waits for the device's previous work
       ([timeline] reaching [timeline_value - 1]), makes host writes
       visible, launches the kernel over a [global_size] grid of
       [local_size] workgroups, and signals [timeline] with

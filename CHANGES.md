@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD and NV dispatch bind arguments by their compiled slots and scalar widths,
+  preserving mixed-width alignment and 64-bit values instead of packing every
+  scalar into 32 bits. Invalid argument layouts leave mapped memory unchanged.
+
 - Recompiling a kernel produces the same structural name regardless of earlier
   compilations, preserving source-cache reuse and stable program identities.
 

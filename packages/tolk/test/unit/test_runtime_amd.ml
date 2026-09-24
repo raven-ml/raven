@@ -16,6 +16,14 @@ module Program = Tolk_amd.Program
 module Pci_iface = Tolk_amd.Pci_iface
 module Amdev = Tolk_amd.Amdev
 
+let argument_layout nbufs dtypes =
+  let open Tolk_uop in
+  let arg slot addrspace dtype : Tiny_elf.argument =
+    { name = None; slot; addrspace; dtype; shape = [] } in
+  Tiny_elf.layout
+    (List.init nbufs (fun slot -> arg slot Dtype.Global Dtype.uint8)
+     @ List.mapi (fun i dtype -> arg (nbufs + i) Dtype.Alu dtype) dtypes)
+
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
 
 let contains hay needle =
@@ -691,8 +699,8 @@ let () =
                     Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
                   in
                   let slot = Kernargs.alloc (Kernargs.create root) 24 in
-                  Kernargs.write_args slot ~bufs:[| 0x1000n; 0x2000n |]
-                    ~vals:[| 7; -1 |];
+                  Kernargs.write_args (argument_layout 2 [ Tolk_uop.Dtype.int32; Tolk_uop.Dtype.int32 ]) slot ~bufs:[| 0x1000n; 0x2000n |]
+                    ~vals:[| 7L; -1L |];
                   equal bytes
                     (Bytes.of_string
                        "\x00\x10\x00\x00\x00\x00\x00\x00\
@@ -706,9 +714,9 @@ let () =
                     Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
                   in
                   let slot = Kernargs.alloc (Kernargs.create root) 32 in
-                  Kernargs.write_args slot
+                  Kernargs.write_args (argument_layout 1 [ Tolk_uop.Dtype.int32 ]) slot
                     ~prefix:[| 0xdeadbeef; 1 |]
-                    ~bufs:[| 0x1000n |] ~vals:[| 7 |];
+                    ~bufs:[| 0x1000n |] ~vals:[| 7L |];
                   equal bytes
                     (Bytes.of_string
                        "\xef\xbe\xad\xde\x01\x00\x00\x00\
@@ -716,21 +724,37 @@ let () =
                         \x07\x00\x00\x00")
                     (Mmio.read_bytes m ~off:0 ~len:20);
                   raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args slot ~prefix:[| -1 |] ~bufs:[||]
+                      Kernargs.write_args [] slot ~prefix:[| -1 |] ~bufs:[||]
                         ~vals:[||])));
-          test "write_args is bounds- and range-checked" (fun () ->
+          test "write_args checks slots and capacity before modifying memory" (fun () ->
               with_map 4096 (fun m ->
                   let root =
                     Buffer.make ~va:0n ~size:4096 ~view:m ~meta:() ()
                   in
                   let slot = Buffer.offset root ~off:0 ~size:16 () in
+                  let before = Mmio.read_bytes m ~off:0 ~len:16 in
                   raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args slot
+                      Kernargs.write_args (argument_layout 3 []) slot
                         ~bufs:[| 0x1n; 0x2n; 0x3n |]
                         ~vals:[||]);
                   raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args slot ~bufs:[||]
-                        ~vals:[| 0x100000000 |])));
+                      Kernargs.write_args (argument_layout 1 []) slot ~bufs:[||]
+                        ~vals:[| 0x100000000L |]);
+                  let short = Buffer.make ~va:0n ~size:1 ~view:m ~meta:() () in
+                  raises_match is_invalid_arg (fun () ->
+                      Kernargs.write_args (argument_layout 0 [ Tolk_uop.Dtype.int64 ])
+                        short ~bufs:[||] ~vals:[| 1L |]);
+                  equal bytes before (Mmio.read_bytes m ~off:0 ~len:16)));
+          test "write_args preserves mixed widths after a driver prefix" (fun () ->
+              with_map 4096 (fun m ->
+                  let slot = Buffer.make ~va:0n ~size:40 ~view:(Mmio.view m ~off:0 ~size:40 ()) ~meta:() () in
+                  let open Tolk_uop in
+                  let layout = argument_layout 1 [ Dtype.int8; Dtype.int16; Dtype.int32; Dtype.int64 ] in
+                  Kernargs.write_args ~prefix:[| 0xdeadbeef; 1 |] layout slot
+                    ~bufs:[| 0x100002000n |] ~vals:[| -7L; 300L; 12345L; Int64.min_int |];
+                  equal bytes
+                    (Bytes.of_string "\xef\xbe\xad\xde\x01\x00\x00\x00\x00\x20\x00\x00\x01\x00\x00\x00\xf9\x00\x2c\x01\x39\x30\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80")
+                    (Mmio.read_bytes m ~off:0 ~len:32)));
           test "the region wraps when exhausted" (fun () ->
               with_map 4096 (fun m ->
                   let root =
@@ -1252,9 +1276,10 @@ let () =
                   Mmio.write64 m (aux + 16 + 8) 10000L;
                   Mmio.write64 m (aux + 32 + 8) 35000L;
                   let elapsed =
-                    Program.call prg ~kernargs ~queue:qd ~timeline:tl
+                    Program.call prg ~layout:(argument_layout 2 [ Tolk_uop.Dtype.int64 ])
+                      ~kernargs ~queue:qd ~timeline:tl
                       ~timeline_value:0x43 ~wait:(st, en)
-                      ~bufs:[| 0x1000n; 0x2000n |] ~vals:[| 7 |]
+                      ~bufs:[| 0x1000n; 0x2000n |] ~vals:[| 0x100000007L |]
                       ~global_size:(4, 3, 2) ~local_size:(8, 4, 1) ()
                   in
                   (match elapsed with
@@ -1266,8 +1291,8 @@ let () =
                     (Bytes.of_string
                        "\x00\x10\x00\x00\x00\x00\x00\x00\
                         \x00\x20\x00\x00\x00\x00\x00\x00\
-                        \x07\x00\x00\x00")
-                    (Mmio.read_bytes m ~off:(aux + 64) ~len:20);
+                        \x07\x00\x00\x00\x01\x00\x00\x00")
+                    (Mmio.read_bytes m ~off:(aux + 64) ~len:24);
                   let expected =
                     let cq = Cq.create dev in
                     Cq.wait cq ~value:0x42 tl;
@@ -1318,7 +1343,7 @@ let () =
                     }
                   in
                   let r =
-                    Program.call prg ~kernargs ~queue:qd ~timeline:tl
+                    Program.call prg ~layout:[] ~kernargs ~queue:qd ~timeline:tl
                       ~timeline_value:1 ~bufs:[||] ~vals:[||]
                       ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) ()
                   in
@@ -1366,7 +1391,7 @@ let () =
                     }
                   in
                   raises_match is_invalid_arg (fun () ->
-                      Program.call
+                      Program.call ~layout:[]
                         (prog (amd_prog ~dispatch_ptr:true dev) 88)
                         ~kernargs ~queue:qd ~timeline:tl ~timeline_value:1
                         ~bufs:[||] ~vals:[||] ~global_size:(1, 1, 1)
@@ -1377,7 +1402,7 @@ let () =
                   equal int 0 qd.Tolk_amd.Queue_desc.put_value;
                   (* the timeline wait needs a value to wait on *)
                   raises_match is_invalid_arg (fun () ->
-                      Program.call
+                      Program.call ~layout:[]
                         (prog (amd_prog dev) 24)
                         ~kernargs ~queue:qd ~timeline:tl ~timeline_value:0
                         ~bufs:[||] ~vals:[||] ~global_size:(1, 1, 1)

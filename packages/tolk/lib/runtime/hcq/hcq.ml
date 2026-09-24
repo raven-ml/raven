@@ -420,23 +420,16 @@ module Kernargs = struct
   let alloc t size =
     Buffer.offset t.buf ~off:(Tolk.Bump.alloc t.bump size ~align:8 ()) ~size ()
 
-  let write_args ?(prefix = [||]) slot ~bufs ~vals =
+  let write_args ?(prefix = [||]) layout slot ~bufs ~vals =
     let view = Buffer.cpu_view slot in
-    Array.iteri
-      (fun i w ->
-        if w < 0 || w > 0xFFFF_FFFF then
-          invalid_arg "Kernargs.write_args: not a 32-bit value";
-        Mmio.write32 view (4 * i) (Int32.of_int w))
-      prefix;
+    let args = Tolk_uop.Tiny_elf.pack layout ~bufs ~vals in
     let base = 4 * Array.length prefix in
-    Array.iteri
-      (fun i va -> Mmio.write64 view (base + (8 * i)) (Int64.of_nativeint va))
-      bufs;
-    let base = base + (8 * Array.length bufs) in
-    Array.iteri
-      (fun i v ->
-        if v < -0x8000_0000 || v > 0xFFFF_FFFF then
-          invalid_arg "Kernargs.write_args: not a 32-bit value";
-        Mmio.write32 view (base + (4 * i)) (Int32.of_int v))
-      vals
+    let capacity = min (Buffer.size slot) (Mmio.size view) in
+    if base > capacity || Bytes.length args > capacity - base then
+      invalid_arg "Kernargs.write_args: argument layout exceeds the slot";
+    Array.iter (fun w ->
+        if w < 0 || w > 0xFFFF_FFFF then
+          invalid_arg "Kernargs.write_args: not a 32-bit prefix word") prefix;
+    Array.iteri (fun i w -> Mmio.write32 view (4 * i) (Int32.of_int w)) prefix;
+    Mmio.blit_bytes view ~off:base args
 end

@@ -452,15 +452,15 @@ module Kernargs : sig
 
   val write_args :
     ?prefix:int array ->
+    Tolk_uop.Tiny_elf.field list ->
     'meta Buffer.t ->
     bufs:nativeint array ->
-    vals:int array ->
+    vals:int64 array ->
     unit
-  (** [write_args slot ~bufs ~vals] lays out kernel arguments in
-      [slot]: the words of [prefix] as 32-bit words from byte offset
-      [0] (defaults to none), then the addresses in [bufs] as 64-bit
-      words, then the values in [vals] as 32-bit words. Raises
-      [Invalid_argument] if the layout does not fit in [slot], if a
-      prefix word is negative or exceeds [0xFFFFFFFF], if a value does
-      not fit in 32 bits, or if [slot] has no view. *)
+  (** [write_args layout slot ~bufs ~vals] writes the 32-bit words of
+      [prefix] (defaults to none), followed by the typed argument structure
+      encoded by {!Tolk_uop.Tiny_elf.pack}. Argument offsets are relative to
+      the end of the prefix. Raises [Invalid_argument] before writing if the
+      layout does not fit in [slot], if a prefix word is negative or exceeds
+      [0xFFFFFFFF], if argument slots are invalid, or if [slot] has no view. *)
 end

@@ -21,6 +21,14 @@ module Nvk_iface = Tolk_nv.Nvk_iface
 module Pci_iface = Tolk_nv.Pci_iface
 module Program = Tolk_nv.Program
 
+let argument_layout nbufs dtypes =
+  let open Tolk_uop in
+  let arg slot addrspace dtype : Tiny_elf.argument =
+    { name = None; slot; addrspace; dtype; shape = [] } in
+  Tiny_elf.layout
+    (List.init nbufs (fun slot -> arg slot Dtype.Global Dtype.uint8)
+     @ List.mapi (fun i dtype -> arg (nbufs + i) Dtype.Alu dtype) dtypes)
+
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
 
 let with_map size f =
@@ -1337,10 +1345,11 @@ let () =
                          ~meta:() ())
                   in
                   let r =
-                    Program.call prg ~kernargs ~queue:qd ~timeline:tl_sig
+                    Program.call prg ~layout:(argument_layout 2 [ Tolk_uop.Dtype.int64 ])
+                      ~kernargs ~queue:qd ~timeline:tl_sig
                       ~timeline_value:1
                       ~bufs:[| 0x111100000n; 0x222200000n |]
-                      ~vals:[| 7 |] ~global_size:(4, 3, 2)
+                      ~vals:[| 0x100000007L |] ~global_size:(4, 3, 2)
                       ~local_size:(8, 4, 1) ()
                   in
                   is_none r;
@@ -1360,7 +1369,7 @@ let () =
                     (staged_dwords m ~off:(0x4000 + 24) 6);
                   equal int64 0x111100000L (Mmio.read64 m (0x4000 + 0x160));
                   equal int64 0x222200000L (Mmio.read64 m (0x4000 + 0x168));
-                  equal int32 7l (Mmio.read32 m (0x4000 + 0x170));
+                  equal int64 0x100000007L (Mmio.read64 m (0x4000 + 0x170));
                   let q =
                     exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
                       ~kernarg_off:0x4000
@@ -1407,7 +1416,7 @@ let () =
                   Mmio.write64 m 0x3018 10_000_000L;
                   Mmio.write64 m 0x3028 35_000_000L;
                   let r =
-                    Program.call prg ~kernargs ~queue:qd ~timeline:tl_sig
+                    Program.call prg ~layout:[] ~kernargs ~queue:qd ~timeline:tl_sig
                       ~timeline_value:1 ~wait:(st, en) ~bufs:[||] ~vals:[||]
                       ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) ()
                   in
@@ -1445,7 +1454,7 @@ let () =
                          ~meta:() ())
                   in
                   let call ?(prg = prg) ~global_size ~local_size () =
-                    Program.call prg ~kernargs ~queue:qd ~timeline:tl_sig
+                    Program.call prg ~layout:[] ~kernargs ~queue:qd ~timeline:tl_sig
                       ~timeline_value:1 ~bufs:[||] ~vals:[||] ~global_size
                       ~local_size ()
                   in
@@ -1472,7 +1481,7 @@ let () =
                   in
                   let prg_small = load_fixture small in
                   raises_match (failure_with "Too many resources") (fun () ->
-                      Program.call prg_small ~kernargs ~queue:qd
+                      Program.call prg_small ~layout:[] ~kernargs ~queue:qd
                         ~timeline:tl_sig ~timeline_value:1 ~bufs:[||]
                         ~vals:[||] ~global_size:(1, 1, 1)
                         ~local_size:(1, 1, 1) ());

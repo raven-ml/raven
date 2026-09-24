@@ -3,7 +3,7 @@
 (library
  (name tolk_hcq)
  (public_name tolk.hcq)
- (libraries tolk)
+ (libraries tolk tolk.uop)
  (foreign_stubs
   (language c)
   (names tolk_hcq_stubs tolk_system_stubs)))

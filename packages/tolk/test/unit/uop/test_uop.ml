@@ -2395,6 +2395,22 @@ let binary_argument_layout () =
         (fun () -> ignore (Tiny_elf.layout [ arg 0 Dtype.Alu dtype ])))
     [ Dtype.void; Dtype.weakint; Dtype.weakfloat ]
 
+let binary_argument_packing () =
+  let arg slot addrspace dtype : Tiny_elf.argument =
+    { name = None; slot; addrspace; dtype; shape = [] } in
+  let layout = Tiny_elf.layout
+    [ arg 1 Dtype.Global Dtype.float32; arg 0 Dtype.Global Dtype.uint8;
+      arg 3 Dtype.Alu Dtype.int8; arg 2 Dtype.Alu Dtype.int64;
+      arg 4 Dtype.Alu Dtype.int16; arg 5 Dtype.Alu Dtype.int32 ] in
+  let packed = Tiny_elf.pack layout ~bufs:[| 0x100002000n; 0x300004000n |]
+    ~vals:[| Int64.min_int; -7L; 300L; 0x123456789L |] in
+  equal bytes
+    (Bytes.of_string "\x00\x40\x00\x00\x03\x00\x00\x00\x00\x20\x00\x00\x01\x00\x00\x00\xf9\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x2c\x01\x00\x00\x89\x67\x45\x23")
+    packed;
+  equal bytes Bytes.empty (Tiny_elf.pack [] ~bufs:[||] ~vals:[||]);
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> ignore (Tiny_elf.pack layout ~bufs:[||] ~vals:[||]))
+
 let incomplete_program_has_no_binary () =
   let sink = Uop.sink [] in
   let info = Uop.program_info_from_sink sink in
@@ -2411,6 +2427,7 @@ let () =
           test "compiled signatures preserve sparse slots and argument types"
             compiled_signature_preserves_slots_and_types;
           test "argument structures align pointers and mixed scalar widths" binary_argument_layout;
+          test "argument packing follows slots, widths and alignment" binary_argument_packing;
           test "incomplete programs have no binary" incomplete_program_has_no_binary;
           test "Ops and dtype access" ops_access;
           test "Ops tinygrad order" ops_tinygrad_order;
