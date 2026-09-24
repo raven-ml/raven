@@ -45,8 +45,8 @@ val pm_commit_weak : Upat.Pattern_matcher.t
 val pm_cast_weak : Upat.Pattern_matcher.t
 (** [pm_cast_weak] commits a weak ALU node under demand from a concrete cast
     over it. The committed width is the promotion of the cast's dtype with the
-    node's own default width, so a cast can widen the computation but never
-    narrows it below what the node's value range requires. *)
+    node's and each weak operand's default widths. A cast can widen the
+    computation but never narrows it below the ranges its operands require. *)
 
 val pm_lower_index_dtype : unit -> Upat.Pattern_matcher.t
 (** [pm_lower_index_dtype ()] is the full weak-lowering pass: {!pm_commit_weak}

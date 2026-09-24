@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- Weak integer conversions preserve truncation through nested casts and
+  arithmetic. A narrow result cast no longer narrows wide division operands
+  before the computation.
+
 - Preserve floating-point rounding when simplifying comparisons with added
   constants. The rewrite `(c0 + x) < c1` to `x < c1 - c0` now applies only
   to integers.

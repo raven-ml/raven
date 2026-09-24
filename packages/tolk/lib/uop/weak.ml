@@ -32,9 +32,12 @@ let select_dtype u =
 let rebuilt_dtype u dt =
   if Ops.Group.is_comparison (U.op u) then Dtype.bool else dt
 
-let strip_weak_cast s =
+let absorb_weak_src s =
   match U.op s, U.src s with
-  | Ops.Cast, [| inner |] when is_weak s -> inner
+  | Ops.Cast, [| inner |] when is_weak s ->
+      if Dtype.equal (U.dtype s) Dtype.weakint && not (Dtype.is_int (U.dtype inner))
+      then U.cast ~src:inner ~dtype:(select_dtype s)
+      else inner
   | _ -> s
 
 let promo srcs = Dtype.least_upper_dtype (List.map U.dtype srcs)
@@ -66,7 +69,7 @@ let target_dtype u src =
    node is not ready yet. *)
 let lower_weak_node u =
   let start = if U.op u = Ops.Where then 1 else 0 in
-  let src = Array.map strip_weak_cast (U.src u) in
+  let src = Array.map absorb_weak_src (U.src u) in
   let unchanged = Array.for_all2 U.equal (U.src u) src
   and still_weak =
     let rec loop i =
@@ -98,10 +101,9 @@ let lower_weak_const u =
            ~dtype:(U.dtype u))
   | _ -> None
 
-(* Two stacked weak casts are a weakint value used as weakfloat (or the
-   reverse): resolve the inner one at the outer kind's default. A single weak
-   cast is never rewritten here — each consumer absorbs it on its own edge,
-   see lower_weak_srcs. *)
+(* Two stacked weak casts are two value conversions: resolve each at its own
+   kind's default. A single weak cast is absorbed by each consumer on its own
+   edge; see lower_weak_srcs. *)
 let lower_weak_cast u =
   match U.src u with
   | [| inner |] when is_weak inner -> (
@@ -109,7 +111,9 @@ let lower_weak_cast u =
       | Ops.Cast, [| x |] when not (is_weak x) ->
           Some
             (U.cast
-               ~src:(U.cast ~src:x ~dtype:(select_dtype u))
+               ~src:(U.cast
+                    ~src:(U.cast ~src:x ~dtype:(select_dtype inner))
+                    ~dtype:(select_dtype u))
                ~dtype:(U.dtype u))
       | _ -> None)
   | _ -> None
@@ -221,7 +225,12 @@ let cast_weak_srcs c u =
     || not (Dtype.equal (Dtype.weak_dtype (U.dtype c)) (U.dtype u))
   then None
   else
-    let dt = Dtype.least_upper_dtype [ U.dtype c; select_dtype u ] in
+    let widths =
+      Array.fold_left
+        (fun widths s -> if is_weak s then select_dtype s :: widths else widths)
+        [ U.dtype c; select_dtype u ] (U.src u)
+    in
+    let dt = Dtype.least_upper_dtype widths in
     let src =
       Array.map (fun s -> if is_weak s then commit_weak s dt else s) (U.src u)
     in

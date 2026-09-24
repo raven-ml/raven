@@ -93,6 +93,34 @@ let consumer_cast_never_narrows () =
   equal dtype ~msg:"the value keeps the width its range needs" D.int64
     (U.dtype (src r 0))
 
+let cast_preserves_operand_widths () =
+  let large = 1 lsl 40 in
+  let x = U.variable ~name:"dividend" ~min_val:0 ~max_val:large
+      ~dtype:D.weakint () in
+  let quotient = U.alu_binary ~op:Ops.Cdiv ~lhs:x ~rhs:(U.const_int large) in
+  let r = rewrite Weak.pm_cast_weak (U.cast ~src:quotient ~dtype:D.int32) in
+  let division = List.find (fun u -> U.op u = Ops.Cdiv) (U.toposort r) in
+  equal dtype ~msg:"division operands need int64 even though its result fits int32"
+    D.int64 (U.dtype (src division 0))
+
+let consecutive_weak_casts_preserve_integer_conversion () =
+  let x = U.const (C.float D.float32 1.5) in
+  let e = U.cast ~src:(U.cast ~src:x ~dtype:D.weakint) ~dtype:D.weakfloat in
+  let r = lower e |> Symbolic.simplify in
+  match U.arg r with
+  | U.Arg.Value c ->
+      (match C.view c with
+       | C.Float value -> equal float_exact 1.0 value
+       | _ -> fail "expected a floating constant")
+  | _ -> fail "expected a constant"
+
+let weak_integer_cast_is_a_value_conversion () =
+  let x = U.const (C.float D.float32 1.5) in
+  let integer = U.cast ~src:x ~dtype:D.weakint in
+  let r = lower U.O.(integer + U.const_int 1) |> Symbolic.simplify in
+  equal dtype D.int32 (U.dtype r);
+  equal (option int) (Some 2) (const_int_of r)
+
 (* Whole-pass lowering. *)
 
 let range_arithmetic_lowers_to_concrete_int () =
@@ -168,6 +196,11 @@ let () =
         ];
       group "cast demand"
         [
+          test "a cast preserves operand widths" cast_preserves_operand_widths;
+          test "consecutive weak casts preserve integer conversion"
+            consecutive_weak_casts_preserve_integer_conversion;
+          test "a weak integer cast converts its value"
+            weak_integer_cast_is_a_value_conversion;
           test "a wider cast widens" consumer_cast_widens;
           test "a narrower cast does not narrow" consumer_cast_never_narrows;
         ];
