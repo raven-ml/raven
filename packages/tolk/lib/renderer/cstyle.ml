@@ -531,12 +531,12 @@ let volatile_prefix u =
   | Some param when param.volatile -> "volatile "
   | Some _ | None -> ""
 
-(* [render_access ~access_scalar ~access_width u] dereferences the address
+(* [render_ptr ~access_scalar ~access_width u] renders the address
    expression [u] (an INDEX/SHRINK node). [access_scalar]/[access_width] describe
    the value moved through the access; when it is wider than one lane or its
    scalar differs from the pointer's, the address is cast to a matching pointer
    before the dereference. *)
-let render_access (ctx : ctx) ~access_scalar ~access_width (u : U.t) =
+let render_ptr (ctx : ctx) ~access_scalar ~access_width (u : U.t) =
   let expr_count = expr_numel u in
   let access_count =
     if expr_count > 1 then expr_count else max access_width (max_numel u)
@@ -550,11 +550,14 @@ let render_access (ctx : ctx) ~access_scalar ~access_width (u : U.t) =
     || not (Dtype.equal (U.dtype u) ptr_scalar)
   in
   if cast then
-    strf "*((%s%s)(%s))" (volatile_prefix u)
+    strf "((%s%s)(%s))" (volatile_prefix u)
       (render_dtype_c ctx.lang ~sz:access_count ~addrspace:(addrspace_of u)
          ~override_ptr:true ~shape:(U.shape_opt u) access_scalar)
       (lookup ctx u)
-  else strf "*%s" (lookup ctx u)
+  else lookup ctx u
+
+let render_access ctx ~access_scalar ~access_width u =
+  "*" ^ render_ptr ctx ~access_scalar ~access_width u
 
 (* Images are the tinygrad convention of a rank-3 shape whose last axis is 4
    (RGBA); the buffer carries no pointer dtype, so image-ness is read from the
@@ -2415,10 +2418,23 @@ let amd_wmma_rule arch : ctx rule =
                  (wmma_name v.info (U.dtype x)) a b c)
       | Some _ | None -> None )
 
+let amd_nontemporal_load : ctx rule =
+  let open Upat in
+  ( op ~name:"x" Ops.Load,
+    fun ctx bs _ ->
+      let x = bs $ "x" in
+      match U.arg x, U.as_load x with
+      | U.Arg.String "nontemporal", Some { src; alt = None; gate = None } ->
+          Some (strf "__builtin_nontemporal_load(%s)"
+              (render_ptr ctx ~access_scalar:(U.dtype x)
+                 ~access_width:(render_numel ctx x) src))
+      | _ -> None )
+
 let amd_string_rewrite arch =
-  if amd_is_cdna arch then
+  amd_nontemporal_load ::
+  (if amd_is_cdna arch then
     [ amd_wmma_rule arch; amd_fp8_const_rule; amd_fp8_cast_rule ] @ base_rewrite
-  else base_rewrite
+  else base_rewrite)
 
 let amd_non_native_float_scalars =
   [

@@ -1392,6 +1392,25 @@ let () =
         ];
       group "AMD/HIP"
         [
+          test "nontemporal loads keep their scalar or vector pointer type" (fun () ->
+            List.iter (fun width ->
+                let src = U.param ~slot:1 ~dtype:Dtype.float32
+                    ~shape:(U.const_int 8) () in
+                let dst = U.param ~slot:0 ~dtype:Dtype.float32
+                    ~shape:(U.const_int 8) () in
+                let address ptr = if width = 1 then
+                    U.index ~ptr ~idxs:[ U.const_int 0 ] ()
+                  else U.shrink ~src:ptr ~offset:(U.const_int 0) ~size:(U.const_int width) in
+                let ld = U.load ~src:(address src) ()
+                    |> fun u -> U.replace u ~arg:(U.Arg.String "nontemporal") () in
+                let sink = U.sink [ U.store ~dst:(address dst) ~value:ld () ] in
+                List.iter (fun arch ->
+                    let source = render_kernel (Cstyle.amd arch) sink in
+                    assert_contains "AMD nontemporal load" source "__builtin_nontemporal_load(";
+                    if width > 1 then
+                      assert_contains "vector pointer" source "__builtin_nontemporal_load(((float4*)")
+                  [ Gpu_target.RDNA3; Gpu_target.RDNA4; Gpu_target.CDNA3; Gpu_target.CDNA4 ])
+              [ 1; 4 ]);
           test "special dims" (fun () ->
             let rdna3 = Cstyle.amd Gpu_target.RDNA3 in
             assert_contains "amd group_id"

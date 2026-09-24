@@ -65,7 +65,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port final gpudims, slot allocation, range merge, gating and WAR barriers.
   Preserve WARP dimensions and symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
-- Render final constants and AMD nontemporal loads.
+- Render final constants.
   Coordinate Metal's argument-struct ABI with its runtime binding.
 
 ## Storage, execution and devices

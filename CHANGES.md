@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD kernels honor loads marked `nontemporal` by emitting the cache-bypassing
+  builtin. Scalar and vector loads retain the pointer type of their access.
+
 - Elementwise computations over storage slices no longer fail with a false
   indexing-cycle error. Call normalization retains the sliced argument and
   its offset through JIT capture and replay.
