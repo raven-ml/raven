@@ -161,7 +161,6 @@ module Buffer = struct
           Helpers.Global_counters.add_mem_used buf.device (nbytes t)
     | Some base ->
         ensure_allocated (Pack base);
-        base.allocated_views <- base.allocated_views + 1;
         let offset =
           match buf.allocator.offset with
           | None -> invalid_arg "allocator offset is required for buffer views"
@@ -170,7 +169,8 @@ module Buffer = struct
         let base_buf =
           match base.storage with Backing b -> b | Unallocated | Empty -> assert false
         in
-        buf.storage <- Backing (offset base_buf (nbytes t) buf.offset)
+        buf.storage <- Backing (offset base_buf (nbytes t) buf.offset);
+        base.allocated_views <- base.allocated_views + 1
 
   and ensure_allocated t = if not (is_initialized t) then allocate t
 

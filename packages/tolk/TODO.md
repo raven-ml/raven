@@ -73,8 +73,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 - Adopt BufferStorage, HostAllocator, per-device mappings and typed dispatch/
   transfer identities. Remove the nativeint-only transfer seam and Metal token
-  workaround; preserve view lifetimes and 64-bit offsets. Leave view ownership
-  unchanged when offset creation fails.
+  workaround; preserve view lifetimes and 64-bit offsets.
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.

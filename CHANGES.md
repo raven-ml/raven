@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Failed buffer-view allocation no longer retains a nonexistent live view.
+  Allocation can be retried and the base buffer freed after the view is released.
+
 - Empty host arrays have a registered storage identity and can participate in
   JIT capture and replay. Zero-byte buffers, copies, and views require no native
   allocation; empty views may start at the end of a buffer.

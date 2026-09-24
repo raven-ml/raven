@@ -92,6 +92,32 @@ let copy_from_tests =
    by the time any test runs. test_device_no_engine covers that half in a
    separate executable that never references the engine. *)
 
+let failed_view_allocation_preserves_ownership () =
+  let attempts = ref 0 and frees = ref 0 in
+  let allocator = Device.Allocator.Pack {
+      alloc = (fun _ _ -> ());
+      free = (fun () _ _ -> incr frees);
+      copyin = (fun () _ -> ()); copyout = (fun _ () -> ());
+      addr = (fun () -> Nativeint.one);
+      offset = Some (fun () _ _ ->
+          incr attempts;
+          if !attempts = 1 then failwith "offset failed");
+      transfer = None; supports_transfer = false;
+      copy_from_disk = None; supports_copy_from_disk = false;
+    } in
+  let base = Device.Buffer.create ~device:"VIEW_TEST" ~size:4 ~dtype:i32 allocator in
+  let view = Device.Buffer.view base ~size:2 ~dtype:i32 ~offset:4 in
+  raises (Failure "offset failed") (fun () -> Device.Buffer.allocate view);
+  equal int 0 (Device.Buffer.allocated_views base);
+  is_false (Device.Buffer.is_initialized view);
+  Device.Buffer.ensure_allocated view;
+  equal int 1 (Device.Buffer.allocated_views base);
+  Device.Buffer.deallocate view;
+  equal int 0 (Device.Buffer.allocated_views base);
+  Device.Buffer.deallocate base;
+  equal int 1 !frees
+
+
 let empty_storage () =
   let unexpected op = fail ("empty storage called allocator " ^ op) in
   let allocator = Device.Allocator.Pack {
@@ -127,4 +153,4 @@ let empty_storage () =
   equal nativeint 0n (Device.Buffer.addr tail);
   List.iter Device.Buffer.deallocate [ tail; base; view; src; dst ]
 
-let () = run __FILE__ [ copy_from_tests; test "empty storage never calls an allocator" empty_storage ]
+let () = run __FILE__ [ copy_from_tests; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]
