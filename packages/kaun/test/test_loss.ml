@@ -6,19 +6,6 @@
 open Windtrap
 open Kaun
 
-(* A bare float64 tensor as a differentiable structure, for gradient checks. *)
-module Tensor = struct
-  type t = (float, Nx.float64_elt) Nx.t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (t : t) : t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
-      (b : t) : t =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (t : t) = f t
-end
-
 let vec xs = Nx.create Nx.float64 [| Array.length xs |] xs
 let mat rows cols xs = Nx.create Nx.float64 [| rows; cols |] xs
 let labels ls = Nx.create Nx.int32 [| Array.length ls |] ls
@@ -28,7 +15,7 @@ let close_grad ?(eps = 1e-9) expected g =
   equal (array (float eps)) expected (Nx.to_array g)
 
 let grads_ok ?msg f x =
-  match Rune.check_grads (module Tensor) f x with
+  match Rune.check_grads Nx.Ptree.tensor f x with
   | Ok () -> ()
   | Error e -> fail (match msg with Some m -> m ^ ": " ^ e | None -> e)
 

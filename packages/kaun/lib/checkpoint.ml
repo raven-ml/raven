@@ -5,7 +5,7 @@
 
 module String_map = Map.Make (String)
 
-type t = Rune.Ptree.tensor String_map.t
+type t = Nx.packed String_map.t
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
@@ -16,13 +16,6 @@ let full_name ?prefix path =
   match prefix with
   | None -> path
   | Some p -> if path = "" then p else p ^ "." ^ path
-
-let add_entry ~op ?prefix path packed acc =
-  let name = full_name ?prefix path in
-  if name = "" then invalid_argf "Checkpoint.%s: empty tensor name" op;
-  if String_map.mem name acc then
-    invalid_argf "Checkpoint.%s: duplicate name %S" op name;
-  String_map.add name packed acc
 
 let entry ~op name t =
   match String_map.find_opt name t with
@@ -36,7 +29,7 @@ let check_shape ~op name ~shape x =
       (shape_to_string (Nx.shape x))
 
 let typed (type a b) ~op ~shape (dtype : (a, b) Nx.dtype) name t : (a, b) Nx.t =
-  let (Rune.Ptree.P x) = entry ~op name t in
+  let (Nx.P x) = entry ~op name t in
   check_shape ~op name ~shape x;
   match Nx_core.Dtype.equal_witness (Nx.dtype x) dtype with
   | Some Type.Equal -> x
@@ -48,29 +41,33 @@ let typed (type a b) ~op ~shape (dtype : (a, b) Nx.dtype) name t : (a, b) Nx.t =
 
 let empty = String_map.empty
 
-let of_params (module U : Nx.Ptree.Uniform) ?prefix (params : ('a, 'b) Nx.t U.t)
-    : t =
-  U.fold
-    (fun path acc leaf ->
-      add_entry ~op:"of_params" ?prefix path (Rune.Ptree.P leaf) acc)
-    String_map.empty params
+(* A value's entry names: [path] under [prefix], distinct and non-empty. *)
+let namer ~op ?prefix () =
+  let seen = Hashtbl.create 64 in
+  fun path ->
+    let name = full_name ?prefix (Nx.Ptree.Path.to_string path) in
+    if name = "" then
+      invalid_argf "Checkpoint.%s: a leaf at the root needs ~prefix" op;
+    if Hashtbl.mem seen name then
+      invalid_argf "Checkpoint.%s: %s: two leaves have this name" op name;
+    Hashtbl.add seen name ();
+    name
 
-let of_packed (module U : Nx.Ptree.Uniform) ?prefix
-    (params : Rune.Ptree.tensor U.t) : t =
-  U.fold
-    (fun path acc packed -> add_entry ~op:"of_packed" ?prefix path packed acc)
-    String_map.empty params
+let of_value ?prefix s x =
+  let name = namer ~op:"of_value" ?prefix () in
+  Nx.Ptree.fold s
+    (fun path leaf acc -> String_map.add (name path) (Nx.P leaf) acc)
+    x String_map.empty
 
 let of_tensor name x =
   if name = "" then invalid_arg "Checkpoint.of_tensor: empty tensor name";
-  String_map.singleton name (Rune.Ptree.P x)
+  String_map.singleton name (Nx.P x)
 
 let of_int name i =
   if name = "" then invalid_arg "Checkpoint.of_int: empty tensor name";
   if Int32.to_int (Int32.of_int i) <> i then
     invalid_argf "Checkpoint.of_int: %d does not fit in an int32 entry" i;
-  String_map.singleton name
-    (Rune.Ptree.P (Nx.full Nx.int32 [| 1 |] (Int32.of_int i)))
+  String_map.singleton name (Nx.P (Nx.full Nx.int32 [| 1 |] (Int32.of_int i)))
 
 let concat ts =
   List.fold_left
@@ -89,14 +86,6 @@ let get name t =
   | Some entry -> entry
   | None -> invalid_argf "Checkpoint.get: no entry named %S" name
 
-(* The template's names must be distinct and non-empty before they can be looked
-   up; a plain fold over the template checks them. *)
-let check_names ~op fold_names ?prefix like =
-  ignore
-    (fold_names
-       (fun path acc () -> add_entry ~op ?prefix path () acc)
-       String_map.empty like)
-
 let to_tensor ~shape dtype name t = typed ~op:"to_tensor" ~shape dtype name t
 
 let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
@@ -108,7 +97,7 @@ let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
         op name
         (Nx_core.Dtype.to_string dtype)
   | Float16 | BFloat16 | Float32 | Float64 -> ());
-  let (Rune.Ptree.P x) = entry ~op name t in
+  let (Nx.P x) = entry ~op name t in
   check_shape ~op name ~shape x;
   match Nx.dtype x with
   | Float16 | BFloat16 | Float32 | Float64 -> Nx.cast dtype x
@@ -123,33 +112,39 @@ let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
         op name
         (Nx_core.Dtype.to_string source)
 
-let to_params (module U : Nx.Ptree.Uniform) ?prefix ~(like : ('a, 'b) Nx.t U.t)
-    (t : t) : ('a, 'b) Nx.t U.t =
-  check_names ~op:"to_params"
-    (fun f acc like -> U.fold (fun path acc _ -> f path acc ()) acc like)
-    ?prefix like;
-  U.map2
-    (fun path leaf ->
-      typed ~op:"to_params" ~shape:(Nx.shape leaf) (Nx.dtype leaf)
-        (full_name ?prefix path) t)
-    (U.names like) like
-
-let to_packed (module U : Nx.Ptree.Uniform) ?prefix
-    ~(like : Rune.Ptree.tensor U.t) (t : t) : Rune.Ptree.tensor U.t =
-  check_names ~op:"to_packed"
-    (fun f acc like -> U.fold (fun path acc _ -> f path acc ()) acc like)
-    ?prefix like;
-  U.map2
-    (fun path (Rune.Ptree.P leaf) ->
-      Rune.Ptree.P
-        (typed ~op:"to_packed" ~shape:(Nx.shape leaf) (Nx.dtype leaf)
-           (full_name ?prefix path) t))
-    (U.names like) like
+let to_value ?prefix s ~like t =
+  let op = "to_value" in
+  let name = namer ~op ?prefix () in
+  let load (type a b) path (leaf : (a, b) Nx.t) : (a, b) Nx.t =
+    let name = name path in
+    match String_map.find_opt name t with
+    | None ->
+        invalid_argf
+          "Checkpoint.%s: %s: no entry in the checkpoint, a leaf in the \
+           template"
+          op name
+    | Some (Nx.P x) -> (
+        if Nx.shape x <> Nx.shape leaf then
+          invalid_argf
+            "Checkpoint.%s: %s: shape %s in the checkpoint, %s in the template"
+            op name
+            (shape_to_string (Nx.shape x))
+            (shape_to_string (Nx.shape leaf));
+        match Nx_core.Dtype.equal_witness (Nx.dtype x) (Nx.dtype leaf) with
+        | Some Type.Equal -> x
+        | None ->
+            invalid_argf
+              "Checkpoint.%s: %s: %s in the checkpoint, %s in the template" op
+              name
+              (Nx_core.Dtype.to_string (Nx.dtype x))
+              (Nx_core.Dtype.to_string (Nx.dtype leaf)))
+  in
+  Nx.Ptree.map s load like
 
 let to_int name t =
   match String_map.find_opt name t with
   | None -> invalid_argf "Checkpoint.to_int: no entry named %S" name
-  | Some (Rune.Ptree.P x) -> (
+  | Some (Nx.P x) -> (
       if Nx.numel x <> 1 then
         invalid_argf "Checkpoint.to_int: %S is not a scalar (shape %s)" name
           (shape_to_string (Nx.shape x));
@@ -160,18 +155,8 @@ let to_int name t =
             name
             (Nx_core.Dtype.to_string (Nx.dtype x)))
 
-let save path t =
-  let entries =
-    String_map.fold
-      (fun name entry acc ->
-        match entry with Rune.Ptree.P x -> (name, Nx_io.P x) :: acc)
-      t []
-  in
-  Nx_io.save_safetensors path entries
+let save path t = Nx_io.save_safetensors path (String_map.bindings t)
 
 let load path =
   let archive = Nx_io.load_safetensors path in
-  Hashtbl.fold
-    (fun name entry acc ->
-      match entry with Nx_io.P x -> String_map.add name (Rune.Ptree.P x) acc)
-    archive String_map.empty
+  Hashtbl.fold String_map.add archive String_map.empty

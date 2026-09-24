@@ -6,22 +6,17 @@
 open Windtrap
 open Kaun
 
-(* Float64 instances for gradient checking; Conv's traversals are dtype-generic,
-   so the instance is just a type pin. Tensor64 treats a bare tensor as a
-   one-leaf parameter tree, for gradients with respect to an input. *)
+(* Conv's walk is dtype-generic, so each instance is a type pin: float64 for
+   gradient checking. *)
 
-let conv64 = Kaun.ptree (module Conv)
+let conv64 = Nx.Ptree.instantiate (module Conv)
 
-module Tensor64 = struct
-  type t = (float, Nx.float64_elt) Nx.t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
-end
+let paths p =
+  let conv = Nx.Ptree.instantiate (module Conv) in
+  List.rev
+    (Nx.Ptree.fold conv
+       (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
+       p [])
 
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
@@ -134,13 +129,13 @@ let test_conv_no_bias () =
       Nx.float32
   in
   is_true ~msg:"no bias parameter" (p.Conv.b = None);
-  let paths = List.rev (Conv.fold (fun path acc _ -> path :: acc) [] p) in
+  let paths = paths p in
   equal ~msg:"paths without bias" (list string) [ "w" ] paths
 
 let test_conv_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2) in
-  let paths = List.rev (Conv.fold (fun path acc _ -> path :: acc) [] p) in
+  let paths = paths p in
   equal ~msg:"with bias" (list string) [ "w"; "b" ] paths
 
 let test_conv_gradients () =
@@ -174,7 +169,7 @@ let test_conv_input_gradients () =
     Nx.sum (Nx.mul y y)
   in
   let x = Nx.randn Nx.float64 [| 1; 2; 3; 3 |] in
-  grads_ok (Rune.check_grads (module Tensor64) loss x)
+  grads_ok (Rune.check_grads Nx.Ptree.tensor loss x)
 
 let test_conv_rejects_bad_geometry () =
   raises
@@ -243,7 +238,7 @@ let test_pool_shape_contracts () =
 let test_max_pool_gradient_routes_to_max () =
   let x = Nx.create Nx.float64 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int) in
   let loss x = Nx.sum (Pool.max_pool2d ~kernel_size:(2, 2) x) in
-  let g = Rune.grad (module Tensor64) loss x in
+  let g = Rune.grad Nx.Ptree.tensor loss x in
   let expected = Array.make 16 0.0 in
   List.iter (fun i -> expected.(i) <- 1.0) [ 5; 7; 13; 15 ];
   values_are ~msg:"gradient is 1 at each window maximum" ~tol:1e-12 expected g
@@ -255,12 +250,12 @@ let test_pool_gradients () =
     let y = Pool.max_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Tensor64) max_loss x);
+  grads_ok (Rune.check_grads Nx.Ptree.tensor max_loss x);
   let avg_loss x =
     let y = Pool.avg_pool2d ~kernel_size:(2, 2) x in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads (module Tensor64) avg_loss x)
+  grads_ok (Rune.check_grads Nx.Ptree.tensor avg_loss x)
 
 let test_pool_rejects_bad_input () =
   let x = Nx.zeros Nx.float32 [| 1; 1; 2; 5 |] in
@@ -297,7 +292,7 @@ let () =
           test "make respects w_init, bias_init and the conv fans"
             test_conv_custom_inits_and_fans;
           test "bias:false drops the bias parameter" test_conv_no_bias;
-          test "names follow traversal order" test_conv_names;
+          test "names follow walk order" test_conv_names;
           test "parameter gradients agree with finite differences"
             test_conv_gradients;
           test "input gradients agree with finite differences"

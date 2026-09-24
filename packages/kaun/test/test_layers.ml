@@ -6,33 +6,31 @@
 open Windtrap
 open Kaun
 
-(* Each layer's traversals satisfy the Uniform contract, so a layer is a valid
-   [@@deriving ptree] delegate by construction. *)
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Linear.t = Linear
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Conv.t = Conv
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Embedding.t = Embedding
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Layer_norm.t = Layer_norm
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Rms_norm.t = Rms_norm
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.t = Batch_norm
+(* Each layer is a structure. *)
+module _ : Nx.Ptree.S with type 'a t = 'a Linear.t = Linear
+module _ : Nx.Ptree.S with type 'a t = 'a Conv.t = Conv
+module _ : Nx.Ptree.S with type 'a t = 'a Embedding.t = Embedding
+module _ : Nx.Ptree.S with type 'a t = 'a Layer_norm.t = Layer_norm
+module _ : Nx.Ptree.S with type 'a t = 'a Rms_norm.t = Rms_norm
+module _ : Nx.Ptree.S with type 'a t = 'a Batch_norm.t = Batch_norm
+module _ : Nx.Ptree.S with type 'a t = 'a Batch_norm.Stats.t = Batch_norm.Stats
+module _ : Nx.Ptree.S with type 'a t = 'a Attention.t = Attention
+module _ : Nx.Ptree.S with type 'a t = 'a Attention.Cache.t = Attention.Cache
 
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.Stats.t =
-  Batch_norm.Stats
+(* Float64 instances for gradient checking; the layers' maps are dtype-generic,
+   so each instance is just a type pin. *)
 
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.t = Attention
+let linear64 = Nx.Ptree.instantiate (module Linear)
+let embedding64 = Nx.Ptree.instantiate (module Embedding)
+let layer_norm64 = Nx.Ptree.instantiate (module Layer_norm)
+let rms_norm64 = Nx.Ptree.instantiate (module Rms_norm)
 
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t =
-  Attention.Cache
+let paths s p =
+  List.rev
+    (Nx.Ptree.fold s
+       (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
+       p [])
 
-module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t list =
-  Attention.Cache.List
-
-(* Float64 instances for gradient checking; the layer traversals are
-   dtype-generic, so each instance is just a type pin. *)
-
-let linear64 = Kaun.ptree (module Linear)
-let embedding64 = Kaun.ptree (module Embedding)
-let layer_norm64 = Kaun.ptree (module Layer_norm)
-let rms_norm64 = Kaun.ptree (module Rms_norm)
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
 
@@ -89,10 +87,8 @@ let test_linear_custom_inits () =
 let test_linear_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let with_bias = Linear.init ~inputs:2 ~outputs:2 in
-  let paths p = List.rev (Linear.fold (fun path acc _ -> path :: acc) [] p) in
+  let paths = paths (Nx.Ptree.instantiate (module Linear)) in
   equal ~msg:"with bias" (list string) [ "w"; "b" ] (paths with_bias);
-  equal ~msg:"names agree with fold" (option string) (Some "b")
-    (Linear.names with_bias).Linear.b;
   let no_bias = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
   equal ~msg:"without bias" (list string) [ "w" ] (paths no_bias)
 
@@ -112,8 +108,11 @@ let test_linear_map2_bias_mismatch () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p = Linear.init ~inputs:2 ~outputs:2 in
   let q = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
-  raises (Invalid_argument "Linear.map2: bias mismatch") (fun () ->
-      Linear.map2 (fun a _ -> a) p q)
+  raises
+    (Invalid_argument
+       "Nx.Ptree.map2: b: Some in the first value, None in the second")
+    (fun () ->
+      Nx.Ptree.map2 (Nx.Ptree.instantiate (module Linear)) (fun _ a _ -> a) p q)
 
 let test_linear_rejects_bad_geometry () =
   raises
@@ -138,7 +137,8 @@ let test_embedding_init_shape () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p = Embedding.init ~vocab:7 ~dim:4 in
   shape_is ~msg:"table shape" [| 7; 4 |] p.Embedding.table;
-  equal ~msg:"names" string "table" (Embedding.names p).Embedding.table
+  equal ~msg:"names" (list string) [ "table" ]
+    (paths (Nx.Ptree.instantiate (module Embedding)) p)
 
 let test_embedding_gathers_rows () =
   let p = embedding_4x3 () in
@@ -200,8 +200,8 @@ let test_layer_norm_init_shapes () =
   shape_is ~msg:"beta shape" [| 6 |] p.Layer_norm.beta;
   values_are ~msg:"gamma is ones" ~tol:0.0 (Array.make 6 1.0) p.Layer_norm.gamma;
   values_are ~msg:"beta is zeros" ~tol:0.0 (Array.make 6 0.0) p.Layer_norm.beta;
-  let paths = List.rev (Layer_norm.fold (fun path acc _ -> path :: acc) [] p) in
-  equal ~msg:"names" (list string) [ "gamma"; "beta" ] paths
+  equal ~msg:"names" (list string) [ "gamma"; "beta" ]
+    (paths (Nx.Ptree.instantiate (module Layer_norm)) p)
 
 let test_layer_norm_analytic () =
   (* Per row: mean 1, variance 1, so x normalizes to [-1; 1] (up to eps), then
@@ -308,7 +308,7 @@ let test_rms_norm_does_not_center () =
 
 let test_rms_norm_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 13) @@ fun () ->
-  let p = Rms_norm.map (Nx.cast Nx.float64) (Rms_norm.init ~dim:5) in
+  let p = Nx.Ptree.cast (module Rms_norm) Nx.float64 (Rms_norm.init ~dim:5) in
   let p =
     {
       Rms_norm.gamma =
@@ -321,16 +321,8 @@ let test_rms_norm_gradients () =
     (Rune.check_grads rms_norm64
        (fun p -> Nx.sum (Nx.mul w (Rms_norm.apply p x)))
        p);
-  let module X = struct
-    type 'a t = 'a
-
-    let map f x = f x
-    let map2 f x y = f x y
-    let iter f x = f x
-  end in
   grads_ok
-    (Rune.check_grads
-       (Kaun.ptree (module X))
+    (Rune.check_grads Nx.Ptree.tensor
        (fun x -> Nx.sum (Nx.mul w (Rms_norm.apply p x)))
        x)
 
@@ -353,9 +345,10 @@ let () =
           test "bias:false drops the bias parameter" test_linear_no_bias;
           test "leading axes are batch axes" test_linear_batched_apply;
           test "make respects w_init and bias_init" test_linear_custom_inits;
-          test "names follow traversal order" test_linear_names;
+          test "names follow walk order" test_linear_names;
           test "gradients agree with finite differences" test_linear_gradients;
-          test "map2 rejects a bias mismatch" test_linear_map2_bias_mismatch;
+          test "Nx.Ptree.map2 rejects a bias mismatch"
+            test_linear_map2_bias_mismatch;
           test "make rejects non-positive geometry"
             test_linear_rejects_bad_geometry;
         ];

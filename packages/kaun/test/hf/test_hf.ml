@@ -15,7 +15,7 @@ let vec xs = Nx.create f32 [| Array.length xs |] xs
 let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
 let entry name ckpt =
-  match Checkpoint.get name ckpt with Rune.Ptree.P x -> Nx.cast f32 x
+  match Checkpoint.get name ckpt with Nx.P x -> Nx.cast f32 x
 
 let check_entry ~msg expected name ckpt =
   equal ~msg (array float_exact) expected (to_arr (entry name ckpt))

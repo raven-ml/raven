@@ -9,33 +9,28 @@
     non-empty names, stored as a
     {{:https://huggingface.co/docs/safetensors/}safetensors} file.
 
-    {b Files this library wrote.} Parameter structures enter and leave
-    checkpoints through their {!Nx.Ptree.Uniform} instance: {!of_params} names
-    each leaf by its path, record fields and container positions joined with
-    ["."], and {!to_params} rebuilds a structure from its entries, using an
-    existing value as the template for structure, dtypes and shapes. A restart
-    holds such a value already. Entries not named by the template are ignored,
-    so one file holds several sections side by side, model parameters,
-    parameter-shaped optimizer state and counters:
+    {b Files this library wrote.} Values enter and leave checkpoints through
+    their structure ({!Nx.Ptree.t}): {!of_value} names each tensor by its path,
+    record fields and container positions joined with ["."], and {!to_value}
+    rebuilds a value from its entries, using an existing value as the template
+    for structure, dtypes and shapes. A restart holds such a value already.
+    Entries not named by the template are ignored, so one file holds several
+    sections side by side, model parameters, optimizer state and counters:
 
     {[
     Checkpoint.save path
       (Checkpoint.concat
          [
-           Checkpoint.of_params (module Model) ~prefix:"model" params;
-           Checkpoint.of_params (module Model) ~prefix:"optim.mu" st.mu;
-           Checkpoint.of_params (module Model) ~prefix:"optim.nu" st.nu;
-           Checkpoint.of_tensor "optim.step" st.step;
+           Checkpoint.of_value ~prefix:"model" model params;
+           Checkpoint.of_value ~prefix:"optim" (Vega.adam_ptree model) opt;
+           Checkpoint.of_int "epoch" epoch;
          ])
     ]}
 
-    and
-    [to_params (module Model) ~prefix:"model" ~like:params (Checkpoint.load
-     path)] reads the model back. To load a file into a partially different
-    model, say a new head on a pretrained backbone, extract each sub-structure
-    with its own module and prefix. Structures with mixed leaf dtypes, the stock
-    dynamic tree {!Rune.Ptree.t} among them, hold packed leaves and use
-    {!of_packed} and {!to_packed}.
+    and [to_value ~prefix:"model" model ~like:params (Checkpoint.load path)]
+    reads the model back. To load a file into a partially different model, say a
+    new head on a pretrained backbone, extract each sub-structure with its own
+    structure and prefix.
 
     {b Files produced elsewhere.} A pretrained checkpoint has its own names and
     layouts. Its importer is an ordinary function that builds the parameter
@@ -69,26 +64,17 @@ type t
 val empty : t
 (** [empty] is the checkpoint with no entries. *)
 
-val of_params :
-  (module U : Nx.Ptree.Uniform) -> ?prefix:string -> ('a, 'b) Nx.t U.t -> t
-(** [of_params (module U) ?prefix params] is a checkpoint with one entry per
-    leaf of [params], named by its path ([U.fold]'s path convention). When
-    [prefix] is given, each name becomes [prefix ^ "." ^ path] ([prefix] alone
-    for the empty path).
+val of_value : ?prefix:string -> 's Nx.Ptree.t -> 's -> t
+(** [of_value ?prefix s x] is a checkpoint with one entry per tensor [s] walks
+    in [x], fixed tensors included, named by its path
+    ({!Nx.Ptree.Path.to_string}). When [prefix] is given, each name becomes
+    [prefix ^ "." ^ path] ([prefix] alone for the root). The entries hold [x]'s
+    tensors; nothing is copied.
 
-    Raises [Invalid_argument] if the resulting names are not distinct and
-    non-empty. *)
-
-val of_packed :
-  (module U : Nx.Ptree.Uniform) -> ?prefix:string -> Rune.Ptree.tensor U.t -> t
-(** [of_packed (module U) ?prefix params] is like {!of_params} for a structure
-    with packed leaves, whose dtypes may differ. For the stock dynamic tree,
-    pass [(module Rune.Ptree.Tree)]: leaves are named by dict keys and
-    zero-based list positions joined with ["."] (e.g. ["layers.0.w"]), and a
-    bare root tensor has the empty path and is named by [prefix] alone.
-
-    Raises [Invalid_argument] if the resulting names are not distinct and
-    non-empty. *)
+    Raises [Invalid_argument] if two tensors of [x] have one name, as in
+    ["Checkpoint.of_value: w: two leaves have this name"], or if a tensor at the
+    root has no [prefix], as in
+    ["Checkpoint.of_value: a leaf at the root needs ~prefix"]. *)
 
 val of_tensor : string -> ('a, 'b) Nx.t -> t
 (** [of_tensor name x] is a checkpoint with the single entry [name] holding [x].
@@ -112,10 +98,10 @@ val concat : t list -> t
 val names : t -> string list
 (** [names t] is the names of [t]'s entries, sorted. *)
 
-val find : string -> t -> Rune.Ptree.tensor option
+val find : string -> t -> Nx.packed option
 (** [find name t] is [name]'s entry in [t], if any. *)
 
-val get : string -> t -> Rune.Ptree.tensor
+val get : string -> t -> Nx.packed
 (** [get name t] is [name]'s entry in [t].
 
     Raises [Invalid_argument] if [name] has no entry. *)
@@ -146,28 +132,25 @@ val to_float :
     entry's shape differs, if the entry is not one of the four dtypes, or if
     [dtype] is an 8-bit float. *)
 
-val to_params :
-  (module U : Nx.Ptree.Uniform) ->
-  ?prefix:string -> like:('a, 'b) Nx.t U.t -> t -> ('a, 'b) Nx.t U.t
-(** [to_params (module U) ?prefix ~like t] is [like] with every leaf replaced by
-    [t]'s entry of the same name, the leaf's path prefixed as in {!of_params}:
-    {!to_tensor} at each leaf's name, shape and dtype. [like] supplies the
-    structure, names, dtypes and shapes; its values are discarded. Entries of
-    [t] not named by [like] are ignored.
+val to_value : ?prefix:string -> 's Nx.Ptree.t -> like:'s -> t -> 's
+(** [to_value ?prefix s ~like t] is [like] with every tensor replaced by [t]'s
+    entry of the same name, the tensor's path prefixed as in {!of_value}. [like]
+    supplies the structure, names, dtypes and shapes; its values are discarded.
+    The result holds [t]'s entries; nothing is copied, so a call that consumes
+    the result also ends those entries. Entries of [t] not named by [like] are
+    ignored. A checkpoint stores no reports: a value loads into [like]'s shape,
+    its list lengths, option presences and cases.
 
     A template states the dtype it expects, so nothing is converted: a restart
     that names the wrong dtype fails instead of narrowing its state. To convert,
     ask by name with {!to_float}.
 
-    Raises [Invalid_argument] if an entry named by [like] is missing, on a shape
-    or dtype mismatch, or if [like]'s names are not distinct and non-empty. *)
-
-val to_packed :
-  (module U : Nx.Ptree.Uniform) ->
-  ?prefix:string -> like:Rune.Ptree.tensor U.t -> t -> Rune.Ptree.tensor U.t
-(** [to_packed (module U) ?prefix ~like t] is like {!to_params} for a structure
-    with packed leaves, with names as in {!of_packed}. Each template leaf's
-    runtime dtype and shape check the corresponding entry. *)
+    Raises [Invalid_argument] naming the entry and what the checkpoint and the
+    template hold there if an entry named by [like] is missing or its shape or
+    dtype differs, as in
+    ["Checkpoint.to_value: model.l1.w: shape [3] in the checkpoint, [2; 3] in
+     the template"], and as {!of_value} if [like]'s names are not distinct and
+    non-empty. *)
 
 val to_int : string -> t -> int
 (** [to_int name t] is the integer stored at [name] by {!of_int}.

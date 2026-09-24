@@ -168,23 +168,10 @@ let test_non_positive_fan_rejected () =
    truncated_normal is the interesting one: the glorot/he/lecun normal families
    go through it, and until it was drawn by inverting the CDF it could not be
    traced at all. *)
-module Scope_key = struct
-  type t = Nx.Rng.key
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 let test_init_compiles_under_jit () =
   let check name (init : Nx.float32_elt Init.t) =
     let f =
-      Rune.jit
-        (module Scope_key)
-        (fun key ->
+      Rune.jit Nx.Ptree.tensor (fun key ->
           Nx.Rng.with_key key @@ fun () ->
           init ~fan_in:8 ~fan_out:8 Nx.float32 [| 8; 8 |])
     in

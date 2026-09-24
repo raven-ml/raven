@@ -9,8 +9,8 @@
     affine [gamma] and [beta], differentiated and optimized like any other
     parameters) and running statistics {!Stats.t} (per-feature mean and
     variance, never differentiated, updated by every training forward). Both are
-    records with payload holes; this module is the {!Nx.Ptree.Uniform} instance
-    of its parameters and {!Stats} that of its statistics.
+    records with payload holes; this module is the {!Nx.Ptree.S} instance of its
+    parameters and {!Stats} that of its statistics.
 
     {!apply} in training mode normalizes with the current batch's statistics and
     returns updated running statistics; in eval mode it normalizes with the
@@ -19,7 +19,7 @@
     auxiliary channel — they ride through differentiation undifferentiated:
 
     {[
-    let model = Kaun.ptree (module Model) in
+    let model = Nx.Ptree.instantiate (module Model) in
     let step (params, stats, ostate) =
       let objective p =
         let pred, stats' = Model.forward p stats ~training:true x in
@@ -39,8 +39,10 @@
     {[
     Checkpoint.concat
       [
-        Checkpoint.of_params (module Model) ~prefix:"model" params;
-        Checkpoint.of_params (module Model.Stats) ~prefix:"stats" stats;
+        Checkpoint.of_value ~prefix:"model" model params;
+        Checkpoint.of_value ~prefix:"stats"
+          (Nx.Ptree.instantiate (module Model.Stats))
+          stats;
       ]
     ]} *)
 
@@ -51,25 +53,11 @@ type 'a t = { gamma : 'a; beta : 'a }
     [gamma] and shift [beta], at tensor payloads each of shape [[| features |]].
 *)
 
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to [gamma] and [beta]. [map (Nx.cast dt)]
-    converts a layer's precision; the cast is differentiable through Rune. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p q] combines [p] and [q] leafwise with [f]. *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to [gamma] and [beta], in that order. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise; leaf paths are ["gamma"] and ["beta"].
-*)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p q] is like {!fold} across two layers. *)
-
-val names : 'a t -> string t
-(** [names p] is [{ gamma = "gamma"; beta = "beta" }]. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parameters, [gamma] then [beta], at those paths: the
+    parameters' {!Nx.Ptree.S} instance.
+    [Nx.Ptree.instantiate (module Batch_norm)] is the parameters at one dtype,
+    and [Nx.Ptree.cast (module Batch_norm) dtype p] converts their precision. *)
 
 (** {1:stats Running statistics} *)
 
@@ -84,25 +72,12 @@ module Stats : sig
       small increments, so keep statistics at float32 even when the parameters
       are half precision. *)
 
-  val map : ('a -> 'b) -> 'a t -> 'b t
-  (** [map f s] is [s] with [f] applied to [mean] and [var]. *)
-
-  val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-  (** [map2 f s s'] combines [s] and [s'] leafwise with [f]. *)
-
-  val iter : ('a -> unit) -> 'a t -> unit
-  (** [iter f s] applies [f] to [mean] and [var], in that order. *)
-
-  val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-  (** [fold f acc s] reduces [s] leafwise; leaf paths are ["mean"] and ["var"].
-  *)
-
-  val fold2 :
-    (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-  (** [fold2 f acc s s'] is like {!fold} across two statistics. *)
-
-  val names : 'a t -> string t
-  (** [names s] is [{ mean = "mean"; var = "var" }]. *)
+  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  (** [walk c s] walks [s]'s statistics, [mean] then [var], at those paths: the
+      statistics' {!Nx.Ptree.S} instance.
+      [Nx.Ptree.instantiate (module Batch_norm.Stats)] is the statistics at one
+      dtype, and [Nx.Ptree.cast (module Batch_norm.Stats) dtype s] converts
+      their precision. *)
 end
 
 (** {1:constructors Constructors} *)

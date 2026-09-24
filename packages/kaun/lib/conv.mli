@@ -9,9 +9,8 @@
     an optional per-filter bias. It slides its filters over inputs in NCHW
     layout — [[| batch; channels; height; width |]] — computing the
     cross-correlation used by deep-learning frameworks (no kernel flip).
-    Construct parameters with {!init} or {!make} and convolve with {!apply}; the
-    traversals supply the {!Nx.Ptree.Uniform} and checkpoint plumbing, exactly
-    as in {!Linear}.
+    Construct parameters with {!init} or {!make} and convolve with {!apply};
+    {!walk} makes it a structure, exactly as in {!Linear}.
 
     Pooling has no parameters and lives in {!Pool}. *)
 
@@ -24,7 +23,7 @@ type 'a t = { w : 'a; b : 'a option }
     — one [in_channels × kh × kw] filter per output channel — and [b], when
     present, shape [[| out_channels |]]. [b] is [None] for layers built without
     a bias ({!make}[ ~bias:false]); such layers have no bias parameter at all,
-    so traversals skip it and {!apply} performs no shift. *)
+    so {!walk} skips it and {!apply} performs no shift. *)
 
 (** {1:constructors Constructors} *)
 
@@ -86,32 +85,11 @@ val apply :
     have size [in_channels], if a stride component is not positive, or if the
     filter does not fit the [`Valid] input ([height < kh] or [width < kw]). *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Payload traversals in the order [w] then [b], satisfying the
-    {!Nx.Ptree.Uniform} contract. Leaf paths are ["w"] and ["b"]. *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to every payload leaf. [map (Nx.cast dt)]
-    converts a layer's precision; the cast is differentiable through Rune. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p q] combines [p] and [q] leafwise with [f].
-
-    Raises [Invalid_argument] if one of [p] and [q] has a bias and the other
-    does not. *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to every payload leaf of [p]. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise, threading each leaf's path. *)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p q] is like {!fold} across two structurally equal layers.
-
-    Raises [Invalid_argument] if one of [p] and [q] has a bias and the other
-    does not. *)
-
-val names : 'a t -> string t
-(** [names p] is [p] with every payload replaced by its path. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parameters: [w] at ["w"], then [b] at ["b"],
+    reporting whether [b] is present, so a layer with a bias and one without are
+    distinct structures. It is the layer's {!Nx.Ptree.S} instance.
+    [Nx.Ptree.instantiate (module Conv)] is the layer at one dtype, and
+    [Nx.Ptree.cast (module Conv) dtype p] converts its precision. *)

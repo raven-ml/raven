@@ -464,61 +464,37 @@ let extend index values pool =
       | Some columns ->
           (read_chosen index columns ~tail (from_pool ~tail ~table pool), pool))
 
-(* Traversals *)
+(* Structure *)
 
-let map f index =
-  let tokens =
-    match index.tokens with
-    | Whole pos -> Whole (f pos)
+module Walked = struct
+  type nonrec _ t = t
+
+  let block c (m, blocks) =
+    let open Nx.Ptree.Walk in
+    let m = int c m in
+    (m, tensor c blocks)
+
+  let tokens c tokens =
+    let open Nx.Ptree.Walk in
+    match tokens with
+    | Whole pos ->
+        case c "whole";
+        Whole (field c "pos" tensor pos)
     | Tabled { row; pos; table; blocks } ->
-        let row = Option.map f row in
-        let pos = f pos in
-        let table = f table in
-        let blocks = List.map (fun (m, blocks) -> (m, f blocks)) blocks in
+        case c "tabled";
+        let row = field c "row" (option tensor) row in
+        let pos = field c "pos" tensor pos in
+        let table = field c "table" tensor table in
+        let blocks = field c "blocks" (list block) blocks in
         Tabled { row; pos; table; blocks }
-  in
-  { index with tokens; columns = Option.map f index.columns }
 
-let map2 f a b =
-  if a.window <> b.window then
-    invalid_arg "Cache_index.map2: the indices differ in their window";
-  if a.every <> b.every then
-    invalid_arg "Cache_index.map2: the indices read blocks of different sizes";
-  let tokens =
-    match (a.tokens, b.tokens) with
-    | Whole pos, Whole pos' -> Whole (f pos pos')
-    | Tabled a, Tabled b
-      when Option.is_some a.row = Option.is_some b.row
-           && List.map fst a.blocks = List.map fst b.blocks ->
-        let row =
-          match (a.row, b.row) with
-          | Some row, Some row' -> Some (f row row')
-          | _ -> None
-        in
-        let pos = f a.pos b.pos in
-        let table = f a.table b.table in
-        let blocks =
-          List.map2 (fun (m, t) (_, t') -> (m, f t t')) a.blocks b.blocks
-        in
-        Tabled { row; pos; table; blocks }
-    | _ ->
-        invalid_arg "Cache_index.map2: the indices were not built the same way"
-  in
-  let columns =
-    match (a.columns, b.columns) with
-    | None, None -> None
-    | Some c, Some c' -> Some (f c c')
-    | _ ->
-        invalid_arg "Cache_index.map2: one index selects columns, one does not"
-  in
-  { a with tokens; columns }
+  let walk c x =
+    let open Nx.Ptree.Walk in
+    let tokens = field c "tokens" tokens x.tokens in
+    let every = field c "every" int x.every in
+    let window = field c "window" (option int) x.window in
+    let columns = field c "columns" (option tensor) x.columns in
+    { tokens; every; window; columns }
+end
 
-let iter f index =
-  (match index.tokens with
-  | Whole pos -> f pos
-  | Tabled { row; pos; table; blocks } ->
-      Option.iter f row;
-      f pos;
-      f table;
-      List.iter (fun (_, blocks) -> f blocks) blocks);
-  Option.iter f index.columns
+let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)

@@ -10,45 +10,13 @@ type 'a t = {
   out : 'a Linear.t;
 }
 
-let map f { q; k; v; out } =
-  let q = Linear.map f q in
-  let k = Linear.map f k in
-  let v = Linear.map f v in
-  let out = Linear.map f out in
+let walk c { q; k; v; out } =
+  let open Nx.Ptree.Walk in
+  let q = field c "q" Linear.walk q in
+  let k = field c "k" Linear.walk k in
+  let v = field c "v" Linear.walk v in
+  let out = field c "out" Linear.walk out in
   { q; k; v; out }
-
-let map2 f p p' =
-  let q = Linear.map2 f p.q p'.q in
-  let k = Linear.map2 f p.k p'.k in
-  let v = Linear.map2 f p.v p'.v in
-  let out = Linear.map2 f p.out p'.out in
-  { q; k; v; out }
-
-let iter f { q; k; v; out } =
-  Linear.iter f q;
-  Linear.iter f k;
-  Linear.iter f v;
-  Linear.iter f out
-
-let join prefix path = if path = "" then prefix else prefix ^ "." ^ path
-
-let fold f acc { q; k; v; out } =
-  let under prefix acc l =
-    Linear.fold (fun path -> f (join prefix path)) acc l
-  in
-  under "out" (under "v" (under "k" (under "q" acc q) k) v) out
-
-let fold2 f acc p p' =
-  let under prefix acc l l' =
-    Linear.fold2 (fun path -> f (join prefix path)) acc l l'
-  in
-  under "out"
-    (under "v" (under "k" (under "q" acc p.q p'.q) p.k p'.k) p.v p'.v)
-    p.out p'.out
-
-let names p =
-  let sub prefix l = Linear.map (join prefix) (Linear.names l) in
-  { q = sub "q" p.q; k = sub "k" p.k; v = sub "v" p.v; out = sub "out" p.out }
 
 let make ?w_init ?bias_init ?bias ?q_dim ?kv_dim ~embed_dim dtype =
   let q_dim = Option.value q_dim ~default:embed_dim in
@@ -349,72 +317,11 @@ module Cache = struct
     let v, values = through cache.values v in
     (k, v, { keys; values })
 
-  let map f { keys; values } =
-    let keys = f keys in
-    let values = f values in
+  let walk c { keys; values } =
+    let open Nx.Ptree.Walk in
+    let keys = field c "keys" leaf keys in
+    let values = field c "values" leaf values in
     { keys; values }
-
-  let map2 f c c' =
-    let keys = f c.keys c'.keys in
-    let values = f c.values c'.values in
-    { keys; values }
-
-  let iter f { keys; values } =
-    f keys;
-    f values
-
-  let fold f acc { keys; values } = f "values" (f "keys" acc keys) values
-
-  let fold2 f acc c c' =
-    f "values" (f "keys" acc c.keys c'.keys) c.values c'.values
-
-  let names _ = { keys = "keys"; values = "values" }
-
-  (* One cache per block, in block order: a decoder's carried state. *)
-  module List = struct
-    type 'a cache = 'a t
-    type 'a t = 'a cache list
-
-    module L = Stdlib.List
-
-    let one_map = map
-    and one_map2 = map2
-    and one_iter = iter
-    and one_fold = fold
-    and one_fold2 = fold2
-    and one_names = names
-
-    let same_length fn l l' =
-      if L.compare_lengths l l' <> 0 then
-        Printf.ksprintf invalid_arg
-          "Attention.Cache.List.%s: lists differ in length" fn
-
-    let map f l = L.map (one_map f) l
-
-    let map2 f l l' =
-      same_length "map2" l l';
-      L.map2 (one_map2 f) l l'
-
-    let iter f l = L.iter (one_iter f) l
-    let under i path = string_of_int i ^ "." ^ path
-
-    let fold f acc l =
-      snd
-        (L.fold_left
-           (fun (i, acc) c ->
-             (i + 1, one_fold (fun path -> f (under i path)) acc c))
-           (0, acc) l)
-
-    let fold2 f acc l l' =
-      same_length "fold2" l l';
-      snd
-        (L.fold_left2
-           (fun (i, acc) c c' ->
-             (i + 1, one_fold2 (fun path -> f (under i path)) acc c c'))
-           (0, acc) l l')
-
-    let names l = L.mapi (fun i c -> one_map (under i) (one_names c)) l
-  end
 end
 
 (* Cached attention *)

@@ -18,18 +18,6 @@ let check_arr ?(eps = 1e-9) ~msg expected actual =
     (fun i e -> equal ~msg:(Printf.sprintf "%s[%d]" msg i) t e actual.(i))
     expected
 
-(* Single-tensor Ptree.S instance for Rune.check_grads. *)
-module Single = struct
-  type t = Nx.float64_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 (* Analytic values *)
 
 let test_relu () =
@@ -179,7 +167,7 @@ let grad_check_tests =
   List.map
     (fun (name, objective) ->
       test (name ^ " gradient matches finite differences") (fun () ->
-          match Rune.check_grads (module Single) objective (x ()) with
+          match Rune.check_grads Nx.Ptree.tensor objective (x ()) with
           | Ok () -> ()
           | Error msg -> fail msg))
     [

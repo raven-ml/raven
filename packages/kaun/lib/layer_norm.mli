@@ -10,7 +10,7 @@
     ([gamma]) and shift ([beta]). Unlike batch normalization it is stateless and
     independent of the batch: the same function at training and inference time.
     Construct parameters with {!init} or {!make} and normalize with {!apply};
-    the traversals supply the {!Nx.Ptree.Uniform} and checkpoint plumbing. *)
+    {!walk} makes it a structure. *)
 
 (** {1:types Types} *)
 
@@ -52,26 +52,10 @@ val apply :
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
     have size [dim], or if [eps] is negative. *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Payload traversals in the order [gamma] then [beta], satisfying the
-    {!Nx.Ptree.Uniform} contract. Leaf paths are ["gamma"] and ["beta"]. *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to every payload leaf. [map (Nx.cast dt)]
-    converts a layer's precision; the cast is differentiable through Rune. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p q] combines [p] and [q] leafwise with [f]. *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to every payload leaf of [p]. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise, threading each leaf's path. *)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p q] is like {!fold} across two layers. *)
-
-val names : 'a t -> string t
-(** [names p] is [{ gamma = "gamma"; beta = "beta" }]. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks [p]'s parameters, [gamma] then [beta], at those paths: the
+    layer's {!Nx.Ptree.S} instance. [Nx.Ptree.instantiate (module Layer_norm)]
+    is the layer at one dtype, and [Nx.Ptree.cast (module Layer_norm) dtype p]
+    converts its precision. *)

@@ -11,8 +11,7 @@
     over a key-value cache, for decoding. Both split the projections into heads,
     run {!scaled_dot_product_attention} and merge through the output projection.
     Like the other layers, an attention layer composes into models through
-    record nesting; the traversals supply the {!Nx.Ptree.Uniform} and checkpoint
-    plumbing.
+    record nesting, and {!walk} makes it a structure.
 
     Head counts are not parameters. [head_dim], the one integer shared by the
     queries, the keys, the cache and the rotary embedding, is an argument of
@@ -111,8 +110,8 @@ val causal_mask :
 
     Everything is functional: {!cached} returns the written cache and never
     mutates its argument. Thread the cache through the decode loop like any
-    other state; under {!Rune.jit_step}, which consumes it, the write happens in
-    the cache's own storage.
+    other state; under a compiled step that consumes it ({!Nx.Ptree.consumes}),
+    the write happens in the cache's own storage.
 
     The addressing laws are {!Cache_index}'s. The layer adds three:
 
@@ -126,9 +125,8 @@ val causal_mask :
       layer. A model defines its training forward pass as {!cached} over
       {!Cache_index.whole}, so it has one implementation and none to keep equal.
     + {b One tensor per cache leaf.} Two sequences share a prefix by naming the
-      same slots in an index's table, never by two leaves holding one tensor:
-      storage reuse under {!Rune.jit_step} needs each consumed tensor to seed
-      one leaf. *)
+      same slots in an index's table, never by two leaves holding one tensor: a
+      compiled step refuses to consume one storage from two leaves. *)
 
 (** Key-value caches. *)
 module Cache : sig
@@ -151,26 +149,12 @@ module Cache : sig
       Raises [Invalid_argument] if [slots] is negative or another dimension is
       not positive. *)
 
-  val map : ('a -> 'b) -> 'a t -> 'b t
-  (** [map f c] is [c] with [f] applied to [c.keys] and [c.values], in that
-      order. The traversals satisfy the {!Nx.Ptree.Uniform} contract. *)
-
-  val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-  (** [map2 f c c'] combines [c] and [c'] leafwise with [f]. *)
-
-  val iter : ('a -> unit) -> 'a t -> unit
-  (** [iter f c] applies [f] to [c.keys] and [c.values], in that order. *)
-
-  val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-  (** [fold f acc c] reduces [c] leafwise; leaf paths are ["keys"] and
-      ["values"]. *)
-
-  val fold2 :
-    (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-  (** [fold2 f acc c c'] is like {!fold} across two caches. *)
-
-  val names : 'a t -> string t
-  (** [names c] is [{ keys = "keys"; values = "values" }]. *)
+  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  (** [walk c cache] walks [cache.keys] then [cache.values], at the paths
+      ["keys"] and ["values"]: the cache's {!Nx.Ptree.S} instance. A decoder's
+      caches, one per block in block order, are
+      [Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))], whose
+      leaf paths are ["0.keys"], ["0.values"], ["1.keys"], ... *)
 
   val extend :
     Cache_index.t ->
@@ -188,11 +172,6 @@ module Cache : sig
 
       Raises [Invalid_argument] if [k] or [v] does not have that shape for
       [index] and [cache]. *)
-
-  module List : Nx.Ptree.Uniform with type 'a t = 'a t list
-  (** One cache per block, in block order: the carried state of a decoder whose
-      only state is its attention caches. Leaf paths are ["0.keys"],
-      ["0.values"], ["1.keys"], ... *)
 end
 
 val cached :
@@ -220,7 +199,7 @@ val cached :
     {!apply}: a model's whole-sequence forward pass is this function over
     {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
     tokens and one gather of its context; both trace once under {!Rune.jit}
-    whatever the index holds. Consumed by {!Rune.jit_step} on a device, the
+    whatever the index holds. Consumed by a compiled step on a device, the
     step's cost does not depend on the size of the cache. Differentiable through
     Rune.
 
@@ -353,34 +332,11 @@ val scaled_dot_product_attention :
     axis, or [sinks] does not broadcast to the scores without their last axis.
 *)
 
-(** {1:traversals Traversals}
+(** {1:structure Structure} *)
 
-    Payload traversals in the order [q], [k], [v], [out], each traversed as by
-    {!Linear}, satisfying the {!Nx.Ptree.Uniform} contract. Leaf paths are the
-    projections' paths prefixed with the field name (["q.w"], ["q.b"], ...,
-    ["out.b"]). *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f p] is [p] with [f] applied to every payload leaf. [map (Nx.cast dt)]
-    converts a layer's precision; the cast is differentiable through Rune. *)
-
-val map2 : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-(** [map2 f p p'] combines [p] and [p'] leafwise with [f].
-
-    Raises [Invalid_argument] if a projection of [p] has a bias and the
-    corresponding projection of [p'] does not (see {!Linear.map2}). *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f p] applies [f] to every payload leaf of [p]. *)
-
-val fold : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f acc p] reduces [p] leafwise, threading each leaf's path. *)
-
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-(** [fold2 f acc p p'] is like {!fold} across two structurally equal layers.
-
-    Raises [Invalid_argument] if a projection of [p] has a bias and the
-    corresponding projection of [p'] does not. *)
-
-val names : 'a t -> string t
-(** [names p] is [p] with every payload replaced by its path. *)
+val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+(** [walk c p] walks the projections [q], [k], [v] then [out], each by
+    {!Linear.walk}, at those paths: the layer's {!Nx.Ptree.S} instance. Leaf
+    paths are ["q.w"], ["q.b"], ..., ["out.b"].
+    [Nx.Ptree.cast (module Attention) dtype p] converts the layer's precision.
+*)

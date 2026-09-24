@@ -7,14 +7,14 @@
 
     Kaun has no layer or trainer abstraction. A layer is a record of parameters
     with a payload hole and an [apply] function; a model is a record of layers
-    with one-line traversals (the {!Nx.Ptree.Uniform} contract, hand-written or
-    derived with [ppx_ptree]; see {!Linear} for the pattern). {!ptree}
-    instantiates the model at its tensor type, a training step composes
-    {!Rune.value_and_grad} with a [Vega] optimizer update, and the training loop
-    is ordinary [Seq] iteration over {!Data} minibatches.
+    with one [walk], one line per field (see {!Linear} for the pattern).
+    [Nx.Ptree.instantiate] makes the model a structure at its tensor type, a
+    training step composes {!Rune.value_and_grad} with a [Vega] optimizer
+    update, and the training loop is ordinary [Seq] iteration over {!Data}
+    minibatches.
 
     {[
-    let model = Kaun.ptree (module Model)
+    let model = Nx.Ptree.instantiate (module Model)
 
     let step (params, ostate) (x, y) =
       let loss p = Loss.softmax_cross_entropy_sparse (Model.apply p x) y in
@@ -31,25 +31,11 @@
     one: root it at a key threaded through the step's inputs and the keyless
     draws inside compile, exactly as an explicit key ({!Dropout}) would. *)
 
-val ptree :
-  (module U : Nx.Ptree.Traverse) ->
-  (module Nx.Ptree.S with type t = ('a, 'b) Nx.t U.t)
-(** [ptree (module Model)] is your model's parameter tree: the walker the
-    transformations take. Bind it once per model:
-
-    {[
-      let mlp = Kaun.ptree (module Mlp) in
-      let l, grads = Rune.value_and_grad mlp loss params
-    ]}
-
-    This is [Nx.Ptree.instantiate]; see there for details. *)
-
 (** {1:layers Layers}
 
     Parameterized building blocks. Each module pairs a parameter record with
     constructors ({!Linear.init}, {!Linear.make}), an [apply] function, and the
-    traversals that make it compose into differentiable, checkpointable models.
-*)
+    [walk] that makes it compose into differentiable, checkpointable models. *)
 
 module Linear = Linear
 (** Dense (fully connected) layers, and the model-as-record pattern. *)

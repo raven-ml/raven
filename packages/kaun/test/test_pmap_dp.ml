@@ -8,10 +8,10 @@
    replicated and the batch sharded over two CPU devices. The loss trajectory
    and final weights must match the single-device [Rune.jit2] step up to fp32
    reduction order (the cross-device gradient allreduce reorders the batch sum).
-   Momentum runs thread a real [Vega.Sgd_state] through the step — the state is
-   a parameter tree ([Vega.Sgd_state (Model)]) whose leaves replicate like the
-   parameters — and the pmapped trajectory must match the jitted one. Runs on
-   CPU device instances; no pretrained weights involved. *)
+   Momentum runs thread a real SGD state through the step — the state is a
+   structure over the model's ([Vega.sgd_ptree model]) whose leaves replicate
+   like the parameters — and the pmapped trajectory must match the jitted one.
+   Runs on CPU device instances; no pretrained weights involved. *)
 
 open Windtrap
 open Kaun
@@ -26,34 +26,24 @@ let lr = 0.05
 (* The model: pre-norm causal self-attention with a residual, then a linear head
    over the vocabulary. *)
 
-type model = {
-  ln : Nx.float32_t Layer_norm.t;
-  attn : Nx.float32_t Attention.t;
-  head : Nx.float32_t Linear.t;
+type 'a model = {
+  ln : 'a Layer_norm.t;
+  attn : 'a Attention.t;
+  head : 'a Linear.t;
 }
 
 module Model = struct
-  type t = model
+  type 'a t = 'a model
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) m =
-    {
-      ln = Layer_norm.map f m.ln;
-      attn = Attention.map f m.attn;
-      head = Linear.map f m.head;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      ln = Layer_norm.map2 f a.ln b.ln;
-      attn = Attention.map2 f a.attn b.attn;
-      head = Linear.map2 f a.head b.head;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) m =
-    Layer_norm.iter f m.ln;
-    Attention.iter f m.attn;
-    Linear.iter f m.head
+  let walk c { ln; attn; head } =
+    let open Nx.Ptree.Walk in
+    let ln = field c "ln" Layer_norm.walk ln in
+    let attn = field c "attn" Attention.walk attn in
+    let head = field c "head" Linear.walk head in
+    { ln; attn; head }
 end
+
+let model : Nx.float32_t model Nx.Ptree.t = Nx.Ptree.instantiate (module Model)
 
 (* Deterministic init, no RNG: every run and both step implementations see the
    same weights and batch. *)
@@ -89,83 +79,58 @@ let loss_fn x tgt m =
   in
   Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
 
-(* Step structures for pmap2: the batch joins the parameters (and the optimizer
-   state) as leaves so it can be sharded on axis 0 while everything else
-   replicates. The state rides as one field, walked by its own parameter tree —
-   [Opt.map f s.opt] — instead of a duplicated model structure. *)
-module Opt = Vega.Sgd_state (Model)
+(* Step structures for pmap2: the batch joins the parameters and the optimizer
+   state as leaves so it can be sharded on axis 0 while everything else
+   replicates. The state is walked by its own structure over the model's. *)
 
 type step_in = {
-  m : model;
-  opt : Opt.t;
+  m : Nx.float32_t model;
+  opt : Nx.float32_t model Vega.sgd_state;
   x : Nx.float32_t;
   tgt : (int32, Nx.int32_elt) Nx.t;
 }
 
-module Step_in = struct
-  type t = step_in
+let step_in =
+  Nx.Ptree.(
+    iso
+      (fun ((m, opt), (x, tgt)) -> { m; opt; x; tgt })
+      (fun { m; opt; x; tgt } -> ((m, opt), (x, tgt)))
+      (pair (pair model (Vega.sgd_ptree model)) (pair tensor tensor)))
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    { m = Model.map f s.m; opt = Opt.map f s.opt; x = f s.x; tgt = f s.tgt }
+type step_out = {
+  m' : Nx.float32_t model;
+  opt' : Nx.float32_t model Vega.sgd_state;
+  loss : Nx.float32_t;
+}
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      m = Model.map2 f a.m b.m;
-      opt = Opt.map2 f a.opt b.opt;
-      x = f a.x b.x;
-      tgt = f a.tgt b.tgt;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
-    Model.iter f s.m;
-    Opt.iter f s.opt;
-    f s.x;
-    f s.tgt
-end
-
-type step_out = { m' : model; opt' : Opt.t; loss : Nx.float32_t }
-
-module Step_out = struct
-  type t = step_out
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-    { m' = Model.map f s.m'; opt' = Opt.map f s.opt'; loss = f s.loss }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      m' = Model.map2 f a.m' b.m';
-      opt' = Opt.map2 f a.opt' b.opt';
-      loss = f a.loss b.loss;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) s =
-    Model.iter f s.m';
-    Opt.iter f s.opt';
-    f s.loss
-end
+let step_out =
+  Nx.Ptree.(
+    iso
+      (fun ((m', opt'), loss) -> { m'; opt'; loss })
+      (fun { m'; opt'; loss } -> ((m', opt'), loss))
+      (pair (pair model (Vega.sgd_ptree model)) tensor))
 
 (* One SGD step: value_and_grad inside the (jitted or pmapped) function, so
    under pmap the gradients allreduce across devices before the update. With
    momentum 0 the velocity is never read; with momentum the state advances from
    the replicated leaves on every device, identically. *)
 let train_step ~momentum { m; opt; x; tgt } =
-  let loss, grads = Rune.value_and_grad (module Model) (loss_fn x tgt) m in
+  let loss, grads = Rune.value_and_grad model (loss_fn x tgt) m in
   let m', opt' =
-    Vega.sgd_step (module Model) ~lr:(Vega.lr lr) ~momentum opt ~params:m ~grads
+    Vega.sgd_step model ~lr:(Vega.lr lr) ~momentum opt ~params:m ~grads
   in
   { m'; opt'; loss }
 
 let init ~momentum:_ =
   let m = model_init () in
-  let opt = Vega.sgd_init (module Model) m in
+  let opt = Vega.sgd_init model m in
   { m; opt; x = x_init (); tgt = tgt_init () }
 
 (* One [in_axes] entry per leaf: everything replicated except the two batch
    leaves, sharded on axis 0. *)
 let in_axes s =
-  let n = ref 0 in
-  Step_in.iter (fun _ -> incr n) s;
-  List.init (!n - 2) (fun _ -> None) @ [ Some 0; Some 0 ]
+  let n = Nx.Ptree.fold step_in (fun _ _ n -> n + 1) s 0 in
+  List.init (n - 2) (fun _ -> None) @ [ Some 0; Some 0 ]
 
 let trajectory ~momentum ~steps step0 =
   let s = ref (init ~momentum) in
@@ -178,15 +143,13 @@ let run_both ~momentum ~steps =
   let mom = if momentum then 0.9 else 0.0 in
   let jit =
     trajectory ~momentum ~steps
-      (Rune.jit2 (module Step_in) (module Step_out) (train_step ~momentum:mom))
+      (Rune.jit2 step_in step_out (train_step ~momentum:mom))
   in
   let pm =
     trajectory ~momentum ~steps
       (Rune.pmap2 ~devices:devs2
          ~in_axes:(in_axes (init ~momentum))
-         (module Step_in)
-         (module Step_out)
-         (train_step ~momentum:mom))
+         step_in step_out (train_step ~momentum:mom))
   in
   (jit, pm)
 
@@ -206,8 +169,8 @@ let test_dp_matches_jit () =
   let _, m_jit = jit.(2) and _, m_pm = pm.(2) in
   let leaf = ref 0 in
   ignore
-    (Model.map2
-       (fun (type a b) (a : (a, b) Nx.t) (b : (a, b) Nx.t) : (a, b) Nx.t ->
+    (Nx.Ptree.map2 model
+       (fun (type a b) _ (a : (a, b) Nx.t) (b : (a, b) Nx.t) : (a, b) Nx.t ->
          incr leaf;
          let d =
            Nx.item [] (Nx.cast Nx.float64 (Nx.max (Nx.abs (Nx.sub a b))))

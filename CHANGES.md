@@ -2565,6 +2565,20 @@ thread.
 
 ### Kaun
 
+- **Breaking:** a layer's structure, and `Attention.Cache`'s, is its one `walk`,
+  which walks an `Nx.Ptree.Walk` cursor. `Kaun.ptree` is `Nx.Ptree.instantiate`
+  and `Attention.Cache.List` is `Nx.Ptree.list`.
+- **Breaking:** a layer's `map`, `map2`, `iter`, `fold`, `fold2` and `names` are
+  `Nx.Ptree.Payload.map`, `map2` and `fold` over `(module L)`, whose functions
+  take each payload's path, or `Nx.Ptree.map`, `map2`, `fold` and `cast` for
+  tensors.
+- **Breaking:** `Checkpoint.of_params (module P)` and `of_packed` are
+  `Checkpoint.of_value p`, `to_params` and `to_packed` are `to_value p`, and
+  `find` and `get` return `Nx.packed`. Names are unchanged, except that a fixed
+  tensor now has an entry.
+- **Breaking:** `Cache_index.map`, `map2` and `iter` are `Nx.Ptree.map`, `map2`
+  and `fold` over `Cache_index.ptree`, which also reports the tokens' case,
+  `every`, block sizes, window and selection, so a compiled step sees them.
 - The GPT-2, Llama and gpt-oss examples' importers and cache builders take
   `?placement : role -> axis:int -> Nx.Placement.t` and place each leaf and
   cache pool with it as they build it, naming each leaf's tensor-parallel cut.
@@ -2601,9 +2615,9 @@ thread.
   strict and returns the entry as stored, a view of the file; `to_float` casts
   between `float16`, `bfloat16`, `float32` and `float64` and refuses anything
   else.
-- `Checkpoint.to_params` and `to_packed` lose `?cast` and raise on any dtype
-  mismatch, so a restart that names the wrong dtype fails instead of narrowing
-  its state. To convert, read the entry with `Checkpoint.to_float`.
+- `Checkpoint.to_value` raises on any dtype mismatch, so a restart that names
+  the wrong dtype fails instead of narrowing its state. To convert, read the
+  entry with `Checkpoint.to_float`.
 - `Checkpoint.load` and `Kaun_hf.load_checkpoint` map their files, as
   `Nx_io.load_safetensors` now does: loading reads headers only, entries are
   views of the file, and entries whose dtype nx lacks arrive as `uint8` bytes
