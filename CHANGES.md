@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Dtype_ops.bitcast` supports different element widths by rescaling the last
+  axis. Packing preserves byte order through non-contiguous views and
+  unaligned subword slices.
+
 - `Rand.rand` draws and dropout masks own fresh storage, matching tinygrad.
   Random draws can receive indexed updates before their first realization.
 

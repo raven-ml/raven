@@ -18,8 +18,6 @@ let bitcast t dt =
   if D.is_weak (T.dtype t) || D.is_weak dt then
     invalid_arg "Dtype_ops.bitcast: both dtypes must be concrete"
   else if D.equal (T.dtype t) dt then t
-  else if D.itemsize (T.dtype t) <> D.itemsize dt then
-    invalid_arg "Dtype_ops.bitcast: element sizes differ"
   else T.of_uop (U.bitcast ~src:(T.uop t) ~dtype:dt)
 
 let is_floating_point t = D.is_float (T.dtype t)

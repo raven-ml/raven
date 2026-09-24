@@ -8,8 +8,8 @@
 (** Type conversions.
 
     Numeric casts change the element type, converting values with the usual
-    rounding and range rules. Bitcasts reinterpret the underlying bits and
-    require matching element sizes. *)
+    rounding and range rules. Bitcasts reinterpret the underlying bits,
+    rescaling the last axis when element sizes differ. *)
 
 val cast : Tensor.t -> Tolk_uop.Dtype.t -> Tensor.t
 (** [cast t dt] converts [t] to element type [dt]. Returns [t] unchanged when
@@ -17,12 +17,13 @@ val cast : Tensor.t -> Tolk_uop.Dtype.t -> Tensor.t
 
 val bitcast : Tensor.t -> Tolk_uop.Dtype.t -> Tensor.t
 (** [bitcast t dt] reinterprets the bits of [t] as [dt] without conversion.
+    When element sizes differ, the last axis is rescaled to preserve its
+    byte length. Elements are packed in little-endian order, following [t]'s
+    logical element order even when it is a non-contiguous view.
 
-    @raise Invalid_argument
-      if either dtype is weak, since a weak dtype has no committed width; or
-      if [dt] and [t]'s dtype have different element sizes. This module does
-      not implement the multi-element repacking used for size-changing
-      bitcasts. *)
+    @raise Invalid_argument if either dtype is weak, since it has no committed
+      width, or the last axis does not contain a whole number of elements
+      of [dt]. A size-changing bitcast needs at least one axis. *)
 
 val is_floating_point : Tensor.t -> bool
 (** [is_floating_point t] is [true] iff [t]'s scalar dtype is a floating-point

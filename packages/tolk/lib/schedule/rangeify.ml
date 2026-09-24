@@ -703,6 +703,57 @@ let identity_of op dtv = match op with
   | Ops.Max -> Const.min_value dtv
   | _ -> Const.zero dtv
 
+(* tinygrad/schedule/prepare.py: repack the trailing dimension through
+   unsigned integer lanes before scalar indexing fixes each element's width. *)
+let expand_bitcast bc =
+  if U.op bc <> Ops.Bitcast then None
+  else
+    let x = src0 bc in
+    let os = Dtype.itemsize (U.dtype x) in
+    let ns = Dtype.itemsize (U.dtype bc) in
+    if os = ns then None
+    else
+      let uint = function
+        | 1 -> Dtype.uint8 | 2 -> Dtype.uint16
+        | 4 -> Dtype.uint32 | 8 -> Dtype.uint64
+        | _ -> invalid_arg "Rangeify.expand_bitcast: unsupported element width"
+      in
+      let dims = function [ d ] -> d | ds -> U.stack ds in
+      let reshape x shape = U.reshape ~src:x ~shape:(dims shape) in
+      let shape = U.shape x in
+      if shape = [] then
+        invalid_arg "Rangeify.expand_bitcast: size-changing bitcast needs an axis";
+      let target = U.shape bc in
+      let tmp = U.bitcast ~src:x ~dtype:(uint os) in
+      let repacked =
+        if ns > os then begin
+          let rate = ns / os in
+          let tmp = reshape tmp (target @ [ int_ rate ]) in
+          let prefix = List.map (fun _ -> int_ 0) target in
+          let parts =
+            List.init rate (fun i ->
+                let part = U.shrink ~src:tmp
+                    ~offset:(dims (prefix @ [ int_ i ]))
+                    ~size:(dims (target @ [ int_ 1 ])) in
+                U.alu_binary ~op:Ops.Shl
+                  ~lhs:(U.cast ~src:part ~dtype:(uint ns))
+                  ~rhs:(int_ (8 * i * os)))
+          in
+          match parts with
+          | first :: rest ->
+              reshape (List.fold_left (fun lhs rhs ->
+                  U.alu_binary ~op:Ops.Add ~lhs ~rhs) first rest) target
+          | [] -> assert false
+        end else begin
+          let parts = List.init (os / ns) (fun i ->
+              U.alu_binary ~op:Ops.Shr ~lhs:tmp ~rhs:(int_ (8 * i * ns))) in
+          let order = List.init (List.length shape) (fun i -> i + 1) @ [ 0 ] in
+          U.cast ~dtype:(uint ns)
+            ~src:(reshape (U.permute ~src:(U.stack parts) ~order) target)
+        end
+      in
+      Some (U.bitcast ~src:repacked ~dtype:(U.dtype bc))
+
 let earliest_rewrites =
   U.first_match
     [ pm_mop_through_index;
@@ -845,6 +896,7 @@ let earliest_rewrites =
                      ~value:(U.bitcast ~src:value ~dtype:(U.dtype inner))
                      ())
          | _ -> None);
+      expand_bitcast;
       (fun n -> match U.as_reduce n with
          | Some { src; op; _ } ->
              (match shape_of src, shape_of n with

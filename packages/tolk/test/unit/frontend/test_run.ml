@@ -3,9 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Numeric end-to-end tests: build a tensor expression, realize it on the CPU
-   backend, and assert the computed values against expectations derived from
-   tinygrad. *)
+(* Numeric end-to-end tests on the process-wide default device (DEV selects
+   the backend), with expectations derived from tinygrad. *)
 
 open Windtrap
 module T = Tolk_frontend.Tensor
@@ -60,6 +59,60 @@ let elementwise_tests =
       test "contiguous preserves values" (fun () ->
           check_floats [| 2.; 4.; 6. |]
             (El.contiguous (El.add (vec [| 1.; 2.; 3. |]) (vec [| 1.; 2.; 3. |]))));
+    ]
+
+let bitcast_tests =
+  let module D = Tolk_uop.Dtype in
+  let bytes = Bytes.init 16 (fun i -> Char.chr ((i * 37 + 129) land 255)) in
+  group "bitcast"
+    [
+      test "size-changing bitcasts preserve every byte" (fun () ->
+          let dtypes =
+            [ D.uint8; D.uint16; D.uint32; D.uint64; D.int32; D.float32 ]
+          in
+          List.iter
+            (fun src_dtype ->
+              List.iter
+                (fun dst_dtype ->
+                  let source =
+                    Run.of_bytes ~dtype:src_dtype
+                      ~shape:[ 2; 8 / D.itemsize src_dtype ] bytes
+                  in
+                  let result = Dt.bitcast source dst_dtype in
+                  equal (list int) [ 2; 8 / D.itemsize dst_dtype ] (T.shape result);
+                  equal string (Bytes.to_string bytes)
+                    (Bytes.to_string (Run.data result)))
+                dtypes)
+            dtypes);
+      test "size-changing bitcast follows noncontiguous element order" (fun () ->
+          let source = Run.of_int_array ~shape:[ 2; 2 ] [| 1; 2; 3; 4 |] in
+          let result = Dt.bitcast (Mv.permute source [ 1; 0 ]) D.uint8 in
+          let expected = Bytes.make 16 '\000' in
+          List.iteri
+            (fun i n -> Bytes.set_int32_le expected (4 * i) (Int32.of_int n))
+            [ 1; 3; 2; 4 ];
+          equal (list int) [ 2; 8 ] (T.shape result);
+          equal string (Bytes.to_string expected)
+            (Bytes.to_string (Run.data result)));
+      test "subword slices can be repacked at an unaligned offset" (fun () ->
+          let source =
+            Run.of_int_array ~shape:[ 2 ] [| 0x04030201; 0x08070605 |]
+          in
+          let part = Mv.shrink (Dt.bitcast source D.uint8) [ (1, 3) ] in
+          let result = Dt.bitcast part D.uint16 in
+          equal (list int) [ 1 ] (T.shape result);
+          equal string "\002\003" (Bytes.to_string (Run.data result)));
+      test "size-changing bitcast supports an empty last axis" (fun () ->
+          let source = Run.of_bytes ~dtype:D.uint32 ~shape:[ 2; 0 ] Bytes.empty in
+          let result = Dt.bitcast source D.uint8 in
+          equal (list int) [ 2; 0 ] (T.shape result);
+          equal string "" (Bytes.to_string (Run.data result)));
+      test "size-changing bitcast rejects an incomplete destination element" (fun () ->
+          let source =
+            Run.of_bytes ~dtype:D.uint8 ~shape:[ 3 ] (Bytes.make 3 '\000')
+          in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> T.shape (Dt.bitcast source D.uint32)));
     ]
 
 let reduce_tests =
@@ -1208,6 +1261,7 @@ let () =
       scatter_indexed_tests;
       clone_tests;
       sort_tests;
+      bitcast_tests;
       reduce_tests;
       matmul_tests;
       scan_tests;

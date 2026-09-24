@@ -33,11 +33,12 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 ## Preparation and scheduling
 
 - Introduce the final preparation owner and move early rewrites out of
-  rangeify/callify. Port shape-changing bitcast expansion and disk/view rules.
+  rangeify/callify. Port disk/view rules.
 - Normalize explicit allocations and calls, lexical scalar formals and the
   separate becomes map. Handle precompiled calls without preallocation.
 - Track RAW/WAR dependencies for sliced/overlapping assignments, self-copy,
-  nested calls and shared aliases; reject cycles.
+  nested calls and shared aliases; reject cycles. Cover assignment through
+  bitcast views and initialization of pending values without evaluating them.
 - Replace SLICE memory-plan views with SHRINK/BITCAST byte offsets. Unify
   contiguous-view folding and test leading-dimension and symbolic views.
 - Port final sharding/indexing/allreduce ownership and hierarchical allreduce;
@@ -96,8 +97,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   with Nx and model/state ownership with Kaun, avoiding duplicate codecs and
   additional JSON dependencies.
 
-- Complete symbolic getitem/negative slices, shape-changing bitcasts, half
-  random generation.
+- Complete symbolic getitem/negative slices and half random generation.
 - Revalidate scan, scatter and external-buffer contracts under the new call
   and storage protocol.
 - Review the audited Rune residency, uploads, memory planning and symbolic
