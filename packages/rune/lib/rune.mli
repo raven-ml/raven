@@ -408,6 +408,36 @@ val check_grads :
     keyless [Nx.rand] draws from. A key the transform closes over is a constant
     of that transform, whichever front-end reads it. *)
 
+(** {1:devices Devices}
+
+    A device is a {!Nx.Device.t}: rune opens it by name, and it carries the
+    engine that holds values on it ({!Nx.place}). A device has one name:
+    ["METAL"], ["CUDA:3"], never an index [0] (["CUDA:0"] is ["CUDA"]). ["CPU"]
+    is the host, {!Nx.Device.host}; ["CPU:1"], ["CPU:2"], ... are devices with
+    storage of their own, for testing placement without a GPU. *)
+
+val device : string -> Nx.Device.t
+(** [device name] is the device [name] names, opened at the first call. Every
+    call with the same name returns the same value, and the backend part of the
+    name is case-insensitive.
+
+    Raises [Invalid_argument] if the backend is unknown or the device cannot be
+    opened. *)
+
+val devices : string -> Nx.Device.t list
+(** [devices backend] is every device of [backend] in index order: ["CUDA"],
+    ["CUDA:1"], ... for as long as they open. [devices "CPU"] is
+    [[Nx.Device.host]], and [devices "METAL"] is the one Metal device.
+
+    Raises [Invalid_argument] if [backend] names one device (["CUDA:1"]), is
+    unknown, or its first device cannot be opened. *)
+
+val default_device : unit -> Nx.Device.t
+(** [default_device ()] is the device that compiled functions run on unless they
+    are told otherwise: the backend that the [DEV] environment variable names,
+    or else the first of METAL, AMD, NV and CUDA that opens, or else the host.
+    It is resolved once per process, at the first call. *)
+
 (** {1:jit Just-in-time compilation} *)
 
 exception Jit_error of string
@@ -436,16 +466,13 @@ val jit :
     order — replay the compiled program on the new leaf values. A new signature
     triggers a fresh trace and compilation.
 
-    [device] selects where the kernels compile and run: ["CPU"], ["AMD"] (AMD
-    GPUs, Linux only), ["NV"] (NVIDIA GPUs on the kernel driver's hardware
-    queues, Linux only), ["CUDA"] (NVIDIA GPUs through the CUDA driver API), or
-    ["METAL"] (macOS only). When [device] is omitted, the process-wide default
-    applies: the [DEV] environment variable selects a backend by name; otherwise
-    backends are probed in order METAL, AMD, NV, CUDA and the first that opens
-    wins, falling back to CPU. The default is resolved once per process, at its
-    first use. On the CPU device, contiguous inputs and captured tensors are
-    read in place and outputs are computed directly into the returned tensors'
-    storage; non-contiguous tensors are copied.
+    [device] names the device the kernels compile and run on, as {!val-device}
+    does: ["CPU"] (the host), ["AMD"] (AMD GPUs, Linux only), ["NV"] (NVIDIA
+    GPUs on the kernel driver's hardware queues, Linux only), ["CUDA"] (NVIDIA
+    GPUs through the CUDA driver API), ["METAL"] (macOS only), or a device with
+    an index. It defaults to {!default_device}. On the host, contiguous inputs
+    and captured tensors are read in place and outputs are computed directly
+    into the returned tensors' storage; non-contiguous tensors are copied.
 
     On other devices, results are bit-identical but data moves lazily. Inputs
     are copied to the device on every call; outputs are values placed on the
@@ -489,12 +516,12 @@ val jit :
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
     are compile-time constants, bound once when the trace first compiles: on the
-    CPU device contiguous captures are read in place, and every other capture is
+    host contiguous captures are read in place, and every other capture is
     copied to the device once per closure — signatures share the copy. Mutating
     a captured tensor between calls is not supported and has unspecified
-    visibility (the CPU device may observe the mutation through its in-place
-    binding; other devices never do): pass values that change between calls as
-    leaves of [P] rather than capturing them.
+    visibility (the host may observe the mutation through its in-place binding;
+    other devices never do): pass values that change between calls as leaves of
+    [P] rather than capturing them.
 
     Compiled programs also persist across processes: the first compilation of a
     trace writes the scheduled and compiled kernels to a disk cache under the
@@ -619,8 +646,8 @@ val jit_step :
     storage and the leaf is released after the call, about two generations.
     [RUNE_JIT_DEBUG=1] reports, per input leaf in traversal order (the first
     argument's first), whether it was [read], its storage [reused] or [copied],
-    or was [not resident]. On the CPU device outputs are host tensors and
-    consuming changes nothing.
+    or was [not resident]. On the host outputs are host tensors and consuming
+    changes nothing.
 
     Compilation, caching and capture semantics are {!val-jit}'s. Raises as
     {!val-jit}. *)
@@ -646,9 +673,10 @@ val pmap :
   ('c, 'd) Nx.t
 (** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
     [devices] — {!val-jit} whose inputs are placed on a device tuple instead of
-    one device. Device names are as in {!val-jit}, with an instance suffix to
-    address several devices of one backend (["CUDA:0"], ["CUDA:1"], or
-    ["CPU:1"], ["CPU:2"], ...); all devices must share one backend.
+    one device. Device names are as in {!val-device}, with an index to address
+    several devices of one backend (["CUDA"], ["CUDA:1"], or ["CPU:1"],
+    ["CPU:2"], ...); all devices must share one backend, and the host (["CPU"])
+    is not one of them.
 
     [in_axes] gives one entry per leaf of [P], in traversal order: [Some a]
     splits the leaf along axis [a] into [List.length devices] equal shards, one
@@ -678,10 +706,11 @@ val pmap :
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
 
-    Raises [Invalid_argument] if [devices] is empty, mixes backends, or a device
-    is unavailable; if [in_axes] has one entry per leaf missing or in excess; or
-    if a sharded leaf's dimension does not divide evenly across the devices.
-    Raises {!Jit_error} when tracing fails, as {!val-jit}. *)
+    Raises [Invalid_argument] if [devices] is empty, mixes backends, names the
+    host, or a device is unavailable; if [in_axes] has one entry per leaf
+    missing or in excess; or if a sharded leaf's dimension does not divide
+    evenly across the devices. Raises {!Jit_error} when tracing fails, as
+    {!val-jit}. *)
 
 val pmap2 :
   devices:string list ->
@@ -726,12 +755,11 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     [bound]. A capture resident on another device, and any resident capture of a
     {!pmap}, is read to the host and uploaded, as a host capture is.
 
-    On the CPU device, which computes in host memory, the result is
-    [Nx.contiguous x]. Elsewhere it is {!Nx.place} on [device]: under
-    {!val-grad} and {!val-jvp} placement is linear and a cotangent returns to
-    its primal's placement, under {!val-vmap} it places the batched value, and
-    inside {!val-jit} it is [x] when [device] is the program's and raises
-    {!Jit_error} otherwise. *)
+    On the host, the result is [Nx.contiguous x]. Elsewhere it is {!Nx.place} on
+    [device]: under {!val-grad} and {!val-jvp} placement is linear and a
+    cotangent returns to its primal's placement, under {!val-vmap} it places the
+    batched value, and inside {!val-jit} it is [x] when [device] is the
+    program's and raises {!Jit_error} otherwise. *)
 
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)

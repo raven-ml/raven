@@ -297,23 +297,20 @@ let test_set_traced_window_on_mapped_axis () =
 
 (* A placed capture is on one device: a pmap reads it back and replicates it, as
    it does a host capture, and a function that bound it keeps its buffer. *)
+let test_host_is_not_a_device () =
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Rune.pmap ~devices:[ "CPU"; "CPU:1" ] (module Single_f32) Fun.id)
+
 let test_placed_capture_is_replicated () =
-  Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
-  Fun.protect
-    ~finally:(fun () -> Unix.putenv "RUNE_JIT_FORCE_COPY" "0")
-    (fun () ->
-      let w = Nx.create f32 [| 6 |] (arange 6) in
-      let p = Rune.to_device ~device:"CPU" w in
-      let bound = Rune.jit' ~device:"CPU" (fun x -> Nx.mul x p) in
-      let x = m46 () in
-      check_arr ~msg:"bound" (to_arr (Nx.mul x w)) (bound x);
-      let g =
-        Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul x p)
-      in
-      check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
-      check_arr ~msg:"bound, after the pmap read it"
-        (to_arr (Nx.mul x w))
-        (bound x))
+  let w = Nx.create f32 [| 6 |] (arange 6) in
+  let p = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w in
+  let bound = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x p) in
+  let x = m46 () in
+  check_arr ~msg:"bound" (to_arr (Nx.mul x w)) (bound x);
+  let g = Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul x p) in
+  check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
+  check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w)) (bound x)
 
 let test_pass_through_output () =
   let g =
@@ -761,6 +758,7 @@ let tests =
     group "errors"
       [
         test "empty devices raises" test_empty_devices;
+        test "the host is not a pmap device" test_host_is_not_a_device;
         test "mixed backends raise" test_mixed_backends;
         test "non-divisible shard axis raises" test_non_divisible_axis;
         test "in_axes arity mismatch raises" test_in_axes_arity;

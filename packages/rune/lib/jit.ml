@@ -114,28 +114,22 @@ end)
 
 type packed = Packed : ('a, 'b) ND.t * ('a, 'b) Nx_effect.t -> packed
 
-(* Devices. Instances live in the shared tolk registry, one per canonical name,
-   so jit, pmap, the process-wide default, and the engine's multi-device
-   schedules all resolve the same instance. [Jit_device.create] is installed as
-   the opener so unknown and unavailable names keep rune's error text. *)
+(* Backends. Device instances live in the shared tolk registry, one per
+   canonical name, so jit, pmap and the engine's multi-device schedules resolve
+   the same instance. rune installs its own opener for every backend when it is
+   initialised, before any device can be opened through it: the CPU is opened
+   without aligned vector types, since host tensors need not be aligned, and
+   unknown or unavailable names keep rune's error text. The list is the order in
+   which the default device is probed. *)
 
-let canonical name =
-  let name = String.uppercase_ascii name in
-  if String.contains name ':' then name else name ^ ":0"
+let backends = [ "METAL"; "AMD"; "NV"; "CUDA"; "CPU" ]
+let () = List.iter (fun b -> Tolk.Device.register b Jit_device.create) backends
 
-let device_prefix name =
+let backend name =
   match String.index_opt name ':' with
   | Some i -> String.sub name 0 i
   | None -> name
 
-let get_device name =
-  let name = canonical name in
-  Tolk.Device.register (device_prefix name) Jit_device.create;
-  Tolk.Device.get name
-
-(* Only the CPU device shares host memory with Nx tensors, so only it can run on
-   wrapped buffers instead of copies. *)
-let is_cpu name = String.starts_with ~prefix:"CPU" (canonical name)
 let to_program dev = Tolk.Codegen.to_program dev (Tolk.Device.renderer dev)
 
 (* Environment knobs, read when a jit closure is created (not at module
@@ -146,10 +140,6 @@ let env_int name default =
   | Some s -> ( match int_of_string_opt s with Some v -> v | None -> default)
   | None -> default
 
-(* Forces the copy path on the CPU device, so the device-residency machinery
-   (staged transfers, placed outputs, resident feedback) is exercised without a
-   GPU. *)
-let force_copy () = env_int "RUNE_JIT_FORCE_COPY" 0 <> 0
 let jit_debug = lazy (env_int "RUNE_JIT_DEBUG" 0)
 
 (* Transfer accounting. Cumulative byte counters for host-to-device and
@@ -190,11 +180,10 @@ let place_axis = function
 (* A pmap device tuple: canonical names and their registry instances. *)
 type multi_spec = { md_names : string list; md_devs : Tolk.Device.t list }
 
-(* Devices. Each tolk device instance has one nx device value, whose engine is
-   [engine] below. *)
+(* The devices other than the host, by canonical name: each has one nx device
+   value, whose engine is [engine] below, and one tolk device. *)
 
-let nx_devices : (string, Nx.Device.t * Tolk.Device.t) Hashtbl.t =
-  Hashtbl.create 4
+let by_name : (string, Nx.Device.t * Tolk.Device.t) Hashtbl.t = Hashtbl.create 4
 
 (* Resident storage
 
@@ -2752,6 +2741,16 @@ let allocate d buf =
     try Tolk.Device.Buffer.ensure_allocated buf
     with Failure _ -> raise (Nx.Device.Out_of_memory (d, n)))
 
+(* The name of the tolk device that compiles and runs the host's programs. *)
+let host_name = "CPU"
+
+let tolk_device_of d =
+  if d == Nx.Device.host then Tolk.Device.get host_name
+  else
+    match Hashtbl.find_opt by_name (Nx.Device.name d) with
+    | Some (d', dev) when d' == d -> dev
+    | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
+
 (* Raise unless [dev] can hold [dt]: its programs load, store and compute it,
    natively or by emulation. *)
 let check_holds (type a b) d dev (dt : (a, b) ND.t) =
@@ -2834,24 +2833,81 @@ and place_on : type a b.
       in
       make_placed p [ dev ] ~nolru dt (NV.create shape) bufs
 
-and tolk_device_of d =
-  match
-    Hashtbl.fold
-      (fun _ (d', dev) acc -> if d' == d then Some dev else acc)
-      nx_devices None
-  with
-  | Some dev -> dev
-  | None -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
+(* Devices, opened by name *)
 
-(* The device value of a tolk device: one per device, made on first use. *)
-let nx_device dev =
-  let name = Tolk.Device.name dev in
-  match Hashtbl.find_opt nx_devices name with
-  | Some (d, _) -> d
-  | None ->
-      let d = Nx_effect.Device.make name engine in
-      Hashtbl.add nx_devices name (d, dev);
-      d
+(* A device's canonical name: its backend in capitals, and its index unless it
+   is 0. Metal has one device, whatever the index its runtime is opened with. *)
+let canonical name =
+  let b = String.uppercase_ascii (backend name) in
+  match String.index_opt name ':' with
+  | None -> b
+  | Some i -> (
+      match
+        int_of_string_opt (String.sub name (i + 1) (String.length name - i - 1))
+      with
+      | Some 0 -> b
+      | Some _ when String.equal b "METAL" ->
+          invalid_arg "Rune.device: Metal has one device, METAL"
+      | Some k when k > 0 -> b ^ ":" ^ string_of_int k
+      | _ ->
+          invalid_arg
+            (Printf.sprintf "Rune.device: %s: the index is not a natural number"
+               name))
+
+let device name =
+  let name = canonical name in
+  if String.equal name host_name then Nx.Device.host
+  else
+    match Hashtbl.find_opt by_name name with
+    | Some (d, _) -> d
+    | None ->
+        if not (List.mem (backend name) backends) then
+          invalid_arg (Printf.sprintf "Rune.device: unknown device %s" name);
+        let dev =
+          try Tolk.Device.get name
+          with Failure msg ->
+            invalid_arg
+              (Printf.sprintf "Rune.device: device %s unavailable: %s" name msg)
+        in
+        let d = Nx_effect.Device.make name engine in
+        Hashtbl.add by_name name (d, dev);
+        d
+
+(* Metal exposes one device, whatever the index; the other backends number
+   theirs from 0, and the first index that does not open ends the list. *)
+let devices name =
+  let name = String.uppercase_ascii name in
+  if String.contains name ':' then
+    invalid_arg
+      (Printf.sprintf
+         "Rune.devices: %s names one device; pass its backend, such as %s" name
+         (backend name));
+  if String.equal name host_name then [ Nx.Device.host ]
+  else if String.equal name "METAL" then [ device name ]
+  else
+    let rec from i =
+      match device (Printf.sprintf "%s:%d" name i) with
+      | d -> d :: from (i + 1)
+      | exception Invalid_argument _ -> []
+    in
+    device name :: from 1
+
+(* The [DEV] environment variable names the default backend; without it, the
+   first backend that opens, in the order of [backends], the host last. *)
+let default_device =
+  let chosen =
+    lazy
+      (match Tolk.Helpers.Context_var.get Tolk.Helpers.dev with
+      | target :: _ when target.Tolk_uop.Target.device <> "" ->
+          device target.device
+      | _ ->
+          Tolk.Helpers.select_first_inited ~message:"Rune: no usable device"
+            (List.map (fun b () -> device b) backends))
+  in
+  fun () -> Lazy.force chosen
+
+(* The device value of a tolk device. *)
+let nx_device dev = device (Tolk.Device.name dev)
 
 let create_fresh_buffer dev dtolk n =
   let buf = Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev in
@@ -2861,18 +2917,19 @@ let create_fresh_buffer dev dtolk n =
 (* Placement
 
    [to_device] places a tensor on one device and hands back the placed value,
-   exactly like an unread output of a compiled call. On the CPU device, which
-   shares host memory, it stays a host tensor, made contiguous. *)
+   exactly like an unread output of a compiled call. On the host it stays a host
+   tensor, made contiguous. *)
 
-let to_device (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
-  let device = match device with Some d -> d | None -> F.Run.device_name () in
-  if is_cpu device && not (force_copy ()) then
+let to_device (type a b) ?device:name (x : (a, b) Nx_effect.t) :
+    (a, b) Nx_effect.t =
+  let d = match name with Some n -> device n | None -> default_device () in
+  if d == Nx.Device.host then
     let x = on_host x in
     let strided = not (NV.is_c_contiguous (Nx_effect.view x)) in
     match if strided then read_base (Hashtbl.create 1) x else None with
     | Some base -> Nx_effect.contiguous base
     | None -> Nx_effect.contiguous x
-  else Nx_effect.place (Nx.Placement.device (nx_device (get_device device))) x
+  else Nx_effect.place (Nx.Placement.device d) x
 
 (* Compiled traces *)
 
@@ -3970,14 +4027,13 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
    in the same order. Two splits of one leaf sequence compile apart: which
    inputs an indexed write lands in and which outputs may take storage
    differ. *)
-let compile_fn (type p q) ?device ?beam ?beam_parallel ~consumed_from
+let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
-  (* No [device] means the process-wide default: the [DEV] environment variable,
-     else the best backend that opens. *)
-  let device = match device with Some d -> d | None -> F.Run.device_name () in
-  let dev = get_device device in
-  let zero_copy = is_cpu device && not (force_copy ()) in
+  let d = match name with Some n -> device n | None -> default_device () in
+  let dev = tolk_device_of d in
+  (* The host's programs run over host memory. *)
+  let zero_copy = d == Nx.Device.host in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
   (* Device copies of captured tensors, shared by every signature of this
      closure and keyed by capture identity. *)
@@ -4090,10 +4146,14 @@ let pmap_names devices =
   if devices = [] then
     invalid_arg "Rune.pmap: devices must name at least one device";
   let names = List.map canonical devices in
-  let p0 = device_prefix (List.hd names) in
+  let p0 = backend (List.hd names) in
   List.iter
     (fun n ->
-      if not (String.equal (device_prefix n) p0) then
+      if String.equal n host_name then
+        invalid_arg
+          "Rune.pmap: CPU is the host, which holds no placed value; use CPU:1, \
+           CPU:2, ...";
+      if not (String.equal (backend n) p0) then
         invalid_arg
           (Printf.sprintf
              "Rune.pmap: devices must share one backend, got %s and %s"
@@ -4105,7 +4165,7 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
   let names = pmap_names devices in
-  let devs = List.map get_device names in
+  let devs = List.map (fun n -> tolk_device_of (device n)) names in
   let spec = { md_names = names; md_devs = devs } in
   let dev = List.hd devs in
   let ndev = List.length names in

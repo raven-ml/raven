@@ -7,8 +7,8 @@
    whose step time must not grow with the pool, and the gradient of [Nx.take]
    into a vocabulary-sized table, whose cost must follow the tokens. Each step
    ends with a scalar read that depends on the written tensor, so a timing
-   covers the device work. Run with DEV set; on CPU, storage is reused only
-   under RUNE_JIT_FORCE_COPY=1. *)
+   covers the device work. Run with DEV set to a GPU backend: on the host,
+   outputs are host tensors and no storage is reused. *)
 
 type state = { pool : Nx.float32_t; rows : Nx.int32_t; values : Nx.float32_t }
 

@@ -12,17 +12,17 @@ let create name =
     try Tolk_amd.create name
     with Failure msg ->
       invalid_arg
-        (Printf.sprintf "Rune.jit: device %s unavailable: %s" name msg)
+        (Printf.sprintf "Rune.device: device %s unavailable: %s" name msg)
   else if String.starts_with ~prefix:"NV" name then
     try Tolk_nv.create name
     with Failure msg ->
       invalid_arg
-        (Printf.sprintf "Rune.jit: device %s unavailable: %s" name msg)
+        (Printf.sprintf "Rune.device: device %s unavailable: %s" name msg)
   else if String.starts_with ~prefix:"CUDA" name then
     try Tolk_cuda.create name
     with Failure msg ->
       invalid_arg
-        (Printf.sprintf "Rune.jit: device %s unavailable: %s" name msg)
+        (Printf.sprintf "Rune.device: device %s unavailable: %s" name msg)
   else if String.starts_with ~prefix:"METAL" name then
-    invalid_arg "Rune.jit: device METAL is only available on macOS"
-  else invalid_arg (Printf.sprintf "Rune.jit: unknown device %s" name)
+    invalid_arg "Rune.device: device METAL is only available on macOS"
+  else invalid_arg (Printf.sprintf "Rune.device: unknown device %s" name)

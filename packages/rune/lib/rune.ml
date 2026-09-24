@@ -497,6 +497,9 @@ let while_loop (type p) (module C : Ptree.S with type t = p)
 
 exception Jit_error = Jit.Jit_error
 
+let device = Jit.device
+let devices = Jit.devices
+let default_device = Jit.default_device
 let jit = Jit.jit
 let jit2 = Jit.jit2
 let jit_step = Jit.jit_step

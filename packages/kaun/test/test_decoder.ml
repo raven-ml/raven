@@ -422,12 +422,9 @@ module State = struct
     Attention.Cache.List.iter f kv
 end
 
-let with_force_copy f =
-  Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
-  Fun.protect f ~finally:(fun () -> Unix.putenv "RUNE_JIT_FORCE_COPY" "0")
-
+(* On CPU:1, a device with storage of its own, the cache stays on the device and
+   each step writes it in place. *)
 let test_generation_matches_recomputation () =
-  with_force_copy @@ fun () ->
   let m = model () in
   let steps = 5 in
   let start = [| 3; 14; 1 |] in
@@ -457,7 +454,7 @@ let test_generation_matches_recomputation () =
     }
   in
   let step =
-    Rune.jit_step
+    Rune.jit_step ~device:"CPU:1"
       (module Nx.Ptree)
       (module State)
       (fun _ s -> step s)

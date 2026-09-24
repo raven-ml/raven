@@ -1438,16 +1438,14 @@ let test_jitted_training_matches_eager () =
   let l0 = scalar (loss (init ())) and l5 = scalar (loss jitted) in
   is_true ~msg:"loss decreased" (l5 < l0)
 
-(* Device residency. Under RUNE_JIT_FORCE_COPY=1 the CPU device takes the
-   staged-copy path used by CUDA and Metal: outputs become deferred handles that
-   stay on the device until read, and a handle fed back into a compiled call
+(* Device residency. CPU:1 is a device with storage of its own, which takes the
+   staged-copy path used by CUDA and Metal: outputs are placed values that stay
+   on the device until read, and a placed value fed back into a compiled call
    seeds its input buffer directly. The transfer counters make the no-copy
-   claims observable. The knob is read when the jit closure is created, so it is
-   scoped to each test body. *)
+   claims observable. *)
 
-let with_force_copy f =
-  Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
-  Fun.protect f ~finally:(fun () -> Unix.putenv "RUNE_JIT_FORCE_COPY" "0")
+let cpu1 = Rune.device "CPU:1"
+let place x = Nx.place (Nx.Placement.device cpu1) x
 
 (* Run [f] and return its result with the bytes moved to and from the device
    during the run. *)
@@ -1459,59 +1457,51 @@ let delta f =
     s1.bytes_to_device - s0.bytes_to_device,
     s1.bytes_from_device - s0.bytes_from_device )
 
-(* Placement. [Rune.to_device] makes a value resident without a compiled call;
-   under RUNE_JIT_FORCE_COPY=1 the CPU device holds it in a buffer of its
-   own. *)
+(* Placement. [Nx.place] makes a value resident without a compiled call. *)
 
 let resident () = (Rune.jit_stats ()).resident_bytes
 
 let test_place_equals_its_argument () =
-  with_force_copy (fun () ->
-      let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-      let base = resident () in
-      let p, up, down = delta (fun () -> Rune.to_device x) in
-      equal ~msg:"placing uploads the value once" int 24 up;
-      equal ~msg:"placing reads nothing back" int 0 down;
-      equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape p);
-      is_true ~msg:"dtype" (Nx.dtype p = f32);
-      equal ~msg:"the placed value is resident" int 24 (resident () - base);
-      let (), up, down =
-        delta (fun () -> check_arr ~msg:"value" (to_arr x) p)
-      in
-      equal ~msg:"the first read copies it back" int 24 down;
-      equal ~msg:"and uploads nothing" int 0 up;
-      equal ~msg:"a read leaves the value placed" int 24 (resident () - base);
-      check_arr ~msg:"the argument is untouched"
-        [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-        x)
+  let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let base = resident () in
+  let p, up, down = delta (fun () -> place x) in
+  equal ~msg:"placing uploads the value once" int 24 up;
+  equal ~msg:"placing reads nothing back" int 0 down;
+  equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape p);
+  is_true ~msg:"dtype" (Nx.dtype p = f32);
+  equal ~msg:"the placed value is resident" int 24 (resident () - base);
+  let (), up, down = delta (fun () -> check_arr ~msg:"value" (to_arr x) p) in
+  equal ~msg:"the first read copies it back" int 24 down;
+  equal ~msg:"and uploads nothing" int 0 up;
+  equal ~msg:"a read leaves the value placed" int 24 (resident () - base);
+  check_arr ~msg:"the argument is untouched"
+    [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
+    x
 
 let test_place_strided_and_offset () =
-  with_force_copy (fun () ->
-      let m = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-      let t = Nx.matrix_transpose m in
-      check_arr ~msg:"strided" (to_arr t) (Rune.to_device t);
-      let s = Nx.slice [ Nx.R (1, 2) ] m in
-      check_arr ~msg:"offset" [| 4.0; 5.0; 6.0 |] (Rune.to_device s))
+  let m = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let t = Nx.matrix_transpose m in
+  check_arr ~msg:"strided" (to_arr t) (place t);
+  let s = Nx.slice [ Nx.R (1, 2) ] m in
+  check_arr ~msg:"offset" [| 4.0; 5.0; 6.0 |] (place s)
 
 let test_place_feeds_inputs_without_transfer () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      ignore (g (vec32 [| 0.0; 0.0 |]));
-      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      let y, up, down = delta (fun () -> g p) in
-      equal ~msg:"no upload" int 0 up;
-      equal ~msg:"no read-back" int 0 down;
-      check_arr ~msg:"result" [| 2.0; 4.0 |] y;
-      check_arr ~msg:"the input is still readable" [| 1.0; 2.0 |] p)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  ignore (g (vec32 [| 0.0; 0.0 |]));
+  let p = place (vec32 [| 1.0; 2.0 |]) in
+  let y, up, down = delta (fun () -> g p) in
+  equal ~msg:"no upload" int 0 up;
+  equal ~msg:"no read-back" int 0 down;
+  check_arr ~msg:"result" [| 2.0; 4.0 |] y;
+  check_arr ~msg:"the input is still readable" [| 1.0; 2.0 |] p
 
 let test_place_resident_value_is_returned () =
-  with_force_copy (fun () ->
-      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      let q, up, _ = delta (fun () -> Rune.to_device p) in
-      is_true ~msg:"the same value" (p == q);
-      equal ~msg:"no upload" int 0 up;
-      let h = Rune.jit' (fun x -> Nx.mul_s x 2.0) p in
-      is_true ~msg:"an unread output too" (Rune.to_device h == h))
+  let p = place (vec32 [| 1.0; 2.0 |]) in
+  let q, up, _ = delta (fun () -> place p) in
+  is_true ~msg:"the same value" (p == q);
+  equal ~msg:"no upload" int 0 up;
+  let h = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) p in
+  is_true ~msg:"an unread output too" (place h == h)
 
 let test_place_on_the_host_device () =
   let x = vec32 [| 1.0; 2.0; 3.0 |] in
@@ -1525,82 +1515,105 @@ let test_place_on_the_host_device () =
   check_arr ~msg:"value" [| 1.0; 3.0; 2.0; 4.0 |] p
 
 let test_place_is_the_identity_under_transformations () =
-  with_force_copy (fun () ->
-      let x = vec32 [| 1.0; -2.0; 0.5 |] in
-      let loss place x =
-        let x = place x in
-        Nx.sum (Nx.mul x (Nx.mul x x))
-      in
-      let plain = loss Fun.id and placed = loss (fun x -> Rune.to_device x) in
-      let g = Rune.grad' placed x in
-      check_arr ~msg:"grad, eagerly" (to_arr (Rune.grad' plain x)) g;
-      is_true ~msg:"the cotangent comes back to its primal's placement"
-        (Nx.Placement.equal Nx.Placement.host (Nx.placement g));
-      check_arr ~msg:"grad, compiled"
-        (to_arr (Rune.grad' plain x))
-        (Rune.jit' (Rune.grad' placed) x);
-      let tangent = vec32 [| 1.0; 1.0; 1.0 |] in
-      check_arr ~msg:"jvp"
-        (to_arr (snd (Rune.jvp' plain x tangent)))
-        (snd (Rune.jvp' placed x tangent));
-      let rows = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-      let double place x = Nx.mul_s (place x) 2.0 in
-      check_arr ~msg:"vmap"
-        (to_arr (Rune.vmap' (double Fun.id) rows))
-        (Rune.vmap' (double (fun x -> Rune.to_device x)) rows);
-      let (_ : Nx.float32_t), up, _ =
-        delta (fun () -> Rune.jit' (fun x -> Nx.mul_s (Rune.to_device x) 2.0) x)
-      in
-      equal ~msg:"inside jit, placing where the program runs moves nothing" int
-        12 up)
+  let x = vec32 [| 1.0; -2.0; 0.5 |] in
+  let loss place x =
+    let x = place x in
+    Nx.sum (Nx.mul x (Nx.mul x x))
+  in
+  let plain = loss Fun.id and placed = loss (fun x -> place x) in
+  let g = Rune.grad' placed x in
+  check_arr ~msg:"grad, eagerly" (to_arr (Rune.grad' plain x)) g;
+  is_true ~msg:"the cotangent comes back to its primal's placement"
+    (Nx.Placement.equal Nx.Placement.host (Nx.placement g));
+  check_arr ~msg:"grad, compiled"
+    (to_arr (Rune.grad' plain x))
+    (Rune.jit' ~device:"CPU:1" (Rune.grad' placed) x);
+  let tangent = vec32 [| 1.0; 1.0; 1.0 |] in
+  check_arr ~msg:"jvp"
+    (to_arr (snd (Rune.jvp' plain x tangent)))
+    (snd (Rune.jvp' placed x tangent));
+  let rows = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let double place x = Nx.mul_s (place x) 2.0 in
+  check_arr ~msg:"vmap"
+    (to_arr (Rune.vmap' (double Fun.id) rows))
+    (Rune.vmap' (double (fun x -> place x)) rows);
+  let (_ : Nx.float32_t), up, _ =
+    delta (fun () ->
+        Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s (place x) 2.0) x)
+  in
+  equal ~msg:"inside jit, placing where the program runs moves nothing" int 12
+    up
+
+(* Devices have one name and one value each; CPU is the host. *)
+let test_one_device_per_name () =
+  is_true ~msg:"CPU is the host" (Rune.device "CPU" == Nx.Device.host);
+  is_true ~msg:"index 0 is the device itself"
+    (Rune.device "cpu:0" == Nx.Device.host);
+  let d = Rune.device "CPU:1" in
+  is_true ~msg:"one value per name" (Rune.device "cpu:1" == d);
+  is_true ~msg:"whatever the index's spelling" (Rune.device "CPU:01" == d);
+  equal ~msg:"its name" string "CPU:1" (Nx.Device.name d);
+  is_true ~msg:"the host backend's devices"
+    (List.equal ( == ) [ Nx.Device.host ] (Rune.devices "CPU"));
+  is_true ~msg:"DEV=CPU makes the host the default"
+    (Rune.default_device () == Nx.Device.host);
+  let invalid f =
+    raises_match (function Invalid_argument _ -> true | _ -> false) f
+  in
+  invalid (fun () -> Rune.device "TPU");
+  invalid (fun () -> Rune.device "CPU:-1");
+  invalid (fun () -> Rune.devices "CPU:1")
+
+(* A program on the host computes on host values: placing on the host inside it
+   is the identity, and its outputs are on the host. *)
+let test_host_program_is_on_the_host () =
+  let x = vec32 [| 1.0; 2.0 |] in
+  let f x = Nx.mul_s (Nx.place Nx.Placement.host x) 2.0 in
+  let y = Rune.jit' ~device:"CPU" f x in
+  check_arr ~msg:"placing on the host is the identity" [| 2.0; 4.0 |] y;
+  is_true ~msg:"the output is on the host"
+    (Nx.Placement.equal Nx.Placement.host (Nx.placement y));
+  check_arr ~msg:"and so is its gradient's" [| 2.0; 2.0 |]
+    (Rune.jit' ~device:"CPU" (Rune.grad' (fun x -> Nx.sum (f x))) x)
 
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
 let test_item_reads_one_element () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let y = g (Nx.create f32 [| 64; 64 |] (Array.init 4096 float_of_int)) in
-      let v, up, down = delta (fun () -> Nx.item [ 1; 2 ] y) in
-      equal ~msg:"the element" float_exact 132.0 v;
-      equal ~msg:"one element moves" int 4 down;
-      equal ~msg:"nothing is uploaded" int 0 up;
-      is_true ~msg:"the value stays resident" (bound_by 0 y);
-      let (_ : Nx.float32_t), up, _ = delta (fun () -> g y) in
-      equal ~msg:"and feeds a call with no upload" int 0 up)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let y = g (Nx.create f32 [| 64; 64 |] (Array.init 4096 float_of_int)) in
+  let v, up, down = delta (fun () -> Nx.item [ 1; 2 ] y) in
+  equal ~msg:"the element" float_exact 132.0 v;
+  equal ~msg:"one element moves" int 4 down;
+  equal ~msg:"nothing is uploaded" int 0 up;
+  is_true ~msg:"the value stays resident" (bound_by 0 y);
+  let (_ : Nx.float32_t), up, _ = delta (fun () -> g y) in
+  equal ~msg:"and feeds a call with no upload" int 0 up
 
 let test_move_to_host_keeps_its_source () =
-  with_force_copy (fun () ->
-      let p = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let h = Nx.place Nx.Placement.host p in
-      is_true ~msg:"a host copy"
-        (Nx.Placement.equal Nx.Placement.host (Nx.placement h));
-      check_arr ~msg:"its elements" [| 1.0; 2.0; 3.0 |] h;
-      check_arr ~msg:"the source is still readable" [| 1.0; 2.0; 3.0 |] p;
-      is_true ~msg:"and resident" (bound_by 0 p))
+  let p = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let h = Nx.place Nx.Placement.host p in
+  is_true ~msg:"a host copy"
+    (Nx.Placement.equal Nx.Placement.host (Nx.placement h));
+  check_arr ~msg:"its elements" [| 1.0; 2.0; 3.0 |] h;
+  check_arr ~msg:"the source is still readable" [| 1.0; 2.0; 3.0 |] p;
+  is_true ~msg:"and resident" (bound_by 0 p)
 
 let test_mixed_placements_raise () =
-  with_force_copy (fun () ->
-      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      let q =
-        Rune.jit' ~device:"CPU:1"
-          (fun x -> Nx.mul_s x 1.0)
-          (vec32 [| 3.0; 4.0 |])
-      in
-      raises_match
-        (function
-          | Invalid_argument msg ->
-              String.ends_with ~suffix:"place one of them" msg
-          | _ -> false)
-        (fun () -> Nx.add p q);
-      check_arr ~msg:"a host operand joins" [| 2.0; 3.0 |]
-        (Nx.add p (vec32 [| 1.0; 1.0 |])))
+  let p = place (vec32 [| 1.0; 2.0 |]) in
+  let q =
+    Rune.jit' ~device:"CPU:2" (fun x -> Nx.mul_s x 1.0) (vec32 [| 3.0; 4.0 |])
+  in
+  raises_match
+    (function
+      | Invalid_argument msg -> String.ends_with ~suffix:"place one of them" msg
+      | _ -> false)
+    (fun () -> Nx.add p q);
+  check_arr ~msg:"a host operand joins" [| 2.0; 3.0 |]
+    (Nx.add p (vec32 [| 1.0; 1.0 |]))
 
 let test_placing_elsewhere_inside_jit_raises () =
-  with_force_copy (fun () ->
-      let other =
-        Nx.placement (Rune.to_device ~device:"CPU:1" (vec32 [| 0.0 |]))
-      in
-      raises_jit_error (fun () ->
-          Rune.jit' (fun x -> Nx.place other x) (vec32 [| 1.0 |])))
+  let other = Nx.Placement.device (Rune.device "CPU:2") in
+  raises_jit_error (fun () ->
+      Rune.jit' ~device:"CPU:1" (fun x -> Nx.place other x) (vec32 [| 1.0 |]))
 
 (* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
    these values are larger than that, with a last chunk shorter than the
@@ -1608,20 +1621,21 @@ let test_placing_elsewhere_inside_jit_raises () =
 
 let chunk = 64 * 1024 * 1024
 
-(* [f] on the forced-copy device against [f] eagerly: every element uploaded,
-   computed and read back in its place. *)
+(* [f] on CPU:1 against [f] eagerly: every element uploaded, computed and read
+   back in its place. *)
 let check_transfers ~msg f x =
-  with_force_copy (fun () ->
-      let (y : Nx.int32_t), up, _ = delta (fun () -> Rune.jit' f x) in
-      let worst, _, down =
-        delta (fun () ->
-            let y = Nx.place Nx.Placement.host y in
-            Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
-      in
-      equal ~msg:(msg ^ ": difference from eager") int32 0l worst;
-      is_true ~msg:(msg ^ ": larger than a chunk") (Nx.nbytes x > chunk);
-      equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
-      equal ~msg:(msg ^ ": bytes read back") int (Nx.nbytes x) down)
+  let (y : Nx.int32_t), up, _ =
+    delta (fun () -> Rune.jit' ~device:"CPU:1" f x)
+  in
+  let worst, _, down =
+    delta (fun () ->
+        let y = Nx.place Nx.Placement.host y in
+        Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
+  in
+  equal ~msg:(msg ^ ": difference from eager") int32 0l worst;
+  is_true ~msg:(msg ^ ": larger than a chunk") (Nx.nbytes x > chunk);
+  equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
+  equal ~msg:(msg ^ ": bytes read back") int (Nx.nbytes x) down
 
 let test_chunked_contiguous () =
   let n = (chunk / 4) + 4099 in
@@ -1660,192 +1674,178 @@ let test_chunked_capture () =
   let w =
     Nx.matrix_transpose (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1))
   in
-  with_force_copy (fun () ->
-      let f s = Nx.add (Nx.reshape [| n |] w) s in
-      let s = Nx.create Nx.int32 [| 1 |] [| 5l |] in
-      let worst = Nx.max (Nx.abs (Nx.sub (Rune.jit' f s) (f s))) in
-      equal ~msg:"capture: difference from eager" int32 0l (Nx.item [] worst))
+  let f s = Nx.add (Nx.reshape [| n |] w) s in
+  let s = Nx.create Nx.int32 [| 1 |] [| 5l |] in
+  let worst = Nx.max (Nx.abs (Nx.sub (Rune.jit' ~device:"CPU:1" f s) (f s))) in
+  equal ~msg:"capture: difference from eager" int32 0l (Nx.item [] worst)
 
 let test_feedback_chain_moves_no_bytes () =
-  with_force_copy (fun () ->
-      let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
-      let g = Rune.jit' f in
-      let x = vec32 [| 1.0; 2.0; 3.0 |] in
-      let h1 = g x in
-      let h2, up2, down2 = delta (fun () -> g h1) in
-      let h3, up3, down3 = delta (fun () -> g h2) in
-      equal ~msg:"feeding h1 back uploads nothing" int 0 up2;
-      equal ~msg:"producing h2 downloads nothing" int 0 down2;
-      equal ~msg:"feeding h2 back uploads nothing" int 0 up3;
-      equal ~msg:"producing h3 downloads nothing" int 0 down3;
-      check_arr ~msg:"h3 matches the eager composition"
-        (to_arr (f (f (f x))))
-        h3;
-      (* Handles from earlier calls keep their own storage (R3). *)
-      check_arr ~msg:"h1 still readable" (to_arr (f x)) h1;
-      check_arr ~msg:"h2 still readable" (to_arr (f (f x))) h2)
+  let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
+  let g = Rune.jit' ~device:"CPU:1" f in
+  let x = vec32 [| 1.0; 2.0; 3.0 |] in
+  let h1 = g x in
+  let h2, up2, down2 = delta (fun () -> g h1) in
+  let h3, up3, down3 = delta (fun () -> g h2) in
+  equal ~msg:"feeding h1 back uploads nothing" int 0 up2;
+  equal ~msg:"producing h2 downloads nothing" int 0 down2;
+  equal ~msg:"feeding h2 back uploads nothing" int 0 up3;
+  equal ~msg:"producing h3 downloads nothing" int 0 down3;
+  check_arr ~msg:"h3 matches the eager composition" (to_arr (f (f (f x)))) h3;
+  (* Handles from earlier calls keep their own storage (R3). *)
+  check_arr ~msg:"h1 still readable" (to_arr (f x)) h1;
+  check_arr ~msg:"h2 still readable" (to_arr (f (f x))) h2
 
 let test_forced_handle_feeds_current_bytes () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
-      check_arr ~msg:"a read leaves the value placed" [| 2.0; 4.0; 6.0 |] h;
-      (* A value an eager operation derives from it lives with it, and feeds a
-         call with no upload. *)
-      let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
-      let h2, up, _ = delta (fun () -> g h) in
-      equal ~msg:"a derived value feeds with no upload" int 0 up;
-      check_arr ~msg:"the new value is observed" [| 20.0; 8.0; 12.0 |] h2)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
+  check_arr ~msg:"a read leaves the value placed" [| 2.0; 4.0; 6.0 |] h;
+  (* A value an eager operation derives from it lives with it, and feeds a call
+     with no upload. *)
+  let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
+  let h2, up, _ = delta (fun () -> g h) in
+  equal ~msg:"a derived value feeds with no upload" int 0 up;
+  check_arr ~msg:"the new value is observed" [| 20.0; 8.0; 12.0 |] h2
 
 let test_same_handle_as_two_leaves () =
-  with_force_copy (fun () ->
-      let g =
-        Rune.jit2
-          (module Pair)
-          (module Pair)
-          (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
-      in
-      let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |]) in
-      let r, up, _ = delta (fun () -> g { u = h; v = h }) in
-      equal ~msg:"resident duplicate leaves upload nothing" int 0 up;
-      check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
-      check_arr ~msg:"v" [| 9.0; 36.0 |] r.v)
+  let g =
+    Rune.jit2 ~device:"CPU:1"
+      (module Pair)
+      (module Pair)
+      (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+  in
+  let h =
+    Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
+  in
+  let r, up, _ = delta (fun () -> g { u = h; v = h }) in
+  equal ~msg:"resident duplicate leaves upload nothing" int 0 up;
+  check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
+  check_arr ~msg:"v" [| 9.0; 36.0 |] r.v
 
 let test_duplicate_outputs_share_one_handle () =
-  with_force_copy (fun () ->
-      let g =
-        Rune.jit2
-          (module Pair)
-          (module Pair)
-          (fun p ->
-            let y = Nx.add p.u p.v in
-            { u = y; v = y })
-      in
-      let r = g { u = vec32 [| 1.0 |]; v = vec32 [| 2.0 |] } in
-      is_true ~msg:"both leaves are one handle" (r.u == r.v);
-      check_arr ~msg:"readable" [| 3.0 |] r.u;
-      check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v)
+  let g =
+    Rune.jit2 ~device:"CPU:1"
+      (module Pair)
+      (module Pair)
+      (fun p ->
+        let y = Nx.add p.u p.v in
+        { u = y; v = y })
+  in
+  let r = g { u = vec32 [| 1.0 |]; v = vec32 [| 2.0 |] } in
+  is_true ~msg:"both leaves are one handle" (r.u == r.v);
+  check_arr ~msg:"readable" [| 3.0 |] r.u;
+  check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v
 
 let test_cross_jit_feedback () =
-  with_force_copy (fun () ->
-      let g1 = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let g2 = Rune.jit' (fun x -> Nx.add_s x 1.0) in
-      let h = g1 (vec32 [| 1.0; 2.0 |]) in
-      let r, up, _ = delta (fun () -> g2 h) in
-      equal ~msg:"a distinct jitted closure seeds the handle too" int 0 up;
-      check_arr ~msg:"value" [| 3.0; 5.0 |] r)
+  let g1 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let g2 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.add_s x 1.0) in
+  let h = g1 (vec32 [| 1.0; 2.0 |]) in
+  let r, up, _ = delta (fun () -> g2 h) in
+  equal ~msg:"a distinct jitted closure seeds the handle too" int 0 up;
+  check_arr ~msg:"value" [| 3.0; 5.0 |] r
 
 let test_cross_signature_feedback () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.sum ~axes:[ 0 ] x) in
-      let h1 =
-        g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |])
-      in
-      (* h1 has a new shape: feeding it back compiles a second signature, still
-         without forcing the handle. *)
-      let h2, up, down = delta (fun () -> g h1) in
-      equal ~msg:"the retrace uploads nothing" int 0 up;
-      equal ~msg:"the retrace downloads nothing" int 0 down;
-      check_arr ~msg:"value" [| 21.0 |] h2;
-      check_arr ~msg:"h1 still readable" [| 5.0; 7.0; 9.0 |] h1)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.sum ~axes:[ 0 ] x) in
+  let h1 = g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]) in
+  (* h1 has a new shape: feeding it back compiles a second signature, still
+     without forcing the handle. *)
+  let h2, up, down = delta (fun () -> g h1) in
+  equal ~msg:"the retrace uploads nothing" int 0 up;
+  equal ~msg:"the retrace downloads nothing" int 0 down;
+  check_arr ~msg:"value" [| 21.0 |] h2;
+  check_arr ~msg:"h1 still readable" [| 5.0; 7.0; 9.0 |] h1
 
 let test_pass_through_output_survives () =
-  with_force_copy (fun () ->
-      let g =
-        Rune.jit2
-          (module Pair)
-          (module Pair)
-          (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
-      in
-      let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
-      let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
-      check_arr ~msg:"pass-through survives a later call" [| 1.0; 2.0 |] r1.u;
-      check_arr ~msg:"first call's computed output" [| 6.0; 8.0 |] r1.v;
-      check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
-      check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v)
+  let g =
+    Rune.jit2 ~device:"CPU:1"
+      (module Pair)
+      (module Pair)
+      (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
+  in
+  let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
+  let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
+  check_arr ~msg:"pass-through survives a later call" [| 1.0; 2.0 |] r1.u;
+  check_arr ~msg:"first call's computed output" [| 6.0; 8.0 |] r1.v;
+  check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
+  check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v
 
 let test_grad_over_jit_with_deferred_arg () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul x x) in
-      let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
-      (* Under grad the jitted function runs eagerly; the handle forces on its
-         first operation. *)
-      let dx = Rune.grad' (fun x -> Nx.sum (g x)) h in
-      check_arr ~msg:"gradient at the deferred point" [| 2.0; 8.0; 18.0 |] dx)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x x) in
+  let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
+  (* Under grad the jitted function runs eagerly; the handle forces on its first
+     operation. *)
+  let dx = Rune.grad' (fun x -> Nx.sum (g x)) h in
+  check_arr ~msg:"gradient at the deferred point" [| 2.0; 8.0; 18.0 |] dx
 
 let test_vmap_over_jit_with_deferred_arg () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let h = g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
-      let y = Rune.vmap' g h in
-      check_arr ~msg:"vmap over jit at a deferred point"
-        [| 4.0; 8.0; 12.0; 16.0 |] y)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let h = g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
+  let y = Rune.vmap' g h in
+  check_arr ~msg:"vmap over jit at a deferred point" [| 4.0; 8.0; 12.0; 16.0 |]
+    y
 
 let test_dispatch_on_handle_reads_no_bytes () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let h = g (vec32 [| 1.0; 2.0 |]) in
-      (* Signature dispatch uses only metadata: replaying on a handle must not
-         force it. *)
-      let _h2, _, down = delta (fun () -> g h) in
-      equal ~msg:"dispatching on a handle downloads nothing" int 0 down)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let h = g (vec32 [| 1.0; 2.0 |]) in
+  (* Signature dispatch uses only metadata: replaying on a handle must not force
+     it. *)
+  let _h2, _, down = delta (fun () -> g h) in
+  equal ~msg:"dispatching on a handle downloads nothing" int 0 down
 
 let test_capture_uploaded_once_across_signatures () =
-  with_force_copy (fun () ->
-      let n = 256 in
-      let c = vec32 (Array.init n float_of_int) in
-      let g = Rune.jit' (fun x -> Nx.add x c) in
-      let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
-      (* A new input shape compiles a second signature; the capture's device
-         copy is shared, so only the input is uploaded. *)
-      let _, up2, _ =
-        delta (fun () -> g (Nx.create f32 [| 1; n |] (Array.make n 1.0)))
-      in
-      equal ~msg:"first compile uploads input and capture" int (2 * n * 4) up1;
-      equal ~msg:"second signature re-uploads only the input" int (n * 4) up2)
+  let n = 256 in
+  let c = vec32 (Array.init n float_of_int) in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.add x c) in
+  let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
+  (* A new input shape compiles a second signature; the capture's device copy is
+     shared, so only the input is uploaded. *)
+  let _, up2, _ =
+    delta (fun () -> g (Nx.create f32 [| 1; n |] (Array.make n 1.0)))
+  in
+  equal ~msg:"first compile uploads input and capture" int (2 * n * 4) up1;
+  equal ~msg:"second signature re-uploads only the input" int (n * 4) up2
 
 let test_dropped_handles_are_reclaimed () =
-  with_force_copy (fun () ->
-      let n = 1024 in
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let x = vec32 (Array.make n 1.0) in
-      let base = (Rune.jit_stats ()).resident_bytes in
-      let _, _, down =
-        delta (fun () ->
-            for _ = 1 to 50 do
-              ignore (g x)
-            done)
-      in
-      equal ~msg:"unread outputs download nothing" int 0 down;
-      (* Collect the dropped handles; the next calls drain their buffers. *)
-      full_major ();
-      ignore (g x);
-      full_major ();
-      ignore (g x);
-      let s = Rune.jit_stats () in
-      is_true ~msg:"resident bytes are bounded after gc"
-        (s.resident_bytes - base <= 3 * n * 4))
+  let n = 1024 in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let x = vec32 (Array.make n 1.0) in
+  let base = (Rune.jit_stats ()).resident_bytes in
+  let _, _, down =
+    delta (fun () ->
+        for _ = 1 to 50 do
+          ignore (g x)
+        done)
+  in
+  equal ~msg:"unread outputs download nothing" int 0 down;
+  (* Collect the dropped handles; the next calls drain their buffers. *)
+  full_major ();
+  ignore (g x);
+  full_major ();
+  ignore (g x);
+  let s = Rune.jit_stats () in
+  is_true ~msg:"resident bytes are bounded after gc"
+    (s.resident_bytes - base <= 3 * n * 4)
 
 (* A call returns while its kernels may still run. A read waits for them: right
    after one call, and after a chain of unread calls. *)
 let test_read_after_call_waits () =
-  with_force_copy (fun () ->
-      let n = 256 in
-      let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
-      let g = Rune.jit' f in
-      let x =
-        Nx.create f32 [| n; n |]
-          (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
-      in
-      check_arr ~eps:1e-3 ~msg:"right after one call" (to_arr (f x)) (g x);
-      let step = Rune.jit' (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0) in
-      let h = ref (Rune.to_device (vec32 (Array.make 4096 0.0))) in
-      for _ = 1 to 50 do
-        h := step !h
-      done;
-      let expected = 2.0 -. (2.0 *. (0.5 ** 50.0)) in
-      check_arr ~eps:1e-6 ~msg:"after fifty unread calls"
-        (Array.make 4096 expected) !h)
+  let n = 256 in
+  let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
+  let g = Rune.jit' ~device:"CPU:1" f in
+  let x =
+    Nx.create f32 [| n; n |]
+      (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
+  in
+  check_arr ~eps:1e-3 ~msg:"right after one call" (to_arr (f x)) (g x);
+  let step =
+    Rune.jit' ~device:"CPU:1" (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
+  in
+  let h = ref (place (vec32 (Array.make 4096 0.0))) in
+  for _ = 1 to 50 do
+    h := step !h
+  done;
+  let expected = 2.0 -. (2.0 *. (0.5 ** 50.0)) in
+  check_arr ~eps:1e-6 ~msg:"after fifty unread calls" (Array.make 4096 expected)
+    !h
 
 (* Arenas. A program's planned intermediates are slices of its device's shared
    arena, so programs run in turn hold one arena between them. *)
@@ -1865,71 +1865,68 @@ let arena_program ~n act =
     Nx.create f32 [| n; 8 |]
       (Array.init (n * 8) (fun i -> sin (float_of_int ((k * i) + 1)) /. 4.0))
   in
-  (f, Rune.jit' f, x)
+  (f, Rune.jit' ~device:"CPU:1" f, x)
 
 let test_programs_share_an_arena () =
-  with_force_copy (fun () ->
-      let n = 512 in
-      let f, f', x = arena_program ~n Nx.tanh in
-      let g, g', _ = arena_program ~n Nx.sin in
-      check_arr ~eps:1e-2 ~msg:"first program" (to_arr (f (x 1))) (f' (x 1));
-      let before = device_bytes "CPU" in
-      check_arr ~eps:1e-2 ~msg:"second program" (to_arr (g (x 2))) (g' (x 2));
-      is_true ~msg:"the second program allocates no arena of its own"
-        (device_bytes "CPU" - before < n * n * 4);
-      for k = 3 to 5 do
-        check_arr ~eps:1e-2 ~msg:"the first after the second"
-          (to_arr (f (x k)))
-          (f' (x k));
-        check_arr ~eps:1e-2 ~msg:"the second after the first"
-          (to_arr (g (x (k + 3))))
-          (g' (x (k + 3)))
-      done)
+  let n = 512 in
+  let f, f', x = arena_program ~n Nx.tanh in
+  let g, g', _ = arena_program ~n Nx.sin in
+  check_arr ~eps:1e-2 ~msg:"first program" (to_arr (f (x 1))) (f' (x 1));
+  let before = device_bytes "CPU:1" in
+  check_arr ~eps:1e-2 ~msg:"second program" (to_arr (g (x 2))) (g' (x 2));
+  is_true ~msg:"the second program allocates no arena of its own"
+    (device_bytes "CPU:1" - before < n * n * 4);
+  for k = 3 to 5 do
+    check_arr ~eps:1e-2 ~msg:"the first after the second"
+      (to_arr (f (x k)))
+      (f' (x k));
+    check_arr ~eps:1e-2 ~msg:"the second after the first"
+      (to_arr (g (x (k + 3))))
+      (g' (x (k + 3)))
+  done
 
 (* A larger arena grows the shared one; the programs bound to the old buffer
    move to the new one at their next call, and the old buffer is freed: the
    device grows by less than the new arena. *)
 let test_a_grown_arena_frees_the_old () =
-  with_force_copy (fun () ->
-      let f, f', x = arena_program ~n:256 Nx.tanh in
-      check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
-      let n = 1024 in
-      let g, g', y = arena_program ~n Nx.sin in
-      (* Collect the views earlier tests' programs left of the old buffer. *)
-      full_major ();
-      let before = device_bytes "CPU" in
-      check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
-      is_true ~msg:"the outgrown buffer is freed"
-        (device_bytes "CPU" - before < (n * n * 4) - (128 * 1024));
-      check_arr ~eps:1e-2 ~msg:"small, on the grown arena"
-        (to_arr (f (x 2)))
-        (f' (x 2));
-      check_arr ~eps:1e-2 ~msg:"large again" (to_arr (g (y 2))) (g' (y 2)))
+  let f, f', x = arena_program ~n:256 Nx.tanh in
+  check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
+  let n = 1024 in
+  let g, g', y = arena_program ~n Nx.sin in
+  (* Collect the views earlier tests' programs left of the old buffer. *)
+  full_major ();
+  let before = device_bytes "CPU:1" in
+  check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
+  is_true ~msg:"the outgrown buffer is freed"
+    (device_bytes "CPU:1" - before < (n * n * 4) - (128 * 1024));
+  check_arr ~eps:1e-2 ~msg:"small, on the grown arena"
+    (to_arr (f (x 2)))
+    (f' (x 2));
+  check_arr ~eps:1e-2 ~msg:"large again" (to_arr (g (y 2))) (g' (y 2))
 
 (* Not inlined: once it returns, only the queued kernels use the placed
    input. *)
 let[@inline never] run_on_a_dropped_input g data n =
-  g (Rune.to_device (Nx.create f32 [| n; n |] data))
+  g (place (Nx.create f32 [| n; n |] data))
 
 (* A placed input dropped while the kernels that read it are queued returns to
    the system only once they have run: the first result is intact after a value
    of the same size is placed, which may take the dropped input's memory. *)
 let test_buffer_freed_under_a_running_kernel () =
-  with_force_copy (fun () ->
-      let n = 384 in
-      let data = Array.init (n * n) (fun i -> float_of_int (i mod 7) /. 7.0) in
-      let f x = Nx.matmul (Nx.tanh (Nx.matmul x x)) x in
-      let expected = to_arr (f (Nx.create f32 [| n; n |] data)) in
-      let g = Rune.jit' f in
-      ignore (to_arr (g (Nx.create f32 [| n; n |] data)));
-      let noise = Nx.create f32 [| n; n |] (Array.make (n * n) 1e9) in
-      for _ = 1 to 4 do
-        let y = run_on_a_dropped_input g data n in
-        full_major ();
-        let z = Rune.to_device noise in
-        check_arr ~eps:1e-2 ~msg:"the first result" expected y;
-        ignore (to_arr z)
-      done)
+  let n = 384 in
+  let data = Array.init (n * n) (fun i -> float_of_int (i mod 7) /. 7.0) in
+  let f x = Nx.matmul (Nx.tanh (Nx.matmul x x)) x in
+  let expected = to_arr (f (Nx.create f32 [| n; n |] data)) in
+  let g = Rune.jit' ~device:"CPU:1" f in
+  ignore (to_arr (g (Nx.create f32 [| n; n |] data)));
+  let noise = Nx.create f32 [| n; n |] (Array.make (n * n) 1e9) in
+  for _ = 1 to 4 do
+    let y = run_on_a_dropped_input g data n in
+    full_major ();
+    let z = place noise in
+    check_arr ~eps:1e-2 ~msg:"the first result" expected y;
+    ignore (to_arr z)
+  done
 
 (* Traced values carry no storage. OCaml counts a bigarray's bytes towards the
    major collector's pace even when its pages are never touched, so a
@@ -2003,211 +2000,200 @@ let leaf (type a b) () : (module Nx.Ptree.S with type t = (a, b) Nx.t) =
 
 (* [f] compiled as a step that reads nothing and consumes its state. *)
 let consume state f =
-  Rune.jit_step (module Nx.Ptree) state (fun _ x -> f x) (Nx.Ptree.list [])
+  Rune.jit_step ~device:"CPU:1"
+    (module Nx.Ptree)
+    state
+    (fun _ x -> f x)
+    (Nx.Ptree.list [])
 
 let consume' f = consume (leaf ()) f
 
 let test_donate_bounds_resident_memory () =
-  with_force_copy (fun () ->
-      let n = 4096 in
-      let step d =
-        let f x = Nx.add_s x 1.0 in
-        if d then consume' f else Rune.jit' f
-      in
-      let x = vec32 (Array.make n 0.0) in
-      (* Every handle created here stays reachable; retiring the handles earlier
-         tests dropped unread keeps their release out of the measured window. *)
-      let hold = Array.make 10 x in
-      let run g =
-        full_major ();
-        let base = (Rune.jit_stats ()).resident_bytes in
-        let h = ref (g x) in
-        for i = 0 to 9 do
-          hold.(i) <- !h;
-          h := g !h
-        done;
-        let r = (Rune.jit_stats ()).resident_bytes - base in
-        (!h, r)
-      in
-      let h, grew = run (step true) in
-      is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
-      check_arr ~msg:"donated chain computes the right value"
-        (Array.make n 11.0) h;
-      let h', grew' = run (step false) in
-      is_true ~msg:"without donate every generation stays resident"
-        (grew' >= 10 * n * 4);
-      check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h')
+  let n = 4096 in
+  let step d =
+    let f x = Nx.add_s x 1.0 in
+    if d then consume' f else Rune.jit' ~device:"CPU:1" f
+  in
+  let x = vec32 (Array.make n 0.0) in
+  (* Every handle created here stays reachable; retiring the handles earlier
+     tests dropped unread keeps their release out of the measured window. *)
+  let hold = Array.make 10 x in
+  let run g =
+    full_major ();
+    let base = (Rune.jit_stats ()).resident_bytes in
+    let h = ref (g x) in
+    for i = 0 to 9 do
+      hold.(i) <- !h;
+      h := g !h
+    done;
+    let r = (Rune.jit_stats ()).resident_bytes - base in
+    (!h, r)
+  in
+  let h, grew = run (step true) in
+  is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
+  check_arr ~msg:"donated chain computes the right value" (Array.make n 11.0) h;
+  let h', grew' = run (step false) in
+  is_true ~msg:"without donate every generation stays resident"
+    (grew' >= 10 * n * 4);
+  check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h'
 
 (* Elision: a donated input whose output reads it at the same index hands its
    storage to the output, so a carry loop holds one generation, not two. *)
 let test_donate_reuses_storage () =
-  with_force_copy (fun () ->
-      let n = 4096 in
-      let step = consume' (fun x -> Nx.add_s x 1.0) in
-      let x = vec32 (Array.make n 0.0) in
-      full_major ();
-      let base = (Rune.jit_stats ()).resident_bytes in
-      let h = ref (step x) in
-      let hold = Array.make 10 !h in
-      for i = 0 to 9 do
-        hold.(i) <- !h;
-        h := step !h
-      done;
-      let grew = (Rune.jit_stats ()).resident_bytes - base in
-      is_true ~msg:"one generation stays resident" (grew <= n * 4);
-      check_arr ~msg:"the chain computes the right value" (Array.make n 11.0) !h)
+  let n = 4096 in
+  let step = consume' (fun x -> Nx.add_s x 1.0) in
+  let x = vec32 (Array.make n 0.0) in
+  full_major ();
+  let base = (Rune.jit_stats ()).resident_bytes in
+  let h = ref (step x) in
+  let hold = Array.make 10 !h in
+  for i = 0 to 9 do
+    hold.(i) <- !h;
+    h := step !h
+  done;
+  let grew = (Rune.jit_stats ()).resident_bytes - base in
+  is_true ~msg:"one generation stays resident" (grew <= n * 4);
+  check_arr ~msg:"the chain computes the right value" (Array.make n 11.0) !h
 
 (* A path through a movement op reads the input at another index, so the output
    must not take its storage; a chain stays correct. *)
 let test_donate_refuses_movement_path () =
-  with_force_copy (fun () ->
-      let f x = Nx.add x (Nx.transpose x) in
-      let step = consume' f in
-      let x = Nx.create f32 [| 3; 3 |] (Array.init 9 float_of_int) in
-      let e = ref x and h = ref x in
-      for _ = 1 to 3 do
-        e := f !e;
-        h := step !h
-      done;
-      check_arr ~msg:"transposed chain" (to_arr (f !e)) (step !h))
+  let f x = Nx.add x (Nx.transpose x) in
+  let step = consume' f in
+  let x = Nx.create f32 [| 3; 3 |] (Array.init 9 float_of_int) in
+  let e = ref x and h = ref x in
+  for _ = 1 to 3 do
+    e := f !e;
+    h := step !h
+  done;
+  check_arr ~msg:"transposed chain" (to_arr (f !e)) (step !h)
 
 (* An input read by a kernel that runs after the output's store keeps its own
    storage: here the reduction over [u] must see the old value. *)
 let test_donate_refuses_later_reader () =
-  with_force_copy (fun () ->
-      let f (p : Pair.t) =
-        {
-          Pair.u = Nx.add_s p.u 1.0;
-          v = Nx.add p.v (Nx.broadcast_to (Nx.shape p.v) (Nx.sum p.u));
-        }
-      in
-      let step = consume (module Pair) f in
-      let p =
-        { Pair.u = vec32 [| 1.0; 2.0; 3.0 |]; v = vec32 [| 0.0; 0.0; 0.0 |] }
-      in
-      let e = ref p and h = ref p in
-      for _ = 1 to 3 do
-        e := f !e;
-        h := step !h
-      done;
-      let e = f !e and h = step !h in
-      check_arr ~msg:"u" (to_arr e.Pair.u) h.Pair.u;
-      check_arr ~msg:"v sums the pre-update values" (to_arr e.Pair.v) h.Pair.v)
+  let f (p : Pair.t) =
+    {
+      Pair.u = Nx.add_s p.u 1.0;
+      v = Nx.add p.v (Nx.broadcast_to (Nx.shape p.v) (Nx.sum p.u));
+    }
+  in
+  let step = consume (module Pair) f in
+  let p =
+    { Pair.u = vec32 [| 1.0; 2.0; 3.0 |]; v = vec32 [| 0.0; 0.0; 0.0 |] }
+  in
+  let e = ref p and h = ref p in
+  for _ = 1 to 3 do
+    e := f !e;
+    h := step !h
+  done;
+  let e = f !e and h = step !h in
+  check_arr ~msg:"u" (to_arr e.Pair.u) h.Pair.u;
+  check_arr ~msg:"v sums the pre-update values" (to_arr e.Pair.v) h.Pair.v
 
 (* A donated input returned unchanged moves its storage to the output. *)
 let test_donate_moves_pass_through () =
-  with_force_copy (fun () ->
-      let step =
-        consume
-          (module Pair)
-          (fun (p : Pair.t) -> { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
-      in
-      let p =
-        { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] }
-        |> step |> step
-      in
-      let base = (Rune.jit_stats ()).resident_bytes in
-      let r, up, _ = delta (fun () -> step p) in
-      equal ~msg:"resident leaves upload nothing" int 0 up;
-      is_true ~msg:"no fresh buffer for the pass-through"
-        ((Rune.jit_stats ()).resident_bytes - base <= 0);
-      check_arr ~msg:"pass-through value" [| 1.0; 2.0 |] r.Pair.u;
-      check_arr ~msg:"updated value" [| 6.0; 7.0 |] r.Pair.v;
-      raises_donated (fun () -> to_arr p.Pair.u))
+  let step =
+    consume
+      (module Pair)
+      (fun (p : Pair.t) -> { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
+  in
+  let p =
+    { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } |> step |> step
+  in
+  let base = (Rune.jit_stats ()).resident_bytes in
+  let r, up, _ = delta (fun () -> step p) in
+  equal ~msg:"resident leaves upload nothing" int 0 up;
+  is_true ~msg:"no fresh buffer for the pass-through"
+    ((Rune.jit_stats ()).resident_bytes - base <= 0);
+  check_arr ~msg:"pass-through value" [| 1.0; 2.0 |] r.Pair.u;
+  check_arr ~msg:"updated value" [| 6.0; 7.0 |] r.Pair.v;
+  raises_donated (fun () -> to_arr p.Pair.u)
 
 (* An input both updated and returned unchanged keeps its storage for the
    pass-through: the update must not write over the value the pass-through
    copies out after the kernels ran. *)
 let test_donate_keeps_pass_through_readable () =
-  with_force_copy (fun () ->
-      let step =
-        consume
-          (module Pair)
-          (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
-      in
-      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 0.0; 0.0 |] } in
-      let r = step (step p) in
-      check_arr ~msg:"updated" [| 3.0; 4.0 |] r.Pair.u;
-      check_arr ~msg:"pass-through holds the value before the update"
-        [| 2.0; 3.0 |] r.Pair.v)
+  let step =
+    consume
+      (module Pair)
+      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+  in
+  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 0.0; 0.0 |] } in
+  let r = step (step p) in
+  check_arr ~msg:"updated" [| 3.0; 4.0 |] r.Pair.u;
+  check_arr ~msg:"pass-through holds the value before the update" [| 2.0; 3.0 |]
+    r.Pair.v
 
 (* Every leaf an output derives from is reused, whatever its position among the
    inputs. *)
 let test_donate_reuses_every_leaf () =
-  with_force_copy (fun () ->
-      let step =
-        consume
-          (module Pair)
-          (fun (p : Pair.t) ->
-            { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
-      in
-      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
-      let r1 = step p in
-      let before = (Rune.jit_stats ()).reused_bytes in
-      let r2 = step r1 in
-      equal ~msg:"both leaves reused" int 16
-        ((Rune.jit_stats ()).reused_bytes - before);
-      check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
-      check_arr ~msg:"v" [| 7.0; 8.0 |] r2.Pair.v)
+  let step =
+    consume
+      (module Pair)
+      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
+  in
+  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
+  let r1 = step p in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let r2 = step r1 in
+  equal ~msg:"both leaves reused" int 16
+    ((Rune.jit_stats ()).reused_bytes - before);
+  check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
+  check_arr ~msg:"v" [| 7.0; 8.0 |] r2.Pair.v
 
 (* A staged loop refuses reuse only for the leaves it touches. *)
 let test_donate_reuses_beside_a_scan () =
-  with_force_copy (fun () ->
-      let step =
-        consume
-          (module Pair)
-          (fun (p : Pair.t) ->
-            { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
-      in
-      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 1.0; 2.0 |] } in
-      let r1 = step p in
-      let before = (Rune.jit_stats ()).reused_bytes in
-      let r2 = step r1 in
-      is_true ~msg:"the leaf beside the loop is reused"
-        ((Rune.jit_stats ()).reused_bytes - before >= 8);
-      check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
-      check_arr ~msg:"v" [| 1.0; 4.0 |] r2.Pair.v)
+  let step =
+    consume
+      (module Pair)
+      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
+  in
+  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 1.0; 2.0 |] } in
+  let r1 = step p in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let r2 = step r1 in
+  is_true ~msg:"the leaf beside the loop is reused"
+    ((Rune.jit_stats ()).reused_bytes - before >= 8);
+  check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
+  check_arr ~msg:"v" [| 1.0; 4.0 |] r2.Pair.v
 
 (* A fresh output never takes an input's buffer node: a resident input fed to a
    later call keeps its bytes whatever the outputs are. *)
 let test_outputs_never_write_into_inputs () =
-  with_force_copy (fun () ->
-      let step =
-        Rune.jit2
-          (module Pair)
-          (module Pair)
-          (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
-      in
-      let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 5.0; 6.0 |] } in
-      let r1 = step p in
-      let r2 = step r1 in
-      check_arr ~msg:"second call's output" [| 3.0; 4.0 |] r2.Pair.u;
-      check_arr ~msg:"the first call's pass-through is intact" [| 1.0; 2.0 |]
-        r1.Pair.v;
-      check_arr ~msg:"the first call's output is intact" [| 2.0; 3.0 |]
-        r1.Pair.u)
+  let step =
+    Rune.jit2 ~device:"CPU:1"
+      (module Pair)
+      (module Pair)
+      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+  in
+  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 5.0; 6.0 |] } in
+  let r1 = step p in
+  let r2 = step r1 in
+  check_arr ~msg:"second call's output" [| 3.0; 4.0 |] r2.Pair.u;
+  check_arr ~msg:"the first call's pass-through is intact" [| 1.0; 2.0 |]
+    r1.Pair.v;
+  check_arr ~msg:"the first call's output is intact" [| 2.0; 3.0 |] r1.Pair.u
 
 (* The decode shape: a window write at a run-time position reuses the cache's
    storage across steps. *)
 let test_donate_reuses_window_write () =
-  with_force_copy (fun () ->
-      let v = vec32 [| 9.0; 8.0 |] in
-      let f { x; pos } =
-        { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
-      in
-      let step = consume (module Windowed) f in
-      let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
-      let s = ref (step s0) in
-      full_major ();
-      let base = (Rune.jit_stats ()).resident_bytes in
-      for _ = 1 to 3 do
-        s := step !s
-      done;
-      let grew = (Rune.jit_stats ()).resident_bytes - base in
-      is_true ~msg:"the cache holds one generation" (grew <= 0);
-      check_arr ~msg:"every window written"
-        [| 9.0; 8.0; 9.0; 8.0; 9.0; 8.0; 9.0; 8.0 |]
-        !s.x)
+  let v = vec32 [| 9.0; 8.0 |] in
+  let f { x; pos } =
+    { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
+  in
+  let step = consume (module Windowed) f in
+  let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
+  let s = ref (step s0) in
+  full_major ();
+  let base = (Rune.jit_stats ()).resident_bytes in
+  for _ = 1 to 3 do
+    s := step !s
+  done;
+  let grew = (Rune.jit_stats ()).resident_bytes - base in
+  is_true ~msg:"the cache holds one generation" (grew <= 0);
+  check_arr ~msg:"every window written"
+    [| 9.0; 8.0; 9.0; 8.0; 9.0; 8.0; 9.0; 8.0 |]
+    !s.x
 
 (* The slot-pool write of a key-value cache: every slot takes a new row or keeps
    its old one, and the same program reads the written pool back through an
@@ -2234,70 +2220,65 @@ module Pool = struct
 end
 
 let test_donate_reuses_pool_read_after_write () =
-  with_force_copy (fun () ->
-      let n = 1024 in
-      let rows = vec32 [| 10.0; 20.0; 30.0 |] in
-      let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
-      let f { slots; writer; read = _ } =
-        let fresh = Nx.take ~axis:0 ~indices:(Nx.maximum_s writer 0l) rows in
-        let slots = Nx.where (Nx.greater_equal_s writer 0l) fresh slots in
-        { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
-      in
-      let step = consume (module Pool) f in
-      let writer =
-        Nx.create Nx.int32 [| n |]
-          (Array.init n (fun i ->
-               match i with 2 -> 0l | 5 -> 1l | 7 -> 2l | _ -> -1l))
-      in
-      let s =
-        ref
-          (step
-             { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] })
-      in
-      let before = (Rune.jit_stats ()).reused_bytes in
-      s := step !s;
-      is_true ~msg:"the pool is written over its donated input"
-        ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
-      check_arr ~msg:"the read sees the written pool"
-        [| 20.0; 10.0; 30.0; 1.0 |]
-        !s.read)
+  let n = 1024 in
+  let rows = vec32 [| 10.0; 20.0; 30.0 |] in
+  let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
+  let f { slots; writer; read = _ } =
+    let fresh = Nx.take ~axis:0 ~indices:(Nx.maximum_s writer 0l) rows in
+    let slots = Nx.where (Nx.greater_equal_s writer 0l) fresh slots in
+    { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
+  in
+  let step = consume (module Pool) f in
+  let writer =
+    Nx.create Nx.int32 [| n |]
+      (Array.init n (fun i ->
+           match i with 2 -> 0l | 5 -> 1l | 7 -> 2l | _ -> -1l))
+  in
+  let s =
+    ref
+      (step { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] })
+  in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  s := step !s;
+  is_true ~msg:"the pool is written over its donated input"
+    ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
+  check_arr ~msg:"the read sees the written pool"
+    [| 20.0; 10.0; 30.0; 1.0 |]
+    !s.read
 
 (* Two compiled programs take turns on one donated state. Each keeps its own
    planned intermediates, so a program that parked an intermediate in storage
    the other still owns would corrupt the state here. *)
 let test_donate_alternates_two_programs () =
-  with_force_copy (fun () ->
-      let n = 8 in
-      let mix (p : Pair.t) =
-        let a = Nx.tanh (Nx.matmul p.u p.v) in
-        let scale =
-          Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0
-        in
-        {
-          Pair.u = Nx.add p.u (Nx.div a scale);
-          v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
-        }
-      in
-      let fold (p : Pair.t) =
-        let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
-        let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
-        { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
-      in
-      let mix' = consume (module Pair) mix in
-      let fold' = consume (module Pair) fold in
-      let init k =
-        Nx.create f32 [| n; n |]
-          (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1))))
-      in
-      let p = { Pair.u = init 3; v = init 7 } in
-      let e = ref p and h = ref p in
-      for i = 1 to 8 do
-        let f, f' = if i mod 2 = 0 then (fold, fold') else (mix, mix') in
-        e := f !e;
-        h := f' !h
-      done;
-      check_arr ~eps:1e-4 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
-      check_arr ~eps:1e-4 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v)
+  let n = 8 in
+  let mix (p : Pair.t) =
+    let a = Nx.tanh (Nx.matmul p.u p.v) in
+    let scale = Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0 in
+    {
+      Pair.u = Nx.add p.u (Nx.div a scale);
+      v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
+    }
+  in
+  let fold (p : Pair.t) =
+    let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
+    let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
+    { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
+  in
+  let mix' = consume (module Pair) mix in
+  let fold' = consume (module Pair) fold in
+  let init k =
+    Nx.create f32 [| n; n |]
+      (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1))))
+  in
+  let p = { Pair.u = init 3; v = init 7 } in
+  let e = ref p and h = ref p in
+  for i = 1 to 8 do
+    let f, f' = if i mod 2 = 0 then (fold, fold') else (mix, mix') in
+    e := f !e;
+    h := f' !h
+  done;
+  check_arr ~eps:1e-4 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
+  check_arr ~eps:1e-4 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v
 
 (* The same pool written through the token-to-slot map: a scatter over the
    tokens. The output is a copy of the pool plus a store at loaded indices, and
@@ -2318,7 +2299,7 @@ let scatter_pool ~donate =
   in
   let step =
     if donate then consume (module Pool) f
-    else Rune.jit2 (module Pool) (module Pool) f
+    else Rune.jit2 ~device:"CPU:1" (module Pool) (module Pool) f
   in
   (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
   let writer = Nx.create Nx.int32 [| 4 |] [| 2l; 5l; -1l; 5l |] in
@@ -2328,26 +2309,24 @@ let scatter_pool ~donate =
   (n, step, first)
 
 let test_donate_reuses_pool_scatter () =
-  with_force_copy (fun () ->
-      let n, step, first = scatter_pool ~donate:true in
-      let s = ref (step first) in
-      let before = (Rune.jit_stats ()).reused_bytes in
-      s := step !s;
-      is_true ~msg:"the pool is written over its donated input"
-        ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
-      check_arr ~msg:"the read sees the written pool" [| 40.0; 10.0; 1.0; 1.0 |]
-        !s.read;
-      let slots = to_arr !s.slots in
-      equal ~msg:"an unwritten slot keeps its row" float_exact 1.0 slots.(9))
+  let n, step, first = scatter_pool ~donate:true in
+  let s = ref (step first) in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  s := step !s;
+  is_true ~msg:"the pool is written over its donated input"
+    ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
+  check_arr ~msg:"the read sees the written pool" [| 40.0; 10.0; 1.0; 1.0 |]
+    !s.read;
+  let slots = to_arr !s.slots in
+  equal ~msg:"an unwritten slot keeps its row" float_exact 1.0 slots.(9)
 
 let test_scatter_without_donation_keeps_the_input () =
-  with_force_copy (fun () ->
-      let _, step, first = scatter_pool ~donate:false in
-      let s1 = step first in
-      let s2 = step s1 in
-      check_arr ~msg:"second call" [| 40.0; 10.0; 1.0; 1.0 |] s2.read;
-      equal ~msg:"the first call's pool is intact" float_exact 40.0
-        (to_arr s1.slots).(5))
+  let _, step, first = scatter_pool ~donate:false in
+  let s1 = step first in
+  let s2 = step s1 in
+  check_arr ~msg:"second call" [| 40.0; 10.0; 1.0; 1.0 |] s2.read;
+  equal ~msg:"the first call's pool is intact" float_exact 40.0
+    (to_arr s1.slots).(5)
 
 (* Bytes of donated storage the second of two donated steps reuses. *)
 let reused_by_second_step step x =
@@ -2360,84 +2339,79 @@ let reused_by_second_step step x =
    before the write: a reader of the old value in time, so the output still
    takes the pool's storage. *)
 let test_scatter_of_values_read_from_the_pool () =
-  with_force_copy (fun () ->
-      let n = 8 in
-      let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
-      let f x =
-        let values = Nx.mul_s (Nx.slice [ Nx.R (6, 8) ] (Nx.flip x)) 10.0 in
-        Nx.scatter ~axis:0 ~indices ~values x
-      in
-      let step = consume' f in
-      let x = vec32 (Array.init n float_of_int) in
-      let expected = to_arr (f (f x)) in
-      let z, reused = reused_by_second_step step x in
-      check_arr ~msg:"two donated steps" expected z;
-      equal ~msg:"the pool's storage is reused" int (n * 4) reused)
+  let n = 8 in
+  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
+  let f x =
+    let values = Nx.mul_s (Nx.slice [ Nx.R (6, 8) ] (Nx.flip x)) 10.0 in
+    Nx.scatter ~axis:0 ~indices ~values x
+  in
+  let step = consume' f in
+  let x = vec32 (Array.init n float_of_int) in
+  let expected = to_arr (f (f x)) in
+  let z, reused = reused_by_second_step step x in
+  check_arr ~msg:"two donated steps" expected z;
+  equal ~msg:"the pool's storage is reused" int (n * 4) reused
 
 (* The donated pool is itself the values: the kernel would read through the
    storage it writes, so the output must not take it. *)
 let test_scatter_of_the_pool_into_itself () =
-  with_force_copy (fun () ->
-      let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
-      let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
-      let step = consume' f in
-      let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-      check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step x)));
-      let _, reused = reused_by_second_step step x in
-      equal ~msg:"the pool's storage is not reused" int 0 reused)
+  let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
+  let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
+  let step = consume' f in
+  let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+  check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step x)));
+  let _, reused = reused_by_second_step step x in
+  equal ~msg:"the pool's storage is not reused" int 0 reused
 
 (* A kernel reads the old pool and the written one together, so it runs after
    the write: the output must not take the pool's storage, and the reader still
    sees the old value. *)
 let test_scatter_refuses_a_later_reader_of_the_pool () =
-  with_force_copy (fun () ->
-      let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
-      let values = vec32 [| 50.0; 70.0 |] in
-      let f (p : Pair.t) =
-        let u = Nx.scatter ~axis:0 ~indices ~values p.u in
-        { Pair.u; v = Nx.add (Nx.flip p.u) u }
-      in
-      let step = consume (module Pair) f in
-      let p =
-        { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
-      in
-      let e = f (f p) in
-      let r1 = step p in
-      let before = (Rune.jit_stats ()).reused_bytes in
-      let r2 = step r1 in
-      equal ~msg:"only the leaf the step never reads lends its storage" int 16
-        ((Rune.jit_stats ()).reused_bytes - before);
-      check_arr ~msg:"written" (to_arr e.Pair.u) r2.Pair.u;
-      check_arr ~msg:"old value read" (to_arr e.Pair.v) r2.Pair.v)
+  let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+  let values = vec32 [| 50.0; 70.0 |] in
+  let f (p : Pair.t) =
+    let u = Nx.scatter ~axis:0 ~indices ~values p.u in
+    { Pair.u; v = Nx.add (Nx.flip p.u) u }
+  in
+  let step = consume (module Pair) f in
+  let p =
+    { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
+  in
+  let e = f (f p) in
+  let r1 = step p in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let r2 = step r1 in
+  equal ~msg:"only the leaf the step never reads lends its storage" int 16
+    ((Rune.jit_stats ()).reused_bytes - before);
+  check_arr ~msg:"written" (to_arr e.Pair.u) r2.Pair.u;
+  check_arr ~msg:"old value read" (to_arr e.Pair.v) r2.Pair.v
 
 (* A reader of the old pool scheduled with the write: the output keeps the new
    value and the reader the old one, whether or not storage was reused. *)
 let test_scatter_beside_a_reader_of_the_old_value () =
-  with_force_copy (fun () ->
-      let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
-      let values = vec32 [| 50.0; 70.0 |] in
-      let f (p : Pair.t) =
-        {
-          Pair.u = Nx.scatter ~axis:0 ~indices ~values p.u;
-          v = Nx.add (Nx.flip p.u) p.v;
-        }
-      in
-      let step = consume (module Pair) f in
-      let p () =
-        { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
-      in
-      let e = f (f (p ())) in
-      let r = step (step (p ())) in
-      check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
-      check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v)
+  let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+  let values = vec32 [| 50.0; 70.0 |] in
+  let f (p : Pair.t) =
+    {
+      Pair.u = Nx.scatter ~axis:0 ~indices ~values p.u;
+      v = Nx.add (Nx.flip p.u) p.v;
+    }
+  in
+  let step = consume (module Pair) f in
+  let p () =
+    { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
+  in
+  let e = f (f (p ())) in
+  let r = step (step (p ())) in
+  check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
+  check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v
 
 let test_place_then_donate_consumes () =
-  with_force_copy (fun () ->
-      let g = consume' (fun x -> Nx.mul_s x 2.0) in
-      ignore (g (vec32 [| 0.0; 0.0 |]));
-      let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
-      raises_donated (fun () -> to_arr p))
+  let g = consume' (fun x -> Nx.mul_s x 2.0) in
+  ignore (g (vec32 [| 0.0; 0.0 |]));
+  let p = place (vec32 [| 1.0; 2.0 |]) in
+  check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
+  raises_donated (fun () -> to_arr p)
 
 (* File-backed sources. An upload reads a tensor over a mapped file from the
    file itself. *)
@@ -2486,8 +2460,8 @@ let check_placed_from_file ~msg x =
   is_true
     ~msg:(msg ^ ": over a mapped file")
     (Nx_buffer.file_range (Nx.data x) <> None);
-  let from_memory = Rune.to_device (Nx.copy x) in
-  let from_file, up, _ = delta (fun () -> Rune.to_device x) in
+  let from_memory = place (Nx.copy x) in
+  let from_file, up, _ = delta (fun () -> place x) in
   equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
   let differing =
     Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal from_file from_memory)))
@@ -2495,166 +2469,154 @@ let check_placed_from_file ~msg x =
   equal ~msg:(msg ^ ": elements differing") int32 0l differing
 
 let test_file_backed_upload () =
-  with_force_copy (fun () ->
-      let n = (chunk / 4) + 4099 in
-      let x, path = mapped_int32 ~byte:first_byte n in
-      Fun.protect
-        ~finally:(fun () -> remove_mapped path)
-        (fun () ->
-          check_placed_from_file ~msg:"contiguous" x;
-          check_placed_from_file ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
-          let rows = 4100 in
-          let cols = n / rows in
-          let m =
-            Nx.reshape [| rows; cols |] (Nx.slice [ Nx.R (0, rows * cols) ] x)
-          in
-          check_placed_from_file ~msg:"transposed" (Nx.matrix_transpose m)))
+  let n = (chunk / 4) + 4099 in
+  let x, path = mapped_int32 ~byte:first_byte n in
+  Fun.protect
+    ~finally:(fun () -> remove_mapped path)
+    (fun () ->
+      check_placed_from_file ~msg:"contiguous" x;
+      check_placed_from_file ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
+      let rows = 4100 in
+      let cols = n / rows in
+      let m =
+        Nx.reshape [| rows; cols |] (Nx.slice [ Nx.R (0, rows * cols) ] x)
+      in
+      check_placed_from_file ~msg:"transposed" (Nx.matrix_transpose m))
 
 (* The path names another file by now: the upload must not read it. *)
 let test_file_backed_upload_after_replace () =
-  with_force_copy (fun () ->
-      let n = 1 lsl 16 in
-      let x, path = mapped_int32 ~byte:first_byte n in
-      Fun.protect
-        ~finally:(fun () -> remove_mapped path)
-        (fun () ->
-          let expected = Nx.copy x in
-          let _, replacement = mapped_int32 ~byte:other_byte n in
-          Unix.rename replacement path;
-          let differing placed =
-            Nx.item []
-              (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal placed expected)))
-          in
-          equal ~msg:"contiguous: the mapped bytes" int32 0l
-            (differing (Rune.to_device x));
-          let m = Nx.matrix_transpose (Nx.reshape [| 256; 256 |] x) in
-          equal ~msg:"transposed: the mapped bytes" int32 0l
-            (Nx.item []
-               (Nx.sum
-                  (Nx.cast Nx.int32
-                     (Nx.not_equal (Rune.to_device m)
-                        (Nx.matrix_transpose
-                           (Nx.reshape [| 256; 256 |] expected))))))))
+  let n = 1 lsl 16 in
+  let x, path = mapped_int32 ~byte:first_byte n in
+  Fun.protect
+    ~finally:(fun () -> remove_mapped path)
+    (fun () ->
+      let expected = Nx.copy x in
+      let _, replacement = mapped_int32 ~byte:other_byte n in
+      Unix.rename replacement path;
+      let differing placed =
+        Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal placed expected)))
+      in
+      equal ~msg:"contiguous: the mapped bytes" int32 0l (differing (place x));
+      let m = Nx.matrix_transpose (Nx.reshape [| 256; 256 |] x) in
+      equal ~msg:"transposed: the mapped bytes" int32 0l
+        (Nx.item []
+           (Nx.sum
+              (Nx.cast Nx.int32
+                 (Nx.not_equal (place m)
+                    (Nx.matrix_transpose (Nx.reshape [| 256; 256 |] expected)))))))
 
 (* Bound captures. A compiled function that captures a resident value on its own
    device reads that value's buffer as its constant. *)
 
 let test_bound_capture_moves_no_bytes () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let g = Rune.jit' (fun x -> Nx.mul x w) in
-      let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
-      let y, up, down = delta (fun () -> g x) in
-      equal ~msg:"compiling and calling uploads nothing" int 0 up;
-      equal ~msg:"and reads nothing back" int 0 down;
-      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
-      (* A second signature of the same closure binds the same buffer. *)
-      let m = Rune.to_device (Nx.create f32 [| 2; 3 |] (Array.make 6 3.0)) in
-      let y2, up, _ = delta (fun () -> g m) in
-      equal ~msg:"a second signature uploads nothing" int 0 up;
-      check_arr ~msg:"second signature" [| 3.0; 6.0; 9.0; 3.0; 6.0; 9.0 |] y2)
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let x = place (vec32 [| 2.0; 2.0; 2.0 |]) in
+  let y, up, down = delta (fun () -> g x) in
+  equal ~msg:"compiling and calling uploads nothing" int 0 up;
+  equal ~msg:"and reads nothing back" int 0 down;
+  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
+  (* A second signature of the same closure binds the same buffer. *)
+  let m = place (Nx.create f32 [| 2; 3 |] (Array.make 6 3.0)) in
+  let y2, up, _ = delta (fun () -> g m) in
+  equal ~msg:"a second signature uploads nothing" int 0 up;
+  check_arr ~msg:"second signature" [| 3.0; 6.0; 9.0; 3.0; 6.0; 9.0 |] y2
 
 let test_bound_capture_is_shared () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let g1 = Rune.jit' (fun x -> Nx.mul x w) in
-      let g2 = Rune.jit' (fun x -> Nx.add x w) in
-      let x = vec32 [| 2.0; 2.0; 2.0 |] in
-      let (), up, _ =
-        delta (fun () ->
-            check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
-            check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x))
-      in
-      equal ~msg:"only the inputs are uploaded" int 24 up;
-      equal ~msg:"one storage, bound by both functions" int 2 (cell_of w).bound;
-      ignore (Sys.opaque_identity (g1, g2, w)))
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g1 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let g2 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.add x w) in
+  let x = vec32 [| 2.0; 2.0; 2.0 |] in
+  let (), up, _ =
+    delta (fun () ->
+        check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
+        check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x))
+  in
+  equal ~msg:"only the inputs are uploaded" int 24 up;
+  equal ~msg:"one storage, bound by both functions" int 2 (cell_of w).bound;
+  ignore (Sys.opaque_identity (g1, g2, w))
 
 let test_bound_value_survives_a_read () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let g = Rune.jit' (fun x -> Nx.mul x w) in
-      let x = vec32 [| 2.0; 2.0; 2.0 |] in
-      check_arr ~msg:"before the read" [| 2.0; 4.0; 6.0 |] (g x);
-      let (), _, down =
-        delta (fun () -> check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w)
-      in
-      equal ~msg:"the read copies the value out" int 12 down;
-      is_true ~msg:"and leaves the storage bound" (bound_by 1 w);
-      let (), _, down =
-        delta (fun () -> check_arr ~msg:"value again" [| 1.0; 2.0; 3.0 |] w)
-      in
-      equal ~msg:"a second read copies again: nothing is memoised" int 12 down;
-      check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
-      (* As an input leaf it still seeds from its buffer. *)
-      let double = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      ignore (double x);
-      let y, up, _ = delta (fun () -> double w) in
-      equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
-      check_arr ~msg:"as an input" [| 2.0; 4.0; 6.0 |] y)
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let x = vec32 [| 2.0; 2.0; 2.0 |] in
+  check_arr ~msg:"before the read" [| 2.0; 4.0; 6.0 |] (g x);
+  let (), _, down =
+    delta (fun () -> check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w)
+  in
+  equal ~msg:"the read copies the value out" int 12 down;
+  is_true ~msg:"and leaves the storage bound" (bound_by 1 w);
+  let (), _, down =
+    delta (fun () -> check_arr ~msg:"value again" [| 1.0; 2.0; 3.0 |] w)
+  in
+  equal ~msg:"a second read copies again: nothing is memoised" int 12 down;
+  check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
+  (* As an input leaf it still seeds from its buffer. *)
+  let double = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  ignore (double x);
+  let y, up, _ = delta (fun () -> double w) in
+  equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
+  check_arr ~msg:"as an input" [| 2.0; 4.0; 6.0 |] y
 
 let test_unbound_value_stays_after_a_read () =
-  with_force_copy (fun () ->
-      full_major ();
-      let base = resident () in
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
-      equal ~msg:"the read left the buffer" int 12 (resident () - base);
-      let g = Rune.jit' (fun x -> Nx.mul x w) in
-      let x = Rune.to_device (vec32 [| 2.0; 2.0; 2.0 |]) in
-      let y, up, _ = delta (fun () -> g x) in
-      equal ~msg:"captured afterwards it is bound" int 0 up;
-      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y)
+  full_major ();
+  let base = resident () in
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
+  equal ~msg:"the read left the buffer" int 12 (resident () - base);
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  let x = place (vec32 [| 2.0; 2.0; 2.0 |]) in
+  let y, up, _ = delta (fun () -> g x) in
+  equal ~msg:"captured afterwards it is bound" int 0 up;
+  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y
 
 let test_bound_input_is_not_donated () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let g = Rune.jit' (fun x -> Nx.mul x w) in
-      ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
-      let step = consume' (fun x -> Nx.mul_s x 2.0) in
-      let y, up, _ = delta (fun () -> step w) in
-      equal ~msg:"the bound input seeds with no transfer" int 0 up;
-      check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
-      check_arr ~msg:"the bound value is still readable" [| 1.0; 2.0; 3.0 |] w;
-      check_arr ~msg:"and still the constant" [| 2.0; 4.0; 6.0 |]
-        (g (vec32 [| 2.0; 2.0; 2.0 |]));
-      (* Returned unchanged, it comes back as a copy on the device. *)
-      let pass = consume' (fun x -> x) in
-      let z, up, _ = delta (fun () -> pass w) in
-      equal ~msg:"the pass-through uploads nothing" int 0 up;
-      is_true ~msg:"the pass-through is another value" (z != w);
-      is_true ~msg:"with storage of its own" (cell_of z != cell_of w);
-      check_arr ~msg:"pass-through value" [| 1.0; 2.0; 3.0 |] z;
-      check_arr ~msg:"the constant after the pass-through" [| 2.0; 4.0; 6.0 |]
-        (g (vec32 [| 2.0; 2.0; 2.0 |])))
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
+  ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
+  let step = consume' (fun x -> Nx.mul_s x 2.0) in
+  let y, up, _ = delta (fun () -> step w) in
+  equal ~msg:"the bound input seeds with no transfer" int 0 up;
+  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
+  check_arr ~msg:"the bound value is still readable" [| 1.0; 2.0; 3.0 |] w;
+  check_arr ~msg:"and still the constant" [| 2.0; 4.0; 6.0 |]
+    (g (vec32 [| 2.0; 2.0; 2.0 |]));
+  (* Returned unchanged, it comes back as a copy on the device. *)
+  let pass = consume' (fun x -> x) in
+  let z, up, _ = delta (fun () -> pass w) in
+  equal ~msg:"the pass-through uploads nothing" int 0 up;
+  is_true ~msg:"the pass-through is another value" (z != w);
+  is_true ~msg:"with storage of its own" (cell_of z != cell_of w);
+  check_arr ~msg:"pass-through value" [| 1.0; 2.0; 3.0 |] z;
+  check_arr ~msg:"the constant after the pass-through" [| 2.0; 4.0; 6.0 |]
+    (g (vec32 [| 2.0; 2.0; 2.0 |]))
 
 let test_bound_capture_returned_is_a_copy () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let g = consume' (fun (_ : Nx.float32_t) -> w) in
-      let y = g (vec32 [| 0.0 |]) in
-      is_true ~msg:"another value" (y != w);
-      check_arr ~msg:"the copy" [| 1.0; 2.0; 3.0 |] y;
-      check_arr ~msg:"a second call" [| 1.0; 2.0; 3.0 |] (g (vec32 [| 0.0 |])))
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = consume' (fun (_ : Nx.float32_t) -> w) in
+  let y = g (vec32 [| 0.0 |]) in
+  is_true ~msg:"another value" (y != w);
+  check_arr ~msg:"the copy" [| 1.0; 2.0; 3.0 |] y;
+  check_arr ~msg:"a second call" [| 1.0; 2.0; 3.0 |] (g (vec32 [| 0.0 |]))
 
 (* Not inlined: once it returns, nothing but the collector's own bookkeeping
    refers to the placed value or to the function that bound it. It returns a
    weak pointer to the value's cell, whose finaliser releases the storage. *)
 let[@inline never] bind_and_drop () =
-  let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' (fun x -> Nx.mul x w) in
+  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul x w) in
   check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]));
   let cell = Weak.create 1 in
   Weak.set cell 0 (Some (cell_of w));
   cell
 
 let test_bound_buffer_is_released_with_its_owners () =
-  with_force_copy (fun () ->
-      let cell = bind_and_drop () in
-      let before = resident () in
-      full_major ();
-      is_true ~msg:"the cell is collected once its owners are"
-        (Option.is_none (Weak.get cell 0));
-      is_true ~msg:"and its storage released" (resident () <= before - 12))
+  let cell = bind_and_drop () in
+  let before = resident () in
+  full_major ();
+  is_true ~msg:"the cell is collected once its owners are"
+    (Option.is_none (Weak.get cell 0));
+  is_true ~msg:"and its storage released" (resident () <= before - 12)
 
 let with_budget bytes f =
   Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" (string_of_int bytes);
@@ -2666,204 +2628,195 @@ let majors () = (Gc.quick_stat ()).major_collections
    collection: eager results count as outputs do, and weights placed before a
    collection weigh on none after it. *)
 let test_budget_counts_every_allocation () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (Nx.create f32 [| 1024 |] (Array.make 1024 1.0)) in
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      ignore (g (vec32 [| 1.0 |]));
-      with_budget 1024 (fun () ->
-          let before = majors () in
-          for _ = 1 to 20 do
-            ignore (Nx.mul_s w 2.0)
-          done;
-          is_true ~msg:"each 4 KiB eager result past a 1 KiB budget collects"
-            (majors () - before >= 20);
-          let before = majors () in
-          for _ = 1 to 100 do
-            ignore (to_arr (g (vec32 [| 1.0 |])))
-          done;
-          is_true ~msg:"4-byte outputs collect about every 256 calls"
-            (majors () - before < 50));
-      ignore (Sys.opaque_identity w))
+  let w = place (Nx.create f32 [| 1024 |] (Array.make 1024 1.0)) in
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  ignore (g (vec32 [| 1.0 |]));
+  with_budget 1024 (fun () ->
+      let before = majors () in
+      for _ = 1 to 20 do
+        ignore (Nx.mul_s w 2.0)
+      done;
+      is_true ~msg:"each 4 KiB eager result past a 1 KiB budget collects"
+        (majors () - before >= 20);
+      let before = majors () in
+      for _ = 1 to 100 do
+        ignore (to_arr (g (vec32 [| 1.0 |])))
+      done;
+      is_true ~msg:"4-byte outputs collect about every 256 calls"
+        (majors () - before < 50));
+  ignore (Sys.opaque_identity w)
 
 let test_out_of_memory () =
-  with_force_copy (fun () ->
-      let huge = Nx.broadcast_to [| 1 lsl 48 |] (Nx.scalar f32 1.0) in
-      raises_match
-        (function Nx.Device.Out_of_memory (_, n) -> n = 4 lsl 48 | _ -> false)
-        (fun () -> Rune.to_device huge))
+  let huge = Nx.broadcast_to [| 1 lsl 48 |] (Nx.scalar f32 1.0) in
+  raises_match
+    (function Nx.Device.Out_of_memory (_, n) -> n = 4 lsl 48 | _ -> false)
+    (fun () -> place huge)
 
 let test_donated_handle_raises_on_read () =
-  with_force_copy (fun () ->
-      let g = consume' (fun x -> Nx.mul_s x 2.0) in
-      let h1 = g (vec32 [| 1.0; 2.0 |]) in
-      let h2 = g h1 in
-      (* h1 was donated to the second call: its storage is gone. *)
-      raises_donated (fun () -> to_arr h1);
-      check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2)
+  let g = consume' (fun x -> Nx.mul_s x 2.0) in
+  let h1 = g (vec32 [| 1.0; 2.0 |]) in
+  let h2 = g h1 in
+  (* h1 was donated to the second call: its storage is gone. *)
+  raises_donated (fun () -> to_arr h1);
+  check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2
 
 let test_donated_handle_refeed_raises () =
-  with_force_copy (fun () ->
-      let g = consume' (fun x -> Nx.mul_s x 2.0) in
-      let h1 = g (vec32 [| 1.0; 2.0 |]) in
-      ignore (g h1);
-      (* Seeding a donated handle forces it, which raises the same error. *)
-      raises_donated (fun () -> g h1))
+  let g = consume' (fun x -> Nx.mul_s x 2.0) in
+  let h1 = g (vec32 [| 1.0; 2.0 |]) in
+  ignore (g h1);
+  (* Seeding a donated handle forces it, which raises the same error. *)
+  raises_donated (fun () -> g h1)
 
 let test_donate_duplicate_leaves_once () =
-  with_force_copy (fun () ->
-      let g =
-        consume
-          (module Pair)
-          (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
-      in
-      let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |]) in
-      let base = (Rune.jit_stats ()).resident_bytes in
-      let r = g { u = h; v = h } in
-      (* One handle behind two leaves donates once; only the two fresh outputs
-         remain resident. *)
-      is_true ~msg:"the duplicate handle was released once"
-        ((Rune.jit_stats ()).resident_bytes - base <= 2 * 2 * 4);
-      check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
-      check_arr ~msg:"v" [| 9.0; 36.0 |] r.v;
-      raises_donated (fun () -> to_arr h))
+  let g =
+    consume (module Pair) (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+  in
+  let h =
+    Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
+  in
+  let base = (Rune.jit_stats ()).resident_bytes in
+  let r = g { u = h; v = h } in
+  (* One handle behind two leaves donates once; only the two fresh outputs
+     remain resident. *)
+  is_true ~msg:"the duplicate handle was released once"
+    ((Rune.jit_stats ()).resident_bytes - base <= 2 * 2 * 4);
+  check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
+  check_arr ~msg:"v" [| 9.0; 36.0 |] r.v;
+  raises_donated (fun () -> to_arr h)
 
 let test_read_value_is_still_donated () =
-  with_force_copy (fun () ->
-      let g = consume' (fun x -> Nx.mul_s x 2.0) in
-      let h = g (vec32 [| 1.0; 2.0 |]) in
-      check_arr ~msg:"a read before the call" [| 2.0; 4.0 |] h;
-      let y = g h in
-      (* A read moved nothing, so the value is still resident and donated. *)
-      raises_donated (fun () -> to_arr h);
-      check_arr ~msg:"the result" [| 4.0; 8.0 |] y)
+  let g = consume' (fun x -> Nx.mul_s x 2.0) in
+  let h = g (vec32 [| 1.0; 2.0 |]) in
+  check_arr ~msg:"a read before the call" [| 2.0; 4.0 |] h;
+  let y = g h in
+  (* A read moved nothing, so the value is still resident and donated. *)
+  raises_donated (fun () -> to_arr h);
+  check_arr ~msg:"the result" [| 4.0; 8.0 |] y
 
 let test_host_input_unaffected_by_donate () =
-  with_force_copy (fun () ->
-      let g = consume' (fun x -> Nx.mul_s x 2.0) in
-      let x = vec32 [| 1.0; 2.0 |] in
-      ignore (g x);
-      check_arr ~msg:"a host tensor is never consumed" [| 1.0; 2.0 |] x)
+  let g = consume' (fun x -> Nx.mul_s x 2.0) in
+  let x = vec32 [| 1.0; 2.0 |] in
+  ignore (g x);
+  check_arr ~msg:"a host tensor is never consumed" [| 1.0; 2.0 |] x
 
 let test_jit_leaves_handle_readable () =
-  with_force_copy (fun () ->
-      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-      let h1 = g (vec32 [| 1.0; 2.0 |]) in
-      ignore (g h1);
-      check_arr ~msg:"jit keeps the input handle alive" [| 2.0; 4.0 |] h1)
+  let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
+  let h1 = g (vec32 [| 1.0; 2.0 |]) in
+  ignore (g h1);
+  check_arr ~msg:"jit keeps the input handle alive" [| 2.0; 4.0 |] h1
 
 (* A step reads its first argument: a resident leaf there is used in place, call
    after call, and stays readable. *)
 let test_step_reads_its_first_argument () =
-  with_force_copy (fun () ->
-      let step =
-        Rune.jit_step
-          (module Csingle)
-          (module Csingle)
-          (fun w x -> Nx.add (Nx.mul w x) w)
-      in
-      let w = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      let x = Rune.to_device (vec32 [| 3.0; 4.0 |]) in
-      let y = step w x in
-      let z, up, _ = delta (fun () -> step w y) in
-      equal ~msg:"resident leaves upload nothing" int 0 up;
-      check_arr ~msg:"two steps" [| 5.0; 22.0 |] z;
-      raises_donated (fun () -> to_arr x);
-      raises_donated (fun () -> to_arr y);
-      check_arr ~msg:"the read leaf is readable" [| 1.0; 2.0 |] w)
+  let step =
+    Rune.jit_step ~device:"CPU:1"
+      (module Csingle)
+      (module Csingle)
+      (fun w x -> Nx.add (Nx.mul w x) w)
+  in
+  let w = place (vec32 [| 1.0; 2.0 |]) in
+  let x = place (vec32 [| 3.0; 4.0 |]) in
+  let y = step w x in
+  let z, up, _ = delta (fun () -> step w y) in
+  equal ~msg:"resident leaves upload nothing" int 0 up;
+  check_arr ~msg:"two steps" [| 5.0; 22.0 |] z;
+  raises_donated (fun () -> to_arr x);
+  raises_donated (fun () -> to_arr y);
+  check_arr ~msg:"the read leaf is readable" [| 1.0; 2.0 |] w
 
 (* The next state takes the storage of the state leaf at its own position; a
    read leaf lends none, even to an output that derives from it alone. *)
 let test_step_reuses_only_the_state () =
-  with_force_copy (fun () ->
-      let w = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      let add =
-        Rune.jit_step (module Csingle) (module Csingle) (fun w x -> Nx.add x w)
-      in
-      let x, reused =
-        reused_by_second_step (add w) (Rune.to_device (vec32 [| 0.0; 0.0 |]))
-      in
-      equal ~msg:"the state's storage is reused" int 8 reused;
-      check_arr ~msg:"value" [| 2.0; 4.0 |] x;
-      let double =
-        Rune.jit_step
-          (module Csingle)
-          (module Csingle)
-          (fun w _ -> Nx.mul_s w 2.0)
-      in
-      let y, reused =
-        reused_by_second_step (double w) (Rune.to_device (vec32 [| 0.0; 0.0 |]))
-      in
-      equal ~msg:"the state lends its storage, the read leaf none" int 8 reused;
-      check_arr ~msg:"value" [| 2.0; 4.0 |] y;
-      check_arr ~msg:"the read leaf is intact" [| 1.0; 2.0 |] w)
+  let w = place (vec32 [| 1.0; 2.0 |]) in
+  let add =
+    Rune.jit_step ~device:"CPU:1"
+      (module Csingle)
+      (module Csingle)
+      (fun w x -> Nx.add x w)
+  in
+  let x, reused =
+    reused_by_second_step (add w) (place (vec32 [| 0.0; 0.0 |]))
+  in
+  equal ~msg:"the state's storage is reused" int 8 reused;
+  check_arr ~msg:"value" [| 2.0; 4.0 |] x;
+  let double =
+    Rune.jit_step ~device:"CPU:1"
+      (module Csingle)
+      (module Csingle)
+      (fun w _ -> Nx.mul_s w 2.0)
+  in
+  let y, reused =
+    reused_by_second_step (double w) (place (vec32 [| 0.0; 0.0 |]))
+  in
+  equal ~msg:"the state lends its storage, the read leaf none" int 8 reused;
+  check_arr ~msg:"value" [| 2.0; 4.0 |] y;
+  check_arr ~msg:"the read leaf is intact" [| 1.0; 2.0 |] w
 
 (* A handle passed as both arguments is read: the call consumes nothing, lends
    nothing, and the handle stays usable. *)
 let test_step_reads_a_handle_in_both_arguments () =
-  with_force_copy (fun () ->
-      let step =
-        Rune.jit_step (module Csingle) (module Csingle) (fun w x -> Nx.add w x)
-      in
-      let h = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
-      let before = (Rune.jit_stats ()).reused_bytes in
-      let y = step h h in
-      let y' = step h h in
-      equal ~msg:"it lends nothing" int 0
-        ((Rune.jit_stats ()).reused_bytes - before);
-      check_arr ~msg:"first" [| 2.0; 4.0 |] y;
-      check_arr ~msg:"second" [| 2.0; 4.0 |] y';
-      check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h)
+  let step =
+    Rune.jit_step ~device:"CPU:1"
+      (module Csingle)
+      (module Csingle)
+      (fun w x -> Nx.add w x)
+  in
+  let h = place (vec32 [| 1.0; 2.0 |]) in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let y = step h h in
+  let y' = step h h in
+  equal ~msg:"it lends nothing" int 0 ((Rune.jit_stats ()).reused_bytes - before);
+  check_arr ~msg:"first" [| 2.0; 4.0 |] y;
+  check_arr ~msg:"second" [| 2.0; 4.0 |] y';
+  check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h
 
 (* Only a value whose view covers its storage can be donated: a state leaf that
    is a view of part of one raises before the call, and the value stays. *)
 let test_step_refuses_a_partial_view () =
-  with_force_copy (fun () ->
-      let step = consume' (fun x -> Nx.mul_s x 2.0) in
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
-      let part = Nx.slice [ Nx.R (0, 2) ] w in
-      raises_match
-        (function
-          | Invalid_argument msg ->
-              String.starts_with ~prefix:"Rune.jit_step: state leaf 0" msg
-          | _ -> false)
-        (fun () -> step part);
-      check_arr ~msg:"the value stays" [| 1.0; 2.0 |] part;
-      check_arr ~msg:"and so does its storage" [| 1.0; 2.0; 3.0; 4.0 |] w)
+  let step = consume' (fun x -> Nx.mul_s x 2.0) in
+  let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
+  let part = Nx.slice [ Nx.R (0, 2) ] w in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with ~prefix:"Rune.jit_step: state leaf 0" msg
+      | _ -> false)
+    (fun () -> step part);
+  check_arr ~msg:"the value stays" [| 1.0; 2.0 |] part;
+  check_arr ~msg:"and so does its storage" [| 1.0; 2.0; 3.0; 4.0 |] w
 
 (* A storage both arguments reach is read, even when the read argument reaches
    it through a view of part of it. *)
 let test_step_reads_a_storage_both_arguments_reach () =
-  with_force_copy (fun () ->
-      let step =
-        Rune.jit_step
-          (module Csingle)
-          (module Csingle)
-          (fun r s -> Nx.add s (Nx.sum r))
-      in
-      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
-      let view = Nx.slice [ Nx.R (0, 2) ] w in
-      let y = step view w in
-      check_arr ~msg:"result" [| 4.0; 5.0; 6.0; 7.0 |] y;
-      check_arr ~msg:"the read view is readable" [| 1.0; 2.0 |] view;
-      check_arr ~msg:"and so is the state" [| 1.0; 2.0; 3.0; 4.0 |] w)
+  let step =
+    Rune.jit_step ~device:"CPU:1"
+      (module Csingle)
+      (module Csingle)
+      (fun r s -> Nx.add s (Nx.sum r))
+  in
+  let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
+  let view = Nx.slice [ Nx.R (0, 2) ] w in
+  let y = step view w in
+  check_arr ~msg:"result" [| 4.0; 5.0; 6.0; 7.0 |] y;
+  check_arr ~msg:"the read view is readable" [| 1.0; 2.0 |] view;
+  check_arr ~msg:"and so is the state" [| 1.0; 2.0; 3.0; 4.0 |] w
 
 (* An indexed write into a read leaf lands in fresh storage: the leaf keeps its
    value. *)
 let test_step_write_into_a_read_leaf () =
-  with_force_copy (fun () ->
-      let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
-      let step =
-        Rune.jit_step
-          (module Csingle)
-          (module Csingle)
-          (fun pool x -> Nx.scatter ~axis:0 ~indices ~values:x pool)
-      in
-      let pool = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let a = step pool (vec32 [| 10.0; 30.0 |]) in
-      let b = step pool (vec32 [| 40.0; 60.0 |]) in
-      check_arr ~msg:"first write" [| 10.0; 2.0; 30.0 |] a;
-      check_arr ~msg:"second write" [| 40.0; 2.0; 60.0 |] b;
-      check_arr ~msg:"the pool keeps its value" [| 1.0; 2.0; 3.0 |] pool)
+  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+  let step =
+    Rune.jit_step ~device:"CPU:1"
+      (module Csingle)
+      (module Csingle)
+      (fun pool x -> Nx.scatter ~axis:0 ~indices ~values:x pool)
+  in
+  let pool = place (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let a = step pool (vec32 [| 10.0; 30.0 |]) in
+  let b = step pool (vec32 [| 40.0; 60.0 |]) in
+  check_arr ~msg:"first write" [| 10.0; 2.0; 30.0 |] a;
+  check_arr ~msg:"second write" [| 40.0; 2.0; 60.0 |] b;
+  check_arr ~msg:"the pool keeps its value" [| 1.0; 2.0; 3.0 |] pool
 
 (* One tensor behind both leaves on the tracing call: two inputs that happen to
    be equal, each bound to its own position, so a later call may pass distinct
@@ -3014,6 +2967,9 @@ let tests =
         test "mixed placements raise" test_mixed_placements_raise;
         test "placing elsewhere inside jit raises"
           test_placing_elsewhere_inside_jit_raises;
+        test "one device per name" test_one_device_per_name;
+        test "a program on the host is on the host"
+          test_host_program_is_on_the_host;
       ];
     group "file-backed sources"
       [

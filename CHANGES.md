@@ -107,6 +107,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.device`, `Rune.devices` and `Rune.default_device`: one
+  `Nx.Device.t` per name (`"METAL"`, `"CUDA:3"`). `"CPU"` is `Nx.Device.host`,
+  so placing on the host inside a host program is the identity; `"CPU:1"`,
+  `"CPU:2"`... have storage of their own.
+- **Breaking:** Remove `RUNE_JIT_FORCE_COPY`; compile for `"CPU:1"` to run the
+  device path without a GPU. `Rune.pmap` over `"CPU"` raises.
 - Reading a compiled function's output no longer moves it to the host:
   `Nx.item` on resident logits copies one element and the logits stay
   resident, and eager operations and `grad` over resident values keep their

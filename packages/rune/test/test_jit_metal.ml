@@ -25,6 +25,16 @@ let test_elementwise_on_metal () =
   check_arr ~msg:"first call" (to_arr (f x)) (g x);
   check_arr ~msg:"replay" (to_arr (f x)) (g x)
 
+(* Metal has one device: its name has no index. *)
+let test_one_metal_device () =
+  let metal = Rune.device "METAL" in
+  is_true ~msg:"index 0 is the device" (Rune.device "metal:0" == metal);
+  is_true ~msg:"its backend's devices"
+    (List.equal ( == ) [ metal ] (Rune.devices "METAL"));
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Rune.device "METAL:1")
+
 let test_matmul_grad_on_metal () =
   let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let f x = Nx.sum (Nx.matmul x w) in
@@ -361,19 +371,15 @@ let test_programs_share_an_arena () =
   done
 
 let test_capture_resident_elsewhere () =
-  Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
-  Fun.protect
-    ~finally:(fun () -> Unix.putenv "RUNE_JIT_FORCE_COPY" "0")
-    (fun () ->
-      let w1, _ = weights () in
-      let p = Rune.to_device ~device:"CPU" w1 in
-      let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
-      let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
-      let y, up = delta (fun () -> g x) in
-      equal ~msg:"the capture goes through the host and is uploaded" int
-        (Nx.nbytes x + Nx.nbytes w1)
-        up;
-      check_arr ~msg:"result" (to_arr (Nx.matmul x w1)) y)
+  let w1, _ = weights () in
+  let p = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w1 in
+  let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
+  let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
+  let y, up = delta (fun () -> g x) in
+  equal ~msg:"the capture goes through the host and is uploaded" int
+    (Nx.nbytes x + Nx.nbytes w1)
+    up;
+  check_arr ~msg:"result" (to_arr (Nx.matmul x w1)) y
 
 (* A weight over a mapped file is placed by reading the file. *)
 let test_place_from_a_mapped_file () =
@@ -420,6 +426,7 @@ let tests =
   [
     group "metal device"
       [
+        test "Metal has one device" test_one_metal_device;
         test "element-wise chain matches eager" test_elementwise_on_metal;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
