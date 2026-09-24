@@ -440,7 +440,9 @@ module Renderer_set = struct
           invalid_arg (Printf.sprintf "%s has no renderer %S" set.device target.renderer);
         let renderer = Helpers.select_first_inited
             ~message:(Printf.sprintf "No renderer for %s is available" set.device)
-            (List.map (fun (_, create) () -> create target) entries) in
+            (List.map (fun (name, create) () ->
+                 let target = { target with renderer = name } in
+                 Renderer.with_target target (create target)) entries) in
         Hashtbl.add set.cache target renderer;
         renderer)
 end
@@ -477,7 +479,8 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
   let name = Option.value name ~default:"kern" in
   let src = Renderer.render ren ~name program in
   let lib = Compiler.compile_cached comp src in
-  Program_spec.of_program ~name ~src ~device:d.name ~lib ~applied_opts ~estimates program
+  Program_spec.of_program ~name ~src ~device:d.name ~target:(Renderer.target ren)
+    ~lib ~applied_opts ~estimates program
 
 let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator

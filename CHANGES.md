@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled programs and beam-search caches distinguish the selected renderer
+  and target architecture. Switching targets can no longer reuse a program
+  compiled for an earlier architecture on the same device.
+
 - CPU JIT kernels on x86-64 can call external functions more than 2 GiB away.
   The ELF loader emits an absolute-address trampoline instead of truncating
   the call displacement and jumping to the wrong address.

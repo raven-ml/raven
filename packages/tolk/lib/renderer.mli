@@ -77,6 +77,10 @@ type t
 
 (** {1:properties Properties} *)
 
+val target : t -> Tolk_uop.Target.t
+(** [target r] is the compilation target recorded by [r]. Device selection
+    resolves the renderer and architecture before compilation. *)
+
 val name : t -> string
 (** [name r] is the renderer name (e.g., ["metal"], ["cuda"]). *)
 
@@ -203,6 +207,9 @@ val make :
       {!all_supported_ops}.
     - [supports_dtype]: [fun _ -> true].
     - [compiler]: [None]. *)
+
+val with_target : Tolk_uop.Target.t -> t -> t
+(** [with_target target r] records the resolved [target] of [r]. *)
 
 val with_compiler : Compiler.t -> t -> t
 (** [with_compiler c r] is [r] with compiler set to [Some c]. *)

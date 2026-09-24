@@ -111,6 +111,7 @@ and launch_dim = Launch_int of int | Launch_float of float | Launch_sym of t
 and launch_value = Launch_value_int of int | Launch_value_float of float
 
 and program_info = {
+  target : Target.t;
   name : string;
   global_size : launch_dim list;
   local_size : int list option;
@@ -3073,7 +3074,7 @@ let program_index_buffer u =
   | Some idx when Array.length (src idx) > 0 -> Some (buf_uop (src idx).(0))
   | _ -> None
 
-let program_info_from_sink sink =
+let program_info_from_sink ?(target = Target.of_string "") sink =
   let vars = ref [] in
   let globals = ref [] in
   let outs = ref [] in
@@ -3142,7 +3143,7 @@ let program_info_from_sink sink =
     if !outs = [] && !ins = [] then globals, globals
     else sort_uniq_ints !outs, sort_uniq_ints !ins
   in
-  { name; global_size = !global_size; local_size = !local_size;
+  { target; name; global_size = !global_size; local_size = !local_size;
     vars = sort_program_vars !vars; globals; outs; ins }
 
 let int_floor_div a b =
@@ -3464,7 +3465,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 9
+let export_version = 10
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

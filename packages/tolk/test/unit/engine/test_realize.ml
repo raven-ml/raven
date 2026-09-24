@@ -192,8 +192,10 @@ let renderer_selection_tests =
               [ "FIRST", first; "SECOND", second ] in
           let device = test_device ~renderer_set:renderers (runtime_state ()) in
           with_target "TEST" (fun () ->
-              ignore (Device.renderer device);
-              ignore (Device.renderer device));
+              let selected = Device.renderer device in
+              equal string "TEST:SECOND:detected"
+                (Target.to_string (Renderer.target selected));
+              is_true (Device.renderer device == selected));
           equal (list string) [ "second:detected"; "first:detected" ] !calls;
           with_target "TEST:SECOND:override" (fun () -> ignore (Device.renderer device));
           equal (list string) [ "second:override"; "second:detected"; "first:detected" ] !calls;
@@ -232,10 +234,12 @@ let renderer_selection_tests =
               [ "TEST", create ] in
           let device = test_device ~name:"TEST:target-cache" ~renderer_set:renderers (runtime_state ()) in
           let compile arch = with_target ("TEST:TEST:" ^ arch) (fun () ->
-              Device.compile_program device ~name:"target_cache" [] |> Program_spec.src) in
-          equal string "first" (compile "first");
-          equal string "second" (compile "second");
-          equal string "first" (compile "first"));
+              let spec = Device.compile_program device ~name:"target_cache" [] in
+              let info = Program_spec.program_info spec in
+              Program_spec.src spec, Target.to_string info.target) in
+          equal (pair string string) ("first", "TEST:TEST:first") (compile "first");
+          equal (pair string string) ("second", "TEST:TEST:second") (compile "second");
+          equal (pair string string) ("first", "TEST:TEST:first") (compile "first"));
     ]
 
 let () =
@@ -296,6 +300,26 @@ let () =
             ignore
               (Realize.pm_compile ~device:dev1 ~to_program
                  (U.linear [ call_of ast ]));
+            equal int 2 !calls);
+          test "keys cached programs by selected target" (fun () ->
+            let create target =
+              let render ?name program =
+                ignore name; ignore program; target.Target.arch in
+              Renderer.with_compiler
+                (Compiler.make ~name:"TARGET_CACHE" ~compile:Bytes.of_string ())
+                (Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
+                   ~has_shared:false ~shared_max:0 ~render ()) in
+            let renderer_set = Device.Renderer_set.make ~device:"TEST"
+                [ "TEST", create ] in
+            let device = test_device ~name:"TEST:architecture-cache"
+                ~renderer_set (runtime_state ()) in
+            let body = U.sink ~kernel_info:(kernel_info "architecture_cache_test") [] in
+            let linear = U.linear [ U.call ~body ~args:[] ~info:(call_info None) ] in
+            let calls = ref 0 in
+            let to_program body = incr calls; program_of body in
+            List.iter (fun arch -> with_target ("TEST:TEST:" ^ arch) (fun () ->
+                ignore (Realize.pm_compile ~device ~to_program linear)))
+              [ "first"; "second"; "first" ];
             equal int 2 !calls);
           test "rewrites CALL(SINK) to CALL(PROGRAM) with source and binary"
             (fun () ->

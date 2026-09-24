@@ -72,14 +72,16 @@ val of_program :
   name:string ->
   src:string ->
   device:string ->
+  ?target:Tolk_uop.Target.t ->
   ?lib:bytes ->
   ?applied_opts:Tolk_uop.Uop.Opt.t list ->
   ?estimates:Estimates.t ->
   program ->
   t
-(** [of_program ~name ~src ~device ?lib ?applied_opts ?estimates program]
+(** [of_program ~name ~src ~device ?target ?lib ?applied_opts ?estimates program]
     extracts a kernel description from [program]. If [estimates] is omitted,
-    estimates are computed from [program]. *)
+    estimates are computed from [program]. [target] records the compilation
+    target and defaults to an unspecified target. *)
 
 val with_lib : bytes -> t -> t
 (** [with_lib lib spec] is [spec] with [lib] set to [Some lib]. *)

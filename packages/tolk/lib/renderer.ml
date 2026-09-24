@@ -63,6 +63,7 @@ let supported_ops_of_code_for_op (ops : code_op list) : Decomp_op.supported_ops 
   }
 
 type t = {
+  target : Tolk_uop.Target.t;
   name : string;
   device : string;
   compiler : Compiler.t option;
@@ -85,6 +86,7 @@ type t = {
 
 (* Accessors *)
 
+let target t = t.target
 let name t = t.name
 let device t = t.device
 let compiler t = t.compiler
@@ -110,11 +112,13 @@ let emulated_float_dtypes t : (Tolk_uop.Dtype.t * Tolk_uop.Dtype.t) list =
 
 (* Construction *)
 
+let with_target target t = { t with target }
+
+let with_compiler compiler t = { t with compiler = Some compiler }
+
 (* 0x8FFFFFFF: conservative upper bound for grid/block dimensions.
    Backends override with actual hardware limits (e.g., CUDA
    gridDim.x = 2^31-1). *)
-let with_compiler compiler t = { t with compiler = Some compiler }
-
 let make ?(tensor_cores = []) ?(supports_float4 = true)
     ?image_pitch_alignment
     ?(global_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
@@ -133,6 +137,8 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
   in
   let supported_ops = { supported_ops with supports_dtype } in
   {
+    target = { (Tolk_uop.Target.of_string device) with
+      renderer = String.uppercase_ascii name };
     name;
     device;
     compiler;

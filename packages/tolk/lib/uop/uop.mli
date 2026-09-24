@@ -264,6 +264,7 @@ type launch_value =
 (** Concrete launch dimension returned by {!program_launch_dims}. *)
 
 type program_info = {
+  target : Target.t;  (** Resolved compilation target. *)
   name : string;  (** Program name before sanitization. *)
   global_size : launch_dim list;  (** Global launch dimensions. *)
   local_size : int list option;  (** Local launch dimensions, if fixed. *)
@@ -287,9 +288,9 @@ val program_function_name : program_info -> string
 (** [program_function_name info] is [info.name] sanitized for backend
     function emission. *)
 
-val program_info_from_sink : t -> program_info
-(** [program_info_from_sink sink] derives tinygrad-style program metadata
-    from [sink]. It scans [sink]'s topological order for ALU {!Ops.Param}
+val program_info_from_sink : ?target:Target.t -> t -> program_info
+(** [program_info_from_sink ?target sink] derives tinygrad-style program metadata
+    from [sink]. [target] defaults to an unspecified target. It scans [sink]'s topological order for ALU {!Ops.Param}
     runtime variables, non-ALU {!Ops.Param} global buffer slots, load/store
     buffer slots, and {!Ops.Special} launch dimensions.
 

@@ -136,7 +136,7 @@ let to_program ?(optimize = true) ?beam_device dev ren sink =
       (String.concat ", " (List.map U.Opt.to_string ki.applied_opts));
   if debug () >= 4 then Printf.eprintf "%s\n%!" src;
   let lib = Compiler.compile_cached comp src in
-  let info = U.program_info_from_sink full_sink in
+  let info = U.program_info_from_sink ~target:(Renderer.target ren) full_sink in
   let full_sink =
     match ki.estimates with
     | Some _ -> full_sink

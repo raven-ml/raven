@@ -425,6 +425,7 @@ let cache_key_of s amt allow_test_size ren =
       ("amt", string_of_int amt);
       ("allow_test_size", string_of_bool allow_test_size);
       ("device", Renderer.device ren);
+      ("target", Target.to_string (Renderer.target ren));
       ("suffix", Renderer.name ren);
     ]
   in

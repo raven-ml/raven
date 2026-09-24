@@ -272,10 +272,11 @@ let program_config () =
     ]
 
 let cache_key ~device ~ast_key =
-  let compiler_name = match Renderer.compiler (Device.renderer device) with
+  let ren = Device.renderer device in
+  let compiler_name = match Renderer.compiler ren with
     | Some c -> Compiler.name c | None -> "" in
-  strf "%s:%s:%s:%s" (Device.name device) compiler_name (program_config ())
-    ast_key
+  Marshal.to_string
+    (Device.name device, Renderer.target ren, compiler_name, program_config (), ast_key) []
 
 let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64

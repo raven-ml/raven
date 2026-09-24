@@ -268,6 +268,7 @@ type launch = {
 }
 
 type t = {
+  target : Target.t;
   name : string;
   src : string;
   device : string;
@@ -386,7 +387,7 @@ let collect_launch (program : program) : launch =
   else if !has_group then { kind = Thread_groups; global; local = Some local }
   else { kind = Serial; global; local = Some local }
 
-let of_program ~name ~src ~device ?lib ?(applied_opts = [])
+let of_program ~name ~src ~device ?(target = Target.of_string "") ?lib ?(applied_opts = [])
     ?estimates (program : program) : t =
   let var_defs = collect_vars program in
   let vars = List.map (fun def -> def.var) var_defs in
@@ -399,7 +400,7 @@ let of_program ~name ~src ~device ?lib ?(applied_opts = [])
     | Some estimates -> estimates
     | None -> Estimates.of_program program
   in
-  { name; src; device; program; lib; applied_opts; vars; var_defs; globals;
+  { target; name; src; device; program; lib; applied_opts; vars; var_defs; globals;
     outs; ins; launch; estimates }
 
 let with_lib lib t = { t with lib = Some lib }
@@ -429,6 +430,7 @@ let fixed_dims dims =
 
 let program_info t : U.program_info =
   {
+    target = t.target;
     name = t.name;
     global_size = List.map launch_dim (Array.to_list t.launch.global);
     local_size = Option.bind t.launch.local fixed_dims;

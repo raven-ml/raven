@@ -1279,6 +1279,7 @@ let info_function_names_follow_tinygrad () =
   let program_info name : Uop.program_info =
     {
       name;
+      target = Target.of_string "";
       global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
       local_size = Some [ 1; 1; 1 ];
       vars = [];
@@ -1321,6 +1322,7 @@ let cache_info_semantic_key_parity () =
   let program_info name : Uop.program_info =
     {
       name;
+      target = Target.of_string "";
       global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
       local_size = Some [ 1; 1; 1 ];
       vars = [];
@@ -1421,6 +1423,7 @@ let program_constructor_prefix_layouts () =
   let info : Uop.program_info =
     {
       name = "prog";
+      target = Target.of_string "";
       global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
       local_size = Some [ 1; 1; 1 ];
       vars = [];
@@ -1641,6 +1644,7 @@ let debug_prints_rich_args_dataclass_style () =
   let program_info : Uop.program_info =
     {
       name = "prog";
+      target = Target.of_string "";
       global_size = [ Launch_int 1; Launch_float 2.0 ];
       local_size = None;
       vars = [ param ];

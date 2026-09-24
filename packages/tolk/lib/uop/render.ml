@@ -340,6 +340,7 @@ and program_info_debug_string (p : program_info) =
       "globals", tuple_string (List.map string_of_int p.globals);
       "outs", tuple_string (List.map string_of_int p.outs);
       "ins", tuple_string (List.map string_of_int p.ins);
+      "target", Target.to_string p.target;
     ]
 
 and wmma_info_debug_string (w : wmma_info) =

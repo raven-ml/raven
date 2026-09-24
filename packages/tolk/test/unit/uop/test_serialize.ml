@@ -61,6 +61,7 @@ let compiled_program ~name () =
   let info : U.program_info =
     {
       name;
+      target = Target.of_string "PCI:0,2+AMD:HIP:gfx1100";
       global_size = [ U.Launch_sym var; U.Launch_int 1; U.Launch_int 1 ];
       local_size = None;
       vars = [ var ];
@@ -76,6 +77,17 @@ let compiled_program ~name () =
 let program_roundtrips_physically () =
   let prog = compiled_program ~name:"kern" () in
   is_true ~msg:"import (export u) == u" (U.import (U.export prog) == prog)
+
+let program_target_identity () =
+  let prog = compiled_program ~name:"target_identity" () in
+  let info = Option.get (U.as_program_info prog) in
+  let imported = U.import (U.export prog) in
+  equal string "PCI:0,2+AMD:HIP:gfx1100"
+    (Target.to_string (Option.get (U.as_program_info imported)).target);
+  let other = U.replace prog ~arg:(U.Arg.Program_info
+      { info with target = Target.of_string "PCI:0,2+AMD:HIP:gfx1200" }) () in
+  is_true ~msg:"architecture contributes to the program key"
+    (U.semantic_key prog <> U.semantic_key other)
 
 let import_reuses_live_nodes () =
   let blob =
@@ -143,7 +155,7 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
   (* Older layouts and future formats are rejected before reading the graph. *)
-  let current_version = Marshal.to_string 9 [] in
+  let current_version = Marshal.to_string 10 [] in
   let p = find_sub blob current_version in
   List.iter (fun version ->
       let replacement = Marshal.to_string version [] in
@@ -153,7 +165,7 @@ let import_rejects_malformed () =
             (p + String.length current_version)
             (String.length blob - p - String.length current_version)
       in
-      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 10 ]
+      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 11 ]
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the
@@ -258,6 +270,8 @@ let () =
                   tc_upcast_axes = Some ([ ([ 3; 1; 2 ], 2) ], [], [ ([ 3; 1; 2 ], 2) ]) } in
               let value = U.wmma ~a:x ~b:x ~c:x ~info ~dtype:Dtype.float32 in
               is_true ~msg:"nested axis metadata survives import" (U.import (U.export value) == value));
+          test "compiled target survives serialization and separates program keys"
+            program_target_identity;
           test "compiled program round-trips physically"
             program_roundtrips_physically;
           test "import reuses live structurally-equal nodes"
