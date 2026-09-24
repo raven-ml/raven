@@ -146,8 +146,10 @@ let tests =
         test "differentiates like the primitive" test_grad_through_scan;
         test "vectorizes over the batch" test_vmap_of_scan;
         test "rejects a scalar input" test_scan_rejects_scalar;
-        test "per-sample gradients (vmap of grad)" test_vmap_of_grad_through_scan;
-        test "second-order gradients (grad of grad)" test_grad_of_grad_through_scan;
+        test "per-sample gradients (vmap of grad)"
+          test_vmap_of_grad_through_scan;
+        test "second-order gradients (grad of grad)"
+          test_grad_of_grad_through_scan;
         test "hessian-vector product (jvp of grad)" test_hvp_through_scan;
       ];
     group "cond"

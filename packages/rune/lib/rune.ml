@@ -60,8 +60,9 @@ let untie (type p) (module P : Ptree.S with type t = p) (params : P.t) : P.t =
 
 (* Run [f params] under the reverse handler with the leaves of [params] tracked,
    seed the output cotangent, and pull gradients back to the leaves. *)
-let run_reverse (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t)
-    (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t) : (c, d) Nx.t * P.t =
+let run_reverse (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t)
+    : (c, d) Nx.t * P.t =
   let params = untie (module P) params in
   let tape = Tape.create () in
   P.iter
@@ -72,8 +73,8 @@ let run_reverse (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c
   Tape.backward tape;
   (y, P.map (fun leaf -> Tape.cotangent tape leaf) params)
 
-let value_and_grad (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t)
-    (params : P.t) : (c, d) Nx.t * P.t =
+let value_and_grad (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t * P.t =
   let y, grads =
     run_reverse
       (module P)
@@ -84,8 +85,8 @@ let value_and_grad (type p c d) (module P : Ptree.S with type t = p) (f : P.t ->
   in
   (y, grads)
 
-let grad (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
-    : P.t =
+let grad (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) : P.t =
   snd (value_and_grad (module P) f params)
 
 let value_and_grad_aux (type p c d) (module P : Ptree.S with type t = p)
@@ -101,8 +102,9 @@ let value_and_grad_aux (type p c d) (module P : Ptree.S with type t = p)
   | Some a -> (y, grads, a)
   | None -> assert false (* [f'] completed, so [aux] was set. *)
 
-let vjp (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
-    (cotangent : (c, d) Nx.t) : (c, d) Nx.t * P.t =
+let vjp (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) (cotangent : (c, d) Nx.t) :
+    (c, d) Nx.t * P.t =
   run_reverse (module P) f params ~seed:(fun _ -> cotangent)
 
 let err_cotangent_shape leaf cotangent =
@@ -112,8 +114,9 @@ let err_cotangent_shape leaf cotangent =
        (shape_string (Nx.shape cotangent))
        (shape_string (Nx.shape leaf)))
 
-let vjp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S with type t = q) (f : P.t -> Q.t)
-    (params : P.t) (cotangents : Q.t) : Q.t * P.t =
+let vjp2 (type p q) (module P : Ptree.S with type t = p)
+    (module Q : Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t)
+    (cotangents : Q.t) : Q.t * P.t =
   let params = untie (module P) params in
   let tape = Tape.create () in
   P.iter
@@ -131,8 +134,9 @@ let vjp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S wit
   Tape.backward tape;
   (y, P.map (fun leaf -> Tape.cotangent tape leaf) params)
 
-let vjp_fun (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t)
-    (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t) =
+let vjp_fun (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t)
+    =
   let params = untie (module P) params in
   let tape = Tape.create () in
   P.iter
@@ -178,8 +182,9 @@ let err_tangent_shape name leaf tangent =
 let output_tangent store y =
   match Tensor_map.find store y with Some dy -> dy | None -> Nx.zeros_like y
 
-let jvp (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
-    (tangents : P.t) : (c, d) Nx.t * (c, d) Nx.t =
+let jvp (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) (tangents : P.t) :
+    (c, d) Nx.t * (c, d) Nx.t =
   let params = untie (module P) params in
   let store = Tensor_map.create () in
   let (_ : P.t) =
@@ -194,8 +199,9 @@ let jvp (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.
   let y = run_transform f params (Forward.handler store) in
   (y, output_tangent store y)
 
-let jvp_aux (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t * 'aux)
-    (params : P.t) (tangents : P.t) : (c, d) Nx.t * (c, d) Nx.t * 'aux =
+let jvp_aux (type p c d) (module P : Ptree.S with type t = p)
+    (f : P.t -> (c, d) Nx.t * 'aux) (params : P.t) (tangents : P.t) :
+    (c, d) Nx.t * (c, d) Nx.t * 'aux =
   let aux = ref None in
   let f' ps =
     let y, a = f ps in
@@ -207,8 +213,9 @@ let jvp_aux (type p c d) (module P : Ptree.S with type t = p) (f : P.t -> (c, d)
   | Some a -> (y, dy, a)
   | None -> assert false (* [f'] completed, so [aux] was set. *)
 
-let jvp2 (type p q) (module P : Ptree.S with type t = p) (module Q : Ptree.S with type t = q) (f : P.t -> Q.t)
-    (params : P.t) (tangents : P.t) : Q.t * Q.t =
+let jvp2 (type p q) (module P : Ptree.S with type t = p)
+    (module Q : Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t)
+    (tangents : P.t) : Q.t * Q.t =
   let params = untie (module P) params in
   let store = Tensor_map.create () in
   let (_ : P.t) =
@@ -235,8 +242,8 @@ let broadcast_output st y =
 
 (* Validate in_axes, determine the batch size, move mapped axes to the front and
    mark those leaves: shared by [vmap] and [vmap2]. *)
-let prepare_vmap (type p) ?in_axes (module P : Ptree.S with type t = p) (params : P.t) : Vmap.state * P.t
-    =
+let prepare_vmap (type p) ?in_axes (module P : Ptree.S with type t = p)
+    (params : P.t) : Vmap.state * P.t =
   let leaves = ref 0 in
   P.iter (fun _ -> incr leaves) params;
   let specs =
@@ -313,13 +320,15 @@ let finalize_vmap st out_axis y =
   let y = broadcast_output st y in
   if out_axis = 0 then y else Nx.moveaxis 0 out_axis y
 
-let vmap (type p c d) ?in_axes ?(out_axis = 0) (module P : Ptree.S with type t = p)
-    (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t =
+let vmap (type p c d) ?in_axes ?(out_axis = 0)
+    (module P : Ptree.S with type t = p) (f : P.t -> (c, d) Nx.t) (params : P.t)
+    : (c, d) Nx.t =
   let st, params = prepare_vmap ?in_axes (module P) params in
   let y = run_transform f params (Vmap.handler st) in
   finalize_vmap st out_axis y
 
-let vmap2 (type p q) ?in_axes ?(out_axis = 0) (module P : Ptree.S with type t = p) (module Q : Ptree.S with type t = q)
+let vmap2 (type p q) ?in_axes ?(out_axis = 0)
+    (module P : Ptree.S with type t = p) (module Q : Ptree.S with type t = q)
     (f : P.t -> Q.t) (params : P.t) : Q.t =
   let st, params = prepare_vmap ?in_axes (module P) params in
   let y = run_transform f params (Vmap.handler st) in
@@ -367,8 +376,8 @@ let jvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
 
 (* Gradient checkpointing *)
 
-let remat (type p) (module P : Ptree.S with type t = p) (f : P.t -> ('c, 'd) Nx.t) (params : P.t) :
-    ('c, 'd) Nx.t =
+let remat (type p) (module P : Ptree.S with type t = p)
+    (f : P.t -> ('c, 'd) Nx.t) (params : P.t) : ('c, 'd) Nx.t =
   Custom.custom_vjp
     (module P)
     ~fwd:(fun p -> (f p, p))
@@ -407,8 +416,8 @@ let hessian' (type a b) (f : (a, b) Nx.t -> (a, b) Nx.t) (x : (a, b) Nx.t) :
     (a, b) Nx.t =
   jacfwd' (grad' f) x
 
-let hvp (type p) (module P : Ptree.S with type t = p) (f : P.t -> ('c, 'd) Nx.t) (params : P.t) (v : P.t)
-    : P.t =
+let hvp (type p) (module P : Ptree.S with type t = p) (f : P.t -> ('c, 'd) Nx.t)
+    (params : P.t) (v : P.t) : P.t =
   snd (jvp2 (module P) (module P) (grad (module P) f) params v)
 
 let hvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
@@ -417,8 +426,9 @@ let hvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
 
 (* Gradient checking *)
 
-let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S with type t = p)
-    (f : P.t -> ('c, 'd) Nx.t) (params : P.t) : (unit, string) result =
+let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2)
+    (module P : Ptree.S with type t = p) (f : P.t -> ('c, 'd) Nx.t)
+    (params : P.t) : (unit, string) result =
   let scalar_f64 t = Nx.item [] (Nx.reshape [||] (Nx.cast Nx.float64 t)) in
   let g = grad (module P) f params in
   (* Two deterministic directions: all-ones, and a params-derived direction so
@@ -467,13 +477,13 @@ let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S with ty
 
 (* Control flow. Eager implementations with staging-ready signatures: a future
    jit stages these as structured control flow instead of unrolled traces.
-   [scan] attempts the staged [Scan.E_scan] effect; when no handler claims
-   it, the eager fold below runs, observed by whatever transformation handlers
-   are installed. *)
+   [scan] attempts the staged [Scan.E_scan] effect; when no handler claims it,
+   the eager fold below runs, observed by whatever transformation handlers are
+   installed. *)
 
 let scan (type p) (module C : Ptree.S with type t = p)
-    ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t)
-    ~(init : C.t) (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
+    ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t) ~(init : C.t)
+    (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
   Scan.scan (module C) ~f ~init xs
 
 let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
@@ -481,8 +491,8 @@ let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
   if Nx.item [] pred then then_ () else else_ ()
 
 let while_loop (type p) (module C : Ptree.S with type t = p)
-    ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t)
-    ~(body : C.t -> C.t) (init : C.t) : C.t =
+    ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t) ~(body : C.t -> C.t) (init : C.t)
+    : C.t =
   let rec go c = if Nx.item [] (cond c) then go (body c) else c in
   go init
 

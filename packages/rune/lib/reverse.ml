@@ -17,12 +17,12 @@
    differentiates them: higher-order derivatives work.
 
    Every Nx effect constructor is matched explicitly. Operations without a
-   gradient fall into two deliberate categories: - zero derivative
-   (comparisons, bitwise and integer ops, rounding, argmax/argmin/argsort, RNG,
-   tensor creation): fall through untracked, which yields the correct zero
-   gradient; - no rule implemented (svd, eig, eigh, psum, mod): raise when an
-   input is tracked instead of silently producing a zero gradient — detach the
-   input if differentiation should not flow through it. *)
+   gradient fall into two deliberate categories: - zero derivative (comparisons,
+   bitwise and integer ops, rounding, argmax/argmin/argsort, RNG, tensor
+   creation): fall through untracked, which yields the correct zero gradient; -
+   no rule implemented (svd, eig, eigh, psum, mod): raise when an input is
+   tracked instead of silently producing a zero gradient — detach the input if
+   differentiation should not flow through it. *)
 
 open Nx_effect
 module T = Nx
@@ -128,8 +128,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_const_scalar _ -> None
       | E_from_host _ -> None
       | E_threefry _ -> None
-      (* Placement is the identity under differentiation: a placed copy would
-         be a fresh, untracked value. *)
+      (* Placement is the identity under differentiation: a placed copy would be
+         a fresh, untracked value. *)
       | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
@@ -702,8 +702,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           let gu = gather g indices ~axis in
                           (* Under [`Set] an update shadowed by a later one at
                              the same position reaches no output. Scattering
-                             each update's rank along [axis] the same way
-                             leaves the winner's rank at every position. *)
+                             each update's rank along [axis] the same way leaves
+                             the winner's rank at every position. *)
                           let gu =
                             match mode with
                             | `Set when not unique_indices ->
@@ -758,9 +758,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                     match Tape.find tape out with
                     | None -> ()
                     | Some g ->
-                        (* The window shadows [t_in]; [v] receives the window
-                           of the cotangent, read axis by axis with a gather so
-                           a traced [starts] stays traced. *)
+                        (* The window shadows [t_in]; [v] receives the window of
+                           the cotangent, read axis by axis with a gather so a
+                           traced [starts] stays traced. *)
                         if tt then
                           Tape.accumulate tape t_in
                             (update g ~starts (T.zeros_like v));
@@ -770,7 +770,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           let win = ref g in
                           for ax = 0 to rank - 1 do
                             let len = vshape.(ax) in
-                            let start = T.reshape [||] (T.slice [ I ax ] starts) in
+                            let start =
+                              T.reshape [||] (T.slice [ I ax ] starts)
+                            in
                             let idx = T.add (T.arange T.int32 0 len 1) start in
                             let shp = Array.copy (T.shape !win) in
                             shp.(ax) <- len;
@@ -945,7 +947,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
               let l = cholesky ~upper t_in in
               pull1 k l t_in (fun dl ->
                   let l_lower, dl_lower =
-                    if upper then (T.matrix_transpose l, T.matrix_transpose dl) else (l, dl)
+                    if upper then (T.matrix_transpose l, T.matrix_transpose dl)
+                    else (l, dl)
                   in
                   let c = T.matmul (T.matrix_transpose l_lower) dl_lower in
                   let p =
@@ -964,7 +967,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   let s = T.matrix_transpose y in
                   let da_sym =
-                    T.sub (T.add s (T.matrix_transpose s)) (Derivs.diag_matrix (T.diagonal s))
+                    T.sub
+                      (T.add s (T.matrix_transpose s))
+                      (Derivs.diag_matrix (T.diagonal s))
                   in
                   T.tril da_sym))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
@@ -992,8 +997,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           in
                           let grad_a_full =
                             if transpose then
-                              T.neg (T.matmul out_2d (T.matrix_transpose grad_b_2d))
-                            else T.neg (T.matmul grad_b_2d (T.matrix_transpose out_2d))
+                              T.neg
+                                (T.matmul out_2d (T.matrix_transpose grad_b_2d))
+                            else
+                              T.neg
+                                (T.matmul grad_b_2d (T.matrix_transpose out_2d))
                           in
                           let grad_a =
                             let tri =
@@ -1026,7 +1034,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         in
                         let gr =
                           match found_r with
-                          | Some g -> T.matrix_transpose (T.tril (T.matrix_transpose g))
+                          | Some g ->
+                              T.matrix_transpose (T.tril (T.matrix_transpose g))
                           | None -> T.zeros_like r
                         in
                         let m =
@@ -1038,7 +1047,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         let diag_mat = Derivs.diag_matrix (T.diagonal m) in
                         let copyltu =
                           T.add
-                            (T.add lower_strict (T.matrix_transpose lower_strict))
+                            (T.add lower_strict
+                               (T.matrix_transpose lower_strict))
                             diag_mat
                         in
                         let rhs = T.add gq (T.matmul q copyltu) in

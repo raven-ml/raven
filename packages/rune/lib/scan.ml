@@ -65,9 +65,9 @@ type scan_bwd_res = {
    probe: a staging jit answers [true]; a transformation handler answers
    [false], because its own [E_scan] case intercepts the scan before any stager
    above it could. Reverse-mode asks before re-performing [E_scan] — it records
-   a staged-transpose tape entry (an [E_scan_bwd] only a staging jit can
-   answer) exactly when the probe says [true], and otherwise folds eagerly so
-   every step is taped. Unhandled means [false]. *)
+   a staged-transpose tape entry (an [E_scan_bwd] only a staging jit can answer)
+   exactly when the probe says [true], and otherwise folds eagerly so every step
+   is taped. Unhandled means [false]. *)
 type _ Effect.t +=
   | E_scan : scan_req -> scan_res Effect.t
   | E_scan_bwd : scan_bwd -> scan_bwd_res Effect.t
@@ -76,8 +76,8 @@ type _ Effect.t +=
 (* A stager may decline an [E_scan] it claimed when tracing the body reveals a
    loop it cannot compile (a carry whose shape changes across steps): it
    discontinues the scan with [Not_staged]. Every performer of [E_scan] must
-   treat [Not_staged] like [Effect.Unhandled] and fold eagerly — the probe is
-   an optimistic answer, not a promise. *)
+   treat [Not_staged] like [Effect.Unhandled] and fold eagerly — the probe is an
+   optimistic answer, not a promise. *)
 exception Not_staged
 
 (* The eager fold, over the packed representation. Runs the body with ordinary

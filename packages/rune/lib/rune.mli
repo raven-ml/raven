@@ -415,9 +415,9 @@ exception Jit_error of string
     [Nx.Rng.with_key] on a constant key — the draw would be a compile-time
     constant replayed on every call; pass the key as an input instead), or it
     used an operation the compiler does not support (FFT, the SVD and
-    eigensolvers, complex, int4 and uint4 tensors). QR,
-    triangular solves, Cholesky, [solve], and [inv] do compile: they unroll at
-    trace time into the fixed number of steps their shapes imply. *)
+    eigensolvers, complex, int4 and uint4 tensors). QR, triangular solves,
+    Cholesky, [solve], and [inv] do compile: they unroll at trace time into the
+    fixed number of steps their shapes imply. *)
 
 val jit :
   ?device:string ->
@@ -460,9 +460,9 @@ val jit :
     {!val-to_device}. A transfer failure surfaces as an exception at the first
     read of the affected output.
 
-    Inputs are read, never consumed: a resident input leaf is still resident
-    and readable after the call. {!jit_step} compiles a function that consumes
-    part of its argument, so its storage can be reused.
+    Inputs are read, never consumed: a resident input leaf is still resident and
+    readable after the call. {!jit_step} compiles a function that consumes part
+    of its argument, so its storage can be reused.
 
     [beam] enables beam-search autotuning of this function's kernels with the
     given width: instead of scheduling each kernel by fixed heuristics, the
@@ -517,12 +517,11 @@ val jit :
           Params.map2 (fun w g -> Nx.sub w (Nx.mul_s g lr)) p g)
     ]}
 
-    Tensors are values, so state threads through [P]: the function returns
-    its updated parameters, optimizer state or cache, and the caller feeds
-    them to the next call, as the example does. Structured values read during
-    tracing must not depend on traced tensors: a data-dependent {!cond} or
-    {!while_loop} predicate raises {!Jit_error}. Compiled functions are not
-    thread-safe.
+    Tensors are values, so state threads through [P]: the function returns its
+    updated parameters, optimizer state or cache, and the caller feeds them to
+    the next call, as the example does. Structured values read during tracing
+    must not depend on traced tensors: a data-dependent {!cond} or {!while_loop}
+    predicate raises {!Jit_error}. Compiled functions are not thread-safe.
 
     Randomness inside a jitted function comes from a {!Nx.Rng} key threaded
     through the inputs: samplers are pure functions of their key, so the
@@ -577,7 +576,9 @@ val jit_step :
         (module State)
         (fun { Batch.inputs; targets } { State.params; opt; loss = _ } ->
           let loss, grads =
-            Rune.value_and_grad (module Params) (objective inputs targets)
+            Rune.value_and_grad
+              (module Params)
+              (objective inputs targets)
               params
           in
           let params, opt =
@@ -595,24 +596,24 @@ val jit_step :
     allocator or taken by an output, and the handle becomes unusable. Reading
     it, or feeding it to a later call (which reads it), raises
     [Invalid_argument]; read or copy the value before the call if it is still
-    needed. A host leaf of the state is uploaded and stays usable, and so does
-    a handle already read. The first argument's leaves are read as by
-    {!val-jit} and are never consumed, and a handle that is a leaf of both
-    arguments, or that a compiled function binds as a capture, is read:
-    it lends nothing and stays usable.
+    needed. A host leaf of the state is uploaded and stays usable, and so does a
+    handle already read. The first argument's leaves are read as by {!val-jit}
+    and are never consumed, and a handle that is a leaf of both arguments, or
+    that a compiled function binds as a capture, is read: it lends nothing and
+    stays usable.
 
     An output leaf takes the storage of the state's leaf at the same position
     when their dtypes and sizes match, no other leaf of the call reaches that
-    storage, and reusing it cannot change the result: the output reads the
-    leaf only at the element it writes (an optimizer update, a window write
-    into a cache) or not at all (a bf16 copy of f32 master weights), and no
-    kernel reads the leaf after the output is written. A state-to-state loop
-    therefore holds one generation of state on the device. Any other output
-    gets fresh storage and the leaf is released after the call, about two
-    generations. [RUNE_JIT_DEBUG=1] reports, per input leaf in traversal order
-    (the first argument's first), whether it was [read], its storage [reused]
-    or [copied], or was [not resident]. On the CPU device outputs are host
-    tensors and consuming changes nothing.
+    storage, and reusing it cannot change the result: the output reads the leaf
+    only at the element it writes (an optimizer update, a window write into a
+    cache) or not at all (a bf16 copy of f32 master weights), and no kernel
+    reads the leaf after the output is written. A state-to-state loop therefore
+    holds one generation of state on the device. Any other output gets fresh
+    storage and the leaf is released after the call, about two generations.
+    [RUNE_JIT_DEBUG=1] reports, per input leaf in traversal order (the first
+    argument's first), whether it was [read], its storage [reused] or [copied],
+    or was [not resident]. On the CPU device outputs are host tensors and
+    consuming changes nothing.
 
     Compilation, caching and capture semantics are {!val-jit}'s. Raises as
     {!val-jit}. *)
@@ -653,19 +654,18 @@ val pmap :
     [pmap] yields allreduced gradients, which makes data-parallel training a
     matter of sharding the batch and replicating the parameters.
 
-    Compilation, caching and capture semantics are {!val-jit}'s.
-    Outputs stay resident, one buffer per device, and gather to the host the
-    first time they are read (shards are reassembled along their axis;
-    replicated outputs read one replica). An unread output fed back as an input
-    leaf whose placement matches — same devices, same axis or replication —
-    seeds the compiled program's buffers directly with no transfer, so iterated
-    calls (a data-parallel training step) move only the freshly sharded batch.
-    [donate] (default [false]) consumes every resident input as {!jit_step}
-    consumes its state, releasing every per-device buffer of the
-    donated handle; a handle whose placement mismatches is forced to the host
-    first and is not donated. A donated carry keeps two generations. [pmap]
-    keeps this whole-argument form until {!val-jit} over device lists replaces
-    [pmap].
+    Compilation, caching and capture semantics are {!val-jit}'s. Outputs stay
+    resident, one buffer per device, and gather to the host the first time they
+    are read (shards are reassembled along their axis; replicated outputs read
+    one replica). An unread output fed back as an input leaf whose placement
+    matches — same devices, same axis or replication — seeds the compiled
+    program's buffers directly with no transfer, so iterated calls (a
+    data-parallel training step) move only the freshly sharded batch. [donate]
+    (default [false]) consumes every resident input as {!jit_step} consumes its
+    state, releasing every per-device buffer of the donated handle; a handle
+    whose placement mismatches is forced to the host first and is not donated. A
+    donated carry keeps two generations. [pmap] keeps this whole-argument form
+    until {!val-jit} over device lists replaces [pmap].
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
@@ -707,12 +707,12 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     resident on another device goes through the host. The buffer is returned to
     the system when the value is released, not kept for reuse.
 
-    {b Captures bind.} A compiled function that captures a resident value on
-    its own device, and is not a {!pmap}, uses that value's buffer as its
-    constant from its first compilation on: no bytes move, and every compiled
-    function that captures the value shares the one buffer. A value that is read
-    or donated before that first compilation is not bound: read, it is captured
-    as the host tensor it became; donated, it can no longer be used. Binding is
+    {b Captures bind.} A compiled function that captures a resident value on its
+    own device, and is not a {!pmap}, uses that value's buffer as its constant
+    from its first compilation on: no bytes move, and every compiled function
+    that captures the value shares the one buffer. A value that is read or
+    donated before that first compilation is not bound: read, it is captured as
+    the host tensor it became; donated, it can no longer be used. Binding is
     permanent. A bound value keeps its buffer for as long as it is reachable,
     and a compiled function keeps the values it binds reachable. A host read of
     a bound value copies it out, keeps the copy on the value as for any tensor

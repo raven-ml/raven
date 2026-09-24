@@ -232,8 +232,8 @@ let test_mismatched_placement_forces () =
     (to_arr (Nx.add (Nx.add x x) (Nx.add x x)))
     (g1 y)
 
-(* A window write on the sharded axis: each device writes the part of the
-   window that falls in its shard, for a static and for a traced start. *)
+(* A window write on the sharded axis: each device writes the part of the window
+   that falls in its shard, for a static and for a traced start. *)
 module Win = struct
   type t = { x : Nx.float32_t; v : Nx.float32_t; pos : Nx.int32_t }
 
@@ -255,8 +255,11 @@ let test_set_window_on_mapped_axis () =
     Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] (module Win) f
   in
   let w =
-    { Win.x = m46 (); v = Nx.full f32 [| 2; 6 |] 9.0;
-      pos = Nx.scalar Nx.int32 1l }
+    {
+      Win.x = m46 ();
+      v = Nx.full f32 [| 2; 6 |] 9.0;
+      pos = Nx.scalar Nx.int32 1l;
+    }
   in
   check_arr ~eps:0.0 ~msg:"window spanning both shards" (to_arr (f w)) (g w)
 
@@ -266,14 +269,18 @@ let test_set_traced_window_on_mapped_axis () =
     Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None; None ] (module Win) f
   in
   let w =
-    { Win.x = m46 (); v = Nx.full f32 [| 2; 6 |] 9.0;
-      pos = Nx.scalar Nx.int32 1l }
+    {
+      Win.x = m46 ();
+      v = Nx.full f32 [| 2; 6 |] 9.0;
+      pos = Nx.scalar Nx.int32 1l;
+    }
   in
-  check_arr ~eps:0.0 ~msg:"traced window spanning both shards" (to_arr (f w))
+  check_arr ~eps:0.0 ~msg:"traced window spanning both shards"
+    (to_arr (f w))
     (g w)
 
-(* A placed capture is on one device: a pmap reads it back and replicates it,
-   as it does a host capture, and a function that bound it keeps its buffer. *)
+(* A placed capture is on one device: a pmap reads it back and replicates it, as
+   it does a host capture, and a function that bound it keeps its buffer. *)
 let test_placed_capture_is_replicated () =
   Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
   Fun.protect
@@ -288,7 +295,8 @@ let test_placed_capture_is_replicated () =
         Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul x p)
       in
       check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
-      check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w))
+      check_arr ~msg:"bound, after the pmap read it"
+        (to_arr (Nx.mul x w))
         (bound x))
 
 let test_pass_through_output () =
@@ -379,8 +387,6 @@ let test_donate_mismatched_placement_not_consumed () =
   check_arr ~eps:0.0 ~msg:"the mismatched handle survives as a host tensor"
     (to_arr (Nx.add x x))
     y
-
-
 
 (* Errors *)
 
