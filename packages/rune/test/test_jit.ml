@@ -1886,14 +1886,14 @@ let test_buffer_freed_under_a_running_kernel () =
    operation: the first call of a 20b-parameter decoder step spent 35 s of its
    47 s there. *)
 let test_traced_values_have_no_storage () =
-  let is_symbolic (type a b) (x : (a, b) Nx.t) =
-    match x with Nx_effect.Symbolic _ -> true | T _ | Deferred _ -> false
+  let is_traced (type a b) (x : (a, b) Nx.t) =
+    match x with Nx_effect.Traced _ -> true | T _ | Deferred _ -> false
   in
   let seen = ref [] in
   let f x =
     let y = Nx.add_s (Nx.reshape [| 2; 2 |] x) 1.0 in
     let q, r = Nx.qr y in
-    seen := List.map is_symbolic [ x; y; q; r ];
+    seen := List.map is_traced [ x; y; q; r ];
     Nx.matmul q r
   in
   let x = vec32 [| 1.0; 2.0; 3.0; 5.0 |] in
@@ -1902,6 +1902,23 @@ let test_traced_values_have_no_storage () =
   check_arr ~eps:1e-4 ~msg:"value" (to_arr (f x)) compiled;
   equal ~msg:"input, result, and both results of a two-result operation"
     (list bool) [ true; true; true; true ] traced
+
+(* A traced value exists only inside its trace: leaked out of it, it neither
+   runs eagerly nor enters another trace. *)
+let test_leaked_traced_value_raises () =
+  let leaked = ref None in
+  let f x =
+    let y = Nx.mul_s x 2.0 in
+    leaked := Some y;
+    y
+  in
+  ignore (Rune.jit' f (vec32 [| 1.0; 2.0 |]));
+  let y = Option.get !leaked in
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Nx.add y y);
+  raises_jit_error (fun () ->
+      Rune.jit' (fun x -> Nx.add x y) (vec32 [| 1.0; 2.0 |]))
 
 (* Donation. [jit_step] consumes the resident leaves of its state: their device
    buffers return to the allocator once the call completes, so a state-to-state
@@ -3039,6 +3056,7 @@ let tests =
       [
         test "reading a traced value raises" test_data_dependent_read_raises;
         test "traced values have no storage" test_traced_values_have_no_storage;
+        test "a leaked traced value raises" test_leaked_traced_value_raises;
         test "unsupported operations raise" test_unsupported_op_raises;
       ];
   ]

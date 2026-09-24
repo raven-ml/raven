@@ -364,6 +364,7 @@ type input = {
 }
 
 type state = {
+  st_id : int; (* the trace's own id, in its traced tensors *)
   st_device : Tolk.Device.t;
   st_multi : string list option; (* pmap device tuple, [None] = single *)
   st_takes_storage : int -> bool;
@@ -371,10 +372,10 @@ type state = {
          leaves of a single-device program whose outputs are not in host
          memory *)
   st_ctx : Nx_effect.context;
-  table : F.Tensor.t Tbl.t; (* nx tensor -> tolk tensor *)
-  traced : unit Tbl.t; (* placeholders whose bytes are not meaningful *)
+  table : F.Tensor.t Tbl.t;
+      (* tensors with bytes (captures, constants made while tracing) -> tolk
+         tensor *)
   captures : unit Tbl.t; (* closure captures lifted into the trace *)
-  input_index : int Tbl.t; (* input placeholder -> traversal position *)
   input_tags : (int, int) Hashtbl.t;
       (* input buffer node tag -> traversal position *)
   mutable prefills : (U.t * U.t) list;
@@ -412,6 +413,18 @@ and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
 
 let shape_of x = NV.shape (Nx_effect.view x)
 let numel shape = Array.fold_left ( * ) 1 shape
+
+(* A traced tensor's payload: the trace that made it and its node. *)
+type Nx_effect.node += Node of { trace : int; tensor : F.Tensor.t }
+
+let trace_counter = ref 0
+
+(* A fresh traced tensor of [st]'s trace standing for [tt], of [tt]'s shape. *)
+let traced st dt tt =
+  let shape = Array.of_list (F.Tensor.shape tt) in
+  Nx_effect.traced st.st_ctx dt shape (Node { trace = st.st_id; tensor = tt })
+
+let is_traced = function Nx_effect.Traced _ -> true | _ -> false
 
 (* Wrap a graph buffer node as a tolk tensor of [shape]. Buffers are 1-D on the
    graph; the reshape restores the logical shape. *)
@@ -482,17 +495,26 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
   (match st.scan_collectors with
   | [] -> ()
   | fs -> List.iter (fun h -> h.hook x) fs);
-  match bindable st x with
-  | Some e -> (
-      match Hashtbl.find_opt st.bound e.r_id with
-      | Some t -> t
-      | None -> bind_const st e x)
-  | None -> (
-      match Tbl.find_opt st.table (Obj.repr x) with
-      | Some t -> t
-      | None ->
-          Tbl.replace st.captures (Obj.repr x) ();
-          lift_const st x)
+  match x with
+  | Nx_effect.Traced { t_node = Node { trace; tensor }; _ }
+    when trace = st.st_id ->
+      tensor
+  | Nx_effect.Traced _ ->
+      err
+        "Rune.jit: a tensor traced by another jit entered this trace; a value \
+         computed inside a jitted function exists outside it only as an output"
+  | _ -> (
+      match bindable st x with
+      | Some e -> (
+          match Hashtbl.find_opt st.bound e.r_id with
+          | Some t -> t
+          | None -> bind_const st e x)
+      | None -> (
+          match Tbl.find_opt st.table (Obj.repr x) with
+          | Some t -> t
+          | None ->
+              Tbl.replace st.captures (Obj.repr x) ();
+              lift_const st x))
 
 (* Composed operations Tolk has no primitive for. *)
 
@@ -1094,11 +1116,9 @@ let body_slots st ?(row = false) (Scan.Tree (m, t) as tree) =
         let shape =
           if row then Array.sub shape 1 (Array.length shape - 1) else shape
         in
-        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) shape in
         let dt = tolk_dtype (Nx_effect.dtype leaf) in
         let node = make_node st dt (numel shape) in
-        Tbl.replace st.table (Obj.repr ph) (buffer_tensor node shape);
-        Tbl.replace st.traced (Obj.repr ph) ();
+        let ph = traced st (Nx_effect.dtype leaf) (buffer_tensor node shape) in
         { s_ph = Scan.Packed_t ph; s_node = node; s_dt = dt; s_shape = shape })
       (Scan.leaves tree)
   in
@@ -1110,9 +1130,10 @@ let placeholders st (Scan.Tree (m, t) as tree) values =
   let phs =
     List.map2
       (fun (Scan.Packed_t leaf) (shape, value) ->
-        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) shape in
-        Tbl.replace st.table (Obj.repr ph) value;
-        Tbl.replace st.traced (Obj.repr ph) ();
+        let ph =
+          Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
+            (Node { trace = st.st_id; tensor = value })
+        in
         Scan.Packed_t ph)
       (Scan.leaves tree) values
   in
@@ -1130,12 +1151,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
      fresh placeholder carrying the result's shape and dtype. *)
   let ret : type a b r.
       ((a, b) Nx_effect.t, r) continuation -> (a, b) ND.t -> F.Tensor.t -> r =
-   fun k dt tt ->
-    let shape = Array.of_list (F.Tensor.shape tt) in
-    let ph : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt shape in
-    Tbl.replace st.table (Obj.repr ph) tt;
-    Tbl.replace st.traced (Obj.repr ph) ();
-    continue k ph
+   fun k dt tt -> continue k (traced st dt tt)
   in
   let dt x = Nx_effect.dtype x in
   let go x = tolk_of st x in
@@ -1147,15 +1163,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       F.Tensor.t ->
       F.Tensor.t ->
       r =
-   fun k dt tq tr ->
-    let shape tt = Array.of_list (F.Tensor.shape tt) in
-    let phq : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt (shape tq) in
-    let phr : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt (shape tr) in
-    Tbl.replace st.table (Obj.repr phq) tq;
-    Tbl.replace st.traced (Obj.repr phq) ();
-    Tbl.replace st.table (Obj.repr phr) tr;
-    Tbl.replace st.traced (Obj.repr phr) ();
-    continue k (phq, phr)
+   fun k dt tq tr -> continue k (traced st dt tq, traced st dt tr)
   in
   let refuse k op =
     discontinue k
@@ -1175,7 +1183,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        created during the trace); reading a traced value would burn data into
        the compiled program. *)
     | E_to_host x ->
-        if Tbl.mem st.traced (Obj.repr x) then
+        if is_traced x then
           Some
             (fun k ->
               discontinue k
@@ -1498,7 +1506,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let tt = go t_in and tv = go v in
             let zero = scalar_of (dt v) (ND.zero (dt v)) in
             if rank = 0 then ret k (dt t_in) tv
-            else if not (Tbl.mem st.traced (Obj.repr starts)) then begin
+            else if not (is_traced starts) then begin
               let host = Nx_effect.to_host starts in
               let sv = Nx_effect.view starts in
               let s k =
@@ -1743,6 +1751,11 @@ and stage_scan : type r.
      filter if tolk ever takes them. *)
   let before = Tbl.create 16 in
   Tbl.iter (fun k _ -> Tbl.replace before k ()) st.table;
+  let horizon = Nx_effect.next_traced_id () in
+  let predates : type a b. (a, b) Nx_effect.t -> bool = function
+    | Nx_effect.Traced { t_id; _ } -> t_id < horizon
+    | t -> Tbl.mem before (Obj.repr t)
+  in
   let closed = ref [] in
   let collect =
     {
@@ -1751,7 +1764,7 @@ and stage_scan : type r.
           let k = Obj.repr t in
           if
             ND.is_float (Nx_effect.dtype t)
-            && Tbl.mem before k
+            && predates t
             && not
                  (List.exists
                     (fun (Scan.Packed_t g) -> Obj.repr g == k)
@@ -2215,9 +2228,7 @@ and stage_scan_bwd : type r.
     List.map2
       (fun (Scan.Packed_t g, g_shape, _, _, _, _, _) pair ->
         let after = written_by call (final_carry ~n pair) in
-        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype g) g_shape in
-        Tbl.replace st.table (Obj.repr ph) (buffer_tensor after g_shape);
-        Tbl.replace st.traced (Obj.repr ph) ();
+        let ph = traced st (Nx_effect.dtype g) (buffer_tensor after g_shape) in
         Scan.Closed_ctan (g, ph))
       g_outs g_pairs
   in
@@ -2874,17 +2885,17 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
   let consumed i =
     match consumed_from with Some n -> i >= n | None -> false
   in
+  incr trace_counter;
   let st =
     {
+      st_id = !trace_counter;
       st_device = dev;
       st_multi = Option.map (fun (spec, _) -> spec.md_names) multi;
       st_takes_storage =
         (fun i -> consumed i && (not zero_copy) && multi = None);
       st_ctx = Nx_effect.create_context ();
       table = Tbl.create 64;
-      traced = Tbl.create 64;
       captures = Tbl.create 16;
-      input_index = Tbl.create 16;
       input_tags = Hashtbl.create 16;
       prefills = [];
       consts = [];
@@ -2899,26 +2910,11 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
   in
   (* One placeholder and one input record per leaf visit, in traversal order, so
      replay pairs current leaves positionally: a tensor behind two leaves is two
-     inputs, equal on this call and free to differ on the next. The placeholders
-     are made inside [P.map], whose callback order is instance-defined, and
-     paired with their positions by walking the mapped structure with [P.iter],
-     which visits it in [params]' order. *)
-  let ph_params =
-    P.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
-        Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf))
-      params
-  in
-  let placeholders =
-    let acc = ref [] in
-    P.iter (fun ph -> acc := Obj.repr ph :: !acc) ph_params;
-    Array.of_list (List.rev !acc)
-  in
-  let inputs = ref [] in
+     inputs, equal on this call and free to differ on the next. *)
+  let inputs = ref [] and placeholders = ref [] in
   let pos = ref 0 in
   P.iter
     (fun leaf ->
-      let ph = placeholders.(!pos) in
       let dtolk = tolk_dtype (Nx_effect.dtype leaf) in
       let shape = shape_of leaf in
       let n = numel shape in
@@ -2961,9 +2957,11 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
                 spec.md_devs )
         | (P_replicated | P_sharded _), None -> assert false
       in
-      Tbl.replace st.table ph tt;
-      Tbl.replace st.traced ph ();
-      Tbl.replace st.input_index ph !pos;
+      let ph =
+        Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
+          (Node { trace = st.st_id; tensor = tt })
+      in
+      placeholders := Scan.Packed_t ph :: !placeholders;
       Hashtbl.replace st.input_tags (U.tag node) !pos;
       inputs :=
         {
@@ -2976,6 +2974,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         :: !inputs;
       incr pos)
     params;
+  let ph_params = Scan.unflatten (module P) params (List.rev !placeholders) in
   let y =
     Gate.with_transform (fun () ->
         Effect.Deep.match_with f ph_params (handler st))

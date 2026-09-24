@@ -35,7 +35,7 @@ let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
 let stable (type a b) (x : (a, b) Nx_effect.t) =
   match x with
   | Nx_effect.Deferred _ -> ignore (Nx_effect.unwrap x)
-  | Nx_effect.T _ | Nx_effect.Symbolic _ -> ()
+  | Nx_effect.T _ | Nx_effect.Traced _ -> ()
 
 let set m x v =
   stable x;

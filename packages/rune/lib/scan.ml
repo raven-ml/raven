@@ -33,13 +33,15 @@ let leaves (Tree ((module T), t)) =
    callback's order is instance-defined, so positions are recovered through
    fresh markers: [T.map] replaces every leaf with its own marker, [T.iter]
    numbers the markers, and a second [T.map] looks each one up. *)
+type Nx_effect.node += Marker
+
 let unflatten (type a) (module T : Nx.Ptree.S with type t = a) (t : a)
     (ls : packed_t list) : a =
   let marked =
     T.map
       (fun leaf ->
-        Nx_effect.symbolic (Nx_effect.context leaf) (Nx_effect.dtype leaf)
-          (Nx.shape leaf))
+        Nx_effect.traced (Nx_effect.context leaf) (Nx_effect.dtype leaf)
+          (Nx.shape leaf) Marker)
       t
   in
   let positions = ref [] and i = ref 0 in

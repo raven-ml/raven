@@ -26,14 +26,15 @@ type context = Nx_backend.context
    device buffer out — memoizing the resulting backend tensor. A deferred tensor
    is never a trace placeholder, so its metadata never needs an effect.
 
-   [Symbolic] is a tensor that has no bytes and never will: its metadata alone.
-   A handler that records operations instead of running them (Rune's jit)
-   answers each one with a symbolic tensor of the result's dtype and shape.
-   Asking for its bytes is an error. *)
+   [Traced] is a node of a trace: a tensor that has no bytes and never will. A
+   handler that records operations instead of running them (Rune's jit) answers
+   each one with a traced tensor of the result's dtype and shape, and keeps its
+   own payload in [t_node], so the tensor itself says which node of which trace
+   it stands for. Asking for its bytes outside its trace is an error. *)
 type ('a, 'b) t =
   | T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
   | Deferred : ('a, 'b) deferred -> ('a, 'b) t
-  | Symbolic : ('a, 'b) symbolic -> ('a, 'b) t
+  | Traced : ('a, 'b) traced -> ('a, 'b) t
 
 and ('a, 'b) deferred = {
   d_id : int; (* fresh; lets creators key side tables by handle *)
@@ -44,12 +45,15 @@ and ('a, 'b) deferred = {
   mutable d_forced : ('a, 'b) Nx_backend.t option;
 }
 
-and ('a, 'b) symbolic = {
-  s_id : int; (* fresh; tells apart tensors of one dtype and shape *)
-  s_context : Nx_backend.context;
-  s_dtype : ('a, 'b) Dtype.t;
-  s_view : View.t; (* C-contiguous over the tensor's shape *)
+and ('a, 'b) traced = {
+  t_id : int; (* fresh; identity tables key by it *)
+  t_context : Nx_backend.context;
+  t_dtype : ('a, 'b) Dtype.t;
+  t_view : View.t; (* C-contiguous over the tensor's shape *)
+  t_node : node; (* the tracer's payload *)
 }
+
+and node = ..
 
 (* [Nx_buffer.t] is not injective in its parameters either (it abbreviates a
    bigarray), so a host buffer cannot be an effect's result directly; the same
@@ -361,7 +365,10 @@ let force (type a b) (d : (a, b) deferred) : (a, b) Nx_backend.t =
 let unwrap : type a b. (a, b) t -> (a, b) Nx_backend.t = function
   | T t -> t
   | Deferred d -> force d
-  | Symbolic _ -> invalid_arg "Nx_effect.unwrap: a symbolic tensor has no bytes"
+  | Traced _ ->
+      invalid_arg
+        "Nx_effect.unwrap: a traced tensor has no bytes; it was used outside \
+         the trace that made it"
 
 (* Deferred constructors *)
 
@@ -384,22 +391,27 @@ let deferred (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
    whether the creator's side state (for example a resident device buffer)
    survives the read is the creator's to say. *)
 let deferred_id : type a b. (a, b) t -> int option = function
-  | T _ | Symbolic _ -> None
+  | T _ | Traced _ -> None
   | Deferred d -> Some d.d_id
 
-(* Symbolic constructor *)
+(* Traced constructor *)
 
-let symbolic_id_counter = ref 0
+let traced_id_counter = ref 0
 
-let symbolic (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
-    (shape : int array) : (a, b) t =
-  incr symbolic_id_counter;
-  Symbolic
+(* Ids are handed out in increasing order, so a tracer can tell the traced
+   tensors made before a point of its trace from those made after it. *)
+let next_traced_id () = !traced_id_counter + 1
+
+let traced (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
+    (shape : int array) (node : node) : (a, b) t =
+  incr traced_id_counter;
+  Traced
     {
-      s_id = !symbolic_id_counter;
-      s_context = ctx;
-      s_dtype = dtype;
-      s_view = View.create shape;
+      t_id = !traced_id_counter;
+      t_context = ctx;
+      t_dtype = dtype;
+      t_view = View.create shape;
+      t_node = node;
     }
 
 (* Lenses. Metadata reads on a deferred tensor answer from its record without
@@ -412,7 +424,7 @@ let create_context () : context = Nx_backend.create_context ()
 let context : type a b. (a, b) t -> context = function
   | T t -> Nx_backend.context t
   | Deferred d -> d.d_context
-  | Symbolic s -> s.s_context
+  | Traced t -> t.t_context
 
 let to_device (_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t = t
 
@@ -423,12 +435,12 @@ let view (type a b) (x : (a, b) t) : View.t =
     | T t -> Nx_backend.view t
     | Deferred d -> (
         match d.d_forced with Some t -> Nx_backend.view t | None -> d.d_view)
-    | Symbolic s -> s.s_view)
+    | Traced t -> t.t_view)
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | T t -> Nx_backend.dtype t
   | Deferred d -> d.d_dtype
-  | Symbolic s -> s.s_dtype
+  | Traced t -> t.t_dtype
 
 let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
   try
