@@ -988,7 +988,7 @@ let where_fold_tests =
             U.alu_binary ~op:Ops.Cmpne ~lhs:x ~rhs:(U.const_bool false)
           in
           is_true (simplify expr == x));
-      test "where cast push: where(s,a,b).cast(dt)" (fun () ->
+      test "cast stays outside a conditional" (fun () ->
           let s =
             U.variable ~name:"s" ~min_val:0 ~max_val:1 ~dtype:D.bool ()
           in
@@ -996,9 +996,15 @@ let where_fold_tests =
           let w = U.alu_ternary ~op:Ops.Where ~a:s ~b:a ~c:b in
           let expr = U.cast ~src:w ~dtype:(D.float32) in
           let result = simplify expr in
-          check_op result Ops.Where;
-          check_op (src result 1) Ops.Cast;
-          check_op (src result 2) Ops.Cast);
+          check_op result Ops.Cast;
+          is_true (src result 0 == w));
+      test "Boolean selection stays inside its integer cast" (fun () ->
+          let variable name = U.variable ~name ~min_val:0 ~max_val:1 ~dtype:D.bool () in
+          let gate = variable "cast_gate" and a = variable "cast_a" and b = variable "cast_b" in
+          let selected = U.O.where gate a b in
+          let result = simplify (U.cast ~src:selected ~dtype:D.int32) in
+          check_op result Ops.Cast;
+          is_true (src result 0 == selected));
       test "where eq one zero flips to ne zero one" (fun () ->
           let x = var "x" 0 10 and y = var "y" 0 10 in
           let cond = U.alu_binary ~op:Ops.Cmpeq ~lhs:x ~rhs:y in

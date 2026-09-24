@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Keep a single cast around conditional expressions during symbolic
+  simplification instead of duplicating it across both branches.
+
 - Use tinygrad's lexical argument ordering for weak-index simplification
   and kernel instruction scheduling.
 

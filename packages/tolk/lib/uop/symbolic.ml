@@ -2085,15 +2085,6 @@ let sym : Upat.Pattern_matcher.t =
        let alu = bs $ "alu" and x = bs $ "x" and y = bs $ "y" in
        Some (Uop.stack [ Uop.alu_binary ~op:(Uop.op alu) ~lhs:x ~rhs:y ]));
 
-    (* where(s, a, b).cast(d) -> where(s, a.cast(d), b.cast(d)). *)
-    (let s = var "s" and a = var "a" and b = var "b" in
-     cast ~name:"cast" (where s a b) => fun bs ->
-       let cast = bs $ "cast"
-       and s = bs $ "s" and a = bs $ "a" and b = bs $ "b" in
-       let dt = Uop.dtype cast in
-       Some (Uop.O.where s
-               (Uop.cast ~src:a ~dtype:dt) (Uop.cast ~src:b ~dtype:dt)));
-
     (* store(index, load(index)) -> Noop  (self-store elimination). *)
     (let i = op ~name:"index" Ops.Index in
      store i (load i) => fun _ ->

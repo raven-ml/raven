@@ -17,8 +17,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   its manually staged kernel gets the structural name `E_2`, whereas the
   target tensor graph gets `r_2_2_2_2_2`; remove the remaining staging shortcuts.
 - Reconcile Metal source ordering in `lorenz_fold` and vector-lane extraction
-  in `vectorize_index`. Align Boolean CAST/WHERE and reduction placement in
-  `moe_gather_block` on CPU and Metal.
+  in `vectorize_index`.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
