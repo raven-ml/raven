@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Beam search releases temporary program handles after timing completes,
+  including failures and interruptions, instead of retaining every candidate
+  for the process lifetime or reusing handles across device instances.
+
 - `END` validation requires a void effect and bounded integer ranges.
   Simplifying folded loop ranges preserves the enclosed effect and removes
   redundant loop boundaries.

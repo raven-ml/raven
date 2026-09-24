@@ -361,16 +361,6 @@ let indexed_rawbufs ~device ast rawbufs =
     (fun (req, buf) -> (req.slot, normalize_buffer_req device req buf))
     pairs
 
-(* Device dispatch handles for already-loaded compiled binaries, shared across
-   every kernel's beam search in this process and keyed by device: the driver's
-   module load (PTX -> SASS JIT) is pure CPU work and would otherwise run once
-   per timed candidate. The entry name is always "test" in beam search, so
-   the binary identifies the module; runtimevars join the key because some
-   runtimes capture them at handle creation. *)
-let prog_caches : (string, ((bytes * string), Device.prog) Hashtbl.t)
-    Hashtbl.t =
-  Hashtbl.create 4
-
 (* Time a compiled program on device. Returns a list of timing samples. *)
 let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
     ~allow_test_size ~dev_timeout =
@@ -389,66 +379,53 @@ let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
       factor := f;
       Program_spec.with_global_dims scaled_global p
   in
-  let prg =
-    match Program_spec.lib p with
-    | Some lib ->
-        let dname = Device.name device in
-        let cache =
-          match Hashtbl.find_opt prog_caches dname with
-          | Some cache -> cache
-          | None ->
-              let cache = Hashtbl.create 64 in
-              Hashtbl.replace prog_caches dname cache;
-              cache
-        in
-        let runtimevars =
-          Tolk_uop.Uop.program_runtimevars (Program_spec.program_info p)
-        in
-        let key = (lib, String.concat "," (List.map fst runtimevars)) in
-        (match Hashtbl.find_opt cache key with
-         | Some prg -> Some prg
-         | None ->
-             let name =
-               Tolk_uop.Uop.sanitize_function_name (Program_spec.name p)
-             in
-             let prg = Device.runtime device name lib ~runtimevars in
-             Hashtbl.replace cache key prg;
-             Some prg)
-    | None -> None
+  let lib = match Program_spec.lib p with
+    | Some lib -> lib
+    | None -> invalid_arg "Search.time_program: missing compiled binary"
   in
-  let car = Realize.Compiled_runner.create ~device ?prg p in
-  let input_bufs =
-    List.map
-      (fun slot ->
-        match List.assoc_opt slot rawbufs_by_slot with
-        | Some buf -> buf
-        | None ->
-            invalid_arg
-              (Printf.sprintf
-                 "beam_search: raw buffer slot %d missing (%d slots supplied)"
-                 slot (List.length rawbufs_by_slot)))
-      (Program_spec.globals p)
-  in
-  let tms = ref [] in
-  let stopped = ref false in
-  for _ = 1 to cnt do
-    if not !stopped then begin
-      if clear_l2 then Device.invalidate_caches device;
-      let tm =
-        try
-          match
-            Realize.Compiled_runner.call car input_bufs var_vals ~wait:true
-              ~timeout
-          with
-          | Some t -> t *. !factor
-          | None -> infinity
-        with Assert_failure _ -> infinity
+  let runtimevars = U.program_runtimevars (Program_spec.program_info p) in
+  let name = U.sanitize_function_name (Program_spec.name p) in
+  let prg = Device.runtime device name lib ~runtimevars in
+  (* Candidates are timed once per search. Retain a handle for its samples,
+     then drain queued work and release it even if timing raises. Ordinary
+     execution owns its separate runtime cache. *)
+  Fun.protect
+    ~finally:(fun () ->
+      Fun.protect ~finally:prg.free (fun () -> Device.synchronize device))
+    (fun () ->
+      let car = Realize.Compiled_runner.create ~device ~prg p in
+      let input_bufs =
+        List.map
+          (fun slot ->
+            match List.assoc_opt slot rawbufs_by_slot with
+            | Some buf -> buf
+            | None ->
+                invalid_arg
+                  (Printf.sprintf
+                     "beam_search: raw buffer slot %d missing (%d slots supplied)"
+                     slot (List.length rawbufs_by_slot)))
+          (Program_spec.globals p)
       in
-      tms := tm :: !tms;
-      if early_stop < List.fold_left min infinity !tms then stopped := true
-    end
-  done;
-  List.rev !tms
+      let tms = ref [] in
+      let stopped = ref false in
+      for _ = 1 to cnt do
+        if not !stopped then begin
+          if clear_l2 then Device.invalidate_caches device;
+          let tm =
+            try
+              match
+                Realize.Compiled_runner.call car input_bufs var_vals ~wait:true
+                  ~timeout
+              with
+              | Some t -> t *. !factor
+              | None -> infinity
+            with Assert_failure _ -> infinity
+          in
+          tms := tm :: !tms;
+          if early_stop < List.fold_left min infinity !tms then stopped := true
+        end
+      done;
+      List.rev !tms)
 
 (* Beam search *)
 

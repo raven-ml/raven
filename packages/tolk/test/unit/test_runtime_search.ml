@@ -354,6 +354,63 @@ let search_timing_tests =
           done);
     ]
 
+(* Runtime handles loaded only to time a candidate must not outlive timing. *)
+let transient_program_lifetimes =
+  let check failure () =
+    let backing = cpu "beam-lifetime-buffers" in
+    let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
+    let allocator = Device.Buffer.allocator sample in
+    let loaded = ref 0 and freed = ref 0 and pending = ref false in
+    let runtime _ _ ~runtimevars:_ =
+      incr loaded;
+      let released = ref false in
+      let call _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ =
+        is_false ~msg:"timing never reuses a released program" !released;
+        pending := true;
+        match failure with
+        | Some exn -> raise exn
+        | None -> pending := false; Some 1e-6
+      in
+      let free () =
+        is_false ~msg:"queued work completes before program release" !pending;
+        is_false ~msg:"program is released exactly once" !released;
+        released := true;
+        incr freed
+      in
+      Device.{ call; free; handle = 0n }
+    in
+    let compiler = Compiler.make ~name:"BEAM_LIFETIME"
+        ~compile:Bytes.of_string () in
+    let ren = Renderer.with_compiler compiler ren in
+    let renderer_set = Device.Renderer_set.make ~device:"CPU" ~arch:"generic"
+        [ "CLANG", (fun _ -> ren) ] in
+    let device = Device.make ~name:"CPU:beam-lifetime" ~allocator ~renderer_set
+        ~runtime ~synchronize:(fun () -> pending := false) () in
+    let ast = elementwise_1d_ast ~n:4 in
+    let rawbufs = create_bufs_for_kernel device ast in
+    let cachelevel = Sys.getenv_opt "CACHELEVEL" in
+    Unix.putenv "CACHELEVEL" "0";
+    Fun.protect
+      ~finally:(fun () ->
+        Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:"");
+        List.iter Device.Buffer.deallocate rawbufs)
+      (fun () ->
+        let search () =
+          ignore (Search.beam_search ~disable_cache:true
+            (P.create ast ren) rawbufs 1 device : P.t)
+        in
+        (match failure with
+         | Some Exit -> raises Exit search
+         | _ -> search ());
+        is_true ~msg:"the test timed at least one compiled candidate" (!loaded > 0);
+        equal ~msg:"every transient program is released before search returns"
+          int !loaded !freed)
+  in
+  group "transient program lifetimes"
+    [ test "successful timings release programs" (check None);
+      test "rejected timings release programs" (check (Some (Failure "timing failed")));
+      test "interrupted search releases programs" (check (Some Exit)) ]
+
 (* Entry *)
 
-let () = run __FILE__ [ beam_search_tests; search_timing_tests ]
+let () = run __FILE__ [ beam_search_tests; search_timing_tests; transient_program_lifetimes ]
