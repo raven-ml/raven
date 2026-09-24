@@ -315,6 +315,67 @@ let test_every () =
        (weight [| 1; 3; 8; 64 |])
        (floats [| 4; 2; 64 |]))
 
+(* Tolk's kernel, which a product takes while its matrix meets at most the
+   device's row bound of rows (64 on the CPU and 32 on Metal at bfloat16, 2 and
+   16 at float32): one group per row, which a GPU gates at its loads; rows that
+   no row tile divides, and two full tiles of 8; an [x] shared by the positions
+   of a token, and one broadcast along another axis; a stack against one shared
+   row; and no id selecting an expert. At float32 on the CPU (bound 2) only the
+   one-row cases reach the kernel; tolk's own tests cover its row tile there. *)
+let test_kernel () =
+  let dtypes = [ float32; bfloat16; float16 ] in
+  let scale _ =
+    match Random.State.int rng 16 with
+    | 0 -> 255
+    | 1 -> 0
+    | 2 -> 1
+    | _ -> 110 + Random.State.int rng 21
+  in
+  let battery = battery ~dtypes in
+  battery (case (weight ~scale [| 48; 32 |]) (floats [| 1; 32 |]));
+  battery
+    (case
+       ~ids:(ints [| 3 |] [| 1; -1; 1 |])
+       (weight ~scale [| 2; 40; 32 |])
+       (poison ~at:[ [ 1 ] ] (floats [| 3; 1; 32 |])));
+  battery (case (weight ~scale [| 48; 128 |]) (floats [| 6; 128 |]));
+  battery (case (weight ~scale [| 40; 64 |]) (floats [| 16; 64 |]));
+  (* A stack of matrices against one shared row. *)
+  battery (case (weight ~scale [| 2; 8; 32 |]) (floats [| 32 |]));
+  battery (case (weight ~scale [| 2; 8; 32 |]) (floats [| 1; 1; 32 |]));
+  battery (case (weight ~scale [| 3; 20; 96 |]) (floats [| 3; 3; 96 |]));
+  let w = weight ~scale [| 6; 48; 128 |] in
+  battery
+    (case
+       ~ids:(ints [| 3; 4 |] [| 5; 0; -1; 2; 7; 3; 3; 1; 0; 0; 4; -2 |])
+       w
+       (poison ~at:[ [ 0; 0 ] ] (floats [| 3; 1; 1; 128 |])));
+  battery
+    (case
+       ~ids:(ints [| 3; 2 |] [| 5; 0; 2; 2; 1; 4 |])
+       w
+       (floats [| 1; 2; 5; 128 |]));
+  battery (case ~ids:(ints [| 2 |] [| -1; 6 |]) w (floats [| 2; 1; 128 |]))
+
+(* Past the row bound, decoding then multiplying: without ids, with fewer
+   positions than experts, with as many or more, and with lanes. *)
+let test_past_the_bound () =
+  let rows = 65 in
+  battery (case (weight [| 8; 64 |]) (floats [| rows; 64 |]));
+  let w = weight [| 3; 8; 64 |] in
+  battery
+    (case
+       ~ids:(ints [| 2 |] [| 2; -1 |])
+       w
+       (poison ~at:[ [ 1 ] ] (floats [| 2; rows; 64 |])));
+  battery
+    (case ~ids:(ints [| 4 |] [| 0; 2; 2; 5 |]) w (floats [| 4; rows; 64 |]));
+  battery
+    (case ~lanes:1
+       ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
+       (weight [| 2; 3; 8; 64 |])
+       (floats [| 2; 2; rows; 64 |]))
+
 let test_transposed () =
   let w = weight [| 4; 8; 64 |] in
   battery (case ~transpose:true w (floats [| 4; 3; 8 |]));
@@ -354,7 +415,11 @@ let test_empty () =
   check "no experts per token"
     (case ~ids:(ints [| 3; 0 |] [||]) w (floats [| 3; 1; 1; 64 |]))
     [| 3; 0; 1; 8 |];
-  check "no rows" (case (weight [| 8; 64 |]) (floats [| 0; 64 |])) [| 0; 8 |]
+  check "no rows" (case (weight [| 8; 64 |]) (floats [| 0; 64 |])) [| 0; 8 |];
+  let c = case (weight [| 8; 0 |]) (floats [| 2; 0 |]) in
+  check "no inputs" c [| 2; 8 |];
+  law2 ~msg:"no inputs, CPU" ~u:0.0 ~tiny:0.0 ~flush:false c c.x
+    (compiled ~device:"CPU" c c.x)
 
 (* float16 [x], with scales that keep every result inside float16's range. *)
 let test_float16 () =
@@ -429,7 +494,7 @@ let test_dequant () =
    gathered form does, not all 32. Its arithmetic is counted on a replay against
    four experts of four, which every form decodes whole. *)
 let test_one_token_gathers () =
-  let x = floats [| 1; 1; 1; 256 |] in
+  let x = floats [| 1; 1; 65; 256 |] in
   let ops e =
     let w = weight ~scale:(fun _ -> 127) [| e; 64; 256 |] in
     let ids = ints [| 1; 4 |] [| 3; 0; 2; 1 |] in
@@ -447,6 +512,30 @@ let test_one_token_gathers () =
   is_true
     ~msg:(Printf.sprintf "%d operations against %d" gathered every)
     (gathered < 2 * every)
+
+(* Rule 1 on every device: within the row bound the product reads its packed
+   bytes, under one byte per weight; past it, decoding writes at least two. *)
+let test_rule () =
+  let n = 256 and k = 256 in
+  let w = weight [| n; k |] in
+  let bytes device rows =
+    let f = Rune.jit' ~device (Nx_quant.apply w) in
+    let x = Nx.cast Nx.bfloat16 (floats [| rows; k |]) in
+    ignore (Nx.to_array (f x));
+    let before = !Tolk.Helpers.Global_counters.global_mem in
+    ignore (Nx.to_array (f x));
+    !Tolk.Helpers.Global_counters.global_mem - before
+  in
+  List.iter
+    (fun device ->
+      let one = bytes device 1 and past = bytes device 65 in
+      is_true
+        ~msg:(Printf.sprintf "%s, one row: %d bytes" device one)
+        (one < n * k);
+      is_true
+        ~msg:(Printf.sprintf "%s, 65 rows: %d bytes" device past)
+        (past > 2 * n * k))
+    devices
 
 (* Reverse and forward mode *)
 
@@ -703,6 +792,9 @@ let () =
           slow "float16 x" test_float16;
           test "compiled dequant" test_dequant;
           test "one token's experts are gathered" test_one_token_gathers;
+          slow "the kernel" test_kernel;
+          slow "past the row bound" test_past_the_bound;
+          test "the row bound chooses the kernel" test_rule;
         ];
       group "rules"
         [

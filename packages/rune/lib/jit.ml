@@ -1329,6 +1329,16 @@ let rec written_buffer u =
   | Tolk_uop.Ops.After when U.has_buffer_identity ~after_ok:true u -> Some u
   | _ -> None
 
+(* Whether [tt] is whole storage under any reshape, which a kernel argument
+   reads in place. *)
+let is_storage tt =
+  let rec go u =
+    match U.op u with
+    | Tolk_uop.Ops.Reshape -> go (U.src u).(0)
+    | _ -> U.has_buffer_identity ~after_ok:true u
+  in
+  go (F.Tensor.uop tt)
+
 (* A loop-call argument must resolve to a buffer. Buffer-identity nodes pass
    through; a computed value is realized; a device-less constant (e.g. a scalar
    carry init) is stored into a fresh buffer once, before the loop. *)
@@ -1904,13 +1914,37 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_matmul { a; b } ->
         Some (fun k -> ret k (dt a) (F.Op.matmul (go a) (go b)))
     (* Quantised products lower to Nx compositions, traced under this handler
-       like the function's own operations. *)
+       like the function's own operations, and on a single device to tolk's
+       kernels over the traced values. *)
     | Nx_quant.Effect.E_quant { w; op } ->
+        let kernels =
+          match st.st_multi with
+          | Some _ -> None
+          | None ->
+              let quant_matmul ?ids x ~codes ~scales =
+                let part name t =
+                  let tt = go t in
+                  if Lazy.force jit_debug >= 1 && not (is_storage tt) then
+                    Printf.eprintf
+                      "rune.jit: quantised product: %s is a view, copied on \
+                       every call\n\
+                       %!"
+                      name;
+                  tt
+                in
+                let codes = part "codes" codes
+                and scales = part "scales" scales in
+                traced st (dt x)
+                  (F.Op.quant_matmul ?ids:(Option.map go ids) (go x) ~codes
+                     ~scales)
+              in
+              Some { Quant.device = st.st_device; quant_matmul }
+        in
         Some
           (fun k ->
             continue k
               (Effect.Deep.match_with
-                 (fun () -> Quant.lower w op)
+                 (fun () -> Quant.lower kernels w op)
                  () (handler st)))
     (* Device movement is the identity on the single jit device. *)
     (* A placement inside a program is the compiler's: placing a value where

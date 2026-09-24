@@ -7,10 +7,10 @@
 
    [lower] is the compiled form of [Nx_quant]'s effect, written as Nx operations
    that jit traces into its graph under its own handler. The form is chosen from
-   static shapes. The kernel, for a matrix that meets at most a row bound of
-   rows, and the grouped form, for experts that many routes share, do not exist
-   yet: the row bound is 0 and the grouping cost infinite, so every product
-   decodes, then multiplies. *)
+   static shapes. A matrix that meets at most the device's row bound of rows
+   takes tolk's kernel, which decodes in registers; the grouped form, for
+   experts that many routes share, does not exist yet (its grouping cost is
+   infinite), so every other product decodes, then multiplies. *)
 
 (* Decoding. Values are computed at float32, where every product of a code and a
    scale is exact, and cast once. *)
@@ -64,7 +64,7 @@ let broadcast a b =
   Array.init l (fun i ->
       let da = if i < l - la then 1 else a.(i - l + la) in
       let db = if i < l - lb then 1 else b.(i - l + lb) in
-      max da db)
+      if da = 1 then db else da)
 
 (* [lane_index lanes] is, for a weight whose leading axes are [lanes], each
    lane's position among them, of shape [lanes]: a unit axis indexes 0 whatever
@@ -184,6 +184,134 @@ let every ~transpose ~p ~e ids codes scales x =
   let rows = if vector then [| rows.(1) |] else rows in
   Nx.reshape (Array.concat [ batch; positions; rows ]) y
 
+(* What a single-device trace gives the lowering: its device, whose measured
+   options fix the kernel's row bound, and [quant_matmul ?ids x ~codes ~scales],
+   tolk's [Op.quant_matmul] over traced values: [x] [[| ix; m; k |]], matrices
+   [[| e; n; k / 2 |]] and ids [[| i |]], each of the [i] instances taking block
+   [t / (i / ix)] of [x]. *)
+type kernels = {
+  device : Tolk.Device.t;
+  quant_matmul :
+    'b.
+    ?ids:Nx.int32_t ->
+    (float, 'b) Nx.t ->
+    codes:(int, Nx.uint8_elt) Nx.t ->
+    scales:(int, Nx.uint8_elt) Nx.t ->
+    (float, 'b) Nx.t;
+}
+
+(* The most rows one [n] by [k] matrix may meet in the kernel, for [x]'s
+   dtype. *)
+let row_bound (type b) kernels (x : (float, b) Nx.t) ~n ~k =
+  let bound dtype =
+    Tolk_frontend.Op.quant_row_bound
+      (Tolk.Device.renderer kernels.device)
+      dtype ~n ~k
+  in
+  match Nx.dtype x with
+  | Nx.Float32 -> bound Tolk_uop.Dtype.float32
+  | Nx.BFloat16 -> bound Tolk_uop.Dtype.bfloat16
+  | Nx.Float16 -> bound Tolk_uop.Dtype.float16
+  | _ -> 0
+
+(* [x] as the kernel's [[| ix; m; k |]] for a product whose batch is [batch]:
+   its batch axes must be a prefix of [batch] followed by units, or it is
+   broadcast to [batch] first. *)
+let kernel_x ~batch x =
+  let xs = Nx.shape x in
+  let r = Array.length xs in
+  let mk = Array.sub xs (r - 2) 2 in
+  let b = Array.length batch in
+  let xb = Array.append (ones (b - (r - 2))) (Array.sub xs 0 (r - 2)) in
+  let rec prefix j =
+    if j = b || xb.(j) <> batch.(j) then j else prefix (j + 1)
+  in
+  let j = prefix 0 in
+  if Array.for_all (( = ) 1) (Array.sub xb j (b - j)) then
+    Nx.reshape
+      (Array.append [| count (Array.sub xb 0 j) |] mk)
+      (Nx.contiguous x)
+  else
+    Nx.reshape
+      (Array.append [| count batch |] mk)
+      (Nx.contiguous (Nx.broadcast_to (Array.append batch mk) x))
+
+(* Rule 1: without ids, a matrix meeting [r] rows takes the kernel while [r <=
+   row_bound]; with ids and ungrouped, each instance takes it with [r = m].
+   [None] where the product takes another form. *)
+let by_kernel kernels ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
+  let vector = Nx.ndim x = 1 in
+  let x =
+    if vector then Nx.reshape (Array.append [| 1 |] (Nx.shape x)) x else x
+  in
+  let xs = Nx.shape x and cs = Nx.shape codes in
+  let xr = Array.length xs and cr = Array.length cs in
+  let m = xs.(xr - 2) and k = xs.(xr - 1) and n = cs.(cr - 2) in
+  let xb = Array.sub xs 0 (xr - 2) in
+  let finish batch y =
+    let rows = if vector then [| n |] else [| m; n |] in
+    Some (Nx.reshape (Array.append batch rows) y)
+  in
+  let rows_fit r = r > 0 && n > 0 && r <= row_bound kernels x ~n ~k in
+  let parts e =
+    (Nx.reshape [| e; n; k / 2 |] codes, Nx.reshape [| e; n; k / 32 |] scales)
+  in
+  match ids with
+  | None ->
+      let wb = Array.sub cs 0 (cr - 2) in
+      if Array.for_all (( = ) 1) wb then
+        let r = count xb * m in
+        if not (rows_fit r) then None
+        else
+          let codes, scales = parts 1 in
+          let x = Nx.reshape [| 1; r; k |] (Nx.contiguous x) in
+          finish (broadcast wb xb) (kernels.quant_matmul x ~codes ~scales)
+      else
+        let batch = broadcast wb xb in
+        let wb =
+          Array.append (ones (Array.length batch - Array.length wb)) wb
+        in
+        if wb <> batch || not (rows_fit m) then None
+        else
+          let codes, scales = parts (count batch) in
+          finish batch (kernels.quant_matmul (kernel_x ~batch x) ~codes ~scales)
+  | Some ids ->
+      let p = cr - 3 in
+      let e = cs.(p) and is = Nx.shape ids in
+      if not (rows_fit m) then None
+      else
+        (* Lanes flattened: lane [l]'s expert [id] is matrix [l * e + id], and
+           an id outside the experts stays outside every lane's. *)
+        let index =
+          if p = 0 then ids
+          else
+            let valid =
+              Nx.logical_and
+                (Nx.greater_equal_s ids 0l)
+                (Nx.less_s ids (Int32.of_int e))
+            in
+            let lane = lane_index (Array.sub cs 0 p) in
+            let lane =
+              Nx.reshape
+                (Array.append (Nx.shape lane) (ones (Array.length is - p)))
+                lane
+            in
+            Nx.where valid
+              (Nx.add (Nx.mul_s lane (Int32.of_int e)) ids)
+              (Nx.full Nx.int32 [||] (-1l))
+        in
+        let batch = broadcast xb (Nx.shape index) in
+        if count batch = 0 then None
+        else
+          let ids =
+            Nx.reshape
+              [| count batch |]
+              (Nx.contiguous (Nx.broadcast_to batch index))
+          in
+          let codes, scales = parts (count (Array.sub cs 0 (p + 1))) in
+          finish batch
+            (kernels.quant_matmul ~ids (kernel_x ~batch x) ~codes ~scales)
+
 let product ~transpose ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
   match ids with
   | None ->
@@ -197,14 +325,37 @@ let product ~transpose ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
       if positions < e then gathered ~transpose ~p ~e ids codes scales x
       else every ~transpose ~p ~e ids codes scales x
 
-(* Decoding happens at [x]'s dtype when it has float32's exponent range, and
-   otherwise at float32. *)
-let apply (type b) ~transpose ?ids w (x : (float, b) Nx.t) : (float, b) Nx.t =
+(* The kernel takes float32, bfloat16 and float16 as they are. Decoding happens
+   at [x]'s dtype when it has float32's exponent range, and otherwise at
+   float32. The transposed product, the reverse rule's, never takes the
+   kernel. *)
+let apply (type b) kernels ~transpose ?ids w (x : (float, b) Nx.t) :
+    (float, b) Nx.t =
+  let kernel_form x =
+    match kernels with
+    | Some kernels when not transpose -> by_kernel kernels ?ids w x
+    | _ -> None
+  in
   match Nx.dtype x with
-  | Nx.Float32 | Nx.BFloat16 -> product ~transpose ?ids w x
-  | dt -> Nx.cast dt (product ~transpose ?ids w (Nx.cast Nx.float32 x))
+  | Nx.Float32 | Nx.BFloat16 -> (
+      match kernel_form x with
+      | Some y -> y
+      | None -> product ~transpose ?ids w x)
+  | Nx.Float16 -> (
+      match kernel_form x with
+      | Some y -> y
+      | None ->
+          Nx.cast Nx.float16 (product ~transpose ?ids w (Nx.cast Nx.float32 x)))
+  | dt -> (
+      let x32 = Nx.cast Nx.float32 x in
+      match kernel_form x32 with
+      | Some y -> Nx.cast dt y
+      | None -> Nx.cast dt (product ~transpose ?ids w x32))
 
-let lower : type a b. Nx_quant.t -> (a, b) Nx_quant.Effect.op -> (a, b) Nx.t =
- fun (Nx_quant.Mxfp4 { codes; scales } as w) -> function
-  | Apply { ids; x; transpose } -> apply ~transpose ?ids w x
+(* [lower kernels w op] is [op]'s compiled form; [kernels] is [None] in a
+   program over several devices. *)
+let lower : type a b.
+    kernels option -> Nx_quant.t -> (a, b) Nx_quant.Effect.op -> (a, b) Nx.t =
+ fun kernels (Nx_quant.Mxfp4 { codes; scales } as w) -> function
+  | Apply { ids; x; transpose } -> apply kernels ~transpose ?ids w x
   | Dequant dt -> decode dt codes scales

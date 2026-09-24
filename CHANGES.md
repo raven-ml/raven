@@ -109,6 +109,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx_quant.apply` runs tolk's kernel, which decodes MXFP4 weights in
+  registers, when a matrix meets few rows (32 on Metal and 64 on the CPU, at
+  bfloat16). On an M1 Max, gpt-oss-20b decodes a token in 48-54 ms against
+  122-126 ms, 8 sequences in 100 ms against 446 ms, and a 512-token prompt in
+  3.5 s against 8.8 s.
 - `Nx_quant.apply` and `Nx_quant.dequant` compile under `Rune.jit`, and `grad`,
   `jvp`, `vmap` and `with_debug` take them: gradients flow to `x` only, and a
   quantised weight whose part is differentiated raises.
