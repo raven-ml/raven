@@ -30,6 +30,11 @@ let err_no_rule op =
         differentiation should not flow through it"
        op)
 
+let err_quant () =
+  invalid_arg
+    "Rune: a part of a quantised weight is differentiated; capture the weight, \
+     or build it from Rune.detached tensors"
+
 let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
  fun tangents ->
   let open Effect.Deep in
@@ -611,6 +616,24 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   "Rune: a custom_vjp function is not forward-differentiable; \
                    define a custom_jvp rule instead"
               else continue k (fst (fwd params)))
+      (* Quantised products. A weight is never differentiated; the tangent of a
+         product is the product of the tangent of [x]. *)
+      | Nx_quant.Effect.E_quant
+          { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
+          Some
+            (fun k ->
+              if active codes || active scales then err_quant ();
+              let y = Nx_quant.Effect.perform w op in
+              (match op with
+              | Apply { ids; x; transpose } -> (
+                  match tangent x with
+                  | None -> ()
+                  | Some dx ->
+                      set_tangent y
+                        (Nx_quant.Effect.perform w
+                           (Apply { ids; x = dx; transpose })))
+              | Dequant _ -> ());
+              continue k y)
       (* Effects from other libraries fall through. A new Nx tensor operation
          must be added to this match: an unmatched tensor effect would be
          differentiated as a constant. *)

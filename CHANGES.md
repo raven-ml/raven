@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx_quant.apply` and `Nx_quant.dequant` compile under `Rune.jit`, and `grad`,
+  `jvp`, `vmap` and `with_debug` take them: gradients flow to `x` only, and a
+  quantised weight whose part is differentiated raises.
 - Fix compiled `int64` and `uint64` constants beyond 2^62: `Rune.jit` read
   them through OCaml's 63-bit `int`, so `Int64.min_int` became 0 and
   `0x4000000000000000L` became `-2^62`. They now keep every bit.

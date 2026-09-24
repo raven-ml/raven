@@ -14,10 +14,12 @@
   jit
   jit_cache
   jit_device
-  scan)
+  scan
+  quant)
  (libraries
   nx.core
   nx
+  nx.quant
   nx.effect
   nx.buffer
   unix

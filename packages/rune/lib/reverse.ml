@@ -70,6 +70,11 @@ let err_no_rule op =
         differentiation should not flow through it"
        op)
 
+let err_quant () =
+  invalid_arg
+    "Rune: a part of a quantised weight is differentiated; capture the weight, \
+     or build it from Rune.detached tensors"
+
 (* Handler *)
 
 let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
@@ -1125,6 +1130,43 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"
               else continue k (f params))
+      (* Quantised products. A weight is never differentiated; the cotangent of
+         [x] is the transposed product with the same ids, summed over the axes
+         along which [x] was broadcast. The tape holds the weight and the ids,
+         nothing decoded. *)
+      | Nx_quant.Effect.E_quant
+          { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
+          Some
+            (fun k ->
+              if tracked codes || tracked scales then err_quant ();
+              let y = Nx_quant.Effect.perform w op in
+              (match op with
+              | Apply { ids; x; transpose } when tracked x ->
+                  track y;
+                  Tape.record tape (fun () ->
+                      match Tape.find tape y with
+                      | None -> ()
+                      | Some g ->
+                          let x_shape = T.shape x in
+                          let vector = Array.length x_shape = 1 in
+                          let g =
+                            if vector then T.unsqueeze ~axes:[ T.ndim g - 1 ] g
+                            else g
+                          in
+                          let op =
+                            Nx_quant.Effect.Apply
+                              { ids; x = g; transpose = not transpose }
+                          in
+                          let dx = Nx_quant.Effect.perform w op in
+                          let dx =
+                            if vector then
+                              T.reshape x_shape
+                                (unbroadcast dx (Array.append [| 1 |] x_shape))
+                            else unbroadcast dx x_shape
+                          in
+                          Tape.accumulate tape x dx)
+              | Apply _ | Dequant _ -> ());
+              continue k y)
       (* Effects from other libraries fall through. A new Nx tensor operation
          must be added to this match: an unmatched tensor effect would be
          differentiated as a constant. *)

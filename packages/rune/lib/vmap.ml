@@ -75,6 +75,66 @@ let ensure_batched st x = to_batched st x (vshape st x)
    so non-negative axes shift by one and negative axes are unchanged. *)
 let taxis ax = if ax >= 0 then ax + 1 else ax
 
+(* Quantised products. The lane becomes a leading axis of the weight's parts, of
+   [ids] and of [x], a unit axis where one is unbatched, after [pad] unit axes
+   that align the operands' batch axes, so that each lane meets its own weight
+   with its own ids. *)
+
+let lift st ?shape ~lead ~pad x =
+  let s = match shape with Some s -> s | None -> vshape st x in
+  let b = if batched st x then st.batch_size else 1 in
+  let x = T.reshape (Array.concat [ [| b |]; Array.make pad 1; s ]) x in
+  if b >= lead then x
+  else T.broadcast_to (Array.concat [ [| lead |]; Array.make pad 1; s ]) x
+
+let lift_weight st ~pad (Nx_quant.Mxfp4 { codes; scales }) =
+  let lead =
+    if batched st codes || batched st scales then st.batch_size else 1
+  in
+  Nx_quant.mxfp4 ~scales:(lift st ~lead ~pad scales) (lift st ~lead ~pad codes)
+
+let quant_batched (type a b) st (Nx_quant.Mxfp4 { codes; scales })
+    (op : (a, b) Nx_quant.Effect.op) =
+  batched st codes || batched st scales
+  ||
+  match op with
+  | Apply { ids; x; _ } ->
+      batched st x || Option.fold ~none:false ~some:(batched st) ids
+  | Dequant _ -> false
+
+let quant (type a b) st w (op : (a, b) Nx_quant.Effect.op) : (a, b) t =
+  match op with
+  | Dequant _ -> Nx_quant.Effect.perform (lift_weight st ~pad:0 w) op
+  | Apply { ids; x; transpose } ->
+      let ws = vshape st (match w with Nx_quant.Mxfp4 { codes; _ } -> codes)
+      and xs = vshape st x in
+      let vector = Array.length xs = 1 in
+      let xb = if vector then [||] else Array.sub xs 0 (Array.length xs - 2) in
+      let wb =
+        match ids with
+        | None -> Array.sub ws 0 (Array.length ws - 2)
+        | Some ids -> vshape st ids
+      in
+      let rank = Stdlib.max (Array.length xb) (Array.length wb) in
+      let pad = rank - Array.length wb in
+      let x =
+        lift st
+          ?shape:(if vector then Some (Array.append [| 1 |] xs) else None)
+          ~lead:1
+          ~pad:(rank - Array.length xb)
+          x
+      in
+      let ids = Option.map (lift st ~lead:1 ~pad) ids in
+      let y =
+        Nx_quant.Effect.perform (lift_weight st ~pad w)
+          (Apply { ids; x; transpose })
+      in
+      if vector then
+        let s = T.shape y in
+        let r = Array.length s in
+        T.reshape (Array.append (Array.sub s 0 (r - 2)) [| s.(r - 1) |]) y
+      else y
+
 (* Polymorphic recursion: the nested fibers spawned for custom rules run at the
    rule's own result type. *)
 let rec handler : type r. state -> (r, r) Effect.Deep.handler =
@@ -557,6 +617,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               match_with (fun () -> Scan.eager req) () (handler st)
             in
             continue k res)
+    | Nx_quant.Effect.E_quant { w; op } when quant_batched st w op ->
+        Some
+          (fun k ->
+            let out = quant st w op in
+            mark st out;
+            continue k out)
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }

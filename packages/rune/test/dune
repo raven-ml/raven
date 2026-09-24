@@ -58,6 +58,12 @@
  (modules repro_jit_beam)
  (libraries rune nx nx.core unix))
 
+(test
+ (name test_quant)
+ (modules test_quant)
+ (package rune)
+ (libraries rune nx nx.quant tolk windtrap))
+
 (tests
  (names test_jit_alignment)
  (modules test_jit_alignment)

@@ -120,6 +120,14 @@ let handler ppf =
     | E_update { t_in; starts; v } ->
         Some (fun k -> obs k "update" (update t_in ~starts v))
     | E_matmul { a; b } -> Some (fun k -> obs k "matmul" (matmul a b))
+    | Nx_quant.Effect.E_quant { w; op } ->
+        let name =
+          match op with
+          | Apply { transpose = false; _ } -> "quant_apply"
+          | Apply { transpose = true; _ } -> "quant_apply_transposed"
+          | Dequant _ -> "quant_dequant"
+        in
+        Some (fun k -> obs k name (Nx_quant.Effect.perform w op))
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }

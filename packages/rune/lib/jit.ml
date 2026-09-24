@@ -1903,6 +1903,15 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     (* Matrix multiplication *)
     | E_matmul { a; b } ->
         Some (fun k -> ret k (dt a) (F.Op.matmul (go a) (go b)))
+    (* Quantised products lower to Nx compositions, traced under this handler
+       like the function's own operations. *)
+    | Nx_quant.Effect.E_quant { w; op } ->
+        Some
+          (fun k ->
+            continue k
+              (Effect.Deep.match_with
+                 (fun () -> Quant.lower w op)
+                 () (handler st)))
     (* Device movement is the identity on the single jit device. *)
     (* A placement inside a program is the compiler's: placing a value where
        the program runs is the identity, and a program moves nothing between
