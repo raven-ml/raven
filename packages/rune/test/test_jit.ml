@@ -1885,6 +1885,27 @@ let test_mixed_placements_raise () =
   check_arr ~msg:"a host operand joins" [| 2.0; 3.0 |]
     (Nx.add p (vec32 [| 1.0; 1.0 |]))
 
+(* A host value and the placed value a call returns for it share a program. *)
+let test_host_started_loop_compiles_once () =
+  let traces = ref 0 in
+  let step =
+    Rune.jit_step ~device:"CPU:1"
+      (module Nx.Ptree)
+      (module Csingle)
+      (fun _ x ->
+        incr traces;
+        Nx.add_s (Nx.mul_s x 0.5) 1.0)
+      (Nx.Ptree.list [])
+  in
+  let x = ref (vec32 (Array.make 8 0.0)) in
+  for _ = 1 to 4 do
+    x := step !x
+  done;
+  equal ~msg:"one trace" int 1 !traces;
+  is_true ~msg:"the state is on CPU:1"
+    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement !x));
+  check_arr ~msg:"four steps" (Array.make 8 (2.0 -. (2.0 *. (0.5 ** 4.0)))) !x
+
 let test_placing_elsewhere_inside_jit_raises () =
   let other = Nx.Placement.device (Rune.device "CPU:2") in
   raises_jit_error (fun () ->
@@ -3263,6 +3284,8 @@ let tests =
         test "a move to the host keeps its source"
           test_move_to_host_keeps_its_source;
         test "mixed placements raise" test_mixed_placements_raise;
+        test "a loop whose state starts on the host compiles once"
+          test_host_started_loop_compiles_once;
         test "placing elsewhere inside jit raises"
           test_placing_elsewhere_inside_jit_raises;
         test "one device per name" test_one_device_per_name;

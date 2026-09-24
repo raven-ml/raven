@@ -546,6 +546,87 @@ let test_sort_keeps_subnormals () =
     (unsigned_zero (sort x))
     (unsigned_zero (Rune.jit' ~device:"METAL" sort x))
 
+(* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4), and
+   a loop whose state starts on the host compiles once. *)
+
+let read_bytes f =
+  let s0 = Rune.jit_stats () in
+  let r = f () in
+  (r, (Rune.jit_stats ()).bytes_from_device - s0.bytes_from_device)
+
+let test_item_on_resident_logits () =
+  let vocab = 4096 in
+  let w =
+    Nx.create f32 [| 8; vocab |]
+      (Array.init (8 * vocab) (fun i -> float_of_int (i mod 17) /. 17.0))
+  in
+  let placed = on_metal w in
+  let head = Rune.jit' ~device:"METAL" (fun h -> Nx.matmul h placed) in
+  let h = Nx.create f32 [| 1; 8 |] (Array.init 8 float_of_int) in
+  let logits = head h in
+  let v, down = read_bytes (fun () -> Nx.item [ 0; 5 ] logits) in
+  equal ~msg:"the element" (float 1e-5) (Nx.item [ 0; 5 ] (Nx.matmul h w)) v;
+  equal ~msg:"four bytes move" int 4 down;
+  is_true ~msg:"the logits stay resident" (bound_by 0 logits);
+  let step = Rune.jit' ~device:"METAL" (fun l -> Nx.mul_s l 2.0) in
+  let (_ : Nx.float32_t), up = delta (fun () -> step logits) in
+  equal ~msg:"and feed a call with no upload" int 0 up
+
+let test_move_to_host_keeps_its_source () =
+  let w1, _ = weights () in
+  let p = on_metal w1 in
+  let h = Nx.place Nx.Placement.host p in
+  is_true ~msg:"a host copy"
+    (Nx.Placement.equal Nx.Placement.host (Nx.placement h));
+  check_arr ~msg:"its elements" (to_arr w1) h;
+  check_arr ~msg:"the source is still readable" (to_arr w1) p;
+  is_true ~msg:"and resident" (bound_by 0 p);
+  let g = Rune.jit' ~device:"METAL" (fun x -> Nx.mul_s x 2.0) in
+  let (_ : Nx.float32_t), up = delta (fun () -> g p) in
+  equal ~msg:"and feeds a call with no upload" int 0 up
+
+let test_mixed_placements_raise () =
+  let p = on_metal (vec32 [| 1.0; 2.0 |]) in
+  let q =
+    Nx.place (Nx.Placement.device (Rune.device "CPU:1")) (vec32 [| 3.0; 4.0 |])
+  in
+  let (), down =
+    read_bytes (fun () ->
+        raises_match
+          (function
+            | Invalid_argument msg ->
+                String.ends_with ~suffix:"place one of them" msg
+            | _ -> false)
+          (fun () -> Nx.add p q))
+  in
+  equal ~msg:"nothing is read" int 0 down;
+  let y = Nx.add p (vec32 [| 1.0; 1.0 |]) in
+  is_true ~msg:"a host operand joins"
+    (Nx.Placement.equal (Nx.placement p) (Nx.placement y));
+  check_arr ~msg:"and the result is right" [| 2.0; 3.0 |] y
+
+let test_host_started_loop_compiles_once () =
+  let traces = ref 0 in
+  let step =
+    Rune.jit_step
+      (module Nx.Ptree)
+      (module Single)
+      (fun _ x ->
+        incr traces;
+        Nx.add_s (Nx.mul_s x 0.5) 1.0)
+      (Nx.Ptree.list [])
+  in
+  let x = ref (vec32 (Array.make 64 0.0)) in
+  for _ = 1 to 4 do
+    x := step !x
+  done;
+  equal ~msg:"one trace for the host state and the placed ones" int 1 !traces;
+  is_true ~msg:"the state is on Metal"
+    (Nx.Placement.equal
+       (Nx.Placement.device (Rune.device "METAL"))
+       (Nx.placement !x));
+  check_arr ~msg:"four steps" (Array.make 64 (2.0 -. (2.0 *. (0.5 ** 4.0)))) !x
+
 let tests =
   [
     group "metal device"
@@ -584,6 +665,16 @@ let tests =
           test_capture_moves_past_a_dtype;
         test "a weight over a mapped file is placed from the file"
           test_place_from_a_mapped_file;
+      ];
+    group "reads, moves and loops"
+      [
+        test "item on resident logits reads one element"
+          test_item_on_resident_logits;
+        test "a move to the host keeps its source"
+          test_move_to_host_keeps_its_source;
+        test "mixed placements raise" test_mixed_placements_raise;
+        test "a loop whose state starts on the host compiles once"
+          test_host_started_loop_compiles_once;
       ];
   ]
 
