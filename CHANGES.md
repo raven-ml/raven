@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Conditional loops pass through kernel optimization without querying numeric
+  bounds for their void scopes. New split axes avoid IDs held by loop scopes,
+  device axes, and size-one ranges.
+
 - AMD kernels honor loads marked `nontemporal` by emitting the cache-bypassing
   builtin. Scalar and vector loads retain the pointer type of their access.
 

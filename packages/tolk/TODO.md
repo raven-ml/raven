@@ -77,7 +77,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
 - Migrate CPU host calls and threadless tensor kernels; port ELF/TinyELF and
-  x86 out-of-range relocation trampolines. Rebaseline CPU matmul performance.
+  x86 out-of-range relocation trampolines. Reconcile the fixed-array CPU call
+  ABI with TinyELF signatures without adding an FFI dependency. Rebaseline CPU
+  matmul performance.
 - Migrate Metal/CUDA queues and argument bindings; implement CUDA peer enablement
   and synchronized cross-device transfer with unsupported-peer fallback.
 - Migrate AMD queue descriptors, AQL/multi-XCC, race/recovery fixes and consumed

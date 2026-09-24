@@ -206,7 +206,7 @@ let test_conditional_loop () =
   let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:next
       ~rhs:(U.const (Const.int Dtype.int32 5)) in
   let edge = U.backedge ~body:store ~loop ~cond in
-  let sink = U.sink [ edge ] |> Linearizer.pm_add_control_flow in
+  let sink = U.sink [ edge ] |> Codegen.full_rewrite_to_sink (Device.renderer device) in
   let program = Linearizer.linearize sink in
   Spec.verify_list Spec.program_spec program;
   let spec = Device.compile_program device ~name:"conditional_loop" program in

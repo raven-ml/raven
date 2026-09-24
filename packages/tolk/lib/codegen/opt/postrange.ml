@@ -62,13 +62,14 @@ type shape = {
   shape_str : string list;
 }
 
-(* Always in order by axis type. The device axis is launched, not an opt
-   axis. *)
+(* Always in order by axis type. Device axes are launched, while void
+   ranges are loop scopes; neither is a numeric optimization axis. *)
 let compute_shape ast =
   let rngs =
     U.toposort ast
     |> List.filter (fun u ->
-           is_range u && Bound.lt (Bound.int 0) (U.vmax u) && range_kind u <> Axis_type.Device)
+           is_range u && U.dtype u <> Dtype.void
+           && Bound.lt Bound.zero (U.vmax u) && range_kind u <> Axis_type.Device)
     |> List.sort (fun a b ->
          compare
            (Axis_type.to_pos (range_kind a), U.axis_id a)
@@ -108,7 +109,9 @@ let create ast ren =
   in
   let shape = compute_shape ast in
   let max_axis =
-    List.fold_left (fun acc r -> max acc (range_axis r)) 0 shape.rngs
+    List.fold_left
+      (fun acc r -> if is_range r then max acc (range_axis r) else acc)
+      0 (U.backward_slice ast)
   in
   {
     ast; ren; dont_use_locals; applied_opts;

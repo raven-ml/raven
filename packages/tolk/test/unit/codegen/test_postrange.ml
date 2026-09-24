@@ -679,6 +679,21 @@ let state_query_tests =
         List.iter
           (fun r -> is_true (range_size_int r > 1))
           rngs);
+      test "conditional loops are scopes rather than numeric optimization axes" (fun () ->
+        let scope = U.loop ~axis:42 in
+        let r = loop_range ~axis:0 8 in
+        let dst = U.param ~slot:0 ~dtype:D.float32 ~shape:(idx 8) () in
+        let ptr = U.after ~src:dst ~deps:[ scope ] in
+        let store = U.store ~dst:(U.index ~ptr ~idxs:[ r ] ())
+            ~value:(U.const_float 1.) () in
+        let body = U.end_ ~value:store ~ranges:[ r ] in
+        let edge = U.backedge ~body ~loop:scope ~cond:(U.const_bool false) in
+        let k = P.create (wrap_sink [ edge ]) (cpu_renderer ()) in
+        equal int 1 (P.shape_len k);
+        equal (list int) [ 8 ] (List.map const_to_int (P.full_shape k));
+        match P.apply_opt k (U.Opt.Upcast { axis = 0; amount = 2 }) with
+        | Some (_, added) -> equal (list int) [ 43 ] (U.axis_id added)
+        | None -> fail "expected a split range");
       (* shape_str produces correct labels *)
       test "shape_str produces correct labels" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
