@@ -64,6 +64,19 @@ let elementwise_tests =
               [| 100.; 0.; -0.25; 7. |];
             ];
           equal int ~msg:"function ran only for warmup and capture" 2 !traces);
+      test "empty host inputs participate in capture and replay" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create (fun inputs ~vars:_ ->
+              incr traces;
+              Run.realize (El.add (Rd.sum inputs.(0)) (Rd.sum inputs.(1)))) in
+          for call = 0 to 3 do
+            let empty = Run.of_float_array ~shape:[ 0; 3 ] [||] in
+            let input = vec [| Float.of_int call; 2. |] in
+            check_floats [| Float.of_int call +. 2. |]
+              (Jit.call jit [| empty; input |]);
+            equal bool (call >= 1) (Jit.captured jit)
+          done;
+          equal int 2 !traces);
       test "unrealized inputs are realized by call" (fun () ->
           let jit =
             Jit.create (fun inputs ~vars:_ ->

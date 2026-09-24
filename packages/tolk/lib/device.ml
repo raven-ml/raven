@@ -104,6 +104,8 @@ module Lru_allocator = struct
 end
 
 module Buffer = struct
+  type 'buf storage = Unallocated | Empty | Backing of 'buf
+
   type 'buf raw = {
     id : int;
     device : string;
@@ -111,7 +113,7 @@ module Buffer = struct
     dtype : Dtype.t;
     spec : Buffer_spec.t;
     allocator : 'buf Allocator.t;
-    mutable buf : 'buf option;
+    mutable storage : 'buf storage;
     base : 'buf raw option;
     offset : int;
     mutable uop_refcount : int;
@@ -139,8 +141,9 @@ module Buffer = struct
     base.uop_refcount <- base.uop_refcount + cnt;
     t
 
-  let is_allocated (Pack buf) = Option.is_some (base_raw buf).buf
-  let is_initialized (Pack buf) = Option.is_some buf.buf
+  let initialized buf = match buf.storage with Unallocated -> false | Empty | Backing _ -> true
+  let is_allocated (Pack buf) = initialized buf || initialized (base_raw buf)
+  let is_initialized (Pack buf) = initialized buf
   let allocated_views (Pack buf) = (base_raw buf).allocated_views
   let nbytes (Pack buf) = buf.size * Dtype.itemsize buf.dtype
 
@@ -149,14 +152,11 @@ module Buffer = struct
     && Option.is_none buf.spec.external_ptr
 
   let rec allocate (Pack buf as t) =
-    if Option.is_some buf.buf then invalid_arg "buffer already allocated";
-    match buf.base with
+    if initialized buf then invalid_arg "buffer already allocated";
+    if nbytes t = 0 then buf.storage <- Empty
+    else match buf.base with
     | None ->
-        if nbytes t <= 0 then
-          invalid_arg
-            (Printf.sprintf "Device.Buffer.allocate: size must be positive, got %d"
-               (nbytes t));
-        buf.buf <- Some (buf.allocator.alloc (nbytes t) buf.spec);
+        buf.storage <- Backing (buf.allocator.alloc (nbytes t) buf.spec);
         if counts_as_used buf then
           Helpers.Global_counters.add_mem_used buf.device (nbytes t)
     | Some base ->
@@ -168,16 +168,17 @@ module Buffer = struct
           | Some f -> f
         in
         let base_buf =
-          match base.buf with Some b -> b | None -> assert false
+          match base.storage with Backing b -> b | Unallocated | Empty -> assert false
         in
-        buf.buf <- Some (offset base_buf (nbytes t) buf.offset)
+        buf.storage <- Backing (offset base_buf (nbytes t) buf.offset)
 
   and ensure_allocated t = if not (is_initialized t) then allocate t
 
   let rec deallocate (Pack buf as t) =
-    match (buf.base, buf.buf) with
-    | _, None -> ()
-    | None, Some raw ->
+    match (buf.base, buf.storage) with
+    | _, Unallocated -> ()
+    | _, Empty -> buf.storage <- Unallocated
+    | None, Backing raw ->
         (* Catch use-after-free early: freeing a base while views still
            reference it would leave dangling pointers. *)
         if buf.allocated_views <> 0 then
@@ -185,9 +186,9 @@ module Buffer = struct
         if counts_as_used buf then
           Helpers.Global_counters.add_mem_used buf.device (-nbytes t);
         buf.allocator.free raw (nbytes t) buf.spec;
-        buf.buf <- None
-    | Some base, Some _ ->
-        buf.buf <- None;
+        buf.storage <- Unallocated
+    | Some base, Backing _ ->
+        buf.storage <- Unallocated;
         base.allocated_views <- base.allocated_views - 1
 
   let create ~device ~size ~dtype ?spec allocator =
@@ -202,7 +203,7 @@ module Buffer = struct
             dtype;
             spec;
             allocator = alloc;
-            buf = None;
+            storage = Unallocated;
             base = None;
             offset = 0;
             uop_refcount = 0;
@@ -241,36 +242,43 @@ module Buffer = struct
 
   let copyin (Pack b as t) bytes =
     ensure_size t bytes;
-    match b.buf with
-    | None -> invalid_arg "buffer is not allocated"
-    | Some raw -> b.allocator.copyin raw bytes
+    match b.storage with
+    | Unallocated -> invalid_arg "buffer is not allocated"
+    | Empty -> ()
+    | Backing raw -> b.allocator.copyin raw bytes
 
   let copyout (Pack b as t) bytes =
     ensure_size t bytes;
-    match b.buf with
-    | None -> invalid_arg "buffer is not allocated"
-    | Some raw -> b.allocator.copyout bytes raw
+    match b.storage with
+    | Unallocated -> invalid_arg "buffer is not allocated"
+    | Empty -> ()
+    | Backing raw -> b.allocator.copyout bytes raw
 
   let as_buffer (Pack b as t) =
-    match b.buf with
-    | None -> invalid_arg "buffer is not allocated"
-    | Some raw -> Option.map (fun f -> f raw (nbytes t)) b.allocator.as_buffer
+    match b.storage with
+    | Unallocated -> invalid_arg "buffer is not allocated"
+    | Empty -> None
+    | Backing raw -> Option.map (fun f -> f raw (nbytes t)) b.allocator.as_buffer
 
   let transfer ~dst:((Pack dst_raw) as dst) ~src:((Pack src_raw) as src) =
     if size dst <> size src then invalid_arg "buffer transfer size mismatch";
     if not (Dtype.equal (dtype dst) (dtype src)) then
       invalid_arg "buffer transfer dtype mismatch";
-    match dst_raw.allocator.transfer with
+    if nbytes dst = 0 then begin
+      ensure_allocated dst;
+      ensure_allocated src;
+      true
+    end else match dst_raw.allocator.transfer with
     | Some transfer
       when dst_raw.allocator.supports_transfer
            && same_backend dst_raw.device src_raw.device ->
         ensure_allocated dst;
         ensure_allocated src;
         let dest =
-          match dst_raw.buf with Some raw -> raw | None -> assert false
+          match dst_raw.storage with Backing raw -> raw | Unallocated | Empty -> assert false
         in
         let src =
-          match src_raw.buf with Some raw -> raw | None -> assert false
+          match src_raw.storage with Backing raw -> raw | Unallocated | Empty -> assert false
         in
         (* Allocator raw buffer types are hidden by [Buffer.t].  tinygrad's
            transfer fast path is selected by backend prefix; Tolk keeps the
@@ -287,8 +295,8 @@ module Buffer = struct
 
   let view (Pack b as t) ~size ~dtype ~offset =
     if offset < 0 then invalid_arg "buffer view offset must be non-negative";
-    if offset >= nbytes t then
-      invalid_arg "buffer view offset must be less than nbytes";
+    if offset > nbytes t || (offset = nbytes t && size <> 0) then
+      invalid_arg "buffer view offset is outside the buffer";
     let view_nbytes = size * Dtype.itemsize dtype in
     let base = base_raw b in
     let absolute_offset = b.offset + offset in
@@ -302,7 +310,7 @@ module Buffer = struct
         dtype;
         spec = base.spec;
         allocator = base.allocator;
-        buf = None;
+        storage = Unallocated;
         base = Some base;
         offset = absolute_offset;
         uop_refcount = 0;
@@ -314,7 +322,10 @@ module Buffer = struct
 
   let addr (Pack b as t) =
     ensure_allocated t;
-    match b.buf with Some raw -> b.allocator.addr raw | None -> assert false
+    match b.storage with
+    | Backing raw -> b.allocator.addr raw
+    | Empty -> Nativeint.zero
+    | Unallocated -> assert false
 
   (* XXX: copy_between belongs in the engine layer, not the device layer.
      tinygrad's buffer-to-buffer copies live in realize.py with fast paths

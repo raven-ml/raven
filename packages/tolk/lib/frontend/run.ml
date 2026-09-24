@@ -115,23 +115,17 @@ let buffer_nodes () = Buffer_nodes.fold List.cons stored_nodes []
 
 let make_input ~dtype ~shape n fill =
   let dev = device () in
-  if n = 0 then
-    Movement.reshape
-      (Creation.empty ~dtype ~device:(U.Single (Tolk.Device.name dev)) [ 0 ])
-      shape
-  else begin
-    let buf = Tolk.Device.create_buffer ~size:n ~dtype dev in
-    Tolk.Device.Buffer.ensure_allocated buf;
-    let bytes = Bytes.create (Tolk.Device.Buffer.nbytes buf) in
-    fill bytes;
-    Tolk.Device.Buffer.copyin buf bytes;
-    let node =
-      U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
-        ~device:(U.Single (device_name ())) ()
-    in
-    register node buf;
-    Movement.reshape (T.of_uop node) shape
-  end
+  let buf = Tolk.Device.create_buffer ~size:n ~dtype dev in
+  Tolk.Device.Buffer.ensure_allocated buf;
+  let bytes = Bytes.create (Tolk.Device.Buffer.nbytes buf) in
+  fill bytes;
+  Tolk.Device.Buffer.copyin buf bytes;
+  let node =
+    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
+      ~device:(U.Single (device_name ())) ()
+  in
+  register node buf;
+  Movement.reshape (T.of_uop node) shape
 
 let of_float_array ~shape data =
   make_input ~dtype:D.float32 ~shape (Array.length data) (fun bytes ->

@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Empty host arrays have a registered storage identity and can participate in
+  JIT capture and replay. Zero-byte buffers, copies, and views require no native
+  allocation; empty views may start at the end of a buffer.
+
 - `Search.beam_search` requires explicit `var_vals` for candidate filtering and
   timing, and rejects missing or out-of-bounds values. Codegen supplies
   floor-rounded interval midpoints by default, including negative intervals.

@@ -170,8 +170,9 @@ module Buffer : sig
       and spanning [size] elements of [dtype]. The view shares the base buffer's
       allocator and spec.
 
-      Raises [Invalid_argument] if [offset] is negative, [>= nbytes b], or if
-      the resulting view extends past the root base buffer. *)
+      An empty view may start at [nbytes b]. Raises [Invalid_argument] if
+      [offset] is negative, past [nbytes b], at [nbytes b] for a nonempty view,
+      or if the resulting view extends past the root base buffer. *)
 
   (** {1:identity Identity and metadata} *)
 
@@ -210,28 +211,28 @@ module Buffer : sig
   val allocate : t -> unit
   (** [allocate b] materialises backing storage for [b]. For views, ensures the
       base buffer is allocated first, then creates the offset view via the
-      allocator.
+      allocator. Empty buffers and views acquire a storage identity without
+      calling the allocator or retaining a native allocation.
 
-      Raises [Invalid_argument] if [b] is already allocated, if [b] is a base
-      buffer with no bytes (no device has storage of size zero), or if [b] is a
-      view and the allocator does not support {!Allocator.offset}. *)
+      Raises [Invalid_argument] if [b] is already allocated, or if [b] is a
+      nonempty view and the allocator does not support {!Allocator.offset}. *)
 
   val ensure_allocated : t -> unit
   (** [ensure_allocated b] calls {!allocate} if [b] is not yet initialised.
       No-op otherwise. *)
 
   val is_allocated : t -> bool
-  (** [is_allocated b] is [true] iff the base buffer's backing storage exists.
-  *)
+  (** [is_allocated b] is [true] iff [b] has initialized empty storage or its
+      base buffer's storage exists. *)
 
   val is_initialized : t -> bool
   (** [is_initialized b] is [true] iff this specific buffer or view has its own
-      storage pointer set. A view can be uninitialised even when the base buffer
-      is allocated. *)
+      storage initialized, including empty storage without a pointer. A view
+      can be uninitialised even when the base buffer is allocated. *)
 
   val allocated_views : t -> int
-  (** [allocated_views b] is the number of allocated views of [b]'s root base
-      buffer. {!deallocate} refuses a base buffer while it is positive. *)
+  (** [allocated_views b] is the number of nonempty allocated views of [b]'s
+      root base buffer. {!deallocate} refuses a base buffer while it is positive. *)
 
   val deallocate : t -> unit
   (** [deallocate b] releases backing storage if allocated. For base buffers,
@@ -330,7 +331,8 @@ module Buffer : sig
       {!copy_from} raises [Invalid_argument]. Not for application use. *)
 
   val addr : t -> nativeint
-  (** [addr b] is the device address of [b]. Allocates [b] if needed. *)
+  (** [addr b] is the device address of [b], or [0n] for empty storage.
+      Initializes [b] if needed. *)
 end
 
 (** {1:prog Runtime program handle} *)
