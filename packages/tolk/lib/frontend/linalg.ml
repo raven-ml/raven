@@ -5,6 +5,9 @@
 
 (* Linear algebra as unrolled compositions.
 
+   No tinygrad counterpart: these compositions serve Rune's compiled QR,
+   Cholesky and triangular-solve effects, including their gradients.
+
    Tolk's Uop vocabulary has no host control flow, so an operation whose eager
    implementation iterates over data — a factorization's column loop, a
    substitution's row loop — cannot be a single op. None of the operations
