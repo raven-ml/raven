@@ -619,7 +619,7 @@ let divandmod_tests =
           let result = simplify expr in
           (* Should simplify to just r. Check it's a range with size 8. *)
           (match U.as_range result with
-          | Some _ -> equal int (U.vmax result + 1) 8
+          | Some _ -> equal int ((Bound.to_int (U.vmax result)) + 1) 8
           | _ ->
               (* Might be the original r if no simplification was needed *)
               is_true true));
@@ -936,7 +936,7 @@ let reduce_tests =
       test "add tensor reduce floats const and preserves axes" (fun () ->
           let x =
             U.param ~slot:0 ~dtype:D.weakint ~shape:(U.stack [ idx 4 ])
-              ~vmin_vmax:(0, 10) ()
+              ~vmin_vmax:(Bound.int (0), Bound.int (10)) ()
           in
           let body = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(idx 3) in
           let red = U.reduce_axis ~src:body ~op:Ops.Add ~axes:[ 0 ] in

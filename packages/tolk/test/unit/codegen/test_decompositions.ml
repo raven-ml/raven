@@ -257,7 +257,7 @@ let tagged_long_index_reindexes_before_define () =
        | Some { idxs = [ i ]; _ } ->
            is_true ~msg:"tagged INDEX is narrowed and offset to high half"
              (Dtype.equal (Uop.dtype rewritten) Dtype.int32
-              && Uop.vmin i = 7 && Uop.vmax i = 7)
+              && (Bound.to_int (Uop.vmin i)) = 7 && (Bound.to_int (Uop.vmax i)) = 7)
        | _ -> is_true ~msg:"rewritten node remains INDEX" false)
   | None -> is_true ~msg:"tagged INDEX rule fired" false
 
@@ -277,8 +277,8 @@ let tagged_long_index_preserves_multi_index_tail () =
       (match Uop.as_index rewritten with
        | Some { idxs = [ i; tail ]; _ } ->
            is_true ~msg:"tagged INDEX rewrites first index and keeps tail"
-             (Uop.vmin i = 7 && Uop.vmax i = 7
-              && Uop.vmin tail = 5 && Uop.vmax tail = 5)
+             ((Bound.to_int (Uop.vmin i)) = 7 && (Bound.to_int (Uop.vmax i)) = 7
+              && (Bound.to_int (Uop.vmin tail)) = 5 && (Bound.to_int (Uop.vmax tail)) = 5)
        | _ -> is_true ~msg:"rewritten node keeps two indexes" false)
   | None -> is_true ~msg:"tagged INDEX rule fired" false
 
@@ -744,7 +744,7 @@ let bf16_vector_load_reindexes_shrink () =
     List.filter_map
       (fun n ->
          match Uop.as_index n with
-         | Some { idxs = [ i ]; _ } -> Some (Uop.vmin i)
+         | Some { idxs = [ i ]; _ } -> Some ((Bound.to_int (Uop.vmin i)))
          | _ -> None)
       nodes
     |> List.sort_uniq compare

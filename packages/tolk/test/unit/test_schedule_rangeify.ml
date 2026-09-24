@@ -16,6 +16,7 @@
    Covers core rangeify correctness and schedule-level fusion decisions. *)
 
 open Windtrap
+module Bound = Tolk_uop.Bound
 open Tolk
 module C = Tolk_uop.Const
 module D = Tolk_uop.Dtype
@@ -1067,7 +1068,7 @@ let symbolic_variable_tests =
      ranged scalar PARAM sizing a SHRINK. *)
   let named_param () =
     U.param ~slot:1 ~dtype:D.weakint ~shape:(U.stack [])
-      ~vmin_vmax:(1, 7) ~name:"start_pos" ~addrspace:D.Alu ()
+      ~vmin_vmax:(Bound.int (1), Bound.int (7)) ~name:"start_pos" ~addrspace:D.Alu ()
   in
   let symbolic_shrink_sink () =
     let buf = mk_param ~idx:0 [ 8 ] in
@@ -1095,9 +1096,9 @@ let symbolic_variable_tests =
         | Some
             { param =
                 { slot = -1; addrspace = D.Alu; name = Some "start_pos";
-                  vmin_vmax = Some (1, 7); _ };
+                  vmin_vmax = Some (lo, hi); _ };
               _ } ->
-            true
+            Bound.equal lo (Bound.int 1) && Bound.equal hi (Bound.int 7)
         | _ -> false)
       (U.toposort ~enter_calls:true body)
   in

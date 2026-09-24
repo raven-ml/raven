@@ -81,7 +81,7 @@ let expand_reduce node =
           if U.op u = Ops.Range then range_srcs := u :: !range_srcs
           else
             U.shape u
-            |> List.iteri (fun i s -> if U.vmax s > 1 then new_axes := i :: !new_axes))
+            |> List.iteri (fun i s -> if Bound.lt (Bound.int 1) (U.vmax s) then new_axes := i :: !new_axes))
         ranges;
       let new_axes = List.rev !new_axes in
       if new_axes = [] then None
@@ -167,7 +167,7 @@ let expander2 range_map =
            match U.as_range r with
            | Some { axis; _ } when Hashtbl.mem range_map axis ->
                let idx = Hashtbl.find range_map axis in
-               let n = U.vmax r + 1 in
+               let n = Bound.to_int (Bound.succ (U.vmax r)) in
                let dtype = U.dtype r in
                let dims =
                  List.init (Hashtbl.length range_map) (fun i ->
@@ -271,7 +271,7 @@ let broadcast_and_devec_wmma node =
           | dim :: dims ->
               let tail = product dims in
               List.concat
-                (List.init (U.vmax dim) (fun i ->
+                (List.init (Bound.to_int (U.vmax dim)) (fun i ->
                      List.map (fun idx -> int_ i :: idx) tail))
         in
         let lanes =
@@ -828,7 +828,7 @@ let add_war_barrier node =
         List.filter
           (fun r ->
             match U.as_range r with
-            | Some { kind; _ } -> range_repeats kind && U.vmax r > 0
+            | Some { kind; _ } -> range_repeats kind && Bound.lt (Bound.int 0) (U.vmax r)
             | None -> false)
           ranges
       in

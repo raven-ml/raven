@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.vmin`, `Uop.vmax` and parameter bounds retain exact integers and
+  floating-point limits. Weak scalars can commit to `uint64`; values beyond
+  all supported integer widths are rejected instead of silently narrowing.
 - Remove the obsolete `Dtype.Uint128` and `Dtype.Uint256` storage helpers,
   matching the target scalar dtype set. Existing serialized caches are invalidated.
 - Missing runtime variables report their name and program or replay call,

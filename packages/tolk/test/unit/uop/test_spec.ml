@@ -669,7 +669,7 @@ let bind_accepts_alu_param_const () =
 let bind_rejects_alu_param_stack () =
   let var =
     Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"shape"
-      ~vmin_vmax:(0, 8) ~addrspace:Dtype.Alu ()
+      ~vmin_vmax:(Bound.int (0), Bound.int (8)) ~addrspace:Dtype.Alu ()
   in
   let value = stack [ Uop.const_int 1; Uop.const_int 2 ] ~dtype:Dtype.weakint in
   let b = Uop.bind ~var ~value in
@@ -685,7 +685,7 @@ let bind_rejects_non_alu_param () =
 (* A 64-bit variable is a valid binding target. *)
 let bind_accepts_64_bit_variable () =
   let var =
-    Uop.param ~slot:(-1) ~dtype:Dtype.int64 ~name:"n" ~vmin_vmax:(0, 8)
+    Uop.param ~slot:(-1) ~dtype:Dtype.int64 ~name:"n" ~vmin_vmax:(Bound.int (0), Bound.int (8))
       ~addrspace:Dtype.Alu ()
   in
   let b = Uop.bind ~var ~value:(Uop.const (Const.int Dtype.int64 3)) in

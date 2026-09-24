@@ -112,12 +112,12 @@ let simplify_expr = U.simplify
 let is_zero e =
   match U.const_int_value (simplify_expr e) with
   | Some 0 -> true
-  | _ -> U.vmin e = 0 && U.vmax e = 0
+  | _ -> Bound.equal (U.vmin e) (Bound.int 0) && Bound.equal (U.vmax e) (Bound.int 0)
 
 let is_one e =
   match U.const_int_value (simplify_expr e) with
   | Some 1 -> true
-  | _ -> U.vmin e = 1 && U.vmax e = 1
+  | _ -> Bound.equal (U.vmin e) (Bound.int 1) && Bound.equal (U.vmax e) (Bound.int 1)
 
 let same_expr a b =
   U.equal a b || is_zero (simplify_expr (a -! b))
@@ -171,7 +171,7 @@ let range_set ctx n v = Hashtbl.replace ctx.range_map (U.tag n) v
 let new_range_expr ctx size ?(kind = Axis_type.Weak) () =
   if U.op size = Ops.Range then size
   else if U.const_int_value (simplify_expr size) = Some 1
-          || (U.vmin size = 1 && U.vmax size = 1)
+          || (Bound.equal (U.vmin size) (Bound.int 1) && Bound.equal (U.vmax size) (Bound.int 1))
   then idx 0
   else
     let axis = ctx.range_idx in

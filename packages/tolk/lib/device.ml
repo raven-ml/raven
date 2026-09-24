@@ -514,7 +514,12 @@ module Program_cache = struct
 
   let add_param_arg b (p : Uop.param_arg) =
     add_int b p.slot;
-    add_option (add_pair add_int add_int) b p.vmin_vmax;
+    let add_bound b = function
+      | `Int n -> add_atom b "int"; add_atom b (Z.to_string n)
+      | `Float f -> add_atom b "float"; add_float b f
+      | `Bool v -> add_atom b "bool"; add_int b (Bool.to_int v)
+    in
+    add_option (add_pair add_bound add_bound) b p.vmin_vmax;
     add_option add_int b p.multiple_of;
     add_option add_atom b p.name;
     add_addrspace b p.addrspace;

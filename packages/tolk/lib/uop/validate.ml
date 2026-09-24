@@ -37,22 +37,28 @@ let check_oob_enabled () =
       false
   | Some _ -> true
 
-let sat_pred n = if n = min_int then min_int else n - 1
-let sat_succ n = if n = max_int then max_int else n + 1
+let interval_empty (lo, hi) = Bound.lt hi lo
 
-let interval_empty (lo, hi) = lo > hi
+let tighten_lower = Bound.max
+let tighten_upper = Bound.min
 
-let tighten_lower lo candidate = max lo candidate
-let tighten_upper hi candidate = min hi candidate
+let integer_const u =
+  match Uop.op u, Uop.arg u with
+  | Ops.Const, Uop.Arg.Value c ->
+      (match Const.view c with
+       | Const.Int n -> Some (`Int n)
+       | Const.Bool b -> Some (`Bool b)
+       | Const.Float _ | Const.Invalid -> None)
+  | _ -> None
 
 let refine_cmp_bound idx (lo, hi) lhs rhs =
-  match Uop.const_int_value lhs, Uop.const_int_value rhs with
-  | _, Some n when Uop.equal lhs idx -> lo, tighten_upper hi (sat_pred n)
-  | Some n, _ when Uop.equal rhs idx -> tighten_lower lo (sat_succ n), hi
+  match integer_const lhs, integer_const rhs with
+  | _, Some n when Uop.equal lhs idx -> lo, tighten_upper hi (Bound.pred n)
+  | Some n, _ when Uop.equal rhs idx -> tighten_lower lo (Bound.succ n), hi
   | _ -> lo, hi
 
 let refine_eq_bound idx (lo, hi) lhs rhs =
-  match Uop.const_int_value lhs, Uop.const_int_value rhs with
+  match integer_const lhs, integer_const rhs with
   | _, Some n when Uop.equal lhs idx ->
       tighten_lower lo n, tighten_upper hi n
   | Some n, _ when Uop.equal rhs idx ->
@@ -75,7 +81,7 @@ let validate_index_with_gate_bounds size idx gate =
   let lo, hi =
     refine_index_bounds_under_gate idx (Uop.vmin idx, Uop.vmax idx) gate
   in
-  interval_empty (lo, hi) || (0 <= lo && hi < size)
+  interval_empty (lo, hi) || (Bound.le Bound.zero lo && Bound.lt hi size)
 
 let validate_index ?gate uidx =
   let srcs = Uop.src uidx in
@@ -88,10 +94,10 @@ let validate_index ?gate uidx =
     || is_image_shape buf
     ||
     match gate with
-    | Some g when is_false_const g || Uop.vmax g = 0 -> true
+    | Some g when is_false_const g || Bound.equal (Uop.vmax g) Bound.zero -> true
     | _ -> (
         let check_axis size idx =
-          (0 <= Uop.vmin idx && Uop.vmax idx < size)
+          (Bound.le Bound.zero (Uop.vmin idx) && Bound.lt (Uop.vmax idx) size)
           ||
           match gate with
           | Some gate -> validate_index_with_gate_bounds size idx gate
@@ -101,7 +107,7 @@ let validate_index ?gate uidx =
         | [ idx ] -> (
             match max_numel buf with
             | None -> false
-            | Some size -> check_axis size idx)
+            | Some size -> check_axis (Bound.int size) idx)
         | _ -> (
             try
               let shape = Uop.shape buf in

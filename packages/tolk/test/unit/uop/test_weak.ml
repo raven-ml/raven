@@ -130,6 +130,20 @@ let gated_long_index_narrows_for_small_buffers () =
   equal dtype ~msg:"an index into an 8-element buffer fits int32" D.int32
     (U.dtype (src (src r 1) 1))
 
+let uint64_width_and_unrepresentable_const () =
+  let maximum = Z.pred (Z.shift_left Z.one 64) in
+  let value n = U.const (C.integer D.weakint n) in
+  let r = lower (value maximum) in
+  equal dtype D.uint64 (U.dtype r);
+  (match U.arg r with
+   | U.Arg.Value c ->
+       (match C.view c with
+        | C.Int n -> is_true (Z.equal maximum n)
+        | _ -> fail "expected integer constant")
+   | _ -> fail "expected constant");
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> lower (value (Z.succ maximum)))
+
 let () =
   run "tolk.uop.weak"
     [
@@ -140,6 +154,7 @@ let () =
           test "overflowing int const"
             unconstrained_overflowing_const_commits_at_int64;
           test "float const" unconstrained_float_const_commits_at_default_float;
+          test "uint64 width and overflow" uint64_width_and_unrepresentable_const;
         ];
       group "peer demand"
         [

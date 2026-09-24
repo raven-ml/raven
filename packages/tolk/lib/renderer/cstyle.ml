@@ -439,22 +439,22 @@ let render_index (ctx : ctx) ~ptr ~idxs =
                           |> List.map node_summary |> String.concat ";"))
                 |> String.concat ",")
                (idxs
-                |> List.map (fun idx -> string_of_int (U.vmax idx + 1))
+                |> List.map (fun idx -> string_of_int (Bound.to_int (Bound.succ (U.vmax idx))))
                 |> String.concat ","))
     in
     let used_shape =
       if List.length ptr_shape >= List.length idxs then
-        List.filteri (fun i _ -> i < List.length idxs) ptr_shape |> List.map U.vmax
+        List.filteri (fun i _ -> i < List.length idxs) ptr_shape |> List.map (fun dim -> Bound.to_int (U.vmax dim))
       else
         match ptr_shape with
         | [ flat ] ->
-            let flat = U.vmax flat in
+            let flat = Bound.to_int (U.vmax flat) in
             let first_dim =
-              match idxs with idx :: _ -> U.vmax idx + 1 | [] -> 1
+              match idxs with idx :: _ -> Bound.to_int (Bound.succ (U.vmax idx)) | [] -> 1
             in
             if first_dim = flat then [ flat ]
             else
-            let dims = List.map (fun idx -> U.vmax idx + 1) idxs in
+            let dims = List.map (fun idx -> Bound.to_int (Bound.succ (U.vmax idx))) idxs in
             let prod = List.fold_left ( * ) 1 dims in
             if prod = flat then dims
             else
@@ -463,7 +463,7 @@ let render_index (ctx : ctx) ~ptr ~idxs =
                    "render_index: cannot infer %d logical dims from flat size %d bounds=%s"
                    (List.length idxs) flat
                    (String.concat ","
-                      (List.map (fun idx -> string_of_int (U.vmax idx + 1)) idxs)))
+                      (List.map (fun idx -> string_of_int (Bound.to_int (Bound.succ (U.vmax idx)))) idxs)))
         | _ ->
             invalid_arg
               (Printf.sprintf "render_index: rank mismatch, got %d idxs for rank %d"
@@ -1506,7 +1506,7 @@ let local_size_of u =
 let default_render_kernel (ctx : ctx) ~function_name ~kernel ~bufs
     ~uops ~prefix =
   let launch_bounds =
-    prod (List.map U.vmax (List.filter_map local_size_of uops))
+    prod (List.map (fun dim -> Bound.to_int (U.vmax dim)) (List.filter_map local_size_of uops))
   in
   let typedef =
     replace_first ~needle:"{launch_bounds}"

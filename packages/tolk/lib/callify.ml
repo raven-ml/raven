@@ -332,7 +332,7 @@ let buffer_like ctx src dtype =
       in
       let dev = match ctx.devices src with
         | Some d -> d | None -> failwith "buffer_like: unknown device" in
-      let max_shape = List.map U.vmax dims in
+      let max_shape = List.map (fun dim -> Bound.to_int (U.vmax dim)) dims in
       let buf =
         U.buffer ~slot:(U.fresh_buffer_slot ()) ~device:dev
           ~shape:(shape_node max_shape) ~addrspace:D.Global ~dtype ()

@@ -64,12 +64,13 @@
     - {!Symbolic} — algebraic simplification rules wired into
       {!Uop.simplify}.
     - {!Weak} — commits weak dtypes to concrete widths, resolving index
-      arithmetic to [int32] or [int64]. *)
+      arithmetic to [int32], [int64], or [uint64]. *)
 
 module Ops = Ops
 module Axis_type = Axis_type
 module Dtype = Dtype
 module Const = Const
+module Bound = Bound
 module Uop = Uop
 module Render = Render
 module Upat = Upat

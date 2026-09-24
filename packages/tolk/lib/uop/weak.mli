@@ -22,8 +22,10 @@
       width the value will live at. That width is a floor, never a narrowing
       ({!pm_cast_weak});
     - {b nothing}: a value nobody constrains takes its default width —
-      {!Dtype.default_float} for {!Dtype.weakfloat}, otherwise [int32], or
-      [int64] when the node's value range overflows [int32].
+      {!Dtype.default_float} for {!Dtype.weakfloat}; integers select the first
+      of [int32], [int64], [uint64] containing their exact bounds. An exact
+      scalar outside these types raises [Invalid_argument]. An unresolved
+      interval that fits none of them defaults to [int64].
 
     Each committed node is re-wrapped in a cast back to its weak dtype, so a
     consumer that has not yet been visited still sees a weak edge; the cast is

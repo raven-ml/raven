@@ -161,7 +161,7 @@ let transform_to_call_keeps_variable_identity () =
    | Some p -> (
        match U.as_param p with
        | Some { param; _ } ->
-           equal (option (pair int int)) (Some (1, 7)) param.vmin_vmax
+           equal (option (pair int int)) (Some (1, 7)) (Option.map (fun (lo, hi) -> Bound.to_int lo, Bound.to_int hi) param.vmin_vmax)
        | None -> fail "expected PARAM view")
    | None -> fail "CALL body lost the variable name");
   is_true ~msg:"CALL args include the original BIND"

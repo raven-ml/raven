@@ -84,7 +84,7 @@ let is_tc = function U.Opt.Tc _ -> true | _ -> false
 (* Build name-keyed var_vals from symbolic Param nodes in the AST, using the
    midpoint of each variable's range. *)
 let build_var_vals ast =
-  U.symbolic_vars ast |> List.map (fun (_, name, lo, hi) -> (name, (lo + hi) / 2))
+  U.symbolic_vars ast |> List.map (fun (_, name, lo, hi) -> (name, Bound.to_int (Bound.cdiv (Bound.add lo hi) (Bound.int 2))))
 
 (* Action filtering *)
 
@@ -113,7 +113,7 @@ let get_kernel_actions ?(include_0 = true) ?max_up s =
     match U.const_int_value x with
     | Some sz -> sz
     | None ->
-        (try U.sym_infer x var_vals with Invalid_argument _ -> U.vmax x)
+        (try U.sym_infer x var_vals with Invalid_argument _ -> (Bound.to_int (U.vmax x)))
   in
   let upcast_and_local s2 =
     let up = ref 1 and lcl = ref 1 in
@@ -270,7 +270,7 @@ type buffer_req = { slot : int; size : int; dtype : Dtype.t }
 let shape_arg_max_numel u =
   match U.src u with
   | [| shape; _ |] | [| shape |] when U.op shape <> Ops.Noop ->
-      Some (List.fold_left ( * ) 1 (List.map U.vmax (U.as_shape shape)))
+      Some (List.fold_left ( * ) 1 (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.as_shape shape)))
   | _ -> None
 
 let buffer_reqs ast =

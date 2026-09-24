@@ -43,7 +43,7 @@ let shape_ints u =
     (Uop.shape u)
 
 let equal_bounds ~msg u expected =
-  equal (pair int int) ~msg expected (Uop.vmin u, Uop.vmax u)
+  equal (pair int int) ~msg expected (Bound.to_int (Uop.vmin u), Bound.to_int (Uop.vmax u))
 
 let with_env name value f =
   let old = Sys.getenv_opt name in
@@ -289,18 +289,18 @@ let param_arg_symbolic_constructor () =
    | Uop.Arg.Param_arg { slot; name; vmin_vmax; addrspace; _ } ->
        is_true ~msg:"symbolic slot" (slot = -1);
        is_true ~msg:"symbolic name" (name = Some "n");
-       is_true ~msg:"symbolic bounds" (vmin_vmax = Some (2, 8));
+       is_true ~msg:"symbolic bounds" (vmin_vmax = Some (Bound.int 2, Bound.int 8));
        is_true ~msg:"symbolic addrspace" (addrspace = Dtype.Alu)
    | _ -> is_true ~msg:"Param carries Param_arg" false);
   (match Uop.as_param v with
    | Some { param = { name; vmin_vmax; _ }; shape } ->
        is_true ~msg:"param view name" (name = Some "n");
-       is_true ~msg:"param view bounds" (vmin_vmax = Some (2, 8));
+       is_true ~msg:"param view bounds" (vmin_vmax = Some (Bound.int 2, Bound.int 8));
        is_true ~msg:"variable has scalar shape child"
          (Uop.op shape = Ops.Stack && Dtype.equal (Uop.dtype shape) Dtype.void)
    | None -> is_true ~msg:"param view is present" false);
-  is_true ~msg:"vmin reads Param_arg" (Uop.vmin v = 2);
-  is_true ~msg:"vmax reads Param_arg" (Uop.vmax v = 8)
+  is_true ~msg:"vmin reads Param_arg" ((Bound.to_int (Uop.vmin v)) = 2);
+  is_true ~msg:"vmax reads Param_arg" ((Bound.to_int (Uop.vmax v)) = 8)
 
 let bind_requires_concrete_value () =
   let var = Uop.variable ~name:"n" ~min_val:0 ~max_val:4 () in
@@ -371,18 +371,17 @@ let integer_bounds_parity () =
   equal_bounds ~msg:"FLOORMOD over empty numerator is zero"
     (Uop.alu_binary ~op:Ops.Floormod ~lhs:empty_range ~rhs:two)
     (0, 0);
-  let int64_max = Uop.const (Const.int64 Dtype.int64 Int64.max_int) in
-  equal_bounds ~msg:"wide signed max constant saturates to native max"
-    int64_max (max_int, max_int);
-  let int64_min = Uop.const (Const.int64 Dtype.int64 Int64.min_int) in
-  equal_bounds ~msg:"wide signed min constant saturates to native min"
-    int64_min (min_int, min_int);
-  let uint64_max = Uop.const (Const.int64 Dtype.uint64 Int64.minus_one) in
-  equal_bounds ~msg:"raw uint64 max constant saturates to native max"
-    uint64_max (max_int, max_int);
-  let uint64_param = Uop.param ~slot:7 ~dtype:Dtype.uint64 () in
-  equal_bounds ~msg:"uint64 unknown bounds saturate high side"
-    uint64_param (0, max_int);
+  let exact_bounds u lo hi =
+    is_true (Bound.equal (Uop.vmin u) (`Int lo));
+    is_true (Bound.equal (Uop.vmax u) (`Int hi))
+  in
+  let signed_max = Z.of_int64 Int64.max_int in
+  let signed_min = Z.of_int64 Int64.min_int in
+  let unsigned_max = Z.pred (Z.shift_left Z.one 64) in
+  exact_bounds (Uop.const (Const.int64 Dtype.int64 Int64.max_int)) signed_max signed_max;
+  exact_bounds (Uop.const (Const.int64 Dtype.int64 Int64.min_int)) signed_min signed_min;
+  exact_bounds (Uop.const (Const.int64 Dtype.uint64 Int64.minus_one)) unsigned_max unsigned_max;
+  exact_bounds (Uop.param ~slot:7 ~dtype:Dtype.uint64 ()) Z.zero unsigned_max;
   let wrapping_const =
     Uop.const
       (Const.int64 Dtype.weakint (Int64.add Int64.min_int 5L))
@@ -398,6 +397,40 @@ let integer_bounds_parity () =
   in
   is_true ~msg:"bind rejects int64 values outside native bounds"
     overflow_rejected
+
+let exact_symbolic_bounds () =
+  let huge = Z.shift_left Z.one 200 in
+  let value n = Uop.const (Const.integer Dtype.weakint n) in
+  let exact u n =
+    is_true (Bound.equal (Uop.vmin u) (`Int n));
+    is_true (Bound.equal (Uop.vmax u) (`Int n))
+  in
+  exact Uop.O.(value huge - value Z.(pred huge)) Z.one;
+  exact Uop.O.(value huge * value huge) Z.(mul huge huge);
+  let shifted = Uop.alu_binary ~op:Ops.Shl ~lhs:(value huge) ~rhs:(Uop.const_int 100) in
+  exact shifted Z.(shift_left one 300);
+  let v = Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"wide"
+      ~vmin_vmax:(`Int huge, `Int Z.(add huge (of_int 7)))
+      ~addrspace:Dtype.Alu ~shape:(Uop.stack []) () in
+  let small = Uop.O.(v - value huge) in
+  (match Symbolic.parse_valid Uop.O.(value huge < v) with
+   | Some (subject, false, lo) ->
+       is_true (Uop.equal subject v);
+       is_true (Bound.equal lo (`Int (Z.succ huge)))
+   | _ -> fail "expected exact lower-bound clause");
+  equal_bounds ~msg:"cancellation retains a tight interval" small (0, 7);
+  is_true (Uop.resolve ~default:false Uop.O.(small < Uop.const_int 8));
+  let above_float = value (Z.of_string "9007199254740993") in
+  let rounded_float = Uop.const (Const.float Dtype.float64 9007199254740992.) in
+  let comparison = Uop.alu_binary ~op:Ops.Cmplt ~lhs:rounded_float ~rhs:above_float in
+  exact comparison Z.one;
+  let nan = Uop.const (Const.float Dtype.float32 Float.nan) in
+  is_true (Bound.equal (Uop.vmin nan) (`Float neg_infinity));
+  is_true (Bound.equal (Uop.vmax nan) (`Float infinity));
+  let fractional = Uop.const (Const.float Dtype.float64 (-3.75)) in
+  exact (Uop.cast ~src:fractional ~dtype:Dtype.int32) (Z.of_int (-3));
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Bound.to_int (`Int huge))
 
 let cast_bounds_parity () =
   let fits = Uop.variable ~name:"fits" ~min_val:5 ~max_val:10 () in
@@ -448,7 +481,7 @@ let uop_constructor_parity_shortcuts () =
   is_true ~msg:"stack cast keeps scalar lane dtype"
     (Dtype.equal (Uop.dtype casted) Dtype.float32);
   equal (list int) ~msg:"stack cast keeps vector shape" [ 2 ]
-    (List.map Uop.vmax (Uop.shape casted));
+    (List.map (fun dim -> Bound.to_int (Uop.vmax dim)) (Uop.shape casted));
   is_true ~msg:"cast to same dtype returns source"
     (Uop.cast ~src:stacked ~dtype:Dtype.weakint == stacked);
   is_true ~msg:"bitcast to same dtype returns source"
@@ -586,7 +619,7 @@ let property_helpers_parity () =
   let copied = Uop.copy ~src:multi ~device:(Uop.Single "CPU") () in
   is_true ~msg:"Copy clears axis" (Uop.axis copied = None);
   let var =
-    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(0, 8)
+    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(Bound.int (0), Bound.int (8))
       ~name:"n" ~addrspace:Dtype.Alu ~axis:0 ()
   in
   let bound = Uop.bind ~var ~value:(Uop.const_int 3) in
@@ -786,7 +819,7 @@ let property_helpers_parity () =
   is_true ~msg:"Contiguous view offset rejects non-singleton flip"
     (Uop.contiguous_view_offset flipped_nonsingleton = None);
   let sym_one =
-    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(1, 1)
+    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(Bound.int (1), Bound.int (1))
       ~name:"one" ~addrspace:Dtype.Alu ()
   in
   let symbolic_singleton =
@@ -812,7 +845,7 @@ let property_helpers_parity () =
     }
   in
   let formal_dim =
-    Uop.param ~slot:0 ~dtype:Dtype.weakint ~vmin_vmax:(1, 8)
+    Uop.param ~slot:0 ~dtype:Dtype.weakint ~vmin_vmax:(Bound.int (1), Bound.int (8))
       ~name:"n" ~addrspace:Dtype.Alu ()
   in
   let body_value =
@@ -1391,11 +1424,11 @@ let program_constructor_prefix_layouts () =
 let program_info_from_sink_parity () =
   let core_id =
     Uop.param ~slot:0 ~dtype:Dtype.weakint ~name:"core_id"
-      ~vmin_vmax:(0, 3) ~addrspace:Dtype.Alu ()
+      ~vmin_vmax:(Bound.int (0), Bound.int (3)) ~addrspace:Dtype.Alu ()
   in
   let n =
     Uop.param ~slot:1 ~dtype:Dtype.weakint ~name:"n"
-      ~vmin_vmax:(2, 8) ~addrspace:Dtype.Alu ()
+      ~vmin_vmax:(Bound.int (2), Bound.int (8)) ~addrspace:Dtype.Alu ()
   in
   let input = Uop.param ~slot:2 ~dtype:Dtype.float32 () in
   let output = Uop.param ~slot:3 ~dtype:Dtype.float32 () in
@@ -1459,7 +1492,7 @@ let program_info_from_sink_parity () =
 let program_launch_dims_floor_divmod () =
   let n =
     Uop.param ~slot:0 ~dtype:Dtype.weakint ~name:"n"
-      ~vmin_vmax:(-10, 10) ~addrspace:Dtype.Alu ()
+      ~vmin_vmax:(Bound.int (-10), Bound.int (10)) ~addrspace:Dtype.Alu ()
   in
   let three = Uop.const_int 3 in
   let groups = Uop.O.(n // three) in
@@ -2280,6 +2313,7 @@ let () =
           test "BIND requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "tinygrad CAST bounds parity" cast_bounds_parity;
+          test "exact symbolic bounds" exact_symbolic_bounds;
           test "Stack/Stage/Slice constructors"
             stack_stage_slice_constructors;
           test "UOp constructor parity shortcuts"

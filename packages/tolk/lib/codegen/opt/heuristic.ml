@@ -155,7 +155,7 @@ let upcast_image_buf k buf =
         | Some valid -> U.backward_slice valid
       in
       let axes = List.filter_map (fun c ->
-        if is_range c && (U.vmax c + 1) mod 4 = 0
+        if is_range c && (Bound.to_int (Bound.succ (U.vmax c))) mod 4 = 0
            && not (List.exists (fun g -> g == c) gating)
         then
           let i = index_of_rng (P.rngs k) c in

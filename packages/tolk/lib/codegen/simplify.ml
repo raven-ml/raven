@@ -448,7 +448,7 @@ let rule_lift_mul_lt =
   let x = var "x" and y = var "y" and c = var "c" in
   O.(x * y < c) => fun bs ->
     let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-    if no_range y && no_range c && Dtype.is_int (U.dtype y) && U.vmin y > 0
+    if no_range y && no_range c && Dtype.is_int (U.dtype y) && Bound.lt (Bound.int 0) (U.vmin y)
     then
       let open U.O in
       let numerator = c + y - U.const_like y 1 in
@@ -695,9 +695,9 @@ let collect_proxies ~included ~in_set =
               || U.Ref_tbl.mem proxies s
               || is_leaf s) then begin
         let dv =
-          U.variable ~name:(Printf.sprintf "in%d" !n)
-            ~min_val:(U.vmin s) ~max_val:(U.vmax s)
-            ~dtype:(U.dtype s) ()
+          U.param ~slot:(-1) ~name:(Printf.sprintf "in%d" !n)
+            ~vmin_vmax:(U.vmin s, U.vmax s) ~shape:(U.stack [])
+            ~multiple_of:1 ~addrspace:Dtype.Alu ~dtype:(U.dtype s) ()
         in
         U.Ref_tbl.replace proxies s dv;
         incr n

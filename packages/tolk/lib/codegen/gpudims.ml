@@ -21,7 +21,7 @@ let err_limit dims max_sizes =
   strf "cannot limit dim [%s], max_sizes=[%s]"
     (pp_ints dims) (pp_ints max_sizes)
 
-let dim_max (d : U.t) : int = U.vmax d
+let dim_max (d : U.t) : int = Bound.to_int (U.vmax d)
 
 type dim_kind =
   | Group_id
@@ -350,7 +350,7 @@ let device_to_var (node : U.t) : U.t option =
   match U.as_range node, U.as_end node with
   | Some { kind = Axis_type.Device; _ }, _ ->
       Some
-        (U.variable ~name:"_device_num" ~min_val:0 ~max_val:(U.vmax node)
+        (U.variable ~name:"_device_num" ~min_val:0 ~max_val:(Bound.to_int (U.vmax node))
            ~dtype:(U.dtype node) ())
   | _, Some { value; ranges } when List.exists is_device_num ranges ->
       Some

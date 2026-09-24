@@ -73,7 +73,7 @@ type metadata = { name : string; backward : bool }
 type param_arg = {
   slot : int;
   dtype : Dtype.t;
-  vmin_vmax : (int * int) option;
+  vmin_vmax : (Bound.t * Bound.t) option;
   multiple_of : int option;
   name : string option;
   addrspace : Dtype.addr_space;
@@ -410,13 +410,6 @@ let child_ops u =
 
 let integer_as_native n = if Z.fits_int n then Some (Z.to_int n) else None
 
-let saturate_integer n =
-  if Z.fits_int n then Z.to_int n else if Z.sign n < 0 then min_int else max_int
-
-let const_int_bounds n =
-  let n = saturate_integer n in
-  n, n
-
 let program_var_name u =
   match op u, arg u with
   | Ops.Param, Arg.Param_arg { name = Some name; _ } -> Some name
@@ -727,7 +720,7 @@ let stage ~src ~ranges ~opts =
 let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint)
     ?(multiple_of = 1) () =
   let shape = mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty in
-  param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(min_val, max_val)
+  param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(Bound.int min_val, Bound.int max_val)
     ~multiple_of ~addrspace:Dtype.Alu ()
 
 let bind ~var ~value =
@@ -735,12 +728,10 @@ let bind ~var ~value =
     | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ }, Ops.Const, Arg.Value c ->
         (match Const.view c with
          | Const.Int n ->
-             (match integer_as_native n with
-              | Some n -> lo <= n && n <= hi
-              | None -> false)
+             Bound.le lo (`Int n) && Bound.le (`Int n) hi
          | Const.Bool b ->
-             let n = if b then 1 else 0 in
-             lo <= n && n <= hi
+             let n = `Bool b in
+             Bound.le lo n && Bound.le n hi
          | Const.Float _ | Const.Invalid -> true)
     | _ -> true
   in
@@ -1716,223 +1707,120 @@ let substitute ?(walk = false) mappings root =
 
 (* Analysis *)
 
-let min_max_cache : (int * int) Weak_tbl.t Domain.DLS.key =
+let min_max_cache : (Bound.t * Bound.t) Weak_tbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Weak_tbl.create 1024)
 
 let rec min_max u =
-  let min_max_cache = Domain.DLS.get min_max_cache in
-  match Weak_tbl.find_opt min_max_cache u with
-  | Option.Some mm -> mm
-  | Option.None ->
-      let mm = compute_min_max u in
-      Weak_tbl.replace min_max_cache u mm;
-      mm
+  let cache = Domain.DLS.get min_max_cache in
+  match Weak_tbl.find_opt cache u with
+  | Some bounds -> bounds
+  | None ->
+      let bounds = compute_min_max u in
+      Weak_tbl.replace cache u bounds;
+      bounds
 
 and compute_min_max u =
-  (* Dtype-tight integer bounds. [min_int, max_int] for non-integer
-     dtypes (bool/float are out of this analysis's domain) so callers
-     treat those as "unknown". *)
-  let dtype_bounds () =
-    let dt = dtype u in
-    if Dtype.is_int dt then
-      match Dtype.min dt, Dtype.max dt with
-      | `Int a, `Int b -> saturate_integer a, saturate_integer b
-      | _ -> min_int, max_int
-    else if Dtype.is_bool dt then 0, 1
-    else min_int, max_int
+  let module B = Bound in
+  let zero = B.zero in
+  let dtype_bounds () = Dtype.min (dtype u), Dtype.max (dtype u) in
+  let corners f a b c d =
+    let w, x, y, z = f a c, f a d, f b c, f b d in
+    B.min (B.min w x) (B.min y z), B.max (B.max w x) (B.max y z)
   in
-  let sat_add a b =
-    if b > 0 && a > max_int - b then max_int
-    else if b < 0 && a < min_int - b then min_int
-    else a + b
-  in
-  let sat_neg a = if a = min_int then max_int else -a in
-  let sat_sub a b = sat_add a (sat_neg b) in
-  let sat_mul a b =
-    if a = 0 || b = 0 then 0
-    else
-      let p = Float.of_int a *. Float.of_int b in
-      if p >= Float.of_int max_int then max_int
-      else if p <= Float.of_int min_int then min_int
-      else a * b
-  in
-  let sat_lsl a b =
-    if b < 0 then 0
-    else if b >= Sys.int_size - 1 then
-      if a = 0 then 0 else if a > 0 then max_int else min_int
-    else sat_mul a (1 lsl b)
-  in
-  let same_sign_nonzero lo hi = (lo > 0 && hi > 0) || (lo < 0 && hi < 0) in
-  let floor_div a b =
-    if b = 0 then 0
-    else if a = min_int && b = -1 then max_int
-    else
-      let q = a / b in
-      let r = a mod b in
-      if r <> 0 && ((r > 0) <> (b > 0)) then q - 1 else q
-  in
-  let floor_mod a b =
-    if b = 0 then 0 else sat_sub a (sat_mul (floor_div a b) b)
-  in
-  let binary_int o =
-    let s0_lo, s0_hi = min_max (src u).(0) in
-    let s1_lo, s1_hi = min_max (src u).(1) in
-    let min4 w x y z = min (min w x) (min y z) in
-    let max4 w x y z = max (max w x) (max y z) in
-    match o with
-    | Ops.Add -> Option.Some (sat_add s0_lo s1_lo, sat_add s0_hi s1_hi)
-    | Ops.Sub -> Option.Some (sat_sub s0_lo s1_hi, sat_sub s0_hi s1_lo)
-    | Ops.And
-      when Dtype.is_int (dtype u) && s1_lo = s1_hi && s1_lo >= 0 ->
-        let hi = if s0_lo < 0 then s1_hi else min s0_hi s1_hi in
-        Option.Some (0, hi)
-    | Ops.Mul ->
-        let vals =
-          ( sat_mul s0_lo s1_lo,
-            sat_mul s0_lo s1_hi,
-            sat_mul s0_hi s1_lo,
-            sat_mul s0_hi s1_hi )
-        in
-        Option.Some
-          (match vals with
-           | w, x, y, z -> min4 w x y z, max4 w x y z)
-    | Ops.Shl when s1_lo = s1_hi ->
-        Option.Some (sat_lsl s0_lo s1_lo, sat_lsl s0_hi s1_lo)
-    | Ops.Shr when s1_lo = s1_hi ->
-        Option.Some (s0_lo asr s1_lo, s0_hi asr s1_lo)
+  let binary () =
+    let a, b = min_max (src u).(0) and c, d = min_max (src u).(1) in
+    let positive x = B.lt zero x and negative x = B.lt x zero in
+    let divisor_nonzero = (positive c && positive d) || (negative c && negative d) in
+    match op u with
+    | Ops.Add -> Some (B.add a c, B.add b d)
+    | Ops.Sub -> Some (B.sub a d, B.sub b c)
+    | Ops.And when Dtype.is_int (dtype u) && B.equal c d && B.le zero c ->
+        Some (zero, if negative a then d else B.min b d)
+    | Ops.Mul -> Some (corners B.mul a b c d)
+    | Ops.Shl when B.equal c d -> Some (B.shift_left a c, B.shift_left b c)
+    | Ops.Shr when B.equal c d -> Some (B.shift_right a c, B.shift_right b c)
     | Ops.Cmod ->
-        let c = s1_lo in
-        if c = s1_hi && c > 0 then
-          let lo =
-            if s0_lo > 0 then 0
-            else if s0_lo > -c then s0_lo
-            else -(s1_hi - 1)
-          in
-          let hi =
-            if s0_hi < 0 then 0
-            else if s0_hi < c then s0_hi
-            else c - 1
-          in
-          Option.Some (lo, hi)
-        else if s1_lo > 0 then
-          if s0_lo >= 0 then Option.Some (0, s1_hi - 1)
-          else if s0_hi <= 0 then Option.Some (-(s1_hi - 1), 0)
-          else Option.Some (-(s1_hi - 1), s1_hi - 1)
-        else if s1_hi < 0 then
-          if s0_lo >= 0 then Option.Some (0, -s1_lo - 1)
-          else if s0_hi <= 0 then Option.Some (-(-s1_lo - 1), 0)
-          else Option.Some (-(-s1_lo - 1), -s1_lo - 1)
-        else Option.None
-    | Ops.Cdiv when same_sign_nonzero s1_lo s1_hi ->
-        let cdiv a b =
-          (* truncation toward zero: OCaml's integer division already
-             truncates toward zero. *)
-          a / b
-        in
-        Option.Some
-          (min4 (cdiv s0_lo s1_lo) (cdiv s0_lo s1_hi)
-              (cdiv s0_hi s1_lo) (cdiv s0_hi s1_hi),
-           max4 (cdiv s0_lo s1_lo) (cdiv s0_lo s1_hi)
-              (cdiv s0_hi s1_lo) (cdiv s0_hi s1_hi))
-    | Ops.Floordiv when s0_lo > s0_hi ->
-        Option.Some (0, 0)
-    | Ops.Floordiv when same_sign_nonzero s1_lo s1_hi ->
-        Option.Some
-          (min4 (floor_div s0_lo s1_lo) (floor_div s0_lo s1_hi)
-              (floor_div s0_hi s1_lo) (floor_div s0_hi s1_hi),
-           max4 (floor_div s0_lo s1_lo) (floor_div s0_lo s1_hi)
-              (floor_div s0_hi s1_lo) (floor_div s0_hi s1_hi))
-    | Ops.Floormod when s0_lo > s0_hi ->
-        Option.Some (0, 0)
+        if B.equal c d && positive c then
+          Some ((if positive a then zero else if B.lt (B.neg c) a then a else B.neg (B.pred d)),
+                (if negative b then zero else if B.lt b c then b else B.pred c))
+        else if positive c then
+          Some ((if B.le zero a then zero else B.neg (B.pred d)),
+                (if B.le b zero then zero else B.pred d))
+        else if negative d then
+          let hi = B.pred (B.neg c) in
+          Some ((if B.le zero a then zero else B.neg hi),
+                (if B.le b zero then zero else hi))
+        else None
+    | Ops.Cdiv when divisor_nonzero -> Some (corners B.cdiv a b c d)
+    | Ops.Floordiv | Ops.Floormod when B.lt b a -> Some (zero, zero)
+    | Ops.Floordiv when divisor_nonzero -> Some (corners B.floordiv a b c d)
     | Ops.Floormod ->
-        if s1_lo = s1_hi && s1_lo > 0 then
-          let c = s1_lo in
-          if floor_div s0_lo c = floor_div s0_hi c then
-            Option.Some (floor_mod s0_lo c, floor_mod s0_hi c)
-          else Option.Some (0, c - 1)
-        else if s1_lo = s1_hi && s1_lo < 0 then
-          let c = s1_lo in
-          if floor_div s0_lo c = floor_div s0_hi c then
-            Option.Some (floor_mod s0_lo c, floor_mod s0_hi c)
-          else Option.Some (c + 1, 0)
-        else if s1_lo > 0 then Option.Some (0, s1_hi - 1)
-        else if s1_hi < 0 then Option.Some (s1_lo + 1, 0)
-        else Option.None
-    | Ops.Xor when s1_lo = s1_hi && s1_lo = -1 ->
-        Option.Some (lnot s0_hi, lnot s0_lo)
-    | Ops.Max -> Option.Some (max s0_lo s1_lo, max s0_hi s1_hi)
-    | Ops.Cmplt ->
-        Option.Some
-          ((if s0_hi < s1_lo then 1 else 0),
-           (if s0_lo < s1_hi then 1 else 0))
+        if B.equal c d && not (B.equal c zero) then
+          if B.equal (B.floordiv a c) (B.floordiv b c) then
+            Some (B.floormod a c, B.floormod b c)
+          else if positive c then Some (zero, B.pred c)
+          else Some (B.succ c, zero)
+        else if positive c then Some (zero, B.pred d)
+        else if negative d then Some (B.succ c, zero)
+        else None
+    | Ops.Xor when B.equal c d && B.equal c (B.int (-1)) ->
+        Some (B.lognot b, B.lognot a)
+    | Ops.Max -> Some (B.max a c, B.max b d)
+    | Ops.Cmplt -> Some (`Bool (B.lt b c), `Bool (B.lt a d))
     | Ops.Cmpne ->
-        let lo = if s0_hi < s1_lo || s1_hi < s0_lo then 1 else 0 in
-        let hi =
-          if s0_lo = s0_hi && s0_lo = s1_lo && s1_lo = s1_hi then 0 else 1
-        in
-        Option.Some (lo, hi)
-    | Ops.Or when Dtype.is_bool (dtype u) ->
-        let b_or a b = if a <> 0 || b <> 0 then 1 else 0 in
-        Option.Some (b_or s0_lo s1_lo, b_or s0_hi s1_hi)
-    | Ops.And when Dtype.is_bool (dtype u) ->
-        let b_and a b = if a <> 0 && b <> 0 then 1 else 0 in
-        Option.Some (b_and s0_lo s1_lo, b_and s0_hi s1_hi)
-    | _ -> Option.None
+        Some (`Bool (B.lt b c || B.lt d a),
+              `Bool (not (B.equal a b && B.equal a c && B.equal c d)))
+    | Ops.Or when Dtype.is_bool (dtype u) -> Some (B.max a c, B.max b d)
+    | Ops.And when Dtype.is_bool (dtype u) -> Some (B.min a c, B.min b d)
+    | _ -> None
   in
-  let is_int_dtype = Dtype.is_int (dtype u) in
-  let is_float_dtype = Dtype.is_float (dtype u) in
   let binary_result =
-    if is_float_dtype then Option.None
-    else if Ops.Group.is_binary (op u) && Array.length (src u) >= 2 then
-      binary_int (op u)
-    else Option.None
+    if not (Dtype.is_float (dtype u)) && Ops.Group.is_binary (op u)
+       && Array.length (src u) >= 2 then binary () else None
   in
   match binary_result with
-  | Option.Some r -> r
-  | Option.None ->
-  (match op u with
-  | Ops.Where when is_int_dtype && Array.length (src u) >= 3 ->
-      let t_lo, t_hi = min_max (src u).(1) in
-      let f_lo, f_hi = min_max (src u).(2) in
-      min t_lo f_lo, max t_hi f_hi
-  | Ops.Const ->
-      (match arg u with
-       | Arg.Value c ->
-           (match Const.view c with
-            | Const.Int n -> const_int_bounds n
-            | Const.Bool b -> (if b then 1 else 0), (if b then 1 else 0)
-            | Const.Float _ | Const.Invalid -> dtype_bounds ())
-       | _ -> dtype_bounds ())
-  | Ops.Param ->
-      (match arg u with
-       | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ } -> lo, hi
-       | _ -> dtype_bounds ())
-  | Ops.Range | Ops.Special ->
-      let _, hi = min_max (src u).(0) in
-      0, sat_sub hi 1
-  | Ops.Bind when Array.length (src u) > 0 -> min_max (src u).(0)
-  | Ops.Stack ->
-      let srcs = src u in
-      if Array.length srcs = 0 then dtype_bounds ()
-      else Array.fold_left (fun (lo, hi) s ->
-        let sl, sh = min_max s in min lo sl, max hi sh)
-        (max_int, min_int) srcs
-  | Ops.Index when Array.length (src u) > 0 -> min_max (src u).(0)
-  | Ops.Cast when Array.length (src u) > 0 ->
-      (* An unsigned destination wraps, so it carries the source bounds
-         over exactly while the source fits its window and says nothing
-         otherwise. Signed-int and float destinations are monotone; bool
-         is neither. *)
-      let dt = dtype u in
-      let d_lo, d_hi = dtype_bounds () in
-      let s_lo, s_hi = min_max (src u).(0) in
-      if Dtype.is_unsigned dt then
-        if s_lo >= 0 && s_hi <= d_hi then s_lo, s_hi else d_lo, d_hi
-      else if (Dtype.is_float dt || Dtype.is_int dt)
-              && s_lo <= d_hi && d_lo <= s_hi then
-        max d_lo s_lo, min s_hi d_hi
-      else d_lo, d_hi
-  | _ -> dtype_bounds ())
+  | Some bounds -> bounds
+  | None ->
+      match op u, src u with
+      | Ops.Where, [| _; t; f |] ->
+          let a, b = min_max t and c, d = min_max f in
+          B.min a c, B.max b d
+      | Ops.Const, _ ->
+          (match arg u with
+           | Arg.Value c ->
+               (match Const.view c with
+                | Const.Int n -> `Int n, `Int n
+                | Const.Bool b -> `Bool b, `Bool b
+                | Const.Float f when not (Float.is_nan f) -> `Float f, `Float f
+                | Const.Float _ | Const.Invalid -> dtype_bounds ())
+           | _ -> dtype_bounds ())
+      | Ops.Param, _ ->
+          (match arg u with
+           | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ } -> lo, hi
+           | _ -> dtype_bounds ())
+      | (Ops.Range | Ops.Special), srcs when Array.length srcs > 0 ->
+          zero, B.pred (snd (min_max srcs.(0)))
+      | Ops.Stack, srcs when Array.length srcs > 0 ->
+          Array.fold_left (fun (lo, hi) s ->
+              let a, b = min_max s in B.min lo a, B.max hi b)
+            (min_max srcs.(0)) srcs
+      | Ops.Pad, srcs when Array.length srcs > 0 ->
+          let lo, hi = min_max srcs.(0) in B.min lo zero, B.max hi zero
+      | (Ops.Bind | Ops.Index | Ops.Stage | Ops.After | Ops.Detach | Ops.Copy
+        | Ops.Contiguous_backward), srcs when Array.length srcs > 0 -> min_max srcs.(0)
+      | movement, srcs when Ops.Group.is_movement movement && Array.length srcs > 0 -> min_max srcs.(0)
+      | Ops.Cast, [| s |] ->
+          let dt = dtype u in
+          let lo, hi = dtype_bounds () in
+          let a, b = min_max s in
+          let a, b = B.round dt a, B.round dt b in
+          let is_nan = function `Float f -> Float.is_nan f | _ -> false in
+          if is_nan a || is_nan b then lo, hi
+          else if Dtype.is_unsigned dt && B.le zero a && B.le b hi then a, b
+          else if (Dtype.is_float dt || (Dtype.is_int dt && not (Dtype.is_unsigned dt)))
+                  && B.le a hi && B.le lo b then B.max lo a, B.min b hi
+          else lo, hi
+      | _ -> dtype_bounds ()
 
 let vmin u = fst (min_max u)
 let vmax u = snd (min_max u)
@@ -1976,12 +1864,12 @@ let dim_prod dims = List.fold_left dim_mul dim_one dims
 let dims_equal a b =
   List.length a = List.length b && List.for_all2 equal a b
 
-let dim_non_negative d = vmin d >= 0
+let dim_non_negative d = Bound.le Bound.zero (vmin d)
 
 let dim_leq a b =
   match const_int_value a, const_int_value b with
   | Some a, Some b -> a <= b
-  | _ -> equal a b || vmax a <= vmin b
+  | _ -> equal a b || Bound.le (vmax a) (vmin b)
 
 let invalid_shape op msg =
   invalid_arg
@@ -2034,13 +1922,13 @@ let require_shrink op src_shape offsets sizes =
      negative only when definitely negative ([vmax < 0]), and the slice
      overruns only when it definitely exceeds the input ([vmin] of
      [offset + size] past the input's [vmax]). *)
-  let provably_negative d = vmax d < 0 in
+  let provably_negative d = Bound.lt (vmax d) Bound.zero in
   if List.exists provably_negative offsets
      || List.exists provably_negative sizes then
     invalid_shape op "shape contains a negative dimension";
   List.iter2
     (fun src_dim (offset, size) ->
-      if vmin (dim_add offset size) > vmax src_dim then
+      if Bound.lt (vmax src_dim) (vmin (dim_add offset size)) then
         invalid_shape op "slice extends past the input shape")
     src_shape (List.combine offsets sizes)
 
@@ -2224,7 +2112,7 @@ and compute_shape_opt u =
           (fun r ->
             let rs = src r in
             if op r = Ops.Range && Array.length rs > 0 then rs.(0)
-            else const_int (vmax r + 1))
+            else const (Bound.const Dtype.weakint (Bound.succ (vmax r))))
           ranges
       in
       if Array.length srcs = 0 then None else Some (range_shape @ shape srcs.(0))
@@ -2346,7 +2234,7 @@ and compute_shape_opt u =
       if shapes = [] then None else Some (lenient_broadcast_shape shapes)
   | _ -> None
 
-let max_shape u = List.map vmax (shape u)
+let max_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shape u)
 let max_numel u = List.fold_left ( * ) 1 (max_shape u)
 
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
@@ -2479,7 +2367,7 @@ let shard_shape u =
         (shape u)
   | _ -> shape u
 
-let max_shard_shape u = List.map vmax (shard_shape u)
+let max_shard_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shard_shape u)
 
 (* Placeholders and custom kernels *)
 
@@ -2536,7 +2424,7 @@ let bounds u =
 let contiguous_view_offset u =
   let exact_int t = const_int_value t in
   let dim_is_zero t = match exact_int t with Some 0 -> true | _ -> false in
-  let dim_max_at_most n t = vmax t <= n in
+  let dim_max_at_most n t = Bound.le (vmax t) (Bound.int n) in
   let same_dim a b =
     equal a b
     ||
@@ -3040,7 +2928,7 @@ let resolve ?(default = true) u =
     invalid_arg "Uop.resolve: expected a boolean expression";
   let s = simplify u in
   let lo = vmin s in
-  if lo = vmax s then lo <> 0 else default
+  if Bound.equal lo (vmax s) then not (Bound.equal lo Bound.zero) else default
 
 let smax = function
   | [] -> invalid_arg "Uop.smax: empty list"
@@ -3245,7 +3133,7 @@ let program_info_from_sink sink =
         ->
           global_size :=
             set_nth "program_info_from_sink" !global_size 0
-              (Launch_int (vmax u + 1))
+              (Launch_int (Bound.to_int (Bound.succ (vmax u))))
       | _ -> ())
     (toposort sink);
   let name =
@@ -3584,7 +3472,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 3
+let export_version = 4
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

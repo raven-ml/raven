@@ -154,8 +154,9 @@ type param_arg = {
       (** Scalar element dtype of the parameter or buffer. Equal to the node's
           dtype; carried in the arg so index-lowering rewrites can re-infer the
           node dtype without desynchronising from the parameter. *)
-  vmin_vmax : (int * int) option;
-      (** Symbolic lower and upper bounds, when known. *)
+  vmin_vmax : (Bound.t * Bound.t) option;
+      (** Exact inclusive numeric bounds, when known. Floating endpoints must
+          not be NaN. *)
   multiple_of : int option;
       (** A known divisor of every value this parameter can take, when the
           producer declares one. Lets index folding discharge a remainder
@@ -662,7 +663,7 @@ val linear : t list -> t
 
 val param :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
-  ?vmin_vmax:int * int -> ?multiple_of:int -> ?name:string ->
+  ?vmin_vmax:Bound.t * Bound.t -> ?multiple_of:int -> ?name:string ->
   ?addrspace:Dtype.addr_space -> ?axis:int -> unit -> t
 (** [param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name
     ?addrspace ?axis ()]
@@ -1451,26 +1452,14 @@ module Weak_tbl : Ephemeron.S with type key = t
 
 (** {1:analysis Analysis} *)
 
-val vmin : t -> int
-(** [vmin u] is a conservative lower bound for [u]'s integer value.
-    Analyses {!Ops.Const}, bounded symbolic {!Ops.Param},
-    {!Ops.Range}, {!Ops.Special}, {!Ops.Bind}, {!Ops.Stack},
-    {!Ops.Cast}, {!Ops.Where}, {!Ops.Neg}
-    and the integer binary ALU ops (including {!Ops.Add}, {!Ops.Sub},
-    {!Ops.Mul}, {!Ops.Max}, {!Ops.Cmod}, {!Ops.Cdiv},
-    {!Ops.Floordiv}, {!Ops.Floormod}, {!Ops.Shl}, {!Ops.Shr},
-    {!Ops.And}, {!Ops.Or}, {!Ops.Xor}, {!Ops.Cmplt}, {!Ops.Cmpne}).
-    Empty intervals are represented by [vmin u > vmax u], as for
-    [RANGE(0)]. Bounds that exceed OCaml's native [int] range are
-    saturated to [min_int] or [max_int]. For unanalysed nodes the
-    bound is the minimum value representable by [u]'s dtype
-    ({!Dtype.min} for integer dtypes; [min_int] for non-integer
-    dtypes). Memoised. *)
+val vmin : t -> Bound.t
+(** [vmin u] is a conservative numeric lower bound for [u]. Integer bounds
+    retain arbitrary precision; float bounds preserve infinities and exclude
+    NaN. Unknown values use the dtype's limits. Empty intervals have a lower
+    bound greater than their upper bound, as for [RANGE(0)]. Memoised. *)
 
-val vmax : t -> int
-(** [vmax u] is a conservative upper bound, symmetric to {!vmin}.
-    Fallback is {!Dtype.max} for integer dtypes, [max_int]
-    otherwise. *)
+val vmax : t -> Bound.t
+(** [vmax u] is the upper bound symmetric to {!vmin}. *)
 
 val const_int_value : t -> int option
 (** [const_int_value u] is [Some n] when [u] is a scalar integer
@@ -1533,7 +1522,7 @@ val simplify_ref : (t -> t) ref
     and the symbolic rewriter. *)
 
 
-val symbolic_vars : t -> (t * string * int * int) list
+val symbolic_vars : t -> (t * string * Bound.t * Bound.t) list
 (** [symbolic_vars u] is the named, bounded variables [u] reaches, each as
     [(node, name, vmin, vmax)]. *)
 

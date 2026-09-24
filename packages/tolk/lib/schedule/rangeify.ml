@@ -201,7 +201,7 @@ and compute_shape_of n =
   | _ ->
       (* Ops with no rule above — a LOAD, an INDEX, the ranges under them —
          still carry a shape on the node itself. *)
-      (try Some (List.map U.vmax (U.shape n)) with Invalid_argument _ -> None)
+      (try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape n)) with Invalid_argument _ -> None)
 
 let shape_expr_of_cache : U.t list option U.Ref_tbl.t = U.Ref_tbl.create 256
 
@@ -275,7 +275,7 @@ let pm_mop_through_index n =
         match shape_of u with
         | Some _ as shape -> shape
         | None -> (
-            try Some (List.map U.vmax (U.shape u))
+            try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape u))
             with Invalid_argument _ -> None)
       in
       (match mop_shape src, mop_shape ptr with
@@ -356,7 +356,7 @@ let shape_for_store u =
   try Some (U.shape u) with Invalid_argument _ -> None
 
 let shape_numel dims =
-  List.fold_left (fun acc d -> acc * U.vmax d) 1 dims
+  List.fold_left (fun acc d -> acc * (Bound.to_int (U.vmax d))) 1 dims
 
 let same_shape a b =
   List.length a = List.length b && List.for_all2 U.equal a b
@@ -727,7 +727,7 @@ let earliest_rewrites =
              let shape = match shape_of n with
                | Some _ as s -> s
                | None ->
-                   (try Some (List.map U.vmax (U.shape n))
+                   (try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape n))
                     with Invalid_argument _ -> None)
              in
              (match shape with
@@ -1230,8 +1230,8 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
    whole extent. *)
 let range_int_size r =
   match U.as_range r with
-  | Some v -> Option.value (U.const_int_value v.size) ~default:(U.vmax r + 1)
-  | None -> if U.op r = Ops.Const then 1 else U.vmax r + 1
+  | Some v -> Option.value (U.const_int_value v.size) ~default:(Bound.to_int (Bound.succ (U.vmax r)))
+  | None -> if U.op r = Ops.Const then 1 else Bound.to_int (Bound.succ (U.vmax r))
 
 let flat_index_of_ranges ?dims ranges =
   let range_dims ranges =
@@ -1274,7 +1274,7 @@ let flatten_stage n =
          Only the range dims flatten into the index; folding the source's
          shape in as well overflows the size to a negative when the source
          carries an unresolved dimension. *)
-      let range_dims = List.map (fun r -> U.vmax r + 1) ranges in
+      let range_dims = List.map (fun r -> Bound.to_int (Bound.succ (U.vmax r))) ranges in
       let shape = try U.max_shape n with Invalid_argument _ -> range_dims in
       let flat_src =
         U.buffer ~slot:(-1) ~dtype:(U.dtype src)
@@ -1645,7 +1645,8 @@ let to_define_global ctx n =
          binding identity survives the kernel split. *)
       | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ } ->
           Some
-            (U.variable ~name ~min_val:lo ~max_val:hi ~dtype:(U.dtype n) ())
+            (U.param ~slot:(-1) ~name ~dtype:(U.dtype n) ~shape:(U.stack [])
+               ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ())
       (* Renumber only an already-tagged, shaped, unnamed PARAM. The tag is
          set by the param/range tagging rule so a PARAM freshly created here
          is not debuffed again. *)
@@ -1839,10 +1840,10 @@ let split_store n =
                       let stored_ranges =
                         List.filter is_range (U.ranges stored)
                       in
-                      let same_size a b = U.vmax a = U.vmax b in
+                      let same_size a b = Bound.equal (U.vmax a) (U.vmax b) in
                       let flat_size ranges =
                         List.fold_left
-                          (fun acc r -> acc * (U.vmax r + 1))
+                          (fun acc r -> acc * (Bound.to_int (Bound.succ (U.vmax r))))
                           1 ranges
                       in
                       let same_flat_size dst stored =

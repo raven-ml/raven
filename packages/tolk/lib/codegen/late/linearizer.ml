@@ -19,7 +19,7 @@ module U = Uop
 type extra = No_extra | Idx of int
 
 let range_size r =
-  match U.as_range r with Some _ -> U.vmax r + 1 | None -> 1
+  match U.as_range r with Some _ -> Bound.to_int (Bound.succ (U.vmax r)) | None -> 1
 
 let run_count u = List.fold_left (fun acc r -> acc * range_size r) 1 (U.ranges u)
 

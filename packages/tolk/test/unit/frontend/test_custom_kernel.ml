@@ -7,6 +7,7 @@
    cases follow tinygrad's test/backend/test_custom_kernel.py. *)
 
 open Windtrap
+module Bound = Tolk_uop.Bound
 module T = Tolk_frontend.Tensor
 module Mv = Tolk_frontend.Movement
 module El = Tolk_frontend.Elementwise
@@ -30,7 +31,7 @@ let kernel_info ?opts_to_apply name =
     beam = 0;
   }
 
-let dims u = List.map U.vmax (U.shape u)
+let dims u = List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape u)
 let numel u = List.fold_left ( * ) 1 (dims u)
 let flatten u = U.reshape ~src:u ~shape:(U.const_int (numel u))
 

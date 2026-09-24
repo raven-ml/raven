@@ -22,8 +22,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 ## Scalar semantics and UOp contracts
 
-- Extend exact integer arithmetic to symbolic bounds;
-  remove saturating host-integer bounds.
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/CallInfo/
   ProgramInfo metadata, ALLOC, effectful CALL, scalar binding effects and
   void RANGE/BACKEDGE. Remove deleted operations and stale enum/cache formats.

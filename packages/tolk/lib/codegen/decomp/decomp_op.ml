@@ -159,17 +159,19 @@ let rec fast_idiv ?(dont_cast = false) ~is_metal ~supports_dtype x d =
         if not is_int then None
         else
           let is_unsigned =
-            Uop.vmin x >= 0 || Dtype.is_unsigned v
+            Bound.le Bound.zero (Uop.vmin x) || Dtype.is_unsigned v
           in
           let vmin = Uop.vmin x and vmax = Uop.vmax x in
-          if vmin = min_int || vmax = max_int then None
-          else if vmin > -d && vmax < d then Some (Uop.const_like x 0)
+          if Bound.lt (Bound.int (-d)) vmin && Bound.lt vmax (Bound.int d)
+          then Some (Uop.const_like x 0)
           else
             match dtype_int_bounds v with
             | None -> None
             | Some (dtype_lo, dtype_hi) ->
-                let vmin64 = max (Int64.of_int vmin) dtype_lo in
-                let vmax64 = min (Int64.of_int vmax) dtype_hi in
+                let lo = Z.max (Bound.integer vmin) (Z.of_int64 dtype_lo) in
+                let hi = Z.min (Bound.integer vmax) (Z.of_int64 dtype_hi) in
+                if Z.compare lo hi > 0 then None else
+                let vmin64 = Z.to_int64 lo and vmax64 = Z.to_int64 hi in
                 let abs_vmin = abs_int64_checked vmin64 in
                 let vmax_for_magic =
                   match abs_vmin with
@@ -348,8 +350,8 @@ let rule_threefry (ops : supported_ops) node =
     | _ -> None
 
 let floor_same_as_trunc a b =
-  (Uop.vmin a >= 0 && Uop.vmin b > 0)
-  || (Uop.vmax a <= 0 && Uop.vmax b < 0)
+  (Bound.le Bound.zero (Uop.vmin a) && Bound.lt Bound.zero (Uop.vmin b))
+  || (Bound.le (Uop.vmax a) Bound.zero && Bound.lt (Uop.vmax b) Bound.zero)
 
 let floor_fixup_condition a b r =
   let zero_a = Uop.const_like a 0 in
@@ -514,8 +516,8 @@ let rule_sdiv_to_shr (ops : supported_ops) node =
                            ~rhs:(Uop.const (Const.int64 dt 0L))
                        in
                        let cond =
-                         if Uop.vmin lt_zero = Uop.vmax lt_zero then
-                           Uop.const_like lt_zero (Uop.vmin lt_zero)
+                         if Bound.equal (Uop.vmin lt_zero) (Uop.vmax lt_zero) then
+                           Uop.const (Bound.const Dtype.bool (Uop.vmin lt_zero))
                          else lt_zero
                        in
                        let correction =
@@ -540,7 +542,7 @@ let rule_fast_idiv_late (ops : supported_ops) node =
         (match Uop.dtype node, s with
          | dt, [| x; d |]
            when Dtype.is_int dt
-                && (Uop.vmin x >= 0 || Dtype.is_unsigned dt) ->
+                && (Bound.le Bound.zero (Uop.vmin x) || Dtype.is_unsigned dt) ->
              (match const_int64_value d with
               | Some dv when Int64.compare dv 0L > 0 ->
                   (match log2_of_power dv with
@@ -564,7 +566,7 @@ let rule_mod_from_idiv (ops : supported_ops) node =
         (match Uop.dtype node, s with
          | dt, [| x; d |]
            when Dtype.is_int dt
-                && (Uop.vmin x >= 0 || Dtype.is_unsigned dt) ->
+                && (Bound.le Bound.zero (Uop.vmin x) || Dtype.is_unsigned dt) ->
              (match const_int64_value d with
               | Some dv when ops.has_and && is_power_of_two dv -> None
               | _ ->

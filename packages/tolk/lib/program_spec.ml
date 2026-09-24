@@ -234,7 +234,7 @@ module Estimates = struct
           (match U.arg u with
            | U.Arg.Param_arg
                { name = Some "core_id"; vmin_vmax = Some (_lo, hi); _ } ->
-               mults := mul_estimate !mults (Int (Stdlib.( + ) hi 1))
+               mults := mul_estimate !mults (Int (Bound.to_int (Bound.succ hi)))
            | _ -> ())
       | Ops.Mulacc when not (U.Tbl.mem ignored u) ->
           add_ops (2 * U.max_numel u)
@@ -296,7 +296,7 @@ let collect_vars (program : program) =
         U.Arg.Param_arg
           { name = Some name; vmin_vmax = Some (lo, hi); addrspace = Dtype.Alu;
             _ } ) ->
-        raw := { node = u; var = { name; lo; hi; dtype = U.dtype u } } :: !raw
+        raw := { node = u; var = { name; lo = Bound.to_int lo; hi = Bound.to_int hi; dtype = U.dtype u } } :: !raw
     | _ -> ())
     program;
   let sorted =

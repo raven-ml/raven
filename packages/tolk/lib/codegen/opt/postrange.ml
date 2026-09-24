@@ -53,7 +53,7 @@ let const_int_or default u =
 
 let range_int_size u = const_int_or 0 (range_size u)
 
-let range_max_extent u = U.vmax u + 1
+let range_max_extent u = Bound.to_int (Bound.succ (U.vmax u))
 
 (* Cached shape data recomputed after every AST mutation. *)
 type shape = {
@@ -69,7 +69,7 @@ let compute_shape ast =
   let rngs =
     U.toposort ast
     |> List.filter (fun u ->
-           is_range u && U.vmax u > 0 && range_kind u <> Axis_type.Device)
+           is_range u && Bound.lt (Bound.int 0) (U.vmax u) && range_kind u <> Axis_type.Device)
     |> List.sort (fun a b ->
          compare
            (Axis_type.to_pos (range_kind a), range_axis a, range_sub a)
@@ -328,7 +328,7 @@ let make_kernel_name t =
   in
   (* Special sizes always print their upper bound, even when symbolic. *)
   let special_strs =
-    List.map (fun s -> string_of_int (U.vmax s + 1)) specials
+    List.map (fun s -> string_of_int (Bound.to_int (Bound.succ (U.vmax s)))) specials
   in
   let rng_strs = List.map (fun r -> render_size (range_size r)) (rngs t) in
   (* Reference builds ['_'.join([''] + parts)]: no separator at all when the

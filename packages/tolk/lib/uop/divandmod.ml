@@ -99,7 +99,7 @@ let rule_nested_div =
   floordiv_pat O.(floordiv_pat x c + a) d => fun bs ->
     let x = bs $ "x" and c = bs $ "c" in
     let a = bs $ "a" and d = bs $ "d" in
-    if Uop.vmin d > 0
+    if Bound.lt Bound.zero (Uop.vmin d)
     then Some (floordiv Uop.O.(x + (a * c)) Uop.O.(c * d))
     else None
 
@@ -146,9 +146,9 @@ let param_multiple_of_divides x y =
 let try_cancel_divmod d_op x y =
   let xdiv = floordiv x y in
   let q = Uop.vmin xdiv in
-  if q <> Uop.vmax xdiv then None
-  else if d_op = Ops.Floormod then Some Uop.O.(x - (Uop.const_like x q * y))
-  else Some (Uop.const_like xdiv q)
+  if not (Bound.equal q (Uop.vmax xdiv)) then None
+  else if d_op = Ops.Floormod then Some Uop.O.(x - (Uop.const (Bound.const (Uop.dtype x) q) * y))
+  else Some (Uop.const (Bound.const (Uop.dtype xdiv) q))
 
 (* remove_nested_mod for ADD: (a%4 + b) % 2 -> (a+b) % 2 when the inner
    mod divisor divides [c]. *)
@@ -248,9 +248,12 @@ let try_fold_divmod_congruence d_op x y c =
               let const_u = Uop.const_like x const_mod_c in
               let rem_sum = Uop.usum (r_terms @ [ const_u ]) in
               let rmin = Uop.vmin rem_sum and rmax = Uop.vmax rem_sum in
-              match floor_div_checked rmin c, floor_div_checked rmax c with
-              | Some k, Some kmax
-                when rmin <> min_int && rmax <> max_int && k = kmax ->
+              let quotient bound =
+                let n = Bound.integer (Bound.floordiv bound (Bound.int c)) in
+                if Z.fits_int n then Some (Z.to_int n) else None
+              in
+              match quotient rmin, quotient rmax with
+              | Some k, Some kmax when k = kmax ->
                   if d_op = Ops.Floormod then
                     (match mul_checked k c with
                      | Some offset_v ->
@@ -293,7 +296,7 @@ let try_nested_div d_op x y c =
   else
     let inner_x = (Uop.src x).(0) and inner_d = (Uop.src x).(1) in
     match Uop.divides inner_d c with
-    | Some k when Uop.vmin k > 0 -> Some (floormod (floordiv inner_x y) k)
+    | Some k when Bound.lt Bound.zero (Uop.vmin k) -> Some (floormod (floordiv inner_x y) k)
     | _ -> None
 
 (* gcd_with_remainder: factor a common GCD out of numerator. *)
@@ -330,7 +333,7 @@ let try_gcd_remainder d_op x y c =
                    if const_mod = 0 then xp_g
                    else Uop.O.(xp_g + Uop.const_like xp_g const_mod)
                  in
-                 if Uop.vmin new_x < 0 then None
+                 if Bound.lt (Uop.vmin new_x) Bound.zero then None
                  else if d_op = Ops.Floormod then
                    let divisor = Uop.const_like y c_over_g in
                    let factor = Uop.const_like y g in
@@ -360,7 +363,7 @@ let try_divide_by_gcd d_op x y =
 
 (* factor_remainder: (d*x+y) op d -> x + y op d / x for div, y op d for mod. *)
 let try_factor_remainder d_op x y =
-  if Uop.vmin x < 0 || Uop.vmin y < 0 then None
+  if Bound.lt (Uop.vmin x) Bound.zero || Bound.lt (Uop.vmin y) Bound.zero then None
   else
     let all_uops = Uop.split_uop x Ops.Add in
     let quo = ref [] and rem = ref [] in
@@ -396,7 +399,7 @@ let try_factor_remainder d_op x y =
         | [] -> Uop.const_like x 0
         | xs -> Uop.usum xs
       in
-      if Uop.vmin rem_sum < 0 then None
+      if Bound.lt (Uop.vmin rem_sum) Bound.zero then None
       else if d_op = Ops.Floormod
       then Some (floormod rem_sum y)
       else Some Uop.O.(floordiv rem_sum y + Uop.usum (List.rev !quo))
@@ -434,7 +437,7 @@ let rec try_nest_by_factor d_op x y c =
           | [] -> Uop.const_like x 0
           | xs -> Uop.usum (List.rev xs)
         in
-        if Uop.vmin b >= 0 && Uop.vmax b < div_ then
+        if Bound.le Bound.zero (Uop.vmin b) && Bound.lt (Uop.vmax b) (Bound.int div_) then
           let c_div = Uop.const_like x c_div_v in
           let factor_u = Uop.const_like x div_ in
           Some Uop.O.(floormod newxs c_div * factor_u + b)
@@ -456,7 +459,7 @@ let rec try_nest_by_factor d_op x y c =
                    (List.length (Uop.backward_slice newxs),
                     floordiv newxs divisor)
              | None -> None)
-          else if Uop.vmin x >= 0 && Uop.vmin newxs >= 0 then
+          else if Bound.le Bound.zero (Uop.vmin x) && Bound.le Bound.zero (Uop.vmin newxs) then
             (match build_mod_candidate newxs div_ with
              | Some r -> Some (List.length (Uop.backward_slice r), r)
              | None -> None)
@@ -494,7 +497,7 @@ and fold_divmod_general_rec (d : Uop.t) : Uop.t option =
   else if Array.length (Uop.src d) <> 2 then None
   else
     let x = (Uop.src d).(0) and y = (Uop.src d).(1) in
-    if Uop.vmin y = 0 && Uop.vmax y = 0 then raise Division_by_zero
+    if Bound.equal (Uop.vmin y) Bound.zero && Bound.equal (Uop.vmax y) Bound.zero then raise Division_by_zero
     else
       match try_cancel_divmod d_op x y with
       | Some r -> Some r

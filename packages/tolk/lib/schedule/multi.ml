@@ -319,7 +319,7 @@ let shard_srcs ~shapes ~devices children axis =
     | None -> failwith "shard_srcs: unknown shape"
   in
   let out_shape =
-    List.map U.vmax (U.broadcast_shape (List.map U.shape children))
+    List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.broadcast_shape (List.map U.shape children))
   in
   let out_rank = List.length out_shape in
   List.map

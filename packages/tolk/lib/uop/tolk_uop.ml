@@ -9,6 +9,7 @@ module Ops = Ops
 module Axis_type = Axis_type
 module Dtype = Dtype
 module Const = Const
+module Bound = Bound
 module Uop = Uop
 module Render = Render
 module Upat = Upat

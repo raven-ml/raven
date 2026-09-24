@@ -820,113 +820,111 @@ let vmin_vmax_tests =
     [
       test "const int" (fun () ->
           let n = idx 42 in
-          equal int (U.vmin n) 42;
-          equal int (U.vmax n) 42);
+          equal int ((Bound.to_int (U.vmin n))) 42;
+          equal int ((Bound.to_int (U.vmax n))) 42);
       test "const bool" (fun () ->
           let t = U.const (C.bool true) in
           let f_ = U.const (C.bool false) in
-          equal int (U.vmin t) 1;
-          equal int (U.vmax t) 1;
-          equal int (U.vmin f_) 0;
-          equal int (U.vmax f_) 0);
+          equal int ((Bound.to_int (U.vmin t))) 1;
+          equal int ((Bound.to_int (U.vmax t))) 1;
+          equal int ((Bound.to_int (U.vmin f_))) 0;
+          equal int ((Bound.to_int (U.vmax f_))) 0);
       test "range" (fun () ->
           let r = loop_range ~axis:0 10 in
-          equal int (U.vmin r) 0;
-          equal int (U.vmax r) 9);
+          equal int ((Bound.to_int (U.vmin r))) 0;
+          equal int ((Bound.to_int (U.vmax r))) 9);
       test "define_var" (fun () ->
           let dv = U.variable ~name:"x" ~min_val:3 ~max_val:7 () in
-          equal int (U.vmin dv) 3;
-          equal int (U.vmax dv) 7);
+          equal int ((Bound.to_int (U.vmin dv))) 3;
+          equal int ((Bound.to_int (U.vmax dv))) 7);
       test "add" (fun () ->
           let r = loop_range ~axis:0 4 in
           let open U.O in
           let n = r + idx 3 in
-          equal int (U.vmin n) 3;
-          equal int (U.vmax n) 6);
+          equal int ((Bound.to_int (U.vmin n))) 3;
+          equal int ((Bound.to_int (U.vmax n))) 6);
       test "sub" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = U.alu_binary ~op:Ops.Sub ~lhs:(idx 10) ~rhs:r in
-          equal int (U.vmin n) 7;
-          equal int (U.vmax n) 10);
+          equal int ((Bound.to_int (U.vmin n))) 7;
+          equal int ((Bound.to_int (U.vmax n))) 10);
       test "neg" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = U.alu_unary ~op:Ops.Neg ~src:(U.cast ~src:r ~dtype:(D.int32)) in
-          equal int (U.vmin n) (-2147483648);
-          equal int (U.vmax n) 2147483647);
+          equal int ((Bound.to_int (U.vmin n))) (-2147483648);
+          equal int ((Bound.to_int (U.vmax n))) 2147483647);
       test "mul with negative" (fun () ->
           let r = loop_range ~axis:0 3 in
           let open U.O in
           let n = r * idx (-2) in
-          equal int (U.vmin n) (-4);
-          equal int (U.vmax n) 0);
+          equal int ((Bound.to_int (U.vmin n))) (-4);
+          equal int ((Bound.to_int (U.vmax n))) 0);
       test "idiv positive" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open U.O in
           let n = r // idx 3 in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 3);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 3);
       test "mod constant" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open U.O in
           let n = r mod idx 3 in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 2);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 2);
       test "max" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = U.alu_binary ~op:Ops.Max ~lhs:r ~rhs:(idx 2) in
-          equal int (U.vmin n) 2;
-          equal int (U.vmax n) 3);
+          equal int ((Bound.to_int (U.vmin n))) 2;
+          equal int ((Bound.to_int (U.vmax n))) 3);
       test "cmplt known true" (fun () ->
           let r = loop_range ~axis:0 3 in
           let open U.O in
           let n = r < idx 10 in
-          equal int (U.vmin n) 1;
-          equal int (U.vmax n) 1);
+          equal int ((Bound.to_int (U.vmin n))) 1;
+          equal int ((Bound.to_int (U.vmax n))) 1);
       test "cmplt unknown" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open U.O in
           let n = r < idx 5 in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 1);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 1);
       test "where int" (fun () ->
           let r1 = loop_range ~axis:0 5 in
           let r2 = loop_range ~axis:1 10 in
           let cond = U.const (C.bool true) in
           let n = U.alu_ternary ~op:Ops.Where ~a:cond ~b:r1 ~c:r2 in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 9);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 9);
       test "and mask" (fun () ->
           let r = loop_range ~axis:0 256 in
           let n = U.alu_binary ~op:Ops.And ~lhs:r ~rhs:(idx 15) in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 15);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 15);
       test "shl constant" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = U.alu_binary ~op:Ops.Shl ~lhs:r ~rhs:(idx 2) in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 12);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 12);
       test "shr constant" (fun () ->
           let r = loop_range ~axis:0 16 in
           let n = U.alu_binary ~op:Ops.Shr ~lhs:r ~rhs:(idx 2) in
-          equal int (U.vmin n) 0;
-          equal int (U.vmax n) 3);
+          equal int ((Bound.to_int (U.vmin n))) 0;
+          equal int ((Bound.to_int (U.vmax n))) 3);
       test "vectorize bounds" (fun () ->
           let r = loop_range ~axis:0 5 in
           let dv = U.variable ~name:"x" ~min_val:2 ~max_val:10 () in
           let v = U.stack [ r; dv ] in
           (* stack: min of sources, max of sources *)
-          equal int (U.vmin v) 0;
-          equal int (U.vmax v) 10);
+          equal int ((Bound.to_int (U.vmin v))) 0;
+          equal int ((Bound.to_int (U.vmax v))) 10);
       test "float binary falls back to dtype" (fun () ->
           let open U.O in
           let a = f32 1.0 in
           let b = f32 2.0 in
           let n = a + b in
           (* float binary: no recursion, falls back to dtype bounds *)
-          let vmin = U.vmin n in
-          let vmax = U.vmax n in
-          is_true (vmin <= 0);
-          is_true (vmax > 0));
+          is_true (Bound.equal (U.vmin n) (`Float neg_infinity));
+          is_true (Bound.equal (U.vmax n) (`Float infinity)));
     ]
 
 (* Additional pm_load_collapse tests *)

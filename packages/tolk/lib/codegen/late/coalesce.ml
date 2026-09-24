@@ -62,19 +62,19 @@ let invalid_where_index idx =
   | _ -> None
 
 let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
-  U.variable ~name:(Printf.sprintf "fake%d" index) ~min_val:lo
-    ~max_val:hi ~dtype ()
+  U.param ~slot:(-1) ~name:(Printf.sprintf "fake%d" index) ~dtype
+    ~shape:(U.stack []) ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ()
 
 let drop_valid_stmts valid idx height width =
   let coord_before_zero coord =
     match U.const_int_value coord with
     | Some n -> n < 0
-    | None -> U.vmax coord < 0
+    | None -> Bound.lt (U.vmax coord) Bound.zero
   in
   let coord_after_bound coord bound =
     match U.const_int_value coord with
     | Some n -> n >= bound
-    | None -> U.vmin coord >= bound
+    | None -> Bound.le (Bound.int bound) (U.vmin coord)
   in
   let dropped = ref [] in
   List.iteri
@@ -84,10 +84,10 @@ let drop_valid_stmts valid idx height width =
       | Some (x, is_upper_bound, c) ->
           let terms = U.split_uop x Ops.Add in
           let can_drop_simplex =
-            (not is_upper_bound) && c = 1
+            (not is_upper_bound) && Bound.equal c Bound.one
             && List.for_all
                  (fun u ->
-                   List.mem (U.op u) Ops.Group.irreducible && U.vmin u = 0)
+                   List.mem (U.op u) Ops.Group.irreducible && Bound.equal (U.vmin u) Bound.zero)
                  terms
           in
           if can_drop_simplex then begin
@@ -104,10 +104,10 @@ let drop_valid_stmts valid idx height width =
           end;
           if not (List.exists (U.equal stmt) !dropped) then begin
             let lo, hi =
-              if is_upper_bound then (c + 1, U.vmax x)
-              else (U.vmin x, c - 1)
+              if is_upper_bound then (Bound.succ c, U.vmax x)
+              else (U.vmin x, Bound.pred c)
             in
-            if lo <= hi then begin
+            if Bound.le lo hi then begin
               let fake = fake_var ~index:i ~lo ~hi ~dtype:(U.dtype x) () in
               let coord_out_of_bounds coord bound =
                 let rw = U.substitute [ (x, fake) ] coord |> U.simplify in

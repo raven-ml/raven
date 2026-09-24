@@ -290,11 +290,11 @@ let () =
             let p2 = U.param ~slot:2 ~dtype:Dtype.int32 () in
             let n =
               U.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"n"
-                ~vmin_vmax:(0, 8) ~addrspace:Dtype.Alu ()
+                ~vmin_vmax:(Bound.int (0), Bound.int (8)) ~addrspace:Dtype.Alu ()
             in
             let m =
               U.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"m"
-                ~vmin_vmax:(0, 8) ~addrspace:Dtype.Alu ()
+                ~vmin_vmax:(Bound.int (0), Bound.int (8)) ~addrspace:Dtype.Alu ()
             in
             let root = U.sink [ p0; p2; n; m ] in
             let lowered = Codegen_lower.lower (test_renderer ()) root in

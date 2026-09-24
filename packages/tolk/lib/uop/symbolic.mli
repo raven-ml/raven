@@ -90,7 +90,7 @@ val pm_move_where_on_load : Upat.Pattern_matcher.t
 (** [pm_move_where_on_load] moves eligible [where] guards around value-typed
     indexes into the index validity predicate. *)
 
-val parse_valid : Uop.t -> (Uop.t * bool * int) option
+val parse_valid : Uop.t -> (Uop.t * bool * Bound.t) option
 (** [parse_valid v] parses a validity clause. It returns
     [(expr, is_upper, c)] for [expr < c + 1] when [is_upper] is [true],
     or [expr >= c] when [is_upper] is [false]. *)

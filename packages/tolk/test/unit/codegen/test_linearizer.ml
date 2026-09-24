@@ -113,7 +113,7 @@ module P = struct
           when addrspace = Dtype.Alu ->
             (match name, vmin_vmax with
              | Some name, Some (lo, hi) ->
-                 Define_var { name; lo; hi; dtype = U.dtype u }
+                 Define_var { name; lo = Bound.to_int lo; hi = Bound.to_int hi; dtype = U.dtype u }
              | _ -> Param { idx = slot; dtype = U.dtype u })
         | Some { param = { slot; _ }; _ } -> Param { idx = slot; dtype = U.dtype u }
         | None -> Other u)

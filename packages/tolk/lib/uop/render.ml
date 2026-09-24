@@ -116,8 +116,13 @@ let device_arg_string = function
   | Multi ds -> tuple_string (List.map python_quote ds)
   | Index i -> string_of_int i
 
-let int_pair_string (a, b) =
-  tuple_string [ string_of_int a; string_of_int b ]
+let bound_pair_string (a, b) =
+  let render = function
+    | `Int n -> Z.to_string n
+    | `Float f -> python_float_string f
+    | `Bool b -> if b then "True" else "False"
+  in
+  tuple_string [ render a; render b ]
 
 let param_arg_debug_string (p : param_arg) =
   let fields = ref [ string_of_int p.slot; dtype_debug_string p.dtype ] in
@@ -125,7 +130,7 @@ let param_arg_debug_string (p : param_arg) =
     | None -> ()
     | Some value -> fields := !fields @ [ name ^ "=" ^ render value ]
   in
-  add "vmin_vmax" int_pair_string p.vmin_vmax;
+  add "vmin_vmax" bound_pair_string p.vmin_vmax;
   add "multiple_of" string_of_int p.multiple_of;
   add "name" python_quote p.name;
   (match p.addrspace with

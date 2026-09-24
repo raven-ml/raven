@@ -42,7 +42,7 @@ let const_int_exn node =
       match C.view value with
       | C.Int n -> Z.to_int n
       | _ -> failwith "const_int_exn: not int")
-  | _ when U.vmin node = U.vmax node -> U.vmin node
+  | _ when (Bound.to_int (U.vmin node)) = (Bound.to_int (U.vmax node)) -> (Bound.to_int (U.vmin node))
   | _ -> failwith "const_int_exn: not const"
 
 (* Evaluate a Kernel expression tree by substituting integer values for

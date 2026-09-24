@@ -180,13 +180,12 @@ let ceil_div a b = if a > 0 then ((a + b - 1) / b) else -(-a / b)
 
 let int_bounds (v : Dtype.t) =
   match Dtype.min v, Dtype.max v with
-  | `Int lo, `Int hi when Z.fits_int lo && Z.fits_int hi ->
-      Some (Z.to_int lo, Z.to_int hi)
+  | (`Int _ as lo), (`Int _ as hi) -> Some (lo, hi)
   | _ -> None
 
 let overflows u (v : Dtype.t) =
   match int_bounds v with
-  | Some (lo, hi) -> Uop.vmin u < lo || Uop.vmax u > hi
+  | Some (lo, hi) -> Bound.lt (Uop.vmin u) lo || Bound.lt hi (Uop.vmax u)
   | None -> true
 
 let const_as_int c =
@@ -376,9 +375,7 @@ let const_numeric_v c =
        | Some n -> Some (float_of_int n)
        | None -> None)
 
-let const_bound_like u n =
-  if Dtype.is_bool (Uop.dtype u) then Uop.const_bool (n <> 0)
-  else Uop.const_like u n
+let const_bound_like u n = Uop.const (Bound.const (Uop.dtype u) n)
 
 (* The rewritten exponent is left weak: it is a mathematical value, and the
    width it eventually takes is the surrounding expression's to decide.
@@ -1224,9 +1221,9 @@ let lt_folding x c =
     let d = List.fold_left gcd_int c factors in
     if d <= 1 then None
     else
-      let p_vmin = List.fold_left (fun acc u -> acc + Uop.vmin u) 0 p in
-      let p_vmax = List.fold_left (fun acc u -> acc + Uop.vmax u) 0 p in
-      if p_vmin < 0 || p_vmax >= d then None
+      let p_vmin = List.fold_left (fun acc u -> Bound.add acc (Uop.vmin u)) Bound.zero p in
+      let p_vmax = List.fold_left (fun acc u -> Bound.add acc (Uop.vmax u)) Bound.zero p in
+      if Bound.lt p_vmin Bound.zero || Bound.le (Bound.int d) p_vmax then None
       else
         let np_sum = Uop.usum np in
         match Uop.divides np_sum d with
@@ -1253,7 +1250,7 @@ let canonicalize_simplex x =
         | _ -> u
       in
       let is_irreducible = List.mem (Uop.op u') Ops.Group.irreducible in
-      if not (is_irreducible && Uop.vmin u' >= 0) then raise Reject;
+      if not (is_irreducible && Bound.le Bound.zero (Uop.vmin u')) then raise Reject;
       u') terms in
     if !changed then Some (Uop.usum ret) else None
   with Reject -> None
@@ -1469,7 +1466,7 @@ let symbolic : Upat.Pattern_matcher.t =
      and c1 = cvar ~name:"c1" () and c2 = cvar ~name:"c2" () in
      alu [ alu [ x; c1 ] Ops.Floordiv; c2 ] Ops.Floordiv => fun bs ->
        let x = bs $ "x" and c1 = bs $ "c1" and c2 = bs $ "c2" in
-       if Uop.vmin c2 > 0 then
+       if Bound.lt Bound.zero (Uop.vmin c2) then
          Some
            (Uop.alu_binary ~op:Ops.Floordiv ~lhs:x
               ~rhs:Uop.O.(c1 * c2))
@@ -1483,7 +1480,7 @@ let symbolic : Upat.Pattern_matcher.t =
      => fun bs ->
        let x = bs $ "x" in
        let lo = Uop.vmin x and hi = Uop.vmax x in
-       if lo = hi && lo <> min_int && lo <> max_int
+       if Bound.equal lo hi
        then Some (const_bound_like x lo)
        else None);
 
@@ -1491,16 +1488,16 @@ let symbolic : Upat.Pattern_matcher.t =
     (op ~name:"x" Ops.Range => fun bs ->
        let x = bs $ "x" in
        let lo = Uop.vmin x and hi = Uop.vmax x in
-       if lo = hi && lo <> min_int && lo <> max_int
-       then Some (Uop.const_like x lo)
+       if Bound.equal lo hi
+       then Some (const_bound_like x lo)
        else None);
 
     (* max(x, y) -> x if x.vmin >= y.vmax; -> y if x.vmax <= y.vmin. *)
     (rewrite2 (fun x y -> alu [ x; y ] Ops.Max) (fun x y ->
        if is_max_identity x then Some y
        else if is_max_identity y then Some x
-       else if Uop.vmin x >= Uop.vmax y then Some x
-       else if Uop.vmax x <= Uop.vmin y then Some y
+       else if Bound.le (Uop.vmax y) (Uop.vmin x) then Some x
+       else if Bound.le (Uop.vmax x) (Uop.vmin y) then Some y
        else None));
   ]
   (* two-stage associative folding sits between max folding and the lt rules,
@@ -1661,7 +1658,7 @@ let symbolic : Upat.Pattern_matcher.t =
        then None
        else (
          match int_bounds (Uop.dtype a) with
-         | Some (lo, hi) when lo <= Uop.vmin x && Uop.vmax x <= hi ->
+         | Some (lo, hi) when Bound.le lo (Uop.vmin x) && Bound.le (Uop.vmax x) hi ->
              Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
          | _ -> None));
 
@@ -1838,15 +1835,19 @@ let parse_valid v =
            Some (lhs, false, Uop.vmin rhs2)
        | _ -> None)
   | Ops.Cmplt, [| lhs; rhs |] when Dtype.is_int (Uop.dtype lhs) ->
-      (match const_int_v lhs with
+      (match Uop.op lhs, Uop.arg lhs with
        (* c < X is a lower bound on X. *)
-       | Some c -> Some (rhs, false, c + 1)
-       | None -> Some (lhs, true, Uop.vmax rhs - 1))
+       | Ops.Const, Uop.Arg.Value c ->
+           (match Const.view c with
+            | Const.Int n -> Some (rhs, false, `Int (Z.succ n))
+            | _ -> None)
+       | _ -> Some (lhs, true, Bound.pred (Uop.vmax rhs)))
   | _ -> None
 
 let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
   let name = Printf.sprintf "fake%d" index in
-  Uop.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
+  Uop.param ~slot:(-1) ~name ~dtype ~shape:(Uop.stack [])
+    ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ()
 
 (* [uop_given_valid ~try_simplex valid u] rewrites [u] under the
    assumption that every AND-clause of [valid] holds. For each bounded
@@ -1942,7 +1943,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
     let default_hi = Uop.vmax expr in
     let lo = Option.value !lo_r ~default:default_lo in
     let hi = Option.value !hi_r ~default:default_hi in
-    if lo = min_int || hi = max_int then ()
+    if not (Dtype.is_int (Uop.dtype expr)) then ()
     else
       let dt = Uop.dtype expr in
       let fake = fake_var ~index:i ~lo ~hi ~dtype:dt () in
@@ -1950,7 +1951,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
       if try_simplex then begin
         try_candidate [ (expr, fake) ];
         let is_simplex =
-          Uop.op expr = Ops.Add && lo = 1
+          Uop.op expr = Ops.Add && Bound.equal lo Bound.one
           && List.for_all
                (fun u -> List.mem (Uop.op u) Ops.Group.irreducible)
                (Uop.split_uop expr Ops.Add)
@@ -1959,7 +1960,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
           let simplex_cands = List.map (fun xi ->
             let xi_dt = Uop.dtype xi in
             let hi_xi = Uop.vmax xi in
-            (xi, fake_var ~index:i ~lo:1 ~hi:hi_xi ~dtype:xi_dt ())
+            (xi, fake_var ~index:i ~lo:Bound.one ~hi:hi_xi ~dtype:xi_dt ())
           ) (Uop.split_uop expr Ops.Add) in
           try_candidate simplex_cands
       end)
@@ -2197,7 +2198,7 @@ let sym : Upat.Pattern_matcher.t =
                     List.exists (fun rn -> Uop.in_backward_slice rn m) ranges
                   in
                   let m_is_range = List.memq m ranges in
-                  let vmin_ok = op <> Ops.Max || Uop.vmin m >= 0 in
+                  let vmin_ok = op <> Ops.Max || Bound.le Bound.zero (Uop.vmin m) in
                   if (not m_refs_range) && (not m_is_range) && vmin_ok
                   then outside := m :: !outside
                   else inside := m :: !inside)
