@@ -400,17 +400,17 @@ let rule_long_defines =
       in
       Some (Uop.replace n ~dtype:narrow ~arg ~src ())
 
-(* Tagged INDEX that produces a long value (i.e. the dtype-narrowed
-   [Uop.index ~as_ptr:false ...]) -> stride by two and narrow to int32. *)
-let rule_long_index_tagged =
+(* Narrow the storage chain before deriving an INDEX's word dtype and
+   scaling its element offset. *)
+let rule_long_index_tagged rewrite =
   let open Upat in
   op ~name:"ix" Ops.Index => fun bs ->
     let n = bs $ "ix" in
     match Uop.dtype n, Uop.node_tag n with
     | dv, Some tag when is_long_dtype dv ->
         let off = if String.equal tag "1" then 1 else 0 in
-        let narrow = long_to_int_dtype dv in
-        Some (Uop.replace (reindex n off 2) ~dtype:narrow ())
+        let storage = rewrite (Uop.replace n ~node_tag:None ()) in
+        Some (reindex storage off 2)
     | _ -> None
 
 (* Untagged STORE of a long value -> two tagged stores (low, high). *)
@@ -427,12 +427,12 @@ let rule_long_store =
          | dv when is_long_dtype dv ->
              let store_lo =
                Uop.with_tag "0"
-                 (Uop.store ~dst:(reindex dst 0 2)
+                 (Uop.store ~dst:(Uop.with_tag "0" dst)
                     ~value:(Uop.with_tag "0" value) ?gate ())
              in
              let store_hi =
                Uop.with_tag "1"
-                 (Uop.store ~dst:(reindex dst 1 2)
+                 (Uop.store ~dst:(Uop.with_tag "1" dst)
                     ~value:(Uop.with_tag "1" value) ?gate ())
              in
              Some (Uop.group [ store_lo; store_hi ])
@@ -440,7 +440,7 @@ let rule_long_store =
 
 (* Tagged LOAD of a long value -> load the matching half of the widened
    buffer. *)
-let rule_long_load =
+let rule_long_load rewrite =
   let open Upat in
   op ~name:"ld" Ops.Load => fun bs ->
     let n = bs $ "ld" in
@@ -452,8 +452,9 @@ let rule_long_load =
               | None -> None
               | Some { src; alt; gate } ->
                let off = if tag = "1" then 1 else 0 in
-               let alt = Option.map (Uop.with_tag tag) alt in
-               Some (Uop.load ~src:(reindex src off 2) ?alt ?gate ()))
+               let storage = rewrite src in
+               let alt = Option.map (fun a -> rewrite (Uop.with_tag tag a)) alt in
+               Some (Uop.load ~src:(reindex storage off 2) ?alt ?gate ()))
          | None -> None)
     | _ -> None
 
@@ -755,12 +756,16 @@ let rule_long_alu =
                   | _ -> None))
         | _ -> None
 
-let pm_long_decomp : Upat.Pattern_matcher.t =
+let rec rewrite_long node =
+  Uop.graph_rewrite ~bottom_up:true
+    (Upat.Pattern_matcher.rewrite (Lazy.force long_matcher)) node
+
+and long_matcher = lazy (
   Upat.Pattern_matcher.make [
-    rule_long_index_tagged;
+    rule_long_index_tagged rewrite_long;
     rule_long_defines;
     rule_long_store;
-    rule_long_load;
+    rule_long_load rewrite_long;
     rule_long_const;
     rule_long_cast_long_to_long;
     rule_long_cast_to_long;
@@ -768,7 +773,9 @@ let pm_long_decomp : Upat.Pattern_matcher.t =
     rule_long_bitcast;
     rule_long_cmp;
     rule_long_alu;
-  ]
+  ])
+
+let pm_long_decomp = Lazy.force long_matcher
 
 type float_decomp_ctx = {
   from_dtype : Dtype.t;
@@ -1234,11 +1241,6 @@ let float_decomp_target renderer scalar =
   then Dtype.Float16
   else Dtype.Float32
 
-let safe_rewrite pm node =
-  try Upat.Pattern_matcher.rewrite pm node with
-  | Invalid_argument msg
-    when String.equal msg "Uop.index: expected pointer ptr" -> None
-
 let do_dtype_decomps (renderer : Renderer.t) (sink : Uop.t) : Uop.t =
   let ctx = { detected = Hashtbl.create 8 } in
   ignore (Uop.graph_rewrite ~name:"detect dtypes" (pm_dtype_decomps ctx) sink);
@@ -1248,7 +1250,7 @@ let do_dtype_decomps (renderer : Renderer.t) (sink : Uop.t) : Uop.t =
     |> List.filter (should_emulate renderer)
   in
   let rewrite pm name sink =
-    Uop.graph_rewrite ~name ~bottom_up:true (safe_rewrite pm) sink
+    Uop.graph_rewrite ~name ~bottom_up:true (Upat.Pattern_matcher.rewrite pm) sink
   in
   List.fold_left
     (fun sink dtype ->

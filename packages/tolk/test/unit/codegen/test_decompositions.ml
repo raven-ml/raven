@@ -257,7 +257,7 @@ let untagged_long_index_is_not_rewritten () =
   | None -> ()
   | Some _ -> is_true ~msg:"untagged INDEX should not rewrite" false
 
-let tagged_long_index_reindexes_before_define () =
+let tagged_long_index_narrows_storage () =
   let buf =
     Uop.param ~slot:0 ~dtype:Dtype.int64 ~shape:(Uop.const_int 8)
       ~addrspace:Dtype.Global ()
@@ -269,9 +269,11 @@ let tagged_long_index_reindexes_before_define () =
   with
   | Some rewritten ->
       (match Uop.as_index rewritten with
-       | Some { idxs = [ i ]; _ } ->
+       | Some { ptr; idxs = [ i ] } ->
            is_true ~msg:"tagged INDEX is narrowed and offset to high half"
              (Dtype.equal (Uop.dtype rewritten) Dtype.int32
+              && Dtype.equal (Uop.dtype ptr) Dtype.int32
+              && Uop.max_numel ptr = 16
               && (Bound.to_int (Uop.vmin i)) = 7 && (Bound.to_int (Uop.vmax i)) = 7)
        | _ -> is_true ~msg:"rewritten node remains INDEX" false)
   | None -> is_true ~msg:"tagged INDEX rule fired" false
@@ -849,8 +851,8 @@ let () =
             unbounded_long_param_keeps_unbounded_size;
           test "untagged INDEX is not rewritten"
             untagged_long_index_is_not_rewritten;
-          test "tagged INDEX reindexes before define"
-            tagged_long_index_reindexes_before_define;
+          test "tagged INDEX narrows storage before reindexing"
+            tagged_long_index_narrows_storage;
           test "tagged INDEX preserves multi-index tail"
             tagged_long_index_preserves_multi_index_tail;
           test "CAST float->long high half uses reciprocal"

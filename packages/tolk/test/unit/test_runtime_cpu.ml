@@ -232,11 +232,70 @@ let test_emulated_long_to_float64 () =
       equal ~msg:(Printf.sprintf "%s %Ld" (Dtype.to_string dtype) value)
         float_exact expected actual) cases
 
+let test_emulated_long_buffer_arithmetic () =
+  let device = cpu "emulated-long-buffer" in
+  let renderer = Renderer.make ~name:"emulation" ~device:"TEST"
+      ~has_local:false ~has_shared:false ~shared_max:0
+      ~supports_dtype:(fun dtype -> dtype <> Dtype.int64 && dtype <> Dtype.uint64)
+      ~render:(fun ?name:_ _ -> "") () in
+  let values = [| 0L; 4294967295L; Int64.max_int; Int64.min_int; -4294967296L |] in
+  let increment = 4294967299L and fallback = 8589934595L in
+  let sentinel = 0xdeadbeef11223344L in
+  let count = Array.length values in
+  List.iter (fun (dtype, guarded) ->
+      let constant value = U.const (Const.int64 dtype value) in
+      let param slot = U.param ~slot ~dtype ~shape:(U.const_int count)
+          ~addrspace:Dtype.Global () in
+      let dst = param 0 and src = param 1 in
+      let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Weak () in
+      let index ptr i = U.index ~ptr ~idxs:[ i ] () in
+      let load =
+        if guarded then
+          let offset = U.O.(range + int_ 1) in
+          let cond = U.O.(range < int_ (Stdlib.pred count)) in
+          let loaded = U.load ~src:(index src (U.valid ~src:offset ~cond)) () in
+          U.alu_ternary ~op:Ops.Where ~a:cond ~b:loaded ~c:(constant fallback)
+        else U.load ~src:(index src range) () in
+      let value = U.alu_binary ~op:Ops.Add ~lhs:load ~rhs:(constant increment) in
+      let offset = if guarded then
+          U.valid ~src:range ~cond:(U.O.ne range (U.const_int 0)) else range in
+      let store = U.store ~dst:(index dst offset) ~value () in
+      let sink = U.sink [ U.end_ ~value:store ~ranges:[ range ] ] in
+      let decomposed = Decomp_dtype.do_dtype_decomps renderer sink in
+      Spec.type_verify Spec.full_spec decomposed;
+      is_false ~msg:"buffer emulation leaves no 64-bit integer operations"
+        (List.exists (fun n -> U.dtype n = Dtype.int64 || U.dtype n = Dtype.uint64)
+           (U.toposort decomposed));
+      let program = Codegen_lower.lower (Device.renderer device) decomposed
+          |> Linearizer.linearize in
+      let spec = Device.compile_program device ~name:"emulated_long_buffer" program in
+      let create values =
+        let buffer = Device.create_buffer ~size:count ~dtype device in
+        Device.Buffer.ensure_allocated buffer;
+        let bytes = Bytes.create (8 * count) in
+        Array.iteri (fun i value -> Bytes.set_int64_le bytes (8 * i) value) values;
+        Device.Buffer.copyin buffer bytes;
+        buffer in
+      let input = create values and output = create (Array.make count sentinel) in
+      run_spec device spec [ output; input ];
+      let result = Device.Buffer.as_bytes output in
+      let expected = List.init count (fun i ->
+          if guarded && i = 0 then sentinel
+          else Int64.add increment
+              (if not guarded then values.(i)
+               else if i = count - 1 then fallback else values.(i + 1))) in
+      equal ~msg:(Printf.sprintf "%s guarded=%b" (Dtype.to_string dtype) guarded)
+        (list int64) expected
+        (List.init count (fun i -> Bytes.get_int64_le result (8 * i))))
+    [ Dtype.int64, false; Dtype.uint64, false;
+      Dtype.int64, true; Dtype.uint64, true ]
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "emulated long buffer arithmetic preserves both words" test_emulated_long_buffer_arithmetic;
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
           test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
