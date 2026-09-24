@@ -41,8 +41,8 @@ let global_i32_param_with_shape ?(slot = 0) shape =
 let i32 n = Uop.const (Const.int Dtype.int32 n)
 
 
-let stack srcs ~dtype =
-  Uop.replace (Uop.const_int 0) ~op:Ops.Stack ~dtype
+let stack srcs =
+  Uop.replace (Uop.const_int 0) ~op:Ops.Stack
     ~src:(Array.of_list srcs) ~arg:Uop.Arg.Empty ()
 
 let load_with_gate ~idx ~alt ~gate =
@@ -114,34 +114,36 @@ let buffer_rejects_alu_addrspace () =
 
 let empty_stack_void () =
   let s =
-    Uop.replace (Uop.const_int 0) ~op:Ops.Stack ~dtype:Dtype.void
+    Uop.replace (Uop.const_int 0) ~op:Ops.Stack
       ~src:[||] ~arg:Uop.Arg.Empty ()
   in
   is_true ~msg:"empty void stack accepted" (accepts Spec.shared_spec s)
 
 let stack_sources_match () =
-  let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.int32 in
+  let s = stack [ i32 1; i32 2 ] in
   is_true ~msg:"stack accepted" (accepts Spec.shared_spec s)
 
 let stack_derives_child_dtype () =
-  let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.float32 in
-  is_true ~msg:"stale dtype hints cannot override the sources"
-    (Dtype.equal (Uop.dtype s) Dtype.int32);
+  let s = stack [ i32 1; i32 2 ] in
+  let f n = Uop.const (Const.float Dtype.float32 n) in
+  let s = Uop.replace s ~src:[| f 1.; f 2. |] () in
+  is_true ~msg:"source replacement derives the new stack dtype"
+    (Dtype.equal (Uop.dtype s) Dtype.float32);
   Spec.type_verify Spec.shared_spec s
 
 (* A weak child is fine — lowering commits it later — but two committed dtypes
    must agree. *)
 let stack_rejects_mixed_dtype () =
   let f32 = Uop.const (Const.float Dtype.float32 2.0) in
-  let s = stack [ i32 1; f32 ] ~dtype:Dtype.int32 in
+  let s = stack [ i32 1; f32 ] in
   is_true ~msg:"stack children must share the stack dtype"
     (rejected Spec.shared_spec s);
-  let weak = stack [ i32 1; Uop.const_int 2 ] ~dtype:Dtype.int32 in
+  let weak = stack [ i32 1; Uop.const_int 2 ] in
   is_true ~msg:"a weak child is accepted" (accepts Spec.shared_spec weak)
 
 let stack_rejects_mixed_child_counts () =
-  let pair = stack [ i32 1; i32 2 ] ~dtype:Dtype.int32 in
-  let s = stack [ pair; i32 3 ] ~dtype:Dtype.int32 in
+  let pair = stack [ i32 1; i32 2 ] in
+  let s = stack [ pair; i32 3 ] in
   is_true ~msg:"mixed child vector counts rejected"
     (rejected Spec.shared_spec s)
 
@@ -190,11 +192,7 @@ let shift_count_dtypes () =
   is_true ~msg:"narrower shift count rejected"
     (rejected Spec.shared_spec
        (shl ~rhs:(Uop.const (Const.int Dtype.uint8 2))));
-  let widened =
-    Uop.replace
-      (shl ~rhs:(Uop.const (Const.int Dtype.uint32 2)))
-      ~dtype:Dtype.int64 ()
-  in
+  let widened = shl ~rhs:(Uop.const (Const.int Dtype.uint32 2)) in
   is_true ~msg:"shift result must match the shifted operand"
     (Dtype.equal (Uop.dtype widened) Dtype.int32)
 
@@ -293,25 +291,22 @@ let range_rejects_bad_layouts () =
   let missing_arg = Uop.replace r ~arg:Uop.Arg.Empty () in
   is_true ~msg:"Range requires Range_info"
     (rejected Spec.shared_spec missing_arg);
-  let mismatch = Uop.replace r ~dtype:Dtype.weakint () in
   is_true ~msg:"Range dtype must match size dtype"
-    (Dtype.equal (Uop.dtype mismatch) Dtype.int32)
+    (Dtype.equal (Uop.dtype r) Dtype.int32)
 
 let barrier_boundaries () =
   let barrier = Uop.barrier ~srcs:[ i32 1 ] () in
   is_true ~msg:"Barrier accepted in shared_spec"
     (accepts Spec.shared_spec barrier);
-  let bad_barrier = Uop.replace barrier ~dtype:Dtype.int32 () in
   is_true ~msg:"Barrier must be void"
-    (Dtype.equal (Uop.dtype bad_barrier) Dtype.void)
+    (Dtype.equal (Uop.dtype barrier) Dtype.void)
 
 let group_after_bad_layouts () =
   let grouped =
     Uop.group [ Uop.noop ~dtype:Dtype.void (); Uop.noop ~dtype:Dtype.void () ]
   in
-  let bad_group_dtype = Uop.replace grouped ~dtype:Dtype.int32 () in
   is_true ~msg:"Group must be void"
-    (Dtype.equal (Uop.dtype bad_group_dtype) Dtype.void);
+    (Dtype.equal (Uop.dtype grouped) Dtype.void);
   let bad_group_src =
     Uop.replace grouped ~src:[| Uop.barrier () |] ()
   in
@@ -360,9 +355,8 @@ let copy_accepts_lowered_range_sources () =
 let copy_rejects_bad_device_or_dtype () =
   let src = i32 1 in
   let copy = Uop.copy ~src ~device:(Uop.Single "CPU") () in
-  let bad_dtype = Uop.replace copy ~dtype:Dtype.float32 () in
   is_true ~msg:"Copy result dtype must match source"
-    (Dtype.equal (Uop.dtype bad_dtype) Dtype.int32);
+    (Dtype.equal (Uop.dtype copy) Dtype.int32);
   let bad_index = Uop.copy ~src ~device:(Uop.Index 0) () in
   is_true ~msg:"Copy rejects positional device selector"
     (rejected Spec.tensor_spec bad_index);
@@ -469,9 +463,8 @@ let allreduce_rejects_bad_device_or_dtype () =
   let red =
     Uop.allreduce ~src ~device:(Uop.Multi [ "CPU"; "GPU" ]) ~op:Ops.Add
   in
-  let bad_dtype = Uop.replace red ~dtype:Dtype.float32 () in
   is_true ~msg:"Allreduce result dtype must match source"
-    (Dtype.equal (Uop.dtype bad_dtype) Dtype.int32);
+    (Dtype.equal (Uop.dtype red) Dtype.int32);
   let bad_single = Uop.allreduce ~src ~device:(Uop.Single "CPU") ~op:Ops.Add in
   is_true ~msg:"Allreduce requires a multi-device group"
     (rejected Spec.tensor_spec bad_single);
@@ -498,9 +491,8 @@ let multi_device_selection_layouts () =
   let negative = Uop.mselect ~src:multi ~index:(-1) in
   is_true ~msg:"Mselect rejects negative tuple-device index"
     (rejected Spec.tensor_spec negative);
-  let dtype_mismatch = Uop.replace selected ~dtype:Dtype.float32 () in
   is_true ~msg:"Mselect result dtype must match source"
-    (Dtype.equal (Uop.dtype dtype_mismatch) Dtype.int32);
+    (Dtype.equal (Uop.dtype selected) Dtype.int32);
   let single =
     Uop.buffer ~slot:1 ~dtype:Dtype.int32 ~device:(Uop.Single "CPU") ()
   in
@@ -543,9 +535,8 @@ let multi_device_stack_layouts () =
   let bad_multi = Uop.mstack [ Uop.multi ~src:multi_src ~axis:0 ] in
   is_true ~msg:"Mstack rejects already-multi sources"
     (rejected Spec.tensor_spec bad_multi);
-  let dtype_mismatch = Uop.replace stacked ~dtype:Dtype.float32 () in
   is_true ~msg:"Mstack result dtype must match sources"
-    (rejected Spec.tensor_spec dtype_mismatch)
+    (Dtype.equal (Uop.dtype stacked) Dtype.int32)
 
 let multi_device_multi_layouts () =
   let shape = Uop.stack [ Uop.const_int 4; Uop.const_int 4 ] in
@@ -562,9 +553,8 @@ let multi_device_multi_layouts () =
   let out_of_range = Uop.multi ~src:sharded ~axis:2 in
   is_true ~msg:"Multi rejects out-of-range sharding axis"
     (rejected Spec.tensor_spec out_of_range);
-  let dtype_mismatch = Uop.replace ok ~dtype:Dtype.float32 () in
   is_true ~msg:"Multi result dtype must match source"
-    (rejected Spec.tensor_spec dtype_mismatch);
+    (Dtype.equal (Uop.dtype ok) Dtype.int32);
   let unplaced = Uop.buffer ~slot:1 ~dtype:Dtype.int32 ~shape () in
   let no_device = Uop.multi ~src:unplaced ~axis:0 in
   is_true ~msg:"Multi rejects sources without multi-device placement"
@@ -611,7 +601,7 @@ let bind_accepts_variable_const () =
 
 let bind_rejects_nonconstant_value () =
   let var = Uop.variable ~name:"shape" ~min_val:0 ~max_val:8 () in
-  let value = stack [ Uop.const_int 1; Uop.const_int 2 ] ~dtype:Dtype.weakint in
+  let value = stack [ Uop.const_int 1; Uop.const_int 2 ] in
   raises (Invalid_argument "Uop.bind: expected a constant value")
     (fun () -> ignore (Uop.bind ~var ~value))
 
@@ -1063,7 +1053,6 @@ let program_rejects_bad_if_layouts () =
   let extra_src =
     Uop.replace valid ~src:[| Uop.const_bool true; idx; idx |] ()
   in
-  is_true (Uop.equal valid (Uop.replace valid ~dtype:Dtype.int32 ()));
   List.iter
     (fun u ->
       is_true ~msg:"malformed If layout rejected by program_spec"
@@ -1103,7 +1092,6 @@ let program_rejects_bad_endif_layouts () =
     Uop.replace endif ~src:[| Uop.const_bool true |] ()
   in
   let extra_src = Uop.replace endif ~src:[| if_; if_ |] () in
-  is_true (Uop.equal endif (Uop.replace endif ~dtype:Dtype.int32 ()));
   List.iter
     (fun u ->
       is_true ~msg:"malformed Endif layout rejected by program_spec"
@@ -1170,8 +1158,6 @@ let typed_host_call_contract () =
       ~arg:(Uop.Arg.Call_info { info with dtype = Dtype.float32 }) () in
   is_true ~msg:"metadata replacement derives the new return type"
     (Dtype.equal (Uop.dtype changed) Dtype.float32);
-  is_true ~msg:"an explicit stale dtype cannot override CallInfo"
-    (Uop.equal call (Uop.replace call ~dtype:Dtype.void ()));
   is_true ~msg:"serialized calls retain the declared return type"
     (Uop.equal changed (Uop.import (Uop.export changed)))
 

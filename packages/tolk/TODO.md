@@ -14,7 +14,6 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 1. Complete the CPU path through the new protocol
 
-- Remove remaining explicit dtype overrides with the legacy IR.
 - Port CPU scheduling and realization onto that graph: explicit allocation and
   call arguments, RAW/WAR dependencies for overlapping assignments, self-copy,
   nested calls and shared aliases, and cycle rejection. Centralize shape,

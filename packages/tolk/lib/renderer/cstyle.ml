@@ -974,7 +974,6 @@ let no_vectorized_alu (u : U.t) : U.t option =
   let n = max_numel u in
   if n <= 1 then None
   else
-    let scalar_dt = U.dtype u in
     let lanes =
       List.init n (fun i ->
         let scalar_srcs =
@@ -984,7 +983,7 @@ let no_vectorized_alu (u : U.t) : U.t option =
                    U.index ~ptr:s ~idxs:[ U.const_int i ] ()
                  else s)
         in
-        U.replace u ~src:(Array.of_list scalar_srcs) ~dtype:scalar_dt ())
+        U.replace u ~src:(Array.of_list scalar_srcs) ())
     in
     Some (U.stack ~dtype:(U.dtype u) lanes)
 
@@ -1031,7 +1030,7 @@ let create_non_native_float_pats ?(casting = true)
         |> List.map (fun c -> if is_nn (U.dtype c) then cast_f32 c else c)
       in
       let promoted =
-        U.replace node ~src:(Array.of_list new_children) ~dtype:f32 ()
+        U.replace node ~src:(Array.of_list new_children) ()
       in
       Some (U.cast ~src:promoted ~dtype:dt)
   | o when Ops.Group.is_binary o && Dtype.is_bool dt ->
@@ -1910,7 +1909,7 @@ let metal_extra_matcher (node : U.t) : U.t option =
         |> List.map (fun c -> U.cast ~src:c ~dtype:f32)
       in
       let promoted =
-        U.replace node ~src:(Array.of_list new_children) ~dtype:f32 ()
+        U.replace node ~src:(Array.of_list new_children) ()
       in
       Some (U.cast ~src:promoted ~dtype:(U.dtype node))
   | _ -> (

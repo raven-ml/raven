@@ -489,7 +489,7 @@ let coalesce_load_group ren entries offsets =
       in
       let template = List.hd (entries_at entries group_offset) in
       let load =
-        U.replace template.node ~src:[| idx |] ~dtype:(U.dtype template.node) ()
+        U.replace template.node ~src:[| idx |] ()
       in
       let replacements =
         List.mapi
@@ -499,8 +499,7 @@ let coalesce_load_group ren entries offsets =
                    let value =
                      if width > 1 then
                        U.replace entry.index
-                         ~src:[| load; U.const_int lane |]
-                         ~dtype:(U.dtype entry.node) ()
+                         ~src:[| load; U.const_int lane |] ()
                      else load
                    in
                    (entry.node, value)))

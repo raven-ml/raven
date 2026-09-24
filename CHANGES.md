@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Remove `Uop.replace ~dtype`: result types follow source edges or typed
+  metadata. Cast and storage rewrites must update their payload explicitly.
+
 - Execution now requires graph-owned storage or an explicit buffer binding;
   it no longer allocates unplaced placeholders on a default device.
   `Realize.Buffers.create ()` therefore takes no device argument.

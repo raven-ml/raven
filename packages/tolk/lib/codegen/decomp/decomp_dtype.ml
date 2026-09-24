@@ -1007,7 +1007,7 @@ and f2f_clamp ?(sat = true) val_ dt =
 let storage_load rewrite x =
   let src = Array.copy (Uop.src x) in
   src.(0) <- rewrite src.(0);
-  Uop.replace x ~src ~dtype:(Uop.dtype src.(0)) ()
+  Uop.replace x ~src ()
 
 let f2f_load rewrite x fr to_ =
   let n = Uop.max_numel x in
@@ -1065,7 +1065,7 @@ let rule_float_defines_index_shrink rewrite ctx =
             src.(0) <- rewrite src.(0);
             src
           else src in
-        Some (Uop.replace x ~dtype:base ~src ~arg ~node_tag:tag ())
+        Some (Uop.replace x ~src ~arg ~node_tag:tag ())
 
 let rule_float_load rewrite ctx =
   let open Upat in
@@ -1160,7 +1160,7 @@ let rule_float_all ctx =
              else child)
           (Uop.src x)
       in
-      Some (Uop.replace x ~dtype:to_dt ~src ())
+      Some (Uop.replace x ~src ())
     else None
 
 let rule_float_store_bitcast ctx =
@@ -1175,7 +1175,7 @@ let rule_float_store_bitcast ctx =
         Some
           (Uop.replace st
              ~src:[| dst;
-                     Uop.replace value ~dtype:(f2f_dt ctx.from_dtype) () |]
+                     Uop.replace value ~arg:(Uop.Arg.Dtype (f2f_dt ctx.from_dtype)) () |]
              ())
     | Some _ | None -> None
 

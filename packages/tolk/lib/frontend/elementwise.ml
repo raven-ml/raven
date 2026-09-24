@@ -30,7 +30,7 @@ let promote_weak_const t dtype =
         else
           let src = Array.copy (Uop.src u) in
           src.(0) <- remint src.(0);
-          Uop.replace u ~src ~dtype ()
+          Uop.replace u ~src ()
       in
       Some (if D.equal (T.dtype t) dtype then t else T.of_uop (remint node))
   | _ -> None

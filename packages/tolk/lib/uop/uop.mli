@@ -1182,16 +1182,15 @@ val custom_function : name:string -> srcs:t list -> t
     and src layout centralised. *)
 
 val replace :
-  t -> ?op:Ops.t -> ?src:t array -> ?arg:arg -> ?dtype:Dtype.t ->
+  t -> ?op:Ops.t -> ?src:t array -> ?arg:arg ->
   ?node_tag:string option -> unit -> t
-(** [replace u ?op ?src ?arg ?dtype ?node_tag ()] rebuilds [u] with
+(** [replace u ?op ?src ?arg ?node_tag ()] rebuilds [u] with
     the supplied fields overridden and the rest inherited from [u].
     Pass [~node_tag:None] to clear the diagnostic tag; omit it to
     preserve it. The result is hash-consed, so it is physically equal
     to [u] when every override matches the existing field. Result dtypes are
-    derived from the new sources and argument. [dtype] updates the payload
-    for casts, storage and custom instructions; it cannot override a dtype
-    derived from sources or {!call_info}.
+    derived from the new sources and argument. To change a cast, storage or
+    custom instruction's dtype, replace its typed payload explicitly.
 
     Bypasses the per-op validation performed by the dedicated smart
     constructors; callers are responsible for preserving the op's

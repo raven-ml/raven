@@ -375,8 +375,8 @@ let ptr_buffer slot =
 
 (* [U.index] folds a constant index into a stack at construction, so build the
    raw [Index] node directly to leave the fold for the pattern matcher. *)
-let raw_index_stack_const ~ptr ~idx ~dtype =
-  U.replace ptr ~op:Ops.Index ~src:[| ptr; idx |] ~arg:U.Arg.Empty ~dtype ()
+let raw_index_stack_const ~ptr ~idx =
+  U.replace ptr ~op:Ops.Index ~src:[| ptr; idx |] ~arg:U.Arg.Empty ()
 
 (* Symbolic folding understands bare and committed literals. *)
 let sym_pm = Symbolic.sym
@@ -745,14 +745,14 @@ let index_pushing_tests =
           let a = ptr_buffer 10 and b = ptr_buffer 11 and c = ptr_buffer 12 in
           let stk = U.stack [ a; b; c ] in
           let index =
-            raw_index_stack_const ~ptr:stk ~idx:(idx 1) ~dtype:(U.dtype b)
+            raw_index_stack_const ~ptr:stk ~idx:(idx 1)
           in
           fires sym index b);
       test "INDEX(STACK(a, b), out-of-bounds const) does not fold" (fun () ->
           let a = ptr_buffer 13 and b = ptr_buffer 14 in
           let stk = U.stack [ a; b ] in
           let index =
-            raw_index_stack_const ~ptr:stk ~idx:(idx 2) ~dtype:(U.dtype a)
+            raw_index_stack_const ~ptr:stk ~idx:(idx 2)
           in
           match sym index with
           | None -> ()
@@ -1352,17 +1352,17 @@ let unpack_u64_tests =
 
 let mop_tests =
   let mop n = Upat.Pattern_matcher.rewrite Movement.mop_cleanup n in
-  let raw_index ~ptr ~idxs ~dtype =
+  let raw_index ~ptr ~idxs =
     U.replace ptr ~op:Ops.Index
       ~src:(Array.of_list (ptr :: idxs))
-      ~arg:U.Arg.Empty ~dtype ()
+      ~arg:U.Arg.Empty ()
   in
   group "mop_cleanup"
     [
       test "INDEX on INDEX chains scalar coordinates" (fun () ->
           let buf = ptr_buffer 0 in
-          let inner = raw_index ~ptr:buf ~idxs:[ idx 3 ] ~dtype:D.int32 in
-          let outer = raw_index ~ptr:inner ~idxs:[ idx 2 ] ~dtype:D.int32 in
+          let inner = raw_index ~ptr:buf ~idxs:[ idx 3 ] in
+          let outer = raw_index ~ptr:inner ~idxs:[ idx 2 ] in
           match mop outer with
           | Some r ->
               check_op r Ops.Index;

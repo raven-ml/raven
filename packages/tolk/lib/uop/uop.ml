@@ -1232,21 +1232,14 @@ let custom_function ~name ~srcs =
 
 (* Replace / with_tag *)
 
-let replace u ?op:op_opt ?src:src_opt ?arg:arg_opt ?dtype:dtype_opt
+let replace u ?op:op_opt ?src:src_opt ?arg:arg_opt
     ?node_tag:node_tag_opt () =
   let n : node = u.Hashcons.node in
   let op = Option.value op_opt ~default:n.op in
   let src = Option.value src_opt ~default:n.src in
   let arg = Option.value arg_opt ~default:n.arg in
-  let dtype = Option.value dtype_opt ~default:n.dtype in
-  let arg = match dtype_opt, op, arg with
-    | Some dtype, (Ops.Cast | Ops.Bitcast), _ -> Arg.Dtype dtype
-    | Some dtype, (Ops.Custom | Ops.Customi | Ops.Ins), Arg.Typed (text, _) -> Arg.Typed (text, dtype)
-    | Some dtype, (Ops.Param | Ops.Buffer | Ops.Alloc), Arg.Param_arg p -> Arg.Param_arg { p with dtype }
-    | _ -> arg
-  in
   let node_tag = Option.value node_tag_opt ~default:n.node_tag in
-  intern_node { op; src; arg; dtype; node_tag }
+  intern_node { op; src; arg; dtype = Dtype.void; node_tag }
 
 let with_tag s u =
   intern_node { u.Hashcons.node with node_tag = Option.Some s }
