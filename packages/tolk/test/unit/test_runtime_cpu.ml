@@ -242,8 +242,13 @@ let test_emulated_long_buffer_arithmetic () =
   let increment = 4294967299L and fallback = 8589934595L in
   let sentinel = 0xdeadbeef11223344L in
   let count = Array.length values in
-  List.iter (fun (dtype, guarded) ->
-      let constant value = U.const (Const.int64 dtype value) in
+  List.iter (fun (dtype, guarded, literal) ->
+      let constant value =
+        let weak = U.const (Const.int64 Dtype.weakint value) in
+        match literal with
+        | `Weak -> weak
+        | `Cast -> U.cast ~src:weak ~dtype
+        | `Typed -> U.const (Const.int64 dtype value) in
       let param slot = U.param ~slot ~dtype ~shape:(U.const_int count)
           ~addrspace:Dtype.Global () in
       let dst = param 0 and src = param 1 in
@@ -284,11 +289,16 @@ let test_emulated_long_buffer_arithmetic () =
           else Int64.add increment
               (if not guarded then values.(i)
                else if i = count - 1 then fallback else values.(i + 1))) in
-      equal ~msg:(Printf.sprintf "%s guarded=%b" (Dtype.to_string dtype) guarded)
+      let literal_name = match literal with
+        | `Weak -> "weak" | `Cast -> "cast" | `Typed -> "typed" in
+      equal ~msg:(Printf.sprintf "%s guarded=%b literal=%s"
+                    (Dtype.to_string dtype) guarded literal_name)
         (list int64) expected
         (List.init count (fun i -> Bytes.get_int64_le result (8 * i))))
-    [ Dtype.int64, false; Dtype.uint64, false;
-      Dtype.int64, true; Dtype.uint64, true ]
+    (List.concat_map (fun literal ->
+         [ Dtype.int64, false, literal; Dtype.uint64, false, literal;
+           Dtype.int64, true, literal; Dtype.uint64, true, literal ])
+       [ `Typed; `Weak; `Cast ])
 
 let main () =
   run "Cpu_runtime"

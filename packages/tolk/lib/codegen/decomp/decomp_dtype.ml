@@ -486,6 +486,20 @@ let rule_long_const =
          | _ -> None)
     | _ -> None
 
+(* A constant cast retains its exact value until the word is selected. The
+   generic integer cast would sign-extend its low word and lose higher bits. *)
+let rule_long_cast_const =
+  let open Upat in
+  cast ~name:"c" (op ~name:"v" Ops.Const) => fun bs ->
+    let n = bs $ "c" and v = bs $ "v" in
+    match Uop.node_tag n, Uop.arg v with
+    | Some tag, Uop.Arg.Value value when is_long_dtype (Uop.dtype n) ->
+        (match Const.view value with
+         | Const.Int bits ->
+             Some (Uop.with_tag tag (Uop.const (Const.integer (Uop.dtype n) bits)))
+         | _ -> None)
+    | _ -> None
+
 (* CAST between two long dtypes (int64 <-> uint64): equivalent to a
    bitcast of each narrow half. Selected by the CAST node's tag. *)
 let rule_long_cast_long_to_long =
@@ -761,19 +775,20 @@ let rec rewrite_long node =
     (Upat.Pattern_matcher.rewrite (Lazy.force long_matcher)) node
 
 and long_matcher = lazy (
-  Upat.Pattern_matcher.make [
+  Upat.Pattern_matcher.(Weak.pm_commit_weak ++ make [
     rule_long_index_tagged rewrite_long;
     rule_long_defines;
     rule_long_store;
     rule_long_load rewrite_long;
     rule_long_const;
+    rule_long_cast_const;
     rule_long_cast_long_to_long;
     rule_long_cast_to_long;
     rule_long_cast_from_long;
     rule_long_bitcast;
     rule_long_cmp;
     rule_long_alu;
-  ])
+  ]))
 
 let pm_long_decomp = Lazy.force long_matcher
 

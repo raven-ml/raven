@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Emulated `int64` and `uint64` arithmetic accepts weak integer literals and
+  preserves their high words through explicit casts, including masked-load
+  fallback values.
+
 - Emulated `int64` and `uint64` buffer accesses use both 32-bit storage words
   consistently. Masked loads and stores preserve their bounds and fallback
   values instead of leaving unsupported 64-bit accesses in the kernel.
