@@ -24,23 +24,23 @@
    alone to split a block's error between its attention and its experts and to
    give the router the input the block gives it.
 
-   Errors of a stream are in units of the reference stream's root mean square
-   at that position: the largest difference over the first features, the
-   largest difference over the projections divided by the square root of the
-   width, and the differences of the three statistics.
+   Errors of a stream are in units of the reference stream's root mean square at
+   that position: the largest difference over the first features, the largest
+   difference over the projections divided by the square root of the width, and
+   the differences of the three statistics.
 
-   Run eagerly, the block's dense form dequantises the 32 experts of a projection
-   in one expression whose float32 temporaries are all alive at once: 19 GB at
-   the 20b widths, whatever the number of tokens. [--experts-by-one] dequantises
-   a block's experts one expert at a time with the same [Mxfp4.dequant] and
-   gives the block the same values as float weights, in the layout the packed
-   path gives its product. Every check prints the same error either way, and
-   the peak of a whole run is 9.3 GB, the float32 head included.
+   Run eagerly, the block's dense form dequantises the 32 experts of a
+   projection in one expression whose float32 temporaries are all alive at once:
+   19 GB at the 20b widths, whatever the number of tokens. [--experts-by-one]
+   dequantises a block's experts one expert at a time with the same
+   [Mxfp4.dequant] and gives the block the same values as float weights, in the
+   layout the packed path gives its product. Every check prints the same error
+   either way, and the peak of a whole run is 9.3 GB, the float32 head included.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
    [--tol X] [--experts-by-one]. With [--blocks] only the first [N] blocks run
-   and the head is skipped. Not part of the test suite: it needs the download, 13.8 GB for
-   gpt-oss-20b. *)
+   and the head is skipped. Not part of the test suite: it needs the download,
+   13.8 GB for gpt-oss-20b. *)
 
 open Kaun
 
@@ -179,8 +179,9 @@ let routing ~k ~margin recorded experts =
     end
   done;
   ( !sets = 0,
-    Printf.sprintf "experts: %d of %d tokens differ as sets, %d in order, margin %.1e"
-      !sets tokens (!orders - !sets) margin )
+    Printf.sprintf
+      "experts: %d of %d tokens differ as sets, %d in order, margin %.1e" !sets
+      tokens (!orders - !sets) margin )
 
 (* A packed projection as float weights, one expert at a time: the values and
    the transposed layout of [Moe]'s dense form. *)
@@ -224,7 +225,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
       Gc.full_major ();
       { b with moe = { moe with gate_up; down = by_one dt moe.down } }
     in
-    let blocks = if experts_by_one then List.map unpack m.blocks else m.blocks in
+    let blocks =
+      if experts_by_one then List.map unpack m.blocks else m.blocks
+    in
     { m with tok = { Embedding.table = x }; blocks }
   in
   let prompt (name, recorded) =
@@ -237,7 +240,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
     let ids_t =
       Nx.create Nx.int32 [| 1; tokens |] (Array.map Int32.of_int ids)
     in
-    let x = ref (cast (Nx.reshape [| tokens; dim |] (Embedding.apply p.tok ids_t))) in
+    let x =
+      ref (cast (Nx.reshape [| tokens; dim |] (Embedding.apply p.tok ids_t)))
+    in
     let e =
       summaries_error ~signs ~dim ~positions (mem "embedded" recorded) (host !x)
     in
@@ -294,7 +299,8 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
           check
             (label (block ^ " after experts"))
             (e < tol)
-            (Printf.sprintf "  (%.1e, %.0f s)" e (Unix.gettimeofday () -. started));
+            (Printf.sprintf "  (%.1e, %.0f s)" e
+               (Unix.gettimeofday () -. started));
           x := y;
           Gc.full_major ()
         end)
@@ -316,7 +322,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
         Float.max
           (summaries_error ~signs ~dim ~positions (mem "normed" recorded)
              normed_host)
-          (row_error ~dim (floats (mem "normed_last" recorded)) normed_host last)
+          (row_error ~dim
+             (floats (mem "normed_last" recorded))
+             normed_host last)
       in
       check (label "final norm") (e < tol) (error e);
       let logits = host (Gpt_oss.logits cfg m !x) in
@@ -329,7 +337,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
           let scale = worst_of (Array.map Float.abs values) in
           Array.iteri
             (fun j id ->
-              let d = Float.abs (logits.((t * vocab) + id) -. values.(j)) /. scale in
+              let d =
+                Float.abs (logits.((t * vocab) + id) -. values.(j)) /. scale
+              in
               if not (d <= !worst) then worst := d)
             ids)
         (List.combine top_ids top_values);
