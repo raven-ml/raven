@@ -202,6 +202,7 @@ let matmul ?dtype a b = dot ?dtype a b
    the select below rather than by an explicit cast here. *)
 let scalar_tensor = function
   | T.Sint n -> T.i n
+  | T.Sint64 n -> T.of_uop (Uop.const (Const.int64 D.weakint n))
   | T.Sfloat x -> T.f x
   | T.Sbool v -> T.b v
 

@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix compiled `int64` and `uint64` constants beyond 2^62: `Rune.jit` read
+  them through OCaml's 63-bit `int`, so `Int64.min_int` became 0 and
+  `0x4000000000000000L` became `-2^62`. They now keep every bit.
 - Fix reading a strided view of a placed value (`Nx.to_array`, `Nx.copy`, or
   an eager operation on `Nx.transpose` of it): the elements were copied
   through OCaml values, which quieted signalling NaNs. They are now copied as

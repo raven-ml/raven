@@ -87,9 +87,11 @@ val resolve_dim : ?extra:bool -> t -> int -> int
 (** {1 Scalars} *)
 
 (** A Python-style scalar literal, used as a fill or operand value. Its dtype,
-    when not given explicitly, follows the variant: {!Sint} is the default
-    integer type, {!Sfloat} the default float, {!Sbool} boolean. *)
-type scalar = Sint of int | Sfloat of float | Sbool of bool
+    when not given explicitly, follows the variant: {!Sint} and {!Sint64} are
+    the default integer type, {!Sfloat} the default float, {!Sbool} boolean.
+    {!Sint64} carries the 64-bit integers an [int] cannot, with every bit: for
+    [uint64] it is read as a bit pattern, as {!Tolk_uop.Const.int64} does. *)
+type scalar = Sint of int | Sint64 of int64 | Sfloat of float | Sbool of bool
 
 val scalar_const : Tolk_uop.Dtype.t -> scalar -> Tolk_uop.Const.t
 (** [scalar_const dt s] is the constant value [s] coerced to dtype [dt]. *)

@@ -107,18 +107,29 @@ let resolve_dim ?(extra = false) t dim =
          hi);
   if dim < 0 then dim + total else dim
 
-type scalar = Sint of int | Sfloat of float | Sbool of bool
+type scalar = Sint of int | Sint64 of int64 | Sfloat of float | Sbool of bool
 
 let scalar_const dt s =
   if D.is_bool dt then
     Const.bool
-      (match s with Sbool v -> v | Sint n -> n <> 0 | Sfloat x -> x <> 0.)
+      (match s with
+       | Sbool v -> v
+       | Sint n -> n <> 0
+       | Sint64 n -> n <> 0L
+       | Sfloat x -> x <> 0.)
   else if D.is_float dt then
     Const.float dt
-      (match s with Sfloat x -> x | Sint n -> float_of_int n | Sbool v -> if v then 1. else 0.)
+      (match s with
+       | Sfloat x -> x
+       | Sint n -> float_of_int n
+       | Sint64 n -> Int64.to_float n
+       | Sbool v -> if v then 1. else 0.)
   else
-    Const.int dt
-      (match s with Sint n -> n | Sfloat x -> int_of_float x | Sbool v -> if v then 1 else 0)
+    match s with
+    | Sint64 n -> Const.int64 dt n
+    | Sint n -> Const.int dt n
+    | Sfloat x -> Const.int dt (int_of_float x)
+    | Sbool v -> Const.int dt (if v then 1 else 0)
 
 (* A scalar literal has no committed width: it enters the graph weak and takes
    one from the operand it meets, so a literal never widens its peer. *)

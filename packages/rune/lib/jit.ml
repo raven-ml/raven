@@ -98,8 +98,8 @@ let scalar_of : type a b. (a, b) ND.t -> a -> F.Tensor.scalar =
   | ND.UInt4 -> F.Tensor.Sint v
   | ND.Int32 -> F.Tensor.Sint (Int32.to_int v)
   | ND.UInt32 -> F.Tensor.Sint (Int32.to_int v)
-  | ND.Int64 -> F.Tensor.Sint (Int64.to_int v)
-  | ND.UInt64 -> F.Tensor.Sint (Int64.to_int v)
+  | ND.Int64 -> F.Tensor.Sint64 v
+  | ND.UInt64 -> F.Tensor.Sint64 v
   | ND.Bool -> F.Tensor.Sbool v
   | ND.Complex64 -> unsupported "a complex tensor"
   | ND.Complex128 -> unsupported "a complex tensor"

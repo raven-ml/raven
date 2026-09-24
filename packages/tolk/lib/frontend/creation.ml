@@ -14,7 +14,7 @@ module D = Dtype
 module T = Tensor
 
 let dtype_of_fill = function
-  | T.Sint _ -> D.weakint
+  | T.Sint _ | T.Sint64 _ -> D.weakint
   | T.Sfloat _ -> D.weakfloat
   | T.Sbool _ -> D.bool
 

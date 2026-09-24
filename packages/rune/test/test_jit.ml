@@ -15,6 +15,36 @@ let quadratic p = Nx.add (Nx.sum (Nx.mul p.w p.w)) (Nx.mul_s (Nx.sum p.b) 3.0)
 
 (* Basics *)
 
+(* A 64-bit constant keeps every bit under jit, though OCaml's int holds 63: the
+   sign bit, the bit below it, and a uint64 above 2^63. *)
+let test_64_bit_constants () =
+  let check (type b) name (x : (int64, b) Nx.t) constants =
+    List.iter
+      (fun c ->
+        let f x = Nx.bitwise_xor x (Nx.full_like x c) in
+        equal
+          ~msg:(Printf.sprintf "%s %Lx" name c)
+          (array int64)
+          (Nx.to_array (f x))
+          (Nx.to_array (Rune.jit' f x)))
+      constants
+  in
+  let bits = [ Int64.min_int; Int64.max_int; 0x4000000000000000L; -1L ] in
+  check "int64" (Nx.create Nx.int64 [| 3 |] [| 1L; 2L; -3L |]) bits;
+  check "uint64"
+    (Nx.create Nx.uint64 [| 2 |] [| 1L; 0xC000000000000000L |])
+    (0x8000000000000001L :: bits);
+  let u32 = Nx.create Nx.uint32 [| 2 |] [| 1l; 0xC0000000l |] in
+  List.iter
+    (fun c ->
+      let f x = Nx.bitwise_xor x (Nx.full_like x c) in
+      equal
+        ~msg:(Printf.sprintf "uint32 %lx" c)
+        (array int32)
+        (Nx.to_array (f u32))
+        (Nx.to_array (Rune.jit' f u32)))
+    [ Int32.min_int; -1l; 0x80000001l ]
+
 let test_elementwise_matches_eager () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let g = Rune.jit' f in
@@ -3210,6 +3240,7 @@ let tests =
   [
     group "jit basics"
       [
+        test "64-bit constants keep every bit" test_64_bit_constants;
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a compiled float8 bitcast is refused"
