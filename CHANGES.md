@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Workgroup reductions use `Local` and `Warp` axes, with shared-memory staging
+  derived from the contracted ranges. Remove `Axis_type.Group_reduce` and
+  invalidate older compiled-program exports and caches.
+
 - `Device.compile_program` groups buffer formals before scalar formals when
   compiling hand-built kernels, so interleaved declarations agree with the
   binary signature and cannot shift GPU argument values.

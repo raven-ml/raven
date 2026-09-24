@@ -103,20 +103,24 @@ val ranges_of : t -> Tolk_uop.Axis_type.t list -> Tolk_uop.Uop.t list
 val upcastable_dims : t -> int list
 (** Global/Local/Weak axes with constant size > 1. *)
 
+val reduce_axes : t -> int list
+(** [reduce_axes t] are the indices of ranges contracted by REDUCE nodes in
+    [t], independently of their hardware role. *)
+
 val unrollable_dims : t -> int list
-(** Group_reduce/Reduce axes with constant size > 1. *)
+(** [unrollable_dims t] are reduced Local/Reduce axes with constant size > 1. *)
 
 val upcast_size : t -> int
 (** Product of Upcast and Unroll shape sizes. *)
 
 val output_shape : t -> Tolk_uop.Uop.t list
-(** {!full_shape} with reduce/unroll/group axes replaced by [1]. *)
+(** [output_shape t] is {!full_shape} with contracted axes replaced by [1]. *)
 
 val upcasted : t -> int
 (** Number of Upcast and Unroll axes. *)
 
 val group_for_reduces : t -> int
-(** Number of Group_reduce axes. *)
+(** [group_for_reduces t] is the number of contracted Warp/Local axes. *)
 
 (** {1:queries Queries} *)
 

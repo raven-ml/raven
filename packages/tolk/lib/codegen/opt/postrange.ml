@@ -232,7 +232,6 @@ let axis_color : Axis_type.t -> string = function
   | Warp -> "CYAN"
   | Weak | Loop -> "WHITE"
   | Upcast -> "yellow"
-  | Group_reduce -> "RED"
   | Reduce -> "red"
   | Unroll -> "magenta"
   | Placeholder -> "white"
@@ -397,25 +396,37 @@ let upcast_size t =
 let upcastable_dims t =
   const_dims t [ Axis_type.Global; Axis_type.Local; Axis_type.Weak ]
 
+let reduce_axes t =
+  let reduced = U.Ref_tbl.create 16 in
+  List.iter (fun u -> match U.as_reduce u with
+      | None -> ()
+      | Some v -> List.iter (fun r ->
+          List.iter (fun r -> U.Ref_tbl.replace reduced r ()) (U.ranges r)) v.ranges)
+    (U.backward_slice t.ast);
+  List.mapi (fun i r -> if U.Ref_tbl.mem reduced r then Some i else None) (rngs t)
+  |> List.filter_map Fun.id
+
 let unrollable_dims t =
-  const_dims t [ Axis_type.Group_reduce; Axis_type.Reduce ]
+  let reduced = reduce_axes t in
+  List.filter (fun i -> List.mem i reduced)
+    (const_dims t [ Axis_type.Local; Axis_type.Reduce ])
 
 let bufs t =
   List.rev
     (List.filter (fun x -> U.op x = Ops.Index) (U.toposort t.ast))
 
 let output_shape t =
-  List.map2
-    (fun s at ->
-      match at with
-      | Axis_type.Reduce | Axis_type.Unroll | Axis_type.Group_reduce ->
-          U.const_int 1
-      | _ -> s)
-    (full_shape t) (axis_types t)
+  let reduced = reduce_axes t in
+  List.mapi (fun i size -> if List.mem i reduced then U.const_int 1 else size)
+    (full_shape t)
 
 let upcasted t = List.length (axes_of t [ Axis_type.Upcast; Axis_type.Unroll ])
 
-let group_for_reduces t = List.length (axes_of t [ Axis_type.Group_reduce ])
+let group_for_reduces t =
+  let kinds = axis_types t in
+  List.fold_left (fun n i ->
+      match List.nth kinds i with Axis_type.Warp | Axis_type.Local -> n + 1 | _ -> n)
+    0 (reduce_axes t)
 
 (* Resolve an opt's axis to a real range index. *)
 let real_axis t op axis =
@@ -607,7 +618,6 @@ let check_shared_memory t opt amt red_opt =
                 Axis_type.Upcast;
                 Axis_type.Warp;
                 Axis_type.Local;
-                Axis_type.Group_reduce;
               ]))
     in
     let red = Option.get red_opt in
@@ -618,7 +628,7 @@ let check_shared_memory t opt amt red_opt =
          (Renderer.shared_max t.ren))
   end
 
-(* Check that a GROUP_REDUCE is not inside another reduce. *)
+(* Workgroup reductions cannot be nested inside sequential reductions. *)
 let check_no_nested_group t r red_opt =
   if red_opt <> None then begin
     let reduce_node =
@@ -640,10 +650,9 @@ let check_no_nested_group t r red_opt =
                 (fun u ->
                   let k = range_kind u in
                   k = Axis_type.Reduce
-                  || k = Axis_type.Unroll
-                  || k = Axis_type.Group_reduce)
+                  || k = Axis_type.Unroll)
                 enclosing))
-          "cannot have a GROUP_REDUCE inside another reduce"
+          "cannot have a workgroup reduction inside another reduce"
     | None -> ()
   end
 
@@ -653,8 +662,8 @@ let validate_shift_opt t opt amt rng_kind =
   | U.Opt.Unroll _ ->
       check (amt <= 32) "don't unroll more than 32";
       check
-        (rng_kind = Axis_type.Group_reduce || rng_kind = Axis_type.Reduce)
-        "unroll is for GROUP_REDUCE/REDUCE"
+        (rng_kind = Axis_type.Local || rng_kind = Axis_type.Reduce)
+        "unroll is for LOCAL/REDUCE"
   | U.Opt.Upcast _ ->
       check
         (Renderer.device t.ren = "DSP" || amt <= 16)
@@ -929,8 +938,7 @@ and apply_opt ?(append_opt = true) t opt =
           (List.for_all
              (fun at ->
                at <> Axis_type.Warp
-               && at <> Axis_type.Local
-               && at <> Axis_type.Group_reduce)
+               && at <> Axis_type.Local)
              (axis_types t))
           "no locals can't have locals";
         t.dont_use_locals <- true;
@@ -971,7 +979,7 @@ and apply_opt ?(append_opt = true) t opt =
           | Local _ -> Axis_type.Local
           | Upcast _ -> Axis_type.Upcast
           | Unroll _ -> Axis_type.Unroll
-          | Group _ | Grouptop _ -> Axis_type.Group_reduce
+          | Group _ | Grouptop _ -> Axis_type.Local
           | _ -> assert false
         in
         let amt =

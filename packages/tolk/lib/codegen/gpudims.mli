@@ -12,7 +12,7 @@
     contraction.
 
     The pass replaces {!Tolk_uop.Ops.Range} nodes of Global,
-    Warp, Local, and Group_reduce kinds with SPECIAL hardware index nodes,
+    Warp and Local kinds with SPECIAL hardware index nodes,
     adjusting for renderer grid size limits. Missing local ranges on global stores are gated with
     validity masks. A Device range is not a program axis: it becomes the
     [_device_num] variable, bound per device at launch, and is dropped from

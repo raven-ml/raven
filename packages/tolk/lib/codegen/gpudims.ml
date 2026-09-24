@@ -257,7 +257,7 @@ let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
         in
         let local_dims =
           extract_keys (function
-            | Axis_type.Warp | Local | Group_reduce -> true
+            | Axis_type.Warp | Local -> true
             | _ -> false)
         in
         if global_dims = [] && local_dims = [] then None

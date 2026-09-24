@@ -102,7 +102,7 @@ let try_opt_on_rng tk rng sizes mk_opt =
    X or Y axis that is itself reduced), so each candidate is tried in turn
    on a fresh copy. *)
 let try_tensor_cores k =
-  let reduce_axes = P.axes_of k [ Axis_type.Group_reduce; Axis_type.Reduce ] in
+  let reduce_axes = P.reduce_axes k in
   let use_tc = use_tc () in
   let tc_opt = tc_opt () in
   if use_tc <= 0 || (List.length reduce_axes <> 1 && tc_opt < 1) then None

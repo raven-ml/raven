@@ -13,7 +13,6 @@ type t =
   | Warp
   | Local
   | Weak
-  | Group_reduce
   | Reduce
   | Upcast
   | Unroll
@@ -29,7 +28,6 @@ let to_string = function
   | Warp -> "warp"
   | Local -> "local"
   | Weak -> "weak"
-  | Group_reduce -> "group_reduce"
   | Reduce -> "reduce"
   | Upcast -> "upcast"
   | Unroll -> "unroll"
@@ -43,7 +41,7 @@ let to_pos = function
   | Weak | Loop -> -1
   | Global -> 0
   | Warp -> 1
-  | Local | Group_reduce -> 2
+  | Local -> 2
   | Upcast -> 3
   | Reduce -> 4
   | Unroll -> 5
@@ -56,7 +54,6 @@ let letter = function
   | Warp -> "w"
   | Weak | Loop -> "L"
   | Upcast -> "u"
-  | Group_reduce -> "G"
   | Reduce -> "R"
   | Unroll -> "r"
   | Placeholder -> "?"

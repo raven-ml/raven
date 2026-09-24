@@ -448,13 +448,14 @@ let fix_group_for_reduce_rule node =
   match U.as_reduce node with
   | None -> None
   | Some v ->
+      let is_thread r = range_kind_is Axis_type.Warp r || range_kind_is Axis_type.Local r in
       let group_reduce, reduce_ranges =
-        List.partition (range_kind_is Axis_type.Group_reduce) v.ranges
+        List.partition is_thread v.ranges
       in
       if group_reduce = [] then None
       else
         let upstream_locals =
-          U.toposort node |> List.filter (range_kind_is Axis_type.Local)
+          U.ranges node |> List.filter is_thread
         in
         let partial = U.replace node ~src:(Array.of_list (v.src :: reduce_ranges)) () in
         let reduce_loop = List.map clone_group_reduce_range group_reduce in
@@ -817,7 +818,7 @@ let range_repeats kind =
   match (kind : Axis_type.t) with
   | Axis_type.Reduce | Axis_type.Weak | Axis_type.Loop -> true
   | Axis_type.Device | Axis_type.Global | Axis_type.Warp | Axis_type.Local
-  | Axis_type.Group_reduce | Axis_type.Upcast | Axis_type.Unroll
+  | Axis_type.Upcast | Axis_type.Unroll
   | Axis_type.Placeholder ->
       false
 

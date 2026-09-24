@@ -40,8 +40,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
   metadata, ALLOC, effectful CALL and scalar binding effects. Remove deleted
   operations and stale enum/cache formats.
-- Adopt the final axis kinds. Port sorted-axis
-  UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
+- Port sorted-axis UNSHARD and the corresponding COPY/CALL/WMMA spec rules
+  with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.
 - Centralize shape, numel, range and backward-slice properties. Remove parallel
   reconstruction and silent guesses in view offsets, stage

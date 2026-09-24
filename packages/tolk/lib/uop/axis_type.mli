@@ -41,16 +41,14 @@ type t =
   | Local
       (** Workgroup-local thread dimension. Materialises as the in-group
           thread index and is the natural companion of shared-memory
-          staging. *)
+          staging. A reduction over this axis is staged through shared
+          memory before its final accumulation. *)
   | Weak
       (** Counted loop with no committed hardware role. Emitted as a
           [for] over its size with no implicit parallelism, but the
           schedule optimiser is free to promote it first — to {!Global},
           {!Local} or {!Upcast} — so a range keeps this kind only for as
           long as nothing better has claimed it. *)
-  | Group_reduce
-      (** Reduction across a {!Local} workgroup, typically staged
-          through shared memory and a tree reduction. *)
   | Reduce
       (** Sequential reduction axis. Emits an accumulator loop around
           the reduced body. *)
@@ -82,7 +80,7 @@ val compare : t -> t -> int
 
 val to_string : t -> string
 (** [to_string t] is the lowercase constructor name (e.g. ["global"],
-    ["group_reduce"]). Stable identifier used in serialised kernel
+    ["reduce"]). Stable identifier used in serialised kernel
     info and debugging output. *)
 
 val pp : Format.formatter -> t -> unit
@@ -104,7 +102,7 @@ val to_pos : t -> int
     {- {!Weak}, {!Loop} [-> -1]}
     {- {!Global} [-> 0]}
     {- {!Warp} [-> 1]}
-    {- {!Local}, {!Group_reduce} [-> 2]}
+    {- {!Local} [-> 2]}
     {- {!Upcast} [-> 3]}
     {- {!Reduce} [-> 4]}
     {- {!Unroll} [-> 5]}
@@ -124,7 +122,6 @@ val letter : t -> string
     {- {!Warp} [-> "w"]}
     {- {!Weak}, {!Loop} [-> "L"]}
     {- {!Upcast} [-> "u"]}
-    {- {!Group_reduce} [-> "G"]}
     {- {!Reduce} [-> "R"]}
     {- {!Unroll} [-> "r"]}
     {- {!Placeholder} [-> "?"]}} *)

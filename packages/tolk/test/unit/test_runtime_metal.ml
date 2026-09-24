@@ -204,11 +204,40 @@ let test_many_buffer_arguments () =
   equal (list int) [ 627 ] (read_i32 buffers.(0));
   equal (list int) [ 528 ] (read_i32 second)
 
+let test_thread_reduction kind width expected () =
+  let device = metal_device () in
+  let param slot size = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int size) () in
+  let count = 16 * width in
+  let output = param 0 2 and input = param 1 count in
+  let range axis size kind = U.range ~size:(U.const_int size) ~axis ~kind () in
+  let row = range 0 2 Axis_type.Local in
+  let col = range 1 width kind in
+  let seq = range 2 8 Axis_type.Reduce in
+  let stride = 8 * width in
+  let idx = U.O.(row * int_ stride + col * int_ 8 + seq) in
+  let loaded = U.load ~src:(U.index ~ptr:input ~idxs:[ idx ] ()) () in
+  let value = U.reduce ~src:loaded ~ranges:[ seq; col ] ~op:Ops.Add ~dtype:Dtype.int32 in
+  let store = U.store ~dst:(U.index ~ptr:output ~idxs:[ row ] ()) ~value () in
+  let kernel_info : U.kernel_info =
+    { name = "metal_thread_reduce"; axis_types = []; dont_use_locals = false;
+      applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
+  let sink = U.sink ~kernel_info [ U.end_ ~value:store ~ranges:[ row ] ] in
+  let linear = Codegen.full_rewrite_to_sink ~optimize:false (Device.renderer device) sink
+      |> Linearizer.linearize in
+  let spec = Device.compile_program device ~name:"metal_thread_reduce" linear in
+  let output = i32_buf device [ 0; 0 ] and input = i32_buf device (List.init count Fun.id) in
+  run_spec device spec [ output; input ];
+  equal (list int) expected (read_i32 output)
+
 let () =
   run "Metal_runtime"
     [
       group "Execution"
         [
+          test "local reductions preserve independent output threads"
+            (test_thread_reduction Axis_type.Local 4 [ 496; 1520 ]);
+          test "warp reductions preserve independent output threads"
+            (test_thread_reduction Axis_type.Warp 32 [ 32640; 98176 ]);
           test "typed argument structures preserve scalar widths in dispatch and replay"
             test_mixed_scalar_widths;
           test "argument structures support more than 31 buffers and rebinding"

@@ -429,14 +429,33 @@ let shift_opt_tests =
         ignore (P.apply_opt t (U.Opt.Upcast { axis = 0; amount = 0 }));
         is_true (List.mem 8 (List.map range_size_int (P.rngs t))));
       (* Port of test_local_and_grouped_reduce: GROUPTOP on reduce *)
-      test "GROUPTOP on reduce creates group_reduce range" (fun () ->
+      test "local and warp reductions retain independent output threads" (fun () ->
+        List.iter (fun kind ->
+          let ast = reduce_global_ast ~s0:4 ~s1:8 ~sr:16 in
+          let subs = U.toposort ast |> List.filter_map (fun r ->
+              match U.as_range r with
+              | Some v when v.axis = 0 || v.axis = 2 ->
+                  let kind = if v.axis = 0 then Ak.Local else kind in
+                  Some (r, U.range ~size:v.size ~axis:v.axis ~kind ())
+              | _ -> None) in
+          let t = P.create (U.substitute subs ast) (gpu_renderer ()) in
+          equal int 1 (P.group_for_reduces t);
+          List.iter2 (fun r output ->
+              let expected = if U.axis_id r = [ 2 ] then 1 else range_size_int r in
+              equal int expected (Option.get (U.const_int_value output)))
+            (P.rngs t) (P.output_shape t);
+          let axes = List.map (fun i -> U.axis_id (List.nth (P.rngs t) i))
+              (P.unrollable_dims t) in
+          equal (list (list int)) (if kind = Ak.Local then [ [ 2 ] ] else []) axes)
+          [ Ak.Local; Ak.Warp ]);
+      test "GROUPTOP on reduce creates a local reduction range" (fun () ->
         let ast = reduce_global_ast ~s0:32 ~s1:32 ~sr:128 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 32 }));
         equal int 1 (P.group_for_reduces t);
         let ats = P.axis_types t in
-        is_true (List.exists (fun at -> at = Ak.Group_reduce) ats));
+        is_true (List.exists (fun at -> at = Ak.Local) ats));
       (* Port of test_matmul: GROUPTOP + UNROLL *)
       test "UNROLL after GROUPTOP" (fun () ->
         let ast = reduce_global_ast ~s0:32 ~s1:32 ~sr:128 in
@@ -447,7 +466,7 @@ let shift_opt_tests =
         equal int 1 (P.upcasted t);
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Unroll) ats);
-        is_true (List.exists (fun at -> at = Ak.Group_reduce) ats));
+        is_true (List.exists (fun at -> at = Ak.Local) ats));
       (* Port of test_matmul combo: LOCAL×2 + GROUPTOP + UNROLL + UPCAST×2 *)
       test "combined LOCAL + GROUPTOP + UNROLL + UPCAST" (fun () ->
         let ast = reduce_global_ast ~s0:128 ~s1:128 ~sr:128 in
@@ -463,7 +482,7 @@ let shift_opt_tests =
         is_true (List.exists (fun at -> at = Ak.Local) ats);
         is_true (List.exists (fun at -> at = Ak.Upcast) ats);
         is_true (List.exists (fun at -> at = Ak.Unroll) ats);
-        is_true (List.exists (fun at -> at = Ak.Group_reduce) ats));
+        equal int 1 (P.group_for_reduces t));
       (* Multiple GROUPTOPs on a single reduction. *)
       test "double GROUPTOP on reduce" (fun () ->
         let ast = reduce_global_ast ~s0:8 ~s1:8 ~sr:128 in
@@ -709,7 +728,7 @@ let state_query_tests =
         equal int 2 (List.length up);
         (* 1 reduce axis with size > 1 → 1 unrollable dim *)
         equal int 1 (List.length un));
-      (* output_shape replaces reduce/unroll/group_reduce with 1 *)
+      (* output_shape replaces contracted ranges with 1 *)
       test "output_shape replaces non-output axes with 1" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
         let ren = gpu_renderer () in

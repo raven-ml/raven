@@ -110,8 +110,7 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
       let sz = factor x in
       if t = Axis_type.Upcast || t = Axis_type.Unroll then
         up := !up * sz
-      else if t = Axis_type.Warp || t = Axis_type.Local
-              || t = Axis_type.Group_reduce then
+      else if t = Axis_type.Warp || t = Axis_type.Local then
         lcl := !lcl * sz)
       (P.full_shape s2) (P.axis_types s2);
     let tc_up = match P.tensor_core s2 with
