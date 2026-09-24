@@ -437,6 +437,16 @@ let find_ranges root =
 let integration_tests =
   group "pm_add_gpudims"
     [
+      test "keeps the warp dimension separate while folding local axes" (fun () ->
+          let ranges = List.mapi (fun axis (size, kind) ->
+              U.range ~size:(idx size) ~axis:(axis - 1) ~kind ())
+              [ 32, Ak.Warp; 2, Ak.Local; 2, Ak.Local; 2, Ak.Local ] in
+          let sink = wrap_sink ranges in
+          let result = Gpudims.pm_add_gpudims
+              (gpu_renderer ~local_max:[ 1024; 1024; 64 ] ()) sink in
+          let indices = U.children result in
+          equal (list int) [ 32; 4; 2 ] (special_sizes indices);
+          verify_bijectivity indices [| 32; 2; 2; 2 |]);
       test "replaces global ranges with SPECIAL" (fun () ->
           let r0 =
             U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()

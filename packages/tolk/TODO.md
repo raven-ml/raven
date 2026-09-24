@@ -38,8 +38,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   `Nx.bitcast`.
 
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
-  metadata, ALLOC, effectful CALL and scalar binding effects. Remove deleted
-  operations and stale enum/cache formats.
+  metadata, ALLOC, effectful CALL and scalar binding effects. Remove redundant
+  KernelInfo axis metadata, deleted operations and stale enum/cache formats.
 - Port sorted-axis UNSHARD and the corresponding COPY/CALL/WMMA spec rules
   with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.
@@ -72,7 +72,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   accumulator ordering at the optimizer/expander; port CUDA MMA, AMD MFMA/FP8
   variants and Metal BF16 support.
 - Port final gpudims, slot allocation, range merge, gating and WAR barriers.
-  Preserve WARP dimensions and symbolic extents.
+  Preserve symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
 - Render final constants.
 
@@ -133,9 +133,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Share a bounded compilation worker facility across beam and ordinary lowering;
   snapshot context and handle cancellation/timeouts and errors safely. Respect
   affinity/container limits and audit nested contexts and concurrent caches.
-- Port final beam actions, heuristics, device-aware
-  compilation and dynamic cache policy. Measure search cost, chosen-kernel
-  latency, JIT replay, allocations and handle counts on consumer workloads.
+- Port remaining heuristics, device-aware compilation and dynamic cache
+  policy. Measure search cost, chosen-kernel latency, JIT replay, allocations
+  and handle counts on consumer workloads.
 - Remove closed divergence rulings and record retained ones with current
   consumer, test and reconsideration criterion. Adopt the frozen reference only
   when drivers, expectations and implementation agree.

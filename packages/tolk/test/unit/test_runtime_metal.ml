@@ -229,11 +229,68 @@ let test_thread_reduction kind width expected () =
   run_spec device spec [ output; input ];
   equal (list int) expected (read_i32 output)
 
+let test_tensor_core_warp_grouping () =
+  let device = metal_device () in
+  let ren = Device.renderer device in
+  if Renderer.tensor_cores ren = [] then skip ~reason:"Metal tensor cores unavailable" ();
+  let m, n, k = 32, 64, 8 in
+  let param slot size = U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int size) () in
+  let output = param 0 (m * n) and a = param 1 (m * k) and b = param 2 (k * n) in
+  let range axis size kind = U.range ~size:(U.const_int size) ~axis ~kind () in
+  let row = range 0 m Axis_type.Global and col = range 1 n Axis_type.Global in
+  let red = range 2 k Axis_type.Reduce in
+  let load ptr index = U.load ~src:(U.index ~ptr ~idxs:[ index ] ()) () in
+  let av = load a U.O.(row * int_ k + red) in
+  let bv = load b U.O.(red * int_ n + col) in
+  let product = U.alu_binary ~op:Ops.Mul ~lhs:av ~rhs:bv in
+  let value = U.reduce ~src:product ~ranges:[ red ] ~op:Ops.Add ~dtype:Dtype.float32 in
+  let dst = U.index ~ptr:output ~idxs:[ U.O.(row * int_ n + col) ] () in
+  let store = U.store ~dst ~value () in
+  let kernel_info : U.kernel_info =
+    { name = "metal_warp_grouping"; axis_types = []; applied_opts = [];
+      opts_to_apply = None; estimates = None; beam = 0 } in
+  let sink = U.sink ~kernel_info [ U.end_ ~value:store ~ranges:[ row; col ] ] in
+  let scheduler = Postrange.create sink ren in
+  ignore (Postrange.apply_opt scheduler
+    (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }));
+  for step = 0 to 2 do
+    let axis = List.hd (Postrange.axes_of scheduler [ Axis_type.Global ]) in
+    ignore (Postrange.apply_opt scheduler
+      (U.Opt.Split { axis; amount = 2; kind = Axis_type.Local; top = false }));
+    equal int (step + 1) (List.length (Postrange.axes_of scheduler [ Axis_type.Local ]))
+  done;
+  let linear = Codegen.full_rewrite_to_sink ~optimize:false ren (Postrange.ast scheduler)
+      |> Linearizer.linearize in
+  let spec = Device.compile_program device ~name:"metal_warp_grouping" linear in
+  let buffer values =
+    let buf = Device.create_buffer ~size:(Array.length values) ~dtype:Dtype.float32 device in
+    let bytes = Bytes.create (Array.length values * 4) in
+    Array.iteri (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.bits_of_float v)) values;
+    Device.Buffer.ensure_allocated buf;
+    Device.Buffer.copyin buf bytes;
+    buf in
+  let a = Array.init (m * k) (fun i -> float_of_int ((i * 13 mod 7) - 2)) in
+  let b = Array.init (k * n) (fun i -> float_of_int ((i * 11 mod 9) - 3)) in
+  let output = buffer (Array.make (m * n) nan) in
+  run_spec device spec [ output; buffer a; buffer b ];
+  let bytes = Device.Buffer.as_bytes output in
+  for i = 0 to m - 1 do
+    for j = 0 to n - 1 do
+      let expected = ref 0. in
+      for r = 0 to k - 1 do expected := !expected +. a.(i * k + r) *. b.(r * n + j) done;
+      let actual = Int32.float_of_bits (Bytes.get_int32_le bytes ((i * n + j) * 4)) in
+      is_true ~msg:(Printf.sprintf "matmul[%d,%d]: expected %g, got %g" i j !expected actual)
+        (Float.abs (actual -. !expected) < 1.e-5)
+    done
+  done
+
 let () =
   run "Metal_runtime"
     [
       group "Execution"
         [
+          test "tensor cores retain warp lanes across four local dimensions"
+            test_tensor_core_warp_grouping;
           test "local reductions preserve independent output threads"
             (test_thread_reduction Axis_type.Local 4 [ 496; 1520 ]);
           test "warp reductions preserve independent output threads"

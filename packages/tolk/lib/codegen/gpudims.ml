@@ -196,9 +196,9 @@ let gate_missing_locals (idx : U.t) (idx_view : U.index_view)
     ()
 
 (* Per-device compute grid for a kernel. *)
-let compute_idxs (ctx : Renderer.t) ~global_shape ~local_shape =
+let compute_idxs (ctx : Renderer.t) ~global_shape ~local_shape ~local_max =
   let local_idxs =
-    get_grouped_dims Local_id local_shape (Renderer.local_max ctx)
+    get_grouped_dims Local_id local_shape local_max
       ~reverse:false
   in
   let hw_local =
@@ -262,8 +262,15 @@ let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
           in
           let global_shape = shape_of global_dims in
           let local_shape = shape_of local_dims in
+          let local_max =
+            match Renderer.local_max ctx, local_dims with
+            | Some (_ :: rest), first :: _
+              when range_kind (Rkmap.find first all_ranges) = Axis_type.Warp ->
+                Some (dim_max local_shape.(0) :: rest)
+            | limits, _ -> limits
+          in
           let idxs =
-            compute_idxs ctx ~global_shape ~local_shape
+            compute_idxs ctx ~global_shape ~local_shape ~local_max
           in
           let all_dim_keys = global_dims @ local_dims in
           let dim_idx, _ =

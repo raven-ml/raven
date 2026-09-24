@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Keep tensor-core warp dimensions separate when folding logical local axes
+  into GPU launch dimensions, so hardware lane indices retain their meaning.
+
 - Replace `Opt.Upcast`, `Unroll`, `Local`, `Group` and `Grouptop` with
   `Opt.Split` using absolute range indices. Match tinygrad's split validation
   and beam choices; remove `Nolocals` and `kernel_info.dont_use_locals`.
