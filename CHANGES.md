@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.clone` supports symbolic shapes, allocating at dimension bounds
+  while preserving the logical view. Assignment can now initialize symbolic
+  pending tensors, and clones retain independent storage through later writes.
+
 - `Op.assign` propagates writes through bitcast aliases and initializes pending
   values without evaluating the computation being overwritten. Partial writes
   into pending contiguous storage preserve initialization and update effects.

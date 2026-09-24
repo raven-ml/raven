@@ -35,15 +35,22 @@ let empty ?(dtype = D.default_float) ?device shape =
    shape, written by a store effect. Realization allocates the storage and
    runs the fill, and in-place assignment then writes into it. *)
 let clone ?device t =
-  let shape = T.shape t in
-  let n = List.fold_left ( * ) 1 shape in
+  let shape = T.symbolic_shape t in
+  let max_shape = U.max_shape (T.uop t) in
+  let n = U.max_numel (T.uop t) in
   let device = match device with Some _ -> device | None -> T.device t in
   let dtype = U.commit_dtype (T.uop t) in
   let buf =
     U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype
       ~shape:(T.shape_uop [ n ]) ?device ()
   in
-  let dst = U.reshape ~src:buf ~shape:(T.shape_uop shape) in
+  let dst = U.reshape ~src:buf ~shape:(T.shape_uop max_shape) in
+  let dst =
+    if List.equal U.equal (U.shape dst) shape then dst
+    else U.shrink ~src:dst
+        ~offset:(T.shape_uop (List.map (fun _ -> 0) shape))
+        ~size:(T.symbolic_shape_uop shape)
+  in
   let value =
     match (T.device t, device) with
     | Some from, Some device when from <> device ->

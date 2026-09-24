@@ -952,6 +952,32 @@ let plus1 u = U.O.(u + U.const_int 1)
 let symbolic_tests =
   group "symbolic"
     [
+      test "cloning a symbolic view preserves its values and storage independence" (fun () ->
+          List.iter
+            (fun length ->
+              let base = fa ~shape:[ 2; 4 ] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
+              let bound = bound_var "clone_len" ~max_val:4 length in
+              let source = Mv.symbolic_shrink base
+                  [ None; Some (U.const_int 0, bound) ] in
+              let cloned = Creation.clone source in
+              let shape = T.symbolic_shape source in
+              is_true (List.equal U.equal shape (T.symbolic_shape cloned));
+              let expected =
+                float_of_int (length * (length + 1) + 4 * length)
+              in
+              check_floats [| expected |] (Rd.sum cloned);
+              is_true (List.equal U.equal shape (T.symbolic_shape cloned));
+              ignore (Op.assign cloned (T.f 9.));
+              check_floats [| float_of_int (18 * length) |] (Rd.sum cloned);
+              check_floats [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] base)
+            [ 0; 1; 3; 4 ]);
+      test "initializing a symbolic pending value preserves its logical shape" (fun () ->
+          let base = vec [| 1.; 2.; 3.; 4. |] in
+          let bound = bound_var "assign_len" ~max_val:4 3 in
+          let source = Mv.symbolic_shrink base [ Some (U.const_int 0, bound) ] in
+          let destination = El.add source (T.f 1.) in
+          ignore (Op.assign destination (T.f 7.));
+          check_floats [| 21. |] (Rd.sum destination));
       test "shrink + sum matches concrete for several bind values" (fun () ->
           let data = Array.init 8 (fun i -> float_of_int (i + 1)) in
           List.iter

@@ -27,9 +27,10 @@ val empty :
     Raises [Invalid_argument] if [dtype] is weak. *)
 
 val clone : ?device:Tolk_uop.Uop.device -> Tensor.t -> Tensor.t
-(** [clone t] is [t]'s value in fresh storage: a new buffer written by one
-    kernel that computes [t] into it. Writes into the clone leave [t]'s own
-    storage alone. The buffer is placed on [device], which defaults to [t]'s
+(** [clone t] is [t]'s value in fresh storage. Symbolic dimensions allocate
+    at their upper bounds and retain their logical shape through a view.
+    Writes into the clone leave [t]'s storage alone. The buffer is placed on
+    [device], which defaults to [t]'s
     device, and [t] is copied across when it lives on another one. A constant
     [t] has no device, and without [device] its clone is placed by whatever
     consumes it. Weak inputs commit to a concrete dtype according to
