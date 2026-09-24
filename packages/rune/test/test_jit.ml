@@ -1145,6 +1145,23 @@ let test_long_scans_match_eager () =
   check "cummax" (Nx.cummax ~axis:0) values;
   check "cumprod" (Nx.cumprod ~axis:0) signs
 
+(* A running maximum or minimum is NaN from the first NaN on, on the direct scan
+   and on the chunked one. *)
+let test_scans_propagate_nan () =
+  let check name f x =
+    check_arr ~eps:0. ~msg:name (to_arr (f x)) (Rune.jit' f x)
+  in
+  let short = vec32 [| 1.0; Float.nan; 0.0; 2.0 |] in
+  let long =
+    Nx.create f32 [| 1000; 2 |]
+      (Array.init 2000 (fun i ->
+           if i = 601 then Float.nan else float_of_int ((i * 7 mod 11) - 5)))
+  in
+  check "cummax" (Nx.cummax ~axis:0) short;
+  check "cummin" (Nx.cummin ~axis:0) short;
+  check "long cummax" (Nx.cummax ~axis:0) long;
+  check "long cummin" (Nx.cummin ~axis:0) long
+
 (* Indexed access *)
 
 (* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
@@ -3145,6 +3162,7 @@ let tests =
         slow "small integer scans keep their dtype"
           test_small_int_scans_keep_dtype;
         test "long scans match eager" test_long_scans_match_eager;
+        test "scans propagate NaN" test_scans_propagate_nan;
       ];
     group "indexed access"
       [

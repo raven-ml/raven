@@ -109,6 +109,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.cummax` and `Nx.cummin` are NaN from the first NaN on, as
+  eager ones are. They kept the running maximum or minimum past a NaN.
 - **Breaking:** Remove `Rune.to_device`. Place values with
   `Nx.place (Nx.Placement.device (Rune.device "METAL")) x`; on the host,
   `Nx.place` returns its argument where `to_device` made it contiguous.

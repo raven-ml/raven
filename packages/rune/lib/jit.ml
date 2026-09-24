@@ -728,6 +728,14 @@ let atan2_graph y x =
   let pi = F.Creation.const_like z (F.Tensor.Sfloat Float.pi) in
   add z (where (lt x (zero x)) (where (ge y (zero y)) pi (neg pi)) (zero z))
 
+(* A running maximum or minimum is NaN from the first NaN on. Tolk's scan keeps
+   the larger operand by comparison, which a NaN never wins. *)
+let nan_from_first ~axis t scanned =
+  let seen = fst (F.Op.cummax ~axis (F.Elementwise.isnan t)) in
+  F.Elementwise.where seen
+    (F.Creation.const_like scanned (F.Tensor.Sfloat Float.nan))
+    scanned
+
 (* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
    trace (captures, host arrays) are buffers too, but only input nodes are in
    [st.input_tags]; a value that never touches one is a compile-time constant of
@@ -1572,12 +1580,15 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             let t = go t_in in
+            let nan_through r =
+              if ND.is_float (dt t_in) then nan_from_first ~axis t r else r
+            in
             let r =
               match op with
               | `Sum -> F.Op.cumsum ~axis t
               | `Prod -> F.Op.cumprod ~axis t
-              | `Max -> fst (F.Op.cummax ~axis t)
-              | `Min -> fst (F.Op.cummin ~axis t)
+              | `Max -> nan_through (fst (F.Op.cummax ~axis t))
+              | `Min -> nan_through (fst (F.Op.cummin ~axis t))
             in
             (* A sum over small integers accumulates wider; the scan keeps its
                input's dtype. *)
