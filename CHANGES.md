@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Run.data` rejects symbolic logical shapes, matching tinygrad and the typed
+  host readers. It no longer exposes the allocation's maximum-size bytes as
+  though they were the tensor's concrete shape.
+
 - `Creation.clone` supports symbolic shapes, allocating at dimension bounds
   while preserving the logical view. Assignment can now initialize symbolic
   pending tensors, and clones retain independent storage through later writes.

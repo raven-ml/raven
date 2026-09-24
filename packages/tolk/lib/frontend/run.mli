@@ -8,8 +8,8 @@
 (** Realization: turning a lazy tensor graph into computed values.
 
     A {!Tensor.t} is a handle onto a lazily built computation. The functions
-    here schedule that computation, run it on the CPU backend, and read the
-    result back to the host. Building tensors stays pure; nothing executes until
+    here schedule that computation, run it on the selected device, and read
+    the result back to the host. Building tensors stays pure; nothing executes until
     a value is requested. *)
 
 (** {1 Device and storage}
@@ -73,7 +73,10 @@ val realize_many : Tensor.t list -> unit
     host. The tensor must have a concrete (non-symbolic) shape. *)
 
 val data : Tensor.t -> bytes
-(** [data t] is the raw little-endian bytes of [t]'s buffer. *)
+(** [data t] is the raw little-endian bytes of [t]'s buffer. A shape with a
+    statically zero dimension returns empty bytes without executing the graph.
+
+    @raise Invalid_argument if a non-empty [t] has a symbolic shape. *)
 
 val to_float_array : Tensor.t -> float array
 (** [to_float_array t] is [t]'s elements decoded as [float32], in row-major

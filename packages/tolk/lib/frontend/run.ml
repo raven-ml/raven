@@ -266,7 +266,13 @@ let buffer_of t =
 
 let data t =
   if has_empty_shape t then Bytes.empty
-  else Tolk.Device.Buffer.as_bytes (buffer_of t)
+  else begin
+    if not (List.for_all
+              (fun d -> Option.is_some (U.const_int_value d))
+              (T.symbolic_shape t)) then
+      invalid_arg "Run.data: tensor shape is symbolic";
+    Tolk.Device.Buffer.as_bytes (buffer_of t)
+  end
 
 let to_float_array t =
   let n = T.numel t in

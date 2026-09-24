@@ -952,6 +952,12 @@ let plus1 u = U.O.(u + U.const_int 1)
 let symbolic_tests =
   group "symbolic"
     [
+      test "raw byte reads reject a symbolic logical shape" (fun () ->
+          let base = vec [| 1.; 2.; 3.; 4. |] in
+          let bound = bound_var "read_len" ~max_val:4 3 in
+          let view = Mv.symbolic_shrink base [ Some (U.const_int 0, bound) ] in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Run.data view));
       test "cloning a symbolic view preserves its values and storage independence" (fun () ->
           List.iter
             (fun length ->
