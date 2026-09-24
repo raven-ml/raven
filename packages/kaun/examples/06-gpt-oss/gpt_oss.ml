@@ -340,18 +340,24 @@ let of_hf ?placement cfg dt ckpt =
              (float ~shape:[| cfg.experts; inputs; outputs |] name))
     | Some _ ->
         let groups = inputs / 32 in
-        let bytes ~shape name = Checkpoint.to_tensor ~shape Nx.uint8 name ckpt in
+        let bytes ~shape name =
+          Checkpoint.to_tensor ~shape Nx.uint8 name ckpt
+        in
         let codes =
           bytes ~shape:[| cfg.experts; outputs; groups; 16 |] (name ^ "_blocks")
         in
+        let w =
+          Nx_quant.mxfp4
+            ~scales:
+              (bytes
+                 ~shape:[| cfg.experts; outputs; groups |]
+                 (name ^ "_scales"))
+            (Nx.reshape [| cfg.experts; outputs; inputs / 2 |] codes)
+        in
         Moe.Quant
-          (Nx_quant.map (fun x -> place Experts ~axis:0 x)
-             (Nx_quant.mxfp4
-                ~scales:
-                  (bytes
-                     ~shape:[| cfg.experts; outputs; groups |]
-                     (name ^ "_scales"))
-                (Nx.reshape [| cfg.experts; outputs; inputs / 2 |] codes)))
+          (match placement with
+          | None -> w
+          | Some p -> Nx_quant.place (p Experts ~axis:0) w)
   in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in

@@ -199,8 +199,9 @@ val of_hf :
     {!Nx_quant.mxfp4} weight over the file's bytes, whatever [dt]. At the file's
     own dtype nothing is copied; at another one each float leaf is cast.
 
-    With [placement], each leaf, float or uint8, is placed with
-    [Nx.place (placement role ~axis)] as it is built (see {!role}), so a
+    With [placement], each float leaf is placed with
+    [Nx.place (placement role ~axis)] as it is built (see {!role}), and each
+    packed weight with [Nx_quant.place (placement Experts ~axis:0)], so a
     function compiled where the model is that captures it uploads nothing and
     the host holds one leaf at a time.
 
