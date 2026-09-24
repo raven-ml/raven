@@ -1,0 +1,136 @@
+; The suites jit without naming a device and assert CPU semantics; pin the
+; process-wide default so they do not auto-select a GPU backend.
+
+(env
+ (_
+  (env-vars
+   (DEV CPU))))
+
+(tests
+ (names test_integration test_signature)
+ (package ppx_jit)
+ (flags
+  (:standard -warn-error +a))
+ (modules test_integration test_signature)
+ (libraries nx nx.effect rune windtrap)
+ (preprocess
+  (pps ppx_ptree ppx_jit)))
+
+(executable
+ (name pp)
+ (modules pp)
+ (flags
+  (:standard -warn-error +a))
+ (libraries ppxlib ppx_jit)
+ (link_flags -linkall))
+
+(rule
+ (alias runtest)
+ (targets expansion_simple.actual)
+ (deps
+  (:pp pp.exe))
+ (action
+  (progn
+   (with-stdout-to
+    expansion_simple.actual
+    (run ./%{pp} -impl %{dep:expansion_cases/simple.ml}))
+   (diff expansion_cases/simple.expected expansion_simple.actual))))
+
+; ocamlc hands -ppx to the platform shell, and cmd.exe cannot start a "./"
+; program, so the compiler diagnostic cases do not run on Windows.
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
+ (targets
+  compiler_missing_return.actual
+  compiler_missing_annotation.actual
+  compiler_recursive.actual
+  compiler_and_group.actual)
+ (deps
+  (:pp pp.exe))
+ (action
+  (progn
+   (with-stderr-to
+    compiler_missing_return.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/missing_return.ml}
+      -o
+      missing_return.cmo)))
+   (with-stderr-to
+    compiler_missing_annotation.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/missing_annotation.ml}
+      -o
+      missing_annotation.cmo)))
+   (with-stderr-to
+    compiler_recursive.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/recursive.ml}
+      -o
+      recursive.cmo)))
+   (with-stderr-to
+    compiler_and_group.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/and_group.ml}
+      -o
+      and_group.cmo)))
+   (diff
+    compiler_cases/missing_return.expected
+    compiler_missing_return.actual)
+   (diff
+    compiler_cases/missing_annotation.expected
+    compiler_missing_annotation.actual)
+   (diff compiler_cases/recursive.expected compiler_recursive.actual)
+   (diff compiler_cases/and_group.expected compiler_and_group.actual))))

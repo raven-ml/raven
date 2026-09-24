@@ -1,0 +1,52 @@
+module Ppx_jit_in_add =
+  struct
+    type nonrec t = {
+      a: Nx.float32_t ;
+      b: Nx.float32_t }
+    let map
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) =
+      let ptree_a__003_ = f x.a in
+      let ptree_b__004_ = f x.b in { a = ptree_a__003_; b = ptree_b__004_ }
+    let map2
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) (y : t) =
+      let ptree_a__005_ = f x.a y.a in
+      let ptree_b__006_ = f x.b y.b in
+      { a = ptree_a__005_; b = ptree_b__006_ }
+    let iter (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit)
+      (x : t) = f x.a; f x.b
+  end
+module Ppx_jit_out_add =
+  struct
+    type nonrec t = {
+      result: Nx.float32_t }
+    let map
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) =
+      let ptree_result__001_ = f x.result in { result = ptree_result__001_ }
+    let map2
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) (y : t) =
+      let ptree_result__002_ = f x.result y.result in
+      { result = ptree_result__002_ }
+    let iter (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit)
+      (x : t) = f x.result
+  end
+let add =
+  let ppx_jit_impl =
+    Rune.jit2 (module Ppx_jit_in_add) (module Ppx_jit_out_add)
+      (fun { Ppx_jit_in_add.a = a; Ppx_jit_in_add.b = b } ->
+         { Ppx_jit_out_add.result = (Nx.add a b) }) in
+  fun (a : Nx.float32_t) (b : Nx.float32_t) ->
+    (ppx_jit_impl { Ppx_jit_in_add.a = a; Ppx_jit_in_add.b = b }).Ppx_jit_out_add.result

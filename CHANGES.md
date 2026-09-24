@@ -267,6 +267,16 @@ All notable changes to this project will be documented in this file.
 - Add a runnable linear-regression example using a derived parameter module
   directly with `Rune.grad` and `Rune.jit2`.
 
+### Ppx_jit (new)
+
+- Add the `ppx_jit` rewriter: `let[@jit] f (a : A.t) (b : B.t) : C.t * D.t =
+  body` compiles `f` with `Rune.jit2` without hand-written input/output
+  `Ptree.S` modules, and `f` keeps its original type so signatures do not
+  change. Argument annotations select the traversing module as in
+  `[@@deriving ptree]`; labelled and optional arguments are preserved, and an
+  optional payload — `[@jit { device = "NV"; beam = 8 }]` — is spliced into
+  the `Rune.jit2` call.
+
 ### Munin (new)
 
 - Artifact digests are BLAKE2b-256 from the standard library instead of

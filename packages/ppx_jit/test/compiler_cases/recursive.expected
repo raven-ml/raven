@@ -1,0 +1,4 @@
+File "compiler_cases/recursive.ml", line 1, characters 0-55:
+1 | let[@jit] rec f (a : Nx.float32_t) : Nx.float32_t = f a
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: ppx_jit: [@jit] does not support recursive functions

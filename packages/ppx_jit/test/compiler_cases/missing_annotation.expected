@@ -1,0 +1,5 @@
+File "compiler_cases/missing_annotation.ml", line 1, characters 12-13:
+1 | let[@jit] f a : Nx.float32_t = a
+                ^
+Error: ppx_jit: argument `a` needs a type annotation selecting its Ptree
+       module, e.g. (a : Params.t)
