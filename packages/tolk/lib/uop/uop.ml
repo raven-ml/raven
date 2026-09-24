@@ -171,11 +171,14 @@ type const_value =
 
 exception Bottom_up_gate
 
-module Ref_tbl = Hashtbl.Make (struct
+module Ref_key = struct
   type nonrec t = t
   let equal = ( == )
   let hash u = u.Hashcons.tag
-end)
+end
+
+module Ref_tbl = Hashtbl.Make (Ref_key)
+module Weak_tbl = Ephemeron.K1.Make (Ref_key)
 
 (* Arg module: re-export [arg] with its constructors under the [Arg.t]
    name so callers can write [Uop.Arg.Int 5] or [match a with Uop.Arg.Empty
@@ -295,14 +298,7 @@ let intern_mutex = Mutex.create ()
 let intern_node node =
   Mutex.protect intern_mutex (fun () -> H.hashcons global_table node)
 
-module Side_metadata_tbl = Hashtbl.Make (struct
-  type nonrec t = t
-  let equal = ( == )
-  let hash u = u.Hashcons.tag
-end)
-
-let side_metadata : metadata list Side_metadata_tbl.t =
-  Side_metadata_tbl.create 64
+let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 
 let default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Dtype.Global) ?axis ?device slot =
@@ -375,11 +371,11 @@ let node_tag u = u.Hashcons.node.node_tag
 let tag u = u.Hashcons.tag
 let metadata u =
   Mutex.protect intern_mutex (fun () ->
-      Option.value (Side_metadata_tbl.find_opt side_metadata u) ~default:[])
+      Option.value (Weak_tbl.find_opt side_metadata u) ~default:[])
 
 let with_metadata md u =
   Mutex.protect intern_mutex (fun () ->
-      Side_metadata_tbl.replace side_metadata u md;
+      Weak_tbl.replace side_metadata u md;
       u)
 
 let children u = Array.to_list (src u)
@@ -394,12 +390,12 @@ let compare a b = Int.compare a.Hashcons.tag b.Hashcons.tag
    consumers: each memoizes a pure function of an immutable hash-consed node,
    so beam-search workers compiling candidates in parallel domains fill their
    own tables instead of racing on one unsynchronized Hashtbl. *)
-let child_ops_cache : Ops.t list Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
+let child_ops_cache : Ops.t list Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 1024)
 
 let child_ops u =
   let child_ops_cache = Domain.DLS.get child_ops_cache in
-  match Ref_tbl.find_opt child_ops_cache u with
+  match Weak_tbl.find_opt child_ops_cache u with
   | Some ops -> ops
   | None ->
       let ops =
@@ -409,7 +405,7 @@ let child_ops u =
             if List.exists (Ops.equal o) acc then acc else o :: acc)
           [] (src u)
       in
-      Ref_tbl.add child_ops_cache u ops;
+      Weak_tbl.add child_ops_cache u ops;
       ops
 
 let integer_as_native n = if Z.fits_int n then Some (Z.to_int n) else None
@@ -566,16 +562,16 @@ let as_bind u =
   | Ops.Bind, [ var; value ] -> Option.Some { var; value }
   | _ -> Option.None
 
-let device_cache : device option Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 32)
+let device_cache : device option Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 32)
 
 let rec device_of u =
   let device_cache = Domain.DLS.get device_cache in
-  match Ref_tbl.find_opt device_cache u with
+  match Weak_tbl.find_opt device_cache u with
   | Some d -> d
   | None ->
       let d = compute_device u in
-      Ref_tbl.add device_cache u d;
+      Weak_tbl.add device_cache u d;
       d
 
 and compute_device u =
@@ -996,16 +992,16 @@ let rec base u =
 
 (* Memoized: an unmemoized walk revisits shared subgraphs and goes
    exponential on wide unrolled ALU chains. *)
-let addrspace_cache : Dtype.addr_space option Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 256)
+let addrspace_cache : Dtype.addr_space option Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 256)
 
 let rec addrspace u =
   let addrspace_cache = Domain.DLS.get addrspace_cache in
-  match Ref_tbl.find_opt addrspace_cache u with
+  match Weak_tbl.find_opt addrspace_cache u with
   | Some a -> a
   | None ->
       let a = compute_addrspace u in
-      Ref_tbl.add addrspace_cache u a;
+      Weak_tbl.add addrspace_cache u a;
       a
 
 and compute_addrspace u =
@@ -1319,16 +1315,16 @@ module Ref_set = Set.Make (struct
   let compare a b = Int.compare a.Hashcons.tag b.Hashcons.tag
 end)
 
-let ranges_cache : Ref_set.t Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 64)
+let ranges_cache : Ref_set.t Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
 
 let rec ranges_set u =
   let ranges_cache = Domain.DLS.get ranges_cache in
-  match Ref_tbl.find_opt ranges_cache u with
+  match Weak_tbl.find_opt ranges_cache u with
   | Some set -> set
   | None ->
       let set = compute_ranges u in
-      Ref_tbl.add ranges_cache u set;
+      Weak_tbl.add ranges_cache u set;
       set
 
 and compute_ranges u =
@@ -1365,24 +1361,24 @@ and ended_ranges u =
    pruned to the only dtype a condition can have. Memoized, since the
    where-closure fold queries it on every WHERE and an unmemoized walk
    revisits shared subgraphs. *)
-let bool_slice_cache : Ref_set.t Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 256)
+let bool_slice_cache : Ref_set.t Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 256)
 
 let rec bool_slice u =
   let bool_slice_cache = Domain.DLS.get bool_slice_cache in
-  match Ref_tbl.find_opt bool_slice_cache u with
+  match Weak_tbl.find_opt bool_slice_cache u with
   | Some s -> s
   | None ->
       let acc = ref Ref_set.empty in
       Array.iter (fun c -> acc := Ref_set.union !acc (bool_slice c)) (src u);
       if Dtype.is_bool (dtype u) then acc := Ref_set.add u !acc;
-      Ref_tbl.add bool_slice_cache u !acc;
+      Weak_tbl.add bool_slice_cache u !acc;
       !acc
 
 let bool_slice_mem root u = Ref_set.mem u (bool_slice root)
 
-let ranges_list_cache : t list Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 64)
+let ranges_list_cache : t list Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
 
 let ranges u =
   let ranges_list_cache = Domain.DLS.get ranges_list_cache in
@@ -1392,11 +1388,11 @@ let ranges u =
     List.filter (fun r -> not (mem_ref r rs)) acc
   in
   let rec ranges_list u =
-    match Ref_tbl.find_opt ranges_list_cache u with
+    match Weak_tbl.find_opt ranges_list_cache u with
     | Some l -> l
     | None ->
         let l = compute_ranges_list u in
-        Ref_tbl.add ranges_list_cache u l;
+        Weak_tbl.add ranges_list_cache u l;
         l
   and compute_ranges_list u =
     let children = src u in
@@ -1720,16 +1716,16 @@ let substitute ?(walk = false) mappings root =
 
 (* Analysis *)
 
-let min_max_cache : (int * int) Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
+let min_max_cache : (int * int) Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 1024)
 
 let rec min_max u =
   let min_max_cache = Domain.DLS.get min_max_cache in
-  match Ref_tbl.find_opt min_max_cache u with
+  match Weak_tbl.find_opt min_max_cache u with
   | Option.Some mm -> mm
   | Option.None ->
       let mm = compute_min_max u in
-      Ref_tbl.replace min_max_cache u mm;
+      Weak_tbl.replace min_max_cache u mm;
       mm
 
 and compute_min_max u =
@@ -2126,8 +2122,8 @@ let substitute_function_shape_args fn dims =
    pure function of the node; caching it by node identity (as [device_of] and
    [min_max] already do) avoids recomputing shared subgraphs, which would
    otherwise re-walk a diamond once per parent and blow up exponentially. *)
-let shape_cache : t list option Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
+let shape_cache : t list option Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 1024)
 
 let rec shape u =
   match shape_opt u with
@@ -2139,11 +2135,11 @@ let rec shape u =
 
 and shape_opt u =
   let shape_cache = Domain.DLS.get shape_cache in
-  match Ref_tbl.find_opt shape_cache u with
+  match Weak_tbl.find_opt shape_cache u with
   | Some cached -> cached
   | None ->
       let result = compute_shape_opt u in
-      Ref_tbl.add shape_cache u result;
+      Weak_tbl.add shape_cache u result;
       result
 
 and compute_shape_opt u =
@@ -2354,16 +2350,16 @@ let max_numel u = List.fold_left ( * ) 1 (max_shape u)
 
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
    exponential in residual depth. *)
-let axis_cache : int option Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Ref_tbl.create 1024)
+let axis_cache : int option Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 1024)
 
 let rec axis u =
   let axis_cache = Domain.DLS.get axis_cache in
-  match Ref_tbl.find_opt axis_cache u with
+  match Weak_tbl.find_opt axis_cache u with
   | Some cached -> cached
   | None ->
       let result = compute_axis u in
-      Ref_tbl.add axis_cache u result;
+      Weak_tbl.add axis_cache u result;
       result
 
 and compute_axis u =
@@ -3475,45 +3471,6 @@ let program_vals info ~var_vals =
       | None -> raise Not_found)
     info.vars
 
-let semantic_key root =
-  let semantic_arg = function
-    | Arg.Call_info info -> Arg.Call_info { info with aux = None }
-    | arg -> arg
-  in
-  (* Memoized per call: an unmemoized walk re-digests shared subgraphs and
-     goes exponential on graphs with heavy sharing. *)
-  let memo : string Ref_tbl.t = Ref_tbl.create 256 in
-  let rec key u =
-    match Ref_tbl.find_opt memo u with
-    | Some k -> k
-    | None ->
-        let k = compute_key u in
-        Ref_tbl.add memo u k;
-        k
-  and compute_key u =
-    (* The header must separate any two nodes whose own payload differs. The
-       polymorphic hash is unreliable here: [Hashtbl.hash] stops after 10
-       meaningful words (too few to reach a payload buried behind the dtype),
-       and the built-in [int64] hash folds the two halves with xor, colliding
-       adjacent constants such as [0L] and [-1L]. Hash with a deep traversal
-       and render constant payloads exactly. *)
-    let header =
-      let payload = (op u, dtype u, semantic_arg (arg u)) in
-      let value =
-        match arg u with Arg.Value c -> Const.to_string c | _ -> ""
-      in
-      Printf.sprintf "%d.%d.%s"
-        (Hashtbl.hash_param 1000 1000 payload)
-        (Hashtbl.seeded_hash_param 1000 1000 17 payload)
-        value
-    in
-    let children =
-      Array.to_list (src u) |> List.map key |> String.concat ""
-    in
-    Digest.to_hex (Digest.string (header ^ children))
-  in
-  key root
-
 (* Serialization *)
 
 (* Uops embedded in node arguments are graph edges just like [src] entries:
@@ -3556,6 +3513,61 @@ let map_arg_uops f = function
           vars = List.map f pi.vars;
           global_size = List.map dim pi.global_size }
   | a -> a
+
+let semantic_key root =
+  (* Argument-embedded nodes are edges too. Keep their positions in the
+     header and digest their semantics alongside the source edges. *)
+  let semantic_arg = function
+    | Arg.Kernel_info ({ estimates = Some e; _ } as ki) ->
+        let scalar = function Int n -> Int n | Sym _ -> Int 0 in
+        let symbolic = function Sym _ -> true | Int _ -> false in
+        (Arg.Kernel_info { ki with estimates = Some
+            { ops = scalar e.ops; lds = scalar e.lds; mem = scalar e.mem } },
+         [ symbolic e.ops; symbolic e.lds; symbolic e.mem ], 0)
+    | Arg.Program_info pi ->
+        let scalar = function Launch_sym _ -> Launch_int 0 | x -> x in
+        let symbolic = function Launch_sym _ -> true | _ -> false in
+        (Arg.Program_info { pi with vars = []; global_size = List.map scalar pi.global_size },
+         List.map symbolic pi.global_size, List.length pi.vars)
+    | Arg.Call_info info -> (Arg.Call_info { info with aux = None }, [], 0)
+    | arg -> (arg, [], 0)
+  in
+  (* Memoized per call: an unmemoized walk re-digests shared subgraphs and
+     goes exponential on graphs with heavy sharing. *)
+  let memo : string Ref_tbl.t = Ref_tbl.create 256 in
+  let rec key u =
+    match Ref_tbl.find_opt memo u with
+    | Some k -> k
+    | None ->
+        let k = compute_key u in
+        Ref_tbl.add memo u k;
+        k
+  and compute_key u =
+    (* The header must separate any two nodes whose own payload differs. The
+       polymorphic hash is unreliable here: [Hashtbl.hash] stops after 10
+       meaningful words (too few to reach a payload buried behind the dtype),
+       and the built-in [int64] hash folds the two halves with xor, colliding
+       adjacent constants such as [0L] and [-1L]. Hash with a deep traversal
+       and render constant payloads exactly. *)
+    let header =
+      let payload =
+        (op u, dtype u, semantic_arg (arg u))
+      in
+      let value =
+        match arg u with Arg.Value c -> Const.to_string c | _ -> ""
+      in
+      Printf.sprintf "%d.%d.%s"
+        (Hashtbl.hash_param 1000 1000 payload)
+        (Hashtbl.seeded_hash_param 1000 1000 17 payload)
+        value
+    in
+    let children =
+      (Array.to_list (src u) @ arg_uops (arg u))
+      |> List.map key |> String.concat ""
+    in
+    Digest.to_hex (Digest.string (header ^ children))
+  in
+  key root
 
 let export_magic = "TOLKUOP\x00"
 let export_version = 2

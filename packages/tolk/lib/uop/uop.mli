@@ -1441,6 +1441,12 @@ module Ref_tbl : Hashtbl.S with type key = t
 (** Hashtable keyed by physical equality ([==]), hashing on {!tag}.
     Use this for caches that want to avoid re-hashing on each lookup. *)
 
+module Weak_tbl : Ephemeron.S with type key = t
+(** Ephemeron table keyed by physical equality, hashing on {!tag}.
+    Entries retain their values only while their keys are otherwise reachable,
+    including when a value refers back to its key. Use for long-lived caches
+    and node-owned resources. *)
+
 (** {1:analysis Analysis} *)
 
 val vmin : t -> int

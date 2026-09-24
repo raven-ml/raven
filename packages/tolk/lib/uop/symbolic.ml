@@ -1343,16 +1343,16 @@ let pm_fold_lane_stack : Upat.Pattern_matcher.t =
    Memoized here rather than expressed as the equivalent {!Uop.in_backward_slice}
    query, because that one re-walks the graph per call and the rule below runs
    on every [where] in every pass. *)
-let has_index_cache : bool Uop.Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Uop.Ref_tbl.create 256)
+let has_index_cache : bool Uop.Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Uop.Weak_tbl.create 256)
 
 let rec has_index u =
   let has_index_cache = Domain.DLS.get has_index_cache in
-  match Uop.Ref_tbl.find_opt has_index_cache u with
+  match Uop.Weak_tbl.find_opt has_index_cache u with
   | Some b -> b
   | None ->
       let b = Uop.op u = Ops.Index || Array.exists has_index (Uop.src u) in
-      Uop.Ref_tbl.add has_index_cache u b;
+      Uop.Weak_tbl.add has_index_cache u b;
       b
 
 (* In [cond.where(t, f)], [cond] is true throughout [t] and false throughout

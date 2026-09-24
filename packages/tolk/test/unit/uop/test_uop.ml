@@ -981,6 +981,29 @@ let child_ops_reports_child_op_set () =
     && List.exists (Ops.equal Ops.Param) ops);
   is_true ~msg:"child_ops is stable across calls" (Uop.child_ops node = ops)
 
+let property_caches_release_nodes () =
+  let weak = Stdlib.Weak.create 2 in
+  let[@inline never] populate () =
+    let r = Uop.range ~axis:9127 ~kind:Axis_type.Weak ~size:(Uop.const_int 9) () in
+    let cond = Uop.O.(r < Uop.const_int 4) in
+    ignore (Uop.with_metadata [ { name = "lifetime"; backward = false } ] r);
+    ignore (Uop.child_ops cond);
+    ignore (Uop.device_of cond);
+    ignore (Uop.addrspace cond);
+    ignore (Uop.ranges r);
+    ignore (Uop.bool_slice_mem cond cond);
+    ignore (Uop.vmin r);
+    ignore (Uop.shape r);
+    Stdlib.Weak.set weak 0 (Some r);
+    Stdlib.Weak.set weak 1 (Some cond)
+  in
+  populate ();
+  Gc.full_major ();
+  Gc.full_major ();
+  is_false ~msg:"cached range is collectible, even when its ranges include itself"
+    (Stdlib.Weak.check weak 0);
+  is_false ~msg:"cached condition is collectible" (Stdlib.Weak.check weak 1)
+
 let exec_alu_folds_and_absorbs () =
   let c n = Const.int Dtype.int32 n in
   (match Uop.exec_alu Ops.Add Dtype.int32 [ c 2; c 3 ] with
@@ -2266,6 +2289,7 @@ let () =
           test "BITCAST size change" bitcast_size_change;
           test "child_ops reports the child op set"
             child_ops_reports_child_op_set;
+          test "property caches release nodes" property_caches_release_nodes;
           test "exec_alu folds and absorbs invalids"
             exec_alu_folds_and_absorbs;
           test "exec_alu division preserves IEEE exceptional values" exec_alu_float_division;

@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- Release unreachable tensor buffers and cached graph properties. Live views
+  and JIT captures retain their storage; serialized program cache keys no
+  longer depend on process-local node identities.
 - `Uop.exec_alu` preserves full-width integer values and exact weak-integer
   intermediates. Literal matching avoids float rounding; weak promotion
   preserves padded values. `Const.Int` now carries a `Z.t` mathematical value.

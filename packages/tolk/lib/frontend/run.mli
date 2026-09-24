@@ -18,7 +18,8 @@
     environment variable picks a backend by name, otherwise backends are
     scanned in priority order and the first one that opens wins. Every buffer
     node backed by concrete device storage — host inputs, realized outputs,
-    in-place assignment targets — is recorded in a process-wide registry. *)
+    in-place assignment targets — retains its storage while the node is live.
+    The registry itself does not keep nodes or their storage alive. *)
 
 val device : unit -> Tolk.Device.t
 (** [device ()] is the process-wide execution device, opened on first use. *)

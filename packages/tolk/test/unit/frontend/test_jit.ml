@@ -48,6 +48,7 @@ let elementwise_tests =
           in
           List.iteri
             (fun i data ->
+              Gc.full_major ();
               let out = Jit.call jit [| vec data |] in
               check_floats
                 ~msg:(Printf.sprintf "call %d" i)

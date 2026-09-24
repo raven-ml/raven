@@ -971,10 +971,43 @@ let numerical_edge_tests =
           check [| 1.; 4.; 1. |] (El.add padded (vec [| 1.; 1.; 1. |])));
     ]
 
+let lifetime_tests =
+  group "lifetime"
+    [
+      test "unreachable input and realized storage are collectible" (fun () ->
+          let nodes = Stdlib.Weak.create 2 and buffers = Stdlib.Weak.create 2 in
+          let[@inline never] populate () =
+            let input = vec [| 1.; 2.; 3. |] in
+            let output = Run.realize (El.add input (T.f 1.)) in
+            List.iteri
+              (fun i tensor ->
+                let node = U.buf_uop (T.uop tensor) in
+                Stdlib.Weak.set nodes i (Some node);
+                Stdlib.Weak.set buffers i (Run.buffer_of_node node))
+              [ input; output ]
+          in
+          populate ();
+          Gc.full_major ();
+          Gc.full_major ();
+          for i = 0 to 1 do
+            is_false ~msg:"unreachable node retained" (Stdlib.Weak.check nodes i);
+            is_false ~msg:"unreachable buffer retained" (Stdlib.Weak.check buffers i)
+          done);
+      test "live slice retains its backing storage" (fun () ->
+          let[@inline never] make_view () =
+            let input = vec [| 1.; 2.; 3.; 4. |] in
+            Mv.shrink input [ (1, 3) ]
+          in
+          let view = make_view () in
+          Gc.full_major ();
+          check_floats [| 2.; 3. |] view);
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
       aliasing_tests;
+      lifetime_tests;
       numerical_edge_tests;
       constant_tests;
       elementwise_tests;

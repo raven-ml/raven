@@ -53,22 +53,29 @@ let default_device =
 let device () = Lazy.force default_device
 let device_name () = Tolk.Device.name (device ())
 
-(* Storage registry: every node known to be backed by a concrete device
-   buffer — host inputs, realized outputs, assignment targets — keyed by node
-   tag and carrying the node itself so the backing buffers can be enumerated
-   (JIT capture holds them all). A node with buffer identity distinct from
-   itself is registered under both tags, so a lookup succeeds whether it
-   starts from the tensor's node or from the underlying [Ops.Buffer]. *)
-let storage : (int, U.t * Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 64
+(* A live node owns its storage. The registry itself keeps neither alive;
+   views and captured graphs retain their nodes through ordinary references. *)
+let storage : Tolk.Device.Buffer.t U.Weak_tbl.t = U.Weak_tbl.create 64
+
+(* Ephemeron tables have no iterator. This weak set supplies the live keys
+   needed by capture without changing their ownership. *)
+module Buffer_nodes = Stdlib.Weak.Make (struct
+  type t = U.t
+  let equal = ( == )
+  let hash = U.tag
+end)
+
+let stored_nodes = Buffer_nodes.create 64
 
 let register node buf =
-  Hashtbl.replace storage (U.tag node) (node, buf);
+  U.Weak_tbl.replace storage node buf;
   let b = U.buf_uop node in
-  if b != node && Ops.equal (U.op b) Ops.Buffer then
-    Hashtbl.replace storage (U.tag b) (b, buf)
+  if Ops.equal (U.op b) Ops.Buffer then begin
+    ignore (Buffer_nodes.merge stored_nodes b);
+    if b != node then U.Weak_tbl.replace storage b buf
+  end
 
-let buffer_of_node node =
-  Option.map snd (Hashtbl.find_opt storage (U.tag node))
+let buffer_of_node node = U.Weak_tbl.find_opt storage node
 
 (* Resolve a node that is a contiguous view of a realized buffer to that buffer
    viewed at its element offset — an alias, with no copy. Returns [None] when
@@ -97,11 +104,7 @@ let view_buffer node =
             v)
         (buffer_of_node (U.buf_uop node))
 
-let buffer_nodes () =
-  Hashtbl.fold
-    (fun _ (node, _) acc ->
-      if Ops.equal (U.op node) Ops.Buffer then node :: acc else acc)
-    storage []
+let buffer_nodes () = Buffer_nodes.fold List.cons stored_nodes []
 
 let make_input ~dtype ~shape n fill =
   let dev = device () in
@@ -205,7 +208,7 @@ let realize_buffers ts =
              recomputing. *)
           (match view_buffer (T.uop t) with
            | Some buf ->
-               Hashtbl.replace storage (U.tag (T.uop t)) (T.uop t, buf);
+               U.Weak_tbl.replace storage (T.uop t) buf;
                Some buf
            | None -> buffer_of_node (U.buf_uop out)))
     ts outs
