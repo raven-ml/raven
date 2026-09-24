@@ -383,7 +383,12 @@ let coalesce_entry node =
   let of_index op ?value index =
     match U.as_index index with
     | Some { ptr = buf; idxs = [ idx ] } ->
-        if U.addrspace buf = Some Dtype.Reg then None
+        let volatile =
+          match U.Arg.as_param_arg (U.arg (U.buf_uop buf)) with
+          | Some param -> param.volatile
+          | None -> false
+        in
+        if U.addrspace buf = Some Dtype.Reg || volatile then None
         else
           let valid, idx =
             match invalid_where_index idx with
@@ -420,7 +425,7 @@ let valid_equal a b =
 
 let same_memory_key a b =
   a.op = b.op && U.equal a.buf b.buf && base_equal a.base b.base
-  && valid_equal a.valid b.valid
+  && valid_equal a.valid b.valid && U.Arg.equal (U.arg a.node) (U.arg b.node)
 
 let offset_groups offsets =
   let rec finish current groups = match current with

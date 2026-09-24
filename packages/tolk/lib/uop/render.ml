@@ -139,6 +139,7 @@ let param_arg_debug_string (p : param_arg) =
        fields := !fields @ [ "addrspace=" ^ addrspace_debug_string addrspace ]);
   add "axis" string_of_int p.axis;
   add "device" device_repr_string p.device;
+  if p.volatile then fields := !fields @ [ "volatile=True" ];
   "ParamArg(" ^ String.concat ", " !fields ^ ")"
 
 let reduce_arg_debug_string (r : reduce_arg) =

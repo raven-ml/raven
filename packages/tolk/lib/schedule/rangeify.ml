@@ -1358,8 +1358,13 @@ let debuf ctx n =
   ctx.slot <- ctx.slot + 1;
   let ret =
     let device = U.device_of n in
+    let volatile =
+      match U.Arg.as_param_arg (U.arg (U.buf_uop n)) with
+      | Some param -> param.volatile
+      | None -> false
+    in
     let param =
-      U.param ~slot ~dtype ~shape:(shape_node [ size ]) ?device ~addrspace ()
+      U.param ~slot ~dtype ~shape:(shape_node [ size ]) ?device ~addrspace ~volatile ()
     in
     let reshaped = U.reshape ~src:param ~shape:(shape_node max_shape) in
     (* Symbolic buffers: the param is sized for [max_shape]; shrink the
@@ -1498,10 +1503,10 @@ let to_define_global ctx n =
       match U.as_param n with
       (* A named, ranged PARAM normalises to the canonical variable so
          binding identity survives the kernel split. *)
-      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ } ->
+      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); volatile; _ }; _ } ->
           Some
             (U.param ~slot:(-1) ~name ~dtype:(U.dtype n) ~shape:(U.stack [])
-               ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ())
+               ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ~volatile ())
       (* Renumber only an already-tagged, shaped, unnamed PARAM. The tag is
          set by the param/range tagging rule so a PARAM freshly created here
          is not debuffed again. *)

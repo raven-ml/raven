@@ -112,7 +112,7 @@ let buffer_rejects_alu_addrspace () =
         (Uop.Arg.Param_arg
            { slot = 0; dtype = Dtype.int32; vmin_vmax = None;
              multiple_of = None; name = None; addrspace = Dtype.Alu;
-             axis = None; device = None })
+             axis = None; device = None; volatile = false })
       ()
   in
   is_true ~msg:"Buffer with ALU addrspace rejected"

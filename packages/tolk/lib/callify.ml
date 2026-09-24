@@ -499,6 +499,11 @@ let pm_replace_buf ctx node =
       | None -> U.shape_to_shape_arg None
     in
     let addrspace = replacement_addrspace b in
+    let volatile =
+      match U.Arg.as_param_arg (U.arg (U.buf_uop b)) with
+      | Some param -> param.volatile
+      | None -> false
+    in
     match U.as_bind b, ctx.shapes b with
     | Some { var; _ }, _ ->
         (* A bound variable keeps its name and range so the kernel graph can
@@ -510,7 +515,7 @@ let pm_replace_buf ctx node =
           | None -> None, None
         in
         Some
-          (U.param ~slot:idx ~dtype ~shape ?device ?vmin_vmax ?name ~addrspace
+          (U.param ~slot:idx ~dtype ~shape ?device ?vmin_vmax ?name ~addrspace ~volatile
              ())
     (* A buffer is always numel-shaped: a scalar output is a size-1 buffer
        viewed as a scalar. Emitting a bare scalar PARAM loses the size-1
@@ -519,10 +524,10 @@ let pm_replace_buf ctx node =
     | None, Some [] ->
         let param =
           U.param ~slot:idx ~dtype ~shape:(shape_node [ 1 ]) ?device
-            ~addrspace ()
+            ~addrspace ~volatile ()
         in
         Some (U.reshape ~src:param ~shape:(shape_node []))
-    | None, _ -> Some (U.param ~slot:idx ~dtype ~shape ?device ~addrspace ())
+    | None, _ -> Some (U.param ~slot:idx ~dtype ~shape ?device ~addrspace ~volatile ())
   in
   match U.op node, U.children node with
   | Ops.Buffer, _ ->

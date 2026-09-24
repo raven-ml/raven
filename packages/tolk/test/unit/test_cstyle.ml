@@ -513,6 +513,28 @@ let safe_dtype_gen = Gen.with_pp Dtype.pp (Gen.of_list safe_dtypes)
 let () =
   run "Renderer"
     [
+      group "Volatile parameters"
+        [ test "buffer qualifiers survive rendering and serialization" (fun () ->
+            let p = U.param ~slot:0 ~dtype:Dtype.float32
+                ~shape:(U.const_int 4) ~volatile:true () in
+            let ordinary = U.param ~slot:0 ~dtype:Dtype.float32
+                ~shape:(U.const_int 4) () in
+            is_false (U.equal p ordinary);
+            let p = U.import (U.export p) in
+            let index = U.index ~ptr:p ~idxs:[ U.const_int 0 ] () in
+            let ld = U.load ~src:index () in
+            let sink = U.sink [ U.store ~dst:index ~value:ld () ] in
+            for_each_renderer all_renderers (fun name r ->
+                let source = render_kernel r sink in
+                assert_contains (name ^ " volatile qualifier") source "volatile "));
+          test "vector access casts retain the volatile qualifier" (fun () ->
+            let p = U.param ~slot:0 ~dtype:Dtype.float32
+                ~shape:(U.const_int 4) ~volatile:true () in
+            let lanes = U.shrink ~src:p ~offset:(U.const_int 0) ~size:(U.const_int 4) in
+            let ld = U.load ~src:lanes () in
+            let sink = U.sink [ U.store ~dst:lanes ~value:ld () ] in
+            let source = render_kernel clang_renderer sink in
+            assert_contains "volatile vector pointer cast" source "volatile float4*") ];
       group "Constants"
         [
           test "int constant" (fun () ->

@@ -203,6 +203,31 @@ let create_linear_with_vars_keeps_only_used_binds () =
   in
   equal (list (pair string int)) [ "used", 7 ] var_vals
 
+let volatile_inputs_survive_scheduling () =
+  let build ?(sliced = true) volatile =
+    let input = U.buffer ~slot:827 ~dtype:Dtype.float32 ~shape:(shape [ 16 ])
+        ~device:(U.Single "CPU") ~volatile () in
+    let view = U.slice ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
+    let value = U.alu_binary ~op:Ops.Add ~lhs:(if sliced then view else input)
+        ~rhs:(U.const_float 1.) in
+    let call, _ = Callify.transform_to_call (U.sink [ U.contiguous ~src:value () ]) in
+    call
+  in
+  let call_body call = match U.as_call call with
+    | Some { body; _ } -> body | None -> fail "expected call" in
+  let body = call_body (build true) in
+  is_false (String.equal (U.semantic_key body)
+      (U.semantic_key (call_body (build false))));
+  let volatile_params root = U.find_nodes (fun u ->
+      match U.as_param u with
+      | Some { param; _ } -> param.volatile
+      | None -> false) root in
+  equal int 1 (List.length (volatile_params body));
+  let linear, _ = Schedule.create_linear_with_vars
+      ~get_kernel_graph:Rangeify.get_kernel_graph (build ~sliced:false true) in
+  is_true ~msg:"kernel lowering retains the volatile input"
+    (List.length (volatile_params linear) > 0)
+
 let fresh_internal_buffer_slots_stay_distinct () =
   let a = Schedule.fresh_internal_buffer_slot () in
   let b = Schedule.fresh_internal_buffer_slot () in
@@ -218,6 +243,7 @@ let fresh_internal_buffer_slots_stay_distinct () =
 let () =
   run "Engine.Schedule"
     [
+      test "volatile inputs survive scheduling" volatile_inputs_survive_scheduling;
       test "AFTER partition ignores STORE and keeps kernel order"
         after_partition_ignores_store_and_keeps_kernel_order;
       test "AFTER dependencies use all producer kernels"

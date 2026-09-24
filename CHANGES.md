@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.param`, `Uop.buffer`, and global `Uop.placeholder` accept `volatile`.
+  Scheduling and rendering retain the qualifier, and coalescing keeps volatile
+  accesses separate and no longer combines accesses with different flags.
+
 - Failed buffer-view allocation no longer retains a nonexistent live view.
   Allocation can be retried and the base buffer freed after the view is released.
 

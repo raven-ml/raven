@@ -524,6 +524,13 @@ let render_index (ctx : ctx) ~ptr ~idxs =
     then base
     else strf "(%s+%s)" base idx
 
+(* Qualifying access casts has no tinygrad counterpart: dropping the
+   parameter qualifier here would permit volatile vector reads to be removed. *)
+let volatile_prefix u =
+  match U.Arg.as_param_arg (U.arg (U.buf_uop u)) with
+  | Some param when param.volatile -> "volatile "
+  | Some _ | None -> ""
+
 (* [render_access ~access_scalar ~access_width u] dereferences the address
    expression [u] (an INDEX/SHRINK node). [access_scalar]/[access_width] describe
    the value moved through the access; when it is wider than one lane or its
@@ -543,7 +550,7 @@ let render_access (ctx : ctx) ~access_scalar ~access_width (u : U.t) =
     || not (Dtype.equal (U.dtype u) ptr_scalar)
   in
   if cast then
-    strf "*((%s)(%s))"
+    strf "*((%s%s)(%s))" (volatile_prefix u)
       (render_dtype_c ctx.lang ~sz:access_count ~addrspace:(addrspace_of u)
          ~override_ptr:true ~shape:(U.shape_opt u) access_scalar)
       (lookup ctx u)
@@ -1486,7 +1493,7 @@ let buf_param ctx (u, nm, (dt, mut)) =
     | Dtype.Alu -> (ctx.lang.var_prefix, ctx.lang.var_suffix)
     | Dtype.Global | Dtype.Local | Dtype.Reg -> ("", ctx.lang.buffer_suffix)
   in
-  strf "%s%s%s %s" prefix
+  strf "%s%s%s%s %s" (volatile_prefix u) prefix
     (render_dtype_c ctx.lang ~sz:1 ~addrspace ~mutable_:mut
        ~shape:(U.shape_opt u) dt)
     suffix nm

@@ -44,6 +44,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   rangeify/callify. Port disk/view rules.
 - Normalize explicit allocations and calls, lexical scalar formals and the
   separate becomes map. Handle precompiled calls without preallocation.
+- Resolve the false indexing-cycle rejection for elementwise computations over
+  `SLICE(BUFFER)` inputs.
 - Track RAW/WAR dependencies for sliced/overlapping assignments, self-copy,
   nested calls and shared aliases; reject cycles.
 - Replace SLICE memory-plan views with SHRINK/BITCAST byte offsets. Unify
@@ -65,8 +67,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port final gpudims, slot allocation, range merge, gating and WAR barriers.
   Preserve WARP dimensions and symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
-  Preserve access flags and volatile metadata during coalescing.
-- Render volatile parameters and final constants.
+- Render final constants and AMD nontemporal loads.
   Coordinate Metal's argument-struct ABI with its runtime binding.
 
 ## Storage, execution and devices

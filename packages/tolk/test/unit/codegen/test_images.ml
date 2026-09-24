@@ -194,6 +194,32 @@ let () =
                   nodes
               in
               equal int 1 (List.length vector_stores));
+          test "volatile accesses through bitcast views never coalesce" (fun () ->
+            let buf = U.param ~slot:0 ~dtype:Dtype.uint32
+                ~shape:(U.const_int 4) ~volatile:true ()
+                |> fun p -> U.bitcast ~src:p ~dtype:Dtype.int32 in
+            let accesses = List.init 4 (fun i ->
+                let ptr = U.index ~ptr:buf ~idxs:[ U.const_int i ] () in
+                [ U.load ~src:ptr ();
+                  U.store ~dst:ptr ~value:(U.const (Const.int Dtype.int32 i)) () ])
+                |> List.flatten in
+            let root = Coalesce.memory_coalescing (test_renderer ()) (U.sink accesses) in
+            equal int 4 (count (fun u -> U.op u = Ops.Load) root);
+            equal int 4 (count (fun u -> U.op u = Ops.Store) root));
+          test "access flags separate adjacent loads and stores" (fun () ->
+            let buf = lowered_float_buffer 16 in
+            List.iter (fun make ->
+                let accesses = List.init 4 (fun i ->
+                    let node = make buf i in
+                    if i < 2 then U.replace node ~arg:(U.Arg.String "nontemporal") ()
+                    else node) in
+                let root = Coalesce.memory_coalescing (test_renderer ()) (U.sink accesses) in
+                let merged = U.find_nodes (fun u ->
+                    U.op u = U.op (List.hd accesses)) root in
+                equal int 2 (List.length merged);
+                equal int 1 (List.length (List.filter (fun u ->
+                    U.Arg.equal (U.arg u) (U.Arg.String "nontemporal")) merged)))
+              [ lowered_load; (fun buf i -> lowered_store buf i (Float.of_int i)) ]);
           test "duplicate stores to one offset are rejected" (fun () ->
             let buf = lowered_float_buffer 16 in
             let stores =

@@ -49,6 +49,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   rejected. Coverage: the scalar/spec OOB tests. Reconsider if a concrete
   consumer requires proofs that cannot be expressed by the existing rules.
 
+## Rendering
+
+- **Pointer casts preserve volatile qualifiers.** The frozen reference qualifies
+  parameters but its `CStyleLanguage.render_ptr` drops the qualifier when casting
+  a vector access. Tolk keeps it so explicit vector accesses to polling or shared
+  runtime buffers retain their memory semantics. Coverage: the renderer's
+  volatile vector-pointer regression. Remove this ruling when upstream preserves
+  the qualifier in access casts too.
+
 ## CPU runtime
 
 - **The CPU device runs on tolk's own worker queue; the reference's CPU device

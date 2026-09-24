@@ -79,6 +79,7 @@ type param_arg = {
   addrspace : Dtype.addr_space;
   axis : int option;
   device : device option;
+  volatile : bool;
 }
 
 type reduce_arg = { op : Ops.t; num_axes : int }
@@ -308,8 +309,8 @@ let intern_node node =
 let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 
 let default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name
-    ?(addrspace = Dtype.Global) ?axis ?device slot =
-  { slot; dtype; vmin_vmax; multiple_of; name; addrspace; axis; device }
+    ?(addrspace = Dtype.Global) ?axis ?device ?(volatile = false) slot =
+  { slot; dtype; vmin_vmax; multiple_of; name; addrspace; axis; device; volatile }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -698,18 +699,18 @@ let linear srcs =
     ~src:(Array.of_list srcs) ~arg:Arg.Empty
 
 let param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name ?addrspace
-    ?axis () =
+    ?axis ?volatile () =
   let shape = shape_to_shape_arg shape in
   mk ~op:Ops.Param ~dtype ~src:[| shape |]
     ~arg:(Arg.Param_arg
             (default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name ?addrspace
-               ?axis ?device slot))
+               ?axis ?device ?volatile slot))
 
-let buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device () =
+let buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile () =
   let shape = shape_to_shape_arg shape in
   mk ~op:Ops.Buffer ~dtype ~src:[| shape |]
     ~arg:(Arg.Param_arg
-            (default_param_arg ~dtype ?name ?addrspace ?axis ?device slot))
+            (default_param_arg ~dtype ?name ?addrspace ?axis ?device ?volatile slot))
 
 (* Buffer slots come from one process-wide counter: buffers hash-cons on
    (slot, dtype, shape, device), so reusing a slot would collapse two distinct
@@ -2411,12 +2412,12 @@ let max_shard_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shard_shape u
 (* Placeholders and custom kernels *)
 
 let placeholder ~shape:dims ~dtype ~slot ?(addrspace = Dtype.Global) ?device
-    () =
+    ?volatile () =
   let dtype = Dtype.strong_dtype dtype in
   let flat = const_int (List.fold_left ( * ) 1 dims) in
   let base =
     match addrspace with
-    | Dtype.Global -> param ~slot ~dtype ~shape:flat ~addrspace ?device ()
+    | Dtype.Global -> param ~slot ~dtype ~shape:flat ~addrspace ?device ?volatile ()
     | Dtype.Local | Dtype.Reg ->
         if Option.is_some device then
           invalid_arg
@@ -3488,7 +3489,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 7
+let export_version = 8
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

@@ -544,9 +544,8 @@ let param_to_multi node =
       Some
         (U.multi
            ~src:
-             (U.param ~slot:param.slot ~dtype:(U.dtype node) ~shape
-                ?device:param.device ?vmin_vmax:param.vmin_vmax
-                ?name:param.name ~addrspace:param.addrspace ())
+             (U.replace node ~src:[| shape |]
+                ~arg:(U.Arg.Param_arg { param with axis = None }) ())
            ~axis)
   | _ -> None
 

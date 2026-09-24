@@ -219,14 +219,15 @@ let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
   let mappings =
     List.mapi
       (fun i u ->
-        let shape =
+        let param =
           match U.as_buffer u with
-          | Some { shape; _ } -> Some shape
-          | None -> None
+          | Some { buffer; _ } ->
+              U.replace u ~op:Ops.Param
+                ~arg:(U.Arg.Param_arg { buffer with slot = i }) ()
+          | None ->
+              U.param ~slot:i ~dtype:(U.dtype u) ?device:(U.device_of u) ()
         in
-        ( u,
-          U.param ~slot:i ~dtype:(U.dtype u) ?shape ?device:(U.device_of u) ()
-        ))
+        (u, param))
       (Array.to_list input_uops)
   in
   let linear = U.substitute ~walk:true mappings linear in

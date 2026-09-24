@@ -168,6 +168,9 @@ type param_arg = {
           {!Dtype.Alu} denotes ALU symbolic parameters. *)
   axis : int option;  (** Sharding axis, when applicable. *)
   device : device option;  (** Concrete or multi-device placement. *)
+  volatile : bool;
+      (** Preserve individual memory accesses and emit volatile parameters.
+          Defaults to [false]; does not provide atomicity or synchronization. *)
 }
 (** Payload for {!Ops.Param} and {!Ops.Buffer}. *)
 
@@ -674,9 +677,9 @@ val linear : t list -> t
 val param :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
   ?vmin_vmax:Bound.t * Bound.t -> ?multiple_of:int -> ?name:string ->
-  ?addrspace:Dtype.addr_space -> ?axis:int -> unit -> t
+  ?addrspace:Dtype.addr_space -> ?axis:int -> ?volatile:bool -> unit -> t
 (** [param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name
-    ?addrspace ?axis ()]
+    ?addrspace ?axis ?volatile ()]
     is a {!Ops.Param} carrying {!param_arg} and exactly one shape child.
     [shape] defaults to {!shape_to_shape_arg} [None]. Shared. *)
 
@@ -691,8 +694,9 @@ val variable :
 
 val buffer :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?name:string ->
-  ?addrspace:Dtype.addr_space -> ?axis:int -> ?device:device -> unit -> t
-(** [buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ()] is an
+  ?addrspace:Dtype.addr_space -> ?axis:int -> ?device:device ->
+  ?volatile:bool -> unit -> t
+(** [buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile ()] is an
     {!Ops.Buffer} carrying {!param_arg} and exactly one shape child. [shape]
     defaults to {!shape_to_shape_arg} [None]. Tensor. *)
 
@@ -1098,13 +1102,14 @@ val set : target:t -> value:t -> ?extras:t list -> unit -> t
 
 val placeholder :
   shape:int list -> dtype:Dtype.t -> slot:int -> ?addrspace:Dtype.addr_space ->
-  ?device:device -> unit -> t
-(** [placeholder ~shape ~dtype ~slot ?addrspace ?device ()] is storage for
+  ?device:device -> ?volatile:bool -> unit -> t
+(** [placeholder ~shape ~dtype ~slot ?addrspace ?device ?volatile ()] is storage for
     [shape] elements of [dtype] that a kernel body addresses before any buffer
     is bound to it. The storage is flat, holding the product of [shape], and a
     {!reshape} restores a [shape] of rank above one. A weak [dtype] commits to
     its default width. [addrspace] defaults to {!Dtype.Global}, which gives a
     {!Ops.Param}; {!Dtype.Local} and {!Dtype.Reg} give an {!Ops.Buffer}.
+    [volatile] defaults to [false] and applies to global parameters.
 
     @raise Invalid_argument
       if [addrspace] is {!Dtype.Alu}, or if [device] is given for a local or
