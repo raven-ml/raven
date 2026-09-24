@@ -11,6 +11,9 @@
     comparisons. The exception is {!confusion_matrix}, which returns a count
     matrix.
 
+    Metrics compute on the host: a value placed on a device ({!Nx.place}) is
+    read to the host once, where the metric starts.
+
     Metrics are pure and hold no state; running tracking belongs to the caller
     (see munin) and aggregation across batches is the caller's fold. Batch means
     of {!val-accuracy}, {!top_k_accuracy} and micro-averaged scores weighted by

@@ -8,6 +8,10 @@ type average = [ `Macro | `Micro ]
 let invalid_argf fn fmt =
   Printf.ksprintf (fun msg -> invalid_arg ("Metric." ^ fn ^ ": " ^ msg)) fmt
 
+(* Metrics compute on the host, element by element and in float64, which a
+   device may not hold. *)
+let host x = Nx.place Nx.Placement.host x
+
 let shape_str s =
   "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
 
@@ -41,11 +45,13 @@ let fraction correct = Nx.item [] (Nx.mean (Nx.cast Nx.float64 correct))
 (* Accuracy *)
 
 let accuracy predictions labels =
+  let predictions = host predictions and labels = host labels in
   let _ = check_predictions ~fn:"accuracy" predictions labels in
   fraction (Nx.equal (Nx.argmax ~axis:(-1) predictions) labels)
 
 let top_k_accuracy ~k predictions labels =
   let fn = "top_k_accuracy" in
+  let predictions = host predictions and labels = host labels in
   let classes, _ = check_predictions ~fn predictions labels in
   if k < 1 || k > classes then
     invalid_argf fn "k must be in [1;%d] (got %d)" classes k;
@@ -66,6 +72,7 @@ let top_k_accuracy ~k predictions labels =
 (* Flat row-major [classes * classes] counts; row = label, column = predicted
    class. *)
 let confusion_counts ~fn predictions labels =
+  let predictions = host predictions and labels = host labels in
   let classes, labels = check_predictions ~fn predictions labels in
   let predicted = Nx.to_array (Nx.argmax ~axis:(-1) predictions) in
   let counts = Array.make (classes * classes) 0 in
@@ -134,6 +141,7 @@ let f1 ?(average = `Macro) predictions labels =
 
 let auc_roc scores labels =
   let fn = "auc_roc" in
+  let scores = host scores and labels = host labels in
   let scores_shape = Nx.shape scores and labels_shape = Nx.shape labels in
   if labels_shape <> scores_shape then
     invalid_argf fn "labels shape %s does not match scores shape %s"

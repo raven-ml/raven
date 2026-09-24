@@ -1952,6 +1952,9 @@ thread.
 
 ### Kaun
 
+- `Metric` functions read placed predictions, labels and scores to the host
+  once and compute there. They ran on the device and placed every
+  intermediate, and raised on Metal, which cannot hold the float64 they sum.
 - Add `Cache_index.every m index` for layers that keep one entry per block of
   `m` positions, such as a compressed key: `make ~every` and `rows ~every` give
   the index a table of blocks, and a block is stored by its last token and seen

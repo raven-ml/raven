@@ -222,6 +222,29 @@ let auc_tests =
             Metric.auc_roc (vec [| 0.1; 0.5; 0.9 |]) (labels [| 0l; 1l |])));
   ]
 
+(* Metrics compute on the host: a placed input is read once, and nothing is
+   placed on its device. *)
+let placed_tests =
+  let on_device x = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) x in
+  let uploads f =
+    let before = (Rune.jit_stats ()).bytes_to_device in
+    let r = f () in
+    (r, (Rune.jit_stats ()).bytes_to_device - before)
+  in
+  let preds = predicting 3 [| 0; 2; 1; 2 |]
+  and ls = labels [| 0l; 2l; 2l; 2l |] in
+  let p = on_device preds and l = on_device ls in
+  [
+    test "accuracy of placed values" (fun () ->
+        let a, up = uploads (fun () -> Metric.accuracy p l) in
+        close (Metric.accuracy preds ls) a;
+        equal ~msg:"nothing is uploaded" int 0 up);
+    test "f1 of placed values" (fun () ->
+        let f, up = uploads (fun () -> Metric.f1 p l) in
+        close (Metric.f1 preds ls) f;
+        equal ~msg:"nothing is uploaded" int 0 up);
+  ]
+
 let tests =
   [
     group "accuracy" accuracy_tests;
@@ -229,6 +252,7 @@ let tests =
     group "confusion_matrix" confusion_tests;
     group "precision, recall, f1" prf_tests;
     group "auc_roc" auc_tests;
+    group "placed values" placed_tests;
   ]
 
 let () = run "kaun metric" tests
