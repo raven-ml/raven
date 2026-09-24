@@ -14,12 +14,12 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 1. Complete the CPU path through the new protocol
 
-- Adopt derived dtypes, weak CONST plus typed CAST, flat ParamArg storage size
-  and image metadata, ALLOC, effectful CALL and scalar binding effects. Port
+- Adopt weak CONST plus typed CAST, ALLOC, effectful CALL and scalar binding
+  effects. Remove remaining explicit dtype overrides with the legacy IR. Port
   weak commitment/lowering and the corresponding spec rules together. Eliminate
   unplaced BUFFER placeholders and their execution-time allocation fallback.
   Remove FUNCTION/TUPLE/GETTUPLE/BIND and obsolete enum/cache layouts as their producers
-  move to the new protocol. Include integer FDIV and mixed-dtype STACK promotion.
+  move to the new protocol.
 - Introduce the final preparation owner. Move early rewrites out of
   rangeify/callify, port inline calls, explicit allocations, output forwarding,
   lexical scalar formals and the separate becomes map. Handle precompiled

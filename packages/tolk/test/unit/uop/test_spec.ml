@@ -77,12 +77,9 @@ let param_with_param_arg () =
   is_true ~msg:"Param with Param_arg accepted" (accepts Spec.shared_spec p)
 
 let param_rejects_empty_arg () =
-  let p =
-    Uop.replace (Uop.variable ~name:"n" ~min_val:0 ~max_val:8 ())
-      ~arg:Uop.Arg.Empty ()
-  in
-  is_true ~msg:"Param without Param_arg rejected"
-    (rejected Spec.shared_spec p)
+  raises (Invalid_argument "Uop: storage requires ParamArg") (fun () ->
+      ignore (Uop.replace (Uop.variable ~name:"n" ~min_val:0 ~max_val:8 ())
+        ~arg:Uop.Arg.Empty ()))
 
 let buffer_with_param_arg () =
   let b =
@@ -96,13 +93,10 @@ let shared_rejects_global_buffer () =
     (rejected Spec.shared_spec b)
 
 let buffer_rejects_empty_arg () =
-  let b =
-    Uop.replace
-      (Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ())
-      ~arg:Uop.Arg.Empty ()
-  in
-  is_true ~msg:"Buffer without Param_arg rejected"
-    (rejected Spec.shared_spec b)
+  raises (Invalid_argument "Uop: storage requires ParamArg") (fun () ->
+      ignore (Uop.replace
+        (Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ())
+        ~arg:Uop.Arg.Empty ()))
 
 let buffer_rejects_alu_addrspace () =
   let b =
@@ -110,7 +104,7 @@ let buffer_rejects_alu_addrspace () =
       (Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ())
       ~arg:
         (Uop.Arg.Param_arg
-           { slot = 0; dtype = Dtype.int32; vmin_vmax = None;
+           { slot = 0; dtype = Dtype.int32; size = None; image = None; vmin_vmax = None;
              multiple_of = None; name = None; addrspace = Dtype.Alu;
              axis = None; device = None; volatile = false; buffer = None })
       ()
@@ -129,10 +123,11 @@ let stack_sources_match () =
   let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.int32 in
   is_true ~msg:"stack accepted" (accepts Spec.shared_spec s)
 
-let stack_rejects_mismatched_child_dtype () =
+let stack_derives_child_dtype () =
   let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.float32 in
-  is_true ~msg:"stack children must match the stack dtype"
-    (rejected Spec.shared_spec s)
+  is_true ~msg:"stale dtype hints cannot override the sources"
+    (Dtype.equal (Uop.dtype s) Dtype.int32);
+  Spec.type_verify Spec.shared_spec s
 
 (* A weak child is fine — lowering commits it later — but two committed dtypes
    must agree. *)
@@ -141,7 +136,7 @@ let stack_rejects_mixed_dtype () =
   let s = stack [ i32 1; f32 ] ~dtype:Dtype.int32 in
   is_true ~msg:"stack children must share the stack dtype"
     (rejected Spec.shared_spec s);
-  let weak = stack [ i32 1; Uop.const_float 2.0 ] ~dtype:Dtype.int32 in
+  let weak = stack [ i32 1; Uop.const_int 2 ] ~dtype:Dtype.int32 in
   is_true ~msg:"a weak child is accepted" (accepts Spec.shared_spec weak)
 
 let stack_rejects_mixed_child_counts () =
@@ -201,7 +196,7 @@ let shift_count_dtypes () =
       ~dtype:Dtype.int64 ()
   in
   is_true ~msg:"shift result must match the shifted operand"
-    (rejected Spec.shared_spec widened)
+    (Dtype.equal (Uop.dtype widened) Dtype.int32)
 
 (* Bitwise and shift operands must be integral. *)
 let bitwise_rejects_float_operands () =
@@ -300,7 +295,7 @@ let range_rejects_bad_layouts () =
     (rejected Spec.shared_spec missing_arg);
   let mismatch = Uop.replace r ~dtype:Dtype.weakint () in
   is_true ~msg:"Range dtype must match size dtype"
-    (rejected Spec.shared_spec mismatch)
+    (Dtype.equal (Uop.dtype mismatch) Dtype.int32)
 
 let barrier_boundaries () =
   let barrier = Uop.barrier ~srcs:[ i32 1 ] () in
@@ -308,7 +303,7 @@ let barrier_boundaries () =
     (accepts Spec.shared_spec barrier);
   let bad_barrier = Uop.replace barrier ~dtype:Dtype.int32 () in
   is_true ~msg:"Barrier must be void"
-    (rejected Spec.shared_spec bad_barrier)
+    (Dtype.equal (Uop.dtype bad_barrier) Dtype.void)
 
 let group_after_bad_layouts () =
   let grouped =
@@ -316,17 +311,14 @@ let group_after_bad_layouts () =
   in
   let bad_group_dtype = Uop.replace grouped ~dtype:Dtype.int32 () in
   is_true ~msg:"Group must be void"
-    (rejected Spec.shared_spec bad_group_dtype);
+    (Dtype.equal (Uop.dtype bad_group_dtype) Dtype.void);
   let bad_group_src =
     Uop.replace grouped ~src:[| Uop.barrier () |] ()
   in
   is_true ~msg:"Group source must be group/store/noop/ins/end"
     (rejected Spec.shared_spec bad_group_src);
-  let bad_after_empty =
-    Uop.replace (i32 1) ~op:Ops.After ~src:[||] ()
-  in
-  is_true ~msg:"After requires at least one source"
-    (rejected Spec.shared_spec bad_after_empty)
+  raises (Invalid_argument "Uop: missing source for AFTER") (fun () ->
+      ignore (Uop.replace (i32 1) ~op:Ops.After ~src:[||] ()))
 
 (* Tensor spec *)
 
@@ -370,7 +362,7 @@ let copy_rejects_bad_device_or_dtype () =
   let copy = Uop.copy ~src ~device:(Uop.Single "CPU") () in
   let bad_dtype = Uop.replace copy ~dtype:Dtype.float32 () in
   is_true ~msg:"Copy result dtype must match source"
-    (rejected Spec.tensor_spec bad_dtype);
+    (Dtype.equal (Uop.dtype bad_dtype) Dtype.int32);
   let bad_index = Uop.copy ~src ~device:(Uop.Index 0) () in
   is_true ~msg:"Copy rejects positional device selector"
     (rejected Spec.tensor_spec bad_index);
@@ -537,7 +529,7 @@ let allreduce_rejects_bad_device_or_dtype () =
   in
   let bad_dtype = Uop.replace red ~dtype:Dtype.float32 () in
   is_true ~msg:"Allreduce result dtype must match source"
-    (rejected Spec.tensor_spec bad_dtype);
+    (Dtype.equal (Uop.dtype bad_dtype) Dtype.int32);
   let bad_single = Uop.allreduce ~src ~device:(Uop.Single "CPU") ~op:Ops.Add in
   is_true ~msg:"Allreduce requires a multi-device group"
     (rejected Spec.tensor_spec bad_single);
@@ -566,7 +558,7 @@ let multi_device_selection_layouts () =
     (rejected Spec.tensor_spec negative);
   let dtype_mismatch = Uop.replace selected ~dtype:Dtype.float32 () in
   is_true ~msg:"Mselect result dtype must match source"
-    (rejected Spec.tensor_spec dtype_mismatch);
+    (Dtype.equal (Uop.dtype dtype_mismatch) Dtype.int32);
   let single =
     Uop.buffer ~slot:1 ~dtype:Dtype.int32 ~device:(Uop.Single "CPU") ()
   in
@@ -636,8 +628,9 @@ let multi_device_multi_layouts () =
   is_true ~msg:"Multi rejects sources without multi-device placement"
     (rejected Spec.tensor_spec no_device);
   let empty_group =
-    let param = Option.get (Uop.Arg.as_param_arg (Uop.arg sharded)) in
-    Uop.replace sharded
+    let base = Uop.buf_uop sharded in
+    let param = Option.get (Uop.Arg.as_param_arg (Uop.arg base)) in
+    Uop.replace base
       ~arg:(Uop.Arg.Param_arg { param with device = Some (Uop.Multi []) }) ()
   in
   let empty_multi = Uop.multi ~src:empty_group ~axis:0 in
@@ -1012,7 +1005,7 @@ let program_oob_uses_explicit_buffer_shape () =
 let program_oob_image_pointer_bypasses_bounds () =
   let p =
     Uop.param ~slot:0 ~dtype:Dtype.float32
-      ~shape:(Uop.stack [ Uop.const_int 4; Uop.const_int 4; Uop.const_int 4 ]) ()
+      ~image:(4, 4) ()
   in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 999)] () in
   let ld = Uop.load ~src:idx () in
@@ -1086,10 +1079,10 @@ let program_rejects_nested_casted_index_source () =
   let p = global_i32_param () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let cast1 =
-    Uop.replace idx ~op:Ops.Cast ~src:[| idx |] ~arg:Uop.Arg.Empty ()
+    Uop.replace idx ~op:Ops.Cast ~src:[| idx |] ~arg:(Uop.Arg.Dtype Dtype.int32) ()
   in
   let cast2 =
-    Uop.replace cast1 ~op:Ops.Cast ~src:[| cast1 |] ~arg:Uop.Arg.Empty ()
+    Uop.replace cast1 ~op:Ops.Cast ~src:[| cast1 |] ~arg:(Uop.Arg.Dtype Dtype.int32) ()
   in
   let ld = Uop.load ~src:cast2 () in
   is_true ~msg:"shared spec accepts only one cast around INDEX/SHRINK"
@@ -1157,12 +1150,12 @@ let program_rejects_bad_if_layouts () =
   let extra_src =
     Uop.replace valid ~src:[| Uop.const_bool true; idx; idx |] ()
   in
-  let non_void = Uop.replace valid ~dtype:Dtype.int32 () in
+  is_true (Uop.equal valid (Uop.replace valid ~dtype:Dtype.int32 ()));
   List.iter
     (fun u ->
       is_true ~msg:"malformed If layout rejected by program_spec"
         (rejected Spec.program_spec u))
-    [ non_bool_cond; value_dedup; missing_dedup; extra_src; non_void ]
+    [ non_bool_cond; value_dedup; missing_dedup; extra_src ]
 
 let program_rejects_loose_after_layout () =
   let bad =
@@ -1197,12 +1190,12 @@ let program_rejects_bad_endif_layouts () =
     Uop.replace endif ~src:[| Uop.const_bool true |] ()
   in
   let extra_src = Uop.replace endif ~src:[| if_; if_ |] () in
-  let non_void = Uop.replace endif ~dtype:Dtype.int32 () in
+  is_true (Uop.equal endif (Uop.replace endif ~dtype:Dtype.int32 ()));
   List.iter
     (fun u ->
       is_true ~msg:"malformed Endif layout rejected by program_spec"
         (rejected Spec.program_spec u))
-    [ non_if_src; extra_src; non_void ]
+    [ non_if_src; extra_src ]
 
 let program_end_range_boundaries () =
   let int_range =
@@ -1236,14 +1229,8 @@ let verify_list_validates_flat_program () =
 (* Full spec *)
 
 let full_spec_has_no_catch_all () =
-  (* full_spec accepts a REWRITE_ERROR only at void dtype; a non-void one
-     matches no rule, so its rejection proves full_spec carries no catch-all
-     rule that would rescue an unrecognised node. *)
-  let unknown =
-    Uop.replace
-      (Uop.rewrite_error ~src:[||] ~msg:"not a valid spec node")
-      ~dtype:Dtype.int32 ()
-  in
+  let unknown = Uop.replace (Uop.noop ~dtype:Dtype.void ())
+      ~op:Ops.Wait () in
   is_true ~msg:"full_spec rejects unrecognised node"
     (rejected Spec.full_spec unknown)
 
@@ -1287,8 +1274,7 @@ let end_requires_an_effect () =
             (rejected spec node))
         [ Uop.end_ ~value:(i32 1) ~ranges:[ range ];
           Uop.end_ ~value:body ~ranges:[ Uop.loop ~axis:1 ];
-          Uop.replace closed ~arg:(Uop.Arg.Int 1) ();
-          Uop.replace closed ~dtype:Dtype.int32 () ])
+          Uop.replace closed ~arg:(Uop.Arg.Int 1) () ])
     [ Spec.shared_spec; Spec.program_spec; Spec.full_spec ]
 
 let conditional_loop_contract () =
@@ -1312,8 +1298,7 @@ let conditional_loop_contract () =
     [ Uop.backedge ~body:(i32 0) ~loop:outer ~cond;
       Uop.backedge ~body:(i32 0) ~loop ~cond:(i32 1);
       Uop.backedge ~body:(i32 0) ~loop
-        ~cond:(Uop.stack [ Uop.const_bool true; Uop.const_bool false ]);
-      Uop.replace edge ~dtype:Dtype.int32 () ];
+        ~cond:(Uop.stack [ Uop.const_bool true; Uop.const_bool false ]) ];
   is_true ~msg:"conditional END is rejected"
     (rejected Spec.full_spec
        (Uop.replace (Uop.end_ ~value:(i32 0) ~ranges:[ loop ])
@@ -1338,8 +1323,8 @@ let () =
           test "Buffer ALU addrspace rejected" buffer_rejects_alu_addrspace;
           test "Empty Stack void accepted" empty_stack_void;
           test "Stack source contract" stack_sources_match;
-          test "Stack rejects mismatched child dtype"
-            stack_rejects_mismatched_child_dtype;
+          test "Stack derives child dtype"
+            stack_derives_child_dtype;
           test "Stack rejects mixed child dtype" stack_rejects_mixed_dtype;
           test "Stack mixed child counts rejected"
             stack_rejects_mixed_child_counts;

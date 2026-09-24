@@ -929,7 +929,7 @@ let base_rewrite : ctx rule list =
       fun ctx bs _ ->
         let x = bs $ "x" in
         match U.arg x with
-        | U.Arg.String fmt ->
+        | U.Arg.Typed (fmt, _) ->
             let args =
               Array.to_list (U.src x) |> List.map (fun s -> lookup ctx s)
             in
@@ -1160,7 +1160,7 @@ let writable_params (uops : U.t list) : unit U.Ref_tbl.t =
     List.filter_map
       (fun u ->
         match U.op u, U.arg u, Array.to_list (U.src u) with
-        | (Ops.Custom | Ops.Customi), U.Arg.String fmt, dst :: _
+        | (Ops.Custom | Ops.Customi), U.Arg.Typed (fmt, _), dst :: _
           when contains_substring fmt "write_imagef" ->
             Some dst
         | _ -> None)

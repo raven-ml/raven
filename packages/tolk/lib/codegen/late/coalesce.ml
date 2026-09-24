@@ -12,11 +12,9 @@ module U = Uop
 let ceil_div a b = (a + b - 1) / b
 let lane src i = U.index ~ptr:src ~idxs:[ U.const_int i ] ()
 
-(* An image buffer is a param/buffer whose shape is [(height, width, 4)].
-   Pointer-ness and image-ness are structural now: there is no image dtype. *)
 let is_image_shape u =
-  match (try U.max_shape u with Invalid_argument _ -> []) with
-  | [ _; _; 4 ] -> true
+  match U.arg u with
+  | U.Arg.Param_arg { image = Some _; _ } -> true
   | _ -> false
 
 let image_valid_dims ?(osx = false) ~image_pitch_alignment ~base ~size () =
@@ -130,7 +128,7 @@ let simplify_valid_load ptr start_idx valid =
 
 (* Image load/store is always float-typed regardless of the buffer's scalar
    dtype; the half conversion is handled by the image-float rules. *)
-let image_index ptr idxs = U.replace (U.index ~ptr ~idxs ()) ~dtype:Dtype.float32 ()
+let image_index ptr idxs = U.index ~ptr ~idxs ()
 
 let simplify_valid_image_coords buf y x =
   match invalid_where_index y, invalid_where_index x with
@@ -267,11 +265,8 @@ let transform_to_image shapes ren buf offset =
         (match pick with
          | None -> None
          | Some (_, height, width, cidx) ->
-             let shape_arg =
-               U.stack
-                 [ U.const_int height; U.const_int width; U.const_int 4 ]
-             in
-             let buf = U.replace buf ~src:[| shape_arg |] () in
+             let buf = U.replace buf
+                 ~arg:(U.Arg.Param_arg { param with image = Some (height, width) }) () in
              Hashtbl.replace shapes param.slot (height, width);
              let x = lane cidx 0 in
              let y = lane cidx 1 in

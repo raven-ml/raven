@@ -249,17 +249,11 @@ let compile_candidates ~device ~nworkers candidates =
 
 type buffer_req = { slot : int; size : int; dtype : Dtype.t }
 
-let shape_arg_max_numel u =
-  match U.src u with
-  | [| shape; _ |] | [| shape |] when U.op shape <> Ops.Noop ->
-      Some (List.fold_left ( * ) 1 (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.as_shape shape)))
-  | _ -> None
-
 let buffer_reqs ast =
   let req_of_param u =
     match U.as_param u with
     | Some { param; _ } when param.slot >= 0 ->
-        (match shape_arg_max_numel u with
+        (match param.size with
          | Some size when size >= 0 ->
              Some { slot = param.slot; size; dtype = U.dtype u }
          | Some _ | None ->

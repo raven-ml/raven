@@ -152,6 +152,20 @@ let emulation_renderer unsupported =
     ~supports_dtype:(fun dtype -> not (List.mem dtype unsupported))
     ~render:(fun ?name:_ _ -> "") ()
 
+let long_storage_size_is_doubled () =
+  List.iter (fun dtype ->
+      let p = Uop.param ~slot:0 ~dtype ~shape:(Uop.const_int 7) () in
+      let result = Decomp_dtype.do_dtype_decomps
+          (emulation_renderer [ Dtype.int64; Dtype.uint64 ]) p in
+      match Uop.as_param result with
+      | Some { param; _ } ->
+          equal (option int) (Some 14) param.size;
+          equal int 0 (Array.length (Uop.src result));
+          is_true (Dtype.equal param.dtype (if Dtype.is_unsigned dtype
+            then Dtype.uint32 else Dtype.int32))
+      | None -> failwith "decomposed storage must remain a flat parameter")
+    [ Dtype.int64; Dtype.uint64 ]
+
 let long_scalar_variables_are_rejected () =
   List.iter (fun dtype ->
       let variable = Uop.variable ~name:"length" ~min_val:0
@@ -587,7 +601,7 @@ let same_sign_divisor_bounds_can_include_zero () =
             (match result with Some u -> Uop.op u = expected | None -> false))
         [ Ops.Floordiv, Ops.Cdiv; Ops.Floormod, Ops.Cmod ]) [ 0, 3; -3, 0 ]
 
-let threefry_rewrite_requires_uint64 () =
+let threefry_derives_uint64 () =
   let x = Uop.const (Const.int Dtype.uint32 42) in
   let key = Uop.const (Const.int Dtype.uint32 99) in
   let fry = Uop.alu_binary ~op:Ops.Threefry ~lhs:x ~rhs:key in
@@ -595,7 +609,9 @@ let threefry_rewrite_requires_uint64 () =
     Decomp_op.get_simplifying_rewrite_patterns
       (supported_ops ~has_threefry:false ()) fry
   in
-  is_true ~msg:"Threefry software rewrite is only for uint64" (got = None)
+  is_true ~msg:"Threefry always produces uint64"
+    (Dtype.equal (Uop.dtype fry) Dtype.uint64);
+  is_true ~msg:"software rewrite sees the derived result type" (Option.is_some got)
 
 let early_decomp u =
   let ops = supported_ops () in
@@ -823,7 +839,7 @@ let bf16_load_promotes_to_f32 () =
     { from_dtype = Dtype.Bfloat16; to_dtype = Dtype.Float32 }
   in
   let rewritten =
-    Uop.graph_rewrite
+    Uop.graph_rewrite ~bottom_up:true
       (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx))
       load
   in
@@ -851,7 +867,7 @@ let bf16_vector_load_reindexes_shrink () =
     { from_dtype = Dtype.Bfloat16; to_dtype = Dtype.Float32 }
   in
   let rewritten =
-    Uop.graph_rewrite
+    Uop.graph_rewrite ~bottom_up:true
       (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx))
       load
   in
@@ -935,7 +951,8 @@ let () =
       group "prng"
         [ test "threefry2x32 is uint64" threefry_produces_uint64 ];
       group "long decomposition"
-        [ test "scalar variables fail instead of narrowing their binding"
+        [ test "long storage doubles flat size" long_storage_size_is_doubled;
+          test "scalar variables fail instead of narrowing their binding"
             long_scalar_variables_are_rejected;
           test "MUL lowers" mul_long_decomposes;
           test "IDIV lowers" idiv_long_decomposes;
@@ -998,8 +1015,8 @@ let () =
             floor_power_of_two_lowers_before_truncation;
           test "same-sign divisor bounds may include zero"
             same_sign_divisor_bounds_can_include_zero;
-          test "Threefry rewrite requires uint64"
-            threefry_rewrite_requires_uint64;
+          test "Threefry derives uint64"
+            threefry_derives_uint64;
           test "early Floordiv by zero raises before trunc lowering"
             early_floordiv_by_zero_raises;
           test "early Floormod by zero raises before trunc lowering"

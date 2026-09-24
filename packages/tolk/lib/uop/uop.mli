@@ -137,6 +137,10 @@ type param_arg = {
       (** Scalar element dtype of the parameter or buffer. Equal to the node's
           dtype; carried in the arg so index-lowering rewrites can re-infer the
           node dtype without desynchronising from the parameter. *)
+  size : int option;
+      (** Maximum flat storage size, or [None] for a scalar parameter. *)
+  image : (int * int) option;
+      (** Image height and width; its storage shape is [(height, width, 4)]. *)
   vmin_vmax : (Bound.t * Bound.t) option;
       (** Exact inclusive numeric bounds, when known. Floating endpoints must
           not be NaN. *)
@@ -339,6 +343,8 @@ module Arg : sig
     | Int of int
     | Ints of int list
     | Bools of bool list
+    | Dtype of Dtype.t  (** Destination dtype for casts and bitcasts. *)
+    | Typed of string * Dtype.t  (** Custom instruction text and result dtype. *)
     | String of string
     | Value of Const.t
     | Op of Ops.t
@@ -651,13 +657,15 @@ val linear : t list -> t
 (** {2:ctors_buffers Parameters and buffers} *)
 
 val param :
-  slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
+  slot:int -> dtype:Dtype.t -> ?shape:t -> ?image:int * int -> ?device:device ->
   ?vmin_vmax:Bound.t * Bound.t -> ?multiple_of:int -> ?name:string ->
   ?addrspace:Dtype.addr_space -> ?axis:int -> ?volatile:bool -> unit -> t
-(** [param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name
+(** [param ~slot ~dtype ?shape ?image ?device ?vmin_vmax ?multiple_of ?name
     ?addrspace ?axis ?volatile ()]
-    is a {!Ops.Param} carrying {!param_arg} and exactly one shape child.
-    [shape] defaults to {!shape_to_shape_arg} [None]. Shared. *)
+    is a flat {!Ops.Param} with no shape child, viewed at [shape]. Multidimensional
+    shapes add a reshape; symbolic extents shrink the maximum-sized storage.
+    Omitting [shape] creates a scalar. [image] creates an image parameter with
+    explicit height and width. Shared. *)
 
 val variable :
   name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.t ->
@@ -672,9 +680,9 @@ val buffer :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?name:string ->
   ?addrspace:Dtype.addr_space -> ?axis:int -> ?device:device ->
   ?volatile:bool -> unit -> t
-(** [buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile ()] is an
-    {!Ops.Buffer} carrying {!param_arg} and exactly one shape child. [shape]
-    defaults to {!shape_to_shape_arg} [None]. Tensor. *)
+(** [buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile ()] is a
+    flat {!Ops.Buffer} viewed at [shape]. Its maximum storage size lives in
+    {!param_arg}; placed global buffers own their storage directly. Tensor. *)
 
 val from_buffer : Storage.t -> t
 (** [from_buffer b] is a flat BUFFER retaining [b], including its external
@@ -1169,9 +1177,10 @@ val replace :
     the supplied fields overridden and the rest inherited from [u].
     Pass [~node_tag:None] to clear the diagnostic tag; omit it to
     preserve it. The result is hash-consed, so it is physically equal
-    to [u] when every override matches the existing field. A {!Ops.Call}
-    always derives its result dtype from its {!call_info}, including when
-    [dtype] is supplied explicitly.
+    to [u] when every override matches the existing field. Result dtypes are
+    derived from the new sources and argument. [dtype] updates the payload
+    for casts, storage and custom instructions; it cannot override a dtype
+    derived from sources or {!call_info}.
 
     Bypasses the per-op validation performed by the dedicated smart
     constructors; callers are responsible for preserving the op's

@@ -1510,8 +1510,8 @@ let to_define_global ctx n =
       (* Renumber only an already-tagged, shaped, unnamed PARAM. The tag is
          set by the param/range tagging rule so a PARAM freshly created here
          is not debuffed again. *)
-      | Some { param = { name = None; _ }; shape }
-        when U.op shape <> Ops.Noop && U.node_tag n = Some "" ->
+      | Some { param = { name = None; size = Some _; _ }; _ }
+        when U.node_tag n = Some "" ->
           debuf ctx n
       | _ -> None)
   | Ops.Bind -> unbind_kernel ctx n

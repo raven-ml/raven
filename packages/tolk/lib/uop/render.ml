@@ -130,6 +130,8 @@ let param_arg_debug_string (p : param_arg) =
     | None -> ()
     | Some value -> fields := !fields @ [ name ^ "=" ^ render value ]
   in
+  add "size" string_of_int p.size;
+  add "image" (fun (h, w) -> tuple_string [string_of_int h; string_of_int w]) p.image;
   add "vmin_vmax" bound_pair_string p.vmin_vmax;
   add "multiple_of" string_of_int p.multiple_of;
   add "name" python_quote p.name;
@@ -247,6 +249,8 @@ and uop_repr_debug_string root =
         | Arg.Int n -> string_of_int n
         | Arg.Ints xs -> tuple_string (List.map string_of_int xs)
         | Arg.Bools xs -> tuple_string (List.map python_bool xs)
+        | Arg.Dtype dtype -> dtype_debug_string dtype
+        | Arg.Typed (s, dtype) -> tuple_string [python_quote s; dtype_debug_string dtype]
         | Arg.String s -> python_quote s
         | Arg.Value c -> const_repr_string c
         | Arg.Op o -> "Ops." ^ Ops.name o
@@ -330,6 +334,8 @@ let arg_debug_string = function
   | Arg.Int n -> string_of_int n
   | Arg.Ints xs -> tuple_string (List.map string_of_int xs)
   | Arg.Bools xs -> tuple_string (List.map python_bool xs)
+  | Arg.Dtype dtype -> dtype_debug_string dtype
+  | Arg.Typed (s, dtype) -> tuple_string [python_quote s; dtype_debug_string dtype]
   | Arg.String s -> python_quote s
   | Arg.Value c -> const_debug_string c
   | Arg.Op op -> "Ops." ^ Ops.name op

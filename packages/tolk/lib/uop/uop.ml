@@ -54,6 +54,8 @@ type metadata = { name : string; backward : bool }
 type param_arg = {
   slot : int;
   dtype : Dtype.t;
+  size : int option;
+  image : (int * int) option;
   vmin_vmax : (Bound.t * Bound.t) option;
   multiple_of : int option;
   name : string option;
@@ -117,6 +119,8 @@ and arg =
   | Int of int
   | Ints of int list
   | Bools of bool list
+  | Dtype of Dtype.t
+  | Typed of string * Dtype.t
   | String of string
   | Value of Const.t
   | Op of Ops.t
@@ -171,6 +175,8 @@ module Arg = struct
     | Int of int
     | Ints of int list
     | Bools of bool list
+    | Dtype of Dtype.t
+    | Typed of string * Dtype.t
     | String of string
     | Value of Const.t
     | Op of Ops.t
@@ -191,6 +197,8 @@ module Arg = struct
     | Int x, Int y -> x = y
     | Ints x, Ints y -> x = y
     | Bools x, Bools y -> x = y
+    | Dtype x, Dtype y -> Dtype.equal x y
+    | Typed (x, dx), Typed (y, dy) -> String.equal x y && Dtype.equal dx dy
     | String x, String y -> String.equal x y
     | Value x, Value y -> Const.equal x y
     | Op x, Op y -> Ops.equal x y
@@ -234,7 +242,7 @@ module Arg = struct
   let as_int = function Int n -> Option.Some n | _ -> Option.None
   let as_ints = function Ints l -> Option.Some l | _ -> Option.None
   let as_bools = function Bools l -> Option.Some l | _ -> Option.None
-  let as_string = function String s -> Option.Some s | _ -> Option.None
+  let as_string = function String s | Typed (s, _) -> Option.Some s | _ -> Option.None
   let as_value = function Value v -> Option.Some v | _ -> Option.None
   let as_op = function Op o -> Option.Some o | _ -> Option.None
   let as_param_arg = function Param_arg a -> Option.Some a | _ -> Option.None
@@ -288,19 +296,89 @@ let global_table = H.create 4096
    lock in this module, so there is no lock ordering to deadlock on. *)
 let intern_mutex = Mutex.create ()
 
-let intern_node node =
-  let node = match node.op, node.arg with
-    | Ops.Call, Arg.Call_info info when not (Dtype.equal node.dtype info.dtype) ->
-        { node with dtype = info.dtype }
-    | _ -> node
+let derived_dtype (node : node) =
+  let dt (u : t) = u.Hashcons.node.dtype in
+  let source i =
+    if i >= Array.length node.src then
+      invalid_arg ("Uop: missing source for " ^ Ops.name node.op);
+    node.src.(i)
   in
+  let first () = dt (source 0) in
+  let promote sources = match sources with
+    | [] -> Dtype.void
+    | first :: rest ->
+        let dtype = dt first in
+        if List.for_all (fun u -> Dtype.equal (dt u) dtype) rest then dtype
+        else Dtype.least_upper_dtype (List.map dt sources)
+  in
+  let rec invalid u =
+    let n = u.Hashcons.node in
+    match n.op, n.arg with
+    | Ops.Const, Arg.Value c -> Const.view c = Const.Invalid
+    | op, _ when (Ops.Group.is_movement op || op = Ops.Detach)
+                 && Array.length n.src > 0 -> invalid n.src.(0)
+    | _ -> false
+  in
+  match node.op with
+  | Ops.Store | Ops.Linear | Ops.Sink | Ops.Program | Ops.Source
+  | Ops.Backedge | Ops.Barrier | Ops.Group | Ops.If | Ops.Endif | Ops.Noop
+  | Ops.Custom_function | Ops.Rewrite_error | Ops.Pyliteral | Ops.Tuple | Ops.Wait -> Dtype.void
+  | Ops.Call | Ops.Function ->
+      (match node.arg with Arg.Call_info info -> info.dtype | _ -> Dtype.void)
+  | Ops.Custom | Ops.Customi | Ops.Ins ->
+      (match node.arg with
+       | Arg.Typed (_, dtype) -> dtype
+       | _ -> invalid_arg "Uop: custom instructions require a typed payload")
+  | Ops.Cast | Ops.Bitcast ->
+      (match node.arg with
+       | Arg.Dtype dtype -> dtype
+       | _ -> invalid_arg "Uop: casts require a dtype payload")
+  | Ops.Buffer | Ops.Param ->
+      (match node.arg with
+       | Arg.Param_arg p -> p.dtype
+       | _ -> invalid_arg "Uop: storage requires ParamArg")
+  | Ops.Const ->
+      (match node.arg with
+       | Arg.Value value -> Const.dtype value
+       | _ -> invalid_arg "Uop: CONST requires a scalar value")
+  | Ops.Binary -> Dtype.uint8
+  | Ops.Cmplt | Ops.Cmpne | Ops.Cmpeq -> Dtype.bool
+  | Ops.Getaddr | Ops.Threefry -> Dtype.uint64
+  | Ops.Sin | Ops.Log2 | Ops.Exp2 | Ops.Sqrt | Ops.Reciprocal ->
+      if invalid (source 0) then Dtype.bool else Dtype.least_upper_float (first ())
+  | Ops.Fdiv -> Dtype.least_upper_float (promote (Array.to_list node.src))
+  | Ops.Shl | Ops.Shr ->
+      if not (Array.for_all (fun u -> Dtype.is_int (dt u) || invalid u) node.src) then
+        invalid_arg "Uop: shift operands must be integers";
+      first ()
+  | Ops.Where ->
+      if not (Dtype.equal (first ()) Dtype.bool) then
+        invalid_arg "Uop: WHERE condition must be bool";
+      promote (List.tl (Array.to_list node.src))
+  | Ops.Stack -> promote (Array.to_list node.src)
+  | Ops.Wmma -> dt (source 2)
+  | Ops.Index ->
+      (match (source 0).Hashcons.node.arg with
+       | Arg.Param_arg { image = Some _; _ } -> Dtype.float32
+       | _ -> first ())
+  | Ops.Load | Ops.Unshard | Ops.Reduce | Ops.After | Ops.Range | Ops.Copy
+  | Ops.Stage | Ops.Detach | Ops.Mstack | Ops.Mselect | Ops.Allreduce | Ops.Special
+  | Ops.End | Ops.Contiguous | Ops.Contiguous_backward | Ops.Bind -> first ()
+  | Ops.Gettuple | Ops.Slice -> node.dtype
+  | op when Ops.Group.is_unary op || Ops.Group.is_movement op -> first ()
+  | op when Ops.Group.is_broadcastable op -> promote (Array.to_list node.src)
+  | op -> invalid_arg ("Uop: no dtype rule for " ^ Ops.name op)
+
+let intern_node (node : node) =
+  let node = { node with dtype = derived_dtype node } in
   Mutex.protect intern_mutex (fun () -> H.hashcons global_table node)
 
 let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 
-let default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name
+let default_param_arg ~dtype ?size ?image ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Dtype.Global) ?axis ?device ?(volatile = false) slot =
-  { slot; dtype; vmin_vmax; multiple_of; name; addrspace; axis; device; volatile; buffer = None }
+  { slot; dtype; size; image; vmin_vmax; multiple_of; name; addrspace; axis;
+    device; volatile; buffer = None }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -510,18 +588,6 @@ let as_slice u =
       Option.Some { src; offset; size }
   | _ -> Option.None
 
-let as_param u =
-  match op u, arg u, Array.to_list (src u) with
-  | Ops.Param, Arg.Param_arg arg, [ shape ] ->
-      Option.Some { param = arg; shape }
-  | _ -> Option.None
-
-let as_buffer u =
-  match op u, arg u, Array.to_list (src u) with
-  | Ops.Buffer, Arg.Param_arg arg, [ shape ] ->
-      Option.Some { buffer = arg; shape }
-  | _ -> Option.None
-
 let as_wmma u =
   match op u, arg u, Array.to_list (src u) with
   | Ops.Wmma, Arg.Wmma_info info, [ a; b; c ] ->
@@ -674,14 +740,6 @@ let linear srcs =
   mk ~op:Ops.Linear ~dtype:void_dtype
     ~src:(Array.of_list srcs) ~arg:Arg.Empty
 
-let param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name ?addrspace
-    ?axis ?volatile () =
-  let shape = shape_to_shape_arg shape in
-  mk ~op:Ops.Param ~dtype ~src:[| shape |]
-    ~arg:(Arg.Param_arg
-            (default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name ?addrspace
-               ?axis ?device ?volatile slot))
-
 (* Buffer slots come from one process-wide counter: buffers hash-cons on
    (slot, dtype, shape, device), so reusing a slot would collapse two distinct
    allocations onto one node identity. *)
@@ -702,9 +760,10 @@ let stage ~src ~ranges ~opts =
 
 let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint)
     ?(multiple_of = 1) () =
-  let shape = mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty in
-  param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(Bound.int min_val, Bound.int max_val)
-    ~multiple_of ~addrspace:Dtype.Alu ()
+  mk ~op:Ops.Param ~dtype ~src:[||]
+    ~arg:(Arg.Param_arg (default_param_arg ~dtype ~name
+      ~vmin_vmax:(Bound.int min_val, Bound.int max_val) ~multiple_of
+      ~addrspace:Dtype.Alu (-1)))
 
 let bind ~var ~value =
   let in_bounds = match arg var, op value, arg value with
@@ -756,6 +815,27 @@ let index ~ptr ~idxs () =
       mk ~op:Ops.Index ~dtype:(dtype ptr) ~src:(Array.of_list (ptr :: idxs))
         ~arg:Arg.Empty
 
+let storage_shape (p : param_arg) =
+  match p.image, p.size with
+  | Some (h, w), _ -> [const_int h; const_int w; const_int 4]
+  | None, Some size -> [const_int size]
+  | None, None -> []
+
+let storage_shape_arg p = match storage_shape p with
+  | [dim] -> dim
+  | dims -> mk ~op:Ops.Stack ~dtype:(if dims = [] then Dtype.void else Dtype.weakint)
+      ~src:(Array.of_list dims) ~arg:Arg.Empty
+
+let as_param u =
+  match op u, arg u, Array.length (src u) with
+  | Ops.Param, Arg.Param_arg p, 0 -> Some { param = p; shape = storage_shape_arg p }
+  | _ -> None
+
+let as_buffer u =
+  match op u, arg u, Array.length (src u) with
+  | Ops.Buffer, Arg.Param_arg p, 0 -> Some { buffer = p; shape = storage_shape_arg p }
+  | _ -> None
+
 let load ~src ?dtype:load_dtype ?alt ?gate () =
   (* The indexed source already carries the element dtype. *)
   let dtype = match load_dtype with Some dtype -> dtype | None -> dtype src in
@@ -793,52 +873,19 @@ let alu_unary ~op ~src =
   if not (Ops.Group.is_unary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_unary: %s is not unary" (Ops.name op));
-  (* The transcendental ops produce a float even from an integer argument. *)
-  let dt =
-    match op with
-    | Ops.Sin | Ops.Log2 | Ops.Exp2 | Ops.Sqrt | Ops.Reciprocal ->
-        Dtype.least_upper_float (dtype src)
-    | _ -> dtype src
-  in
-  mk ~op ~dtype:dt ~src:[| src |] ~arg:Arg.Empty
+  mk ~op ~dtype:void_dtype ~src:[| src |] ~arg:Arg.Empty
 
 let alu_binary ~op ~lhs ~rhs =
   if not (Ops.Group.is_binary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_binary: %s is not binary" (Ops.name op));
-  let dt =
-    if Ops.Group.is_comparison op then Dtype.bool
-    else
-      match op with
-      (* A shift is not a promotion: the result is as wide as the value being
-         shifted, whatever width the shift amount happens to carry. *)
-      | Ops.Shl | Ops.Shr ->
-          if not (Dtype.is_int (dtype lhs) && Dtype.is_int (dtype rhs)) then
-            invalid_arg
-              (Printf.sprintf "Uop.alu_binary: %s operands must be int, got %s and %s"
-                 (Ops.name op)
-                 (Dtype.to_string (dtype lhs))
-                 (Dtype.to_string (dtype rhs)));
-          dtype lhs
-      | _ -> promo_dtype [ lhs; rhs ]
-  in
-  mk ~op ~dtype:dt ~src:[| lhs; rhs |] ~arg:Arg.Empty
+  mk ~op ~dtype:void_dtype ~src:[| lhs; rhs |] ~arg:Arg.Empty
 
 let alu_ternary ~op ~a ~b ~c =
   if not (Ops.Group.is_ternary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_ternary: %s is not ternary" (Ops.name op));
-  let dt =
-    match op with
-    | Ops.Where ->
-        if not (Dtype.equal (dtype a) Dtype.bool) then
-          invalid_arg
-            (Printf.sprintf "Uop.alu_ternary: WHERE condition must be bool, got %s"
-               (Dtype.to_string (dtype a)));
-        promo_dtype [ b; c ]
-    | _ -> promo_dtype [ a; b; c ]
-  in
-  mk ~op ~dtype:dt ~src:[| a; b; c |] ~arg:Arg.Empty
+  mk ~op ~dtype:void_dtype ~src:[| a; b; c |] ~arg:Arg.Empty
 
 let valid ~src ~cond =
   let inv = const Const.invalid in
@@ -846,19 +893,22 @@ let valid ~src ~cond =
 
 let cast ~src ~dtype:target_dtype =
   if Dtype.equal (dtype src) target_dtype then src
-  else mk ~op:Ops.Cast ~dtype:target_dtype ~src:[| src |] ~arg:Arg.Empty
+  else mk ~op:Ops.Cast ~dtype:target_dtype ~src:[| src |] ~arg:(Arg.Dtype target_dtype)
 
 let bitcast ~src ~dtype:target_dtype =
   if Dtype.equal (dtype src) target_dtype then src
-  else mk ~op:Ops.Bitcast ~dtype:target_dtype ~src:[| src |] ~arg:Arg.Empty
+  else mk ~op:Ops.Bitcast ~dtype:target_dtype ~src:[| src |] ~arg:(Arg.Dtype target_dtype)
 
 let stack ?dtype:dtype_opt srcs =
-  let dt = match dtype_opt, srcs with
-    | Option.Some dt, _ -> dt
-    | Option.None, [] -> void_dtype
-    | Option.None, first :: _ -> dtype first
+  let dt = match srcs with
+    | [] -> void_dtype
+    | _ -> Option.value dtype_opt ~default:(promo_dtype srcs)
   in
-  mk ~op:Ops.Stack ~dtype:dt ~src:(Array.of_list srcs) ~arg:Arg.Empty
+  let src = List.map (fun u ->
+      match op u, arg u with
+      | Ops.Const, Arg.Value c when Const.view c = Const.Invalid -> u
+      | _ -> cast ~src:u ~dtype:dt) srcs in
+  mk ~op:Ops.Stack ~dtype:dt ~src:(Array.of_list src) ~arg:Arg.Empty
 
 let slice ~src ~offset ~size ~dtype =
   mk ~op:Ops.Slice ~dtype ~src:[| src; offset |] ~arg:(Arg.Int size)
@@ -1157,11 +1207,11 @@ let wmma ~a ~b ~c ~info ~dtype =
 
 let custom ~fmt ~args =
   mk ~op:Ops.Custom ~dtype:void_dtype
-    ~src:(Array.of_list args) ~arg:(Arg.String fmt)
+    ~src:(Array.of_list args) ~arg:(Arg.Typed (fmt, void_dtype))
 
 let custom_inline ~fmt ~args ~dtype =
   mk ~op:Ops.Customi ~dtype
-    ~src:(Array.of_list args) ~arg:(Arg.String fmt)
+    ~src:(Array.of_list args) ~arg:(Arg.Typed (fmt, dtype))
 
 let source s =
   mk ~op:Ops.Source ~dtype:void_dtype ~src:[||] ~arg:(Arg.String s)
@@ -1174,7 +1224,7 @@ let rewrite_error ~src ~msg =
 
 let ins ~mnemonic ~operands ?(dtype = void_dtype) () =
   mk ~op:Ops.Ins ~dtype
-    ~src:(Array.of_list operands) ~arg:(Arg.String mnemonic)
+    ~src:(Array.of_list operands) ~arg:(Arg.Typed (mnemonic, dtype))
 
 let custom_function ~name ~srcs =
   mk ~op:Ops.Custom_function ~dtype:void_dtype
@@ -1189,6 +1239,12 @@ let replace u ?op:op_opt ?src:src_opt ?arg:arg_opt ?dtype:dtype_opt
   let src = Option.value src_opt ~default:n.src in
   let arg = Option.value arg_opt ~default:n.arg in
   let dtype = Option.value dtype_opt ~default:n.dtype in
+  let arg = match dtype_opt, op, arg with
+    | Some dtype, (Ops.Cast | Ops.Bitcast), _ -> Arg.Dtype dtype
+    | Some dtype, (Ops.Custom | Ops.Customi | Ops.Ins), Arg.Typed (text, _) -> Arg.Typed (text, dtype)
+    | Some dtype, (Ops.Param | Ops.Buffer), Arg.Param_arg p -> Arg.Param_arg { p with dtype }
+    | _ -> arg
+  in
   let node_tag = Option.value node_tag_opt ~default:n.node_tag in
   intern_node { op; src; arg; dtype; node_tag }
 
@@ -2096,9 +2152,9 @@ and compute_shape_opt u =
        | Arg.String s -> Some [ const_int (String.length s) ]
        | _ -> Some [])
   | Ops.Buffer | Ops.Param ->
-      (match Array.to_list srcs with
-       | shape :: _ when op shape <> Ops.Noop -> Some (as_shape shape)
-       | _ -> Some [])
+      (match Arg.as_param_arg (arg u) with
+       | Some p -> Some (storage_shape p)
+       | None -> None)
   | Ops.Slice ->
       if Array.length srcs > 0 && op srcs.(0) = Ops.Index then Some []
       else
@@ -2247,29 +2303,54 @@ let max_numel u =
   List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one (shape u)
   |> Bound.to_int
 
+let storage_size dims =
+  match dims with
+  | [] -> None
+  | _ -> Some (List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one dims
+               |> Bound.to_int)
+
+let view_as node dims =
+  match dims with
+  | [] -> node
+  | _ ->
+      let max_dims = List.map (fun dim -> const (Bound.const Dtype.weakint (vmax dim))) dims in
+      let node = if List.length dims > 1 then reshape ~src:node ~shape:(shape_arg max_dims) else node in
+      if List.for_all (fun dim -> Bound.equal (vmin dim) (vmax dim)) dims then node
+      else shrink ~src:node ~offset:(shape_arg (List.map (fun _ -> const_int 0) dims))
+          ~size:(shape_arg dims)
+
+let param ~slot ~dtype ?shape:shape_arg ?image ?device ?vmin_vmax ?multiple_of ?name
+    ?addrspace ?axis ?volatile () =
+  let dims = match shape_arg with None -> [] | Some shape when op shape = Ops.Noop -> [] | Some shape -> as_shape shape in
+  let size = match image with
+    | None -> storage_size dims
+    | Some (h, w) -> storage_size [const_int h; const_int w; const_int 4]
+  in
+  let p = default_param_arg ~dtype ?size ?image ?vmin_vmax ?multiple_of ?name
+      ?addrspace ?axis ?device ?volatile slot in
+  let node = mk ~op:Ops.Param ~dtype ~src:[||] ~arg:(Arg.Param_arg p) in
+  if Option.is_some image then node else view_as node dims
+
 let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatile () =
-  let shape = shape_to_shape_arg shape_arg in
-  let p = default_param_arg ~dtype ?name ?addrspace ?axis ?device ?volatile slot in
-  let buffers = match p.addrspace, device with
+  let dims = match shape_arg with None -> [] | Some shape when op shape = Ops.Noop -> [] | Some shape -> as_shape shape in
+  let size = storage_size dims in
+  let p = default_param_arg ~dtype ?size ?name ?addrspace ?axis ?device ?volatile slot in
+  let devices = match p.addrspace, device with
     | Dtype.Global, Some (Single device) -> Some [device]
     | Dtype.Global, Some (Multi devices) -> Some devices
     | _ -> None
   in
   let buffer = Option.map (fun devices ->
       if devices = [] then invalid_arg "Uop.buffer: empty device placement";
-      let dims = if op shape = Ops.Noop then [] else as_shape shape in
-      let size = List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one dims
-          |> Bound.to_int in
-      List.map (fun device -> Storage.on_device ~device ~size ~dtype ()) devices)
-      buffers in
-  mk ~op:Ops.Buffer ~dtype ~src:[|shape|] ~arg:(Arg.Param_arg { p with buffer })
+      List.map (fun device -> Storage.on_device ~device ~size:(Option.value size ~default:1) ~dtype ()) devices)
+      devices in
+  view_as (mk ~op:Ops.Buffer ~dtype ~src:[||] ~arg:(Arg.Param_arg { p with buffer })) dims
 
 let from_buffer buf =
   let dtype = Storage.dtype buf in
-  let shape = const_int (Storage.size buf) in
-  let p = default_param_arg ~dtype ~device:(Single (Storage.device buf))
-      (-1 - Storage.id buf) in
-  mk ~op:Ops.Buffer ~dtype ~src:[|shape|]
+  let p = default_param_arg ~dtype ~size:(Storage.size buf)
+      ~device:(Single (Storage.device buf)) (-1 - Storage.id buf) in
+  mk ~op:Ops.Buffer ~dtype ~src:[||]
     ~arg:(Arg.Param_arg { p with buffer = Some [buf] })
 
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
@@ -2457,7 +2538,15 @@ let bounds u =
           lo, hi)
 
 let contiguous_view_offset u =
-  let exact_int t = const_int_value t in
+  let exact_int t =
+    match const_int_value t with
+    | Some _ as value -> value
+    | None ->
+        let lo, hi = min_max t in
+        if Bound.equal lo hi then
+          (try Some (Bound.to_int lo) with Invalid_argument _ -> None)
+        else None
+  in
   let dim_is_zero t = match exact_int t with Some 0 -> true | _ -> false in
   let dim_max_at_most n t = Bound.le (vmax t) (Bound.int n) in
   let same_dim a b =
@@ -3506,7 +3595,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 16
+let export_version = 18
 
 type serialized_node = {
   serialized_op : Ops.t;

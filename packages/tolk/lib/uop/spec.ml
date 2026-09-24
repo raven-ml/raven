@@ -338,7 +338,9 @@ let shared_spec : t =
     =?> (fun u _ -> Array.for_all (matches_or_weak u) (Uop.src u));
 
     ops ~src:[ any ] [ Ops.Cast; Ops.Bitcast ]
-    =?> (fun u _ -> arg_empty u);
+    =?> (fun u _ -> match Uop.arg u with
+      | Uop.Arg.Dtype dtype -> Dtype.equal dtype (Uop.dtype u)
+      | _ -> false);
 
     op ~allow_any_len:true ~src:[ var "size" ] Ops.Range
     =?> (fun u bs ->

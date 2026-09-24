@@ -305,8 +305,9 @@ let make_dtype_changing_load () =
   let c0 = c0_i32 () in
   let idx0 = ptr_index p0 c0 () in
   let idx1 = ptr_index p1 c0 () in
-  let ld = U.replace (load idx0) ~dtype:dt () in
-  [ p0; p1; c0; idx0; idx1; ld; store idx1 ld ]
+  let access = U.cast ~src:idx0 ~dtype:dt in
+  let ld = load access in
+  [ p0; p1; c0; idx0; idx1; access; ld; store idx1 ld ]
 
 let make_pointer_bitcast_load () =
   let p0 = param 0 dt and p1 = param 1 Dtype.int32 in
@@ -331,8 +332,7 @@ let make_shrink_load () =
 (* An image is a float param whose shape is rank-3 with a trailing dim of 4. *)
 let image_param slot =
   U.param ~slot ~dtype:Dtype.float32
-    ~shape:(U.stack [ U.const_int 4; U.const_int 4; U.const_int 4 ])
-    ~addrspace:Dtype.Global ()
+    ~image:(4, 4) ~addrspace:Dtype.Global ()
 
 let make_image_load () =
   let img = image_param 0 in

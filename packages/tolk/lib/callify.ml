@@ -55,11 +55,6 @@ let src0 n =
   | x :: _ -> Some x
   | [] -> None
 
-let src1 n =
-  match U.children n with
-  | _ :: x :: _ -> Some x
-  | _ -> None
-
 let after_parts n =
   match U.op n, U.children n with
   | Ops.After, src :: deps -> Some (src, deps)
@@ -74,29 +69,6 @@ let first_src n =
   match U.children n with
   | src :: _ -> Some src
   | [] -> None
-
-let const_ints n =
-  match U.op n with
-  | Ops.Stack ->
-      let rec loop acc = function
-        | [] -> Some (List.rev acc)
-        | x :: xs ->
-            (match U.const_int_value x with
-             | Some v -> loop (v :: acc) xs
-             | None -> None)
-      in
-      loop [] (U.children n)
-  | Ops.Const -> Option.map (fun v -> [ v ]) (U.const_int_value n)
-  | _ -> None
-
-let shrink_pairs n =
-  match U.op n, src1 n, U.children n with
-  | Ops.Shrink, Some offset, [ _src; _offset; size ] ->
-      (match const_ints offset, const_ints size with
-       | Some offsets, Some sizes ->
-           (try Some (List.combine offsets sizes) with Invalid_argument _ -> None)
-       | _ -> None)
-  | _ -> None
 
 (* Follow movement ops (not MULTI, not DETACH) plus DETACH to the
    underlying node.  Equivalent to tinygrad's UOp.multibase. *)
@@ -128,55 +100,6 @@ let shrink_to src target_shape =
     let size = match target_shape with [ d ] -> d | ds -> U.stack ds in
     U.shrink ~src ~offset ~size
 
-(* If movement ops on [src] collapse to a contiguous range backed by a
-   buffer, return the element offset.  Returns [None] when the view is
-   non-contiguous or too complex to analyse statically. *)
-let contiguous_view_offset shapes src =
-  (* Walk the movement-op chain and track whether the view stays
-     contiguous.  We handle the common patterns; the full analysis
-     would require the rangeify index pipeline. *)
-  let rec walk node =
-    match U.op node, first_src node with
-    | (Ops.Buffer | Ops.Param), _ -> Some 0
-    | Ops.Slice, _ ->
-        (match U.as_slice node with
-         | Some { src; offset; _ } ->
-             (match U.const_int_value offset, walk src with
-              | Some off, Some base_off -> Some (base_off + off)
-              | _ -> None)
-         | None -> None)
-    | Ops.Reshape, Some src -> walk src
-    | Ops.Shrink, Some src ->
-        let inner = match shapes src with Some s -> s | None -> [] in
-        if inner = [] then None
-        else
-          let pairs = match shrink_pairs node with Some p -> p | None -> [] in
-          if pairs = [] || List.length pairs <> List.length inner then None
-          else
-            (* A window is one range of the flat buffer when every axis
-               before the first one it narrows has extent one, and every
-               axis after it is kept whole. *)
-            let rec window offset leading = function
-              | [] -> Some offset
-              | ((before, size), dim) :: rest ->
-                  if before = 0 && size = dim then
-                    window offset (leading && dim <= 1) rest
-                  else if leading then
-                    let stride =
-                      List.fold_left (fun acc (_, d) -> acc * d) 1 rest
-                    in
-                    window (offset + (before * stride)) (size <= 1) rest
-                  else None
-            in
-            (match window 0 true (List.combine pairs inner), walk src with
-             | Some offset, Some base_off -> Some (base_off + offset)
-             | _ -> None)
-    | _ -> None
-  in
-  let base = base src in
-  match U.op base with
-  | Ops.Buffer | Ops.Slice | Ops.Param -> walk src
-  | _ -> None
 
 (* Context *)
 
@@ -295,9 +218,11 @@ let buffer_like ctx src dtype =
 (* If movement ops on [src] collapse to a contiguous range, return a
    Slice reshaped to [src]'s shape. *)
 let make_slice shapes src =
-  match contiguous_view_offset shapes src with
-  | None -> None
-  | Some offset ->
+  (* A view fold cannot discard the effects carried by its base. Preparation
+     must first forward that storage through the call producing it. *)
+  match U.op (multibase src), U.contiguous_view_offset src with
+  | Ops.After, _ | _, None -> None
+  | _, Some offset ->
       let base = base src in
       let size = match shapes src with
         | Some s -> shape_prod s | None -> 0 in

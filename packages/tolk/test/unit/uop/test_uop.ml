@@ -410,12 +410,36 @@ let integer_bounds_parity () =
   is_true ~msg:"bind rejects int64 values outside native bounds"
     overflow_rejected
 
+let flat_storage_parameters () =
+  let n = Uop.variable ~name:"extent" ~min_val:1 ~max_val:8 () in
+  let dims = Uop.stack [Uop.const_int 3; n] in
+  let view = Uop.param ~slot:4 ~dtype:Dtype.float32 ~shape:dims () in
+  let base = Uop.buf_uop view in
+  equal int 0 (Array.length (Uop.src base));
+  equal int 24 (Uop.max_numel base);
+  is_true (List.equal Uop.equal [Uop.const_int 3; n] (Uop.shape view));
+  (match Uop.as_param base with
+   | Some { param; _ } -> equal (option int) (Some 24) param.size
+   | None -> fail "expected flat parameter");
+  let concrete = Uop.param ~slot:5 ~dtype:Dtype.int32
+      ~shape:(Uop.const (Const.int Dtype.int32 4)) () in
+  is_true ~msg:"concrete strong dimensions need no symbolic shrink"
+    (Uop.op concrete = Ops.Param);
+  let scalar = Uop.param ~slot:0 ~dtype:Dtype.int32 () in
+  equal int 0 (Array.length (Uop.src scalar));
+  is_true (Uop.shape scalar = []);
+  let image = Uop.param ~slot:1 ~dtype:Dtype.float32 ~image:(2, 3) () in
+  equal int 0 (Array.length (Uop.src image));
+  equal (list int) [2; 3; 4] (Uop.max_shape image);
+  match Uop.as_param image with
+  | Some { param; _ } -> equal (option int) (Some 24) param.size
+  | None -> fail "expected image parameter"
+
 let max_numel_checks_host_range () =
   let dim = Uop.const_int (1 lsl 32) in
-  let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
-      ~shape:(Uop.stack [ dim; dim ]) () in
   raises_match (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> Uop.max_numel buffer)
+    (fun () -> Uop.param ~slot:0 ~dtype:Dtype.float32
+        ~shape:(Uop.stack [ dim; dim ]) ())
 
 let max_numel_handles_zero_after_large_dimensions () =
   let huge = Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100)) in
@@ -1194,6 +1218,28 @@ let alu_unary_promotes_transcendentals () =
     with Invalid_argument _ -> true
   in
   is_true ~msg:"alu_unary rejects a non-unary op" raised
+
+let division_promotes_integer_operands () =
+  let divide a b = Uop.alu_binary ~op:Ops.Fdiv ~lhs:a ~rhs:b in
+  let weak = divide (Uop.const_int 3) (Uop.const_int 2) in
+  is_true (Dtype.equal (Uop.dtype weak) Dtype.weakfloat);
+  let typed = divide (Uop.const (Const.int Dtype.int32 3))
+      (Uop.const (Const.int Dtype.int32 2)) in
+  is_true (Dtype.equal (Uop.dtype typed) Dtype.float32);
+  (match Uop.arg (Uop.simplify typed) with
+   | Uop.Arg.Value c -> equal (option float_exact) (Some 1.5)
+       (match Const.view c with Const.Float f -> Some f | _ -> None)
+   | _ -> fail "integer division did not fold to a floating value")
+
+let stack_promotes_all_operands () =
+  let half = Uop.const (Const.float Dtype.float16 1.) in
+  let single = Uop.const (Const.float Dtype.float32 2.) in
+  List.iter (fun srcs ->
+      let stacked = Uop.stack srcs in
+      is_true (Dtype.equal (Uop.dtype stacked) Dtype.float32);
+      equal (list int) [ 2 ] (Uop.max_shape stacked))
+    [ [ half; single ]; [ single; half ] ];
+  is_true (Dtype.equal (Uop.dtype (Uop.stack [])) Dtype.void)
 
 let runtime_realization_state_parity () =
   let shape = Uop.stack [ Uop.const_int 4 ] in
@@ -2333,7 +2379,7 @@ let compiled_signature_preserves_slots_and_types () =
   let sink = U.sink [ b11; b3; v ] in
   let target = Target.of_string "PCI:2+AMD:HIP:gfx1100" in
   let info = { (U.program_info_from_sink ~target sink) with vars = [ v ] } in
-  let program = U.program ~sink ~linear:(U.linear [ b11; v; b3 ])
+  let program = U.program ~sink ~linear:(U.linear [ b11; v; U.buf_uop b3 ])
       ~source:(U.source "source") ~binary:(U.binary "\x7fELF\x00payload") ~info () in
   let obj = U.to_elf program in
   equal string "test" obj.name;
@@ -2341,7 +2387,7 @@ let compiled_signature_preserves_slots_and_types () =
   equal string "PCI:2+AMD:HIP:gfx1100" (Target.to_string obj.target);
   equal (option string) (Some (U.semantic_key program)) obj.profile_key;
   equal (list int) [ 1; 0; 2 ] (List.map (fun (a : Tiny_elf.argument) -> a.slot) obj.signature);
-  equal (list (list int)) [ [ 0 ]; [ 12; 4 ]; [] ]
+  equal (list (list int)) [ [ 0 ]; [ 48 ]; [] ]
     (List.map (fun (a : Tiny_elf.argument) -> a.shape) obj.signature);
   match obj.signature with
   | [ zero; named; scalar ] ->
@@ -2424,6 +2470,7 @@ let () =
           test "BIND requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "tinygrad CAST bounds parity" cast_bounds_parity;
+          test "flat storage parameters retain symbolic views" flat_storage_parameters;
           test "max_numel checks host range" max_numel_checks_host_range;
           test "max_numel handles zero after large dimensions"
             max_numel_handles_zero_after_large_dimensions;
@@ -2437,6 +2484,8 @@ let () =
           test "tinygrad call constructor parity"
             call_constructor_parity;
           test "tinygrad property helper parity" property_helpers_parity;
+          test "division promotes integer operands" division_promotes_integer_operands;
+          test "STACK promotes all operands" stack_promotes_all_operands;
           test "tinygrad runtime realization state parity"
             runtime_realization_state_parity;
           test "Reduce layouts" reduce_layouts;

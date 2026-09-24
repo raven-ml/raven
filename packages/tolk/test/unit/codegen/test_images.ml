@@ -21,10 +21,10 @@ let coord ?(cast = false) x y =
   let x = maybe_cast x and y = maybe_cast y in
   U.stack ~dtype:(U.dtype x) [ x; y ]
 
-(* An image is a float parameter whose shape is [(height, width, 4)]. *)
-let image_param ?(slot = 0) shape =
-  U.param ~slot ~dtype:Dtype.float32
-    ~shape:(U.stack (List.map U.const_int shape)) ()
+let image_param ?(slot = 0) = function
+  | [ height; width; 4 ] ->
+      U.param ~slot ~dtype:Dtype.float32 ~image:(height, width) ()
+  | _ -> invalid_arg "image_param: expected height, width, four channels"
 
 let buffer_param ?(slot = 1) dtype =
   U.param ~slot ~dtype ~shape:(U.const_int 1) ()

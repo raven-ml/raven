@@ -386,19 +386,14 @@ let rule_long_defines =
       let narrow = long_to_int_dtype dt in
       let arg =
         match Uop.arg n with
-        | Uop.Arg.Param_arg pa -> Uop.Arg.Param_arg { pa with dtype = narrow }
+        | Uop.Arg.Param_arg pa ->
+            let size = Option.map
+                (fun n -> Bound.to_int (Bound.mul (Bound.int n) (Bound.int 2)))
+                pa.size in
+            Uop.Arg.Param_arg { pa with dtype = narrow; size }
         | other -> other
       in
-      let src = Uop.src n in
-      let src =
-        (* A concrete element count doubles; an unknown shape (void sentinel)
-           is left untouched. *)
-        if Array.length src >= 1 && Dtype.is_int (Uop.dtype src.(0)) then
-          [| Uop.alu_binary ~op:Ops.Mul ~lhs:src.(0)
-               ~rhs:(Uop.const_like src.(0) 2) |]
-        else src
-      in
-      Some (Uop.replace n ~dtype:narrow ~arg ~src ())
+      Some (Uop.replace n ~arg ())
 
 (* Narrow the storage chain before deriving an INDEX's word dtype and
    scaling its element offset. *)

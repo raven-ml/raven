@@ -379,6 +379,11 @@ thread.
 
 ### Tolk (new)
 
+- `Uop` rewrites derive result dtypes from their new inputs. Integer `FDIV`
+  produces a float, and `Uop.stack` promotes mixed element dtypes.
+- `Uop.param` and `Uop.buffer` describe flat maximum storage sizes, with
+  symbolic and multidimensional shapes represented as views.
+
 - `Uop.from_buffer` retains storage directly in the graph, including external
   buffers and views. Realization no longer needs a frontend storage registry.
 - `Uop.export` preserves buffer contents and shared views across import while
