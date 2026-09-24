@@ -2673,6 +2673,9 @@ thread.
 
 ### Talon
 
+- `Col.of_tensor` and `of_nx` read a value placed on a device to the host once,
+  so a dataframe's columns are host values. A placed column was read one
+  element at a time, and eager operations on it ran through the device.
 - Fix `cast_column` and mixed-dtype `concat` leaving a source dtype's null
   sentinel in the cast tensor. Casting a nullable integer column to a float
   dtype made `to_array` read its nulls as `Int64.min_int` converted to float

@@ -466,6 +466,32 @@ let test_of_nx () =
   check_int "of_nx cols" 3 (num_columns df);
   check_bool "of_nx not empty" false (is_empty df)
 
+(* A placed value is read to the host once, as its columns are made, and they
+   hold host values. *)
+let test_placed_values () =
+  let tensor =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
+  in
+  let reads = !Placed.reads in
+  let df = of_nx (Placed.place tensor) in
+  check_int "one read" (reads + 1) !Placed.reads;
+  let col = get_column_exn df "col1" in
+  match Col.to_tensor Nx.float32 col with
+  | None -> fail "a float32 column"
+  | Some t ->
+      check_bool "on the host" true
+        (Nx.Placement.equal Nx.Placement.host (Nx.placement t));
+      check_bool "its elements" true (Nx.to_array t = [| 2.0; 5.0 |]);
+      let reads = !Placed.reads in
+      let col =
+        Col.of_tensor (Placed.place (Nx.create Nx.int32 [| 2 |] [| 7l; 8l |]))
+      in
+      check_int "a column: one read" (reads + 1) !Placed.reads;
+      check_bool "a column on the host" true
+        (match Col.to_tensor Nx.int32 col with
+        | Some t -> Nx.Placement.equal Nx.Placement.host (Nx.placement t)
+        | None -> false)
+
 (* ───── Test Edge Cases ───── *)
 
 let test_empty_operations () =
@@ -690,6 +716,7 @@ let conversion_tests =
     test "to_arrays" test_to_arrays;
     test "to_nx" test_to_nx;
     test "of_nx" test_of_nx;
+    test "placed values" test_placed_values;
     test "cast_column" test_cast_column;
   ]
 

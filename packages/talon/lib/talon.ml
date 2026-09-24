@@ -75,6 +75,8 @@ let of_tensors ?names tensors =
 let of_nx ?names tensor =
   match Nx.shape tensor with
   | [| _rows; cols |] ->
+      (* One read of a placed value, rather than one per column. *)
+      let tensor = Nx.place Nx.Placement.host tensor in
       let tensors =
         List.init cols (fun col_i -> Nx.slice [ Nx.A; Nx.I col_i ] tensor)
       in

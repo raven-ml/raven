@@ -74,9 +74,11 @@ let float64_opt arr = numeric_opt Nx.float64 arr
 let int32_opt arr = numeric_opt Nx.int32 arr
 let int64_opt arr = numeric_opt Nx.int64 arr
 
+(* A column's elements are read on the host, one by one, so a value placed on a
+   device is read to the host once, as the column is made. *)
 let of_tensor (type a b) (t : (a, b) Nx.t) =
   match Nx.shape t with
-  | [| _ |] -> P (Nx.dtype t, t, None)
+  | [| _ |] -> P (Nx.dtype t, Nx.place Nx.Placement.host t, None)
   | _ -> invalid_arg "of_tensor: tensor must be 1D"
 
 (* Properties *)
