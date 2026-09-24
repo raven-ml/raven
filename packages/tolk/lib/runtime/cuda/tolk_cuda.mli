@@ -18,14 +18,13 @@
     {1:compilation Kernel compilation}
 
     Kernels are compiled to PTX with NVRTC for the device's compute-capability
-    tier and JIT-compiled by the driver at module load. Compilation results
+    architecture and JIT-compiled by the driver at module load. Compilation results
     are stored in the on-disk compile cache.
 
     {1:env Environment variables}
 
-    - [CUDA_ARCH] / [CUDA_SM] — override the compute-capability tier used for
-      source generation and PTX compilation (e.g. [sm_80]). Defaults to the
-      tier resolved from the device's compute capability.
+    - [DEV=CUDA:CUDA:sm_80] overrides the renderer and compiler architecture.
+      The default is the device's exact compute capability.
     - [CUDA_PATH] — CUDA toolkit root used for compile-time include paths.
       Defaults to the standard system locations. *)
 

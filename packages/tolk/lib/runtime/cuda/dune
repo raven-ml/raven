@@ -3,7 +3,7 @@
 (library
  (name tolk_cuda)
  (public_name tolk.cuda)
- (libraries tolk tolk_nvrtc)
+ (libraries tolk tolk_uop tolk_nvrtc)
  (foreign_stubs
   (language c)
   (names tolk_cuda_stubs)

@@ -1908,20 +1908,13 @@ let open_device ~name iface =
   | None -> ());
   let allocator = Allocator.create state in
   Runtime.ensure_scratch state 128;
-  let renderer_target =
-    match Tolk.Gpu_target.amd_of_env () with
-    | Some t -> t
-    | None -> (
-        match Tolk.Gpu_target.parse_amd_arch arch with
-        | Some t -> t
-        | None -> failwith ("Unsupported arch: " ^ arch))
-  in
-  let renderer =
-    Tolk.Renderer.with_compiler
-      (Compiler_amd.create ~arch)
-      (Tolk.Cstyle.amd renderer_target)
-  in
-  let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
+  let renderer_set = Tolk.Device.Renderer_set.make ~device:name ~arch
+      [ "HIP", (fun target ->
+          let arch = match Tolk.Gpu_target.parse_amd_arch target.Tolk_uop.Target.arch with
+            | Some arch -> arch
+            | None -> invalid_arg ("unsupported AMD architecture: " ^ target.arch) in
+          Tolk.Renderer.with_compiler (Compiler_amd.create ~arch:target.arch)
+            (Tolk.Cstyle.amd arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Runtime.runtime state)
     ~synchronize:(fun () -> State.synchronize state)

@@ -779,8 +779,8 @@ val create : string -> Tolk.Device.t
 (** [create name] opens the AMD GPU named [name] — ["AMD"] for the
     first usable GPU, ["AMD:n"] for the [n]th — and is its device
     runtime. Kernels are compiled with {!Compiler_amd} for the
-    discovered architecture (overridable through the environment, see
-    {!Tolk.Gpu_target.amd_of_env}) and dispatched through a hardware
+    discovered architecture (overridable with [DEV=AMD:HIP:gfx1100])
+    and dispatched through a hardware
     compute queue; host transfers ride the DMA engine when the device
     provides one, and fall back to host-visible device memory
     otherwise.

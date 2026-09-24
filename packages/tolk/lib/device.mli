@@ -393,24 +393,24 @@ end
 
 (** {1:renderer_set Renderer selection} *)
 
-(** Available renderers for a device.
-
-    Each renderer carries its own {!Compiler.t} via {!Renderer.compiler}.
-    The active renderer is chosen at {!Device.compile_program} time:
-    explicit environment override takes priority, then forced entries
-    ([ctrl = 1]), then the first non-disabled entry. *)
+(** Available renderers for a device. Each renderer carries its compiler.
+    [DEV] selects a renderer by name, or initialization tries the factories
+    in priority order. Successful selections are cached by target. *)
 module Renderer_set : sig
   type t
   (** The type for renderer sets. *)
 
   val make :
-    ?ctrl:string Helpers.Context_var.t ->
-    (Renderer.t * int Helpers.Context_var.t option) list ->
-    t
-  (** [make ?ctrl entries] is a renderer set from [entries]. Each entry
-      pairs a renderer with an optional environment variable control
-      ([1] forces selection, [0] disables). [ctrl] is a global override
-      that selects by compiler name (case-insensitive). *)
+    ?arch:string -> device:string ->
+    (string * (Tolk_uop.Target.t -> Renderer.t)) list -> t
+  (** [make ~device entries] lists named renderer factories for [device].
+      Names are uppercase, for example ["CLANG"] or ["CUDA"]. [arch] supplies
+      the detected architecture when [DEV] does not specify one.
+
+      Factories run on first use with the resolved target. Failed factories
+      fall through to the next candidate; an explicit renderer selection
+      restricts candidates to that name. Deprecated renderer environment
+      switches raise [Invalid_argument] with a [DEV] replacement. *)
 end
 
 (** {1:device_operations Device operations} *)

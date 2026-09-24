@@ -74,7 +74,7 @@ let test_allocator =
 
 let test_device =
   Device.make ~name:"TEST:0" ~allocator:test_allocator
-    ~renderer_set:(Device.Renderer_set.make [ test_renderer, None ])
+    ~renderer_set:(Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
     ~runtime:(fun _ _ ~runtimevars:_ ->
       { Device.call = (fun _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ -> None);
         handle = 0n;

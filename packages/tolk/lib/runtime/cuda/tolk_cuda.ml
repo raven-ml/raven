@@ -98,24 +98,10 @@ module Ffi = struct
   external graph_destroy : nativeint -> unit = "caml_tolk_cuda_graph_destroy"
 end
 
-(* Compute capabilities outside the supported source-generation tiers fall
-   back to the nearest tier; the driver JIT-compiles its PTX for the actual
-   GPU. Extend [arch_of_target] when a new tier is added. *)
-let target_of_capability ~major ~minor =
-  match Gpu_target.cuda_of_sm ((major * 10) + minor) with
-  | Some target -> target
-  | None -> Gpu_target.SM75
-
-let arch_of_target = function
-  | Gpu_target.SM75 -> "sm_75"
-  | Gpu_target.SM80 -> "sm_80"
-  | Gpu_target.SM89 -> "sm_89"
-  | Gpu_target.SM90 -> "sm_90"
-
 module State = struct
   type t = {
     context : nativeint;
-    target : Gpu_target.cuda;
+    arch : string;
     mutable pending_copyin : (nativeint * int * Device.Buffer_spec.t) list;
     (* The device's LRU-wrapped allocator; set right after creation and used
        by copyin staging and pending-buffer release. *)
@@ -129,12 +115,8 @@ module State = struct
     let cu_device = Ffi.device_get device_id in
     let context = Ffi.ctx_create cu_device in
     let major, minor = Ffi.compute_capability cu_device in
-    let target =
-      match Gpu_target.cuda_of_env () with
-      | Some target -> target
-      | None -> target_of_capability ~major ~minor
-    in
-    let state = { context; target; pending_copyin = []; allocator = None } in
+    let arch = Printf.sprintf "sm_%d%d" major minor in
+    let state = { context; arch; pending_copyin = []; allocator = None } in
     devices := !devices @ [ state ];
     state
 
@@ -303,14 +285,13 @@ let create name =
   in
   let state = State.create device_id in
   let allocator = Allocator.create state in
-  let compiler =
-    Tolk_nvrtc.Compiler_nvrtc.create ~cache_key:"cuda"
-      (arch_of_target state.State.target)
-  in
-  let renderer =
-    Renderer.with_compiler compiler (Cstyle.cuda state.State.target)
-  in
-  let renderer_set = Device.Renderer_set.make [ (renderer, None) ] in
+  let renderer_set = Device.Renderer_set.make ~device:name ~arch:state.State.arch
+      [ "CUDA", (fun target ->
+          let arch = match Gpu_target.parse_cuda_arch target.Tolk_uop.Target.arch with
+            | Some arch -> arch
+            | None -> invalid_arg ("unsupported CUDA architecture: " ^ target.arch) in
+          let compiler = Tolk_nvrtc.Compiler_nvrtc.create ~cache_key:"cuda" target.arch in
+          Renderer.with_compiler compiler (Cstyle.cuda arch)) ] in
   let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
   Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize

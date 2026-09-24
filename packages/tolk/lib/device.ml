@@ -368,48 +368,38 @@ module Graph = struct
 end
 
 module Renderer_set = struct
-  type entry = {
-    renderer : Renderer.t;
-    ctrl : int Helpers.Context_var.t option;
+  type t = {
+    device : string;
+    arch : string;
+    entries : (string * (Target.t -> Renderer.t)) list;
+    cache : (Target.t, Renderer.t) Hashtbl.t;
+    mutex : Mutex.t;
   }
 
-  type t = { entries : entry list; ctrl : string Helpers.Context_var.t option }
+  let make ?(arch = "") ~device entries =
+    { device; arch; entries; cache = Hashtbl.create 4; mutex = Mutex.create () }
 
-  let make ?ctrl entries =
-    { entries = List.map (fun (renderer, ctrl) -> { renderer; ctrl }) entries;
-      ctrl }
+  let target set = Helpers.target ~arch:set.arch set.device
 
-  let entry_name (e : entry) =
-    match Renderer.compiler e.renderer with
-    | Some comp -> String.uppercase_ascii (Compiler.name comp)
-    | None -> String.uppercase_ascii (Renderer.name e.renderer)
-
-  let ctrl_value (e : entry) = Option.map Helpers.Context_var.get e.ctrl
-
-  let select set =
-    let pick = function
-      | [] -> invalid_arg "no available renderers"
-      | [ e ] -> e
-      | _ -> invalid_arg "multiple renderers forced"
-    in
-    let by_priority () =
-      let forced = List.filter (fun e -> ctrl_value e = Some 1) set.entries in
-      match forced with
-      | _ :: _ -> pick forced
-      | [] ->
-          pick (List.filter (fun e -> ctrl_value e <> Some 0) set.entries)
-    in
-    let selected =
-      match Option.map Helpers.Context_var.get set.ctrl with
-      | None -> by_priority ()
-      | Some name -> (
-          let name = String.uppercase_ascii name in
-          match List.find_opt (fun e -> entry_name e = name) set.entries with
-          | None ->
-              invalid_arg (Printf.sprintf "unknown renderer selection: %s" name)
-          | Some entry -> entry)
-    in
-    selected.renderer
+  let select set = Mutex.protect set.mutex (fun () ->
+    let target = target set in
+    List.iter (fun (name, _) ->
+        let key = set.device ^ "_" ^ name in
+        if Helpers.getenv key 0 <> 0 then
+          invalid_arg (Printf.sprintf "%s is deprecated, use DEV=%s instead"
+            key (Target.to_string { target with renderer = name }))) set.entries;
+    match Hashtbl.find_opt set.cache target with
+    | Some renderer -> renderer
+    | None ->
+        let entries = List.filter (fun (name, _) ->
+            target.renderer = "" || target.renderer = name) set.entries in
+        if entries = [] then
+          invalid_arg (Printf.sprintf "%s has no renderer %S" set.device target.renderer);
+        let renderer = Helpers.select_first_inited
+            ~message:(Printf.sprintf "No renderer for %s is available" set.device)
+            (List.map (fun (_, create) () -> create target) entries) in
+        Hashtbl.add set.cache target renderer;
+        renderer)
 end
 
 type t = {
@@ -434,6 +424,7 @@ module Program_cache = struct
   type key = {
     device : string;
     compiler : string;
+    target : Target.t;
     kernel_key : string;
     context : renderer_context;
     entry_name : string;
@@ -702,6 +693,7 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
       {
         device;
         compiler = Compiler.name comp;
+        target = Renderer_set.target d.renderer_set;
         kernel_key = kkey;
         context = Program_cache.renderer_context ren;
         entry_name = kernel_name;

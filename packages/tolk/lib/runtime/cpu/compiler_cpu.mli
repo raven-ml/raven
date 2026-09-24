@@ -8,7 +8,7 @@
 (** CPU backend Clang compiler for the tolk JIT runtime.
 
     Compiles C source to relocatable ELF objects by invoking clang as a
-    subprocess. The compiler targets the host architecture in freestanding mode
+    subprocess. The compiler uses the selected architecture in freestanding mode
     ([-ffreestanding], [-nostdlib], [-fPIC]), producing position-independent
     objects suitable for JIT loading via {!Compiler}.
 
@@ -20,16 +20,20 @@
 
 (** {1:compiling Compiling} *)
 
-val compile_clang : string -> bytes
-(** [compile_clang src] compiles C source [src] to a relocatable ELF object.
+val host_arch : unit -> string
+(** [host_arch ()] is the normalized host architecture followed by [,native],
+    suitable as the default CPU target. *)
+
+val compile_clang : ?arch:string -> string -> bytes
+(** [compile_clang ?arch src] compiles C source [src] to a relocatable ELF object.
 
     The returned {!bytes} contains the raw object file contents.
 
-    Compilation uses [-O2] and the following architecture-specific flags:
-    - x86_64: [-march=native]
-    - ARM64/AArch64: [-ffixed-x18] and [-mcpu=native] (avoids the
-      platform-reserved register on macOS and Windows)
-    - RISC-V 64: [-march=rv64g]
+    [arch] defaults to {!host_arch}. It has the form [arch,cpu,features], with
+    zero or more comma-separated features; prefix a feature with [-] to disable
+    it. For example, [x86_64,znver2,-avx512f] or [arm64,generic].
+    Compilation uses [-O2] and architecture-specific tuning flags. On ARM64,
+    [-ffixed-x18] reserves the platform register used by macOS and Windows.
 
     [-fno-math-errno] is always passed so that intrinsics like [sqrt] compile to
     single instructions rather than function calls.
@@ -38,17 +42,19 @@ val compile_clang : string -> bytes
     [amd64] to [x86_64] and [aarch64] to [arm64].
 
     Raises {!Compiler.Compile_error} if clang cannot be started or exits with a
-    non-zero status, or if the host architecture is unsupported. The error
+    non-zero status, or if [arch] is malformed or unsupported. The error
     message includes clang's stderr output when available. *)
 
-val supports_bf16 : unit -> bool
-(** [supports_bf16 ()] is [true] iff the host C compiler accepts the [__bf16]
-    type when targeting the host architecture.
+val supports_bf16 : ?arch:string -> unit -> bool
+(** [supports_bf16 ?arch ()] is [true] iff the selected C compiler accepts the
+    [__bf16] type for [arch], which defaults to {!host_arch}.
 
     Clang only gained [__bf16] on x86-64 in version 15, so older toolchains
     reject bfloat16 kernel source. The result is determined by compiling a
     one-line probe with the same flags as {!compile_clang} and is computed at
-    most once per process.
+    most once per compiler and architecture.
 
     Pass the result as [native_bf16] when constructing a CPU renderer so that
-    bfloat16 kernels fall back to storage emulation on affected hosts. *)
+    bfloat16 kernels fall back to storage emulation on affected targets.
+
+    Raises {!Compiler.Compile_error} for a malformed architecture description. *)

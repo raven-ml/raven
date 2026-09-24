@@ -7,8 +7,8 @@
 
 (** Resolved GPU target descriptors for renderer construction.
 
-    This module owns CUDA/AMD target selection policy. Renderers consume these
-    resolved targets and do not read environment variables themselves. *)
+    These descriptors select source-generation capabilities. Exact compiler
+    architectures and runtime selection live in {!Tolk_uop.Target}. *)
 
 (** CUDA SM architecture tiers used by source generation. *)
 type cuda = SM75 | SM80 | SM89 | SM90
@@ -43,19 +43,14 @@ val cuda_of_sm : int -> cuda option
     given as major*10+minor (e.g. [89] for sm_89). Capabilities newer than the
     highest supported tier map to that tier. Returns [None] below [75]. *)
 
-val cuda_of_env : unit -> cuda option
-(** [cuda_of_env ()] resolves [CUDA_ARCH] or [CUDA_SM] to the nearest supported
-    CUDA SM tier. Returns [None] when no supported tier is configured. *)
+val parse_cuda_arch : string -> cuda option
+(** [parse_cuda_arch s] resolves a CUDA architecture such as ["sm_89"] to its
+    source-generation tier. Returns [None] for an unsupported architecture. *)
 
 val parse_amd_arch : string -> amd option
 (** [parse_amd_arch s] normalizes AMD architecture names such as ["gfx1100"]
     or dotted graphics versions such as ["11.0.0"] to their renderer target
     family. Returns [None] for an unsupported architecture. *)
-
-val amd_of_env : unit -> amd option
-(** [amd_of_env ()] resolves common AMD arch environment variables such as
-    [AMD_ARCH], [HIP_ARCH], [HCC_AMDGPU_TARGET], or [HSA_OVERRIDE_GFX_VERSION].
-    Returns [None] when no supported arch family is configured. *)
 
 val parse_metal_arch : string -> metal option
 (** [parse_metal_arch s] parses tinygrad-style Metal architecture names such as

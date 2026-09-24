@@ -22,7 +22,10 @@ val create : ?aligned:bool -> string -> Tolk.Device.t
 (** [create name] is a CPU device named [name].
 
     The device uses clang (or the compiler specified by the [CC] environment
-    variable) to compile kernel source to native object code. Compiled objects
+    variable) to compile kernel source to native object code. [DEV=CPU:CLANG]
+    selects this renderer; a third field overrides the architecture, for example
+    [DEV=CPU:CLANG:arm64,generic]. The default is the host architecture and CPU.
+    Compiled objects
     are loaded into executable memory via an ELF loader and JIT stubs.
 
     Kernel execution is dispatched through a background worker domain.

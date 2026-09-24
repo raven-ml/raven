@@ -38,14 +38,6 @@ let host_cpu () =
   | Some arch -> arch
   | None -> invalid_arg (Printf.sprintf "unsupported CPU architecture %S" machine)
 
-let parse_cuda_arch arch =
-  let buf = Buffer.create (String.length arch) in
-  String.iter
-    (fun c -> if c >= '0' && c <= '9' then Buffer.add_char buf c else ())
-    arch;
-  if Buffer.length buf = 0 then None
-  else int_of_string_opt (Buffer.contents buf)
-
 let cuda_of_sm sm =
   if sm >= 90 then Some SM90
   else if sm >= 89 then Some SM89
@@ -53,18 +45,11 @@ let cuda_of_sm sm =
   else if sm >= 75 then Some SM75
   else None
 
-let cuda_of_env () =
-  let raw =
-    match Sys.getenv_opt "CUDA_ARCH" with
-    | Some arch when String.trim arch <> "" -> String.trim arch
-    | _ -> (
-        match Sys.getenv_opt "CUDA_SM" with
-        | Some arch when String.trim arch <> "" -> String.trim arch
-        | _ -> "")
-  in
-  match parse_cuda_arch raw with
-  | Some ver -> cuda_of_sm ver
-  | None -> None
+let parse_cuda_arch arch =
+  if not (String.starts_with ~prefix:"sm_" arch) then None
+  else match int_of_string_opt (String.sub arch 3 (String.length arch - 3)) with
+    | Some sm -> cuda_of_sm sm
+    | None -> None
 
 let parse_amd_arch arch =
   let arch = String.trim arch |> String.lowercase_ascii in
@@ -86,21 +71,6 @@ let parse_amd_arch arch =
   then Some RDNA4
   else if contains "gfx11" || contains "11." then Some RDNA3
   else None
-
-let amd_of_env () =
-  let first_set vars =
-    let rec loop = function
-      | [] -> ""
-      | var :: vars -> (
-          match Sys.getenv_opt var with
-          | Some value when String.trim value <> "" -> String.trim value
-          | _ -> loop vars)
-    in
-    loop vars
-  in
-  first_set
-    [ "AMD_ARCH"; "HIP_ARCH"; "HCC_AMDGPU_TARGET"; "HSA_OVERRIDE_GFX_VERSION" ]
-  |> parse_amd_arch
 
 let parse_metal_arch arch =
   let arch = String.trim arch in

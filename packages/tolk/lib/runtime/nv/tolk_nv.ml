@@ -2196,25 +2196,14 @@ let open_device ~name (iface : Nv_iface.t) =
            name (Printexc.to_string e));
       iface.Nv_iface.device_fini ());
   let allocator = Allocator.create state in
-  (* the compiler targets the exact chip; the renderer needs only its
-     source-generation tier *)
-  let renderer_target =
-    match Tolk.Gpu_target.cuda_of_env () with
-    | Some t -> t
-    | None -> (
-        match
-          Tolk.Gpu_target.cuda_of_sm
-            (int_of_string (String.sub arch 3 (String.length arch - 3)))
-        with
-        | Some t -> t
-        | None -> Tolk.Gpu_target.SM75)
-  in
-  let renderer =
-    Tolk.Renderer.with_compiler
-      (Tolk_nvrtc.Compiler_nvrtc.create ~ptx:false ~cache_key:"nv" arch)
-      (Tolk.Cstyle.cuda ~device:"NV" renderer_target)
-  in
-  let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
+  let renderer_set = Tolk.Device.Renderer_set.make ~device:name ~arch
+      [ "CUDA", (fun target ->
+          let arch = match Tolk.Gpu_target.parse_cuda_arch target.Tolk_uop.Target.arch with
+            | Some arch -> arch
+            | None -> invalid_arg ("unsupported NV architecture: " ^ target.arch) in
+          Tolk.Renderer.with_compiler
+            (Tolk_nvrtc.Compiler_nvrtc.create ~ptx:false ~cache_key:"nv" target.arch)
+            (Tolk.Cstyle.cuda ~device:"NV" arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Runtime.runtime state)
     ~synchronize:(fun () -> Timeline.synchronize state.State.tl)

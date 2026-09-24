@@ -192,7 +192,7 @@ module State = struct
     mutable closed : bool;
     needs_icb_fix : bool;
     device_name : string;
-    arch : Gpu_target.metal;
+    arch : string;
   }
 
   let create () =
@@ -204,11 +204,7 @@ module State = struct
         try
           let needs_icb_fix = Ffi.needs_icb_fix device in
           let device_name = Ffi.device_name device in
-          let arch =
-            match Gpu_target.parse_metal_arch (Ffi.device_arch device) with
-            | Some arch -> arch
-            | None -> failwith "invalid Metal device architecture"
-          in
+          let arch = Ffi.device_arch device in
           {
             device;
             queue;
@@ -536,10 +532,13 @@ let create name =
   let state = State.create () in
   at_exit (fun () -> State.shutdown state);
   let allocator = Allocator.create state in
-  let renderer =
-    Renderer.with_compiler (Compiler.create ()) (Cstyle.metal state.State.arch)
-  in
-  let renderer_set = Device.Renderer_set.make [renderer, None] in
+  let renderer_set = Device.Renderer_set.make ~device:name
+      ~arch:state.State.arch
+      [ "METAL", (fun target ->
+          let arch = match Gpu_target.parse_metal_arch target.Tolk_uop.Target.arch with
+            | Some arch -> arch
+            | None -> invalid_arg ("unsupported Metal architecture: " ^ target.arch) in
+          Renderer.with_compiler (Compiler.create ()) (Cstyle.metal arch)) ] in
   let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
   let graph =

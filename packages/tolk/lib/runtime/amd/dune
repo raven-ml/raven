@@ -3,7 +3,7 @@
 (library
  (name tolk_amd)
  (public_name tolk.amd)
- (libraries tolk tolk_hcq)
+ (libraries tolk tolk_uop tolk_hcq)
  (foreign_stubs
   (language c)
   (names tolk_amd_stubs tolk_amd_comgr_stubs)

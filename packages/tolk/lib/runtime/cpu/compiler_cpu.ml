@@ -49,10 +49,26 @@ let target = function
   | Arm64 -> "arm64"
   | Riscv64 -> "riscv64"
 
-let arch_args = function
-  | X86_64 -> [ "-march=native" ]
-  | Arm64 -> [ "-ffixed-x18"; "-mcpu=native" ]
-  | Riscv64 -> [ "-march=rv64g" ]
+let host_arch () = target (arch_of_machine (host_machine ())) ^ ",native"
+
+let parse_arch description =
+  match String.split_on_char ',' description with
+  | machine :: cpu :: feats ->
+      let arch = arch_of_machine machine in
+      let disable f =
+        if String.starts_with ~prefix:"-" f then
+          "no" ^ String.sub f 1 (String.length f - 1)
+        else f
+      in
+      let args = match arch with
+        | X86_64 -> ("-march=" ^ cpu) :: List.map (fun f ->
+            if String.starts_with ~prefix:"-" f then "-mno" ^ f else "-m" ^ f) feats
+        | Arm64 -> [ "-ffixed-x18"; "-mcpu=" ^ String.concat "+" (cpu :: List.map disable feats) ]
+        | Riscv64 -> [ "-march=" ^ String.concat "_" ((if cpu = "native" then "rv64g" else cpu) :: feats) ]
+      in
+      arch, args
+  | _ -> raise (Compiler.Compile_error
+      (Printf.sprintf "invalid CPU architecture %S: expected <arch>,<cpu>[,<features>]" description))
 
 (* Subprocess Helpers *)
 
@@ -119,10 +135,10 @@ let read_pipes stdout_fd stderr_fd =
 (* Compilation *)
 
 (* Mirrors tinygrad's ClangCompiler for CPU: compile C source to a relocatable
-   ELF object for the normalized host architecture. *)
-let compile_clang src =
+   ELF object for the selected architecture. *)
+let compile_clang ?arch src =
   let compiler = cc () in
-  let arch = arch_of_machine (host_machine ()) in
+  let arch, arch_args = parse_arch (match arch with Some arch -> arch | None -> host_arch ()) in
   let base_args =
     [
       "-O2";
@@ -143,7 +159,7 @@ let compile_clang src =
   let argv =
     Array.of_list
       ((compiler :: "-c" :: "-x" :: "c" :: base_args)
-      @ arch_args arch @ [ "-"; "-o"; "-" ])
+      @ arch_args @ [ "-"; "-o"; "-" ])
   in
   let pid =
     try Unix.create_process compiler argv stdin_r stdout_w stderr_w
@@ -183,14 +199,22 @@ let compile_clang src =
       in
       raise (Compiler.Compile_error msg)
 
-(* Clang only gained __bf16 on x86-64 in version 15, so older toolchains
-   reject bfloat16 kernel source. Probe the actual compiler once per process
-   instead of parsing version strings. *)
-let supports_bf16 =
-  let probe =
-    lazy
-      (match compile_clang "__bf16 f(__bf16 *x) { return x[0]; }" with
-      | (_ : bytes) -> true
-      | exception Compiler.Compile_error _ -> false)
-  in
-  fun () -> Lazy.force probe
+(* Probe the selected compiler and target, since feature flags can change
+   which scalar types it accepts. *)
+let bf16_support = Hashtbl.create 4
+let bf16_mutex = Mutex.create ()
+
+let supports_bf16 ?arch () = Mutex.protect bf16_mutex (fun () ->
+  let arch = match arch with Some arch -> arch | None -> host_arch () in
+  ignore (parse_arch arch);
+  let key = cc (), arch in
+  match Hashtbl.find_opt bf16_support key with
+  | Some supported -> supported
+  | None ->
+      let supported =
+        match compile_clang ~arch "__bf16 f(__bf16 *x) { return x[0]; }" with
+        | (_ : bytes) -> true
+        | exception Compiler.Compile_error _ -> false
+      in
+      Hashtbl.replace bf16_support key supported;
+      supported)

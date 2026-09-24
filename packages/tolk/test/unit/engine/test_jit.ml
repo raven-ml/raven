@@ -53,7 +53,7 @@ let allocator =
 
 let make_device ?(name = "TEST:0") ?(state = runtime_state ()) () =
   Device.make ~name ~allocator
-    ~renderer_set:(Device.Renderer_set.make [ renderer, None ])
+    ~renderer_set:(Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const renderer ])
     ~runtime:(fun _ _ ~runtimevars:_ ->
       {
         Device.call =
@@ -145,7 +145,7 @@ let make_kernel_jit ?(body = U.sink ~kernel_info:(kernel_info "jit_k") [])
 
 let graph_device ~max_buffer_offset =
   Device.make ~name:"TEST:0" ~allocator
-    ~renderer_set:(Device.Renderer_set.make [ renderer, None ])
+    ~renderer_set:(Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const renderer ])
     ~runtime:(fun _ _ ~runtimevars:_ -> failwith "unused")
     ~synchronize:(fun () -> ())
     ~graph:

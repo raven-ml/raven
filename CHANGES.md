@@ -294,6 +294,13 @@ thread.
 
 ### Tolk (new)
 
+- `DEV` selects lazy renderer factories and exact compiler architectures,
+  including CPU tuning and feature flags. Program caches distinguish targets;
+  CUDA compilation uses the exact GPU architecture instead of a rendering tier.
+
+- `Device.Renderer_set.make` accepts named target-aware factories. Superseded
+  renderer controls and GPU architecture environment readers are removed.
+
 - `DEV` accepts tinygrad target strings and per-backend configurations.
   AMD/NV interface selection and visible-device lists use this shared setting;
   legacy `*_IFACE` and `HCQ_VISIBLE_DEVICES` settings report replacements.

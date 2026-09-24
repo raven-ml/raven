@@ -80,6 +80,19 @@ let () =
     [
       group "Clang"
         [
+          group "explicit architectures"
+            (List.map (fun (arch, machine) -> test arch (fun () ->
+                 let obj =
+                   try Tolk_cpu__Compiler_cpu.compile_clang ~arch "int f(int x) { return x + 1; }"
+                   with Compiler.Compile_error msg when
+                     String.starts_with
+                       ~prefix:"clang -x c failed:\nerror: unable to create target: 'No available targets"
+                       msg -> skip ~reason:("installed clang has no " ^ arch ^ " target") () in
+                 equal int machine (u16 obj 18)))
+               [ "x86_64,x86-64,-avx", 62; "arm64,generic", 183; "riscv64,rv64g", 243 ]);
+          test "architecture requires a CPU field" (fun () ->
+              raises_match (function Compiler.Compile_error _ -> true | _ -> false)
+                (fun () -> Tolk_cpu__Compiler_cpu.compile_clang ~arch:"arm64" "int x;"));
           test "outputs relocatable ELF for normalized host"
             compiler_outputs_relocatable_elf;
           test "output is parseable by ELF support"

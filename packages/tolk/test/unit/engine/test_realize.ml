@@ -81,8 +81,9 @@ let test_allocator ?(transfer = false) stats =
       }
 
 let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
-    ?(transfer = false) state =
-  let renderer_set = Device.Renderer_set.make [ test_renderer, None ] in
+    ?(transfer = false)
+    ?(renderer_set = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
+    state =
   let runtime _name _lib ~runtimevars =
     state.runtimevars <- runtimevars;
     let call bufs ~global ~local:_ ~vals ~wait:_ ~timeout:_ =
@@ -177,9 +178,49 @@ let run_copy ?(dest_name = "TEST:0") ?(src_name = "TEST:1")
             ~wait:true ~timeout:None);
   dest, data, dest_stats, src_stats
 
+let with_target s f =
+  Helpers.Context_var.with_context [ B (Helpers.dev, [ Target.of_string s ]) ] f
+
+let renderer_selection_tests =
+  group "Renderer selection"
+    [
+      test "initializes in priority order and caches the successful target" (fun () ->
+          let calls = ref [] in
+          let first target = calls := ("first:" ^ target.Target.arch) :: !calls; failwith "unavailable" in
+          let second target = calls := ("second:" ^ target.Target.arch) :: !calls; test_renderer in
+          let renderers = Device.Renderer_set.make ~device:"TEST" ~arch:"detected"
+              [ "FIRST", first; "SECOND", second ] in
+          let device = test_device ~renderer_set:renderers (runtime_state ()) in
+          with_target "TEST" (fun () ->
+              ignore (Device.renderer device);
+              ignore (Device.renderer device));
+          equal (list string) [ "second:detected"; "first:detected" ] !calls;
+          with_target "TEST:SECOND:override" (fun () -> ignore (Device.renderer device));
+          equal (list string) [ "second:override"; "second:detected"; "first:detected" ] !calls;
+          with_target "TEST:FIRST" (fun () ->
+              raises (Failure "unavailable") (fun () -> Device.renderer device));
+          with_target "TEST:MISSING" (fun () ->
+              raises (Invalid_argument "TEST has no renderer \"MISSING\"") (fun () -> Device.renderer device)));
+      test "compilation caches distinguish target architectures" (fun () ->
+          let create target =
+            let render ?name program = ignore name; ignore program; target.Target.arch in
+            Renderer.with_compiler (Compiler.make ~name:"TARGET_TEST" ~compile:Bytes.of_string ())
+              (Renderer.make ~name:"test" ~device:"TEST" ~has_local:false ~has_shared:false
+                 ~shared_max:0 ~render ()) in
+          let renderers = Device.Renderer_set.make ~device:"TEST"
+              [ "TEST", create ] in
+          let device = test_device ~name:"TEST:target-cache" ~renderer_set:renderers (runtime_state ()) in
+          let compile arch = with_target ("TEST:TEST:" ^ arch) (fun () ->
+              Device.compile_program device ~name:"target_cache" [] |> Program_spec.src) in
+          equal string "first" (compile "first");
+          equal string "second" (compile "second");
+          equal string "first" (compile "first"));
+    ]
+
 let () =
   run "Engine_realize"
     [
+      renderer_selection_tests;
       group "Compiled_runner"
         [
           test "passes vals and runtimevars from program metadata" (fun () ->

@@ -337,10 +337,6 @@ end
 (* Device Registration *)
 
 let create ?aligned name =
-  let clang =
-    Compiler.make ~name:"CLANG" ~cachekey:"compile_clang_jit"
-      ~compile:Compiler_cpu.compile_clang ()
-  in
   let state = Cpu_queue.create () in
   at_exit (fun () -> Cpu_queue.shutdown state);
   let runtime entry_name lib ~runtimevars =
@@ -371,14 +367,19 @@ let create ?aligned name =
     Device.{ call; free; handle = 0n }
   in
   let synchronize () = Cpu_queue.synchronize state in
-  let renderer =
-    Renderer.with_compiler clang
-      (Cstyle.clang
-         ~native_bf16:(Compiler_cpu.supports_bf16 ())
-         ?aligned
-         (Gpu_target.host_cpu ()))
-  in
-  let renderer_set = Device.Renderer_set.make [renderer, None] in
+  let renderer_set = Device.Renderer_set.make ~device:name ~arch:(Compiler_cpu.host_arch ())
+      [ "CLANG", (fun target ->
+          let arch = match String.split_on_char ',' target.Tolk_uop.Target.arch with
+            | machine :: _ -> (match Gpu_target.cpu_of_machine machine with
+                | Some arch -> arch
+                | None -> invalid_arg ("unsupported CPU architecture: " ^ target.arch))
+            | [] -> assert false in
+          let compiler = Compiler.make ~name:"CLANG"
+              ~cachekey:("compile_clang_jit_" ^ target.arch)
+              ~compile:(Compiler_cpu.compile_clang ~arch:target.arch) () in
+          Renderer.with_compiler compiler
+            (Cstyle.clang ~native_bf16:(Compiler_cpu.supports_bf16 ~arch:target.arch ())
+               ?aligned arch)) ] in
   let allocator =
     Device.Allocator.Pack
       (Device.Lru_allocator.wrap
