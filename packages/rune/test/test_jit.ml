@@ -691,6 +691,83 @@ let test_scan_rejects_ragged_rows () =
     (function Invalid_argument _ -> true | _ -> false)
     (fun () -> bad { (rows ()) with Rows.step = Nx.scalar Nx.int32 0l })
 
+(* A carry updated in place: a body that writes one row of a stacked cache per
+   step moves that row, not the cache. A body that reads the old cache after
+   writing the new one still sees the old values: the write lands in a copy. *)
+module Cache_carry = struct
+  type t = { h : Nx.float32_t; cache : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) c =
+    { h = f c.h; cache = f c.cache }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) c c' =
+    { h = f c.h c'.h; cache = f c.cache c'.cache }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) c =
+    f c.h;
+    f c.cache
+end
+
+module Carry_and_sums = struct
+  type t = Cache_carry.t * Nx.float32_t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (c, y) =
+    (Cache_carry.map f c, f y)
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (c, y)
+      (c', y') =
+    (Cache_carry.map2 f c c', f y y')
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (c, y) =
+    Cache_carry.iter f c;
+    f y
+end
+
+let test_scan_carry_written_in_place () =
+  let layers = 4 and slots = 64 and d = 16 in
+  let fold ~read_old (c : Cache_carry.t) =
+    Rune.scan
+      (module Cache_carry)
+      Nx.Ptree.leaf Nx.Ptree.leaf
+      ~f:(fun (c : Cache_carry.t) l ->
+        let h = Nx.tanh (Nx.add_s c.h 0.25) in
+        let cache =
+          Nx.set
+            [ D (l, 1); D (Nx.mul_s l 3l, 1) ]
+            (Nx.reshape [| 1; 1; d |] h)
+            c.cache
+        in
+        let y = if read_old then Nx.sum c.cache else Nx.sum h in
+        ({ Cache_carry.h; cache }, y))
+      ~init:c
+      (Nx.arange Nx.int32 0 layers 1)
+  in
+  let c0 =
+    {
+      Cache_carry.h =
+        Nx.create f32 [| d |] (Array.init d (fun i -> Float.of_int i /. 16.0));
+      cache = Nx.zeros f32 [| layers; slots; d |];
+    }
+  in
+  List.iter
+    (fun read_old ->
+      let expected_c, expected_ys = fold ~read_old c0 in
+      let g =
+        Rune.jit2 (module Cache_carry) (module Carry_and_sums) (fold ~read_old)
+      in
+      ignore (g c0);
+      let before = !Tolk.Helpers.Global_counters.global_mem in
+      let c, ys = g c0 in
+      let bytes = !Tolk.Helpers.Global_counters.global_mem - before in
+      let msg what = Printf.sprintf "%s (read_old %b)" what read_old in
+      check_arr ~msg:(msg "cache") (to_arr expected_c.cache) c.cache;
+      check_arr ~msg:(msg "state") (to_arr expected_c.h) c.h;
+      check_arr ~msg:(msg "outputs") (to_arr expected_ys) ys;
+      if not read_old then
+        is_true ~msg:"a replay moves less than three caches' worth of bytes"
+          (bytes < 3 * layers * slots * d * 4))
+    [ false; true ]
+
 let test_scan_rows_short_of_16_bytes () =
   let fold xs =
     Rune.scan'
@@ -2601,6 +2678,7 @@ let tests =
         test "a scan over structured rows" test_scan_over_structured_rows;
         test "a scan rejects ragged or scalar rows"
           test_scan_rejects_ragged_rows;
+        test "a scan carry is written in place" test_scan_carry_written_in_place;
       ];
     group "sliding windows"
       [

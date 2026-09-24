@@ -786,11 +786,13 @@ val scan :
     in [xs]: reading it from a tensor [f] captures, for instance with
     {!Nx.index.D} at a step counter, is a gather. The cotangent of [xs] is
     stacked like the outputs, row [i] coming from step [i], while a captured
-    tensor's cotangent is the sum over the steps, accumulated on every one.
-    Staging needs the carry to keep its shapes across steps; a fold that changes
-    them — or one reached through {!val-vmap} or {!val-pmap} — unrolls into the
-    compiled program instead. Everywhere else the scan folds eagerly, tracing
-    every step.
+    tensor's cotangent is the sum over the steps, accumulated on every one. A
+    carry leaf the step updates with {!Nx.set}, or reads only at the index it
+    writes, is updated in place: a step that writes one row of a cache in the
+    carry moves that row, not the cache. Staging needs the carry to keep its
+    shapes across steps; a fold that changes them — or one reached through
+    {!val-vmap} or {!val-pmap} — unrolls into the compiled program instead.
+    Everywhere else the scan folds eagerly, tracing every step.
 
     {!scan'} is the form for single tensors, and {!Nx.Ptree.leaf} stands for a
     role that is one.

@@ -48,6 +48,7 @@
   nx.core
   nx.buffer
   nx.effect
+  tolk
   unix
   windtrap
   rune_test_support))

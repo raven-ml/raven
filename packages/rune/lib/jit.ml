@@ -352,6 +352,9 @@ type state = {
   mutable scan_collectors : tensor_hook list;
       (* active observers of the tensors a scan body reads, innermost first;
          consulted by [tolk_of] while a scan body is being traced *)
+  mutable scan_writes : (U.t * U.t list ref) list;
+      (* staged scans being traced: each carry slot's buffer node -> the buffers
+         indexed writes into it land in (see [write_destination]) *)
 }
 
 (* A polymorphic observer of the tensors flowing through [tolk_of]. *)
@@ -484,25 +487,41 @@ let depends_on_input st u =
    [st.prefills], and replay gives that buffer [t]'s value before the program
    runs, by handing it the input's donated storage or by copying. A program
    whose replays never take storage copies [t] itself: a kernel does it faster
-   than replay. [operands] place the storage when [t] is a constant. *)
+   than replay. A [t] that is a staged loop's carry is not copied either: the
+   write lands in an empty buffer the loop fills (see [stage_scan]). [operands]
+   place the storage when [t] is a constant. *)
 let write_destination st t ~operands =
   let device = List.find_map F.Tensor.device (t :: operands) in
   let u = F.Tensor.uop t in
-  let takes =
-    U.has_buffer_identity u
-    &&
-    match Hashtbl.find_opt st.input_tags (U.tag (U.buf_uop u)) with
-    | Some i -> st.st_takes_storage i
-    | None -> false
+  let empty () =
+    F.Creation.empty ~dtype:(F.Tensor.dtype t) ?device (F.Tensor.shape t)
   in
-  if takes then begin
-    let out =
-      F.Creation.empty ~dtype:(F.Tensor.dtype t) ?device (F.Tensor.shape t)
-    in
-    st.prefills <- (U.buf_uop (F.Tensor.uop out), U.buf_uop u) :: st.prefills;
-    out
-  end
-  else F.Creation.clone ?device t
+  let carry_writes =
+    if U.has_buffer_identity u then List.assq_opt (U.buf_uop u) st.scan_writes
+    else None
+  in
+  match carry_writes with
+  | Some writes ->
+      (* A staged loop's carry: the loop gives the buffer the carry's value, by
+         binding it to the carry's storage or by a copy (see [stage_scan]). *)
+      let out = empty () in
+      writes := U.buf_uop (F.Tensor.uop out) :: !writes;
+      out
+  | None ->
+      let takes =
+        U.has_buffer_identity u
+        &&
+        match Hashtbl.find_opt st.input_tags (U.tag (U.buf_uop u)) with
+        | Some i -> st.st_takes_storage i
+        | None -> false
+      in
+      if takes then begin
+        let out = empty () in
+        st.prefills <-
+          (U.buf_uop (F.Tensor.uop out), U.buf_uop u) :: st.prefills;
+        out
+      end
+      else F.Creation.clone ?device t
 
 (* Threefry lowering. The trace-level operation hashes int32 (key, counter)
    pairs laid out as consecutive elements; Tolk's primitive mixes uint64
@@ -840,10 +859,12 @@ let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
    a whole number of 16 bytes, so every row starts where a vectorized access
    may.
 
-   A carry binds a body input and a body output to a buffer pair that alternates
-   by iteration: iteration [j] reads buffer [j mod 2] and writes the other, so
-   after [n] iterations the value is in buffer [n mod 2]. Buffer 0 is written
-   with the initial value before the loop.
+   A carry binds the body nodes that read it and the nodes that write it to a
+   buffer pair that alternates by iteration: iteration [j] reads buffer [j mod
+   2] and writes the other, so after [n] iterations the value is in buffer [n
+   mod 2]. A carry the body may update in place binds every node to one buffer.
+   The buffer the loop starts from is written with the initial value before the
+   loop.
 
    The loop launches the body and nothing else: the schedule writes every buffer
    it starts from, and every result is a buffer the body wrote. *)
@@ -891,19 +912,34 @@ let add_rows_out st l ~slot ~dt ~numel ~n =
     { node = slot; pos0 = pos; pos1 = -1; size = numel; stride } :: l.outs;
   (buf, stride)
 
-(* A carry of [numel] elements of [dt] read through [slot_in] and written
-   through [slot_out], starting from [init]. Returns the buffer pair. *)
-let add_carry st l ~slot_in ~slot_out ~dt ~numel init =
-  let b0 = make_node st dt numel and b1 = make_node st dt numel in
-  let pos0 = add_arg l (U.after ~src:b0 ~deps:[ store_flat b0 numel init ]) in
-  let pos1 = add_arg l b1 in
-  let slot node = { node; pos0; pos1; size = numel; stride = 0 } in
-  l.ins <- slot slot_in :: l.ins;
-  l.outs <- slot slot_out :: l.outs;
-  (b0, b1)
+type carry = Pair of U.t * U.t | In_place of U.t
 
-(* The buffer of a carry pair holding its value after [n] iterations. *)
-let final_carry ~n (b0, b1) = if n mod 2 = 0 then b0 else b1
+(* A carry of [numel] elements of [dt] starting from [init], read through the
+   body nodes [reads] and written through [writes]: in one buffer under
+   [in_place], in a pair otherwise. *)
+let add_carry st l ?(in_place = false) ~reads ~writes ~dt ~numel init =
+  let start = make_node st dt numel in
+  let pos0 =
+    add_arg l (U.after ~src:start ~deps:[ store_flat start numel init ])
+  in
+  let slot pos1 node = { node; pos0; pos1; size = numel; stride = 0 } in
+  if in_place then begin
+    l.ins <- List.rev_append (List.map (slot (-1)) reads) l.ins;
+    l.outs <- List.rev_append (List.map (slot (-1)) writes) l.outs;
+    In_place start
+  end
+  else begin
+    let other = make_node st dt numel in
+    let pos1 = add_arg l other in
+    l.ins <- List.rev_append (List.map (slot pos1) reads) l.ins;
+    l.outs <- List.rev_append (List.map (slot pos1) writes) l.outs;
+    Pair (start, other)
+  end
+
+(* The buffer holding a carry's value after [n] iterations. *)
+let final_carry ~n = function
+  | In_place b -> b
+  | Pair (b0, b1) -> if n mod 2 = 0 then b0 else b1
 
 let loop_call l ~body_linear ~reversed ~n =
   let cint v = U.const (Tolk_uop.Const.int Tolk_uop.Dtype.weakint v) in
@@ -1674,11 +1710,17 @@ and stage_scan : type r.
   let slot_c, c_slots = body_slots st req_carry in
   let slot_x, x_slots = body_slots st ~row:true req_xs in
   (* Trace the body once under a nested copy of this tracer, collecting its
-     external inputs. *)
+     external inputs and the buffers its indexed writes into the carry land
+     in. *)
+  let writes = List.map (fun s -> (s.s_node, ref [])) c_slots in
+  let outer_writes = st.scan_writes in
   st.scan_collectors <- collect :: st.scan_collectors;
+  st.scan_writes <- writes @ outer_writes;
   let c_next, y =
     Fun.protect
-      ~finally:(fun () -> st.scan_collectors <- List.tl st.scan_collectors)
+      ~finally:(fun () ->
+        st.scan_collectors <- List.tl st.scan_collectors;
+        st.scan_writes <- outer_writes)
       (fun () ->
         Effect.Deep.match_with
           (fun () -> step.run slot_c slot_x)
@@ -1705,41 +1747,140 @@ and stage_scan : type r.
             tolk_of st y ))
         ys
     in
-    let c_outs =
-      List.map (fun s -> make_node st s.s_dt (numel s.s_shape)) c_slots
-    in
     let stack_outs =
       if req_record then
         List.map (fun s -> make_node st s.s_dt (numel s.s_shape)) c_slots
       else []
     in
-    (* The body sub-program writes every output into a buffer the loop rebinds
-       per iteration: the next carry, the output rows, and the carry-stack rows,
-       copies of the carry it received. *)
-    let body_sink =
-      U.sink
-        (List.map2
-           (fun (s, c_out) (Scan.Packed_t c) ->
-             U.after ~src:c_out
-               ~deps:[ store_flat c_out (numel s.s_shape) (tolk_of st c) ])
-           (List.combine c_slots c_outs)
-           c_next
-        @ List.map
-            (fun (_, shape, y_out, value) ->
-              U.after ~src:y_out ~deps:[ store_flat y_out (numel shape) value ])
-            y_outs
-        @ List.map2
-            (fun s stack_out ->
-              U.after ~src:stack_out
-                ~deps:
-                  [
-                    store_flat stack_out (numel s.s_shape)
-                      (buffer_tensor s.s_node s.s_shape);
-                  ])
-            (if req_record then c_slots else [])
-            stack_outs)
+    (* In-place carries, by RFC 0001's reuse rule applied to the body. An
+       indexed write into a carry lands in its own buffer (see
+       [write_destination]), which the loop binds to the carry's storage: the
+       body then writes only the elements it updates. A carry whose next value
+       is that write needs no other buffer, nor does one whose next value reads
+       it only at the index it writes. Both hold only when the body's schedule
+       reads the carry no later than the write, which is known once the body is
+       scheduled: a write that fails it is filled with the carry by a kernel
+       instead, the other carries stay pairs, and the body is scheduled again
+       until every remaining candidate holds. *)
+    let next_values =
+      List.map (fun (Scan.Packed_t c) -> F.Tensor.uop (tolk_of st c)) c_next
     in
-    let body_linear = schedule_body_linear st body_sink in
+    let slot_writes = List.map (fun (_, w) -> !w) writes in
+    let c_outs =
+      List.map (fun s -> make_node st s.s_dt (numel s.s_shape)) c_slots
+    in
+    let body ~copied ~same_index =
+      let aliased es = List.filter (fun e -> not (List.memq e copied)) es in
+      let written es value =
+        match (aliased es, written_buffer value) with
+        | [ e ], Some a when U.buf_uop a == e -> Some a
+        | _ -> None
+      in
+      let modes =
+        List.map2
+          (fun (es, c_out) value ->
+            match written es value with
+            | Some a -> `Written (a, List.hd (aliased es))
+            | None ->
+                if es = [] && List.memq c_out same_index then `Same_index c_out
+                else `Pair (aliased es, c_out))
+          (List.combine slot_writes c_outs)
+          next_values
+      in
+      let fill e =
+        let s, _ =
+          List.find
+            (fun (_, es) -> List.memq e es)
+            (List.combine c_slots slot_writes)
+        in
+        ( e,
+          U.after ~src:e
+            ~deps:
+              [
+                store_flat e (numel s.s_shape)
+                  (buffer_tensor s.s_node s.s_shape);
+              ] )
+      in
+      let sink =
+        U.sink
+          (List.map2
+             (fun (s, mode) value ->
+               match mode with
+               | `Written (a, _) -> a
+               | `Same_index c_out | `Pair (_, c_out) ->
+                   U.after ~src:c_out
+                     ~deps:
+                       [
+                         store_flat c_out (numel s.s_shape)
+                           (F.Tensor.of_uop value);
+                       ])
+             (List.combine c_slots modes)
+             next_values
+          @ List.map
+              (fun (_, shape, y_out, value) ->
+                U.after ~src:y_out
+                  ~deps:[ store_flat y_out (numel shape) value ])
+              y_outs
+          @ List.map2
+              (fun s stack_out ->
+                U.after ~src:stack_out
+                  ~deps:
+                    [
+                      store_flat stack_out (numel s.s_shape)
+                        (buffer_tensor s.s_node s.s_shape);
+                    ])
+              (if req_record then c_slots else [])
+              stack_outs)
+      in
+      let sink =
+        if copied = [] then sink
+        else U.substitute ~walk:true (List.map fill copied) sink
+      in
+      (modes, schedule_body_linear st sink)
+    in
+    let rec settle ~copied ~same_index =
+      let modes, linear = body ~copied ~same_index in
+      let allows ?indexed (s : body_slot) o =
+        schedule_allows ?indexed ~linear ~itag:(U.tag s.s_node) ~otag:(U.tag o)
+          ()
+      in
+      let failed_writes =
+        List.concat_map
+          (fun (s, mode) ->
+            match mode with
+            | `Written (_, e) -> if allows ~indexed:true s e then [] else [ e ]
+            | `Pair (es, _) ->
+                List.filter (fun e -> not (allows ~indexed:true s e)) es
+            | `Same_index _ -> [])
+          (List.combine c_slots modes)
+      in
+      let failed_updates =
+        List.concat_map
+          (fun (s, mode) ->
+            match mode with
+            | `Same_index c_out -> if allows s c_out then [] else [ c_out ]
+            | `Written _ | `Pair _ -> [])
+          (List.combine c_slots modes)
+      in
+      if failed_writes = [] && failed_updates = [] then (modes, linear)
+      else
+        settle ~copied:(failed_writes @ copied)
+          ~same_index:
+            (List.filter (fun c -> not (List.memq c failed_updates)) same_index)
+    in
+    let same_index =
+      List.filter_map
+        (fun ((s, c_out), value) ->
+          if snd (same_index_paths ~inode:s.s_node value) then Some c_out
+          else None)
+        (List.combine (List.combine c_slots c_outs) next_values)
+    in
+    let copied =
+      List.concat_map
+        (fun es -> if List.length es > 1 then es else [])
+        slot_writes
+    in
+    let modes, body_linear = settle ~copied ~same_index in
     let l = loop () in
     List.iter2
       (fun s (Scan.Packed_t x) ->
@@ -1748,10 +1889,17 @@ and stage_scan : type r.
       x_slots (Scan.leaves req_xs);
     let pairs =
       List.map2
-        (fun (s, c_out) (Scan.Packed_t c) ->
-          add_carry st l ~slot_in:s.s_node ~slot_out:c_out ~dt:s.s_dt
-            ~numel:(numel s.s_shape) (tolk_of st c))
-        (List.combine c_slots c_outs)
+        (fun (s, mode) (Scan.Packed_t c) ->
+          let add = add_carry st l ~dt:s.s_dt ~numel:(numel s.s_shape) in
+          let init = tolk_of st c in
+          match mode with
+          | `Written (_, e) ->
+              add ~in_place:true ~reads:[ s.s_node; e ] ~writes:[] init
+          | `Same_index c_out ->
+              add ~in_place:true ~reads:[ s.s_node ] ~writes:[ c_out ] init
+          | `Pair (es, c_out) ->
+              add ~reads:(s.s_node :: es) ~writes:[ c_out ] init)
+        (List.combine c_slots modes)
         (Scan.leaves req_carry)
     in
     let ys_rows =
@@ -1966,7 +2114,7 @@ and stage_scan_bwd : type r.
   let dc_pairs =
     List.map2
       (fun ((s, dc_out), d) dc ->
-        add_carry st l ~slot_in:d.s_node ~slot_out:dc_out ~dt:s.s_dt
+        add_carry st l ~reads:[ d.s_node ] ~writes:[ dc_out ] ~dt:s.s_dt
           ~numel:(numel s.s_shape) (value dc))
       (List.combine (List.combine c_slots dc_outs) dc_slots)
       (Scan.leaves bwd_dc)
@@ -1984,7 +2132,7 @@ and stage_scan_bwd : type r.
   let g_pairs =
     List.map
       (fun (_, _, gdt, gn, g_in, g_out, _) ->
-        add_carry st l ~slot_in:g_in ~slot_out:g_out ~dt:gdt ~numel:gn
+        add_carry st l ~reads:[ g_in ] ~writes:[ g_out ] ~dt:gdt ~numel:gn
           (F.Creation.zeros ~dtype:gdt [ gn ]))
       g_outs
   in
@@ -2688,6 +2836,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
       scan_stacks = Tbl.create 4;
       scan_closed = Tbl.create 4;
       scan_collectors = [];
+      scan_writes = [];
     }
   in
   (* One placeholder and one input record per leaf visit, in traversal order, so

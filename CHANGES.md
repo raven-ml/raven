@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.scan` staged under `Rune.jit` updates a carry in place when its step
+  writes it with `Nx.set` or reads it only where it writes: a step writing one
+  row of a stacked cache no longer copies the whole cache.
 - `Rune.scan (module C) (module X) (module Y)` folds over structures, `scan'`
   over single tensors, and `Nx.Ptree.leaf` fills a single-tensor role. Put
   per-step data such as stacked layer weights in `xs`: `jit` reads it in place.
