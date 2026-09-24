@@ -14,6 +14,10 @@ perf follow-ups:
   transform_to_call)
 
 rune/jit follow-ups:
+- an empty output of a compiled function on Metal raises "Metal OOM while
+  allocating buffer", over host leaves too (`jit' ~device:"METAL" (fun v ->
+  Nx.mul_s (Nx.slice [R (1, 1)] v) 2.0)`); `test_zero_size_outputs` runs on
+  the CPU only
 - symbolic shapes through rune (inherit tolk's symbolic shrink/assign): one
   compiled kernel set for all positions, dissolves the fixed-shape kv-cache
   masks in kaun attention and per-prompt-length signatures
