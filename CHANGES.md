@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.scan` staged under `Rune.jit` no longer waits for the device on
+  every iteration: the body writes what the loop used to copy. A 64-step scan
+  on Metal goes from 60 ms to 18 ms.
 - A compiled call on a GPU returns without waiting for its kernels; reads wait.
   Twenty-six chained small calls on Metal take 2.9 ms instead of 10.8 ms.
 - Add `Rune.jit_step`: it reads its first argument and consumes and returns its

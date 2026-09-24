@@ -124,15 +124,17 @@ delete it rather than registering it.
   (`engine/realize.ml` `exec_loop`; `schedule/rangeify.ml` `find_bufs`
   walking `enter_calls:false` and `split_store` passing a precompiled CALL
   through as its own kernel; builder with its consumer in rune's `jit.ml`).
-  Rune stages `Rune.scan` as one compiled body replayed per slice
-  (`rune/doc/05-staged-scan.md`); the reference's answer to a recurrence is
-  unrolling plus TinyJit, so there is nothing to port. The named-payload
-  mechanism is upstream's own ("graph", "encdec", "hcq"); "loop" is a
-  tolk-local name in it, and no tinygrad-shaped graph can reach the new
-  branches. Pin moves must keep the two rangeify branches — a re-sync of
-  `rangeify.py` will not find them upstream. The tolk corpus cannot build a
-  loop call; rune's `test_jit.ml` scan groups are this extension's parity
-  suite.
+  Rune stages `Rune.scan` as one compiled body replayed per slice (the
+  design is in `rune/lib/scan.ml` and `stage_scan` in `rune/lib/jit.ml`);
+  the reference's answer to a recurrence is unrolling plus TinyJit, so there
+  is nothing to port. The loop launches its body and nothing else: the
+  schedule writes the buffers it starts from, and the body writes every
+  result. The named-payload mechanism is upstream's own ("graph", "encdec",
+  "hcq"); "loop" is a tolk-local name in it, and no tinygrad-shaped graph
+  can reach the new branches. Pin moves must keep the two rangeify branches
+  — a re-sync of `rangeify.py` will not find them upstream. The tolk corpus
+  cannot build a loop call; rune's `test_jit.ml` scan groups are this
+  extension's parity suite.
 
 - **`split_reduceop` leaves a one-hot sum whole** (`schedule/rangeify.ml`
   `is_one_hot_sum`). The reference splits any reduce whose input is 32768

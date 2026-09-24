@@ -379,15 +379,10 @@ module Buffers = struct
            runs, unlike lazily allocated intermediates. Sticky across
            [remove], so graph replay keeps repatching a node that is reseeded
            per call. *)
-    loop_scratch : (int, Device.Buffer.t) Hashtbl.t;
-        (* Scratch buffers owned by the loop executor, keyed by slot-node
-           tag so they persist across loop calls and outlive async work
-           that has the stream queued but not yet drained. *)
   }
 
   let create ~device =
-    { device; tbl = Hashtbl.create 64; seeded = Hashtbl.create 16;
-      loop_scratch = Hashtbl.create 8 }
+    { device; tbl = Hashtbl.create 64; seeded = Hashtbl.create 16 }
 
   let seed t node buf =
     let tag = Tolk_uop.Uop.tag node in
@@ -1335,7 +1330,9 @@ let rec dispatch_call binding ctx ~device call =
 
    A CALL(CUSTOM_FUNCTION "loop", ...) replays a compiled sub-linear once per
    iteration, rebinding the loop's input and output slots between iterations.
-   The payload (the children of the CUSTOM_FUNCTION body) encodes:
+   It launches the body's calls and nothing else: every buffer the loop starts
+   from is written by the schedule before it, and every result is a buffer the
+   body wrote. The payload (the children of the CUSTOM_FUNCTION body) encodes:
 
    - child 0: the body's LINEAR (pre-compiled: its CALL(SINK) bodies are
      already CALL(PROGRAM));
@@ -1344,26 +1341,22 @@ let rec dispatch_call binding ctx ~device call =
    - child 3: the number of input slots, then per slot five entries:
      [node; pos0; pos1; size; stride] where [node] is the body's input buffer
      node (seeded per iteration), [pos0]/[pos1] index the loop call's buffer
-     arguments (two positions = double-buffered carry, alternated by the
-     iteration counter; [pos1] = -1 for a single buffer), [size] the slot's
-     element count, and [stride] the per-iteration element offset (0 = the
-     whole buffer, no offset);
+     arguments (two positions = a buffer pair alternated by the iteration
+     counter; [pos1] = -1 for a single buffer), [size] the slot's element
+     count, and [stride] the per-iteration element offset (0 = the whole
+     buffer, no offset);
    - the number of output slots, then per slot the same five entries, with
-     the node seeded per iteration to the buffer the body writes (double-
-     buffered outputs use the next position: iteration [j] writes
-     pos (j+1) mod 2);
-   - the number of copies, then per copy [src0; src1; dst; size]: a
-     whole-buffer copy before the first iteration ([src1] = -1) or after the
-     last ([src0]/[src1] = the double-buffered pair, [dst] the result);
-   - the number of stack slots, then per slot [carry0; carry1; stack; size]:
-     before each iteration, the current carry buffer is copied into the stack
-     buffer at the iteration's data index (so a reversed loop can read the
-     carry of step i out of the stack).
+     the node seeded per iteration to the buffer the body writes (a pair's
+     output uses the other position: iteration [j] writes
+     pos (j+1) mod 2).
 
    The data index is [j] for forward loops and [trip-1-j] for reversed ones;
-   buffer positions alternate by the iteration counter [j]. Slot buffers are
-   seeded into the binding before each iteration; a slot with a nonzero stride
-   is bound to a view of its argument buffer at the data-index offset. *)
+   buffer positions alternate by the iteration counter [j], so a pair's last
+   write lands in position [trip mod 2]. A slot with a nonzero stride is bound
+   to a view of its argument buffer at the data-index offset. The body's
+   kernels assume an aligned base pointer, so a stride must be a whole number
+   of 16 bytes (the widest vector access, float4 or half8): the loop's builder
+   pads rows to it. *)
 and exec_loop binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   let int_child children i =
@@ -1378,241 +1371,64 @@ and exec_loop binding ctx ~device call =
       let body_linear = List.nth children 0 in
       let trip = int_child children 1 in
       let reversed = int_child children 2 <> 0 in
-      let idx = ref 4 in
-      let decode_slot () =
-        let node = List.nth children !idx in
-        let pos0 = int_child children (!idx + 1) in
-        let pos1 = int_child children (!idx + 2) in
-        let size = int_child children (!idx + 3) in
-        let stride = int_child children (!idx + 4) in
-        idx := !idx + 5;
-        (node, pos0, pos1, size, stride)
-      in
-      let n_in = int_child children 3 in
-      let in_slots = List.init n_in (fun _ -> decode_slot ()) in
-      let n_out = int_child children !idx in
-      idx := !idx + 1;
-      let out_slots = List.init n_out (fun _ -> decode_slot ()) in
-      let n_copy = int_child children !idx in
-      idx := !idx + 1;
-      let copies =
-        List.init n_copy (fun _ ->
-            let src0 = int_child children !idx in
-            let src1 = int_child children (!idx + 1) in
-            let dst = int_child children (!idx + 2) in
+      let idx = ref 3 in
+      let decode_slots () =
+        let n = int_child children !idx in
+        incr idx;
+        List.init n (fun _ ->
+            let node = List.nth children !idx in
+            let pos0 = int_child children (!idx + 1) in
+            let pos1 = int_child children (!idx + 2) in
             let size = int_child children (!idx + 3) in
-            idx := !idx + 4;
-            (src0, src1, dst, size))
+            let stride = int_child children (!idx + 4) in
+            idx := !idx + 5;
+            (node, pos0, pos1, size, stride))
       in
-      let n_stack = int_child children !idx in
-      idx := !idx + 1;
-      let stacks =
-        List.init n_stack (fun _ ->
-            let carry0 = int_child children !idx in
-            let carry1 = int_child children (!idx + 1) in
-            let stack = int_child children (!idx + 2) in
-            let size = int_child children (!idx + 3) in
-            idx := !idx + 4;
-            (carry0, carry1, stack, size))
+      let in_slots = decode_slots () in
+      let out_slots = decode_slots () in
+      let bufs =
+        Array.of_list (List.map (resolve binding ctx) (call_arg_uops args))
       in
-      let arg_nodes = call_arg_uops args in
-      if debug >= 2 then begin
-        (* Tag-level dump only: [U.pp] of a DAG unfolds shared subgraphs and
-           explodes in size. *)
-        List.iteri
-          (fun i a ->
-            match U.as_param a with
-            | Some { param = { slot; _ }; _ } ->
-                Format.eprintf "exec_loop arg %d: PARAM slot %d (tag %d)\n%!" i slot (U.tag a)
-            | None -> Format.eprintf "exec_loop arg %d: tag %d\n%!" i (U.tag a))
-          arg_nodes;
-        List.iter
-          (fun (node, pos0, pos1, size, stride) ->
-            Format.eprintf "  in_slot node tag %d pos0 %d pos1 %d size %d stride %d\n%!"
-              (U.tag node) pos0 pos1 size stride)
-          in_slots;
-        List.iter
-          (fun (node, pos0, pos1, size, stride) ->
-            Format.eprintf "  out_slot node tag %d pos0 %d pos1 %d size %d stride %d\n%!"
-              (U.tag node) pos0 pos1 size stride)
-          out_slots;
-        List.iter
-          (fun c ->
-            match U.as_call c with
-            | Some { args; _ } ->
-                Format.eprintf "  body call args: %s\n%!"
-                  (String.concat ", "
-                     (List.map (fun a -> strf "tag %d" (U.tag a)) args))
-            | None -> ())
-          (U.children body_linear)
-      end;
-      let bufs = Array.of_list (List.map (resolve binding ctx) arg_nodes) in
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: resolved args trip=%d reversed=%b\n%!" trip
-          reversed;
       let buf i =
         if i < 0 || i >= Array.length bufs then
           invalid_arg
             (Format.asprintf "exec_loop: argument %d out of range" i);
         bufs.(i)
       in
-      let view buf size offset =
-        let dt = Device.Buffer.dtype buf in
-        Device.Buffer.view buf ~size ~dtype:dt
-          ~offset:(offset * Tolk_uop.Dtype.itemsize dt)
-      in
-      let copy_bytes dst src =
-        (* Same path as [exec_copy]: the ambient device when the buffer's name
-           agrees, so no device-registry lookup is needed for same-device
-           copies (a jit's own device may not be registered). *)
-        Device.Buffer.ensure_allocated dst;
-        Device.Buffer.ensure_allocated src;
-        let runner =
-          buffer_copy
-            ~device:(device_for ~device dst)
-            ~total_sz:(Device.Buffer.nbytes dst)
-            ~dest_device:(Device.Buffer.device dst)
-            ~src_device:(Device.Buffer.device src)
+      List.iter
+        (fun (_, pos0, _, _, stride) ->
+          if stride * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype (buf pos0))
+             mod 16 <> 0
+          then invalid_arg "exec_loop: a slot stride is not 16-byte aligned")
+        (in_slots @ out_slots);
+      let bind ~next j (node, pos0, pos1, size, stride) =
+        let b =
+          if pos1 < 0 then buf pos0
+          else buf (if (j + next) mod 2 = 0 then pos0 else pos1)
         in
-        ignore
-          (Runner.call runner [ dst; src ] ctx.var_vals ~wait:ctx.wait
-             ~timeout:None)
-      in
-      (* Strict-alignment devices (CUDA faults with error 716, Metal
-         similarly) cannot take a vectorized access to a buffer whose address
-         is not aligned to the access width: the runtime slot views carry an
-         element offset beyond the allocation's 256-byte alignment, but the
-         body kernels were compiled assuming the base pointer itself is
-         aligned (the offset is invisible to the compiler).  Slots whose
-         per-iteration byte offset is not a multiple of the widest vector
-         access (16 bytes, i.e. float4/half8) are therefore routed through an
-         aligned scratch buffer: the slice is copied in before the body runs
-         and copied back after it for outputs. *)
-      let misaligned stride b =
-        stride <> 0
-        && (stride * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype b)) mod 16
-           <> 0
-      in
-      let prepare slots =
-        List.map
-          (fun ((node, pos0, pos1, size, stride) as slot) ->
-            let tag = U.tag node in
-            let b = buf pos0 in
-            let scratch =
-              if misaligned stride b then
-                let s =
-                  match Hashtbl.find_opt binding.Buffers.loop_scratch tag with
-                  | Some s -> s
-                  | None ->
-                      let s =
-                        Device.create_buffer ~size
-                          ~dtype:(Device.Buffer.dtype b)
-                          (device_for ~device b)
-                      in
-                      Device.Buffer.ensure_allocated s;
-                      Hashtbl.replace binding.Buffers.loop_scratch tag s;
-                      s
-                in
-                Some s
-              else None
-            in
-            (slot, scratch))
-          slots
-      in
-      let in_slots = prepare in_slots in
-      let out_slots = prepare out_slots in
-      let run_iteration j =
         let i = if reversed then trip - 1 - j else j in
-        let writebacks = ref [] in
-        (* Input slots: the body reads its inputs through these nodes. *)
-        List.iter
-          (fun ((node, pos0, pos1, size, stride), scratch) ->
-            let b =
-              if pos1 < 0 then buf pos0
-              else buf (if j mod 2 = 0 then pos0 else pos1)
-            in
-            let b =
-              if stride = 0 then b
-              else
-                let v = view b size (i * stride) in
-                (match scratch with
-                | Some s ->
-                    copy_bytes s v;
-                    s
-                | None -> v)
-            in
-            Buffers.seed binding node b)
-          in_slots;
-        (* Output slots: the body writes its outputs into these nodes. *)
-        List.iter
-          (fun ((node, pos0, pos1, size, stride), scratch) ->
-            let b =
-              if pos1 < 0 then buf pos0
-              else buf (if (j + 1) mod 2 = 0 then pos0 else pos1)
-            in
-            (match scratch with
-            | Some s ->
-                (* Write into aligned scratch; copy back after the body. *)
-                Buffers.seed binding node s;
-                writebacks :=
-                  (s, b, size, stride, i) :: !writebacks
-            | None ->
-                Buffers.seed binding node
-                  (if stride = 0 then b else view b size (i * stride))))
-          out_slots;
-        (* Stack: record the carry entering iteration i for the backward
-           loop. *)
-        List.iter
-          (fun (carry0, carry1, stack, size) ->
-            let cbuf = buf (if j mod 2 = 0 then carry0 else carry1) in
-            copy_bytes (view (buf stack) size (i * size)) cbuf)
-          stacks;
+        let b =
+          if stride = 0 then b
+          else
+            let dt = Device.Buffer.dtype b in
+            Device.Buffer.view b ~size ~dtype:dt
+              ~offset:(i * stride * Tolk_uop.Dtype.itemsize dt)
+        in
+        Buffers.seed binding node b
+      in
+      if debug >= 2 then
+        Printf.eprintf "exec_loop: %d iterations, reversed=%b\n%!" trip
+          reversed;
+      for j = 0 to trip - 1 do
+        List.iter (bind ~next:0 j) in_slots;
+        List.iter (bind ~next:1 j) out_slots;
         List.iter
           (dispatch_call binding ctx ~device)
-          (U.children body_linear);
-        (* Copy any aligned scratch buffers back into the strided-out views
-           the body wrote. *)
-        List.iter
-          (fun (s, b, size, stride, i) ->
-            copy_bytes (view b size (i * stride)) s)
-          !writebacks
-      in
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: initial copies start\n%!";
-      (* Initial copies (e.g. seed the carry double buffer from the scan's
-         init value): a copy naming a single source ([src1] = -1). *)
-      List.iter
-        (fun (src0, src1, dst, _size) ->
-          if src1 < 0 then copy_bytes (buf dst) (buf src0))
-        copies;
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: starting %d iterations\n%!" trip;
-      for j = 0 to trip - 1 do
-        if debug >= 3 then
-          Printf.eprintf "exec_loop: iter %d / %d\n%!" j trip;
-        run_iteration j
+          (U.children body_linear)
       done;
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: iterations done\n%!";
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: final copies start\n%!";
-      (* Final copies (e.g. carry the double-buffered result into the loop's
-         output buffer): a copy naming a buffer pair, taken at position
-         [trip mod 2]. *)
-      List.iter
-        (fun (src0, src1, dst, _size) ->
-          if src1 >= 0 then
-            copy_bytes (buf dst) (buf (if trip mod 2 = 0 then src0 else src1)))
-        copies;
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: trip=%d sync start\n%!" trip;
-      (* The body kernels and copy-backs are async-launched (CUDA stream 0).
-         Block until they complete so scratch buffers and transient views are
-         safe to reuse. *)
-      let dev = device_for ~device (buf 0) in
-      Device.synchronize dev;
-      if debug >= 2 then
-        Printf.eprintf "exec_loop: trip=%d sync done\n%!" trip
+      (* The body's launches are asynchronous. Block until they complete so
+         the per-iteration views are never released under queued work. *)
+      Device.synchronize (device_for ~device (buf 0))
   | None -> invalid_arg "exec_loop: expected CALL"
 
 let rec run_linear ~device ~to_program binding ?(var_vals = [])

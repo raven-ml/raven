@@ -606,6 +606,58 @@ let test_grad_through_scan_vector_carry () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
+(* A loop steps through its stacked rows at a stride padded to 16 bytes, so rows
+   that fall short of it (five halves, three floats) read and write only their
+   own elements, forward and backward. *)
+let test_scan_rows_short_of_16_bytes () =
+  let fold xs =
+    Rune.scan
+      (module struct
+        type t = Nx.float16_t
+
+        let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
+
+        let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a
+            b =
+          f a b
+
+        let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
+      end)
+      ~f:(fun c x ->
+        let c = Nx.add (Nx.mul_s c 0.5) x in
+        (c, Nx.mul c x))
+      ~init:(Nx.zeros Nx.float16 [| 5 |])
+      xs
+  in
+  let xs =
+    Nx.cast Nx.float16
+      (Nx.create f32 [| 4; 5 |]
+         (Array.init 20 (fun i -> Float.of_int (i - 7) /. 8.0)))
+  in
+  let to_f32 t = to_arr (Nx.cast f32 t) in
+  let c, ys = fold xs in
+  check_arr ~msg:"half carry" (to_f32 c)
+    (Nx.cast f32 (Rune.jit' (fun xs -> fst (fold xs)) xs));
+  check_arr ~msg:"half rows" (to_f32 ys)
+    (Nx.cast f32 (Rune.jit' (fun xs -> snd (fold xs)) xs));
+  let loss xs =
+    let c, ys =
+      Rune.scan
+        (module Csingle)
+        ~f:(fun c x ->
+          let c = Nx.tanh (Nx.add c x) in
+          (c, Nx.mul c x))
+        ~init:(Nx.zeros f32 [| 3 |]) xs
+    in
+    Nx.add (Nx.sum c) (Nx.sum ys)
+  in
+  let xs =
+    Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> Float.of_int i /. 6.0))
+  in
+  check_arr ~msg:"three-float rows, gradient"
+    (to_arr (Rune.grad' loss xs))
+    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+
 let test_grad_through_scan_external_input () =
   (* The body closes over a *differentiated* input that is neither the carry nor
      the scanned sequence: an external co-tangent the backward loop must total
@@ -2479,6 +2531,7 @@ let tests =
           test_grad_through_scan_external_matrices;
         test "grad through a scan with a matrix carry"
           test_grad_through_scan_matrix_carry;
+        test "scan rows short of 16 bytes" test_scan_rows_short_of_16_bytes;
       ];
     group "sliding windows"
       [
