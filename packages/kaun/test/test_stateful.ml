@@ -338,7 +338,9 @@ let test_dropout_keyless_jit_raises () =
    step's own key, which is what lets a model keep its draw sites key-free. *)
 let test_dropout_keyless_scope_jit_compiles () =
   let f =
-    Rune.jit Nx.Ptree.tensor (fun key ->
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key ->
         Nx.Rng.with_key key @@ fun () ->
         Dropout.apply ~rate:0.5 ~training:true (Nx.ones Nx.float32 [| 64 |]))
   in
@@ -362,7 +364,11 @@ let test_dropout_keyed_jit_matches_eager () =
   let apply { Keyed_x.x; key } =
     Dropout.apply ~rate:0.5 ~training:true ~key x
   in
-  let f = Rune.jit (Nx.Ptree.instantiate (module Keyed_x)) apply in
+  let f =
+    Rune.jit
+      Nx.Ptree.(Nx.Ptree.instantiate (module Keyed_x) @-> returns tensor)
+      apply
+  in
   let k = Nx.Rng.key 21 and k' = Nx.Rng.key 22 in
   check_arr ~eps:0.0 ~msg:"jit == eager, same key"
     (Nx.to_array (apply { Keyed_x.x; key = k }))
@@ -428,7 +434,9 @@ let test_dropout_jitted_training_steps () =
   let trajectory seed =
     let root = Nx.Rng.key seed in
     let f =
-      Rune.jit2 mlp_in mlp_out (fun { Mlp_in.p; key } ->
+      Rune.jit
+        Nx.Ptree.(mlp_in @-> returns mlp_out)
+        (fun { Mlp_in.p; key } ->
           let loss, grads =
             Rune.value_and_grad mlp (mlp_objective ~key 0.5) p
           in
@@ -442,7 +450,9 @@ let test_dropout_jitted_training_steps () =
   in
   let dropout_free () =
     let f =
-      Rune.jit2 mlp mlp_out (fun p ->
+      Rune.jit
+        Nx.Ptree.(mlp @-> returns mlp_out)
+        (fun p ->
           let loss, grads = Rune.value_and_grad mlp (mlp_objective 0.0) p in
           { Mlp_out.p = mlp_update p grads; loss })
     in

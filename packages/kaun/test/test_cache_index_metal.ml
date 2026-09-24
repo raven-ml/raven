@@ -63,7 +63,12 @@ let stream index s =
 (* A prompt of 6 positions, which splits block 1, then 6 one-token steps that
    close blocks 1 and 2, over shuffled tables. Block j holds 16 j + 10. *)
 let test_stream_on_metal () =
-  let step = Rune.jit_step ~device:"METAL" Cache_index.ptree state stream in
+  let step =
+    Rune.jit
+      ~devices:[ Rune.device "METAL" ]
+      Nx.Ptree.(Cache_index.ptree @-> consumes state @@ returns state)
+      stream
+  in
   let table = int32s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
   let blocks = int32s [| 1; 3 |] [| 1; 2; 0 |] in
   let call s positions =

@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Data-parallel training through [Rune.pmap2] on kaun layers: a tiny causal
+(* Data-parallel training through [Rune.pmap] on kaun layers: a tiny causal
    attention + linear stack trained for a few SGD steps with parameters
    replicated and the batch sharded over two CPU devices. The loss trajectory
-   and final weights must match the single-device [Rune.jit2] step up to fp32
+   and final weights must match the single-device [Rune.jit] step up to fp32
    reduction order (the cross-device gradient allreduce reorders the batch sum).
    Momentum runs thread a real SGD state through the step — the state is a
    structure over the model's ([Vega.sgd_ptree model]) whose leaves replicate
@@ -16,7 +16,7 @@
 open Windtrap
 open Kaun
 
-let devs2 = [ "CPU:1"; "CPU:2" ]
+let devs2 = [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
 let batch = 8
 let seq = 4
 let dim = 8
@@ -79,77 +79,61 @@ let loss_fn x tgt m =
   in
   Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
 
-(* Step structures for pmap2: the batch joins the parameters and the optimizer
-   state as leaves so it can be sharded on axis 0 while everything else
-   replicates. The state is walked by its own structure over the model's. *)
+(* The step's state: the parameters and the optimizer state, a structure over
+   the model's. A step reads the state, which replicates, and the batch, which
+   splits on axis 0, as separate arguments. *)
 
-type step_in = {
-  m : Nx.float32_t model;
-  opt : Nx.float32_t model Vega.sgd_state;
-  x : Nx.float32_t;
-  tgt : (int32, Nx.int32_elt) Nx.t;
-}
+module State = struct
+  type state = {
+    m : Nx.float32_t model;
+    opt : Nx.float32_t model Vega.sgd_state;
+  }
 
-let step_in =
-  Nx.Ptree.(
-    iso
-      (fun ((m, opt), (x, tgt)) -> { m; opt; x; tgt })
-      (fun { m; opt; x; tgt } -> ((m, opt), (x, tgt)))
-      (pair (pair model (Vega.sgd_ptree model)) (pair tensor tensor)))
+  type _ t = state
 
-type step_out = {
-  m' : Nx.float32_t model;
-  opt' : Nx.float32_t model Vega.sgd_state;
-  loss : Nx.float32_t;
-}
+  let walk c { m; opt } =
+    let open Nx.Ptree.Walk in
+    let m = field c "m" (structure model) m in
+    let opt = field c "opt" (structure (Vega.sgd_ptree model)) opt in
+    { m; opt }
+end
 
-let step_out =
-  Nx.Ptree.(
-    iso
-      (fun ((m', opt'), loss) -> { m'; opt'; loss })
-      (fun { m'; opt'; loss } -> ((m', opt'), loss))
-      (pair (pair model (Vega.sgd_ptree model)) tensor))
+let state = Nx.Ptree.instantiate (module State)
+
+let step_signature =
+  Nx.Ptree.(state @-> tensor @-> tensor @-> returns (pair state tensor))
 
 (* One SGD step: value_and_grad inside the (jitted or pmapped) function, so
    under pmap the gradients allreduce across devices before the update. With
    momentum 0 the velocity is never read; with momentum the state advances from
    the replicated leaves on every device, identically. *)
-let train_step ~momentum { m; opt; x; tgt } =
+let train_step ~momentum { State.m; opt } x tgt =
   let loss, grads = Rune.value_and_grad model (loss_fn x tgt) m in
-  let m', opt' =
+  let m, opt =
     Vega.sgd_step model ~lr:(Vega.lr lr) ~momentum opt ~params:m ~grads
   in
-  { m'; opt'; loss }
+  ({ State.m; opt }, loss)
 
-let init ~momentum:_ =
+let init () =
   let m = model_init () in
-  let opt = Vega.sgd_init model m in
-  { m; opt; x = x_init (); tgt = tgt_init () }
+  { State.m; opt = Vega.sgd_init model m }
 
-(* One [in_axes] entry per leaf: everything replicated except the two batch
-   leaves, sharded on axis 0. *)
-let in_axes s =
-  let n = Nx.Ptree.fold step_in (fun _ _ n -> n + 1) s 0 in
-  List.init (n - 2) (fun _ -> None) @ [ Some 0; Some 0 ]
-
-let trajectory ~momentum ~steps step0 =
-  let s = ref (init ~momentum) in
+let trajectory ~steps step0 =
+  let s = ref (init ()) and x = x_init () and tgt = tgt_init () in
   Array.init steps (fun _ ->
-      let out = step0 !s in
-      s := { !s with m = out.m'; opt = out.opt' };
-      (Nx.item [] out.loss, out.m'))
+      let next, loss = step0 !s x tgt in
+      s := next;
+      (Nx.item [] loss, next.State.m))
 
 let run_both ~momentum ~steps =
   let mom = if momentum then 0.9 else 0.0 in
   let jit =
-    trajectory ~momentum ~steps
-      (Rune.jit2 step_in step_out (train_step ~momentum:mom))
+    trajectory ~steps (Rune.jit step_signature (train_step ~momentum:mom))
   in
   let pm =
-    trajectory ~momentum ~steps
-      (Rune.pmap2 ~devices:devs2
-         ~in_axes:(in_axes (init ~momentum))
-         step_in step_out (train_step ~momentum:mom))
+    trajectory ~steps
+      (Rune.pmap ~devices:devs2 ~in_axes:[ None; Some 0; Some 0 ] step_signature
+         (train_step ~momentum:mom))
   in
   (jit, pm)
 

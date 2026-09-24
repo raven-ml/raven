@@ -875,7 +875,8 @@ let test_index_select_compiled () =
         seen = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |];
       }
     in
-    (step s, Rune.jit2 Selected.ptree Selected.ptree step s)
+    ( step s,
+      Rune.jit Nx.Ptree.(Selected.ptree @-> returns Selected.ptree) step s )
   in
   List.iter
     (fun columns ->
@@ -1276,7 +1277,7 @@ let test_index_every_stream () =
     (Array.to_list (flat s.y))
 
 let test_index_every_compiled () =
-  let step = Rune.jit2 stream_ptree stream_ptree stream in
+  let step = Rune.jit Nx.Ptree.(stream_ptree @-> returns stream_ptree) stream in
   let expected = stream_expected (List.init 12 Fun.id) in
   let ys, stored =
     feed_stream ~step
@@ -1573,7 +1574,9 @@ let test_cached_windowed_columns_are_zero () =
     { x = y; index; c }
   in
   check ~msg:"compiled"
-    (Rune.jit2 step_ptree step_ptree step
+    (Rune.jit
+       Nx.Ptree.(step_ptree @-> returns step_ptree)
+       step
        { x = rest; index = tail; c = poisoned })
       .x
 
@@ -1593,7 +1596,7 @@ let test_cached_step_jits_once () =
     in
     Nx.concatenate ~axis:1 (List.rev ys)
   in
-  (* [Rune.jit2] runs the traced function itself only when it (re)traces, so the
+  (* [Rune.jit] runs the traced function itself only when it (re)traces, so the
      counter observes compilations: every step has the same signature and must
      replay the single trace. *)
   let traces = ref 0 in
@@ -1604,7 +1607,9 @@ let test_cached_step_jits_once () =
   in
   let eager = decode step in
   traces := 0;
-  let jitted = decode (Rune.jit2 step_ptree step_ptree step) in
+  let jitted =
+    decode (Rune.jit Nx.Ptree.(step_ptree @-> returns step_ptree) step)
+  in
   equal ~msg:"jitted decode = eager decode"
     (array (float 1e-5))
     (flat eager) (flat jitted);
@@ -1612,6 +1617,67 @@ let test_cached_step_jits_once () =
   close ~msg:"and both are causal attention over the prompt"
     (Attention.apply ~head_dim ~mask:(causal 4) ~rope p x)
     jitted
+
+(* A compiled step keys its programs on the index's reports: another window
+   compiles a second program, and an equal one replays. *)
+let test_a_changed_window_compiles_again () =
+  Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
+  let p = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 1; 1; 8 |] in
+  let kv = Nx.Ptree.instantiate (module Attention.Cache) in
+  let traces = ref 0 in
+  let step =
+    Rune.jit
+      Nx.Ptree.(
+        tensor @-> Cache_index.ptree @-> consumes kv @@ returns (pair tensor kv))
+      (fun x index c ->
+        incr traces;
+        call p c index x)
+  in
+  let index = index_at ~pos:[| [| 2 |] |] ~slots:[| [| 3; 0; 2; 1 |] |] in
+  let check w =
+    let index = Cache_index.window w index in
+    close
+      ~msg:(Printf.sprintf "window %d: compiled = eager" w)
+      (fst (call p (cache 4) index x))
+      (fst (step x index (cache 4)))
+  in
+  check 2;
+  check 2;
+  equal ~msg:"an equal window replays" int 1 !traces;
+  check 1;
+  equal ~msg:"another window compiles a second program" int 2 !traces;
+  check 2;
+  equal ~msg:"and the first window replays its own" int 2 !traces
+
+(* Two cache leaves that hold one tensor cannot be consumed: the call raises
+   before it runs, naming both, and the cache stays usable. *)
+let test_one_storage_behind_two_caches_raises () =
+  let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
+  let step =
+    Rune.jit
+      ~devices:[ Rune.device "CPU:1" ]
+      Nx.Ptree.(consumes caches @@ returns caches)
+      (List.map (fun (c : Nx.float32_t Attention.Cache.t) ->
+           { c with Attention.Cache.keys = Nx.add_s c.keys 1.0 }))
+  in
+  let c =
+    Nx.Ptree.map
+      (Nx.Ptree.instantiate (module Attention.Cache))
+      (fun _ t -> Nx.place (Nx.Placement.device (Rune.device "CPU:1")) t)
+      (cache 4)
+  in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with
+            ~prefix:
+              "Rune.jit: the arguments at 0.0.keys and 0.1.keys reach one \
+               storage"
+            msg
+      | _ -> false)
+    (fun () -> step [ c; c ]);
+  close ~msg:"the cache stays usable" (cache 4).Attention.Cache.keys c.keys
 
 (* Eager and compiled runs agree on what addresses nothing: neither raises and
    both write no slot. *)
@@ -1630,7 +1696,12 @@ let test_cached_out_of_range_under_jit () =
       ()
   in
   let eager = step { x; index; c = cache 4 } in
-  let jitted = Rune.jit2 step_ptree step_ptree step { x; index; c = cache 4 } in
+  let jitted =
+    Rune.jit
+      Nx.Ptree.(step_ptree @-> returns step_ptree)
+      step
+      { x; index; c = cache 4 }
+  in
   values_are ~msg:"nothing written, eager" ~tol:0.0 (Array.make 16 0.0)
     (slots_of eager.c.Attention.Cache.keys);
   values_are ~msg:"nothing written, compiled" ~tol:0.0 (Array.make 16 0.0)
@@ -1965,6 +2036,10 @@ let () =
             test_cached_windowed_columns_are_zero;
           test "one jitted step serves every position and slot map"
             test_cached_step_jits_once;
+          test "a changed window compiles again"
+            test_a_changed_window_compiles_again;
+          test "one storage behind two caches raises"
+            test_one_storage_behind_two_caches_raises;
           test "eager and compiled runs agree on what addresses nothing"
             test_cached_out_of_range_under_jit;
           test "gradients flow through the cache" test_cached_gradients;

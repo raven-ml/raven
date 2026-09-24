@@ -110,8 +110,9 @@ val causal_mask :
 
     Everything is functional: {!cached} returns the written cache and never
     mutates its argument. Thread the cache through the decode loop like any
-    other state; under a compiled step that consumes it ({!Nx.Ptree.consumes}),
-    the write happens in the cache's own storage.
+    other state; under a compiled function whose signature consumes it
+    ({!Nx.Ptree.consumes} in [Rune.jit]'s signature), the write happens in the
+    cache's own storage and the cache given to the call is dead after it.
 
     The addressing laws are {!Cache_index}'s. The layer adds three:
 
@@ -126,7 +127,8 @@ val causal_mask :
       {!Cache_index.whole}, so it has one implementation and none to keep equal.
     + {b One tensor per cache leaf.} Two sequences share a prefix by naming the
       same slots in an index's table, never by two leaves holding one tensor: a
-      compiled step refuses to consume one storage from two leaves. *)
+      compiled call that consumes a storage two leaves reach raises before it
+      runs, naming both. *)
 
 (** Key-value caches. *)
 module Cache : sig
