@@ -55,3 +55,4 @@ a document outside the repository.
 - [0001](0001-tensors-as-values.md) Tensors as values (committed)
 - [0002](0002-decode-contract.md) The decode contract (committed)
 - [0003](0003-loading-weights.md) Loading weights (committed)
+- [0004](0004-quantised-weights.md) Quantised weights (published)
