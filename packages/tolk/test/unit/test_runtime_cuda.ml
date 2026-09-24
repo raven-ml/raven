@@ -238,7 +238,7 @@ let test_mixed_scalar_widths () =
       let value = U.cast ~src:var ~dtype:Dtype.int64 in
       [ offset; ptr; value; U.store ~dst:ptr ~value () ]) vars |> List.concat in
   let spec = Device.compile_program device ~name:"cuda_mixed_widths"
-      (output :: vars @ stores) in
+      (vars @ (output :: stores)) in
   let buffer = Device.create_buffer ~size:4 ~dtype:Dtype.int64 device in
   Device.Buffer.ensure_allocated buffer;
   Device.Buffer.copyin buffer (Bytes.make 32 '\000');

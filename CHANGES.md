@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Device.compile_program` groups buffer formals before scalar formals when
+  compiling hand-built kernels, so interleaved declarations agree with the
+  binary signature and cannot shift GPU argument values.
+
 - CUDA dispatch and graph replay pack arguments using the binary signature,
   preserving mixed-width alignment, compact slot order and 64-bit scalar
   values when launching kernels or rebinding replay arguments.

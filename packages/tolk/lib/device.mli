@@ -484,6 +484,8 @@ val compile_program :
   Program_spec.t
 (** [compile_program d ?name ?applied_opts ?estimates program] renders and
     compiles [program] for [d], returning its {!Program_spec.t} description.
+    Parameter declarations are grouped before the body, with buffers before
+    scalars, preserving their relative order within each group.
 
     Compiled bytes use {!Compiler.compile_cached}, keyed by the actual source
     and the compiler's cache key. Device, optimization and execution metadata

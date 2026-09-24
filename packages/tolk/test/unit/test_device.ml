@@ -153,4 +153,35 @@ let empty_storage () =
   equal nativeint 0n (Device.Buffer.addr tail);
   List.iter Device.Buffer.deallocate [ tail; base; view; src; dst ]
 
-let () = run __FILE__ [ copy_from_tests; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]
+let interleaved_kernel_formals () =
+  let module U = Uop in
+  let allocator = Device.Buffer.allocator
+      (Device.create_buffer ~size:0 ~dtype:i32 device) in
+  let compiler = Compiler.make ~name:"SIGNATURE_TEST" ~compile:Bytes.of_string () in
+  let renderer_set = Device.Renderer_set.make ~device:"SIGNATURE_TEST"
+      [ "CUDA", (fun _ -> Renderer.with_compiler compiler (Cstyle.cuda Gpu_target.SM80)) ] in
+  let dev = Device.make ~name:"SIGNATURE_TEST" ~allocator ~renderer_set
+      ~runtime:(fun _ -> fail "source-only test loaded a binary")
+      ~synchronize:(fun () -> ()) () in
+  let param slot = U.param ~slot ~dtype:i32 ~shape:(U.const_int 1) () in
+  let output = param 7 and input = param 2 in
+  let increment = U.variable ~name:"increment" ~min_val:0 ~max_val:100 ~dtype:i32 () in
+  let zero = U.const (Const.int i32 0) in
+  let src = U.index ~ptr:input ~idxs:[ zero ] () in
+  let dst = U.index ~ptr:output ~idxs:[ zero ] () in
+  let loaded = U.load ~src () in
+  let sum = U.alu_binary ~op:Ops.Add ~lhs:loaded ~rhs:increment in
+  let linear = [ increment; output; zero; input; src; dst; loaded; sum;
+                 U.store ~dst ~value:sum () ] in
+  let spec = Device.compile_program dev ~name:"canonical_formals" linear in
+  let prototype = String.split_on_char '\n' (Program_spec.src spec)
+      |> List.find (String.starts_with ~prefix:"extern \"C\" __global__") in
+  equal string
+    "extern \"C\" __global__ void __launch_bounds__(1) canonical_formals(int* data7_1, int* data2_1, const int increment) {"
+    prototype;
+  equal (list int) [ 7; 2 ] (Program_spec.globals spec);
+  let obj = Program_spec.to_elf spec in
+  equal (list int) [ 0; 1; 2 ]
+    (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature)
+
+let () = run __FILE__ [ copy_from_tests; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]

@@ -490,6 +490,13 @@ let synchronize d = d.synchronize ()
 let graph d = d.graph
 
 let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
+  let module U = Tolk_uop.Uop in
+  (* TinyELF and dispatch share a buffer-first signature. Hand-built linear
+     programs need the same formal order as the codegen linearizer. *)
+  let params, body = List.partition (fun u -> U.op u = Tolk_uop.Ops.Param) program in
+  let buffers, scalars = List.partition
+      (fun u -> U.addrspace u <> Some Tolk_uop.Dtype.Alu) params in
+  let program = buffers @ scalars @ body in
   let ren = Renderer_set.select d.renderer_set in
   let comp = match Renderer.compiler ren with
     | Some c -> c
