@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled functions on a device share the memory their intermediates need,
+  sized to the largest, instead of each holding its own: gpt-oss-20b run one
+  compiled layer kind at a time peaks at 17.4 GB instead of 19.4 GB.
 - A `Rune.scan` staged under `Rune.jit` updates a carry in place when its step
   writes it with `Nx.set` or reads it only where it writes: a step writing one
   row of a stacked cache no longer copies the whole cache.

@@ -1744,6 +1744,65 @@ let test_read_after_call_waits () =
       check_arr ~eps:1e-6 ~msg:"after fifty unread calls"
         (Array.make 4096 expected) !h)
 
+(* Arenas. A program's planned intermediates are slices of its device's shared
+   arena, so programs run in turn hold one arena between them. *)
+
+let device_bytes name =
+  Option.value ~default:0
+    (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device name)
+
+(* An [n x n] intermediate from an [n x 8] input: its arena outweighs the input
+   and output storage the program also allocates. *)
+let arena_program ~n act =
+  let f x =
+    let a = act (Nx.matmul x (Nx.transpose x)) in
+    Nx.sum ~axes:[ 1 ] (Nx.matmul a a)
+  in
+  let x k =
+    Nx.create f32 [| n; 8 |]
+      (Array.init (n * 8) (fun i -> sin (float_of_int ((k * i) + 1)) /. 4.0))
+  in
+  (f, Rune.jit' f, x)
+
+let test_programs_share_an_arena () =
+  with_force_copy (fun () ->
+      let n = 512 in
+      let f, f', x = arena_program ~n Nx.tanh in
+      let g, g', _ = arena_program ~n Nx.sin in
+      check_arr ~eps:1e-2 ~msg:"first program" (to_arr (f (x 1))) (f' (x 1));
+      let before = device_bytes "CPU" in
+      check_arr ~eps:1e-2 ~msg:"second program" (to_arr (g (x 2))) (g' (x 2));
+      is_true ~msg:"the second program allocates no arena of its own"
+        (device_bytes "CPU" - before < n * n * 4);
+      for k = 3 to 5 do
+        check_arr ~eps:1e-2 ~msg:"the first after the second"
+          (to_arr (f (x k)))
+          (f' (x k));
+        check_arr ~eps:1e-2 ~msg:"the second after the first"
+          (to_arr (g (x (k + 3))))
+          (g' (x (k + 3)))
+      done)
+
+(* A larger arena grows the shared one; the programs bound to the old buffer
+   move to the new one at their next call, and the old buffer is freed: the
+   device grows by less than the new arena. *)
+let test_a_grown_arena_frees_the_old () =
+  with_force_copy (fun () ->
+      let f, f', x = arena_program ~n:256 Nx.tanh in
+      check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
+      let n = 1024 in
+      let g, g', y = arena_program ~n Nx.sin in
+      (* Collect the views earlier tests' programs left of the old buffer. *)
+      Gc.full_major ();
+      let before = device_bytes "CPU" in
+      check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
+      is_true ~msg:"the outgrown buffer is freed"
+        (device_bytes "CPU" - before < (n * n * 4) - (128 * 1024));
+      check_arr ~eps:1e-2 ~msg:"small, on the grown arena"
+        (to_arr (f (x 2)))
+        (f' (x 2));
+      check_arr ~eps:1e-2 ~msg:"large again" (to_arr (g (y 2))) (g' (y 2)))
+
 (* Not inlined: once it returns, only the queued kernels use the placed
    input. *)
 let[@inline never] run_on_a_dropped_input g data n =
@@ -2828,6 +2887,8 @@ let tests =
           test_capture_uploaded_once_across_signatures;
         test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
         test "a read after a call waits for it" test_read_after_call_waits;
+        test "programs run in turn share an arena" test_programs_share_an_arena;
+        test "a grown arena frees the old one" test_a_grown_arena_frees_the_old;
         test "a buffer freed under a running kernel is not reused"
           test_buffer_freed_under_a_running_kernel;
       ];

@@ -118,6 +118,7 @@ module Buffer = struct
 
   let is_allocated (Pack buf) = Option.is_some (base_raw buf).buf
   let is_initialized (Pack buf) = Option.is_some buf.buf
+  let allocated_views (Pack buf) = (base_raw buf).allocated_views
   let nbytes (Pack buf) = buf.size * Dtype.itemsize buf.dtype
 
   let counts_as_used buf =

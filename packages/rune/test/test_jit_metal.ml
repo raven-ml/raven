@@ -306,6 +306,47 @@ let test_two_programs_alternate () =
   check_arr ~eps:1e-3 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
   check_arr ~eps:1e-3 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v
 
+(* Programs run in turn share the device's arena. A program recorded as a device
+   graph over a smaller arena is re-patched onto the grown one, and a second
+   program of the same size allocates no arena of its own. *)
+let test_programs_share_an_arena () =
+  let program ~n act =
+    let f x =
+      let a = act (Nx.matmul x (Nx.transpose x)) in
+      Nx.sum ~axes:[ 1 ] (Nx.matmul a a)
+    in
+    let x k =
+      Nx.create f32 [| n; 8 |]
+        (Array.init (n * 8) (fun i -> sin (float_of_int ((k * i) + 1)) /. 4.0))
+    in
+    (f, Rune.jit' ~device:"METAL" f, x)
+  in
+  let device_bytes () =
+    Option.value ~default:0
+      (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device "METAL")
+  in
+  let f, f', x = program ~n:256 Nx.tanh in
+  check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
+  check_arr ~eps:1e-2 ~msg:"small, replayed" (to_arr (f (x 2))) (f' (x 2));
+  let n = 1024 in
+  let g, g', y = program ~n Nx.sin in
+  check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
+  check_arr ~eps:1e-2 ~msg:"small, on the grown arena"
+    (to_arr (f (x 3)))
+    (f' (x 3));
+  let h, h', _ = program ~n (fun a -> Nx.mul_s (Nx.sin a) 0.5) in
+  let before = device_bytes () in
+  check_arr ~eps:1e-2 ~msg:"another large" (to_arr (h (y 2))) (h' (y 2));
+  is_true ~msg:"it allocates no arena of its own"
+    (device_bytes () - before < n * n * 4);
+  for k = 4 to 6 do
+    check_arr ~eps:1e-2 ~msg:"small, in turn" (to_arr (f (x k))) (f' (x k));
+    check_arr ~eps:1e-2 ~msg:"large, in turn" (to_arr (g (y k))) (g' (y k));
+    check_arr ~eps:1e-2 ~msg:"other large, in turn"
+      (to_arr (h (y (k + 3))))
+      (h' (y (k + 3)))
+  done
+
 let test_capture_resident_elsewhere () =
   Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
   Fun.protect
@@ -375,6 +416,7 @@ let tests =
         test "a recorded graph is released with its function"
           test_graph_released_with_its_function;
         test "a read after a call waits for it" test_read_after_call_waits;
+        test "programs run in turn share an arena" test_programs_share_an_arena;
         test "two programs alternate on one consumed state"
           test_two_programs_alternate;
       ];

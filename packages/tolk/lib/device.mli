@@ -218,6 +218,10 @@ module Buffer : sig
       storage pointer set. A view can be uninitialised even when the base buffer
       is allocated. *)
 
+  val allocated_views : t -> int
+  (** [allocated_views b] is the number of allocated views of [b]'s root base
+      buffer. {!deallocate} refuses a base buffer while it is positive. *)
+
   val deallocate : t -> unit
   (** [deallocate b] releases backing storage if allocated. For base buffers,
       frees via the allocator. For views, detaches from the base buffer. No-op

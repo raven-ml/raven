@@ -264,7 +264,34 @@ let release_entry e =
           try Tolk.Device.Buffer.deallocate buf with Invalid_argument _ -> ())
         bufs
 
+(* Arenas
+
+   A compiled program's planned intermediates are slices of arena buffers (see
+   [held_buffers]). They live and die inside one call, and a device runs the
+   calls of all programs in queue order, so the single-device programs a device
+   runs share its arenas: a program's [k]th arena is bound, at every call, to
+   the device's [k]th shared buffer, which grows to the largest arena bound to
+   it. The buffer a slot outgrows is retired: device graphs recorded over it
+   keep views of it for as long as their program lives, and it is freed once no
+   view remains, after the device has finished the work that may use it. *)
+
+let arenas : (string * int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 4
+let retired_arenas : (Tolk.Device.t * Tolk.Device.Buffer.t) list ref = ref []
+
+let free_retired_arenas () =
+  retired_arenas :=
+    List.filter
+      (fun (dev, buf) ->
+        Tolk.Device.Buffer.allocated_views buf > 0
+        || begin
+          Tolk.Device.synchronize dev;
+          Tolk.Device.Buffer.deallocate buf;
+          false
+        end)
+      !retired_arenas
+
 let drain_releases () =
+  if !retired_arenas <> [] then free_retired_arenas ();
   match !pending_release with
   | [] -> ()
   | entries ->
@@ -302,6 +329,29 @@ let create_fresh_buffer dev dtolk n =
      drain_releases ();
      Tolk.Device.Buffer.ensure_allocated buf);
   buf
+
+(* The device's [k]th shared arena, of at least [nbytes] bytes. It bypasses the
+   allocator's cache: an outgrown arena returns to the system. *)
+let shared_arena dev k nbytes =
+  let key = (Tolk.Device.name dev, k) in
+  match Hashtbl.find_opt arenas key with
+  | Some buf when Tolk.Device.Buffer.nbytes buf >= nbytes -> buf
+  | outgrown ->
+      Option.iter
+        (fun buf -> retired_arenas := (dev, buf) :: !retired_arenas)
+        outgrown;
+      let buf =
+        Tolk.Device.create_buffer ~size:nbytes ~dtype:TD.int8
+          ~spec:{ Tolk.Device.Buffer_spec.default with nolru = true }
+          dev
+      in
+      (try Tolk.Device.Buffer.ensure_allocated buf
+       with _ ->
+         Gc.major ();
+         drain_releases ();
+         Tolk.Device.Buffer.ensure_allocated buf);
+      Hashtbl.replace arenas key buf;
+      buf
 
 (* Trace state *)
 
@@ -2737,6 +2787,9 @@ type 'q compiled = {
   cp_reserved : (int, unit) Hashtbl.t;
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
+  cp_arenas : U.t list;
+      (* the memory planner's arena buffer nodes, bound at every call to the
+         device's shared arenas (see [shared_arena]); none under a pmap *)
   cp_skeleton : 'q; (* trace-time output structure *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
@@ -3123,6 +3176,34 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
      recorded graph by [Realize.run_linear]'s graph runner. Honors JIT (>= 2
      disables) and JIT_BATCH_SIZE. *)
   let linear = Tolk.Jit.batch_graphs ~device:dev linear in
+  (* The planner's arenas are the int8 buffers its slices view; every other
+     buffer a slice views is an input, a constant or an output. *)
+  let cp_arenas =
+    if multi <> None then []
+    else begin
+      let bound = Hashtbl.create 16 in
+      List.iter
+        (fun n -> Hashtbl.replace bound (U.tag n) ())
+        (List.map (fun inp -> inp.i_node) !inputs
+        @ List.map fst st.consts
+        @ List.map (fun (node, _, _) -> node) st.bound_consts
+        @ List.map (fun (_, _, node, _) -> node) cp_outputs);
+      let seen = Hashtbl.create 4 and acc = ref [] in
+      List.iter
+        (fun u ->
+          match U.as_slice u with
+          | Some { src; _ }
+            when U.op src = Ops.Buffer
+                 && TD.equal (U.dtype src) TD.int8
+                 && (not (Hashtbl.mem bound (U.tag src)))
+                 && not (Hashtbl.mem seen (U.tag src)) ->
+              Hashtbl.replace seen (U.tag src) ();
+              acc := src :: !acc
+          | _ -> ())
+        (U.toposort ~enter_calls:true linear);
+      List.rev !acc
+    end
+  in
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   let reserved = Hashtbl.create 16 in
   List.iter
@@ -3322,6 +3403,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
     cp_aliases;
     cp_prefills;
     cp_reserved = reserved;
+    cp_arenas;
     cp_skeleton = y;
     cp_scratch = Hashtbl.create 8;
   }
@@ -3330,6 +3412,14 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (c : Q.t compiled) (params : P.t) :
     Q.t =
   drain_releases ();
+  (* Bind the arenas before the first run records a device graph over them, so
+     the graph re-patches their addresses when a shared arena grows. *)
+  List.iteri
+    (fun k node ->
+      let nbytes = List.fold_left ( * ) 1 (U.max_shape node) in
+      Tolk.Realize.Buffers.seed c.cp_binding node
+        (shared_arena c.cp_device k nbytes))
+    c.cp_arenas;
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs. A leaf that is an unread output of an earlier call on this
      device seeds its input node with the resident buffer directly — no

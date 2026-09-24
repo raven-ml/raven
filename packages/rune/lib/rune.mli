@@ -461,7 +461,10 @@ val jit :
     bytes, a few GiB by default) a collection is triggered before allocating
     more. The budget counts outputs only, not values placed with
     {!val-to_device}. A transfer failure surfaces as an exception at the first
-    read of the affected output.
+    read of the affected output. The intermediate values of a call live in
+    scratch memory that every compiled function on the device shares, sized to
+    the largest any of them needs, so functions called in turn (the blocks of a
+    deep model) do not each hold their own. A {!pmap} keeps its own.
 
     Inputs are read, never consumed: a resident input leaf is still resident and
     readable after the call. {!jit_step} compiles a function that consumes part
