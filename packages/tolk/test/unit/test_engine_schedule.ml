@@ -1,5 +1,14 @@
 (* Engine.Schedule parity tests. *)
 
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let bufferized_call sink =
   let sink, map = Tolk.Bufferize.run sink in
   Tolk.Callify.transform_to_call sink, map
@@ -214,7 +223,7 @@ let volatile_inputs_survive_scheduling () =
   let build ?(sliced = true) volatile =
     let input = U.buffer ~slot:827 ~dtype:Dtype.float32 ~shape:(shape [ 16 ])
         ~device:(U.Single "CPU") ~volatile () in
-    let view = U.slice ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
+    let view = storage_view ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
     let value = U.alu_binary ~op:Ops.Add ~lhs:(if sliced then view else input)
         ~rhs:(U.const_float 1.) in
     let call, _ = bufferized_call (U.sink [ U.contiguous ~src:value () ]) in
@@ -239,15 +248,18 @@ let slice_inputs_are_normalized_before_their_bases () =
   List.iter (fun volatile ->
       let input = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
           ~shape:(shape [ 16 ]) ~device:(U.Single "CPU") ~volatile () in
-      let view = U.slice ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
+      let view = storage_view ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
       let value = U.alu_binary ~op:Ops.Add ~lhs:view ~rhs:(U.const_float 1.) in
       let call, _ = bufferized_call (U.sink [ U.contiguous ~src:value () ]) in
       let body, args = match U.as_call call with
         | Some { body; args; _ } -> body, args
         | None -> fail "expected call" in
-      is_true ~msg:"slice is a call argument" (List.exists (U.equal view) args);
+      is_true ~msg:"view is a call argument" (List.exists (fun arg ->
+          match U.contiguous_view arg, U.contiguous_view view with
+          | Some (a, x), Some (b, y) -> a == b && x = y
+          | _ -> false) args);
       is_false ~msg:"callee addresses its formal without an embedded storage slice"
-        (List.exists (fun u -> U.op u = Ops.Slice) (U.toposort body));
+        (List.exists (fun u -> U.op u = Ops.Shrink || U.op u = Ops.Bitcast) (U.toposort body));
       let linear, _ = Schedule.create_linear_with_vars
           ~get_kernel_graph:Rangeify.get_kernel_graph call in
       equal int 1 (List.length (linear_calls linear))) [ false; true ]

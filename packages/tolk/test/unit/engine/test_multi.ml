@@ -3,6 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let bufferized_call sink =
   let sink, map = Tolk.Bufferize.run sink in
   Tolk.Callify.transform_to_call sink, map
@@ -177,9 +186,9 @@ let () =
                   equal ~msg:"shard devices" (list string) devs2
                     (List.map Device.Buffer.device
                        (Device.Multi_buffer.bufs m));
-                  (* SLICE of a multi buffer views every shard. *)
+                  (* byte view of a multi buffer views every shard. *)
                   let sliced =
-                    U.slice ~src:node ~offset:(U.const_int 1) ~size:2
+                    storage_view ~src:node ~offset:(U.const_int 1) ~size:2
                       ~dtype:Dtype.float32
                   in
                   (match Realize.resolve_buffer binding ctx sliced with
@@ -196,7 +205,7 @@ let () =
                         (Device.Multi_buffer.bufs v)
                         (Device.Multi_buffer.bufs m)
                   | Realize.Single _ ->
-                      fail "SLICE of a multi buffer resolved to single")
+                      fail "byte view of a multi buffer resolved to single")
               | Realize.Single _ ->
                   fail "multi-device BUFFER resolved to a single buffer");
         ];

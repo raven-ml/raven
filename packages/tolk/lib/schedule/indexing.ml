@@ -13,7 +13,7 @@ module U = Uop
 (* Ops that never need realization: they produce contiguous output, so
    their consumers can always index directly. *)
 let always_contiguous = function
-  | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Const
+  | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Const
   | Ops.Mselect | Ops.Mstack | Ops.Param | Ops.Load | Ops.Call
   ->
       true
@@ -212,7 +212,7 @@ let data_srcs op (srcs : U.t array) =
   let value_src = if Array.length srcs = 0 then [] else [ srcs.(0) ] in
   match op with
   | Ops.Param | Ops.Buffer | Ops.Alloc | Ops.Range | Ops.Special -> []
-  | Ops.Index | Ops.Slice | Ops.Stage | Ops.Reduce | Ops.After | Ops.End ->
+  | Ops.Index | Ops.Stage | Ops.Reduce | Ops.After | Ops.End ->
       value_src
   | op when Ops.Group.is_movement op -> value_src
   | _ -> Array.to_list srcs
@@ -257,11 +257,6 @@ let generate_realize_map ctx root =
          let s = U.src n in
          if Array.length s = 2 then begin
            let dest = s.(0) and src = s.(1) in
-           (match U.op src with
-            | Ops.Slice
-              when realize_mem ctx src && not (has_non_injective_view dest) ->
-                realize_del ctx src
-            | _ -> ());
            let dest_base = U.base dest in
            if List.exists (fun x -> x == dest_base)
                 (src :: U.backward_slice src) then
@@ -613,7 +608,7 @@ let direct_buffer_src u =
       match U.as_param u with
       | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> false
       | _ -> true)
-  | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Mstack | Ops.Mselect | Ops.After -> true
+  | Ops.Buffer | Ops.Alloc | Ops.Mstack | Ops.Mselect | Ops.After -> true
   | _ -> false
 
 (* Movement ops disappear — their effect is captured in the range_map. *)

@@ -508,10 +508,6 @@ type stage_view = { src : t; ranges : t list; opts : stage_opts }
 (** View of an {!Ops.Stage} node: materialised body, indexing
     ranges, and placement options. *)
 
-type slice_view = { src : t; offset : t; size : int }
-(** View of an {!Ops.Slice} node: underlying buffer, symbolic offset,
-    and element count. *)
-
 type param_view = { param : param_arg; shape : t }
 (** View of an {!Ops.Param} node: tinygrad-style payload plus shape child.
     Unknown shape is represented by an empty void {!Ops.Noop}
@@ -580,9 +576,6 @@ val as_allreduce : t -> allreduce_view option
 
 val as_stage : t -> stage_view option
 (** [as_stage u] matches {!Ops.Stage}. *)
-
-val as_slice : t -> slice_view option
-(** [as_slice u] matches {!Ops.Slice}. *)
 
 val as_param : t -> param_view option
 (** [as_param u] matches {!Ops.Param} nodes carrying {!Param_arg}. *)
@@ -717,11 +710,6 @@ val reserve_buffer_slots : int -> unit
 val stage : src:t -> ranges:t list -> opts:stage_opts -> t
 (** [stage ~src ~ranges ~opts] materialises [src] into a staged value
     indexed by loop [ranges]. Dtype is inherited from [src]. Kernel. *)
-
-val slice : src:t -> offset:t -> size:int -> dtype:Dtype.t -> t
-(** [slice ~src ~offset ~size ~dtype] is a {!Ops.Slice} view of [src]
-    at symbolic [offset] in source elements, with [size] elements of [dtype].
-    Tensor. *)
 
 (** {2:ctors_scalars Variables, binds, constants} *)
 
@@ -1070,8 +1058,8 @@ val contiguous : src:t -> ?ranges:t list -> ?force:bool -> unit -> t
     [ranges] defaults to [[]]. Schedule options live on the enclosing
     {!sink}'s {!kernel_info}, not here. Dtype is inherited from [src].
     Returns [src] unchanged for duplicate {!Ops.Contiguous} sources and
-    for empty-range buffer-identity sources ({!Ops.Buffer}, {!Ops.Param},
-    {!Ops.Slice}), unless [force] is [true].
+    for empty-range buffer-identity sources ({!Ops.Buffer}, {!Ops.Alloc},
+    {!Ops.Param}), unless [force] is [true].
     Tensor. *)
 
 val contiguous_backward : src:t -> t
@@ -1274,8 +1262,7 @@ val ranges : t -> t list
 (** [ranges u] is the set of {!Ops.Range} nodes that [u] is nested
     within. A [Range] is included in its own [ranges]. Ops that close
     a range (e.g. {!Ops.Reduce}, {!Ops.Stage}, {!Ops.End}, {!Ops.Backedge},
-    {!Ops.Wmma}, {!Ops.Call}, {!Ops.Copy},
-    {!Ops.Slice}) drop ended ranges from the
+    {!Ops.Wmma}, {!Ops.Call}, {!Ops.Copy}) drop ended ranges from the
     propagated set. *)
 
 val ranges_subset : t -> t -> bool
@@ -1311,7 +1298,7 @@ val addrspace : t -> Dtype.addr_space option
 val base : t -> t
 (** [base u] walks through movement ops and {!Ops.Detach} to the
     underlying node. Other ops, including {!Ops.Unshard}, {!Ops.Stage},
-    {!Ops.Slice}, {!Ops.Param}, and {!Ops.Buffer}, are their
+    {!Ops.Param}, and {!Ops.Buffer}, are their
     own base. *)
 
 val storage_base : t -> t
@@ -1322,14 +1309,13 @@ val storage_base : t -> t
 val buf_uop : t -> t
 (** [buf_uop u] is the buffer-identity node reached by following tinygrad's
     buffer property rules. {!Ops.Param} and {!Ops.Buffer} return themselves;
-    {!Ops.Slice} resolves through its source; {!Ops.Stage} and {!Ops.Mstack}
+    {!Ops.Stage} and {!Ops.Mstack}
     stop the walk. *)
 
 val has_buffer_identity : ?after_ok:bool -> t -> bool
 (** [has_buffer_identity ?after_ok u] is [true] iff [u] is a concrete graph
-    buffer identity: {!Ops.Param}, {!Ops.Buffer}, {!Ops.Alloc}, {!Ops.Slice}, or those
-    identities through {!Ops.Reshape}, {!Ops.Unshard}, {!Ops.Mselect}, or
-    their movement views. With [after_ok] (default
+    buffer identity: {!Ops.Param}, {!Ops.Buffer}, {!Ops.Alloc}, or those
+    identities through {!Ops.Reshape}, {!Ops.Unshard}, or {!Ops.Mselect}. With [after_ok] (default
     [false]) an {!Ops.After} over such an identity also qualifies. *)
 
 val as_shape : t -> t list
@@ -1390,11 +1376,11 @@ val bounds : t -> (t * t) list
     Raises [Invalid_argument] if [u] has no sharding axis or no multi-device
     placement. *)
 
-val contiguous_view_offset : t -> int option
-(** [contiguous_view_offset u] is the element offset when [u] is a
-    statically contiguous view of a parameter, buffer, or slice. Returns
-    [None] when the layout is non-contiguous or the offset cannot be proven as
-    an exact integer from UOp-local shape information. *)
+val contiguous_view : t -> (t * int) option
+(** [contiguous_view u] is the underlying storage node and byte offset when
+    [u] is a contiguous view. The offset must be statically known; leading
+    dimensions may have bounded symbolic lengths. Returns [None] if the
+    layout or offset cannot be established from the graph. *)
 
 (** {1:rewrite Rewriting} *)
 

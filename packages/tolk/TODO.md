@@ -20,10 +20,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   normalize COPY/STAGE storage views through the same call interface.
 - Port CPU scheduling and realization onto that graph: explicit allocation and
   call arguments, RAW/WAR dependencies for overlapping assignments, self-copy,
-  nested calls and shared aliases, and cycle rejection. Replace SLICE memory
-  views with SHRINK/BITCAST byte offsets. Centralize shape, numel, range and
-  backward-slice properties for allocation sizes and view bounds. Unify
-  contiguous-view folding and test leading-dimension and symbolic views.
+  nested calls and shared aliases, and cycle rejection. Centralize shape,
+  numel, range and backward-slice properties for allocation sizes and view
+  bounds.
 
 Acceptance: the public Tolk frontend executes CPU elementwise, reduction,
 matmul and custom multi-output kernels through the new protocol. Cover nested

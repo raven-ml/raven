@@ -38,10 +38,10 @@ let view_buffer node =
           let src = U.src node in
           Array.length src > 0 && pending_effect src.(0)
   in
-  match U.contiguous_view_offset node with
+  match U.contiguous_view node with
   | None -> None
   | Some _ when pending_effect node -> None
-  | Some offset ->
+  | Some (base, offset) ->
       Option.map
         (fun src ->
           let numel = List.fold_left ( * ) 1 (U.max_shape node) in
@@ -54,11 +54,11 @@ let view_buffer node =
           else
             let v =
               Tolk.Device.Buffer.view src ~size:numel ~dtype
-                ~offset:(offset * D.itemsize dtype)
+                ~offset
             in
             Tolk.Device.Buffer.ensure_allocated v;
             v)
-        (owned_buffer (U.buf_uop node))
+        (owned_buffer base)
 
 let buffer_of_node = view_buffer
 

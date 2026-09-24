@@ -59,7 +59,7 @@ val memory_plan_rewrite :
   Tolk_uop.Uop.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
 (** [memory_plan_rewrite linear held_bufs] replaces the internal
     {!Tolk_uop.Ops.Buffer} nodes of the {!Tolk_uop.Ops.Linear} [linear] with
-    {!Tolk_uop.Ops.Slice} views into per-device arena buffers sized by
+    {!Tolk_uop.Ops.Shrink}/{!Tolk_uop.Ops.Bitcast} views into per-device arena buffers sized by
     liveness analysis. Buffers in [held_bufs] (compared by physical identity)
     keep their identity and their own allocation: hold any buffer that
     outlives the schedule, such as external inputs and outputs.

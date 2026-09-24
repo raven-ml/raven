@@ -578,7 +578,7 @@ let earliest_rewrites =
                | Some a, Some b -> prod a <> prod b
                | _ -> false
              in
-             if resized || U.contiguous_view_offset s = None then
+             if resized || U.contiguous_view s = None then
                let sr = Array.copy (U.src n) in
                sr.(0) <- U.contiguous ~src:s ();
                Some (U.replace n ~src:sr ())

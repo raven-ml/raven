@@ -114,11 +114,10 @@ val tensor_spec : t
 (** Tensor-graph spec. Accepts, on top of {!shared_spec}, float-only unary
     math ({!Ops.Sin}, {!Ops.Log2}, {!Ops.Exp2}, {!Ops.Sqrt},
     {!Ops.Reciprocal}), tensor-level devices, global buffers whose shape source
-    is [weakint]-typed, scalar constant binds, calls/functions/tuples,
+    is [weakint]-typed, scalar binding effects and calls,
     [weakint]-typed {!Ops.Special},
     movement ops, reductions over an integer tail, copy/allreduce/multi-device
-    ops, staging, and program packaging. {!Ops.Slice} is an explicit
-    {!full_spec} intermediate, not a tensor-stage node. Concrete device
+    ops, staging, and program packaging. Concrete device
     payloads reject positional selectors and empty multi-device groups;
     sharding axes must point into the source shape of a multi-device value. *)
 
@@ -135,8 +134,7 @@ val program_spec : t
 val full_spec : t
 (** [full_spec] is the explicit intermediate validator formed from the
     transitional full-spec forms plus {!tensor_spec} and {!program_spec}. It
-    accepts rewrite-error markers, known intermediate {!Ops.Slice},
-    {!Ops.Call} over slice bodies, loose {!Ops.After}/{!Ops.End}, expander raw
+    accepts rewrite-error markers, loose {!Ops.After}/{!Ops.End}, expander raw
     memory access, and scalar binding effects. It has no catch-all rule. *)
 
 (** {1:verify Verification} *)

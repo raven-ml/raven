@@ -368,7 +368,6 @@ let derived_dtype (node : node) =
   | Ops.Load | Ops.Unshard | Ops.Reduce | Ops.After | Ops.Range | Ops.Copy
   | Ops.Stage | Ops.Detach | Ops.Mstack | Ops.Mselect | Ops.Allreduce | Ops.Special
   | Ops.End | Ops.Contiguous | Ops.Contiguous_backward -> first ()
-  | Ops.Slice -> node.dtype
   | op when Ops.Group.is_unary op || Ops.Group.is_movement op -> first ()
   | op when Ops.Group.is_broadcastable op -> promote (Array.to_list node.src)
   | op -> invalid_arg ("Uop: no dtype rule for " ^ Ops.name op)
@@ -511,7 +510,6 @@ type if_view = { cond : t; idx_for_dedup : t }
 type reduce_view = { src : t; ranges : t list; op : Ops.t; num_axes : int }
 type allreduce_view = { src : t; device : device; op : Ops.t }
 type stage_view = { src : t; ranges : t list; opts : stage_opts }
-type slice_view = { src : t; offset : t; size : int }
 type param_view = { param : param_arg; shape : t }
 type buffer_view = { buffer : param_arg; shape : t }
 type wmma_view = { a : t; b : t; c : t; info : wmma_info }
@@ -584,12 +582,6 @@ let as_stage u =
   match op u, arg u, Array.to_list (src u) with
   | Ops.Stage, Arg.Stage_info opts, src :: ranges ->
       Option.Some { src; ranges; opts }
-  | _ -> Option.None
-
-let as_slice u =
-  match op u, arg u, Array.to_list (src u) with
-  | Ops.Slice, Arg.Int size, [ src; offset ] ->
-      Option.Some { src; offset; size }
   | _ -> Option.None
 
 let as_wmma u =
@@ -966,9 +958,6 @@ let stack ?dtype:dtype_opt srcs =
       | _ -> cast ~src:u ~dtype:dt) srcs in
   mk ~op:Ops.Stack ~dtype:dt ~src:(Array.of_list src) ~arg:Arg.Empty
 
-let slice ~src ~offset ~size ~dtype =
-  mk ~op:Ops.Slice ~dtype ~src:[| src; offset |] ~arg:(Arg.Int size)
-
 let getaddr ~src =
   mk ~op:Ops.Getaddr ~dtype:Dtype.uint64 ~src:[| src |] ~arg:Arg.Empty
 
@@ -1165,7 +1154,7 @@ let rec has_buffer_identity ?(after_ok = false) u =
       Array.length srcs > 0 && has_buffer_identity ~after_ok srcs.(0)
   | Ops.After when after_ok ->
       Array.length srcs > 0 && has_buffer_identity ~after_ok srcs.(0)
-  | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Param -> true
+  | Ops.Buffer | Ops.Alloc | Ops.Param -> true
   | _ -> false
 
 let expand ~src ~dims =
@@ -1370,7 +1359,6 @@ let range_start_idx = function
   | Ops.Linear -> Option.Some 0
   | Ops.Stage | Ops.Reduce | Ops.End | Ops.Call
   | Ops.Copy -> Option.Some 1
-  | Ops.Slice -> Option.Some 2
   | Ops.Wmma -> Option.Some 3
   | _ -> Option.None
 
@@ -1489,7 +1477,7 @@ let ranges_subset sub sup =
   List.for_all (fun r -> Ref_set.mem r sup_set) (ranges sub)
 
 let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy | Ops.Slice
+  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy
   | Ops.Custom_function -> true
   | _ -> false
 
@@ -2140,12 +2128,6 @@ and compute_shape_opt u =
       (match Arg.as_param_arg (arg u) with
        | Some p -> Some (storage_shape p)
        | None -> None)
-  | Ops.Slice ->
-      if Array.length srcs > 0 && op srcs.(0) = Ops.Index then Some []
-      else
-        Option.map
-          (fun ({ size; _ } : slice_view) -> [ const_int size ])
-          (as_slice u)
   | Ops.Stage ->
       let ranges = Array.to_list srcs |> List.tl in
       let range_shape =
@@ -2576,7 +2558,7 @@ let bounds u =
           let hi = dim_mul shard (const_int (i + 1)) in
           lo, hi)
 
-let contiguous_view_offset u =
+let contiguous_view u =
   let exact_int t =
     match const_int_value t with
     | Some _ as value -> value
@@ -2648,17 +2630,18 @@ let contiguous_view_offset u =
             loop (prefix_one && dim_max_at_most 1 dim) offset (dim :: out)
               (i + 1)
           else
-            match exact_int offset_dim, exact_int size, exact_int dim with
-            | Some offset_dim, Some size, Some dim
-              when offset_dim >= 0 && size >= 0 && offset_dim + size <= dim
+            match exact_int offset_dim, exact_int dim with
+            | Some offset_dim, Some dim
+              when offset_dim >= 0 && Bound.le Bound.zero (vmin size)
+                   && Bound.le (vmax size) (Bound.int (dim - offset_dim))
                    && prefix_one ->
                 let trailing = List.filteri (fun j _ -> j > i) shape in
                 (match exact_stride trailing with
                  | Some stride ->
-                     loop (size <= 1) (offset + (offset_dim * stride))
-                       (const_int size :: out) (i + 1)
+                     loop (dim_max_at_most 1 size) (offset + (offset_dim * stride))
+                       (size :: out) (i + 1)
                  | None when offset_dim = 0 ->
-                     loop (size <= 1) offset (const_int size :: out) (i + 1)
+                     loop (dim_max_at_most 1 size) offset (size :: out) (i + 1)
                  | None -> None)
             | _ -> None
       in
@@ -2666,15 +2649,11 @@ let contiguous_view_offset u =
   in
   let rec walk node =
     match op node with
-    | Ops.Buffer | Ops.Alloc | Ops.Param -> Some (0, shape node)
-    | Ops.Slice ->
-        (match as_slice node with
-         | Some { src; offset; _ } ->
-             (match exact_int offset, walk src with
-              | Some off, Some (base_off, _) ->
-                  Some (base_off + off, shape node)
-              | _ -> None)
-         | None -> None)
+    | Ops.Buffer | Ops.Alloc | Ops.Param -> Some (node, 0, shape node)
+    | Ops.Mselect | Ops.Mstack -> Some (node, 0, shape node)
+    | Ops.Bitcast ->
+        Option.map (fun (base, offset, _) -> base, offset, shape node)
+          (walk (src node).(0))
     | Ops.Detach | Ops.Contiguous | Ops.Contiguous_backward | Ops.After ->
         let srcs = src node in
         if Array.length srcs = 0 then None else walk srcs.(0)
@@ -2683,24 +2662,24 @@ let contiguous_view_offset u =
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), shape_arg srcs 1 with
-           | Some (base_off, _), Some target -> Some (base_off, target)
+           | Some (base, base_off, _), Some target -> Some (base, base_off, target)
            | _ -> None)
     | Ops.Expand ->
         let srcs = src node in
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), shape_arg srcs 1 with
-           | Some (base_off, current), Some target
+           | Some (base, base_off, current), Some target
              when List.length current = List.length target
                   && List.for_all2 same_dim current target ->
-               Some (base_off, target)
+               Some (base, base_off, target)
            | _ -> None)
     | Ops.Pad ->
         let srcs = src node in
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), pairs_arg srcs with
-           | Some ((_, current) as state), Some pairs
+           | Some ((_, _, current) as state), Some pairs
              when List.length current = List.length pairs
                   && List.for_all2
                        (fun dim (offset, size) ->
@@ -2713,9 +2692,9 @@ let contiguous_view_offset u =
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), pairs_arg srcs with
-           | Some (base_off, current), Some pairs ->
+           | Some (base, base_off, current), Some pairs ->
                (match shrink_shape_and_offset current pairs with
-                | Some (offset, shape) -> Some (base_off + offset, shape)
+                | Some (offset, shape) -> Some (base, base_off + offset * Dtype.itemsize (dtype node), shape)
                 | None -> None)
            | _ -> None)
     | Ops.Permute ->
@@ -2723,10 +2702,10 @@ let contiguous_view_offset u =
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), Arg.as_ints (arg node) with
-           | Some (base_off, current), Some order
+           | Some (base, base_off, current), Some order
              when contiguous_permutation order current ->
                (match permute_list order current with
-                | Some shape -> Some (base_off, shape)
+                | Some shape -> Some (base, base_off, shape)
                 | None -> None)
            | _ -> None)
     | Ops.Flip ->
@@ -2734,17 +2713,17 @@ let contiguous_view_offset u =
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), Arg.as_bools (arg node) with
-           | Some state, Some dims
-             when List.length dims = List.length (snd state)
+           | Some ((_, _, current) as state), Some dims
+             when List.length dims = List.length current
                   && List.for_all2
                        (fun flipped dim ->
                          (not flipped) || dim_max_at_most 1 dim)
-                       dims (snd state) ->
+                       dims current ->
                Some state
            | _ -> None)
     | _ -> None
   in
-  Option.map fst (walk u)
+  Option.map (fun (base, offset, _) -> base, offset) (walk u)
 
 let reduce_axis ~src ~op ~axes =
   let shp = shape src in
@@ -3612,7 +3591,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 22
+let export_version = 23
 
 type serialized_node = {
   serialized_op : Ops.t;

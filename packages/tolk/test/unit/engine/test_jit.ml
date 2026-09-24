@@ -19,6 +19,15 @@ type runtime_state = {
   mutable global : int array;
 }
 
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let runtime_state () = { calls = 0; vals = [||]; global = [||] }
 
 let renderer =
@@ -186,7 +195,7 @@ let () =
                 program_call
                   [
                     buffer_node ();
-                    U.slice ~src:base
+                    storage_view ~src:base
                       ~offset:(U.const_int (1 lsl 30))
                       ~size:4 ~dtype:Dtype.int32;
                   ]

@@ -99,7 +99,6 @@ type t =
   | Detach  (** Detaches from gradient tracking. *)
   | Stage  (** Staged buffer before final buffer materialisation. *)
   | Copy  (** Cross-device copy. *)
-  | Slice  (** Slice of a buffer identity. *)
   | Mselect  (** Selects one shard of a sharded value. *)
   | Mstack  (** Stacks per-device shards. *)
   | Custom_function  (** User-defined tensor-stage function. *)

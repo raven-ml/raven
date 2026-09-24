@@ -82,7 +82,6 @@ type t =
   | Detach
   | Stage
   | Copy
-  | Slice
   | Mselect
   | Mstack
   | Custom_function
@@ -168,7 +167,6 @@ let name = function
   | Detach -> "DETACH"
   | Stage -> "STAGE"
   | Copy -> "COPY"
-  | Slice -> "SLICE"
   | Mselect -> "MSELECT"
   | Mstack -> "MSTACK"
   | Custom_function -> "CUSTOM_FUNCTION"
@@ -303,7 +301,6 @@ module Group = struct
       Detach;
       Stage;
       Copy;
-      Slice;
       Mselect;
       Mstack;
       Custom_function;

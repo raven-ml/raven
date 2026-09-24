@@ -370,27 +370,6 @@ let copy_rejects_bad_device_or_dtype () =
   is_true ~msg:"Copy rejects empty multi-device target"
     (rejected Spec.tensor_spec bad_empty)
 
-let slice_is_full_spec_only () =
-  let b = Uop.buffer ~slot:0 ~dtype:Dtype.int32 () in
-  let valid = Uop.slice ~src:b ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32 in
-  is_true ~msg:"Slice rejected by tensor_spec"
-    (rejected Spec.tensor_spec valid);
-  is_true ~msg:"Slice accepted by full_spec"
-    (accepts Spec.full_spec valid);
-  let bad_offset =
-    Uop.replace valid ~src:[| b; Uop.const_float 0.0 |] ()
-  in
-  is_true ~msg:"Slice with non-integer offset rejected"
-    (rejected Spec.full_spec bad_offset);
-  let bad_size = Uop.replace valid ~arg:(Uop.Arg.Int (-1)) () in
-  is_true ~msg:"Slice only requires integer size in full_spec"
-    (accepts Spec.full_spec bad_size);
-  let bad_source =
-    Uop.slice ~src:(i32 1) ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32
-  in
-  is_true ~msg:"Slice source must be a buffer/view intermediate"
-    (rejected Spec.full_spec bad_source)
-
 let call_reject_bad_layouts () =
   let info = call_info "f" in
   let arg = Uop.const_int 2 in
@@ -711,12 +690,6 @@ let movement_validates_shape_contracts () =
     (rejected Spec.tensor_spec flip_bad)
 
 let full_spec_accepts_intermediate_forms () =
-  let src = Uop.buffer ~slot:0 ~dtype:Dtype.int32 () in
-  let slice = Uop.slice ~src ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32 in
-  let call = Uop.call ~body:slice ~args:[ Uop.const_int 4 ] ~info:(call_info "slice") in
-  let call_without_info = Uop.replace call ~arg:Uop.Arg.Empty () in
-  let call_non_void = Uop.replace call
-      ~arg:(Uop.Arg.Call_info { (call_info "slice") with dtype = Dtype.int32 }) () in
   let loose_after =
     Uop.replace (i32 1) ~op:Ops.After
       ~src:[| i32 1; Uop.const_float 0.0 |] ()
@@ -741,14 +714,6 @@ let full_spec_accepts_intermediate_forms () =
     in
     Uop.index ~ptr:src ~idxs:[ i32 1 ] ()
   in
-  is_true ~msg:"full_spec accepts Slice intermediate"
-    (accepts Spec.full_spec slice);
-  is_true ~msg:"full_spec accepts Call(Slice) intermediate"
-    (accepts Spec.full_spec call);
-  is_true ~msg:"full_spec accepts transitional Call(Slice) without Call_info"
-    (accepts Spec.full_spec call_without_info);
-  is_true ~msg:"full_spec still requires Call(Slice) to be void"
-    (rejected Spec.full_spec call_non_void);
   is_true ~msg:"full_spec accepts loose After intermediate"
     (accepts Spec.full_spec loose_after);
   is_true ~msg:"full_spec rejects malformed End payloads"
@@ -1300,7 +1265,6 @@ let () =
             copy_accepts_lowered_range_sources;
           test "Copy bad device or dtype rejected"
             copy_rejects_bad_device_or_dtype;
-          test "Slice is full_spec only" slice_is_full_spec_only;
           test "Call bad layouts rejected"
             call_reject_bad_layouts;
           test "Call source contracts"

@@ -20,15 +20,21 @@ let contiguous_view u =
     | Ops.After -> true
     | op when Ops.Group.is_movement op || op = Ops.Bitcast -> has_effect (U.src u).(0)
     | _ -> false in
-  let base = U.buf_uop u in
-  if U.op base <> Ops.Buffer || has_effect u then None
-  else match U.contiguous_view_offset u with
-    | None -> None
-    | Some offset ->
-        let view = U.slice ~src:base ~offset:(U.const_int offset)
-            ~size:(U.max_numel u) ~dtype:(U.dtype u) in
-        let dims = match U.shape u with [d] -> d | dims -> U.stack dims in
-        Some (U.reshape ~src:view ~shape:dims)
+  if has_effect u then None
+  else match U.contiguous_view u with
+    | Some (base, offset) when U.op base = Ops.Buffer ->
+        let bytes = U.bitcast ~src:base ~dtype:Dtype.int8 in
+        let bytes = U.shrink ~src:bytes ~offset:(U.const_int offset)
+            ~size:(U.const_int (U.max_numel u * Dtype.itemsize (U.dtype u))) in
+        let flat = U.bitcast ~src:bytes ~dtype:(U.dtype u) in
+        let dims_node = function [d] -> d | dims -> U.stack dims in
+        let dims = U.shape u in
+        let max_dims = List.map U.const_int (U.max_shape u) in
+        let view = U.reshape ~src:flat ~shape:(dims_node max_dims) in
+        Some (if List.equal U.equal dims max_dims then view else
+          U.shrink ~src:view ~offset:(dims_node (List.map (fun _ -> U.const_int 0) dims))
+            ~size:(dims_node dims))
+    | _ -> None
 
 let rec canonicalize_scope root =
   let allocs = U.Ref_tbl.create 16 in
@@ -65,7 +71,9 @@ let transform_to_call sink =
   let body = U.graph_rewrite ~bottom_up:true ~walk:true (fun u ->
       match U.op u with
       | Ops.Buffer when U.addrspace u = Some Dtype.Global -> replace_input u
-      | Ops.Slice when U.op (U.src u).(0) = Ops.Buffer -> replace_input u
+      | (Ops.Shrink | Ops.Bitcast)
+        when List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape u) ->
+          (match contiguous_view u with Some view -> replace_input view | None -> None)
       | Ops.After when U.is_bound_var u -> replace_input u
       | _ -> None) body in
   let body = U.graph_rewrite ~enter_calls:true (fun u ->

@@ -515,8 +515,9 @@ let memory_plan_rewrite linear held_bufs =
                         (Hashtbl.find offsets tag))
                  in
                  let slice =
-                   U.slice ~src:arena ~offset ~size:(buffer_numel b)
-                     ~dtype:(U.dtype b)
+                   U.bitcast ~dtype:(U.dtype b)
+                     ~src:(U.shrink ~src:arena ~offset
+                       ~size:(U.const_int (buffer_nbytes b)))
                  in
                  (b, slice) :: acc)
               buffers []

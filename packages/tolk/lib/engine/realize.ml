@@ -203,7 +203,7 @@ let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
 
 (* Rewrite each kernel CALL(SINK) in [linear] to CALL(PROGRAM), compiling the
    body with [to_program] and caching the compiled PROGRAM by the SINK's
-   semantic key. SLICE and COPY calls pass through unchanged. [beam] stamps
+   semantic key. COPY calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
 let pm_compile ~device ?beam ~to_program linear =
@@ -269,7 +269,7 @@ let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
 (* Buffer binding
 
    Placed BUFFER nodes own storage directly. Caller bindings can override
-   that storage; a PARAM resolves through [input_uops], and a SLICE is an
+   that storage; a PARAM resolves through [input_uops], and a contiguous movement is an
    offset view. Unplaced placeholders still use the execution device. *)
 
 type buffer =
@@ -395,30 +395,17 @@ let rec resolve_buffer binding ctx node =
       | _ ->
           invalid_arg
             (Format.asprintf "resolve: unbound PARAM %a" U.pp node))
-  | Tolk_uop.Ops.Slice -> (
-      match U.as_slice node with
-      | Some { src; offset; size } ->
-          let off =
-            match U.const_int_value offset with
-            | Some o -> o
-            | None -> invalid_arg "resolve: symbolic SLICE offset"
-          in
-          (match resolve_buffer binding ctx src with
-          | Single base ->
-              let byte_offset =
-                off * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype base)
-              in
-              Single
-                (Device.Buffer.view base ~size ~dtype:(U.dtype node)
-                   ~offset:byte_offset)
-          | Multi base ->
-              let byte_offset =
-                off * Tolk_uop.Dtype.itemsize (Device.Multi_buffer.dtype base)
-              in
-              Multi
-                (Device.Multi_buffer.view base ~size ~dtype:(U.dtype node)
-                   ~offset:byte_offset))
-      | None -> invalid_arg "resolve: malformed SLICE")
+  | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Detach | Tolk_uop.Ops.After
+  | Tolk_uop.Ops.Unshard | Tolk_uop.Ops.Contiguous_backward ->
+      resolve_buffer binding ctx (U.src node).(0)
+  | op when Tolk_uop.Ops.Group.is_movement op || op = Tolk_uop.Ops.Bitcast ->
+      (match U.contiguous_view node with
+       | None -> invalid_arg "resolve: non-contiguous storage view"
+       | Some (base, offset) ->
+           let size = U.max_numel node and dtype = U.dtype node in
+           match resolve_buffer binding ctx base with
+           | Single buffer -> Single (Device.Buffer.view buffer ~size ~dtype ~offset)
+           | Multi buffer -> Multi (Device.Multi_buffer.view buffer ~size ~dtype ~offset))
   | Tolk_uop.Ops.Buffer -> Buffers.buffer_of_node binding node
   | Tolk_uop.Ops.Mselect -> (
       match U.children node, U.Arg.as_int (U.arg node) with
@@ -485,7 +472,7 @@ let unwrap_multi bufs =
 (* Run linear
 
    Executes a scheduled LINEAR by dispatching each CALL on its callee: kernel
-   SINKs are compiled and launched, SLICE bodies bind a view of their source,
+   SINKs are compiled and launched,
    and COPY bodies transfer between buffers. Buffer arguments are resolved
    through the binding and PARAM slots through [input_uops]. *)
 
@@ -534,17 +521,6 @@ let get_call_name call bufs var_vals =
       let arg_uops = call_arg_uops args in
       match (U.op ast, arg_uops, bufs) with
       | Tolk_uop.Ops.Program, _, _ -> U.program_function_name ast
-      | Tolk_uop.Ops.Slice, out :: src :: _, _ ->
-          let offset =
-            match U.as_slice ast with
-            | Some { offset; _ } ->
-                U.sym_infer offset var_vals
-                * Tolk_uop.Dtype.itemsize (U.dtype src)
-            | None -> invalid_arg "get_call_name: malformed SLICE"
-          in
-          Helpers.colored
-            (strf "view %10s @ %-10d" (size_str out) offset)
-            (Some "yellow")
       | Tolk_uop.Ops.Copy, out :: _, dest :: src :: _ ->
           Helpers.colored
             (strf "copy %10s, %7s <- %-7s" (size_str out) (dev_str dest)
@@ -753,37 +729,6 @@ let exec_kernel binding ctx ~device call =
                 bufs)
             groups)
   | None -> invalid_arg "exec_kernel: expected CALL"
-
-let exec_view binding ctx ~device call =
-  let module U = Tolk_uop.Uop in
-  match U.as_call call with
-  | Some { body; args; _ } -> (
-      match call_arg_uops args, U.as_slice body with
-      | out_node :: src_node :: _, Some { offset; _ } ->
-          let src = resolve binding ctx src_node in
-          let off =
-            match U.const_int_value offset with
-            | Some o -> o
-            | None -> invalid_arg "exec_view: symbolic SLICE offset"
-          in
-          let byte_offset =
-            off * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype src)
-          in
-          let view =
-            Device.Buffer.view src ~size:(Buffers.numel out_node)
-              ~dtype:(U.dtype body) ~offset:byte_offset
-          in
-          let bind () =
-            Buffers.seed binding out_node view;
-            None
-          in
-          ignore
-            (track_stats ctx call
-               ~device:(device_for ~device view)
-               [ view; src ] ctx.var_vals bind
-              : float option)
-      | _ -> invalid_arg "exec_view: malformed SLICE call")
-  | None -> invalid_arg "exec_view: expected CALL"
 
 let exec_copy binding ctx ~device call =
   let module U = Tolk_uop.Uop in
@@ -1232,7 +1177,6 @@ let rec dispatch_call binding ctx ~device call =
   match U.as_call call with
   | Some { body; _ } -> (
       match U.op body with
-      | Tolk_uop.Ops.Slice -> exec_view binding ctx ~device call
       | Tolk_uop.Ops.Copy -> exec_copy binding ctx ~device call
       | Tolk_uop.Ops.Program -> exec_kernel binding ctx ~device call
       | Tolk_uop.Ops.Custom_function
@@ -1393,7 +1337,6 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
                  && U.Arg.as_string (U.arg body) = Some "graph" ->
               "graph"
           | Some { body; _ } when U.op body = Tolk_uop.Ops.Copy -> "copy"
-          | Some { body; _ } when U.op body = Tolk_uop.Ops.Slice -> "slice"
           | _ -> "?")
         (U.children linear)
     in

@@ -3919,8 +3919,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
       let seen = Hashtbl.create 4 and acc = ref [] in
       List.iter
         (fun u ->
-          match U.as_slice u with
-          | Some { src; _ }
+          match U.contiguous_view u with
+          | Some (src, _)
             when U.op src = Ops.Buffer
                  && TD.equal (U.dtype src) TD.int8
                  && (not (Hashtbl.mem bound (U.tag src)))

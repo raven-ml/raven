@@ -72,8 +72,7 @@ let input_info_of_uop u =
    compatible when its body is a PROGRAM (or a COPY, if the capability
    supports copies), every buffer argument lives on the batch's device, and
    no buffer view starts past the capability's offset bound; any other call
-   breaks the batch. SLICE calls are dropped: they only bind
-   offset views, which argument resolution derives structurally. The batch
+   breaks the batch. The batch
    size limit doubles after each emitted graph. *)
 
 let dedup xs =
@@ -139,17 +138,12 @@ let call_device_prefixes si =
   in
   loop [] (call_args si)
 
-(* Whether every SLICE argument of a call stays within [max_offset] bytes. *)
+(* Graph backends may limit byte offsets into argument storage. *)
 let view_offsets_within max_offset si =
-  List.for_all
-    (fun b ->
-      match U.as_slice b with
-      | Some { src; offset; _ } -> (
-          match U.const_int_value offset with
-          | Some o -> o * Dtype.itemsize (U.dtype src) <= max_offset
-          | None -> true)
-      | None -> true)
-    (call_args si)
+  List.for_all (fun b ->
+      match U.contiguous_view b with
+      | Some (_, offset) -> offset <= max_offset
+      | None -> false) (List.filter (fun b -> not (U.is_variable b || U.is_bound_var b)) (call_args si))
 
 let graph_split_rewrite ~device linear ~max_batch_size =
   let graph = Device.graph device in
@@ -172,7 +166,6 @@ let graph_split_rewrite ~device linear ~max_batch_size =
   List.iter
     (fun si ->
       match call_body si with
-      | Some body when is_op Ops.Slice body -> ()
       | Some body ->
           let can_graph =
             (match graph with

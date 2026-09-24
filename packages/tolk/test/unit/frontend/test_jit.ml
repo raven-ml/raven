@@ -19,6 +19,15 @@ module Run = Tolk_frontend.Run
 module Jit = Tolk_frontend.Jit
 module U = Tolk_uop.Uop
 
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let vec data = Run.of_float_array ~shape:[ Array.length data ] data
 let close a b = Float.abs (a -. b) < 1e-4
 
@@ -43,7 +52,7 @@ let elementwise_tests =
               let traces = ref 0 in
               let jit = Jit.create (fun inputs ~vars:_ ->
                   incr traces;
-                  let view = U.slice ~src:(U.base (T.uop inputs.(0)))
+                  let view = storage_view ~src:(U.base (T.uop inputs.(0)))
                       ~offset:(U.const_int offset) ~size:4 ~dtype:Tolk_uop.Dtype.float32 in
                   Run.realize (El.add (T.of_uop view) (T.f 1.))) in
               for call = 0 to 3 do

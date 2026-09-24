@@ -119,25 +119,13 @@ let end_ok u =
   end_effect_ok u
   && tail_srcs (fun s -> Uop.op s = Ops.Range && is_int s) u
 
-let valid_full_slice u =
-  match Uop.as_slice u, Uop.src u with
-  | Some { offset; _ }, srcs ->
-      Array.length srcs >= 2
-      && (match Uop.op srcs.(0) with
-          | op when Ops.Group.is_movement op -> true
-          | Ops.Buffer | Ops.Param | Ops.Stage | Ops.After -> true
-          | _ -> false)
-      && Uop.op offset = Ops.Const
-      && is_weakint offset
-  | _ -> false
-
 let call_info_arg u =
   match Uop.arg u with
   | Uop.Arg.Call_info info -> Dtype.equal (Uop.dtype u) info.dtype
   | _ -> false
 
 let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy | Ops.Slice
+  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy
   | Ops.Custom_function -> true
   | _ -> false
 
@@ -506,11 +494,6 @@ let full_only_spec : t =
   make [
     op ~dtype:Dtype.void Ops.Rewrite_error
     =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
-
-    op Ops.Slice =?> (fun u _ -> valid_full_slice u);
-
-    op ~allow_any_len:true ~dtype:Dtype.void ~src:[ op Ops.Slice ] Ops.Call
-    =?> (fun _ _ -> true);
 
     op ~allow_any_len:true ~src:[ any; any ] Ops.End
     =?> (fun u _ -> end_effect_ok u && tail_srcs is_int u);

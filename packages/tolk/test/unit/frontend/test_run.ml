@@ -1344,6 +1344,29 @@ let aliasing_tests =
           equal int ~msg:"view starts at the slice offset" (3 * 4)
             (Device.Buffer.offset ybuf);
           check_floats [| 3.; 4.; 5.; 6. |] y);
+      test "symbolic leading views retain their storage and byte offset" (fun () ->
+          List.iter (fun size ->
+              let x = fa ~shape:[3; 2] [|1.; 2.; 3.; 4.; 5.; 6.|] in
+              let n = U.variable ~name:"view_rows" ~min_val:1 ~max_val:2 () in
+              let bound = U.bind ~var:n ~value:(U.const_int size) in
+              let view = U.shrink ~src:(T.uop x)
+                  ~offset:(U.stack [U.const_int 1; U.const_int 0])
+                  ~size:(U.stack [bound; U.const_int 2]) |> T.of_uop |> El.contiguous in
+              ignore (Run.realize view);
+              let base = buffer_of x and selected = buffer_of view in
+              equal int (Device.Buffer.base_id base) (Device.Buffer.base_id selected);
+              equal int 8 (Device.Buffer.offset selected);
+              let sum = Rd.sum view in
+              equal float_exact (if size = 1 then 7. else 18.) (Run.item_float sum)) [1; 2]);
+      test "subword bitcast views alias the original bytes" (fun () ->
+          let x = Run.of_int_array ~shape:[2] [|0x04030201; 0x08070605|] in
+          let part = Mv.shrink (Dt.bitcast x Tolk_uop.Dtype.uint8) [(1, 3)] in
+          let view = Dt.bitcast part Tolk_uop.Dtype.uint16 |> El.contiguous in
+          ignore (Run.realize view);
+          let base = buffer_of x and selected = buffer_of view in
+          equal int (Device.Buffer.base_id base) (Device.Buffer.base_id selected);
+          equal int 1 (Device.Buffer.offset selected);
+          equal string "\002\003" (Bytes.to_string (Run.data view)));
       test "a shrunk trailing axis is not a contiguous range" (fun () ->
           let x = fa ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
           check_floats [| 1.; 2.; 4.; 5. |]

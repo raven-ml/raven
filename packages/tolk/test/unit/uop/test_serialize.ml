@@ -4,6 +4,15 @@ open Windtrap
 open Tolk_uop
 module U = Uop
 
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let call_info : U.call_info =
   {
     grad_fxn = None;
@@ -25,7 +34,7 @@ let internal_buffer slot =
 
 (* A compiled-program-shaped graph exercising every argument embedding:
    kernel_info estimates ([Sym]), program_info [vars] and [Launch_sym]
-   launch dimensions, a tagged node, and SLICE/COPY call bodies. *)
+   launch dimensions, a tagged node, and byte views and COPY call bodies. *)
 let compiled_program ~name () =
   let dt = Dtype.int32 in
   let var = U.variable ~name:"n" ~min_val:1 ~max_val:128 ~dtype:dt () in
@@ -49,7 +58,7 @@ let compiled_program ~name () =
   in
   let sink = U.sink ~kernel_info [ st ] in
   let kern_call = U.call ~body:sink ~args:[ p0 ] ~info:call_info in
-  let sl = U.slice ~src:p0 ~offset:(U.const_int 0) ~size:8 ~dtype:dt in
+  let sl = storage_view ~src:p0 ~offset:(U.const_int 0) ~size:8 ~dtype:dt in
   let copy_call =
     U.call
       ~body:(U.copy ~src:sl ~device:(U.Single "CPU") ())
@@ -152,7 +161,7 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
   (* Older layouts and future formats are rejected before reading the graph. *)
-  let current_version = Marshal.to_string 22 [] in
+  let current_version = Marshal.to_string 23 [] in
   let p = find_sub blob current_version in
   List.iter (fun version ->
       let replacement = Marshal.to_string version [] in
@@ -162,7 +171,7 @@ let import_rejects_malformed () =
             (p + String.length current_version)
             (String.length blob - p - String.length current_version)
       in
-      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19; 20; 21; 23 ]
+      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19; 20; 21; 22; 24 ]
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the

@@ -3,6 +3,17 @@
 open Windtrap
 open Tolk_uop
 
+let byte_offset u = Option.map snd (Uop.contiguous_view u)
+
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let string_option =
   let pp fmt = function
     | None -> Format.pp_print_string fmt "None"
@@ -137,7 +148,6 @@ let ops_tinygrad_order () =
       "DETACH";
       "STAGE";
       "COPY";
-      "SLICE";
       "MSELECT";
       "MSTACK";
       "CUSTOM_FUNCTION";
@@ -522,14 +532,7 @@ let stack_stage_slice_constructors () =
   let staged = Uop.stage ~src:a ~ranges:[] ~opts in
   is_true ~msg:"stage uses Stage op" (Uop.op staged = Ops.Stage);
   is_true ~msg:"stage inherits source dtype"
-    (Dtype.equal (Uop.dtype staged) (Uop.dtype a));
-  let sliced =
-    Uop.slice ~src:staged ~offset:(Uop.const_int 4) ~size:8
-      ~dtype:Dtype.int32
-  in
-  is_true ~msg:"slice uses Slice op" (Uop.op sliced = Ops.Slice);
-  is_true ~msg:"slice has symbolic offset source"
-    (Array.length (Uop.src sliced) = 2)
+    (Dtype.equal (Uop.dtype staged) (Uop.dtype a))
 
 let uop_constructor_parity_shortcuts () =
   let a = Uop.const_int 1 and b = Uop.const_int 2 in
@@ -628,13 +631,6 @@ let call_constructor_parity () =
   let opaque_call = Uop.call ~body:sink ~args:[ arg ] ~info in
   is_true ~msg:"sink body call stays Call"
     (Ops.equal (Uop.op opaque_call) Ops.Call);
-  let slice =
-    Uop.slice ~src:(Uop.buffer ~slot:1 ~dtype:Dtype.int32 ())
-      ~offset:(Uop.const_int 0) ~size:1 ~dtype:Dtype.int32
-  in
-  let slice_call = Uop.call ~body:slice ~args:[ arg ] ~info in
-  is_true ~msg:"slice body call stays Call"
-    (Ops.equal (Uop.op slice_call) Ops.Call);
   let range =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
   in
@@ -687,7 +683,7 @@ let property_helpers_parity () =
   is_true ~msg:"Param addrspace comes from ParamArg"
     (Uop.addrspace var = Some Dtype.Alu);
   let buffer =
-    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ()
+    Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(Uop.const_int 8) ~addrspace:Dtype.Local ()
   in
   is_true ~msg:"Buffer addrspace comes from ParamArg"
     (Uop.addrspace buffer = Some Dtype.Local);
@@ -789,26 +785,26 @@ let property_helpers_parity () =
   equal (list int) ~msg:"Reduce shape drops reduced dims"
     [ 4 ] (shape_ints reduced);
   let sliced =
-    Uop.slice ~src:buffer ~offset:(Uop.const_int 0) ~size:4
+    storage_view ~src:buffer ~offset:(Uop.const_int 0) ~size:4
       ~dtype:Dtype.int32
   in
-  equal (list int) ~msg:"Slice shape is its size"
+  equal (list int) ~msg:"storage view shape is its size"
     [ 4 ] (shape_ints sliced);
-  is_true ~msg:"Slice is its own base" (Uop.base sliced == sliced);
-  is_true ~msg:"Slice has buffer identity"
+  is_true ~msg:"storage view retains its buffer" (Uop.storage_base sliced == buffer);
+  is_false ~msg:"movement views are not standalone storage identities"
     (Uop.has_buffer_identity sliced);
-  is_true ~msg:"Slice buf_uop resolves through source"
+  is_true ~msg:"storage view buf_uop resolves through source"
     (Uop.buf_uop sliced == buffer);
   is_true ~msg:"Stage buf_uop stops at stage"
     (Uop.buf_uop staged == staged);
   is_true ~msg:"Contiguous view offset for base buffer is zero"
-    (Uop.contiguous_view_offset buffer = Some 0);
+    (byte_offset buffer = Some 0);
   let offset_slice =
-    Uop.slice ~src:buffer ~offset:(Uop.const_int 3) ~size:2
+    storage_view ~src:buffer ~offset:(Uop.const_int 3) ~size:2
       ~dtype:Dtype.int32
   in
   is_true ~msg:"Contiguous view offset accumulates slice offset"
-    (Uop.contiguous_view_offset offset_slice = Some 3);
+    (byte_offset offset_slice = Some 12);
   let matrix_shape = Uop.stack [ Uop.const_int 4; Uop.const_int 5 ] in
   let matrix = Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:matrix_shape () in
   let row_slice =
@@ -817,21 +813,21 @@ let property_helpers_parity () =
       ~size:(Uop.stack [ Uop.const_int 2; Uop.const_int 5 ])
   in
   is_true ~msg:"Contiguous view offset handles full-row shrink"
-    (Uop.contiguous_view_offset row_slice = Some 5);
+    (byte_offset row_slice = Some 20);
   let col_slice =
     Uop.shrink ~src:matrix
       ~offset:(Uop.stack [ Uop.const_int 0; Uop.const_int 1 ])
       ~size:(Uop.stack [ Uop.const_int 4; Uop.const_int 2 ])
   in
   is_true ~msg:"Contiguous view offset rejects strided shrink"
-    (Uop.contiguous_view_offset col_slice = None);
+    (byte_offset col_slice = None);
   let single_row_cols =
     Uop.shrink ~src:matrix
       ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 2 ])
       ~size:(Uop.stack [ Uop.const_int 1; Uop.const_int 2 ])
   in
   is_true ~msg:"Contiguous view offset handles one-row column shrink"
-    (Uop.contiguous_view_offset single_row_cols = Some 7);
+    (byte_offset single_row_cols = Some 28);
   let reshaped_matrix =
     Uop.reshape ~src:matrix
       ~shape:(Uop.stack [ Uop.const_int 2; Uop.const_int 10 ])
@@ -842,21 +838,21 @@ let property_helpers_parity () =
       ~size:(Uop.stack [ Uop.const_int 1; Uop.const_int 10 ])
   in
   is_true ~msg:"Contiguous view offset composes through reshape"
-    (Uop.contiguous_view_offset reshaped_rows = Some 10);
+    (byte_offset reshaped_rows = Some 40);
   let zero_pad =
     Uop.pad ~src:matrix
       ~offset:(Uop.stack [ Uop.const_int 0; Uop.const_int 0 ])
       ~size:(Uop.stack [ Uop.const_int 4; Uop.const_int 5 ])
   in
   is_true ~msg:"Contiguous view offset accepts zero pad"
-    (Uop.contiguous_view_offset zero_pad = Some 0);
+    (byte_offset zero_pad = Some 0);
   let positive_pad =
     Uop.pad ~src:matrix
       ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
       ~size:(Uop.stack [ Uop.const_int 5; Uop.const_int 5 ])
   in
   is_true ~msg:"Contiguous view offset rejects positive pad"
-    (Uop.contiguous_view_offset positive_pad = None);
+    (byte_offset positive_pad = None);
   let singleton_shape =
     Uop.stack [ Uop.const_int 1; Uop.const_int 3; Uop.const_int 4 ]
   in
@@ -867,17 +863,17 @@ let property_helpers_parity () =
     Uop.permute ~src:singleton_matrix ~order:[ 1; 2; 0 ]
   in
   is_true ~msg:"Contiguous view offset accepts singleton-only permute"
-    (Uop.contiguous_view_offset singleton_permute = Some 0);
+    (byte_offset singleton_permute = Some 0);
   let flipped_singleton =
     Uop.flip ~src:singleton_matrix ~dims:[ true; false; false ]
   in
   is_true ~msg:"Contiguous view offset accepts singleton flip"
-    (Uop.contiguous_view_offset flipped_singleton = Some 0);
+    (byte_offset flipped_singleton = Some 0);
   let flipped_nonsingleton =
     Uop.flip ~src:singleton_matrix ~dims:[ false; true; false ]
   in
   is_true ~msg:"Contiguous view offset rejects non-singleton flip"
-    (Uop.contiguous_view_offset flipped_nonsingleton = None);
+    (byte_offset flipped_nonsingleton = None);
   let sym_one =
     Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(Bound.int (1), Bound.int (1))
       ~name:"one" ~addrspace:Dtype.Alu ()
@@ -892,9 +888,9 @@ let property_helpers_parity () =
     Uop.flip ~src:symbolic_singleton ~dims:[ true; false ]
   in
   is_true ~msg:"Contiguous view offset accepts bounded symbolic singleton permute"
-    (Uop.contiguous_view_offset symbolic_permute = Some 0);
+    (byte_offset symbolic_permute = Some 0);
   is_true ~msg:"Contiguous view offset accepts bounded symbolic singleton flip"
-    (Uop.contiguous_view_offset symbolic_flip = Some 0);
+    (byte_offset symbolic_flip = Some 0);
   let info =
     {
       Uop.grad_fxn = None;
@@ -1272,7 +1268,7 @@ let runtime_realization_state_parity () =
       ~shape:(Uop.stack [ Uop.const_int 2; Uop.const_int 2 ])
   in
   let slice =
-    Uop.slice ~src:global ~offset:(Uop.const_int 1) ~size:2
+    storage_view ~src:global ~offset:(Uop.const_int 1) ~size:2
       ~dtype:Dtype.int32
   in
   (match Uop.runtime_realization_state global with
@@ -1289,7 +1285,7 @@ let runtime_realization_state_parity () =
     (Uop.runtime_realization_state reg = Never_realized);
   is_true ~msg:"PARAM identity is not a runtime realized buffer"
     (Uop.runtime_realization_state param = Never_realized);
-  is_true ~msg:"SLICE has buffer identity but not tinygrad is_realized"
+  is_true ~msg:"storage view is not a storage identity"
     (Uop.runtime_realization_state slice = Never_realized);
   let second_global =
     Uop.buffer ~slot:4 ~dtype:Dtype.int32 ~shape ()
@@ -2484,7 +2480,7 @@ let () =
           test "max_numel handles zero after large dimensions"
             max_numel_handles_zero_after_large_dimensions;
           test "exact symbolic bounds" exact_symbolic_bounds;
-          test "Stack/Stage/Slice constructors"
+          test "Stack/Stage constructors"
             stack_stage_slice_constructors;
           test "UOp constructor parity shortcuts"
             uop_constructor_parity_shortcuts;

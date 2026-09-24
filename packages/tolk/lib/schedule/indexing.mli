@@ -31,7 +31,7 @@
 val always_contiguous : Tolk_uop.Ops.t -> bool
 (** [always_contiguous op] is [true] for ops whose output is
     contiguous by definition (Contiguous, After, Copy, Buffer,
-    Slice, Const, Mselect, Mstack, Param, Alloc, Load, Call).  Their consumers can index directly without
+    Const, Mselect, Mstack, Param, Alloc, Load, Call).  Their consumers can index directly without
     realization. *)
 
 (** {1:context Indexing context} *)
@@ -135,7 +135,7 @@ val apply_rangeify_pass :
     {- PAD → WHERE guarded by the input ranges' validity.}
     {- STACK → nested WHERE selecting a source on the leading range.}
     {- Realized sources → STAGE + INDEX (or END for stores).}
-    {- Direct buffer sources (Param, Buffer, Slice, …) → INDEX.}
+    {- Direct buffer sources (Param, Buffer, Alloc, …) → INDEX.}
     {- Movement ops → removed (their effect is in the range map).}} *)
 
 (** {1:helpers Range helpers} *)

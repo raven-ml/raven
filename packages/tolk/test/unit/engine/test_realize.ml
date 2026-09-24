@@ -15,6 +15,15 @@ type runtime_state = {
   mutable nbufs : int;
 }
 
+let storage_view ~src ~offset ~size ~dtype =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  let offset = U.alu_binary ~op:Tolk_uop.Ops.Mul ~lhs:offset
+      ~rhs:(U.const_int (D.itemsize (U.dtype src))) in
+  let bytes = U.bitcast ~src ~dtype:D.int8 in
+  U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
+      ~size:(U.const_int (size * D.itemsize dtype)))
+
 let runtime_state () =
   { vals = [||]; global = [||]; nbufs = -1 }
 
@@ -101,7 +110,7 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
     ~renderer_set ~runtime ~synchronize ?graph ()
 
 let variable name lo hi =
-  U.variable ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 ()
+  U.variable ~param:true ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 ()
 
 let shape_const n = U.const (Const.int Dtype.weakint n)
 
@@ -533,12 +542,12 @@ let () =
             let ctx = Realize.exec_context ~input_uops:[| input |] () in
             let got = Realize.resolve binding ctx param in
             equal int (Device.Buffer.id seeded) (Device.Buffer.id got));
-          test "resolves SLICE as an offset view" (fun () ->
+          test "resolves byte view as an offset view" (fun () ->
             let device = test_device (runtime_state ()) in
             let binding = Realize.Buffers.create ~device in
             let base_node = buffer_node ~size:4 () in
             let slice =
-              U.slice ~src:base_node ~offset:(shape_const 1) ~size:2
+              storage_view ~src:base_node ~offset:(shape_const 1) ~size:2
                 ~dtype:Dtype.int32
             in
             let ctx = Realize.exec_context () in
@@ -608,35 +617,13 @@ let () =
               binding ~input_uops:[| input |]
               (U.linear [ call ]);
             equal int 1 state.nbufs);
-          test "binds an offset view for a SLICE call" (fun () ->
+          test "resolves an offset byte view structurally" (fun () ->
             let device = test_device (runtime_state ()) in
             let binding = Realize.Buffers.create ~device in
             let src_node = buffer_node ~slot:0 ~size:8 () in
-            let out_node = buffer_node ~slot:1 ~size:2 () in
-            let slice_body =
-              U.slice ~src:src_node ~offset:(shape_const 4) ~size:2
-                ~dtype:Dtype.int32
-            in
-            let info : U.call_info =
-              {
-                grad_fxn = None;
-                name = None;
-                precompile = false;
-                precompile_backward = false;
-                dtype = Dtype.void;
-                aux = None;
-              }
-            in
-            let call = U.call ~body:slice_body ~args:[ out_node; src_node ] ~info in
-            Realize.run_linear ~device
-              ~to_program:program_of
-              binding
-              (U.linear [ call ]);
-            let v =
-              match Realize.Buffers.find_opt binding out_node with
-              | Some v -> v
-              | None -> failwith "expected a view binding"
-            in
+            let view = storage_view ~src:src_node ~offset:(shape_const 4) ~size:2
+                ~dtype:Dtype.int32 in
+            let v = Realize.resolve binding (Realize.exec_context ()) view in
             equal int 2 (Device.Buffer.size v);
             equal int 16 (Device.Buffer.offset v));
         ];

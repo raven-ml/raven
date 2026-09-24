@@ -236,7 +236,7 @@ let memory_plans_internal_buffers_when_not_capturing () =
       (internal_buffer_sink ())
   in
   is_true ~msg:"internal buffer folded into an arena slice"
-    (Ops.equal (U.op (internal_buffer_arg linear)) Ops.Slice)
+    (Ops.equal (U.op (internal_buffer_arg linear)) Ops.Bitcast)
 
 let capture_hands_unplanned_schedule_to_capturer () =
   let received = ref None in

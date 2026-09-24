@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Storage views now use `SHRINK`/`BITCAST` instead of `SLICE` and executable
+  view calls. `Uop.contiguous_view` reports one byte offset for scheduling,
+  replay and frontend aliases, including symbolic leading dimensions.
+
 - `Uop.call_with_outputs` passes tensor results through explicit storage
   arguments, replacing `FUNCTION`/`TUPLE`/`GETTUPLE`. Inline and precompiled
   calls share allocation ownership and symbolic output shapes.

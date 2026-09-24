@@ -149,8 +149,7 @@ val pm_compile :
 (** [pm_compile ~device ?beam ~to_program linear] rewrites every kernel
     {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
     into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
-    [to_program]. {!Tolk_uop.Ops.Slice} and {!Tolk_uop.Ops.Copy} calls are left
-    unchanged.
+    [to_program]. {!Tolk_uop.Ops.Copy} calls are left unchanged.
 
     When [beam] is [b >= 1], every kernel sink that does not already carry a
     beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]
@@ -259,8 +258,8 @@ val exec_context :
 val resolve_buffer : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> buffer
 (** [resolve_buffer binding ctx node] is the concrete buffer named by call
     argument [node]: a {!Tolk_uop.Ops.Param} resolves through
-    [ctx.input_uops]; a {!Tolk_uop.Ops.Slice} is an offset view of its
-    resolved source (per underlying device when the source is multi-device);
+    [ctx.input_uops]; contiguous movement and bitcast views alias their
+    resolved storage at the byte offset from {!Tolk_uop.Uop.contiguous_view} (per underlying device when the source is multi-device);
     a {!Tolk_uop.Ops.Buffer} is resolved through [binding]; a
     {!Tolk_uop.Ops.Mselect} indexes one shard of its multi-device source; a
     {!Tolk_uop.Ops.Mstack} joins its per-device sources into a multi-device
@@ -299,8 +298,7 @@ val run_linear :
     compiled. Each call is then dispatched on its body: a
     {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
-    built from its compiled binary; a {!Tolk_uop.Ops.Slice} binds a view of its
-    resolved source into [binding]; a {!Tolk_uop.Ops.Copy} transfers between its
+    built from its compiled binary; a {!Tolk_uop.Ops.Copy} transfers between its
     resolved buffers; a {!Tolk_uop.Ops.Custom_function} named ["graph"] records
     its LINEAR body into the device's {!Device.Graph} on first execution and
     replays that graph afterwards, patching per run every buffer argument
