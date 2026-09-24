@@ -726,8 +726,11 @@ let schedule_body_linear st body_sink =
         | None -> assert false
       in
       reserve_slots_of body_linear;
-      Tolk.Realize.pm_compile ~device:st.st_device
-        ~to_program:(to_program st.st_device) body_linear
+      (* Batched like a compiled call's linear: each iteration replays the
+         body's graphs with the rebound slot buffers patched in. *)
+      Tolk.Jit.batch_graphs ~device:st.st_device
+        (Tolk.Realize.pm_compile ~device:st.st_device
+           ~to_program:(to_program st.st_device) body_linear)
 
 (* Loop calls.
 

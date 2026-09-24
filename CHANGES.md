@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.scan` staged under `Rune.jit` replays its body as batched device
+  graphs instead of launching each kernel: a 64-step scan on Metal goes from
+  18.5 ms to 6.4 ms.
 - A `Rune.scan` staged under `Rune.jit` no longer waits for the device on
   every iteration: the body writes what the loop used to copy. A 64-step scan
   on Metal goes from 60 ms to 18 ms.

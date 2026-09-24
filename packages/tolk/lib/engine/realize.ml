@@ -1271,6 +1271,25 @@ let graph_launches = ref 0
 
 let graph_runners () = (Graph_cache.stats_alive graph_cache).num_bindings
 
+let record_graph ~device binding ctx ast =
+  let module U = Tolk_uop.Uop in
+  let rt = Graph_runner.create ~device binding ctx ast in
+  if not (Graph_cache.mem graph_estimates ast) then begin
+    let calls = List.concat_map U.children (U.children ast) in
+    Graph_cache.replace graph_estimates ast
+      (List.fold_left
+         (fun acc c -> Program_spec.Estimates.(acc + estimate_uop c))
+         Program_spec.Estimates.zero calls)
+  end;
+  rt
+
+let launch_graph binding ctx ~device call rt =
+  incr graph_launches;
+  ignore
+    (track_stats ctx call ~device [] ctx.var_vals (fun () ->
+         Graph_runner.call rt binding ctx)
+      : float option)
+
 let exec_graph binding ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
@@ -1279,21 +1298,47 @@ let exec_graph binding ctx ~device call =
         match Graph_cache.find_opt graph_cache ast with
         | Some rt -> rt
         | None ->
-            let rt = Graph_runner.create ~device binding ctx ast in
+            let rt = record_graph ~device binding ctx ast in
             Graph_cache.replace graph_cache ast rt;
-            let calls = List.concat_map U.children (U.children ast) in
-            Graph_cache.replace graph_estimates ast
-              (List.fold_left
-                 (fun acc c -> Program_spec.Estimates.(acc + estimate_uop c))
-                 Program_spec.Estimates.zero calls);
             rt
       in
-      incr graph_launches;
-      ignore
-        (track_stats ctx call ~device [] ctx.var_vals (fun () ->
-             Graph_runner.call rt binding ctx)
-          : float option)
+      launch_graph binding ctx ~device call rt
   | None -> invalid_arg "exec_graph: expected CALL"
+
+(* A staged loop replays each graph of its body once per iteration, and
+   patching a graph waits for the graph's previous replay to finish. The loop
+   therefore cycles through [loop_graph_instances] recordings of each graph:
+   while the host patches one, the device runs another with a third queued
+   behind it, so it never idles on the host between iterations. No tinygrad
+   counterpart: see [exec_loop]. *)
+let loop_graph_instances = 3
+
+let loop_graphs : Graph_runner.t option array Graph_cache.t =
+  Graph_cache.create 8
+
+let exec_loop_graph binding ctx ~device ~iteration call =
+  let module U = Tolk_uop.Uop in
+  match U.as_call call with
+  | Some { body = ast; _ } ->
+      let ring =
+        match Graph_cache.find_opt loop_graphs ast with
+        | Some ring -> ring
+        | None ->
+            let ring = Array.make loop_graph_instances None in
+            Graph_cache.replace loop_graphs ast ring;
+            ring
+      in
+      let k = iteration mod loop_graph_instances in
+      let rt =
+        match ring.(k) with
+        | Some rt -> rt
+        | None ->
+            let rt = record_graph ~device binding ctx ast in
+            ring.(k) <- Some rt;
+            rt
+      in
+      launch_graph binding ctx ~device call rt
+  | None -> invalid_arg "exec_loop_graph: expected CALL"
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
    executor, which replays a compiled sub-linear per iteration. *)
@@ -1335,7 +1380,9 @@ let rec dispatch_call binding ctx ~device call =
    body wrote. The payload (the children of the CUSTOM_FUNCTION body) encodes:
 
    - child 0: the body's LINEAR (pre-compiled: its CALL(SINK) bodies are
-     already CALL(PROGRAM));
+     already CALL(PROGRAM), and consecutive kernels may be batched into a
+     graph call, which each iteration replays with its rebound slot buffers
+     patched in);
    - child 1: the trip count;
    - child 2: 1 for a reversed (backward) loop, 0 otherwise;
    - child 3: the number of input slots, then per slot five entries:
@@ -1423,7 +1470,13 @@ and exec_loop binding ctx ~device call =
         List.iter (bind ~next:0 j) in_slots;
         List.iter (bind ~next:1 j) out_slots;
         List.iter
-          (dispatch_call binding ctx ~device)
+          (fun c ->
+            match U.as_call c with
+            | Some { body; _ }
+              when U.op body = Tolk_uop.Ops.Custom_function
+                   && U.Arg.as_string (U.arg body) = Some "graph" ->
+                exec_loop_graph binding ctx ~device ~iteration:j c
+            | _ -> dispatch_call binding ctx ~device c)
           (U.children body_linear)
       done;
       (* The body's launches are asynchronous. Block until they complete so

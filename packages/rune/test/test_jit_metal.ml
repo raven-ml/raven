@@ -67,6 +67,49 @@ let test_graph_batched_replay () =
     (to_arr (f (f x)))
     (g (g x))
 
+(* A staged scan's body replays as one device graph per iteration, the slot
+   buffers rebound between iterations patched into it, instead of launching its
+   kernels one by one. *)
+module Vec = struct
+  type t = Nx.float32_t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
+end
+
+let test_scan_body_replays_as_a_graph () =
+  let w =
+    Nx.create f32 [| 4; 4 |]
+      (Array.init 16 (fun i -> (float_of_int (i mod 5) /. 4.0) -. 0.5))
+  in
+  let fold xs =
+    Rune.scan
+      (module Vec)
+      ~f:(fun c x ->
+        let c =
+          Nx.tanh
+            (Nx.add
+               (Nx.matmul (Nx.reshape [| 1; 4 |] c) w |> Nx.reshape [| 4 |])
+               x)
+        in
+        (c, Nx.sum (Nx.mul c c)))
+      ~init:(Nx.zeros f32 [| 4 |]) xs
+  in
+  let f xs = snd (fold xs) in
+  let g = Rune.jit' ~device:"METAL" f in
+  let xs =
+    Nx.create f32 [| 6; 4 |] (Array.init 24 (fun i -> float_of_int i /. 24.0))
+  in
+  check_arr ~msg:"first call" (to_arr (f xs)) (g xs);
+  let launches0 = !Tolk.Realize.graph_launches in
+  check_arr ~msg:"replay" (to_arr (f xs)) (g xs);
+  graphs_used ~msg:"one graph launch per iteration"
+    (!Tolk.Realize.graph_launches - launches0 >= 6)
+
 (* A recorded graph keeps its intermediates' buffers alive, so it must not
    outlive the compiled function it belongs to. *)
 let test_graph_released_with_its_function () =
@@ -339,6 +382,8 @@ let tests =
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
           test_graph_batched_replay;
+        test "a staged scan body replays as a device graph"
+          test_scan_body_replays_as_a_graph;
         test "a recorded graph is released with its function"
           test_graph_released_with_its_function;
         test "a read after a call waits for it" test_read_after_call_waits;

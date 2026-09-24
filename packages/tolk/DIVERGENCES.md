@@ -129,7 +129,11 @@ delete it rather than registering it.
   the reference's answer to a recurrence is unrolling plus TinyJit, so there
   is nothing to port. The loop launches its body and nothing else: the
   schedule writes the buffers it starts from, and the body writes every
-  result. The named-payload mechanism is upstream's own ("graph", "encdec",
+  result. The body is batched into graph calls like any compiled linear;
+  each iteration replays them through the upstream graph runner with its
+  rebound slot buffers patched in, cycling through three recordings of each
+  graph (`exec_loop_graph`) because patching a graph waits for its previous
+  replay. The named-payload mechanism is upstream's own ("graph", "encdec",
   "hcq"); "loop" is a tolk-local name in it, and no tinygrad-shaped graph
   can reach the new branches. Pin moves must keep the two rangeify branches
   — a re-sync of `rangeify.py` will not find them upstream. The tolk corpus
