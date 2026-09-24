@@ -38,6 +38,7 @@ type 'a params = {
 }
 
 type t = Nx.float32_t params
+type role = Whole | Column | Row | Kv_heads
 
 module Params = struct
   type nonrec 'a t = 'a params
@@ -202,10 +203,14 @@ let embed p ids pos =
 
 module Cache = Attention.Cache.List
 
-let cache cfg ~slots dtype =
+let cache ?placement cfg ~slots dtype =
+  let place x =
+    match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
+  in
   List.init cfg.n_layer (fun _ ->
-      Attention.Cache.make ~slots ~kv_heads:cfg.n_head ~head_dim:(head_dim cfg)
-        dtype)
+      Attention.Cache.map place
+        (Attention.Cache.make ~slots ~kv_heads:cfg.n_head
+           ~head_dim:(head_dim cfg) dtype))
 
 let cached cfg ?dropout p caches index ids =
   if Cache_index.context index > cfg.n_positions then
@@ -245,15 +250,15 @@ let logits cfg p h =
    weights are already [inputs; outputs], so only the fused projection is cut,
    with [Nx.split], into three views. *)
 
-let of_hf ?device cfg dt ckpt =
-  let placement =
-    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
+let of_hf ?placement cfg dt ckpt =
+  let place role ~axis x =
+    match placement with None -> x | Some p -> Nx.place (p role ~axis) x
   in
-  let place x = match placement with None -> x | Some p -> Nx.place p x in
+  let whole x = place Whole ~axis:0 x in
   let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
   let d = cfg.n_embd in
   let layer_norm name =
-    Layer_norm.map place
+    Layer_norm.map whole
       {
         Layer_norm.gamma = float ~shape:[| d |] (name ^ ".weight");
         beta = float ~shape:[| d |] (name ^ ".bias");
@@ -265,8 +270,16 @@ let of_hf ?device cfg dt ckpt =
       b = Some (float ~shape:[| outputs |] (name ^ ".bias"));
     }
   in
-  let linear ~inputs ~outputs name =
-    Linear.map place (stored ~inputs ~outputs name)
+  (* A column projection is cut along its outputs, bias included; a row
+     projection along its inputs, and its bias is added whole. *)
+  let column { Linear.w; b } =
+    {
+      Linear.w = place Column ~axis:1 w;
+      b = Option.map (place Column ~axis:0) b;
+    }
+  in
+  let row { Linear.w; b } =
+    { Linear.w = place Row ~axis:0 w; b = Option.map whole b }
   in
   let block i =
     let at leaf = Printf.sprintf "h.%d.%s" i leaf in
@@ -274,7 +287,7 @@ let of_hf ?device cfg dt ckpt =
     let q, k, v =
       match
         List.map2
-          (fun w b -> Linear.map place { Linear.w; b = Some b })
+          (fun w b -> column { Linear.w; b = Some b })
           (Nx.split ~axis:1 3 fused.w)
           (Nx.split ~axis:0 3 (Option.get fused.b))
       with
@@ -283,22 +296,23 @@ let of_hf ?device cfg dt ckpt =
     in
     {
       ln1 = layer_norm (at "ln_1");
-      attn = { q; k; v; out = linear ~inputs:d ~outputs:d (at "attn.c_proj") };
+      attn =
+        { q; k; v; out = row (stored ~inputs:d ~outputs:d (at "attn.c_proj")) };
       ln2 = layer_norm (at "ln_2");
-      fc = linear ~inputs:d ~outputs:cfg.n_inner (at "mlp.c_fc");
-      proj = linear ~inputs:cfg.n_inner ~outputs:d (at "mlp.c_proj");
+      fc = column (stored ~inputs:d ~outputs:cfg.n_inner (at "mlp.c_fc"));
+      proj = row (stored ~inputs:cfg.n_inner ~outputs:d (at "mlp.c_proj"));
     }
   in
   {
     wte =
       {
         Embedding.table =
-          place (float ~shape:[| cfg.vocab_size; d |] "wte.weight");
+          whole (float ~shape:[| cfg.vocab_size; d |] "wte.weight");
       };
     wpe =
       {
         Embedding.table =
-          place (float ~shape:[| cfg.n_positions; d |] "wpe.weight");
+          whole (float ~shape:[| cfg.n_positions; d |] "wpe.weight");
       };
     blocks = List.init cfg.n_layer block;
     ln_f = layer_norm "ln_f";
@@ -357,8 +371,9 @@ let config_of_json json =
       | _ -> 1e-5);
   }
 
-let from_file ?device cfg dt path = of_hf ?device cfg dt (Checkpoint.load path)
+let from_file ?placement cfg dt path =
+  of_hf ?placement cfg dt (Checkpoint.load path)
 
-let from_pretrained ?device ?(repo_id = "gpt2") dt =
+let from_pretrained ?placement ?(repo_id = "gpt2") dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?device cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?placement cfg dt (Hf.load_checkpoint repo_id))

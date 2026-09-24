@@ -18,9 +18,9 @@ open Kaun
    call. Positions, slots, the key and the sampling parameters enter as tensors:
    [Rune.jit2] compiles a prefill and one single-token step, and a captured
    temperature would be frozen into them. *)
-let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
-    (dt : (float, b) Nx.dtype) ~temperature ~top_k ~top_p ~seed ~max_tokens
-    prompt =
+let generate (type b) ?device ?placement cfg
+    (params : (float, b) Nx.t Llama.params) (dt : (float, b) Nx.dtype)
+    ~temperature ~top_k ~top_p ~seed ~max_tokens prompt =
   let module Step = struct
     type t = {
       token : Nx.int32_t;
@@ -111,7 +111,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
            temperature = Nx.scalar Nx.float32 (Float.max temperature 1e-6);
            k = Nx.scalar Nx.int32 (Int32.of_int top_k);
            p = Nx.scalar Nx.float32 top_p;
-           caches = Llama.cache cfg ~slots:context dt;
+           caches = Llama.cache ?placement cfg ~slots:context dt;
          })
   in
   let out = Array.make max_tokens 0l in
@@ -161,14 +161,18 @@ let () =
      trained to start from. *)
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   let device = if !jit = "" then None else Some !jit in
+  (* One device holds every leaf and cache pool whole. *)
+  let placement =
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
+  in
   (* At the checkpoint's own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
     if !dtype = "" then Llama.stored_dtype ckpt
     else Llama.dtype_of_string !dtype
   in
   let toks =
-    generate ?device cfg
-      (Llama.of_hf ?device cfg dt ckpt)
+    generate ?device ?placement cfg
+      (Llama.of_hf ?placement cfg dt ckpt)
       dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
       ~max_tokens:!count ids
   in

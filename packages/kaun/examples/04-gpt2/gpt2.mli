@@ -58,6 +58,25 @@ val make : config -> t
 (** [make cfg] is a zero-initialized model, the [~like] template for
     {!Kaun.Checkpoint.to_params}. *)
 
+(** {1:placement Placement}
+
+    {!of_hf} and {!cache} place each leaf they build with
+    [placement role ~axis]: [role] is the cut a tensor-parallel placement makes
+    in the leaf and [axis] the axis of the leaf that cut runs along, [0] for
+    [Whole]. One device ignores both: [fun _ ~axis:_ -> p]. *)
+
+(** The type for the cuts of a tensor-parallel placement. *)
+type role =
+  | Whole
+      (** Kept whole: embeddings, layer norms, a [Row] projection's bias. *)
+  | Column
+      (** Cut along its outputs: the query, key and value projections and the
+          MLP's up projection, biases included. *)
+  | Row
+      (** Cut along its inputs: the attention's output projection and the MLP's
+          down projection. *)
+  | Kv_heads  (** Cut along its heads: a cache pool. *)
+
 (** {1:forward Forward passes}
 
     One model, one fold over the blocks: {!cached} is the residual stream of
@@ -69,10 +88,17 @@ module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
 (** Decoding state: one key-value cache per block, in block order. *)
 
 val cache :
-  config -> slots:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t Cache.t
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  config ->
+  slots:int ->
+  (float, 'b) Nx.dtype ->
+  (float, 'b) Nx.t Cache.t
 (** [cache cfg ~slots dtype] is an empty decoding state whose caches hold
     [slots] slots each. [Kaun.Cache_index.rows ~context lens] needs
-    [Array.length lens * context] of them. [dtype] is the parameters' dtype. *)
+    [Array.length lens * context] of them. [dtype] is the parameters' dtype.
+
+    With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
+    a compiled step finds the caches where the model is from its first call. *)
 
 val cached :
   config ->
@@ -127,7 +153,7 @@ val config_of_json : Jsont.json -> config
     Raises [Failure] on a missing field. *)
 
 val of_hf :
-  ?device:string ->
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
   Kaun.Checkpoint.t ->
@@ -140,14 +166,15 @@ val of_hf :
     are the file's entries; at another one each leaf is cast. Entries the model
     does not use (attention mask buffers) are never read.
 
-    With [device], each leaf is placed on it with [Nx.place] as it is built, so
-    a function compiled for [device] that captures the model uploads nothing.
+    With [placement], each leaf is placed with [Nx.place (placement role ~axis)]
+    as it is built (see {!role}), so a function compiled where the model is that
+    captures it uploads nothing.
 
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or is not a floating-point entry. *)
 
 val from_file :
-  ?device:string ->
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
   string ->
@@ -170,7 +197,7 @@ val stored_dtype : Kaun.Checkpoint.t -> dtype
     at which {!of_hf} casts nothing. *)
 
 val from_pretrained :
-  ?device:string ->
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
   ?repo_id:string ->
   (float, 'b) Nx.dtype ->
   config * (float, 'b) Nx.t params

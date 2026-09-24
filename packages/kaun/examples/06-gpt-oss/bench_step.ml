@@ -127,6 +127,9 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
   }
 
 let run ?device c params dt ~tokens ~steps ~context =
+  let placement =
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
+  in
   let step = Layer_loop.greedy ?device c params in
   let timed (caches, index, ids) =
     let t0 = Unix.gettimeofday () in
@@ -144,7 +147,7 @@ let run ?device c params dt ~tokens ~steps ~context =
   in
   let state, t =
     timed
-      ( Gpt_oss.cache c ~slots:context dt,
+      ( Gpt_oss.cache ?placement c ~slots:context dt,
         Cache_index.rows ~context [| tokens |],
         Nx.create Nx.int32 [| 1; tokens |]
           (Array.init tokens (fun i -> Int32.of_int (17 + i))) )

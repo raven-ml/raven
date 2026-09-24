@@ -79,6 +79,28 @@ val block_ptree :
 (** [block_ptree ()] is the parameter tree of one block, in {!ptree}'s order:
     the tree a compiled block takes its weights as. *)
 
+(** {1:placement Placement}
+
+    {!of_hf} and {!cache} place each leaf they build with
+    [placement role ~axis]: [role] is the cut a tensor-parallel or
+    expert-parallel placement makes in the leaf and [axis] the axis of the leaf
+    that cut runs along, [0] for [Whole]. One device ignores both:
+    [fun _ ~axis:_ -> p]. *)
+
+(** The type for the cuts of a tensor-parallel or expert-parallel placement. *)
+type role =
+  | Whole
+      (** Kept whole: the token table, the norms, the router and the attention
+          output's bias. *)
+  | Column
+      (** Cut along its outputs: the query, key and value projections with their
+          biases, the sinks, and an untied head. *)
+  | Row  (** Cut along its inputs: the attention's output projection. *)
+  | Experts
+      (** Cut along the expert axis: the expert weights, packed parts included,
+          and their biases. *)
+  | Kv_heads  (** Cut along its heads: a cache pool. *)
+
 (** {1:attention Attention} *)
 
 val attention :
@@ -131,9 +153,16 @@ module Cache : Nx.Ptree.Uniform with type 'a t = 'a Kaun.Attention.Cache.t list
 (** Decoding state: one key-value cache per block, in block order. *)
 
 val cache :
-  config -> slots:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t Cache.t
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  config ->
+  slots:int ->
+  (float, 'b) Nx.dtype ->
+  (float, 'b) Nx.t Cache.t
 (** [cache cfg ~slots dtype] is an empty decoding state of [slots] slots per
-    block, at the parameters' dtype. *)
+    block, at the parameters' dtype.
+
+    With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
+    a compiled step finds the caches where the model is from its first call. *)
 
 val cached :
   config ->
@@ -160,7 +189,7 @@ val config_of_json : Jsont.json -> config
     without truncation. *)
 
 val of_hf :
-  ?device:string ->
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
   Kaun.Checkpoint.t ->
@@ -172,15 +201,16 @@ val of_hf :
     packed uint8 tensors, whatever [dt]. At the file's own dtype nothing is
     copied; at another one each float leaf is cast.
 
-    With [device], each leaf, float or uint8, is placed on it with [Nx.place] as
-    it is built, so a function compiled for [device] that captures the model
-    uploads nothing and the host holds one leaf at a time.
+    With [placement], each leaf, float or uint8, is placed with
+    [Nx.place (placement role ~axis)] as it is built (see {!role}), so a
+    function compiled where the model is that captures it uploads nothing and
+    the host holds one leaf at a time.
 
     Raises [Invalid_argument], naming the entry, if one is missing, has another
     shape than [cfg] says, or has a dtype the leaf cannot take. *)
 
 val from_file :
-  ?device:string ->
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
   string ->
@@ -200,7 +230,7 @@ val stored_dtype : Kaun.Checkpoint.t -> dtype
     dtype at which {!of_hf} casts nothing. *)
 
 val from_pretrained :
-  ?device:string ->
+  ?placement:(role -> axis:int -> Nx.Placement.t) ->
   string ->
   (float, 'b) Nx.dtype ->
   config * (float, 'b) Nx.t params

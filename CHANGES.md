@@ -1966,6 +1966,9 @@ thread.
 
 ### Kaun
 
+- The GPT-2, Llama and gpt-oss examples' importers and cache builders take
+  `?placement : role -> axis:int -> Nx.Placement.t` and place each leaf and
+  cache pool with it as they build it, naming each leaf's tensor-parallel cut.
 - `Metric` functions read placed predictions, labels and scores to the host
   once and compute there. They ran on the device and placed every
   intermediate, and raised on Metal, which cannot hold the float64 they sum.
@@ -1987,10 +1990,6 @@ thread.
   tokenizer, streams the model's final answer as it decodes and stops when the
   model closes its turn. Its `Harmony` module renders and parses the format,
   checked against `openai-harmony` by `validate_text.exe`.
-- The GPT-2, Llama and gpt-oss examples' importers take `?device` and place
-  each leaf on it with `Rune.to_device` as they build it, and their programs
-  pass the device they compile for: the model is held once, on the device, and
-  the first compiled call uploads nothing.
 - Remove `Kaun_hf.rename`, `transpose` and `split`. They existed because a
   template found entries by its own paths; an importer now asks for each entry
   by the file's name, so a rename is the name at the field, a transpose is

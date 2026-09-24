@@ -40,6 +40,7 @@ type 'a params = {
 }
 
 type t = Nx.float32_t params
+type role = Whole | Column | Row | Kv_heads
 
 module Params = struct
   type nonrec 'a t = 'a params
@@ -219,10 +220,14 @@ let block cfg b cache index x =
 
 module Cache = Attention.Cache.List
 
-let cache cfg ~slots dtype =
+let cache ?placement cfg ~slots dtype =
+  let place x =
+    match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
+  in
   List.init cfg.n_layers (fun _ ->
-      Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
-        ~head_dim:cfg.head_dim dtype)
+      Attention.Cache.map place
+        (Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
+           ~head_dim:cfg.head_dim dtype))
 
 let cached cfg p caches index ids =
   let x, rev =
@@ -254,24 +259,23 @@ let logits cfg p h =
    i with i + head_dim / 2, which is [Rope]'s. A tied model has no lm_head
    entry. *)
 
-let of_hf ?device cfg dt ckpt =
-  let placement =
-    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
+let of_hf ?placement cfg dt ckpt =
+  let place role ~axis x =
+    match placement with None -> x | Some p -> Nx.place (p role ~axis) x
   in
-  let place x = match placement with None -> x | Some p -> Nx.place p x in
   let weight ~shape name =
     Checkpoint.to_float ~shape dt (name ^ ".weight") ckpt
   in
   let norm name =
-    { Rms_norm.gamma = place (weight ~shape:[| cfg.dim |] name) }
+    { Rms_norm.gamma = place Whole ~axis:0 (weight ~shape:[| cfg.dim |] name) }
   in
-  let linear ~inputs ~outputs name =
-    {
-      Linear.w =
-        place (Nx.matrix_transpose (weight ~shape:[| outputs; inputs |] name));
-      b = None;
-    }
+  (* A column projection is cut along its outputs, a row one along its
+     inputs. *)
+  let linear role ~axis ~inputs ~outputs name =
+    let w = Nx.matrix_transpose (weight ~shape:[| outputs; inputs |] name) in
+    { Linear.w = place role ~axis w; b = None }
   in
+  let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in
   let block i =
@@ -280,29 +284,29 @@ let of_hf ?device cfg dt ckpt =
       attn_norm = norm (at "input_layernorm");
       attn =
         {
-          q = linear ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
-          k = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
-          v = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
-          out = linear ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
+          q = column ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
+          k = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
+          v = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
+          out = row ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
         };
       ffn_norm = norm (at "post_attention_layernorm");
-      gate = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "mlp.gate_proj");
-      up = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "mlp.up_proj");
-      down = linear ~inputs:cfg.hidden_dim ~outputs:cfg.dim (at "mlp.down_proj");
+      gate = column ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "mlp.gate_proj");
+      up = column ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "mlp.up_proj");
+      down = row ~inputs:cfg.hidden_dim ~outputs:cfg.dim (at "mlp.down_proj");
     }
   in
   {
     tok =
       {
         Embedding.table =
-          place
+          place Whole ~axis:0
             (weight ~shape:[| cfg.vocab_size; cfg.dim |] "model.embed_tokens");
       };
     blocks = List.init cfg.n_layers block;
     norm = norm "model.norm";
     head =
       (if cfg.tied then None
-       else Some (linear ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
+       else Some (column ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
   }
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
@@ -391,11 +395,12 @@ let config_of_json json =
 
 (* Pretrained loading *)
 
-let from_file ?device cfg dt path = of_hf ?device cfg dt (Checkpoint.load path)
+let from_file ?placement cfg dt path =
+  of_hf ?placement cfg dt (Checkpoint.load path)
 
 (* An ungated mirror whose weight files are byte-identical to Meta's. *)
 let default_repo = "NousResearch/Llama-3.2-1B"
 
-let from_pretrained ?device ?(repo_id = default_repo) dt =
+let from_pretrained ?placement ?(repo_id = default_repo) dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?device cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?placement cfg dt (Hf.load_checkpoint repo_id))

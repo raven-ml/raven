@@ -63,8 +63,9 @@ let load_tokenizer () =
    caches carry the same dtype as the weights, so [--dtype float16] decodes with
    half precision weights, activations and caches alike. *)
 
-let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
-    (dt : (float, b) Nx.dtype) ~max_tokens prompt =
+let generate (type b) ?device ?placement cfg
+    (params : (float, b) Nx.t Gpt2.params) (dt : (float, b) Nx.dtype)
+    ~max_tokens prompt =
   let module Step = struct
     type t = {
       token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token *)
@@ -125,7 +126,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
          {
            Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
            index = Kaun.Cache_index.rows ~context:len [| n0 |];
-           caches = Gpt2.cache cfg ~slots:len dt;
+           caches = Gpt2.cache ?placement cfg ~slots:len dt;
          })
   in
   tokens.(n0) <- Nx.item [ 0; 0 ] !state.Step.token;
@@ -218,7 +219,11 @@ let () =
     if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
   in
   let device = if !jit = "" then None else Some !jit in
-  let params = Gpt2.of_hf ?device cfg dt ckpt in
+  (* One device holds every leaf and cache pool whole. *)
+  let placement =
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
+  in
+  let params = Gpt2.of_hf ?placement cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin
@@ -231,7 +236,7 @@ let () =
     (float_of_int !bytes /. 1e6)
     (Nx_core.Dtype.to_string dt);
   let t0 = Unix.gettimeofday () in
-  let toks = generate ?device cfg params dt ~max_tokens:!count ids in
+  let toks = generate ?device ?placement cfg params dt ~max_tokens:!count ids in
   let dt = Unix.gettimeofday () -. t0 in
   Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt
     (float_of_int !count /. dt);

@@ -43,6 +43,7 @@ type 'a params = {
 }
 
 type t = Nx.float32_t params
+type role = Whole | Column | Row | Experts | Kv_heads
 
 (* Traversals *)
 
@@ -201,11 +202,15 @@ let block cfg layer b cache index x =
 
 module Cache = Attention.Cache.List
 
-let cache cfg ~slots dtype =
+let cache ?placement cfg ~slots dtype =
+  let place x =
+    match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
+  in
   List.map
     (fun _ ->
-      Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
-        ~head_dim:cfg.head_dim dtype)
+      Attention.Cache.map place
+        (Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
+           ~head_dim:cfg.head_dim dtype))
     cfg.layers
 
 let cached cfg p caches index ids =
@@ -309,33 +314,44 @@ let config_of_json json =
    exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
    [Checkpoint.to_float] refuses them. A tied model has no lm_head entry. *)
 
-let of_hf ?device cfg dt ckpt =
-  let placement =
-    Option.map (fun d -> Nx.Placement.device (Rune.device d)) device
+let of_hf ?placement cfg dt ckpt =
+  let place role ~axis x =
+    match placement with None -> x | Some p -> Nx.place (p role ~axis) x
   in
-  let place x = match placement with None -> x | Some p -> Nx.place p x in
-  let float ~shape name = place (Checkpoint.to_float ~shape dt name ckpt) in
-  let bytes ~shape name =
-    place (Checkpoint.to_tensor ~shape Nx.uint8 name ckpt)
+  let whole x = place Whole ~axis:0 x in
+  let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
+  let norm name =
+    { Rms_norm.gamma = whole (float ~shape:[| cfg.dim |] name) }
   in
-  let stored ~shape name = Checkpoint.to_float ~shape dt name ckpt in
-  let norm name = { Rms_norm.gamma = float ~shape:[| cfg.dim |] name } in
-  let linear ?(bias = true) ~inputs ~outputs name =
+  (* A column projection is cut along its outputs, bias included; a row
+     projection along its inputs, and its bias is added whole. *)
+  let linear role ~axis ?(bias = true) ~inputs ~outputs name =
+    let b_role = match role with Row -> Whole | role -> role in
     {
       Linear.w =
-        place
+        place role ~axis
           (Nx.matrix_transpose
-             (stored ~shape:[| outputs; inputs |] (name ^ ".weight")));
+             (float ~shape:[| outputs; inputs |] (name ^ ".weight")));
       b =
-        (if bias then Some (float ~shape:[| outputs |] (name ^ ".bias"))
+        (if bias then
+           Some
+             (place b_role ~axis:0
+                (float ~shape:[| outputs |] (name ^ ".bias")))
          else None);
     }
   in
+  let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
   let experts ~inputs ~outputs name =
     match Checkpoint.find (name ^ "_blocks") ckpt with
-    | None -> Moe.Float (float ~shape:[| cfg.experts; inputs; outputs |] name)
+    | None ->
+        Moe.Float
+          (place Experts ~axis:0
+             (float ~shape:[| cfg.experts; inputs; outputs |] name))
     | Some _ ->
         let groups = inputs / 32 in
+        let bytes ~shape name =
+          place Experts ~axis:0 (Checkpoint.to_tensor ~shape Nx.uint8 name ckpt)
+        in
         Moe.Mxfp4
           {
             blocks =
@@ -355,29 +371,35 @@ let of_hf ?device cfg dt ckpt =
       attn =
         {
           Attention.q =
-            linear ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
-          k = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
-          v = linear ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
-          out = linear ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
+            column ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
+          k = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
+          v = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
+          out = row ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
         };
-      sinks = float ~shape:[| cfg.n_heads |] (at "self_attn.sinks");
+      sinks =
+        place Column ~axis:0
+          (float ~shape:[| cfg.n_heads |] (at "self_attn.sinks"));
       ffn_norm = norm (at "post_attention_layernorm.weight");
-      router = linear ~inputs:cfg.dim ~outputs:cfg.experts (at "mlp.router");
+      router =
+        linear Whole ~axis:0 ~inputs:cfg.dim ~outputs:cfg.experts
+          (at "mlp.router");
       moe =
         {
           Moe.gate_up =
             experts ~inputs:cfg.dim ~outputs:(2 * cfg.hidden_dim)
               (at "mlp.experts.gate_up_proj");
           gate_up_bias =
-            float
-              ~shape:[| cfg.experts; 2 * cfg.hidden_dim |]
-              (at "mlp.experts.gate_up_proj_bias");
+            place Experts ~axis:0
+              (float
+                 ~shape:[| cfg.experts; 2 * cfg.hidden_dim |]
+                 (at "mlp.experts.gate_up_proj_bias"));
           down =
             experts ~inputs:cfg.hidden_dim ~outputs:cfg.dim
               (at "mlp.experts.down_proj");
           down_bias =
-            float ~shape:[| cfg.experts; cfg.dim |]
-              (at "mlp.experts.down_proj_bias");
+            place Experts ~axis:0
+              (float ~shape:[| cfg.experts; cfg.dim |]
+                 (at "mlp.experts.down_proj_bias"));
         };
     }
   in
@@ -385,7 +407,10 @@ let of_hf ?device cfg dt ckpt =
     tok =
       {
         Embedding.table =
-          float ~shape:[| cfg.vocab_size; cfg.dim |] "model.embed_tokens.weight";
+          whole
+            (float
+               ~shape:[| cfg.vocab_size; cfg.dim |]
+               "model.embed_tokens.weight");
       };
     blocks = List.mapi (fun i _ -> block i) cfg.layers;
     norm = norm "model.norm.weight";
@@ -393,7 +418,7 @@ let of_hf ?device cfg dt ckpt =
       (if cfg.tied then None
        else
          Some
-           (linear ~bias:false ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
+           (column ~bias:false ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
   }
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
@@ -412,8 +437,9 @@ let stored_dtype ckpt =
       failwith
         "the checkpoint's embedding table is not a bfloat16 or float32 entry"
 
-let from_file ?device cfg dt path = of_hf ?device cfg dt (Checkpoint.load path)
+let from_file ?placement cfg dt path =
+  of_hf ?placement cfg dt (Checkpoint.load path)
 
-let from_pretrained ?device repo_id dt =
+let from_pretrained ?placement repo_id dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?device cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?placement cfg dt (Hf.load_checkpoint repo_id))
