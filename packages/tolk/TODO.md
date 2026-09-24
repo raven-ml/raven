@@ -44,8 +44,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   rangeify/callify. Port disk/view rules.
 - Normalize explicit allocations and calls, lexical scalar formals and the
   separate becomes map. Handle precompiled calls without preallocation.
-- Resolve the false indexing-cycle rejection for elementwise computations over
-  `SLICE(BUFFER)` inputs.
 - Track RAW/WAR dependencies for sliced/overlapping assignments, self-copy,
   nested calls and shared aliases; reject cycles.
 - Replace SLICE memory-plan views with SHRINK/BITCAST byte offsets. Unify

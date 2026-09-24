@@ -716,7 +716,8 @@ val stage : src:t -> ranges:t list -> opts:stage_opts -> t
 
 val slice : src:t -> offset:t -> size:int -> dtype:Dtype.t -> t
 (** [slice ~src ~offset ~size ~dtype] is a {!Ops.Slice} view of [src]
-    at symbolic [offset], with [size] elements. Tensor. *)
+    at symbolic [offset] in source elements, with [size] elements of [dtype].
+    Tensor. *)
 
 (** {2:ctors_scalars Variables, binds, constants} *)
 

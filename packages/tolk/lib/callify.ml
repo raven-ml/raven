@@ -595,8 +595,10 @@ let transform_to_call (big_sink : U.t) : U.t * (int, U.t) Hashtbl.t =
   (* Phase 3b: replace buffers with PARAMs and wrap in a CALL. *)
   let assigns_sink = U.sink (List.rev ctx.assigns) in
   let body =
-    U.graph_rewrite ~name:"replace_bufs" ~walk:true (pm_replace_buf ctx)
-      assigns_sink in
+    (* A storage view is one argument. Match it before its underlying buffer
+       becomes a PARAM and the view's identity can no longer be recovered. *)
+    U.graph_rewrite ~name:"replace_bufs" ~bottom_up:true ~walk:true
+      (pm_replace_buf ctx) assigns_sink in
   let args =
     ctx.replacements
     |> List.sort (fun (a, _) (b, _) -> Int.compare a b)

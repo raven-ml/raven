@@ -38,6 +38,20 @@ let is_jit_error = function Jit.Jit_error _ -> true | _ -> false
 let elementwise_tests =
   group "elementwise"
     [
+      test "storage slices remain views through capture and replay" (fun () ->
+          List.iter (fun offset ->
+              let traces = ref 0 in
+              let jit = Jit.create (fun inputs ~vars:_ ->
+                  incr traces;
+                  let view = U.slice ~src:(U.base (T.uop inputs.(0)))
+                      ~offset:(U.const_int offset) ~size:4 ~dtype:Tolk_uop.Dtype.float32 in
+                  Run.realize (El.add (T.of_uop view) (T.f 1.))) in
+              for call = 0 to 3 do
+                let data = Array.init 8 (fun i -> Float.of_int (call * 10 + i)) in
+                let out = Jit.call jit [| vec data |] in
+                check_floats (Array.init 4 (fun i -> data.(i + offset) +. 1.)) out
+              done;
+              equal int 2 !traces) [ 1; 4 ]);
       test "chain replays without re-running the function" (fun () ->
           let traces = ref 0 in
           let jit =

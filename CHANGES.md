@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Elementwise computations over storage slices no longer fail with a false
+  indexing-cycle error. Call normalization retains the sliced argument and
+  its offset through JIT capture and replay.
+
 - `Uop.param`, `Uop.buffer`, and global `Uop.placeholder` accept `volatile`.
   Scheduling and rendering retain the qualifier, and coalescing keeps volatile
   accesses separate and no longer combines accesses with different flags.

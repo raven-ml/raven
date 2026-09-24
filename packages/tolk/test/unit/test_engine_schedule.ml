@@ -228,6 +228,23 @@ let volatile_inputs_survive_scheduling () =
   is_true ~msg:"kernel lowering retains the volatile input"
     (List.length (volatile_params linear) > 0)
 
+let slice_inputs_are_normalized_before_their_bases () =
+  List.iter (fun volatile ->
+      let input = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
+          ~shape:(shape [ 16 ]) ~device:(U.Single "CPU") ~volatile () in
+      let view = U.slice ~src:input ~offset:(U.const_int 4) ~size:4 ~dtype:Dtype.float32 in
+      let value = U.alu_binary ~op:Ops.Add ~lhs:view ~rhs:(U.const_float 1.) in
+      let call, _ = Callify.transform_to_call (U.sink [ U.contiguous ~src:value () ]) in
+      let body, args = match U.as_call call with
+        | Some { body; args; _ } -> body, args
+        | None -> fail "expected call" in
+      is_true ~msg:"slice is a call argument" (List.exists (U.equal view) args);
+      is_false ~msg:"callee addresses its formal without an embedded storage slice"
+        (List.exists (fun u -> U.op u = Ops.Slice) (U.toposort body));
+      let linear, _ = Schedule.create_linear_with_vars
+          ~get_kernel_graph:Rangeify.get_kernel_graph call in
+      equal int 1 (List.length (linear_calls linear))) [ false; true ]
+
 let fresh_internal_buffer_slots_stay_distinct () =
   let a = Schedule.fresh_internal_buffer_slot () in
   let b = Schedule.fresh_internal_buffer_slot () in
@@ -243,6 +260,8 @@ let fresh_internal_buffer_slots_stay_distinct () =
 let () =
   run "Engine.Schedule"
     [
+      test "slice inputs are normalized before their bases"
+        slice_inputs_are_normalized_before_their_bases;
       test "volatile inputs survive scheduling" volatile_inputs_survive_scheduling;
       test "AFTER partition ignores STORE and keeps kernel order"
         after_partition_ignores_store_and_keeps_kernel_order;
