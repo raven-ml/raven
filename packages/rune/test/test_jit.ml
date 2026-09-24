@@ -48,7 +48,8 @@ let test_zero_size_outputs () =
     done
   in
   check "int8 cumsum" (Nx.cumsum ~axis:1) (Nx.zeros Nx.int8 [| 2; 0 |]);
-  check "float32 add of a cumsum" (fun x -> Nx.add (Nx.cumsum x) x)
+  check "float32 add of a cumsum"
+    (fun x -> Nx.add (Nx.cumsum x) x)
     (Nx.zeros f32 [| 0 |])
 
 let test_closure_matmul () =
@@ -1110,15 +1111,17 @@ let test_correlate_matches_eager () =
 (* Cumulative reductions *)
 
 (* A sum over int8 or int16 accumulates in int32; the compiled scan hands back
-   the input's dtype, so its values wrap as eager's do. Compacting between
-   calls exposes a result written past a buffer sized for the input dtype. *)
+   the input's dtype, so its values wrap as eager's do. Compacting between calls
+   exposes a result written past a buffer sized for the input dtype. *)
 let test_small_int_scans_keep_dtype () =
   let check (type b) name (dtype : (int, b) Nx.dtype) values =
     let x = Nx.create dtype [| Array.length values |] values in
     let g = Rune.jit' (Nx.cumsum ~axis:0) in
     let expected = Nx.to_array (Nx.cumsum ~axis:0 x) in
     for call = 1 to 20 do
-      equal ~msg:(Printf.sprintf "%s, call %d" name call) (array int) expected
+      equal
+        ~msg:(Printf.sprintf "%s, call %d" name call)
+        (array int) expected
         (Nx.to_array (g x));
       Gc.compact ()
     done

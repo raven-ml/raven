@@ -1353,8 +1353,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               | `Max -> fst (F.Op.cummax ~axis t)
               | `Min -> fst (F.Op.cummin ~axis t)
             in
-            (* A sum over small integers accumulates wider; the scan keeps
-               its input's dtype. *)
+            (* A sum over small integers accumulates wider; the scan keeps its
+               input's dtype. *)
             ret k (dt t_in) (F.Dtype_ops.cast r (tolk_dtype (dt t_in))))
     (* Movement *)
     | E_permute { t_in; axes } ->
