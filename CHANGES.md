@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.cumsum` under `Rune.jit` keeps int8 and int16 results in their dtype. The
+  compiled scan left them in int32, so values came back wrong (int8
+  `[100; 100; 100; 1]` gave `[100; 0; 0; 0]`) and the process could crash.
 - Compiled functions on a device share the memory their intermediates need,
   sized to the largest, instead of each holding its own: gpt-oss-20b run one
   compiled layer kind at a time peaks at 17.4 GB instead of 19.4 GB.

@@ -1090,6 +1090,28 @@ let test_correlate_matches_eager () =
   let x = Nx.create f32 [| 6; 7 |] (Array.init 42 (fun i -> float_of_int i)) in
   check_arr ~msg:"correlate same" (to_arr (f x)) (g x)
 
+(* Cumulative reductions *)
+
+(* A sum over int8 or int16 accumulates in int32; the compiled scan hands back
+   the input's dtype, so its values wrap as eager's do. Compacting between
+   calls exposes a result written past a buffer sized for the input dtype. *)
+let test_small_int_scans_keep_dtype () =
+  let check (type b) name (dtype : (int, b) Nx.dtype) values =
+    let x = Nx.create dtype [| Array.length values |] values in
+    let g = Rune.jit' (Nx.cumsum ~axis:0) in
+    let expected = Nx.to_array (Nx.cumsum ~axis:0 x) in
+    for call = 1 to 20 do
+      equal ~msg:(Printf.sprintf "%s, call %d" name call) (array int) expected
+        (Nx.to_array (g x));
+      Gc.compact ()
+    done
+  in
+  check "int8" Nx.int8 [| 100; 100; 100; 1 |];
+  check "int8, 64" Nx.int8 (Array.make 64 1);
+  check "int8, 600" Nx.int8 (Array.make 600 1);
+  check "int16" Nx.int16 [| 1; 2; 3 |];
+  check "int16, 600" Nx.int16 (Array.init 600 (fun i -> i * 50))
+
 (* Indexed access *)
 
 (* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
@@ -2779,6 +2801,11 @@ let tests =
         test "fold of unfold matches eager" test_fold_matches_eager;
         test "sliding window matches eager" test_sliding_window_matches_eager;
         test "correlate matches eager" test_correlate_matches_eager;
+      ];
+    group "cumulative reductions"
+      [
+        slow "small integer scans keep their dtype"
+          test_small_int_scans_keep_dtype;
       ];
     group "indexed access"
       [
