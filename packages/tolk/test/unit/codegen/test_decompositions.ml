@@ -713,6 +713,37 @@ let late_bounded_cmplt_collapses_to_eq () =
          && const_int64_value src.(1) = Some 4L)
   | None -> is_true ~msg:"late CMPLT rule fired" false
 
+let compact_float_accesses_narrow_storage_first () =
+  List.iter (fun dtype ->
+      let buf = Uop.param ~slot:0 ~dtype ~shape:(Uop.const_int 5)
+          ~addrspace:Dtype.Global () in
+      let idx = Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3 ] () in
+      let window = Uop.shrink ~src:buf ~offset:(Uop.const_int 3)
+          ~size:(Uop.const_int 2) in
+      let uint = if Dtype.bitsize dtype = 8 then Dtype.uint8 else Dtype.uint16 in
+      let load = Uop.load ~src:idx () in
+      let ctx : Decomp_dtype.float_decomp_ctx =
+        { from_dtype = dtype; to_dtype = Dtype.float32 } in
+      let matcher = Decomp_dtype.pm_float_decomp ctx in
+      List.iter (fun node ->
+          match Upat.Pattern_matcher.rewrite matcher node with
+          | None -> failwith "compact-float access did not rewrite"
+          | Some result ->
+              Spec.type_verify Spec.full_spec result;
+              List.iter (fun n ->
+                  let storage = match Uop.as_load n, Uop.as_index n with
+                    | Some { src; _ }, _ -> Some src
+                    | _, Some { ptr; _ } -> Some ptr
+                    | _ -> None in
+                  Option.iter (fun ptr ->
+                      is_true ~msg:"each generated access already agrees with its storage"
+                        (Dtype.equal (Uop.dtype n) (Uop.dtype ptr))) storage)
+                (Uop.toposort result))
+        [ idx; window; load; Uop.load ~src:window ();
+          Uop.bitcast ~src:load ~dtype:uint ])
+    [ Dtype.float16; Dtype.bfloat16; Dtype.fp8e4m3; Dtype.fp8e5m2;
+      Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz ]
+
 let bf16_load_promotes_to_f32 () =
   let buf =
     Uop.param ~slot:0 ~dtype:Dtype.bfloat16 ~shape:(Uop.const_int 1)
@@ -917,7 +948,9 @@ let () =
             late_bounded_cmplt_collapses_to_eq;
         ];
       group "float decomposition"
-        [ test "bf16 load promotes to f32" bf16_load_promotes_to_f32;
+        [
+          test "compact-float accesses narrow storage before reconstruction"
+            compact_float_accesses_narrow_storage_first; test "bf16 load promotes to f32" bf16_load_promotes_to_f32;
           test "bf16 vector load reindexes SHRINK"
             bf16_vector_load_reindexes_shrink;
           test "f32 store demotes to bf16 bits" f32_store_demotes_to_bf16_bits;

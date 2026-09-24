@@ -1003,20 +1003,21 @@ and f2f_clamp ?(sat = true) val_ dt =
     (iwhere (icmplt val_ neg_mx) neg_sat
        (iwhere (icmplt mx val_) sat_value val_))
 
-let f2f_load x fr to_ =
+let storage_load rewrite x =
+  let src = Array.copy (Uop.src x) in
+  src.(0) <- rewrite src.(0);
+  Uop.replace x ~src ~dtype:(Uop.dtype src.(0)) ()
+
+let f2f_load rewrite x fr to_ =
   let n = Uop.max_numel x in
-  let uint_fr = f2f_dt fr in
-  if n = 1 then f2f (Uop.replace x ~dtype:uint_fr ()) fr to_
+  let load = storage_load rewrite x in
+  if n = 1 then f2f load fr to_
   else
-    match Uop.as_load x with
-    | None -> invalid_arg "Dtype.f2f_load: expected load"
-    | Some { src; _ } ->
-        Uop.stack
-          (List.init n (fun i ->
-             let ld =
-               Uop.replace x ~src:[| reindex src i 1 |] ~dtype:uint_fr ()
-             in
-             f2f ld fr to_))
+    Uop.stack
+      (List.init n (fun i ->
+         let src = Array.copy (Uop.src load) in
+         src.(0) <- reindex src.(0) i 1;
+         f2f (Uop.replace load ~src ()) fr to_))
 
 let f2f_store st idx val_ fr to_ =
   let n = Uop.max_numel val_ in
@@ -1038,7 +1039,7 @@ let f2f_store st idx val_ fr to_ =
 
 let same_scalar s dt = Dtype.equal dt s
 
-let rule_float_defines_index_shrink ctx =
+let rule_float_defines_index_shrink rewrite ctx =
   let open Upat in
   ops ~name:"x" (Ops.Group.defines @ [ Ops.Index; Ops.Shrink ]) => fun bs ->
     let x = bs $ "x" in
@@ -1046,7 +1047,8 @@ let rule_float_defines_index_shrink ctx =
     if not (Dtype.equal (Uop.dtype x) ctx.from_dtype) then None
     else
       let src = Uop.src x in
-      if Uop.op x = Ops.Index && Array.length src > 0
+      let is_view = Uop.op x = Ops.Index || Uop.op x = Ops.Shrink in
+      if is_view && Array.length src > 0
          && (Uop.op src.(0) = Ops.Load || Uop.op src.(0) = Ops.Stack)
       then None
       else
@@ -1056,17 +1058,23 @@ let rule_float_defines_index_shrink ctx =
           | Uop.Arg.Param_arg pa -> Uop.Arg.Param_arg { pa with dtype = base }
           | other -> other
         in
-        Some (Uop.replace x ~dtype:base ~arg ~node_tag:tag ())
+        let src =
+          if is_view then
+            let src = Array.copy src in
+            src.(0) <- rewrite src.(0);
+            src
+          else src in
+        Some (Uop.replace x ~dtype:base ~src ~arg ~node_tag:tag ())
 
-let rule_float_load ctx =
+let rule_float_load rewrite ctx =
   let open Upat in
   op ~name:"x" Ops.Load => fun bs ->
     let x = bs $ "x" in
     if same_scalar ctx.from_dtype (Uop.dtype x) then
-      Some (f2f_load x ctx.from_dtype ctx.to_dtype)
+      Some (f2f_load rewrite x ctx.from_dtype ctx.to_dtype)
     else None
 
-let rule_float_bitcast_load ctx =
+let rule_float_bitcast_load rewrite ctx =
   let open Upat in
   op ~name:"bc" Ops.Bitcast => fun bs ->
     let bc = bs $ "bc" in
@@ -1075,7 +1083,7 @@ let rule_float_bitcast_load ctx =
                   && same_scalar ctx.from_dtype (Uop.dtype ld) ->
         Some
           (Uop.bitcast
-             ~src:(Uop.replace ld ~dtype:(f2f_dt ctx.from_dtype) ())
+             ~src:(storage_load rewrite ld)
              ~dtype:(Uop.dtype bc))
     | _ -> None
 
@@ -1134,14 +1142,11 @@ let rule_float_const ctx =
           | Const.Int _ | Const.Bool _ | Const.Invalid -> None)
       | _ -> None
 
-(* Buffers, casts and constants declare their own dtype rather than
-   inheriting one from their sources; each has its own rule above. *)
+(* Only arithmetic and value aggregation inherit the promoted dtype.
+   Storage and memory operations are rebuilt by their owning rules. *)
 let rule_float_all ctx =
   let open Upat in
-  let declares_own_dtype op =
-    List.mem op [ Ops.Bitcast; Ops.Cast; Ops.Const ] || Ops.Group.is_define op
-  in
-  ops ~name:"x" (List.filter (fun op -> not (declares_own_dtype op)) Ops.Group.all)
+  ops ~name:"x" (Ops.Group.alu @ [ Ops.Stack; Ops.Index ])
   => fun bs ->
     let x = bs $ "x" in
     if same_scalar ctx.from_dtype (Uop.dtype x) then
@@ -1191,18 +1196,23 @@ let rule_float_store ctx =
     | Some _ | None -> None
 
 let pm_float_decomp (ctx : float_decomp_ctx) : Upat.Pattern_matcher.t =
-  Upat.Pattern_matcher.make [
-    rule_float_defines_index_shrink ctx;
-    rule_float_load ctx;
-    rule_float_bitcast_load ctx;
-    rule_float_bitcast_from ctx;
-    rule_float_bitcast_to ctx;
-    rule_float_cast ctx;
-    rule_float_const ctx;
-    rule_float_all ctx;
-    rule_float_store_bitcast ctx;
-    rule_float_store ctx;
-  ]
+  let rec rewrite node =
+    Uop.graph_rewrite ~bottom_up:true
+      (Upat.Pattern_matcher.rewrite (Lazy.force matcher)) node
+  and matcher = lazy (
+    Upat.Pattern_matcher.make [
+      rule_float_defines_index_shrink rewrite ctx;
+      rule_float_load rewrite ctx;
+      rule_float_bitcast_load rewrite ctx;
+      rule_float_bitcast_from ctx;
+      rule_float_bitcast_to ctx;
+      rule_float_cast ctx;
+      rule_float_const ctx;
+      rule_float_all ctx;
+      rule_float_store_bitcast ctx;
+      rule_float_store ctx;
+    ]) in
+  Lazy.force matcher
 
 type dtype_decomp_ctx = {
   detected : (Dtype.t, unit) Hashtbl.t;

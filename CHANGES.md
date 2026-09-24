@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Compact-float emulation constructs loads, vector slices, and bitcasts from
+  their converted integer storage, keeping access dtypes consistent throughout
+  lowering and preserving masked reads and writes.
+
 - FP8 emulation uses `float32` arithmetic even on backends with native
   `float16`, preserving small normal `fp8e5m2fnuz` values that previously
   underflowed to zero.

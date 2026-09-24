@@ -347,11 +347,81 @@ let test_emulated_fp8_loads () =
       done)
     [ Dtype.fp8e4m3; Dtype.fp8e5m2; Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz ]
 
+let test_emulated_compact_float_storage () =
+  let device = cpu "emulated-compact-float-storage" in
+  let fp8_cases = List.map (fun dtype ->
+      dtype, List.map (Dtype.float_to_fp8 dtype) [ 1.0; -1.0; 2.0; 0.5; 4.0 ],
+      Dtype.float_to_fp8 dtype 1.5, Dtype.float_to_fp8 dtype 0.25)
+      [ Dtype.fp8e4m3; Dtype.fp8e5m2; Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz ] in
+  let cases =
+    (Dtype.float16, [ 0x3c00; 0xbc00; 0x4000; 0x3800; 0x4400 ], 0x3e00, 0x3400)
+    :: (Dtype.bfloat16, [ 0x3f80; 0xbf80; 0x4000; 0x3f00; 0x4080 ], 0x3fc0, 0x3e80)
+    :: fp8_cases in
+  List.iter (fun (dtype, bits, fallback, sentinel) ->
+      let renderer = Renderer.make ~name:"emulation" ~device:"TEST"
+          ~has_local:false ~has_shared:false ~shared_max:0
+          ~supports_dtype:(fun dt -> dt <> dtype) ~render:(fun ?name:_ _ -> "") () in
+      let input_count = List.length bits in
+      let count = input_count + 1 in
+      let word_size = Dtype.itemsize dtype in
+      let uint = if word_size = 1 then Dtype.uint8 else Dtype.uint16 in
+      let param slot dt size = U.param ~slot ~dtype:dt ~shape:(U.const_int size)
+          ~addrspace:Dtype.Global () in
+      let dst = param 0 Dtype.float32 count and src = param 1 dtype input_count in
+      let roundtrip = param 2 dtype count and raw = param 3 uint count in
+      let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Weak () in
+      let index ptr offset = U.index ~ptr ~idxs:[ offset ] () in
+      let cond = U.O.(range < int_ input_count) in
+      let offset = U.valid ~src:range ~cond in
+      let loaded = U.load ~src:(index src offset) () in
+      let value = U.alu_ternary ~op:Ops.Where ~a:cond ~b:loaded
+          ~c:(U.const (Const.float dtype 1.5)) in
+      let guarded = U.valid ~src:range ~cond:(U.O.ne range (U.const_int 0)) in
+      let stores =
+        [ U.store ~dst:(index dst range) ~value:(U.cast ~src:value ~dtype:Dtype.float32) ();
+          U.store ~dst:(index roundtrip guarded) ~value ();
+          U.store ~dst:(index raw range)
+            ~value:(U.bitcast ~src:loaded ~dtype:uint) () ] in
+      let sink = U.sink [ U.end_ ~value:(U.group stores) ~ranges:[ range ] ] in
+      let decomposed = Decomp_dtype.do_dtype_decomps renderer sink in
+      Spec.type_verify Spec.full_spec decomposed;
+      is_false ~msg:"compact-float accesses leave no unsupported dtype"
+        (List.exists (fun n -> U.dtype n = dtype) (U.toposort decomposed));
+      let program = Codegen_lower.lower (Device.renderer device) decomposed
+          |> Linearizer.linearize in
+      let spec = Device.compile_program device ~name:"emulated_compact_storage" program in
+      let allocate dtype size =
+        let buffer = Device.create_buffer ~size ~dtype device in
+        Device.Buffer.ensure_allocated buffer;
+        buffer in
+      let encode bits =
+        let bytes = Bytes.create (List.length bits * word_size) in
+        List.iteri (fun i v ->
+            if word_size = 1 then Bytes.set_uint8 bytes i v
+            else Bytes.set_uint16_le bytes (2 * i) v) bits;
+        bytes in
+      let input = allocate dtype input_count and output = allocate Dtype.float32 count in
+      let copied = allocate dtype count and bitcast = allocate uint count in
+      Device.Buffer.copyin input (encode bits);
+      Device.Buffer.copyin copied (encode (List.init count (fun _ -> sentinel)));
+      run_spec device spec [ output; input; copied; bitcast ];
+      let result = Device.Buffer.as_bytes output in
+      equal ~msg:(Dtype.to_string dtype ^ " masked read with fallback") (list float_exact)
+        [ 1.0; -1.0; 2.0; 0.5; 4.0; 1.5 ]
+        (List.init count (fun i -> Int32.float_of_bits (Bytes.get_int32_le result (4 * i))));
+      equal ~msg:(Dtype.to_string dtype ^ " masked write") string
+        (Bytes.to_string (encode (sentinel :: List.tl bits @ [ fallback ])))
+        (Bytes.to_string (Device.Buffer.as_bytes copied));
+      equal ~msg:(Dtype.to_string dtype ^ " raw bitcast") string
+        (Bytes.to_string (encode (bits @ [ 0 ]))) (Bytes.to_string (Device.Buffer.as_bytes bitcast))) cases
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "emulated compact-float storage preserves masks and bitcasts"
+            test_emulated_compact_float_storage;
           test "emulated FP8 loads preserve all normal values" test_emulated_fp8_loads;
           test "emulated long buffer arithmetic preserves both words" test_emulated_long_buffer_arithmetic;
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
