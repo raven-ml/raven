@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- Long Metal runs no longer exit silently with status 2. Releasing a buffer
+  view from a GC finaliser could relock the buffer table inside an allocation
+  that already held it, which killed decode loops after a few dozen steps.
+
 - Emulated `int64` and `uint64` casts to `float64` preserve double precision
   and the correct high word, fixing rounded results and zero output for `2^63`.
 

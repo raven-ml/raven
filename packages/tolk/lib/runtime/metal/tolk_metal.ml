@@ -110,6 +110,9 @@ module Ffi = struct
   external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
 end
 
+(* Buffers cross the device interface as addresses, but a Metal buffer is an
+   object and a byte offset into it: every allocation and view is named by a
+   token, a negative address that resolves to both. *)
 module Buffer_token = struct
   type buffer = {
     token : nativeint;
@@ -120,51 +123,41 @@ module Buffer_token = struct
 
   let next = Atomic.make (-1)
   let mutex = Mutex.create ()
-  let strong_table : (nativeint, buffer) Hashtbl.t = Hashtbl.create 1024
-  let weak_table : (nativeint, buffer Weak.t) Hashtbl.t = Hashtbl.create 1024
+  let table : (nativeint, nativeint * int) Hashtbl.t = Hashtbl.create 1024
 
-  let unregister_token token =
-    Mutex.lock mutex;
-    Hashtbl.remove strong_table token;
-    Hashtbl.remove weak_table token;
-    Mutex.unlock mutex
+  (* Tokens whose buffers are gone. A GC finaliser can run at any allocation,
+     including one made while [mutex] is held, so releasing a token never
+     locks: it is queued here, and the next holder of the lock removes it from
+     [table] before looking at it. *)
+  let released : nativeint list Atomic.t = Atomic.make []
 
-  let register ?(strong = false) handle ~size ~offset =
+  let with_table f =
+    Mutex.protect mutex (fun () ->
+        List.iter (Hashtbl.remove table) (Atomic.exchange released []);
+        f table)
+
+  let rec unregister buffer =
+    let tokens = Atomic.get released in
+    if not (Atomic.compare_and_set released tokens (buffer.token :: tokens))
+    then unregister buffer
+
+  let register handle ~size ~offset =
     let token = Nativeint.of_int (Atomic.fetch_and_add next (-1)) in
-    let buffer = { token; handle; size; offset } in
-    Mutex.lock mutex;
-    if strong then Hashtbl.add strong_table token buffer
-    else begin
-      let weak = Weak.create 1 in
-      Weak.set weak 0 (Some buffer);
-      Hashtbl.add weak_table token weak
-    end;
-    Mutex.unlock mutex;
-    if not strong then Gc.finalise (fun b -> unregister_token b.token) buffer;
+    with_table (fun table -> Hashtbl.replace table token (handle, offset));
+    { token; handle; size; offset }
+
+  (* Views are never freed: a view's token is released once the view is
+     collected. The table holds the location, not the view, so it does not keep
+     the view alive. *)
+  let view handle ~size ~offset =
+    let buffer = register handle ~size ~offset in
+    Gc.finalise unregister buffer;
     buffer
 
-  let unregister buffer = unregister_token buffer.token
-
   let resolve token =
-    Mutex.lock mutex;
-    let buffer =
-      match Hashtbl.find_opt strong_table token with
-      | Some buffer -> Some buffer
-      | None -> (
-          match Hashtbl.find_opt weak_table token with
-          | None -> None
-          | Some weak -> (
-              match Weak.get weak 0 with
-              | Some buffer -> Some buffer
-              | None ->
-                  Hashtbl.remove weak_table token;
-                  None))
-    in
-    Mutex.unlock mutex;
-    match buffer with
-    | Some buffer -> buffer
-    | None when Nativeint.compare token Nativeint.zero >= 0 ->
-        { token; handle = token; size = 0; offset = 0 }
+    match with_table (fun table -> Hashtbl.find_opt table token) with
+    | Some location -> location
+    | None when Nativeint.compare token Nativeint.zero >= 0 -> (token, 0)
     | None ->
         invalid_arg
           (Printf.sprintf "unknown Metal buffer token %nd" token)
@@ -174,9 +167,9 @@ module Buffer_token = struct
     let handles = Array.make len Nativeint.zero in
     let offsets = Array.make len 0 in
     for i = 0 to len - 1 do
-      let buffer = resolve tokens.(i) in
-      handles.(i) <- buffer.handle;
-      offsets.(i) <- buffer.offset
+      let handle, offset = resolve tokens.(i) in
+      handles.(i) <- handle;
+      offsets.(i) <- offset
     done;
     (handles, offsets)
 end
@@ -264,7 +257,7 @@ module Allocator = struct
         | Some ptr -> ptr
         | None -> Ffi.buffer_alloc state.State.device size
       in
-      Buffer_token.register ~strong:true handle ~size ~offset:0
+      Buffer_token.register handle ~size ~offset:0
     in
     let free buf _size spec =
       Buffer_token.unregister buf;
@@ -295,8 +288,7 @@ module Allocator = struct
         invalid_arg "Metal buffer offset must be non-negative";
       if byte_offset + size > buf.Buffer_token.size then
         invalid_arg "Metal buffer view exceeds base buffer";
-      Buffer_token.register buf.handle ~size
-        ~offset:(buf.offset + byte_offset)
+      Buffer_token.view buf.handle ~size ~offset:(buf.offset + byte_offset)
     in
     {
       Device.Allocator.alloc;
@@ -361,8 +353,8 @@ module Icb = struct
       arg_offsets global local
 
   let update_buffer t ~index ~buf_index ~buf =
-    let buffer = Buffer_token.resolve buf in
-    Ffi.icb_update_buffer t.handle index buf_index buffer.handle buffer.offset
+    let handle, offset = Buffer_token.resolve buf in
+    Ffi.icb_update_buffer t.handle index buf_index handle offset
 
   let update_dispatch t ~index ~global ~local =
     Ffi.icb_update_dispatch t.handle index global local
@@ -492,10 +484,9 @@ module Graph = struct
         Device.Graph.set_buf =
           (fun node pos addr ->
             settle ();
-            let buffer = Buffer_token.resolve addr in
-            Ffi.icb_update_buffer icb.Icb.handle node pos buffer.handle
-              buffer.offset;
-            bound.(node).(pos) <- buffer.handle;
+            let handle, offset = Buffer_token.resolve addr in
+            Ffi.icb_update_buffer icb.Icb.handle node pos handle offset;
+            bound.(node).(pos) <- handle;
             rebound := true);
         set_val =
           (fun node idx v ->

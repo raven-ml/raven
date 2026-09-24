@@ -194,6 +194,21 @@ let () =
             let leaf = i32_view mid ~offset:4 ~size:1 in
             Device.Buffer.copyin leaf (int32_to_bytes [ 33 ]);
             equal (list int) [ 1; 2; 33; 4 ] (read_i32 base));
+          test "collects dropped views while creating new ones" (fun () ->
+            let device = metal_device () in
+            let base = i32_buf device [ 1; 2; 3; 4 ] in
+            (* A small, eager heap runs the finalisers of dropped views inside
+               the allocations that register new ones. *)
+            let gc = Gc.get () in
+            Gc.set { gc with minor_heap_size = 4096; space_overhead = 20 };
+            Fun.protect
+              ~finally:(fun () -> Gc.set gc)
+              (fun () ->
+                for i = 0 to 99_999 do
+                  ignore (i32_view base ~offset:(4 * (i mod 4)) ~size:1)
+                done);
+            let view = i32_view base ~offset:8 ~size:1 in
+            equal (list int) [ 3 ] (read_i32 view));
           test "kernel dispatch binds buffer view offsets" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_view_add_one" in
