@@ -46,8 +46,8 @@
     let linear ~inputs ~outputs name ckpt =
       (* The file stores the weight as [outputs; inputs]. *)
       let w =
-        Checkpoint.to_float ~shape:[| outputs; inputs |] dt
-          (name ^ ".weight") ckpt
+        Checkpoint.to_float ~shape:[| outputs; inputs |] dt (name ^ ".weight")
+          ckpt
       in
       { Linear.w = Nx.matrix_transpose w; b = None }
     ]}
@@ -80,10 +80,7 @@ val of_params :
     non-empty. *)
 
 val of_packed :
-  (module U : Nx.Ptree.Uniform) ->
-  ?prefix:string ->
-  Rune.Ptree.tensor U.t ->
-  t
+  (module U : Nx.Ptree.Uniform) -> ?prefix:string -> Rune.Ptree.tensor U.t -> t
 (** [of_packed (module U) ?prefix params] is like {!of_params} for a structure
     with packed leaves, whose dtypes may differ. For the stock dynamic tree,
     pass [(module Rune.Ptree.Tree)]: leaves are named by dict keys and
@@ -151,10 +148,7 @@ val to_float :
 
 val to_params :
   (module U : Nx.Ptree.Uniform) ->
-  ?prefix:string ->
-  like:('a, 'b) Nx.t U.t ->
-  t ->
-  ('a, 'b) Nx.t U.t
+  ?prefix:string -> like:('a, 'b) Nx.t U.t -> t -> ('a, 'b) Nx.t U.t
 (** [to_params (module U) ?prefix ~like t] is [like] with every leaf replaced by
     [t]'s entry of the same name, the leaf's path prefixed as in {!of_params}:
     {!to_tensor} at each leaf's name, shape and dtype. [like] supplies the
@@ -170,10 +164,7 @@ val to_params :
 
 val to_packed :
   (module U : Nx.Ptree.Uniform) ->
-  ?prefix:string ->
-  like:Rune.Ptree.tensor U.t ->
-  t ->
-  Rune.Ptree.tensor U.t
+  ?prefix:string -> like:Rune.Ptree.tensor U.t -> t -> Rune.Ptree.tensor U.t
 (** [to_packed (module U) ?prefix ~like t] is like {!to_params} for a structure
     with packed leaves, with names as in {!of_packed}. Each template leaf's
     runtime dtype and shape check the corresponding entry. *)
@@ -197,10 +188,10 @@ val save : string -> t -> unit
 
 val load : string -> t
 (** [load path] is the checkpoint stored in the safetensors file at [path],
-    whether written by {!save} or produced elsewhere. The file is mapped and
-    its entries are views of it, read when first used: the file must not be
-    modified in place while an entry is alive, and [Nx.copy] gives a tensor
-    that no longer depends on it. An entry whose dtype nx lacks is loaded as
-    its bytes, at [uint8]. See {!Nx_io.load_safetensors}.
+    whether written by {!save} or produced elsewhere. The file is mapped and its
+    entries are views of it, read when first used: the file must not be modified
+    in place while an entry is alive, and [Nx.copy] gives a tensor that no
+    longer depends on it. An entry whose dtype nx lacks is loaded as its bytes,
+    at [uint8]. See {!Nx_io.load_safetensors}.
 
     Raises [Failure] on I/O or format errors. *)

@@ -210,9 +210,7 @@ let test_bn_train_step_roundtrip () =
       let pred, stats' = Model.forward p stats ~training:true x in
       (Loss.mse pred y, stats')
     in
-    let loss, grads, stats' =
-      Rune.value_and_grad_aux model objective params
-    in
+    let loss, grads, stats' = Rune.value_and_grad_aux model objective params in
     let params, ostate =
       Vega.adam_step model ~lr:(Vega.lr 0.02) ostate ~params ~grads
     in
@@ -289,7 +287,8 @@ let test_dropout_validates_rate () =
 let test_dropout_deterministic_under_seed () =
   let x = vec (Array.init 100 float_of_int) in
   let run () =
-    Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () -> Dropout.apply ~rate:0.5 ~training:true x
+    Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
+    Dropout.apply ~rate:0.5 ~training:true x
   in
   check_arr ~eps:0.0 ~msg:"same seed, same mask" (Nx.to_array (run ())) (run ())
 

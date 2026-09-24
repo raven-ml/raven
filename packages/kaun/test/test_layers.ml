@@ -15,18 +15,15 @@ module _ : Nx.Ptree.Uniform with type 'a t = 'a Layer_norm.t = Layer_norm
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Rms_norm.t = Rms_norm
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.t = Batch_norm
 
-module _ :
-  Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.Stats.t =
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Batch_norm.Stats.t =
   Batch_norm.Stats
 
 module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.t = Attention
 
-module _ :
-  Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t =
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t =
   Attention.Cache
 
-module _ :
-  Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t list =
+module _ : Nx.Ptree.Uniform with type 'a t = 'a Attention.Cache.t list =
   Attention.Cache.List
 
 (* Float64 instances for gradient checking; the layer traversals are
@@ -36,7 +33,6 @@ let linear64 = Kaun.ptree (module Linear)
 let embedding64 = Kaun.ptree (module Embedding)
 let layer_norm64 = Kaun.ptree (module Layer_norm)
 let rms_norm64 = Kaun.ptree (module Rms_norm)
-
 let grads_ok = function Ok () -> () | Error m -> fail m
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
 
@@ -304,26 +300,37 @@ let test_rms_norm_unit_rms () =
     (Nx.to_array (Nx.mean ~axes:[ 1 ] (Nx.mul y y)))
 
 let test_rms_norm_does_not_center () =
-  let y = Rms_norm.apply (Rms_norm.init ~dim:4) (Nx.full Nx.float32 [| 2; 4 |] 5.0) in
+  let y =
+    Rms_norm.apply (Rms_norm.init ~dim:4) (Nx.full Nx.float32 [| 2; 4 |] 5.0)
+  in
   values_are ~msg:"a constant vector keeps its sign and unit size" ~tol:1e-5
     (Array.make 8 1.0) y
 
 let test_rms_norm_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 13) @@ fun () ->
   let p = Rms_norm.map (Nx.cast Nx.float64) (Rms_norm.init ~dim:5) in
-  let p = { Rms_norm.gamma = Nx.add p.gamma (Nx.mul_s (Nx.randn Nx.float64 [| 5 |]) 0.3) } in
+  let p =
+    {
+      Rms_norm.gamma =
+        Nx.add p.gamma (Nx.mul_s (Nx.randn Nx.float64 [| 5 |]) 0.3);
+    }
+  in
   let x = Nx.randn Nx.float64 [| 3; 5 |] in
   let w = Nx.randn Nx.float64 [| 3; 5 |] in
   grads_ok
-    (Rune.check_grads rms_norm64 (fun p -> Nx.sum (Nx.mul w (Rms_norm.apply p x))) p);
+    (Rune.check_grads rms_norm64
+       (fun p -> Nx.sum (Nx.mul w (Rms_norm.apply p x)))
+       p);
   let module X = struct
     type 'a t = 'a
+
     let map f x = f x
     let map2 f x y = f x y
     let iter f x = f x
   end in
   grads_ok
-    (Rune.check_grads (Kaun.ptree (module X))
+    (Rune.check_grads
+       (Kaun.ptree (module X))
        (fun x -> Nx.sum (Nx.mul w (Rms_norm.apply p x)))
        x)
 
@@ -388,8 +395,7 @@ let () =
             test_rms_norm_unit_rms;
           test "a constant vector is not centered away"
             test_rms_norm_does_not_center;
-          test "gradients agree with finite differences"
-            test_rms_norm_gradients;
+          test "gradients agree with finite differences" test_rms_norm_gradients;
           test "invalid inputs are rejected" test_rms_norm_rejects_bad_input;
         ];
     ]

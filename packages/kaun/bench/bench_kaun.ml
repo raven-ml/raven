@@ -106,7 +106,9 @@ end
 
 (* One-hot labels [0; 1; ...; d_out-1] cycled over [n] rows. *)
 let one_hot n =
-  let labels = Nx.init Nx.int32 [| n |] (fun i -> Int32.of_int (i.(0) mod d_out)) in
+  let labels =
+    Nx.init Nx.int32 [| n |] (fun i -> Int32.of_int (i.(0) mod d_out))
+  in
   Nx.cast Nx.float32 (Nx.one_hot ~num_classes:d_out labels)
 
 let () =
@@ -154,7 +156,9 @@ let () =
   let cnn_step () =
     let l, grads = Rune.value_and_grad (module Cnn) cnn_loss cnn_params in
     let params', state' =
-      Vega.adam_step (module Cnn) ~lr:(Vega.lr lr) cnn_state ~params:cnn_params ~grads
+      Vega.adam_step
+        (module Cnn)
+        ~lr:(Vega.lr lr) cnn_state ~params:cnn_params ~grads
     in
     (l, params', state')
   in
@@ -190,7 +194,6 @@ let () =
         [
           Thumper.bench "linear fwd" (fun () -> Kaun.Linear.apply lin lx);
           Thumper.bench "linear fwd+bwd" (fun () ->
-              Rune.value_and_grad (Kaun.ptree (module Kaun.Linear)) lin_loss
-                lin);
+              Rune.value_and_grad (Kaun.ptree (module Kaun.Linear)) lin_loss lin);
         ];
     ]

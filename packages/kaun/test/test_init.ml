@@ -160,10 +160,10 @@ let test_non_positive_fan_rejected () =
       Init.variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Normal
         ~fan_in:3 ~fan_out:(-1) Nx.float32 [| 3 |])
 
-(* Initializers take no key: they draw from the ambient scope. That does not
-   put them out of reach of the compiler — a scope rooted at a traced key makes
-   its draws traced too, so initialising a model inside one compiles and the
-   weights follow the key. This is why Init needs no key parameter of its own.
+(* Initializers take no key: they draw from the ambient scope. That does not put
+   them out of reach of the compiler — a scope rooted at a traced key makes its
+   draws traced too, so initialising a model inside one compiles and the weights
+   follow the key. This is why Init needs no key parameter of its own.
 
    truncated_normal is the interesting one: the glorot/he/lecun normal families
    go through it, and until it was drawn by inverting the CDF it could not be
@@ -190,8 +190,7 @@ let test_init_compiles_under_jit () =
     in
     let at k = Nx.to_array (f (Nx.Rng.key k)) in
     is_true ~msg:(name ^ " follows the key it is given") (at 1 <> at 2);
-    is_true ~msg:(name ^ " is finite")
-      (Array.for_all Float.is_finite (at 1))
+    is_true ~msg:(name ^ " is finite") (Array.for_all Float.is_finite (at 1))
   in
   check "glorot_uniform" Init.glorot_uniform;
   check "he_normal" Init.he_normal;

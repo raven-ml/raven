@@ -9,9 +9,9 @@
    and final weights must match the single-device [Rune.jit2] step up to fp32
    reduction order (the cross-device gradient allreduce reorders the batch sum).
    Momentum runs thread a real [Vega.Sgd_state] through the step — the state is
-   a parameter tree ([Vega.Sgd_state (Model)]) whose leaves replicate like
-   the parameters — and the pmapped trajectory must match the jitted one. Runs
-   on CPU device instances; no pretrained weights involved. *)
+   a parameter tree ([Vega.Sgd_state (Model)]) whose leaves replicate like the
+   parameters — and the pmapped trajectory must match the jitted one. Runs on
+   CPU device instances; no pretrained weights involved. *)
 
 open Windtrap
 open Kaun

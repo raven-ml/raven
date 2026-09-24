@@ -89,8 +89,8 @@ let get name t =
   | Some entry -> entry
   | None -> invalid_argf "Checkpoint.get: no entry named %S" name
 
-(* The template's names must be distinct and non-empty before they can be
-   looked up; a plain fold over the template checks them. *)
+(* The template's names must be distinct and non-empty before they can be looked
+   up; a plain fold over the template checks them. *)
 let check_names ~op fold_names ?prefix like =
   ignore
     (fold_names
@@ -123,8 +123,8 @@ let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
         op name
         (Nx_core.Dtype.to_string source)
 
-let to_params (module U : Nx.Ptree.Uniform) ?prefix
-    ~(like : ('a, 'b) Nx.t U.t) (t : t) : ('a, 'b) Nx.t U.t =
+let to_params (module U : Nx.Ptree.Uniform) ?prefix ~(like : ('a, 'b) Nx.t U.t)
+    (t : t) : ('a, 'b) Nx.t U.t =
   check_names ~op:"to_params"
     (fun f acc like -> U.fold (fun path acc _ -> f path acc ()) acc like)
     ?prefix like;

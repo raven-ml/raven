@@ -32,7 +32,8 @@ val init : dim:int -> Nx.float32_t t
 
 (** {1:applying Applying} *)
 
-val apply : ?eps:float -> (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val apply :
+  ?eps:float -> (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [apply p x] normalizes each vector along [x]'s last axis and rescales it:
 
     {v (x - mean(x)) / sqrt (var(x) + eps) * gamma + beta v}
