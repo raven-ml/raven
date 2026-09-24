@@ -92,6 +92,38 @@ let test_multi_leaf_rule () =
   check_arr ~msg:"da" (to_arr b) g.fst;
   check_arr ~msg:"db" (to_arr a) g.snd
 
+(* A rule whose result is one of its parameters: the result's cotangent is added
+   to the parameter once, and the parameter keeps its own tangent. *)
+let w () = vec64 [| 2.0; -3.0 |]
+
+let test_vjp_rule_returning_its_parameter () =
+  let id x =
+    Rune.custom_vjp
+      (module Single)
+      ~fwd:(fun x -> (x, ()))
+      ~bwd:(fun () ct -> ct)
+      x
+  in
+  check_arr ~msg:"1 + 2x" [| 5.0; -5.0 |]
+    (Rune.grad' (fun x -> Nx.sum (Nx.add (id x) (Nx.mul x x))) (w ()));
+  let r = Rune.remat (module Single) (fun x -> x) in
+  check_arr ~msg:"remat of the identity" [| 4.0; -6.0 |]
+    (Rune.grad' (fun x -> Nx.sum (Nx.mul (r x) x)) (w ()))
+
+let test_jvp_rule_returning_its_parameter () =
+  let dbl x =
+    Rune.custom_jvp
+      (module Single)
+      ~f:Fun.id
+      ~jvp:(fun x dx -> (x, Nx.mul_s dx 2.0))
+      x
+  in
+  let ones = vec64 [| 1.0; 1.0 |] in
+  let _, dy = Rune.jvp' (fun x -> Nx.add (dbl x) x) (w ()) ones in
+  check_arr ~msg:"2 + 1" [| 3.0; 3.0 |] dy;
+  let _, dy = Rune.jvp' (fun x -> Nx.add x (dbl x)) (w ()) ones in
+  check_arr ~msg:"1 + 2" [| 3.0; 3.0 |] dy
+
 let test_custom_vjp_rejects_forward_mode () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Rune.jvp' my_sin (v3 ()) (tangent_like (v3 ()))))
@@ -204,6 +236,8 @@ let tests =
         test "constants pass through" test_constants_pass_through;
         test "multi-leaf structures get per-leaf gradients" test_multi_leaf_rule;
         test "rejects forward mode" test_custom_vjp_rejects_forward_mode;
+        test "a result that is its parameter"
+          test_vjp_rule_returning_its_parameter;
       ];
     group "custom_jvp"
       [
@@ -212,6 +246,8 @@ let tests =
           test_correct_jvp_rule_matches_autodiff;
         test "rejects reverse mode" test_custom_jvp_rejects_reverse_mode;
         test "undifferentiated calls run f" test_custom_jvp_undifferentiated;
+        test "a result that is its parameter"
+          test_jvp_rule_returning_its_parameter;
       ];
     group "composition"
       [

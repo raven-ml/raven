@@ -602,6 +602,9 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
               else begin
                 let dparams = Q.map (fun leaf -> tan_or_zeros leaf) params in
                 let y, dy = jvp params dparams in
+                (* A result that is one of the parameters is aliased, so the
+                   parameter keeps its own tangent. *)
+                let y = reshape y (T.shape y) in
                 set_tangent y dy;
                 continue k y
               end)

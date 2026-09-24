@@ -1104,6 +1104,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
               let any = ref false in
               Q.iter (fun leaf -> if tracked leaf then any := true) params;
               let y, res = fwd params in
+              (* A result that is one of the parameters is aliased, so its
+                 cotangent is the result's alone. *)
+              let y = if !any then reshape y (T.shape y) else y in
               if !any then begin
                 track y;
                 Tape.record tape (fun () ->
