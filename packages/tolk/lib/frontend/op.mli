@@ -74,6 +74,14 @@ val pad_constant :
     [None] leaves an axis unchanged, and negative counts shrink. When [value]
     is non-zero the result dtype is promoted to hold it. *)
 
+val pad_to : ?value:Tensor.scalar -> Tensor.t -> int option list -> Tensor.t
+(** [pad_to t dims] pads [t] at the end of each axis to the corresponding
+    size in [dims], filling new elements with [value] (default [0]). [None]
+    keeps the current size. An unchanged shape returns [t].
+
+    @raise Invalid_argument if the ranks differ or a target size is smaller
+      than its current size. *)
+
 type pad_mode =
   | Constant  (** Fill new positions with a constant. *)
   | Reflect  (** Mirror the edge values, excluding the edge itself. *)

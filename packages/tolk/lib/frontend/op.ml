@@ -77,7 +77,7 @@ let var ?axis ?(keepdim = false) ?(correction = 1) t =
   let m = mean ?axis ~keepdim:true t in
   let squares = Elementwise.square (Elementwise.sub t m) in
   let n = reduced_count squares ?axis () in
-  let acc = D.sum_acc_dtype (T.val_dtype t) in
+  let acc = D.sum_acc_dtype (T.val_dtype squares) in
   let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast squares acc) in
   let denom = Stdlib.max (n - correction) 0 in
   Dtype_ops.cast (Elementwise.div numerator (T.i denom)) out_dt
@@ -177,8 +177,6 @@ let matmul ?dtype a b = dot ?dtype a b
 
 (* Constant padding *)
 
-let is_zero = function T.Sint 0 | T.Sfloat 0.0 -> true | _ -> false
-
 (* A fill value enters as a weak literal, so the padded tensor is promoted by
    the select below rather than by an explicit cast here. *)
 let scalar_tensor = function
@@ -186,7 +184,7 @@ let scalar_tensor = function
   | T.Sfloat x -> T.f x
   | T.Sbool v -> T.b v
 
-let pad_constant t px value =
+let pad_value t px value =
   let px = List.map (function None -> (0, 0) | Some p -> p) px in
   let sh = T.shape t in
   let has_neg = List.exists (fun (before, after) -> before < 0 || after < 0) px in
@@ -203,42 +201,44 @@ let pad_constant t px value =
     else px
   in
   let base = Movement.pad x pads in
-  if is_zero value then base
+  if Uop.equal (T.uop value) (Uop.const (Const.zero (T.dtype value))) then base
   else
     let mask =
       Movement.pad (Creation.const_like ~dtype:D.bool x (T.Sbool true)) pads
     in
-    Elementwise.where mask base (scalar_tensor value)
+    Elementwise.where mask base value
+
+let pad_constant t px value = pad_value t px (scalar_tensor value)
+
+let pad_to ?(value = T.Sint 0) t dims =
+  let ret = Movement.pad_to t dims in
+  let value = scalar_tensor value in
+  if T.uop ret == T.uop t
+     || Uop.equal (T.uop value) (Uop.const (Const.zero (T.dtype value))) then ret
+  else
+    let mask =
+      Movement.pad_to (Creation.const_like ~dtype:D.bool t (T.Sbool true)) dims
+    in
+    Elementwise.where mask ret value
 
 (* Associative scans *)
 
-let max_identity dt =
-  if D.is_float dt then T.Sfloat neg_infinity
-  else if D.is_unsigned dt then T.Sint 0
-  else
-    let bits = D.bitsize dt in
-    T.Sint (if bits >= 63 then min_int else -(1 lsl (bits - 1)))
-
-let dtype_max dt =
-  if D.is_float dt then T.Sfloat infinity
-  else
-    let bits = D.bitsize dt in
-    if D.is_unsigned dt then T.Sint (if bits >= 63 then max_int else (1 lsl bits) - 1)
-    else T.Sint (if bits >= 62 then max_int else (1 lsl (bits - 1)) - 1)
+let dtype_min_tensor t = T.of_uop (Uop.const (Const.min_value (T.val_dtype t)))
+let dtype_max_tensor t = T.of_uop (Uop.const (Const.max_value (T.val_dtype t)))
 
 let cumalu t axis op =
   let k = List.nth (T.shape t) axis in
   let ident =
     match op with
-    | Ops.Add -> T.Sint 0
-    | Ops.Mul -> T.Sint 1
-    | Ops.Max -> max_identity (T.val_dtype t)
+    | Ops.Add -> T.i 0
+    | Ops.Mul -> T.i 1
+    | Ops.Max -> dtype_min_tensor t
     | _ -> invalid_arg "Op.cumalu: op must be Add, Mul, or Max"
   in
   let xt = Movement.transpose ~dim0:axis ~dim1:(-1) t in
   let nd = T.ndim xt in
   let px = List.init nd (fun idx -> if idx = nd - 1 then Some (k - 1, 0) else None) in
-  let pooled = Movement.pool (pad_constant xt px ident) ~k:[ k ] () in
+  let pooled = Movement.pool (pad_value xt px ident) ~k:[ k ] () in
   let reduced =
     match op with
     | Ops.Add -> Reduce.sum ~axis:[ -1 ] pooled
@@ -289,7 +289,10 @@ let arange ?stop ?(step = 1) ?dtype start =
   let output_len = iceildiv (stop - start) step in
   if output_len <= 0 then Creation.full ~dtype:dt ~buffer:false [ 0 ] (T.Sint 0)
   else
-    let base = Creation.full ~dtype:dt ~buffer:false [ output_len ] (T.Sint step) in
+    let acc_dtype =
+      if D.is_float dt then D.least_upper_dtype [ dt; D.float32 ] else dt
+    in
+    let base = Creation.full ~dtype:acc_dtype ~buffer:false [ output_len ] (T.Sint step) in
     let scan = cumalu base 0 Ops.Add in
     Dtype_ops.cast (Elementwise.add scan (T.i (start - step))) dt
 
@@ -464,15 +467,15 @@ let scatter_reduce t ~dim index src ~reduce ?(include_self = true) () =
         (Reduce.prod ~axis:[ -1 ] (Elementwise.where mask src (T.i 1)))
         (self_or (T.i 1))
   | `Amax ->
-      let m = Creation.const_like src (max_identity (T.val_dtype src)) in
+      let m = dtype_min_tensor src in
       Elementwise.maximum
         (Reduce.max ~axis:[ -1 ] (Elementwise.where mask src m))
-        (self_or (Creation.const_like t (max_identity (T.val_dtype src))))
+        (self_or (dtype_min_tensor src))
   | `Amin ->
-      let m = Creation.const_like src (dtype_max (T.val_dtype src)) in
+      let m = dtype_max_tensor src in
       Elementwise.minimum
         (Reduce.min ~axis:[ -1 ] (Elementwise.where mask src m))
-        (self_or (Creation.const_like t (dtype_max (T.val_dtype src))))
+        (self_or (dtype_max_tensor src))
   | `Mean ->
       let count =
         Elementwise.add
@@ -868,7 +871,7 @@ let sort ?(dim = -1) ?(descending = false) t =
     let ndim = T.ndim t in
     let n_stages = bit_length (orig_len - 1) in
     let pad_val =
-      if descending then max_identity (T.val_dtype t) else dtype_max (T.val_dtype t)
+      if descending then dtype_min_tensor t else dtype_max_tensor t
     in
     let pads =
       List.init ndim (fun i ->
@@ -876,7 +879,7 @@ let sort ?(dim = -1) ?(descending = false) t =
     in
     let x =
       ref
-        (Movement.unflatten (pad_constant t pads pad_val) dim
+        (Movement.unflatten (pad_value t pads pad_val) dim
            (List.init n_stages (fun _ -> 2)))
     in
     let split2 d = match Movement.split ~dim:d !x 1 with [ a; b ] -> (a, b) | _ -> assert false in
@@ -980,7 +983,7 @@ let conv2d ?bias ?(groups = 1) ?(stride = [ 1 ]) ?(dilation = [ 1 ])
   in
   let x =
     Movement.pool
-      (pad_constant x pad_arg (T.Sfloat 0.0))
+      (pad_constant x pad_arg (T.Sfloat 0.))
       ~k:hw ~stride ~dilation ()
   in
   let rcout = cout / groups in
@@ -1011,9 +1014,6 @@ let conv2d ?bias ?(groups = 1) ?(stride = [ 1 ]) ?(dilation = [ 1 ])
       Elementwise.add ret
         (Movement.reshape bias ([ 1; -1 ] @ List.init nsp (fun _ -> 1)))
 
-let dtype_min_scalar t =
-  if Dtype_ops.is_floating_point t then T.Sfloat neg_infinity
-  else invalid_arg "Op.max_pool2d: integer max pooling is not yet supported"
 
 let pool_pad x ~k ~pads ~value =
   let ndim = T.ndim x in
@@ -1022,7 +1022,7 @@ let pool_pad x ~k ~pads ~value =
     List.init (ndim - nk) (fun _ -> Some (0, 0))
     @ List.map (fun p -> Some p) (flat_to_grouped pads)
   in
-  pad_constant x pad_arg value
+  pad_value x pad_arg value
 
 let avg_pool2d ?(kernel_size = [ 2; 2 ]) ?stride ?(dilation = [ 1 ])
     ?(padding = [ 0 ]) x =
@@ -1032,7 +1032,7 @@ let avg_pool2d ?(kernel_size = [ 2; 2 ]) ?stride ?(dilation = [ 1 ])
   let axis = List.init nk (fun i -> -nk + i) in
   let pads = resolve_pool_pads padding nk in
   let pooled =
-    Movement.pool (pool_pad x ~k ~pads ~value:(T.Sfloat 0.0)) ~k ~stride ~dilation ()
+    Movement.pool (pool_pad x ~k ~pads ~value:(T.f 0.)) ~k ~stride ~dilation ()
   in
   mean ~axis pooled
 
@@ -1045,7 +1045,7 @@ let max_pool2d ?(kernel_size = [ 2; 2 ]) ?stride ?(dilation = [ 1 ])
   let pads = resolve_pool_pads padding nk in
   let pooled =
     Movement.pool
-      (pool_pad x ~k ~pads ~value:(dtype_min_scalar x))
+      (pool_pad x ~k ~pads ~value:(dtype_min_tensor x))
       ~k ~stride ~dilation ()
   in
   Reduce.max ~axis pooled
@@ -1054,7 +1054,8 @@ let max_pool2d ?(kernel_size = [ 2; 2 ]) ?stride ?(dilation = [ 1 ])
 
 let logsumexp ?axis ?(keepdim = false) t =
   let ax = Option.map (fun a -> [ a ]) axis in
-  let m = Reduce.max ?axis:ax ~keepdim:true t in
+  let mx = Reduce.max ?axis:ax ~keepdim:true t in
+  let m = Elementwise.where (Elementwise.isfinite mx) mx (T.i 0) in
   let reduced =
     Elementwise.log
       (Reduce.sum ?axis:ax ~keepdim (Elementwise.exp (Elementwise.sub t m)))
@@ -1123,10 +1124,11 @@ let logcumsumexp ?(axis = 0) t =
     let last = List.nth (T.shape x) (T.ndim x - 1) in
     let x_unsqueezed = Movement.unsqueeze x (-2) in
     let x_cummax, _ = cummax ~axis:(-1) x in
+    let x_cummax = Elementwise.where (Elementwise.isfinite x_cummax) x_cummax (T.i 0) in
     let mask = tril (Creation.ones ~dtype:D.bool ~buffer:false [ last; last ]) in
     let diff = Elementwise.sub x_unsqueezed (Movement.unsqueeze x_cummax (-1)) in
     let filled =
-      Elementwise.where mask diff (Creation.const_like diff (dtype_min_scalar t))
+      Elementwise.where mask diff (dtype_min_tensor t)
     in
     let ret =
       Elementwise.add

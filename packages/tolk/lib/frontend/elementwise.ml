@@ -272,11 +272,6 @@ let copysign a b =
     (bitwise_or (lt b (T.i 0)) (lt (reciprocal b) (T.i 0)))
     (neg mag) mag
 
-let logaddexp a b =
-  let a, b = broadcasted a b in
-  let m = maximum a b in
-  add (log (add (exp (sub a m)) (exp (sub b m)))) m
-
 let lerp t end_ weight = add t (mul (sub end_ t) weight)
 
 (* Floating-point classification *)
@@ -289,6 +284,12 @@ let isinf ?(detect_positive = true) ?(detect_negative = true) t =
     (mul (eq t (T.f neg_infinity)) (T.b detect_negative))
 
 let isfinite t = logical_not (bitwise_or (isinf t) (isnan t))
+
+let logaddexp a b =
+  let a, b = broadcasted a b in
+  let mx = maximum a b in
+  let m = where (isfinite mx) mx (T.i 0) in
+  add (log (add (exp (sub a m)) (exp (sub b m)))) m
 
 let isclose ?(rtol = 1e-05) ?(atol = 1e-08) ?(equal_nan = false) t other =
   let finite =
@@ -304,8 +305,9 @@ let isclose ?(rtol = 1e-05) ?(atol = 1e-08) ?(equal_nan = false) t other =
 (* Error function and other logarithms *)
 
 let erf t =
-  let s = reciprocal (add (T.f 1.0) (mul (T.f 0.3275911) (abs t))) in
-  mul (sign t)
+  let sg = where (ge t (T.i 0)) (T.f 1.) (T.f (-1.)) in
+  let s = reciprocal (add (T.f 1.0) (mul (T.f 0.3275911) (mul sg t))) in
+  mul sg
     (sub (T.f 1.0)
        (mul
           (mul s
@@ -325,13 +327,15 @@ let asin t =
   let coeffs =
     [
       -0.0012624911; 0.0066700901; -0.0170881256; 0.0308918810; -0.0501743046;
-      0.0889789874; -0.2145988016; 1.5707963050;
+      0.0889789874; -0.2145988016; Float.pi /. 2.;
     ]
   in
-  mul (sign t)
+  let sg = where (ge t (T.i 0)) (T.f 1.) (T.f (-1.)) in
+  let a = mul sg t in
+  mul sg
     (sub
        (T.f (Float.pi /. 2.))
-       (mul (sqrt (sub (T.f 1.0) (abs t))) (polyn (abs t) coeffs)))
+       (mul (sqrt (sub (T.f 1.0) a)) (polyn a coeffs)))
 
 let acos t = sub (T.f (Float.pi /. 2.)) (asin t)
 let atan t = asin (div t (sqrt (add (T.f 1.0) (mul t t))))
@@ -344,20 +348,23 @@ let cosh t = div (add (exp t) (exp (neg t))) (T.f 2.0)
 let atanh t =
   div (log (div (add (T.f 1.0) t) (sub (T.f 1.0) t))) (T.f 2.0)
 
-let asinh t = log (add t (sqrt (add (square t) (T.f 1.0))))
+let asinh t =
+  let sg = where (lt t (T.i 0)) (T.f (-1.)) (T.f 1.) in
+  mul sg (log (add (mul t sg) (sqrt (add (square t) (T.i 1)))))
 let acosh t = log (add t (sqrt (sub (square t) (T.f 1.0))))
 
 (* Activations *)
 
-let relu6 t = sub (relu t) (relu (sub t (T.f 6.0)))
+let relu6 t =
+  let r = relu t in
+  where (lt r (T.i 6)) r (T.i 6)
 
 let hardswish t =
   mul (mul t (relu6 (add t (T.f 3.0)))) (T.f (1. /. 6.))
 
 let hardsigmoid ?(alpha = 1. /. 6.) ?(beta = 0.5) t =
-  sub
-    (relu (add (mul (T.f alpha) t) (T.f beta)))
-    (relu (sub (add (mul (T.f alpha) t) (T.f beta)) (T.f 1.0)))
+  let y = relu (add (mul (T.f alpha) t) (T.f beta)) in
+  where (lt y (T.i 1)) y (T.i 1)
 
 let hardtanh ?(min_val = -1.0) ?(max_val = 1.0) t =
   clamp ~min:(T.f min_val) ~max:(T.f max_val) t
@@ -379,19 +386,14 @@ let swish t = mul t (sigmoid t)
 let silu = swish
 
 let elu ?(alpha = 1.0) t =
-  sub (relu t) (mul (T.f alpha) (relu (sub (T.f 1.0) (exp t))))
+  where (gt t (T.i 0)) t
+    (mul (T.f alpha) (sub (exp (sub t (relu t))) (T.i 1)))
 
 let celu ?(alpha = 1.0) t =
-  add (maximum t (T.i 0))
-    (minimum
-       (mul (T.f alpha)
-          (sub (exp (div t (T.f alpha))) (T.f 1.0)))
-       (T.i 0))
+  mul (T.f alpha) (elu (div t (T.f alpha)))
 
 let selu ?(alpha = 1.67326) ?(gamma = 1.0507) t =
-  mul (T.f gamma)
-    (where (ge t (T.i 0)) t
-       (mul (T.f alpha) (sub (exp t) (T.f 1.0))))
+  mul (T.f gamma) (elu ~alpha t)
 
 let softplus ?(beta = 1.0) t =
   mul (T.f (1. /. beta))

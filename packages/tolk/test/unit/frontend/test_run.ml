@@ -952,6 +952,16 @@ let constant_tests =
     ]
 
 let numerical_edge_tests =
+  let int64s values =
+    let bytes = Bytes.create (Array.length values * 8) in
+    Array.iteri (fun i n -> Bytes.set_int64_le bytes (8 * i) n) values;
+    Run.of_bytes ~dtype:Tolk_uop.Dtype.int64 ~shape:[ Array.length values ] bytes
+  in
+  let check_int64s values tensor =
+    let bytes = Run.data tensor in
+    equal int (8 * Array.length values) (Bytes.length bytes);
+    Array.iteri (fun i n -> equal int64 n (Bytes.get_int64_le bytes (8 * i))) values
+  in
   let check expected t =
     let actual = Run.to_float_array t in
     equal int (Array.length expected) (Array.length actual);
@@ -966,9 +976,78 @@ let numerical_edge_tests =
   in
   group "numerical edges"
     [
+      test "int64 scan, sort and scatter retain full-width identities" (fun () ->
+          let lo = Int64.min_int and hi = Int64.max_int in
+          let ascending = [| lo; Int64.succ lo; Int64.add lo 2L |] in
+          check_int64s ascending (fst (Op.cummax (int64s ascending)));
+          let unordered = [| hi; Int64.sub hi 2L; Int64.pred hi |] in
+          check_int64s [| Int64.sub hi 2L; Int64.pred hi; hi |]
+            (fst (Op.sort (int64s unordered)));
+          check_int64s [| hi; Int64.sub hi 2L; hi |]
+            (Op.scatter_reduce (int64s [| hi; hi; hi |]) ~dim:0
+               (Run.of_int_array ~shape:[ 1 ] [| 1 |])
+               (int64s [| Int64.sub hi 2L |]) ~reduce:`Amin ~include_self:false ()));
+      test "small-dtype arange accumulates before narrowing" (fun () ->
+          let module D = Tolk_uop.Dtype in
+          List.iter
+            (fun dtype ->
+              List.iter
+                (fun (start, stop, step) ->
+                  let expected =
+                    Dt.float (Dt.cast (Op.arange ~stop ~step start) dtype)
+                    |> Run.to_float_array
+                  in
+                  check expected (Dt.float (Op.arange ~dtype ~stop ~step start)))
+                ([ (0, 10, 3); (0, 200, 1) ]
+                 @ if D.is_fp8 dtype then [] else [ (0, 2560, 1) ]))
+            [ D.float16; D.bfloat16; D.fp8e4m3; D.fp8e5m2 ]);
+      test "pad_to preserves nonzero fill" (fun () ->
+          let input = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
+          check [| 1.; 2.; -7.; 3.; 4.; -7.; -7.; -7.; -7. |]
+            (Op.pad_to ~value:(T.Sfloat (-7.)) input [ Some 3; Some 3 ]);
+          check [| 1.; 2.; 0.; 3.; 4.; 0. |]
+            (Op.pad_to input [ None; Some 3 ]);
+          is_true
+            (T.uop (Op.pad_to ~value:(T.Sfloat (-7.)) input [ None; None ])
+             == T.uop input));
+      test "asinh handles large negative inputs" (fun () ->
+          let values = [| -10000.; -1.; 0.; 1.; 10000. |] in
+          check (Array.map Float.asinh values) (El.asinh (vec values)));
+      test "logaddexp handles infinities" (fun () ->
+          check [| neg_infinity; infinity; infinity; 0.; nan |]
+            (El.logaddexp
+               (vec [| neg_infinity; infinity; infinity; neg_infinity; nan |])
+               (vec [| neg_infinity; infinity; 0.; 0.; 1. |])));
+      test "logsumexp handles infinite rows" (fun () ->
+          check [| neg_infinity; infinity; Float.log 3. |]
+            (Op.logsumexp ~axis:1
+               (fa ~shape:[ 3; 2 ]
+                  [| neg_infinity; neg_infinity; infinity; 0.; 0.; Float.log 2. |])));
+      test "logcumsumexp handles infinite prefixes" (fun () ->
+          check [| neg_infinity; neg_infinity; 0.; infinity |]
+            (Op.logcumsumexp (vec [| neg_infinity; neg_infinity; 0.; infinity |])));
+      test "bounded activations saturate at large inputs" (fun () ->
+          let input = vec [| 1e20; infinity; neg_infinity; 0. |] in
+          check [| 6.; 6.; 0.; 0. |] (El.relu6 input);
+          check [| 1.; 1.; 0.; 0.5 |] (El.hardsigmoid input));
+      test "integer variance retains fractional squares" (fun () ->
+          check [| 0.25 |]
+            (Op.var ~correction:0 (Run.of_int_array ~shape:[ 2 ] [| 0; 1 |])));
       test "weak promotion preserves padding" (fun () ->
           let padded = Mv.pad (Mv.reshape (T.i 3) [ 1 ]) [ (1, 1) ] in
           check [| 1.; 4.; 1. |] (El.add padded (vec [| 1.; 1.; 1. |])));
+      test "integer max pooling pads with the dtype minimum" (fun () ->
+          let input = Run.of_int_array ~shape:[ 1; 1; 2; 2 ] [| -4; -3; -2; -1 |] in
+          check_ints [| -4; -3; -3; -2; -1; -1; -2; -1; -1 |]
+            (Op.max_pool2d ~stride:[ 1; 1 ] ~padding:[ 1 ] input));
+      test "int64 max pooling preserves a full-width padding value" (fun () ->
+          let data = Bytes.create 8 in
+          Bytes.set_int64_le data 0 Int64.min_int;
+          let input = Run.of_bytes ~dtype:Tolk_uop.Dtype.int64 ~shape:[ 1; 1; 1; 1 ] data in
+          let out = Op.max_pool2d ~stride:[ 1; 1 ] ~padding:[ 1 ] input in
+          let actual = Run.data out in
+          equal int 32 (Bytes.length actual);
+          for i = 0 to 3 do equal int64 Int64.min_int (Bytes.get_int64_le actual (8 * i)) done);
     ]
 
 let lifetime_tests =

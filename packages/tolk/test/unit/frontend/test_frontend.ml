@@ -530,10 +530,6 @@ let conv_tests =
             (shape
                (Op.avg_pool2d ~kernel_size:[ 3; 3 ] ~stride:[ 2 ] ~padding:[ 1 ]
                   (ones_f [ 1; 3; 8; 8 ]))));
-      test "max_pool2d on int raises" (fun () ->
-          raises_match
-            (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> Op.max_pool2d (ones_i [ 1; 1; 4; 4 ])));
     ]
 
 (* Elementwise remainder *)
@@ -817,7 +813,10 @@ let creation2_tests =
       test "arange rejects a range its explicit dtype cannot hold" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> Op.arange ~dtype:D.int8 200));
+            (fun () -> Op.arange ~dtype:D.int8 200);
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Op.arange ~dtype:D.fp8e4m3 450));
     ]
 
 (* Padding modes and masked fill *)

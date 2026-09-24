@@ -294,6 +294,11 @@ thread.
 
 ### Tolk (new)
 
+- Fix `asinh` for large negative inputs, log-space operations at infinity,
+  activation saturation, and integer `Op.var`.
+- Extrema, scans, sort and padded integer `Op.max_pool2d` preserve full-width
+  integer identities. `Op.arange` accumulates small floats in float32 before
+  narrowing, and `Op.pad_to` supports a nonzero fill value.
 - Release unreachable tensor buffers and cached graph properties. Live views
   and JIT captures retain their storage; serialized program cache keys no
   longer depend on process-local node identities.
