@@ -634,11 +634,52 @@ let test_sparse_program_arguments () =
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (Device.runtime device bad))
 
+let test_linear_formal_order ~reverse_buffers ~reverse_scalars () =
+  let device = cpu (Printf.sprintf "formal-order-%b-%b" reverse_buffers reverse_scalars) in
+  let param slot = U.param ~slot ~dtype:Dtype.int64 ~shape:(U.const_int 1) () in
+  let output = param (if reverse_buffers then 7 else 2) in
+  let input = param (if reverse_buffers then 2 else 7) in
+  let small = U.variable ~name:"z_small" ~min_val:0 ~max_val:16 ~dtype:Dtype.int32 () in
+  let wide_value = 0x1_0000_0002 in
+  let wide = U.variable ~name:"a_wide" ~min_val:0 ~max_val:(wide_value + 10)
+      ~dtype:Dtype.int64 () in
+  let zero = U.const (Const.int Dtype.int32 0) in
+  let index ptr = U.index ~ptr ~idxs:[ zero ] () in
+  let src = index input and dst = index output in
+  let loaded = U.load ~src () in
+  let small64 = U.cast ~src:small ~dtype:Dtype.int64 in
+  let scalar_sum = U.alu_binary ~op:Ops.Add ~lhs:small64 ~rhs:wide in
+  let sum = U.alu_binary ~op:Ops.Add ~lhs:loaded ~rhs:scalar_sum in
+  let scalars = if reverse_scalars then [ small; wide ] else [ wide; small ] in
+  let linear = [ output; input ] @ scalars @
+    [ zero; src; dst; loaded; small64; scalar_sum; sum; U.store ~dst ~value:sum () ] in
+  let spec = Device.compile_program device ~name:"formal_order" linear in
+  let buffer n =
+    let b = Device.create_buffer ~size:1 ~dtype:Dtype.int64 device in
+    Device.Buffer.ensure_allocated b;
+    let bytes = Bytes.create 8 in
+    Bytes.set_int64_le bytes 0 n;
+    Device.Buffer.copyin b bytes;
+    b in
+  let out = buffer 0L and inp = buffer 5L in
+  let slots = [ (if reverse_buffers then 7 else 2), out;
+                (if reverse_buffers then 2 else 7), inp ] in
+  let buffers = List.map (fun slot -> List.assoc slot slots) (Program_spec.globals spec) in
+  let runner = Realize.Compiled_runner.create ~device spec in
+  ignore (Realize.Compiled_runner.call runner buffers [ "z_small", 3; "a_wide", wide_value ]
+    ~wait:true ~timeout:None);
+  equal int64 (Int64.of_int (wide_value + 8)) (Bytes.get_int64_le (Device.Buffer.as_bytes out) 0);
+  equal int64 5L (Bytes.get_int64_le (Device.Buffer.as_bytes inp) 0)
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "linear buffer formals retain their declaration order"
+            (test_linear_formal_order ~reverse_buffers:true ~reverse_scalars:false);
+          test "mixed-width scalar formals retain their declaration order"
+            (test_linear_formal_order ~reverse_buffers:false ~reverse_scalars:true);
           test "compiled signatures bind sparse arguments and reject wrong arities"
             test_sparse_program_arguments;
           test "software sine handles large arguments and word boundaries"

@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Hand-built linear programs preserve buffer and scalar declaration order in
+  `Program_spec`, preventing dispatch from swapping arguments when slot or
+  variable-name order differs from the rendered function signature.
 - `Device.runtime` now loads `Tiny_elf.t` binaries with their compilation
   target and argument signature. Dispatch checks argument counts, binds only
   the buffers used by each kernel, and supplies scalars during local-size tuning.

@@ -307,7 +307,7 @@ let () =
             let n = variable "n" 0 16 in
             let core_id = variable "core_id" 0 3 in
             ignore (call_runner state [ n; core_id ] [ "core_id", 2; "n", 7 ]);
-            equal (array int64) [| 2L; 7L |] state.vals;
+            equal (array int64) [| 7L; 2L |] state.vals;
             equal (array int) [| 1; 1; 1 |] state.global;
             equal int 0 state.nbufs);
           test "requires scalar variables" (fun () ->

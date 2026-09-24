@@ -286,44 +286,28 @@ type t = {
 
 let default_dims () = [| U.const_int 1; U.const_int 1; U.const_int 1 |]
 
-(* Collect bounded scalar parameter nodes visible from the program. *)
+(* The renderer consumes formals in linear order. Independently sorting their
+   names would bind a different value to each emitted argument. *)
 let collect_vars (program : program) =
-  let raw = ref [] in
-  List.iter (fun u ->
-    match U.op u, U.arg u with
-    | ( Ops.Param,
-        U.Arg.Param_arg
-          { name = Some name; vmin_vmax = Some (lo, hi); addrspace = Dtype.Alu;
-            _ } ) ->
-        raw := { node = u; var = { name; lo = Bound.to_int lo; hi = Bound.to_int hi; dtype = U.dtype u } } :: !raw
-    | _ -> ())
-    program;
-  let sorted =
-    List.sort
-      (fun (a : var_def) (b : var_def) ->
-        compare
-          (a.var.name, a.var.lo, a.var.hi)
-          (b.var.name, b.var.lo, b.var.hi))
-      !raw
-  in
-  (* Deduplicate by (name, lo, hi). *)
-  let rec dedup = function
-    | [] -> []
-    | [x] -> [x]
-    | { var = { name = an; lo = alo; hi = ahi; _ }; _ }
-      :: ({ var = { name = bn; lo = blo; hi = bhi; _ }; _ } :: _ as rest)
-      when an = bn && alo = blo && ahi = bhi ->
-        dedup rest
-    | a :: rest -> a :: dedup rest
-  in
-  dedup sorted
+  let seen = U.Ref_tbl.create 8 in
+  List.filter_map (fun u ->
+      match U.op u, U.arg u with
+      | Ops.Param, U.Arg.Param_arg
+          { name = Some name; vmin_vmax = Some (lo, hi); addrspace = Dtype.Alu; _ }
+        when not (U.Ref_tbl.mem seen u) ->
+          U.Ref_tbl.add seen u ();
+          Some { node = u; var = { name; lo = Bound.to_int lo;
+            hi = Bound.to_int hi; dtype = U.dtype u } }
+      | _ -> None) program
 
 let collect_globals (program : program) =
-  let globals = ref [] in
-  List.iter (fun u ->
-    Option.iter (fun slot -> globals := slot :: !globals) (slot_of_define u))
-    program;
-  List.sort_uniq Int.compare !globals
+  let seen = Hashtbl.create 8 in
+  List.filter_map (fun u ->
+      match slot_of_define u with
+      | Some slot when not (Hashtbl.mem seen slot) ->
+          Hashtbl.add seen slot ();
+          Some slot
+      | _ -> None) program
 
 let collect_buffers (program : program) =
   let outs = ref [] in
@@ -392,9 +376,7 @@ let of_program ~name ~src ~device ?(target = Target.of_string "") ?lib ?(applied
   let var_defs = collect_vars program in
   let vars = List.map (fun def -> def.var) var_defs in
   let outs, ins = collect_buffers program in
-  let globals =
-    List.sort_uniq Int.compare (collect_globals program @ outs @ ins)
-  in
+  let globals = collect_globals program in
   let launch = collect_launch program in
   let estimates = match estimates with
     | Some estimates -> estimates

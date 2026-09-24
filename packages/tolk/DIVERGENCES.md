@@ -6,6 +6,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **CPU kernels expose an entry taking buffer and scalar arrays.** The Clang
+  wrapper casts each scalar to its declared type, so OCaml can call arbitrary
+  kernel arities through one native stub without an FFI dependency. `Tiny_elf`
+  retains the typed signature and dispatch checks both array lengths. Coverage:
+  CPU execution tests for mixed-width scalars, sparse slots, rejected arities
+  and typed host calls. Reconsider when adding a CPU renderer that cannot emit
+  this entry convention.
+
 - **Symbolic index expressions use `Movement.symbolic_shrink`**, composed with
   `Movement.squeeze` for a scalar selection. `Movement.index` keeps integer
   bounds; `Op.getitem` supports symbolic axis lengths and index-tensor shapes.
