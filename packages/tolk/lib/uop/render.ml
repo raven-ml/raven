@@ -249,11 +249,13 @@ and kernel_info_debug_string (k : kernel_info) =
     ]
 
 and call_info_debug_string (c : call_info) =
-  Printf.sprintf "CallInfo(%s, %s, %s, %s)"
+  Printf.sprintf "CallInfo(%s, %s, %s, %s%s)"
     (if Option.is_some c.grad_fxn then "<function>" else "None")
     (option_string python_quote c.name)
     (python_bool c.precompile)
     (python_bool c.precompile_backward)
+    (if Dtype.equal c.dtype Dtype.void then ""
+     else ", dtype=" ^ dtype_debug_string c.dtype)
 
 and launch_dim_debug_string = function
   | Launch_int n -> string_of_int n

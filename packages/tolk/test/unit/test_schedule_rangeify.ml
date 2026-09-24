@@ -250,6 +250,7 @@ let is_always_contiguous_tests =
                       name = None;
                       precompile = false;
                       precompile_backward = false;
+                      dtype = Tolk_uop.Dtype.void;
                     })));
       test "reshape not contiguous" (fun () ->
           is_false (is_always_contiguous (U.reshape ~src:dummy ~shape:dummy2)));

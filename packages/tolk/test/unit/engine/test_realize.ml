@@ -127,6 +127,7 @@ let call_info name : U.call_info =
     name;
     precompile = false;
     precompile_backward = false;
+    dtype = Dtype.void;
     aux = None;
   }
 
@@ -444,6 +445,7 @@ let () =
                 name = Some "rl_kernel";
                 precompile = false;
                 precompile_backward = false;
+                dtype = Dtype.void;
                 aux = None;
               }
             in
@@ -466,6 +468,7 @@ let () =
                 name = Some "rl_param";
                 precompile = false;
                 precompile_backward = false;
+                dtype = Dtype.void;
                 aux = None;
               }
             in
@@ -496,6 +499,7 @@ let () =
                 name = None;
                 precompile = false;
                 precompile_backward = false;
+                dtype = Dtype.void;
                 aux = None;
               }
             in

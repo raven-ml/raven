@@ -60,6 +60,7 @@ let call_info name : Uop.call_info =
     name = Some name;
     precompile = false;
     precompile_backward = false;
+    dtype = Dtype.void;
     aux = None;
   }
 
@@ -769,7 +770,8 @@ let full_spec_accepts_intermediate_forms () =
   let slice = Uop.slice ~src ~offset:(Uop.const_int 0) ~size:4 ~dtype:Dtype.int32 in
   let call = Uop.call ~body:slice ~args:[ Uop.const_int 4 ] ~info:(call_info "slice") in
   let call_without_info = Uop.replace call ~arg:Uop.Arg.Empty () in
-  let call_non_void = Uop.replace call ~dtype:Dtype.int32 () in
+  let call_non_void = Uop.replace call
+      ~arg:(Uop.Arg.Call_info { (call_info "slice") with dtype = Dtype.int32 }) () in
   let loose_after =
     Uop.replace (i32 1) ~op:Ops.After
       ~src:[| i32 1; Uop.const_float 0.0 |] ()
@@ -1243,6 +1245,34 @@ let full_spec_has_no_catch_all () =
   is_true ~msg:"full_spec rejects unrecognised node"
     (rejected Spec.full_spec unknown)
 
+let typed_host_call_contract () =
+  let range = Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Loop
+      ~dtype:Dtype.int32 () in
+  let body = Uop.custom_function ~name:"external"
+      ~srcs:[ Uop.const (Const.int Dtype.uint64 0) ] in
+  let info = { (call_info "external") with dtype = Dtype.int32 } in
+  let buffer = global_i32_param () in
+  let opaque = Uop.call ~body ~args:[ buffer ]
+      ~info:{ info with dtype = Dtype.void } in
+  let program_info = Uop.program_info_from_sink (Uop.sink [ opaque ]) in
+  equal (list int) [ 0 ] program_info.ins;
+  equal (list int) [ 0 ] program_info.outs;
+  let call = Uop.call ~body ~args:[ range ] ~info in
+  List.iter (fun spec -> Spec.type_verify spec call)
+    [ Spec.tensor_spec; Spec.program_spec; Spec.full_spec ];
+  equal int 1 (List.length (Uop.ranges call));
+  is_true ~msg:"host calls preserve argument ranges"
+    (Uop.equal range (List.hd (Uop.ranges call)));
+  is_true ~msg:"host returns have scalar shape" (Uop.shape_opt call = Some []);
+  let changed = Uop.replace call
+      ~arg:(Uop.Arg.Call_info { info with dtype = Dtype.float32 }) () in
+  is_true ~msg:"metadata replacement derives the new return type"
+    (Dtype.equal (Uop.dtype changed) Dtype.float32);
+  is_true ~msg:"an explicit stale dtype cannot override CallInfo"
+    (Uop.equal call (Uop.replace call ~dtype:Dtype.void ()));
+  is_true ~msg:"serialized calls retain the declared return type"
+    (Uop.equal changed (Uop.import (Uop.export changed)))
+
 let conditional_loop_contract () =
   let outer = Uop.range ~size:(i32 4) ~axis:1 ~kind:Axis_type.Loop
       ~dtype:Dtype.int32 () in
@@ -1276,6 +1306,7 @@ let () =
     [
       group "shared_spec"
         [
+          test "Typed host call contract" typed_host_call_contract;
           test "Conditional loop contract" conditional_loop_contract;
           test "Sink void accepted" sink_void;
           test "Const matching dtype" const_matching_dtype;

@@ -573,6 +573,7 @@ let call_constructor_parity () =
       name = Some "call";
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in
@@ -867,6 +868,7 @@ let property_helpers_parity () =
       name = Some "shape_fn";
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in
@@ -1333,6 +1335,7 @@ let cache_info_semantic_key_parity () =
       name = Some "fn";
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux;
     }
   in
@@ -1379,6 +1382,7 @@ let remove_all_tags_parity () =
       name = None;
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in
@@ -1654,6 +1658,7 @@ let debug_prints_rich_args_dataclass_style () =
       name = Some "fn";
       precompile = true;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in
@@ -2103,6 +2108,7 @@ let graph_rewrite_skips_call_body_by_default () =
       name = None;
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in
@@ -2143,6 +2149,7 @@ let graph_rewrite_pins_call_body_on_every_path () =
       name = None;
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in

@@ -134,7 +134,7 @@ let valid_full_slice u =
 
 let call_info_arg u =
   match Uop.arg u with
-  | Uop.Arg.Call_info _ -> true
+  | Uop.Arg.Call_info info -> Dtype.equal (Uop.dtype u) info.dtype
   | _ -> false
 
 let valid_gettuple g t =
@@ -163,7 +163,11 @@ let opaque_call_body = function
 let call_ok u body =
   call_info_arg u
   && opaque_call_body (Uop.op body)
-  && Uop.ranges body = []
+  && List.for_all
+       (fun r -> match Uop.as_range r with
+        | Some { kind = Axis_type.Device; _ } -> true
+        | _ -> false)
+       (Uop.ranges body)
 
 let function_ok u body =
   call_info_arg u && Uop.op body = Ops.Tuple && Uop.ranges body = []
@@ -272,6 +276,13 @@ let shared_spec : t =
     op ~dtype:Dtype.void Ops.Sink =?> (fun _ _ -> true);
 
     op Ops.Noop =?> (fun _ _ -> true);
+
+    op ~dtype:Dtype.void Ops.Custom_function
+    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
+
+    op ~allow_any_len:true
+      ~src:[ op ~src:[ any ] Ops.Custom_function ] Ops.Call
+    =?> (fun u _ -> call_info_arg u);
 
     (* Invalid is the lattice bottom and lives at bool. *)
     op ~src:[] Ops.Const
@@ -405,10 +416,7 @@ let tensor_spec : t =
     op ~src:[ var "var"; var "value" ] Ops.Bind
     =?> (fun u bs -> bind_ok u (bs $ "var") (bs $ "value"));
 
-    op ~dtype:Dtype.void Ops.Custom_function
-    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
-
-    op ~allow_any_len:true ~dtype:Dtype.void
+    op ~allow_any_len:true
       ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Copy;
                    Ops.Custom_function ] ]
       Ops.Call

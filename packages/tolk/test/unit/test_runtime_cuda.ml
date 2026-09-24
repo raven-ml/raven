@@ -130,6 +130,7 @@ let graph_call_info : U.call_info =
     name = None;
     precompile = false;
     precompile_backward = false;
+    dtype = Dtype.void;
     aux = None;
   }
 

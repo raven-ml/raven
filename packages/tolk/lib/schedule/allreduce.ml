@@ -237,6 +237,7 @@ let create_allreduce_function buf ~op ~device ~dtype ~shape ?output () =
           name = Some "allreduce";
           precompile = true;
           precompile_backward = false;
+          dtype = Dtype.void;
           aux = None;
         }
       in

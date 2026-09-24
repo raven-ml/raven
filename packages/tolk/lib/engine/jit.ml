@@ -118,6 +118,7 @@ let create_graph_call batch =
       name = None;
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in

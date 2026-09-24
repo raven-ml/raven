@@ -206,6 +206,7 @@ type ctx = {
 and language = {
   (* language options *)
   kernel_typedef : string;  (* may embed {launch_bounds} *)
+  abi : string;
   buffer_prefix : string;
   buffer_suffix : string;
   smem_align : string;
@@ -696,6 +697,20 @@ let base_rewrite : ctx rule list =
   [
     (* Local/register buffers. *)
     (op ~name:"x" Ops.Buffer, fun ctx bs _ -> render_buffer ctx (bs $ "x"));
+    (* External calls carry the callee pointer in their body. *)
+    ( op ~name:"call" ~allow_any_len:true
+        ~src:[ op ~src:[ var "fptr" ] Ops.Custom_function ] Ops.Call,
+      fun ctx bs _ ->
+        let call = bs $ "call" in
+        let args = List.tl (U.children call) in
+        let types = List.map (render_type ctx) args |> String.concat ", " in
+        let values = List.map (fun arg ->
+            strf "(%s)(%s)" (render_type ctx arg) (lookup ctx arg)) args
+          |> String.concat ", " in
+        Some (strf "(((%s%s(*)(%s))(%s))(%s))%s"
+          ctx.lang.abi (render_dtype ctx (U.dtype call)) types
+          (lookup ctx (bs $ "fptr")) values
+          (if Dtype.equal (U.dtype call) Dtype.void then ";" else "")) );
     (* IF: "if (cond) {" *)
     ( op ~name:"x" Ops.If,
       fun ctx bs _ ->
@@ -1299,7 +1314,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
   List.iter
     (fun u ->
       match U.op u with
-      | Ops.Noop | Ops.Group -> ()
+      | Ops.Noop | Ops.Group | Ops.Custom_function -> ()
       (* An empty void Stack is the rank-0 shape marker carried by scalar
          Param sources: structural, nothing to render. *)
       | Ops.Stack
@@ -1549,7 +1564,7 @@ let render (lang : language) ?name:name_override (uops : U.t list) : string =
 let default_type_map scalar = Some (c_scalar_to_string scalar)
 
 let make_language
-    ?(kernel_typedef = "void")
+    ?(kernel_typedef = "void") ?(abi = "")
     ?(buffer_prefix = "") ?(buffer_suffix = "")
     ?(smem_align = "") ?(smem_prefix = "")
     ?(smem_prefix_for_cast = true)
@@ -1572,7 +1587,7 @@ let make_language
     ?(preamble = fun _ _ -> [])
     () : language =
   {
-    kernel_typedef; buffer_prefix; buffer_suffix; smem_align; smem_prefix;
+    kernel_typedef; abi; buffer_prefix; buffer_suffix; smem_align; smem_prefix;
     smem_prefix_for_cast; var_prefix; var_suffix; barrier; code_for_workitem;
     extra_args; supports_images; float4; float4_style; gep_arr_threshold; type_map;
     infinity; nan; code_for_op; string_rewrite; extra_matcher;
@@ -1711,6 +1726,7 @@ let clang_preamble ?aligned lang uops =
 
 let clang_language : language =
   make_language
+    ~abi:(if Sys.win32 then "__attribute__((ms_abi)) " else "")
     ~buffer_suffix:" restrict"
     ~gep_arr_threshold:0
     ~type_map:clang_type_map

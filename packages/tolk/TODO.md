@@ -27,8 +27,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   flushes subnormals and clamps infinities, so rune refuses a compiled float8
   `Nx.bitcast`.
 
-- Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/CallInfo/
-  ProgramInfo metadata, ALLOC, effectful CALL, scalar binding effects and
+- Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
+  metadata, ALLOC, effectful CALL, scalar binding effects and
   effect-preserving END. Remove deleted operations and stale enum/cache formats.
 - Adopt the final axis kinds. Port sorted-axis
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
@@ -66,7 +66,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   Preserve WARP dimensions and symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
   Preserve access flags and volatile metadata during coalescing.
-- Render host-call ABI, volatile parameters, void loops and final constants.
+- Render volatile parameters and final constants.
   Coordinate Metal's argument-struct ABI with its runtime binding.
 
 ## Storage, execution and devices

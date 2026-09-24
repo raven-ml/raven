@@ -105,6 +105,7 @@ and call_info = {
   precompile : bool;
   precompile_backward : bool;
   aux : string option;
+  dtype : Dtype.t;
 }
 
 and launch_dim = Launch_int of int | Launch_float of float | Launch_sym of t
@@ -232,6 +233,7 @@ module Arg = struct
         && x.precompile = y.precompile
         && x.precompile_backward = y.precompile_backward
         && x.aux = y.aux
+        && Dtype.equal x.dtype y.dtype
     | Program_info x, Program_info y -> x = y
     | Wmma_info x, Wmma_info y -> x = y
     | _ -> false
@@ -296,6 +298,11 @@ let global_table = H.create 4096
 let intern_mutex = Mutex.create ()
 
 let intern_node node =
+  let node = match node.op, node.arg with
+    | Ops.Call, Arg.Call_info info when not (Dtype.equal node.dtype info.dtype) ->
+        { node with dtype = info.dtype }
+    | _ -> node
+  in
   Mutex.protect intern_mutex (fun () -> H.hashcons global_table node)
 
 let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
@@ -364,7 +371,7 @@ let program_function_name (info : program_info) = sanitize_function_name info.na
 (* Accessors *)
 
 let op u = u.Hashcons.node.op
-let dtype u = u.Hashcons.node.dtype
+let dtype (u : t) = u.Hashcons.node.dtype
 let src u = u.Hashcons.node.src
 let arg u = u.Hashcons.node.arg
 let node_tag u = u.Hashcons.node.node_tag
@@ -1350,6 +1357,10 @@ and compute_ranges u =
 and ended_ranges u =
   let children = src u in
   match op u with
+  | Ops.Call
+    when Array.length children > 0
+         && op children.(0) = Ops.Custom_function
+         && Array.length (src children.(0)) = 1 -> []
   | Ops.Backedge -> [ children.(1) ]
   | Ops.End ->
       Array.to_list children |> List.tl
@@ -2073,8 +2084,10 @@ and compute_shape_opt u =
   match op u with
   | Ops.If | Ops.Barrier | Ops.Sink | Ops.Rewrite_error | Ops.Endif | Ops.Backedge
   | Ops.Group | Ops.Linear | Ops.Program | Ops.Source | Ops.Tuple
-  | Ops.Call | Ops.Function | Ops.Custom_function ->
+  | Ops.Function | Ops.Custom_function ->
       None
+  | Ops.Call ->
+      if Dtype.equal (dtype u) Dtype.void then None else Some []
   | Ops.Ins ->
       (* Scalar shape; the vector width is carried in the instruction
          encoding, not the shape. *)
@@ -2445,7 +2458,7 @@ let custom_kernel ?grad_fxn ~fxn srcs =
   in
   let info =
     { grad_fxn; name = None; precompile = false; precompile_backward = false;
-      aux = None }
+      aux = None; dtype = Dtype.void }
   in
   let kernel = call ~body:(fxn placeholders) ~args:srcs ~info in
   List.map (fun s -> after ~src:s ~deps:[ kernel ]) srcs
@@ -3186,15 +3199,13 @@ let program_info_from_sink sink =
     | Some info -> info.name
     | None -> "test"
   in
-  {
-    name;
-    global_size = !global_size;
-    local_size = !local_size;
-    vars = sort_program_vars !vars;
-    globals = sort_uniq_ints !globals;
-    outs = sort_uniq_ints !outs;
-    ins = sort_uniq_ints !ins;
-  }
+  let globals = sort_uniq_ints !globals in
+  let outs, ins =
+    if !outs = [] && !ins = [] then globals, globals
+    else sort_uniq_ints !outs, sort_uniq_ints !ins
+  in
+  { name; global_size = !global_size; local_size = !local_size;
+    vars = sort_program_vars !vars; globals; outs; ins }
 
 let int_floor_div a b =
   let q = a / b and r = a mod b in
@@ -3517,7 +3528,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 6
+let export_version = 7
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

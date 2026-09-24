@@ -214,6 +214,52 @@ let test_conditional_loop () =
   run_spec device spec [ output ];
   equal (list int) [ 5 ] (read_i32_buffer output)
 
+let test_host_calls () =
+  let device = cpu "host-calls" in
+  let renderer = Device.renderer device in
+  let compiler = Option.get (Renderer.compiler renderer) in
+  let i32 n = U.const (Const.int Dtype.int32 n) in
+  let dst = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(i32 4)
+      ~addrspace:Dtype.Global () in
+  let pointer name = U.custom_inline ~fmt:("(unsigned long)&" ^ name)
+      ~args:[] ~dtype:Dtype.uint64 in
+  let invoke name dtype args =
+    let body = U.custom_function ~name ~srcs:[ pointer name ] in
+    let info : U.call_info =
+      { grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; aux = None; dtype }
+    in
+    U.call ~body ~args ~info
+  in
+  let index offset = U.index ~ptr:dst ~idxs:[ offset ] () in
+  let compile_run name helper sink output =
+    let sink = Linearizer.pm_add_control_flow sink in
+    let program = Linearizer.linearize sink in
+    Spec.verify_list Spec.program_spec program;
+    let source = helper ^ "\n" ^ Renderer.render renderer ~name program in
+    let lib = Compiler.compile compiler source in
+    let spec = Program_spec.of_program ~name ~src:source
+        ~device:(Device.name device) ~lib program in
+    run_spec device spec [ output ]
+  in
+  let void = invoke "call_out" Dtype.void [ i32 3; index (i32 0) ] in
+  let output = create_i32_buffer device [ 0; 0; 0; 0 ] in
+  compile_run "host_call_out"
+    "static void call_out(int n, int *out) { out[0] = n * 2; }"
+    (U.sink [ void ]) output;
+  equal (list int) [ 6; 0; 0; 0 ] (read_i32_buffer output);
+  let range = U.range ~size:(i32 3) ~axis:0 ~kind:Axis_type.Loop
+      ~dtype:Dtype.int32 () in
+  let call = invoke "call_ret" Dtype.int32 [ range; index (i32 0) ] in
+  let value = U.alu_binary ~op:Ops.Add ~lhs:call ~rhs:call in
+  let store = U.store ~dst:(index (U.alu_binary ~op:Ops.Add ~lhs:range ~rhs:(i32 1)))
+      ~value () in
+  let output = create_i32_buffer device [ 0; 0; 0; 0 ] in
+  compile_run "host_call_ret"
+    "static int call_ret(int n, int *count) { count[0]++; return n + 1; }"
+    (U.sink [ U.end_ ~value:store ~ranges:[ range ] ]) output;
+  equal (list int) [ 3; 2; 4; 6 ] (read_i32_buffer output)
+
 let test_emulated_long_to_float64 () =
   let device = cpu "emulated-long-cast" in
   let cases =
@@ -562,6 +608,7 @@ let main () =
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
           test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
+          test "host calls preserve effects and loop arguments" test_host_calls;
           test "execute a conditional loop" test_conditional_loop;
           test "compile and run one kernel" (fun () ->
             let device = cpu "run-one" in

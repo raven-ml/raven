@@ -87,6 +87,7 @@ let call_info name : U.call_info =
     name = Some name;
     precompile = false;
     precompile_backward = false;
+    dtype = Dtype.void;
     aux = None;
   }
 

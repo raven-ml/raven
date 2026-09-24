@@ -677,6 +677,6 @@ let transform_to_call (big_sink : U.t) : U.t * (int, U.t) Hashtbl.t =
   in
   let info =
     { U.grad_fxn = None; name = None; precompile = false;
-      precompile_backward = false; aux = None } in
+      precompile_backward = false; dtype = Dtype.void; aux = None } in
   let ret = U.call ~body ~args ~info in
   (ret, ctx.buffer_map)

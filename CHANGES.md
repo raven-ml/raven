@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.call_info.dtype` declares a call’s scalar return type. C renderers
+  support indirect host calls with typed arguments and preserve calls inside
+  their enclosing loops.
+
 - `Uop.loop` and `Uop.backedge` represent conditional loops explicitly,
   preserving enclosing range dependencies through validation, scheduling,
   and C rendering.

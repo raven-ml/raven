@@ -1426,6 +1426,7 @@ let loop_call l ~body_linear ~reversed ~n =
       name = None;
       precompile = false;
       precompile_backward = false;
+      dtype = TD.void;
       aux = None;
     }
   in

@@ -246,8 +246,10 @@ type call_info = {
   precompile_backward : bool;
       (** [true] to precompile the backward callee. *)
   aux : string option;  (** Auxiliary call payload for cache/runtime users. *)
+  dtype : Dtype.t;  (** Scalar return dtype, or {!Dtype.void} for effects. *)
 }
-(** Annotations attached to a {!Ops.Call} or {!Ops.Function} node. *)
+(** Result type and scheduling attributes of a {!Ops.Call} or
+    {!Ops.Function} node. *)
 
 type launch_dim =
   | Launch_int of int  (** Concrete integer launch dimension. *)
@@ -290,7 +292,9 @@ val program_info_from_sink : t -> program_info
     runtime variables, non-ALU {!Ops.Param} global buffer slots, load/store
     buffer slots, and {!Ops.Special} launch dimensions.
 
-    The resulting [vars], [globals], [outs], and [ins] are deduplicated and sorted like tinygrad's [ProgramInfo.from_sink].
+    The resulting [vars], [globals], [outs], and [ins] are deduplicated
+    and sorted. If no reads or writes can be inferred, every global buffer
+    is conservatively treated as both an input and an output.
 
     Raises [Invalid_argument] if a launch axis is outside the three tinygrad
     launch dimensions, or if a local launch dimension is not a concrete
@@ -1058,10 +1062,12 @@ val call : body:t -> args:t list -> info:call_info -> t
     bodies ({!Ops.Sink}, {!Ops.Program}, {!Ops.Linear}, {!Ops.Copy},
     {!Ops.Slice}, and {!Ops.Custom_function}) produce {!Ops.Call}.
     Value-producing bodies produce {!Ops.Function}; non-tuple bodies are
-    wrapped in {!Ops.Tuple}. Dtype is void and [src] is [(body, arg0,
-    arg1, ...)].
+    wrapped in {!Ops.Tuple}. A {!Ops.Call} derives its dtype from
+    [info.dtype]; {!Ops.Function} has void dtype. [src] is
+    [(body, arg0, arg1, ...)].
 
-    Raises [Invalid_argument] if [body] has in-scope ranges. Tensor. *)
+    Raises [Invalid_argument] if [body] has in-scope ranges other than
+    device ranges. *)
 
 val tuple : t list -> t
 (** [tuple srcs] is an {!Ops.Tuple} with void dtype and
@@ -1160,7 +1166,9 @@ val ins : mnemonic:string -> operands:t list -> ?dtype:Dtype.t -> unit -> t
 
 val custom_function : name:string -> srcs:t list -> t
 (** [custom_function ~name ~srcs] is an {!Ops.Custom_function} named
-    [name] with [src = srcs]. Void dtype. Tensor. *)
+    [name] with [src = srcs]. With a single function-pointer source, it is
+    the body of an indirect host {!call}. The body has void dtype; the
+    call’s result dtype is declared in {!call_info}. *)
 
 (** {2:ctors_replace Replace}
 
@@ -1175,7 +1183,9 @@ val replace :
     the supplied fields overridden and the rest inherited from [u].
     Pass [~node_tag:None] to clear the diagnostic tag; omit it to
     preserve it. The result is hash-consed, so it is physically equal
-    to [u] when every override matches the existing field.
+    to [u] when every override matches the existing field. A {!Ops.Call}
+    always derives its result dtype from its {!call_info}, including when
+    [dtype] is supplied explicitly.
 
     Bypasses the per-op validation performed by the dedicated smart
     constructors; callers are responsible for preserving the op's

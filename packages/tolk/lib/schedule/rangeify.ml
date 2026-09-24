@@ -1997,6 +1997,7 @@ let split_store n =
                  name = None;
                  precompile = false;
                  precompile_backward = false;
+                 dtype = Dtype.void;
                  aux = None;
                }
              in

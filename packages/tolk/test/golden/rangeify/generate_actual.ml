@@ -60,6 +60,7 @@ let scheduled_kernel ?(name = "") ?(optimize = true) args body =
       name = None;
       precompile = false;
       precompile_backward = false;
+      dtype = Dtype.void;
       aux = None;
     }
   in
