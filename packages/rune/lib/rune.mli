@@ -456,10 +456,10 @@ val jit :
     device seeds the compiled program's input directly — no transfer — which
     makes iterated calls (training steps, decode loops with a cache) run without
     per-call traffic. Device memory backing an output is held until the output
-    is garbage-collected; past a budget of outputs still held (the
-    [RUNE_JIT_RESIDENT_BUDGET] environment variable, in bytes, 4 GiB by
-    default), a collection runs before the next output is allocated. The budget
-    counts outputs only, not values placed with {!val-to_device}. A transfer
+    is garbage-collected. Past a budget of device allocations since the last
+    major collection (the [RUNE_JIT_RESIDENT_BUDGET] environment variable, in
+    bytes, 4 GiB by default), a collection runs before allocating more, and an
+    allocation that still fails raises {!Nx.Device.Out_of_memory}. A transfer
     failure surfaces as an exception at the first read of the affected output.
     The intermediate values of a call live in scratch memory that every compiled
     function on the device shares, sized to the largest any of them needs, so

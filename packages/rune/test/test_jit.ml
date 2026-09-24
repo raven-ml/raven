@@ -2653,23 +2653,41 @@ let test_bound_buffer_is_released_with_its_owners () =
         (Option.is_none (Weak.get cell 0));
       is_true ~msg:"and its storage released" (resident () <= before - 12))
 
-let test_budget_ignores_placed_values () =
+let with_budget bytes f =
+  Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" (string_of_int bytes);
+  Fun.protect ~finally:(fun () -> Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "") f
+
+let majors () = (Gc.quick_stat ()).major_collections
+
+(* The collection budget counts every device allocation since the last major
+   collection: eager results count as outputs do, and weights placed before a
+   collection weigh on none after it. *)
+let test_budget_counts_every_allocation () =
   with_force_copy (fun () ->
-      let w = Rune.to_device (Nx.create f32 [| 4096 |] (Array.make 4096 1.0)) in
+      let w = Rune.to_device (Nx.create f32 [| 1024 |] (Array.make 1024 1.0)) in
       let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
       ignore (g (vec32 [| 1.0 |]));
-      Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "1024";
-      Fun.protect
-        ~finally:(fun () -> Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "")
-        (fun () ->
-          let before = (Gc.quick_stat ()).major_collections in
+      with_budget 1024 (fun () ->
+          let before = majors () in
+          for _ = 1 to 20 do
+            ignore (Nx.mul_s w 2.0)
+          done;
+          is_true ~msg:"each 4 KiB eager result past a 1 KiB budget collects"
+            (majors () - before >= 20);
+          let before = majors () in
           for _ = 1 to 100 do
             ignore (to_arr (g (vec32 [| 1.0 |])))
           done;
-          let collections = (Gc.quick_stat ()).major_collections - before in
-          is_true ~msg:"no collection per output while weights are resident"
-            (collections < 50));
+          is_true ~msg:"4-byte outputs collect about every 256 calls"
+            (majors () - before < 50));
       ignore (Sys.opaque_identity w))
+
+let test_out_of_memory () =
+  with_force_copy (fun () ->
+      let huge = Nx.broadcast_to [| 1 lsl 48 |] (Nx.scalar f32 1.0) in
+      raises_match
+        (function Nx.Device.Out_of_memory (_, n) -> n = 4 lsl 48 | _ -> false)
+        (fun () -> Rune.to_device huge))
 
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
@@ -3000,8 +3018,10 @@ let tests =
           test_bound_capture_returned_is_a_copy;
         test "a bound buffer is released with its owners"
           test_bound_buffer_is_released_with_its_owners;
-        test "the resident budget ignores placed values"
-          test_budget_ignores_placed_values;
+        test "the collection budget counts every allocation"
+          test_budget_counts_every_allocation;
+        test "a device that cannot allocate raises Out_of_memory"
+          test_out_of_memory;
       ];
     group "chunked transfers"
       [

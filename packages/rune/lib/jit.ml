@@ -212,7 +212,6 @@ type store = {
   s_nbytes : int; (* summed across shards *)
   mutable s_bufs : Tolk.Device.Buffer.t list; (* [[]] once released or lent *)
   s_nolru : bool; (* bypasses the allocator's cache: a mapped file's upload *)
-  s_output : bool; (* made by a compiled call: counts towards the budget *)
 }
 
 type Nx_effect.storage += Buffers of store
@@ -220,15 +219,7 @@ type Nx_effect.storage += Buffers of store
 let store_of (c : Nx_effect.cell) =
   match c.state with Live (Buffers s) -> Some s | _ -> None
 
-(* The part of [resident_bytes] held by outputs of compiled calls, which is what
-   the resident budget bounds. Placed values are excluded: a model's weights
-   stay resident by design, and counting them would run a major collection
-   before every output allocation. *)
-let output_bytes = ref 0
-
-let account s sign =
-  resident_bytes := !resident_bytes + (sign * s.s_nbytes);
-  if s.s_output then output_bytes := !output_bytes + (sign * s.s_nbytes)
+let account s sign = resident_bytes := !resident_bytes + (sign * s.s_nbytes)
 
 (* Finalizers only record the store; buffers are released at the next safe point
    (a read, a placement or a replay), not mid-GC inside arbitrary device
@@ -300,8 +291,21 @@ let stats () =
     reused_bytes = !reused_bytes;
   }
 
+(* The collection budget: device allocations since the last major collection,
+   eager results and uploads included. The collector does not see device memory,
+   so past the budget a major collection runs and the storage of the values it
+   finds unreachable is released. *)
 let resident_budget () =
   env_int "RUNE_JIT_RESIDENT_BUDGET" (4 * 1024 * 1024 * 1024)
+
+let allocated = ref 0
+let majors = ref 0
+
+let collect () =
+  Gc.major ();
+  drain_releases ();
+  majors := (Gc.quick_stat ()).major_collections;
+  allocated := 0
 
 (* The device's [k]th shared arena, of at least [nbytes] bytes. It bypasses the
    allocator's cache: an outgrown arena returns to the system. *)
@@ -2727,15 +2731,26 @@ let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
   | Placed _ as x -> Nx_effect.Host (Nx_effect.host_of x)
   | x -> x
 
-(* Allocate [buf]. An allocation that fails collects and retries once (the LRU
-   allocator has flushed its own cache by then). *)
-let allocate buf =
+(* Allocate [buf] on [dev], whose device value is [d], collecting first past the
+   budget. An allocation that fails collects and retries once (the LRU allocator
+   has flushed its own cache by then); a second failure is the device's
+   [Out_of_memory]. *)
+let allocate d buf =
   drain_releases ();
+  let n = Tolk.Device.Buffer.nbytes buf in
+  let m = (Gc.quick_stat ()).major_collections in
+  if m <> !majors then begin
+    majors := m;
+    allocated := 0
+  end;
+  if !allocated + n > resident_budget () then collect ();
+  allocated := !allocated + n;
+  (* Allocators report an exhausted device with [Failure]. *)
   try Tolk.Device.Buffer.ensure_allocated buf
-  with _ ->
-    Gc.major ();
-    drain_releases ();
-    Tolk.Device.Buffer.ensure_allocated buf
+  with Failure _ -> (
+    collect ();
+    try Tolk.Device.Buffer.ensure_allocated buf
+    with Failure _ -> raise (Nx.Device.Out_of_memory (d, n)))
 
 (* Raise unless [dev] can hold [dt]: its programs load, store and compute it,
    natively or by emulation. *)
@@ -2761,12 +2776,11 @@ and make_placed : type a b.
     Nx_effect.placement ->
     Tolk.Device.t list ->
     nolru:bool ->
-    output:bool ->
     (a, b) ND.t ->
     NV.t ->
     Tolk.Device.Buffer.t list ->
     (a, b) Nx_effect.t =
- fun placement devices ~nolru ~output dt view bufs ->
+ fun placement devices ~nolru dt view bufs ->
   let s =
     {
       s_devices = devices;
@@ -2774,7 +2788,6 @@ and make_placed : type a b.
         List.fold_left (fun a b -> a + Tolk.Device.Buffer.nbytes b) 0 bufs;
       s_bufs = bufs;
       s_nolru = nolru;
-      s_output = output;
     }
   in
   account s 1;
@@ -2814,12 +2827,12 @@ and place_on : type a b.
               ~spec:{ Tolk.Device.Buffer_spec.default with nolru }
               dev
           in
-          allocate buf;
+          allocate d buf;
           copyin_tensor (Hashtbl.create 1) dev buf x;
           [ buf ]
         end
       in
-      make_placed p [ dev ] ~nolru ~output:false dt (NV.create shape) bufs
+      make_placed p [ dev ] ~nolru dt (NV.create shape) bufs
 
 and tolk_device_of d =
   match
@@ -2840,15 +2853,9 @@ let nx_device dev =
       Hashtbl.add nx_devices name (d, dev);
       d
 
-(* Fresh device buffer for a call's output. Past the resident budget, collect
-   dropped outputs first. *)
 let create_fresh_buffer dev dtolk n =
-  if !output_bytes > resident_budget () then begin
-    Gc.major ();
-    drain_releases ()
-  end;
   let buf = Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev in
-  allocate buf;
+  allocate (nx_device dev) buf;
   buf
 
 (* Placement
@@ -3887,8 +3894,7 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
                       in
                       let dt = Nx_effect.dtype leaf in
                       let h =
-                        make_placed placement devices ~nolru:false ~output:true
-                          dt view bufs
+                        make_placed placement devices ~nolru:false dt view bufs
                       in
                       Hashtbl.add handles tag (Packed (dt, h));
                       h))

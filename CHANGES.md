@@ -122,6 +122,9 @@ All notable changes to this project will be documented in this file.
   result has that dtype: `float64` on Metal, and complex and 4-bit integers on
   every rune device, so `Nx.rfft` of a placed value raises; place it on the
   host first.
+- `RUNE_JIT_RESIDENT_BUDGET` counts every device allocation since the last
+  major collection, eager results and uploads included, and a device that
+  still cannot allocate after a collection raises `Nx.Device.Out_of_memory`.
 - A compiled function whose output has no elements returns an empty tensor of
   that output's dtype and shape instead of raising "an output of the traced
   function was not scheduled to a buffer".
