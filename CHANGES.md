@@ -109,6 +109,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix `Rune.custom_vjp` and `Rune.custom_jvp` when the rule returns one of its
+  parameters: its cotangent was added to the parameter's twice, and its tangent
+  replaced the parameter's for every later use. `Rune.remat` of a function
+  returning an argument doubled that argument's gradient.
 - Compiled `Nx.max`, `Nx.min`, `Nx.argmax` and `Nx.argmin` of floats return
   NaN (the first NaN's index) when any element is NaN, as eager does; a NaN was
   ignored unless it came first, and Metal flushed subnormals. Compiled `max`
