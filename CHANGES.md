@@ -125,6 +125,8 @@ All notable changes to this project will be documented in this file.
 - `RUNE_JIT_RESIDENT_BUDGET` counts every device allocation since the last
   major collection, eager results and uploads included, and a device that
   still cannot allocate after a collection raises `Nx.Device.Out_of_memory`.
+- `Rune.jit_step` raises when a state leaf is a view of part of its storage,
+  which cannot be donated; pass a copy of it.
 - A compiled function whose output has no elements returns an empty tensor of
   that output's dtype and shape instead of raising "an output of the traced
   function was not scheduled to a buffer".

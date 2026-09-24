@@ -601,11 +601,13 @@ val jit_step :
     {!val-to_device}) is consumed: its device buffer is released to the
     allocator or taken by an output, and every view of it becomes unusable.
     Reading it, or feeding it to a later call, raises [Invalid_argument]; copy
-    the value to the host before the call if it is still needed. A host leaf of
-    the state is uploaded and stays usable. The first argument's leaves are read
-    as by {!val-jit} and are never consumed, and a storage that both arguments
-    reach, through any view, or that a compiled function binds as a capture, is
-    read: it lends nothing and stays usable.
+    the value to the host before the call if it is still needed. A resident leaf
+    whose view covers only part of its storage cannot be consumed and raises
+    [Invalid_argument] before the call. A host leaf of the state is uploaded and
+    stays usable. The first argument's leaves are read as by {!val-jit} and are
+    never consumed, and a storage that both arguments reach, through any view,
+    or that a compiled function binds as a capture, is read: it lends nothing
+    and stays usable.
 
     An output leaf takes the storage of the state's leaf at the same position
     when their dtypes and sizes match, no other leaf of the call reaches that

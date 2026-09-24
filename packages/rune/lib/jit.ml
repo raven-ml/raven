@@ -3642,12 +3642,20 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
               Tolk.Realize.Buffers.seed c.cp_binding inp.i_node
                 (List.hd (bufs_of e))
           | None -> (
-              (* A state leaf is donated by cell: a held value is consumed. *)
+              (* A state leaf is donated by cell: a held value is consumed, and
+                 a view of part of its storage cannot be. *)
               (match leaf with
               | Placed r when c.cp_consumed !i && not (List.memq r.r_cell !read)
                 -> (
                   match r.r_cell.state with
                   | Live (Nx_effect.Held _) -> note !i r.r_cell
+                  | Live _ when not (Nx_effect.covers r) ->
+                      invalid_arg
+                        (Printf.sprintf
+                           "Rune.jit_step: state leaf %d is a view of part of \
+                            its storage, which cannot be donated; pass \
+                            [Nx.copy] of it"
+                           !i)
                   | Live _ | Donated -> ())
               | _ -> ());
               match

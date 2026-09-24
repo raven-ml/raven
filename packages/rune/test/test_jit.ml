@@ -2811,6 +2811,22 @@ let test_step_reads_a_handle_in_both_arguments () =
       check_arr ~msg:"second" [| 2.0; 4.0 |] y';
       check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h)
 
+(* Only a value whose view covers its storage can be donated: a state leaf that
+   is a view of part of one raises before the call, and the value stays. *)
+let test_step_refuses_a_partial_view () =
+  with_force_copy (fun () ->
+      let step = consume' (fun x -> Nx.mul_s x 2.0) in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
+      let part = Nx.slice [ Nx.R (0, 2) ] w in
+      raises_match
+        (function
+          | Invalid_argument msg ->
+              String.starts_with ~prefix:"Rune.jit_step: state leaf 0" msg
+          | _ -> false)
+        (fun () -> step part);
+      check_arr ~msg:"the value stays" [| 1.0; 2.0 |] part;
+      check_arr ~msg:"and so does its storage" [| 1.0; 2.0; 3.0; 4.0 |] w)
+
 (* A storage both arguments reach is read, even when the read argument reaches
    it through a view of part of it. *)
 let test_step_reads_a_storage_both_arguments_reach () =
@@ -3081,6 +3097,8 @@ let tests =
           test_donate_alternates_two_programs;
         test "donation reuses a pool written by scatter"
           test_donate_reuses_pool_scatter;
+        test "a partial view of a storage is not donated"
+          test_step_refuses_a_partial_view;
         test "a storage both arguments reach is read"
           test_step_reads_a_storage_both_arguments_reach;
         test "scatter without donation keeps its input"
