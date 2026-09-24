@@ -1088,9 +1088,6 @@ let rec has_buffer_identity ?(after_ok = false) u =
   | Ops.Buffer | Ops.Slice | Ops.Param -> true
   | _ -> false
 
-let reshape ~src ~shape =
-  mk ~op:Ops.Reshape ~dtype:(dtype src) ~src:[| src; shape |] ~arg:Arg.Empty
-
 let expand ~src ~dims =
   (* EXPAND prepends [dims] as new leading axes; expanding by an empty shape
      (an empty stack) is a no-op. *)
@@ -2257,6 +2254,15 @@ and compute_shape_opt u =
       let shapes = Array.to_list srcs |> List.filter_map shape_opt in
       if shapes = [] then None else Some (lenient_broadcast_shape shapes)
   | _ -> None
+
+(* A reshape to [src]'s own shape is [src]. Indexing through the no-op node
+   would re-derive the index by mod and div, which folds a range of at most one
+   iteration to 0. *)
+let reshape ~src ~shape =
+  match shape_opt src with
+  | Some dims when List.equal equal dims (as_shape shape) -> src
+  | _ ->
+      mk ~op:Ops.Reshape ~dtype:(dtype src) ~src:[| src; shape |] ~arg:Arg.Empty
 
 let max_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shape u)
 let max_numel u =

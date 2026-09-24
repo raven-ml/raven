@@ -616,17 +616,11 @@ let apply_movement_op_tests =
                   [ rng0; rng1 ]
               in
               equal int 1 (List.length result));
-          test "identity [4] to [4]" (fun () ->
+          (* An identity reshape is never built, so its index is never
+             re-derived. *)
+          test "identity [4] to [4] is its source" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
-              let ctx = Indexing.create_context () in
-              let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
-              let new_shape = mk_shape [ 4 ] in
-              let shapes = shape_of in
-              let v = U.reshape ~src:param ~shape:new_shape in
-              let result =
-                Indexing.apply_movement_op ~shapes v [ rng ]
-              in
-              equal int 1 (List.length result));
+              is_true (U.reshape ~src:param ~shape:(mk_shape [ 4 ]) == param));
           test "symbolic flatten decomposes by symbolic shape" (fun () ->
               let n = U.variable ~name:"n" ~min_val:1 ~max_val:1024 () in
               let four = weak_int 4 in

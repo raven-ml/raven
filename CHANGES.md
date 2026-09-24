@@ -342,6 +342,9 @@ thread.
 
 ### Tolk (new)
 
+- A store whose length is a variable of at most 1 writes nothing when the
+  length is 0. It wrote one element, which in a decode step overwrote row 0.
+
 - A loop whose size is a variable of at most 1 stays a loop. The symbolic rules
   replaced it with its single index, so it ran once when the size was 0.
 

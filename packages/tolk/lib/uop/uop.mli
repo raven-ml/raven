@@ -983,7 +983,7 @@ val copy : src:t -> device:device -> unit -> t
 val reshape : src:t -> shape:t -> t
 (** [reshape ~src ~shape] rearranges the elements of [src] into
     [shape] without changing the total count. Dtype is inherited from
-    [src]. Tensor. *)
+    [src]. It is [src] itself when [shape] is [src]'s shape. Tensor. *)
 
 val expand : src:t -> dims:t -> t
 (** [expand ~src ~dims] prepends [dims] as new leading axes of [src]: the

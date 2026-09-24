@@ -1010,6 +1010,29 @@ let plus1 u = U.O.(u + U.const_int 1)
 let symbolic_tests =
   group "symbolic"
     [
+      (* A write whose length is a variable in [0, 1] loops that many times:
+         at length 0 it writes nothing, at the start or at an offset. *)
+      test "a store of symbolic length at most 1 writes only when it is 1"
+        (fun () ->
+          List.iter
+            (fun (offset, length) ->
+              let cache = vec [| 0.; 0.; 0. |] in
+              ignore (Run.realize cache);
+              let len = bound_var "store_len" ~max_val:1 length in
+              let start = U.const_int offset in
+              let view =
+                Mv.symbolic_shrink cache [ Some (start, U.O.(start + len)) ]
+              in
+              let src =
+                Mv.symbolic_shrink (vec [| 9.; 9.; 9. |])
+                  [ Some (U.const_int 0, len) ]
+              in
+              ignore (Run.realize (Op.assign view src));
+              check_floats
+                (Array.init 3 (fun i ->
+                     if i = offset && length = 1 then 9. else 0.))
+                cache)
+            [ (0, 0); (0, 1); (1, 0); (1, 1) ]);
       test "advanced indexing retains symbolic unindexed dimensions" (fun () ->
           let index values = Mv.T (Run.of_int_array ~shape:[ 2 ] values) in
           List.iter
