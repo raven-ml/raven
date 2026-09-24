@@ -10,7 +10,6 @@ type 'a weight =
   | Mxfp4 of { blocks : Mxfp4.blocks; scales : Mxfp4.scales }
 
 type 'a t = {
-  router : 'a Linear.t;
   gate_up : 'a weight;
   gate_up_bias : 'a;
   down : 'a weight;
@@ -24,15 +23,14 @@ let map_weight f = function
   | Mxfp4 { blocks; scales } -> Mxfp4 { blocks; scales }
 
 let map f p =
-  let router = Linear.map f p.router in
   let gate_up = map_weight f p.gate_up in
   let gate_up_bias = f p.gate_up_bias in
   let down = map_weight f p.down in
   let down_bias = f p.down_bias in
-  { router; gate_up; gate_up_bias; down; down_bias }
+  { gate_up; gate_up_bias; down; down_bias }
 
-let route ~k p x =
-  let logits, experts = Nx.top_k ~k (Linear.apply p.router x) in
+let route ~k logits =
+  let logits, experts = Nx.top_k ~k logits in
   (experts, Nx.softmax logits)
 
 let activation ~limit h =
@@ -106,11 +104,13 @@ let dense ~limit p dt ids weights x =
     (Nx.mul (Nx.contiguous y)
        (Nx.unsqueeze ~axes:[ 2 ] (Nx.transpose per_expert)))
 
-let apply form ~k ~limit p x =
+let apply form ~limit p (ids, weights) x =
   let shape = Nx.shape x in
   let width = shape.(Array.length shape - 1) in
   let x = Nx.reshape [| -1; width |] x in
-  let ids, weights = route ~k p x in
+  let k = Nx.dim (Nx.ndim ids - 1) ids in
+  let ids = Nx.reshape [| -1; k |] ids in
+  let weights = Nx.reshape [| -1; k |] weights in
   let dt = Nx.dtype x in
   let y =
     match form with

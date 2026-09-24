@@ -265,9 +265,10 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
           in
           let middle = Nx.add x3 attended in
           let experts, _ =
-            Moe.route ~k b'.moe
-              (Nx.reshape [| tokens; dim |]
-                 (Rms_norm.apply ~eps:cfg.norm_eps b'.ffn_norm middle))
+            Moe.route ~k
+              (Linear.apply b'.router
+                 (Nx.reshape [| tokens; dim |]
+                    (Rms_norm.apply ~eps:cfg.norm_eps b'.ffn_norm middle)))
           in
           let y = Nx.reshape [| tokens; dim |] (Gpt_oss.hidden one m rows) in
           let block = Printf.sprintf "block %d" i in

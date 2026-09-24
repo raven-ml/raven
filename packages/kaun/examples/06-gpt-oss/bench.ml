@@ -65,15 +65,16 @@ let () =
     | f -> failwith ("--form must be gather or dense, got " ^ f)
   in
   Random.init 0;
+  let router =
+    {
+      Kaun.Linear.w = random_floats ~scale:0.05 [| width; experts |];
+      b = Some (random_floats ~scale:0.05 [| experts |]);
+    }
+  in
   let p, building =
     seconds (fun () ->
         {
-          Moe.router =
-            {
-              Kaun.Linear.w = random_floats ~scale:0.05 [| width; experts |];
-              b = Some (random_floats ~scale:0.05 [| experts |]);
-            };
-          gate_up = packed ~inputs:width ~outputs:(2 * intermediate);
+          Moe.gate_up = packed ~inputs:width ~outputs:(2 * intermediate);
           gate_up_bias =
             random_floats ~scale:0.05 [| experts; 2 * intermediate |];
           down = packed ~inputs:intermediate ~outputs:width;
@@ -81,7 +82,10 @@ let () =
         })
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
-  let f = Rune.jit' ~device:!jit (fun x -> Moe.apply form ~k ~limit p x) in
+  let f =
+    Rune.jit' ~device:!jit (fun x ->
+        Moe.apply form ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
+  in
   let run () =
     let x = random_floats ~scale:1.0 [| !tokens; width |] in
     let y, t = seconds (fun () -> Nx.to_array (f x)) in

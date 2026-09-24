@@ -31,6 +31,7 @@ type 'a block = {
   attn : 'a Attention.t;
   sinks : 'a;
   ffn_norm : 'a Rms_norm.t;
+  router : 'a Linear.t;
   moe : 'a Moe.t;
 }
 
@@ -50,8 +51,9 @@ let map_block f b =
   let attn = Attention.map f b.attn in
   let sinks = f b.sinks in
   let ffn_norm = Rms_norm.map f b.ffn_norm in
+  let router = Linear.map f b.router in
   let moe = Moe.map f b.moe in
-  { attn_norm; attn; sinks; ffn_norm; moe }
+  { attn_norm; attn; sinks; ffn_norm; router; moe }
 
 let map f p =
   let tok = Embedding.map f p.tok in
@@ -77,13 +79,13 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
       let attn = Attention.map f b.attn in
       let sinks = f b.sinks in
       let ffn_norm = Rms_norm.map f b.ffn_norm in
-      let router = Linear.map f b.moe.Moe.router in
-      let gate_up = map_weight f b.moe.gate_up in
+      let router = Linear.map f b.router in
+      let gate_up = map_weight f b.moe.Moe.gate_up in
       let gate_up_bias = f b.moe.gate_up_bias in
       let down = map_weight f b.moe.down in
       let down_bias = f b.moe.down_bias in
-      let moe = { Moe.router; gate_up; gate_up_bias; down; down_bias } in
-      { attn_norm; attn; sinks; ffn_norm; moe }
+      let moe = { Moe.gate_up; gate_up_bias; down; down_bias } in
+      { attn_norm; attn; sinks; ffn_norm; router; moe }
 
     let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p =
       let tok = Embedding.map f p.tok in
@@ -109,14 +111,14 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
       let attn = Attention.map2 f b.attn b'.attn in
       let sinks = f b.sinks b'.sinks in
       let ffn_norm = Rms_norm.map2 f b.ffn_norm b'.ffn_norm in
+      let router = Linear.map2 f b.router b'.router in
       let m = b.moe and m' = b'.moe in
-      let router = Linear.map2 f m.Moe.router m'.Moe.router in
-      let gate_up = map2_weight f m.gate_up m'.gate_up in
+      let gate_up = map2_weight f m.Moe.gate_up m'.Moe.gate_up in
       let gate_up_bias = f m.gate_up_bias m'.gate_up_bias in
       let down = map2_weight f m.down m'.down in
       let down_bias = f m.down_bias m'.down_bias in
-      let moe = { Moe.router; gate_up; gate_up_bias; down; down_bias } in
-      { attn_norm; attn; sinks; ffn_norm; moe }
+      let moe = { Moe.gate_up; gate_up_bias; down; down_bias } in
+      { attn_norm; attn; sinks; ffn_norm; router; moe }
 
     let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p p' =
       let tok = Embedding.map2 f p.tok p'.tok in
@@ -142,8 +144,8 @@ let ptree (type b) () : (module Nx.Ptree.S with type t = (float, b) Nx.t params)
       Attention.iter f b.attn;
       f b.sinks;
       Rms_norm.iter f b.ffn_norm;
-      Linear.iter f b.moe.Moe.router;
-      iter_weight f b.moe.gate_up;
+      Linear.iter f b.router;
+      iter_weight f b.moe.Moe.gate_up;
       f b.moe.gate_up_bias;
       iter_weight f b.moe.down;
       f b.moe.down_bias
@@ -183,10 +185,9 @@ let block cfg layer b cache index x =
   in
   let x = Nx.add x a in
   let form = if Cache_index.seq index = 1 then Moe.Gather else Moe.Dense in
-  let experts =
-    Moe.apply form ~k:cfg.experts_per_token ~limit:cfg.swiglu_limit b.moe
-      (Rms_norm.apply ~eps b.ffn_norm x)
-  in
+  let h = Rms_norm.apply ~eps b.ffn_norm x in
+  let routing = Moe.route ~k:cfg.experts_per_token (Linear.apply b.router h) in
+  let experts = Moe.apply form ~limit:cfg.swiglu_limit b.moe routing h in
   (Nx.add x experts, cache)
 
 module Cache = Attention.Cache.List
@@ -351,11 +352,10 @@ let of_hf ?device cfg dt ckpt =
         };
       sinks = float ~shape:[| cfg.n_heads |] (at "self_attn.sinks");
       ffn_norm = norm (at "post_attention_layernorm.weight");
+      router = linear ~inputs:cfg.dim ~outputs:cfg.experts (at "mlp.router");
       moe =
         {
-          Moe.router =
-            linear ~inputs:cfg.dim ~outputs:cfg.experts (at "mlp.router");
-          gate_up =
+          Moe.gate_up =
             experts ~inputs:cfg.dim ~outputs:(2 * cfg.hidden_dim)
               (at "mlp.experts.gate_up_proj");
           gate_up_bias =

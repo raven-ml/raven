@@ -103,10 +103,10 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
           };
         sinks = f ~scale:1.0 [| c.n_heads |];
         ffn_norm = gamma ();
+        router = linear c.dim c.experts;
         moe =
           {
-            Moe.router = linear c.dim c.experts;
-            gate_up = packed ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
+            Moe.gate_up = packed ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
             gate_up_bias = f ~scale:0.02 [| c.experts; 2 * c.hidden_dim |];
             down = packed ~inputs:c.hidden_dim ~outputs:c.dim;
             down_bias = f ~scale:0.02 [| c.experts; c.dim |];

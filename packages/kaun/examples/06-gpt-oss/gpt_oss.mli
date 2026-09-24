@@ -47,6 +47,7 @@ type 'a block = {
   attn : 'a Kaun.Attention.t;  (** Every projection has a bias. *)
   sinks : 'a;  (** [[| n_heads |]]. *)
   ffn_norm : 'a Kaun.Rms_norm.t;
+  router : 'a Kaun.Linear.t;  (** Model width to experts, with a bias. *)
   moe : 'a Moe.t;
 }
 (** The type for one block over payload ['a]. Packed expert weights are uint8

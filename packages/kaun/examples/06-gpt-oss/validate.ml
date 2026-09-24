@@ -148,17 +148,21 @@ let bytes ckpt name =
 
 let moe_params ckpt ~layer ~weight =
   let name leaf = Printf.sprintf "model.layers.%d.mlp.%s" layer leaf in
-  {
-    Moe.router =
-      {
-        Linear.w = Nx.transpose (tensor ckpt (name "router.weight"));
-        b = Some (tensor ckpt (name "router.bias"));
-      };
-    gate_up = weight (name "experts.gate_up_proj");
-    gate_up_bias = tensor ckpt (name "experts.gate_up_proj_bias");
-    down = weight (name "experts.down_proj");
-    down_bias = tensor ckpt (name "experts.down_proj_bias");
-  }
+  let router =
+    {
+      Linear.w = Nx.transpose (tensor ckpt (name "router.weight"));
+      b = Some (tensor ckpt (name "router.bias"));
+    }
+  in
+  let experts =
+    {
+      Moe.gate_up = weight (name "experts.gate_up_proj");
+      gate_up_bias = tensor ckpt (name "experts.gate_up_proj_bias");
+      down = weight (name "experts.down_proj");
+      down_bias = tensor ckpt (name "experts.down_proj_bias");
+    }
+  in
+  (router, experts)
 
 let float_weight ckpt name = Moe.Float (tensor ckpt name)
 
@@ -234,23 +238,12 @@ let ties ~device fx =
   let case = mem "ties" fx in
   let logits = floats (mem "logits" case) in
   let experts = Array.length logits / 3 in
-  let identity =
-    {
-      Moe.router = { Linear.w = Nx.eye Nx.float32 experts; b = None };
-      gate_up = Moe.Float (Nx.zeros Nx.float32 [| experts; experts; 2 |]);
-      gate_up_bias = Nx.zeros Nx.float32 [| experts; 2 |];
-      down = Moe.Float (Nx.zeros Nx.float32 [| experts; 1; experts |]);
-      down_bias = Nx.zeros Nx.float32 [| experts; experts |];
-    }
-  in
   let x = float32 [| 3; experts |] logits in
   let ids =
     Array.map Int32.to_int
-      (flat (compiled device (fun x -> fst (Moe.route ~k identity x)) x))
+      (flat (compiled device (fun x -> fst (Moe.route ~k x)) x))
   in
-  let weights =
-    flat (compiled device (fun x -> snd (Moe.route ~k identity x)) x)
-  in
+  let weights = flat (compiled device (fun x -> snd (Moe.route ~k x)) x) in
   let row a r = Array.sub a (r * k) k in
   let lowest_first =
     [| [| 0; 1; 2; 3 |]; [| 6; 13; 20; 27 |]; [| 5; 9; 20; 21 |] |]
@@ -279,7 +272,7 @@ let ties ~device fx =
      %!"
     same_sets
 
-let block ~device ~tol ~k ~limit label p case =
+let block ~device ~tol ~k ~limit label (router, p) case =
   let shape = ints (mem "shape" case) in
   let width = shape.(Array.length shape - 1) in
   let x = float32 shape (floats (mem "hidden" case)) in
@@ -287,18 +280,21 @@ let block ~device ~tol ~k ~limit label p case =
   let name what = Printf.sprintf "%s: %s" label what in
   close ~tol (name "router logits")
     (floats (mem "router_logits" case))
-    (flat (compiled device (fun x -> Linear.apply p.Moe.router x) tokens));
-  let ids = compiled device (fun x -> fst (Moe.route ~k p x)) tokens in
+    (flat (compiled device (fun x -> Linear.apply router x) tokens));
+  let route x = Moe.route ~k (Linear.apply router x) in
+  let ids = compiled device (fun x -> fst (route x)) tokens in
   check (name "selected experts")
     (Array.map Int32.to_int (flat ids) = ints (mem "experts" case))
     "";
   close ~tol (name "expert weights")
     (floats (mem "expert_weights" case))
-    (flat (compiled device (fun x -> snd (Moe.route ~k p x)) tokens));
+    (flat (compiled device (fun x -> snd (route x)) tokens));
   let last = Nx.dim 0 tokens - 1 in
   List.iter
     (fun (form, form_name) ->
-      let apply x = compiled device (fun x -> Moe.apply form ~k ~limit p x) x in
+      let apply x =
+        compiled device (fun x -> Moe.apply form ~limit p (route x) x) x
+      in
       let whole = apply tokens in
       close ~tol
         (name ("output, " ^ form_name))
