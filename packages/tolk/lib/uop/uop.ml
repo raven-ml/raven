@@ -981,6 +981,12 @@ let rec base u =
       if Array.length srcs = 0 then u else base srcs.(0)
   | _ -> u
 
+let rec storage_base u =
+  let b = base u in
+  match op b with
+  | Ops.Bitcast | Ops.After | Ops.Unshard -> storage_base (src b).(0)
+  | _ -> b
+
 (* Memoized: an unmemoized walk revisits shared subgraphs and goes
    exponential on wide unrolled ALU chains. *)
 let addrspace_cache : Dtype.addr_space option Weak_tbl.t Domain.DLS.key =

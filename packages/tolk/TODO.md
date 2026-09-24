@@ -37,8 +37,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Normalize explicit allocations and calls, lexical scalar formals and the
   separate becomes map. Handle precompiled calls without preallocation.
 - Track RAW/WAR dependencies for sliced/overlapping assignments, self-copy,
-  nested calls and shared aliases; reject cycles. Cover assignment through
-  bitcast views and initialization of pending values without evaluating them.
+  nested calls and shared aliases; reject cycles.
 - Replace SLICE memory-plan views with SHRINK/BITCAST byte offsets. Unify
   contiguous-view folding and test leading-dimension and symbolic views.
 - Port final sharding/indexing/allreduce ownership and hierarchical allreduce;

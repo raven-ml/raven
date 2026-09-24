@@ -1268,6 +1268,11 @@ val base : t -> t
     {!Ops.Slice}, {!Ops.Bind}, {!Ops.Param}, and {!Ops.Buffer}, are their
     own base. *)
 
+val storage_base : t -> t
+(** [storage_base u] is the node targeted by [u]'s storage views. It walks
+    through movement ops, {!Ops.Detach}, {!Ops.Bitcast}, {!Ops.After}, and
+    {!Ops.Unshard}, stopping at storage identities or pending computations. *)
+
 val buf_uop : t -> t
 (** [buf_uop u] is the buffer-identity node reached by following tinygrad's
     buffer property rules. {!Ops.Param} and {!Ops.Buffer} return themselves;

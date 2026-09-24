@@ -489,17 +489,7 @@ let revert_store_to_contiguous ctx node =
       (match store_src with
        | None -> None
        | Some src ->
-           let rec find_target n =
-             match U.op n, first_src n, after_parts n with
-             | Ops.Bitcast, Some src, _ -> find_target (base src)
-             (* A multi-device store target wraps its per-shard buffer in
-                MULTI; look through it, or the AFTER just built for it
-                reverts and the rewrite cycles. *)
-             | Ops.Unshard, Some src, _ -> find_target (base src)
-             | _, _, Some (src, _) -> find_target (base src)
-             | _ -> n
-           in
-           let target = find_target node in
+           let target = U.storage_base node in
            (match U.op target with
             | Ops.Buffer | Ops.Slice -> None
             | _ ->

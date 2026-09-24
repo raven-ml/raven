@@ -41,25 +41,40 @@ let assign t x =
     if not (D.equal (T.dtype t) (T.dtype x)) then
       invalid_arg "Op.assign: dtype mismatch";
     let dst = T.uop t in
-    let assigned =
-      Uop.after ~src:dst ~deps:[ Uop.store ~dst ~value:(T.uop x) () ]
-    in
-    let base = Uop.base dst in
-    let is_view_of_buffer =
-      (match Uop.op base with Ops.Buffer | Ops.After -> true | _ -> false)
-      && dst != base
-      && not (Uop.has_buffer_identity dst)
-    in
-    if is_view_of_buffer then begin
-      (* Embed the write at the buffer-identity level so every alias of the
-         buffer sees it. *)
-      let ib = ref dst in
-      while (not (Uop.has_buffer_identity !ib)) && !ib != base do
-        ib := (Uop.src !ib).(0)
-      done;
-      T.apply_map [ (!ib, Uop.after ~src:!ib ~deps:[ assigned ]) ]
-    end
-    else T.set_uop t assigned;
+    let assigned_to = Uop.storage_base dst in
+    if not (Uop.has_buffer_identity assigned_to)
+       && (Uop.op assigned_to <> Ops.Contiguous || dst == assigned_to)
+    then begin
+      (* Overwriting a pending value initializes new storage; its old
+         computation is dead. A view into pending storage still needs a write. *)
+      let value = T.uop x in
+      let value =
+        if Uop.op value = Ops.Contiguous then (Uop.src value).(0) else value
+      in
+      T.set_uop t (T.uop (Creation.clone (T.of_uop value)))
+    end else begin
+      let store = Uop.store ~dst ~value:(T.uop x) () in
+      let held u = List.exists (fun t -> T.uop t == u) (T.live_tensors ()) in
+      let rec identity u =
+        let op = Uop.op u in
+        if (Ops.Group.is_movement op || op = Ops.Bitcast || op = Ops.Detach)
+           && not (Uop.has_buffer_identity u && held u)
+        then identity (Uop.src u).(0)
+        else u
+      in
+      let ib = identity dst in
+      if ib != dst then begin
+        let target =
+          if Uop.has_buffer_identity ~after_ok:true ib then ib
+          else T.uop (Creation.clone (T.of_uop ib))
+        in
+        let store =
+          if target == ib then store
+          else Uop.substitute ~walk:true [ ib, target ] store
+        in
+        T.apply_map [ ib, Uop.after ~src:target ~deps:[ store ] ]
+      end else T.set_uop t (Uop.after ~src:dst ~deps:[ store ])
+    end;
     t
   end
 

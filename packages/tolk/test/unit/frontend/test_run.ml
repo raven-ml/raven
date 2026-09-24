@@ -663,6 +663,73 @@ let triu_tests =
 let assign_tests =
   group "assign"
     [
+      test "assign through a bitcast updates the original tensor" (fun () ->
+          let base = vec [| 1.; 2.; 3.; 4. |] in
+          let view = Dt.bitcast base Tolk_uop.Dtype.int32 in
+          let values =
+            Run.of_int_array ~shape:[ 4 ]
+              [| 0x40800000; 0x40400000; 0x40000000; 0x3f800000 |]
+          in
+          ignore (Op.assign view values);
+          check_floats [| 4.; 3.; 2.; 1. |] base);
+      test "assign through a shrunk and twice-bitcast view keeps other elements" (fun () ->
+          let base = vec [| 1.; 2.; 3.; 4. |] in
+          let view =
+            Mv.shrink base [ (0, 2) ]
+            |> fun x -> Dt.bitcast x Tolk_uop.Dtype.uint32
+            |> fun x -> Dt.bitcast x Tolk_uop.Dtype.int32
+          in
+          let values =
+            Run.of_int_array ~shape:[ 2 ] [| 0x40800000; 0x40400000 |]
+          in
+          ignore (Op.assign view values);
+          check_floats [| 4.; 3.; 3.; 4. |] base);
+      test "assign through a wider bitcast updates the original bytes" (fun () ->
+          let base =
+            Run.of_bytes ~dtype:Tolk_uop.Dtype.uint8
+              ~shape:[ 8 ] (Bytes.make 8 '\000')
+          in
+          let view = Dt.bitcast base Tolk_uop.Dtype.int64 in
+          let bytes = Bytes.make 8 '\000' in
+          Bytes.set_int64_le bytes 0 12345L;
+          let values =
+            Run.of_bytes ~dtype:Tolk_uop.Dtype.int64 ~shape:[ 1 ] bytes
+          in
+          ignore (Op.assign view values);
+          equal string (Bytes.to_string bytes) (Bytes.to_string (Run.data base)));
+      test "assign to a pending value discards its old computation" (fun () ->
+          let input = vec [| 1.; 2.; 3. |] in
+          let destination = El.add input (T.f 1.) in
+          let pending = T.uop destination in
+          ignore (Op.assign destination (vec [| 7.; 8.; 9. |]));
+          is_true
+            (not (List.exists (( == ) pending) (U.toposort (T.uop destination))));
+          check_floats [| 7.; 8.; 9. |] destination;
+          check_floats [| 1.; 2.; 3. |] input);
+      test "assign to a pending contiguous value discards its old computation" (fun () ->
+          let destination =
+            El.contiguous (El.add (vec [| 1.; 2.; 3. |]) (T.f 1.))
+          in
+          let pending = T.uop destination in
+          ignore (Op.assign destination (vec [| 7.; 8.; 9. |]));
+          is_true
+            (not (List.exists (( == ) pending) (U.toposort (T.uop destination))));
+          check_floats [| 7.; 8.; 9. |] destination);
+      test "initialization by assignment does not alias its source" (fun () ->
+          let source = El.add (vec [| 1.; 2.; 3. |]) (T.f 1.) in
+          let destination = El.mul (vec [| 4.; 5.; 6. |]) (T.f 2.) in
+          ignore (Op.assign destination source);
+          ignore (Op.assign destination (T.f 7.));
+          check_floats [| 7.; 7.; 7. |] destination;
+          check_floats [| 2.; 3.; 4. |] source);
+      test "partial assign materializes a pending contiguous value for its aliases" (fun () ->
+          let input = vec [| 1.; 2.; 3.; 4. |] in
+          let base = El.contiguous (El.mul input (T.f 2.)) in
+          let view = Mv.shrink base [ (1, 3) ] in
+          ignore (Op.assign view (T.f 7.));
+          check_floats [| 2.; 7.; 7.; 8. |] base;
+          check_floats [| 7.; 7. |] view;
+          check_floats [| 1.; 2.; 3.; 4. |] input);
       test "assign an identity computation leaves storage unchanged" (fun () ->
           let t = vec [| 1.; 2.; 3. |] in
           ignore (Op.assign t (El.add t (T.f 0.)));

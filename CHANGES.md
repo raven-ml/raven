@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Op.assign` propagates writes through bitcast aliases and initializes pending
+  values without evaluating the computation being overwritten. Partial writes
+  into pending contiguous storage preserve initialization and update effects.
+
 - `Rand.rand` supports concrete float widths beyond float32, including
   float16, bfloat16 and float64 on capable devices. Packed draws and counter
   advancement match tinygrad, including odd-sized and empty half-width draws.

@@ -15,12 +15,16 @@
 val assign : Tensor.t -> Tensor.t -> Tensor.t
 (** [assign t x] writes the values of [x] into the storage of [t] and returns
     [t]. The write is recorded in the graph as an effect on [t]'s buffer:
-    nothing executes until a realization, and every read of the buffer built
-    after the assignment observes the written values. When [t] is a view (a
-    slice of a larger tensor), the write lands in the viewed region and every
-    live tensor aliasing the underlying buffer is repointed to depend on it.
-    [x] is broadcast to the shape of [t]. A weak [t] first acquires fresh
-    storage at the dtype selected by {!Tolk_uop.Uop.commit_dtype}. A weak [x]
+    nothing executes until a realization. A view of storage, including a
+    bitcast view, writes into the viewed region and repoints live aliases to
+    depend on the write. A partial write into a pending contiguous tensor
+    first materializes that tensor's storage.
+
+    If [t] is a pending value without storage, its old computation is discarded
+    and [x] initializes fresh storage. This also applies when overwriting a
+    whole pending contiguous tensor. [x] is broadcast to the shape of [t].
+    A weak [t] first acquires fresh storage at the dtype selected by
+    {!Tolk_uop.Uop.commit_dtype}. A weak [x]
     promotes with [t]'s dtype; the result must match [t]'s dtype. Once [t] has
     a concrete dtype, assigning it to itself is a no-op.
 
