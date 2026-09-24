@@ -249,8 +249,6 @@ let c_scalar_to_string = function
   | Dtype.Uint16 -> "unsigned short"
   | Dtype.Uint32 -> "unsigned int"
   | Dtype.Uint64 -> "unsigned long"
-  | Dtype.Uint128 -> "ulong2"
-  | Dtype.Uint256 -> "ulong4"
   | Dtype.Float16 -> "half"
   | Dtype.Bfloat16 -> "__bf16"
   | Dtype.Float32 -> "float"

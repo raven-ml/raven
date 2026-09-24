@@ -138,19 +138,6 @@ let predicates () =
   is_true (Dtype.is_fp8 Dtype.fp8e4m3);
   is_false (Dtype.is_fp8 Dtype.float16)
 
-(* Private wide storage helpers are not classified as integers and carry no
-   public representation. *)
-let private_wide_helpers () =
-  is_false (Dtype.is_int Dtype.Uint128);
-  is_false (Dtype.is_unsigned Dtype.Uint128);
-  is_false (Dtype.is_int Dtype.Uint256);
-  is_false (Dtype.is_unsigned Dtype.Uint256);
-  equal bound (`Bool false) (Dtype.min Dtype.Uint128);
-  equal bound (`Bool true) (Dtype.max Dtype.Uint256);
-  equal char_option None (Dtype.storage_fmt_for_dtype Dtype.Uint128);
-  is_true ~msg:"private wide helper dtypes have no public repr"
-    (raises_invalid (fun () -> Dtype.repr Dtype.Uint128))
-
 let repr_surface () =
   equal string "dtypes.int" (Dtype.repr Dtype.int32);
   equal string "dtypes.char" (Dtype.repr Dtype.int8);
@@ -361,8 +348,7 @@ let storage_formats () =
   equal char_option (Some 'H') (Dtype.storage_fmt_for_dtype Dtype.bfloat16);
   equal char_option (Some 'B') (Dtype.storage_fmt_for_dtype Dtype.fp8e4m3);
   equal char_option None (Dtype.storage_fmt_for_dtype Dtype.weakint);
-  equal char_option None (Dtype.storage_fmt_for_dtype Dtype.weakfloat);
-  equal char_option None (Dtype.storage_fmt_for_dtype Dtype.Uint128)
+  equal char_option None (Dtype.storage_fmt_for_dtype Dtype.weakfloat)
 
 let truncation_surface () =
   equal storage_scalar (`Bool false) (Dtype.truncate Dtype.bool (`Int 0L));
@@ -593,7 +579,6 @@ let tests =
     group "Dtype"
       [
         test "predicates" predicates;
-        test "private wide helpers" private_wide_helpers;
         test "repr" repr_surface;
         test "address space" address_space;
       ];

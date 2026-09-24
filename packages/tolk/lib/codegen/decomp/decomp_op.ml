@@ -119,7 +119,7 @@ let next_integer_dtype (dt : Dtype.t) =
     | Dtype.Uint8 -> Some Dtype.Uint16
     | Dtype.Uint16 -> Some Dtype.Uint32
     | Dtype.Uint32 -> Some Dtype.Uint64
-    | Dtype.Weakint | Dtype.Uint64 | Dtype.Uint128 | Dtype.Uint256
+    | Dtype.Weakint | Dtype.Uint64
     | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
     | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz | Dtype.Float16
     | Dtype.Bfloat16 | Dtype.Float32 | Dtype.Float64 | Dtype.Bool | Dtype.Void

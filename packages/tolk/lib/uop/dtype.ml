@@ -8,7 +8,6 @@
 let strf = Printf.sprintf
 
 let err_void_bounds = "void has no numeric bounds"
-let err_private_wide_repr name = strf "Dtype.repr: private dtype %s has no public repr" name
 
 type t =
   | Void
@@ -22,8 +21,6 @@ type t =
   | Uint16
   | Uint32
   | Uint64
-  | Uint128
-  | Uint256
   | Weakfloat
   | Fp8e4m3
   | Fp8e5m2
@@ -45,8 +42,6 @@ let bitsize = function
   | Int16 | Uint16 | Float16 | Bfloat16 -> 16
   | Int32 | Uint32 | Float32 -> 32
   | Int64 | Uint64 | Float64 -> 64
-  | Uint128 -> 128
-  | Uint256 -> 256
   | Weakint | Weakfloat -> 800
 
 let itemsize dt = (bitsize dt + 7) / 8
@@ -61,7 +56,7 @@ let priority = function
   | Int32 -> 5
   | Uint32 -> 6
   | Int64 -> 7
-  | Uint64 | Uint128 | Uint256 -> 8
+  | Uint64 -> 8
   | Weakfloat -> 9
   | Fp8e4m3 | Fp8e4m3fnuz -> 10
   | Fp8e5m2 | Fp8e5m2fnuz -> 11
@@ -125,8 +120,6 @@ let of_string s =
   | "uint16" | "ushort" -> Some Uint16
   | "uint32" | "uint" -> Some Uint32
   | "uint64" | "ulong" -> Some Uint64
-  | "_uint128" -> Some Uint128
-  | "_uint256" -> Some Uint256
   | "float16" | "half" -> Some Float16
   | "bfloat16" -> Some Bfloat16
   | "float32" | "float" -> Some Float32
@@ -299,7 +292,7 @@ type bound = [ `Bool of bool | `Int of Z.t | `Float of float ]
 
 let max (dt : t) =
   match dt with
-  | Bool | Uint128 | Uint256 -> `Bool true
+  | Bool -> `Bool true
   | Uint8 | Uint16 | Uint32 | Uint64 ->
       `Int (Z.pred (Z.shift_left Z.one (bitsize dt)))
   | Int8 | Int16 | Int32 | Int64 | Weakint ->
@@ -333,7 +326,6 @@ let to_string = function
   | Weakfloat -> "weakfloat"
   | Int8 -> "i8"     | Int16 -> "i16"   | Int32 -> "i32"   | Int64 -> "i64"
   | Uint8 -> "u8"    | Uint16 -> "u16"  | Uint32 -> "u32"  | Uint64 -> "u64"
-  | Uint128 -> "u128" | Uint256 -> "u256"
   | Float16 -> "f16" | Bfloat16 -> "bf16"
   | Float32 -> "f32" | Float64 -> "f64"
   | Fp8e4m3 -> "fp8e4m3" | Fp8e5m2 -> "fp8e5m2"
@@ -345,8 +337,6 @@ let repr_name = function
   | Int8 -> "char" | Int16 -> "short" | Int32 -> "int" | Int64 -> "long"
   | Uint8 -> "uchar" | Uint16 -> "ushort" | Uint32 -> "uint"
   | Uint64 -> "ulong"
-  | Uint128 -> invalid_arg (err_private_wide_repr "_uint128")
-  | Uint256 -> invalid_arg (err_private_wide_repr "_uint256")
   | Float16 -> "half" | Bfloat16 -> "bfloat16"
   | Float32 -> "float" | Float64 -> "double"
   | Fp8e4m3 -> "fp8e4m3" | Fp8e5m2 -> "fp8e5m2"
@@ -633,9 +623,6 @@ let truncate_int (dt : t) x =
   | Bool -> if x <> 0 then 1 else 0
   | Uint8 | Uint16 | Uint32 | Uint64 ->
       if b >= Sys.int_size then x else x land ((1 lsl b) - 1)
-  | Uint128 | Uint256 ->
-      (* Virtual wider-than-native types: no OCaml int truncation. *)
-      x
   | Int8 | Int16 | Int32 | Int64 | Weakint ->
       if b >= Sys.int_size then x
       else
@@ -670,7 +657,7 @@ let storage_fmt_for_dtype (dt : t) =
   | Float16 -> Some 'e'
   | Float32 -> Some 'f'
   | Float64 -> Some 'd'
-  | Void | Weakint | Weakfloat | Uint128 | Uint256 -> None
+  | Void | Weakint | Weakfloat -> None
 
 let storage_bool = function
   | `Bool b -> b
@@ -693,7 +680,6 @@ let truncate_int64 (dt : t) x =
   | Bool -> if x <> 0L then 1L else 0L
   | Uint8 | Uint16 | Uint32 | Uint64 ->
       if b >= 64 then x else Int64.logand x Int64.(sub (shift_left 1L b) 1L)
-  | Uint128 | Uint256 -> x
   | Int8 | Int16 | Int32 | Int64 | Weakint ->
       if b >= 64 then x
       else
@@ -717,8 +703,8 @@ let to_storage_scalar (dt : t) x =
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
       `Int (Int64.of_int (float_to_fp8 dt (storage_float x)))
   | Float32 | Float64 | Weakfloat -> `Float (storage_float x)
-  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Uint128
-  | Uint256 | Weakint -> `Int (storage_int64 x)
+  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Weakint -> `Int (storage_int64 x)
   | Void -> invalid_arg "to_storage_scalar: void has no storage scalar"
 
 let from_storage_scalar x (dt : t) =
@@ -730,8 +716,8 @@ let from_storage_scalar x (dt : t) =
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
       `Float (fp8_to_float dt (Int64.to_int (storage_int64 x)))
   | Float16 | Float32 | Float64 | Weakfloat -> `Float (storage_float x)
-  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Uint128
-  | Uint256 | Weakint -> `Int (storage_int64 x)
+  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Weakint -> `Int (storage_int64 x)
   | Void -> invalid_arg "from_storage_scalar: void has no storage scalar"
 
 let truncate (dt : t) x =
@@ -739,6 +725,6 @@ let truncate (dt : t) x =
   | Bool -> `Bool (storage_bool x)
   | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz
   | Fp8e5m2fnuz | Weakfloat -> `Float (truncate_float dt (storage_float x))
-  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Uint128
-  | Uint256 | Weakint -> `Int (truncate_int64 dt (storage_int64 x))
+  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Weakint -> `Int (truncate_int64 dt (storage_int64 x))
   | Void -> invalid_arg "truncate: void has no storage scalar"

@@ -48,14 +48,6 @@ type t =
   | Uint16  (** Unsigned 16-bit integer. *)
   | Uint32  (** Unsigned 32-bit integer. *)
   | Uint64  (** Unsigned 64-bit integer. *)
-  | Uint128
-      (** Private virtual 128-bit storage helper. Not classified as an integer
-          or unsigned dtype. String parsing accepts only the private spelling
-          ["_uint128"]. *)
-  | Uint256
-      (** Private virtual 256-bit storage helper. Not classified as an integer
-          or unsigned dtype. String parsing accepts only the private spelling
-          ["_uint256"]. *)
   | Weakfloat
       (** Abstract floating-point literal. Priority [9], sentinel width [800].
           Promotes to any concrete floating-point type. *)
@@ -127,13 +119,11 @@ val is_float : t -> bool
     fp8 dtypes and {!Weakfloat}. *)
 
 val is_int : t -> bool
-(** [is_int dt] is [true] iff [dt] is an integer dtype, including {!Weakint}.
-    {!Uint128} and {!Uint256} are private storage helpers and are not
-    classified as integers. *)
+(** [is_int dt] is [true] iff [dt] is an integer dtype, including {!Weakint}. *)
 
 val is_unsigned : t -> bool
 (** [is_unsigned dt] is [true] iff [dt] is a public unsigned integer dtype.
-    {!Weakint}, {!Uint128}, and {!Uint256} are not classified as unsigned. *)
+    {!Weakint} is not classified as unsigned. *)
 
 val is_bool : t -> bool
 (** [is_bool dt] is [true] iff [dt] is {!Bool}. *)
@@ -154,7 +144,7 @@ val strong_dtype : t -> t
 val weak_dtype : t -> t
 (** [weak_dtype dt] projects [dt] onto the weak dtype of its kind: any float
     becomes {!Weakfloat}, any integer becomes {!Weakint}. Every other dtype
-    ({!Bool}, {!Void}, and the private wide helpers) is returned unchanged.
+    ({!Bool} and {!Void}) is returned unchanged.
 
     See also {!strong_dtype}. *)
 
@@ -184,7 +174,7 @@ val least_upper_dtype : t list -> t
 
     Raises [Invalid_argument] if [ts] is empty, or if the inputs have no common
     supertype — which happens for any dtype outside the lattice, such as
-    {!Void}, {!Uint128}, or {!Uint256}.
+    {!Void}.
 
     See also {!least_upper_float} and {!can_lossless_cast}. *)
 
@@ -236,16 +226,14 @@ type bound = [ `Bool of bool | `Int of Z.t | `Float of float ]
       report finite limits; other formats report infinities. *)
 
 val min : t -> bound
-(** [min dt] is the smallest value representable by [dt]. {!Uint128} and
-    {!Uint256}, which have no numeric bounds, report [`Bool false].
+(** [min dt] is the smallest value representable by [dt].
 
     Raises [Invalid_argument] if [dt] is {!Void}.
 
     See also {!max}. *)
 
 val max : t -> bound
-(** [max dt] is the largest value representable by [dt]. {!Uint128} and
-    {!Uint256}, which have no numeric bounds, report [`Bool true].
+(** [max dt] is the largest value representable by [dt].
 
     Raises [Invalid_argument] if [dt] is {!Void}.
 
@@ -278,10 +266,7 @@ val to_string : t -> string
 
 val repr : t -> string
 (** [repr dt] is the qualified dtype representation, such as ["dtypes.int"] or
-    ["dtypes.float"].
-
-    Raises [Invalid_argument] if [dt] is a private wide helper ({!Uint128} or
-    {!Uint256}), which have no public representation. *)
+    ["dtypes.float"]. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a dtype using {!to_string}. *)
@@ -369,7 +354,7 @@ val storage_fmt_for_dtype : t -> char option
     scalar lane of [dt].
 
     Returns [None] for dtypes without a portable storage format: {!Void},
-    {!Weakint}, {!Weakfloat}, {!Uint128}, and {!Uint256}.
+    {!Weakint}, and {!Weakfloat}.
     {!Bfloat16} stores as ['H'] and fp8 dtypes store as ['B']. *)
 
 val to_storage_scalar : t -> storage_scalar -> storage_scalar

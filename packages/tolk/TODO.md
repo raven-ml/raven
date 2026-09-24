@@ -26,8 +26,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   remove saturating host-integer bounds.
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/CallInfo/
   ProgramInfo metadata, ALLOC, effectful CALL, scalar binding effects and
-  void RANGE/BACKEDGE. Remove deleted operations, packed Uint128/Uint256
-  dtypes and stale enum/cache formats.
+  void RANGE/BACKEDGE. Remove deleted operations and stale enum/cache formats.
 - Use complete tuple axis IDs and the final axis kinds. Port sorted-axis
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
 - Port final weak commitment/lowering and symbolic rules, including integer-only

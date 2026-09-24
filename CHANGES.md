@@ -294,6 +294,8 @@ thread.
 
 ### Tolk (new)
 
+- Remove the obsolete `Dtype.Uint128` and `Dtype.Uint256` storage helpers,
+  matching the target scalar dtype set. Existing serialized caches are invalidated.
 - Missing runtime variables report their name and program or replay call,
   including variables needed to compute launch dimensions.
 - `CHECK_OOB` rejects unproved scalar accesses containing bitcasts or stacks

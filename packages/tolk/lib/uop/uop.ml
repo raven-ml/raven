@@ -3584,7 +3584,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 2
+let export_version = 3
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and
