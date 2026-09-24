@@ -1053,6 +1053,16 @@ let numerical_edge_tests =
 let lifetime_tests =
   group "lifetime"
     [
+      test "empty host inputs need no native allocation" (fun () ->
+          let floats = Run.of_float_array ~shape:[ 0; 3 ] [||] in
+          let ints = Run.of_int_array ~shape:[ 2; 0 ] [||] in
+          Run.realize_many [ floats; ints ];
+          equal int 0 (Array.length (Run.to_float_array floats));
+          equal int 0 (Array.length (Run.to_int_array ints));
+          equal int 0 (Bytes.length (Run.data floats));
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Run.of_float_array ~shape:[ 3 ] [||]));
       test "unreachable input and realized storage are collectible" (fun () ->
           let nodes = Stdlib.Weak.create 2 and buffers = Stdlib.Weak.create 2 in
           let[@inline never] populate () =

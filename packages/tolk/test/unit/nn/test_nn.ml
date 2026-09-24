@@ -126,6 +126,63 @@ let output_floats oc values =
       output_bytes oc b)
     values
 
+let with_safetensors_header header data f =
+  let path = Filename.temp_file "tolk-header" ".safetensors" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+      Out_channel.with_open_bin path (fun oc ->
+          let prefix = Bytes.create 8 in
+          Bytes.set_int64_le prefix 0 (Int64.of_int (String.length header));
+          output_bytes oc prefix;
+          output_string oc header;
+          output_string oc data);
+      f path)
+
+let header_tests =
+  group "safetensors headers"
+    [
+      test "decodes Unicode and every JSON string escape" (fun () ->
+          let header = {|{"\u0061\u00e9\ud83d\ude80\"\\\/\b\f\r\n\t":{"dtype":"I32","shape":[1],"data_offsets":[0,4]}}|} in
+          with_safetensors_header header "\001\000\000\000" (fun path ->
+              let tensors = State.safe_load path in
+              equal (list string) [ "aé🚀\"\\/\b\012\r\n\t" ] (List.map fst tensors);
+              equal (array int) [| 1 |] (Run.to_int_array (snd (List.hd tensors)))));
+      test "accepts unknown fields with general JSON values" (fun () ->
+          let header = {|{"a":{"dtype":"I32","shape":[1],"data_offsets":[0,4],"extra":[true,false,null,1.25e+2]}}|} in
+          with_safetensors_header header "\042\000\000\000" (fun path ->
+              equal (array int) [| 42 |]
+                (Run.to_int_array (List.assoc "a" (State.safe_load path)))));
+      test "preserves integer shape dimensions above 2^53" (fun () ->
+          let header = {|{"empty":{"dtype":"U8","shape":[9007199254740993,0],"data_offsets":[0,0]}}|} in
+          with_safetensors_header header "" (fun path ->
+              equal (list int) [ 9007199254740993; 0 ]
+                (T.shape (List.assoc "empty" (State.safe_load path)))));
+      test "rejects invalid headers before loading tensors" (fun () ->
+          List.iter
+            (fun header ->
+              with_safetensors_header header "\000\000\000\000" (fun path ->
+                  raises_match (function Invalid_argument _ -> true | _ -> false)
+                    (fun () -> State.safe_load path)))
+            [
+              {|{"\ud800":{"dtype":"I32","shape":[1],"data_offsets":[0,4]}}|};
+              {|{"\udc00":{"dtype":"I32","shape":[1],"data_offsets":[0,4]}}|};
+              {|{"\ud800\u0041":{"dtype":"I32","shape":[1],"data_offsets":[0,4]}}|};
+              {|{"\q":{"dtype":"I32","shape":[1],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[01],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[1,],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[1],"data_offsets":[0,4],}}|};
+              "{\"a\001b\":{\"dtype\":\"I32\",\"shape\":[1],\"data_offsets\":[0,4]}}";
+              "{\"\255\":{\"dtype\":\"I32\",\"shape\":[1],\"data_offsets\":[0,4]}}";
+              {|{"__metadata__":{"format":1},"a":{"dtype":"I32","shape":[1],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[-1],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[1.0],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[1],"data_offsets":[4,0]}}|};
+              {|{"a":{"dtype":"I32","shape":[1],"data_offsets":[0,8]}}|};
+              {|{"a":{"dtype":"I32","shape":[2],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[1],"shape":[1],"data_offsets":[0,4]}}|};
+              {|{"a":{"dtype":"I32","shape":[4611686018427387903,4],"data_offsets":[0,4]}}|};
+            ]);
+    ]
+
 let state_tests =
   group "state"
     [
@@ -191,4 +248,4 @@ let state_tests =
           is_true (T.uop p == before));
     ]
 
-let () = run "Tolk_nn" [ embedding_tests; linear_tests; layer_norm_tests; state_tests ]
+let () = run "Tolk_nn" [ embedding_tests; linear_tests; layer_norm_tests; state_tests; header_tests ]

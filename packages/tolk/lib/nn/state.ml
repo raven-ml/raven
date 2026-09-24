@@ -8,19 +8,18 @@
 open Tolk_frontend
 module D = Tolk_uop.Dtype
 
-(* Minimal JSON reader for safetensors headers: objects, arrays, strings, and
-   non-negative integers are all the format uses. *)
+let bad_header msg = invalid_arg ("State.safe_load: " ^ msg)
+
+(* Safetensors headers need lossless number tokens: dimensions and offsets
+   must not pass through a floating-point JSON representation. *)
 module Json = struct
-  type t =
-    | Obj of (string * t) list
-    | Arr of t list
-    | Str of string
-    | Int of int
+  type t = Obj of (string * t) list | Arr of t list | Str of string
+         | Number of string | Bool of bool | Null
 
   type parser = { input : string; mutable pos : int }
 
   let error p msg =
-    invalid_arg (Printf.sprintf "safetensors header: %s at %d" msg p.pos)
+    bad_header (Printf.sprintf "%s at byte %d" msg p.pos)
 
   let peek p =
     if p.pos < String.length p.input then Some p.input.[p.pos] else None
@@ -29,15 +28,39 @@ module Json = struct
     while
       p.pos < String.length p.input
       && match p.input.[p.pos] with ' ' | '\t' | '\n' | '\r' -> true | _ -> false
-    do
-      p.pos <- p.pos + 1
-    done
+    do p.pos <- p.pos + 1 done
 
-  let expect p c =
-    skip_ws p;
+  let take p c =
     match peek p with
     | Some ch when ch = c -> p.pos <- p.pos + 1
     | _ -> error p (Printf.sprintf "expected %C" c)
+
+  let expect p c = skip_ws p; take p c
+
+  let hex4 p =
+    let value = ref 0 in
+    for i = 0 to 3 do
+      let digit = match peek p with
+        | Some ('0' .. '9' as c) -> Char.code c - Char.code '0'
+        | Some ('a' .. 'f' as c) -> Char.code c - Char.code 'a' + 10
+        | Some ('A' .. 'F' as c) -> Char.code c - Char.code 'A' + 10
+        | _ -> error p (Printf.sprintf "invalid Unicode escape digit %d" (i + 1))
+      in
+      value := (!value lsl 4) lor digit;
+      p.pos <- p.pos + 1
+    done;
+    !value
+
+  let unicode p =
+    let first = hex4 p in
+    if first >= 0xd800 && first <= 0xdbff then begin
+      take p '\\'; take p 'u';
+      let second = hex4 p in
+      if second < 0xdc00 || second > 0xdfff then error p "invalid surrogate pair";
+      Uchar.of_int (0x10000 + ((first - 0xd800) lsl 10) + second - 0xdc00)
+    end else if first >= 0xdc00 && first <= 0xdfff then
+      error p "unpaired low surrogate"
+    else Uchar.of_int first
 
   let string_ p =
     expect p '"';
@@ -45,41 +68,59 @@ module Json = struct
     let rec loop () =
       match peek p with
       | None -> error p "unterminated string"
-      | Some '"' -> p.pos <- p.pos + 1
-      | Some '\\' -> (
+      | Some '"' -> p.pos <- p.pos + 1; Buffer.contents buf
+      | Some '\\' ->
           p.pos <- p.pos + 1;
-          match peek p with
-          | Some (('"' | '\\' | '/') as c) ->
-              Buffer.add_char buf c;
-              p.pos <- p.pos + 1;
-              loop ()
-          | Some 'n' -> Buffer.add_char buf '\n'; p.pos <- p.pos + 1; loop ()
-          | Some 't' -> Buffer.add_char buf '\t'; p.pos <- p.pos + 1; loop ()
-          | Some 'u' ->
-              (* Header names are ASCII in practice; keep the escape verbatim. *)
-              Buffer.add_string buf "\\u";
-              p.pos <- p.pos + 1;
-              loop ()
-          | _ -> error p "bad escape")
+          (match peek p with
+           | None -> error p "unterminated escape"
+           | Some c ->
+               p.pos <- p.pos + 1;
+               match c with
+               | '"' | '\\' | '/' -> Buffer.add_char buf c
+               | 'b' -> Buffer.add_char buf '\b'
+               | 'f' -> Buffer.add_char buf '\012'
+               | 'n' -> Buffer.add_char buf '\n'
+               | 'r' -> Buffer.add_char buf '\r'
+               | 't' -> Buffer.add_char buf '\t'
+               | 'u' -> Buffer.add_utf_8_uchar buf (unicode p)
+               | _ -> error p "invalid escape");
+          loop ()
       | Some c ->
+          if Char.code c < 0x20 then error p "unescaped control character";
           Buffer.add_char buf c;
           p.pos <- p.pos + 1;
           loop ()
     in
-    loop ();
-    Buffer.contents buf
+    loop ()
 
-  let int_ p =
-    skip_ws p;
+  let digits p =
     let start = p.pos in
-    while
-      p.pos < String.length p.input
-      && match p.input.[p.pos] with '0' .. '9' -> true | _ -> false
-    do
-      p.pos <- p.pos + 1
-    done;
-    if p.pos = start then error p "expected integer";
-    int_of_string (String.sub p.input start (p.pos - start))
+    while match peek p with
+      | Some ('0' .. '9') -> p.pos <- p.pos + 1; true
+      | _ -> false
+    do () done;
+    if start = p.pos then error p "expected a digit"
+
+  let number p =
+    let start = p.pos in
+    (match peek p with Some '-' -> p.pos <- p.pos + 1 | _ -> ());
+    (match peek p with
+     | Some '0' -> p.pos <- p.pos + 1
+     | _ -> digits p);
+    (match peek p with
+     | Some '.' -> p.pos <- p.pos + 1; digits p
+     | _ -> ());
+    (match peek p with
+     | Some ('e' | 'E') ->
+         p.pos <- p.pos + 1;
+         (match peek p with Some ('+' | '-') -> p.pos <- p.pos + 1 | _ -> ());
+         digits p
+     | _ -> ());
+    Number (String.sub p.input start (p.pos - start))
+
+  let literal p text value =
+    String.iter (take p) text;
+    value
 
   let rec value p =
     skip_ws p;
@@ -87,8 +128,11 @@ module Json = struct
     | Some '{' -> obj p
     | Some '[' -> arr p
     | Some '"' -> Str (string_ p)
-    | Some '0' .. '9' -> Int (int_ p)
-    | _ -> error p "expected value"
+    | Some ('-' | '0' .. '9') -> number p
+    | Some 't' -> literal p "true" (Bool true)
+    | Some 'f' -> literal p "false" (Bool false)
+    | Some 'n' -> literal p "null" Null
+    | _ -> error p "expected a JSON value"
 
   and obj p =
     expect p '{';
@@ -96,13 +140,13 @@ module Json = struct
     if peek p = Some '}' then (p.pos <- p.pos + 1; Obj [])
     else
       let rec fields acc =
-        let k = (skip_ws p; string_ p) in
+        let key = string_ p in
         expect p ':';
         let v = value p in
         skip_ws p;
         match peek p with
-        | Some ',' -> p.pos <- p.pos + 1; fields ((k, v) :: acc)
-        | Some '}' -> p.pos <- p.pos + 1; Obj (List.rev ((k, v) :: acc))
+        | Some ',' -> p.pos <- p.pos + 1; fields ((key, v) :: acc)
+        | Some '}' -> p.pos <- p.pos + 1; Obj (List.rev ((key, v) :: acc))
         | _ -> error p "expected ',' or '}'"
       in
       fields []
@@ -122,13 +166,34 @@ module Json = struct
       in
       items []
 
-  let parse s =
-    let p = { input = s; pos = 0 } in
-    let v = value p in
+  let parse input =
+    if not (String.is_valid_utf_8 input) then bad_header "invalid UTF-8";
+    let p = { input; pos = 0 } in
+    let result = value p in
     skip_ws p;
-    if p.pos <> String.length s then error p "trailing data";
-    v
+    if p.pos <> String.length input then error p "trailing data";
+    result
 end
+
+let object_fields = function
+  | Json.Obj members ->
+      let seen = Hashtbl.create (List.length members) in
+      List.map (fun (name, value) ->
+          if Hashtbl.mem seen name then bad_header ("duplicate field " ^ name);
+          Hashtbl.add seen name ();
+          (name, value)) members
+  | _ -> bad_header "expected an object"
+
+let json_string = function
+  | Json.Str s -> s
+  | _ -> bad_header "expected a string"
+
+let json_int = function
+  | Json.Number token ->
+      (match int_of_string_opt token with
+       | Some n when n >= 0 -> n
+       | _ -> bad_header "expected a representable non-negative integer")
+  | _ -> bad_header "expected an integer"
 
 let dtype_of_string = function
   | "BOOL" -> D.bool
@@ -149,63 +214,69 @@ let dtype_of_string = function
   | s -> invalid_arg (Printf.sprintf "State.safe_load: unknown dtype %S" s)
 
 let safe_load fn =
-  let ic = In_channel.open_bin fn in
-  Fun.protect
-    ~finally:(fun () -> In_channel.close ic)
-    (fun () ->
+  In_channel.with_open_bin fn (fun ic ->
+      let file_size = In_channel.length ic in
       let head = Bytes.create 8 in
       (match In_channel.really_input ic head 0 8 with
       | Some () -> ()
-      | None -> invalid_arg "State.safe_load: truncated file");
-      let header_len = Int64.to_int (Bytes.get_int64_le head 0) in
+      | None -> bad_header "truncated file");
+      let header_len = Bytes.get_int64_le head 0 in
+      if header_len < 0L || header_len > Int64.sub file_size 8L
+         || header_len > Int64.of_int Sys.max_string_length
+      then bad_header "invalid header length";
       let header =
-        match In_channel.really_input_string ic header_len with
+        match In_channel.really_input_string ic (Int64.to_int header_len) with
         | Some s -> s
-        | None -> invalid_arg "State.safe_load: truncated header"
+        | None -> bad_header "truncated header"
       in
-      let data_start = 8 + header_len in
       let entries =
-        match Json.parse header with
-        | Json.Obj kvs -> kvs
-        | _ -> invalid_arg "State.safe_load: header is not an object"
+        object_fields (Json.parse header)
       in
-      List.filter_map
-        (fun (name, entry) ->
-          if String.equal name "__metadata__" then None
-          else
-            match entry with
-            | Json.Obj fields ->
-                let str k =
-                  match List.assoc_opt k fields with
-                  | Some (Json.Str s) -> s
-                  | _ -> invalid_arg ("State.safe_load: bad field " ^ k)
-                in
-                let ints k =
-                  match List.assoc_opt k fields with
-                  | Some (Json.Arr vs) ->
-                      List.map
-                        (function
-                          | Json.Int i -> i
-                          | _ -> invalid_arg ("State.safe_load: bad field " ^ k))
-                        vs
-                  | _ -> invalid_arg ("State.safe_load: bad field " ^ k)
-                in
-                let dtype = dtype_of_string (str "dtype") in
-                let shape = ints "shape" in
-                let off0, off1 =
-                  match ints "data_offsets" with
-                  | [ a; b ] -> (a, b)
-                  | _ -> invalid_arg "State.safe_load: bad data_offsets"
-                in
-                let nbytes = off1 - off0 in
-                let data = Bytes.create nbytes in
-                In_channel.seek ic (Int64.of_int (data_start + off0));
-                (match In_channel.really_input ic data 0 nbytes with
-                | Some () -> ()
-                | None -> invalid_arg "State.safe_load: truncated tensor data");
-                Some (name, Run.of_bytes ~dtype ~shape data)
-            | _ -> invalid_arg "State.safe_load: bad header entry")
-        entries)
+      let data_start = Int64.add 8L header_len in
+      let data_size = Int64.sub file_size data_start in
+      let descriptors = List.filter_map (fun (name, entry) ->
+          let fields = object_fields entry in
+          if name = "__metadata__" then begin
+            List.iter (fun (_, v) -> ignore (json_string v)) fields;
+            None
+          end else begin
+            let field key = match List.assoc_opt key fields with
+              | Some v -> v | None -> bad_header ("missing field " ^ key)
+            in
+            let ints key = match field key with
+              | Json.Arr vs -> List.map json_int vs
+              | _ -> bad_header ("expected array " ^ key)
+            in
+            let dtype = dtype_of_string (json_string (field "dtype")) in
+            let shape = ints "shape" in
+            let off0, off1 = match ints "data_offsets" with
+              | [ a; b ] when a <= b && Int64.of_int b <= data_size -> (a, b)
+              | _ -> bad_header ("invalid offsets for " ^ name)
+            in
+            let nbytes =
+              if List.mem 0 shape then 0
+              else List.fold_left (fun size dim ->
+                  if size > Sys.max_string_length / dim then
+                    bad_header ("tensor too large: " ^ name);
+                  size * dim) (D.itemsize dtype) shape
+            in
+            if off1 - off0 <> nbytes then bad_header ("shape/size mismatch for " ^ name);
+            Some (name, dtype, shape, off0, off1)
+          end) entries
+      in
+      let sorted = List.sort (fun (_, _, _, a, b) (_, _, _, c, d) ->
+          let order = Int.compare a c in if order = 0 then Int.compare b d else order) descriptors in
+      let end_offset = List.fold_left (fun previous (_, _, _, start, stop) ->
+          if previous <> start then bad_header "overlapping or non-contiguous tensor data";
+          stop) 0 sorted in
+      if Int64.of_int end_offset <> data_size then bad_header "unclaimed tensor data";
+      List.map (fun (name, dtype, shape, off0, off1) ->
+          let data = Bytes.create (off1 - off0) in
+          In_channel.seek ic (Int64.add data_start (Int64.of_int off0));
+          (match In_channel.really_input ic data 0 (Bytes.length data) with
+          | Some () -> ()
+          | None -> bad_header "truncated tensor data");
+          (name, Run.of_bytes ~dtype ~shape data)) descriptors)
 
 let load_state_dict ?(strict = true) ?(realize = true) model state_dict =
   let loaded =

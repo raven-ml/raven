@@ -17,7 +17,9 @@ open Tolk_frontend
 val safe_load : string -> (string * Tensor.t) list
 (** [safe_load fn] reads the safetensors file at [fn] and returns its tensors
     as a state dict, in header order. Each tensor's raw data is copied to the
-    default device. Every safetensors dtype is supported.
+    default device. Empty tensors need no device allocation. Names are decoded
+    as UTF-8, including escaped Unicode. Metadata, shapes and data ranges are
+    validated before any tensor is uploaded. Every safetensors dtype is supported.
 
     @raise Invalid_argument if the file is malformed.
     @raise Sys_error if the file cannot be read. *)

@@ -108,17 +108,23 @@ let buffer_nodes () = Buffer_nodes.fold List.cons stored_nodes []
 
 let make_input ~dtype ~shape n fill =
   let dev = device () in
-  let buf = Tolk.Device.create_buffer ~size:n ~dtype dev in
-  Tolk.Device.Buffer.ensure_allocated buf;
-  let bytes = Bytes.create (Tolk.Device.Buffer.nbytes buf) in
-  fill bytes;
-  Tolk.Device.Buffer.copyin buf bytes;
-  let node =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
-      ~device:(U.Single (device_name ())) ()
-  in
-  register node buf;
-  Movement.reshape (T.of_uop node) shape
+  if n = 0 then
+    Movement.reshape
+      (Creation.empty ~dtype ~device:(U.Single (Tolk.Device.name dev)) [ 0 ])
+      shape
+  else begin
+    let buf = Tolk.Device.create_buffer ~size:n ~dtype dev in
+    Tolk.Device.Buffer.ensure_allocated buf;
+    let bytes = Bytes.create (Tolk.Device.Buffer.nbytes buf) in
+    fill bytes;
+    Tolk.Device.Buffer.copyin buf bytes;
+    let node =
+      U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
+        ~device:(U.Single (device_name ())) ()
+    in
+    register node buf;
+    Movement.reshape (T.of_uop node) shape
+  end
 
 let of_float_array ~shape data =
   make_input ~dtype:D.float32 ~shape (Array.length data) (fun bytes ->
@@ -213,10 +219,15 @@ let realize_buffers ts =
            | None -> buffer_of_node (U.buf_uop out)))
     ts outs
 
-let realize_many ts = ignore (realize_buffers ts)
+let has_empty_shape t =
+  List.exists (fun dim -> U.const_int_value dim = Some 0) (T.symbolic_shape t)
+
+let realize_many ts =
+  let ts = List.filter (fun t -> not (has_empty_shape t)) ts in
+  if ts <> [] then ignore (realize_buffers ts)
 
 let realize t =
-  ignore (realize_buffers [ t ]);
+  realize_many [ t ];
   t
 
 (* Materialize [t] into a fresh buffer on the default device, written by a
@@ -251,7 +262,9 @@ let buffer_of t =
                 "Run.buffer_of: tensor folded to a constant expression with no \
                  storage"))
 
-let data t = Tolk.Device.Buffer.as_bytes (buffer_of t)
+let data t =
+  if has_empty_shape t then Bytes.empty
+  else Tolk.Device.Buffer.as_bytes (buffer_of t)
 
 let to_float_array t =
   let n = T.numel t in

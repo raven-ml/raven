@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- `State.safe_load` decodes escaped Unicode names and validates metadata,
+  shapes and byte offsets before uploading tensors. Empty host inputs no
+  longer attempt zero-byte native allocations.
 - Fix `asinh` for large negative inputs, log-space operations at infinity,
   activation saturation, and integer `Op.var`.
 - Extrema, scans, sort and padded integer `Op.max_pool2d` preserve full-width
