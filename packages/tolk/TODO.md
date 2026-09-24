@@ -80,9 +80,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
-- Finish CPU host-call integration with HCQ2. Compare CPU
-  matmul performance with the final target after optimizer migration and
-  resolve avoidable regressions.
+- Finish CPU host-call integration with HCQ2.
 - Migrate Metal/CUDA queues; implement CUDA peer enablement
   and synchronized cross-device transfer with unsupported-peer fallback.
 - Migrate AMD queue descriptors, AQL/multi-XCC, race/recovery fixes and consumed

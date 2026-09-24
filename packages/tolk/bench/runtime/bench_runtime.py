@@ -1,31 +1,30 @@
 #!/usr/bin/env python3
-"""Reference-side runtime throughput for the indicative runtime benches, and
-the merge step that prints the context table.
+"""Compare execution-only CPU throughput with an explicit tinygrad checkout.
 
-Mirrors the four OCaml workloads (see bench_runtime.ml) on the reference's CPU
-device and times execution-only replays: matmul and the elementwise/reduce
-buffer kernels through the reference JIT, and the host->device copy through the
-allocator's copyin primitive. Warm once (capture), then median and min of an
-adaptively sized replay run on a monotonic clock.
+Run the OCaml executable first, then:
+  python packages/tolk/bench/runtime/bench_runtime.py OUT --reference _tinygrad_target
 
-Then reads <out>/tolk_runtime.json (written by the OCaml exe), joins on
-(bench, size), prints the human table `bench size backend tolk tg unit`, and
-writes <out>/runtime.tsv.
-
-These numbers are indicative context, not a target: a runtime gap would only
-close by changing compiler semantics, which is out of scope for this suite.
-
-Run from the repo root, after the OCaml exe has written its JSON:
-  uv run packages/tolk/bench/runtime/bench_runtime.py [out_dir]
+Both sides use realized zero-filled inputs, two JIT warmup/capture calls and
+adaptive replay timing. Compilation and allocation are outside the timed
+region. Repeat alternating runs on a quiet host before drawing conclusions.
 """
 
+import argparse
+import hashlib
 import json
+import math
 import os
+import subprocess
 import sys
+from pathlib import Path
 import time
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "..", "..", "..", "_tinygrad"))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("out_dir", nargs="?", default=".")
+parser.add_argument("--reference", type=Path,
+                    default=Path(__file__).resolve().parents[4] / "_tinygrad")
+args = parser.parse_args()
+sys.path.insert(0, str(args.reference.resolve()))
 
 # Force the reference onto CPU so the context column matches the tolk CPU
 # default, and silence ANSI so nothing leaks into stdout.
@@ -71,17 +70,20 @@ def time_compute(build, inputs):
         jf(*inputs)
         sync()
 
-    # Warm and capture: the reference JIT records on the second call and
-    # replays afterward, so three calls guarantee a compiled program.
-    call()
+    # Warm and capture; the estimate call below is the first replay.
     call()
     call()
     return time_replay(call)
 
 
+def input_tensor(shape):
+    return Tensor(bytes(math.prod(shape) * F32_BYTES), dtype=dtypes.float32,
+                  device="CPU").reshape(shape).realize()
+
+
 def matmul_bench(n):
-    a = Tensor.ones(n, n, device="CPU").contiguous().realize()
-    b = Tensor.ones(n, n, device="CPU").contiguous().realize()
+    a = input_tensor((n, n))
+    b = input_tensor((n, n))
     median, minimum, k = time_compute(lambda a, b: (a @ b).realize(), (a, b))
     flops = 2.0 * n * n * n
     return {"bench": "matmul", "size": str(n), "unit": "GFLOP/s",
@@ -89,9 +91,9 @@ def matmul_bench(n):
 
 
 def elementwise_bench(n):
-    a = Tensor.ones(n, device="CPU").contiguous().realize()
-    b = Tensor.ones(n, device="CPU").contiguous().realize()
-    c = Tensor.ones(n, device="CPU").contiguous().realize()
+    a = input_tensor((n,))
+    b = input_tensor((n,))
+    c = input_tensor((n,))
     median, minimum, k = time_compute(
         lambda a, b, c: (a + b * c).realize(), (a, b, c))
     return {"bench": "elementwise", "size": "16M", "unit": "GB/s",
@@ -100,7 +102,7 @@ def elementwise_bench(n):
 
 
 def reduce_bench(n):
-    x = Tensor.ones(n, device="CPU").contiguous().realize()
+    x = input_tensor((n,))
     median, minimum, k = time_compute(lambda x: x.sum().realize(), (x,))
     return {"bench": "reduce", "size": "16M", "unit": "GB/s",
             "amount": float(n) * F32_BYTES,
@@ -113,7 +115,7 @@ def copy_bench(n):
     host = memoryview(bytearray(n * F32_BYTES))
 
     def call():
-        dev.allocator._copyin(buf._buf, host)
+        buf.host[:] = host
         dev.synchronize()
 
     call()
@@ -140,31 +142,33 @@ def per_ns(amount, ns):
 def run_reference():
     rows = {}
     for bench in BENCHES:
-        try:
-            r = bench()
-            rows[(r["bench"], r["size"])] = r
-        except Exception as e:  # noqa: BLE001 - context column, keep going
-            print(f"WARNING: reference bench failed: {e}", file=sys.stderr)
+        row = bench()
+        rows[(row["bench"], row["size"])] = row
     return rows
 
 
-BANNER = (
-    "=" * 72 + "\n"
-    "INDICATIVE runtime throughput — context only, NOT a target.\n"
-    "The reference column is provided for orientation. Closing a runtime gap\n"
-    "would require changing compiler semantics, which is out of scope here.\n"
-    "Both sides time execution-only replays (compile/schedule held outside\n"
-    "the timed loop); values are the median-replay throughput.\n"
-    + "=" * 72
-)
-
-
 def main():
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-    ref = run_reference()
+    out_dir = args.out_dir
 
     with open(os.path.join(out_dir, "tolk_runtime.json")) as f:
         tolk_rows = json.load(f)
+
+    if any(row["backend"] != "CPU" for row in tolk_rows):
+        raise ValueError("the reference CPU benchmark requires DEV=CPU on both sides")
+    reference = args.reference.resolve()
+    revision = (subprocess.check_output(
+        ["git", "-C", str(reference), "rev-parse", "HEAD"], text=True).strip()
+        if (reference / ".git").exists() else None)
+    digest = hashlib.sha256()
+    for source in sorted((reference / "tinygrad").rglob("*.py")):
+        digest.update(str(source.relative_to(reference)).encode() + b"\0")
+        digest.update(source.read_bytes() + b"\0")
+    ref = run_reference()
+    provenance = {"reference": str(reference), "revision": revision,
+                  "python_source_sha256": digest.hexdigest(), "python": sys.version,
+                  "target": str(Device["CPU"].renderer.target),
+                  "rows": list(ref.values())}
+    Path(out_dir, "tinygrad_runtime.json").write_text(json.dumps(provenance, indent=2) + "\n")
 
     header = ["bench", "size", "backend", "tolk", "tg", "unit"]
     table = []
@@ -180,7 +184,7 @@ def main():
             "unit": t["unit"],
         })
 
-    print(BANNER)
+    print(f"CPU execution-only throughput against tinygrad {revision or digest.hexdigest()}")
     rows = [header] + [[
         r["bench"], r["size"], r["backend"], f"{r['tolk']:.2f}",
         f"{r['tg']:.2f}" if r["tg"] is not None else "-", r["unit"],

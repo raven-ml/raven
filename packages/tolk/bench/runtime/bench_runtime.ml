@@ -14,10 +14,10 @@
      reduce       sum over a buffer        GB/s      (1 read)
      copy         host -> device buffer    GB/s      (bytes uploaded)
 
-   These numbers are context, not a target: a runtime divergence would only
-   close by changing compiler semantics, which is out of scope. The backend is
-   whatever the process-wide device resolves to (CPU unless [DEV] selects
-   another); its name is recorded in every row. *)
+   Run the Python companion against an explicit tinygrad checkout for a
+   like-for-like CPU comparison. Repeat alternating runs on a quiet host.
+   The backend defaults to CPU unless [DEV] selects another device; its
+   name is recorded in every row. *)
 
 module Dtype = Tolk_uop.Dtype
 module Dev = Tolk.Device
