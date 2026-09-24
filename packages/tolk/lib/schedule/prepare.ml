@@ -191,9 +191,15 @@ let fix_store_hazard ~target ~value =
     || (op = Ops.Shrink && target_has_shrink)
   in
   let b = base target in
-  let slice =
-    U.toposort ~gate:(fun s -> U.op s <> Ops.Contiguous) value
-  in
+  let boundary s =
+    match U.op s with
+    | Ops.Stage | Ops.Copy -> false
+    | Ops.After -> not (List.exists (fun dep ->
+        match U.as_store dep with
+        | Some {dst; _} -> U.base dst == U.base (src0 s)
+        | None -> false) (src_tail s))
+    | _ -> true in
+  let slice = U.toposort ~enter_calls:false ~gate:boundary value in
   let reaches = U.Ref_tbl.create (List.length slice) in
   let found = ref false in
   List.iter (fun s ->
@@ -204,7 +210,8 @@ let fix_store_hazard ~target ~value =
                (U.children s)
         in
         U.Ref_tbl.replace reaches s r;
-        if r && unsafe (U.op s) then found := true
+        if r && unsafe (U.op s) && not (s == target && U.op s = Ops.Shrink) then
+          found := true
       end) slice;
   if !found then
     Some (U.store ~dst:target ~value:(U.contiguous ~src:value ()) ())
@@ -289,7 +296,7 @@ let forward_call_outputs sink =
                  && U.has_buffer_identity target
                  && U.max_numel base = U.max_numel (U.storage_base target)
               then Some (U.storage_base target)
-              else if U.op src = Ops.Contiguous then
+              else if U.op src = Ops.Stage && U.arg src = U.Arg.Empty then
                 Some (U.after ~src:target ~deps:[U.store ~dst:target ~value:(U.src src).(0) ()])
               else if (U.op src = Ops.Buffer || U.op src = Ops.Unshard)
                       && U.has_buffer_identity src && U.has_buffer_identity target then Some target
@@ -538,6 +545,73 @@ let expand_bitcast bc =
       in
       Some (U.bitcast ~src:repacked ~dtype:(U.dtype bc))
 
+(* Copies to stores *)
+
+let dims_node = function [ d ] -> d | ds -> U.stack ds
+
+(* Reshapes as the tensor layer builds them: an identity reshape is the
+   value itself, so a view shared between consumers stays one node. *)
+let reshape_to u dims =
+  if List.equal U.equal (U.shape u) dims then u
+  else U.reshape ~src:u ~shape:(dims_node dims)
+
+let flatten u =
+  match U.shape u with
+  | [] -> reshape_to u [ int_ 1 ]
+  | [ _ ] -> u
+  | ds -> reshape_to u [ U.simplify (U.uprod ds) ]
+
+(* A COPY is a plain kernel: the source's flat view, made contiguous unless
+   it already names a buffer, stored into a flat buffer on the target device
+   and reshaped back. [existing] is the buffer an assignment stores the copy
+   into; it is written directly only when it is a whole buffer. The
+   scheduler turns the kernel back into a transfer. *)
+let convert_copy_to_store ?existing copy =
+  let input = src0 copy in
+  let input =
+    if U.has_buffer_identity ~after_ok:true input then input
+    else U.contiguous ~src:input ()
+  in
+  let input = flatten input in
+  match existing with
+  | Some buf ->
+      if not (U.has_buffer_identity ~after_ok:true buf) then None
+      else Some (U.store ~dst:(flatten buf) ~value:input ())
+  | None ->
+      let device = U.Arg.as_device (U.arg copy) in
+      let buf =
+        U.alloc ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype copy)
+          ~shape:(shape_node (U.max_shape input)) ?device ()
+      in
+      let stored =
+        U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:input () ]
+      in
+      Some (reshape_to stored (U.shape copy))
+
+let stage_to_store stage =
+  let input = src0 stage in
+  if U.has_buffer_identity ~after_ok:true input || U.op input = Ops.Copy then Some input
+  else
+    let dims = U.shape stage in
+    let max_dims = List.map int_ (U.max_shape stage) in
+    let buffer = U.alloc ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype stage)
+        ~shape:(dims_node max_dims) ?device:(U.device_of input) () in
+    let view = if List.equal U.equal dims max_dims then buffer else
+        U.shrink ~src:buffer ~offset:(dims_node (List.map (fun _ -> int_ 0) dims))
+          ~size:(dims_node dims) in
+    Some (U.after ~src:view ~deps:[U.store ~dst:view ~value:input ()])
+
+let materialize n =
+  match U.op n with
+  | Ops.Store -> (
+      match U.as_store n with
+      | Some { dst; value; gate = None } when U.op value = Ops.Copy ->
+          convert_copy_to_store ~existing:dst value
+      | _ -> None)
+  | Ops.Copy -> convert_copy_to_store n
+  | Ops.Stage when U.arg n = U.Arg.Empty -> stage_to_store n
+  | _ -> None
+
 let earliest_rewrites =
   let shaped_const n value =
     let dims = match U.shape n with [ d ] -> d | ds -> U.stack ds in
@@ -598,7 +672,7 @@ let earliest_rewrites =
              let s = src0 n in
              (match U.device_of s, U.device_of n with
               | Some d1, Some d2 when d1 = d2 ->
-                  Some (U.noop ~src:s ~dtype:(U.dtype s) ())
+                  Some s
               | _ -> None)
          | _ -> None);
       (* Copy on reshape is reshape on copy. *)
@@ -613,6 +687,7 @@ let earliest_rewrites =
                        ~shape:(U.src shp).(1))
               | None -> None)
          | _ -> None);
+      materialize;
       (fun n -> match U.op n with
          | Ops.Sink ->
              let children = U.children n in
@@ -689,59 +764,6 @@ let earliest_rewrites =
           | _ -> None);
     ]
 
-(* Copies to stores *)
-
-let dims_node = function [ d ] -> d | ds -> U.stack ds
-
-(* Reshapes as the tensor layer builds them: an identity reshape is the
-   value itself, so a view shared between consumers stays one node. *)
-let reshape_to u dims =
-  if List.equal U.equal (U.shape u) dims then u
-  else U.reshape ~src:u ~shape:(dims_node dims)
-
-let flatten u =
-  match U.shape u with
-  | [] -> reshape_to u [ int_ 1 ]
-  | [ _ ] -> u
-  | ds -> reshape_to u [ U.simplify (U.uprod ds) ]
-
-(* A COPY is a plain kernel: the source's flat view, made contiguous unless
-   it already names a buffer, stored into a flat buffer on the target device
-   and reshaped back. [existing] is the buffer an assignment stores the copy
-   into; it is written directly only when it is a whole buffer. The
-   scheduler turns the kernel back into a transfer. *)
-let convert_copy_to_store ?existing copy =
-  let input = src0 copy in
-  let input =
-    if U.has_buffer_identity ~after_ok:true input then input
-    else U.contiguous ~src:input ()
-  in
-  let input = flatten input in
-  match existing with
-  | Some buf ->
-      if not (U.has_buffer_identity ~after_ok:true buf) then None
-      else Some (U.store ~dst:(flatten buf) ~value:input ())
-  | None ->
-      let device = U.Arg.as_device (U.arg copy) in
-      let buf =
-        U.alloc ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype copy)
-          ~shape:(shape_node (U.max_shape input)) ?device ()
-      in
-      let stored =
-        U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:input () ]
-      in
-      Some (reshape_to stored (U.shape copy))
-
-let pm_copy_to_store n =
-  match U.op n with
-  | Ops.Store -> (
-      match U.as_store n with
-      | Some { dst; value; gate = None } when U.op value = Ops.Copy ->
-          convert_copy_to_store ~existing:dst value
-      | _ -> None)
-  | Ops.Copy -> convert_copy_to_store n
-  | _ -> None
-
 let prepare_rangeify root =
   let root = forward_call_outputs root in
   (* Sharding rewrites see the graph's own shapes with every symbolic
@@ -768,9 +790,5 @@ let prepare_rangeify root =
   let root =
     U.graph_rewrite ~bottom_up:true ~name:"earliest rewrites"
       earliest_rewrites root
-  in
-  let root =
-    U.graph_rewrite ~bottom_up:true ~name:"convert copy to store"
-      pm_copy_to_store root
   in
   root

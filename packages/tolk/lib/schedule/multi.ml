@@ -665,8 +665,8 @@ let rec multi_pm ~shapes ~devices node =
   | Ops.Call ->
       call_multi ~shapes ~devices node
 
-  (* Passthrough: CAST, BITCAST, CONTIGUOUS, DETACH, CONTIGUOUS_BACKWARD. *)
-  | (Ops.Cast | Ops.Bitcast | Ops.Contiguous | Ops.Detach
+  (* Passthrough: CAST, BITCAST, STAGE, DETACH, CONTIGUOUS_BACKWARD. *)
+  | (Ops.Cast | Ops.Bitcast | Ops.Stage | Ops.Detach
     | Ops.Contiguous_backward)
     when is_multi (U.src node).(0) ->
       let src = (U.src node).(0) in

@@ -123,7 +123,7 @@ let is_invalid = U.is_invalid_const
 
 (* Post-rangeify *)
 
-let is_always_run op = op = Ops.Contiguous || op = Ops.Noop
+let is_always_run op = op = Ops.Noop
 
 let remove_noop_stage n =
   match U.as_stage n with
@@ -626,14 +626,12 @@ type split_context = {
   (* Scalar bindings unbound inside the kernel, most recent first. *)
   mutable vars : U.t list;
   mutable range_ctr : int;
-  mutable opts : U.Opt.t list option;
 }
 
 let create_split_context () =
   { slot = 0; buf_map = U.Ref_tbl.create 16; formals = [];
     vars = [];
-    range_ctr = 0;
-    opts = None }
+    range_ctr = 0 }
 
 let same_split_buffer a b =
   if a == b then true
@@ -777,12 +775,6 @@ let renumber_kernel_ranges root =
   in
   U.substitute mappings root
 
-let get_contiguous ctx n =
-  (match U.as_contiguous_opts n with
-   | Some opts when opts <> [] -> ctx.opts <- Some opts
-   | _ -> ());
-  Some (src0 n)
-
 let find_bufs n =
   (* A base buffer read through two INDEXes whose immediate pointer has a
      different op (e.g. a raw BUFFER vs an AFTER/STAGE over it) is a
@@ -848,7 +840,6 @@ let to_define_global ctx n =
   | Ops.Const when Array.length (U.src n) > 0 ->
       Some (U.replace n ~src:[||] ())
   | Ops.Range -> None
-  | Ops.Contiguous -> get_contiguous ctx n
   | Ops.Noop when Array.length (U.src n) > 0 -> Some (src0 n)
   | _ -> None
 
@@ -1102,7 +1093,7 @@ let split_store n =
                compact_kernel_params ctx
                  (U.sink ~kernel_info:{
                     name = "";
-                    applied_opts = []; opts_to_apply = ctx.opts;
+                    applied_opts = []; opts_to_apply = None;
                     estimates = None; beam = 0 } [ ret ])
              in
              Some (U.call ~body ~args ~info))
@@ -1272,12 +1263,12 @@ let add_buffers_rules ?(allow_locals = true) counter =
            else Some (U.after ~src:(src0 n) ~deps:flat)
        | _ -> None);
     (* Remove invalid writes: a STORE of an Invalid constant (possibly
-       through CONTIGUOUS) is a NOOP. *)
+       through STAGE) is a NOOP. *)
     (fun n -> match U.as_store n with
        | Some { value; gate = None; _ } ->
            let value =
              match U.op value with
-             | Ops.Contiguous when Array.length (U.src value) > 0 ->
+             | Ops.Stage when Array.length (U.src value) > 0 ->
                  src0 value
              | _ -> value
            in

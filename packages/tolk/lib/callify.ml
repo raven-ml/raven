@@ -58,6 +58,16 @@ let rec canonicalize_scope root =
       | _ -> None) root
 
 let transform_to_call sink =
+  let sink = U.graph_rewrite (fun u ->
+      match U.op u, U.src u with
+      | (Ops.Copy | Ops.Stage), [|src|]
+        when (U.op u = Ops.Copy || U.arg u = U.Arg.Empty)
+             && (Ops.Group.is_movement (U.op src) || U.op src = Ops.Bitcast) ->
+          (match contiguous_view src with
+           | Some view when U.op u = Ops.Stage -> Some view
+           | Some view when not (U.equal view src) -> Some (U.replace u ~src:[|view|] ())
+           | _ -> None)
+      | _ -> None) sink in
   let stores = ref [] in
   ignore (U.graph_rewrite (fun u ->
       if is_store_after u then stores := u :: !stores;

@@ -138,7 +138,9 @@ let call_ok u body =
         | _ -> false)
        (Uop.ranges body)
 
-let stage_ok u = Option.is_some (Uop.as_stage u) && tail_srcs is_int u
+let stage_ok u =
+  (arg_empty u && Array.length (Uop.src u) = 1)
+  || (Option.is_some (Uop.as_stage u) && tail_srcs is_int u)
 
 let valid_reduce_op op = Ops.Group.mem op Ops.Group.reduce
 
@@ -313,7 +315,7 @@ let shared_spec : t =
     op ~allow_any_len:true
       ~src:[
         ops (Ops.Group.movement @
-             [ Ops.Param; Ops.Buffer; Ops.Contiguous; Ops.Index; Ops.After;
+             [ Ops.Param; Ops.Buffer; Ops.Stage; Ops.Index; Ops.After;
                Ops.Unshard; Ops.Bitcast; Ops.Ins ])
       ]
       Ops.After
@@ -421,7 +423,7 @@ let tensor_spec : t =
     op Ops.Mstack =?> (fun u _ -> mstack_ok u);
 
     ops ~allow_any_len:true ~src:[ var "x" ]
-      [ Ops.Detach; Ops.Contiguous; Ops.Contiguous_backward ]
+      [ Ops.Detach; Ops.Contiguous_backward ]
     =?> (fun u bs -> same_dtype u (bs $ "x"));
 
     op ~allow_any_len:true ~src:[ var "x" ] Ops.Stage

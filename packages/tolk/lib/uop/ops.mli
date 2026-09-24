@@ -94,7 +94,6 @@ type t =
 
   (** {2 Tensor graph and expansion ops} *)
 
-  | Contiguous  (** Forces contiguous layout. *)
   | Contiguous_backward  (** Backward-pass contiguous marker. *)
   | Detach  (** Detaches from gradient tracking. *)
   | Stage  (** Staged buffer before final buffer materialisation. *)

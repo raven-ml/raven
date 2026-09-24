@@ -358,8 +358,8 @@ module Arg : sig
     | Op_device of Ops.t * device
         (** For [Allreduce]: reduction op and device group. *)
     | Stage_info of stage_opts
-    | Opts of Opt.t list
-        (** For [Contiguous]: schedule options attached to the boundary. *)
+        (** Placement and lifetime of a kernel stage. Bare tensor stages
+            carry {!Empty}. *)
     | Kernel_info of kernel_info
     | Call_info of call_info
     | Program_info of program_info
@@ -390,7 +390,6 @@ module Arg : sig
   val as_param_arg : t -> param_arg option
   val as_reduce_arg : t -> reduce_arg option
   val as_device : t -> device option
-  val as_opts : t -> Opt.t list option
   val as_stage_info : t -> stage_opts option
   val as_program_info : t -> program_info option
 end
@@ -600,10 +599,6 @@ val is_variable : t -> bool
 
 val is_bound_var : t -> bool
 (** [is_bound_var u] is true when {!as_bind} recognizes a binding effect. *)
-
-val as_contiguous_opts : t -> Opt.t list option
-(** [as_contiguous_opts u] is [Some opts] when [u] is an {!Ops.Contiguous}
-    carrying schedule options, and [None] otherwise. *)
 
 val as_kernel_info : t -> kernel_info option
 (** [as_kernel_info u] is [Some ki] when [u] is an {!Ops.Sink} carrying
@@ -1053,12 +1048,12 @@ val detach : src:t -> t
 (** [detach ~src] detaches [src] from the gradient tape. Dtype is
     inherited from [src]. Tensor. *)
 
-val contiguous : src:t -> ?ranges:t list -> ?force:bool -> unit -> t
-(** [contiguous ~src ?ranges ?force ()] forces [src] into contiguous layout.
-    [ranges] defaults to [[]]. Schedule options live on the enclosing
+val contiguous : src:t -> ?force:bool -> unit -> t
+(** [contiguous ~src ?force ()] forces [src] into contiguous layout.
+    Schedule options live on the enclosing
     {!sink}'s {!kernel_info}, not here. Dtype is inherited from [src].
-    Returns [src] unchanged for duplicate {!Ops.Contiguous} sources and
-    for empty-range buffer-identity sources ({!Ops.Buffer}, {!Ops.Alloc},
+    Returns [src] unchanged for duplicate bare {!Ops.Stage} sources and
+    for buffer-identity sources ({!Ops.Buffer}, {!Ops.Alloc},
     {!Ops.Param}), unless [force] is [true].
     Tensor. *)
 

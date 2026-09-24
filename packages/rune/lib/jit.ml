@@ -1245,7 +1245,7 @@ let same_index_paths ~(inode : U.t) (u : U.t) =
                  || TD.itemsize (U.dtype u)
                     = TD.itemsize (U.dtype (U.src u).(0)))
               || op = Tolk_uop.Ops.Reshape
-              || op = Tolk_uop.Ops.Contiguous
+              || op = Tolk_uop.Ops.Stage
               || op = Tolk_uop.Ops.Contiguous_backward
               || op = Tolk_uop.Ops.Detach
             in

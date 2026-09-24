@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.contiguous` now creates bare `STAGE` materializations, replacing
+  `CONTIGUOUS`. Preparation lowers them to call-local stores and shares
+  assignment-hazard boundaries with copies and existing store effects.
+
 - Storage views now use `SHRINK`/`BITCAST` instead of `SLICE` and executable
   view calls. `Uop.contiguous_view` reports one byte offset for scheduling,
   replay and frontend aliases, including symbolic leading dimensions.

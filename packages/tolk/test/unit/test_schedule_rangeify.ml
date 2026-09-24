@@ -192,7 +192,7 @@ let is_always_contiguous_tests =
           is_true
             (is_always_contiguous
                (U.call
-                  ~body:(U.const_int 0)
+                  ~body:(U.sink [])
                   ~args:[]
                   ~info:
                     {

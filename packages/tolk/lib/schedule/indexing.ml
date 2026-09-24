@@ -13,7 +13,7 @@ module U = Uop
 (* Ops that never need realization: they produce contiguous output, so
    their consumers can always index directly. *)
 let always_contiguous = function
-  | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Const
+  | Ops.Stage | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Const
   | Ops.Mselect | Ops.Mstack | Ops.Param | Ops.Load | Ops.Call
   ->
       true
@@ -245,7 +245,7 @@ let generate_realize_map ctx root =
          realize_custom_kernel_srcs ctx n
      | _ -> ());
     (match U.op n with
-     | Ops.Contiguous | Ops.Store -> realize_set ctx n Marked
+     | Ops.Stage | Ops.Store -> realize_set ctx n Marked
      | _ -> ());
     (match U.op n with
      | Ops.Mselect | Ops.Mstack ->

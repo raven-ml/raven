@@ -30,7 +30,7 @@
 
 val always_contiguous : Tolk_uop.Ops.t -> bool
 (** [always_contiguous op] is [true] for ops whose output is
-    contiguous by definition (Contiguous, After, Copy, Buffer,
+    contiguous by definition (Stage, After, Copy, Buffer,
     Const, Mselect, Mstack, Param, Alloc, Load, Call).  Their consumers can index directly without
     realization. *)
 

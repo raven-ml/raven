@@ -592,8 +592,14 @@ let stage_rejects_bad_layouts () =
   is_true ~msg:"Stage range sources must be integer-valued"
     (rejected Spec.tensor_spec bad_range);
   let bad_arg = Uop.replace stage ~arg:Uop.Arg.Empty () in
-  is_true ~msg:"Stage requires BufferizeOpts"
-    (rejected Spec.tensor_spec bad_arg)
+  is_true ~msg:"Indexed Stage requires placement options"
+    (rejected Spec.tensor_spec bad_arg);
+  let input = Uop.buffer ~slot:888 ~dtype:Dtype.float32 ~shape:(Uop.const_int 4)
+      ~device:(Uop.Single "CPU") () in
+  let bare = Uop.contiguous ~src:input ~force:true () in
+  is_true ~msg:"bare materialization is a tensor Stage" (Uop.op bare = Ops.Stage);
+  is_true ~msg:"bare Stage retains source placement" (Uop.device_of bare = Some (Uop.Single "CPU"));
+  Spec.type_verify Spec.tensor_spec bare
 
 let bind_accepts_variable_const () =
   let var =

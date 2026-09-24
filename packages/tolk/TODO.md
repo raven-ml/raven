@@ -16,8 +16,6 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 - Remove remaining explicit dtype overrides with the legacy IR. Eliminate
   unplaced BUFFER placeholders and their execution-time allocation fallback.
-- Replace CONTIGUOUS with bare STAGE materialization in preparation and
-  normalize COPY/STAGE storage views through the same call interface.
 - Port CPU scheduling and realization onto that graph: explicit allocation and
   call arguments, RAW/WAR dependencies for overlapping assignments, self-copy,
   nested calls and shared aliases, and cycle rejection. Centralize shape,

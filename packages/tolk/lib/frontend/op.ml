@@ -43,13 +43,13 @@ let assign t x =
     let dst = T.uop t in
     let assigned_to = Uop.storage_base dst in
     if not (Uop.has_buffer_identity assigned_to)
-       && (Uop.op assigned_to <> Ops.Contiguous || dst == assigned_to)
+       && (Uop.op assigned_to <> Ops.Stage || dst == assigned_to)
     then begin
       (* Overwriting a pending value initializes new storage; its old
          computation is dead. A view into pending storage still needs a write. *)
       let value = T.uop x in
       let value =
-        if Uop.op value = Ops.Contiguous then (Uop.src value).(0) else value
+        if Uop.op value = Ops.Stage then (Uop.src value).(0) else value
       in
       T.set_uop t (T.uop (Creation.clone (T.of_uop value)))
     end else begin

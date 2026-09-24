@@ -143,7 +143,6 @@ let ops_tinygrad_order () =
       "CUSTOM";
       "CUSTOMI";
       "INS";
-      "CONTIGUOUS";
       "CONTIGUOUS_BACKWARD";
       "DETACH";
       "STAGE";

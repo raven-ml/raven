@@ -265,7 +265,6 @@ and uop_repr_debug_string root =
         | Arg.Op_device (o, device) ->
             tuple_string [ "Ops." ^ Ops.name o; device_repr_string device ]
         | Arg.Stage_info opts -> stage_opts_debug_string opts
-        | Arg.Opts opts -> tuple_string (List.map opt_debug_string opts)
         | Arg.Kernel_info info -> kernel_info_debug_string info
         | Arg.Call_info info -> call_info_debug_string info
         | Arg.Program_info info -> program_info_debug_string info
@@ -350,7 +349,6 @@ let arg_debug_string = function
   | Arg.Op_device (op, device) ->
       tuple_string [ "Ops." ^ Ops.name op; device_repr_string device ]
   | Arg.Stage_info opts -> stage_opts_debug_string opts
-  | Arg.Opts opts -> tuple_string (List.map opt_debug_string opts)
   | Arg.Kernel_info info -> kernel_info_debug_string info
   | Arg.Call_info info -> call_info_debug_string info
   | Arg.Program_info info -> program_info_debug_string info

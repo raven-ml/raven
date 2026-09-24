@@ -77,7 +77,6 @@ type t =
   | Customi
   | Ins
   (* 6 -- ops that don't exist in programs *)
-  | Contiguous
   | Contiguous_backward
   | Detach
   | Stage
@@ -162,7 +161,6 @@ let name = function
   | Custom -> "CUSTOM"
   | Customi -> "CUSTOMI"
   | Ins -> "INS"
-  | Contiguous -> "CONTIGUOUS"
   | Contiguous_backward -> "CONTIGUOUS_BACKWARD"
   | Detach -> "DETACH"
   | Stage -> "STAGE"
@@ -296,7 +294,6 @@ module Group = struct
       Custom;
       Customi;
       Ins;
-      Contiguous;
       Contiguous_backward;
       Detach;
       Stage;

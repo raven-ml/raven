@@ -23,7 +23,8 @@ let run sink =
       let base = U.base u in
       U.Ref_tbl.replace bases base ();
       let rec peel u = match U.op u with
-        | Ops.Contiguous | Ops.Detach | Ops.Contiguous_backward -> peel (U.base (U.src u).(0))
+        | Ops.Stage when U.arg u = U.Arg.Empty -> peel (U.base (U.src u).(0))
+        | Ops.Detach | Ops.Contiguous_backward -> peel (U.base (U.src u).(0))
         | _ -> u in
       let storage = U.storage_base (peel base) in
       if U.op storage = Ops.Alloc then U.Ref_tbl.replace bases storage ()) (U.children sink);
@@ -39,7 +40,7 @@ let run sink =
         | _ when U.Ref_tbl.mem bases original && not (U.is_virtual u)
                  && (U.op (U.storage_base u) = Ops.Alloc || not (U.has_buffer_identity u)) ->
             let rec peel contiguous src = match U.op src with
-              | Ops.Contiguous -> peel true (U.src src).(0)
+              | Ops.Stage when U.arg src = U.Arg.Empty -> peel true (U.src src).(0)
               | Ops.Detach | Ops.Contiguous_backward -> peel contiguous (U.src src).(0)
               | _ -> contiguous, src in
             let contiguous, src = peel false u in

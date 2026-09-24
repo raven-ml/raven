@@ -131,7 +131,6 @@ and arg =
   | Device of device
   | Op_device of Ops.t * device
   | Stage_info of stage_opts
-  | Opts of Opt.t list
   | Kernel_info of kernel_info
   | Call_info of call_info
   | Program_info of program_info
@@ -187,7 +186,6 @@ module Arg = struct
     | Device of device
     | Op_device of Ops.t * device
     | Stage_info of stage_opts
-    | Opts of Opt.t list
     | Kernel_info of kernel_info
     | Call_info of call_info
     | Program_info of program_info
@@ -215,7 +213,6 @@ module Arg = struct
     | Op_device (opx, dx), Op_device (opy, dy) ->
         Ops.equal opx opy && dx = dy
     | Stage_info x, Stage_info y -> x = y
-    | Opts x, Opts y -> x = y
     | Kernel_info x, Kernel_info y -> x = y
     | Call_info x, Call_info y ->
         (match x.grad_fxn, y.grad_fxn with
@@ -251,7 +248,6 @@ module Arg = struct
     | Reduce_arg a -> Option.Some a
     | _ -> Option.None
   let as_device = function Device d -> Option.Some d | _ -> Option.None
-  let as_opts = function Opts o -> Option.Some o | _ -> Option.None
   let as_stage_info = function
     | Stage_info b -> Option.Some b
     | _ -> Option.None
@@ -367,7 +363,7 @@ let derived_dtype (node : node) =
        | _ -> first ())
   | Ops.Load | Ops.Unshard | Ops.Reduce | Ops.After | Ops.Range | Ops.Copy
   | Ops.Stage | Ops.Detach | Ops.Mstack | Ops.Mselect | Ops.Allreduce | Ops.Special
-  | Ops.End | Ops.Contiguous | Ops.Contiguous_backward -> first ()
+  | Ops.End | Ops.Contiguous_backward -> first ()
   | op when Ops.Group.is_unary op || Ops.Group.is_movement op -> first ()
   | op when Ops.Group.is_broadcastable op -> promote (Array.to_list node.src)
   | op -> invalid_arg ("Uop: no dtype rule for " ^ Ops.name op)
@@ -636,6 +632,7 @@ and compute_device u =
   | Ops.Stage ->
       (match Arg.as_stage_info (arg u) with
        | Some opts -> opts.device
+       | None when Array.length children > 0 -> device_of children.(0)
        | None -> None)
   | Ops.After when Array.length children >= 1 -> device_of children.(0)
   | Ops.Mselect when Array.length children >= 1 ->
@@ -687,11 +684,6 @@ and compute_device u =
    way the value cannot back a buffer as it stands. *)
 let is_virtual u =
   Option.is_none (device_of u) || Dtype.is_weak (dtype u)
-
-let as_contiguous_opts u =
-  match op u, arg u with
-  | Ops.Contiguous, Arg.Opts o -> Option.Some o
-  | _ -> Option.None
 
 let as_kernel_info u =
   match op u, arg u with
@@ -1184,14 +1176,10 @@ let flip ~src ~dims =
 let detach ~src =
   mk ~op:Ops.Detach ~dtype:(dtype src) ~src:[| src |] ~arg:Arg.Empty
 
-let contiguous ~src ?(ranges = []) ?(force = false) () =
-  match (force, ranges, op src, device_of src) with
-  | false, _, Ops.Contiguous, _ -> src
-  | false, [], _, None -> src
-  | false, [], _, _ when has_buffer_identity src -> src
-  | _ ->
-      mk ~op:Ops.Contiguous ~dtype:(dtype src)
-        ~src:(Array.of_list (src :: ranges)) ~arg:Arg.Empty
+let contiguous ~src ?(force = false) () =
+  if not force && (is_virtual src || has_buffer_identity src ||
+      (op src = Ops.Stage && arg src = Arg.Empty)) then src
+  else mk ~op:Ops.Stage ~dtype:(dtype src) ~src:[|src|] ~arg:Arg.Empty
 
 let contiguous_backward ~src =
   mk ~op:Ops.Contiguous_backward ~dtype:(dtype src) ~src:[| src |]
@@ -1873,7 +1861,7 @@ and compute_min_max u =
       | Ops.Pad, srcs when Array.length srcs > 0 ->
           let lo, hi = min_max srcs.(0) in B.min lo zero, B.max hi zero
       | (Ops.Index | Ops.Stage | Ops.After | Ops.Detach | Ops.Copy
-        | Ops.Contiguous | Ops.Contiguous_backward), srcs when Array.length srcs > 0 -> min_max srcs.(0)
+        | Ops.Contiguous_backward), srcs when Array.length srcs > 0 -> min_max srcs.(0)
       | movement, srcs when Ops.Group.is_movement movement && Array.length srcs > 0 -> min_max srcs.(0)
       | Ops.Cast, [| s |] ->
           let dt = dtype u in
@@ -2157,7 +2145,7 @@ and compute_shape_opt u =
               @ [ List.nth s2 (List.length s2 - 1) ])
         | _ -> None
       else None
-  | Ops.Mstack | Ops.Mselect | Ops.Detach | Ops.Contiguous
+  | Ops.Mstack | Ops.Mselect | Ops.Detach
   | Ops.Contiguous_backward | Ops.After | Ops.Load | Ops.Copy
   | Ops.Allreduce | Ops.Store | Ops.End ->
       first_shape ()
@@ -2654,7 +2642,8 @@ let contiguous_view u =
     | Ops.Bitcast ->
         Option.map (fun (base, offset, _) -> base, offset, shape node)
           (walk (src node).(0))
-    | Ops.Detach | Ops.Contiguous | Ops.Contiguous_backward | Ops.After ->
+    | Ops.Stage when arg node = Arg.Empty -> walk (src node).(0)
+    | Ops.Detach | Ops.Contiguous_backward | Ops.After ->
         let srcs = src node in
         if Array.length srcs = 0 then None else walk srcs.(0)
     | Ops.Reshape ->
@@ -3591,7 +3580,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 23
+let export_version = 24
 
 type serialized_node = {
   serialized_op : Ops.t;
