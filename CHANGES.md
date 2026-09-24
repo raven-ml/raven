@@ -294,6 +294,14 @@ thread.
 
 ### Tolk (new)
 
+- Reading an assigned tensor or view now executes its pending write before
+  returning bytes. `Run.data` no longer returns stale values through the
+  contiguous-view shortcut, and repeated reads do not repeat the assignment.
+
+- `Op.assign` accepts weak scalar values that promote to the destination dtype
+  and commits weak destinations to concrete storage. Assignment and
+  `Op.scatter_indexed` reject weak-float updates to integer storage.
+
 - Conditional simplification folds known branch conditions before merging
   guards, avoiding redundant predicates. Constant guards stay outside index
   validity rewrites instead of repeatedly adding masks to the same access.

@@ -24,10 +24,16 @@ let sub_range lo hi l = List.filteri (fun idx _ -> idx >= lo && idx < hi) l
    that buffer is repointed, so they all observe the write. *)
 
 let assign t x =
+  if D.is_weak (T.dtype t) then T.set_uop t (T.uop (Creation.clone t));
   if T.uop t == T.uop x then t
   else begin
-    (* Broadcast the value's shape only; the dtype must already match. *)
+    (* Broadcast the value before resolving weak promotion with the destination. *)
     let x = Movement.symbolic_broadcast_to x (T.symbolic_shape t) in
+    let x =
+      if D.is_weak (T.dtype x) then
+        Dtype_ops.cast x (D.least_upper_dtype [ T.dtype t; T.dtype x ])
+      else x
+    in
     (match (T.device t, T.device x) with
     | Some dt, Some dx when dt <> dx ->
         invalid_arg "Op.assign: device mismatch"
@@ -508,7 +514,9 @@ let scatter t ~dim index src =
 
 let scatter_indexed t ~dim index src ~mode ~unique =
   let src =
-    if D.is_weak (T.dtype src) then Dtype_ops.cast src (T.dtype t) else src
+    if D.is_weak (T.dtype src) then
+      Dtype_ops.cast src (D.least_upper_dtype [ T.dtype t; T.dtype src ])
+    else src
   in
   let dim = T.resolve_dim t dim in
   let tsh = T.shape t and ish = T.shape index and ssh = T.shape src in

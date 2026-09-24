@@ -19,11 +19,14 @@ val assign : Tensor.t -> Tensor.t -> Tensor.t
     after the assignment observes the written values. When [t] is a view (a
     slice of a larger tensor), the write lands in the viewed region and every
     live tensor aliasing the underlying buffer is repointed to depend on it.
-    [x] is broadcast to the shape of [t]; assigning a tensor to itself is a
-    no-op.
+    [x] is broadcast to the shape of [t]. A weak [t] first acquires fresh
+    storage at the dtype selected by {!Tolk_uop.Uop.commit_dtype}. A weak [x]
+    promotes with [t]'s dtype; the result must match [t]'s dtype. Once [t] has
+    a concrete dtype, assigning it to itself is a no-op.
 
     @raise Invalid_argument
-      if the dtypes differ or the tensors live on different devices. *)
+      if the dtypes differ after weak promotion, or the tensors live on
+      different devices. *)
 
 (** {1 Statistics} *)
 
@@ -203,8 +206,9 @@ val scatter_indexed :
     [index] and [src] have the rank of [t]; [src] has the extent of [t] on
     every axis but [dim], where it has the extent of [index]; off [dim],
     [index] has the extent of [t] or one, and an index broadcast along an axis
-    is read once for that axis. A weak [src] converts to [t]'s dtype before
-    the write; a concrete [src] must already have that dtype.
+    is read once for that axis. A weak [src] promotes with [t]'s dtype before
+    the write; the result must match [t]'s dtype. A concrete [src] must already
+    have that dtype.
 
     Under [`Set] the last of the updates aimed at one position wins, in the
     order of [index] along [dim]; under [`Add] they all accumulate onto [t]'s

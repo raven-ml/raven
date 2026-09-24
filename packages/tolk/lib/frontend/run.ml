@@ -83,8 +83,19 @@ let buffer_of_node node = U.Weak_tbl.find_opt storage node
    buffer has not been realized. A whole-buffer view resolves to the base buffer
    itself, so an already-materialised node keeps its exact identity. *)
 let view_buffer node =
+  let rec pending_effect node =
+    if Option.is_some (buffer_of_node node) then false
+    else
+      match U.op node with
+      | Ops.After -> true
+      | Ops.Buffer | Ops.Param -> false
+      | _ ->
+          let src = U.src node in
+          Array.length src > 0 && pending_effect src.(0)
+  in
   match U.contiguous_view_offset node with
   | None -> None
+  | Some _ when pending_effect node -> None
   | Some offset ->
       Option.map
         (fun src ->

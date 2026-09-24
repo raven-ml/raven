@@ -610,6 +610,47 @@ let triu_tests =
 let assign_tests =
   group "assign"
     [
+      test "reads execute pending assignments exactly once" (fun () ->
+          let t = vec [| 1.; 2.; 3. |] in
+          ignore (Op.assign t (El.add t (T.f 1.)));
+          check_floats [| 2.; 3.; 4. |] t;
+          check_floats [| 2.; 3.; 4. |] t;
+          ignore (Op.assign t (El.add t (T.f 1.)));
+          check_floats [| 3.; 4.; 5. |] t;
+          check_floats [| 3.; 4.; 5. |] t);
+      test "assign weak scalars into concrete storage" (fun () ->
+          let floats = vec [| 0.; 0.; 0. |] in
+          ignore (Op.assign floats (T.f 2.5));
+          check_floats [| 2.5; 2.5; 2.5 |] floats;
+          let ints = Run.of_int_array ~shape:[ 3 ] [| 0; 0; 0 |] in
+          ignore (Op.assign ints (T.i 7));
+          check_ints [| 7; 7; 7 |] ints);
+      test "assign weak scalar through a view updates the base" (fun () ->
+          let base = vec [| 1.; 2.; 3.; 4. |] in
+          let view = Mv.shrink base [ (1, 3) ] in
+          ignore (Op.assign view (T.i 7));
+          check_floats [| 1.; 7.; 7.; 4. |] base);
+      test "assign commits a weak destination without narrowing" (fun () ->
+          let large = 1 lsl 40 in
+          let dst = T.i large in
+          ignore (Op.assign dst (T.i (large + 1)));
+          let dtype =
+            Testable.make ~pp:Tolk_uop.Dtype.pp ~equal:Tolk_uop.Dtype.equal
+          in
+          equal dtype Tolk_uop.Dtype.int64 (T.dtype dst);
+          let bytes = Run.data dst in
+          equal int 8 (Bytes.length bytes);
+          equal int64 (Int64.of_int (large + 1)) (Bytes.get_int64_le bytes 0));
+      test "assign and indexed scatter reject weak-float values for integer storage" (fun () ->
+          let destination () = Run.of_int_array ~shape:[ 1 ] [| 0 |] in
+          let source = Mv.reshape (T.f 1.5) [ 1 ] in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Op.assign (destination ()) source);
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () ->
+              Op.scatter_indexed (destination ()) ~dim:0
+                (Run.of_int_array ~shape:[ 1 ] [| 0 |]) source ~mode:`Set
+                ~unique:true));
       test "assign whole tensor in place" (fun () ->
           let t = vec [| 1.; 2.; 3. |] in
           ignore (Run.realize t);
