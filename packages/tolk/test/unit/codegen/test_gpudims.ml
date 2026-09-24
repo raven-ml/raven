@@ -415,12 +415,6 @@ let gpu_renderer
     ~shared_max:32768 ~global_max ?global_prod_max ~local_max
     ~render:(fun ?name:_ _ -> "") ()
 
-let thread_renderer () =
-  Renderer.make ~name:"thread" ~device:"CPU" ~has_local:false ~has_shared:false
-    ~shared_max:0 ~has_threads:true
-    ~global_max:[ 8; 0; 0 ]
-    ~render:(fun ?name:_ _ -> "") ()
-
 (* Build a simple kernel: load from data0[range_sum], store to data0[range_sum]. *)
 let make_global_kernel ?(ki = kernel_info ()) ranges =
   let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
@@ -441,14 +435,6 @@ let find_specials root =
 
 let find_ranges root =
   List.filter (fun n -> U.op n = Ops.Range) (U.toposort root)
-
-let find_core_vars root =
-  List.filter
-    (fun n ->
-      match U.as_param n with
-      | Some { param = { slot = -1; name = Some "core_id"; _ }; _ } -> true
-      | _ -> false)
-    (U.toposort root)
 
 let integration_tests =
   group "pm_add_gpudims"
@@ -532,15 +518,6 @@ let integration_tests =
           let specials_after = find_specials result in
           equal int (List.length specials_before) (List.length specials_after)
             ~msg:"same SPECIAL count (idempotent)");
-      test "threaded renderer uses core_id" (fun () ->
-          let r0 =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()
-          in
-          let sink = make_global_kernel [ r0 ] in
-          let ren = thread_renderer () in
-          let result = Gpudims.pm_add_gpudims ren sink in
-          let dvars = find_core_vars result in
-          is_true (List.length dvars > 0) ~msg:"has core_id variable");
       test "global_prod_max caps global size by local hardware size" (fun () ->
           let g0 =
             U.range ~size:(idx 1024) ~axis:0 ~kind:Ak.Global
@@ -561,25 +538,6 @@ let integration_tests =
           equal int
             (const_int_exn (special_size_node (Gpu_dim.Group_id 0) idxs))
             16);
-      test "threaded renderer rejects multiple global ranges" (fun () ->
-          let r0 =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Global ~dtype:D.weakint ()
-          in
-          let r1 =
-            U.range ~size:(idx 4) ~axis:1 ~kind:Ak.Global ~dtype:D.weakint ()
-          in
-          let sink = make_global_kernel [ r0; r1 ] in
-          raises_match
-            (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> ignore (Gpudims.pm_add_gpudims (thread_renderer ()) sink)));
-      test "threaded renderer rejects local-only ranges" (fun () ->
-          let l0 =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Local ~dtype:D.weakint ()
-          in
-          let sink = make_global_kernel [ l0 ] in
-          raises_match
-            (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> ignore (Gpudims.pm_add_gpudims (thread_renderer ()) sink)));
     ]
 
 (* Group 11: missing-locals gating *)

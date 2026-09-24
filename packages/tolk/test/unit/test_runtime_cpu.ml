@@ -71,11 +71,11 @@ let increment_program () =
   let store = U.store ~dst:idx_dst ~value:sum () in
   [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
 
-let core_id_program ~threads =
+let core_id_program () =
   let dt = Dtype.int32 in
   let p0 = i32_param ~slot:0 in
   let core_id =
-    U.variable ~name:"core_id" ~min_val:0 ~max_val:(threads - 1) ~dtype:dt ()
+    U.variable ~name:"core_id" ~min_val:2 ~max_val:7 ~dtype:dt ()
   in
   let idx = U.index ~ptr:p0 ~idxs:[core_id] () in
   let store = U.store ~dst:idx ~value:core_id () in
@@ -108,9 +108,8 @@ let read_file path =
     ~finally:(fun () -> close_in ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
-(* Export the program in a child process (re-running this executable with
-   [TOLK_EXPORT_BLOB] set; the CPU runtime spawns domains, which forbids
-   forking), then import and execute it here. *)
+(* Re-run this executable with [TOLK_EXPORT_BLOB] set to export a program
+   from a separate process, then import and execute it here. *)
 let export_blob_var = "TOLK_EXPORT_BLOB"
 
 let export_child path =
@@ -150,10 +149,7 @@ let imported_program_runs () =
    - the bfloat16 compiler probe (Compiler_cpu.supports_bf16) is gated on the
      host clang version;
    - the AArch64 CALL26/JUMP26 trampoline only fires for branch targets beyond
-     +/-128 MiB, unreachable with kernel-sized images;
-   - the no-core_id/global>1 dispatch guard (threads forced to 1) is not
-     observable through the compile path, which emits global>1 only alongside a
-     core_id variable. *)
+     +/-128 MiB, unreachable with kernel-sized images. *)
 let test_compilation_preserves_alignment () =
   let param slot =
     U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int 4)
@@ -632,16 +628,42 @@ let main () =
             run_spec device spec [ a; b ];
             equal (list int) [ 2 ] (read_i32_buffer a);
             equal (list int) [ 1 ] (read_i32_buffer b));
-          test "core_id drives parallel execution" (fun () ->
+          test "core_id uses its explicit scalar value" (fun () ->
             let device = cpu "core-id" in
-            let threads = 4 in
-            let spec =
-              Device.compile_program device ~name:"write_core_id"
-                (core_id_program ~threads)
-            in
-            let dst = create_i32_buffer device [ 0; 0; 0; 0 ] in
-            run_spec device spec [ dst ];
-            equal (list int) [ 0; 1; 2; 3 ] (read_i32_buffer dst));
+            let spec = Device.compile_program device ~name:"write_core_id"
+                (core_id_program ()) in
+            let dst = create_i32_buffer device [ 0; 0; 0; 0; 0; 0; 0; 0 ] in
+            let runner = Realize.Compiled_runner.create ~device spec in
+            ignore (Realize.Compiled_runner.call runner [ dst ] [ "core_id", 5 ]
+                ~wait:false ~timeout:None);
+            equal (list int) [ 0; 0; 0; 0; 0; 5; 0; 0 ] (read_i32_buffer dst));
+          test "untimed calls finish before returning" (fun () ->
+            let device = cpu "synchronous" in
+            let p = U.param ~slot:0 ~dtype:Dtype.int32 ~volatile:true
+                ~shape:(U.const_int 1) () in
+            let count = U.const (Const.int Dtype.int32 1_000_000) in
+            let range = U.range ~axis:0 ~size:count
+                ~kind:Axis_type.Weak ~dtype:Dtype.int32 () in
+            let zero = U.const (Const.int Dtype.int32 0) in
+            let dst = U.index ~ptr:p ~idxs:[ zero ] () in
+            let store = U.store ~dst ~value:range () in
+            let end_ = U.end_ ~value:store ~ranges:[ range ] in
+            let spec = Device.compile_program device ~name:"write_until_done"
+                [ p; zero; count; dst; range; store; end_ ] in
+            let buf = create_i32_buffer device [ -1 ] in
+            (* A separate device observes the memory without synchronizing the
+               executing device, so copyout cannot hide an asynchronous call. *)
+            let observer = cpu "synchronous-observer" in
+            let options = { Device.Buffer_spec.default with
+                external_ptr = Some (Device.Buffer.addr buf) } in
+            let observed = Device.create_buffer ~size:1 ~dtype:Dtype.int32
+                ~spec:options observer in
+            Device.Buffer.ensure_allocated observed;
+            let runner = Realize.Compiled_runner.create ~device spec in
+            is_none (Realize.Compiled_runner.call runner [ buf ] []
+                ~wait:false ~timeout:None);
+            equal (list int) [ 999_999 ] (read_i32_buffer observed);
+            ignore (Sys.opaque_identity buf));
           test "wait returns positive elapsed time" (fun () ->
             (* BEAM search selects kernels by this timing; [None] would collapse
                every candidate to infinity. Assert a real, positive measurement

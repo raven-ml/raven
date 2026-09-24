@@ -95,42 +95,42 @@ let buffer_node ~size () =
   U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.int32 ~shape:(idx size)
     ~device:(U.Single device_name) ()
 
-(* out[i] = in[i] + in[i] over a Global range of [size] elements. *)
+(* out[i] = in[i] + in[i] over a CPU loop of [size] elements. *)
 let double_kernel name ~size =
   let p_out = iparam ~slot:0 size in
   let p_in = iparam ~slot:1 size in
-  let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Global () in
+  let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Weak () in
   let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
   let v = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:ld in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ()) ~value:v () in
   U.sink
-    ~kernel_info:(kernel_info name [ Axis_type.Global ])
+    ~kernel_info:(kernel_info name [ Axis_type.Weak ])
     [ U.end_ ~value:st ~ranges:[ r ] ]
 
-(* out[i] = in[i] + [addend] over a Global range of [size] elements. *)
+(* out[i] = in[i] + [addend] over a CPU loop of [size] elements. *)
 let add_const_kernel name ~size ~addend =
   let p_out = iparam ~slot:0 size in
   let p_in = iparam ~slot:1 size in
-  let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Global () in
+  let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Weak () in
   let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
   let v = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:(ci addend) in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ()) ~value:v () in
   U.sink
-    ~kernel_info:(kernel_info name [ Axis_type.Global ])
+    ~kernel_info:(kernel_info name [ Axis_type.Weak ])
     [ U.end_ ~value:st ~ranges:[ r ] ]
 
 (* out[i] = sum_{j<=i} in[j] — a triangular reduce (cumsum). *)
 let running_sum_kernel name ~size =
   let p_out = iparam ~slot:0 size in
   let p_in = iparam ~slot:1 size in
-  let ri = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Global () in
+  let ri = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Weak () in
   let rj = U.range ~size:(idx size) ~axis:1 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ rj ] ()) () in
   let masked = U.O.where U.O.(ri < rj) (ci 0) ld in
   let red = U.reduce ~op:Ops.Add ~src:masked ~ranges:[ rj ] ~dtype:Dtype.int32 in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ ri ] ()) ~value:red () in
   U.sink
-    ~kernel_info:(kernel_info name [ Axis_type.Global; Axis_type.Reduce ])
+    ~kernel_info:(kernel_info name [ Axis_type.Weak; Axis_type.Reduce ])
     [ U.end_ ~value:st ~ranges:[ ri ] ]
 
 (* out[0] = sum_i in[i] over a single Reduce range — the scalar-output path. *)

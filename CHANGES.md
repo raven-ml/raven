@@ -379,6 +379,13 @@ thread.
 
 ### Tolk (new)
 
+- CPU kernels now finish on the calling domain, matching tinygrad's threadless
+  execution model. SIMD remains enabled; `THREADS`, `NUM_CPU_THREADS`, and
+  implicit `core_id` arguments no longer control dispatch.
+
+- CPU kernel timings on macOS use the raw monotonic clock so fast synchronous
+  kernels remain distinguishable during beam search.
+
 - Conditional loops pass through kernel optimization without querying numeric
   bounds for their void scopes. New split axes avoid IDs held by loop scopes,
   device axes, and size-one ranges.

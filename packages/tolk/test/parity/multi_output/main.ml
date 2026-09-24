@@ -16,13 +16,12 @@ let kernel () =
       ~dst:(U.index ~ptr:p1 ~idxs:[r0] ())
       ~value:(U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:one) ()
   in
-  let e1 = U.end_ ~value:st1 ~ranges:[ r0 ] in
   let st2 =
     U.store
       ~dst:(U.index ~ptr:p2 ~idxs:[r0] ())
       ~value:(U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:two) ()
   in
-  let e2 = U.end_ ~value:st2 ~ranges:[ r0 ] in
+  let end_ = U.end_ ~value:(U.group [ st1; st2 ]) ~ranges:[ r0 ] in
   U.sink
     ~kernel_info:
       {
@@ -34,7 +33,7 @@ let kernel () =
         estimates = None;
       beam = 0;
       }
-    [ e1; e2 ]
+    [ end_ ]
 
 let () =
   Helpers.dump

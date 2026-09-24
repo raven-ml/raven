@@ -121,7 +121,7 @@ let prog_of_spec device spec =
   in
   Device.runtime device
     (U.sanitize_function_name (Program_spec.name spec))
-    lib ~runtimevars:[]
+    lib
 
 let ones3 = [| 1; 1; 1 |]
 

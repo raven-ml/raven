@@ -60,9 +60,6 @@ type t =
   | Unroll
       (** Fully unrolled axis over a reduction, producing an explicit
           sum of per-iteration expressions. *)
-  | Thread
-      (** Per-thread private dimension, used by tensor-core lowerings to
-          describe register-held tiles. *)
   | Placeholder
       (** Unassigned axis. Temporary kind used between schedule passes;
           no range with this kind may reach the renderer. *)
@@ -105,7 +102,7 @@ val to_pos : t -> int
     {ul
     {- {!Device} [-> -2]}
     {- {!Weak}, {!Loop} [-> -1]}
-    {- {!Thread}, {!Global} [-> 0]}
+    {- {!Global} [-> 0]}
     {- {!Warp} [-> 1]}
     {- {!Local}, {!Group_reduce} [-> 2]}
     {- {!Upcast} [-> 3]}
@@ -123,7 +120,6 @@ val letter : t -> string
     {ul
     {- {!Device} [-> "d"]}
     {- {!Global} [-> "g"]}
-    {- {!Thread} [-> "t"]}
     {- {!Local} [-> "l"]}
     {- {!Warp} [-> "w"]}
     {- {!Weak}, {!Loop} [-> "L"]}

@@ -67,7 +67,6 @@ type t = {
   device : string;
   compiler : Compiler.t option;
   has_local : bool;
-  has_threads : bool;
   has_shared : bool;
   global_max : int list option;
   global_prod_max : int list option;
@@ -90,7 +89,6 @@ let name t = t.name
 let device t = t.device
 let compiler t = t.compiler
 let has_local t = t.has_local
-let has_threads t = t.has_threads
 let has_shared t = t.has_shared
 let global_max t = t.global_max
 let global_prod_max t = t.global_prod_max
@@ -119,7 +117,6 @@ let with_compiler compiler t = { t with compiler = Some compiler }
 
 let make ?(tensor_cores = []) ?(supports_float4 = true)
     ?image_pitch_alignment
-    ?(has_threads = false)
     ?(global_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
     ?global_prod_max
     ?(local_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
@@ -140,7 +137,6 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
     device;
     compiler;
     has_local;
-    has_threads;
     has_shared;
     global_max = Some global_max;
     global_prod_max;

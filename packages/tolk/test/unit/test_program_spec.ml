@@ -162,25 +162,16 @@ let () =
                 equal (array int) [| 1; 1; 11 |] global;
                 is_none local
             | _ -> failwith "expected flat thread launch metadata");
-          test "core_id is explicit runtime metadata" (fun () ->
+          test "core_id is an ordinary scalar" (fun () ->
             let arg = define_var "arg" 0 9 in
-            let cid = define_var "core_id" 0 7 in
+            let cid = define_var "core_id" 2 7 in
             let spec = spec_of [ arg; cid ] in
-            match Program_spec.core_id spec with
-            | None -> failwith "expected core_id metadata"
-            | Some core_id ->
-                equal int 1 core_id.var_index;
-                equal int 8 (Program_spec.thread_count core_id);
-                begin match Program_spec.launch_kind spec with
-                | Program_spec.Serial -> ()
-                | _ -> failwith "core_id should not synthesize GPU launch metadata"
-                end;
-                let global, local = Program_spec.launch_dims spec [] in
-                equal (array int) [| 8; 1; 1 |] global;
-                begin match local with
-                | None -> failwith "expected serial local dims"
-                | Some local -> equal (array int) [| 1; 1; 1 |] local
-                end);
+            equal (list string) [ "arg"; "core_id" ]
+              (List.map (fun (v : Program_spec.var) -> v.name) (Program_spec.vars spec));
+            is_true (Program_spec.launch_kind spec = Program_spec.Serial);
+            let global, local = Program_spec.launch_dims spec [] in
+            equal (array int) [| 1; 1; 1 |] global;
+            equal (option (array int)) (Some [| 1; 1; 1 |]) local);
           test "program_info mirrors extracted metadata" (fun () ->
             let m = define_var "m" 1 32 in
             let p0 = param 0 Dtype.float32 in
@@ -222,10 +213,6 @@ let () =
                  "launch metadata cannot mix flat-thread and thread-group \
                   specials")
               (fun () -> ignore (spec_of [ c4; group; flat ])));
-          test "core_id lower bound must be zero" (fun () ->
-            let cid = define_var "core_id" 2 7 in
-            raises (Invalid_argument "core_id must have lower bound 0")
-              (fun () -> ignore (spec_of [ cid ])));
           test "exact estimates can be forwarded" (fun () ->
             let estimates =
               E.of_uop U.{ ops = Int 7; lds = Int 11; mem = Int 13 }

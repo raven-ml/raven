@@ -328,7 +328,7 @@ module Compiler = struct
 end
 
 module Program = struct
-  let runtime state entry_name lib ~runtimevars:_ =
+  let runtime state entry_name lib =
     let handle = Ffi.program_create state.State.device entry_name lib in
     let local_dims = [| 1; 1; 1 |] in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =

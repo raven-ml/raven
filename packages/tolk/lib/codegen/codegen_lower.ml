@@ -818,7 +818,7 @@ let range_repeats kind =
   | Axis_type.Reduce | Axis_type.Weak | Axis_type.Loop -> true
   | Axis_type.Device | Axis_type.Global | Axis_type.Warp | Axis_type.Local
   | Axis_type.Group_reduce | Axis_type.Upcast | Axis_type.Unroll
-  | Axis_type.Thread | Axis_type.Placeholder ->
+  | Axis_type.Placeholder ->
       false
 
 let add_war_barrier node =

@@ -10,14 +10,13 @@ open Tolk_uop
 module U = Uop
 
 type runtime_state = {
-  mutable runtimevars : (string * int) list;
   mutable vals : int64 array;
   mutable global : int array;
   mutable nbufs : int;
 }
 
 let runtime_state () =
-  { runtimevars = []; vals = [||]; global = [||]; nbufs = -1 }
+  { vals = [||]; global = [||]; nbufs = -1 }
 
 let test_renderer =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
@@ -85,8 +84,7 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
     ?(transfer = false)
     ?(renderer_set = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
     state =
-  let runtime _name _lib ~runtimevars =
-    state.runtimevars <- runtimevars;
+  let runtime _name _lib =
     let call bufs ~global ~local:_ ~vals ~wait:_ ~timeout:_ =
       state.nbufs <- Array.length bufs;
       state.global <- Array.copy global;
@@ -246,16 +244,15 @@ let () =
       renderer_selection_tests;
       group "Compiled_runner"
         [
-          test "passes vals and runtimevars from program metadata" (fun () ->
+          test "passes every scalar from program metadata" (fun () ->
             let state = runtime_state () in
             let n = variable "n" 0 16 in
             let core_id = variable "core_id" 0 3 in
-            ignore (call_runner state [ n; core_id ] [ "n", 7 ]);
-            equal (list (pair string int)) [ "core_id", 0 ] state.runtimevars;
-            equal (array int64) [| 0L; 7L |] state.vals;
-            equal (array int) [| 4; 1; 1 |] state.global;
+            ignore (call_runner state [ n; core_id ] [ "core_id", 2; "n", 7 ]);
+            equal (array int64) [| 2L; 7L |] state.vals;
+            equal (array int) [| 1; 1; 1 |] state.global;
             equal int 0 state.nbufs);
-          test "requires non-runtime scalar variables" (fun () ->
+          test "requires scalar variables" (fun () ->
             let state = runtime_state () in
             let n = variable "n" 0 16 in
             raises (Invalid_argument "program \"kern\": missing variable \"n\"") (fun () ->

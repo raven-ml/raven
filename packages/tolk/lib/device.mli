@@ -348,10 +348,9 @@ type prog = {
 }
 (** A device-specific dispatch handle. *)
 
-type runtime = string -> bytes -> runtimevars:(string * int) list -> prog
-(** [runtime name lib ~runtimevars] creates a dispatch handle for [lib]
-    with entry point [name]. [runtimevars] maps variable names (e.g.
-    ["core_id"]) to their index in the vals array. *)
+type runtime = string -> bytes -> prog
+(** [runtime name lib] creates a dispatch handle for [lib] with entry point
+    [name]. Scalar arguments use the order declared by the program. *)
 
 (** {1:graph Batched dispatch graphs} *)
 

@@ -5,7 +5,7 @@
 
 (* Unit and integration tests for Heuristic.hand_coded_optimizations.
 
-   Tests the 11-step heuristic optimization sequence. These tests verify
+   Tests the heuristic optimization sequence. These tests verify
    structural decision logic by checking which opts are applied for specific
    kernel shapes and renderers. *)
 
@@ -54,11 +54,6 @@ let cpu_renderer () =
   Renderer.make ~name:"cpu" ~device:"CPU" ~has_local:false ~has_shared:false
     ~shared_max:0 ~render:(fun ?name:_ _ -> "") ()
 
-let thread_renderer () =
-  Renderer.make ~name:"thread" ~device:"CPU" ~has_local:false ~has_shared:false
-    ~shared_max:0 ~has_threads:true ~global_max:[ 32; 32; 32 ]
-    ~render:(fun ?name:_ _ -> "") ()
-
 let qcom_renderer () =
   Renderer.make ~name:"qcom" ~device:"QCOM" ~has_local:true ~has_shared:true
     ~shared_max:32768 ~image_pitch_alignment:64
@@ -79,11 +74,9 @@ let is_grouptop = function U.Opt.Grouptop _ -> true | _ -> false
 let is_upcast = function U.Opt.Upcast _ -> true | _ -> false
 let is_unroll = function U.Opt.Unroll _ -> true | _ -> false
 let is_local = function U.Opt.Local _ -> true | _ -> false
-let is_thread = function U.Opt.Thread _ -> true | _ -> false
 let is_group = function U.Opt.Group _ -> true | _ -> false
 let is_nolocals = function U.Opt.Nolocals -> true | _ -> false
 
-let thread_axis = function U.Opt.Thread { axis; _ } -> Some axis | _ -> None
 let local_axis = function U.Opt.Local { axis; _ } -> Some axis | _ -> None
 let upcast_axis_amount = function
   | U.Opt.Upcast { axis; amount } -> Some (axis, amount)
@@ -132,7 +125,7 @@ let elementwise_global_ast ~s0 ~s1 =
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
   wrap_sink [ e ]
 
-(* Elementwise with Weak ranges — for thread renderer tests *)
+(* Elementwise with Weak ranges — for CPU renderer tests *)
 let elementwise_loop_ast ~s0 ~s1 =
   let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
   let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
@@ -541,8 +534,7 @@ let matvec_tests =
           let ren = gpu_renderer () in
           let opts = run_heuristic ast ren in
           is_true (not (has is_grouptop opts));
-          is_true (not (has is_unroll opts));
-          is_true (not (has is_thread opts)));
+          is_true (not (has is_unroll opts)));
       (* Matvec skipped on CPU (no local/shared). *)
       test "matvec skipped on CPU" (fun () ->
           let ast = matvec_global_ast ~rows:128 ~cols:128 in
@@ -761,49 +753,6 @@ let local_groups_tests =
           is_true (local_prod <= 128));
     ]
 
-(* Group 7: Threading *)
-
-let threading_tests =
-  group "threading"
-    [
-      (* Large kernel: 4096×4096=16M. 16M/131072=128 ≥ 32 → THREAD. *)
-      test "threading on large kernel" (fun () ->
-          let ast = elementwise_loop_ast ~s0:4096 ~s1:4096 in
-          let ren = thread_renderer () in
-          let opts = run_heuristic ast ren in
-          is_true (has is_thread opts));
-      (* Small kernel: 4×4=16. 16/131072=0 < any thread count → no THREAD. *)
-      test "threading skipped on small kernel" (fun () ->
-          let ast = elementwise_loop_ast ~s0:4 ~s1:4 in
-          let ren = thread_renderer () in
-          let opts = run_heuristic ast ren in
-          is_true (not (has is_thread opts)));
-      (* First divisible loop axis is picked. Both axes div by 32; THREAD
-         should target axis 0. *)
-      test "threading picks first divisible axis" (fun () ->
-          let ast = elementwise_loop_ast ~s0:4096 ~s1:4096 in
-          let ren = thread_renderer () in
-          let opts = run_heuristic ast ren in
-          let axes = List.filter_map thread_axis opts in
-          is_true (axes <> []);
-          equal int 0 (List.hd axes));
-      (* First axis not divisible by any thread count (size 7); second axis
-         is divisible. THREAD should target the second loop axis. *)
-      test "threading skips non-divisible axis" (fun () ->
-          (* 7 × 4194304 = 29M, 29M/131072=224 ≥ 32. Axis 0 has size 7,
-             not divisible by any of [32,16,12,8,6,5,4,3,2].
-             After step 9 upcast by 4 on last dim: shape=[7, 1048576, 4].
-             Axis 1 (1048576) is divisible by 32. *)
-          let ast = elementwise_loop_ast ~s0:7 ~s1:4194304 in
-          let ren = thread_renderer () in
-          let opts = run_heuristic ast ren in
-          let axes = List.filter_map thread_axis opts in
-          is_true (axes <> []);
-          (* Axis 1 after upcast — exact value depends on shape after
-             upcast splitting, but it must NOT be axis 0 (size 7). *)
-          is_true (List.hd axes <> 0));
-    ]
-
 (* Group 8: Integration *)
 
 let integration_tests =
@@ -847,15 +796,13 @@ let integration_tests =
           let ren = cpu_renderer () in
           let opts = run_heuristic ast ren in
           is_true (has is_upcast opts);
-          is_true (not (has is_local opts));
-          is_true (not (has is_thread opts)));
-      (* Large kernel on thread renderer: upcast + thread. *)
-      test "large kernel on thread renderer" (fun () ->
+          is_true (not (has is_local opts)));
+      (* Large CPU loops retain vectorization without a hardware launch axis. *)
+      test "large kernel on CPU" (fun () ->
           let ast = elementwise_loop_ast ~s0:4096 ~s1:4096 in
-          let ren = thread_renderer () in
+          let ren = cpu_renderer () in
           let opts = run_heuristic ast ren in
           is_true (has is_upcast opts);
-          is_true (has is_thread opts);
           is_true (not (has is_local opts)));
     ]
 
@@ -872,6 +819,5 @@ let () =
       image_tests;
       masked_upcast_tests;
       local_groups_tests;
-      threading_tests;
       integration_tests;
     ]

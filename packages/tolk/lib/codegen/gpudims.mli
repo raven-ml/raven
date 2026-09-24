@@ -11,11 +11,9 @@
     ({!Tolk_uop.Ops.Special} nodes) via grouping, splitting, and
     contraction.
 
-    The pass replaces {!Tolk_uop.Ops.Range} nodes of Global, Thread,
+    The pass replaces {!Tolk_uop.Ops.Range} nodes of Global,
     Warp, Local, and Group_reduce kinds with SPECIAL hardware index nodes,
-    adjusting for renderer grid size limits. Threaded backends require exactly
-    one global range and no local ranges; that range is replaced by a
-    [core_id] variable. Missing local ranges on global stores are gated with
+    adjusting for renderer grid size limits. Missing local ranges on global stores are gated with
     validity masks. A Device range is not a program axis: it becomes the
     [_device_num] variable, bound per device at launch, and is dropped from
     the {!Tolk_uop.Ops.End} nodes that closed it. *)

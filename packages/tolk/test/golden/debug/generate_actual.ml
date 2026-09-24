@@ -16,7 +16,7 @@ let make_kernel ~name ~opts_to_apply ~ptr_size =
   let p0 = U.param ~slot:0 ~dtype:Dtype.float32 ~shape () in
   let p1 = U.param ~slot:1 ~dtype:Dtype.float32 ~shape () in
   let p2 = U.param ~slot:2 ~dtype:Dtype.float32 ~shape () in
-  let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
+  let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Weak () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
@@ -24,7 +24,7 @@ let make_kernel ~name ~opts_to_apply ~ptr_size =
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   U.sink
     ~kernel_info:{ U.name = name;
-      axis_types = [ Axis_type.Global ]; dont_use_locals = false;
+      axis_types = [ Axis_type.Weak ]; dont_use_locals = false;
       applied_opts = []; opts_to_apply; estimates = None; beam = 0 }
     [ e ]
 

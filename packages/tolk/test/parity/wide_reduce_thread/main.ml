@@ -6,13 +6,9 @@
    gradient takes when a recurrence is unrolled — one contraction per step,
    all accumulated — reduced to the smallest graph that reaches it.
 
-   The host-threading heuristic sizes its thread count from the product of
-   the full shape, so a 63-bit reconstruction of that product wraps and
-   silently drops the thread split. This pins that the split survives an
-   iteration space that does not fit in a machine word.
-
-   CPU only — threading is a host-renderer feature — and NUM_CPU_THREADS is
-   pinned so the chosen thread count does not follow the machine.
+   The CPU lowering must preserve all contractions when their combined
+   iteration space does not fit in a machine word. The target executes this
+   kernel on one CPU thread, with vectorized arithmetic.
 
    Paired with main.py. Run `uv run main.py` to regenerate *.expected. *)
 

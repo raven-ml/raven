@@ -32,15 +32,27 @@ let rstrip_newline s =
   let n = String.length s in
   if n > 0 && s.[n - 1] = '\n' then String.sub s 0 (n - 1) else s
 
+(* Hand-built hardware ranges become software loops on the CPU. *)
+let kernel_for_renderer ren sink =
+  if Renderer.has_local ren then sink
+  else
+    let subs = U.toposort sink |> List.filter_map (fun u ->
+      match U.as_range u with
+      | Some { kind = Axis_type.Global; axis; sub; size; parents } ->
+          Some (u, U.range ~size ~axis ~sub ~parents ~kind:Axis_type.Weak
+              ~dtype:(U.dtype u) ())
+      | _ -> None) in
+    U.substitute subs sink
+
 (* Stage 5: kernel AST after the full codegen rewrite pipeline. Per-backend
    because opt passes and pre/extra matchers are renderer-specific. *)
 let stage5 ?(optimize = true) ren sink =
-  let processed = Codegen.full_rewrite_to_sink ~optimize ren sink in
+  let processed = Codegen.full_rewrite_to_sink ~optimize ren (kernel_for_renderer ren sink) in
   rstrip_newline (Render.uops_to_string processed)
 
 (* Stage 7: rendered backend source. *)
 let stage7 ?(optimize = true) ren sink =
-  let processed = Codegen.full_rewrite_to_sink ~optimize ren sink in
+  let processed = Codegen.full_rewrite_to_sink ~optimize ren (kernel_for_renderer ren sink) in
   let name =
     match U.as_kernel_info processed with Some ki -> ki.name | None -> "kernel"
   in

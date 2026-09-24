@@ -3,7 +3,7 @@
 (library
  (name tolk_cpu)
  (public_name tolk.cpu)
- (libraries tolk tolk_uop unix threads)
+ (libraries tolk tolk_uop unix)
  (foreign_stubs
   (language c)
   (names tolk_cpu_stubs)))

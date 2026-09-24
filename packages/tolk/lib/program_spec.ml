@@ -13,10 +13,6 @@ module U = Uop
 
 type var = { name : string; lo : int; hi : int; dtype : Dtype.t }
 type var_def = { node : U.t; var : var }
-type core_id = { var_index : int; lo : int; hi : int }
-
-let thread_count core_id = core_id.hi - core_id.lo + 1
-
 type launch_kind = Serial | Thread_groups | Threads
 
 (* The lowered program representation. In the uop IR, a linearized
@@ -239,12 +235,6 @@ module Estimates = struct
           (match U.as_special u with
            | Some sv -> mults := mul_estimate !mults (estimate_of_size sv.size)
            | None -> ())
-      | Ops.Param ->
-          (match U.arg u with
-           | U.Arg.Param_arg
-               { name = Some "core_id"; vmin_vmax = Some (_lo, hi); _ } ->
-               mults := mul_estimate !mults (Int (Bound.to_int (Bound.succ hi)))
-           | _ -> ())
       | Ops.Mulacc when not (U.Tbl.mem ignored u) ->
           add_ops (2 * U.max_numel u)
       | op when Ops.Group.is_alu op && not (U.Tbl.mem ignored u) ->
@@ -291,7 +281,6 @@ type t = {
   ins : int list;
   launch : launch;
   estimates : Estimates.t;
-  core_id : core_id option;
 }
 
 let default_dims () = [| U.const_int 1; U.const_int 1; U.const_int 1 |]
@@ -366,19 +355,7 @@ let set_dim seen label dims axis size =
   Array.set seen axis true;
   Array.set dims axis size
 
-let collect_core_id vars =
-  let found = ref None in
-  List.iteri (fun i (v : var) ->
-    if v.name = "core_id" then begin
-      if v.lo <> 0 then invalid_arg "core_id must have lower bound 0";
-      match !found with
-      | Some _ -> invalid_arg "core_id appears more than once"
-      | None -> found := Some { var_index = i; lo = v.lo; hi = v.hi }
-    end)
-    vars;
-  !found
-
-let collect_launch (program : program) (vars : var list) : launch * core_id option =
+let collect_launch (program : program) : launch =
   let global = default_dims () in
   let local = default_dims () in
   let group_seen = Array.make 3 false in
@@ -405,17 +382,9 @@ let collect_launch (program : program) (vars : var list) : launch * core_id opti
   if !has_group && !has_flat then
     invalid_arg
       "launch metadata cannot mix flat-thread and thread-group specials";
-  let core_id = collect_core_id vars in
-  begin match core_id, !has_group, !has_flat with
-  | Some cid, false, false -> global.(0) <- U.const_int (thread_count cid)
-  | _ -> ()
-  end;
-  let launch =
-    if !has_flat then { kind = Threads; global; local = None }
-    else if !has_group then { kind = Thread_groups; global; local = Some local }
-    else { kind = Serial; global; local = Some local }
-  in
-  (launch, core_id)
+  if !has_flat then { kind = Threads; global; local = None }
+  else if !has_group then { kind = Thread_groups; global; local = Some local }
+  else { kind = Serial; global; local = Some local }
 
 let of_program ~name ~src ~device ?lib ?(applied_opts = [])
     ?estimates (program : program) : t =
@@ -425,13 +394,13 @@ let of_program ~name ~src ~device ?lib ?(applied_opts = [])
   let globals =
     List.sort_uniq Int.compare (collect_globals program @ outs @ ins)
   in
-  let launch, core_id = collect_launch program vars in
+  let launch = collect_launch program in
   let estimates = match estimates with
     | Some estimates -> estimates
     | None -> Estimates.of_program program
   in
   { name; src; device; program; lib; applied_opts; vars; var_defs; globals;
-    outs; ins; launch; estimates; core_id }
+    outs; ins; launch; estimates }
 
 let with_lib lib t = { t with lib = Some lib }
 let with_estimates estimates t = { t with estimates }
@@ -479,7 +448,6 @@ let vars t = t.vars
 let globals t = t.globals
 let outs t = t.outs
 let ins t = t.ins
-let core_id t = t.core_id
 let launch_kind t = t.launch.kind
 let estimates t = t.estimates
 

@@ -92,31 +92,6 @@ let getenv name default =
   | Some s -> ( try int_of_string s with Failure _ -> default)
   | None -> default
 
-(* A cgroup v2 CPU quota ("<quota> <period>", or "max" when unset) is the real
-   limit inside a container, where the online-processor count reports the whole
-   host. *)
-let cgroup_cpu_quota () =
-  try
-    let ic = open_in "/sys/fs/cgroup/cpu.max" in
-    let line =
-      Fun.protect
-        ~finally:(fun () -> close_in_noerr ic)
-        (fun () -> input_line ic)
-    in
-    match String.split_on_char ' ' (String.trim line) with
-    | [ quota; period ] when quota <> "max" ->
-        Some (max 1 (int_of_string quota / int_of_string period))
-    | _ -> None
-  with _ -> None
-
-let host_cpu_count () =
-  match Sys.getenv_opt "NUM_CPU_THREADS" with
-  | Some s -> (try max 1 (int_of_string s) with Failure _ -> 1)
-  | None -> (
-      match cgroup_cpu_quota () with
-      | Some n -> n
-      | None -> Domain.recommended_domain_count ())
-
 (* Subset of python str.format(): positional {0}/{1}, auto-numbered {}, {{ }} escapes. *)
 let render_custom_fmt fmt args =
   let a = Array.of_list args in
@@ -2757,8 +2732,8 @@ let supports_amd_dtype arch dt =
 
 let clang_no_abi ?(native_bf16 = true) arch =
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
-    ~has_threads:(getenv "THREADS" 1 <> 0) ~has_shared:false
-    ~shared_max:0 ~global_max:[ host_cpu_count (); 0; 0 ]
+    ~has_shared:false
+    ~shared_max:0 ~global_max:[ 1; 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang ~extra_matcher:clang_language.extra_matcher
     ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
@@ -2768,8 +2743,8 @@ let clang_no_abi ?(native_bf16 = true) arch =
 let clang ?(native_bf16 = true) ?aligned arch =
   let language = clang_fixed_abi_language ?aligned arch in
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
-    ~has_threads:(getenv "THREADS" 1 <> 0) ~has_shared:false
-    ~shared_max:0 ~global_max:[ host_cpu_count (); 0; 0 ]
+    ~has_shared:false
+    ~shared_max:0 ~global_max:[ 1; 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang
     ~extra_matcher:language.extra_matcher

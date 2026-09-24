@@ -31,9 +31,21 @@ let kernel_info ?(axis_types = []) name =
 let name_of_sink sink =
   match U.as_kernel_info sink with Some ki -> ki.name | None -> "kernel"
 
+(* Hand-built hardware ranges become software loops on the CPU. *)
+let kernel_for_renderer ren sink =
+  if Renderer.has_local ren then sink
+  else
+    let subs = U.toposort sink |> List.filter_map (fun u ->
+      match U.as_range u with
+      | Some { kind = Axis_type.Global; axis; sub; size; parents } ->
+          Some (u, U.range ~size ~axis ~sub ~parents ~kind:Axis_type.Weak
+              ~dtype:(U.dtype u) ())
+      | _ -> None) in
+    U.substitute subs sink
+
 (* Full pipeline chain: Kernel.t -> source string. *)
 let pipeline_to_source ?(optimize = true) ren sink =
-  let processed = Codegen.full_rewrite_to_sink ~optimize ren sink in
+  let processed = Codegen.full_rewrite_to_sink ~optimize ren (kernel_for_renderer ren sink) in
   let name = name_of_sink processed in
   let program = Linearizer.linearize processed in
   String.trim (Renderer.render ren ~name program)
@@ -186,14 +198,13 @@ let make_multi_output () =
       ~dst:(U.index ~ptr:p1 ~idxs:[r0] ())
       ~value:(U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:one) ()
   in
-  let e1 = U.end_ ~value:st1 ~ranges:[ r0 ] in
   let st2 =
     U.store
       ~dst:(U.index ~ptr:p2 ~idxs:[r0] ())
       ~value:(U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:two) ()
   in
-  let e2 = U.end_ ~value:st2 ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "multi_output") [ e1; e2 ]
+  let end_ = U.end_ ~value:(U.group [ st1; st2 ]) ~ranges:[ r0 ] in
+  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "multi_output") [ end_ ]
 
 let make_gated_store () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in

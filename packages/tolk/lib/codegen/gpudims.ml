@@ -197,17 +197,7 @@ let gate_missing_locals (idx : U.t) (idx_view : U.index_view)
 
 (* Per-device compute grid for a kernel. *)
 let compute_idxs (ctx : Renderer.t) ki ~global_shape ~local_shape ~local_dims =
-  if Renderer.has_threads ctx then begin
-    if Array.length global_shape <> 1 || local_dims <> [] then
-      invalid_arg
-        "threaded renderer expects exactly one global range and no local ranges";
-    let hi = dim_max global_shape.(0) - 1 in
-    let core =
-      U.variable ~name:"core_id" ~min_val:0 ~max_val:hi ~dtype:Dtype.int32 ()
-    in
-    [ U.cast ~src:core ~dtype:Dtype.weakint ]
-  end
-  else if ki.U.dont_use_locals then begin
+  if ki.U.dont_use_locals then begin
     assert (local_dims = []);
     get_grouped_dims Global_idx global_shape (Renderer.global_max ctx)
       ~reverse:true
@@ -262,7 +252,7 @@ let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
         in
         let global_dims =
           extract_keys (function
-            | Axis_type.Global | Thread -> true
+            | Axis_type.Global -> true
             | _ -> false)
         in
         let local_dims =

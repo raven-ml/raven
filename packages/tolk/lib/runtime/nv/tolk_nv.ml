@@ -1983,7 +1983,7 @@ module Runtime = struct
 
   let default_local = [| 1; 1; 1 |]
 
-  let runtime state name lib ~runtimevars:_ =
+  let runtime state name lib =
     let prg =
       Program.load state.State.hw
         ~alloc:(fun size ->

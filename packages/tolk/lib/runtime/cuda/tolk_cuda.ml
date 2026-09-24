@@ -217,7 +217,7 @@ module Allocator = struct
 end
 
 module Program = struct
-  let runtime state entry_name lib ~runtimevars:_ =
+  let runtime state entry_name lib =
     Ffi.ctx_set_current state.State.context;
     let module_ = Ffi.module_load lib in
     let func = Ffi.module_get_function module_ entry_name in

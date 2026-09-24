@@ -17,7 +17,6 @@ module Opt = struct
     | Upcast of { axis : int; amount : int }
     | Unroll of { axis : int; amount : int }
     | Local of { axis : int; amount : int }
-    | Thread of { axis : int; amount : int }
     | Group of { axis : int; amount : int }
     | Grouptop of { axis : int; amount : int }
     | Nolocals
@@ -30,7 +29,6 @@ module Opt = struct
     | Upcast { axis; amount } -> Printf.sprintf "UPCAST:%d:%d" axis amount
     | Unroll { axis; amount } -> Printf.sprintf "UNROLL:%d:%d" axis amount
     | Local { axis; amount } -> Printf.sprintf "LOCAL:%d:%d" axis amount
-    | Thread { axis; amount } -> Printf.sprintf "THREAD:%d:%d" axis amount
     | Group { axis; amount } -> Printf.sprintf "GROUP:%d:%d" axis amount
     | Grouptop { axis; amount } -> Printf.sprintf "GROUPTOP:%d:%d" axis amount
     | Nolocals -> "NOLOCALS"
@@ -41,13 +39,13 @@ module Opt = struct
 
   let axis = function
     | Tc { axis; _ } | Upcast { axis; _ } | Unroll { axis; _ }
-    | Local { axis; _ } | Thread { axis; _ } | Group { axis; _ }
+    | Local { axis; _ } | Group { axis; _ }
     | Grouptop { axis; _ } | Padto { axis; _ } | Swap { axis; _ } -> Some axis
     | Nolocals -> None
 
   let amount = function
     | Upcast { amount; _ } | Unroll { amount; _ } | Local { amount; _ }
-    | Thread { amount; _ } | Group { amount; _ } | Grouptop { amount; _ }
+    | Group { amount; _ } | Grouptop { amount; _ }
     | Padto { amount; _ } -> Some amount
     | Tc _ | Swap _ | Nolocals -> None
 
@@ -55,7 +53,6 @@ module Opt = struct
     | Upcast r -> Upcast { r with amount = a }
     | Unroll r -> Unroll { r with amount = a }
     | Local r -> Local { r with amount = a }
-    | Thread r -> Thread { r with amount = a }
     | Group r -> Group { r with amount = a }
     | Grouptop r -> Grouptop { r with amount = a }
     | Padto r -> Padto { r with amount = a }
@@ -422,19 +419,6 @@ let program_var_name u =
   match op u, arg u with
   | Ops.Param, Arg.Param_arg { name = Some name; _ } -> Some name
   | _ -> None
-
-let program_runtimevars (info : program_info) =
-  let rec loop i acc = function
-    | [] -> List.rev acc
-    | var :: vars ->
-        let acc =
-          match program_var_name var with
-          | Some "core_id" -> ("core_id", i) :: acc
-          | Some _ | None -> acc
-        in
-        loop (i + 1) acc vars
-  in
-  loop 0 [] info.vars
 
 (* View accessors — structured views over per-op src/arg contracts. *)
 
@@ -3146,14 +3130,7 @@ let program_info_from_sink sink =
            match as_special u with
            | Some { name; size } -> update_special name size
            | None -> ())
-       | _ -> ());
-      match op u, arg u with
-      | Ops.Param, Arg.Param_arg { addrspace = Dtype.Alu; name = Some "core_id"; _ }
-        ->
-          global_size :=
-            set_nth "program_info_from_sink" !global_size 0
-              (Launch_int (Bound.to_int (Bound.succ (vmax u))))
-      | _ -> ())
+       | _ -> ()))
     (toposort sink);
   let name =
     match as_kernel_info sink with
@@ -3375,15 +3352,13 @@ let program_launch_dims (info : program_info) ~var_vals =
   ( List.map (program_launch_dim info.name var_vals) info.global_size,
     info.local_size )
 
-let program_vals info ~var_vals =
-  let runtimevars = program_runtimevars info in
+let program_vals (info : program_info) ~var_vals =
   List.map
     (fun var ->
       match program_var_name var with
-      | Some name when List.mem_assoc name runtimevars -> None
       | Some name ->
           (match List.assoc_opt name var_vals with
-           | Some value -> Some value
+           | Some value -> value
            | None -> invalid_arg
                (Printf.sprintf "program %S: missing variable %S" info.name name))
       | None -> invalid_arg
@@ -3489,7 +3464,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 8
+let export_version = 9
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

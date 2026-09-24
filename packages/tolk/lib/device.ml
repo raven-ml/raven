@@ -374,7 +374,7 @@ type prog = {
   handle : nativeint;
 }
 
-type runtime = string -> bytes -> runtimevars:(string * int) list -> prog
+type runtime = string -> bytes -> prog
 
 (* Batched dispatch graphs *)
 

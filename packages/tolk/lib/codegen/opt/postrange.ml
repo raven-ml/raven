@@ -228,7 +228,6 @@ let reduceop t = List.find_opt is_reduce (U.backward_slice t.ast)
 let axis_color : Axis_type.t -> string = function
   | Device -> "green"
   | Global -> "blue"
-  | Thread -> "BLUE"
   | Local -> "cyan"
   | Warp -> "CYAN"
   | Weak | Loop -> "WHITE"
@@ -676,7 +675,7 @@ let check_no_nested_group t r red_opt =
   end
 
 (* Per-opt validation for shift_to opts. *)
-let validate_shift_opt t opt r amt rng_kind =
+let validate_shift_opt t opt amt rng_kind =
   match opt with
   | U.Opt.Unroll _ ->
       check (amt <= 32) "don't unroll more than 32";
@@ -697,15 +696,6 @@ let validate_shift_opt t opt r amt rng_kind =
       check
         (rng_kind = Axis_type.Global || rng_kind = Axis_type.Weak)
         "local is for globals"
-  | U.Opt.Thread _ ->
-      check (Renderer.has_threads t.ren) "target does not support threads";
-      (match Renderer.global_max t.ren with
-       | Some (gm :: _) -> check (amt <= gm) "too many threads"
-       | _ -> raise (Opt_error "too many threads"));
-      check
-        (List.for_all (fun at -> at <> Axis_type.Thread) (axis_types t))
-        "already threaded";
-      check (List.memq r (globalizable_rngs t)) "can't apply thread to this dim"
   | U.Opt.Group _ | U.Opt.Grouptop _ ->
       check
         (List.for_all
@@ -747,7 +737,6 @@ let apply_padto t r amount _red_opt =
   check
     (rng_kind <> Axis_type.Upcast && rng_kind <> Axis_type.Unroll)
     "cannot pad upcasted";
-  check (rng_kind <> Axis_type.Thread) "cannot pad thread";
   let old_size = range_int_size r in
   let new_sz = round_up old_size amount in
   check (old_size > new_sz / 4) "pad adds more than quadruple the work";
@@ -1010,7 +999,6 @@ and apply_opt ?(append_opt = true) t opt =
           | Upcast _ -> Axis_type.Upcast
           | Unroll _ -> Axis_type.Unroll
           | Group _ | Grouptop _ -> Axis_type.Group_reduce
-          | Thread _ -> Axis_type.Thread
           | _ -> assert false
         in
         let amt =
@@ -1024,9 +1012,9 @@ and apply_opt ?(append_opt = true) t opt =
         (match opt with
          | Group _ | Grouptop _ -> check_no_nested_group t r red_opt
          | _ -> ());
-        validate_shift_opt t opt r amt (range_kind r);
+        validate_shift_opt t opt amt (range_kind r);
         let top =
-          match opt with Grouptop _ | Thread _ -> true | _ -> false
+          match opt with Grouptop _ -> true | _ -> false
         in
         Some (shift_to ~top t r amt new_kind)
   in

@@ -438,50 +438,6 @@ let apply_locals k =
       ignore (P.apply_opt k (U.Opt.Local { axis; amount = local_sz }));
       if will_delete then incr deleted) to_apply
 
-(* Try splitting the first divisible LOOP axis by [threads]. *)
-let try_thread_split k threads =
-  try List.iter (fun axis ->
-    if const_int_or 0 (nth_size k axis) mod threads = 0 then begin
-      try_apply k (U.Opt.Thread { axis; amount = threads });
-      raise_notrace Exit
-    end) (P.axes_of k [ Axis_type.Weak ])
-  with Exit -> ()
-
-let last_is_thread opts = opts <> [] && (match last opts with
-  | U.Opt.Thread _ -> true | _ -> false)
-
-(* Pick a thread count for LOOP axes. *)
-let apply_threading k =
-  if not (Renderer.has_threads (P.ren k)) then ()
-  else match Renderer.global_max (P.ren k) with
-  | None | Some [] -> ()
-  | Some (gmax :: _) ->
-      (* Heuristic: use about 128K ops per thread. The reference forms this
-         product in arbitrary precision, where an OCaml int wraps — a kernel
-         fusing enough reduce axes overflows to a value that fails every
-         comparison below and silently loses threading. 32 is the largest
-         thread count tried, so any product at or above 128K*32 decides those
-         comparisons exactly as the true product would; multiplying only when
-         the result provably stays under that bound keeps the fold itself
-         overflow-free. *)
-      let saturate = (128 lsl 10) * 32 in
-      let total =
-        List.fold_left
-          (fun acc s ->
-            let s = const_int_or 1 s in
-            if acc = 0 || s = 0 then 0
-            else if acc >= saturate then acc
-            else if s > saturate / acc then saturate
-            else acc * s)
-          1 (P.full_shape k)
-      in
-      try List.iter (fun threads ->
-        if threads <= gmax && total / (128 lsl 10) >= threads then begin
-          try_thread_split k threads;
-          if last_is_thread (P.applied_opts k) then raise_notrace Exit
-        end) [ 32; 16; 12; 8; 6; 5; 4; 3; 2 ]
-      with Exit -> ()
-
 let hand_coded_optimizations k =
   match try_tensor_cores k with
   | Some k -> k
@@ -498,6 +454,5 @@ let hand_coded_optimizations k =
             unroll_reduce k;
             upcast_default k;
             apply_locals k;
-            apply_threading k;
             k
           end

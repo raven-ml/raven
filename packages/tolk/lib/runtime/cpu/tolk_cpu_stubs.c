@@ -142,7 +142,13 @@ CAMLprim value caml_tolk_cpu_monotonic_ns(value unit) {
       (intnat)(whole * 1000000000LL + rest * 1000000000LL / freq.QuadPart));
 #else
   struct timespec ts;
+#if defined(__APPLE__)
+  /* Darwin's adjusted monotonic clock rounds to microseconds, which can time
+     a synchronous kernel at zero. Use the raw high-resolution counter. */
+  clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+#else
   clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
   return Val_long((intnat)ts.tv_sec * 1000000000LL + ts.tv_nsec);
 #endif
 }

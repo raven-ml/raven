@@ -98,8 +98,6 @@ module Opt : sig
         (** Unroll [axis] by [amount] iterations. *)
     | Local of { axis : int; amount : int }
         (** Split [axis] into workgroup-shared tiles of [amount]. *)
-    | Thread of { axis : int; amount : int }
-        (** Split [axis] into per-thread tiles of [amount]. *)
     | Group of { axis : int; amount : int }
         (** Split [axis] into workgroups of [amount]. *)
     | Grouptop of { axis : int; amount : int }
@@ -303,11 +301,6 @@ val program_info_from_sink : t -> program_info
     launch dimensions, or if a local launch dimension is not a concrete
     integer. *)
 
-val program_runtimevars : program_info -> (string * int) list
-(** [program_runtimevars info] maps runtime-owned variable names to their
-    positions in [info.vars]. Currently this matches tinygrad's [core_id]
-    rule. *)
-
 val program_launch_dims :
   program_info -> var_vals:(string * int) list ->
   launch_value list * int list option
@@ -319,13 +312,12 @@ val program_launch_dims :
     dimension references a missing variable. Raises [Not_found] for an
     expression outside the UOp-local evaluator. *)
 
-val program_vals : program_info -> var_vals:(string * int) list -> int option list
+val program_vals : program_info -> var_vals:(string * int) list -> int list
 (** [program_vals info ~var_vals] is the runtime argument tuple for
-    [info.vars]. Variables listed by {!program_runtimevars} return [None];
-    other variables return [Some value] from [var_vals].
+    [info.vars], in their declared order, resolved from [var_vals].
 
     Raises [Invalid_argument], naming the program and variable, if a
-    non-runtime variable has no supplied value. *)
+    variable has no supplied value. *)
 
 type wmma_info = {
   dims : int * int * int;  (** Matrix dimensions [(M, N, K)]. *)

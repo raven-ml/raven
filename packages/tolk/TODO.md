@@ -12,6 +12,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
   `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including
   kernel naming, intermediate GROUP cleanup and remaining ordering differences.
+  Reconcile threadless CPU cases `wide_reduce_thread`, `two_sum`,
+  `upcast_lane_load`, `upcast_lane_store` and `lorenz_fold` (names and ordering),
+  and the intermediate GROUP in `multi_output`.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -76,10 +79,11 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
-- Migrate CPU host calls and threadless tensor kernels; port ELF/TinyELF and
+- Migrate CPU host calls; port ELF/TinyELF and
   x86 out-of-range relocation trampolines. Reconcile the fixed-array CPU call
-  ABI with TinyELF signatures without adding an FFI dependency. Rebaseline CPU
-  matmul performance.
+  ABI with TinyELF signatures without adding an FFI dependency. Compare CPU
+  matmul performance with the final target after optimizer migration and
+  resolve avoidable regressions.
 - Migrate Metal/CUDA queues and argument bindings; implement CUDA peer enablement
   and synchronized cross-device transfer with unsupported-peer fallback.
 - Migrate AMD queue descriptors, AQL/multi-XCC, race/recovery fixes and consumed

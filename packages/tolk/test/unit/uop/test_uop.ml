@@ -1496,15 +1496,13 @@ let program_info_from_sink_parity () =
   equal int ~msg:"ProgramInfo vars count" 2 (List.length info.vars);
   is_true ~msg:"ProgramInfo vars sorted by slot"
     (List.hd info.vars == core_id && List.nth info.vars 1 == n);
-  equal (list (pair string int)) ~msg:"runtimevars follows core_id"
-    [ ("core_id", 0) ] (Uop.program_runtimevars info);
-  equal (list (option int)) ~msg:"ProgramInfo vals skip runtime vars"
-    [ None; Some 6 ] (Uop.program_vals info ~var_vals:[ "n", 6 ]);
+  equal (list int) ~msg:"ProgramInfo values include every scalar"
+    [ 2; 6 ] (Uop.program_vals info ~var_vals:[ "core_id", 2; "n", 6 ]);
   raises_match
     (function
       | Invalid_argument msg -> contains msg "kernel name" && contains msg "\"n\""
       | _ -> false)
-    (fun () -> Uop.program_vals info ~var_vals:[]);
+    (fun () -> Uop.program_vals info ~var_vals:[ "core_id", 2 ]);
   raises_match
     (function
       | Invalid_argument msg -> contains msg "kernel name" && contains msg "\"n\""
@@ -1514,7 +1512,7 @@ let program_info_from_sink_parity () =
     Uop.program_launch_dims info ~var_vals:[ "n", 6 ]
   in
   equal (list launch_value_testable) ~msg:"ProgramInfo launch dims"
-    [ Launch_value_int 4; Launch_value_int 1; Launch_value_int 7 ]
+    [ Launch_value_int 1; Launch_value_int 1; Launch_value_int 7 ]
     global_size;
   equal (option (list int)) ~msg:"ProgramInfo local dims"
     (Some [ 1; 8; 1 ]) local_size

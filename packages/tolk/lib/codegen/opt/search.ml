@@ -72,8 +72,6 @@ let actions =
       add (Swap { axis = axis_0; with_axis = axis_1 })
     done
   done;
-  gen (fun axis amount -> Thread { axis; amount }) 2
-    [2; 3; 4; 5; 8; 12; 16; 24; 32; 64];
   if nolocals then add Nolocals;
   List.rev !acc
 
@@ -374,9 +372,8 @@ let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
     | Some lib -> lib
     | None -> invalid_arg "Search.time_program: missing compiled binary"
   in
-  let runtimevars = U.program_runtimevars (Program_spec.program_info p) in
   let name = U.sanitize_function_name (Program_spec.name p) in
-  let prg = Device.runtime device name lib ~runtimevars in
+  let prg = Device.runtime device name lib in
   (* Candidates are timed once per search. Retain a handle for its samples,
      then drain queued work and release it even if timing raises. Ordinary
      execution owns its separate runtime cache. *)

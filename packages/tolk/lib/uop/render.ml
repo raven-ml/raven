@@ -188,13 +188,6 @@ and opt_debug_string = function
           "axis", string_of_int axis;
           "arg", string_of_int amount;
         ]
-  | Thread { axis; amount } ->
-      dataclass_string "Opt"
-        [
-          "op", opt_op_string "THREAD";
-          "axis", string_of_int axis;
-          "arg", string_of_int amount;
-        ]
   | Group { axis; amount } ->
       dataclass_string "Opt"
         [

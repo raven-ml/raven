@@ -26,16 +26,6 @@ type var = {
 }
 (** Bounded scalar {!Tolk_uop.Uop.Param_arg} kernel parameter. *)
 
-type core_id = {
-  var_index : int;
-  lo : int;
-  hi : int;
-}
-(** Runtime-managed ["core_id"] variable for multi-core dispatch. *)
-
-val thread_count : core_id -> int
-(** [thread_count cid] is [cid.hi - cid.lo + 1]. *)
-
 type launch_kind =
   | Serial
   | Thread_groups
@@ -111,7 +101,6 @@ val vars : t -> var list
 val outs : t -> int list
 val ins : t -> int list
 val globals : t -> int list
-val core_id : t -> core_id option
 val launch_kind : t -> launch_kind
 val estimates : t -> Estimates.t
 val global_size : t -> Tolk_uop.Uop.t array

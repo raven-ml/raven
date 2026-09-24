@@ -124,15 +124,9 @@ module Compiled_runner = struct
     prg : Device.prog;
   }
 
-  let runtimevars_of_spec p =
-    Tolk_uop.Uop.program_runtimevars (Program_spec.program_info p)
-
   let vals_of_spec p var_vals =
-    let runtimevars = runtimevars_of_spec p in
     Program_spec.vars p
     |> List.map (fun (v : Program_spec.var) ->
-      if List.mem_assoc v.name runtimevars then 0L
-      else
         match List.assoc_opt v.name var_vals with
         | Some n -> Int64.of_int n
         | None -> invalid_arg
@@ -162,7 +156,7 @@ module Compiled_runner = struct
       | None ->
           Device.runtime device
             (Tolk_uop.Uop.sanitize_function_name (Program_spec.name p))
-            lib ~runtimevars:(runtimevars_of_spec p)
+            lib
     in
     let call bufs var_vals ~wait ~timeout =
       let global, local = Program_spec.launch_dims p var_vals in
@@ -344,7 +338,6 @@ let get_runtime ~device program (info : Tolk_uop.Uop.program_info) =
       let lib = Bytes.of_string (program_binary program) in
       let prg =
         Device.runtime device (U.program_function_name info) lib
-          ~runtimevars:(U.program_runtimevars info)
       in
       Hashtbl.replace runtime_cache ckey prg;
       prg
@@ -818,7 +811,7 @@ let exec_kernel binding ctx ~device call =
         let vals =
           Array.of_list
             (List.map
-               (function Some n -> Int64.of_int n | None -> 0L)
+               Int64.of_int
                (U.program_vals info ~var_vals))
         in
         let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
@@ -1062,14 +1055,12 @@ module Graph_runner = struct
       (function U.Launch_sym _ -> true | _ -> false)
       info.global_size
 
-  (* Non-runtime variables of a kernel, as (scalar argument index, name). *)
+  (* Variables of a kernel, as (scalar argument index, name). *)
   let kernel_vars (info : U.program_info) =
-    let runtimevars = List.map fst (U.program_runtimevars info) in
     List.mapi
       (fun i var ->
         match U.as_param var with
-        | Some { param = { name = Some name; _ }; _ }
-          when not (List.mem name runtimevars) ->
+        | Some { param = { name = Some name; _ }; _ } ->
             Some (i, name)
         | _ -> None)
       info.vars
@@ -1140,9 +1131,7 @@ module Graph_runner = struct
                 in
                 let vals =
                   Array.of_list
-                    (List.map
-                       (function Some v -> v | None -> 0)
-                       (U.program_vals info ~var_vals:ctx.var_vals))
+                    (U.program_vals info ~var_vals:ctx.var_vals)
                 in
                 let node_deps =
                   Deps.access deps

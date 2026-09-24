@@ -17,7 +17,6 @@ type t =
   | Reduce
   | Upcast
   | Unroll
-  | Thread
   | Placeholder
   | Loop
 
@@ -34,7 +33,6 @@ let to_string = function
   | Reduce -> "reduce"
   | Upcast -> "upcast"
   | Unroll -> "unroll"
-  | Thread -> "thread"
   | Placeholder -> "placeholder"
   | Loop -> "loop"
 
@@ -43,7 +41,7 @@ let pp fmt t = Format.pp_print_string fmt (to_string t)
 let to_pos = function
   | Device -> -2
   | Weak | Loop -> -1
-  | Thread | Global -> 0
+  | Global -> 0
   | Warp -> 1
   | Local | Group_reduce -> 2
   | Upcast -> 3
@@ -54,7 +52,6 @@ let to_pos = function
 let letter = function
   | Device -> "d"
   | Global -> "g"
-  | Thread -> "t"
   | Local -> "l"
   | Warp -> "w"
   | Weak | Loop -> "L"

@@ -64,25 +64,16 @@ let unload_program loaded =
 
 (* Allocator *)
 
-let raw_allocator ~synchronize ~after_queue =
+let raw_allocator () =
   let alloc size spec =
     match spec.Device.Buffer_spec.external_ptr with
     | Some ptr -> ptr
     | None -> cpu_alloc size
   in
-  (* A queued kernel may still use the memory. *)
   let free buf _size spec =
     match spec.Device.Buffer_spec.external_ptr with
     | Some _ -> ()
-    | None -> after_queue (fun () -> cpu_free buf)
-  in
-  let copyin buf bytes =
-    synchronize ();
-    cpu_copyin buf bytes
-  in
-  let copyout bytes buf =
-    synchronize ();
-    cpu_copyout bytes buf
+    | None -> cpu_free buf
   in
   let offset buf _size byte_offset =
     if byte_offset < 0 then invalid_arg "CPU buffer offset must be non-negative";
@@ -91,8 +82,8 @@ let raw_allocator ~synchronize ~after_queue =
   {
     Device.Allocator.alloc;
     free;
-    copyin;
-    copyout;
+    copyin = cpu_copyin;
+    copyout = cpu_copyout;
     as_buffer = Some cpu_as_buffer;
     addr = Fun.id;
     offset = Some offset;
@@ -102,275 +93,21 @@ let raw_allocator ~synchronize ~after_queue =
     supports_copy_from_disk = false;
   }
 
-(* Execution Queue *)
-
-module Cpu_queue = struct
-  type pool_job = Run of (unit -> unit) | Stop
-
-  type pool = {
-    tasks : pool_job Queue.t;
-    mutex : Mutex.t;
-    cond : Condition.t;
-    mutable workers : unit Domain.t list;
-  }
-
-  let pool_create () =
-    {
-      tasks = Queue.create ();
-      mutex = Mutex.create ();
-      cond = Condition.create ();
-      workers = [];
-    }
-
-  let rec pool_worker_loop pool =
-    Mutex.lock pool.mutex;
-    while Queue.is_empty pool.tasks do
-      Condition.wait pool.cond pool.mutex
-    done;
-    let job = Queue.take pool.tasks in
-    Mutex.unlock pool.mutex;
-    match job with
-    | Stop -> ()
-    | Run fn ->
-        fn ();
-        pool_worker_loop pool
-
-  let pool_start_worker pool = Domain.spawn (fun () -> pool_worker_loop pool)
-
-  (* Only called from the single dispatch domain, so no lock needed. *)
-  let pool_ensure pool count =
-    let existing = List.length pool.workers in
-    if count > existing then
-      let new_workers =
-        List.init (count - existing) (fun _ -> pool_start_worker pool)
-      in
-      pool.workers <- pool.workers @ new_workers
-
-  let pool_enqueue pool job =
-    Mutex.lock pool.mutex;
-    Queue.add (Run job) pool.tasks;
-    Condition.signal pool.cond;
-    Mutex.unlock pool.mutex
-
-  let pool_shutdown pool =
-    match pool.workers with
-    | [] -> ()
-    | workers ->
-        Mutex.lock pool.mutex;
-        List.iter (fun _ -> Queue.add Stop pool.tasks) workers;
-        Condition.broadcast pool.cond;
-        Mutex.unlock pool.mutex;
-        List.iter Domain.join workers;
-        pool.workers <- []
-
-  type work = {
-    entry : nativeint;
-    bufs : nativeint array;
-    vals : int64 array;
-    threads : int;
-    core_id_index : int option;
-  }
-
-  type task = Work of work | Stop
-
-  type t = {
-    tasks : task Queue.t;
-    mutex : Mutex.t;
-    cond : Condition.t;
-    pool : pool;
-    mutable worker_thread : unit Domain.t option;
-    mutable pending : int;
-    mutable error : exn option;
-    mutable holding : bool;
-        (* the dispatch domain holds [mutex]; a GC finaliser run there by an
-           allocation must not wait on the queue *)
-    mutable deferred : (unit -> unit) list;
-        (* work for after the queue drains, left by such a finaliser *)
-  }
-
-  let run_kernel task tid =
-    let vals = Array.copy task.vals in
-    (match task.core_id_index with
-    | None -> ()
-    | Some idx ->
-        if idx >= 0 && idx < Array.length vals then
-          vals.(idx) <- Int64.of_int tid);
-    exec_call task.entry task.bufs vals
-
-  (* Fan out kernel execution across the Domain pool. Thread 0 runs on the
-     dispatch thread; threads 1..N-1 are enqueued to pool workers. The dispatch
-     thread blocks until all threads complete, propagating the first error. *)
-  let run_task t task =
-    let threads = max 1 task.threads in
-    if threads = 1 then run_kernel task 0
-    else (
-      pool_ensure t.pool (threads - 1);
-      let remaining = ref threads in
-      let mutex = Mutex.create () in
-      let cond = Condition.create () in
-      let error : exn option ref = ref None in
-      let record_error exn =
-        Mutex.lock mutex;
-        if !error = None then error := Some exn;
-        Mutex.unlock mutex
-      in
-      let finish () =
-        Mutex.lock mutex;
-        remaining := !remaining - 1;
-        if !remaining = 0 then Condition.signal cond;
-        Mutex.unlock mutex
-      in
-      let run tid =
-        (try run_kernel task tid with exn -> record_error exn);
-        finish ()
-      in
-      for tid = 1 to threads - 1 do
-        pool_enqueue t.pool (fun () -> run tid)
-      done;
-      run 0;
-      Mutex.lock mutex;
-      while !remaining > 0 do
-        Condition.wait cond mutex
-      done;
-      let task_error = !error in
-      Mutex.unlock mutex;
-      match task_error with None -> () | Some exn -> raise exn)
-
-  let worker t =
-    let rec loop () =
-      Mutex.lock t.mutex;
-      while Queue.is_empty t.tasks do
-        Condition.wait t.cond t.mutex
-      done;
-      let task = Queue.take t.tasks in
-      Mutex.unlock t.mutex;
-      match task with
-      | Stop -> ()
-      | Work work ->
-          let error =
-            try
-              run_task t work;
-              None
-            with exn -> Some exn
-          in
-          Mutex.lock t.mutex;
-          (match error with
-          | None -> ()
-          | Some exn -> if t.error = None then t.error <- Some exn);
-          t.pending <- t.pending - 1;
-          Condition.broadcast t.cond;
-          Mutex.unlock t.mutex;
-          loop ()
-    in
-    loop ()
-
-  let create () =
-    let pool = pool_create () in
-    let t =
-      {
-        tasks = Queue.create ();
-        mutex = Mutex.create ();
-        cond = Condition.create ();
-        pool;
-        worker_thread = None;
-        pending = 0;
-        error = None;
-        holding = false;
-        deferred = [];
-      }
-    in
-    let worker_thread = Domain.spawn (fun () -> worker t) in
-    t.worker_thread <- Some worker_thread;
-    t
-
-  let exec t ~entry ~bufs ~vals ~threads ~core_id_index =
-    let task = Work { entry; bufs; vals; threads; core_id_index } in
-    Mutex.lock t.mutex;
-    t.holding <- true;
-    let error = t.error in
-    (match error with
-    | None ->
-        Queue.add task t.tasks;
-        t.pending <- t.pending + 1;
-        Condition.signal t.cond;
-        t.holding <- false;
-        Mutex.unlock t.mutex
-    | Some exn ->
-        t.holding <- false;
-        Mutex.unlock t.mutex;
-        raise exn)
-
-  let synchronize t =
-    Mutex.lock t.mutex;
-    t.holding <- true;
-    while t.pending > 0 do
-      Condition.wait t.cond t.mutex
-    done;
-    let error = t.error in
-    t.holding <- false;
-    Mutex.unlock t.mutex;
-    let deferred = t.deferred in
-    t.deferred <- [];
-    List.iter (fun f -> f ()) deferred;
-    match error with None -> () | Some exn -> raise exn
-
-  (* [after_queue t f] runs [f] once the work queued so far has completed. Inside
-     the queue's own critical section, where a GC finaliser can run, waiting
-     would take the lock twice: [f] then runs at the next [synchronize], which
-     waits for that work too. *)
-  let after_queue t f =
-    if t.holding then t.deferred <- f :: t.deferred
-    else begin
-      synchronize t;
-      f ()
-    end
-
-  let shutdown t =
-    match t.worker_thread with
-    | None -> ()
-    | Some worker ->
-        Mutex.lock t.mutex;
-        Queue.add Stop t.tasks;
-        Condition.signal t.cond;
-        Mutex.unlock t.mutex;
-        Domain.join worker;
-        t.worker_thread <- None;
-        pool_shutdown t.pool
-end
-
 (* Device Registration *)
 
 let create ?aligned name =
-  let state = Cpu_queue.create () in
-  at_exit (fun () -> Cpu_queue.shutdown state);
-  let runtime entry_name lib ~runtimevars =
+  let runtime entry_name lib =
     let loaded = load_program ~name:entry_name ~lib in
-    let core_id_index = List.assoc_opt "core_id" runtimevars in
-    let global_threads global =
-      if Array.length global = 0 then 1 else max 1 global.(0)
-    in
-    let call bufs ~global ~local:_ ~vals ~wait ~timeout:_ =
-      let threads = match core_id_index with
-        | Some _ -> global_threads global
-        | None -> 1
-      in
+    let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";
       let st = if wait then monotonic_ns () else 0 in
-      Cpu_queue.exec state ~entry:loaded.entry ~bufs ~vals ~threads
-        ~core_id_index;
-      if wait then begin
-        Cpu_queue.synchronize state;
-        Some (float_of_int (monotonic_ns () - st) *. 1e-9)
-      end else
-        None
+      exec_call loaded.entry bufs vals;
+      if wait then Some (float_of_int (monotonic_ns () - st) *. 1e-9)
+      else None
     in
-    let free () =
-      Fun.protect ~finally:(fun () -> unload_program loaded) (fun () ->
-        Cpu_queue.synchronize state)
-    in
-    Device.{ call; free; handle = 0n }
+    Device.{ call; free = (fun () -> unload_program loaded); handle = 0n }
   in
-  let synchronize () = Cpu_queue.synchronize state in
+  let synchronize () = () in
   let renderer_set = Device.Renderer_set.make ~device:name ~arch:(Compiler_cpu.host_arch ())
       [ "CLANG", (fun target ->
           let arch = match String.split_on_char ',' target.Tolk_uop.Target.arch with
@@ -386,8 +123,6 @@ let create ?aligned name =
                ?aligned arch)) ] in
   let allocator =
     Device.Allocator.Pack
-      (Device.Lru_allocator.wrap
-         (raw_allocator ~synchronize
-            ~after_queue:(Cpu_queue.after_queue state)))
+      (Device.Lru_allocator.wrap (raw_allocator ()))
   in
   Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()

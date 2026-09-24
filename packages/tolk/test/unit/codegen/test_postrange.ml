@@ -54,12 +54,7 @@ let cpu_renderer () =
   Renderer.make ~name:"cpu" ~device:"CPU" ~has_local:false ~has_shared:false
     ~shared_max:0 ~render:(fun ?name:_ _ -> "") ()
 
-let thread_renderer () =
-  Renderer.make ~name:"thread" ~device:"CPU" ~has_local:false ~has_shared:false
-    ~shared_max:0 ~has_threads:true ~global_max:[ 8; 8; 8 ]
-    ~render:(fun ?name:_ _ -> "") ()
-
-(* Small shared memory renderer for testing budget *)
+(* Small shared memory renderer for testing budget. *)
 let small_smem_renderer () =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:true ~has_shared:true
     ~shared_max:64 ~render:(fun ?name:_ _ -> "") ()
@@ -379,14 +374,6 @@ let validation_tests =
         let t = P.create ast ren in
         raises_opt_error (fun () ->
           ignore (P.apply_opt t (U.Opt.Grouptop { axis = 0; amount = 32 }))));
-      test "THREAD rejects double-thread" (fun () ->
-        let ast = elementwise_ast ~s0:8 ~s1:8 in
-        let ren = thread_renderer () in
-        let t = P.create ast ren in
-        P.convert_loop_to_global t;
-        ignore (P.apply_opt t (U.Opt.Thread { axis = 0; amount = 2 }));
-        raises_opt_error (fun () ->
-          ignore (P.apply_opt t (U.Opt.Thread { axis = 0; amount = 2 }))));
       test "NOLOCALS rejects existing locals" (fun () ->
         let ast = elementwise_global_ast ~s0:8 ~s1:8 in
         let ren = gpu_renderer () in
@@ -477,17 +464,7 @@ let shift_opt_tests =
         is_true (List.exists (fun at -> at = Ak.Upcast) ats);
         is_true (List.exists (fun at -> at = Ak.Unroll) ats);
         is_true (List.exists (fun at -> at = Ak.Group_reduce) ats));
-      (* Port of test_thread_opts: THREAD on threadable renderer *)
-      test "THREAD on threadable renderer" (fun () ->
-        let ast = elementwise_ast ~s0:8 ~s1:8 in
-        let ren = thread_renderer () in
-        let t = P.create ast ren in
-        P.convert_loop_to_global t;
-        ignore (P.apply_opt t (U.Opt.Thread { axis = 0; amount = 2 }));
-        let ats = P.axis_types t in
-        is_true (List.exists (fun at -> at = Ak.Thread) ats));
-      (* Port of test_double_reduce: Multiple GROUPTOPs on double reduce.
-         We use a single reduce with two reduce ranges. *)
+      (* Multiple GROUPTOPs on a single reduction. *)
       test "double GROUPTOP on reduce" (fun () ->
         let ast = reduce_global_ast ~s0:8 ~s1:8 ~sr:128 in
         let ren = gpu_renderer () in

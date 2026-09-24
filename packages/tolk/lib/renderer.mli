@@ -92,10 +92,6 @@ val compiler : t -> Compiler.t option
 val has_local : t -> bool
 (** [has_local r] is [true] iff [r] supports local thread IDs. *)
 
-val has_threads : t -> bool
-(** [has_threads r] is [true] iff [r] supports host-side threading instead of
-    GPU grid dimensions. *)
-
 val has_shared : t -> bool
 (** [has_shared r] is [true] iff [r] supports shared memory. *)
 
@@ -174,7 +170,6 @@ val make :
   ?tensor_cores:Tc.t list ->
   ?supports_float4:bool ->
   ?image_pitch_alignment:int ->
-  ?has_threads:bool ->
   ?global_max:int list ->
   ?global_prod_max:int list ->
   ?local_max:int list ->
@@ -199,7 +194,6 @@ val make :
     - [tensor_cores]: [[]] (none).
     - [supports_float4]: [true].
     - [image_pitch_alignment]: [None].
-    - [has_threads]: [false].
     - [global_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
     - [global_prod_max]: [None].
     - [local_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
