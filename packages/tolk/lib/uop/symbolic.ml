@@ -1472,8 +1472,9 @@ let symbolic : Upat.Pattern_matcher.t =
        then Some (const_bound_like x lo)
        else None);
 
-    (* RANGE with const vmin == vmax -> const. *)
-    (op ~name:"x" Ops.Range => fun bs ->
+    (* RANGE of constant size with vmin == vmax -> const. A size that is only
+       bounded may still be zero, so the loop may not run at all. *)
+    (op_src ~name:"x" ~src:(repeat (op Ops.Const)) Ops.Range => fun bs ->
        let x = bs $ "x" in
        let lo = Uop.vmin x and hi = Uop.vmax x in
        if Bound.equal lo hi

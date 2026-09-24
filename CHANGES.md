@@ -337,6 +337,9 @@ thread.
 
 ### Tolk (new)
 
+- A loop whose size is a variable of at most 1 stays a loop. The symbolic rules
+  replaced it with its single index, so it ran once when the size was 0.
+
 - Add `Decomp_dtype.is_dtype_supported`: whether a renderer's programs can use
   a dtype, natively or by emulation. `float64` on Metal is neither.
 

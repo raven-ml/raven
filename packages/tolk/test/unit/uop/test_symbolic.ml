@@ -670,6 +670,22 @@ let divandmod_tests =
               is_true true));
     ]
 
+(* Range folding *)
+
+let range_fold_tests =
+  group "range_fold"
+    [
+      test "Range(1) → 0" (fun () -> simplifies_to_int (range 1) 0);
+      (* A size in [0, 1] gives the range vmin = vmax = 0, but the loop runs
+         zero times when the size is 0: it is not the constant 0. *)
+      test "a range of bounded size stays a range" (fun () ->
+          let size = var "n" 0 1 in
+          let r =
+            U.range ~size ~axis:0 ~kind:Axis_type.Weak ~dtype:D.weakint ()
+          in
+          equal uop r (simplify r));
+    ]
+
 (* Combine terms *)
 
 let combine_terms_tests =
@@ -1385,6 +1401,7 @@ let () =
          self_fold_tests;
          divmod_reconstitute_tests;
          divandmod_tests;
+         range_fold_tests;
          combine_terms_tests;
          associative_tests;
          index_pushing_tests;
