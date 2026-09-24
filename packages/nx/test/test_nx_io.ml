@@ -1054,7 +1054,9 @@ let txt_tests =
 
 let with_safetensors_header header f =
   let path = temp_file "test_safetensors_header_" ".safetensors" in
-  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
       let prefix = Bytes.create 8 in
       Bytes.set_int64_le prefix 0 (Int64.of_int (String.length header));
       write_file_bytes path (Bytes.to_string prefix ^ header ^ "\042");
@@ -1073,7 +1075,9 @@ let test_safetensors_json_escapes () =
 
 let test_safetensors_json_encoding () =
   let path = temp_file "test_safetensors_unicode_" ".safetensors" in
-  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
       let name = "é🚀\000\001\b\012\r\n\t\"\\" in
       Nx_io.save_safetensors path
         [ (name, Nx_io.P (Nx.create Nx.uint8 [| 1 |] [| 42 |])) ];
@@ -1090,11 +1094,12 @@ let test_safetensors_invalid_json_strings () =
   List.iter
     (fun name ->
       let header =
-        "{\"" ^ name ^ "\":{\"dtype\":\"U8\",\"shape\":[1],\"data_offsets\":[0,1]}}"
+        "{\"" ^ name
+        ^ "\":{\"dtype\":\"U8\",\"shape\":[1],\"data_offsets\":[0,1]}}"
       in
       with_safetensors_header header (fun path ->
-          expect_failure (Printf.sprintf "invalid JSON string %S" name) (fun () ->
-              Nx_io.load_safetensors path)))
+          expect_failure (Printf.sprintf "invalid JSON string %S" name)
+            (fun () -> Nx_io.load_safetensors path)))
     [ {|\ud800|}; {|\udc00|}; {|\ud800\u0041|}; {|\u12xz|}; {|\q|}; "a\001b" ]
 
 let test_safetensors_save_load () =
@@ -1839,8 +1844,10 @@ let () =
       group "safetensors"
         [
           test "Decode JSON string escapes" test_safetensors_json_escapes;
-          test "Encode Unicode and control characters" test_safetensors_json_encoding;
-          test "Reject invalid JSON strings" test_safetensors_invalid_json_strings;
+          test "Encode Unicode and control characters"
+            test_safetensors_json_encoding;
+          test "Reject invalid JSON strings"
+            test_safetensors_invalid_json_strings;
           test "Save/load tensors" test_safetensors_save_load;
           test "Different dtypes" test_safetensors_different_dtypes;
           test "Float16 round-trip" test_safetensors_float16_roundtrip;
