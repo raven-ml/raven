@@ -387,6 +387,15 @@ let () =
                       Mmio.view m ~off:(-1) ());
                   raises_match is_invalid_arg (fun () ->
                       Mmio.view m ~off:0 ~size:8193 ())));
+          test "view ranges reject integer overflow" (fun () ->
+              let m = Mmio.make ~addr:0n ~size:64 in
+              raises_match is_invalid_arg (fun () ->
+                  Mmio.view m ~off:max_int ~size:4 ());
+              raises_match is_invalid_arg (fun () ->
+                  Mmio.view m ~off:32 ~size:max_int ());
+              let large = Mmio.make ~addr:0n ~size:max_int in
+              equal int 4 (Mmio.size (Mmio.view large ~off:(max_int - 4) ~size:4 ()));
+              equal int 0 (Mmio.size (Mmio.view large ~off:max_int ~size:0 ())));
           test "reads and writes are bounds-checked" (fun () ->
               with_map 8192 (fun m ->
                   raises_match is_invalid_arg (fun () ->
@@ -428,6 +437,15 @@ let () =
                   Buffer.offset buf ~off:32 ~size:33 ());
               raises_match is_invalid_arg (fun () ->
                   Buffer.offset buf ~off:0 ~size:65 ()));
+          test "offset ranges reject integer overflow" (fun () ->
+              let buf = Buffer.make ~va:0n ~size:64 ~meta:() () in
+              raises_match is_invalid_arg (fun () ->
+                  Buffer.offset buf ~off:max_int ~size:4 ());
+              raises_match is_invalid_arg (fun () ->
+                  Buffer.offset buf ~off:32 ~size:max_int ());
+              let large = Buffer.make ~va:0n ~size:max_int ~meta:() () in
+              equal int 4 (Buffer.size (Buffer.offset large ~off:(max_int - 4) ~size:4 ()));
+              equal int 0 (Buffer.size (Buffer.offset large ~off:max_int ~size:0 ())));
           test "sub-buffers share meta and base" (fun () ->
               let meta = ref 0 in
               let buf = Buffer.make ~va:0n ~size:64 ~meta () in

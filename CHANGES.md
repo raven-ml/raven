@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Reject negative or overflowing buffer sizes and view ranges before native
+  memory access. Large offsets can no longer bypass MMIO bounds checks.
+
 - Honor declared workgroup sizes, including symbolic extents during replay,
   without extra trial executions on first launch.
 - `Uop.program_info` stores launch expressions for global and local dimensions.

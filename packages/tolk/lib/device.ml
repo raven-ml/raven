@@ -191,7 +191,14 @@ module Buffer = struct
         buf.storage <- Unallocated;
         base.allocated_views <- base.allocated_views - 1
 
+  let checked_nbytes size dtype =
+    let itemsize = Dtype.itemsize dtype in
+    if size < 0 || (itemsize > 0 && size > max_int / itemsize) then
+      invalid_arg "buffer size is negative or exceeds the byte address range";
+    size * itemsize
+
   let create ~device ~size ~dtype ?spec allocator =
+    ignore (checked_nbytes size dtype : int);
     let spec = Option.value spec ~default:Buffer_spec.default in
     match allocator with
     | Allocator.Pack alloc ->
@@ -297,11 +304,12 @@ module Buffer = struct
     if offset < 0 then invalid_arg "buffer view offset must be non-negative";
     if offset > nbytes t || (offset = nbytes t && size <> 0) then
       invalid_arg "buffer view offset is outside the buffer";
-    let view_nbytes = size * Dtype.itemsize dtype in
+    let view_nbytes = checked_nbytes size dtype in
     let base = base_raw b in
+    let remaining = nbytes (Pack base) - b.offset in
+    if offset > remaining || view_nbytes > remaining - offset then
+      invalid_arg "buffer view exceeds base buffer";
     let absolute_offset = b.offset + offset in
-    if absolute_offset + view_nbytes > base.size * Dtype.itemsize base.dtype
-    then invalid_arg "buffer view exceeds base buffer";
     let raw =
       {
         id = fresh_id ();

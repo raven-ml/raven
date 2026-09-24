@@ -89,7 +89,7 @@ module Mmio = struct
   let size t = t.size
 
   let check t off len =
-    if off < 0 || len < 0 || off + len > t.size then
+    if off < 0 || len < 0 || off > t.size || len > t.size - off then
       invalid_arg
         (Printf.sprintf "Mmio: range %d+%d exceeds size %d" off len t.size)
 
@@ -156,7 +156,7 @@ module Buffer = struct
 
   let offset t ~off ?size () =
     let size = match size with Some s -> s | None -> t.size - off in
-    if off < 0 || size < 0 || off + size > t.size then
+    if off < 0 || size < 0 || off > t.size || size > t.size - off then
       invalid_arg
         (Printf.sprintf "Buffer.offset: range %d+%d exceeds size %d" off size
            t.size);

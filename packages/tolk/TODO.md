@@ -73,9 +73,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 ## Storage, execution and devices
 
-- Reject overflowing byte ranges in MMIO and storage views before address
-  arithmetic.
-
 - Adopt BufferStorage, HostAllocator, per-device mappings and typed dispatch/
   transfer identities. Remove the nativeint-only transfer seam and Metal token
   workaround; preserve view lifetimes and 64-bit offsets.

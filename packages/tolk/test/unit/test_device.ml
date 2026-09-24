@@ -153,6 +153,25 @@ let empty_storage () =
   equal nativeint 0n (Device.Buffer.addr tail);
   List.iter Device.Buffer.deallocate [ tail; base; view; src; dst ]
 
+let buffer_byte_ranges () =
+  let allocator = Device.Buffer.allocator
+      (Device.create_buffer ~size:0 ~dtype:i32 device) in
+  let create size dtype = Device.Buffer.create ~device:"BOUNDS" ~size ~dtype allocator in
+  let invalid_arg = function Invalid_argument _ -> true | _ -> false in
+  raises_match invalid_arg (fun () -> create (-1) D.uint8);
+  raises_match invalid_arg (fun () -> create ((max_int / 8) + 1) D.int64);
+  let base = create max_int D.uint8 in
+  raises_match invalid_arg (fun () -> Device.Buffer.view base ~size:(-1) ~dtype:D.uint8 ~offset:0);
+  raises_match invalid_arg (fun () -> Device.Buffer.view base ~size:((max_int / 8) + 1) ~dtype:D.int64 ~offset:0);
+  raises_match invalid_arg (fun () -> Device.Buffer.view base ~size:max_int ~dtype:D.uint8 ~offset:16);
+  let tail = Device.Buffer.view base ~size:16 ~dtype:D.uint8 ~offset:(max_int - 16) in
+  raises_match invalid_arg (fun () -> Device.Buffer.view tail ~size:16 ~dtype:D.uint8 ~offset:8);
+  let nested = Device.Buffer.view tail ~size:8 ~dtype:D.uint8 ~offset:8 in
+  equal int 8 (Device.Buffer.nbytes nested);
+  let empty = Device.Buffer.view nested ~size:0 ~dtype:D.uint8 ~offset:8 in
+  equal int 0 (Device.Buffer.nbytes empty);
+  is_false (Device.Buffer.is_initialized base)
+
 let interleaved_kernel_formals () =
   let module U = Uop in
   let allocator = Device.Buffer.allocator
@@ -184,4 +203,4 @@ let interleaved_kernel_formals () =
   equal (list int) [ 0; 1; 2 ]
     (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature)
 
-let () = run __FILE__ [ copy_from_tests; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]
+let () = run __FILE__ [ copy_from_tests; test "buffer byte ranges reject overflow" buffer_byte_ranges; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]

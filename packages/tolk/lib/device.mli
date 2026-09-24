@@ -161,7 +161,8 @@ module Buffer : sig
     Allocator.packed ->
     t
   (** [create ~device ~size ~dtype ?spec allocator] is an unallocated base
-      buffer for [size] elements of [dtype] on [device].
+      buffer for [size] elements of [dtype] on [device]. Raises
+      [Invalid_argument] if [size] is negative or the byte size exceeds [max_int].
 
       [spec] defaults to {!Buffer_spec.default}. *)
 
@@ -172,7 +173,8 @@ module Buffer : sig
 
       An empty view may start at [nbytes b]. Raises [Invalid_argument] if
       [offset] is negative, past [nbytes b], at [nbytes b] for a nonempty view,
-      or if the resulting view extends past the root base buffer. *)
+      if [size] is negative or its byte size exceeds [max_int], or if the
+      resulting view extends past the root base buffer. *)
 
   (** {1:identity Identity and metadata} *)
 
