@@ -163,8 +163,8 @@ let test_grad_rejects_integer_leaves () =
            (fun x -> Nx.sum x)
            (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |])))
 
-(* A structure does have somewhere. The canonical case is an RNG key, which
-   must sit in the structure to reach a compiled step as an input, but is not
+(* A structure does have somewhere. The canonical case is an RNG key, which must
+   sit in the structure to reach a compiled step as an input, but is not
    something to differentiate. Such a leaf is carried: zero in the gradient,
    untouched by the optimizer, while the real parameters update. Before this,
    grad refused the whole structure and the key had to be captured in a closure
@@ -196,9 +196,9 @@ let test_grad_carries_a_key_leaf () =
       (fun p -> Nx.sum (Nx.mul p.Stepper.w p.Stepper.w))
       p
   in
-  check_arr ~msg:"the float leaf differentiates" [| 2.0; -4.0; 6.0 |] g.Stepper.w;
-  equal ~msg:"the key's gradient is zero" (array int32)
-    [| 0l; 0l |]
+  check_arr ~msg:"the float leaf differentiates" [| 2.0; -4.0; 6.0 |]
+    g.Stepper.w;
+  equal ~msg:"the key's gradient is zero" (array int32) [| 0l; 0l |]
     (Nx.to_array g.Stepper.key)
 
 (* One tensor behind both leaves. A structure is positional: each leaf is its

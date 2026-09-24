@@ -431,8 +431,8 @@ let test_jvp_through_vmap () =
   let expected = Nx.sum ~axes:[ 1 ] (Nx.mul_s (Nx.mul (xs ()) v) 2.0) in
   check_arr ~msg:"jvp through vmap" (to_arr expected) dy
 
-(* A window write batches over the template and the value; each row gets its
-   own window. *)
+(* A window write batches over the template and the value; each row gets its own
+   window. *)
 module Row_pos = struct
   type t = { row : Nx.float32_t; pos : Nx.int32_t }
 
@@ -459,8 +459,7 @@ let test_vmap_set_window_batched_start () =
        (module Row_pos)
        (fun r -> Nx.set [ Nx.D (r.pos, 2) ] v r.row)
        { row = xs; pos });
-  check_arr ~msg:"per-example reads"
-    [| 1.; 2.; 12.; 13. |]
+  check_arr ~msg:"per-example reads" [| 1.; 2.; 12.; 13. |]
     (Rune.vmap
        (module Row_pos)
        (fun r -> Nx.slice [ Nx.D (r.pos, 2) ] r.row)

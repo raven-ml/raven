@@ -294,7 +294,8 @@ let linalg_tests =
     test "solve_triangular (batched vector rhs)" (fun () ->
         check_jvp2 ~msg:"solve_triangular batched"
           (fun a b -> Nx.solve_triangular a b)
-          (Nx.create f64 [| 2; 2; 2 |] [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
+          (Nx.create f64 [| 2; 2; 2 |]
+             [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
           (Nx.create f64 [| 2; 2 |] [| 1.0; -2.0; 0.5; 3.0 |]));
   ]
 
@@ -384,7 +385,6 @@ let test_unsupported_op_raises_when_active () =
              let _, s, _ = Nx.svd x in
              s)
            x (tangent_like x)))
-
 
 let tests =
   [

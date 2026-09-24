@@ -34,8 +34,6 @@ let accumulate tape x g =
 (* A cotangent is accumulated as the lazy view its pulls produced (a transpose,
    a broadcast) and materialized once, here, where it leaves the tape. *)
 let cotangent tape x =
-  match find tape x with
-  | Some g -> Nx.contiguous g
-  | None -> Nx.zeros_like x
+  match find tape x with Some g -> Nx.contiguous g | None -> Nx.zeros_like x
 
 let reset_cotangents tape = tape.cotangents <- Tensor_map.create ()

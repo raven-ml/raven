@@ -48,9 +48,9 @@ let custom_vjp (type p c d) (module P : Nx.Ptree.S with type t = p)
       (E_custom_vjp (Vjp_call { tree = (module P); params; fwd; bwd }))
   with Effect.Unhandled _ -> fst (fwd params)
 
-let custom_jvp (type p c d) (module P : Nx.Ptree.S with type t = p) ~(f : P.t -> (c, d) Nx.t)
-    ~(jvp : P.t -> P.t -> (c, d) Nx.t * (c, d) Nx.t) (params : P.t) :
-    (c, d) Nx.t =
+let custom_jvp (type p c d) (module P : Nx.Ptree.S with type t = p)
+    ~(f : P.t -> (c, d) Nx.t) ~(jvp : P.t -> P.t -> (c, d) Nx.t * (c, d) Nx.t)
+    (params : P.t) : (c, d) Nx.t =
   try
     Effect.perform
       (E_custom_jvp (Jvp_call { tree = (module P); params; f; jvp }))
