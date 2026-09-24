@@ -730,6 +730,11 @@ let index_tests =
             (function Invalid_argument _ -> true | _ -> false)
             (fun () -> Op.getitem (base ()) [ Mv.I 0; Mv.I 0; Mv.I 0; Mv.I 0 ]));
       (* Advanced (tensor) indexing *)
+      test "tensor indices on another device are rejected" (fun () ->
+          let base = Cr.empty ~device:(U.Single "CPU") [ 4 ] in
+          let index = Cr.empty ~dtype:D.int32 ~device:(U.Single "METAL") [ 2 ] in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Op.getitem base [ Mv.T index ]));
       test "single tensor index keeps trailing axes" (fun () ->
           equal (list int) [ 2; 3; 4 ]
             (shape (Op.getitem (base ()) [ Mv.T (ar 2) ])));

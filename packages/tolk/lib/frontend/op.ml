@@ -666,22 +666,30 @@ let rec getitem t indices =
       | [] -> []
       | index :: rest ->
           let size =
-            match index with Movement.New -> 1 | _ -> List.nth (T.shape t) dim
+            match index with
+            | Movement.New -> Uop.const_int 1
+            | _ -> List.nth (T.symbolic_shape t) dim
           in
           let p =
             match index with
             | Movement.T tensor ->
+                if Option.is_none (Uop.const_int_value size) then
+                  invalid_arg "Op.getitem: advanced indexing needs a concrete axis size";
                 if not (D.is_int (T.dtype tensor)) then
                   invalid_arg "Op.getitem: index tensor must be integer";
+                (match T.device tensor, T.device t with
+                 | Some a, Some b when a <> b ->
+                     invalid_arg "Op.getitem: index and tensor devices differ"
+                 | _ -> ());
                 let tensor =
                   Elementwise.where
                     (Elementwise.lt tensor (T.i 0))
-                    (Elementwise.add tensor (T.i size))
+                    (Elementwise.add tensor (T.of_uop size))
                     tensor
                 in
                 {
                   Movement.size;
-                  boundary = (0, size);
+                  boundary = (Uop.const_int 0, size);
                   stride = 1;
                   collapse_dim = false;
                   resolved = Movement.Advanced tensor;
@@ -707,7 +715,7 @@ let rec getitem t indices =
   let mops = List.filter (fun p -> not (is_newaxis p)) parsed in
   let x = Movement.apply_view_ops t mops in
   let x_dims = List.filter (fun p -> not p.Movement.collapse_dim) parsed in
-  let x = Movement.reshape x (List.map (fun p -> p.Movement.size) x_dims) in
+  let x = Movement.symbolic_reshape x (List.map (fun p -> p.Movement.size) x_dims) in
   let tops =
     List.concat
       (List.mapi (fun d p -> if is_adv p then [ (d, adv_tensor p) ] else []) x_dims)

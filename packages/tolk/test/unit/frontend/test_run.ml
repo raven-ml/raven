@@ -943,8 +943,8 @@ let gpt2_getitem_tests =
    passed to the kernel at launch. *)
 
 
-let bound_var name ~max_val value =
-  let var = U.variable ~name ~min_val:0 ~max_val () in
+let bound_var ?(min_val = 0) name ~max_val value =
+  let var = U.variable ~name ~min_val ~max_val () in
   U.bind ~var ~value:(U.const_int value)
 
 let plus1 u = U.O.(u + U.const_int 1)
@@ -952,6 +952,39 @@ let plus1 u = U.O.(u + U.const_int 1)
 let symbolic_tests =
   group "symbolic"
     [
+      test "integer getitem resolves against a symbolic axis" (fun () ->
+          List.iter
+            (fun length ->
+              let base = fa ~shape:[ 2; 4 ] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
+              let bound = bound_var "index_len" ~max_val:4 length in
+              let source = Mv.symbolic_shrink base
+                  [ None; Some (U.const_int 0, bound) ] in
+              check_floats [| float_of_int length; float_of_int (4 + length) |]
+                (Op.getitem source [ Mv.All; Mv.I (-1) ]);
+              check_floats [| float_of_int (length * (length + 1) / 2) |]
+                (Rd.sum (Op.getitem source [ Mv.I 0; Mv.All ])))
+            [ 1; 3; 4 ]);
+      test "negative slice bounds use the symbolic length" (fun () ->
+          List.iter
+            (fun length ->
+              let base = vec [| 1.; 2.; 3.; 4. |] in
+              let bound = bound_var "slice_len" ~min_val:2 ~max_val:4 length in
+              let source = Mv.symbolic_shrink base [ Some (U.const_int 0, bound) ] in
+              check_floats [| float_of_int (length - 1); float_of_int length |]
+                (Op.getitem source [ Mv.New; Mv.Ellipsis; Mv.R (Some (-2), None, None) ]);
+              check_floats [| float_of_int (length * (length - 1) / 2) |]
+                (Rd.sum (Op.getitem source [ Mv.R (None, Some (-1), None) ])))
+            [ 2; 3; 4 ]);
+      test "symbolic slicing rejects unproved lengths and non-unit steps" (fun () ->
+          let base = vec [| 1.; 2.; 3.; 4. |] in
+          let bound = bound_var "unknown_slice_len" ~max_val:4 3 in
+          let source = Mv.symbolic_shrink base [ Some (U.const_int 0, bound) ] in
+          List.iter
+            (fun index ->
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> Op.getitem source [ index ]))
+            [ Mv.R (None, Some (-1), None); Mv.R (None, None, Some (-1));
+              Mv.R (None, None, Some 2); Mv.R (None, None, Some 0) ]);
       test "raw byte reads reject a symbolic logical shape" (fun () ->
           let base = vec [| 1.; 2.; 3.; 4. |] in
           let bound = bound_var "read_len" ~max_val:4 3 in

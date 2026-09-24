@@ -294,6 +294,13 @@ thread.
 
 ### Tolk (new)
 
+- `Op.getitem` supports symbolic axis lengths and negative slice bounds.
+  `Movement.parsed` and `parse_view_index` now carry symbolic sizes and bounds;
+  symbolic slices require a unit step and a provably non-negative length.
+
+- Advanced integer-tensor indexing rejects indices on a different device,
+  matching tinygrad instead of constructing an invalid mixed-device graph.
+
 - `Run.data` rejects symbolic logical shapes, matching tinygrad and the typed
   host readers. It no longer exposes the allocation's maximum-size bytes as
   though they were the tensor's concrete shape.

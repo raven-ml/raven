@@ -130,7 +130,9 @@ val getitem : Tensor.t -> Movement.index list -> Tensor.t
     per axis applied from the outermost inward. Integer indices ({!Movement.I})
     drop their axis, slices ({!Movement.R}, {!Movement.All}) keep a strided
     range, {!Movement.New} inserts a size-[1] axis, and {!Movement.Ellipsis}
-    fills the unaddressed axes.
+    fills the unaddressed axes. Axis lengths may be symbolic. A slice whose
+    bounds remain symbolic requires a unit step and a provably non-negative
+    length; negative integer bounds count from the symbolic axis length.
 
     An integer-tensor index ({!Movement.T}) performs advanced indexing: its
     elements gather positions along the axis, and several such indices broadcast
@@ -140,7 +142,8 @@ val getitem : Tensor.t -> Movement.index list -> Tensor.t
     @raise Invalid_argument
       if the indices are malformed for the rank of [t] (see
       {!Movement.normalize_indices} and {!Movement.parse_view_index}) or an
-      index tensor is not integer-typed. *)
+      index tensor is not integer-typed, is on a different device, or indexes
+      a symbolic-size axis. *)
 
 val one_hot : Tensor.t -> int -> Tensor.t
 (** [one_hot index num_classes] adds a trailing axis of length [num_classes]

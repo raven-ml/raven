@@ -180,20 +180,24 @@ type resolved = Newaxis | View | Advanced of Tensor.t
     {!Advanced} gathers along it with an index tensor. *)
 
 type parsed = {
-  size : int;  (** Length of the resulting axis (before any collapse). *)
-  boundary : int * int;  (** Half-open [\[lo, hi)] window kept from the axis. *)
+  size : Tolk_uop.Uop.t;
+      (** Symbolic length of the resulting axis (before any collapse). *)
+  boundary : Tolk_uop.Uop.t * Tolk_uop.Uop.t;
+      (** Symbolic half-open [\[lo, hi)] window kept from the axis. *)
   stride : int;  (** Step through the window; negative reverses it. *)
   collapse_dim : bool;  (** Whether the axis is dropped, as for an integer index. *)
   resolved : resolved;
 }
-(** A single index resolved against a concrete axis size. *)
+(** A single index resolved against a possibly symbolic axis size. *)
 
-val parse_view_index : index -> int -> parsed
+val parse_view_index : index -> Tolk_uop.Uop.t -> parsed
 (** [parse_view_index index size] resolves a non-advanced [index] against an
-    axis of length [size].
+    axis of length [size]. Negative integer bounds count from [size].
+    Symbolic slice bounds require a unit step and a provably non-negative
+    length; concrete bounds use Python-style clipping and strides.
 
-    @raise Invalid_argument
-      if an integer index is out of bounds or a slice step is zero. *)
+    @raise Invalid_argument if an integer index is provably out of bounds,
+      a slice step is zero, or the symbolic slice is unsupported. *)
 
 val normalize_indices : Tensor.t -> index list -> index list
 (** [normalize_indices t indices] expands a single {!Ellipsis} (or, if there is

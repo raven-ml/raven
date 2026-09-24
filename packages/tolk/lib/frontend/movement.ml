@@ -318,8 +318,8 @@ type index =
 type resolved = Newaxis | View | Advanced of Tensor.t
 
 type parsed = {
-  size : int;
-  boundary : int * int;
+  size : U.t;
+  boundary : U.t * U.t;
   stride : int;
   collapse_dim : bool;
   resolved : resolved;
@@ -343,30 +343,49 @@ let slice_indices size start stop step =
   (start, stop, step)
 
 let parse_view_index index size =
+  let resolve = U.resolve ~default:false in
+  let non_negative x = resolve U.O.(not_ (x < sdim 0)) in
+  let view ?(collapse_dim = false) ~size ~boundary ~stride () =
+    { size; boundary; stride; collapse_dim; resolved = View }
+  in
   match index with
-  | New -> { size = 1; boundary = (0, 1); stride = 1; collapse_dim = false; resolved = Newaxis }
+  | New ->
+      { size = sdim 1; boundary = (sdim 0, sdim 1); stride = 1;
+        collapse_dim = false; resolved = Newaxis }
   | I n ->
-      if n >= size || n < -size then
-        invalid_arg "Movement.getitem: index out of bounds";
-      let b = if n >= 0 then n else n + size in
-      { size; boundary = (b, b + 1); stride = 1; collapse_dim = true; resolved = View }
+      let index = sdim n in
+      if resolve U.O.(not_ (index < size)) || resolve U.O.(index < dim_neg size)
+      then invalid_arg "Movement.getitem: index out of bounds";
+      let b = if n >= 0 then index else U.simplify U.O.(index + size) in
+      view ~collapse_dim:true ~size ~boundary:(b, U.simplify U.O.(b + sdim 1))
+        ~stride:1 ()
   | All | R _ ->
       let start, stop, step =
         match index with R (a, b, s) -> (a, b, s) | _ -> (None, None, None)
       in
-      let s, e, st = slice_indices size start stop step in
-      let lo, hi =
-        if st * (e - s) < 0 then (0, 0)
-        else if st < 0 then (e + 1, s + 1)
-        else (s, e)
+      let stride = Option.value step ~default:1 in
+      if stride = 0 then invalid_arg "Movement.getitem: slice step cannot be 0";
+      let bound default = function
+        | None -> default
+        | Some n when n < 0 -> U.simplify U.O.(sdim n + size)
+        | Some n -> sdim n
       in
-      {
-        size = ceildiv (hi - lo) (abs st);
-        boundary = (lo, hi);
-        stride = st;
-        collapse_dim = false;
-        resolved = View;
-      }
+      let first = bound (sdim 0) start and last = bound size stop in
+      (match U.const_int_value first, U.const_int_value last with
+       | Some _, Some _ ->
+           let s, e, st = slice_indices (Bound.to_int (U.vmax size)) start stop step in
+           let lo, hi =
+             if st * (e - s) < 0 then (0, 0)
+             else if st < 0 then (e + 1, s + 1)
+             else (s, e)
+           in
+           view ~size:(sdim (ceildiv (hi - lo) (abs st)))
+             ~boundary:(sdim lo, sdim hi) ~stride:st ()
+       | _ ->
+           let length = U.simplify (dim_sub last first) in
+           if stride <> 1 || not (non_negative length) then
+             invalid_arg "Movement.getitem: unsupported symbolic slice";
+           view ~size:length ~boundary:(first, last) ~stride ())
   | Ellipsis | T _ -> invalid_arg "Movement.getitem: index must be resolved first"
 
 let normalize_indices t indices =
@@ -387,7 +406,7 @@ let normalize_indices t indices =
   at 0 indices
 
 let apply_view_ops t mops =
-  let x = shrink t (List.map (fun m -> m.boundary) mops) in
+  let x = symbolic_shrink t (List.map (fun m -> Some m.boundary) mops) in
   let flip_axes =
     List.filter_map Fun.id
       (List.mapi (fun i m -> if m.stride < 0 then Some i else None) mops)
